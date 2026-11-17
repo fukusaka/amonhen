@@ -21,6 +21,7 @@ const SELECTED_UNFOCUSED: Color = Color::Indexed(236);
 pub enum Picked {
     Changes,
     History,
+    Reflog,
     /// ref が指すコミット（16 進の ID）。
     Commit(String),
 }
@@ -30,6 +31,7 @@ enum Row {
     Header(String),
     Changes,
     History,
+    Reflog,
     Ref {
         /// `branch`・`remote`・`tag`・`stash`。
         kind: &'static str,
@@ -51,6 +53,7 @@ impl Row {
             Row::Header(_) => None,
             Row::Changes => Some("view:changes".to_owned()),
             Row::History => Some("view:history".to_owned()),
+            Row::Reflog => Some("view:reflog".to_owned()),
             Row::Ref { name, .. } => Some(format!("ref:{name}")),
         }
     }
@@ -72,7 +75,12 @@ impl Default for Sidebar {
         Self {
             refs: Value::Null,
             filter: String::new(),
-            rows: vec![Row::Header(tr!("Workspace")), Row::Changes, Row::History],
+            rows: vec![
+                Row::Header(tr!("Workspace")),
+                Row::Changes,
+                Row::History,
+                Row::Reflog,
+            ],
             // 開いたときのメインの画面は History。
             selected: 2,
             top: 0,
@@ -102,7 +110,12 @@ impl Sidebar {
         let refs = &self.refs;
         let selected = self.rows.get(self.selected).and_then(Row::key);
         let head = refs["headBranch"].as_str();
-        let mut rows = vec![Row::Header(tr!("Workspace")), Row::Changes, Row::History];
+        let mut rows = vec![
+            Row::Header(tr!("Workspace")),
+            Row::Changes,
+            Row::History,
+            Row::Reflog,
+        ];
         for (kind, title) in [
             ("branch", tr!("Branches")),
             ("remote", tr!("Remotes")),
@@ -152,11 +165,18 @@ impl Sidebar {
     }
 
     /// メインの画面が替わった（数字のキーなど）ら、その行を選ぶ。ref を選んでいる間はそのまま。
-    pub fn show_view(&mut self, changes: bool) {
-        if matches!(self.rows.get(self.selected), Some(Row::Ref { .. })) && !changes {
+    pub fn show_view(&mut self, picked: Picked) {
+        // History で ref を選んでいる間は、そのまま。
+        if matches!(self.rows.get(self.selected), Some(Row::Ref { .. }))
+            && picked == Picked::History
+        {
             return;
         }
-        self.selected = if changes { 1 } else { 2 };
+        self.selected = match picked {
+            Picked::Changes => 1,
+            Picked::Reflog => 3,
+            _ => 2,
+        };
         self.clamp_top();
     }
 
@@ -237,6 +257,7 @@ impl Sidebar {
             Row::Header(_) => None,
             Row::Changes => Some(Picked::Changes),
             Row::History => Some(Picked::History),
+            Row::Reflog => Some(Picked::Reflog),
             Row::Ref { target, .. } => Some(Picked::Commit(target.clone())),
         }
     }
@@ -281,6 +302,9 @@ impl Sidebar {
                 }
                 Row::History => {
                     buf.set_stringn(area.x + 2, y, tr!("History"), width - 2, Style::new());
+                }
+                Row::Reflog => {
+                    buf.set_stringn(area.x + 2, y, tr!("Reflog"), width - 2, Style::new());
                 }
                 Row::Ref {
                     label: name,
@@ -356,8 +380,8 @@ mod tests {
     fn selection_skips_headers() {
         let mut sidebar = sidebar();
         assert_eq!(sidebar.picked(), Some(Picked::History));
-        // History の次は、Branches の見出しを飛ばして main。
-        assert!(sidebar.move_selection(1));
+        // History の次は Reflog、その次は Branches の見出しを飛ばして main。
+        assert!(sidebar.move_selection(2));
         assert_eq!(sidebar.picked(), Some(Picked::Commit("aa".to_owned())));
         sidebar.move_selection(2);
         assert_eq!(sidebar.picked(), Some(Picked::Commit("cc".to_owned())));
@@ -371,7 +395,7 @@ mod tests {
     #[test]
     fn selection_survives_a_reload() {
         let mut sidebar = sidebar();
-        sidebar.move_selection(2);
+        sidebar.move_selection(3);
         assert_eq!(sidebar.picked(), Some(Picked::Commit("bb".to_owned())));
         sidebar.set_refs(&json!({
             "headBranch": "main",

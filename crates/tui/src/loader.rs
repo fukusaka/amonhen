@@ -39,6 +39,8 @@ pub enum Request {
     Syntax { id: String, of: Value },
     /// 作業ツリーの状態（変わったファイルの一覧）。
     Status,
+    /// HEAD の reflog。
+    Reflog,
     /// 作業ツリーのファイルの差分。`serial` は、どの回の `status` に対するものか。`unstaged` は、stage して
     /// いない変更があるか（行ごとの印つきの差分が出せないときに、どちらを出すか）。
     WorkingDiff {
@@ -100,6 +102,8 @@ pub enum Loaded {
         id: String,
         reply: Option<Reply>,
     },
+    /// `reflog` の答え。だめなら理由。
+    Reflog(std::result::Result<Value, String>),
     /// `status` の答え。だめなら理由。
     Status(std::result::Result<Value, String>),
     WorkingDiff {
@@ -151,6 +155,7 @@ impl Loader {
             Request::Run { .. } => &self.operations,
             Request::Commit { .. } | Request::Syntax { .. } => &self.details,
             Request::Status
+            | Request::Reflog
             | Request::WorkingDiff { .. }
             | Request::Stage { .. }
             | Request::StageRows { .. }
@@ -238,6 +243,9 @@ fn load(front: &dyn Front, request: Request) -> Result<Loaded> {
                 id,
                 reply: front.call(of).ok(),
             }
+        }
+        Request::Reflog => {
+            Loaded::Reflog(run(front, json!({"op": "reflog"})).map_err(|e| e.to_string()))
         }
         Request::Status => Loaded::Status(
             front

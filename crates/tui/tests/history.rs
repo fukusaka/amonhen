@@ -151,7 +151,7 @@ fn history_shows_one_line_per_commit() {
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(
         lines[0].trim(),
-        format!("{name}  main   1 Changes   2 History")
+        format!("{name}  main   1 Changes   2 History   3 Reflog")
     );
     assert_eq!(
         &lines[1..6],
@@ -471,11 +471,12 @@ fn sidebar_lists_refs_and_jumps_to_them() {
     println!("{text}");
     let side: Vec<String> = text.lines().skip(1).filter_map(|l| column(l, 0)).collect();
     assert_eq!(
-        side[..8],
+        side[..9],
         [
             "Workspace",
             "  Changes",
             "  History",
+            "  Reflog",
             "Branches",
             "● main",
             "  topic",
@@ -484,7 +485,7 @@ fn sidebar_lists_refs_and_jumps_to_them() {
         ]
     );
     // `0` でサイドバーへ。History の 2 つ下が topic。Enter で、そのコミットを選ぶ。
-    let jumped = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jj\n").unwrap();
+    let jumped = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjj\n").unwrap();
     println!("{jumped}");
     assert!(jumped.contains("3/5"));
     let details: Vec<String> = jumped.lines().filter_map(|l| column(l, 2)).collect();
@@ -503,8 +504,8 @@ fn sidebar_opens_on_demand_when_narrow() {
     println!("{text}");
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(lines[1], "Workspace");
-    assert_eq!(lines[5], "● main");
-    let back = amonhen_tui::snapshot(open(dir.path()), 64, 10, clock(), "0jj\n").unwrap();
+    assert_eq!(lines[6], "● main");
+    let back = amonhen_tui::snapshot(open(dir.path()), 64, 10, clock(), "0jjj\n").unwrap();
     println!("{back}");
     assert!(
         back.lines()
@@ -592,13 +593,20 @@ fn sidebar_filter_narrows_refs() {
     };
     let filtered = side("0/TOP");
     assert_eq!(
-        filtered[..5],
-        ["Workspace", "  Changes", "  History", "Branches", "  topic"]
+        filtered[..6],
+        [
+            "Workspace",
+            "  Changes",
+            "  History",
+            "  Reflog",
+            "Branches",
+            "  topic"
+        ]
     );
-    assert!(filtered[5].starts_with(" Filter: TOP"), "{filtered:?}");
+    assert!(filtered[6].starts_with(" Filter: TOP"), "{filtered:?}");
     // Enter で確定しても絞り込んだまま。Esc で戻る。
-    assert_eq!(side("0/TOP\n")[4], "  topic");
-    assert_eq!(side("0/TOP\n\x1b")[4], "● main");
+    assert_eq!(side("0/TOP\n")[5], "  topic");
+    assert_eq!(side("0/TOP\n\x1b")[5], "● main");
 }
 
 /// `?` で今の枠のキーの一覧。次のキーで閉じる
@@ -705,14 +713,14 @@ fn checkout_new_branch_and_undo() {
     merged(dir.path());
     let branch = || git_out(dir.path(), &["branch", "--show-current"]);
     // History の 2 つ下が topic。
-    let out = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjc").unwrap();
+    let out = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjjc").unwrap();
     println!("{out}");
     assert_eq!(branch(), "topic\n");
     assert!(out.contains("● topic"));
     // main の行（1 つ上）で `b`: 名前を聞き、main から作って切り替える。
-    let typing = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jbne").unwrap();
+    let typing = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjbne").unwrap();
     assert!(typing.contains("New branch at main: ne"));
-    amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jbnext\n").unwrap();
+    amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjbnext\n").unwrap();
     assert_eq!(branch(), "next\n");
     assert_eq!(
         git_out(dir.path(), &["rev-parse", "next"]),
@@ -747,9 +755,9 @@ fn merge_stops_at_conflicts_and_can_be_aborted() {
     let dir = tempfile::tempdir().unwrap();
     diverged(dir.path());
     // History の 2 つ下が topic。
-    let asked = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjm").unwrap();
+    let asked = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjjm").unwrap();
     assert!(asked.contains("Merge topic into main?   y merge   n cancel"));
-    let stopped = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjmy").unwrap();
+    let stopped = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjjmy").unwrap();
     println!("{stopped}");
     assert!(stopped.contains("Stopped at conflicts"));
     // Working Copy に移り、コンフリクトのファイルが並ぶ。
@@ -772,11 +780,11 @@ fn rebase_onto_the_picked_ref() {
     let dir = tempfile::tempdir().unwrap();
     merged(dir.path());
     // topic に切り替えて（`c`）、main（1 つ上）の上に rebase する。
-    amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjc").unwrap();
-    let asked = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jr").unwrap();
+    amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjjc").unwrap();
+    let asked = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjr").unwrap();
     println!("{asked}");
     assert!(asked.contains("Rebase topic onto main?   y rebase   n cancel"));
-    amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jry").unwrap();
+    amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjry").unwrap();
     assert_eq!(
         git_out(dir.path(), &["merge-base", "topic", "main"]),
         git_out(dir.path(), &["rev-parse", "main"])
@@ -807,7 +815,7 @@ fn conflicts_are_resolved_by_side() {
     let dir = tempfile::tempdir().unwrap();
     diverged(dir.path());
     let read = |dir: &Path| std::fs::read_to_string(dir.join("a.txt")).unwrap();
-    amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjmy").unwrap();
+    amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjjmy").unwrap();
     assert!(read(dir.path()).contains("<<<<<<<"));
     // Working Copy を開くと、マーカーつきの中身。
     let shown = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "1").unwrap();
@@ -828,7 +836,7 @@ fn conflicts_are_resolved_by_side() {
 fn take_one_side_of_a_conflicted_file() {
     let dir = tempfile::tempdir().unwrap();
     diverged(dir.path());
-    amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjmy").unwrap();
+    amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjjmy").unwrap();
     let asked = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "1o").unwrap();
     assert!(asked.contains("Take the current side of a.txt?   y take   n cancel"));
     amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "1oy").unwrap();
@@ -864,4 +872,21 @@ fn stashes_are_listed_and_applied_from_the_sidebar() {
     assert!(asked.contains("Drop stash@{0}? Undo brings it back.   y drop   n cancel"));
     amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0Gxy").unwrap();
     assert_eq!(git_out(dir.path(), &["stash", "list"]), "");
+}
+
+/// `3` で Reflog: HEAD が動いた記録が新しい順に並び、選んだ行のコミットの詳細が出る
+#[test]
+fn reflog_lists_where_head_was() {
+    let dir = tempfile::tempdir().unwrap();
+    merged(dir.path());
+    let text = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "3").unwrap();
+    println!("{text}");
+    let list: Vec<String> = text.lines().skip(1).filter_map(|l| column(l, 1)).collect();
+    assert!(list[0].starts_with("HEAD@{0}   merge topic"), "{list:?}");
+    assert!(list[1].starts_with("HEAD@{1}   commit: Bump the version"));
+    // 1 つ下を選ぶと、そのコミットの詳細。
+    let next = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "3j").unwrap();
+    let details: Vec<String> = next.lines().filter_map(|l| column(l, 2)).collect();
+    assert_eq!(details[0], "Bump the version");
+    assert!(next.lines().last().unwrap().ends_with("2/7"), "{next}");
 }

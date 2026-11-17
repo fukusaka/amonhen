@@ -22,6 +22,7 @@ use crate::details::Details;
 use crate::diff::{PAN, Theme};
 use crate::history::{History, WHEEL_ROWS};
 use crate::loader::{Loaded, Loader, Request};
+use crate::reflog::Reflog;
 use crate::sidebar::{self, Picked, Sidebar};
 
 pub enum Event {
@@ -41,6 +42,17 @@ enum View {
     /// Working Copy。
     Changes,
     History,
+    Reflog,
+}
+
+impl View {
+    fn picked(self) -> Picked {
+        match self {
+            View::Changes => Picked::Changes,
+            View::History => Picked::History,
+            View::Reflog => Picked::Reflog,
+        }
+    }
 }
 
 /// キーが届く所: メインの画面の一覧（History・変わったファイル）か、その横（詳細・差分）。
@@ -71,6 +83,7 @@ pub struct App {
     details: Details,
     changes: Changes,
     sidebar: Sidebar,
+    reflog: Reflog,
     view: View,
     focus: Focus,
     /// リポジトリ・ref・History を読んでいる。
@@ -140,6 +153,7 @@ impl App {
             details: Details::default(),
             changes: Changes::default(),
             sidebar: Sidebar::default(),
+            reflog: Reflog::default(),
             view: View::History,
             focus: Focus::Main,
             opening: false,
@@ -189,6 +203,8 @@ impl App {
             return;
         }
         self.opening = true;
+        // HEAD が動いたかもしれない。
+        self.reflog.refresh();
         self.send(Request::Open);
     }
 
@@ -202,6 +218,7 @@ impl App {
         self.history.set_height(rows.saturating_sub(BARS));
         self.changes.set_height(rows.saturating_sub(BARS));
         self.sidebar.set_height(rows.saturating_sub(BARS));
+        self.reflog.set_height(rows.saturating_sub(BARS));
         // 詳細の幅は、並べても開いても、キーの届く所によらない。
         let layout = self.layout();
         let details = layout.side.or(layout.main).unwrap_or_default();
@@ -366,6 +383,11 @@ impl App {
                             }
                         }
                     }
+                    Loaded::Reflog(reply) => {
+                        if let Some(error) = self.reflog.set(reply) {
+                            self.error = Some(error);
+                        }
+                    }
                     Loaded::Lineage { row, bits } => self.history.set_lineage(row, bits),
                     Loaded::RowOf(row) => {
                         if let Some(row) = row {
@@ -471,10 +493,16 @@ impl App {
         let side = self.layout().side.is_some();
         // 詳細が見えているなら、選んでいるコミットのものにする。
         if side
-            && self.view == View::History
-            && let Some(id) = self.history.selected_id()
+            && let Some(id) = match self.view {
+                View::History => self.history.selected_id(),
+                View::Reflog => self.reflog.selected_id(),
+                View::Changes => None,
+            }
         {
             self.dirty |= self.details.want(id);
+        }
+        if let Some(request) = self.reflog.request(self.view == View::Reflog) {
+            self.send(request);
         }
         if let Some(request) = self.details.request() {
             self.send(request);
@@ -676,10 +704,14 @@ impl App {
             }
             KeyCode::Char('1') => self.show(View::Changes),
             KeyCode::Char('2') => self.show(View::History),
+            KeyCode::Char('3') => self.show(View::Reflog),
             _ => {
                 self.dirty |= match (self.view, self.focus) {
                     (View::History, Focus::Main) => self.history_key(key.code, control),
-                    (View::History, Focus::Side) => self.details_key(key.code, control),
+                    (View::History | View::Reflog, Focus::Side) => {
+                        self.details_key(key.code, control)
+                    }
+                    (View::Reflog, Focus::Main) => self.reflog_key(key.code, control),
                     (View::Changes, Focus::Main) => self.changes_key(key.code, control),
                     (View::Changes, Focus::Side) => self.changes_diff_key(key.code, control),
                     (_, Focus::Message) => false,
@@ -694,7 +726,7 @@ impl App {
         self.dirty |= self.view != view || self.focus != Focus::Main;
         self.view = view;
         self.focus = Focus::Main;
-        self.sidebar.show_view(view == View::Changes);
+        self.sidebar.show_view(view.picked());
     }
 
     /// コアの命令を動かす。1 つずつ（動いている間は、次を受けない）。
@@ -759,7 +791,7 @@ impl App {
                         self.error = Some(tr!("Stopped at conflicts: resolve them, then continue"));
                         self.view = View::Changes;
                         self.focus = Focus::Main;
-                        self.sidebar.show_view(true);
+                        self.sidebar.show_view(Picked::Changes);
                     }
                     Some("stopped") => self.notice = Some(tr!("Stopped")),
                     _ => self.notice = Some(tr!("Done")),
@@ -829,6 +861,7 @@ impl App {
         let start = picked.or_else(|| {
             let id = match self.view {
                 View::History => self.history.selected_id()?.to_string(),
+                View::Reflog => self.reflog.selected_id()?.to_string(),
                 View::Changes => self.head.clone()?,
             };
             let short = id[..id.len().min(8)].to_owned();
@@ -950,6 +983,29 @@ impl App {
         self.history.clear_matches() || had
     }
 
+    fn reflog_key(&mut self, code: KeyCode, control: bool) -> bool {
+        let page = self.reflog.page();
+        match code {
+            KeyCode::Char('d') if control => self.reflog.move_selection(page / 2),
+            KeyCode::Char('u') if control => self.reflog.move_selection(-page / 2),
+            KeyCode::Char('j') | KeyCode::Down => self.reflog.move_selection(1),
+            KeyCode::Char('k') | KeyCode::Up => self.reflog.move_selection(-1),
+            KeyCode::PageDown | KeyCode::Char(' ') => self.reflog.move_selection(page),
+            KeyCode::PageUp => self.reflog.move_selection(-page),
+            KeyCode::Char('g') | KeyCode::Home => self.reflog.select(0),
+            KeyCode::Char('G') | KeyCode::End => self.reflog.select(usize::MAX),
+            KeyCode::Char('h') | KeyCode::Left => {
+                self.focus = Focus::Sidebar;
+                true
+            }
+            KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right => {
+                self.focus = Focus::Side;
+                true
+            }
+            _ => false,
+        }
+    }
+
     fn sidebar_key(&mut self, code: KeyCode, control: bool) -> bool {
         let page = self.sidebar.page();
         match code {
@@ -1011,7 +1067,12 @@ impl App {
                 ("n N", tr!("Next and previous match")),
                 ("Esc", tr!("Clear the search")),
             ],
-            (View::History, Focus::Side) => vec![
+            (View::Reflog, Focus::Main) => vec![
+                ("j k", tr!("Move")),
+                ("g G", tr!("Top and bottom")),
+                ("Enter", tr!("Go to the details")),
+            ],
+            (View::History | View::Reflog, Focus::Side) => vec![
                 ("j k", tr!("Scroll")),
                 ("[ ]", tr!("Previous and next file")),
                 ("h l", tr!("Pan long lines")),
@@ -1056,7 +1117,7 @@ impl App {
                 tr!("Continue, skip, abort a merge or rebase in progress"),
             ),
             ("u", tr!("Undo the last operation")),
-            ("1 2", tr!("Changes and History")),
+            ("1 2 3", tr!("Changes, History and Reflog")),
             ("0", tr!("Sidebar")),
             ("Tab", tr!("Next pane")),
             ("q", tr!("Quit")),
@@ -1069,6 +1130,7 @@ impl App {
         match self.sidebar.picked() {
             Some(Picked::Changes) => self.show(View::Changes),
             Some(Picked::History) => self.show(View::History),
+            Some(Picked::Reflog) => self.show(View::Reflog),
             Some(Picked::Commit(id)) => {
                 self.view = View::History;
                 self.focus = Focus::Main;
@@ -1336,7 +1398,7 @@ impl App {
             _ => None,
         };
         let click = matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left));
-        let history = self.view == View::History;
+        let view = self.view;
         let changed = if let Some(area) = inside(layout.sidebar) {
             match wheel {
                 Some(rows) => self.sidebar.scroll(rows),
@@ -1351,19 +1413,23 @@ impl App {
             }
         } else if let Some(area) = inside(layout.main) {
             match wheel {
-                Some(rows) if history => self.history.scroll(rows),
-                Some(rows) => self.changes.scroll_list(rows),
+                Some(rows) => match view {
+                    View::History => self.history.scroll(rows),
+                    View::Reflog => self.reflog.scroll(rows),
+                    View::Changes => self.changes.scroll_list(rows),
+                },
                 None if click => {
                     let focused = std::mem::replace(&mut self.focus, Focus::Main);
                     let line = mouse.row - area.y;
-                    let selected = if history {
-                        self.history.click(line)
-                    } else if line >= self.changes.list_height() {
+                    let selected = match view {
+                        View::History => self.history.click(line),
+                        View::Reflog => self.reflog.click(line),
                         // 一覧の下は、メッセージの欄。
-                        self.focus = Focus::Message;
-                        false
-                    } else {
-                        self.changes.click(line)
+                        View::Changes if line >= self.changes.list_height() => {
+                            self.focus = Focus::Message;
+                            false
+                        }
+                        View::Changes => self.changes.click(line),
                     };
                     selected || focused != self.focus
                 }
@@ -1371,11 +1437,12 @@ impl App {
             }
         } else if let Some(area) = inside(layout.side) {
             match wheel {
-                Some(rows) if history => self.details.scroll(rows),
-                Some(rows) => self.changes.scroll(rows),
+                Some(rows) if view == View::Changes => self.changes.scroll(rows),
+                Some(rows) => self.details.scroll(rows),
                 None if click => {
                     let focused = std::mem::replace(&mut self.focus, Focus::Side);
-                    let selected = !history && self.changes.click_diff(mouse.row - area.y);
+                    let selected =
+                        view == View::Changes && self.changes.click_diff(mouse.row - area.y);
                     selected || focused != Focus::Side
                 }
                 None => false,
@@ -1438,7 +1505,11 @@ impl App {
             0 => tr!("1 Changes"),
             count => tr!("1 Changes ({count})", count = count),
         };
-        for (view, label) in [(View::Changes, changes), (View::History, tr!("2 History"))] {
+        for (view, label) in [
+            (View::Changes, changes),
+            (View::History, tr!("2 History")),
+            (View::Reflog, tr!("3 Reflog")),
+        ] {
             if !tabs || x + 3 >= area.right() {
                 break;
             }
@@ -1481,6 +1552,7 @@ impl App {
         if let Some(at) = layout.main {
             match self.view {
                 View::History => self.history.draw(at, buf, self.clock.now, focused),
+                View::Reflog => self.reflog.draw(at, buf, self.clock.now, focused),
                 View::Changes => {
                     cursor = self
                         .changes
@@ -1497,7 +1569,9 @@ impl App {
                 }
             }
             match self.view {
-                View::History => self.details.draw(at, buf, &self.clock, &self.theme),
+                View::History | View::Reflog => {
+                    self.details.draw(at, buf, &self.clock, &self.theme);
+                }
                 View::Changes => self.changes.draw_diff(at, buf, &self.theme, !focused),
             }
         }
@@ -1509,7 +1583,8 @@ impl App {
                 (self.history.selected() + 1).min(self.history.total()),
                 self.history.total(),
             ),
-            (View::History, Focus::Side) => self.details.position(),
+            (View::History | View::Reflog, Focus::Side) => self.details.position(),
+            (View::Reflog, Focus::Main | Focus::Sidebar) => self.reflog.position(),
             (View::Changes, Focus::Main) => self.changes.list_position(),
             (View::Changes, Focus::Side) => self.changes.diff_position(),
             (_, Focus::Message) => self.changes.list_position(),
@@ -1648,8 +1723,11 @@ impl App {
                         }
                         None => tr!("j/k move   / search   Enter details   0 sidebar   q quit"),
                     },
-                    (View::History, Focus::Side) => {
+                    (View::History | View::Reflog, Focus::Side) => {
                         tr!("j/k scroll   [/] file   h/l pan   Esc back")
+                    }
+                    (View::Reflog, Focus::Main) => {
+                        tr!("j/k move   Enter details   b new branch   0 sidebar   q quit")
                     }
                     (View::Changes, Focus::Main) => {
                         tr!(

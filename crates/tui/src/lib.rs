@@ -13,6 +13,7 @@ mod diff;
 mod editor;
 mod history;
 mod loader;
+mod reflog;
 mod sidebar;
 mod terminal;
 
