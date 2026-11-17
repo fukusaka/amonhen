@@ -31,6 +31,15 @@ const FILTER: &[&str] = &[
     "Microsoft.UI.Xaml.Controls.IControlFactory::{}",
     "Microsoft.UI.Xaml.Controls.IControlStatics::{}",
     "Microsoft.UI.Xaml.Controls.IControl::{put_FontFamily}",
+    // 境目のつまみの、左右・上下の矢印のカーソル（ProtectedCursor は派生した部品向けだが、インターフェースを
+    // 引けば外から付けられる）。
+    "Microsoft.UI.Xaml.IUIElementProtected::{put_ProtectedCursor}",
+    "Microsoft.UI.Input.InputCursor",
+    "Microsoft.UI.Input.InputSystemCursor",
+    "Microsoft.UI.Input.IInputSystemCursorStatics::{Create}",
+    "Microsoft.UI.Input.InputSystemCursorShape",
+    "Microsoft.UI.Input.IInputCursorFactory::{}",
+    "Microsoft.UI.Input.IInputCursorStatics::{}",
     // ハンドラーの型は丸ごと（`new` が要る）。
     "Microsoft.UI.Xaml.Input.KeyEventHandler",
     "Microsoft.UI.Xaml.Input.PointerEventHandler",
