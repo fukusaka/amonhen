@@ -182,7 +182,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Refresh と Rebuild History | ✓ | ✓ | ✓ | ✓ | △ | VSCode: Rebuild History はサイドバーの ⋯ とコマンドパレットから。エンジンがあれば。<br>CLI: `log --rebuild`・`daemon rebuild`。 |
 | 直前の操作の Undo（尋ね、何を戻すか示す） | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: 上の Undo とコマンドパレットは尋ねる。操作の直後に押す知らせの Undo は尋ねない。<br>CLI: `undo`（先に見るなら `--peek`）。 |
 | 範囲付きの History の検索（件名・作者・ID・パス・中身） | ✓ | ✓ | △ | ✓ | ✓ | VSCode: エンジンがあるとき。<br>CLI: `log <query>`。<br>Windows: 範囲の選択はない。 |
-| ahead/behind のバッジ | ✓ | ✓ | △ | ✓ | △ | VSCode: サイドバーのブランチの行に出る。<br>CLI: `status` に出る。<br>Windows: サイドバーだけ。 |
+| ahead/behind のバッジ | ✓ | ✓ | △ | ✓ | △ | VSCode: サイドバーのブランチの行に出る。<br>CLI: `status` に出る。<br>Windows: サイドバーとウィンドウの題（↑n ↓n）。ツールバーの Pull・Push のボタンには出ない（ボタンの名前を出していない）。 |
 | ツールバーのカスタマイズ | ✓ | ✓ | — | n/a | n/a | GTK4: パレットは NSToolbar と同じ使い方で、シートと同じく見出しの下に中身に重ねて出し、窓の大きさは変えない。見出しはアイコンだけなので、表示（アイコンと文字）は選ばない。Repository のメニューと主メニューはメニューバーの代わりなので動かない。 |
 | 120 秒黙った network の git を止める | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: エンジンのものと、エンジンを使わないときの拡張自身の fetch・push。<br>Windows: エンジンのもの。 |
 
