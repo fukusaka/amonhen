@@ -502,6 +502,11 @@ impl App {
     }
 
     /// メインの画面の中の 1 列（計測で、そこにホイールを送る）。
+    /// 前のフレームで組み立てたものを捨てる（次は、すべてを組み立て直す）。
+    pub fn forget_drawn(&mut self) {
+        self.history.forget_drawn();
+    }
+
     pub fn main_column(&self) -> u16 {
         self.layout().main.map_or(0, |at| at.x + 1)
     }

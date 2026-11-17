@@ -265,6 +265,8 @@ pub fn frame(
 /// すべてを描いたフレーム。変わった所だけを描き直してきた画面（`shown`）がこれと違えば、失敗。
 fn whole(app: &mut App, shown: &Buffer) -> Result<Buffer> {
     let mut whole = Buffer::empty(shown.area);
+    // 前のフレームから写さずに、すべてを組み立て直したものと比べる。
+    app.forget_drawn();
     app.draw(&mut whole, Damage::ALL);
     let width = usize::from(shown.area.width);
     match (0..whole.content.len()).find(|&i| whole.content[i] != shown.content[i]) {

@@ -10,7 +10,7 @@ use amonhen_front::Reply;
 use amonhen_layout::{Edge, Node};
 use amonhen_model::Oid;
 use amonhen_projection::terminal::{Graph, palette};
-use ratatui_core::buffer::Buffer;
+use ratatui_core::buffer::{Buffer, Cell};
 use ratatui_core::layout::Rect;
 use ratatui_core::style::{Color, Modifier, Style};
 use serde_json::Value;
@@ -21,6 +21,8 @@ use crate::loader::Request;
 /// 手元に持つ行は、見えている範囲の前後にこの倍数の画面分（少なくとも `MIN_WINDOW` 行）。
 const WINDOW_SCREENS: u32 = 4;
 const MIN_WINDOW: u32 = 256;
+/// 行のセルを、見えている行の何倍まで持っておくか（少し戻るスクロールでも写せるよう）。
+const CACHE_SCREENS: usize = 2;
 /// グラフに使う幅は、画面のこの分の 1 まで。
 const GRAPH_SHARE: u16 = 3;
 /// ホイール 1 目盛りで動く行数。
@@ -82,6 +84,50 @@ impl Window {
     }
 }
 
+/// 前のフレームで組み立てた行の、グラフより右のセル（ラベル・件名・作者・日付。選択と祖先の色は入れない）。
+/// スクロールではほとんどの行がずれるだけなので、組み立て直さずにここから写す。
+#[derive(Default)]
+struct RowCache {
+    /// セルの中身を決めるもの: 幅、グラフの幅、今の時刻、`History::generation`。違えば、すべて捨てる。
+    key: (u16, u16, i64, u64),
+    /// 行ごとのセルの数。
+    width: usize,
+    /// 置き場所ごとに、入っている行（なければ `u32::MAX`）。行 `r` の置き場所は `r % rows.len()`。
+    rows: Vec<u32>,
+    cells: Vec<Cell>,
+}
+
+impl RowCache {
+    /// `key` と大きさが前と違えば、空にする。
+    fn prepare(&mut self, key: (u16, u16, i64, u64), width: usize, slots: usize) {
+        if self.key == key && self.width == width && self.rows.len() == slots {
+            return;
+        }
+        self.key = key;
+        self.width = width;
+        self.rows.clear();
+        self.rows.resize(slots, u32::MAX);
+        self.cells.clear();
+        self.cells.resize(slots * width, Cell::default());
+    }
+
+    /// `row` のセルを `to` に写す（持っていなければ `false`）。
+    fn copy_to(&self, row: u32, to: &mut [Cell]) -> bool {
+        let slot = row as usize % self.rows.len();
+        if self.rows[slot] != row {
+            return false;
+        }
+        to.clone_from_slice(&self.cells[slot * self.width..(slot + 1) * self.width]);
+        true
+    }
+
+    fn store(&mut self, row: u32, from: &[Cell]) {
+        let slot = row as usize % self.rows.len();
+        self.rows[slot] = row;
+        self.cells[slot * self.width..(slot + 1) * self.width].clone_from_slice(from);
+    }
+}
+
 #[derive(Default)]
 pub struct History {
     id: Value,
@@ -103,6 +149,9 @@ pub struct History {
     lineage: Option<(u32, Vec<u64>)>,
     /// 祖先を頼んで、答えを待っている。
     lineage_loading: bool,
+    cache: RowCache,
+    /// 行の中身（ラベル・件名の色）が変わるたびに進める。
+    generation: u64,
 }
 
 impl History {
@@ -115,6 +164,7 @@ impl History {
         // 行の番号が変わるので、検索の結果は捨てる（検索し直すのは呼ぶ側）。
         self.matches.clear();
         self.lineage = None;
+        self.generation += 1;
         self.labels.clear();
         let head = refs["headBranch"].as_str();
         for e in refs["entries"].as_array().into_iter().flatten() {
@@ -143,6 +193,11 @@ impl History {
         self.clamp_top();
     }
 
+    /// 前のフレームで組み立てた行を捨てる。
+    pub fn forget_drawn(&mut self) {
+        self.generation += 1;
+    }
+
     pub fn total(&self) -> u32 {
         self.total
     }
@@ -150,6 +205,7 @@ impl History {
     /// 検索に合った行を入れる。選んでいる行か、その下の最初の行（なければ一番上の行）を選ぶ。
     pub fn set_matches(&mut self, rows: Vec<u32>) {
         self.matches = rows;
+        self.generation += 1;
         let at = self.matches.partition_point(|&r| r < self.selected);
         if let Some(&row) = self.matches.get(at).or(self.matches.first()) {
             self.select(row);
@@ -159,6 +215,7 @@ impl History {
     pub fn clear_matches(&mut self) -> bool {
         let had = !self.matches.is_empty();
         self.matches.clear();
+        self.generation += u64::from(had);
         had
     }
 
@@ -373,21 +430,20 @@ impl History {
         let graph = Graph::new(&window.nodes[visible], &edges);
         let graph_width = (graph.width() as u16).min(area.width / GRAPH_SHARE);
         let wide = area.width >= NARROW;
-        // 右端から: 日付、作者。
-        let date_x = area.right().saturating_sub(DATE_WIDTH);
-        let author_x = date_x.saturating_sub(AUTHOR_WIDTH + 1);
-        let text_end = if wide {
-            author_x.saturating_sub(1)
-        } else {
-            area.right()
-        };
-
         // 選んでいるコミットの祖先でない行は薄くする（祖先がまだ届いていなければ、薄くしない）。
         let lineage = self
             .lineage
             .as_ref()
             .filter(|l| l.0 == self.selected && !l.1.is_empty())
             .map(|l| l.1.as_slice());
+        // グラフより右は、前のフレームで組み立てた行なら写すだけ。
+        let text_x = (area.x + graph_width + 1).min(area.right());
+        let text_width = usize::from(area.right() - text_x);
+        self.cache.prepare(
+            (area.width, graph_width, now, self.generation),
+            text_width,
+            usize::from(area.height) * CACHE_SCREENS,
+        );
         for row in rows {
             let y = area.y + (row - self.top) as u16;
             let Some(i) = window.index(row) else {
@@ -408,41 +464,12 @@ impl History {
                     cell.set_fg(Color::Indexed(palette(color)));
                 }
             }
-            let mut x = area.x + graph_width + 1;
-            for label in self.labels.get(&window.ids[i]).into_iter().flatten() {
-                if x + 2 >= text_end {
-                    break;
-                }
-                let style = match label.kind {
-                    LabelKind::Head => Style::new()
-                        .fg(Color::Indexed(114))
-                        .add_modifier(Modifier::BOLD),
-                    LabelKind::Branch => Style::new().fg(Color::Indexed(114)),
-                    LabelKind::Remote => Style::new().fg(Color::Indexed(174)),
-                    LabelKind::Tag => Style::new().fg(Color::Indexed(179)),
-                };
-                let name = fit(&label.name, usize::from(text_end - x - 1));
-                x = buf
-                    .set_stringn(x, y, format!("[{name}]"), usize::from(text_end - x), style)
-                    .0
-                    + 1;
-            }
-            if x < text_end {
-                let subject = fit(window.string(i, 0), usize::from(text_end - x));
-                // 検索に合った行は、件名に色をつける。
-                let style = match self.matches.binary_search(&row) {
-                    Ok(_) => Style::new().fg(Color::Yellow),
-                    Err(_) => Style::new(),
-                };
-                buf.set_string(x, y, subject, style);
-            }
-            if wide {
-                let dim = Style::new().fg(DIM);
-                let author = fit(window.string(i, 1), usize::from(AUTHOR_WIDTH));
-                buf.set_string(author_x, y, author, dim);
-                let date = ago(now, window.times[i]);
-                let pad = DATE_WIDTH.saturating_sub(date.width() as u16);
-                buf.set_string(date_x + pad, y, date, dim);
+            let text = buf.index_of(text_x, y);
+            let text = text..text + text_width;
+            if !self.cache.copy_to(row, &mut buf.content[text.clone()]) {
+                let at = Rect::new(text_x, y, text_width as u16, 1);
+                self.text(window, i, row, at, wide, buf, now);
+                self.cache.store(row, &buf.content[text]);
             }
             if let Some(bits) = lineage
                 && bits
@@ -464,6 +491,65 @@ impl History {
                     }),
                 );
             }
+        }
+    }
+
+    /// 行のグラフより右（`at`）: ラベル、件名、広ければ作者と日付。
+    #[allow(clippy::too_many_arguments)]
+    fn text(
+        &self,
+        window: &Window,
+        i: usize,
+        row: u32,
+        at: Rect,
+        wide: bool,
+        buf: &mut Buffer,
+        now: i64,
+    ) {
+        let y = at.y;
+        // 右端から: 日付、作者。
+        let date_x = at.right().saturating_sub(DATE_WIDTH);
+        let author_x = date_x.saturating_sub(AUTHOR_WIDTH + 1);
+        let text_end = if wide {
+            author_x.saturating_sub(1)
+        } else {
+            at.right()
+        };
+        let mut x = at.x;
+        for label in self.labels.get(&window.ids[i]).into_iter().flatten() {
+            if x + 2 >= text_end {
+                break;
+            }
+            let style = match label.kind {
+                LabelKind::Head => Style::new()
+                    .fg(Color::Indexed(114))
+                    .add_modifier(Modifier::BOLD),
+                LabelKind::Branch => Style::new().fg(Color::Indexed(114)),
+                LabelKind::Remote => Style::new().fg(Color::Indexed(174)),
+                LabelKind::Tag => Style::new().fg(Color::Indexed(179)),
+            };
+            let name = fit(&label.name, usize::from(text_end - x - 1));
+            x = buf
+                .set_stringn(x, y, format!("[{name}]"), usize::from(text_end - x), style)
+                .0
+                + 1;
+        }
+        if x < text_end {
+            let subject = fit(window.string(i, 0), usize::from(text_end - x));
+            // 検索に合った行は、件名に色をつける。
+            let style = match self.matches.binary_search(&row) {
+                Ok(_) => Style::new().fg(Color::Yellow),
+                Err(_) => Style::new(),
+            };
+            buf.set_string(x, y, subject, style);
+        }
+        if wide && author_x >= at.x {
+            let dim = Style::new().fg(DIM);
+            let author = fit(window.string(i, 1), usize::from(AUTHOR_WIDTH));
+            buf.set_string(author_x, y, author, dim);
+            let date = ago(now, window.times[i]);
+            let pad = DATE_WIDTH.saturating_sub(date.width() as u16);
+            buf.set_string(date_x + pad, y, date, dim);
         }
     }
 }
