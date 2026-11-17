@@ -548,22 +548,200 @@ pub fn for_move(info: &Value, how: &Move) -> Option<View> {
             },
         );
     }
-    // 真ん中の矢印。
-    let rows = move_rows(d);
+    Some(finish(c, move_rows(d), move_rows(d)))
+}
+
+/// 真ん中の矢印（`arrow_rows` 行の真ん中の高さ）を置き、`rows` 行の高さの Canvas にする。
+fn finish(mut c: Canvas2, rows: usize, arrow_rows: usize) -> View {
     c.text(
         "→",
         COLUMN + 6.0,
-        TOP + rows.saturating_sub(1) as f64 * ROW / 2.0,
+        TOP + arrow_rows.saturating_sub(1) as f64 * ROW / 2.0,
         alpha(FG, 0.4),
         false,
         20.0,
         15.0,
     );
-    let height = rows as f64 * ROW + 26.0;
-    Some(
-        Canvas::new()
-            .width(COLUMN * 2.0 + 24.0)
-            .height(height)
-            .children((View::keyed_fragment(c.items),)),
-    )
+    Canvas::new()
+        .width(COLUMN * 2.0 + 24.0)
+        .height(rows as f64 * ROW + 26.0)
+        .children((View::keyed_fragment(c.items),))
+}
+
+/// rebase の確認の絵（`rewritePreview` の答え。GTK4 版の `rewritedraw::draw`）。左が今: 載せ直すコミット（右の
+/// 線）と載せ先で進んだコミット（左の線）が、分かれたところで合流する。右が rebase の後: 載せ直したコミット
+/// （A′）が載せ先の上に 1 本で続く。今のブランチと一緒に動くブランチの札は A′ へ移る。描くものがなければ None。
+pub fn for_rewrite(info: &Value) -> Option<View> {
+    let d = &info["drawing"];
+    if d.is_null() {
+        return None;
+    }
+    let current = info["current"].as_str().map(str::to_owned);
+    let moving: Vec<String> = info["moving"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|b| b["name"].as_str().map(str::to_owned))
+        .collect();
+    let labels = labels_of(d);
+    let mut picks = commits(&d["picks"]);
+    picks.reverse();
+    let onto = commits(&d["onto"]);
+    let more = d["ontoMore"].as_u64().unwrap_or(0);
+    let more_at = d["ontoMoreAt"].as_u64();
+    let picks_more = d["picksMore"].as_u64().unwrap_or(0);
+    let picks_at = d["picksMoreAt"].as_u64();
+    let base = (!d["base"].is_null()).then(|| {
+        (
+            d["base"]["oid"].as_str().unwrap_or_default().to_owned(),
+            d["base"]["subject"].as_str().unwrap_or_default().to_owned(),
+        )
+    });
+    let mut c = Canvas2 { items: Vec::new() };
+    c.text(&tr!("Now"), 4.0, 2.0, alpha(FG, 0.6), true, COLUMN, 11.0);
+    c.text(
+        &tr!("After the rebase"),
+        COLUMN + 28.0,
+        2.0,
+        alpha(FG, 0.6),
+        true,
+        COLUMN,
+        11.0,
+    );
+
+    // 左: 今。上に載せ直すコミット（右の線）、その下に載せ先で進んだコミット（左の線）、いちばん下で合流。
+    // どちらも長ければ真ん中を省く（そこだけ点線）。
+    let mut y = TOP;
+    let mut rows = Vec::new();
+    let mut gaps = Vec::new();
+    with_gap(
+        &picks,
+        picks_more,
+        picks_at,
+        1,
+        &mut y,
+        &mut gaps,
+        |(oid, subject), y| {
+            rows.push(Row {
+                oid: oid.clone(),
+                subject: subject.clone(),
+                lane: 1,
+                dim: true,
+                y,
+                ..Default::default()
+            });
+        },
+    );
+    with_gap(
+        &onto,
+        more,
+        more_at,
+        0,
+        &mut y,
+        &mut gaps,
+        |(oid, subject), y| {
+            rows.push(Row {
+                oid: oid.clone(),
+                subject: subject.clone(),
+                y,
+                ..Default::default()
+            });
+        },
+    );
+    column(
+        &mut c,
+        0.0,
+        &rows,
+        y,
+        base.as_ref(),
+        &gaps,
+        0,
+        split_note(&d["base"]),
+        &|oid| {
+            // 左には今のブランチの札をすべて（動くものも、まだ元のところにある）。
+            labels
+                .get(oid)
+                .into_iter()
+                .flatten()
+                .map(|(n, k)| (n.clone(), k.clone(), Some(n) == current.as_ref()))
+                .collect()
+        },
+    );
+
+    // 右: rebase の後。
+    let mut after = Vec::new();
+    let mut after_gaps = Vec::new();
+    y = TOP;
+    with_gap(
+        &picks,
+        picks_more,
+        picks_at,
+        0,
+        &mut y,
+        &mut after_gaps,
+        |(oid, subject), y| {
+            after.push(Row {
+                oid: oid.clone(),
+                subject: format!("{subject}′"),
+                y,
+                ..Default::default()
+            });
+        },
+    );
+    with_gap(
+        &onto,
+        more,
+        more_at,
+        0,
+        &mut y,
+        &mut after_gaps,
+        |(oid, subject), y| {
+            after.push(Row {
+                oid: oid.clone(),
+                subject: subject.clone(),
+                dim: true,
+                y,
+                ..Default::default()
+            });
+        },
+    );
+    let first_pick = picks.first().map(|p| p.0.clone());
+    let onto_ids: Vec<String> = onto.iter().map(|c| c.0.clone()).collect();
+    let base_id = base.as_ref().map(|b| b.0.clone());
+    column(
+        &mut c,
+        COLUMN + 24.0,
+        &after,
+        y,
+        base.as_ref(),
+        &after_gaps,
+        picks.len(),
+        None,
+        &|oid| {
+            let mut out: Vec<Label> = Vec::new();
+            // 今のブランチは先頭の A′ へ、一緒に動くブランチは、元の先頭に対応する A′ へ。
+            if Some(oid) == first_pick.as_deref()
+                && let Some(c) = &current
+            {
+                out.push((c.clone(), "local".into(), true));
+            }
+            for (n, k) in labels.get(oid).into_iter().flatten() {
+                if k == "local" && moving.contains(n) {
+                    out.push((n.clone(), "moved".into(), false));
+                }
+            }
+            // 載せ先のコミットに付いている札は、そのまま。
+            if onto_ids.iter().any(|o| o == oid) || base_id.as_deref() == Some(oid) {
+                for (n, k) in labels.get(oid).into_iter().flatten() {
+                    if Some(n) != current.as_ref() && !moving.contains(n) {
+                        out.push((n.clone(), k.clone(), false));
+                    }
+                }
+            }
+            out
+        },
+    );
+    let more = |k: &str| usize::from(d[k].as_u64().unwrap_or(0) > 0);
+    let rows = picks.len() + more("picksMore") + onto.len() + more("ontoMore") + 1;
+    Some(finish(c, rows, picks.len()))
 }

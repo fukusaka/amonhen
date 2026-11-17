@@ -118,6 +118,8 @@ struct Root {
     sync_warnings: Vec<String>,
     /// Pull で手元に新しいコミットがないときの、先へ進める前と後の絵（`movePreview` の答え）。
     sync_drawing: Option<Value>,
+    /// Rebase の確認の前と後の絵（相手の rev と `rewritePreview` の答え）。
+    integrate_drawing: Option<(String, Value)>,
     /// stash の詳しい中身（名前 → 中身。ref が変わるたびに読み直す）。
     stash_details: std::collections::HashMap<String, crate::stashes::Detail>,
     /// ほかの worktree の変更の数（パス → 数）。
@@ -575,7 +577,7 @@ enum Dialog {
         mode: usize,
     },
     /// Merge・Rebase（GTK4 版の `sheets::integrate_sheet`）。`choices` は名前と rev。2 つ以上なら相手を選ぶ。
-    /// merge なら取り込み方も選ぶ。前後の絵・コンフリクトの見込みはまだない。
+    /// merge なら取り込み方も選ぶ。前後の絵は rebase だけ、コンフリクトの見込みはまだない。
     Integrate {
         repo: Arc<Repository>,
         rebase: bool,
@@ -777,6 +779,8 @@ enum Message {
     RecallRecent(isize),
     /// Pull・Push のダイアログのコミットの一覧を読んだ。
     SyncLists(Vec<SyncList>, Vec<String>, Option<Value>),
+    /// Rebase の確認の前と後の絵を読んだ（相手の rev と `rewritePreview` の答え）。
+    IntegrateDrawn(String, Value),
     /// stash の詳しい中身を読んだ。
     StashDetails(std::collections::HashMap<String, crate::stashes::Detail>),
     /// ほかの worktree の変更を数える（true なら全部を数え直す）と、その答え（パスと数）。
@@ -992,6 +996,7 @@ impl Component for Root {
             multi: Vec::new(),
             sync_warnings: Vec::new(),
             sync_drawing: None,
+            integrate_drawing: None,
             submodules: Value::Null,
             subtrees: Value::Null,
             repositories: None,
@@ -1394,6 +1399,12 @@ impl Component for Root {
                 if let Some(Dialog::Integrate { chosen, .. }) = &mut self.dialog {
                     *chosen = index;
                 }
+                self.load_integrate_drawing(context);
+            }
+            Message::IntegrateDrawn(rev, info) => {
+                if matches!(self.dialog, Some(Dialog::Integrate { .. })) {
+                    self.integrate_drawing = Some((rev, info));
+                }
             }
             Message::MergeMode(Some(index)) => {
                 if let Some(Dialog::Integrate { mode, .. }) = &mut self.dialog {
@@ -1402,7 +1413,8 @@ impl Component for Root {
             }
             Message::ResetMode(None) | Message::IntegrateRev(None) | Message::MergeMode(None) => {}
             Message::Command(id) if id == "merge" || id == "rebase" => {
-                self.integrate_choosing(id == "rebase")
+                self.integrate_choosing(id == "rebase");
+                self.load_integrate_drawing(context);
             }
             Message::FetchFrom(index) => {
                 if let (Some(Dialog::Fetch { from, .. }), Some(index)) = (&mut self.dialog, index) {
@@ -3879,6 +3891,7 @@ impl Component for Root {
                     self.integrate(rev.to_owned(), false);
                 } else if let Some(rev) = key.strip_prefix("rebase:") {
                     self.integrate(rev.to_owned(), true);
+                    self.load_integrate_drawing(context);
                 }
             }
             Message::ConfirmWithDrawing(dialog) => self.dialog = Some(*dialog),
@@ -7341,8 +7354,14 @@ impl Root {
                         View::empty(),
                     )
                 };
+                // rebase なら、選んだ相手の前と後の絵（選び直すと替わる。GTK4 版と同じ）。
+                let rev = choices.get(*chosen).map(|c| c.1.as_str());
                 let modes: View = if *rebase {
-                    View::empty()
+                    self.integrate_drawing
+                        .as_ref()
+                        .filter(|(r, _)| Some(r.as_str()) == rev)
+                        .and_then(|(_, info)| crate::drawing::for_rewrite(info))
+                        .unwrap_or_else(View::empty)
                 } else {
                     ComboBox::new()
                         .items_source(
@@ -7938,6 +7957,31 @@ impl Root {
                 _ => Ok(head),
             });
             Message::DeleteChecked(repo, name, checked)
+        });
+    }
+
+    /// Rebase の確認に出す前と後の絵を裏で読む（選んだ相手の `rewritePreview`）。
+    fn load_integrate_drawing(&mut self, context: &ComponentContext<Self>) {
+        self.integrate_drawing = None;
+        let Some(Dialog::Integrate {
+            repo,
+            rebase: true,
+            choices,
+            chosen,
+            ..
+        }) = &self.dialog
+        else {
+            return;
+        };
+        let Some((_, rev)) = choices.get(*chosen) else {
+            return;
+        };
+        let (repo, rev) = (repo.clone(), rev.clone());
+        context.spawn_background(move |_| {
+            let query = json!({ "op": "rewritePreview", "onto": &rev });
+            let reply: Value =
+                serde_json::from_str(&repo.run_json(&query.to_string())).unwrap_or_default();
+            Message::IntegrateDrawn(rev, reply["info"].clone())
         });
     }
 
