@@ -307,6 +307,24 @@ pub fn operation_rows() -> Vec<OperationRow> {
     ]
 }
 
+/// git が古くて使えない行の理由（GTK4 版の `repoform::too_old`。`form` はコアの `repositoryForm` の info）。
+fn too_old(needed: &str, form: &Value) -> View {
+    let version = form["gitVersion"].as_str().unwrap_or("?");
+    TextBlock::new()
+        .text(format!(
+            "⚠ {}",
+            tr!(
+                "Needs git {needed} or later. This repository’s git is {version}.",
+                needed = needed,
+                version = version
+            )
+        ))
+        .font_size(12.0)
+        .foreground(Brush::Solid(Color::rgb(0xb8, 0x6e, 0x00)))
+        .text_wrapping(TextWrapping::Wrap)
+        .into()
+}
+
 /// メッセージのテンプレートのファイル（git の `commit.template`）。
 pub const TEMPLATE_KEY: &str = "commit.template";
 
@@ -862,6 +880,9 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                         },
                     ),
                 ));
+                if !can {
+                    rows.push(("partial-old".to_owned(), too_old("2.36", form)));
+                }
             }
             if rows.is_empty() {
                 rows.push((
@@ -976,7 +997,15 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                     )),
                 }
             }
-            if form["canMaintain"].as_bool().unwrap_or(true) {
+            // 取り出すフォルダを選べない git なら、その理由（GTK4 版の `too_old`）。
+            if form["workingTree"].as_bool() != Some(false)
+                && !form["canSparseCheckout"].as_bool().unwrap_or(true)
+            {
+                rows.push(("sparse-old".to_owned(), too_old("2.25", form)));
+            }
+            // git maintenance に登録できない git でも行は出し、止めて理由を添える（GTK4 版と同じ）。
+            {
+                let can = form["canMaintain"].as_bool().unwrap_or(true);
                 let on = form["maintenance"].as_bool() == Some(true);
                 rows.push((
                     "maintenance".to_owned(),
@@ -985,6 +1014,7 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                         .children((
                             CheckBox::new()
                                 .is_checked(on)
+                                .is_enabled(can)
                                 .on_is_checked_changed((callbacks.toggle)("maintenance".to_owned()))
                                 .content(TextBlock::new().text(tr!(
                                     "Keep this repository maintained in the background"
@@ -996,6 +1026,11 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                                 .font_size(12.0)
                                 .opacity(0.65)
                                 .text_wrapping(TextWrapping::Wrap),
+                            if can {
+                                View::empty()
+                            } else {
+                                too_old("2.31", form)
+                            },
                         )),
                 ));
             }
