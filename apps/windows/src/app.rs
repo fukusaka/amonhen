@@ -4422,8 +4422,11 @@ impl Component for Root {
                             .iter()
                             .map(|w| (format!("worktree:{}", w.path), w.title()))
                             .collect::<Vec<_>>(),
-                        &self.form,
-                        conflicts,
+                        sidebar::Marks {
+                            form: &self.form,
+                            conflicts,
+                            tag_remotes: &self.tag_remotes,
+                        },
                         &self.sidebar_filter,
                     )),
                 Grid::new()
@@ -6157,8 +6160,22 @@ impl Root {
                 ));
             }
         }
-        let mut items = pushes;
+        // リモートごとの様子（GTK4 版はタグの印のポップオーバーに出す）。
+        let mut items: Vec<MenuItem> = remotes
+            .iter()
+            .map(|(remote, _)| {
+                MenuItem::disabled(
+                    format!("-state:{remote}"),
+                    crate::sidebar::tag_state_text(&self.tag_remotes, name, remote),
+                )
+            })
+            .collect();
         if !items.is_empty() {
+            items.push(MenuItem::separator("-states"));
+        }
+        let pushed = !pushes.is_empty();
+        items.extend(pushes);
+        if pushed {
             items.push(MenuItem::separator("-push-tag"));
         }
         items.push(MenuItem::item(

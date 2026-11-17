@@ -10,7 +10,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use amonhen_model::{RefEntry, RefKind, Refs};
+use amonhen_model::{RefEntry, RefKind, Refs, tr};
 use serde_json::Value;
 use windows_reactor::TreeNode;
 
@@ -126,6 +126,13 @@ pub fn parse_ref_key(key: &str) -> Option<(u8, &str)> {
     Some((kind.parse().ok()?, name))
 }
 
+/// 行に付ける印のもと: リポジトリの形、コンフリクトの数、タグのリモートでの様子（`tagRemotes` の info）。
+pub struct Marks<'a> {
+    pub form: &'a RepositoryForm,
+    pub conflicts: usize,
+    pub tag_remotes: &'a serde_json::Value,
+}
+
 /// サイドバーの木。`refs` がまだなければ Workspace だけ。
 /// `range_diff` なら、Workspace に Range Diff の行を出す（開いている間だけ）。
 /// `worktrees` は worktree の行（キーと見出し。2 つ以上あるときだけ Workspace の下に Worktrees を出す）。
@@ -136,10 +143,14 @@ pub fn nodes(
     groups: Option<&BranchGroups>,
     range_diff: bool,
     worktrees: &[(String, String)],
-    form: &RepositoryForm,
-    conflicts: usize,
+    marks: Marks,
     filter: &str,
 ) -> Vec<TreeNode> {
+    let Marks {
+        form,
+        conflicts,
+        tag_remotes,
+    } = marks;
     let mut history = String::from("History");
     if form.shallow {
         history.push_str("  ✂");
@@ -246,7 +257,11 @@ pub fn nodes(
     let mut tags = Tree::default();
     for e in of(RefKind::Tag) {
         let parts: Vec<&str> = e.name.split('/').collect();
-        tags.insert(&parts, TreeNode::new(ref_key(e), parts[parts.len() - 1]));
+        let title = match tag_mark(tag_remotes, &e.name) {
+            Some(mark) => format!("{}  {mark}", parts[parts.len() - 1]),
+            None => parts[parts.len() - 1].to_owned(),
+        };
+        tags.insert(&parts, TreeNode::new(ref_key(e), title));
     }
     let tags = tags.into_nodes("tags");
     if !tags.is_empty() {
@@ -260,6 +275,51 @@ pub fn nodes(
         out.push(group("submodules", "Submodules", submodules));
     }
     out
+}
+
+/// タグの行の後ろの印（GTK4 版の `TagRemotes::mark`）: 読んだリモートのどれかに同じ名前の別のタグがあれば ⚠、
+/// 読んだどのリモートにもなければ ∅。`info` はコアの `tagRemotes` の info。
+pub fn tag_mark(info: &serde_json::Value, tag: &str) -> Option<&'static str> {
+    let checked: Vec<&str> = info["remotes"]
+        .as_array()?
+        .iter()
+        .filter(|r| r["checked"].is_i64())
+        .filter_map(|r| r["name"].as_str())
+        .collect();
+    if checked.is_empty() {
+        return None;
+    }
+    let state = |remote: &str| info["tags"][tag][remote].as_str();
+    if checked.iter().any(|r| state(r) == Some("different")) {
+        return Some("⚠");
+    }
+    checked
+        .iter()
+        .all(|r| state(r).is_none_or(|s| s == "missing"))
+        .then_some("∅")
+}
+
+/// タグの、リモート 1 つでの様子の一文（GTK4 版の `tag_state_text`。タグのメニューの先頭に並べる）。
+pub fn tag_state_text(info: &serde_json::Value, tag: &str, remote: &str) -> String {
+    let checked = info["remotes"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .any(|r| r["name"].as_str() == Some(remote) && r["checked"].is_i64());
+    if !checked {
+        return tr!(
+            "{remote}: not checked yet (Fetch reads it)",
+            remote = remote
+        );
+    }
+    match info["tags"][tag][remote].as_str() {
+        Some("same") => tr!("{remote}: has it", remote = remote),
+        Some("different") => tr!(
+            "{remote}: has a different tag with this name",
+            remote = remote
+        ),
+        _ => tr!("{remote}: doesn’t have it", remote = remote),
+    }
 }
 
 fn group(key: &str, title: &str, children: impl IntoIterator<Item = TreeNode>) -> TreeNode {

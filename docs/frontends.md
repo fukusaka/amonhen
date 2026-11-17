@@ -59,7 +59,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Branch menu: checkout, rename, delete (Delete Anyway when unmerged) | ✓ | ✓ | ✓ | ✓ | △ | macOS: Set Upstream is only in the Repository menu.<br>GTK4: Set Upstream is only in the Repository menu.<br>CLI: Via `amonhen run`. |
 | Sync a branch that is not checked out (Fast-Forward, Push, Publish) | ✓ | ✓ | △ | ✓ | △ | CLI: Via `amonhen run`.<br>Windows: Windows: No before-and-after drawing for Fast-Forward. |
 | Tags listed | ✓ | ✓ | ✓ | ✓ | ✓ |  |
-| Tag marks for remotes (missing, different) with a popover | ✓ | ✓ | — | ✓ | △ | VSCode: In the row's description, each remote's state in the tooltip (no popover).<br>CLI: Via `amonhen run` (`tagRemotes`). |
+| Tag marks for remotes (missing, different) with a popover | ✓ | ✓ | △ | ✓ | △ | VSCode: In the row's description, each remote's state in the tooltip (no popover).<br>CLI: Via `amonhen run` (`tagRemotes`).<br>Windows: ⚠ (a different tag on a remote) or ∅ (on no remote) after the name, and each remote's state at the top of the tag's menu; no popover. |
 | Tag signature marks | ✓ | ✓ | — | ✓ | ✓ | VSCode: The row's icon, explained in the tooltip.<br>CLI: `refs --verify`. |
 | Tag menu: Push to, Replace on, Delete, Delete from a remote | ✓ | ✓ | ✓ | ✓ | △ | VSCode: The remote is chosen in a list when there are several.<br>CLI: Via `amonhen run`. |
 | Remotes with their branches | ✓ | ✓ | ✓ | ✓ | ✓ |  |

@@ -59,7 +59,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | ブランチのメニュー: checkout・名前の変更・削除（未マージは Delete Anyway） | ✓ | ✓ | ✓ | ✓ | △ | macOS: Set Upstream は Repository メニューだけ。<br>GTK4: Set Upstream は Repository メニューだけ。<br>CLI: `amonhen run` から。 |
 | checkout していないブランチの同期（Fast-Forward・Push・Publish） | ✓ | ✓ | △ | ✓ | △ | CLI: `amonhen run` から。<br>Windows: Windows: Fast-Forward の前後の絵はまだない。 |
 | タグの一覧 | ✓ | ✓ | ✓ | ✓ | ✓ |  |
-| タグのリモートの印（ない・違う）とポップオーバー | ✓ | ✓ | — | ✓ | △ | VSCode: 行の説明に出し、リモートごとの様子はツールチップに（ポップオーバーはない）。<br>CLI: `amonhen run`（`tagRemotes`）から。 |
+| タグのリモートの印（ない・違う）とポップオーバー | ✓ | ✓ | △ | ✓ | △ | VSCode: 行の説明に出し、リモートごとの様子はツールチップに（ポップオーバーはない）。<br>CLI: `amonhen run`（`tagRemotes`）から。<br>Windows: 名前の後ろに ⚠（リモートに別のタグ）か ∅（どのリモートにもない）、リモートごとの様子はタグのメニューの先頭に。ポップオーバーはない。 |
 | タグの署名の印 | ✓ | ✓ | — | ✓ | ✓ | VSCode: 行のアイコンで、説明はツールチップに。<br>CLI: `refs --verify`。 |
 | タグのメニュー: Push to・Replace on・削除・リモートから削除 | ✓ | ✓ | ✓ | ✓ | △ | VSCode: リモートがいくつもあれば一覧で選ぶ。<br>CLI: `amonhen run` から。 |
 | リモートとそのブランチ | ✓ | ✓ | ✓ | ✓ | ✓ |  |
