@@ -814,6 +814,8 @@ enum Message {
     CloseSearch,
     /// 件数の文字（「N / M」「No Matches」）。
     SearchStatus(String),
+    /// 検索の欄の ▾ で選んだ書き方（`author:` など）。
+    SearchScope(String),
     /// Amend を切り替えた。
     Amend(bool),
     /// Amend にしたときの、HEAD のメッセージ（件名と本文）。
@@ -1319,6 +1321,16 @@ impl Component for Root {
                 }
             }
             Message::Query(text) => self.query = text,
+            Message::SearchScope(prefix) => {
+                // 欄の後ろに書き方を足し、欄にフォーカスを戻す（GTK4 版の `with_prefix`）。
+                let current = self.query.trim();
+                self.query = if current.is_empty() {
+                    prefix
+                } else {
+                    format!("{current} {prefix}")
+                };
+                self.search_opened += 1;
+            }
             Message::SearchSubmit(backwards) => {
                 let query = self.query.trim().to_owned();
                 with_history(|h| h.search(query, backwards));
@@ -5549,22 +5561,34 @@ impl Component for Root {
             });
         }
         let search_bar: View = if self.search_open {
+            // ▾: 作者・パス・内容・日時で探す書き方を入れる（GTK4 版・macOS 版の検索の欄の ▾ のメニュー）。
+            let scopes = SEARCH_SCOPES
+                .iter()
+                .map(|(title, prefix)| {
+                    MenuItem::item(*prefix, amonhen_model::i18n::translate(title).into_owned())
+                })
+                .collect::<Vec<_>>();
             Grid::new()
-                .columns([GridLength::Star(1.0), GridLength::Auto])
+                .columns([GridLength::Auto, GridLength::Star(1.0), GridLength::Auto])
+                .column_spacing(4.0)
                 .margin(Thickness::new(8.0, 4.0, 8.0, 4.0))
                 .grid_row(0)
                 .children((
+                    DropDownButton::new()
+                        .grid_column(0)
+                        .content(TextBlock::new().text("🔍"))
+                        .menu(Menu::new(scopes, context.callback(Message::SearchScope))),
                     TextBox::new()
                         .element_ref(&self.search_box)
                         .text(self.query.clone())
                         .placeholder_text(tr!("Search"))
                         .on_text_changed(context.callback(Message::Query))
-                        .grid_column(0),
+                        .grid_column(1),
                     TextBlock::new()
                         .text(self.search_status.clone())
                         .margin(Thickness::new(8.0, 0.0, 4.0, 0.0))
                         .vertical_alignment(VerticalAlignment::Center)
-                        .grid_column(1),
+                        .grid_column(2),
                 ))
         } else {
             View::empty()
@@ -11593,6 +11617,15 @@ fn submodule_path(url: &str) -> String {
 }
 
 /// Clone の「最近の履歴だけ」で選べるコミットの数（GTK4 版の `shallow::more_choices` と 1）。
+/// 検索の欄の ▾ のメニュー（題と入れる書き方。GTK4 版の `search::SCOPES` と同じ順）。
+const SEARCH_SCOPES: [(&str, &str); 5] = [
+    ("Search by Author (author:)", "author:"),
+    ("Search by Path (path:)", "path:"),
+    ("Search by Contents (contents:)", "contents:"),
+    ("Committed After (after:)", "after:"),
+    ("Committed Before (before:)", "before:"),
+];
+
 const CLONE_DEPTHS: [u32; 4] = [1, 100, 1_000, 10_000];
 
 /// 打ったコミットの数（1 以上。カンマや空白は除く）。
