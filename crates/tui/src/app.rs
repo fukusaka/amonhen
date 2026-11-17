@@ -84,6 +84,10 @@ pub struct App {
     upstream: Option<String>,
     ahead: u64,
     behind: u64,
+    /// 途中の操作（merge・rebase・cherry-pick・revert）: 種類と、何番目・全部でいくつ（rebase）。
+    sequence: Option<(String, Option<(u64, u64)>)>,
+    /// 一番新しい stash の名前（`stash@{0}`）。
+    stash: Option<String>,
     /// HEAD のコミット（amend で、そのメッセージを欄に入れる）。
     head: Option<String>,
     /// コミットを作っている。
@@ -138,6 +142,8 @@ impl App {
             upstream: None,
             ahead: 0,
             behind: 0,
+            sequence: None,
+            stash: None,
             head: None,
             committing: false,
             notice: None,
@@ -305,6 +311,13 @@ impl App {
                         let selected = self.history.selected_id();
                         self.history.opened(&refs, &history);
                         self.sidebar.set_refs(&refs);
+                        self.stash = refs["entries"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .find(|e| e["kind"] == "stash")
+                            .and_then(|e| e["name"].as_str())
+                            .map(str::to_owned);
                         // 検索していたら、新しい History で検索し直す。
                         if let Some((query, _)) = self.search.clone() {
                             self.start_search(query);
@@ -357,6 +370,12 @@ impl App {
                         self.upstream = status["upstream"].as_str().map(str::to_owned);
                         self.ahead = status["ahead"].as_u64().unwrap_or(0);
                         self.behind = status["behind"].as_u64().unwrap_or(0);
+                        let sequence = &status["sequence"];
+                        self.sequence = sequence["kind"].as_str().map(|kind| {
+                            let progress =
+                                sequence["current"].as_u64().zip(sequence["total"].as_u64());
+                            (kind.to_owned(), progress)
+                        });
                         self.changes.status(&status);
                     }
                     Loaded::Ran { name, result } => self.ran(name, result),
@@ -573,6 +592,41 @@ impl App {
                 self.run("undoPeek", tr!("Undo…"), json!({"op": "undoPeek"}))
             }
             KeyCode::Char('b') if !control => self.ask_branch(),
+            KeyCode::Char('s') if !control && self.focus != Focus::Side => self.run(
+                "stash",
+                tr!("Stashing…"),
+                json!({"op": "stashPush", "message": null, "includeUntracked": false}),
+            ),
+            KeyCode::Char('S') if self.focus != Focus::Side => match self.stash.clone() {
+                Some(name) => self.run(
+                    "pop",
+                    tr!("Popping the stash…"),
+                    json!({"op": "stashApply", "name": name, "pop": true}),
+                ),
+                None => {
+                    self.error = Some(tr!("No stash to pop"));
+                    self.dirty = true;
+                }
+            },
+            // 途中の操作があるときだけ: 続ける、飛ばす、やめる（やめる前に確かめる）。
+            KeyCode::Char('C') if self.sequence.is_some() => {
+                self.run("continue", tr!("Continuing…"), json!({"op": "continue"}));
+            }
+            KeyCode::Char('K') if self.sequence.is_some() => {
+                self.run("skip", tr!("Skipping…"), json!({"op": "skip"}));
+            }
+            KeyCode::Char('A') if self.sequence.is_some() => {
+                let kind = self.sequence.as_ref().map_or("", |s| s.0.as_str());
+                self.confirm = Some((
+                    tr!("Abort the {kind}?", kind = kind),
+                    tr!("abort"),
+                    Request::Run {
+                        name: "abort",
+                        command: json!({"op": "abort"}),
+                    },
+                ));
+                self.dirty = true;
+            }
             KeyCode::Char('?') => {
                 self.help = true;
                 self.dirty = true;
@@ -653,6 +707,22 @@ impl App {
             "undo" => self.notice = Some(tr!("Undone")),
             "checkout" => self.notice = Some(tr!("Checked out")),
             "createBranch" => self.notice = Some(tr!("Created the branch")),
+            "stash" => self.notice = Some(tr!("Stashed")),
+            "pop" => self.notice = Some(tr!("Popped the stash")),
+            "abort" => self.notice = Some(tr!("Aborted")),
+            "merge" | "rebase" | "continue" | "skip" => {
+                // コンフリクトで止まったら、Working Copy で解決する。
+                match reply["outcome"].as_str() {
+                    Some("conflict") => {
+                        self.error = Some(tr!("Stopped at conflicts: resolve them, then continue"));
+                        self.view = View::Changes;
+                        self.focus = Focus::Main;
+                        self.sidebar.show_view(true);
+                    }
+                    Some("stopped") => self.notice = Some(tr!("Stopped")),
+                    _ => self.notice = Some(tr!("Done")),
+                }
+            }
             _ => {}
         }
         self.changes.refresh();
@@ -747,6 +817,38 @@ impl App {
         true
     }
 
+    /// サイドバーで選んでいる ref を今のブランチに merge する（`merge`）か、今のブランチをその上に rebase する
+    /// 前に確かめる。
+    fn ask_merge_or_rebase(&mut self, merge: bool) -> bool {
+        let Some((_, name, _)) = self.sidebar.picked_ref() else {
+            return false;
+        };
+        let Some(branch) = self.branch.clone() else {
+            self.error = Some(tr!("No branch is checked out"));
+            return true;
+        };
+        self.confirm = Some(if merge {
+            (
+                tr!("Merge {name} into {branch}?", name = name, branch = branch),
+                tr!("merge"),
+                Request::Run {
+                    name: "merge",
+                    command: json!({"op": "merge", "rev": name}),
+                },
+            )
+        } else {
+            (
+                tr!("Rebase {branch} onto {name}?", name = name, branch = branch),
+                tr!("rebase"),
+                Request::Run {
+                    name: "rebase",
+                    command: json!({"op": "rebase", "onto": name}),
+                },
+            )
+        });
+        true
+    }
+
     /// History を検索する。動いている検索は取り消す。
     fn start_search(&mut self, query: String) {
         self.cancel_search();
@@ -791,6 +893,8 @@ impl App {
                 true
             }
             KeyCode::Char('c') => self.checkout_picked(),
+            KeyCode::Char('m') => self.ask_merge_or_rebase(true),
+            KeyCode::Char('r') => self.ask_merge_or_rebase(false),
             // 絞り込んでいれば、まずそれをやめる。
             KeyCode::Esc if !self.sidebar.filter().is_empty() => {
                 self.sidebar.set_filter("");
@@ -814,6 +918,8 @@ impl App {
                     tr!("Open the view, or select the ref's commit in History"),
                 ),
                 ("c", tr!("Check out the branch")),
+                ("m", tr!("Merge it into the current branch")),
+                ("r", tr!("Rebase the current branch onto it")),
                 ("/", tr!("Filter branches and tags")),
                 ("Esc", tr!("Clear the filter, or go back")),
             ],
@@ -857,6 +963,11 @@ impl App {
             ("", String::new()),
             ("f p P", tr!("Fetch, pull, push")),
             ("b", tr!("New branch at the selected commit or ref")),
+            ("s S", tr!("Stash, and pop the newest stash")),
+            (
+                "C K A",
+                tr!("Continue, skip, abort a merge or rebase in progress"),
+            ),
             ("u", tr!("Undo the last operation")),
             ("1 2", tr!("Changes and History")),
             ("0", tr!("Sidebar")),
@@ -1338,6 +1449,35 @@ impl App {
             (None, None) if self.notice.is_some() => {
                 let notice = self.notice.as_deref().unwrap_or("");
                 buf.set_stringn(area.x + 1, y, notice, room, Style::new().fg(Color::Green));
+            }
+            // 途中の操作: 「Rebase 3/7 · 2 conflicts」と、その操作のキー。
+            (None, None) if self.sequence.is_some() => {
+                let (kind, progress) = self.sequence.as_ref().unwrap();
+                let mut state = kind.clone();
+                if let Some((current, total)) = progress {
+                    state.push_str(&format!(" {current}/{total}"));
+                }
+                match self.changes.conflicts() {
+                    0 => {}
+                    1 => state.push_str(&tr!(" · 1 conflict")),
+                    count => state.push_str(&tr!(" · {count} conflicts", count = count)),
+                }
+                let x = buf
+                    .set_stringn(
+                        area.x + 1,
+                        y,
+                        state,
+                        room,
+                        Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                    )
+                    .0;
+                buf.set_stringn(
+                    x + 3,
+                    y,
+                    tr!("C continue   K skip   A abort"),
+                    usize::from(position_x.saturating_sub(x + 3)),
+                    Style::new(),
+                );
             }
             (None, None) => {
                 let hints = match (self.view, self.focus) {

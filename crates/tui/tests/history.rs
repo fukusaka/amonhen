@@ -726,3 +726,77 @@ fn checkout_new_branch_and_undo() {
     amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "uy").unwrap();
     assert_eq!(branch(), "topic\n");
 }
+
+/// main と topic が同じ行を別々に書き換えたリポジトリ（main にいる）。
+fn diverged(dir: &Path) {
+    git(dir, BASE, &["init", "-q", "-b", "main"]);
+    std::fs::write(dir.join("a.txt"), "one\n").unwrap();
+    git(dir, BASE, &["add", "."]);
+    git(dir, BASE, &["commit", "-q", "-m", "Start"]);
+    git(dir, BASE, &["switch", "-q", "-c", "topic"]);
+    std::fs::write(dir.join("a.txt"), "topic\n").unwrap();
+    git(dir, BASE + DAY, &["commit", "-q", "-am", "On topic"]);
+    git(dir, BASE, &["switch", "-q", "main"]);
+    std::fs::write(dir.join("a.txt"), "main\n").unwrap();
+    git(dir, BASE + DAY * 2, &["commit", "-q", "-am", "On main"]);
+}
+
+/// サイドバーの `m` で merge。コンフリクトで止まったら、一番下の行に途中の状態と操作が出る。`A` でやめる
+#[test]
+fn merge_stops_at_conflicts_and_can_be_aborted() {
+    let dir = tempfile::tempdir().unwrap();
+    diverged(dir.path());
+    // History の 2 つ下が topic。
+    let asked = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjm").unwrap();
+    assert!(asked.contains("Merge topic into main?   y merge   n cancel"));
+    let stopped = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjmy").unwrap();
+    println!("{stopped}");
+    assert!(stopped.contains("Stopped at conflicts"));
+    // Working Copy に移り、コンフリクトのファイルが並ぶ。
+    assert!(stopped.contains("U a.txt"));
+    assert!(dir.path().join(".git/MERGE_HEAD").exists());
+    // 次に開くと、途中の状態が出ている。
+    let state = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "").unwrap();
+    println!("{state}");
+    assert!(state.contains("merge · 1 conflict   C continue   K skip   A abort"));
+    let asked = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "A").unwrap();
+    assert!(asked.contains("Abort the merge?   y abort   n cancel"));
+    let aborted = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "Ay").unwrap();
+    assert!(aborted.contains("Aborted"));
+    assert!(!dir.path().join(".git/MERGE_HEAD").exists());
+}
+
+/// サイドバーの `r` で、今のブランチを選んだ ref の上に rebase する
+#[test]
+fn rebase_onto_the_picked_ref() {
+    let dir = tempfile::tempdir().unwrap();
+    merged(dir.path());
+    // topic に切り替えて（`c`）、main（1 つ上）の上に rebase する。
+    amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjc").unwrap();
+    let asked = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jr").unwrap();
+    println!("{asked}");
+    assert!(asked.contains("Rebase topic onto main?   y rebase   n cancel"));
+    amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jry").unwrap();
+    assert_eq!(
+        git_out(dir.path(), &["merge-base", "topic", "main"]),
+        git_out(dir.path(), &["rev-parse", "main"])
+    );
+}
+
+/// `s` で作業中の変更を stash し、`S` で戻す
+#[test]
+fn stash_and_pop() {
+    let dir = tempfile::tempdir().unwrap();
+    two_lines(dir.path());
+    let read = |dir: &Path| std::fs::read_to_string(dir.join("a.txt")).unwrap();
+    let stashed = amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "s").unwrap();
+    println!("{stashed}");
+    assert!(stashed.contains("Stashed"));
+    assert_eq!(read(dir.path()), "one\ntwo\nthree\nfour\n");
+    let popped = amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "S").unwrap();
+    assert!(popped.contains("Popped the stash"));
+    assert_eq!(read(dir.path()), "ONE\ntwo\nTHREE\nfour\n");
+    // stash がなければ、理由を出す。
+    let none = amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "S").unwrap();
+    assert!(none.contains("No stash to pop"));
+}

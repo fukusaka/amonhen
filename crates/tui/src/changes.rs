@@ -101,6 +101,11 @@ impl Changes {
         self.entries.len()
     }
 
+    /// コンフリクトのあるファイルの数。
+    pub fn conflicts(&self) -> usize {
+        self.entries.iter().filter(|e| e.letter == 'U').count()
+    }
+
     fn selected_entry(&self) -> Option<&Entry> {
         self.entries.get(self.selected)
     }

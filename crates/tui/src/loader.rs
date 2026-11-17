@@ -240,7 +240,14 @@ fn load(front: &dyn Front, request: Request) -> Result<Loaded> {
         Request::Status => Loaded::Status(
             front
                 .call(json!({"op": "status"}))
-                .map(|r| r.json)
+                .map(|r| {
+                    // 途中の操作（merge・rebase など）も一緒に聞く。
+                    let mut status = r.json;
+                    status["sequence"] = run(front, json!({"op": "sequence"}))
+                        .map(|mut s| s["info"].take())
+                        .unwrap_or(Value::Null);
+                    status
+                })
                 .map_err(|e| e.to_string()),
         ),
         Request::WorkingDiff {
