@@ -90,6 +90,8 @@ pub struct DiffContent<'a> {
     pub view: &'a DiffView,
     pub highlights: &'a HashMap<u32, Vec<(u32, u32)>>,
     pub syntax: &'a HashMap<u32, Vec<(u32, u32, u8)>>,
+    /// ファイルの見出しの行の番号（昇順。上に張り付かせる見出しを探す）。
+    pub file_rows: &'a [u32],
     /// 行ごとに次のコミットに含めるかの印を出す（Working Copy の 1 本の差分）。
     pub marks: bool,
 }
@@ -126,6 +128,7 @@ impl WorkingShown {
             view: &self.diff.view,
             highlights: &self.highlights,
             syntax: &self.syntax,
+            file_rows: &[],
             marks: self.diff.combined.is_some(),
         }
     }
@@ -146,6 +149,8 @@ pub struct CommitShown {
     pub stacked: Arc<StackedDiff>,
     /// ファイルごとに畳んでいるか（コミットの変更ファイルの順）。
     pub collapsed: Vec<bool>,
+    /// ファイルの見出しの行の番号（表示を作り直すたびに求める）。
+    pub file_rows: Vec<u32>,
     /// 表示を作り直した回数（古い表示の構文の色を捨てるため）。
     version: u32,
 }
@@ -171,6 +176,7 @@ impl CommitShown {
             extras: None,
             stacked,
             collapsed,
+            file_rows: Vec::new(),
             version: 0,
         };
         shown.index_highlights();
@@ -182,10 +188,12 @@ impl CommitShown {
             view: &self.diff,
             highlights: &self.highlights,
             syntax: &self.syntax,
+            file_rows: &self.file_rows,
             marks: false,
         }
     }
 
+    /// 単語の範囲とファイルの見出しの行を、表示から引けるようにする。
     fn index_highlights(&mut self) {
         self.highlights.clear();
         for h in &self.diff.highlights {
@@ -194,6 +202,15 @@ impl CommitShown {
                 .or_default()
                 .push((h.start, h.end));
         }
+        // ファイルの見出しの行（描くたびに全部の行を見なくて済むように）。
+        self.file_rows = self
+            .diff
+            .rows
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| r.kind == amonhen_layout::DiffRow::FILE)
+            .map(|(i, _)| i as u32)
+            .collect();
     }
 }
 

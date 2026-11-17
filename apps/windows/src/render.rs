@@ -1042,48 +1042,7 @@ impl Renderer {
                     self.d2d.FillRectangle(&rect(0.0, width), &self.brush);
                 }
             }
-            if !self.diff_rows.contains_key(&i) {
-                let mut text = Vec::with_capacity(128);
-                if file {
-                    // 畳んだファイルは ▸、開いているファイルは ▾（見出しを押すと切り替わる）。
-                    let mark = if row.flags & DiffRow::COLLAPSED != 0 {
-                        "▸ "
-                    } else {
-                        "▾ "
-                    };
-                    text.extend(mark.encode_utf16());
-                }
-                crate::data::push_utf16(
-                    view.strings.bytes(row.text),
-                    row.text.is_ascii(),
-                    &mut text,
-                );
-                if file {
-                    text.extend(format!("    +{}  −{}", row.new_no, row.old_no).encode_utf16());
-                }
-                let format = if file {
-                    &self.file_format
-                } else {
-                    &self.code_format
-                };
-                let layout = unsafe {
-                    self.dwrite
-                        .CreateTextLayout(&text, format, 100_000.0, DIFF_ROW_HEIGHT)?
-                };
-                if let Some(spans) = commit.syntax.get(&i) {
-                    for &(start, end, kind) in spans {
-                        let Some(brush) = self.syntax_brush(kind)? else {
-                            continue;
-                        };
-                        let range = DWRITE_TEXT_RANGE {
-                            startPosition: start,
-                            length: end.saturating_sub(start),
-                        };
-                        unsafe { layout.SetDrawingEffect(&brush, range)? };
-                    }
-                }
-                self.diff_rows.insert(i, layout);
-            }
+            self.diff_layout(view, commit.syntax, i)?;
             let layout = &self.diff_rows[&i];
             // 差分の中の検索の一致（黄色、今の一致は橙。GTK4 版の差分の検索の帯）。
             let from = self.diff_find.partition_point(|m| m.0 < i);
@@ -1163,6 +1122,92 @@ impl Renderer {
                     self.draw_mark(mark, top)?;
                 }
             }
+        }
+        // 見出しの行が上に隠れたファイルは、見出しを上に張り付かせる（次のファイルの見出しが来たら押し上げる。
+        // macOS 版・GTK4 版と同じ）。
+        if let Some((i, top)) = sticky_header(commit.file_rows, scroll_y) {
+            self.diff_layout(view, commit.syntax, i as u32)?;
+            let layout = &self.diff_rows[&(i as u32)];
+            unsafe {
+                self.brush.SetColor(&BACKGROUND);
+                self.d2d.FillRectangle(
+                    &D2D_RECT_F {
+                        left: 0.0,
+                        top,
+                        right: width,
+                        bottom: top + DIFF_ROW_HEIGHT,
+                    },
+                    &self.brush,
+                );
+                self.brush.SetColor(&DIFF_FILE);
+                self.d2d.FillRectangle(
+                    &D2D_RECT_F {
+                        left: 0.0,
+                        top,
+                        right: width,
+                        bottom: top + DIFF_ROW_HEIGHT,
+                    },
+                    &self.brush,
+                );
+                self.brush.SetColor(&FOREGROUND);
+                self.d2d.DrawTextLayout(
+                    point(DIFF_TEXT_INSET, top + 1.0),
+                    layout,
+                    &self.brush,
+                    D2D1_DRAW_TEXT_OPTIONS_CLIP,
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// 差分の `i` 行目の文字の配置を作って取っておく（あれば何もしない）。
+    fn diff_layout(
+        &mut self,
+        view: &amonhen_core::diff::DiffView,
+        syntax: &std::collections::HashMap<u32, Vec<(u32, u32, u8)>>,
+        i: u32,
+    ) -> Result<()> {
+        use amonhen_layout::DiffRow;
+        let row = &view.rows[i as usize];
+        let file = row.kind == DiffRow::FILE;
+        if !self.diff_rows.contains_key(&i) {
+            let mut text = Vec::with_capacity(128);
+            if file {
+                // 畳んだファイルは ▸、開いているファイルは ▾（見出しを押すと切り替わる）。
+                let mark = if row.flags & DiffRow::COLLAPSED != 0 {
+                    "▸ "
+                } else {
+                    "▾ "
+                };
+                text.extend(mark.encode_utf16());
+            }
+            crate::data::push_utf16(view.strings.bytes(row.text), row.text.is_ascii(), &mut text);
+            if file {
+                text.extend(format!("    +{}  −{}", row.new_no, row.old_no).encode_utf16());
+            }
+            let format = if file {
+                &self.file_format
+            } else {
+                &self.code_format
+            };
+            let layout = unsafe {
+                self.dwrite
+                    .CreateTextLayout(&text, format, 100_000.0, DIFF_ROW_HEIGHT)?
+            };
+            if let Some(spans) = syntax.get(&i) {
+                for &(start, end, kind) in spans {
+                    let Some(brush) = self.syntax_brush(kind)? else {
+                        continue;
+                    };
+                    let range = DWRITE_TEXT_RANGE {
+                        startPosition: start,
+                        length: end.saturating_sub(start),
+                    };
+                    unsafe { layout.SetDrawingEffect(&brush, range)? };
+                }
+            }
+            self.diff_rows.insert(i, layout);
         }
         Ok(())
     }
@@ -1486,4 +1531,40 @@ fn x_of(layout: &IDWriteTextLayout, position: u32) -> Result<f32> {
     let mut metrics = DWRITE_HIT_TEST_METRICS::default();
     unsafe { layout.HitTestTextPosition(position, false, &mut x, &mut y, &mut metrics)? };
     Ok(x)
+}
+
+/// 上に張り付かせるファイルの見出し（見出しの行の番号と、見えている範囲の上端からの位置）。見出しの行が見えている
+/// 範囲より上にあるファイルのものを出し、次のファイルの見出しが近づいたら押し上げる（GTK4 版の `sticky`）。
+/// `file_rows` は見出しの行の番号（昇順）。
+pub fn sticky_header(file_rows: &[u32], scroll_y: f32) -> Option<(usize, f32)> {
+    let first = (scroll_y / DIFF_ROW_HEIGHT).floor().max(0.0) as u32;
+    let at = file_rows.partition_point(|&r| r <= first).checked_sub(1)?;
+    let file = file_rows[at] as usize;
+    if file as f32 * DIFF_ROW_HEIGHT >= scroll_y {
+        return None;
+    }
+    let top = file_rows.get(at + 1).map_or(0.0, |&next| {
+        (next as f32 * DIFF_ROW_HEIGHT - scroll_y - DIFF_ROW_HEIGHT).min(0.0)
+    });
+    Some((file, top))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sticky_header_sticks_and_is_pushed_up() {
+        let rh = DIFF_ROW_HEIGHT;
+        let files = [0, 10];
+        // 一番上で見出しが見えていれば張り付かせない。
+        assert_eq!(sticky_header(&files, 0.0), None);
+        // 見出しが上に隠れたら、上端に張り付く。
+        assert_eq!(sticky_header(&files, 3.0 * rh), Some((0, 0.0)));
+        // 次の見出しが 2 行目に来たら、その分だけ押し上げる。
+        assert_eq!(sticky_header(&files, 9.5 * rh), Some((0, -0.5 * rh)));
+        // 次のファイルに入ったら、そのファイルの見出し。
+        assert_eq!(sticky_header(&files, 12.0 * rh), Some((10, 0.0)));
+        assert_eq!(sticky_header(&[], 5.0 * rh), None);
+    }
 }

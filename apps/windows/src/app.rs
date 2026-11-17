@@ -13923,9 +13923,27 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
                 }
                 // ファイルの見出しを押すと、そのファイルを畳む・開く。
                 Target::Diff => {
-                    let row = ((h.diff.scroll_y + position.Y) / DIFF_ROW_HEIGHT).floor();
+                    // 上に張り付いた見出しを押したら、そのファイルの見出しの行（畳んだら見出しを一番上に）。
+                    let stuck =
+                        h.session.data.commit.as_ref().and_then(|c| {
+                            crate::render::sticky_header(&c.file_rows, h.diff.scroll_y)
+                        });
+                    let (row, stuck) = match stuck {
+                        Some((file, top))
+                            if position.Y >= top && position.Y < top + DIFF_ROW_HEIGHT =>
+                        {
+                            (file as f32, true)
+                        }
+                        _ => (
+                            ((h.diff.scroll_y + position.Y) / DIFF_ROW_HEIGHT).floor(),
+                            false,
+                        ),
+                    };
                     if row >= 0.0 && h.session.data.toggle_file(row as usize) {
                         h.session.renderer.forget_diff();
+                        if stuck {
+                            h.diff.scroll_y = row * DIFF_ROW_HEIGHT;
+                        }
                         let rows = h.diff_rows();
                         h.diff.scroll_by(0.0, rows);
                     }
