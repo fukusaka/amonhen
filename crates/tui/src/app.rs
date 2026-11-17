@@ -1962,15 +1962,27 @@ impl App {
 
     fn changes_diff_key(&mut self, code: KeyCode, control: bool) -> bool {
         let page = self.changes.diff_page();
+        // 選んでいる行を動かすだけなら、差分の中だけが変わる。
+        let moved = match code {
+            KeyCode::Char('d') if control => Some(self.changes.move_cursor(page / 2)),
+            KeyCode::Char('u') if control => Some(self.changes.move_cursor(-page / 2)),
+            KeyCode::Char('j') | KeyCode::Down => Some(self.changes.move_cursor(1)),
+            KeyCode::Char('k') | KeyCode::Up => Some(self.changes.move_cursor(-1)),
+            KeyCode::PageDown => Some(self.changes.move_cursor(page)),
+            KeyCode::PageUp => Some(self.changes.move_cursor(-page)),
+            KeyCode::Char('g') | KeyCode::Home => Some(self.changes.cursor_to(0)),
+            KeyCode::Char('G') | KeyCode::End => Some(self.changes.cursor_to(u32::MAX)),
+            KeyCode::Char(']') => Some(self.changes.jump_hunk(true)),
+            KeyCode::Char('[') => Some(self.changes.jump_hunk(false)),
+            _ => None,
+        };
+        if let Some(moved) = moved {
+            if moved {
+                self.damage |= Damage::SIDE;
+            }
+            return false;
+        }
         match code {
-            KeyCode::Char('d') if control => self.changes.move_cursor(page / 2),
-            KeyCode::Char('u') if control => self.changes.move_cursor(-page / 2),
-            KeyCode::Char('j') | KeyCode::Down => self.changes.move_cursor(1),
-            KeyCode::Char('k') | KeyCode::Up => self.changes.move_cursor(-1),
-            KeyCode::PageDown => self.changes.move_cursor(page),
-            KeyCode::PageUp => self.changes.move_cursor(-page),
-            KeyCode::Char('g') | KeyCode::Home => self.changes.cursor_to(0),
-            KeyCode::Char('G') | KeyCode::End => self.changes.cursor_to(u32::MAX),
             KeyCode::Char('l') | KeyCode::Right => self.changes.pan(PAN),
             // 左の端にいるなら、動かさずに一覧へ戻る。
             KeyCode::Char('h') | KeyCode::Left => {
@@ -1982,8 +1994,6 @@ impl App {
             // 行の範囲: `v` で始まりを決め、動かした所までを選ぶ。もう一度で、やめる。
             KeyCode::Char('v') => self.changes.toggle_mark(),
             KeyCode::Esc if self.changes.has_mark() => self.changes.toggle_mark(),
-            KeyCode::Char(']') => self.changes.jump_hunk(true),
-            KeyCode::Char('[') => self.changes.jump_hunk(false),
             // コンフリクトの中では、そのコンフリクトを Current・Incoming・両方のどれかにする（Undo できる）。
             KeyCode::Char('o' | 't' | 'b') if self.changes.conflict_at_cursor().is_some() => {
                 let choice = match code {

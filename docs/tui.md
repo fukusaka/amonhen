@@ -44,7 +44,7 @@ The core gets no terminal code, and `amonhen-front` gets no new commands for the
 - `Front::call` blocks, so every call runs on a worker thread and its reply comes back through the channel. Each kind of request (History rows, a diff, status, a search) carries a generation; a reply older than the current one is dropped, and a running search is cancelled through `call_until`.
 - The state is plain data (which view, the selection, the scroll position, the caches below). Drawing is a function of the state, as ratatui expects. There is no retained widget tree.
 - A frame is written inside a synchronized update (`CSI ? 2026`), so a terminal that supports it shows the frame whole. Only the cells that changed are sent.
-- The frame output is our own (`canvas`), over `ratatui-core`'s cell buffers and ratatui's crossterm backend, in place of ratatui's `Terminal`, which clears, rebuilds and compares every cell on every frame. An event marks what it changed: everything, or one pane (the sidebar, the main view, or the details and diff) when it can only have changed that pane, which is the wheel over a pane, moving the selection in History, scrolling the details, and the replies that fill History rows, ancestors, a commit and syntax colors. Only the marked panes are cleared, rebuilt and compared; the top and bottom lines are redrawn with any of them, and the key help, which lies over the panes, redraws everything. Anything not listed marks everything, so a pane is never left stale by an event nobody classified.
+- The frame output is our own (`canvas`), over `ratatui-core`'s cell buffers and ratatui's crossterm backend, in place of ratatui's `Terminal`, which clears, rebuilds and compares every cell on every frame. An event marks what it changed: everything, or one pane (the sidebar, the main view, or the details and diff) when it can only have changed that pane, which is the wheel over a pane, moving the selection in History, scrolling the details, moving the selected line in the Working Copy diff, and the replies that fill History rows, ancestors, a commit and syntax colors. Only the marked panes are cleared, rebuilt and compared; the top and bottom lines are redrawn with any of them, and the key help, which lies over the panes, redraws everything. Anything not listed marks everything, so a pane is never left stale by an event nobody classified.
 
 ### History
 
@@ -125,7 +125,7 @@ The targets of [design.md](design.md) apply up to the point the TUI controls: th
 | Bytes per scroll step | Measured and kept from growing (it is what an SSH session carries) |
 | Launch to the first screen of History | A few ms more than `amonhen log` (same persistent cache) |
 
-- `amonhen tui --measure-scroll` scrolls History through the real event path with the output going to a counter, and prints the time and the bytes per frame (the apps' flag of the same name). `--measure-move` does the same pressing `j` (and `k` at the end) to move the selection, and `--measure-diff` going into the selected commit's details and scrolling the diff with `j`; `--keys` are pressed first, to select the commit.
+- `amonhen tui --measure-scroll` scrolls History through the real event path with the output going to a counter, and prints the time and the bytes per frame (the apps' flag of the same name). `--measure-move` does the same pressing `j` (and `k` at the end) to move the selection, `--measure-diff` going into the selected commit's details and scrolling the diff with `j`, and `--measure-changes` going into the selected file's diff in the Working Copy and moving the selected line; `--keys` are pressed first, to select the commit.
 - `amonhen tui --snapshot <file>` draws through the same frame output as the real screen (a frame after each key, redrawing only what that key marked) and writes the last frame as text. It fails if that screen differs from one drawn whole, so every screen test also checks that no pane was left stale. It takes `--size <cols>x<rows>` and, to reach another screen first, `--keys <keys>` (one key per character; a newline is Enter, a tab is Tab, other control characters are Ctrl with the letter). Tests compare such frames; CI needs no terminal.
 - `--measure-scroll` also checks its last screen against one drawn whole, and prints how much CPU time the slowest frame used.
 - criterion benches for building a frame and packing the graph into cells are not written yet.
@@ -199,7 +199,19 @@ Scrolling a commit's diff a line at a time (`--measure-diff`, which goes into th
 
 - Under the 1 ms target in the median at every size, with only the details pane rebuilt and compared. The slowest frames (2 to 36 ms) used 0.2 to 1.5 ms of CPU time, so they are the thread descheduled again.
 - A step sends about twice the bytes of a History step (10,000 against 5,000 at 200 × 60): every line of the diff moves and its colors go with it. This is where a scroll region would save the most, for an SSH session.
-- Not measured: the Working Copy diff (it moves a selected line, and scrolls only when the line leaves the pane), and a diff with long lines panned sideways.
+- Not measured: a diff with long lines panned sideways.
+
+Moving through the Working Copy diff (`--measure-changes`, which goes into the selected file's diff and presses `j`, `k` at the end; the diff scrolls once the selected line leaves the pane, which is all but the first screenful of steps), the same Mac, a copy of this repository with one file changed (a diff of 2,804 lines), the build before and the build after run in turn, five times each:
+
+| Size | Before (median of a run) | After | Bytes per frame (mean / max) |
+| --- | --- | --- | --- |
+| 200 × 60 (sidebar, the list, the diff) | 0.66 to 1.52 ms | 0.84 to 1.18 ms | 10,343 / 15,016 |
+| 80 × 60 (the diff alone) | 0.74 to 1.02 ms | 0.72 to 0.98 ms | 9,101 / 12,920 |
+| 120 × 40 (sidebar, the diff) | 0.80 to 1.01 ms | 0.61 to 0.72 ms | 6,601 / 9,223 |
+
+- Before, a move of the selected line redrew the whole screen; after, the moving keys (`j` `k`, the page keys, `g` `G`, `[` `]`) mark only the diff pane. That was faster in 4 of 5 pairs at 200 × 60 and in all 5 at 120 × 40; at 80 × 60 the diff is the whole screen and nothing changed.
+- At 200 × 60 this is about the 1 ms target, not under it, and slower than a commit's diff: the Working Copy diff has the pane to itself beside the list (more cells), and every line carries two line numbers and the staging mark. Building it takes 0.41 to 0.60 ms and diffing and writing 0.40 to 0.56 ms. The 95% frame is 2.1 to 2.4 ms.
+- What would cut it is what History got: keeping the lines that only moved. Not built.
 
 ## Distribution
 
