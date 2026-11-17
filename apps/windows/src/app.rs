@@ -116,7 +116,8 @@ struct Root {
     multi: Vec<(String, bool)>,
     /// Push のダイアログの注意（GTK4 版の `push_warnings`）。
     sync_warnings: Vec<String>,
-    /// Pull で手元に新しいコミットがないときの、先へ進める前と後の絵（`movePreview` の答え）。
+    /// Pull で手元に新しいコミットがないときの、先へ進める前と後の絵と、Push で送った後の形の絵（`movePreview` の
+    /// 答え）。
     sync_drawing: Option<Value>,
     /// Pull で両方に新しいコミットがあるときの、取り込み方ごとの前と後の絵。
     pull_drawings: Option<PullDrawings>,
@@ -3611,7 +3612,7 @@ impl Component for Root {
                         None => beep(),
                     }
                 } else if let Some(name) = key.strip_prefix("fast-forward:") {
-                    // チェックアウトしないで上流まで進める（GTK4 版の `sheets::fast_forward`。前後の絵はまだない）。
+                    // チェックアウトしないで上流まで進める（GTK4 版の `sheets::fast_forward`）。
                     let upstream =
                         self.refs
                             .as_ref()
@@ -7338,8 +7339,33 @@ impl Root {
                 message,
                 replace,
                 diverged,
+                remote,
+                remote_branch,
                 ..
             }) => {
+                // 送った後の形（Force Push なら、上流から消えるコミットを赤で。GTK4 版と同じ）。
+                let upstream = format!("{remote}/{remote_branch}");
+                let drawing = self
+                    .sync_drawing
+                    .as_ref()
+                    .and_then(|preview| {
+                        crate::drawing::for_move(
+                            preview,
+                            &crate::drawing::Move {
+                                moving: upstream.clone(),
+                                kind: "remote",
+                                after_title: if *replace || *diverged {
+                                    tr!("After the force push")
+                                } else {
+                                    tr!("After the push")
+                                },
+                                lost_note: tr!("removed from {upstream}", upstream = &upstream),
+                                lost_red: true,
+                                removes: false,
+                            },
+                        )
+                    })
+                    .unwrap_or_else(View::empty);
                 let dialog = dialog
                     .is_open(true)
                     .title(title.clone())
@@ -7357,6 +7383,7 @@ impl Root {
                         TextBlock::new()
                             .text(message.clone())
                             .text_wrapping(TextWrapping::Wrap),
+                        drawing,
                         self.sync_lists_view(),
                     )),
                 )
@@ -9487,7 +9514,8 @@ impl Root {
         // Push の注意を出すための、上流と送るブランチのコミット。
         let mut push_range: Option<(String, amonhen_model::Oid, amonhen_model::Oid)> = None;
         // 手元に新しいコミットがない Pull は、どの取り込み方でも先へ進めるだけなので、その絵（GTK4 版と同じ）。
-        let mut fast_forward: Option<Value> = None;
+        // Push なら、送った後の形の絵。
+        let mut move_query: Option<Value> = None;
         let (repo, lists) = match &self.dialog {
             Some(Dialog::Pull { repo, sources, .. }) if sources.is_empty() => {
                 let Some(entry) = self.head_entry() else {
@@ -9497,7 +9525,7 @@ impl Root {
                     return;
                 };
                 if entry.ahead == 0 && entry.behind > 0 {
-                    fast_forward = Some(json!({
+                    move_query = Some(json!({
                         "op": "movePreview", "from": "HEAD", "to": &upstream, "branch": &entry.name,
                     }));
                 }
@@ -9556,6 +9584,8 @@ impl Root {
                 ..
             }) => {
                 let upstream = format!("{remote}/{remote_branch}");
+                // 送った後の形（上流の札が手元の先端へ。Force Push なら上流から消えるコミット。GTK4 版と同じ）。
+                move_query = Some(json!({ "op": "movePreview", "from": &upstream, "to": branch }));
                 let target = |kind: amonhen_model::RefKind, name: &str| {
                     self.refs
                         .as_ref()?
@@ -9624,7 +9654,7 @@ impl Root {
                 }
                 _ => Vec::new(),
             };
-            let drawing = fast_forward
+            let drawing = move_query
                 .and_then(|query| {
                     serde_json::from_str::<Value>(&repo.run_json(&query.to_string())).ok()
                 })
