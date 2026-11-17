@@ -17,6 +17,19 @@ use windows_reactor::TreeNode;
 thread_local! {
     /// 絞り込んでいる間（フォルダを開いて、合うものを見せる）。`nodes` が作る間だけ。
     static EXPAND: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// 行のツールチップ（項目のキーごと。印の意味など）。`nodes` が作り直す。
+    static TIPS: std::cell::RefCell<HashMap<String, String>> = std::cell::RefCell::new(HashMap::new());
+}
+
+/// 項目のツールチップ（GTK4 版の行のツールチップ: 印の意味と、submodule・subtree・タグの様子）。
+pub fn tooltip(key: &str) -> Option<String> {
+    TIPS.with(|t| t.borrow().get(key).cloned())
+}
+
+fn set_tooltip(key: &str, lines: Vec<String>) {
+    if !lines.is_empty() {
+        TIPS.with(|t| t.borrow_mut().insert(key.to_owned(), lines.join("\n")));
+    }
 }
 
 /// Inactive とみなす日数（最後のコミットからこれだけ経ったブランチ）。
@@ -160,6 +173,19 @@ pub fn nodes(
         subtrees,
         tag_signatures,
     } = marks;
+    TIPS.with(|t| t.borrow_mut().clear());
+    let mut history_tips = Vec::new();
+    if form.shallow {
+        history_tips.push(tr!("Shallow clone: older history isn’t fetched"));
+    }
+    if let Some(filter) = &form.partial {
+        history_tips.push(tr!(
+            "Partial clone: file contents are fetched when needed ({filter})",
+            filter = filter
+        ));
+    }
+    set_tooltip("page:history", history_tips);
+    set_tooltip("page:working-copy", form.sparse.iter().cloned().collect());
     let mut history = String::from("History");
     if form.shallow {
         history.push_str("  ✂");
@@ -278,6 +304,7 @@ pub fn nodes(
             .into_iter()
             .chain(tag_mark(tag_remotes, &e.name))
             .collect();
+        set_tooltip(&ref_key(e), tag_tooltip(tag_remotes, &e.name));
         let title = if shown.is_empty() {
             parts[parts.len() - 1].to_owned()
         } else {
@@ -292,6 +319,7 @@ pub fn nodes(
 
     let submodules: Vec<TreeNode> = of(RefKind::Submodule)
         .map(|e| {
+            set_tooltip(&ref_key(e), submodule_tooltip(submodule_states, &e.name));
             let title = match submodule_mark(submodule_states, &e.name) {
                 Some(mark) => format!("{}  {mark}", e.name),
                 None => e.name.clone(),
@@ -310,6 +338,17 @@ pub fn nodes(
         .flatten()
         .filter_map(|s| {
             let dir = s["dir"].as_str()?;
+            let about = [
+                s["url"].as_str().map(|u| match s["ref"].as_str() {
+                    Some(r) => format!("{u} {r}"),
+                    None => u.to_owned(),
+                }),
+                (s["squashed"].as_bool() == Some(true)).then(|| tr!("Squashed when last pulled")),
+            ];
+            set_tooltip(
+                &format!("subtree:{dir}"),
+                about.into_iter().flatten().collect(),
+            );
             let title = if s["squashed"].as_bool() == Some(true) {
                 format!("{dir}  ⊟")
             } else {
@@ -351,6 +390,72 @@ fn submodule_mark(states: &serde_json::Value, path: &str) -> Option<String> {
         .filter_map(|(yes, m)| yes.then_some(m))
         .collect();
     (!marks.is_empty()).then(|| marks.join(" "))
+}
+
+/// submodule の行のツールチップ（GTK4 版の `finish_submodule`）: 印の意味、URL、追うブランチ。
+fn submodule_tooltip(states: &serde_json::Value, path: &str) -> Vec<String> {
+    let Some(s) = submodule_state(states, path) else {
+        return Vec::new();
+    };
+    let on = |k: &str| s[k].as_bool() == Some(true);
+    let mut lines = Vec::new();
+    if on("conflict") {
+        lines.push(tr!("In conflict"));
+    } else if !on("initialized") {
+        lines.push(tr!("Not checked out (Update checks it out)"));
+    } else {
+        if on("moved") {
+            lines.push(tr!(
+                "At another commit than the one recorded (Update goes back to it)"
+            ));
+        }
+        if on("changed") {
+            lines.push(tr!("Has uncommitted changes inside"));
+        }
+    }
+    lines.extend(s["url"].as_str().map(str::to_owned));
+    lines.extend(
+        s["branch"]
+            .as_str()
+            .map(|b| tr!("Follows {branch}", branch = b)),
+    );
+    lines
+}
+
+/// タグの行のツールチップ（GTK4 版の `finish_tag`）: 印の意味と、リモートごとの様子。
+fn tag_tooltip(info: &serde_json::Value, tag: &str) -> Vec<String> {
+    let mut lines = Vec::new();
+    let checked: Vec<&str> = info["remotes"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|r| r["checked"].is_i64())
+        .filter_map(|r| r["name"].as_str())
+        .collect();
+    match tag_mark(info, tag) {
+        Some("⚠") => {
+            let different: Vec<&str> = checked
+                .iter()
+                .copied()
+                .filter(|r| info["tags"][tag][*r].as_str() == Some("different"))
+                .collect();
+            lines.push(tr!(
+                "A different tag with this name is on {remotes}",
+                remotes = different.join(", ")
+            ));
+        }
+        Some(_) => lines.push(tr!("Not on any remote (as of the last fetch)")),
+        None => {}
+    }
+    lines.extend(
+        info["remotes"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|r| r["name"].as_str())
+            .map(|r| tag_state_text(info, tag, r)),
+    );
+    lines
 }
 
 /// タグの行の後ろの印（GTK4 版の `TagRemotes::mark`）: 読んだリモートのどれかに同じ名前の別のタグがあれば ⚠、

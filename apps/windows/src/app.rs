@@ -36,6 +36,8 @@ thread_local! {
     static HISTORY_FLYOUT: RefCell<Option<xaml::FlyoutBase>> = const { RefCell::new(None) };
     /// サイドバーの木の生の要素と、右クリックで開く位置（キーボードで開いたときは項目そのものに出す）。
     static SIDEBAR_ELEMENT: RefCell<Option<xaml::UIElement>> = const { RefCell::new(None) };
+    /// ツールチップを付けたサイドバーの項目（要素の identity と付けた文字。同じなら付け直さない）。
+    static SIDEBAR_TIP: RefCell<Option<(usize, Option<String>)>> = const { RefCell::new(None) };
     /// ほかの worktree の変更を最後に数えた時刻と、全部を数え直した時刻（10 秒ごと・5 分ごと。GTK4 版と同じ）。
     static WORKTREE_TICK: std::cell::Cell<(Instant, Instant)> =
         std::cell::Cell::new((Instant::now(), Instant::now()));
@@ -11877,6 +11879,32 @@ fn attach_sidebar(element: &IInspectable) -> windows_core_reactor::Result<()> {
         with_history(|h| {
             h.sender.send(Message::SidebarMenu(key));
         });
+    })?;
+    REVOKERS.with(|r| r.borrow_mut().push(revoker));
+    // 行のツールチップ（印の意味など。reactor の木の項目は文字だけなので、指の下の項目に付ける。項目の要素は
+    // 使い回されるので、指が別の項目に移るたびに付け直す）。
+    let revoker = ui.PointerMoved(move |_, args: Ref<xaml::PointerRoutedEventArgs>| {
+        let Some(args) = args.as_ref() else { return };
+        let Ok(original) = args.OriginalSource() else {
+            return;
+        };
+        let Some((item, key)) = tree_item_key(&original) else {
+            return;
+        };
+        let identity = item
+            .cast::<windows_core_reactor::IUnknown>()
+            .map_or(0, |u| u.as_raw() as usize);
+        let text = sidebar::tooltip(&key);
+        let changed = SIDEBAR_TIP.with(|t| {
+            let mut t = t.borrow_mut();
+            let next = (identity, text.clone());
+            let changed = t.as_ref() != Some(&next);
+            *t = Some(next);
+            changed
+        });
+        if changed && let Ok(item) = item.cast::<IInspectable>() {
+            let _ = windows_reactor::set_tooltip_text(&item, text.as_deref());
+        }
     })?;
     REVOKERS.with(|r| r.borrow_mut().push(revoker));
     Ok(())
