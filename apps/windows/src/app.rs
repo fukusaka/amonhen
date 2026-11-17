@@ -4063,6 +4063,40 @@ impl Component for Root {
                     let text =
                         crate::reposettings::lf(state.template.as_deref().unwrap_or_default());
                     vec![json!({ "op": "saveCommitTemplate", "text": text })]
+                } else if key == "deepen-other" || key == "deepen-since" {
+                    let Some(repo) = self.repo.clone() else {
+                        return beep();
+                    };
+                    let since = key == "deepen-since";
+                    self.dialog = Some(Dialog::Form {
+                        repo,
+                        title: if since {
+                            tr!("Fetch History Up to a Date")
+                        } else {
+                            tr!("Fetch More History")
+                        },
+                        message: if since {
+                            tr!(
+                                "Fetches the commits made after this date (git fetch --shallow-since)."
+                            )
+                        } else {
+                            tr!("How many older commits to fetch (git fetch --deepen).")
+                        },
+                        button: "Fetch".to_owned(),
+                        fields: vec![if since {
+                            (String::new(), String::new(), "YYYY-MM-DD".to_owned())
+                        } else {
+                            (String::new(), "100".to_owned(), String::new())
+                        }],
+                        checks: Vec::new(),
+                        kind: if since {
+                            FormKind::DeepenSince
+                        } else {
+                            FormKind::Deepen
+                        },
+                    });
+                    self.dialog_inputs += 1;
+                    return;
                 } else if let Some(n) = key.strip_prefix("deepen:") {
                     vec![json!({ "op": "deepen", "commits": n.parse::<u64>().unwrap_or(100) })]
                 } else if key == "unshallow" {
@@ -10718,6 +10752,10 @@ enum FormKind {
     /// subtree の場所と、Push か（でなければ Pull）。
     PullOrPushSubtree(String, bool),
     SplitSubtree(String),
+    /// shallow clone の履歴を、決めた数だけ取り足す（`git fetch --deepen`）。
+    Deepen,
+    /// shallow clone の履歴を、決めた日付まで取り足す（`git fetch --shallow-since`）。
+    DeepenSince,
 }
 
 impl FormKind {
@@ -10754,6 +10792,26 @@ impl FormKind {
                     "op": "changeSubmodule",
                     "change": { "kind": "foreach", "command": command, "recursive": check(0) },
                 })
+            }
+            FormKind::Deepen => {
+                let commits = field(0).parse::<u32>().ok().filter(|&n| n > 0)?;
+                json!({ "op": "deepen", "commits": commits })
+            }
+            FormKind::DeepenSince => {
+                let since = field(0);
+                // YYYY-MM-DD だけ受ける（GTK4 版は暦で選ぶ）。
+                let ok = since.len() == 10
+                    && since.chars().enumerate().all(|(i, c)| {
+                        if i == 4 || i == 7 {
+                            c == '-'
+                        } else {
+                            c.is_ascii_digit()
+                        }
+                    });
+                if !ok {
+                    return None;
+                }
+                json!({ "op": "deepen", "since": since })
             }
             FormKind::SetUrl(path) => json!({
                 "op": "changeSubmodule",

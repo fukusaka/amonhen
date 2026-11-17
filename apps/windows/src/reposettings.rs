@@ -822,6 +822,9 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                         vec![
                             ("deepen:100".to_owned(), tr!("100 Commits")),
                             ("deepen:1000".to_owned(), tr!("1,000 Commits")),
+                            // 数を尋ねる・日付まで（GTK4 版の「さらに取る」の Other… と Up to a Date…）。
+                            ("deepen-other".to_owned(), tr!("Other…")),
+                            ("deepen-since".to_owned(), tr!("Up to a Date…")),
                             ("unshallow".to_owned(), tr!("Fetch All")),
                         ],
                     ),

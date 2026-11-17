@@ -156,7 +156,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Keys and Values (git config table, Basic / Customized / All, Combined / Levels) | ✓ | ✓ | △ | ✓ | △ | VSCode: Basic / Customized / All, Combined / Levels and search; values are edited in an input box.<br>CLI: Via `amonhen run` (`configList`, `configSet`).<br>Windows: Search, add and remove in this repository; no Basic / All or Levels. |
 | Rows disabled with the git version needed | ✓ | ✓ | — | ✓ | n/a | |
 | Repository's form on the git line (shallow, partial, sparse, maintenance) | ✓ | ✓ | — | ✓ | △ | CLI: `status` notes shallow, partial and sparse repositories. |
-| Fetching and Folders: fetch more of a shallow clone (a count, up to a date, all) | ✓ | ✓ | △ | ✓ | △ | CLI: Via `amonhen run` (`deepen`, `unshallow`).<br>Windows: Windows: 100 or 1,000 commits, or all; no other count or date. |
+| Fetching and Folders: fetch more of a shallow clone (a count, up to a date, all) | ✓ | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run` (`deepen`, `unshallow`).<br>Windows: The date is typed as YYYY-MM-DD (no calendar) |
 | Fetching and Folders: fetch all contents of a partial clone (git 2.36) | ✓ | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run` (`fetchAllContents`). |
 | Fetching and Folders: folders of a sparse checkout picked from HEAD's tree (git 2.25) | ✓ | ✓ | — | ✓ | △ | VSCode: The folder is picked by walking HEAD's tree in a list.<br>CLI: Via `amonhen run` (`sparseCheckout`, `treeFolders`). |
 | Fetching and Folders: git maintenance switch (git 2.31) | ✓ | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run` (`maintenance`). |
