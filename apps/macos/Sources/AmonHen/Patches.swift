@@ -129,10 +129,10 @@ extension Actions {
             }
             switch result {
             case let .failure(error):
-                await alert(L("Can’t Read the Patch"), "\(error)")
+                await alert(L("Couldn’t apply the patch"), "\(error)")
             case let .success(summary):
                 if summary.patches.allSatisfy(\.files.isEmpty) {
-                    await alert(L("Can’t Read the Patch"), L("There are no changes in the patch."))
+                    await alert(L("Couldn’t apply the patch"), L("There are no changes in the patch."))
                 } else {
                     await confirmApply(summary, paths: paths)
                 }

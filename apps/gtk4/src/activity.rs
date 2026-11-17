@@ -1603,13 +1603,15 @@ impl Activity {
                 // 2 秒待たずに、すぐに様子を読み直す（macOS 版の loadDaemon(force: true)）。
                 tick.set(0);
                 refresh_daemon();
-                // 起動できなければ、エラーの文そのものを見出しにして知らせる（macOS 版の NSAlert(error:)）。
+                // 起動できなければ、窓のシートで知らせる（題は「Couldn’t <操作>」。macOS 版と同じ）。
                 if let Ok(Err(e)) = result {
-                    gtk::AlertDialog::builder()
-                        .message(e)
-                        .modal(true)
-                        .build()
-                        .show(w.upgrade().as_ref());
+                    let parent = w.upgrade().map(|w| w.upcast::<gtk::Window>());
+                    crate::sheets::alert(
+                        parent.as_ref(),
+                        &tr!("Couldn’t start the shared daemon"),
+                        &e,
+                    )
+                    .await;
                 }
             });
         });

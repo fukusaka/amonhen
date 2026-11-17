@@ -245,7 +245,9 @@ pub fn apply(actions: &Rc<Actions>, mut paths: Vec<PathBuf>) {
                 Some(e) => e.to_owned(),
                 None => tr!("There are no changes in the patch."),
             };
-            actions.alert(&tr!("Can’t Read the Patch"), &detail).await;
+            actions
+                .alert(&tr!("Couldn’t apply the patch"), &detail)
+                .await;
             return;
         }
         confirm(&actions, &target, &branch, summary, &patches, paths).await;

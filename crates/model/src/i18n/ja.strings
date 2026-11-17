@@ -560,7 +560,6 @@
 "Discard" = "捨てる";
 "Mark {path} as resolved with {count} conflicts left?" = "{path} にコンフリクトが {count} 残っていますが、解決済みにしますか？";
 "The conflict markers stay in the file." = "コンフリクトのマーカーはファイルに残ります。";
-"Can’t open the merge editor" = "マージエディタを開けません";
 "Current (your branch)" = "Current（今のブランチ）";
 "Result (editable)" = "Result（結果、編集できる）";
 "Incoming (being merged in)" = "Incoming（取り込む側）";
@@ -610,7 +609,6 @@
 "Clear" = "消す";
 "Opens History right away next time. Cleared, it is read from git again." = "次に開くとき History をすぐ出します。消すと git から読み直します。";
 "Answers the same question again without asking the AI." = "同じ問い合わせには、AI に聞かずに前の結果を出します。";
-"Can’t clear the cache" = "キャッシュを消せません";
 "What each open repository’s History cache wrote since the app started (through the shared daemon, what the daemon wrote). It writes only what changed." = "開いているリポジトリの History のキャッシュが、アプリを起動してから書いたもの（共有の daemon 越しなら、daemon が書いたもの）。変わった所だけを書く。";
 "Performance" = "パフォーマンス";
 "Item" = "項目";
@@ -1025,7 +1023,6 @@
 "Choose the folder for the patches. Files with the same names are replaced." = "パッチを書き出すフォルダを選んでください。同じ名前のファイルは置き換えます。";
 "Choose patch files (.patch, .diff, .mbox, .eml)." = "パッチのファイル（.patch・.diff・.mbox・.eml）を選んでください。";
 "There are no changes in the patch." = "パッチに変更がありません。";
-"Can’t Read the Patch" = "パッチを読めません";
 "Apply “{subject}”?" = "「{subject}」を当てますか？";
 "Apply {count} Patches?" = "{count} 個のパッチを当てますか？";
 "Each patch becomes a commit on {branch} (git am)." = "パッチごとに {branch} のコミットになります（git am）。";
@@ -2334,3 +2331,12 @@
 "Branch to follow" = "追うブランチ";
 "Send" = "送る";
 "Don’t Send" = "送らない";
+
+/* 失敗の知らせ（docs/ux.md: 「Couldn’t <操作>」） */
+"Couldn’t clear the cache" = "キャッシュを消せませんでした";
+"Couldn’t list the ignored files" = "ignore されたファイルを読めませんでした";
+"Couldn’t list the branches to clean up" = "片付けるブランチを読めませんでした";
+"Couldn’t start the shared daemon" = "共有の daemon を起動できませんでした";
+"Couldn’t reload {path}" = "{path} を読み直せませんでした";
+"Couldn’t apply the patch" = "パッチを当てられませんでした";
+"Couldn’t open {path} in the merge editor" = "{path} をマージエディタで開けませんでした";

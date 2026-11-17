@@ -444,7 +444,12 @@ impl Actions {
             let reply = crate::sheets::run(&target.repo, json!({ "op": "ignoredFiles" })).await;
             let parent = crate::sheets::parent(&this);
             if let Some(error) = reply["error"].as_str() {
-                return crate::sheets::alert(parent.as_ref(), error, "").await;
+                return crate::sheets::alert(
+                    parent.as_ref(),
+                    &tr!("Couldn’t list the ignored files"),
+                    error,
+                )
+                .await;
             }
             let paths: Vec<String> = reply["info"]["paths"]
                 .as_array()
@@ -545,7 +550,12 @@ impl Actions {
             .await;
             let parent = crate::sheets::parent(&this);
             if let Some(error) = reply["error"].as_str() {
-                return crate::sheets::alert(parent.as_ref(), error, "").await;
+                return crate::sheets::alert(
+                    parent.as_ref(),
+                    &tr!("Couldn’t list the branches to clean up"),
+                    error,
+                )
+                .await;
             }
             let info = &reply["info"];
             let base = info["base"].as_str().unwrap_or("main").to_owned();
@@ -1008,6 +1018,7 @@ impl Actions {
                 dropdown.upcast_ref(),
                 dropdown.upcast_ref(),
                 ok,
+                None,
             )
             .await
         {

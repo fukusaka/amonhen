@@ -486,7 +486,7 @@ fn cache_row(
             glib::spawn_future_local(async move {
                 crate::sheets::alert(
                     parent.as_ref(),
-                    &tr!("Can’t clear the cache"),
+                    &tr!("Couldn’t clear the cache"),
                     &e.to_string(),
                 )
                 .await;
