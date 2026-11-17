@@ -54,7 +54,7 @@ jobs:
       contents: read # コミットを取ってくる
     env:
       GIT_VERSION: 2.23.4
-      GIT_SHA256: d008bf4461f7cf92405a67851456496e5e5f6c495064c1058d2de6a390d8bb60
+      GIT_COMMIT: d60b6a96f087ea5ad530b71096a604c993fd9e71 # git/git の v2.23.4
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -68,16 +68,25 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/git-minimum
-          key: git-${{ env.GIT_VERSION }}-${{ runner.os }}-${{ runner.arch }}
+          key: git-${{ env.GIT_COMMIT }}-${{ runner.os }}-${{ runner.arch }}
+      # ソースは GitHub の git/git から、コミットを決めて取る（GitHub の外には取りに行かない）。
+      - if: steps.git-cache.outputs.cache-hit != 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: git/git
+          ref: ${{ env.GIT_COMMIT }}
+          path: git-src
+          persist-credentials: false
       - if: steps.git-cache.outputs.cache-hit != 'true'
         run: |
-          curl -sSfLO "https://mirrors.edge.kernel.org/pub/software/scm/git/git-$GIT_VERSION.tar.xz"
-          echo "$GIT_SHA256  git-$GIT_VERSION.tar.xz" | sha256sum -c -
-          tar xf "git-$GIT_VERSION.tar.xz"
+          # タグのない checkout なので、版は `version` に書いて決める（配布の tar と同じ）。
+          echo "$GIT_VERSION" > git-src/version
           # 試験に要らないもの（HTTP・翻訳・Perl・Python・Tcl/Tk）は外す。C の規格は C17 に決める: 今の gcc の
           # 既定（C23）では `thread_local` が予約語で、この版の git（`struct thread_local`）はコンパイルできない。
-          make -C "git-$GIT_VERSION" -j"$(nproc)" prefix="$HOME/git-minimum" CFLAGS="-g -O2 -std=gnu17" \
+          make -C git-src -j"$(nproc)" prefix="$HOME/git-minimum" CFLAGS="-g -O2 -std=gnu17" \
             NO_CURL=1 NO_EXPAT=1 NO_GETTEXT=1 NO_PERL=1 NO_PYTHON=1 NO_TCLTK=1 install
+          # 作り終えたら消す（リポジトリの中に別のリポジトリを残さない）。
+          rm -rf git-src
       # 試験は手元の git の設定を GIT_CONFIG_GLOBAL で読ませないが、これは git 2.32 からなので、HOME を空にする。
       - run: |
           export CARGO_HOME="$HOME/.cargo" RUSTUP_HOME="$HOME/.rustup"
