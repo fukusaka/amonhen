@@ -66,7 +66,7 @@ pub struct Detail {
 }
 
 /// どのくらい前か（GTK4 版の `ago`）。
-fn ago(time: i64) -> String {
+pub fn ago(time: i64) -> String {
     const MIN: i64 = 60;
     const HOUR: i64 = 60 * MIN;
     const DAY: i64 = 24 * HOUR;

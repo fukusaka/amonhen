@@ -86,6 +86,8 @@ struct Root {
     /// タグのリモートでの様子（コアの `tagRemotes` の info。リモートと読んだ時刻、タグごとの same・different・
     /// missing）。
     tag_remotes: Value,
+    /// Pull・Push のダイアログのコミットの一覧（見出し・数・(oid, 件名, 作者, 時刻)・消えるものか）。
+    sync_lists: Vec<SyncList>,
     /// stash の詳しい中身（名前 → 中身。ref が変わるたびに読み直す）。
     stash_details: std::collections::HashMap<String, crate::stashes::Detail>,
     /// ほかの worktree の変更の数（パス → 数）。
@@ -622,6 +624,8 @@ enum Message {
     CloseActivity,
     /// Repositories の操作。
     Repos(crate::repositories::Event),
+    /// Pull・Push のダイアログのコミットの一覧を読んだ。
+    SyncLists(Vec<SyncList>),
     /// stash の詳しい中身を読んだ。
     StashDetails(std::collections::HashMap<String, crate::stashes::Detail>),
     /// ほかの worktree の変更を数える（true なら全部を数え直す）と、その答え（パスと数）。
@@ -785,6 +789,7 @@ impl Component for Root {
             tag_remotes: Value::Null,
             worktree_counts: std::collections::HashMap::new(),
             stash_details: std::collections::HashMap::new(),
+            sync_lists: Vec::new(),
             submodules: Value::Null,
             subtrees: Value::Null,
             repositories: None,
@@ -893,6 +898,11 @@ impl Component for Root {
             }
             Message::TagRemotes(info) => self.tag_remotes = info,
             Message::StashDetails(details) => self.stash_details = details,
+            Message::SyncLists(lists) => {
+                if matches!(self.dialog, Some(Dialog::Pull { .. } | Dialog::Push { .. })) {
+                    self.sync_lists = lists;
+                }
+            }
             Message::Submodules(states) => self.submodules = states,
             Message::Subtrees(info) => self.subtrees = info,
             Message::FormField(index, text) => {
@@ -917,7 +927,10 @@ impl Component for Root {
             Message::Commit(info, extras) => self.info = Some((info, extras)),
             Message::Failed(e) => self.error = Some(e),
             Message::Command(id) if id == "undo" => self.undo(context),
-            Message::Command(id) if id == "pull" => self.pull(),
+            Message::Command(id) if id == "pull" => {
+                self.pull();
+                self.load_sync_lists(context);
+            }
             Message::Command(id) if id == "new-branch" => {
                 // 選んでいるコミットから（なければ今のブランチから。GTK4 版の `start_point`）。
                 let start = self
@@ -958,8 +971,14 @@ impl Component for Root {
                 }
                 _ => {}
             },
-            Message::Command(id) if id == "push" => self.push(false),
-            Message::Command(id) if id == "force-push" => self.push(true),
+            Message::Command(id) if id == "push" => {
+                self.push(false);
+                self.load_sync_lists(context);
+            }
+            Message::Command(id) if id == "force-push" => {
+                self.push(true);
+                self.load_sync_lists(context);
+            }
             Message::PullSource(Some(index)) => {
                 if let Some(Dialog::Pull { source, .. }) = &mut self.dialog {
                     *source = index;
@@ -2630,7 +2649,10 @@ impl Component for Root {
                             .cloned()
                     });
                     match entry {
-                        Some(entry) => self.push_branch(entry, false),
+                        Some(entry) => {
+                            self.push_branch(entry, false);
+                            self.load_sync_lists(context);
+                        }
                         None => beep(),
                     }
                 } else if let Some(name) = key.strip_prefix("fast-forward:") {
@@ -5497,6 +5519,7 @@ impl Root {
                                 .items_source(modes)
                                 .selected_index(*mode)
                                 .on_selection_changed(context.callback(Message::PullMode)),
+                            self.sync_lists_view(),
                         )),
                     )
             }
@@ -5520,9 +5543,12 @@ impl Root {
                     dialog.primary_button_text(if *replace { "Force Push" } else { "Push" })
                 };
                 dialog.content(
-                    TextBlock::new()
-                        .text(message.clone())
-                        .text_wrapping(TextWrapping::Wrap),
+                    StackPanel::new().spacing(6.0).children((
+                        TextBlock::new()
+                            .text(message.clone())
+                            .text_wrapping(TextWrapping::Wrap),
+                        self.sync_lists_view(),
+                    )),
                 )
             }
             Some(Dialog::Publish {
@@ -7026,6 +7052,165 @@ impl Root {
             message,
             command,
         });
+    }
+
+    /// 出した Pull・Push のダイアログに並べるコミットの一覧を裏で読む（GTK4 版の `commit_lists`。取り込むもの・
+    /// 手元にだけあるもの、送るもの・上流が失うもの）。
+    fn load_sync_lists(&mut self, context: &ComponentContext<Self>) {
+        self.sync_lists.clear();
+        let (repo, lists) = match &self.dialog {
+            Some(Dialog::Pull { repo, sources, .. }) if sources.is_empty() => {
+                let Some(upstream) = self.head_entry().and_then(|e| e.detail.clone()) else {
+                    return;
+                };
+                (
+                    repo.clone(),
+                    vec![
+                        (
+                            tr!("Commits to pull"),
+                            "HEAD".to_owned(),
+                            upstream.clone(),
+                            false,
+                        ),
+                        (tr!("Commits only here"), upstream, "HEAD".to_owned(), false),
+                    ],
+                )
+            }
+            Some(Dialog::Push {
+                repo,
+                remote,
+                branch,
+                remote_branch,
+                replace,
+                diverged,
+                ..
+            }) => {
+                let upstream = format!("{remote}/{remote_branch}");
+                let mut lists = vec![(
+                    tr!("Commits to send"),
+                    upstream.clone(),
+                    branch.clone(),
+                    false,
+                )];
+                if *replace || *diverged {
+                    lists.push((
+                        tr!("Commits {upstream} will lose", upstream = &upstream),
+                        branch.clone(),
+                        upstream,
+                        true,
+                    ));
+                }
+                (repo.clone(), lists)
+            }
+            _ => return,
+        };
+        context.spawn_background(move |_| {
+            let lists = lists
+                .into_iter()
+                .map(|(title, base, tip, warn)| {
+                    let command = json!({ "op": "between", "base": base, "tip": tip, "limit": 20 });
+                    let reply: Value = serde_json::from_str(&repo.run_json(&command.to_string()))
+                        .unwrap_or_default();
+                    let info = &reply["info"];
+                    SyncList {
+                        title,
+                        count: info["count"].as_u64().unwrap_or(0),
+                        commits: info["commits"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .map(|c| {
+                                (
+                                    c["oid"].as_str().unwrap_or_default().to_owned(),
+                                    c["subject"].as_str().unwrap_or_default().to_owned(),
+                                    c["author"].as_str().unwrap_or_default().to_owned(),
+                                    c["time"].as_i64().unwrap_or(0),
+                                )
+                            })
+                            .collect(),
+                        warn,
+                    }
+                })
+                .collect();
+            Message::SyncLists(lists)
+        });
+    }
+
+    /// Pull・Push のダイアログのコミットの一覧（空の一覧は出さない。消えるものは赤）。
+    fn sync_lists_view(&self) -> View {
+        let lists = self.sync_lists.iter().filter(|l| l.count > 0).map(|list| {
+            let red = Color::rgb(0xc0, 0x1c, 0x28);
+            let header = TextBlock::new()
+                .text(format!("{} ({})", list.title, list.count))
+                .font_size(13.0)
+                .margin(Thickness::new(0.0, 6.0, 0.0, 2.0));
+            let header = if list.warn {
+                header.foreground(Brush::Solid(red))
+            } else {
+                header
+            };
+            let rows = list.commits.iter().map(|(oid, subject, author, time)| {
+                let subject = TextBlock::new()
+                    .text(subject.clone())
+                    .text_trimming(TextTrimming::CharacterEllipsis)
+                    .grid_column(1);
+                let subject = if list.warn {
+                    subject.foreground(Brush::Solid(red))
+                } else {
+                    subject
+                };
+                (
+                    oid.clone(),
+                    Grid::new()
+                        .columns([
+                            GridLength::Pixel(70.0),
+                            GridLength::Star(1.0),
+                            GridLength::Auto,
+                        ])
+                        .children((
+                            TextBlock::new()
+                                .text(oid[..oid.len().min(8)].to_owned())
+                                .font_size(12.0)
+                                .opacity(0.6)
+                                .grid_column(0),
+                            subject,
+                            TextBlock::new()
+                                .text(format!("{author} · {}", crate::stashes::ago(*time)))
+                                .font_size(11.0)
+                                .opacity(0.6)
+                                .margin(Thickness::new(8.0, 0.0, 0.0, 0.0))
+                                .grid_column(2),
+                        )),
+                )
+            });
+            let mut items: Vec<(String, View)> = rows.collect();
+            let more = list.count.saturating_sub(list.commits.len() as u64);
+            if more > 0 {
+                items.push((
+                    "more".to_owned(),
+                    TextBlock::new()
+                        .text(tr!("and {count} more", count = more))
+                        .font_size(11.0)
+                        .opacity(0.6)
+                        .into(),
+                ));
+            }
+            (
+                list.title.clone(),
+                StackPanel::new().children((
+                    header,
+                    ScrollViewer::new().max_height(8.0 * 22.0).content(
+                        StackPanel::new()
+                            .spacing(2.0)
+                            .children((View::keyed_fragment(items),)),
+                    ),
+                )),
+            )
+        });
+        let lists: Vec<(String, View)> = lists.collect();
+        StackPanel::new()
+            .width(460.0)
+            .children((View::keyed_fragment(lists),))
     }
 
     /// 今のブランチの、ref の一覧の行（上流は `detail`、上流との差は `ahead`・`behind`）。
@@ -9577,6 +9762,17 @@ fn attach_working_keys(element: &IInspectable) -> windows_core_reactor::Result<(
     })?;
     REVOKERS.with(|r| r.borrow_mut().push(revoker));
     Ok(())
+}
+
+/// Pull・Push のダイアログのコミットの一覧の 1 つ（コアの `between` の答え）。
+#[derive(Clone)]
+struct SyncList {
+    title: String,
+    count: u64,
+    /// (oid, 件名, 作者, 時刻)。新しい順。
+    commits: Vec<(String, String, String, i64)>,
+    /// 消えるもの（赤で出す）。
+    warn: bool,
 }
 
 /// `Dialog::Form` の答えをどの命令にするか（GTK4 版の `submodulesheet`）。
