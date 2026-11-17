@@ -453,8 +453,33 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
             .tooltip(tip)
             .menu(Menu::new(items, callbacks.message_menu.clone()))
     };
+    // 件名の文字数（50 を超えたら黄、72 を超えたら橙。git の慣習。空なら出さない。GTK4 版と同じ）。
+    let length = input.summary.chars().count();
+    let count = TextBlock::new()
+        .text(if length == 0 {
+            String::new()
+        } else {
+            length.to_string()
+        })
+        .font_size(12.0)
+        .vertical_alignment(VerticalAlignment::Center)
+        .margin(Thickness::new(6.0, 0.0, 2.0, 0.0))
+        .grid_column(1);
+    let count = match length {
+        n if n > 72 => count.foreground(Brush::Solid(Color::rgb(0xe6, 0x61, 0x00))),
+        n if n > 50 => count.foreground(Brush::Solid(Color::rgb(0xc4, 0x90, 0x00))),
+        _ => count.opacity(0.45),
+    }
+    .tooltip(tr!(
+        "Length of the summary (yellow over 50, orange over 72)"
+    ));
     let summary = Grid::new()
-        .columns([GridLength::Star(1.0), GridLength::Auto, GridLength::Auto])
+        .columns([
+            GridLength::Star(1.0),
+            GridLength::Auto,
+            GridLength::Auto,
+            GridLength::Auto,
+        ])
         .children((
             TextBox::new()
                 .element_ref(callbacks.summary_box)
@@ -462,17 +487,18 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
                 .placeholder_text("Summary")
                 .grid_column(0)
                 .on_text_changed(callbacks.summary),
+            count,
             menu_button(
                 "🕘",
                 tr!("Recent commit messages"),
                 recent_menu(input.recent),
-                1,
+                2,
             ),
             menu_button(
                 "+",
                 tr!("Insert a Conventional Commits type, Co-authored-by or Signed-off-by"),
                 insert_menu(input.recent),
-                2,
+                3,
             ),
         ));
     let message = StackPanel::new().spacing(6.0).grid_row(1).children((
