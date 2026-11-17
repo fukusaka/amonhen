@@ -349,6 +349,8 @@ enum Event {
     Working(Box<WorkingShown>),
     /// History の検索の答え（History の世代、問い合わせ、一致した行）。
     Search(u64, String, Result<Vec<u32>, String>),
+    /// 一致したコミットだけの History（元の History の世代、作った History、その行の ref の印、元の一致）。
+    Filtered(u64, Arc<HistorySnapshot>, Labels, Vec<u32>),
     /// 署名の検証の結果（History の世代）。
     Signatures(u64, Vec<(amonhen_model::Oid, Signature)>),
     Chunk(u64, u32, Chunk),
@@ -367,6 +369,11 @@ pub struct Data {
     pub working_changed: bool,
     /// 今の History の行の、ref のラベル。
     pub labels: Labels,
+    /// 一致したコミットだけを出している間の、元の History とその一致・ref の印（検索の欄の Show Only Matching
+    /// Commits。GTK4 版の `search::apply_filter`）。探すのはいつも元の History。
+    base: Option<(Arc<HistorySnapshot>, Vec<u32>, Labels)>,
+    /// 一致したコミットだけを出したい（一致が届いたら作る）。
+    matching_only: bool,
     /// 署名の検証の結果と、検証している・これから検証するコミット（見えている行のものだけ、裏で）。
     pub signatures: HashMap<amonhen_model::Oid, Signature>,
     verifying: HashSet<amonhen_model::Oid>,
@@ -584,6 +591,8 @@ impl Data {
             worktree_heads: Vec::new(),
             elsewhere: HashSet::new(),
             matches: Vec::new(),
+            base: None,
+            matching_only: false,
             multi: Vec::new(),
             selection_seq: 0,
             searching: None,
@@ -613,9 +622,71 @@ impl Data {
         let _ = self.changed_tx.send(all);
     }
 
+    /// 出す History を替える（行の番号が変わるので、行ごとのものは捨てる）。
+    fn show(&mut self, history: Arc<HistorySnapshot>, labels: Labels, matches: Vec<u32>) {
+        self.history = Some(history);
+        self.history_changed = true;
+        self.labels = labels;
+        self.place_worktrees();
+        // 署名の結果はコミットのものなので残すが、検証中のものは新しい世代で頼み直す。
+        self.verifying.clear();
+        self.matches = matches;
+        self.multi.clear();
+        self.commit = None;
+        self.commit_wanted = None;
+        self.chunks.clear();
+        self.loading.clear();
+    }
+
+    /// 探す History（一致したコミットだけを出している間も、元の History）。
+    fn searched(&self) -> Option<&Arc<HistorySnapshot>> {
+        self.base
+            .as_ref()
+            .map(|(h, _, _)| h)
+            .or(self.history.as_ref())
+    }
+
+    /// 一致したコミットだけを出しているか。
+    pub fn is_filtered(&self) -> bool {
+        self.base.is_some()
+    }
+
+    /// 一致したコミットだけを出すか（一致がなければ元の History のまま。GTK4 版と同じ）。
+    pub fn set_matching_only(&mut self, on: bool) {
+        self.matching_only = on;
+        if !on {
+            if let Some((history, matches, labels)) = self.base.take() {
+                self.show(history, labels, matches);
+            }
+            return;
+        }
+        if self.base.is_none() {
+            let matches = self.matches.clone();
+            self.filter(matches);
+        }
+    }
+
+    /// 一致したコミットだけの History を裏で作る（linux の 25 万件で 50 ms ほど。GTK4 版と同じく裏で）。
+    fn filter(&mut self, matches: Vec<u32>) {
+        let (Some(repo), Some(base)) = (self.repo.clone(), self.searched().cloned()) else {
+            return;
+        };
+        if matches.is_empty() {
+            return;
+        }
+        let refs = self.refs.clone();
+        let (tx, wake) = (self.tx.clone(), self.wake.clone());
+        std::thread::spawn(move || {
+            let filtered = repo.history_matching(&base, &matches);
+            let labels = refs.map_or_else(Labels::new, |r| labels(&filtered, &r.refs));
+            let _ = tx.send(Event::Filtered(base.generation, filtered, labels, matches));
+            wake();
+        });
+    }
+
     /// History を `query`（コアの問い合わせの書き方）で探す。答えは `search` に届く。
     pub fn search(&mut self, query: String) {
-        let (Some(repo), Some(history)) = (self.repo.clone(), self.history.clone()) else {
+        let (Some(repo), Some(history)) = (self.repo.clone(), self.searched().cloned()) else {
             return;
         };
         self.searching = Some(query.clone());
@@ -831,19 +902,9 @@ impl Data {
                         continue;
                     }
                     self.repo = Some(repo);
-                    self.history = Some(history);
-                    self.history_changed = true;
-                    self.labels.clear();
-                    self.place_worktrees();
-                    // 署名の結果はコミットのものなので残すが、検証中のものは新しい世代で頼み直す。
-                    self.verifying.clear();
-                    // 行の番号が変わるので、検索の一致も捨てる（探し直すのは FE）。
-                    self.matches.clear();
-                    self.multi.clear();
-                    self.commit = None;
-                    self.commit_wanted = None;
-                    self.chunks.clear();
-                    self.loading.clear();
+                    // 新しい History では、一致したコミットだけの History も作り直す（探し直すのは FE）。
+                    self.base = None;
+                    self.show(history, Labels::new(), Vec::new());
                     changed = true;
                 }
                 Event::Chunk(generation, index, chunk) => {
@@ -877,6 +938,10 @@ impl Data {
                         .is_some_and(|h| h.generation == generation)
                     {
                         self.labels = labels;
+                    } else if let Some((h, _, base_labels)) = &mut self.base
+                        && h.generation == generation
+                    {
+                        *base_labels = labels;
                     }
                     self.refs = Some(refs);
                     changed = true;
@@ -928,15 +993,19 @@ impl Data {
                     }
                 }
                 Event::Search(generation, query, rows) => {
-                    let current = self
-                        .history
-                        .as_ref()
-                        .is_some_and(|h| h.generation == generation);
+                    let current = self.searched().is_some_and(|h| h.generation == generation);
                     if current && self.searching.as_deref() == Some(query.as_str()) {
                         self.searching = None;
+                        // 一致したコミットだけを出している間に探し直したら、元の History に戻してから作り直す。
+                        if let Some((history, _, labels)) = self.base.take() {
+                            self.show(history, labels, Vec::new());
+                        }
                         self.search = Some(match rows {
                             Ok(rows) => {
                                 self.matches = rows;
+                                if self.matching_only {
+                                    self.filter(self.matches.clone());
+                                }
                                 SearchDone::Found(query)
                             }
                             Err(e) => {
@@ -944,6 +1013,21 @@ impl Data {
                                 SearchDone::Failed(query, e)
                             }
                         });
+                        changed = true;
+                    }
+                }
+                Event::Filtered(generation, filtered, labels, matches) => {
+                    let current = self
+                        .history
+                        .as_ref()
+                        .is_some_and(|h| h.generation == generation);
+                    if current && self.matching_only && self.base.is_none() {
+                        let base = self.history.clone().expect("History");
+                        let base_labels = std::mem::take(&mut self.labels);
+                        self.base = Some((base, matches, base_labels));
+                        // すべて一致なので塗らない（次・前は行を 1 つずつ。GTK4 版と同じ）。
+                        let rows = (0..filtered.graph.len() as u32).collect();
+                        self.show(filtered, labels, rows);
                         changed = true;
                     }
                 }

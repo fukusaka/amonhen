@@ -157,6 +157,9 @@ struct Root {
     search_open: bool,
     query: String,
     search_status: String,
+    /// 一致したコミットだけを出しているか、最後に探した問い合わせ（探すまでは切り替えを押せない）。
+    search_only: bool,
+    last_search: Option<String>,
     search_box: ElementRef<TextBox>,
     /// 検索の欄を開いた回数（開いた後にフォーカスとキーを付ける）。
     search_opened: u64,
@@ -834,6 +837,8 @@ enum Message {
     Query(String),
     /// 検索の欄で Enter（`true` なら Shift+Enter で前へ）。
     SearchSubmit(bool),
+    /// 一致したコミットだけを出すか。
+    SearchOnly(bool),
     CloseSearch,
     /// 件数の文字（「N / M」「No Matches」）。
     SearchStatus(String),
@@ -947,6 +952,8 @@ impl Component for Root {
             search_open: false,
             query: String::new(),
             search_status: String::new(),
+            search_only: false,
+            last_search: None,
             search_box: ElementRef::new(),
             search_opened: 0,
             working_file: None,
@@ -1359,11 +1366,26 @@ impl Component for Root {
             }
             Message::SearchSubmit(backwards) => {
                 let query = self.query.trim().to_owned();
+                self.last_search = (!query.is_empty()).then(|| query.clone());
                 with_history(|h| h.search(query, backwards));
+            }
+            Message::SearchOnly(on) => {
+                if self.search_only == on {
+                    return;
+                }
+                self.search_only = on;
+                with_history(|h| {
+                    h.session.data.set_matching_only(on);
+                    h.session.invalidate();
+                });
             }
             Message::CloseSearch => {
                 self.search_open = false;
                 self.search_status.clear();
+                self.last_search = None;
+                if std::mem::take(&mut self.search_only) {
+                    with_history(|h| h.session.data.set_matching_only(false));
+                }
                 with_history(|h| h.search(String::new(), false));
             }
             Message::SearchStatus(text) => self.search_status = text,
@@ -5713,7 +5735,12 @@ impl Component for Root {
                 })
                 .collect::<Vec<_>>();
             Grid::new()
-                .columns([GridLength::Auto, GridLength::Star(1.0), GridLength::Auto])
+                .columns([
+                    GridLength::Auto,
+                    GridLength::Star(1.0),
+                    GridLength::Auto,
+                    GridLength::Auto,
+                ])
                 .column_spacing(4.0)
                 .margin(Thickness::new(8.0, 4.0, 8.0, 4.0))
                 .grid_row(0)
@@ -5733,6 +5760,14 @@ impl Component for Root {
                         .margin(Thickness::new(8.0, 0.0, 4.0, 0.0))
                         .vertical_alignment(VerticalAlignment::Center)
                         .grid_column(2),
+                    // 一致したコミットだけを出す（GTK4 版・macOS 版の検索の欄の切り替え。探すまでは押せない）。
+                    ToggleButton::new()
+                        .is_checked(self.search_only)
+                        .is_enabled(self.last_search.is_some())
+                        .on_is_checked_changed(context.callback(Message::SearchOnly))
+                        .grid_column(3)
+                        .content(TextBlock::new().text("⊟"))
+                        .tooltip(tr!("Show Only Matching Commits")),
                 ))
         } else {
             View::empty()

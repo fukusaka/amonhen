@@ -594,8 +594,14 @@ impl Renderer {
         data.want(first.saturating_sub(screen)..(last + screen).min(count));
 
         // 検索で一致した行の背景（見えている分だけ）。
-        let from = data.matches.partition_point(|&r| r < first);
-        for &row in data.matches[from..].iter().take_while(|&&r| r < last) {
+        // 一致したコミットだけを出しているときは、すべて一致なので塗らない。
+        let matches: &[u32] = if data.is_filtered() {
+            &[]
+        } else {
+            &data.matches
+        };
+        let from = matches.partition_point(|&r| r < first);
+        for &row in matches[from..].iter().take_while(|&&r| r < last) {
             let top = row as f32 * row_height() - scroll_y;
             unsafe {
                 self.brush.SetColor(&MATCH);
