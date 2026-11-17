@@ -341,7 +341,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Operations（git の命令・出力・進み具合・取り消し） | ✓ | ✓ | ✓ | △ | △ | VSCode: Output のチャンネルの記録だけ。<br>CLI: `amonhen run`（`remoteActivity`・`cancelActivity`）から。<br>Windows: 出力は行の下に出す（詳細の欄はない） |
 | History（操作ログ・ここまで戻す） | ✓ | ✓ | ✓ | △ | △ | VSCode: Undo History… が Undo の記録を並べ、選んだところまで戻す。ほかの Activity はない。<br>CLI: `undo --list` が記録を出す。 |
 | Performance | ✓ | ✓ | — | n/a | n/a | VSCode: VSCode の出力（Amon Hen のログ）が代わり。 |
-| History のキャッシュの書き込み（リポジトリごとの大きさ・回数・量・最後の書き込み） | ✓ | ✓ | △ | — | △ | CLI: `amonhen run`（`historyCache`）。<br>Windows: Windows: 開いているリポジトリだけ。 |
+| History のキャッシュの書き込み（リポジトリごとの大きさ・回数・量・最後の書き込み） | ✓ | ✓ | ✓ | — | △ | CLI: `amonhen run`（`historyCache`）。<br>Windows: その窓のリポジトリ（1 つの窓に 1 つのリポジトリ）。 |
 | Events | ✓ | ✓ | — | n/a | n/a | VSCode: VSCode の出力（Amon Hen のログ）が代わり。 |
 | JSON で書き出す | ✓ | ✓ | ✓ | n/a | n/a | VSCode: VSCode の出力（Amon Hen のログ）が代わり。 |
 | Daemon のタブ（起動・停止・つながり） | ✓ | ✓ | — | ✓ | △ | VSCode: メインビューのページ（サイドバーの ⋯ とコマンドパレットの Show Daemon）。窓のつながりは手元の daemon だけ。<br>CLI: `daemon status / start / stop`。 |
