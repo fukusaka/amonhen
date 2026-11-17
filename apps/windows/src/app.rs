@@ -2926,7 +2926,7 @@ impl Component for Root {
                     if let Some(repo) = self.repo.clone() {
                         self.dialog = Some(Dialog::Patch {
                             repo,
-                            oids: vec![oid.to_owned()],
+                            oids: oid.split(',').map(str::to_owned).collect(),
                             single: crate::prefs::bool(PATCH_SINGLE_FILE),
                             cover: crate::prefs::bool(PATCH_COVER_LETTER),
                             version: String::new(),
@@ -8403,8 +8403,18 @@ impl Root {
                     format!("revert:{}", ids.join(",")),
                     tr!("Revert {count} Commits…", count = n),
                 ),
-                MenuItem::separator("-pick"),
             ];
+            // マージはパッチにできない（git format-patch は飛ばす）。押せない項目で残す。古い順に（GTK4 版と同じ）。
+            let title = tr!("Save {count} Commits as Patches…", count = n);
+            if self.multi.iter().any(|(_, merge)| *merge) {
+                items.push(MenuItem::disabled("patch-merge", title));
+            } else {
+                items.push(MenuItem::item(
+                    format!("patch:{}", oldest_first.join(",")),
+                    title,
+                ));
+            }
+            items.push(MenuItem::separator("-pick"));
             // 2 つなら、それぞれを先端とする 2 つの版として比べられる（rebase の前と後など）。
             if let [newer, older] = &ids[..] {
                 items.push(MenuItem::item(
