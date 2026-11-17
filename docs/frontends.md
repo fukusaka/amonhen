@@ -272,7 +272,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Feature | macOS | GTK4 | Windows | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
 | Full message, draggable panes, ⤢ to expand | ✓ | ✓ | △ | ✓ | n/a | Windows: The message and ⤢; the panes don't resize. |
-| Find inside the details | ✓ | ✓ | — | ✓ | n/a | VSCode: ⌘F searches the whole main view; diffs not loaded yet aren't searched. |
+| Find inside the details | ✓ | ✓ | △ | ✓ | n/a | VSCode: ⌘F searches the whole main view; diffs not loaded yet aren't searched.<br>Windows: The diff only (🔍 over it): matches highlighted, ↑ / ↓ to move; not the message, and no Ctrl+F. |
 | All files stacked (sticky headers, collapse, Viewed) | ✓ | ✓ | △ | ✓ | ✓ | CLI: `show`.<br>Windows: Stacked and collapsible, and Toggle Viewed in a file header's menu; no sticky headers. |
 | Changed files as a tree beside the diff | ✓ | ✓ | — | ✓ | n/a | VSCode: Tree / List above the files. |
 | File header menu (Blame, File History, copy path, open) | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: Blame, File History and Copy Path on the right-click; Open in VSCode's diff editor. |

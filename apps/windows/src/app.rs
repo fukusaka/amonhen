@@ -165,6 +165,11 @@ struct Root {
     working_hovered: Option<String>,
     last_search: Option<String>,
     search_box: ElementRef<TextBox>,
+    /// 差分の中を探す帯（開いているか、欄、探す文字、件数）。
+    diff_find_open: bool,
+    diff_find_box: ElementRef<TextBox>,
+    diff_find_query: String,
+    diff_find_status: String,
     /// Working Copy の一部だけ含めているチェック（キーごと）と、直前の画面で使ったキー。
     mixed_checks: RefCell<std::collections::HashMap<String, ElementRef<CheckBox>>>,
     mixed_used: RefCell<Vec<String>>,
@@ -844,6 +849,11 @@ enum Message {
     Query(String),
     /// 検索の欄で Enter（`true` なら Shift+Enter で前へ）。
     SearchSubmit(bool),
+    /// 差分の中を探す帯を開く・閉じる、探す文字、前・次へ、件数の文字。
+    DiffFindOpen(bool),
+    DiffFindQuery(String),
+    DiffFindStep(i32),
+    DiffFindStatus(String),
     /// Working Copy のファイルの行にマウスが載った。
     WorkingHover(String),
     /// 窓に落としたもの。
@@ -972,6 +982,10 @@ impl Component for Root {
             working_hovered: None,
             last_search: None,
             search_box: ElementRef::new(),
+            diff_find_open: false,
+            diff_find_box: ElementRef::new(),
+            diff_find_query: String::new(),
+            diff_find_status: String::new(),
             mixed_checks: RefCell::default(),
             mixed_used: RefCell::default(),
             search_opened: 0,
@@ -1389,6 +1403,29 @@ impl Component for Root {
                 with_history(|h| h.search(query, backwards));
             }
             Message::ExpandDetails(on) => self.details_expanded = on,
+            Message::DiffFindOpen(open) => {
+                self.diff_find_open = open;
+                if !open {
+                    self.diff_find_query.clear();
+                    self.diff_find_status.clear();
+                    with_history(|h| {
+                        h.find_in_diff(String::new(), 0);
+                    });
+                }
+            }
+            Message::DiffFindQuery(query) => {
+                self.diff_find_query = query.clone();
+                let mut status = String::new();
+                with_history(|h| status = h.find_in_diff(query, 0));
+                self.diff_find_status = status;
+            }
+            Message::DiffFindStep(step) => {
+                let query = self.diff_find_query.clone();
+                let mut status = String::new();
+                with_history(|h| status = h.find_in_diff(query, step));
+                self.diff_find_status = status;
+            }
+            Message::DiffFindStatus(status) => self.diff_find_status = status,
             Message::WorkingHover(path) => {
                 if self.working_hovered.as_deref() != Some(path.as_str()) {
                     self.working_hovered = Some(path);
@@ -5595,6 +5632,7 @@ impl Component for Root {
             };
             let view = Rc::new(RefCell::new(HistoryView {
                 session,
+                diff_query: String::new(),
                 root,
                 root_input: false,
                 sidebar,
@@ -5758,20 +5796,29 @@ impl Component for Root {
         };
         let right = Grid::new()
             .rows(if self.page == Page::WorkingCopy {
-                [GridLength::Auto, GridLength::Star(1.0)]
+                [GridLength::Auto, GridLength::Auto, GridLength::Star(1.0)]
             } else if self.details_expanded {
                 // ⤢: 詳細だけを右の列いっぱいに（差分を隠す。GTK4 版の `expand_button`）。
-                [GridLength::Star(1.0), GridLength::Pixel(0.0)]
+                [
+                    GridLength::Star(1.0),
+                    GridLength::Auto,
+                    GridLength::Pixel(0.0),
+                ]
             } else {
-                [GridLength::Pixel(240.0), GridLength::Star(1.0)]
+                [
+                    GridLength::Pixel(240.0),
+                    GridLength::Auto,
+                    GridLength::Star(1.0),
+                ]
             })
             .grid_column(2)
             .children((
                 self.top_of_diff(context),
+                self.diff_find_bar(context),
                 Grid::new()
                     .background(Brush::Solid(Color::transparent()))
                     .element_ref(&self.diff_area)
-                    .grid_row(1)
+                    .grid_row(2)
                     .children((SwapChainPanel::new().element_ref(&self.diff_panel),))
                     .menu(Menu::new(
                         self.diff_file_menu(),
@@ -10089,29 +10136,97 @@ impl Root {
                 .children((
                     ScrollViewer::new()
                         .content(details(self.info.as_ref().map(|(i, e)| (i, e.as_ref())))),
-                    ToggleButton::new()
-                        .is_checked(self.details_expanded)
-                        .on_is_checked_changed(context.callback(Message::ExpandDetails))
+                    StackPanel::new()
+                        .orientation(Orientation::Horizontal)
+                        .spacing(4.0)
                         .horizontal_alignment(HorizontalAlignment::Right)
                         .vertical_alignment(VerticalAlignment::Top)
                         .margin(Thickness::new(0.0, 4.0, 8.0, 0.0))
-                        .content(TextBlock::new().text("⤢"))
-                        .tooltip(tr!(
-                            "Expand the commit details to fill the right column (click again to restore)."
+                        .children((
+                            self.diff_find_button(context),
+                            ToggleButton::new()
+                                .is_checked(self.details_expanded)
+                                .on_is_checked_changed(context.callback(Message::ExpandDetails))
+                                .content(TextBlock::new().text("⤢"))
+                                .tooltip(tr!(
+                                    "Expand the commit details to fill the right column (click again to restore)."
+                                )),
                         )),
                 ));
         }
-        let Some(staged) = self.working_sides else {
-            return View::empty();
+        let sides: View = match self.working_sides {
+            Some(staged) => RadioButtons::new()
+                .max_columns(2)
+                .margin(Thickness::new(10.0, 0.0, 10.0, 0.0))
+                .items_source(vec!["Unstaged".to_owned(), "Staged".to_owned()])
+                .selected_index(usize::from(staged))
+                .on_selection_changed(context.callback(Message::WorkingSide))
+                .into(),
+            None => View::empty(),
         };
-        RadioButtons::new()
+        // 差分の中を探すボタンは右上に（Working Copy の差分にも）。
+        Grid::new()
             .grid_row(0)
-            .max_columns(2)
-            .margin(Thickness::new(10.0, 0.0, 10.0, 0.0))
-            .items_source(vec!["Unstaged".to_owned(), "Staged".to_owned()])
-            .selected_index(usize::from(staged))
-            .on_selection_changed(context.callback(Message::WorkingSide))
-            .into()
+            .columns([GridLength::Star(1.0), GridLength::Auto])
+            .children((
+                sides,
+                Border::new()
+                    .grid_column(1)
+                    .margin(Thickness::new(0.0, 2.0, 8.0, 2.0))
+                    .content(self.diff_find_button(context)),
+            ))
+    }
+
+    /// 差分の中を探す帯を開くボタン（GTK4 版の `find_button`。詳細の右上に置く）。
+    fn diff_find_button(&self, context: &ViewContext<Self>) -> View {
+        Button::new()
+            .on_click(context.callback(|()| Message::DiffFindOpen(true)))
+            .content(TextBlock::new().text("🔍"))
+            .tooltip(tr!("Find in the diff (Ctrl+F)"))
+    }
+
+    /// 差分の中を探す帯（GTK4 版の `difffind`: 欄、件数、前・次、Done）。
+    fn diff_find_bar(&self, context: &ViewContext<Self>) -> View {
+        if !self.diff_find_open {
+            return View::empty();
+        }
+        Grid::new()
+            .grid_row(1)
+            .columns([
+                GridLength::Star(1.0),
+                GridLength::Auto,
+                GridLength::Auto,
+                GridLength::Auto,
+                GridLength::Auto,
+            ])
+            .column_spacing(4.0)
+            .margin(Thickness::new(8.0, 4.0, 8.0, 4.0))
+            .children((
+                TextBox::new()
+                    .element_ref(&self.diff_find_box)
+                    .text(self.diff_find_query.clone())
+                    .placeholder_text(tr!("Search Diff"))
+                    .on_text_changed(context.callback(Message::DiffFindQuery)),
+                TextBlock::new()
+                    .grid_column(1)
+                    .text(self.diff_find_status.clone())
+                    .vertical_alignment(VerticalAlignment::Center)
+                    .margin(Thickness::new(4.0, 0.0, 4.0, 0.0)),
+                Button::new()
+                    .grid_column(2)
+                    .on_click(context.callback(|()| Message::DiffFindStep(-1)))
+                    .content(TextBlock::new().text("↑"))
+                    .tooltip(tr!("Previous")),
+                Button::new()
+                    .grid_column(3)
+                    .on_click(context.callback(|()| Message::DiffFindStep(1)))
+                    .content(TextBlock::new().text("↓"))
+                    .tooltip(tr!("Next")),
+                Button::new()
+                    .grid_column(4)
+                    .on_click(context.callback(|()| Message::DiffFindOpen(false)))
+                    .content(TextBlock::new().text(tr!("Done"))),
+            ))
     }
 
     fn working_copy_view(&self, context: &mut ViewContext<Self>) -> View {
@@ -11375,6 +11490,8 @@ impl DiffPane {
 
 struct HistoryView {
     session: Session,
+    /// 差分の中を探している文字（空なら探していない）。
+    diff_query: String,
     root: ElementRef<Grid>,
     /// 根にショートカットを付けた（付けるのを頼んだ）。
     root_input: bool,
@@ -11647,6 +11764,7 @@ impl HistoryView {
             self.menu_requested = true;
             self.sender.send(Message::OpenHistoryMenu);
         }
+        let mut diff_replaced = false;
         if let Some(commit) = &s.data.commit
             && self.shown != Some(commit.row)
         {
@@ -11657,6 +11775,7 @@ impl HistoryView {
             s.renderer.forget_diff();
             self.diff.scroll_y = 0.0;
             self.diff.dirty = true;
+            diff_replaced = true;
         }
         if std::mem::take(&mut s.data.extras_changed)
             && let Some(commit) = &s.data.commit
@@ -11678,6 +11797,29 @@ impl HistoryView {
             s.renderer.forget_diff();
             self.diff.scroll_y = 0.0;
             self.diff.dirty = true;
+            diff_replaced = true;
+        }
+        // 差分が替わったら、差分の中の検索をし直す（一致の数だけ。移るのは次・前を押したとき）。
+        if diff_replaced && !self.diff_query.is_empty() {
+            let view = if self.working_page {
+                s.data.working.as_ref().map(|w| &w.diff.view)
+            } else {
+                s.data.commit.as_ref().map(|c| &c.diff)
+            };
+            let found = view.map_or_else(Vec::new, |v| {
+                crate::render::find_in_diff(v, &self.diff_query)
+            });
+            let status = if found.is_empty() {
+                tr!("No Matches")
+            } else {
+                found.len().to_string()
+            };
+            s.renderer.diff_find = found;
+            s.renderer.diff_current = None;
+            self.sender.send(Message::DiffFindStatus(status));
+        } else if diff_replaced {
+            s.renderer.diff_find.clear();
+            s.renderer.diff_current = None;
         }
         if self.diff.dirty
             && let Some(surface) = self.diff.surface.as_mut()
@@ -11710,6 +11852,51 @@ impl HistoryView {
             std::process::exit(0);
         }
         Ok(())
+    }
+
+    /// 差分の中を `query` で探し、`step` だけ一致を移る（0 なら今見えている所から最初の一致）。件数の文字を返す。
+    fn find_in_diff(&mut self, query: String, step: i32) -> String {
+        if query != self.diff_query {
+            self.diff_query = query;
+            self.session.renderer.diff_current = None;
+        }
+        let rows = self.diff_rows();
+        let data = &self.session.data;
+        let view = if self.working_page {
+            data.working.as_ref().map(|w| &w.diff.view)
+        } else {
+            data.commit.as_ref().map(|c| &c.diff)
+        };
+        let found = view.map_or_else(Vec::new, |v| {
+            crate::render::find_in_diff(v, &self.diff_query)
+        });
+        self.diff.dirty = true;
+        let r = &mut self.session.renderer;
+        if found.is_empty() {
+            r.diff_find.clear();
+            r.diff_current = None;
+            return if self.diff_query.is_empty() {
+                String::new()
+            } else {
+                tr!("No Matches")
+            };
+        }
+        let n = found.len();
+        let top = (self.diff.scroll_y / DIFF_ROW_HEIGHT) as u32;
+        let index = match (step, r.diff_current) {
+            (0, _) | (_, None) => found.iter().position(|m| m.0 >= top).unwrap_or(0),
+            (s, Some(c)) => (c as i64 + i64::from(s)).rem_euclid(n as i64) as usize,
+        };
+        let row = found[index].0;
+        r.diff_find = found;
+        r.diff_current = Some(index);
+        // 今の一致の行が見えていなければ、上から 3 分の 1 の所へ。
+        let (row_top, height) = (row as f32 * DIFF_ROW_HEIGHT, self.diff.height());
+        if row_top < self.diff.scroll_y || row_top + DIFF_ROW_HEIGHT > self.diff.scroll_y + height {
+            self.diff.scroll_y = row_top - height / 3.0;
+        }
+        self.diff.scroll_by(0.0, rows);
+        format!("{} / {n}", index + 1)
     }
 
     /// History を探す。同じ問い合わせをもう探してあれば、選んでいる行から次（`backwards` なら前）の一致へ。空なら

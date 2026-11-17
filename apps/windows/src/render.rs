@@ -347,6 +347,9 @@ pub struct Renderer {
     lineage: Option<(u64, u32, amonhen_core::lineage::LineageWindow)>,
     /// 祖先が描く行まで届いていない（次のフレームで続ける）。
     pub lineage_pending: bool,
+    /// 差分の中の検索の一致（行、UTF-16 の始まりと終わり。行の文字の形の中の位置）と、今の一致。
+    pub diff_find: Vec<(u32, u32, u32)>,
+    pub diff_current: Option<usize>,
     /// shallow clone の境界のコミットの行（History の世代ごと）。
     boundary: (u64, std::collections::HashSet<u32>),
     /// `rows` を作ったときの行の項目（変わったら作り直す）。
@@ -483,6 +486,8 @@ impl Renderer {
                 rows: HashMap::new(),
                 lineage: None,
                 lineage_pending: false,
+                diff_find: Vec::new(),
+                diff_current: None,
                 boundary: (u64::MAX, std::collections::HashSet::new()),
                 rows_items: items::ALL,
                 labels: HashMap::new(),
@@ -1080,6 +1085,28 @@ impl Renderer {
                 self.diff_rows.insert(i, layout);
             }
             let layout = &self.diff_rows[&i];
+            // 差分の中の検索の一致（黄色、今の一致は橙。GTK4 版の差分の検索の帯）。
+            let from = self.diff_find.partition_point(|m| m.0 < i);
+            for (k, &(_, start, end)) in self.diff_find[from..]
+                .iter()
+                .enumerate()
+                .take_while(|(_, m)| m.0 == i)
+            {
+                let (left, right) = (x_of(layout, start)?, x_of(layout, end)?);
+                let base = if file { DIFF_TEXT_INSET } else { text_x };
+                let fill = if self.diff_current == Some(from + k) {
+                    rgba(1.0, 0.6, 0.1, 0.65)
+                } else {
+                    rgba(1.0, 0.85, 0.2, 0.55)
+                };
+                unsafe {
+                    self.brush.SetColor(&fill);
+                    self.d2d.FillRectangle(
+                        &rect(base + left, base + right.max(left + 2.0)),
+                        &self.brush,
+                    );
+                }
+            }
             // 削除行と追加行の組の中で、変わった単語の地。
             if let Some(ranges) = commit.highlights.get(&i) {
                 let fill = if row.kind == DiffRow::REMOVED {
@@ -1353,6 +1380,51 @@ impl Renderer {
             })
         }
     }
+}
+
+/// 差分の行から `query` を探す（大文字小文字を区別しない。GTK4 版の `find_all` と同じく、ファイルの見出しも含め
+/// すべての行から）。位置は行の文字の形（`draw_diff_rows` が作るもの）の中の UTF-16 の位置。
+pub fn find_in_diff(view: &amonhen_core::diff::DiffView, query: &str) -> Vec<(u32, u32, u32)> {
+    let needle: Vec<char> = query.chars().flat_map(char::to_lowercase).collect();
+    if needle.is_empty() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for (i, row) in view.rows.iter().enumerate() {
+        let text = String::from_utf8_lossy(view.strings.bytes(row.text));
+        // ファイルの見出しは前に「▾ 」が付く。
+        let prefix: u32 = if row.kind == amonhen_layout::DiffRow::FILE {
+            2
+        } else {
+            0
+        };
+        // 文字ごとの（小文字、UTF-16 の位置）。
+        let mut chars: Vec<(char, u32)> = Vec::new();
+        let mut at = prefix;
+        for c in text.chars() {
+            let lower: Vec<char> = c.to_lowercase().collect();
+            let lower = if lower.len() == 1 { lower[0] } else { c };
+            chars.push((lower, at));
+            at += c.len_utf16() as u32;
+        }
+        let mut k = 0;
+        while k + needle.len() <= chars.len() {
+            if chars[k..k + needle.len()]
+                .iter()
+                .zip(&needle)
+                .all(|((c, _), n)| c == n)
+            {
+                let end = chars
+                    .get(k + needle.len())
+                    .map_or(at, |&(_, position)| position);
+                out.push((i as u32, chars[k].1, end));
+                k += needle.len();
+            } else {
+                k += 1;
+            }
+        }
+    }
+    out
 }
 
 /// UTC の秒を、この機械の時間帯で `YYYY-MM-DD HH:MM` にする（History の行と同じ書き方）。
