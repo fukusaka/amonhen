@@ -831,6 +831,8 @@ enum Message {
     SyncLists(Vec<SyncList>, Vec<String>, Option<Value>),
     /// Push の画面で行を選んだ。
     PushRow(Option<usize>),
+    /// 選んだリポジトリを fetch する。
+    FetchRepositories(Vec<String>),
     /// 境目を動かした（新しい幅・高さ）・離した。
     SplitTo(Split, f64),
     SplitDone,
@@ -5162,51 +5164,42 @@ impl Component for Root {
                     command: Value::Array(vec![json!({ "op": "undo" }); count]),
                 });
             }
-            Message::Repos(event) => {
-                use crate::repositories::Action;
-                let Some(state) = self.repositories.as_mut() else {
-                    return;
-                };
-                match state.handle(event) {
-                    Action::None => {}
-                    Action::Close => {
-                        self.repositories = None;
-                        self.page = self.repositories_from;
-                    }
-                    Action::Scan(roots) => {
-                        context.spawn_background(move |_| {
-                            Message::Repos(crate::repositories::Event::Scanned(
-                                crate::repositories::scan(roots),
-                            ))
+            // 選んだ行の Fetch は、選んでいるリポジトリすべて（一覧の選択は部品から読む）。
+            Message::Repos(crate::repositories::Event::Menu(id)) if id.starts_with("fetch:") => {
+                let clicked = id["fetch:".len()..].to_owned();
+                let requested = self
+                    .repositories_list
+                    .request_native_element(move |result| {
+                        let selected = result
+                            .ok()
+                            .map(|element| xaml::selected_tags(&element))
+                            .unwrap_or_default();
+                        let locations = if selected.len() > 1 && selected.contains(&clicked) {
+                            selected
+                        } else {
+                            vec![clicked.clone()]
+                        };
+                        with_history(|h| {
+                            h.sender.send(Message::FetchRepositories(locations.clone()));
                         });
-                    }
-                    Action::Peek(locations) if locations.is_empty() => {}
-                    Action::Peek(locations) => {
-                        context.spawn_background(move |_| {
-                            Message::Repos(crate::repositories::Event::Peeked(
-                                crate::repositories::peek(locations),
-                            ))
-                        });
-                    }
-                    Action::Rename(location, name) => {
-                        self.dialog = Some(Dialog::RenameRepository { location, name });
-                        self.dialog_inputs += 1;
-                    }
-                    Action::Fetch(location) => {
-                        context.spawn_background(move |_| {
-                            let error = crate::repositories::fetch(&location);
-                            Message::Repos(crate::repositories::Event::Fetched(location, error))
-                        });
-                    }
-                    Action::NewGroup(location) => {
-                        self.dialog = Some(Dialog::NewGroup {
-                            location,
-                            name: String::new(),
-                        });
-                        self.dialog_inputs += 1;
-                    }
+                    });
+                if !requested {
+                    let location = id["fetch:".len()..].to_owned();
+                    self.repositories_event(
+                        crate::repositories::Event::Menu(format!("fetch:{location}")),
+                        context,
+                    );
                 }
             }
+            Message::FetchRepositories(locations) => {
+                for location in locations {
+                    self.repositories_event(
+                        crate::repositories::Event::Menu(format!("fetch:{location}")),
+                        context,
+                    );
+                }
+            }
+            Message::Repos(event) => self.repositories_event(event, context),
             Message::CloseActivity => {
                 self.activity = None;
                 ACTIVITY_TICK.with(|t| t.set(None));
@@ -10610,6 +10603,57 @@ impl Root {
                         buttons,
                     )),
             )
+    }
+
+    /// Repositories の画面の知らせを扱う（状態を変え、要る操作をする）。
+    fn repositories_event(
+        &mut self,
+        event: crate::repositories::Event,
+        context: &ComponentContext<Self>,
+    ) {
+        use crate::repositories::Action;
+        let Some(state) = self.repositories.as_mut() else {
+            return;
+        };
+        match state.handle(event) {
+            Action::None => {}
+            Action::Close => {
+                self.repositories = None;
+                self.page = self.repositories_from;
+            }
+            Action::Scan(roots) => {
+                context.spawn_background(move |_| {
+                    Message::Repos(crate::repositories::Event::Scanned(
+                        crate::repositories::scan(roots),
+                    ))
+                });
+            }
+            Action::Peek(locations) if locations.is_empty() => {}
+            Action::Peek(locations) => {
+                context.spawn_background(move |_| {
+                    Message::Repos(crate::repositories::Event::Peeked(
+                        crate::repositories::peek(locations),
+                    ))
+                });
+            }
+            Action::Rename(location, name) => {
+                self.dialog = Some(Dialog::RenameRepository { location, name });
+                self.dialog_inputs += 1;
+            }
+            Action::Fetch(location) => {
+                context.spawn_background(move |_| {
+                    let error = crate::repositories::fetch(&location);
+                    Message::Repos(crate::repositories::Event::Fetched(location, error))
+                });
+            }
+            Action::NewGroup(location) => {
+                self.dialog = Some(Dialog::NewGroup {
+                    location,
+                    name: String::new(),
+                });
+                self.dialog_inputs += 1;
+            }
+        }
     }
 
     fn show_page(&mut self, page: Page) {

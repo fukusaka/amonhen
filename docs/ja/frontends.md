@@ -95,7 +95,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 状態の列（ブランチ・変更・ahead/behind・最後のコミット・開いた時）、並べ替え、列の順の入れ替え | ✓ | ✓ | △ | n/a | n/a | Windows: 見出しを押して並べ替えられる。列の幅・並びは変えられない。 |
 | お気に入り・表示名・色のラベル | ✓ | ✓ | ✓ | n/a | n/a |  |
 | タブ・窓で開く、Finder（ファイル）・Terminal・エディタ | ✓ | ✓ | △ | n/a | n/a | GTK4: 知っているコードエディタと「その他…」で選んだプログラム以外は、inode/directory を宣言しているアプリだけがフォルダを開く。<br>Windows: エクスプローラー・Windows Terminal（なければ cmd）・Settings で選んだエディタ。タブはなく新しいウィンドウで開く。 |
-| 選んだリポジトリを Fetch | ✓ | ✓ | △ | n/a | n/a | Windows: 行のメニューから 1 つずつ。複数の行は選べない。 |
+| 選んだリポジトリを Fetch | ✓ | ✓ | ✓ | n/a | n/a | Windows: Ctrl・Shift で行を選び、選んだ行のメニューの Fetch で、選んだものすべてを fetch する。 |
 | Quick Open（あいまい検索） | ✓ | ✓ | ✓ | n/a | n/a | Windows: 新しいウィンドウで開く。 |
 | ツールバーのリポジトリ名で切り替える | ✓ | ✓ | — | ✓ | n/a | VSCode: Select Repository でワークスペースのリポジトリから選ぶ。 |
 | Clone（自分の GitHub のリポジトリから選ぶ） | ✓ | ✓ | △ | n/a | △ | VSCode: VSCode 自身の Git: Clone。<br>CLI: `clone <url>` だけ。<br>Windows: 自分の GitHub のリポジトリの一覧はない。clone したものは新しいウィンドウで開く。 |

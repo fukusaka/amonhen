@@ -6,7 +6,7 @@
 //! ブックマークは macOS 版・GTK4 版と同じ形の `bookmarks.json`（設定と同じフォルダ）。知らない鍵（自動 fetch・
 //! 窓の背景など）は読んだ JSON のまま書き戻す。窓にタブがないので、開くと新しい窓（別のプロセス）で開く。
 //!
-//! まだないもの: 列の並べ替え・幅、表示名の変更、SSH・daemon の場所、スキャンの深さ、一覧からの fetch。
+//! まだないもの: 列の並べ替え・幅、表示名の変更、SSH・daemon の場所、スキャンの深さ。
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -1347,7 +1347,9 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
         .selected
         .as_deref()
         .and_then(|s| shown.iter().position(|l| same(l, s)));
+    // Ctrl・Shift で複数選べる（選んだ行の右クリックの Fetch は、選んだものすべて。macOS 版と同じ）。
     let list = ListView::new()
+        .selection_mode(ListViewSelectionMode::Extended)
         .selected_index(index)
         .on_selection_changed(callbacks.selected)
         .collection_slot(ListViewSlot::Items, rows);

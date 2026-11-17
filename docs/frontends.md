@@ -95,7 +95,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Status columns (branch, changes, ahead/behind, last commit, opened), sortable and reorderable | ✓ | ✓ | △ | n/a | n/a | Windows: Sortable by clicking a header; columns can't be resized or reordered. |
 | Favorites, display name, color label | ✓ | ✓ | ✓ | n/a | n/a |  |
 | Open in a tab or window; Finder / Files, Terminal, Editor | ✓ | ✓ | △ | n/a | n/a | GTK4: An app other than a known code editor or a program chosen with Other… opens a folder only if it declares inode/directory.<br>Windows: Explorer, Windows Terminal (or cmd) and the editor chosen in Settings; no tabs, so a repository opens in a new window. |
-| Fetch the selected repositories | ✓ | ✓ | △ | n/a | n/a | Windows: One repository at a time from the row's menu; rows can't be multi-selected. |
+| Fetch the selected repositories | ✓ | ✓ | ✓ | n/a | n/a | Windows: Rows are selected with Ctrl or Shift, and Fetch on a selected row's menu fetches them all. |
 | Quick Open (fuzzy search) | ✓ | ✓ | ✓ | n/a | n/a | Windows: Opens in a new window. |
 | Repository name in the toolbar switches the repository | ✓ | ✓ | — | ✓ | n/a | VSCode: Select Repository picks among workspace repositories. |
 | Clone (choosing from your own GitHub repositories) | ✓ | ✓ | △ | n/a | △ | VSCode: VSCode's own Git: Clone.<br>CLI: `clone <url>` only.<br>Windows: No list of your own GitHub repositories; the clone opens in a new window. |
