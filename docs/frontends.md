@@ -276,7 +276,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | All files stacked (sticky headers, collapse, Viewed) | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `show`.<br>Windows: Toggle Viewed is in a file header's menu. |
 | Changed files as a tree beside the diff | ✓ | ✓ | △ | ✓ | n/a | VSCode: Tree / List above the files.<br>Windows: A list between the message and the diff (choosing a file scrolls to it); no tree. |
 | File header menu (Blame, File History, copy path, open) | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: Blame, File History and Copy Path on the right-click; Open in VSCode's diff editor. |
-| Switch to the single-file diff | ✓ | ✓ | — | ✓ | n/a | VSCode: One File / All Files above the files. |
+| Switch to the single-file diff | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: One File / All Files above the files.<br>Windows: View > All Files in One Diff; when off, the file chosen in the changed files list. |
 | Diff of a selection (range squashed, A..B / A...B, scattered) | ✓ | ✓ | ✓ | ✓ | △ | VSCode: With the engine.<br>CLI: `diff <rev> <rev>`. |
 | Actions on a selection (cherry-pick, revert, squash, copy IDs) | ✓ | ✓ | ✓ | ✓ | △ | VSCode: With the engine.<br>CLI: Via `amonhen run`.<br>Windows: Combining consecutive commits edits the message in a dialog, then rewrites at once (no edit mode). |
 | Signature popover | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: A Signature row in the details (status, explanation, signer and key), no popover. |

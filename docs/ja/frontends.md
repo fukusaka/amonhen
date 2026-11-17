@@ -276,7 +276,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | すべてのファイルを積む（貼り付く見出し・畳む・Viewed） | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `show`。<br>Windows: Viewed の切り替えはファイルの見出しのメニューにある。 |
 | 差分の横の、変更したファイルの木 | ✓ | ✓ | △ | ✓ | n/a | VSCode: 一覧の上の Tree / List で切り替える。<br>Windows: メッセージと差分の間に一覧（選ぶとそのファイルまでスクロール）。木はない。 |
 | ファイルの見出しのメニュー（Blame・File History・パスのコピー・開く） | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: 右クリックの Blame・File History・Copy Path と、VSCode の差分のエディターで開く。 |
-| 1 ファイルずつの差分に切り替える | ✓ | ✓ | — | ✓ | n/a | VSCode: 一覧の上の One File / All Files で切り替える。 |
+| 1 ファイルずつの差分に切り替える | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: 一覧の上の One File / All Files で切り替える。<br>Windows: 表示 > 全ファイルを 1 つの差分に並べる。切ると、変更ファイルの一覧で選んだファイル。 |
 | 選んだものの差分（範囲をまとめる・A..B / A...B・飛び飛び） | ✓ | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあるとき。<br>CLI: `diff <rev> <rev>`。 |
 | 選んだものの操作（cherry-pick・revert・squash・ID のコピー） | ✓ | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあるとき。<br>CLI: `amonhen run` から。<br>Windows: 続いたコミットをまとめるときは、ダイアログでメッセージを直してすぐ書き換える（編集モードはない）。 |
 | 署名のポップオーバー | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: 詳細の Signature の行（様子・説明・署名した人と鍵）。ポップオーバーはない。 |

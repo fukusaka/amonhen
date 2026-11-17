@@ -26,6 +26,8 @@ pub const COMPACT_HISTORY_ROWS: &str = "compactHistoryRows";
 pub const LAST_REPOSITORY: &str = "lastRepository";
 /// History でマージ済みブランチを折りたたむ（既定は折りたたまない。GTK4 版・macOS 版と同じ鍵）。
 pub const FOLD_MERGED_BRANCHES: &str = "foldMergedBranches";
+/// コミットの差分で全ファイルを縦に並べる（既定は並べる。macOS 版・GTK4 版と同じ鍵）。
+pub const STACKED_COMMIT_DIFF: &str = "stackedCommitDiff";
 /// 選んだコミットの祖先を強調する（既定は強調する。GTK4 版・macOS 版と同じ鍵）。
 pub const HIGHLIGHT_ANCESTORS: &str = "highlightAncestors";
 /// History の行に出す項目（`render::items` のビットを 10 進の文字で。GTK4 版・macOS 版と同じ鍵）。
@@ -64,7 +66,12 @@ fn load() -> Map<String, Value> {
 pub fn bool(key: &str) -> bool {
     VALUES
         .with(|v| v.borrow().get(key).and_then(Value::as_bool))
-        .unwrap_or(key == AUTO_MAGIC_MERGE || key == AUTO_BOOKMARK || key == HIGHLIGHT_ANCESTORS)
+        .unwrap_or(
+            key == AUTO_MAGIC_MERGE
+                || key == AUTO_BOOKMARK
+                || key == HIGHLIGHT_ANCESTORS
+                || key == STACKED_COMMIT_DIFF,
+        )
 }
 
 pub fn string(key: &str) -> Option<String> {
@@ -76,12 +83,12 @@ pub fn string(key: &str) -> Option<String> {
     })
 }
 
-/// 書いて保存する（書けなければ理由）。
 /// 数（なければ・読めなければ None）。
 pub fn number(key: &str) -> Option<f64> {
     string(key)?.parse().ok()
 }
 
+/// 書いて保存する（書けなければ理由）。
 pub fn set_bool(key: &str, value: bool) -> Result<(), String> {
     set(key, Value::Bool(value))
 }

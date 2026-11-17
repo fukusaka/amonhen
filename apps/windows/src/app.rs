@@ -1284,14 +1284,34 @@ impl Component for Root {
             }
             Message::PushRow(index) => self.select_push_row(index),
             Message::ChangedFiles(files) => {
+                // 1 ファイルずつなら、最初のファイルを出している。
+                let single = !crate::prefs::bool(crate::prefs::STACKED_COMMIT_DIFF);
+                self.changed_file = (single && files.len() > 1).then_some(0);
                 self.changed_files = files;
-                self.changed_file = None;
             }
             Message::ChangedFileSelected(index) => {
                 self.changed_file = index;
                 if let Some(index) = index {
                     with_history(|h| h.show_file(index));
                 }
+            }
+            // View の All Files in One Diff（切ると、コミットの差分は一覧で選んだファイルだけ。macOS 版・GTK4 版と
+            // 同じ）。
+            Message::Command(id) if id == "all-files-in-one-diff" => {
+                let stacked = !crate::prefs::bool(crate::prefs::STACKED_COMMIT_DIFF);
+                if let Err(e) = crate::prefs::set_bool(crate::prefs::STACKED_COMMIT_DIFF, stacked) {
+                    eprintln!("全ファイルを並べるかを覚えられない: {e}");
+                }
+                let selected = self.changed_file.unwrap_or(0);
+                self.changed_file = (!stacked && self.changed_files.len() > 1).then_some(selected);
+                with_history(|h| {
+                    if h.session.data.set_single_file(!stacked) {
+                        h.diff_replaced();
+                    }
+                    if !stacked {
+                        h.show_file(selected);
+                    }
+                });
             }
             Message::SplitTo(split, size) => match split {
                 Split::Sidebar => self.sidebar_width = size.clamp(160.0, 520.0),
@@ -5448,6 +5468,9 @@ impl Component for Root {
                 let now = match id {
                     "one-line-history" => crate::render::one_line(),
                     "highlight-ancestors" => crate::render::highlight_ancestors(),
+                    "all-files-in-one-diff" => {
+                        crate::prefs::bool(crate::prefs::STACKED_COMMIT_DIFF)
+                    }
                     "history-item-refs" => bit(crate::render::items::REFS),
                     "history-item-author" => bit(crate::render::items::AUTHOR),
                     "history-item-date" => bit(crate::render::items::DATE),
@@ -6058,7 +6081,11 @@ impl Component for Root {
             }
             PENDING_PLACE.with(|p| p.set(args.place.map(|r| (r, 0))));
             let session = match Session::new(&args, "app", started, Arc::new(|| {})) {
-                Ok(s) => s,
+                Ok(mut s) => {
+                    // View の All Files in One Diff を切っていれば、コミットの差分は 1 ファイルずつ。
+                    s.data.single_file = !crate::prefs::bool(crate::prefs::STACKED_COMMIT_DIFF);
+                    s
+                }
                 Err(e) => {
                     sender.send(Message::Failed(e));
                     return None;
@@ -13657,8 +13684,22 @@ impl HistoryView {
         }
     }
 
-    /// 差分を、`index` 番目のファイルの見出しまでスクロールする（変更ファイルの一覧で選んだ）。
+    /// 差分の中身を替えた（取っておいた行の文字を捨て、上から描き直す）。
+    fn diff_replaced(&mut self) {
+        self.session.renderer.forget_diff();
+        self.diff.scroll_y = 0.0;
+        self.diff.dirty = true;
+    }
+
+    /// 変更ファイルの一覧で `index` 番目を選んだ: 1 ファイルずつならそのファイルを出し、並べているなら見出しまで
+    /// スクロールする。
     fn show_file(&mut self, index: usize) {
+        if self.session.data.single_file {
+            if self.session.data.show_only(Some(index)) {
+                self.diff_replaced();
+            }
+            return;
+        }
         let row = self
             .session
             .data

@@ -205,6 +205,16 @@ pub fn menu_bar(on_click: impl Fn() -> Callback<String>) -> View {
                 "highlight-ancestors",
                 format!("{mark}{}", amonhen_model::tr!("Highlight Ancestors")),
             ));
+            // コミットの差分で全ファイルを並べるか（切ると、変更ファイルの一覧で選んだファイルだけ）。
+            let mark = if crate::prefs::bool(crate::prefs::STACKED_COMMIT_DIFF) {
+                "✓ "
+            } else {
+                ""
+            };
+            items.push(MenuItem::item(
+                "all-files-in-one-diff",
+                format!("{mark}{}", amonhen_model::tr!("All Files in One Diff")),
+            ));
             items.push(MenuItem::separator("-toolbar"));
             items.push(MenuItem::item(
                 "customize-toolbar",
