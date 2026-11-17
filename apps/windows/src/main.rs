@@ -59,6 +59,8 @@ pub struct Args {
     pub out: Option<PathBuf>,
     /// 開いたら Repositories の画面を出す（File > New Window で開いた窓）。
     pub repositories: bool,
+    /// リポジトリを引数で渡された。
+    pub repo_given: bool,
 }
 
 fn parse() -> Result<Args, String> {
@@ -79,6 +81,7 @@ fn parse() -> Result<Args, String> {
         },
         out: None,
         repositories: false,
+        repo_given: false,
     };
     let mut rows = measure::ROWS_PER_FRAME;
     let mut measuring = false;
@@ -110,7 +113,10 @@ fn parse() -> Result<Args, String> {
             // SAFETY: スレッドを作る前（引数を読んでいるところ）で、ほかに環境を読む者はいない。
             "--profile" => unsafe { std::env::set_var("AMONHEN_PROFILE", "1") },
             _ if a.starts_with("--") => return Err(format!("知らない引数: {a}")),
-            _ => parsed.repo = a.into(),
+            _ => {
+                parsed.repo = a.into();
+                parsed.repo_given = true;
+            }
         }
     }
     parsed.measure = measuring.then_some(rows);
@@ -135,13 +141,23 @@ fn main() {
     render::set_one_line(prefs::bool(prefs::COMPACT_HISTORY_ROWS));
     render::set_history_items(prefs::history_items());
     render::set_highlight_ancestors(prefs::bool(prefs::HIGHLIGHT_ANCESTORS));
-    let args = match parse() {
+    let mut args = match parse() {
         Ok(a) => a,
         Err(e) => {
             eprintln!("{e}");
             std::process::exit(2);
         }
     };
+    // 引数なしで起動したら、最後に閉じた窓のリポジトリを開く（なくなっていれば今のフォルダ）。
+    if !args.repo_given
+        && !args.repositories
+        && let Some(last) = prefs::string(prefs::LAST_REPOSITORY)
+        && std::path::Path::new(&last).join(".git").exists()
+    {
+        args.repo = last.into();
+    }
+    let opened = std::fs::canonicalize(&args.repo).unwrap_or_else(|_| args.repo.clone());
+    let app_window = args.host == "app";
     let result = match args.host.as_str() {
         "app" => app::run(args, started),
         "win32" => win32::run(args, started),
@@ -151,6 +167,14 @@ fn main() {
     if let Err(e) = result {
         eprintln!("{e}");
         std::process::exit(1);
+    }
+    // 閉じた窓のリポジトリを覚える（いちばん後に閉じた窓のものが残る）。
+    if app_window && opened.join(".git").exists() {
+        let path = opened.display().to_string();
+        let path = path.strip_prefix(r"\\?\").unwrap_or(&path);
+        if let Err(e) = prefs::set_string(prefs::LAST_REPOSITORY, path) {
+            eprintln!("最後のリポジトリを覚えられない: {e}");
+        }
     }
 }
 
