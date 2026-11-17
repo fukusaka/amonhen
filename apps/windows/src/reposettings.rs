@@ -307,6 +307,89 @@ pub fn operation_rows() -> Vec<OperationRow> {
     ]
 }
 
+/// 見出しの下の git の行（GTK4 版の左の列の git とリポジトリの形）: このリポジトリを動かす git の版と機械、shallow・
+/// partial clone・sparse checkout・git maintenance の札（説明はツールチップ）。
+fn git_line(form: Option<&Value>) -> View {
+    let Some(form) = form else {
+        return View::empty();
+    };
+    let git = TextBlock::new()
+        .text(format!(
+            "git {} · {}",
+            form["gitVersion"].as_str().unwrap_or("?"),
+            tr!("This computer")
+        ))
+        .font_size(12.0)
+        .opacity(0.6)
+        .vertical_alignment(VerticalAlignment::Center)
+        .tooltip(tr!(
+            "This computer’s git runs this repository. Choose it in Settings > Git."
+        ));
+    let mut items: Vec<(String, String)> = Vec::new();
+    if form["shallow"].as_bool() == Some(true) {
+        items.push((
+            "shallow clone".to_owned(),
+            tr!(
+                "Older history isn’t fetched. Fetch more in Fetching and Folders, or at the end of History."
+            ),
+        ));
+    }
+    if let Some(partial) = form["partial"].as_object() {
+        let title = match partial.get("filter").and_then(Value::as_str) {
+            Some(filter) => tr!("Contents fetched when needed ({filter})", filter = filter),
+            None => tr!("Contents fetched when needed"),
+        };
+        let remote = partial.get("remote").and_then(Value::as_str).unwrap_or("?");
+        items.push((
+            title,
+            tr!(
+                "Partial clone: file contents are fetched from {remote} when they’re needed.",
+                remote = remote
+            ),
+        ));
+    }
+    if let Some(sparse) = form["sparse"].as_object() {
+        let cone = sparse.get("cone").and_then(Value::as_bool) == Some(true);
+        let count = sparse
+            .get("folders")
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len);
+        let help = match (cone, count) {
+            (false, _) => {
+                tr!("Sparse checkout: only the files matching its patterns are checked out.")
+            }
+            (true, 0) => tr!("Sparse checkout: only the files at the top are checked out."),
+            (true, 1) => tr!("Sparse checkout: only 1 folder is checked out."),
+            (true, n) => tr!(
+                "Sparse checkout: only {count} folders are checked out.",
+                count = n
+            ),
+        };
+        items.push((tr!("Some folders only"), help));
+    }
+    if form["maintenance"].as_bool() == Some(true) {
+        items.push((
+            "maintenance".to_owned(),
+            tr!("Registered with git maintenance, which tidies it up in the background."),
+        ));
+    }
+    let tags = items.into_iter().map(|(title, help)| {
+        (
+            title.clone(),
+            Border::new()
+                .background(Brush::Solid(Color::rgb(0xec, 0xec, 0xec)))
+                .corner_radius(4.0)
+                .padding(Thickness::new(6.0, 1.0, 6.0, 1.0))
+                .content(TextBlock::new().text(title).font_size(11.0).opacity(0.75))
+                .tooltip(help),
+        )
+    });
+    StackPanel::new()
+        .orientation(Orientation::Horizontal)
+        .spacing(6.0)
+        .children((git, View::keyed_fragment(tags)))
+}
+
 /// git が古くて使えない行の理由（GTK4 版の `repoform::too_old`。`form` はコアの `repositoryForm` の info）。
 fn too_old(needed: &str, form: &Value) -> View {
     let version = form["gitVersion"].as_str().unwrap_or("?");
@@ -466,11 +549,12 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
         .margin(Thickness::new(10.0, 6.0, 8.0, 6.0))
         .grid_row(0)
         .children((
-            TextBlock::new()
-                .text(tr!("Repository Settings"))
-                .font_size(14.0)
-                .vertical_alignment(VerticalAlignment::Center)
-                .grid_column(0),
+            StackPanel::new().spacing(2.0).grid_column(0).children((
+                TextBlock::new()
+                    .text(tr!("Repository Settings"))
+                    .font_size(14.0),
+                git_line(state.form.as_ref()),
+            )),
             Button::new()
                 .on_click((callbacks.button)("close".to_owned()))
                 .grid_column(1)

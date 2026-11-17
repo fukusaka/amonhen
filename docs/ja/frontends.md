@@ -155,7 +155,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | LFS: 入っているか・パターン・Track Pattern…・ファイルの数 | ✓ | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
 | Keys and Values（git config の表、Basic / Customized / All、Combined / Levels） | ✓ | ✓ | △ | ✓ | △ | VSCode: Basic / Customized / All、Combined / Levels と検索。値は入力欄で変える。<br>CLI: `amonhen run`（`configList`・`configSet`）から。<br>Windows: 検索と、このリポジトリへの追加・削除。Basic / All・Levels はない。 |
 | 要る git の版を添えて行を無効にする | ✓ | ✓ | ✓ | ✓ | n/a | Windows: 取得とフォルダの行（partial clone・sparse checkout・maintenance） |
-| git の行にリポジトリの形（shallow・partial・sparse・maintenance） | ✓ | ✓ | — | ✓ | △ | CLI: `status` が shallow・partial・sparse を添える。 |
+| git の行にリポジトリの形（shallow・partial・sparse・maintenance） | ✓ | ✓ | ✓ | ✓ | △ | CLI: `status` が shallow・partial・sparse を添える。 |
 | 取得とフォルダ: shallow clone の履歴を取り足す（数・日付まで・すべて） | ✓ | ✓ | ✓ | ✓ | △ | CLI: `amonhen run`（`deepen`・`unshallow`）から。<br>Windows: 日付は YYYY-MM-DD で打つ（暦はない） |
 | 取得とフォルダ: partial clone の中身をすべて取る（git 2.36） | ✓ | ✓ | ✓ | ✓ | △ | CLI: `amonhen run`（`fetchAllContents`）から。 |
 | 取得とフォルダ: sparse checkout のフォルダを HEAD の木から選ぶ（git 2.25） | ✓ | ✓ | ✓ | ✓ | △ | VSCode: フォルダは HEAD の木を一覧でたどって選ぶ。<br>CLI: `amonhen run`（`sparseCheckout`・`treeFolders`）から。<br>Windows: フォルダは HEAD の木を一覧でたどって選ぶ（↑ と →） |
