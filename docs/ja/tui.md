@@ -4,7 +4,7 @@
 
 端末で動く FE: `amonhen tui`。アプリが届かない所（SSH のセッション、デスクトップのないマシン、エディタの横の端末）のためのもので、目指すところはアプリと同じ: 画面のどこも git を待たない。
 
-状態: 段階 T1 と T2（History・選んだコミットの詳細と差分・スクロール・`--snapshot`・`--measure-scroll`）と、T3 の大半（Working Copy の一覧と差分・ファイル、hunk、行ごとの stage・discard・メッセージの欄・commit と amend・変化の知らせ）、T4 の大半（Branches・Remotes・Tags のあるサイドバーとその絞り込み、History の検索、祖先の強調、キーの一覧）を作った。残りは設計。
+状態: 段階 T1 と T2（History・選んだコミットの詳細と差分・スクロール・`--snapshot`・`--measure-scroll`）と、T3 の大半（Working Copy の一覧と差分・ファイル、hunk、行ごとの stage・discard・メッセージの欄・commit と amend・変化の知らせ）、T4 の大半（Branches・Remotes・Tags のあるサイドバーとその絞り込み、History の検索、祖先の強調、キーの一覧）、T5 の最初の操作（fetch・pull・push・checkout・新しいブランチ・undo）を作った。残りは設計。
 
 ## 概要
 
@@ -163,7 +163,7 @@ T2、同じ Mac、このリポジトリ（3,438 コミット）。200 × 60 で�
 - [x] T2. コミットの詳細と差分（ファイルの一覧・unified の差分・変わった語・構文の色）、狭いときのレイアウト
 - [ ] T3. Working Copy: 一覧、ファイル・hunk・行ごとの stage、discard、メッセージの欄とエディタ、commit と amend。変化の知らせ。作ったもの: ファイルごとに印のある一覧、stage 済みの行に印のつく差分、Space での stage と unstage（一覧ではファイル、差分では行。hunk の見出しではその hunk）、確かめてからの discard（`d`）、一覧の下のメッセージの欄と commit・amend、変化の知らせでの読み直し。残り: メッセージを git のエディタで開く（`Ctrl-e`）、行の範囲の選択
 - [ ] T4. サイドバー（Branches・Remotes・Tags・絞り込み）、ref ごとの History、検索、祖先の強調、命令の一覧とヘルプ。作ったもの: Workspace の行・Branches（今のブランチの印、ahead と behind）・Remotes・Tags のあるサイドバー、ref を開くと History でそのコミットを選ぶ、読み直しても選択をコミットで保つ、`/` と `n` `N` での検索、サイドバーの絞り込み（サイドバーで `/`）、選んだコミットの祖先でない行を薄くする、`?` でフォーカスのある枠のキーの一覧。残り: 検索の途中の結果、祖先に沿ってグラフの線を光らせる（今は行ごと薄くするだけ）、命令の一覧（`:`）、サイドバーの Worktrees と Stashes
-- [ ] T5. シートつきの操作（fetch・pull・push・branch・checkout・merge・rebase・stash・reset・undo）、askpass、動いている処理の表示。マウスの取り込みを切るキーと設定、一時停止（`Ctrl-z`）、kitty のキーボードプロトコル
+- [ ] T5. 作ったもの: `f` fetch、`p` pull、`P` 上流への push（先に確かめる）、`u` undo（何を戻すかを出して確かめる）、`b` 選んでいるコミットか ref に新しいブランチ、サイドバーの `c` でブランチをチェックアウト（リモートのブランチは、追跡するブランチを作る）。操作は専用のワーカーで 1 つずつ動き、一番上の行に名前を出す。ブランチの横に ahead と behind を出す。確認とブランチの名前は、まだシートではなく一番下の行で聞く。残り: アプリと同じ選択肢のあるシート（pull の取り込み方、force push、上流のないブランチの publish）、merge・rebase・stash・reset、askpass（パスワードやパスフレーズが要る操作は試していない。失敗するか、待ったままになるかもしれない）、この項目のほかのもの。シートつきの操作（fetch・pull・push・branch・checkout・merge・rebase・stash・reset・undo）、askpass、動いている処理の表示。マウスの取り込みを切るキーと設定、一時停止（`Ctrl-z`）、kitty のキーボードプロトコル
 - [ ] T6. コンフリクト、Stashes、Reflog、Worktrees、History の編集（命令として）、前と後の絵
 - [ ] T7. frontends.md の TUI の列、usage.md、CHANGELOG
 
