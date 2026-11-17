@@ -438,25 +438,33 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                     tr!("Speed up status with fsmonitor"),
                 ),
                 note(tr!("A git fsmonitor--daemon runs for each repository.")),
-                StackPanel::new()
-                    .orientation(Orientation::Horizontal)
-                    .spacing(12.0)
-                    .margin(Thickness::new(0.0, 8.0, 0.0, 0.0))
-                    .children((
-                        TextBlock::new()
-                            .text(format!(
-                                "{}: {}",
-                                tr!("History"),
-                                state.cache_size.map(size).unwrap_or_else(|| "…".to_owned())
-                            ))
-                            .vertical_alignment(VerticalAlignment::Center),
-                        Button::new()
-                            .is_enabled(state.cache_size.is_some_and(|n| n > 0))
-                            .on_click(callbacks.clear_cache)
-                            .content(TextBlock::new().text(tr!("Clear"))),
+                // キャッシュ（GTK4 版の Caches の節。AI がないので History だけ）。
+                StackPanel::new().children((
+                    TextBlock::new()
+                        .text(tr!("Caches"))
+                        .font_size(13.0)
+                        .opacity(0.8)
+                        .margin(Thickness::new(0.0, 12.0, 0.0, 0.0)),
+                    StackPanel::new()
+                        .orientation(Orientation::Horizontal)
+                        .spacing(12.0)
+                        .margin(Thickness::new(0.0, 4.0, 0.0, 0.0))
+                        .children((
+                            TextBlock::new()
+                                .text(format!(
+                                    "{}: {}",
+                                    tr!("History"),
+                                    state.cache_size.map(size).unwrap_or_else(|| "…".to_owned())
+                                ))
+                                .vertical_alignment(VerticalAlignment::Center),
+                            Button::new()
+                                .is_enabled(state.cache_size.is_some_and(|n| n > 0))
+                                .on_click(callbacks.clear_cache)
+                                .content(TextBlock::new().text(tr!("Clear"))),
+                        )),
+                    note(tr!(
+                        "Opens History right away next time. Cleared, it is read from git again."
                     )),
-                note(tr!(
-                    "Opens History right away next time. Cleared, it is read from git again."
                 )),
             )),
     );
