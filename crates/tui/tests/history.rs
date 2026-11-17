@@ -12,11 +12,27 @@ const DAY: i64 = 86_400;
 
 fn git(dir: &Path, time: i64, args: &[&str]) {
     amonhen_model::testing::isolate_from_user_settings();
+    // `git init -b` は git 2.28 から。サポートする最低の git でも通るよう、作ってから HEAD を向ける。
+    let branch = match args {
+        ["init", rest @ ..] => rest
+            .iter()
+            .position(|a| *a == "-b")
+            .and_then(|i| rest.get(i + 1).copied()),
+        _ => None,
+    };
+    let args: Vec<&str> = match branch {
+        Some(branch) => args
+            .iter()
+            .copied()
+            .filter(|a| *a != "-b" && *a != branch)
+            .collect(),
+        None => args.to_vec(),
+    };
     let date = format!("{time} +0000");
     let out = amonhen_model::process::command("git")
         .args(["-c", "user.name=Ann", "-c", "user.email=ann@example.com"])
         .args(["-c", "commit.gpgsign=false"])
-        .args(args)
+        .args(&args)
         .env("GIT_AUTHOR_DATE", &date)
         .env("GIT_COMMITTER_DATE", &date)
         .current_dir(dir)
@@ -27,6 +43,28 @@ fn git(dir: &Path, time: i64, args: &[&str]) {
         "git {args:?}: {}",
         String::from_utf8_lossy(&out.stderr)
     );
+    // 作った（か、clone した）リポジトリには、作者を決めておく。画面からのコミットは、ここの `-c` を通らない
+    // （作者の設定のない機械では、コミットできない）。署名もしない。
+    if let ["init" | "clone", rest @ ..] = args.as_slice() {
+        let made = match rest.last() {
+            Some(last) if !last.starts_with('-') && (args[0] == "clone" || rest.len() > 1) => {
+                dir.join(last)
+            }
+            _ => dir.to_owned(),
+        };
+        if let Some(branch) = branch {
+            let head = format!("refs/heads/{branch}");
+            git(&made, time, &["symbolic-ref", "HEAD", &head]);
+        }
+        for (key, value) in [
+            ("user.name", "Ann"),
+            ("user.email", "ann@example.com"),
+            ("commit.gpgsign", "false"),
+            ("tag.gpgsign", "false"),
+        ] {
+            git(&made, time, &["config", key, value]);
+        }
+    }
 }
 
 fn commit(dir: &Path, time: i64, message: &str) {
