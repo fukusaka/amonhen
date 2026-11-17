@@ -7105,20 +7105,26 @@ impl Root {
                 source,
                 ..
             }) => {
+                // 選んだ取り込み方が今の状態で何をするか、押せないならそのわけ（GTK4 版の `describe`）。
+                let (explain, blocked) = self.pull_explain(*mode, branch, sources, *source);
                 // 選んだ取り込み方の絵（git の設定のとおりなら、その設定の取り込み方。押せないときは出さない）。
                 let method = match PULL_MODES.get(*mode).copied() {
-                    Some("git") => self.pull_drawings.as_ref().and_then(|p| {
-                        (!p.refused).then_some(p.by_git.as_str())
-                    }),
+                    Some("git") => self.pull_drawings.as_ref().map(|p| p.by_git.as_str()),
                     other => other,
                 };
-                let diverged = self.pull_drawings.as_ref().and_then(|p| match method {
-                    Some("rebase") => crate::drawing::for_rewrite(&p.rebase),
-                    Some("merge") => {
-                        crate::drawing::for_merge(&p.merge, branch, tr!("After the pull"))
-                    }
-                    _ => None,
-                });
+                let diverged = self
+                    .pull_drawings
+                    .as_ref()
+                    .filter(|_| blocked.is_none())
+                    .and_then(|p| match method {
+                        Some("rebase") => crate::drawing::for_rewrite(p.rebase.as_ref()?),
+                        Some("merge") => crate::drawing::for_merge(
+                            p.merge.as_ref()?,
+                            branch,
+                            tr!("After the pull"),
+                        ),
+                        _ => None,
+                    });
                 let drawing = self
                     .sync_drawing
                     .as_ref()
@@ -7137,6 +7143,32 @@ impl Root {
                     })
                     .or(diverged)
                     .unwrap_or_else(View::empty);
+                // 説明（押せないときは空のことがあり、そのときは出さない）。
+                let explain_view: View = if explain.is_empty() {
+                    View::empty()
+                } else {
+                    TextBlock::new()
+                        .text(explain)
+                        .font_size(12.0)
+                        .foreground(Brush::Solid(Color::argb(0xa0, 0, 0, 0)))
+                        .text_wrapping(TextWrapping::Wrap)
+                        .into()
+                };
+                // 押せないときは、絵の代わりに「Pull できません」とそのわけを（GTK4 版と同じ）。
+                let blocked_view: View = match &blocked {
+                    Some(reason) => StackPanel::new()
+                        .spacing(2.0)
+                        .children((
+                            TextBlock::new()
+                                .text(format!("⚠ {}", tr!("Can’t pull")))
+                                .font_weight(FontWeight::SEMI_BOLD)
+                                .foreground(Brush::Solid(Color::rgb(0xc4, 0x6a, 0x00))),
+                            TextBlock::new()
+                                .text(reason.clone())
+                                .text_wrapping(TextWrapping::Wrap),
+                        )),
+                    None => View::empty(),
+                };
                 let modes: Vec<String> = PULL_MODES.iter().map(|m| pull_mode_title(m)).collect();
                 // 上流がなければ、取り込み元を選ぶ欄を先に。
                 let from: View = if sources.is_empty() {
@@ -7154,6 +7186,7 @@ impl Root {
                     .is_open(true)
                     .title(title.clone())
                     .primary_button_text("Pull")
+                    .is_primary_button_enabled(blocked.is_none())
                     .close_button_text(tr!("Cancel"))
                     .content(
                         StackPanel::new().spacing(6.0).children((
@@ -7163,6 +7196,8 @@ impl Root {
                                 .items_source(modes)
                                 .selected_index(*mode)
                                 .on_selection_changed(context.callback(Message::PullMode)),
+                            explain_view,
+                            blocked_view,
                             drawing,
                             self.sync_lists_view(),
                         )),
@@ -9143,26 +9178,30 @@ impl Root {
                     fast_forward = Some(json!({
                         "op": "movePreview", "from": "HEAD", "to": &upstream, "branch": &entry.name,
                     }));
-                } else if entry.ahead > 0 && entry.behind > 0 {
-                    // 両方に新しいコミットがあれば、merge と rebase の絵（GTK4 版の `pull_in`）。
-                    let (repo, upstream) = (repo.clone(), upstream.clone());
-                    context.spawn_background(move |_| {
-                        let ask = |query: Value| -> Value {
-                            serde_json::from_str::<Value>(&repo.run_json(&query.to_string()))
-                                .unwrap_or_default()["info"]
-                                .clone()
-                        };
-                        let defaults = ask(json!({ "op": "syncDefaults" }));
-                        Message::PullDrawn(Box::new(PullDrawings {
-                            by_git: defaults["pull"].as_str().unwrap_or("merge").to_owned(),
-                            refused: defaults["pullRefuses"].is_string(),
-                            merge: ask(json!({
-                                "op": "mergePreview", "theirs": &upstream, "ffSetting": "pull.ff",
-                            })),
-                            rebase: ask(json!({ "op": "rewritePreview", "onto": &upstream })),
-                        }))
-                    });
                 }
+                // git の設定（取り込み方と、決まっていなければ断るか）と、両方に新しいコミットがあれば merge と
+                // rebase の絵（GTK4 版の `pull_in`）。
+                let diverged = entry.ahead > 0 && entry.behind > 0;
+                let (git, onto) = (repo.clone(), upstream.clone());
+                context.spawn_background(move |_| {
+                    let ask = |query: Value| -> Value {
+                        serde_json::from_str::<Value>(&git.run_json(&query.to_string()))
+                            .unwrap_or_default()["info"]
+                            .clone()
+                    };
+                    let defaults = ask(json!({ "op": "syncDefaults" }));
+                    Message::PullDrawn(Box::new(PullDrawings {
+                        by_git: defaults["pull"].as_str().unwrap_or("merge").to_owned(),
+                        refuses: defaults["pullRefuses"].as_str().map(str::to_owned),
+                        merge: diverged.then(|| {
+                            ask(json!({
+                                "op": "mergePreview", "theirs": &onto, "ffSetting": "pull.ff",
+                            }))
+                        }),
+                        rebase: diverged
+                            .then(|| ask(json!({ "op": "rewritePreview", "onto": &onto }))),
+                    }))
+                });
                 (
                     repo.clone(),
                     vec![
@@ -9364,6 +9403,88 @@ impl Root {
         refs.entries
             .iter()
             .find(|e| e.kind == amonhen_model::RefKind::Local && e.name == head)
+    }
+
+    /// Pull の確認で、選んだ取り込み方が今の状態で何をするかの文と、押せないならそのわけ（GTK4 版の
+    /// `pull_in` の `describe`。数は最後の Fetch の時点のもの）。
+    fn pull_explain(
+        &self,
+        mode: usize,
+        branch: &str,
+        sources: &[String],
+        source: usize,
+    ) -> (String, Option<String>) {
+        let mut lines = Vec::new();
+        let mut blocked = None;
+        let entry = self.head_entry();
+        let (incoming, outgoing) = entry.map_or((0, 0), |e| (e.behind, e.ahead));
+        let m = PULL_MODES.get(mode).copied().unwrap_or("git");
+        let defaults = self.pull_drawings.as_ref();
+        // 取り込み方を何も決めていなければ、git（2.33.1 から）は分かれたブランチの pull を断る（GTK4 版と同じ）。
+        let refused = defaults.is_some_and(|d| {
+            d.refuses.is_some()
+                && outgoing > 0
+                && (incoming > 0 || d.refuses.as_deref() == Some("notFastForward"))
+        });
+        let method = if m == "git" {
+            defaults.map_or("merge", |d| d.by_git.as_str())
+        } else {
+            m
+        };
+        if !sources.is_empty() {
+            lines.push(tr!(
+                "Sets {source} as the upstream, then pulls.",
+                source = sources.get(source).map_or("", String::as_str)
+            ));
+        } else if m == "git" && refused {
+            blocked = Some(tr!(
+                "git won’t pull: the branches have diverged, and neither pull.rebase nor pull.ff says how to reconcile them. Choose Merge or Rebase for this pull (your settings stay as they are)."
+            ));
+        } else if incoming == 0 {
+            lines.push(tr!(
+                "Nothing new as of the last Fetch (Pull fetches first)."
+            ));
+        } else if outgoing == 0 {
+            lines.push(tr!(
+                "Moves {branch} forward (fast-forward).",
+                branch = branch
+            ));
+        } else {
+            match method {
+                "rebase" => lines.push(tr!(
+                    "Your {count} local commits are replayed on top (their IDs change).",
+                    count = outgoing
+                )),
+                "fastForwardOnly" => {
+                    blocked = Some(tr!(
+                        "Fast-Forward Only can’t pull these: you have {count} local commits. Choose Merge or Rebase.",
+                        count = outgoing
+                    ));
+                }
+                _ => lines.push(tr!(
+                    "You have {count} local commits, so this makes a merge commit.",
+                    count = outgoing
+                )),
+            }
+        }
+        let changed = self.status.as_ref().map_or(0, |s| {
+            s.status
+                .entries
+                .iter()
+                .filter(|e| e.kind != amonhen_model::StatusKind::Untracked)
+                .count()
+        });
+        if changed > 0 {
+            lines.push(tr!(
+                "{count} files have uncommitted changes. Pull stops if the incoming changes touch them.",
+                count = changed
+            ));
+        }
+        // 押せないときは、戻すものもない。
+        if blocked.is_none() {
+            lines.push(tr!("You can Undo this (Ctrl+Alt+Z)."));
+        }
+        (lines.join("\n"), blocked)
     }
 
     /// Repository > Pull…: 上流から取り込む（GTK4 版の `sheets::pull_in` の見出しと取り込み方）。上流がなければ、
@@ -12634,15 +12755,15 @@ fn push_warnings(
     out
 }
 
-/// Pull で両方に新しいコミットがあるときの、取り込み方ごとの前と後の絵の材料。
+/// Pull の確認に要る、git の設定と取り込み方ごとの前と後の絵の材料。
 pub struct PullDrawings {
-    /// git の設定のとおりのときの取り込み方（`syncDefaults` の `pull`）と、取り込み方が決まっていないので git が
-    /// 断るか。
+    /// git の設定のとおりのときの取り込み方（`syncDefaults` の `pull`）と、取り込み方が決まっていないときに git が
+    /// 断る場合（`pullRefuses`。決まっていれば None）。
     by_git: String,
-    refused: bool,
-    /// `mergePreview`・`rewritePreview` の答え。
-    merge: Value,
-    rebase: Value,
+    refuses: Option<String>,
+    /// 両方に新しいコミットがあるときの `mergePreview`・`rewritePreview` の答え。
+    merge: Option<Value>,
+    rebase: Option<Value>,
 }
 
 /// Pull・Push のダイアログのコミットの一覧の 1 つ（コアの `between` の答え）。
