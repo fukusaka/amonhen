@@ -45,6 +45,8 @@ thread_local! {
     static FLASH_UNTIL: std::cell::Cell<Option<Instant>> = const { std::cell::Cell::new(None) };
     /// Activity を開いている間、読み直しを頼んだ最後の時刻（0.5 秒ごとに頼む）。
     static ACTIVITY_TICK: std::cell::Cell<Option<Instant>> = const { std::cell::Cell::new(None) };
+    /// 走っている操作の数と、最後に数えた時（ステータスバーの ⟳ n。0.5 秒ごとに数える）。
+    static RUNNING: std::cell::Cell<(usize, Option<Instant>)> = const { std::cell::Cell::new((0, None)) };
     /// 自動の fetch の間隔（分。0 はしない）と、最後に数え始めた時。
     static AUTO_FETCH: std::cell::Cell<(u32, Instant)> =
         std::cell::Cell::new((crate::prefs::auto_fetch_minutes(), Instant::now()));
@@ -106,6 +108,8 @@ struct Root {
     sync_lists: Vec<SyncList>,
     /// ステータスバーに出している、終わった操作の一言。
     flash: Option<String>,
+    /// 走っている操作の数（GTK4 版の Activity のボタンの回る印と数）。
+    running: usize,
     /// History で複数選んでいるコミット（上から。右クリックのメニューを複数のもの用にする）。
     multi: Vec<(String, bool)>,
     /// Push のダイアログの注意（GTK4 版の `push_warnings`）。
@@ -675,6 +679,8 @@ enum Message {
     ActivityUndoLog(Vec<Value>),
     ActivityUndo(usize),
     ActivityTick,
+    /// 走っている操作の数が変わった。
+    Running(usize),
     /// 自動の fetch の間隔を選んだ（Settings）。
     SettingsAutoFetch(Option<usize>),
     /// Settings > General の外のエディタを選んだ（項目の番号）。
@@ -903,6 +909,7 @@ impl Component for Root {
             stash_details: std::collections::HashMap::new(),
             sync_lists: Vec::new(),
             flash: None,
+            running: 0,
             multi: Vec::new(),
             sync_warnings: Vec::new(),
             submodules: Value::Null,
@@ -4504,6 +4511,7 @@ impl Component for Root {
                     state.undo = entries;
                 }
             }
+            Message::Running(count) => self.running = count,
             Message::ActivityTick => {
                 if let Some(state) = self.activity.as_mut() {
                     state.refresh();
@@ -5699,7 +5707,7 @@ impl Component for Root {
                 GridLength::Star(1.0),
                 GridLength::Auto,
             ])
-            .children((menu_bar, toolbar, body, self.status_bar(), dialog))
+            .children((menu_bar, toolbar, body, self.status_bar(context), dialog))
     }
 }
 
@@ -8818,7 +8826,7 @@ impl Root {
     }
 
     /// 窓の下のステータスバー: 走っている操作（なければ今のブランチ）。
-    fn status_bar(&self) -> View {
+    fn status_bar(&self, context: &ViewContext<Self>) -> View {
         let mut text = match &self.busy {
             Some(busy) => busy.clone(),
             None => self
@@ -8833,12 +8841,37 @@ impl Root {
         if let (None, Some(flash)) = (&self.busy, &self.flash) {
             text.push_str(&format!("  ·  ✓ {flash}"));
         }
-        TextBlock::new()
-            .text(text)
-            .font_size(12.0)
-            .margin(Thickness::new(12.0, 3.0, 12.0, 4.0))
+        // 走っている操作があれば右に ⟳ n（押すと Activity。GTK4 版の Activity のボタンの回る印）。
+        let running: View = if self.running > 0 {
+            Button::new()
+                .style(ButtonStyle::Subtle)
+                .on_click(context.callback(|()| Message::Command("activity".to_owned())))
+                .content(
+                    TextBlock::new()
+                        .text(format!("⟳ {}", self.running))
+                        .font_size(12.0),
+                )
+                .tooltip(tr!(
+                    "{count} operations running (click for Activity)",
+                    count = self.running
+                ))
+        } else {
+            View::empty()
+        };
+        Grid::new()
+            .columns([GridLength::Star(1.0), GridLength::Auto])
             .grid_row(3)
-            .into()
+            .children((
+                TextBlock::new()
+                    .text(text)
+                    .font_size(12.0)
+                    .margin(Thickness::new(12.0, 3.0, 12.0, 4.0))
+                    .grid_column(0),
+                Border::new()
+                    .margin(Thickness::new(0.0, 0.0, 8.0, 0.0))
+                    .grid_column(1)
+                    .content(running),
+            ))
     }
 
     fn show_page(&mut self, page: Page) {
@@ -11013,6 +11046,18 @@ impl HistoryView {
         {
             FLASH_UNTIL.with(|f| f.set(None));
             self.sender.send(Message::FlashExpired);
+        }
+        // 走っている操作の数を 0.5 秒ごとに数え、変わったら知らせる（ステータスバーの ⟳ n）。
+        let (count, last) = RUNNING.with(|r| r.get());
+        if last.is_none_or(|l| l.elapsed() >= std::time::Duration::from_millis(500)) {
+            let now = amonhen_model::activity::records()
+                .iter()
+                .filter(|r| r.ok.is_none())
+                .count();
+            RUNNING.with(|r| r.set((now, Some(Instant::now()))));
+            if now != count {
+                self.sender.send(Message::Running(now));
+            }
         }
         // Activity を開いている間は 0.5 秒ごとに読み直してもらう（GTK4 版と同じ間隔）。
         if let Some(last) = ACTIVITY_TICK.with(|t| t.get())
