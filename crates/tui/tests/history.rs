@@ -1224,3 +1224,28 @@ fn blame_and_file_history_of_a_file() {
     let back = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "1L\x1b").unwrap();
     assert!(back.contains("[ ] M lane.rs"));
 }
+
+/// コミットの詳細で `B`: 見ているファイルの、そのコミットの時点の Blame。Esc で元の画面に戻る
+#[test]
+fn blame_from_a_commits_file() {
+    let dir = tempfile::tempdir().unwrap();
+    changed(dir.path());
+    // 詳細へ移り、2 つ目のファイル（notes.txt）の見出しまで進めて `B`。
+    let blame = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "\t]]B").unwrap();
+    println!("{blame}");
+    assert!(blame.lines().last().unwrap().contains("Blame at "));
+    assert!(blame.lines().last().unwrap().contains(": notes.txt"));
+    let list: Vec<String> = blame.lines().skip(1).filter_map(|l| column(l, 1)).collect();
+    assert!(list[0].ends_with("one"), "{list:?}");
+    // 最初のファイル（lane.rs）の File History（見出しが一番上に見える所から）。
+    let log = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "\t]L").unwrap();
+    assert!(
+        log.lines()
+            .last()
+            .unwrap()
+            .contains("File History: lane.rs")
+    );
+    // Esc で History に戻る。
+    let back = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "\t]L\x1b").unwrap();
+    assert!(back.contains("◉  [main] Take the lane from the trunk"));
+}

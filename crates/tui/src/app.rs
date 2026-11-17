@@ -107,6 +107,8 @@ pub struct App {
     pinned: Option<Oid>,
     reflog: Reflog,
     file: FileView,
+    /// ファイルの画面を閉じたときに戻る画面。
+    file_back: View,
     view: View,
     focus: Focus,
     /// リポジトリ・ref・History を読んでいる。
@@ -200,6 +202,7 @@ impl App {
             pinned: None,
             reflog: Reflog::default(),
             file: FileView::default(),
+            file_back: View::Changes,
             view: View::History,
             focus: Focus::Main,
             opening: false,
@@ -1403,7 +1406,7 @@ impl App {
                 true
             }
             KeyCode::Esc | KeyCode::Backspace => {
-                self.show(View::Changes);
+                self.show(self.file_back);
                 true
             }
             _ => false,
@@ -1509,11 +1512,12 @@ impl App {
                 ("g G", tr!("Top and bottom")),
                 ("Enter", tr!("Go to the commit's details")),
                 ("H", tr!("Select the commit in History")),
-                ("Esc", tr!("Go back to the Working Copy")),
+                ("Esc", tr!("Go back")),
             ],
             (View::History | View::Reflog | View::File, Focus::Side) => vec![
                 ("j k", tr!("Scroll")),
                 ("[ ]", tr!("Previous and next file")),
+                ("B L", tr!("Blame, File History of the file in view")),
                 ("h l", tr!("Pan long lines")),
                 ("Esc", tr!("Go back to History")),
             ],
@@ -1685,7 +1689,8 @@ impl App {
             // 選んでいるファイルの Blame・File History を開く。
             KeyCode::Char('B' | 'L') => match self.changes.selected_path() {
                 Some(path) => {
-                    self.file.open(path, code == KeyCode::Char('B'));
+                    self.file.open(path, code == KeyCode::Char('B'), None);
+                    self.file_back = View::Changes;
                     self.view = View::File;
                     true
                 }
@@ -1874,6 +1879,21 @@ impl App {
             KeyCode::Char('G') | KeyCode::End => self.details.scroll_to(u32::MAX),
             KeyCode::Char('l') | KeyCode::Right => self.details.pan(PAN),
             KeyCode::Char('h') | KeyCode::Left => self.details.pan(-PAN),
+            // 今見ているファイルの Blame（そのコミットの時点の）・File History を開く。
+            KeyCode::Char('B' | 'L') if self.view != View::File => {
+                match self.details.current_file() {
+                    Some((path, id)) => {
+                        let blame = code == KeyCode::Char('B');
+                        let path = path.to_owned();
+                        self.file.open(&path, blame, blame.then(|| id.to_string()));
+                        self.file_back = self.view;
+                        self.view = View::File;
+                        self.focus = Focus::Main;
+                        true
+                    }
+                    None => false,
+                }
+            }
             KeyCode::Char(']') => self.details.jump_file(true),
             KeyCode::Char('[') => self.details.jump_file(false),
             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Backspace => {

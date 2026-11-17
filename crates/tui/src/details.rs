@@ -181,6 +181,9 @@ pub struct Details {
     failed: Option<(Oid, String)>,
     scroll: Scroll,
     width: u16,
+    /// `[` `]` で移ったファイル（その後にスクロールしたら忘れる）。文書の終わり近くでは、見出しを一番上まで
+    /// 動かせないので、どのファイルへ移ったかを覚えておく。
+    jumped: Option<usize>,
 }
 
 impl Details {
@@ -233,6 +236,7 @@ impl Details {
                 self.failed = None;
                 self.scroll.top = 0;
                 self.scroll.left = 0;
+                self.jumped = None;
                 (!view.is_null()).then(|| Request::Syntax {
                     id: id.to_string(),
                     of: serde_json::json!({"view": view}),
@@ -278,10 +282,12 @@ impl Details {
     }
 
     pub fn scroll(&mut self, delta: i64) -> bool {
+        self.jumped = None;
         self.scroll.by(delta, self.lines())
     }
 
     pub fn scroll_to(&mut self, top: u32) -> bool {
+        self.jumped = None;
         self.scroll.to(top, self.lines())
     }
 
@@ -290,19 +296,47 @@ impl Details {
         self.scroll.pan(delta)
     }
 
+    /// 今見ているファイルのパスと、出しているコミット。ファイルは、見えている最初の見出しのもの。見出しが
+    /// 見えていなければ、上にある最後の見出しのもの（それもなければ最初のファイル）。
+    pub fn current_file(&self) -> Option<(&str, Oid)> {
+        let commit = self.commit.as_ref()?;
+        let before = commit.before_diff();
+        let (top, bottom) = (
+            self.scroll.top,
+            self.scroll.top + u32::from(self.scroll.height),
+        );
+        let lines = commit.diff.file_rows.iter().map(|row| before + row);
+        let index = self.jumped.unwrap_or_else(|| {
+            lines
+                .clone()
+                .position(|line| top <= line && line < bottom)
+                .unwrap_or_else(|| lines.filter(|&line| line < top).count().saturating_sub(1))
+        });
+        Some((commit.files.get(index)?.path.as_str(), commit.id))
+    }
+
     /// 次（`forward`）か前のファイルの見出しを一番上に。
     pub fn jump_file(&mut self, forward: bool) -> bool {
         let Some(commit) = &self.commit else {
             return false;
         };
         let before = commit.before_diff();
-        let mut starts = commit.diff.file_rows.iter().map(|r| before + r);
-        let target = if forward {
-            starts.find(|&line| line > self.scroll.top)
-        } else {
-            starts.take_while(|&line| line < self.scroll.top).last()
+        // 今のファイル（覚えていればそれ、なければ一番上の行より上の最後の見出し）の、次か前。
+        let starts: Vec<u32> = commit.diff.file_rows.iter().map(|r| before + r).collect();
+        let current = self.jumped.map(|index| index as i64).unwrap_or_else(|| {
+            starts
+                .iter()
+                .filter(|&&line| line <= self.scroll.top)
+                .count() as i64
+                - 1
+        });
+        let target = current + if forward { 1 } else { -1 };
+        let Some(&line) = usize::try_from(target).ok().and_then(|t| starts.get(t)) else {
+            return false;
         };
-        target.is_some_and(|line| self.scroll_to(line))
+        self.scroll_to(line);
+        self.jumped = Some(target as usize);
+        true
     }
 
     pub fn draw(&mut self, area: Rect, buf: &mut Buffer, clock: &Clock, theme: &Theme) {

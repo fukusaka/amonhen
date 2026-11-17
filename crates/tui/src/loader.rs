@@ -42,8 +42,12 @@ pub enum Request {
     Status,
     /// HEAD の reflog。
     Reflog,
-    /// ファイルの Blame（`blame`）か、そのファイルを変えたコミット。
-    File { path: String, blame: bool },
+    /// ファイルの Blame（`blame`。`rev` があれば、そのコミットの時点の）か、そのファイルを変えたコミット。
+    File {
+        path: String,
+        blame: bool,
+        rev: Option<String>,
+    },
     /// 作業ツリーのファイルの差分。`serial` は、どの回の `status` に対するものか。`unstaged` は、stage して
     /// いない変更があるか（行ごとの印つきの差分が出せないときに、どちらを出すか）。
     WorkingDiff {
@@ -264,9 +268,9 @@ fn load(front: &dyn Front, request: Request) -> Result<Loaded> {
                 reply: front.call(of).ok(),
             }
         }
-        Request::File { path, blame } => {
+        Request::File { path, blame, rev } => {
             let command = match blame {
-                true => json!({"op": "blame", "path": path}),
+                true => json!({"op": "blame", "path": path, "rev": rev}),
                 false => json!({"op": "fileHistory", "path": path, "limit": 500}),
             };
             let result = run(front, command).map_err(|e| e.to_string());

@@ -34,6 +34,8 @@ struct Line {
 pub struct FileView {
     path: String,
     blame: bool,
+    /// Blame するコミット（16 進の ID。なければ作業ツリーの内容）。
+    rev: Option<String>,
     lines: Vec<Line>,
     loaded: bool,
     /// 頼むことがある（開いた直後）。
@@ -45,10 +47,11 @@ pub struct FileView {
 
 impl FileView {
     /// `path` の Blame（`blame`）か File History を開く。
-    pub fn open(&mut self, path: &str, blame: bool) {
+    pub fn open(&mut self, path: &str, blame: bool, rev: Option<String>) {
         *self = Self {
             path: path.to_owned(),
             blame,
+            rev,
             wanted: true,
             height: self.height,
             ..Self::default()
@@ -59,6 +62,7 @@ impl FileView {
         std::mem::take(&mut self.wanted).then(|| Request::File {
             path: self.path.clone(),
             blame: self.blame,
+            rev: self.rev.clone(),
         })
     }
 
@@ -122,9 +126,14 @@ impl FileView {
 
     /// 一番上の行に出す名前（「Blame: a.rs」）。
     pub fn title(&self) -> String {
-        match self.blame {
-            true => tr!("Blame: {path}", path = self.path),
-            false => tr!("File History: {path}", path = self.path),
+        match (self.blame, &self.rev) {
+            (true, Some(rev)) => tr!(
+                "Blame at {commit}: {path}",
+                commit = &rev[..rev.len().min(8)],
+                path = self.path
+            ),
+            (true, None) => tr!("Blame: {path}", path = self.path),
+            (false, _) => tr!("File History: {path}", path = self.path),
         }
     }
 
