@@ -74,8 +74,9 @@ jobs:
           curl -sSfLO "https://mirrors.edge.kernel.org/pub/software/scm/git/git-$GIT_VERSION.tar.xz"
           echo "$GIT_SHA256  git-$GIT_VERSION.tar.xz" | sha256sum -c -
           tar xf "git-$GIT_VERSION.tar.xz"
-          # 試験に要らないもの（HTTP・翻訳・Perl・Python・Tcl/Tk）は外す。
-          make -C "git-$GIT_VERSION" -j"$(nproc)" prefix="$HOME/git-minimum" \
+          # 試験に要らないもの（HTTP・翻訳・Perl・Python・Tcl/Tk）は外す。C の規格は C17 に決める: 今の gcc の
+          # 既定（C23）では `thread_local` が予約語で、この版の git（`struct thread_local`）はコンパイルできない。
+          make -C "git-$GIT_VERSION" -j"$(nproc)" prefix="$HOME/git-minimum" CFLAGS="-g -O2 -std=gnu17" \
             NO_CURL=1 NO_EXPAT=1 NO_GETTEXT=1 NO_PERL=1 NO_PYTHON=1 NO_TCLTK=1 install
       # 試験は手元の git の設定を GIT_CONFIG_GLOBAL で読ませないが、これは git 2.32 からなので、HOME を空にする。
       - run: |
