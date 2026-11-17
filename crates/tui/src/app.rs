@@ -6,9 +6,9 @@ use std::sync::mpsc::Sender;
 
 use amonhen_front::Front;
 use amonhen_model::{Oid, tr};
+use ratatui_core::buffer::Buffer;
 use ratatui_core::layout::Rect;
 use ratatui_core::style::{Color, Modifier, Style};
-use ratatui_core::terminal::Frame;
 use ratatui_crossterm::crossterm::event::{
     Event as Input, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent,
     MouseEventKind,
@@ -36,6 +36,36 @@ pub enum Event {
     Ask(crate::askpass::Question),
     Loaded(Loaded),
     Failed(String),
+}
+
+/// 描き直す所。一番上と一番下の行は、どれかを描き直すたびに描き直す。
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub struct Damage(u8);
+
+impl Damage {
+    const SIDEBAR: Self = Self(1);
+    const MAIN: Self = Self(2);
+    const SIDE: Self = Self(4);
+    /// すべて（ペインの間の線と、重ねて出すものも）。
+    pub const ALL: Self = Self(u8::MAX);
+
+    fn has(self, pane: Self) -> bool {
+        self.0 & pane.0 == pane.0
+    }
+}
+
+impl std::ops::BitOr for Damage {
+    type Output = Self;
+
+    fn bitor(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+}
+
+impl std::ops::BitOrAssign for Damage {
+    fn bitor_assign(&mut self, other: Self) {
+        self.0 |= other.0;
+    }
 }
 
 /// メインの画面。
@@ -181,7 +211,12 @@ pub struct App {
     /// ワーカーに頼んで、まだ答えが来ていない数。
     pending: usize,
     error: Option<String>,
+    /// すべてを描き直す。
     dirty: bool,
+    /// 描き直すペイン（そのペインの中だけが変わったとき。ほかは `dirty`）。
+    damage: Damage,
+    /// メインの画面が最後に置いたカーソル（メインを描き直さないフレームで使う）。
+    main_cursor: Option<(u16, u16)>,
     quit: bool,
 }
 
@@ -249,6 +284,8 @@ impl App {
             pending: 0,
             error: None,
             dirty: true,
+            damage: Damage::default(),
+            main_cursor: None,
             quit: false,
         }
     }
@@ -336,9 +373,38 @@ impl App {
         }
     }
 
-    /// 描き直すことがあれば true（聞いたら、なかったことにする）。
-    pub fn take_dirty(&mut self) -> bool {
-        std::mem::take(&mut self.dirty)
+    /// 描き直す所があれば、その所（聞いたら、なかったことにする）。キーの一覧はペインに重なるので、出している
+    /// 間はすべてを描き直す。
+    pub fn take_damage(&mut self) -> Option<Damage> {
+        let damage = std::mem::take(&mut self.damage);
+        if std::mem::take(&mut self.dirty) || (self.help && damage != Damage::default()) {
+            return Some(Damage::ALL);
+        }
+        (damage != Damage::default()).then_some(damage)
+    }
+
+    pub fn size(&self) -> (u16, u16) {
+        self.size
+    }
+
+    /// `damage` で描き直すセルの範囲（`draw` はこの中だけに描く）。
+    pub fn areas(&self, damage: Damage) -> Vec<Rect> {
+        let (cols, rows) = self.size;
+        if damage == Damage::ALL || rows < BARS + 1 {
+            return vec![Rect::new(0, 0, cols, rows)];
+        }
+        let layout = self.layout();
+        let mut areas = vec![Rect::new(0, 0, cols, 1), Rect::new(0, rows - 1, cols, 1)];
+        for (pane, area) in [
+            (Damage::SIDEBAR, layout.sidebar),
+            (Damage::MAIN, layout.main),
+            (Damage::SIDE, layout.side),
+        ] {
+            if damage.has(pane) {
+                areas.extend(area);
+            }
+        }
+        areas
     }
 
     pub fn quit(&self) -> bool {
@@ -465,7 +531,12 @@ impl App {
             }
             Event::Loaded(loaded) => {
                 self.pending = self.pending.saturating_sub(1);
-                self.dirty = true;
+                // 行と祖先は History の中だけ、コミットと構文の色は詳細・差分の中だけが変わる。
+                match &loaded {
+                    Loaded::Rows { .. } | Loaded::Lineage { .. } => self.damage |= Damage::MAIN,
+                    Loaded::Commit { .. } | Loaded::Syntax { .. } => self.damage |= Damage::SIDE,
+                    _ => self.dirty = true,
+                }
                 match loaded {
                     Loaded::Opened {
                         workdir,
@@ -678,7 +749,10 @@ impl App {
             }
         {
             let stash = self.view == View::History && self.pinned == Some(id);
-            self.dirty |= self.details.want(id, stash);
+            // 詳細の中だけが変わる。
+            if self.details.want(id, stash) {
+                self.damage |= Damage::SIDE;
+            }
         }
         if let Some(request) = self.file.request() {
             self.send(request);
@@ -1925,15 +1999,25 @@ impl App {
         // History を操作したら、開いていた stash ではなく選んでいるコミットを出す。
         self.pinned = None;
         let page = self.history.page();
+        // 選択を動かすだけなら、History の中だけが変わる（詳細は、頼むときに印をつける）。
+        let moved = match code {
+            KeyCode::Char('d') if control => Some(self.history.move_selection(page / 2)),
+            KeyCode::Char('u') if control => Some(self.history.move_selection(-page / 2)),
+            KeyCode::Char('j') | KeyCode::Down => Some(self.history.move_selection(1)),
+            KeyCode::Char('k') | KeyCode::Up => Some(self.history.move_selection(-1)),
+            KeyCode::PageDown | KeyCode::Char(' ') => Some(self.history.move_selection(page)),
+            KeyCode::PageUp => Some(self.history.move_selection(-page)),
+            KeyCode::Char('g') | KeyCode::Home => Some(self.history.select(0)),
+            KeyCode::Char('G') | KeyCode::End => Some(self.history.select(u32::MAX)),
+            _ => None,
+        };
+        if let Some(moved) = moved {
+            if moved {
+                self.damage |= Damage::MAIN;
+            }
+            return false;
+        }
         match code {
-            KeyCode::Char('d') if control => self.history.move_selection(page / 2),
-            KeyCode::Char('u') if control => self.history.move_selection(-page / 2),
-            KeyCode::Char('j') | KeyCode::Down => self.history.move_selection(1),
-            KeyCode::Char('k') | KeyCode::Up => self.history.move_selection(-1),
-            KeyCode::PageDown | KeyCode::Char(' ') => self.history.move_selection(page),
-            KeyCode::PageUp => self.history.move_selection(-page),
-            KeyCode::Char('g') | KeyCode::Home => self.history.select(0),
-            KeyCode::Char('G') | KeyCode::End => self.history.select(u32::MAX),
             KeyCode::Char('/') => {
                 // 前の語から直せるよう、入れておく。
                 self.typing_query =
@@ -1959,17 +2043,29 @@ impl App {
 
     fn details_key(&mut self, code: KeyCode, control: bool) -> bool {
         let page = self.details.page();
+        // 動かすだけなら、詳細の中だけが変わる。
+        let scrolled = match code {
+            KeyCode::Char('d') if control => Some(self.details.scroll(page / 2)),
+            KeyCode::Char('u') if control => Some(self.details.scroll(-page / 2)),
+            KeyCode::Char('j') | KeyCode::Down => Some(self.details.scroll(1)),
+            KeyCode::Char('k') | KeyCode::Up => Some(self.details.scroll(-1)),
+            KeyCode::PageDown | KeyCode::Char(' ') => Some(self.details.scroll(page)),
+            KeyCode::PageUp => Some(self.details.scroll(-page)),
+            KeyCode::Char('g') | KeyCode::Home => Some(self.details.scroll_to(0)),
+            KeyCode::Char('G') | KeyCode::End => Some(self.details.scroll_to(u32::MAX)),
+            KeyCode::Char('l') | KeyCode::Right => Some(self.details.pan(PAN)),
+            KeyCode::Char('h') | KeyCode::Left => Some(self.details.pan(-PAN)),
+            KeyCode::Char(']') => Some(self.details.jump_file(true)),
+            KeyCode::Char('[') => Some(self.details.jump_file(false)),
+            _ => None,
+        };
+        if let Some(scrolled) = scrolled {
+            if scrolled {
+                self.damage |= Damage::SIDE;
+            }
+            return false;
+        }
         match code {
-            KeyCode::Char('d') if control => self.details.scroll(page / 2),
-            KeyCode::Char('u') if control => self.details.scroll(-page / 2),
-            KeyCode::Char('j') | KeyCode::Down => self.details.scroll(1),
-            KeyCode::Char('k') | KeyCode::Up => self.details.scroll(-1),
-            KeyCode::PageDown | KeyCode::Char(' ') => self.details.scroll(page),
-            KeyCode::PageUp => self.details.scroll(-page),
-            KeyCode::Char('g') | KeyCode::Home => self.details.scroll_to(0),
-            KeyCode::Char('G') | KeyCode::End => self.details.scroll_to(u32::MAX),
-            KeyCode::Char('l') | KeyCode::Right => self.details.pan(PAN),
-            KeyCode::Char('h') | KeyCode::Left => self.details.pan(-PAN),
             // 今見ているファイルの Blame（そのコミットの時点の）・File History を開く。
             KeyCode::Char('B' | 'L') if self.view != View::File => {
                 match self.details.current_file() {
@@ -1985,8 +2081,6 @@ impl App {
                     None => false,
                 }
             }
-            KeyCode::Char(']') => self.details.jump_file(true),
-            KeyCode::Char('[') => self.details.jump_file(false),
             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Backspace => {
                 self.focus = Focus::Main;
                 true
@@ -2016,6 +2110,13 @@ impl App {
         };
         let click = matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left));
         let view = self.view;
+        let pane = if inside(layout.sidebar).is_some() {
+            Damage::SIDEBAR
+        } else if inside(layout.main).is_some() {
+            Damage::MAIN
+        } else {
+            Damage::SIDE
+        };
         let changed = if let Some(area) = inside(layout.sidebar) {
             match wheel {
                 Some(rows) => self.sidebar.scroll(rows),
@@ -2069,16 +2170,21 @@ impl App {
         } else {
             false
         };
-        self.dirty |= changed;
+        // ホイールで動くのは、そのペインの中だけ。
+        match wheel {
+            Some(_) if changed => self.damage |= pane,
+            _ => self.dirty |= changed,
+        }
     }
 
-    pub fn draw(&mut self, frame: &mut Frame) {
-        let area = frame.area();
+    /// `damage` の所を描き（`areas` が返す範囲。呼ぶ側が消してある）、カーソルを置く位置を返す。
+    pub fn draw(&mut self, buf: &mut Buffer, damage: Damage) -> Option<(u16, u16)> {
+        let area = buf.area;
         if area.height < BARS + 1 {
-            return;
+            return None;
         }
+        let all = damage == Damage::ALL;
         let mut cursor = None;
-        let buf = frame.buffer_mut();
         let bar = Style::new().add_modifier(Modifier::REVERSED);
 
         // 一番上: リポジトリ、ブランチ、読んでいる間の印。
@@ -2156,11 +2262,11 @@ impl App {
         }
 
         let layout = self.layout();
-        if let Some(at) = layout.sidebar {
+        if let Some(at) = layout.sidebar.filter(|_| damage.has(Damage::SIDEBAR)) {
             self.sidebar
                 .draw(at, buf, self.focus == Focus::Sidebar, self.changes.count());
             // メインの画面と並べたときは、間に区切りの線。
-            if at.right() < area.right() {
+            if all && at.right() < area.right() {
                 let line = Style::new().fg(Color::Indexed(238));
                 for y in at.y..at.bottom() {
                     buf[(at.right(), y)].set_char('│').set_style(line);
@@ -2168,21 +2274,26 @@ impl App {
             }
         }
         let focused = self.focus == Focus::Main;
-        if let Some(at) = layout.main {
+        if layout.main.is_none() {
+            self.main_cursor = None;
+        }
+        if let Some(at) = layout.main.filter(|_| damage.has(Damage::MAIN)) {
+            self.main_cursor = None;
             match self.view {
                 View::History => self.history.draw(at, buf, self.clock.now, focused),
                 View::Reflog => self.reflog.draw(at, buf, self.clock.now, focused),
                 View::File => self.file.draw(at, buf, self.clock.now, focused),
                 View::Changes => {
-                    cursor = self
-                        .changes
-                        .draw_main(at, buf, focused, self.focus == Focus::Message);
+                    self.main_cursor =
+                        self.changes
+                            .draw_main(at, buf, focused, self.focus == Focus::Message);
                 }
             }
         }
-        if let Some(at) = layout.side {
+        cursor = cursor.or(self.main_cursor);
+        if let Some(at) = layout.side.filter(|_| damage.has(Damage::SIDE)) {
             // 一覧と並べたときは、間に区切りの線。
-            if layout.main.is_some() {
+            if all && layout.main.is_some() {
                 let line = Style::new().fg(Color::Indexed(if focused { 238 } else { 244 }));
                 for y in at.y..at.bottom() {
                     buf[(at.x - 1, y)].set_char('│').set_style(line);
@@ -2496,8 +2607,6 @@ impl App {
             }
         }
         // 入力しているときだけ、カーソルを出す。
-        if let Some(at) = cursor {
-            frame.set_cursor_position(at);
-        }
+        cursor
     }
 }

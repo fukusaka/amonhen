@@ -1,28 +1,31 @@
 //! 本物の端末: 代替画面・raw モード・マウスの取り込みと、その後始末。入力を読むスレッド。
 
-use std::io::{BufWriter, Stdout, Write};
+use std::io::{BufWriter, Stdout};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::time::Duration;
 
-use ratatui_core::terminal::{Frame, Terminal};
-use ratatui_crossterm::CrosstermBackend;
 use ratatui_crossterm::crossterm::event::{self, DisableMouseCapture, EnableMouseCapture};
 use ratatui_crossterm::crossterm::terminal::{
-    BeginSynchronizedUpdate, EndSynchronizedUpdate, EnterAlternateScreen, LeaveAlternateScreen,
-    disable_raw_mode, enable_raw_mode,
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use ratatui_crossterm::crossterm::{cursor, execute, queue};
+use ratatui_crossterm::crossterm::{cursor, execute};
 
 use crate::Result;
 use crate::app::Event;
+use crate::canvas::Canvas;
 
 /// 1 フレームを 1 回の書き込みで出せる大きさ（200 × 60 の全面の描き直しでも収まる）。
 const OUTPUT_BUFFER: usize = 1 << 16;
 
 pub struct Screen {
-    pub terminal: Terminal<CrosstermBackend<BufWriter<Stdout>>>,
+    pub canvas: Canvas<BufWriter<Stdout>>,
+}
+
+/// 端末の大きさ（列、行）。
+pub fn size() -> Result<(u16, u16)> {
+    Ok(ratatui_crossterm::crossterm::terminal::size()?)
 }
 
 impl Screen {
@@ -38,24 +41,15 @@ impl Screen {
             previous(info);
         }));
         Ok(Self {
-            terminal: Terminal::new(CrosstermBackend::new(out))?,
+            canvas: Canvas::new(out),
         })
-    }
-
-    /// 1 フレーム描く。対応する端末ではまとめて表示されるよう、synchronized update で包む。
-    pub fn draw(&mut self, render: impl FnOnce(&mut Frame)) -> Result<()> {
-        queue!(self.terminal.backend_mut(), BeginSynchronizedUpdate)?;
-        self.terminal.draw(render)?;
-        queue!(self.terminal.backend_mut(), EndSynchronizedUpdate)?;
-        self.terminal.backend_mut().flush()?;
-        Ok(())
     }
 }
 
 impl Screen {
     /// マウスの取り込みを替える（切ると、端末が文字の選択を受け持つ）。
     pub fn set_mouse(&mut self, capture: bool) -> Result<()> {
-        let out = self.terminal.backend_mut();
+        let out = self.canvas.out();
         match capture {
             true => execute!(out, EnableMouseCapture)?,
             false => execute!(out, DisableMouseCapture)?,
@@ -84,8 +78,8 @@ impl Screen {
         if mouse {
             execute!(out, EnableMouseCapture)?;
         }
-        // 代替画面は空なので、前のフレームを持たない端末に取り替える（次のフレームはすべて書く）。
-        self.terminal = Terminal::new(CrosstermBackend::new(out))?;
+        // 代替画面は空なので、前のフレームを持たないものに取り替える（次のフレームはすべて書く）。
+        self.canvas = Canvas::new(out);
         Ok(result)
     }
 }

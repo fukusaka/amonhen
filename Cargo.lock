@@ -247,6 +247,7 @@ dependencies = [
  "amonhen-layout",
  "amonhen-model",
  "amonhen-projection",
+ "libc",
  "ratatui-core",
  "ratatui-crossterm",
  "serde_json",

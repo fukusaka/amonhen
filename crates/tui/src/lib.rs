@@ -7,6 +7,7 @@
 mod app;
 #[cfg(unix)]
 pub mod askpass;
+mod canvas;
 mod changes;
 mod details;
 mod diff;
@@ -25,18 +26,15 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use amonhen_front::Front;
-use ratatui_core::backend::TestBackend;
 use ratatui_core::buffer::Buffer;
-use ratatui_core::layout::Rect;
-use ratatui_core::terminal::{Terminal, TerminalOptions, Viewport};
-use ratatui_crossterm::CrosstermBackend;
 use ratatui_crossterm::crossterm::event::{
     Event as Input, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind,
 };
 
 use unicode_width::UnicodeWidthStr;
 
-use app::{App, Event};
+use app::{App, Damage, Event};
+use canvas::Canvas;
 
 pub type Result<T> = amonhen_model::Result<T>;
 
@@ -81,12 +79,12 @@ fn run_with(
         }
     }));
     let mut app = App::new(front, tx, Clock { now: now(), local });
-    let size = screen.terminal.size()?;
-    app.resize(size.width, size.height);
+    let (cols, rows) = terminal::size()?;
+    app.resize(cols, rows);
     app.start();
     loop {
-        if app.take_dirty() {
-            screen.draw(|frame| app.draw(frame))?;
+        if let Some(damage) = app.take_damage() {
+            paint(&mut screen.canvas, &mut app, damage)?;
         }
         // 1 つ待ち、たまっている分はまとめて片づけてから描く。
         let Ok(event) = rx.recv() else { break };
@@ -103,6 +101,9 @@ fn run_with(
         #[cfg(unix)]
         if app.take_suspend() {
             screen.suspend(app.mouse_captured())?;
+            // 止まっている間に端末の大きさが変わっていても、知らせは届かない。
+            let (cols, rows) = terminal::size()?;
+            app.resize(cols, rows);
         }
         // メッセージを git のエディタで開く。その間は、入力を読むのをやめて端末を渡す。
         if let Some((message, workdir)) = app.take_edit_message() {
@@ -111,6 +112,8 @@ fn run_with(
             let edited =
                 screen.outside(app.mouse_captured(), || edit(&message, workdir.as_deref()))?;
             input_paused.store(false, Ordering::Relaxed);
+            let (cols, rows) = terminal::size()?;
+            app.resize(cols, rows);
             app.message_edited(edited);
         }
     }
@@ -155,6 +158,15 @@ fn edit(message: &str, workdir: Option<&str>) -> Result<String> {
         .into()),
         Err(e) => Err(e.into()),
     }
+}
+
+/// 1 フレームを出す: `damage` の所だけを描き直す。
+fn paint<W: Write>(canvas: &mut Canvas<W>, app: &mut App, damage: Damage) -> Result<()> {
+    let areas = app.areas(damage);
+    canvas.draw(app.size(), &areas, |buf, all| {
+        app.draw(buf, if all { Damage::ALL } else { damage })
+    })?;
+    Ok(())
 }
 
 /// 頼んだものの答えがそろうまで受け取る。
@@ -216,6 +228,11 @@ pub fn frame(
     app.resize(cols, rows);
     app.start();
     settle(&mut app, &rx)?;
+    // 本物と同じに、キーごとに変わった所だけを描き直していく。
+    let mut canvas = Canvas::new(std::io::sink());
+    if let Some(damage) = app.take_damage() {
+        paint(&mut canvas, &mut app, damage)?;
+    }
     for ch in keys.chars() {
         let (code, modifiers) = match ch {
             '\n' => (KeyCode::Enter, KeyModifiers::NONE),
@@ -232,10 +249,29 @@ pub fn frame(
         app.handle(Event::Input(Input::Key(KeyEvent::new(code, modifiers))));
         // 操作がだめだったときの理由は、画面に出る（スナップショットは続ける）。
         wait(&mut app, &rx)?;
+        if let Some(damage) = app.take_damage() {
+            paint(&mut canvas, &mut app, damage)?;
+        }
     }
-    let mut terminal = Terminal::new(TestBackend::new(cols, rows))?;
-    terminal.draw(|frame| app.draw(frame))?;
-    Ok(terminal.backend().buffer().clone())
+    whole(&mut app, canvas.shown())
+}
+
+/// すべてを描いたフレーム。変わった所だけを描き直してきた画面（`shown`）がこれと違えば、失敗。
+fn whole(app: &mut App, shown: &Buffer) -> Result<Buffer> {
+    let mut whole = Buffer::empty(shown.area);
+    app.draw(&mut whole, Damage::ALL);
+    let width = usize::from(shown.area.width);
+    match (0..whole.content.len()).find(|&i| whole.content[i] != shown.content[i]) {
+        Some(at) => Err(format!(
+            "a partial redraw left a stale cell at column {}, line {}: {:?} where a full redraw has {:?}",
+            at % width,
+            at / width,
+            shown.content[at].symbol(),
+            whole.content[at].symbol()
+        )
+        .into()),
+        None => Ok(whole),
+    }
 }
 
 /// `--measure-scroll` の結果。
@@ -258,6 +294,26 @@ pub struct Measure {
     pub slowest_parts_us: [u64; 3],
     /// 最も遅いフレームで、ワーカーから届いた答えの数。
     pub slowest_replies: usize,
+    /// 最も遅いフレームで、このスレッドが CPU を使っていた時間（µs。読めない OS では `None`）。かかった時間より
+    /// ずっと短ければ、その間スレッドは止められていた。
+    pub slowest_cpu_us: Option<u64>,
+}
+
+/// このスレッドが、ここまでに CPU を使った時間。
+#[cfg(unix)]
+fn thread_cpu() -> Option<Duration> {
+    let mut time = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: `time` は、呼び出しの間だけ使う手元の値。
+    let ok = unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut time) } == 0;
+    ok.then(|| Duration::new(time.tv_sec as u64, time.tv_nsec as u32))
+}
+
+#[cfg(not(unix))]
+fn thread_cpu() -> Option<Duration> {
+    None
 }
 
 /// 出したバイト数を数えるだけの出力先。
@@ -290,13 +346,10 @@ pub fn measure_scroll(
     app.start();
     settle(&mut app, &rx)?;
     let written = Arc::new(AtomicU64::new(0));
-    let mut terminal = Terminal::with_options(
-        CrosstermBackend::new(Counter(written.clone())),
-        TerminalOptions {
-            viewport: Viewport::Fixed(Rect::new(0, 0, cols, rows)),
-        },
-    )?;
-    terminal.draw(|frame| app.draw(frame))?;
+    let mut canvas = Canvas::new(Counter(written.clone()));
+    if let Some(damage) = app.take_damage() {
+        paint(&mut canvas, &mut app, damage)?;
+    }
     let column = app.main_column();
     let wheel = |kind| {
         Event::Input(Input::Mouse(MouseEvent {
@@ -309,11 +362,13 @@ pub fn measure_scroll(
     };
     let mut times = Vec::with_capacity(frames);
     let mut parts: Vec<([u64; 3], usize)> = Vec::with_capacity(frames);
+    let mut cpu: Vec<Option<u64>> = Vec::with_capacity(frames);
     let mut sizes = Vec::with_capacity(frames);
     let mut incomplete = 0;
     let mut down = true;
     for _ in 0..frames {
         let before = written.load(Ordering::Relaxed);
+        let cpu_start = thread_cpu();
         let start = Instant::now();
         // 端に着いたら折り返す。
         if app.history_at_end(down) {
@@ -331,14 +386,21 @@ pub fn measure_scroll(
         }
         let handled = start.elapsed();
         let mut built = Duration::ZERO;
-        if app.take_dirty() {
-            terminal.draw(|frame| {
+        if let Some(damage) = app.take_damage() {
+            let areas = app.areas(damage);
+            canvas.draw(app.size(), &areas, |buf, all| {
                 let before = Instant::now();
-                app.draw(frame);
+                let cursor = app.draw(buf, if all { Damage::ALL } else { damage });
                 built = before.elapsed();
+                cursor
             })?;
         }
         let spent = start.elapsed();
+        cpu.push(
+            thread_cpu()
+                .zip(cpu_start)
+                .map(|(end, start)| end.saturating_sub(start).as_micros() as u64),
+        );
         let micros = |d: Duration| d.as_micros() as u64;
         parts.push((
             [
@@ -353,6 +415,8 @@ pub fn measure_scroll(
         incomplete += usize::from(app.last_frame_incomplete());
         std::thread::sleep(interval.saturating_sub(spent));
     }
+    // 測った後の画面が、すべてを描いたものと同じか確かめる。
+    whole(&mut app, canvas.shown())?;
     // 最も遅いフレームの内訳（並べ替える前に探す）。
     let slowest = (0..times.len()).max_by_key(|&i| times[i]).unwrap_or(0);
     let (slowest_parts_us, slowest_replies) = parts.get(slowest).copied().unwrap_or_default();
@@ -376,6 +440,7 @@ pub fn measure_scroll(
         median_parts_us,
         slowest_parts_us,
         slowest_replies,
+        slowest_cpu_us: cpu.get(slowest).copied().flatten(),
     })
 }
 

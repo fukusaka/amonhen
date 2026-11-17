@@ -124,6 +124,17 @@ pub fn run(args: &[String]) -> Result<ExitCode> {
                 replies = m.slowest_replies,
             )
         );
+        // かかった時間よりずっと短ければ、その間スレッドは止められていた。
+        if let Some(cpu) = m.slowest_cpu_us {
+            println!(
+                "{}",
+                tr!(
+                    "slowest frame: {cpu} µs of CPU time in {max} µs",
+                    cpu = cpu,
+                    max = m.max_us
+                )
+            );
+        }
         return Ok(ExitCode::SUCCESS);
     }
     #[cfg(unix)]
