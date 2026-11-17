@@ -18,6 +18,7 @@ amonhen-daemon.workspace = true
 amonhen-front.workspace = true
 amonhen-layout.workspace = true
 amonhen-model.workspace = true
+amonhen-projection.workspace = true
 amonhen-remote.workspace = true
 amonhen-watch.workspace = true
 serde_json = "1.0.154"

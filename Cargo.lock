@@ -68,6 +68,7 @@ dependencies = [
  "amonhen-front",
  "amonhen-layout",
  "amonhen-model",
+ "amonhen-projection",
  "amonhen-remote",
  "amonhen-watch",
  "libc",
