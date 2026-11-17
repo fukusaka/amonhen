@@ -1920,7 +1920,15 @@ private struct OperationsPage: View {
                             let forget = alert.addButton(withTitle: L("Forget All"))
                             forget.markDestructive()
                             alert.addButton(withTitle: L("Cancel")).keyEquivalent = "\r"
-                            if alert.runModal() == .alertFirstButtonReturn { model.perform([["op": "forgetAllResolutions"]]) }
+                            let run = { (response: NSApplication.ModalResponse) in
+                                if response == .alertFirstButtonReturn { model.perform([["op": "forgetAllResolutions"]]) }
+                            }
+                            // 窓のシートで聞く（docs/ux.md: アプリ全体を止めない）。
+                            if let window = NSApp.keyWindow ?? NSApp.mainWindow {
+                                alert.beginSheetModal(for: window, completionHandler: run)
+                            } else {
+                                run(alert.runModal())
+                            }
                         }
                     }
                 }
