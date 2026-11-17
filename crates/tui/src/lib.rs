@@ -8,6 +8,7 @@ mod app;
 mod changes;
 mod details;
 mod diff;
+mod editor;
 mod history;
 mod loader;
 mod terminal;
@@ -75,14 +76,20 @@ pub fn run(front: Arc<dyn Front>, local: fn(i64) -> String) -> Result<()> {
     Ok(())
 }
 
-/// 読み込みが落ち着くまで、答えを受け取る。
-fn settle(app: &mut App, rx: &mpsc::Receiver<Event>) -> Result<()> {
+/// 頼んだものの答えがそろうまで受け取る。
+fn wait(app: &mut App, rx: &mpsc::Receiver<Event>) -> Result<()> {
     while app.busy() {
         let event = rx
             .recv_timeout(Duration::from_secs(60))
-            .map_err(|_| "the repository took too long to load")?;
+            .map_err(|_| "the repository took too long to answer")?;
         app.handle(event);
     }
+    Ok(())
+}
+
+/// 読み込みが落ち着くまで、答えを受け取る。読めなければ失敗。
+fn settle(app: &mut App, rx: &mpsc::Receiver<Event>) -> Result<()> {
+    wait(app, rx)?;
     match app.error() {
         Some(e) => Err(e.to_owned().into()),
         None => Ok(()),
@@ -90,7 +97,7 @@ fn settle(app: &mut App, rx: &mpsc::Receiver<Event>) -> Result<()> {
 }
 
 /// 1 フレームを文字で（`--snapshot`。テストと、見た目の確認に）。`keys` は、描く前に押すキー（1 文字ずつ。
-/// 改行は Enter、タブは Tab、`\x1b` は Esc）。
+/// 改行は Enter、タブは Tab、`\x1b` は Esc、ほかの制御文字は Ctrl と文字）。
 pub fn snapshot(
     front: Arc<dyn Front>,
     cols: u16,
@@ -104,17 +111,20 @@ pub fn snapshot(
     app.start();
     settle(&mut app, &rx)?;
     for ch in keys.chars() {
-        let code = match ch {
-            '\n' => KeyCode::Enter,
-            '\t' => KeyCode::Tab,
-            '\x1b' => KeyCode::Esc,
-            ch => KeyCode::Char(ch),
+        let (code, modifiers) = match ch {
+            '\n' => (KeyCode::Enter, KeyModifiers::NONE),
+            '\t' => (KeyCode::Tab, KeyModifiers::NONE),
+            '\x1b' => (KeyCode::Esc, KeyModifiers::NONE),
+            // ほかの制御文字は Ctrl と文字（`\x13` は Ctrl-s）。
+            '\x01'..='\x1a' => (
+                KeyCode::Char((b'a' + ch as u8 - 1) as char),
+                KeyModifiers::CONTROL,
+            ),
+            ch => (KeyCode::Char(ch), KeyModifiers::NONE),
         };
-        app.handle(Event::Input(Input::Key(KeyEvent::new(
-            code,
-            KeyModifiers::NONE,
-        ))));
-        settle(&mut app, &rx)?;
+        app.handle(Event::Input(Input::Key(KeyEvent::new(code, modifiers))));
+        // 操作がだめだったときの理由は、画面に出る（スナップショットは続ける）。
+        wait(&mut app, &rx)?;
     }
     let mut terminal = Terminal::new(TestBackend::new(cols, rows))?;
     terminal.draw(|frame| app.draw(frame))?;

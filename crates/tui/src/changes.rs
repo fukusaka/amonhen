@@ -12,6 +12,7 @@ use ratatui_core::style::{Color, Modifier, Style};
 use serde_json::Value;
 
 use crate::diff::{DIM, Diff, Scroll, Theme, counts, draw_row, fit_path};
+use crate::editor::Editor;
 use crate::loader::Request;
 
 const SELECTED: Color = Color::Indexed(238);
@@ -74,6 +75,20 @@ pub struct Changes {
     scroll: Scroll,
     /// 差分の中で選んでいる行（文書の行。0 はパスの行）。
     cursor: u32,
+    /// コミットメッセージの欄。
+    pub message: Editor,
+    /// 直前のコミットを作り直す。
+    pub amend: bool,
+    /// 一覧とメッセージの欄を合わせた高さ。
+    total_height: u16,
+}
+
+/// メッセージの欄の高さ（見出しの 1 行を含む）: 全体の 3 分の 1 で、3 行から 8 行。狭すぎれば出さない。
+fn message_height(total: u16) -> u16 {
+    if total < 6 {
+        return 0;
+    }
+    (total / 3).clamp(3, 8)
 }
 
 impl Changes {
@@ -239,8 +254,24 @@ impl Changes {
 
     // MARK: 一覧
 
+    /// stage 済みの変更があるファイルの数。
+    pub fn staged_count(&self) -> usize {
+        self.entries.iter().filter(|e| e.staged).count()
+    }
+
+    /// 一覧の高さ（メッセージの欄を除く）。
+    pub fn list_height(&self) -> u16 {
+        self.height
+    }
+
+    /// メッセージの欄が出ている。
+    pub fn has_message_field(&self) -> bool {
+        message_height(self.total_height) > 0
+    }
+
     pub fn set_height(&mut self, height: u16) {
-        self.height = height;
+        self.total_height = height;
+        self.height = height - message_height(height);
         self.scroll.height = height;
         self.clamp_top();
         self.scroll.clamp(self.lines());
@@ -297,7 +328,59 @@ impl Changes {
         ((self.selected as u32 + 1).min(count), count)
     }
 
-    pub fn draw_list(&self, area: Rect, buf: &mut Buffer, focused: bool) {
+    /// 一覧と、その下のメッセージの欄。欄で入力しているなら、カーソルを置く位置を返す。
+    pub fn draw_main(
+        &mut self,
+        area: Rect,
+        buf: &mut Buffer,
+        focused: bool,
+        typing: bool,
+    ) -> Option<(u16, u16)> {
+        let field = message_height(area.height);
+        let list = Rect::new(area.x, area.y, area.width, area.height - field);
+        self.draw_list(list, buf, focused);
+        if field == 0 || area.width == 0 {
+            return None;
+        }
+        // 見出し: 「── Message ───── 23 ─」（右は件名の文字数）。
+        let y = list.bottom();
+        let line = Style::new().fg(if typing { Color::Cyan } else { DIM });
+        for x in area.x..area.right() {
+            buf[(x, y)].set_char('─').set_style(line);
+        }
+        let title = if self.amend {
+            tr!(" Message (amend) ")
+        } else {
+            tr!(" Message ")
+        };
+        buf.set_stringn(
+            area.x + 2,
+            y,
+            title,
+            usize::from(area.width.saturating_sub(2)),
+            line,
+        );
+        let count = format!(" {} ", self.message.summary_length());
+        let count_x = area.right().saturating_sub(count.len() as u16 + 1);
+        if count_x > area.x + 20 {
+            buf.set_string(count_x, y, count, line);
+        }
+        let body = Rect::new(area.x + 1, y + 1, area.width - 1, field - 1);
+        if self.message.is_empty() && !typing {
+            buf.set_stringn(
+                body.x,
+                body.y,
+                tr!("c to write the commit message"),
+                usize::from(body.width),
+                Style::new().fg(DIM),
+            );
+            return None;
+        }
+        let cursor = self.message.draw(body, buf);
+        cursor.filter(|_| typing)
+    }
+
+    fn draw_list(&self, area: Rect, buf: &mut Buffer, focused: bool) {
         if area.width == 0 || area.height == 0 {
             return;
         }

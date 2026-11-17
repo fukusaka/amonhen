@@ -42,6 +42,8 @@ enum View {
 enum Focus {
     Main,
     Side,
+    /// コミットメッセージの欄（Working Copy の一覧の下）。
+    Message,
 }
 
 /// 画面の割り方（一番上と一番下の行を除いた所）。
@@ -68,6 +70,12 @@ pub struct App {
     reopen: bool,
     /// 確かめてから行う操作: 尋ねる文と、`y` で頼む中身。
     confirm: Option<(String, Request)>,
+    /// HEAD のコミット（amend で、そのメッセージを欄に入れる）。
+    head: Option<String>,
+    /// コミットを作っている。
+    committing: bool,
+    /// 済んだことの知らせ（次のキーまで出す）。
+    notice: Option<String>,
     theme: Theme,
     /// リポジトリの名前（作業ツリーのフォルダ名）。
     name: String,
@@ -100,6 +108,9 @@ impl App {
             opening: false,
             reopen: false,
             confirm: None,
+            head: None,
+            committing: false,
+            notice: None,
             theme: Theme::detect(),
             name: String::new(),
             branch: None,
@@ -159,7 +170,7 @@ impl App {
         }
         let all = Some(Rect::new(0, 1, cols, height));
         match self.focus {
-            Focus::Main => Layout {
+            Focus::Main | Focus::Message => Layout {
                 main: all,
                 side: None,
             },
@@ -229,6 +240,7 @@ impl App {
                             .map(|n| n.to_string_lossy().into_owned())
                             .unwrap_or_default();
                         self.branch = refs["headBranch"].as_str().map(str::to_owned);
+                        self.head = refs["head"].as_str().map(str::to_owned);
                         self.history.opened(&refs, &history);
                         self.opening = false;
                         if std::mem::take(&mut self.reopen) {
@@ -259,6 +271,36 @@ impl App {
                     } => {
                         if let Some(request) = self.changes.working_diff(path, serial, result) {
                             self.send(request);
+                        }
+                    }
+                    Loaded::Committed(result) => {
+                        self.committing = false;
+                        match result {
+                            Ok(output) => {
+                                self.changes.message.clear();
+                                self.changes.amend = false;
+                                self.focus = Focus::Main;
+                                // hooks が何か書いていれば、その 1 行目を出す。
+                                self.notice =
+                                    Some(match output.lines().find(|l| !l.trim().is_empty()) {
+                                        Some(line) => {
+                                            tr!("Committed: {output}", output = line.trim())
+                                        }
+                                        None => tr!("Committed"),
+                                    });
+                                self.changes.refresh();
+                                self.open();
+                            }
+                            Err(error) => self.error = Some(error),
+                        }
+                    }
+                    Loaded::Message(message) => {
+                        // 待つ間に書き始めていたら、そのままにする。
+                        if let Some(message) = message
+                            && self.changes.amend
+                            && self.changes.message.is_empty()
+                        {
+                            self.changes.message.set_text(&message);
                         }
                     }
                     Loaded::Staged(result) => {
@@ -312,7 +354,7 @@ impl App {
         // 詳細・差分が、一覧の所に開いている（並んでいない）。
         let covering = self.layout().main.is_none();
         // エラーは、次のキーまで出しておく。
-        self.dirty |= self.error.take().is_some();
+        self.dirty |= self.error.take().is_some() | self.notice.take().is_some();
         // 確かめている間は、`y`（か Enter）で行い、ほかのキーでやめる。
         if let Some((_, request)) = self.confirm.take() {
             if matches!(key.code, KeyCode::Char('y' | 'Y') | KeyCode::Enter) {
@@ -321,12 +363,17 @@ impl App {
             self.dirty = true;
             return;
         }
+        // メッセージを書いている間は、文字のキーはすべて入力。
+        if self.focus == Focus::Message && !(control && key.code == KeyCode::Char('c')) {
+            self.message_key(key);
+            return;
+        }
         match key.code {
             KeyCode::Char('c') if control => self.quit = true,
             KeyCode::Char('q') if !covering => self.quit = true,
             KeyCode::Tab | KeyCode::BackTab => {
                 self.focus = match self.focus {
-                    Focus::Main => Focus::Side,
+                    Focus::Main | Focus::Message => Focus::Side,
                     Focus::Side => Focus::Main,
                 };
                 self.dirty = true;
@@ -339,6 +386,7 @@ impl App {
                     (View::History, Focus::Side) => self.details_key(key.code, control),
                     (View::Changes, Focus::Main) => self.changes_key(key.code, control),
                     (View::Changes, Focus::Side) => self.changes_diff_key(key.code, control),
+                    (_, Focus::Message) => false,
                 }
             }
         }
@@ -349,6 +397,40 @@ impl App {
         self.dirty |= self.view != view || self.focus != Focus::Main;
         self.view = view;
         self.focus = Focus::Main;
+    }
+
+    /// メッセージの欄でのキー: Esc と Tab で一覧へ、`Ctrl-s`（か Alt-Enter）でコミット、ほかは入力。
+    fn message_key(&mut self, key: KeyEvent) {
+        let control = key.modifiers.contains(KeyModifiers::CONTROL);
+        let alt = key.modifiers.contains(KeyModifiers::ALT);
+        self.dirty = true;
+        match key.code {
+            KeyCode::Esc | KeyCode::Tab | KeyCode::BackTab => self.focus = Focus::Main,
+            KeyCode::Char('s') if control => self.commit(),
+            KeyCode::Enter if alt => self.commit(),
+            KeyCode::Char(_) if control || alt => {}
+            code => {
+                self.changes.message.key(code);
+            }
+        }
+    }
+
+    /// 欄のメッセージでコミットを作る。できないときは、理由を出す。
+    fn commit(&mut self) {
+        if self.committing {
+            return;
+        }
+        if self.changes.message.is_empty() {
+            self.error = Some(tr!("Write a commit message first"));
+        } else if !self.changes.amend && self.changes.staged_count() == 0 {
+            self.error = Some(tr!("Nothing is staged (Space stages a file)"));
+        } else {
+            self.committing = true;
+            self.send(Request::MakeCommit {
+                message: self.changes.message.text(),
+                amend: self.changes.amend,
+            });
+        }
     }
 
     fn changes_key(&mut self, code: KeyCode, control: bool) -> bool {
@@ -367,6 +449,25 @@ impl App {
                     self.send(request);
                 }
                 false
+            }
+            KeyCode::Char('c') if self.changes.has_message_field() => {
+                self.focus = Focus::Message;
+                true
+            }
+            // 直前のコミットを作り直す。欄が空なら、そのメッセージを入れる。
+            KeyCode::Char('a') => {
+                self.changes.amend = !self.changes.amend;
+                if self.changes.amend
+                    && self.changes.message.is_empty()
+                    && let Some(id) = self.head.clone()
+                {
+                    self.send(Request::Message { id });
+                }
+                true
+            }
+            KeyCode::Char('s') if control => {
+                self.commit();
+                true
             }
             KeyCode::Char('d') => {
                 self.confirm = self.changes.discard_file().map(|(path, request)| {
@@ -512,10 +613,14 @@ impl App {
                     let line = mouse.row - area.y;
                     let selected = if history {
                         self.history.click(line)
+                    } else if line >= self.changes.list_height() {
+                        // 一覧の下は、メッセージの欄。
+                        self.focus = Focus::Message;
+                        false
                     } else {
                         self.changes.click(line)
                     };
-                    selected || focused != Focus::Main
+                    selected || focused != self.focus
                 }
                 None => false,
             }
@@ -541,6 +646,7 @@ impl App {
         if area.height < BARS + 1 {
             return;
         }
+        let mut cursor = None;
         let buf = frame.buffer_mut();
         let bar = Style::new().add_modifier(Modifier::REVERSED);
 
@@ -604,7 +710,11 @@ impl App {
         if let Some(at) = layout.main {
             match self.view {
                 View::History => self.history.draw(at, buf, self.clock.now, focused),
-                View::Changes => self.changes.draw_list(at, buf, focused),
+                View::Changes => {
+                    cursor = self
+                        .changes
+                        .draw_main(at, buf, focused, self.focus == Focus::Message);
+                }
             }
         }
         if let Some(at) = layout.side {
@@ -631,6 +741,7 @@ impl App {
             (View::History, Focus::Side) => self.details.position(),
             (View::Changes, Focus::Main) => self.changes.list_position(),
             (View::Changes, Focus::Side) => self.changes.diff_position(),
+            (_, Focus::Message) => self.changes.list_position(),
         };
         let position = format!("{at}/{of}");
         let position_x = area
@@ -660,6 +771,10 @@ impl App {
             (None, Some(error)) => {
                 buf.set_stringn(area.x + 1, y, error, room, Style::new().fg(Color::Red));
             }
+            (None, None) if self.notice.is_some() => {
+                let notice = self.notice.as_deref().unwrap_or("");
+                buf.set_stringn(area.x + 1, y, notice, room, Style::new().fg(Color::Green));
+            }
             (None, None) => {
                 let hints = match (self.view, self.focus) {
                     (View::History, Focus::Main) => {
@@ -669,11 +784,14 @@ impl App {
                         tr!("j/k scroll   [/] file   h/l pan   Esc back")
                     }
                     (View::Changes, Focus::Main) => {
-                        tr!("j/k move   Space stage/unstage   d discard   Enter diff   q quit")
+                        tr!(
+                            "j/k move   Space stage/unstage   c message   a amend   d discard   q quit"
+                        )
                     }
                     (View::Changes, Focus::Side) => {
                         tr!("j/k line   [/] hunk   Space stage/unstage   d discard   Esc back")
                     }
+                    (_, Focus::Message) => tr!("Ctrl-s commit   Esc back"),
                 };
                 buf.set_stringn(
                     area.x + 1,
@@ -685,5 +803,9 @@ impl App {
             }
         }
         buf.set_string(position_x, y, position, Style::new());
+        // 入力しているときだけ、カーソルを出す。
+        if let Some(at) = cursor {
+            frame.set_cursor_position(at);
+        }
     }
 }

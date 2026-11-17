@@ -47,6 +47,10 @@ pub enum Request {
     DiscardRows { diff: Value, rows: Vec<u32> },
     /// ファイルの変更を捨てる。
     Discard { paths: Vec<String> },
+    /// コミットを作る（`amend` なら、直前のコミットを作り直す）。
+    MakeCommit { message: String, amend: bool },
+    /// コミット（16 進の ID）のメッセージ（amend で欄に入れる）。
+    Message { id: String },
 }
 
 pub enum Loaded {
@@ -76,6 +80,10 @@ pub enum Loaded {
         serial: u64,
         result: std::result::Result<Reply, String>,
     },
+    /// コミットを作った（hooks が書いたもの）。だめなら理由。
+    Committed(std::result::Result<String, String>),
+    /// コミットのメッセージ（読めなければ `None`）。
+    Message(Option<String>),
     /// stage・unstage・discard が済んだ。だめなら理由。
     Staged(std::result::Result<(), String>),
 }
@@ -105,7 +113,9 @@ impl Loader {
             | Request::Stage { .. }
             | Request::StageRows { .. }
             | Request::DiscardRows { .. }
-            | Request::Discard { .. } => &self.work,
+            | Request::Discard { .. }
+            | Request::MakeCommit { .. }
+            | Request::Message { .. } => &self.work,
         };
         let _ = to.send(request);
     }
@@ -192,6 +202,17 @@ fn load(front: &dyn Front, request: Request) -> Result<Loaded> {
             done(front.call(json!({"op": "discardRows", "diff": diff, "rows": rows})))
         }
         Request::Discard { paths } => done(run(front, json!({"op": "discard", "paths": paths}))),
+        Request::MakeCommit { message, amend } => Loaded::Committed(
+            front
+                .call(json!({"op": "commit", "message": message, "amend": amend}))
+                .map(|r| r.json["output"].as_str().unwrap_or("").to_owned())
+                .map_err(|e| e.to_string()),
+        ),
+        Request::Message { id } => Loaded::Message(
+            run(front, json!({"op": "commitInfo", "oid": id}))
+                .ok()
+                .and_then(|r| r["info"]["message"].as_str().map(str::to_owned)),
+        ),
     })
 }
 

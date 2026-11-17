@@ -396,3 +396,61 @@ fn discard_asks_first() {
     assert_eq!(read(dir.path()), "one\ntwo\nthree\nfour\n");
     assert!(gone.contains("No changes"));
 }
+
+/// `c` でメッセージを書き、`Ctrl-s` で stage 済みの変更をコミットする
+#[test]
+fn commit_from_the_message_field() {
+    let dir = tempfile::tempdir().unwrap();
+    two_lines(dir.path());
+    let front = || {
+        amonhen_model::testing::isolate_from_user_settings();
+        open(dir.path())
+    };
+    // 何も stage していなければ、理由を出してコミットしない。
+    let nothing = amonhen_tui::snapshot(front(), 100, 14, clock(), "1cFix\x13").unwrap();
+    println!("{nothing}");
+    assert!(nothing.contains("Nothing is staged"));
+    assert_eq!(git_out(dir.path(), &["rev-list", "--count", "HEAD"]), "1\n");
+    // 書いている途中の画面: 欄の見出しに件名の文字数。
+    let typing =
+        amonhen_tui::snapshot(front(), 100, 14, clock(), "1 cUse capitals\n\nBody").unwrap();
+    println!("{typing}");
+    assert!(typing.contains("─ Message ─"));
+    assert!(typing.contains(" 12 ─"));
+    assert!(typing.contains(" Use capitals"));
+    assert!(typing.contains("Ctrl-s commit"));
+    // stage 済み（上の Space）なので、コミットできる。
+    let done =
+        amonhen_tui::snapshot(front(), 100, 14, clock(), "1cUse capitals\n\nBody\x13").unwrap();
+    println!("{done}");
+    assert!(done.contains("Committed"));
+    assert!(done.contains("No changes"));
+    assert_eq!(
+        git_out(dir.path(), &["log", "-1", "--format=%B"]).trim_end(),
+        "Use capitals\n\nBody"
+    );
+}
+
+/// `a` で amend: 欄に直前のメッセージが入り、コミットを作り直す
+#[test]
+fn amend_rewrites_the_last_commit() {
+    let dir = tempfile::tempdir().unwrap();
+    two_lines(dir.path());
+    let front = || {
+        amonhen_model::testing::isolate_from_user_settings();
+        open(dir.path())
+    };
+    let shown = amonhen_tui::snapshot(front(), 100, 14, clock(), "1a").unwrap();
+    println!("{shown}");
+    assert!(shown.contains("─ Message (amend) ─"));
+    assert!(shown.contains(" Start"));
+    // メッセージに書き足して、stage した変更ごと作り直す。
+    let done = amonhen_tui::snapshot(front(), 100, 14, clock(), "1 ac again\x13").unwrap();
+    println!("{done}");
+    assert_eq!(git_out(dir.path(), &["rev-list", "--count", "HEAD"]), "1\n");
+    assert_eq!(
+        git_out(dir.path(), &["log", "-1", "--format=%s"]),
+        "Start again\n"
+    );
+    assert_eq!(git_out(dir.path(), &["status", "--porcelain"]), "");
+}
