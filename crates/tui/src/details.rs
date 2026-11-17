@@ -286,6 +286,15 @@ impl Details {
         self.scroll.by(delta, self.lines())
     }
 
+    /// `down` の向きに、もうスクロールできない。
+    pub fn at_end(&self, down: bool) -> bool {
+        if down {
+            self.scroll.position(self.lines()).0 >= self.lines()
+        } else {
+            self.scroll.top == 0
+        }
+    }
+
     pub fn scroll_to(&mut self, top: u32) -> bool {
         self.jumped = None;
         self.scroll.to(top, self.lines())

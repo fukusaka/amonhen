@@ -515,14 +515,21 @@ impl App {
         self.history.total()
     }
 
-    /// `down` の向きに、もうスクロールできない（`selection` なら、選択をもう動かせない）。
-    pub fn history_at_end(&self, down: bool, selection: bool) -> bool {
-        if selection {
-            let last = self.history.total().saturating_sub(1);
-            self.history.selected() == if down { last } else { 0 }
-        } else {
-            self.history.at_end(down)
+    /// 計測の `step` を、`down` の向きにはもう進められない。
+    pub fn at_end(&self, down: bool, step: crate::Step) -> bool {
+        match step {
+            crate::Step::Wheel => self.history.at_end(down),
+            crate::Step::Move => {
+                let last = self.history.total().saturating_sub(1);
+                self.history.selected() == if down { last } else { 0 }
+            }
+            crate::Step::Diff => self.details.at_end(down),
         }
+    }
+
+    /// 詳細に出ている行の数（差分を含む）。
+    pub fn details_lines(&self) -> u32 {
+        self.details.position().1
     }
 
     pub fn last_frame_incomplete(&self) -> bool {

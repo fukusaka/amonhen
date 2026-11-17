@@ -22,7 +22,7 @@ pub fn run(args: &[String]) -> Result<ExitCode> {
     let mut snapshot: Option<String> = None;
     let mut keys = String::new();
     let mut measure = false;
-    let mut measure_keys = false;
+    let mut step = amonhen_tui::Step::Wheel;
     let mut size = DEFAULT_SIZE;
     // askpass として呼ばれた（`amonhen-tui` が作るスクリプトから。隠した引数）。
     #[cfg(unix)]
@@ -48,7 +48,8 @@ pub fn run(args: &[String]) -> Result<ExitCode> {
             "--snapshot" => snapshot = Some(a.value("--snapshot")?.to_owned()),
             "--keys" => keys = a.value("--keys")?.to_owned(),
             "--measure-scroll" => measure = true,
-            "--measure-move" => (measure, measure_keys) = (true, true),
+            "--measure-move" => (measure, step) = (true, amonhen_tui::Step::Move),
+            "--measure-diff" => (measure, step) = (true, amonhen_tui::Step::Diff),
             "--size" => {
                 let value = a.value("--size")?;
                 size = value
@@ -101,7 +102,8 @@ pub fn run(args: &[String]) -> Result<ExitCode> {
             size.1,
             MEASURE_FRAMES,
             MEASURE_INTERVAL,
-            measure_keys,
+            step,
+            &keys,
             local,
         )?;
         println!(
@@ -137,6 +139,9 @@ pub fn run(args: &[String]) -> Result<ExitCode> {
                     max = m.max_us
                 )
             );
+        }
+        if step == amonhen_tui::Step::Diff {
+            println!("{}", tr!("details: {lines} lines", lines = m.details_lines));
         }
         return Ok(ExitCode::SUCCESS);
     }

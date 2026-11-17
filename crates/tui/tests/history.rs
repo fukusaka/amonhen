@@ -185,20 +185,23 @@ fn scrolling_is_measured_without_a_terminal() {
     for i in 0..40 {
         commit(dir.path(), BASE + i, &format!("Commit {i}"));
     }
-    // ホイールと、`j` `k` での選択の移動（端で折り返すまで）。
-    for (keys, frames) in [(false, 30), (true, 100)] {
+    // ホイールと、`j` `k` での選択の移動（端で折り返すまで）、詳細のスクロール。
+    use amonhen_tui::Step;
+    for (step, frames) in [(Step::Wheel, 30), (Step::Move, 100), (Step::Diff, 30)] {
         let m = amonhen_tui::measure_scroll(
             open(dir.path()),
             80,
             12,
             frames,
             Duration::from_millis(1),
-            keys,
+            step,
+            "",
             local,
         )
         .unwrap();
         assert_eq!((m.frames, m.rows), (frames, 40));
-        assert!(m.mean_bytes > 0 && m.max_bytes >= m.mean_bytes);
+        // 詳細は 1 画面に収まるので、スクロールしても何も変わらない。
+        assert!((m.mean_bytes > 0 || step == Step::Diff) && m.max_bytes >= m.mean_bytes);
         assert_eq!(m.incomplete_frames, 0);
     }
 }
