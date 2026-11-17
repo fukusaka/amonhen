@@ -664,6 +664,32 @@ impl Data {
         });
     }
 
+    /// Working Copy の差分で右クリックした `row` の行（変わった行ならその行、hunk の見出しならその hunk の行）と、
+    /// そのうちに含めている行があるか（含めている行は捨てられない）。stage 済みの側の差分では None。
+    pub fn working_rows_at(&self, row: usize) -> Option<(Vec<usize>, bool)> {
+        use amonhen_layout::DiffRow;
+        let working = self.working.as_ref()?;
+        if working.diff.staged {
+            return None;
+        }
+        let rows = match working.diff.view.rows.get(row)?.kind {
+            DiffRow::ADDED | DiffRow::REMOVED => vec![row],
+            DiffRow::HUNK => hunk_rows(&working.diff.view.rows, row),
+            _ => return None,
+        };
+        let staged = working
+            .diff
+            .combined
+            .as_ref()
+            .is_some_and(|c| rows.iter().any(|&r| c.get(r).copied().unwrap_or(false)));
+        (!rows.is_empty()).then_some((rows, staged))
+    }
+
+    /// Working Copy の今の差分（行を捨てるのに使う）。
+    pub fn working_diff(&self) -> Option<(Arc<Repository>, Arc<amonhen_core::WorkingDiff>)> {
+        Some((self.repo.clone()?, self.working.as_ref()?.diff.clone()))
+    }
+
     /// Working Copy の status を読み直す（stage・コミットの後。見張りが拾う前に出す）。
     pub fn reload_status(&self) {
         let _ = self.changed_tx.send(amonhen_watch::Changes::INDEX.0);

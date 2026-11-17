@@ -90,6 +90,8 @@ struct Root {
     diff_area: ElementRef<Grid>,
     /// 差分で右クリックしたファイル（見出しのメニューの中身）。
     diff_file: Option<crate::data::DiffFile>,
+    /// Working Copy の差分で右クリックした行（その行か hunk の行）と、含めている行があるか。
+    diff_rows: Option<(Vec<usize>, bool)>,
     refs: Option<Arc<RefsSnapshot>>,
     /// ローカルブランチの分け方（コアの `branchGroups`）。
     groups: Option<BranchGroups>,
@@ -611,6 +613,10 @@ enum Message {
     OpenFileHistory(String),
     /// 差分で右クリックしたファイル。
     DiffFileAt(Option<crate::data::DiffFile>),
+    /// Working Copy の差分で右クリックした行。
+    DiffRowsAt(Option<(Vec<usize>, bool)>),
+    /// 行を捨て終えた（失敗ならそのわけ）。
+    LinesDiscarded(Option<String>),
     /// 差分のファイルの見出しのメニュー（GTK4 版の `commitfiles` の見出しのメニュー）。
     DiffFileMenu(String),
     FileHistoryLoaded(String, Result<Vec<crate::filehistory::Entry>, String>),
@@ -800,6 +806,7 @@ impl Component for Root {
             diff_panel: ElementRef::new(),
             diff_area: ElementRef::new(),
             diff_file: None,
+            diff_rows: None,
             refs: None,
             groups: None,
             info: None,
@@ -4534,6 +4541,24 @@ impl Component for Root {
                     self.diff_menu_request += 1;
                 }
                 self.diff_file = file;
+                self.diff_rows = None;
+            }
+            Message::LinesDiscarded(failed) => {
+                // ファイルの状態（M）は変わらず status が届かないことがあるので、差分を読み直す。
+                self.load_working_diff();
+                if let Some(message) = failed {
+                    self.dialog = Some(Dialog::Failed {
+                        title: "Discard Lines".to_owned(),
+                        message,
+                    });
+                }
+            }
+            Message::DiffRowsAt(rows) => {
+                if rows.is_some() {
+                    self.diff_menu_request += 1;
+                }
+                self.diff_rows = rows;
+                self.diff_file = None;
             }
             Message::DiffFileMenu(key) => self.diff_file_action(&key, context),
             Message::WorkingFileMenu(path, key) => match key.as_str() {
@@ -7172,6 +7197,15 @@ impl Root {
     /// 差分で右クリックしたファイルのメニュー（GTK4 版の `commitfiles` の見出しのメニュー: 畳む・Blame・
     /// File History・パスのコピー・ファイルで表示・エディタ・既定のアプリ）。
     fn diff_file_menu(&self) -> Vec<MenuItem> {
+        // Working Copy の差分: その行（hunk）の変更を捨てる。含めている行は捨てられない（先に外す。GTK4 版と同じ）。
+        if let Some((_, staged)) = &self.diff_rows {
+            let title = "Discard Lines";
+            return vec![if *staged {
+                MenuItem::disabled("discard-lines", title)
+            } else {
+                MenuItem::item("discard-lines", title)
+            }];
+        }
         let Some(file) = &self.diff_file else {
             return Vec::new();
         };
@@ -7216,6 +7250,21 @@ impl Root {
     }
 
     fn diff_file_action(&mut self, key: &str, context: &ComponentContext<Self>) {
+        if key == "discard-lines" {
+            let Some((rows, false)) = self.diff_rows.clone() else {
+                return beep();
+            };
+            let mut target = None;
+            with_history(|h| target = h.session.data.working_diff());
+            let Some((repo, diff)) = target else {
+                return beep();
+            };
+            context.spawn_background(move |_| {
+                let result = repo.discard_rows(&diff, &rows);
+                Message::LinesDiscarded(result.err().map(|e| e.to_string()))
+            });
+            return;
+        }
         let Some(file) = self.diff_file.clone() else {
             return;
         };
@@ -10930,7 +10979,7 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
 
     if target == Target::Diff {
         // 右クリック: 押した行のファイルのメニューに作り直してから開く（WinUI が今のメニューを開かないよう、
-        // 扱ったことにする）。History の差分だけ（Working Copy の差分にはまだない）。
+        // 扱ったことにする）。Working Copy の差分では、押した行（hunk）を捨てるメニュー。
         let source = ui.clone();
         revokers.push(ui.ContextRequested(
             move |_, args: Ref<xaml::ContextRequestedEventArgs>| {
@@ -10940,9 +10989,19 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
                 let _ = args.TryGetPosition(&source, &mut at);
                 with_history(|h| {
                     let row = ((h.diff.scroll_y + at.Y) / DIFF_ROW_HEIGHT).floor();
-                    let file = (row >= 0.0 && !h.working_page)
-                        .then(|| h.session.data.file_at(row as usize))
-                        .flatten();
+                    if row < 0.0 {
+                        return;
+                    }
+                    // Working Copy の差分なら行（hunk）の、History の差分ならファイルのメニュー。
+                    if h.working_page {
+                        let rows = h.session.data.working_rows_at(row as usize);
+                        if rows.is_some() {
+                            DIFF_AT.with(|a| *a.borrow_mut() = Some((source.clone(), at)));
+                        }
+                        h.sender.send(Message::DiffRowsAt(rows));
+                        return;
+                    }
+                    let file = h.session.data.file_at(row as usize);
                     if file.is_some() {
                         DIFF_AT.with(|a| *a.borrow_mut() = Some((source.clone(), at)));
                     }
