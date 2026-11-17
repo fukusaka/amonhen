@@ -5,6 +5,7 @@
 //! 描画はその関数。何も変わらなければ描かない。
 
 mod app;
+mod details;
 mod history;
 mod loader;
 mod terminal;
@@ -21,7 +22,7 @@ use ratatui_core::layout::Rect;
 use ratatui_core::terminal::{Terminal, TerminalOptions, Viewport};
 use ratatui_crossterm::CrosstermBackend;
 use ratatui_crossterm::crossterm::event::{
-    Event as Input, KeyModifiers, MouseEvent, MouseEventKind,
+    Event as Input, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind,
 };
 
 use unicode_width::UnicodeWidthStr;
@@ -30,12 +31,21 @@ use app::{App, Event};
 
 pub type Result<T> = amonhen_model::Result<T>;
 
+/// 時刻の出し方。
+#[derive(Clone, Copy)]
+pub struct Clock {
+    /// 「2d」などの基準（UNIX 時刻）。
+    pub now: i64,
+    /// UNIX 時刻を、手元の日付と時刻の文字に。
+    pub local: fn(i64) -> String,
+}
+
 /// 端末を取って、終わる（`q`）まで動かす。
-pub fn run(front: Arc<dyn Front>) -> Result<()> {
+pub fn run(front: Arc<dyn Front>, local: fn(i64) -> String) -> Result<()> {
     let (tx, rx) = mpsc::channel();
     let mut screen = terminal::Screen::enter()?;
     terminal::read_input(tx.clone());
-    let mut app = App::new(front, tx, now());
+    let mut app = App::new(front, tx, Clock { now: now(), local });
     let size = screen.terminal.size()?;
     app.resize(size.width, size.height);
     app.start();
@@ -70,13 +80,33 @@ fn settle(app: &mut App, rx: &mpsc::Receiver<Event>) -> Result<()> {
     }
 }
 
-/// 1 フレームを文字で（`--snapshot`。テストと、見た目の確認に）。`now` は「2d」などの時刻の基準。
-pub fn snapshot(front: Arc<dyn Front>, cols: u16, rows: u16, now: i64) -> Result<String> {
+/// 1 フレームを文字で（`--snapshot`。テストと、見た目の確認に）。`keys` は、描く前に押すキー（1 文字ずつ。
+/// 改行は Enter、タブは Tab、`\x1b` は Esc）。
+pub fn snapshot(
+    front: Arc<dyn Front>,
+    cols: u16,
+    rows: u16,
+    clock: Clock,
+    keys: &str,
+) -> Result<String> {
     let (tx, rx) = mpsc::channel();
-    let mut app = App::new(front, tx, now);
+    let mut app = App::new(front, tx, clock);
     app.resize(cols, rows);
     app.start();
     settle(&mut app, &rx)?;
+    for ch in keys.chars() {
+        let code = match ch {
+            '\n' => KeyCode::Enter,
+            '\t' => KeyCode::Tab,
+            '\x1b' => KeyCode::Esc,
+            ch => KeyCode::Char(ch),
+        };
+        app.handle(Event::Input(Input::Key(KeyEvent::new(
+            code,
+            KeyModifiers::NONE,
+        ))));
+        settle(&mut app, &rx)?;
+    }
     let mut terminal = Terminal::new(TestBackend::new(cols, rows))?;
     terminal.draw(|frame| app.draw(frame))?;
     let buffer = terminal.backend().buffer();
@@ -134,9 +164,10 @@ pub fn measure_scroll(
     rows: u16,
     frames: usize,
     interval: Duration,
+    local: fn(i64) -> String,
 ) -> Result<Measure> {
     let (tx, rx) = mpsc::channel();
-    let mut app = App::new(front, tx, now());
+    let mut app = App::new(front, tx, Clock { now: now(), local });
     app.resize(cols, rows);
     app.start();
     settle(&mut app, &rx)?;
@@ -151,7 +182,8 @@ pub fn measure_scroll(
     let wheel = |kind| {
         Event::Input(Input::Mouse(MouseEvent {
             kind,
-            column: cols / 2,
+            // History の上（詳細と並んでいても、左が History）。
+            column: 1,
             row: rows / 2,
             modifiers: KeyModifiers::NONE,
         }))

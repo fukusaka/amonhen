@@ -57,7 +57,7 @@ usage: amonhen [<path>]
        amonhen refs [--verify] [--json]
        amonhen run [<json>…]
        amonhen watch [--json]
-       amonhen tui [<path> | ssh://host/path | daemon:<path>] [--snapshot <file> | --measure-scroll] [--size <cols>x<rows>]
+       amonhen tui [<path> | ssh://host/path | daemon:<path>] [--snapshot <file> [--keys <keys>] | --measure-scroll] [--size <cols>x<rows>]
        amonhen undo [--list | --peek]
        amonhen worktree [list [--changes] [--json] | add <path> [<start>] [-b <branch>] | remove [--force] <path> | prune | lock [--reason <text>] <path> | unlock <path> | move <path> <new-path> | repair [<path>…]]
        amonhen merge-file [--all] [--check] <file>…
@@ -92,9 +92,10 @@ and discard's --rows are diff (unstaged) line numbers; only the changes on those
 can be undone with undo.
 restore puts files as they are in <rev> into the working tree (and the index with --staged); a file <rev> lacks is
 deleted. undo brings the working tree files back.
-tui shows History in the terminal (q quits). --snapshot writes one frame as text (- for the standard output) and
---measure-scroll prints how long a frame takes while scrolling and how many bytes it sends; both draw at --size
-(120x40 by default) and need no terminal.
+tui shows History and the selected commit's details and diff in the terminal (q quits). --snapshot writes one frame
+as text (- for the standard output) after pressing --keys (one key per character), and --measure-scroll prints how
+long a frame takes while scrolling and how many bytes it sends; both draw at --size (120x40 by default) and need no
+terminal.
 run takes commands like {\"op\":\"checkout\",\"branch\":\"main\"} (the core's command.rs). Each answer is one line of JSON.
 log --rebuild and daemon rebuild throw away the History cache and build it again (the shared daemon's too).
 merge-file applies only the rules that can't go wrong by default (--all for every rule). If conflicts remain the exit

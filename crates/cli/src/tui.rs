@@ -20,6 +20,7 @@ const MEASURE_INTERVAL: Duration = Duration::from_micros(8333);
 pub fn run(args: &[String]) -> Result<ExitCode> {
     let mut dir = PathBuf::from(".");
     let mut snapshot: Option<String> = None;
+    let mut keys = String::new();
     let mut measure = false;
     let mut size = DEFAULT_SIZE;
     let mut a = Args::new(args);
@@ -27,6 +28,7 @@ pub fn run(args: &[String]) -> Result<ExitCode> {
         match arg.as_str() {
             "-C" => dir = PathBuf::from(a.value("-C")?),
             "--snapshot" => snapshot = Some(a.value("--snapshot")?.to_owned()),
+            "--keys" => keys = a.value("--keys")?.to_owned(),
             "--measure-scroll" => measure = true,
             "--size" => {
                 let value = a.value("--size")?;
@@ -52,7 +54,8 @@ pub fn run(args: &[String]) -> Result<ExitCode> {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs() as i64);
-        let text = amonhen_tui::snapshot(front, size.0, size.1, now)?;
+        let clock = amonhen_tui::Clock { now, local };
+        let text = amonhen_tui::snapshot(front, size.0, size.1, clock, &keys)?;
         if file == "-" {
             crate::term::write(&text);
         } else {
@@ -61,8 +64,14 @@ pub fn run(args: &[String]) -> Result<ExitCode> {
         return Ok(ExitCode::SUCCESS);
     }
     if measure {
-        let m =
-            amonhen_tui::measure_scroll(front, size.0, size.1, MEASURE_FRAMES, MEASURE_INTERVAL)?;
+        let m = amonhen_tui::measure_scroll(
+            front,
+            size.0,
+            size.1,
+            MEASURE_FRAMES,
+            MEASURE_INTERVAL,
+            local,
+        )?;
         println!(
             "{}",
             tr!(
@@ -81,6 +90,11 @@ pub fn run(args: &[String]) -> Result<ExitCode> {
         );
         return Ok(ExitCode::SUCCESS);
     }
-    amonhen_tui::run(front)?;
+    amonhen_tui::run(front, local)?;
     Ok(ExitCode::SUCCESS)
+}
+
+/// 手元の日付と時刻。
+fn local(time: i64) -> String {
+    crate::term::local_time(time, true)
 }

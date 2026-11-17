@@ -95,6 +95,47 @@ fn merged(dir: &Path) {
     git(dir, BASE, &["tag", "v1"]);
 }
 
+/// 時刻は、手元の時間帯によらないよう UNIX 時刻のまま出す。
+fn local(time: i64) -> String {
+    format!("@{time}")
+}
+
+fn clock() -> amonhen_tui::Clock {
+    amonhen_tui::Clock {
+        now: BASE + DAY * 5,
+        local,
+    }
+}
+
+/// ファイルを 1 つ足し、次のコミットで 1 行を書き換える。
+fn changed(dir: &Path) {
+    git(dir, BASE, &["init", "-q", "-b", "main"]);
+    std::fs::write(
+        dir.join("lane.rs"),
+        "fn lane() -> u32 {\n    let lane = 0;\n    lane\n}\n",
+    )
+    .unwrap();
+    git(dir, BASE, &["add", "."]);
+    git(dir, BASE, &["commit", "-q", "-m", "Start"]);
+    std::fs::write(
+        dir.join("lane.rs"),
+        "fn lane() -> u32 {\n    let lane = trunk();\n    lane\n}\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("notes.txt"), "one\n").unwrap();
+    git(dir, BASE, &["add", "."]);
+    git(
+        dir,
+        BASE + DAY * 3,
+        &[
+            "commit",
+            "-q",
+            "-m",
+            "Take the lane from the trunk\n\nThe first lane was always 0.",
+        ],
+    );
+}
+
 fn open(dir: &Path) -> Arc<dyn Front> {
     Arc::new(InProcess::open(dir, None).unwrap())
 }
@@ -104,7 +145,7 @@ fn open(dir: &Path) -> Arc<dyn Front> {
 fn history_shows_one_line_per_commit() {
     let dir = tempfile::tempdir().unwrap();
     merged(dir.path());
-    let text = amonhen_tui::snapshot(open(dir.path()), 64, 8, BASE + DAY * 5).unwrap();
+    let text = amonhen_tui::snapshot(open(dir.path()), 64, 8, clock(), "").unwrap();
     println!("{text}");
     let name = dir.path().file_name().unwrap().to_string_lossy();
     let lines: Vec<&str> = text.lines().collect();
@@ -127,7 +168,7 @@ fn history_shows_one_line_per_commit() {
 fn a_narrow_terminal_drops_the_author_and_date() {
     let dir = tempfile::tempdir().unwrap();
     merged(dir.path());
-    let text = amonhen_tui::snapshot(open(dir.path()), 24, 6, BASE + DAY * 5).unwrap();
+    let text = amonhen_tui::snapshot(open(dir.path()), 24, 6, clock(), "").unwrap();
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(lines[1], "◉─╮  [main] [v1] Merge …");
     assert_eq!(lines[3], "│ ●  [topic] 日本語の件…");
@@ -141,9 +182,65 @@ fn scrolling_is_measured_without_a_terminal() {
     for i in 0..40 {
         commit(dir.path(), BASE + i, &format!("Commit {i}"));
     }
-    let m = amonhen_tui::measure_scroll(open(dir.path()), 80, 12, 30, Duration::from_millis(1))
-        .unwrap();
+    let m = amonhen_tui::measure_scroll(
+        open(dir.path()),
+        80,
+        12,
+        30,
+        Duration::from_millis(1),
+        local,
+    )
+    .unwrap();
     assert_eq!((m.frames, m.rows), (30, 40));
     assert!(m.mean_bytes > 0 && m.max_bytes >= m.mean_bytes);
     assert_eq!(m.incomplete_frames, 0);
+}
+
+/// 幅があれば、History の右に選んでいるコミットの詳細と差分が並ぶ
+#[test]
+fn details_sit_beside_history_when_wide() {
+    let dir = tempfile::tempdir().unwrap();
+    changed(dir.path());
+    let text = amonhen_tui::snapshot(open(dir.path()), 120, 20, clock(), "").unwrap();
+    println!("{text}");
+    let lines: Vec<&str> = text.lines().collect();
+    // 左が History、区切りの右が詳細。
+    let right = |line: &str| line.split_once('│').map(|(_, r)| r.to_owned());
+    let details: Vec<String> = lines.iter().filter_map(|l| right(l)).collect();
+    assert!(lines[1].starts_with("◉  [main] Take the lane from the trunk"));
+    assert_eq!(details[0], "Take the lane from the trunk");
+    assert_eq!(details[2], "The first lane was always 0.");
+    assert_eq!(details[4], "Author   Ann <ann@example.com>");
+    assert_eq!(details[5], format!("Date     @{} (2d ago)", BASE + DAY * 3));
+    assert_eq!(details[9], "M lane.rs +1 -1");
+    assert_eq!(details[10], "A notes.txt +1");
+    assert!(details[12].starts_with("── lane.rs ─ +1 -1 ──"));
+    assert_eq!(details[13], "@@ -1,4 +1,4 @@");
+    assert_eq!(details[14], "1 1  fn lane() -> u32 {");
+    assert_eq!(details[15], "2   -    let lane = 0;");
+    assert_eq!(details[16], "  2 +    let lane = trunk();");
+}
+
+/// 狭ければ、Enter で History の所に詳細が開き、Esc で戻る
+#[test]
+fn details_open_over_history_when_narrow() {
+    let dir = tempfile::tempdir().unwrap();
+    changed(dir.path());
+    let text = amonhen_tui::snapshot(open(dir.path()), 64, 20, clock(), "\n").unwrap();
+    println!("{text}");
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines[1], "Take the lane from the trunk");
+    assert_eq!(lines[15], "1 1  fn lane() -> u32 {");
+    assert!(lines[19].contains("Esc back"));
+    // 一番下まで動かすと、2 つ目のファイルが見える。
+    let end = amonhen_tui::snapshot(open(dir.path()), 64, 20, clock(), "\nG").unwrap();
+    println!("{end}");
+    assert!(end.contains("── notes.txt ─ +1 ──"));
+    assert!(end.contains("  1 +one"));
+    // `]` は次のファイルの見出しを一番上に。
+    let jumped = amonhen_tui::snapshot(open(dir.path()), 64, 8, clock(), "\n]").unwrap();
+    println!("{jumped}");
+    assert!(jumped.lines().nth(1).unwrap().starts_with("── lane.rs ─"));
+    let back = amonhen_tui::snapshot(open(dir.path()), 64, 20, clock(), "\n\x1b").unwrap();
+    assert!(back.lines().nth(1).unwrap().starts_with("◉  [main]"));
 }

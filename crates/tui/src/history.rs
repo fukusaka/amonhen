@@ -32,6 +32,8 @@ const DATE_WIDTH: u16 = 4;
 const NARROW: u16 = 60;
 
 const SELECTED: Color = Color::Indexed(238);
+/// ほかの所を操作している間の、選んでいる行。
+const SELECTED_UNFOCUSED: Color = Color::Indexed(236);
 const DIM: Color = Color::Indexed(244);
 
 #[derive(Clone, Copy)]
@@ -134,6 +136,12 @@ impl History {
 
     pub fn total(&self) -> u32 {
         self.total
+    }
+
+    /// 選んでいるコミット（その行がまだ届いていなければ `None`）。
+    pub fn selected_id(&self) -> Option<Oid> {
+        let window = self.window.as_ref()?;
+        Some(window.ids[window.index(self.selected)?])
     }
 
     pub fn selected(&self) -> u32 {
@@ -251,7 +259,7 @@ impl History {
         row < self.total && self.select(row)
     }
 
-    pub fn draw(&mut self, area: Rect, buf: &mut Buffer, now: i64) {
+    pub fn draw(&mut self, area: Rect, buf: &mut Buffer, now: i64, focused: bool) {
         self.incomplete = false;
         let Some(window) = &self.window else {
             self.incomplete = self.total > 0;
@@ -336,7 +344,11 @@ impl History {
             if row == self.selected {
                 buf.set_style(
                     Rect::new(area.x, y, area.width, 1),
-                    Style::new().bg(SELECTED),
+                    Style::new().bg(if focused {
+                        SELECTED
+                    } else {
+                        SELECTED_UNFOCUSED
+                    }),
                 );
             }
         }
@@ -344,7 +356,7 @@ impl History {
 }
 
 /// `width` セルに収まるよう切り詰める（収まらなければ「…」で終える）。
-fn fit(text: &str, width: usize) -> Cow<'_, str> {
+pub(crate) fn fit(text: &str, width: usize) -> Cow<'_, str> {
     if text.width() <= width {
         return Cow::Borrowed(text);
     }
@@ -365,7 +377,7 @@ fn fit(text: &str, width: usize) -> Cow<'_, str> {
 }
 
 /// `time` が `now` からどれだけ前かを、4 文字までで（「5m」「3h」「2d」「6w」「11mo」「3y」）。
-fn ago(now: i64, time: i64) -> String {
+pub(crate) fn ago(now: i64, time: i64) -> String {
     let secs = (now - time).max(0);
     let (minute, hour, day) = (60, 3600, 86400);
     match secs {
