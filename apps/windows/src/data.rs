@@ -52,6 +52,11 @@ impl Chunk {
         self.0.author_times[i]
     }
 
+    /// 署名のあるコミット（検証はまだ。History の行の印）。
+    pub fn signed(&self, i: usize) -> bool {
+        self.0.signatures.get(i).is_some_and(|&k| k != 0)
+    }
+
     /// `s` を UTF-16 で `out` に足す。
     pub fn push_utf16(&self, s: StrRef, out: &mut Vec<u16>) {
         push_utf16(self.0.bytes(s), s.is_ascii(), out);
@@ -215,6 +220,81 @@ pub enum SearchDone {
     Failed(String, String),
 }
 
+/// 署名の検証の結果（History の行の印の色。GTK4 版の `signature::Status` をまとめたもの）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Signature {
+    Verified,
+    /// 鍵の信用度が決まっていない・署名者がコミッターと違う（黄色）。
+    Caution,
+    Expired,
+    /// 失効した鍵・正しくない署名（赤）。
+    Bad,
+    /// 鍵がない・検証できない。
+    Unknown,
+}
+
+impl Signature {
+    /// `verifySignatures` の答えの 1 件から決める（GTK4 版の `signature::Status::new` と同じ判定）。
+    pub fn of(check: &serde_json::Value) -> Self {
+        let status = check["status"].as_str().unwrap_or_default();
+        match status {
+            "G" | "U" => {
+                let signer = check["signer"].as_str().unwrap_or_default();
+                let key = check["key"].as_str().unwrap_or_default();
+                let ssh = !signer.contains('<') && key.starts_with("SHA256:");
+                let level = if ssh {
+                    3
+                } else {
+                    match check["trust"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_lowercase()
+                        .as_str()
+                    {
+                        "ultimate" | "full" | "fully" => 3,
+                        "marginal" => 2,
+                        "never" => 0,
+                        _ => 1,
+                    }
+                };
+                if status == "U" || level < 2 || signer_mismatch(check) {
+                    Self::Caution
+                } else {
+                    Self::Verified
+                }
+            }
+            "X" | "Y" => Self::Expired,
+            "R" | "B" => Self::Bad,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+/// 鍵のメールにコミッターのメールが（有効なものとして）ない（GTK4 版の `CommitterMatch::Mismatched`）。
+fn signer_mismatch(check: &serde_json::Value) -> bool {
+    let committer = check["committerEmail"]
+        .as_str()
+        .unwrap_or_default()
+        .to_lowercase();
+    let emails: Vec<(String, String)> = check["emails"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|e| {
+            (
+                e["email"].as_str().unwrap_or_default().to_lowercase(),
+                e["validity"].as_str().unwrap_or_default().to_owned(),
+            )
+        })
+        .collect();
+    if emails.is_empty() || committer.is_empty() {
+        return false;
+    }
+    !emails
+        .iter()
+        .any(|(e, v)| *e == committer && !matches!(v.as_str(), "r" | "e" | "n"))
+}
+
 /// History の差分のファイル（見出しの右クリックのメニュー）。
 #[derive(Clone, Debug, PartialEq)]
 pub struct DiffFile {
@@ -252,6 +332,8 @@ enum Event {
     Working(Box<WorkingShown>),
     /// History の検索の答え（History の世代、問い合わせ、一致した行）。
     Search(u64, String, Result<Vec<u32>, String>),
+    /// 署名の検証の結果（History の世代）。
+    Signatures(u64, Vec<(amonhen_model::Oid, Signature)>),
     Chunk(u64, u32, Chunk),
     Failed(String),
 }
@@ -268,6 +350,10 @@ pub struct Data {
     pub working_changed: bool,
     /// 今の History の行の、ref のラベル。
     pub labels: Labels,
+    /// 署名の検証の結果と、検証している・これから検証するコミット（見えている行のものだけ、裏で）。
+    pub signatures: HashMap<amonhen_model::Oid, Signature>,
+    verifying: HashSet<amonhen_model::Oid>,
+    unverified: Vec<amonhen_model::Oid>,
     /// 今の History の行の、worktree の HEAD の札（ref のラベルの前に出す）と、その元（コミット、札の文字、
     /// 書き込む先か）。
     pub worktree_labels: Labels,
@@ -419,6 +505,9 @@ impl Data {
             working_wanted: None,
             working_changed: false,
             labels: HashMap::new(),
+            signatures: HashMap::new(),
+            verifying: HashSet::new(),
+            unverified: Vec::new(),
             worktree_labels: HashMap::new(),
             worktree_heads: Vec::new(),
             elsewhere: HashSet::new(),
@@ -561,6 +650,8 @@ impl Data {
                     self.history_changed = true;
                     self.labels.clear();
                     self.place_worktrees();
+                    // 署名の結果はコミットのものなので残すが、検証中のものは新しい世代で頼み直す。
+                    self.verifying.clear();
                     // 行の番号が変わるので、検索の一致も捨てる（探し直すのは FE）。
                     self.matches.clear();
                     self.multi.clear();
@@ -578,6 +669,19 @@ impl Data {
                     {
                         self.loading.remove(&index);
                         self.chunks.insert(index, Rc::new(chunk));
+                        changed = true;
+                    }
+                }
+                Event::Signatures(generation, found) => {
+                    if self
+                        .history
+                        .as_ref()
+                        .is_some_and(|h| h.generation == generation)
+                    {
+                        for (id, signature) in found {
+                            self.verifying.remove(&id);
+                            self.signatures.insert(id, signature);
+                        }
                         changed = true;
                     }
                 }
@@ -865,6 +969,48 @@ impl Data {
             let _ = tx.send(Event::Commit(generation, Box::new(shown)));
             wake();
             send_syntax(tx, wake, generation, key, 0, stacked, collapsed);
+        });
+    }
+
+    /// 行のコミットの署名の印（署名がなければ None、まだ検証していなければ Some(None) で、裏で検証を頼む）。
+    pub fn signature_mark(&mut self, id: amonhen_model::Oid) -> Option<Signature> {
+        let known = self.signatures.get(&id).copied();
+        if known.is_none() && !self.verifying.contains(&id) && !self.unverified.contains(&id) {
+            self.unverified.push(id);
+        }
+        known
+    }
+
+    /// 頼まれた署名を裏でまとめて検証する（描いた後に呼ぶ。GTK4 版は 8 個ずつ）。
+    pub fn verify_signatures(&mut self) {
+        if self.unverified.is_empty() {
+            return;
+        }
+        let (Some(repo), Some(history)) = (self.repo.clone(), self.history.as_ref()) else {
+            return;
+        };
+        let generation = history.generation;
+        let pending = std::mem::take(&mut self.unverified);
+        self.verifying.extend(pending.iter().copied());
+        let (tx, wake) = (self.tx.clone(), self.wake.clone());
+        std::thread::spawn(move || {
+            for batch in pending.chunks(8) {
+                let oids: Vec<String> = batch.iter().map(ToString::to_string).collect();
+                let command = serde_json::json!({ "op": "verifySignatures", "oids": oids });
+                let reply: serde_json::Value =
+                    serde_json::from_str(&repo.run_json(&command.to_string())).unwrap_or_default();
+                let checks = reply["info"]["checks"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default();
+                let found = batch
+                    .iter()
+                    .zip(checks.iter())
+                    .map(|(id, c)| (*id, Signature::of(c)))
+                    .collect();
+                let _ = tx.send(Event::Signatures(generation, found));
+                wake();
+            }
         });
     }
 

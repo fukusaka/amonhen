@@ -85,6 +85,19 @@ const LABEL_GAP: f32 = 4.0;
 /// ラベルを並べる幅の上限（文字の幅に対する割合）。残りは件名に回す。
 const LABEL_SHARE: f32 = 0.6;
 
+/// 署名の検証の結果の色（GTK4 版の `signature_color`。まだ検証していなければ薄い灰色）。
+fn signature_color(mark: Option<crate::data::Signature>) -> D2D1_COLOR_F {
+    use crate::data::Signature;
+    match mark {
+        Some(Signature::Verified) => rgba(0.20, 0.70, 0.30, 1.0),
+        Some(Signature::Caution) => rgba(0.90, 0.75, 0.10, 1.0),
+        Some(Signature::Expired) => rgba(0.95, 0.55, 0.15, 1.0),
+        Some(Signature::Bad) => rgba(0.90, 0.25, 0.25, 1.0),
+        Some(Signature::Unknown) => rgba(0.11, 0.11, 0.12, 0.55),
+        None => rgba(0.11, 0.11, 0.12, 0.25),
+    }
+}
+
 const fn rgba(r: f32, g: f32, b: f32, a: f32) -> D2D1_COLOR_F {
     D2D1_COLOR_F { r, g, b, a }
 }
@@ -608,11 +621,28 @@ impl Renderer {
                     subject_x += pill + LABEL_GAP;
                 }
             }
+            // 署名があれば、作者・日時の行の後ろに検証の結果の色の丸（GTK4 版・macOS 版の印）。
+            let signed = chunk.signed(chunk.index(row));
+            let mark = signed.then(|| data.signature_mark(history.graph.ids()[row as usize]));
             let line = &self.rows[&row];
             unsafe {
                 line.subject
                     .SetMaxWidth((text_x + text_width - subject_x).max(0.0))?;
-                line.meta.SetMaxWidth(text_width)?;
+                line.meta
+                    .SetMaxWidth((text_width - if signed { 14.0 } else { 0.0 }).max(0.0))?;
+                if let Some(mark) = mark {
+                    let mut metrics = DWRITE_TEXT_METRICS::default();
+                    line.meta.GetMetrics(&mut metrics)?;
+                    self.brush.SetColor(&signature_color(mark));
+                    self.d2d.FillEllipse(
+                        &D2D1_ELLIPSE {
+                            point: point(text_x + metrics.width + 8.0, top + 27.0),
+                            radiusX: 3.5,
+                            radiusY: 3.5,
+                        },
+                        &self.brush,
+                    );
+                }
                 self.brush.SetColor(&FOREGROUND);
                 self.d2d.DrawTextLayout(
                     point(subject_x, top + 2.0),
@@ -633,6 +663,8 @@ impl Renderer {
             unsafe { self.d2d.Flush(None, None)? };
         }
         stages[3] = lap(&mut t) - stages[2];
+        // 描いた行で頼まれた署名を、裏で検証する。
+        data.verify_signatures();
         Ok(())
     }
 
