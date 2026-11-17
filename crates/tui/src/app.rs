@@ -527,13 +527,15 @@ impl App {
             }
             crate::Step::Diff => self.details.at_end(down),
             crate::Step::Changes => self.changes.at_end(down),
+            // 回数で折り返す。
+            crate::Step::DiffPan | crate::Step::ChangesPan => false,
         }
     }
 
     /// 詳細に出ている行の数（差分を含む）。
     pub fn details_lines(&self, step: crate::Step) -> u32 {
         match step {
-            crate::Step::Changes => self.changes.diff_position().1,
+            crate::Step::Changes | crate::Step::ChangesPan => self.changes.diff_position().1,
             _ => self.details.position().1,
         }
     }

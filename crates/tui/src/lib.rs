@@ -358,7 +358,14 @@ pub enum Step {
     /// Working Copy で、選んでいるファイルの差分に入り、選んでいる行を `j`（端に着いたら `k`）で動かす。行が
     /// ペインを出るときに、差分がスクロールする。
     Changes,
+    /// `Diff` と同じ所で、差分を `l` で横に動かす（`PAN_STEPS` 回で折り返して `h`）。
+    DiffPan,
+    /// `Changes` と同じ所で、差分を `l` で横に動かす。
+    ChangesPan,
 }
+
+/// 横に動かす計測で、折り返すまでの回数（1 回で 8 セル）。左の端での `h` は一覧へ戻るので、端では押さない。
+const PAN_STEPS: usize = 20;
 
 /// `step` を `frames` 回くり返し（`interval` おき）、1 フレームにかかる時間とバイト数を測る。`keys` は、測る前に
 /// 押すキー（`--snapshot` と同じ書き方。測るコミットを選ぶのに）。入力から出力までは本物と同じ道を通し、出力先
@@ -386,8 +393,8 @@ pub fn measure_scroll(
     }
     let enter = match step {
         Step::Wheel | Step::Move => "",
-        Step::Diff => "\n",
-        Step::Changes => "1\n",
+        Step::Diff | Step::DiffPan => "\n",
+        Step::Changes | Step::ChangesPan => "1\n",
     };
     for ch in keys.chars().chain(enter.chars()) {
         app.handle(key(ch));
@@ -412,15 +419,18 @@ pub fn measure_scroll(
     let mut sizes = Vec::with_capacity(frames);
     let mut incomplete = 0;
     let mut down = true;
-    for _ in 0..frames {
+    for frame in 0..frames {
         let before = written.load(Ordering::Relaxed);
         let cpu_start = thread_cpu();
         let start = Instant::now();
         // 端に着いたら折り返す。
-        if app.at_end(down, step) {
+        if matches!(step, Step::DiffPan | Step::ChangesPan) {
+            down = (frame / PAN_STEPS).is_multiple_of(2);
+        } else if app.at_end(down, step) {
             down = !down;
         }
         app.handle(match (step, down) {
+            (Step::DiffPan | Step::ChangesPan, _) => key(if down { 'l' } else { 'h' }),
             (Step::Move | Step::Diff | Step::Changes, _) => key(if down { 'j' } else { 'k' }),
             (Step::Wheel, true) => wheel(MouseEventKind::ScrollDown),
             (Step::Wheel, false) => wheel(MouseEventKind::ScrollUp),

@@ -57,7 +57,7 @@ usage: amonhen [<path>]
        amonhen refs [--verify] [--json]
        amonhen run [<json>…]
        amonhen watch [--json]
-       amonhen tui [<path> | ssh://host/path | daemon:<path>] [--snapshot <file> | --measure-scroll | --measure-move | --measure-diff | --measure-changes] [--keys <keys>] [--size <cols>x<rows>]
+       amonhen tui [<path> | ssh://host/path | daemon:<path>] [--snapshot <file> | --measure-scroll | --measure-move | --measure-diff | --measure-changes | --measure-diff-pan | --measure-changes-pan] [--keys <keys>] [--size <cols>x<rows>]
        amonhen undo [--list | --peek]
        amonhen worktree [list [--changes] [--json] | add <path> [<start>] [-b <branch>] | remove [--force] <path> | prune | lock [--reason <text>] <path> | unlock <path> | move <path> <new-path> | repair [<path>…]]
        amonhen merge-file [--all] [--check] <file>…

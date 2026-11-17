@@ -51,6 +51,8 @@ pub fn run(args: &[String]) -> Result<ExitCode> {
             "--measure-move" => (measure, step) = (true, amonhen_tui::Step::Move),
             "--measure-diff" => (measure, step) = (true, amonhen_tui::Step::Diff),
             "--measure-changes" => (measure, step) = (true, amonhen_tui::Step::Changes),
+            "--measure-diff-pan" => (measure, step) = (true, amonhen_tui::Step::DiffPan),
+            "--measure-changes-pan" => (measure, step) = (true, amonhen_tui::Step::ChangesPan),
             "--size" => {
                 let value = a.value("--size")?;
                 size = value
@@ -141,7 +143,7 @@ pub fn run(args: &[String]) -> Result<ExitCode> {
                 )
             );
         }
-        if matches!(step, amonhen_tui::Step::Diff | amonhen_tui::Step::Changes) {
+        if !matches!(step, amonhen_tui::Step::Wheel | amonhen_tui::Step::Move) {
             println!("{}", tr!("diff: {lines} lines", lines = m.details_lines));
         }
         return Ok(ExitCode::SUCCESS);

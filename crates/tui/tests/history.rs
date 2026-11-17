@@ -223,6 +223,21 @@ fn moving_through_the_working_copy_diff_is_measured() {
     )
     .unwrap();
     assert!(m.details_lines > 2 && m.mean_bytes > 0);
+    // 横に動かすのも（行は短いので、消えていくだけ）。
+    for step in [amonhen_tui::Step::ChangesPan, amonhen_tui::Step::DiffPan] {
+        let m = amonhen_tui::measure_scroll(
+            open(dir.path()),
+            80,
+            12,
+            50,
+            Duration::from_millis(1),
+            step,
+            "",
+            local,
+        )
+        .unwrap();
+        assert!(m.mean_bytes > 0, "{m:?}");
+    }
 }
 
 /// 区切りの線で分けた `index` 番目の列（右の空白は除く）。
