@@ -85,6 +85,8 @@ struct Root {
     tag_remotes: Value,
     /// submodule の様子（コアの `submodules` の info の `submodules`）。
     submodules: Value,
+    /// subtree（コアの `subtrees` の info。`available` と `subtrees`）。
+    subtrees: Value,
     /// 選んだコミットの詳細（`commit_info` の答え）と、時間のかかる分（`commit_extras`）。
     info: Option<(Value, Option<Value>)>,
     error: Option<String>,
@@ -614,6 +616,8 @@ enum Message {
     TagRemotes(Value),
     /// submodule の様子を読んだ。
     Submodules(Value),
+    /// subtree を読んだ（`subtrees` の info）。
+    Subtrees(Value),
     /// 入力の欄とチェックのダイアログ（`Dialog::Form`）の欄・チェックを変えた。
     FormField(usize, String),
     FormCheck(usize, bool),
@@ -764,6 +768,7 @@ impl Component for Root {
             activity_from: Page::History,
             tag_remotes: Value::Null,
             submodules: Value::Null,
+            subtrees: Value::Null,
             repositories: None,
             repositories_from: Page::History,
             repositories_list: ElementRef::new(),
@@ -829,6 +834,7 @@ impl Component for Root {
             }
             Message::TagRemotes(info) => self.tag_remotes = info,
             Message::Submodules(states) => self.submodules = states,
+            Message::Subtrees(info) => self.subtrees = info,
             Message::FormField(index, text) => {
                 if let Some(Dialog::Form { fields, .. }) = &mut self.dialog
                     && let Some(field) = fields.get_mut(index)
@@ -1247,6 +1253,7 @@ impl Component for Root {
             }
             // Repository > Add Submodule…・Update Submodules…（サイドバーの Submodules の見出しと同じ）。
             Message::Command(id) if id == "add-submodule" => self.submodule_menu("sm-add", context),
+            Message::Command(id) if id == "add-subtree" => self.submodule_menu("st-add", context),
             Message::Command(id) if id == "update-submodules" => {
                 self.submodule_menu("sm-update:", context)
             }
@@ -2649,7 +2656,7 @@ impl Component for Root {
                         button,
                         command,
                     });
-                } else if key.starts_with("sm-") {
+                } else if key.starts_with("sm-") || key.starts_with("st-") {
                     self.submodule_menu(&key, context);
                 } else if key == "clean-up-branches" {
                     // 消してよいブランチの候補（GitHub のプルリクエストはまだ読まない）。
@@ -4488,6 +4495,7 @@ impl Component for Root {
                             conflicts,
                             tag_remotes: &self.tag_remotes,
                             submodules: &self.submodules,
+                            subtrees: &self.subtrees["subtrees"],
                         },
                         &self.sidebar_filter,
                     )),
@@ -6124,6 +6132,18 @@ impl Root {
             Some("group:remotes") => {
                 return vec![MenuItem::item("remote-add", tr!("Add Remote…"))];
             }
+            // subtree と Subtrees の見出し（GTK4 版の `remote_menu`）。
+            Some("group:subtrees") => {
+                return vec![MenuItem::item("st-add", tr!("Add Subtree…"))];
+            }
+            Some(key) if key.starts_with("subtree:") => {
+                let dir = &key["subtree:".len()..];
+                return vec![
+                    MenuItem::item(format!("st-pull:{dir}"), "Pull…"),
+                    MenuItem::item(format!("st-push:{dir}"), "Push…"),
+                    MenuItem::item(format!("st-split:{dir}"), "Split…"),
+                ];
+            }
             // Submodules の見出し（GTK4 版の `remote_menu` の Submodules）。
             Some("group:submodules") => {
                 return vec![
@@ -6430,6 +6450,89 @@ impl Root {
                 Vec::new(),
                 FormKind::SetBranch(path.clone()),
             ),
+            // subtree（GTK4 版の `subtreesheet`）。この機械の git に subtree がなければ鳴らす。
+            "st-add" | "st-pull" | "st-push" | "st-split"
+                if self.subtrees["available"].as_bool() != Some(true) =>
+            {
+                return beep();
+            }
+            "st-add" => form(
+                tr!("Add Subtree"),
+                tr!(
+                    "Brings another repository’s branch into a folder of this one as a commit (git subtree add). Pull and Push later use the same repository and branch."
+                ),
+                tr!("Add"),
+                vec![
+                    (tr!("Repository URL"), String::new(), String::new()),
+                    (tr!("Branch or tag"), String::new(), String::new()),
+                    (tr!("Folder"), String::new(), String::new()),
+                ],
+                vec![(tr!("Squash its history into one commit (--squash)"), false)],
+                FormKind::AddSubtree,
+            ),
+            "st-pull" | "st-push" => {
+                let push = what == "st-push";
+                let subtree = self.subtrees["subtrees"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .find(|s| s["dir"].as_str() == Some(&path))
+                    .cloned()
+                    .unwrap_or_default();
+                let known = |k: &str| subtree[k].as_str().unwrap_or_default().to_owned();
+                let rev = if push && !known("pushRef").is_empty() {
+                    known("pushRef")
+                } else {
+                    known("ref")
+                };
+                let (title, message) = if push {
+                    (
+                        tr!("Push {dir}", dir = &path),
+                        tr!(
+                            "Sends the commits that changed this folder to the repository’s branch, as that repository’s own history (git subtree push)."
+                        ),
+                    )
+                } else {
+                    (
+                        tr!("Pull {dir}", dir = &path),
+                        tr!(
+                            "Merges the repository’s branch into this folder (git subtree pull). Conflicts stop it like a merge."
+                        ),
+                    )
+                };
+                let checks = if push {
+                    Vec::new()
+                } else {
+                    vec![(
+                        tr!("Squash its history into one commit (--squash)"),
+                        subtree["squash"].as_bool() == Some(true),
+                    )]
+                };
+                form(
+                    title,
+                    message,
+                    if push { "Push" } else { "Pull" }.to_owned(),
+                    vec![
+                        (tr!("Repository URL"), known("url"), String::new()),
+                        (tr!("Branch or tag"), rev, String::new()),
+                    ],
+                    checks,
+                    FormKind::PullOrPushSubtree(path.clone(), push),
+                )
+            }
+            "st-split" => {
+                let name = path.rsplit('/').next().unwrap_or(&path);
+                form(
+                    tr!("Split {dir}", dir = &path),
+                    tr!(
+                        "Creates a branch with only the history of this folder, its files at the top (git subtree split)."
+                    ),
+                    tr!("Create"),
+                    vec![(String::new(), String::new(), format!("{name}-split"))],
+                    Vec::new(),
+                    FormKind::SplitSubtree(path.clone()),
+                )
+            }
             "sm-remove" => {
                 let name = match text("name") {
                     n if n.is_empty() => path.clone(),
@@ -8173,6 +8276,12 @@ fn load_tag_remotes(repo: Arc<Repository>, context: &ComponentContext<Root>) {
             serde_json::from_str(&r.run_json(r#"{"op":"tagRemotes"}"#)).unwrap_or_default();
         Message::TagRemotes(reply["info"].clone())
     });
+    let r = repo.clone();
+    context.spawn_background(move |_| {
+        let reply: Value =
+            serde_json::from_str(&r.run_json(r#"{"op":"subtrees"}"#)).unwrap_or_default();
+        Message::Subtrees(reply["info"].clone())
+    });
     load_submodules(repo, context);
 }
 
@@ -9269,6 +9378,10 @@ enum FormKind {
     SetUrl(String),
     SetBranch(String),
     RemoveSubmodule(String),
+    AddSubtree,
+    /// subtree の場所と、Push か（でなければ Pull）。
+    PullOrPushSubtree(String, bool),
+    SplitSubtree(String),
 }
 
 impl FormKind {
@@ -9314,6 +9427,38 @@ impl FormKind {
                 "op": "changeSubmodule",
                 "change": { "kind": "setBranch", "path": path, "branch": optional(field(0)) },
             }),
+            FormKind::AddSubtree => {
+                let (url, rev) = (field(0), field(1));
+                let dir = optional(field(2)).unwrap_or_else(|| submodule_path(&url));
+                if url.is_empty() || rev.is_empty() || dir.is_empty() {
+                    return None;
+                }
+                json!({
+                    "op": "subtree",
+                    "action": { "kind": "add", "dir": dir, "url": url, "ref": rev, "squash": check(0) },
+                })
+            }
+            FormKind::PullOrPushSubtree(dir, push) => {
+                let (url, rev) = (optional(field(0))?, optional(field(1))?);
+                let mut action = json!({
+                    "kind": if *push { "push" } else { "pull" },
+                    "dir": dir,
+                    "url": url,
+                    "ref": rev,
+                });
+                if !*push {
+                    action["squash"] = json!(check(0));
+                }
+                json!({ "op": "subtree", "action": action })
+            }
+            FormKind::SplitSubtree(dir) => {
+                let name = dir.rsplit('/').next().unwrap_or(dir);
+                let branch = optional(field(0)).unwrap_or_else(|| format!("{name}-split"));
+                json!({
+                    "op": "subtree",
+                    "action": { "kind": "split", "dir": dir, "branch": branch },
+                })
+            }
             FormKind::RemoveSubmodule(path) => json!({
                 "op": "changeSubmodule",
                 "change": { "kind": "remove", "path": path, "deleteGitDir": check(0) },

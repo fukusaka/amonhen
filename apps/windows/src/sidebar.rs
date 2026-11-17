@@ -133,6 +133,8 @@ pub struct Marks<'a> {
     pub tag_remotes: &'a serde_json::Value,
     /// submodule の様子（コアの `submodules` の info の `submodules`）。
     pub submodules: &'a serde_json::Value,
+    /// subtree（コアの `subtrees` の info の `subtrees`）。
+    pub subtrees: &'a serde_json::Value,
 }
 
 /// サイドバーの木。`refs` がまだなければ Workspace だけ。
@@ -153,6 +155,7 @@ pub fn nodes(
         conflicts,
         tag_remotes,
         submodules: submodule_states,
+        subtrees,
     } = marks;
     let mut history = String::from("History");
     if form.shallow {
@@ -282,6 +285,25 @@ pub fn nodes(
         .collect();
     if !submodules.is_empty() {
         out.push(group("submodules", "Submodules", submodules));
+    }
+
+    // subtree（取り込んだフォルダ。GTK4 版と同じく、Pull の squash の記録があれば印）。
+    let subtrees: Vec<TreeNode> = subtrees
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|s| {
+            let dir = s["dir"].as_str()?;
+            let title = if s["squashed"].as_bool() == Some(true) {
+                format!("{dir}  ⊟")
+            } else {
+                dir.to_owned()
+            };
+            Some(TreeNode::new(format!("subtree:{dir}"), title))
+        })
+        .collect();
+    if !subtrees.is_empty() {
+        out.push(group("subtrees", "Subtrees", subtrees));
     }
     out
 }
