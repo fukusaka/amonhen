@@ -167,6 +167,8 @@ struct Root {
     search_box: ElementRef<TextBox>,
     /// 差分の中を探す帯（開いているか、欄、探す文字、件数）。
     diff_find_open: bool,
+    /// 帯を開いた回数（開くたびに欄にフォーカスを入れる）。
+    diff_find_opened: u64,
     diff_find_box: ElementRef<TextBox>,
     diff_find_query: String,
     diff_find_status: String,
@@ -983,6 +985,7 @@ impl Component for Root {
             last_search: None,
             search_box: ElementRef::new(),
             diff_find_open: false,
+            diff_find_opened: 0,
             diff_find_box: ElementRef::new(),
             diff_find_query: String::new(),
             diff_find_status: String::new(),
@@ -1405,6 +1408,9 @@ impl Component for Root {
             Message::ExpandDetails(on) => self.details_expanded = on,
             Message::DiffFindOpen(open) => {
                 self.diff_find_open = open;
+                if open {
+                    self.diff_find_opened += 1;
+                }
                 if !open {
                     self.diff_find_query.clear();
                     self.diff_find_status.clear();
@@ -5827,6 +5833,14 @@ impl Component for Root {
             ));
         let menu_bar = crate::menus::menu_bar(|| context.callback(Message::Command));
         let toolbar = crate::menus::toolbar(context.callback(Message::Command));
+        // 差分の検索の帯を開いたら、欄にフォーカスを入れる（描き直した後に）。
+        if self.diff_find_opened > 0 {
+            let field = self.diff_find_box.clone();
+            context.use_effect("diff-find-box", self.diff_find_opened, move || {
+                let _ = field.request_focus();
+                None
+            });
+        }
         // 検索の欄を開いたら、フォーカスを入れて Enter・Esc を受ける（描き直した後に）。
         if self.search_opened > 0 {
             let search_box = self.search_box.clone();
@@ -12780,6 +12794,16 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
                     xaml::VirtualKey::End => s.move_selection(s.data.row_count() as i64),
                     _ => handled.set(false),
                 }
+            }
+            // 差分にフォーカスがあれば、Ctrl+F で差分の中を探す帯を開く（GTK4 版の `find_in_focused`）。
+            Target::Diff
+                if key == xaml::VirtualKey::F
+                    && xaml::InputKeyboardSource::GetKeyStateForCurrentThread(
+                        xaml::VirtualKey::Control,
+                    )
+                    .is_ok_and(|s| s.contains(xaml::CoreVirtualKeyStates::Down)) =>
+            {
+                h.sender.send(Message::DiffFindOpen(true));
             }
             Target::Diff if matches!(key, xaml::VirtualKey::J | xaml::VirtualKey::K) => {
                 // J・K で次・前の変更（hunk）へ、Alt+J・Alt+K で次・前のファイルへ（GTK4 版の `move_hunk`・
