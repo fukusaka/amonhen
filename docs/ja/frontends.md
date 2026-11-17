@@ -265,7 +265,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 近道: Edit Message…・Combine with Older…・Drop…・Combine N…・コミットのドラッグ | ✓ | ✓ | △ | ✓ | △ | VSCode: エンジンがあれば編集モードを開く。ないときはすぐ書き換え、Combine N Commits はない。<br>CLI: `amonhen run` から。<br>Windows: コミットの右クリックの Edit Message…・Combine with Older Commit…・Drop…・Split…。編集モードではなく、ダイアログの後にすぐ書き換える。 |
 | コミットを分ける | ✓ | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
 | 編集でマージを保つ（`--rebase-merges`） | ✓ | ✓ | — | ✓ | △ | VSCode: エンジンがあるとき。ないときは最初のマージで止まる。<br>CLI: `amonhen run` から。 |
-| shallow clone: 終わりの帯で取り足す、境界のコミットの印 | ✓ | ✓ | — | ✓ | △ | VSCode: エンジンがあるとき。<br>CLI: `log` が履歴の止まる所を添える。取り足すのは `amonhen run` から。 |
+| shallow clone: 終わりの帯で取り足す、境界のコミットの印 | ✓ | ✓ | △ | ✓ | △ | VSCode: エンジンがあるとき。<br>CLI: `log` が履歴の止まる所を添える。取り足すのは `amonhen run` から。<br>Windows: History の下に「さらに取る ▾」と「すべて取る」の帯。境界のコミットに印はない |
 
 ## 7. History の右の列
 

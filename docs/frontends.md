@@ -265,7 +265,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Shortcuts: Edit Message…, Combine with Older…, Drop…, Combine N…, drag a commit | ✓ | ✓ | △ | ✓ | △ | VSCode: With the engine they open the edit mode; without it they rewrite at once, and there's no Combine N Commits.<br>CLI: Via `amonhen run`.<br>Windows: Edit Message…, Combine with Older Commit…, Drop… and Split… in a commit's menu, applied after a dialog (no edit mode). |
 | Split a commit | ✓ | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
 | Merges kept when editing (`--rebase-merges`) | ✓ | ✓ | — | ✓ | △ | VSCode: With the engine; without it, editing stops at the first merge.<br>CLI: Via `amonhen run`. |
-| Shallow clone: band at the end to fetch more, boundary commits marked | ✓ | ✓ | — | ✓ | △ | VSCode: With the engine.<br>CLI: `log` notes where the history stops; fetching more via `amonhen run`. |
+| Shallow clone: band at the end to fetch more, boundary commits marked | ✓ | ✓ | △ | ✓ | △ | VSCode: With the engine.<br>CLI: `log` notes where the history stops; fetching more via `amonhen run`.<br>Windows: A band under History with Fetch More ▾ and Fetch All; boundary commits aren't marked |
 
 ## 7. History's right column
 

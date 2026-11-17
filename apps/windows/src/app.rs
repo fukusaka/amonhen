@@ -681,6 +681,8 @@ enum Message {
     ActivityTick,
     /// 走っている操作の数が変わった。
     Running(usize),
+    /// History の下の帯から shallow clone の履歴を取り足す（`deepen:N`・`deepen-other`・`deepen-since`・`unshallow`）。
+    ShallowFetch(String),
     /// 自動の fetch の間隔を選んだ（Settings）。
     SettingsAutoFetch(Option<usize>),
     /// Settings > General の外のエディタを選んだ（項目の番号）。
@@ -4422,38 +4424,7 @@ impl Component for Root {
                         crate::reposettings::lf(state.template.as_deref().unwrap_or_default());
                     vec![json!({ "op": "saveCommitTemplate", "text": text })]
                 } else if key == "deepen-other" || key == "deepen-since" {
-                    let Some(repo) = self.repo.clone() else {
-                        return beep();
-                    };
-                    let since = key == "deepen-since";
-                    self.dialog = Some(Dialog::Form {
-                        repo,
-                        title: if since {
-                            tr!("Fetch History Up to a Date")
-                        } else {
-                            tr!("Fetch More History")
-                        },
-                        message: if since {
-                            tr!(
-                                "Fetches the commits made after this date (git fetch --shallow-since)."
-                            )
-                        } else {
-                            tr!("How many older commits to fetch (git fetch --deepen).")
-                        },
-                        button: "Fetch".to_owned(),
-                        fields: vec![if since {
-                            (String::new(), String::new(), "YYYY-MM-DD".to_owned())
-                        } else {
-                            (String::new(), "100".to_owned(), String::new())
-                        }],
-                        checks: Vec::new(),
-                        kind: if since {
-                            FormKind::DeepenSince
-                        } else {
-                            FormKind::Deepen
-                        },
-                    });
-                    self.dialog_inputs += 1;
+                    self.deepen_dialog(key == "deepen-since");
                     return;
                 } else if let Some(n) = key.strip_prefix("deepen:") {
                     vec![json!({ "op": "deepen", "commits": n.parse::<u64>().unwrap_or(100) })]
@@ -4512,6 +4483,27 @@ impl Component for Root {
                 }
             }
             Message::Running(count) => self.running = count,
+            Message::ShallowFetch(key) => {
+                // History の下の帯（GTK4 版の `shallow::band`）。
+                let Some(repo) = self.repo.clone() else {
+                    return beep();
+                };
+                let command = match key.as_str() {
+                    "deepen-other" | "deepen-since" => {
+                        return self.deepen_dialog(key == "deepen-since");
+                    }
+                    "unshallow" => json!({ "op": "unshallow" }),
+                    _ => {
+                        let n = key
+                            .strip_prefix("deepen:")
+                            .and_then(|n| n.parse::<u64>().ok())
+                            .unwrap_or(100);
+                        json!({ "op": "deepen", "commits": n })
+                    }
+                };
+                self.busy = Some(tr!("Fetch More"));
+                perform(context, repo, command, tr!("Fetch More"));
+            }
             Message::ActivityTick => {
                 if let Some(state) = self.activity.as_mut() {
                     state.refresh();
@@ -5611,9 +5603,10 @@ impl Component for Root {
             .children((
                 sidebar,
                 Grid::new()
-                    .rows([GridLength::Auto, GridLength::Star(1.0)])
+                    .rows([GridLength::Auto, GridLength::Star(1.0), GridLength::Auto])
                     .grid_column(1)
                     .children((
+                        self.shallow_band(context),
                         search_bar,
                         Grid::new()
                             .background(Brush::Solid(Color::transparent()))
@@ -8130,6 +8123,39 @@ impl Root {
         }
     }
 
+    /// shallow clone の履歴を、数か日付まで取り足すダイアログ（GTK4 版の「さらに取る」の Other… と Up to a Date…）。
+    fn deepen_dialog(&mut self, since: bool) {
+        let Some(repo) = self.repo.clone() else {
+            return beep();
+        };
+        self.dialog = Some(Dialog::Form {
+            repo,
+            title: if since {
+                tr!("Fetch History Up to a Date")
+            } else {
+                tr!("Fetch More History")
+            },
+            message: if since {
+                tr!("Fetches the commits made after this date (git fetch --shallow-since).")
+            } else {
+                tr!("How many older commits to fetch (git fetch --deepen).")
+            },
+            button: "Fetch".to_owned(),
+            fields: vec![if since {
+                (String::new(), String::new(), "YYYY-MM-DD".to_owned())
+            } else {
+                (String::new(), "100".to_owned(), String::new())
+            }],
+            checks: Vec::new(),
+            kind: if since {
+                FormKind::DeepenSince
+            } else {
+                FormKind::Deepen
+            },
+        });
+        self.dialog_inputs += 1;
+    }
+
     fn tag_items(&self, name: &str) -> Vec<MenuItem> {
         let remotes: Vec<(String, bool)> = self.tag_remotes["remotes"]
             .as_array()
@@ -8826,6 +8852,51 @@ impl Root {
     }
 
     /// 窓の下のステータスバー: 走っている操作（なければ今のブランチ）。
+    /// shallow clone なら History の下に帯（GTK4 版の `shallow::band`）: さらに取る ▾（100・1,000・その他…・この日付
+    /// まで…）とすべて取る。
+    fn shallow_band(&self, context: &ViewContext<Self>) -> View {
+        if !self.form.shallow || self.page != Page::History {
+            return View::empty();
+        }
+        let more = [
+            ("deepen:100", tr!("100 Commits")),
+            ("deepen:1000", tr!("1,000 Commits")),
+            ("deepen-other", tr!("Other…")),
+            ("deepen-since", tr!("Up to a Date…")),
+        ]
+        .into_iter()
+        .map(|(key, title)| MenuItem::item(key, title))
+        .collect::<Vec<_>>();
+        Border::new()
+            .grid_row(2)
+            .background(Brush::Solid(Color::rgb(0xf3, 0xf3, 0xf3)))
+            .padding(Thickness::new(10.0, 4.0, 10.0, 4.0))
+            .content(
+                StackPanel::new()
+                    .orientation(Orientation::Horizontal)
+                    .spacing(8.0)
+                    .children((
+                        TextBlock::new()
+                            .text(tr!("Older history isn’t fetched (shallow clone)"))
+                            .font_size(12.0)
+                            .opacity(0.65)
+                            .vertical_alignment(VerticalAlignment::Center),
+                        DropDownButton::new()
+                            .content(TextBlock::new().text(tr!("Fetch More")).font_size(12.0))
+                            .menu(Menu::new(more, context.callback(Message::ShallowFetch))),
+                        Button::new()
+                            .on_click(
+                                context
+                                    .callback(|()| Message::ShallowFetch("unshallow".to_owned())),
+                            )
+                            .content(TextBlock::new().text(tr!("Fetch All")).font_size(12.0))
+                            .tooltip(tr!(
+                                "Fetch the whole history from the remote (git fetch --unshallow)"
+                            )),
+                    )),
+            )
+    }
+
     fn status_bar(&self, context: &ViewContext<Self>) -> View {
         let mut text = match &self.busy {
             Some(busy) => busy.clone(),
