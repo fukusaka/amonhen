@@ -183,7 +183,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Undo the last operation (asks, names what it puts back) | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: The title's Undo and the Command Palette ask; a notification's Undo, pressed right after the operation, doesn't.<br>CLI: `undo` (`--peek` to see it first). |
 | History search with scopes (subject, author, ID, path, contents) | ✓ | ✓ | △ | ✓ | ✓ | VSCode: With the engine.<br>CLI: `log <query>`.<br>Windows: No scopes. |
 | Ahead/behind badges | ✓ | ✓ | △ | ✓ | △ | VSCode: On the sidebar's branch rows.<br>CLI: In `status`.<br>Windows: In the sidebar and the window title (↑n ↓n); not on the toolbar's Pull and Push buttons, whose names aren't shown. |
-| Toolbar customization | ✓ | ✓ | — | n/a | n/a | GTK4: The palette works like NSToolbar's and slides down under the header bar over the content like its sheet, without changing the window's size, with no Show (icon/text) choice since the header bar shows icons; the Repository menu and the main menu take the menu bar's place and stay put. |
+| Toolbar customization | ✓ | ✓ | ✓ | n/a | n/a | GTK4: The palette works like NSToolbar's and slides down under the header bar over the content like its sheet, without changing the window's size, with no Show (icon/text) choice since the header bar shows icons; the Repository menu and the main menu take the menu bar's place and stay put.<br>Windows: View > Customize Toolbar… with a check per button, ↑ ↓ and spaces (no dragging, no flexible space) |
 | Network git stopped after 120 s of silence | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: The engine's, and the extension's own fetch and push without it.<br>Windows: The engine's. |
 
 ## 5a. Stashes

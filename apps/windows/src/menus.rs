@@ -119,6 +119,16 @@ pub fn menu_bar(on_click: impl Fn() -> Callback<String>) -> View {
                 }
             }));
         }
+        // View の終わりに Customize Toolbar…（GTK4 版の View のメニュー）。
+        if menu == Menu::View {
+            if !items.is_empty() {
+                items.push(MenuItem::separator("-toolbar"));
+            }
+            items.push(MenuItem::item(
+                "customize-toolbar",
+                amonhen_model::tr!("Customize Toolbar…"),
+            ));
+        }
         if items.is_empty() {
             continue;
         }
@@ -156,12 +166,101 @@ const TOOLBAR: &[Option<(&str, Symbol)>] = &[
     Some(("search", Symbol::Find)),
 ];
 
+/// 既定では出さないが、足せるボタン（GTK4 版・macOS 版の `OPTIONAL`）。
+const OPTIONAL: &[(&str, Symbol)] = &[
+    ("new-branch", Symbol::Add),
+    ("terminal", Symbol::Keyboard),
+    ("editor", Symbol::Edit),
+    ("files", Symbol::Document),
+];
+
+/// 並びを置く設定の鍵（GTK4 版と同じ形: `,` でつなぎ、出さないものは `-` を前に付ける。`space` はスペース）。
+pub const TOOLBAR_KEY: &str = "toolbarItemsV3";
+
+/// ツールバーの並びの 1 つ（GTK4 版の `toolbar::Entry` のうち、CommandBar で表せるもの）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ToolbarEntry {
+    Item(String, bool),
+    Space,
+}
+
+fn icon_of(id: &str) -> Option<Symbol> {
+    TOOLBAR
+        .iter()
+        .flatten()
+        .chain(OPTIONAL)
+        .find(|(i, _)| *i == id)
+        .map(|(_, s)| *s)
+}
+
+/// 既定の並び（足せるボタンは出さずに後ろへ）。
+pub fn default_toolbar() -> Vec<ToolbarEntry> {
+    TOOLBAR
+        .iter()
+        .map(|e| match e {
+            Some((id, _)) => ToolbarEntry::Item((*id).to_owned(), true),
+            None => ToolbarEntry::Space,
+        })
+        .chain(
+            OPTIONAL
+                .iter()
+                .map(|(id, _)| ToolbarEntry::Item((*id).to_owned(), false)),
+        )
+        .collect()
+}
+
+/// 保存した並び（なければ既定）。知らないボタンは除き、並びにないボタンは出さずに後ろへ足す。
+pub fn toolbar_entries() -> Vec<ToolbarEntry> {
+    let Some(text) = crate::prefs::string(TOOLBAR_KEY).filter(|t| !t.is_empty()) else {
+        return default_toolbar();
+    };
+    let mut entries = Vec::new();
+    for part in text.split(',').map(str::trim) {
+        let (id, shown) = match part.strip_prefix('-') {
+            Some(id) => (id, false),
+            None => (part, true),
+        };
+        match id {
+            // 伸縮するスペースも、ここではスペース。境目は置かない。
+            "space" | "~" => entries.push(ToolbarEntry::Space),
+            _ if icon_of(id).is_some() => entries.push(ToolbarEntry::Item(id.to_owned(), shown)),
+            _ => {}
+        }
+    }
+    for (id, _) in TOOLBAR.iter().flatten().chain(OPTIONAL) {
+        if !entries
+            .iter()
+            .any(|e| matches!(e, ToolbarEntry::Item(i, _) if i == id))
+        {
+            entries.push(ToolbarEntry::Item((*id).to_owned(), false));
+        }
+    }
+    entries
+}
+
+/// 並びを保存する。
+pub fn save_toolbar(entries: &[ToolbarEntry]) {
+    let text: Vec<String> = entries
+        .iter()
+        .map(|e| match e {
+            ToolbarEntry::Item(id, true) => id.clone(),
+            ToolbarEntry::Item(id, false) => format!("-{id}"),
+            ToolbarEntry::Space => "space".to_owned(),
+        })
+        .collect();
+    let _ = crate::prefs::set_string(TOOLBAR_KEY, &text.join(","));
+}
+
 /// ツールバーのボタンの名前（GTK4 版の `toolbar::name`。操作の名前は英語のまま）。
-fn toolbar_name(id: &str) -> String {
+pub fn toolbar_name(id: &str) -> String {
     match id {
         "sidebar" => amonhen_model::tr!("Show Sidebar"),
         "search" => amonhen_model::tr!("Search"),
         "refresh" => amonhen_model::tr!("Refresh"),
+        "terminal" => amonhen_model::tr!("Terminal"),
+        "editor" => amonhen_model::tr!("Editor"),
+        "files" => amonhen_model::tr!("Files"),
+        "new-branch" => "New Branch".to_owned(),
         "repositories" => "Repositories".to_owned(),
         _ => {
             let mut name = id.to_owned();
@@ -178,20 +277,37 @@ fn toolbar_command(id: &str) -> &str {
         "pop" => "pop-stash",
         "sidebar" => "show-sidebar",
         "search" => "find-in-history",
+        "terminal" => "open-in-terminal",
+        "editor" => "open-in-editor",
+        "files" => "reveal-in-files",
         _ => id,
     }
 }
 
 /// ツールバー（CommandBar）。押すと `on_click` が操作の id を受ける。まだ動かない操作のボタンは押せない。
 pub fn toolbar(on_click: Callback<String>) -> View {
-    let commands = TOOLBAR.iter().enumerate().map(|(i, entry)| match entry {
-        None => CommandBarCommand::separator(format!("-{i}")),
-        Some((id, icon)) => {
-            let command = toolbar_command(id);
-            CommandBarCommand::button_with_icon(command, toolbar_name(id), *icon)
-                .enabled(IMPLEMENTED.contains(&command))
-        }
-    });
+    // 並びは View > Customize Toolbar… で変えられる（GTK4 版の `toolbar.rs`）。
+    let commands = toolbar_entries()
+        .into_iter()
+        .enumerate()
+        .filter_map(|(i, entry)| match entry {
+            ToolbarEntry::Space => Some(CommandBarCommand::separator(format!("-{i}"))),
+            ToolbarEntry::Item(_, false) => None,
+            ToolbarEntry::Item(id, true) => {
+                let icon = icon_of(&id)?;
+                let command = toolbar_command(&id);
+                let enabled = IMPLEMENTED.contains(&command);
+                Some(
+                    CommandBarCommand::button_with_icon(
+                        command.to_owned(),
+                        toolbar_name(&id),
+                        icon,
+                    )
+                    .enabled(enabled),
+                )
+            }
+        })
+        .collect::<Vec<_>>();
     CommandBar::new()
         .grid_row(1)
         .owned_commands(commands, [], on_click)

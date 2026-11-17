@@ -270,6 +270,8 @@ enum Dialog {
         /// 最近の履歴の「その他…」で打った数。
         depth_other: String,
     },
+    /// View > Customize Toolbar…（GTK4 版はパレットへのドラッグ。ここではチェックと ↑↓ で並べる）。
+    Toolbar(Vec<crate::menus::ToolbarEntry>),
     /// Quick Open（リポジトリをあいまい検索して新しい窓で開く）。
     QuickOpen {
         query: String,
@@ -774,6 +776,12 @@ enum Message {
     RemoteLoaded(Arc<Repository>, Option<(String, String, String)>),
     /// リモートのシートの欄（0 は名前、1 は fetch、2 は push の URL）。
     RemoteField(usize, String),
+    /// ツールバーのカスタマイズ: 出すか、上下に動かす（`true` で上）、スペースを外す・足す、既定に戻す。
+    ToolbarShown(usize, bool),
+    ToolbarMove(usize, bool),
+    ToolbarRemove(usize),
+    ToolbarAddSpace,
+    ToolbarDefaults,
     /// フォルダを選ぶダイアログ: 読んだ中身、選んだ行、選んだフォルダに入る、上に戻る。
     TreeFolderLoaded(String, Result<Vec<String>, String>),
     TreeFolderSelect(Option<usize>),
@@ -1441,6 +1449,41 @@ impl Component for Root {
             }
             // File > New Window: 新しい窓（別のプロセス）に Repositories の画面を出す（窓にタブがないので、今の
             // リポジトリを開いた窓。GTK4 版・macOS 版の New Window）。
+            Message::Command(id) if id == "customize-toolbar" => {
+                self.dialog = Some(Dialog::Toolbar(crate::menus::toolbar_entries()));
+            }
+            Message::ToolbarShown(i, on) => {
+                if let Some(Dialog::Toolbar(entries)) = &mut self.dialog
+                    && let Some(crate::menus::ToolbarEntry::Item(_, shown)) = entries.get_mut(i)
+                {
+                    *shown = on;
+                }
+            }
+            Message::ToolbarMove(i, up) => {
+                if let Some(Dialog::Toolbar(entries)) = &mut self.dialog {
+                    let j = if up { i.checked_sub(1) } else { Some(i + 1) };
+                    if let Some(j) = j.filter(|&j| j < entries.len()) {
+                        entries.swap(i, j);
+                    }
+                }
+            }
+            Message::ToolbarRemove(i) => {
+                if let Some(Dialog::Toolbar(entries)) = &mut self.dialog
+                    && i < entries.len()
+                {
+                    entries.remove(i);
+                }
+            }
+            Message::ToolbarAddSpace => {
+                if let Some(Dialog::Toolbar(entries)) = &mut self.dialog {
+                    entries.push(crate::menus::ToolbarEntry::Space);
+                }
+            }
+            Message::ToolbarDefaults => {
+                if let Some(Dialog::Toolbar(entries)) = &mut self.dialog {
+                    *entries = crate::menus::default_toolbar();
+                }
+            }
             Message::Command(id) if id == "new-window" => {
                 let location = self
                     .repo
@@ -2478,6 +2521,9 @@ impl Component for Root {
                             message,
                         });
                     }
+                }
+                (Some(Dialog::Toolbar(entries)), ContentDialogResult::Primary) => {
+                    crate::menus::save_toolbar(&entries);
                 }
                 (
                     Some(Dialog::RenameRepository { location, name }),
@@ -6272,6 +6318,79 @@ impl Root {
                                         .vertical_alignment(VerticalAlignment::Center),
                                 )),
                             body,
+                        )),
+                    )
+            }
+            Some(Dialog::Toolbar(entries)) => {
+                use crate::menus::ToolbarEntry;
+                let last = entries.len().saturating_sub(1);
+                let rows = entries.iter().enumerate().map(|(i, entry)| {
+                    let arrows = StackPanel::new()
+                        .orientation(Orientation::Horizontal)
+                        .spacing(4.0)
+                        .grid_column(1)
+                        .children((
+                            Button::new()
+                                .is_enabled(i > 0)
+                                .on_click(context.callback(move |()| Message::ToolbarMove(i, true)))
+                                .content(TextBlock::new().text("↑")),
+                            Button::new()
+                                .is_enabled(i < last)
+                                .on_click(context.callback(move |()| Message::ToolbarMove(i, false)))
+                                .content(TextBlock::new().text("↓")),
+                        ));
+                    let head: View = match entry {
+                        ToolbarEntry::Item(id, shown) => CheckBox::new()
+                            .is_checked(*shown)
+                            .on_is_checked_changed(
+                                context.callback(move |on| Message::ToolbarShown(i, on)),
+                            )
+                            .content(TextBlock::new().text(crate::menus::toolbar_name(id)))
+                            ,
+                        ToolbarEntry::Space => StackPanel::new()
+                            .orientation(Orientation::Horizontal)
+                            .spacing(8.0)
+                            .children((
+                                TextBlock::new()
+                                    .text(format!("— {} —", tr!("Space")))
+                                    .opacity(0.6)
+                                    .vertical_alignment(VerticalAlignment::Center),
+                                Button::new()
+                                    .on_click(context.callback(move |()| Message::ToolbarRemove(i)))
+                                    .content(TextBlock::new().text("−")),
+                            ))
+                            ,
+                    };
+                    (
+                        format!("{i}:{entry:?}"),
+                        Grid::new()
+                            .columns([GridLength::Star(1.0), GridLength::Auto])
+                            .children((Border::new().grid_column(0).content(head), arrows)),
+                    )
+                });
+                dialog
+                    .is_open(true)
+                    .title(tr!("Customize Toolbar"))
+                    .primary_button_text(tr!("Save"))
+                    .close_button_text(tr!("Cancel"))
+                    .content(
+                        StackPanel::new().spacing(6.0).width(380.0).children((
+                            ScrollViewer::new().max_height(380.0).content(
+                                StackPanel::new()
+                                    .spacing(2.0)
+                                    .children((View::keyed_fragment(rows),)),
+                            ),
+                            StackPanel::new()
+                                .orientation(Orientation::Horizontal)
+                                .spacing(8.0)
+                                .children((
+                                    Button::new()
+                                        .on_click(context.callback(|()| Message::ToolbarAddSpace))
+                                        .content(TextBlock::new().text(format!("+ {}", tr!("Space")))),
+                                    Button::new()
+                                        .on_click(context.callback(|()| Message::ToolbarDefaults))
+                                        .content(TextBlock::new().text(tr!("Restore Default"))),
+                                )),
                         )),
                     )
             }
