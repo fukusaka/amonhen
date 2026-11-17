@@ -39,6 +39,10 @@ thread_local! {
     /// ほかの worktree の変更を最後に数えた時刻と、全部を数え直した時刻（10 秒ごと・5 分ごと。GTK4 版と同じ）。
     static WORKTREE_TICK: std::cell::Cell<(Instant, Instant)> =
         std::cell::Cell::new((Instant::now(), Instant::now()));
+    /// 今のブランチの名前（終わった操作の一言に使う。ref を読むたびに書く）。
+    static HEAD_NAME: RefCell<String> = const { RefCell::new(String::new()) };
+    /// 終わった操作の一言を消す時刻。
+    static FLASH_UNTIL: std::cell::Cell<Option<Instant>> = const { std::cell::Cell::new(None) };
     /// Activity を開いている間、読み直しを頼んだ最後の時刻（0.5 秒ごとに頼む）。
     static ACTIVITY_TICK: std::cell::Cell<Option<Instant>> = const { std::cell::Cell::new(None) };
     /// 自動の fetch の間隔（分。0 はしない）と、最後に数え始めた時。
@@ -88,6 +92,8 @@ struct Root {
     tag_remotes: Value,
     /// Pull・Push のダイアログのコミットの一覧（見出し・数・(oid, 件名, 作者, 時刻)・消えるものか）。
     sync_lists: Vec<SyncList>,
+    /// ステータスバーに出している、終わった操作の一言。
+    flash: Option<String>,
     /// History で複数選んでいるコミット（上から。右クリックのメニューを複数のもの用にする）。
     multi: Vec<(String, bool)>,
     /// Push のダイアログの注意（GTK4 版の `push_warnings`）。
@@ -635,6 +641,10 @@ enum Message {
     Repos(crate::repositories::Event),
     /// Export Archive の書き出すフォルダの欄。
     ArchiveFolder(String),
+    /// 操作が終わった（失敗はなく、ステータスバーに一言を出す）。
+    Done(String),
+    /// 終わった操作の一言を消す。
+    FlashExpired,
     /// History で複数選んだコミット（上から。1 つ以下なら空）。
     MultiSelected(Vec<(String, bool)>),
     /// Pull・Push のダイアログのコミットの一覧を読んだ。
@@ -803,6 +813,7 @@ impl Component for Root {
             worktree_counts: std::collections::HashMap::new(),
             stash_details: std::collections::HashMap::new(),
             sync_lists: Vec::new(),
+            flash: None,
             multi: Vec::new(),
             sync_warnings: Vec::new(),
             submodules: Value::Null,
@@ -835,6 +846,8 @@ impl Component for Root {
     fn update(&mut self, message: Message, context: &ComponentContext<Self>) {
         match message {
             Message::Refs(refs, repo) => {
+                HEAD_NAME
+                    .with(|h| *h.borrow_mut() = refs.refs.head_branch.clone().unwrap_or_default());
                 self.refs = Some(refs);
                 self.repo = Some(repo.clone());
                 self.switch_draft(&repo, context);
@@ -913,6 +926,14 @@ impl Component for Root {
             }
             Message::TagRemotes(info) => self.tag_remotes = info,
             Message::StashDetails(details) => self.stash_details = details,
+            Message::Done(text) => {
+                // 終わった後の読み直しは同じ（`Performed`）。一言は 5 秒（GTK4 版と同じ）。
+                self.update(Message::Performed(None), context);
+                self.flash = Some(text);
+                FLASH_UNTIL
+                    .with(|f| f.set(Some(Instant::now() + std::time::Duration::from_secs(5))));
+            }
+            Message::FlashExpired => self.flash = None,
             Message::ArchiveFolder(text) => {
                 if let Some(Dialog::Archive { folder, .. }) = &mut self.dialog {
                     *folder = text;
@@ -7557,6 +7578,9 @@ impl Root {
         if let Some(note) = &self.status_note {
             text.push_str(&format!("  ·  {note}"));
         }
+        if let (None, Some(flash)) = (&self.busy, &self.flash) {
+            text.push_str(&format!("  ·  ✓ {flash}"));
+        }
         TextBlock::new()
             .text(text)
             .font_size(12.0)
@@ -8977,11 +9001,50 @@ fn add_to_gitignore(context: &ComponentContext<Root>, repo: Arc<Repository>, pat
 }
 
 fn perform(context: &ComponentContext<Root>, repo: Arc<Repository>, command: Value, title: String) {
+    let done = done_text(&command);
     context.spawn_background(move |_| {
         let reply: Value = serde_json::from_str(&repo.run_json(&command.to_string()))
             .unwrap_or_else(|e| json!({ "error": e.to_string() }));
-        Message::Performed(reply["error"].as_str().map(|e| (title, e.to_owned())))
+        match (reply["error"].as_str(), done) {
+            (Some(e), _) => Message::Performed(Some((title, e.to_owned()))),
+            (None, Some(done)) => Message::Done(done),
+            (None, None) => Message::Performed(None),
+        }
     });
+}
+
+/// 操作が終わったときの一言（知らせる値打ちのある操作だけ。GTK4 版の `statusbar::done_text`）。
+fn done_text(command: &Value) -> Option<String> {
+    let s = |key: &str| command[key].as_str().unwrap_or_default().to_owned();
+    let head = HEAD_NAME.with(|h| h.borrow().clone());
+    let head = if head.is_empty() {
+        "HEAD".to_owned()
+    } else {
+        head
+    };
+    Some(match command["op"].as_str()? {
+        "fetch" => tr!("Fetched"),
+        "pull" => tr!("Pulled into {branch}", branch = head),
+        "push" => tr!(
+            "Pushed {branch} to {target}",
+            branch = s("branch"),
+            target = format!("{}/{}", s("remote"), s("remoteBranch"))
+        ),
+        "merge" => tr!("Merged into {branch}", branch = head),
+        "mergeInto" => tr!(
+            "Merged {rev} into {target}",
+            rev = s("rev"),
+            target = s("target")
+        ),
+        "rebase" => tr!("Rebased onto {onto}", onto = s("onto")),
+        "checkout" => tr!("Checked out {name}", name = s("branch")),
+        "track" => tr!("Checked out {name}", name = s("remoteBranch")),
+        "stashPush" => tr!("Stashed the changes"),
+        "stashApply" => tr!("Applied {name}", name = s("name")),
+        "deleteBranch" => tr!("Deleted {name}", name = s("name")),
+        "undo" => tr!("Undone"),
+        _ => return None,
+    })
 }
 
 /// 命令を順に裏で実行する（失敗したらそこで止める）。
@@ -8992,6 +9055,8 @@ fn perform_all(
     title: String,
 ) {
     context.spawn_background(move |_| {
+        // 終わったときの一言は、最後の命令のもの（設定を書いてから pull するなど）。
+        let done = commands.last().and_then(done_text);
         for command in commands {
             let reply: Value = serde_json::from_str(&repo.run_json(&command.to_string()))
                 .unwrap_or_else(|e| json!({ "error": e.to_string() }));
@@ -8999,7 +9064,10 @@ fn perform_all(
                 return Message::Performed(Some((title, e.to_owned())));
             }
         }
-        Message::Performed(None)
+        match done {
+            Some(done) => Message::Done(done),
+            None => Message::Performed(None),
+        }
     });
 }
 
@@ -9564,6 +9632,14 @@ impl HistoryView {
             WORKTREE_TICK
                 .with(|t| t.set((Instant::now(), if all { Instant::now() } else { fresh })));
             self.sender.send(Message::CountWorktrees(all));
+        }
+        // 終わった操作の一言を、出してから 5 秒で消す。
+        if FLASH_UNTIL
+            .with(|f| f.get())
+            .is_some_and(|until| Instant::now() >= until)
+        {
+            FLASH_UNTIL.with(|f| f.set(None));
+            self.sender.send(Message::FlashExpired);
         }
         // Activity を開いている間は 0.5 秒ごとに読み直してもらう（GTK4 版と同じ間隔）。
         if let Some(last) = ACTIVITY_TICK.with(|t| t.get())
