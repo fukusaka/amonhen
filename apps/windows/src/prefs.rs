@@ -102,6 +102,8 @@ fn set(key: &str, value: Value) -> Result<(), String> {
 fn write(change: impl FnOnce(&mut Map<String, Value>)) -> Result<(), String> {
     let text = VALUES.with(|v| {
         let mut v = v.borrow_mut();
+        // 窓ごとに別のプロセスなので、ほかの窓が書いた分を消さないよう、書く前に読み直す。
+        *v = load();
         change(&mut v);
         serde_json::to_string_pretty(&*v).unwrap_or_default()
     });
