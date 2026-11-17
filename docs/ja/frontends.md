@@ -419,9 +419,9 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 `amonhen tui`（`crates/tui`）はまだ最初の段階で、上の表に列はない。機能が落ち着いたら列を足す。今あるものを、上の章の順に（詳しいことと残りは [tui.md](tui.md)）:
 
 - サイドバー: Workspace の行、Branches（今のブランチの印、ahead と behind）、Remotes、Tags、Stashes、Worktrees（並べるだけ）を平らな一覧で。絞り込みあり。フォルダ・お気に入り・submodule・右クリックのメニューはない。操作はキーで行う。
-- ツールバー: fetch、pull（分かれていれば merge か rebase を選べる）、上流への push、publish、上流が進んでいるときの force push（with lease）、新しいブランチ、名前の変更と削除、タグの作成と削除、stash（メッセージと追跡していないファイルはない）、pop、undo、サイドバーからの merge と rebase。確認と名前は、シートではなく一番下の行で聞く。
+- ツールバー: fetch、pull（分かれていれば merge か rebase を選べる）、上流への push、publish、上流が進んでいるときの force push（with lease）、新しいブランチ、名前の変更と削除、タグの作成と削除、stash（追跡しているファイル・追跡していないファイルも・index を残す、から選ぶ。メッセージはない）、pop、undo、サイドバーからの merge と rebase。確認と名前は、シートではなく一番下の行で聞く。
 - Stashes: サイドバーから、戻す・pop・消す。Enter で stash の差分を出す。
-- Working Copy: ファイルごとに印のある 1 つの一覧、stage 済みの印のつく HEAD から作業ツリーまでの差分、ファイル・hunk・行・行の範囲ごとの stage、discard、メッセージと commit・amend、git のエディタ（Commit and Push はない）、マーカーつきのコンフリクトの表示と、コンフリクトごと・ファイルごとの片側での解決（共通の祖先の側・Magic Merge・マージエディタはない）。
+- Working Copy: ファイルごとに印のある 1 つの一覧、stage 済みの印のつく HEAD から作業ツリーまでの差分、ファイル・hunk・行・行の範囲ごとの stage、discard、メッセージと commit・amend・Commit and Push（push は確かめる）、git のエディタ、マーカーつきのコンフリクトの表示と、コンフリクトごと・ファイルごとの片側での解決（共通の祖先の側・Magic Merge・マージエディタはない）。
 - History: 1 コミット 1 行のグラフ、ref の札、検索（合った行に色、順に移る。途中の結果と、合った行だけの表示はない）、行を薄くする祖先の強調、選べるコミットは 1 つで、cherry-pick・revert・detached のチェックアウト・新しいブランチ・新しいタグ・reset をキーで行う（複数選択・折りたたみ・密度の帯・編集モードはない）。
 - History の右の列: メッセージ、作者と日付、違うときはコミッター、ID と親、そのコミットを指す ref、署名の有無（検証はしない）、変わったファイル、変わった語と構文の色のついた unified の差分。署名の検証・notes・詳しい表はない。
 - ステータスバー: 一番下の行に、merge・rebase・cherry-pick・revert の途中の状態と、続ける・飛ばす・やめる。

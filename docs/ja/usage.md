@@ -64,6 +64,6 @@ amonhen daemon status          # 共有の daemon の様子
 
 - 枠: サイドバー（100 桁から。狭ければ `0`）、メインの画面（`1` Changes、`2` History、`3` Reflog）、その横か Enter で開く、コミットの詳細かファイルの差分。Tab で順に回り、Esc で戻り、`q` で終わる。
 - History: `j` `k` などで動く。`/` で History の検索の書き方で検索し、`n` `N` で次と前の合った行へ。選んでいるコミットを `y` で cherry-pick、`v` で revert、`c` でチェックアウト。
-- Working Copy: Space でファイルを stage / unstage。差分では行（hunk の見出しではその hunk）。`d` は確かめてから捨てる。`v` で行の範囲を選び始める。`c` でメッセージを書き（そこで `Ctrl-e` を押すと git のエディタで開く）、`Ctrl-s` でコミット。`a` で amend。コンフリクトのあるファイルは `o` `t` で Current か Incoming の側を取り、その差分では `o` `t` `b` でコンフリクトを 1 つずつ解決する。
+- Working Copy: Space でファイルを stage / unstage。差分では行（hunk の見出しではその hunk）。`d` は確かめてから捨てる。`v` で行の範囲を選び始める。`c` でメッセージを書き（そこで `Ctrl-e` を押すと git のエディタで開く）、`Ctrl-s` でコミット、`Ctrl-p` でコミットしてから push。`a` で amend。コンフリクトのあるファイルは `o` `t` で Current か Incoming の側を取り、その差分では `o` `t` `b` でコンフリクトを 1 つずつ解決する。
 - 操作: `f` fetch、`p` pull、`P` push、`b` 新しいブランチ、`s` stash、`S` pop、`u` undo、`R` 選んでいるコミットへ reset。`M` でマウスを切ると端末で文字を選べる。`Ctrl-z` で一時停止。サイドバーの ref の上では、Enter でそのコミットを選ぶ、`c` でチェックアウト、`m` で merge、`r` でその上に rebase、`n` でブランチの名前を変える、`D` でブランチかタグを消す。`T` は、どこからでも、選んでいるコミットか ref にタグを作る。stash の上では `a` `o` `x` で戻す・pop・消す。merge や rebase が止まっている間は、`C` で続ける、`K` で飛ばす、`A` でやめる。
 - git や ssh が尋ねるパスワードとパスフレーズは、一番下の行で聞く（Unix）。
