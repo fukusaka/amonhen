@@ -61,7 +61,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Tags listed | ✓ | ✓ | ✓ | ✓ | ✓ |  |
 | Tag marks for remotes (missing, different) with a popover | ✓ | ✓ | — | ✓ | △ | VSCode: In the row's description, each remote's state in the tooltip (no popover).<br>CLI: Via `amonhen run` (`tagRemotes`). |
 | Tag signature marks | ✓ | ✓ | — | ✓ | ✓ | VSCode: The row's icon, explained in the tooltip.<br>CLI: `refs --verify`. |
-| Tag menu: Push to, Replace on, Delete, Delete from a remote | ✓ | ✓ | △ | ✓ | △ | VSCode: The remote is chosen in a list when there are several.<br>CLI: Via `amonhen run`.<br>Windows: Delete only. |
+| Tag menu: Push to, Replace on, Delete, Delete from a remote | ✓ | ✓ | ✓ | ✓ | △ | VSCode: The remote is chosen in a list when there are several.<br>CLI: Via `amonhen run`. |
 | Remotes with their branches | ✓ | ✓ | ✓ | ✓ | ✓ |  |
 | Remote menu: Add, Rename, Edit URL, Remove, Prune | ✓ | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`.<br>Windows: Edit… changes the name and the URLs. |
 | Pull Requests group | ✓ | ✓ | — | — | — |  |

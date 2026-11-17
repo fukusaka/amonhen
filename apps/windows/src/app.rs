@@ -80,6 +80,9 @@ struct Root {
     refs: Option<Arc<RefsSnapshot>>,
     /// ローカルブランチの分け方（コアの `branchGroups`）。
     groups: Option<BranchGroups>,
+    /// タグのリモートでの様子（コアの `tagRemotes` の info。リモートと読んだ時刻、タグごとの same・different・
+    /// missing）。
+    tag_remotes: Value,
     /// 選んだコミットの詳細（`commit_info` の答え）と、時間のかかる分（`commit_extras`）。
     info: Option<(Value, Option<Value>)>,
     error: Option<String>,
@@ -594,6 +597,8 @@ enum Message {
     CloseActivity,
     /// Repositories の操作。
     Repos(crate::repositories::Event),
+    /// タグのリモートでの様子を読んだ（`tagRemotes` の info）。
+    TagRemotes(Value),
     /// まとめるときのメッセージの初期値を読んだ（コミット、メッセージ）。
     SquashText(String, Result<String, String>),
     /// bundle に入るコミットを数えた（`bundlePreview` の答えと、書く命令）。
@@ -739,6 +744,7 @@ impl Component for Root {
             repo_settings: None,
             repo_settings_from: Page::History,
             activity_from: Page::History,
+            tag_remotes: Value::Null,
             repositories: None,
             repositories_from: Page::History,
             repositories_list: ElementRef::new(),
@@ -785,6 +791,8 @@ impl Component for Root {
                 let r = repo.clone();
                 // ブランチの分け方は ref が変わるたびに読み直す（数十 ms かかるので裏で）。
                 load_groups(repo, context);
+                // タグのリモートでの様子も（fetch でリモートのタグを読み直す）。
+                load_tag_remotes(r.clone(), context);
                 load_recent_messages(r.clone(), context);
                 // リポジトリの形（unshallow・sparse checkout の切り替えも ref・status の変化のときに読み直す）。
                 let f = r.clone();
@@ -800,6 +808,7 @@ impl Component for Root {
                     self.load_reflog(context);
                 }
             }
+            Message::TagRemotes(info) => self.tag_remotes = info,
             Message::Groups(groups) => {
                 if groups.is_some() {
                     self.groups = groups;
@@ -1418,6 +1427,8 @@ impl Component for Root {
             Message::Command(id) if id == "refresh" => {
                 if let Some(repo) = self.repo.clone() {
                     load_groups(repo.clone(), context);
+                    // タグのリモートでの様子も（タグを push・削除しても手元の ref は変わらない）。
+                    load_tag_remotes(repo.clone(), context);
                     load_worktrees(repo, context);
                 }
                 with_history(|h| h.command(&id));
@@ -2510,6 +2521,75 @@ impl Component for Root {
                             command: json!({ "op": "deleteTag", "name": name }),
                         });
                     }
+                } else if let Some(rest) = key
+                    .strip_prefix("push-tag:")
+                    .or_else(|| key.strip_prefix("replace-tag:"))
+                    .or_else(|| key.strip_prefix("delete-remote-tag:"))
+                {
+                    // GTK4 版の `confirm_push_tags`・`confirm_replace`・リモートから消す確認。どれも戻せない。
+                    let mut parts = rest.split('|');
+                    let (Some(remote), Some(tag), Some(repo)) =
+                        (parts.next(), parts.next(), self.repo.clone())
+                    else {
+                        return;
+                    };
+                    let unchecked = parts.next() == Some("1");
+                    let cant_undo = tr!("This can’t be undone.");
+                    let (title, message, button, command) = if key.starts_with("push-tag:") {
+                        (
+                            tr!("Push {branch} to {target}?", branch = tag, target = remote),
+                            format!(
+                                "{tag}\n\n{} {cant_undo}",
+                                tr!(
+                                    "Everyone who fetches from {remote} gets them.",
+                                    remote = remote
+                                )
+                            ),
+                            "Push".to_owned(),
+                            json!({ "op": "pushTags", "remote": remote, "names": [tag] }),
+                        )
+                    } else if key.starts_with("replace-tag:") {
+                        (
+                            tr!("Replace {tag} on {remote}?", tag = tag, remote = remote),
+                            format!(
+                                "{tag}\n{} {cant_undo}",
+                                tr!(
+                                    "{remote} has a different tag with this name; yours replaces it for everyone who fetches.",
+                                    remote = remote
+                                )
+                            ),
+                            tr!("Replace"),
+                            json!({ "op": "pushTags", "remote": remote, "names": [tag], "force": true }),
+                        )
+                    } else {
+                        let mut message = format!(
+                            "{tag}\n\n{} {cant_undo}",
+                            tr!(
+                                "Everyone who fetches from {remote} loses them; yours stay.",
+                                remote = remote
+                            )
+                        );
+                        if unchecked {
+                            message.push(' ');
+                            message.push_str(&tr!(
+                                "Whether {remote} has them hasn’t been checked yet (Fetch reads it).",
+                                remote = remote
+                            ));
+                        }
+                        (
+                            tr!("Delete {tag} from {remote}?", tag = tag, remote = remote),
+                            message,
+                            tr!("Delete"),
+                            json!({ "op": "pushTags", "remote": remote, "names": [tag], "delete": true }),
+                        )
+                    };
+                    self.dialog = Some(Dialog::Confirm {
+                        repo,
+                        title,
+                        message,
+                        button,
+                        command,
+                    });
                 } else if key == "clean-up-branches" {
                     // 消してよいブランチの候補（GitHub のプルリクエストはまだ読まない）。
                     if let Some(repo) = self.repo.clone() {
@@ -2777,6 +2857,8 @@ impl Component for Root {
                 // ブランチの分け方も（お気に入り・アーカイブは git の設定だけが変わり、ref は変わらない）。
                 if let Some(repo) = self.repo.clone() {
                     load_groups(repo.clone(), context);
+                    // タグのリモートでの様子も（タグを push・削除しても手元の ref は変わらない）。
+                    load_tag_remotes(repo.clone(), context);
                     load_worktrees(repo, context);
                 }
                 if let Some((title, message)) = failed {
@@ -6037,11 +6119,53 @@ impl Root {
         }
         if entry.kind == RefKind::Tag {
             items.push(MenuItem::separator("-tag"));
-            items.push(MenuItem::item(
-                format!("delete-tag:{name}"),
-                tr!("Delete {name}…", name = name),
-            ));
+            items.extend(self.tag_items(name));
         }
+        items
+    }
+
+    /// タグのメニュー（GTK4 版の `refops::tag_items`）: リモートごとに Push（ないもの）・Replace（同じ名前の別の
+    /// タグがあるもの）、Delete、リモートごとの Delete from（あるもの）。まだ読んでいないリモートは、どれも出す。
+    fn tag_items(&self, name: &str) -> Vec<MenuItem> {
+        let remotes: Vec<(String, bool)> = self.tag_remotes["remotes"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|r| Some((r["name"].as_str()?.to_owned(), r["checked"].is_i64())))
+            .collect();
+        let state = |remote: &str| self.tag_remotes["tags"][name][remote].as_str();
+        let (mut pushes, mut deletes) = (Vec::new(), Vec::new());
+        for (remote, checked) in &remotes {
+            let st = state(remote);
+            let missing = *checked && st.is_none_or(|s| s == "missing");
+            if !*checked || missing {
+                pushes.push(MenuItem::item(
+                    format!("push-tag:{remote}|{name}"),
+                    tr!("Push {branch} to {target}…", branch = name, target = remote),
+                ));
+            }
+            if *checked && st == Some("different") {
+                pushes.push(MenuItem::item(
+                    format!("replace-tag:{remote}|{name}"),
+                    tr!("Replace {tag} on {remote}…", tag = name, remote = remote),
+                ));
+            }
+            if !missing {
+                deletes.push(MenuItem::item(
+                    format!("delete-remote-tag:{remote}|{name}|{}", u8::from(!*checked)),
+                    tr!("Delete {tag} from {remote}…", tag = name, remote = remote),
+                ));
+            }
+        }
+        let mut items = pushes;
+        if !items.is_empty() {
+            items.push(MenuItem::separator("-push-tag"));
+        }
+        items.push(MenuItem::item(
+            format!("delete-tag:{name}"),
+            tr!("Delete {name}…", name = name),
+        ));
+        items.extend(deletes);
         items
     }
 
@@ -7684,6 +7808,15 @@ fn load_groups(repo: Arc<Repository>, context: &ComponentContext<Root>) {
 fn same_path(a: &str, b: &str) -> bool {
     let norm = |p: &str| p.replace('\\', "/").trim_end_matches('/').to_lowercase();
     norm(a) == norm(b)
+}
+
+/// タグのリモートでの様子（`tagRemotes`）を裏で読む。
+fn load_tag_remotes(repo: Arc<Repository>, context: &ComponentContext<Root>) {
+    context.spawn_background(move |_| {
+        let reply: Value =
+            serde_json::from_str(&repo.run_json(r#"{"op":"tagRemotes"}"#)).unwrap_or_default();
+        Message::TagRemotes(reply["info"].clone())
+    });
 }
 
 /// worktree の一覧を裏で読む。

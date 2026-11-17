@@ -61,7 +61,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | タグの一覧 | ✓ | ✓ | ✓ | ✓ | ✓ |  |
 | タグのリモートの印（ない・違う）とポップオーバー | ✓ | ✓ | — | ✓ | △ | VSCode: 行の説明に出し、リモートごとの様子はツールチップに（ポップオーバーはない）。<br>CLI: `amonhen run`（`tagRemotes`）から。 |
 | タグの署名の印 | ✓ | ✓ | — | ✓ | ✓ | VSCode: 行のアイコンで、説明はツールチップに。<br>CLI: `refs --verify`。 |
-| タグのメニュー: Push to・Replace on・削除・リモートから削除 | ✓ | ✓ | △ | ✓ | △ | VSCode: リモートがいくつもあれば一覧で選ぶ。<br>CLI: `amonhen run` から。<br>Windows: Delete だけ。 |
+| タグのメニュー: Push to・Replace on・削除・リモートから削除 | ✓ | ✓ | ✓ | ✓ | △ | VSCode: リモートがいくつもあれば一覧で選ぶ。<br>CLI: `amonhen run` から。 |
 | リモートとそのブランチ | ✓ | ✓ | ✓ | ✓ | ✓ |  |
 | リモートのメニュー: 追加・名前の変更・URL の変更・削除・Prune | ✓ | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。<br>Windows: Edit… で名前と URL を変える。 |
 | Pull Requests のグループ | ✓ | ✓ | — | — | — |  |
