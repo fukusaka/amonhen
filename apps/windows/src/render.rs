@@ -54,13 +54,13 @@ const SECONDARY: D2D1_COLOR_F = rgba(0.11, 0.11, 0.12, 0.6);
 const MATCH: D2D1_COLOR_F = rgba(1.0, 0.80, 0.0, 0.22);
 /// 選んだ行の背景（Windows の既定のアクセントの色を薄く）。
 const SELECTION: D2D1_COLOR_F = rgba(0.0, 0.47, 0.84, 0.16);
-/// ref のラベル（ローカルブランチ・リモートブランチ・タグ）の地の色と、文字の色。
-const LABEL_LOCAL: D2D1_COLOR_F = rgba(0.16, 0.60, 0.30, 0.18);
-const LABEL_REMOTE: D2D1_COLOR_F = rgba(0.0, 0.47, 0.84, 0.16);
-const LABEL_TAG: D2D1_COLOR_F = rgba(0.85, 0.55, 0.0, 0.20);
+/// ref のラベルの色（ローカルブランチは青、リモートブランチは紫、タグは橙。macOS 版・GTK4 版と同じ）。地は薄く、
+/// チェックアウト中のブランチは濃く塗って白い文字にする。
+const LABEL_LOCAL: (f32, f32, f32) = (0.21, 0.52, 0.89);
+const LABEL_REMOTE: (f32, f32, f32) = (0.57, 0.38, 0.84);
+const LABEL_TAG: (f32, f32, f32) = (0.90, 0.55, 0.15);
 const LABEL_TEXT: D2D1_COLOR_F = rgba(0.11, 0.11, 0.12, 0.9);
-/// チェックアウト中のブランチのラベルの枠。
-const LABEL_HEAD: D2D1_COLOR_F = rgba(0.16, 0.60, 0.30, 0.9);
+const LABEL_HEAD_TEXT: D2D1_COLOR_F = rgba(1.0, 1.0, 1.0, 1.0);
 const LABEL_HEIGHT: f32 = 17.0;
 /// 差分の行の高さ（DIP）と、行番号の列の幅。
 pub const DIFF_ROW_HEIGHT: f32 = 18.0;
@@ -992,11 +992,12 @@ impl Renderer {
         width: f32,
     ) -> Result<()> {
         use amonhen_model::RefKind;
-        let fill = match label.kind {
+        let (r, g, b) = match label.kind {
             RefKind::Local => LABEL_LOCAL,
             RefKind::Remote => LABEL_REMOTE,
             _ => LABEL_TAG,
         };
+        let fill = rgba(r, g, b, if label.head { 0.85 } else { 0.22 });
         let rect = D2D1_ROUNDED_RECT {
             rect: D2D_RECT_F {
                 left: x,
@@ -1010,11 +1011,11 @@ impl Renderer {
         unsafe {
             self.brush.SetColor(&fill);
             self.d2d.FillRoundedRectangle(&rect, &self.brush);
-            if label.head {
-                self.brush.SetColor(&LABEL_HEAD);
-                self.d2d.DrawRoundedRectangle(&rect, &self.brush, 1.2, None);
-            }
-            self.brush.SetColor(&LABEL_TEXT);
+            self.brush.SetColor(if label.head {
+                &LABEL_HEAD_TEXT
+            } else {
+                &LABEL_TEXT
+            });
             self.d2d.DrawTextLayout(
                 point(x + LABEL_PADDING, y + 1.0),
                 layout,
