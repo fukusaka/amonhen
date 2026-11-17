@@ -536,6 +536,23 @@ pub fn tree_node_key_by_identity(identity: usize) -> Option<String> {
     TREE_NODE_KEYS.with(|keys| keys.borrow().get(&identity).cloned())
 }
 
+/// Sets the text tooltip of an element the app found itself (for example the tree view item
+/// under the pointer), or clears it with `None`.
+pub fn set_tooltip_text(
+    element: &windows_core::IInspectable,
+    text: Option<&str>,
+) -> windows_core::Result<()> {
+    let target = element.cast::<DependencyObject>()?;
+    match text {
+        Some(text) => {
+            let content: windows_core::IInspectable =
+                windows_reference::IReference::from(windows_core::HSTRING::from(text)).into();
+            ToolTipService::SetToolTip(&target, &content)
+        }
+        None => ToolTipService::SetToolTip(&target, None::<&windows_core::IInspectable>),
+    }
+}
+
 /// The key of an invoked tree view node.
 fn tree_node_key(node: &impl Interface) -> Option<String> {
     let identity = tree_node_identity(node)?;
