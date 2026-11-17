@@ -396,6 +396,8 @@ pub struct Input<'a> {
 /// 画面が受ける操作。
 pub struct Callbacks<'a> {
     pub summary: Callback<String>,
+    /// 件名の欄（Alt+↑・Alt+↓ で最近のメッセージを呼び出すキーを付ける）。
+    pub summary_box: &'a ElementRef<TextBox>,
     pub description: Callback<String>,
     pub commit: Callback<()>,
     /// パスのファイルを含める（true）・外す（false）。
@@ -455,6 +457,7 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
         .columns([GridLength::Star(1.0), GridLength::Auto, GridLength::Auto])
         .children((
             TextBox::new()
+                .element_ref(callbacks.summary_box)
                 .text(input.summary)
                 .placeholder_text("Summary")
                 .grid_column(0)

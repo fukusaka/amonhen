@@ -198,6 +198,11 @@ struct Root {
     dialog_inputs: u64,
     /// Working Copy の一覧を包む Grid（Space で含める・外す、Delete・Backspace で捨てる）。
     working_list: ElementRef<Grid>,
+    /// Working Copy の件名の欄と、Alt+↑・Alt+↓ で呼び出している最近のメッセージ（-1 は呼び出していない）・
+    /// 呼び出す前の件名と本文（GTK4 版の `recall`）。
+    summary_box: ElementRef<TextBox>,
+    recall_cursor: isize,
+    before_recall: Option<(String, String)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -647,6 +652,8 @@ enum Message {
     FlashExpired,
     /// History で複数選んだコミット（上から。1 つ以下なら空）。
     MultiSelected(Vec<(String, bool)>),
+    /// 件名の欄の Alt+↑（1）・Alt+↓（-1）。
+    RecallRecent(isize),
     /// Pull・Push のダイアログのコミットの一覧を読んだ。
     SyncLists(Vec<SyncList>, Vec<String>),
     /// stash の詳しい中身を読んだ。
@@ -840,6 +847,9 @@ impl Component for Root {
             dialog_input: ElementRef::new(),
             dialog_inputs: 0,
             working_list: ElementRef::new(),
+            summary_box: ElementRef::new(),
+            recall_cursor: -1,
+            before_recall: None,
         }
     }
 
@@ -2504,8 +2514,34 @@ impl Component for Root {
             }
             Message::Summary(text) => {
                 if text != self.summary {
+                    // 打って変えたら、呼び出しをやめる（呼び出した文が欄から戻ってきたときは同じ文）。
+                    self.recall_cursor = -1;
+                    self.before_recall = None;
                     self.summary = text;
                     self.store_draft();
+                }
+            }
+            Message::RecallRecent(step) => {
+                // Alt+↑（古い方へ）・Alt+↓ で、最近のメッセージを順に呼び出す。戻りきったら呼び出す前の下書き。
+                let count = self.recent_messages.len() as isize;
+                if count == 0 {
+                    return;
+                }
+                if self.recall_cursor < 0 {
+                    self.before_recall = Some((self.summary.clone(), self.description.clone()));
+                }
+                let cursor = (self.recall_cursor + step).clamp(-1, count - 1);
+                self.recall_cursor = cursor;
+                if cursor < 0 {
+                    if let Some((s, b)) = self.before_recall.take() {
+                        self.summary = s;
+                        self.description = b;
+                    }
+                } else {
+                    let message = self.recent_messages[cursor as usize].0.clone();
+                    let (s, b) = message.split_once('\n').unwrap_or((&message, ""));
+                    self.summary = s.to_owned();
+                    self.description = b.trim().to_owned();
                 }
             }
             Message::Description(text) => {
@@ -4889,6 +4925,18 @@ impl Component for Root {
                 None
             },
         );
+        // 件名の欄の Alt+↑・Alt+↓（Working Copy を出すたびに欄が作り直される）。
+        let summary_box = self.summary_box.clone();
+        context.use_effect("summary-keys", self.page == Page::WorkingCopy, move || {
+            let _ = summary_box.request_native_element(|result| {
+                if let Ok(element) = result
+                    && let Err(e) = attach_recall_keys(&element)
+                {
+                    eprintln!("件名の欄にキーを付けられない: {e}");
+                }
+            });
+            None
+        });
         // ダイアログの入力の欄: フォーカスを入れ、Enter で既定のボタン（ContentDialog は Enter を既定のボタンに
         // 回さない）。
         if self.dialog_inputs > 0 {
@@ -8367,6 +8415,7 @@ impl Root {
         }
         let callbacks = crate::workcopy::Callbacks {
             summary: context.callback(Message::Summary),
+            summary_box: &self.summary_box,
             description: context.callback(Message::Description),
             commit: context.callback(|()| Message::CommitChanges),
             stage: Box::new(|path: String| {
@@ -10221,6 +10270,30 @@ fn submodule_path(url: &str) -> String {
 
 /// Clone の「最近の履歴だけ」で選べるコミットの数（GTK4 版の `shallow::more_choices` と 1）。
 const CLONE_DEPTHS: [u32; 4] = [1, 100, 1_000, 10_000];
+
+/// 件名の欄の Alt+↑・Alt+↓ で、最近のコミットのメッセージを順に呼び出す（GTK4 版の `commitmsg` と同じ）。
+fn attach_recall_keys(element: &IInspectable) -> windows_core_reactor::Result<()> {
+    let ui: xaml::UIElement = element.cast()?;
+    let revoker = ui.PreviewKeyDown(|_, args: Ref<xaml::KeyRoutedEventArgs>| {
+        let Some(args) = args.as_ref() else { return };
+        let alt = xaml::InputKeyboardSource::GetKeyStateForCurrentThread(xaml::VirtualKey::Menu)
+            .is_ok_and(|s| s.contains(xaml::CoreVirtualKeyStates::Down));
+        if !alt {
+            return;
+        }
+        let step = match args.Key() {
+            Ok(xaml::VirtualKey::Up) => 1,
+            Ok(xaml::VirtualKey::Down) => -1,
+            _ => return,
+        };
+        let _ = args.SetHandled(true);
+        with_history(|h| {
+            h.sender.send(Message::RecallRecent(step));
+        });
+    })?;
+    REVOKERS.with(|r| r.borrow_mut().push(revoker));
+    Ok(())
+}
 
 /// Repositories の一覧: ダブルクリックと Enter で、選んでいるリポジトリを開く（GTK4 版と同じ）。
 fn attach_repositories_open(element: &IInspectable) -> windows_core_reactor::Result<()> {

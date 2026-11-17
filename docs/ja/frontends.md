@@ -227,7 +227,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Space で切り替え、⌫ で捨てる | ✓ | ✓ | ✓ | ✓ | n/a |  |
 | 上のコミットの欄、50/72 の数と本文の目安の線 | ✓ | ✓ | △ | ✓ | n/a | VSCode: 列が 72 文字より狭いので、目安の線の代わりに、72 を超える本文の行の長さを出す。<br>Windows: 件名と本文。数と目安の線はない。 |
 | リポジトリごとの下書き、テンプレートから始める | ✓ | ✓ | △ | ✓ | n/a | VSCode: `commit.template` だけで、共有のテンプレートは使わない。<br>Windows: Windows: `commit.template` だけで、共有のテンプレートはまだない。 |
-| 最近のメッセージ（⌥↑ / ⌥↓・一覧） | ✓ | ✓ | △ | ✓ | n/a | Windows: Windows: 一覧だけ。 |
+| 最近のメッセージ（⌥↑ / ⌥↓・一覧） | ✓ | ✓ | ✓ | ✓ | n/a |  |
 | Conventional の種類・Co-authored-by・Signed-off-by を入れる | ✓ | ✓ | ✓ | ✓ | n/a |  |
 | `#issue` の補完 | ✓ | ✓ | — | — | n/a |  |
 | Commit and Push・Amend | ✓ | ✓ | ✓ | ✓ | △ | CLI: `commit -m … --amend`。 |
