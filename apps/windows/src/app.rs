@@ -45,6 +45,8 @@ thread_local! {
     static HEAD_NAME: RefCell<String> = const { RefCell::new(String::new()) };
     /// Push の画面を出しているか（出していれば、Enter で既定のボタンを押せるか。Force Push は押せない）。
     static PUSH_KEYS: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+    /// 等幅にするのを待っている要素と、試した回数（`retry_monospace`）。
+    static PENDING_MONOSPACE: RefCell<Vec<(IInspectable, u32)>> = const { RefCell::new(Vec::new()) };
     /// 終わった操作の一言を消す時刻。
     static FLASH_UNTIL: std::cell::Cell<Option<Instant>> = const { std::cell::Cell::new(None) };
     /// Activity を開いている間、読み直しを頼んだ最後の時刻（0.5 秒ごとに頼む）。
@@ -260,6 +262,8 @@ struct Root {
     /// Working Copy の件名の欄と、Alt+↑・Alt+↓ で呼び出している最近のメッセージ（-1 は呼び出していない）・
     /// 呼び出す前の件名と本文（GTK4 版の `recall`）。
     summary_box: ElementRef<TextBox>,
+    /// Blame の行番号と中身の列（等幅の字にする）。
+    blame_code: ElementRef<Grid>,
     recall_cursor: isize,
     before_recall: Option<(String, String)>,
 }
@@ -1083,6 +1087,7 @@ impl Component for Root {
             dialog_inputs: 0,
             working_list: ElementRef::new(),
             summary_box: ElementRef::new(),
+            blame_code: ElementRef::new(),
             recall_cursor: -1,
             before_recall: None,
         }
@@ -6305,6 +6310,20 @@ impl Component for Root {
                 // Push の確認は、どの画面の上にも重ねる。
                 self.push_view(context),
             ));
+        // Blame の行番号と中身の列を等幅に（読み終えて列ができてから）。
+        let blame_lines = (self.page == Page::Blame)
+            .then_some(self.blame.as_ref())
+            .flatten()
+            .and_then(|b| Some((b.path.clone(), b.data.as_ref()?.as_ref().ok()?.lines.len())));
+        let host = self.blame_code.clone();
+        context.use_effect("blame-monospace", blame_lines, move || {
+            let _ = host.request_native_element(|result| {
+                if let Ok(element) = result {
+                    PENDING_MONOSPACE.with(|p| p.borrow_mut().push((element, 0)));
+                }
+            });
+            None
+        });
         // Working Copy の一覧のキー: 画面を出すたびに Grid が作り直されるので、そのたびに付ける。
         let host = self.working_list.clone();
         context.use_effect("working-keys", self.page == Page::WorkingCopy, move || {
@@ -10888,6 +10907,7 @@ impl Root {
             crate::blame::Callbacks {
                 close: context.callback(|()| Message::CloseBlame),
                 menu: Box::new(|| context.callback(Message::BlameMenu)),
+                code: &self.blame_code,
             },
         );
         // コードの幅が要るので、History と右の列の両方を覆う。
@@ -12864,6 +12884,7 @@ impl HistoryView {
 
     /// 届いたものを取り込み、描くものがあれば描く。
     fn render(&mut self) -> Result<(), String> {
+        retry_monospace();
         if !self.input_requested {
             self.input_requested = request_input(&self.area, Target::History);
         }
@@ -13865,6 +13886,44 @@ fn attach_sidebar(element: &IInspectable) -> windows_core_reactor::Result<()> {
     })?;
     REVOKERS.with(|r| r.borrow_mut().push(revoker));
     Ok(())
+}
+
+/// 等幅の字（Windows の既定の等幅。なければ Consolas）。
+const MONOSPACE: &str = "Cascadia Mono, Consolas";
+
+/// `element` から親をたどって最初の Control の字を等幅にする（中の TextBlock はその字を継ぐ。reactor の部品には
+/// 字体の指定がない）。まだ画面の木に入っていなければ（親がない）false。
+fn monospace_above(element: &IInspectable) -> windows_core_reactor::Result<bool> {
+    let mut node: xaml::DependencyObject = element.cast()?;
+    for _ in 0..8 {
+        let Ok(parent) = xaml::VisualTreeHelper::GetParent(&node) else {
+            return Ok(false);
+        };
+        node = parent;
+        if let Ok(control) = node.cast::<xaml::Control>() {
+            let font = xaml::FontFamily::CreateInstanceWithName(&MONOSPACE.into())?;
+            control.SetFontFamily(&font)?;
+            return Ok(true);
+        }
+    }
+    Ok(true)
+}
+
+/// 等幅にするのを待っている要素（部品ができた直後はまだ画面の木に入っていないので、描くたびに試す）と、試した回数。
+fn retry_monospace() {
+    PENDING_MONOSPACE.with(|p| {
+        p.borrow_mut().retain_mut(|(element, tries)| {
+            *tries += 1;
+            match monospace_above(element) {
+                Ok(false) => *tries < 120,
+                Ok(true) => false,
+                Err(e) => {
+                    eprintln!("等幅にできない: {e}");
+                    false
+                }
+            }
+        });
+    });
 }
 
 /// `from` から親へたどり、木の項目の要素とそのキーを返す。

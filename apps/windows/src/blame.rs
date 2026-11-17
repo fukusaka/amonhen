@@ -54,6 +54,8 @@ pub struct Callbacks<'a> {
     pub close: Callback<()>,
     /// 行の右クリックのメニュー（`show:<oid>`・`copy:<oid>`）。
     pub menu: Box<dyn Fn() -> Callback<String> + 'a>,
+    /// 行番号と中身の列（等幅の字にする。GTK4 版の `monospace`）。
+    pub code: &'a ElementRef<Grid>,
 }
 
 pub fn view(state: &State, callbacks: Callbacks) -> View {
@@ -91,7 +93,10 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
         Some(Ok(data)) => {
             let digits = data.lines.len().to_string().len();
             let (mut block, mut offset, mut previous) = (0usize, 0usize, usize::MAX);
-            let mut rows = Vec::with_capacity(data.lines.len());
+            // 左に ID・作者・日時・件名の列、右に行番号と中身の列（こちらだけ等幅。GTK4 版と同じ）。右の列は字体を
+            // 継ぐ Control（スクロールしない ScrollViewer）に入れて、まとめて等幅にする。
+            let mut infos = Vec::with_capacity(data.lines.len());
+            let mut codes = Vec::with_capacity(data.lines.len());
             for (i, (commit, text)) in data.lines.iter().enumerate() {
                 if *commit != previous {
                     if i > 0 {
@@ -122,22 +127,19 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                 } else {
                     Color::rgb(0xff, 0xff, 0xff)
                 };
-                let row = Grid::new()
+                let info = TextBlock::new()
+                    .text(info)
+                    .font_size(11.0)
+                    .opacity(if offset == 0 { 0.75 } else { 0.5 })
+                    .text_trimming(TextTrimming::CharacterEllipsis)
+                    .vertical_alignment(VerticalAlignment::Center)
+                    .margin(Thickness::new(6.0, 0.0, 6.0, 0.0));
+                let code = Grid::new()
                     .columns([
-                        GridLength::Pixel(300.0),
                         GridLength::Pixel(8.0 * digits as f64 + 12.0),
                         GridLength::Star(1.0),
                     ])
-                    .background(Brush::Solid(background))
                     .children((
-                        TextBlock::new()
-                            .text(info)
-                            .font_size(11.0)
-                            .opacity(if offset == 0 { 0.75 } else { 0.5 })
-                            .text_trimming(TextTrimming::CharacterEllipsis)
-                            .vertical_alignment(VerticalAlignment::Center)
-                            .margin(Thickness::new(6.0, 0.0, 6.0, 0.0))
-                            .grid_column(0),
                         TextBlock::new()
                             .text(format!("{:>digits$}", i + 1))
                             .font_size(12.0)
@@ -145,29 +147,58 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                             .horizontal_alignment(HorizontalAlignment::Right)
                             .vertical_alignment(VerticalAlignment::Center)
                             .margin(Thickness::new(0.0, 0.0, 8.0, 0.0))
-                            .grid_column(1),
+                            .grid_column(0),
                         TextBlock::new()
                             .text(text.replace('\t', "    "))
                             .font_size(12.0)
                             .vertical_alignment(VerticalAlignment::Center)
-                            .grid_column(2),
+                            .grid_column(1),
                     ));
                 // まだコミットしていない行は History に出せない。
-                let row: View = if committed {
-                    row.menu(Menu::new(
-                        [
-                            MenuItem::item(format!("show:{oid}"), tr!("Show in History")),
-                            MenuItem::item(format!("copy:{oid}"), tr!("Copy Commit ID")),
-                        ],
-                        (callbacks.menu)(),
-                    ))
-                } else {
-                    row
+                let menu = |view: View| -> View {
+                    if committed {
+                        view.menu(Menu::new(
+                            [
+                                MenuItem::item(format!("show:{oid}"), tr!("Show in History")),
+                                MenuItem::item(format!("copy:{oid}"), tr!("Copy Commit ID")),
+                            ],
+                            (callbacks.menu)(),
+                        ))
+                    } else {
+                        view
+                    }
                 };
-                rows.push(Border::new().height(20.0).content(row));
+                infos.push(menu(
+                    Border::new()
+                        .height(20.0)
+                        .background(Brush::Solid(background))
+                        .content(info),
+                ));
+                codes.push(menu(
+                    Border::new()
+                        .height(20.0)
+                        .background(Brush::Solid(background))
+                        .content(code),
+                ));
             }
-            let rows = View::keyed_fragment(rows.into_iter().enumerate());
-            ScrollViewer::new().content(StackPanel::new().children((rows,)))
+            let infos = View::keyed_fragment(infos.into_iter().enumerate());
+            let codes = View::keyed_fragment(codes.into_iter().enumerate());
+            ScrollViewer::new().content(
+                Grid::new()
+                    .columns([GridLength::Pixel(300.0), GridLength::Star(1.0)])
+                    .children((
+                        StackPanel::new().grid_column(0).children((infos,)),
+                        Border::new().grid_column(1).content(
+                            ScrollViewer::new()
+                                .vertical_scroll_bar_visibility(ScrollBarVisibility::Disabled)
+                                .content(
+                                    Grid::new()
+                                        .element_ref(callbacks.code)
+                                        .children((StackPanel::new().children((codes,)),)),
+                                ),
+                        ),
+                    )),
+            )
         }
     };
     Grid::new()
