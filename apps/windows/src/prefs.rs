@@ -77,6 +77,11 @@ pub fn string(key: &str) -> Option<String> {
 }
 
 /// 書いて保存する（書けなければ理由）。
+/// 数（なければ・読めなければ None）。
+pub fn number(key: &str) -> Option<f64> {
+    string(key)?.parse().ok()
+}
+
 pub fn set_bool(key: &str, value: bool) -> Result<(), String> {
     set(key, Value::Bool(value))
 }

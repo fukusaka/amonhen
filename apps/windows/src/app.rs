@@ -45,6 +45,15 @@ thread_local! {
     static HEAD_NAME: RefCell<String> = const { RefCell::new(String::new()) };
     /// Push の画面を出しているか（出していれば、Enter で既定のボタンを押せるか。Force Push は押せない）。
     static PUSH_KEYS: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+    /// 境目の今の大きさ（サイドバーの幅、右の列の幅、詳細の高さ。描くたびに書く）と、動かしている境目と、押した
+    /// 位置とそのときの大きさ。
+    static SPLIT_SIZES: std::cell::Cell<(f64, Option<f64>, f64)> =
+        const { std::cell::Cell::new((260.0, None, 240.0)) };
+    static SPLIT_DRAG: std::cell::Cell<Option<(Split, f64, f64)>> = const { std::cell::Cell::new(None) };
+    /// 押す・動かすをまだ付けていない境目のつまみ。
+    static SPLIT_PENDING: RefCell<Vec<(ElementRef<Grid>, Split)>> = const { RefCell::new(Vec::new()) };
+    /// 動かしている境目の親（位置を測る Grid）。
+    static SPLIT_PARENT: RefCell<Option<xaml::UIElement>> = const { RefCell::new(None) };
     /// 等幅にするのを待っている要素と、試した回数（`retry_monospace`）。
     static PENDING_MONOSPACE: RefCell<Vec<(IInspectable, u32)>> = const { RefCell::new(Vec::new()) };
     /// 終わった操作の一言を消す時刻。
@@ -266,6 +275,13 @@ struct Root {
     description_box: ElementRef<TextBox>,
     /// Blame の行番号と中身の列（等幅の字にする）。
     blame_code: ElementRef<Grid>,
+    /// サイドバーの幅、右の列の幅（None なら History と半分ずつ）、右の列の詳細の高さ（DIP。境目を動かして
+    /// 変える。macOS 版の分割の位置と同じく覚えておく）。
+    sidebar_width: f64,
+    right_width: Option<f64>,
+    details_height: f64,
+    /// 境目のつまみ（サイドバー、右の列、詳細の下）。
+    split_handles: [ElementRef<Grid>; 3],
     recall_cursor: isize,
     before_recall: Option<(String, String)>,
 }
@@ -815,6 +831,9 @@ enum Message {
     SyncLists(Vec<SyncList>, Vec<String>, Option<Value>),
     /// Push の画面で行を選んだ。
     PushRow(Option<usize>),
+    /// 境目を動かした（新しい幅・高さ）・離した。
+    SplitTo(Split, f64),
+    SplitDone,
     /// Pull の取り込み方ごとの前と後の絵を読んだ。
     PullDrawn(Box<PullDrawings>),
     /// Merge・Rebase の確認の前と後の絵を読んだ（相手の rev と `mergePreview`・`rewritePreview` の答え）。
@@ -1091,6 +1110,10 @@ impl Component for Root {
             summary_box: ElementRef::new(),
             description_box: ElementRef::new(),
             blame_code: ElementRef::new(),
+            sidebar_width: crate::prefs::number(SIDEBAR_WIDTH_KEY).unwrap_or(260.0),
+            right_width: crate::prefs::number(RIGHT_WIDTH_KEY),
+            details_height: crate::prefs::number(DETAILS_HEIGHT_KEY).unwrap_or(240.0),
+            split_handles: [ElementRef::new(), ElementRef::new(), ElementRef::new()],
             recall_cursor: -1,
             before_recall: None,
         }
@@ -1248,6 +1271,20 @@ impl Component for Root {
                 }
             }
             Message::PushRow(index) => self.select_push_row(index),
+            Message::SplitTo(split, size) => match split {
+                Split::Sidebar => self.sidebar_width = size.clamp(160.0, 520.0),
+                Split::Right => self.right_width = Some(size.max(240.0)),
+                Split::Details => self.details_height = size.clamp(60.0, 800.0),
+            },
+            Message::SplitDone => {
+                let _ =
+                    crate::prefs::set_string(SIDEBAR_WIDTH_KEY, &self.sidebar_width.to_string());
+                let _ =
+                    crate::prefs::set_string(DETAILS_HEIGHT_KEY, &self.details_height.to_string());
+                if let Some(width) = self.right_width {
+                    let _ = crate::prefs::set_string(RIGHT_WIDTH_KEY, &width.to_string());
+                }
+            }
             Message::Submodules(states) => self.submodules = states,
             Message::Subtrees(info) => self.subtrees = info,
             Message::FormField(index, text) => {
@@ -6179,7 +6216,7 @@ impl Component for Root {
                 ]
             } else {
                 [
-                    GridLength::Pixel(240.0),
+                    GridLength::Pixel(self.details_height),
                     GridLength::Auto,
                     GridLength::Star(1.0),
                 ]
@@ -6270,11 +6307,29 @@ impl Component for Root {
             View::empty()
         };
         let working_copy = self.working_copy_view(context);
+        let details_split = self.page != Page::WorkingCopy && !self.details_expanded;
+        SPLIT_SIZES.with(|s| s.set((self.sidebar_width, self.right_width, self.details_height)));
+        // 境目のつまみに押す・動かすを付ける（つまみができたとき。詳細の下のつまみは出すたびにできる）。部品は
+        // まだできていないことがあるので、描くたびに頼み直す（`retry_splitters`）。
+        for (i, split, shown) in [
+            (0, Split::Sidebar, true),
+            (1, Split::Right, true),
+            (2, Split::Details, details_split),
+        ] {
+            let handle = self.split_handles[i].clone();
+            context.use_effect(format!("split-{i}"), shown, move || {
+                if shown {
+                    SPLIT_PENDING.with(|p| p.borrow_mut().push((handle, split)));
+                }
+                None
+            });
+        }
         let body = Grid::new()
             .columns([
-                GridLength::Pixel(260.0),
+                GridLength::Pixel(self.sidebar_width),
                 GridLength::Star(1.0),
-                GridLength::Star(1.0),
+                self.right_width
+                    .map_or(GridLength::Star(1.0), GridLength::Pixel),
             ])
             .children((
                 sidebar,
@@ -6312,6 +6367,16 @@ impl Component for Root {
                 self.repo_settings_view(context),
                 // Push の確認は、どの画面の上にも重ねる。
                 self.push_view(context),
+                // 列の境目（動かして幅を変える）。いちばん上に重ねる。
+                View::fragment((
+                    splitter(&self.split_handles[0], Split::Sidebar, 0.0),
+                    splitter(&self.split_handles[1], Split::Right, 0.0),
+                    if details_split {
+                        splitter(&self.split_handles[2], Split::Details, self.details_height)
+                    } else {
+                        View::empty()
+                    },
+                )),
             ));
         // Blame の行番号と中身の列を等幅に（読み終えて列ができてから）。
         let blame_lines = (self.page == Page::Blame)
@@ -12905,6 +12970,7 @@ impl HistoryView {
     /// 届いたものを取り込み、描くものがあれば描く。
     fn render(&mut self) -> Result<(), String> {
         retry_monospace();
+        retry_splitters();
         if !self.input_requested {
             self.input_requested = request_input(&self.area, Target::History);
         }
@@ -13576,6 +13642,180 @@ pub struct PullDrawings {
     merge: Option<Value>,
     rebase: Option<Value>,
     forecast: Option<Value>,
+}
+
+/// 動かせる境目: サイドバーの右、右の列の左、右の列の詳細と差分の間。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Split {
+    Sidebar,
+    Right,
+    Details,
+}
+
+/// 境目の幅・高さを覚える設定の鍵。
+const SIDEBAR_WIDTH_KEY: &str = "sidebarWidth";
+const RIGHT_WIDTH_KEY: &str = "detailsColumnWidth";
+const DETAILS_HEIGHT_KEY: &str = "detailsHeight";
+
+/// 境目のつまみ（細く透明な帯。押して動かすと幅・高さが変わる。`attach_splitter` が押す・動かすを受ける）。
+/// `top` は詳細の下端の位置。
+fn splitter(handle: &ElementRef<Grid>, split: Split, top: f64) -> View {
+    let grid = Grid::new()
+        .element_ref(handle)
+        .background(Brush::Solid(Color::transparent()));
+    match split {
+        // サイドバーの右端。
+        Split::Sidebar => grid
+            .width(6.0)
+            .grid_column(0)
+            .horizontal_alignment(HorizontalAlignment::Right)
+            .into(),
+        // 右の列の左端。
+        Split::Right => grid
+            .width(6.0)
+            .grid_column(2)
+            .horizontal_alignment(HorizontalAlignment::Left)
+            .into(),
+        // 詳細の下端（右の列の 1 行目の下）。
+        Split::Details => grid
+            .height(6.0)
+            .grid_column(2)
+            .vertical_alignment(VerticalAlignment::Top)
+            .margin(Thickness::new(0.0, top - 3.0, 0.0, 0.0))
+            .into(),
+    }
+}
+
+/// まだ付けていない境目のつまみに、押す・動かすを付ける（部品ができていれば頼み、頼めたものは外す）。
+fn retry_splitters() {
+    SPLIT_PENDING.with(|p| {
+        p.borrow_mut().retain(|(handle, split)| {
+            let split = *split;
+            !handle.request_native_element(move |result| match result {
+                Ok(element) => {
+                    if let Err(e) = attach_splitter(&element, split) {
+                        eprintln!("境目に操作を付けられない: {e}");
+                    }
+                }
+                Err(e) => eprintln!("境目の部品を取れない: {e:?}"),
+            })
+        });
+    });
+}
+
+/// 境目のつまみに、押す・動かす・離すを付ける。押したら指を捕まえ、動かすたびに新しい幅・高さを送る。
+fn attach_splitter(element: &IInspectable, split: Split) -> windows_core_reactor::Result<()> {
+    let ui: xaml::UIElement = element.cast()?;
+    let source = ui.clone();
+    let pressed = ui.PointerPressed(move |_, args: Ref<xaml::PointerRoutedEventArgs>| {
+        let Some(args) = args.as_ref() else { return };
+        let left = args
+            .GetCurrentPoint(&source)
+            .and_then(|p| p.Properties())
+            .and_then(|p| p.IsLeftButtonPressed())
+            .unwrap_or(false);
+        // 位置は親（列を並べる Grid。つまみが動いても動かない）の中で測る。
+        let Some(parent) = source
+            .cast::<xaml::DependencyObject>()
+            .ok()
+            .and_then(|o| xaml::VisualTreeHelper::GetParent(&o).ok())
+            .and_then(|p| p.cast::<xaml::UIElement>().ok())
+            .filter(|_| left)
+        else {
+            return;
+        };
+        let Some(position) = split_position(args, &parent, split) else {
+            return;
+        };
+        let (sidebar, right, details) = SPLIT_SIZES.with(std::cell::Cell::get);
+        let size = match split {
+            Split::Sidebar => sidebar,
+            Split::Details => details,
+            // 半分ずつのままなら、今の幅を差分の面の大きさから求める。
+            Split::Right => right.unwrap_or_else(|| {
+                let mut width = 400.0;
+                with_history(|h| {
+                    if let Some(s) = h.diff.surface.as_ref() {
+                        width = f64::from(s.width) / f64::from(h.diff.scale.max(0.1));
+                    }
+                });
+                width
+            }),
+        };
+        if let Ok(pointer) = args.Pointer() {
+            let _ = source.CapturePointer(&pointer);
+        }
+        SPLIT_DRAG.with(|d| d.set(Some((split, position, size))));
+        SPLIT_PARENT.with(|p| *p.borrow_mut() = Some(parent));
+        let _ = args.SetHandled(true);
+    })?;
+    let moved = ui.PointerMoved(move |_, args: Ref<xaml::PointerRoutedEventArgs>| {
+        if let Some(args) = args.as_ref()
+            && split_moved(args)
+        {
+            let _ = args.SetHandled(true);
+        }
+    })?;
+    let source = ui.clone();
+    let released = ui.PointerReleased(move |_, args: Ref<xaml::PointerRoutedEventArgs>| {
+        let Some(args) = args.as_ref() else { return };
+        if let Ok(pointer) = args.Pointer() {
+            let _ = source.ReleasePointerCapture(&pointer);
+        }
+        if split_released() {
+            let _ = args.SetHandled(true);
+        }
+    })?;
+    REVOKERS.with(|r| r.borrow_mut().extend([pressed, moved, released]));
+    Ok(())
+}
+
+/// `parent` の中の指の位置（DIP）の、境目の向きの成分。
+fn split_position(
+    args: &xaml::PointerRoutedEventArgs,
+    parent: &xaml::UIElement,
+    split: Split,
+) -> Option<f64> {
+    let position = args.GetCurrentPoint(parent).ok()?.Position().ok()?;
+    Some(f64::from(if split == Split::Details {
+        position.Y
+    } else {
+        position.X
+    }))
+}
+
+/// 境目を動かしていれば、指の位置から新しい幅・高さを送る（扱ったら true）。
+fn split_moved(args: &xaml::PointerRoutedEventArgs) -> bool {
+    let Some((split, start, size)) = SPLIT_DRAG.with(std::cell::Cell::get) else {
+        return false;
+    };
+    let Some(parent) = SPLIT_PARENT.with(|p| p.borrow().clone()) else {
+        return false;
+    };
+    let Some(position) = split_position(args, &parent, split) else {
+        return false;
+    };
+    // 右の列は左へ動かすと広がる。
+    let size = match split {
+        Split::Right => size - (position - start),
+        _ => size + (position - start),
+    };
+    with_history(|h| {
+        h.sender.send(Message::SplitTo(split, size));
+    });
+    true
+}
+
+/// 境目を動かしていれば終える（覚える。扱ったら true）。
+fn split_released() -> bool {
+    if SPLIT_DRAG.with(|d| d.take()).is_none() {
+        return false;
+    }
+    SPLIT_PARENT.with(|p| *p.borrow_mut() = None);
+    with_history(|h| {
+        h.sender.send(Message::SplitDone);
+    });
+    true
 }
 
 /// Push の画面の行。
