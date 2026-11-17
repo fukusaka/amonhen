@@ -287,7 +287,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 機能 | macOS | GTK4 | Windows | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
 | Blame | ✓ | ✓ | △ | ✓ | △ | VSCode: メインビューのページ。<br>CLI: `amonhen run`（`blame`）から。<br>Windows: 構文の色と等幅のフォントはない。行の右クリックで History へ。 |
-| ファイルをコミットの版に戻す（この版・その前の版。選べば stage も） | ✓ | ✓ | △ | ✓ | ✓ | VSCode: エンジンがあるとき、History の詳細のファイルの右クリックから。Restore and Stage は 2 つめのボタン。<br>CLI: `restore --source <rev> [--staged]`。<br>Windows: Windows: File History からだけ（History の詳細のファイルの見出しからはまだ）。 |
+| ファイルをコミットの版に戻す（この版・その前の版。選べば stage も） | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: エンジンがあるとき、History の詳細のファイルの右クリックから。Restore and Stage は 2 つめのボタン。<br>CLI: `restore --source <rev> [--staged]`。 |
 | File History | ✓ | ✓ | ✓ | ✓ | △ | VSCode: メインビューのページ。エクスプローラー・エディターのタブ・コマンドパレット・メインビューのファイルから開く。<br>CLI: `amonhen run`（`fileHistory`）から。<br>Windows: Working Copy のファイルから。 |
 | リポジトリのタブの隣のタブに、リポジトリのツールバー付きで開く | ✓ | ✓ | — | n/a | n/a | GTK4: リポジトリのタブがほかの窓で前に出ているときは、ツールバーのない題だけの帯になる。<br>Windows: 同じ窓の History の上に重ねる。 |
 | 行の履歴 | — | — | — | — | — |  |

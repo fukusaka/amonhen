@@ -321,6 +321,8 @@ pub struct DiffFile {
     pub commit: Option<String>,
     /// そのコミットで消したファイル（Blame できない）。
     pub deleted: bool,
+    /// そのコミットで足したファイル（その前の版はない）。
+    pub added: bool,
 }
 
 /// History の行に付ける ref の名前（ブランチ・リモートブランチ・タグ）。
@@ -1094,16 +1096,16 @@ impl Data {
             .count()
             .checked_sub(1)?;
         let path = commit.stacked.files.get(index)?.0.clone();
-        let deleted = commit.info["files"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .any(|f| f["path"].as_str() == Some(&path) && f["status"].as_str() == Some("D"));
+        // 足した・消したファイルか（GTK4 版の `deleted` の手元の決め方と同じく、前後の中身が空か）。
+        let diff = &commit.stacked.files.get(index)?.1;
+        let deleted = diff.new.is_empty() && !diff.old.is_empty();
+        let added = diff.old.is_empty() && !diff.new.is_empty();
         Some(DiffFile {
             index,
             collapsed: commit.collapsed.get(index).copied().unwrap_or(false),
             commit: commit.info["oid"].as_str().map(str::to_owned),
             deleted,
+            added,
             path,
         })
     }

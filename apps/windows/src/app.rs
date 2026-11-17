@@ -7971,6 +7971,22 @@ impl Root {
             items.push(MenuItem::item("blame", "Blame"));
         }
         items.push(MenuItem::item("history", "File History"));
+        // そのコミットの版・その前の版に戻す（File History の行と同じ。GTK4 版の `restoresheet::items`）。
+        if file.commit.is_some() {
+            items.push(MenuItem::separator("-restore"));
+            let this = tr!("Restore This Version…");
+            items.push(if file.deleted {
+                MenuItem::disabled("restore", this)
+            } else {
+                MenuItem::item("restore", this)
+            });
+            let before = tr!("Restore Version Before This Commit…");
+            items.push(if file.added {
+                MenuItem::disabled("restore-before", before)
+            } else {
+                MenuItem::item("restore-before", before)
+            });
+        }
         items.push(MenuItem::separator("-copy"));
         items.push(MenuItem::item("copy-path", tr!("Copy Path")));
         // 手元にあるファイルだけ、エクスプローラーとほかのアプリで開ける。
@@ -8024,6 +8040,38 @@ impl Root {
             }),
             "blame" => self.update(Message::OpenBlame(file.path, file.commit), context),
             "history" => self.update(Message::OpenFileHistory(file.path), context),
+            "restore" | "restore-before" => {
+                let (Some(repo), Some(oid)) = (self.repo.clone(), file.commit.clone()) else {
+                    return beep();
+                };
+                let before = key == "restore-before";
+                let short = &oid[..oid.len().min(8)];
+                let title = if before {
+                    tr!(
+                        "Restore {path} as It Was Before {commit}?",
+                        path = &file.path,
+                        commit = short
+                    )
+                } else {
+                    tr!(
+                        "Restore {path} as It Is in {commit}?",
+                        path = &file.path,
+                        commit = short
+                    )
+                };
+                let rev = if before {
+                    format!("{oid}^")
+                } else {
+                    oid.clone()
+                };
+                self.dialog = Some(Dialog::Restore {
+                    repo,
+                    title,
+                    rev,
+                    paths: vec![file.path],
+                    staged: false,
+                });
+            }
             "copy-path" => copy_text(&file.path),
             _ => {
                 let Some(local) = self.local_file(&file.path) else {
