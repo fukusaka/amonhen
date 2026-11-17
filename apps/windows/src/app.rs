@@ -52,6 +52,10 @@ thread_local! {
     static SIDEBAR_MENU_HOST: RefCell<Option<xaml::UIElement>> = const { RefCell::new(None) };
     static SIDEBAR_AT: RefCell<Option<(xaml::UIElement, Option<xaml::Point>)>> =
         const { RefCell::new(None) };
+    /// 差分の欄と、右クリックした位置（メニューを作り直してから、そこで開く）。
+    static DIFF_AT: RefCell<Option<(xaml::UIElement, xaml::Point)>> = const { RefCell::new(None) };
+    /// 右クリックで外しておいた差分のメニュー（作り直したら付き直す）。
+    static DIFF_FLYOUT: RefCell<Option<xaml::FlyoutBase>> = const { RefCell::new(None) };
     /// History と差分に付けたイベント（持っている間だけ届く）。
     static REVOKERS: RefCell<Vec<windows_core_reactor::EventRevoker>> =
         const { RefCell::new(Vec::new()) };
@@ -84,6 +88,8 @@ struct Root {
     area: ElementRef<Grid>,
     diff_panel: ElementRef<SwapChainPanel>,
     diff_area: ElementRef<Grid>,
+    /// 差分で右クリックしたファイル（見出しのメニューの中身）。
+    diff_file: Option<crate::data::DiffFile>,
     refs: Option<Arc<RefsSnapshot>>,
     /// ローカルブランチの分け方（コアの `branchGroups`）。
     groups: Option<BranchGroups>,
@@ -120,6 +126,8 @@ struct Root {
     sidebar_menu_host: ElementRef<Grid>,
     sidebar_key: Option<String>,
     sidebar_request: u64,
+    /// 差分のファイルのメニューを開く頼み（数が変わったら、描き直した後に開く）。
+    diff_menu_request: u64,
     /// 出している画面（サイドバーの Workspace）。
     page: Page,
     repo: Option<Arc<Repository>>,
@@ -595,6 +603,10 @@ enum Message {
     StashSelected(Option<usize>),
     /// File History を開く（パス）・読み終えた・一覧で選んだ・閉じる。
     OpenFileHistory(String),
+    /// 差分で右クリックしたファイル。
+    DiffFileAt(Option<crate::data::DiffFile>),
+    /// 差分のファイルの見出しのメニュー（GTK4 版の `commitfiles` の見出しのメニュー）。
+    DiffFileMenu(String),
     FileHistoryLoaded(String, Result<Vec<crate::filehistory::Entry>, String>),
     FileHistorySelected(Option<usize>),
     CloseFileHistory,
@@ -779,6 +791,7 @@ impl Component for Root {
             area: ElementRef::new(),
             diff_panel: ElementRef::new(),
             diff_area: ElementRef::new(),
+            diff_file: None,
             refs: None,
             groups: None,
             info: None,
@@ -832,6 +845,7 @@ impl Component for Root {
             repositories_list: ElementRef::new(),
             settings_from: Page::History,
             sidebar_request: 0,
+            diff_menu_request: 0,
             page: Page::History,
             repo: None,
             status: None,
@@ -4443,6 +4457,13 @@ impl Component for Root {
             }
             Message::RecentMessages(recent) => self.recent_messages = recent,
             Message::CommitTextMenu(key) => self.message_menu(&key, context),
+            Message::DiffFileAt(file) => {
+                if file.is_some() {
+                    self.diff_menu_request += 1;
+                }
+                self.diff_file = file;
+            }
+            Message::DiffFileMenu(key) => self.diff_file_action(&key, context),
             Message::WorkingFileMenu(path, key) => match key.as_str() {
                 "history" => self.update(Message::OpenFileHistory(path), context),
                 "blame" => self.update(Message::OpenBlame(path, None), context),
@@ -4690,6 +4711,7 @@ impl Component for Root {
                 sidebar_input: false,
                 sidebar_host_input: false,
                 sidebar_menu_ready: false,
+                diff_menu_ready: false,
                 panel: panel.clone(),
                 area,
                 options: args.options,
@@ -4752,6 +4774,14 @@ impl Component for Root {
             // effect の時点では WinUI のメニューはまだ入れ替わっていないので、次のフレームで開く。
             context.use_effect("history-menu", self.menu_request, || {
                 with_history(|h| h.menu_ready = true);
+                None
+            });
+        }
+
+        // 差分の右クリック: メニューをそのファイルのものに作り直した後、次のフレームで開く。
+        if self.diff_menu_request > 0 {
+            context.use_effect("diff-menu", self.diff_menu_request, || {
+                with_history(|h| h.diff_menu_ready = true);
                 None
             });
         }
@@ -4852,7 +4882,11 @@ impl Component for Root {
                     .background(Brush::Solid(Color::transparent()))
                     .element_ref(&self.diff_area)
                     .grid_row(1)
-                    .children((SwapChainPanel::new().element_ref(&self.diff_panel),)),
+                    .children((SwapChainPanel::new().element_ref(&self.diff_panel),))
+                    .menu(Menu::new(
+                        self.diff_file_menu(),
+                        context.callback(Message::DiffFileMenu),
+                    )),
             ));
         let menu_bar = crate::menus::menu_bar(|| context.callback(Message::Command));
         let toolbar = crate::menus::toolbar(context.callback(Message::Command));
@@ -7010,6 +7044,92 @@ impl Root {
             h.session.data.set_worktrees(heads, elsewhere);
             h.session.invalidate();
         });
+    }
+
+    /// 差分で右クリックしたファイルのメニュー（GTK4 版の `commitfiles` の見出しのメニュー: 畳む・Blame・
+    /// File History・パスのコピー・ファイルで表示・エディタ・既定のアプリ）。
+    fn diff_file_menu(&self) -> Vec<MenuItem> {
+        let Some(file) = &self.diff_file else {
+            return Vec::new();
+        };
+        let mut items = vec![
+            MenuItem::item(
+                "collapse",
+                if file.collapsed {
+                    tr!("Expand")
+                } else {
+                    tr!("Collapse")
+                },
+            ),
+            MenuItem::separator("-file"),
+        ];
+        // 消したファイルは、そのコミットにはない（Blame を出さない）。
+        if !file.deleted {
+            items.push(MenuItem::item("blame", "Blame"));
+        }
+        items.push(MenuItem::item("history", "File History"));
+        items.push(MenuItem::separator("-copy"));
+        items.push(MenuItem::item("copy-path", tr!("Copy Path")));
+        // 手元にあるファイルだけ、エクスプローラーとほかのアプリで開ける。
+        let local = self.local_file(&file.path).is_some();
+        for (key, title) in [
+            ("reveal", tr!("Show in Files")),
+            ("editor", tr!("Open in Editor")),
+            ("default-app", tr!("Open with Default App")),
+        ] {
+            items.push(if local {
+                MenuItem::item(key, title)
+            } else {
+                MenuItem::disabled(key, title)
+            });
+        }
+        items
+    }
+
+    /// 作業ツリーにある `path` のファイル。
+    fn local_file(&self, path: &str) -> Option<std::path::PathBuf> {
+        let file = self.repo.as_ref()?.paths().workdir?.join(path);
+        file.exists().then_some(file)
+    }
+
+    fn diff_file_action(&mut self, key: &str, context: &ComponentContext<Self>) {
+        let Some(file) = self.diff_file.clone() else {
+            return;
+        };
+        match key {
+            "collapse" => with_history(|h| {
+                if h.session.data.toggle_file_index(file.index) {
+                    h.session.renderer.forget_diff();
+                    let rows = h.diff_rows();
+                    h.diff.scroll_by(0.0, rows);
+                }
+            }),
+            "blame" => self.update(Message::OpenBlame(file.path, file.commit), context),
+            "history" => self.update(Message::OpenFileHistory(file.path), context),
+            "copy-path" => copy_text(&file.path),
+            _ => {
+                let Some(local) = self.local_file(&file.path) else {
+                    return beep();
+                };
+                match key {
+                    "reveal" => crate::files::reveal(&local),
+                    "editor" => {
+                        context.spawn_background(move |_| {
+                            Message::Performed(
+                                crate::editor::open_file(&local)
+                                    .err()
+                                    .map(|e| (tr!("Couldn’t Open in Editor"), e)),
+                            )
+                        });
+                    }
+                    _ => {
+                        if !crate::files::open_default(&local) {
+                            beep();
+                        }
+                    }
+                }
+            }
+        }
     }
 
     fn tag_items(&self, name: &str) -> Vec<MenuItem> {
@@ -9676,6 +9796,8 @@ struct HistoryView {
     sidebar_input: bool,
     sidebar_host_input: bool,
     sidebar_menu_ready: bool,
+    /// 差分のファイルのメニューを作り直したので、次のフレームで開く。
+    diff_menu_ready: bool,
     /// メニューを作り直した（次のフレームで開く）。
     menu_ready: bool,
     /// Working Copy を出している（差分の欄は選んだファイルの差分）。
@@ -9756,6 +9878,9 @@ impl HistoryView {
         }
         if std::mem::take(&mut self.sidebar_menu_ready) {
             open_sidebar_menu();
+        }
+        if std::mem::take(&mut self.diff_menu_ready) {
+            open_diff_menu();
         }
         // 自動の fetch（Settings > General で決めた間隔）。
         let (minutes, since) = AUTO_FETCH.with(|a| a.get());
@@ -10508,6 +10633,33 @@ fn open_sidebar_menu() {
     }
 }
 
+/// 作り直した差分のファイルのメニューを、右クリックした所で開く。
+fn open_diff_menu() {
+    let Some((element, at)) = DIFF_AT.with(|a| a.borrow_mut().take()) else {
+        return;
+    };
+    let open = || -> windows_core_reactor::Result<()> {
+        // reactor が作り直したメニューは要素に付き直しているので、外してから開く（付いていなければ前のもの）。
+        let flyout = match element.ContextFlyout() {
+            Ok(flyout) => {
+                element.SetContextFlyout(None::<&xaml::FlyoutBase>)?;
+                DIFF_FLYOUT.with(|f| *f.borrow_mut() = Some(flyout.clone()));
+                flyout
+            }
+            Err(_) => match DIFF_FLYOUT.with(|f| f.borrow().clone()) {
+                Some(flyout) => flyout,
+                None => return Ok(()),
+            },
+        };
+        let options = xaml::FlyoutShowOptions::new()?;
+        options.SetPosition(Some(at))?;
+        flyout.ShowAtWithOptions(&element, &options)
+    };
+    if let Err(e) = open() {
+        eprintln!("差分のメニューを開けない: {e}");
+    }
+}
+
 /// `area` の生の要素に入力を付ける（まだ載っていなければ `false`、次のフレームでまた試す）。
 fn request_input(area: &ElementRef<Grid>, target: Target) -> bool {
     area.request_native_element(move |result| match result {
@@ -10543,12 +10695,12 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
             }
             let _ = source.Focus(xaml::FocusState::Pointer);
             // 右クリック: WinUI が今のメニュー（選び直す前の行のもの）を開かないよう、要素から外しておく。
-            if right
-                && target == Target::History
-                && let Ok(flyout) = source.ContextFlyout()
-            {
+            if right && let Ok(flyout) = source.ContextFlyout() {
                 let _ = source.SetContextFlyout(None::<&xaml::FlyoutBase>);
-                HISTORY_FLYOUT.with(|f| *f.borrow_mut() = Some(flyout));
+                match target {
+                    Target::History => HISTORY_FLYOUT.with(|f| *f.borrow_mut() = Some(flyout)),
+                    Target::Diff => DIFF_FLYOUT.with(|f| *f.borrow_mut() = Some(flyout)),
+                }
             }
             with_history(|h| match target {
                 // 右クリックも、先にその行を選ぶ（メニューはそのコミットのもの）。
@@ -10630,6 +10782,30 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
                         };
                     }
                     h.context_at = Some(at);
+                });
+            },
+        )?);
+    }
+
+    if target == Target::Diff {
+        // 右クリック: 押した行のファイルのメニューに作り直してから開く（WinUI が今のメニューを開かないよう、
+        // 扱ったことにする）。History の差分だけ（Working Copy の差分にはまだない）。
+        let source = ui.clone();
+        revokers.push(ui.ContextRequested(
+            move |_, args: Ref<xaml::ContextRequestedEventArgs>| {
+                let Some(args) = args.as_ref() else { return };
+                let _ = args.SetHandled(true);
+                let mut at = xaml::Point { X: 24.0, Y: 8.0 };
+                let _ = args.TryGetPosition(&source, &mut at);
+                with_history(|h| {
+                    let row = ((h.diff.scroll_y + at.Y) / DIFF_ROW_HEIGHT).floor();
+                    let file = (row >= 0.0 && !h.working_page)
+                        .then(|| h.session.data.file_at(row as usize))
+                        .flatten();
+                    if file.is_some() {
+                        DIFF_AT.with(|a| *a.borrow_mut() = Some((source.clone(), at)));
+                    }
+                    h.sender.send(Message::DiffFileAt(file));
                 });
             },
         )?);

@@ -275,7 +275,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Find inside the details | ✓ | ✓ | — | ✓ | n/a | VSCode: ⌘F searches the whole main view; diffs not loaded yet aren't searched. |
 | All files stacked (sticky headers, collapse, Viewed) | ✓ | ✓ | △ | ✓ | ✓ | CLI: `show`.<br>Windows: Stacked and collapsible; no sticky headers or Viewed. |
 | Changed files as a tree beside the diff | ✓ | ✓ | — | ✓ | n/a | VSCode: Tree / List above the files. |
-| File header menu (Blame, File History, copy path, open) | ✓ | ✓ | — | ✓ | n/a | VSCode: Blame, File History and Copy Path on the right-click; Open in VSCode's diff editor. |
+| File header menu (Blame, File History, copy path, open) | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: Blame, File History and Copy Path on the right-click; Open in VSCode's diff editor. |
 | Switch to the single-file diff | ✓ | ✓ | — | ✓ | n/a | VSCode: One File / All Files above the files. |
 | Diff of a selection (range squashed, A..B / A...B, scattered) | ✓ | ✓ | ✓ | ✓ | △ | VSCode: With the engine.<br>CLI: `diff <rev> <rev>`. |
 | Actions on a selection (cherry-pick, revert, squash, copy IDs) | ✓ | ✓ | △ | ✓ | △ | VSCode: With the engine.<br>CLI: Via `amonhen run`.<br>Windows: Cherry-pick, revert, Range Diff of two and copy IDs from History's menu; no combining. |

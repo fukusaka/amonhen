@@ -174,6 +174,17 @@ pub fn open_folder(dir: &Path) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// ファイルを選んだエディタで開く（GTK4 版の `open_file`）。開けなければ、そのわけ。
+// エディタの窓を出すのが目的なので、process::command（窓を出さない）は使わない。
+#[allow(clippy::disallowed_methods)]
+pub fn open_file(file: &Path) -> Result<(), String> {
+    std::process::Command::new(chosen().id)
+        .arg(file)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

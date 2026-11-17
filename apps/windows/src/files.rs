@@ -103,6 +103,16 @@ pub fn reveal(path: &std::path::Path) {
         .spawn();
 }
 
+/// ファイルを既定のアプリで開く（エクスプローラーに渡す）。
+// アプリの窓を出すのが目的なので、process::command（窓を出さない）は使わない。
+#[allow(clippy::disallowed_methods)]
+pub fn open_default(path: &std::path::Path) -> bool {
+    std::process::Command::new("explorer.exe")
+        .arg(path)
+        .spawn()
+        .is_ok()
+}
+
 /// フォルダをエクスプローラーで開く（Repository > Show in Files）。
 // エクスプローラーの窓を出すのが目的なので、process::command（窓を出さない）は使わない。
 #[allow(clippy::disallowed_methods)]

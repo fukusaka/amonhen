@@ -275,7 +275,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 詳細の中を探す | ✓ | ✓ | — | ✓ | n/a | VSCode: ⌘F でメインビュー全体を探す。まだ読んでいない差分は探さない。 |
 | すべてのファイルを積む（貼り付く見出し・畳む・Viewed） | ✓ | ✓ | △ | ✓ | ✓ | CLI: `show`。<br>Windows: 並べて畳める。見出しの固定と Viewed はない。 |
 | 差分の横の、変更したファイルの木 | ✓ | ✓ | — | ✓ | n/a | VSCode: 一覧の上の Tree / List で切り替える。 |
-| ファイルの見出しのメニュー（Blame・File History・パスのコピー・開く） | ✓ | ✓ | — | ✓ | n/a | VSCode: 右クリックの Blame・File History・Copy Path と、VSCode の差分のエディターで開く。 |
+| ファイルの見出しのメニュー（Blame・File History・パスのコピー・開く） | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: 右クリックの Blame・File History・Copy Path と、VSCode の差分のエディターで開く。 |
 | 1 ファイルずつの差分に切り替える | ✓ | ✓ | — | ✓ | n/a | VSCode: 一覧の上の One File / All Files で切り替える。 |
 | 選んだものの差分（範囲をまとめる・A..B / A...B・飛び飛び） | ✓ | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあるとき。<br>CLI: `diff <rev> <rev>`。 |
 | 選んだものの操作（cherry-pick・revert・squash・ID のコピー） | ✓ | ✓ | △ | ✓ | △ | VSCode: エンジンがあるとき。<br>CLI: `amonhen run` から。<br>Windows: History のメニューから Cherry-pick・Revert・2 つの Range Diff・ID のコピー。まとめる（Combine）はない。 |

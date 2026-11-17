@@ -215,6 +215,19 @@ pub enum SearchDone {
     Failed(String, String),
 }
 
+/// History の差分のファイル（見出しの右クリックのメニュー）。
+#[derive(Clone, Debug, PartialEq)]
+pub struct DiffFile {
+    /// コミットの変更ファイルの順の番号。
+    pub index: usize,
+    pub path: String,
+    pub collapsed: bool,
+    /// 1 つのコミットの差分ならその ID（複数選んだときは None）。
+    pub commit: Option<String>,
+    /// そのコミットで消したファイル（Blame できない）。
+    pub deleted: bool,
+}
+
 /// History の行に付ける ref の名前（ブランチ・リモートブランチ・タグ）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RefLabel {
@@ -855,12 +868,33 @@ impl Data {
         });
     }
 
+    /// History の差分の `diff_row` 行目が入っているファイル（右クリックのメニュー）。
+    pub fn file_at(&self, diff_row: usize) -> Option<DiffFile> {
+        let commit = self.commit.as_ref()?;
+        let rows = commit.diff.rows.get(..=diff_row)?;
+        let index = rows
+            .iter()
+            .filter(|r| r.kind == amonhen_layout::DiffRow::FILE)
+            .count()
+            .checked_sub(1)?;
+        let path = commit.stacked.files.get(index)?.0.clone();
+        let deleted = commit.info["files"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .any(|f| f["path"].as_str() == Some(&path) && f["status"].as_str() == Some("D"));
+        Some(DiffFile {
+            index,
+            collapsed: commit.collapsed.get(index).copied().unwrap_or(false),
+            commit: commit.info["oid"].as_str().map(str::to_owned),
+            deleted,
+            path,
+        })
+    }
+
     /// 差分の `diff_row` 行目（ファイルの見出し）のファイルを畳む・開く。見出しでなければ何もしない。
     pub fn toggle_file(&mut self, diff_row: usize) -> bool {
-        let Some(generation) = self.history.as_ref().map(|h| h.generation) else {
-            return false;
-        };
-        let Some(commit) = self.commit.as_mut() else {
+        let Some(commit) = self.commit.as_ref() else {
             return false;
         };
         let rows = &commit.diff.rows;
@@ -874,7 +908,21 @@ impl Data {
             .iter()
             .filter(|r| r.kind == amonhen_layout::DiffRow::FILE)
             .count();
-        commit.collapsed[file] = !commit.collapsed[file];
+        self.toggle_file_index(file)
+    }
+
+    /// 差分の `file` 番目のファイルを畳む・開く。
+    pub fn toggle_file_index(&mut self, file: usize) -> bool {
+        let Some(generation) = self.history.as_ref().map(|h| h.generation) else {
+            return false;
+        };
+        let Some(commit) = self.commit.as_mut() else {
+            return false;
+        };
+        let Some(collapsed) = commit.collapsed.get_mut(file) else {
+            return false;
+        };
+        *collapsed = !*collapsed;
         commit.diff = commit.stacked.view(&commit.collapsed, &PROFILE);
         commit.index_highlights();
         commit.syntax.clear();
@@ -895,7 +943,6 @@ impl Data {
         self.repo.clone()
     }
 
-    /// コミットの行（今の History の）。
     /// 各 worktree の HEAD の札と、ほかの worktree が checkout しているブランチ（GTK4 版の
     /// `HistoryView::set_worktrees`）。worktree が 1 つなら空で呼ぶ。
     pub fn set_worktrees(
@@ -924,6 +971,7 @@ impl Data {
         self.worktree_labels = labels;
     }
 
+    /// コミットの行（今の History の）。
     pub fn row_of(&self, id: &amonhen_model::Oid) -> Option<u32> {
         self.history.as_ref()?.row_of(id)
     }
