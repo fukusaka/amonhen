@@ -749,6 +749,7 @@ impl App {
             "stash" => self.notice = Some(tr!("Stashed")),
             "pop" => self.notice = Some(tr!("Popped the stash")),
             "abort" => self.notice = Some(tr!("Aborted")),
+            "resolve" => self.notice = Some(tr!("Resolved")),
             "merge" | "rebase" | "continue" | "skip" => {
                 // コンフリクトで止まったら、Working Copy で解決する。
                 match reply["outcome"].as_str() {
@@ -981,6 +982,10 @@ impl App {
                 ("j k", tr!("Move")),
                 ("Space", tr!("Stage or unstage the file")),
                 ("d", tr!("Discard the file's changes")),
+                (
+                    "o t",
+                    tr!("Take the current or the incoming side of a conflicted file"),
+                ),
                 ("Enter", tr!("Go to the diff")),
                 ("c", tr!("Write the commit message")),
                 ("a", tr!("Amend the last commit")),
@@ -994,6 +999,10 @@ impl App {
                     tr!("Stage or unstage the line, or the hunk on its header"),
                 ),
                 ("d", tr!("Discard the line or the hunk")),
+                (
+                    "o t b",
+                    tr!("In a conflict: take current, incoming, or both"),
+                ),
                 ("h l", tr!("Pan long lines")),
                 ("Esc", tr!("Go back to the list")),
             ],
@@ -1089,6 +1098,24 @@ impl App {
                 self.focus = Focus::Sidebar;
                 true
             }
+            // コンフリクトのあるファイルを、片側にして解決済みにする（先に確かめる）。
+            KeyCode::Char('o' | 't') if self.changes.conflicted_path().is_some() => {
+                let ours = code == KeyCode::Char('o');
+                let path = self.changes.conflicted_path().unwrap_or("").to_owned();
+                let ask = match ours {
+                    true => tr!("Take the current side of {path}?", path = path),
+                    false => tr!("Take the incoming side of {path}?", path = path),
+                };
+                self.confirm = Some((
+                    ask,
+                    tr!("take"),
+                    Request::Run {
+                        name: "resolve",
+                        command: json!({"op": "takeSide", "path": path, "ours": ours}),
+                    },
+                ));
+                true
+            }
             KeyCode::Char('c') if self.changes.has_message_field() => {
                 self.focus = Focus::Message;
                 true
@@ -1141,6 +1168,21 @@ impl App {
             KeyCode::Char('h') | KeyCode::Left => self.changes.pan(-PAN),
             KeyCode::Char(']') => self.changes.jump_hunk(true),
             KeyCode::Char('[') => self.changes.jump_hunk(false),
+            // コンフリクトの中では、そのコンフリクトを Current・Incoming・両方のどれかにする（Undo できる）。
+            KeyCode::Char('o' | 't' | 'b') if self.changes.conflict_at_cursor().is_some() => {
+                let choice = match code {
+                    KeyCode::Char('o') => "ours",
+                    KeyCode::Char('t') => "theirs",
+                    _ => "both",
+                };
+                if let Some((path, index)) = self.changes.conflict_at_cursor() {
+                    let command = json!({
+                        "op": "resolveConflict", "path": path, "index": index, "choice": choice,
+                    });
+                    self.run("resolve", tr!("Resolving…"), command);
+                }
+                true
+            }
             // 行（hunk の見出しなら、その hunk）の stage を切り替える。
             KeyCode::Char(' ') => match self.changes.toggle_rows() {
                 Ok(Some(request)) => {

@@ -46,6 +46,8 @@ struct Shown {
     combined: bool,
     /// stage 済みの変更だけの差分。
     staged_only: bool,
+    /// コンフリクトのあるファイルの、マーカーつきの中身。
+    conflict: bool,
 }
 
 /// 行ごとの操作の相手。
@@ -134,12 +136,13 @@ impl Changes {
         {
             return None;
         }
-        let (path, unstaged) = (entry.path.clone(), entry.unstaged);
+        let (path, unstaged, conflict) = (entry.path.clone(), entry.unstaged, entry.letter == 'U');
         self.loading = Some((path.clone(), self.serial));
         Some(Request::WorkingDiff {
             path,
             serial: self.serial,
             unstaged,
+            conflict,
         })
     }
 
@@ -217,6 +220,8 @@ impl Changes {
                     diff: Diff::new(&reply, mode == "combined"),
                     combined: mode == "combined",
                     staged_only: mode == "staged",
+                    // `conflict` の答えには、差分の種類も番号もない。
+                    conflict: reply.json["mode"].is_null(),
                     id: id.clone(),
                     added: reply.json["added"].as_u64().unwrap_or(0),
                     removed: reply.json["removed"].as_u64().unwrap_or(0),
@@ -570,6 +575,27 @@ impl Changes {
             rows: target.rows.clone(),
         };
         Ok(Some((target, request)))
+    }
+
+    /// 選んでいるファイルがコンフリクトしていれば、そのパス。
+    pub fn conflicted_path(&self) -> Option<&str> {
+        self.selected_entry()
+            .filter(|e| e.letter == 'U')
+            .map(|e| e.path.as_str())
+    }
+
+    /// 差分で選んでいる行を含むコンフリクト: パスと、ファイルの中で何番目か（0 始まり）。
+    pub fn conflict_at_cursor(&self) -> Option<(&str, usize)> {
+        let shown = self.shown.as_ref().filter(|s| s.conflict)?;
+        let row = self.cursor.checked_sub(1)? as usize;
+        let marker = |r: usize, start: &str| {
+            shown.diff.kind(r).0 == DiffRow::MARKER && shown.diff.row_text(r).starts_with(start)
+        };
+        let rows = (shown.diff.len() as usize).min(row + 1);
+        // 選んでいる行までの「<<<<<<<」の数。最後のものが「>>>>>>>」で閉じていれば、コンフリクトの外。
+        let opened = (0..rows).filter(|&r| marker(r, "<<<<<<<")).count();
+        let closed = (0..row).filter(|&r| marker(r, ">>>>>>>")).count();
+        (opened > closed).then(|| (shown.path.as_str(), opened - 1))
     }
 
     /// 選んでいるファイルの変更を捨てる中身と、そのパス。

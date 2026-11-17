@@ -800,3 +800,45 @@ fn stash_and_pop() {
     let none = amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "S").unwrap();
     assert!(none.contains("No stash to pop"));
 }
+
+/// コンフリクトのあるファイル: マーカーつきの中身が出て、差分の中で `o` `t` `b` でそのコンフリクトを解決する
+#[test]
+fn conflicts_are_resolved_by_side() {
+    let dir = tempfile::tempdir().unwrap();
+    diverged(dir.path());
+    let read = |dir: &Path| std::fs::read_to_string(dir.join("a.txt")).unwrap();
+    amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjmy").unwrap();
+    assert!(read(dir.path()).contains("<<<<<<<"));
+    // Working Copy を開くと、マーカーつきの中身。
+    let shown = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "1").unwrap();
+    println!("{shown}");
+    let diff: Vec<String> = shown.lines().skip(1).filter_map(|l| column(l, 2)).collect();
+    assert!(diff.iter().any(|l| l.contains("<<<<<<<")), "{diff:?}");
+    assert!(diff.iter().any(|l| l.ends_with("main")));
+    assert!(diff.iter().any(|l| l.ends_with("topic")));
+    // 差分へ移り、コンフリクトの中（マーカーの次の行）で `t`: Incoming の側にする。
+    let resolved = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "1\tjjt").unwrap();
+    println!("{resolved}");
+    assert!(resolved.contains("Resolved"));
+    assert_eq!(read(dir.path()), "topic\n");
+}
+
+/// 一覧の `o` は、ファイルごと Current の側にして解決済みにする（先に確かめる）
+#[test]
+fn take_one_side_of_a_conflicted_file() {
+    let dir = tempfile::tempdir().unwrap();
+    diverged(dir.path());
+    amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjmy").unwrap();
+    let asked = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "1o").unwrap();
+    assert!(asked.contains("Take the current side of a.txt?   y take   n cancel"));
+    amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "1oy").unwrap();
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+        "main\n"
+    );
+    // 解決済みになる（コンフリクトのファイルが残っていない）。
+    assert_eq!(
+        git_out(dir.path(), &["diff", "--name-only", "--diff-filter=U"]),
+        ""
+    );
+}

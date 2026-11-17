@@ -27,6 +27,9 @@ pub struct Theme {
     added_word: Color,
     removed: Color,
     removed_word: Color,
+    /// コンフリクトの Current の側と Incoming の側。
+    ours: Color,
+    theirs: Color,
 }
 
 impl Theme {
@@ -35,12 +38,16 @@ impl Theme {
         added_word: Color::Indexed(28),
         removed: Color::Indexed(52),
         removed_word: Color::Indexed(88),
+        ours: Color::Indexed(17),
+        theirs: Color::Indexed(53),
     };
     const LIGHT: Self = Self {
         added: Color::Indexed(194),
         added_word: Color::Indexed(157),
         removed: Color::Indexed(224),
         removed_word: Color::Indexed(217),
+        ours: Color::Indexed(189),
+        theirs: Color::Indexed(225),
     };
 
     /// `COLORFGBG`（「文字;背景」の色番号）の背景が白なら明るい端末。わからなければ暗いとみなす。
@@ -137,7 +144,8 @@ impl Diff {
         sort_spans::<4>(&mut self.syntax);
     }
 
-    fn row_text(&self, row: usize) -> &str {
+    /// 行の文字（行番号や印を除く）。
+    pub fn row_text(&self, row: usize) -> &str {
         let start = self.rows[row * 4 + 3] as usize;
         let len = self.lengths.get(row).copied().unwrap_or(0) as usize;
         self.text
@@ -327,6 +335,9 @@ pub fn draw_row(at: Rect, buf: &mut Buffer, diff: &Diff, row: usize, left: u16, 
             Some(theme.removed),
             Some(theme.removed_word),
         ),
+        // コンフリクト: Current と Incoming は地の色で、マーカーと共通の祖先は薄く。
+        DiffRow::OURS => (' ', DIM, Some(theme.ours), None),
+        DiffRow::THEIRS => (' ', DIM, Some(theme.theirs), None),
         _ => (' ', DIM, None, None),
     };
     let base = match line_bg {

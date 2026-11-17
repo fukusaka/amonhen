@@ -45,6 +45,8 @@ pub enum Request {
         path: String,
         serial: u64,
         unstaged: bool,
+        /// コンフリクトのあるファイル（マーカーつきの中身を出す）。
+        conflict: bool,
     },
     /// ファイルを stage する（`stage` が false なら unstage）。
     Stage { paths: Vec<String>, stage: bool },
@@ -254,13 +256,19 @@ fn load(front: &dyn Front, request: Request) -> Result<Loaded> {
             path,
             serial,
             unstaged,
+            conflict,
         } => {
             let diff =
                 |mode: &str| front.call(json!({"op": "workingDiff", "path": path, "mode": mode}));
-            // 行ごとの stage の印つきが出せないファイル（バイナリ・コンフリクトなど）は、片方だけを出す。
-            let result = diff("combined")
-                .or_else(|_| diff(if unstaged { "unstaged" } else { "staged" }))
-                .map_err(|e| e.to_string());
+            // コンフリクトのあるファイルは、マーカーつきの中身（出せなければ、ふつうの差分）。
+            // 行ごとの stage の印つきが出せないファイル（バイナリなど）は、片方だけを出す。
+            let result = match conflict {
+                true => front.call(json!({"op": "conflict", "path": path})),
+                false => Err("".into()),
+            }
+            .or_else(|_| diff("combined"))
+            .or_else(|_| diff(if unstaged { "unstaged" } else { "staged" }))
+            .map_err(|e| e.to_string());
             Loaded::WorkingDiff {
                 path,
                 serial,
