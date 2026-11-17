@@ -21,7 +21,7 @@ use windows::Win32::System::Threading::WaitForSingleObjectEx;
 use windows_core_reactor::{IInspectable, Interface as _, Ref};
 use windows_reactor::*;
 
-use crate::render::{DIFF_ROW_HEIGHT, Options, ROW_HEIGHT, Renderer, Surface};
+use crate::render::{DIFF_ROW_HEIGHT, Options, Renderer, Surface, row_height};
 use crate::sidebar::{self, BranchGroups};
 use crate::{Args, Session};
 
@@ -1487,6 +1487,14 @@ impl Component for Root {
             }
             // File > New Window: 新しい窓（別のプロセス）に Repositories の画面を出す（窓にタブがないので、今の
             // リポジトリを開いた窓。GTK4 版・macOS 版の New Window）。
+            // View の One Line per Commit（GTK4 版の History の見せ方）。
+            Message::Command(id) if id == "one-line-history" => {
+                let value = !crate::render::one_line();
+                if let Err(e) = crate::prefs::set_bool(crate::prefs::COMPACT_HISTORY_ROWS, value) {
+                    eprintln!("1 行表示を覚えられない: {e}");
+                }
+                with_history(|h| h.session.set_one_line(value));
+            }
             // View の Date Order・Topological Order（GTK4 版の History の見せ方の並び順）。
             Message::Command(id) if id.starts_with("history-order-") => {
                 let order = if id == "history-order-topo" {
@@ -12167,7 +12175,7 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
                         let Some(row) = s.selected else { return };
                         at = xaml::Point {
                             X: 40.0,
-                            Y: s.row_top(row) + ROW_HEIGHT / 2.0,
+                            Y: s.row_top(row) + row_height() / 2.0,
                         };
                     }
                     h.context_at = Some(at);
@@ -12224,7 +12232,7 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
             }
             let notches = -(properties.MouseWheelDelta().unwrap_or(0) as f32) / 120.0;
             with_history(|h| match target {
-                Target::History => h.session.scroll_by(notches * WHEEL_ROWS * ROW_HEIGHT),
+                Target::History => h.session.scroll_by(notches * WHEEL_ROWS * row_height()),
                 Target::Diff => {
                     let rows = h.diff_rows();
                     h.diff

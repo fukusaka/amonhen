@@ -141,6 +141,15 @@ pub fn menu_bar(on_click: impl Fn() -> Callback<String>) -> View {
                 let mark = if order == value { "✓ " } else { "" };
                 items.push(MenuItem::item(id, format!("{mark}{title}")));
             }
+            let mark = if crate::render::one_line() {
+                "✓ "
+            } else {
+                ""
+            };
+            items.push(MenuItem::item(
+                "one-line-history",
+                format!("{mark}{}", amonhen_model::tr!("One Line per Commit")),
+            ));
             items.push(MenuItem::separator("-toolbar"));
             items.push(MenuItem::item(
                 "customize-toolbar",

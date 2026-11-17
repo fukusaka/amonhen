@@ -26,8 +26,21 @@ use windows_numerics::Vector2;
 
 use crate::data::{Chunk, Data};
 
-/// History の行の高さ（件名と、作者・日時の 2 行。DIP）。
-pub const ROW_HEIGHT: f32 = 38.0;
+/// History を 1 行で出すか（View の One Line per Commit。GTK4 版の `Display::one_line`）。
+static ONE_LINE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// History の行の高さ（DIP）: ふだんは件名と、作者・日時の 2 行。1 行で出すなら件名の右に作者・日時。
+pub fn row_height() -> f32 {
+    if one_line() { 24.0 } else { 38.0 }
+}
+
+pub fn one_line() -> bool {
+    ONE_LINE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn set_one_line(value: bool) {
+    ONE_LINE.store(value, std::sync::atomic::Ordering::Relaxed);
+}
 const LANE_WIDTH: f32 = 14.0;
 const LEFT_INSET: f32 = 10.0;
 const NODE_RADIUS: f32 = 4.0;
@@ -515,8 +528,8 @@ impl Renderer {
             self.history = Some(history.clone());
         }
         let count = history.layout.nodes().len() as u32;
-        let first = ((scroll_y / ROW_HEIGHT).floor().max(0.0) as u32).min(count);
-        let last = (((scroll_y + height) / ROW_HEIGHT).ceil() as u32 + 1).min(count);
+        let first = ((scroll_y / row_height()).floor().max(0.0) as u32).min(count);
+        let last = (((scroll_y + height) / row_height()).ceil() as u32 + 1).min(count);
         // 前後 1 画面分も読んでおく。
         let screen = last - first;
         data.want(first.saturating_sub(screen)..(last + screen).min(count));
@@ -524,7 +537,7 @@ impl Renderer {
         // 検索で一致した行の背景（見えている分だけ）。
         let from = data.matches.partition_point(|&r| r < first);
         for &row in data.matches[from..].iter().take_while(|&&r| r < last) {
-            let top = row as f32 * ROW_HEIGHT - scroll_y;
+            let top = row as f32 * row_height() - scroll_y;
             unsafe {
                 self.brush.SetColor(&MATCH);
                 self.d2d.FillRectangle(
@@ -532,7 +545,7 @@ impl Renderer {
                         left: 0.0,
                         top,
                         right: width,
-                        bottom: top + ROW_HEIGHT,
+                        bottom: top + row_height(),
                     },
                     &self.brush,
                 );
@@ -544,7 +557,7 @@ impl Renderer {
             if Some(row) == selected {
                 continue;
             }
-            let top = row as f32 * ROW_HEIGHT - scroll_y;
+            let top = row as f32 * row_height() - scroll_y;
             unsafe {
                 self.brush.SetColor(&SELECTION);
                 self.d2d.FillRectangle(
@@ -552,7 +565,7 @@ impl Renderer {
                         left: 0.0,
                         top,
                         right: width,
-                        bottom: top + ROW_HEIGHT,
+                        bottom: top + row_height(),
                     },
                     &self.brush,
                 );
@@ -560,7 +573,7 @@ impl Renderer {
         }
         // 選んだ行の背景（グラフの下に敷く）。
         if let Some(row) = selected.filter(|r| (first..last).contains(r)) {
-            let top = row as f32 * ROW_HEIGHT - scroll_y;
+            let top = row as f32 * row_height() - scroll_y;
             unsafe {
                 self.brush.SetColor(&SELECTION);
                 self.d2d.FillRectangle(
@@ -568,7 +581,7 @@ impl Renderer {
                         left: 0.0,
                         top,
                         right: width,
-                        bottom: top + ROW_HEIGHT,
+                        bottom: top + row_height(),
                     },
                     &self.brush,
                 );
@@ -604,7 +617,29 @@ impl Renderer {
                 self.rows.insert(row, text);
                 stages[2] += made.elapsed().as_secs_f64() * 1000.0;
             }
-            let top = row as f32 * ROW_HEIGHT - scroll_y;
+            let top = row as f32 * row_height() - scroll_y;
+            let compact = one_line();
+            let label_top = if compact {
+                (row_height() - LABEL_HEIGHT) / 2.0
+            } else {
+                2.0
+            };
+            let signed = chunk.signed(chunk.index(row));
+            let mark_width = if signed { 14.0 } else { 0.0 };
+            // 1 行なら、作者・日時を右端に寄せ（GTK4 版の 1 行表示と同じく件名の右）、ラベルと件名はその手前まで。
+            let (meta_x, meta_y, subject_right) = unsafe {
+                let meta = &self.rows[&row].meta;
+                if compact {
+                    meta.SetMaxWidth((text_width * 0.5 - mark_width).max(0.0))?;
+                    let mut metrics = DWRITE_TEXT_METRICS::default();
+                    meta.GetMetrics(&mut metrics)?;
+                    let meta_x = text_x + text_width - mark_width - metrics.width;
+                    (meta_x, top + 4.0, meta_x - 12.0)
+                } else {
+                    meta.SetMaxWidth((text_width - mark_width).max(0.0))?;
+                    (text_x, top + 20.0, text_x + text_width)
+                }
+            };
             // ref のラベルを件名の前に並べる。
             let mut subject_x = text_x;
             // worktree の HEAD の札を先に。
@@ -615,7 +650,7 @@ impl Renderer {
                 .chain(data.labels.get(&row))
                 .flatten();
             {
-                let limit = text_x + text_width * LABEL_SHARE;
+                let limit = (text_x + text_width * LABEL_SHARE).min(subject_right);
                 for label in labels {
                     let (layout, w) = self.label(&label.name)?;
                     let pill = w + LABEL_PADDING * 2.0;
@@ -624,27 +659,24 @@ impl Renderer {
                     }
                     let elsewhere =
                         label.kind == RefKind::Local && data.elsewhere.contains(&label.name);
-                    let place = (subject_x, top + 2.0, pill);
+                    let place = (subject_x, top + label_top, pill);
                     self.draw_label(label, elsewhere, &layout, place)?;
                     subject_x += pill + LABEL_GAP;
                 }
             }
-            // 署名があれば、作者・日時の行の後ろに検証の結果の色の丸（GTK4 版・macOS 版の印）。
-            let signed = chunk.signed(chunk.index(row));
+            // 署名があれば、作者・日時の後ろに検証の結果の色の丸（GTK4 版・macOS 版の印）。
             let mark = signed.then(|| data.signature_mark(history.graph.ids()[row as usize]));
             let line = &self.rows[&row];
             unsafe {
                 line.subject
-                    .SetMaxWidth((text_x + text_width - subject_x).max(0.0))?;
-                line.meta
-                    .SetMaxWidth((text_width - if signed { 14.0 } else { 0.0 }).max(0.0))?;
+                    .SetMaxWidth((subject_right - subject_x).max(0.0))?;
                 if let Some(mark) = mark {
                     let mut metrics = DWRITE_TEXT_METRICS::default();
                     line.meta.GetMetrics(&mut metrics)?;
                     self.brush.SetColor(&signature_color(mark));
                     self.d2d.FillEllipse(
                         &D2D1_ELLIPSE {
-                            point: point(text_x + metrics.width + 8.0, top + 27.0),
+                            point: point(meta_x + metrics.width + 8.0, meta_y + 7.0),
                             radiusX: 3.5,
                             radiusY: 3.5,
                         },
@@ -653,14 +685,14 @@ impl Renderer {
                 }
                 self.brush.SetColor(&FOREGROUND);
                 self.d2d.DrawTextLayout(
-                    point(subject_x, top + 2.0),
+                    point(subject_x, top + if compact { 3.0 } else { 2.0 }),
                     &line.subject,
                     &self.brush,
                     D2D1_DRAW_TEXT_OPTIONS_NONE,
                 );
                 self.brush.SetColor(&SECONDARY);
                 self.d2d.DrawTextLayout(
-                    point(text_x, top + 20.0),
+                    point(meta_x, meta_y),
                     &line.meta,
                     &self.brush,
                     D2D1_DRAW_TEXT_OPTIONS_NONE,
@@ -701,7 +733,7 @@ impl Renderer {
                 .unwrap_or(lane as f32 * LANE_WIDTH + LANE_WIDTH / 2.0);
             LEFT_INSET - LANE_WIDTH / 2.0 + c
         };
-        let row_y = |row: u32| (row as f32 + 0.5) * ROW_HEIGHT - scroll_y;
+        let row_y = |row: u32| (row as f32 + 0.5) * row_height() - scroll_y;
 
         // 色と太さが同じ線を 1 つのパスにまとめる。
         let mut groups: HashMap<(u16, bool), Vec<&Edge>> = HashMap::new();
@@ -733,8 +765,8 @@ impl Renderer {
                     if e.lane_start == e.lane_end {
                         // 何十万行にまたがる線もあるので、見えている所に切り詰めてから渡す（Direct2D は
                         // 画面の外の分まで輪郭を作る）。
-                        let top = ay.max(-ROW_HEIGHT);
-                        let bottom = by.min(height + ROW_HEIGHT);
+                        let top = ay.max(-row_height());
+                        let bottom = by.min(height + row_height());
                         sink.BeginFigure(point(ax, top), D2D1_FIGURE_BEGIN_HOLLOW);
                         sink.AddLine(point(bx, bottom));
                     } else {
@@ -1130,13 +1162,13 @@ impl Renderer {
                     &subject,
                     &self.subject_format,
                     10000.0,
-                    ROW_HEIGHT,
+                    row_height(),
                 )?,
                 meta: self.dwrite.CreateTextLayout(
                     &meta,
                     &self.meta_format,
                     10000.0,
-                    ROW_HEIGHT,
+                    row_height(),
                 )?,
             })
         }

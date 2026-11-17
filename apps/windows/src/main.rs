@@ -39,7 +39,7 @@ use std::time::Instant;
 
 use data::Data;
 use measure::{InputLatency, Measure};
-use render::{Options, ROW_HEIGHT, Renderer, Surface};
+use render::{Options, Renderer, Surface, row_height};
 
 #[derive(Clone)]
 pub struct Args {
@@ -132,6 +132,7 @@ fn main() {
     amonhen_backend_cli::set_fsmonitor(prefs::bool(prefs::USE_FSMONITOR));
     // Settings > Git > Environment Variables で選んだ名前を、git と ssh に渡す（ほかのスレッドを動かす前に）。
     settingsview::apply_env_added();
+    render::set_one_line(prefs::bool(prefs::COMPACT_HISTORY_ROWS));
     let args = match parse() {
         Ok(a) => a,
         Err(e) => {
@@ -251,12 +252,23 @@ impl Session {
     }
 
     fn max_scroll(&self) -> f32 {
-        (self.data.row_count() as f32 * ROW_HEIGHT - self.height()).max(0.0)
+        (self.data.row_count() as f32 * row_height() - self.height()).max(0.0)
     }
 
     pub fn scroll_by(&mut self, dy: f32) {
         self.scroll_y = (self.scroll_y + dy).clamp(0.0, self.max_scroll());
         self.dirty = true;
+    }
+
+    /// History を 1 行で出すかを切り替える（行の高さが変わるので、上の端の行を保つ）。
+    pub fn set_one_line(&mut self, value: bool) {
+        if render::one_line() == value {
+            return;
+        }
+        let row = self.scroll_y / row_height();
+        render::set_one_line(value);
+        self.scroll_to(row * row_height());
+        self.invalidate();
     }
 
     pub fn scroll_to(&mut self, y: f32) {
@@ -266,12 +278,12 @@ impl Session {
 
     /// 行の上の端の、窓の中の高さ（DIP）。
     pub fn row_top(&self, row: u32) -> f32 {
-        row as f32 * ROW_HEIGHT - self.scroll_y
+        row as f32 * row_height() - self.scroll_y
     }
 
     /// 窓の中の高さ `y`（DIP）にある行。
     pub fn row_at(&self, y: f32) -> Option<u32> {
-        let row = ((self.scroll_y + y) / ROW_HEIGHT).floor();
+        let row = ((self.scroll_y + y) / row_height()).floor();
         (row >= 0.0 && (row as u32) < self.data.row_count()).then_some(row as u32)
     }
 
@@ -285,20 +297,20 @@ impl Session {
             .history
             .as_ref()
             .and_then(|h| h.graph.ids().get(row as usize).copied());
-        let top = row as f32 * ROW_HEIGHT;
+        let top = row as f32 * row_height();
         if top < self.scroll_y {
             self.scroll_to(top);
-        } else if top + ROW_HEIGHT > self.scroll_y + self.height() {
-            self.scroll_to(top + ROW_HEIGHT - self.height());
+        } else if top + row_height() > self.scroll_y + self.height() {
+            self.scroll_to(top + row_height() - self.height());
         }
         self.dirty = true;
     }
 
     /// 行を選び、見えていなければ真ん中に出す（サイドバーで ref を選んだとき）。
     pub fn reveal(&mut self, row: u32) {
-        let top = row as f32 * ROW_HEIGHT;
-        if top < self.scroll_y || top + ROW_HEIGHT > self.scroll_y + self.height() {
-            self.scroll_to(top - (self.height() - ROW_HEIGHT) / 2.0);
+        let top = row as f32 * row_height();
+        if top < self.scroll_y || top + row_height() > self.scroll_y + self.height() {
+            self.scroll_to(top - (self.height() - row_height()) / 2.0);
         }
         self.select(row);
     }
@@ -356,7 +368,7 @@ impl Session {
 
     /// 1 画面分の行の数。
     pub fn page_rows(&self) -> i64 {
-        ((self.height() / ROW_HEIGHT) as i64 - 1).max(1)
+        ((self.height() / row_height()) as i64 - 1).max(1)
     }
 
     pub fn page(&self) -> f32 {
@@ -365,8 +377,8 @@ impl Session {
 
     fn visible(&self) -> std::ops::Range<u32> {
         let count = self.data.row_count();
-        let first = ((self.scroll_y / ROW_HEIGHT) as u32).min(count);
-        let last = (((self.scroll_y + self.height()) / ROW_HEIGHT).ceil() as u32).min(count);
+        let first = ((self.scroll_y / row_height()) as u32).min(count);
+        let last = (((self.scroll_y + self.height()) / row_height()).ceil() as u32).min(count);
         first..last
     }
 
@@ -429,7 +441,7 @@ impl Session {
         }
         let start = match (&self.phase, &mut self.measure) {
             (Phase::Running, Some(m)) => {
-                let (t, dy) = (m.frame_started(), m.rows_per_frame * ROW_HEIGHT);
+                let (t, dy) = (m.frame_started(), m.rows_per_frame * row_height());
                 self.scroll_by(dy);
                 t
             }
