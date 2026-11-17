@@ -423,7 +423,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 - Stashes: apply, pop and drop from the sidebar; Enter shows a stash's diff.
 - Working Copy: one list with a check per file, the HEAD-to-working-tree diff with staged marks, staging by file, hunk, line and a range of lines, discard, the message with commit and amend and git's editor (no Commit and Push), conflicts shown with markers and resolved by side per conflict or per file (no base side, no Magic Merge, no merge editor).
 - History: the graph on one line per commit, ref labels, search with matches colored and stepped through (no partial results, no matches-only view), ancestor emphasis by dimming rows, one selected commit with cherry-pick, revert, detached checkout, new branch, new tag and reset as keys (no multi-selection, folding, density band or edit mode).
-- History's right column: message, author and date, committer when different, ID and parents, changed files, the unified diff with changed words and syntax colors. No signatures, tags, notes or the detailed table.
+- History's right column: message, author and date, committer when different, ID and parents, the refs at the commit, whether it is signed (not verified), changed files, the unified diff with changed words and syntax colors. No signature verification, notes or the detailed table.
 - Status bar: the bottom line shows a merge, rebase, cherry-pick or revert in progress with continue, skip and abort.
 - SSH hosts, shared daemon, askpass: opens `ssh://` and `daemon:` locations like the CLI (not tested yet); askpass on Unix.
 - Reflog: HEAD's entries with the selected commit's details and a new branch there; no other refs, no reset, restore or compare.

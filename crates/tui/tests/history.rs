@@ -223,13 +223,13 @@ fn details_sit_beside_history_when_wide() {
     assert_eq!(details[2], "The first lane was always 0.");
     assert_eq!(details[4], "Author   Ann <ann@example.com>");
     assert_eq!(details[5], format!("Date     @{} (2d ago)", BASE + DAY * 3));
-    assert_eq!(details[9], "M lane.rs +1 -1");
-    assert_eq!(details[10], "A notes.txt +1");
-    assert!(details[12].starts_with("── lane.rs ─ +1 -1 ──"));
-    assert_eq!(details[13], "@@ -1,4 +1,4 @@");
-    assert_eq!(details[14], "1 1  fn lane() -> u32 {");
-    assert_eq!(details[15], "2   -    let lane = 0;");
-    assert_eq!(details[16], "  2 +    let lane = trunk();");
+    assert_eq!(details[10], "M lane.rs +1 -1");
+    assert_eq!(details[11], "A notes.txt +1");
+    assert!(details[13].starts_with("── lane.rs ─ +1 -1 ──"));
+    assert_eq!(details[14], "@@ -1,4 +1,4 @@");
+    assert_eq!(details[15], "1 1  fn lane() -> u32 {");
+    assert_eq!(details[16], "2   -    let lane = 0;");
+    assert_eq!(details[17], "  2 +    let lane = trunk();");
 }
 
 /// 狭ければ、Enter で History の所に詳細が開き、Esc で戻る
@@ -241,7 +241,7 @@ fn details_open_over_history_when_narrow() {
     println!("{text}");
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(lines[1], "Take the lane from the trunk");
-    assert_eq!(lines[15], "1 1  fn lane() -> u32 {");
+    assert_eq!(lines[16], "1 1  fn lane() -> u32 {");
     assert!(lines[19].contains("Esc back"));
     // 一番下まで動かすと、2 つ目のファイルが見える。
     let end = amonhen_tui::snapshot(open(dir.path()), 64, 20, clock(), "\nG").unwrap();
@@ -1127,4 +1127,18 @@ fn the_key_list_scrolls_when_it_does_not_fit() {
     println!("{bottom}");
     assert!(bottom.contains("│ q "));
     assert!(!bottom.contains("│ j k"));
+}
+
+/// 詳細には、そのコミットを指すブランチとタグも出る
+#[test]
+fn details_list_the_refs_at_the_commit() {
+    let dir = tempfile::tempdir().unwrap();
+    merged(dir.path());
+    let text = amonhen_tui::snapshot(open(dir.path()), 160, 14, clock(), "").unwrap();
+    println!("{text}");
+    let details: Vec<String> = text.lines().filter_map(|l| column(l, 2)).collect();
+    let refs = details.iter().find(|l| l.starts_with("Refs")).unwrap();
+    assert!(refs.contains("main") && refs.contains("v1"), "{refs}");
+    // 署名のないコミットには、署名の行がない。
+    assert!(!details.iter().any(|l| l.starts_with("Signed")));
 }

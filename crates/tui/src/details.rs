@@ -141,6 +141,23 @@ impl Commit {
         if !parents.is_empty() {
             fields.push((tr!("Parents"), parents.join(" ")));
         }
+        // このコミットを指すブランチとタグ。
+        let refs: Vec<&str> = self.info["refs"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .collect();
+        if !refs.is_empty() {
+            fields.push((tr!("Refs"), refs.join(", ")));
+        }
+        // 署名があることと、その種類（検証はしていない）。
+        if let Some(kind) = self.info["signed"].as_str() {
+            fields.push((
+                tr!("Signed"),
+                tr!("{kind} (not verified here)", kind = kind.to_uppercase()),
+            ));
+        }
         let column = fields.iter().map(|(l, _)| l.width()).max().unwrap_or(0) + 2;
         for (label, value) in fields {
             let pad = " ".repeat(column - label.width());
