@@ -1987,13 +1987,22 @@ impl App {
             return false;
         }
         match code {
-            KeyCode::Char('l') | KeyCode::Right => self.changes.pan(PAN),
+            // 横に動かすのも、差分の中だけが変わる。
+            KeyCode::Char('l') | KeyCode::Right => {
+                if self.changes.pan(PAN) {
+                    self.damage |= Damage::SIDE;
+                }
+                false
+            }
             // 左の端にいるなら、動かさずに一覧へ戻る。
             KeyCode::Char('h') | KeyCode::Left => {
-                if !self.changes.pan(-PAN) {
+                if self.changes.pan(-PAN) {
+                    self.damage |= Damage::SIDE;
+                    false
+                } else {
                     self.focus = Focus::Main;
+                    true
                 }
-                true
             }
             // 行の範囲: `v` で始まりを決め、動かした所までを選ぶ。もう一度で、やめる。
             KeyCode::Char('v') => self.changes.toggle_mark(),
