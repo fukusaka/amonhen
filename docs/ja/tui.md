@@ -4,7 +4,7 @@
 
 端末で動く FE: `amonhen tui`。アプリが届かない所（SSH のセッション、デスクトップのないマシン、エディタの横の端末）のためのもので、目指すところはアプリと同じ: 画面のどこも git を待たない。
 
-状態: 段階 T1 と T2（History・選んだコミットの詳細と差分・スクロール・`--snapshot`・`--measure-scroll`）と、T3 の最初の部分（Working Copy の一覧と差分・ファイルごとの stage・変化の知らせ）を作った。残りは設計。
+状態: 段階 T1 と T2（History・選んだコミットの詳細と差分・スクロール・`--snapshot`・`--measure-scroll`）と、T3 の大半（Working Copy の一覧と差分・ファイル、hunk、行ごとの stage・discard・変化の知らせ。コミットはまだ）を作った。残りは設計。
 
 ## 概要
 
@@ -95,6 +95,7 @@
 
 - 移動: 矢印と `j` `k`、`g` `G`、PageUp と PageDown、`Ctrl-d` `Ctrl-u`。枠の間は `Tab` と `Shift-Tab`。Workspace の行は `1`…`5`。
 - 詳細では: `[` `]` で前と次のファイル、`h` `l`（と左右の矢印）で差分を横に動かす、Esc で History に戻る。
+- Working Copy の差分では行を選ぶ（`j` `k`。`[` `]` で hunk の見出しへ）: Space でその行を stage / unstage、`d` で捨てる。hunk の見出しでは、どちらもその hunk すべてに働く。一覧では `d` でファイルの変更を捨てる。捨てる前に一番下の行で尋ね（`y` で進む、ほかのキーでやめる）、Undo で戻せることを書く。T5 でシートができるまでの形。
 - サイドバーができるまでは、一番上の行にメインの画面とそのキーを並べる（`1` Changes と変わったファイルの数、`2` History）。
 - `/` で検索（History。サイドバーでは絞り込み）、`n` `N` で次と前。
 - `:` で命令の一覧: 共通の表（`amonhen-commands`）の操作のうち TUI にあるものを、打った文字で絞り込み、キーを横に出す。`?` でフォーカスのある所のキーの一覧。
@@ -159,7 +160,7 @@ T2、同じ Mac、このリポジトリ（3,438 コミット）。200 × 60 で�
 - [x] T1. `crates/tui`、イベントループ、`amonhen tui`、History（グラフ・札・件名・作者・日付）、行の範囲を持つスクロール、`amonhen log` と共有する `amonhen-projection::terminal`、`--snapshot` と `--measure-scroll`。速さ・1 行のグラフ・エンジンの大きさを linux のリポジトリで測った（計測の記録）
 - [ ] T1b. 端末のスクロール領域を使う自前のフレームの出力（スクロールの 1 歩で、新しく見える行だけを送る）。最も遅いフレームの原因を調べる。criterion のベンチ
 - [x] T2. コミットの詳細と差分（ファイルの一覧・unified の差分・変わった語・構文の色）、狭いときのレイアウト
-- [ ] T3. Working Copy: 一覧、ファイル・hunk・行ごとの stage、discard、メッセージの欄とエディタ、commit と amend。変化の知らせ。作ったもの: ファイルごとに印のある一覧、stage 済みの行に印のつく差分、Space でのファイルの stage と unstage、変化の知らせでの読み直し。残り: hunk と行、discard、メッセージ、commit と amend
+- [ ] T3. Working Copy: 一覧、ファイル・hunk・行ごとの stage、discard、メッセージの欄とエディタ、commit と amend。変化の知らせ。作ったもの: ファイルごとに印のある一覧、stage 済みの行に印のつく差分、Space での stage と unstage（一覧ではファイル、差分では行。hunk の見出しではその hunk）、確かめてからの discard（`d`）、変化の知らせでの読み直し。残り: メッセージ、commit と amend、行の範囲の選択
 - [ ] T4. サイドバー（Branches・Remotes・Tags・絞り込み）、ref ごとの History、検索、祖先の強調、命令の一覧とヘルプ
 - [ ] T5. シートつきの操作（fetch・pull・push・branch・checkout・merge・rebase・stash・reset・undo）、askpass、動いている処理の表示。マウスの取り込みを切るキーと設定、一時停止（`Ctrl-z`）、kitty のキーボードプロトコル
 - [ ] T6. コンフリクト、Stashes、Reflog、Worktrees、History の編集（命令として）、前と後の絵
