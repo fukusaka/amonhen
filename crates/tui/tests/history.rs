@@ -842,3 +842,26 @@ fn take_one_side_of_a_conflicted_file() {
         ""
     );
 }
+
+/// サイドバーの Stashes: メッセージで並び、`a` で戻す、`x` で確かめてから消す
+#[test]
+fn stashes_are_listed_and_applied_from_the_sidebar() {
+    let dir = tempfile::tempdir().unwrap();
+    two_lines(dir.path());
+    git(dir.path(), BASE, &["stash", "push", "-q", "-m", "Capitals"]);
+    let read = |dir: &Path| std::fs::read_to_string(dir.join("a.txt")).unwrap();
+    let text = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "").unwrap();
+    println!("{text}");
+    let side: Vec<String> = text.lines().skip(1).filter_map(|l| column(l, 0)).collect();
+    let at = side.iter().position(|l| l == "Stashes").unwrap();
+    assert!(side[at + 1].contains("Capitals"), "{side:?}");
+    // 一番下の行（stash）で `a`: 変更が戻り、stash は残る。
+    let applied = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0Ga").unwrap();
+    assert!(applied.contains("Applied the stash"));
+    assert_eq!(read(dir.path()), "ONE\ntwo\nTHREE\nfour\n");
+    assert_eq!(git_out(dir.path(), &["stash", "list"]).lines().count(), 1);
+    let asked = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0Gx").unwrap();
+    assert!(asked.contains("Drop stash@{0}? Undo brings it back.   y drop   n cancel"));
+    amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0Gxy").unwrap();
+    assert_eq!(git_out(dir.path(), &["stash", "list"]), "");
+}

@@ -750,6 +750,8 @@ impl App {
             "pop" => self.notice = Some(tr!("Popped the stash")),
             "abort" => self.notice = Some(tr!("Aborted")),
             "resolve" => self.notice = Some(tr!("Resolved")),
+            "apply" => self.notice = Some(tr!("Applied the stash")),
+            "drop" => self.notice = Some(tr!("Dropped the stash")),
             "merge" | "rebase" | "continue" | "skip" => {
                 // コンフリクトで止まったら、Working Copy で解決する。
                 match reply["outcome"].as_str() {
@@ -860,9 +862,12 @@ impl App {
     /// サイドバーで選んでいる ref を今のブランチに merge する（`merge`）か、今のブランチをその上に rebase する
     /// 前に確かめる。
     fn ask_merge_or_rebase(&mut self, merge: bool) -> bool {
-        let Some((_, name, _)) = self.sidebar.picked_ref() else {
+        let Some((kind, name, _)) = self.sidebar.picked_ref() else {
             return false;
         };
+        if kind == "stash" {
+            return false;
+        }
         let Some(branch) = self.branch.clone() else {
             self.error = Some(tr!("No branch is checked out"));
             return true;
@@ -886,6 +891,38 @@ impl App {
                 },
             )
         });
+        true
+    }
+
+    /// サイドバーで選んでいる stash を戻す（`pop` なら、戻して消す）か、消す（先に確かめる）。
+    fn stash_key(&mut self, code: KeyCode) -> bool {
+        let Some(("stash", name, _)) = self.sidebar.picked_ref() else {
+            return false;
+        };
+        let name = name.to_owned();
+        match code {
+            KeyCode::Char('a') => self.run(
+                "apply",
+                tr!("Applying the stash…"),
+                json!({"op": "stashApply", "name": name, "pop": false}),
+            ),
+            KeyCode::Char('o') => self.run(
+                "pop",
+                tr!("Popping the stash…"),
+                json!({"op": "stashApply", "name": name, "pop": true}),
+            ),
+            KeyCode::Char('x') => {
+                self.confirm = Some((
+                    tr!("Drop {name}? Undo brings it back.", name = name),
+                    tr!("drop"),
+                    Request::Run {
+                        name: "drop",
+                        command: json!({"op": "stashDrop", "name": name}),
+                    },
+                ));
+            }
+            _ => return false,
+        }
         true
     }
 
@@ -933,6 +970,7 @@ impl App {
                 true
             }
             KeyCode::Char('c') => self.checkout_picked(),
+            KeyCode::Char('a' | 'o' | 'x') => self.stash_key(code),
             KeyCode::Char('m') => self.ask_merge_or_rebase(true),
             KeyCode::Char('r') => self.ask_merge_or_rebase(false),
             // 絞り込んでいれば、まずそれをやめる。
@@ -960,6 +998,7 @@ impl App {
                 ("c", tr!("Check out the branch")),
                 ("m", tr!("Merge it into the current branch")),
                 ("r", tr!("Rebase the current branch onto it")),
+                ("a o x", tr!("On a stash: apply, pop, drop")),
                 ("/", tr!("Filter branches and tags")),
                 ("Esc", tr!("Clear the filter, or go back")),
             ],

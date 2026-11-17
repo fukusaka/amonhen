@@ -31,9 +31,11 @@ enum Row {
     Changes,
     History,
     Ref {
-        /// `branch`・`remote`・`tag`。
+        /// `branch`・`remote`・`tag`・`stash`。
         kind: &'static str,
         name: String,
+        /// 出す文字（stash はメッセージ、ほかは名前）。
+        label: String,
         target: String,
         /// 今のブランチ。
         current: bool,
@@ -105,6 +107,7 @@ impl Sidebar {
             ("branch", tr!("Branches")),
             ("remote", tr!("Remotes")),
             ("tag", tr!("Tags")),
+            ("stash", tr!("Stashes")),
         ] {
             let mut of_kind = refs["entries"]
                 .as_array()
@@ -113,12 +116,18 @@ impl Sidebar {
                 .filter(|e| e["kind"] == kind)
                 .filter_map(|e| {
                     let name = e["name"].as_str()?;
-                    if !name.to_lowercase().contains(&self.filter) {
+                    // stash は、名前（`stash@{0}`）ではなくメッセージを出す。
+                    let label = match kind {
+                        "stash" => e["detail"].as_str().unwrap_or(name),
+                        _ => name,
+                    };
+                    if !label.to_lowercase().contains(&self.filter) {
                         return None;
                     }
                     Some(Row::Ref {
                         kind,
                         name: name.to_owned(),
+                        label: label.to_owned(),
                         target: e["target"].as_str()?.to_owned(),
                         current: kind == "branch" && Some(name) == head,
                         ahead: e["ahead"].as_u64().unwrap_or(0),
@@ -274,7 +283,7 @@ impl Sidebar {
                     buf.set_stringn(area.x + 2, y, tr!("History"), width - 2, Style::new());
                 }
                 Row::Ref {
-                    name,
+                    label: name,
                     current,
                     ahead,
                     behind,
