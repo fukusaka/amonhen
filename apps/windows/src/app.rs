@@ -89,7 +89,7 @@ struct Root {
     /// Pull・Push のダイアログのコミットの一覧（見出し・数・(oid, 件名, 作者, 時刻)・消えるものか）。
     sync_lists: Vec<SyncList>,
     /// History で複数選んでいるコミット（上から。右クリックのメニューを複数のもの用にする）。
-    multi: Vec<String>,
+    multi: Vec<(String, bool)>,
     /// Push のダイアログの注意（GTK4 版の `push_warnings`）。
     sync_warnings: Vec<String>,
     /// stash の詳しい中身（名前 → 中身。ref が変わるたびに読み直す）。
@@ -632,7 +632,7 @@ enum Message {
     /// Repositories の操作。
     Repos(crate::repositories::Event),
     /// History で複数選んだコミット（上から。1 つ以下なら空）。
-    MultiSelected(Vec<String>),
+    MultiSelected(Vec<(String, bool)>),
     /// Pull・Push のダイアログのコミットの一覧を読んだ。
     SyncLists(Vec<SyncList>, Vec<String>),
     /// stash の詳しい中身を読んだ。
@@ -2623,10 +2623,10 @@ impl Component for Root {
                     self.new_branch(oid.to_owned());
                 } else if let Some(oid) = key.strip_prefix("tag:") {
                     self.ask_name(oid.to_owned(), true);
-                } else if let Some(oid) = key.strip_prefix("cherry-pick:") {
-                    self.pick(oid.to_owned(), false);
-                } else if let Some(oid) = key.strip_prefix("revert:") {
-                    self.pick(oid.to_owned(), true);
+                } else if let Some(oids) = key.strip_prefix("cherry-pick:") {
+                    self.pick(oids.split(',').map(str::to_owned).collect(), false);
+                } else if let Some(oids) = key.strip_prefix("revert:") {
+                    self.pick(oids.split(',').map(str::to_owned).collect(), true);
                 } else if let Some(oid) = key.strip_prefix("reset:") {
                     self.reset(oid.to_owned());
                 } else if let Some(name) = key.strip_prefix("delete-branch:") {
@@ -6217,7 +6217,9 @@ impl Root {
     }
 
     /// Cherry-pick・Revert の確認（GTK4 版の `sheets::pick`: 今のブランチに足す。前後の絵はまだない）。
-    fn pick(&mut self, oid: String, revert: bool) {
+    /// Cherry-pick・Revert（GTK4 版の `sheets::pick`）。いくつでも 1 つの命令で（コンフリクトで止まったら、残りは
+    /// git が覚えていて Continue・Skip で続く）。
+    fn pick(&mut self, oids: Vec<String>, revert: bool) {
         let Some(repo) = self.repo.clone() else {
             return beep();
         };
@@ -6226,7 +6228,10 @@ impl Root {
             .as_ref()
             .and_then(|r| r.refs.head_branch.clone())
             .unwrap_or_else(|| "HEAD".to_owned());
-        let what = oid[..8].to_owned();
+        let what = match &oids[..] {
+            [one] => one[..8.min(one.len())].to_owned(),
+            _ => tr!("{count} commits", count = oids.len()),
+        };
         let title = if revert {
             tr!("Revert {what} on {onto}?", what = what, onto = onto)
         } else {
@@ -6241,10 +6246,13 @@ impl Root {
             },
             tr!("You can Undo this (Ctrl+Alt+Z).")
         );
-        // マージかは、出している詳細の親の数で（同じコミットのとき）。
-        let merge = self.info.as_ref().is_some_and(|(info, _)| {
-            info["oid"].as_str() == Some(oid.as_str())
-                && info["parents"].as_array().is_some_and(|p| p.len() > 1)
+        // マージかは、複数なら選んだ行の印で、1 つなら出している詳細の親の数で（同じコミットのとき）。
+        let merge = oids.iter().any(|oid| {
+            self.multi.iter().any(|(id, merge)| id == oid && *merge)
+                || self.info.as_ref().is_some_and(|(info, _)| {
+                    info["oid"].as_str() == Some(oid.as_str())
+                        && info["parents"].as_array().is_some_and(|p| p.len() > 1)
+                })
         });
         let op = if revert { "revert" } else { "cherryPick" };
         self.dialog = Some(Dialog::Confirm {
@@ -6252,7 +6260,7 @@ impl Root {
             title,
             message,
             button: if revert { "Revert" } else { "Cherry-pick" }.to_owned(),
-            command: json!({ "op": op, "oids": [oid], "isMerge": merge }),
+            command: json!({ "op": op, "oids": oids, "isMerge": merge }),
         });
     }
 
@@ -8382,9 +8390,23 @@ impl Root {
     fn history_menu(&self) -> Vec<MenuItem> {
         // 複数選んでいれば、まとめて使える操作だけ（GTK4 版の `commitops::multi_menu` のうち、この FE にあるもの）。
         if self.multi.len() > 1 {
-            let mut items = Vec::new();
+            let n = self.multi.len();
+            let ids: Vec<&str> = self.multi.iter().map(|(id, _)| id.as_str()).collect();
+            // Cherry-pick は古い順に、Revert は新しい順に（GTK4 版の `menu_many` と同じ）。
+            let oldest_first: Vec<&str> = ids.iter().rev().copied().collect();
+            let mut items = vec![
+                MenuItem::item(
+                    format!("cherry-pick:{}", oldest_first.join(",")),
+                    tr!("Cherry-pick {count} Commits…", count = n),
+                ),
+                MenuItem::item(
+                    format!("revert:{}", ids.join(",")),
+                    tr!("Revert {count} Commits…", count = n),
+                ),
+                MenuItem::separator("-pick"),
+            ];
             // 2 つなら、それぞれを先端とする 2 つの版として比べられる（rebase の前と後など）。
-            if let [newer, older] = &self.multi[..] {
+            if let [newer, older] = &ids[..] {
                 items.push(MenuItem::item(
                     format!("rangediff:{older}...{newer}"),
                     tr!("Compare as Two Versions (Range Diff)"),
@@ -8392,14 +8414,13 @@ impl Root {
                 items.push(MenuItem::separator("-copy"));
             }
             items.push(MenuItem::item(
-                format!("copy:{}", self.multi.join("\n")),
+                format!("copy:{}", ids.join("\n")),
                 tr!("Copy Commit IDs"),
             ));
             items.push(MenuItem::item(
                 format!(
                     "copy:{}",
-                    self.multi
-                        .iter()
+                    ids.iter()
                         .map(|id| &id[..id.len().min(8)])
                         .collect::<Vec<_>>()
                         .join("\n")
@@ -9557,9 +9578,17 @@ impl HistoryView {
             // 右クリックのメニュー（2 つなら Range Diff で比べる）のために、選んだコミットを知らせる（上から）。
             let mut rows = self.multi_sent.clone();
             rows.sort_unstable();
-            let ids: Vec<String> = s.data.history.as_ref().map_or_else(Vec::new, |h| {
+            let ids: Vec<(String, bool)> = s.data.history.as_ref().map_or_else(Vec::new, |h| {
                 rows.iter()
-                    .filter_map(|&r| h.graph.ids().get(r as usize).map(|id| id.to_string()))
+                    .filter_map(|&r| {
+                        let id = h.graph.ids().get(r as usize)?.to_string();
+                        let merge = h
+                            .layout
+                            .nodes()
+                            .get(r as usize)
+                            .is_some_and(|n| n.flags & amonhen_layout::Node::MERGE != 0);
+                        Some((id, merge))
+                    })
                     .collect()
             });
             self.sender.send(Message::MultiSelected(ids));
