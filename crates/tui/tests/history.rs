@@ -1075,3 +1075,56 @@ fn rename_and_delete_branches_and_tags() {
     amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0GDy").unwrap();
     assert_eq!(git_out(dir.path(), &["tag"]), "v1\n");
 }
+
+/// History の `y` で cherry-pick、`v` で revert、`c` でそのコミットをチェックアウトする（どれも先に確かめる）
+#[test]
+fn cherry_pick_revert_and_detach_from_history() {
+    let dir = tempfile::tempdir().unwrap();
+    diverged(dir.path());
+    let subject = || git_out(dir.path(), &["log", "-1", "--format=%s"]);
+    // 2 行目（On topic）を main に持ってくる: 同じ行を書き換えているので、コンフリクトで止まる。
+    let asked = amonhen_tui::snapshot(open(dir.path()), 120, 10, clock(), "jy").unwrap();
+    println!("{asked}");
+    assert!(asked.contains("“On topic”?   y cherry-pick   n cancel"));
+    let stopped = amonhen_tui::snapshot(open(dir.path()), 120, 10, clock(), "jyy").unwrap();
+    assert!(stopped.contains("Stopped at conflicts"));
+    amonhen_tui::snapshot(open(dir.path()), 120, 10, clock(), "Ay").unwrap();
+    // 一番上（On main）を打ち消す。
+    let asked = amonhen_tui::snapshot(open(dir.path()), 120, 10, clock(), "v").unwrap();
+    assert!(asked.contains("Revert "));
+    amonhen_tui::snapshot(open(dir.path()), 120, 10, clock(), "vy").unwrap();
+    assert_eq!(subject(), "Revert \"On main\"\n");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+        "one\n"
+    );
+    // 一番下（Start）をチェックアウト: ブランチから離れる。
+    let asked = amonhen_tui::snapshot(open(dir.path()), 120, 10, clock(), "Gc").unwrap();
+    assert!(asked.contains("(detached HEAD)?   y check out   n cancel"));
+    amonhen_tui::snapshot(open(dir.path()), 120, 10, clock(), "Gcy").unwrap();
+    assert_eq!(subject(), "Start\n");
+    assert_eq!(git_out(dir.path(), &["branch", "--show-current"]), "");
+}
+
+/// キーの一覧が収まらなければ、`j` `k` で動かせる
+#[test]
+fn the_key_list_scrolls_when_it_does_not_fit() {
+    let dir = tempfile::tempdir().unwrap();
+    merged(dir.path());
+    let top = amonhen_tui::snapshot(open(dir.path()), 80, 12, clock(), "?").unwrap();
+    println!("{top}");
+    assert!(top.contains("j/k more"));
+    assert!(top.contains("│ j k"));
+    assert!(!top.contains("│ q "));
+    let bottom = amonhen_tui::snapshot(
+        open(dir.path()),
+        80,
+        12,
+        clock(),
+        &format!("?{}", "j".repeat(40)),
+    )
+    .unwrap();
+    println!("{bottom}");
+    assert!(bottom.contains("│ q "));
+    assert!(!bottom.contains("│ j k"));
+}

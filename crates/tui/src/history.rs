@@ -225,6 +225,17 @@ impl History {
         Some(window.ids[window.index(self.selected)?])
     }
 
+    /// 選んでいるコミットと、それが merge か、その件名（その行がまだ届いていなければ `None`）。
+    pub fn selected_commit(&self) -> Option<(Oid, bool, &str)> {
+        let window = self.window.as_ref()?;
+        let i = window.index(self.selected)?;
+        Some((
+            window.ids[i],
+            window.nodes[i].flags & Node::MERGE != 0,
+            window.string(i, 0),
+        ))
+    }
+
     pub fn selected(&self) -> u32 {
         self.selected
     }

@@ -150,6 +150,8 @@ pub struct App {
     typing_filter: Option<String>,
     /// キーの一覧を出している（`?`）。
     help: bool,
+    /// キーの一覧の、一番上に見えている行（収まらないときに動かす）。
+    help_top: usize,
     /// 今の検索: 語と、動いている検索を取り消す印（結果が届いたら `None`）。
     search: Option<(String, Option<Arc<AtomicBool>>)>,
     theme: Theme,
@@ -216,6 +218,7 @@ impl App {
             typing_query: None,
             typing_filter: None,
             help: false,
+            help_top: 0,
             search: None,
             theme: Theme::detect(),
             name: String::new(),
@@ -648,9 +651,14 @@ impl App {
             }
             return;
         }
-        // キーの一覧は、次のキーで閉じる。
-        if std::mem::take(&mut self.help) {
+        // キーの一覧は、`j` `k`（と矢印）で動かせる。ほかのキーで閉じる。
+        if self.help {
             self.dirty = true;
+            match key.code {
+                KeyCode::Char('j') | KeyCode::Down => self.help_top += 1,
+                KeyCode::Char('k') | KeyCode::Up => self.help_top = self.help_top.saturating_sub(1),
+                _ => self.help = false,
+            }
             return;
         }
         // 絞り込みの語は、打つたびに効く。Enter で確定、Esc で絞り込みをやめる。
@@ -819,6 +827,7 @@ impl App {
             }
             KeyCode::Char('?') => {
                 self.help = true;
+                self.help_top = 0;
                 self.dirty = true;
             }
             KeyCode::Char('0') => {
@@ -918,7 +927,7 @@ impl App {
             }
             "apply" => self.notice = Some(tr!("Applied the stash")),
             "drop" => self.notice = Some(tr!("Dropped the stash")),
-            "merge" | "rebase" | "continue" | "skip" => {
+            "merge" | "rebase" | "continue" | "skip" | "cherryPick" | "revert" => {
                 // コンフリクトで止まったら、Working Copy で解決する。
                 match reply["outcome"].as_str() {
                     Some("conflict") => {
@@ -1050,6 +1059,51 @@ impl App {
             return;
         }
         self.confirm = Some((ask, tr!("push"), push(remote, remote_branch, false, false)));
+    }
+
+    /// History で選んでいるコミットへの操作: `y` cherry-pick、`v` revert、`c` そのコミットをチェックアウト
+    /// （detached HEAD）。
+    fn ask_commit_operation(&mut self, code: KeyCode) -> bool {
+        let Some((id, is_merge, subject)) = self.history.selected_commit() else {
+            return false;
+        };
+        let (id, subject) = (id.to_string(), subject.to_owned());
+        let short = id[..id.len().min(8)].to_owned();
+        self.confirm = Some(match code {
+            KeyCode::Char('y') => (
+                tr!(
+                    "Cherry-pick {commit} “{subject}”?",
+                    commit = short,
+                    subject = subject
+                ),
+                tr!("cherry-pick"),
+                Request::Run {
+                    name: "cherryPick",
+                    command: json!({"op": "cherryPick", "oid": id, "isMerge": is_merge}),
+                },
+            ),
+            KeyCode::Char('v') => (
+                tr!(
+                    "Revert {commit} “{subject}”?",
+                    commit = short,
+                    subject = subject
+                ),
+                tr!("revert"),
+                Request::Run {
+                    name: "revert",
+                    command: json!({"op": "revert", "oid": id, "isMerge": is_merge}),
+                },
+            ),
+            _ => (
+                tr!("Check out {commit} (detached HEAD)?", commit = short),
+                tr!("check out"),
+                Request::Run {
+                    name: "checkout",
+                    command: json!({"op": "detach", "oid": id}),
+                },
+            ),
+        });
+        true
     }
 
     /// 今のブランチを、選んでいるコミット（History・Reflog）に動かす前に、どう動かすかを選ばせる。
@@ -1355,6 +1409,8 @@ impl App {
                 ("Enter", tr!("Go to the details")),
                 ("/", tr!("Search")),
                 ("n N", tr!("Next and previous match")),
+                ("y v", tr!("Cherry-pick, revert the selected commit")),
+                ("c", tr!("Check out the selected commit (detached HEAD)")),
                 ("Esc", tr!("Clear the search")),
             ],
             (View::Reflog, Focus::Main) => vec![
@@ -1671,6 +1727,8 @@ impl App {
                     Some(self.search.as_ref().map_or(String::new(), |s| s.0.clone()));
                 true
             }
+            // 選んでいるコミットを今のブランチに持ってくる・打ち消す・そこをチェックアウトする（先に確かめる）。
+            KeyCode::Char('y' | 'v' | 'c') => self.ask_commit_operation(code),
             KeyCode::Char('n') => self.history.next_match(true),
             KeyCode::Char('N') => self.history.next_match(false),
             KeyCode::Esc => self.clear_search(),
@@ -2161,7 +2219,24 @@ impl App {
                 usize::from(width.saturating_sub(4)),
                 Style::new().add_modifier(Modifier::BOLD),
             );
-            for (y, (key, text)) in (at.y + 1..at.bottom().saturating_sub(1)).zip(&lines) {
+            // 収まらない分は、`j` `k` で動かす。
+            let inside = usize::from(height.saturating_sub(2));
+            self.help_top = self.help_top.min(lines.len().saturating_sub(inside));
+            if lines.len() > inside {
+                let more = tr!(" j/k more ");
+                let x = at.right().saturating_sub(more.width() as u16 + 2);
+                if x > at.x + 8 {
+                    buf.set_string(
+                        x,
+                        at.bottom() - 1,
+                        more,
+                        Style::new().fg(Color::Indexed(244)),
+                    );
+                }
+            }
+            for (y, (key, text)) in
+                (at.y + 1..at.bottom().saturating_sub(1)).zip(lines.iter().skip(self.help_top))
+            {
                 buf.set_stringn(
                     at.x + 2,
                     y,
