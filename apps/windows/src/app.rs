@@ -83,6 +83,8 @@ struct Root {
     /// タグのリモートでの様子（コアの `tagRemotes` の info。リモートと読んだ時刻、タグごとの same・different・
     /// missing）。
     tag_remotes: Value,
+    /// submodule の様子（コアの `submodules` の info の `submodules`）。
+    submodules: Value,
     /// 選んだコミットの詳細（`commit_info` の答え）と、時間のかかる分（`commit_extras`）。
     info: Option<(Value, Option<Value>)>,
     error: Option<String>,
@@ -408,6 +410,17 @@ enum Dialog {
     CloseMerge,
     /// コンフリクトが残っているファイルを解決済みにしてよいか。
     MarkResolved { path: String, count: u64 },
+    /// 入力の欄（見出し・値・薄い文字）とチェック（名前・値）のダイアログ（submodule のシートなど）。押すと
+    /// `kind` で命令にする。
+    Form {
+        repo: Arc<Repository>,
+        title: String,
+        message: String,
+        button: String,
+        fields: Vec<(String, String, String)>,
+        checks: Vec<(String, bool)>,
+        kind: FormKind,
+    },
     /// Repositories の行の表示名を変える。
     RenameRepository { location: String, name: String },
     /// Repositories のグループを作る（リポジトリがあればそこに移す）。
@@ -599,6 +612,11 @@ enum Message {
     Repos(crate::repositories::Event),
     /// タグのリモートでの様子を読んだ（`tagRemotes` の info）。
     TagRemotes(Value),
+    /// submodule の様子を読んだ。
+    Submodules(Value),
+    /// 入力の欄とチェックのダイアログ（`Dialog::Form`）の欄・チェックを変えた。
+    FormField(usize, String),
+    FormCheck(usize, bool),
     /// まとめるときのメッセージの初期値を読んだ（コミット、メッセージ）。
     SquashText(String, Result<String, String>),
     /// bundle に入るコミットを数えた（`bundlePreview` の答えと、書く命令）。
@@ -745,6 +763,7 @@ impl Component for Root {
             repo_settings_from: Page::History,
             activity_from: Page::History,
             tag_remotes: Value::Null,
+            submodules: Value::Null,
             repositories: None,
             repositories_from: Page::History,
             repositories_list: ElementRef::new(),
@@ -809,6 +828,21 @@ impl Component for Root {
                 }
             }
             Message::TagRemotes(info) => self.tag_remotes = info,
+            Message::Submodules(states) => self.submodules = states,
+            Message::FormField(index, text) => {
+                if let Some(Dialog::Form { fields, .. }) = &mut self.dialog
+                    && let Some(field) = fields.get_mut(index)
+                {
+                    field.1 = text;
+                }
+            }
+            Message::FormCheck(index, on) => {
+                if let Some(Dialog::Form { checks, .. }) = &mut self.dialog
+                    && let Some(check) = checks.get_mut(index)
+                {
+                    check.1 = on;
+                }
+            }
             Message::Groups(groups) => {
                 if groups.is_some() {
                     self.groups = groups;
@@ -1210,6 +1244,11 @@ impl Component for Root {
                         }
                     }
                 }
+            }
+            // Repository > Add Submodule…・Update Submodules…（サイドバーの Submodules の見出しと同じ）。
+            Message::Command(id) if id == "add-submodule" => self.submodule_menu("sm-add", context),
+            Message::Command(id) if id == "update-submodules" => {
+                self.submodule_menu("sm-update:", context)
             }
             Message::Command(id) if id == "quick-open" => {
                 self.dialog = Some(Dialog::QuickOpen {
@@ -1983,6 +2022,20 @@ impl Component for Root {
                     self.update(Message::Stage(path, true), context);
                 }
                 (
+                    Some(Dialog::Form {
+                        repo,
+                        title,
+                        fields,
+                        checks,
+                        kind,
+                        ..
+                    }),
+                    ContentDialogResult::Primary,
+                ) => match kind.command(&fields, &checks) {
+                    Some(command) => perform(context, repo, command, title),
+                    None => beep(),
+                },
+                (
                     Some(Dialog::RenameRepository { location, name }),
                     ContentDialogResult::Primary,
                 ) => {
@@ -2234,6 +2287,12 @@ impl Component for Root {
                 }
             }
             Message::Status(status) => {
+                // submodule の中の変更（✎）も status の変化で読み直す（submodule があるときだけ）。
+                if let Some(repo) = self.repo.clone()
+                    && self.submodules.as_array().is_some_and(|s| !s.is_empty())
+                {
+                    load_submodules(repo, context);
+                }
                 // 行数は裏で読む（数がなくても一覧は先に出す。GTK4 版の `load_stats`）。
                 if let Some(repo) = self.repo.clone() {
                     let generation = status.generation;
@@ -2590,6 +2649,8 @@ impl Component for Root {
                         button,
                         command,
                     });
+                } else if key.starts_with("sm-") {
+                    self.submodule_menu(&key, context);
                 } else if key == "clean-up-branches" {
                     // 消してよいブランチの候補（GitHub のプルリクエストはまだ読まない）。
                     if let Some(repo) = self.repo.clone() {
@@ -4426,6 +4487,7 @@ impl Component for Root {
                             form: &self.form,
                             conflicts,
                             tag_remotes: &self.tag_remotes,
+                            submodules: &self.submodules,
                         },
                         &self.sidebar_filter,
                     )),
@@ -5137,6 +5199,58 @@ impl Root {
                         .text(tr!("The conflict markers stay in the file."))
                         .text_wrapping(TextWrapping::Wrap),
                 ),
+            Some(Dialog::Form {
+                title,
+                message,
+                button,
+                fields,
+                checks,
+                ..
+            }) => {
+                // 欄（見出しがあれば上に）とチェックを縦に並べる。最初の欄にフォーカスと Enter。
+                let mut rows: Vec<(String, View)> = vec![(
+                    "message".to_owned(),
+                    TextBlock::new()
+                        .text(message.clone())
+                        .text_wrapping(TextWrapping::Wrap)
+                        .into(),
+                )];
+                for (i, (label, value, placeholder)) in fields.iter().enumerate() {
+                    if !label.is_empty() {
+                        rows.push((format!("label{i}"), TextBlock::new().text(label.clone()).into()));
+                    }
+                    let field = TextBox::new()
+                        .text(value.clone())
+                        .placeholder_text(placeholder.clone())
+                        .on_text_changed(context.callback(move |t| Message::FormField(i, t)));
+                    let field: View = if i == 0 {
+                        field.element_ref(&self.dialog_input).into()
+                    } else {
+                        field.into()
+                    };
+                    rows.push((format!("field{i}"), field));
+                }
+                for (i, (label, on)) in checks.iter().enumerate() {
+                    rows.push((
+                        format!("check{i}"),
+                        CheckBox::new()
+                            .is_checked(*on)
+                            .on_is_checked_changed(context.callback(move |v| Message::FormCheck(i, v)))
+                            .content(TextBlock::new().text(label.clone()).text_wrapping(TextWrapping::Wrap)),
+                    ));
+                }
+                dialog
+                    .is_open(true)
+                    .title(title.clone())
+                    .primary_button_text(button.clone())
+                    .close_button_text(tr!("Cancel"))
+                    .content(
+                        StackPanel::new()
+                            .spacing(6.0)
+                            .width(440.0)
+                            .children((View::keyed_fragment(rows),)),
+                    )
+            }
             Some(Dialog::RenameRepository { name, .. }) => dialog
                 .is_open(true)
                 .title(tr!("Rename"))
@@ -6010,6 +6124,17 @@ impl Root {
             Some("group:remotes") => {
                 return vec![MenuItem::item("remote-add", tr!("Add Remote…"))];
             }
+            // Submodules の見出し（GTK4 版の `remote_menu` の Submodules）。
+            Some("group:submodules") => {
+                return vec![
+                    MenuItem::item("sm-update-all", "Update All"),
+                    MenuItem::item("sm-update:", "Update Submodules…"),
+                    MenuItem::item("sm-sync", "Sync URLs"),
+                    MenuItem::item("sm-foreach", tr!("Run in Each Submodule…")),
+                    MenuItem::separator("-add"),
+                    MenuItem::item("sm-add", tr!("Add Submodule…")),
+                ];
+            }
             Some(key) if key.starts_with("folder:remotes/") => {
                 let remote = &key["folder:remotes/".len()..];
                 return vec![
@@ -6040,6 +6165,38 @@ impl Root {
             _ => tr!("Copy Name"),
         };
         items.push(MenuItem::item(format!("copy:{name}"), copy));
+        // submodule（GTK4 版の `refops::items` の Submodule）。
+        if entry.kind == RefKind::Submodule {
+            let state = crate::sidebar::submodule_state(&self.submodules, name);
+            let on = |k: &str| state.is_some_and(|s| s[k].as_bool() == Some(true));
+            items.push(MenuItem::separator("-copy"));
+            items.push(MenuItem::item(
+                format!("sm-update1:{name}"),
+                format!("Update {name}"),
+            ));
+            items.push(MenuItem::item(format!("sm-update:{name}"), "Update…"));
+            if state.is_none() || on("initialized") {
+                items.push(MenuItem::item(
+                    format!("sm-open:{name}"),
+                    tr!("Open in New Window"),
+                ));
+            }
+            items.push(MenuItem::separator("-edit"));
+            items.push(MenuItem::item(format!("sm-url:{name}"), tr!("Edit URL…")));
+            items.push(MenuItem::item(
+                format!("sm-branch:{name}"),
+                tr!("Branch to Follow…"),
+            ));
+            if on("ownGitDir") {
+                items.push(MenuItem::item(
+                    format!("sm-absorb:{name}"),
+                    tr!("Move Repository Data into .git/modules"),
+                ));
+            }
+            items.push(MenuItem::separator("-remove"));
+            items.push(MenuItem::item(format!("sm-remove:{name}"), tr!("Remove…")));
+            return items;
+        }
         if !matches!(entry.kind, RefKind::Local | RefKind::Remote | RefKind::Tag) {
             return items;
         }
@@ -6125,6 +6282,187 @@ impl Root {
             items.extend(self.tag_items(name));
         }
         items
+    }
+
+    /// submodule と Submodules の見出しのメニュー（GTK4 版の `refops` と `submodulesheet`）。
+    fn submodule_menu(&mut self, key: &str, context: &ComponentContext<Self>) {
+        let Some(repo) = self.repo.clone() else {
+            return beep();
+        };
+        let (what, path) = key.split_once(':').unwrap_or((key, ""));
+        let path = path.to_owned();
+        let state = crate::sidebar::submodule_state(&self.submodules, &path).cloned();
+        let text = |k: &str| {
+            state
+                .as_ref()
+                .and_then(|s| s[k].as_str())
+                .unwrap_or_default()
+                .to_owned()
+        };
+        let form =
+            |title: String, message: String, button: String, fields, checks, kind| Dialog::Form {
+                repo: repo.clone(),
+                title,
+                message,
+                button,
+                fields,
+                checks,
+                kind,
+            };
+        let dialog = match what {
+            "sm-update-all" => {
+                return perform(
+                    context,
+                    repo,
+                    json!({ "op": "updateSubmodules", "paths": [] }),
+                    "Update All".to_owned(),
+                );
+            }
+            "sm-update1" => {
+                return perform(
+                    context,
+                    repo,
+                    json!({ "op": "updateSubmodules", "paths": [path] }),
+                    format!("Update {path}"),
+                );
+            }
+            "sm-sync" => {
+                return perform(
+                    context,
+                    repo,
+                    json!({ "op": "changeSubmodule", "change": { "kind": "sync", "recursive": true } }),
+                    "Sync URLs".to_owned(),
+                );
+            }
+            "sm-absorb" => {
+                return perform(
+                    context,
+                    repo,
+                    json!({ "op": "changeSubmodule", "change": { "kind": "absorb", "paths": [path] } }),
+                    tr!("Move Repository Data into .git/modules"),
+                );
+            }
+            "sm-open" => {
+                if let Some(dir) = repo.paths().workdir
+                    && let Err(e) =
+                        crate::repositories::open_window(&dir.join(&path).display().to_string())
+                {
+                    self.dialog = Some(Dialog::Failed {
+                        title: tr!("Open in New Window"),
+                        message: e,
+                    });
+                }
+                return;
+            }
+            "sm-update" => {
+                let paths: Vec<String> = (!path.is_empty())
+                    .then(|| path.clone())
+                    .into_iter()
+                    .collect();
+                form(
+                    if path.is_empty() {
+                        tr!("Update All Submodules")
+                    } else {
+                        tr!("Update {path}", path = &path)
+                    },
+                    tr!(
+                        "Checks out the commit recorded in this repository, unless you choose otherwise."
+                    ),
+                    "Update".to_owned(),
+                    Vec::new(),
+                    vec![
+                        (
+                            tr!("Also update the submodules inside it (--recursive)"),
+                            false,
+                        ),
+                        (
+                            tr!("Use the latest commit of the branch it follows (--remote)"),
+                            false,
+                        ),
+                    ],
+                    FormKind::UpdateSubmodules(paths),
+                )
+            }
+            "sm-foreach" => form(
+                tr!("Run in Each Submodule"),
+                tr!(
+                    "Runs the command with the shell in each submodule’s folder (git submodule foreach). Its output is in Activity."
+                ),
+                tr!("Run"),
+                vec![(String::new(), String::new(), tr!("Command"))],
+                vec![(
+                    tr!("Also in the submodules inside them (--recursive)"),
+                    false,
+                )],
+                FormKind::RunInEach,
+            ),
+            "sm-add" => form(
+                tr!("Add Submodule"),
+                tr!(
+                    "Clones the repository into a folder of this one and records it in .gitmodules (git submodule add). Commit to keep it."
+                ),
+                tr!("Add"),
+                vec![
+                    (tr!("Repository URL"), String::new(), String::new()),
+                    (tr!("Folder"), String::new(), String::new()),
+                    (tr!("Branch to follow"), String::new(), tr!("(optional)")),
+                ],
+                Vec::new(),
+                FormKind::AddSubmodule,
+            ),
+            "sm-url" => form(
+                tr!("Edit URL of {path}", path = &path),
+                tr!(
+                    "Changes the URL in .gitmodules and copies it to this repository’s settings (git submodule set-url). Commit .gitmodules to share it."
+                ),
+                tr!("Save"),
+                vec![(String::new(), text("url"), tr!("Repository URL"))],
+                Vec::new(),
+                FormKind::SetUrl(path.clone()),
+            ),
+            "sm-branch" => form(
+                tr!("Branch to Follow for {path}", path = &path),
+                tr!(
+                    "Updating with “the latest commit of the branch it follows” moves to this branch’s latest commit. Leave it empty for the remote’s default branch."
+                ),
+                tr!("Save"),
+                vec![(String::new(), text("branch"), tr!("Default branch"))],
+                Vec::new(),
+                FormKind::SetBranch(path.clone()),
+            ),
+            "sm-remove" => {
+                let name = match text("name") {
+                    n if n.is_empty() => path.clone(),
+                    n => n,
+                };
+                form(
+                    tr!("Remove {name}?", name = &path),
+                    format!(
+                        "{} {}\n\n{}",
+                        tr!(
+                            "Removes the folder and its entry in .gitmodules, and stages that. Commit to keep it."
+                        ),
+                        tr!("This can’t be undone."),
+                        tr!(
+                            "Kept, it brings back the submodule’s commits and stashes when you add it again, including ones not pushed."
+                        )
+                    ),
+                    tr!("Remove"),
+                    Vec::new(),
+                    vec![(
+                        tr!(
+                            "Also delete its repository data (.git/modules/{name})",
+                            name = &name
+                        ),
+                        false,
+                    )],
+                    FormKind::RemoveSubmodule(path.clone()),
+                )
+            }
+            _ => return,
+        };
+        self.dialog = Some(dialog);
+        self.dialog_inputs += 1;
     }
 
     /// タグのメニュー（GTK4 版の `refops::tag_items`）: リモートごとに Push（ないもの）・Replace（同じ名前の別の
@@ -7827,12 +8165,23 @@ fn same_path(a: &str, b: &str) -> bool {
     norm(a) == norm(b)
 }
 
-/// タグのリモートでの様子（`tagRemotes`）を裏で読む。
+/// タグのリモートでの様子（`tagRemotes`）と submodule の様子（`submodules`）を裏で読む。
 fn load_tag_remotes(repo: Arc<Repository>, context: &ComponentContext<Root>) {
+    let r = repo.clone();
     context.spawn_background(move |_| {
         let reply: Value =
-            serde_json::from_str(&repo.run_json(r#"{"op":"tagRemotes"}"#)).unwrap_or_default();
+            serde_json::from_str(&r.run_json(r#"{"op":"tagRemotes"}"#)).unwrap_or_default();
         Message::TagRemotes(reply["info"].clone())
+    });
+    load_submodules(repo, context);
+}
+
+/// submodule の様子（`submodules`）を裏で読む。
+fn load_submodules(repo: Arc<Repository>, context: &ComponentContext<Root>) {
+    context.spawn_background(move |_| {
+        let reply: Value =
+            serde_json::from_str(&repo.run_json(r#"{"op":"submodules"}"#)).unwrap_or_default();
+        Message::Submodules(reply["info"]["submodules"].clone())
     });
 }
 
@@ -8909,6 +9258,79 @@ fn attach_working_keys(element: &IInspectable) -> windows_core_reactor::Result<(
     })?;
     REVOKERS.with(|r| r.borrow_mut().push(revoker));
     Ok(())
+}
+
+/// `Dialog::Form` の答えをどの命令にするか（GTK4 版の `submodulesheet`）。
+#[derive(Clone)]
+enum FormKind {
+    AddSubmodule,
+    UpdateSubmodules(Vec<String>),
+    RunInEach,
+    SetUrl(String),
+    SetBranch(String),
+    RemoveSubmodule(String),
+}
+
+impl FormKind {
+    /// 欄とチェックの値からコアの命令（欄が足りなければ None）。
+    fn command(
+        &self,
+        fields: &[(String, String, String)],
+        checks: &[(String, bool)],
+    ) -> Option<Value> {
+        let field = |i: usize| fields.get(i).map_or("", |f| f.1.trim()).to_owned();
+        let check = |i: usize| checks.get(i).is_some_and(|c| c.1);
+        let optional = |t: String| (!t.is_empty()).then_some(t);
+        Some(match self {
+            FormKind::AddSubmodule => {
+                let url = field(0);
+                let path = optional(field(1)).unwrap_or_else(|| submodule_path(&url));
+                if url.is_empty() || path.is_empty() {
+                    return None;
+                }
+                json!({
+                    "op": "changeSubmodule",
+                    "change": { "kind": "add", "url": url, "path": path, "branch": optional(field(2)) },
+                })
+            }
+            FormKind::UpdateSubmodules(paths) => json!({
+                "op": "updateSubmodules",
+                "paths": paths,
+                "recursive": check(0),
+                "remote": check(1),
+            }),
+            FormKind::RunInEach => {
+                let command = optional(field(0))?;
+                json!({
+                    "op": "changeSubmodule",
+                    "change": { "kind": "foreach", "command": command, "recursive": check(0) },
+                })
+            }
+            FormKind::SetUrl(path) => json!({
+                "op": "changeSubmodule",
+                "change": { "kind": "setUrl", "path": path, "url": optional(field(0))? },
+            }),
+            FormKind::SetBranch(path) => json!({
+                "op": "changeSubmodule",
+                "change": { "kind": "setBranch", "path": path, "branch": optional(field(0)) },
+            }),
+            FormKind::RemoveSubmodule(path) => json!({
+                "op": "changeSubmodule",
+                "change": { "kind": "remove", "path": path, "deleteGitDir": check(0) },
+            }),
+        })
+    }
+}
+
+/// URL の最後の部分から `.git` を除いたもの（git が submodule の場所の既定にするもの。GTK4 版の `default_path`）。
+fn submodule_path(url: &str) -> String {
+    let last = url
+        .trim()
+        .trim_end_matches('/')
+        .rsplit(['/', ':'])
+        .next()
+        .unwrap_or_default();
+    last.strip_suffix(".git").unwrap_or(last).to_owned()
 }
 
 /// Clone の「最近の履歴だけ」で選べるコミットの数（GTK4 版の `shallow::more_choices` と 1）。

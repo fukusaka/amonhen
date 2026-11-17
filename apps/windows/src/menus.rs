@@ -32,6 +32,8 @@ pub const IMPLEMENTED: &[&str] = &[
     "activity",
     "repositories",
     "quick-open",
+    "add-submodule",
+    "update-submodules",
     "repository-settings",
     "stash",
     "pop-stash",

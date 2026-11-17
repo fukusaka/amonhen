@@ -131,6 +131,8 @@ pub struct Marks<'a> {
     pub form: &'a RepositoryForm,
     pub conflicts: usize,
     pub tag_remotes: &'a serde_json::Value,
+    /// submodule の様子（コアの `submodules` の info の `submodules`）。
+    pub submodules: &'a serde_json::Value,
 }
 
 /// サイドバーの木。`refs` がまだなければ Workspace だけ。
@@ -150,6 +152,7 @@ pub fn nodes(
         form,
         conflicts,
         tag_remotes,
+        submodules: submodule_states,
     } = marks;
     let mut history = String::from("History");
     if form.shallow {
@@ -269,12 +272,47 @@ pub fn nodes(
     }
 
     let submodules: Vec<TreeNode> = of(RefKind::Submodule)
-        .map(|e| TreeNode::new(ref_key(e), e.name.as_str()))
+        .map(|e| {
+            let title = match submodule_mark(submodule_states, &e.name) {
+                Some(mark) => format!("{}  {mark}", e.name),
+                None => e.name.clone(),
+            };
+            TreeNode::new(ref_key(e), title)
+        })
         .collect();
     if !submodules.is_empty() {
         out.push(group("submodules", "Submodules", submodules));
     }
     out
+}
+
+/// submodule の様子（`submodules` の答えの 1 つ）。
+pub fn submodule_state<'a>(
+    states: &'a serde_json::Value,
+    path: &str,
+) -> Option<&'a serde_json::Value> {
+    states
+        .as_array()?
+        .iter()
+        .find(|s| s["path"].as_str() == Some(path))
+}
+
+/// submodule の行の後ろの印（GTK4 版の `finish_submodule`）: コンフリクト ⚠、取り出していない ○、記録と違う
+/// コミット ≠、中に変更 ✎。
+fn submodule_mark(states: &serde_json::Value, path: &str) -> Option<String> {
+    let s = submodule_state(states, path)?;
+    let on = |k: &str| s[k].as_bool() == Some(true);
+    if on("conflict") {
+        return Some("⚠".to_owned());
+    }
+    if !on("initialized") {
+        return Some("○".to_owned());
+    }
+    let marks: Vec<&str> = [(on("moved"), "≠"), (on("changed"), "✎")]
+        .into_iter()
+        .filter_map(|(yes, m)| yes.then_some(m))
+        .collect();
+    (!marks.is_empty()).then(|| marks.join(" "))
 }
 
 /// タグの行の後ろの印（GTK4 版の `TagRemotes::mark`）: 読んだリモートのどれかに同じ名前の別のタグがあれば ⚠、
