@@ -88,6 +88,8 @@ struct Root {
     tag_remotes: Value,
     /// Pull・Push のダイアログのコミットの一覧（見出し・数・(oid, 件名, 作者, 時刻)・消えるものか）。
     sync_lists: Vec<SyncList>,
+    /// Push のダイアログの注意（GTK4 版の `push_warnings`）。
+    sync_warnings: Vec<String>,
     /// stash の詳しい中身（名前 → 中身。ref が変わるたびに読み直す）。
     stash_details: std::collections::HashMap<String, crate::stashes::Detail>,
     /// ほかの worktree の変更の数（パス → 数）。
@@ -625,7 +627,7 @@ enum Message {
     /// Repositories の操作。
     Repos(crate::repositories::Event),
     /// Pull・Push のダイアログのコミットの一覧を読んだ。
-    SyncLists(Vec<SyncList>),
+    SyncLists(Vec<SyncList>, Vec<String>),
     /// stash の詳しい中身を読んだ。
     StashDetails(std::collections::HashMap<String, crate::stashes::Detail>),
     /// ほかの worktree の変更を数える（true なら全部を数え直す）と、その答え（パスと数）。
@@ -790,6 +792,7 @@ impl Component for Root {
             worktree_counts: std::collections::HashMap::new(),
             stash_details: std::collections::HashMap::new(),
             sync_lists: Vec::new(),
+            sync_warnings: Vec::new(),
             submodules: Value::Null,
             subtrees: Value::Null,
             repositories: None,
@@ -898,9 +901,10 @@ impl Component for Root {
             }
             Message::TagRemotes(info) => self.tag_remotes = info,
             Message::StashDetails(details) => self.stash_details = details,
-            Message::SyncLists(lists) => {
+            Message::SyncLists(lists, warnings) => {
                 if matches!(self.dialog, Some(Dialog::Pull { .. } | Dialog::Push { .. })) {
                     self.sync_lists = lists;
+                    self.sync_warnings = warnings;
                 }
             }
             Message::Submodules(states) => self.submodules = states,
@@ -7058,6 +7062,9 @@ impl Root {
     /// 手元にだけあるもの、送るもの・上流が失うもの）。
     fn load_sync_lists(&mut self, context: &ComponentContext<Self>) {
         self.sync_lists.clear();
+        self.sync_warnings.clear();
+        // Push の注意を出すための、上流と送るブランチのコミット。
+        let mut push_range: Option<(String, amonhen_model::Oid, amonhen_model::Oid)> = None;
         let (repo, lists) = match &self.dialog {
             Some(Dialog::Pull { repo, sources, .. }) if sources.is_empty() => {
                 let Some(upstream) = self.head_entry().and_then(|e| e.detail.clone()) else {
@@ -7086,6 +7093,21 @@ impl Root {
                 ..
             }) => {
                 let upstream = format!("{remote}/{remote_branch}");
+                let target = |kind: amonhen_model::RefKind, name: &str| {
+                    self.refs
+                        .as_ref()?
+                        .refs
+                        .entries
+                        .iter()
+                        .find(|e| e.kind == kind && e.name == name)?
+                        .target
+                };
+                if let (Some(base), Some(tip)) = (
+                    target(amonhen_model::RefKind::Remote, &upstream),
+                    target(amonhen_model::RefKind::Local, branch),
+                ) {
+                    push_range = Some((upstream.clone(), base, tip));
+                }
                 let mut lists = vec![(
                     tr!("Commits to send"),
                     upstream.clone(),
@@ -7131,13 +7153,35 @@ impl Root {
                         warn,
                     }
                 })
-                .collect();
-            Message::SyncLists(lists)
+                .collect::<Vec<SyncList>>();
+            // 送る範囲があれば注意（送るものがない Force Push などには出さない。GTK4 版と同じ）。
+            let warnings = match push_range {
+                Some((upstream, base, tip)) if lists.first().is_some_and(|l| l.count > 0) => {
+                    push_warnings(&repo, &upstream, &lists[0].commits, &base, &tip)
+                }
+                _ => Vec::new(),
+            };
+            Message::SyncLists(lists, warnings)
         });
     }
 
-    /// Pull・Push のダイアログのコミットの一覧（空の一覧は出さない。消えるものは赤）。
+    /// Pull・Push のダイアログのコミットの一覧（空の一覧は出さない。消えるものは赤）と、Push の注意。
     fn sync_lists_view(&self) -> View {
+        let warnings: Vec<(String, View)> = self
+            .sync_warnings
+            .iter()
+            .enumerate()
+            .map(|(i, w)| {
+                (
+                    format!("warning{i}"),
+                    TextBlock::new()
+                        .text(format!("⚠︎ {w}"))
+                        .text_wrapping(TextWrapping::Wrap)
+                        .foreground(Brush::Solid(Color::rgb(0x9c, 0x6a, 0x00)))
+                        .into(),
+                )
+            })
+            .collect();
         let lists = self.sync_lists.iter().filter(|l| l.count > 0).map(|list| {
             let red = Color::rgb(0xc0, 0x1c, 0x28);
             let header = TextBlock::new()
@@ -7210,7 +7254,8 @@ impl Root {
         let lists: Vec<(String, View)> = lists.collect();
         StackPanel::new()
             .width(460.0)
-            .children((View::keyed_fragment(lists),))
+            .spacing(4.0)
+            .children((View::keyed_fragment(warnings), View::keyed_fragment(lists)))
     }
 
     /// 今のブランチの、ref の一覧の行（上流は `detail`、上流との差は `ahead`・`behind`）。
@@ -9762,6 +9807,82 @@ fn attach_working_keys(element: &IInspectable) -> windows_core_reactor::Result<(
     })?;
     REVOKERS.with(|r| r.borrow_mut().push(revoker));
     Ok(())
+}
+
+/// Push の前の注意（GTK4 版の `push_warnings`）: 既定のブランチへ直接、整理し忘れのコミット、秘密らしきファイル・
+/// バイナリの追加（`base`〜`tip` で足すファイルから。バイナリは先頭の 100 ファイルまで数える）。
+fn push_warnings(
+    repo: &Repository,
+    upstream: &str,
+    outgoing: &[(String, String, String, i64)],
+    base: &amonhen_model::Oid,
+    tip: &amonhen_model::Oid,
+) -> Vec<String> {
+    use amonhen_model::ChangeKind;
+    let mut out = Vec::new();
+    let remote_branch = upstream.split_once('/').map_or(upstream, |(_, b)| b);
+    if ["main", "master", "trunk", "develop"].contains(&remote_branch) {
+        out.push(tr!(
+            "This pushes straight to {upstream}.",
+            upstream = upstream
+        ));
+    }
+    let unfinished = outgoing
+        .iter()
+        .filter(|(_, subject, _, _)| {
+            let s = subject.to_lowercase();
+            s.starts_with("fixup!")
+                || s.starts_with("squash!")
+                || s.starts_with("amend!")
+                || s.starts_with("wip")
+                || s.contains(" wip ")
+                || s.ends_with(" wip")
+        })
+        .count();
+    if unfinished > 0 {
+        out.push(tr!(
+            "{count} commits look unfinished (fixup!, squash! or WIP).",
+            count = unfinished
+        ));
+    }
+    let changes = repo.changes_between(Some(base), tip).unwrap_or_default();
+    let secret_like: Vec<&str> = changes
+        .iter()
+        .filter(|c| c.kind == ChangeKind::Added)
+        .map(|c| c.path.as_str())
+        .filter(|path| {
+            let name = path.rsplit('/').next().unwrap_or(path).to_lowercase();
+            name == ".env"
+                || name.starts_with(".env.")
+                || [".pem", ".key", ".p12", ".pfx"]
+                    .iter()
+                    .any(|e| name.ends_with(e))
+                || name.starts_with("id_rsa")
+                || name.starts_with("id_ed25519")
+                || name.contains("credential")
+                || name.contains("secret")
+        })
+        .take(3)
+        .collect();
+    if !secret_like.is_empty() {
+        out.push(tr!(
+            "Adds files that may hold secrets: {files}",
+            files = secret_like.join(", ")
+        ));
+    }
+    let binaries = changes
+        .iter()
+        .take(100)
+        .filter(|c| c.kind == ChangeKind::Added)
+        .filter(|c| {
+            repo.file_diff(c, &crate::data::PROFILE)
+                .is_ok_and(|d| d.binary)
+        })
+        .count();
+    if binaries > 0 {
+        out.push(tr!("Adds {count} binary files.", count = binaries));
+    }
+    out
 }
 
 /// Pull・Push のダイアログのコミットの一覧の 1 つ（コアの `between` の答え）。

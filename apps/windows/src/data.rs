@@ -21,7 +21,7 @@ pub const CHUNK_ROWS: u32 = 256;
 const KEPT_CHUNKS: usize = 24;
 
 /// Windows の FE の形。文字列は ASCII ならそのまま、それ以外は UTF-16（DirectWrite に `PCWSTR` で渡す）。
-const PROFILE: FrontendProfile = FrontendProfile {
+pub(crate) const PROFILE: FrontendProfile = FrontendProfile {
     string: StringEncoding::Utf16,
     columns: ColumnSet::ALL,
     page_aligned: false,
