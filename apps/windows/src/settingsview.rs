@@ -21,6 +21,65 @@ pub struct State {
     pub editors: Vec<crate::editor::App>,
     pub editor: String,
     pub editor_epoch: u32,
+    /// このプロセスの環境変数（名前の順）、渡すと決めた名前、探す文字（Git > Environment Variables）。
+    pub env: Vec<(String, String)>,
+    pub env_added: Vec<String>,
+    pub env_query: String,
+}
+
+/// 足した名前の設定の鍵（GTK4 版・macOS 版と同じ）。
+pub const ENV_ADDED: &str = "addedEnvironmentNames";
+
+/// 足した名前（渡せないものは除く。GTK4 版の `environment::added_names`）。
+pub fn env_added_names() -> Vec<String> {
+    crate::prefs::string(ENV_ADDED)
+        .unwrap_or_default()
+        .split(|c: char| c == ',' || c.is_whitespace())
+        .filter(|n| !n.is_empty() && amonhen_model::process::env_refusal(n).is_none())
+        .map(str::to_owned)
+        .collect()
+}
+
+/// 足した名前を `AMONHEN_PASS_ENV` に置いて、このアプリが動かす git と ssh に渡す（起動の初めと、選び直したとき）。
+pub fn apply_env_added() {
+    let mut names = env_added_names();
+    names.sort();
+    names.dedup();
+    // SAFETY: 起動の初めは、まだほかのスレッドがない。選び直したときは GTK4 版と同じく動いている間に変える。環境を
+    // 読むのはコア（std の `env::var`・`Command`）で、std の中の鍵で守られている。
+    unsafe {
+        if names.is_empty() {
+            std::env::remove_var(amonhen_model::process::PASS_ENV);
+        } else {
+            std::env::set_var(amonhen_model::process::PASS_ENV, names.join(","));
+        }
+    }
+}
+
+/// トークン・パスワード・鍵らしい名前か（値を伏せる。GTK4 版の `environment::is_secret`）。
+pub fn is_secret(name: &str) -> bool {
+    let upper = name.to_uppercase();
+    if upper == "SSH_AUTH_SOCK" || upper == amonhen_model::process::PASS_ENV {
+        return false;
+    }
+    upper
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .any(|word| {
+            [
+                "TOKEN",
+                "SECRET",
+                "PASSWORD",
+                "PASSWD",
+                "CREDENTIAL",
+                "PRIVATE",
+            ]
+            .iter()
+            .any(|c| word.contains(c))
+                || word == "AUTH"
+                || word == "PASS"
+                || word.ends_with("KEY")
+        })
 }
 
 impl State {
@@ -70,6 +129,10 @@ pub struct Callbacks<'a> {
     pub clear_cache: Callback<()>,
     /// 外のエディタを選んだ（[`State::editor_items`] の番号）。
     pub editor: Callback<Option<usize>>,
+    /// 環境変数を渡すかを切り替えた（名前ごと）。
+    pub env: Box<dyn Fn(String) -> Callback<bool> + 'a>,
+    /// 環境変数を探す文字。
+    pub env_query: Callback<String>,
 }
 
 /// バイト数を読みやすく。
@@ -104,7 +167,83 @@ fn note(text: String) -> TextBlock {
         .text_wrapping(TextWrapping::Wrap)
 }
 
+/// Git > Environment Variables（GTK4 版の `environment::page` の、この機械の表）: このプロセスの環境変数を値と一緒に
+/// 並べ、git と ssh に渡すものをチェックで選ぶ。いつも渡すもの（`ALWAYS_PASSED` と `GIT_*`）は外せず、渡せない
+/// もの（`env_refusal`）は選べない。トークンらしい値は伏せ、伏せた値では探さない。
+fn environment(state: &State, callbacks: &Callbacks) -> View {
+    use amonhen_model::process::{ALWAYS_PASSED, always_passed, env_refusal};
+    let query = state.env_query.to_lowercase();
+    let rows = state
+        .env
+        .iter()
+        .filter(|(name, value)| {
+            query.is_empty()
+                || name.to_lowercase().contains(&query)
+                || (!is_secret(name) && value.to_lowercase().contains(&query))
+        })
+        .map(|(name, value)| {
+            let refusal = env_refusal(name);
+            let always = always_passed(name);
+            let added = state.env_added.iter().any(|n| n.eq_ignore_ascii_case(name));
+            let shown = if is_secret(name) {
+                "••••••••".to_owned()
+            } else {
+                value.clone()
+            };
+            let check = CheckBox::new()
+                .is_checked(always || added)
+                .is_enabled(!always && refusal.is_none())
+                .on_is_checked_changed((callbacks.env)(name.clone()))
+                .content(TextBlock::new().text(name.clone()).font_size(12.0));
+            let help = match (&refusal, always) {
+                (Some(reason), _) => Some(reason.clone()),
+                (None, true) => Some(tr!("git and ssh always get this")),
+                _ => None,
+            };
+            let check: View = match help {
+                Some(help) => check.tooltip(help),
+                None => check,
+            };
+            (
+                name.clone(),
+                Grid::new()
+                    .columns([GridLength::Pixel(220.0), GridLength::Star(1.0)])
+                    .children((
+                        Border::new().grid_column(0).content(check),
+                        TextBlock::new()
+                            .text(shown)
+                            .font_size(12.0)
+                            .opacity(0.7)
+                            .is_text_selection_enabled(!is_secret(name))
+                            .text_trimming(TextTrimming::CharacterEllipsis)
+                            .vertical_alignment(VerticalAlignment::Center)
+                            .grid_column(1),
+                    )),
+            )
+        });
+    let mut always: Vec<&str> = ALWAYS_PASSED.to_vec();
+    always.push("GIT_*");
+    StackPanel::new()
+        .spacing(4.0)
+        .margin(Thickness::new(0.0, 12.0, 0.0, 0.0))
+        .children((
+            TextBlock::new().text(tr!("Environment Variables")),
+            TextBox::new()
+                .text(state.env_query.clone())
+                .placeholder_text(tr!("Search by name or value"))
+                .on_text_changed(callbacks.env_query.clone()),
+            ScrollViewer::new()
+                .max_height(260.0)
+                .content(StackPanel::new().children((View::keyed_fragment(rows),))),
+            note(tr!(
+                "Checked variables go to the git and ssh this app runs, through the shared daemon too, but not to SSH hosts. Always passed, when the shell sets them: {names}.",
+                names = always.join(", ")
+            )),
+        ))
+}
+
 pub fn view(state: &State, callbacks: Callbacks) -> View {
+    let env = environment(state, &callbacks);
     let head = Grid::new()
         .columns([GridLength::Star(1.0), GridLength::Auto])
         .margin(Thickness::new(10.0, 6.0, 8.0, 6.0))
@@ -204,7 +343,7 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                         })]),
                     )),
                 heading("Git".to_owned()),
-                git,
+                StackPanel::new().children((git, env)),
                 heading(tr!("Diff & Merge")),
                 check(
                     crate::prefs::AUTO_MAGIC_MERGE,

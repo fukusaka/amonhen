@@ -677,6 +677,9 @@ enum Message {
     SettingsAutoFetch(Option<usize>),
     /// Settings > General の外のエディタを選んだ（項目の番号）。
     SettingsEditor(Option<usize>),
+    /// Settings > Git > Environment Variables: 渡すかの切り替えと、探す文字。
+    SettingsEnv(String, bool),
+    SettingsEnvQuery(String),
     /// History のキャッシュの大きさを読んだ。
     CacheSize(u64),
     /// History のキャッシュを消す。
@@ -1718,6 +1721,13 @@ impl Component for Root {
                     editors: crate::settingsview::editor_choices(&editor),
                     editor,
                     editor_epoch: 0,
+                    env: {
+                        let mut env: Vec<(String, String)> = std::env::vars().collect();
+                        env.sort_by_key(|(n, _)| n.to_lowercase());
+                        env
+                    },
+                    env_added: crate::settingsview::env_added_names(),
+                    env_query: String::new(),
                 });
                 context.spawn_background(|_| {
                     Message::CacheSize(
@@ -4650,6 +4660,27 @@ impl Component for Root {
                         e.lines().next().unwrap_or_default()
                     )
                 });
+            }
+            Message::SettingsEnv(name, on) => {
+                // 渡す名前を足す・外して、すぐ効かせる（GTK4 版の `set_added_text`）。
+                let Some(state) = self.settings.as_mut() else {
+                    return;
+                };
+                state.env_added.retain(|n| !n.eq_ignore_ascii_case(&name));
+                if on {
+                    state.env_added.push(name);
+                }
+                state.env_added.sort();
+                let _ = crate::prefs::set_string(
+                    crate::settingsview::ENV_ADDED,
+                    &state.env_added.join(", "),
+                );
+                crate::settingsview::apply_env_added();
+            }
+            Message::SettingsEnvQuery(text) => {
+                if let Some(state) = self.settings.as_mut() {
+                    state.env_query = text;
+                }
             }
             Message::SettingsToggle(key, value) => {
                 if key == crate::prefs::USE_FSMONITOR {
@@ -8888,6 +8919,10 @@ impl Root {
                 auto_fetch: context.callback(Message::SettingsAutoFetch),
                 clear_cache: context.callback(|()| Message::ClearCache),
                 editor: context.callback(Message::SettingsEditor),
+                env: Box::new(|name: String| {
+                    context.callback(move |on| Message::SettingsEnv(name.clone(), on))
+                }),
+                env_query: context.callback(Message::SettingsEnvQuery),
             },
         );
         Border::new()

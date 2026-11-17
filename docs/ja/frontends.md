@@ -116,7 +116,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Git: 機械全体のページ（Author and Signing・Commits・Operations・Working Copy・Keys and Values） | ✓ | ✓ | △ | — | △ | CLI: `amonhen run` から。<br>Windows: すべてのリポジトリの名前とメールだけ。 |
 | Git > Commits: 共有のメッセージのテンプレート | ✓ | ✓ | — | — | — |  |
 | Git > Programs: git・gpg・ssh-keygen・gpgsm | ✓ | ✓ | — | n/a | △ | VSCode: 拡張は、ここで機械に選んだ git を動かし、選んでいなければ VSCode の `git.path`。gpg・ssh-keygen は git の設定で決まる。<br>CLI: `amonhen run`（`programs`・`setMachineGit`）から。 |
-| Git > この機械の Environment Variables（渡す・秘密を隠す） | ✓ | ✓ | — | n/a | n/a | VSCode: VSCode の環境が代わり（拡張はそれを daemon に渡す）。 |
+| Git > この機械の Environment Variables（渡す・秘密を隠す） | ✓ | ✓ | ✓ | n/a | n/a | VSCode: VSCode の環境が代わり（拡張はそれを daemon に渡す）。<br>Windows: Settings の 1 ページの Git の下。Passed / All の切り替えと値の詳細はない |
 | Environment Variables: ログインシェルのものを使う（Read Again・SSH agent） | ✓ | — | — | n/a | n/a | GTK4: 外した。Linux のセッションはすでに持っている。<br>VSCode: VSCode の環境が代わり（拡張はそれを daemon に渡す）。 |
 | SSH Hosts: + / − の付いたホスト、届かないものは薄く | ✓ | ✓ | — | n/a | n/a | VSCode: Remote-SSH が受け持つ。 |
 | SSH Hosts > Connection: 状態・Check Connection・エンジン | ✓ | ✓ | — | n/a | n/a |  |

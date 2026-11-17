@@ -129,6 +129,8 @@ fn main() {
     amonhen_model::i18n::set_default(language());
     // status で git の fsmonitor を使うか（Settings > Performance。変えたら Settings が渡し直す）。
     amonhen_backend_cli::set_fsmonitor(prefs::bool(prefs::USE_FSMONITOR));
+    // Settings > Git > Environment Variables で選んだ名前を、git と ssh に渡す（ほかのスレッドを動かす前に）。
+    settingsview::apply_env_added();
     let args = match parse() {
         Ok(a) => a,
         Err(e) => {
