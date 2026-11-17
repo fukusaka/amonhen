@@ -3981,6 +3981,31 @@ impl Component for Root {
                     });
                     return;
                 }
+                // フックをエディタで開く・ファイルの場所を開く（GTK4 版の `open_hook`）。
+                if let Some((how, name)) = key
+                    .strip_prefix("hook-edit:")
+                    .map(|n| ("edit", n))
+                    .or_else(|| key.strip_prefix("hook-reveal:").map(|n| ("reveal", n)))
+                {
+                    let Some(file) =
+                        hooks_directory(self.repo.as_deref(), state.hooks_path.as_deref())
+                            .map(|d| d.join(name))
+                    else {
+                        return beep();
+                    };
+                    if how == "reveal" {
+                        crate::files::reveal(&file);
+                    } else {
+                        context.spawn_background(move |_| {
+                            Message::Performed(
+                                crate::editor::open_file(&file)
+                                    .err()
+                                    .map(|e| (tr!("Couldn’t Open in Editor"), e)),
+                            )
+                        });
+                    }
+                    return;
+                }
                 if let Some(name) = key.strip_prefix("hook-show:") {
                     let (Some(repo), name) = (self.repo.clone(), name.to_owned()) else {
                         return;
@@ -8340,6 +8365,7 @@ impl Root {
                 toggle: Box::new(|name: String| {
                     context.callback(move |on| Message::HookEnabled(name.clone(), on))
                 }),
+                menu: Box::new(|| context.callback(Message::RepoSettingsButton)),
             },
         );
         Border::new()
@@ -9974,6 +10000,24 @@ fn attach_chain(panel: &ElementRef<SwapChainPanel>, surface: &Surface) -> Result
             eprintln!("SwapChainPanel に swap chain をつなげない: {e:?}");
         }
     }))
+}
+
+/// フックの置き場所（GTK4 版の `hooks_directory`）: `core.hooksPath` がなければ $GIT_COMMON_DIR/hooks、相対なら
+/// 作業ツリーから、`~` はホームから。
+fn hooks_directory(
+    repo: Option<&Repository>,
+    hooks_path: Option<&str>,
+) -> Option<std::path::PathBuf> {
+    let paths = repo?.paths();
+    match hooks_path {
+        None => Some(paths.common_dir.join("hooks")),
+        Some(p) if std::path::Path::new(p).is_absolute() || p.starts_with('/') => Some(p.into()),
+        Some(p) if p.starts_with('~') => Some(
+            std::path::PathBuf::from(std::env::var_os("USERPROFILE")?)
+                .join(p[1..].trim_start_matches(['/', '\\'])),
+        ),
+        Some(p) => paths.workdir.map(|w| w.join(p)),
+    }
 }
 
 /// 大きさが変わった swap chain を作り直す（なければ作る）。

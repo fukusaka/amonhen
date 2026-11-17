@@ -62,6 +62,9 @@ pub struct State {
     pub template: Option<String>,
     pub template_saved: String,
     pub template_path: String,
+    /// `core.hooksPath`（なければ `.git/hooks`）と、フックを開くエディタの名前（Settings > General で選んだもの）。
+    pub hooks_path: Option<String>,
+    pub editor: String,
     /// rerere が覚えた解決（`rr-cache`）がある（Forget All Recorded Resolutions… を出す）。
     pub rerere_cache: bool,
 }
@@ -92,6 +95,8 @@ impl State {
             template_saved: String::new(),
             template_path: String::new(),
             rerere_cache: false,
+            hooks_path: None,
+            editor: String::new(),
         }
     }
 
@@ -127,6 +132,8 @@ impl State {
                 })
                 .collect(),
         );
+        self.hooks_path = info["hooksPath"].as_str().map(str::to_owned);
+        self.editor = crate::editor::chosen().name;
         self.lfs = info["lfs"].as_bool().unwrap_or(false);
         self.lfs_patterns = info["lfsPatterns"]
             .as_array()
@@ -424,6 +431,8 @@ pub struct Callbacks<'a> {
     pub choice: Box<dyn Fn(&'static str) -> Callback<Option<usize>> + 'a>,
     /// フックの有効の切り替え（フックの名前ごと）。
     pub toggle: Box<dyn Fn(String) -> Callback<bool> + 'a>,
+    /// 右クリックのメニュー（`button` と同じ鍵）。
+    pub menu: Box<dyn Fn() -> Callback<String> + 'a>,
 }
 
 pub fn view(state: &State, callbacks: Callbacks) -> View {
@@ -633,10 +642,33 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                             .tooltip(tr!(
                                 "Hooks can’t be disabled on Windows (git runs them whatever their permissions)"
                             )),
-                        Button::new()
-                            .on_click((callbacks.button)(format!("hook-show:{name}")))
+                        StackPanel::new()
+                            .orientation(Orientation::Horizontal)
+                            .spacing(6.0)
                             .grid_column(3)
-                            .content(TextBlock::new().text(tr!("Show"))),
+                            .children((
+                                Button::new()
+                                    .on_click((callbacks.button)(format!("hook-show:{name}")))
+                                    .content(TextBlock::new().text(tr!("Show"))),
+                                // 選んだエディタで編集（GTK4 版・macOS 版の「〜で編集」）。
+                                Button::new()
+                                    .on_click((callbacks.button)(format!("hook-edit:{name}")))
+                                    .content(TextBlock::new().text(tr!(
+                                        "Edit in {app}",
+                                        app = &state.editor
+                                    ))),
+                            )),
+                    ))
+                    // 右クリック: 編集とファイルの場所（GTK4 版の `hook_context_menu` のうち Edit With 以外）。
+                    .menu(Menu::new(
+                        [
+                            MenuItem::item(
+                                format!("hook-edit:{name}"),
+                                tr!("Edit in {app}", app = &state.editor),
+                            ),
+                            MenuItem::item(format!("hook-reveal:{name}"), tr!("Show in Files")),
+                        ],
+                        (callbacks.menu)(),
                     ));
                 (name.clone(), Border::new().min_height(32.0).content(row))
             });
