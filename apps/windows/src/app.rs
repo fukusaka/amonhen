@@ -162,6 +162,11 @@ struct Root {
     search_opened: u64,
     /// Working Copy の一覧で選んでいるファイル（パス）。
     working_file: Option<String>,
+    /// 両側に変更があって 1 本の差分で表せないファイルで、stage 済みの側を見るか（GTK4 版の Unstaged / Staged の
+    /// 切り替え。別のファイルを選ぶと作業ツリーの側に戻す）。
+    working_staged: bool,
+    /// 切り替えを出すなら、出している側（stage 済みなら true）。
+    working_sides: Option<bool>,
     /// 走っている操作（ステータスバーに出す）。
     busy: Option<String>,
     /// Range Diff の画面（開いている間だけ。サイドバーに行を出す）と、比べた回数（古い答えを捨てる）。
@@ -647,6 +652,10 @@ enum Message {
     DiffRowsAt(Option<(Vec<usize>, bool)>),
     /// 行を捨て終えた（失敗ならそのわけ）。
     LinesDiscarded(Option<String>),
+    /// 出した差分の側（切り替えを出すなら Some）。
+    WorkingSides(Option<bool>),
+    /// 切り替えで選んだ側（stage 済みなら true）。
+    WorkingSide(Option<usize>),
     /// 差分のファイルの見出しのメニュー（GTK4 版の `commitfiles` の見出しのメニュー）。
     DiffFileMenu(String),
     FileHistoryLoaded(String, Result<Vec<crate::filehistory::Entry>, String>),
@@ -937,6 +946,8 @@ impl Component for Root {
             search_box: ElementRef::new(),
             search_opened: 0,
             working_file: None,
+            working_staged: false,
+            working_sides: None,
             busy: None,
             dialog_input: ElementRef::new(),
             dialog_inputs: 0,
@@ -3128,6 +3139,9 @@ impl Component for Root {
                             .find(|e| &e.path == p)
                             .map(|e| e.kind == amonhen_model::StatusKind::Unmerged)
                     });
+                    if changed {
+                        self.working_staged = false;
+                    }
                     self.working_file = path.clone();
                     self.load_working_diff();
                     if changed
@@ -5117,6 +5131,21 @@ impl Component for Root {
                 self.diff_file = file;
                 self.diff_rows = None;
             }
+            Message::WorkingSides(sides) => {
+                self.working_sides = sides;
+                if let Some(staged) = sides {
+                    self.working_staged = staged;
+                }
+            }
+            Message::WorkingSide(index) => {
+                let Some(index) = index else { return };
+                let staged = index == 1;
+                if self.working_sides == Some(staged) {
+                    return;
+                }
+                self.working_staged = staged;
+                self.load_working_diff();
+            }
             Message::LinesDiscarded(failed) => {
                 // ファイルの状態（M）は変わらず status が届かないことがあるので、差分を読み直す。
                 self.load_working_diff();
@@ -5542,18 +5571,16 @@ impl Component for Root {
         };
         let right = Grid::new()
             .rows([
-                GridLength::Pixel(if self.page == Page::WorkingCopy {
-                    0.0
+                if self.page == Page::WorkingCopy {
+                    GridLength::Auto
                 } else {
-                    240.0
-                }),
+                    GridLength::Pixel(240.0)
+                },
                 GridLength::Star(1.0),
             ])
             .grid_column(2)
             .children((
-                ScrollViewer::new()
-                    .grid_row(0)
-                    .content(details(self.info.as_ref().map(|(i, e)| (i, e.as_ref())))),
+                self.top_of_diff(context),
                 Grid::new()
                     .background(Brush::Solid(Color::transparent()))
                     .element_ref(&self.diff_area)
@@ -9658,7 +9685,8 @@ impl Root {
                 .find(|e| &e.path == path)
                 .cloned()
         });
-        with_history(|h| h.session.data.want_working(entry));
+        let staged = self.working_staged;
+        with_history(|h| h.session.data.want_working(entry, staged));
     }
 
     /// 欄の中身を、開いている worktree の下書きとして覚える（どちらも空なら消す。GTK4 版の `save_draft`）。
@@ -9784,6 +9812,27 @@ impl Root {
         } else if key == "beep" {
             beep();
         }
+    }
+
+    /// 差分の上: History ではコミットの詳細。Working Copy では、両側に変更があって 1 本の差分で表せないファイルの
+    /// Unstaged / Staged の切り替え（GTK4 版の `workcopy.rs` の `sides`）。
+    fn top_of_diff(&self, context: &ViewContext<Self>) -> View {
+        if self.page != Page::WorkingCopy {
+            return ScrollViewer::new()
+                .grid_row(0)
+                .content(details(self.info.as_ref().map(|(i, e)| (i, e.as_ref()))));
+        }
+        let Some(staged) = self.working_sides else {
+            return View::empty();
+        };
+        RadioButtons::new()
+            .grid_row(0)
+            .max_columns(2)
+            .margin(Thickness::new(10.0, 0.0, 10.0, 0.0))
+            .items_source(vec!["Unstaged".to_owned(), "Staged".to_owned()])
+            .selected_index(usize::from(staged))
+            .on_selection_changed(context.callback(Message::WorkingSide))
+            .into()
     }
 
     fn working_copy_view(&self, context: &ViewContext<Self>) -> View {
@@ -11294,6 +11343,12 @@ impl HistoryView {
             self.diff.dirty = true;
         }
         if std::mem::take(&mut s.data.working_changed) && self.working_page {
+            let sides = s.data.working.as_ref().and_then(|w| {
+                let d = &w.diff;
+                (d.combined.is_none() && d.entry.is_staged() && d.entry.is_unstaged())
+                    .then_some(d.staged)
+            });
+            self.sender.send(Message::WorkingSides(sides));
             s.renderer.forget_diff();
             self.diff.scroll_y = 0.0;
             self.diff.dirty = true;

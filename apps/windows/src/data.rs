@@ -573,7 +573,8 @@ impl Data {
 
     /// Working Copy のファイルの差分を裏で読む。1 本の差分で表せれば HEAD と作業ツリーの差分、表せなければ変更の
     /// ある側（両方なら作業ツリーの側）。`None` なら出さない。
-    pub fn want_working(&mut self, entry: Option<amonhen_model::StatusEntry>) {
+    /// `prefer_staged`: 両側に変更があって 1 本の差分で表せないとき、stage 済みの側を読むか。
+    pub fn want_working(&mut self, entry: Option<amonhen_model::StatusEntry>, prefer_staged: bool) {
         let Some(entry) = entry else {
             self.working_wanted = None;
             self.working = None;
@@ -588,7 +589,15 @@ impl Data {
         std::thread::spawn(move || {
             let diff = match repo.working_diff_combined(&entry, &PROFILE).ok().flatten() {
                 Some(diff) => Ok(diff),
-                None => repo.working_diff(&entry, !entry.is_unstaged(), &PROFILE),
+                // 1 本の差分で表せなければ、選んだ側（片側にしか変更がなければその側。GTK4 版と同じ）。
+                None => {
+                    let staged = if entry.is_staged() && entry.is_unstaged() {
+                        prefer_staged
+                    } else {
+                        !entry.is_unstaged()
+                    };
+                    repo.working_diff(&entry, staged, &PROFILE)
+                }
             };
             let event = match diff {
                 Ok(diff) => {
