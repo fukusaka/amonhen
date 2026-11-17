@@ -942,3 +942,42 @@ fn v_selects_a_range_of_lines() {
         "a.txt\n"
     );
 }
+
+/// サイドバーで stash を開くと、その差分が詳細の枠に出る
+#[test]
+fn opening_a_stash_shows_its_diff() {
+    let dir = tempfile::tempdir().unwrap();
+    two_lines(dir.path());
+    git(dir.path(), BASE, &["stash", "push", "-q", "-m", "Capitals"]);
+    let text = amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), "0G\n").unwrap();
+    println!("{text}");
+    let details: Vec<String> = text.lines().filter_map(|l| column(l, 2)).collect();
+    assert!(details[0].contains("Capitals"), "{details:?}");
+    assert!(details.iter().any(|l| l == "M a.txt +2 -2"), "{details:?}");
+    assert!(details.iter().any(|l| l.ends_with("+ONE")));
+    // History を動かすと、選んでいるコミットの詳細に戻る。
+    let back = amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), "0G\n\x1bj").unwrap();
+    let details: Vec<String> = back.lines().filter_map(|l| column(l, 2)).collect();
+    assert_eq!(details[0], "Start");
+}
+
+/// worktree が 2 つ以上あれば、サイドバーに並ぶ
+#[test]
+fn worktrees_are_listed_in_the_sidebar() {
+    let dir = tempfile::tempdir().unwrap();
+    let main = dir.path().join("main");
+    std::fs::create_dir(&main).unwrap();
+    merged(&main);
+    let other = dir.path().join("other");
+    git(
+        &main,
+        BASE,
+        &["worktree", "add", "-q", other.to_str().unwrap(), "topic"],
+    );
+    let text = amonhen_tui::snapshot(open(&main), 160, 16, clock(), "").unwrap();
+    println!("{text}");
+    let side: Vec<String> = text.lines().skip(1).filter_map(|l| column(l, 0)).collect();
+    let at = side.iter().position(|l| l == "Worktrees").unwrap();
+    assert_eq!(side[at + 1], "● main (main)");
+    assert_eq!(side[at + 2], "  other (topic)");
+}

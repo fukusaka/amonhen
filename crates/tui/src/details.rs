@@ -155,6 +155,8 @@ impl Commit {
 pub struct Details {
     /// 出したいコミット。
     wanted: Option<Oid>,
+    /// 出したいコミットは stash（stash としての差分を出す）。
+    wanted_stash: bool,
     /// 頼んで、答えを待っているコミット。
     loading: Option<Oid>,
     commit: Option<Commit>,
@@ -166,11 +168,12 @@ pub struct Details {
 
 impl Details {
     /// 出すコミットを替える。替わったら true。
-    pub fn want(&mut self, id: Oid) -> bool {
+    pub fn want(&mut self, id: Oid, stash: bool) -> bool {
         if self.wanted == Some(id) {
             return false;
         }
         self.wanted = Some(id);
+        self.wanted_stash = stash;
         true
     }
 
@@ -186,6 +189,7 @@ impl Details {
         self.loading = Some(wanted);
         Some(Request::Commit {
             id: wanted.to_string(),
+            stash: self.wanted_stash,
         })
     }
 

@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 
 use amonhen_front::Front;
-use amonhen_model::tr;
+use amonhen_model::{Oid, tr};
 use ratatui_core::layout::Rect;
 use ratatui_core::style::{Color, Modifier, Style};
 use ratatui_core::terminal::Frame;
@@ -87,6 +87,8 @@ pub struct App {
     details: Details,
     changes: Changes,
     sidebar: Sidebar,
+    /// サイドバーで開いた stash（詳細の枠に、History の選択の代わりに出す）。
+    pinned: Option<Oid>,
     reflog: Reflog,
     view: View,
     focus: Focus,
@@ -169,6 +171,7 @@ impl App {
             details: Details::default(),
             changes: Changes::default(),
             sidebar: Sidebar::default(),
+            pinned: None,
             reflog: Reflog::default(),
             view: View::History,
             focus: Focus::Main,
@@ -553,12 +556,13 @@ impl App {
         // 詳細が見えているなら、選んでいるコミットのものにする。
         if side
             && let Some(id) = match self.view {
-                View::History => self.history.selected_id(),
+                View::History => self.pinned.or(self.history.selected_id()),
                 View::Reflog => self.reflog.selected_id(),
                 View::Changes => None,
             }
         {
-            self.dirty |= self.details.want(id);
+            let stash = self.view == View::History && self.pinned == Some(id);
+            self.dirty |= self.details.want(id, stash);
         }
         if let Some(request) = self.reflog.request(self.view == View::Reflog) {
             self.send(request);
@@ -805,6 +809,7 @@ impl App {
     /// メインの画面を替える。
     fn show(&mut self, view: View) {
         self.dirty |= self.view != view || self.focus != Focus::Main;
+        self.pinned = None;
         self.view = view;
         self.focus = Focus::Main;
         self.sidebar.show_view(view.picked());
@@ -1026,7 +1031,7 @@ impl App {
         let Some((kind, name, _)) = self.sidebar.picked_ref() else {
             return false;
         };
-        if kind == "stash" {
+        if kind == "stash" || kind == "worktree" {
             return false;
         }
         let Some(branch) = self.branch.clone() else {
@@ -1275,7 +1280,23 @@ impl App {
             Some(Picked::Changes) => self.show(View::Changes),
             Some(Picked::History) => self.show(View::History),
             Some(Picked::Reflog) => self.show(View::Reflog),
+            // stash は History の行ではないので、その差分を詳細の枠に出す。
+            Some(Picked::Commit(id))
+                if self.sidebar.picked_ref().is_some_and(|r| r.0 == "stash") =>
+            {
+                self.view = View::History;
+                self.focus = Focus::Side;
+                self.pinned = Oid::from_hex(&id);
+            }
+            // worktree は、その場所を知らせるだけ（開くのは、そこで `amonhen tui`）。
+            Some(Picked::Commit(_))
+                if self.sidebar.picked_ref().is_some_and(|r| r.0 == "worktree") =>
+            {
+                let path = self.sidebar.picked_ref().map_or("", |r| r.1).to_owned();
+                self.notice = Some(tr!("Worktree at {path}", path = path));
+            }
             Some(Picked::Commit(id)) => {
+                self.pinned = None;
                 self.view = View::History;
                 self.focus = Focus::Main;
                 self.send(Request::RowOf {
@@ -1472,6 +1493,8 @@ impl App {
     }
 
     fn history_key(&mut self, code: KeyCode, control: bool) -> bool {
+        // History を操作したら、開いていた stash ではなく選んでいるコミットを出す。
+        self.pinned = None;
         let page = self.history.page();
         match code {
             KeyCode::Char('d') if control => self.history.move_selection(page / 2),

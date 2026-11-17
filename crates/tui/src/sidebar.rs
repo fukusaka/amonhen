@@ -33,7 +33,7 @@ enum Row {
     History,
     Reflog,
     Ref {
-        /// `branch`・`remote`・`tag`・`stash`。
+        /// `branch`・`remote`・`tag`・`stash`・`worktree`（名前はその場所）。
         kind: &'static str,
         name: String,
         /// 出す文字（stash はメッセージ、ほかは名前）。
@@ -150,6 +150,37 @@ impl Sidebar {
                 .peekable();
             if of_kind.peek().is_some() {
                 rows.push(Row::Header(title));
+                rows.extend(of_kind);
+            }
+        }
+        // worktree は、2 つ以上あるときだけ並べる（フォルダの名前と、そこのブランチ）。
+        let worktrees: Vec<&Value> = refs["worktrees"].as_array().into_iter().flatten().collect();
+        if worktrees.len() > 1 {
+            let mut of_kind = worktrees
+                .iter()
+                .filter_map(|w| {
+                    let path = w["path"].as_str()?;
+                    let folder = path.rsplit(['/', '\\']).next().unwrap_or(path);
+                    let label = match w["branch"].as_str() {
+                        Some(branch) => format!("{folder} ({branch})"),
+                        None => folder.to_owned(),
+                    };
+                    if !label.to_lowercase().contains(&self.filter) {
+                        return None;
+                    }
+                    Some(Row::Ref {
+                        kind: "worktree",
+                        name: path.to_owned(),
+                        label,
+                        target: w["head"].as_str().unwrap_or("").to_owned(),
+                        current: w["current"] == true,
+                        ahead: 0,
+                        behind: 0,
+                    })
+                })
+                .peekable();
+            if of_kind.peek().is_some() {
+                rows.push(Row::Header(tr!("Worktrees")));
                 rows.extend(of_kind);
             }
         }

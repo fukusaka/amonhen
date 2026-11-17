@@ -32,8 +32,9 @@ pub enum Request {
     Lineage { history: Value, row: u32 },
     /// コミット（16 進の ID）が History の何行目か。
     RowOf { history: Value, id: String },
-    /// コミットの詳細（作者・メッセージなど）と差分。`id` は 16 進の ID。
-    Commit { id: String },
+    /// コミットの詳細（作者・メッセージなど）と差分。`id` は 16 進の ID。`stash` なら、stash としての差分
+    /// （作ったときの HEAD から、作業中の変更まで）。
+    Commit { id: String, stash: bool },
     /// 差分の構文の色。`of` は `{"view": …}`（`commitDiff` の答えのもの）か `{"diff": …}`（`workingDiff` の
     /// もの）。`id` は、答えを見分ける名前。
     Syntax { id: String, of: Value },
@@ -192,7 +193,14 @@ fn load(front: &dyn Front, request: Request) -> Result<Loaded> {
             workdir: front.call(json!({"op": "hello"}))?.json["workdir"]
                 .as_str()
                 .map(str::to_owned),
-            refs: front.call(json!({"op": "refs"}))?.json,
+            refs: {
+                // worktree の一覧も一緒に（サイドバーに並べる）。
+                let mut refs = front.call(json!({"op": "refs"}))?.json;
+                refs["worktrees"] = run(front, json!({"op": "worktrees"}))
+                    .map(|mut w| w["info"]["worktrees"].take())
+                    .unwrap_or(Value::Null);
+                refs
+            },
             history: front.call(json!({"op": "history"}))?.json,
         },
         Request::Rows {
@@ -233,8 +241,8 @@ fn load(front: &dyn Front, request: Request) -> Result<Loaded> {
                 .and_then(|r| r.json["row"].as_u64())
                 .map(|row| row as u32),
         ),
-        Request::Commit { id } => {
-            let result = commit(front, &id).map_err(|e| e.to_string());
+        Request::Commit { id, stash } => {
+            let result = commit(front, &id, stash).map_err(|e| e.to_string());
             Loaded::Commit { id, result }
         }
         Request::Syntax { id, mut of } => {
@@ -327,8 +335,9 @@ fn run(front: &dyn Front, command: Value) -> Result<Value> {
     Ok(reply)
 }
 
-fn commit(front: &dyn Front, id: &str) -> Result<(Value, Reply)> {
+fn commit(front: &dyn Front, id: &str, stash: bool) -> Result<(Value, Reply)> {
     let mut info = run(front, json!({"op": "commitInfo", "oid": id}))?;
-    let diff = front.call(json!({"op": "commitDiff", "id": id}))?;
+    let of = if stash { "stash" } else { "id" };
+    let diff = front.call(json!({"op": "commitDiff", of: id}))?;
     Ok((info["info"].take(), diff))
 }
