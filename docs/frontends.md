@@ -426,4 +426,5 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 - History's right column: message, author and date, committer when different, ID and parents, changed files, the unified diff with changed words and syntax colors. No signatures, tags, notes or the detailed table.
 - Status bar: the bottom line shows a merge, rebase, cherry-pick or revert in progress with continue, skip and abort.
 - SSH hosts, shared daemon, askpass: opens `ssh://` and `daemon:` locations like the CLI (not tested yet); askpass on Unix.
-- Not there: tabs and windows, the repository list, Settings and Repository settings, Reflog, Reset, Range Diff, Blame and File History, patches, AI, Activity, GitHub, worktrees, selecting text in diffs.
+- Reflog: HEAD's entries with the selected commit's details and a new branch there; no other refs, no reset, restore or compare.
+- Not there: tabs and windows, the repository list, Settings and Repository settings, Reset, Range Diff, Blame and File History, patches, AI, Activity, GitHub, worktrees, selecting text in diffs.

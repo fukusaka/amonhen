@@ -426,4 +426,5 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 - History の右の列: メッセージ、作者と日付、違うときはコミッター、ID と親、変わったファイル、変わった語と構文の色のついた unified の差分。署名・タグ・notes・詳しい表はない。
 - ステータスバー: 一番下の行に、merge・rebase・cherry-pick・revert の途中の状態と、続ける・飛ばす・やめる。
 - SSH 先・共有の daemon・askpass: CLI と同じく `ssh://` と `daemon:` の場所を開く（まだ試していない）。askpass は Unix で。
-- ないもの: タブと窓、リポジトリの一覧、Settings と Repository Settings、Reflog、Reset、Range Diff、Blame と File History、パッチ、AI、Activity、GitHub、worktree、差分の文字の選択。
+- Reflog: HEAD の記録と、選んだコミットの詳細、そこへの新しいブランチ。ほかの ref・reset・ファイルを戻す・比べるはない。
+- ないもの: タブと窓、リポジトリの一覧、Settings と Repository Settings、Reset、Range Diff、Blame と File History、パッチ、AI、Activity、GitHub、worktree、差分の文字の選択。
