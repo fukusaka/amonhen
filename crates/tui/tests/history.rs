@@ -149,7 +149,10 @@ fn history_shows_one_line_per_commit() {
     println!("{text}");
     let name = dir.path().file_name().unwrap().to_string_lossy();
     let lines: Vec<&str> = text.lines().collect();
-    assert_eq!(lines[0].trim(), format!("{name}  main"));
+    assert_eq!(
+        lines[0].trim(),
+        format!("{name}  main   1 Changes   2 History")
+    );
     assert_eq!(
         &lines[1..6],
         [
@@ -243,4 +246,79 @@ fn details_open_over_history_when_narrow() {
     assert!(jumped.lines().nth(1).unwrap().starts_with("── lane.rs ─"));
     let back = amonhen_tui::snapshot(open(dir.path()), 64, 20, clock(), "\n\x1b").unwrap();
     assert!(back.lines().nth(1).unwrap().starts_with("◉  [main]"));
+}
+
+/// 書き換えたファイル・stage 済みの新しいファイル・追跡していないファイルがある作業ツリー。
+fn dirty(dir: &Path) {
+    changed(dir);
+    std::fs::write(
+        dir.join("lane.rs"),
+        "fn lane() -> u32 {\n    let lane = branch();\n    lane\n}\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("staged.txt"), "two\n").unwrap();
+    git(dir, BASE, &["add", "staged.txt"]);
+    std::fs::write(dir.join("untracked.txt"), "three\n").unwrap();
+}
+
+/// `1` で Working Copy: 変わったファイルの一覧と、選んだファイルの差分
+#[test]
+fn working_copy_lists_files_beside_the_diff() {
+    let dir = tempfile::tempdir().unwrap();
+    dirty(dir.path());
+    let text = amonhen_tui::snapshot(open(dir.path()), 120, 12, clock(), "1").unwrap();
+    println!("{text}");
+    let lines: Vec<&str> = text.lines().collect();
+    assert!(lines[0].ends_with("main   1 Changes (3)   2 History"));
+    let (list, diff): (Vec<&str>, Vec<&str>) = lines[1..8]
+        .iter()
+        .map(|l| l.split_once('│').unwrap())
+        .map(|(l, d)| (l.trim_end(), d))
+        .unzip();
+    // stage の印（まだ・済み）、状態の 1 文字、パス。
+    assert_eq!(
+        list[..3],
+        ["[ ] M lane.rs", "[x] A staged.txt", "[ ] ? untracked.txt"]
+    );
+    assert_eq!(diff[0], "lane.rs +1 -1");
+    assert_eq!(diff[1], "@@ -1,4 +1,4 @@");
+    assert_eq!(diff[3], "2     -    let lane = trunk();");
+    assert_eq!(diff[4], "  2   +    let lane = branch();");
+}
+
+/// Space で、選んでいるファイルを stage する。もう一度で unstage
+#[test]
+fn space_stages_and_unstages_the_file() {
+    let dir = tempfile::tempdir().unwrap();
+    dirty(dir.path());
+    let staged = amonhen_tui::snapshot(open(dir.path()), 120, 12, clock(), "1 ").unwrap();
+    println!("{staged}");
+    // 一覧の印が替わり、差分の行に stage 済みの印がつく。
+    assert!(staged.contains("[x] M lane.rs"));
+    assert!(staged.contains("│2   ● -    let lane = trunk();"));
+    let index = |dir: &Path| {
+        let out = amonhen_model::process::command("git")
+            .args(["diff", "--cached", "--name-only"])
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    assert_eq!(index(dir.path()), "lane.rs\nstaged.txt\n");
+    let unstaged = amonhen_tui::snapshot(open(dir.path()), 120, 12, clock(), "1 ").unwrap();
+    assert!(unstaged.contains("[ ] M lane.rs"));
+    assert_eq!(index(dir.path()), "staged.txt\n");
+}
+
+/// 狭ければ、Enter で一覧の所に差分が開く
+#[test]
+fn working_copy_diff_opens_over_the_list_when_narrow() {
+    let dir = tempfile::tempdir().unwrap();
+    dirty(dir.path());
+    let text = amonhen_tui::snapshot(open(dir.path()), 60, 12, clock(), "1jj\n").unwrap();
+    println!("{text}");
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines[1], "untracked.txt +1");
+    assert_eq!(lines[3], "  1   +three");
+    assert!(lines[11].contains("Esc back"));
 }

@@ -23,8 +23,20 @@ pub enum Request {
     },
     /// コミットの詳細（作者・メッセージなど）と差分。`id` は 16 進の ID。
     Commit { id: String },
-    /// 差分（`view` は `commitDiff` の答えのもの）の構文の色。
-    Syntax { id: String, view: Value },
+    /// 差分の構文の色。`of` は `{"view": …}`（`commitDiff` の答えのもの）か `{"diff": …}`（`workingDiff` の
+    /// もの）。`id` は、答えを見分ける名前。
+    Syntax { id: String, of: Value },
+    /// 作業ツリーの状態（変わったファイルの一覧）。
+    Status,
+    /// 作業ツリーのファイルの差分。`serial` は、どの回の `status` に対するものか。`unstaged` は、stage して
+    /// いない変更があるか（行ごとの印つきの差分が出せないときに、どちらを出すか）。
+    WorkingDiff {
+        path: String,
+        serial: u64,
+        unstaged: bool,
+    },
+    /// ファイルを stage する（`stage` が false なら unstage）。
+    Stage { paths: Vec<String>, stage: bool },
 }
 
 pub enum Loaded {
@@ -47,11 +59,21 @@ pub enum Loaded {
         id: String,
         reply: Option<Reply>,
     },
+    /// `status` の答え。だめなら理由。
+    Status(std::result::Result<Value, String>),
+    WorkingDiff {
+        path: String,
+        serial: u64,
+        result: std::result::Result<Reply, String>,
+    },
+    /// stage・unstage が済んだ。だめなら理由。
+    Staged(std::result::Result<(), String>),
 }
 
 pub struct Loader {
     rows: Sender<Request>,
     details: Sender<Request>,
+    work: Sender<Request>,
 }
 
 impl Loader {
@@ -59,7 +81,8 @@ impl Loader {
     pub fn start(front: Arc<dyn Front>, events: Sender<Event>) -> Self {
         Self {
             rows: worker("amonhen-tui-rows", front.clone(), events.clone()),
-            details: worker("amonhen-tui-details", front, events),
+            details: worker("amonhen-tui-details", front.clone(), events.clone()),
+            work: worker("amonhen-tui-work", front, events),
         }
     }
 
@@ -67,6 +90,7 @@ impl Loader {
         let to = match request {
             Request::Open | Request::Rows { .. } => &self.rows,
             Request::Commit { .. } | Request::Syntax { .. } => &self.details,
+            Request::Status | Request::WorkingDiff { .. } | Request::Stage { .. } => &self.work,
         };
         let _ = to.send(request);
     }
@@ -113,10 +137,42 @@ fn load(front: &dyn Front, request: Request) -> Result<Loaded> {
             let result = commit(front, &id).map_err(|e| e.to_string());
             Loaded::Commit { id, result }
         }
-        Request::Syntax { id, view } => Loaded::Syntax {
-            id,
-            reply: front.call(json!({"op": "diffSyntax", "view": view})).ok(),
-        },
+        Request::Syntax { id, mut of } => {
+            of["op"] = json!("diffSyntax");
+            Loaded::Syntax {
+                id,
+                reply: front.call(of).ok(),
+            }
+        }
+        Request::Status => Loaded::Status(
+            front
+                .call(json!({"op": "status"}))
+                .map(|r| r.json)
+                .map_err(|e| e.to_string()),
+        ),
+        Request::WorkingDiff {
+            path,
+            serial,
+            unstaged,
+        } => {
+            let diff =
+                |mode: &str| front.call(json!({"op": "workingDiff", "path": path, "mode": mode}));
+            // 行ごとの stage の印つきが出せないファイル（バイナリ・コンフリクトなど）は、片方だけを出す。
+            let result = diff("combined")
+                .or_else(|_| diff(if unstaged { "unstaged" } else { "staged" }))
+                .map_err(|e| e.to_string());
+            Loaded::WorkingDiff {
+                path,
+                serial,
+                result,
+            }
+        }
+        Request::Stage { paths, stage } => Loaded::Staged(
+            front
+                .call(json!({"op": if stage { "stage" } else { "unstage" }, "paths": paths}))
+                .map(|_| ())
+                .map_err(|e| e.to_string()),
+        ),
     })
 }
 

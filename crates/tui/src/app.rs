@@ -15,34 +15,57 @@ use ratatui_crossterm::crossterm::event::{
 use unicode_width::UnicodeWidthStr;
 
 use crate::Clock;
-use crate::details::{Details, PAN, Theme};
+use crate::changes::Changes;
+use crate::details::Details;
+use crate::diff::{PAN, Theme};
 use crate::history::{History, WHEEL_ROWS};
 use crate::loader::{Loaded, Loader, Request};
 
 pub enum Event {
     Input(Input),
+    /// リポジトリが変わった（`amonhen_watch::Changes` のビット）。
+    Changed(u32),
     Loaded(Loaded),
     Failed(String),
 }
 
-/// キーが届く所。
+/// メインの画面。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum View {
+    /// Working Copy。
+    Changes,
+    History,
+}
+
+/// キーが届く所: メインの画面の一覧（History・変わったファイル）か、その横（詳細・差分）。
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Focus {
-    History,
-    Details,
+    Main,
+    Side,
 }
 
 /// 画面の割り方（一番上と一番下の行を除いた所）。
 struct Layout {
-    history: Option<Rect>,
-    details: Option<Rect>,
+    main: Option<Rect>,
+    side: Option<Rect>,
 }
+
+/// 変化の知らせのビット（`amonhen_watch::Changes`）。
+const CHANGED_REFS: u32 = 1;
+const CHANGED_INDEX: u32 = 2;
+const CHANGED_WORKTREE: u32 = 4;
 
 pub struct App {
     loader: Loader,
     history: History,
     details: Details,
+    changes: Changes,
+    view: View,
     focus: Focus,
+    /// リポジトリ・ref・History を読んでいる。
+    opening: bool,
+    /// 読んでいる間に、また ref が変わった。
+    reopen: bool,
     theme: Theme,
     /// リポジトリの名前（作業ツリーのフォルダ名）。
     name: String,
@@ -69,7 +92,11 @@ impl App {
             loader: Loader::start(front, events),
             history: History::default(),
             details: Details::default(),
-            focus: Focus::History,
+            changes: Changes::default(),
+            view: View::History,
+            focus: Focus::Main,
+            opening: false,
+            reopen: false,
             theme: Theme::detect(),
             name: String::new(),
             branch: None,
@@ -84,6 +111,18 @@ impl App {
 
     /// リポジトリを読み始める。
     pub fn start(&mut self) {
+        self.open();
+        self.changes.refresh();
+        self.request();
+    }
+
+    /// リポジトリ・ref・History を読む。読んでいる間に頼まれた分は、終わってからもう一度。
+    fn open(&mut self) {
+        if self.opening {
+            self.reopen = true;
+            return;
+        }
+        self.opening = true;
         self.send(Request::Open);
     }
 
@@ -95,9 +134,10 @@ impl App {
     pub fn resize(&mut self, cols: u16, rows: u16) {
         self.size = (cols, rows);
         self.history.set_height(rows.saturating_sub(BARS));
+        self.changes.set_height(rows.saturating_sub(BARS));
         // 詳細の幅は、並べても開いても、キーの届く所によらない。
         let layout = self.layout();
-        let details = layout.details.or(layout.history).unwrap_or_default();
+        let details = layout.side.or(layout.main).unwrap_or_default();
         self.details
             .set_size(details.width, details.height, &self.clock);
         self.dirty = true;
@@ -110,19 +150,19 @@ impl App {
             let left = (cols / 5 * 2).max(HISTORY_MIN);
             // 間に区切りの 1 列。
             return Layout {
-                history: Some(Rect::new(0, 1, left, height)),
-                details: Some(Rect::new(left + 1, 1, cols - left - 1, height)),
+                main: Some(Rect::new(0, 1, left, height)),
+                side: Some(Rect::new(left + 1, 1, cols - left - 1, height)),
             };
         }
         let all = Some(Rect::new(0, 1, cols, height));
         match self.focus {
-            Focus::History => Layout {
-                history: all,
-                details: None,
+            Focus::Main => Layout {
+                main: all,
+                side: None,
             },
-            Focus::Details => Layout {
-                history: None,
-                details: all,
+            Focus::Side => Layout {
+                main: None,
+                side: all,
             },
         }
     }
@@ -163,6 +203,14 @@ impl App {
             Event::Input(Input::Mouse(mouse)) => self.mouse(mouse),
             Event::Input(Input::Resize(cols, rows)) => self.resize(cols, rows),
             Event::Input(_) => {}
+            Event::Changed(bits) => {
+                if bits & (CHANGED_INDEX | CHANGED_WORKTREE) != 0 {
+                    self.changes.refresh();
+                }
+                if bits & CHANGED_REFS != 0 {
+                    self.open();
+                }
+            }
             Event::Loaded(loaded) => {
                 self.pending = self.pending.saturating_sub(1);
                 self.dirty = true;
@@ -179,6 +227,10 @@ impl App {
                             .unwrap_or_default();
                         self.branch = refs["headBranch"].as_str().map(str::to_owned);
                         self.history.opened(&refs, &history);
+                        self.opening = false;
+                        if std::mem::take(&mut self.reopen) {
+                            self.open();
+                        }
                     }
                     Loaded::Rows { start, reply } => self.history.loaded(start, &reply),
                     Loaded::Commit { id, result } => {
@@ -186,27 +238,64 @@ impl App {
                             self.send(request);
                         }
                     }
-                    Loaded::Syntax { id, reply } => self.details.syntax(&id, reply.as_ref()),
+                    Loaded::Syntax { id, reply } => {
+                        if let Some(reply) = &reply {
+                            self.changes.syntax(&id, reply);
+                        }
+                        self.details.syntax(&id, reply.as_ref());
+                    }
+                    Loaded::Status(Ok(status)) => self.changes.status(&status),
+                    Loaded::Status(Err(error)) => {
+                        self.changes.status_failed();
+                        self.error = Some(error);
+                    }
+                    Loaded::WorkingDiff {
+                        path,
+                        serial,
+                        result,
+                    } => {
+                        if let Some(request) = self.changes.working_diff(path, serial, result) {
+                            self.send(request);
+                        }
+                    }
+                    Loaded::Staged(result) => {
+                        if let Err(error) = result {
+                            self.error = Some(error);
+                        }
+                        // 変化の知らせを待たずに読み直す。
+                        self.changes.refresh();
+                    }
                 }
             }
             Event::Failed(error) => {
                 self.pending = self.pending.saturating_sub(1);
                 self.history.failed();
+                self.opening = false;
                 self.error = Some(error);
                 self.dirty = true;
             }
         }
+        self.request();
+    }
+
+    /// 画面に出すのに足りないものを頼む。
+    fn request(&mut self) {
         // 見える範囲が動いたら、足りない行を頼む。
         if let Some(request) = self.history.request() {
             self.send(request);
         }
+        let side = self.layout().side.is_some();
         // 詳細が見えているなら、選んでいるコミットのものにする。
-        if self.layout().details.is_some()
+        if side
+            && self.view == View::History
             && let Some(id) = self.history.selected_id()
         {
             self.dirty |= self.details.want(id);
         }
         if let Some(request) = self.details.request() {
+            self.send(request);
+        }
+        while let Some(request) = self.changes.request(side && self.view == View::Changes) {
             self.send(request);
         }
     }
@@ -217,24 +306,85 @@ impl App {
             return;
         }
         let control = key.modifiers.contains(KeyModifiers::CONTROL);
-        // 詳細が History の所に開いている（並んでいない）。
-        let covering = self.layout().history.is_none();
+        // 詳細・差分が、一覧の所に開いている（並んでいない）。
+        let covering = self.layout().main.is_none();
+        // エラーは、次のキーまで出しておく。
+        self.dirty |= self.error.take().is_some();
         match key.code {
             KeyCode::Char('c') if control => self.quit = true,
             KeyCode::Char('q') if !covering => self.quit = true,
             KeyCode::Tab | KeyCode::BackTab => {
                 self.focus = match self.focus {
-                    Focus::History => Focus::Details,
-                    Focus::Details => Focus::History,
+                    Focus::Main => Focus::Side,
+                    Focus::Side => Focus::Main,
                 };
                 self.dirty = true;
             }
+            KeyCode::Char('1') => self.show(View::Changes),
+            KeyCode::Char('2') => self.show(View::History),
             _ => {
-                self.dirty |= match self.focus {
-                    Focus::History => self.history_key(key.code, control),
-                    Focus::Details => self.details_key(key.code, control),
+                self.dirty |= match (self.view, self.focus) {
+                    (View::History, Focus::Main) => self.history_key(key.code, control),
+                    (View::History, Focus::Side) => self.details_key(key.code, control),
+                    (View::Changes, Focus::Main) => self.changes_key(key.code, control),
+                    (View::Changes, Focus::Side) => self.changes_diff_key(key.code, control),
                 }
             }
+        }
+    }
+
+    /// メインの画面を替える。
+    fn show(&mut self, view: View) {
+        self.dirty |= self.view != view || self.focus != Focus::Main;
+        self.view = view;
+        self.focus = Focus::Main;
+    }
+
+    fn changes_key(&mut self, code: KeyCode, control: bool) -> bool {
+        let page = self.changes.page();
+        match code {
+            KeyCode::Char('d') if control => self.changes.move_selection(page / 2),
+            KeyCode::Char('u') if control => self.changes.move_selection(-page / 2),
+            KeyCode::Char('j') | KeyCode::Down => self.changes.move_selection(1),
+            KeyCode::Char('k') | KeyCode::Up => self.changes.move_selection(-1),
+            KeyCode::PageDown => self.changes.move_selection(page),
+            KeyCode::PageUp => self.changes.move_selection(-page),
+            KeyCode::Char('g') | KeyCode::Home => self.changes.select(0),
+            KeyCode::Char('G') | KeyCode::End => self.changes.select(usize::MAX),
+            KeyCode::Char(' ') => {
+                if let Some(request) = self.changes.toggle() {
+                    self.send(request);
+                }
+                false
+            }
+            KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right => {
+                self.focus = Focus::Side;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn changes_diff_key(&mut self, code: KeyCode, control: bool) -> bool {
+        let page = self.changes.diff_page();
+        match code {
+            KeyCode::Char('d') if control => self.changes.scroll(page / 2),
+            KeyCode::Char('u') if control => self.changes.scroll(-page / 2),
+            KeyCode::Char('j') | KeyCode::Down => self.changes.scroll(1),
+            KeyCode::Char('k') | KeyCode::Up => self.changes.scroll(-1),
+            KeyCode::PageDown | KeyCode::Char(' ') => self.changes.scroll(page),
+            KeyCode::PageUp => self.changes.scroll(-page),
+            KeyCode::Char('g') | KeyCode::Home => self.changes.scroll_to(0),
+            KeyCode::Char('G') | KeyCode::End => self.changes.scroll_to(u32::MAX),
+            KeyCode::Char('l') | KeyCode::Right => self.changes.pan(PAN),
+            KeyCode::Char('h') | KeyCode::Left => self.changes.pan(-PAN),
+            KeyCode::Char(']') => self.changes.jump_hunk(true),
+            KeyCode::Char('[') => self.changes.jump_hunk(false),
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Backspace => {
+                self.focus = Focus::Main;
+                true
+            }
+            _ => false,
         }
     }
 
@@ -250,7 +400,7 @@ impl App {
             KeyCode::Char('g') | KeyCode::Home => self.history.select(0),
             KeyCode::Char('G') | KeyCode::End => self.history.select(u32::MAX),
             KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right => {
-                self.focus = Focus::Details;
+                self.focus = Focus::Side;
                 true
             }
             _ => false,
@@ -273,7 +423,7 @@ impl App {
             KeyCode::Char(']') => self.details.jump_file(true),
             KeyCode::Char('[') => self.details.jump_file(false),
             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Backspace => {
-                self.focus = Focus::History;
+                self.focus = Focus::Main;
                 true
             }
             _ => false,
@@ -296,21 +446,28 @@ impl App {
             _ => None,
         };
         let click = matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left));
-        let changed = if let Some(area) = inside(layout.history) {
+        let history = self.view == View::History;
+        let changed = if let Some(area) = inside(layout.main) {
             match wheel {
-                Some(rows) => self.history.scroll(rows),
+                Some(rows) if history => self.history.scroll(rows),
+                Some(rows) => self.changes.scroll_list(rows),
                 None if click => {
-                    let focused = std::mem::replace(&mut self.focus, Focus::History);
-                    self.history.click(mouse.row - area.y) || focused != Focus::History
+                    let focused = std::mem::replace(&mut self.focus, Focus::Main);
+                    let line = mouse.row - area.y;
+                    let selected = if history {
+                        self.history.click(line)
+                    } else {
+                        self.changes.click(line)
+                    };
+                    selected || focused != Focus::Main
                 }
                 None => false,
             }
-        } else if inside(layout.details).is_some() {
+        } else if inside(layout.side).is_some() {
             match wheel {
-                Some(rows) => self.details.scroll(rows),
-                None if click => {
-                    std::mem::replace(&mut self.focus, Focus::Details) != Focus::Details
-                }
+                Some(rows) if history => self.details.scroll(rows),
+                Some(rows) => self.changes.scroll(rows),
+                None if click => std::mem::replace(&mut self.focus, Focus::Side) != Focus::Side,
                 None => false,
             }
         } else {
@@ -339,14 +496,40 @@ impl App {
                 bar.add_modifier(Modifier::BOLD),
             )
             .0;
+        let mut x = x;
         if let Some(branch) = &self.branch {
-            buf.set_stringn(
-                x + 2,
-                area.y,
-                branch,
-                usize::from(area.right().saturating_sub(x + 3)),
-                bar,
-            );
+            x = buf
+                .set_stringn(
+                    x + 2,
+                    area.y,
+                    branch,
+                    usize::from(area.right().saturating_sub(x + 3)),
+                    bar,
+                )
+                .0;
+        }
+        // メインの画面の切り替え（数字のキー）。今の画面は太字。
+        let changes = match self.changes.count() {
+            0 => tr!("1 Changes"),
+            count => tr!("1 Changes ({count})", count = count),
+        };
+        for (view, label) in [(View::Changes, changes), (View::History, tr!("2 History"))] {
+            if x + 3 >= area.right() {
+                break;
+            }
+            let style = match self.view == view {
+                true => bar.add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+                false => bar,
+            };
+            x = buf
+                .set_stringn(
+                    x + 3,
+                    area.y,
+                    label,
+                    usize::from(area.right().saturating_sub(x + 4)),
+                    style,
+                )
+                .0;
         }
         if self.busy() {
             let loading = tr!("Loading…");
@@ -357,33 +540,37 @@ impl App {
         }
 
         let layout = self.layout();
-        if let Some(at) = layout.history {
-            self.history
-                .draw(at, buf, self.clock.now, self.focus == Focus::History);
+        let focused = self.focus == Focus::Main;
+        if let Some(at) = layout.main {
+            match self.view {
+                View::History => self.history.draw(at, buf, self.clock.now, focused),
+                View::Changes => self.changes.draw_list(at, buf, focused),
+            }
         }
-        if let Some(at) = layout.details {
-            // History と並べたときは、間に区切りの線。
+        if let Some(at) = layout.side {
+            // 一覧と並べたときは、間に区切りの線。
             if at.x > area.x {
-                let line = Style::new().fg(Color::Indexed(if self.focus == Focus::Details {
-                    244
-                } else {
-                    238
-                }));
+                let line = Style::new().fg(Color::Indexed(if focused { 238 } else { 244 }));
                 for y in at.y..at.bottom() {
                     buf[(at.x - 1, y)].set_char('│').set_style(line);
                 }
             }
-            self.details.draw(at, buf, &self.clock, &self.theme);
+            match self.view {
+                View::History => self.details.draw(at, buf, &self.clock, &self.theme),
+                View::Changes => self.changes.draw_diff(at, buf, &self.theme),
+            }
         }
 
-        // 一番下: エラーか、キーの案内。右に、今の位置（History は選んでいる行、詳細は見えている最後の行）。
+        // 一番下: エラーか、キーの案内。右に、今の位置（一覧は選んでいる行、詳細と差分は見えている最後の行）。
         let y = area.bottom() - 1;
-        let (at, of) = match self.focus {
-            Focus::History => (
+        let (at, of) = match (self.view, self.focus) {
+            (View::History, Focus::Main) => (
                 (self.history.selected() + 1).min(self.history.total()),
                 self.history.total(),
             ),
-            Focus::Details => self.details.position(),
+            (View::History, Focus::Side) => self.details.position(),
+            (View::Changes, Focus::Main) => self.changes.list_position(),
+            (View::Changes, Focus::Side) => self.changes.diff_position(),
         };
         let position = format!("{at}/{of}");
         let position_x = area
@@ -396,10 +583,18 @@ impl App {
                 buf.set_stringn(area.x + 1, y, error, room, Style::new().fg(Color::Red));
             }
             None => {
-                let hints = match self.focus {
-                    Focus::History => tr!("j/k move   g/G top/bottom   Enter details   q quit"),
-                    Focus::Details => {
+                let hints = match (self.view, self.focus) {
+                    (View::History, Focus::Main) => {
+                        tr!("j/k move   g/G top/bottom   Enter details   q quit")
+                    }
+                    (View::History, Focus::Side) => {
                         tr!("j/k scroll   [/] file   h/l pan   Esc back")
+                    }
+                    (View::Changes, Focus::Main) => {
+                        tr!("j/k move   Space stage/unstage   Enter diff   q quit")
+                    }
+                    (View::Changes, Focus::Side) => {
+                        tr!("j/k scroll   [/] hunk   h/l pan   Esc back")
                     }
                 };
                 buf.set_stringn(

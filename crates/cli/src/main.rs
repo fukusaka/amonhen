@@ -92,7 +92,7 @@ and discard's --rows are diff (unstaged) line numbers; only the changes on those
 can be undone with undo.
 restore puts files as they are in <rev> into the working tree (and the index with --staged); a file <rev> lacks is
 deleted. undo brings the working tree files back.
-tui shows History and the selected commit's details and diff in the terminal (q quits). --snapshot writes one frame
+tui shows History, the selected commit's details and diff, and the Working Copy in the terminal (q quits). --snapshot writes one frame
 as text (- for the standard output) after pressing --keys (one key per character), and --measure-scroll prints how
 long a frame takes while scrolling and how many bytes it sends; both draw at --size (120x40 by default) and need no
 terminal.

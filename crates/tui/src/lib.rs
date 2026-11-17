@@ -5,7 +5,9 @@
 //! 描画はその関数。何も変わらなければ描かない。
 
 mod app;
+mod changes;
 mod details;
+mod diff;
 mod history;
 mod loader;
 mod terminal;
@@ -45,6 +47,13 @@ pub fn run(front: Arc<dyn Front>, local: fn(i64) -> String) -> Result<()> {
     let (tx, rx) = mpsc::channel();
     let mut screen = terminal::Screen::enter()?;
     terminal::read_input(tx.clone());
+    // リポジトリの変化の知らせ（受けられなくても、画面は動く）。
+    let changed = std::sync::Mutex::new(tx.clone());
+    let _ = front.subscribe(Box::new(move |bits| {
+        if let Ok(tx) = changed.lock() {
+            let _ = tx.send(Event::Changed(bits));
+        }
+    }));
     let mut app = App::new(front, tx, Clock { now: now(), local });
     let size = screen.terminal.size()?;
     app.resize(size.width, size.height);
