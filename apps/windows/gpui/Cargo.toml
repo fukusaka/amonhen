@@ -1,0 +1,24 @@
+# GPUI（Zed の UI）で同じ History を描く試作。windows-rs の版が本体の試作と違うので、別の workspace にする。
+[package]
+name = "amonhen-win-gpui"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+amonhen-backend-gix = { path = "../../../crates/backend-gix" }
+amonhen-core = { path = "../../../crates/core" }
+amonhen-layout = { path = "../../../crates/layout" }
+amonhen-model = { path = "../../../crates/model" }
+amonhen-projection = { path = "../../../crates/projection" }
+amonhen-remote = { path = "../../../crates/remote" }
+futures = "0.3"
+gpui = "0.2.2"
+windows = { version = "0.61", features = ["Win32_System_Performance"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+debug = "line-tables-only"

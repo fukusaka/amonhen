@@ -31,6 +31,7 @@ Amon Hen（リポジトリは fukusaka/amonhen。もとの名前は amonhen-stan
 - `crates/ffi-c`: C ABI。`build.rs` が `include/amonhen.h` を生成する（コミットする）
 - `apps/vscode`: VSCode 拡張（TypeScript。もとは vscode-amonhen のリポジトリ。履歴ごと取り込んだ）。エンジンを同梱し、共有の daemon の FE 向けの窓口を使う。決まりは下の「VSCode 拡張」。正式版のタグは `vscode-v*`（アプリ・エンジンは `v*`）
 - `apps/gtk4`: GTK4 のアプリ（gtk4-rs、`amonhen-gtk`）。Linux・BSD が本命（Windows・macOS でも動くが、配るのはそれぞれのネイティブの FE）。コアを FFI なしで直接使う。GTK が要るので、ルートとは別の Cargo の workspace（`Cargo.lock` も別）
+- `apps/windows`: Windows の FE（Rust から windows-reactor で WinUI 3、History は Direct2D・DirectWrite で SwapChainPanel に描く）。今は骨格を決めた試作で、`--host win32` と比べるための GPUI 版（`apps/windows/gpui`）、計測のスクリプト（`measure.ps1`・`measure-input.ps1`）がある。ルートとは別の Cargo の workspace
 - `apps/macos`: SwiftPM のパッケージ。`AmonhenKit`（コアの Swift ラッパー）と `AmonHen`（AppKit のアプリ）
 
 ## 確認
@@ -42,6 +43,7 @@ Amon Hen（リポジトリは fukusaka/amonhen。もとの名前は amonhen-stan
 - VSCode 拡張: `cargo build -p amonhen-cli && (cd apps/vscode && npm ci && npm run typecheck && npm test)`
 - VSCode 拡張を実際の VSCode で: `(cd apps/vscode && npm run test:e2e)`（Linux で画面がなければ `xvfb-run -a`、Windows の実機に ssh からなら `scripts\e2e-windows.ps1`、画面で見るなら `-Desktop`）
 - GTK4 のアプリ: `(cd apps/gtk4 && cargo fmt --check && cargo clippy --all-targets -- -D warnings)`、見た目: `cargo run --release -- <repo> --snapshot out.png`、速さ: `--measure-scroll`
+- Windows のアプリ（Windows で）: `(cd apps/windows && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test)`
 
 ## VSCode 拡張（`apps/vscode`）
 

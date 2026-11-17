@@ -1,0 +1,66 @@
+# Windows の FE の試作。windows-rs が要るので、ルートの workspace には入れず、ここだけの workspace にする
+# （apps/gtk4 と同じ）。コアの crate はパスで参照する。
+[workspace]
+
+[package]
+name = "amonhen-win"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+publish = false
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+amonhen-backend-gix = { path = "../../crates/backend-gix" }
+amonhen-commands = { path = "../../crates/commands" }
+amonhen-core = { path = "../../crates/core", features = ["syntax"] }
+amonhen-layout = { path = "../../crates/layout" }
+amonhen-model = { path = "../../crates/model" }
+amonhen-projection = { path = "../../crates/projection" }
+amonhen-remote = { path = "../../crates/remote" }
+amonhen-watch = { path = "../../crates/watch" }
+amonhen-win-xaml = { path = "xaml" }
+serde_json = "1"
+windows-core = "0.62"
+windows-numerics = "0.3"
+windows-reactor = "0.100"
+windows-core-reactor = { package = "windows-core", version = "0.100" }
+
+[dependencies.windows]
+version = "0.62"
+features = [
+    "Win32_Foundation",
+    "Win32_Globalization",
+    "Win32_Graphics_Direct2D",
+    "Win32_Graphics_Direct2D_Common",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_DirectWrite",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_Graphics_Gdi",
+    "Win32_System_Com",
+    "Win32_System_DataExchange",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Memory",
+    "Win32_System_Performance",
+    "Win32_System_Threading",
+    "Win32_System_Time",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Input",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_Common",
+    "Win32_UI_WindowsAndMessaging",
+]
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+debug = "line-tables-only"
+
+# windows-reactor は crates.io の 0.100.0 をそのまま vendor/ に置き、足りない所（部品の生の WinUI のオブジェクトを
+# 取る口など）を手で足して使う。変えた所はこのディレクトリの git の履歴で追える。
+[patch.crates-io]
+windows-reactor = { path = "vendor/windows-reactor" }

@@ -1,0 +1,13 @@
+# `../src/bindings.rs` を作る道具。Windows で、入っている Windows App SDK の winmd を渡して動かす:
+#   cargo run --manifest-path xaml/generate/Cargo.toml -- "C:\Program Files\WindowsApps\Microsoft.WindowsAppRuntime.2_..._x64__8wekyb3d8bbwe"
+[workspace]
+
+[package]
+name = "amonhen-win-xaml-generate"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+windows-bindgen = "0.100"
