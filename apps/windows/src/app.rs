@@ -259,6 +259,8 @@ enum Dialog {
         depth: usize,
         sparse: bool,
         submodules: bool,
+        /// HEAD のない bundle から取り出すブランチ（None なら main・master・最初のブランチ）。
+        branch: Option<String>,
     },
     /// Quick Open（リポジトリをあいまい検索して新しい窓で開く）。
     QuickOpen {
@@ -567,6 +569,10 @@ enum Message {
     CloneDepth(Option<usize>),
     CloneCheck(usize, bool),
     CloneChoose,
+    /// Clone する bundle のファイルを選ぶ。
+    CloneBundle,
+    /// HEAD のない bundle から取り出すブランチ。
+    CloneBranch(Option<usize>),
     /// clone が終わった（作ったフォルダと、失敗なら理由）。
     Cloned(std::path::PathBuf, Option<String>),
     /// Quick Open の候補を、スキャンで見つけたものも入れて読み直した。
@@ -1378,6 +1384,7 @@ impl Component for Root {
                     depth: 1,
                     sparse: false,
                     submodules: false,
+                    branch: None,
                 });
                 self.dialog_inputs += 1;
             }
@@ -1408,6 +1415,27 @@ impl Component for Root {
                     *[sparse, submodules].into_iter().nth(index).expect("check") = on;
                 }
             }
+            Message::CloneBundle => {
+                let chosen = crate::files::open_files(&tr!(
+                    "Choose a bundle file (git bundle) to clone from."
+                ));
+                if let Some(path) = chosen.into_iter().next()
+                    && let Some(Dialog::Clone { url, branch, .. }) = &mut self.dialog
+                {
+                    *url = path.display().to_string();
+                    *branch = None;
+                    self.dialog_inputs += 1;
+                }
+            }
+            Message::CloneBranch(Some(index)) => {
+                if let Some(Dialog::Clone { url, branch, .. }) = &mut self.dialog {
+                    let names = crate::repositories::clone_bundle(url)
+                        .map(|i| crate::repositories::bundle_branches(&i))
+                        .unwrap_or_default();
+                    *branch = names.get(index).cloned();
+                }
+            }
+            Message::CloneBranch(None) => {}
             Message::CloneChoose => {
                 if let Some(path) =
                     crate::files::pick_folder(&tr!("Clone Location"), &tr!("Choose"))
@@ -1773,10 +1801,17 @@ impl Component for Root {
                         depth,
                         sparse,
                         submodules,
+                        branch,
                     }),
                     ContentDialogResult::Primary,
                 ) => {
-                    let url = url.trim().to_owned();
+                    // bundle のファイルなら、取得する範囲は選べない（git は中身をすべて写す）。HEAD がなければ、選んだ
+                    // ブランチ（既定は main・master・最初のブランチ）を取り出す。
+                    let bundle = crate::repositories::clone_bundle(&url);
+                    let url = match &bundle {
+                        Some(_) => crate::repositories::path_of(&url).display().to_string(),
+                        None => url.trim().to_owned(),
+                    };
                     let name = match name.trim() {
                         "" => crate::repositories::name_from_url(&url),
                         n => n.to_owned(),
@@ -1786,12 +1821,22 @@ impl Component for Root {
                         return beep();
                     }
                     let dest = parent.join(&name);
+                    let download = if bundle.is_some() { 0 } else { download };
+                    let branch = bundle.as_ref().and_then(|info| {
+                        let names = crate::repositories::bundle_branches(info);
+                        if names.is_empty() {
+                            return None;
+                        }
+                        branch
+                            .filter(|b| names.contains(b))
+                            .or_else(|| amonhen_backend_cli::bundle_default_branch(info))
+                    });
                     let options = amonhen_backend_cli::CloneOptions {
                         filter: (download == 1).then(|| "blob:none".to_owned()),
                         depth: (download == 2).then(|| CLONE_DEPTHS[depth.min(3)]),
                         sparse,
                         recurse_submodules: submodules,
-                        ..Default::default()
+                        branch,
                     };
                     if dest.exists() {
                         // ダイアログを閉じた同じ更新では次のダイアログを出せないので、知らせで出す。
@@ -6024,7 +6069,9 @@ impl Root {
                 depth,
                 sparse,
                 submodules,
+                branch,
             }) => {
+                let bundle = crate::repositories::clone_bundle(url);
                 let field = |index: usize, text: &str, placeholder: String| {
                     TextBox::new()
                         .text(text.to_owned())
@@ -6037,12 +6084,19 @@ impl Root {
                     tr!("File contents when needed"),
                     tr!("Recent history only"),
                 ];
-                let help = match download {
-                    1 => tr!(
+                let help = match (&bundle, download) {
+                    (Some(info), _) if info.prerequisites > 0 => format!(
+                        "⚠ {}",
+                        tr!(
+                            "This bundle has only the commits after ones it doesn’t include, so it can’t be cloned."
+                        )
+                    ),
+                    (Some(_), _) => tr!("From a bundle file, everything in it is copied."),
+                    (None, 1) => tr!(
                         "Good for large repositories: file contents are fetched when a diff or file needs them."
                     ),
-                    2 => tr!("Older history can be fetched later from the end of History."),
-                    _ => tr!(
+                    (None, 2) => tr!("Older history can be fetched later from the end of History."),
+                    (None, _) => tr!(
                         "The whole history and the contents of every file, as git does by default."
                     ),
                 };
@@ -6055,6 +6109,34 @@ impl Root {
                         _ => tr!("10,000 Commits"),
                     })
                     .collect();
+                let download = if bundle.is_some() { &0 } else { download };
+                // HEAD のない bundle: 取り出すブランチ（GTK4 版の Branch: の行）。
+                let names = bundle
+                    .as_ref()
+                    .map(crate::repositories::bundle_branches)
+                    .unwrap_or_default();
+                let branch_row: View = if names.is_empty() {
+                    View::empty()
+                } else {
+                    let chosen = branch
+                        .clone()
+                        .filter(|b| names.contains(b))
+                        .or_else(|| {
+                            bundle
+                                .as_ref()
+                                .and_then(amonhen_backend_cli::bundle_default_branch)
+                        });
+                    let at = chosen.and_then(|c| names.iter().position(|n| *n == c));
+                    StackPanel::new()
+                        .spacing(4.0)
+                        .children((
+                            label(tr!("Branch:")),
+                            ComboBox::new()
+                                .items_source(names)
+                                .selected_index(at)
+                                .on_selection_changed(context.callback(Message::CloneBranch)),
+                        ))
+                };
                 let depth_box: View = if *download == 2 {
                     ComboBox::new()
                         .items_source(depths)
@@ -6064,7 +6146,9 @@ impl Root {
                 } else {
                     View::empty()
                 };
-                let ready = !url.trim().is_empty() && !folder.trim().is_empty();
+                let ready = !url.trim().is_empty()
+                    && !folder.trim().is_empty()
+                    && bundle.as_ref().is_none_or(|i| i.prerequisites == 0);
                 dialog
                     .is_open(true)
                     .title(tr!("Clone Repository"))
@@ -6073,14 +6157,24 @@ impl Root {
                     .is_primary_button_enabled(ready)
                     .content(
                         StackPanel::new().spacing(4.0).width(480.0).children((
-                            field(
-                                0,
-                                url,
-                                tr!(
-                                    "https://github.com/owner/repo.git, git@host:owner/repo.git or a bundle file"
-                                ),
-                            )
-                            .element_ref(&self.dialog_input),
+                            Grid::new()
+                                .columns([GridLength::Star(1.0), GridLength::Auto])
+                                .column_spacing(6.0)
+                                .children((
+                                    field(
+                                        0,
+                                        url,
+                                        tr!(
+                                            "https://github.com/owner/repo.git, git@host:owner/repo.git or a bundle file"
+                                        ),
+                                    )
+                                    .element_ref(&self.dialog_input)
+                                    .grid_column(0),
+                                    Button::new()
+                                        .on_click(context.callback(|()| Message::CloneBundle))
+                                        .grid_column(1)
+                                        .content(TextBlock::new().text(tr!("Choose Bundle…"))),
+                                )),
                             label(tr!("Location:")),
                             Grid::new()
                                 .columns([GridLength::Star(1.0), GridLength::Auto])
@@ -6102,11 +6196,13 @@ impl Root {
                                     ComboBox::new()
                                         .items_source(downloads)
                                         .selected_index(*download)
+                                        .is_enabled(bundle.is_none())
                                         .on_selection_changed(
                                             context.callback(Message::CloneDownload),
                                         ),
                                     depth_box,
                                 )),
+                            branch_row,
                             TextBlock::new()
                                 .text(help)
                                 .font_size(12.0)

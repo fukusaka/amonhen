@@ -370,6 +370,33 @@ pub fn path_of(text: &str) -> PathBuf {
     expand(text.trim())
 }
 
+/// Clone の URL の欄が bundle のファイルなら、その見出し（GTK4 版の Clone のシートと同じ）。
+pub fn clone_bundle(url: &str) -> Option<amonhen_model::BundleInfo> {
+    if url.trim().is_empty() {
+        return None;
+    }
+    let path = path_of(url);
+    path.is_file()
+        .then(|| amonhen_backend_cli::bundle_info(&path))
+        .flatten()
+}
+
+/// HEAD のない bundle から取り出せるブランチ（短い名前。clone できないときは空）。
+pub fn bundle_branches(info: &amonhen_model::BundleInfo) -> Vec<String> {
+    if info.head || info.prerequisites > 0 {
+        return Vec::new();
+    }
+    info.refs
+        .iter()
+        .map(|r| {
+            r.strip_prefix("refs/heads/")
+                .or_else(|| r.strip_prefix("refs/tags/"))
+                .unwrap_or(r)
+                .to_owned()
+        })
+        .collect()
+}
+
 /// URL の最後の部分（`.git`・`.bundle` を除く。GTK4 版の `name_from_url`）。
 pub fn name_from_url(url: &str) -> String {
     let trimmed = url.trim().trim_end_matches(['/', '\\']);
