@@ -790,7 +790,6 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
                     .tooltip(tr!(
                         "Discard the working tree changes (return to the content of the index)"
                     ))
-                    .into()
             } else {
                 View::empty()
             };
