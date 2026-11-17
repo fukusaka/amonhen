@@ -420,12 +420,18 @@ pub fn fetch(location: &str) -> Option<String> {
 
 /// リポジトリを新しい窓（別のプロセス）で開く。
 pub fn open_window(location: &str) -> Result<(), String> {
+    open_window_with(location, &[])
+}
+
+/// リポジトリを新しい窓で開く（`extra` は足す引数。`--repositories` なら Repositories の画面から）。
+pub fn open_window_with(location: &str, extra: &[&str]) -> Result<(), String> {
     if !is_repository(location) {
         return Err(tr!("Not found — {path}", path = location));
     }
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     amonhen_model::process::command(exe)
         .arg(expand(location))
+        .args(extra)
         .spawn()
         .map(|_| ())
         .map_err(|e| e.to_string())

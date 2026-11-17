@@ -54,10 +54,15 @@ pub const IMPLEMENTED: &[&str] = &[
 
 /// 表にない、この FE が File メニューの先頭に置く項目（GTK4 版の `appmenu` の Open…・Clone…。macOS 版の
 /// ⌘O・⌘⌃C）。
-const FILE_ITEMS: &[(&str, &str)] = &[("open", "Primary+O"), ("clone", "Primary+Alt+C")];
+const FILE_ITEMS: &[(&str, &str)] = &[
+    ("new-window", "Primary+N"),
+    ("open", "Primary+O"),
+    ("clone", "Primary+Alt+C"),
+];
 
 fn file_item_title(id: &str) -> String {
     match id {
+        "new-window" => amonhen_model::tr!("New Window"),
         "open" => amonhen_model::tr!("Open…"),
         _ => "Clone…".to_owned(),
     }

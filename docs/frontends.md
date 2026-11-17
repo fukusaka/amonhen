@@ -76,7 +76,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Feature | macOS | GTK4 | Windows | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
 | Repository tabs in a window | ✓ | ✓ | — | n/a | n/a |  |
-| Separate windows (New Window) | ✓ | ✓ | — | n/a | n/a |  |
+| Separate windows (New Window) | ✓ | ✓ | ✓ | n/a | n/a | Windows: A window is a separate process; New Window opens one on the current repository showing Repositories |
 | Open windows and tabs restored at launch | ✓ | ✓ | — | n/a | n/a |  |
 | Connecting tab for SSH and daemon repositories (Cancel, Try Again) | ✓ | ✓ | — | n/a | n/a |  |
 | Title shows uncommitted ● and ahead/behind | ✓ | ✓ | ✓ | n/a | n/a | GTK4: On the tab names.<br>Windows: Windows: On the window title (there are no tabs yet). |

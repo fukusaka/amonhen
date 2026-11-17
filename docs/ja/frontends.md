@@ -76,7 +76,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 機能 | macOS | GTK4 | Windows | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
 | 窓の中のリポジトリのタブ | ✓ | ✓ | — | n/a | n/a |  |
-| 別の窓（New Window） | ✓ | ✓ | — | n/a | n/a |  |
+| 別の窓（New Window） | ✓ | ✓ | ✓ | n/a | n/a | Windows: 窓は別のプロセス。New Window は今のリポジトリの窓を開き、Repositories を出す |
 | 起動時に窓とタブを戻す | ✓ | ✓ | — | n/a | n/a |  |
 | SSH・daemon のリポジトリのつなぎ中のタブ（Cancel・Try Again） | ✓ | ✓ | — | n/a | n/a |  |
 | 題に未コミットの ● と ahead/behind | ✓ | ✓ | ✓ | n/a | n/a | GTK4: タブの名前に出る。<br>Windows: Windows: 窓のタイトルに（タブはまだない）。 |

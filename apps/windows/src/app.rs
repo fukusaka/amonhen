@@ -1400,6 +1400,27 @@ impl Component for Root {
                     *selected = index;
                 }
             }
+            // File > New Window: 新しい窓（別のプロセス）に Repositories の画面を出す（窓にタブがないので、今の
+            // リポジトリを開いた窓。GTK4 版・macOS 版の New Window）。
+            Message::Command(id) if id == "new-window" => {
+                let location = self
+                    .repo
+                    .as_ref()
+                    .and_then(|r| r.paths().workdir)
+                    .map(|d| d.display().to_string());
+                let result = match location {
+                    Some(location) => {
+                        crate::repositories::open_window_with(&location, &["--repositories"])
+                    }
+                    None => Err(tr!("Not found — {path}", path = "")),
+                };
+                if let Err(message) = result {
+                    self.dialog = Some(Dialog::Failed {
+                        title: tr!("New Window"),
+                        message,
+                    });
+                }
+            }
             Message::Command(id) if id == "open" => {
                 // 開いているものとは別の窓で開く（窓にタブがない）。
                 let Some(path) = crate::files::pick_folder(&tr!("Open…"), &tr!("Open")) else {
@@ -5135,6 +5156,10 @@ impl Component for Root {
         context.use_effect("history", (), move || {
             let (panel, area, diff_panel, diff_area, sidebar, sidebar_menu_host) = refs;
             let (args, started) = ARGS.with(|a| a.borrow().clone()).expect("args");
+            // File > New Window で開いた窓は、Repositories の画面から（GTK4 版の `show_home`）。
+            if args.repositories {
+                sender.send(Message::Command("repositories".to_owned()));
+            }
             let session = match Session::new(&args, "app", started, Arc::new(|| {})) {
                 Ok(s) => s,
                 Err(e) => {

@@ -56,6 +56,8 @@ pub struct Args {
     pub child_hwnd: bool,
     pub options: Options,
     pub out: Option<PathBuf>,
+    /// 開いたら Repositories の画面を出す（File > New Window で開いた窓）。
+    pub repositories: bool,
 }
 
 fn parse() -> Result<Args, String> {
@@ -75,6 +77,7 @@ fn parse() -> Result<Args, String> {
             tearing: false,
         },
         out: None,
+        repositories: false,
     };
     let mut rows = measure::ROWS_PER_FRAME;
     let mut measuring = false;
@@ -102,6 +105,7 @@ fn parse() -> Result<Args, String> {
             "--sync" => parsed.options.sync = value()?.parse().map_err(|e| format!("{e}"))?,
             "--tearing" => parsed.options.tearing = true,
             "--out" => parsed.out = Some(value()?.into()),
+            "--repositories" => parsed.repositories = true,
             // SAFETY: スレッドを作る前（引数を読んでいるところ）で、ほかに環境を読む者はいない。
             "--profile" => unsafe { std::env::set_var("AMONHEN_PROFILE", "1") },
             _ if a.starts_with("--") => return Err(format!("知らない引数: {a}")),
