@@ -514,7 +514,7 @@ private struct RemotesTab: View {
             }
             .contextMenu(forSelectionType: String.self) { names in
                 Button(L("Edit…")) { names.first.map(edit) }.disabled(names.count != 1)
-                Button("Prune") { for n in names { model.changeRemote(["kind": "prune", "name": n]) } }.disabled(names.isEmpty)
+                Button("Prune…") { prune(Array(names)) }.disabled(names.isEmpty)
                 Divider()
                 Button(L("Remove…")) { names.first.map(remove) }.disabled(names.count != 1)
             } primaryAction: { names in
@@ -523,7 +523,7 @@ private struct RemotesTab: View {
             HStack {
                 Button(L("Add…")) { present(nil) }
                 Button(L("Edit…")) { selection.map(edit) }.disabled(selection == nil)
-                Button("Prune") { selection.map { model.changeRemote(["kind": "prune", "name": $0]) } }
+                Button("Prune…") { selection.map { prune([$0]) } }
                     .disabled(selection == nil)
                     .help(L("Remove remote-tracking branches that no longer exist on the remote."))
                 Spacer()
@@ -542,6 +542,27 @@ private struct RemotesTab: View {
     private func present(_ remote: RemoteEntry?) {
         guard let window = NSApp.keyWindow ?? NSApp.mainWindow else { return }
         RemoteSheet.present(in: window, repository: model.repository, remote: remote) { model.perform($0) }
+    }
+
+    /// Prune もリモートと話す（消えたブランチを読む）ので、サイドバーと同じく先に聞く（docs/ux.md）。
+    private func prune(_ names: [String]) {
+        guard !names.isEmpty else { return }
+        let list = names.sorted().joined(separator: ", ")
+        let alert = NSAlert()
+        alert.messageText = L("Prune %@?", list)
+        alert.informativeText = L("Removes the remote-tracking branches whose branches are gone from %@ (git remote prune).", list)
+            + " " + Actions.cantUndo
+        alert.addButton(withTitle: "Prune")
+        alert.addButton(withTitle: L("Cancel"))
+        let run = { (response: NSApplication.ModalResponse) in
+            guard response == .alertFirstButtonReturn else { return }
+            for name in names { model.changeRemote(["kind": "prune", "name": name]) }
+        }
+        if let window = NSApp.keyWindow ?? NSApp.mainWindow {
+            alert.beginSheetModal(for: window, completionHandler: run)
+        } else {
+            run(alert.runModal())
+        }
     }
 
     private func remove(_ name: String) {
