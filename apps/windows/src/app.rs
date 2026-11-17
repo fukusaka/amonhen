@@ -92,6 +92,8 @@ struct Root {
     diff_file: Option<crate::data::DiffFile>,
     /// Working Copy の差分で右クリックした行（その行か hunk の行）と、含めている行があるか。
     diff_rows: Option<(Vec<usize>, bool)>,
+    /// 始めた clone が sparse か（終わったら、取り出すフォルダを尋ねる）。
+    clone_sparse: bool,
     refs: Option<Arc<RefsSnapshot>>,
     /// ローカルブランチの分け方（コアの `branchGroups`）。
     groups: Option<BranchGroups>,
@@ -477,6 +479,8 @@ enum Dialog {
         selected: Option<usize>,
         /// 今取り出しているフォルダ（空なら sparse checkout を始める）。
         existing: Vec<String>,
+        /// clone した直後なら、そのリポジトリ（選んでも取り消しても、その後で新しい窓で開く）。
+        cloned: Option<String>,
     },
     /// Repositories の行の表示名を変える。
     RenameRepository { location: String, name: String },
@@ -832,6 +836,7 @@ impl Component for Root {
             diff_area: ElementRef::new(),
             diff_file: None,
             diff_rows: None,
+            clone_sparse: false,
             refs: None,
             groups: None,
             info: None,
@@ -1494,6 +1499,22 @@ impl Component for Root {
                     None => {
                         let dest = dest.display().to_string();
                         crate::repositories::add_bookmark(&dest);
+                        // 根のファイルだけを取り出した clone なら、取り出すフォルダを先に選ぶ（GTK4 版の
+                        // `choose_folder`）。選んでも取り消しても、その後で開く。
+                        if std::mem::take(&mut self.clone_sparse)
+                            && let Some(repo) = open_repository(&dest)
+                        {
+                            load_tree_folders(repo.clone(), "/".to_owned(), context);
+                            self.dialog = Some(Dialog::TreeFolder {
+                                repo,
+                                path: "/".to_owned(),
+                                entries: None,
+                                selected: None,
+                                existing: Vec::new(),
+                                cloned: Some(dest),
+                            });
+                            return;
+                        }
                         if let Err(message) = crate::repositories::open_window(&dest) {
                             self.dialog = Some(Dialog::Failed {
                                 title: tr!("Couldn’t clone"),
@@ -1895,6 +1916,7 @@ impl Component for Root {
                     }
                     crate::repositories::remember_clone_folder(folder.trim());
                     self.busy = Some(tr!("Cloning {url}…", url = url));
+                    self.clone_sparse = options.sparse;
                     context.spawn_background(move |_| {
                         let result = amonhen_backend_cli::clone(&url, &dest, &options);
                         Message::Cloned(dest, result.err().map(|e| e.to_string()))
@@ -2333,6 +2355,7 @@ impl Component for Root {
                         entries,
                         selected,
                         existing,
+                        cloned,
                     }),
                     ContentDialogResult::Primary,
                 ) => {
@@ -2351,9 +2374,43 @@ impl Component for Root {
                         return;
                     }
                     let mut folders = existing;
-                    folders.push(chosen);
+                    folders.push(chosen.clone());
                     let command = json!({ "op": "sparseCheckout", "folders": folders });
+                    // clone した直後: 取り出してから新しい窓で開く。
+                    if let Some(dest) = cloned {
+                        self.busy = Some(tr!("Checking out {folder}…", folder = &chosen));
+                        context.spawn_background(move |_| {
+                            let reply: Value =
+                                serde_json::from_str(&repo.run_json(&command.to_string()))
+                                    .unwrap_or_else(|e| json!({ "error": e.to_string() }));
+                            let failed = reply["error"].as_str().map(|e| {
+                                (
+                                    tr!("Couldn’t check out {folder}", folder = &chosen),
+                                    e.to_owned(),
+                                )
+                            });
+                            let opened = crate::repositories::open_window(&dest)
+                                .err()
+                                .map(|e| (tr!("Couldn’t clone"), e));
+                            Message::Performed(failed.or(opened))
+                        });
+                        return;
+                    }
                     perform(context, repo, command, tr!("Check Out One More Folder"));
+                }
+                // clone した直後に取り消した: そのまま開く。
+                (
+                    Some(Dialog::TreeFolder {
+                        cloned: Some(dest), ..
+                    }),
+                    _,
+                ) => {
+                    if let Err(message) = crate::repositories::open_window(&dest) {
+                        self.dialog = Some(Dialog::Failed {
+                            title: tr!("Couldn’t clone"),
+                            message,
+                        });
+                    }
                 }
                 (
                     Some(Dialog::RenameRepository { location, name }),
@@ -4121,6 +4178,7 @@ impl Component for Root {
                         entries: None,
                         selected: None,
                         existing,
+                        cloned: None,
                     });
                     return;
                 }
@@ -6048,6 +6106,7 @@ impl Root {
                 entries,
                 selected,
                 existing,
+                cloned,
                 ..
             }) => {
                 let first = existing.is_empty();
@@ -6091,7 +6150,11 @@ impl Root {
                     .content(
                         StackPanel::new().spacing(6.0).width(440.0).children((
                             TextBlock::new()
-                                .text(if first {
+                                .text(if cloned.is_some() {
+                                    tr!(
+                                        "Only the files at the top are checked out. Choose a folder to check out too; add more later in Settings > Fetching and Folders."
+                                    )
+                                } else if first {
                                     tr!(
                                         "Only this folder is checked out, with the files at the top. Others are removed from disk until you check them out again; add more folders here later."
                                     )
@@ -10288,6 +10351,12 @@ fn attach_chain(panel: &ElementRef<SwapChainPanel>, surface: &Surface) -> Result
             eprintln!("SwapChainPanel に swap chain をつなげない: {e:?}");
         }
     }))
+}
+
+/// 開いていないリポジトリを、その場で開く（clone した直後に取り出すフォルダを選ぶ）。
+fn open_repository(location: &str) -> Option<Arc<Repository>> {
+    let backend = amonhen_backend_gix::GixBackend::open(location).ok()?;
+    Some(Arc::new(Repository::new(backend)))
 }
 
 /// HEAD の木の `path` にあるフォルダを裏で読む（コアの `treeFolders`）。
