@@ -23,6 +23,23 @@ pub fn run(args: &[String]) -> Result<ExitCode> {
     let mut keys = String::new();
     let mut measure = false;
     let mut size = DEFAULT_SIZE;
+    // askpass として呼ばれた（`amonhen-tui` が作るスクリプトから。隠した引数）。
+    #[cfg(unix)]
+    if let [flag, socket, rest @ ..] = args
+        && flag == "--askpass"
+    {
+        let prompt = rest.first().map_or("", String::as_str);
+        return Ok(
+            match amonhen_tui::askpass::ask(std::path::Path::new(socket), prompt)? {
+                Some(answer) => {
+                    println!("{answer}");
+                    ExitCode::SUCCESS
+                }
+                // やめた。
+                None => ExitCode::FAILURE,
+            },
+        );
+    }
     let mut a = Args::new(args);
     while let Some(arg) = a.rest.next() {
         match arg.as_str() {
@@ -49,6 +66,18 @@ pub fn run(args: &[String]) -> Result<ExitCode> {
             _ => dir = PathBuf::from(arg),
         }
     }
+    // 画面を出すなら、git や ssh が尋ねることを TUI の中で聞けるよう、askpass を用意する。リポジトリを開く前に
+    // 環境変数に入れる（共有の daemon には、開くときの環境が渡る）。
+    #[cfg(unix)]
+    let askpass = match snapshot.is_none() && !measure {
+        true => {
+            let askpass = amonhen_tui::askpass::Askpass::prepare(&std::env::current_exe()?)?;
+            // SAFETY: まだほかのスレッドを始めていない。
+            unsafe { std::env::set_var("AMONHEN_ASKPASS", askpass.script()) };
+            Some(askpass)
+        }
+        false => None,
+    };
     let front: Arc<dyn Front> = Arc::from(open_repository(&dir)?);
     if let Some(file) = snapshot {
         let now = std::time::SystemTime::now()
@@ -88,6 +117,11 @@ pub fn run(args: &[String]) -> Result<ExitCode> {
                 incomplete = m.incomplete_frames,
             )
         );
+        return Ok(ExitCode::SUCCESS);
+    }
+    #[cfg(unix)]
+    if let Some(askpass) = askpass {
+        amonhen_tui::run_asking(front, local, &askpass)?;
         return Ok(ExitCode::SUCCESS);
     }
     amonhen_tui::run(front, local)?;

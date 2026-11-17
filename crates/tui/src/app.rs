@@ -28,6 +28,9 @@ pub enum Event {
     Input(Input),
     /// リポジトリが変わった（`amonhen_watch::Changes` のビット）。
     Changed(u32),
+    /// git や ssh が、パスワードなどを尋ねてきた。
+    #[cfg(unix)]
+    Ask(crate::askpass::Question),
     Loaded(Loaded),
     Failed(String),
 }
@@ -78,6 +81,10 @@ pub struct App {
     confirm: Option<(String, String, Request)>,
     /// 新しいブランチの名前を打っている: 始まり（ref かコミット）、その出し方、打った名前。
     typing_branch: Option<(String, String, String)>,
+    /// git や ssh から尋ねられていること（先頭を画面で聞いている）と、打った答え。
+    #[cfg(unix)]
+    questions: std::collections::VecDeque<crate::askpass::Question>,
+    answer: String,
     /// 動いている操作（fetch・push など）の、一番上の行に出す名前。
     running: Option<String>,
     /// 今のブランチの上流（`origin/main`）と、ahead・behind。
@@ -138,6 +145,9 @@ impl App {
             reopen: false,
             confirm: None,
             typing_branch: None,
+            #[cfg(unix)]
+            questions: std::collections::VecDeque::new(),
+            answer: String::new(),
             running: None,
             upstream: None,
             ahead: 0,
@@ -283,6 +293,11 @@ impl App {
             Event::Input(Input::Mouse(mouse)) => self.mouse(mouse),
             Event::Input(Input::Resize(cols, rows)) => self.resize(cols, rows),
             Event::Input(_) => {}
+            #[cfg(unix)]
+            Event::Ask(question) => {
+                self.questions.push_back(question);
+                self.dirty = true;
+            }
             Event::Changed(bits) => {
                 if bits & (CHANGED_INDEX | CHANGED_WORKTREE) != 0 {
                     self.changes.refresh();
@@ -483,6 +498,28 @@ impl App {
                 self.send(request);
             }
             self.dirty = true;
+            return;
+        }
+        // 尋ねられている間は、Enter で答える、Esc でやめる（尋ねた操作は失敗する）。
+        #[cfg(unix)]
+        if let Some(question) = self.questions.front() {
+            self.dirty = true;
+            match key.code {
+                KeyCode::Enter => {
+                    let _ = question.reply.send(Some(std::mem::take(&mut self.answer)));
+                    self.questions.pop_front();
+                }
+                KeyCode::Esc => {
+                    let _ = question.reply.send(None);
+                    self.answer.clear();
+                    self.questions.pop_front();
+                }
+                KeyCode::Backspace => {
+                    self.answer.pop();
+                }
+                KeyCode::Char(ch) if !control => self.answer.push(ch),
+                _ => {}
+            }
             return;
         }
         // キーの一覧は、次のキーで閉じる。
@@ -1405,7 +1442,39 @@ impl App {
             .saturating_sub(position.width() as u16 + 1)
             .max(area.x);
         let room = usize::from(position_x.saturating_sub(area.x + 2));
+        #[cfg(unix)]
+        let asked = self.questions.front();
+        #[cfg(not(unix))]
+        let asked: Option<&()> = None;
         match (&self.confirm, &self.error) {
+            // 尋ねられていること: 文と、打った答え（パスワードは隠す）。
+            #[cfg(unix)]
+            _ if asked.is_some() => {
+                let question = asked.unwrap();
+                let shown = match question.secret() {
+                    true => "•".repeat(self.answer.chars().count()),
+                    false => self.answer.clone(),
+                };
+                let x = buf
+                    .set_stringn(
+                        area.x + 1,
+                        y,
+                        question.prompt.trim(),
+                        room,
+                        Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                    )
+                    .0;
+                let x = buf
+                    .set_stringn(
+                        x + 1,
+                        y,
+                        shown,
+                        usize::from(position_x.saturating_sub(x + 2)),
+                        Style::new(),
+                    )
+                    .0;
+                cursor = Some((x.min(position_x.saturating_sub(1)), y));
+            }
             (Some((ask, yes, _)), _) => {
                 let x = buf
                     .set_stringn(

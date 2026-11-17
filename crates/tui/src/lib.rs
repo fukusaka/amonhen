@@ -5,6 +5,8 @@
 //! 描画はその関数。何も変わらなければ描かない。
 
 mod app;
+#[cfg(unix)]
+pub mod askpass;
 mod changes;
 mod details;
 mod diff;
@@ -47,7 +49,26 @@ pub struct Clock {
 
 /// 端末を取って、終わる（`q`）まで動かす。
 pub fn run(front: Arc<dyn Front>, local: fn(i64) -> String) -> Result<()> {
+    run_with(front, local, |_| Ok(()))
+}
+
+/// `run` と同じ。`askpass` があれば、git や ssh が尋ねてきたことを画面で聞く。
+#[cfg(unix)]
+pub fn run_asking(
+    front: Arc<dyn Front>,
+    local: fn(i64) -> String,
+    askpass: &askpass::Askpass,
+) -> Result<()> {
+    run_with(front, local, |events| askpass.serve(events))
+}
+
+fn run_with(
+    front: Arc<dyn Front>,
+    local: fn(i64) -> String,
+    serve: impl FnOnce(mpsc::Sender<Event>) -> Result<()>,
+) -> Result<()> {
     let (tx, rx) = mpsc::channel();
+    serve(tx.clone())?;
     let mut screen = terminal::Screen::enter()?;
     terminal::read_input(tx.clone());
     // リポジトリの変化の知らせ（受けられなくても、画面は動く）。
