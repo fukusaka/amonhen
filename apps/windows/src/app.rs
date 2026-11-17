@@ -3114,8 +3114,25 @@ impl Component for Root {
                         Some(Ok(path)) => Some(path),
                         None => None,
                     };
-                    self.working_file = path;
+                    // コンフリクトのあるファイルを選び直したら、マージエディタで開く（GTK4 版・macOS 版は右の列に
+                    // 埋め込む）。同じファイルの選び直しの知らせでは開き直さない（閉じた後にまた開かないように）。
+                    let changed = path != self.working_file;
+                    let conflicted = path.as_ref().and_then(|p| {
+                        let s = self.status.as_ref()?;
+                        s.status
+                            .entries
+                            .iter()
+                            .find(|e| &e.path == p)
+                            .map(|e| e.kind == amonhen_model::StatusKind::Unmerged)
+                    });
+                    self.working_file = path.clone();
                     self.load_working_diff();
+                    if changed
+                        && conflicted == Some(true)
+                        && let Some(path) = path
+                    {
+                        self.update(Message::OpenMerge(path), context);
+                    }
                 }
             }
             Message::Committed(failed, hooks) => {
