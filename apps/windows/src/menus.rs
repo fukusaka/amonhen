@@ -141,6 +141,16 @@ pub fn menu_bar(on_click: impl Fn() -> Callback<String>) -> View {
                 let mark = if order == value { "✓ " } else { "" };
                 items.push(MenuItem::item(id, format!("{mark}{title}")));
             }
+            // History の範囲（GTK4 版の History のバーの範囲。ref はサイドバーで選ぶ）。
+            items.push(MenuItem::separator("-scope"));
+            items.push(MenuItem::item(
+                "scope-all",
+                amonhen_model::tr!("All Branches"),
+            ));
+            items.push(MenuItem::item(
+                "scope-current",
+                amonhen_model::tr!("Current Branch"),
+            ));
             // 行に出す項目（GTK4 版の View の History の見せ方。CI の状態はこの FE にない）。
             items.push(MenuItem::separator("-items"));
             let shown = crate::render::history_items();

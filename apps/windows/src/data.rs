@@ -418,6 +418,41 @@ pub struct Data {
     /// マージ済みブランチを折りたたむか、取り込んだ側も見せる merge（裏のスレッドと共有）。
     fold: Arc<std::sync::atomic::AtomicBool>,
     expanded: Arc<std::sync::Mutex<Vec<amonhen_model::Oid>>>,
+    /// History の範囲（裏のスレッドと共有）。
+    scope: Arc<std::sync::Mutex<Scope>>,
+    /// 範囲を変えた（作り直した History が届いたら、選んだ行を見せる）。
+    pub scope_changed: bool,
+}
+
+/// History の範囲（GTK4 版の `historydisplay::Scope`）。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum Scope {
+    /// 全ブランチ。
+    #[default]
+    All,
+    /// 今のブランチ（HEAD から辿れるもの）。
+    Current,
+    /// サイドバーで選んだ ref（種類と名前）。それぞれから辿れるコミット。
+    Refs(Vec<(RefKind, String)>),
+}
+
+impl Scope {
+    /// 起点のコミット（ref がなくなっていれば、その分は除く）。
+    pub fn tips(&self, refs: &Refs) -> Vec<amonhen_model::Oid> {
+        match self {
+            Scope::All => Vec::new(),
+            Scope::Current => refs.head.into_iter().collect(),
+            Scope::Refs(list) => list
+                .iter()
+                .filter_map(|(kind, name)| {
+                    refs.entries
+                        .iter()
+                        .find(|e| e.kind == *kind && &e.name == name)
+                        .and_then(|e| e.target)
+                })
+                .collect(),
+        }
+    }
 }
 
 /// 変化の知らせのビットのうち、History を作り直す頼み（`amonhen_watch::Changes` が使わない上のビット）。
@@ -444,6 +479,9 @@ impl Data {
         )));
         let expanded: Arc<std::sync::Mutex<Vec<amonhen_model::Oid>>> = Arc::default();
         let (thread_fold, thread_expanded) = (fold.clone(), expanded.clone());
+        // History の範囲（全ブランチ・今のブランチ・選んだ ref）。
+        let scope: Arc<std::sync::Mutex<Scope>> = Arc::default();
+        let thread_scope = scope.clone();
         let order_of = move || {
             if thread_topo.load(std::sync::atomic::Ordering::Relaxed) {
                 amonhen_model::HistoryOrder::Topo
@@ -470,11 +508,30 @@ impl Data {
             // 出す History: 折りたたむなら、マージ済みブランチを折りたたんだもの（GTK4 版の `reshape`）。作れない・
             // 空になったときは全体のまま。
             let shape = |full: Arc<HistorySnapshot>| -> Arc<HistorySnapshot> {
-                if !thread_fold.load(std::sync::atomic::Ordering::Relaxed) {
+                let fold = thread_fold.load(std::sync::atomic::Ordering::Relaxed);
+                // 範囲を絞るなら、その起点（ref は今の指す先。ほかのプログラムで動いても付け替わる）。
+                let scope = thread_scope.lock().unwrap().clone();
+                let tips: Vec<amonhen_model::Oid> = match &scope {
+                    Scope::All => Vec::new(),
+                    Scope::Current | Scope::Refs(_) => match repo.load_refs() {
+                        Ok(refs) => scope.tips(&refs.refs),
+                        Err(e) => {
+                            eprintln!("ref を読めない: {e}");
+                            Vec::new()
+                        }
+                    },
+                };
+                if !fold && tips.is_empty() {
                     return full;
                 }
                 let expanded = thread_expanded.lock().unwrap().clone();
-                match repo.history_folded(None, &expanded) {
+                let some = (!tips.is_empty()).then_some(&tips[..]);
+                let shaped = if fold {
+                    repo.history_folded(some, &expanded)
+                } else {
+                    repo.history_filtered(&tips)
+                };
+                match shaped {
                     Ok(folded) if !(folded.graph.is_empty() && !full.graph.is_empty()) => folded,
                     Ok(_) => full,
                     Err(e) => {
@@ -613,6 +670,8 @@ impl Data {
             topo,
             fold,
             expanded,
+            scope,
+            scope_changed: false,
         }
     }
 
@@ -841,6 +900,24 @@ impl Data {
             order == amonhen_model::HistoryOrder::Topo,
             std::sync::atomic::Ordering::Relaxed,
         );
+        let _ = self.changed_tx.send(REORDER);
+    }
+
+    /// History の範囲。
+    pub fn scope(&self) -> Scope {
+        self.scope.lock().unwrap().clone()
+    }
+
+    /// History の範囲を変えて作り直す（GTK4 版の `set_scope`）。
+    pub fn set_scope(&mut self, scope: Scope) {
+        {
+            let mut current = self.scope.lock().unwrap();
+            if *current == scope {
+                return;
+            }
+            *current = scope;
+        }
+        self.scope_changed = true;
         let _ = self.changed_tx.send(REORDER);
     }
 

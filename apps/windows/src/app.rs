@@ -1532,6 +1532,15 @@ impl Component for Root {
                 }
                 with_history(|h| h.session.set_display(|| crate::render::set_one_line(value)));
             }
+            // View の All Branches・Current Branch と、上の帯の All Branches（History の範囲）。
+            Message::Command(id) if id == "scope-all" || id == "scope-current" => {
+                let scope = if id == "scope-all" {
+                    crate::data::Scope::All
+                } else {
+                    crate::data::Scope::Current
+                };
+                with_history(|h| h.session.data.set_scope(scope));
+            }
             // View の Fold Merged Branches（GTK4 版の History の見せ方）。
             Message::Command(id) if id == "fold-merged-branches" => {
                 let value = !crate::prefs::bool(crate::prefs::FOLD_MERGED_BRANCHES);
@@ -5477,10 +5486,26 @@ impl Component for Root {
                 ) {
                     self.show_page(Page::History);
                 }
+                // ブランチ・リモートブランチ・タグなら、History をその ref から辿れるものに絞り、指すコミットを
+                // 選ぶ（GTK4 版・macOS 版の `scope_to_ref`。上の帯の All Branches で戻す）。
                 if let Some(entry) = self.entry(&key)
                     && let Some(target) = entry.target
                 {
-                    with_history(|h| h.select_commit(&target));
+                    let scoped = matches!(
+                        entry.kind,
+                        amonhen_model::RefKind::Local
+                            | amonhen_model::RefKind::Remote
+                            | amonhen_model::RefKind::Tag
+                    );
+                    with_history(|h| {
+                        h.select_commit(&target);
+                        if scoped {
+                            h.session.data.set_scope(crate::data::Scope::Refs(vec![(
+                                entry.kind,
+                                entry.name.clone(),
+                            )]));
+                        }
+                    });
                 }
             }
         }
@@ -5798,7 +5823,9 @@ impl Component for Root {
                     .grid_column(1)
                     .children((
                         self.shallow_band(context),
-                        search_bar,
+                        StackPanel::new()
+                            .grid_row(0)
+                            .children((self.scope_band(context), search_bar)),
                         Grid::new()
                             .background(Brush::Solid(Color::transparent()))
                             .element_ref(&self.area)
@@ -9961,6 +9988,31 @@ impl Root {
 
     /// 差分の上: History ではコミットの詳細。Working Copy では、両側に変更があって 1 本の差分で表せないファイルの
     /// Unstaged / Staged の切り替え（GTK4 版の `workcopy.rs` の `sides`）。
+    /// History を絞っているときの、上の帯（範囲の名前と All Branches。GTK4 版の History のバーの範囲）。
+    fn scope_band(&self, context: &ViewContext<Self>) -> View {
+        let mut scope = crate::data::Scope::All;
+        with_history(|h| scope = h.session.data.scope());
+        let title = match &scope {
+            crate::data::Scope::All => return View::empty(),
+            crate::data::Scope::Current => tr!("Current Branch"),
+            crate::data::Scope::Refs(list) if list.len() == 1 => list[0].1.clone(),
+            crate::data::Scope::Refs(list) => tr!("{count} branches", count = list.len()),
+        };
+        Grid::new()
+            .columns([GridLength::Star(1.0), GridLength::Auto])
+            .margin(Thickness::new(8.0, 4.0, 8.0, 0.0))
+            .children((
+                TextBlock::new()
+                    .text(format!("History · {title}"))
+                    .vertical_alignment(VerticalAlignment::Center)
+                    .text_trimming(TextTrimming::CharacterEllipsis),
+                Button::new()
+                    .grid_column(1)
+                    .on_click(context.callback(|()| Message::Command("scope-all".to_owned())))
+                    .content(TextBlock::new().text(tr!("All Branches"))),
+            ))
+    }
+
     fn top_of_diff(&self, context: &ViewContext<Self>) -> View {
         if self.page != Page::WorkingCopy {
             // 右上に ⤢（詳細だけを右の列いっぱいに広げる。もう一度押すと戻す）。

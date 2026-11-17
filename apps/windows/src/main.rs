@@ -453,6 +453,13 @@ impl Session {
                 self.selected_id = None;
             }
             self.scroll_by(0.0);
+            // 範囲を変えたら、選んだコミットを見せる（なければ先頭）。
+            if std::mem::take(&mut self.data.scope_changed) {
+                match self.selected {
+                    Some(row) => self.reveal(row),
+                    None => self.scroll_to(0.0),
+                }
+            }
         }
         Ok(())
     }
