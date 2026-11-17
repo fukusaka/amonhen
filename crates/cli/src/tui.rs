@@ -22,6 +22,7 @@ pub fn run(args: &[String]) -> Result<ExitCode> {
     let mut snapshot: Option<String> = None;
     let mut keys = String::new();
     let mut measure = false;
+    let mut measure_keys = false;
     let mut size = DEFAULT_SIZE;
     // askpass として呼ばれた（`amonhen-tui` が作るスクリプトから。隠した引数）。
     #[cfg(unix)]
@@ -47,6 +48,7 @@ pub fn run(args: &[String]) -> Result<ExitCode> {
             "--snapshot" => snapshot = Some(a.value("--snapshot")?.to_owned()),
             "--keys" => keys = a.value("--keys")?.to_owned(),
             "--measure-scroll" => measure = true,
+            "--measure-move" => (measure, measure_keys) = (true, true),
             "--size" => {
                 let value = a.value("--size")?;
                 size = value
@@ -99,6 +101,7 @@ pub fn run(args: &[String]) -> Result<ExitCode> {
             size.1,
             MEASURE_FRAMES,
             MEASURE_INTERVAL,
+            measure_keys,
             local,
         )?;
         println!(

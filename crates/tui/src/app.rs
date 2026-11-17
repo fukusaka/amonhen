@@ -510,8 +510,14 @@ impl App {
         self.history.total()
     }
 
-    pub fn history_at_end(&self, down: bool) -> bool {
-        self.history.at_end(down)
+    /// `down` の向きに、もうスクロールできない（`selection` なら、選択をもう動かせない）。
+    pub fn history_at_end(&self, down: bool, selection: bool) -> bool {
+        if selection {
+            let last = self.history.total().saturating_sub(1);
+            self.history.selected() == if down { last } else { 0 }
+        } else {
+            self.history.at_end(down)
+        }
     }
 
     pub fn last_frame_incomplete(&self) -> bool {

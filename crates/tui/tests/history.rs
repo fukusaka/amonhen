@@ -185,18 +185,22 @@ fn scrolling_is_measured_without_a_terminal() {
     for i in 0..40 {
         commit(dir.path(), BASE + i, &format!("Commit {i}"));
     }
-    let m = amonhen_tui::measure_scroll(
-        open(dir.path()),
-        80,
-        12,
-        30,
-        Duration::from_millis(1),
-        local,
-    )
-    .unwrap();
-    assert_eq!((m.frames, m.rows), (30, 40));
-    assert!(m.mean_bytes > 0 && m.max_bytes >= m.mean_bytes);
-    assert_eq!(m.incomplete_frames, 0);
+    // ホイールと、`j` `k` での選択の移動（端で折り返すまで）。
+    for (keys, frames) in [(false, 30), (true, 100)] {
+        let m = amonhen_tui::measure_scroll(
+            open(dir.path()),
+            80,
+            12,
+            frames,
+            Duration::from_millis(1),
+            keys,
+            local,
+        )
+        .unwrap();
+        assert_eq!((m.frames, m.rows), (frames, 40));
+        assert!(m.mean_bytes > 0 && m.max_bytes >= m.mean_bytes);
+        assert_eq!(m.incomplete_frames, 0);
+    }
 }
 
 /// 区切りの線で分けた `index` 番目の列（右の空白は除く）。

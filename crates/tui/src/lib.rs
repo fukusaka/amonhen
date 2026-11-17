@@ -337,13 +337,15 @@ impl Write for Counter {
 }
 
 /// History を `frames` 回スクロールし（ホイール 1 目盛り、`interval` おき）、1 フレームにかかる時間とバイト数を
-/// 測る。入力から出力までは本物と同じ道を通し、出力先だけを数えるものに替える。
+/// 測る。`keys` なら、ホイールの代わりに `j`（端に着いたら `k`）を押して選択を動かす。入力から出力までは本物と
+/// 同じ道を通し、出力先だけを数えるものに替える。
 pub fn measure_scroll(
     front: Arc<dyn Front>,
     cols: u16,
     rows: u16,
     frames: usize,
     interval: Duration,
+    keys: bool,
     local: fn(i64) -> String,
 ) -> Result<Measure> {
     let (tx, rx) = mpsc::channel();
@@ -377,14 +379,17 @@ pub fn measure_scroll(
         let cpu_start = thread_cpu();
         let start = Instant::now();
         // 端に着いたら折り返す。
-        if app.history_at_end(down) {
+        if app.history_at_end(down, keys) {
             down = !down;
         }
-        app.handle(wheel(if down {
-            MouseEventKind::ScrollDown
-        } else {
-            MouseEventKind::ScrollUp
-        }));
+        app.handle(match (keys, down) {
+            (true, _) => Event::Input(Input::Key(KeyEvent::new(
+                KeyCode::Char(if down { 'j' } else { 'k' }),
+                KeyModifiers::NONE,
+            ))),
+            (false, true) => wheel(MouseEventKind::ScrollDown),
+            (false, false) => wheel(MouseEventKind::ScrollUp),
+        });
         let mut replies = 0;
         while let Ok(event) = rx.try_recv() {
             app.handle(event);
