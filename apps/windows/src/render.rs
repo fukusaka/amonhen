@@ -29,13 +29,43 @@ use crate::data::{Chunk, Data};
 /// History を 1 行で出すか（View の One Line per Commit。GTK4 版の `Display::one_line`）。
 static ONE_LINE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// History の行に出す項目（View の Branches and Tags・Author・Date・Commit ID・Signature。GTK4 版の
+/// `settings::items` と同じビット。CI の状態はこの FE にない）。
+pub mod items {
+    pub const REFS: u32 = 1;
+    pub const AUTHOR: u32 = 2;
+    pub const DATE: u32 = 4;
+    pub const ID: u32 = 8;
+    pub const SIGNATURE: u32 = 16;
+    /// GitHub の CI の状態（この FE は出さないが、ビットは GTK4 版・macOS 版と同じ設定に残す）。
+    pub const CI: u32 = 32;
+    pub const ALL: u32 = REFS | AUTHOR | DATE | ID | SIGNATURE | CI;
+    /// 作者・日時の行に出すもの。
+    pub const META: u32 = AUTHOR | DATE | ID;
+}
+
+static ITEMS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(items::ALL);
+
+pub fn history_items() -> u32 {
+    ITEMS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn set_history_items(value: u32) {
+    ITEMS.store(value, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// History の行の高さ（DIP）: ふだんは件名と、作者・日時の 2 行。1 行で出すなら件名の右に作者・日時。
 pub fn row_height() -> f32 {
-    if one_line() { 24.0 } else { 38.0 }
+    if compact() { 24.0 } else { 38.0 }
 }
 
 pub fn one_line() -> bool {
     ONE_LINE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// 実際に 1 行で出すか: 1 行にしたか、作者・日時の行に出す項目が 1 つもないとき（GTK4 版の `Display::compact`）。
+fn compact() -> bool {
+    one_line() || history_items() & items::META == 0
 }
 
 pub fn set_one_line(value: bool) {
@@ -293,6 +323,8 @@ pub struct Renderer {
     /// UTC から地方時への差（秒）。
     utc_offset: i64,
     rows: HashMap<u32, RowText>,
+    /// `rows` を作ったときの行の項目（変わったら作り直す）。
+    rows_items: u32,
     /// ラベルの文字（名前ごと）と、その幅。
     labels: HashMap<String, (IDWriteTextLayout, f32)>,
     label_format: IDWriteTextFormat,
@@ -423,6 +455,7 @@ impl Renderer {
                 tearing_supported,
                 utc_offset: -(tz.Bias as i64) * 60,
                 rows: HashMap::new(),
+                rows_items: items::ALL,
                 labels: HashMap::new(),
                 label_format,
                 code_format,
@@ -604,8 +637,9 @@ impl Renderer {
         // 文字。
         let text_x = graph_width + TEXT_INSET;
         let text_width = (width - TEXT_INSET - text_x).max(0.0);
-        if self.rows.len() > 4096 {
+        if self.rows.len() > 4096 || self.rows_items != history_items() {
             self.rows.clear();
+            self.rows_items = history_items();
         }
         for row in first..last {
             let Some(chunk) = data.chunks.get(&(row / crate::data::CHUNK_ROWS)).cloned() else {
@@ -618,13 +652,14 @@ impl Renderer {
                 stages[2] += made.elapsed().as_secs_f64() * 1000.0;
             }
             let top = row as f32 * row_height() - scroll_y;
-            let compact = one_line();
+            let compact = compact();
+            let shown = history_items();
             let label_top = if compact {
                 (row_height() - LABEL_HEIGHT) / 2.0
             } else {
                 2.0
             };
-            let signed = chunk.signed(chunk.index(row));
+            let signed = shown & items::SIGNATURE != 0 && chunk.signed(chunk.index(row));
             let mark_width = if signed { 14.0 } else { 0.0 };
             // 1 行なら、作者・日時を右端に寄せ（GTK4 版の 1 行表示と同じく件名の右）、ラベルと件名はその手前まで。
             let (meta_x, meta_y, subject_right) = unsafe {
@@ -648,7 +683,8 @@ impl Renderer {
                 .get(&row)
                 .into_iter()
                 .chain(data.labels.get(&row))
-                .flatten();
+                .flatten()
+                .filter(|_| shown & items::REFS != 0);
             {
                 let limit = (text_x + text_width * LABEL_SHARE).min(subject_right);
                 for label in labels {
@@ -1151,11 +1187,27 @@ impl Renderer {
         let i = chunk.index(row);
         let mut subject = Vec::with_capacity(96);
         chunk.push_utf16(chunk.subject(i), &mut subject);
-        let mut meta = Vec::with_capacity(64);
-        chunk.push_utf16(chunk.author(i), &mut meta);
-        let id = history.graph.ids()[row as usize].to_string();
-        let date = date(chunk.time(i) + self.utc_offset);
-        meta.extend(format!("  ·  {date}  ·  {}", &id[..8]).encode_utf16());
+        // 作者・日時・ID のうち、出す項目だけを「  ·  」でつなぐ。
+        let shown = history_items();
+        let mut parts: Vec<Vec<u16>> = Vec::new();
+        if shown & items::AUTHOR != 0 {
+            let mut author = Vec::with_capacity(32);
+            chunk.push_utf16(chunk.author(i), &mut author);
+            parts.push(author);
+        }
+        if shown & items::DATE != 0 {
+            parts.push(
+                date(chunk.time(i) + self.utc_offset)
+                    .encode_utf16()
+                    .collect(),
+            );
+        }
+        if shown & items::ID != 0 {
+            let id = history.graph.ids()[row as usize].to_string();
+            parts.push(id[..8].encode_utf16().collect());
+        }
+        let separator: Vec<u16> = "  ·  ".encode_utf16().collect();
+        let meta = parts.join(&separator[..]);
         unsafe {
             Ok(RowText {
                 subject: self.dwrite.CreateTextLayout(

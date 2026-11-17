@@ -133,6 +133,7 @@ fn main() {
     // Settings > Git > Environment Variables で選んだ名前を、git と ssh に渡す（ほかのスレッドを動かす前に）。
     settingsview::apply_env_added();
     render::set_one_line(prefs::bool(prefs::COMPACT_HISTORY_ROWS));
+    render::set_history_items(prefs::history_items());
     let args = match parse() {
         Ok(a) => a,
         Err(e) => {
@@ -260,13 +261,10 @@ impl Session {
         self.dirty = true;
     }
 
-    /// History を 1 行で出すかを切り替える（行の高さが変わるので、上の端の行を保つ）。
-    pub fn set_one_line(&mut self, value: bool) {
-        if render::one_line() == value {
-            return;
-        }
+    /// History の行の見せ方（1 行か・出す項目）を変える。行の高さが変わることがあるので、上の端の行を保つ。
+    pub fn set_display(&mut self, change: impl FnOnce()) {
         let row = self.scroll_y / row_height();
-        render::set_one_line(value);
+        change();
         self.scroll_to(row * row_height());
         self.invalidate();
     }

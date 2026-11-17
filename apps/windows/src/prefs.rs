@@ -22,6 +22,14 @@ pub const FILE_HISTORY_MERGES: &str = "fileHistoryMerges";
 pub const AUTO_BOOKMARK: &str = "autoBookmark";
 /// History を 1 行で出す（View の One Line per Commit。GTK4 版・macOS 版と同じ鍵）。
 pub const COMPACT_HISTORY_ROWS: &str = "compactHistoryRows";
+/// History の行に出す項目（`render::items` のビットを 10 進の文字で。GTK4 版・macOS 版と同じ鍵）。
+pub const HISTORY_ITEMS: &str = "historyItems";
+
+pub fn history_items() -> u32 {
+    string(HISTORY_ITEMS)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(crate::render::items::ALL)
+}
 /// History の並び順（`date`・`topo`。GTK4 版・macOS 版と同じ鍵）。
 pub const HISTORY_ORDER: &str = "historyOrder";
 

@@ -1493,7 +1493,28 @@ impl Component for Root {
                 if let Err(e) = crate::prefs::set_bool(crate::prefs::COMPACT_HISTORY_ROWS, value) {
                     eprintln!("1 行表示を覚えられない: {e}");
                 }
-                with_history(|h| h.session.set_one_line(value));
+                with_history(|h| h.session.set_display(|| crate::render::set_one_line(value)));
+            }
+            // View の行に出す項目（GTK4 版の History の見せ方の項目）。
+            Message::Command(id) if id.starts_with("history-item-") => {
+                let bit = match id.as_str() {
+                    "history-item-refs" => crate::render::items::REFS,
+                    "history-item-author" => crate::render::items::AUTHOR,
+                    "history-item-date" => crate::render::items::DATE,
+                    "history-item-id" => crate::render::items::ID,
+                    "history-item-signature" => crate::render::items::SIGNATURE,
+                    _ => return,
+                };
+                let value = crate::render::history_items() ^ bit;
+                if let Err(e) =
+                    crate::prefs::set_string(crate::prefs::HISTORY_ITEMS, &value.to_string())
+                {
+                    eprintln!("行の項目を覚えられない: {e}");
+                }
+                with_history(|h| {
+                    h.session
+                        .set_display(|| crate::render::set_history_items(value))
+                });
             }
             // View の Date Order・Topological Order（GTK4 版の History の見せ方の並び順）。
             Message::Command(id) if id.starts_with("history-order-") => {

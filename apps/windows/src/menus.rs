@@ -141,6 +141,33 @@ pub fn menu_bar(on_click: impl Fn() -> Callback<String>) -> View {
                 let mark = if order == value { "✓ " } else { "" };
                 items.push(MenuItem::item(id, format!("{mark}{title}")));
             }
+            // 行に出す項目（GTK4 版の View の History の見せ方。CI の状態はこの FE にない）。
+            items.push(MenuItem::separator("-items"));
+            let shown = crate::render::history_items();
+            for (id, bit, title) in [
+                (
+                    "history-item-refs",
+                    crate::render::items::REFS,
+                    "Branches and Tags",
+                ),
+                (
+                    "history-item-author",
+                    crate::render::items::AUTHOR,
+                    "Author",
+                ),
+                ("history-item-date", crate::render::items::DATE, "Date"),
+                ("history-item-id", crate::render::items::ID, "Commit ID"),
+                (
+                    "history-item-signature",
+                    crate::render::items::SIGNATURE,
+                    "Signature",
+                ),
+            ] {
+                let mark = if shown & bit != 0 { "✓ " } else { "" };
+                let title = amonhen_model::i18n::translate(title);
+                items.push(MenuItem::item(id, format!("{mark}{title}")));
+            }
+            items.push(MenuItem::separator("-one-line"));
             let mark = if crate::render::one_line() {
                 "✓ "
             } else {
