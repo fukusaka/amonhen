@@ -67,6 +67,10 @@ pub struct Args {
     pub repositories: bool,
     /// リポジトリを引数で渡された。
     pub repo_given: bool,
+    /// 窓をこの位置・大きさ（画面のピクセル。x, y, 幅, 高さ）に出す（書き込む先の worktree を替えた窓）。
+    pub place: Option<[i32; 4]>,
+    /// 開いたら Working Copy の画面を出す。
+    pub working_copy: bool,
 }
 
 fn parse() -> Result<Args, String> {
@@ -88,6 +92,8 @@ fn parse() -> Result<Args, String> {
         out: None,
         repositories: false,
         repo_given: false,
+        place: None,
+        working_copy: false,
     };
     let mut rows = measure::ROWS_PER_FRAME;
     let mut measuring = false;
@@ -116,6 +122,18 @@ fn parse() -> Result<Args, String> {
             "--tearing" => parsed.options.tearing = true,
             "--out" => parsed.out = Some(value()?.into()),
             "--repositories" => parsed.repositories = true,
+            "--working-copy" => parsed.working_copy = true,
+            "--place" => {
+                let numbers: Vec<i32> = value()?
+                    .split(',')
+                    .map(|n| n.trim().parse().map_err(|e| format!("--place: {e}")))
+                    .collect::<Result<_, _>>()?;
+                parsed.place = Some(
+                    numbers
+                        .try_into()
+                        .map_err(|_| "--place は x,y,幅,高さ".to_owned())?,
+                );
+            }
             // SAFETY: スレッドを作る前（引数を読んでいるところ）で、ほかに環境を読む者はいない。
             "--profile" => unsafe { std::env::set_var("AMONHEN_PROFILE", "1") },
             _ if a.starts_with("--") => return Err(format!("知らない引数: {a}")),

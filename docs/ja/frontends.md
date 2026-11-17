@@ -68,7 +68,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Submodules のグループ（Update・新しい窓で開く） | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `submodule`・`submodule update`。 |
 | submodule の印（取り出していない・違うコミット・中の変更・コンフリクト）とメニュー: Update…（中の submodule も・追うブランチの最新）・URL の編集・追うブランチ・外す（.git/modules も消せる）・追加・Sync URLs | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: Remove は 2 つのボタンで、.git/modules を残すか一緒に消すかを聞く。<br>CLI: `submodule`（`add`・`remove`・`set-url`・`set-branch`・`sync`）。 |
 | submodule: リポジトリのデータを .git/modules に移す・それぞれで命令を動かす | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: Run in Each Submodule… の出力は出力パネルに出る（アプリの Activity にあたる）。<br>CLI: `submodule absorb`・`submodule foreach`。<br>Windows: Run in Each Submodule… の出力は Activity のその行の下に。 |
-| Working Copy の下の worktree と変更の数（✎ ⌂ ⑂） | ✓ | ✓ | △ | ✓ | △ | VSCode: 印は行のアイコン。ほかの worktree が checkout しているブランチには ⌂ か ⑂ が付く。<br>CLI: `worktree list --changes`。<br>Windows: Worktrees の見出しの下に ✎ ⌂ ⑂ と · n。書き込む先の worktree は替えられない。 |
+| Working Copy の下の worktree と変更の数（✎ ⌂ ⑂） | ✓ | ✓ | △ | ✓ | △ | VSCode: 印は行のアイコン。ほかの worktree が checkout しているブランチには ⌂ か ⑂ が付く。<br>CLI: `worktree list --changes`。<br>Windows: ✎ ⌂ ⑂ と · n 付きで、別の Worktrees のまとまりに出す。 |
 | shallow clone・partial clone（History）と sparse checkout（Working Copy）の印 | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: History の上の Shallow・Partial（Partial は押すと中身をすべて取る）。sparse checkout なら Working Copy の行に「· some folders」。 |
 
 ## 1. タブと窓
@@ -396,12 +396,12 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 機能 | macOS | GTK4 | Windows | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
 | worktree と変更の数 | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `worktree list --changes`。 |
-| 書き込む先の worktree（✎）と切り替え | ✓ | ✓ | — | ✓ | n/a | VSCode: 拡張が働くリポジトリを切り替える。ワークスペースの外のものはソース管理のビューには足さない。<br>CLI: 動かした worktree で働く。 |
+| 書き込む先の worktree（✎）と切り替え | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: 拡張が働くリポジトリを切り替える。ワークスペースの外のものはソース管理のビューには足さない。<br>CLI: 動かした worktree で働く。<br>Windows: worktree を選ぶ（か Edit This Worktree）と、同じ位置・同じ画面の窓でその worktree を開き直す（窓ごとに 1 つのリポジトリを開くため）。 |
 | New Worktree…（ブランチ・コミットから） | ✓ | ✓ | ✓ | ✓ | ✓ |  |
 | Remove Worktree（尋ね、変更があれば `--force`） | ✓ | ✓ | ✓ | ✓ | ✓ |  |
 | ロックと解除・移動・移したフォルダを探す（repair） | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: worktree の右クリックから。書き込む先の worktree は、ほかに切り替えてから移す。<br>CLI: `worktree lock`・`unlock`・`move`・`repair`。 |
 | worktree の Prune | ✓ | ✓ | ✓ | ✓ | ✓ |  |
-| worktree のフォルダーを開くと、そのリポジトリでそれを書き込む先にする | ✓ | ✓ | — | ✓ | n/a | VSCode: フォルダーを開くとその worktree で働き、ほかの worktree も並ぶ。 |
+| worktree のフォルダーを開くと、そのリポジトリでそれを書き込む先にする | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: フォルダーを開くとその worktree で働き、ほかの worktree も並ぶ。<br>Windows: フォルダはそれ自身の窓で開き、その worktree が ✎、ほかも並ぶ。 |
 
 ## SSH 先・共有の daemon・askpass
 

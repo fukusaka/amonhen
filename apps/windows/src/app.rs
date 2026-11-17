@@ -45,6 +45,8 @@ thread_local! {
     static HEAD_NAME: RefCell<String> = const { RefCell::new(String::new()) };
     /// Push の画面を出しているか（出していれば、Enter で既定のボタンを押せるか。Force Push は押せない）。
     static PUSH_KEYS: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+    /// 窓を出す位置・大きさ（`--place`）と、試した回数（窓ができるまで描くたびに試す）。
+    static PENDING_PLACE: std::cell::Cell<Option<([i32; 4], u32)>> = const { std::cell::Cell::new(None) };
     /// 境目の今の大きさ（サイドバーの幅、右の列の幅、詳細の高さ。描くたびに書く）と、動かしている境目と、押した
     /// 位置とそのときの大きさ。
     static SPLIT_SIZES: std::cell::Cell<(f64, Option<f64>, f64)> =
@@ -3996,6 +3998,8 @@ impl Component for Root {
                             version: String::new(),
                         });
                     }
+                } else if let Some(path) = key.strip_prefix("edit-worktree:") {
+                    self.edit_worktree(path);
                 } else if let Some(path) = key.strip_prefix("wt-remove:") {
                     self.ask_remove_worktree(path.to_owned(), context);
                 } else if let Some(path) = key.strip_prefix("wt-lock:") {
@@ -4193,6 +4197,10 @@ impl Component for Root {
                 self.show_page(Page::WorkingCopy)
             }
             Message::Invoked(key) if key == "page:history" => self.show_page(Page::History),
+            // worktree の行を選んだら、その worktree を書き込む先にする（macOS 版・GTK4 版と同じ）。
+            Message::Invoked(key) if key.starts_with("worktree:") => {
+                self.edit_worktree(&key["worktree:".len()..]);
+            }
             Message::Invoked(key) if key == "page:stashes" => self.show_page(Page::Stashes),
             // Conflicts: Working Copy で最初のコンフリクトのファイルを開く（GTK4 版と同じ）。
             Message::Invoked(key) if key == "page:conflicts" => {
@@ -6026,6 +6034,11 @@ impl Component for Root {
             if args.repositories {
                 sender.send(Message::Command("repositories".to_owned()));
             }
+            // 書き込む先の worktree を替えた窓は、前の窓と同じ所・同じ画面に。
+            if args.working_copy {
+                sender.send(Message::Command("show-working-copy".to_owned()));
+            }
+            PENDING_PLACE.with(|p| p.set(args.place.map(|r| (r, 0))));
             let session = match Session::new(&args, "app", started, Arc::new(|| {})) {
                 Ok(s) => s,
                 Err(e) => {
@@ -8639,7 +8652,21 @@ impl Root {
             let Some(w) = self.worktrees.iter().find(|w| w.path == path) else {
                 return Vec::new();
             };
-            let mut items = vec![MenuItem::item(format!("copy:{path}"), tr!("Copy Path"))];
+            let mut items = Vec::new();
+            // ほかの worktree なら、書き込む先にできる（macOS 版の Edit This Worktree）。
+            let editing = self
+                .repo
+                .as_ref()
+                .and_then(|r| r.paths().workdir)
+                .is_some_and(|d| same_path(&d.display().to_string(), path));
+            if !editing && !w.prunable {
+                items.push(MenuItem::item(
+                    format!("edit-worktree:{path}"),
+                    tr!("Edit This Worktree"),
+                ));
+                items.push(MenuItem::separator("-edit"));
+            }
+            items.push(MenuItem::item(format!("copy:{path}"), tr!("Copy Path")));
             if w.prunable {
                 items.push(MenuItem::separator("-prune"));
                 // フォルダを手で移したなら、つながりを直せる（git worktree repair。GTK4 版と同じ）。
@@ -10652,6 +10679,41 @@ impl Root {
                     name: String::new(),
                 });
                 self.dialog_inputs += 1;
+            }
+        }
+    }
+
+    /// `path` の worktree を書き込む先にする（macOS 版・GTK4 版の Edit This Worktree）。この版は窓ごとに 1 つの
+    /// リポジトリを開くので、その worktree を同じ位置・大きさ・画面の窓で開き直し、この窓を閉じる。操作の途中なら
+    /// 替えない。
+    fn edit_worktree(&mut self, path: &str) {
+        let editing = self
+            .repo
+            .as_ref()
+            .and_then(|r| r.paths().workdir)
+            .is_some_and(|d| same_path(&d.display().to_string(), path));
+        if editing {
+            return;
+        }
+        if self.running > 0 || self.busy.is_some() {
+            return beep();
+        }
+        let mut extra: Vec<String> = Vec::new();
+        if let Some([x, y, w, h]) = window_rect() {
+            extra.push("--place".to_owned());
+            extra.push(format!("{x},{y},{w},{h}"));
+        }
+        if self.page == Page::WorkingCopy {
+            extra.push("--working-copy".to_owned());
+        }
+        let extra: Vec<&str> = extra.iter().map(String::as_str).collect();
+        match crate::repositories::open_window_with(path, &extra) {
+            Ok(()) => std::process::exit(0),
+            Err(message) => {
+                self.dialog = Some(Dialog::Failed {
+                    title: tr!("Can’t open the worktree"),
+                    message,
+                });
             }
         }
     }
@@ -13019,6 +13081,7 @@ impl HistoryView {
     fn render(&mut self) -> Result<(), String> {
         retry_monospace();
         retry_splitters();
+        retry_place();
         if !self.input_requested {
             self.input_requested = request_input(&self.area, Target::History);
         }
@@ -13732,6 +13795,43 @@ fn splitter(handle: &ElementRef<Grid>, split: Split, top: f64) -> View {
             .margin(Thickness::new(0.0, top - 3.0, 0.0, 0.0))
             .into(),
     }
+}
+
+/// この窓の位置と大きさ（画面のピクセル。x, y, 幅, 高さ）。
+fn window_rect() -> Option<[i32; 4]> {
+    use windows::Win32::Foundation::RECT;
+    use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
+    let window = unsafe { windows::Win32::UI::Input::KeyboardAndMouse::GetActiveWindow() };
+    if window.is_invalid() {
+        return None;
+    }
+    let mut rect = RECT::default();
+    unsafe { GetWindowRect(window, &mut rect) }.ok()?;
+    Some([
+        rect.left,
+        rect.top,
+        rect.right - rect.left,
+        rect.bottom - rect.top,
+    ])
+}
+
+/// `--place` の位置・大きさに窓を動かす（窓ができて前に出るまで、描くたびに試す。2 秒ほどであきらめる）。
+fn retry_place() {
+    let Some((rect, tries)) = PENDING_PLACE.with(std::cell::Cell::get) else {
+        return;
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{SWP_NOACTIVATE, SWP_NOZORDER, SetWindowPos};
+    let window = unsafe { windows::Win32::UI::Input::KeyboardAndMouse::GetActiveWindow() };
+    if window.is_invalid() {
+        PENDING_PLACE.with(|p| p.set((tries < 120).then_some((rect, tries + 1))));
+        return;
+    }
+    let [x, y, w, h] = rect;
+    if let Err(e) = unsafe { SetWindowPos(window, None, x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE) }
+    {
+        eprintln!("窓を動かせない: {e}");
+    }
+    PENDING_PLACE.with(|p| p.set(None));
 }
 
 /// まだ付けていない境目のつまみに、押す・動かすを付ける（部品ができていれば頼み、頼めたものは外す）。
