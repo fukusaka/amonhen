@@ -13,6 +13,7 @@ use ratatui_crossterm::crossterm::event::{
     Event as Input, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent,
     MouseEventKind,
 };
+use serde_json::{Value, json};
 use unicode_width::UnicodeWidthStr;
 
 use crate::Clock;
@@ -74,7 +75,15 @@ pub struct App {
     /// 読んでいる間に、また ref が変わった。
     reopen: bool,
     /// 確かめてから行う操作: 尋ねる文と、`y` で頼む中身。
-    confirm: Option<(String, Request)>,
+    confirm: Option<(String, String, Request)>,
+    /// 新しいブランチの名前を打っている: 始まり（ref かコミット）、その出し方、打った名前。
+    typing_branch: Option<(String, String, String)>,
+    /// 動いている操作（fetch・push など）の、一番上の行に出す名前。
+    running: Option<String>,
+    /// 今のブランチの上流（`origin/main`）と、ahead・behind。
+    upstream: Option<String>,
+    ahead: u64,
+    behind: u64,
     /// HEAD のコミット（amend で、そのメッセージを欄に入れる）。
     head: Option<String>,
     /// コミットを作っている。
@@ -124,6 +133,11 @@ impl App {
             opening: false,
             reopen: false,
             confirm: None,
+            typing_branch: None,
+            running: None,
+            upstream: None,
+            ahead: 0,
+            behind: 0,
             head: None,
             committing: false,
             notice: None,
@@ -339,7 +353,13 @@ impl App {
                         }
                         self.details.syntax(&id, reply.as_ref());
                     }
-                    Loaded::Status(Ok(status)) => self.changes.status(&status),
+                    Loaded::Status(Ok(status)) => {
+                        self.upstream = status["upstream"].as_str().map(str::to_owned);
+                        self.ahead = status["ahead"].as_u64().unwrap_or(0);
+                        self.behind = status["behind"].as_u64().unwrap_or(0);
+                        self.changes.status(&status);
+                    }
+                    Loaded::Ran { name, result } => self.ran(name, result),
                     Loaded::Status(Err(error)) => {
                         self.changes.status_failed();
                         self.error = Some(error);
@@ -439,7 +459,7 @@ impl App {
         // エラーは、次のキーまで出しておく。
         self.dirty |= self.error.take().is_some() | self.notice.take().is_some();
         // 確かめている間は、`y`（か Enter）で行い、ほかのキーでやめる。
-        if let Some((_, request)) = self.confirm.take() {
+        if let Some((_, _, request)) = self.confirm.take() {
             if matches!(key.code, KeyCode::Char('y' | 'Y') | KeyCode::Enter) {
                 self.send(request);
             }
@@ -468,6 +488,35 @@ impl App {
                     filter.push(ch);
                     self.sidebar.set_filter(filter);
                 }
+                _ => {}
+            }
+            return;
+        }
+        // 新しいブランチの名前を打っている間は、Enter で作って切り替える、Esc でやめる。
+        if let Some((_, _, name)) = &mut self.typing_branch {
+            self.dirty = true;
+            match key.code {
+                KeyCode::Enter => {
+                    if let Some((start, _, name)) = self.typing_branch.take()
+                        && !name.trim().is_empty()
+                    {
+                        self.run(
+                            "createBranch",
+                            tr!("Creating {name}…", name = name.trim()),
+                            json!({
+                                "op": "createBranch",
+                                "name": name.trim(),
+                                "start": start,
+                                "checkout": true,
+                            }),
+                        );
+                    }
+                }
+                KeyCode::Esc => self.typing_branch = None,
+                KeyCode::Backspace => {
+                    name.pop();
+                }
+                KeyCode::Char(ch) if !control => name.push(ch),
                 _ => {}
             }
             return;
@@ -512,6 +561,12 @@ impl App {
                 };
                 self.dirty = true;
             }
+            KeyCode::Char('f') if !control => self.run("fetch", tr!("Fetching…"), json!({"op": "fetch"})),
+            KeyCode::Char('p') if !control => self.run("pull", tr!("Pulling…"), json!({"op": "pull"})),
+            KeyCode::Char('P') if !control => self.ask_push(),
+            // 次に戻す操作の名前を聞いてから、確かめる。
+            KeyCode::Char('u') if !control => self.run("undoPeek", tr!("Undo…"), json!({"op": "undoPeek"})),
+            KeyCode::Char('b') if !control => self.ask_branch(),
             KeyCode::Char('?') => {
                 self.help = true;
                 self.dirty = true;
@@ -541,6 +596,149 @@ impl App {
         self.view = view;
         self.focus = Focus::Main;
         self.sidebar.show_view(view == View::Changes);
+    }
+
+    /// コアの命令を動かす。1 つずつ（動いている間は、次を受けない）。
+    fn run(&mut self, name: &'static str, label: String, command: Value) {
+        self.dirty = true;
+        if self.running.is_some() {
+            self.error = Some(tr!("Another operation is still running"));
+            return;
+        }
+        self.running = Some(label);
+        self.send(Request::Run { name, command });
+    }
+
+    /// 命令が済んだ。だめなら理由を出し、どちらでも状態・ref・History を読み直す。
+    fn ran(&mut self, name: &'static str, result: std::result::Result<Value, String>) {
+        self.running = None;
+        let reply = match result {
+            Ok(reply) => reply,
+            Err(error) => {
+                // 長い出力は、最初の行だけ。
+                let line = error.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
+                self.error = Some(line.trim().to_owned());
+                self.changes.refresh();
+                self.open();
+                return;
+            }
+        };
+        match name {
+            // 戻す操作があれば、名前を出して確かめる。
+            "undoPeek" => {
+                match reply["label"].as_str() {
+                    Some(label) => {
+                        self.confirm = Some((
+                            tr!("Undo “{label}”?", label = label),
+                            tr!("undo"),
+                            Request::Run {
+                                name: "undo",
+                                command: json!({"op": "undo"}),
+                            },
+                        ));
+                    }
+                    None => self.error = Some(tr!("Nothing to undo")),
+                }
+                return;
+            }
+            "fetch" => self.notice = Some(tr!("Fetched")),
+            "pull" => self.notice = Some(tr!("Pulled")),
+            "push" => self.notice = Some(tr!("Pushed")),
+            "undo" => self.notice = Some(tr!("Undone")),
+            "checkout" => self.notice = Some(tr!("Checked out")),
+            "createBranch" => self.notice = Some(tr!("Created the branch")),
+            _ => {}
+        }
+        self.changes.refresh();
+        self.open();
+    }
+
+    /// 今のブランチを上流へ push する前に確かめる。
+    fn ask_push(&mut self) {
+        self.dirty = true;
+        let Some(branch) = self.branch.clone() else {
+            self.error = Some(tr!("No branch is checked out"));
+            return;
+        };
+        let Some((remote, remote_branch)) =
+            self.upstream.as_deref().and_then(|u| u.split_once('/'))
+        else {
+            self.error = Some(tr!("{branch} has no upstream to push to", branch = branch));
+            return;
+        };
+        let ask = match self.ahead {
+            1 => tr!(
+                "Push {branch} to {remote}/{remote_branch} (1 commit)?",
+                branch = branch,
+                remote = remote,
+                remote_branch = remote_branch
+            ),
+            count => tr!(
+                "Push {branch} to {remote}/{remote_branch} ({count} commits)?",
+                branch = branch,
+                remote = remote,
+                remote_branch = remote_branch,
+                count = count
+            ),
+        };
+        self.confirm = Some((
+            ask,
+            tr!("push"),
+            Request::Run {
+                name: "push",
+                command: json!({
+                    "op": "push",
+                    "remote": remote,
+                    "branch": branch,
+                    "remoteBranch": remote_branch,
+                    "force": false,
+                    "setUpstream": false,
+                }),
+            },
+        ));
+    }
+
+    /// 新しいブランチの名前を聞く。始まりは、サイドバーなら選んでいる ref、ほかは History で選んでいるコミット
+    /// （History を見ていなければ HEAD）。
+    fn ask_branch(&mut self) {
+        let picked = match self.focus {
+            Focus::Sidebar => self
+                .sidebar
+                .picked_ref()
+                .map(|(_, name, _)| (name.to_owned(), name.to_owned())),
+            _ => None,
+        };
+        let start = picked.or_else(|| {
+            let id = match self.view {
+                View::History => self.history.selected_id()?.to_string(),
+                View::Changes => self.head.clone()?,
+            };
+            let short = id[..id.len().min(8)].to_owned();
+            Some((id, short))
+        });
+        if let Some((start, shown)) = start {
+            self.typing_branch = Some((start, shown, String::new()));
+            self.dirty = true;
+        }
+    }
+
+    /// サイドバーで選んでいる ref をチェックアウトする: ローカルのブランチはそのまま、リモートのブランチは追跡する
+    /// ローカルのブランチを作って。
+    fn checkout_picked(&mut self) -> bool {
+        let Some((kind, name, _)) = self.sidebar.picked_ref() else {
+            return false;
+        };
+        let command = match kind {
+            "branch" => json!({"op": "checkout", "branch": name}),
+            "remote" => json!({"op": "track", "remoteBranch": name}),
+            _ => {
+                self.error = Some(tr!("Only branches can be checked out here"));
+                return true;
+            }
+        };
+        let label = tr!("Checking out {name}…", name = name);
+        self.run("checkout", label, command);
+        true
     }
 
     /// History を検索する。動いている検索は取り消す。
@@ -586,6 +784,7 @@ impl App {
                 self.typing_filter = Some(self.sidebar.filter().to_owned());
                 true
             }
+            KeyCode::Char('c') => self.checkout_picked(),
             // 絞り込んでいれば、まずそれをやめる。
             KeyCode::Esc if !self.sidebar.filter().is_empty() => {
                 self.sidebar.set_filter("");
@@ -608,6 +807,7 @@ impl App {
                     "Enter",
                     tr!("Open the view, or select the ref's commit in History"),
                 ),
+                ("c", tr!("Check out the branch")),
                 ("/", tr!("Filter branches and tags")),
                 ("Esc", tr!("Clear the filter, or go back")),
             ],
@@ -649,6 +849,9 @@ impl App {
         };
         lines.extend([
             ("", String::new()),
+            ("f p P", tr!("Fetch, pull, push")),
+            ("b", tr!("New branch at the selected commit or ref")),
+            ("u", tr!("Undo the last operation")),
             ("1 2", tr!("Changes and History")),
             ("0", tr!("Sidebar")),
             ("Tab", tr!("Next pane")),
@@ -755,7 +958,7 @@ impl App {
                         "Discard the changes in {path}? Undo brings them back.",
                         path = path
                     );
-                    (ask, request)
+                    (ask, tr!("discard"), request)
                 });
                 self.confirm.is_some()
             }
@@ -804,7 +1007,7 @@ impl App {
                             count = count
                         ),
                     };
-                    self.confirm = Some((ask, request));
+                    self.confirm = Some((ask, tr!("discard"), request));
                     true
                 }
                 Ok(None) => false,
@@ -978,6 +1181,19 @@ impl App {
                     bar,
                 )
                 .0;
+            // 上流より進んでいる数と、遅れている数。
+            let mut counts = String::new();
+            if self.ahead > 0 {
+                counts.push_str(&format!(" ↑{}", self.ahead));
+            }
+            if self.behind > 0 {
+                counts.push_str(&format!(" ↓{}", self.behind));
+            }
+            if !counts.is_empty() && x + 1 < area.right() {
+                x = buf
+                    .set_stringn(x, area.y, counts, usize::from(area.right() - x - 1), bar)
+                    .0;
+            }
         }
         // サイドバーが出ていなければ、メインの画面の切り替え（数字のキー）を並べる。今の画面は太字。
         let tabs = self.layout().sidebar.is_none();
@@ -1004,7 +1220,8 @@ impl App {
                 .0;
         }
         if self.busy() {
-            let loading = tr!("Loading…");
+            // 動いている操作があれば、その名前。
+            let loading = self.running.clone().unwrap_or_else(|| tr!("Loading…"));
             let width = loading.width() as u16 + 1;
             if width < area.width {
                 buf.set_string(area.right() - width, area.y, loading, bar);
@@ -1072,7 +1289,7 @@ impl App {
             .max(area.x);
         let room = usize::from(position_x.saturating_sub(area.x + 2));
         match (&self.confirm, &self.error) {
-            (Some((ask, _)), _) => {
+            (Some((ask, yes, _)), _) => {
                 let x = buf
                     .set_stringn(
                         area.x + 1,
@@ -1085,13 +1302,19 @@ impl App {
                 buf.set_stringn(
                     x + 3,
                     y,
-                    tr!("y discard   n cancel"),
+                    tr!("y {yes}   n cancel", yes = yes),
                     usize::from(position_x.saturating_sub(x + 3)),
                     Style::new(),
                 );
             }
             (None, Some(error)) => {
                 buf.set_stringn(area.x + 1, y, error, room, Style::new().fg(Color::Red));
+            }
+            (None, None) if self.typing_branch.is_some() => {
+                let (_, at, name) = self.typing_branch.as_ref().unwrap();
+                let text = tr!("New branch at {at}: {name}", at = at, name = name);
+                let x = buf.set_stringn(area.x + 1, y, text, room, Style::new()).0;
+                cursor = Some((x.min(position_x.saturating_sub(1)), y));
             }
             (None, None) if self.typing_filter.is_some() => {
                 let filter = self.typing_filter.as_deref().unwrap_or("");

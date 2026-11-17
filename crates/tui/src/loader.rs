@@ -58,6 +58,8 @@ pub enum Request {
     DiscardRows { diff: Value, rows: Vec<u32> },
     /// ファイルの変更を捨てる。
     Discard { paths: Vec<String> },
+    /// コアの命令（fetch・push・checkout など）を動かす。`name` は、答えを見分ける名前。
+    Run { name: &'static str, command: Value },
     /// コミットを作る（`amend` なら、直前のコミットを作り直す）。
     MakeCommit { message: String, amend: bool },
     /// コミット（16 進の ID）のメッセージ（amend で欄に入れる）。
@@ -103,6 +105,11 @@ pub enum Loaded {
         serial: u64,
         result: std::result::Result<Reply, String>,
     },
+    /// コアの命令が済んだ（その答え）。だめなら理由。
+    Ran {
+        name: &'static str,
+        result: std::result::Result<Value, String>,
+    },
     /// コミットを作った（hooks が書いたもの）。だめなら理由。
     Committed(std::result::Result<String, String>),
     /// コミットのメッセージ（読めなければ `None`）。
@@ -116,6 +123,8 @@ pub struct Loader {
     details: Sender<Request>,
     work: Sender<Request>,
     search: Sender<Request>,
+    /// fetch・push など、時間のかかる操作。
+    operations: Sender<Request>,
 }
 
 impl Loader {
@@ -125,7 +134,8 @@ impl Loader {
             rows: worker("amonhen-tui-rows", front.clone(), events.clone()),
             details: worker("amonhen-tui-details", front.clone(), events.clone()),
             work: worker("amonhen-tui-work", front.clone(), events.clone()),
-            search: worker("amonhen-tui-search", front, events),
+            search: worker("amonhen-tui-search", front.clone(), events.clone()),
+            operations: worker("amonhen-tui-operations", front, events),
         }
     }
 
@@ -136,6 +146,7 @@ impl Loader {
             | Request::RowOf { .. }
             | Request::Lineage { .. } => &self.rows,
             Request::Search { .. } => &self.search,
+            Request::Run { .. } => &self.operations,
             Request::Commit { .. } | Request::Syntax { .. } => &self.details,
             Request::Status
             | Request::WorkingDiff { .. }
@@ -259,6 +270,10 @@ fn load(front: &dyn Front, request: Request) -> Result<Loaded> {
             done(front.call(json!({"op": "discardRows", "diff": diff, "rows": rows})))
         }
         Request::Discard { paths } => done(run(front, json!({"op": "discard", "paths": paths}))),
+        Request::Run { name, command } => Loaded::Ran {
+            name,
+            result: run(front, command).map_err(|e| e.to_string()),
+        },
         Request::MakeCommit { message, amend } => Loaded::Committed(
             front
                 .call(json!({"op": "commit", "message": message, "amend": amend}))

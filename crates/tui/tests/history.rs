@@ -617,3 +617,112 @@ fn question_mark_lists_the_keys() {
     let diff = amonhen_tui::snapshot(open(dir.path()), 80, 20, clock(), "1\n?").unwrap();
     assert!(diff.contains("Previous and next hunk"));
 }
+
+/// 上流のあるリポジトリ: 空のリモートに main を push してから、手元で 1 つ進める。
+fn with_remote(dir: &Path) -> std::path::PathBuf {
+    let remote = dir.join("origin.git");
+    let work = dir.join("work");
+    std::fs::create_dir_all(&work).unwrap();
+    git(
+        dir,
+        BASE,
+        &["init", "-q", "--bare", "-b", "main", "origin.git"],
+    );
+    git(&work, BASE, &["init", "-q", "-b", "main"]);
+    commit(&work, BASE, "Start");
+    git(
+        &work,
+        BASE,
+        &["remote", "add", "origin", remote.to_str().unwrap()],
+    );
+    git(&work, BASE, &["push", "-q", "-u", "origin", "main"]);
+    commit(&work, BASE + DAY, "Ahead of the remote");
+    work
+}
+
+/// `P` は確かめてから、今のブランチを上流へ push する
+#[test]
+fn push_asks_then_pushes_to_the_upstream() {
+    let dir = tempfile::tempdir().unwrap();
+    let work = with_remote(dir.path());
+    let remote_head = || {
+        git_out(
+            &dir.path().join("origin.git"),
+            &["log", "-1", "--format=%s", "main"],
+        )
+    };
+    let asked = amonhen_tui::snapshot(open(&work), 100, 8, clock(), "P").unwrap();
+    println!("{asked}");
+    // 一番上の行に、上流より進んでいる数。
+    assert!(asked.lines().next().unwrap().contains("main ↑1"));
+    assert!(asked.contains("Push main to origin/main (1 commit)?   y push   n cancel"));
+    assert_eq!(remote_head(), "Start\n");
+    // やめる。
+    amonhen_tui::snapshot(open(&work), 100, 8, clock(), "Pn").unwrap();
+    assert_eq!(remote_head(), "Start\n");
+    let pushed = amonhen_tui::snapshot(open(&work), 100, 8, clock(), "Py").unwrap();
+    println!("{pushed}");
+    assert!(pushed.contains("Pushed"));
+    assert_eq!(remote_head(), "Ahead of the remote\n");
+    assert!(!pushed.lines().next().unwrap().contains("↑"));
+}
+
+/// `f` で fetch、`p` で pull: リモートに増えたコミットを取り込む
+#[test]
+fn fetch_and_pull_bring_in_remote_commits() {
+    let dir = tempfile::tempdir().unwrap();
+    let work = with_remote(dir.path());
+    git(&work, BASE, &["push", "-q"]);
+    // 別の clone から、リモートを 1 つ進める。
+    let remote = dir.path().join("origin.git");
+    git(
+        dir.path(),
+        BASE,
+        &["clone", "-q", remote.to_str().unwrap(), "other"],
+    );
+    let other = dir.path().join("other");
+    commit(&other, BASE + DAY * 2, "From elsewhere");
+    git(&other, BASE, &["push", "-q"]);
+
+    let fetched = amonhen_tui::snapshot(open(&work), 100, 8, clock(), "f").unwrap();
+    println!("{fetched}");
+    assert!(fetched.contains("Fetched"));
+    assert!(fetched.lines().next().unwrap().contains("main ↓1"));
+    assert!(fetched.contains("[origin/main] From elsewhere"));
+    let pulled = amonhen_tui::snapshot(open(&work), 100, 8, clock(), "p").unwrap();
+    println!("{pulled}");
+    assert!(pulled.contains("Pulled"));
+    assert_eq!(
+        git_out(&work, &["log", "-1", "--format=%s"]),
+        "From elsewhere\n"
+    );
+}
+
+/// サイドバーの `c` でブランチをチェックアウトし、`b` で新しいブランチを作る。`u` で戻す
+#[test]
+fn checkout_new_branch_and_undo() {
+    let dir = tempfile::tempdir().unwrap();
+    merged(dir.path());
+    let branch = || git_out(dir.path(), &["branch", "--show-current"]);
+    // History の 2 つ下が topic。
+    let out = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjc").unwrap();
+    println!("{out}");
+    assert_eq!(branch(), "topic\n");
+    assert!(out.contains("● topic"));
+    // main の行（1 つ上）で `b`: 名前を聞き、main から作って切り替える。
+    let typing = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jbne").unwrap();
+    assert!(typing.contains("New branch at main: ne"));
+    amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jbnext\n").unwrap();
+    assert_eq!(branch(), "next\n");
+    assert_eq!(
+        git_out(dir.path(), &["rev-parse", "next"]),
+        git_out(dir.path(), &["rev-parse", "main"])
+    );
+    // `u` は、戻す操作の名前を出して確かめる。
+    let asked = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "u").unwrap();
+    println!("{asked}");
+    assert!(asked.contains("Undo “"));
+    assert!(asked.contains("y undo   n cancel"));
+    amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "uy").unwrap();
+    assert_eq!(branch(), "topic\n");
+}

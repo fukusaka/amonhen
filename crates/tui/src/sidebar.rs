@@ -31,6 +31,8 @@ enum Row {
     Changes,
     History,
     Ref {
+        /// `branch`・`remote`・`tag`。
+        kind: &'static str,
         name: String,
         target: String,
         /// 今のブランチ。
@@ -115,6 +117,7 @@ impl Sidebar {
                         return None;
                     }
                     Some(Row::Ref {
+                        kind,
                         name: name.to_owned(),
                         target: e["target"].as_str()?.to_owned(),
                         current: kind == "branch" && Some(name) == head,
@@ -226,6 +229,16 @@ impl Sidebar {
             Row::Changes => Some(Picked::Changes),
             Row::History => Some(Picked::History),
             Row::Ref { target, .. } => Some(Picked::Commit(target.clone())),
+        }
+    }
+
+    /// 選んでいる ref の種類（`branch`・`remote`・`tag`）・名前・指すコミット。
+    pub fn picked_ref(&self) -> Option<(&'static str, &str, &str)> {
+        match self.rows.get(self.selected)? {
+            Row::Ref {
+                kind, name, target, ..
+            } => Some((kind, name, target)),
+            _ => None,
         }
     }
 
