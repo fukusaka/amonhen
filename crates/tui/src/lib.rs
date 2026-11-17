@@ -292,7 +292,7 @@ fn whole(app: &mut App, shown: &Buffer) -> Result<Buffer> {
 pub struct Measure {
     pub frames: usize,
     pub rows: u32,
-    /// 詳細に出ている行の数（頭の部分と差分）。
+    /// スクロールした所の行の数（詳細なら頭の部分と差分、Working Copy なら選んでいるファイルの差分）。
     pub details_lines: u32,
     /// イベントを受けてからフレームのバイト列を出し終えるまで（µs）。
     pub median_us: u64,
@@ -354,6 +354,9 @@ pub enum Step {
     Move,
     /// 選んでいるコミットの詳細に入り、差分を `j`（端に着いたら `k`）で 1 行ずつスクロールする。
     Diff,
+    /// Working Copy で、選んでいるファイルの差分に入り、選んでいる行を `j`（端に着いたら `k`）で動かす。行が
+    /// ペインを出るときに、差分がスクロールする。
+    Changes,
 }
 
 /// `step` を `frames` 回くり返し（`interval` おき）、1 フレームにかかる時間とバイト数を測る。`keys` は、測る前に
@@ -380,7 +383,12 @@ pub fn measure_scroll(
     if let Some(damage) = app.take_damage() {
         paint(&mut canvas, &mut app, damage)?;
     }
-    for ch in keys.chars().chain((step == Step::Diff).then_some('\n')) {
+    let enter = match step {
+        Step::Wheel | Step::Move => "",
+        Step::Diff => "\n",
+        Step::Changes => "1\n",
+    };
+    for ch in keys.chars().chain(enter.chars()) {
         app.handle(key(ch));
         wait(&mut app, &rx)?;
         if let Some(damage) = app.take_damage() {
@@ -412,7 +420,7 @@ pub fn measure_scroll(
             down = !down;
         }
         app.handle(match (step, down) {
-            (Step::Move | Step::Diff, _) => key(if down { 'j' } else { 'k' }),
+            (Step::Move | Step::Diff | Step::Changes, _) => key(if down { 'j' } else { 'k' }),
             (Step::Wheel, true) => wheel(MouseEventKind::ScrollDown),
             (Step::Wheel, false) => wheel(MouseEventKind::ScrollUp),
         });
@@ -468,7 +476,7 @@ pub fn measure_scroll(
     Ok(Measure {
         frames,
         rows: app.history_rows(),
-        details_lines: app.details_lines(),
+        details_lines: app.details_lines(step),
         median_us: at(0.5),
         p95_us: at(0.95),
         max_us: at(1.0),

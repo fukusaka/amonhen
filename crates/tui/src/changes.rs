@@ -477,6 +477,16 @@ impl Changes {
         ((self.cursor + 1).min(lines), lines)
     }
 
+    /// 選んでいる行を、`down` の向きにはもう動かせない。
+    pub fn at_end(&self, down: bool) -> bool {
+        self.cursor
+            == if down {
+                self.lines().saturating_sub(1)
+            } else {
+                0
+            }
+    }
+
     pub fn diff_page(&self) -> i64 {
         self.scroll.page()
     }

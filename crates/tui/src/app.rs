@@ -524,12 +524,16 @@ impl App {
                 self.history.selected() == if down { last } else { 0 }
             }
             crate::Step::Diff => self.details.at_end(down),
+            crate::Step::Changes => self.changes.at_end(down),
         }
     }
 
     /// 詳細に出ている行の数（差分を含む）。
-    pub fn details_lines(&self) -> u32 {
-        self.details.position().1
+    pub fn details_lines(&self, step: crate::Step) -> u32 {
+        match step {
+            crate::Step::Changes => self.changes.diff_position().1,
+            _ => self.details.position().1,
+        }
     }
 
     pub fn last_frame_incomplete(&self) -> bool {

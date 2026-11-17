@@ -206,6 +206,25 @@ fn scrolling_is_measured_without_a_terminal() {
     }
 }
 
+/// Working Copy の差分で選んでいる行を動かすのも測れる（最後の画面は、すべてを描いたものと同じ）
+#[test]
+fn moving_through_the_working_copy_diff_is_measured() {
+    let dir = tempfile::tempdir().unwrap();
+    two_lines(dir.path());
+    let m = amonhen_tui::measure_scroll(
+        open(dir.path()),
+        80,
+        12,
+        20,
+        Duration::from_millis(1),
+        amonhen_tui::Step::Changes,
+        "",
+        local,
+    )
+    .unwrap();
+    assert!(m.details_lines > 2 && m.mean_bytes > 0);
+}
+
 /// 区切りの線で分けた `index` 番目の列（右の空白は除く）。
 fn column(line: &str, index: usize) -> Option<String> {
     line.split('│').nth(index).map(|c| c.trim_end().to_owned())
