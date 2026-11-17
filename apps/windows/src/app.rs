@@ -7743,13 +7743,17 @@ impl Root {
                             Some(f) => format!("{}. {}  ⚠ {}", i + 1, s.rev, f.join(", ")),
                             None => format!("{}. {}", i + 1, s.rev),
                         };
-                        let view: View = TextBlock::new()
-                            .text(text)
-                            .text_trimming(TextTrimming::CharacterEllipsis)
-                            .foreground_optional(
-                                files.map(|_| Brush::Solid(Color::rgb(0xc4, 0x6a, 0x00))),
-                            )
-                            .into();
+                        // 並べ替えた順は項目の Tag で知らされるので、ListViewItem に rev を持たせる。
+                        let view = ListViewItem::new()
+                            .tag(s.rev.clone())
+                            .content(
+                                TextBlock::new()
+                                    .text(text)
+                                    .text_trimming(TextTrimming::CharacterEllipsis)
+                                    .foreground_optional(
+                                        files.map(|_| Brush::Solid(Color::rgb(0xc4, 0x6a, 0x00))),
+                                    ),
+                            );
                         (s.rev.clone(), view)
                     })
                     .collect();
