@@ -408,6 +408,9 @@ pub struct Data {
     changed_tx: Sender<u32>,
     /// History を位相順に並べるか（裏のスレッドと共有）。
     topo: Arc<std::sync::atomic::AtomicBool>,
+    /// マージ済みブランチを折りたたむか、取り込んだ側も見せる merge（裏のスレッドと共有）。
+    fold: Arc<std::sync::atomic::AtomicBool>,
+    expanded: Arc<std::sync::Mutex<Vec<amonhen_model::Oid>>>,
 }
 
 /// 変化の知らせのビットのうち、History を作り直す頼み（`amonhen_watch::Changes` が使わない上のビット）。
@@ -428,6 +431,12 @@ impl Data {
             crate::prefs::history_order() == amonhen_model::HistoryOrder::Topo,
         ));
         let thread_topo = topo.clone();
+        // マージ済みブランチを折りたたむか（View の Fold Merged Branches）と、取り込んだ側も見せる merge。
+        let fold = Arc::new(std::sync::atomic::AtomicBool::new(crate::prefs::bool(
+            crate::prefs::FOLD_MERGED_BRANCHES,
+        )));
+        let expanded: Arc<std::sync::Mutex<Vec<amonhen_model::Oid>>> = Arc::default();
+        let (thread_fold, thread_expanded) = (fold.clone(), expanded.clone());
         let order_of = move || {
             if thread_topo.load(std::sync::atomic::Ordering::Relaxed) {
                 amonhen_model::HistoryOrder::Topo
@@ -451,11 +460,27 @@ impl Data {
             {
                 eprintln!("History の並び順を変えられない: {e}");
             }
+            // 出す History: 折りたたむなら、マージ済みブランチを折りたたんだもの（GTK4 版の `reshape`）。作れない・
+            // 空になったときは全体のまま。
+            let shape = |full: Arc<HistorySnapshot>| -> Arc<HistorySnapshot> {
+                if !thread_fold.load(std::sync::atomic::Ordering::Relaxed) {
+                    return full;
+                }
+                let expanded = thread_expanded.lock().unwrap().clone();
+                match repo.history_folded(None, &expanded) {
+                    Ok(folded) if !(folded.graph.is_empty() && !full.graph.is_empty()) => folded,
+                    Ok(_) => full,
+                    Err(e) => {
+                        eprintln!("History を折りたためない: {e}");
+                        full
+                    }
+                }
+            };
             if let Some(cached) = repo.load_cached_history() {
-                send(Event::History(repo.clone(), cached));
+                send(Event::History(repo.clone(), shape(cached)));
             }
             let history = match repo.load_history() {
-                Ok(history) => history,
+                Ok(history) => shape(history),
                 Err(e) => return send(Event::Failed(format!("History を読めない: {e}"))),
             };
             send(Event::History(repo.clone(), history.clone()));
@@ -511,7 +536,7 @@ impl Data {
                     // History の永続キャッシュを捨てて作り直す（View > Rebuild History）。
                     match repo.rebuild_history() {
                         Ok(h) => {
-                            history = h;
+                            history = shape(h);
                             send(Event::History(repo.clone(), history.clone()));
                         }
                         Err(e) => eprintln!("History を作り直せない: {e}"),
@@ -519,7 +544,7 @@ impl Data {
                 } else if changes.contains(amonhen_watch::Changes::REFS) {
                     match repo.load_history() {
                         Ok(h) => {
-                            history = h;
+                            history = shape(h);
                             send(Event::History(repo.clone(), history.clone()));
                         }
                         Err(e) => eprintln!("History を読み直せない: {e}"),
@@ -577,6 +602,8 @@ impl Data {
             wake,
             changed_tx,
             topo,
+            fold,
+            expanded,
         }
     }
 
@@ -743,6 +770,43 @@ impl Data {
             order == amonhen_model::HistoryOrder::Topo,
             std::sync::atomic::Ordering::Relaxed,
         );
+        let _ = self.changed_tx.send(REORDER);
+    }
+
+    /// マージ済みブランチを折りたたむかを変えて、出し直す（View の Fold Merged Branches）。
+    pub fn set_fold(&self, value: bool) {
+        self.fold.store(value, std::sync::atomic::Ordering::Relaxed);
+        let _ = self.changed_tx.send(REORDER);
+    }
+
+    /// 折りたたんだ History での、コミット `id` の merge の隠しているコミットの数（取り込んだ側を見せていれば 0。
+    /// 右クリックの Show n Merged Commits・Fold Merged Commits。どちらでもなければ None）。
+    pub fn merge_fold(&self, id: &str) -> Option<u32> {
+        if !self.fold.load(std::sync::atomic::Ordering::Relaxed) {
+            return None;
+        }
+        let oid = amonhen_model::Oid::from_hex(id)?;
+        let history = self.history.as_ref()?;
+        let row = history.row_of(&oid)?;
+        let hidden = history.folded.get(row as usize).copied().unwrap_or(0);
+        let open = self.expanded.lock().unwrap().contains(&oid);
+        (hidden > 0 || open).then_some(hidden)
+    }
+
+    /// 折りたたんだ merge の取り込んだ側を見せる・たたむ。
+    pub fn toggle_merge(&self, id: &str) {
+        let Some(oid) = amonhen_model::Oid::from_hex(id) else {
+            return;
+        };
+        {
+            let mut expanded = self.expanded.lock().unwrap();
+            match expanded.iter().position(|e| *e == oid) {
+                Some(i) => {
+                    expanded.remove(i);
+                }
+                None => expanded.push(oid),
+            }
+        }
         let _ = self.changed_tx.send(REORDER);
     }
 

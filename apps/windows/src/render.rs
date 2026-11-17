@@ -1291,6 +1291,16 @@ impl Renderer {
             let id = history.graph.ids()[row as usize].to_string();
             parts.push(id[..8].encode_utf16().collect());
         }
+        // 折りたたんだ merge は、隠しているコミットの数を添える（GTK4 版と同じ）。
+        if let Some(&hidden) = history.folded.get(row as usize)
+            && hidden > 0
+        {
+            parts.push(
+                format!("⊕ {}", amonhen_model::tr!("{count} folded", count = hidden))
+                    .encode_utf16()
+                    .collect(),
+            );
+        }
         let separator: Vec<u16> = "  ·  ".encode_utf16().collect();
         let meta = parts.join(&separator[..]);
         unsafe {

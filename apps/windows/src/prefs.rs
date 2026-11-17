@@ -22,6 +22,8 @@ pub const FILE_HISTORY_MERGES: &str = "fileHistoryMerges";
 pub const AUTO_BOOKMARK: &str = "autoBookmark";
 /// History を 1 行で出す（View の One Line per Commit。GTK4 版・macOS 版と同じ鍵）。
 pub const COMPACT_HISTORY_ROWS: &str = "compactHistoryRows";
+/// History でマージ済みブランチを折りたたむ（既定は折りたたまない。GTK4 版・macOS 版と同じ鍵）。
+pub const FOLD_MERGED_BRANCHES: &str = "foldMergedBranches";
 /// 選んだコミットの祖先を強調する（既定は強調する。GTK4 版・macOS 版と同じ鍵）。
 pub const HIGHLIGHT_ANCESTORS: &str = "highlightAncestors";
 /// History の行に出す項目（`render::items` のビットを 10 進の文字で。GTK4 版・macOS 版と同じ鍵）。

@@ -1495,6 +1495,14 @@ impl Component for Root {
                 }
                 with_history(|h| h.session.set_display(|| crate::render::set_one_line(value)));
             }
+            // View の Fold Merged Branches（GTK4 版の History の見せ方）。
+            Message::Command(id) if id == "fold-merged-branches" => {
+                let value = !crate::prefs::bool(crate::prefs::FOLD_MERGED_BRANCHES);
+                if let Err(e) = crate::prefs::set_bool(crate::prefs::FOLD_MERGED_BRANCHES, value) {
+                    eprintln!("折りたたみを覚えられない: {e}");
+                }
+                with_history(|h| h.session.data.set_fold(value));
+            }
             // View の Highlight Ancestors（GTK4 版の History の見せ方）。
             Message::Command(id) if id == "highlight-ancestors" => {
                 let value = !crate::render::highlight_ancestors();
@@ -3236,7 +3244,9 @@ impl Component for Root {
                 }
             }
             Message::HistoryMenu(key) => {
-                if let Some(text) = key.strip_prefix("copy:") {
+                if let Some(id) = key.strip_prefix("toggle-merge:") {
+                    with_history(|h| h.session.data.toggle_merge(id));
+                } else if let Some(text) = key.strip_prefix("copy:") {
                     copy_text(text);
                 } else if let Some(name) = key.strip_prefix("checkout:") {
                     self.checkout(CheckoutTarget::Branch(name.to_owned()));
@@ -10028,6 +10038,18 @@ impl Root {
         };
         let head = self.refs.as_ref().and_then(|r| r.refs.head_branch.clone());
         let mut items = Vec::new();
+        // 折りたたんだ merge なら、取り込んだ側を開く・たたむ（GTK4 版の `merge_items`。メニューの先頭）。
+        let mut fold = None;
+        with_history(|h| fold = h.session.data.merge_fold(id));
+        if let Some(hidden) = fold {
+            let title = if hidden > 0 {
+                tr!("Show {count} Merged Commits", count = hidden)
+            } else {
+                tr!("Fold Merged Commits")
+            };
+            items.push(MenuItem::item(format!("toggle-merge:{id}"), title));
+            items.push(MenuItem::separator("-fold"));
+        }
         // Checkout: このコミットを指すローカルブランチ（今のブランチは除く）、リモートブランチ、なければコミット。
         let mut checkouts = 0;
         for label in labels.iter().take(5) {

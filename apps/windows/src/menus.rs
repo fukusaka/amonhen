@@ -177,6 +177,15 @@ pub fn menu_bar(on_click: impl Fn() -> Callback<String>) -> View {
                 "one-line-history",
                 format!("{mark}{}", amonhen_model::tr!("One Line per Commit")),
             ));
+            let mark = if crate::prefs::bool(crate::prefs::FOLD_MERGED_BRANCHES) {
+                "✓ "
+            } else {
+                ""
+            };
+            items.push(MenuItem::item(
+                "fold-merged-branches",
+                format!("{mark}{}", amonhen_model::tr!("Fold Merged Branches")),
+            ));
             let mark = if crate::render::highlight_ancestors() {
                 "✓ "
             } else {
