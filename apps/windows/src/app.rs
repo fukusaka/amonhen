@@ -269,6 +269,9 @@ enum Dialog {
         repo: Arc<Repository>,
         remotes: Vec<String>,
         from: usize,
+        /// リモートごとの、消えたブランチを片づける設定（`remote.<name>.prune`、なければ `fetch.prune`）が
+        /// true ならその名前。
+        prune: Vec<Option<String>>,
     },
     /// Pull の確認（上流から取り込む。取り込み方を選ぶ）。
     Pull {
@@ -714,7 +717,8 @@ enum Message {
     /// Pull のダイアログで、取り込み方を選んだ。
     PullMode(Option<usize>),
     /// Fetch のダイアログに出すリモート（なければ空）。
-    Remotes(Arc<Repository>, Vec<String>),
+    /// Fetch の相手（リモートの名前と、片づける設定が効いていればその設定の名前）。
+    Remotes(Arc<Repository>, Vec<(String, Option<String>)>),
     /// Fetch のダイアログで、取るリモートを選んだ（0 はすべて）。
     FetchFrom(Option<usize>),
     /// Reset の動かし方・Merge の相手・Merge の取り込み方を選んだ。
@@ -1038,11 +1042,43 @@ impl Component for Root {
                 context.spawn_background(move |_| {
                     let reply: Value = serde_json::from_str(&repo.run_json(r#"{"op":"remotes"}"#))
                         .unwrap_or_default();
+                    // 片づけるかは git と同じく、remote.<name>.prune、なければ fetch.prune（GTK4 版と同じ）。
+                    let config: Value =
+                        serde_json::from_str(&repo.run_json(r#"{"op":"configList"}"#))
+                            .unwrap_or_default();
+                    let entries: Vec<(String, String)> = config["info"]["entries"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|e| {
+                            Some((
+                                e["key"].as_str()?.to_lowercase(),
+                                e["value"].as_str()?.to_lowercase(),
+                            ))
+                        })
+                        .collect();
+                    let value = |key: &str| {
+                        entries
+                            .iter()
+                            .rev()
+                            .find(|(k, _)| *k == key.to_lowercase())
+                            .map(|(_, v)| v.clone())
+                    };
                     let remotes = reply["info"]["remotes"]
                         .as_array()
                         .into_iter()
                         .flatten()
                         .filter_map(|r| r["name"].as_str().map(str::to_owned))
+                        .map(|name| {
+                            let own = format!("remote.{name}.prune");
+                            let key = if value(&own).is_some() {
+                                own
+                            } else {
+                                "fetch.prune".to_owned()
+                            };
+                            let prune = (value(&key).as_deref() == Some("true")).then_some(key);
+                            (name, prune)
+                        })
                         .collect();
                     Message::Remotes(repo, remotes)
                 });
@@ -1051,10 +1087,12 @@ impl Component for Root {
                 if remotes.is_empty() {
                     beep();
                 } else {
+                    let (remotes, prune) = remotes.into_iter().unzip();
                     self.dialog = Some(Dialog::Fetch {
                         repo,
                         remotes,
                         from: 0,
+                        prune,
                     });
                 }
             }
@@ -2237,6 +2275,7 @@ impl Component for Root {
                         repo,
                         remotes,
                         from,
+                        ..
                     }),
                     ContentDialogResult::Primary,
                 ) => {
@@ -5517,7 +5556,12 @@ impl Root {
                             .on_text_changed(context.callback(Message::BranchName)),
                     )),
                 ),
-            Some(Dialog::Fetch { remotes, from, .. }) => {
+            Some(Dialog::Fetch {
+                remotes,
+                from,
+                prune,
+                ..
+            }) => {
                 // GTK4 版の `sheets::fetch` と同じ: リモートが 1 つならその名前を見出しに、2 つ以上なら選ぶ。
                 let title = match remotes.as_slice() {
                     [only] => tr!("Fetch from {remote}?", remote = only),
@@ -5539,6 +5583,42 @@ impl Root {
                 } else {
                     TextBlock::new().into()
                 };
+                // 選んだリモートで、消えたブランチを片づける設定が効いていれば知らせる（GTK4 版の `prune_line`）。
+                let chosen: Vec<usize> = match from.checked_sub(1) {
+                    Some(i) => vec![i],
+                    None => (0..remotes.len()).collect(),
+                };
+                let pruned: Vec<&String> = chosen
+                    .iter()
+                    .filter(|&&i| prune.get(i).is_some_and(Option::is_some))
+                    .map(|&i| &remotes[i])
+                    .collect();
+                let mut keys: Vec<String> = Vec::new();
+                for key in chosen.iter().filter_map(|&i| prune.get(i).cloned().flatten()) {
+                    if !keys.contains(&key) {
+                        keys.push(key);
+                    }
+                }
+                let note = if pruned.is_empty() {
+                    String::new()
+                } else if pruned.len() == chosen.len() {
+                    tr!(
+                        "Remote branches deleted there are removed here too ({settings}).",
+                        settings = amonhen_model::i18n::list(&keys)
+                    )
+                } else {
+                    tr!(
+                        "Remote branches deleted on {remotes} are removed here too ({settings}).",
+                        remotes = amonhen_model::i18n::list(&pruned),
+                        settings = amonhen_model::i18n::list(&keys)
+                    )
+                };
+                let content = StackPanel::new().spacing(8.0).children((
+                    TextBlock::new()
+                        .text(note)
+                        .text_wrapping(TextWrapping::Wrap),
+                    content,
+                ));
                 dialog
                     .is_open(true)
                     .title(title)
