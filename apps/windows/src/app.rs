@@ -541,6 +541,11 @@ enum Dialog {
         button: String,
         then: PendingSave,
     },
+    /// 失敗した操作（要点、次にどうするか、git の文。次の一手があればそのボタン。GTK4 版の失敗の帯と Details）。
+    Failure {
+        repo: Arc<Repository>,
+        failure: crate::failure::Failure,
+    },
     /// Checkout の確認（GTK4 版の `sheets::checkout`）。
     Checkout {
         repo: Arc<Repository>,
@@ -904,6 +909,8 @@ enum Message {
     DialogClosed(ContentDialogResult),
     /// 書き込む操作が終わった（失敗ならそのダイアログの見出しと文）。
     Performed(Option<(String, String)>),
+    /// 命令が失敗した（種類が分かれば、要点と次の一手を出す）。
+    OperationFailed(Arc<Repository>, crate::failure::Failure),
     Failed(String),
 }
 
@@ -2123,6 +2130,28 @@ impl Component for Root {
                         };
                         perform(context, repo, command, tr!("Create"));
                     }
+                }
+                (Some(Dialog::Failure { repo, failure }), ContentDialogResult::Primary) => {
+                    use crate::failure::Remedy;
+                    match failure.remedies(true).into_iter().next() {
+                        Some(Remedy::Retry) => {
+                            if let Some(command) = failure.command.clone() {
+                                perform(context, repo, command, String::new());
+                            }
+                        }
+                        Some(Remedy::Pull) => {
+                            self.update(Message::Command("pull".to_owned()), context)
+                        }
+                        Some(Remedy::WorkingCopy) => self.show_page(Page::WorkingCopy),
+                        Some(Remedy::OpenTerminal) => {
+                            self.update(Message::Command("open-in-terminal".to_owned()), context)
+                        }
+                        // ほかの worktree・上流は、この FE ではまだ一手で開けない。
+                        _ => {}
+                    }
+                }
+                (Some(Dialog::Failure { .. }), ContentDialogResult::Secondary) => {
+                    self.update(Message::Command("activity".to_owned()), context);
                 }
                 (Some(Dialog::FetchFirst { then, .. }), ContentDialogResult::Primary) => {
                     self.save(then, context);
@@ -3805,6 +3834,13 @@ impl Component for Root {
                     self.integrate(rev.to_owned(), false);
                 } else if let Some(rev) = key.strip_prefix("rebase:") {
                     self.integrate(rev.to_owned(), true);
+                }
+            }
+            Message::OperationFailed(repo, failure) => {
+                self.update(Message::Performed(None), context);
+                // 取り消したときは知らせない（GTK4 版は帯を出してすぐ消す）。
+                if !failure.cancelled() {
+                    self.dialog = Some(Dialog::Failure { repo, failure });
                 }
             }
             Message::Performed(failed) => {
@@ -7673,6 +7709,21 @@ impl Root {
                         )),
                     )
             }
+            Some(Dialog::Failure { failure, .. }) => {
+                let remedy = failure.remedies(true).into_iter().next();
+                dialog
+                    .is_open(true)
+                    .title(failure.op_title())
+                    .primary_button_text_optional(remedy.map(|r| r.title()))
+                    .secondary_button_text("Activity")
+                    .close_button_text(tr!("Close"))
+                    .content(
+                        TextBlock::new()
+                            .text(failure.details())
+                            .text_wrapping(TextWrapping::Wrap)
+                            .is_text_selection_enabled(true),
+                    )
+            }
             Some(Dialog::Failed { title, message }) => dialog
                 .is_open(true)
                 .title(title.clone())
@@ -11072,11 +11123,16 @@ fn add_to_gitignore(context: &ComponentContext<Root>, repo: Arc<Repository>, pat
 
 fn perform(context: &ComponentContext<Root>, repo: Arc<Repository>, command: Value, title: String) {
     let done = done_text(&command);
+    let _ = title;
     context.spawn_background(move |_| {
         let reply: Value = serde_json::from_str(&repo.run_json(&command.to_string()))
             .unwrap_or_else(|e| json!({ "error": e.to_string() }));
         match (reply["error"].as_str(), done) {
-            (Some(e), _) => Message::Performed(Some((title, e.to_owned()))),
+            // 何が失敗したか・なぜか・次に何ができるか（GTK4 版の失敗の帯と Details）。
+            (Some(_), _) => Message::OperationFailed(
+                repo,
+                crate::failure::Failure::from_reply(&reply, Some(command)),
+            ),
             (None, Some(done)) => Message::Done(done),
             (None, None) => Message::Performed(None),
         }

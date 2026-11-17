@@ -12,6 +12,7 @@ mod blame;
 mod branchswitcher;
 mod data;
 mod editor;
+mod failure;
 mod filehistory;
 mod files;
 mod listen;
