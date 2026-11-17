@@ -20,6 +20,15 @@ pub const WORKING_COPY_LAYOUT: &str = "workingCopyLayout";
 pub const FILE_HISTORY_MERGES: &str = "fileHistoryMerges";
 /// 開いたリポジトリを Repositories のブックマークに入れる（既定は入れる。GTK4 版・macOS 版と同じ鍵）。
 pub const AUTO_BOOKMARK: &str = "autoBookmark";
+/// History の並び順（`date`・`topo`。GTK4 版・macOS 版と同じ鍵）。
+pub const HISTORY_ORDER: &str = "historyOrder";
+
+/// History の並び順（既定は日付順）。
+pub fn history_order() -> amonhen_model::HistoryOrder {
+    string(HISTORY_ORDER)
+        .and_then(|s| amonhen_model::HistoryOrder::from_name(&s))
+        .unwrap_or_default()
+}
 
 thread_local! {
     static VALUES: RefCell<Map<String, Value>> = RefCell::new(load());

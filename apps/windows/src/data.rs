@@ -406,10 +406,14 @@ pub struct Data {
     rx: Receiver<Event>,
     wake: Wake,
     changed_tx: Sender<u32>,
+    /// History を位相順に並べるか（裏のスレッドと共有）。
+    topo: Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// 変化の知らせのビットのうち、History を作り直す頼み（`amonhen_watch::Changes` が使わない上のビット）。
 const REBUILD: u32 = 1 << 31;
+/// 並び順を変えて History を並べ直す頼み（並び順は `Data::topo`）。
+const REORDER: u32 = 1 << 30;
 
 impl Data {
     /// `path` を裏のスレッドで開き、前回の History をすぐ送ってから最新を読む。
@@ -419,6 +423,18 @@ impl Data {
         // 変化の知らせ（`amonhen_watch::Changes` のビット）。見張りのほか、Refresh などで自分でも送る。
         let (changed_tx, changed_rx) = channel::<u32>();
         let watch_tx = changed_tx.clone();
+        // History の並び順（View の Date Order・Topological Order。設定は UI のスレッドで読む）。
+        let topo = Arc::new(std::sync::atomic::AtomicBool::new(
+            crate::prefs::history_order() == amonhen_model::HistoryOrder::Topo,
+        ));
+        let thread_topo = topo.clone();
+        let order_of = move || {
+            if thread_topo.load(std::sync::atomic::Ordering::Relaxed) {
+                amonhen_model::HistoryOrder::Topo
+            } else {
+                amonhen_model::HistoryOrder::Date
+            }
+        };
         std::thread::spawn(move || {
             let send = |e| {
                 let _ = thread_tx.send(e);
@@ -428,6 +444,13 @@ impl Data {
                 Ok(repo) => Arc::new(repo),
                 Err(e) => return send(Event::Failed(format!("リポジトリを開けない: {e}"))),
             };
+            // 並び順は読む前にコアへ（既定の日付順なら何もしない。GTK4 版と同じ）。
+            let order = order_of();
+            if order != amonhen_model::HistoryOrder::Date
+                && let Err(e) = repo.set_history_order(order)
+            {
+                eprintln!("History の並び順を変えられない: {e}");
+            }
             if let Some(cached) = repo.load_cached_history() {
                 send(Event::History(repo.clone(), cached));
             }
@@ -475,6 +498,13 @@ impl Data {
                 // まとめて来た知らせは 1 回の読み直しにする。
                 while let Ok(more) = changed_rx.try_recv() {
                     bits |= more;
+                }
+                if bits & REORDER != 0 {
+                    if let Err(e) = repo.set_history_order(order_of()) {
+                        eprintln!("History を並べ直せない: {e}");
+                    }
+                    // 並べ直した History と、その行の ref の印を読み直す。
+                    bits |= amonhen_watch::Changes::REFS.0;
                 }
                 let changes = amonhen_watch::Changes(bits);
                 if bits & REBUILD != 0 {
@@ -546,6 +576,7 @@ impl Data {
             rx,
             wake,
             changed_tx,
+            topo,
         }
     }
 
@@ -704,6 +735,15 @@ impl Data {
     /// Working Copy の status を読み直す（stage・コミットの後。見張りが拾う前に出す）。
     pub fn reload_status(&self) {
         let _ = self.changed_tx.send(amonhen_watch::Changes::INDEX.0);
+    }
+
+    /// History の並び順を変えて並べ直す（View の Date Order・Topological Order）。
+    pub fn reorder(&self, order: amonhen_model::HistoryOrder) {
+        self.topo.store(
+            order == amonhen_model::HistoryOrder::Topo,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        let _ = self.changed_tx.send(REORDER);
     }
 
     /// History の永続キャッシュを捨てて作り直し、ref も読み直す（View > Rebuild History）。

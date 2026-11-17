@@ -119,11 +119,22 @@ pub fn menu_bar(on_click: impl Fn() -> Callback<String>) -> View {
                 }
             }));
         }
-        // View の終わりに Customize Toolbar…（GTK4 版の View のメニュー）。
+        // View の終わりに History の並び順（GTK4 版の View の History の見せ方）と Customize Toolbar…（GTK4 版の
+        // View のメニュー）。並び順の項目は選んでいる方に印を付けない: メニューバーの項目を開いている間に
+        // 作り直すと、WinUI が前の項目を残して二重に並べる。
         if menu == Menu::View {
             if !items.is_empty() {
-                items.push(MenuItem::separator("-toolbar"));
+                items.push(MenuItem::separator("-order"));
             }
+            items.push(MenuItem::item(
+                "history-order-date",
+                amonhen_model::tr!("Date Order"),
+            ));
+            items.push(MenuItem::item(
+                "history-order-topo",
+                amonhen_model::tr!("Topological Order"),
+            ));
+            items.push(MenuItem::separator("-toolbar"));
             items.push(MenuItem::item(
                 "customize-toolbar",
                 amonhen_model::tr!("Customize Toolbar…"),

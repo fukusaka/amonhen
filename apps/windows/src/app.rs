@@ -1487,6 +1487,22 @@ impl Component for Root {
             }
             // File > New Window: 新しい窓（別のプロセス）に Repositories の画面を出す（窓にタブがないので、今の
             // リポジトリを開いた窓。GTK4 版・macOS 版の New Window）。
+            // View の Date Order・Topological Order（GTK4 版の History の見せ方の並び順）。
+            Message::Command(id) if id.starts_with("history-order-") => {
+                let order = if id == "history-order-topo" {
+                    amonhen_model::HistoryOrder::Topo
+                } else {
+                    amonhen_model::HistoryOrder::Date
+                };
+                if order == crate::prefs::history_order() {
+                    return;
+                }
+                if let Err(e) = crate::prefs::set_string(crate::prefs::HISTORY_ORDER, order.name())
+                {
+                    eprintln!("並び順を覚えられない: {e}");
+                }
+                with_history(|h| h.session.data.reorder(order));
+            }
             Message::Command(id) if id == "customize-toolbar" => {
                 self.dialog = Some(Dialog::Toolbar(crate::menus::toolbar_entries()));
             }
