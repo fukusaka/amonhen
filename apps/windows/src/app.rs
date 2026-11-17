@@ -36,6 +36,9 @@ thread_local! {
     static HISTORY_FLYOUT: RefCell<Option<xaml::FlyoutBase>> = const { RefCell::new(None) };
     /// サイドバーの木の生の要素と、右クリックで開く位置（キーボードで開いたときは項目そのものに出す）。
     static SIDEBAR_ELEMENT: RefCell<Option<xaml::UIElement>> = const { RefCell::new(None) };
+    /// ほかの worktree の変更を最後に数えた時刻と、全部を数え直した時刻（10 秒ごと・5 分ごと。GTK4 版と同じ）。
+    static WORKTREE_TICK: std::cell::Cell<(Instant, Instant)> =
+        std::cell::Cell::new((Instant::now(), Instant::now()));
     /// Activity を開いている間、読み直しを頼んだ最後の時刻（0.5 秒ごとに頼む）。
     static ACTIVITY_TICK: std::cell::Cell<Option<Instant>> = const { std::cell::Cell::new(None) };
     /// 自動の fetch の間隔（分。0 はしない）と、最後に数え始めた時。
@@ -83,6 +86,8 @@ struct Root {
     /// タグのリモートでの様子（コアの `tagRemotes` の info。リモートと読んだ時刻、タグごとの same・different・
     /// missing）。
     tag_remotes: Value,
+    /// ほかの worktree の変更の数（パス → 数）。
+    worktree_counts: std::collections::HashMap<String, u64>,
     /// submodule の様子（コアの `submodules` の info の `submodules`）。
     submodules: Value,
     /// subtree（コアの `subtrees` の info。`available` と `subtrees`）。
@@ -612,6 +617,9 @@ enum Message {
     CloseActivity,
     /// Repositories の操作。
     Repos(crate::repositories::Event),
+    /// ほかの worktree の変更を数える（true なら全部を数え直す）と、その答え（パスと数）。
+    CountWorktrees(bool),
+    WorktreeCounts(Vec<(String, u64)>),
     /// タグのリモートでの様子を読んだ（`tagRemotes` の info）。
     TagRemotes(Value),
     /// submodule の様子を読んだ。
@@ -767,6 +775,7 @@ impl Component for Root {
             repo_settings_from: Page::History,
             activity_from: Page::History,
             tag_remotes: Value::Null,
+            worktree_counts: std::collections::HashMap::new(),
             submodules: Value::Null,
             subtrees: Value::Null,
             repositories: None,
@@ -3216,7 +3225,50 @@ impl Component for Root {
                 });
                 self.dialog_inputs += 1;
             }
-            Message::Worktrees(list) => self.worktrees = list,
+            Message::Worktrees(list) => {
+                self.worktrees = list;
+                self.update(Message::CountWorktrees(true), context);
+            }
+            Message::CountWorktrees(fresh) => {
+                // 開いている worktree は status で見ているので数えない。消えかけ（prunable）も。
+                let Some(repo) = self.repo.clone() else {
+                    return;
+                };
+                let open = repo.paths().workdir.map(|d| d.display().to_string());
+                let paths: Vec<String> = self
+                    .worktrees
+                    .iter()
+                    .filter(|w| !w.prunable)
+                    .filter(|w| !open.as_deref().is_some_and(|o| same_path(o, &w.path)))
+                    .map(|w| w.path.clone())
+                    .collect();
+                if self.worktrees.len() < 2 || paths.is_empty() {
+                    return;
+                }
+                context.spawn_background(move |_| {
+                    let command =
+                        json!({ "op": "worktreeChanges", "paths": paths, "fresh": fresh });
+                    let reply: Value = serde_json::from_str(&repo.run_json(&command.to_string()))
+                        .unwrap_or_default();
+                    Message::WorktreeCounts(
+                        reply["info"]["worktrees"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|w| {
+                                Some((w["path"].as_str()?.to_owned(), w["count"].as_u64()?))
+                            })
+                            .collect(),
+                    )
+                });
+            }
+            Message::WorktreeCounts(counts) => {
+                for (path, count) in counts {
+                    if let Some(w) = self.worktrees.iter().find(|w| same_path(&w.path, &path)) {
+                        self.worktree_counts.insert(w.path.clone(), count);
+                    }
+                }
+            }
             Message::Confirm(repo, title, message, button, command) => {
                 self.dialog = Some(Dialog::Confirm {
                     repo,
@@ -4488,7 +4540,16 @@ impl Component for Root {
                         &self
                             .worktrees
                             .iter()
-                            .map(|w| (format!("worktree:{}", w.path), w.title()))
+                            .map(|w| {
+                                let editing = self
+                                    .repo
+                                    .as_ref()
+                                    .and_then(|r| r.paths().workdir)
+                                    .is_some_and(|d| same_path(&d.display().to_string(), &w.path));
+                                let changes =
+                                    self.worktree_counts.get(&w.path).copied().unwrap_or(0);
+                                (format!("worktree:{}", w.path), w.title(editing, changes))
+                            })
                             .collect::<Vec<_>>(),
                         sidebar::Marks {
                             form: &self.form,
@@ -8172,8 +8233,17 @@ impl WorktreeInfo {
 
     /// サイドバーの見出し（フォルダの名前とブランチ。ロック・なくなったフォルダは、細いサイドバーでも切れない
     /// よう前に印をつける）。
-    fn title(&self) -> String {
+    /// サイドバーの行の見出し。`editing` は開いている worktree か、`changes` は変更の数（GTK4 版と同じく、
+    /// ✎ 開いているもの・⌂ メイン・⑂ ほかの印と、` · n`）。
+    fn title(&self, editing: bool, changes: u64) -> String {
         let mut text = String::new();
+        text.push_str(if editing {
+            "✎ "
+        } else if self.main {
+            "⌂ "
+        } else {
+            "⑂ "
+        });
         if self.prunable {
             text.push_str("⚠ ");
         }
@@ -8183,6 +8253,9 @@ impl WorktreeInfo {
         text.push_str(&worktree_name(&self.path));
         if let Some(branch) = &self.branch {
             text.push_str(&format!("  {branch}"));
+        }
+        if changes > 0 {
+            text.push_str(&format!(" · {changes}"));
         }
         text
     }
@@ -9003,6 +9076,15 @@ impl HistoryView {
         {
             AUTO_FETCH.with(|a| a.set((minutes, Instant::now())));
             self.sender.send(Message::AutoFetch);
+        }
+        // ほかの worktree の変更の数（10 秒ごと、5 分ごとに全部を数え直す。変わっていなければエンジンは git を
+        // 動かさない）。
+        let (counted, fresh) = WORKTREE_TICK.with(|t| t.get());
+        if counted.elapsed() >= std::time::Duration::from_secs(10) {
+            let all = fresh.elapsed() >= std::time::Duration::from_secs(300);
+            WORKTREE_TICK
+                .with(|t| t.set((Instant::now(), if all { Instant::now() } else { fresh })));
+            self.sender.send(Message::CountWorktrees(all));
         }
         // Activity を開いている間は 0.5 秒ごとに読み直してもらう（GTK4 版と同じ間隔）。
         if let Some(last) = ACTIVITY_TICK.with(|t| t.get())
