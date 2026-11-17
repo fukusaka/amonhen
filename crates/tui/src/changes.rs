@@ -77,6 +77,8 @@ pub struct Changes {
     scroll: Scroll,
     /// 差分の中で選んでいる行（文書の行。0 はパスの行）。
     cursor: u32,
+    /// 行の範囲の始まり（あれば、ここから選んでいる行までが相手）。
+    mark: Option<u32>,
     /// コミットメッセージの欄。
     pub message: Editor,
     /// 直前のコミットを作り直す。
@@ -213,6 +215,7 @@ impl Changes {
                     self.scroll.top = 0;
                     self.scroll.left = 0;
                     self.cursor = 0;
+                    self.mark = None;
                 }
                 let id = reply.json["diff"].clone();
                 let mode = reply.json["mode"].as_str().unwrap_or("");
@@ -520,14 +523,44 @@ impl Changes {
         target.is_some_and(|line| self.cursor_to(line))
     }
 
+    /// 選んでいる範囲（文書の行。両端を含む）。
+    fn range(&self) -> Option<(u32, u32)> {
+        let mark = self.mark?;
+        Some((mark.min(self.cursor), mark.max(self.cursor)))
+    }
+
+    pub fn has_mark(&self) -> bool {
+        self.mark.is_some()
+    }
+
+    /// 範囲の始まりを、選んでいる行に置く。もう置いてあれば、やめる。
+    pub fn toggle_mark(&mut self) -> bool {
+        self.mark = match self.mark {
+            Some(_) => None,
+            None => Some(self.cursor),
+        };
+        true
+    }
+
+    pub fn clear_mark(&mut self) {
+        self.mark = None;
+    }
+
     /// 選んでいる行が指す変更: 追加・削除の行ならその行、hunk の見出しならその hunk の変更すべて。
     fn target(&self) -> Option<(&Shown, Target)> {
         let shown = self.shown.as_ref()?;
+        let changed = |r: usize| matches!(shown.diff.kind(r).0, DiffRow::ADDED | DiffRow::REMOVED);
+        // 範囲を選んでいれば、その中の変更すべて。
+        if let Some((first, last)) = self.range() {
+            let rows: Vec<u32> = (first.max(1) - 1..last.min(shown.diff.len()))
+                .filter(|&r| changed(r as usize))
+                .collect();
+            return (!rows.is_empty()).then_some((shown, Target { rows, hunk: false }));
+        }
         let row = self.cursor.checked_sub(1)? as usize;
         if row >= shown.diff.len() as usize {
             return None;
         }
-        let changed = |r: usize| matches!(shown.diff.kind(r).0, DiffRow::ADDED | DiffRow::REMOVED);
         let rows: Vec<u32> = match shown.diff.kind(row).0 {
             DiffRow::HUNK => (row + 1..shown.diff.len() as usize)
                 .take_while(|&r| !matches!(shown.diff.kind(r).0, DiffRow::HUNK | DiffRow::FILE))
@@ -665,7 +698,10 @@ impl Changes {
                     );
                 }
             }
-            if line == self.cursor && focused {
+            let in_range = self
+                .range()
+                .is_some_and(|(first, last)| first <= line && line <= last);
+            if (line == self.cursor || in_range) && focused {
                 buf[(area.x, area.y + y)].set_char('▌').set_fg(Color::Cyan);
             }
         }

@@ -17,6 +17,7 @@ use serde_json::{Value, json};
 use unicode_width::UnicodeWidthStr;
 
 use crate::Clock;
+use crate::Result;
 use crate::changes::Changes;
 use crate::details::Details;
 use crate::diff::{PAN, Theme};
@@ -137,6 +138,10 @@ pub struct App {
     theme: Theme,
     /// リポジトリの名前（作業ツリーのフォルダ名）。
     name: String,
+    /// 作業ツリーの場所。
+    workdir: Option<String>,
+    /// メッセージをエディタで開く（`Ctrl-e`。端末を渡してから）。
+    edit_message: bool,
     branch: Option<String>,
     clock: Clock,
     size: (u16, u16),
@@ -194,6 +199,8 @@ impl App {
             search: None,
             theme: Theme::detect(),
             name: String::new(),
+            workdir: None,
+            edit_message: false,
             branch: None,
             clock,
             size: (0, 0),
@@ -311,6 +318,25 @@ impl App {
         suspend
     }
 
+    /// メッセージをエディタで開くなら、今のメッセージと作業ツリーの場所（聞いたら、なかったことにする）。
+    pub fn take_edit_message(&mut self) -> Option<(String, Option<String>)> {
+        std::mem::take(&mut self.edit_message)
+            .then(|| (self.changes.message.text(), self.workdir.clone()))
+    }
+
+    /// エディタを閉じた後のメッセージ。だめなら理由を出し、メッセージはそのまま。
+    pub fn message_edited(&mut self, edited: Result<String>) {
+        match edited {
+            // `#` で始まる行は、git と同じくコメント。
+            Ok(text) => {
+                let text: Vec<&str> = text.lines().filter(|l| !l.starts_with('#')).collect();
+                self.changes.message.set_text(&text.join("\n"));
+            }
+            Err(error) => self.error = Some(error.to_string()),
+        }
+        self.dirty = true;
+    }
+
     /// まだ読んでいる。
     pub fn busy(&self) -> bool {
         self.pending > 0
@@ -365,6 +391,7 @@ impl App {
                         refs,
                         history,
                     } => {
+                        self.workdir = workdir.clone();
                         self.name = workdir
                             .as_deref()
                             .and_then(|w| std::path::Path::new(w).file_name())
@@ -493,6 +520,7 @@ impl App {
                         }
                     }
                     Loaded::Staged(result) => {
+                        self.changes.clear_mark();
                         if let Err(error) = result {
                             self.error = Some(error);
                         }
@@ -1187,7 +1215,10 @@ impl App {
                     tr!("Take the current or the incoming side of a conflicted file"),
                 ),
                 ("Enter", tr!("Go to the diff")),
-                ("c", tr!("Write the commit message")),
+                (
+                    "c",
+                    tr!("Write the commit message (Ctrl-e there opens git's editor)"),
+                ),
                 ("a", tr!("Amend the last commit")),
                 ("Ctrl-s", tr!("Commit")),
             ],
@@ -1199,6 +1230,10 @@ impl App {
                     tr!("Stage or unstage the line, or the hunk on its header"),
                 ),
                 ("d", tr!("Discard the line or the hunk")),
+                (
+                    "v",
+                    tr!("Start a range of lines; Space and d then act on all of it"),
+                ),
                 (
                     "o t b",
                     tr!("In a conflict: take current, incoming, or both"),
@@ -1261,6 +1296,7 @@ impl App {
         match key.code {
             KeyCode::Esc | KeyCode::Tab | KeyCode::BackTab => self.focus = Focus::Main,
             KeyCode::Char('s') if control => self.commit(),
+            KeyCode::Char('e') if control => self.edit_message = true,
             KeyCode::Enter if alt => self.commit(),
             KeyCode::Char(_) if control || alt => {}
             code => {
@@ -1376,6 +1412,9 @@ impl App {
             KeyCode::Char('G') | KeyCode::End => self.changes.cursor_to(u32::MAX),
             KeyCode::Char('l') | KeyCode::Right => self.changes.pan(PAN),
             KeyCode::Char('h') | KeyCode::Left => self.changes.pan(-PAN),
+            // 行の範囲: `v` で始まりを決め、動かした所までを選ぶ。もう一度で、やめる。
+            KeyCode::Char('v') => self.changes.toggle_mark(),
+            KeyCode::Esc if self.changes.has_mark() => self.changes.toggle_mark(),
             KeyCode::Char(']') => self.changes.jump_hunk(true),
             KeyCode::Char('[') => self.changes.jump_hunk(false),
             // コンフリクトの中では、そのコンフリクトを Current・Incoming・両方のどれかにする（Undo できる）。
@@ -1878,7 +1917,7 @@ impl App {
                     (View::Changes, Focus::Side) => {
                         tr!("j/k line   [/] hunk   Space stage/unstage   d discard   Esc back")
                     }
-                    (_, Focus::Message) => tr!("Ctrl-s commit   Esc back"),
+                    (_, Focus::Message) => tr!("Ctrl-s commit   Ctrl-e editor   Esc back"),
                     (_, Focus::Sidebar) => {
                         tr!("j/k move   Enter open   / filter   ? keys   Esc back   q quit")
                     }

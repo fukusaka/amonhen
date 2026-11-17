@@ -924,3 +924,21 @@ fn m_toggles_mouse_capture() {
     let on = amonhen_tui::snapshot(open(dir.path()), 80, 8, clock(), "MM").unwrap();
     assert!(on.contains("Mouse on"));
 }
+
+/// 差分で `v` を押して動かすと、行の範囲を選ぶ。Space はその中の変更すべてを stage する
+#[test]
+fn v_selects_a_range_of_lines() {
+    let dir = tempfile::tempdir().unwrap();
+    two_lines(dir.path());
+    // 「-one」で `v`、「+THREE」まで動かして Space（間の「two」は変更ではない）。
+    let text = amonhen_tui::snapshot(open(dir.path()), 80, 12, clock(), "1\njjvjjjj").unwrap();
+    println!("{text}");
+    // 範囲の行すべてに印。
+    assert_eq!(text.lines().filter(|l| l.starts_with('▌')).count(), 5);
+    amonhen_tui::snapshot(open(dir.path()), 80, 12, clock(), "1\njjvjjjj ").unwrap();
+    assert_eq!(git_out(dir.path(), &["diff", "--name-only"]), "");
+    assert_eq!(
+        git_out(dir.path(), &["diff", "--cached", "--name-only"]),
+        "a.txt\n"
+    );
+}

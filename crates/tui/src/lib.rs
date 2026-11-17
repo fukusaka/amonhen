@@ -71,7 +71,7 @@ fn run_with(
     let (tx, rx) = mpsc::channel();
     serve(tx.clone())?;
     let mut screen = terminal::Screen::enter()?;
-    terminal::read_input(tx.clone());
+    let input_paused = terminal::read_input(tx.clone());
     // リポジトリの変化の知らせ（受けられなくても、画面は動く）。
     let changed = std::sync::Mutex::new(tx.clone());
     let _ = front.subscribe(Box::new(move |bits| {
@@ -103,8 +103,57 @@ fn run_with(
         if app.take_suspend() {
             screen.suspend(app.mouse_captured())?;
         }
+        // メッセージを git のエディタで開く。その間は、入力を読むのをやめて端末を渡す。
+        if let Some((message, workdir)) = app.take_edit_message() {
+            input_paused.store(true, Ordering::Relaxed);
+            std::thread::sleep(terminal::INPUT_POLL * 2);
+            let edited =
+                screen.outside(app.mouse_captured(), || edit(&message, workdir.as_deref()))?;
+            input_paused.store(false, Ordering::Relaxed);
+            app.message_edited(edited);
+        }
     }
     Ok(())
+}
+
+/// `message` を一時ファイルに書いて git のエディタ（`git var GIT_EDITOR`: `GIT_EDITOR`・`core.editor`・
+/// `VISUAL`・`EDITOR` の順）で開き、閉じた後の中身を返す。
+fn edit(message: &str, workdir: Option<&str>) -> Result<String> {
+    let dir = workdir
+        .map(std::path::Path::new)
+        .filter(|d| d.is_dir())
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_else(|| ".".into());
+    let out = amonhen_model::process::command("git")
+        .args(["var", "GIT_EDITOR"])
+        .current_dir(&dir)
+        .output()?;
+    let editor = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+    if !out.status.success() || editor.is_empty() {
+        return Err(amonhen_model::tr!(
+            "git has no editor set (GIT_EDITOR, core.editor, VISUAL, EDITOR)"
+        )
+        .into());
+    }
+    let file =
+        std::env::temp_dir().join(format!("amonhen-tui-{}-COMMIT_EDITMSG", std::process::id()));
+    std::fs::write(&file, format!("{message}\n"))?;
+    // git と同じく、シェルに渡す（エディタの指定に引数があってもよい）。
+    let status = amonhen_model::process::command("sh")
+        .args(["-c", &format!("{editor} \"$@\""), "sh"])
+        .arg(&file)
+        .current_dir(&dir)
+        .status();
+    let text = std::fs::read_to_string(&file);
+    let _ = std::fs::remove_file(&file);
+    match status {
+        Ok(status) if status.success() => Ok(text?),
+        Ok(_) => Err(amonhen_model::tr!(
+            "The editor ended with an error; the message is unchanged"
+        )
+        .into()),
+        Err(e) => Err(e.into()),
+    }
 }
 
 /// 頼んだものの答えがそろうまで受け取る。
