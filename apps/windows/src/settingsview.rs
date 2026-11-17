@@ -141,6 +141,70 @@ pub struct Callbacks<'a> {
     pub template: Box<dyn Fn(usize, usize) -> Callback<String> + 'a>,
     pub template_add: Callback<()>,
     pub template_remove: Box<dyn Fn(usize) -> Callback<()> + 'a>,
+    /// Appearance: History の見せ方を切り替えた（View の項目の id と、チェックの値）。
+    pub display: Box<dyn Fn(&'static str) -> Callback<bool> + 'a>,
+    /// Appearance: History の並び順を選んだ（0 は日付順、1 はトポロジー順）。
+    pub order: Callback<Option<usize>>,
+}
+
+/// Appearance（GTK4 版の Appearance のタブの History と Items。CI の状態はこの FE にない）。値は View の
+/// History の見せ方と同じもの（どちらで変えても同じ設定）。
+fn appearance(callbacks: &Callbacks) -> View {
+    use crate::render::items;
+    let display = |id: &'static str, value: bool, label: String| {
+        CheckBox::new()
+            .is_checked(value)
+            .on_is_checked_changed((callbacks.display)(id))
+            .content(TextBlock::new().text(label))
+    };
+    let shown = crate::render::history_items();
+    let item = |id: &'static str, bit: u32, label: &'static str| {
+        display(
+            id,
+            shown & bit != 0,
+            amonhen_model::i18n::translate(label).into_owned(),
+        )
+    };
+    StackPanel::new()
+        .children((
+            heading(tr!("Appearance")),
+            StackPanel::new()
+                .orientation(Orientation::Horizontal)
+                .spacing(12.0)
+                .children((
+                    TextBlock::new()
+                        .text(tr!("Order"))
+                        .vertical_alignment(VerticalAlignment::Center),
+                    ComboBox::new()
+                        .items_source(vec![tr!("Date Order"), tr!("Topological Order")])
+                        .selected_index(usize::from(
+                            crate::prefs::history_order() == amonhen_model::HistoryOrder::Topo,
+                        ))
+                        .on_selection_changed(callbacks.order.clone()),
+                )),
+            display(
+                "one-line-history",
+                crate::render::one_line(),
+                tr!("Show each commit on one line"),
+            ),
+            display(
+                "highlight-ancestors",
+                crate::render::highlight_ancestors(),
+                tr!("Highlight the selected commit’s ancestors"),
+            ),
+            TextBlock::new()
+                .text(tr!("Items"))
+                .font_size(13.0)
+                .opacity(0.8)
+                .margin(Thickness::new(0.0, 12.0, 0.0, 0.0)),
+            item("history-item-refs", items::REFS, "Branches and Tags"),
+            item("history-item-author", items::AUTHOR, "Author"),
+            item("history-item-date", items::DATE, "Date"),
+            item("history-item-id", items::ID, "Commit ID"),
+            item("history-item-signature", items::SIGNATURE, "Signature"),
+            note(tr!("What each commit’s row shows besides the subject.")),
+        ))
+        .into()
 }
 
 /// バイト数を読みやすく。
@@ -296,6 +360,7 @@ fn templates(state: &State, callbacks: &Callbacks) -> View {
 }
 
 pub fn view(state: &State, callbacks: Callbacks) -> View {
+    let appearance = appearance(&callbacks);
     let env = environment(state, &callbacks);
     let shared_templates = templates(state, &callbacks);
     let head = Grid::new()
@@ -408,6 +473,7 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                 bookmark,
                 heading("Git".to_owned()),
                 StackPanel::new().children((git, shared_templates, env)),
+                appearance,
                 heading(tr!("Diff & Merge")),
                 check(
                     crate::prefs::AUTO_MAGIC_MERGE,

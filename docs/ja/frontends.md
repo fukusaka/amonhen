@@ -126,7 +126,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | SSH Hosts: ホストの Environment Variables（ログインシェルの切り替え） | ✓ | ✓ | — | n/a | n/a |  |
 | ホスト・この機械の列で選ぶパスのシート | ✓ | ✓ | — | n/a | n/a |  |
 | Accounts: GitHub（CI の状態・アバター） | ✓ | ✓ | — | — | n/a |  |
-| Appearance: History の順・1 行・行の項目・アバター | ✓ | ✓ | — | n/a | n/a |  |
+| Appearance: History の順・1 行・行の項目・アバター | ✓ | ✓ | △ | n/a | n/a | Windows: History の並び順・1 行表示・祖先の強調・行の項目（CI の状態はない）。アバターはない。 |
 | Appearance: フォント・グラフの色 | — | — | — | n/a | n/a |  |
 | Theme: 窓の背景（透過とぼかし・背景画像・ツールバーの色・リポジトリごと） | ✓ | ✓ | — | n/a | n/a | GTK4: ぼかしはない（GNOME では窓の後ろをぼかせない）。透かすにはコンポジタが要る。 |
 | Theme: 構文と差分の色（内蔵のテーマ・VSCode のテーマ・差分は標準の色） | ✓ | ✓ | — | n/a | n/a | VSCode: VSCode 自身のテーマに従う。 |

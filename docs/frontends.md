@@ -126,7 +126,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | SSH Hosts: the host's Environment Variables (login shell switch) | ✓ | ✓ | — | n/a | n/a |  |
 | Path picker in columns for a host or this machine | ✓ | ✓ | — | n/a | n/a |  |
 | Accounts: GitHub (CI status, avatars) | ✓ | ✓ | — | — | n/a |  |
-| Appearance: History order, one line, row items, avatars | ✓ | ✓ | — | n/a | n/a |  |
+| Appearance: History order, one line, row items, avatars | ✓ | ✓ | △ | n/a | n/a | Windows: History's order, one line, ancestor highlight and row items (no CI status); no avatars. |
 | Appearance: fonts, graph colors | — | — | — | n/a | n/a |  |
 | Theme: window background (transparency and blur, image, toolbar tint, per repository) | ✓ | ✓ | — | n/a | n/a | GTK4: No blur (GNOME can't blur what is behind the window); a see-through window needs a compositor. |
 | Theme: syntax and diff colors (built-in themes, VSCode themes, standard diff colors) | ✓ | ✓ | — | n/a | n/a | VSCode: follows VSCode's own theme. |

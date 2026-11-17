@@ -684,6 +684,10 @@ enum Message {
     SettingsField(usize, String),
     SettingsSaveGit,
     SettingsToggle(&'static str, bool),
+    /// Settings > Appearance の History の見せ方（View の項目の id と、チェックの値）。
+    SettingsDisplay(&'static str, bool),
+    /// Settings > Appearance の並び順（0 は日付順、1 はトポロジー順）。
+    SettingsOrder(Option<usize>),
     CloseSettings,
     /// Activity: タブを選んだ・Undo の記録を読んだ・戻す数を選んだ・読み直す時刻・閉じる。
     ActivityTab(Option<usize>),
@@ -4896,6 +4900,32 @@ impl Component for Root {
                         _ => state.file_history_merges = value,
                     }
                 }
+            }
+            Message::SettingsDisplay(id, value) => {
+                // 今の値と違うときだけ、View の項目と同じく切り替える（作り直しで同じ値が来ても切り替えない）。
+                let bit = |b: u32| crate::render::history_items() & b != 0;
+                let now = match id {
+                    "one-line-history" => crate::render::one_line(),
+                    "highlight-ancestors" => crate::render::highlight_ancestors(),
+                    "history-item-refs" => bit(crate::render::items::REFS),
+                    "history-item-author" => bit(crate::render::items::AUTHOR),
+                    "history-item-date" => bit(crate::render::items::DATE),
+                    "history-item-id" => bit(crate::render::items::ID),
+                    "history-item-signature" => bit(crate::render::items::SIGNATURE),
+                    _ => return,
+                };
+                if now != value {
+                    self.update(Message::Command(id.to_owned()), context);
+                }
+            }
+            Message::SettingsOrder(index) => {
+                let Some(index) = index else { return };
+                let id = if index == 1 {
+                    "history-order-topo"
+                } else {
+                    "history-order-date"
+                };
+                self.update(Message::Command(id.to_owned()), context);
             }
             Message::CloseSettings => {
                 self.settings = None;
@@ -9400,6 +9430,8 @@ impl Root {
                     context.callback(move |text| Message::SettingsTemplate(i, field, text))
                 }),
                 template_add: context.callback(|()| Message::SettingsTemplateAdd),
+                display: Box::new(|id| context.callback(move |v| Message::SettingsDisplay(id, v))),
+                order: context.callback(Message::SettingsOrder),
                 template_remove: Box::new(|i| {
                     context.callback(move |()| Message::SettingsTemplateRemove(i))
                 }),
