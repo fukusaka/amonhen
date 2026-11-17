@@ -213,7 +213,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
 | Range Diff の表示（= ! < >・Changes Only・差分の差分） | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `range-diff`。 |
 | Compare with Previous Version | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `range-diff --previous`。 |
-| History の 2 つのコミット・Reflog の行を 2 つの版として比べる | ✓ | ✓ | △ | ✓ | ✓ | CLI: どの範囲でも。<br>Windows: Reflog の行からだけ。 |
+| History の 2 つのコミット・Reflog の行を 2 つの版として比べる | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: どの範囲でも。 |
 | 範囲を直して比べ直す | ✓ | ✓ | ✓ | ✓ | ✓ |  |
 
 ## 6. Working Copy

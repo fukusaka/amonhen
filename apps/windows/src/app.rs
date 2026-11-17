@@ -88,6 +88,8 @@ struct Root {
     tag_remotes: Value,
     /// Pull・Push のダイアログのコミットの一覧（見出し・数・(oid, 件名, 作者, 時刻)・消えるものか）。
     sync_lists: Vec<SyncList>,
+    /// History で複数選んでいるコミット（上から。右クリックのメニューを複数のもの用にする）。
+    multi: Vec<String>,
     /// Push のダイアログの注意（GTK4 版の `push_warnings`）。
     sync_warnings: Vec<String>,
     /// stash の詳しい中身（名前 → 中身。ref が変わるたびに読み直す）。
@@ -629,6 +631,8 @@ enum Message {
     CloseActivity,
     /// Repositories の操作。
     Repos(crate::repositories::Event),
+    /// History で複数選んだコミット（上から。1 つ以下なら空）。
+    MultiSelected(Vec<String>),
     /// Pull・Push のダイアログのコミットの一覧を読んだ。
     SyncLists(Vec<SyncList>, Vec<String>),
     /// stash の詳しい中身を読んだ。
@@ -795,6 +799,7 @@ impl Component for Root {
             worktree_counts: std::collections::HashMap::new(),
             stash_details: std::collections::HashMap::new(),
             sync_lists: Vec::new(),
+            multi: Vec::new(),
             sync_warnings: Vec::new(),
             submodules: Value::Null,
             subtrees: Value::Null,
@@ -904,6 +909,9 @@ impl Component for Root {
             }
             Message::TagRemotes(info) => self.tag_remotes = info,
             Message::StashDetails(details) => self.stash_details = details,
+            Message::MultiSelected(ids) => {
+                self.multi = if ids.len() > 1 { ids } else { Vec::new() }
+            }
             Message::SyncLists(lists, warnings) => {
                 if matches!(self.dialog, Some(Dialog::Pull { .. } | Dialog::Push { .. })) {
                     self.sync_lists = lists;
@@ -8372,6 +8380,34 @@ impl Root {
     /// History の右クリックのメニュー（GTK4 版の `commitops::menu`、macOS 版の `HistoryViewController` と同じ並び）。
     /// まだ動かない操作は出さない。右クリックは先に行を選ぶので、選んでいるコミットのメニューになる。
     fn history_menu(&self) -> Vec<MenuItem> {
+        // 複数選んでいれば、まとめて使える操作だけ（GTK4 版の `commitops::multi_menu` のうち、この FE にあるもの）。
+        if self.multi.len() > 1 {
+            let mut items = Vec::new();
+            // 2 つなら、それぞれを先端とする 2 つの版として比べられる（rebase の前と後など）。
+            if let [newer, older] = &self.multi[..] {
+                items.push(MenuItem::item(
+                    format!("rangediff:{older}...{newer}"),
+                    tr!("Compare as Two Versions (Range Diff)"),
+                ));
+                items.push(MenuItem::separator("-copy"));
+            }
+            items.push(MenuItem::item(
+                format!("copy:{}", self.multi.join("\n")),
+                tr!("Copy Commit IDs"),
+            ));
+            items.push(MenuItem::item(
+                format!(
+                    "copy:{}",
+                    self.multi
+                        .iter()
+                        .map(|id| &id[..id.len().min(8)])
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                ),
+                tr!("Copy Short IDs"),
+            ));
+            return items;
+        }
         let Some((id, labels)) = &self.selected else {
             return Vec::new();
         };
@@ -9518,6 +9554,15 @@ impl HistoryView {
         // 複数選んだ行が変わったら、まとめた差分を読む。
         if s.data.multi != self.multi_sent {
             self.multi_sent = s.data.multi.clone();
+            // 右クリックのメニュー（2 つなら Range Diff で比べる）のために、選んだコミットを知らせる（上から）。
+            let mut rows = self.multi_sent.clone();
+            rows.sort_unstable();
+            let ids: Vec<String> = s.data.history.as_ref().map_or_else(Vec::new, |h| {
+                rows.iter()
+                    .filter_map(|&r| h.graph.ids().get(r as usize).map(|id| id.to_string()))
+                    .collect()
+            });
+            self.sender.send(Message::MultiSelected(ids));
             if self.multi_sent.len() > 1 {
                 s.data.want_selection(self.multi_sent.clone());
             } else {
