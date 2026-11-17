@@ -2977,8 +2977,8 @@ impl Component for Root {
                     if let Some((full, name)) = rest.split_once(':') {
                         self.ask_bundle(vec![full.to_owned()], name.to_owned(), name.to_owned());
                     }
-                } else if let Some(rest) = key.strip_prefix("archive:") {
-                    // `archive:<rev>:<既定の名前>`（タグ・ブランチの名前、なければ短い ID）。
+                } else if let Some(rest) = key.strip_prefix("export-archive:") {
+                    // `export-archive:<rev>:<既定の名前>`（既定の名前はタグ・ブランチの名前、なければ短い ID。ブランチの `archive:` と分ける）。
                     if let (Some(repo), Some((rev, label))) =
                         (self.repo.clone(), rest.split_once(':'))
                     {
@@ -8527,7 +8527,7 @@ impl Root {
             })
             .map_or_else(|| id[..8].to_owned(), |l| l.name.clone());
         items.push(MenuItem::item(
-            format!("archive:{id}:{label}"),
+            format!("export-archive:{id}:{label}"),
             tr!("Export Archive…"),
         ));
         items.push(MenuItem::separator("-copy"));
