@@ -210,6 +210,17 @@ enum Dialog {
         staged: bool,
     },
     /// ブランチの切り替え（GTK4 版の `branchswitcher`）: 打った問い合わせと、選んでいる候補。
+    /// File > Clone…（GTK4 版の `repos::clone`）。欄は URL・置き場所・フォルダの名前、取得する範囲
+    /// （すべて・中身は必要なときに・最近の履歴だけ）と最近の履歴の数、一部のフォルダだけ・submodule も。
+    Clone {
+        url: String,
+        folder: String,
+        name: String,
+        download: usize,
+        depth: usize,
+        sparse: bool,
+        submodules: bool,
+    },
     /// Quick Open（リポジトリをあいまい検索して新しい窓で開く）。
     QuickOpen {
         query: String,
@@ -489,6 +500,15 @@ enum Message {
     RestoreStaged(bool),
     /// ブランチの切り替えで候補を選んだ。
     SwitcherSelect(Option<usize>),
+    /// Clone の欄（0 は URL、1 は置き場所、2 はフォルダの名前）・取得する範囲・数・チェック（0 は一部のフォルダ
+    /// だけ、1 は submodule も）・置き場所を選ぶ。
+    CloneField(usize, String),
+    CloneDownload(Option<usize>),
+    CloneDepth(Option<usize>),
+    CloneCheck(usize, bool),
+    CloneChoose,
+    /// clone が終わった（作ったフォルダと、失敗なら理由）。
+    Cloned(std::path::PathBuf, Option<String>),
     /// Quick Open の候補を、スキャンで見つけたものも入れて読み直した。
     QuickOpenCandidates(Vec<crate::repositories::Candidate>),
     /// New Orphan Branch の「今のファイルを残す」。
@@ -1100,6 +1120,86 @@ impl Component for Root {
                     *selected = index;
                 }
             }
+            Message::Command(id) if id == "open" => {
+                // 開いているものとは別の窓で開く（窓にタブがない）。
+                let Some(path) = crate::files::pick_folder(&tr!("Open…"), &tr!("Open")) else {
+                    return;
+                };
+                if let Err(e) = crate::repositories::open_window(&path.display().to_string()) {
+                    self.dialog = Some(Dialog::Failed {
+                        title: tr!("Open…"),
+                        message: e,
+                    });
+                }
+            }
+            Message::Command(id) if id == "clone" => {
+                self.dialog = Some(Dialog::Clone {
+                    url: String::new(),
+                    folder: crate::repositories::clone_folder(),
+                    name: String::new(),
+                    download: 0,
+                    depth: 1,
+                    sparse: false,
+                    submodules: false,
+                });
+                self.dialog_inputs += 1;
+            }
+            Message::CloneField(index, text) => {
+                if let Some(Dialog::Clone {
+                    url, folder, name, ..
+                }) = &mut self.dialog
+                {
+                    *[url, folder, name].into_iter().nth(index).expect("field") = text;
+                }
+            }
+            Message::CloneDownload(Some(index)) => {
+                if let Some(Dialog::Clone { download, .. }) = &mut self.dialog {
+                    *download = index;
+                }
+            }
+            Message::CloneDepth(Some(index)) => {
+                if let Some(Dialog::Clone { depth, .. }) = &mut self.dialog {
+                    *depth = index;
+                }
+            }
+            Message::CloneDownload(None) | Message::CloneDepth(None) => {}
+            Message::CloneCheck(index, on) => {
+                if let Some(Dialog::Clone {
+                    sparse, submodules, ..
+                }) = &mut self.dialog
+                {
+                    *[sparse, submodules].into_iter().nth(index).expect("check") = on;
+                }
+            }
+            Message::CloneChoose => {
+                if let Some(path) =
+                    crate::files::pick_folder(&tr!("Clone Location"), &tr!("Choose"))
+                    && let Some(Dialog::Clone { folder, .. }) = &mut self.dialog
+                {
+                    *folder = path.display().to_string();
+                }
+            }
+            Message::Cloned(dest, failed) => {
+                self.busy = None;
+                match failed {
+                    Some(message) => {
+                        self.dialog = Some(Dialog::Failed {
+                            title: tr!("Couldn’t clone"),
+                            message,
+                        })
+                    }
+                    None => {
+                        let dest = dest.display().to_string();
+                        crate::repositories::add_bookmark(&dest);
+                        if let Err(message) = crate::repositories::open_window(&dest) {
+                            self.dialog = Some(Dialog::Failed {
+                                title: tr!("Couldn’t clone"),
+                                message,
+                            });
+                        }
+                    }
+                }
+            }
             Message::Command(id) if id == "quick-open" => {
                 self.dialog = Some(Dialog::QuickOpen {
                     query: String::new(),
@@ -1414,6 +1514,53 @@ impl Component for Root {
                     let commands =
                         remote_changes(original.as_ref(), name.trim(), fetch.trim(), push.trim());
                     perform_all(context, repo, commands, title);
+                }
+                (
+                    Some(Dialog::Clone {
+                        url,
+                        folder,
+                        name,
+                        download,
+                        depth,
+                        sparse,
+                        submodules,
+                    }),
+                    ContentDialogResult::Primary,
+                ) => {
+                    let url = url.trim().to_owned();
+                    let name = match name.trim() {
+                        "" => crate::repositories::name_from_url(&url),
+                        n => n.to_owned(),
+                    };
+                    let parent = crate::repositories::path_of(&folder);
+                    if url.is_empty() || name.is_empty() || folder.trim().is_empty() {
+                        return beep();
+                    }
+                    let dest = parent.join(&name);
+                    let options = amonhen_backend_cli::CloneOptions {
+                        filter: (download == 1).then(|| "blob:none".to_owned()),
+                        depth: (download == 2).then(|| CLONE_DEPTHS[depth.min(3)]),
+                        sparse,
+                        recurse_submodules: submodules,
+                        ..Default::default()
+                    };
+                    if dest.exists() {
+                        // ダイアログを閉じた同じ更新では次のダイアログを出せないので、知らせで出す。
+                        let title = tr!("{path} already exists", path = dest.display());
+                        context.spawn_background(move |_| {
+                            Message::Performed(Some((
+                                title,
+                                tr!("Choose a different name or location."),
+                            )))
+                        });
+                        return;
+                    }
+                    crate::repositories::remember_clone_folder(folder.trim());
+                    self.busy = Some(tr!("Cloning {url}…", url = url));
+                    context.spawn_background(move |_| {
+                        let result = amonhen_backend_cli::clone(&url, &dest, &options);
+                        Message::Cloned(dest, result.err().map(|e| e.to_string()))
+                    });
                 }
                 (
                     Some(Dialog::QuickOpen {
@@ -5140,6 +5287,117 @@ impl Root {
                             .children((head, picker, modes)),
                     )
             }
+            Some(Dialog::Clone {
+                url,
+                folder,
+                name,
+                download,
+                depth,
+                sparse,
+                submodules,
+            }) => {
+                let field = |index: usize, text: &str, placeholder: String| {
+                    TextBox::new()
+                        .text(text.to_owned())
+                        .placeholder_text(placeholder)
+                        .on_text_changed(context.callback(move |t| Message::CloneField(index, t)))
+                };
+                let label = |text: String| TextBlock::new().text(text).margin(Thickness::new(0.0, 4.0, 0.0, 0.0));
+                let downloads = vec![
+                    tr!("Everything"),
+                    tr!("File contents when needed"),
+                    tr!("Recent history only"),
+                ];
+                let help = match download {
+                    1 => tr!(
+                        "Good for large repositories: file contents are fetched when a diff or file needs them."
+                    ),
+                    2 => tr!("Older history can be fetched later from the end of History."),
+                    _ => tr!(
+                        "The whole history and the contents of every file, as git does by default."
+                    ),
+                };
+                let depths: Vec<String> = CLONE_DEPTHS
+                    .iter()
+                    .map(|&d| match d {
+                        1 => tr!("1 Commit"),
+                        100 => tr!("100 Commits"),
+                        1_000 => tr!("1,000 Commits"),
+                        _ => tr!("10,000 Commits"),
+                    })
+                    .collect();
+                let depth_box: View = if *download == 2 {
+                    ComboBox::new()
+                        .items_source(depths)
+                        .selected_index(*depth)
+                        .on_selection_changed(context.callback(Message::CloneDepth))
+                        .into()
+                } else {
+                    View::empty()
+                };
+                let ready = !url.trim().is_empty() && !folder.trim().is_empty();
+                dialog
+                    .is_open(true)
+                    .title(tr!("Clone Repository"))
+                    .primary_button_text("Clone")
+                    .close_button_text(tr!("Cancel"))
+                    .is_primary_button_enabled(ready)
+                    .content(
+                        StackPanel::new().spacing(4.0).width(480.0).children((
+                            field(
+                                0,
+                                url,
+                                tr!(
+                                    "https://github.com/owner/repo.git, git@host:owner/repo.git or a bundle file"
+                                ),
+                            )
+                            .element_ref(&self.dialog_input),
+                            label(tr!("Location:")),
+                            Grid::new()
+                                .columns([GridLength::Star(1.0), GridLength::Auto])
+                                .column_spacing(6.0)
+                                .children((
+                                    field(1, folder, String::new()).grid_column(0),
+                                    Button::new()
+                                        .on_click(context.callback(|()| Message::CloneChoose))
+                                        .grid_column(1)
+                                        .content(TextBlock::new().text(tr!("Choose…"))),
+                                )),
+                            label(tr!("Folder Name:")),
+                            field(2, name, tr!("Taken from the URL")),
+                            label(tr!("Download:")),
+                            StackPanel::new()
+                                .orientation(Orientation::Horizontal)
+                                .spacing(6.0)
+                                .children((
+                                    ComboBox::new()
+                                        .items_source(downloads)
+                                        .selected_index(*download)
+                                        .on_selection_changed(
+                                            context.callback(Message::CloneDownload),
+                                        ),
+                                    depth_box,
+                                )),
+                            TextBlock::new()
+                                .text(help)
+                                .font_size(12.0)
+                                .opacity(0.65)
+                                .text_wrapping(TextWrapping::Wrap),
+                            CheckBox::new()
+                                .is_checked(*sparse)
+                                .on_is_checked_changed(
+                                    context.callback(|on| Message::CloneCheck(0, on)),
+                                )
+                                .content(TextBlock::new().text(tr!("Check out only some folders"))),
+                            CheckBox::new()
+                                .is_checked(*submodules)
+                                .on_is_checked_changed(
+                                    context.callback(|on| Message::CloneCheck(1, on)),
+                                )
+                                .content(TextBlock::new().text(tr!("Check out submodules too"))),
+                        )),
+                    )
+            }
             Some(Dialog::QuickOpen {
                 query,
                 selected,
@@ -8419,6 +8677,9 @@ fn attach_working_keys(element: &IInspectable) -> windows_core_reactor::Result<(
     REVOKERS.with(|r| r.borrow_mut().push(revoker));
     Ok(())
 }
+
+/// Clone の「最近の履歴だけ」で選べるコミットの数（GTK4 版の `shallow::more_choices` と 1）。
+const CLONE_DEPTHS: [u32; 4] = [1, 100, 1_000, 10_000];
 
 /// Repositories の一覧: ダブルクリックと Enter で、選んでいるリポジトリを開く（GTK4 版と同じ）。
 fn attach_repositories_open(element: &IInspectable) -> windows_core_reactor::Result<()> {

@@ -331,6 +331,42 @@ pub fn shown_path(location: &str) -> String {
     tilde(location)
 }
 
+/// ブックマークに入れる（clone したもの。macOS 版・GTK4 版と同じ）。
+pub fn add_bookmark(path: &str) {
+    let _ = edit(|d| update(d, path, |_| {}));
+}
+
+/// 窓に開いていないリポジトリを開く入口の、置き場所の初期値（前に clone した場所、なければスキャンするフォルダの
+/// 最初、なければホーム。GTK4 版の `repos::clone` と同じ）。
+pub fn clone_folder() -> String {
+    crate::prefs::string(CLONE_FOLDER)
+        .filter(|f| !f.is_empty())
+        .or_else(|| roots(&read()).into_iter().map(|r| r.0).next())
+        .or_else(|| std::env::var("USERPROFILE").ok())
+        .unwrap_or_default()
+}
+
+/// clone した親のフォルダを覚える（次の Clone の初期値）。
+pub fn remember_clone_folder(folder: &str) {
+    let _ = crate::prefs::set_string(CLONE_FOLDER, folder);
+}
+
+/// 前に clone した場所（GTK4 版と同じ鍵）。
+const CLONE_FOLDER: &str = "cloneFolder";
+
+/// 欄に打ったパス（`~` はホーム）。
+pub fn path_of(text: &str) -> PathBuf {
+    expand(text.trim())
+}
+
+/// URL の最後の部分（`.git`・`.bundle` を除く。GTK4 版の `name_from_url`）。
+pub fn name_from_url(url: &str) -> String {
+    let trimmed = url.trim().trim_end_matches(['/', '\\']);
+    let last = trimmed.rsplit(['/', ':', '\\']).next().unwrap_or_default();
+    let last = last.strip_suffix(".git").unwrap_or(last);
+    last.strip_suffix(".bundle").unwrap_or(last).to_owned()
+}
+
 /// リポジトリを新しい窓（別のプロセス）で開く。
 pub fn open_window(location: &str) -> Result<(), String> {
     if !is_repository(location) {

@@ -49,6 +49,17 @@ pub const IMPLEMENTED: &[&str] = &[
     "reveal-in-files",
 ];
 
+/// 表にない、この FE が File メニューの先頭に置く項目（GTK4 版の `appmenu` の Open…・Clone…。macOS 版の
+/// ⌘O・⌘⌃C）。
+const FILE_ITEMS: &[(&str, &str)] = &[("open", "Primary+O"), ("clone", "Primary+Alt+C")];
+
+fn file_item_title(id: &str) -> String {
+    match id {
+        "open" => amonhen_model::tr!("Open…"),
+        _ => "Clone…".to_owned(),
+    }
+}
+
 /// 項目の名前（GTK4 版の `appmenu::title` と同じ）。
 fn title(c: &Command) -> String {
     match c.id {
@@ -72,6 +83,15 @@ pub fn menu_bar(on_click: impl Fn() -> Callback<String>) -> View {
     let mut bar: Vec<(String, View)> = Vec::new();
     for (menu, name) in menus {
         let mut items = Vec::new();
+        if menu == Menu::File {
+            items.extend(FILE_ITEMS.iter().map(|(id, key)| {
+                let item = MenuItem::item(*id, file_item_title(id));
+                match shortcut(key) {
+                    Some(s) => item.with_shortcut(s),
+                    None => item,
+                }
+            }));
+        }
         for (i, section) in amonhen_commands::menu(menu).into_iter().enumerate() {
             let shown: Vec<&Command> = section
                 .into_iter()
@@ -171,6 +191,12 @@ pub fn toolbar(on_click: Callback<String>) -> View {
 
 /// 押したキーに当たる、この FE で動く操作（メニューの項目のショートカット）。
 pub fn command_for(pressed: MenuShortcut) -> Option<&'static str> {
+    if let Some((id, _)) = FILE_ITEMS
+        .iter()
+        .find(|(_, key)| shortcut(key) == Some(pressed))
+    {
+        return Some(id);
+    }
     amonhen_commands::COMMANDS
         .iter()
         .filter(|c| IMPLEMENTED.contains(&c.id))
