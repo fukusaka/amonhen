@@ -38,7 +38,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 
 | Feature | macOS | GTK4 | Windows | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
-| Workspace rows switch the main view (Working Copy, History, Stashes, Reflog…) | ✓ | ✓ | △ | ✓ | n/a | VSCode: Working Copy, History, Stashes and (with the engine) Reflog; Conflicts while there are conflicts, opening the first in the merge editor.<br>Windows: Working Copy, History, Stashes and Reflog. |
+| Workspace rows switch the main view (Working Copy, History, Stashes, Reflog…) | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: Working Copy, History, Stashes and (with the engine) Reflog; Conflicts while there are conflicts, opening the first in the merge editor. |
 | Conflicts row with a count while there are conflicts | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: A Conflicts group inside the Working Copy view. |
 | Stashes row with a count only when there are stashes | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: The Stashes section. |
 | Range Diff row while a range diff is open | ✓ | ✓ | ✓ | ✓ | n/a |  |
