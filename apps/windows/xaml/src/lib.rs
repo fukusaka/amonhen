@@ -12,4 +12,6 @@
 )]
 
 mod bindings;
+mod textbox;
 pub use bindings::*;
+pub use textbox::select_all;

@@ -405,6 +405,8 @@ enum Dialog {
     CloseMerge,
     /// コンフリクトが残っているファイルを解決済みにしてよいか。
     MarkResolved { path: String, count: u64 },
+    /// Repositories の行の表示名を変える。
+    RenameRepository { location: String, name: String },
     /// Repositories のグループを作る（リポジトリがあればそこに移す）。
     NewGroup {
         location: Option<String>,
@@ -822,6 +824,7 @@ impl Component for Root {
                 | Some(Dialog::QuickOpen { query: current, .. })
                 | Some(Dialog::Rename { name: current, .. })
                 | Some(Dialog::NewGroup { name: current, .. })
+                | Some(Dialog::RenameRepository { name: current, .. })
                 | Some(Dialog::StashBranch { name: current, .. })
                 | Some(Dialog::Publish { name: current, .. })
                 | Some(Dialog::Stash {
@@ -1964,6 +1967,14 @@ impl Component for Root {
                 }
                 (Some(Dialog::MarkResolved { path, .. }), ContentDialogResult::Primary) => {
                     self.update(Message::Stage(path, true), context);
+                }
+                (
+                    Some(Dialog::RenameRepository { location, name }),
+                    ContentDialogResult::Primary,
+                ) => {
+                    if let Some(state) = self.repositories.as_mut() {
+                        state.rename(&location, &name);
+                    }
                 }
                 (Some(Dialog::NewGroup { location, name }), ContentDialogResult::Primary) => {
                     if let Some(state) = self.repositories.as_mut() {
@@ -3526,6 +3537,16 @@ impl Component for Root {
                             ))
                         });
                     }
+                    Action::Rename(location, name) => {
+                        self.dialog = Some(Dialog::RenameRepository { location, name });
+                        self.dialog_inputs += 1;
+                    }
+                    Action::Fetch(location) => {
+                        context.spawn_background(move |_| {
+                            let error = crate::repositories::fetch(&location);
+                            Message::Repos(crate::repositories::Event::Fetched(location, error))
+                        });
+                    }
                     Action::NewGroup(location) => {
                         self.dialog = Some(Dialog::NewGroup {
                             location,
@@ -4435,10 +4456,12 @@ impl Component for Root {
             context.use_effect("dialog-input", self.dialog_inputs, move || {
                 let _ = input.request_focus();
                 let _ = input.request_native_element(|result| {
-                    if let Ok(element) = result
-                        && let Err(e) = attach_enter(&element)
-                    {
-                        eprintln!("入力の欄にキーを付けられない: {e}");
+                    if let Ok(element) = result {
+                        if let Err(e) = attach_enter(&element) {
+                            eprintln!("入力の欄にキーを付けられない: {e}");
+                        }
+                        // 入れてある文字（Rename の今の名前など）は選んでおき、打てば置き換わるように。
+                        let _ = xaml::select_all(&element);
                     }
                 });
                 None
@@ -4988,6 +5011,22 @@ impl Root {
                     TextBlock::new()
                         .text(tr!("The conflict markers stay in the file."))
                         .text_wrapping(TextWrapping::Wrap),
+                ),
+            Some(Dialog::RenameRepository { name, .. }) => dialog
+                .is_open(true)
+                .title(tr!("Rename"))
+                .primary_button_text(tr!("Rename"))
+                .close_button_text(tr!("Cancel"))
+                .content(
+                    StackPanel::new().spacing(6.0).children((
+                        TextBlock::new()
+                            .text(tr!("Name shown in the list (leave empty for the folder name)"))
+                            .text_wrapping(TextWrapping::Wrap),
+                        TextBox::new()
+                            .element_ref(&self.dialog_input)
+                            .text(name.clone())
+                            .on_text_changed(context.callback(Message::BranchName)),
+                    )),
                 ),
             Some(Dialog::NewGroup { name, .. }) => dialog
                 .is_open(true)

@@ -106,6 +106,14 @@ fn update(data: &mut Value, path: &str, change: impl FnOnce(&mut Map<String, Val
     }
 }
 
+fn items_mut_find<'a>(data: &'a mut Value, path: &str) -> Option<&'a mut Map<String, Value>> {
+    data["items"]
+        .as_array_mut()?
+        .iter_mut()
+        .find(|b| b["path"].as_str().is_some_and(|p| same(p, path)))?
+        .as_object_mut()
+}
+
 fn strings(v: &Value) -> Vec<String> {
     v.as_array()
         .into_iter()
@@ -367,6 +375,19 @@ pub fn name_from_url(url: &str) -> String {
     last.strip_suffix(".bundle").unwrap_or(last).to_owned()
 }
 
+/// 開いていないリポジトリを fetch する（GTK4 版の `bookmarks::fetch` と同じく、daemon を通さずにその場で開く）。
+/// 失敗なら理由。
+pub fn fetch(location: &str) -> Option<String> {
+    let backend = match amonhen_backend_gix::GixBackend::open(expand(location)) {
+        Ok(b) => b,
+        Err(e) => return Some(e.to_string()),
+    };
+    let repo = amonhen_core::Repository::new(backend);
+    let reply: Value =
+        serde_json::from_str(&repo.run_json(r#"{"op":"fetch"}"#)).unwrap_or_default();
+    reply["error"].as_str().map(str::to_owned)
+}
+
 /// リポジトリを新しい窓（別のプロセス）で開く。
 pub fn open_window(location: &str) -> Result<(), String> {
     if !is_repository(location) {
@@ -404,6 +425,9 @@ pub struct State {
     selected: Option<String>,
     /// 知らせ（書けなかったなど）。
     note: String,
+    /// fetch している・失敗したリポジトリ（[`key`] の形）。
+    fetching: HashSet<String>,
+    fetch_errors: HashMap<String, String>,
 }
 
 /// ページの操作。
@@ -420,6 +444,8 @@ pub enum Event {
     Close,
     Scanned(Vec<(String, Vec<String>)>),
     Peeked(Vec<(String, Peek)>),
+    /// fetch が終わった（場所と、失敗なら理由）。
+    Fetched(String, Option<String>),
 }
 
 /// ページの外でする続き。
@@ -432,6 +458,10 @@ pub enum Action {
     Peek(Vec<String>),
     /// グループの名前を聞いて、リポジトリをそこに移す（None なら名前だけ足す）。
     NewGroup(Option<String>),
+    /// 表示名を聞く（場所と、今の名前）。
+    Rename(String, String),
+    /// 裏で fetch する。
+    Fetch(String),
 }
 
 impl State {
@@ -449,6 +479,8 @@ impl State {
                 filter: String::new(),
                 selected: None,
                 note: String::new(),
+                fetching: HashSet::new(),
+                fetch_errors: HashMap::new(),
             },
             roots,
         )
@@ -582,6 +614,30 @@ impl State {
         }
     }
 
+    /// 一覧に出す名前を変える（空ならフォルダの名前に戻す）。
+    pub fn rename(&mut self, location: &str, name: &str) {
+        let name = name.trim();
+        let folder = {
+            let mut copy = self.data.clone();
+            if let Some(b) = items_mut_find(&mut copy, location) {
+                b.remove("name");
+            }
+            let data = std::mem::replace(&mut self.data, copy);
+            let folder = self.name(location);
+            self.data = data;
+            folder
+        };
+        self.change(|d| {
+            update(d, location, |b| {
+                if name.is_empty() || name == folder {
+                    b.remove("name");
+                } else {
+                    b.insert("name".into(), json!(name));
+                }
+            })
+        });
+    }
+
     /// グループを足し、`location` があればそこに移す。
     pub fn add_group(&mut self, name: &str, location: Option<&str>) {
         let name = name.trim();
@@ -660,6 +716,19 @@ impl State {
                 self.scanned = Some(found);
                 return Action::Peek(self.unpeeked());
             }
+            Event::Fetched(location, error) => {
+                self.fetching.remove(&key(&location));
+                match error {
+                    Some(e) => {
+                        self.fetch_errors.insert(key(&location), e);
+                    }
+                    None => {
+                        self.fetch_errors.remove(&key(&location));
+                    }
+                }
+                // 上流との差が変わる。
+                return Action::Peek(vec![location]);
+            }
             Event::Peeked(peeks) => {
                 self.peeks
                     .extend(peeks.into_iter().map(|(l, p)| (key(&l), p)));
@@ -706,6 +775,16 @@ impl State {
                 })
             }),
             "new-group" => return Action::NewGroup(Some(location)),
+            "rename" => return Action::Rename(location.clone(), self.name(&location)),
+            "fetch" => {
+                if is_remote(&location) || !is_repository(&location) {
+                    return Action::None;
+                }
+                if self.fetching.insert(key(&location)) {
+                    self.fetch_errors.remove(&key(&location));
+                    return Action::Fetch(location);
+                }
+            }
             "color" => self.change(|d| {
                 update(d, &location, |b| {
                     if value.is_empty() {
@@ -823,6 +902,8 @@ fn row_menu(state: &State, location: &str) -> Vec<MenuItem> {
     }
     vec![
         MenuItem::item(format!("open:{location}"), tr!("Open in New Window")),
+        MenuItem::separator("-fetch"),
+        MenuItem::item(format!("fetch:{location}"), "Fetch"),
         MenuItem::separator("-favorite"),
         if favorite {
             MenuItem::item(
@@ -834,6 +915,7 @@ fn row_menu(state: &State, location: &str) -> Vec<MenuItem> {
         },
         MenuItem::submenu("groups", tr!("Group"), groups),
         MenuItem::submenu("colors", tr!("Color Label"), colors),
+        MenuItem::item(format!("rename:{location}"), tr!("Rename…")),
         MenuItem::separator("-files"),
         MenuItem::item(format!("reveal:{location}"), tr!("Show in Files")),
         MenuItem::item(format!("terminal:{location}"), tr!("Open in Terminal")),
@@ -867,7 +949,12 @@ fn category_menu(category: &Category) -> Vec<MenuItem> {
 }
 
 /// 状態の列（変更の数・上流との差。なければ ✓）とツールチップ。
-fn status(location: &str, peek: Option<&Peek>) -> (String, Option<String>) {
+fn status(
+    location: &str,
+    peek: Option<&Peek>,
+    fetching: bool,
+    fetch_error: Option<&str>,
+) -> (String, Option<String>) {
     if is_remote(location) {
         return (
             "—".into(),
@@ -877,10 +964,18 @@ fn status(location: &str, peek: Option<&Peek>) -> (String, Option<String>) {
     if !is_repository(location) {
         return (tr!("Not found"), None);
     }
-    let Some(p) = peek else {
-        return (String::new(), None);
-    };
+    // fetch の失敗・途中を先に（GTK4 版の `state_text` と同じ）。
     let mut parts = Vec::new();
+    if fetch_error.is_some() {
+        parts.push(tr!("Fetch failed"));
+    }
+    if fetching {
+        parts.push(tr!("Fetching…"));
+    }
+    let Some(p) = peek else {
+        return (parts.join("  "), None);
+    };
+    let before = parts.len();
     if p.changed > 0 {
         parts.push(tr!("Changes {count}", count = p.changed));
     }
@@ -890,8 +985,14 @@ fn status(location: &str, peek: Option<&Peek>) -> (String, Option<String>) {
     if p.behind > 0 {
         parts.push(format!("↓{}", p.behind));
     }
-    if parts.is_empty() {
+    if parts.len() == before {
         parts.push("✓".into());
+    }
+    if let Some(e) = fetch_error {
+        return (
+            parts.join("  "),
+            Some(tr!("Fetch failed: {error}", error = e)),
+        );
     }
     let tip = [
         if p.changed > 0 {
@@ -1080,7 +1181,12 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                         .text_trimming(TextTrimming::CharacterEllipsis),
                 )),
             ));
-        let (status, tip) = status(location, peek);
+        let (status, tip) = status(
+            location,
+            peek,
+            state.fetching.contains(&key(location)),
+            state.fetch_errors.get(&key(location)).map(String::as_str),
+        );
         let cell = |text: String, column: i32| {
             TextBlock::new()
                 .text(text)

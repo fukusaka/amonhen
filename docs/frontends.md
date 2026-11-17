@@ -93,9 +93,9 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Folder tree of the repositories under a place | ✓ | ✓ | — | n/a | n/a |  |
 | Manual groups; rows dragged onto Favorites or a group | △ | △ | △ | n/a | n/a | macOS: Groups themselves can't be reordered by dragging.<br>GTK4: Groups themselves can't be reordered by dragging.<br>Windows: Group on the row's menu; no dragging. |
 | Status columns (branch, changes, ahead/behind, last commit, opened), sortable and reorderable | ✓ | ✓ | △ | n/a | n/a | Windows: Not sortable or reorderable. |
-| Favorites, display name, color label | ✓ | ✓ | △ | n/a | n/a | Windows: No display name. |
+| Favorites, display name, color label | ✓ | ✓ | ✓ | n/a | n/a |  |
 | Open in a tab or window; Finder / Files, Terminal, Editor | ✓ | ✓ | △ | n/a | n/a | GTK4: An app other than a known code editor or a program chosen with Other… opens a folder only if it declares inode/directory.<br>Windows: Explorer, Windows Terminal (or cmd) and VS Code; no tabs, so a repository opens in a new window, and the editor can't be chosen. |
-| Fetch the selected repositories | ✓ | ✓ | — | n/a | n/a |  |
+| Fetch the selected repositories | ✓ | ✓ | △ | n/a | n/a | Windows: One repository at a time from the row's menu; rows can't be multi-selected. |
 | Quick Open (fuzzy search) | ✓ | ✓ | ✓ | n/a | n/a | Windows: Opens in a new window. |
 | Repository name in the toolbar switches the repository | ✓ | ✓ | — | ✓ | n/a | VSCode: Select Repository picks among workspace repositories. |
 | Clone (choosing from your own GitHub repositories) | ✓ | ✓ | △ | n/a | △ | VSCode: VSCode's own Git: Clone.<br>CLI: `clone <url>` only.<br>Windows: No list of your own GitHub repositories; the clone opens in a new window. |
