@@ -338,7 +338,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 
 | Feature | macOS | GTK4 | Windows | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
-| Operations (git commands, output, progress, cancel) | ✓ | ✓ | △ | △ | △ | VSCode: An Output channel log only.<br>CLI: Via `amonhen run` (`remoteActivity`, `cancelActivity`).<br>Windows: Commands, duration and errors; no output or cancel. |
+| Operations (git commands, output, progress, cancel) | ✓ | ✓ | ✓ | △ | △ | VSCode: An Output channel log only.<br>CLI: Via `amonhen run` (`remoteActivity`, `cancelActivity`).<br>Windows: The output is shown under its row, not in a detail pane |
 | History (operation log, Undo to Here) | ✓ | ✓ | ✓ | △ | △ | VSCode: Undo History… lists the Undo log and undoes down to the chosen one; no other activity.<br>CLI: `undo --list` shows the log. |
 | Performance | ✓ | ✓ | — | n/a | n/a | VSCode: VSCode's Output channel (the Amon Hen log). |
 | History cache writes (size, count, bytes, last write per repository) | ✓ | ✓ | △ | — | △ | CLI: Via `amonhen run` (`historyCache`).<br>Windows: Windows: The open repository only. |

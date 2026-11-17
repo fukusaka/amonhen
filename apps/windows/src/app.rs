@@ -8318,6 +8318,12 @@ impl Root {
                 undo: Box::new(|n| context.callback(move |()| Message::ActivityUndo(n))),
                 close: context.callback(|()| Message::CloseActivity),
                 export: context.callback(|()| Message::ActivityExport),
+                cancel: Box::new(|seq| {
+                    context.callback(move |()| {
+                        amonhen_model::activity::cancel(seq);
+                        Message::ActivityTick
+                    })
+                }),
             },
         );
         Border::new()

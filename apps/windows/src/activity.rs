@@ -49,6 +49,8 @@ pub struct Callbacks<'a> {
     pub close: Callback<()>,
     /// Operations の記録を JSON に書き出す。
     pub export: Callback<()>,
+    /// 走っている操作を取り消す（記録の通し番号）。
+    pub cancel: Box<dyn Fn(u64) -> Callback<()> + 'a>,
 }
 
 /// バイト数を読みやすく（GTK4 版の `glib::format_size` に近い形）。
@@ -151,15 +153,34 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                         .font_size(12.0)
                         .opacity(0.6)
                         .grid_column(2),
-                    TextBlock::new()
-                        .text(
-                            r.progress
-                                .clone()
-                                .map_or_else(|| r.label.clone(), |p| format!("{} — {p}", r.label)),
-                        )
-                        .font_size(12.0)
-                        .text_trimming(TextTrimming::CharacterEllipsis)
-                        .grid_column(3),
+                    // 内容（走っていれば進み具合）と、走っていて取り消せる操作には「取り消す」（GTK4 版と同じ）。
+                    Grid::new()
+                        .columns([GridLength::Star(1.0), GridLength::Auto])
+                        .grid_column(3)
+                        .children((
+                            TextBlock::new()
+                                .text(r.progress.clone().map_or_else(
+                                    || r.label.clone(),
+                                    |p| format!("{} — {p}", r.label),
+                                ))
+                                .font_size(12.0)
+                                .text_trimming(TextTrimming::CharacterEllipsis)
+                                .vertical_alignment(VerticalAlignment::Center)
+                                .grid_column(0),
+                            if r.ok.is_none() && r.cancellable {
+                                Button::new()
+                                    .on_click((callbacks.cancel)(r.seq))
+                                    .margin(Thickness::new(6.0, 0.0, 0.0, 0.0))
+                                    .grid_column(1)
+                                    .content(
+                                        TextBlock::new()
+                                            .text(tr!("Cancel Operation"))
+                                            .font_size(11.0),
+                                    )
+                            } else {
+                                View::empty()
+                            },
+                        )),
                     TextBlock::new()
                         .text(r.duration.map(duration).unwrap_or_default())
                         .font_size(12.0)
@@ -167,18 +188,28 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                         .horizontal_alignment(HorizontalAlignment::Right)
                         .grid_column(4),
                 ));
-            // 失敗したものは、その理由を下に（選んでコピーできる）。
-            let row: View = match &r.error {
-                Some(e) => StackPanel::new().children((
-                    line,
-                    TextBlock::new()
-                        .text(e.clone())
+            // 失敗したものはその理由を、成功して出力（hooks など）があればそれを下に（選んでコピーできる）。
+            let below = match (&r.error, &r.output) {
+                (Some(e), _) => Some((e.clone(), Some(Color::rgb(0xc4, 0x2b, 0x1c)))),
+                (None, Some(output)) if !output.trim().is_empty() => {
+                    Some((output.trim_end().to_owned(), None))
+                }
+                _ => None,
+            };
+            let row: View = match below {
+                Some((text, color)) => {
+                    let mut text = TextBlock::new()
+                        .text(text)
                         .font_size(11.0)
-                        .foreground(Brush::Solid(Color::rgb(0xc4, 0x2b, 0x1c)))
                         .text_wrapping(TextWrapping::Wrap)
                         .is_text_selection_enabled(true)
-                        .margin(Thickness::new(124.0, 0.0, 0.0, 2.0)),
-                )),
+                        .margin(Thickness::new(124.0, 0.0, 0.0, 2.0));
+                    text = match color {
+                        Some(color) => text.foreground(Brush::Solid(color)),
+                        None => text.opacity(0.65),
+                    };
+                    StackPanel::new().children((line, text))
+                }
                 None => line,
             };
             (
