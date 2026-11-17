@@ -116,6 +116,8 @@ struct Root {
     multi: Vec<(String, bool)>,
     /// Push のダイアログの注意（GTK4 版の `push_warnings`）。
     sync_warnings: Vec<String>,
+    /// Pull で手元に新しいコミットがないときの、先へ進める前と後の絵（`movePreview` の答え）。
+    sync_drawing: Option<Value>,
     /// stash の詳しい中身（名前 → 中身。ref が変わるたびに読み直す）。
     stash_details: std::collections::HashMap<String, crate::stashes::Detail>,
     /// ほかの worktree の変更の数（パス → 数）。
@@ -774,7 +776,7 @@ enum Message {
     /// 件名の欄の Alt+↑（1）・Alt+↓（-1）。
     RecallRecent(isize),
     /// Pull・Push のダイアログのコミットの一覧を読んだ。
-    SyncLists(Vec<SyncList>, Vec<String>),
+    SyncLists(Vec<SyncList>, Vec<String>, Option<Value>),
     /// stash の詳しい中身を読んだ。
     StashDetails(std::collections::HashMap<String, crate::stashes::Detail>),
     /// ほかの worktree の変更を数える（true なら全部を数え直す）と、その答え（パスと数）。
@@ -989,6 +991,7 @@ impl Component for Root {
             running: 0,
             multi: Vec::new(),
             sync_warnings: Vec::new(),
+            sync_drawing: None,
             submodules: Value::Null,
             subtrees: Value::Null,
             repositories: None,
@@ -1163,10 +1166,11 @@ impl Component for Root {
             Message::MultiSelected(ids) => {
                 self.multi = if ids.len() > 1 { ids } else { Vec::new() }
             }
-            Message::SyncLists(lists, warnings) => {
+            Message::SyncLists(lists, warnings, drawing) => {
                 if matches!(self.dialog, Some(Dialog::Pull { .. } | Dialog::Push { .. })) {
                     self.sync_lists = lists;
                     self.sync_warnings = warnings;
+                    self.sync_drawing = drawing;
                 }
             }
             Message::Submodules(states) => self.submodules = states,
@@ -7045,10 +7049,28 @@ impl Root {
             Some(Dialog::Pull {
                 title,
                 mode,
+                branch,
                 sources,
                 source,
                 ..
             }) => {
+                let drawing = self
+                    .sync_drawing
+                    .as_ref()
+                    .and_then(|preview| {
+                        crate::drawing::for_move(
+                            preview,
+                            &crate::drawing::Move {
+                                moving: branch.clone(),
+                                kind: "local",
+                                after_title: tr!("After the pull"),
+                                lost_note: String::new(),
+                                lost_red: false,
+                                removes: false,
+                            },
+                        )
+                    })
+                    .unwrap_or_else(View::empty);
                 let modes: Vec<String> = PULL_MODES.iter().map(|m| pull_mode_title(m)).collect();
                 // 上流がなければ、取り込み元を選ぶ欄を先に。
                 let from: View = if sources.is_empty() {
@@ -7075,6 +7097,7 @@ impl Root {
                                 .items_source(modes)
                                 .selected_index(*mode)
                                 .on_selection_changed(context.callback(Message::PullMode)),
+                            drawing,
                             self.sync_lists_view(),
                         )),
                     )
@@ -8977,13 +9000,24 @@ impl Root {
     fn load_sync_lists(&mut self, context: &ComponentContext<Self>) {
         self.sync_lists.clear();
         self.sync_warnings.clear();
+        self.sync_drawing = None;
         // Push の注意を出すための、上流と送るブランチのコミット。
         let mut push_range: Option<(String, amonhen_model::Oid, amonhen_model::Oid)> = None;
+        // 手元に新しいコミットがない Pull は、どの取り込み方でも先へ進めるだけなので、その絵（GTK4 版と同じ）。
+        let mut fast_forward: Option<Value> = None;
         let (repo, lists) = match &self.dialog {
             Some(Dialog::Pull { repo, sources, .. }) if sources.is_empty() => {
-                let Some(upstream) = self.head_entry().and_then(|e| e.detail.clone()) else {
+                let Some(entry) = self.head_entry() else {
                     return;
                 };
+                let Some(upstream) = entry.detail.clone() else {
+                    return;
+                };
+                if entry.ahead == 0 && entry.behind > 0 {
+                    fast_forward = Some(json!({
+                        "op": "movePreview", "from": "HEAD", "to": &upstream, "branch": &entry.name,
+                    }));
+                }
                 (
                     repo.clone(),
                     vec![
@@ -9075,7 +9109,13 @@ impl Root {
                 }
                 _ => Vec::new(),
             };
-            Message::SyncLists(lists, warnings)
+            let drawing = fast_forward
+                .and_then(|query| {
+                    serde_json::from_str::<Value>(&repo.run_json(&query.to_string())).ok()
+                })
+                .map(|reply| reply["info"].clone())
+                .filter(|info| !info["drawing"].is_null());
+            Message::SyncLists(lists, warnings, drawing)
         });
     }
 
@@ -9182,7 +9222,8 @@ impl Root {
     }
 
     /// Repository > Pull…: 上流から取り込む（GTK4 版の `sheets::pull_in` の見出しと取り込み方）。上流がなければ、
-    /// 取り込み元のリモートのブランチ（同じ名前のものから）を選び、それを上流にして取り込む。前後の絵はまだない。
+    /// 取り込み元のリモートのブランチ（同じ名前のものから）を選び、それを上流にして取り込む。前後の絵は、手元に
+    /// 新しいコミットがないとき（先へ進めるだけ）のものだけ。
     fn pull(&mut self) {
         let (Some(repo), Some(entry)) = (self.repo.clone(), self.head_entry().cloned()) else {
             return beep();

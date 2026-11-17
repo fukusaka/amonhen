@@ -168,7 +168,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 履歴のない新しいブランチ（空から・ファイルを残して） | ✓ | ✓ | ✓ | ✓ | △ | VSCode: コマンドパレットと Branches のグループの右クリックから。<br>CLI: `amonhen run`（`createOrphanBranch`）から。 |
 | ブランチの切り替え（あいまい検索・最近・追跡・新しいブランチ） | ✓ | ✓ | ✓ | ✓ | △ | VSCode: Switch Branch…（QuickPick）。サイドバーの ⋯・Branches の見出し・コマンドパレットから。⌘⇧B は VSCode のビルドのタスクなので近道はない。<br>CLI: `amonhen run` から。 |
 | Fetch のシート（すべてか 1 つのリモート、prune を示す） | ✓ | ✓ | ✓ | ✓ | △ | VSCode: リモートが 1 つならモーダル、いくつもならすべてか 1 つを QuickPick で。<br>CLI: `amonhen run` から。 |
-| Pull のシート（コミット・merge / rebase / ff-only・なければ上流） | ✓ | ✓ | △ | ✓ | △ | VSCode: QuickPick。取り込み方ごとにここで何が起きるか、その下にコミット。コンフリクトの見込みはない。<br>CLI: `amonhen run` から。<br>Windows: merge / rebase / ff-only、上流がなければ取り込み元、取り込むコミットと手元にだけあるコミット。前と後の絵はない。 |
+| Pull のシート（コミット・merge / rebase / ff-only・なければ上流） | ✓ | ✓ | △ | ✓ | △ | VSCode: QuickPick。取り込み方ごとにここで何が起きるか、その下にコミット。コンフリクトの見込みはない。<br>CLI: `amonhen run` から。<br>Windows: 取り込み方（merge・rebase・ff-only）・上流がないときの取り込み元・取り込むコミットと手元にだけあるもの。前と後の絵は先へ進めるだけのときだけ。 |
 | Push のシート（注意・コミットと差分・lease 付きの Force Push） | ✓ | ✓ | △ | ✓ | △ | VSCode: QuickPick。注意、送るコミット、上流から消えるコミット、Pull… か lease 付きの Force Push。送る変更すべてとそれぞれのコミットは、選ぶと差分を複数ファイルの diff エディタで開く（シートは閉じない）。<br>CLI: `amonhen run` から。<br>Windows: 注意、lease つきの Force Push、上流が進んでいれば Pull…、送るコミットと上流が失うコミット。送る中身の差分はない。 |
 | Publish（リモートと名前を選ぶ） | ✓ | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
 | Merge（fast-forward だけ・no-ff・squash の選択） | ✓ | ✓ | ✓ | ✓ | △ | VSCode: 取り込み方を選ぶ一覧が確認を兼ねる。<br>CLI: `amonhen run` から（`mode`）。 |
