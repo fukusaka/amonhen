@@ -515,6 +515,9 @@ enum Message {
     RangePrevious(u64, Result<(Vec<String>, String), String>),
     RangeDiffLoaded(u64, Result<Vec<crate::rangediff::Pair>, String>),
     RangeDiffSelected(Option<usize>),
+    /// 一覧の行を選んだ（一覧に出している組の番号）と、Changes Only を切り替えた。
+    RangeDiffRow(Option<usize>),
+    RangeDiffChangesOnly(bool),
     RangeDiffRanges(String),
     RangeDiffCompare,
     CloseRangeDiff,
@@ -3108,6 +3111,27 @@ impl Component for Root {
                         }
                         Err(e) => state.error = Some(e),
                     }
+                }
+            }
+            Message::RangeDiffRow(row) => {
+                let index = self
+                    .range_diff
+                    .as_ref()
+                    .and_then(|s| s.shown().get(row?).copied());
+                if index.is_some() {
+                    self.update(Message::RangeDiffSelected(index), context);
+                }
+            }
+            Message::RangeDiffChangesOnly(on) => {
+                let Some(state) = self.range_diff.as_mut() else {
+                    return;
+                };
+                state.changes_only = on;
+                // 選んでいた組が隠れたら、最初の変わった組を選ぶ（GTK4 版の `filter`）。
+                let shown = state.shown();
+                if state.selected.is_some_and(|s| !shown.contains(&s)) {
+                    let first = shown.first().copied();
+                    self.update(Message::RangeDiffSelected(first), context);
                 }
             }
             Message::RangeDiffSelected(index) => {
@@ -7987,8 +8011,9 @@ impl Root {
                 crate::rangediff::Callbacks {
                     ranges: context.callback(Message::RangeDiffRanges),
                     compare: context.callback(|()| Message::RangeDiffCompare),
-                    selected: context.callback(Message::RangeDiffSelected),
+                    selected: context.callback(Message::RangeDiffRow),
                     close: context.callback(|()| Message::CloseRangeDiff),
+                    changes_only: context.callback(Message::RangeDiffChangesOnly),
                 },
             ));
         // 変わった組は、右の列に差分の差分を重ねる。
