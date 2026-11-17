@@ -165,46 +165,44 @@ fn appearance(callbacks: &Callbacks) -> View {
             amonhen_model::i18n::translate(label).into_owned(),
         )
     };
-    StackPanel::new()
-        .children((
-            heading(tr!("Appearance")),
-            StackPanel::new()
-                .orientation(Orientation::Horizontal)
-                .spacing(12.0)
-                .children((
-                    TextBlock::new()
-                        .text(tr!("Order"))
-                        .vertical_alignment(VerticalAlignment::Center),
-                    ComboBox::new()
-                        .items_source(vec![tr!("Date Order"), tr!("Topological Order")])
-                        .selected_index(usize::from(
-                            crate::prefs::history_order() == amonhen_model::HistoryOrder::Topo,
-                        ))
-                        .on_selection_changed(callbacks.order.clone()),
-                )),
-            display(
-                "one-line-history",
-                crate::render::one_line(),
-                tr!("Show each commit on one line"),
-            ),
-            display(
-                "highlight-ancestors",
-                crate::render::highlight_ancestors(),
-                tr!("Highlight the selected commit’s ancestors"),
-            ),
-            TextBlock::new()
-                .text(tr!("Items"))
-                .font_size(13.0)
-                .opacity(0.8)
-                .margin(Thickness::new(0.0, 12.0, 0.0, 0.0)),
-            item("history-item-refs", items::REFS, "Branches and Tags"),
-            item("history-item-author", items::AUTHOR, "Author"),
-            item("history-item-date", items::DATE, "Date"),
-            item("history-item-id", items::ID, "Commit ID"),
-            item("history-item-signature", items::SIGNATURE, "Signature"),
-            note(tr!("What each commit’s row shows besides the subject.")),
-        ))
-        .into()
+    StackPanel::new().children((
+        heading(tr!("Appearance")),
+        StackPanel::new()
+            .orientation(Orientation::Horizontal)
+            .spacing(12.0)
+            .children((
+                TextBlock::new()
+                    .text(tr!("Order"))
+                    .vertical_alignment(VerticalAlignment::Center),
+                ComboBox::new()
+                    .items_source(vec![tr!("Date Order"), tr!("Topological Order")])
+                    .selected_index(usize::from(
+                        crate::prefs::history_order() == amonhen_model::HistoryOrder::Topo,
+                    ))
+                    .on_selection_changed(callbacks.order.clone()),
+            )),
+        display(
+            "one-line-history",
+            crate::render::one_line(),
+            tr!("Show each commit on one line"),
+        ),
+        display(
+            "highlight-ancestors",
+            crate::render::highlight_ancestors(),
+            tr!("Highlight the selected commit’s ancestors"),
+        ),
+        TextBlock::new()
+            .text(tr!("Items"))
+            .font_size(13.0)
+            .opacity(0.8)
+            .margin(Thickness::new(0.0, 12.0, 0.0, 0.0)),
+        item("history-item-refs", items::REFS, "Branches and Tags"),
+        item("history-item-author", items::AUTHOR, "Author"),
+        item("history-item-date", items::DATE, "Date"),
+        item("history-item-id", items::ID, "Commit ID"),
+        item("history-item-signature", items::SIGNATURE, "Signature"),
+        note(tr!("What each commit’s row shows besides the subject.")),
+    ))
 }
 
 /// バイト数を読みやすく。
