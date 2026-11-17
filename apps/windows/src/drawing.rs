@@ -169,8 +169,8 @@ impl Canvas2 {
             "moved" => Color::rgb(0x2e, 0x9e, 0x52),
             _ => BLUE,
         };
-        // 字の幅はおおよそ（10 pt の字で 1 文字 6 px）。
-        let width = (name.chars().count() as f64 * 6.0 + 10.0).min(max.max(20.0));
+        // 字の幅はおおよそ（10 pt の字で 1 文字 6 px）に、左右の余白（5 px ずつ）と、字の幅の見込み違いの分。
+        let width = (name.chars().count() as f64 * 6.0 + 18.0).min(max.max(20.0));
         let fill = if current { color } else { alpha(color, 0.16) };
         let text = if current {
             Color::rgb(0xff, 0xff, 0xff)
@@ -932,4 +932,129 @@ fn merge_rows(d: &Value) -> usize {
         d[k].as_array().map_or(0, Vec::len) + usize::from(d[more].as_u64().unwrap_or(0) > 0)
     };
     rows("ours", "oursMore") + rows("theirs", "theirsMore") + usize::from(!d["base"].is_null())
+}
+
+/// 何で作るか（見出しと、件名の書き方が変わる。GTK4 版の `rewritedraw::PickKind`）。
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum PickKind {
+    CherryPick,
+    Revert,
+    Patches,
+}
+
+/// 確認に添える絵の見せ方（`ConfirmDrawn` に持たせる）。
+pub enum How {
+    /// ref を動かす（`movePreview` の答え）。
+    Move(Move),
+    /// 今のブランチの上にコミットを作る（`pickPreview` の答え）。`current` は今のブランチ。
+    Pick { current: String, kind: PickKind },
+}
+
+/// 答えと見せ方から絵を作る。描くものがなければ None。
+pub fn for_how(info: &Value, how: &How) -> Option<View> {
+    match how {
+        How::Move(how) => for_move(info, how),
+        How::Pick { current, kind } => for_pick(info, current, *kind),
+    }
+}
+
+/// cherry-pick・revert・パッチ（git am）の見込み（`pickPreview` の答え）の絵（GTK4 版の `draw_pick`）。左が今の
+/// 先端、右が後: その上に、これから作るコミット（点線の丸。cherry-pick は件名に ′）が並び、今のブランチの札が
+/// 一番上へ移る。描くものがなければ None。
+pub fn for_pick(info: &Value, current: &str, kind: PickKind) -> Option<View> {
+    let d = &info["drawing"];
+    if d.is_null() {
+        return None;
+    }
+    let labels = labels_of(d);
+    let head = commits(&d["head"]);
+    let picks = commits(&d["picks"]);
+    let picks_more = d["picksMore"].as_u64().unwrap_or(0);
+    let tip = head.first().map(|c| c.0.clone());
+    let first_new = picks.first().map(|c| format!("new:{}", c.0));
+    let mut c = Canvas2 { items: Vec::new() };
+    c.text(&tr!("Now"), 4.0, 2.0, alpha(FG, 0.6), true, COLUMN, 11.0);
+    c.text(
+        &match kind {
+            PickKind::CherryPick => tr!("After the cherry-pick"),
+            PickKind::Revert => tr!("After the revert"),
+            PickKind::Patches => tr!("After applying the patches"),
+        },
+        COLUMN + 28.0,
+        2.0,
+        alpha(FG, 0.6),
+        true,
+        COLUMN,
+        11.0,
+    );
+    for after in [false, true] {
+        let x = if after { COLUMN + 24.0 } else { 0.0 };
+        let mut y = TOP;
+        let mut rows = Vec::new();
+        let mut gaps = Vec::new();
+        if after {
+            with_gap(
+                &picks,
+                picks_more,
+                d["picksMoreAt"].as_u64(),
+                0,
+                &mut y,
+                &mut gaps,
+                |(oid, subject), y| {
+                    rows.push(Row {
+                        oid: format!("new:{oid}"),
+                        subject: if kind == PickKind::CherryPick {
+                            format!("{subject}′")
+                        } else {
+                            subject.clone()
+                        },
+                        y,
+                        is_new: true,
+                        ..Default::default()
+                    });
+                },
+            );
+        }
+        for (i, (oid, subject)) in head.iter().enumerate() {
+            rows.push(Row {
+                oid: oid.clone(),
+                subject: subject.clone(),
+                dim: after || i > 0,
+                y,
+                ..Default::default()
+            });
+            y += ROW;
+        }
+        column(
+            &mut c,
+            x,
+            &rows,
+            y - ROW,
+            None,
+            &gaps,
+            0,
+            None,
+            None,
+            &|oid| {
+                let mut out: Vec<Label> = labels
+                    .get(oid)
+                    .into_iter()
+                    .flatten()
+                    .filter(|(n, _)| n != current)
+                    .map(|(n, k)| (n.clone(), k.clone(), false))
+                    .collect();
+                let here = if after {
+                    first_new.as_deref() == Some(oid)
+                } else {
+                    tip.as_deref() == Some(oid)
+                };
+                if here {
+                    out.insert(0, (current.to_owned(), "local".to_owned(), true));
+                }
+                out
+            },
+        );
+    }
+    let picks = picks.len() + usize::from(picks_more > 0);
+    Some(finish(c, picks + head.len(), picks))
 }

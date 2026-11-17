@@ -297,7 +297,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 機能 | macOS | GTK4 | Windows | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
 | Save as Patch（コミットごとか mbox・カバーレター・-v） | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `format-patch`。 |
-| Apply Patch（am / apply・下見・3-way・--index） | ✓ | ✓ | △ | ✓ | ✓ | CLI: `am`・`apply`（`--check`）。<br>Windows: 前後の絵はない。 |
+| Apply Patch（am / apply・下見・3-way・--index） | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `am`・`apply`（`--check`）。 |
 | パッチのファイルを窓に落とす | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: エクスプローラーのメニューから。 |
 | Export Archive（zip・tar.gz・tar、先頭のフォルダ、1 つのフォルダ） | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: エンジンがあれば。ブランチ・タグの右クリック、History のコミットの右クリック、HEAD はコマンドパレットから。<br>CLI: `archive`。<br>Windows: コミットのメニューから、形・先頭のフォルダ・1 つのフォルダ（パスを書く）。 |
 | Save as Bundle（すべて・一部の ref・基点より後） | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: エンジンがあれば。選んだブランチ・タグの右クリック、リポジトリ全体はサイドバーの ⋯ から。<br>CLI: `bundle create`。 |

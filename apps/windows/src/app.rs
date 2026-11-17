@@ -483,6 +483,8 @@ enum Dialog {
         applies: Result<(), String>,
         three_way: bool,
         index: bool,
+        /// git am なら、前と後の絵（`pickPreview` の答え）。
+        drawing: Value,
     },
     /// 作業中の変更を stash する（GTK4 版の `Actions::stash_paths`）。`paths` があればそのファイルだけ。
     Stash {
@@ -552,16 +554,16 @@ enum Dialog {
         repo: Arc<Repository>,
         failure: crate::failure::Failure,
     },
-    /// 前と後の絵を添えた確認（Fast-Forward など。GTK4 版の `rewritedraw::new_move` を埋めたシート）。
+    /// 前と後の絵を添えた確認（Fast-Forward・Cherry-pick・Revert。GTK4 版の `rewritedraw` の絵を埋めたシート）。
     ConfirmDrawn {
         repo: Arc<Repository>,
         title: String,
         message: String,
         button: String,
         command: Value,
-        /// `movePreview` の答えと、その絵の見せ方。
+        /// `movePreview`・`pickPreview` の答えと、その絵の見せ方。
         preview: Value,
-        how: Arc<crate::drawing::Move>,
+        how: Arc<crate::drawing::How>,
     },
     /// Checkout の確認（GTK4 版の `sheets::checkout`）。
     Checkout {
@@ -1996,8 +1998,24 @@ impl Component for Root {
                 paths.sort_by(|a, b| crate::patch_files::natural(a, b));
                 context.spawn_background(move |_| {
                     let command = json!({ "op": "readPatch", "paths": &paths });
-                    let reply: Value = serde_json::from_str(&repo.run_json(&command.to_string()))
-                        .unwrap_or_else(|e| json!({ "error": e.to_string() }));
+                    let mut reply: Value =
+                        serde_json::from_str(&repo.run_json(&command.to_string()))
+                            .unwrap_or_else(|e| json!({ "error": e.to_string() }));
+                    // コミットになるなら（git am）、前と後の絵（今の先端の上に、パッチごとのコミット。GTK4 版と
+                    // 同じ）。
+                    if reply["info"]["kind"].as_str() == Some("mailbox") {
+                        let subjects: Vec<&str> = reply["info"]["patches"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .map(|p| p["subject"].as_str().unwrap_or_default())
+                            .collect();
+                        let query = json!({ "op": "pickPreview", "subjects": subjects });
+                        let preview: Value =
+                            serde_json::from_str(&repo.run_json(&query.to_string()))
+                                .unwrap_or_default();
+                        reply["drawing"] = preview["info"].clone();
+                    }
                     Message::PatchRead(repo, paths, reply)
                 });
             }
@@ -3460,9 +3478,9 @@ impl Component for Root {
                 } else if let Some(oid) = key.strip_prefix("tag:") {
                     self.ask_name(oid.to_owned(), true);
                 } else if let Some(oids) = key.strip_prefix("cherry-pick:") {
-                    self.pick(oids.split(',').map(str::to_owned).collect(), false);
+                    self.pick(oids.split(',').map(str::to_owned).collect(), false, context);
                 } else if let Some(oids) = key.strip_prefix("revert:") {
-                    self.pick(oids.split(',').map(str::to_owned).collect(), true);
+                    self.pick(oids.split(',').map(str::to_owned).collect(), true, context);
                 } else if let Some(oid) = key.strip_prefix("reset:") {
                     self.reset(oid.to_owned());
                 } else if let Some(name) = key.strip_prefix("delete-branch:") {
@@ -3539,14 +3557,14 @@ impl Component for Root {
                                 button: "Fast-Forward".to_owned(),
                                 command: json!({ "op": "fastForward", "branch": &name }),
                                 preview: reply["info"].clone(),
-                                how: Arc::new(crate::drawing::Move {
+                                how: Arc::new(crate::drawing::How::Move(crate::drawing::Move {
                                     moving: name.clone(),
                                     kind: "local",
                                     after_title: tr!("After the fast-forward"),
                                     lost_note: String::new(),
                                     lost_red: false,
                                     removes: false,
-                                }),
+                                })),
                             }))
                         });
                     }
@@ -4440,6 +4458,7 @@ impl Component for Root {
                     applies,
                     three_way: mailbox && summary["threeWay"].as_bool() == Some(true),
                     index: false,
+                    drawing: reply["drawing"].clone(),
                 });
             }
             Message::ApplyOption(option, on) => {
@@ -6256,7 +6275,7 @@ impl Root {
                         TextBlock::new()
                             .text(message.clone())
                             .text_wrapping(TextWrapping::Wrap),
-                        crate::drawing::for_move(preview, how).unwrap_or_else(View::empty),
+                        crate::drawing::for_how(preview, how).unwrap_or_else(View::empty),
                     )),
                 ),
             Some(Dialog::FetchFirst {
@@ -6586,8 +6605,15 @@ impl Root {
                 applies,
                 three_way,
                 index,
+                drawing,
                 ..
             }) => {
+                let drawing = crate::drawing::for_pick(
+                    drawing,
+                    &self.head_name(),
+                    crate::drawing::PickKind::Patches,
+                )
+                .unwrap_or_else(View::empty);
                 let status = match applies {
                     Ok(()) => tr!("Applies cleanly."),
                     Err(reason) => tr!("Doesn’t apply cleanly: {reason}", reason = reason),
@@ -6608,6 +6634,7 @@ impl Root {
                             TextBlock::new()
                                 .text(format!("{what} {}", tr!("You can Undo this (Ctrl+Alt+Z).")))
                                 .text_wrapping(TextWrapping::Wrap),
+                            drawing,
                             ScrollViewer::new().max_height(180.0).content(
                                 TextBlock::new()
                                     .text(list.clone())
@@ -7895,10 +7922,9 @@ impl Root {
         self.dialog_inputs += 1;
     }
 
-    /// Cherry-pick・Revert の確認（GTK4 版の `sheets::pick`: 今のブランチに足す。前後の絵はまだない）。
-    /// Cherry-pick・Revert（GTK4 版の `sheets::pick`）。いくつでも 1 つの命令で（コンフリクトで止まったら、残りは
-    /// git が覚えていて Continue・Skip で続く）。
-    fn pick(&mut self, oids: Vec<String>, revert: bool) {
+    /// Cherry-pick・Revert の確認（GTK4 版の `sheets::pick`: 今のブランチに足す。前と後の絵を読んでから出す）。
+    /// いくつでも 1 つの命令で（コンフリクトで止まったら、残りは git が覚えていて Continue・Skip で続く）。
+    fn pick(&mut self, oids: Vec<String>, revert: bool, context: &ComponentContext<Self>) {
         let Some(repo) = self.repo.clone() else {
             return beep();
         };
@@ -7934,12 +7960,27 @@ impl Root {
                 })
         });
         let op = if revert { "revert" } else { "cherryPick" };
-        self.dialog = Some(Dialog::Confirm {
-            repo,
-            title,
-            message,
-            button: if revert { "Revert" } else { "Cherry-pick" }.to_owned(),
-            command: json!({ "op": op, "oids": oids, "isMerge": merge }),
+        let kind = if revert {
+            crate::drawing::PickKind::Revert
+        } else {
+            crate::drawing::PickKind::CherryPick
+        };
+        context.spawn_background(move |_| {
+            let query = json!({ "op": "pickPreview", "oids": &oids, "revert": revert });
+            let reply: Value =
+                serde_json::from_str(&repo.run_json(&query.to_string())).unwrap_or_default();
+            Message::ConfirmWithDrawing(Box::new(Dialog::ConfirmDrawn {
+                repo,
+                title,
+                message,
+                button: if revert { "Revert" } else { "Cherry-pick" }.to_owned(),
+                command: json!({ "op": op, "oids": oids, "isMerge": merge }),
+                preview: reply["info"].clone(),
+                how: Arc::new(crate::drawing::How::Pick {
+                    current: onto,
+                    kind,
+                }),
+            }))
         });
     }
 
