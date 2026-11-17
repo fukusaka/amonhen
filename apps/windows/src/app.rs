@@ -729,8 +729,8 @@ enum Message {
     Stage(String, bool),
     /// Working Copy の Commit を押した。
     CommitChanges,
-    /// コミットが終わった（失敗ならその文）。
-    Committed(Option<String>),
+    /// コミットが終わった（失敗ならその文と、成功して hooks が何か書いていればその出力）。
+    Committed(Option<String>, Option<String>),
     /// 検索の欄の問い合わせが変わった。
     Query(String),
     /// 検索の欄で Enter（`true` なら Shift+Enter で前へ）。
@@ -2583,8 +2583,27 @@ impl Component for Root {
                 let message = crate::workcopy::message(&self.summary, &self.description);
                 let amend = self.amend;
                 self.committing = true;
+                // hooks の出力を探すため、始めた時刻（Activity の記録と同じ UNIX 時刻のミリ秒）を覚えておく。
+                let started = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_millis() as u64);
                 context.spawn_background(move |_| {
-                    Message::Committed(repo.commit(&message, amend).err().map(|e| e.to_string()))
+                    let failed = repo.commit(&message, amend).err().map(|e| e.to_string());
+                    // hooks（pre-commit・commit-msg など）が何か書いていれば見せる（GTK4 版と同じ）。
+                    let output = failed.is_none().then(|| {
+                        amonhen_model::activity::records()
+                            .into_iter()
+                            .rev()
+                            .find(|r| {
+                                r.kind == "git"
+                                    && r.label.starts_with("git commit")
+                                    && r.started >= started
+                                    && r.ok == Some(true)
+                            })
+                            .and_then(|r| r.output)
+                            .filter(|o| !o.trim().is_empty())
+                    });
+                    Message::Committed(failed, output.flatten())
                 });
             }
             Message::Amend(amend) => {
@@ -2664,8 +2683,14 @@ impl Component for Root {
                     self.load_working_diff();
                 }
             }
-            Message::Committed(failed) => {
+            Message::Committed(failed, hooks) => {
                 self.committing = false;
+                if let Some(output) = hooks {
+                    self.dialog = Some(Dialog::Failed {
+                        title: tr!("Committed (hooks output)"),
+                        message: output,
+                    });
+                }
                 match failed {
                     None => {
                         self.summary.clear();

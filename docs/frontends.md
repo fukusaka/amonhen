@@ -232,7 +232,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | `#issue` completion | ✓ | ✓ | — | — | n/a |  |
 | Commit and Push, Amend | ✓ | ✓ | ✓ | ✓ | △ | CLI: `commit -m … --amend`. |
 | Fixup / Squash Commit For | ✓ | ✓ | ✓ | ✓ | n/a |  |
-| Hooks output sheet | ✓ | ✓ | — | ✓ | n/a |  |
+| Hooks output sheet | ✓ | ✓ | ✓ | ✓ | n/a |  |
 | Reason shown when Commit is disabled | ✓ | ✓ | ✓ | ✓ | n/a | In the button's tooltip. |
 | Combined HEAD → working tree diff with line and hunk checks | ✓ | ✓ | △ | ✓ | ✓ | VSCode: With the engine; without it, line staging on separate unstaged and staged diffs.<br>CLI: `diff --combined`, `stage --rows`.<br>Windows: Line checks; no hunk checks. |
 | Range selection in the gutter, J/K and ⌥J/⌥K | ✓ | ✓ | — | ✓ | n/a |  |

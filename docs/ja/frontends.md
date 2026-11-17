@@ -232,7 +232,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | `#issue` の補完 | ✓ | ✓ | — | — | n/a |  |
 | Commit and Push・Amend | ✓ | ✓ | ✓ | ✓ | △ | CLI: `commit -m … --amend`。 |
 | Fixup / Squash Commit For | ✓ | ✓ | ✓ | ✓ | n/a |  |
-| hooks の出力のシート | ✓ | ✓ | — | ✓ | n/a |  |
+| hooks の出力のシート | ✓ | ✓ | ✓ | ✓ | n/a |  |
 | Commit が押せない理由を出す | ✓ | ✓ | ✓ | ✓ | n/a | ボタンのツールチップに。 |
 | HEAD → 作業ツリーの 1 つの差分と、行・hunk のチェック | ✓ | ✓ | △ | ✓ | ✓ | VSCode: エンジンがあれば。なければ別々の未ステージ・ステージ済みの差分で行をステージ。<br>CLI: `diff --combined`・`stage --rows`。<br>Windows: 行のチェック。hunk のチェックはない。 |
 | 行の範囲の選択、J/K・⌥J/⌥K | ✓ | ✓ | — | ✓ | n/a |  |
