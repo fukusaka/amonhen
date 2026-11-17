@@ -1549,6 +1549,32 @@ pub fn sticky_header(file_rows: &[u32], scroll_y: f32) -> Option<(usize, f32)> {
     Some((file, top))
 }
 
+/// 等幅の字（Cascadia Mono）の「0」の幅（DIP）。コミットの説明の欄の 72 桁の目安の線の位置に使う（macOS 版・
+/// GTK4 版と同じく「0」の幅から決める）。測れなければ None。
+pub fn monospace_zero_width(size: f32) -> Option<f32> {
+    let measure = || -> Result<f32> {
+        unsafe {
+            let dwrite: IDWriteFactory = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)?;
+            let format = dwrite.CreateTextFormat(
+                w!("Cascadia Mono"),
+                None,
+                DWRITE_FONT_WEIGHT_NORMAL,
+                DWRITE_FONT_STYLE_NORMAL,
+                DWRITE_FONT_STRETCH_NORMAL,
+                size,
+                w!("ja-jp"),
+            )?;
+            // 1 字では丸めが効くので、72 字の幅から求める。
+            let text: Vec<u16> = "0".repeat(72).encode_utf16().collect();
+            let layout = dwrite.CreateTextLayout(&text, &format, 100_000.0, 100.0)?;
+            let mut metrics = DWRITE_TEXT_METRICS::default();
+            layout.GetMetrics(&mut metrics)?;
+            Ok(metrics.widthIncludingTrailingWhitespace / 72.0)
+        }
+    };
+    measure().ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

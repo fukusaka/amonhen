@@ -404,6 +404,8 @@ pub struct Callbacks<'a> {
     /// 件名の欄（Alt+↑・Alt+↓ で最近のメッセージを呼び出すキーを付ける）。
     pub summary_box: &'a ElementRef<TextBox>,
     pub description: Callback<String>,
+    /// 説明の欄（等幅の字にする）。
+    pub description_box: &'a ElementRef<TextBox>,
     pub commit: Callback<()>,
     /// パスのファイルを含める（true）・外す（false）。
     pub stage: Box<dyn Fn(String) -> Callback<bool> + 'a>,
@@ -512,13 +514,17 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
         ));
     let message = StackPanel::new().spacing(6.0).grid_row(1).children((
         summary,
-        TextBox::new()
-            .text(input.description)
-            .placeholder_text(tr!("Description (optional)"))
-            .accepts_return(true)
-            .text_wrapping(TextWrapping::Wrap)
-            .height(80.0)
-            .on_text_changed(callbacks.description),
+        Grid::new().children((
+            TextBox::new()
+                .element_ref(callbacks.description_box)
+                .text(input.description)
+                .placeholder_text(tr!("Description (optional)"))
+                .accepts_return(true)
+                .text_wrapping(TextWrapping::Wrap)
+                .height(80.0)
+                .on_text_changed(callbacks.description),
+            description_guide(),
+        )),
     ));
     // Amend なら含めるファイルがなくても押せる（メッセージだけ直す。macOS 版と同じ）。
     // 見出しのチェック: すべて（コンフリクト以外）を含める・外す。一部だけなら薄く（GTK4 版の一覧の見出し）。
@@ -952,6 +958,31 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
         ])
         .margin(Thickness::new(14.0, 10.0, 14.0, 0.0))
         .children((band, message, commit, filter, list))
+}
+
+/// 説明の欄の字の大きさ（TextBox の既定の 14。reactor の TextBox には字の大きさの指定がない）。
+const DESCRIPTION_FONT_SIZE: f32 = 14.0;
+
+/// 説明の欄に重ねる、72 桁の目安の縦線（72 桁で改行する git の慣習。macOS 版・GTK4 版と同じく「0」の幅から
+/// 位置を決める）。欄の枠（1 px）と左の余白（TextBox の既定の 10 px）の後ろから数える。
+fn description_guide() -> View {
+    static ZERO: std::sync::OnceLock<Option<f32>> = std::sync::OnceLock::new();
+    let Some(zero) =
+        *ZERO.get_or_init(|| crate::render::monospace_zero_width(DESCRIPTION_FONT_SIZE))
+    else {
+        return View::empty();
+    };
+    Border::new()
+        .width(1.0)
+        .horizontal_alignment(HorizontalAlignment::Left)
+        .margin(Thickness::new(
+            1.0 + 10.0 + f64::from(zero) * 72.0,
+            2.0,
+            0.0,
+            2.0,
+        ))
+        .background(Brush::Solid(Color::argb(0x26, 0, 0, 0)))
+        .into()
 }
 
 #[cfg(test)]

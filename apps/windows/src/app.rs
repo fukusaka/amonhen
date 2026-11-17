@@ -262,6 +262,8 @@ struct Root {
     /// Working Copy の件名の欄と、Alt+↑・Alt+↓ で呼び出している最近のメッセージ（-1 は呼び出していない）・
     /// 呼び出す前の件名と本文（GTK4 版の `recall`）。
     summary_box: ElementRef<TextBox>,
+    /// コミットの説明の欄（等幅の字にする）。
+    description_box: ElementRef<TextBox>,
     /// Blame の行番号と中身の列（等幅の字にする）。
     blame_code: ElementRef<Grid>,
     recall_cursor: isize,
@@ -1087,6 +1089,7 @@ impl Component for Root {
             dialog_inputs: 0,
             working_list: ElementRef::new(),
             summary_box: ElementRef::new(),
+            description_box: ElementRef::new(),
             blame_code: ElementRef::new(),
             recall_cursor: -1,
             before_recall: None,
@@ -6352,6 +6355,22 @@ impl Component for Root {
                 None
             },
         );
+        // 説明の欄を等幅に（Working Copy を出すたびに欄が作り直される。TextBox は Control なので、そのものに付ける）。
+        let description_box = self.description_box.clone();
+        context.use_effect(
+            "description-monospace",
+            self.page == Page::WorkingCopy,
+            move || {
+                let _ = description_box.request_native_element(|result| {
+                    if let Ok(element) = result
+                        && let Err(e) = monospace(&element)
+                    {
+                        eprintln!("説明の欄を等幅にできない: {e}");
+                    }
+                });
+                None
+            },
+        );
         // 件名の欄の Alt+↑・Alt+↓（Working Copy を出すたびに欄が作り直される）。
         let summary_box = self.summary_box.clone();
         context.use_effect("summary-keys", self.page == Page::WorkingCopy, move || {
@@ -11483,6 +11502,7 @@ impl Root {
         let callbacks = crate::workcopy::Callbacks {
             summary: context.callback(Message::Summary),
             summary_box: &self.summary_box,
+            description_box: &self.description_box,
             description: context.callback(Message::Description),
             commit: context.callback(|()| Message::CommitChanges),
             stage: Box::new(|path: String| {
@@ -13907,6 +13927,12 @@ fn monospace_above(element: &IInspectable) -> windows_core_reactor::Result<bool>
         }
     }
     Ok(true)
+}
+
+/// Control（TextBox など）そのものの字を等幅にする。
+fn monospace(element: &IInspectable) -> windows_core_reactor::Result<()> {
+    let font = xaml::FontFamily::CreateInstanceWithName(&MONOSPACE.into())?;
+    element.cast::<xaml::Control>()?.SetFontFamily(&font)
 }
 
 /// 等幅にするのを待っている要素（部品ができた直後はまだ画面の木に入っていないので、描くたびに試す）と、試した回数。
