@@ -6242,7 +6242,7 @@ impl Component for Root {
                     )),
             ));
         let menu_bar = crate::menus::menu_bar(|| context.callback(Message::Command));
-        let toolbar = crate::menus::toolbar(context.callback(Message::Command));
+        let toolbar = crate::menus::toolbar(context.callback(Message::Command), self.tracking());
         // 差分の検索の帯を開いたら、欄にフォーカスを入れる（描き直した後に）。
         if self.diff_find_opened > 0 {
             let field = self.diff_find_box.clone();
@@ -9945,6 +9945,25 @@ impl Root {
     }
 
     /// 今のブランチの、ref の一覧の行（上流は `detail`、上流との差は `ahead`・`behind`）。
+    /// ツールバーの Pull・Push の様子（今のブランチの上流との差、上流があるか、リモートがないか）。
+    fn tracking(&self) -> crate::menus::Tracking {
+        let entry = self.head_entry();
+        let no_remote = !self.refs.as_ref().is_some_and(|r| {
+            r.refs
+                .entries
+                .iter()
+                .any(|e| e.kind == amonhen_model::RefKind::Remote)
+        });
+        crate::menus::Tracking {
+            ahead: entry.map_or(0, |e| e.ahead),
+            behind: entry.map_or(0, |e| e.behind),
+            // 上流があって、そのリモートブランチもある（Push で送れる）。今のブランチがなければ（HEAD が
+            // 外れている）送れないので、Publish にもしない。
+            published: entry.is_none_or(|e| e.detail.is_some() && !e.gone),
+            no_remote,
+        }
+    }
+
     fn head_entry(&self) -> Option<&RefEntry> {
         let refs = &self.refs.as_ref()?.refs;
         let head = refs.head_branch.as_deref()?;

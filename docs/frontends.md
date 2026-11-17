@@ -182,7 +182,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Refresh and Rebuild History | ✓ | ✓ | ✓ | ✓ | △ | VSCode: Rebuild History in the sidebar's ⋯ and the command palette, with the engine.<br>CLI: `log --rebuild`, `daemon rebuild`. |
 | Undo the last operation (asks, names what it puts back) | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: The title's Undo and the Command Palette ask; a notification's Undo, pressed right after the operation, doesn't.<br>CLI: `undo` (`--peek` to see it first). |
 | History search with scopes (subject, author, ID, path, contents) | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: With the engine.<br>CLI: `log <query>`. |
-| Ahead/behind badges | ✓ | ✓ | △ | ✓ | △ | VSCode: On the sidebar's branch rows.<br>CLI: In `status`.<br>Windows: In the sidebar and the window title (↑n ↓n); not on the toolbar's Pull and Push buttons, whose names aren't shown. |
+| Ahead/behind badges | ✓ | ✓ | △ | ✓ | △ | VSCode: On the sidebar's branch rows.<br>CLI: In `status`.<br>Windows: In the sidebar, the window title (↑n ↓n) and the Pull and Push buttons' tooltips; no badge on the buttons. |
 | Toolbar customization | ✓ | ✓ | ✓ | n/a | n/a | GTK4: The palette works like NSToolbar's and slides down under the header bar over the content like its sheet, without changing the window's size, with no Show (icon/text) choice since the header bar shows icons; the Repository menu and the main menu take the menu bar's place and stay put.<br>Windows: View > Customize Toolbar… with a check per button, ↑ ↓ and spaces (no dragging, no flexible space) |
 | Network git stopped after 120 s of silence | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: The engine's, and the extension's own fetch and push without it.<br>Windows: The engine's. |
 
@@ -371,7 +371,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
 | A sheet before remote, HEAD-moving and deleting operations | ✓ | ✓ | ✓ | ✓ | n/a | GTK4: Name prompts and every confirmation are the same sheet. Return presses the default button wherever the focus is (a drop-down or a radio too), as on macOS.<br>VSCode: Modals, and QuickPicks for Fetch, Pull and Push; Switch Branch… switches at once, as the app's switcher does. |
 | Undo of git operations (`undo.json`) | ✓ | ✓ | ✓ | ✓ | ✓ |  |
-| Disabled controls say why in their tooltip | ✓ | ✓ | — | n/a | n/a | VSCode: Commands that can't be used aren't shown (when clauses). |
+| Disabled controls say why in their tooltip | ✓ | ✓ | △ | n/a | n/a | VSCode: Commands that can't be used aren't shown (when clauses).<br>Windows: Commit and the toolbar's Push say why in their tooltip; WinUI shows no tooltip on a disabled button, so Push stays enabled and beeps. |
 
 ## 12. GitHub
 

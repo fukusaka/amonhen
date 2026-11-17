@@ -366,8 +366,53 @@ fn toolbar_command(id: &str) -> &str {
     }
 }
 
+/// Pull・Push のボタンの様子（今のブランチの上流との差、上流があるか、リモートがないか）。
+#[derive(Clone, Copy, Default)]
+pub struct Tracking {
+    pub ahead: u32,
+    pub behind: u32,
+    pub published: bool,
+    pub no_remote: bool,
+}
+
+/// Pull のツールチップ（上流より後ろならその数。macOS 版の `setTracking` と同じ）。
+fn pull_tooltip(t: Tracking) -> String {
+    if t.behind > 0 {
+        amonhen_model::tr!(
+            "{count} commits behind upstream (Ctrl+Alt+L)",
+            count = t.behind
+        )
+    } else {
+        amonhen_model::tr!("Pull (Ctrl+Alt+L)")
+    }
+}
+
+/// Push のツールチップ（押しても送れないときはその理由。macOS 版の `setTracking`、GTK4 版の `push_tooltip` と
+/// 同じ文）。上流がなければ Publish（送り先を選ぶ）になる。
+fn push_tooltip(t: Tracking) -> String {
+    use amonhen_model::tr;
+    if !t.published && t.no_remote {
+        tr!("No remote to publish to. Add one in Repository > Add Remote….")
+    } else if !t.published {
+        tr!("Publish — choose the remote to create this branch on first (Ctrl+Alt+P)")
+    } else if t.ahead > 0 {
+        tr!(
+            "{count} commits ahead of upstream (Ctrl+Alt+P)",
+            count = t.ahead
+        )
+    } else if t.behind > 0 {
+        tr!(
+            "Nothing to push. Pull the {count} new commits first.",
+            count = t.behind
+        )
+    } else {
+        tr!("Nothing to push")
+    }
+}
+
 /// ツールバー（CommandBar）。押すと `on_click` が操作の id を受ける。まだ動かない操作のボタンは押せない。
-pub fn toolbar(on_click: Callback<String>) -> View {
+/// Pull・Push は `tracking` で、上流との差と、送れないわけをツールチップに出す。
+pub fn toolbar(on_click: Callback<String>, tracking: Tracking) -> View {
     // 並びは View > Customize Toolbar… で変えられる（GTK4 版の `toolbar.rs`）。
     let commands = toolbar_entries()
         .into_iter()
@@ -379,14 +424,18 @@ pub fn toolbar(on_click: Callback<String>) -> View {
                 let icon = icon_of(&id)?;
                 let command = toolbar_command(&id);
                 let enabled = IMPLEMENTED.contains(&command);
-                Some(
-                    CommandBarCommand::button_with_icon(
-                        command.to_owned(),
-                        toolbar_name(&id),
-                        icon,
-                    )
-                    .enabled(enabled),
-                )
+                let button = CommandBarCommand::button_with_icon(
+                    command.to_owned(),
+                    toolbar_name(&id),
+                    icon,
+                );
+                Some(match id.as_str() {
+                    "pull" => button.enabled(enabled).tooltip(pull_tooltip(tracking)),
+                    // 送れないときも押せるままにする（WinUI は押せない部品のツールチップを出さないので、わけが
+                    // 読めなくなる。押せばベルが鳴る）。
+                    "push" => button.enabled(enabled).tooltip(push_tooltip(tracking)),
+                    _ => button.enabled(enabled),
+                })
             }
         })
         .collect::<Vec<_>>();
