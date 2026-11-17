@@ -4,7 +4,7 @@
 
 端末で動く FE: `amonhen tui`。アプリが届かない所（SSH のセッション、デスクトップのないマシン、エディタの横の端末）のためのもので、目指すところはアプリと同じ: 画面のどこも git を待たない。
 
-状態: 段階 T1 と T2（History・選んだコミットの詳細と差分・スクロール・`--snapshot`・`--measure-scroll`）と、T3 の大半（Working Copy の一覧と差分・ファイル、hunk、行ごとの stage・discard・メッセージの欄・commit と amend・変化の知らせ）、T4 の最初の部分（Branches・Remotes・Tags のあるサイドバー）を作った。残りは設計。
+状態: 段階 T1 と T2（History・選んだコミットの詳細と差分・スクロール・`--snapshot`・`--measure-scroll`）と、T3 の大半（Working Copy の一覧と差分・ファイル、hunk、行ごとの stage・discard・メッセージの欄・commit と amend・変化の知らせ）、T4 の一部（Branches・Remotes・Tags のあるサイドバー、History の検索）を作った。残りは設計。
 
 ## 概要
 
@@ -52,7 +52,7 @@
 - 1 コミットは必ず端末の 1 行。行と画面の位置は引き算で求まり、ページ単位のスクロールで行の高さを測らなくてよい。`amonhen log` がコミットの間の「つなぎの行」に描いている曲線は、コミットの行に描く: コミットから出る曲線はそのコミットの行で曲げ、親に入る曲線は親の行で曲げる。隣の行へまっすぐつなぐ曲線は、first-parent なら親の行（ブランチが分かれた所へ戻る形）、マージなら子の行で曲げる。ほかのレーンを横切る線は `┼` になる。
 - グラフの列は、要るだけ取る。上限は幅の一部（既定で 3 分の 1）。通るだけのレーンは、`amonhen log` と同じく細い 1 列にまとめる。
 - ref の札は `refs` から取り、コミットの ID で行に付ける。選んだコミットの祖先は `historyLineage` で強調する（ほかを薄くする。アプリと同じ）。
-- 検索は History の検索の書き方で `historySearch` を使い、見つかった分から出す（`historySearchPartial`）。
+- 検索は History の検索の書き方で `historySearch` を使い、見つかった分から出す（`historySearchPartial`）。作ったもの: `/` で一番下の行に語を打つ。検索は専用のワーカーで動き、次の検索を始めるか Esc でやめると取り消す。合った行は件名に色がつき、一番下の行に、選んでいるのが何番目かと合った数を出す。結果は検索が終わってから出す（途中の結果はまだ）。History を読み直すと、検索し直す。
 
 ### 差分
 
@@ -162,7 +162,7 @@ T2、同じ Mac、このリポジトリ（3,438 コミット）。200 × 60 で�
 - [ ] T1b. 端末のスクロール領域を使う自前のフレームの出力（スクロールの 1 歩で、新しく見える行だけを送る）。最も遅いフレームの原因を調べる。criterion のベンチ
 - [x] T2. コミットの詳細と差分（ファイルの一覧・unified の差分・変わった語・構文の色）、狭いときのレイアウト
 - [ ] T3. Working Copy: 一覧、ファイル・hunk・行ごとの stage、discard、メッセージの欄とエディタ、commit と amend。変化の知らせ。作ったもの: ファイルごとに印のある一覧、stage 済みの行に印のつく差分、Space での stage と unstage（一覧ではファイル、差分では行。hunk の見出しではその hunk）、確かめてからの discard（`d`）、一覧の下のメッセージの欄と commit・amend、変化の知らせでの読み直し。残り: メッセージを git のエディタで開く（`Ctrl-e`）、行の範囲の選択
-- [ ] T4. サイドバー（Branches・Remotes・Tags・絞り込み）、ref ごとの History、検索、祖先の強調、命令の一覧とヘルプ。作ったもの: Workspace の行・Branches（今のブランチの印、ahead と behind）・Remotes・Tags のあるサイドバー、ref を開くと History でそのコミットを選ぶ、読み直しても選択をコミットで保つ。残り: 絞り込み、検索、祖先の強調、命令の一覧とヘルプ、サイドバーの Worktrees と Stashes
+- [ ] T4. サイドバー（Branches・Remotes・Tags・絞り込み）、ref ごとの History、検索、祖先の強調、命令の一覧とヘルプ。作ったもの: Workspace の行・Branches（今のブランチの印、ahead と behind）・Remotes・Tags のあるサイドバー、ref を開くと History でそのコミットを選ぶ、読み直しても選択をコミットで保つ、`/` と `n` `N` での検索。残り: 絞り込み、検索の途中の結果、祖先の強調、命令の一覧とヘルプ、サイドバーの Worktrees と Stashes
 - [ ] T5. シートつきの操作（fetch・pull・push・branch・checkout・merge・rebase・stash・reset・undo）、askpass、動いている処理の表示。マウスの取り込みを切るキーと設定、一時停止（`Ctrl-z`）、kitty のキーボードプロトコル
 - [ ] T6. コンフリクト、Stashes、Reflog、Worktrees、History の編集（命令として）、前と後の絵
 - [ ] T7. frontends.md の TUI の列、usage.md、CHANGELOG
