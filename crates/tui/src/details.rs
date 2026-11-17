@@ -288,6 +288,11 @@ impl Details {
         self.scroll.by(delta, self.lines())
     }
 
+    /// 最後に描いてから、縦に何行ずれたか（正なら、中身が上へ）。
+    pub fn scrolled(&self) -> i32 {
+        self.scroll.scrolled()
+    }
+
     /// 前のフレームで組み立てた行を捨てる。
     pub fn forget_drawn(&mut self) {
         self.kept.forget();
@@ -377,6 +382,7 @@ impl Details {
         commit.build_head(area.width, clock);
         let commit = &*commit;
         self.scroll.clamp(commit.lines());
+        self.scroll.drawn();
         // 読めなかったコミットを選んでいる間は、理由を 1 行目に重ねる。
         let failed = self
             .failed

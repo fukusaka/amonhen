@@ -410,6 +410,28 @@ impl App {
         areas
     }
 
+    /// `damage` で描き直すペインのうち、最後に描いてから中身が縦にずれたものと、その行数（正なら上へ）。
+    /// フレームの出力が、端末のスクロールに使う。当てにならなくてもよい（中身が替わっていても、違うセルは書く）。
+    pub fn scrolls(&self, damage: Damage) -> Vec<(Rect, i32)> {
+        let layout = self.layout();
+        let main = match self.view {
+            View::History => self.history.scrolled(),
+            _ => 0,
+        };
+        let side = match self.view {
+            View::Changes => self.changes.diff_scrolled(),
+            _ => self.details.scrolled(),
+        };
+        [
+            (Damage::MAIN, layout.main, main),
+            (Damage::SIDE, layout.side, side),
+        ]
+        .into_iter()
+        .filter(|&(pane, _, lines)| damage.has(pane) && lines != 0)
+        .filter_map(|(_, area, lines)| Some((area?, lines)))
+        .collect()
+    }
+
     pub fn quit(&self) -> bool {
         self.quit
     }

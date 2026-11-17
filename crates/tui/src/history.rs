@@ -96,6 +96,8 @@ pub struct History {
     loading: bool,
     /// 一番上に見えている行。
     top: u32,
+    /// 最後に描いたときの `top`。
+    drawn_top: u32,
     selected: u32,
     /// 行を出す所の高さ（最後に知らされた大きさ）。
     height: u32,
@@ -367,8 +369,14 @@ impl History {
         row < self.total && self.select(row)
     }
 
+    /// 最後に描いてから、縦に何行ずれたか（正なら、中身が上へ）。
+    pub fn scrolled(&self) -> i32 {
+        (i64::from(self.top) - i64::from(self.drawn_top)) as i32
+    }
+
     pub fn draw(&mut self, area: Rect, buf: &mut Buffer, now: i64, focused: bool) {
         self.incomplete = false;
+        self.drawn_top = self.top;
         let Some(window) = &self.window else {
             self.incomplete = self.total > 0;
             return;

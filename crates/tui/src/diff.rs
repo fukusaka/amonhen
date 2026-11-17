@@ -194,6 +194,8 @@ pub struct Scroll {
     /// 差分を横に動かした幅（セル）。
     pub left: u16,
     pub height: u16,
+    /// 最後に描いたときの `top`。
+    drawn_top: u32,
 }
 
 impl Scroll {
@@ -203,6 +205,16 @@ impl Scroll {
 
     pub fn clamp(&mut self, lines: u32) {
         self.top = self.top.min(self.last_top(lines));
+    }
+
+    /// 今の位置で描いた（描くたびに呼ぶ）。
+    pub fn drawn(&mut self) {
+        self.drawn_top = self.top;
+    }
+
+    /// 最後に描いてから、縦に何行ずれたか（正なら、中身が上へ）。
+    pub fn scrolled(&self) -> i32 {
+        (i64::from(self.top) - i64::from(self.drawn_top)) as i32
     }
 
     /// 今の位置（一番下に見えている行）と、全体の行数。

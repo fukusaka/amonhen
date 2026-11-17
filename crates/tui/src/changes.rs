@@ -479,6 +479,11 @@ impl Changes {
         ((self.cursor + 1).min(lines), lines)
     }
 
+    /// 最後に描いてから、差分が縦に何行ずれたか（正なら、中身が上へ）。
+    pub fn diff_scrolled(&self) -> i32 {
+        self.scroll.scrolled()
+    }
+
     /// 前のフレームで組み立てた行を捨てる。
     pub fn forget_drawn(&mut self) {
         self.kept.forget();
@@ -698,6 +703,7 @@ impl Changes {
             return;
         };
         self.scroll.clamp(1 + shown.diff.len());
+        self.scroll.drawn();
         // 左の 1 列は、選んでいる行の印。
         let body = Rect::new(area.x + 1, area.y, area.width - 1, area.height);
         for y in 0..area.height {

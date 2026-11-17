@@ -170,7 +170,8 @@ fn edit(message: &str, workdir: Option<&str>) -> Result<String> {
 /// 1 フレームを出す: `damage` の所だけを描き直す。
 fn paint<W: Write>(canvas: &mut Canvas<W>, app: &mut App, damage: Damage) -> Result<()> {
     let areas = app.areas(damage);
-    canvas.draw(app.size(), &areas, |buf, all| {
+    let scrolls = app.scrolls(damage);
+    canvas.draw(app.size(), &areas, &scrolls, |buf, all| {
         app.draw(buf, if all { Damage::ALL } else { damage })
     })?;
     Ok(())
@@ -444,7 +445,8 @@ pub fn measure_scroll(
         let mut built = Duration::ZERO;
         if let Some(damage) = app.take_damage() {
             let areas = app.areas(damage);
-            canvas.draw(app.size(), &areas, |buf, all| {
+            let scrolls = app.scrolls(damage);
+            canvas.draw(app.size(), &areas, &scrolls, |buf, all| {
                 let before = Instant::now();
                 let cursor = app.draw(buf, if all { Damage::ALL } else { damage });
                 built = before.elapsed();
