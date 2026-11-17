@@ -83,6 +83,10 @@ pub struct App {
     notice: Option<String>,
     /// 検索の語を打っている（`/`）。
     typing_query: Option<String>,
+    /// サイドバーの絞り込みの語を打っている（サイドバーで `/`）。
+    typing_filter: Option<String>,
+    /// キーの一覧を出している（`?`）。
+    help: bool,
     /// 今の検索: 語と、動いている検索を取り消す印（結果が届いたら `None`）。
     search: Option<(String, Option<Arc<AtomicBool>>)>,
     theme: Theme,
@@ -124,6 +128,8 @@ impl App {
             committing: false,
             notice: None,
             typing_query: None,
+            typing_filter: None,
+            help: false,
             search: None,
             theme: Theme::detect(),
             name: String::new(),
@@ -440,6 +446,32 @@ impl App {
             self.dirty = true;
             return;
         }
+        // キーの一覧は、次のキーで閉じる。
+        if std::mem::take(&mut self.help) {
+            self.dirty = true;
+            return;
+        }
+        // 絞り込みの語は、打つたびに効く。Enter で確定、Esc で絞り込みをやめる。
+        if let Some(filter) = &mut self.typing_filter {
+            self.dirty = true;
+            match key.code {
+                KeyCode::Enter => self.typing_filter = None,
+                KeyCode::Esc => {
+                    self.typing_filter = None;
+                    self.sidebar.set_filter("");
+                }
+                KeyCode::Backspace => {
+                    filter.pop();
+                    self.sidebar.set_filter(filter);
+                }
+                KeyCode::Char(ch) if !control => {
+                    filter.push(ch);
+                    self.sidebar.set_filter(filter);
+                }
+                _ => {}
+            }
+            return;
+        }
         // 検索の語を打っている間は、Enter で検索、Esc でやめる。
         if let Some(query) = &mut self.typing_query {
             self.dirty = true;
@@ -478,6 +510,10 @@ impl App {
                     Focus::Side if sidebar => Focus::Sidebar,
                     Focus::Side => Focus::Main,
                 };
+                self.dirty = true;
+            }
+            KeyCode::Char('?') => {
+                self.help = true;
                 self.dirty = true;
             }
             KeyCode::Char('0') => {
@@ -546,12 +582,79 @@ impl App {
                 self.pick();
                 true
             }
+            KeyCode::Char('/') => {
+                self.typing_filter = Some(self.sidebar.filter().to_owned());
+                true
+            }
+            // 絞り込んでいれば、まずそれをやめる。
+            KeyCode::Esc if !self.sidebar.filter().is_empty() => {
+                self.sidebar.set_filter("");
+                true
+            }
             KeyCode::Esc => {
                 self.focus = Focus::Main;
                 true
             }
             _ => false,
         }
+    }
+
+    /// 今の枠で使えるキー（`?` で出す一覧）。
+    fn help_lines(&self) -> Vec<(&'static str, String)> {
+        let mut lines = match (self.view, self.focus) {
+            (_, Focus::Sidebar) => vec![
+                ("j k", tr!("Move")),
+                (
+                    "Enter",
+                    tr!("Open the view, or select the ref's commit in History"),
+                ),
+                ("/", tr!("Filter branches and tags")),
+                ("Esc", tr!("Clear the filter, or go back")),
+            ],
+            (View::History, Focus::Main) => vec![
+                ("j k", tr!("Move")),
+                ("g G", tr!("Top and bottom")),
+                ("PgUp PgDn", tr!("Move by a page")),
+                ("Enter", tr!("Go to the details")),
+                ("/", tr!("Search")),
+                ("n N", tr!("Next and previous match")),
+                ("Esc", tr!("Clear the search")),
+            ],
+            (View::History, Focus::Side) => vec![
+                ("j k", tr!("Scroll")),
+                ("[ ]", tr!("Previous and next file")),
+                ("h l", tr!("Pan long lines")),
+                ("Esc", tr!("Go back to History")),
+            ],
+            (View::Changes, Focus::Main) | (_, Focus::Message) => vec![
+                ("j k", tr!("Move")),
+                ("Space", tr!("Stage or unstage the file")),
+                ("d", tr!("Discard the file's changes")),
+                ("Enter", tr!("Go to the diff")),
+                ("c", tr!("Write the commit message")),
+                ("a", tr!("Amend the last commit")),
+                ("Ctrl-s", tr!("Commit")),
+            ],
+            (View::Changes, Focus::Side) => vec![
+                ("j k", tr!("Move by line")),
+                ("[ ]", tr!("Previous and next hunk")),
+                (
+                    "Space",
+                    tr!("Stage or unstage the line, or the hunk on its header"),
+                ),
+                ("d", tr!("Discard the line or the hunk")),
+                ("h l", tr!("Pan long lines")),
+                ("Esc", tr!("Go back to the list")),
+            ],
+        };
+        lines.extend([
+            ("", String::new()),
+            ("1 2", tr!("Changes and History")),
+            ("0", tr!("Sidebar")),
+            ("Tab", tr!("Next pane")),
+            ("q", tr!("Quit")),
+        ]);
+        lines
     }
 
     /// サイドバーで選んでいる行を開く: メインの画面を替えるか、ref のコミットを History で選ぶ。
@@ -990,6 +1093,12 @@ impl App {
             (None, Some(error)) => {
                 buf.set_stringn(area.x + 1, y, error, room, Style::new().fg(Color::Red));
             }
+            (None, None) if self.typing_filter.is_some() => {
+                let filter = self.typing_filter.as_deref().unwrap_or("");
+                let text = tr!("Filter: {filter}", filter = filter);
+                let x = buf.set_stringn(area.x + 1, y, text, room, Style::new()).0;
+                cursor = Some((x.min(position_x.saturating_sub(1)), y));
+            }
             (None, None) if self.typing_query.is_some() => {
                 let query = self.typing_query.as_deref().unwrap_or("");
                 let x = buf
@@ -1032,7 +1141,9 @@ impl App {
                         tr!("j/k line   [/] hunk   Space stage/unstage   d discard   Esc back")
                     }
                     (_, Focus::Message) => tr!("Ctrl-s commit   Esc back"),
-                    (_, Focus::Sidebar) => tr!("j/k move   Enter open   Esc back   q quit"),
+                    (_, Focus::Sidebar) => {
+                        tr!("j/k move   Enter open   / filter   ? keys   Esc back   q quit")
+                    }
                 };
                 buf.set_stringn(
                     area.x + 1,
@@ -1044,6 +1155,67 @@ impl App {
             }
         }
         buf.set_string(position_x, y, position, Style::new());
+        if self.help {
+            cursor = None;
+            let lines = self.help_lines();
+            let keys = lines.iter().map(|l| l.0.width()).max().unwrap_or(0) as u16;
+            let text = lines.iter().map(|l| l.1.width()).max().unwrap_or(0) as u16;
+            // 枠は画面の真ん中に。収まらない分は切る。
+            let width = (keys + text + 7).min(area.width);
+            let height = (lines.len() as u16 + 2).min(area.height);
+            let at = Rect::new(
+                area.x + (area.width - width) / 2,
+                area.y + (area.height - height) / 2,
+                width,
+                height,
+            );
+            for y in at.y..at.bottom() {
+                // 枠の左端が全角の文字の後ろ半分に重なるなら、その文字を消す。
+                if at.x > area.x && buf[(at.x - 1, y)].symbol().width() > 1 {
+                    buf[(at.x - 1, y)].set_char(' ');
+                }
+                for x in at.x..at.right() {
+                    let edge_y = y == at.y || y == at.bottom() - 1;
+                    let edge_x = x == at.x || x == at.right() - 1;
+                    let ch = match (edge_y, edge_x) {
+                        (true, true) if y == at.y && x == at.x => '┌',
+                        (true, true) if y == at.y => '┐',
+                        (true, true) if x == at.x => '└',
+                        (true, true) => '┘',
+                        (true, false) => '─',
+                        (false, true) => '│',
+                        (false, false) => ' ',
+                    };
+                    buf[(x, y)].reset();
+                    buf[(x, y)].set_char(ch);
+                }
+            }
+            buf.set_stringn(
+                at.x + 2,
+                at.y,
+                tr!(" Keys "),
+                usize::from(width.saturating_sub(4)),
+                Style::new().add_modifier(Modifier::BOLD),
+            );
+            for (y, (key, text)) in (at.y + 1..at.bottom().saturating_sub(1)).zip(&lines) {
+                buf.set_stringn(
+                    at.x + 2,
+                    y,
+                    key,
+                    usize::from(width.saturating_sub(4)),
+                    Style::new().fg(Color::Cyan),
+                );
+                if width > keys + 6 {
+                    buf.set_stringn(
+                        at.x + 4 + keys,
+                        y,
+                        text,
+                        usize::from(width - keys - 6),
+                        Style::new(),
+                    );
+                }
+            }
+        }
         // 入力しているときだけ、カーソルを出す。
         if let Some(at) = cursor {
             frame.set_cursor_position(at);

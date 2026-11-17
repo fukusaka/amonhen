@@ -53,6 +53,10 @@ impl Row {
 }
 
 pub struct Sidebar {
+    /// 最後に届いた `refs` の答え（絞り込みを替えたときに、行を作り直す）。
+    refs: Value,
+    /// 名前にこれを含む ref だけを出す（大文字小文字は区別しない）。空なら、すべて。
+    filter: String,
     rows: Vec<Row>,
     selected: usize,
     top: usize,
@@ -62,6 +66,8 @@ pub struct Sidebar {
 impl Default for Sidebar {
     fn default() -> Self {
         Self {
+            refs: Value::Null,
+            filter: String::new(),
             rows: vec![Row::Header(tr!("Workspace")), Row::Changes, Row::History],
             // 開いたときのメインの画面は History。
             selected: 2,
@@ -74,6 +80,22 @@ impl Default for Sidebar {
 impl Sidebar {
     /// `refs` の答えから、行を作り直す。選んでいた行は名前で引き継ぐ。
     pub fn set_refs(&mut self, refs: &Value) {
+        self.refs = refs.clone();
+        self.rebuild();
+    }
+
+    /// 絞り込みの語を替える。
+    pub fn set_filter(&mut self, filter: &str) {
+        self.filter = filter.to_lowercase();
+        self.rebuild();
+    }
+
+    pub fn filter(&self) -> &str {
+        &self.filter
+    }
+
+    fn rebuild(&mut self) {
+        let refs = &self.refs;
         let selected = self.rows.get(self.selected).and_then(Row::key);
         let head = refs["headBranch"].as_str();
         let mut rows = vec![Row::Header(tr!("Workspace")), Row::Changes, Row::History];
@@ -89,6 +111,9 @@ impl Sidebar {
                 .filter(|e| e["kind"] == kind)
                 .filter_map(|e| {
                     let name = e["name"].as_str()?;
+                    if !name.to_lowercase().contains(&self.filter) {
+                        return None;
+                    }
                     Some(Row::Ref {
                         name: name.to_owned(),
                         target: e["target"].as_str()?.to_owned(),

@@ -575,3 +575,45 @@ fn rows_outside_the_selected_commits_ancestry_are_dimmed() {
     // topic のコミットの祖先は、分かれる前の 2 つ。
     assert_eq!(dim("jj"), [true, true, false, false, false]);
 }
+
+/// サイドバーで `/`: 打った語を名前に含む ref だけを出す。Esc でやめる
+#[test]
+fn sidebar_filter_narrows_refs() {
+    let dir = tempfile::tempdir().unwrap();
+    merged(dir.path());
+    let side = |keys: &str| -> Vec<String> {
+        amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), keys)
+            .unwrap()
+            .lines()
+            .skip(1)
+            .filter_map(|l| column(l, 0))
+            .filter(|l| !l.is_empty())
+            .collect()
+    };
+    let filtered = side("0/TOP");
+    assert_eq!(
+        filtered[..5],
+        ["Workspace", "  Changes", "  History", "Branches", "  topic"]
+    );
+    assert!(filtered[5].starts_with(" Filter: TOP"), "{filtered:?}");
+    // Enter で確定しても絞り込んだまま。Esc で戻る。
+    assert_eq!(side("0/TOP\n")[4], "  topic");
+    assert_eq!(side("0/TOP\n\x1b")[4], "● main");
+}
+
+/// `?` で今の枠のキーの一覧。次のキーで閉じる
+#[test]
+fn question_mark_lists_the_keys() {
+    let dir = tempfile::tempdir().unwrap();
+    merged(dir.path());
+    let help = amonhen_tui::snapshot(open(dir.path()), 80, 20, clock(), "?").unwrap();
+    println!("{help}");
+    assert!(help.contains("┌─ Keys ─"));
+    assert!(help.contains("│ n N        Next and previous match"));
+    assert!(help.contains("│ q          Quit"));
+    let closed = amonhen_tui::snapshot(open(dir.path()), 80, 20, clock(), "?x").unwrap();
+    assert!(!closed.contains("Keys"));
+    // Working Copy の差分では、その枠のキー。
+    let diff = amonhen_tui::snapshot(open(dir.path()), 80, 20, clock(), "1\n?").unwrap();
+    assert!(diff.contains("Previous and next hunk"));
+}
