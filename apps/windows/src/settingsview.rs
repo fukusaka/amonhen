@@ -16,6 +16,44 @@ pub struct State {
     pub use_fsmonitor: bool,
     /// History のキャッシュの大きさ（バイト。読むまでは None）。
     pub cache_size: Option<u64>,
+    /// 外のエディタの選べるもの（自動・Other… を除く）と、選んでいる値（空なら自動）。選び直すたびに欄を
+    /// 作り直す数（Other… を取り消したとき、欄を元の選びに戻す）。
+    pub editors: Vec<crate::editor::App>,
+    pub editor: String,
+    pub editor_epoch: u32,
+}
+
+impl State {
+    /// 外のエディタの欄の項目（自動・入っているもの・Other…）と、選んでいる番号。
+    pub fn editor_items(&self) -> (Vec<String>, usize) {
+        let mut items = vec![tr!(
+            "Automatic ({label})",
+            label = crate::editor::automatic().name
+        )];
+        items.extend(self.editors.iter().map(|a| a.name.clone()));
+        items.push(tr!("Other…"));
+        let selected = if self.editor.is_empty() {
+            0
+        } else {
+            self.editors
+                .iter()
+                .position(|a| a.id.eq_ignore_ascii_case(&self.editor))
+                .map_or(0, |i| i + 1)
+        };
+        (items, selected)
+    }
+}
+
+/// 外のエディタの選べるもの（入っているものと、Other… で選んだもの）。
+pub fn editor_choices(value: &str) -> Vec<crate::editor::App> {
+    let mut apps = crate::editor::installed();
+    if !value.is_empty()
+        && !apps.iter().any(|a| a.id.eq_ignore_ascii_case(value))
+        && let Some(app) = crate::editor::app_of(value)
+    {
+        apps.push(app);
+    }
+    apps
 }
 
 /// 自動の fetch の間隔の選べる値（GTK4 版・macOS 版と同じ）。
@@ -30,6 +68,8 @@ pub struct Callbacks<'a> {
     pub auto_fetch: Callback<Option<usize>>,
     /// History のキャッシュを消す。
     pub clear_cache: Callback<()>,
+    /// 外のエディタを選んだ（[`State::editor_items`] の番号）。
+    pub editor: Callback<Option<usize>>,
 }
 
 /// バイト数を読みやすく。
@@ -146,6 +186,22 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                                     .unwrap_or(0),
                             )
                             .on_selection_changed(callbacks.auto_fetch),
+                    )),
+                StackPanel::new()
+                    .orientation(Orientation::Horizontal)
+                    .spacing(12.0)
+                    .margin(Thickness::new(0.0, 8.0, 0.0, 0.0))
+                    .children((
+                        TextBlock::new()
+                            .text(tr!("External Editor"))
+                            .vertical_alignment(VerticalAlignment::Center),
+                        View::keyed_fragment([(state.editor_epoch.to_string(), {
+                            let (items, selected) = state.editor_items();
+                            ComboBox::new()
+                                .items_source(items)
+                                .selected_index(selected)
+                                .on_selection_changed(callbacks.editor)
+                        })]),
                     )),
                 heading("Git".to_owned()),
                 git,

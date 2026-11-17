@@ -94,7 +94,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 手で作るグループ・行を Favorites やグループへドラッグ | △ | △ | △ | n/a | n/a | macOS: グループそのものはドラッグで並べ替えられない。<br>GTK4: グループそのものはドラッグで並べ替えられない。<br>Windows: 行のメニューの Group で。ドラッグはない。 |
 | 状態の列（ブランチ・変更・ahead/behind・最後のコミット・開いた時）、並べ替え、列の順の入れ替え | ✓ | ✓ | △ | n/a | n/a | Windows: 見出しを押して並べ替えられる。列の幅・並びは変えられない。 |
 | お気に入り・表示名・色のラベル | ✓ | ✓ | ✓ | n/a | n/a |  |
-| タブ・窓で開く、Finder（ファイル）・Terminal・エディタ | ✓ | ✓ | △ | n/a | n/a | GTK4: 知っているコードエディタと「その他…」で選んだプログラム以外は、inode/directory を宣言しているアプリだけがフォルダを開く。<br>Windows: エクスプローラー・Windows Terminal（なければ cmd）・VS Code。タブはなく新しいウィンドウで開く。エディタは選べない。 |
+| タブ・窓で開く、Finder（ファイル）・Terminal・エディタ | ✓ | ✓ | △ | n/a | n/a | GTK4: 知っているコードエディタと「その他…」で選んだプログラム以外は、inode/directory を宣言しているアプリだけがフォルダを開く。<br>Windows: エクスプローラー・Windows Terminal（なければ cmd）・Settings で選んだエディタ。タブはなく新しいウィンドウで開く。 |
 | 選んだリポジトリを Fetch | ✓ | ✓ | △ | n/a | n/a | Windows: 行のメニューから 1 つずつ。複数の行は選べない。 |
 | Quick Open（あいまい検索） | ✓ | ✓ | ✓ | n/a | n/a | Windows: 新しいウィンドウで開く。 |
 | ツールバーのリポジトリ名で切り替える | ✓ | ✓ | — | ✓ | n/a | VSCode: Select Repository でワークスペースのリポジトリから選ぶ。 |
@@ -111,7 +111,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | General: 開いたリポジトリをブックマークする | ✓ | ✓ | △ | n/a | n/a | Windows: 常に入れる。切り替えはない。 |
 | General: 起動時に開き直す・既定はタブか窓か | — | — | — | n/a | n/a | macOS: いつも開き直し、切り替えはない。<br>GTK4: いつも開き直し、切り替えはない。 |
 | General: 自動で fetch | ✓ | ✓ | ✓ | n/a | n/a | VSCode: VSCode の `git.autofetch` が代わり。<br>Windows: Windows: 失敗はステータスバーに添える。 |
-| General: 外のエディター | ✓ | ✓ | — | n/a | n/a | GTK4: コードエディターは desktop のエントリーで macOS 版と同じ順に探す。なければテキストエディター（オフィスのアプリは選ばない）。Other… ではプログラムを選ぶ。 |
+| General: 外のエディター | ✓ | ✓ | ✓ | n/a | n/a | GTK4: コードエディターは desktop のエントリーで macOS 版と同じ順に探す。なければテキストエディター（オフィスのアプリは選ばない）。Other… ではプログラムを選ぶ。<br>Windows: 知っているコードエディタはインストール先か PATH の起動用のスクリプトから、macOS 版の順に探す。なければメモ帳（フォルダは開けない）。その他… で実行ファイルを選べる。 |
 | General: 端末と diff のツール | — | — | — | n/a | n/a |  |
 | Git: 機械全体のページ（Author and Signing・Commits・Operations・Working Copy・Keys and Values） | ✓ | ✓ | △ | — | △ | CLI: `amonhen run` から。<br>Windows: すべてのリポジトリの名前とメールだけ。 |
 | Git > Commits: 共有のメッセージのテンプレート | ✓ | ✓ | — | — | — |  |

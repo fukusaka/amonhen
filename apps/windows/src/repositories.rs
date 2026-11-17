@@ -862,7 +862,9 @@ impl State {
                 crate::files::open_terminal(&expand(&location));
             }
             "editor" => {
-                crate::files::open_editor(&expand(&location));
+                if let Err(e) = crate::editor::open_folder(&expand(&location)) {
+                    self.note = e;
+                }
             }
             "copy" => crate::app::copy_text(&location),
             "remove" => {

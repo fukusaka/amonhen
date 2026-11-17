@@ -136,15 +136,3 @@ pub fn open_terminal(path: &std::path::Path) -> bool {
         .spawn()
         .is_ok()
 }
-
-/// フォルダをエディタで開く（Repository > Open in Editor）。VS Code の `code` が PATH にあればそれ（GTK4 版・
-/// macOS 版はエディタを選べるが、ここではまだ VS Code だけ）。
-pub fn open_editor(path: &std::path::Path) -> bool {
-    // `code` は code.cmd なので cmd に起動させる（コンソールの窓は出さない）。
-    amonhen_model::process::command("cmd.exe")
-        .arg("/C")
-        .arg("code")
-        .arg(path)
-        .status()
-        .is_ok_and(|s| s.success())
-}

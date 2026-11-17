@@ -577,6 +577,8 @@ enum Message {
     ActivityTick,
     /// 自動の fetch の間隔を選んだ（Settings）。
     SettingsAutoFetch(Option<usize>),
+    /// Settings > General の外のエディタを選んだ（項目の番号）。
+    SettingsEditor(Option<usize>),
     /// History のキャッシュの大きさを読んだ。
     CacheSize(u64),
     /// History のキャッシュを消す。
@@ -1041,14 +1043,11 @@ impl Component for Root {
                 // エディタは起動を待つので裏で（code.cmd がすぐ返す）。
                 if id == "open-in-editor" {
                     context.spawn_background(move |_| {
-                        if crate::files::open_editor(&dir) {
-                            Message::Performed(None)
-                        } else {
-                            Message::Performed(Some((
-                                tr!("Couldn’t Open in Editor"),
-                                tr!("Couldn’t open {name}", name = "code"),
-                            )))
-                        }
+                        Message::Performed(
+                            crate::editor::open_folder(&dir)
+                                .err()
+                                .map(|e| (tr!("Couldn’t Open in Editor"), e)),
+                        )
                     });
                     return;
                 }
@@ -1322,6 +1321,7 @@ impl Component for Root {
                 if self.page != Page::Settings {
                     self.settings_from = self.page;
                 }
+                let editor = crate::prefs::string(crate::editor::KEY).unwrap_or_default();
                 self.settings = Some(crate::settingsview::State {
                     git: None,
                     auto_magic_merge: crate::prefs::bool(crate::prefs::AUTO_MAGIC_MERGE),
@@ -1330,6 +1330,9 @@ impl Component for Root {
                     write_commit_graph: crate::prefs::bool(crate::prefs::WRITE_COMMIT_GRAPH),
                     use_fsmonitor: crate::prefs::bool(crate::prefs::USE_FSMONITOR),
                     cache_size: None,
+                    editors: crate::settingsview::editor_choices(&editor),
+                    editor,
+                    editor_epoch: 0,
                 });
                 context.spawn_background(|_| {
                     Message::CacheSize(
@@ -3622,6 +3625,43 @@ impl Component for Root {
                 AUTO_FETCH.with(|a| a.set((minutes, Instant::now())));
             }
             Message::SettingsAutoFetch(None) => {}
+            Message::SettingsEditor(Some(index)) => {
+                let Some(state) = self.settings.as_mut() else {
+                    return;
+                };
+                let (items, selected) = state.editor_items();
+                if index == selected {
+                    return;
+                }
+                let value = if index == 0 {
+                    Some(String::new())
+                } else if index + 1 == items.len() {
+                    // Other…: 実行ファイルを選ぶ（取り消したら元のまま）。
+                    crate::files::open_files(&tr!("Choose the app to open files in."))
+                        .into_iter()
+                        .next()
+                        .map(|p| p.display().to_string())
+                } else {
+                    state.editors.get(index - 1).map(|a| a.id.clone())
+                };
+                if let Some(value) = value {
+                    let saved = if value.is_empty() {
+                        crate::prefs::remove(crate::editor::KEY)
+                    } else {
+                        crate::prefs::set_string(crate::editor::KEY, &value)
+                    };
+                    if let Err(e) = saved {
+                        self.dialog = Some(Dialog::Failed {
+                            title: tr!("Save"),
+                            message: e,
+                        });
+                    }
+                    state.editors = crate::settingsview::editor_choices(&value);
+                    state.editor = value;
+                }
+                state.editor_epoch += 1;
+            }
+            Message::SettingsEditor(None) => {}
             Message::CacheSize(bytes) => {
                 if let Some(state) = self.settings.as_mut() {
                     state.cache_size = Some(bytes);
@@ -6757,6 +6797,7 @@ impl Root {
                 close: context.callback(|()| Message::CloseSettings),
                 auto_fetch: context.callback(Message::SettingsAutoFetch),
                 clear_cache: context.callback(|()| Message::ClearCache),
+                editor: context.callback(Message::SettingsEditor),
             },
         );
         Border::new()

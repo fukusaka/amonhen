@@ -94,7 +94,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Manual groups; rows dragged onto Favorites or a group | △ | △ | △ | n/a | n/a | macOS: Groups themselves can't be reordered by dragging.<br>GTK4: Groups themselves can't be reordered by dragging.<br>Windows: Group on the row's menu; no dragging. |
 | Status columns (branch, changes, ahead/behind, last commit, opened), sortable and reorderable | ✓ | ✓ | △ | n/a | n/a | Windows: Sortable by clicking a header; columns can't be resized or reordered. |
 | Favorites, display name, color label | ✓ | ✓ | ✓ | n/a | n/a |  |
-| Open in a tab or window; Finder / Files, Terminal, Editor | ✓ | ✓ | △ | n/a | n/a | GTK4: An app other than a known code editor or a program chosen with Other… opens a folder only if it declares inode/directory.<br>Windows: Explorer, Windows Terminal (or cmd) and VS Code; no tabs, so a repository opens in a new window, and the editor can't be chosen. |
+| Open in a tab or window; Finder / Files, Terminal, Editor | ✓ | ✓ | △ | n/a | n/a | GTK4: An app other than a known code editor or a program chosen with Other… opens a folder only if it declares inode/directory.<br>Windows: Explorer, Windows Terminal (or cmd) and the editor chosen in Settings; no tabs, so a repository opens in a new window. |
 | Fetch the selected repositories | ✓ | ✓ | △ | n/a | n/a | Windows: One repository at a time from the row's menu; rows can't be multi-selected. |
 | Quick Open (fuzzy search) | ✓ | ✓ | ✓ | n/a | n/a | Windows: Opens in a new window. |
 | Repository name in the toolbar switches the repository | ✓ | ✓ | — | ✓ | n/a | VSCode: Select Repository picks among workspace repositories. |
@@ -111,7 +111,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | General: bookmark opened repositories | ✓ | ✓ | △ | n/a | n/a | Windows: Always on; no switch. |
 | General: reopen at launch, tab or window by default | — | — | — | n/a | n/a | macOS: Always reopens; no switch.<br>GTK4: Always reopens; no switch. |
 | General: fetch automatically | ✓ | ✓ | ✓ | n/a | n/a | VSCode: VSCode's own `git.autofetch`.<br>Windows: Windows: A failure is added to the status bar. |
-| General: external editor | ✓ | ✓ | — | n/a | n/a | GTK4: Code editors are found by their desktop entries, in the macOS order; the fallback is a text editor, never an office app; Other… takes a program. |
+| General: external editor | ✓ | ✓ | ✓ | n/a | n/a | GTK4: Code editors are found by their desktop entries, in the macOS order; the fallback is a text editor, never an office app; Other… takes a program.<br>Windows: Known code editors are found in their install folders or by their launchers on PATH, in the macOS order; the fallback is Notepad, which can't open folders; Other… takes a program. |
 | General: terminal and diff tool | — | — | — | n/a | n/a |  |
 | Git: machine-wide pages (Author and Signing, Commits, Operations, Working Copy, Keys and Values) | ✓ | ✓ | △ | — | △ | CLI: Via `amonhen run`.<br>Windows: The name and email for all repositories only. |
 | Git > Commits: shared message template library | ✓ | ✓ | — | — | — |  |
