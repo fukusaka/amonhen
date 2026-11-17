@@ -86,6 +86,8 @@ struct Root {
     /// タグのリモートでの様子（コアの `tagRemotes` の info。リモートと読んだ時刻、タグごとの same・different・
     /// missing）。
     tag_remotes: Value,
+    /// stash の詳しい中身（名前 → 中身。ref が変わるたびに読み直す）。
+    stash_details: std::collections::HashMap<String, crate::stashes::Detail>,
     /// ほかの worktree の変更の数（パス → 数）。
     worktree_counts: std::collections::HashMap<String, u64>,
     /// submodule の様子（コアの `submodules` の info の `submodules`）。
@@ -617,6 +619,8 @@ enum Message {
     CloseActivity,
     /// Repositories の操作。
     Repos(crate::repositories::Event),
+    /// stash の詳しい中身を読んだ。
+    StashDetails(std::collections::HashMap<String, crate::stashes::Detail>),
     /// ほかの worktree の変更を数える（true なら全部を数え直す）と、その答え（パスと数）。
     CountWorktrees(bool),
     WorktreeCounts(Vec<(String, u64)>),
@@ -776,6 +780,7 @@ impl Component for Root {
             activity_from: Page::History,
             tag_remotes: Value::Null,
             worktree_counts: std::collections::HashMap::new(),
+            stash_details: std::collections::HashMap::new(),
             submodules: Value::Null,
             subtrees: Value::Null,
             repositories: None,
@@ -826,6 +831,47 @@ impl Component for Root {
                 load_groups(repo, context);
                 // タグのリモートでの様子も（fetch でリモートのタグを読み直す）。
                 load_tag_remotes(r.clone(), context);
+                // stash の詳しい中身（作った時刻・untracked・土台と HEAD の離れ具合）。
+                let stashes: Vec<(String, amonhen_model::Oid)> = self
+                    .stash_entries()
+                    .into_iter()
+                    .filter_map(|e| Some((e.name.clone(), e.target?)))
+                    .collect();
+                if !stashes.is_empty() {
+                    let s = r.clone();
+                    context.spawn_background(move |_| {
+                        let bases: Value =
+                            serde_json::from_str(&s.run_json(r#"{"op":"stashBases"}"#))
+                                .unwrap_or_default();
+                        let details = stashes
+                            .into_iter()
+                            .map(|(name, id)| {
+                                let info = s.commit_info(&id).unwrap_or_default();
+                                let parents: Vec<&str> = info["parents"]
+                                    .as_array()
+                                    .into_iter()
+                                    .flatten()
+                                    .filter_map(Value::as_str)
+                                    .collect();
+                                let base = bases["info"]["stashes"]
+                                    .as_array()
+                                    .into_iter()
+                                    .flatten()
+                                    .find(|b| b["name"].as_str() == Some(&name));
+                                let detail = crate::stashes::Detail {
+                                    time: info["committerTime"].as_i64().unwrap_or_default(),
+                                    untracked: parents.len() > 2,
+                                    base: parents.first().map(|p| (*p).to_owned()),
+                                    ahead_behind: base.and_then(|b| {
+                                        Some((b["ahead"].as_u64()?, b["behind"].as_u64()?))
+                                    }),
+                                };
+                                (name, detail)
+                            })
+                            .collect();
+                        Message::StashDetails(details)
+                    });
+                }
                 load_recent_messages(r.clone(), context);
                 // リポジトリの形（unshallow・sparse checkout の切り替えも ref・status の変化のときに読み直す）。
                 let f = r.clone();
@@ -842,6 +888,7 @@ impl Component for Root {
                 }
             }
             Message::TagRemotes(info) => self.tag_remotes = info,
+            Message::StashDetails(details) => self.stash_details = details,
             Message::Submodules(states) => self.submodules = states,
             Message::Subtrees(info) => self.subtrees = info,
             Message::FormField(index, text) => {
@@ -7767,6 +7814,7 @@ impl Root {
             self.refs
                 .as_ref()
                 .and_then(|r| r.refs.head_branch.as_deref()),
+            &self.stash_details,
             callbacks,
         );
         Border::new()
