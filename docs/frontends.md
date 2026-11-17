@@ -92,7 +92,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Folders to scan on SSH hosts | ✓ | ✓ | — | n/a | △ | CLI: `find-repositories` does the scan for the apps. |
 | Folder tree of the repositories under a place | ✓ | ✓ | — | n/a | n/a |  |
 | Manual groups; rows dragged onto Favorites or a group | △ | △ | △ | n/a | n/a | macOS: Groups themselves can't be reordered by dragging.<br>GTK4: Groups themselves can't be reordered by dragging.<br>Windows: Group on the row's menu; no dragging. |
-| Status columns (branch, changes, ahead/behind, last commit, opened), sortable and reorderable | ✓ | ✓ | △ | n/a | n/a | Windows: Not sortable or reorderable. |
+| Status columns (branch, changes, ahead/behind, last commit, opened), sortable and reorderable | ✓ | ✓ | △ | n/a | n/a | Windows: Sortable by clicking a header; columns can't be resized or reordered. |
 | Favorites, display name, color label | ✓ | ✓ | ✓ | n/a | n/a |  |
 | Open in a tab or window; Finder / Files, Terminal, Editor | ✓ | ✓ | △ | n/a | n/a | GTK4: An app other than a known code editor or a program chosen with Other… opens a folder only if it declares inode/directory.<br>Windows: Explorer, Windows Terminal (or cmd) and VS Code; no tabs, so a repository opens in a new window, and the editor can't be chosen. |
 | Fetch the selected repositories | ✓ | ✓ | △ | n/a | n/a | Windows: One repository at a time from the row's menu; rows can't be multi-selected. |

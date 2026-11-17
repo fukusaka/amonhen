@@ -6707,7 +6707,10 @@ impl Root {
                         Message::Repos(match key {
                             "add-repository" => Event::AddRepository,
                             "add-scan-folder" => Event::AddScanFolder,
-                            _ => Event::Close,
+                            _ => match key.strip_prefix("sort:") {
+                                Some(column) => Event::Sort(column),
+                                None => Event::Close,
+                            },
                         })
                     })
                 }),

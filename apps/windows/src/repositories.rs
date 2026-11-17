@@ -19,6 +19,9 @@ use windows_reactor::*;
 /// 最後に開いた日時（場所 → UNIX 時間。macOS 版・GTK4 版と同じ鍵）と、最近開いたもの（新しい順）。
 const OPENED: &str = "repositoryOpenedAt";
 const RECENT: &str = "recentRepositories";
+/// 並べた列と向き（GTK4 版・macOS 版と同じ鍵。既定は開いた日時の新しい順）。
+const SORT_KEY: &str = "repositoryPageSort";
+const SORT_ASCENDING_KEY: &str = "repositoryPageSortAscending";
 /// 最近開いたものを覚える数。
 const RECENT_LIMIT: usize = 50;
 
@@ -425,6 +428,9 @@ pub struct State {
     selected: Option<String>,
     /// 知らせ（書けなかったなど）。
     note: String,
+    /// 並べる列（`name`・`branch`・`status`・`commit`・`opened`）と、上る向きか。
+    sort: String,
+    ascending: bool,
     /// fetch している・失敗したリポジトリ（[`key`] の形）。
     fetching: HashSet<String>,
     fetch_errors: HashMap<String, String>,
@@ -446,6 +452,8 @@ pub enum Event {
     Peeked(Vec<(String, Peek)>),
     /// fetch が終わった（場所と、失敗なら理由）。
     Fetched(String, Option<String>),
+    /// 列の見出しを押した。
+    Sort(&'static str),
 }
 
 /// ページの外でする続き。
@@ -481,6 +489,8 @@ impl State {
                 note: String::new(),
                 fetching: HashSet::new(),
                 fetch_errors: HashMap::new(),
+                sort: crate::prefs::string(SORT_KEY).unwrap_or_else(|| "opened".to_owned()),
+                ascending: crate::prefs::bool(SORT_ASCENDING_KEY),
             },
             roots,
         )
@@ -571,14 +581,66 @@ impl State {
     /// 右に出すリポジトリ（絞り込んだもの）。
     fn shown(&self) -> Vec<String> {
         let filter = self.filter.trim().to_lowercase();
-        self.locations(&self.category())
+        let mut shown: Vec<(String, String)> = self
+            .locations(&self.category())
             .into_iter()
-            .filter(|p| {
-                filter.is_empty()
-                    || self.name(p).to_lowercase().contains(&filter)
-                    || p.to_lowercase().contains(&filter)
+            .map(|p| (self.name(&p).to_lowercase(), p))
+            .filter(|(name, p)| {
+                filter.is_empty() || name.contains(&filter) || p.to_lowercase().contains(&filter)
             })
-            .collect()
+            .collect();
+        // 選んだ列で並べる（同じ値なら名前の昇順。GTK4 版の `sorter` と同じ）。
+        shown.sort_by(|(an, a), (bn, b)| {
+            let order = self.sort_value(a, an).cmp(&self.sort_value(b, bn));
+            let order = if self.ascending {
+                order
+            } else {
+                order.reverse()
+            };
+            order.then_with(|| an.cmp(bn))
+        });
+        shown.into_iter().map(|(_, p)| p).collect()
+    }
+
+    /// 列で並べる値（文字の列は小文字の文字、ほかは数）。
+    fn sort_value(&self, location: &str, name: &str) -> (i64, String) {
+        let peek = self.peeks.get(&key(location));
+        match self.sort.as_str() {
+            "name" => (0, name.to_owned()),
+            "branch" => (
+                0,
+                peek.and_then(|p| p.branch.clone())
+                    .unwrap_or_default()
+                    .to_lowercase(),
+            ),
+            "status" => (
+                peek.map_or(-1, |p| {
+                    p.changed as i64 * 10_000 + p.ahead as i64 + p.behind as i64
+                }),
+                String::new(),
+            ),
+            "commit" => (
+                peek.and_then(|p| p.last_commit.as_ref())
+                    .map_or(i64::MIN, |c| c.0),
+                String::new(),
+            ),
+            _ => (
+                self.opened.get(&key(location)).copied().unwrap_or(i64::MIN),
+                String::new(),
+            ),
+        }
+    }
+
+    /// 見出しを押した: 同じ列なら向きを替え、ほかの列ならその列で（日時・状態は新しい順・多い順から）。
+    fn sort_by(&mut self, column: &str) {
+        if self.sort == column {
+            self.ascending = !self.ascending;
+        } else {
+            self.sort = column.to_owned();
+            self.ascending = !matches!(column, "status" | "commit" | "opened");
+        }
+        let _ = crate::prefs::set_string(SORT_KEY, &self.sort);
+        let _ = crate::prefs::set_bool(SORT_ASCENDING_KEY, self.ascending);
     }
 
     /// 表示名（上書きがなければフォルダの名前）。
@@ -668,6 +730,7 @@ impl State {
                 self.selected = i.and_then(|i| self.shown().into_iter().nth(i));
             }
             Event::Filter(text) => self.filter = text,
+            Event::Sort(column) => self.sort_by(column),
             Event::Open => {
                 if let Some(location) = self.selected.clone() {
                     self.open(&location);
@@ -1118,25 +1181,37 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
         .content(View::keyed_fragment([(side_key, side)]));
     // 右: リポジトリの一覧。
     let shown = state.shown();
-    let header_cell = |text: String, column: i32| -> View {
-        TextBlock::new()
-            .text(text)
-            .font_size(11.0)
-            .opacity(0.6)
-            .margin(Thickness::new(4.0, 0.0, 4.0, 0.0))
+    // 見出しを押すとその列で並べる（並べている列に ▲・▼）。
+    let header_cell = |text: String, id: &'static str, column: i32| -> View {
+        let text = match (state.sort == id, state.ascending) {
+            (true, true) => format!("{text} ▲"),
+            (true, false) => format!("{text} ▼"),
+            _ => text,
+        };
+        Button::new()
+            .style(ButtonStyle::Subtle)
+            .horizontal_alignment(HorizontalAlignment::Stretch)
+            .horizontal_content_alignment(HorizontalAlignment::Left)
+            .on_click((callbacks.button)(match id {
+                "name" => "sort:name",
+                "branch" => "sort:branch",
+                "status" => "sort:status",
+                "commit" => "sort:commit",
+                _ => "sort:opened",
+            }))
             .grid_column(column)
-            .into()
+            .content(TextBlock::new().text(text).font_size(11.0).opacity(0.6))
     };
     let header = Grid::new()
         .columns(columns())
         .margin(Thickness::new(16.0, 0.0, 16.0, 4.0))
         .grid_row(0)
         .children((
-            header_cell(tr!("Name"), 0),
-            header_cell(tr!("Branch"), 1),
-            header_cell(tr!("Status"), 2),
-            header_cell(tr!("Last Commit"), 3),
-            header_cell(tr!("Opened"), 4),
+            header_cell(tr!("Name"), "name", 0),
+            header_cell(tr!("Branch"), "branch", 1),
+            header_cell(tr!("Status"), "status", 2),
+            header_cell(tr!("Last Commit"), "commit", 3),
+            header_cell(tr!("Opened"), "opened", 4),
         ));
     let rows = shown.iter().map(|location| {
         let peek = state.peeks.get(&key(location));
