@@ -263,6 +263,8 @@ enum Dialog {
         submodules: bool,
         /// HEAD のない bundle から取り出すブランチ（None なら main・master・最初のブランチ）。
         branch: Option<String>,
+        /// 最近の履歴の「その他…」で打った数。
+        depth_other: String,
     },
     /// Quick Open（リポジトリをあいまい検索して新しい窓で開く）。
     QuickOpen {
@@ -575,6 +577,8 @@ enum Message {
     CloneChoose,
     /// Clone する bundle のファイルを選ぶ。
     CloneBundle,
+    /// Clone の最近の履歴の「その他…」で打った数。
+    CloneDepthOther(String),
     /// HEAD のない bundle から取り出すブランチ。
     CloneBranch(Option<usize>),
     /// clone が終わった（作ったフォルダと、失敗なら理由）。
@@ -1398,6 +1402,7 @@ impl Component for Root {
                     sparse: false,
                     submodules: false,
                     branch: None,
+                    depth_other: "100".to_owned(),
                 });
                 self.dialog_inputs += 1;
             }
@@ -1417,6 +1422,11 @@ impl Component for Root {
             Message::CloneDepth(Some(index)) => {
                 if let Some(Dialog::Clone { depth, .. }) = &mut self.dialog {
                     *depth = index;
+                }
+            }
+            Message::CloneDepthOther(text) => {
+                if let Some(Dialog::Clone { depth_other, .. }) = &mut self.dialog {
+                    *depth_other = text;
                 }
             }
             Message::CloneDownload(None) | Message::CloneDepth(None) => {}
@@ -1816,6 +1826,7 @@ impl Component for Root {
                         sparse,
                         submodules,
                         branch,
+                        depth_other,
                     }),
                     ContentDialogResult::Primary,
                 ) => {
@@ -1847,7 +1858,11 @@ impl Component for Root {
                     });
                     let options = amonhen_backend_cli::CloneOptions {
                         filter: (download == 1).then(|| "blob:none".to_owned()),
-                        depth: (download == 2).then(|| CLONE_DEPTHS[depth.min(3)]),
+                        depth: (download == 2).then(|| {
+                            CLONE_DEPTHS.get(depth).copied().unwrap_or_else(|| {
+                                depth_count(&depth_other).unwrap_or(CLONE_DEPTHS[1])
+                            })
+                        }),
                         sparse,
                         recurse_submodules: submodules,
                         branch,
@@ -6248,6 +6263,7 @@ impl Root {
                 sparse,
                 submodules,
                 branch,
+                depth_other,
             }) => {
                 let bundle = crate::repositories::clone_bundle(url);
                 let field = |index: usize, text: &str, placeholder: String| {
@@ -6278,7 +6294,8 @@ impl Root {
                         "The whole history and the contents of every file, as git does by default."
                     ),
                 };
-                let depths: Vec<String> = CLONE_DEPTHS
+                // 決まった数と「その他…」（数を打つ。GTK4 版と同じ）。
+                let mut depths: Vec<String> = CLONE_DEPTHS
                     .iter()
                     .map(|&d| match d {
                         1 => tr!("1 Commit"),
@@ -6287,6 +6304,7 @@ impl Root {
                         _ => tr!("10,000 Commits"),
                     })
                     .collect();
+                depths.push(tr!("Other…"));
                 let download = if bundle.is_some() { &0 } else { download };
                 // HEAD のない bundle: 取り出すブランチ（GTK4 版の Branch: の行）。
                 let names = bundle
@@ -6324,9 +6342,20 @@ impl Root {
                 } else {
                     View::empty()
                 };
+                let other = *download == 2 && *depth >= CLONE_DEPTHS.len();
+                let other_box: View = if other {
+                    TextBox::new()
+                        .text(depth_other.clone())
+                        .width(90.0)
+                        .on_text_changed(context.callback(Message::CloneDepthOther))
+                        .into()
+                } else {
+                    View::empty()
+                };
                 let ready = !url.trim().is_empty()
                     && !folder.trim().is_empty()
-                    && bundle.as_ref().is_none_or(|i| i.prerequisites == 0);
+                    && bundle.as_ref().is_none_or(|i| i.prerequisites == 0)
+                    && (!other || depth_count(depth_other).is_some());
                 dialog
                     .is_open(true)
                     .title(tr!("Clone Repository"))
@@ -6379,6 +6408,7 @@ impl Root {
                                             context.callback(Message::CloneDownload),
                                         ),
                                     depth_box,
+                                    other_box,
                                 )),
                             branch_row,
                             TextBlock::new()
@@ -10874,6 +10904,16 @@ fn submodule_path(url: &str) -> String {
 
 /// Clone の「最近の履歴だけ」で選べるコミットの数（GTK4 版の `shallow::more_choices` と 1）。
 const CLONE_DEPTHS: [u32; 4] = [1, 100, 1_000, 10_000];
+
+/// 打ったコミットの数（1 以上。カンマや空白は除く）。
+fn depth_count(text: &str) -> Option<u32> {
+    text.chars()
+        .filter(|c| !matches!(c, ',' | ' '))
+        .collect::<String>()
+        .parse::<u32>()
+        .ok()
+        .filter(|&n| n > 0)
+}
 
 /// 件名の欄の Alt+↑・Alt+↓ で、最近のコミットのメッセージを順に呼び出す（GTK4 版の `commitmsg` と同じ）。
 fn attach_recall_keys(element: &IInspectable) -> windows_core_reactor::Result<()> {
