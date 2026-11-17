@@ -422,18 +422,13 @@ impl Actions {
             fields.append(&name);
             fields.append(&keep);
             sheet.add(&fields);
-            sheet.buttons(&tr!("Create"), false, None);
+            let create = sheet.buttons(&tr!("Create"), false, None);
+            crate::sheets::require(&[&name], &create);
             name.grab_focus();
             if sheet.run().await != crate::sheets::Response::Ok {
                 return;
             }
             let branch = name.text().trim().to_owned();
-            if branch.is_empty() {
-                if let Some(window) = this.window() {
-                    window.error_bell();
-                }
-                return;
-            }
             this.perform(json!({ "op": "createOrphanBranch", "name": branch, "keepFiles": keep.is_active() }));
         });
     }
@@ -932,7 +927,14 @@ impl Actions {
             content.append(c);
         }
         if !self
-            .run_dialog(title, message, content.upcast_ref(), entry.upcast_ref(), ok)
+            .run_dialog(
+                title,
+                message,
+                content.upcast_ref(),
+                entry.upcast_ref(),
+                ok,
+                Some(&entry),
+            )
             .await
         {
             return None;
@@ -959,7 +961,14 @@ impl Actions {
             .has_frame(true)
             .build();
         if !self
-            .run_dialog(title, "", scrolled.upcast_ref(), text.upcast_ref(), ok)
+            .run_dialog(
+                title,
+                "",
+                scrolled.upcast_ref(),
+                text.upcast_ref(),
+                ok,
+                None,
+            )
             .await
         {
             return None;
@@ -1018,12 +1027,17 @@ impl Actions {
         content: &gtk::Widget,
         focus: &gtk::Widget,
         ok: &str,
+        required: Option<&gtk::Entry>,
     ) -> bool {
         let parent = self.window();
         let sheet =
             crate::sheets::Sheet::unnamed(parent.as_ref().map(|w| w.upcast_ref()), title, message);
         sheet.add(content);
-        sheet.buttons(ok, false, None);
+        let button = sheet.buttons(ok, false, None);
+        // 名前のない枝やタグは作れないので、空のあいだは押せなくする（macOS 版と同じ）。
+        if let Some(entry) = required {
+            crate::sheets::require(&[entry], &button);
+        }
         sheet.window.present();
         focus.grab_focus();
         sheet.run().await == crate::sheets::Response::Ok

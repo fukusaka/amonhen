@@ -2158,7 +2158,9 @@ impl Browser {
                 items.push(menu::action(tr!("Rename…"), move || {
                     let (b, n) = (b.clone(), n.clone());
                     glib::spawn_future_local(async move {
-                        if let Some(new) = b.ask(&tr!("Rename Group"), &tr!("Group name"), &n).await
+                        if let Some(new) = b
+                            .ask(&tr!("Rename Group"), &tr!("Group name"), &n, &tr!("Rename"))
+                            .await
                         {
                             bookmarks::rename_group(&n, &new);
                             // 選んでいたグループなら新しい名前を選んだままに。ほかを選んでいたらそのまま
@@ -2394,7 +2396,10 @@ impl Browser {
     fn new_group(self: &Rc<Self>) {
         let b = self.clone();
         glib::spawn_future_local(async move {
-            if let Some(name) = b.ask(&tr!("New Group"), &tr!("Group name"), "").await {
+            if let Some(name) = b
+                .ask(&tr!("New Group"), &tr!("Group name"), "", &tr!("Create"))
+                .await
+            {
                 bookmarks::add_group(&name);
                 b.set_category(Category::Group(name));
                 b.reload();
@@ -2440,8 +2445,8 @@ impl Browser {
     }
 
     /// 文字を入れてもらう。キャンセルか空なら None。
-    async fn ask(&self, title: &str, message: &str, initial: &str) -> Option<String> {
-        ask(&self.window(), title, message, initial).await
+    async fn ask(&self, title: &str, message: &str, initial: &str, ok: &str) -> Option<String> {
+        ask(&self.window(), title, message, initial, ok).await
     }
 }
 
@@ -2541,7 +2546,15 @@ pub fn row_items(
     groups.push(menu::action(tr!("New Group…"), move || {
         let (w, t) = (w.clone(), t.clone());
         glib::spawn_future_local(async move {
-            if let Some(name) = ask(&w, &tr!("New Group"), &tr!("Group name"), "").await {
+            if let Some(name) = ask(
+                &w,
+                &tr!("New Group"),
+                &tr!("Group name"),
+                "",
+                &tr!("Create"),
+            )
+            .await
+            {
                 bookmarks::add_group(&name);
                 for p in &t {
                     bookmarks::move_to(p, Some(&name));
@@ -2585,6 +2598,7 @@ pub fn row_items(
                 &tr!("Rename"),
                 &tr!("Name shown in the list (leave empty for the folder name)"),
                 &current,
+                &tr!("Rename"),
             )
             .await
             {
@@ -2619,8 +2633,14 @@ pub fn row_items(
 }
 
 /// 文字を入れてもらう。キャンセルか空なら None。
-async fn ask(window: &gtk::Window, title: &str, message: &str, initial: &str) -> Option<String> {
-    ask_allowing_empty(window, title, message, initial)
+async fn ask(
+    window: &gtk::Window,
+    title: &str,
+    message: &str,
+    initial: &str,
+    ok: &str,
+) -> Option<String> {
+    ask_entry(window, title, message, initial, ok, true)
         .await
         .filter(|s| !s.is_empty())
 }
@@ -2631,6 +2651,19 @@ async fn ask_allowing_empty(
     title: &str,
     message: &str,
     initial: &str,
+    ok: &str,
+) -> Option<String> {
+    ask_entry(window, title, message, initial, ok, false).await
+}
+
+/// 文字を入れてもらう。ボタンは題の動詞（docs/ux.md）。`required` なら空のあいだ押せない。
+async fn ask_entry(
+    window: &gtk::Window,
+    title: &str,
+    message: &str,
+    initial: &str,
+    ok: &str,
+    required: bool,
 ) -> Option<String> {
     let sheet = Sheet::unnamed(Some(window), title, message);
     let entry = gtk::Entry::builder()
@@ -2639,7 +2672,10 @@ async fn ask_allowing_empty(
         .hexpand(true)
         .build();
     sheet.add(&entry);
-    sheet.buttons("OK", false, None);
+    let button = sheet.buttons(ok, false, None);
+    if required {
+        crate::sheets::require(&[&entry], &button);
+    }
     entry.grab_focus();
     (sheet.run().await == Response::Ok).then(|| entry.text().trim().to_owned())
 }

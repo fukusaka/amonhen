@@ -1683,7 +1683,8 @@ fn track_pattern(s: &Rc<RepoSettings>) {
             .activates_default(true)
             .build();
         sheet.add(&entry);
-        sheet.buttons("OK", false, None);
+        let track = sheet.buttons(&tr!("Track"), false, None);
+        crate::sheets::require(&[&entry], &track);
         if sheet.run().await != Response::Ok {
             return;
         }
