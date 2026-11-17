@@ -10866,17 +10866,21 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
                     let row = ((h.diff.scroll_y + position.Y) / DIFF_ROW_HEIGHT).floor();
                     if row >= 0.0 && position.X < crate::render::DIFF_MARK_WIDTH {
                         let row = row as usize;
-                        let change = h.session.data.working.as_ref().is_some_and(|w| {
-                            w.diff.view.rows.get(row).is_some_and(|r| {
-                                matches!(
-                                    r.kind,
-                                    amonhen_layout::DiffRow::ADDED
-                                        | amonhen_layout::DiffRow::REMOVED
-                                )
-                            })
-                        });
-                        if change {
-                            h.session.data.toggle_working_row(row);
+                        let kind = h
+                            .session
+                            .data
+                            .working
+                            .as_ref()
+                            .and_then(|w| w.diff.view.rows.get(row).map(|r| r.kind));
+                        match kind {
+                            Some(
+                                amonhen_layout::DiffRow::ADDED | amonhen_layout::DiffRow::REMOVED,
+                            ) => h.session.data.toggle_working_row(row),
+                            // hunk の見出しの印: その hunk の行をまとめて。
+                            Some(amonhen_layout::DiffRow::HUNK) => {
+                                h.session.data.toggle_working_hunk(row)
+                            }
+                            _ => {}
                         }
                     }
                 }

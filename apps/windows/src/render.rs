@@ -85,6 +85,14 @@ const LABEL_GAP: f32 = 4.0;
 /// ラベルを並べる幅の上限（文字の幅に対する割合）。残りは件名に回す。
 const LABEL_SHARE: f32 = 0.6;
 
+/// 差分の行（hunk）を次のコミットに含めているか。
+#[derive(Clone, Copy)]
+enum Mark {
+    All,
+    Some,
+    None,
+}
+
 /// 署名の検証の結果の色（GTK4 版の `signature_color`。まだ検証していなければ薄い灰色）。
 fn signature_color(mark: Option<crate::data::Signature>) -> D2D1_COLOR_F {
     use crate::data::Signature;
@@ -919,7 +927,28 @@ impl Renderer {
                 self.draw_number(row.new_no, left + DIFF_NUMBER_WIDTH, top)?;
             }
             if commit.marks && matches!(row.kind, DiffRow::ADDED | DiffRow::REMOVED) {
-                self.draw_mark(row.flags & DiffRow::STAGED != 0, top)?;
+                let mark = if row.flags & DiffRow::STAGED != 0 {
+                    Mark::All
+                } else {
+                    Mark::None
+                };
+                self.draw_mark(mark, top)?;
+            }
+            // hunk の見出し: その hunk の行をすべて（☑）・一部（▣）・どれも（☐）含めているか。
+            if commit.marks && row.kind == DiffRow::HUNK {
+                let rows = crate::data::hunk_rows(&view.rows, i as usize);
+                let staged = rows
+                    .iter()
+                    .filter(|&&r| view.rows[r].flags & DiffRow::STAGED != 0)
+                    .count();
+                let mark = match staged {
+                    0 => Mark::None,
+                    n if n == rows.len() => Mark::All,
+                    _ => Mark::Some,
+                };
+                if !rows.is_empty() {
+                    self.draw_mark(mark, top)?;
+                }
             }
         }
         Ok(())
@@ -948,8 +977,8 @@ impl Renderer {
         Ok(Some(brush))
     }
 
-    /// 行を次のコミットに含めているかの印（含めていれば塗った四角にチェック、いなければ枠だけ）。
-    fn draw_mark(&self, staged: bool, top: f32) -> Result<()> {
+    /// 行を次のコミットに含めているかの印（含めていれば塗った四角にチェック、一部なら横線、いなければ枠だけ）。
+    fn draw_mark(&self, mark: Mark, top: f32) -> Result<()> {
         let size = 12.0;
         let (x, y) = (
             (DIFF_MARK_WIDTH - size) / 2.0,
@@ -966,18 +995,28 @@ impl Renderer {
             radiusY: 2.5,
         };
         unsafe {
-            if staged {
-                self.brush.SetColor(&DIFF_MARK);
-                self.d2d.FillRoundedRectangle(&rect, &self.brush);
-                self.brush.SetColor(&BACKGROUND);
-                let a = point(x + 2.8, y + 6.2);
-                let b = point(x + 5.2, y + 8.8);
-                let c = point(x + 9.4, y + 3.6);
-                self.d2d.DrawLine(a, b, &self.brush, 1.6, &self.round);
-                self.d2d.DrawLine(b, c, &self.brush, 1.6, &self.round);
-            } else {
-                self.brush.SetColor(&SECONDARY);
-                self.d2d.DrawRoundedRectangle(&rect, &self.brush, 1.0, None);
+            match mark {
+                Mark::All => {
+                    self.brush.SetColor(&DIFF_MARK);
+                    self.d2d.FillRoundedRectangle(&rect, &self.brush);
+                    self.brush.SetColor(&BACKGROUND);
+                    let a = point(x + 2.8, y + 6.2);
+                    let b = point(x + 5.2, y + 8.8);
+                    let c = point(x + 9.4, y + 3.6);
+                    self.d2d.DrawLine(a, b, &self.brush, 1.6, &self.round);
+                    self.d2d.DrawLine(b, c, &self.brush, 1.6, &self.round);
+                }
+                Mark::Some => {
+                    self.brush.SetColor(&DIFF_MARK);
+                    self.d2d.FillRoundedRectangle(&rect, &self.brush);
+                    self.brush.SetColor(&BACKGROUND);
+                    let (a, b) = (point(x + 3.0, y + 6.0), point(x + 9.0, y + 6.0));
+                    self.d2d.DrawLine(a, b, &self.brush, 1.6, &self.round);
+                }
+                Mark::None => {
+                    self.brush.SetColor(&SECONDARY);
+                    self.d2d.DrawRoundedRectangle(&rect, &self.brush, 1.0, None);
+                }
             }
         }
         Ok(())

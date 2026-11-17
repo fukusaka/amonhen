@@ -295,6 +295,21 @@ fn signer_mismatch(check: &serde_json::Value) -> bool {
         .any(|(e, v)| *e == committer && !matches!(v.as_str(), "r" | "e" | "n"))
 }
 
+/// 差分の `hunk` 行目（hunk の見出し）に続く、変わった行（次の hunk かファイルの見出しまで）。見出しでなければ空。
+pub fn hunk_rows(rows: &[amonhen_layout::DiffRow], hunk: usize) -> Vec<usize> {
+    use amonhen_layout::DiffRow;
+    if rows.get(hunk).is_none_or(|r| r.kind != DiffRow::HUNK) {
+        return Vec::new();
+    }
+    rows.iter()
+        .enumerate()
+        .skip(hunk + 1)
+        .take_while(|(_, r)| !matches!(r.kind, DiffRow::HUNK | DiffRow::FILE))
+        .filter(|(_, r)| matches!(r.kind, DiffRow::ADDED | DiffRow::REMOVED))
+        .map(|(i, _)| i)
+        .collect()
+}
+
 /// History の差分のファイル（見出しの右クリックのメニュー）。
 #[derive(Clone, Debug, PartialEq)]
 pub struct DiffFile {
@@ -615,6 +630,35 @@ impl Data {
         std::thread::spawn(move || {
             if let Err(e) = repo.set_rows_staged(&diff, &[row], !staged) {
                 eprintln!("行を含められない: {e}");
+            }
+            let _ = changed.send(amonhen_watch::Changes::INDEX.0);
+        });
+    }
+
+    /// Working Copy の差分の hunk の見出し（`row`）の行をまとめて含める・外す（GTK4 版の hunk の印）。1 行でも
+    /// 含めていなければすべて含め、すべて含めていればすべて外す。
+    pub fn toggle_working_hunk(&self, row: usize) {
+        let Some(working) = &self.working else { return };
+        let Some(combined) = working.diff.combined.as_ref() else {
+            return;
+        };
+        let rows = hunk_rows(&working.diff.view.rows, row);
+        if rows.is_empty() {
+            return;
+        }
+        let stage = rows
+            .iter()
+            .any(|&r| !combined.get(r).copied().unwrap_or(false));
+        let (Some(repo), diff, changed) = (
+            self.repo.clone(),
+            working.diff.clone(),
+            self.changed_tx.clone(),
+        ) else {
+            return;
+        };
+        std::thread::spawn(move || {
+            if let Err(e) = repo.set_rows_staged(&diff, &rows, stage) {
+                eprintln!("hunk を含められない: {e}");
             }
             let _ = changed.send(amonhen_watch::Changes::INDEX.0);
         });
