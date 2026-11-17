@@ -121,7 +121,7 @@ struct Root {
     /// Pull で両方に新しいコミットがあるときの、取り込み方ごとの前と後の絵。
     pull_drawings: Option<PullDrawings>,
     /// Merge・Rebase の確認の前と後の絵（相手の rev と `mergePreview`・`rewritePreview` の答え）。
-    integrate_drawing: Option<(String, Value)>,
+    integrate_drawing: Option<(String, Value, Value)>,
     /// stash の詳しい中身（名前 → 中身。ref が変わるたびに読み直す）。
     stash_details: std::collections::HashMap<String, crate::stashes::Detail>,
     /// ほかの worktree の変更の数（パス → 数）。
@@ -581,7 +581,7 @@ enum Dialog {
         mode: usize,
     },
     /// Merge・Rebase（GTK4 版の `sheets::integrate_sheet`）。`choices` は名前と rev。2 つ以上なら相手を選ぶ。
-    /// merge なら取り込み方も選ぶ。コンフリクトの見込みはまだない。
+    /// merge なら取り込み方も選ぶ。前と後の絵とコンフリクトの見込みを添える。
     Integrate {
         repo: Arc<Repository>,
         rebase: bool,
@@ -786,7 +786,7 @@ enum Message {
     /// Pull の取り込み方ごとの前と後の絵を読んだ。
     PullDrawn(Box<PullDrawings>),
     /// Merge・Rebase の確認の前と後の絵を読んだ（相手の rev と `mergePreview`・`rewritePreview` の答え）。
-    IntegrateDrawn(String, Value),
+    IntegrateDrawn(String, Value, Value),
     /// stash の詳しい中身を読んだ。
     StashDetails(std::collections::HashMap<String, crate::stashes::Detail>),
     /// ほかの worktree の変更を数える（true なら全部を数え直す）と、その答え（パスと数）。
@@ -1413,9 +1413,9 @@ impl Component for Root {
                     self.pull_drawings = Some(*drawings);
                 }
             }
-            Message::IntegrateDrawn(rev, info) => {
+            Message::IntegrateDrawn(rev, info, forecast) => {
                 if matches!(self.dialog, Some(Dialog::Integrate { .. })) {
-                    self.integrate_drawing = Some((rev, info));
+                    self.integrate_drawing = Some((rev, info, forecast));
                 }
             }
             Message::MergeMode(Some(index)) => {
@@ -7154,6 +7154,27 @@ impl Root {
                         .text_wrapping(TextWrapping::Wrap)
                         .into()
                 };
+                // 両方に新しいコミットがあれば、コンフリクトの見込み（Fast-Forward Only と押せないときは出さない。
+                // rebase なら目安と書き添える。GTK4 版と同じ）。
+                let pull_forecast: View = match self.head_entry() {
+                    Some(e) if e.ahead > 0 && e.behind > 0 && sources.is_empty() => {
+                        if blocked.is_some() || method == Some("fastForwardOnly") {
+                            View::empty()
+                        } else {
+                            match self.pull_drawings.as_ref().and_then(|p| p.forecast.as_ref()) {
+                                None => forecast_view(&tr!("Checking for conflicts…"), false),
+                                Some(reply) => crate::forecast::merge_text(
+                                    reply,
+                                    method == Some("rebase"),
+                                )
+                                .map_or_else(View::empty, |(line, conflicts)| {
+                                    forecast_view(&line, conflicts)
+                                }),
+                            }
+                        }
+                    }
+                    _ => View::empty(),
+                };
                 // 押せないときは、絵の代わりに「Pull できません」とそのわけを（GTK4 版と同じ）。
                 let blocked_view: View = match &blocked {
                     Some(reason) => StackPanel::new()
@@ -7197,6 +7218,7 @@ impl Root {
                                 .selected_index(*mode)
                                 .on_selection_changed(context.callback(Message::PullMode)),
                             explain_view,
+                            pull_forecast,
                             blocked_view,
                             drawing,
                             self.sync_lists_view(),
@@ -7445,12 +7467,25 @@ impl Root {
                 // 選んだ相手の前と後の絵（選び直すと替わる）。merge は、取り込み方が git の設定のとおりのときだけ
                 // （GTK4 版と同じ）。
                 let rev = choices.get(*chosen).map(|c| c.1.as_str());
-                let drawing = self
+                let answer = self
                     .integrate_drawing
                     .as_ref()
-                    .filter(|(r, _)| Some(r.as_str()) == rev)
+                    .filter(|(r, ..)| Some(r.as_str()) == rev);
+                // コンフリクトの見込み（rebase は、一緒に動くブランチ・push 済みも。GTK4 版と同じ）。
+                let forecast = match answer {
+                    None => forecast_view(&tr!("Checking for conflicts…"), false),
+                    Some((_, info, _)) if *rebase => {
+                        let (lines, conflicts) = crate::forecast::rewrite_lines(info);
+                        forecast_view(&lines.join("\n"), conflicts)
+                    }
+                    Some((_, _, reply)) => crate::forecast::merge_text(reply, false)
+                        .map_or_else(View::empty, |(line, conflicts)| {
+                            forecast_view(&line, conflicts)
+                        }),
+                };
+                let drawing = answer
                     .filter(|_| *rebase || MERGE_MODES.get(*mode) == Some(&"git"))
-                    .and_then(|(_, info)| {
+                    .and_then(|(_, info, _)| {
                         if *rebase {
                             crate::drawing::for_rewrite(info)
                         } else {
@@ -7480,7 +7515,7 @@ impl Root {
                     .content(
                         StackPanel::new()
                             .spacing(6.0)
-                            .children((head, picker, modes, drawing)),
+                            .children((head, picker, modes, drawing, forecast)),
                     )
             }
             Some(Dialog::Clone {
@@ -8095,9 +8130,17 @@ impl Root {
             } else {
                 json!({ "op": "mergePreview", "theirs": &rev })
             };
-            let reply: Value =
-                serde_json::from_str(&repo.run_json(&query.to_string())).unwrap_or_default();
-            Message::IntegrateDrawn(rev, reply["info"].clone())
+            let ask = |query: &Value| -> Value {
+                serde_json::from_str(&repo.run_json(&query.to_string())).unwrap_or_default()
+            };
+            let reply = ask(&query);
+            // merge なら、コンフリクトの見込み（rebase は rewritePreview の答えにある）。
+            let forecast = if rebase {
+                Value::Null
+            } else {
+                ask(&json!({ "op": "predictMerge", "ours": "HEAD", "theirs": &rev }))
+            };
+            Message::IntegrateDrawn(rev, reply["info"].clone(), forecast)
         });
     }
 
@@ -9200,6 +9243,15 @@ impl Root {
                         }),
                         rebase: diverged
                             .then(|| ask(json!({ "op": "rewritePreview", "onto": &onto }))),
+                        forecast: diverged.then(|| {
+                            serde_json::from_str::<Value>(
+                                &git.run_json(
+                                    &json!({ "op": "predictMerge", "ours": "HEAD", "theirs": &onto })
+                                        .to_string(),
+                                ),
+                            )
+                            .unwrap_or_default()
+                        }),
                     }))
                 });
                 (
@@ -12755,15 +12807,30 @@ fn push_warnings(
     out
 }
 
+/// コンフリクトの見込みの行（ありそうならオレンジ）。
+fn forecast_view(text: &str, conflicts: bool) -> View {
+    TextBlock::new()
+        .text(text.to_owned())
+        .font_size(12.0)
+        .foreground(Brush::Solid(if conflicts {
+            Color::rgb(0xc4, 0x6a, 0x00)
+        } else {
+            Color::argb(0xa0, 0, 0, 0)
+        }))
+        .text_wrapping(TextWrapping::Wrap)
+        .into()
+}
+
 /// Pull の確認に要る、git の設定と取り込み方ごとの前と後の絵の材料。
 pub struct PullDrawings {
     /// git の設定のとおりのときの取り込み方（`syncDefaults` の `pull`）と、取り込み方が決まっていないときに git が
     /// 断る場合（`pullRefuses`。決まっていれば None）。
     by_git: String,
     refuses: Option<String>,
-    /// 両方に新しいコミットがあるときの `mergePreview`・`rewritePreview` の答え。
+    /// 両方に新しいコミットがあるときの `mergePreview`・`rewritePreview`・`predictMerge` の答え。
     merge: Option<Value>,
     rebase: Option<Value>,
+    forecast: Option<Value>,
 }
 
 /// Pull・Push のダイアログのコミットの一覧の 1 つ（コアの `between` の答え）。
