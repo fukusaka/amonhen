@@ -561,11 +561,17 @@ impl App {
                 };
                 self.dirty = true;
             }
-            KeyCode::Char('f') if !control => self.run("fetch", tr!("Fetching…"), json!({"op": "fetch"})),
-            KeyCode::Char('p') if !control => self.run("pull", tr!("Pulling…"), json!({"op": "pull"})),
+            KeyCode::Char('f') if !control => {
+                self.run("fetch", tr!("Fetching…"), json!({"op": "fetch"}))
+            }
+            KeyCode::Char('p') if !control => {
+                self.run("pull", tr!("Pulling…"), json!({"op": "pull"}))
+            }
             KeyCode::Char('P') if !control => self.ask_push(),
             // 次に戻す操作の名前を聞いてから、確かめる。
-            KeyCode::Char('u') if !control => self.run("undoPeek", tr!("Undo…"), json!({"op": "undoPeek"})),
+            KeyCode::Char('u') if !control => {
+                self.run("undoPeek", tr!("Undo…"), json!({"op": "undoPeek"}))
+            }
             KeyCode::Char('b') if !control => self.ask_branch(),
             KeyCode::Char('?') => {
                 self.help = true;
