@@ -123,6 +123,8 @@ pub struct App {
     sequence: Option<(String, Option<(u64, u64)>)>,
     /// 一番新しい stash の名前（`stash@{0}`）。
     stash: Option<String>,
+    /// リモートの名前（上流のないブランチを publish する先）。
+    remotes: Vec<String>,
     /// HEAD のコミット（amend で、そのメッセージを欄に入れる）。
     head: Option<String>,
     /// コミットを作っている。
@@ -193,6 +195,7 @@ impl App {
             behind: 0,
             sequence: None,
             stash: None,
+            remotes: Vec::new(),
             head: None,
             committing: false,
             notice: None,
@@ -406,6 +409,13 @@ impl App {
                         let selected = self.history.selected_id();
                         self.history.opened(&refs, &history);
                         self.sidebar.set_refs(&refs);
+                        self.remotes = refs["remotes"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|r| r["name"].as_str().or(r.as_str()))
+                            .map(str::to_owned)
+                            .collect();
                         self.stash = refs["entries"]
                             .as_array()
                             .into_iter()
@@ -732,9 +742,7 @@ impl App {
             KeyCode::Char('f') if !control => {
                 self.run("fetch", tr!("Fetching…"), json!({"op": "fetch"}))
             }
-            KeyCode::Char('p') if !control => {
-                self.run("pull", tr!("Pulling…"), json!({"op": "pull"}))
-            }
+            KeyCode::Char('p') if !control => self.ask_pull(),
             KeyCode::Char('P') if !control => self.ask_push(),
             // 次に戻す操作の名前を聞いてから、確かめる。
             KeyCode::Char('u') if !control => {
@@ -896,6 +904,27 @@ impl App {
         self.open();
     }
 
+    /// pull する。上流と分かれているときは、どう取り込むかを選ばせる（ほかは git の設定のとおり）。
+    fn ask_pull(&mut self) {
+        let pull = |mode: &str| Request::Run {
+            name: "pull",
+            command: json!({"op": "pull", "mode": mode}),
+        };
+        if self.ahead > 0 && self.behind > 0 {
+            self.choices = Some((
+                tr!("Pull: the branch and its upstream have diverged. How?"),
+                vec![
+                    ('y', tr!("as git is set"), pull("git")),
+                    ('m', tr!("merge"), pull("merge")),
+                    ('r', tr!("rebase"), pull("rebase")),
+                ],
+            ));
+            self.dirty = true;
+            return;
+        }
+        self.run("pull", tr!("Pulling…"), json!({"op": "pull"}));
+    }
+
     /// 今のブランチを上流へ push する前に確かめる。
     fn ask_push(&mut self) {
         self.dirty = true;
@@ -903,10 +932,54 @@ impl App {
             self.error = Some(tr!("No branch is checked out"));
             return;
         };
+        let push =
+            |remote: &str, remote_branch: &str, force: bool, set_upstream: bool| Request::Run {
+                name: "push",
+                command: json!({
+                    "op": "push",
+                    "remote": remote,
+                    "branch": branch,
+                    "remoteBranch": remote_branch,
+                    "force": force,
+                    "setUpstream": set_upstream,
+                }),
+            };
         let Some((remote, remote_branch)) =
             self.upstream.as_deref().and_then(|u| u.split_once('/'))
         else {
-            self.error = Some(tr!("{branch} has no upstream to push to", branch = branch));
+            // 上流がなければ、リモートを選んで publish する（同じ名前のブランチを作り、上流にする）。
+            match self.remotes.as_slice() {
+                [] => {
+                    self.error = Some(tr!(
+                        "There is no remote to publish {branch} to",
+                        branch = branch
+                    ))
+                }
+                [remote] => {
+                    self.confirm = Some((
+                        tr!(
+                            "Publish {branch} to {remote}?",
+                            branch = branch,
+                            remote = remote
+                        ),
+                        tr!("publish"),
+                        push(remote, &branch, false, true),
+                    ));
+                }
+                remotes => {
+                    let options = remotes
+                        .iter()
+                        .zip('1'..='9')
+                        .map(|(remote, key)| {
+                            (key, remote.clone(), push(remote, &branch, false, true))
+                        })
+                        .collect();
+                    self.choices = Some((
+                        tr!("Publish {branch} to which remote?", branch = branch),
+                        options,
+                    ));
+                }
+            }
             return;
         };
         let ask = match self.ahead {
@@ -924,21 +997,26 @@ impl App {
                 count = count
             ),
         };
-        self.confirm = Some((
-            ask,
-            tr!("push"),
-            Request::Run {
-                name: "push",
-                command: json!({
-                    "op": "push",
-                    "remote": remote,
-                    "branch": branch,
-                    "remoteBranch": remote_branch,
-                    "force": false,
-                    "setUpstream": false,
-                }),
-            },
-        ));
+        // 上流に手元にないコミットがあれば、ふつうの push は断られる。置き換える push（上流が最後に見たときの
+        // ままのときだけ）も選べるようにする。
+        if self.behind > 0 {
+            self.choices = Some((
+                ask,
+                vec![
+                    ('y', tr!("push"), push(remote, remote_branch, false, false)),
+                    (
+                        'f',
+                        tr!(
+                            "force push (with lease), replacing {count} on the remote",
+                            count = self.behind
+                        ),
+                        push(remote, remote_branch, true, false),
+                    ),
+                ],
+            ));
+            return;
+        }
+        self.confirm = Some((ask, tr!("push"), push(remote, remote_branch, false, false)));
     }
 
     /// 今のブランチを、選んでいるコミット（History・Reflog）に動かす前に、どう動かすかを選ばせる。

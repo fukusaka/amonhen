@@ -196,6 +196,9 @@ fn load(front: &dyn Front, request: Request) -> Result<Loaded> {
             refs: {
                 // worktree の一覧も一緒に（サイドバーに並べる）。
                 let mut refs = front.call(json!({"op": "refs"}))?.json;
+                refs["remotes"] = run(front, json!({"op": "remotes"}))
+                    .map(|mut r| r["info"]["remotes"].take())
+                    .unwrap_or(Value::Null);
                 refs["worktrees"] = run(front, json!({"op": "worktrees"}))
                     .map(|mut w| w["info"]["worktrees"].take())
                     .unwrap_or(Value::Null);

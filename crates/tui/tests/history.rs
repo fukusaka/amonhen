@@ -981,3 +981,63 @@ fn worktrees_are_listed_in_the_sidebar() {
     assert_eq!(side[at + 1], "● main (main)");
     assert_eq!(side[at + 2], "  other (topic)");
 }
+
+/// 上流のないブランチの `P` は、リモートに同じ名前で publish して上流にする
+#[test]
+fn push_publishes_a_branch_without_an_upstream() {
+    let dir = tempfile::tempdir().unwrap();
+    let work = with_remote(dir.path());
+    git(&work, BASE, &["switch", "-q", "-c", "topic"]);
+    let asked = amonhen_tui::snapshot(open(&work), 100, 8, clock(), "P").unwrap();
+    println!("{asked}");
+    assert!(asked.contains("Publish topic to origin?   y publish   n cancel"));
+    let done = amonhen_tui::snapshot(open(&work), 100, 8, clock(), "Py").unwrap();
+    assert!(done.contains("Pushed"));
+    assert_eq!(
+        git_out(&work, &["rev-parse", "--abbrev-ref", "topic@{upstream}"]),
+        "origin/topic\n"
+    );
+}
+
+/// 上流と分かれていれば、`P` は置き換える push も選ばせ、`p` は取り込み方を選ばせる
+#[test]
+fn diverged_branches_offer_force_push_and_pull_modes() {
+    let dir = tempfile::tempdir().unwrap();
+    let work = with_remote(dir.path());
+    git(&work, BASE, &["push", "-q"]);
+    // push 済みのコミットを作り直す: 手元と上流が 1 つずつ違う。
+    git(
+        &work,
+        BASE + DAY,
+        &[
+            "commit",
+            "-q",
+            "--amend",
+            "--allow-empty",
+            "-m",
+            "Rewritten",
+        ],
+    );
+    let remote_head = || {
+        git_out(
+            &dir.path().join("origin.git"),
+            &["log", "-1", "--format=%s", "main"],
+        )
+    };
+    let pull = amonhen_tui::snapshot(open(&work), 120, 8, clock(), "p").unwrap();
+    println!("{pull}");
+    assert!(pull.contains("have diverged. How?   y as git is set   m merge   r rebase   n cancel"));
+    let asked = amonhen_tui::snapshot(open(&work), 140, 8, clock(), "P").unwrap();
+    println!("{asked}");
+    assert!(
+        asked.contains("y push   f force push (with lease), replacing 1 on the remote   n cancel")
+    );
+    // ふつうの push は断られる（理由が出る）。
+    let refused = amonhen_tui::snapshot(open(&work), 140, 8, clock(), "Py").unwrap();
+    println!("{refused}");
+    assert_eq!(remote_head(), "Ahead of the remote\n");
+    assert!(!refused.contains("Pushed"));
+    let forced = amonhen_tui::snapshot(open(&work), 140, 8, clock(), "Pf").unwrap();
+    assert!(forced.contains("Pushed"));
+    assert_eq!(remote_head(), "Rewritten\n");
+}
