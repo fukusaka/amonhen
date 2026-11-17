@@ -357,6 +357,8 @@ enum Dialog {
         rev: String,
         format: usize,
         top: String,
+        /// 書き出すフォルダ（そのコミットの根からのパス。空ならすべてのファイル）。
+        folder: String,
     },
     /// `refs`（空なら HEAD とすべてのブランチ・タグ）を bundle に書く（GTK4 版の `bundle::save`）。入れる範囲を
     /// 選んでから、コミットの数を確かめ、保存するファイルを選ぶ。partial clone の中身を先に取る確認はまだない。
@@ -631,6 +633,8 @@ enum Message {
     CloseActivity,
     /// Repositories の操作。
     Repos(crate::repositories::Event),
+    /// Export Archive の書き出すフォルダの欄。
+    ArchiveFolder(String),
     /// History で複数選んだコミット（上から。1 つ以下なら空）。
     MultiSelected(Vec<(String, bool)>),
     /// Pull・Push のダイアログのコミットの一覧を読んだ。
@@ -909,6 +913,11 @@ impl Component for Root {
             }
             Message::TagRemotes(info) => self.tag_remotes = info,
             Message::StashDetails(details) => self.stash_details = details,
+            Message::ArchiveFolder(text) => {
+                if let Some(Dialog::Archive { folder, .. }) = &mut self.dialog {
+                    *folder = text;
+                }
+            }
             Message::MultiSelected(ids) => {
                 self.multi = if ids.len() > 1 { ids } else { Vec::new() }
             }
@@ -1983,6 +1992,7 @@ impl Component for Root {
                         rev,
                         format,
                         top,
+                        folder,
                     }),
                     ContentDialogResult::Primary,
                 ) => {
@@ -1994,6 +2004,14 @@ impl Component for Root {
                     } else {
                         prefix.as_str()
                     };
+                    // 1 つのフォルダだけ（GTK4 版の「Folder」。区切りは / にそろえる）。
+                    let folder = folder
+                        .trim()
+                        .replace('\\', "/")
+                        .trim_matches('/')
+                        .to_owned();
+                    let paths: Vec<String> =
+                        (!folder.is_empty()).then_some(folder).into_iter().collect();
                     let Some(path) = crate::files::save_file(
                         &tr!("Export Archive"),
                         &format!("{stem}.{picked}"),
@@ -2007,7 +2025,7 @@ impl Component for Root {
                         "rev": rev,
                         "format": picked,
                         "prefix": if prefix.is_empty() { String::new() } else { format!("{prefix}/") },
-                        "paths": [],
+                        "paths": paths,
                         "file": path.to_string_lossy(),
                     });
                     // 書けたら、そのファイルをエクスプローラーで見せる（GTK4 版と同じ）。
@@ -3001,6 +3019,7 @@ impl Component for Root {
                                 .position(|f| *f == remembered)
                                 .unwrap_or(0),
                             top,
+                            folder: String::new(),
                         });
                     }
                 } else if let Some(oid) = key.strip_prefix("drop:") {
@@ -5160,7 +5179,12 @@ impl Root {
                             .on_text_changed(context.callback(Message::BranchName)),
                     )),
                 ),
-            Some(Dialog::Archive { format, top, .. }) => dialog
+            Some(Dialog::Archive {
+                format,
+                top,
+                folder,
+                ..
+            }) => dialog
                 .is_open(true)
                 .title(tr!("Export Archive"))
                 .primary_button_text(tr!("Export…"))
@@ -5182,6 +5206,11 @@ impl Root {
                             .text(top.clone())
                             .placeholder_text(tr!("None"))
                             .on_text_changed(context.callback(Message::BranchName)),
+                        TextBlock::new().text(tr!("Folder:")),
+                        TextBox::new()
+                            .text(folder.clone())
+                            .placeholder_text(tr!("All files"))
+                            .on_text_changed(context.callback(Message::ArchiveFolder)),
                     )),
                 ),
             Some(Dialog::ApplyPatch {
