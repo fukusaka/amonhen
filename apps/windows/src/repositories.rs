@@ -269,6 +269,81 @@ pub fn peek(locations: Vec<String>) -> Vec<(String, Peek)> {
     out
 }
 
+// Quick Open（Ctrl+Shift+O。GTK4 版の `quickopen.rs`、macOS 版の `QuickOpen.swift`）
+
+/// Quick Open の候補（場所と、比べるための小文字の名前・場所）。並びはすべての一覧と同じ（お気に入り・
+/// ブックマーク・最近開いたもの・スキャンで見つけたもの）。
+#[derive(Clone)]
+pub struct Candidate {
+    pub location: String,
+    pub name: String,
+    lower_name: String,
+    lower: String,
+}
+
+/// 候補を読む（`scanned` はスキャンで見つけたもの。まだなければ空）。
+pub fn candidates(scanned: Vec<(String, Vec<String>)>) -> Vec<Candidate> {
+    let mut state = State::new().0;
+    state.scanned = Some(scanned);
+    state
+        .all()
+        .into_iter()
+        .filter(|l| !is_remote(l))
+        .map(|location| {
+            let name = state.name(&location);
+            Candidate {
+                lower_name: name.to_lowercase(),
+                lower: location.to_lowercase(),
+                name,
+                location,
+            }
+        })
+        .collect()
+}
+
+/// スキャンするフォルダ（Quick Open が候補を足すため）。
+pub fn scan_roots() -> Vec<Root> {
+    roots(&read())
+}
+
+/// 問い合わせに合う候補を、合い方の良い順に（名前で合えば高く、パスでしか合わなければ低く。GTK4 版と同じ）。
+pub fn matches<'a>(candidates: &'a [Candidate], query: &str) -> Vec<&'a Candidate> {
+    let query = query.trim().to_lowercase();
+    if query.is_empty() {
+        return candidates.iter().collect();
+    }
+    let mut scored: Vec<(&Candidate, i64)> = candidates
+        .iter()
+        .filter_map(|c| {
+            if let Some(s) = crate::branchswitcher::score(&query, &c.lower_name) {
+                return Some((c, s + 1000));
+            }
+            crate::branchswitcher::score(&query, &c.lower).map(|s| (c, s))
+        })
+        .collect();
+    // 同じ点なら元の並び。
+    scored.sort_by_key(|(_, s)| -s);
+    scored.into_iter().map(|(c, _)| c).collect()
+}
+
+/// Quick Open の行の 2 行目（ホームの下は `~`）。
+pub fn shown_path(location: &str) -> String {
+    tilde(location)
+}
+
+/// リポジトリを新しい窓（別のプロセス）で開く。
+pub fn open_window(location: &str) -> Result<(), String> {
+    if !is_repository(location) {
+        return Err(tr!("Not found — {path}", path = location));
+    }
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    amonhen_model::process::command(exe)
+        .arg(expand(location))
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
 // 画面の状態
 
 #[derive(Clone, PartialEq)]
@@ -559,19 +634,7 @@ impl State {
     }
 
     fn open(&mut self, location: &str) {
-        if !is_repository(location) {
-            self.note = tr!("Not found — {path}", path = location);
-            return;
-        }
-        let result = std::env::current_exe()
-            .map_err(|e| e.to_string())
-            .and_then(|exe| {
-                amonhen_model::process::command(exe)
-                    .arg(expand(location))
-                    .spawn()
-                    .map_err(|e| e.to_string())
-            });
-        match result {
+        match open_window(location) {
             Ok(_) => {
                 self.note.clear();
                 self.opened.insert(key(location), now());

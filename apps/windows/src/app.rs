@@ -210,6 +210,12 @@ enum Dialog {
         staged: bool,
     },
     /// ブランチの切り替え（GTK4 版の `branchswitcher`）: 打った問い合わせと、選んでいる候補。
+    /// Quick Open（リポジトリをあいまい検索して新しい窓で開く）。
+    QuickOpen {
+        query: String,
+        selected: usize,
+        candidates: Vec<crate::repositories::Candidate>,
+    },
     Switcher {
         repo: Arc<Repository>,
         query: String,
@@ -483,6 +489,8 @@ enum Message {
     RestoreStaged(bool),
     /// ブランチの切り替えで候補を選んだ。
     SwitcherSelect(Option<usize>),
+    /// Quick Open の候補を、スキャンで見つけたものも入れて読み直した。
+    QuickOpenCandidates(Vec<crate::repositories::Candidate>),
     /// New Orphan Branch の「今のファイルを残す」。
     OrphanKeep(bool),
     /// ignore されたファイルを読んだ（`ignoredFiles` の答え）。
@@ -791,6 +799,7 @@ impl Component for Root {
                 Some(Dialog::NewBranch { name: current, .. })
                 | Some(Dialog::NewOrphan { name: current, .. })
                 | Some(Dialog::Switcher { query: current, .. })
+                | Some(Dialog::QuickOpen { query: current, .. })
                 | Some(Dialog::Rename { name: current, .. })
                 | Some(Dialog::NewGroup { name: current, .. })
                 | Some(Dialog::StashBranch { name: current, .. })
@@ -1083,10 +1092,33 @@ impl Component for Root {
                 self.dialog_inputs += 1;
             }
             Message::SwitcherSelect(index) => {
-                if let (Some(Dialog::Switcher { selected, .. }), Some(index)) =
-                    (&mut self.dialog, index)
+                if let (
+                    Some(Dialog::Switcher { selected, .. } | Dialog::QuickOpen { selected, .. }),
+                    Some(index),
+                ) = (&mut self.dialog, index)
                 {
                     *selected = index;
+                }
+            }
+            Message::Command(id) if id == "quick-open" => {
+                self.dialog = Some(Dialog::QuickOpen {
+                    query: String::new(),
+                    selected: 0,
+                    candidates: crate::repositories::candidates(Vec::new()),
+                });
+                self.dialog_inputs += 1;
+                // スキャンするフォルダの下のリポジトリは、探し終えてから足す。
+                let roots = crate::repositories::scan_roots();
+                if !roots.is_empty() {
+                    context.spawn_background(move |_| {
+                        let found = crate::repositories::scan(roots);
+                        Message::QuickOpenCandidates(crate::repositories::candidates(found))
+                    });
+                }
+            }
+            Message::QuickOpenCandidates(found) => {
+                if let Some(Dialog::QuickOpen { candidates, .. }) = &mut self.dialog {
+                    *candidates = found;
                 }
             }
             Message::Command(id) if id == "new-orphan-branch" => {
@@ -1382,6 +1414,25 @@ impl Component for Root {
                     let commands =
                         remote_changes(original.as_ref(), name.trim(), fetch.trim(), push.trim());
                     perform_all(context, repo, commands, title);
+                }
+                (
+                    Some(Dialog::QuickOpen {
+                        query,
+                        selected,
+                        candidates,
+                    }),
+                    ContentDialogResult::Primary,
+                ) => {
+                    let shown = crate::repositories::matches(&candidates, &query);
+                    // 打ち替えて候補が減っていれば、先頭。
+                    match shown.get(selected).or(shown.first()) {
+                        Some(c) => {
+                            if let Err(e) = crate::repositories::open_window(&c.location) {
+                                self.error = Some(e);
+                            }
+                        }
+                        None => beep(),
+                    }
                 }
                 (
                     Some(Dialog::Switcher {
@@ -5087,6 +5138,56 @@ impl Root {
                         StackPanel::new()
                             .spacing(6.0)
                             .children((head, picker, modes)),
+                    )
+            }
+            Some(Dialog::QuickOpen {
+                query,
+                selected,
+                candidates,
+            }) => {
+                let shown = crate::repositories::matches(candidates, query);
+                let selected = (*selected).min(shown.len().saturating_sub(1));
+                let rows = shown.iter().map(|c| {
+                    (
+                        c.location.clone(),
+                        ListViewItem::new().tag(c.location.clone()).content(
+                            StackPanel::new().spacing(1.0).children((
+                                TextBlock::new().text(c.name.clone()),
+                                TextBlock::new()
+                                    .text(crate::repositories::shown_path(&c.location))
+                                    .font_size(11.0)
+                                    .opacity(0.6)
+                                    .text_trimming(TextTrimming::CharacterEllipsis),
+                            )),
+                        ),
+                    )
+                });
+                // 打つたび・候補が増えるたびに一覧ごと作り直す（reactor の ListView は消した項目の場所が空いた
+                // まま残る）。
+                let key = format!("{query}\n{}", shown.len());
+                let list = ListView::new()
+                    .selected_index((!shown.is_empty()).then_some(selected))
+                    .on_selection_changed(context.callback(Message::SwitcherSelect))
+                    .collection_slot(ListViewSlot::Items, rows);
+                dialog
+                    .is_open(true)
+                    .title("Quick Open")
+                    .primary_button_text(tr!("Open"))
+                    .close_button_text(tr!("Cancel"))
+                    .is_primary_button_enabled(!shown.is_empty())
+                    .content(
+                        StackPanel::new().spacing(6.0).width(480.0).children((
+                            TextBox::new()
+                                .element_ref(&self.dialog_input)
+                                .text(query.clone())
+                                .placeholder_text(tr!(
+                                    "Open a repository (fuzzy search by name or path)"
+                                ))
+                                .on_text_changed(context.callback(Message::BranchName)),
+                            ScrollViewer::new()
+                                .height(320.0)
+                                .content(View::keyed_fragment([(key, list)])),
+                        )),
                     )
             }
             Some(Dialog::Switcher {

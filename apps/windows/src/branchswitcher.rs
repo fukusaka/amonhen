@@ -74,8 +74,8 @@ pub fn remember(location: &str, branch: &str) {
 }
 
 /// `query` の文字を `text` の中に順に（飛び飛びでよい）見つけられれば、点数（続いているほど・先頭や区切りの直後
-/// ほど高い）。見つからなければ None（GTK4 版の `quickopen::score`）。
-fn score(query: &str, text: &str) -> Option<i64> {
+/// ほど高い）。見つからなければ None（GTK4 版の `quickopen::score`。Quick Open も使う）。
+pub fn score(query: &str, text: &str) -> Option<i64> {
     let t: Vec<char> = text.chars().collect();
     let (mut score, mut ti, mut previous) = (0i64, 0usize, -2i64);
     for c in query.chars() {
@@ -88,7 +88,7 @@ fn score(query: &str, text: &str) -> Option<i64> {
         if ti as i64 == previous + 1 {
             score += 5;
         }
-        if ti == 0 || "/-_. ".contains(t[ti - 1]) {
+        if ti == 0 || "/\\-_. ".contains(t[ti - 1]) {
             score += 8;
         }
         previous = ti as i64;

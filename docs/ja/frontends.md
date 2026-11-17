@@ -96,7 +96,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | お気に入り・表示名・色のラベル | ✓ | ✓ | △ | n/a | n/a | Windows: 表示名はない。 |
 | タブ・窓で開く、Finder（ファイル）・Terminal・エディタ | ✓ | ✓ | △ | n/a | n/a | GTK4: 知っているコードエディタと「その他…」で選んだプログラム以外は、inode/directory を宣言しているアプリだけがフォルダを開く。<br>Windows: エクスプローラー・Windows Terminal（なければ cmd）・VS Code。タブはなく新しいウィンドウで開く。エディタは選べない。 |
 | 選んだリポジトリを Fetch | ✓ | ✓ | — | n/a | n/a |  |
-| Quick Open（あいまい検索） | ✓ | ✓ | — | n/a | n/a |  |
+| Quick Open（あいまい検索） | ✓ | ✓ | ✓ | n/a | n/a | Windows: 新しいウィンドウで開く。 |
 | ツールバーのリポジトリ名で切り替える | ✓ | ✓ | — | ✓ | n/a | VSCode: Select Repository でワークスペースのリポジトリから選ぶ。 |
 | Clone（自分の GitHub のリポジトリから選ぶ） | ✓ | ✓ | — | n/a | △ | VSCode: VSCode 自身の Git: Clone。<br>CLI: `clone <url>` だけ。 |
 | Clone: 取得する範囲（すべて・中身は必要なときに・最近の履歴）と、一部のフォルダだけ | ✓ | ✓ | — | n/a | ✓ | VSCode: VSCode の Git: Clone が代わり。<br>CLI: `clone --filter`・`--depth`・`--sparse`。 |

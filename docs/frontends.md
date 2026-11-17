@@ -96,7 +96,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Favorites, display name, color label | ✓ | ✓ | △ | n/a | n/a | Windows: No display name. |
 | Open in a tab or window; Finder / Files, Terminal, Editor | ✓ | ✓ | △ | n/a | n/a | GTK4: An app other than a known code editor or a program chosen with Other… opens a folder only if it declares inode/directory.<br>Windows: Explorer, Windows Terminal (or cmd) and VS Code; no tabs, so a repository opens in a new window, and the editor can't be chosen. |
 | Fetch the selected repositories | ✓ | ✓ | — | n/a | n/a |  |
-| Quick Open (fuzzy search) | ✓ | ✓ | — | n/a | n/a |  |
+| Quick Open (fuzzy search) | ✓ | ✓ | ✓ | n/a | n/a | Windows: Opens in a new window. |
 | Repository name in the toolbar switches the repository | ✓ | ✓ | — | ✓ | n/a | VSCode: Select Repository picks among workspace repositories. |
 | Clone (choosing from your own GitHub repositories) | ✓ | ✓ | — | n/a | △ | VSCode: VSCode's own Git: Clone.<br>CLI: `clone <url>` only. |
 | Clone: what to download (everything, contents when needed, recent history) and only some folders | ✓ | ✓ | — | n/a | ✓ | VSCode: VSCode's own Git: Clone.<br>CLI: `clone --filter`, `--depth`, `--sparse`. |
