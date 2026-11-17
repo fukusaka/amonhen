@@ -340,11 +340,32 @@ fn remove_remote(s: &Rc<RepoSettings>, name: String) {
     });
 }
 
+/// Prune もリモートと話す（消えたブランチを読む）ので、サイドバーと同じく先に聞く（docs/ux.md）。
 fn prune_remote(s: &Rc<RepoSettings>, name: String) {
-    s.perform(
-        vec![json!({"op": "changeRemote", "change": {"kind": "prune", "name": name}})],
-        |_| {},
-    );
+    let (w, parent) = (s.weak(), s.window());
+    glib::spawn_future_local(async move {
+        let sheet = Sheet::unnamed(
+            parent.as_ref(),
+            &tr!("Prune {remote}?", remote = name),
+            &format!(
+                "{} {}",
+                tr!(
+                    "Removes the remote-tracking branches whose branches are gone from {remote} (git remote prune).",
+                    remote = name
+                ),
+                crate::sheets::cant_undo()
+            ),
+        );
+        sheet.buttons("Prune", false, None);
+        if sheet.run().await == Response::Ok
+            && let Some(s) = w.upgrade()
+        {
+            s.perform(
+                vec![json!({"op": "changeRemote", "change": {"kind": "prune", "name": name}})],
+                |_| {},
+            );
+        }
+    });
 }
 
 /// リモートの追加・編集のシート（docs/ux.md の 4.5）: 名前、fetch の URL、push の URL（空なら fetch と同じ）、URL の
@@ -621,7 +642,7 @@ pub(crate) fn remotes_page(s: &Rc<RepoSettings>) -> gtk::Box {
     let remove = add_action("remove", Rc::new(remove_remote));
     let menu = gio::Menu::new();
     menu.append(Some(&tr!("Edit…")), Some("remotes.edit"));
-    menu.append(Some("Prune"), Some("remotes.prune"));
+    menu.append(Some("Prune…"), Some("remotes.prune"));
     let danger = gio::Menu::new();
     danger.append(Some(&tr!("Remove…")), Some("remotes.remove"));
     menu.append_section(None, &danger);
@@ -641,7 +662,7 @@ pub(crate) fn remotes_page(s: &Rc<RepoSettings>) -> gtk::Box {
     group.add_action(&action);
     let edit_button = gtk::Button::with_label(&tr!("Edit…"));
     edit_button.set_action_name(Some("remotes.edit"));
-    let prune_button = gtk::Button::with_label("Prune");
+    let prune_button = gtk::Button::with_label("Prune…");
     prune_button.set_action_name(Some("remotes.prune"));
     prune_button.set_tooltip_text(Some(&tr!(
         "Remove remote-tracking branches that no longer exist on the remote."
