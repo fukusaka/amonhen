@@ -98,6 +98,12 @@ fn run_with(
         if let Some(capture) = app.take_mouse_change() {
             screen.set_mouse(capture)?;
         }
+        if app.take_redraw() {
+            screen.canvas.forget();
+            // 大きさの知らせを取りこぼしていても、ここで合う。
+            let (cols, rows) = terminal::size()?;
+            app.resize(cols, rows);
+        }
         #[cfg(unix)]
         if app.take_suspend() {
             screen.suspend(app.mouse_captured())?;

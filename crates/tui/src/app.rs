@@ -156,6 +156,8 @@ pub struct App {
     /// `Ctrl-z` で止める（端末を戻してから）。
     #[cfg(unix)]
     suspend: bool,
+    /// `Ctrl-l` で、端末に出ているものを当てにせずにすべて書き直す。
+    redraw: bool,
     /// 新しいブランチの名前を打っている: 始まり（ref かコミット）、その出し方、打った名前。
     typing_branch: Option<(String, String, String)>,
     /// 打っている名前が何のものか。
@@ -251,6 +253,7 @@ impl App {
             mouse_changed: false,
             #[cfg(unix)]
             suspend: false,
+            redraw: false,
             typing_branch: None,
             naming: Naming::Branch,
             #[cfg(unix)]
@@ -426,6 +429,11 @@ impl App {
         let suspend = std::mem::take(&mut self.suspend);
         self.dirty |= suspend;
         suspend
+    }
+
+    /// `Ctrl-l` を押した（聞いたら、なかったことにする）。
+    pub fn take_redraw(&mut self) -> bool {
+        std::mem::take(&mut self.redraw)
     }
 
     /// メッセージをエディタで開くなら、今のメッセージと作業ツリーの場所（聞いたら、なかったことにする）。
@@ -774,6 +782,12 @@ impl App {
             return;
         }
         let control = key.modifiers.contains(KeyModifiers::CONTROL);
+        // 画面が乱れたときに、どこからでもすべて書き直す（中身は読み直さない）。
+        if control && key.code == KeyCode::Char('l') {
+            self.redraw = true;
+            self.dirty = true;
+            return;
+        }
         // 詳細・差分が、一覧の所に開いている（並んでいない）。
         let covering = self.focus == Focus::Side && self.layout().main.is_none();
         // エラーは、次のキーまで出しておく。
@@ -1745,6 +1759,7 @@ impl App {
                 "M",
                 tr!("Mouse on or off (off lets the terminal select text)"),
             ),
+            ("Ctrl-l", tr!("Redraw the screen")),
             #[cfg(unix)]
             ("Ctrl-z", tr!("Suspend (fg in the shell comes back)")),
             ("1 2 3", tr!("Changes, History and Reflog")),

@@ -112,7 +112,7 @@ The core gets no terminal code, and `amonhen-front` gets no new commands for the
 - The mouse: capturing it stops the terminal's own text selection (most terminals still select with Shift held). On by default, with a key to turn it off and a setting.
 - Conflicts: the TUI lists them, shows each file's conflicts (`conflict`) and offers the per-conflict and per-file choices the apps have (the core gives them as `resolveConflict` and `takeSide`); the three-pane editor is not planned. `e` opens the file in the editor.
 - The before and after drawings of the sheets (rebase, merge, reset) are drawn with the same graph cells, without animation. Later stage.
-- Suspend (`Ctrl-z`) and a resized terminal restore and redraw the screen. A panic restores the terminal before printing.
+- Suspend (`Ctrl-z`) and a resized terminal restore and redraw the screen. `Ctrl-l` clears the terminal and writes the whole screen again, without reloading anything, for when something else wrote over it. A panic restores the terminal before printing.
 
 ## Speed
 

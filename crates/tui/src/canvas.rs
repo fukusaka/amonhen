@@ -44,6 +44,11 @@ impl<W: Write> Canvas<W> {
         &mut self.backend
     }
 
+    /// 端末に出ているものを当てにしない（次のフレームは、消してからすべて書く）。
+    pub fn forget(&mut self) {
+        self.blank = true;
+    }
+
     /// 端末に出ているセル。
     pub fn shown(&self) -> &Buffer {
         &self.shown
@@ -211,6 +216,28 @@ mod tests {
             !written.contains('d') && !written.contains('a'),
             "{written:?}"
         );
+    }
+
+    /// 忘れさせたら、同じ中身でもすべて書き直す
+    #[test]
+    fn forgetting_writes_everything_again() {
+        let out = Written::default();
+        let mut canvas = Canvas::new(out.clone());
+        let draw = |canvas: &mut Canvas<Written>| {
+            canvas
+                .draw((6, 1), &[Rect::new(0, 0, 6, 1)], |buf, _| {
+                    buf.set_string(0, 0, "abcdef", Style::new());
+                    None
+                })
+                .unwrap();
+        };
+        draw(&mut canvas);
+        out.take();
+        draw(&mut canvas);
+        assert!(!out.take().contains('a'));
+        canvas.forget();
+        draw(&mut canvas);
+        assert!(out.take().contains("abcdef"));
     }
 
     /// 全角の文字が半角になったら、後ろのセルも書き直す。大きさが変わったら、すべて描き直す
