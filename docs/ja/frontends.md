@@ -235,7 +235,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | hooks の出力のシート | ✓ | ✓ | ✓ | ✓ | n/a |  |
 | Commit が押せない理由を出す | ✓ | ✓ | ✓ | ✓ | n/a | ボタンのツールチップに。 |
 | HEAD → 作業ツリーの 1 つの差分と、行・hunk のチェック | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: エンジンがあれば。なければ別々の未ステージ・ステージ済みの差分で行をステージ。<br>CLI: `diff --combined`・`stage --rows`。 |
-| 行の範囲の選択、J/K・⌥J/⌥K | ✓ | ✓ | — | ✓ | n/a |  |
+| 行の範囲の選択、J/K・⌥J/⌥K | ✓ | ✓ | △ | ✓ | n/a | Windows: J・K と Alt+J・Alt+K で次・前の変更・ファイルへ。行番号の列での範囲の選択はない。 |
 | 重ねられないファイルの Unstaged / Staged の切り替え | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: いつも別々に出す。<br>CLI: `diff --staged`。 |
 | 差分の表示の選択（unified/split・空白・前後の行・折り返し） | — | — | — | — | n/a |  |
 | 行・hunk・ファイルを捨てる（Undo できる） | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `discard --rows`。<br>Windows: Working Copy の差分で行か hunk の見出しを右クリック（Discard Lines）。行を選ぶことはできない |

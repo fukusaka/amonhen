@@ -235,7 +235,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Hooks output sheet | ✓ | ✓ | ✓ | ✓ | n/a |  |
 | Reason shown when Commit is disabled | ✓ | ✓ | ✓ | ✓ | n/a | In the button's tooltip. |
 | Combined HEAD → working tree diff with line and hunk checks | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: With the engine; without it, line staging on separate unstaged and staged diffs.<br>CLI: `diff --combined`, `stage --rows`. |
-| Range selection in the gutter, J/K and ⌥J/⌥K | ✓ | ✓ | — | ✓ | n/a |  |
+| Range selection in the gutter, J/K and ⌥J/⌥K | ✓ | ✓ | △ | ✓ | n/a | Windows: J / K and Alt+J / Alt+K move to the next or previous change or file; no range selection in the gutter. |
 | Unstaged / Staged switch for files that can't be overlaid | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: Always shown separately.<br>CLI: `diff --staged`. |
 | Diff options (unified/split, whitespace, context, wrap) | — | — | — | — | n/a |  |
 | Discard lines, hunks and files (undoable) | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `discard --rows`.<br>Windows: Right-click a line or a hunk header in the Working Copy diff (Discard Lines); lines can't be selected |

@@ -11854,6 +11854,38 @@ impl HistoryView {
         Ok(())
     }
 
+    /// 差分で次・前の変更（hunk の見出し。`files` ならファイルの見出し）を一番上に出す。行き先がなければ false。
+    fn move_in_diff(&mut self, step: i32, files: bool) -> bool {
+        use amonhen_layout::DiffRow;
+        let data = &self.session.data;
+        let view = if self.working_page {
+            data.working.as_ref().map(|w| &w.diff.view)
+        } else {
+            data.commit.as_ref().map(|c| &c.diff)
+        };
+        let Some(view) = view else { return false };
+        let kind = if files { DiffRow::FILE } else { DiffRow::HUNK };
+        let marks: Vec<usize> = view
+            .rows
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| r.kind == kind)
+            .map(|(i, _)| i)
+            .collect();
+        let rows = view.rows.len();
+        // 一番上に見えている行（の見出し）から数える。
+        let top = (self.diff.scroll_y / DIFF_ROW_HEIGHT + 0.5) as usize;
+        let target = if step > 0 {
+            marks.iter().copied().find(|&r| r > top)
+        } else {
+            marks.iter().copied().rev().find(|&r| r < top)
+        };
+        let Some(row) = target else { return false };
+        self.diff.scroll_y = row as f32 * DIFF_ROW_HEIGHT;
+        self.diff.scroll_by(0.0, rows);
+        true
+    }
+
     /// 差分の中を `query` で探し、`step` だけ一致を移る（0 なら今見えている所から最初の一致）。件数の文字を返す。
     fn find_in_diff(&mut self, query: String, step: i32) -> String {
         if query != self.diff_query {
@@ -12747,6 +12779,17 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
                     xaml::VirtualKey::Home => s.move_selection(-(s.data.row_count() as i64)),
                     xaml::VirtualKey::End => s.move_selection(s.data.row_count() as i64),
                     _ => handled.set(false),
+                }
+            }
+            Target::Diff if matches!(key, xaml::VirtualKey::J | xaml::VirtualKey::K) => {
+                // J・K で次・前の変更（hunk）へ、Alt+J・Alt+K で次・前のファイルへ（GTK4 版の `move_hunk`・
+                // `move_file`）。
+                let alt =
+                    xaml::InputKeyboardSource::GetKeyStateForCurrentThread(xaml::VirtualKey::Menu)
+                        .is_ok_and(|s| s.contains(xaml::CoreVirtualKeyStates::Down));
+                let step = if key == xaml::VirtualKey::J { 1 } else { -1 };
+                if !h.move_in_diff(step, alt) {
+                    beep();
                 }
             }
             Target::Diff => {
