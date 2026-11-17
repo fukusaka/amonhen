@@ -84,6 +84,7 @@ pub struct App {
     /// git や ssh から尋ねられていること（先頭を画面で聞いている）と、打った答え。
     #[cfg(unix)]
     questions: std::collections::VecDeque<crate::askpass::Question>,
+    #[cfg(unix)]
     answer: String,
     /// 動いている操作（fetch・push など）の、一番上の行に出す名前。
     running: Option<String>,
@@ -147,6 +148,7 @@ impl App {
             typing_branch: None,
             #[cfg(unix)]
             questions: std::collections::VecDeque::new(),
+            #[cfg(unix)]
             answer: String::new(),
             running: None,
             upstream: None,
@@ -1444,8 +1446,6 @@ impl App {
         let room = usize::from(position_x.saturating_sub(area.x + 2));
         #[cfg(unix)]
         let asked = self.questions.front();
-        #[cfg(not(unix))]
-        let asked: Option<&()> = None;
         match (&self.confirm, &self.error) {
             // 尋ねられていること: 文と、打った答え（パスワードは隠す）。
             #[cfg(unix)]
