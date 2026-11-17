@@ -79,6 +79,104 @@ pub fn host_of(location: &str) -> Option<String> {
     (!host.is_empty()).then(|| host.to_owned())
 }
 
+/// SSH 先（`location`）につなぐ（裏の糸から。macOS 版の `EngineConsent.connecting`）。`attempt` は SSH 先ごとの
+/// 選択でつなぐ。エンジンを送る承認が要れば（コアの `EngineConsent`）、メインの糸のシートで利用者に聞いて待ち、
+/// 送るならその中身への承認を添えてつなぎ直す。送らないなら、その SSH 先の送り込みを切り（Settings > SSH Hosts）、
+/// 送れない理由で失敗する。初めて送るときも、版が変わって送り直すときも聞く。
+pub fn connecting<T>(
+    location: &str,
+    attempt: impl Fn(&HostOptions) -> amonhen_model::Result<T>,
+) -> amonhen_model::Result<T> {
+    use amonhen_remote::ssh::EngineConsent;
+    static ASKING: Mutex<()> = Mutex::new(());
+    let first = match attempt(&options_for(location)) {
+        Ok(v) => return Ok(v),
+        Err(e) => e,
+    };
+    let host = host_of(location);
+    // メインの糸からは聞けない（シートの答えを待つと、答えを受け取る糸が止まる）。
+    if EngineConsent::find(&first.to_string()).is_none()
+        || host.is_none()
+        || glib::MainContext::default().is_owner()
+    {
+        return Err(EngineConsent::strip(&first.to_string()).into());
+    }
+    let host = host.unwrap();
+    // 同じ SSH 先を同時に開いても、聞くのは 1 回（後のものは、前の答えの後でつなぎ直す）。
+    let _asking = ASKING.lock().unwrap_or_else(|e| e.into_inner());
+    let err = match attempt(&options_for(location)) {
+        Ok(v) => return Ok(v),
+        Err(e) => e,
+    };
+    let Some(consent) = EngineConsent::find(&err.to_string()) else {
+        return Err(err);
+    };
+    let (tx, rx) = std::sync::mpsc::channel();
+    let (h, c) = (host.clone(), consent.clone());
+    glib::MainContext::default().invoke(move || {
+        glib::spawn_future_local(async move {
+            let _ = tx.send(ask_send_engine(&h, &c).await);
+        });
+    });
+    let send = rx.recv().unwrap_or(None);
+    let mut options = options_for(location);
+    if send.is_some() {
+        options.send_engine = Some(consent.hash);
+    }
+    attempt(&options).map_err(|e| EngineConsent::strip(&e.to_string()).into())
+}
+
+/// エンジンを送ってよいかを聞き（メインの糸）、答えを設定に残す。送るなら Some（今後も聞かないなら Some(true)）、
+/// 送らないなら None（その SSH 先の送り込みを切る）。
+async fn ask_send_engine(host: &str, consent: &amonhen_remote::ssh::EngineConsent) -> Option<bool> {
+    // 今前にある窓に付ける（設定の窓からつないだなら設定の窓。リポジトリの窓に付けると、それが前に出て設定の窓が
+    // 隠れる）。
+    let parent = gtk::Window::list_toplevels()
+        .into_iter()
+        .filter_map(|w| w.downcast::<gtk::Window>().ok())
+        .find(|w| w.is_active() && w.is_visible())
+        .or_else(|| crate::tabs::front_window().map(|w| w.window.clone().upcast()));
+    let title = if consent.update {
+        tr!("Send a new version of the engine to {host}?", host = host)
+    } else {
+        tr!("Send the engine to {host}?", host = host)
+    };
+    let sheet = Sheet::unnamed(
+        parent.as_ref().map(|w| w.upcast_ref()),
+        &title,
+        &tr!(
+            "To open repositories on this host, Amon Hen puts its engine (amonhen, {size} MB, {platform}) on the host and runs it there. If you don’t send it, Amon Hen won’t send one to this host until you turn it back on in Settings > SSH Hosts.",
+            size = consent.megabytes(),
+            platform = consent.platform
+        ),
+    );
+    let always = gtk::CheckButton::with_label(&tr!("Send without asking to this host from now on"));
+    sheet.add(&always);
+    sheet.button(&tr!("Don’t Send"), Response::Cancel, None);
+    sheet.button(
+        &tr!("Send"),
+        Response::Ok,
+        Some(crate::sheets::Style::Suggested),
+    );
+    let send = sheet.run().await == Response::Ok;
+    let mut options = host_options(host);
+    let answer = match (send, always.is_active()) {
+        (false, _) => {
+            options.push = Some(false);
+            None
+        }
+        (true, true) => {
+            options.push = Some(true);
+            Some(true)
+        }
+        (true, false) => Some(false),
+    };
+    if options != host_options(host) {
+        set_host_options(host, &options);
+    }
+    answer
+}
+
 /// `location` の SSH 先ごとの選択（手元・選んでいなければ既定）。どの糸からも読める。
 pub fn options_for(location: &str) -> HostOptions {
     let Some(host) = host_of(location) else {
@@ -1354,29 +1452,45 @@ fn engine_choice(session: &Rc<HostSession>) -> Vec<gtk::Widget> {
     let help = match options.engine.as_deref() {
         Some("installed") => tr!("Uses the amonhen installed on the host. It must be this build."),
         Some("sent") => {
-            tr!("Uses the one Amon Hen sent to the host, sending it first when there is none.")
+            tr!(
+                "Uses the one Amon Hen sent to the host, sending one when there is none (whether to ask first is chosen below)."
+            )
         }
         Some(p) if is_engine_path(p) => tr!("Uses this path on the host."),
         _ => tr!(
-            "The amonhen on the host’s PATH if it is this build, else one sent earlier, else Amon Hen sends one."
+            "The amonhen on the host’s PATH if it is this build, else one sent earlier, else the one Amon Hen sends."
         ),
     };
-    let push = gtk::Switch::new();
-    push.set_active(options.push.unwrap_or(true));
+    // 合うものがないとき: 送る前に聞く（既定）・聞かずに送る・送らない。
+    let choices = [
+        tr!("Ask before sending one"),
+        tr!("Send one without asking"),
+        tr!("Don’t send one"),
+    ];
+    let push = gtk::DropDown::from_strings(&choices.iter().map(String::as_str).collect::<Vec<_>>());
+    push.set_selected(match options.push {
+        None => 0,
+        Some(true) => 1,
+        Some(false) => 2,
+    });
     push.set_sensitive(
         options.engine.as_deref() != Some("installed")
             && !options.engine.as_deref().is_some_and(is_engine_path),
     );
     let h = host.clone();
-    push.connect_active_notify(move |sw| {
+    push.connect_selected_notify(move |d| {
         let mut new = host_options(&h);
-        new.push = (!sw.is_active()).then_some(false);
+        new.push = match d.selected() {
+            1 => Some(true),
+            2 => Some(false),
+            _ => None,
+        };
         save(new);
     });
     vec![
         labeled(&tr!("Engine to use"), &picker.button),
         note(&help),
-        labeled(&tr!("Send one when none fits"), &push),
+        labeled(&tr!("When none fits"), &push),
     ]
 }
 

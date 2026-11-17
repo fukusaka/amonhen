@@ -54,5 +54,6 @@ amonhen stage --rows 3,5-9 f   # stage diff lines (see the numbers with amonhen 
 amonhen undo [--list]          # undo operations (record shared with the app and the VSCode extension)
 amonhen range-diff --previous  # compare the branch with its version before the last rebase or amend (git range-diff)
 amonhen log -C ssh://host/path # SSH host (the shared daemon keeps the SSH connection alive)
+                               # asks before sending the engine to the host (--send-engine: without asking)
 amonhen daemon status          # state of the shared daemon
 ```

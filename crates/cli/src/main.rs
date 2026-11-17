@@ -77,7 +77,8 @@ usage: amonhen [<path>]
        amonhen --serve [<socket>] | --stdio <repo> | --socket   (runs as a daemon; used by FEs and SSH hosts)
 
 Commands that work on a repository choose it with -C <path>, -C ssh://host/path (through the shared daemon) or
--C daemon:<path>. Besides the human-readable form, --json prints the form FEs read (also --color=auto|always|never).
+-C daemon:<path>. When an SSH host has no engine of this build, the CLI asks before sending one there (--send-engine
+sends it without asking; without a terminal and without it, the CLI stops). Besides the human-readable form, --json prints the form FEs read (also --color=auto|always|never).
 log's <query> uses the History search syntax (author:name path:path contents:\"text\" and so on).
 diff shows unstaged changes by default, staged changes with --staged, and with --combined the changes since HEAD with
 staged lines marked (●). With one <rev> it shows that commit's diff; with two, the same diff as selecting two commits in
@@ -136,7 +137,7 @@ fn main() -> ExitCode {
     #[cfg(target_os = "macos")]
     amonhen_model::process::set_agent_finder(session_agent);
     let argv0 = std::env::args().next().unwrap_or_default();
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
     // エンジンは 1 つの実行ファイルで、daemon としての起動（`--serve`・`--stdio`・`--socket`、または `amonhend` と
     // いう名前）なら daemon になる。
     // git が status の fsmonitor の hook として起動した（Linux・BSD。エンジン自身が Watchman に聞く）。隠した命令。
@@ -148,6 +149,15 @@ fn main() -> ExitCode {
     amonhen_backend_cli::set_fsmonitor_engine(std::env::current_exe().ok());
     if amonhen_daemon::is_daemon(&argv0, &args) {
         return ExitCode::from(amonhen_daemon::run(&args) as u8);
+    }
+    // SSH 先にエンジンを送ってよい（聞かずに）。どの命令にも付けられる。
+    if let Some(i) = args
+        .iter()
+        .take_while(|a| *a != "--")
+        .position(|a| a == "--send-engine")
+    {
+        args.remove(i);
+        SEND_ENGINE.store(true, std::sync::atomic::Ordering::Relaxed);
     }
     let result = match args.first().map(String::as_str) {
         None => open::run(&[]),
@@ -254,10 +264,66 @@ pub(crate) fn repository_root(path: &Path) -> Result<PathBuf> {
 pub(crate) fn open_repository(path: &Path) -> Result<Box<dyn Front>> {
     let given = path.to_str().unwrap_or_default();
     if given.starts_with("ssh://") || given.starts_with("daemon:") {
-        return amonhen_front::open(given, &daemon_program()?, None);
+        return open_remote(given);
     }
     let root = repository_root(path)?;
     amonhen_front::open(&root.display().to_string(), "", cache_dir().as_deref())
+}
+
+/// `--send-engine`（SSH 先にエンジンを聞かずに送る）を付けたか。
+static SEND_ENGINE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// SSH 先（`ssh://`・`daemon:ssh://`）を共有の daemon で開く。SSH 先にエンジンを送るときは、`--send-engine` が
+/// なければ利用者に聞く（端末でなければ聞けないので、送らずにやめる）。
+fn open_remote(location: &str) -> Result<Box<dyn Front>> {
+    use amonhen_remote::ssh::{EngineConsent, HostOptions};
+    use std::io::IsTerminal;
+    let daemon = daemon_program()?;
+    let mut options = HostOptions {
+        push: SEND_ENGINE
+            .load(std::sync::atomic::Ordering::Relaxed)
+            .then_some(true),
+        ..Default::default()
+    };
+    match amonhen_front::open_with(location, &daemon, None, &options) {
+        Ok(front) => Ok(front),
+        Err(e) => {
+            let message = e.to_string();
+            let Some(consent) = EngineConsent::find(&message) else {
+                return Err(e);
+            };
+            if !(std::io::stdin().is_terminal() && std::io::stderr().is_terminal()) {
+                return Err(EngineConsent::strip(&message).into());
+            }
+            let question = if consent.update {
+                tr!(
+                    "Send a new version of the Amon Hen engine ({size} MB, {platform}) to {host}? [y/N] ",
+                    size = consent.megabytes(),
+                    platform = consent.platform,
+                    host = consent.host
+                )
+            } else {
+                tr!(
+                    "Send the Amon Hen engine ({size} MB, {platform}) to {host}? [y/N] ",
+                    size = consent.megabytes(),
+                    platform = consent.platform,
+                    host = consent.host
+                )
+            };
+            eprint!("{question}");
+            let mut answer = String::new();
+            std::io::stdin().read_line(&mut answer)?;
+            if !matches!(answer.trim(), "y" | "Y" | "yes" | "Yes" | "YES") {
+                return Err(tr!(
+                    "Didn’t send the engine to {host}, so it can’t be opened",
+                    host = consent.host
+                )
+                .into());
+            }
+            options.send_engine = Some(consent.hash);
+            amonhen_front::open_with(location, &daemon, None, &options)
+        }
+    }
 }
 
 /// 窓口に命令を送る。

@@ -436,8 +436,12 @@ private struct EngineChoice: View {
                 Text(L("Other…")).tag(Self.other)
             }
             Note(help)
-            Toggle(L("Send one when none fits"), isOn: Binding(get: { options.push ?? true }, set: { setPush($0) }))
-                .disabled(options.engine == "installed" || options.engine.map(HostPath.isAbsolute) == true)
+            Picker(L("When none fits"), selection: Binding(get: { options.push }, set: { setPush($0) })) {
+                Text(L("Ask before sending one")).tag(Bool?.none)
+                Text(L("Send one without asking")).tag(Bool?.some(true))
+                Text(L("Don’t send one")).tag(Bool?.some(false))
+            }
+            .disabled(options.engine == "installed" || options.engine.map(HostPath.isAbsolute) == true)
         }
         .onAppear { options = Settings.hostOptions(for: host) }
         .onChange(of: host) { _, now in options = Settings.hostOptions(for: now) }
@@ -446,15 +450,16 @@ private struct EngineChoice: View {
     private var help: String {
         switch options.engine {
         case "installed": L("Uses the amonhen installed on the host. It must be this build.")
-        case "sent": L("Uses the one Amon Hen sent to the host, sending it first when there is none.")
+        case "sent": L("Uses the one Amon Hen sent to the host, sending one when there is none (whether to ask first is chosen below).")
         case let path? where HostPath.isAbsolute(path): L("Uses this path on the host.")
-        default: L("The amonhen on the host’s PATH if it is this build, else one sent earlier, else Amon Hen sends one.")
+        default: L("The amonhen on the host’s PATH if it is this build, else one sent earlier, else the one Amon Hen sends.")
         }
     }
 
     private func choose(_ value: String) {
         guard value == Self.other else {
-            var new = options
+            // 選ぶ間に（つなぐときの確認で）変わったかもしれないので、残してあるものから。
+            var new = Settings.hostOptions(for: host)
             new.engine = value.isEmpty ? nil : value
             save(new)
             return
@@ -463,20 +468,20 @@ private struct EngineChoice: View {
         FilePicker.present(title: L("Engine on %@", host), message: L("Choose amonhen on the host. It must be this build."),
                                  kind: .executable, host: host, repository: repository, initial: current) { chosen in
             guard let path = chosen?.path, HostPath.isAbsolute(path) else { return }
-            var new = options
+            var new = Settings.hostOptions(for: host)
             new.engine = path
             save(new)
         }
     }
 
-    private func setPush(_ on: Bool) {
-        var new = options
-        new.push = on ? nil : false
+    private func setPush(_ push: Bool?) {
+        var new = Settings.hostOptions(for: host)
+        new.push = push
         save(new)
     }
 
     private func save(_ new: HostOptions) {
-        guard new != options else { return }
+        guard new != Settings.hostOptions(for: host) else { options = new; return }
         options = new
         Settings.setHostOptions(new, for: host)
     }

@@ -19,6 +19,8 @@ becomes the GitHub Release notes.
 
 - History search: `author:` also matches the email, `committer:` searches by committer and `message:` searches the whole
   message (it used to be another name for `subject:`). The search field's ▾ menu puts in these and `commit:`, `subject:`.
+- Amon Hen asks before sending its engine to an SSH host, the first time and for each new version; Don't Send turns
+  sending off for that host. Settings > SSH Hosts can send without asking, and the CLI asks too (`--send-engine`).
 - Pushing a tag and a remote's Prune ask first, like every other operation that talks to a remote.
 - macOS: buttons for what can't be undone are red with white text (Force Push's included), instead of dark red text.
 - The submodule, subtree and New Worktree sheets label their fields on the left and enable their button once the

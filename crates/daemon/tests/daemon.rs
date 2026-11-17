@@ -288,16 +288,36 @@ fn provisions_the_engine_on_ssh_hosts() {
         push: None,
     };
     let target = ssh::Target::parse(&format!("ssh://dev{}", repo_dir.display())).unwrap();
-    let open = |daemons: &ssh::Daemons| -> amonhen_model::Result<String> {
-        let conn = ssh::connect(ssh_program, &target, daemons, &Default::default())?;
-        let engine = conn.remote_engine().unwrap_or_default();
-        let repo = Repository::new(RemoteBackend::connect(conn)?);
-        assert_eq!(repo.load_history()?.graph.len(), 1);
-        Ok(engine)
-    };
+    let open_with =
+        |daemons: &ssh::Daemons, options: &ssh::HostOptions| -> amonhen_model::Result<String> {
+            let conn = ssh::connect(ssh_program, &target, daemons, options)?;
+            let engine = conn.remote_engine().unwrap_or_default();
+            let repo = Repository::new(RemoteBackend::connect(conn)?);
+            assert_eq!(repo.load_history()?.graph.len(), 1);
+            Ok(engine)
+        };
+    let open = |daemons: &ssh::Daemons| open_with(daemons, &Default::default());
 
-    // 1 回目: 送る。置いたら中身を確かめる。
-    let engine = open(&daemons).unwrap();
+    // 1 回目: 送ってよいかを決めていなければ、送らずに承認を求める。
+    let err = open(&daemons).unwrap_err().to_string();
+    let consent = ssh::EngineConsent::find(&err).expect(&err);
+    assert_eq!(consent.host, "dev");
+    assert!(!consent.update && consent.size > 0, "{consent:?}");
+    assert!(engines(&home).is_empty());
+    // 違うものへの承認では送らない。
+    let wrong = ssh::HostOptions {
+        send_engine: Some("0000000000000000".into()),
+        ..Default::default()
+    };
+    assert!(
+        ssh::EngineConsent::find(&open_with(&daemons, &wrong).unwrap_err().to_string()).is_some()
+    );
+    // 承認したら送る。置いたら中身を確かめる。
+    let approved = ssh::HostOptions {
+        send_engine: Some(consent.hash.clone()),
+        ..Default::default()
+    };
+    let engine = open_with(&daemons, &approved).unwrap();
     assert!(engine.contains("sent now"), "{engine}");
     let sent = engines(&home);
     assert_eq!(sent.len(), 1, "{sent:?}");
@@ -382,7 +402,20 @@ fn provisions_the_engine_on_ssh_hosts() {
     );
     std::fs::remove_dir_all(&bin).unwrap();
 
-    // 送り込みを止めていて、使えるものがなければ、理由を返す。
+    // ほかの版だけが置いてあれば、入れ替えとして承認を求める。聞かずに送ると決めてあれば（`push`）、聞かない。
+    let older = root.join("2222222222222222");
+    std::fs::rename(root.join(&sent[0]), &older).unwrap();
+    std::fs::write(older.join("build"), "0000000000000000").unwrap();
+    let err = open(&daemons).unwrap_err().to_string();
+    assert!(ssh::EngineConsent::find(&err).expect(&err).update);
+    let always = ssh::HostOptions {
+        push: Some(true),
+        ..Default::default()
+    };
+    let engine = open_with(&daemons, &always).unwrap();
+    assert!(engine.contains("sent now"), "{engine}");
+
+    // 送り込みを止めていて、使えるものがなければ、理由を返す（聞かない）。
     std::fs::remove_dir_all(&root).unwrap();
     let no_push = ssh::Daemons {
         dir: bundled,
@@ -390,7 +423,7 @@ fn provisions_the_engine_on_ssh_hosts() {
         remote_engine: None,
         push: Some(false),
     };
-    let err = open(&no_push).unwrap_err().to_string();
+    let err = open_with(&no_push, &approved).unwrap_err().to_string();
     assert!(err.contains("No usable engine"), "{err}");
     assert!(engines(&home).is_empty());
 }
@@ -715,6 +748,8 @@ fn shared_daemon_opens_an_ssh_host_without_a_repository() {
             .env("HOME", &local_home)
             .env("AMONHEN_SSH", &ssh_program)
             .env("AMONHEN_ENGINES", &bundled)
+            // 承認を聞く相手がいないので、聞かずに送る。
+            .env("AMONHEN_PUSH", "1")
             .spawn()
             .unwrap(),
     );
@@ -869,7 +904,17 @@ fn shared_daemon_uses_the_host_options_it_is_given() {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
-    let repo = Repository::new(connect("ssh://dev", &HostOptions::default()).unwrap());
+    // 送ってよいかを決めていなければ、daemon も送らずに承認を求める。承認（`sendEngine`）を添えれば送る。
+    let err = connect("ssh://dev", &HostOptions::default())
+        .err()
+        .unwrap()
+        .to_string();
+    let consent = ssh::EngineConsent::find(&err).expect(&err);
+    let approved = HostOptions {
+        send_engine: Some(consent.hash),
+        ..Default::default()
+    };
+    let repo = Repository::new(connect("ssh://dev", &approved).unwrap());
     let set = |git: Option<&std::path::Path>| {
         repo.run(amonhen_core::command::Command::SetMachineGit {
             git: git.map(|g| g.display().to_string()),
@@ -1109,6 +1154,8 @@ fn shared_daemon_opens_an_ssh_repository_for_everyone() {
             .env("HOME", &local_home)
             .env("AMONHEN_SSH", &ssh_program)
             .env("AMONHEN_ENGINES", &bundled)
+            // 承認を聞く相手がいないので、聞かずに送る。
+            .env("AMONHEN_PUSH", "1")
             .spawn()
             .unwrap(),
     );

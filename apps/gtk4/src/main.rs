@@ -530,20 +530,24 @@ fn repository_title(name: &str, worktree: Option<&str>) -> (String, String) {
 fn open_remote(location: &str) -> amonhen_model::Result<Repository> {
     use amonhen_remote::ssh;
     let daemon = engine();
-    // SSH 先ごとの選択（Settings > SSH Hosts のエンジンとログインシェル。macOS 版の `hostOptions`）。
-    let options = sshhosts::options_for(location);
-    let conn = if location.starts_with("ssh://") {
-        // SSH 先が手元と同じ OS と CPU なら、手元のエンジンを送る。
-        let daemons =
-            ssh::Daemons::new(engines_dir(), Some((ssh::local_platform(), daemon.clone())));
-        let program = std::env::var("AMONHEN_SSH").unwrap_or_else(|_| "ssh".into());
-        ssh::connect(&program, &ssh::Target::parse(location)?, &daemons, &options)?
-    } else {
-        // `daemon:ssh://…` なら、共有の daemon がエンジンを起動するときに SSH 先ごとの選択を使う。
-        let path = amonhen_remote::location::local_path(location)?;
-        amonhen_remote::local::connect_with(path, &daemon.to_string_lossy(), &options)?
-    };
-    let backend = amonhen_remote::RemoteBackend::connect(conn)?;
+    // SSH 先ごとの選択（Settings > SSH Hosts のエンジンとログインシェル。macOS 版の `hostOptions`）は
+    // `sshhosts::connecting` が読む。
+    // エンジンを送るなら、先に利用者に聞く。
+    let backend = sshhosts::connecting(location, |options| {
+        let conn = if location.starts_with("ssh://") {
+            // SSH 先が手元と同じ OS と CPU なら、手元のエンジンを送る。
+            let daemons =
+                ssh::Daemons::new(engines_dir(), Some((ssh::local_platform(), daemon.clone())));
+            let program = std::env::var("AMONHEN_SSH").unwrap_or_else(|_| "ssh".into());
+            ssh::connect(&program, &ssh::Target::parse(location)?, &daemons, options)?
+        } else {
+            // `daemon:ssh://…` なら、共有の daemon がエンジンを起動するときに SSH 先ごとの選択を使う。
+            let path = amonhen_remote::location::local_path(location)?;
+            amonhen_remote::local::connect_with(path, &daemon.to_string_lossy(), options)?
+        };
+        // 共有の daemon が開けなかった理由（承認が要る、も）は、最初の要求の答えで来る。
+        amonhen_remote::RemoteBackend::connect(conn)
+    })?;
     // SSH 先の History は手元にキャッシュする（つなぎ直したら新しいコミットだけを受け取る）。手元の共有の daemon
     // なら、daemon が用意したファイルを直接読むので持たない。
     let repo = match amonhen_remote::local::cache_dir() {

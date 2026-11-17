@@ -54,5 +54,6 @@ amonhen stage --rows 3,5-9 f   # 差分の行ごとに stage（amonhen diff --co
 amonhen undo [--list]          # 操作を戻す（アプリ・VSCode 拡張と記録を共有）
 amonhen range-diff --previous  # ブランチを、最後の rebase・amend の前の版と比べる（git range-diff）
 amonhen log -C ssh://host/path # SSH 先（共有の daemon が SSH のつながりを持ち続ける）
+                               # SSH 先にエンジンを送る前に聞く（--send-engine なら聞かずに送る）
 amonhen daemon status          # 共有の daemon の様子
 ```

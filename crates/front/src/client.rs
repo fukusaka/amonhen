@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
 use amonhen_remote::frame::{self, Kind};
+use amonhen_remote::ssh::HostOptions;
 use serde_json::Value;
 
 use crate::{Reply, Result, Session};
@@ -34,11 +35,22 @@ pub trait Front: Send + Sync {
 /// `location` を開く。`ssh://host/path` と `daemon:<path | ssh://…>` は共有の daemon（`daemon` はその場所。
 /// いなければ起動する）のコアで、ほかは同じプロセスのコアで（History の永続キャッシュは `cache_dir` に置く）。
 pub fn open(location: &str, daemon: &str, cache_dir: Option<&Path>) -> Result<Box<dyn Front>> {
+    open_with(location, daemon, cache_dir, &Default::default())
+}
+
+/// `open` に、SSH 先ごとの選択（共有の daemon が SSH 先のエンジンを用意するときに使う。エンジンを送る承認も）を
+/// 添えて。
+pub fn open_with(
+    location: &str,
+    daemon: &str,
+    cache_dir: Option<&Path>,
+    options: &HostOptions,
+) -> Result<Box<dyn Front>> {
     if location.starts_with("ssh://") {
-        return Ok(Box::new(Remote::connect(location, daemon)?));
+        return Ok(Box::new(Remote::connect_with(location, daemon, options)?));
     }
     if let Some(rest) = location.strip_prefix("daemon:") {
-        return Ok(Box::new(Remote::connect(rest, daemon)?));
+        return Ok(Box::new(Remote::connect_with(rest, daemon, options)?));
     }
     Ok(Box::new(InProcess::open(Path::new(location), cache_dir)?))
 }
@@ -107,6 +119,11 @@ struct Shared {
 impl Remote {
     /// 共有の daemon で `location`（手元のパスか `ssh://host/path`）を開いてつなぐ。
     pub fn connect(location: &str, daemon: &str) -> Result<Self> {
+        Self::connect_with(location, daemon, &Default::default())
+    }
+
+    /// `connect` に、SSH 先ごとの選択を添えて。
+    pub fn connect_with(location: &str, daemon: &str, options: &HostOptions) -> Result<Self> {
         let location = if location.starts_with("ssh://") {
             location.to_owned()
         } else {
@@ -117,9 +134,10 @@ impl Remote {
         let mut writer = std::io::BufWriter::new(stream.writer);
         amonhen_remote::local::write_preamble(
             &mut writer,
-            &amonhen_remote::local::opening(
+            &amonhen_remote::local::opening_with(
                 &format!("{}{location}", crate::PREAMBLE),
                 &amonhen_model::process::ClientEnv::current(),
+                options,
             ),
         )?;
         let shared = Arc::new(Shared::default());
