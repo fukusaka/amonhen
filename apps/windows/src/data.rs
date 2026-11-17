@@ -220,8 +220,10 @@ pub enum SearchDone {
 pub struct RefLabel {
     pub name: String,
     pub kind: RefKind,
-    /// チェックアウト中のブランチ。
+    /// チェックアウト中のブランチ（worktree の札なら、書き込む先の worktree）。
     pub head: bool,
+    /// worktree の HEAD の札（✎ ⌂ ⑂ と名前と変更の数。GTK4 版・macOS 版と同じ）。
+    pub worktree: bool,
 }
 
 /// 行ごとのラベル。行の番号は `generation` の History のもの。
@@ -253,6 +255,12 @@ pub struct Data {
     pub working_changed: bool,
     /// 今の History の行の、ref のラベル。
     pub labels: Labels,
+    /// 今の History の行の、worktree の HEAD の札（ref のラベルの前に出す）と、その元（コミット、札の文字、
+    /// 書き込む先か）。
+    pub worktree_labels: Labels,
+    worktree_heads: Vec<(amonhen_model::Oid, String, bool)>,
+    /// 書き込む先・メインでない worktree が checkout しているブランチ（札を緑にする）。
+    pub elsewhere: HashSet<String>,
     /// History の検索で一致した行（昇順）。描くときに塗る。
     pub matches: Vec<u32>,
     /// History で複数選んでいる行（昇順。2 つ以上のときだけ）。描くときに塗る。
@@ -398,6 +406,9 @@ impl Data {
             working_wanted: None,
             working_changed: false,
             labels: HashMap::new(),
+            worktree_labels: HashMap::new(),
+            worktree_heads: Vec::new(),
+            elsewhere: HashSet::new(),
             matches: Vec::new(),
             multi: Vec::new(),
             selection_seq: 0,
@@ -536,6 +547,7 @@ impl Data {
                     self.history = Some(history);
                     self.history_changed = true;
                     self.labels.clear();
+                    self.place_worktrees();
                     // 行の番号が変わるので、検索の一致も捨てる（探し直すのは FE）。
                     self.matches.clear();
                     self.multi.clear();
@@ -884,6 +896,34 @@ impl Data {
     }
 
     /// コミットの行（今の History の）。
+    /// 各 worktree の HEAD の札と、ほかの worktree が checkout しているブランチ（GTK4 版の
+    /// `HistoryView::set_worktrees`）。worktree が 1 つなら空で呼ぶ。
+    pub fn set_worktrees(
+        &mut self,
+        heads: Vec<(amonhen_model::Oid, String, bool)>,
+        elsewhere: HashSet<String>,
+    ) {
+        self.worktree_heads = heads;
+        self.elsewhere = elsewhere;
+        self.place_worktrees();
+    }
+
+    /// worktree の札を今の History の行に置く。
+    fn place_worktrees(&mut self) {
+        let mut labels = Labels::new();
+        for (head, name, editing) in &self.worktree_heads {
+            if let Some(row) = self.row_of(head) {
+                labels.entry(row).or_default().push(RefLabel {
+                    name: name.clone(),
+                    kind: RefKind::Local,
+                    head: *editing,
+                    worktree: true,
+                });
+            }
+        }
+        self.worktree_labels = labels;
+    }
+
     pub fn row_of(&self, id: &amonhen_model::Oid) -> Option<u32> {
         self.history.as_ref()?.row_of(id)
     }
@@ -965,6 +1005,7 @@ fn labels(history: &HistorySnapshot, refs: &Refs) -> Labels {
             name: entry.name.clone(),
             kind: entry.kind,
             head,
+            worktree: false,
         });
     }
     for row in labels.values_mut() {

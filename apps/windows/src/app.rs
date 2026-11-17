@@ -3472,6 +3472,7 @@ impl Component for Root {
             }
             Message::Worktrees(list) => {
                 self.worktrees = list;
+                self.show_worktree_labels();
                 self.update(Message::CountWorktrees(true), context);
             }
             Message::CountWorktrees(fresh) => {
@@ -3513,6 +3514,7 @@ impl Component for Root {
                         self.worktree_counts.insert(w.path.clone(), count);
                     }
                 }
+                self.show_worktree_labels();
             }
             Message::Confirm(repo, title, message, button, command) => {
                 self.dialog = Some(Dialog::Confirm {
@@ -6951,6 +6953,58 @@ impl Root {
 
     /// タグのメニュー（GTK4 版の `refops::tag_items`）: リモートごとに Push（ないもの）・Replace（同じ名前の別の
     /// タグがあるもの）、Delete、リモートごとの Delete from（あるもの）。まだ読んでいないリモートは、どれも出す。
+    /// History に各 worktree の HEAD の札（✎ ⌂ ⑂ と名前と変更の数）と、追加した worktree が checkout している
+    /// ブランチの緑を出す（GTK4 版の `worktrees::heads`・`branches_elsewhere`）。worktree が 1 つなら出さない。
+    fn show_worktree_labels(&self) {
+        let workdir = self
+            .repo
+            .as_ref()
+            .and_then(|r| r.paths().workdir)
+            .map(|d| d.display().to_string());
+        let editing = |w: &WorktreeInfo| workdir.as_deref().is_some_and(|d| same_path(d, &w.path));
+        let mut heads = Vec::new();
+        let mut elsewhere = std::collections::HashSet::new();
+        if self.worktrees.len() > 1 {
+            // 同じコミットにいくつもあれば、書き込む先、メイン、名前の順。
+            let mut ordered: Vec<&WorktreeInfo> = self.worktrees.iter().collect();
+            ordered.sort_by(|a, b| {
+                editing(b)
+                    .cmp(&editing(a))
+                    .then(b.main.cmp(&a.main))
+                    .then_with(|| worktree_name(&a.path).cmp(&worktree_name(&b.path)))
+            });
+            for w in ordered {
+                let Some(head) = w.head.as_deref().and_then(amonhen_model::Oid::from_hex) else {
+                    continue;
+                };
+                let is_editing = editing(w);
+                let mark = if is_editing {
+                    "✎"
+                } else if w.main {
+                    "⌂"
+                } else {
+                    "⑂"
+                };
+                let mut name = format!("{mark} {}", worktree_name(&w.path));
+                let changes = self.worktree_counts.get(&w.path).copied().unwrap_or(0);
+                if changes > 0 {
+                    name.push_str(&format!(" · {changes}"));
+                }
+                heads.push((head, name, is_editing));
+                if !is_editing
+                    && !w.main
+                    && let Some(branch) = &w.branch
+                {
+                    elsewhere.insert(branch.clone());
+                }
+            }
+        }
+        with_history(|h| {
+            h.session.data.set_worktrees(heads, elsewhere);
+            h.session.invalidate();
+        });
+    }
+
     fn tag_items(&self, name: &str) -> Vec<MenuItem> {
         let remotes: Vec<(String, bool)> = self.tag_remotes["remotes"]
             .as_array()
@@ -8786,6 +8840,8 @@ fn patch_error_line(text: &str) -> String {
 pub struct WorktreeInfo {
     pub path: String,
     pub branch: Option<String>,
+    /// HEAD のコミット（まだコミットのないブランチなら None）。
+    pub head: Option<String>,
     pub locked: bool,
     pub prunable: bool,
     pub main: bool,
@@ -8801,6 +8857,7 @@ impl WorktreeInfo {
             .map(|w| Self {
                 path: w["path"].as_str().unwrap_or_default().to_owned(),
                 branch: w["branch"].as_str().map(str::to_owned),
+                head: w["head"].as_str().map(str::to_owned),
                 locked: !w["locked"].is_null() && w["locked"] != false,
                 prunable: !w["prunable"].is_null() && w["prunable"] != false,
                 main: w["main"].as_bool() == Some(true),

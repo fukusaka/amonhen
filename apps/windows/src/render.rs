@@ -11,6 +11,7 @@ use std::sync::Arc;
 use amonhen_core::HistorySnapshot;
 use amonhen_core::lanes::{LaneMetrics, lane_positions};
 use amonhen_layout::Edge;
+use amonhen_model::RefKind;
 use windows::Win32::Foundation::HANDLE;
 use windows::Win32::Graphics::Direct2D::Common::*;
 use windows::Win32::Graphics::Direct2D::*;
@@ -59,6 +60,8 @@ const SELECTION: D2D1_COLOR_F = rgba(0.0, 0.47, 0.84, 0.16);
 const LABEL_LOCAL: (f32, f32, f32) = (0.21, 0.52, 0.89);
 const LABEL_REMOTE: (f32, f32, f32) = (0.57, 0.38, 0.84);
 const LABEL_TAG: (f32, f32, f32) = (0.90, 0.55, 0.15);
+/// worktree の HEAD の札と、ほかの worktree が checkout しているブランチ。
+const LABEL_WORKTREE: (f32, f32, f32) = (0.20, 0.66, 0.30);
 const LABEL_TEXT: D2D1_COLOR_F = rgba(0.11, 0.11, 0.12, 0.9);
 const LABEL_HEAD_TEXT: D2D1_COLOR_F = rgba(1.0, 1.0, 1.0, 1.0);
 const LABEL_HEIGHT: f32 = 17.0;
@@ -583,7 +586,14 @@ impl Renderer {
             let top = row as f32 * ROW_HEIGHT - scroll_y;
             // ref のラベルを件名の前に並べる。
             let mut subject_x = text_x;
-            if let Some(labels) = data.labels.get(&row) {
+            // worktree の HEAD の札を先に。
+            let labels = data
+                .worktree_labels
+                .get(&row)
+                .into_iter()
+                .chain(data.labels.get(&row))
+                .flatten();
+            {
                 let limit = text_x + text_width * LABEL_SHARE;
                 for label in labels {
                     let (layout, w) = self.label(&label.name)?;
@@ -591,7 +601,10 @@ impl Renderer {
                     if subject_x + pill > limit {
                         break;
                     }
-                    self.draw_label(label, &layout, subject_x, top + 2.0, pill)?;
+                    let elsewhere =
+                        label.kind == RefKind::Local && data.elsewhere.contains(&label.name);
+                    let place = (subject_x, top + 2.0, pill);
+                    self.draw_label(label, elsewhere, &layout, place)?;
                     subject_x += pill + LABEL_GAP;
                 }
             }
@@ -986,18 +999,23 @@ impl Renderer {
     fn draw_label(
         &self,
         label: &crate::data::RefLabel,
+        elsewhere: bool,
         layout: &IDWriteTextLayout,
-        x: f32,
-        y: f32,
-        width: f32,
+        (x, y, width): (f32, f32, f32),
     ) -> Result<()> {
-        use amonhen_model::RefKind;
+        // worktree の札と、ほかの worktree が checkout しているブランチは緑（macOS 版と同じ）。
         let (r, g, b) = match label.kind {
+            _ if label.worktree || elsewhere => LABEL_WORKTREE,
             RefKind::Local => LABEL_LOCAL,
             RefKind::Remote => LABEL_REMOTE,
             _ => LABEL_TAG,
         };
-        let fill = rgba(r, g, b, if label.head { 0.85 } else { 0.22 });
+        let alpha = match (label.head, label.worktree) {
+            (true, _) => 0.85,
+            (false, true) => 0.25,
+            (false, false) => 0.22,
+        };
+        let fill = rgba(r, g, b, alpha);
         let rect = D2D1_ROUNDED_RECT {
             rect: D2D_RECT_F {
                 left: x,
