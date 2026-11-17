@@ -391,6 +391,9 @@ pub struct Input<'a> {
     pub sequence: Option<(&'a str, &'a str, bool)>,
     /// 止まった git am を 3-way マージでやり直せるか（帯に Retry with 3-Way Merge を出す。GTK4 版と同じ条件）。
     pub retry_three_way: bool,
+    /// 一部だけ含めているチェック（▣）の要素（キーごと）。描いた後に、どちらでもない状態にする（reactor の
+    /// CheckBox は true・false だけなので、作ったチェックの状態を直に変える）。
+    pub mixed: &'a dyn Fn(&str) -> ElementRef<CheckBox>,
 }
 
 /// 画面が受ける操作。
@@ -522,11 +525,21 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
     let header_check = CheckBox::new()
         .is_checked(some_in)
         .is_enabled(!checkable.is_empty())
-        .opacity(if some_in && !all_in { 0.5 } else { 1.0 })
         .on_is_checked_changed((callbacks.stage_all)(
             checkable.iter().map(|e| e.path.clone()).collect(),
             !all_in,
         ));
+    // 一部だけなら ▣（どちらでもない状態）。状態が変わるたびに作り直す（GTK4 版の見出しの inconsistent）。
+    let header_mixed = some_in && !all_in;
+    let header_check = if header_mixed {
+        header_check.element_ref(&(input.mixed)("header"))
+    } else {
+        header_check
+    };
+    let header_check = View::keyed_fragment([(
+        format!("header:{some_in}:{all_in}"),
+        View::from(header_check),
+    )]);
     let has_message = !input.summary.trim().is_empty();
     let can_commit = !input.committing && (staged > 0 || input.amend) && has_message;
     // 押せないときは、ツールチップでわけを言う（docs/ux.md の決まり。GTK4 版・macOS 版と同じ）。
@@ -660,13 +673,20 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
                     all,
                     some,
                 } => {
-                    // 一部だけ含めているディレクトリは、薄いチェック（reactor の CheckBox に 3 つ目の状態がない）。
+                    // 一部だけ含めているディレクトリは ▣（どちらでもない状態。状態が変わるたびに作り直す）。
                     let check = CheckBox::new()
                         .is_checked(some)
                         .is_enabled(!files.is_empty())
-                        .on_is_checked_changed((callbacks.stage_all)(files, !all))
-                        .opacity(if some && !all { 0.5 } else { 1.0 })
-                        .grid_column(0);
+                        .on_is_checked_changed((callbacks.stage_all)(files, !all));
+                    let check = if some && !all {
+                        check.element_ref(&(input.mixed)(&format!("dir:{path}")))
+                    } else {
+                        check
+                    };
+                    let check = Border::new().grid_column(0).content(View::keyed_fragment([(
+                        format!("{some}:{all}"),
+                        View::from(check),
+                    )]));
                     let row = Grid::new()
                         .columns([GridLength::Auto, GridLength::Star(1.0)])
                         .margin(indent(depth))

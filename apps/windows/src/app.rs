@@ -161,6 +161,9 @@ struct Root {
     search_only: bool,
     last_search: Option<String>,
     search_box: ElementRef<TextBox>,
+    /// Working Copy の一部だけ含めているチェック（キーごと）と、直前の画面で使ったキー。
+    mixed_checks: RefCell<std::collections::HashMap<String, ElementRef<CheckBox>>>,
+    mixed_used: RefCell<Vec<String>>,
     /// 検索の欄を開いた回数（開いた後にフォーカスとキーを付ける）。
     search_opened: u64,
     /// Working Copy の一覧で選んでいるファイル（パス）。
@@ -955,6 +958,8 @@ impl Component for Root {
             search_only: false,
             last_search: None,
             search_box: ElementRef::new(),
+            mixed_checks: RefCell::default(),
+            mixed_used: RefCell::default(),
             search_opened: 0,
             working_file: None,
             working_staged: false,
@@ -5772,6 +5777,7 @@ impl Component for Root {
         } else {
             View::empty()
         };
+        let working_copy = self.working_copy_view(context);
         let body = Grid::new()
             .grid_row(2)
             .columns([
@@ -5800,7 +5806,7 @@ impl Component for Root {
                 right,
                 // Working Copy は History の上に重ねる（History の描画は SwapChainPanel の毎フレームの知らせで回って
                 // いて、外すと止まる）。
-                self.working_copy_view(context),
+                working_copy,
                 self.stashes_view(context),
                 self.reflog_view(context),
                 self.range_diff_view(context),
@@ -9968,7 +9974,7 @@ impl Root {
             .into()
     }
 
-    fn working_copy_view(&self, context: &ViewContext<Self>) -> View {
+    fn working_copy_view(&self, context: &mut ViewContext<Self>) -> View {
         if self.page != Page::WorkingCopy {
             return View::empty();
         }
@@ -10036,9 +10042,37 @@ impl Root {
                         && s["retried"].as_bool() != Some(true)
                         && s["empty"].as_bool() != Some(true)
                 }),
+                mixed: &|key: &str| {
+                    self.mixed_used.borrow_mut().push(key.to_owned());
+                    self.mixed_checks
+                        .borrow_mut()
+                        .entry(key.to_owned())
+                        .or_default()
+                        .clone()
+                },
             },
             callbacks,
         );
+        // 一部だけ含めているチェックを、描いた後に ▣ にする（status が変わるたびに。作り直したチェックは
+        // 含めている状態に戻っている）。
+        let used = std::mem::take(&mut *self.mixed_used.borrow_mut());
+        let refs: Vec<ElementRef<CheckBox>> = {
+            let checks = self.mixed_checks.borrow();
+            used.iter().filter_map(|k| checks.get(k).cloned()).collect()
+        };
+        let generation = self.status.as_ref().map(|s| s.generation);
+        context.use_effect("mixed-checks", (used, generation), move || {
+            for r in &refs {
+                let _ = r.request_native_element(|result| {
+                    if let Ok(element) = result
+                        && let Err(e) = windows_reactor::set_check_mixed(&element)
+                    {
+                        eprintln!("チェックを ▣ にできない: {e}");
+                    }
+                });
+            }
+            None
+        });
         // まん中の列だけを覆う。右の列は差分の欄（詳細の行は畳む）。
         Border::new()
             .background(Brush::Solid(Color::rgb(0xff, 0xff, 0xff)))
