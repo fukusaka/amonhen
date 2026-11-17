@@ -9660,8 +9660,37 @@ fn details(info: Option<(&Value, Option<&Value>)>) -> View {
             rows.push(line("Rev", rev.to_owned()).into());
         }
     }
-    if let Some(status) = signature_status(info, extras) {
-        rows.push(line("Signature", status).into());
+    // 署名: 状態（と署名者）を押すと、吹き出しで詳しく（GTK4 版・macOS 版と同じ）。
+    if let Some((status, check, kind)) = crate::signature::of(info, extras) {
+        let signer = check
+            .and_then(|c| c["signer"].as_str())
+            .filter(|s| !s.is_empty());
+        let text = match signer {
+            Some(signer) => format!("{} — {signer}", status.label()),
+            None => status.label().to_owned(),
+        };
+        let mut value = TextBlock::new().text(text).font_size(12.0);
+        if let Some(color) = status.color() {
+            value = value.foreground(Brush::Solid(color));
+        }
+        let committer = info["committerEmail"].as_str().unwrap_or_default();
+        let popover = crate::signature::popover(status, check, &kind, committer);
+        rows.push(
+            StackPanel::new()
+                .orientation(Orientation::Horizontal)
+                .spacing(2.0)
+                .children((
+                    TextBlock::new()
+                        .text("Signature")
+                        .font_size(12.0)
+                        .foreground(secondary)
+                        .vertical_alignment(VerticalAlignment::Center),
+                    Button::new()
+                        .style(ButtonStyle::Subtle)
+                        .content(value)
+                        .flyout_with(Flyout::rich(popover).placement(FlyoutPlacement::Bottom)),
+                )),
+        );
     }
     let refs = list("refs");
     if !refs.is_empty() {
@@ -9779,44 +9808,6 @@ fn selection_details(selection: &Value) -> View {
         .spacing(4.0)
         .margin(Thickness::new(14.0, 10.0, 14.0, 10.0))
         .children((View::keyed_fragment(rows.into_iter().enumerate()),))
-}
-
-/// 署名の行の文字（署名がなければ `None`）。言葉は GTK4 版の `signature::Status::label` と同じ（署名者の
-/// メールとコミッターの照合はまだしない）。検証の結果は時間のかかる分で届く。
-fn signature_status(info: &Value, extras: Option<&Value>) -> Option<String> {
-    let kind = info["signed"].as_str();
-    let check = extras.map(|e| &e["signature"]).filter(|s| !s.is_null());
-    if kind.is_none() && check.is_none() {
-        return None;
-    }
-    let label = match (extras, check) {
-        (None, _) => "Checking…",
-        (Some(_), None) => "No key",
-        (Some(_), Some(check)) => match check["status"].as_str().unwrap_or_default() {
-            "G" | "U" => {
-                let trust = check["trust"].as_str().unwrap_or_default().to_lowercase();
-                let trusted = kind == Some("ssh")
-                    || matches!(trust.as_str(), "ultimate" | "full" | "fully" | "marginal");
-                if check["status"] == "U" || !trusted {
-                    "Untrusted key"
-                } else {
-                    "Verified"
-                }
-            }
-            "X" | "Y" => "Expired",
-            "R" => "Revoked key",
-            "B" => "Bad signature",
-            "V" => "Can’t verify",
-            _ => "No key",
-        },
-    };
-    let signer = check
-        .and_then(|c| c["signer"].as_str())
-        .filter(|s| !s.is_empty());
-    Some(match signer {
-        Some(signer) => format!("{label} — {signer}"),
-        None => label.to_owned(),
-    })
 }
 
 /// SwapChainPanel に swap chain をつなぐ（reactor が使う windows-core の型で渡す）。受け付けられたら `true`。

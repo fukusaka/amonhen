@@ -279,7 +279,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Switch to the single-file diff | ✓ | ✓ | — | ✓ | n/a | VSCode: One File / All Files above the files. |
 | Diff of a selection (range squashed, A..B / A...B, scattered) | ✓ | ✓ | ✓ | ✓ | △ | VSCode: With the engine.<br>CLI: `diff <rev> <rev>`. |
 | Actions on a selection (cherry-pick, revert, squash, copy IDs) | ✓ | ✓ | △ | ✓ | △ | VSCode: With the engine.<br>CLI: Via `amonhen run`.<br>Windows: Cherry-pick, revert, Range Diff of two and copy IDs from History's menu; no combining. |
-| Signature popover | ✓ | ✓ | — | ✓ | n/a | VSCode: A Signature row in the details (status, explanation, signer and key), no popover. |
+| Signature popover | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: A Signature row in the details (status, explanation, signer and key), no popover. |
 | Word highlights and syntax colors | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: Syntax colors with the engine, after the diff shows. |
 
 ## Blame / File History

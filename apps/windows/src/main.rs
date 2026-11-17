@@ -27,6 +27,7 @@ mod repositories;
 mod sequence;
 mod settingsview;
 mod sidebar;
+mod signature;
 mod stashes;
 mod win32;
 mod winui;
