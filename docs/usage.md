@@ -57,3 +57,13 @@ amonhen log -C ssh://host/path # SSH host (the shared daemon keeps the SSH conne
                                # asks before sending the engine to the host (--send-engine: without asking)
 amonhen daemon status          # state of the shared daemon
 ```
+
+## Terminal (TUI)
+
+`amonhen tui [<path> | ssh://host/path | daemon:<path>]` shows the repository inside the terminal, for an SSH session or a pane beside an editor. It is in its first stages; [tui.md](tui.md) says what is built and what is not. `?` lists the keys of the focused pane.
+
+- Panes: the sidebar (from 100 columns; `0` otherwise), the main view (`1` Changes, `2` History) and, beside it or on Enter, the commit's details or the file's diff. Tab goes round them, Esc goes back, `q` quits.
+- History: `j` `k` and the usual keys move, `/` searches with the History search syntax, `n` `N` go to the next and previous match.
+- Working Copy: Space stages or unstages a file, or in the diff a line (a hunk on its header); `d` discards after asking; `c` writes the message and `Ctrl-s` commits; `a` amends. On a conflicted file `o` `t` take the current or incoming side, and in its diff `o` `t` `b` resolve one conflict.
+- Operations: `f` fetch, `p` pull, `P` push, `b` new branch, `s` stash, `S` pop, `u` undo. In the sidebar, on a ref: Enter selects its commit, `c` checks it out, `m` merges it, `r` rebases onto it; on a stash: `a` `o` `x` apply, pop, drop. While a merge or rebase is stopped: `C` continue, `K` skip, `A` abort.
+- Passwords and passphrases that git or ssh ask for are asked on the bottom line (Unix).

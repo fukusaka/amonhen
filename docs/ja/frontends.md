@@ -413,3 +413,17 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Windows の SSH 先 | ✓ | ✓ | — | ✓ | ✓ |  |
 | パスワード・パスフレーズを尋ねる askpass のダイアログ | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: VSCode の入力欄。拡張が git・ssh・共有の daemon に渡すスクリプトから尋ねる。<br>CLI: ダイアログはアプリのもの。 |
 | 署名の確かめ（この機械か、ホストの鍵） | ✓ | ✓ | — | n/a | △ | VSCode: 拡張は `ssh://` のリポジトリを開かない。Remote-SSH では拡張がホストで動くので、開くほかのリポジトリと同じく、git がホストの鍵で確かめる。<br>CLI: `show`・`refs --verify` で確かめ、選択はない。 |
+
+## 端末の FE（TUI）
+
+`amonhen tui`（`crates/tui`）はまだ最初の段階で、上の表に列はない。機能が落ち着いたら列を足す。今あるものを、上の章の順に（詳しいことと残りは [tui.md](tui.md)）:
+
+- サイドバー: Workspace の行、Branches（今のブランチの印、ahead と behind）、Remotes、Tags、Stashes を平らな一覧で。絞り込みあり。フォルダ・お気に入り・worktree・submodule・右クリックのメニューはない。操作はキーで行う。
+- ツールバー: fetch、pull（git の設定の取り込み方だけ）、上流への push（force push と publish はない）、新しいブランチ、stash（メッセージと追跡していないファイルはない）、pop、undo、サイドバーからの merge と rebase。確認と名前は、シートではなく一番下の行で聞く。
+- Stashes: サイドバーから、戻す・pop・消す。stash の差分は出ない。
+- Working Copy: ファイルごとに印のある 1 つの一覧、stage 済みの印のつく HEAD から作業ツリーまでの差分、ファイル・hunk・行ごとの stage（行の範囲はない）、discard、メッセージと commit・amend（Commit and Push とエディタはない）、マーカーつきのコンフリクトの表示と、コンフリクトごと・ファイルごとの片側での解決（共通の祖先の側・Magic Merge・マージエディタはない）。
+- History: 1 コミット 1 行のグラフ、ref の札、検索（合った行に色、順に移る。途中の結果と、合った行だけの表示はない）、行を薄くする祖先の強調、選べるコミットは 1 つ（複数選択・折りたたみ・密度の帯・編集モード・コミットのメニューはない）。
+- History の右の列: メッセージ、作者と日付、違うときはコミッター、ID と親、変わったファイル、変わった語と構文の色のついた unified の差分。署名・タグ・notes・詳しい表はない。
+- ステータスバー: 一番下の行に、merge・rebase・cherry-pick・revert の途中の状態と、続ける・飛ばす・やめる。
+- SSH 先・共有の daemon・askpass: CLI と同じく `ssh://` と `daemon:` の場所を開く（まだ試していない）。askpass は Unix で。
+- ないもの: タブと窓、リポジトリの一覧、Settings と Repository Settings、Reflog、Reset、Range Diff、Blame と File History、パッチ、AI、Activity、GitHub、worktree、差分の文字の選択。

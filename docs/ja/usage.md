@@ -57,3 +57,13 @@ amonhen log -C ssh://host/path # SSH 先（共有の daemon が SSH のつなが
                                # SSH 先にエンジンを送る前に聞く（--send-engine なら聞かずに送る）
 amonhen daemon status          # 共有の daemon の様子
 ```
+
+## 端末（TUI）
+
+`amonhen tui [<path> | ssh://host/path | daemon:<path>]` は、端末の中でリポジトリを見せる。SSH のセッションや、エディタの横の端末のためのもの。まだ最初の段階で、作ったものと作っていないものは [tui.md](tui.md) にある。`?` で、フォーカスのある枠のキーの一覧。
+
+- 枠: サイドバー（100 桁から。狭ければ `0`）、メインの画面（`1` Changes、`2` History）、その横か Enter で開く、コミットの詳細かファイルの差分。Tab で順に回り、Esc で戻り、`q` で終わる。
+- History: `j` `k` などで動く。`/` で History の検索の書き方で検索し、`n` `N` で次と前の合った行へ。
+- Working Copy: Space でファイルを stage / unstage。差分では行（hunk の見出しではその hunk）。`d` は確かめてから捨てる。`c` でメッセージを書き、`Ctrl-s` でコミット。`a` で amend。コンフリクトのあるファイルは `o` `t` で Current か Incoming の側を取り、その差分では `o` `t` `b` でコンフリクトを 1 つずつ解決する。
+- 操作: `f` fetch、`p` pull、`P` push、`b` 新しいブランチ、`s` stash、`S` pop、`u` undo。サイドバーの ref の上では、Enter でそのコミットを選ぶ、`c` でチェックアウト、`m` で merge、`r` でその上に rebase。stash の上では `a` `o` `x` で戻す・pop・消す。merge や rebase が止まっている間は、`C` で続ける、`K` で飛ばす、`A` でやめる。
+- git や ssh が尋ねるパスワードとパスフレーズは、一番下の行で聞く（Unix）。

@@ -413,3 +413,17 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Windows SSH hosts | ✓ | ✓ | — | ✓ | ✓ |  |
 | askpass dialog for passwords and passphrases | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: VSCode's input box, through a script the extension passes to git, ssh and the shared daemon.<br>CLI: The dialog belongs to the apps. |
 | Signature verification (this machine's keys or the host's) | ✓ | ✓ | — | n/a | △ | VSCode: The extension opens no `ssh://` repositories; under Remote-SSH it runs on the host, so git verifies there with the host's keys, as for any repository the extension opens.<br>CLI: Checked in `show` and `refs --verify`; no choice. |
+
+## Terminal front end (TUI)
+
+`amonhen tui` (`crates/tui`) is in its first stages and has no column in the tables above yet; it gets one when its features settle. What it has today, by the chapters above ([tui.md](tui.md) has the details and what is left):
+
+- Sidebar: Workspace rows, Branches (current marked, ahead and behind), Remotes, Tags and Stashes in flat lists, with a filter. No folders, favorites, worktrees, submodules or context menus; operations are keys.
+- Toolbar: fetch, pull (git's configured mode only), push to the upstream (no force push or publish), new branch, stash (no message or untracked files), pop, undo, merge and rebase from the sidebar. Confirmations and names are asked on the bottom line, not in sheets.
+- Stashes: apply, pop and drop from the sidebar; a stash's diff is not shown.
+- Working Copy: one list with a check per file, the HEAD-to-working-tree diff with staged marks, staging by file, hunk and line (no range of lines), discard, the message with commit and amend (no Commit and Push, no editor), conflicts shown with markers and resolved by side per conflict or per file (no base side, no Magic Merge, no merge editor).
+- History: the graph on one line per commit, ref labels, search with matches colored and stepped through (no partial results, no matches-only view), ancestor emphasis by dimming rows, one selected commit (no multi-selection, folding, density band, edit mode or commit menu).
+- History's right column: message, author and date, committer when different, ID and parents, changed files, the unified diff with changed words and syntax colors. No signatures, tags, notes or the detailed table.
+- Status bar: the bottom line shows a merge, rebase, cherry-pick or revert in progress with continue, skip and abort.
+- SSH hosts, shared daemon, askpass: opens `ssh://` and `daemon:` locations like the CLI (not tested yet); askpass on Unix.
+- Not there: tabs and windows, the repository list, Settings and Repository settings, Reflog, Reset, Range Diff, Blame and File History, patches, AI, Activity, GitHub, worktrees, selecting text in diffs.
