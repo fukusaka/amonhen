@@ -4,7 +4,7 @@
 
 端末で動く FE: `amonhen tui`。アプリが届かない所（SSH のセッション、デスクトップのないマシン、エディタの横の端末）のためのもので、目指すところはアプリと同じ: 画面のどこも git を待たない。
 
-状態: 段階 T1 と T2 を作った（History・選んだコミットの詳細と差分・スクロール・`--snapshot`・`--measure-scroll`）。残りは設計。
+状態: 段階 T1 と T2（History・選んだコミットの詳細と差分・スクロール・`--snapshot`・`--measure-scroll`）と、T3 の最初の部分（Working Copy の一覧と差分・ファイルごとの stage・変化の知らせ）を作った。残りは設計。
 
 ## 概要
 
@@ -65,7 +65,7 @@
 
 ### 変化
 
-`front.subscribe` が変化のビット（refs・index・作業ツリー・config）を届ける。続けて来たビットはまとめ、ビットが指すものだけを読み直す（index と作業ツリーなら `status`、refs なら `refs` と `history`）。画面の History は新しいものができるまで番号を保ち、できたら選択をコミットの ID で引き継ぐ（`historyRowOf`）。
+`front.subscribe` が変化のビット（refs・index・作業ツリー・config）を届ける。続けて来たビットはまとめ、ビットが指すものだけを読み直す（index と作業ツリーなら `status`、refs なら `refs` と `history`）。画面の History は新しいものができるまで番号を保ち、できたら選択をコミットの ID で引き継ぐ（`historyRowOf`）。今は、refs が変わると History をその場で読み直す: 選択は同じコミットではなく同じ行番号に残り、行は届くまで空になる（T4 で直す）。TUI 自身が stage した後は、知らせを待たずに状態を読み直す。
 
 ## 画面
 
@@ -88,13 +88,14 @@
 - 端末が広ければ（140 桁ほどから）3 列: サイドバー・メインの画面・詳細。狭ければ、詳細はメインの画面と入れ替わりで開く（Enter で入り、Esc で戻る）。さらに狭ければ（80 桁ほど未満）、サイドバーは呼んだときだけメインの画面に重ねる。サイドバーができる（T4）までは、120 桁から History と詳細を並べ、History は 5 分の 2（少なくとも 60 桁）を使う。
 - サイドバーはアプリと同じ節（メインの画面を切り替える Workspace の行、続いて Branches・Remotes・Tags・Worktrees）と、絞り込みの欄を持つ。
 - 一番上の行は、リポジトリ・今のブランチと ahead / behind・動いている処理。一番下の行は、merge・rebase・cherry-pick の途中ならその状態と操作、そうでなければ、フォーカスのある所のキーの案内。
-- Working Copy はアプリと同じ 1 つの一覧で、ファイルごとにチェック（Space で stage / unstage）。右に差分（hunk・行ごとの stage。`stageRows`・`discardRows`）、一覧の下にメッセージの欄。
+- Working Copy はアプリと同じ 1 つの一覧で、ファイルごとにチェック（`[x]` stage 済み、`[-]` 一部、`[ ]` まだ。Space で stage / unstage）。右に差分（hunk・行ごとの stage。`stageRows`・`discardRows`）、一覧の下にメッセージの欄。
 - シート（確認・Branch・Merge・Rebase・Push…）は画面に重ねる枠で、欄と文言はアプリと同じ。壊す操作は先に尋ね、Undo で戻せるかを書く。
 
 ## キー
 
 - 移動: 矢印と `j` `k`、`g` `G`、PageUp と PageDown、`Ctrl-d` `Ctrl-u`。枠の間は `Tab` と `Shift-Tab`。Workspace の行は `1`…`5`。
 - 詳細では: `[` `]` で前と次のファイル、`h` `l`（と左右の矢印）で差分を横に動かす、Esc で History に戻る。
+- サイドバーができるまでは、一番上の行にメインの画面とそのキーを並べる（`1` Changes と変わったファイルの数、`2` History）。
 - `/` で検索（History。サイドバーでは絞り込み）、`n` `N` で次と前。
 - `:` で命令の一覧: 共通の表（`amonhen-commands`）の操作のうち TUI にあるものを、打った文字で絞り込み、キーを横に出す。`?` でフォーカスのある所のキーの一覧。
 - アプリのツールバーにある操作は 1 文字のキーを持つ（`f` fetch、`p` pull、`P` push、`b` branch、`m` merge、`r` rebase、`s` stash、`u` undo）。アプリがシートを通すものは、TUI もシートを通す。
@@ -158,7 +159,7 @@ T2、同じ Mac、このリポジトリ（3,438 コミット）。200 × 60 で�
 - [x] T1. `crates/tui`、イベントループ、`amonhen tui`、History（グラフ・札・件名・作者・日付）、行の範囲を持つスクロール、`amonhen log` と共有する `amonhen-projection::terminal`、`--snapshot` と `--measure-scroll`。速さ・1 行のグラフ・エンジンの大きさを linux のリポジトリで測った（計測の記録）
 - [ ] T1b. 端末のスクロール領域を使う自前のフレームの出力（スクロールの 1 歩で、新しく見える行だけを送る）。最も遅いフレームの原因を調べる。criterion のベンチ
 - [x] T2. コミットの詳細と差分（ファイルの一覧・unified の差分・変わった語・構文の色）、狭いときのレイアウト
-- [ ] T3. Working Copy: 一覧、ファイル・hunk・行ごとの stage、discard、メッセージの欄とエディタ、commit と amend。変化の知らせ
+- [ ] T3. Working Copy: 一覧、ファイル・hunk・行ごとの stage、discard、メッセージの欄とエディタ、commit と amend。変化の知らせ。作ったもの: ファイルごとに印のある一覧、stage 済みの行に印のつく差分、Space でのファイルの stage と unstage、変化の知らせでの読み直し。残り: hunk と行、discard、メッセージ、commit と amend
 - [ ] T4. サイドバー（Branches・Remotes・Tags・絞り込み）、ref ごとの History、検索、祖先の強調、命令の一覧とヘルプ
 - [ ] T5. シートつきの操作（fetch・pull・push・branch・checkout・merge・rebase・stash・reset・undo）、askpass、動いている処理の表示。マウスの取り込みを切るキーと設定、一時停止（`Ctrl-z`）、kitty のキーボードプロトコル
 - [ ] T6. コンフリクト、Stashes、Reflog、Worktrees、History の編集（命令として）、前と後の絵
