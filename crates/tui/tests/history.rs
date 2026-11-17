@@ -617,13 +617,27 @@ fn question_mark_lists_the_keys() {
     let help = amonhen_tui::snapshot(open(dir.path()), 80, 30, clock(), "?").unwrap();
     println!("{help}");
     assert!(help.contains("┌─ Keys ─"));
-    assert!(help.contains("│ n N        Next and previous match"));
-    assert!(help.contains("│ q          Quit"));
+    assert!(help.contains("│ n N          Next and previous match"));
+    assert!(help.contains("│ q            Quit"));
     let closed = amonhen_tui::snapshot(open(dir.path()), 80, 30, clock(), "?x").unwrap();
     assert!(!closed.contains("Keys"));
     // Working Copy の差分では、その枠のキー。
     let diff = amonhen_tui::snapshot(open(dir.path()), 80, 30, clock(), "1\n?").unwrap();
     assert!(diff.contains("Previous and next hunk"));
+}
+
+/// Space は、History とサイドバーで Enter と同じ（詳細へ入る・選んでいる行を開く）
+#[test]
+fn space_opens_like_enter() {
+    let dir = tempfile::tempdir().unwrap();
+    merged(dir.path());
+    let shot = |keys: &str| amonhen_tui::snapshot(open(dir.path()), 80, 30, clock(), keys).unwrap();
+    // 狭いので、詳細は History の所に開く。
+    assert_ne!(shot("j "), shot("j"));
+    assert_eq!(shot("j "), shot("j\n"));
+    // サイドバーの Changes の行を開く。
+    assert_ne!(shot("0gj "), shot("0gj"));
+    assert_eq!(shot("0gj "), shot("0gj\n"));
 }
 
 /// 上流のあるリポジトリ: 空のリモートに main を push してから、手元で 1 つ進める。

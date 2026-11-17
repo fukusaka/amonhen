@@ -1610,7 +1610,7 @@ impl App {
             KeyCode::PageUp => self.sidebar.move_selection(-page),
             KeyCode::Char('g') | KeyCode::Home => self.sidebar.move_selection(i64::MIN / 2),
             KeyCode::Char('G') | KeyCode::End => self.sidebar.move_selection(i64::MAX / 2),
-            KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right => {
+            KeyCode::Enter | KeyCode::Char(' ' | 'l') | KeyCode::Right => {
                 self.pick();
                 true
             }
@@ -1643,7 +1643,7 @@ impl App {
             (_, Focus::Sidebar) => vec![
                 ("j k", tr!("Move")),
                 (
-                    "Enter",
+                    "Enter Space",
                     tr!("Open the view, or select the ref's commit in History"),
                 ),
                 ("c", tr!("Check out the branch")),
@@ -1658,7 +1658,7 @@ impl App {
                 ("j k", tr!("Move")),
                 ("g G", tr!("Top and bottom")),
                 ("PgUp PgDn", tr!("Move by a page")),
-                ("Enter", tr!("Go to the details")),
+                ("Enter Space", tr!("Go to the details")),
                 ("/", tr!("Search")),
                 ("n N", tr!("Next and previous match")),
                 ("y v", tr!("Cherry-pick, revert the selected commit")),
@@ -2005,7 +2005,7 @@ impl App {
             KeyCode::Char('u') if control => Some(self.history.move_selection(-page / 2)),
             KeyCode::Char('j') | KeyCode::Down => Some(self.history.move_selection(1)),
             KeyCode::Char('k') | KeyCode::Up => Some(self.history.move_selection(-1)),
-            KeyCode::PageDown | KeyCode::Char(' ') => Some(self.history.move_selection(page)),
+            KeyCode::PageDown => Some(self.history.move_selection(page)),
             KeyCode::PageUp => Some(self.history.move_selection(-page)),
             KeyCode::Char('g') | KeyCode::Home => Some(self.history.select(0)),
             KeyCode::Char('G') | KeyCode::End => Some(self.history.select(u32::MAX)),
@@ -2033,7 +2033,7 @@ impl App {
                 self.focus = Focus::Sidebar;
                 true
             }
-            KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right => {
+            KeyCode::Enter | KeyCode::Char(' ' | 'l') | KeyCode::Right => {
                 self.focus = Focus::Side;
                 true
             }
