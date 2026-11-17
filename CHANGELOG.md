@@ -11,8 +11,8 @@ becomes the GitHub Release notes.
 
 #### Added
 
-- `amonhen tui` is a front end in the terminal: History with commit details and diffs, and the Working Copy with
-  staging by file, hunk and line, discard, commit and amend. These are its first stages; see `docs/tui.md`.
+- `amonhen tui` is a front end in the terminal: History with commit details and diffs, the Working Copy with staging
+  by file, hunk and line, discard, commit and amend, and a sidebar of branches and tags. These are its first stages; see `docs/tui.md`.
 
 ### [0.2.12] - 2026-11-18
 

@@ -4,7 +4,7 @@
 
 端末で動く FE: `amonhen tui`。アプリが届かない所（SSH のセッション、デスクトップのないマシン、エディタの横の端末）のためのもので、目指すところはアプリと同じ: 画面のどこも git を待たない。
 
-状態: 段階 T1 と T2（History・選んだコミットの詳細と差分・スクロール・`--snapshot`・`--measure-scroll`）と、T3 の大半（Working Copy の一覧と差分・ファイル、hunk、行ごとの stage・discard・メッセージの欄・commit と amend・変化の知らせ）を作った。残りは設計。
+状態: 段階 T1 と T2（History・選んだコミットの詳細と差分・スクロール・`--snapshot`・`--measure-scroll`）と、T3 の大半（Working Copy の一覧と差分・ファイル、hunk、行ごとの stage・discard・メッセージの欄・commit と amend・変化の知らせ）、T4 の最初の部分（Branches・Remotes・Tags のあるサイドバー）を作った。残りは設計。
 
 ## 概要
 
@@ -65,7 +65,7 @@
 
 ### 変化
 
-`front.subscribe` が変化のビット（refs・index・作業ツリー・config）を届ける。続けて来たビットはまとめ、ビットが指すものだけを読み直す（index と作業ツリーなら `status`、refs なら `refs` と `history`）。画面の History は新しいものができるまで番号を保ち、できたら選択をコミットの ID で引き継ぐ（`historyRowOf`）。今は、refs が変わると History をその場で読み直す: 選択は同じコミットではなく同じ行番号に残り、行は届くまで空になる（T4 で直す）。TUI 自身が stage した後は、知らせを待たずに状態を読み直す。
+`front.subscribe` が変化のビット（refs・index・作業ツリー・config）を届ける。続けて来たビットはまとめ、ビットが指すものだけを読み直す（index と作業ツリーなら `status`、refs なら `refs` と `history`）。画面の History は新しいものができるまで番号を保ち、できたら選択をコミットの ID で引き継ぐ（`historyRowOf`）。refs が変わると History をその場で読み直し、同じコミットを選び直す（`historyRowOf`）。行は、届くまでは今も空になる。TUI 自身が stage した後は、知らせを待たずに状態を読み直す。
 
 ## 画面
 
@@ -85,7 +85,7 @@
  Rebase 3/7 · 2 conflicts   c continue  s skip  a abort                    ? help  : commands
 ```
 
-- 端末が広ければ（140 桁ほどから）3 列: サイドバー・メインの画面・詳細。狭ければ、詳細はメインの画面と入れ替わりで開く（Enter で入り、Esc で戻る）。さらに狭ければ（80 桁ほど未満）、サイドバーは呼んだときだけメインの画面に重ねる。サイドバーができる（T4）までは、120 桁から History と詳細を並べ、History は 5 分の 2（少なくとも 60 桁）を使う。
+- 端末が広ければ（140 桁ほどから）3 列: サイドバー・メインの画面・詳細。狭ければ、詳細はメインの画面と入れ替わりで開く（Enter で入り、Esc で戻る）。さらに狭ければ（80 桁ほど未満）、サイドバーは呼んだときだけメインの画面に重ねる。作ったもの: サイドバー（26 桁）は 100 桁から出る。メインの画面と詳細は、残りが 116 桁あれば（全体で 142 桁ほど）並べ、メインの画面は 5 分の 2（少なくとも 60 桁）を使う。100 桁未満では、`0` でサイドバーをメインの画面の所に出す。
 - サイドバーはアプリと同じ節（メインの画面を切り替える Workspace の行、続いて Branches・Remotes・Tags・Worktrees）と、絞り込みの欄を持つ。
 - 一番上の行は、リポジトリ・今のブランチと ahead / behind・動いている処理。一番下の行は、merge・rebase・cherry-pick の途中ならその状態と操作、そうでなければ、フォーカスのある所のキーの案内。
 - Working Copy はアプリと同じ 1 つの一覧で、ファイルごとにチェック（`[x]` stage 済み、`[-]` 一部、`[ ]` まだ。Space で stage / unstage）。右に差分（hunk・行ごとの stage。`stageRows`・`discardRows`）、一覧の下にメッセージの欄。
@@ -97,7 +97,7 @@
 - 詳細では: `[` `]` で前と次のファイル、`h` `l`（と左右の矢印）で差分を横に動かす、Esc で History に戻る。
 - Working Copy の差分では行を選ぶ（`j` `k`。`[` `]` で hunk の見出しへ）: Space でその行を stage / unstage、`d` で捨てる。hunk の見出しでは、どちらもその hunk すべてに働く。一覧では `d` でファイルの変更を捨てる。捨てる前に一番下の行で尋ね（`y` で進む、ほかのキーでやめる）、Undo で戻せることを書く。T5 でシートができるまでの形。
 - メッセージの欄は Working Copy の一覧の下にあり、見出しに件名の行の文字数を出す。`c` で入り、Esc か Tab で戻る。書いている間は、ふつうのキーはすべて文字になる。コミットは `Ctrl-s`（一覧からも。端末が送るなら、欄では Alt-Enter でも）。端末は Ctrl-Enter と Enter を区別できないため。一覧の `a` で amend を切り替え、入れたときに欄が空なら直前のコミットのメッセージを入れる。コミットできないときは、理由を一番下の行に出す（メッセージがない、何も stage していない）。アプリの Commit ボタンがツールチップに出すのと同じ。
-- サイドバーができるまでは、一番上の行にメインの画面とそのキーを並べる（`1` Changes と変わったファイルの数、`2` History）。
+- `0` でサイドバーへ（一覧からは `h` か左の矢印でも。Tab は枠を順に回る）。Enter で選んでいる行を開く: Workspace の行はメインの画面を替え、ブランチ・リモートのブランチ・タグは History でそのコミットを選ぶ。`1` と `2` は、どこからでも Changes と History に替える。サイドバーが出ていないときは、一番上の行にメインの画面とそのキー、変わったファイルの数を並べる。
 - `/` で検索（History。サイドバーでは絞り込み）、`n` `N` で次と前。
 - `:` で命令の一覧: 共通の表（`amonhen-commands`）の操作のうち TUI にあるものを、打った文字で絞り込み、キーを横に出す。`?` でフォーカスのある所のキーの一覧。
 - アプリのツールバーにある操作は 1 文字のキーを持つ（`f` fetch、`p` pull、`P` push、`b` branch、`m` merge、`r` rebase、`s` stash、`u` undo）。アプリがシートを通すものは、TUI もシートを通す。
@@ -162,7 +162,7 @@ T2、同じ Mac、このリポジトリ（3,438 コミット）。200 × 60 で�
 - [ ] T1b. 端末のスクロール領域を使う自前のフレームの出力（スクロールの 1 歩で、新しく見える行だけを送る）。最も遅いフレームの原因を調べる。criterion のベンチ
 - [x] T2. コミットの詳細と差分（ファイルの一覧・unified の差分・変わった語・構文の色）、狭いときのレイアウト
 - [ ] T3. Working Copy: 一覧、ファイル・hunk・行ごとの stage、discard、メッセージの欄とエディタ、commit と amend。変化の知らせ。作ったもの: ファイルごとに印のある一覧、stage 済みの行に印のつく差分、Space での stage と unstage（一覧ではファイル、差分では行。hunk の見出しではその hunk）、確かめてからの discard（`d`）、一覧の下のメッセージの欄と commit・amend、変化の知らせでの読み直し。残り: メッセージを git のエディタで開く（`Ctrl-e`）、行の範囲の選択
-- [ ] T4. サイドバー（Branches・Remotes・Tags・絞り込み）、ref ごとの History、検索、祖先の強調、命令の一覧とヘルプ
+- [ ] T4. サイドバー（Branches・Remotes・Tags・絞り込み）、ref ごとの History、検索、祖先の強調、命令の一覧とヘルプ。作ったもの: Workspace の行・Branches（今のブランチの印、ahead と behind）・Remotes・Tags のあるサイドバー、ref を開くと History でそのコミットを選ぶ、読み直しても選択をコミットで保つ。残り: 絞り込み、検索、祖先の強調、命令の一覧とヘルプ、サイドバーの Worktrees と Stashes
 - [ ] T5. シートつきの操作（fetch・pull・push・branch・checkout・merge・rebase・stash・reset・undo）、askpass、動いている処理の表示。マウスの取り込みを切るキーと設定、一時停止（`Ctrl-z`）、kitty のキーボードプロトコル
 - [ ] T6. コンフリクト、Stashes、Reflog、Worktrees、History の編集（命令として）、前と後の絵
 - [ ] T7. frontends.md の TUI の列、usage.md、CHANGELOG

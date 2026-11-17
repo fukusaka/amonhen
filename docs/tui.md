@@ -4,7 +4,7 @@
 
 A front end that runs in a terminal: `amonhen tui`. It is for the places the apps don't reach (an SSH session, a machine without a desktop, a terminal pane beside an editor) and it keeps the same aim as the apps: nothing on screen waits for git.
 
-Status: stages T1 and T2 are built (History, the selected commit's details and diff, scrolling, `--snapshot`, `--measure-scroll`), and most of T3 (the Working Copy list and diff, staging by file, hunk and line, discard, the message field, commit and amend, change notifications). The rest is design.
+Status: stages T1 and T2 are built (History, the selected commit's details and diff, scrolling, `--snapshot`, `--measure-scroll`), and most of T3 (the Working Copy list and diff, staging by file, hunk and line, discard, the message field, commit and amend, change notifications) and the first part of T4 (the sidebar with Branches, Remotes and Tags). The rest is design.
 
 ## Overview
 
@@ -65,7 +65,7 @@ The core gets no terminal code, and `amonhen-front` gets no new commands for the
 
 ### Changes
 
-`front.subscribe` delivers the change bits (refs, index, working tree, config). Bits arriving close together are merged, then only what the bits name is reloaded (`status` for index and working tree; `refs` and `history` for refs). The History on screen keeps its number until the new one is ready, then the selection is carried over by commit ID (`historyRowOf`). Today a refs change reloads History in place: the selection stays on the same row number, not the same commit, and the rows are blank until they arrive (to do with T4). After the TUI's own staging it reloads the status without waiting for the notification.
+`front.subscribe` delivers the change bits (refs, index, working tree, config). Bits arriving close together are merged, then only what the bits name is reloaded (`status` for index and working tree; `refs` and `history` for refs). The History on screen keeps its number until the new one is ready, then the selection is carried over by commit ID (`historyRowOf`). A refs change reloads History in place and selects the same commit again (`historyRowOf`); the rows are still blank until they arrive. After the TUI's own staging it reloads the status without waiting for the notification.
 
 ## Screen
 
@@ -85,7 +85,7 @@ The core gets no terminal code, and `amonhen-front` gets no new commands for the
  Rebase 3/7 · 2 conflicts   c continue  s skip  a abort                    ? help  : commands
 ```
 
-- Three columns when the terminal is wide enough (about 140 columns and up): the sidebar, the main view, the details. Narrower, the details open in place of the main view (Enter to go in, Esc to come back); narrower still (under about 80), the sidebar opens over the main view on demand. Until the sidebar exists (T4), History and the details sit side by side from 120 columns, History taking two fifths (60 columns at least).
+- Three columns when the terminal is wide enough (about 140 columns and up): the sidebar, the main view, the details. Narrower, the details open in place of the main view (Enter to go in, Esc to come back); narrower still (under about 80), the sidebar opens over the main view on demand. As built: the sidebar (26 columns) shows from 100 columns; the main view and the details sit side by side when 116 columns are left for them (about 142 in all), the main view taking two fifths (60 columns at least). Under 100 columns `0` opens the sidebar in place of the main view.
 - The sidebar has the same sections as the apps (Workspace rows that switch the main view, then Branches, Remotes, Tags, Worktrees), with the filter field.
 - The top line is the repository, the current branch with ahead and behind, and what is running. The bottom line is the state of a merge, rebase or cherry-pick with its actions, and otherwise hints for the focused pane.
 - Working Copy is the apps' single list with a check per file (`[x]` staged, `[-]` partly, `[ ]` not; Space stages or unstages), the diff on the right with staging by hunk and by line (`stageRows`, `discardRows`), and the message field under the list.
@@ -97,7 +97,7 @@ The core gets no terminal code, and `amonhen-front` gets no new commands for the
 - In the details: `[` `]` to the previous and next file, `h` `l` (and the left and right arrows) to pan the diff, Esc back to History.
 - In the Working Copy diff a line is selected (`j` `k`; `[` `]` to the hunk headers): Space stages or unstages it, `d` discards it; on a hunk header both act on the whole hunk. In the list, `d` discards the file's changes. Discarding asks first on the bottom line (`y` to go on, any other key to cancel) and says that Undo brings the change back; this stands in for the sheets until T5.
 - The message field sits under the Working Copy list; its heading shows the length of the summary line. `c` goes into it, Esc or Tab comes back, and while typing every plain key is text. `Ctrl-s` commits (also from the list; Alt-Enter in the field too, where the terminal sends it), since a terminal can't tell Ctrl-Enter from Enter. `a` in the list turns amend on and off; turning it on fills an empty field with the last commit's message. A commit that can't be made says why on the bottom line (no message, nothing staged), as the apps' Commit button does in its tooltip.
-- Until the sidebar exists, the top line lists the main views with their keys (`1` Changes with the number of changed files, `2` History).
+- `0` goes to the sidebar (also `h` or the left arrow from a list, and Tab goes round the panes); Enter opens the selected row: a Workspace row switches the main view, a branch, remote branch or tag selects its commit in History. `1` and `2` switch to Changes and History from anywhere. When the sidebar is not showing, the top line lists the main views with their keys and the number of changed files.
 - `/` search (History, or the filter in the sidebar), `n` `N` next and previous match.
 - `:` opens the command list: every operation in the shared table (`amonhen-commands`) that the TUI has, filtered as you type, with its key beside it. `?` lists the keys of the focused pane.
 - Operations have single keys where the apps have toolbar buttons (`f` fetch, `p` pull, `P` push, `b` branch, `m` merge, `r` rebase, `s` stash, `u` undo) and go through a sheet when the apps do.
@@ -162,7 +162,7 @@ T2, the same Mac, this repository (3,438 commits), with the details beside Histo
 - [ ] T1b. Our own frame output with terminal scroll regions, so a scroll step sends only the rows that come into view; profile the slowest frames; criterion benches
 - [x] T2. Commit details and the diff (file list, unified diff, changed words, syntax colors), the narrow layouts
 - [ ] T3. Working Copy: the list, staging by file, hunk and line, discard, the message field and the editor, commit and amend; change notifications. Built so far: the list with a check per file, the diff with a mark on staged lines, staging and unstaging with Space (a file in the list; a line, or a hunk on its header, in the diff), discard with `d` after a confirmation, the message field under the list with commit and amend, reloading on change notifications. Left: opening the message in git's editor (`Ctrl-e`), selecting a range of lines
-- [ ] T4. The sidebar (Branches, Remotes, Tags, the filter), History by ref, search, ancestor emphasis, the command list and help
+- [ ] T4. The sidebar (Branches, Remotes, Tags, the filter), History by ref, search, ancestor emphasis, the command list and help. Built so far: the sidebar with the Workspace rows, Branches (the current one marked, ahead and behind), Remotes and Tags; opening a ref selects its commit in History; the selection is kept by commit across reloads. Left: the filter, search, ancestor emphasis, the command list and help, Worktrees and Stashes in the sidebar
 - [ ] T5. Operations with their sheets (fetch, pull, push, branch, checkout, merge, rebase, stash, reset, undo), askpass, what is running; the key and the setting that turn mouse capture off, suspend (`Ctrl-z`), the kitty keyboard protocol
 - [ ] T6. Conflicts, Stashes, Reflog, Worktrees, History's edit mode as commands, the before and after drawings
 - [ ] T7. The TUI column of frontends.md, usage.md, the CHANGELOG entry
