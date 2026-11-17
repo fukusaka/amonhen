@@ -404,6 +404,11 @@ final class RepositorySettingsModel {
             }
             load()
             onRepositoryChange?()
+            // 検証の設定（`gpg.ssh.allowedSignersFile`・`gpg.minTrustLevel` など）を変えたら、覚えていた検証の
+            // 結果を捨てて検証し直す（すべての窓。「すべてのリポジトリ」の段の書き換えはどのリポジトリにも効く）。
+            if commands.contains(where: { ($0["key"] as? String)?.lowercased().hasPrefix("gpg.") == true }) {
+                NotificationCenter.default.post(name: .signatureCheckChanged, object: nil)
+            }
             done?(ok)
         }
     }
@@ -646,7 +651,8 @@ private struct AllSettingsTab: View {
     private static let newRowID = ""
     /// 「基本」のキー: このページ群が尋ねるもの（docs/ux.md の 4.5）。git が出す形（小文字）で。
     private static let basicKeys = [
-        "user.name", "user.email", "commit.gpgsign", "gpg.format", "user.signingkey", "commit.template",
+        "user.name", "user.email", "commit.gpgsign", "gpg.format", "user.signingkey", "gpg.ssh.allowedsignersfile",
+        "commit.template",
         "amonhen.defaultbranch", "pull.rebase", "pull.ff", "fetch.prune", "rebase.autostash", "rebase.updaterefs",
         "merge.conflictstyle", "rerere.enabled", "rerere.autoupdate", "core.autocrlf", "core.filemode",
     ]
@@ -1398,6 +1404,7 @@ private struct AuthorSigningPage: View {
             Section {
                 SigningRow(model: model)
                 SigningKeyRow(model: model, format: format)
+                AllowedSignersRow(model: model)
             } header: {
                 Text(L("Signing"))
             }
@@ -1458,6 +1465,77 @@ private struct MailmapFileRow: View {
             }
         } else if value.isEmpty {
             // 上の段で決めたものを消すことはできないので、ここでは上書きを消す（上の段にあればそれが効く）。
+            model.set(Self.key, nil)
+        }
+    }
+}
+
+/// SSH の署名を検証する公開鍵の一覧（`gpg.ssh.allowedSignersFile`）。git が読むファイルなので、SSH 先の
+/// リポジトリなら SSH 先のものを選ぶ。署名の形式によらず出す（ほかの人の SSH の署名を検証するのにも使う）。
+private struct AllowedSignersRow: View {
+    let model: RepositorySettingsModel
+    private static let key = "gpg.ssh.allowedSignersFile", pickFile = "\u{1}file"
+    private let help = L("Public keys trusted to verify SSH signatures.")
+
+    private var current: String { model.effective(Self.key)?.value ?? "" }
+
+    private func label(_ path: String) -> String {
+        path.isEmpty ? L("None") : L("File: %@", (path as NSString).abbreviatingWithTildeInPath)
+    }
+
+    /// 署名をこの Mac の鍵で検証する SSH 先（そこではこの行の設定を読まない。docs/design.md の「Where to verify」）。
+    /// SSH Hosts で検証する側を変えたら読み直す。
+    @State private var hostCheckedHere: String?
+
+    private func readHostCheckedHere() {
+        hostCheckedHere = model.host.flatMap { Settings.checkSignaturesLocally(on: $0) ? $0 : nil }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            SettingRow(model: model, question: L("Allowed signers"), help: help, keys: [Self.key], describe: label) {
+                Picker("", selection: Binding(get: { current }, set: { choose($0) })) {
+                    Text(L("None")).tag("")
+                    if !current.isEmpty { Text(label(current)).tag(current) }
+                    Divider()
+                    Text(L("A file…")).tag(Self.pickFile)
+                }
+                .labelsHidden()
+                .frame(maxWidth: 320)
+            }
+            if let host = hostCheckedHere {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("⚠ " + L("Signatures on this host are checked with this Mac’s keys, so this setting isn’t used. Set it in Settings > Git on this Mac, or choose The host’s git and keys for Verify with in Settings > SSH Hosts."))
+                        .foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+                    Button(L("Open SSH Hosts")) {
+                        SettingsWindowController.shared.show(tab: L("SSH Hosts"), host: host)
+                    }
+                    .buttonStyle(.link)
+                }
+                .padding(.horizontal, 8).padding(.bottom, 6)
+            }
+        }
+        .onAppear(perform: readHostCheckedHere)
+        .onReceive(NotificationCenter.default.publisher(for: .signatureCheckChanged)) { _ in readHostCheckedHere() }
+    }
+
+    private func choose(_ value: String) {
+        if value == current { return }
+        if value == Self.pickFile {
+            let initial = current.isEmpty ? "~/.ssh" : current
+            if let host = model.host {
+                FilePicker.present(title: L("Allowed signers"), message: L("Choose an allowed signers file"),
+                                   kind: .file, host: host, repository: model.repository, initial: initial) {
+                    if let chosen = $0 { model.set(Self.key, chosen.path) }
+                }
+            } else {
+                FilePicker.presentLocal(title: L("Allowed signers"), message: L("Choose an allowed signers file"),
+                                        kind: .file, initial: initial) {
+                    if let path = $0?.first { model.set(Self.key, path) }
+                }
+            }
+        } else if value.isEmpty {
+            // 上の段で決めたものは消せないので、ここでは上書きを消す（上の段にあればそれが効く）。
             model.set(Self.key, nil)
         }
     }

@@ -147,8 +147,13 @@ pub struct HostOptions {
     /// 置いたもの。なければ送る）、パス（`/…`、Windows なら `C:\…`）ならそれ。なければ自動（PATH のもの →
     /// 置いたもの → 送る）。
     pub engine: Option<String>,
-    /// 合うものがなければ送り込むか。なければ送る。
+    /// 合うものがなければ送り込むか。`true` なら聞かずに送り、`false` なら送らない。なければ、送る前に利用者に
+    /// 聞く（`EngineConsent` のエラーを返し、FE が聞いて `send_engine` を添えてつなぎ直す）。
     pub push: Option<bool>,
+    /// 利用者が送ってよいと答えたエンジン（`EngineConsent::hash`）。このつなぎ方 1 回だけのもので、FE は覚えない。
+    /// 送ろうとするものがこれと違えば（その間に版が変わった）、また聞く。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub send_engine: Option<String>,
     /// エンジンを SSH 先のログインシェル経由で起動するか（`~/.profile` などで足した PATH・`GIT_*` を、エンジンと
     /// git が受け取る）。なければ起動しない（ssh がそのまま動かす、ログインでないシェルの環境）。
     pub login_shell: Option<bool>,
@@ -176,8 +181,8 @@ pub struct Daemons {
     pub local: Option<(String, PathBuf)>,
     /// SSH 先で使うエンジンの場所（`AMONHEN_REMOTE_ENGINE`）。あれば、調べずにこれを使う。
     pub remote_engine: Option<String>,
-    /// 使えるエンジンがなければ送り込むか（`AMONHEN_PUSH`。`0` で止める）。環境になければ None（SSH 先ごとの
-    /// 選択、それもなければ送る）。
+    /// 使えるエンジンがなければ送り込むか（`AMONHEN_PUSH`。`0` で止め、ほかの値なら聞かずに送る）。環境になければ
+    /// None（SSH 先ごとの選択、それもなければ送る前に聞く）。
     pub push: Option<bool>,
 }
 
@@ -463,6 +468,65 @@ impl RemoteEngine {
     }
 }
 
+/// SSH 先にエンジンを送る前に、利用者の承認が要る（`HostOptions::push` を決めていない）。エラーの文の終わりに
+/// `[amonhen:send-engine {JSON}]` の形で載せる（共有の daemon・C ABI を文のまま通る）。FE は `find` で取り出して
+/// 利用者に聞き、送ってよければ `HostOptions::send_engine` に `hash` を入れてつなぎ直す。
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EngineConsent {
+    /// SSH 先（`user@host:port`）。
+    pub host: String,
+    /// SSH 先の OS と CPU（`uname -sm`、Windows なら `windows x86_64` など）。
+    pub platform: String,
+    /// 送るエンジンの大きさ（バイト）。
+    pub size: u64,
+    /// 送るエンジンの中身のハッシュ（置き場所の名前）。承認はこれに対して。
+    pub hash: String,
+    /// 前に送ったエンジンがある（新しい版に入れ替える）。
+    pub update: bool,
+}
+
+const CONSENT_MARK: &str = "[amonhen:send-engine ";
+
+impl EngineConsent {
+    /// エラーの文から取り出す（なければ None）。
+    pub fn find(message: &str) -> Option<Self> {
+        let start = message.find(CONSENT_MARK)? + CONSENT_MARK.len();
+        serde_json::Deserializer::from_str(&message[start..])
+            .into_iter::<Self>()
+            .next()?
+            .ok()
+    }
+
+    /// 大きさ（MB、小数 1 桁）。
+    pub fn megabytes(&self) -> String {
+        format!("{:.1}", self.size as f64 / 1e6)
+    }
+
+    /// エラーの文から印（`[amonhen:send-engine …]`）を除いたもの（利用者に見せる文）。
+    pub fn strip(message: &str) -> &str {
+        match message.find(CONSENT_MARK) {
+            Some(i) => message[..i].trim_end(),
+            None => message,
+        }
+    }
+}
+
+impl std::fmt::Display for EngineConsent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let text = tr!(
+            "Amon Hen needs to send its engine ({size} MB, {platform}) to the SSH host ({host}), and that hasn’t been allowed. Allow it when Amon Hen asks, use --send-engine with the CLI, or install amonhen on the host’s PATH",
+            size = self.megabytes(),
+            platform = self.platform,
+            host = self.host
+        );
+        let json = serde_json::to_string(self).unwrap_or_default();
+        write!(f, "{text} {CONSENT_MARK}{json}]")
+    }
+}
+
+impl std::error::Error for EngineConsent {}
+
 /// SSH 先にエンジンを用意して起動し、つなぐ。`ssh` は ssh のコマンド（テストでは偽物を渡す）。
 pub fn connect(
     ssh: &str,
@@ -612,7 +676,8 @@ fn prepare(
         Some("sent") => (false, true),
         _ => (false, false),
     };
-    let push = daemons.push.or(options.push).unwrap_or(true);
+    // None なら、送る前に聞く。
+    let push = daemons.push.or(options.push);
     // OS と CPU、置き場所、PATH の amonhen の版、置いてあるエンジン（ハッシュの名前と、記録したビルドの指紋）を
     // 1 回で調べる。
     // ログインシェル経由なら、PATH の amonhen もログインシェルの PATH で探す。
@@ -723,7 +788,17 @@ fn prepare(
                 pushed_bytes: None,
                 windows: shell,
             }
-        } else if !push {
+        } else if push.is_none() && options.send_engine.as_deref() != Some(hash) {
+            // 初めて送るときも、版が変わって送り直すときも、利用者に聞く。
+            return Err(EngineConsent {
+                host: target.authority(),
+                platform: uname.trim().to_owned(),
+                size: data.len() as u64,
+                hash: hash.to_owned(),
+                update: !present.is_empty(),
+            }
+            .into());
+        } else if push == Some(false) {
             return Err(tr!(
                 "No usable engine on the SSH host ({host}), and sending one is turned off (Settings > SSH Hosts, or AMONHEN_PUSH=0). Install amonhen on the host’s PATH, or set its location with AMONHEN_REMOTE_ENGINE",
                 host = target.destination
@@ -906,8 +981,11 @@ mod host_options_tests {
             engine: Some("sent".into()),
             push: Some(false),
             login_shell: Some(true),
+            send_engine: None,
         };
         assert!(options.to_json().contains("\"loginShell\":true"));
+        // 1 回だけの承認は、なければ JSON に載せない。
+        assert!(!options.to_json().contains("sendEngine"));
         let login = super::through_login_shell(&options, "exec x");
         assert!(
             login.starts_with(r#"case "${SHELL##*/}" in csh|tcsh)"#),
@@ -925,6 +1003,30 @@ mod host_options_tests {
         assert!(HostOptions::from_json("{}").is_empty());
         // 前の版の git の選択（今は SSH 先の設定にある）は読み捨てる。
         assert!(HostOptions::from_json(r#"{"git":"/usr/local/bin/git"}"#).is_empty());
+    }
+
+    #[test]
+    fn engine_consent_survives_the_error_text() {
+        let consent = super::EngineConsent {
+            host: "me@dev:2222".into(),
+            platform: "Linux x86_64".into(),
+            size: 12_345_678,
+            hash: "0123456789abcdef".into(),
+            update: true,
+        };
+        // 共有の daemon は理由の前に文を足す。
+        let message = format!("Can’t open ssh://me@dev:2222/x: {consent}");
+        assert_eq!(super::EngineConsent::find(&message), Some(consent));
+        assert_eq!(
+            super::EngineConsent::strip(&message),
+            "Can’t open ssh://me@dev:2222/x: Amon Hen needs to send its engine (12.3 MB, Linux x86_64) to the SSH host (me@dev:2222), and that hasn’t been allowed. Allow it when Amon Hen asks, use --send-engine with the CLI, or install amonhen on the host’s PATH"
+        );
+        assert_eq!(super::EngineConsent::find("Can’t open x: no"), None);
+        let approved = HostOptions {
+            send_engine: Some("0123456789abcdef".into()),
+            ..Default::default()
+        };
+        assert_eq!(HostOptions::from_json(&approved.to_json()), approved);
     }
 }
 

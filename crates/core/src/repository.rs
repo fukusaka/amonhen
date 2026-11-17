@@ -449,6 +449,13 @@ impl Repository {
         signatures.1.clear();
     }
 
+    /// 覚えていた検証の結果を捨てる（検証の設定 `gpg.*` を書いたとき。鍵や信用度が変わったかもしれない）。
+    pub fn forget_signatures(&self) {
+        let mut signatures = self.signatures.lock().unwrap();
+        signatures.0 += 1;
+        signatures.1.clear();
+    }
+
     /// 今の検証する側の番号と、手元で検証するもの。
     fn signature_checker(&self) -> (u64, Option<Arc<dyn amonhen_model::SignatureVerifier>>) {
         let signatures = self.signatures.lock().unwrap();
@@ -1821,6 +1828,8 @@ impl Repository {
                     Field::Author => TextField::Author,
                     Field::Subject => TextField::Subject,
                     Field::Commit => TextField::Commit,
+                    Field::Committer => TextField::Committer,
+                    Field::Message => TextField::Message,
                     _ => TextField::Any,
                 };
                 TextTerm::new(field, &t.value)
@@ -2106,6 +2115,31 @@ mod tests {
             Vec::<u32>::new()
         );
         assert!(repo.search_history(&history, "(unclosed").is_err());
+    }
+
+    #[test]
+    fn searches_author_emails_committers_and_whole_messages() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        git(dir, &["init", "-q"]);
+        git(dir, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+        git(dir, &["commit", "--allow-empty", "-q", "-m", "first"]);
+        let body = "Reported-by: Eve <eve@example.net>";
+        git(
+            dir,
+            &["commit", "--allow-empty", "-q", "-m", "second", "-m", body],
+        );
+        let repo =
+            Repository::with_cache(GixBackend::open(dir).unwrap(), tmp.path().join("cache.bin"));
+        let history = repo.load_history().unwrap();
+        // 作者・コミッターはテストでは "a <a@example.com>"。
+        let search = |q: &str| repo.search_history(&history, q).unwrap();
+        assert_eq!(search("author:a@example.com"), [0, 1]);
+        assert_eq!(search("committer:a@example.com"), [0, 1]);
+        assert_eq!(search("committer:nobody"), Vec::<u32>::new());
+        assert_eq!(search("message:\"reported-by: eve\""), [0]);
+        assert_eq!(search("subject:reported-by"), Vec::<u32>::new());
+        assert_eq!(search("message:first or committer:nobody"), [1]);
     }
 
     #[test]

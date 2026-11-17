@@ -25,6 +25,8 @@ export interface DaemonRow {
   parents: number[];
   /** 親の ID */
   parentOids: string[];
+  /** 署名があるか（コミットの gpgsig）。答えに署名の欄がない古いエンジンでは undefined */
+  signed?: boolean;
 }
 
 const hex = Array.from({ length: 256 }, (_, i) => i.toString(16).padStart(2, '0'));
@@ -50,6 +52,8 @@ export function readRows(reply: Reply): DaemonRow[] {
   const parentStarts = reply.u32('parentStarts');
   const parents = reply.u32('parents');
   const parentIds = reply.bytes('parentIds');
+  const signatures = reply.bytes('signatures');
+  const knowsSigned = signatures.length === numbers.length;
   const graphs = graphRows(numbers, nodes, reply.u16('edges'), reply.u32('edges'), reply.u32('edgeIds'));
   const rows: DaemonRow[] = [];
   for (let i = 0; i < numbers.length; i++) {
@@ -67,6 +71,7 @@ export function readRows(reply: Reply): DaemonRow[] {
       graph: graphs[i]!,
       parents: Array.from(parents.subarray(from, to)),
       parentOids: Array.from({ length: to - from }, (_, k) => oidAt(parentIds, from + k)),
+      ...(knowsSigned ? { signed: signatures[i] !== 0 } : {}),
     });
   }
   return rows;

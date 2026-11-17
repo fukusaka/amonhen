@@ -899,14 +899,18 @@ fn scan_root(root: &ScanRoot) -> Result<(Vec<String>, Vec<PathBuf>), String> {
     let target = ssh::Target::parse(&root.path).map_err(|e| e.to_string())?;
     let program = std::env::var("AMONHEN_SSH").unwrap_or_else(|_| "ssh".into());
     // SSH 先ごとの選択（Settings > SSH Hosts のエンジン・ログインシェル・環境。開くときと同じ）。
-    let found = ssh::find_repositories(
-        &program,
-        &target,
-        &ssh_daemons(),
-        &crate::sshhosts::options_for(&root.path),
-        root.depth,
-        &root.excludes,
-    )
+    // エンジンを送るなら、先に利用者に聞く。
+    let daemons = ssh_daemons();
+    let found = crate::sshhosts::connecting(&root.path, |options| {
+        ssh::find_repositories(
+            &program,
+            &target,
+            &daemons,
+            options,
+            root.depth,
+            &root.excludes,
+        )
+    })
     .map_err(|e| e.to_string())?;
     // 場所の形に戻す（`ssh://` と接続先はそのまま、パスだけ見つけたものに）。
     let prefix = &root.path[..root.path.len() - target.path.len()];

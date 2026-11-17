@@ -65,8 +65,9 @@ export type FetchingAction =
   /** Commits: 専用のテンプレートを書く（commit.template をそれに向ける）・ファイルを選ぶ */
   | { action: 'templateSave'; text: string }
   | { action: 'templateFile' }
-  /** Author and Signing: 一覧にない鍵を入れる・mailmap のファイルを選ぶ */
+  /** Author and Signing: 一覧にない鍵を入れる・許可する署名者のファイル・mailmap のファイルを選ぶ */
   | { action: 'signingKeyOther' }
+  | { action: 'allowedSignersFile' }
   | { action: 'mailmapFile' }
   /** Operations: rerere が覚えた解決をすべて忘れる */
   | { action: 'forgetAllResolutions' };

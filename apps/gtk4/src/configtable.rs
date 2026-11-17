@@ -30,6 +30,7 @@ const BASIC_KEYS: &[&str] = &[
     "commit.gpgSign",
     "gpg.format",
     "user.signingKey",
+    "gpg.ssh.allowedSignersFile",
     "commit.template",
     "amonhen.defaultBranch",
     "pull.rebase",

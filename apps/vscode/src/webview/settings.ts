@@ -618,6 +618,22 @@ export function createSettingsView(): View {
     return row('Key', `${FORMATS[format]} keys found on the machine that runs git.`, [key], control, (v) => facts.signingKeys.find((k) => k.id === v)?.label ?? v);
   }
 
+  /** SSH の署名を検証する公開鍵の一覧（gpg.ssh.allowedSignersFile）。署名の形式によらず出す */
+  function allowedSignersRow(): HTMLElement {
+    const key = 'gpg.ssh.allowedsignersfile';
+    const current = config.effective(key)?.value ?? '';
+    const options = [
+      { value: '', label: 'None' },
+      ...(current ? [{ value: current, label: `File: ${current}` }] : []),
+      { value: '\u0001pick', label: 'A file…' },
+    ];
+    const control = select(options, current, (v) => {
+      if (v === '\u0001pick') post({ type: 'settingsRun', action: 'allowedSignersFile' });
+      else if (!v) set([[key, null]]);
+    });
+    return row('Allowed signers', 'Public keys trusted to verify SSH signatures.', [key], control, (v) => (v ? `File: ${v}` : 'None'));
+  }
+
   /** mailmap のファイル（mailmap.file。リポジトリの .mailmap の後に読む） */
   function mailmapFileRow(): HTMLElement {
     const key = 'mailmap.file';
@@ -660,6 +676,8 @@ export function createSettingsView(): View {
         return signingRow();
       case 'signingKey':
         return signingKeyRow();
+      case 'allowedSigners':
+        return allowedSignersRow();
       case 'mailmapFile':
         return mailmapFileRow();
       case 'rerereCache':

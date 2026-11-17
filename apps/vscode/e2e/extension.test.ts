@@ -3713,6 +3713,57 @@ suite('Amon Hen in VSCode', () => {
     await panel.history.handle({ type: 'search', query: '', matchingOnly: false, selected: 0 });
   });
 
+  test('searches author emails, committers and whole messages through the daemon', async () => {
+    // 作者とコミッターが違い、本文にトレーラーがあるコミット
+    const subject = 'search people and body';
+    childProcess.execFileSync(
+      'git',
+      ['commit', '-q', '--allow-empty', '-m', subject, '-m', 'Reported-by: E2E Reporter <reporter@e2e.example>'],
+      {
+        cwd: root,
+        env: {
+          ...process.env,
+          GIT_AUTHOR_NAME: 'Search Author',
+          GIT_AUTHOR_EMAIL: 'search-author@e2e.example',
+          GIT_COMMITTER_NAME: 'Search Committer',
+          GIT_COMMITTER_EMAIL: 'search-committer@e2e.example',
+        },
+      },
+    );
+    await vscode.commands.executeCommand('amonhen.refresh');
+    const mark = posted.length;
+    const panel = await showView('amonhen.showHistory');
+    await panel.history.reset();
+    await waitPosted('searchable', mark, (m) => m.searchable);
+    await waitPosted('rows', mark, (m) => m.rows.some((r) => r.subject === subject));
+    /** query に合う行の件名 */
+    const search = async (query: string): Promise<string[]> => {
+      const at = posted.length;
+      await panel.history.handle({ type: 'search', query, matchingOnly: false, selected: 0 });
+      const { state } = await waitPosted('search', at, (m) => m.state.query === query && !m.state.searching);
+      assert.ok(!state.error, `${query}: ${state.error}`);
+      const subjects: string[] = [];
+      for (const row of state.rows) {
+        const got = posted.length;
+        await panel.history.handle({ type: 'range', start: row, count: 1 });
+        subjects.push((await waitPosted('rows', got, (m) => m.start === row)).rows[0]!.subject);
+      }
+      return subjects;
+    };
+    try {
+      // author: はメールでも合う（ただの語はメールを見ない）
+      assert.deepEqual(await search('author:search-author@e2e'), [subject]);
+      assert.deepEqual(await search('search-author@e2e'), []);
+      assert.deepEqual(await search('committer:"Search Committer"'), [subject]);
+      assert.deepEqual(await search('committer:search-committer@e2e'), [subject]);
+      // message: は本文も、subject: は件名だけ
+      assert.deepEqual(await search('message:"reported-by: e2e reporter"'), [subject]);
+      assert.deepEqual(await search('subject:"reported-by: e2e"'), []);
+    } finally {
+      await panel.history.handle({ type: 'search', query: '', matchingOnly: false, selected: 0 });
+    }
+  });
+
   test('keeps the History open when an older reload finishes after a newer one', async () => {
     const panel = await showView('amonhen.showHistory');
     const repo = api.manager.current!;

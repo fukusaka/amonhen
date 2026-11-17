@@ -38,6 +38,8 @@ export type SettingRow =
   /** 署名（しない・OpenPGP・SSH・X.509。commit.gpgsign と gpg.format を一緒に書く）と、その鍵 */
   | { kind: 'signing' }
   | { kind: 'signingKey' }
+  /** SSH の署名を検証する公開鍵の一覧（gpg.ssh.allowedSignersFile。なし・ファイル） */
+  | { kind: 'allowedSigners' }
   /** mailmap のファイル（mailmap.file。なし・ファイル） */
   | { kind: 'mailmapFile' };
 
@@ -68,7 +70,7 @@ export const PAGES: SettingPage[] = [
           { kind: 'text', question: 'Email', key: 'user.email' },
         ],
       },
-      { title: 'Signing', rows: [{ kind: 'signing' }, { kind: 'signingKey' }] },
+      { title: 'Signing', rows: [{ kind: 'signing' }, { kind: 'signingKey' }, { kind: 'allowedSigners' }] },
       {
         title: 'mailmap',
         rows: [

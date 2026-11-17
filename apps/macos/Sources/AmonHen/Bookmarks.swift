@@ -302,9 +302,11 @@ final class Bookmarks {
                         group.addTask {
                             if RepositoryLocation.isRemote(root.path) {
                                 return (root.path, Result {
-                                    try RemoteScan.findRepositories(
-                                        location: root.path, depth: root.depth, excludes: root.excludes, daemon: daemon, daemons: daemons,
-                                        hostOptions: Settings.hostOptionsJSON(for: root.path))
+                                    try EngineConsent.connecting(root.path) { options in
+                                        try RemoteScan.findRepositories(
+                                            location: root.path, depth: root.depth, excludes: root.excludes, daemon: daemon,
+                                            daemons: daemons, hostOptions: options)
+                                    }
                                 })
                             }
                             return (root.path, .success(Self.scan(root)))

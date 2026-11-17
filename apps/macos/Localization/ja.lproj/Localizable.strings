@@ -935,6 +935,10 @@
 "Search History" = "History を検索";
 "Search" = "検索";
 "Search by Author (author:)" = "作者で探す（author:）";
+"Search by Committer (committer:)" = "コミッターで探す（committer:）";
+"Search by Commit ID (commit:)" = "コミットの ID で探す（commit:）";
+"Search by Subject (subject:)" = "件名で探す（subject:）";
+"Search by Message (message:)" = "メッセージで探す（message:）";
 "Search by Path (path:)" = "パスで探す（path:）";
 "Search by Contents (contents:)" = "内容で探す（contents:）";
 "Committed After (after:)" = "この日時より後（after:）";
@@ -1025,7 +1029,7 @@
 /* HistoryViewController.swift */
 "Message" = "メッセージ";
 "Search (author:, path:, contents: also work)" = "検索（author: path: contents: も使える）";
-"Words match the subject, author and ID. Spaces mean AND, “or” means OR, and parentheses group.\nauthor:name  subject:text  commit:ID  path:path  contents:\"diff text\"\nExample: path:fs/ (author:linus or author:greg)" = "語は件名・作者・ID から探す。空白で区切ると AND、or で OR、括弧でまとめる。\nauthor:名前  subject:件名  commit:ID  path:パス  contents:\"差分の文字列\"\n例: path:fs/ (author:linus or author:greg)";
+"Words match the subject, author and ID. Spaces mean AND, “or” means OR, and parentheses group.\nauthor:name  committer:name  subject:text  message:text  commit:ID  path:path  contents:\"diff text\"\nExample: path:fs/ (author:linus or author:greg)" = "語は件名・作者・ID から探す。空白で区切ると AND、or で OR、括弧でまとめる。\nauthor:名前  committer:名前  subject:件名  message:メッセージ  commit:ID  path:パス  contents:\"差分の文字列\"\n例: path:fs/ (author:linus or author:greg)";
 "Previous Match (⇧↩, ⌘⇧G)" = "前の一致（⇧↩・⌘⇧G）";
 "Next Match (↩, ⌘G)" = "次の一致（↩・⌘G）";
 "Show Only Matching Commits" = "一致したコミットだけを出す";
@@ -1535,11 +1539,20 @@
 "Engine to use" = "使うエンジン";
 "The amonhen on the host’s PATH" = "SSH 先の PATH の amonhen";
 "The one Amon Hen sends" = "Amon Hen が送り込むもの";
-"Send one when none fits" = "合うものがなければ送り込む";
+"When none fits" = "合うものがないとき";
+"Ask before sending one" = "送る前に聞く";
+"Send one without asking" = "聞かずに送る";
+"Don’t send one" = "送らない";
+"Send the engine to %@?" = "%@ にエンジンを送りますか？";
+"Send a new version of the engine to %@?" = "%@ にエンジンの新しい版を送りますか？";
+"To open repositories on this host, Amon Hen puts its engine (amonhen, %@ MB, %@) on the host and runs it there. If you don’t send it, Amon Hen won’t send one to this host until you turn it back on in Settings > SSH Hosts." = "このホストのリポジトリを開くために、Amon Hen はエンジン（amonhen、%@ MB、%@）をホストに置いて動かします。送らない場合、設定 > SSH ホストで戻すまで、このホストにはエンジンを送りません。";
+"Send" = "送る";
+"Don’t Send" = "送らない";
+"Send without asking to this host from now on" = "今後このホストには聞かずに送る";
 "Uses the amonhen installed on the host. It must be this build." = "SSH 先に入っている amonhen を使います。このビルドのものである必要があります。";
-"Uses the one Amon Hen sent to the host, sending it first when there is none." = "Amon Hen が SSH 先に送ったものを使います。なければ先に送ります。";
+"Uses the one Amon Hen sent to the host, sending one when there is none (whether to ask first is chosen below)." = "Amon Hen が SSH 先に送ったものを使います。なければ送ります（送る前に聞くかは下で選びます）。";
 "Uses this path on the host." = "SSH 先のこのパスのものを使います。";
-"The amonhen on the host’s PATH if it is this build, else one sent earlier, else Amon Hen sends one." = "SSH 先の PATH の amonhen がこのビルドならそれ、なければ前に送ったもの、それもなければ送り込みます。";
+"The amonhen on the host’s PATH if it is this build, else one sent earlier, else the one Amon Hen sends." = "SSH 先の PATH の amonhen がこのビルドならそれ、なければ前に送ったもの、それもなければ Amon Hen が送るもの。";
 "Engine on %@" = "%@ のエンジン";
 "Choose amonhen on the host. It must be this build." = "SSH 先の amonhen を選びます。このビルドのものである必要があります。";
 "%@ is set in the environment, so it decides instead." = "環境変数 %@ があるので、そちらが優先されます。";
@@ -1585,6 +1598,11 @@
 "Mailmap file" = "mailmap のファイル";
 "Read after the repository’s .mailmap." = "リポジトリの .mailmap の後に読みます。";
 "Choose a mailmap file" = "mailmap のファイルを選ぶ";
+"Allowed signers" = "許可する署名者";
+"Public keys trusted to verify SSH signatures." = "SSH の署名の検証で信用する公開鍵です。";
+"Choose an allowed signers file" = "許可する署名者のファイルを選ぶ";
+"Signatures on this host are checked with this Mac’s keys, so this setting isn’t used. Set it in Settings > Git on this Mac, or choose The host’s git and keys for Verify with in Settings > SSH Hosts." = "この SSH 先の署名はこの Mac の鍵で検証するので、ここでの設定は使われません。この Mac の設定 > Git で設定するか、設定 > SSH ホストの「検証に使う鍵」を「SSH 先の git と鍵」にしてください。";
+"Open SSH Hosts" = "SSH ホストを開く";
 "The mailmap changed. Showing the names again." = "mailmap が変わったので、名前を出し直しました。";
 
 /* Range Diff */

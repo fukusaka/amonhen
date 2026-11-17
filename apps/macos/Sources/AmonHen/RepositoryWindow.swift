@@ -68,9 +68,11 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         guard RepositoryLocation.isRemote(location) else {
             return try Repository(path: location, cacheDirectory: cacheDirectory)
         }
-        // SSH 先ごとの選択（エンジンと git）も渡す。
-        let repository = try Repository(location: location, daemon: daemon, daemons: daemons, cacheDirectory: cacheDirectory,
-                                        hostOptions: Settings.hostOptionsJSON(for: location))
+        // SSH 先ごとの選択（エンジンと git）も渡す。エンジンを送るなら、先に利用者に聞く。
+        let repository = try EngineConsent.connecting(location) { options in
+            try Repository(location: location, daemon: daemon, daemons: daemons, cacheDirectory: cacheDirectory,
+                           hostOptions: options)
+        }
         // 署名をどこで検証するかは、何かを読む前に渡す（後で渡すと、開いてすぐ読んだ詳細だけ SSH 先の鍵で検証される）。
         repository.setLocalSignatureCheck(Settings.checksSignaturesLocally(at: location))
         return repository
@@ -1083,6 +1085,9 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         } catch {
             NSLog("リポジトリを監視できない: \(error)")
         }
+        // 署名を検証する側（SSH 先のリポジトリ）か、検証の設定（`gpg.*`。手元のリポジトリも）が変わったら検証し直す。
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(signatureCheckChanged), name: .signatureCheckChanged, object: nil)
         watchConnection()
         if debug { startDebugOptions() }
     }
@@ -1094,8 +1099,6 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     /// daemon 越しなら、初めての読み込みの進み具合と、接続が切れたことを出す。
     private func watchConnection() {
         guard RepositoryLocation.isRemote(location) else { return }
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(signatureCheckChanged), name: .signatureCheckChanged, object: nil)
         updateConnection()
         connectionTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.updateConnection() }
@@ -1120,9 +1123,12 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         }
     }
 
-    /// 署名を検証する側が変わった。コアと画面が覚えていた結果を捨て、見えているものを検証し直す。
+    /// 署名を検証する側か検証の設定が変わった。コアと画面が覚えていた結果を捨て、見えているものを検証し直す。
+    /// 設定はほかのリポジトリや Settings > Git・SSH Hosts で書いたかもしれない（コアが捨てるのは書いたリポジトリの
+    /// 分だけ）ので、この窓のコアの分もここで捨てる。
     @objc private func signatureCheckChanged() {
         repository.setLocalSignatureCheck(Settings.sshHost(of: location).map(Settings.checkSignaturesLocally(on:)) ?? Settings.checkRemoteSignaturesLocally)
+        repository.forgetSignatures()
         updateSignaturePlace()
         history.forgetSignatures()
         sidebar.forgetSignatures()
@@ -1237,6 +1243,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             split.insertSplitViewItem(next, at: 0)
             if !collapsed { split.splitView.setPosition(width, ofDividerAt: 0) }
         }
+        split.dividerStopsAtToolbar = settings.style != .system
         host.apply(settings)
         statusBar.paint(settings.paneColor, underToolbar: settings.style == .system)
         // 読む面はどの型でも自分では塗らず、下の 1 つの色を見せる。サイドバーは `system` ではガラスのまま。

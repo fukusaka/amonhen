@@ -10,7 +10,7 @@ mod client;
 mod records;
 mod session;
 
-pub use client::{Front, InProcess, Remote, open};
+pub use client::{Front, InProcess, Remote, open, open_with};
 pub use records::Records;
 pub use session::Session;
 

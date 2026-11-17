@@ -134,10 +134,11 @@ pub fn menu(
     // このコミットを指すブランチ・タグの名前（リモートブランチは origin/ を付けたまま。5 つまで。macOS 版と同じ）。
     if let Some(view) = widget.downcast_ref::<crate::history::HistoryView>() {
         for (name, kind) in view.ref_names(id).into_iter().take(5) {
+            let shown = crate::titles::menu_name(&name);
             let title = if kind == amonhen_model::RefKind::Tag {
-                tr!("Copy Tag Name “{name}”", name = name)
+                tr!("Copy Tag Name “{name}”", name = shown)
             } else {
-                tr!("Copy Branch Name “{name}”", name = name)
+                tr!("Copy Branch Name “{name}”", name = shown)
             };
             let w = widget.clone();
             items.push(menu::action(title, move || {

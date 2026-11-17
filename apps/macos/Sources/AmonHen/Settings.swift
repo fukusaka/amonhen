@@ -110,8 +110,9 @@ enum Settings {
         NotificationCenter.default.post(name: .hostOptionsChanged, object: host)
     }
 
-    /// 選択をそのまま（まだ移していない git も）残す。
-    nonisolated private static func storeHostOptions(_ options: HostOptions, for host: String) {
+    /// 選択をそのまま（まだ移していない git も）残す。`hostOptionsChanged` は知らせない（どの糸からも呼べる。つなぐ
+    /// 途中で決めた、エンジンを送るかの答えも。つなぎ直さないように）。
+    nonisolated static func storeHostOptions(_ options: HostOptions, for host: String) {
         var all = UserDefaults.standard.dictionary(forKey: hostOptionsKey) as? [String: String] ?? [:]
         all[host] = options.isEmpty ? nil : (try? JSONEncoder().encode(options)).flatMap { String(data: $0, encoding: .utf8) }
         UserDefaults.standard.set(all, forKey: hostOptionsKey)
@@ -430,13 +431,16 @@ nonisolated struct HostOptions: Codable, Equatable, Sendable {
     var git: String?
     /// `installed`（PATH の amonhen）・`sent`（Amon Hen が送り込むもの）・`/` で始まるパス。nil なら自動。
     var engine: String?
-    /// 合うものがなければ送り込むか。nil なら送る。
+    /// 合うものがなければ送り込むか。true なら聞かずに送り、false なら送らない。nil なら送る前に聞く
+    /// （`EngineConsent`）。
     var push: Bool?
     /// エンジンを SSH 先のログインシェル経由で起動するか（`~/.profile` などの PATH・`GIT_*` を受け取る）。nil なら
     /// 起動しない。
     var loginShell: Bool?
+    /// 利用者が送ってよいと答えたエンジン（中身のハッシュ）。つなぐ 1 回だけのもので、残さない。
+    var sendEngine: String?
 
-    var isEmpty: Bool { git == nil && engine == nil && push == nil && loginShell == nil }
+    var isEmpty: Bool { git == nil && engine == nil && push == nil && loginShell == nil && sendEngine == nil }
 
     /// コアに渡す JSON（エンジンの起動に使うものを何も選んでいなければ nil。git は渡さない）。
     var json: String? {

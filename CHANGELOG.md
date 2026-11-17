@@ -9,17 +9,33 @@ becomes the GitHub Release notes.
 
 ### Unreleased
 
+#### Added
+
+- Repository Settings > Author and Signing has Allowed signers, the file (`gpg.ssh.allowedSignersFile`) for verifying
+  SSH signatures; changing a `gpg.*` setting there verifies the shown signatures again. For an SSH host whose
+  signatures are verified with this Mac's keys, the row notes that it isn't used there.
+
 #### Changed
 
+- History search: `author:` also matches the email, `committer:` searches by committer and `message:` searches the whole
+  message (it used to be another name for `subject:`). The search field's ▾ menu puts in these and `commit:`, `subject:`.
+- Amon Hen asks before sending its engine to an SSH host, the first time and for each new version; Don't Send turns
+  sending off for that host. Settings > SSH Hosts can send without asking, and the CLI asks too (`--send-engine`).
 - Pushing a tag and a remote's Prune ask first, like every other operation that talks to a remote.
 - macOS: buttons for what can't be undone are red with white text (Force Push's included), instead of dark red text.
 - The submodule, subtree and New Worktree sheets label their fields on the left and enable their button once the
   required fields are filled; Merge One by One became a checkbox in the merge sheet.
 - Publish is disabled when the repository has no remote, and a remote's Rename… and Edit URL… are one Edit….
+- In the before-and-after drawings, branch labels that don't fit on a commit's line wrap onto up to three lines
+  below it instead of being left out, with the rest gathered into a "+n" label that lists them in its tooltip; a very
+  tall drawing scrolls inside the sheet.
 
 #### Fixed
 
 - The confirmation for closing the merge editor without saving keeps its buttons side by side.
+- macOS: in a see-through window, the sidebar's divider line stops below the toolbar instead of running up to the
+  window's top edge.
+- A long branch name no longer widens History's context menu: its Copy Branch Name item cuts the name in the middle.
 - Long branch names no longer overlap in the Reset, Merge and Rebase drawings, and on macOS the merge editor's own
   window no longer puts its title bar buttons over the conflict count.
 - Alerts for a repository that can't be opened or read have a title, commit IDs in New Branch, New Tag and New
@@ -1154,6 +1170,22 @@ First release.
 - Repositories on SSH hosts through a daemon on the host.
 
 ## VSCode extension
+
+### Unreleased
+
+#### Added
+
+- Repository Settings > Author and Signing has Allowed signers, the file (`gpg.ssh.allowedSignersFile`) for verifying
+  SSH signatures; changing a `gpg.*` setting there verifies the shown signatures again.
+
+#### Changed
+
+- In the before-and-after drawings, long branch labels wrap onto up to three lines below the commit instead of
+  pushing its subject out of view, with the rest gathered into a "+n" label that lists them in its tooltip.
+- History search with the engine: `author:` also matches the email, `committer:` searches by committer and `message:`
+  searches the whole message. The search field shows how to write a search, like the app's.
+- A signed commit whose signature can't be verified shows No key in History and the details, as the app does, instead
+  of no mark; only signed rows are verified.
 
 ### [0.2.7] - 2026-11-13
 

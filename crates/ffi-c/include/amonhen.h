@@ -767,7 +767,7 @@ uint32_t amonhen_history_lane_positions(const AmonhenHistory *history_ptr,
 
 /**
  * `query` に合うコミットの行（昇順、`amonhen_rows_free` で解放する）。構文は `amonhen-core` の
- * `query`（`author:` `subject:` `commit:` `path:` `contents:` `after:` `before:`、AND・OR・括弧）。すべてのコミットを読むので
+ * `query`（`author:` `committer:` `subject:` `message:` `commit:` `path:` `contents:` `after:` `before:`、AND・OR・括弧）。すべてのコミットを読むので
  * 裏のスレッドで呼ぶ（linux の 148 万コミットで約 1.2 秒）。新しい検索を始めるか `amonhen_search_cancel` を
  * 呼ぶと、走っている検索は NULL を返す。
  *
@@ -1267,6 +1267,15 @@ bool amonhen_discard_rows(const AmonhenRepo *repo_ptr,
  * `repo` は有効なリポジトリであること。
  */
 char *amonhen_repo_workdir(const AmonhenRepo *repo_ptr);
+
+/**
+ * 覚えていた署名の検証の結果を捨てる（ほかのリポジトリや Settings > Git・SSH Hosts で検証の設定 `gpg.*` を
+ * 書いたとき。次に頼まれたら検証し直す）。
+ *
+ * # Safety
+ * `repo` は有効なリポジトリであること。
+ */
+void amonhen_repo_forget_signatures(const AmonhenRepo *repo_ptr);
 
 /**
  * daemon 越しのリポジトリのコミットの署名を、手元の鍵で検証するか（false なら SSH 先の git と鍵で検証する）。

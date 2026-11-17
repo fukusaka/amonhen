@@ -150,10 +150,10 @@ final class MergeDrawingView: GraphDrawingView {
     override var intrinsicContentSize: NSSize {
         guard let d = preview?.drawing else { return NSSize(width: Self.columnWidth * 2 + 24, height: 0) }
         // 右には merge コミットの 1 行が増える。
-        return NSSize(width: Self.columnWidth * 2 + 24, height: CGFloat(rowCount(d) + 1) * Self.rowHeight + 26)
+        return NSSize(width: Self.columnWidth * 2 + 24, height: capped(CGFloat(rowCount(d) + 1) * Self.rowHeight + 26 + labelExtraHeight()))
     }
 
-    override func draw(_ dirtyRect: NSRect) {
+    override func drawContent() {
         guard let d = preview?.drawing else { return }
         let headingAttributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.boldSystemFont(ofSize: NSFont.smallSystemFontSize), .foregroundColor: NSColor.secondaryLabelColor,
@@ -233,10 +233,10 @@ final class PickDrawingView: GraphDrawingView {
 
     override var intrinsicContentSize: NSSize {
         guard let d = preview?.drawing else { return NSSize(width: Self.columnWidth * 2 + 24, height: 0) }
-        return NSSize(width: Self.columnWidth * 2 + 24, height: CGFloat(newRows(d) + d.head.count) * Self.rowHeight + 26)
+        return NSSize(width: Self.columnWidth * 2 + 24, height: capped(CGFloat(newRows(d) + d.head.count) * Self.rowHeight + 26 + labelExtraHeight()))
     }
 
-    override func draw(_ dirtyRect: NSRect) {
+    override func drawContent() {
         guard let d = preview?.drawing else { return }
         let headingAttributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.boldSystemFont(ofSize: NSFont.smallSystemFontSize), .foregroundColor: NSColor.secondaryLabelColor,
@@ -334,10 +334,10 @@ final class OctopusDrawingView: GraphDrawingView {
 
     override var intrinsicContentSize: NSSize {
         guard let d = preview?.drawing else { return NSSize(width: Self.columnWidth * 2 + 24, height: 0) }
-        return NSSize(width: Self.columnWidth * 2 + 24, height: CGFloat(rowCount(d) + 1) * Self.rowHeight + 26)
+        return NSSize(width: Self.columnWidth * 2 + 24, height: capped(CGFloat(rowCount(d) + 1) * Self.rowHeight + 26 + labelExtraHeight()))
     }
 
-    override func draw(_ dirtyRect: NSRect) {
+    override func drawContent() {
         guard let d = preview?.drawing else { return }
         let headingAttributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.boldSystemFont(ofSize: NSFont.smallSystemFontSize), .foregroundColor: NSColor.secondaryLabelColor,
@@ -374,9 +374,8 @@ final class OctopusDrawingView: GraphDrawingView {
                 if side.more > 0 { gaps.append(Gap(lane: i + 1, y: y, count: side.more)); y += Self.rowHeight }
             }
             if rest > 0 {
-                NSString(string: L("and %ld more branches", rest)).draw(
-                    at: NSPoint(x: x + 10 + CGFloat(shown.count) * Self.laneWidth + 14, y: y + 3),
-                    withAttributes: [.font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize), .foregroundColor: NSColor.tertiaryLabelColor])
+                // 線は引かず、文だけ（札が折り返した行の下では、その分だけ下がる）。
+                gaps.append(Gap(lane: -1, y: y, count: rest, text: L("and %ld more branches", rest)))
                 y += Self.rowHeight
             }
             drawColumn(x: x, rows: rows, baseY: y, base: d.base, gaps: gaps,

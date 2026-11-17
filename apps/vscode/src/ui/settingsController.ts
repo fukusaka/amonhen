@@ -11,6 +11,7 @@ import { HOOK_NAMES, hookWhen } from '../settings/hooks.ts';
 import type { ConfigEntry } from '../settings/model.ts';
 import type { FetchingAction, RepositoryForm, SettingsFacts, SettingsHostMessage, SettingsWebviewMessage } from '../settings/protocol.ts';
 import type { Repository } from '../state/repository.ts';
+import { signatureConfigWritten } from './signatureConfig.ts';
 import { showError } from './stageCommands.ts';
 
 /** コアの `repositoryForm` の答え（git の行に出す分） */
@@ -115,6 +116,7 @@ export class SettingsController implements vscode.Disposable {
       const reply = (await client.call({ op: 'run', command: { op: 'configSet', key, value } })).json;
       if (reply['ok'] !== true) throw new Error(String(reply['error'] ?? `Can’t set ${key}`));
     }
+    signatureConfigWritten(writes.map(([key]) => key));
     // 設定は Pull・rebase・merge などの操作が読む。サイドバーなどは読み直しで追いつく
     await repo.refresh();
   }
@@ -140,6 +142,7 @@ export class SettingsController implements vscode.Disposable {
         (await client.call({ op: 'run', command })).json,
       );
       if (reply['ok'] !== true) throw new Error(String(reply['error'] ?? `${title} failed`));
+      if (command['op'] === 'configSet') signatureConfigWritten([String(command['key'])]);
     };
     const form = (await client.call({ op: 'run', command: { op: 'repositoryForm' } })).json['info'] as RepositoryForm | undefined;
     const folders = form?.sparse?.cone ? form.sparse.folders : [];
@@ -158,6 +161,17 @@ export class SettingsController implements vscode.Disposable {
         const picked = await vscode.window.showOpenDialog({ title: 'Mailmap file', openLabel: 'Use as Mailmap', canSelectMany: false });
         if (!picked?.[0]) return;
         await run({ op: 'configSet', key: 'mailmap.file', value: picked[0].fsPath }, 'Set the mailmap file');
+        return;
+      }
+      case 'allowedSignersFile': {
+        const picked = await vscode.window.showOpenDialog({
+          title: 'Allowed signers',
+          openLabel: 'Use as Allowed Signers',
+          canSelectMany: false,
+          defaultUri: vscode.Uri.file(join(homedir(), '.ssh')),
+        });
+        if (!picked?.[0]) return;
+        await run({ op: 'configSet', key: 'gpg.ssh.allowedSignersFile', value: picked[0].fsPath }, 'Set the allowed signers file');
         return;
       }
       // rerere が覚えた解決をすべて消す（戻せないので確かめる）
@@ -299,6 +313,7 @@ export class SettingsController implements vscode.Disposable {
     if (value === undefined) return;
     const reply = (await client.call({ op: 'run', command: { op: 'configSet', key: name, value } })).json;
     if (reply['ok'] !== true) throw new Error(String(reply['error'] ?? `Can’t set ${name}`));
+    signatureConfigWritten([name]);
     await this.repo?.refresh();
   }
 

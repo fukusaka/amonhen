@@ -17,6 +17,22 @@ pub fn shown_start(rev: &str) -> &str {
     if full { short(rev) } else { rev }
 }
 
+/// メニューに出す名前の文字数の上限（長いブランチ名でメニューが窓ほどの幅にならないように。macOS 版と同じ）。
+pub const MENU_NAME: usize = 40;
+
+/// メニューの項目に入れる名前: 長ければ真ん中を「…」で省く（頭と末尾は残す。コピーするのは全文）。
+pub fn menu_name(name: &str) -> String {
+    let count = name.chars().count();
+    if count <= MENU_NAME {
+        return name.to_owned();
+    }
+    let head = (MENU_NAME - 1) / 2;
+    let tail = MENU_NAME - 1 - head;
+    let start: String = name.chars().take(head).collect();
+    let end: String = name.chars().skip(count - tail).collect();
+    format!("{start}…{end}")
+}
+
 pub fn checkout(name: &str) -> String {
     tr!("Checkout {name}…", name = name)
 }
@@ -222,6 +238,20 @@ mod tests {
         assert_eq!(short_date(Lang::En, 2026, 11, 3), "11/3/26");
         assert_eq!(short_date(Lang::En, 2005, 1, 9), "1/9/05");
         assert_eq!(short_date(Lang::Ja, 2026, 9, 22), "2026/09/22");
+    }
+
+    #[test]
+    fn menu_name_cuts_the_middle_of_long_names() {
+        assert_eq!(menu_name("main"), "main");
+        let long =
+            "feature/a-rather-long-branch-name-to-see-how-the-sidebar-and-the-graph-cope-with-it";
+        let shown = menu_name(long);
+        assert_eq!(shown.chars().count(), MENU_NAME);
+        assert!(
+            shown.starts_with("feature/a-rather-lo") && shown.ends_with("graph-cope-with-it"),
+            "{shown}"
+        );
+        assert_eq!(menu_name(&"x".repeat(MENU_NAME)), "x".repeat(MENU_NAME));
     }
 
     #[test]

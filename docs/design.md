@@ -278,6 +278,7 @@ Windows' OpenSSH server runs the command it is sent with the shell in `HKLM\SOFT
     - Local (default): receive the commit object (a few KB), write it to a local scratch bare repository (`$TMPDIR/amonhen-verify.git`), and have the local git verify it with `%G?`. Trees and other objects are not needed. The rules, keys and trust levels are the same as for local repositories. If the written object's ID differs from the original ID, it is rejected.
     - SSH host: send a request to the daemon and verify with the SSH host's git and keys. If the SSH host has no public key, the result is "cannot verify".
   - The trust level is "how much I trust that key", so judging by the local keyring is the default.
+- Results are remembered (by the core and by each frontend). Writing a verification setting (`gpg.*`, such as `gpg.ssh.allowedSignersFile` or `gpg.minTrustLevel`) from the settings forgets them in every open repository (the settings may be another repository's, or all repositories' in Settings > Git or SSH Hosts, so each window also asks its core to forget, `forgetSignatures`), and the visible rows, tags and details are verified again.
 - The presentation (`SignatureStatus`) is decided from `%G?` plus the trust level (`%GT`) and "whether the signer's email address matches the committer". `%GT` is from git 2.26; with older git the trust level is the signing key's validity, read with gpg along with its email addresses. Wording is English, matching GitHub.
 
   | State | Icon (SF Symbols) | Color | Wording | Trust scale |
@@ -514,6 +515,9 @@ or split history in ways that are hard to see afterwards.
   - the labels of the branches that move are drawn moving;
   - the labels of the branches left behind stay on the old commits, with the reason;
   - for a pushed branch, `origin/<branch>` stays on the old commit;
+  - labels that don't fit on a commit's line wrap onto the lines below it (the subject too, when little room is
+    left), up to three lines; the rest are gathered into a "+n" label whose tooltip lists them, and only a single
+    label wider than the column is shortened. A drawing taller than 360 pt scrolls inside itself;
   - the conflict forecast goes underneath.
 
   A checkbox, "Also move the stacked branches", starts from the setting and applies to this operation only

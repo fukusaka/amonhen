@@ -530,20 +530,24 @@ fn repository_title(name: &str, worktree: Option<&str>) -> (String, String) {
 fn open_remote(location: &str) -> amonhen_model::Result<Repository> {
     use amonhen_remote::ssh;
     let daemon = engine();
-    // SSH 先ごとの選択（Settings > SSH Hosts のエンジンとログインシェル。macOS 版の `hostOptions`）。
-    let options = sshhosts::options_for(location);
-    let conn = if location.starts_with("ssh://") {
-        // SSH 先が手元と同じ OS と CPU なら、手元のエンジンを送る。
-        let daemons =
-            ssh::Daemons::new(engines_dir(), Some((ssh::local_platform(), daemon.clone())));
-        let program = std::env::var("AMONHEN_SSH").unwrap_or_else(|_| "ssh".into());
-        ssh::connect(&program, &ssh::Target::parse(location)?, &daemons, &options)?
-    } else {
-        // `daemon:ssh://…` なら、共有の daemon がエンジンを起動するときに SSH 先ごとの選択を使う。
-        let path = amonhen_remote::location::local_path(location)?;
-        amonhen_remote::local::connect_with(path, &daemon.to_string_lossy(), &options)?
-    };
-    let backend = amonhen_remote::RemoteBackend::connect(conn)?;
+    // SSH 先ごとの選択（Settings > SSH Hosts のエンジンとログインシェル。macOS 版の `hostOptions`）は
+    // `sshhosts::connecting` が読む。
+    // エンジンを送るなら、先に利用者に聞く。
+    let backend = sshhosts::connecting(location, |options| {
+        let conn = if location.starts_with("ssh://") {
+            // SSH 先が手元と同じ OS と CPU なら、手元のエンジンを送る。
+            let daemons =
+                ssh::Daemons::new(engines_dir(), Some((ssh::local_platform(), daemon.clone())));
+            let program = std::env::var("AMONHEN_SSH").unwrap_or_else(|_| "ssh".into());
+            ssh::connect(&program, &ssh::Target::parse(location)?, &daemons, options)?
+        } else {
+            // `daemon:ssh://…` なら、共有の daemon がエンジンを起動するときに SSH 先ごとの選択を使う。
+            let path = amonhen_remote::location::local_path(location)?;
+            amonhen_remote::local::connect_with(path, &daemon.to_string_lossy(), options)?
+        };
+        // 共有の daemon が開けなかった理由（承認が要る、も）は、最初の要求の答えで来る。
+        amonhen_remote::RemoteBackend::connect(conn)
+    })?;
     // SSH 先の History は手元にキャッシュする（つなぎ直したら新しいコミットだけを受け取る）。手元の共有の daemon
     // なら、daemon が用意したファイルを直接読むので持たない。
     let repo = match amonhen_remote::local::cache_dir() {
@@ -991,8 +995,8 @@ fn build_tab(
     pages.add_named(&range_diff.root, Some(rangediff::PAGE));
     let sidebar = Rc::new(Sidebar::new());
     sidebar.set_location(&text);
-    // 署名を検証する側（Settings > SSH Hosts）が変わった: コアと画面が覚えていた結果を捨て、見えているものを
-    // 検証し直す（macOS 版の `signatureCheckChanged`）。
+    // 署名を検証する側（Settings > SSH Hosts）か、検証の設定（`gpg.*`）が変わった: コアと画面が覚えていた結果を
+    // 捨て、見えているものを検証し直す（macOS 版の `signatureCheckChanged`）。
     {
         let (v, d, s, location) = (
             view.downgrade(),
@@ -1003,7 +1007,7 @@ fn build_tab(
         let (st, rd) = (Rc::downgrade(&stashes), Rc::downgrade(&range_diff));
         // History の表がある間だけ見る（閉じたタブの分を残さない）。
         settings::connect_changed_while(&view, move |key| {
-            if key != sshhosts::SIGNATURE_BY_HOST {
+            if key != sshhosts::SIGNATURE_BY_HOST && key != settings::SIGNATURE_CONFIG {
                 return;
             }
             let (v, d, s, location) = (v.clone(), d.clone(), s.clone(), location.clone());
@@ -1019,6 +1023,9 @@ fn build_tab(
                     return;
                 };
                 sshhosts::apply_signature_check(&repo, &location);
+                // 設定はほかのリポジトリや Settings > Git・SSH Hosts で書いたかもしれない（コアが捨てるのは書いた
+                // リポジトリの分だけ）ので、このリポジトリのコアの分もここで捨てる。
+                repo.forget_signatures();
                 details.set_location(&location);
                 if let Some(stashes) = st.upgrade() {
                     stashes.set_location(&location);
