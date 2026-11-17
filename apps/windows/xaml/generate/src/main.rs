@@ -23,6 +23,14 @@ const FILTER: &[&str] = &[
     "Microsoft.UI.Xaml.Media.VisualTreeHelper",
     "Microsoft.UI.Xaml.Media.IVisualTreeHelperStatics::{GetParent}",
     "Microsoft.UI.Xaml.IFrameworkElement::{DataContext}",
+    // 等幅の字（Control に付けると、中の TextBlock が継ぐ。reactor の部品には字体の指定がない）。
+    "Microsoft.UI.Xaml.Media.FontFamily",
+    "Microsoft.UI.Xaml.Media.IFontFamilyFactory::{CreateInstanceWithName}",
+    "Microsoft.UI.Xaml.Media.IFontFamilyStatics::{}",
+    "Microsoft.UI.Xaml.Controls.Control",
+    "Microsoft.UI.Xaml.Controls.IControlFactory::{}",
+    "Microsoft.UI.Xaml.Controls.IControlStatics::{}",
+    "Microsoft.UI.Xaml.Controls.IControl::{put_FontFamily}",
     // ハンドラーの型は丸ごと（`new` が要る）。
     "Microsoft.UI.Xaml.Input.KeyEventHandler",
     "Microsoft.UI.Xaml.Input.PointerEventHandler",
