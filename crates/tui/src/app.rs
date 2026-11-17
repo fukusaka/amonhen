@@ -78,6 +78,17 @@ const CHANGED_REFS: u32 = 1;
 const CHANGED_INDEX: u32 = 2;
 const CHANGED_WORKTREE: u32 = 4;
 
+/// 一番下の行で打っている名前の使い道。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Naming {
+    /// 新しいブランチ（始まりのコミットか ref に作って、切り替える）。
+    Branch,
+    /// 新しいタグ（コミットか ref に）。
+    Tag,
+    /// ブランチの新しい名前。
+    Rename,
+}
+
 /// 選択肢 1 つ: 押すキー、名前、頼む中身。
 type Choice = (char, String, Request);
 
@@ -108,6 +119,8 @@ pub struct App {
     suspend: bool,
     /// 新しいブランチの名前を打っている: 始まり（ref かコミット）、その出し方、打った名前。
     typing_branch: Option<(String, String, String)>,
+    /// 打っている名前が何のものか。
+    naming: Naming,
     /// git や ssh から尋ねられていること（先頭を画面で聞いている）と、打った答え。
     #[cfg(unix)]
     questions: std::collections::VecDeque<crate::askpass::Question>,
@@ -185,6 +198,7 @@ impl App {
             mouse_changed: false,
             suspend: false,
             typing_branch: None,
+            naming: Naming::Branch,
             #[cfg(unix)]
             questions: std::collections::VecDeque::new(),
             #[cfg(unix)]
@@ -668,16 +682,31 @@ impl App {
                     if let Some((start, _, name)) = self.typing_branch.take()
                         && !name.trim().is_empty()
                     {
-                        self.run(
-                            "createBranch",
-                            tr!("Creating {name}…", name = name.trim()),
-                            json!({
-                                "op": "createBranch",
-                                "name": name.trim(),
-                                "start": start,
-                                "checkout": true,
-                            }),
-                        );
+                        let name = name.trim();
+                        let (op, label, command) = match self.naming {
+                            Naming::Branch => (
+                                "createBranch",
+                                tr!("Creating {name}…", name = name),
+                                json!({
+                                    "op": "createBranch", "name": name, "start": start,
+                                    "checkout": true,
+                                }),
+                            ),
+                            Naming::Tag => (
+                                "createTag",
+                                tr!("Tagging {name}…", name = name),
+                                json!({
+                                    "op": "createTag", "name": name, "target": start,
+                                    "message": null,
+                                }),
+                            ),
+                            Naming::Rename => (
+                                "renameBranch",
+                                tr!("Renaming to {name}…", name = name),
+                                json!({"op": "renameBranch", "from": start, "to": name}),
+                            ),
+                        };
+                        self.run(op, label, command);
                     }
                 }
                 KeyCode::Esc => self.typing_branch = None,
@@ -749,6 +778,7 @@ impl App {
                 self.run("undoPeek", tr!("Undo…"), json!({"op": "undoPeek"}))
             }
             KeyCode::Char('b') if !control => self.ask_branch(),
+            KeyCode::Char('T') => self.ask_name(Naming::Tag),
             KeyCode::Char('R') if self.view != View::Changes && self.focus == Focus::Main => {
                 self.ask_reset();
             }
@@ -872,6 +902,9 @@ impl App {
             "undo" => self.notice = Some(tr!("Undone")),
             "checkout" => self.notice = Some(tr!("Checked out")),
             "createBranch" => self.notice = Some(tr!("Created the branch")),
+            "createTag" => self.notice = Some(tr!("Created the tag")),
+            "renameBranch" => self.notice = Some(tr!("Renamed")),
+            "deleteBranch" | "deleteTag" => self.notice = Some(tr!("Deleted")),
             "stash" => self.notice = Some(tr!("Stashed")),
             "pop" => self.notice = Some(tr!("Popped the stash")),
             "abort" => self.notice = Some(tr!("Aborted")),
@@ -1062,10 +1095,16 @@ impl App {
     /// 新しいブランチの名前を聞く。始まりは、サイドバーなら選んでいる ref、ほかは History で選んでいるコミット
     /// （History を見ていなければ HEAD）。
     fn ask_branch(&mut self) {
+        self.ask_name(Naming::Branch);
+    }
+
+    /// 新しいブランチかタグの名前を聞く（始まりは `ask_branch` のとおり）。
+    fn ask_name(&mut self, naming: Naming) {
         let picked = match self.focus {
             Focus::Sidebar => self
                 .sidebar
                 .picked_ref()
+                .filter(|r| matches!(r.0, "branch" | "remote" | "tag"))
                 .map(|(_, name, _)| (name.to_owned(), name.to_owned())),
             _ => None,
         };
@@ -1079,9 +1118,46 @@ impl App {
             Some((id, short))
         });
         if let Some((start, shown)) = start {
+            self.naming = naming;
             self.typing_branch = Some((start, shown, String::new()));
             self.dirty = true;
         }
+    }
+
+    /// サイドバーで選んでいるブランチかタグを消す前に確かめる（Undo で戻せる）。今のブランチは消せない。
+    fn ask_delete(&mut self) -> bool {
+        let Some((kind, name, _)) = self.sidebar.picked_ref() else {
+            return false;
+        };
+        let (op, command) = match kind {
+            "branch" if Some(name) == self.branch.as_deref() => {
+                self.error = Some(tr!("The current branch can’t be deleted"));
+                return true;
+            }
+            "branch" => (
+                "deleteBranch",
+                json!({"op": "deleteBranch", "name": name, "force": false}),
+            ),
+            "tag" => ("deleteTag", json!({"op": "deleteTag", "name": name})),
+            _ => return false,
+        };
+        self.confirm = Some((
+            tr!("Delete {name}? Undo brings it back.", name = name),
+            tr!("delete"),
+            Request::Run { name: op, command },
+        ));
+        true
+    }
+
+    /// サイドバーで選んでいるブランチの、新しい名前を聞く。
+    fn ask_rename(&mut self) -> bool {
+        let Some(("branch", name, _)) = self.sidebar.picked_ref() else {
+            return false;
+        };
+        let name = name.to_owned();
+        self.naming = Naming::Rename;
+        self.typing_branch = Some((name.clone(), name.clone(), name));
+        true
     }
 
     /// サイドバーで選んでいる ref をチェックアウトする: ローカルのブランチはそのまま、リモートのブランチは追跡する
@@ -1238,6 +1314,8 @@ impl App {
             }
             KeyCode::Char('c') => self.checkout_picked(),
             KeyCode::Char('a' | 'o' | 'x') => self.stash_key(code),
+            KeyCode::Char('D') => self.ask_delete(),
+            KeyCode::Char('n') => self.ask_rename(),
             KeyCode::Char('m') => self.ask_merge_or_rebase(true),
             KeyCode::Char('r') => self.ask_merge_or_rebase(false),
             // 絞り込んでいれば、まずそれをやめる。
@@ -1266,6 +1344,7 @@ impl App {
                 ("m", tr!("Merge it into the current branch")),
                 ("r", tr!("Rebase the current branch onto it")),
                 ("a o x", tr!("On a stash: apply, pop, drop")),
+                ("n D", tr!("Rename a branch; delete a branch or a tag")),
                 ("/", tr!("Filter branches and tags")),
                 ("Esc", tr!("Clear the filter, or go back")),
             ],
@@ -1328,7 +1407,10 @@ impl App {
         lines.extend([
             ("", String::new()),
             ("f p P", tr!("Fetch, pull, push")),
-            ("b", tr!("New branch at the selected commit or ref")),
+            (
+                "b T",
+                tr!("New branch, new tag at the selected commit or ref"),
+            ),
             ("s S", tr!("Stash, and pop the newest stash")),
             (
                 "C K A",
@@ -1935,7 +2017,11 @@ impl App {
             }
             (None, None) if self.typing_branch.is_some() => {
                 let (_, at, name) = self.typing_branch.as_ref().unwrap();
-                let text = tr!("New branch at {at}: {name}", at = at, name = name);
+                let text = match self.naming {
+                    Naming::Branch => tr!("New branch at {at}: {name}", at = at, name = name),
+                    Naming::Tag => tr!("New tag at {at}: {name}", at = at, name = name),
+                    Naming::Rename => tr!("Rename {at} to: {name}", at = at, name = name),
+                };
                 let x = buf.set_stringn(area.x + 1, y, text, room, Style::new()).0;
                 cursor = Some((x.min(position_x.saturating_sub(1)), y));
             }

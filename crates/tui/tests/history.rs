@@ -1041,3 +1041,37 @@ fn diverged_branches_offer_force_push_and_pull_modes() {
     assert!(forced.contains("Pushed"));
     assert_eq!(remote_head(), "Rewritten\n");
 }
+
+/// サイドバーの `n` でブランチの名前を変え、`D` で確かめてから消す。`T` でタグを作る
+#[test]
+fn rename_and_delete_branches_and_tags() {
+    let dir = tempfile::tempdir().unwrap();
+    merged(dir.path());
+    let branches = || git_out(dir.path(), &["branch", "--format=%(refname:short)"]);
+    // topic の行で `n`: 今の名前が入っている。消して打ち直す。
+    let typing = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjjn").unwrap();
+    assert!(typing.contains("Rename topic to: topic"));
+    let keys = format!("0jjjn{}feature\n", "\x7f".repeat(5));
+    amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), &keys).unwrap();
+    assert_eq!(branches(), "feature\nmain\n");
+    // 今のブランチ（main）は消せない。
+    let refused = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjjD").unwrap();
+    println!("{refused}");
+    assert!(refused.contains("The current branch can’t be deleted"));
+    // feature（main の 1 つ上）を消す。
+    let asked = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjD").unwrap();
+    assert!(asked.contains("Delete feature? Undo brings it back.   y delete   n cancel"));
+    amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjDy").unwrap();
+    assert_eq!(branches(), "main\n");
+    // History で選んでいるコミットにタグ。
+    let typing = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "jTv").unwrap();
+    assert!(typing.contains("New tag at "));
+    amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "jTv2\n").unwrap();
+    assert_eq!(
+        git_out(dir.path(), &["log", "-1", "--format=%s", "v2"]),
+        "Bump the version\n"
+    );
+    // タグの行（一番下）で `D`。
+    amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0GDy").unwrap();
+    assert_eq!(git_out(dir.path(), &["tag"]), "v1\n");
+}
