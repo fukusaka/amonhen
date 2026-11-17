@@ -159,6 +159,8 @@ struct Root {
     search_status: String,
     /// 一致したコミットだけを出しているか、最後に探した問い合わせ（探すまでは切り替えを押せない）。
     search_only: bool,
+    /// 詳細だけを右の列いっぱいに広げている（⤢）。
+    details_expanded: bool,
     last_search: Option<String>,
     search_box: ElementRef<TextBox>,
     /// Working Copy の一部だけ含めているチェック（キーごと）と、直前の画面で使ったキー。
@@ -840,6 +842,8 @@ enum Message {
     Query(String),
     /// 検索の欄で Enter（`true` なら Shift+Enter で前へ）。
     SearchSubmit(bool),
+    /// 詳細だけを右の列いっぱいに広げる（⤢）。
+    ExpandDetails(bool),
     /// 一致したコミットだけを出すか。
     SearchOnly(bool),
     CloseSearch,
@@ -956,6 +960,7 @@ impl Component for Root {
             query: String::new(),
             search_status: String::new(),
             search_only: false,
+            details_expanded: false,
             last_search: None,
             search_box: ElementRef::new(),
             mixed_checks: RefCell::default(),
@@ -1374,6 +1379,7 @@ impl Component for Root {
                 self.last_search = (!query.is_empty()).then(|| query.clone());
                 with_history(|h| h.search(query, backwards));
             }
+            Message::ExpandDetails(on) => self.details_expanded = on,
             Message::SearchOnly(on) => {
                 if self.search_only == on {
                     return;
@@ -5693,14 +5699,14 @@ impl Component for Root {
             None => SwapChainPanel::new().element_ref(&self.panel).into(),
         };
         let right = Grid::new()
-            .rows([
-                if self.page == Page::WorkingCopy {
-                    GridLength::Auto
-                } else {
-                    GridLength::Pixel(240.0)
-                },
-                GridLength::Star(1.0),
-            ])
+            .rows(if self.page == Page::WorkingCopy {
+                [GridLength::Auto, GridLength::Star(1.0)]
+            } else if self.details_expanded {
+                // ⤢: 詳細だけを右の列いっぱいに（差分を隠す。GTK4 版の `expand_button`）。
+                [GridLength::Star(1.0), GridLength::Pixel(0.0)]
+            } else {
+                [GridLength::Pixel(240.0), GridLength::Star(1.0)]
+            })
             .grid_column(2)
             .children((
                 self.top_of_diff(context),
@@ -9957,9 +9963,23 @@ impl Root {
     /// Unstaged / Staged の切り替え（GTK4 版の `workcopy.rs` の `sides`）。
     fn top_of_diff(&self, context: &ViewContext<Self>) -> View {
         if self.page != Page::WorkingCopy {
-            return ScrollViewer::new()
+            // 右上に ⤢（詳細だけを右の列いっぱいに広げる。もう一度押すと戻す）。
+            return Grid::new()
                 .grid_row(0)
-                .content(details(self.info.as_ref().map(|(i, e)| (i, e.as_ref()))));
+                .children((
+                    ScrollViewer::new()
+                        .content(details(self.info.as_ref().map(|(i, e)| (i, e.as_ref())))),
+                    ToggleButton::new()
+                        .is_checked(self.details_expanded)
+                        .on_is_checked_changed(context.callback(Message::ExpandDetails))
+                        .horizontal_alignment(HorizontalAlignment::Right)
+                        .vertical_alignment(VerticalAlignment::Top)
+                        .margin(Thickness::new(0.0, 4.0, 8.0, 0.0))
+                        .content(TextBlock::new().text("⤢"))
+                        .tooltip(tr!(
+                            "Expand the commit details to fill the right column (click again to restore)."
+                        )),
+                ));
         }
         let Some(staged) = self.working_sides else {
             return View::empty();
