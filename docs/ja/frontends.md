@@ -310,7 +310,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 機能 | macOS | GTK4 | Windows | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
 | 帯でつないだ 3 つの列（Current / Result / Incoming） | ✓ | ✓ | △ | n/a | n/a | VSCode: VSCode 自身の 3-way のマージエディター。<br>Windows: 3 つの欄。帯・色・揃えたスクロールはない。 |
-| Show Base | ✓ | ✓ | — | n/a | n/a |  |
+| Show Base | ✓ | ✓ | ✓ | n/a | n/a |  |
 | Magic Merge（ファイルを開いたときの確かな規則も） | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: コンフリクトは VSCode 標準の 3-way マージエディターで開く。<br>CLI: `merge-file`（git の mergetool にも）。 |
 | 直せる Result とコンフリクトごとの Undo | ✓ | ✓ | △ | n/a | n/a |<br>Windows: 欄の Undo だけ。 |
 | ファイルを Current / Incoming で解く | ✓ | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |

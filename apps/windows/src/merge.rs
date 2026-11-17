@@ -4,18 +4,25 @@
 //! ✨ Magic Merge は決まった規則で解けるコンフリクトをまとめて解く。解決の計算はコアの `amonhen_core::conflict`、
 //! 読むのは `mergeSides`、書くのは `saveMerge`。
 //!
-//! まだないもの: 列の間の帯と ≫・≪、コンフリクトの色・位置で揃えるスクロール、Base の欄、等幅のフォント（reactor
-//! の TextBox にない）、AI、別の窓。
+//! 共通の祖先（diff3）があれば、Base を左端に出せる（GTK4 版と同じく、出すかは開くたびに切った状態から）。
+//!
+//! まだないもの: 列の間の帯と ≫・≪、コンフリクトの色・位置で揃えるスクロール、等幅のフォント（reactor の TextBox
+//! にない）、AI、別の窓。
 
 use amonhen_core::conflict::{self, Choice, MagicRules};
 use amonhen_model::tr;
 use serde_json::Value;
 use windows_reactor::*;
 
+/// 両側と共通の祖先の中身（Current、Incoming、Base）。
+pub type Sides = (String, String, Option<String>);
+
 pub struct State {
     pub path: String,
-    /// 読んでいる間は None。読めなければ理由。
-    pub sides: Option<Result<(String, String), String>>,
+    /// 読んでいる間は None。読めなければ理由。Current、Incoming、Base（共通の祖先があれば）。
+    pub sides: Option<Result<Sides, String>>,
+    /// Base の欄を出すか。
+    pub show_base: bool,
     /// 編集している Result と、最後に保存した（開いた）Result。
     pub result: String,
     pub saved: String,
@@ -35,6 +42,7 @@ impl State {
         Self {
             path,
             sides: None,
+            show_base: false,
             result: String::new(),
             saved: String::new(),
             selected: 0,
@@ -53,7 +61,8 @@ impl State {
                 self.typed = None;
                 self.crlf = self.result.contains("\r\n");
                 self.saved = self.result.clone();
-                self.sides = Some(Ok((text("current"), text("incoming"))));
+                let base = info["base"]["text"].as_str().map(str::to_owned);
+                self.sides = Some(Ok((text("current"), text("incoming"), base)));
                 self.selected = 0;
                 // 開いたときに、間違えようのないコンフリクトを解く（設定。GTK4 版と同じく、保存はしない）。
                 if crate::prefs::bool(crate::prefs::AUTO_MAGIC_MERGE) {
@@ -138,10 +147,12 @@ impl State {
 }
 
 pub struct Callbacks<'a> {
-    /// 操作のボタン（`accept-ours`・`accept-theirs`・`accept-both`・`magic`・`previous`・`next`・`save`・
-    /// `resolve`・`close`）。
+    /// 操作のボタン（`accept-ours`・`accept-theirs`・`accept-both`・`accept-base`・`magic`・`previous`・
+    /// `next`・`save`・`resolve`・`close`）。
     pub button: Box<dyn Fn(&'static str) -> Callback<()> + 'a>,
     pub result: Callback<String>,
+    /// Base の欄を出すか。
+    pub base: Callback<bool>,
 }
 
 pub fn view(state: &State, callbacks: Callbacks) -> View {
@@ -163,11 +174,29 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
             .content(TextBlock::new().text(title))
     };
     let has = ready && count > 0;
+    let has_base = matches!(&state.sides, Some(Ok((_, _, Some(_)))));
+    let accept_base: View = if has_base {
+        button(
+            "accept-base",
+            amonhen_model::i18n::translate("Accept Base").into_owned(),
+            has,
+        )
+    } else {
+        View::empty()
+    };
+    let base_toggle: View = if has_base {
+        CheckBox::new()
+            .is_checked(state.show_base)
+            .on_is_checked_changed(callbacks.base.clone())
+            .content(TextBlock::new().text("Base"))
+            .tooltip(tr!("Show the common ancestor on the left."))
+    } else {
+        View::empty()
+    };
     let bar = StackPanel::new()
         .orientation(Orientation::Horizontal)
         .spacing(6.0)
         .margin(Thickness::new(10.0, 6.0, 8.0, 6.0))
-        .grid_row(0)
         .children((
             TextBlock::new()
                 .text(format!("{} — {position}", state.path))
@@ -190,6 +219,8 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                 amonhen_model::i18n::translate("Accept Both").into_owned(),
                 has,
             ),
+            accept_base,
+            base_toggle,
             button("save", tr!("Save"), ready && state.dirty()),
             button("resolve", tr!("Save & Mark Resolved"), ready),
             button("close", tr!("Close"), true),
@@ -211,7 +242,7 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
             .margin(16.0)
             .grid_row(1)
             .into(),
-        Some(Ok((current, incoming))) => {
+        Some(Ok((current, incoming, base))) => {
             let pane = |title: String, text: &str, column: i32, editable: bool| -> View {
                 // 左右は読むだけ（reactor の TextBox に読むだけの設定がないので、選べる TextBlock）。
                 let content: View = if editable {
@@ -242,26 +273,43 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                         ScrollViewer::new().grid_row(1).content(content),
                     ))
             };
+            // 列: Base（出すとき）・Current・Result・Incoming（同じ幅に分ける）。
+            let base = base.as_deref().filter(|_| state.show_base);
+            let first = i32::from(base.is_some());
+            let base_pane: View = match base {
+                Some(text) => pane(tr!("Base (common ancestor)"), text, 0, false),
+                None => View::empty(),
+            };
             Grid::new()
-                .columns([
-                    GridLength::Star(1.0),
-                    GridLength::Star(1.0),
-                    GridLength::Star(1.0),
-                ])
+                .columns(vec![GridLength::Star(1.0); 3 + first as usize])
                 .grid_row(1)
                 .children((
-                    pane(tr!("Current (your branch)"), current, 0, false),
+                    base_pane,
+                    pane(tr!("Current (your branch)"), current, first, false),
                     pane(
                         tr!("Result (editable)"),
                         state.typed.as_deref().unwrap_or(&state.result),
-                        1,
+                        first + 1,
                         true,
                     ),
-                    pane(tr!("Incoming (being merged in)"), incoming, 2, false),
+                    pane(
+                        tr!("Incoming (being merged in)"),
+                        incoming,
+                        first + 2,
+                        false,
+                    ),
                 ))
         }
     };
     Grid::new()
         .rows([GridLength::Auto, GridLength::Star(1.0)])
-        .children((bar, body))
+        .children((
+            // 窓が狭くても右端のボタン（閉じる）に届くよう、帯は横にスクロールできる。
+            ScrollViewer::new()
+                .horizontal_scroll_bar_visibility(ScrollBarVisibility::Auto)
+                .vertical_scroll_bar_visibility(ScrollBarVisibility::Disabled)
+                .grid_row(0)
+                .content(bar),
+            body,
+        ))
 }

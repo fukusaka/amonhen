@@ -613,6 +613,8 @@ enum Message {
     OpenMerge(String),
     MergeLoaded(String, Result<Value, String>),
     MergeButton(&'static str),
+    /// マージエディタの Base の欄を出すか。
+    MergeBase(bool),
     MergeResult(String),
     /// Settings: git の名前とメールを読んだ・欄を書き換えた・保存・チェックを替えた・閉じる。
     SettingsGit(String, String),
@@ -3336,6 +3338,11 @@ impl Component for Root {
                 }
             }
             Message::MergeButton(key) => self.merge_button(key, context),
+            Message::MergeBase(on) => {
+                if let Some(state) = self.merge.as_mut() {
+                    state.show_base = on;
+                }
+            }
             Message::ActivityTab(Some(tab)) => {
                 if let Some(state) = self.activity.as_mut() {
                     state.tab = tab;
@@ -7778,6 +7785,7 @@ impl Root {
             "accept-ours" => state.accept(amonhen_core::conflict::Choice::Ours),
             "accept-theirs" => state.accept(amonhen_core::conflict::Choice::Theirs),
             "accept-both" => state.accept(amonhen_core::conflict::Choice::Both),
+            "accept-base" => state.accept(amonhen_core::conflict::Choice::Base),
             "magic" => state.magic(),
             "previous" => state.step(false),
             "next" => state.step(true),
@@ -8036,6 +8044,7 @@ impl Root {
             crate::merge::Callbacks {
                 button: Box::new(|key| context.callback(move |()| Message::MergeButton(key))),
                 result: context.callback(Message::MergeResult),
+                base: context.callback(Message::MergeBase),
             },
         );
         Border::new()
