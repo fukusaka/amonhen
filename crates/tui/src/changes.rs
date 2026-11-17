@@ -11,7 +11,7 @@ use ratatui_core::layout::Rect;
 use ratatui_core::style::{Color, Modifier, Style};
 use serde_json::Value;
 
-use crate::diff::{DIM, Diff, Scroll, Theme, counts, draw_row, fit_path};
+use crate::diff::{DIM, Diff, KeptRows, Scroll, Theme, counts, draw_row_kept, fit_path};
 use crate::editor::Editor;
 use crate::loader::Request;
 
@@ -75,6 +75,8 @@ pub struct Changes {
     /// 読めなかった差分と、その理由。
     failed: Option<(String, u64, String)>,
     scroll: Scroll,
+    /// 前のフレームで組み立てた差分の行。
+    kept: KeptRows,
     /// 差分の中で選んでいる行（文書の行。0 はパスの行）。
     cursor: u32,
     /// 行の範囲の始まり（あれば、ここから選んでいる行までが相手）。
@@ -477,6 +479,11 @@ impl Changes {
         ((self.cursor + 1).min(lines), lines)
     }
 
+    /// 前のフレームで組み立てた行を捨てる。
+    pub fn forget_drawn(&mut self) {
+        self.kept.forget();
+    }
+
     /// 選んでいる行を、`down` の向きにはもう動かせない。
     pub fn at_end(&self, down: bool) -> bool {
         self.cursor
@@ -703,7 +710,9 @@ impl Changes {
                 if line == 0 {
                     draw_title(at, buf, shown);
                 } else {
-                    draw_row(
+                    draw_row_kept(
+                        &mut self.kept,
+                        area.height,
                         at,
                         buf,
                         &shown.diff,

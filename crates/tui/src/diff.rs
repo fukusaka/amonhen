@@ -11,6 +11,8 @@ use ratatui_core::layout::Rect;
 use ratatui_core::style::{Color, Modifier, Style};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
+use crate::rowcache::RowCache;
+
 /// タブはこの幅の倍数まで進める（端末の `git diff` と同じ）。
 const TAB: usize = 8;
 /// これより狭ければ、差分の行番号を出さない。
@@ -97,6 +99,15 @@ pub struct Diff {
     digits: u16,
     /// stage 済みの行に印をつける（HEAD と作業ツリーを比べた差分）。
     marks: bool,
+    /// 行の見た目が変わるたびに替わる番号（ほかの差分とも重ならない）。
+    version: u64,
+}
+
+/// 次の `Diff::version`。
+static VERSION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+fn next_version() -> u64 {
+    VERSION.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 impl Diff {
@@ -124,6 +135,7 @@ impl Diff {
             hunk_rows,
             digits: largest.to_string().len() as u16,
             marks,
+            version: next_version(),
         }
     }
 
@@ -142,6 +154,7 @@ impl Diff {
     pub fn set_syntax(&mut self, reply: &Reply) {
         self.syntax = reply.u32s("spans");
         sort_spans::<4>(&mut self.syntax);
+        self.version = next_version();
     }
 
     /// 行の文字（行番号や印を除く）。
@@ -265,6 +278,37 @@ pub fn fit_path(path: &str, width: usize) -> String {
         return String::new();
     }
     std::iter::once('…').chain(kept.into_iter().rev()).collect()
+}
+
+/// 前のフレームで組み立てた差分の行。中身を決めるのは、差分（`Diff::version`）と横の位置。
+pub type KeptRows = RowCache<(u64, u16)>;
+
+/// 持っておく行の数を、見えている行の何倍にするか（少し戻るスクロールでも写せるよう）。
+const KEPT_SCREENS: usize = 2;
+
+/// 差分の 1 行。前のフレームで組み立てた行なら、`kept` から写すだけ。`height` は、差分を出す所の高さ。
+#[allow(clippy::too_many_arguments)]
+pub fn draw_row_kept(
+    kept: &mut KeptRows,
+    height: u16,
+    at: Rect,
+    buf: &mut Buffer,
+    diff: &Diff,
+    row: usize,
+    left: u16,
+    theme: &Theme,
+) {
+    let width = usize::from(at.width);
+    kept.prepare(
+        (diff.version, left),
+        width,
+        usize::from(height.max(1)) * KEPT_SCREENS,
+    );
+    let start = buf.index_of(at.x, at.y);
+    if !kept.copy_to(row as u32, &mut buf.content[start..start + width]) {
+        draw_row(at, buf, diff, row, left, theme);
+        kept.store(row as u32, &buf.content[start..start + width]);
+    }
 }
 
 /// 差分の 1 行。

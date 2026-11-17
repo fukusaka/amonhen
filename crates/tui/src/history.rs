@@ -10,13 +10,14 @@ use amonhen_front::Reply;
 use amonhen_layout::{Edge, Node};
 use amonhen_model::Oid;
 use amonhen_projection::terminal::{Graph, palette};
-use ratatui_core::buffer::{Buffer, Cell};
+use ratatui_core::buffer::Buffer;
 use ratatui_core::layout::Rect;
 use ratatui_core::style::{Color, Modifier, Style};
 use serde_json::Value;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::loader::Request;
+use crate::rowcache::RowCache;
 
 /// 手元に持つ行は、見えている範囲の前後にこの倍数の画面分（少なくとも `MIN_WINDOW` 行）。
 const WINDOW_SCREENS: u32 = 4;
@@ -84,50 +85,6 @@ impl Window {
     }
 }
 
-/// 前のフレームで組み立てた行の、グラフより右のセル（ラベル・件名・作者・日付。選択と祖先の色は入れない）。
-/// スクロールではほとんどの行がずれるだけなので、組み立て直さずにここから写す。
-#[derive(Default)]
-struct RowCache {
-    /// セルの中身を決めるもの: 幅、グラフの幅、今の時刻、`History::generation`。違えば、すべて捨てる。
-    key: (u16, u16, i64, u64),
-    /// 行ごとのセルの数。
-    width: usize,
-    /// 置き場所ごとに、入っている行（なければ `u32::MAX`）。行 `r` の置き場所は `r % rows.len()`。
-    rows: Vec<u32>,
-    cells: Vec<Cell>,
-}
-
-impl RowCache {
-    /// `key` と大きさが前と違えば、空にする。
-    fn prepare(&mut self, key: (u16, u16, i64, u64), width: usize, slots: usize) {
-        if self.key == key && self.width == width && self.rows.len() == slots {
-            return;
-        }
-        self.key = key;
-        self.width = width;
-        self.rows.clear();
-        self.rows.resize(slots, u32::MAX);
-        self.cells.clear();
-        self.cells.resize(slots * width, Cell::default());
-    }
-
-    /// `row` のセルを `to` に写す（持っていなければ `false`）。
-    fn copy_to(&self, row: u32, to: &mut [Cell]) -> bool {
-        let slot = row as usize % self.rows.len();
-        if self.rows[slot] != row {
-            return false;
-        }
-        to.clone_from_slice(&self.cells[slot * self.width..(slot + 1) * self.width]);
-        true
-    }
-
-    fn store(&mut self, row: u32, from: &[Cell]) {
-        let slot = row as usize % self.rows.len();
-        self.rows[slot] = row;
-        self.cells[slot * self.width..(slot + 1) * self.width].clone_from_slice(from);
-    }
-}
-
 #[derive(Default)]
 pub struct History {
     id: Value,
@@ -149,7 +106,9 @@ pub struct History {
     lineage: Option<(u32, Vec<u64>)>,
     /// 祖先を頼んで、答えを待っている。
     lineage_loading: bool,
-    cache: RowCache,
+    /// 前のフレームで組み立てた行の、グラフより右のセル（ラベル・件名・作者・日付。選択と祖先の色は入れない）。
+    /// 中身を決めるのは、幅、グラフの幅、今の時刻、`generation`。
+    cache: RowCache<(u16, u16, i64, u64)>,
     /// 行の中身（ラベル・件名の色）が変わるたびに進める。
     generation: u64,
 }

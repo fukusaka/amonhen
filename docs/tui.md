@@ -211,7 +211,19 @@ Moving through the Working Copy diff (`--measure-changes`, which goes into the s
 
 - Before, a move of the selected line redrew the whole screen; after, the moving keys (`j` `k`, the page keys, `g` `G`, `[` `]`) mark only the diff pane. That was faster in 4 of 5 pairs at 200 × 60 and in all 5 at 120 × 40; at 80 × 60 the diff is the whole screen and nothing changed.
 - At 200 × 60 this is about the 1 ms target, not under it, and slower than a commit's diff: the Working Copy diff has the pane to itself beside the list (more cells), and every line carries two line numbers and the staging mark. Building it takes 0.41 to 0.60 ms and diffing and writing 0.40 to 0.56 ms. The 95% frame is 2.1 to 2.4 ms.
-- What would cut it is what History got: keeping the lines that only moved. Not built.
+- What would cut it is what History got: keeping the lines that only moved.
+
+The diff's lines kept from the last frame, in the Working Copy diff and in a commit's details (the same Mac, repository and diffs as the two tables above), the build before and the build after run in turn, five times each:
+
+| Size | Working Copy diff, before (median of a run) | After | Commit's diff, before | After |
+| --- | --- | --- | --- | --- |
+| 200 × 60 | 0.76 to 0.87 ms | 0.45 to 0.62 ms | 0.73 to 1.08 ms | 0.44 to 0.66 ms |
+| 80 × 60 | 0.63 to 0.75 ms | 0.37 to 0.50 ms | 0.66 to 1.09 ms | 0.37 to 0.63 ms |
+| 120 × 40 | 0.63 to 0.72 ms | 0.36 to 0.43 ms | 0.59 to 0.74 ms | 0.32 to 0.47 ms |
+
+- Both panes keep the cells of the diff lines they built, for twice the visible lines, and copy them while the diff (its content and syntax colors) and the sideways position stay the same. The mark of the selected line is drawn every frame. Faster in all 30 pairs.
+- Building a frame of the Working Copy diff at 200 × 60 fell from 0.35 to 0.40 ms to 0.07 to 0.08 ms. Diffing and writing stayed at 0.38 to 0.50 ms, and is now most of the frame, as in History; the bytes are the same.
+- The 95% frame of the Working Copy diff at 200 × 60 is 0.9 to 2.4 ms (1.8 to 3.6 ms before).
 
 ## Distribution
 
@@ -222,7 +234,7 @@ Moving through the Working Copy diff (`--measure-changes`, which goes into the s
 ## Implementation order
 
 - [x] T1. `crates/tui`, the event loop, `amonhen tui`, History (graph, labels, subject, author, date), scrolling with the row window, `amonhen-projection::terminal` shared with `amonhen log`, `--snapshot` and `--measure-scroll`. The speed, the one-line graph and the engine's size measured on the linux repository (see the measurement log)
-- [ ] T1b. Our own frame output with terminal scroll regions, so a scroll step sends only the rows that come into view; profile the slowest frames; criterion benches. Built so far: our own frame output that rebuilds and compares only the panes an event changed (a scroll step at 200 × 60 from about 1.5 ms to about 0.9 ms); the slowest frames found to be the thread descheduled. History keeps the rows it built from frame to frame (a scroll step at 200 × 60 to about 0.3 to 0.5 ms). Left: scroll regions (they fit only where History has the full width, and would cut bytes, not time), criterion benches
+- [ ] T1b. Our own frame output with terminal scroll regions, so a scroll step sends only the rows that come into view; profile the slowest frames; criterion benches. Built so far: our own frame output that rebuilds and compares only the panes an event changed (a scroll step at 200 × 60 from about 1.5 ms to about 0.9 ms); the slowest frames found to be the thread descheduled. History keeps the rows it built from frame to frame (a scroll step at 200 × 60 to about 0.3 to 0.5 ms), and so do the Working Copy diff and a commit's diff (about 0.45 to 0.65 ms). Left: scroll regions (they fit only where History has the full width, and would cut bytes, not time), criterion benches
 - [x] T2. Commit details and the diff (file list, unified diff, changed words, syntax colors), the narrow layouts
 - [x] T3. Working Copy: the list, staging by file, hunk and line, discard, the message field and the editor, commit and amend; change notifications. Built so far: the list with a check per file, the diff with a mark on staged lines, staging and unstaging with Space (a file in the list; a line, or a hunk on its header, in the diff), discard with `d` after a confirmation, the message field under the list with commit and amend, reloading on change notifications; `v` in the diff starts a range of lines that Space and `d` then act on; `Ctrl-e` in the message field opens the message in git's editor (`git var GIT_EDITOR`) and takes it back when the editor closes, dropping `#` lines. While the editor has the terminal, the input thread stops reading (it polls for input 50 ms at a time so that it can)
 - [ ] T4. The sidebar (Branches, Remotes, Tags, the filter), History by ref, search, ancestor emphasis, the command list and help. Built so far: the sidebar with the Workspace rows, Branches (the current one marked, ahead and behind), Remotes and Tags; opening a ref selects its commit in History; the selection is kept by commit across reloads; search with `/` and `n` `N`; the sidebar's filter (`/` there); rows outside the selected commit's ancestry dimmed; `?` lists the focused pane's keys. Left: partial search results, lighting the graph's lines along the ancestry (only whole rows are dimmed), the command list (`:`), Worktrees and Stashes in the sidebar

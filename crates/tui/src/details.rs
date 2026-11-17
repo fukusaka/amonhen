@@ -9,7 +9,7 @@ use ratatui_core::style::{Color, Modifier, Style};
 use serde_json::Value;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::diff::{DIM, Diff, Scroll, Theme, counts, draw_row, fit_path};
+use crate::diff::{DIM, Diff, KeptRows, Scroll, Theme, counts, draw_row_kept, fit_path};
 
 use crate::Clock;
 use crate::history::ago;
@@ -180,6 +180,8 @@ pub struct Details {
     /// 読めなかったコミットと、その理由。
     failed: Option<(Oid, String)>,
     scroll: Scroll,
+    /// 前のフレームで組み立てた差分の行。
+    kept: KeptRows,
     width: u16,
     /// `[` `]` で移ったファイル（その後にスクロールしたら忘れる）。文書の終わり近くでは、見出しを一番上まで
     /// 動かせないので、どのファイルへ移ったかを覚えておく。
@@ -284,6 +286,11 @@ impl Details {
     pub fn scroll(&mut self, delta: i64) -> bool {
         self.jumped = None;
         self.scroll.by(delta, self.lines())
+    }
+
+    /// 前のフレームで組み立てた行を捨てる。
+    pub fn forget_drawn(&mut self) {
+        self.kept.forget();
     }
 
     /// `down` の向きに、もうスクロールできない。
@@ -392,7 +399,9 @@ impl Details {
                     draw_file(at, buf, file);
                 }
             } else {
-                draw_row(
+                draw_row_kept(
+                    &mut self.kept,
+                    area.height,
                     at,
                     buf,
                     &commit.diff,

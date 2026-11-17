@@ -16,6 +16,7 @@ mod fileview;
 mod history;
 mod loader;
 mod reflog;
+mod rowcache;
 mod sidebar;
 mod terminal;
 

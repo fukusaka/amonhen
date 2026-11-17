@@ -505,6 +505,8 @@ impl App {
     /// 前のフレームで組み立てたものを捨てる（次は、すべてを組み立て直す）。
     pub fn forget_drawn(&mut self) {
         self.history.forget_drawn();
+        self.changes.forget_drawn();
+        self.details.forget_drawn();
     }
 
     pub fn main_column(&self) -> u16 {
