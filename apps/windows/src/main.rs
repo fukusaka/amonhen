@@ -11,6 +11,7 @@ mod app;
 mod blame;
 mod branchswitcher;
 mod data;
+mod drawing;
 mod editor;
 mod failure;
 mod filehistory;

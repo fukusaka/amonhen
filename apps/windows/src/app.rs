@@ -546,6 +546,17 @@ enum Dialog {
         repo: Arc<Repository>,
         failure: crate::failure::Failure,
     },
+    /// 前と後の絵を添えた確認（Fast-Forward など。GTK4 版の `rewritedraw::new_move` を埋めたシート）。
+    ConfirmDrawn {
+        repo: Arc<Repository>,
+        title: String,
+        message: String,
+        button: String,
+        command: Value,
+        /// `movePreview` の答えと、その絵の見せ方。
+        preview: Value,
+        how: Arc<crate::drawing::Move>,
+    },
     /// Checkout の確認（GTK4 版の `sheets::checkout`）。
     Checkout {
         repo: Arc<Repository>,
@@ -909,6 +920,8 @@ enum Message {
     DialogClosed(ContentDialogResult),
     /// 書き込む操作が終わった（失敗ならそのダイアログの見出しと文）。
     Performed(Option<(String, String)>),
+    /// 前と後の絵を読んだので、確認を出す。
+    ConfirmWithDrawing(Box<Dialog>),
     /// 命令が失敗した（種類が分かれば、要点と次の一手を出す）。
     OperationFailed(Arc<Repository>, crate::failure::Failure),
     Failed(String),
@@ -2153,6 +2166,15 @@ impl Component for Root {
                 (Some(Dialog::Failure { .. }), ContentDialogResult::Secondary) => {
                     self.update(Message::Command("activity".to_owned()), context);
                 }
+                (
+                    Some(Dialog::ConfirmDrawn {
+                        repo,
+                        command,
+                        button,
+                        ..
+                    }),
+                    ContentDialogResult::Primary,
+                ) => perform(context, repo, command, button),
                 (Some(Dialog::FetchFirst { then, .. }), ContentDialogResult::Primary) => {
                     self.save(then, context);
                 }
@@ -3470,17 +3492,36 @@ impl Component for Root {
                             })
                             .and_then(|e| e.detail.clone())
                             .unwrap_or_default();
+                    // 前と後の絵（GTK4 版の `sheets::fast_forward`）。読んでから確かめる。
                     if let Some(repo) = self.repo.clone() {
-                        self.dialog = Some(Dialog::Confirm {
-                            repo,
-                            title: tr!(
-                                "Fast-forward {branch} to {upstream}?",
-                                branch = name,
-                                upstream = &upstream
-                            ),
-                            message: tr!("You can Undo this (Ctrl+Alt+Z)."),
-                            button: "Fast-Forward".to_owned(),
-                            command: json!({ "op": "fastForward", "branch": name }),
+                        let name = name.to_owned();
+                        context.spawn_background(move |_| {
+                            let query = json!({
+                                "op": "movePreview", "from": name, "to": upstream, "branch": name,
+                            });
+                            let reply: Value =
+                                serde_json::from_str(&repo.run_json(&query.to_string()))
+                                    .unwrap_or_default();
+                            Message::ConfirmWithDrawing(Box::new(Dialog::ConfirmDrawn {
+                                repo,
+                                title: tr!(
+                                    "Fast-forward {branch} to {upstream}?",
+                                    branch = &name,
+                                    upstream = &upstream
+                                ),
+                                message: tr!("You can Undo this (Ctrl+Alt+Z)."),
+                                button: "Fast-Forward".to_owned(),
+                                command: json!({ "op": "fastForward", "branch": &name }),
+                                preview: reply["info"].clone(),
+                                how: Arc::new(crate::drawing::Move {
+                                    moving: name.clone(),
+                                    kind: "local",
+                                    after_title: tr!("After the fast-forward"),
+                                    lost_note: String::new(),
+                                    lost_red: false,
+                                    removes: false,
+                                }),
+                            }))
                         });
                     }
                 } else if let Some(name) = key.strip_prefix("rename:") {
@@ -3836,6 +3877,7 @@ impl Component for Root {
                     self.integrate(rev.to_owned(), true);
                 }
             }
+            Message::ConfirmWithDrawing(dialog) => self.dialog = Some(*dialog),
             Message::OperationFailed(repo, failure) => {
                 self.update(Message::Performed(None), context);
                 // 取り消したときは知らせない（GTK4 版は帯を出してすぐ消す）。
@@ -6168,6 +6210,26 @@ impl Root {
                     TextBlock::new()
                         .text(what.clone())
                         .text_wrapping(TextWrapping::Wrap),
+                ),
+            Some(Dialog::ConfirmDrawn {
+                title,
+                message,
+                button,
+                preview,
+                how,
+                ..
+            }) => dialog
+                .is_open(true)
+                .title(title.clone())
+                .primary_button_text(button.clone())
+                .close_button_text(tr!("Cancel"))
+                .content(
+                    StackPanel::new().spacing(10.0).children((
+                        TextBlock::new()
+                            .text(message.clone())
+                            .text_wrapping(TextWrapping::Wrap),
+                        crate::drawing::for_move(preview, how).unwrap_or_else(View::empty),
+                    )),
                 ),
             Some(Dialog::FetchFirst {
                 message, button, ..

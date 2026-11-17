@@ -57,7 +57,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | PR でマージ済みのブランチの印（GitHub で squash・rebase） | ✓ | ✓ | — | ✓ | △ | VSCode: エンジンがあるとき。番号は行のツールチップに出る。CLI: `amonhen run`（`pullRequests` を渡した `branchGroups`）から。マージ済みの PR はアプリと VSCode が gh で読む。 |
 | お気に入りをドラッグで並べ替える | ✓ | ✓ | — | ✓ | n/a | VSCode: メニューの Move Up・Move Down in Favorites（ブランチに落とすと Merge・Rebase）。 |
 | ブランチのメニュー: checkout・名前の変更・削除（未マージは Delete Anyway） | ✓ | ✓ | ✓ | ✓ | △ | macOS: Set Upstream は Repository メニューだけ。<br>GTK4: Set Upstream は Repository メニューだけ。<br>CLI: `amonhen run` から。 |
-| checkout していないブランチの同期（Fast-Forward・Push・Publish） | ✓ | ✓ | △ | ✓ | △ | CLI: `amonhen run` から。<br>Windows: Windows: Fast-Forward の前後の絵はまだない。 |
+| checkout していないブランチの同期（Fast-Forward・Push・Publish） | ✓ | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
 | タグの一覧 | ✓ | ✓ | ✓ | ✓ | ✓ |  |
 | タグのリモートの印（ない・違う）とポップオーバー | ✓ | ✓ | △ | ✓ | △ | VSCode: 行の説明に出し、リモートごとの様子はツールチップに（ポップオーバーはない）。<br>CLI: `amonhen run`（`tagRemotes`）から。<br>Windows: 名前の後ろに ⚠（リモートに別のタグ）か ∅（どのリモートにもない）、リモートごとの様子は行のツールチップとタグのメニューの先頭に。ポップオーバーはない。 |
 | タグの署名の印 | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: 行のアイコンで、説明はツールチップに。<br>CLI: `refs --verify`。<br>Windows: 名前の後ろに 🔏（検証できた）か 🔓（署名はあるが検証できない）、状態と署名者はタグのメニューの先頭。吹き出しはない |
