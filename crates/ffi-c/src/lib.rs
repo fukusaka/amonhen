@@ -2218,6 +2218,16 @@ pub unsafe extern "C" fn amonhen_repo_workdir(repo_ptr: *const AmonhenRepo) -> *
         .map_or(std::ptr::null_mut(), CString::into_raw)
 }
 
+/// 覚えていた署名の検証の結果を捨てる（ほかのリポジトリや Settings > Git・SSH Hosts で検証の設定 `gpg.*` を
+/// 書いたとき。次に頼まれたら検証し直す）。
+///
+/// # Safety
+/// `repo` は有効なリポジトリであること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_repo_forget_signatures(repo_ptr: *const AmonhenRepo) {
+    repo!(repo_ptr).forget_signatures();
+}
+
 /// daemon 越しのリポジトリのコミットの署名を、手元の鍵で検証するか（false なら SSH 先の git と鍵で検証する）。
 /// 手元のリポジトリには効かない（いつも手元で検証する）。変えると、覚えていた検証の結果は捨てる。
 ///

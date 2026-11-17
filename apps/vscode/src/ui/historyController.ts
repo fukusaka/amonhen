@@ -217,9 +217,14 @@ export class HistoryController implements vscode.Disposable {
     const rows = [...this.signatures].map(([oid, view]) => ({ oid, ...(view ? { signed: true } : {}) }));
     this.signatures.clear();
     this.extras.clear();
-    const daemon = this.daemon;
-    if (daemon) void this.verifyRows(daemon, rows, true).catch(() => undefined);
-    if (this.selectedOid) void this.sendDetails(this.selectedOid).catch(() => undefined);
+    void (async () => {
+      // 設定はほかのリポジトリ（Settings の段が global のときも）で書いたかもしれない（コアが捨てるのは書いた
+      // リポジトリの分だけ）ので、このリポジトリのコアの分も捨ててもらう（知らない古いエンジンはそのまま）
+      await (await this.engine())?.call({ op: 'run', command: { op: 'forgetSignatures' } }).catch(() => undefined);
+      const daemon = this.daemon;
+      if (daemon) await this.verifyRows(daemon, rows, true);
+      if (this.selectedOid) await this.sendDetails(this.selectedOid);
+    })().catch(() => undefined);
   }
 
   /**

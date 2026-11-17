@@ -1269,6 +1269,15 @@ bool amonhen_discard_rows(const AmonhenRepo *repo_ptr,
 char *amonhen_repo_workdir(const AmonhenRepo *repo_ptr);
 
 /**
+ * 覚えていた署名の検証の結果を捨てる（ほかのリポジトリや Settings > Git・SSH Hosts で検証の設定 `gpg.*` を
+ * 書いたとき。次に頼まれたら検証し直す）。
+ *
+ * # Safety
+ * `repo` は有効なリポジトリであること。
+ */
+void amonhen_repo_forget_signatures(const AmonhenRepo *repo_ptr);
+
+/**
  * daemon 越しのリポジトリのコミットの署名を、手元の鍵で検証するか（false なら SSH 先の git と鍵で検証する）。
  * 手元のリポジトリには効かない（いつも手元で検証する）。変えると、覚えていた検証の結果は捨てる。
  *
