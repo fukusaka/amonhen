@@ -77,6 +77,9 @@ const CHANGED_REFS: u32 = 1;
 const CHANGED_INDEX: u32 = 2;
 const CHANGED_WORKTREE: u32 = 4;
 
+/// 選択肢 1 つ: 押すキー、名前、頼む中身。
+type Choice = (char, String, Request);
+
 pub struct App {
     loader: Loader,
     history: History,
@@ -92,6 +95,14 @@ pub struct App {
     reopen: bool,
     /// 確かめてから行う操作: 尋ねる文と、`y` で頼む中身。
     confirm: Option<(String, String, Request)>,
+    /// いくつかから選んで行う操作: 尋ねる文と、キー・名前・頼む中身の組。
+    choices: Option<(String, Vec<Choice>)>,
+    /// マウスを取り込んでいる（切ると、端末で文字を選べる）。
+    mouse: bool,
+    /// マウスの取り込みを替えた（端末に伝えるまで）。
+    mouse_changed: bool,
+    /// `Ctrl-z` で止める（端末を戻してから）。
+    suspend: bool,
     /// 新しいブランチの名前を打っている: 始まり（ref かコミット）、その出し方、打った名前。
     typing_branch: Option<(String, String, String)>,
     /// git や ssh から尋ねられていること（先頭を画面で聞いている）と、打った答え。
@@ -159,6 +170,10 @@ impl App {
             opening: false,
             reopen: false,
             confirm: None,
+            choices: None,
+            mouse: true,
+            mouse_changed: false,
+            suspend: false,
             typing_branch: None,
             #[cfg(unix)]
             questions: std::collections::VecDeque::new(),
@@ -278,6 +293,22 @@ impl App {
 
     pub fn quit(&self) -> bool {
         self.quit
+    }
+
+    pub fn mouse_captured(&self) -> bool {
+        self.mouse
+    }
+
+    /// マウスの取り込みを替えたなら、その値（聞いたら、なかったことにする）。
+    pub fn take_mouse_change(&mut self) -> Option<bool> {
+        std::mem::take(&mut self.mouse_changed).then_some(self.mouse)
+    }
+
+    /// `Ctrl-z` を押した（聞いたら、なかったことにする）。止まって続いた後は、描き直す。
+    pub fn take_suspend(&mut self) -> bool {
+        let suspend = std::mem::take(&mut self.suspend);
+        self.dirty |= suspend;
+        suspend
     }
 
     /// まだ読んでいる。
@@ -523,6 +554,15 @@ impl App {
         // エラーは、次のキーまで出しておく。
         self.dirty |= self.error.take().is_some() | self.notice.take().is_some();
         // 確かめている間は、`y`（か Enter）で行い、ほかのキーでやめる。
+        if let Some((_, options)) = self.choices.take() {
+            if let KeyCode::Char(pressed) = key.code
+                && let Some((_, _, request)) = options.into_iter().find(|o| o.0 == pressed)
+            {
+                self.send(request);
+            }
+            self.dirty = true;
+            return;
+        }
         if let Some((_, _, request)) = self.confirm.take() {
             if matches!(key.code, KeyCode::Char('y' | 'Y') | KeyCode::Enter) {
                 self.send(request);
@@ -635,6 +675,16 @@ impl App {
         }
         match key.code {
             KeyCode::Char('c') if control => self.quit = true,
+            KeyCode::Char('z') if control => self.suspend = true,
+            KeyCode::Char('M') => {
+                self.mouse = !self.mouse;
+                self.mouse_changed = true;
+                self.notice = Some(match self.mouse {
+                    true => tr!("Mouse on"),
+                    false => tr!("Mouse off: the terminal selects text"),
+                });
+                self.dirty = true;
+            }
             KeyCode::Char('q') if !covering => self.quit = true,
             KeyCode::Tab | KeyCode::BackTab => {
                 // サイドバーが出ていれば、そこも回る。
@@ -659,6 +709,9 @@ impl App {
                 self.run("undoPeek", tr!("Undo…"), json!({"op": "undoPeek"}))
             }
             KeyCode::Char('b') if !control => self.ask_branch(),
+            KeyCode::Char('R') if self.view != View::Changes && self.focus == Focus::Main => {
+                self.ask_reset();
+            }
             KeyCode::Char('s') if !control && self.focus != Focus::Side => self.run(
                 "stash",
                 tr!("Stashing…"),
@@ -782,6 +835,13 @@ impl App {
             "pop" => self.notice = Some(tr!("Popped the stash")),
             "abort" => self.notice = Some(tr!("Aborted")),
             "resolve" => self.notice = Some(tr!("Resolved")),
+            "reset" => {
+                // hard で作業中の変更があれば、消す前に stash に残っている。
+                self.notice = Some(match reply["info"]["stashed"] == true {
+                    true => tr!("Reset (the working changes are in a stash)"),
+                    false => tr!("Reset"),
+                });
+            }
             "apply" => self.notice = Some(tr!("Applied the stash")),
             "drop" => self.notice = Some(tr!("Dropped the stash")),
             "merge" | "rebase" | "continue" | "skip" => {
@@ -846,6 +906,46 @@ impl App {
                 }),
             },
         ));
+    }
+
+    /// 今のブランチを、選んでいるコミット（History・Reflog）に動かす前に、どう動かすかを選ばせる。
+    fn ask_reset(&mut self) {
+        let id = match self.view {
+            View::History => self.history.selected_id(),
+            View::Reflog => self.reflog.selected_id(),
+            View::Changes => None,
+        };
+        let Some(id) = id.map(|id| id.to_string()) else {
+            return;
+        };
+        let branch = self.branch.clone().unwrap_or_else(|| "HEAD".to_owned());
+        let option = |key: char, mode: &'static str, label: String| {
+            (
+                key,
+                label,
+                Request::Run {
+                    name: "reset",
+                    command: json!({"op": "reset", "oid": id, "mode": mode}),
+                },
+            )
+        };
+        self.choices = Some((
+            tr!(
+                "Reset {branch} to {commit}? Undo brings it back.",
+                branch = branch,
+                commit = &id[..id.len().min(8)]
+            ),
+            vec![
+                option('s', "soft", tr!("soft (keep the index and files)")),
+                option('m', "mixed", tr!("mixed (keep the files)")),
+                option(
+                    'h',
+                    "hard",
+                    tr!("hard (stash the changes, then discard them)"),
+                ),
+            ],
+        ));
+        self.dirty = true;
     }
 
     /// 新しいブランチの名前を聞く。始まりは、サイドバーなら選んでいる ref、ほかは History で選んでいるコミット
@@ -1117,6 +1217,15 @@ impl App {
                 tr!("Continue, skip, abort a merge or rebase in progress"),
             ),
             ("u", tr!("Undo the last operation")),
+            (
+                "R",
+                tr!("In History or Reflog: reset the branch to the selected commit"),
+            ),
+            (
+                "M",
+                tr!("Mouse on or off (off lets the terminal select text)"),
+            ),
+            ("Ctrl-z", tr!("Suspend (fg in the shell comes back)")),
             ("1 2 3", tr!("Changes, History and Reflog")),
             ("0", tr!("Sidebar")),
             ("Tab", tr!("Next pane")),
@@ -1380,7 +1489,7 @@ impl App {
 
     fn mouse(&mut self, mouse: MouseEvent) {
         // 確かめている間は、キーで答えるまで動かさない。
-        if self.confirm.is_some() {
+        if self.confirm.is_some() || self.choices.is_some() || !self.mouse {
             return;
         }
         let layout = self.layout();
@@ -1603,6 +1712,38 @@ impl App {
         #[cfg(unix)]
         let asked = self.questions.front();
         match (&self.confirm, &self.error) {
+            // いくつかから選ぶ: 文と、選択肢のキーと名前。
+            _ if self.choices.is_some() => {
+                let (ask, options) = self.choices.as_ref().unwrap();
+                let mut x =
+                    buf.set_stringn(
+                        area.x + 1,
+                        y,
+                        ask,
+                        room,
+                        Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                    )
+                    .0 + 3;
+                let cancel = ('n', tr!("cancel"));
+                for (key, label) in options
+                    .iter()
+                    .map(|o| (o.0, o.1.as_str()))
+                    .chain([(cancel.0, cancel.1.as_str())])
+                {
+                    if x >= position_x {
+                        break;
+                    }
+                    x =
+                        buf.set_stringn(
+                            x,
+                            y,
+                            format!("{key} {label}"),
+                            usize::from(position_x - x),
+                            Style::new(),
+                        )
+                        .0 + 3;
+                }
+            }
             // 尋ねられていること: 文と、打った答え（パスワードは隠す）。
             #[cfg(unix)]
             _ if asked.is_some() => {

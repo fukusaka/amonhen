@@ -614,15 +614,15 @@ fn sidebar_filter_narrows_refs() {
 fn question_mark_lists_the_keys() {
     let dir = tempfile::tempdir().unwrap();
     merged(dir.path());
-    let help = amonhen_tui::snapshot(open(dir.path()), 80, 20, clock(), "?").unwrap();
+    let help = amonhen_tui::snapshot(open(dir.path()), 80, 30, clock(), "?").unwrap();
     println!("{help}");
     assert!(help.contains("┌─ Keys ─"));
     assert!(help.contains("│ n N        Next and previous match"));
     assert!(help.contains("│ q          Quit"));
-    let closed = amonhen_tui::snapshot(open(dir.path()), 80, 20, clock(), "?x").unwrap();
+    let closed = amonhen_tui::snapshot(open(dir.path()), 80, 30, clock(), "?x").unwrap();
     assert!(!closed.contains("Keys"));
     // Working Copy の差分では、その枠のキー。
-    let diff = amonhen_tui::snapshot(open(dir.path()), 80, 20, clock(), "1\n?").unwrap();
+    let diff = amonhen_tui::snapshot(open(dir.path()), 80, 30, clock(), "1\n?").unwrap();
     assert!(diff.contains("Previous and next hunk"));
 }
 
@@ -889,4 +889,38 @@ fn reflog_lists_where_head_was() {
     let details: Vec<String> = next.lines().filter_map(|l| column(l, 2)).collect();
     assert_eq!(details[0], "Bump the version");
     assert!(next.lines().last().unwrap().ends_with("2/7"), "{next}");
+}
+
+/// `R` は、今のブランチを選んでいるコミットへ動かす。どう動かすかを選ばせる
+#[test]
+fn reset_offers_the_modes() {
+    let dir = tempfile::tempdir().unwrap();
+    merged(dir.path());
+    let head = || git_out(dir.path(), &["log", "-1", "--format=%s"]);
+    // 1 つ下（Bump the version）を選んで `R`。
+    let asked = amonhen_tui::snapshot(open(dir.path()), 160, 10, clock(), "jR").unwrap();
+    println!("{asked}");
+    let last = asked.lines().last().unwrap();
+    assert!(last.contains("Reset main to "), "{last}");
+    assert!(last.contains("s soft (keep the index and files)   m mixed (keep the files)"));
+    // ほかのキーでやめる。
+    amonhen_tui::snapshot(open(dir.path()), 160, 10, clock(), "jRn").unwrap();
+    assert_eq!(head(), "Merge branch 'topic'\n");
+    let done = amonhen_tui::snapshot(open(dir.path()), 160, 10, clock(), "jRh").unwrap();
+    assert!(done.contains("Reset"));
+    assert_eq!(head(), "Bump the version\n");
+    // Undo で戻る。
+    amonhen_tui::snapshot(open(dir.path()), 160, 10, clock(), "uy").unwrap();
+    assert_eq!(head(), "Merge branch 'topic'\n");
+}
+
+/// `M` でマウスの取り込みを切り替える
+#[test]
+fn m_toggles_mouse_capture() {
+    let dir = tempfile::tempdir().unwrap();
+    merged(dir.path());
+    let off = amonhen_tui::snapshot(open(dir.path()), 80, 8, clock(), "M").unwrap();
+    assert!(off.contains("Mouse off: the terminal selects text"));
+    let on = amonhen_tui::snapshot(open(dir.path()), 80, 8, clock(), "MM").unwrap();
+    assert!(on.contains("Mouse on"));
 }

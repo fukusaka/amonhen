@@ -49,6 +49,37 @@ impl Screen {
     }
 }
 
+impl Screen {
+    /// マウスの取り込みを替える（切ると、端末が文字の選択を受け持つ）。
+    pub fn set_mouse(&mut self, capture: bool) -> Result<()> {
+        let out = self.terminal.backend_mut();
+        match capture {
+            true => execute!(out, EnableMouseCapture)?,
+            false => execute!(out, DisableMouseCapture)?,
+        }
+        Ok(())
+    }
+
+    /// 端末を戻してプロセスを止め（`Ctrl-z`。シェルの `fg` で続く）、続いたら端末を取り直す。
+    #[cfg(unix)]
+    pub fn suspend(&mut self, mouse: bool) -> Result<()> {
+        restore();
+        // 自分に SIGTSTP を送る（ここで止まり、SIGCONT で次の行から続く）。
+        let _ = amonhen_model::process::command("kill")
+            .args(["-TSTP", &std::process::id().to_string()])
+            .status();
+        enable_raw_mode()?;
+        let mut out = BufWriter::with_capacity(OUTPUT_BUFFER, std::io::stdout());
+        execute!(out, EnterAlternateScreen, cursor::Hide)?;
+        if mouse {
+            execute!(out, EnableMouseCapture)?;
+        }
+        // 代替画面は空なので、前のフレームを持たない端末に取り替える（次のフレームはすべて書く）。
+        self.terminal = Terminal::new(CrosstermBackend::new(out))?;
+        Ok(())
+    }
+}
+
 impl Drop for Screen {
     fn drop(&mut self) {
         restore();

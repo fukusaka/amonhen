@@ -96,6 +96,13 @@ fn run_with(
         if app.quit() {
             break;
         }
+        if let Some(capture) = app.take_mouse_change() {
+            screen.set_mouse(capture)?;
+        }
+        #[cfg(unix)]
+        if app.take_suspend() {
+            screen.suspend(app.mouse_captured())?;
+        }
     }
     Ok(())
 }
