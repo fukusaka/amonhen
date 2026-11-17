@@ -125,7 +125,7 @@ The targets of [design.md](design.md) apply up to the point the TUI controls: th
 | Bytes per scroll step | Measured and kept from growing (it is what an SSH session carries) |
 | Launch to the first screen of History | A few ms more than `amonhen log` (same persistent cache) |
 
-- `amonhen tui --measure-scroll` scrolls History through the real event path with the output going to a counter, and prints the time and the bytes per frame (the apps' flag of the same name).
+- `amonhen tui --measure-scroll` scrolls History through the real event path with the output going to a counter, and prints the time and the bytes per frame (the apps' flag of the same name). `--measure-move` does the same pressing `j` (and `k` at the end) to move the selection.
 - `amonhen tui --snapshot <file>` draws through the same frame output as the real screen (a frame after each key, redrawing only what that key marked) and writes the last frame as text. It fails if that screen differs from one drawn whole, so every screen test also checks that no pane was left stale. It takes `--size <cols>x<rows>` and, to reach another screen first, `--keys <keys>` (one key per character; a newline is Enter, a tab is Tab, other control characters are Ctrl with the letter). Tests compare such frames; CI needs no terminal.
 - `--measure-scroll` also checks its last screen against one drawn whole, and prints how much CPU time the slowest frame used.
 - criterion benches for building a frame and packing the graph into cells are not written yet.
@@ -174,18 +174,32 @@ T1b, the same Mac, this repository (3,541 commits), `--measure-scroll` with the 
 - The slowest frames are the thread being descheduled: a frame that took 6 to 33 ms used 1.0 to 1.2 ms of CPU time (`CLOCK_THREAD_CPUTIME_ID`), in three runs out of three. Nothing in the TUI is slow in those frames.
 - Terminal scroll regions were not built. A region scrolls whole lines (`DECSTBM`), so it fits only when History has the full width; beside the sidebar or the details it needs left and right margins (`DECSLRM`), which many terminals lack. It would cut the bytes of a step (what an SSH session carries), not the time: the graph's columns are packed from the visible rows, so the rows that stay can change and are rebuilt and compared anyway.
 - Checked in a real terminal emulator: the TUI run in tmux at 200 × 60, with keys that move the History selection and scroll the details, ends on the same screen as `--snapshot` with the same keys.
-- Not measured: holding `j` in History (each step also redraws the details when the commit arrives) and scrolling a diff.
+- Not measured: scrolling a diff.
+
+History's rows kept from the last frame, the same Mac and repository, the build before and the build after run in turn, five times each (the machine not idle, as above). `--measure-move` presses `j` where `--measure-scroll` turns the wheel:
+
+| Size | Scroll, before (median of a run) | After | Move, before | After |
+| --- | --- | --- | --- | --- |
+| 200 × 60 (sidebar, History, details) | 0.65 to 0.99 ms | 0.30 to 0.56 ms | 0.56 to 0.59 ms | 0.40 to 0.45 ms |
+| 80 × 60 (History alone) | 0.32 to 0.36 ms | 0.16 to 0.35 ms | 0.32 to 0.45 ms | 0.16 to 0.25 ms |
+| 120 × 40 (sidebar, History) | 0.29 to 0.84 ms | 0.24 to 0.60 ms | 0.52 to 0.67 ms | 0.34 to 0.61 ms |
+
+- A scroll step rebuilt every visible row, though all but the rows coming into view only moved. History keeps the cells to the right of the graph (labels, subject, author, date) of the rows it built, for twice the visible rows, and copies them while the width, the graph's width and the content stay the same. The graph, the selection and the ancestor dimming are drawn every frame, as they change from frame to frame. The check against a full redraw (`--snapshot`, the measurements) rebuilds every row, so a stale row fails it.
+- Building a frame fell in every pair (at 200 × 60 from 0.44 to 0.62 ms to 0.11 to 0.19 ms a scroll step). Diffing and writing did not, and at 120 × 40 it rose (0.10 to 0.31 ms to 0.14 to 0.40 ms), so part of what the build no longer pays shows up there; the whole frame was still faster in 29 of the 30 pairs and 3% slower in the other (at 120 × 40, scrolling).
+- What is left of a scroll step is mostly comparing the cells and writing them (0.2 to 0.3 ms at 200 × 60), and the bytes are the same.
+- Moving the selection with `j` costs about what a scroll step does. Redrawing only the two rows the selection touches was not built: the ancestor dimming arrives a moment later and changes rows all over the pane.
+- The numbers of this table are lower than the T1b table's for the same build because the machine was quieter; only the pairs compare.
 
 ## Distribution
 
 - The TUI ships inside the engine for every target the engine is built for. crossterm talks to the Windows console directly, so the Windows engines get it too.
-- It adds about 0.36 MB to the engine (40.28 MB to 40.64 MB for the darwin-aarch64 release build, 0.9%), so every engine carries it, the ones copied to SSH hosts included.
+- It adds about 0.77 MB to the engine (40.28 MB to 41.05 MB for the darwin-aarch64 release build, 1.9%; 0.36 MB when only History was built), so every engine carries it, the ones copied to SSH hosts included.
 - No terminfo and no C library are needed, so the static musl engines stay static.
 
 ## Implementation order
 
 - [x] T1. `crates/tui`, the event loop, `amonhen tui`, History (graph, labels, subject, author, date), scrolling with the row window, `amonhen-projection::terminal` shared with `amonhen log`, `--snapshot` and `--measure-scroll`. The speed, the one-line graph and the engine's size measured on the linux repository (see the measurement log)
-- [ ] T1b. Our own frame output with terminal scroll regions, so a scroll step sends only the rows that come into view; profile the slowest frames; criterion benches. Built so far: our own frame output that rebuilds and compares only the panes an event changed (a scroll step at 200 × 60 from about 1.5 ms to about 0.9 ms); the slowest frames found to be the thread descheduled. Left: scroll regions (they fit only where History has the full width, and would cut bytes, not time), criterion benches, measuring a held `j` and diff scrolling
+- [ ] T1b. Our own frame output with terminal scroll regions, so a scroll step sends only the rows that come into view; profile the slowest frames; criterion benches. Built so far: our own frame output that rebuilds and compares only the panes an event changed (a scroll step at 200 × 60 from about 1.5 ms to about 0.9 ms); the slowest frames found to be the thread descheduled. History keeps the rows it built from frame to frame (a scroll step at 200 × 60 to about 0.3 to 0.5 ms). Left: scroll regions (they fit only where History has the full width, and would cut bytes, not time), criterion benches, measuring diff scrolling
 - [x] T2. Commit details and the diff (file list, unified diff, changed words, syntax colors), the narrow layouts
 - [x] T3. Working Copy: the list, staging by file, hunk and line, discard, the message field and the editor, commit and amend; change notifications. Built so far: the list with a check per file, the diff with a mark on staged lines, staging and unstaging with Space (a file in the list; a line, or a hunk on its header, in the diff), discard with `d` after a confirmation, the message field under the list with commit and amend, reloading on change notifications; `v` in the diff starts a range of lines that Space and `d` then act on; `Ctrl-e` in the message field opens the message in git's editor (`git var GIT_EDITOR`) and takes it back when the editor closes, dropping `#` lines. While the editor has the terminal, the input thread stops reading (it polls for input 50 ms at a time so that it can)
 - [ ] T4. The sidebar (Branches, Remotes, Tags, the filter), History by ref, search, ancestor emphasis, the command list and help. Built so far: the sidebar with the Workspace rows, Branches (the current one marked, ahead and behind), Remotes and Tags; opening a ref selects its commit in History; the selection is kept by commit across reloads; search with `/` and `n` `N`; the sidebar's filter (`/` there); rows outside the selected commit's ancestry dimmed; `?` lists the focused pane's keys. Left: partial search results, lighting the graph's lines along the ancestry (only whole rows are dimmed), the command list (`:`), Worktrees and Stashes in the sidebar
