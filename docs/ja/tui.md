@@ -4,7 +4,7 @@
 
 端末で動く FE: `amonhen tui`。アプリが届かない所（SSH のセッション、デスクトップのないマシン、エディタの横の端末）のためのもので、目指すところはアプリと同じ: 画面のどこも git を待たない。
 
-状態: 段階 T1 と T2（History・選んだコミットの詳細と差分・スクロール・`--snapshot`・`--measure-scroll`）と、T3 の大半（Working Copy の一覧と差分・ファイル、hunk、行ごとの stage・discard・メッセージの欄・commit と amend・変化の知らせ）、T4 の大半（Branches・Remotes・Tags のあるサイドバーとその絞り込み、History の検索、祖先の強調、キーの一覧）、T5 のふだんの操作（fetch・pull・push・checkout・新しいブランチ・merge・rebase・stash・undo、止まった操作の続行と中止）を作った。残りは設計。
+状態: 段階 T1 と T2（History・選んだコミットの詳細と差分・スクロール・`--snapshot`・`--measure-scroll`）と、T3 の大半（Working Copy の一覧と差分・ファイル、hunk、行ごとの stage・discard・メッセージの欄・commit と amend・変化の知らせ）、T4 の大半（Branches・Remotes・Tags のあるサイドバーとその絞り込み、History の検索、祖先の強調、キーの一覧）、T5 のふだんの操作（fetch・pull・push・checkout・新しいブランチ・merge・rebase・stash・undo、止まった操作の続行と中止）、T6 の一部（コンフリクトの解決、Stashes）を作った。残りは設計。
 
 ## 概要
 
@@ -109,7 +109,7 @@
 - パスワードとパスフレーズ: git と ssh は端末なしで動く（端末は TUI が使っている）。TUI は `AMONHEN_ASKPASS` を、`amonhen tui --askpass` を呼ぶ小さなスクリプトにする。そのプロセスは、動いている TUI が待っているソケットにつなぎ（場所はスクリプトに書く。daemon は `AMONHEN_ASKPASS` を引き継ぐが、ほかの `AMONHEN_*` は引き継がない）、TUI がシートで尋ね、答えを返す。daemon は FE の `AMONHEN_ASKPASS` を使うので、共有の daemon が git を動かすときも同じに働く。
 - コミットメッセージ: ふだんは TUI の中の複数行の欄。`Ctrl-e` で代替画面を抜け、git のエディタ（`GIT_EDITOR`・`core.editor`・`VISUAL`・`EDITOR`）でメッセージを開き、戻る。
 - マウス: 取り込むと端末の文字の選択が効かなくなる（多くの端末は Shift を押しながらなら選択できる）。既定で取り込み、切るキーと設定を持つ。
-- コンフリクト: 一覧にし、ファイルごとのコンフリクトを出し（`conflict`）、アプリにあるコンフリクトごと・ファイルごとの選択を、コアが命令として出している範囲で使えるようにする（T6 で確かめる）。3 ペインのエディタは作らない。`e` でファイルをエディタで開く。
+- コンフリクト: 一覧にし、ファイルごとのコンフリクトを出し（`conflict`）、アプリにあるコンフリクトごと・ファイルごとの選択を使えるようにする（コアは `resolveConflict` と `takeSide` として出している）。3 ペインのエディタは作らない。`e` でファイルをエディタで開く。
 - シートの前と後の絵（rebase・merge・reset）は、同じグラフのセルで描く（動きはなし）。後の段階。
 - 一時停止（`Ctrl-z`）と端末の大きさの変更では、画面を戻して描き直す。panic のときは、端末を戻してから出す。
 
@@ -164,7 +164,7 @@ T2、同じ Mac、このリポジトリ（3,438 コミット）。200 × 60 で�
 - [ ] T3. Working Copy: 一覧、ファイル・hunk・行ごとの stage、discard、メッセージの欄とエディタ、commit と amend。変化の知らせ。作ったもの: ファイルごとに印のある一覧、stage 済みの行に印のつく差分、Space での stage と unstage（一覧ではファイル、差分では行。hunk の見出しではその hunk）、確かめてからの discard（`d`）、一覧の下のメッセージの欄と commit・amend、変化の知らせでの読み直し。残り: メッセージを git のエディタで開く（`Ctrl-e`）、行の範囲の選択
 - [ ] T4. サイドバー（Branches・Remotes・Tags・絞り込み）、ref ごとの History、検索、祖先の強調、命令の一覧とヘルプ。作ったもの: Workspace の行・Branches（今のブランチの印、ahead と behind）・Remotes・Tags のあるサイドバー、ref を開くと History でそのコミットを選ぶ、読み直しても選択をコミットで保つ、`/` と `n` `N` での検索、サイドバーの絞り込み（サイドバーで `/`）、選んだコミットの祖先でない行を薄くする、`?` でフォーカスのある枠のキーの一覧。残り: 検索の途中の結果、祖先に沿ってグラフの線を光らせる（今は行ごと薄くするだけ）、命令の一覧（`:`）、サイドバーの Worktrees と Stashes
 - [ ] T5. 作ったもの: `f` fetch、`p` pull、`P` 上流への push（先に確かめる）、`u` undo（何を戻すかを出して確かめる）、`b` 選んでいるコミットか ref に新しいブランチ、サイドバーの `c` でブランチをチェックアウト（リモートのブランチは、追跡するブランチを作る）、同じく `m` と `r` で、選んでいる ref を今のブランチに merge・今のブランチをその上に rebase（先に確かめる）、`s` で stash、`S` で一番新しい stash を戻す。merge・rebase・cherry-pick・revert の途中は、一番下の行にその状態と何番目か、コンフリクトのあるファイルの数を出し、`C` で続ける、`K` で飛ばす、`A` でやめる（先に確かめる）。コンフリクトで止まった操作は、Working Copy に切り替える。操作は専用のワーカーで 1 つずつ動き、一番上の行に名前を出す。ブランチの横に ahead と behind を出す。確認とブランチの名前は、まだシートではなく一番下の行で聞く。残り: アプリと同じ選択肢のあるシート（pull の取り込み方、force push、上流のないブランチの publish、stash のメッセージと追跡していないファイル）、reset、この項目のほかのもの。askpass は「端末だから違うところ」のとおりに Unix 向けに作った: ソケットとスクリプトは自分だけが読める一時フォルダに置いて終わるときに消し、尋ねる文は一番下の行に出す（パスワードとパスフレーズは打った文字を隠す。Enter で答え、Esc でやめる）。いくつも来たら順に聞く。動いている TUI に向けてスクリプトを手で呼んで確かめた。実際に尋ねてくる fetch や push、共有の daemon、Windows では試していない。シートつきの操作（fetch・pull・push・branch・checkout・merge・rebase・stash・reset・undo）、askpass、動いている処理の表示。マウスの取り込みを切るキーと設定、一時停止（`Ctrl-z`）、kitty のキーボードプロトコル
-- [ ] T6. コンフリクト、Stashes、Reflog、Worktrees、History の編集（命令として）、前と後の絵
+- [ ] T6. コンフリクト、Stashes、Reflog、Worktrees、History の編集（命令として）、前と後の絵。作ったもの: コンフリクトのあるファイルは、マーカーつきの中身を出す（`conflict`。Current と Incoming の側に地の色）。その差分では、選んでいる行のコンフリクトを `o` `t` `b` で Current・Incoming・両方にする（`resolveConflict`）。一覧では `o` `t` で、確かめてからファイルごと片側にする（`takeSide`）。サイドバーの Stashes はメッセージで並び、`a` で戻す、`o` で pop、`x` で消す（先に確かめる）。残り: 共通の祖先の側を取る、Magic Merge、ファイルをエディタで開く、stash の差分を出す、Reflog、Worktrees、編集モード、絵
 - [ ] T7. frontends.md の TUI の列、usage.md、CHANGELOG
 
 ## 決めたこと
