@@ -138,6 +138,9 @@ struct Root {
     sync_drawing: Option<Value>,
     /// Push の画面で選んでいる行（0 は送る変更すべて。`push_rows` の位置）。
     push_row: Option<usize>,
+    /// 出しているコミットの変更ファイル（詳細と差分の間の一覧）と、選んでいるもの。
+    changed_files: Vec<ChangedFile>,
+    changed_file: Option<usize>,
     /// Pull で両方に新しいコミットがあるときの、取り込み方ごとの前と後の絵。
     pull_drawings: Option<PullDrawings>,
     /// Merge・Rebase の確認の前と後の絵（相手の rev と `mergePreview`・`rewritePreview` の答え）。
@@ -833,6 +836,9 @@ enum Message {
     SyncLists(Vec<SyncList>, Vec<String>, Option<Value>),
     /// Push の画面で行を選んだ。
     PushRow(Option<usize>),
+    /// 出すコミットの変更ファイルが替わった・一覧で選んだ。
+    ChangedFiles(Vec<ChangedFile>),
+    ChangedFileSelected(Option<usize>),
     /// 選んだリポジトリを fetch する。
     FetchRepositories(Vec<String>),
     /// 境目を動かした（新しい幅・高さ）・離した。
@@ -1069,6 +1075,8 @@ impl Component for Root {
             sync_warnings: Vec::new(),
             sync_drawing: None,
             push_row: None,
+            changed_files: Vec::new(),
+            changed_file: None,
             pull_drawings: None,
             integrate_drawing: None,
             merge_several_steps: None,
@@ -1275,6 +1283,16 @@ impl Component for Root {
                 }
             }
             Message::PushRow(index) => self.select_push_row(index),
+            Message::ChangedFiles(files) => {
+                self.changed_files = files;
+                self.changed_file = None;
+            }
+            Message::ChangedFileSelected(index) => {
+                self.changed_file = index;
+                if let Some(index) = index {
+                    with_history(|h| h.show_file(index));
+                }
+            }
             Message::SplitTo(split, size) => match split {
                 Split::Sidebar => self.sidebar_width = size.clamp(160.0, 520.0),
                 Split::Right => self.right_width = Some(size.max(240.0)),
@@ -6230,7 +6248,10 @@ impl Component for Root {
             .grid_column(2)
             .children((
                 self.top_of_diff(context),
-                self.diff_find_bar(context),
+                StackPanel::new().grid_row(1).children((
+                    self.changed_files_view(context),
+                    self.diff_find_bar(context),
+                )),
                 Grid::new()
                     .background(Brush::Solid(Color::transparent()))
                     .element_ref(&self.diff_area)
@@ -10737,6 +10758,63 @@ impl Root {
         }
     }
 
+    /// 詳細と差分の間の、変更ファイルの一覧（macOS 版・GTK4 版の、木にしないときの一覧）。選ぶとそのファイルの
+    /// 見出しまで差分をスクロールする。History で 2 つ以上のファイルを変えたコミットのときだけ。
+    fn changed_files_view(&self, context: &ViewContext<Self>) -> View {
+        if self.page == Page::WorkingCopy || self.details_expanded || self.changed_files.len() < 2 {
+            return View::empty();
+        }
+        let rows = self.changed_files.iter().enumerate().map(|(i, f)| {
+            let counts = if f.binary {
+                tr!("binary")
+            } else {
+                format!("+{}  −{}", f.added, f.removed)
+            };
+            let row = Grid::new()
+                .columns([
+                    GridLength::Pixel(18.0),
+                    GridLength::Star(1.0),
+                    GridLength::Auto,
+                ])
+                .children((
+                    TextBlock::new()
+                        .text(f.mark.to_string())
+                        .font_size(12.0)
+                        .opacity(0.7)
+                        .grid_column(0),
+                    TextBlock::new()
+                        .text(f.path.clone())
+                        .font_size(12.0)
+                        .text_trimming(TextTrimming::CharacterEllipsis)
+                        .grid_column(1),
+                    TextBlock::new()
+                        .text(counts)
+                        .font_size(11.0)
+                        .opacity(0.6)
+                        .margin(Thickness::new(8.0, 0.0, 0.0, 0.0))
+                        .grid_column(2),
+                ));
+            (
+                format!("{i}"),
+                ListViewItem::new()
+                    .tag(f.path.clone())
+                    .min_height(24.0)
+                    .content(row),
+            )
+        });
+        // ファイルが替わったら一覧ごと作り直す（reactor の ListView は消した項目の場所が空いたまま残る）。
+        let key: String = self.changed_files.iter().map(|f| f.path.as_str()).collect();
+        let list = ListView::new()
+            .selected_index(self.changed_file)
+            .on_selection_changed(context.callback(Message::ChangedFileSelected))
+            .collection_slot(ListViewSlot::Items, rows);
+        Border::new()
+            .max_height(5.0 * 24.0 + 8.0)
+            .border_thickness(Thickness::new(0.0, 1.0, 0.0, 0.0))
+            .border_brush(Brush::Solid(Color::rgb(0xe5, 0xe5, 0xe5)))
+            .content(View::keyed_fragment([(key, list)]))
+    }
+
     fn show_page(&mut self, page: Page) {
         let from = self.page;
         self.page = page;
@@ -13311,6 +13389,8 @@ impl HistoryView {
             s.data.extras_changed = false;
             self.sender
                 .send(Message::Commit(commit.info.clone(), commit.extras.clone()));
+            self.sender
+                .send(Message::ChangedFiles(changed_files(&commit.stacked)));
             s.renderer.forget_diff();
             self.diff.scroll_y = 0.0;
             self.diff.dirty = true;
@@ -13574,6 +13654,21 @@ impl HistoryView {
             // History しかまだないので、出しているまま。
             "show-history" => {}
             _ => {}
+        }
+    }
+
+    /// 差分を、`index` 番目のファイルの見出しまでスクロールする（変更ファイルの一覧で選んだ）。
+    fn show_file(&mut self, index: usize) {
+        let row = self
+            .session
+            .data
+            .commit
+            .as_ref()
+            .and_then(|c| c.file_rows.get(index).copied());
+        if let Some(row) = row {
+            self.diff.scroll_y = row as f32 * DIFF_ROW_HEIGHT;
+            let rows = self.diff_rows();
+            self.diff.scroll_by(0.0, rows);
         }
     }
 
@@ -13991,6 +14086,38 @@ fn split_released() -> bool {
         h.sender.send(Message::SplitDone);
     });
     true
+}
+
+/// コミットの変更ファイルの一覧の 1 行。
+#[derive(Clone)]
+struct ChangedFile {
+    path: String,
+    /// 足した（A）・消した（D）・変えた（M）。
+    mark: char,
+    added: u32,
+    removed: u32,
+    binary: bool,
+}
+
+/// 全ファイルの差分から、変更ファイルの一覧を作る（足した・消したは、前後の中身が空か。`file_at` と同じ決め方）。
+fn changed_files(stacked: &amonhen_core::diff::StackedDiff) -> Vec<ChangedFile> {
+    stacked
+        .files
+        .iter()
+        .map(|(path, diff)| ChangedFile {
+            path: path.clone(),
+            mark: if diff.old.is_empty() && !diff.new.is_empty() {
+                'A'
+            } else if diff.new.is_empty() && !diff.old.is_empty() {
+                'D'
+            } else {
+                'M'
+            },
+            added: diff.added,
+            removed: diff.removed,
+            binary: diff.binary,
+        })
+        .collect()
 }
 
 /// Push の画面の行。
