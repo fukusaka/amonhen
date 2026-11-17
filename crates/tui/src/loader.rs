@@ -37,6 +37,16 @@ pub enum Request {
     },
     /// ファイルを stage する（`stage` が false なら unstage）。
     Stage { paths: Vec<String>, stage: bool },
+    /// 差分（`workingDiff` の答えの番号）の行を stage する（`stage` が false なら unstage）。
+    StageRows {
+        diff: Value,
+        rows: Vec<u32>,
+        stage: bool,
+    },
+    /// 差分の行の変更を、作業ツリーから取り除く。
+    DiscardRows { diff: Value, rows: Vec<u32> },
+    /// ファイルの変更を捨てる。
+    Discard { paths: Vec<String> },
 }
 
 pub enum Loaded {
@@ -66,7 +76,7 @@ pub enum Loaded {
         serial: u64,
         result: std::result::Result<Reply, String>,
     },
-    /// stage・unstage が済んだ。だめなら理由。
+    /// stage・unstage・discard が済んだ。だめなら理由。
     Staged(std::result::Result<(), String>),
 }
 
@@ -90,7 +100,12 @@ impl Loader {
         let to = match request {
             Request::Open | Request::Rows { .. } => &self.rows,
             Request::Commit { .. } | Request::Syntax { .. } => &self.details,
-            Request::Status | Request::WorkingDiff { .. } | Request::Stage { .. } => &self.work,
+            Request::Status
+            | Request::WorkingDiff { .. }
+            | Request::Stage { .. }
+            | Request::StageRows { .. }
+            | Request::DiscardRows { .. }
+            | Request::Discard { .. } => &self.work,
         };
         let _ = to.send(request);
     }
@@ -167,25 +182,37 @@ fn load(front: &dyn Front, request: Request) -> Result<Loaded> {
                 result,
             }
         }
-        Request::Stage { paths, stage } => Loaded::Staged(
-            front
-                .call(json!({"op": if stage { "stage" } else { "unstage" }, "paths": paths}))
-                .map(|_| ())
-                .map_err(|e| e.to_string()),
-        ),
+        Request::Stage { paths, stage } => {
+            done(front.call(json!({"op": if stage { "stage" } else { "unstage" }, "paths": paths})))
+        }
+        Request::StageRows { diff, rows, stage } => {
+            done(front.call(json!({"op": "stageRows", "diff": diff, "rows": rows, "stage": stage})))
+        }
+        Request::DiscardRows { diff, rows } => {
+            done(front.call(json!({"op": "discardRows", "diff": diff, "rows": rows})))
+        }
+        Request::Discard { paths } => done(run(front, json!({"op": "discard", "paths": paths}))),
     })
 }
 
-fn commit(front: &dyn Front, id: &str) -> Result<(Value, Reply)> {
-    let mut info = front
-        .call(json!({"op": "run", "command": {"op": "commitInfo", "oid": id}}))?
-        .json;
-    if info["ok"] != true {
-        return Err(info["error"]
+fn done<T>(result: Result<T>) -> Loaded {
+    Loaded::Staged(result.map(|_| ()).map_err(|e| e.to_string()))
+}
+
+/// コアの命令（`run`）。答えの `ok` が true でなければ、その理由で失敗にする。
+fn run(front: &dyn Front, command: Value) -> Result<Value> {
+    let reply = front.call(json!({"op": "run", "command": command}))?.json;
+    if reply["ok"] != true {
+        return Err(reply["error"]
             .as_str()
             .map_or_else(|| tr!("Failed"), str::to_owned)
             .into());
     }
+    Ok(reply)
+}
+
+fn commit(front: &dyn Front, id: &str) -> Result<(Value, Reply)> {
+    let mut info = run(front, json!({"op": "commitInfo", "oid": id}))?;
     let diff = front.call(json!({"op": "commitDiff", "id": id}))?;
     Ok((info["info"].take(), diff))
 }

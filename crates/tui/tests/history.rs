@@ -280,10 +280,10 @@ fn working_copy_lists_files_beside_the_diff() {
         list[..3],
         ["[ ] M lane.rs", "[x] A staged.txt", "[ ] ? untracked.txt"]
     );
-    assert_eq!(diff[0], "lane.rs +1 -1");
-    assert_eq!(diff[1], "@@ -1,4 +1,4 @@");
-    assert_eq!(diff[3], "2     -    let lane = trunk();");
-    assert_eq!(diff[4], "  2   +    let lane = branch();");
+    assert_eq!(diff[0], " lane.rs +1 -1");
+    assert_eq!(diff[1], " @@ -1,4 +1,4 @@");
+    assert_eq!(diff[3], " 2     -    let lane = trunk();");
+    assert_eq!(diff[4], "   2   +    let lane = branch();");
 }
 
 /// Space で、選んでいるファイルを stage する。もう一度で unstage
@@ -295,7 +295,7 @@ fn space_stages_and_unstages_the_file() {
     println!("{staged}");
     // 一覧の印が替わり、差分の行に stage 済みの印がつく。
     assert!(staged.contains("[x] M lane.rs"));
-    assert!(staged.contains("│2   ● -    let lane = trunk();"));
+    assert!(staged.contains("│ 2   ● -    let lane = trunk();"));
     let index = |dir: &Path| {
         let out = amonhen_model::process::command("git")
             .args(["diff", "--cached", "--name-only"])
@@ -318,7 +318,81 @@ fn working_copy_diff_opens_over_the_list_when_narrow() {
     let text = amonhen_tui::snapshot(open(dir.path()), 60, 12, clock(), "1jj\n").unwrap();
     println!("{text}");
     let lines: Vec<&str> = text.lines().collect();
-    assert_eq!(lines[1], "untracked.txt +1");
-    assert_eq!(lines[3], "  1   +three");
-    assert!(lines[11].contains("Esc back"));
+    // 左の 1 列は、選んでいる行の印。
+    assert_eq!(lines[1], "▌untracked.txt +1");
+    assert_eq!(lines[3], "   1   +three");
+    assert!(lines[11].contains("Space stage/unstage"));
+}
+
+fn git_out(dir: &Path, args: &[&str]) -> String {
+    let out = amonhen_model::process::command("git")
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+/// 2 か所を書き換えたファイル（hunk は 1 つ）。
+fn two_lines(dir: &Path) {
+    git(dir, BASE, &["init", "-q", "-b", "main"]);
+    std::fs::write(dir.join("a.txt"), "one\ntwo\nthree\nfour\n").unwrap();
+    git(dir, BASE, &["add", "."]);
+    git(dir, BASE, &["commit", "-q", "-m", "Start"]);
+    std::fs::write(dir.join("a.txt"), "ONE\ntwo\nTHREE\nfour\n").unwrap();
+}
+
+/// 差分の行で Space: その行だけを stage する。hunk の見出しなら、その hunk すべて
+#[test]
+fn space_in_the_diff_stages_a_line_or_a_hunk() {
+    let dir = tempfile::tempdir().unwrap();
+    two_lines(dir.path());
+    // Enter で差分へ。パス、hunk の見出し、「-one」「+ONE」…の順。
+    let text = amonhen_tui::snapshot(open(dir.path()), 80, 12, clock(), "1\njj j ").unwrap();
+    println!("{text}");
+    assert_eq!(
+        git_out(dir.path(), &["diff", "--cached", "-U0"])
+            .lines()
+            .filter(|l| l.starts_with(['+', '-']) && !l.starts_with("+++") && !l.starts_with("---"))
+            .collect::<Vec<_>>(),
+        ["-one", "+ONE"]
+    );
+    assert!(
+        text.contains("[-] M a.txt") || text.contains("● -one"),
+        "{text}"
+    );
+    // hunk の見出しで Space: 残りも stage される。
+    amonhen_tui::snapshot(open(dir.path()), 80, 12, clock(), "1\nj ").unwrap();
+    assert_eq!(git_out(dir.path(), &["diff", "--name-only"]), "");
+    // もう一度で、hunk すべてを unstage。
+    amonhen_tui::snapshot(open(dir.path()), 80, 12, clock(), "1\nj ").unwrap();
+    assert_eq!(
+        git_out(dir.path(), &["diff", "--cached", "--name-only"]),
+        ""
+    );
+}
+
+/// `d` は確かめてから捨てる。`y` で行い、ほかのキーでやめる
+#[test]
+fn discard_asks_first() {
+    let dir = tempfile::tempdir().unwrap();
+    two_lines(dir.path());
+    let read = |dir: &Path| std::fs::read_to_string(dir.join("a.txt")).unwrap();
+    let asked = amonhen_tui::snapshot(open(dir.path()), 100, 12, clock(), "1\njjd").unwrap();
+    println!("{asked}");
+    assert!(asked.contains("Discard this line? Undo brings it back."));
+    assert_eq!(read(dir.path()), "ONE\ntwo\nTHREE\nfour\n");
+    // やめる。
+    amonhen_tui::snapshot(open(dir.path()), 100, 12, clock(), "1\njjdn").unwrap();
+    assert_eq!(read(dir.path()), "ONE\ntwo\nTHREE\nfour\n");
+    // 「-one」の行だけを捨てる: 消した行が戻り、足した行は残る。
+    amonhen_tui::snapshot(open(dir.path()), 100, 12, clock(), "1\njjdy").unwrap();
+    assert_eq!(read(dir.path()), "one\nONE\ntwo\nTHREE\nfour\n");
+    // 一覧で `d`: ファイルの変更をすべて捨てる。
+    let asked = amonhen_tui::snapshot(open(dir.path()), 100, 12, clock(), "1d").unwrap();
+    assert!(asked.contains("Discard the changes in a.txt? Undo brings them back."));
+    let gone = amonhen_tui::snapshot(open(dir.path()), 100, 12, clock(), "1dy").unwrap();
+    println!("{gone}");
+    assert_eq!(read(dir.path()), "one\ntwo\nthree\nfour\n");
+    assert!(gone.contains("No changes"));
 }

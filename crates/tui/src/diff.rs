@@ -125,6 +125,12 @@ impl Diff {
         (self.rows.len() / 4) as u32
     }
 
+    /// 行の種類（`DiffRow::ADDED` など）と印。
+    pub fn kind(&self, row: usize) -> (u8, u8) {
+        let r = self.rows[row * 4];
+        ((r & 0xff) as u8, ((r >> 8) & 0xff) as u8)
+    }
+
     /// 構文の色（`diffSyntax` の答え）を入れる。
     pub fn set_syntax(&mut self, reply: &Reply) {
         self.syntax = reply.u32s("spans");
@@ -196,6 +202,16 @@ impl Scroll {
         let changed = top != self.top;
         self.top = top;
         changed
+    }
+
+    /// `line` が見えるよう、足りない分だけ動かす。
+    pub fn reveal(&mut self, line: u32, lines: u32) {
+        if line < self.top {
+            self.top = line;
+        } else if line >= self.top + u32::from(self.height) {
+            self.top = line + 1 - u32::from(self.height.max(1));
+        }
+        self.clamp(lines);
     }
 
     /// 横に動かす。

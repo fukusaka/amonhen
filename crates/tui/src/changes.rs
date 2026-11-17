@@ -4,6 +4,7 @@
 //! stage 済みの印がつく）で、それが出せないファイルは、stage していない変更（なければ stage 済みの変更）を出す。
 
 use amonhen_front::Reply;
+use amonhen_layout::DiffRow;
 use amonhen_model::tr;
 use ratatui_core::buffer::Buffer;
 use ratatui_core::layout::Rect;
@@ -38,6 +39,19 @@ struct Shown {
     binary: bool,
     /// 構文の色を頼んだときの名前。
     syntax: String,
+    /// 窓口での差分の番号（`stageRows`・`discardRows` に渡す）。
+    id: Value,
+    /// HEAD と作業ツリーを比べた差分（行ごとに stage の印がある）。
+    combined: bool,
+    /// stage 済みの変更だけの差分。
+    staged_only: bool,
+}
+
+/// 行ごとの操作の相手。
+pub struct Target {
+    pub rows: Vec<u32>,
+    /// hunk の見出しで選んだ（その hunk の変更すべて）。
+    pub hunk: bool,
 }
 
 #[derive(Default)]
@@ -58,6 +72,8 @@ pub struct Changes {
     /// 読めなかった差分と、その理由。
     failed: Option<(String, u64, String)>,
     scroll: Scroll,
+    /// 差分の中で選んでいる行（文書の行。0 はパスの行）。
+    cursor: u32,
 }
 
 impl Changes {
@@ -173,10 +189,15 @@ impl Changes {
                 if self.shown.as_ref().is_none_or(|s| s.path != path) {
                     self.scroll.top = 0;
                     self.scroll.left = 0;
+                    self.cursor = 0;
                 }
                 let id = reply.json["diff"].clone();
+                let mode = reply.json["mode"].as_str().unwrap_or("");
                 self.shown = Some(Shown {
-                    diff: Diff::new(&reply, reply.json["mode"] == "combined"),
+                    diff: Diff::new(&reply, mode == "combined"),
+                    combined: mode == "combined",
+                    staged_only: mode == "staged",
+                    id: id.clone(),
                     added: reply.json["added"].as_u64().unwrap_or(0),
                     removed: reply.json["removed"].as_u64().unwrap_or(0),
                     binary: reply.json["binary"] == true,
@@ -185,6 +206,7 @@ impl Changes {
                     serial,
                 });
                 self.failed = None;
+                self.cursor = self.cursor.min(self.lines().saturating_sub(1));
                 self.scroll.clamp(self.lines());
                 (!id.is_null()).then(|| Request::Syntax {
                     id: syntax_key(&id),
@@ -353,41 +375,127 @@ impl Changes {
         self.shown.as_ref().map_or(0, |s| 1 + s.diff.len())
     }
 
+    /// 選んでいる行と、全体の行数。
     pub fn diff_position(&self) -> (u32, u32) {
-        self.scroll.position(self.lines())
+        let lines = self.lines();
+        ((self.cursor + 1).min(lines), lines)
     }
 
     pub fn diff_page(&self) -> i64 {
         self.scroll.page()
     }
 
+    /// 表示を動かす（選んでいる行はそのまま）。
     pub fn scroll(&mut self, delta: i64) -> bool {
         self.scroll.by(delta, self.lines())
-    }
-
-    pub fn scroll_to(&mut self, top: u32) -> bool {
-        self.scroll.to(top, self.lines())
     }
 
     pub fn pan(&mut self, delta: i32) -> bool {
         self.scroll.pan(delta)
     }
 
-    /// 次（`forward`）か前の hunk の見出しを一番上に。
+    /// 選んでいる行を動かす。見えなくなるなら、表示もついていく。
+    pub fn move_cursor(&mut self, delta: i64) -> bool {
+        self.cursor_to((i64::from(self.cursor) + delta).max(0) as u32)
+    }
+
+    pub fn cursor_to(&mut self, line: u32) -> bool {
+        let line = line.min(self.lines().saturating_sub(1));
+        let changed = line != self.cursor;
+        self.cursor = line;
+        self.scroll.reveal(line, self.lines());
+        changed
+    }
+
+    /// 差分の `line` 行目（見えている中で）を選ぶ。
+    pub fn click_diff(&mut self, line: u16) -> bool {
+        let line = self.scroll.top + u32::from(line);
+        line < self.lines() && self.cursor_to(line)
+    }
+
+    /// 次（`forward`）か前の hunk の見出しを選ぶ。
     pub fn jump_hunk(&mut self, forward: bool) -> bool {
         let Some(shown) = &self.shown else {
             return false;
         };
         let mut starts = shown.diff.hunk_rows.iter().map(|r| 1 + r);
         let target = if forward {
-            starts.find(|&line| line > self.scroll.top)
+            starts.find(|&line| line > self.cursor)
         } else {
-            starts.take_while(|&line| line < self.scroll.top).last()
+            starts.take_while(|&line| line < self.cursor).last()
         };
-        target.is_some_and(|line| self.scroll.to(line, self.lines()))
+        target.is_some_and(|line| self.cursor_to(line))
     }
 
-    pub fn draw_diff(&mut self, area: Rect, buf: &mut Buffer, theme: &Theme) {
+    /// 選んでいる行が指す変更: 追加・削除の行ならその行、hunk の見出しならその hunk の変更すべて。
+    fn target(&self) -> Option<(&Shown, Target)> {
+        let shown = self.shown.as_ref()?;
+        let row = self.cursor.checked_sub(1)? as usize;
+        if row >= shown.diff.len() as usize {
+            return None;
+        }
+        let changed = |r: usize| matches!(shown.diff.kind(r).0, DiffRow::ADDED | DiffRow::REMOVED);
+        let rows: Vec<u32> = match shown.diff.kind(row).0 {
+            DiffRow::HUNK => (row + 1..shown.diff.len() as usize)
+                .take_while(|&r| !matches!(shown.diff.kind(r).0, DiffRow::HUNK | DiffRow::FILE))
+                .filter(|&r| changed(r))
+                .map(|r| r as u32)
+                .collect(),
+            _ if changed(row) => vec![row as u32],
+            _ => return None,
+        };
+        let hunk = shown.diff.kind(row).0 == DiffRow::HUNK;
+        (!rows.is_empty()).then_some((shown, Target { rows, hunk }))
+    }
+
+    /// 選んでいる行（か hunk）の stage を切り替える: stage していない行があれば stage、なければ unstage。
+    pub fn toggle_rows(&self) -> std::result::Result<Option<Request>, String> {
+        let Some((shown, target)) = self.target() else {
+            return Ok(None);
+        };
+        if shown.staged_only {
+            return Err(tr!("Lines of this diff can’t be staged one by one"));
+        }
+        let staged = |r: &u32| shown.diff.kind(*r as usize).1 & DiffRow::STAGED != 0;
+        // stage していない変更だけの差分では、stage するだけ。
+        let stage = !shown.combined || !target.rows.iter().all(staged);
+        Ok(Some(Request::StageRows {
+            diff: shown.id.clone(),
+            rows: target.rows,
+            stage,
+        }))
+    }
+
+    /// 選んでいる行（か hunk）の、stage していない変更を捨てる中身。
+    pub fn discard_rows(&self) -> std::result::Result<Option<(Target, Request)>, String> {
+        let Some((shown, mut target)) = self.target() else {
+            return Ok(None);
+        };
+        target
+            .rows
+            .retain(|r| shown.diff.kind(*r as usize).1 & DiffRow::STAGED == 0);
+        if shown.staged_only || target.rows.is_empty() {
+            return Err(tr!("Can’t discard staged changes (unstage them first)"));
+        }
+        let request = Request::DiscardRows {
+            diff: shown.id.clone(),
+            rows: target.rows.clone(),
+        };
+        Ok(Some((target, request)))
+    }
+
+    /// 選んでいるファイルの変更を捨てる中身と、そのパス。
+    pub fn discard_file(&self) -> Option<(String, Request)> {
+        let entry = self.selected_entry()?;
+        Some((
+            entry.path.clone(),
+            Request::Discard {
+                paths: vec![entry.path.clone()],
+            },
+        ))
+    }
+
+    pub fn draw_diff(&mut self, area: Rect, buf: &mut Buffer, theme: &Theme, focused: bool) {
         if area.width == 0 || area.height == 0 {
             return;
         }
@@ -421,23 +529,30 @@ impl Changes {
             return;
         };
         self.scroll.clamp(1 + shown.diff.len());
+        // 左の 1 列は、選んでいる行の印。
+        let body = Rect::new(area.x + 1, area.y, area.width - 1, area.height);
         for y in 0..area.height {
             let line = self.scroll.top + u32::from(y);
             if line > shown.diff.len() {
                 break;
             }
-            let at = Rect::new(area.x, area.y + y, area.width, 1);
-            if line == 0 {
-                draw_title(at, buf, shown);
-            } else {
-                draw_row(
-                    at,
-                    buf,
-                    &shown.diff,
-                    (line - 1) as usize,
-                    self.scroll.left,
-                    theme,
-                );
+            let at = Rect::new(body.x, body.y + y, body.width, 1);
+            if at.width > 0 {
+                if line == 0 {
+                    draw_title(at, buf, shown);
+                } else {
+                    draw_row(
+                        at,
+                        buf,
+                        &shown.diff,
+                        (line - 1) as usize,
+                        self.scroll.left,
+                        theme,
+                    );
+                }
+            }
+            if line == self.cursor && focused {
+                buf[(area.x, area.y + y)].set_char('▌').set_fg(Color::Cyan);
             }
         }
     }

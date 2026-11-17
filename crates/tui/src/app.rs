@@ -66,6 +66,8 @@ pub struct App {
     opening: bool,
     /// 読んでいる間に、また ref が変わった。
     reopen: bool,
+    /// 確かめてから行う操作: 尋ねる文と、`y` で頼む中身。
+    confirm: Option<(String, Request)>,
     theme: Theme,
     /// リポジトリの名前（作業ツリーのフォルダ名）。
     name: String,
@@ -97,6 +99,7 @@ impl App {
             focus: Focus::Main,
             opening: false,
             reopen: false,
+            confirm: None,
             theme: Theme::detect(),
             name: String::new(),
             branch: None,
@@ -310,6 +313,14 @@ impl App {
         let covering = self.layout().main.is_none();
         // エラーは、次のキーまで出しておく。
         self.dirty |= self.error.take().is_some();
+        // 確かめている間は、`y`（か Enter）で行い、ほかのキーでやめる。
+        if let Some((_, request)) = self.confirm.take() {
+            if matches!(key.code, KeyCode::Char('y' | 'Y') | KeyCode::Enter) {
+                self.send(request);
+            }
+            self.dirty = true;
+            return;
+        }
         match key.code {
             KeyCode::Char('c') if control => self.quit = true,
             KeyCode::Char('q') if !covering => self.quit = true,
@@ -357,6 +368,16 @@ impl App {
                 }
                 false
             }
+            KeyCode::Char('d') => {
+                self.confirm = self.changes.discard_file().map(|(path, request)| {
+                    let ask = tr!(
+                        "Discard the changes in {path}? Undo brings them back.",
+                        path = path
+                    );
+                    (ask, request)
+                });
+                self.confirm.is_some()
+            }
             KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right => {
                 self.focus = Focus::Side;
                 true
@@ -368,18 +389,49 @@ impl App {
     fn changes_diff_key(&mut self, code: KeyCode, control: bool) -> bool {
         let page = self.changes.diff_page();
         match code {
-            KeyCode::Char('d') if control => self.changes.scroll(page / 2),
-            KeyCode::Char('u') if control => self.changes.scroll(-page / 2),
-            KeyCode::Char('j') | KeyCode::Down => self.changes.scroll(1),
-            KeyCode::Char('k') | KeyCode::Up => self.changes.scroll(-1),
-            KeyCode::PageDown | KeyCode::Char(' ') => self.changes.scroll(page),
-            KeyCode::PageUp => self.changes.scroll(-page),
-            KeyCode::Char('g') | KeyCode::Home => self.changes.scroll_to(0),
-            KeyCode::Char('G') | KeyCode::End => self.changes.scroll_to(u32::MAX),
+            KeyCode::Char('d') if control => self.changes.move_cursor(page / 2),
+            KeyCode::Char('u') if control => self.changes.move_cursor(-page / 2),
+            KeyCode::Char('j') | KeyCode::Down => self.changes.move_cursor(1),
+            KeyCode::Char('k') | KeyCode::Up => self.changes.move_cursor(-1),
+            KeyCode::PageDown => self.changes.move_cursor(page),
+            KeyCode::PageUp => self.changes.move_cursor(-page),
+            KeyCode::Char('g') | KeyCode::Home => self.changes.cursor_to(0),
+            KeyCode::Char('G') | KeyCode::End => self.changes.cursor_to(u32::MAX),
             KeyCode::Char('l') | KeyCode::Right => self.changes.pan(PAN),
             KeyCode::Char('h') | KeyCode::Left => self.changes.pan(-PAN),
             KeyCode::Char(']') => self.changes.jump_hunk(true),
             KeyCode::Char('[') => self.changes.jump_hunk(false),
+            // 行（hunk の見出しなら、その hunk）の stage を切り替える。
+            KeyCode::Char(' ') => match self.changes.toggle_rows() {
+                Ok(Some(request)) => {
+                    self.send(request);
+                    false
+                }
+                Ok(None) => false,
+                Err(error) => {
+                    self.error = Some(error);
+                    true
+                }
+            },
+            KeyCode::Char('d') => match self.changes.discard_rows() {
+                Ok(Some((target, request))) => {
+                    let ask = match (target.hunk, target.rows.len()) {
+                        (false, _) => tr!("Discard this line? Undo brings it back."),
+                        (true, 1) => tr!("Discard this hunk (1 line)? Undo brings it back."),
+                        (true, count) => tr!(
+                            "Discard this hunk ({count} lines)? Undo brings it back.",
+                            count = count
+                        ),
+                    };
+                    self.confirm = Some((ask, request));
+                    true
+                }
+                Ok(None) => false,
+                Err(error) => {
+                    self.error = Some(error);
+                    true
+                }
+            },
             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Backspace => {
                 self.focus = Focus::Main;
                 true
@@ -431,6 +483,10 @@ impl App {
     }
 
     fn mouse(&mut self, mouse: MouseEvent) {
+        // 確かめている間は、キーで答えるまで動かさない。
+        if self.confirm.is_some() {
+            return;
+        }
         let layout = self.layout();
         let inside = |area: Option<Rect>| {
             area.filter(|a| {
@@ -463,11 +519,15 @@ impl App {
                 }
                 None => false,
             }
-        } else if inside(layout.side).is_some() {
+        } else if let Some(area) = inside(layout.side) {
             match wheel {
                 Some(rows) if history => self.details.scroll(rows),
                 Some(rows) => self.changes.scroll(rows),
-                None if click => std::mem::replace(&mut self.focus, Focus::Side) != Focus::Side,
+                None if click => {
+                    let focused = std::mem::replace(&mut self.focus, Focus::Side);
+                    let selected = !history && self.changes.click_diff(mouse.row - area.y);
+                    selected || focused != Focus::Side
+                }
                 None => false,
             }
         } else {
@@ -557,7 +617,7 @@ impl App {
             }
             match self.view {
                 View::History => self.details.draw(at, buf, &self.clock, &self.theme),
-                View::Changes => self.changes.draw_diff(at, buf, &self.theme),
+                View::Changes => self.changes.draw_diff(at, buf, &self.theme, !focused),
             }
         }
 
@@ -578,11 +638,29 @@ impl App {
             .saturating_sub(position.width() as u16 + 1)
             .max(area.x);
         let room = usize::from(position_x.saturating_sub(area.x + 2));
-        match &self.error {
-            Some(error) => {
+        match (&self.confirm, &self.error) {
+            (Some((ask, _)), _) => {
+                let x = buf
+                    .set_stringn(
+                        area.x + 1,
+                        y,
+                        ask,
+                        room,
+                        Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                    )
+                    .0;
+                buf.set_stringn(
+                    x + 3,
+                    y,
+                    tr!("y discard   n cancel"),
+                    usize::from(position_x.saturating_sub(x + 3)),
+                    Style::new(),
+                );
+            }
+            (None, Some(error)) => {
                 buf.set_stringn(area.x + 1, y, error, room, Style::new().fg(Color::Red));
             }
-            None => {
+            (None, None) => {
                 let hints = match (self.view, self.focus) {
                     (View::History, Focus::Main) => {
                         tr!("j/k move   g/G top/bottom   Enter details   q quit")
@@ -591,10 +669,10 @@ impl App {
                         tr!("j/k scroll   [/] file   h/l pan   Esc back")
                     }
                     (View::Changes, Focus::Main) => {
-                        tr!("j/k move   Space stage/unstage   Enter diff   q quit")
+                        tr!("j/k move   Space stage/unstage   d discard   Enter diff   q quit")
                     }
                     (View::Changes, Focus::Side) => {
-                        tr!("j/k scroll   [/] hunk   h/l pan   Esc back")
+                        tr!("j/k line   [/] hunk   Space stage/unstage   d discard   Esc back")
                     }
                 };
                 buf.set_stringn(
