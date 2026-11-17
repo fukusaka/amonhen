@@ -21,6 +21,7 @@ mod listen;
 mod measure;
 mod menus;
 mod merge;
+mod merge_several;
 mod patch_files;
 mod prefs;
 mod rangediff;

@@ -122,6 +122,8 @@ struct Root {
     pull_drawings: Option<PullDrawings>,
     /// Merge・Rebase の確認の前と後の絵（相手の rev と `mergePreview`・`rewritePreview` の答え）。
     integrate_drawing: Option<(String, Value, Value)>,
+    /// いくつもの merge の、順ごとのコンフリクトの見込み（調べた順と答え。答えが None なら調べられなかった）。
+    merge_several_steps: Option<(Vec<String>, Option<crate::merge_several::Steps>)>,
     /// stash の詳しい中身（名前 → 中身。ref が変わるたびに読み直す）。
     stash_details: std::collections::HashMap<String, crate::stashes::Detail>,
     /// ほかの worktree の変更の数（パス → 数）。
@@ -592,6 +594,15 @@ enum Dialog {
         chosen: usize,
         mode: usize,
     },
+    /// いくつもを今のブランチに 1 つの merge コミットで merge する（octopus。GTK4 版の `mergeseveral::confirm`）。
+    /// 順はドラッグで変える。`mode` は [`SEVERAL_MERGE_MODES`] の位置。
+    MergeSeveral {
+        repo: Arc<Repository>,
+        branch: Option<String>,
+        sources: Vec<crate::merge_several::Source>,
+        mode: usize,
+        one_by_one: bool,
+    },
     /// Working Copy のファイルの変更を捨てる（untracked なら消す）確認。
     Discard {
         repo: Arc<Repository>,
@@ -928,6 +939,13 @@ enum Message {
     ResetMode(Option<usize>),
     IntegrateRev(Option<usize>),
     MergeMode(Option<usize>),
+    /// いくつもの merge: 順ごとの見込みを読んだ・取り込み方を選んだ・ドラッグで並べ替えた（新しい順の rev）・
+    /// 最後に回した・1 つずつ merge するかを切り替えた。
+    MergeSeveralSteps(Vec<String>, Option<crate::merge_several::Steps>),
+    MergeSeveralMode(Option<usize>),
+    MergeSeveralReordered(Vec<String>),
+    MergeSeveralPutLast(usize),
+    MergeSeveralOneByOne(bool),
     /// ダイアログを閉じた（押したボタン）。
     DialogClosed(ContentDialogResult),
     /// 書き込む操作が終わった（失敗ならそのダイアログの見出しと文）。
@@ -1004,6 +1022,7 @@ impl Component for Root {
             sync_drawing: None,
             pull_drawings: None,
             integrate_drawing: None,
+            merge_several_steps: None,
             submodules: Value::Null,
             subtrees: Value::Null,
             repositories: None,
@@ -1424,6 +1443,43 @@ impl Component for Root {
                 }
             }
             Message::ResetMode(None) | Message::IntegrateRev(None) | Message::MergeMode(None) => {}
+            Message::MergeSeveralSteps(revs, answer) => {
+                self.merge_several_steps = Some((revs, answer));
+            }
+            Message::MergeSeveralMode(index) => {
+                if let (Some(Dialog::MergeSeveral { mode, .. }), Some(index)) =
+                    (&mut self.dialog, index)
+                {
+                    *mode = index;
+                }
+            }
+            Message::MergeSeveralOneByOne(on) => {
+                if let Some(Dialog::MergeSeveral { one_by_one, .. }) = &mut self.dialog {
+                    *one_by_one = on;
+                }
+            }
+            Message::MergeSeveralReordered(order) => {
+                if let Some(Dialog::MergeSeveral { sources, .. }) = &mut self.dialog {
+                    // 並べ替えた順に（知らない rev が来たら何もしない）。
+                    let moved: Vec<crate::merge_several::Source> = order
+                        .iter()
+                        .filter_map(|rev| sources.iter().find(|s| s.rev == *rev).cloned())
+                        .collect();
+                    if moved.len() == sources.len() {
+                        *sources = moved;
+                        self.load_merge_several_steps(context);
+                    }
+                }
+            }
+            Message::MergeSeveralPutLast(index) => {
+                if let Some(Dialog::MergeSeveral { sources, .. }) = &mut self.dialog
+                    && index < sources.len()
+                {
+                    let moved = sources.remove(index);
+                    sources.push(moved);
+                    self.load_merge_several_steps(context);
+                }
+            }
             Message::Command(id) if id == "merge" || id == "rebase" => {
                 self.integrate_choosing(id == "rebase");
                 self.load_integrate_drawing(context);
@@ -2247,6 +2303,27 @@ impl Component for Root {
                         json!({ "op": "reset", "oid": oid, "mode": mode }),
                         "Reset".to_owned(),
                     );
+                }
+                (
+                    Some(Dialog::MergeSeveral {
+                        repo,
+                        sources,
+                        mode,
+                        one_by_one,
+                        ..
+                    }),
+                    ContentDialogResult::Primary,
+                ) => {
+                    let revs: Vec<String> = sources.into_iter().map(|s| s.rev).collect();
+                    let mut command = json!({ "op": "merge", "rev": revs });
+                    if one_by_one {
+                        command["oneByOne"] = json!(true);
+                    }
+                    if let Some(m) = SEVERAL_MERGE_MODES.get(mode).filter(|m| **m != "git") {
+                        command["mode"] = json!(m);
+                    }
+                    self.busy = Some("Merge…".to_owned());
+                    perform(context, repo, command, "Merge".to_owned());
                 }
                 (
                     Some(Dialog::Integrate {
@@ -3918,6 +3995,8 @@ impl Component for Root {
                 } else if let Some(rev) = key.strip_prefix("merge:") {
                     self.integrate(rev.to_owned(), false);
                     self.load_integrate_drawing(context);
+                } else if let Some(ids) = key.strip_prefix("merge-several:") {
+                    self.merge_several(ids.split(',').collect(), context);
                 } else if let Some(rev) = key.strip_prefix("rebase:") {
                     self.integrate(rev.to_owned(), true);
                     self.load_integrate_drawing(context);
@@ -7413,6 +7492,104 @@ impl Root {
                         )),
                     )
             }
+            Some(Dialog::MergeSeveral {
+                branch,
+                sources,
+                mode,
+                one_by_one,
+                ..
+            }) => {
+                let revs: Vec<String> = sources.iter().map(|s| s.rev.clone()).collect();
+                // 今の順の答え（まだなら「調べています」）。
+                let answer = self
+                    .merge_several_steps
+                    .as_ref()
+                    .filter(|(r, _)| *r == revs)
+                    .map(|(_, a)| a.as_ref());
+                let (forecast, conflicts, put_last) = match answer {
+                    None => (tr!("Checking for conflicts…"), false, None),
+                    Some(a) => crate::merge_several::forecast(sources, a),
+                };
+                let steps: Vec<Vec<String>> = answer
+                    .flatten()
+                    .and_then(|s| s.clone())
+                    .unwrap_or_default();
+                // 順の一覧（ドラッグで並べ替える）。ぶつかる見込みなら ⚠ とファイル。
+                let rows: Vec<(String, View)> = sources
+                    .iter()
+                    .enumerate()
+                    .map(|(i, s)| {
+                        let files = steps.get(i).filter(|f| !f.is_empty());
+                        let text = match files {
+                            Some(f) => format!("{}. {}  ⚠ {}", i + 1, s.rev, f.join(", ")),
+                            None => format!("{}. {}", i + 1, s.rev),
+                        };
+                        let view: View = TextBlock::new()
+                            .text(text)
+                            .text_trimming(TextTrimming::CharacterEllipsis)
+                            .foreground_optional(
+                                files.map(|_| Brush::Solid(Color::rgb(0xc4, 0x6a, 0x00))),
+                            )
+                            .into();
+                        (s.rev.clone(), view)
+                    })
+                    .collect();
+                let put_last_view: View = match put_last.and_then(|i| sources.get(i).map(|s| (i, s))) {
+                    Some((i, s)) => Button::new()
+                        .on_click(context.callback(move |_| Message::MergeSeveralPutLast(i)))
+                        .content(tr!("Put {name} Last", name = &s.rev)),
+                    None => View::empty(),
+                };
+                let message = crate::merge_several::merge_message(sources, branch.as_deref());
+                dialog
+                    .is_open(true)
+                    .title(tr!(
+                        "Merge {count} into {branch}?",
+                        count = sources.len(),
+                        branch = branch.as_deref().unwrap_or("HEAD")
+                    ))
+                    .primary_button_text("Merge")
+                    .close_button_text(tr!("Cancel"))
+                    .content(
+                        StackPanel::new().spacing(6.0).children((
+                            TextBlock::new()
+                                .text(tr!(
+                                    "This makes one merge commit with all of them as parents, as git merge does with several branches. Drag to change the order. Undo puts it back."
+                                ))
+                                .text_wrapping(TextWrapping::Wrap),
+                            ListView::new()
+                                .can_drag_items(true)
+                                .can_reorder_items(true)
+                                .allow_drop(true)
+                                .max_height(200.0)
+                                .on_reordered(context.callback(Message::MergeSeveralReordered))
+                                .collection_slot(ListViewSlot::Items, rows),
+                            ComboBox::new()
+                                .items_source(
+                                    SEVERAL_MERGE_MODES
+                                        .iter()
+                                        .map(|m| merge_mode_title(m))
+                                        .collect::<Vec<_>>(),
+                                )
+                                .selected_index(*mode)
+                                .on_selection_changed(context.callback(Message::MergeSeveralMode)),
+                            forecast_view(&forecast, conflicts),
+                            put_last_view,
+                            CheckBox::new()
+                                .is_checked(*one_by_one)
+                                .on_is_checked_changed(context.callback(Message::MergeSeveralOneByOne))
+                                .content(TextBlock::new().text(tr!(
+                                    "Merge them one by one (a merge commit for each)"
+                                ))),
+                            TextBlock::new()
+                                .text(tr!("Message: {message}", message = message))
+                                .font_size(12.0)
+                                .foreground(Brush::Solid(Color::argb(0xa0, 0, 0, 0)))
+                                .text_wrapping(TextWrapping::Wrap)
+                                .max_lines(2),
+                        )),
+                    )
+            }
             Some(Dialog::Integrate {
                 rebase,
                 current,
@@ -8104,6 +8281,54 @@ impl Root {
                 _ => Ok(head),
             });
             Message::DeleteChecked(repo, name, checked)
+        });
+    }
+
+    /// History で選んだいくつものコミットを merge する確認を出す（GTK4 版の `mergeseveral::confirm`）。取り込む
+    /// ものが 1 つだけなら、ふつうの Merge の確認。
+    fn merge_several(&mut self, ids: Vec<&str>, context: &ComponentContext<Self>) {
+        let Some(repo) = self.repo.clone() else {
+            return beep();
+        };
+        let refs = self.refs.as_ref().map(|r| &r.refs);
+        let sources = crate::merge_several::sources(refs, &ids);
+        if sources.len() < 2 {
+            if let Some(s) = sources.first() {
+                self.integrate(s.rev.clone(), false);
+                self.load_integrate_drawing(context);
+            }
+            return;
+        }
+        self.dialog = Some(Dialog::MergeSeveral {
+            repo,
+            branch: refs.and_then(|r| r.head_branch.clone()),
+            sources,
+            mode: 0,
+            one_by_one: false,
+        });
+        self.load_merge_several_steps(context);
+    }
+
+    /// いくつもの merge の、今の順でのコンフリクトの見込みを裏で読む（順を変えるたびに。古い答えは順で捨てる）。
+    fn load_merge_several_steps(&mut self, context: &ComponentContext<Self>) {
+        let Some(Dialog::MergeSeveral { repo, sources, .. }) = &self.dialog else {
+            return;
+        };
+        let revs: Vec<String> = sources.iter().map(|s| s.rev.clone()).collect();
+        if self
+            .merge_several_steps
+            .as_ref()
+            .is_some_and(|(r, _)| *r == revs)
+        {
+            return;
+        }
+        self.merge_several_steps = None;
+        let repo = repo.clone();
+        context.spawn_background(move |_| {
+            let query = json!({ "op": "predictMerge", "ours": "HEAD", "theirs": &revs });
+            let reply: Value =
+                serde_json::from_str(&repo.run_json(&query.to_string())).unwrap_or_default();
+            Message::MergeSeveralSteps(revs, crate::merge_several::steps(&reply))
         });
     }
 
@@ -10935,6 +11160,18 @@ impl Root {
                     title,
                 ));
             }
+            // 今のコミット以外を、上の行から順に 1 つのコミットで merge する（octopus。GTK4 版と同じ）。
+            let sources = crate::merge_several::sources(self.refs.as_ref().map(|r| &r.refs), &ids);
+            if sources.len() > 1 {
+                items.push(MenuItem::item(
+                    format!("merge-several:{}", ids.join(",")),
+                    tr!(
+                        "Merge {count} into {branch}…",
+                        count = sources.len(),
+                        branch = self.head_name()
+                    ),
+                ));
+            }
             items.push(MenuItem::separator("-pick"));
             // 2 つなら、それぞれを先端とする 2 つの版として比べられる（rebase の前と後など）。
             if let [newer, older] = &ids[..] {
@@ -11476,6 +11713,9 @@ const RESET_MODES: [&str; 3] = ["soft", "mixed", "hard"];
 
 /// Merge の取り込み方（GTK4 版の `MERGE_MODES`。相手が 1 つなので Fast-Forward Only も選べる）。
 const MERGE_MODES: [&str; 4] = ["git", "fastForwardOnly", "noFastForward", "squash"];
+
+/// いくつもの merge の取り込み方（いくつもなので Fast-Forward Only はない。GTK4 版の `MergeModes::new(false)`）。
+const SEVERAL_MERGE_MODES: [&str; 3] = ["git", "noFastForward", "squash"];
 
 fn merge_mode_title(mode: &str) -> String {
     match mode {
