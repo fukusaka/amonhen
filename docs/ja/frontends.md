@@ -278,7 +278,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | ファイルの見出しのメニュー（Blame・File History・パスのコピー・開く） | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: 右クリックの Blame・File History・Copy Path と、VSCode の差分のエディターで開く。 |
 | 1 ファイルずつの差分に切り替える | ✓ | ✓ | — | ✓ | n/a | VSCode: 一覧の上の One File / All Files で切り替える。 |
 | 選んだものの差分（範囲をまとめる・A..B / A...B・飛び飛び） | ✓ | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあるとき。<br>CLI: `diff <rev> <rev>`。 |
-| 選んだものの操作（cherry-pick・revert・squash・ID のコピー） | ✓ | ✓ | △ | ✓ | △ | VSCode: エンジンがあるとき。<br>CLI: `amonhen run` から。<br>Windows: History のメニューから Cherry-pick・Revert・2 つの Range Diff・ID のコピー。まとめる（Combine）はない。 |
+| 選んだものの操作（cherry-pick・revert・squash・ID のコピー） | ✓ | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあるとき。<br>CLI: `amonhen run` から。<br>Windows: 続いたコミットをまとめるときは、ダイアログでメッセージを直してすぐ書き換える（編集モードはない）。 |
 | 署名のポップオーバー | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: 詳細の Signature の行（様子・説明・署名した人と鍵）。ポップオーバーはない。 |
 | 単語の強調と構文の色 | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: 構文の色はエンジンがあれば、差分を出した後に付く。 |
 

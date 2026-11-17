@@ -116,6 +116,8 @@ struct Root {
     running: usize,
     /// History で複数選んでいるコミット（上から。右クリックのメニューを複数のもの用にする）。
     multi: Vec<(String, bool)>,
+    /// 複数選んだ行が続いているか（Combine N Commits… を出す）。
+    multi_consecutive: bool,
     /// Push のダイアログの注意（GTK4 版の `push_warnings`）。
     sync_warnings: Vec<String>,
     /// Pull で手元に新しいコミットがないときの、先へ進める前と後の絵と、Push で送った後の形の絵（`movePreview` の
@@ -416,6 +418,9 @@ enum Dialog {
         oid: String,
         message: String,
         squash: bool,
+        /// 選んだ連続したコミットを 1 つにまとめる（Combine N Commits…）: いちばん新しいコミットと数。`oid` は
+        /// いちばん古いコミット。
+        last: Option<(String, usize)>,
     },
     /// コミット（古い順）をパッチにする（GTK4 版の `patches::save`）。形・送り状・版を選んでから、書き出す場所を選ぶ。
     Patch {
@@ -796,7 +801,8 @@ enum Message {
     /// 終わった操作の一言を消す。
     FlashExpired,
     /// History で複数選んだコミット（上から。1 つ以下なら空）。
-    MultiSelected(Vec<(String, bool)>),
+    /// 複数選んだコミット（上から。merge か）と、行が続いているか。
+    MultiSelected(Vec<(String, bool)>, bool),
     /// 件名の欄の Alt+↑（1）・Alt+↓（-1）。
     RecallRecent(isize),
     /// Pull・Push のダイアログのコミットの一覧を読んだ。
@@ -825,6 +831,8 @@ enum Message {
     FormCheck(usize, bool),
     /// まとめるときのメッセージの初期値を読んだ（コミット、メッセージ）。
     SquashText(String, Result<String, String>),
+    /// まとめる連続したコミットの、いちばん古い・新しいコミット、数と、まとめたメッセージ（`squashRangeMessage`）。
+    CombineText(Result<(String, String, usize, String), String>),
     /// bundle に入るコミットを数えた（`bundlePreview` の答えと、書く命令）。
     /// archive・bundle を書く前に、手元にない中身の数を調べた（なければ None）。
     SaveChecked(PendingSave, Option<String>),
@@ -1028,6 +1036,7 @@ impl Component for Root {
             flash: None,
             running: 0,
             multi: Vec::new(),
+            multi_consecutive: false,
             sync_warnings: Vec::new(),
             sync_drawing: None,
             push_row: None,
@@ -1215,7 +1224,8 @@ impl Component for Root {
                     *folder = text;
                 }
             }
-            Message::MultiSelected(ids) => {
+            Message::MultiSelected(ids, consecutive) => {
+                self.multi_consecutive = consecutive;
                 self.multi = if ids.len() > 1 { ids } else { Vec::new() }
             }
             Message::SyncLists(lists, warnings, drawing) => {
@@ -2607,7 +2617,31 @@ impl Component for Root {
                         repo,
                         oid,
                         message,
+                        last: Some((last, count)),
+                        ..
+                    }),
+                    ContentDialogResult::Primary,
+                ) => {
+                    let label = tr!("Combine {count} Commits…", count = count)
+                        .trim_end_matches('…')
+                        .to_owned();
+                    perform(
+                        context,
+                        repo,
+                        json!({
+                            "op": "rewrite", "label": label,
+                            "edit": { "kind": "squashRange", "oid": oid, "last": last, "message": message },
+                        }),
+                        label.clone(),
+                    );
+                }
+                (
+                    Some(Dialog::Reword {
+                        repo,
+                        oid,
+                        message,
                         squash,
+                        ..
                     }),
                     ContentDialogResult::Primary,
                 ) => {
@@ -3884,6 +3918,7 @@ impl Component for Root {
                                 oid: oid.to_owned(),
                                 message: message.trim_end().to_owned(),
                                 squash: false,
+                                last: None,
                             });
                             self.dialog_inputs += 1;
                         }
@@ -4026,6 +4061,33 @@ impl Component for Root {
                 } else if let Some(rev) = key.strip_prefix("merge:") {
                     self.integrate(rev.to_owned(), false);
                     self.load_integrate_drawing(context);
+                } else if let Some(ids) = key.strip_prefix("combine:") {
+                    // 選んだ連続したコミットを 1 つに（GTK4 版の Combine N Commits…。ここではダイアログで
+                    // メッセージを直して、すぐ書き換える）。
+                    if let Some(repo) = self.repo.clone() {
+                        let oids: Vec<String> = ids.split(',').map(str::to_owned).collect();
+                        context.spawn_background(move |_| {
+                            let command = json!({ "op": "squashRangeMessage", "oids": &oids });
+                            let reply: Value =
+                                serde_json::from_str(&repo.run_json(&command.to_string()))
+                                    .unwrap_or_default();
+                            Message::CombineText(match reply["error"].as_str() {
+                                Some(e) => Err(e.to_owned()),
+                                None => Ok((
+                                    reply["info"]["oldest"]
+                                        .as_str()
+                                        .unwrap_or_default()
+                                        .to_owned(),
+                                    reply["info"]["newest"]
+                                        .as_str()
+                                        .unwrap_or_default()
+                                        .to_owned(),
+                                    oids.len(),
+                                    reply["text"].as_str().unwrap_or_default().to_owned(),
+                                )),
+                            })
+                        });
+                    }
                 } else if let Some(ids) = key.strip_prefix("merge-several:") {
                     self.merge_several(ids.split(',').collect(), context);
                 } else if let Some(rev) = key.strip_prefix("rebase:") {
@@ -4306,6 +4368,27 @@ impl Component for Root {
                 }
             }
             Message::ActivityTab(None) => {}
+            Message::CombineText(answer) => match (self.repo.clone(), answer) {
+                (Some(repo), Ok((oldest, newest, count, message))) => {
+                    self.dialog = Some(Dialog::Reword {
+                        repo,
+                        oid: oldest,
+                        message,
+                        squash: true,
+                        last: Some((newest, count)),
+                    });
+                    self.dialog_inputs += 1;
+                }
+                (_, Err(message)) => {
+                    self.dialog = Some(Dialog::Failed {
+                        title: tr!("Combine {count} Commits…", count = self.multi.len())
+                            .trim_end_matches('…')
+                            .to_owned(),
+                        message,
+                    })
+                }
+                _ => {}
+            },
             Message::SquashText(oid, message) => match (self.repo.clone(), message) {
                 (Some(repo), Ok(message)) => {
                     self.dialog = Some(Dialog::Reword {
@@ -4313,6 +4396,7 @@ impl Component for Root {
                         oid,
                         message,
                         squash: true,
+                        last: None,
                     });
                     self.dialog_inputs += 1;
                 }
@@ -6627,13 +6711,18 @@ impl Root {
                 oid,
                 message,
                 squash,
+                last,
                 ..
             }) => dialog
                 .is_open(true)
-                .title(if *squash {
-                    tr!("Combine with Older Commit…").trim_end_matches('…').to_owned()
-                } else {
-                    tr!("Edit Message")
+                .title(match last {
+                    Some((_, count)) => tr!("Combine {count} Commits…", count = count)
+                        .trim_end_matches('…')
+                        .to_owned(),
+                    None if *squash => {
+                        tr!("Combine with Older Commit…").trim_end_matches('…').to_owned()
+                    }
+                    None => tr!("Edit Message"),
                 })
                 .primary_button_text(if *squash { "Combine" } else { "Save" })
                 .close_button_text(tr!("Cancel"))
@@ -11509,6 +11598,13 @@ impl Root {
                     title,
                 ));
             }
+            // 連続した行（first-parent で続いているかはコアで確かめる）なら、1 つにまとめられる（GTK4 版と同じ）。
+            if self.multi_consecutive && !self.multi.iter().any(|(_, merge)| *merge) {
+                items.push(MenuItem::item(
+                    format!("combine:{}", ids.join(",")),
+                    tr!("Combine {count} Commits…", count = n),
+                ));
+            }
             // 今のコミット以外を、上の行から順に 1 つのコミットで merge する（octopus。GTK4 版と同じ）。
             let sources = crate::merge_several::sources(self.refs.as_ref().map(|r| &r.refs), &ids);
             if sources.len() > 1 {
@@ -12913,7 +13009,8 @@ impl HistoryView {
                     })
                     .collect()
             });
-            self.sender.send(Message::MultiSelected(ids));
+            let consecutive = rows.windows(2).all(|w| w[1] == w[0] + 1);
+            self.sender.send(Message::MultiSelected(ids, consecutive));
             if self.multi_sent.len() > 1 {
                 s.data.want_selection(self.multi_sent.clone());
             } else {
