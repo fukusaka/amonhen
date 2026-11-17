@@ -161,6 +161,8 @@ struct Root {
     search_only: bool,
     /// 詳細だけを右の列いっぱいに広げている（⤢）。
     details_expanded: bool,
+    /// Working Copy で最後にマウスを載せたファイルの行。
+    working_hovered: Option<String>,
     last_search: Option<String>,
     search_box: ElementRef<TextBox>,
     /// Working Copy の一部だけ含めているチェック（キーごと）と、直前の画面で使ったキー。
@@ -842,6 +844,8 @@ enum Message {
     Query(String),
     /// 検索の欄で Enter（`true` なら Shift+Enter で前へ）。
     SearchSubmit(bool),
+    /// Working Copy のファイルの行にマウスが載った。
+    WorkingHover(String),
     /// 窓に落としたもの。
     Dropped(DroppedData),
     /// パッチのファイルを当てる（読んで、何を変えるかを見せてから）。
@@ -965,6 +969,7 @@ impl Component for Root {
             search_status: String::new(),
             search_only: false,
             details_expanded: false,
+            working_hovered: None,
             last_search: None,
             search_box: ElementRef::new(),
             mixed_checks: RefCell::default(),
@@ -1384,6 +1389,11 @@ impl Component for Root {
                 with_history(|h| h.search(query, backwards));
             }
             Message::ExpandDetails(on) => self.details_expanded = on,
+            Message::WorkingHover(path) => {
+                if self.working_hovered.as_deref() != Some(path.as_str()) {
+                    self.working_hovered = Some(path);
+                }
+            }
             Message::SearchOnly(on) => {
                 if self.search_only == on {
                     return;
@@ -10124,6 +10134,12 @@ impl Root {
             }),
             message_menu: context.callback(Message::CommitTextMenu),
             amend: context.callback(Message::Amend),
+            hover: Box::new(|path: String| {
+                context.callback(move |_: PointerEventInfo| Message::WorkingHover(path.clone()))
+            }),
+            discard: Box::new(|path: String| {
+                context.callback(move |()| Message::DiscardFile(path.clone()))
+            }),
             file_menu: Box::new(|path: String| {
                 context.callback(move |key| Message::WorkingFileMenu(path.clone(), key))
             }),
@@ -10172,6 +10188,7 @@ impl Root {
                         && s["retried"].as_bool() != Some(true)
                         && s["empty"].as_bool() != Some(true)
                 }),
+                hovered: self.working_hovered.as_deref(),
                 mixed: &|key: &str| {
                     self.mixed_used.borrow_mut().push(key.to_owned());
                     self.mixed_checks

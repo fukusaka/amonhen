@@ -394,6 +394,8 @@ pub struct Input<'a> {
     /// 一部だけ含めているチェック（▣）の要素（キーごと）。描いた後に、どちらでもない状態にする（reactor の
     /// CheckBox は true・false だけなので、作ったチェックの状態を直に変える）。
     pub mixed: &'a dyn Fn(&str) -> ElementRef<CheckBox>,
+    /// 最後にマウスを載せたファイルの行（変更を捨てるボタンを出す）。
+    pub hovered: Option<&'a str>,
 }
 
 /// 画面が受ける操作。
@@ -416,6 +418,10 @@ pub struct Callbacks<'a> {
     pub amend: Callback<bool>,
     /// パスのファイルの右クリックのメニュー（File History・Discard File。押した項目のキー）。
     pub file_menu: Box<dyn Fn(String) -> Callback<String> + 'a>,
+    /// ファイルの行にマウスが載った。
+    pub hover: Box<dyn Fn(String) -> Callback<PointerEventInfo> + 'a>,
+    /// 行の変更を捨てるボタン（確かめてから。右クリックの Discard File と同じ）。
+    pub discard: Box<dyn Fn(String) -> Callback<()> + 'a>,
     /// 途中の操作の帯のボタン（`continue`・`skip`・`abort`）。
     pub sequence: Box<dyn Fn(&'static str) -> Callback<()> + 'a>,
 }
@@ -773,10 +779,26 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
                     .grid_column(1)
                     .into()
             };
+            // 変更を捨てるボタン（マウスを載せたときだけ。GTK4 版・macOS 版の行の ↶）。
+            let can_discard = entry.kind != StatusKind::Unmerged && entry.is_unstaged();
+            let discard: View = if can_discard && input.hovered == Some(entry.path.as_str()) {
+                Button::new()
+                    .grid_column(4)
+                    .margin(Thickness::new(6.0, 0.0, 0.0, 0.0))
+                    .on_click((callbacks.discard)(entry.path.clone()))
+                    .content(TextBlock::new().text("↶"))
+                    .tooltip(tr!(
+                        "Discard the working tree changes (return to the content of the index)"
+                    ))
+                    .into()
+            } else {
+                View::empty()
+            };
             let row = Grid::new()
                 .columns([
                     GridLength::Auto,
                     GridLength::Star(1.0),
+                    GridLength::Auto,
                     GridLength::Auto,
                     GridLength::Auto,
                 ])
@@ -788,7 +810,14 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
                         .grid_column(0),
                     name,
                     counts,
+                    discard,
                 ));
+            // 載せた行を覚える（離れたときには消さない: ボタンを押すとボタンがマウスを取り、行から離れたことに
+            // なって、押す前にボタンが消える）。
+            let row = Border::new()
+                .background(Brush::Solid(Color::transparent()))
+                .on_pointer_entered((callbacks.hover)(entry.path.clone()))
+                .content(row);
             // 右クリック: Blame・File History（git がまだ知らない untracked のファイルにはない）と、変更を捨てる（untracked
             // なら消す。確かめてから。コンフリクトのファイルには出さない）。GTK4 版の `connect_file_menu` と同じ。
             let mut items = Vec::new();
