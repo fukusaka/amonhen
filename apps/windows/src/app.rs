@@ -8234,17 +8234,23 @@ impl Root {
         let Some(file) = &self.diff_file else {
             return Vec::new();
         };
-        let mut items = vec![
-            MenuItem::item(
-                "collapse",
-                if file.collapsed {
-                    tr!("Expand")
-                } else {
-                    tr!("Collapse")
-                },
-            ),
-            MenuItem::separator("-file"),
-        ];
+        let mut items = vec![MenuItem::item(
+            "collapse",
+            if file.collapsed {
+                tr!("Expand")
+            } else {
+                tr!("Collapse")
+            },
+        )];
+        // 見たことにする（畳んでコミットごとに覚える。GTK4 版の見出しの Viewed）。
+        if file.commit.is_some() {
+            let mark = if file.viewed { "✓ " } else { "" };
+            items.push(MenuItem::item(
+                "viewed",
+                format!("{mark}{}", tr!("Toggle Viewed")),
+            ));
+        }
+        items.push(MenuItem::separator("-file"));
         // 消したファイルは、そのコミットにはない（Blame を出さない）。
         if !file.deleted {
             items.push(MenuItem::item("blame", "Blame"));
@@ -8317,6 +8323,22 @@ impl Root {
                     h.diff.scroll_by(0.0, rows);
                 }
             }),
+            "viewed" => {
+                let Some(oid) = file.commit.as_deref() else {
+                    return;
+                };
+                // 見たことにしたら畳み、戻したら開く（GTK4 版と同じ）。
+                let viewed = crate::viewed::toggle(oid, &file.path);
+                if viewed != file.collapsed {
+                    with_history(|h| {
+                        if h.session.data.toggle_file_index(file.index) {
+                            h.session.renderer.forget_diff();
+                            let rows = h.diff_rows();
+                            h.diff.scroll_by(0.0, rows);
+                        }
+                    });
+                }
+            }
             "blame" => self.update(Message::OpenBlame(file.path, file.commit), context),
             "history" => self.update(Message::OpenFileHistory(file.path), context),
             "restore" | "restore-before" => {

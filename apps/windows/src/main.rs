@@ -31,6 +31,7 @@ mod sidebar;
 mod signature;
 mod stashes;
 mod templates;
+mod viewed;
 mod win32;
 mod winui;
 mod workcopy;

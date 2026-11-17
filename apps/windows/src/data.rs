@@ -152,7 +152,16 @@ pub struct CommitShown {
 
 impl CommitShown {
     fn new(row: u32, info: serde_json::Value, stacked: Arc<StackedDiff>) -> Self {
-        let collapsed = vec![false; stacked.files.len()];
+        // 見たことにしたファイル（Viewed）は畳んで出す（GTK4 版と同じ）。
+        let viewed = info["oid"]
+            .as_str()
+            .map(crate::viewed::paths)
+            .unwrap_or_default();
+        let collapsed: Vec<bool> = stacked
+            .files
+            .iter()
+            .map(|(path, _)| viewed.contains(path))
+            .collect();
         let mut shown = Self {
             row,
             info,
@@ -323,6 +332,8 @@ pub struct DiffFile {
     pub deleted: bool,
     /// そのコミットで足したファイル（その前の版はない）。
     pub added: bool,
+    /// 見たことにしたファイル（Viewed）。
+    pub viewed: bool,
 }
 
 /// History の行に付ける ref の名前（ブランチ・リモートブランチ・タグ）。
@@ -1374,10 +1385,15 @@ impl Data {
         let diff = &commit.stacked.files.get(index)?.1;
         let deleted = diff.new.is_empty() && !diff.old.is_empty();
         let added = diff.old.is_empty() && !diff.new.is_empty();
+        let oid = commit.info["oid"].as_str().map(str::to_owned);
+        let viewed = oid
+            .as_deref()
+            .is_some_and(|o| crate::viewed::paths(o).contains(&path));
         Some(DiffFile {
             index,
             collapsed: commit.collapsed.get(index).copied().unwrap_or(false),
-            commit: commit.info["oid"].as_str().map(str::to_owned),
+            commit: oid,
+            viewed,
             deleted,
             added,
             path,
