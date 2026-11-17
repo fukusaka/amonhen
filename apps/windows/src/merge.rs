@@ -23,6 +23,10 @@ pub struct State {
     pub sides: Option<Result<Sides, String>>,
     /// Base の欄を出すか。
     pub show_base: bool,
+    /// マーカーの残っていないファイル（rerere が解決を当てた、ほかのエディタで直した）の案内。
+    pub banner: Option<String>,
+    /// rerere が解決を当てた（忘れてコンフリクトからやり直せる）。
+    pub rerere: bool,
     /// 編集している Result と、最後に保存した（開いた）Result。
     pub result: String,
     pub saved: String,
@@ -43,6 +47,8 @@ impl State {
             path,
             sides: None,
             show_base: false,
+            banner: None,
+            rerere: false,
             result: String::new(),
             saved: String::new(),
             selected: 0,
@@ -62,6 +68,17 @@ impl State {
                 self.crlf = self.result.contains("\r\n");
                 self.saved = self.result.clone();
                 let base = info["base"]["text"].as_str().map(str::to_owned);
+                // マーカーが残っていなければ、その案内（GTK4 版の `load` と同じ）。
+                self.rerere = info["rerere"].as_bool() == Some(true);
+                self.banner = (info["markers"].as_u64() == Some(0)).then(|| {
+                    if self.rerere {
+                        tr!(
+                            "git rerere applied the earlier resolution. Check the result, then Mark Resolved."
+                        )
+                    } else {
+                        tr!("No conflict markers are left. Check the result, then Mark Resolved.")
+                    }
+                });
                 self.sides = Some(Ok((text("current"), text("incoming"), base)));
                 self.selected = 0;
                 // 開いたときに、間違えようのないコンフリクトを解く（設定。GTK4 版と同じく、保存はしない）。
@@ -148,7 +165,7 @@ impl State {
 
 pub struct Callbacks<'a> {
     /// 操作のボタン（`accept-ours`・`accept-theirs`・`accept-both`・`accept-base`・`magic`・`previous`・
-    /// `next`・`save`・`resolve`・`close`）。
+    /// `next`・`save`・`resolve`・`forget`・`close`）。
     pub button: Box<dyn Fn(&'static str) -> Callback<()> + 'a>,
     pub result: Callback<String>,
     /// Base の欄を出すか。
@@ -234,13 +251,13 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
             .text(tr!("Loading…"))
             .opacity(0.6)
             .margin(16.0)
-            .grid_row(1)
+            .grid_row(2)
             .into(),
         Some(Err(e)) => TextBlock::new()
             .text(e.clone())
             .text_wrapping(TextWrapping::Wrap)
             .margin(16.0)
-            .grid_row(1)
+            .grid_row(2)
             .into(),
         Some(Ok((current, incoming, base))) => {
             let pane = |title: String, text: &str, column: i32, editable: bool| -> View {
@@ -282,7 +299,7 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
             };
             Grid::new()
                 .columns(vec![GridLength::Star(1.0); 3 + first as usize])
-                .grid_row(1)
+                .grid_row(2)
                 .children((
                     base_pane,
                     pane(tr!("Current (your branch)"), current, first, false),
@@ -301,8 +318,41 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                 ))
         }
     };
+    // マーカーの残っていないファイルの案内。rerere が当てた解決が違っていれば、忘れてコンフリクトからやり直せる
+    // （GTK4 版・macOS 版と同じ）。
+    let banner: View = match &state.banner {
+        Some(text) => {
+            let forget: View = if state.rerere {
+                Button::new()
+                    .on_click((callbacks.button)("forget"))
+                    .vertical_alignment(VerticalAlignment::Center)
+                    .content(TextBlock::new().text(tr!("Forget This Resolution")))
+                    .tooltip(tr!(
+                        "Forgets what git rerere recorded for this file and brings its conflict back (git rerere forget). Undo brings back the file as it is now."
+                    ))
+            } else {
+                View::empty()
+            };
+            Border::new()
+                .background(Brush::Solid(Color::rgb(0xff, 0xf4, 0xce)))
+                .padding(Thickness::new(10.0, 6.0, 10.0, 6.0))
+                .grid_row(1)
+                .content(
+                    StackPanel::new()
+                        .orientation(Orientation::Horizontal)
+                        .spacing(12.0)
+                        .children((
+                            TextBlock::new()
+                                .text(text.clone())
+                                .vertical_alignment(VerticalAlignment::Center),
+                            forget,
+                        )),
+                )
+        }
+        None => View::empty(),
+    };
     Grid::new()
-        .rows([GridLength::Auto, GridLength::Star(1.0)])
+        .rows([GridLength::Auto, GridLength::Auto, GridLength::Star(1.0)])
         .children((
             // 窓が狭くても右端のボタン（閉じる）に届くよう、帯は横にスクロールできる。
             ScrollViewer::new()
@@ -310,6 +360,7 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                 .vertical_scroll_bar_visibility(ScrollBarVisibility::Disabled)
                 .grid_row(0)
                 .content(bar),
+            banner,
             body,
         ))
 }

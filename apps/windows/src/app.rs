@@ -714,6 +714,8 @@ enum Message {
     RepoDetectedBase(Option<String>),
     /// Repository Settings のリポジトリの形を読んだ（`repositoryForm` の info）。
     RepoFormLoaded(Value),
+    /// rerere が覚えた解決（`rr-cache`）があるか。
+    RepoRerereCache(bool),
     /// Repository Settings のフック・LFS を読んだ（`hooksAndLfs` の info）。
     RepoHooksLoaded(Value),
     /// Repository Settings で見るフックの中身を読んだ（名前と中身）。
@@ -3784,6 +3786,11 @@ impl Component for Root {
                     state.form = Some(info);
                 }
             }
+            Message::RepoRerereCache(on) => {
+                if let Some(state) = self.repo_settings.as_mut() {
+                    state.rerere_cache = on;
+                }
+            }
             Message::HookEnabled(name, on) => {
                 let current = self
                     .repo_settings
@@ -3839,6 +3846,26 @@ impl Component for Root {
                         "value": (!value.is_empty()).then_some(value),
                     })
                 };
+                // 覚えた解決をすべて忘れる（戻せないので確かめる。GTK4 版の `forget_resolutions_row`）。
+                if key == "forget-resolutions" {
+                    let Some(repo) = self.repo.clone() else {
+                        return beep();
+                    };
+                    self.dialog = Some(Dialog::Confirm {
+                        repo,
+                        title: tr!("Forget All Recorded Resolutions?"),
+                        message: format!(
+                            "{} {}",
+                            tr!(
+                                "git rerere then no longer reuses the resolutions it recorded in this repository."
+                            ),
+                            tr!("This can’t be undone.")
+                        ),
+                        button: tr!("Forget All"),
+                        command: json!({ "op": "forgetAllResolutions" }),
+                    });
+                    return;
+                }
                 if let Some(name) = key.strip_prefix("hook-show:") {
                     let (Some(repo), name) = (self.repo.clone(), name.to_owned()) else {
                         return;
@@ -7906,6 +7933,21 @@ impl Root {
             "accept-theirs" => state.accept(amonhen_core::conflict::Choice::Theirs),
             "accept-both" => state.accept(amonhen_core::conflict::Choice::Both),
             "accept-base" => state.accept(amonhen_core::conflict::Choice::Base),
+            "forget" => {
+                // rerere が当てた解決を忘れ、コンフリクトのある形から読み直す（失敗したら今の Result を残す）。
+                let path = state.path.clone();
+                context.spawn_background(move |_| {
+                    let command = json!({ "op": "forgetResolution", "path": &path });
+                    let reply: Value = serde_json::from_str(&repo.run_json(&command.to_string()))
+                        .unwrap_or_else(|e| json!({ "error": e.to_string() }));
+                    match reply["error"].as_str() {
+                        Some(e) => {
+                            Message::Performed(Some((tr!("Forget This Resolution"), e.to_owned())))
+                        }
+                        None => Message::OpenMerge(path),
+                    }
+                });
+            }
             "magic" => state.magic(),
             "previous" => state.step(false),
             "next" => state.step(true),
@@ -8005,6 +8047,14 @@ impl Root {
                     serde_json::from_str(&repo.run_json(r#"{"op":"repositoryForm"}"#))
                         .unwrap_or_default();
                 Message::RepoFormLoaded(reply["info"].clone())
+            });
+        }
+        // 覚えた解決があるか（Forget All Recorded Resolutions… を出す）。
+        if let Some(repo) = self.repo.clone() {
+            context.spawn_background(move |_| {
+                let reply: Value = serde_json::from_str(&repo.run_json(r#"{"op":"gitVersion"}"#))
+                    .unwrap_or_default();
+                Message::RepoRerereCache(reply["info"]["rerereCache"].as_bool() == Some(true))
             });
         }
         // フックと LFS も。

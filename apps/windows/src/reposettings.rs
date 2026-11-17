@@ -62,6 +62,8 @@ pub struct State {
     pub template: Option<String>,
     pub template_saved: String,
     pub template_path: String,
+    /// rerere が覚えた解決（`rr-cache`）がある（Forget All Recorded Resolutions… を出す）。
+    pub rerere_cache: bool,
 }
 
 impl State {
@@ -89,6 +91,7 @@ impl State {
             template: None,
             template_saved: String::new(),
             template_path: String::new(),
+            rerere_cache: false,
         }
     }
 
@@ -551,6 +554,16 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
         )
     };
     operations.extend(operation_rows().into_iter().map(row_of));
+    // 覚えた解決をすべて忘れる（覚えたものがあるときだけ。GTK4 版の `forget_resolutions_row`）。
+    if state.rerere_cache {
+        operations.push((
+            "forget-resolutions".to_owned(),
+            Button::new()
+                .on_click((callbacks.button)("forget-resolutions".to_owned()))
+                .horizontal_alignment(HorizontalAlignment::Right)
+                .content(TextBlock::new().text(tr!("Forget All Recorded Resolutions…"))),
+        ));
+    }
     let working_copy: Vec<(String, View)> = working_copy_rows().into_iter().map(row_of).collect();
     // このリポジトリだけで無視するパターン（.git/info/exclude）。
     let exclude: View = match &state.exclude {
