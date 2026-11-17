@@ -116,6 +116,7 @@ pub struct App {
     /// マウスの取り込みを替えた（端末に伝えるまで）。
     mouse_changed: bool,
     /// `Ctrl-z` で止める（端末を戻してから）。
+    #[cfg(unix)]
     suspend: bool,
     /// 新しいブランチの名前を打っている: 始まり（ref かコミット）、その出し方、打った名前。
     typing_branch: Option<(String, String, String)>,
@@ -200,6 +201,7 @@ impl App {
             choices: None,
             mouse: true,
             mouse_changed: false,
+            #[cfg(unix)]
             suspend: false,
             typing_branch: None,
             naming: Naming::Branch,
@@ -338,6 +340,7 @@ impl App {
     }
 
     /// `Ctrl-z` を押した（聞いたら、なかったことにする）。止まって続いた後は、描き直す。
+    #[cfg(unix)]
     pub fn take_suspend(&mut self) -> bool {
         let suspend = std::mem::take(&mut self.suspend);
         self.dirty |= suspend;
@@ -764,6 +767,7 @@ impl App {
         }
         match key.code {
             KeyCode::Char('c') if control => self.quit = true,
+            #[cfg(unix)]
             KeyCode::Char('z') if control => self.suspend = true,
             KeyCode::Char('M') => {
                 self.mouse = !self.mouse;
@@ -1506,6 +1510,7 @@ impl App {
                 "M",
                 tr!("Mouse on or off (off lets the terminal select text)"),
             ),
+            #[cfg(unix)]
             ("Ctrl-z", tr!("Suspend (fg in the shell comes back)")),
             ("1 2 3", tr!("Changes, History and Reflog")),
             ("0", tr!("Sidebar")),
