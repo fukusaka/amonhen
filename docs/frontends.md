@@ -113,7 +113,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | General: fetch automatically | ✓ | ✓ | ✓ | n/a | n/a | VSCode: VSCode's own `git.autofetch`.<br>Windows: Windows: A failure is added to the status bar. |
 | General: external editor | ✓ | ✓ | ✓ | n/a | n/a | GTK4: Code editors are found by their desktop entries, in the macOS order; the fallback is a text editor, never an office app; Other… takes a program.<br>Windows: Known code editors are found in their install folders or by their launchers on PATH, in the macOS order; the fallback is Notepad, which can't open folders; Other… takes a program. |
 | General: terminal and diff tool | — | — | — | n/a | n/a |  |
-| Git: machine-wide pages (Author and Signing, Commits, Operations, Working Copy, Keys and Values) | ✓ | ✓ | △ | — | △ | CLI: Via `amonhen run`.<br>Windows: The name and email, Operations, Working Copy, Keys and Values and shared templates for all repositories; no signing. |
+| Git: machine-wide pages (Author and Signing, Commits, Operations, Working Copy, Keys and Values) | ✓ | ✓ | △ | — | △ | CLI: Via `amonhen run`.<br>Windows: The name and email, signing and mailmap, Operations, Working Copy, Keys and Values and shared templates for all repositories; no allowed signers file or mailmap file. |
 | Git > Commits: shared message template library | ✓ | ✓ | ✓ | — | — | Windows: Edited inline in the one Settings page (no sheet) |
 | Git > Programs: git, gpg, ssh-keygen, gpgsm | ✓ | ✓ | — | n/a | △ | VSCode: The extension runs the git chosen here for the machine, and VSCode's `git.path` only when none is chosen; gpg and ssh-keygen come from git's settings.<br>CLI: Via `amonhen run` (`programs`, `setMachineGit`). |
 | Git > Environment Variables of this machine (pass, masked secrets) | ✓ | ✓ | ✓ | n/a | n/a | VSCode: VSCode's own environment, which the extension passes to the daemon.<br>Windows: In the one Settings page under Git; no Passed / All switch or value detail |
@@ -144,7 +144,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Feature | macOS | GTK4 | Windows | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
 | Settings page (pages, git line, source / ↩︎ / ⓘ per row) | ✓ | ✓ | △ | ✓ | n/a | VSCode: Repository Settings in the main view (with the engine), this repository only.<br>Windows: Author and Keys and Values on one page, without the source / ↩︎ / ⓘ per row. |
-| Author and Signing (signing choice, collected keys, mailmap) | ✓ | ✓ | △ | ✓ | △ | VSCode: Keys are collected for the current format only.<br>CLI: Via `amonhen run` (`signingKeys`, `configSet`).<br>Windows: The name and email only. |
+| Author and Signing (signing choice, collected keys, mailmap) | ✓ | ✓ | △ | ✓ | △ | VSCode: Keys are collected for the current format only.<br>CLI: Via `amonhen run` (`signingKeys`, `configSet`).<br>Windows: No rows for the allowed signers file or the mailmap file. |
 | Commits: message template (none, shared, own, file) | ✓ | ✓ | ✓ | △ | △ | VSCode: None, this repository's own (edited there) or a file; no shared templates.<br>CLI: Via `amonhen run`. |
 | Branches: default branch override | ✓ | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
 | Operations: pull, fetch.prune, autostash, updateRefs, conflict style, rerere | ✓ | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |

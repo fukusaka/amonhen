@@ -67,7 +67,53 @@ pub struct State {
     pub editor: String,
     /// rerere が覚えた解決（`rr-cache`）がある（Forget All Recorded Resolutions… を出す）。
     pub rerere_cache: bool,
+    /// コアが集めた署名の鍵（形式ごと。`SIGNING_FORMATS` の順）。
+    pub signing_keys: Vec<(&'static str, Vec<SigningKey>)>,
+    /// 鍵の「その他…」で打っている値（出していなければ None）。
+    pub signing_other: Option<String>,
 }
+
+/// 署名の鍵 1 つ（コアの `signingKeys` の答え）。
+#[derive(Clone, Debug)]
+pub struct SigningKey {
+    pub id: String,
+    pub label: String,
+    pub emails: Vec<String>,
+}
+
+/// 署名の形式（`gpg.format` の値）。
+pub const SIGNING_FORMATS: &[&str] = &["openpgp", "ssh", "x509"];
+
+fn format_name(format: &str) -> &str {
+    match format {
+        "openpgp" => "OpenPGP",
+        "ssh" => "SSH",
+        "x509" => "X.509",
+        other => other,
+    }
+}
+
+/// `signingKeys` の答え（info）の鍵。集められなければ空。
+pub fn signing_keys_of(info: &Value) -> Vec<SigningKey> {
+    info["keys"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|k| SigningKey {
+            id: k["id"].as_str().unwrap_or_default().to_owned(),
+            label: k["label"].as_str().unwrap_or_default().to_owned(),
+            emails: k["emails"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|e| e.as_str().map(str::to_owned))
+                .collect(),
+        })
+        .collect()
+}
+
+/// 鍵の選ぶ欄で「その他…」を表す値。
+const OTHER_KEY: &str = "\u{0}other";
 
 impl State {
     pub fn new() -> Self {
@@ -95,6 +141,8 @@ impl State {
             template_saved: String::new(),
             template_path: String::new(),
             rerere_cache: false,
+            signing_keys: Vec::new(),
+            signing_other: None,
             hooks_path: None,
             editor: String::new(),
         }
@@ -115,6 +163,71 @@ impl State {
             .rev()
             .find(|e| e.key.eq_ignore_ascii_case(key))
             .map(|e| (e.value.as_str(), e.scope.as_str()))
+    }
+
+    /// 今の署名の形式（`gpg.format`。知らないものは OpenPGP）。
+    pub fn signing_format(&self) -> &'static str {
+        let f = self
+            .effective("gpg.format")
+            .map(|(v, _)| v.to_lowercase())
+            .unwrap_or_default();
+        SIGNING_FORMATS
+            .iter()
+            .find(|x| **x == f)
+            .copied()
+            .unwrap_or("openpgp")
+    }
+
+    /// 署名の選ぶ欄の今の値（署名しないなら空、するなら形式）。
+    fn signing_value(&self) -> &'static str {
+        let on = self
+            .effective("commit.gpgsign")
+            .is_some_and(|(v, _)| normalize_bool(v) == "true");
+        if on { self.signing_format() } else { "" }
+    }
+
+    /// `id` の鍵の形式（集めた鍵になければ None）。
+    fn key_format(&self, id: &str) -> Option<&'static str> {
+        self.signing_keys
+            .iter()
+            .find(|(_, keys)| keys.iter().any(|k| k.id == id))
+            .map(|(f, _)| *f)
+    }
+
+    /// 鍵の選ぶ欄の項目（値と見出し）: 鍵なし、集めた鍵（形式の順、`user.email` の鍵が先）、一覧にない今の値、
+    /// その他…。
+    fn key_options(&self) -> Vec<(String, String)> {
+        let empty = if self.signing_format() == "openpgp" {
+            tr!("Key for your email")
+        } else {
+            tr!("None")
+        };
+        let email = self
+            .effective("user.email")
+            .map(|(v, _)| v.to_lowercase())
+            .unwrap_or_default();
+        let mut options = vec![(String::new(), empty)];
+        for (format, keys) in &self.signing_keys {
+            let mut keys: Vec<&SigningKey> = keys.iter().collect();
+            keys.sort_by_key(|k| {
+                email.is_empty() || !k.emails.iter().any(|e| e.to_lowercase() == email)
+            });
+            options.extend(keys.into_iter().map(|k| {
+                (
+                    k.id.clone(),
+                    format!("{} — {}", format_name(format), k.label),
+                )
+            }));
+        }
+        let current = self
+            .effective("user.signingkey")
+            .map(|(v, _)| v.to_owned())
+            .unwrap_or_default();
+        if !current.is_empty() && self.key_format(&current).is_none() {
+            options.push((current.clone(), current));
+        }
+        options.push((OTHER_KEY.to_owned(), tr!("Other…")));
+        options
     }
 
     /// `hooksAndLfs` の答え（info）を取り込む。
@@ -669,7 +782,7 @@ pub type Rows = Vec<(String, View)>;
 pub fn choice_views(
     state: &State,
     choice: &dyn Fn(&'static str) -> Callback<Option<usize>>,
-) -> (Rows, Rows) {
+) -> (Rows, Rows, Rows) {
     // Operations: 行ごとに選ぶ欄と、効いている値の設定元（このリポジトリで上書きしていなければ）。
     let choice_row = |id: &'static str,
                       title: String,
@@ -750,12 +863,186 @@ pub fn choice_views(
     };
     operations.extend(operation_rows().into_iter().map(row_of));
     let working_copy: Vec<(String, View)> = working_copy_rows().into_iter().map(row_of).collect();
-    (operations, working_copy)
+    // Signing: 1 つの選択（署名しない／OpenPGP／SSH／X.509）と鍵。鍵の形式が違えば知らせる。
+    let signing = ["", "openpgp", "ssh", "x509"];
+    let key_options = state.key_options();
+    let key = state
+        .effective("user.signingkey")
+        .map(|(v, _)| v.to_owned())
+        .unwrap_or_default();
+    let format = state.signing_format();
+    let mismatch = state
+        .key_format(&key)
+        .filter(|k| *k != format)
+        .map(|k| {
+            format!(
+                "⚠ {}",
+                tr!(
+                    "This is an {kind} key, but the format is {format}.",
+                    kind = format_name(k),
+                    format = format_name(format)
+                )
+            )
+        })
+        .unwrap_or_default();
+    let mut author = vec![
+        (
+            "signing".to_owned(),
+            choice_row(
+                "signing",
+                tr!("Signing"),
+                String::new(),
+                &["commit.gpgsign", "gpg.format"],
+                signing
+                    .iter()
+                    .map(|v| {
+                        if v.is_empty() {
+                            tr!("No signing")
+                        } else {
+                            format_name(v).to_owned()
+                        }
+                    })
+                    .collect(),
+                signing
+                    .iter()
+                    .position(|v| *v == state.signing_value())
+                    .unwrap_or(0),
+            ),
+        ),
+        (
+            // 項目が変わったら作り直す（ComboBox の項目は後から差し替えない）。
+            format!("signing-key:{}", key_options.len()),
+            choice_row(
+                "signing-key",
+                tr!("Key"),
+                mismatch,
+                &["user.signingkey"],
+                key_options.iter().map(|(_, l)| l.clone()).collect(),
+                key_options.iter().position(|(v, _)| *v == key).unwrap_or(0),
+            ),
+        ),
+    ];
+    author.extend(mailmap_rows().into_iter().map(row_of));
+    (operations, working_copy, author)
+}
+
+/// mailmap の行（`log.mailmap`）。
+fn mailmap_rows() -> Vec<OperationRow> {
+    vec![(
+        "log.mailmap",
+        tr!("Use the mailmap"),
+        tr!(
+            "Shows the names and emails from the mailmap instead of the recorded ones, like git log (Blame always does)."
+        ),
+        "log.mailmap",
+        vec![("true", tr!("On")), ("false", tr!("Off"))],
+        "false",
+    )]
+}
+
+/// 選ぶ欄で `id` の行の `index` 番目を選んだ。鍵の「その他…」なら打つ欄を出し（命令はなし）、ほかは
+/// `choice_commands` と同じ。
+pub fn choose(state: &mut State, id: &str, index: usize, scope: &str) -> Option<Vec<Value>> {
+    if id == "signing-key" {
+        let (value, _) = state.key_options().get(index)?.clone();
+        if value == OTHER_KEY {
+            state.signing_other = Some(
+                state
+                    .effective("user.signingkey")
+                    .map(|(v, _)| v.to_owned())
+                    .unwrap_or_default(),
+            );
+            return None;
+        }
+        state.signing_other = None;
+    }
+    choice_commands(state, id, index, scope)
+}
+
+/// 鍵の「その他…」の欄（出していなければ空）。Enter の代わりに Save で書く。
+pub fn signing_other_view(
+    state: &State,
+    field: &dyn Fn(&'static str) -> Callback<String>,
+    button: &dyn Fn(String) -> Callback<()>,
+) -> View {
+    let Some(text) = &state.signing_other else {
+        return View::empty();
+    };
+    let placeholder = if state.signing_format() == "ssh" {
+        "~/.ssh/id_ed25519.pub".to_owned()
+    } else {
+        tr!("Fingerprint or key ID")
+    };
+    StackPanel::new()
+        .orientation(Orientation::Horizontal)
+        .spacing(8.0)
+        .children((
+            TextBox::new()
+                .text(text.clone())
+                .placeholder_text(placeholder)
+                .min_width(320.0)
+                .on_text_changed(field("signing-other")),
+            Button::new()
+                .on_click(button("signing-other".to_owned()))
+                .content(TextBlock::new().text(tr!("Save"))),
+        ))
+}
+
+/// 「その他…」で打った鍵を書く命令（空なら消す。今と同じなら None）。欄は閉じる。
+pub fn signing_other_commands(state: &mut State, scope: &str) -> Option<Vec<Value>> {
+    let value = state.signing_other.take()?.trim().to_owned();
+    let current = state
+        .effective("user.signingkey")
+        .map(|(v, _)| v.to_owned())
+        .unwrap_or_default();
+    (value != current).then(|| {
+        vec![config_set(
+            "user.signingkey",
+            (!value.is_empty()).then_some(value.as_str()),
+            scope,
+        )]
+    })
 }
 
 /// 選ぶ欄で `id` の行の `index` 番目を選んだときに書く命令（`scope` の段に。`global` なら全リポジトリ）。今の値と
 /// 同じなら（作り直した欄が今の値を知らせてきたときなど）None。
 pub fn choice_commands(state: &State, id: &str, index: usize, scope: &str) -> Option<Vec<Value>> {
+    if id == "signing" {
+        let value = ["", "openpgp", "ssh", "x509"].get(index).copied()?;
+        if value == state.signing_value() {
+            return None;
+        }
+        if value.is_empty() {
+            return Some(vec![config_set("commit.gpgsign", Some("false"), scope)]);
+        }
+        let mut commands = vec![config_set("commit.gpgsign", Some("true"), scope)];
+        if state.signing_format() != value || state.at(scope, "gpg.format").is_some() {
+            commands.push(config_set("gpg.format", Some(value), scope));
+        }
+        return Some(commands);
+    }
+    if id == "signing-key" {
+        let (value, _) = state.key_options().get(index)?.clone();
+        let current = state
+            .effective("user.signingkey")
+            .map(|(v, _)| v.to_owned())
+            .unwrap_or_default();
+        if value == OTHER_KEY || value == current {
+            return None;
+        }
+        let mut commands = vec![config_set(
+            "user.signingkey",
+            (!value.is_empty()).then_some(value.as_str()),
+            scope,
+        )];
+        // 選んだ鍵の形式が今の形式と違えば、形式も合わせる。
+        if let Some(f) = state.key_format(&value)
+            && f != state.signing_format()
+        {
+            commands.push(config_set("gpg.format", Some(f), scope));
+        }
+        return Some(commands);
+    }
     if id == "pull" {
         let method = ["merge", "rebase", "ffOnly"][index.min(2)];
         if method == pull_method(state) {
@@ -766,6 +1053,7 @@ pub fn choice_commands(state: &State, id: &str, index: usize, scope: &str) -> Op
     let (_, _, _, key, options, default) = operation_rows()
         .into_iter()
         .chain(working_copy_rows())
+        .chain(mailmap_rows())
         .find(|r| r.0 == id)?;
     let (value, _) = options.get(index)?;
     let now = state
@@ -853,7 +1141,10 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                 .on_text_changed((callbacks.field)(field)),
         ))
     };
-    let (mut operations, working_copy) = choice_views(state, &*callbacks.choice);
+    let (mut operations, working_copy, author) = choice_views(state, &*callbacks.choice);
+    let (signing, mailmap): (Rows, Rows) =
+        author.into_iter().partition(|(k, _)| k != "log.mailmap");
+    let signing_other = signing_other_view(state, &*callbacks.field, &*callbacks.button);
     // 覚えた解決をすべて忘れる（覚えたものがあるときだけ。GTK4 版の `forget_resolutions_row`）。
     if state.rerere_cache {
         operations.push((
@@ -1514,6 +1805,17 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                                 .on_click((callbacks.button)("author".to_owned()))
                                 .content(TextBlock::new().text(tr!("Save"))),
                         )),
+                    heading(tr!("Signing")),
+                    StackPanel::new()
+                        .max_width(560.0)
+                        .horizontal_alignment(HorizontalAlignment::Left)
+                        .spacing(12.0)
+                        .children((View::keyed_fragment(signing), signing_other)),
+                    heading("mailmap".to_owned()),
+                    StackPanel::new()
+                        .max_width(560.0)
+                        .horizontal_alignment(HorizontalAlignment::Left)
+                        .children((View::keyed_fragment(mailmap),)),
                     heading("Commits".to_owned()),
                     StackPanel::new()
                         .max_width(560.0)
@@ -1569,4 +1871,69 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
     Grid::new()
         .rows([GridLength::Auto, GridLength::Star(1.0)])
         .children((head, body))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn state(entries: &[(&str, &str, &str)]) -> State {
+        let mut s = State::new();
+        s.entries = Some(
+            entries
+                .iter()
+                .map(|(scope, key, value)| Entry {
+                    scope: (*scope).to_owned(),
+                    key: (*key).to_owned(),
+                    value: (*value).to_owned(),
+                })
+                .collect(),
+        );
+        s
+    }
+
+    #[test]
+    fn signing_writes_gpgsign_and_format_together() {
+        let s = state(&[("global", "user.email", "a@example.com")]);
+        // OpenPGP は既定の形式なので gpg.format は書かない。
+        let c = choice_commands(&s, "signing", 1, "local").expect("命令");
+        assert_eq!(c.len(), 1);
+        assert_eq!(c[0]["key"], "commit.gpgsign");
+        // SSH なら形式も書く。すべてのリポジトリの段なら scope を付ける。
+        let c = choice_commands(&s, "signing", 2, "global").expect("命令");
+        assert_eq!(c[1]["key"], "gpg.format");
+        assert_eq!(c[1]["value"], "ssh");
+        assert_eq!(c[1]["scope"], "global");
+        // 今と同じ（署名しない）なら書かない。
+        assert!(choice_commands(&s, "signing", 0, "local").is_none());
+    }
+
+    #[test]
+    fn choosing_a_key_of_another_format_sets_the_format() {
+        let mut s = state(&[("global", "user.email", "a@example.com")]);
+        s.signing_keys = vec![
+            ("openpgp", Vec::new()),
+            (
+                "ssh",
+                vec![SigningKey {
+                    id: "key::ssh-ed25519 AAAA".into(),
+                    label: "id_ed25519".into(),
+                    emails: Vec::new(),
+                }],
+            ),
+        ];
+        let options = s.key_options();
+        assert_eq!(options[0].1, tr!("Key for your email"));
+        let index = options
+            .iter()
+            .position(|(v, _)| v.starts_with("key::"))
+            .unwrap();
+        let c = choice_commands(&s, "signing-key", index, "local").expect("命令");
+        assert_eq!(c[0]["key"], "user.signingkey");
+        assert_eq!(c[1]["value"], "ssh");
+        // 「その他…」は欄を出すだけ。
+        let other = options.len() - 1;
+        assert!(choose(&mut s, "signing-key", other, "local").is_none());
+        assert_eq!(s.signing_other.as_deref(), Some(""));
+    }
 }

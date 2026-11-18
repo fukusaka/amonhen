@@ -160,8 +160,10 @@ fn git_choices(state: &State, callbacks: &Callbacks) -> View {
     let Some(global) = &state.global else {
         return View::empty();
     };
-    let (operations, working_copy) =
+    let (operations, working_copy, author) =
         crate::reposettings::choice_views(global, &*callbacks.git_choice);
+    let (signing, mailmap): (crate::reposettings::Rows, crate::reposettings::Rows) =
+        author.into_iter().partition(|(k, _)| k != "log.mailmap");
     let title = |text: &str| {
         TextBlock::new()
             .text(text.to_owned())
@@ -169,6 +171,19 @@ fn git_choices(state: &State, callbacks: &Callbacks) -> View {
             .margin(Thickness::new(0.0, 14.0, 0.0, 4.0))
     };
     StackPanel::new().spacing(8.0).children((
+        title(&tr!("Signing")),
+        StackPanel::new().spacing(10.0).children((
+            View::keyed_fragment(signing),
+            crate::reposettings::signing_other_view(
+                global,
+                &*callbacks.keys_field,
+                &*callbacks.keys_button,
+            ),
+        )),
+        title("mailmap"),
+        StackPanel::new()
+            .spacing(10.0)
+            .children((View::keyed_fragment(mailmap),)),
         title("Operations"),
         StackPanel::new()
             .spacing(10.0)

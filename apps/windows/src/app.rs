@@ -895,6 +895,11 @@ enum Message {
     StashOption(&'static str, bool),
     /// Repository Settings: 設定を読んだ・欄を書き換えた・ボタン。
     RepoSettingsLoaded(Vec<crate::reposettings::Entry>),
+    /// 集めた署名の鍵（すべてのリポジトリの段の Settings > Git なら true）。
+    SigningKeysLoaded(
+        bool,
+        Vec<(&'static str, Vec<crate::reposettings::SigningKey>)>,
+    ),
     /// Repository Settings のフックの有効を切り替えた。
     HookEnabled(String, bool),
     /// Repository Settings の専用のテンプレートを読んだ（中身、置き場所）。
@@ -1721,6 +1726,9 @@ impl Component for Root {
                 self.repo_settings = Some(crate::reposettings::State::new());
                 self.page = Page::RepoSettings;
                 self.write_repo_settings(Vec::new(), context);
+                if let Some(repo) = self.repo.clone() {
+                    load_signing_keys(repo, false, context);
+                }
             }
             Message::Command(id) if id == "stash" => self.ask_stash(Vec::new()),
             Message::Command(id) if id == "am-three-way" => {
@@ -2267,6 +2275,7 @@ impl Component for Root {
                     )
                 });
                 self.page = Page::Settings;
+                load_signing_keys(repo.clone(), true, context);
                 // `--global` の段の値（いくつもあれば最後のもの。git と同じ）。
                 context.spawn_background(move |_| {
                     let reply: Value =
@@ -4932,6 +4941,7 @@ impl Component for Root {
                         "exclude" => state.exclude = Some(text),
                         "lfs" => state.new_pattern = text,
                         "template" => state.template = Some(text),
+                        "signing-other" => state.signing_other = Some(text),
                         _ => state.new_value = text,
                     }
                 }
@@ -4948,6 +4958,15 @@ impl Component for Root {
                         "value": (!value.is_empty()).then_some(value),
                     })
                 };
+                // 鍵の「その他…」で打った値。
+                if key == "signing-other" {
+                    if let Some(commands) =
+                        crate::reposettings::signing_other_commands(state, "local")
+                    {
+                        self.write_repo_settings(commands, context);
+                    }
+                    return;
+                }
                 // sparse checkout: すべてのフォルダを取り出す（確かめる）・フォルダを外す・足す。
                 if key == "sparse-all" {
                     let Some(repo) = self.repo.clone() else {
@@ -5275,9 +5294,9 @@ impl Component for Root {
                 let (Some(repo), Some(commands)) = (
                     self.repo.clone(),
                     self.settings
-                        .as_ref()
-                        .and_then(|s| s.global.as_ref())
-                        .and_then(|g| crate::reposettings::choice_commands(g, id, index, "global")),
+                        .as_mut()
+                        .and_then(|s| s.global.as_mut())
+                        .and_then(|g| crate::reposettings::choose(g, id, index, "global")),
                 ) else {
                     return;
                 };
@@ -5287,6 +5306,7 @@ impl Component for Root {
             Message::SettingsKeysField(field, text) => {
                 if let Some(global) = self.settings.as_mut().and_then(|s| s.global.as_mut()) {
                     match field {
+                        "signing-other" => global.signing_other = Some(text),
                         "query" => global.query = text,
                         "key" => global.new_key = text,
                         _ => global.new_value = text,
@@ -5299,7 +5319,13 @@ impl Component for Root {
                     self.settings
                         .as_mut()
                         .and_then(|s| s.global.as_mut())
-                        .and_then(|g| crate::reposettings::keys_commands(g, &key, "global")),
+                        .and_then(|g| {
+                            if key == "signing-other" {
+                                crate::reposettings::signing_other_commands(g, "global")
+                            } else {
+                                crate::reposettings::keys_commands(g, &key, "global")
+                            }
+                        }),
                 ) else {
                     return;
                 };
@@ -5677,10 +5703,24 @@ impl Component for Root {
                     state.new_hook = index;
                 }
             }
+            Message::SigningKeysLoaded(global, keys) => {
+                let state = if global {
+                    self.settings
+                        .as_mut()
+                        .map(|s| s.global.get_or_insert_with(crate::reposettings::State::new))
+                } else {
+                    self.repo_settings.as_mut()
+                };
+                if let Some(state) = state {
+                    state.signing_keys = keys;
+                }
+            }
             Message::RepoSettingsChoice(id, Some(index)) => {
-                let Some(commands) = self.repo_settings.as_ref().and_then(|state| {
-                    crate::reposettings::choice_commands(state, id, index, "local")
-                }) else {
+                let Some(commands) = self
+                    .repo_settings
+                    .as_mut()
+                    .and_then(|state| crate::reposettings::choose(state, id, index, "local"))
+                else {
                     return;
                 };
                 self.write_repo_settings(commands, context);
@@ -13979,6 +14019,23 @@ fn splitter(handle: &ElementRef<Grid>, split: Split, top: f64) -> View {
             .margin(Thickness::new(0.0, top - 3.0, 0.0, 0.0))
             .into(),
     }
+}
+
+/// 署名の鍵を形式ごとに集める（裏で。集められなければ空）。
+fn load_signing_keys(repo: Arc<Repository>, global: bool, context: &ComponentContext<Root>) {
+    context.spawn_background(move |_| {
+        let keys = crate::reposettings::SIGNING_FORMATS
+            .iter()
+            .map(|f| {
+                let reply: Value = serde_json::from_str(
+                    &repo.run_json(&json!({ "op": "signingKeys", "format": f }).to_string()),
+                )
+                .unwrap_or_default();
+                (*f, crate::reposettings::signing_keys_of(&reply["info"]))
+            })
+            .collect();
+        Message::SigningKeysLoaded(global, keys)
+    });
 }
 
 /// Settings > Git の値を書いてから読み直し、効いている値と設定元を出し直す（失敗したらそこで止めて知らせる）。
