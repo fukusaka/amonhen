@@ -262,7 +262,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | コミットのメニュー: checkout・新しいブランチやタグ・cherry-pick・revert・ID のコピー | ✓ | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
 | 編集モード（keep・reword・squash・fixup・drop・edit、ドラッグで並べ替え） | ✓ | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあるとき。ないときは 1 つずつ。<br>CLI: `amonhen run` から。 |
 | 書き換えの見込み（積み重ね・push 済みのブランチ、コンフリクトの見込み） | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: daemon 越し。ほかのブランチの rebase では、アプリと同じく代わりにコンフリクトの見込みを出す。<br>CLI: `rewrite-preview`。 |
-| 近道: Edit Message…・Combine with Older…・Drop…・Combine N…・コミットのドラッグ | ✓ | ✓ | △ | ✓ | △ | VSCode: エンジンがあれば編集モードを開く。ないときはすぐ書き換え、Combine N Commits はない。<br>CLI: `amonhen run` から。<br>Windows: Edit Message…・Combine with Older Commit…・Drop…・Combine N Commits…・History でコミットを運ぶことは、その変更を入れて編集モードを開く。Split… はダイアログ。 |
+| 近道: Edit Message…・Combine with Older…・Drop…・Combine N…・コミットのドラッグ | ✓ | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあれば編集モードを開く。ないときはすぐ書き換え、Combine N Commits はない。<br>CLI: `amonhen run` から。 |
 | コミットを分ける | ✓ | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
 | 編集でマージを保つ（`--rebase-merges`） | ✓ | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあるとき。ないときは最初のマージで止まる。<br>CLI: `amonhen run` から。 |
 | shallow clone: 終わりの帯で取り足す、境界のコミットの印 | ✓ | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあるとき。<br>CLI: `log` が履歴の止まる所を添える。取り足すのは `amonhen run` から。 |
@@ -272,7 +272,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 機能 | macOS | GTK4 | Windows | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
 | メッセージ全体・ドラッグできる境・⤢ で広げる | ✓ | ✓ | ✓ | ✓ | n/a |  |
-| 詳細の中を探す | ✓ | ✓ | △ | ✓ | n/a | VSCode: ⌘F でメインビュー全体を探す。まだ読んでいない差分は探さない。<br>Windows: 差分だけ（上の 🔍、差分で Ctrl+F）: 一致を塗り、↑・↓ で移る。メッセージは探さない。 |
+| 詳細の中を探す | ✓ | ✓ | △ | ✓ | n/a | VSCode: ⌘F でメインビュー全体を探す。まだ読んでいない差分は探さない。<br>Windows: Ctrl+F か 🔍 で差分を探し（一致に色、↑・↓ で移る）、メッセージの中の一致にも色を付ける。↑・↓ はメッセージの中は移らない。 |
 | すべてのファイルを積む（貼り付く見出し・畳む・Viewed） | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `show`。<br>Windows: Viewed の切り替えはファイルの見出しのメニューにある。 |
 | 差分の横の、変更したファイルの木 | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: 一覧の上の Tree / List で切り替える。 |
 | ファイルの見出しのメニュー（Blame・File History・パスのコピー・開く） | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: 右クリックの Blame・File History・Copy Path と、VSCode の差分のエディターで開く。 |

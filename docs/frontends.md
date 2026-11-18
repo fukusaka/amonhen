@@ -262,7 +262,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Commit menu: checkout, new branch or tag, cherry-pick, revert, copy ID | ✓ | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
 | Edit mode (keep, reword, squash, fixup, drop, edit; drag to reorder) | ✓ | ✓ | ✓ | ✓ | △ | VSCode: With the engine; without it, one commit at a time.<br>CLI: Via `amonhen run`. |
 | Rewrite preview (stacked and pushed branches, expected conflicts) | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: Through the daemon. Rebasing another branch gives the conflict estimate instead, as in the app.<br>CLI: `rewrite-preview`. |
-| Shortcuts: Edit Message…, Combine with Older…, Drop…, Combine N…, drag a commit | ✓ | ✓ | △ | ✓ | △ | VSCode: With the engine they open the edit mode; without it they rewrite at once, and there's no Combine N Commits.<br>CLI: Via `amonhen run`.<br>Windows: Edit Message…, Combine with Older Commit…, Drop…, Combine N Commits… and dragging a commit in History open the edit mode with that change; Split… uses a dialog. |
+| Shortcuts: Edit Message…, Combine with Older…, Drop…, Combine N…, drag a commit | ✓ | ✓ | ✓ | ✓ | △ | VSCode: With the engine they open the edit mode; without it they rewrite at once, and there's no Combine N Commits.<br>CLI: Via `amonhen run`. |
 | Split a commit | ✓ | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
 | Merges kept when editing (`--rebase-merges`) | ✓ | ✓ | ✓ | ✓ | △ | VSCode: With the engine; without it, editing stops at the first merge.<br>CLI: Via `amonhen run`. |
 | Shallow clone: band at the end to fetch more, boundary commits marked | ✓ | ✓ | ✓ | ✓ | △ | VSCode: With the engine.<br>CLI: `log` notes where the history stops; fetching more via `amonhen run`. |
@@ -272,7 +272,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Feature | macOS | GTK4 | Windows | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
 | Full message, draggable panes, ⤢ to expand | ✓ | ✓ | ✓ | ✓ | n/a |  |
-| Find inside the details | ✓ | ✓ | △ | ✓ | n/a | VSCode: ⌘F searches the whole main view; diffs not loaded yet aren't searched.<br>Windows: The diff only (🔍 over it, or Ctrl+F in the diff): matches highlighted, ↑ / ↓ to move; not the message. |
+| Find inside the details | ✓ | ✓ | △ | ✓ | n/a | VSCode: ⌘F searches the whole main view; diffs not loaded yet aren't searched.<br>Windows: Ctrl+F or 🔍 searches the diff (matches highlighted, ↑ / ↓ to move) and highlights the matches in the message too; ↑ / ↓ don't move through the message. |
 | All files stacked (sticky headers, collapse, Viewed) | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `show`.<br>Windows: Toggle Viewed is in a file header's menu. |
 | Changed files as a tree beside the diff | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: Tree / List above the files. |
 | File header menu (Blame, File History, copy path, open) | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: Blame, File History and Copy Path on the right-click; Open in VSCode's diff editor. |

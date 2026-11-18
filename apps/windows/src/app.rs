@@ -12359,7 +12359,15 @@ impl Root {
                 .grid_row(0)
                 .children((
                     ScrollViewer::new()
-                        .content(details(self.info.as_ref().map(|(i, e)| (i, e.as_ref())))),
+                        .content(details(
+                            self.info.as_ref().map(|(i, e)| (i, e.as_ref())),
+                            // 差分の中を探しているときは、メッセージの中の一致にも色を付ける。
+                            if self.diff_find_open {
+                                &self.diff_find_query
+                            } else {
+                                ""
+                            },
+                        )),
                     StackPanel::new()
                         .orientation(Orientation::Horizontal)
                         .spacing(4.0)
@@ -13415,7 +13423,81 @@ fn person(info: &Value, role: &str) -> String {
 }
 
 /// コミットの詳細（作者、コミッター、Commit・Parent・Refs の表、件名と本文）。
-fn details(info: Option<(&Value, Option<&Value>)>) -> View {
+/// `text` の中の `query` の一致（大文字・小文字を区別しない）に色を付けた runs。一致がなければ None。
+fn highlighted(text: &str, query: &str, bold: bool) -> Option<RichText> {
+    let query = query.trim();
+    if query.is_empty() {
+        return None;
+    }
+    let lower = text.to_lowercase();
+    let needle = query.to_lowercase();
+    // 小文字にして長さが変わる文字があれば、位置がずれるので色を付けない。
+    if lower.len() != text.len() {
+        return None;
+    }
+    let mut inlines = Vec::new();
+    let mut at = 0;
+    for (start, _) in lower.match_indices(&needle) {
+        let end = start + needle.len();
+        if start < at || !text.is_char_boundary(start) || !text.is_char_boundary(end) {
+            continue;
+        }
+        if at < start {
+            inlines.push(RichTextInline::Run(RichTextRun {
+                text: text[at..start].to_owned(),
+                is_bold: bold,
+                ..RichTextRun::default()
+            }));
+        }
+        inlines.push(RichTextInline::Run(RichTextRun {
+            text: text[start..end].to_owned(),
+            is_bold: true,
+            foreground: Some(Color::rgb(0xb2, 0x5f, 0x00)),
+            ..RichTextRun::default()
+        }));
+        at = end;
+    }
+    if at == 0 {
+        return None;
+    }
+    if at < text.len() {
+        inlines.push(RichTextInline::Run(RichTextRun {
+            text: text[at..].to_owned(),
+            is_bold: bold,
+            ..RichTextRun::default()
+        }));
+    }
+    Some(RichText::single_paragraph(inlines))
+}
+
+/// メッセージの 1 つの欄（`query` の一致があれば色を付ける）。
+fn message_text(text: &str, query: &str, size: f64, bold: bool) -> View {
+    // 色を付けるときと付けないときで部品が違うので、鍵を分けて作り直させる。
+    let runs = highlighted(text, query, bold);
+    let key = if runs.is_some() { "found" } else { "plain" };
+    let view: View = match runs {
+        Some(runs) => RichTextBlock::new()
+            .paragraphs(runs)
+            .font_size(size)
+            .text_wrapping(TextWrapping::Wrap)
+            .into(),
+        None => {
+            let block = TextBlock::new()
+                .text(text)
+                .font_size(size)
+                .is_text_selection_enabled(true)
+                .text_wrapping(TextWrapping::Wrap);
+            if bold {
+                block.font_weight(FontWeight::SEMI_BOLD).into()
+            } else {
+                block.into()
+            }
+        }
+    };
+    View::keyed_fragment([(key, view)])
+}
+
+fn details(info: Option<(&Value, Option<&Value>)>, query: &str) -> View {
     let Some((info, extras)) = info else {
         return TextBlock::new().margin(12.0).into();
     };
@@ -13567,25 +13649,13 @@ fn details(info: Option<(&Value, Option<&Value>)>) -> View {
     let message = info["message"].as_str().unwrap_or_default().trim_end();
     let (subject, body) = message.split_once('\n').unwrap_or((message, ""));
     rows.push(
-        TextBlock::new()
-            .text(subject)
-            .font_size(14.0)
-            .font_weight(FontWeight::SEMI_BOLD)
-            .is_text_selection_enabled(true)
-            .text_wrapping(TextWrapping::Wrap)
+        Border::new()
             .margin(Thickness::new(0.0, 8.0, 0.0, 0.0))
-            .into(),
+            .content(message_text(subject, query, 14.0, true)),
     );
     let body = body.trim();
     if !body.is_empty() {
-        rows.push(
-            TextBlock::new()
-                .text(body)
-                .font_size(13.0)
-                .is_text_selection_enabled(true)
-                .text_wrapping(TextWrapping::Wrap)
-                .into(),
-        );
+        rows.push(message_text(body, query, 13.0, false));
     }
     StackPanel::new()
         .spacing(4.0)
@@ -15814,5 +15884,12 @@ mod tests {
         // 子が 1 つのディレクトリだけなら、つないだ名前で 1 行。
         let tree = file_tree(&[file("x/y/z.rs"), file("w.rs")]);
         assert_eq!(tree[0].name, "x/y");
+    }
+
+    #[test]
+    fn highlights_matches_ignoring_case() {
+        assert!(highlighted("Fix the Bug", "", false).is_none());
+        assert!(highlighted("Fix the Bug", "nothing", false).is_none());
+        assert!(highlighted("Fix the Bug and a bug", "bug", true).is_some());
     }
 }
