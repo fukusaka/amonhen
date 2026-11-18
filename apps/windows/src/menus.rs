@@ -459,9 +459,22 @@ pub fn toolbar(on_click: Callback<String>, tracking: Tracking) -> View {
             }
         })
         .collect::<Vec<_>>();
-    CommandBar::new()
-        .grid_row(1)
-        .owned_commands(commands, [], on_click)
+    CommandBar::new().owned_commands(commands, [], on_click)
+}
+
+/// ツールバーの Pull・Push のボタンに、上流との差の数のバッジを付ける（macOS 版の `setTracking` の `badge`。
+/// Push は先にある数、Pull は後ろの数。0 なら隠す）。`root` はツールバーを包む部品。
+pub fn put_badges(
+    root: &windows_core_reactor::IInspectable,
+    tracking: Tracking,
+) -> windows_core_reactor::Result<()> {
+    amonhen_win_xaml::put_badges(
+        root,
+        &[
+            (toolbar_name("pull"), tracking.behind),
+            (toolbar_name("push"), tracking.ahead),
+        ],
+    )
 }
 
 /// 押したキーに当たる、この FE で動く操作（メニューの項目のショートカット）。

@@ -111,6 +111,8 @@ fn with_history(f: impl FnOnce(&mut HistoryView)) {
 struct Root {
     /// 窓の根の Grid（メニューのショートカットを、フォーカスのある部品より先に受ける）。
     root: ElementRef<Grid>,
+    /// ツールバーを包む部品（Pull・Push のバッジを付けるため）。
+    toolbar: ElementRef<Grid>,
     panel: ElementRef<SwapChainPanel>,
     area: ElementRef<Grid>,
     diff_panel: ElementRef<SwapChainPanel>,
@@ -775,6 +777,9 @@ enum Message {
     DiffFileMenu(String),
     /// 変更ファイルの一覧（木も）の右クリック（ファイルの番号、差分の見出しと同じ項目の鍵）。
     ChangedFileMenu(usize, String),
+    /// ツールバーの Pull・Push のバッジを付け直す（並べ終えるのを少し待ってから）。
+    ToolbarBadgesLater,
+    ToolbarBadges,
     FileHistoryLoaded(String, Result<Vec<crate::filehistory::Entry>, String>),
     FileHistorySelected(Option<usize>),
     CloseFileHistory,
@@ -1082,6 +1087,7 @@ impl Component for Root {
     fn create(_input: &(), _context: &ComponentContext<Self>) -> Self {
         Self {
             root: ElementRef::new(),
+            toolbar: ElementRef::new(),
             panel: ElementRef::new(),
             area: ElementRef::new(),
             diff_panel: ElementRef::new(),
@@ -4756,6 +4762,22 @@ impl Component for Root {
                     merge_scroll_later(context);
                 }
             }
+            Message::ToolbarBadgesLater => {
+                context.spawn_background(|_| {
+                    std::thread::sleep(std::time::Duration::from_millis(150));
+                    Message::ToolbarBadges
+                });
+            }
+            Message::ToolbarBadges => {
+                let tracking = self.tracking();
+                let _ = self.toolbar.request_native_element(move |result| {
+                    if let Ok(element) = result
+                        && let Err(e) = crate::menus::put_badges(&element, tracking)
+                    {
+                        eprintln!("ツールバーのバッジを付けられない: {e}");
+                    }
+                });
+            }
             Message::MergeBringIntoView => {
                 for r in &self.merge_chosen {
                     let _ = r.request_native_element(|result| {
@@ -6887,7 +6909,30 @@ impl Component for Root {
                     )),
             ));
         let menu_bar = crate::menus::menu_bar(|| context.callback(Message::Command));
-        let toolbar = crate::menus::toolbar(context.callback(Message::Command), self.tracking());
+        let tracking = self.tracking();
+        let toolbar = Grid::new()
+            .grid_row(1)
+            .element_ref(&self.toolbar)
+            .children((crate::menus::toolbar(
+                context.callback(Message::Command),
+                tracking,
+            ),));
+        // 数かツールバーの並びが変わったら、Pull・Push のバッジを付け直す（並べ終えてから）。
+        let order: String = crate::menus::toolbar_entries()
+            .iter()
+            .map(|e| format!("{e:?}"))
+            .collect();
+        context.use_effect(
+            "toolbar-badges",
+            (tracking.ahead, tracking.behind, order),
+            {
+                let sender = context.sender();
+                move || {
+                    sender.send(Message::ToolbarBadgesLater);
+                    None
+                }
+            },
+        );
         // 差分の検索の帯を開いたら、欄にフォーカスを入れる（描き直した後に）。
         if self.diff_find_opened > 0 {
             let field = self.diff_find_box.clone();
