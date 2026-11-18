@@ -287,6 +287,8 @@ struct Root {
     details_height: f64,
     /// 境目のつまみ（サイドバー、右の列、詳細の下）。
     split_handles: [ElementRef<Grid>; 3],
+    /// Repositories の見出しの列の境目のつまみ。
+    column_handles: [ElementRef<Grid>; 4],
     recall_cursor: isize,
     before_recall: Option<(String, String)>,
 }
@@ -1138,6 +1140,7 @@ impl Component for Root {
             right_width: crate::prefs::number(RIGHT_WIDTH_KEY),
             details_height: crate::prefs::number(DETAILS_HEIGHT_KEY).unwrap_or(240.0),
             split_handles: [ElementRef::new(), ElementRef::new(), ElementRef::new()],
+            column_handles: std::array::from_fn(|_| ElementRef::new()),
             recall_cursor: -1,
             before_recall: None,
         }
@@ -1329,7 +1332,11 @@ impl Component for Root {
                 Split::Sidebar => self.sidebar_width = size.clamp(160.0, 520.0),
                 Split::Right => self.right_width = Some(size.max(240.0)),
                 Split::Details => self.details_height = size.clamp(60.0, 800.0),
+                Split::Column(i) => crate::repositories::set_column_width(i, size),
             },
+            Message::SplitDone if self.page == Page::Repositories => {
+                crate::repositories::save_column_widths();
+            }
             Message::SplitDone => {
                 let _ =
                     crate::prefs::set_string(SIDEBAR_WIDTH_KEY, &self.sidebar_width.to_string());
@@ -6526,6 +6533,17 @@ impl Component for Root {
                 None
             });
         }
+        // 見出しの境目のつまみに押す・動かすを付ける（画面を出すたび。`retry_splitters` が付け終える）。
+        let shown = self.page == Page::Repositories && self.repositories.is_some();
+        for (i, handle) in self.column_handles.iter().enumerate() {
+            let handle = handle.clone();
+            context.use_effect(format!("column-{i}"), shown, move || {
+                if shown {
+                    SPLIT_PENDING.with(|p| p.borrow_mut().push((handle, Split::Column(i))));
+                }
+                None
+            });
+        }
         let body = Grid::new()
             .columns([
                 GridLength::Pixel(self.sidebar_width),
@@ -11274,8 +11292,10 @@ impl Root {
                     })
                 }),
                 list_host: &self.repositories_list,
+                column_handles: &self.column_handles,
             },
         );
+
         Border::new()
             .background(Brush::Solid(Color::rgb(0xff, 0xff, 0xff)))
             .grid_column(1)
@@ -14073,6 +14093,8 @@ enum Split {
     Sidebar,
     Right,
     Details,
+    /// Repositories の見出しの列（Branch から数えた番号）の左端。
+    Column(usize),
 }
 
 /// 境目の幅・高さを覚える設定の鍵。
@@ -14106,6 +14128,8 @@ fn splitter(handle: &ElementRef<Grid>, split: Split, top: f64) -> View {
             .vertical_alignment(VerticalAlignment::Top)
             .margin(Thickness::new(0.0, top - 3.0, 0.0, 0.0))
             .into(),
+        // Repositories の列のつまみは、repositories.rs の見出しが置く。
+        Split::Column(_) => grid.width(6.0).into(),
     }
 }
 
@@ -14251,6 +14275,7 @@ fn attach_splitter(element: &IInspectable, split: Split) -> windows_core_reactor
         let size = match split {
             Split::Sidebar => sidebar,
             Split::Details => details,
+            Split::Column(i) => crate::repositories::column_width(i),
             // 半分ずつのままなら、今の幅を差分の面の大きさから求める。
             Split::Right => right.unwrap_or_else(|| {
                 let mut width = 400.0;
@@ -14317,7 +14342,8 @@ fn split_moved(args: &xaml::PointerRoutedEventArgs) -> bool {
     };
     // 右の列は左へ動かすと広がる。
     let size = match split {
-        Split::Right => size - (position - start),
+        // 右の列と Repositories の列は、左端を左へ動かすと広がる。
+        Split::Right | Split::Column(_) => size - (position - start),
         _ => size + (position - start),
     };
     with_history(|h| {

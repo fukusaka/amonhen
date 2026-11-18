@@ -965,6 +965,8 @@ pub struct Callbacks<'a> {
     pub button: Box<dyn Fn(&'static str) -> Callback<()> + 'a>,
     /// リポジトリの一覧を包む Grid（ダブルクリック・Enter を付ける）。
     pub list_host: &'a ElementRef<Grid>,
+    /// 見出しの列の境目のつまみ（Branch・Status・Last Commit・Opened の左端。動かすと幅が変わる）。
+    pub column_handles: &'a [ElementRef<Grid>; 4],
 }
 
 /// リポジトリの行の右クリックのメニュー（GTK4 版の `repobrowser::row_menu` の手元の分）。
@@ -1116,11 +1118,59 @@ fn status(
     (parts.join("  "), Some(tip))
 }
 
+/// Branch・Status・Last Commit・Opened の列の初めの幅。
 const COLUMNS: [f64; 4] = [150.0, 110.0, 280.0, 110.0];
+/// 列の幅を覚える設定の鍵（`,` 区切り）。
+const COLUMN_WIDTHS_KEY: &str = "repositoryColumnWidths";
+
+thread_local! {
+    /// 列の幅（見出しの境目を動かすと変わる）。
+    static COLUMN_WIDTHS: std::cell::Cell<[f64; 4]> = std::cell::Cell::new(load_column_widths());
+}
+
+fn load_column_widths() -> [f64; 4] {
+    let mut widths = COLUMNS;
+    if let Some(text) = crate::prefs::string(COLUMN_WIDTHS_KEY) {
+        for (w, part) in widths.iter_mut().zip(text.split(',')) {
+            if let Ok(v) = part.trim().parse::<f64>() {
+                *w = v;
+            }
+        }
+    }
+    widths
+}
+
+/// `i` 番目（Branch から）の列の幅。
+pub fn column_width(i: usize) -> f64 {
+    COLUMN_WIDTHS.with(std::cell::Cell::get)[i.min(3)]
+}
+
+/// `i` 番目の列の幅を変える（狭すぎ・広すぎにはしない）。
+pub fn set_column_width(i: usize, width: f64) {
+    COLUMN_WIDTHS.with(|c| {
+        let mut widths = c.get();
+        widths[i.min(3)] = width.clamp(60.0, 600.0);
+        c.set(widths);
+    });
+}
+
+/// 列の幅を覚える。
+pub fn save_column_widths() {
+    let text: Vec<String> = COLUMN_WIDTHS
+        .with(std::cell::Cell::get)
+        .iter()
+        .map(|w| w.round().to_string())
+        .collect();
+    let _ = crate::prefs::set_string(COLUMN_WIDTHS_KEY, &text.join(","));
+}
 
 fn columns() -> Vec<GridLength> {
     let mut c = vec![GridLength::Star(1.0)];
-    c.extend(COLUMNS.map(GridLength::Pixel));
+    c.extend(
+        COLUMN_WIDTHS
+            .with(std::cell::Cell::get)
+            .map(GridLength::Pixel),
+    );
     c
 }
 
@@ -1251,6 +1301,17 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
             header_cell(tr!("Status"), "status", 2),
             header_cell(tr!("Last Commit"), "commit", 3),
             header_cell(tr!("Opened"), "opened", 4),
+            View::keyed_fragment(callbacks.column_handles.iter().enumerate().map(|(i, h)| {
+                (
+                    format!("handle-{i}"),
+                    Grid::new()
+                        .element_ref(h)
+                        .background(Brush::Solid(Color::transparent()))
+                        .width(6.0)
+                        .grid_column(i as i32 + 1)
+                        .horizontal_alignment(HorizontalAlignment::Left),
+                )
+            })),
         ));
     let rows = shown.iter().map(|location| {
         let peek = state.peeks.get(&key(location));
