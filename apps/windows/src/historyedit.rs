@@ -174,6 +174,8 @@ pub enum Preset {
     /// 1 つならそのコミットをひとつ古いコミットへ、いくつかならいちばん古いものへほかをまとめる。
     Combine(Vec<String>),
     Drop(String),
+    /// コミットを、並び（新しい順）の `to` 番目へ動かす（History でコミットを運んで落としたとき）。
+    Move(String, usize),
 }
 
 /// 編集モードの状態。
@@ -237,6 +239,15 @@ impl State {
             Some(Preset::Drop(oid)) => {
                 if let Some(i) = at(&oid, &state.rows) {
                     state.set_action(i, Action::Drop);
+                }
+            }
+            Some(Preset::Move(oid, to)) => {
+                if let Some(from) = at(&oid, &state.rows)
+                    && to < state.rows.len()
+                    && !state.rows.iter().any(|r| r.merge)
+                {
+                    let row = state.rows.remove(from);
+                    state.rows.insert(to, row);
                 }
             }
             None => {}
@@ -760,5 +771,14 @@ mod tests {
         );
         // 3 つが 1 つのコミットになり、メッセージは古い順につなぐ。
         assert_eq!(plan_steps(&s.rows)[3]["message"], "m2\n\nm1\n\nm0");
+    }
+
+    #[test]
+    fn a_dropped_commit_opens_moved() {
+        let r = rows(3);
+        let oid = r[2].oid.clone();
+        let s = State::new(r, Some(Preset::Move(oid.clone(), 0)));
+        assert_eq!(s.rows[0].oid, oid);
+        assert!(s.has_changes());
     }
 }

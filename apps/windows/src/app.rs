@@ -77,6 +77,8 @@ thread_local! {
     static MARK_ANCHOR: std::cell::Cell<Option<(usize, bool)>> = const { std::cell::Cell::new(None) };
     /// 印の上を引いている間（起点の行、今の行、起点にした状態）。離したら間の行をまとめて同じ状態にする。
     static MARK_DRAG: std::cell::Cell<Option<(usize, usize, bool)>> = const { std::cell::Cell::new(None) };
+    /// History でコミットを運んでいる間（押した行、押した高さ、動かし始めたか）。
+    static HISTORY_DRAG: std::cell::Cell<Option<(u32, f64, bool)>> = const { std::cell::Cell::new(None) };
     /// 右クリックで外しておいた差分のメニュー（作り直したら付き直す）。
     static DIFF_FLYOUT: RefCell<Option<xaml::FlyoutBase>> = const { RefCell::new(None) };
     /// History と差分に付けたイベント（持っている間だけ届く）。
@@ -857,6 +859,10 @@ enum Message {
     Edit(crate::historyedit::Event),
     EditChoice(usize, Option<usize>),
     EditText(String),
+    /// History でコミットを運んで落とした（動かすコミット、落とした行のコミット、最後の行の下か）。
+    HistoryDrop(String, Option<String>, bool),
+    /// 動かせない（ベルを鳴らす）。
+    Bell,
     EditReordered(Vec<String>),
     EditStacked(bool),
     /// 見通し（数と `rewritePreview` の info）。
@@ -1423,6 +1429,40 @@ impl Component for Root {
                 self.edit_preview(context);
             }
             Message::EditChoice(_, None) => {}
+            Message::Bell => beep(),
+            // 編集できる並び（HEAD から最初の merge まで）の中なら、編集モードを開いて動かしておく（範囲は、動かす
+            // 2 か所の古い方から HEAD まで。GTK4 版の `move_by_drop`）。並びの外ならベル。
+            Message::HistoryDrop(oid, below, past_end) => {
+                let (Some(repo), Some(below)) = (self.repo.clone(), below) else {
+                    return beep();
+                };
+                context.spawn_background(move |_| {
+                    let reply: Value =
+                        serde_json::from_str(&repo.run_json(r#"{"op":"editableCommits"}"#))
+                            .unwrap_or_default();
+                    let chain: Vec<String> = reply["text"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .lines()
+                        .filter_map(|l| l.split(' ').next().map(str::to_owned))
+                        .filter(|o| !o.is_empty())
+                        .collect();
+                    let at = |o: &str| chain.iter().position(|c| c == o);
+                    let (Some(from), Some(mut to)) = (at(&oid), at(&below)) else {
+                        return Message::Bell;
+                    };
+                    if past_end {
+                        to = chain.len() - 1;
+                    } else if from < to {
+                        to -= 1;
+                    }
+                    if from == to {
+                        return Message::Performed(None);
+                    }
+                    let preset = crate::historyedit::Preset::Move(oid, to);
+                    Message::EditOpen(chain[from.max(to)].clone(), Some(preset))
+                });
+            }
             Message::EditReordered(order) => {
                 if self.edit.as_mut().is_some_and(|s| s.reorder(&order)) {
                     self.edit_preview(context);
@@ -15399,6 +15439,14 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
                             h.session.select_range(row);
                         } else {
                             h.session.select(row);
+                            // そのまま運べば、編集モードで動かす（GTK4 版・macOS 版の、コミットを運んで落とす）。
+                            if left {
+                                HISTORY_DRAG
+                                    .with(|d| d.set(Some((row, f64::from(position.Y), false))));
+                                if let Ok(pointer) = args.Pointer() {
+                                    let _ = source.CapturePointer(&pointer);
+                                }
+                            }
                         }
                     }
                 }
@@ -15485,6 +15533,53 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
     );
 
     if target == Target::History {
+        // コミットを運ぶ: 少し動かしたら運び始め、離した行の上へ動かす（行の外の下なら最後へ）。
+        let source = ui.clone();
+        revokers.push(
+            ui.PointerMoved(move |_, args: Ref<xaml::PointerRoutedEventArgs>| {
+                let Some(args) = args.as_ref() else { return };
+                let Some((row, y, dragging)) = HISTORY_DRAG.with(std::cell::Cell::get) else {
+                    return;
+                };
+                let Ok(position) = args.GetCurrentPoint(&source).and_then(|p| p.Position()) else {
+                    return;
+                };
+                if !dragging && (f64::from(position.Y) - y).abs() > 8.0 {
+                    HISTORY_DRAG.with(|d| d.set(Some((row, y, true))));
+                }
+            })?,
+        );
+        let source = ui.clone();
+        revokers.push(
+            ui.PointerReleased(move |_, args: Ref<xaml::PointerRoutedEventArgs>| {
+                let Some(args) = args.as_ref() else { return };
+                let Some((from, _, dragging)) = HISTORY_DRAG.with(std::cell::Cell::take) else {
+                    return;
+                };
+                if let Ok(pointer) = args.Pointer() {
+                    let _ = source.ReleasePointerCapture(&pointer);
+                }
+                if !dragging {
+                    return;
+                }
+                let Ok(position) = args.GetCurrentPoint(&source).and_then(|p| p.Position()) else {
+                    return;
+                };
+                with_history(|h| {
+                    let count = h.session.data.row_count();
+                    let row = h.session.row_at(position.Y).unwrap_or(count);
+                    let ids = h.session.data.history.as_ref().map(|h| h.graph.ids());
+                    let id = |r: u32| ids.and_then(|i| i.get(r as usize)).map(ToString::to_string);
+                    if let Some(oid) = id(from)
+                        && row != from
+                    {
+                        let below = id(row.min(count.saturating_sub(1)));
+                        h.sender
+                            .send(Message::HistoryDrop(oid, below, row >= count));
+                    }
+                });
+            })?,
+        );
         HISTORY_ELEMENT.with(|e| *e.borrow_mut() = Some(ui.clone()));
         // 右クリックで選び直す前のメニューが開かないよう、押したときにメニューを外してある。ここで位置を覚え、選んだ
         // 行のメニューに作り直してから開く（キーボードで開くときは、付いたままのメニューを WinUI が開く）。
