@@ -2388,6 +2388,23 @@ impl WinUiRuntime {
                     previous.revision.set(*revision);
                     return Ok(());
                 }
+                // A context or button flyout of the same shape is updated in place too: replacing it
+                // while it is open leaves the open flyout's items reporting the old revision, so
+                // choosing one of them does nothing (as when a right click also re-renders the
+                // owner).
+                if *kind != OwnedMenuKind::MenuBarItem
+                    && let Some(items) = items
+                    && let Some(previous) = self.owned_menus.get_mut(owner)
+                    && previous.kind == *kind
+                    && previous.target == *target
+                    && same_menu_shape(&previous.items, items)
+                    && let Some(flyout) = &previous._flyout
+                {
+                    update_menu_items(items, &flyout.Items().map_err(native_error)?)?;
+                    previous.items = items.clone();
+                    previous.revision.set(*revision);
+                    return Ok(());
+                }
                 if let Some(previous) = self.owned_menus.remove(owner) {
                     match previous.kind {
                         OwnedMenuKind::ButtonFlyout | OwnedMenuKind::DropDownButtonFlyout => {
