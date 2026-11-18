@@ -260,11 +260,11 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Several commits selected (range, two, scattered) | ✓ | ✓ | ✓ | ✓ | △ | VSCode: With the engine.<br>CLI: `diff <rev> <rev>` for two. |
 | History of several selected refs | ✓ | ✓ | △ | ✓ | ✓ | CLI: `log --branch` repeated.<br>Windows: One ref at a time: selecting it in the sidebar shows its History; View has All Branches and Current Branch. |
 | Commit menu: checkout, new branch or tag, cherry-pick, revert, copy ID | ✓ | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
-| Edit mode (keep, reword, squash, fixup, drop, edit; drag to reorder) | ✓ | ✓ | — | ✓ | △ | VSCode: With the engine; without it, one commit at a time.<br>CLI: Via `amonhen run`. |
-| Rewrite preview (stacked and pushed branches, expected conflicts) | ✓ | ✓ | — | ✓ | ✓ | VSCode: Through the daemon. Rebasing another branch gives the conflict estimate instead, as in the app.<br>CLI: `rewrite-preview`. |
-| Shortcuts: Edit Message…, Combine with Older…, Drop…, Combine N…, drag a commit | ✓ | ✓ | △ | ✓ | △ | VSCode: With the engine they open the edit mode; without it they rewrite at once, and there's no Combine N Commits.<br>CLI: Via `amonhen run`.<br>Windows: Edit Message…, Combine with Older Commit…, Drop… and Split… in a commit's menu, applied after a dialog (no edit mode). |
+| Edit mode (keep, reword, squash, fixup, drop, edit; drag to reorder) | ✓ | ✓ | △ | ✓ | △ | VSCode: With the engine; without it, one commit at a time.<br>CLI: Via `amonhen run`.<br>Windows: Reordered with ↑ / ↓ on each row; no dragging. |
+| Rewrite preview (stacked and pushed branches, expected conflicts) | ✓ | ✓ | △ | ✓ | ✓ | VSCode: Through the daemon. Rebasing another branch gives the conflict estimate instead, as in the app.<br>CLI: `rewrite-preview`.<br>Windows: Moving and staying branches, pushed branches and expected conflicts under the list; no marks on the rows and no option to move stacked branches. |
+| Shortcuts: Edit Message…, Combine with Older…, Drop…, Combine N…, drag a commit | ✓ | ✓ | △ | ✓ | △ | VSCode: With the engine they open the edit mode; without it they rewrite at once, and there's no Combine N Commits.<br>CLI: Via `amonhen run`.<br>Windows: Edit Message…, Combine with Older Commit… and Drop… open the edit mode with that change; Combine N for several selected commits and Split… use a dialog; no dragging a commit. |
 | Split a commit | ✓ | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
-| Merges kept when editing (`--rebase-merges`) | ✓ | ✓ | — | ✓ | △ | VSCode: With the engine; without it, editing stops at the first merge.<br>CLI: Via `amonhen run`. |
+| Merges kept when editing (`--rebase-merges`) | ✓ | ✓ | ✓ | ✓ | △ | VSCode: With the engine; without it, editing stops at the first merge.<br>CLI: Via `amonhen run`. |
 | Shallow clone: band at the end to fetch more, boundary commits marked | ✓ | ✓ | ✓ | ✓ | △ | VSCode: With the engine.<br>CLI: `log` notes where the history stops; fetching more via `amonhen run`. |
 
 ## 7. History's right column

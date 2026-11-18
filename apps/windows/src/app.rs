@@ -228,6 +228,8 @@ struct Root {
     range_request: u64,
     /// Reflog の画面の行（読むまでは None）と、選んでいる行。
     reflog: Option<Vec<crate::reflog::Entry>>,
+    /// History の編集モード（開いている間）。
+    edit: Option<crate::historyedit::State>,
     reflog_selected: Option<usize>,
     /// worktree（`worktrees` の答え。開いたリポジトリのもの）。
     worktrees: Vec<WorktreeInfo>,
@@ -311,6 +313,8 @@ enum Page {
     Repositories,
     Reflog,
     RangeDiff,
+    /// History の編集モード（History の画面と入れ替える）。
+    EditCommits,
 }
 
 /// 窓に重ねるダイアログ（macOS 版のシート、GTK4 版の `sheets`）。
@@ -842,6 +846,21 @@ enum Message {
     ArchiveFolder(String),
     /// 操作が終わった（失敗はなく、ステータスバーに一言を出す）。
     Done(String),
+    /// History の編集モードを開く（このコミットから HEAD まで、最初の変更）。
+    EditOpen(String, Option<crate::historyedit::Preset>),
+    /// 編集モードの行を読んだ（読めなければ理由）。
+    EditLoaded(
+        Result<Vec<crate::historyedit::Row>, String>,
+        Option<crate::historyedit::Preset>,
+    ),
+    /// 編集モードで押したもの・選んだもの・打ったもの。
+    Edit(crate::historyedit::Event),
+    EditChoice(usize, Option<usize>),
+    EditText(String),
+    /// 見通し（数と `rewritePreview` の info）。
+    EditPreview(u64, Value),
+    /// 書き換えた（失敗なら答え）。
+    EditApplied(Option<Value>, Value),
     /// 終わった操作の一言を消す。
     FlashExpired,
     /// History で複数選んだコミット（上から。1 つ以下なら空）。
@@ -1075,6 +1094,7 @@ impl Component for Root {
             push_after_commit: false,
             recent_messages: Vec::new(),
             reflog: None,
+            edit: None,
             range_diff: None,
             range_request: 0,
             reflog_selected: None,
@@ -1279,6 +1299,171 @@ impl Component for Root {
             }
             Message::TagSignatures(found) => self.tag_signatures = found,
             Message::StashDetails(details) => self.stash_details = details,
+            Message::EditOpen(start, preset) => {
+                let Some(repo) = self.repo.clone() else {
+                    return beep();
+                };
+                if self.edit.is_some() {
+                    return beep();
+                }
+                context.spawn_background(move |_| {
+                    let reply: Value = serde_json::from_str(
+                        &repo.run_json(r#"{"op":"editableCommits","throughMerges":true}"#),
+                    )
+                    .unwrap_or_default();
+                    // merge を越えて first-parent で辿る（merge は git の --rebase-merges で作り直す）。
+                    let line: Vec<(String, bool)> = reply["text"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .lines()
+                        .filter_map(|l| {
+                            let mut parts = l.split(' ');
+                            let oid = parts.next().filter(|o| !o.is_empty())?.to_owned();
+                            Some((oid, parts.next().is_some()))
+                        })
+                        .collect();
+                    let including_older =
+                        matches!(preset, Some(crate::historyedit::Preset::Combine(_)));
+                    let end = line
+                        .iter()
+                        .position(|(o, _)| o.starts_with(&start) || start.starts_with(o.as_str()))
+                        .map(|e| e + usize::from(including_older))
+                        .filter(|&e| e < line.len());
+                    let Some(end) = end else {
+                        return Message::EditLoaded(
+                            Err(tr!(
+                                "Only commits on HEAD’s first-parent line can be edited."
+                            )),
+                            preset,
+                        );
+                    };
+                    let chosen = &line[..=end];
+                    let ids: Vec<amonhen_model::Oid> = chosen
+                        .iter()
+                        .filter_map(|(o, _)| amonhen_model::Oid::from_hex(o))
+                        .collect();
+                    let texts = repo.commit_texts(&ids).unwrap_or_default();
+                    // 作者は mailmap で置き換えたもの（History・詳細と同じ）。
+                    let mailmap = repo.mailmap();
+                    let rows = chosen
+                        .iter()
+                        .enumerate()
+                        .map(|(i, (oid, merge))| {
+                            let message = amonhen_model::Oid::from_hex(oid)
+                                .and_then(|id| repo.commit_message(&id).ok())
+                                .unwrap_or_default();
+                            let author = texts
+                                .get(i)
+                                .map(|t| {
+                                    String::from_utf8_lossy(&t.author(mailmap.as_deref()).name)
+                                        .into_owned()
+                                })
+                                .unwrap_or_default();
+                            crate::historyedit::Row::new(oid.clone(), message, author, *merge)
+                        })
+                        .collect();
+                    Message::EditLoaded(Ok(rows), preset)
+                });
+            }
+            Message::EditLoaded(rows, preset) => match rows {
+                Ok(rows) if !rows.is_empty() && self.edit.is_none() => {
+                    self.edit = Some(crate::historyedit::State::new(rows, preset));
+                    self.page = Page::EditCommits;
+                    self.edit_preview(context);
+                }
+                Ok(_) => {}
+                Err(message) => {
+                    self.dialog = Some(Dialog::Failed {
+                        title: tr!("Edit Commits"),
+                        message,
+                    });
+                }
+            },
+            Message::EditChoice(row, Some(index)) => {
+                let Some(state) = self.edit.as_mut() else {
+                    return;
+                };
+                let Some(action) = crate::historyedit::chosen(state, row, index) else {
+                    return;
+                };
+                if state.rows.get(row).map(|r| r.action) == Some(action) {
+                    return;
+                }
+                state.set_action(row, action);
+                self.edit_preview(context);
+            }
+            Message::EditChoice(_, None) => {}
+            Message::EditText(text) => {
+                if let Some(state) = self.edit.as_mut() {
+                    state.message_text = text;
+                }
+            }
+            Message::EditPreview(generation, info) => {
+                if let Some(state) = self.edit.as_mut()
+                    && state.generation == generation
+                {
+                    state.preview = Some(crate::forecast::rewrite_lines(&info));
+                }
+            }
+            Message::Edit(event) => {
+                use crate::historyedit::Event;
+                let Some(state) = self.edit.as_mut() else {
+                    return;
+                };
+                match event {
+                    Event::Move(row, up) => {
+                        if !state.move_row(row, up) {
+                            return beep();
+                        }
+                    }
+                    Event::MessageDone(keep) => state.close_message(keep),
+                    Event::Cancel => {
+                        self.edit = None;
+                        self.page = Page::History;
+                        return;
+                    }
+                    Event::Apply => {
+                        if !state.has_changes() {
+                            self.edit = None;
+                            self.page = Page::History;
+                            return;
+                        }
+                        let Some(repo) = self.repo.clone() else {
+                            return beep();
+                        };
+                        state.busy = true;
+                        let command = state.command();
+                        context.spawn_background(move |_| {
+                            let reply: Value =
+                                serde_json::from_str(&repo.run_json(&command.to_string()))
+                                    .unwrap_or_else(|e| json!({ "error": e.to_string() }));
+                            Message::EditApplied(
+                                reply["error"].is_string().then_some(reply),
+                                command,
+                            )
+                        });
+                        return;
+                    }
+                }
+                self.edit_preview(context);
+            }
+            // 書き換えが終わってから編集モードを閉じる。書き換えられなければ編集モードと選んだものを残す。
+            Message::EditApplied(error, command) => {
+                if let Some(reply) = error {
+                    if let Some(state) = self.edit.as_mut() {
+                        state.busy = false;
+                    }
+                    if let Some(repo) = self.repo.clone() {
+                        let failure = crate::failure::Failure::from_reply(&reply, Some(command));
+                        self.update(Message::OperationFailed(repo, failure), context);
+                    }
+                    return;
+                }
+                self.edit = None;
+                self.page = Page::History;
+                let done = command["label"].as_str().unwrap_or_default().to_owned();
+                self.update(Message::Done(done), context);
+            }
             Message::Done(text) => {
                 // 終わった後の読み直しは同じ（`Performed`）。一言は 5 秒（GTK4 版と同じ）。
                 self.update(Message::Performed(None), context);
@@ -4045,6 +4230,17 @@ impl Component for Root {
                     // History に戻ってそのコミットを選ぶ（Reflog から）。
                     self.show_page(Page::History);
                     with_history(|h| h.select_commit(&id));
+                } else if let Some(oid) = key.strip_prefix("edit-from:") {
+                    self.update(Message::EditOpen(oid.to_owned(), None), context);
+                } else if let Some(oid) = key.strip_prefix("edit-reword:") {
+                    let preset = crate::historyedit::Preset::Reword(oid.to_owned());
+                    self.update(Message::EditOpen(oid.to_owned(), Some(preset)), context);
+                } else if let Some(oid) = key.strip_prefix("edit-combine:") {
+                    let preset = crate::historyedit::Preset::Combine(oid.to_owned());
+                    self.update(Message::EditOpen(oid.to_owned(), Some(preset)), context);
+                } else if let Some(oid) = key.strip_prefix("edit-drop:") {
+                    let preset = crate::historyedit::Preset::Drop(oid.to_owned());
+                    self.update(Message::EditOpen(oid.to_owned(), Some(preset)), context);
                 } else if let Some(oid) = key.strip_prefix("reword:") {
                     // 出している詳細のメッセージから（右クリックは先にその行を選ぶ）。
                     let message = self
@@ -6671,7 +6867,7 @@ impl Component for Root {
                 // いて、外すと止まる）。
                 working_copy,
                 self.stashes_view(context),
-                self.reflog_view(context),
+                View::fragment((self.reflog_view(context), self.edit_view(context))),
                 self.range_diff_view(context),
                 self.file_history_view(context),
                 self.blame_view(context),
@@ -11741,6 +11937,44 @@ impl Root {
         });
     }
 
+    /// History の編集モード（History と詳細の列に重ねる）。
+    fn edit_view(&self, context: &ViewContext<Self>) -> View {
+        let (Page::EditCommits, Some(state)) = (self.page, &self.edit) else {
+            return View::empty();
+        };
+        let view = crate::historyedit::view(
+            state,
+            crate::historyedit::Callbacks {
+                event: Box::new(|event| context.callback(move |()| Message::Edit(event.clone()))),
+                choice: Box::new(|row| context.callback(move |i| Message::EditChoice(row, i))),
+                text: context.callback(Message::EditText),
+            },
+        );
+        Border::new()
+            .background(Brush::Solid(Color::rgb(0xff, 0xff, 0xff)))
+            .grid_column(1)
+            .grid_column_span(2)
+            .content(view)
+    }
+
+    /// 編集モードの見通しを読み直す（裏で。古い答えは数で捨てる）。
+    fn edit_preview(&mut self, context: &ComponentContext<Self>) {
+        let (Some(repo), Some(state)) = (self.repo.clone(), self.edit.as_mut()) else {
+            return;
+        };
+        state.generation += 1;
+        if !state.has_changes() {
+            state.preview = None;
+            return;
+        }
+        let (generation, command) = (state.generation, state.preview_command());
+        context.spawn_background(move |_| {
+            let reply: Value =
+                serde_json::from_str(&repo.run_json(&command.to_string())).unwrap_or_default();
+            Message::EditPreview(generation, reply["info"].clone())
+        });
+    }
+
     fn reflog_view(&self, context: &ViewContext<Self>) -> View {
         let (Page::Reflog, Some(entries)) = (self.page, &self.reflog) else {
             return View::empty();
@@ -12390,12 +12624,20 @@ impl Root {
         });
         if !merge {
             items.push(MenuItem::separator("-edit"));
-            items.push(MenuItem::item(format!("reword:{id}"), tr!("Edit Message…")));
+            // 近道は、最初の変更を入れて編集モードを開く（GTK4 版・macOS 版と同じ）。
             items.push(MenuItem::item(
-                format!("squash:{id}"),
+                format!("edit-reword:{id}"),
+                tr!("Edit Message…"),
+            ));
+            items.push(MenuItem::item(
+                format!("edit-combine:{id}"),
                 tr!("Combine with Older Commit…"),
             ));
-            items.push(MenuItem::item(format!("drop:{id}"), "Drop…"));
+            items.push(MenuItem::item(format!("edit-drop:{id}"), "Drop…"));
+            items.push(MenuItem::item(
+                format!("edit-from:{id}"),
+                tr!("Edit Commits from Here…"),
+            ));
             items.push(MenuItem::item(format!("split:{id}"), "Split…"));
         }
         // マージはパッチにできない（git format-patch は飛ばす）。

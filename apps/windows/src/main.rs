@@ -18,6 +18,7 @@ mod failure;
 mod filehistory;
 mod files;
 mod forecast;
+mod historyedit;
 mod listen;
 mod measure;
 mod menus;
