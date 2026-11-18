@@ -1214,21 +1214,11 @@ impl Renderer {
 
     /// 構文の種類の文字の色（GTK4 版の System のテーマの明るい外観と同じ。ない種類は本文の色）。
     fn syntax_brush(&mut self, kind: u8) -> Result<Option<ID2D1SolidColorBrush>> {
-        use amonhen_layout::SyntaxSpan;
         if let Some(brush) = self.syntax_brushes.get(&kind) {
             return Ok(Some(brush.clone()));
         }
-        let (r, g, b) = match kind {
-            SyntaxSpan::KEYWORD | SyntaxSpan::TAG | SyntaxSpan::VARIABLE => (0.80, 0.18, 0.45),
-            SyntaxSpan::STRING => (0.77, 0.16, 0.16),
-            SyntaxSpan::COMMENT => (0.45, 0.45, 0.48),
-            SyntaxSpan::NUMBER | SyntaxSpan::CONSTANT => (0.50, 0.25, 0.75),
-            SyntaxSpan::FUNCTION => (0.10, 0.40, 0.85),
-            SyntaxSpan::TYPE => (0.10, 0.55, 0.60),
-            SyntaxSpan::PROPERTY => (0.10, 0.50, 0.70),
-            SyntaxSpan::ATTRIBUTE | SyntaxSpan::ESCAPE => (0.80, 0.45, 0.05),
-            SyntaxSpan::MODULE => (0.55, 0.40, 0.25),
-            _ => return Ok(None),
+        let Some((r, g, b)) = syntax_rgb(kind) else {
+            return Ok(None);
         };
         let brush = unsafe { self.d2d.CreateSolidColorBrush(&rgba(r, g, b, 1.0), None)? };
         self.syntax_brushes.insert(kind, brush.clone());
@@ -1531,6 +1521,24 @@ fn x_of(layout: &IDWriteTextLayout, position: u32) -> Result<f32> {
     let mut metrics = DWRITE_HIT_TEST_METRICS::default();
     unsafe { layout.HitTestTextPosition(position, false, &mut x, &mut y, &mut metrics)? };
     Ok(x)
+}
+
+/// 構文の種類の文字の色（GTK4 版の System のテーマの明るい外観と同じ。0〜1。本文の色のままの種類は None）。
+/// 差分と Blame で使う。
+pub fn syntax_rgb(kind: u8) -> Option<(f32, f32, f32)> {
+    use amonhen_layout::SyntaxSpan;
+    Some(match kind {
+        SyntaxSpan::KEYWORD | SyntaxSpan::TAG | SyntaxSpan::VARIABLE => (0.80, 0.18, 0.45),
+        SyntaxSpan::STRING => (0.77, 0.16, 0.16),
+        SyntaxSpan::COMMENT => (0.45, 0.45, 0.48),
+        SyntaxSpan::NUMBER | SyntaxSpan::CONSTANT => (0.50, 0.25, 0.75),
+        SyntaxSpan::FUNCTION => (0.10, 0.40, 0.85),
+        SyntaxSpan::TYPE => (0.10, 0.55, 0.60),
+        SyntaxSpan::PROPERTY => (0.10, 0.50, 0.70),
+        SyntaxSpan::ATTRIBUTE | SyntaxSpan::ESCAPE => (0.80, 0.45, 0.05),
+        SyntaxSpan::MODULE => (0.55, 0.40, 0.25),
+        _ => return None,
+    })
 }
 
 /// 上に張り付かせるファイルの見出し（見出しの行の番号と、見えている範囲の上端からの位置）。見出しの行が見えている

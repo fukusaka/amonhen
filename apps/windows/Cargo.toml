@@ -15,6 +15,7 @@ amonhen-backend-cli = { path = "../../crates/backend-cli" }
 amonhen-backend-gix = { path = "../../crates/backend-gix" }
 amonhen-commands = { path = "../../crates/commands" }
 amonhen-core = { path = "../../crates/core", features = ["syntax"] }
+amonhen-syntax = { path = "../../crates/syntax" }
 amonhen-layout = { path = "../../crates/layout" }
 amonhen-model = { path = "../../crates/model" }
 amonhen-projection = { path = "../../crates/projection" }

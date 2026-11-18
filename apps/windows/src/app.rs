@@ -5956,7 +5956,7 @@ impl Component for Root {
                         .unwrap_or_else(|e| json!({ "error": e.to_string() }));
                     let data = match reply["error"].as_str() {
                         Some(e) => Err(e.to_owned()),
-                        None => Ok(crate::blame::data_of(&reply["info"])),
+                        None => Ok(crate::blame::data_of(&reply["info"], &path)),
                     };
                     Message::BlameLoaded(path, rev, data)
                 });
