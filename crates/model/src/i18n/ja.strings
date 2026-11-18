@@ -1468,7 +1468,7 @@
 "Opened" = "開いた日時";
 "Places" = "場所";
 "Remove" = "削除";
-"Remove {host}?" = "{host} を削除しますか？";
+"Remove {host} from List?" = "{host} を一覧から外しますか？";
 "Remove {name} from List…" = "{name} を一覧から外す…";
 "Remove from Favorites" = "お気に入りから外す";
 "Remove from Group" = "グループから外す";
@@ -1554,7 +1554,6 @@
 "Signatures of commits in repositories on this host are checked with these." = "この SSH 先のリポジトリのコミットの署名を、これで検証します。";
 "Write it as ssh knows it: user@host:port, or a name in ~/.ssh/config." = "ssh が知っている名前で書きます: user@host:port か、~/.ssh/config の名前。";
 "Add" = "追加";
-"Remove {host}?" = "{host} を削除しますか？";
 "This removes its {repositories} repositories and {folders} folders to scan from the list. Nothing on the host is touched." = "そのホストのリポジトリ {repositories} 個とスキャンするフォルダ {folders} 個を一覧から外します。ホストの中には触れません。";
 "Engine on {host}" = "{host} のエンジン";
 "Choose amonhen on the host. It must be this build." = "SSH 先の amonhen を選びます。このビルドのものである必要があります。";

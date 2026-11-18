@@ -523,6 +523,7 @@
 "Path" = "パス";
 "Folder of the repository on the host" = "ホストにあるリポジトリのフォルダ";
 "Remove %@ from List…" = "%@ を一覧から外す…";
+"Remove %@ from List?" = "%@ を一覧から外しますか？";
 
 /* RemoteSheet.swift */
 "Edit Remote" = "リモートを編集";

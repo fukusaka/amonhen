@@ -2421,14 +2421,14 @@ impl Browser {
                 .collect();
             let sheet = Sheet::unnamed(
                 Some(&b.window()),
-                &tr!("Remove {host}?", host = name),
+                &tr!("Remove {host} from List?", host = name),
                 &tr!(
                     "This removes its {repositories} repositories and {folders} folders to scan from the list. Nothing on the host is touched.",
                     repositories = paths.len(),
                     folders = roots.len()
                 ),
             );
-            sheet.buttons(&tr!("Remove"), true, None);
+            sheet.buttons(&tr!("Remove from List"), false, None);
             if sheet.run().await != Response::Ok {
                 return;
             }
