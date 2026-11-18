@@ -131,6 +131,8 @@ pub struct Callbacks<'a> {
     pub save_git: Callback<()>,
     /// Git の Operations・Working Copy の選ぶ欄（行の id と、選んだ番号。すべてのリポジトリの段に書く）。
     pub git_choice: Box<dyn Fn(&'static str) -> Callback<Option<usize>> + 'a>,
+    /// Programs の ↩︎（その行を自動に戻す）。
+    pub program_revert: Box<dyn Fn(&'static str) -> Callback<()> + 'a>,
     /// Git の Keys and Values の欄（`query`・`key`・`value`）とボタン（`add`・`remove:<key>`）。すべてのリポジトリの段。
     pub keys_field: Box<dyn Fn(&'static str) -> Callback<String> + 'a>,
     pub keys_button: Box<dyn Fn(String) -> Callback<()> + 'a>,
@@ -204,7 +206,12 @@ fn git_choices(state: &State, callbacks: &Callbacks) -> View {
             .spacing(10.0)
             .children((View::keyed_fragment(working_copy),)),
         title(&tr!("Programs")),
-        crate::programs::view(state.programs.as_ref(), global, &*callbacks.git_choice),
+        crate::programs::view(
+            state.programs.as_ref(),
+            global,
+            &*callbacks.git_choice,
+            &*callbacks.program_revert,
+        ),
         title("Keys and Values"),
         crate::reposettings::keys_view(
             global,

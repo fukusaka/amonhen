@@ -12328,6 +12328,10 @@ impl Root {
                 git_choice: Box::new(|id| {
                     context.callback(move |index| Message::SettingsGitChoice(id, index))
                 }),
+                // ↩︎ は「自動」（どの行も最初の項目）を選んだのと同じ。
+                program_revert: Box::new(|id| {
+                    context.callback(move |()| Message::SettingsGitChoice(id, Some(0)))
+                }),
                 keys_field: Box::new(|field| {
                     context.callback(move |text| Message::SettingsKeysField(field, text))
                 }),
