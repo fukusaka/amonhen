@@ -143,7 +143,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 
 | 機能 | macOS | GTK4 | Windows | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
-| 設定のページ（ページの一覧・git の行・行ごとの出どころ・↩︎・ⓘ） | ✓ | ✓ | △ | ✓ | n/a | VSCode: メインビューの Repository Settings（エンジンがあるとき）で、このリポジトリの設定だけ。<br>Windows: Author と Keys and Values を 1 つのページに。行ごとの設定元・↩︎・ⓘ はない。 |
+| 設定のページ（ページの一覧・git の行・行ごとの出どころ・↩︎・ⓘ） | ✓ | ✓ | △ | ✓ | n/a | VSCode: メインビューの Repository Settings（エンジンがあるとき）で、このリポジトリの設定だけ。<br>Windows: すべての節を 1 ページに。設定の行に設定元・↩︎・ⓘ（段ごとの値をツールチップで）がある。 |
 | Author and Signing（署名の選択・集めた鍵・mailmap） | ✓ | ✓ | ✓ | ✓ | △ | VSCode: 鍵は今の形式のものだけを集める。<br>CLI: `amonhen run`（`signingKeys`・`configSet`）から。 |
 | Commits: メッセージのテンプレート（なし・共有・独自・ファイル） | ✓ | ✓ | ✓ | △ | △ | VSCode: なし・このリポジトリ専用（その場で書く）・ファイル。共有のテンプレートはない。<br>CLI: `amonhen run` から。 |
 | Branches: 既定のブランチを選ぶ | ✓ | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |

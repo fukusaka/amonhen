@@ -162,8 +162,12 @@ fn git_choices(state: &State, callbacks: &Callbacks) -> View {
     let Some(global) = &state.global else {
         return View::empty();
     };
-    let (operations, working_copy, author) =
-        crate::reposettings::choice_views(global, &*callbacks.git_choice);
+    let (operations, working_copy, author) = crate::reposettings::choice_views(
+        global,
+        "global",
+        &*callbacks.git_choice,
+        &*callbacks.keys_button,
+    );
     let (signing, mailmap): (crate::reposettings::Rows, crate::reposettings::Rows) = author
         .into_iter()
         .partition(|(k, _)| !crate::reposettings::is_mailmap_row(k));

@@ -966,6 +966,13 @@ pub fn keys_commands(state: &mut State, key: &str, scope: &str) -> Option<Vec<Va
         state.new_value.clear();
         Some(vec![command])
     } else {
+        if let Some(keys) = key.strip_prefix("revert:") {
+            return Some(
+                keys.split(',')
+                    .map(|k| config_set(k, None, scope))
+                    .collect(),
+            );
+        }
         let k = key.strip_prefix("remove:")?;
         Some(vec![config_set(k, None, scope)])
     }
@@ -978,7 +985,9 @@ pub type Rows = Vec<(String, View)>;
 /// Settings と Settings > Git（すべてのリポジトリの段）で使う。
 pub fn choice_views(
     state: &State,
+    scope: &str,
     choice: &dyn Fn(&'static str) -> Callback<Option<usize>>,
+    button: &dyn Fn(String) -> Callback<()>,
 ) -> (Rows, Rows, Rows) {
     // Operations: 行ごとに選ぶ欄と、効いている値の設定元（このリポジトリで上書きしていなければ）。
     let choice_row = |id: &'static str,
@@ -992,6 +1001,41 @@ pub fn choice_views(
             .find_map(|k| state.effective(k))
             .map(|(_, scope)| scope_label(scope))
             .unwrap_or_else(|| tr!("git’s default"));
+        // ↩︎: この段で決めていれば、消して上の段（なければ git の既定）に戻す。
+        let set_here: Vec<&str> = keys
+            .iter()
+            .copied()
+            .filter(|k| state.at(scope, k).is_some())
+            .collect();
+        let revert: View = if set_here.is_empty() {
+            View::empty()
+        } else {
+            Button::new()
+                .on_click(button(format!("revert:{}", set_here.join(","))))
+                .content(TextBlock::new().text("↩︎").font_size(12.0))
+                .tooltip(tr!("Stop overriding here. The value above takes over."))
+        };
+        // ⓘ: 段ごとの値（マウスを載せると出す）。
+        let details: Vec<String> = keys
+            .iter()
+            .flat_map(|k| {
+                state
+                    .entries
+                    .iter()
+                    .flatten()
+                    .filter(|e| e.key.eq_ignore_ascii_case(k))
+                    .map(|e| format!("{}: {} = {}", scope_label(&e.scope), e.key, e.value))
+            })
+            .collect();
+        let info: View = if details.is_empty() {
+            View::empty()
+        } else {
+            TextBlock::new()
+                .text("ⓘ")
+                .opacity(0.6)
+                .vertical_alignment(VerticalAlignment::Center)
+                .tooltip(details.join("\n"))
+        };
         StackPanel::new().spacing(2.0).children((
             TextBlock::new()
                 .text(title)
@@ -1004,11 +1048,13 @@ pub fn choice_views(
                         .items_source(labels)
                         .selected_index(selected)
                         .on_selection_changed(choice(id)),
+                    revert,
                     TextBlock::new()
                         .text(source)
                         .font_size(12.0)
                         .opacity(0.6)
                         .vertical_alignment(VerticalAlignment::Center),
+                    info,
                 )),
             if help.is_empty() {
                 View::empty()
@@ -1411,7 +1457,8 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                 .on_text_changed((callbacks.field)(field)),
         ))
     };
-    let (mut operations, working_copy, author) = choice_views(state, &*callbacks.choice);
+    let (mut operations, working_copy, author) =
+        choice_views(state, "local", &*callbacks.choice, &*callbacks.button);
     let (signing, mailmap): (Rows, Rows) =
         author.into_iter().partition(|(k, _)| !is_mailmap_row(k));
     let signing_other = signing_other_view(state, &*callbacks.field, &*callbacks.button);
@@ -2252,5 +2299,15 @@ mod tests {
         let basic = key_rows(entries, "local", "basic", "pull");
         assert_eq!(basic.len(), 2);
         assert!(basic.iter().all(|r| r.effective.is_none()));
+    }
+
+    #[test]
+    fn revert_removes_the_keys_at_this_level() {
+        let mut s = state(&[]);
+        let c = keys_commands(&mut s, "revert:pull.ff,pull.rebase", "global").expect("命令");
+        assert_eq!(c.len(), 2);
+        assert_eq!(c[1]["key"], "pull.rebase");
+        assert!(c[1]["value"].is_null());
+        assert_eq!(c[1]["scope"], "global");
     }
 }
