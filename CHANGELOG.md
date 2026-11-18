@@ -30,6 +30,10 @@ becomes the GitHub Release notes.
   disabled until a name is typed.
 - Failures read "Couldn't …" with the error below, in a sheet on the window rather than an app-wide alert; forgetting
   rerere resolutions and adding an SSH host ask in a sheet too.
+- Every confirmation that can't be undone has a red button that Return doesn't press (removing a submodule or a
+  worktree, Prune and pushing tags were blue). Removing an SSH host says "Remove from List", as it only leaves the list.
+- Sheet fields are labeled without a colon, and Japanese no longer puts a space between joined sentences or leaves a
+  few menu items (Amend Last Commit, Fixup / Squash Commit For, the Submodules header's) in English.
 - In the before-and-after drawings, branch labels that don't fit on a commit's line wrap onto up to three lines
   below it instead of being left out, with the rest gathered into a "+n" label that lists them in its tooltip; a very
   tall drawing scrolls inside the sheet.
