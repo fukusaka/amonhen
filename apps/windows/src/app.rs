@@ -773,6 +773,8 @@ enum Message {
     WorkingSide(Option<usize>),
     /// 差分のファイルの見出しのメニュー（GTK4 版の `commitfiles` の見出しのメニュー）。
     DiffFileMenu(String),
+    /// 変更ファイルの一覧（木も）の右クリック（ファイルの番号、差分の見出しと同じ項目の鍵）。
+    ChangedFileMenu(usize, String),
     FileHistoryLoaded(String, Result<Vec<crate::filehistory::Entry>, String>),
     FileHistorySelected(Option<usize>),
     CloseFileHistory,
@@ -6394,6 +6396,15 @@ impl Component for Root {
                 self.diff_file = None;
             }
             Message::DiffFileMenu(key) => self.diff_file_action(&key, context),
+            Message::ChangedFileMenu(index, key) => {
+                let mut file = None;
+                with_history(|h| file = h.session.data.file_of(index));
+                if file.is_none() {
+                    return beep();
+                }
+                self.diff_file = file;
+                self.diff_file_action(&key, context);
+            }
             Message::WorkingFileMenu(path, key) => match key.as_str() {
                 "history" => self.update(Message::OpenFileHistory(path), context),
                 "blame" => self.update(Message::OpenBlame(path, None), context),
@@ -9878,6 +9889,24 @@ impl Root {
         let Some(file) = &self.diff_file else {
             return Vec::new();
         };
+        self.file_menu(file)
+    }
+
+    /// 変更ファイルの一覧の行の右クリック（差分の見出しと同じ項目。GTK4 版の `commitfiles`）。
+    fn changed_file_menu(
+        &self,
+        file: Option<&crate::data::DiffFile>,
+        context: &ViewContext<Self>,
+    ) -> Menu {
+        let index = file.map_or(usize::MAX, |f| f.index);
+        Menu::new(
+            file.map(|f| self.file_menu(f)).unwrap_or_default(),
+            context.callback(move |key| Message::ChangedFileMenu(index, key)),
+        )
+    }
+
+    /// ファイルの右クリックの項目（差分の見出しと、変更ファイルの一覧。GTK4 版の `list_menu_items`）。
+    fn file_menu(&self, file: &crate::data::DiffFile) -> Vec<MenuItem> {
         let mut items = vec![MenuItem::item(
             "collapse",
             if file.collapsed {
@@ -11417,6 +11446,8 @@ impl Root {
         let selected = self
             .changed_file
             .and_then(|f| tree.iter().position(|r| r.file == Some(f)));
+        let mut files = Vec::new();
+        with_history(|h| files = h.session.data.files());
         let rows = tree.iter().enumerate().map(|(i, r)| {
             let indent = Thickness::new(r.depth as f64 * 14.0, 0.0, 0.0, 0.0);
             let content: View = match r.file.and_then(|f| self.changed_files.get(f)) {
@@ -11434,7 +11465,8 @@ impl Root {
                             .font_size(12.0)
                             .text_trimming(TextTrimming::CharacterEllipsis)
                             .grid_column(1),
-                    )),
+                    ))
+                    .menu(self.changed_file_menu(r.file.and_then(|f| files.get(f)), context)),
                 None => TextBlock::new()
                     .text(format!("🗀 {}", r.name))
                     .font_size(12.0)
@@ -11463,7 +11495,10 @@ impl Root {
         if !self.shows_changed_files() || crate::prefs::bool(crate::prefs::HISTORY_FILE_TREE) {
             return View::empty();
         }
+        let mut files = Vec::new();
+        with_history(|h| files = h.session.data.files());
         let rows = self.changed_files.iter().enumerate().map(|(i, f)| {
+            let menu = self.changed_file_menu(files.get(i), context);
             let counts = if f.binary {
                 tr!("binary")
             } else {
@@ -11492,7 +11527,8 @@ impl Root {
                         .opacity(0.6)
                         .margin(Thickness::new(8.0, 0.0, 0.0, 0.0))
                         .grid_column(2),
-                ));
+                ))
+                .menu(menu);
             (
                 format!("{i}"),
                 ListViewItem::new()
