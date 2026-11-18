@@ -825,6 +825,8 @@ enum Message {
     SettingsGit(String, String, Vec<crate::reposettings::Entry>),
     /// Settings > Git の Operations・Working Copy で選んだ（行の id と番号）。
     SettingsGitChoice(&'static str, Option<usize>),
+    /// Settings の左の一覧でページを選んだ。
+    SettingsPage(Option<usize>),
     /// Git > Programs の候補と使う git。
     SettingsPrograms(crate::programs::State),
     /// Settings > Git の Keys and Values の欄（`query`・`key`・`value`）とボタン（`add`・`remove:<key>`）。
@@ -2594,6 +2596,7 @@ impl Component for Root {
                 }
                 let editor = crate::prefs::string(crate::editor::KEY).unwrap_or_default();
                 self.settings = Some(crate::settingsview::State {
+                    page: 0,
                     git: None,
                     global: None,
                     programs: None,
@@ -5771,6 +5774,11 @@ impl Component for Root {
             Message::SettingsPrograms(programs) => {
                 if let Some(state) = self.settings.as_mut() {
                     state.programs = Some(programs);
+                }
+            }
+            Message::SettingsPage(page) => {
+                if let (Some(state), Some(page)) = (self.settings.as_mut(), page) {
+                    state.page = page;
                 }
             }
             Message::SettingsGitChoice(id, Some(index)) if id.starts_with("program:") => {
@@ -12383,6 +12391,7 @@ impl Root {
                 git_choice: Box::new(|id| {
                     context.callback(move |index| Message::SettingsGitChoice(id, index))
                 }),
+                page: context.callback(Message::SettingsPage),
                 // ↩︎ は「自動」（どの行も最初の項目）を選んだのと同じ。
                 program_revert: Box::new(|id| {
                     context.callback(move |()| Message::SettingsGitChoice(id, Some(0)))

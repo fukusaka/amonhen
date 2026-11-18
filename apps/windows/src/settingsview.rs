@@ -6,6 +6,8 @@ use amonhen_model::tr;
 use windows_reactor::*;
 
 pub struct State {
+    /// 出しているページ（[`PAGES`] の何番目か。GTK4 版・macOS 版の Settings のタブ）。
+    pub page: usize,
     /// `--global` の user.name・user.email（読んだものと、欄の今の値）。読むまでは None。
     pub git: Option<[(String, String); 2]>,
     /// システムとすべてのリポジトリの段の設定（Operations・Working Copy の行。読むまでは None）。
@@ -131,6 +133,8 @@ pub struct Callbacks<'a> {
     pub save_git: Callback<()>,
     /// Git の Operations・Working Copy の選ぶ欄（行の id と、選んだ番号。すべてのリポジトリの段に書く）。
     pub git_choice: Box<dyn Fn(&'static str) -> Callback<Option<usize>> + 'a>,
+    /// 左のページの一覧で選んだ。
+    pub page: Callback<Option<usize>>,
     /// Programs の ↩︎（その行を自動に戻す）。
     pub program_revert: Box<dyn Fn(&'static str) -> Callback<()> + 'a>,
     /// Git の Keys and Values の欄（`query`・`key`・`value`）とボタン（`add`・`remove:<key>`）。すべてのリポジトリの段。
@@ -497,6 +501,15 @@ fn templates(state: &State, callbacks: &Callbacks) -> View {
         ))
 }
 
+/// Settings のページ（左の一覧の見出し。訳は `tr!` と同じ表から）。
+pub const PAGES: [&str; 5] = [
+    "General",
+    "Git",
+    "Appearance",
+    "Diff & Merge",
+    "Performance",
+];
+
 pub fn view(state: &State, callbacks: Callbacks) -> View {
     let appearance = appearance(&callbacks);
     let git_choices = git_choices(state, &callbacks);
@@ -558,121 +571,162 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
     let bookmark = Border::new()
         .margin(Thickness::new(0.0, 8.0, 0.0, 0.0))
         .content(bookmark);
-    let body = ScrollViewer::new().grid_row(1).content(
-        StackPanel::new()
-            .max_width(560.0)
-            .horizontal_alignment(HorizontalAlignment::Left)
-            .margin(Thickness::new(24.0, 0.0, 24.0, 24.0))
-            .children((
-                heading(tr!("General")),
-                StackPanel::new()
-                    .orientation(Orientation::Horizontal)
-                    .spacing(12.0)
-                    .children((
-                        TextBlock::new()
-                            .text(tr!("Fetch automatically"))
-                            .vertical_alignment(VerticalAlignment::Center),
-                        ComboBox::new()
-                            .items_source(
-                                AUTO_FETCH_CHOICES
-                                    .iter()
-                                    .map(|&m| {
-                                        if m == 0 {
-                                            tr!("Never")
-                                        } else {
-                                            tr!("Every {count} minutes", count = m)
-                                        }
-                                    })
-                                    .collect::<Vec<_>>(),
-                            )
-                            .selected_index(
-                                AUTO_FETCH_CHOICES
-                                    .iter()
-                                    .position(|&m| m == state.auto_fetch)
-                                    .unwrap_or(0),
-                            )
-                            .on_selection_changed(callbacks.auto_fetch),
-                    )),
-                StackPanel::new()
-                    .orientation(Orientation::Horizontal)
-                    .spacing(12.0)
-                    .margin(Thickness::new(0.0, 8.0, 0.0, 0.0))
-                    .children((
-                        TextBlock::new()
-                            .text(tr!("External Editor"))
-                            .vertical_alignment(VerticalAlignment::Center),
-                        View::keyed_fragment([(state.editor_epoch.to_string(), {
-                            let (items, selected) = state.editor_items();
-                            ComboBox::new()
-                                .items_source(items)
-                                .selected_index(selected)
-                                .on_selection_changed(callbacks.editor)
-                        })]),
-                    )),
-                bookmark,
-                heading("Git".to_owned()),
-                StackPanel::new().children((git, git_choices, shared_templates, env)),
-                appearance,
-                heading(tr!("Diff & Merge")),
-                check(
-                    crate::prefs::AUTO_MAGIC_MERGE,
-                    state.auto_magic_merge,
-                    tr!("Resolve unambiguous conflicts when the merge editor opens"),
-                ),
-                StackPanel::new().children((
-                    heading("File History".to_owned()),
-                    check(
-                        crate::prefs::FILE_HISTORY_MERGES,
-                        state.file_history_merges,
-                        tr!("Show merge commits"),
-                    ),
-                )),
-                // Performance（GTK4 版の Performance のタブのうち、Windows 版にあるもの）。
-                heading(tr!("Performance")),
-                check(
-                    crate::prefs::WRITE_COMMIT_GRAPH,
-                    state.write_commit_graph,
-                    tr!("Write commit-graph automatically"),
-                ),
-                note(tr!(
-                    "Writes to .git, except in repositories git maintenance looks after."
-                )),
-                check(
-                    crate::prefs::USE_FSMONITOR,
-                    state.use_fsmonitor,
-                    tr!("Speed up status with fsmonitor"),
-                ),
-                note(tr!("A git fsmonitor--daemon runs for each repository.")),
-                // キャッシュ（GTK4 版の Caches の節。AI がないので History だけ）。
-                StackPanel::new().children((
+    // ページ（GTK4 版・macOS 版のタブ。Windows 版にあるものだけ）。左の一覧で選んだものを出す。
+    let pages: [View; 5] = [
+        StackPanel::new().children((
+            heading(tr!("General")),
+            StackPanel::new()
+                .orientation(Orientation::Horizontal)
+                .spacing(12.0)
+                .children((
                     TextBlock::new()
-                        .text(tr!("Caches"))
-                        .font_size(13.0)
-                        .opacity(0.8)
-                        .margin(Thickness::new(0.0, 12.0, 0.0, 0.0)),
-                    StackPanel::new()
-                        .orientation(Orientation::Horizontal)
-                        .spacing(12.0)
-                        .margin(Thickness::new(0.0, 4.0, 0.0, 0.0))
-                        .children((
-                            TextBlock::new()
-                                .text(format!(
-                                    "{}: {}",
-                                    tr!("History"),
-                                    state.cache_size.map(size).unwrap_or_else(|| "…".to_owned())
-                                ))
-                                .vertical_alignment(VerticalAlignment::Center),
-                            Button::new()
-                                .is_enabled(state.cache_size.is_some_and(|n| n > 0))
-                                .on_click(callbacks.clear_cache)
-                                .content(TextBlock::new().text(tr!("Clear"))),
-                        )),
-                    note(tr!(
-                        "Opens History right away next time. Cleared, it is read from git again."
+                        .text(tr!("Fetch automatically"))
+                        .vertical_alignment(VerticalAlignment::Center),
+                    ComboBox::new()
+                        .items_source(
+                            AUTO_FETCH_CHOICES
+                                .iter()
+                                .map(|&m| {
+                                    if m == 0 {
+                                        tr!("Never")
+                                    } else {
+                                        tr!("Every {count} minutes", count = m)
+                                    }
+                                })
+                                .collect::<Vec<_>>(),
+                        )
+                        .selected_index(
+                            AUTO_FETCH_CHOICES
+                                .iter()
+                                .position(|&m| m == state.auto_fetch)
+                                .unwrap_or(0),
+                        )
+                        .on_selection_changed(callbacks.auto_fetch),
+                )),
+            StackPanel::new()
+                .orientation(Orientation::Horizontal)
+                .spacing(12.0)
+                .margin(Thickness::new(0.0, 8.0, 0.0, 0.0))
+                .children((
+                    TextBlock::new()
+                        .text(tr!("External Editor"))
+                        .vertical_alignment(VerticalAlignment::Center),
+                    View::keyed_fragment([(state.editor_epoch.to_string(), {
+                        let (items, selected) = state.editor_items();
+                        ComboBox::new()
+                            .items_source(items)
+                            .selected_index(selected)
+                            .on_selection_changed(callbacks.editor)
+                    })]),
+                )),
+            bookmark,
+        )),
+        StackPanel::new().children((
+            heading("Git".to_owned()),
+            StackPanel::new().children((git, git_choices, shared_templates, env)),
+        )),
+        appearance,
+        StackPanel::new().children((
+            heading(tr!("Diff & Merge")),
+            check(
+                crate::prefs::AUTO_MAGIC_MERGE,
+                state.auto_magic_merge,
+                tr!("Resolve unambiguous conflicts when the merge editor opens"),
+            ),
+            StackPanel::new().children((
+                heading("File History".to_owned()),
+                check(
+                    crate::prefs::FILE_HISTORY_MERGES,
+                    state.file_history_merges,
+                    tr!("Show merge commits"),
+                ),
+            )),
+        )),
+        StackPanel::new().children((
+            // Performance（GTK4 版の Performance のタブのうち、Windows 版にあるもの）。
+            heading(tr!("Performance")),
+            check(
+                crate::prefs::WRITE_COMMIT_GRAPH,
+                state.write_commit_graph,
+                tr!("Write commit-graph automatically"),
+            ),
+            note(tr!(
+                "Writes to .git, except in repositories git maintenance looks after."
+            )),
+            check(
+                crate::prefs::USE_FSMONITOR,
+                state.use_fsmonitor,
+                tr!("Speed up status with fsmonitor"),
+            ),
+            note(tr!("A git fsmonitor--daemon runs for each repository.")),
+            // キャッシュ（GTK4 版の Caches の節。AI がないので History だけ）。
+            StackPanel::new().children((
+                TextBlock::new()
+                    .text(tr!("Caches"))
+                    .font_size(13.0)
+                    .opacity(0.8)
+                    .margin(Thickness::new(0.0, 12.0, 0.0, 0.0)),
+                StackPanel::new()
+                    .orientation(Orientation::Horizontal)
+                    .spacing(12.0)
+                    .margin(Thickness::new(0.0, 4.0, 0.0, 0.0))
+                    .children((
+                        TextBlock::new()
+                            .text(format!(
+                                "{}: {}",
+                                tr!("History"),
+                                state.cache_size.map(size).unwrap_or_else(|| "…".to_owned())
+                            ))
+                            .vertical_alignment(VerticalAlignment::Center),
+                        Button::new()
+                            .is_enabled(state.cache_size.is_some_and(|n| n > 0))
+                            .on_click(callbacks.clear_cache)
+                            .content(TextBlock::new().text(tr!("Clear"))),
                     )),
+                note(tr!(
+                    "Opens History right away next time. Cleared, it is read from git again."
                 )),
             )),
-    );
+        )),
+    ];
+    let page = state.page.min(PAGES.len() - 1);
+    let Some(content) = pages.into_iter().nth(page) else {
+        return View::empty();
+    };
+    let nav = ListView::new()
+        .selected_index(Some(page))
+        .on_selection_changed(callbacks.page)
+        .collection_slot(
+            ListViewSlot::Items,
+            PAGES.iter().enumerate().map(|(i, title)| {
+                (
+                    format!("{i}"),
+                    ListViewItem::new().content(
+                        TextBlock::new().text(amonhen_model::i18n::translate(title).into_owned()),
+                    ),
+                )
+            }),
+        );
+    let body = Grid::new()
+        .columns([GridLength::Pixel(170.0), GridLength::Star(1.0)])
+        .grid_row(1)
+        .children((
+            Border::new()
+                .grid_column(0)
+                .border_thickness(Thickness::new(0.0, 0.0, 1.0, 0.0))
+                .border_brush(Brush::Solid(Color::rgb(0xe5, 0xe5, 0xe5)))
+                .content(nav),
+            ScrollViewer::new()
+                .grid_column(1)
+                .content(View::keyed_fragment([(
+                    format!("page-{page}"),
+                    Border::new()
+                        .max_width(560.0)
+                        .horizontal_alignment(HorizontalAlignment::Left)
+                        .margin(Thickness::new(24.0, 0.0, 24.0, 24.0))
+                        .content(content),
+                )])),
+        ));
     Grid::new()
         .rows([GridLength::Auto, GridLength::Star(1.0)])
         .children((head, body))
