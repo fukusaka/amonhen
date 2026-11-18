@@ -1,7 +1,7 @@
 //! Repository Settings の画面（GTK4 版の `reposettings.rs`、macOS 版の `RepositorySettings.swift` のうち、Author
 //! と Keys and Values）。Author はこのリポジトリ（`--local`）の名前とメール。Keys and Values は git が読む設定の
 //! キー・効いている値・設定元で、このリポジトリの段に足す・消す（GTK4 版の `configtable.rs` の Customized に当たる
-//! 並び）。ほかのページ（Commits・Operations・Branches・Remotes・Hooks など）はまだない。
+//! 並び）。Operations・Working Copy の行は Settings > Git（すべてのリポジトリの段）でも使う。
 
 use amonhen_model::tr;
 use serde_json::Value;
@@ -508,12 +508,13 @@ pub fn pull_method(state: &State) -> &'static str {
     }
 }
 
-/// pull の取り込み方を `method` にする命令（GTK4 版と同じく、`pull.rebase` をいつも書いて曖昧さをなくす）。
-pub fn pull_commands(state: &State, method: &str) -> Vec<Value> {
-    let set = |key: &str, value: Option<&str>| serde_json::json!({ "op": "configSet", "key": key, "value": value });
+/// pull の取り込み方を `method` にする命令（`scope` の段に。GTK4 版と同じく、`pull.rebase` をいつも書いて曖昧さを
+/// なくす）。
+pub fn pull_commands(state: &State, method: &str, scope: &str) -> Vec<Value> {
+    let set = |key: &str, value: Option<&str>| config_set(key, value, scope);
     let mut commands = Vec::new();
     if state
-        .at("local", "pull.ff")
+        .at(scope, "pull.ff")
         .is_some_and(|v| v.eq_ignore_ascii_case("only"))
         && method != "ffOnly"
     {
@@ -528,6 +529,135 @@ pub fn pull_commands(state: &State, method: &str) -> Vec<Value> {
         _ => commands.push(set("pull.rebase", Some("false"))),
     }
     commands
+}
+
+/// 鍵の付いた行の並び。
+pub type Rows = Vec<(String, View)>;
+
+/// Operations と Working Copy の選ぶ欄の行（pull・各行。効いている値と、その設定元を添える）。Repository
+/// Settings と Settings > Git（すべてのリポジトリの段）で使う。
+pub fn choice_views(
+    state: &State,
+    choice: &dyn Fn(&'static str) -> Callback<Option<usize>>,
+) -> (Rows, Rows) {
+    // Operations: 行ごとに選ぶ欄と、効いている値の設定元（このリポジトリで上書きしていなければ）。
+    let choice_row = |id: &'static str,
+                      title: String,
+                      help: String,
+                      keys: &[&str],
+                      labels: Vec<String>,
+                      selected: usize| {
+        let source = keys
+            .iter()
+            .find_map(|k| state.effective(k))
+            .map(|(_, scope)| scope_label(scope))
+            .unwrap_or_else(|| tr!("git’s default"));
+        StackPanel::new().spacing(2.0).children((
+            TextBlock::new()
+                .text(title)
+                .text_wrapping(TextWrapping::Wrap),
+            StackPanel::new()
+                .orientation(Orientation::Horizontal)
+                .spacing(8.0)
+                .children((
+                    ComboBox::new()
+                        .items_source(labels)
+                        .selected_index(selected)
+                        .on_selection_changed(choice(id)),
+                    TextBlock::new()
+                        .text(source)
+                        .font_size(12.0)
+                        .opacity(0.6)
+                        .vertical_alignment(VerticalAlignment::Center),
+                )),
+            if help.is_empty() {
+                View::empty()
+            } else {
+                TextBlock::new()
+                    .text(help)
+                    .font_size(12.0)
+                    .opacity(0.65)
+                    .text_wrapping(TextWrapping::Wrap)
+                    .into()
+            },
+        ))
+    };
+    let pull = ["merge", "rebase", "ffOnly"];
+    let mut operations = vec![(
+        "pull".to_owned(),
+        choice_row(
+            "pull",
+            tr!("When pulling, how are the changes brought in?"),
+            String::new(),
+            &["pull.ff", "pull.rebase"],
+            vec![tr!("Merge"), tr!("Rebase"), tr!("Fast-forward")],
+            pull.iter()
+                .position(|m| *m == pull_method(state))
+                .unwrap_or(0),
+        ),
+    )];
+    let row_of = |(id, title, help, key, options, default): OperationRow| {
+        let value = state
+            .effective(key)
+            .map_or_else(|| default.to_owned(), |(v, _)| v.to_owned());
+        let value = if options.iter().any(|(v, _)| *v == "true") {
+            normalize_bool(&value)
+        } else {
+            value.to_lowercase()
+        };
+        let selected = options.iter().position(|(v, _)| *v == value).unwrap_or(0);
+        (
+            id.to_owned(),
+            choice_row(
+                id,
+                title,
+                help,
+                &[key],
+                options.into_iter().map(|(_, l)| l).collect(),
+                selected,
+            ),
+        )
+    };
+    operations.extend(operation_rows().into_iter().map(row_of));
+    let working_copy: Vec<(String, View)> = working_copy_rows().into_iter().map(row_of).collect();
+    (operations, working_copy)
+}
+
+/// 選ぶ欄で `id` の行の `index` 番目を選んだときに書く命令（`scope` の段に。`global` なら全リポジトリ）。今の値と
+/// 同じなら（作り直した欄が今の値を知らせてきたときなど）None。
+pub fn choice_commands(state: &State, id: &str, index: usize, scope: &str) -> Option<Vec<Value>> {
+    if id == "pull" {
+        let method = ["merge", "rebase", "ffOnly"][index.min(2)];
+        if method == pull_method(state) {
+            return None;
+        }
+        return Some(pull_commands(state, method, scope));
+    }
+    let (_, _, _, key, options, default) = operation_rows()
+        .into_iter()
+        .chain(working_copy_rows())
+        .find(|r| r.0 == id)?;
+    let (value, _) = options.get(index)?;
+    let now = state
+        .effective(key)
+        .map_or(default, |(v, _)| v)
+        .to_lowercase();
+    let same = now == *value
+        || (*value == "true" && ["yes", "on", "1"].contains(&now.as_str()))
+        || (*value == "false" && ["no", "off", "0", ""].contains(&now.as_str()));
+    if same {
+        return None;
+    }
+    Some(vec![config_set(key, Some(value), scope)])
+}
+
+/// `key` を `scope` の段（`local` か `global`）で `value` にする命令（None なら消す）。
+fn config_set(key: &str, value: Option<&str>, scope: &str) -> Value {
+    if scope == "global" {
+        serde_json::json!({ "op": "configSet", "key": key, "value": value, "scope": "global" })
+    } else {
+        serde_json::json!({ "op": "configSet", "key": key, "value": value })
+    }
 }
 
 pub struct Callbacks<'a> {
@@ -593,85 +723,7 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                 .on_text_changed((callbacks.field)(field)),
         ))
     };
-    // Operations: 行ごとに選ぶ欄と、効いている値の設定元（このリポジトリで上書きしていなければ）。
-    let choice_row = |id: &'static str,
-                      title: String,
-                      help: String,
-                      keys: &[&str],
-                      labels: Vec<String>,
-                      selected: usize| {
-        let source = keys
-            .iter()
-            .find_map(|k| state.effective(k))
-            .map(|(_, scope)| scope_label(scope))
-            .unwrap_or_else(|| tr!("git’s default"));
-        StackPanel::new().spacing(2.0).children((
-            TextBlock::new()
-                .text(title)
-                .text_wrapping(TextWrapping::Wrap),
-            StackPanel::new()
-                .orientation(Orientation::Horizontal)
-                .spacing(8.0)
-                .children((
-                    ComboBox::new()
-                        .items_source(labels)
-                        .selected_index(selected)
-                        .on_selection_changed((callbacks.choice)(id)),
-                    TextBlock::new()
-                        .text(source)
-                        .font_size(12.0)
-                        .opacity(0.6)
-                        .vertical_alignment(VerticalAlignment::Center),
-                )),
-            if help.is_empty() {
-                View::empty()
-            } else {
-                TextBlock::new()
-                    .text(help)
-                    .font_size(12.0)
-                    .opacity(0.65)
-                    .text_wrapping(TextWrapping::Wrap)
-                    .into()
-            },
-        ))
-    };
-    let pull = ["merge", "rebase", "ffOnly"];
-    let mut operations = vec![(
-        "pull".to_owned(),
-        choice_row(
-            "pull",
-            tr!("When pulling, how are the changes brought in?"),
-            String::new(),
-            &["pull.ff", "pull.rebase"],
-            vec![tr!("Merge"), tr!("Rebase"), tr!("Fast-forward")],
-            pull.iter()
-                .position(|m| *m == pull_method(state))
-                .unwrap_or(0),
-        ),
-    )];
-    let row_of = |(id, title, help, key, options, default): OperationRow| {
-        let value = state
-            .effective(key)
-            .map_or_else(|| default.to_owned(), |(v, _)| v.to_owned());
-        let value = if options.iter().any(|(v, _)| *v == "true") {
-            normalize_bool(&value)
-        } else {
-            value.to_lowercase()
-        };
-        let selected = options.iter().position(|(v, _)| *v == value).unwrap_or(0);
-        (
-            id.to_owned(),
-            choice_row(
-                id,
-                title,
-                help,
-                &[key],
-                options.into_iter().map(|(_, l)| l).collect(),
-                selected,
-            ),
-        )
-    };
-    operations.extend(operation_rows().into_iter().map(row_of));
+    let (mut operations, working_copy) = choice_views(state, &*callbacks.choice);
     // 覚えた解決をすべて忘れる（覚えたものがあるときだけ。GTK4 版の `forget_resolutions_row`）。
     if state.rerere_cache {
         operations.push((
@@ -682,7 +734,7 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                 .content(TextBlock::new().text(tr!("Forget All Recorded Resolutions…"))),
         ));
     }
-    let working_copy: Vec<(String, View)> = working_copy_rows().into_iter().map(row_of).collect();
+
     // このリポジトリだけで無視するパターン（.git/info/exclude）。
     let exclude: View = match &state.exclude {
         None => TextBlock::new().text(tr!("Loading…")).opacity(0.6).into(),

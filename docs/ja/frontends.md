@@ -113,7 +113,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | General: 自動で fetch | ✓ | ✓ | ✓ | n/a | n/a | VSCode: VSCode の `git.autofetch` が代わり。<br>Windows: Windows: 失敗はステータスバーに添える。 |
 | General: 外のエディター | ✓ | ✓ | ✓ | n/a | n/a | GTK4: コードエディターは desktop のエントリーで macOS 版と同じ順に探す。なければテキストエディター（オフィスのアプリは選ばない）。Other… ではプログラムを選ぶ。<br>Windows: 知っているコードエディタはインストール先か PATH の起動用のスクリプトから、macOS 版の順に探す。なければメモ帳（フォルダは開けない）。その他… で実行ファイルを選べる。 |
 | General: 端末と diff のツール | — | — | — | n/a | n/a |  |
-| Git: 機械全体のページ（Author and Signing・Commits・Operations・Working Copy・Keys and Values） | ✓ | ✓ | △ | — | △ | CLI: `amonhen run` から。<br>Windows: すべてのリポジトリの名前とメールだけ。 |
+| Git: 機械全体のページ（Author and Signing・Commits・Operations・Working Copy・Keys and Values） | ✓ | ✓ | △ | — | △ | CLI: `amonhen run` から。<br>Windows: すべてのリポジトリの名前とメール・Operations・Working Copy・共有のテンプレート。署名と Keys and Values のページはない。 |
 | Git > Commits: 共有のメッセージのテンプレート | ✓ | ✓ | ✓ | — | — | Windows: Settings の 1 ページでその場で書く（シートはない） |
 | Git > Programs: git・gpg・ssh-keygen・gpgsm | ✓ | ✓ | — | n/a | △ | VSCode: 拡張は、ここで機械に選んだ git を動かし、選んでいなければ VSCode の `git.path`。gpg・ssh-keygen は git の設定で決まる。<br>CLI: `amonhen run`（`programs`・`setMachineGit`）から。 |
 | Git > この機械の Environment Variables（渡す・秘密を隠す） | ✓ | ✓ | ✓ | n/a | n/a | VSCode: VSCode の環境が代わり（拡張はそれを daemon に渡す）。<br>Windows: Settings の 1 ページの Git の下。Passed / All の切り替えと値の詳細はない |

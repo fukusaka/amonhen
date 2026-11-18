@@ -1,5 +1,5 @@
 //! Settings の画面（GTK4 版の設定の窓のうち、Windows 版に機能のあるもの）。Git は、すべてのリポジトリの段
-//! （`--global`）の名前とメールだけ。GTK4 版・macOS 版は別の窓とタブにするが、ここではまだ History と右の列の
+//! （`--global`）の名前とメールと、Operations・Working Copy（Repository Settings と同じ行）。GTK4 版・macOS 版は別の窓とタブにするが、ここではまだ History と右の列の
 //! 場所に重ねる。
 
 use amonhen_model::tr;
@@ -8,6 +8,8 @@ use windows_reactor::*;
 pub struct State {
     /// `--global` の user.name・user.email（読んだものと、欄の今の値）。読むまでは None。
     pub git: Option<[(String, String); 2]>,
+    /// システムとすべてのリポジトリの段の設定（Operations・Working Copy の行。読むまでは None）。
+    pub global: Option<crate::reposettings::State>,
     pub auto_magic_merge: bool,
     pub file_history_merges: bool,
     /// 開いたリポジトリをブックマークに入れる。
@@ -125,6 +127,8 @@ pub const AUTO_FETCH_CHOICES: [u32; 5] = [0, 5, 15, 30, 60];
 pub struct Callbacks<'a> {
     pub field: Box<dyn Fn(usize) -> Callback<String> + 'a>,
     pub save_git: Callback<()>,
+    /// Git の Operations・Working Copy の選ぶ欄（行の id と、選んだ番号。すべてのリポジトリの段に書く）。
+    pub git_choice: Box<dyn Fn(&'static str) -> Callback<Option<usize>> + 'a>,
     pub toggle: Box<dyn Fn(&'static str) -> Callback<bool> + 'a>,
     pub close: Callback<()>,
     /// 自動の fetch の間隔を選んだ（`AUTO_FETCH_CHOICES` の番号）。
@@ -145,6 +149,32 @@ pub struct Callbacks<'a> {
     pub display: Box<dyn Fn(&'static str) -> Callback<bool> + 'a>,
     /// Appearance: History の並び順を選んだ（0 は日付順、1 はトポロジー順）。
     pub order: Callback<Option<usize>>,
+}
+
+/// Git > Operations・Working Copy（すべてのリポジトリの段。Repository Settings と同じ行で、効いている値の設定元を
+/// 添える。GTK4 版・macOS 版の Settings > Git の同じページ）。
+fn git_choices(state: &State, callbacks: &Callbacks) -> View {
+    let Some(global) = &state.global else {
+        return View::empty();
+    };
+    let (operations, working_copy) =
+        crate::reposettings::choice_views(global, &*callbacks.git_choice);
+    let title = |text: &str| {
+        TextBlock::new()
+            .text(text.to_owned())
+            .font_weight(FontWeight::SEMI_BOLD)
+            .margin(Thickness::new(0.0, 14.0, 0.0, 4.0))
+    };
+    StackPanel::new().spacing(8.0).children((
+        title("Operations"),
+        StackPanel::new()
+            .spacing(10.0)
+            .children((View::keyed_fragment(operations),)),
+        title("Working Copy"),
+        StackPanel::new()
+            .spacing(10.0)
+            .children((View::keyed_fragment(working_copy),)),
+    ))
 }
 
 /// Appearance（GTK4 版の Appearance のタブの History と Items。CI の状態はこの FE にない）。値は View の
@@ -359,6 +389,7 @@ fn templates(state: &State, callbacks: &Callbacks) -> View {
 
 pub fn view(state: &State, callbacks: Callbacks) -> View {
     let appearance = appearance(&callbacks);
+    let git_choices = git_choices(state, &callbacks);
     let env = environment(state, &callbacks);
     let shared_templates = templates(state, &callbacks);
     let head = Grid::new()
@@ -470,7 +501,7 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                     )),
                 bookmark,
                 heading("Git".to_owned()),
-                StackPanel::new().children((git, shared_templates, env)),
+                StackPanel::new().children((git, git_choices, shared_templates, env)),
                 appearance,
                 heading(tr!("Diff & Merge")),
                 check(

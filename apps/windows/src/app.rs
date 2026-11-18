@@ -777,7 +777,9 @@ enum Message {
     MergeBase(bool),
     MergeResult(String),
     /// Settings: git の名前とメールを読んだ・欄を書き換えた・保存・チェックを替えた・閉じる。
-    SettingsGit(String, String),
+    SettingsGit(String, String, Vec<crate::reposettings::Entry>),
+    /// Settings > Git の Operations・Working Copy で選んだ（行の id と番号）。
+    SettingsGitChoice(&'static str, Option<usize>),
     SettingsField(usize, String),
     SettingsSaveGit,
     SettingsToggle(&'static str, bool),
@@ -2235,6 +2237,7 @@ impl Component for Root {
                 let editor = crate::prefs::string(crate::editor::KEY).unwrap_or_default();
                 self.settings = Some(crate::settingsview::State {
                     git: None,
+                    global: None,
                     auto_magic_merge: crate::prefs::bool(crate::prefs::AUTO_MAGIC_MERGE),
                     file_history_merges: crate::prefs::bool(crate::prefs::FILE_HISTORY_MERGES),
                     auto_bookmark: crate::prefs::bool(crate::prefs::AUTO_BOOKMARK),
@@ -2282,7 +2285,11 @@ impl Component for Root {
                             .unwrap_or_default()
                             .to_owned()
                     };
-                    Message::SettingsGit(value("user.name"), value("user.email"))
+                    Message::SettingsGit(
+                        value("user.name"),
+                        value("user.email"),
+                        global_entries(&reply),
+                    )
                 });
             }
             Message::Command(id) if id == "compare-with-previous" => {
@@ -5251,11 +5258,44 @@ impl Component for Root {
                 ACTIVITY_TICK.with(|t| t.set(None));
                 self.page = self.activity_from;
             }
-            Message::SettingsGit(name, email) => {
+            Message::SettingsGit(name, email, entries) => {
                 if let Some(state) = self.settings.as_mut() {
-                    state.git = Some([(name.clone(), name), (email.clone(), email)]);
+                    // 書いた後に読み直したときは、打ちかけの名前とメールを消さない。
+                    if state.git.is_none() {
+                        state.git = Some([(name.clone(), name), (email.clone(), email)]);
+                    }
+                    let mut global = crate::reposettings::State::new();
+                    global.entries = Some(entries);
+                    state.global = Some(global);
                 }
             }
+            Message::SettingsGitChoice(id, Some(index)) => {
+                let (Some(repo), Some(commands)) = (
+                    self.repo.clone(),
+                    self.settings
+                        .as_ref()
+                        .and_then(|s| s.global.as_ref())
+                        .and_then(|g| crate::reposettings::choice_commands(g, id, index, "global")),
+                ) else {
+                    return;
+                };
+                // 書いてから読み直し、効いている値と設定元を出し直す。
+                context.spawn_background(move |_| {
+                    for command in commands {
+                        let reply: Value =
+                            serde_json::from_str(&repo.run_json(&command.to_string()))
+                                .unwrap_or_default();
+                        if let Some(e) = reply["error"].as_str() {
+                            return Message::Performed(Some(("Settings".to_owned(), e.to_owned())));
+                        }
+                    }
+                    let reply: Value =
+                        serde_json::from_str(&repo.run_json(r#"{"op":"configList"}"#))
+                            .unwrap_or_default();
+                    Message::SettingsGit(String::new(), String::new(), global_entries(&reply))
+                });
+            }
+            Message::SettingsGitChoice(_, None) => {}
             Message::SettingsField(index, text) => {
                 if let Some(field) = self
                     .settings
@@ -5629,39 +5669,10 @@ impl Component for Root {
                 }
             }
             Message::RepoSettingsChoice(id, Some(index)) => {
-                let Some(state) = self.repo_settings.as_ref() else {
+                let Some(commands) = self.repo_settings.as_ref().and_then(|state| {
+                    crate::reposettings::choice_commands(state, id, index, "local")
+                }) else {
                     return;
-                };
-                let commands = if id == "pull" {
-                    let method = ["merge", "rebase", "ffOnly"][index.min(2)];
-                    // 作り直した欄が今の値を知らせてきたときは書かない。
-                    if method == crate::reposettings::pull_method(state) {
-                        return;
-                    }
-                    crate::reposettings::pull_commands(state, method)
-                } else {
-                    let Some((_, _, _, key, options, default)) =
-                        crate::reposettings::operation_rows()
-                            .into_iter()
-                            .chain(crate::reposettings::working_copy_rows())
-                            .find(|r| r.0 == id)
-                    else {
-                        return;
-                    };
-                    let Some((value, _)) = options.get(index) else {
-                        return;
-                    };
-                    let now = state
-                        .effective(key)
-                        .map_or(default, |(v, _)| v)
-                        .to_lowercase();
-                    let same = now == *value
-                        || (*value == "true" && ["yes", "on", "1"].contains(&now.as_str()))
-                        || (*value == "false" && ["no", "off", "0", ""].contains(&now.as_str()));
-                    if same {
-                        return;
-                    }
-                    vec![json!({ "op": "configSet", "key": key, "value": value })]
                 };
                 self.write_repo_settings(commands, context);
             }
@@ -11170,6 +11181,9 @@ impl Root {
             crate::settingsview::Callbacks {
                 field: Box::new(|i| context.callback(move |t| Message::SettingsField(i, t))),
                 save_git: context.callback(|()| Message::SettingsSaveGit),
+                git_choice: Box::new(|id| {
+                    context.callback(move |index| Message::SettingsGitChoice(id, index))
+                }),
                 toggle: Box::new(|key| context.callback(move |v| Message::SettingsToggle(key, v))),
                 close: context.callback(|()| Message::CloseSettings),
                 auto_fetch: context.callback(Message::SettingsAutoFetch),
@@ -13950,6 +13964,14 @@ fn splitter(handle: &ElementRef<Grid>, split: Split, top: f64) -> View {
             .margin(Thickness::new(0.0, top - 3.0, 0.0, 0.0))
             .into(),
     }
+}
+
+/// `configList` の答えのうち、システムとすべてのリポジトリの段の項目（Settings > Git の行が読む）。
+fn global_entries(reply: &Value) -> Vec<crate::reposettings::Entry> {
+    crate::reposettings::entries_of(&reply["info"])
+        .into_iter()
+        .filter(|e| e.scope == "system" || e.scope == "global")
+        .collect()
 }
 
 /// この窓の位置と大きさ（画面のピクセル。x, y, 幅, 高さ）。
