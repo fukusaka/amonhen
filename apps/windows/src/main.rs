@@ -8,6 +8,7 @@
 
 mod activity;
 mod app;
+mod askpass;
 mod blame;
 mod branchswitcher;
 mod data;
@@ -151,6 +152,11 @@ fn parse() -> Result<Args, String> {
 
 fn main() {
     let started = Instant::now();
+    // git・ssh が資格情報を尋ねてきた（`GIT_ASKPASS`・`SSH_ASKPASS` がこの実行ファイル）。
+    if let Some(prompt) = askpass::prompt() {
+        amonhen_model::i18n::set_default(language());
+        askpass::run(prompt);
+    }
     let mut raw = std::env::args().skip(1);
     if raw.next().as_deref() == Some("--listen") {
         if let Err(e) = listen::run(raw.next().unwrap_or_else(|| "listen.txt".into()).into()) {
@@ -160,6 +166,8 @@ fn main() {
         return;
     }
     amonhen_model::i18n::set_default(language());
+    // git・ssh が尋ねる資格情報は、この実行ファイルの小さな窓で尋ねる（ほかのスレッドを動かす前に）。
+    askpass::install();
     // status で git の fsmonitor を使うか（Settings > Performance。変えたら Settings が渡し直す）。
     amonhen_backend_cli::set_fsmonitor(prefs::bool(prefs::USE_FSMONITOR));
     // Settings > Git > Environment Variables で選んだ名前を、git と ssh に渡す（ほかのスレッドを動かす前に）。
