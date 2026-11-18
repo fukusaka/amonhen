@@ -215,6 +215,16 @@ pub fn menu_bar(on_click: impl Fn() -> Callback<String>) -> View {
                 "all-files-in-one-diff",
                 format!("{mark}{}", amonhen_model::tr!("All Files in One Diff")),
             ));
+            // 変更ファイルを差分の左に木で出すか（切ると、差分の上に一覧）。
+            let mark = if crate::prefs::bool(crate::prefs::HISTORY_FILE_TREE) {
+                "✓ "
+            } else {
+                ""
+            };
+            items.push(MenuItem::item(
+                "changed-files-as-tree",
+                format!("{mark}{}", amonhen_model::tr!("Changed Files as Tree")),
+            ));
             items.push(MenuItem::separator("-toolbar"));
             items.push(MenuItem::item(
                 "customize-toolbar",

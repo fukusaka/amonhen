@@ -28,6 +28,8 @@ pub const LAST_REPOSITORY: &str = "lastRepository";
 pub const FOLD_MERGED_BRANCHES: &str = "foldMergedBranches";
 /// コミットの差分で全ファイルを縦に並べる（既定は並べる。macOS 版・GTK4 版と同じ鍵）。
 pub const STACKED_COMMIT_DIFF: &str = "stackedCommitDiff";
+/// コミットの変更ファイルを差分の左に木で出す（既定は差分の上に一覧。macOS 版・GTK4 版と同じ鍵）。
+pub const HISTORY_FILE_TREE: &str = "historyFileTree";
 /// 選んだコミットの祖先を強調する（既定は強調する。GTK4 版・macOS 版と同じ鍵）。
 pub const HIGHLIGHT_ANCESTORS: &str = "highlightAncestors";
 /// History の行に出す項目（`render::items` のビットを 10 進の文字で。GTK4 版・macOS 版と同じ鍵）。

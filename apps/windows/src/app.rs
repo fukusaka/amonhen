@@ -856,6 +856,8 @@ enum Message {
     /// 出すコミットの変更ファイルが替わった・一覧で選んだ。
     ChangedFiles(Vec<ChangedFile>),
     ChangedFileSelected(Option<usize>),
+    /// 変更ファイルの木で選んだ行（`file_tree` の番号。ディレクトリの行は選ばない）。
+    ChangedTreeSelected(Option<usize>),
     /// 選んだリポジトリを fetch する。
     FetchRepositories(Vec<String>),
     /// 境目を動かした（新しい幅・高さ）・離した。
@@ -1316,6 +1318,20 @@ impl Component for Root {
                 self.changed_file = index;
                 if let Some(index) = index {
                     with_history(|h| h.show_file(index));
+                }
+            }
+            Message::ChangedTreeSelected(index) => {
+                let file =
+                    index.and_then(|i| file_tree(&self.changed_files).get(i).and_then(|r| r.file));
+                if let Some(file) = file {
+                    self.update(Message::ChangedFileSelected(Some(file)), context);
+                }
+            }
+            // View の Changed Files as Tree（変更ファイルを差分の左に木で。macOS 版・GTK4 版と同じ設定）。
+            Message::Command(id) if id == "changed-files-as-tree" => {
+                let tree = !crate::prefs::bool(crate::prefs::HISTORY_FILE_TREE);
+                if let Err(e) = crate::prefs::set_bool(crate::prefs::HISTORY_FILE_TREE, tree) {
+                    eprintln!("変更ファイルを木で出すかを覚えられない: {e}");
                 }
             }
             // View の All Files in One Diff（切ると、コミットの差分は一覧で選んだファイルだけ。macOS 版・GTK4 版と
@@ -5689,6 +5705,7 @@ impl Component for Root {
                     "all-files-in-one-diff" => {
                         crate::prefs::bool(crate::prefs::STACKED_COMMIT_DIFF)
                     }
+                    "changed-files-as-tree" => crate::prefs::bool(crate::prefs::HISTORY_FILE_TREE),
                     "history-item-refs" => bit(crate::render::items::REFS),
                     "history-item-author" => bit(crate::render::items::AUTHOR),
                     "history-item-date" => bit(crate::render::items::DATE),
@@ -6496,14 +6513,30 @@ impl Component for Root {
                     self.changed_files_view(context),
                     self.diff_find_bar(context),
                 )),
+                // 差分（木を出すときは、その左に変更ファイルの木）。
                 Grid::new()
-                    .background(Brush::Solid(Color::transparent()))
-                    .element_ref(&self.diff_area)
                     .grid_row(2)
-                    .children((SwapChainPanel::new().element_ref(&self.diff_panel),))
-                    .menu(Menu::new(
-                        self.diff_file_menu(),
-                        context.callback(Message::DiffFileMenu),
+                    .columns([
+                        if self.shows_changed_files()
+                            && crate::prefs::bool(crate::prefs::HISTORY_FILE_TREE)
+                        {
+                            GridLength::Pixel(220.0)
+                        } else {
+                            GridLength::Pixel(0.0)
+                        },
+                        GridLength::Star(1.0),
+                    ])
+                    .children((
+                        self.changed_tree_view(context),
+                        Grid::new()
+                            .background(Brush::Solid(Color::transparent()))
+                            .element_ref(&self.diff_area)
+                            .grid_column(1)
+                            .children((SwapChainPanel::new().element_ref(&self.diff_panel),))
+                            .menu(Menu::new(
+                                self.diff_file_menu(),
+                                context.callback(Message::DiffFileMenu),
+                            )),
                     )),
             ));
         let menu_bar = crate::menus::menu_bar(|| context.callback(Message::Command));
@@ -11015,8 +11048,65 @@ impl Root {
 
     /// 詳細と差分の間の、変更ファイルの一覧（macOS 版・GTK4 版の、木にしないときの一覧）。選ぶとそのファイルの
     /// 見出しまで差分をスクロールする。History で 2 つ以上のファイルを変えたコミットのときだけ。
+    /// 変更ファイルを出すか（History などで 2 つ以上のとき）。
+    fn shows_changed_files(&self) -> bool {
+        self.page != Page::WorkingCopy && !self.details_expanded && self.changed_files.len() >= 2
+    }
+
+    /// 変更ファイルの木（差分の左。View の Changed Files as Tree を入れたとき）。ディレクトリの行と、その中の
+    /// ファイル（名前だけ、深さで字下げ）。ファイルを選ぶと、そのファイルへ。
+    fn changed_tree_view(&self, context: &ViewContext<Self>) -> View {
+        if !self.shows_changed_files() || !crate::prefs::bool(crate::prefs::HISTORY_FILE_TREE) {
+            return View::empty();
+        }
+        let tree = file_tree(&self.changed_files);
+        let selected = self
+            .changed_file
+            .and_then(|f| tree.iter().position(|r| r.file == Some(f)));
+        let rows = tree.iter().enumerate().map(|(i, r)| {
+            let indent = Thickness::new(r.depth as f64 * 14.0, 0.0, 0.0, 0.0);
+            let content: View = match r.file.and_then(|f| self.changed_files.get(f)) {
+                Some(f) => Grid::new()
+                    .columns([GridLength::Pixel(16.0), GridLength::Star(1.0)])
+                    .margin(indent)
+                    .children((
+                        TextBlock::new()
+                            .text(f.mark.to_string())
+                            .font_size(12.0)
+                            .opacity(0.7)
+                            .grid_column(0),
+                        TextBlock::new()
+                            .text(r.name.clone())
+                            .font_size(12.0)
+                            .text_trimming(TextTrimming::CharacterEllipsis)
+                            .grid_column(1),
+                    )),
+                None => TextBlock::new()
+                    .text(format!("🗀 {}", r.name))
+                    .font_size(12.0)
+                    .opacity(0.8)
+                    .margin(indent)
+                    .into(),
+            };
+            (
+                format!("{i}"),
+                ListViewItem::new().min_height(22.0).content(content),
+            )
+        });
+        let key: String = self.changed_files.iter().map(|f| f.path.as_str()).collect();
+        let list = ListView::new()
+            .selected_index(selected)
+            .on_selection_changed(context.callback(Message::ChangedTreeSelected))
+            .collection_slot(ListViewSlot::Items, rows);
+        Border::new()
+            .grid_column(0)
+            .border_thickness(Thickness::new(0.0, 0.0, 1.0, 0.0))
+            .border_brush(Brush::Solid(Color::rgb(0xe5, 0xe5, 0xe5)))
+            .content(View::keyed_fragment([(key, list)]))
+    }
+
     fn changed_files_view(&self, context: &ViewContext<Self>) -> View {
-        if self.page == Page::WorkingCopy || self.details_expanded || self.changed_files.len() < 2 {
+        if !self.shows_changed_files() || crate::prefs::bool(crate::prefs::HISTORY_FILE_TREE) {
             return View::empty();
         }
         let rows = self.changed_files.iter().enumerate().map(|(i, f)| {
@@ -14441,6 +14531,61 @@ struct ChangedFile {
     binary: bool,
 }
 
+/// 変更ファイルの木の 1 行: 深さ、出す名前、ファイルなら `changed_files` の番号（ディレクトリなら None）。
+#[derive(Debug, PartialEq)]
+struct TreeRow {
+    depth: usize,
+    name: String,
+    file: Option<usize>,
+}
+
+/// 変更ファイルを木に並べる（ディレクトリが先、名前の順。子が 1 つのディレクトリだけなら名前をつなぐ。
+/// GTK4 版の変更ファイルの木と同じ）。
+fn file_tree(files: &[ChangedFile]) -> Vec<TreeRow> {
+    #[derive(Default)]
+    struct Dir {
+        dirs: std::collections::BTreeMap<String, Dir>,
+        files: Vec<(String, usize)>,
+    }
+    let mut root = Dir::default();
+    for (i, f) in files.iter().enumerate() {
+        let parts: Vec<&str> = f.path.split('/').collect();
+        let mut dir = &mut root;
+        for part in &parts[..parts.len() - 1] {
+            dir = dir.dirs.entry((*part).to_owned()).or_default();
+        }
+        dir.files.push((parts[parts.len() - 1].to_owned(), i));
+    }
+    fn walk(dir: &Dir, depth: usize, out: &mut Vec<TreeRow>) {
+        for (name, child) in &dir.dirs {
+            let (mut name, mut child) = (name.clone(), child);
+            while child.files.is_empty() && child.dirs.len() == 1 {
+                let (n, c) = child.dirs.iter().next().expect("one");
+                name = format!("{name}/{n}");
+                child = c;
+            }
+            out.push(TreeRow {
+                depth,
+                name,
+                file: None,
+            });
+            walk(child, depth + 1, out);
+        }
+        let mut files = dir.files.clone();
+        files.sort();
+        for (name, i) in files {
+            out.push(TreeRow {
+                depth,
+                name,
+                file: Some(i),
+            });
+        }
+    }
+    let mut out = Vec::new();
+    walk(&root, 0, &mut out);
+    out
+}
+
 /// 全ファイルの差分から、変更ファイルの一覧を作る（足した・消したは、前後の中身が空か。`file_at` と同じ決め方）。
 fn changed_files(stacked: &amonhen_core::diff::StackedDiff) -> Vec<ChangedFile> {
     stacked
@@ -15231,4 +15376,54 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
 
     REVOKERS.with(|r| r.borrow_mut().extend(revokers));
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn file_tree_joins_single_directories() {
+        let file = |path: &str| ChangedFile {
+            path: path.into(),
+            mark: 'M',
+            added: 0,
+            removed: 0,
+            binary: false,
+        };
+        let files = [file("src/a/b.rs"), file("README.md"), file("src/c.rs")];
+        assert_eq!(
+            file_tree(&files),
+            [
+                TreeRow {
+                    depth: 0,
+                    name: "src".into(),
+                    file: None
+                },
+                TreeRow {
+                    depth: 1,
+                    name: "a".into(),
+                    file: None
+                },
+                TreeRow {
+                    depth: 2,
+                    name: "b.rs".into(),
+                    file: Some(0)
+                },
+                TreeRow {
+                    depth: 1,
+                    name: "c.rs".into(),
+                    file: Some(2)
+                },
+                TreeRow {
+                    depth: 0,
+                    name: "README.md".into(),
+                    file: Some(1)
+                },
+            ]
+        );
+        // 子が 1 つのディレクトリだけなら、つないだ名前で 1 行。
+        let tree = file_tree(&[file("x/y/z.rs"), file("w.rs")]);
+        assert_eq!(tree[0].name, "x/y");
+    }
 }

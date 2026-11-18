@@ -271,62 +271,70 @@ fn appearance(callbacks: &Callbacks) -> View {
         item("history-item-id", items::ID, "Commit ID"),
         item("history-item-signature", items::SIGNATURE, "Signature"),
         note(tr!("What each commit’s row shows besides the subject.")),
-        // 構文と差分の色（GTK4 版の Theme の Color Theme。この FE は明るい外観だけ）。
-        heading(tr!("Color Theme")),
-        StackPanel::new()
-            .orientation(Orientation::Horizontal)
-            .spacing(12.0)
-            .children((
-                TextBlock::new()
-                    .text(tr!("Light appearance"))
-                    .vertical_alignment(VerticalAlignment::Center),
-                {
-                    let names = crate::theme::names();
-                    let selected = crate::theme::selected();
-                    ComboBox::new()
-                        .selected_index(names.iter().position(|n| *n == selected).unwrap_or(0))
-                        .items_source(names)
-                        .on_selection_changed(callbacks.syntax_theme.clone())
-                },
-            )),
-        StackPanel::new()
-            .spacing(4.0)
-            .children((View::keyed_fragment(
-                crate::theme::imported()
-                    .into_iter()
-                    .map(|t| {
-                        (
-                            format!("imported:{}", t.name),
-                            StackPanel::new()
-                                .orientation(Orientation::Horizontal)
-                                .spacing(8.0)
-                                .children((
-                                    TextBlock::new()
-                                        .text(t.name.clone())
-                                        .vertical_alignment(VerticalAlignment::Center),
-                                    TextBlock::new()
-                                        .text(if t.dark { tr!("Dark") } else { tr!("Light") })
-                                        .opacity(0.6)
-                                        .vertical_alignment(VerticalAlignment::Center),
-                                    Button::new()
-                                        .on_click((callbacks.theme_button)(format!(
-                                            "remove:{}",
-                                            t.name
-                                        )))
-                                        .content(TextBlock::new().text(tr!("Remove"))),
-                                )),
-                        )
-                    })
-                    .collect::<Vec<_>>(),
-            ),)),
-        Button::new()
-            .on_click((callbacks.theme_button)("import".to_owned()))
-            .content(TextBlock::new().text(tr!("Import VSCode Theme…"))),
-        display(
-            "diff-standard-colors",
-            crate::prefs::bool(crate::theme::DIFF_STANDARD_COLORS),
-            tr!("Use standard colors for diffs"),
-        ),
+        // 子の数がタプルの上限を超えないよう、後半を 1 つにまとめる。
+        StackPanel::new().children((
+            // 構文と差分の色（GTK4 版の Theme の Color Theme。この FE は明るい外観だけ）。
+            heading(tr!("Color Theme")),
+            StackPanel::new()
+                .orientation(Orientation::Horizontal)
+                .spacing(12.0)
+                .children((
+                    TextBlock::new()
+                        .text(tr!("Light appearance"))
+                        .vertical_alignment(VerticalAlignment::Center),
+                    {
+                        let names = crate::theme::names();
+                        let selected = crate::theme::selected();
+                        ComboBox::new()
+                            .selected_index(names.iter().position(|n| *n == selected).unwrap_or(0))
+                            .items_source(names)
+                            .on_selection_changed(callbacks.syntax_theme.clone())
+                    },
+                )),
+            StackPanel::new()
+                .spacing(4.0)
+                .children((View::keyed_fragment(
+                    crate::theme::imported()
+                        .into_iter()
+                        .map(|t| {
+                            (
+                                format!("imported:{}", t.name),
+                                StackPanel::new()
+                                    .orientation(Orientation::Horizontal)
+                                    .spacing(8.0)
+                                    .children((
+                                        TextBlock::new()
+                                            .text(t.name.clone())
+                                            .vertical_alignment(VerticalAlignment::Center),
+                                        TextBlock::new()
+                                            .text(if t.dark { tr!("Dark") } else { tr!("Light") })
+                                            .opacity(0.6)
+                                            .vertical_alignment(VerticalAlignment::Center),
+                                        Button::new()
+                                            .on_click((callbacks.theme_button)(format!(
+                                                "remove:{}",
+                                                t.name
+                                            )))
+                                            .content(TextBlock::new().text(tr!("Remove"))),
+                                    )),
+                            )
+                        })
+                        .collect::<Vec<_>>(),
+                ),)),
+            Button::new()
+                .on_click((callbacks.theme_button)("import".to_owned()))
+                .content(TextBlock::new().text(tr!("Import VSCode Theme…"))),
+            display(
+                "changed-files-as-tree",
+                crate::prefs::bool(crate::prefs::HISTORY_FILE_TREE),
+                tr!("Show changed files as a tree left of the diff"),
+            ),
+            display(
+                "diff-standard-colors",
+                crate::prefs::bool(crate::theme::DIFF_STANDARD_COLORS),
+                tr!("Use standard colors for diffs"),
+            ),
+        )),
     ))
 }
 
