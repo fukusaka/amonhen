@@ -6713,14 +6713,35 @@ impl Component for Root {
                             | amonhen_model::RefKind::Remote
                             | amonhen_model::RefKind::Tag
                     );
+                    // Ctrl を押していれば、今の範囲に足す（もう入っていれば外す）。いくつもの ref から辿れるものを
+                    // まとめて出す（macOS 版・GTK4 版でいくつも選んだときと同じ）。
+                    let ctrl = xaml::InputKeyboardSource::GetKeyStateForCurrentThread(
+                        xaml::VirtualKey::Control,
+                    )
+                    .is_ok_and(|s| s.contains(xaml::CoreVirtualKeyStates::Down));
                     with_history(|h| {
-                        h.select_commit(&target);
-                        if scoped {
-                            h.session.data.set_scope(crate::data::Scope::Refs(vec![(
-                                entry.kind,
-                                entry.name.clone(),
-                            )]));
+                        if !scoped {
+                            h.select_commit(&target);
+                            return;
                         }
+                        let this = (entry.kind, entry.name.clone());
+                        let list = match h.session.data.scope() {
+                            crate::data::Scope::Refs(mut list) if ctrl => {
+                                if let Some(at) = list.iter().position(|r| *r == this) {
+                                    list.remove(at);
+                                } else {
+                                    list.push(this);
+                                }
+                                list
+                            }
+                            _ => vec![this],
+                        };
+                        if list.is_empty() {
+                            h.session.data.set_scope(crate::data::Scope::All);
+                        } else {
+                            h.session.data.set_scope(crate::data::Scope::Refs(list));
+                        }
+                        h.select_commit(&target);
                     });
                 }
             }
