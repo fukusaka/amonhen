@@ -135,6 +135,10 @@ struct Root {
     sync_lists: Vec<SyncList>,
     /// ステータスバーに出している、終わった操作の一言。
     flash: Option<String>,
+    /// ステータスバーの上に出している失敗（閉じるか、次の失敗・成功で消える。GTK4 版の `show_failure`）と、
+    /// 出した回数（取り消しの帯を、出し直した後に消さないため）。
+    failure: Option<(Arc<Repository>, crate::failure::Failure)>,
+    failure_generation: u64,
     /// 走っている操作の数（GTK4 版の Activity のボタンの回る印と数）。
     running: usize,
     /// History で複数選んでいるコミット（上から。右クリックのメニューを複数のもの用にする）。
@@ -896,6 +900,11 @@ enum Message {
     EditApplied(Option<Value>, Value),
     /// 終わった操作の一言を消す。
     FlashExpired,
+    /// 失敗の帯のボタン: 次の一手（何番目か）、詳細、閉じる、取り消しの帯の時間切れ（出した回数）。
+    FailureRemedy(usize),
+    FailureDetails,
+    FailureClose,
+    FailureExpired(u64),
     /// History で複数選んだコミット（上から。1 つ以下なら空）。
     /// 複数選んだコミット（上から。merge か）と、行が続いているか。
     MultiSelected(Vec<(String, bool)>, bool),
@@ -1147,6 +1156,8 @@ impl Component for Root {
             stash_details: std::collections::HashMap::new(),
             sync_lists: Vec::new(),
             flash: None,
+            failure: None,
+            failure_generation: 0,
             running: 0,
             multi: Vec::new(),
             multi_consecutive: false,
@@ -1577,7 +1588,8 @@ impl Component for Root {
                 self.update(Message::Done(done), context);
             }
             Message::Done(text) => {
-                // 終わった後の読み直しは同じ（`Performed`）。一言は 5 秒（GTK4 版と同じ）。
+                // 終わった後の読み直しは同じ（`Performed`）。一言は 5 秒（GTK4 版と同じ）。前の失敗の帯は消す。
+                self.failure = None;
                 self.update(Message::Performed(None), context);
                 self.flash = Some(text);
                 FLASH_UNTIL
@@ -2724,22 +2736,9 @@ impl Component for Root {
                     }
                 }
                 (Some(Dialog::Failure { repo, failure }), ContentDialogResult::Primary) => {
-                    use crate::failure::Remedy;
-                    match failure.remedies(true).into_iter().next() {
-                        Some(Remedy::Retry) => {
-                            if let Some(command) = failure.command.clone() {
-                                perform(context, repo, command, String::new());
-                            }
-                        }
-                        Some(Remedy::Pull) => {
-                            self.update(Message::Command("pull".to_owned()), context)
-                        }
-                        Some(Remedy::WorkingCopy) => self.show_page(Page::WorkingCopy),
-                        Some(Remedy::OpenTerminal) => {
-                            self.update(Message::Command("open-in-terminal".to_owned()), context)
-                        }
-                        // ほかの worktree・上流は、この FE ではまだ一手で開けない。
-                        _ => {}
+                    if let Some(remedy) = failure.remedies(true).into_iter().next() {
+                        self.failure = None;
+                        self.run_remedy(repo, &failure, remedy, context);
                     }
                 }
                 // 押したボタンの確認を出す。同じ ContentDialog を開いたまま中身だけ替えると開き直らないので、
@@ -4612,9 +4611,37 @@ impl Component for Root {
                     });
                     return;
                 }
-                // 取り消したときは知らせない（GTK4 版は帯を出してすぐ消す）。
-                if !failure.cancelled() {
+                // ステータスバーの上の帯で知らせる（作業を止めない。GTK4 版・macOS 版と同じ）。取り消したことは
+                // しばらくしたら消す。
+                self.failure_generation += 1;
+                if failure.cancelled() {
+                    let generation = self.failure_generation;
+                    context.spawn_background(move |_| {
+                        std::thread::sleep(std::time::Duration::from_secs(5));
+                        Message::FailureExpired(generation)
+                    });
+                }
+                self.failure = Some((repo, failure));
+            }
+            Message::FailureRemedy(index) => {
+                let Some((repo, failure)) = self.failure.take() else {
+                    return;
+                };
+                if let Some(remedy) = failure.remedies(true).into_iter().nth(index) {
+                    self.run_remedy(repo, &failure, remedy, context);
+                }
+            }
+            Message::FailureDetails => {
+                if let Some((repo, failure)) = self.failure.clone() {
                     self.dialog = Some(Dialog::Failure { repo, failure });
+                }
+            }
+            Message::FailureClose => self.failure = None,
+            Message::FailureExpired(generation) => {
+                if generation == self.failure_generation
+                    && self.failure.as_ref().is_some_and(|(_, f)| f.cancelled())
+                {
+                    self.failure = None;
                 }
             }
             Message::Performed(failed) => {
@@ -11248,6 +11275,130 @@ impl Root {
             )
     }
 
+    /// 失敗の次の一手をする（帯のボタンと、詳細のダイアログの主のボタン）。
+    fn run_remedy(
+        &mut self,
+        repo: Arc<Repository>,
+        failure: &crate::failure::Failure,
+        remedy: crate::failure::Remedy,
+        context: &ComponentContext<Self>,
+    ) {
+        use crate::failure::Remedy;
+        match remedy {
+            Remedy::Retry => {
+                if let Some(command) = failure.command.clone() {
+                    perform(context, repo, command, String::new());
+                }
+            }
+            Remedy::Pull => self.update(Message::Command("pull".to_owned()), context),
+            Remedy::WorkingCopy => self.show_page(Page::WorkingCopy),
+            Remedy::OpenTerminal => {
+                self.update(Message::Command("open-in-terminal".to_owned()), context)
+            }
+        }
+    }
+
+    /// 失敗の帯（ステータスバーの上。GTK4 版の `show_failure`）: 何が失敗したか、なぜか（git の全文は
+    /// ツールチップと Details）、次の一手、Details・Activity・Close。取り消したときは見出しと Activity・Close だけ。
+    fn failure_band(&self, context: &ViewContext<Self>) -> View {
+        let Some((_, failure)) = &self.failure else {
+            return View::empty();
+        };
+        let cancelled = failure.cancelled();
+        let button = |title: String, accent: bool, on: Callback<()>| -> View {
+            let b = Button::new().on_click(on);
+            let b = if accent {
+                b.style(ButtonStyle::Accent)
+            } else {
+                b
+            };
+            b.content(TextBlock::new().text(title).font_size(12.0))
+        };
+        let mut buttons: Vec<(String, View)> = Vec::new();
+        if !cancelled {
+            for (i, remedy) in failure.remedies(true).into_iter().enumerate() {
+                buttons.push((
+                    format!("remedy{i}"),
+                    button(
+                        remedy.title(),
+                        i == 0,
+                        context.callback(move |()| Message::FailureRemedy(i)),
+                    ),
+                ));
+            }
+            buttons.push((
+                "details".to_owned(),
+                button(
+                    tr!("Details"),
+                    false,
+                    context.callback(|()| Message::FailureDetails),
+                ),
+            ));
+        }
+        buttons.push((
+            "activity".to_owned(),
+            button(
+                "Activity".to_owned(),
+                false,
+                context.callback(|()| Message::Command("activity".to_owned())),
+            ),
+        ));
+        buttons.push((
+            "close".to_owned(),
+            button(
+                tr!("Close"),
+                false,
+                context.callback(|()| Message::FailureClose),
+            ),
+        ));
+        let (icon, title, summary) = if cancelled {
+            ("⏹", tr!("Operation Cancelled"), String::new())
+        } else {
+            ("⛔", failure.op_title(), failure.summary())
+        };
+        Border::new()
+            .background(Brush::Solid(if cancelled {
+                Color::rgb(0xf0, 0xf0, 0xf0)
+            } else {
+                Color::rgb(0xfd, 0xe7, 0xe9)
+            }))
+            .padding(Thickness::new(10.0, 5.0, 10.0, 5.0))
+            .content(
+                Grid::new()
+                    .columns([
+                        GridLength::Auto,
+                        GridLength::Auto,
+                        GridLength::Star(1.0),
+                        GridLength::Auto,
+                    ])
+                    .column_spacing(8.0)
+                    .children((
+                        TextBlock::new()
+                            .text(icon)
+                            .vertical_alignment(VerticalAlignment::Center)
+                            .grid_column(0),
+                        TextBlock::new()
+                            .text(title)
+                            .font_size(12.0)
+                            .font_weight(FontWeight::SEMI_BOLD)
+                            .vertical_alignment(VerticalAlignment::Center)
+                            .grid_column(1),
+                        TextBlock::new()
+                            .text(summary)
+                            .font_size(12.0)
+                            .text_trimming(TextTrimming::CharacterEllipsis)
+                            .vertical_alignment(VerticalAlignment::Center)
+                            .grid_column(2)
+                            .tooltip(failure.message.clone()),
+                        StackPanel::new()
+                            .orientation(Orientation::Horizontal)
+                            .spacing(6.0)
+                            .grid_column(3)
+                            .children((View::keyed_fragment(buttons),)),
+                    )),
+            )
+    }
+
     fn status_bar(&self, context: &ViewContext<Self>) -> View {
         let mut text = match &self.busy {
             Some(busy) => busy.clone(),
@@ -11293,9 +11444,11 @@ impl Root {
                     .grid_column(1)
                     .content(running),
             ));
-        StackPanel::new()
-            .grid_row(3)
-            .children((self.sequence_band(context), bar))
+        StackPanel::new().grid_row(3).children((
+            self.failure_band(context),
+            self.sequence_band(context),
+            bar,
+        ))
     }
 
     /// 途中の操作の帯（ステータスバーの上。どの画面でも出す。macOS 版・GTK4 版のステータスバーの行）。
