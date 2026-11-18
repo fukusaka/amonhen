@@ -35,6 +35,10 @@ export function testEnv(dir, engine) {
   } else {
     env.XDG_DATA_HOME = join(home, '.local', 'share');
     env.XDG_CONFIG_HOME = join(home, '.config');
+    // 動かした git をすべて記録する（trace2。拡張・組み込みの git 拡張・daemon・テスト自身のどれも）。index の鍵と
+    // ぶつかったときに、その瞬間に動いていた git を言うため。Windows では開いたままのファイルが片付けの邪魔になるので取らない
+    env.GIT_TRACE2_EVENT = join(dir, 'trace2.jsonl');
+    env.GIT_TRACE2_ENV_VARS = 'GIT_OPTIONAL_LOCKS';
   }
   return env;
 }
