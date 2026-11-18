@@ -271,6 +271,14 @@ fn send_syntax(
     });
 }
 
+/// `f` にかかった時間を Activity の Performance に `metric`（訳す前の名前）で記録する。
+fn timed<T>(metric: &'static str, f: impl FnOnce() -> T) -> T {
+    let started = std::time::Instant::now();
+    let value = f();
+    crate::activity::record(metric, started.elapsed().as_secs_f64() * 1000.0);
+    value
+}
+
 /// 届いた検索の答え。
 pub enum SearchDone {
     Found(String),
@@ -620,7 +628,18 @@ impl Data {
             if let Some(event) = refs(&history) {
                 send(event);
             }
-            let status = || match repo.load_status() {
+            // Activity の Events に出すリポジトリの名前（作業ツリーのフォルダ、なければ .git の場所）。
+            let name = {
+                let paths = repo.paths();
+                paths
+                    .workdir
+                    .as_deref()
+                    .unwrap_or(&paths.git_dir)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+            };
+            let status = || match timed("Reload status", || repo.load_status()) {
                 Ok(status) => Some(Event::Status(status)),
                 Err(e) => {
                     eprintln!("status を読めない: {e}");
@@ -657,6 +676,29 @@ impl Data {
                     bits |= amonhen_watch::Changes::REFS.0;
                 }
                 let changes = amonhen_watch::Changes(bits);
+                // 何が変わったかを Activity の Events に（GTK4 版と同じ言い方）。
+                let what: Vec<String> = [
+                    (amonhen_watch::Changes::REFS, "ref".to_owned()),
+                    (amonhen_watch::Changes::INDEX, "index".to_owned()),
+                    (
+                        amonhen_watch::Changes::WORKTREE,
+                        amonhen_model::tr!("working tree"),
+                    ),
+                    (amonhen_watch::Changes::CONFIG, amonhen_model::tr!("config")),
+                ]
+                .into_iter()
+                .filter(|(bit, _)| changes.contains(*bit))
+                .map(|(_, name)| name)
+                .collect();
+                if !what.is_empty() {
+                    crate::activity::event(
+                        &name,
+                        amonhen_model::tr!(
+                            "Changed: {what}",
+                            what = what.join(&amonhen_model::tr!(", "))
+                        ),
+                    );
+                }
                 if bits & REBUILD != 0 {
                     // History の永続キャッシュを捨てて作り直す（View > Rebuild History）。
                     match repo.rebuild_history() {
@@ -667,7 +709,7 @@ impl Data {
                         Err(e) => eprintln!("History を作り直せない: {e}"),
                     }
                 } else if changes.contains(amonhen_watch::Changes::REFS) {
-                    match repo.load_history() {
+                    match timed("Reload History", || repo.load_history()) {
                         Ok(h) => {
                             history = shape(h);
                             send(Event::History(repo.clone(), history.clone()));
@@ -1227,7 +1269,7 @@ impl Data {
                 let stacked = repo.stacked_diff(&changes).map_err(|e| e.to_string())?;
                 Ok(CommitShown::new(row, info, Arc::new(stacked)))
             };
-            let shown = match load() {
+            let shown = match timed("Load diff", load) {
                 Ok(shown) => shown,
                 Err(e) => {
                     let _ = tx.send(Event::Failed(format!("コミットを読めない: {e}")));
