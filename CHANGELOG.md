@@ -1175,6 +1175,13 @@ First release.
 
 ## VSCode extension
 
+### Unreleased
+
+#### Fixed
+
+- Working Copy: in a narrow diff pane, the buttons above the diff move to their own row instead of wrapping their
+  labels and hiding the file name.
+
 ### [0.2.8] - 2026-11-18
 
 History search with the engine can match the author's email, the committer and the whole message, and Repository

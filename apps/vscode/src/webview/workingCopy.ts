@@ -336,7 +336,10 @@ export function createWorkingCopyView(): View {
     }
     const d = diff;
     const head = el('div', 'diff-head');
-    head.append(el('span', 'path', d.path));
+    const path = el('span', 'path', d.path);
+    // ボタンの列を次の段に送る前にパスに残す幅。短いパスには、その長さの分だけ取る（上限は main.css の 8em）
+    path.style.flexBasis = `min(${[...d.path].length}ch, 8em)`;
+    head.append(path);
     if (d.lineEndings?.notable) {
       head.append(lineEndingsBadge(d.lineEndings));
     }

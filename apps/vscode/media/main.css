@@ -1239,6 +1239,24 @@ button.sheet-list-item:hover {
   gap: 6px;
 }
 
+/* Working Copy の見出し。行を選ぶとボタンが増えるので、幅が足りないときはパスを 8em（短いパスはその長さ。
+   workingCopy.ts が flex-basis に入れる）まで縮めてから、ボタンの列を次の段に送る。その段にも入らなければ
+   ボタンごとに折り返す（ボタンの中の文字は折り返さない） */
+.wc-diff .diff-head {
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+
+.wc-diff .diff-head .actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  margin-left: auto;
+}
+
+.wc-diff .diff-head .actions button {
+  white-space: nowrap;
+}
+
 .diff-head .eol {
   font-size: 0.9em;
   white-space: nowrap;
