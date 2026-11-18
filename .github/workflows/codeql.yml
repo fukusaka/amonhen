@@ -19,17 +19,35 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  # Swift を調べるか（scripts/ci-needs-macos.sh。Windows のアプリと文書だけを変えた PR では macOS で流さない）。
+  changes:
+    name: Changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read # コミットを取ってくる
+      pull-requests: read # PR が変えたファイルの一覧
+    outputs:
+      macos: ${{ steps.decide.outputs.macos }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: decide
+        run: scripts/ci-needs-macos.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+
   analyze:
     name: Analyze (${{ matrix.language }})
+    needs: changes
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { language: actions, build-mode: none, runner: ubuntu-latest }
-          - { language: javascript-typescript, build-mode: none, runner: ubuntu-latest }
-          - { language: rust, build-mode: none, runner: ubuntu-latest }
-          - { language: swift, build-mode: manual, runner: macos-latest }
-    runs-on: ${{ matrix.runner }}
+        language: ${{ fromJSON(needs.changes.outputs.macos == 'true' && '["actions","javascript-typescript","rust","swift"]' || '["actions","javascript-typescript","rust"]') }}
+    # Swift だけ macOS でビルドして調べる。ほかはビルドしない。
+    runs-on: ${{ matrix.language == 'swift' && 'macos-latest' || 'ubuntu-latest' }}
     timeout-minutes: 60
     permissions:
       contents: read # コミットを取ってくる
@@ -46,7 +64,7 @@ jobs:
       - uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           languages: ${{ matrix.language }}
-          build-mode: ${{ matrix.build-mode }}
+          build-mode: ${{ matrix.language == 'swift' && 'manual' || 'none' }}
       # CodeQL はビルドを x86_64 の tracer の下で動かすので、swift build も既定では x86_64 向けに組み、arm64 の
       # Rust のコアとリンクできない。CodeQL が見るのはこのビルドなので、arm64 向けと決めて組む。
       - if: matrix.language == 'swift'
