@@ -938,6 +938,54 @@ impl Data {
         });
     }
 
+    /// Working Copy の差分の `row` の行を含めているか（変わった行でなければ None）。
+    pub fn working_row_staged(&self, row: usize) -> Option<bool> {
+        use amonhen_layout::DiffRow;
+        let working = self.working.as_ref()?;
+        let kind = working.diff.view.rows.get(row)?.kind;
+        if !matches!(kind, DiffRow::ADDED | DiffRow::REMOVED) {
+            return None;
+        }
+        working.diff.combined.as_ref()?.get(row).copied()
+    }
+
+    /// Working Copy の差分の `a`〜`b` の変わった行を、まとめて `stage`（含める・外す）にする（印の上を引いた
+    /// ときと Shift+クリック。GTK4 版の印の範囲）。
+    pub fn set_working_range(&self, a: usize, b: usize, stage: bool) {
+        use amonhen_layout::DiffRow;
+        let Some(working) = &self.working else { return };
+        let Some(combined) = working.diff.combined.as_ref() else {
+            return;
+        };
+        let rows: Vec<usize> = (a.min(b)..=a.max(b))
+            .filter(|&r| {
+                working
+                    .diff
+                    .view
+                    .rows
+                    .get(r)
+                    .is_some_and(|x| matches!(x.kind, DiffRow::ADDED | DiffRow::REMOVED))
+                    && combined.get(r).copied() != Some(stage)
+            })
+            .collect();
+        if rows.is_empty() {
+            return;
+        }
+        let (Some(repo), diff, changed) = (
+            self.repo.clone(),
+            working.diff.clone(),
+            self.changed_tx.clone(),
+        ) else {
+            return;
+        };
+        std::thread::spawn(move || {
+            if let Err(e) = repo.set_rows_staged(&diff, &rows, stage) {
+                eprintln!("行を含められない: {e}");
+            }
+            let _ = changed.send(amonhen_watch::Changes::INDEX.0);
+        });
+    }
+
     /// Working Copy の差分の hunk の見出し（`row`）の行をまとめて含める・外す（GTK4 版の hunk の印）。1 行でも
     /// 含めていなければすべて含め、すべて含めていればすべて外す。
     pub fn toggle_working_hunk(&self, row: usize) {

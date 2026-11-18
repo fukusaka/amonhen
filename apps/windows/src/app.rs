@@ -73,6 +73,10 @@ thread_local! {
         const { RefCell::new(None) };
     /// 差分の欄と、右クリックした位置（メニューを作り直してから、そこで開く）。
     static DIFF_AT: RefCell<Option<(xaml::UIElement, xaml::Point)>> = const { RefCell::new(None) };
+    /// Working Copy の差分で最後に押した印の行と、その行にした状態（Shift+クリックの起点）。
+    static MARK_ANCHOR: std::cell::Cell<Option<(usize, bool)>> = const { std::cell::Cell::new(None) };
+    /// 印の上を引いている間（起点の行、今の行、起点にした状態）。離したら間の行をまとめて同じ状態にする。
+    static MARK_DRAG: std::cell::Cell<Option<(usize, usize, bool)>> = const { std::cell::Cell::new(None) };
     /// 右クリックで外しておいた差分のメニュー（作り直したら付き直す）。
     static DIFF_FLYOUT: RefCell<Option<xaml::FlyoutBase>> = const { RefCell::new(None) };
     /// History と差分に付けたイベント（持っている間だけ届く）。
@@ -14971,10 +14975,33 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
                             .working
                             .as_ref()
                             .and_then(|w| w.diff.view.rows.get(row).map(|r| r.kind));
+                        let shift = xaml::InputKeyboardSource::GetKeyStateForCurrentThread(
+                            xaml::VirtualKey::Shift,
+                        )
+                        .is_ok_and(|s| s.contains(xaml::CoreVirtualKeyStates::Down));
                         match kind {
+                            // Shift+クリック: 前に押した印の行からここまでを、その行と同じ状態に。
                             Some(
                                 amonhen_layout::DiffRow::ADDED | amonhen_layout::DiffRow::REMOVED,
-                            ) => h.session.data.toggle_working_row(row),
+                            ) if shift && MARK_ANCHOR.with(std::cell::Cell::get).is_some() => {
+                                if let Some((anchor, stage)) =
+                                    MARK_ANCHOR.with(std::cell::Cell::get)
+                                {
+                                    h.session.data.set_working_range(anchor, row, stage);
+                                }
+                            }
+                            // 押した行を切り替え、引いたら離したときに間の行も同じ状態にする。
+                            Some(
+                                amonhen_layout::DiffRow::ADDED | amonhen_layout::DiffRow::REMOVED,
+                            ) => {
+                                let stage = !h.session.data.working_row_staged(row).unwrap_or(true);
+                                h.session.data.toggle_working_row(row);
+                                MARK_ANCHOR.with(|a| a.set(Some((row, stage))));
+                                MARK_DRAG.with(|d| d.set(Some((row, row, stage))));
+                                if let Ok(pointer) = args.Pointer() {
+                                    let _ = source.CapturePointer(&pointer);
+                                }
+                            }
                             // hunk の見出しの印: その hunk の行をまとめて。
                             Some(amonhen_layout::DiffRow::HUNK) => {
                                 h.session.data.toggle_working_hunk(row)
@@ -15046,6 +15073,42 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
     }
 
     if target == Target::Diff {
+        // 印の上を引く: 指の下の行を覚え、離したら起点からその行までをまとめて同じ状態にする。
+        let source = ui.clone();
+        revokers.push(
+            ui.PointerMoved(move |_, args: Ref<xaml::PointerRoutedEventArgs>| {
+                let Some(args) = args.as_ref() else { return };
+                let Some((anchor, _, stage)) = MARK_DRAG.with(std::cell::Cell::get) else {
+                    return;
+                };
+                let Ok(position) = args.GetCurrentPoint(&source).and_then(|p| p.Position()) else {
+                    return;
+                };
+                with_history(|h| {
+                    let row = ((h.diff.scroll_y + position.Y) / DIFF_ROW_HEIGHT).floor();
+                    if row >= 0.0 {
+                        MARK_DRAG.with(|d| d.set(Some((anchor, row as usize, stage))));
+                    }
+                });
+                let _ = args.SetHandled(true);
+            })?,
+        );
+        let source = ui.clone();
+        revokers.push(
+            ui.PointerReleased(move |_, args: Ref<xaml::PointerRoutedEventArgs>| {
+                let Some(args) = args.as_ref() else { return };
+                let Some((anchor, current, stage)) = MARK_DRAG.with(std::cell::Cell::take) else {
+                    return;
+                };
+                if let Ok(pointer) = args.Pointer() {
+                    let _ = source.ReleasePointerCapture(&pointer);
+                }
+                if current != anchor {
+                    with_history(|h| h.session.data.set_working_range(anchor, current, stage));
+                }
+                let _ = args.SetHandled(true);
+            })?,
+        );
         // 右クリック: 押した行のファイルのメニューに作り直してから開く（WinUI が今のメニューを開かないよう、
         // 扱ったことにする）。Working Copy の差分では、押した行（hunk）を捨てるメニュー。
         let source = ui.clone();
