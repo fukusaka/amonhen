@@ -68,7 +68,7 @@ checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
 name = "amonhen-backend-cli"
-version = "0.2.11"
+version = "0.2.12"
 dependencies = [
  "amonhen-model",
  "amonhen-watch",
@@ -78,7 +78,7 @@ dependencies = [
 
 [[package]]
 name = "amonhen-backend-gix"
-version = "0.2.11"
+version = "0.2.12"
 dependencies = [
  "amonhen-backend-cli",
  "amonhen-model",
@@ -88,7 +88,7 @@ dependencies = [
 
 [[package]]
 name = "amonhen-core"
-version = "0.2.11"
+version = "0.2.12"
 dependencies = [
  "amonhen-layout",
  "amonhen-model",
@@ -106,14 +106,14 @@ dependencies = [
 
 [[package]]
 name = "amonhen-layout"
-version = "0.2.11"
+version = "0.2.12"
 dependencies = [
  "memmap2",
 ]
 
 [[package]]
 name = "amonhen-model"
-version = "0.2.11"
+version = "0.2.12"
 dependencies = [
  "amonhen-layout",
  "libc",
@@ -123,7 +123,7 @@ dependencies = [
 
 [[package]]
 name = "amonhen-projection"
-version = "0.2.11"
+version = "0.2.12"
 dependencies = [
  "amonhen-layout",
  "amonhen-model",
@@ -131,7 +131,7 @@ dependencies = [
 
 [[package]]
 name = "amonhen-remote"
-version = "0.2.11"
+version = "0.2.12"
 dependencies = [
  "amonhen-layout",
  "amonhen-model",
@@ -149,7 +149,7 @@ dependencies = [
 
 [[package]]
 name = "amonhen-watch"
-version = "0.2.11"
+version = "0.2.12"
 dependencies = [
  "amonhen-model",
  "notify",
