@@ -312,7 +312,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Three columns with bands (Current / Result / Incoming) | ✓ | ✓ | △ | n/a | n/a | VSCode: VSCode's own 3-way merge editor.<br>Windows: Three columns; the side columns color each conflict (Current blue, Incoming green, Base gray, the selected one darker, resolved ones dimmed) with ≫ / ≪ to take that side; no aligned scrolling. |
 | Show Base | ✓ | ✓ | ✓ | n/a | n/a |  |
 | Magic Merge (and the safe rules when a file opens) | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: Conflicts open VSCode's standard 3-way merge editor.<br>CLI: `merge-file` (also as git's mergetool). |
-| Editable Result with undo per conflict | ✓ | ✓ | △ | n/a | n/a |<br>Windows: The text box's own undo. |
+| Editable Result with undo per conflict | ✓ | ✓ | ✓ | n/a | n/a |  |
 | Resolve a file with Current / Incoming | ✓ | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
 | Open in an external merge tool | — | — | — | n/a | n/a |  |
 | Pop out the editor into a window | ✓ | ✓ | — | n/a | n/a |  |

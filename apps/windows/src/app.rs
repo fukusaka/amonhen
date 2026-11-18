@@ -79,6 +79,8 @@ thread_local! {
     static MARK_DRAG: std::cell::Cell<Option<(usize, usize, bool)>> = const { std::cell::Cell::new(None) };
     /// History でコミットを運んでいる間（押した行、押した高さ、動かし始めたか）。
     static HISTORY_DRAG: std::cell::Cell<Option<(u32, f64, bool)>> = const { std::cell::Cell::new(None) };
+    /// マージエディタで、Ctrl+Z で戻せる・Ctrl+Y でやり直せる書き換えがあるか（描くたびに書き直す）。
+    static MERGE_UNDO: std::cell::Cell<(bool, bool)> = const { std::cell::Cell::new((false, false)) };
     /// 右クリックで外しておいた差分のメニュー（作り直したら付き直す）。
     static DIFF_FLYOUT: RefCell<Option<xaml::FlyoutBase>> = const { RefCell::new(None) };
     /// History と差分に付けたイベント（持っている間だけ届く）。
@@ -209,6 +211,8 @@ struct Root {
     /// 帯を開いた回数（開くたびに欄にフォーカスを入れる）。
     diff_find_opened: u64,
     diff_find_box: ElementRef<TextBox>,
+    /// マージエディタの Result の欄（Ctrl+Z・Ctrl+Y を付ける）。
+    merge_result_box: ElementRef<TextBox>,
     diff_find_query: String,
     diff_find_status: String,
     /// Working Copy の一部だけ含めているチェック（キーごと）と、直前の画面で使ったキー。
@@ -790,6 +794,8 @@ enum Message {
     /// マージエディタの Base の欄を出すか。
     MergeBase(bool),
     MergeResult(String),
+    /// マージエディタの Accept などの書き換えを戻す（true ならやり直す）。
+    MergeUndo(bool),
     /// Settings: git の名前とメールを読んだ・欄を書き換えた・保存・チェックを替えた・閉じる。
     SettingsGit(String, String, Vec<crate::reposettings::Entry>),
     /// Settings > Git の Operations・Working Copy で選んだ（行の id と番号）。
@@ -1161,6 +1167,7 @@ impl Component for Root {
             diff_find_open: false,
             diff_find_opened: 0,
             diff_find_box: ElementRef::new(),
+            merge_result_box: ElementRef::new(),
             diff_find_query: String::new(),
             diff_find_status: String::new(),
             mixed_checks: RefCell::default(),
@@ -4741,6 +4748,11 @@ impl Component for Root {
                     state.load(info);
                 }
             }
+            Message::MergeUndo(redo) => {
+                if let Some(state) = self.merge.as_mut() {
+                    state.undo(redo);
+                }
+            }
             Message::MergeResult(text) => {
                 if let Some(state) = self.merge.as_mut() {
                     state.edit(&text);
@@ -6850,6 +6862,24 @@ impl Component for Root {
                 let _ = field.request_focus();
                 None
             });
+        }
+        // マージエディタの Result の欄に Ctrl+Z・Ctrl+Y を付ける（開いたとき、Base の欄の出し入れで作り直したとき）。
+        if let (Page::Merge, Some(state)) = (self.page, &self.merge) {
+            let field = self.merge_result_box.clone();
+            context.use_effect(
+                "merge-keys",
+                (state.path.clone(), state.show_base, state.sides.is_some()),
+                move || {
+                    let _ = field.request_native_element(|result| {
+                        if let Ok(element) = result
+                            && let Err(e) = attach_merge_keys(&element)
+                        {
+                            eprintln!("マージエディタの欄にキーを付けられない: {e}");
+                        }
+                    });
+                    None
+                },
+            );
         }
         // 検索の欄を開いたら、フォーカスを入れて Enter・Esc を受ける（描き直した後に）。
         if self.search_opened > 0 {
@@ -11836,9 +11866,11 @@ impl Root {
         let (Page::Merge, Some(state)) = (self.page, &self.merge) else {
             return View::empty();
         };
+        MERGE_UNDO.with(|u| u.set((state.can_undo(), state.can_redo())));
         let view = crate::merge::view(
             state,
             crate::merge::Callbacks {
+                result_box: &self.merge_result_box,
                 button: Box::new(|key| context.callback(move |()| Message::MergeButton(key))),
                 pick: Box::new(|key: String| {
                     context.callback(move |()| Message::MergePick(key.clone()))
@@ -14520,6 +14552,36 @@ fn attach_search_keys(element: &IInspectable) -> windows_core_reactor::Result<()
         let _ = args.SetHandled(true);
         with_history(|h| {
             h.sender.send(message);
+        });
+    })?;
+    REVOKERS.with(|r| r.borrow_mut().push(revoker));
+    Ok(())
+}
+
+/// マージエディタの Result の欄: Accept などで書き換えた直後なら、Ctrl+Z でそれを戻し、Ctrl+Y・Ctrl+Shift+Z で
+/// やり直す（手で打った後は TextBox の Undo のまま）。
+fn attach_merge_keys(element: &IInspectable) -> windows_core_reactor::Result<()> {
+    let ui: xaml::UIElement = element.cast()?;
+    let revoker = ui.PreviewKeyDown(|_, args: Ref<xaml::KeyRoutedEventArgs>| {
+        let Some(args) = args.as_ref() else { return };
+        let down = |key: xaml::VirtualKey| {
+            xaml::InputKeyboardSource::GetKeyStateForCurrentThread(key)
+                .is_ok_and(|s| s.contains(xaml::CoreVirtualKeyStates::Down))
+        };
+        if !down(xaml::VirtualKey::Control) {
+            return;
+        }
+        let shift = down(xaml::VirtualKey::Shift);
+        let (can_undo, can_redo) = MERGE_UNDO.with(std::cell::Cell::get);
+        let redo = match args.Key() {
+            Ok(xaml::VirtualKey::Z) if !shift && can_undo => false,
+            Ok(xaml::VirtualKey::Z) if shift && can_redo => true,
+            Ok(xaml::VirtualKey::Y) if can_redo => true,
+            _ => return,
+        };
+        let _ = args.SetHandled(true);
+        with_history(|h| {
+            h.sender.send(Message::MergeUndo(redo));
         });
     })?;
     REVOKERS.with(|r| r.borrow_mut().push(revoker));
