@@ -258,6 +258,15 @@ impl State {
         };
     }
 
+    /// 選んでいるコンフリクトが Result の何割目の行から始まるか（Result の欄をそこへスクロールする）。
+    pub fn selected_fraction(&self) -> Option<f64> {
+        let text = self.typed.as_deref().unwrap_or(&self.result);
+        let data = text.as_bytes();
+        let lines = conflict::line_ranges(data).len();
+        let start = conflict::parse(data).get(self.selected)?.lines.start;
+        (lines > 0).then(|| start as f64 / lines as f64)
+    }
+
     pub fn step(&mut self, forward: bool) {
         let count = self.conflicts();
         if count == 0 {
@@ -591,6 +600,17 @@ mod tests {
         assert!(s.result.contains("\nq\n"));
         // 解いたものはもう選べない。
         assert!(!s.pick(1, Choice::Ours));
+    }
+
+    #[test]
+    fn selected_fraction_points_at_the_conflict_start() {
+        let mut s = State::new("f".into());
+        let result = "a\nb\n<<<<<<< ours\nx\n=======\ny\n>>>>>>> theirs\nc\n<<<<<<< ours\np\n=======\nq\n>>>>>>> theirs\n";
+        s.load(Ok(json!({ "result": result })));
+        // 13 行のうち、1 つ目は 2 行目、2 つ目は 8 行目から。
+        assert_eq!(s.selected_fraction(), Some(2.0 / 13.0));
+        s.step(true);
+        assert_eq!(s.selected_fraction(), Some(8.0 / 13.0));
     }
 
     #[test]

@@ -4849,6 +4849,14 @@ impl Component for Root {
                 });
             }
             Message::MergeBringIntoView => {
+                // Result の欄も、選んだコンフリクトへ（左右の欄と同じ所が見えるように）。
+                if let Some(fraction) = self.merge.as_ref().and_then(|m| m.selected_fraction()) {
+                    let _ = self.merge_result_box.request_native_element(move |result| {
+                        if let Ok(element) = result {
+                            xaml::scroll_to_fraction(&element, fraction);
+                        }
+                    });
+                }
                 for r in &self.merge_chosen {
                     let _ = r.request_native_element(|result| {
                         if let Ok(element) = result

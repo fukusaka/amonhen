@@ -70,6 +70,10 @@ const FILTER: &[&str] = &[
     "Microsoft.UI.Xaml.VerticalAlignment",
     "Microsoft.UI.Xaml.Thickness",
     "Microsoft.UI.Xaml.Visibility",
+    // マージエディタの Result の欄（TextBox）を、選んだコンフリクトの行へスクロールする（中の ScrollViewer を動かす）。
+    "Microsoft.UI.Xaml.Controls.ScrollViewer",
+    "Microsoft.UI.Xaml.Controls.IScrollViewer::{ExtentHeight,ViewportHeight,ScrollToVerticalOffset}",
+    "Microsoft.UI.Xaml.Controls.IScrollViewerStatics::{}",
     // ハンドラーの型は丸ごと（`new` が要る）。
     "Microsoft.UI.Xaml.Input.KeyEventHandler",
     "Microsoft.UI.Xaml.Input.PointerEventHandler",
