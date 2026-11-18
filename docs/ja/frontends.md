@@ -258,7 +258,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Go to HEAD・Parent・Child | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: History の上の HEAD のボタン、コミットのメニューの Go to Parent・Go to Child、詳細の親と子へのリンク（エンジンがあるとき）。 |
 | Go to Ref | — | — | — | — | n/a |  |
 | いくつものコミットを選ぶ（範囲・2 つ・飛び飛び） | ✓ | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあるとき。<br>CLI: 2 つは `diff <rev> <rev>`。 |
-| 選んだいくつもの ref の History | ✓ | ✓ | △ | ✓ | ✓ | CLI: `log --branch` を重ねる。<br>Windows: 1 つずつ: サイドバーで選んだ ref の History。View に All Branches と Current Branch。 |
+| 選んだいくつもの ref の History | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `log --branch` を重ねる。<br>Windows: サイドバーで ref を選ぶとその History、Ctrl+クリックで ref を足す・外す。View に All Branches と Current Branch。 |
 | コミットのメニュー: checkout・新しいブランチやタグ・cherry-pick・revert・ID のコピー | ✓ | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
 | 編集モード（keep・reword・squash・fixup・drop・edit、ドラッグで並べ替え） | ✓ | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあるとき。ないときは 1 つずつ。<br>CLI: `amonhen run` から。 |
 | 書き換えの見込み（積み重ね・push 済みのブランチ、コンフリクトの見込み） | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: daemon 越し。ほかのブランチの rebase では、アプリと同じく代わりにコンフリクトの見込みを出す。<br>CLI: `rewrite-preview`。 |
