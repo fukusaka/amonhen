@@ -18,4 +18,4 @@ mod textbox;
 pub use badge::put_badges;
 pub use bindings::*;
 pub use list::selected_tags;
-pub use textbox::select_all;
+pub use textbox::{scroll_to_fraction, select_all};
