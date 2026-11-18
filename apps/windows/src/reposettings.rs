@@ -647,77 +647,275 @@ pub fn pull_commands(state: &State, method: &str, scope: &str) -> Vec<Value> {
     commands
 }
 
-/// Keys and Values（GTK4 版の `configtable.rs` の Customized に当たる並び）: 探す欄、キーごとに効いている値と設定元、
-/// `scope` の段（`local` か `global`）で消すボタン、足す欄。Repository Settings と Settings > Git で使う。
+/// 「Basic」のキー: ページが尋ねるもの（GTK4 版の `BASIC_KEYS`。docs/ux.md の 4.5）。
+const BASIC_KEYS: &[&str] = &[
+    "user.name",
+    "user.email",
+    "commit.gpgSign",
+    "gpg.format",
+    "user.signingKey",
+    "gpg.ssh.allowedSignersFile",
+    "commit.template",
+    "amonhen.defaultBranch",
+    "pull.rebase",
+    "pull.ff",
+    "fetch.prune",
+    "rebase.autoStash",
+    "rebase.updateRefs",
+    "merge.conflictStyle",
+    "rerere.enabled",
+    "rerere.autoUpdate",
+    "core.autocrlf",
+    "core.fileMode",
+];
+
+/// 行と列の切り替えの覚え場所（アプリ全体。macOS 版・GTK4 版と同じ名前）。
+const ROWS_KEY: &str = "configTableRows";
+const COLUMNS_KEY: &str = "configTableColumns";
+const ROWS: [&str; 3] = ["basic", "customized", "all"];
+const COLUMNS: [&str; 2] = ["combined", "levels"];
+
+/// 行の切り替え（Basic・Customized・All）と列の切り替え（Combined・Levels）。初めは Customized と Levels。
+fn keys_modes() -> (&'static str, &'static str) {
+    let rows = crate::prefs::string(ROWS_KEY).unwrap_or_default();
+    let columns = crate::prefs::string(COLUMNS_KEY).unwrap_or_default();
+    (
+        ROWS.iter()
+            .find(|r| **r == rows)
+            .copied()
+            .unwrap_or("customized"),
+        COLUMNS
+            .iter()
+            .find(|c| **c == columns)
+            .copied()
+            .unwrap_or("levels"),
+    )
+}
+
+/// Keys and Values の切り替えを選んだ（`keys-rows`・`keys-columns`）。ほかの id なら false。
+pub fn keys_mode_chosen(id: &str, index: usize) -> bool {
+    let (key, value) = match id {
+        "keys-rows" => (ROWS_KEY, ROWS.get(index)),
+        "keys-columns" => (COLUMNS_KEY, COLUMNS.get(index)),
+        _ => return false,
+    };
+    if let Some(value) = value {
+        let _ = crate::prefs::set_string(key, value);
+    }
+    true
+}
+
+/// 表の 1 行: キーと、段ごとの値（同じ段にいくつもあれば改行で並べる）、効いている値と段。
+struct KeyRow {
+    key: String,
+    values: Vec<(&'static str, String)>,
+    effective: Option<(String, String)>,
+}
+
+/// 出す行（`rows` の切り替えと探す文字で絞り、キーの順に）。
+fn key_rows(entries: &[Entry], scope: &str, rows: &str, query: &str) -> Vec<KeyRow> {
+    const SCOPES: [&str; 4] = ["system", "global", "local", "worktree"];
+    let mut keys: Vec<String> = Vec::new();
+    let mut push = |k: &str| {
+        if !keys.iter().any(|x| x.eq_ignore_ascii_case(k)) {
+            keys.push(k.to_owned());
+        }
+    };
+    if rows == "basic" {
+        BASIC_KEYS.iter().for_each(|k| push(k));
+    } else {
+        // 書ける段: このリポジトリなら local と worktree、すべてのリポジトリなら global。
+        let own = |s: &str| {
+            if scope == "global" {
+                s == "global"
+            } else {
+                s == "local" || s == "worktree"
+            }
+        };
+        entries
+            .iter()
+            .filter(|e| rows == "all" || own(&e.scope))
+            .for_each(|e| push(&e.key));
+    }
+    let query = query.to_lowercase();
+    let mut out: Vec<KeyRow> = keys
+        .into_iter()
+        .map(|key| {
+            let mine: Vec<&Entry> = entries
+                .iter()
+                .filter(|e| e.key.eq_ignore_ascii_case(&key))
+                .collect();
+            let values = SCOPES
+                .iter()
+                .filter_map(|sc| {
+                    let list: Vec<&str> = mine
+                        .iter()
+                        .filter(|e| e.scope == *sc)
+                        .map(|e| e.value.as_str())
+                        .collect();
+                    (!list.is_empty()).then(|| (*sc, list.join("\n")))
+                })
+                .collect();
+            let effective = mine.last().map(|e| (e.value.clone(), e.scope.clone()));
+            KeyRow {
+                key,
+                values,
+                effective,
+            }
+        })
+        .filter(|r| {
+            query.is_empty()
+                || r.key.to_lowercase().contains(&query)
+                || r.values
+                    .iter()
+                    .any(|(_, v)| v.to_lowercase().contains(&query))
+        })
+        .collect();
+    out.sort_by_key(|r| r.key.to_lowercase());
+    out
+}
+
+/// Keys and Values（GTK4 版の `configtable.rs`）: 行は Basic／Customized／All、列は Combined（効いている値と
+/// 設定元）／Levels（段ごとの値、効いている段は太字）。探す欄、`scope` の段（`local` か `global`）の値を消す
+/// −、キーと値を足す欄。
 pub fn keys_view(
     state: &State,
     scope: &str,
     field: &dyn Fn(&'static str) -> Callback<String>,
     button: &dyn Fn(String) -> Callback<()>,
+    choice: &dyn Fn(&'static str) -> Callback<Option<usize>>,
 ) -> View {
     let global = scope == "global";
     let entries: &[Entry] = state.entries.as_deref().unwrap_or_default();
-    // Keys and Values: キーごとに効いている値（最後のもの）。探す文字があれば、キーか値に含むものだけ。
-    let query = state.query.to_lowercase();
-    let mut keys: Vec<&Entry> = Vec::new();
-    for e in entries.iter().rev() {
-        if !keys.iter().any(|k| k.key.eq_ignore_ascii_case(&e.key))
-            && (query.is_empty()
-                || e.key.to_lowercase().contains(&query)
-                || e.value.to_lowercase().contains(&query))
-        {
-            keys.push(e);
-        }
-    }
-    keys.sort_by_key(|e| e.key.to_lowercase());
-    let rows = keys.into_iter().map(|e| {
-        let here = state.at(scope, &e.key).is_some();
-        let remove: View = if here {
-            Button::new()
-                .on_click(button(format!("remove:{}", e.key)))
-                .content(TextBlock::new().text("−").font_size(12.0))
-                .tooltip(if global {
-                    tr!("Remove from All Repositories")
-                } else {
-                    tr!("Remove from This Repository")
-                })
+    let (rows_mode, columns_mode) = keys_modes();
+    let levels = columns_mode == "levels";
+    // Levels の段の列（すべてのリポジトリの段ならシステム全体まで。worktree はあるときだけ）。
+    let scopes: Vec<&'static str> = if global {
+        vec!["system", "global"]
+    } else if entries.iter().any(|e| e.scope == "worktree") {
+        vec!["system", "global", "local", "worktree"]
+    } else {
+        vec!["system", "global", "local"]
+    };
+    let columns = |n: usize| {
+        let mut c = vec![GridLength::Pixel(240.0)];
+        c.extend((0..n).map(|_| GridLength::Star(1.0)));
+        c.push(GridLength::Pixel(40.0));
+        c
+    };
+    let cell = |text: String, column: usize, bold: bool, dim: bool| -> View {
+        let t = TextBlock::new()
+            .text(text)
+            .font_size(12.0)
+            .is_text_selection_enabled(!dim)
+            .text_trimming(TextTrimming::CharacterEllipsis)
+            .vertical_alignment(VerticalAlignment::Center)
+            .margin(Thickness::new(0.0, 0.0, 8.0, 0.0))
+            .grid_column(column as i32);
+        let t = if bold {
+            t.font_weight(FontWeight::SEMI_BOLD)
         } else {
-            View::empty()
+            t
         };
-        let row = Grid::new()
-            .columns([
-                GridLength::Pixel(260.0),
-                GridLength::Star(1.0),
-                GridLength::Pixel(150.0),
-                GridLength::Pixel(40.0),
-            ])
-            .children((
-                TextBlock::new()
-                    .text(e.key.clone())
-                    .font_size(12.0)
-                    .text_trimming(TextTrimming::CharacterEllipsis)
-                    .vertical_alignment(VerticalAlignment::Center)
-                    .grid_column(0),
-                TextBlock::new()
-                    .text(e.value.clone())
-                    .font_size(12.0)
-                    .is_text_selection_enabled(true)
-                    .text_trimming(TextTrimming::CharacterEllipsis)
-                    .vertical_alignment(VerticalAlignment::Center)
-                    .grid_column(1),
-                TextBlock::new()
-                    .text(scope_label(&e.scope))
-                    .font_size(12.0)
-                    .opacity(0.6)
-                    .vertical_alignment(VerticalAlignment::Center)
-                    .grid_column(2),
-                Border::new().grid_column(3).content(remove),
+        if dim { t.opacity(0.6).into() } else { t.into() }
+    };
+    let rows = key_rows(entries, scope, rows_mode, &state.query)
+        .into_iter()
+        .map(|r| {
+            let here = state.at(scope, &r.key).is_some();
+            let remove: View = if here {
+                Button::new()
+                    .on_click(button(format!("remove:{}", r.key)))
+                    .content(TextBlock::new().text("−").font_size(12.0))
+                    .tooltip(if global {
+                        tr!("Remove from All Repositories")
+                    } else {
+                        tr!("Remove from This Repository")
+                    })
+            } else {
+                View::empty()
+            };
+            let mut cells: Vec<(String, View)> =
+                vec![("key".to_owned(), cell(r.key.clone(), 0, false, false))];
+            let n = if levels {
+                let effective = r.effective.as_ref().map(|(_, s)| s.as_str());
+                for (i, sc) in scopes.iter().enumerate() {
+                    let value = r
+                        .values
+                        .iter()
+                        .find(|(s, _)| s == sc)
+                        .map(|(_, v)| v.clone())
+                        .unwrap_or_default();
+                    cells.push((
+                        sc.to_string(),
+                        cell(value, i + 1, effective == Some(*sc), false),
+                    ));
+                }
+                scopes.len()
+            } else {
+                let (value, source) = r
+                    .effective
+                    .as_ref()
+                    .map(|(v, s)| (v.clone(), scope_label(s)))
+                    .unwrap_or_default();
+                cells.push(("value".to_owned(), cell(value, 1, false, false)));
+                cells.push(("source".to_owned(), cell(source, 2, false, true)));
+                2
+            };
+            cells.push((
+                "remove".to_owned(),
+                Border::new().grid_column(n as i32 + 1).content(remove),
             ));
-        (
-            e.key.to_lowercase(),
-            Border::new().min_height(28.0).content(row),
-        )
-    });
+            (
+                format!("{}:{columns_mode}", r.key.to_lowercase()),
+                Border::new().min_height(28.0).content(
+                    Grid::new()
+                        .columns(columns(n))
+                        .children((View::keyed_fragment(cells),)),
+                ),
+            )
+        });
+    // 列の見出し。
+    let mut heads: Vec<(String, View)> = vec![("key".to_owned(), cell(tr!("Key"), 0, false, true))];
+    let n = if levels {
+        for (i, sc) in scopes.iter().enumerate() {
+            heads.push((sc.to_string(), cell(scope_label(sc), i + 1, false, true)));
+        }
+        scopes.len()
+    } else {
+        heads.push(("value".to_owned(), cell(tr!("Value"), 1, false, true)));
+        2
+    };
+    let header = Grid::new()
+        .columns(columns(n))
+        .margin(Thickness::new(0.0, 6.0, 0.0, 2.0))
+        .children((View::keyed_fragment(heads),));
+    let switches = StackPanel::new()
+        .orientation(Orientation::Horizontal)
+        .spacing(8.0)
+        .children((
+            ComboBox::new()
+                .items_source(vec!["Basic".to_owned(), "Customized".to_owned(), "All".to_owned()])
+                .selected_index(ROWS.iter().position(|r| *r == rows_mode).unwrap_or(1))
+                .on_selection_changed(choice("keys-rows"))
+                .tooltip(if global {
+                    tr!("Basic: the settings the pages here ask about, set or not. Customized: the keys set for all repositories. All: every key git reads.")
+                } else {
+                    tr!("Basic: the settings the pages here ask about, set or not. Customized: the keys set in this repository or this worktree. All: every key git reads.")
+                }),
+            ComboBox::new()
+                .items_source(vec!["Combined".to_owned(), "Levels".to_owned()])
+                .selected_index(usize::from(levels))
+                .on_selection_changed(choice("keys-columns"))
+                .tooltip(tr!(
+                    "Combined: the value in effect and where it comes from. Levels: a column per source, the one in effect in bold."
+                )),
+            TextBox::new()
+                .text(state.query.clone())
+                .placeholder_text(tr!("Search by key or value"))
+                .min_width(240.0)
+                .on_text_changed(field("query")),
+        ));
     let add = Grid::new()
         .columns([
             GridLength::Pixel(260.0),
@@ -748,13 +946,9 @@ pub fn keys_view(
                 }),
         ));
     StackPanel::new().children((
-        TextBox::new()
-            .text(state.query.clone())
-            .placeholder_text(tr!("Search by key or value"))
-            .on_text_changed(field("query")),
-        StackPanel::new()
-            .margin(Thickness::new(0.0, 6.0, 0.0, 0.0))
-            .children((View::keyed_fragment(rows),)),
+        switches,
+        header,
+        StackPanel::new().children((View::keyed_fragment(rows.collect::<Vec<_>>()),)),
         add,
     ))
 }
@@ -1011,6 +1205,9 @@ fn mailmap_rows() -> Vec<OperationRow> {
 /// 選ぶ欄で `id` の行の `index` 番目を選んだ。鍵の「その他…」なら打つ欄を出し（命令はなし）、ほかは
 /// `choice_commands` と同じ。
 pub fn choose(state: &mut State, id: &str, index: usize, scope: &str) -> Option<Vec<Value>> {
+    if keys_mode_chosen(id, index) {
+        return None;
+    }
     if id == "signing-key" {
         let (value, _) = state.key_options().get(index)?.clone();
         if value == OTHER_KEY {
@@ -1858,7 +2055,13 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
     ));
     let author_changed = state.at("local", "user.name").unwrap_or_default() != state.name
         || state.at("local", "user.email").unwrap_or_default() != state.email;
-    let keys_and_values = keys_view(state, "local", &*callbacks.field, &*callbacks.button);
+    let keys_and_values = keys_view(
+        state,
+        "local",
+        &*callbacks.field,
+        &*callbacks.button,
+        &*callbacks.choice,
+    );
     let body = ScrollViewer::new().grid_row(1).content(
         StackPanel::new()
             .margin(Thickness::new(24.0, 0.0, 24.0, 24.0))
@@ -2024,5 +2227,30 @@ mod tests {
         let c = choice_commands(&s, "mailmap.file", 0, "local").expect("命令");
         assert!(c[0]["value"].is_null());
         assert!(choice_commands(&s, "mailmap.file", 0, "global").is_none());
+    }
+
+    #[test]
+    fn key_rows_follow_the_row_switch() {
+        let s = state(&[
+            ("system", "core.autocrlf", "true"),
+            ("global", "user.name", "A"),
+            ("local", "user.name", "B"),
+            ("local", "remote.origin.fetch", "x"),
+            ("local", "remote.origin.fetch", "y"),
+        ]);
+        let entries = s.entries.as_deref().unwrap();
+        // Customized: このリポジトリで決めたキーだけ。値は段ごと、効いているのは最後のもの。
+        let rows = key_rows(entries, "local", "customized", "");
+        let keys: Vec<&str> = rows.iter().map(|r| r.key.as_str()).collect();
+        assert_eq!(keys, ["remote.origin.fetch", "user.name"]);
+        assert_eq!(rows[0].values, [("local", "x\ny".to_owned())]);
+        assert_eq!(rows[1].effective.as_ref().unwrap().1, "local");
+        // すべてのリポジトリの段の Customized は global のキー。
+        assert_eq!(key_rows(entries, "global", "customized", "").len(), 1);
+        // All はすべて、Basic は決めていないキーも出す。
+        assert_eq!(key_rows(entries, "local", "all", "").len(), 3);
+        let basic = key_rows(entries, "local", "basic", "pull");
+        assert_eq!(basic.len(), 2);
+        assert!(basic.iter().all(|r| r.effective.is_none()));
     }
 }

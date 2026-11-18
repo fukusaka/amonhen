@@ -203,6 +203,7 @@ fn git_choices(state: &State, callbacks: &Callbacks) -> View {
             "global",
             &*callbacks.keys_field,
             &*callbacks.keys_button,
+            &*callbacks.git_choice,
         ),
     ))
 }
