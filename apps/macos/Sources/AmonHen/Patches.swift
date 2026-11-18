@@ -75,8 +75,8 @@ extension Actions {
         let version = NSTextField(string: "")
         version.placeholderString = "1"
         version.widthAnchor.constraint(equalToConstant: 48).isActive = true
-        let versionRow = NSStackView(views: [NSTextField(labelWithString: L("Version (-v):")), version])
-        let formatRow = NSStackView(views: [NSTextField(labelWithString: L("Format:")), format])
+        let versionRow = NSStackView(views: [NSTextField(labelWithString: L("Version (-v)")), version])
+        let formatRow = NSStackView(views: [NSTextField(labelWithString: L("Format")), format])
         let stack = NSStackView(views: [formatRow, cover, versionRow])
         stack.orientation = .vertical
         stack.alignment = .leading

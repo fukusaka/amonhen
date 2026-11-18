@@ -492,8 +492,8 @@ extension Actions {
                     showForecast()
                 }
             }
-            let grid = NSGridView(views: (sources.isEmpty ? [] : [[NSTextField(labelWithString: L("From:")), source]])
-                + [[NSTextField(labelWithString: L("Integrate with:")), popup]])
+            let grid = NSGridView(views: (sources.isEmpty ? [] : [[NSTextField(labelWithString: L("From")), source]])
+                + [[NSTextField(labelWithString: L("Integrate with")), popup]])
             grid.rowSpacing = 6
             grid.column(at: 0).xPlacement = .trailing
             let stack = NSStackView(views: [grid] + (shownDrawings.isEmpty ? [] : [drawingBox]) + [note]
@@ -684,7 +684,7 @@ extension Actions {
                 }
                 popup.target = target
                 popup.action = #selector(ClosureTarget.fire)
-                let row = NSStackView(views: [NSTextField(labelWithString: L("From:")), popup])
+                let row = NSStackView(views: [NSTextField(labelWithString: L("From")), popup])
                 row.spacing = 6
                 row.frame.size = row.fittingSize
                 alert.accessoryView = row
@@ -850,7 +850,7 @@ extension Actions {
             popup.lastItem?.representedObject = mode.rawValue
             popup.lastItem?.toolTip = mode.toolTip
         }
-        let row = NSStackView(views: [NSTextField(labelWithString: L("Integrate with:")), popup])
+        let row = NSStackView(views: [NSTextField(labelWithString: L("Integrate with")), popup])
         row.spacing = 6
         return (row, popup)
     }

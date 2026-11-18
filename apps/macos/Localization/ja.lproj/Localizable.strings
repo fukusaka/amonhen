@@ -28,7 +28,7 @@
 "You have %ld local commits, so this makes a merge commit." = "手元に %ld コミットあるので、マージコミットを 1 つ作ります。";
 "Your %ld local commits are replayed on top (their IDs change)." = "手元の %ld コミットを、取り込んだコミットの上に載せ直します（ID が変わります）。";
 "%ld files have uncommitted changes. Pull stops if the incoming changes touch them." = "作業中の変更が %ld ファイルあります。取り込む変更と重なると止まります。";
-"Integrate with:" = "取り込み方:";
+"Integrate with" = "取り込み方";
 "%@ has %ld commits you don’t have" = "%1$@ に、手元にないコミットが %2$ld あります";
 "Pull them first, or force push to replace them. Force Push can’t be undone." = "先に Pull するか、Force Push で置き換えます。Force Push は元に戻せません。";
 "%@ loses %ld commits. This can’t be undone." = "%1$@ から %2$ld コミットが消えます。元に戻せません。";
@@ -39,7 +39,7 @@
 "No remote branch to pull from" = "取り込み元のリモートのブランチがありません";
 "Fetch, or add a remote in Repository Settings." = "Fetch するか、リポジトリの設定でリモートを追加してください。";
 "Pull into %@?" = "%@ に Pull しますか？";
-"From:" = "取り込み元:";
+"From" = "取り込み元";
 "Brings the upstream commits in. When both sides have new commits, a merge commit joins them." = "上流のコミットを取り込みます。両方に新しいコミットがあれば、マージコミットでつなぎます。";
 "Puts your local commits on top of the upstream commits, keeping the History in one line." = "手元のコミットを上流のコミットの上に載せ直し、History を 1 本に保ちます。";
 "Only moves the branch forward. Stops without changing anything if you have local commits too." = "ブランチを進めるだけです。手元にもコミットがあれば、何も変えずに止まります。";
@@ -282,7 +282,6 @@
 "New Group" = "新しいグループ";
 "Group name" = "グループの名前";
 "user@host:port (or a name in ~/.ssh/config)" = "user@host:port（~/.ssh/config の名前でもよい）";
-"Host:" = "接続先:";
 "Add a Repository on %@" = "%@ のリポジトリを追加";
 "Add SSH Connection" = "SSH 接続を追加";
 "Add and Open" = "追加して開く";
@@ -361,14 +360,13 @@
 "https://github.com/owner/repo.git or git@host:owner/repo.git" = "https://github.com/owner/repo.git や git@host:owner/repo.git";
 "Taken from the URL" = "URL から決める";
 "Choose…" = "選ぶ…";
-"Location:" = "置き場所:";
-"Folder Name:" = "フォルダの名前:";
+"Folder Name" = "フォルダの名前";
 "Choose from My GitHub Repositories" = "自分の GitHub のリポジトリから選ぶ";
 "Loading…" = "読んでいます…";
 "None found" = "見つかりません";
 "Choose a different name or location." = "別の名前か置き場所にしてください。";
 "Cloning %@…" = "%@ を clone しています…";
-"Download:" = "取得する範囲:";
+"Download" = "取得する範囲";
 "Everything" = "すべて";
 "File contents when needed" = "ファイルの中身は必要なときに取る";
 "Recent history only" = "最近の履歴だけ";
@@ -798,8 +796,7 @@
 "Create" = "作成";
 "Title" = "タイトル";
 "Create as Draft" = "Draft として作る";
-"Title:" = "タイトル:";
-"Body:" = "本文:";
+"Body" = "本文";
 
 /* People.swift */
 "Author" = "作者";
@@ -1654,8 +1651,7 @@
 "One file per commit" = "1 コミット 1 ファイル";
 "One mbox file" = "1 つの mbox ファイル";
 "Cover letter" = "送り状（cover letter）";
-"Version (-v):" = "版（-v）:";
-"Format:" = "形:";
+"Version (-v)" = "版（-v）";
 "Choose the folder for the patches. Files with the same names are replaced." = "パッチを書き出すフォルダを選んでください。同じ名前のファイルは置き換えます。";
 "Apply Patch…" = "パッチを当てる…";
 "Choose patch files (.patch, .diff, .mbox, .eml)." = "パッチのファイル（.patch・.diff・.mbox・.eml）を選んでください。";
@@ -1773,8 +1769,7 @@
 "Export Archive" = "アーカイブとして書き出す";
 "The files of this commit, as git archive writes them; .gitattributes decides what is left out (export-ignore)." = "このコミットのファイルを git archive と同じく書き出します。何を外すかは .gitattributes（export-ignore）に従います。";
 "Export…" = "書き出す…";
-"Top folder:" = "先頭のフォルダ:";
-"Folder:" = "フォルダ:";
+"Top folder" = "先頭のフォルダ";
 "All files" = "すべてのファイル";
 "All Files" = "すべてのファイル";
 "Export One Folder" = "1 つのフォルダだけを書き出す";
@@ -1804,7 +1799,6 @@
 "Choose a bundle file (git bundle) to clone from." = "clone する bundle のファイル（git bundle）を選んでください。";
 "This bundle has only the commits after ones it doesn’t include, so it can’t be cloned." = "この bundle には、入っていないコミットより後のコミットしかないので、clone できません。";
 "From a bundle file, everything in it is copied." = "bundle のファイルからは、入っているものをすべて写します。";
-"Branch:" = "ブランチ:";
 "Fetch from Bundle…" = "bundle から取り込む…";
 "Fetch the branches of a bundle file under a name of their own, as git fetch does" = "bundle のファイルのブランチを、git fetch のように、それ用の名前の下に取り込む";
 "Fetch from Bundle" = "bundle から取り込む";
@@ -1812,7 +1806,6 @@
 "Can’t Fetch the Bundle" = "bundle を取り込めません";
 "Nothing to Fetch" = "取り込むものがありません";
 "The bundle has no branches." = "この bundle にはブランチがありません。";
-"Name:" = "名前:";
 "This repository lacks %ld commits the bundle needs (it has only the commits after them)." = "bundle に要るコミットのうち %ld 個が、このリポジトリにありません（bundle にはそれより後のコミットしかありません）。";
 "%@ has %ld branches (%@). They are fetched under the name below, like a remote’s branches; tags aren’t fetched." = "%1$@ には %2$ld 個のブランチ（%3$@）があります。remote のブランチのように、下の名前の下に取り込みます。タグは取り込みません。";
 

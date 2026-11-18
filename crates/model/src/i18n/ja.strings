@@ -682,14 +682,14 @@
 "Fetch from {remote}?" = "{remote} から Fetch しますか？";
 "Fetch?" = "Fetch しますか？";
 "All Remotes ({names})" = "すべてのリモート（{names}）";
-"From:" = "取り込み元:";
+"From" = "取り込み元";
 "Follow git’s settings" = "git の設定に従う";
 "No remote branch to pull from" = "取り込み元のリモートのブランチがありません";
 "Fetch, or add a remote in Repository Settings." = "Fetch するか、リポジトリの設定でリモートを追加してください。";
 "Pull {count} commits from {upstream}?" = "{upstream} から {count} コミット取り込みますか？";
 "Pull from {upstream}?" = "{upstream} から Pull しますか？";
 "Pull into {branch}?" = "{branch} に Pull しますか？";
-"Integrate with:" = "取り込み方:";
+"Integrate with" = "取り込み方";
 "Commits to pull" = "取り込むコミット";
 "Commits only here" = "手元にだけあるコミット";
 "Sets {source} as the upstream, then pulls." = "{source} を上流にしてから取り込みます。";
@@ -1002,8 +1002,7 @@
 "Taken from the URL" = "URL から決める";
 "Choose from My GitHub Repositories" = "自分の GitHub のリポジトリから選ぶ";
 "None found" = "見つかりません";
-"Location:" = "置き場所:";
-"Folder Name:" = "フォルダの名前:";
+"Folder Name" = "フォルダの名前";
 "Clone Location" = "Clone する場所";
 "{path} already exists" = "{path} はもうあります";
 "Choose a different name or location." = "別の名前か置き場所にしてください。";
@@ -1016,9 +1015,8 @@
 "Numbering, recipients and sign-offs follow git’s format.* settings." = "番号の付け方・宛先・Signed-off-by は git の format.* の設定に従います。";
 "One file per commit" = "1 コミット 1 ファイル";
 "One mbox file" = "1 つの mbox ファイル";
-"Format:" = "形:";
 "Cover letter" = "送り状（cover letter）";
-"Version (-v):" = "版（-v）:";
+"Version (-v)" = "版（-v）";
 "Save…" = "保存…";
 "Choose the folder for the patches. Files with the same names are replaced." = "パッチを書き出すフォルダを選んでください。同じ名前のファイルは置き換えます。";
 "Choose patch files (.patch, .diff, .mbox, .eml)." = "パッチのファイル（.patch・.diff・.mbox・.eml）を選んでください。";
@@ -1050,9 +1048,8 @@
 "From {branch}" = "{branch} から";
 "Create" = "作成";
 "Create as Draft" = "Draft として作る";
-"Title:" = "タイトル:";
 "Title" = "タイトル";
-"Body:" = "本文:";
+"Body" = "本文";
 "Open in Browser" = "ブラウザで開く";
 "Pull Request Created" = "プルリクエストを作りました";
 /* GTK4 の FE: リポジトリの設定 */
@@ -1922,7 +1919,6 @@
 "{name} — click to switch repository" = "{name} — 押すとリポジトリを切り替える";
 "{name} — editing the worktree {worktree}. Click to switch repository" = "{name} — worktree {worktree} を編集中。押すとリポジトリを切り替える";
 /* GTK4: パスを列で選ぶシート */
-"Host:" = "接続先:";
 "You can still type the path above and choose it." = "上の欄にパスを打ち込んで選ぶこともできます。";
 "Show hidden files" = "隠しファイルを表示";
 "New Folder…" = "新規フォルダ…";
@@ -2077,7 +2073,7 @@
 "{count} Commits" = "{count} コミット";
 "Recent History" = "最近の履歴";
 "How many recent commits to fetch (git clone --depth)." = "新しいほうからいくつのコミットを取るか（git clone --depth）。";
-"Download:" = "取得する範囲:";
+"Download" = "取得する範囲";
 "Check out only some folders" = "一部のフォルダだけ取り出す";
 "Only the files at the top are checked out; right after the clone, choose a folder to check out." = "最上位のファイルだけを取り出し、clone の後で取り出すフォルダを選びます。";
 "Needs git 2.27 or later. This computer’s git is {version}." = "git 2.27 以降が必要です。このコンピューターの git は {version} です。";
@@ -2093,8 +2089,7 @@
 "Export Archive" = "アーカイブとして書き出す";
 "The files of this commit, as git archive writes them; .gitattributes decides what is left out (export-ignore)." = "このコミットのファイルを git archive と同じく書き出します。何を外すかは .gitattributes（export-ignore）に従います。";
 "Export…" = "書き出す…";
-"Top folder:" = "先頭のフォルダ:";
-"Folder:" = "フォルダ:";
+"Top folder" = "先頭のフォルダ";
 "All files" = "すべてのファイル";
 "All Files" = "すべてのファイル";
 "Export One Folder" = "1 つのフォルダだけを書き出す";
@@ -2131,7 +2126,6 @@
 "Choose a bundle file (git bundle) to clone from." = "clone する bundle のファイル（git bundle）を選んでください。";
 "This bundle has only the commits after ones it doesn’t include, so it can’t be cloned." = "この bundle には、入っていないコミットより後のコミットしかないので、clone できません。";
 "From a bundle file, everything in it is copied." = "bundle のファイルからは、入っているものをすべて写します。";
-"Branch:" = "ブランチ:";
 "“{name}” can’t be used as a name" = "「{name}」は名前に使えません";
 "There is already a remote named “{name}”. Choose another name" = "「{name}」という名前の remote がもうあります。ほかの名前にしてください";
 "The bundle is {size} MB, more than can be sent at once (1 GB). Copy it to where the repository is and fetch it there" = "bundle が {size} MB あり、一度に送れる大きさ（1 GB）を超えています。リポジトリのある所にコピーして、そこで取り込んでください";
@@ -2146,7 +2140,6 @@
 "Can’t Fetch the Bundle" = "bundle を取り込めません";
 "Nothing to Fetch" = "取り込むものがありません";
 "The bundle has no branches." = "この bundle にはブランチがありません。";
-"Name:" = "名前:";
 "This repository lacks {count} commits the bundle needs (it has only the commits after them)." = "bundle に要るコミットのうち {count} 個が、このリポジトリにありません（bundle にはそれより後のコミットしかありません）。";
 "{file} has {count} branches ({names}). They are fetched under the name below, like a remote’s branches; tags aren’t fetched." = "{file} には {count} 個のブランチ（{names}）があります。remote のブランチのように、下の名前の下に取り込みます。タグは取り込みません。";
 "Stage or discard the changes to .gitmodules first" = ".gitmodules の変更を先に stage するか取り消してください";

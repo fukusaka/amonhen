@@ -1222,7 +1222,7 @@ pub fn fetch(actions: &Rc<Actions>) {
         // 「すべてのリモート」の下に区切りの線（macOS 版と同じ）。
         crate::settings::separate_items(&from, Rc::new(std::cell::RefCell::new(vec![1])));
         if remotes.len() > 1 {
-            sheet.add(&row(&tr!("From:"), &from));
+            sheet.add(&row(&tr!("From"), &from));
             let (message, remotes, prune_line, target) = (
                 sheet.message.clone(),
                 remotes.clone(),
@@ -1368,7 +1368,7 @@ impl MergeModes {
         let refs: Vec<&str> = titles.iter().map(String::as_str).collect();
         let dropdown = gtk::DropDown::from_strings(&refs);
         dropdown.set_list_factory(Some(&mode_factory(&modes, merge_mode_tooltip)));
-        let row = row(&tr!("Integrate with:"), &dropdown);
+        let row = row(&tr!("Integrate with"), &dropdown);
         Self {
             row,
             dropdown,
@@ -1483,7 +1483,7 @@ pub fn pull_in(actions: &Rc<Actions>, target: Target, mode: &str) {
         let source_refs: Vec<&str> = sources.iter().map(String::as_str).collect();
         let source = gtk::DropDown::from_strings(&source_refs);
         if !sources.is_empty() {
-            sheet.add(&row(&tr!("From:"), &source));
+            sheet.add(&row(&tr!("From"), &source));
         }
         let mode_titles: Vec<String> = PULL_MODES
             .iter()
@@ -1504,7 +1504,7 @@ pub fn pull_in(actions: &Rc<Actions>, target: Target, mode: &str) {
         let modes = gtk::DropDown::from_strings(&mode_refs);
         modes.set_list_factory(Some(&pull_mode_factory()));
         modes.set_selected(PULL_MODES.iter().position(|m| *m == mode).unwrap_or(0) as u32);
-        sheet.add(&row(&tr!("Integrate with:"), &modes));
+        sheet.add(&row(&tr!("Integrate with"), &modes));
         // 説明は取り込み方ごとに並べて重ね、高さをいちばん長いものに合わせる（選び直してもシートの大きさを
         // 変えない。macOS 版と同じ）。
         let explain = gtk::Stack::new();

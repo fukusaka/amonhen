@@ -54,7 +54,7 @@ pub fn save(actions: &Rc<Actions>, oids: Vec<String>) {
             tr!("One mbox file").as_str(),
         ]);
         format.set_selected(u32::from(crate::settings::bool(SINGLE_FILE)));
-        sheet.add(&sheets::row(&tr!("Format:"), &format));
+        sheet.add(&sheets::row(&tr!("Format"), &format));
         let cover = gtk::CheckButton::with_label(&tr!("Cover letter"));
         cover.set_active(crate::settings::bool(COVER_LETTER));
         sheet.add(&sheets::row("", &cover));
@@ -64,7 +64,7 @@ pub fn save(actions: &Rc<Actions>, oids: Vec<String>) {
             .max_width_chars(4)
             .activates_default(true)
             .build();
-        sheet.add(&sheets::row(&tr!("Version (-v):"), &version));
+        sheet.add(&sheets::row(&tr!("Version (-v)"), &version));
         sheet.buttons(&tr!("Save…"), false, None);
         if sheet.run().await != Response::Ok {
             return;
