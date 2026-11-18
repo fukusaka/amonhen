@@ -39,6 +39,7 @@ mod signature;
 mod stashes;
 mod templates;
 mod theme;
+mod tip;
 mod viewed;
 mod win32;
 mod winui;

@@ -111,6 +111,8 @@ fn with_history(f: impl FnOnce(&mut HistoryView)) {
 struct Root {
     /// 窓の根の Grid（メニューのショートカットを、フォーカスのある部品より先に受ける）。
     root: ElementRef<Grid>,
+    /// ツールバーを包む部品（Pull・Push のバッジを付けるため）。
+    toolbar: ElementRef<Grid>,
     panel: ElementRef<SwapChainPanel>,
     area: ElementRef<Grid>,
     diff_panel: ElementRef<SwapChainPanel>,
@@ -133,6 +135,10 @@ struct Root {
     sync_lists: Vec<SyncList>,
     /// ステータスバーに出している、終わった操作の一言。
     flash: Option<String>,
+    /// ステータスバーの上に出している失敗（閉じるか、次の失敗・成功で消える。GTK4 版の `show_failure`）と、
+    /// 出した回数（取り消しの帯を、出し直した後に消さないため）。
+    failure: Option<(Arc<Repository>, crate::failure::Failure)>,
+    failure_generation: u64,
     /// 走っている操作の数（GTK4 版の Activity のボタンの回る印と数）。
     running: usize,
     /// History で複数選んでいるコミット（上から。右クリックのメニューを複数のもの用にする）。
@@ -336,6 +342,12 @@ enum Dialog {
     },
     /// 操作の失敗。
     Failed { title: String, message: String },
+    /// タグのリモートの様子（macOS 版の `TagStatusPopover`、GTK4 版の `refmarks::tag`）。`actions` は Push・
+    /// 置き換えのメニューの項目（キーと見出し。初めの 2 つを主・副のボタンにする）。
+    TagStatus {
+        name: String,
+        actions: Vec<(String, String)>,
+    },
     /// ファイルをある版に戻す（GTK4 版の `restoresheet::ask`）。
     Restore {
         repo: Arc<Repository>,
@@ -775,6 +787,9 @@ enum Message {
     DiffFileMenu(String),
     /// 変更ファイルの一覧（木も）の右クリック（ファイルの番号、差分の見出しと同じ項目の鍵）。
     ChangedFileMenu(usize, String),
+    /// ツールバーの Pull・Push のバッジを付け直す（並べ終えるのを少し待ってから）。
+    ToolbarBadgesLater,
+    ToolbarBadges,
     FileHistoryLoaded(String, Result<Vec<crate::filehistory::Entry>, String>),
     FileHistorySelected(Option<usize>),
     CloseFileHistory,
@@ -885,6 +900,11 @@ enum Message {
     EditApplied(Option<Value>, Value),
     /// 終わった操作の一言を消す。
     FlashExpired,
+    /// 失敗の帯のボタン: 次の一手（何番目か）、詳細、閉じる、取り消しの帯の時間切れ（出した回数）。
+    FailureRemedy(usize),
+    FailureDetails,
+    FailureClose,
+    FailureExpired(u64),
     /// History で複数選んだコミット（上から。1 つ以下なら空）。
     /// 複数選んだコミット（上から。merge か）と、行が続いているか。
     MultiSelected(Vec<(String, bool)>, bool),
@@ -1082,6 +1102,7 @@ impl Component for Root {
     fn create(_input: &(), _context: &ComponentContext<Self>) -> Self {
         Self {
             root: ElementRef::new(),
+            toolbar: ElementRef::new(),
             panel: ElementRef::new(),
             area: ElementRef::new(),
             diff_panel: ElementRef::new(),
@@ -1135,6 +1156,8 @@ impl Component for Root {
             stash_details: std::collections::HashMap::new(),
             sync_lists: Vec::new(),
             flash: None,
+            failure: None,
+            failure_generation: 0,
             running: 0,
             multi: Vec::new(),
             multi_consecutive: false,
@@ -1565,7 +1588,8 @@ impl Component for Root {
                 self.update(Message::Done(done), context);
             }
             Message::Done(text) => {
-                // 終わった後の読み直しは同じ（`Performed`）。一言は 5 秒（GTK4 版と同じ）。
+                // 終わった後の読み直しは同じ（`Performed`）。一言は 5 秒（GTK4 版と同じ）。前の失敗の帯は消す。
+                self.failure = None;
                 self.update(Message::Performed(None), context);
                 self.flash = Some(text);
                 FLASH_UNTIL
@@ -2712,22 +2736,21 @@ impl Component for Root {
                     }
                 }
                 (Some(Dialog::Failure { repo, failure }), ContentDialogResult::Primary) => {
-                    use crate::failure::Remedy;
-                    match failure.remedies(true).into_iter().next() {
-                        Some(Remedy::Retry) => {
-                            if let Some(command) = failure.command.clone() {
-                                perform(context, repo, command, String::new());
-                            }
-                        }
-                        Some(Remedy::Pull) => {
-                            self.update(Message::Command("pull".to_owned()), context)
-                        }
-                        Some(Remedy::WorkingCopy) => self.show_page(Page::WorkingCopy),
-                        Some(Remedy::OpenTerminal) => {
-                            self.update(Message::Command("open-in-terminal".to_owned()), context)
-                        }
-                        // ほかの worktree・上流は、この FE ではまだ一手で開けない。
-                        _ => {}
+                    if let Some(remedy) = failure.remedies(true).into_iter().next() {
+                        self.failure = None;
+                        self.run_remedy(repo, &failure, remedy, context);
+                    }
+                }
+                // 押したボタンの確認を出す。同じ ContentDialog を開いたまま中身だけ替えると開き直らないので、
+                // 一度閉じた形で描いてから開く。
+                (Some(Dialog::TagStatus { actions, .. }), ContentDialogResult::Primary) => {
+                    if let Some((key, _)) = actions.into_iter().next() {
+                        menu_later(context, key);
+                    }
+                }
+                (Some(Dialog::TagStatus { actions, .. }), ContentDialogResult::Secondary) => {
+                    if let Some((key, _)) = actions.into_iter().nth(1) {
+                        menu_later(context, key);
                     }
                 }
                 (Some(Dialog::Failure { .. }), ContentDialogResult::Secondary) => {
@@ -4145,6 +4168,31 @@ impl Component for Root {
                         });
                         self.dialog_inputs += 1;
                     }
+                } else if let Some(rest) = key.strip_prefix("tag-status:") {
+                    let name = rest.split_once('|').map_or(rest, |(_, name)| name);
+                    // ボタンは短い名前（macOS 版の吹き出しと同じ。タグの名前は見出しにある）。
+                    let actions = self
+                        .tag_pushes(name)
+                        .into_iter()
+                        .map(|(key, label)| {
+                            let remote = key
+                                .split_once(':')
+                                .and_then(|(_, rest)| rest.split_once('|'))
+                                .map_or("", |(remote, _)| remote);
+                            let short = if key.starts_with("push-tag:") {
+                                tr!("Push to {remote}…", remote = remote)
+                            } else if key.starts_with("replace-tag:") {
+                                tr!("Replace on {remote}…", remote = remote)
+                            } else {
+                                label
+                            };
+                            (key, short)
+                        })
+                        .collect();
+                    self.dialog = Some(Dialog::TagStatus {
+                        name: name.to_owned(),
+                        actions,
+                    });
                 } else if let Some(name) = key.strip_prefix("delete-tag:") {
                     if let Some(repo) = self.repo.clone() {
                         // GTK4 版の `refops::tag_items` の Delete。リモートのタグは残る。
@@ -4563,9 +4611,37 @@ impl Component for Root {
                     });
                     return;
                 }
-                // 取り消したときは知らせない（GTK4 版は帯を出してすぐ消す）。
-                if !failure.cancelled() {
+                // ステータスバーの上の帯で知らせる（作業を止めない。GTK4 版・macOS 版と同じ）。取り消したことは
+                // しばらくしたら消す。
+                self.failure_generation += 1;
+                if failure.cancelled() {
+                    let generation = self.failure_generation;
+                    context.spawn_background(move |_| {
+                        std::thread::sleep(std::time::Duration::from_secs(5));
+                        Message::FailureExpired(generation)
+                    });
+                }
+                self.failure = Some((repo, failure));
+            }
+            Message::FailureRemedy(index) => {
+                let Some((repo, failure)) = self.failure.take() else {
+                    return;
+                };
+                if let Some(remedy) = failure.remedies(true).into_iter().nth(index) {
+                    self.run_remedy(repo, &failure, remedy, context);
+                }
+            }
+            Message::FailureDetails => {
+                if let Some((repo, failure)) = self.failure.clone() {
                     self.dialog = Some(Dialog::Failure { repo, failure });
+                }
+            }
+            Message::FailureClose => self.failure = None,
+            Message::FailureExpired(generation) => {
+                if generation == self.failure_generation
+                    && self.failure.as_ref().is_some_and(|(_, f)| f.cancelled())
+                {
+                    self.failure = None;
                 }
             }
             Message::Performed(failed) => {
@@ -4755,6 +4831,22 @@ impl Component for Root {
                     state.load(info);
                     merge_scroll_later(context);
                 }
+            }
+            Message::ToolbarBadgesLater => {
+                context.spawn_background(|_| {
+                    std::thread::sleep(std::time::Duration::from_millis(150));
+                    Message::ToolbarBadges
+                });
+            }
+            Message::ToolbarBadges => {
+                let tracking = self.tracking();
+                let _ = self.toolbar.request_native_element(move |result| {
+                    if let Ok(element) = result
+                        && let Err(e) = crate::menus::put_badges(&element, tracking)
+                    {
+                        eprintln!("ツールバーのバッジを付けられない: {e}");
+                    }
+                });
             }
             Message::MergeBringIntoView => {
                 for r in &self.merge_chosen {
@@ -6887,7 +6979,30 @@ impl Component for Root {
                     )),
             ));
         let menu_bar = crate::menus::menu_bar(|| context.callback(Message::Command));
-        let toolbar = crate::menus::toolbar(context.callback(Message::Command), self.tracking());
+        let tracking = self.tracking();
+        let toolbar = Grid::new()
+            .grid_row(1)
+            .element_ref(&self.toolbar)
+            .children((crate::menus::toolbar(
+                context.callback(Message::Command),
+                tracking,
+            ),));
+        // 数かツールバーの並びが変わったら、Pull・Push のバッジを付け直す（並べ終えてから）。
+        let order: String = crate::menus::toolbar_entries()
+            .iter()
+            .map(|e| format!("{e:?}"))
+            .collect();
+        context.use_effect(
+            "toolbar-badges",
+            (tracking.ahead, tracking.behind, order),
+            {
+                let sender = context.sender();
+                move || {
+                    sender.send(Message::ToolbarBadgesLater);
+                    None
+                }
+            },
+        );
         // 差分の検索の帯を開いたら、欄にフォーカスを入れる（描き直した後に）。
         if self.diff_find_opened > 0 {
             let field = self.diff_find_box.clone();
@@ -6964,13 +7079,15 @@ impl Component for Root {
                         .vertical_alignment(VerticalAlignment::Center)
                         .grid_column(2),
                     // 一致したコミットだけを出す（GTK4 版・macOS 版の検索の欄の切り替え。探すまでは押せない）。
-                    ToggleButton::new()
-                        .is_checked(self.search_only)
-                        .is_enabled(self.last_search.is_some())
-                        .on_is_checked_changed(context.callback(Message::SearchOnly))
-                        .grid_column(3)
-                        .content(TextBlock::new().text("⊟"))
-                        .tooltip(tr!("Show Only Matching Commits")),
+                    crate::tip::holder(
+                        ToggleButton::new()
+                            .is_checked(self.search_only)
+                            .is_enabled(self.last_search.is_some())
+                            .on_is_checked_changed(context.callback(Message::SearchOnly))
+                            .content(TextBlock::new().text("⊟")),
+                        tr!("Show Only Matching Commits"),
+                        3,
+                    ),
                 ))
         } else {
             View::empty()
@@ -9056,6 +9173,21 @@ impl Root {
                             .is_text_selection_enabled(true),
                     )
             }
+            Some(Dialog::TagStatus { name, actions }) => {
+                let dialog = dialog
+                    .is_open(true)
+                    .title(self.tag_status_title(name))
+                    .close_button_text(tr!("Close"));
+                let dialog = match actions.first() {
+                    Some((_, title)) => dialog.primary_button_text(title.clone()),
+                    None => dialog,
+                };
+                let dialog = match actions.get(1) {
+                    Some((_, title)) => dialog.secondary_button_text(title.clone()),
+                    None => dialog,
+                };
+                dialog.content(self.tag_status_view(name))
+            }
             Some(Dialog::Failed { title, message }) => dialog
                 .is_open(true)
                 .title(title.clone())
@@ -10105,6 +10237,156 @@ impl Root {
         self.dialog_inputs += 1;
     }
 
+    /// タグのリモートの様子の見出し: 印とその意味（印がなければタグの名前）。
+    fn tag_status_title(&self, name: &str) -> String {
+        match crate::sidebar::tag_mark(&self.tag_remotes, name) {
+            Some(mark) => {
+                let lines = crate::sidebar::tag_tooltip(&self.tag_remotes, name);
+                format!("{mark} {}", lines.first().map_or(name, String::as_str))
+            }
+            None => name.to_owned(),
+        }
+    }
+
+    /// タグのリモートの様子（macOS 版の `TagStatusPopover`）: どこから分かったか、タグとコミット、リモートごとの
+    /// 様子と読んだ時刻。
+    fn tag_status_view(&self, name: &str) -> View {
+        let info = &self.tag_remotes;
+        let remotes: Vec<(String, Option<i64>)> = info["remotes"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|r| Some((r["name"].as_str()?.to_owned(), r["checked"].as_i64())))
+            .collect();
+        let state = |remote: &str| info["tags"][name][remote].as_str();
+        let different = remotes
+            .iter()
+            .any(|(r, checked)| checked.is_some() && state(r) == Some("different"));
+        let explanation = if different {
+            tr!(
+                "There, a tag with the same name is a different tag: it points to another commit, or it is another annotated tag on the same commit. Fetch doesn’t overwrite your tag and Push is refused, so the two stay apart until one of them is replaced."
+            )
+        } else {
+            tr!(
+                "Tags have no remote copies here the way branches do, so this was read from each remote at the last Fetch. Push doesn’t send tags; push this one to share it."
+            )
+        };
+        let target = self.refs.as_ref().and_then(|r| {
+            r.refs
+                .entries
+                .iter()
+                .find(|e| e.kind == amonhen_model::RefKind::Tag && e.name == name)
+                .and_then(|e| e.target)
+                .map(|t| t.to_string())
+        });
+        // 見出しと値（値の色: 別のタグは橙、ない・まだ読んでいないは薄く）。
+        let mut rows: Vec<(String, String, Option<Color>, f64)> =
+            vec![(tr!("Tag"), name.to_owned(), None, 1.0)];
+        if let Some(hex) = target {
+            rows.push((
+                tr!("Commit"),
+                hex[..hex.len().min(12)].to_owned(),
+                None,
+                1.0,
+            ));
+        }
+        for (remote, checked) in &remotes {
+            let (text, color, opacity) = match (checked, state(remote)) {
+                (None, _) => (tr!("Not checked yet (Fetch reads it)"), None, 0.5),
+                (Some(_), Some("same")) => (tr!("Has it"), None, 1.0),
+                (Some(_), Some("different")) => (
+                    tr!("Has a different tag with this name"),
+                    Some(Color::rgb(0xc2, 0x5e, 0x00)),
+                    1.0,
+                ),
+                (Some(_), _) => (tr!("Doesn’t have it"), None, 0.65),
+            };
+            let when = checked
+                .map(|ms| {
+                    let time = crate::stashes::ago(ms / 1000);
+                    format!(" · {}", tr!("read {time}", time = time))
+                })
+                .unwrap_or_default();
+            rows.push((remote.clone(), format!("{text}{when}"), color, opacity));
+        }
+        let grid_rows: Vec<(String, View)> = rows
+            .into_iter()
+            .enumerate()
+            .map(|(i, (label, value, color, opacity))| {
+                let value = TextBlock::new()
+                    .text(value)
+                    .font_size(13.0)
+                    .opacity(opacity)
+                    .text_wrapping(TextWrapping::Wrap)
+                    .is_text_selection_enabled(true);
+                let value = match color {
+                    Some(c) => value.foreground(Brush::Solid(c)),
+                    None => value,
+                };
+                (
+                    format!("{i}"),
+                    Grid::new()
+                        .columns([GridLength::Pixel(110.0), GridLength::Star(1.0)])
+                        .column_spacing(10.0)
+                        .children((
+                            TextBlock::new()
+                                .text(label)
+                                .font_size(12.0)
+                                .opacity(0.6)
+                                .horizontal_alignment(HorizontalAlignment::Right)
+                                .text_trimming(TextTrimming::CharacterEllipsis)
+                                .grid_column(0),
+                            value.grid_column(1),
+                        )),
+                )
+            })
+            .collect();
+        StackPanel::new().spacing(12.0).width(440.0).children((
+            TextBlock::new()
+                .text(explanation)
+                .font_size(12.0)
+                .opacity(0.7)
+                .text_wrapping(TextWrapping::Wrap),
+            StackPanel::new()
+                .spacing(5.0)
+                .children((View::keyed_fragment(grid_rows),)),
+        ))
+    }
+
+    /// タグを送る・置き換える操作（キーと見出し）: 読んでいない・ないリモートへの Push、別のタグがあるリモートでの
+    /// 置き換え。タグのメニューと、リモートの様子の確認で使う。
+    fn tag_pushes(&self, name: &str) -> Vec<(String, String)> {
+        let mut pushes = Vec::new();
+        for remote in self.tag_remotes["remotes"].as_array().into_iter().flatten() {
+            let Some(remote_name) = remote["name"].as_str() else {
+                continue;
+            };
+            let checked = remote["checked"].is_i64();
+            let st = self.tag_remotes["tags"][name][remote_name].as_str();
+            if !checked || st.is_none_or(|s| s == "missing") {
+                pushes.push((
+                    format!("push-tag:{remote_name}|{name}"),
+                    tr!(
+                        "Push {branch} to {target}…",
+                        branch = name,
+                        target = remote_name
+                    ),
+                ));
+            }
+            if checked && st == Some("different") {
+                pushes.push((
+                    format!("replace-tag:{remote_name}|{name}"),
+                    tr!(
+                        "Replace {tag} on {remote}…",
+                        tag = name,
+                        remote = remote_name
+                    ),
+                ));
+            }
+        }
+        pushes
+    }
+
     fn tag_items(&self, name: &str) -> Vec<MenuItem> {
         let remotes: Vec<(String, bool)> = self.tag_remotes["remotes"]
             .as_array()
@@ -10113,22 +10395,15 @@ impl Root {
             .filter_map(|r| Some((r["name"].as_str()?.to_owned(), r["checked"].is_i64())))
             .collect();
         let state = |remote: &str| self.tag_remotes["tags"][name][remote].as_str();
-        let (mut pushes, mut deletes) = (Vec::new(), Vec::new());
+        let pushes: Vec<MenuItem> = self
+            .tag_pushes(name)
+            .into_iter()
+            .map(|(key, label)| MenuItem::item(key, label))
+            .collect();
+        let mut deletes = Vec::new();
         for (remote, checked) in &remotes {
             let st = state(remote);
             let missing = *checked && st.is_none_or(|s| s == "missing");
-            if !*checked || missing {
-                pushes.push(MenuItem::item(
-                    format!("push-tag:{remote}|{name}"),
-                    tr!("Push {branch} to {target}…", branch = name, target = remote),
-                ));
-            }
-            if *checked && st == Some("different") {
-                pushes.push(MenuItem::item(
-                    format!("replace-tag:{remote}|{name}"),
-                    tr!("Replace {tag} on {remote}…", tag = name, remote = remote),
-                ));
-            }
             if !missing {
                 deletes.push(MenuItem::item(
                     format!("delete-remote-tag:{remote}|{name}|{}", u8::from(!*checked)),
@@ -10147,9 +10422,10 @@ impl Root {
         });
         let mut items: Vec<MenuItem> = signature
             .into_iter()
+            // 押すと、リモートごとの様子と、それがどこから分かったかを出す（macOS 版・GTK4 版はタグの印の吹き出し）。
             .chain(remotes.iter().map(|(remote, _)| {
-                MenuItem::disabled(
-                    format!("-state:{remote}"),
+                MenuItem::item(
+                    format!("tag-status:{remote}|{name}"),
                     crate::sidebar::tag_state_text(&self.tag_remotes, name, remote),
                 )
             }))
@@ -11001,6 +11277,130 @@ impl Root {
             )
     }
 
+    /// 失敗の次の一手をする（帯のボタンと、詳細のダイアログの主のボタン）。
+    fn run_remedy(
+        &mut self,
+        repo: Arc<Repository>,
+        failure: &crate::failure::Failure,
+        remedy: crate::failure::Remedy,
+        context: &ComponentContext<Self>,
+    ) {
+        use crate::failure::Remedy;
+        match remedy {
+            Remedy::Retry => {
+                if let Some(command) = failure.command.clone() {
+                    perform(context, repo, command, String::new());
+                }
+            }
+            Remedy::Pull => self.update(Message::Command("pull".to_owned()), context),
+            Remedy::WorkingCopy => self.show_page(Page::WorkingCopy),
+            Remedy::OpenTerminal => {
+                self.update(Message::Command("open-in-terminal".to_owned()), context)
+            }
+        }
+    }
+
+    /// 失敗の帯（ステータスバーの上。GTK4 版の `show_failure`）: 何が失敗したか、なぜか（git の全文は
+    /// ツールチップと Details）、次の一手、Details・Activity・Close。取り消したときは見出しと Activity・Close だけ。
+    fn failure_band(&self, context: &ViewContext<Self>) -> View {
+        let Some((_, failure)) = &self.failure else {
+            return View::empty();
+        };
+        let cancelled = failure.cancelled();
+        let button = |title: String, accent: bool, on: Callback<()>| -> View {
+            let b = Button::new().on_click(on);
+            let b = if accent {
+                b.style(ButtonStyle::Accent)
+            } else {
+                b
+            };
+            b.content(TextBlock::new().text(title).font_size(12.0))
+        };
+        let mut buttons: Vec<(String, View)> = Vec::new();
+        if !cancelled {
+            for (i, remedy) in failure.remedies(true).into_iter().enumerate() {
+                buttons.push((
+                    format!("remedy{i}"),
+                    button(
+                        remedy.title(),
+                        i == 0,
+                        context.callback(move |()| Message::FailureRemedy(i)),
+                    ),
+                ));
+            }
+            buttons.push((
+                "details".to_owned(),
+                button(
+                    tr!("Details"),
+                    false,
+                    context.callback(|()| Message::FailureDetails),
+                ),
+            ));
+        }
+        buttons.push((
+            "activity".to_owned(),
+            button(
+                "Activity".to_owned(),
+                false,
+                context.callback(|()| Message::Command("activity".to_owned())),
+            ),
+        ));
+        buttons.push((
+            "close".to_owned(),
+            button(
+                tr!("Close"),
+                false,
+                context.callback(|()| Message::FailureClose),
+            ),
+        ));
+        let (icon, title, summary) = if cancelled {
+            ("⏹", tr!("Operation Cancelled"), String::new())
+        } else {
+            ("⛔", failure.op_title(), failure.summary())
+        };
+        Border::new()
+            .background(Brush::Solid(if cancelled {
+                Color::rgb(0xf0, 0xf0, 0xf0)
+            } else {
+                Color::rgb(0xfd, 0xe7, 0xe9)
+            }))
+            .padding(Thickness::new(10.0, 5.0, 10.0, 5.0))
+            .content(
+                Grid::new()
+                    .columns([
+                        GridLength::Auto,
+                        GridLength::Auto,
+                        GridLength::Star(1.0),
+                        GridLength::Auto,
+                    ])
+                    .column_spacing(8.0)
+                    .children((
+                        TextBlock::new()
+                            .text(icon)
+                            .vertical_alignment(VerticalAlignment::Center)
+                            .grid_column(0),
+                        TextBlock::new()
+                            .text(title)
+                            .font_size(12.0)
+                            .font_weight(FontWeight::SEMI_BOLD)
+                            .vertical_alignment(VerticalAlignment::Center)
+                            .grid_column(1),
+                        TextBlock::new()
+                            .text(summary)
+                            .font_size(12.0)
+                            .text_trimming(TextTrimming::CharacterEllipsis)
+                            .vertical_alignment(VerticalAlignment::Center)
+                            .grid_column(2)
+                            .tooltip(failure.message.clone()),
+                        StackPanel::new()
+                            .orientation(Orientation::Horizontal)
+                            .spacing(6.0)
+                            .grid_column(3)
+                            .children((View::keyed_fragment(buttons),)),
+                    )),
+            )
+    }
+
     fn status_bar(&self, context: &ViewContext<Self>) -> View {
         let mut text = match &self.busy {
             Some(busy) => busy.clone(),
@@ -11033,9 +11433,8 @@ impl Root {
         } else {
             View::empty()
         };
-        Grid::new()
+        let bar = Grid::new()
             .columns([GridLength::Star(1.0), GridLength::Auto])
-            .grid_row(3)
             .children((
                 TextBlock::new()
                     .text(text)
@@ -11046,7 +11445,45 @@ impl Root {
                     .margin(Thickness::new(0.0, 0.0, 8.0, 0.0))
                     .grid_column(1)
                     .content(running),
-            ))
+            ));
+        StackPanel::new().grid_row(3).children((
+            self.failure_band(context),
+            self.sequence_band(context),
+            bar,
+        ))
+    }
+
+    /// 途中の操作の帯（ステータスバーの上。どの画面でも出す。macOS 版・GTK4 版のステータスバーの行）。
+    fn sequence_band(&self, context: &ViewContext<Self>) -> View {
+        // 見出しと説明（コンフリクトの数は status から）。
+        let conflicts = self.status.as_ref().map_or(0, |s| {
+            s.status
+                .entries
+                .iter()
+                .filter(|e| e.kind == amonhen_model::StatusKind::Unmerged)
+                .count()
+        });
+        let sequence = self.sequence.as_ref().map(|s| {
+            (
+                crate::sequence::title(s),
+                crate::sequence::detail(s, conflicts),
+                crate::sequence::can_skip(s),
+            )
+        });
+        crate::workcopy::sequence_band(
+            sequence
+                .as_ref()
+                .map(|(t, d, skip)| (t.as_str(), d.as_str(), *skip)),
+            // 止まった git am: コンフリクトがなく、まだ 3-way でやり直していなければ（GTK4 版の `retry`）。
+            self.sequence.as_ref().is_some_and(|s| {
+                s["kind"] == "am"
+                    && conflicts == 0
+                    && s["threeWay"].as_bool() != Some(true)
+                    && s["retried"].as_bool() != Some(true)
+                    && s["empty"].as_bool() != Some(true)
+            }),
+            &|key: &'static str| context.callback(move |()| Message::Command(key.to_owned())),
+        )
     }
 
     /// Push の画面の行: 送る変更すべて、送るコミット、上流から消えるコミットの見出しとそのコミット（macOS 版の
@@ -12601,25 +13038,7 @@ impl Root {
             file_menu: Box::new(|path: String| {
                 context.callback(move |key| Message::WorkingFileMenu(path.clone(), key))
             }),
-            sequence: Box::new(|key: &'static str| {
-                context.callback(move |()| Message::Command(key.to_owned()))
-            }),
         };
-        // 途中の操作の帯の見出しと説明（コンフリクトの数は status から）。
-        let conflicts = self.status.as_ref().map_or(0, |s| {
-            s.status
-                .entries
-                .iter()
-                .filter(|e| e.kind == amonhen_model::StatusKind::Unmerged)
-                .count()
-        });
-        let sequence = self.sequence.as_ref().map(|s| {
-            (
-                crate::sequence::title(s),
-                crate::sequence::detail(s, conflicts),
-                crate::sequence::can_skip(s),
-            )
-        });
         let view = crate::workcopy::view(
             crate::workcopy::Input {
                 status: self.status.as_deref(),
@@ -12635,17 +13054,6 @@ impl Root {
                 description: &self.description,
                 committing: self.committing,
                 amend: self.amend,
-                sequence: sequence
-                    .as_ref()
-                    .map(|(t, d, skip)| (t.as_str(), d.as_str(), *skip)),
-                // 止まった git am: コンフリクトがなく、まだ 3-way でやり直していなければ（GTK4 版の `retry`）。
-                retry_three_way: self.sequence.as_ref().is_some_and(|s| {
-                    s["kind"] == "am"
-                        && conflicts == 0
-                        && s["threeWay"].as_bool() != Some(true)
-                        && s["retried"].as_bool() != Some(true)
-                        && s["empty"].as_bool() != Some(true)
-                }),
                 hovered: self.working_hovered.as_deref(),
                 mixed: &|key: &str| {
                     self.mixed_used.borrow_mut().push(key.to_owned());
@@ -14619,6 +15027,14 @@ fn attach_search_keys(element: &IInspectable) -> windows_core_reactor::Result<()
 
 /// マージエディタの左右と Base の欄で、選んでいるコンフリクトを見える所へ出す（欄の位置をそろえる。GTK4 版と
 /// 同じ）。描き直した直後は並べ終わっていないので、少し待ってから。
+/// メニューの `key` の操作を、少し後で行う（閉じた ContentDialog を描き終えてから次の確認を開くため）。
+fn menu_later(context: &ComponentContext<Root>, key: String) {
+    context.spawn_background(move |_| {
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        Message::HistoryMenu(key)
+    });
+}
+
 fn merge_scroll_later(context: &ComponentContext<Root>) {
     context.spawn_background(|_| {
         std::thread::sleep(std::time::Duration::from_millis(150));

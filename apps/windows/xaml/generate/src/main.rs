@@ -22,7 +22,7 @@ const FILTER: &[&str] = &[
     "Microsoft.UI.Xaml.DependencyObject",
     "Microsoft.UI.Xaml.Media.VisualTreeHelper",
     "Microsoft.UI.Xaml.Media.IVisualTreeHelperStatics::{GetParent,GetChild,GetChildrenCount}",
-    "Microsoft.UI.Xaml.IFrameworkElement::{DataContext,Tag}",
+    "Microsoft.UI.Xaml.IFrameworkElement::{DataContext,Tag,put_HorizontalAlignment,put_VerticalAlignment,put_Margin}",
     // Repositories の一覧で選んだ行（複数）。
     "Microsoft.UI.Xaml.Controls.ListViewBase",
     "Microsoft.UI.Xaml.Controls.IListViewBase::{SelectedItems}",
@@ -49,6 +49,27 @@ const FILTER: &[&str] = &[
     "Microsoft.UI.Input.InputSystemCursorShape",
     "Microsoft.UI.Input.IInputCursorFactory::{}",
     "Microsoft.UI.Input.IInputCursorStatics::{}",
+    // ツールバーの Pull・Push のボタンに、上流との差の数のバッジ（InfoBadge）を足す（reactor の AppBarButton には
+    // 中身を足す口がないので、ボタンのテンプレートの根の Panel に入れる。Panel.Children は UIElementCollection
+    // を返し、その生成物は IIterable の First を引けずに通らないので、`badge.rs` で IPanel を手で引く）。
+    "Microsoft.UI.Xaml.Controls.InfoBadge",
+    "Microsoft.UI.Xaml.Controls.IInfoBadge::{Value,put_Value}",
+    "Microsoft.UI.Xaml.Controls.IInfoBadgeFactory::{CreateInstance}",
+    "Microsoft.UI.Xaml.Controls.IInfoBadgeStatics::{}",
+    "Microsoft.UI.Xaml.Controls.AppBarButton",
+    "Microsoft.UI.Xaml.Controls.IAppBarButton::{Label}",
+    "Microsoft.UI.Xaml.Controls.IAppBarButtonFactory::{}",
+    "Microsoft.UI.Xaml.Controls.IAppBarButtonStatics::{}",
+    "Microsoft.UI.Xaml.Controls.IButtonFactory::{}",
+    "Microsoft.UI.Xaml.Controls.IButtonStatics::{}",
+    "Microsoft.UI.Xaml.Controls.Primitives.IButtonBaseFactory::{}",
+    "Microsoft.UI.Xaml.Controls.Primitives.IButtonBaseStatics::{}",
+    "Microsoft.UI.Xaml.Controls.IContentControlFactory::{}",
+    "Microsoft.UI.Xaml.Controls.IContentControlStatics::{}",
+    "Microsoft.UI.Xaml.HorizontalAlignment",
+    "Microsoft.UI.Xaml.VerticalAlignment",
+    "Microsoft.UI.Xaml.Thickness",
+    "Microsoft.UI.Xaml.Visibility",
     // ハンドラーの型は丸ごと（`new` が要る）。
     "Microsoft.UI.Xaml.Input.KeyEventHandler",
     "Microsoft.UI.Xaml.Input.PointerEventHandler",
@@ -72,7 +93,7 @@ const FILTER: &[&str] = &[
      PointerMoved,remove_PointerMoved,PointerReleased,remove_PointerReleased,PointerWheelChanged,\
      remove_PointerWheelChanged,DoubleTapped,remove_DoubleTapped,ContextRequested,remove_ContextRequested,\
      IsTabStop,put_IsTabStop,Focus,CapturePointer,ReleasePointerCapture,ContextFlyout,put_ContextFlyout,PreviewKeyDown,remove_PreviewKeyDown,\
-     StartBringIntoView}",
+     StartBringIntoView,put_IsHitTestVisible,put_Visibility}",
     "Microsoft.UI.Xaml.Controls.Primitives.IFlyoutBase::{ShowAt,ShowAtWithOptions,Hide}",
     "Microsoft.UI.Xaml.Controls.Primitives.IFlyoutShowOptions::{put_Position}",
     "Microsoft.UI.Xaml.IRoutedEventArgs::{OriginalSource}",

@@ -387,10 +387,6 @@ pub struct Input<'a> {
     pub committing: bool,
     /// 直前のコミットをやり直す（Amend）。
     pub amend: bool,
-    /// 途中の操作（1 行目の見出し、2 行目の説明、Skip できるか）。あれば上に帯を出す。
-    pub sequence: Option<(&'a str, &'a str, bool)>,
-    /// 止まった git am を 3-way マージでやり直せるか（帯に Retry with 3-Way Merge を出す。GTK4 版と同じ条件）。
-    pub retry_three_way: bool,
     /// 一部だけ含めているチェック（▣）の要素（キーごと）。描いた後に、どちらでもない状態にする（reactor の
     /// CheckBox は true・false だけなので、作ったチェックの状態を直に変える）。
     pub mixed: &'a dyn Fn(&str) -> ElementRef<CheckBox>,
@@ -424,8 +420,6 @@ pub struct Callbacks<'a> {
     pub hover: Box<dyn Fn(String) -> Callback<PointerEventInfo> + 'a>,
     /// 行の変更を捨てるボタン（確かめてから。右クリックの Discard File と同じ）。
     pub discard: Box<dyn Fn(String) -> Callback<()> + 'a>,
-    /// 途中の操作の帯のボタン（`continue`・`skip`・`abort`）。
-    pub sequence: Box<dyn Fn(&'static str) -> Callback<()> + 'a>,
 }
 
 /// 一覧の 1 行の印（M・A・D・R・?・U）。作業ツリー側に変更があればそちら、なければ index 側。
@@ -603,12 +597,14 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
                 .on_is_checked_changed(callbacks.amend)
                 .grid_column(1)
                 .content(TextBlock::new().text("Amend")),
-            Button::new()
-                .is_enabled(can_commit)
-                .on_click(callbacks.commit)
-                .grid_column(2)
-                .content(TextBlock::new().text(label))
-                .tooltip(commit_tip),
+            crate::tip::holder(
+                Button::new()
+                    .is_enabled(can_commit)
+                    .on_click(callbacks.commit)
+                    .content(TextBlock::new().text(label)),
+                commit_tip,
+                2,
+            ),
             Button::new()
                 .margin(Thickness::new(2.0, 0.0, 0.0, 0.0))
                 .grid_column(3)
@@ -891,14 +887,34 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
             ),
             list,
         )]),));
-    // 途中の操作の帯: 何の途中かと、Continue・Skip（1 つずつ当てていく操作だけ）・Abort（GTK4 版のメニューの
-    // 使えるかと同じ）。
-    let band: View = match input.sequence {
+    Grid::new()
+        .rows([
+            GridLength::Auto,
+            GridLength::Auto,
+            GridLength::Auto,
+            GridLength::Auto,
+            GridLength::Star(1.0),
+        ])
+        .margin(Thickness::new(14.0, 10.0, 14.0, 0.0))
+        .children((message, commit, filter, list))
+}
+
+/// 途中の操作の帯（窓の下のステータスバーの上。macOS 版・GTK4 版のステータスバーの行と同じく、どの画面でも
+/// 出す）: 何の途中かと、Continue・Skip（1 つずつ当てていく操作だけ）・Abort（GTK4 版のメニューの使えるかと
+/// 同じ）。`sequence` は 1 行目の見出し、2 行目の説明、Skip できるか。`retry_three_way` は止まった git am を
+/// 3-way マージでやり直せるか（Retry with 3-Way Merge を出す。GTK4 版と同じ条件）。`on` はボタン
+/// （`continue`・`skip`・`abort`・`am-three-way`）。
+pub fn sequence_band(
+    sequence: Option<(&str, &str, bool)>,
+    retry_three_way: bool,
+    on: &dyn Fn(&'static str) -> Callback<()>,
+) -> View {
+    match sequence {
         Some((title, detail, skip)) => {
             let button = |key: &'static str, title: &str, enabled: bool| {
                 Button::new()
                     .is_enabled(enabled)
-                    .on_click((callbacks.sequence)(key))
+                    .on_click(on(key))
                     .content(TextBlock::new().text(title))
             };
             let text = StackPanel::new()
@@ -920,19 +936,19 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
                     .horizontal_alignment(HorizontalAlignment::Right)
                     .grid_column(column)
                     .children((
-                        if input.retry_three_way {
+                        if retry_three_way {
                             button("am-three-way", &tr!("Retry with 3-Way Merge"), true)
                         } else {
                             View::empty()
                         },
                         // やり直せるうちは Continue を押せない（解くものが残っている。GTK4 版と同じ）。
-                        button("continue", "Continue", !input.retry_three_way),
+                        button("continue", "Continue", !retry_three_way),
                         button("skip", "Skip", skip),
                         button("abort", "Abort", true),
                     ))
             };
             // ボタンが 4 つになると見出しが隠れるので、そのときはボタンを下の段に置く。
-            let content: View = if input.retry_three_way {
+            let content: View = if retry_three_way {
                 StackPanel::new().spacing(6.0).children((text, buttons(0)))
             } else {
                 Grid::new()
@@ -942,22 +958,10 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
             Border::new()
                 .background(Brush::Solid(Color::rgb(0xff, 0xf4, 0xce)))
                 .padding(Thickness::new(10.0, 6.0, 10.0, 6.0))
-                .margin(Thickness::new(0.0, 0.0, 0.0, 8.0))
-                .grid_row(0)
                 .content(content)
         }
         None => View::empty(),
-    };
-    Grid::new()
-        .rows([
-            GridLength::Auto,
-            GridLength::Auto,
-            GridLength::Auto,
-            GridLength::Auto,
-            GridLength::Star(1.0),
-        ])
-        .margin(Thickness::new(14.0, 10.0, 14.0, 0.0))
-        .children((band, message, commit, filter, list))
+    }
 }
 
 /// 説明の欄の字の大きさ（TextBox の既定の 14。reactor の TextBox には字の大きさの指定がない）。

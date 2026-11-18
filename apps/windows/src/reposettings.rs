@@ -934,16 +934,18 @@ pub fn keys_view(
                 .placeholder_text(tr!("Value"))
                 .on_text_changed(field("value"))
                 .grid_column(1),
-            Button::new()
-                .is_enabled(state.new_key.trim().contains('.'))
-                .on_click(button("add".to_owned()))
-                .grid_column(2)
-                .content(TextBlock::new().text("+"))
-                .tooltip(if global {
+            crate::tip::holder(
+                Button::new()
+                    .is_enabled(state.new_key.trim().contains('.'))
+                    .on_click(button("add".to_owned()))
+                    .content(TextBlock::new().text("+")),
+                if global {
                     tr!("Add a key for all repositories")
                 } else {
                     tr!("Add a key to this repository")
-                }),
+                },
+                2,
+            ),
         ));
     StackPanel::new().children((
         switches,
@@ -1532,15 +1534,13 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                             .vertical_alignment(VerticalAlignment::Center)
                             .grid_column(1),
                         // Windows の git は実行の許可にかかわらずフックを動かすので、切り替えられない。
-                        CheckBox::new()
-                            .is_checked(*enabled)
-                            .is_enabled(false)
-                            .on_is_checked_changed((callbacks.toggle)(name.clone()))
-                            .grid_column(2)
-                            .content(TextBlock::new().text(tr!("Enabled")))
-                            .tooltip(tr!(
+                        crate::tip::holder(CheckBox::new()
+                                .is_checked(*enabled)
+                                .is_enabled(false)
+                                .on_is_checked_changed((callbacks.toggle)(name.clone()))
+                                .content(TextBlock::new().text(tr!("Enabled"))), tr!(
                                 "Hooks can’t be disabled on Windows (git runs them whatever their permissions)"
-                            )),
+                            ), 2),
                         StackPanel::new()
                             .orientation(Orientation::Horizontal)
                             .spacing(6.0)
@@ -1590,13 +1590,14 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                         .selected_index(state.new_hook.min(missing.len().saturating_sub(1)))
                         .is_enabled(!missing.is_empty())
                         .on_selection_changed((callbacks.choice)("hook-new")),
-                    Button::new()
-                        .is_enabled(!missing.is_empty())
-                        .on_click((callbacks.button)("hook-create".to_owned()))
-                        .content(TextBlock::new().text(tr!("Create Hook…")))
-                        .tooltip(tr!(
-                            "Puts a #!/bin/sh skeleton in place and makes it executable."
-                        )),
+                    crate::tip::holder(
+                        Button::new()
+                            .is_enabled(!missing.is_empty())
+                            .on_click((callbacks.button)("hook-create".to_owned()))
+                            .content(TextBlock::new().text(tr!("Create Hook…"))),
+                        tr!("Puts a #!/bin/sh skeleton in place and makes it executable."),
+                        0,
+                    ),
                 ));
             let script: View = match &state.hook_script {
                 Some((name, text)) => StackPanel::new()
@@ -1813,23 +1814,21 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                                             .text(folder.clone())
                                             .is_text_selection_enabled(true)
                                             .vertical_alignment(VerticalAlignment::Center),
-                                        Button::new()
-                                            .is_enabled(can)
-                                            .on_click(
-                                                (callbacks.button)(format!("sparse-remove:{folder}")),
-                                            )
-                                            .content(TextBlock::new().text("−"))
-                                            .tooltip(tr!("Stop checking out this folder")),
+                                        crate::tip::holder(Button::new()
+                                                .is_enabled(can)
+                                                .on_click((callbacks.button)(format!(
+                                                    "sparse-remove:{folder}"
+                                                )))
+                                                .content(TextBlock::new().text("−")), tr!("Stop checking out this folder"), 0),
                                     )),
                             ));
                         }
                         rows.push((
                             "sparse-add".to_owned(),
-                            Button::new()
-                                .is_enabled(can)
-                                .on_click((callbacks.button)("sparse-add".to_owned()))
-                                .content(TextBlock::new().text("+"))
-                                .tooltip(tr!("Check out one more folder")),
+                            crate::tip::holder(Button::new()
+                                    .is_enabled(can)
+                                    .on_click((callbacks.button)("sparse-add".to_owned()))
+                                    .content(TextBlock::new().text("+")), tr!("Check out one more folder"), 0),
                         ));
                     }
                     Some(sparse) => {

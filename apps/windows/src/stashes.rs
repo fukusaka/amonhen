@@ -143,11 +143,14 @@ pub fn view(
         ),
     ];
     let [a, b, c, d] = buttons.map(|(key, title, tip)| {
-        Button::new()
-            .is_enabled(enabled)
-            .on_click((callbacks.button)(key))
-            .content(TextBlock::new().text(title))
-            .tooltip(tip)
+        crate::tip::holder(
+            Button::new()
+                .is_enabled(enabled)
+                .on_click((callbacks.button)(key))
+                .content(TextBlock::new().text(title)),
+            tip,
+            0,
+        )
     });
     let bar = StackPanel::new()
         .orientation(Orientation::Horizontal)

@@ -59,7 +59,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | ブランチのメニュー: checkout・名前の変更・削除（未マージは Delete Anyway） | ✓ | ✓ | ✓ | ✓ | △ | macOS: Set Upstream は Repository メニューだけ。<br>GTK4: Set Upstream は Repository メニューだけ。<br>CLI: `amonhen run` から。 |
 | checkout していないブランチの同期（Fast-Forward・Push・Publish） | ✓ | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
 | タグの一覧 | ✓ | ✓ | ✓ | ✓ | ✓ |  |
-| タグのリモートの印（ない・違う）とポップオーバー | ✓ | ✓ | △ | ✓ | △ | VSCode: 行の説明に出し、リモートごとの様子はツールチップに（ポップオーバーはない）。<br>CLI: `amonhen run`（`tagRemotes`）から。<br>Windows: 名前の後ろに ⚠（リモートに別のタグ）か ∅（どのリモートにもない）、リモートごとの様子は行のツールチップとタグのメニューの先頭に。ポップオーバーはない。 |
+| タグのリモートの印（ない・違う）とポップオーバー | ✓ | ✓ | ✓ | ✓ | △ | VSCode: 行の説明に出し、リモートごとの様子はツールチップに（ポップオーバーはない）。<br>CLI: `amonhen run`（`tagRemotes`）から。<br>Windows: 名前の後ろに ⚠（リモートに別のタグ）か ∅（どのリモートにもない）、リモートごとの様子を行のツールチップとタグのメニューの先頭に。そこを選ぶと、吹き出しの中身をダイアログで出す。 |
 | タグの署名の印 | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: 行のアイコンで、説明はツールチップに。<br>CLI: `refs --verify`。<br>Windows: 名前の後ろに 🔏（検証できた）か 🔓（署名はあるが検証できない）、状態と署名者はタグのメニューの先頭。吹き出しはない |
 | タグのメニュー: Push to・Replace on・削除・リモートから削除 | ✓ | ✓ | ✓ | ✓ | △ | VSCode: リモートがいくつもあれば一覧で選ぶ。<br>CLI: `amonhen run` から。 |
 | リモートとそのブランチ | ✓ | ✓ | ✓ | ✓ | ✓ |  |
@@ -182,7 +182,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Refresh と Rebuild History | ✓ | ✓ | ✓ | ✓ | △ | VSCode: Rebuild History はサイドバーの ⋯ とコマンドパレットから。エンジンがあれば。<br>CLI: `log --rebuild`・`daemon rebuild`。 |
 | 直前の操作の Undo（尋ね、何を戻すか示す） | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: 上の Undo とコマンドパレットは尋ねる。操作の直後に押す知らせの Undo は尋ねない。<br>CLI: `undo`（先に見るなら `--peek`）。 |
 | 範囲付きの History の検索（件名・作者・ID・パス・中身） | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: エンジンがあるとき。<br>CLI: `log <query>`。 |
-| ahead/behind のバッジ | ✓ | ✓ | △ | ✓ | △ | VSCode: サイドバーのブランチの行に出る。<br>CLI: `status` に出る。<br>Windows: サイドバー・窓の題（↑n ↓n）と、Pull・Push のボタンのツールチップ。ボタンにバッジはない。 |
+| ahead/behind のバッジ | ✓ | ✓ | ✓ | ✓ | △ | VSCode: サイドバーのブランチの行に出る。<br>CLI: `status` に出る。 |
 | ツールバーのカスタマイズ | ✓ | ✓ | ✓ | n/a | n/a | GTK4: パレットは NSToolbar と同じ使い方で、シートと同じく見出しの下に中身に重ねて出し、窓の大きさは変えない。見出しはアイコンだけなので、表示（アイコンと文字）は選ばない。Repository のメニューと主メニューはメニューバーの代わりなので動かない。<br>Windows: View > ツールバーをカスタマイズ… で、ボタンごとのチェック・↑ ↓・スペース（ドラッグとフレキシブルスペースはない） |
 | 120 秒黙った network の git を止める | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: エンジンのものと、エンジンを使わないときの拡張自身の fetch・push。<br>Windows: エンジンのもの。 |
 
@@ -360,8 +360,8 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 
 | 機能 | macOS | GTK4 | Windows | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
-| 進行中の操作と Continue / Skip / Abort | ✓ | ✓ | △ | ✓ | n/a | VSCode: サイドバーの行。<br>Windows: Working Copy の上の帯に。 |
-| 失敗とその原因・Details | ✓ | ✓ | △ | ✓ | n/a | VSCode: 知らせに原因（git の fatal:・error: の行）を出し、Details で全文と git の命令を出力パネルに出す。<br>Windows: 何が失敗したか・理由・どうするか・git の文と、次の一手（もう一度・Pull…・Working Copy・端末）と Activity のダイアログ。帯ではない。 |
+| 進行中の操作と Continue / Skip / Abort | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: サイドバーの行。 |
+| 失敗とその原因・Details | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: 知らせに原因（git の fatal:・error: の行）を出し、Details で全文と git の命令を出力パネルに出す。 |
 | 切れたつながりと Reconnect | ✓ | ✓ | — | n/a | n/a |  |
 | 終わった操作が何をしたか、数秒 | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: ステータスバーの文か、Undo 付きの知らせ。 |
 
@@ -371,7 +371,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
 | リモート・HEAD を動かす・消す操作の前のシート | ✓ | ✓ | ✓ | ✓ | n/a | GTK4: 名前を入れるものもすべての確認も同じシート。macOS と同じく、入力がどこにあっても（ドロップダウンやラジオでも）Return で既定のボタンを押す。<br>VSCode: modal と、Fetch・Pull・Push は QuickPick。Switch Branch… はアプリの切り替えと同じくすぐ切り替える。 |
 | git の操作の Undo（`undo.json`） | ✓ | ✓ | ✓ | ✓ | ✓ |  |
-| 押せない部品はツールチップで理由を言う | ✓ | ✓ | △ | n/a | n/a | VSCode: 使えないコマンドは出さない（when 句）。<br>Windows: Commit とツールバーの Push は、ツールチップでわけを言う。WinUI は押せないボタンのツールチップを出さないので、Push は押せるままでベルを鳴らす。 |
+| 押せない部品はツールチップで理由を言う | ✓ | ✓ | △ | n/a | n/a | VSCode: 使えないコマンドは出さない（when 句）。<br>Windows: 押せないボタンや欄もツールチップを出し（WinUI は押せない部品に出さないので包む部品に付ける）、Commit はわけを言う。ツールバーの Push は包めないので押せるままにし、押すとベルが鳴る（わけはツールチップに）。 |
 
 ## 12. GitHub
 

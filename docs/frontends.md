@@ -59,7 +59,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Branch menu: checkout, rename, delete (Delete Anyway when unmerged) | ✓ | ✓ | ✓ | ✓ | △ | macOS: Set Upstream is only in the Repository menu.<br>GTK4: Set Upstream is only in the Repository menu.<br>CLI: Via `amonhen run`. |
 | Sync a branch that is not checked out (Fast-Forward, Push, Publish) | ✓ | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
 | Tags listed | ✓ | ✓ | ✓ | ✓ | ✓ |  |
-| Tag marks for remotes (missing, different) with a popover | ✓ | ✓ | △ | ✓ | △ | VSCode: In the row's description, each remote's state in the tooltip (no popover).<br>CLI: Via `amonhen run` (`tagRemotes`).<br>Windows: ⚠ (a different tag on a remote) or ∅ (on no remote) after the name, and each remote's state in the row's tooltip and at the top of the tag's menu; no popover. |
+| Tag marks for remotes (missing, different) with a popover | ✓ | ✓ | ✓ | ✓ | △ | VSCode: In the row's description, each remote's state in the tooltip (no popover).<br>CLI: Via `amonhen run` (`tagRemotes`).<br>Windows: ⚠ (a different tag on a remote) or ∅ (on no remote) after the name, and each remote's state in the row's tooltip and at the top of the tag's menu; choosing one of those opens the popover's content as a dialog. |
 | Tag signature marks | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: The row's icon, explained in the tooltip.<br>CLI: `refs --verify`.<br>Windows: 🔏 (verified) or 🔓 (signed, not verified) after the name, and the status and signer at the top of the tag's menu; no popover |
 | Tag menu: Push to, Replace on, Delete, Delete from a remote | ✓ | ✓ | ✓ | ✓ | △ | VSCode: The remote is chosen in a list when there are several.<br>CLI: Via `amonhen run`. |
 | Remotes with their branches | ✓ | ✓ | ✓ | ✓ | ✓ |  |
@@ -182,7 +182,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Refresh and Rebuild History | ✓ | ✓ | ✓ | ✓ | △ | VSCode: Rebuild History in the sidebar's ⋯ and the command palette, with the engine.<br>CLI: `log --rebuild`, `daemon rebuild`. |
 | Undo the last operation (asks, names what it puts back) | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: The title's Undo and the Command Palette ask; a notification's Undo, pressed right after the operation, doesn't.<br>CLI: `undo` (`--peek` to see it first). |
 | History search with scopes (subject, author, ID, path, contents) | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: With the engine.<br>CLI: `log <query>`. |
-| Ahead/behind badges | ✓ | ✓ | △ | ✓ | △ | VSCode: On the sidebar's branch rows.<br>CLI: In `status`.<br>Windows: In the sidebar, the window title (↑n ↓n) and the Pull and Push buttons' tooltips; no badge on the buttons. |
+| Ahead/behind badges | ✓ | ✓ | ✓ | ✓ | △ | VSCode: On the sidebar's branch rows.<br>CLI: In `status`. |
 | Toolbar customization | ✓ | ✓ | ✓ | n/a | n/a | GTK4: The palette works like NSToolbar's and slides down under the header bar over the content like its sheet, without changing the window's size, with no Show (icon/text) choice since the header bar shows icons; the Repository menu and the main menu take the menu bar's place and stay put.<br>Windows: View > Customize Toolbar… with a check per button, ↑ ↓ and spaces (no dragging, no flexible space) |
 | Network git stopped after 120 s of silence | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: The engine's, and the extension's own fetch and push without it.<br>Windows: The engine's. |
 
@@ -360,8 +360,8 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 
 | Feature | macOS | GTK4 | Windows | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
-| Operation in progress with Continue / Skip / Abort | ✓ | ✓ | △ | ✓ | n/a | VSCode: A sidebar row.<br>Windows: In a band above Working Copy. |
-| Failure with its cause and Details | ✓ | ✓ | △ | ✓ | n/a | VSCode: The notification gives the cause (git's fatal: and error: lines); Details shows the whole output and the git command in an output panel.<br>Windows: A dialog with what failed, the cause and what to do, git's text, the next step (Try Again, Pull…, Open Working Copy, Open in Terminal) and Activity; no band. |
+| Operation in progress with Continue / Skip / Abort | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: A sidebar row. |
+| Failure with its cause and Details | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: The notification gives the cause (git's fatal: and error: lines); Details shows the whole output and the git command in an output panel. |
 | Lost connection with Reconnect | ✓ | ✓ | — | n/a | n/a |  |
 | What a finished operation did, for a few seconds | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: A status bar message or a notification with Undo. |
 
@@ -371,7 +371,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
 | A sheet before remote, HEAD-moving and deleting operations | ✓ | ✓ | ✓ | ✓ | n/a | GTK4: Name prompts and every confirmation are the same sheet. Return presses the default button wherever the focus is (a drop-down or a radio too), as on macOS.<br>VSCode: Modals, and QuickPicks for Fetch, Pull and Push; Switch Branch… switches at once, as the app's switcher does. |
 | Undo of git operations (`undo.json`) | ✓ | ✓ | ✓ | ✓ | ✓ |  |
-| Disabled controls say why in their tooltip | ✓ | ✓ | △ | n/a | n/a | VSCode: Commands that can't be used aren't shown (when clauses).<br>Windows: Commit and the toolbar's Push say why in their tooltip; WinUI shows no tooltip on a disabled button, so Push stays enabled and beeps. |
+| Disabled controls say why in their tooltip | ✓ | ✓ | △ | n/a | n/a | VSCode: Commands that can't be used aren't shown (when clauses).<br>Windows: Disabled buttons and boxes keep their tooltip (WinUI shows none on a disabled control, so it sits on a wrapper), and Commit says why; the toolbar's Push can't be wrapped, so it stays enabled and beeps, with the reason in its tooltip. |
 
 ## 12. GitHub
 
