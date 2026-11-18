@@ -156,6 +156,8 @@ pub struct Callbacks<'a> {
     pub order: Callback<Option<usize>>,
     /// Theme: 構文の色のテーマを選んだ（`theme::names` の番号）。
     pub syntax_theme: Callback<Option<usize>>,
+    /// Theme のボタン（`import`・`remove:<name>`）。
+    pub theme_button: Box<dyn Fn(String) -> Callback<()> + 'a>,
 }
 
 /// Git > Operations・Working Copy（すべてのリポジトリの段。Repository Settings と同じ行で、効いている値の設定元を
@@ -287,6 +289,39 @@ fn appearance(callbacks: &Callbacks) -> View {
                         .on_selection_changed(callbacks.syntax_theme.clone())
                 },
             )),
+        StackPanel::new()
+            .spacing(4.0)
+            .children((View::keyed_fragment(
+                crate::theme::imported()
+                    .into_iter()
+                    .map(|t| {
+                        (
+                            format!("imported:{}", t.name),
+                            StackPanel::new()
+                                .orientation(Orientation::Horizontal)
+                                .spacing(8.0)
+                                .children((
+                                    TextBlock::new()
+                                        .text(t.name.clone())
+                                        .vertical_alignment(VerticalAlignment::Center),
+                                    TextBlock::new()
+                                        .text(if t.dark { tr!("Dark") } else { tr!("Light") })
+                                        .opacity(0.6)
+                                        .vertical_alignment(VerticalAlignment::Center),
+                                    Button::new()
+                                        .on_click((callbacks.theme_button)(format!(
+                                            "remove:{}",
+                                            t.name
+                                        )))
+                                        .content(TextBlock::new().text(tr!("Remove"))),
+                                )),
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+            ),)),
+        Button::new()
+            .on_click((callbacks.theme_button)("import".to_owned()))
+            .content(TextBlock::new().text(tr!("Import VSCode Theme…"))),
         display(
             "diff-standard-colors",
             crate::prefs::bool(crate::theme::DIFF_STANDARD_COLORS),

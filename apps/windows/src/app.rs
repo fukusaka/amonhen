@@ -796,6 +796,8 @@ enum Message {
     SettingsOrder(Option<usize>),
     /// Settings > Theme: 構文の色のテーマ（`theme::names` の番号）。
     SettingsSyntaxTheme(Option<usize>),
+    /// Settings > Theme のボタン（`import`・`remove:<name>`）。
+    SettingsThemeButton(String),
     CloseSettings,
     /// Activity: タブを選んだ・Undo の記録を読んだ・戻す数を選んだ・読み直す時刻・閉じる。
     ActivityTab(Option<usize>),
@@ -5629,6 +5631,43 @@ impl Component for Root {
                     crate::theme::reload();
                     with_history(|h| h.diff.dirty = true);
                 }
+            }
+            Message::SettingsThemeButton(key) => {
+                let mut themes = crate::theme::imported();
+                if let Some(name) = key.strip_prefix("remove:") {
+                    themes.retain(|t| t.name != name);
+                } else {
+                    // 読み込んだ明るいテーマは、そのまま明るい外観のテーマにする（GTK4 版・macOS 版と同じ）。
+                    let paths = crate::files::open_files(&tr!("Import VSCode Theme…"));
+                    for path in paths {
+                        match crate::theme::import_vscode(&path) {
+                            Ok(t) => {
+                                themes.retain(|x| x.name != t.name);
+                                if !t.dark {
+                                    let _ = crate::prefs::set_string(
+                                        crate::theme::SYNTAX_THEME_LIGHT,
+                                        &t.name,
+                                    );
+                                }
+                                themes.push(t);
+                            }
+                            Err(e) => {
+                                self.dialog = Some(Dialog::Failed {
+                                    title: tr!("Import VSCode Theme…"),
+                                    message: tr!(
+                                        "Couldn’t read {file}: {error}",
+                                        file =
+                                            path.file_name().unwrap_or_default().to_string_lossy(),
+                                        error = e
+                                    ),
+                                });
+                            }
+                        }
+                    }
+                }
+                crate::theme::set_imported(&themes);
+                crate::theme::reload();
+                with_history(|h| h.diff.dirty = true);
             }
             Message::SettingsDisplay("diff-standard-colors", value) => {
                 if value != crate::prefs::bool(crate::theme::DIFF_STANDARD_COLORS) {
@@ -11382,6 +11421,9 @@ impl Root {
                 display: Box::new(|id| context.callback(move |v| Message::SettingsDisplay(id, v))),
                 order: context.callback(Message::SettingsOrder),
                 syntax_theme: context.callback(Message::SettingsSyntaxTheme),
+                theme_button: Box::new(|key: String| {
+                    context.callback(move |()| Message::SettingsThemeButton(key.clone()))
+                }),
                 template_remove: Box::new(|i| {
                     context.callback(move |()| Message::SettingsTemplateRemove(i))
                 }),
