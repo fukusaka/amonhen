@@ -27,16 +27,17 @@ becomes the GitHub Release notes.
   worktree, Prune and pushing tags were blue). Removing an SSH host says "Remove from List", as it only leaves the list.
 - Sheet fields are labeled without a colon, and Japanese no longer puts a space between joined sentences or leaves a
   few menu items (Amend Last Commit, Fixup / Squash Commit For, the Submodules header's) in English.
+- History's graph draws HEAD's commit as a hollow ring and merge commits as smaller dots.
 
 #### Fixed
 
 - Repository Settings > Remotes' Prune asks first, as the sidebar's does.
 - The engine on Windows opens repositories on SSH hosts (`-C ssh://…`): it no longer relies on ssh's connection
   sharing, which Windows' OpenSSH lacks, and sends the engine to the host with scp correctly.
-
 - History rows: a long branch or tag label is cut in the middle, keeping its start and end, instead of pushing the
   subject out of the row; labels that don't fit are gathered into "+n" instead of being left out. Clicking a cut label
   or "+n" lists the commit's branches and tags in full.
+
 ### [0.2.12] - 2026-11-18
 
 History search can match the author's email, the committer and the whole message. Amon Hen asks before sending its

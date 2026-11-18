@@ -19,12 +19,16 @@ final class GraphRenderer {
         static let line: UInt32 = 0
         static let circle: UInt32 = 1
         static let curve: UInt32 = 2
+        /// 太さ 1.8 の輪（外の半径が `width`）。
+        static let ring: UInt32 = 3
     }
 
     nonisolated struct Uniforms {
         var viewport: SIMD2<Float>
         var scale: Float
         var pad: Float = 0
+        /// 線を描かない円（HEAD の輪の中。中心と半径、半径 0 なら無し）。
+        var hole: SIMD4<Float> = .zero
     }
 
     struct Metrics {
@@ -33,6 +37,10 @@ final class GraphRenderer {
         var laneWidth: Float = 14
         var leftInset: Float = 10
         var nodeRadius: Float = 4
+        /// merge の点の半径（合流は線でも分かるので、ほかの点より小さくする）。
+        var mergeRadius: Float = 3
+        /// HEAD の輪の外の半径（中を抜くので、ほかの点よりひとまわり大きくする）。
+        var headRadius: Float = 5.2
         var lineWidth: Float = 1.6
         var firstParentWidth: Float = 2.4
         /// 線だけのレーンの幅（魚眼で詰めたとき）。入りきらなければ 0 まで詰めて、薄い帯にする。
@@ -63,6 +71,10 @@ final class GraphRenderer {
     /// 祖先でない点と線の不透明度。
     private let dimmedAlpha: Float = 0.18
     var metrics = Metrics()
+    /// HEAD のコミット（20 バイト。点を輪で描く）。
+    var head: Data?
+    /// 描く行にある HEAD の輪の、線を描かない円（`Uniforms.hole`）。
+    private var hole: SIMD4<Float> = .zero
     /// 描いたフレームと、描き先を取れずに飛ばしたフレームの数。
     private(set) var drawnFrames = 0
     private(set) var skippedFrames = 0
@@ -253,12 +265,14 @@ final class GraphRenderer {
         let size = layer.bounds.size
         let rows = visibleRows(history: history, scrollY: scrollY, height: Float(size.height))
         instances.removeAll(keepingCapacity: true)
+        hole = .zero
         if !rows.isEmpty {
             FrameProfile.measure("graph: lane positions") { retargetLanes(history: history, rows: rows) }
             buildInstances(history: history, rows: rows, scrollY: scrollY, wholeLineage: false)
         }
         drawnFrames += 1
-        let uniforms = Uniforms(viewport: [Float(size.width), Float(size.height)], scale: Float(layer.contentsScale))
+        let uniforms = Uniforms(
+            viewport: [Float(size.width), Float(size.height)], scale: Float(layer.contentsScale), hole: hole)
         return HistoryRenderThread.Job(
             layer: layer, size: size,
             encode: Self.encoder(instances: instances, uniforms: uniforms, palette: palette, pipeline: pipeline,
@@ -331,6 +345,7 @@ final class GraphRenderer {
     ) {
         let rows = visibleRows(history: history, scrollY: scrollY, height: Float(size.height))
         instances.removeAll(keepingCapacity: true)
+        hole = .zero
         if !rows.isEmpty {
             // 位置は FE が描く前に `prepareLanes` で進めている（同じ範囲なら、ここでは何もしない）。
             FrameProfile.measure("graph: lane positions") {
@@ -340,7 +355,7 @@ final class GraphRenderer {
             buildInstances(history: history, rows: rows, scrollY: scrollY, wholeLineage: !animate)
         }
 
-        var uniforms = Uniforms(viewport: [Float(size.width), Float(size.height)], scale: scale)
+        var uniforms = Uniforms(viewport: [Float(size.width), Float(size.height)], scale: scale, hole: hole)
         let pass = MTLRenderPassDescriptor()
         pass.colorAttachments[0].texture = texture
         pass.colorAttachments[0].loadAction = .clear
@@ -421,14 +436,21 @@ final class GraphRenderer {
             boundaryHistory = history
             boundaryRows = Set(history.boundaryRows())
         }
+        // HEAD の行は描く行の中だけで探す（全体の索引を作らせない。描く行は数十行）。
+        let headRow = head.flatMap { head in rows.first { history.commitID(row: $0) == head } }
         history.withNodes { nodes in
             for n in nodes[rows] where n.flags & UInt16(AmonhenNode_PENDING) == 0 {
                 let p = SIMD2(laneX(n.lane), rowY(n.row, scrollY: scrollY))
                 let i = Int(n.row) - rows.lowerBound
-                if i >= 0, i < rowExtents.count { rowExtents[i] = max(rowExtents[i], p.x + m.nodeRadius) }
+                let isHead = headRow == Int(n.row)
+                let radius = isHead ? m.headRadius : n.flags & UInt16(AmonhenNode_MERGE) != 0 ? m.mergeRadius : m.nodeRadius
+                if i >= 0, i < rowExtents.count { rowExtents[i] = max(rowExtents[i], p.x + radius) }
                 let alpha: Float = lineage.map { $0.contains(row: Int(n.row)) ? 1 : dimmedAlpha } ?? 1
+                // 輪の中とすぐ外には線を描かない（線が輪に触れずに止まる）。
+                if isHead { hole = [p.x, p.y, radius + 0.4, 0] }
                 instances.append(Instance(
-                    a: p, b: p, width: m.nodeRadius, color: UInt32(n.color), kind: Instance.circle, alpha: alpha))
+                    a: p, b: p, width: radius, color: UInt32(n.color), kind: isHead ? Instance.ring : Instance.circle,
+                    alpha: alpha))
                 if boundaryRows.contains(Int(n.row)) { appendUnfetchedStub(below: p, color: UInt32(n.color), alpha: alpha) }
             }
         }
@@ -480,7 +502,7 @@ final class GraphRenderer {
     using namespace metal;
 
     struct Instance { float2 a; float2 b; float width; uint color; uint kind; float alpha; };
-    struct Uniforms { float2 viewport; float scale; float pad; };
+    struct Uniforms { float2 viewport; float scale; float pad; float4 hole; };
     struct VOut { float4 position [[position]]; float2 p; uint instance [[flat]]; };
 
     vertex VOut graph_vertex(uint vid [[vertex_id]], uint iid [[instance_id]],
@@ -512,8 +534,10 @@ final class GraphRenderer {
                                    constant uint &paletteCount [[buffer(3)]]) {
         Instance i = instances[in.instance];
         float d;
-        if (i.kind == 1) {
+        if (i.kind == 1 || i.kind == 4) {
             d = length(in.p - i.a) - i.width;
+        } else if (i.kind == 3) {
+            d = abs(length(in.p - i.a) - (i.width - 0.9)) - 0.9;
         } else if (i.kind == 0) {
             d = segment(in.p, i.a, i.b) - i.width * 0.5;
         } else {
@@ -531,6 +555,10 @@ final class GraphRenderer {
             d -= i.width * 0.5;
         }
         float alpha = clamp(0.5 - d * u.scale, 0.0, 1.0) * i.alpha;
+        if ((i.kind == 0 || i.kind == 2) && u.hole.z > 0.0) {
+            // HEAD の輪の中の線は描かない。
+            alpha *= clamp(0.5 + (length(in.p - u.hole.xy) - u.hole.z) * u.scale, 0.0, 1.0);
+        }
         float4 c = palette[i.color % paletteCount];
         return float4(c.rgb * alpha, alpha);
     }

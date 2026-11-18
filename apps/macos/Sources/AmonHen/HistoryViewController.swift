@@ -350,7 +350,11 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     /// HEAD のコミット（Current Branch で使う）。
     var head: Data? {
         // ほかのプログラムで commit・rebase すると HEAD が動く。今のブランチに絞っていれば絞り込み直す。
-        didSet { if head != oldValue, scope == .current, history != nil { scheduleReloadScope() } }
+        didSet {
+            renderer.head = head
+            if head != oldValue { redrawGraph() }
+            if head != oldValue, scope == .current, history != nil { scheduleReloadScope() }
+        }
     }
     /// 選んだコミット（20 バイト）。選択がなくなれば nil。
     /// History の編集モードに入る（そのコミットから HEAD まで、最初の変更つき）。
