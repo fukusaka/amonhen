@@ -964,6 +964,9 @@ impl State {
                 self.scanned = None;
                 return Action::Scan(roots(&self.data));
             }
+            "column-left" | "column-right" => {
+                move_column(&location, what == "column-left");
+            }
             "rescan" => {
                 self.scanned = None;
                 return Action::Scan(roots(&self.data));
@@ -1193,9 +1196,66 @@ const COLUMNS: [f64; 4] = [150.0, 110.0, 280.0, 110.0];
 /// 列の幅を覚える設定の鍵（`,` 区切り）。
 const COLUMN_WIDTHS_KEY: &str = "repositoryColumnWidths";
 
+/// 状態の列（Name の後ろ。並べ替えられる。幅はこの順の列ごとに覚える）。
+const COLUMN_IDS: [&str; 4] = ["branch", "status", "commit", "opened"];
+/// 列の並びを覚える設定の鍵（`COLUMN_IDS` の名前を `,` 区切りで。GTK4 版の `repositoryPageColumnOrder`）。
+const COLUMN_ORDER_KEY: &str = "repositoryColumnOrder";
+
 thread_local! {
-    /// 列の幅（見出しの境目を動かすと変わる）。
+    /// 列の幅（見出しの境目を動かすと変わる。`COLUMN_IDS` の順）。
     static COLUMN_WIDTHS: std::cell::Cell<[f64; 4]> = std::cell::Cell::new(load_column_widths());
+    /// 並べている列（左から。`COLUMN_IDS` の何番目か）。
+    static COLUMN_ORDER: std::cell::Cell<[usize; 4]> = std::cell::Cell::new(load_column_order());
+}
+
+fn load_column_order() -> [usize; 4] {
+    parse_column_order(&crate::prefs::string(COLUMN_ORDER_KEY).unwrap_or_default())
+}
+
+/// 覚えた並び（知らない・足りない列は、残りを元の順で後ろに足す）。
+fn parse_column_order(text: &str) -> [usize; 4] {
+    let mut order: Vec<usize> = Vec::new();
+    for id in text.split(',').map(str::trim) {
+        if let Some(i) = COLUMN_IDS.iter().position(|c| *c == id)
+            && !order.contains(&i)
+        {
+            order.push(i);
+        }
+    }
+    for i in 0..4 {
+        if !order.contains(&i) {
+            order.push(i);
+        }
+    }
+    [order[0], order[1], order[2], order[3]]
+}
+
+/// 並べている列（左から。`COLUMN_IDS` の何番目か）。
+fn column_order() -> [usize; 4] {
+    COLUMN_ORDER.with(std::cell::Cell::get)
+}
+
+/// 列 `id` を左（`left`）か右に 1 つ動かして覚える。動かせなければ何もしない。
+fn move_column(id: &str, left: bool) {
+    let Some(column) = COLUMN_IDS.iter().position(|c| *c == id) else {
+        return;
+    };
+    let mut order = column_order();
+    let Some(at) = order.iter().position(|&c| c == column) else {
+        return;
+    };
+    let to = if left {
+        at.checked_sub(1)
+    } else {
+        Some(at + 1).filter(|&t| t < 4)
+    };
+    let Some(to) = to else {
+        return;
+    };
+    order.swap(at, to);
+    COLUMN_ORDER.with(|c| c.set(order));
+    let ids: Vec<&str> = order.iter().map(|&i| COLUMN_IDS[i]).collect();
+    let _ = crate::prefs::set_string(COLUMN_ORDER_KEY, &ids.join(","));
 }
 
 fn load_column_widths() -> [f64; 4] {
@@ -1210,16 +1270,17 @@ fn load_column_widths() -> [f64; 4] {
     widths
 }
 
-/// `i` 番目（Branch から）の列の幅。
+/// 左から `i` 番目（Name の後ろから）の列の幅。
 pub fn column_width(i: usize) -> f64 {
-    COLUMN_WIDTHS.with(std::cell::Cell::get)[i.min(3)]
+    COLUMN_WIDTHS.with(std::cell::Cell::get)[column_order()[i.min(3)]]
 }
 
-/// `i` 番目の列の幅を変える（狭すぎ・広すぎにはしない）。
+/// 左から `i` 番目の列の幅を変える（狭すぎ・広すぎにはしない。幅はその列に付いていく）。
 pub fn set_column_width(i: usize, width: f64) {
+    let column = column_order()[i.min(3)];
     COLUMN_WIDTHS.with(|c| {
         let mut widths = c.get();
-        widths[i.min(3)] = width.clamp(60.0, 600.0);
+        widths[column] = width.clamp(60.0, 600.0);
         c.set(widths);
     });
 }
@@ -1235,13 +1296,16 @@ pub fn save_column_widths() {
 }
 
 fn columns() -> Vec<GridLength> {
+    let widths = COLUMN_WIDTHS.with(std::cell::Cell::get);
     let mut c = vec![GridLength::Star(1.0)];
-    c.extend(
-        COLUMN_WIDTHS
-            .with(std::cell::Cell::get)
-            .map(GridLength::Pixel),
-    );
+    c.extend(column_order().map(|i| GridLength::Pixel(widths[i])));
     c
+}
+
+/// 列 `id`（`COLUMN_IDS` の名前）を出している列の番号（Name が 0）。
+fn grid_column_of(id: &str) -> i32 {
+    let i = COLUMN_IDS.iter().position(|c| *c == id).unwrap_or(0);
+    column_order().iter().position(|&c| c == i).unwrap_or(0) as i32 + 1
 }
 
 pub fn view(state: &State, callbacks: Callbacks) -> View {
@@ -1348,7 +1412,8 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
             (true, false) => format!("{text} ▼"),
             _ => text,
         };
-        Button::new()
+        let title = text.trim_end_matches([' ', '▲', '▼']).to_owned();
+        let button = Button::new()
             .style(ButtonStyle::Subtle)
             .horizontal_alignment(HorizontalAlignment::Stretch)
             .horizontal_content_alignment(HorizontalAlignment::Left)
@@ -1359,8 +1424,30 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                 "commit" => "sort:commit",
                 _ => "sort:opened",
             }))
+            .content(TextBlock::new().text(text).font_size(11.0).opacity(0.6));
+        // 右クリックで、その列を左右に動かす（Name は動かさない。GTK4 版・macOS 版は見出しを引いて動かす）。
+        let mut items = Vec::new();
+        if column > 1 {
+            items.push(MenuItem::item(
+                format!("column-left:{id}"),
+                format!("◀ {title}"),
+            ));
+        }
+        if (1..4).contains(&column) {
+            items.push(MenuItem::item(
+                format!("column-right:{id}"),
+                format!("{title} ▶"),
+            ));
+        }
+        let cell = Grid::new()
             .grid_column(column)
-            .content(TextBlock::new().text(text).font_size(11.0).opacity(0.6))
+            .background(Brush::Solid(Color::transparent()))
+            .children((button,));
+        if items.is_empty() {
+            cell
+        } else {
+            cell.menu(Menu::new(items, (callbacks.menu)()))
+        }
     };
     let header = Grid::new()
         .columns(columns())
@@ -1368,10 +1455,10 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
         .grid_row(0)
         .children((
             header_cell(tr!("Name"), "name", 0),
-            header_cell(tr!("Branch"), "branch", 1),
-            header_cell(tr!("Status"), "status", 2),
-            header_cell(tr!("Last Commit"), "commit", 3),
-            header_cell(tr!("Opened"), "opened", 4),
+            header_cell(tr!("Branch"), "branch", grid_column_of("branch")),
+            header_cell(tr!("Status"), "status", grid_column_of("status")),
+            header_cell(tr!("Last Commit"), "commit", grid_column_of("commit")),
+            header_cell(tr!("Opened"), "opened", grid_column_of("opened")),
             View::keyed_fragment(callbacks.column_handles.iter().enumerate().map(|(i, h)| {
                 (
                     format!("handle-{i}"),
@@ -1454,7 +1541,7 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
             .opened
             .get(&key(location))
             .map_or("—".to_owned(), |t| crate::render::local_date(*t));
-        let status_cell = cell(status, 2);
+        let status_cell = cell(status, grid_column_of("status"));
         let status_cell: View = match tip {
             Some(tip) => status_cell.tooltip(tip),
             None => status_cell.into(),
@@ -1464,10 +1551,10 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
             .margin(Thickness::new(0.0, 3.0, 0.0, 3.0))
             .children((
                 name_cell,
-                cell(branch, 1),
+                cell(branch, grid_column_of("branch")),
                 status_cell,
-                cell(commit, 3),
-                cell(opened, 4).opacity(0.7),
+                cell(commit, grid_column_of("commit")),
+                cell(opened, grid_column_of("opened")).opacity(0.7),
             ))
             .menu(Menu::new(row_menu(state, location), (callbacks.menu)()));
         (
@@ -1518,6 +1605,13 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn column_order_keeps_known_columns_once() {
+        assert_eq!(parse_column_order(""), [0, 1, 2, 3]);
+        assert_eq!(parse_column_order("opened,branch"), [3, 0, 1, 2]);
+        assert_eq!(parse_column_order("commit,commit,x,status"), [2, 1, 0, 3]);
+    }
 
     #[test]
     fn scan_reports_repositories_and_the_folders_to_watch() {
