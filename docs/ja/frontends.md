@@ -312,7 +312,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 帯でつないだ 3 つの列（Current / Result / Incoming） | ✓ | ✓ | △ | n/a | n/a | VSCode: VSCode 自身の 3-way のマージエディター。<br>Windows: 3 列。左右の欄はコンフリクトを塗り（Current は青、Incoming は緑、Base は灰、選んでいるものは濃く、解決済みは薄く）、≫・≪ でその側に解決する。スクロールは揃わない。 |
 | Show Base | ✓ | ✓ | ✓ | n/a | n/a |  |
 | Magic Merge（ファイルを開いたときの確かな規則も） | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: コンフリクトは VSCode 標準の 3-way マージエディターで開く。<br>CLI: `merge-file`（git の mergetool にも）。 |
-| 直せる Result とコンフリクトごとの Undo | ✓ | ✓ | △ | n/a | n/a |<br>Windows: 欄の Undo だけ。 |
+| 直せる Result とコンフリクトごとの Undo | ✓ | ✓ | ✓ | n/a | n/a |  |
 | ファイルを Current / Incoming で解く | ✓ | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
 | 外のマージツールで開く | — | — | — | n/a | n/a |  |
 | エディターを別の窓に出す | ✓ | ✓ | — | n/a | n/a |  |

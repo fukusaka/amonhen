@@ -43,6 +43,10 @@ pub struct State {
     pub regions: [Vec<(usize, usize)>; 3],
     /// 開いたときのコンフリクトの両側（今残っているものが、左右の欄のどれに当たるかを決める）。
     originals: Vec<(String, String)>,
+    /// Accept・Magic Merge などで書き換えた前と後（Result の欄の Ctrl+Z・Ctrl+Y で 1 つずつ行き来する。WinUI の
+    /// TextBox は中身を書き換えると自分の Undo を忘れるので）。
+    undo: Vec<(String, String)>,
+    redo: Vec<(String, String)>,
 }
 
 /// Result に残っているコンフリクトの両側（GTK4 版の `regions`）。
@@ -86,6 +90,8 @@ impl State {
             typed: None,
             regions: Default::default(),
             originals: Vec::new(),
+            undo: Vec::new(),
+            redo: Vec::new(),
         }
     }
 
@@ -123,7 +129,11 @@ impl State {
                     let (merged, solved) =
                         conflict::magic(self.result.as_bytes(), MagicRules::Safe, None);
                     if solved > 0 {
-                        self.result = String::from_utf8_lossy(&merged).into_owned();
+                        let before = std::mem::replace(
+                            &mut self.result,
+                            String::from_utf8_lossy(&merged).into_owned(),
+                        );
+                        self.record(before);
                         self.note = tr!(
                             "Resolved {count} when opened (Ctrl+Z to undo).",
                             count = solved
@@ -172,9 +182,56 @@ impl State {
     }
 
     /// 選んでいるコンフリクトを `choice` で解く（次のコンフリクトが同じ番号に来る）。
+    /// 書き換えた（`before` から今の Result へ）ことを覚える。
+    fn record(&mut self, before: String) {
+        if before != self.result {
+            self.undo.push((before, self.result.clone()));
+            self.redo.clear();
+        }
+    }
+
+    /// Ctrl+Z で戻せる書き換えか（最後に覚えた書き換えの後、手で打っていない）。
+    pub fn can_undo(&self) -> bool {
+        self.undo
+            .last()
+            .is_some_and(|(_, after)| *after == self.result)
+    }
+
+    /// Ctrl+Y・Ctrl+Shift+Z でやり直せるか。
+    pub fn can_redo(&self) -> bool {
+        self.redo
+            .last()
+            .is_some_and(|(before, _)| *before == self.result)
+    }
+
+    /// 最後の書き換えを戻す（`redo` ならやり直す）。
+    pub fn undo(&mut self, redo: bool) {
+        let entry = if redo {
+            self.redo.pop().filter(|(before, _)| *before == self.result)
+        } else {
+            self.undo.pop().filter(|(_, after)| *after == self.result)
+        };
+        let Some((before, after)) = entry else {
+            return;
+        };
+        self.result = if redo { after.clone() } else { before.clone() };
+        if redo {
+            self.undo.push((before, after));
+        } else {
+            self.redo.push((before, after));
+        }
+        self.typed = None;
+        self.clamp();
+        self.note.clear();
+    }
+
     pub fn accept(&mut self, choice: Choice) {
         if let Some(text) = conflict::resolve(self.result.as_bytes(), self.selected, choice) {
-            self.result = String::from_utf8_lossy(&text).into_owned();
+            let before = std::mem::replace(
+                &mut self.result,
+                String::from_utf8_lossy(&text).into_owned(),
+            );
+            self.record(before);
             self.typed = None;
             self.clamp();
             self.note.clear();
@@ -185,7 +242,11 @@ impl State {
     pub fn magic(&mut self) {
         let (merged, solved) = conflict::magic(self.result.as_bytes(), MagicRules::All, None);
         if solved > 0 {
-            self.result = String::from_utf8_lossy(&merged).into_owned();
+            let before = std::mem::replace(
+                &mut self.result,
+                String::from_utf8_lossy(&merged).into_owned(),
+            );
+            self.record(before);
             self.typed = None;
             self.clamp();
         }
@@ -222,6 +283,8 @@ pub struct Callbacks<'a> {
     /// 左右の欄のコンフリクトの ≫・≪（`ours:<番号>`・`theirs:<番号>`。番号は開いたときの何番目か）。
     pub pick: Box<dyn Fn(String) -> Callback<()> + 'a>,
     pub result: Callback<String>,
+    /// Result の欄（Ctrl+Z・Ctrl+Y を付ける）。
+    pub result_box: &'a ElementRef<TextBox>,
     /// Base の欄を出すか。
     pub base: Callback<bool>,
 }
@@ -404,6 +467,7 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                 // 左右は読むだけ（塗った文字の欄）。真ん中の Result は書き換えられる。
                 let content: View = match editable {
                     None => TextBox::new()
+                        .element_ref(callbacks.result_box)
                         .text(text)
                         .accepts_return(true)
                         .on_text_changed(callbacks.result.clone())
@@ -520,5 +584,24 @@ mod tests {
         assert!(s.result.contains("\nq\n"));
         // 解いたものはもう選べない。
         assert!(!s.pick(1, Choice::Ours));
+    }
+
+    #[test]
+    fn undo_steps_through_accepts_until_typed() {
+        let mut s = State::new("f".into());
+        let result = "<<<<<<< ours\nx\n=======\ny\n>>>>>>> theirs\n<<<<<<< ours\np\n=======\nq\n>>>>>>> theirs\n";
+        s.load(Ok(json!({ "result": result })));
+        s.accept(Choice::Ours);
+        s.accept(Choice::Theirs);
+        assert!(s.can_undo() && !s.can_redo());
+        s.undo(false);
+        assert_eq!(s.conflicts(), 1);
+        s.undo(false);
+        assert_eq!(s.result, result);
+        s.undo(true);
+        assert_eq!(s.conflicts(), 1);
+        // 手で打ったら、TextBox の Undo に任せる。
+        s.edit("typed");
+        assert!(!s.can_undo() && !s.can_redo());
     }
 }
