@@ -531,6 +531,136 @@ pub fn pull_commands(state: &State, method: &str, scope: &str) -> Vec<Value> {
     commands
 }
 
+/// Keys and Values（GTK4 版の `configtable.rs` の Customized に当たる並び）: 探す欄、キーごとに効いている値と設定元、
+/// `scope` の段（`local` か `global`）で消すボタン、足す欄。Repository Settings と Settings > Git で使う。
+pub fn keys_view(
+    state: &State,
+    scope: &str,
+    field: &dyn Fn(&'static str) -> Callback<String>,
+    button: &dyn Fn(String) -> Callback<()>,
+) -> View {
+    let global = scope == "global";
+    let entries: &[Entry] = state.entries.as_deref().unwrap_or_default();
+    // Keys and Values: キーごとに効いている値（最後のもの）。探す文字があれば、キーか値に含むものだけ。
+    let query = state.query.to_lowercase();
+    let mut keys: Vec<&Entry> = Vec::new();
+    for e in entries.iter().rev() {
+        if !keys.iter().any(|k| k.key.eq_ignore_ascii_case(&e.key))
+            && (query.is_empty()
+                || e.key.to_lowercase().contains(&query)
+                || e.value.to_lowercase().contains(&query))
+        {
+            keys.push(e);
+        }
+    }
+    keys.sort_by_key(|e| e.key.to_lowercase());
+    let rows = keys.into_iter().map(|e| {
+        let here = state.at(scope, &e.key).is_some();
+        let remove: View = if here {
+            Button::new()
+                .on_click(button(format!("remove:{}", e.key)))
+                .content(TextBlock::new().text("−").font_size(12.0))
+                .tooltip(if global {
+                    tr!("Remove from All Repositories")
+                } else {
+                    tr!("Remove from This Repository")
+                })
+        } else {
+            View::empty()
+        };
+        let row = Grid::new()
+            .columns([
+                GridLength::Pixel(260.0),
+                GridLength::Star(1.0),
+                GridLength::Pixel(150.0),
+                GridLength::Pixel(40.0),
+            ])
+            .children((
+                TextBlock::new()
+                    .text(e.key.clone())
+                    .font_size(12.0)
+                    .text_trimming(TextTrimming::CharacterEllipsis)
+                    .vertical_alignment(VerticalAlignment::Center)
+                    .grid_column(0),
+                TextBlock::new()
+                    .text(e.value.clone())
+                    .font_size(12.0)
+                    .is_text_selection_enabled(true)
+                    .text_trimming(TextTrimming::CharacterEllipsis)
+                    .vertical_alignment(VerticalAlignment::Center)
+                    .grid_column(1),
+                TextBlock::new()
+                    .text(scope_label(&e.scope))
+                    .font_size(12.0)
+                    .opacity(0.6)
+                    .vertical_alignment(VerticalAlignment::Center)
+                    .grid_column(2),
+                Border::new().grid_column(3).content(remove),
+            ));
+        (
+            e.key.to_lowercase(),
+            Border::new().min_height(28.0).content(row),
+        )
+    });
+    let add = Grid::new()
+        .columns([
+            GridLength::Pixel(260.0),
+            GridLength::Star(1.0),
+            GridLength::Auto,
+        ])
+        .margin(Thickness::new(0.0, 8.0, 0.0, 0.0))
+        .children((
+            TextBox::new()
+                .text(state.new_key.clone())
+                .placeholder_text(tr!("Key"))
+                .on_text_changed(field("key"))
+                .grid_column(0),
+            TextBox::new()
+                .text(state.new_value.clone())
+                .placeholder_text(tr!("Value"))
+                .on_text_changed(field("value"))
+                .grid_column(1),
+            Button::new()
+                .is_enabled(state.new_key.trim().contains('.'))
+                .on_click(button("add".to_owned()))
+                .grid_column(2)
+                .content(TextBlock::new().text("+"))
+                .tooltip(if global {
+                    tr!("Add a key for all repositories")
+                } else {
+                    tr!("Add a key to this repository")
+                }),
+        ));
+    StackPanel::new().children((
+        TextBox::new()
+            .text(state.query.clone())
+            .placeholder_text(tr!("Search by key or value"))
+            .on_text_changed(field("query")),
+        StackPanel::new()
+            .margin(Thickness::new(0.0, 6.0, 0.0, 0.0))
+            .children((View::keyed_fragment(rows),)),
+        add,
+    ))
+}
+
+/// Keys and Values のボタン（`add`・`remove:<key>`）で `scope` の段に書く命令（足したら欄を空にする）。
+pub fn keys_commands(state: &mut State, key: &str, scope: &str) -> Option<Vec<Value>> {
+    if key == "add" {
+        let value = state.new_value.trim();
+        let command = config_set(
+            state.new_key.trim(),
+            (!value.is_empty()).then_some(value),
+            scope,
+        );
+        state.new_key.clear();
+        state.new_value.clear();
+        Some(vec![command])
+    } else {
+        let k = key.strip_prefix("remove:")?;
+        Some(vec![config_set(k, None, scope)])
+    }
+}
+
 /// 鍵の付いた行の並び。
 pub type Rows = Vec<(String, View)>;
 
@@ -1364,88 +1494,7 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
     ));
     let author_changed = state.at("local", "user.name").unwrap_or_default() != state.name
         || state.at("local", "user.email").unwrap_or_default() != state.email;
-    // Keys and Values: キーごとに効いている値（最後のもの）。探す文字があれば、キーか値に含むものだけ。
-    let query = state.query.to_lowercase();
-    let mut keys: Vec<&Entry> = Vec::new();
-    for e in entries.iter().rev() {
-        if !keys.iter().any(|k| k.key.eq_ignore_ascii_case(&e.key))
-            && (query.is_empty()
-                || e.key.to_lowercase().contains(&query)
-                || e.value.to_lowercase().contains(&query))
-        {
-            keys.push(e);
-        }
-    }
-    keys.sort_by_key(|e| e.key.to_lowercase());
-    let rows = keys.into_iter().map(|e| {
-        let local = state.at("local", &e.key).is_some();
-        let remove: View = if local {
-            Button::new()
-                .on_click((callbacks.button)(format!("remove:{}", e.key)))
-                .content(TextBlock::new().text("−").font_size(12.0))
-                .tooltip(tr!("Remove from This Repository"))
-        } else {
-            View::empty()
-        };
-        let row = Grid::new()
-            .columns([
-                GridLength::Pixel(260.0),
-                GridLength::Star(1.0),
-                GridLength::Pixel(150.0),
-                GridLength::Pixel(40.0),
-            ])
-            .children((
-                TextBlock::new()
-                    .text(e.key.clone())
-                    .font_size(12.0)
-                    .text_trimming(TextTrimming::CharacterEllipsis)
-                    .vertical_alignment(VerticalAlignment::Center)
-                    .grid_column(0),
-                TextBlock::new()
-                    .text(e.value.clone())
-                    .font_size(12.0)
-                    .is_text_selection_enabled(true)
-                    .text_trimming(TextTrimming::CharacterEllipsis)
-                    .vertical_alignment(VerticalAlignment::Center)
-                    .grid_column(1),
-                TextBlock::new()
-                    .text(scope_label(&e.scope))
-                    .font_size(12.0)
-                    .opacity(0.6)
-                    .vertical_alignment(VerticalAlignment::Center)
-                    .grid_column(2),
-                Border::new().grid_column(3).content(remove),
-            ));
-        (
-            e.key.to_lowercase(),
-            Border::new().min_height(28.0).content(row),
-        )
-    });
-    let add = Grid::new()
-        .columns([
-            GridLength::Pixel(260.0),
-            GridLength::Star(1.0),
-            GridLength::Auto,
-        ])
-        .margin(Thickness::new(0.0, 8.0, 0.0, 0.0))
-        .children((
-            TextBox::new()
-                .text(state.new_key.clone())
-                .placeholder_text(tr!("Key"))
-                .on_text_changed((callbacks.field)("key"))
-                .grid_column(0),
-            TextBox::new()
-                .text(state.new_value.clone())
-                .placeholder_text(tr!("Value"))
-                .on_text_changed((callbacks.field)("value"))
-                .grid_column(1),
-            Button::new()
-                .is_enabled(state.new_key.trim().contains('.'))
-                .on_click((callbacks.button)("add".to_owned()))
-                .grid_column(2)
-                .content(TextBlock::new().text("+"))
-                .tooltip(tr!("Add a key to this repository")),
-        ));
+    let keys_and_values = keys_view(state, "local", &*callbacks.field, &*callbacks.button);
     let body = ScrollViewer::new().grid_row(1).content(
         StackPanel::new()
             .margin(Thickness::new(24.0, 0.0, 24.0, 24.0))
@@ -1514,14 +1563,7 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                     .horizontal_alignment(HorizontalAlignment::Left)
                     .children((lfs,)),
                 heading(tr!("Keys and Values")),
-                TextBox::new()
-                    .text(state.query.clone())
-                    .placeholder_text(tr!("Search by key or value"))
-                    .on_text_changed((callbacks.field)("query")),
-                StackPanel::new()
-                    .margin(Thickness::new(0.0, 6.0, 0.0, 0.0))
-                    .children((View::keyed_fragment(rows),)),
-                add,
+                keys_and_values,
             )),
     );
     Grid::new()

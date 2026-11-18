@@ -780,6 +780,9 @@ enum Message {
     SettingsGit(String, String, Vec<crate::reposettings::Entry>),
     /// Settings > Git の Operations・Working Copy で選んだ（行の id と番号）。
     SettingsGitChoice(&'static str, Option<usize>),
+    /// Settings > Git の Keys and Values の欄（`query`・`key`・`value`）とボタン（`add`・`remove:<key>`）。
+    SettingsKeysField(&'static str, String),
+    SettingsKeysButton(String),
     SettingsField(usize, String),
     SettingsSaveGit,
     SettingsToggle(&'static str, bool),
@@ -5146,13 +5149,10 @@ impl Component for Root {
                         }
                     }
                     commands
-                } else if key == "add" {
-                    let command = set(state.new_key.trim(), &state.new_value);
-                    state.new_key.clear();
-                    state.new_value.clear();
-                    vec![command]
-                } else if let Some(k) = key.strip_prefix("remove:") {
-                    vec![json!({ "op": "configSet", "key": k, "value": null })]
+                } else if let Some(commands) =
+                    crate::reposettings::keys_commands(state, &key, "local")
+                {
+                    commands
                 } else {
                     return;
                 };
@@ -5264,9 +5264,11 @@ impl Component for Root {
                     if state.git.is_none() {
                         state.git = Some([(name.clone(), name), (email.clone(), email)]);
                     }
-                    let mut global = crate::reposettings::State::new();
+                    // 読み直しでは、探す文字と打ちかけのキー・値を残す。
+                    let global = state
+                        .global
+                        .get_or_insert_with(crate::reposettings::State::new);
                     global.entries = Some(entries);
-                    state.global = Some(global);
                 }
             }
             Message::SettingsGitChoice(id, Some(index)) => {
@@ -5279,23 +5281,30 @@ impl Component for Root {
                 ) else {
                     return;
                 };
-                // 書いてから読み直し、効いている値と設定元を出し直す。
-                context.spawn_background(move |_| {
-                    for command in commands {
-                        let reply: Value =
-                            serde_json::from_str(&repo.run_json(&command.to_string()))
-                                .unwrap_or_default();
-                        if let Some(e) = reply["error"].as_str() {
-                            return Message::Performed(Some(("Settings".to_owned(), e.to_owned())));
-                        }
-                    }
-                    let reply: Value =
-                        serde_json::from_str(&repo.run_json(r#"{"op":"configList"}"#))
-                            .unwrap_or_default();
-                    Message::SettingsGit(String::new(), String::new(), global_entries(&reply))
-                });
+                write_global_settings(repo, commands, context);
             }
             Message::SettingsGitChoice(_, None) => {}
+            Message::SettingsKeysField(field, text) => {
+                if let Some(global) = self.settings.as_mut().and_then(|s| s.global.as_mut()) {
+                    match field {
+                        "query" => global.query = text,
+                        "key" => global.new_key = text,
+                        _ => global.new_value = text,
+                    }
+                }
+            }
+            Message::SettingsKeysButton(key) => {
+                let (Some(repo), Some(commands)) = (
+                    self.repo.clone(),
+                    self.settings
+                        .as_mut()
+                        .and_then(|s| s.global.as_mut())
+                        .and_then(|g| crate::reposettings::keys_commands(g, &key, "global")),
+                ) else {
+                    return;
+                };
+                write_global_settings(repo, commands, context);
+            }
             Message::SettingsField(index, text) => {
                 if let Some(field) = self
                     .settings
@@ -11184,6 +11193,12 @@ impl Root {
                 git_choice: Box::new(|id| {
                     context.callback(move |index| Message::SettingsGitChoice(id, index))
                 }),
+                keys_field: Box::new(|field| {
+                    context.callback(move |text| Message::SettingsKeysField(field, text))
+                }),
+                keys_button: Box::new(|key| {
+                    context.callback(move |()| Message::SettingsKeysButton(key.clone()))
+                }),
                 toggle: Box::new(|key| context.callback(move |v| Message::SettingsToggle(key, v))),
                 close: context.callback(|()| Message::CloseSettings),
                 auto_fetch: context.callback(Message::SettingsAutoFetch),
@@ -13964,6 +13979,26 @@ fn splitter(handle: &ElementRef<Grid>, split: Split, top: f64) -> View {
             .margin(Thickness::new(0.0, top - 3.0, 0.0, 0.0))
             .into(),
     }
+}
+
+/// Settings > Git の値を書いてから読み直し、効いている値と設定元を出し直す（失敗したらそこで止めて知らせる）。
+fn write_global_settings(
+    repo: Arc<Repository>,
+    commands: Vec<Value>,
+    context: &ComponentContext<Root>,
+) {
+    context.spawn_background(move |_| {
+        for command in commands {
+            let reply: Value =
+                serde_json::from_str(&repo.run_json(&command.to_string())).unwrap_or_default();
+            if let Some(e) = reply["error"].as_str() {
+                return Message::Performed(Some(("Settings".to_owned(), e.to_owned())));
+            }
+        }
+        let reply: Value =
+            serde_json::from_str(&repo.run_json(r#"{"op":"configList"}"#)).unwrap_or_default();
+        Message::SettingsGit(String::new(), String::new(), global_entries(&reply))
+    });
 }
 
 /// `configList` の答えのうち、システムとすべてのリポジトリの段の項目（Settings > Git の行が読む）。

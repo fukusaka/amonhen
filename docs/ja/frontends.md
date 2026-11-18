@@ -113,7 +113,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | General: 自動で fetch | ✓ | ✓ | ✓ | n/a | n/a | VSCode: VSCode の `git.autofetch` が代わり。<br>Windows: Windows: 失敗はステータスバーに添える。 |
 | General: 外のエディター | ✓ | ✓ | ✓ | n/a | n/a | GTK4: コードエディターは desktop のエントリーで macOS 版と同じ順に探す。なければテキストエディター（オフィスのアプリは選ばない）。Other… ではプログラムを選ぶ。<br>Windows: 知っているコードエディタはインストール先か PATH の起動用のスクリプトから、macOS 版の順に探す。なければメモ帳（フォルダは開けない）。その他… で実行ファイルを選べる。 |
 | General: 端末と diff のツール | — | — | — | n/a | n/a |  |
-| Git: 機械全体のページ（Author and Signing・Commits・Operations・Working Copy・Keys and Values） | ✓ | ✓ | △ | — | △ | CLI: `amonhen run` から。<br>Windows: すべてのリポジトリの名前とメール・Operations・Working Copy・共有のテンプレート。署名と Keys and Values のページはない。 |
+| Git: 機械全体のページ（Author and Signing・Commits・Operations・Working Copy・Keys and Values） | ✓ | ✓ | △ | — | △ | CLI: `amonhen run` から。<br>Windows: すべてのリポジトリの名前とメール・Operations・Working Copy・Keys and Values・共有のテンプレート。署名はない。 |
 | Git > Commits: 共有のメッセージのテンプレート | ✓ | ✓ | ✓ | — | — | Windows: Settings の 1 ページでその場で書く（シートはない） |
 | Git > Programs: git・gpg・ssh-keygen・gpgsm | ✓ | ✓ | — | n/a | △ | VSCode: 拡張は、ここで機械に選んだ git を動かし、選んでいなければ VSCode の `git.path`。gpg・ssh-keygen は git の設定で決まる。<br>CLI: `amonhen run`（`programs`・`setMachineGit`）から。 |
 | Git > この機械の Environment Variables（渡す・秘密を隠す） | ✓ | ✓ | ✓ | n/a | n/a | VSCode: VSCode の環境が代わり（拡張はそれを daemon に渡す）。<br>Windows: Settings の 1 ページの Git の下。Passed / All の切り替えと値の詳細はない |
@@ -153,7 +153,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Remotes: 表と、つながるか確かめるシート | ✓ | ✓ | ✓ | ✓ | △ | VSCode: 表と行ごとのボタン（Edit URL…・Push URL…・Check・Prune・Rename…・Remove…）と Add…。値はシートでなく入力欄で聞く。<br>CLI: `amonhen run` から。 |
 | Hooks: 表・Enabled・スクリプト・Create Hook… | ✓ | ✓ | ✓ | ✓ | △ | VSCode: Open で VSCode のエディターにスクリプトを開く。<br>CLI: `amonhen run` から。<br>Windows: Windows ではフックを止められない（git が実行の許可にかかわらず動かす）。Edit With はない |
 | LFS: 入っているか・パターン・Track Pattern…・ファイルの数 | ✓ | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
-| Keys and Values（git config の表、Basic / Customized / All、Combined / Levels） | ✓ | ✓ | △ | ✓ | △ | VSCode: Basic / Customized / All、Combined / Levels と検索。値は入力欄で変える。<br>CLI: `amonhen run`（`configList`・`configSet`）から。<br>Windows: 検索と、このリポジトリへの追加・削除。Basic / All・Levels はない。 |
+| Keys and Values（git config の表、Basic / Customized / All、Combined / Levels） | ✓ | ✓ | △ | ✓ | △ | VSCode: Basic / Customized / All、Combined / Levels と検索。値は入力欄で変える。<br>CLI: `amonhen run`（`configList`・`configSet`）から。<br>Windows: 探す・足す・消すを、このリポジトリ（Repository Settings）とすべてのリポジトリ（Settings > Git）で。Basic / All と Levels はない。 |
 | 要る git の版を添えて行を無効にする | ✓ | ✓ | ✓ | ✓ | n/a | Windows: 取得とフォルダの行（partial clone・sparse checkout・maintenance） |
 | git の行にリポジトリの形（shallow・partial・sparse・maintenance） | ✓ | ✓ | ✓ | ✓ | △ | CLI: `status` が shallow・partial・sparse を添える。 |
 | 取得とフォルダ: shallow clone の履歴を取り足す（数・日付まで・すべて） | ✓ | ✓ | ✓ | ✓ | △ | CLI: `amonhen run`（`deepen`・`unshallow`）から。<br>Windows: 日付は YYYY-MM-DD で打つ（暦はない） |

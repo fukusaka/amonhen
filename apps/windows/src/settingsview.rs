@@ -1,5 +1,5 @@
 //! Settings の画面（GTK4 版の設定の窓のうち、Windows 版に機能のあるもの）。Git は、すべてのリポジトリの段
-//! （`--global`）の名前とメールと、Operations・Working Copy（Repository Settings と同じ行）。GTK4 版・macOS 版は別の窓とタブにするが、ここではまだ History と右の列の
+//! （`--global`）の名前とメールと、Operations・Working Copy・Keys and Values（Repository Settings と同じ部品）。GTK4 版・macOS 版は別の窓とタブにするが、ここではまだ History と右の列の
 //! 場所に重ねる。
 
 use amonhen_model::tr;
@@ -129,6 +129,9 @@ pub struct Callbacks<'a> {
     pub save_git: Callback<()>,
     /// Git の Operations・Working Copy の選ぶ欄（行の id と、選んだ番号。すべてのリポジトリの段に書く）。
     pub git_choice: Box<dyn Fn(&'static str) -> Callback<Option<usize>> + 'a>,
+    /// Git の Keys and Values の欄（`query`・`key`・`value`）とボタン（`add`・`remove:<key>`）。すべてのリポジトリの段。
+    pub keys_field: Box<dyn Fn(&'static str) -> Callback<String> + 'a>,
+    pub keys_button: Box<dyn Fn(String) -> Callback<()> + 'a>,
     pub toggle: Box<dyn Fn(&'static str) -> Callback<bool> + 'a>,
     pub close: Callback<()>,
     /// 自動の fetch の間隔を選んだ（`AUTO_FETCH_CHOICES` の番号）。
@@ -174,6 +177,13 @@ fn git_choices(state: &State, callbacks: &Callbacks) -> View {
         StackPanel::new()
             .spacing(10.0)
             .children((View::keyed_fragment(working_copy),)),
+        title("Keys and Values"),
+        crate::reposettings::keys_view(
+            global,
+            "global",
+            &*callbacks.keys_field,
+            &*callbacks.keys_button,
+        ),
     ))
 }
 
