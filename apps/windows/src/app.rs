@@ -1324,13 +1324,30 @@ impl Component for Root {
                             Some((oid, parts.next().is_some()))
                         })
                         .collect();
+                    let at = |id: &str| {
+                        line.iter()
+                            .position(|(o, _)| o.starts_with(id) || id.starts_with(o.as_str()))
+                    };
+                    let several = match &preset {
+                        Some(crate::historyedit::Preset::Combine(ids)) if ids.len() > 1 => {
+                            Some(ids.clone())
+                        }
+                        _ => None,
+                    };
                     let including_older =
                         matches!(preset, Some(crate::historyedit::Preset::Combine(_)));
-                    let end = line
-                        .iter()
-                        .position(|(o, _)| o.starts_with(&start) || start.starts_with(o.as_str()))
-                        .map(|e| e + usize::from(including_older))
-                        .filter(|&e| e < line.len());
+                    let end = match &several {
+                        // いくつかをまとめるなら、いちばん古いものまで。どれかが HEAD の first-parent の並びに
+                        // なければ断る（黙って減らさない）。
+                        Some(ids) => ids
+                            .iter()
+                            .map(|id| at(id))
+                            .collect::<Option<Vec<usize>>>()
+                            .and_then(|a| a.into_iter().max()),
+                        None => at(&start)
+                            .map(|e| e + usize::from(including_older))
+                            .filter(|&e| e < line.len()),
+                    };
                     let Some(end) = end else {
                         return Message::EditLoaded(
                             Err(tr!(
@@ -1339,6 +1356,17 @@ impl Component for Root {
                             preset,
                         );
                     };
+                    // 隣り合っていなければ断る（一致したコミットだけの History では、間のコミットが隠れている）。
+                    if let Some(ids) = &several {
+                        let mut found: Vec<usize> = ids.iter().filter_map(|id| at(id)).collect();
+                        found.sort_unstable();
+                        if found.windows(2).any(|w| w[1] != w[0] + 1) {
+                            return Message::EditLoaded(
+                                Err(tr!("Only commits next to each other can be combined.")),
+                                preset,
+                            );
+                        }
+                    }
                     let chosen = &line[..=end];
                     let ids: Vec<amonhen_model::Oid> = chosen
                         .iter()
@@ -4252,8 +4280,14 @@ impl Component for Root {
                     let preset = crate::historyedit::Preset::Reword(oid.to_owned());
                     self.update(Message::EditOpen(oid.to_owned(), Some(preset)), context);
                 } else if let Some(oid) = key.strip_prefix("edit-combine:") {
-                    let preset = crate::historyedit::Preset::Combine(oid.to_owned());
+                    let preset = crate::historyedit::Preset::Combine(vec![oid.to_owned()]);
                     self.update(Message::EditOpen(oid.to_owned(), Some(preset)), context);
+                } else if let Some(ids) = key.strip_prefix("edit-combine-many:") {
+                    // 選んだものを、いちばん古いものへまとめて編集モードを開く（GTK4 版・macOS 版と同じ）。
+                    let ids: Vec<String> = ids.split(',').map(str::to_owned).collect();
+                    let start = ids.first().cloned().unwrap_or_default();
+                    let preset = crate::historyedit::Preset::Combine(ids);
+                    self.update(Message::EditOpen(start, Some(preset)), context);
                 } else if let Some(oid) = key.strip_prefix("edit-drop:") {
                     let preset = crate::historyedit::Preset::Drop(oid.to_owned());
                     self.update(Message::EditOpen(oid.to_owned(), Some(preset)), context);
@@ -12525,7 +12559,7 @@ impl Root {
             // 連続した行（first-parent で続いているかはコアで確かめる）なら、1 つにまとめられる（GTK4 版と同じ）。
             if self.multi_consecutive && !self.multi.iter().any(|(_, merge)| *merge) {
                 items.push(MenuItem::item(
-                    format!("combine:{}", ids.join(",")),
+                    format!("edit-combine-many:{}", ids.join(",")),
                     tr!("Combine {count} Commits…", count = n),
                 ));
             }

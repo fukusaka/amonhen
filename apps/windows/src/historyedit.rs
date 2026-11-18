@@ -171,7 +171,8 @@ pub fn plan_steps(rows: &[Row]) -> Vec<Value> {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Preset {
     Reword(String),
-    Combine(String),
+    /// 1 つならそのコミットをひとつ古いコミットへ、いくつかならいちばん古いものへほかをまとめる。
+    Combine(Vec<String>),
     Drop(String),
 }
 
@@ -220,10 +221,18 @@ impl State {
                     state.set_action(i, Action::Reword);
                 }
             }
-            Some(Preset::Combine(oid)) => {
-                if let Some(i) = at(&oid, &state.rows) {
+            Some(Preset::Combine(oids)) => {
+                let mut indices: Vec<usize> =
+                    oids.iter().filter_map(|o| at(o, &state.rows)).collect();
+                indices.sort_unstable();
+                if indices.len() > 1 {
+                    indices.pop();
+                }
+                for i in indices {
                     state.set_action(i, Action::Squash);
                 }
+                // まとめたメッセージは帯で直せる（開いたまま始めない）。
+                state.message_row = None;
             }
             Some(Preset::Drop(oid)) => {
                 if let Some(i) = at(&oid, &state.rows) {
@@ -706,7 +715,7 @@ mod tests {
 
     #[test]
     fn moving_resets_a_combine_without_an_older_row() {
-        let mut s = State::new(rows(2), Some(Preset::Combine("0".repeat(40))));
+        let mut s = State::new(rows(2), Some(Preset::Combine(vec!["0".repeat(40)])));
         assert_eq!(s.rows[0].action, Action::Squash);
         assert!(s.move_row(0, false));
         assert_eq!(s.rows[1].action, Action::Pick);
@@ -737,5 +746,19 @@ mod tests {
         assert!(s.command().get("updateRefs").is_none());
         s.update_refs = Some(true);
         assert_eq!(s.command()["updateRefs"], true);
+    }
+
+    #[test]
+    fn combining_several_squashes_into_the_oldest() {
+        let r = rows(4);
+        let ids = vec![r[0].oid.clone(), r[1].oid.clone(), r[2].oid.clone()];
+        let s = State::new(r, Some(Preset::Combine(ids)));
+        let actions: Vec<Action> = s.rows.iter().map(|r| r.action).collect();
+        assert_eq!(
+            actions,
+            [Action::Squash, Action::Squash, Action::Pick, Action::Pick]
+        );
+        // 3 つが 1 つのコミットになり、メッセージは古い順につなぐ。
+        assert_eq!(plan_steps(&s.rows)[3]["message"], "m2\n\nm1\n\nm0");
     }
 }
