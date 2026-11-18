@@ -143,7 +143,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 
 | Feature | macOS | GTK4 | Windows | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
-| Settings page (pages, git line, source / ↩︎ / ⓘ per row) | ✓ | ✓ | △ | ✓ | n/a | VSCode: Repository Settings in the main view (with the engine), this repository only.<br>Windows: Every section on one page; the setting rows have the source, ↩︎ and ⓘ (each level's value as a tooltip). |
+| Settings page (pages, git line, source / ↩︎ / ⓘ per row) | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: Repository Settings in the main view (with the engine), this repository only.<br>Windows: Pages listed on the left (General, Git, Appearance, Diff & Merge, Performance); the setting rows have the source, ↩︎ and ⓘ (each level's value as a tooltip). |
 | Author and Signing (signing choice, collected keys, mailmap) | ✓ | ✓ | ✓ | ✓ | △ | VSCode: Keys are collected for the current format only.<br>CLI: Via `amonhen run` (`signingKeys`, `configSet`). |
 | Commits: message template (none, shared, own, file) | ✓ | ✓ | ✓ | △ | △ | VSCode: None, this repository's own (edited there) or a file; no shared templates.<br>CLI: Via `amonhen run`. |
 | Branches: default branch override | ✓ | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
