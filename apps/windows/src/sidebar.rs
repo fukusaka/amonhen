@@ -154,7 +154,7 @@ pub struct Marks<'a> {
 
 /// サイドバーの木。`refs` がまだなければ Workspace だけ。
 /// `range_diff` なら、Workspace に Range Diff の行を出す（開いている間だけ）。
-/// `worktrees` は worktree の行（キーと見出し。2 つ以上あるときだけ Workspace の下に Worktrees を出す）。
+/// `worktrees` は worktree の行（キーと見出し。2 つ以上あるときだけ Working Copy の下に出す）。
 /// `form` はリポジトリの形の印（History の行の後ろ・Working Copy の行の後ろ。GTK4 版の `history_marks` と
 /// sparse checkout の印）。
 pub fn nodes(
@@ -198,10 +198,18 @@ pub fn nodes(
     } else {
         "Working Copy"
     };
-    let mut workspace = vec![
-        TreeNode::new("page:working-copy", working),
-        TreeNode::new("page:history", history),
-    ];
+    // worktree が 2 つ以上あれば、Working Copy の下に並べる（GTK4 版・macOS 版と同じ。✎ ⌂ ⑂ と変更の数つき）。
+    let mut working = TreeNode::new("page:working-copy", working);
+    if worktrees.len() > 1 {
+        working = working
+            .children(
+                worktrees
+                    .iter()
+                    .map(|(key, text)| TreeNode::new(key.as_str(), text.as_str())),
+            )
+            .expanded(true);
+    }
+    let mut workspace = vec![working, TreeNode::new("page:history", history)];
     // コンフリクトのファイルがあるときだけ、History の下に数を添えて（GTK4 版と同じ）。
     if conflicts > 0 {
         workspace.push(TreeNode::new(
@@ -249,18 +257,6 @@ pub fn nodes(
     // いつも Workspace の最後に出す（GTK4 版と同じ）。
     workspace.push(TreeNode::new("page:reflog", "Reflog"));
     let mut out = vec![group("workspace", "Workspace", workspace).expanded(true)];
-    if worktrees.len() > 1 {
-        out.push(
-            group(
-                "worktrees",
-                "Worktrees",
-                worktrees
-                    .iter()
-                    .map(|(key, text)| TreeNode::new(key.as_str(), text.as_str())),
-            )
-            .expanded(true),
-        );
-    }
 
     let locals: Vec<&RefEntry> = of(RefKind::Local).collect();
     let branches = branch_rows(&locals, head, groups);

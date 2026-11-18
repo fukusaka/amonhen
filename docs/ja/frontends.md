@@ -44,7 +44,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Range Diff を開いているあいだの Range Diff の行 | ✓ | ✓ | ✓ | ✓ | n/a |  |
 | Branches・Remotes・Tags を絞り込む欄 | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: サイドバーの上の絞り込みのボタンで言葉を入れ、合うものを平らに並べる。 |
 | ブランチ・タグをいくつも選ぶ | ✓ | ✓ | — | ✓ | n/a | VSCode: Merge into Current Branch・Delete Branch・お気に入り・Archive が選んだものすべてに効く。 |
-| Pull Requests・Worktrees は中身があるときだけ出す | ✓ | ✓ | △ | △ | n/a | VSCode: Worktrees だけ（GitHub は入れない）。<br>Windows: Worktrees だけ（独立した群）。 |
+| Pull Requests・Worktrees は中身があるときだけ出す | ✓ | ✓ | △ | △ | n/a | VSCode: Worktrees だけ（GitHub は入れない）。<br>Windows: Worktrees だけ（Working Copy の下）。 |
 
 ## サイドバー
 
@@ -68,7 +68,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Submodules のグループ（Update・新しい窓で開く） | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `submodule`・`submodule update`。 |
 | submodule の印（取り出していない・違うコミット・中の変更・コンフリクト）とメニュー: Update…（中の submodule も・追うブランチの最新）・URL の編集・追うブランチ・外す（.git/modules も消せる）・追加・Sync URLs | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: Remove は 2 つのボタンで、.git/modules を残すか一緒に消すかを聞く。<br>CLI: `submodule`（`add`・`remove`・`set-url`・`set-branch`・`sync`）。 |
 | submodule: リポジトリのデータを .git/modules に移す・それぞれで命令を動かす | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: Run in Each Submodule… の出力は出力パネルに出る（アプリの Activity にあたる）。<br>CLI: `submodule absorb`・`submodule foreach`。<br>Windows: Run in Each Submodule… の出力は Activity のその行の下に。 |
-| Working Copy の下の worktree と変更の数（✎ ⌂ ⑂） | ✓ | ✓ | △ | ✓ | △ | VSCode: 印は行のアイコン。ほかの worktree が checkout しているブランチには ⌂ か ⑂ が付く。<br>CLI: `worktree list --changes`。<br>Windows: ✎ ⌂ ⑂ と · n 付きで、別の Worktrees のまとまりに出す。 |
+| Working Copy の下の worktree と変更の数（✎ ⌂ ⑂） | ✓ | ✓ | ✓ | ✓ | △ | VSCode: 印は行のアイコン。ほかの worktree が checkout しているブランチには ⌂ か ⑂ が付く。<br>CLI: `worktree list --changes`。 |
 | shallow clone・partial clone（History）と sparse checkout（Working Copy）の印 | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: History の上の Shallow・Partial（Partial は押すと中身をすべて取る）。sparse checkout なら Working Copy の行に「· some folders」。 |
 
 ## 1. タブと窓

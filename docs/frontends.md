@@ -44,7 +44,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Range Diff row while a range diff is open | ✓ | ✓ | ✓ | ✓ | n/a |  |
 | Filter field over Branches, Remotes and Tags | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: The filter button on the sidebar's title asks for the words; the matches are listed flat. |
 | Several branches or tags selected at once | ✓ | ✓ | — | ✓ | n/a | VSCode: Merge into Current Branch, Delete Branch, favorites and Archive act on all of them. |
-| Pull Requests and Worktrees shown only when not empty | ✓ | ✓ | △ | △ | n/a | VSCode: Worktrees only (GitHub is left out).<br>Windows: Worktrees only, in their own group. |
+| Pull Requests and Worktrees shown only when not empty | ✓ | ✓ | △ | △ | n/a | VSCode: Worktrees only (GitHub is left out).<br>Windows: Worktrees only, under Working Copy. |
 
 ## Sidebar
 
@@ -68,7 +68,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Submodules group (Update, Open in New Window) | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `submodule`, `submodule update`. |
 | Submodule marks (not checked out, another commit, changes inside, conflict) and menus: Update… (recursive, remote), Edit URL, Branch to Follow, Remove (optionally .git/modules), Add, Sync URLs | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: Remove asks with two buttons: keep `.git/modules` or delete it too.<br>CLI: `submodule` (`add`, `remove`, `set-url`, `set-branch`, `sync`). |
 | Submodules: move repository data into .git/modules, run a command in each | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: Run in Each Submodule…'s output goes to an Output channel (the app's Activity).<br>CLI: `submodule absorb`, `submodule foreach`.<br>Windows: Run in Each Submodule…'s output is under its row in Activity. |
-| Worktrees under Working Copy with change counts (✎ ⌂ ⑂) | ✓ | ✓ | △ | ✓ | △ | VSCode: The marks are the rows' icons; a branch another worktree has checked out gets ⌂ or ⑂.<br>CLI: `worktree list --changes`.<br>Windows: In their own Worktrees group with ✎ ⌂ ⑂ and · n. |
+| Worktrees under Working Copy with change counts (✎ ⌂ ⑂) | ✓ | ✓ | ✓ | ✓ | △ | VSCode: The marks are the rows' icons; a branch another worktree has checked out gets ⌂ or ⑂.<br>CLI: `worktree list --changes`. |
 | Marks for a shallow or partial clone (History) and a sparse checkout (Working Copy) | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: Shallow and Partial above History (Partial fetches all contents when clicked); " · some folders" on the Working Copy row for a sparse checkout. |
 
 ## 1. Tabs and windows
