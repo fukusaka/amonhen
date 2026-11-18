@@ -187,6 +187,13 @@ pub struct State {
     pub message_text: String,
     /// 書き換えている間（Apply を押せない）。
     pub busy: bool,
+    /// コンフリクトしそうなコミットとファイル（行に ⚠ を付ける）。
+    pub conflicting: std::collections::HashMap<String, Vec<String>>,
+    /// 積み重ねたブランチがあるか、git の設定（`rebase.updateRefs`）、選べるか、この編集で選び直した値。
+    pub stacked: bool,
+    pub configured_update_refs: Option<bool>,
+    pub update_refs_available: bool,
+    pub update_refs: Option<bool>,
 }
 
 impl State {
@@ -200,6 +207,11 @@ impl State {
             message_row: None,
             message_text: String::new(),
             busy: false,
+            conflicting: std::collections::HashMap::new(),
+            stacked: false,
+            configured_update_refs: None,
+            update_refs_available: true,
+            update_refs: None,
         };
         let at = |oid: &str, rows: &[Row]| rows.iter().position(|r| r.oid.starts_with(oid));
         match preset {
@@ -295,6 +307,66 @@ impl State {
         true
     }
 
+    /// ドラッグで並べ替えた（行のコミット ID の並び。知らないものが来たら何もしない）。
+    pub fn reorder(&mut self, order: &[String]) -> bool {
+        let moved: Vec<Row> = order
+            .iter()
+            .filter_map(|oid| self.rows.iter().find(|r| r.oid == *oid).cloned())
+            .collect();
+        if moved.len() != self.rows.len()
+            || moved
+                .iter()
+                .map(|r| &r.oid)
+                .eq(self.rows.iter().map(|r| &r.oid))
+        {
+            return false;
+        }
+        self.rows = moved;
+        self.message_row = None;
+        let last = self.rows.len() - 1;
+        if self.rows[last].action.combines() {
+            self.rows[last].action = Action::Pick;
+            self.rows[last].new_message = None;
+        }
+        true
+    }
+
+    /// 見通し（`rewritePreview` の info）を取り込む: 帯の行、行のコンフリクトの印、積み重ねたブランチの選択。
+    pub fn take_preview(&mut self, info: &Value) {
+        self.preview = Some(crate::forecast::rewrite_lines(info));
+        self.conflicting = info["conflicts"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|c| {
+                let files = c["files"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|f| f.as_str().map(str::to_owned))
+                    .collect();
+                Some((c["oid"].as_str()?.to_owned(), files))
+            })
+            .collect();
+        if let Some(configured) = info["updateRefs"]["configured"].as_bool() {
+            self.configured_update_refs = Some(configured);
+            self.update_refs_available = info["updateRefs"]["available"].as_bool() == Some(true);
+        }
+        // 積み重ねたブランチがあるときだけ選ばせる（GTK4 版と同じ）。
+        self.stacked = info["moving"].as_array().is_some_and(|m| !m.is_empty())
+            || info["staying"].as_array().is_some_and(|s| {
+                s.iter()
+                    .any(|b| matches!(b["reason"].as_str(), Some("setting" | "off")))
+            });
+    }
+
+    /// 積み重ねたブランチも動かすか（選び直していなければ git の設定）。
+    pub fn moves_stacked(&self) -> bool {
+        self.update_refs
+            .or(self.configured_update_refs)
+            .unwrap_or(false)
+    }
+
     /// 要約（帯に出す）。
     pub fn summary(&self) -> String {
         let count = |a: Action| self.rows.iter().filter(|r| r.action == a).count();
@@ -328,16 +400,31 @@ impl State {
 
     /// 書き換える命令。
     pub fn command(&self) -> Value {
-        json!({
+        let mut command = json!({
             "op": "rewrite",
             "label": tr!("Edit {count} Commits", count = self.rows.len()),
             "edit": { "kind": "plan", "steps": plan_steps(&self.rows) },
-        })
+        });
+        // この編集で選び直して、git の設定と違うときだけ渡す。
+        if let Some(on) = self
+            .update_refs
+            .filter(|on| self.stacked && Some(*on) != self.configured_update_refs)
+        {
+            command["updateRefs"] = json!(on);
+        }
+        command
     }
 
     /// 見通しを読む命令。
     pub fn preview_command(&self) -> Value {
-        json!({ "op": "rewritePreview", "edit": { "kind": "plan", "steps": plan_steps(&self.rows) } })
+        let mut command = json!({
+            "op": "rewritePreview",
+            "edit": { "kind": "plan", "steps": plan_steps(&self.rows) },
+        });
+        if let Some(on) = self.update_refs {
+            command["updateRefs"] = json!(on);
+        }
+        command
     }
 }
 
@@ -354,6 +441,10 @@ pub struct Callbacks<'a> {
     pub event: Box<dyn Fn(Event) -> Callback<()> + 'a>,
     pub choice: Box<dyn Fn(usize) -> Callback<Option<usize>> + 'a>,
     pub text: Callback<String>,
+    /// ドラッグで並べ替えた（行のコミット ID の並び）。
+    pub reordered: Callback<Vec<String>>,
+    /// 積み重ねたブランチも動かすか。
+    pub stacked: Callback<bool>,
 }
 
 /// 選ぶ欄で `index` 番目を選んだときの、すること。
@@ -435,16 +526,30 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                     .opacity(0.6)
                     .vertical_alignment(VerticalAlignment::Center)
                     .grid_column(1),
-                TextBlock::new()
-                    .text(row.subject())
-                    .text_trimming(TextTrimming::CharacterEllipsis)
-                    .opacity(if row.action == Action::Drop {
-                        0.45
-                    } else {
-                        1.0
-                    })
-                    .vertical_alignment(VerticalAlignment::Center)
-                    .grid_column(2),
+                match state.conflicting.get(&row.oid) {
+                    // コンフリクトしそうなら ⚠ と、そのファイル。
+                    Some(files) => TextBlock::new()
+                        .text(format!("⚠ {}", row.subject()))
+                        .foreground(Brush::Solid(Color::rgb(0xb2, 0x5f, 0x00)))
+                        .text_trimming(TextTrimming::CharacterEllipsis)
+                        .vertical_alignment(VerticalAlignment::Center)
+                        .grid_column(2)
+                        .tooltip(tr!(
+                            "Conflicts expected in {files}",
+                            files = files.join(", ")
+                        )),
+                    None => TextBlock::new()
+                        .text(row.subject())
+                        .text_trimming(TextTrimming::CharacterEllipsis)
+                        .opacity(if row.action == Action::Drop {
+                            0.45
+                        } else {
+                            1.0
+                        })
+                        .vertical_alignment(VerticalAlignment::Center)
+                        .grid_column(2)
+                        .into(),
+                },
                 TextBlock::new()
                     .text(row.author.clone())
                     .font_size(12.0)
@@ -469,9 +574,11 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
             ));
         (
             format!("{}:{i}:{}", row.oid, list.len()),
-            StackPanel::new()
-                .margin(Thickness::new(0.0, 2.0, 0.0, 2.0))
-                .children((line, editing)),
+            ListViewItem::new().tag(row.oid.clone()).content(
+                StackPanel::new()
+                    .margin(Thickness::new(0.0, 2.0, 0.0, 2.0))
+                    .children((line, editing)),
+            ),
         )
     });
     let (lines, conflicts) = state.preview.clone().unwrap_or_default();
@@ -511,6 +618,22 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                 .margin(Thickness::new(0.0, 8.0, 16.0, 8.0))
                 .vertical_alignment(VerticalAlignment::Center)
                 .children((
+                    if state.stacked {
+                        let check = CheckBox::new()
+                            .is_checked(state.moves_stacked())
+                            .is_enabled(state.update_refs_available && !state.busy)
+                            .on_is_checked_changed(callbacks.stacked.clone())
+                            .content(TextBlock::new().text(tr!("Also move the stacked branches")));
+                        if state.update_refs_available {
+                            check.tooltip(tr!(
+                                "For this edit only (git’s update-ref). Starts from rebase.updateRefs."
+                            ))
+                        } else {
+                            check.tooltip(tr!("Moving stacked branches needs git 2.38 or newer."))
+                        }
+                    } else {
+                        View::empty()
+                    },
                     Button::new()
                         .is_enabled(!state.busy)
                         .on_click((callbacks.event)(Event::Cancel))
@@ -536,11 +659,22 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                         .opacity(0.65)
                         .text_wrapping(TextWrapping::Wrap),
                 )),
-            ScrollViewer::new().grid_row(1).content(
-                StackPanel::new()
-                    .margin(Thickness::new(16.0, 0.0, 16.0, 8.0))
-                    .children((View::keyed_fragment(rows.collect::<Vec<_>>()),)),
-            ),
+            // 行はドラッグで並べ替える（merge があれば並べ替えない）。並びが変わったら一覧ごと作り直す。
+            View::keyed_fragment([(
+                state
+                    .rows
+                    .iter()
+                    .map(|r| r.oid.as_str())
+                    .collect::<String>(),
+                ListView::new()
+                    .grid_row(1)
+                    .margin(Thickness::new(8.0, 0.0, 8.0, 8.0))
+                    .can_drag_items(reorder && !state.busy)
+                    .can_reorder_items(reorder && !state.busy)
+                    .allow_drop(reorder && !state.busy)
+                    .on_reordered(callbacks.reordered.clone())
+                    .collection_slot(ListViewSlot::Items, rows.collect::<Vec<_>>()),
+            )]),
             bar,
         ))
 }
@@ -582,5 +716,26 @@ mod tests {
         s.message_text = "new\r\nbody".into();
         s.close_message(true);
         assert_eq!(plan_steps(&s.rows)[1]["message"], "new\nbody");
+    }
+
+    #[test]
+    fn preview_marks_conflicts_and_stacked_branches() {
+        let mut s = State::new(rows(3), None);
+        // ドラッグで並べ替えた。同じ並びなら何もしない。
+        let order: Vec<String> = s.rows.iter().rev().map(|r| r.oid.clone()).collect();
+        assert!(s.reorder(&order));
+        assert!(!s.reorder(&order));
+        s.take_preview(&json!({
+            "conflicts": [{ "oid": s.rows[0].oid, "files": ["a.txt"] }],
+            "moving": [{ "name": "topic" }],
+            "staying": [],
+            "updateRefs": { "configured": false, "available": true },
+        }));
+        assert_eq!(s.conflicting[&s.rows[0].oid], ["a.txt"]);
+        assert!(s.stacked && !s.moves_stacked());
+        // 選び直した値だけを渡す。
+        assert!(s.command().get("updateRefs").is_none());
+        s.update_refs = Some(true);
+        assert_eq!(s.command()["updateRefs"], true);
     }
 }

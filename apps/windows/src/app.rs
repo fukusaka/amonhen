@@ -857,6 +857,8 @@ enum Message {
     Edit(crate::historyedit::Event),
     EditChoice(usize, Option<usize>),
     EditText(String),
+    EditReordered(Vec<String>),
+    EditStacked(bool),
     /// 見通し（数と `rewritePreview` の info）。
     EditPreview(u64, Value),
     /// 書き換えた（失敗なら答え）。
@@ -1393,6 +1395,20 @@ impl Component for Root {
                 self.edit_preview(context);
             }
             Message::EditChoice(_, None) => {}
+            Message::EditReordered(order) => {
+                if self.edit.as_mut().is_some_and(|s| s.reorder(&order)) {
+                    self.edit_preview(context);
+                }
+            }
+            Message::EditStacked(on) => {
+                let Some(state) = self.edit.as_mut() else {
+                    return;
+                };
+                if state.moves_stacked() != on {
+                    state.update_refs = Some(on);
+                    self.edit_preview(context);
+                }
+            }
             Message::EditText(text) => {
                 if let Some(state) = self.edit.as_mut() {
                     state.message_text = text;
@@ -1402,7 +1418,7 @@ impl Component for Root {
                 if let Some(state) = self.edit.as_mut()
                     && state.generation == generation
                 {
-                    state.preview = Some(crate::forecast::rewrite_lines(&info));
+                    state.take_preview(&info);
                 }
             }
             Message::Edit(event) => {
@@ -11948,6 +11964,8 @@ impl Root {
                 event: Box::new(|event| context.callback(move |()| Message::Edit(event.clone()))),
                 choice: Box::new(|row| context.callback(move |i| Message::EditChoice(row, i))),
                 text: context.callback(Message::EditText),
+                reordered: context.callback(Message::EditReordered),
+                stacked: context.callback(Message::EditStacked),
             },
         );
         Border::new()
