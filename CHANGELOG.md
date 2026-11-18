@@ -34,6 +34,9 @@ becomes the GitHub Release notes.
 - The engine on Windows opens repositories on SSH hosts (`-C ssh://…`): it no longer relies on ssh's connection
   sharing, which Windows' OpenSSH lacks, and sends the engine to the host with scp correctly.
 
+- History rows: a long branch or tag label is cut in the middle, keeping its start and end, instead of pushing the
+  subject out of the row; labels that don't fit are gathered into "+n" instead of being left out. Clicking a cut label
+  or "+n" lists the commit's branches and tags in full.
 ### [0.2.12] - 2026-11-18
 
 History search can match the author's email, the committer and the whole message. Amon Hen asks before sending its
