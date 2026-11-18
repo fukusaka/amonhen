@@ -338,6 +338,12 @@ enum Dialog {
     },
     /// 操作の失敗。
     Failed { title: String, message: String },
+    /// タグのリモートの様子（macOS 版の `TagStatusPopover`、GTK4 版の `refmarks::tag`）。`actions` は Push・
+    /// 置き換えのメニューの項目（キーと見出し。初めの 2 つを主・副のボタンにする）。
+    TagStatus {
+        name: String,
+        actions: Vec<(String, String)>,
+    },
     /// ファイルをある版に戻す（GTK4 版の `restoresheet::ask`）。
     Restore {
         repo: Arc<Repository>,
@@ -2736,6 +2742,18 @@ impl Component for Root {
                         _ => {}
                     }
                 }
+                // 押したボタンの確認を出す。同じ ContentDialog を開いたまま中身だけ替えると開き直らないので、
+                // 一度閉じた形で描いてから開く。
+                (Some(Dialog::TagStatus { actions, .. }), ContentDialogResult::Primary) => {
+                    if let Some((key, _)) = actions.into_iter().next() {
+                        menu_later(context, key);
+                    }
+                }
+                (Some(Dialog::TagStatus { actions, .. }), ContentDialogResult::Secondary) => {
+                    if let Some((key, _)) = actions.into_iter().nth(1) {
+                        menu_later(context, key);
+                    }
+                }
                 (Some(Dialog::Failure { .. }), ContentDialogResult::Secondary) => {
                     self.update(Message::Command("activity".to_owned()), context);
                 }
@@ -4151,6 +4169,31 @@ impl Component for Root {
                         });
                         self.dialog_inputs += 1;
                     }
+                } else if let Some(rest) = key.strip_prefix("tag-status:") {
+                    let name = rest.split_once('|').map_or(rest, |(_, name)| name);
+                    // ボタンは短い名前（macOS 版の吹き出しと同じ。タグの名前は見出しにある）。
+                    let actions = self
+                        .tag_pushes(name)
+                        .into_iter()
+                        .map(|(key, label)| {
+                            let remote = key
+                                .split_once(':')
+                                .and_then(|(_, rest)| rest.split_once('|'))
+                                .map_or("", |(remote, _)| remote);
+                            let short = if key.starts_with("push-tag:") {
+                                tr!("Push to {remote}…", remote = remote)
+                            } else if key.starts_with("replace-tag:") {
+                                tr!("Replace on {remote}…", remote = remote)
+                            } else {
+                                label
+                            };
+                            (key, short)
+                        })
+                        .collect();
+                    self.dialog = Some(Dialog::TagStatus {
+                        name: name.to_owned(),
+                        actions,
+                    });
                 } else if let Some(name) = key.strip_prefix("delete-tag:") {
                     if let Some(repo) = self.repo.clone() {
                         // GTK4 版の `refops::tag_items` の Delete。リモートのタグは残る。
@@ -9101,6 +9144,21 @@ impl Root {
                             .is_text_selection_enabled(true),
                     )
             }
+            Some(Dialog::TagStatus { name, actions }) => {
+                let dialog = dialog
+                    .is_open(true)
+                    .title(self.tag_status_title(name))
+                    .close_button_text(tr!("Close"));
+                let dialog = match actions.first() {
+                    Some((_, title)) => dialog.primary_button_text(title.clone()),
+                    None => dialog,
+                };
+                let dialog = match actions.get(1) {
+                    Some((_, title)) => dialog.secondary_button_text(title.clone()),
+                    None => dialog,
+                };
+                dialog.content(self.tag_status_view(name))
+            }
             Some(Dialog::Failed { title, message }) => dialog
                 .is_open(true)
                 .title(title.clone())
@@ -10150,6 +10208,156 @@ impl Root {
         self.dialog_inputs += 1;
     }
 
+    /// タグのリモートの様子の見出し: 印とその意味（印がなければタグの名前）。
+    fn tag_status_title(&self, name: &str) -> String {
+        match crate::sidebar::tag_mark(&self.tag_remotes, name) {
+            Some(mark) => {
+                let lines = crate::sidebar::tag_tooltip(&self.tag_remotes, name);
+                format!("{mark} {}", lines.first().map_or(name, String::as_str))
+            }
+            None => name.to_owned(),
+        }
+    }
+
+    /// タグのリモートの様子（macOS 版の `TagStatusPopover`）: どこから分かったか、タグとコミット、リモートごとの
+    /// 様子と読んだ時刻。
+    fn tag_status_view(&self, name: &str) -> View {
+        let info = &self.tag_remotes;
+        let remotes: Vec<(String, Option<i64>)> = info["remotes"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|r| Some((r["name"].as_str()?.to_owned(), r["checked"].as_i64())))
+            .collect();
+        let state = |remote: &str| info["tags"][name][remote].as_str();
+        let different = remotes
+            .iter()
+            .any(|(r, checked)| checked.is_some() && state(r) == Some("different"));
+        let explanation = if different {
+            tr!(
+                "There, a tag with the same name is a different tag: it points to another commit, or it is another annotated tag on the same commit. Fetch doesn’t overwrite your tag and Push is refused, so the two stay apart until one of them is replaced."
+            )
+        } else {
+            tr!(
+                "Tags have no remote copies here the way branches do, so this was read from each remote at the last Fetch. Push doesn’t send tags; push this one to share it."
+            )
+        };
+        let target = self.refs.as_ref().and_then(|r| {
+            r.refs
+                .entries
+                .iter()
+                .find(|e| e.kind == amonhen_model::RefKind::Tag && e.name == name)
+                .and_then(|e| e.target)
+                .map(|t| t.to_string())
+        });
+        // 見出しと値（値の色: 別のタグは橙、ない・まだ読んでいないは薄く）。
+        let mut rows: Vec<(String, String, Option<Color>, f64)> =
+            vec![(tr!("Tag"), name.to_owned(), None, 1.0)];
+        if let Some(hex) = target {
+            rows.push((
+                tr!("Commit"),
+                hex[..hex.len().min(12)].to_owned(),
+                None,
+                1.0,
+            ));
+        }
+        for (remote, checked) in &remotes {
+            let (text, color, opacity) = match (checked, state(remote)) {
+                (None, _) => (tr!("Not checked yet (Fetch reads it)"), None, 0.5),
+                (Some(_), Some("same")) => (tr!("Has it"), None, 1.0),
+                (Some(_), Some("different")) => (
+                    tr!("Has a different tag with this name"),
+                    Some(Color::rgb(0xc2, 0x5e, 0x00)),
+                    1.0,
+                ),
+                (Some(_), _) => (tr!("Doesn’t have it"), None, 0.65),
+            };
+            let when = checked
+                .map(|ms| {
+                    let time = crate::stashes::ago(ms / 1000);
+                    format!(" · {}", tr!("read {time}", time = time))
+                })
+                .unwrap_or_default();
+            rows.push((remote.clone(), format!("{text}{when}"), color, opacity));
+        }
+        let grid_rows: Vec<(String, View)> = rows
+            .into_iter()
+            .enumerate()
+            .map(|(i, (label, value, color, opacity))| {
+                let value = TextBlock::new()
+                    .text(value)
+                    .font_size(13.0)
+                    .opacity(opacity)
+                    .text_wrapping(TextWrapping::Wrap)
+                    .is_text_selection_enabled(true);
+                let value = match color {
+                    Some(c) => value.foreground(Brush::Solid(c)),
+                    None => value,
+                };
+                (
+                    format!("{i}"),
+                    Grid::new()
+                        .columns([GridLength::Pixel(110.0), GridLength::Star(1.0)])
+                        .column_spacing(10.0)
+                        .children((
+                            TextBlock::new()
+                                .text(label)
+                                .font_size(12.0)
+                                .opacity(0.6)
+                                .horizontal_alignment(HorizontalAlignment::Right)
+                                .text_trimming(TextTrimming::CharacterEllipsis)
+                                .grid_column(0),
+                            value.grid_column(1),
+                        )),
+                )
+            })
+            .collect();
+        StackPanel::new().spacing(12.0).width(440.0).children((
+            TextBlock::new()
+                .text(explanation)
+                .font_size(12.0)
+                .opacity(0.7)
+                .text_wrapping(TextWrapping::Wrap),
+            StackPanel::new()
+                .spacing(5.0)
+                .children((View::keyed_fragment(grid_rows),)),
+        ))
+    }
+
+    /// タグを送る・置き換える操作（キーと見出し）: 読んでいない・ないリモートへの Push、別のタグがあるリモートでの
+    /// 置き換え。タグのメニューと、リモートの様子の確認で使う。
+    fn tag_pushes(&self, name: &str) -> Vec<(String, String)> {
+        let mut pushes = Vec::new();
+        for remote in self.tag_remotes["remotes"].as_array().into_iter().flatten() {
+            let Some(remote_name) = remote["name"].as_str() else {
+                continue;
+            };
+            let checked = remote["checked"].is_i64();
+            let st = self.tag_remotes["tags"][name][remote_name].as_str();
+            if !checked || st.is_none_or(|s| s == "missing") {
+                pushes.push((
+                    format!("push-tag:{remote_name}|{name}"),
+                    tr!(
+                        "Push {branch} to {target}…",
+                        branch = name,
+                        target = remote_name
+                    ),
+                ));
+            }
+            if checked && st == Some("different") {
+                pushes.push((
+                    format!("replace-tag:{remote_name}|{name}"),
+                    tr!(
+                        "Replace {tag} on {remote}…",
+                        tag = name,
+                        remote = remote_name
+                    ),
+                ));
+            }
+        }
+        pushes
+    }
+
     fn tag_items(&self, name: &str) -> Vec<MenuItem> {
         let remotes: Vec<(String, bool)> = self.tag_remotes["remotes"]
             .as_array()
@@ -10158,22 +10366,15 @@ impl Root {
             .filter_map(|r| Some((r["name"].as_str()?.to_owned(), r["checked"].is_i64())))
             .collect();
         let state = |remote: &str| self.tag_remotes["tags"][name][remote].as_str();
-        let (mut pushes, mut deletes) = (Vec::new(), Vec::new());
+        let pushes: Vec<MenuItem> = self
+            .tag_pushes(name)
+            .into_iter()
+            .map(|(key, label)| MenuItem::item(key, label))
+            .collect();
+        let mut deletes = Vec::new();
         for (remote, checked) in &remotes {
             let st = state(remote);
             let missing = *checked && st.is_none_or(|s| s == "missing");
-            if !*checked || missing {
-                pushes.push(MenuItem::item(
-                    format!("push-tag:{remote}|{name}"),
-                    tr!("Push {branch} to {target}…", branch = name, target = remote),
-                ));
-            }
-            if *checked && st == Some("different") {
-                pushes.push(MenuItem::item(
-                    format!("replace-tag:{remote}|{name}"),
-                    tr!("Replace {tag} on {remote}…", tag = name, remote = remote),
-                ));
-            }
             if !missing {
                 deletes.push(MenuItem::item(
                     format!("delete-remote-tag:{remote}|{name}|{}", u8::from(!*checked)),
@@ -10192,9 +10393,10 @@ impl Root {
         });
         let mut items: Vec<MenuItem> = signature
             .into_iter()
+            // 押すと、リモートごとの様子と、それがどこから分かったかを出す（macOS 版・GTK4 版はタグの印の吹き出し）。
             .chain(remotes.iter().map(|(remote, _)| {
-                MenuItem::disabled(
-                    format!("-state:{remote}"),
+                MenuItem::item(
+                    format!("tag-status:{remote}|{name}"),
                     crate::sidebar::tag_state_text(&self.tag_remotes, name, remote),
                 )
             }))
@@ -14664,6 +14866,14 @@ fn attach_search_keys(element: &IInspectable) -> windows_core_reactor::Result<()
 
 /// マージエディタの左右と Base の欄で、選んでいるコンフリクトを見える所へ出す（欄の位置をそろえる。GTK4 版と
 /// 同じ）。描き直した直後は並べ終わっていないので、少し待ってから。
+/// メニューの `key` の操作を、少し後で行う（閉じた ContentDialog を描き終えてから次の確認を開くため）。
+fn menu_later(context: &ComponentContext<Root>, key: String) {
+    context.spawn_background(move |_| {
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        Message::HistoryMenu(key)
+    });
+}
+
 fn merge_scroll_later(context: &ComponentContext<Root>) {
     context.spawn_background(|_| {
         std::thread::sleep(std::time::Duration::from_millis(150));

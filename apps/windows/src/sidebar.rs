@@ -419,7 +419,7 @@ fn submodule_tooltip(states: &serde_json::Value, path: &str) -> Vec<String> {
 }
 
 /// タグの行のツールチップ（GTK4 版の `finish_tag`）: 印の意味と、リモートごとの様子。
-fn tag_tooltip(info: &serde_json::Value, tag: &str) -> Vec<String> {
+pub fn tag_tooltip(info: &serde_json::Value, tag: &str) -> Vec<String> {
     let mut lines = Vec::new();
     let checked: Vec<&str> = info["remotes"]
         .as_array()
