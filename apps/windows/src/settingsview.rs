@@ -162,8 +162,9 @@ fn git_choices(state: &State, callbacks: &Callbacks) -> View {
     };
     let (operations, working_copy, author) =
         crate::reposettings::choice_views(global, &*callbacks.git_choice);
-    let (signing, mailmap): (crate::reposettings::Rows, crate::reposettings::Rows) =
-        author.into_iter().partition(|(k, _)| k != "log.mailmap");
+    let (signing, mailmap): (crate::reposettings::Rows, crate::reposettings::Rows) = author
+        .into_iter()
+        .partition(|(k, _)| !crate::reposettings::is_mailmap_row(k));
     let title = |text: &str| {
         TextBlock::new()
             .text(text.to_owned())

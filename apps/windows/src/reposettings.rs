@@ -71,6 +71,8 @@ pub struct State {
     pub signing_keys: Vec<(&'static str, Vec<SigningKey>)>,
     /// 鍵の「その他…」で打っている値（出していなければ None）。
     pub signing_other: Option<String>,
+    /// ファイルの行で「ファイル…」を選んだ回数（取りやめても、選ぶ欄を今の値に戻すため作り直す）。
+    pub file_epoch: u32,
 }
 
 /// 署名の鍵 1 つ（コアの `signingKeys` の答え）。
@@ -143,6 +145,7 @@ impl State {
             rerere_cache: false,
             signing_keys: Vec::new(),
             signing_other: None,
+            file_epoch: 0,
             hooks_path: None,
             editor: String::new(),
         }
@@ -922,8 +925,73 @@ pub fn choice_views(
             ),
         ),
     ];
-    author.extend(mailmap_rows().into_iter().map(row_of));
+    // ファイルの行（なし／今のファイル／ファイル…）。
+    for (id, question, help, _) in file_rows() {
+        let current = state
+            .effective(id)
+            .map(|(v, _)| v.to_owned())
+            .unwrap_or_default();
+        let mut labels = vec![tr!("None")];
+        if !current.is_empty() {
+            labels.push(tr!("File: {path}", path = current.as_str()));
+        }
+        labels.push(tr!("A file…"));
+        let row = (
+            format!("{id}:{}:{current}", state.file_epoch),
+            choice_row(
+                id,
+                question,
+                help,
+                &[id],
+                labels,
+                usize::from(!current.is_empty()),
+            ),
+        );
+        if id == "mailmap.file" {
+            author.extend(mailmap_rows().into_iter().map(row_of));
+        }
+        author.push(row);
+    }
     (operations, working_copy, author)
+}
+
+/// mailmap の行か（Author の行を Signing と mailmap に分ける）。
+pub fn is_mailmap_row(key: &str) -> bool {
+    key.starts_with("log.mailmap") || key.starts_with("mailmap.file")
+}
+
+/// git が読むファイルの行（キー、問い、説明、選ぶダイアログの題）。
+fn file_rows() -> Vec<(&'static str, String, String, String)> {
+    vec![
+        (
+            "gpg.ssh.allowedSignersFile",
+            tr!("Allowed signers"),
+            tr!("Public keys trusted to verify SSH signatures."),
+            tr!("Choose an allowed signers file"),
+        ),
+        (
+            "mailmap.file",
+            tr!("Mailmap file"),
+            tr!("Read after the repository’s .mailmap."),
+            tr!("Choose a mailmap file"),
+        ),
+    ]
+}
+
+/// ファイルの行で「ファイル…」を選んだなら、そのキーとダイアログの題（選ぶ欄は作り直す）。
+pub fn file_pick(state: &mut State, id: &str, index: usize) -> Option<(&'static str, String)> {
+    let (key, _, _, title) = file_rows().into_iter().find(|r| r.0 == id)?;
+    let has = state.effective(key).is_some_and(|(v, _)| !v.is_empty());
+    if index != 1 + usize::from(has) {
+        return None;
+    }
+    state.file_epoch += 1;
+    Some((key, title))
+}
+
+/// `key` を `scope` の段で `path` にする命令（選んだファイル）。
+pub fn file_command(key: &str, path: &str, scope: &str) -> Value {
+    config_set(key, Some(path), scope)
 }
 
 /// mailmap の行（`log.mailmap`）。
@@ -1043,6 +1111,11 @@ pub fn choice_commands(state: &State, id: &str, index: usize, scope: &str) -> Op
         }
         return Some(commands);
     }
+    if file_rows().iter().any(|r| r.0 == id) {
+        // 「なし」はこの段の上書きを消す（上の段にあればそれが効く）。今のファイルはそのまま。
+        let has = state.at(scope, id).is_some();
+        return (index == 0 && has).then(|| vec![config_set(id, None, scope)]);
+    }
     if id == "pull" {
         let method = ["merge", "rebase", "ffOnly"][index.min(2)];
         if method == pull_method(state) {
@@ -1143,7 +1216,7 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
     };
     let (mut operations, working_copy, author) = choice_views(state, &*callbacks.choice);
     let (signing, mailmap): (Rows, Rows) =
-        author.into_iter().partition(|(k, _)| k != "log.mailmap");
+        author.into_iter().partition(|(k, _)| !is_mailmap_row(k));
     let signing_other = signing_other_view(state, &*callbacks.field, &*callbacks.button);
     // 覚えた解決をすべて忘れる（覚えたものがあるときだけ。GTK4 版の `forget_resolutions_row`）。
     if state.rerere_cache {
@@ -1935,5 +2008,21 @@ mod tests {
         let other = options.len() - 1;
         assert!(choose(&mut s, "signing-key", other, "local").is_none());
         assert_eq!(s.signing_other.as_deref(), Some(""));
+    }
+
+    #[test]
+    fn file_rows_pick_and_clear() {
+        let mut s = state(&[("local", "mailmap.file", "C:/m/.mailmap")]);
+        // なし・今のファイル・ファイル… の 3 つ。最後を選ぶとダイアログを出す。
+        assert!(file_pick(&mut s, "mailmap.file", 1).is_none());
+        assert_eq!(
+            file_pick(&mut s, "mailmap.file", 2).map(|p| p.0),
+            Some("mailmap.file")
+        );
+        assert_eq!(s.file_epoch, 1);
+        // なしはこの段の上書きを消す。
+        let c = choice_commands(&s, "mailmap.file", 0, "local").expect("命令");
+        assert!(c[0]["value"].is_null());
+        assert!(choice_commands(&s, "mailmap.file", 0, "global").is_none());
     }
 }

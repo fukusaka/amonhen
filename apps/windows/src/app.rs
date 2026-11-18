@@ -5291,6 +5291,25 @@ impl Component for Root {
                 }
             }
             Message::SettingsGitChoice(id, Some(index)) => {
+                if let Some((key, title)) = self
+                    .settings
+                    .as_mut()
+                    .and_then(|s| s.global.as_mut())
+                    .and_then(|g| crate::reposettings::file_pick(g, id, index))
+                {
+                    if let (Some(repo), Some(path)) = (
+                        self.repo.clone(),
+                        crate::files::open_files(&title).into_iter().next(),
+                    ) {
+                        let path = path.display().to_string();
+                        write_global_settings(
+                            repo,
+                            vec![crate::reposettings::file_command(key, &path, "global")],
+                            context,
+                        );
+                    }
+                    return;
+                }
                 let (Some(repo), Some(commands)) = (
                     self.repo.clone(),
                     self.settings
@@ -5716,6 +5735,20 @@ impl Component for Root {
                 }
             }
             Message::RepoSettingsChoice(id, Some(index)) => {
+                if let Some((key, title)) = self
+                    .repo_settings
+                    .as_mut()
+                    .and_then(|state| crate::reposettings::file_pick(state, id, index))
+                {
+                    if let Some(path) = crate::files::open_files(&title).into_iter().next() {
+                        let path = path.display().to_string();
+                        self.write_repo_settings(
+                            vec![crate::reposettings::file_command(key, &path, "local")],
+                            context,
+                        );
+                    }
+                    return;
+                }
                 let Some(commands) = self
                     .repo_settings
                     .as_mut()
