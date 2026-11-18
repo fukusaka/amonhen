@@ -1533,7 +1533,7 @@
 "Forget this host" = "この SSH 先を忘れる";
 "Connection" = "接続";
 "unreachable" = "つながらない";
-"Add an SSH host with +, or open one from Places." = "＋ で SSH 先を追加するか、Places から開きます。";
+"Add an SSH host with +, or open one from Places." = "＋ で SSH 先を追加するか、場所から開きます。";
 "Applies to every repository on {host} (its ~/.gitconfig). git in a terminal there follows these too." = "{host} のすべてのリポジトリに効きます（そこの ~/.gitconfig）。そこの端末の git も同じ設定に従います。";
 "Connecting to {host}…" = "{host} につないでいます…";
 "Couldn’t connect to {host}" = "{host} につなげませんでした";
@@ -2262,6 +2262,11 @@
 "Apply the stash {name}?" = "{name} を Apply しますか？";
 "New Worktree…" = "新しい worktree…";
 "Update Submodules…" = "submodule を Update…";
+"Amend Last Commit" = "直前のコミットを Amend";
+"Fixup Commit For" = "Fixup で直すコミット";
+"Squash Commit For" = "Squash でまとめるコミット";
+"Update All" = "すべて Update";
+"Sync URLs" = "URL を Sync";
 "Stash Changes" = "変更を Stash";
 "Stash Changes in {name}" = "{name} の変更を Stash";
 "Stash Changes in {count} Files" = "{count} ファイルの変更を Stash";
@@ -2315,7 +2320,7 @@
 "Light" = "明るい";
 "Couldn’t read {file}: {error}" = "{file} を読めませんでした: {error}";
 "Use a different background for {name}" = "{name} は別の背景にする";
-"Otherwise this window follows Settings > Theme." = "しなければ、この窓は Settings > Theme に従います。";
+"Otherwise this window follows Settings > Theme." = "しなければ、この窓は設定 > テーマに従います。";
 "Push {count} tags to {remote}?" = "{count} 個のタグを {remote} に Push しますか？";
 "Everyone who fetches from {remote} gets them." = "{remote} から fetch する人みんなに届きます。";
 "Prune {remote}?" = "{remote} を Prune しますか？";

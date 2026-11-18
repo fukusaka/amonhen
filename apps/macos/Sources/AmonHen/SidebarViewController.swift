@@ -1400,9 +1400,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                 return
             }
             if isGroup, node.title == "Submodules" {
-                menu.addItem(ClosureMenuItem(title: "Update All") { actions.perform(["op": "updateSubmodules", "paths": [String]()]) })
-                menu.addItem(ClosureMenuItem(title: "Update Submodules…") { [weak self] in self?.onSubmoduleAction?(nil, .update) })
-                menu.addItem(ClosureMenuItem(title: "Sync URLs") { [weak self] in self?.onSubmoduleAction?(nil, .sync) })
+                menu.addItem(ClosureMenuItem(title: L("Update All")) { actions.perform(["op": "updateSubmodules", "paths": [String]()]) })
+                menu.addItem(ClosureMenuItem(title: L("Update Submodules…")) { [weak self] in self?.onSubmoduleAction?(nil, .update) })
+                menu.addItem(ClosureMenuItem(title: L("Sync URLs")) { [weak self] in self?.onSubmoduleAction?(nil, .sync) })
                 menu.addItem(ClosureMenuItem(title: L("Run in Each Submodule…")) { [weak self] in self?.onSubmoduleAction?(nil, .foreach) })
                 menu.addItem(.separator())
                 menu.addItem(ClosureMenuItem(title: L("Add Submodule…")) { [weak self] in self?.onSubmoduleAction?(nil, .add) })

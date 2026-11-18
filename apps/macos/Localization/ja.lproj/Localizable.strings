@@ -1514,7 +1514,7 @@
 "Add an SSH host" = "SSH 先を追加";
 "Forget this host" = "この SSH 先を忘れる";
 "Write it as ssh knows it: user@host:port, or a name in ~/.ssh/config." = "ssh が知っている名前で書きます: user@host:port か、~/.ssh/config の名前。";
-"Add an SSH host with +, or open one from Places." = "＋ で SSH 先を追加するか、Places から開きます。";
+"Add an SSH host with +, or open one from Places." = "＋ で SSH 先を追加するか、場所から開きます。";
 "Applies to every repository on %@ (its ~/.gitconfig). git in a terminal there follows these too." = "%@ のすべてのリポジトリに効きます（そこの ~/.gitconfig）。そこの端末の git も同じ設定に従います。";
 "The engine on %@ runs the git on its PATH." = "%@ のエンジンは、その PATH の git を使います。";
 "The git on %@ runs this repository. Every repository on that host uses it. See it in Settings > SSH Hosts." = "%@ の git がこのリポジトリを動かしています。その SSH 先のすべてのリポジトリが同じものを使います。設定 > SSH ホストで見られます。";
@@ -1928,6 +1928,11 @@
 "Apply the stash %@?" = "%@ を Apply しますか？";
 "New Worktree…" = "新しい worktree…";
 "Update Submodules…" = "submodule を Update…";
+"Amend Last Commit" = "直前のコミットを Amend";
+"Fixup Commit For" = "Fixup で直すコミット";
+"Squash Commit For" = "Squash でまとめるコミット";
+"Update All" = "すべて Update";
+"Sync URLs" = "URL を Sync";
 "Stash Changes" = "変更を Stash";
 "Stash Changes in %@" = "%@ の変更を Stash";
 "Stash Changes in %ld Files" = "%ld ファイルの変更を Stash";
@@ -1970,7 +1975,7 @@
 "Light" = "明るい";
 "Couldn’t read %@: %@" = "%1$@ を読めませんでした: %2$@";
 "Use a different background for %@" = "%@ は別の背景にする";
-"Otherwise this window follows Settings > Theme." = "しなければ、この窓は Settings > Theme に従います。";
+"Otherwise this window follows Settings > Theme." = "しなければ、この窓は設定 > テーマに従います。";
 "Window Background…" = "窓の背景…";
 "Theme" = "テーマ";
 "Fill the Window" = "窓いっぱい";

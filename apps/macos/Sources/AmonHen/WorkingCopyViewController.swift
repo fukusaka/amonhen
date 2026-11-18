@@ -201,7 +201,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         commitMenuButton.controlSize = .small
         commitMenuButton.isBordered = false
         commitMenuButton.toolTip = L("Commit and Push (⌘⇧↩), Amend")
-        for (title, action) in [("Commit and Push", #selector(commitAndPush)), ("Amend Last Commit", #selector(startAmend))] {
+        for (title, action) in [("Commit and Push", #selector(commitAndPush)), (L("Amend Last Commit"), #selector(startAmend))] {
             let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
             item.target = self
             commitMenuButton.menu?.addItem(item)
@@ -745,7 +745,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
 
     private func buildFixupMenus() {
         guard let menu = commitMenuButton.menu else { return }
-        for title in ["Fixup Commit For", "Squash Commit For"] {
+        for title in [L("Fixup Commit For"), L("Squash Commit For")] {
             if let old = menu.item(withTitle: title) { menu.removeItem(old) }
         }
         // 前に足した区切りも外す（作り直すたびに区切りが増えないように）。
@@ -762,7 +762,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         let separator = NSMenuItem.separator()
         separator.tag = Self.fixupSeparatorTag
         menu.addItem(separator)
-        for (title, prefix, keepBody) in [("Fixup Commit For", "fixup! ", false), ("Squash Commit For", "squash! ", true)] {
+        for (title, prefix, keepBody) in [(L("Fixup Commit For"), "fixup! ", false), (L("Squash Commit For"), "squash! ", true)] {
             let sub = NSMenu(title: title)
             for subject in subjects {
                 sub.addItem(ClosureMenuItem(title: subject) { [weak self] in

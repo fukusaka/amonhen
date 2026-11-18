@@ -255,15 +255,15 @@ fn remote_menu(actions: &Rc<Actions>, data: &Data) -> Vec<Item> {
     // Submodules の見出し（macOS 版と同じ）。
     if matches!(data.item, sidebar::Item::Group) && data.title == "Submodules" {
         let a = actions.clone();
-        let all = menu::action("Update All", move || {
+        let all = menu::action(tr!("Update All"), move || {
             a.perform(json!({ "op": "updateSubmodules", "paths": [] }))
         });
         let a = actions.clone();
-        let update = menu::action("Update Submodules…", move || {
+        let update = menu::action(tr!("Update Submodules…"), move || {
             crate::submodulesheet::update(&a, Vec::new())
         });
         let a = actions.clone();
-        let sync = menu::action("Sync URLs", move || {
+        let sync = menu::action(tr!("Sync URLs"), move || {
             a.perform(
                 json!({ "op": "changeSubmodule", "change": { "kind": "sync", "recursive": true } }),
             )
