@@ -794,6 +794,8 @@ enum Message {
     SettingsDisplay(&'static str, bool),
     /// Settings > Appearance の並び順（0 は日付順、1 はトポロジー順）。
     SettingsOrder(Option<usize>),
+    /// Settings > Theme: 構文の色のテーマ（`theme::names` の番号）。
+    SettingsSyntaxTheme(Option<usize>),
     CloseSettings,
     /// Activity: タブを選んだ・Undo の記録を読んだ・戻す数を選んだ・読み直す時刻・閉じる。
     ActivityTab(Option<usize>),
@@ -5616,6 +5618,23 @@ impl Component for Root {
                         crate::prefs::AUTO_BOOKMARK => state.auto_bookmark = value,
                         _ => state.file_history_merges = value,
                     }
+                }
+            }
+            Message::SettingsSyntaxTheme(index) => {
+                let Some(name) = index.and_then(|i| crate::theme::names().get(i).cloned()) else {
+                    return;
+                };
+                if name != crate::theme::selected() {
+                    let _ = crate::prefs::set_string(crate::theme::SYNTAX_THEME_LIGHT, &name);
+                    crate::theme::reload();
+                    with_history(|h| h.diff.dirty = true);
+                }
+            }
+            Message::SettingsDisplay("diff-standard-colors", value) => {
+                if value != crate::prefs::bool(crate::theme::DIFF_STANDARD_COLORS) {
+                    let _ = crate::prefs::set_bool(crate::theme::DIFF_STANDARD_COLORS, value);
+                    crate::theme::reload();
+                    with_history(|h| h.diff.dirty = true);
                 }
             }
             Message::SettingsDisplay(id, value) => {
@@ -11362,6 +11381,7 @@ impl Root {
                 template_add: context.callback(|()| Message::SettingsTemplateAdd),
                 display: Box::new(|id| context.callback(move |v| Message::SettingsDisplay(id, v))),
                 order: context.callback(Message::SettingsOrder),
+                syntax_theme: context.callback(Message::SettingsSyntaxTheme),
                 template_remove: Box::new(|i| {
                     context.callback(move |()| Message::SettingsTemplateRemove(i))
                 }),

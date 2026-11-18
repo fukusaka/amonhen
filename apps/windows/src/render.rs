@@ -133,11 +133,11 @@ pub const DIFF_ROW_HEIGHT: f32 = 18.0;
 const DIFF_NUMBER_WIDTH: f32 = 44.0;
 const DIFF_TEXT_INSET: f32 = 10.0;
 // 差分の色（GTK4 版・macOS 版の標準の色と同じ）。
-const DIFF_ADDED: D2D1_COLOR_F = rgba(0.2, 0.7, 0.3, 0.16);
-const DIFF_REMOVED: D2D1_COLOR_F = rgba(0.9, 0.25, 0.25, 0.16);
-const DIFF_ADDED_WORD: D2D1_COLOR_F = rgba(0.2, 0.7, 0.3, 0.35);
-const DIFF_REMOVED_WORD: D2D1_COLOR_F = rgba(0.9, 0.25, 0.25, 0.35);
-const DIFF_HUNK: D2D1_COLOR_F = rgba(0.3, 0.5, 0.9, 0.10);
+/// 差分の地の色（Settings > Theme のテーマの色。標準の色にしていればこれまでの色）。
+fn diff_color(kind: crate::theme::DiffColor) -> D2D1_COLOR_F {
+    let (r, g, b, a) = crate::theme::diff(kind);
+    rgba(r, g, b, a)
+}
 const DIFF_FILE: D2D1_COLOR_F = rgba(0.11, 0.11, 0.12, 0.07);
 /// Working Copy の差分の、行ごとの含める印の列の幅。
 pub const DIFF_MARK_WIDTH: f32 = 22.0;
@@ -364,6 +364,8 @@ pub struct Renderer {
     diff_rows: HashMap<u32, IDWriteTextLayout>,
     /// 構文の種類ごとの文字の色。
     syntax_brushes: HashMap<u8, ID2D1SolidColorBrush>,
+    /// 色を付けた行を作ったときのテーマ（変わったら行と筆を作り直す）。
+    theme_generation: u32,
     history: Option<Arc<HistorySnapshot>>,
     /// `AMONHEN_PROFILE` があれば、段階ごとの時間（ms）を残す。段階の間で `Flush` して、溜めた描画も
     /// その段階に数える（その分だけ全体は遅くなる）。
@@ -496,6 +498,7 @@ impl Renderer {
                 file_format,
                 diff_rows: HashMap::new(),
                 syntax_brushes: HashMap::new(),
+                theme_generation: crate::theme::generation(),
                 history: None,
                 profile: std::env::var_os("AMONHEN_PROFILE").map(|_| Vec::new()),
             })
@@ -1011,6 +1014,11 @@ impl Renderer {
         if self.diff_rows.len() > 2048 {
             self.diff_rows.clear();
         }
+        if self.theme_generation != crate::theme::generation() {
+            self.theme_generation = crate::theme::generation();
+            self.diff_rows.clear();
+            self.syntax_brushes.clear();
+        }
         // 行ごとの含める印（Working Copy の 1 本の差分）があれば、その列の右から行番号。
         let left = if commit.marks { DIFF_MARK_WIDTH } else { 0.0 };
         let text_x = left + DIFF_NUMBER_WIDTH * 2.0 + DIFF_TEXT_INSET;
@@ -1025,9 +1033,9 @@ impl Renderer {
             };
             let file = row.kind == DiffRow::FILE;
             let fill = match row.kind {
-                DiffRow::ADDED => Some(DIFF_ADDED),
-                DiffRow::REMOVED => Some(DIFF_REMOVED),
-                DiffRow::HUNK => Some(DIFF_HUNK),
+                DiffRow::ADDED => Some(diff_color(crate::theme::DiffColor::Added)),
+                DiffRow::REMOVED => Some(diff_color(crate::theme::DiffColor::Removed)),
+                DiffRow::HUNK => Some(diff_color(crate::theme::DiffColor::Hunk)),
                 DiffRow::FILE => Some(DIFF_FILE),
                 _ => None,
             };
@@ -1069,9 +1077,9 @@ impl Renderer {
             // 削除行と追加行の組の中で、変わった単語の地。
             if let Some(ranges) = commit.highlights.get(&i) {
                 let fill = if row.kind == DiffRow::REMOVED {
-                    DIFF_REMOVED_WORD
+                    diff_color(crate::theme::DiffColor::RemovedWord)
                 } else {
-                    DIFF_ADDED_WORD
+                    diff_color(crate::theme::DiffColor::AddedWord)
                 };
                 for &(start, end) in ranges {
                     let (left, right) = (x_of(layout, start)?, x_of(layout, end)?);
@@ -1526,6 +1534,11 @@ fn x_of(layout: &IDWriteTextLayout, position: u32) -> Result<f32> {
 /// 構文の種類の文字の色（GTK4 版の System のテーマの明るい外観と同じ。0〜1。本文の色のままの種類は None）。
 /// 差分と Blame で使う。
 pub fn syntax_rgb(kind: u8) -> Option<(f32, f32, f32)> {
+    crate::theme::syntax(kind, system_syntax_rgb)
+}
+
+/// System のテーマの構文の色（GTK4 版の System の明るい外観と同じ）。
+fn system_syntax_rgb(kind: u8) -> Option<(f32, f32, f32)> {
     use amonhen_layout::SyntaxSpan;
     Some(match kind {
         SyntaxSpan::KEYWORD | SyntaxSpan::TAG | SyntaxSpan::VARIABLE => (0.80, 0.18, 0.45),

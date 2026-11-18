@@ -154,6 +154,8 @@ pub struct Callbacks<'a> {
     pub display: Box<dyn Fn(&'static str) -> Callback<bool> + 'a>,
     /// Appearance: History の並び順を選んだ（0 は日付順、1 はトポロジー順）。
     pub order: Callback<Option<usize>>,
+    /// Theme: 構文の色のテーマを選んだ（`theme::names` の番号）。
+    pub syntax_theme: Callback<Option<usize>>,
 }
 
 /// Git > Operations・Working Copy（すべてのリポジトリの段。Repository Settings と同じ行で、効いている値の設定元を
@@ -267,6 +269,29 @@ fn appearance(callbacks: &Callbacks) -> View {
         item("history-item-id", items::ID, "Commit ID"),
         item("history-item-signature", items::SIGNATURE, "Signature"),
         note(tr!("What each commit’s row shows besides the subject.")),
+        // 構文と差分の色（GTK4 版の Theme の Color Theme。この FE は明るい外観だけ）。
+        heading(tr!("Color Theme")),
+        StackPanel::new()
+            .orientation(Orientation::Horizontal)
+            .spacing(12.0)
+            .children((
+                TextBlock::new()
+                    .text(tr!("Light appearance"))
+                    .vertical_alignment(VerticalAlignment::Center),
+                {
+                    let names = crate::theme::names();
+                    let selected = crate::theme::selected();
+                    ComboBox::new()
+                        .selected_index(names.iter().position(|n| *n == selected).unwrap_or(0))
+                        .items_source(names)
+                        .on_selection_changed(callbacks.syntax_theme.clone())
+                },
+            )),
+        display(
+            "diff-standard-colors",
+            crate::prefs::bool(crate::theme::DIFF_STANDARD_COLORS),
+            tr!("Use standard colors for diffs"),
+        ),
     ))
 }
 
