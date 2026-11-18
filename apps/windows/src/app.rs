@@ -780,6 +780,8 @@ enum Message {
     SettingsGit(String, String, Vec<crate::reposettings::Entry>),
     /// Settings > Git の Operations・Working Copy で選んだ（行の id と番号）。
     SettingsGitChoice(&'static str, Option<usize>),
+    /// Git > Programs の候補と使う git。
+    SettingsPrograms(crate::programs::State),
     /// Settings > Git の Keys and Values の欄（`query`・`key`・`value`）とボタン（`add`・`remove:<key>`）。
     SettingsKeysField(&'static str, String),
     SettingsKeysButton(String),
@@ -2249,6 +2251,7 @@ impl Component for Root {
                 self.settings = Some(crate::settingsview::State {
                     git: None,
                     global: None,
+                    programs: None,
                     auto_magic_merge: crate::prefs::bool(crate::prefs::AUTO_MAGIC_MERGE),
                     file_history_merges: crate::prefs::bool(crate::prefs::FILE_HISTORY_MERGES),
                     auto_bookmark: crate::prefs::bool(crate::prefs::AUTO_BOOKMARK),
@@ -2276,6 +2279,7 @@ impl Component for Root {
                 });
                 self.page = Page::Settings;
                 load_signing_keys(repo.clone(), true, context);
+                load_programs(repo.clone(), context);
                 // `--global` の段の値（いくつもあれば最後のもの。git と同じ）。
                 context.spawn_background(move |_| {
                     let reply: Value =
@@ -5288,6 +5292,57 @@ impl Component for Root {
                         .global
                         .get_or_insert_with(crate::reposettings::State::new);
                     global.entries = Some(entries);
+                }
+            }
+            Message::SettingsPrograms(programs) => {
+                if let Some(state) = self.settings.as_mut() {
+                    state.programs = Some(programs);
+                }
+            }
+            Message::SettingsGitChoice(id, Some(index)) if id.starts_with("program:") => {
+                let Some(repo) = self.repo.clone() else {
+                    return;
+                };
+                let Some(state) = self.settings.as_mut() else {
+                    return;
+                };
+                let (Some(programs), Some(global)) =
+                    (state.programs.as_mut(), state.global.as_ref())
+                else {
+                    return;
+                };
+                let choice = match crate::programs::choose(programs, global, id, index) {
+                    Some(crate::programs::Choice::Pick(name)) => {
+                        let Some(path) =
+                            crate::files::open_files(&tr!("Program")).into_iter().next()
+                        else {
+                            return;
+                        };
+                        crate::programs::set(name, &path.display().to_string(), global)
+                    }
+                    Some(choice) => choice,
+                    None => return,
+                };
+                if let crate::programs::Choice::Write(commands, git) = choice {
+                    if git {
+                        // 使う git は Amon Hen の設定なので、書いてから候補と一緒に読み直す。
+                        context.spawn_background(move |_| {
+                            for command in commands {
+                                let reply: Value =
+                                    serde_json::from_str(&repo.run_json(&command.to_string()))
+                                        .unwrap_or_default();
+                                if let Some(e) = reply["error"].as_str() {
+                                    return Message::Performed(Some((
+                                        "Settings".to_owned(),
+                                        e.to_owned(),
+                                    )));
+                                }
+                            }
+                            Message::SettingsPrograms(crate::programs::load(|c| repo.run_json(c)))
+                        });
+                    } else {
+                        write_global_settings(repo, commands, context);
+                    }
                 }
             }
             Message::SettingsGitChoice(id, Some(index)) => {
@@ -14052,6 +14107,13 @@ fn splitter(handle: &ElementRef<Grid>, split: Split, top: f64) -> View {
             .margin(Thickness::new(0.0, top - 3.0, 0.0, 0.0))
             .into(),
     }
+}
+
+/// Git > Programs の候補と使う git を読む（裏で）。
+fn load_programs(repo: Arc<Repository>, context: &ComponentContext<Root>) {
+    context.spawn_background(move |_| {
+        Message::SettingsPrograms(crate::programs::load(|c| repo.run_json(c)))
+    });
 }
 
 /// 署名の鍵を形式ごとに集める（裏で。集められなければ空）。

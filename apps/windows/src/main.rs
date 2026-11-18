@@ -24,6 +24,7 @@ mod merge;
 mod merge_several;
 mod patch_files;
 mod prefs;
+mod programs;
 mod rangediff;
 mod reflog;
 mod render;

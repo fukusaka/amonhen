@@ -10,6 +10,8 @@ pub struct State {
     pub git: Option<[(String, String); 2]>,
     /// システムとすべてのリポジトリの段の設定（Operations・Working Copy の行。読むまでは None）。
     pub global: Option<crate::reposettings::State>,
+    /// Git > Programs（読むまでは None）。
+    pub programs: Option<crate::programs::State>,
     pub auto_magic_merge: bool,
     pub file_history_merges: bool,
     /// 開いたリポジトリをブックマークに入れる。
@@ -193,6 +195,8 @@ fn git_choices(state: &State, callbacks: &Callbacks) -> View {
         StackPanel::new()
             .spacing(10.0)
             .children((View::keyed_fragment(working_copy),)),
+        title(&tr!("Programs")),
+        crate::programs::view(state.programs.as_ref(), global, &*callbacks.git_choice),
         title("Keys and Values"),
         crate::reposettings::keys_view(
             global,
