@@ -114,5 +114,18 @@ try {
 } catch (err) {
   removed = false;
   console.error(`一時ディレクトリを消せません（プロセスが掴んだまま）: ${err}`);
+  // 掴んでいるのが誰かを残す（Windows。残っている git とその引数）
+  if (process.platform === 'win32') {
+    const left = spawnSync(
+      'powershell',
+      [
+        '-NoProfile',
+        '-Command',
+        "Get-CimInstance Win32_Process -Filter 'Name = ''git.exe''' | ForEach-Object { '{0} {1} {2}' -f $_.ProcessId, $_.ParentProcessId, $_.CommandLine }",
+      ],
+      { encoding: 'utf8' },
+    );
+    console.error(`残っている git:\n${left.stdout?.trim() || 'なし'}`);
+  }
 }
 process.exit(run.status !== 0 ? (run.status ?? 1) : removed ? 0 : 1);
