@@ -3647,11 +3647,18 @@ suite('Amon Hen in VSCode', () => {
       });
     } finally {
       await config().update('fsmonitor', false, vscode.ConfigurationTarget.Global);
-      try {
-        git('fsmonitor--daemon', 'stop');
-      } catch {
-        // 起きていなかった
-      }
+      // 設定は daemon に後から届く。届く前の status は fsmonitor--daemon を起こし直すので、止めて、読み直しても
+      // 起きないところまで待つ（残ると、Windows では一時ディレクトリを掴んだままになり、消せない）
+      await until('fsmonitor--daemon が止まったまま', async () => {
+        try {
+          git('fsmonitor--daemon', 'stop');
+        } catch {
+          // 起きていなかった
+        }
+        await vscode.commands.executeCommand('amonhen.refresh');
+        await vscode.commands.executeCommand('amonhen.refresh');
+        return !watching();
+      });
     }
   });
 
