@@ -785,6 +785,8 @@ enum Message {
     OpenMerge(String),
     MergeLoaded(String, Result<Value, String>),
     MergeButton(&'static str),
+    /// マージエディタの左右の欄の ≫・≪（`ours:<番号>`・`theirs:<番号>`）。
+    MergePick(String),
     /// マージエディタの Base の欄を出すか。
     MergeBase(bool),
     MergeResult(String),
@@ -4745,6 +4747,20 @@ impl Component for Root {
                 }
             }
             Message::MergeButton(key) => self.merge_button(key, context),
+            Message::MergePick(key) => {
+                let Some(state) = self.merge.as_mut() else {
+                    return;
+                };
+                let (choice, index) = match key.split_once(':') {
+                    Some(("ours", i)) => (amonhen_core::conflict::Choice::Ours, i),
+                    Some(("theirs", i)) => (amonhen_core::conflict::Choice::Theirs, i),
+                    _ => return,
+                };
+                let picked = index.parse().is_ok_and(|i| state.pick(i, choice));
+                if !picked {
+                    beep();
+                }
+            }
             Message::MergeBase(on) => {
                 if let Some(state) = self.merge.as_mut() {
                     state.show_base = on;
@@ -11824,6 +11840,9 @@ impl Root {
             state,
             crate::merge::Callbacks {
                 button: Box::new(|key| context.callback(move |()| Message::MergeButton(key))),
+                pick: Box::new(|key: String| {
+                    context.callback(move |()| Message::MergePick(key.clone()))
+                }),
                 result: context.callback(Message::MergeResult),
                 base: context.callback(Message::MergeBase),
             },

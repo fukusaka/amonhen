@@ -39,6 +39,35 @@ pub struct State {
     /// Result の欄に打ったままの文字（None なら `result` を出す）。揃えた値で欄を書き直すと、打つたびにカーソルが
     /// 先頭に戻るので、打っている間は欄の文字をそのまま返す。
     pub typed: Option<String>,
+    /// 左右と Base の欄で、各コンフリクトがその欄の何行目から何行目か（0 始まり、終わりは含まない）。
+    pub regions: [Vec<(usize, usize)>; 3],
+    /// 開いたときのコンフリクトの両側（今残っているものが、左右の欄のどれに当たるかを決める）。
+    originals: Vec<(String, String)>,
+}
+
+/// Result に残っているコンフリクトの両側（GTK4 版の `regions`）。
+fn found(text: &str) -> Vec<(String, String)> {
+    let data = text.as_bytes();
+    let ls = conflict::line_ranges(data);
+    let join = |r: &std::ops::Range<usize>| -> String {
+        r.clone()
+            .map(|i| String::from_utf8_lossy(&data[ls[i].clone()]))
+            .collect()
+    };
+    conflict::parse(data)
+        .iter()
+        .map(|c| (join(&c.ours), join(&c.theirs)))
+        .collect()
+}
+
+/// `mergeSides` の欄の、コンフリクトの行範囲。
+fn regions_of(side: &Value) -> Vec<(usize, usize)> {
+    side["regions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|r| Some((r[0].as_u64()? as usize, r[1].as_u64()? as usize)))
+        .collect()
 }
 
 impl State {
@@ -55,6 +84,8 @@ impl State {
             note: String::new(),
             crlf: false,
             typed: None,
+            regions: Default::default(),
+            originals: Vec::new(),
         }
     }
 
@@ -80,6 +111,12 @@ impl State {
                     }
                 });
                 self.sides = Some(Ok((text("current"), text("incoming"), base)));
+                self.regions = [
+                    regions_of(&info["current"]),
+                    regions_of(&info["incoming"]),
+                    regions_of(&info["base"]),
+                ];
+                self.originals = found(&self.result);
                 self.selected = 0;
                 // 開いたときに、間違えようのないコンフリクトを解く（設定。GTK4 版と同じく、保存はしない）。
                 if crate::prefs::bool(crate::prefs::AUTO_MAGIC_MERGE) {
@@ -111,6 +148,21 @@ impl State {
     }
 
     /// Result に残っているコンフリクトの数。
+    /// 今残っている各コンフリクトが、開いたときの何番目か（わからなければ None）。
+    pub fn original_of(&self) -> Vec<Option<usize>> {
+        conflict::match_originals(&self.originals, &found(&self.result))
+    }
+
+    /// 左右の欄の `original` 番目のコンフリクトを、その側（`choice`）で解決する（帯の ≫・≪）。
+    pub fn pick(&mut self, original: usize, choice: Choice) -> bool {
+        let Some(index) = self.original_of().iter().position(|o| *o == Some(original)) else {
+            return false;
+        };
+        self.selected = index;
+        self.accept(choice);
+        true
+    }
+
     pub fn conflicts(&self) -> usize {
         conflict::parse(self.result.as_bytes()).len()
     }
@@ -167,6 +219,8 @@ pub struct Callbacks<'a> {
     /// 操作のボタン（`accept-ours`・`accept-theirs`・`accept-both`・`accept-base`・`magic`・`previous`・
     /// `next`・`save`・`resolve`・`forget`・`close`）。
     pub button: Box<dyn Fn(&'static str) -> Callback<()> + 'a>,
+    /// 左右の欄のコンフリクトの ≫・≪（`ours:<番号>`・`theirs:<番号>`。番号は開いたときの何番目か）。
+    pub pick: Box<dyn Fn(String) -> Callback<()> + 'a>,
     pub result: Callback<String>,
     /// Base の欄を出すか。
     pub base: Callback<bool>,
@@ -260,21 +314,101 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
             .grid_row(2)
             .into(),
         Some(Ok((current, incoming, base))) => {
-            let pane = |title: String, text: &str, column: i32, editable: bool| -> View {
-                // 左右は読むだけ（reactor の TextBox に読むだけの設定がないので、選べる TextBlock）。
-                let content: View = if editable {
-                    TextBox::new()
+            let original_of = state.original_of();
+            let chosen = original_of.get(state.selected).copied().flatten();
+            // 左右と Base の欄: コンフリクトの所を塗る（Current は青、Incoming は緑、Base は灰。選んでいるものは
+            // 濃く、解決済みは薄く）。左右の塗った所の ≫・≪ で、その側に解決する（GTK4 版の帯）。
+            let side = |text: &str, which: usize| -> View {
+                let lines: Vec<&str> = text.split_inclusive('\n').collect();
+                let (r, g, b) = match which {
+                    0 => (0x4d, 0x80, 0xe6),
+                    1 => (0x33, 0xb3, 0x4d),
+                    _ => (0x80, 0x80, 0x80),
+                };
+                let mut parts: Vec<(String, View)> = Vec::new();
+                let mut at = 0;
+                let plain = |from: usize, to: usize| -> View {
+                    TextBlock::new()
+                        .text(lines[from..to].concat().trim_end_matches('\n').to_owned())
+                        .font_size(12.0)
+                        .is_text_selection_enabled(true)
+                        .margin(Thickness::new(10.0, 0.0, 6.0, 0.0))
+                        .into()
+                };
+                for (i, &(start, end)) in state.regions[which].iter().enumerate() {
+                    let (start, end) = (start.min(lines.len()), end.min(lines.len()));
+                    if start < at {
+                        continue;
+                    }
+                    if at < start {
+                        parts.push((format!("t{i}"), plain(at, start)));
+                    }
+                    let open = original_of.contains(&Some(i));
+                    let alpha = if chosen == Some(i) {
+                        0x55
+                    } else if open {
+                        0x2e
+                    } else {
+                        0x14
+                    };
+                    let arrow: View = match (which, open) {
+                        (0, true) => Button::new()
+                            .on_click((callbacks.pick)(format!("ours:{i}")))
+                            .horizontal_alignment(HorizontalAlignment::Right)
+                            .vertical_alignment(VerticalAlignment::Top)
+                            .content(TextBlock::new().text("≫").font_size(11.0))
+                            .tooltip(amonhen_model::i18n::translate("Accept Current").into_owned()),
+                        (1, true) => Button::new()
+                            .on_click((callbacks.pick)(format!("theirs:{i}")))
+                            .horizontal_alignment(HorizontalAlignment::Left)
+                            .vertical_alignment(VerticalAlignment::Top)
+                            .content(TextBlock::new().text("≪").font_size(11.0))
+                            .tooltip(
+                                amonhen_model::i18n::translate("Accept Incoming").into_owned(),
+                            ),
+                        _ => View::empty(),
+                    };
+                    let body = lines[start..end].concat();
+                    parts.push((
+                        format!("c{i}:{alpha}"),
+                        Border::new()
+                            .background(Brush::Solid(Color::argb(alpha, r, g, b)))
+                            .min_height(16.0)
+                            .opacity(if open { 1.0 } else { 0.6 })
+                            .content(
+                                Grid::new().children((
+                                    TextBlock::new()
+                                        .text(body.trim_end_matches('\n').to_owned())
+                                        .font_size(12.0)
+                                        .is_text_selection_enabled(true)
+                                        // ≫ は右、≪ は左に置くので、その側を空ける。
+                                        .margin(if which == 1 {
+                                            Thickness::new(30.0, 0.0, 10.0, 0.0)
+                                        } else {
+                                            Thickness::new(10.0, 0.0, 30.0, 0.0)
+                                        }),
+                                    arrow,
+                                )),
+                            ),
+                    ));
+                    at = end;
+                }
+                if at < lines.len() {
+                    parts.push(("end".to_owned(), plain(at, lines.len())));
+                }
+                StackPanel::new()
+                    .margin(Thickness::new(0.0, 6.0, 0.0, 6.0))
+                    .children((View::keyed_fragment(parts),))
+            };
+            let pane = |title: String, text: &str, column: i32, editable: Option<usize>| -> View {
+                // 左右は読むだけ（塗った文字の欄）。真ん中の Result は書き換えられる。
+                let content: View = match editable {
+                    None => TextBox::new()
                         .text(text)
                         .accepts_return(true)
                         .on_text_changed(callbacks.result.clone())
-                        .into()
-                } else {
-                    TextBlock::new()
-                        .text(text)
-                        .font_size(12.0)
-                        .is_text_selection_enabled(true)
-                        .margin(Thickness::new(10.0, 6.0, 6.0, 6.0))
-                        .into()
+                        .into(),
+                    Some(which) => side(text, which),
                 };
                 Grid::new()
                     .rows([GridLength::Auto, GridLength::Star(1.0)])
@@ -294,7 +428,7 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
             let base = base.as_deref().filter(|_| state.show_base);
             let first = i32::from(base.is_some());
             let base_pane: View = match base {
-                Some(text) => pane(tr!("Base (common ancestor)"), text, 0, false),
+                Some(text) => pane(tr!("Base (common ancestor)"), text, 0, Some(2)),
                 None => View::empty(),
             };
             Grid::new()
@@ -302,18 +436,18 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                 .grid_row(2)
                 .children((
                     base_pane,
-                    pane(tr!("Current (your branch)"), current, first, false),
+                    pane(tr!("Current (your branch)"), current, first, Some(0)),
                     pane(
                         tr!("Result (editable)"),
                         state.typed.as_deref().unwrap_or(&state.result),
                         first + 1,
-                        true,
+                        None,
                     ),
                     pane(
                         tr!("Incoming (being merged in)"),
                         incoming,
                         first + 2,
-                        false,
+                        Some(1),
                     ),
                 ))
         }
@@ -363,4 +497,28 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
             banner,
             body,
         ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn pick_resolves_the_matching_conflict() {
+        let mut s = State::new("f".into());
+        let result = "a\n<<<<<<< ours\nx\n=======\ny\n>>>>>>> theirs\nb\n<<<<<<< ours\np\n=======\nq\n>>>>>>> theirs\n";
+        s.load(Ok(json!({
+            "result": result,
+            "current": { "text": "a\nx\nb\np\n", "regions": [[1, 2], [3, 4]] },
+            "incoming": { "text": "a\ny\nb\nq\n", "regions": [[1, 2], [3, 4]] },
+        })));
+        assert_eq!(s.regions[0], [(1, 2), (3, 4)]);
+        // 2 つ目を Incoming で解くと、残る 1 つ目は開いたときの 0 番目。
+        assert!(s.pick(1, Choice::Theirs));
+        assert_eq!(s.original_of(), [Some(0)]);
+        assert!(s.result.contains("\nq\n"));
+        // 解いたものはもう選べない。
+        assert!(!s.pick(1, Choice::Ours));
+    }
 }
