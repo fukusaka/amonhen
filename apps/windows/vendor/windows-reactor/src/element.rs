@@ -953,12 +953,13 @@ pub enum RichTextInline {
     LineBreak,
 }
 
-/// A text run with optional bold and italic styling.
+/// A text run with optional bold and italic styling and text color.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RichTextRun {
     pub text: String,
     pub is_bold: bool,
     pub is_italic: bool,
+    pub foreground: Option<Color>,
 }
 
 impl RichTextRun {
