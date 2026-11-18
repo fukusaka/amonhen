@@ -532,14 +532,16 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
             ])
             .column_spacing(8.0)
             .children((
-                ComboBox::new()
-                    .items_source(list.iter().map(|a| a.title()).collect::<Vec<_>>())
-                    .selected_index(selected)
-                    .is_enabled(!row.merge && !state.busy)
-                    .horizontal_alignment(HorizontalAlignment::Stretch)
-                    .on_selection_changed((callbacks.choice)(i))
-                    .grid_column(0)
-                    .tooltip(row.action.tip()),
+                crate::tip::holder(
+                    ComboBox::new()
+                        .items_source(list.iter().map(|a| a.title()).collect::<Vec<_>>())
+                        .selected_index(selected)
+                        .is_enabled(!row.merge && !state.busy)
+                        .horizontal_alignment(HorizontalAlignment::Stretch)
+                        .on_selection_changed((callbacks.choice)(i)),
+                    row.action.tip(),
+                    0,
+                ),
                 TextBlock::new()
                     .text(short.to_owned())
                     .font_size(12.0)
@@ -644,13 +646,14 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                             .is_enabled(state.update_refs_available && !state.busy)
                             .on_is_checked_changed(callbacks.stacked.clone())
                             .content(TextBlock::new().text(tr!("Also move the stacked branches")));
-                        if state.update_refs_available {
-                            check.tooltip(tr!(
+                        let tip = if state.update_refs_available {
+                            tr!(
                                 "For this edit only (git’s update-ref). Starts from rebase.updateRefs."
-                            ))
+                            )
                         } else {
-                            check.tooltip(tr!("Moving stacked branches needs git 2.38 or newer."))
-                        }
+                            tr!("Moving stacked branches needs git 2.38 or newer.")
+                        };
+                        crate::tip::holder(check, tip, 0)
                     } else {
                         View::empty()
                     },

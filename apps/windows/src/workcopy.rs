@@ -597,12 +597,14 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
                 .on_is_checked_changed(callbacks.amend)
                 .grid_column(1)
                 .content(TextBlock::new().text("Amend")),
-            Button::new()
-                .is_enabled(can_commit)
-                .on_click(callbacks.commit)
-                .grid_column(2)
-                .content(TextBlock::new().text(label))
-                .tooltip(commit_tip),
+            crate::tip::holder(
+                Button::new()
+                    .is_enabled(can_commit)
+                    .on_click(callbacks.commit)
+                    .content(TextBlock::new().text(label)),
+                commit_tip,
+                2,
+            ),
             Button::new()
                 .margin(Thickness::new(2.0, 0.0, 0.0, 0.0))
                 .grid_column(3)

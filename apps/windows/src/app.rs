@@ -7079,13 +7079,15 @@ impl Component for Root {
                         .vertical_alignment(VerticalAlignment::Center)
                         .grid_column(2),
                     // 一致したコミットだけを出す（GTK4 版・macOS 版の検索の欄の切り替え。探すまでは押せない）。
-                    ToggleButton::new()
-                        .is_checked(self.search_only)
-                        .is_enabled(self.last_search.is_some())
-                        .on_is_checked_changed(context.callback(Message::SearchOnly))
-                        .grid_column(3)
-                        .content(TextBlock::new().text("⊟"))
-                        .tooltip(tr!("Show Only Matching Commits")),
+                    crate::tip::holder(
+                        ToggleButton::new()
+                            .is_checked(self.search_only)
+                            .is_enabled(self.last_search.is_some())
+                            .on_is_checked_changed(context.callback(Message::SearchOnly))
+                            .content(TextBlock::new().text("⊟")),
+                        tr!("Show Only Matching Commits"),
+                        3,
+                    ),
                 ))
         } else {
             View::empty()
