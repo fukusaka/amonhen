@@ -11280,9 +11280,8 @@ impl Root {
         } else {
             View::empty()
         };
-        Grid::new()
+        let bar = Grid::new()
             .columns([GridLength::Star(1.0), GridLength::Auto])
-            .grid_row(3)
             .children((
                 TextBlock::new()
                     .text(text)
@@ -11293,7 +11292,43 @@ impl Root {
                     .margin(Thickness::new(0.0, 0.0, 8.0, 0.0))
                     .grid_column(1)
                     .content(running),
-            ))
+            ));
+        StackPanel::new()
+            .grid_row(3)
+            .children((self.sequence_band(context), bar))
+    }
+
+    /// 途中の操作の帯（ステータスバーの上。どの画面でも出す。macOS 版・GTK4 版のステータスバーの行）。
+    fn sequence_band(&self, context: &ViewContext<Self>) -> View {
+        // 見出しと説明（コンフリクトの数は status から）。
+        let conflicts = self.status.as_ref().map_or(0, |s| {
+            s.status
+                .entries
+                .iter()
+                .filter(|e| e.kind == amonhen_model::StatusKind::Unmerged)
+                .count()
+        });
+        let sequence = self.sequence.as_ref().map(|s| {
+            (
+                crate::sequence::title(s),
+                crate::sequence::detail(s, conflicts),
+                crate::sequence::can_skip(s),
+            )
+        });
+        crate::workcopy::sequence_band(
+            sequence
+                .as_ref()
+                .map(|(t, d, skip)| (t.as_str(), d.as_str(), *skip)),
+            // 止まった git am: コンフリクトがなく、まだ 3-way でやり直していなければ（GTK4 版の `retry`）。
+            self.sequence.as_ref().is_some_and(|s| {
+                s["kind"] == "am"
+                    && conflicts == 0
+                    && s["threeWay"].as_bool() != Some(true)
+                    && s["retried"].as_bool() != Some(true)
+                    && s["empty"].as_bool() != Some(true)
+            }),
+            &|key: &'static str| context.callback(move |()| Message::Command(key.to_owned())),
+        )
     }
 
     /// Push の画面の行: 送る変更すべて、送るコミット、上流から消えるコミットの見出しとそのコミット（macOS 版の
@@ -12848,25 +12883,7 @@ impl Root {
             file_menu: Box::new(|path: String| {
                 context.callback(move |key| Message::WorkingFileMenu(path.clone(), key))
             }),
-            sequence: Box::new(|key: &'static str| {
-                context.callback(move |()| Message::Command(key.to_owned()))
-            }),
         };
-        // 途中の操作の帯の見出しと説明（コンフリクトの数は status から）。
-        let conflicts = self.status.as_ref().map_or(0, |s| {
-            s.status
-                .entries
-                .iter()
-                .filter(|e| e.kind == amonhen_model::StatusKind::Unmerged)
-                .count()
-        });
-        let sequence = self.sequence.as_ref().map(|s| {
-            (
-                crate::sequence::title(s),
-                crate::sequence::detail(s, conflicts),
-                crate::sequence::can_skip(s),
-            )
-        });
         let view = crate::workcopy::view(
             crate::workcopy::Input {
                 status: self.status.as_deref(),
@@ -12882,17 +12899,6 @@ impl Root {
                 description: &self.description,
                 committing: self.committing,
                 amend: self.amend,
-                sequence: sequence
-                    .as_ref()
-                    .map(|(t, d, skip)| (t.as_str(), d.as_str(), *skip)),
-                // 止まった git am: コンフリクトがなく、まだ 3-way でやり直していなければ（GTK4 版の `retry`）。
-                retry_three_way: self.sequence.as_ref().is_some_and(|s| {
-                    s["kind"] == "am"
-                        && conflicts == 0
-                        && s["threeWay"].as_bool() != Some(true)
-                        && s["retried"].as_bool() != Some(true)
-                        && s["empty"].as_bool() != Some(true)
-                }),
                 hovered: self.working_hovered.as_deref(),
                 mixed: &|key: &str| {
                     self.mixed_used.borrow_mut().push(key.to_owned());
