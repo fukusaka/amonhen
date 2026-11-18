@@ -287,9 +287,9 @@ pub fn remove(actions: &Rc<Actions>, submodule: &SubmoduleState) {
             sheets::parent(&actions).as_ref(),
             &tr!("Remove {name}?", name = &submodule.path),
             &format!(
-                "{} {}",
+                "{}{}{}",
                 tr!("Removes the folder and its entry in .gitmodules, and stages that. Commit to keep it."),
-                sheets::cant_undo()
+                amonhen_model::i18n::sentence_gap(), sheets::cant_undo()
             ),
         );
         let delete_git_dir = gtk::CheckButton::with_label(&tr!(

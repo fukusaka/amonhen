@@ -221,11 +221,12 @@ fn remote_menu(actions: &Rc<Actions>, data: &Data) -> Vec<Item> {
                 &a,
                 tr!("Prune {remote}?", remote = r),
                 format!(
-                    "{} {}",
+                    "{}{}{}",
                     tr!(
                         "Removes the remote-tracking branches whose branches are gone from {remote} (git remote prune).",
                         remote = r
                     ),
+                    amonhen_model::i18n::sentence_gap(),
                     sheets::cant_undo()
                 ),
                 "Prune".to_owned(),
@@ -550,9 +551,10 @@ fn tag_items(actions: &Rc<Actions>, names: &[String], known: &Known) -> Vec<Item
         )
     };
     let message = format!(
-        "{}{} {}",
+        "{}{}{}{}",
         list(names),
         tr!("The remotes keep theirs."),
+        amonhen_model::i18n::sentence_gap(),
         sheets::can_undo()
     );
     let commands: Vec<serde_json::Value> = names
@@ -599,16 +601,17 @@ fn tag_items(actions: &Rc<Actions>, names: &[String], known: &Known) -> Vec<Item
             )
         };
         let mut message = format!(
-            "{}{} {}",
+            "{}{}{}{}",
             list(&tags),
             tr!(
                 "Everyone who fetches from {remote} loses them; yours stay.",
                 remote = remote
             ),
+            amonhen_model::i18n::sentence_gap(),
             sheets::cant_undo()
         );
         if unchecked {
-            message.push(' ');
+            message.push_str(amonhen_model::i18n::sentence_gap());
             message.push_str(&tr!(
                 "Whether {remote} has them hasn’t been checked yet (Fetch reads it).",
                 remote = remote
@@ -646,12 +649,13 @@ pub fn confirm_push_tags(actions: &Rc<Actions>, tags: &[String], remote: &str) {
         )
     };
     let message = format!(
-        "{}\n\n{} {}",
+        "{}\n\n{}{}{}",
         tags.join("\n"),
         tr!(
             "Everyone who fetches from {remote} gets them.",
             remote = remote
         ),
+        amonhen_model::i18n::sentence_gap(),
         sheets::cant_undo()
     );
     sheets::confirm_ref_then(
@@ -676,12 +680,13 @@ pub fn confirm_replace(actions: &Rc<Actions>, tags: &[String], remote: &str) {
         )
     };
     let message = format!(
-        "{}\n{} {}",
+        "{}\n{}{}{}",
         tags.join("\n"),
         tr!(
             "{remote} has a different tag with this name; yours replaces it for everyone who fetches.",
             remote = remote
         ),
+        amonhen_model::i18n::sentence_gap(),
         sheets::cant_undo()
     );
     sheets::confirm_ref_then(

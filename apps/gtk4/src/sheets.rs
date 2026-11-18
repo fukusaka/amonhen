@@ -599,8 +599,14 @@ impl MergeForecast {
             )
         };
         if estimate {
+            // コンフリクトするファイルの名前で終わる行は、日本語でも空白で区切る。
+            let gap = if line.ends_with('。') {
+                amonhen_model::i18n::sentence_gap()
+            } else {
+                " "
+            };
             format!(
-                "{line} {}",
+                "{line}{gap}{}",
                 tr!("Rebase applies the commits one at a time, so this is only an estimate.")
             )
         } else {
@@ -2461,12 +2467,13 @@ pub fn pick(actions: &Rc<Actions>, revert: bool, commits: Vec<(String, bool)>) {
             tr!("Cherry-pick {what} onto {onto}?", what = what, onto = onto)
         };
         let message = format!(
-            "{} {}",
+            "{}{}{}",
             if revert {
                 tr!("Adds commits that undo them.")
             } else {
                 tr!("Adds copies of them.")
             },
+            amonhen_model::i18n::sentence_gap(),
             can_undo()
         );
         // 1 つの命令で（git cherry-pick A B C と同じく、コンフリクトで止まったら残りは git が覚えていて、Continue・
@@ -2507,7 +2514,11 @@ pub fn pop(actions: &Rc<Actions>, name: &str, message: Option<&str>, pop: bool) 
         tr!("Applies it to the working tree. It stays in the list.")
     };
     let mut text = message.map(|m| format!("“{m}”\n")).unwrap_or_default();
-    text.push_str(&format!("{what} {}", can_undo()));
+    text.push_str(&format!(
+        "{what}{}{}",
+        amonhen_model::i18n::sentence_gap(),
+        can_undo()
+    ));
     let title = if pop {
         tr!("Pop {name}?", name = name)
     } else {
@@ -3014,7 +3025,7 @@ pub fn delete_branches(actions: &Rc<Actions>, names: Vec<String>) {
                     "Pull request #{number} merged its changes.",
                     number = number
                 ));
-                message.push(' ');
+                message.push_str(amonhen_model::i18n::sentence_gap());
             }
             list => {
                 let merged: Vec<String> = list.iter().map(|(n, p)| format!("{n} (#{p})")).collect();
@@ -3022,14 +3033,14 @@ pub fn delete_branches(actions: &Rc<Actions>, names: Vec<String>) {
                     "Merged by pull request: {branches}",
                     branches = merged.join(", ")
                 ));
-                message.push(' ');
+                message.push_str(amonhen_model::i18n::sentence_gap());
             }
         }
         if unmerged {
             message.push_str(&tr!(
                 "Some commits are on no other branch; they go with the branch."
             ));
-            message.push(' ');
+            message.push_str(amonhen_model::i18n::sentence_gap());
         }
         message.push_str(&can_undo());
         let sheet = target.sheet(parent(&actions).as_ref(), &title, &message);
@@ -3150,12 +3161,13 @@ pub fn push_to_in(
         };
         let message = if force {
             format!(
-                "{} {}",
+                "{}{}{}",
                 tr!(
                     "{target} loses the commits {branch} doesn’t have.",
                     target = target,
                     branch = branch
                 ),
+                amonhen_model::i18n::sentence_gap(),
                 cant_undo()
             )
         } else if there.is_none() {

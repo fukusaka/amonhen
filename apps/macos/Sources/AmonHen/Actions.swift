@@ -323,7 +323,7 @@ final class Actions {
             let short = String(target.prefix(8))
             let name = currentBranch ?? "HEAD"
             let preview = await movePreview(from: "HEAD", to: target, branch: currentBranch)
-            let alert = makeAlert(L("Reset %@ to %@?", name, short), L("Commits taken off stay in Reflog.") + " " + Self.canUndo)
+            let alert = makeAlert(L("Reset %@ to %@?", name, short), L("Commits taken off stay in Reflog.") + sentenceGap + Self.canUndo)
             alert.addButton(withTitle: "Reset")
             alert.addButton(withTitle: L("Cancel"))
             let modes: [(String, String)] = [
@@ -407,7 +407,7 @@ final class Actions {
             }
             let alert = makeAlert(paths.isEmpty ? L("No Ignored Files") : L("Delete %ld Ignored Items?", paths.count),
                                   paths.isEmpty ? L("Nothing in the working tree matches .gitignore.")
-                                      : L("These are removed from the working tree (git clean -X); folders go with everything in them.") + " " + Self.cantUndo)
+                                      : L("These are removed from the working tree (git clean -X); folders go with everything in them.") + sentenceGap + Self.cantUndo)
             if paths.isEmpty {
                 alert.addButton(withTitle: "OK")
                 _ = await present(alert)
@@ -480,7 +480,7 @@ final class Actions {
             }
             let alert = makeAlert(L("Clean Up Branches"),
                                   L("Delete the checked branches. The current branch, favorites and branches used by a worktree aren’t listed.")
-                                      + " " + Self.canUndo + (note.map { "\n\n" + $0 } ?? ""))
+                                      + sentenceGap + Self.canUndo + (note.map { "\n\n" + $0 } ?? ""))
             let delete = alert.addButton(withTitle: "")
             alert.addButton(withTitle: L("Cancel"))
             // 理由ごとに見出しを付けて並べる。

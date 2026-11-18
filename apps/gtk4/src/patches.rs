@@ -300,7 +300,11 @@ async fn confirm(
     let sheet = target.sheet(
         sheets::parent(actions).as_ref(),
         &title,
-        &format!("{what} {}", sheets::can_undo()),
+        &format!(
+            "{what}{}{}",
+            amonhen_model::i18n::sentence_gap(),
+            sheets::can_undo()
+        ),
     );
     // コミットになるなら（git am）、一覧の上に前と後の絵（今の先端の上に、パッチごとのコミット。
     // macOS 版と同じ）。

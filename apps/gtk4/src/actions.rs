@@ -470,11 +470,11 @@ impl Actions {
                 parent.as_ref(),
                 &tr!("Delete {count} Ignored Items?", count = paths.len()),
                 &format!(
-                    "{} {}",
+                    "{}{}{}",
                     tr!(
                         "These are removed from the working tree (git clean -X); folders go with everything in them."
                     ),
-                    crate::sheets::cant_undo()
+                    amonhen_model::i18n::sentence_gap(), crate::sheets::cant_undo()
                 ),
             );
             // パスを選んで写せる（長いパスは折り返す。macOS 版と同じ）。ラベルだと、開いたときに全体が選ばれる。
@@ -577,11 +577,11 @@ impl Actions {
                 parent.as_ref(),
                 &tr!("Clean Up Branches"),
                 &format!(
-                    "{} {}{note}",
+                    "{}{}{}{note}",
                     tr!(
                         "Delete the checked branches. The current branch, favorites and branches used by a worktree aren’t listed."
                     ),
-                    crate::sheets::can_undo()
+                    amonhen_model::i18n::sentence_gap(), crate::sheets::can_undo()
                 ),
             );
             // 理由ごとに見出しを付けて並べる。

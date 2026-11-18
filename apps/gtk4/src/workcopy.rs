@@ -2554,7 +2554,12 @@ impl Inner {
                 &actions,
                 repo,
                 tr!("Delete {path}?", path = path),
-                format!("{} {}", tr!("It’s untracked."), crate::sheets::cant_undo()),
+                format!(
+                    "{}{}{}",
+                    tr!("It’s untracked."),
+                    amonhen_model::i18n::sentence_gap(),
+                    crate::sheets::cant_undo()
+                ),
                 tr!("Delete"),
                 true,
                 vec![json!({ "op": "deleteUntracked", "paths": [path] })],

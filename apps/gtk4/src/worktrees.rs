@@ -1107,21 +1107,23 @@ async fn confirm_remove(
     use crate::sheets::{Response, Sheet};
     let message = if changes > 0 {
         format!(
-            "{} {}",
+            "{}{}{}",
             tr!(
                 "{path} has uncommitted changes in {count} files. They are lost with the folder. The branch stays.",
                 path = &info.path,
                 count = changes
             ),
+            amonhen_model::i18n::sentence_gap(),
             crate::sheets::cant_undo()
         )
     } else {
         format!(
-            "{} {}",
+            "{}{}{}",
             tr!(
                 "Removes the folder {path}. The branch stays.",
                 path = &info.path
             ),
+            amonhen_model::i18n::sentence_gap(),
             crate::sheets::cant_undo()
         )
     };

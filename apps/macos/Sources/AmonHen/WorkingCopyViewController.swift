@@ -471,7 +471,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     /// untracked のファイルを消す前に確かめる（Undo では戻せない）。
     private func confirmDeleteUntracked(_ path: String, actions: Actions) {
         Task { @MainActor in
-            guard await actions.confirm(L("Delete %@?", path), message: L("It’s untracked.") + " " + Actions.cantUndo,
+            guard await actions.confirm(L("Delete %@?", path), message: L("It’s untracked.") + sentenceGap + Actions.cantUndo,
                                         ok: L("Delete"), destructive: true) else { return }
             // ファイルの操作はコアに任せる（SSH 越しのリポジトリでも同じに動く）。
             actions.perform(["op": "deleteUntracked", "paths": [path]])

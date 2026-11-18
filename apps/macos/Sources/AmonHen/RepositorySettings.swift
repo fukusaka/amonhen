@@ -551,7 +551,7 @@ private struct RemotesTab: View {
         let alert = NSAlert()
         alert.messageText = L("Prune %@?", list)
         alert.informativeText = L("Removes the remote-tracking branches whose branches are gone from %@ (git remote prune).", list)
-            + " " + Actions.cantUndo
+            + sentenceGap + Actions.cantUndo
         alert.addButton(withTitle: "Prune")
         alert.addButton(withTitle: L("Cancel"))
         let run = { (response: NSApplication.ModalResponse) in
@@ -1937,7 +1937,7 @@ private struct OperationsPage: View {
                         Button(L("Forget All Recorded Resolutions…")) {
                             let alert = NSAlert()
                             alert.messageText = L("Forget All Recorded Resolutions?")
-                            alert.informativeText = L("git rerere then no longer reuses the resolutions it recorded in this repository.") + " " + Actions.cantUndo
+                            alert.informativeText = L("git rerere then no longer reuses the resolutions it recorded in this repository.") + sentenceGap + Actions.cantUndo
                             let forget = alert.addButton(withTitle: L("Forget All"))
                             forget.markDestructive()
                             alert.addButton(withTitle: L("Cancel")).keyEquivalent = "\r"

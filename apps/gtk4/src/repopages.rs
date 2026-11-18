@@ -348,11 +348,12 @@ fn prune_remote(s: &Rc<RepoSettings>, name: String) {
             parent.as_ref(),
             &tr!("Prune {remote}?", remote = name),
             &format!(
-                "{} {}",
+                "{}{}{}",
                 tr!(
                     "Removes the remote-tracking branches whose branches are gone from {remote} (git remote prune).",
                     remote = name
                 ),
+                amonhen_model::i18n::sentence_gap(),
                 crate::sheets::cant_undo()
             ),
         );

@@ -1898,7 +1898,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
                     // worktree の今のブランチを書き換えるので、Cherry-pick・Revert と同じく、どの worktree かを書く。
                     guard await actions.confirm(L("Split %@?", short),
                                                 message: actions.sheetMessage(
-                                                    L("Its changes go back to the working tree; commit them in parts, then Continue.") + " "
+                                                    L("Its changes go back to the working tree; commit them in parts, then Continue.") + sentenceGap
                                                         + Actions.canUndo), ok: "Split") else { return }
                     actions.rewrite("Split \(short)", ["kind": "split", "oid": hex])
                 }
