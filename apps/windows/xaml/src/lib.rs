@@ -12,4 +12,8 @@
 )]
 
 mod bindings;
+mod list;
+mod textbox;
 pub use bindings::*;
+pub use list::selected_tags;
+pub use textbox::select_all;

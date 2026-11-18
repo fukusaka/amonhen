@@ -8,23 +8,38 @@
 
 mod activity;
 mod app;
+mod askpass;
 mod blame;
+mod branchswitcher;
 mod data;
+mod drawing;
+mod editor;
+mod failure;
 mod filehistory;
 mod files;
+mod forecast;
+mod historyedit;
 mod listen;
 mod measure;
 mod menus;
 mod merge;
+mod merge_several;
+mod patch_files;
 mod prefs;
+mod programs;
 mod rangediff;
 mod reflog;
 mod render;
 mod reposettings;
+mod repositories;
 mod sequence;
 mod settingsview;
 mod sidebar;
+mod signature;
 mod stashes;
+mod templates;
+mod theme;
+mod viewed;
 mod win32;
 mod winui;
 mod workcopy;
@@ -34,7 +49,7 @@ use std::time::Instant;
 
 use data::Data;
 use measure::{InputLatency, Measure};
-use render::{Options, ROW_HEIGHT, Renderer, Surface};
+use render::{Options, Renderer, Surface, row_height};
 
 #[derive(Clone)]
 pub struct Args {
@@ -52,6 +67,14 @@ pub struct Args {
     pub child_hwnd: bool,
     pub options: Options,
     pub out: Option<PathBuf>,
+    /// 開いたら Repositories の画面を出す（File > New Window で開いた窓）。
+    pub repositories: bool,
+    /// リポジトリを引数で渡された。
+    pub repo_given: bool,
+    /// 窓をこの位置・大きさ（画面のピクセル。x, y, 幅, 高さ）に出す（書き込む先の worktree を替えた窓）。
+    pub place: Option<[i32; 4]>,
+    /// 開いたら Working Copy の画面を出す。
+    pub working_copy: bool,
 }
 
 fn parse() -> Result<Args, String> {
@@ -71,6 +94,10 @@ fn parse() -> Result<Args, String> {
             tearing: false,
         },
         out: None,
+        repositories: false,
+        repo_given: false,
+        place: None,
+        working_copy: false,
     };
     let mut rows = measure::ROWS_PER_FRAME;
     let mut measuring = false;
@@ -98,10 +125,26 @@ fn parse() -> Result<Args, String> {
             "--sync" => parsed.options.sync = value()?.parse().map_err(|e| format!("{e}"))?,
             "--tearing" => parsed.options.tearing = true,
             "--out" => parsed.out = Some(value()?.into()),
+            "--repositories" => parsed.repositories = true,
+            "--working-copy" => parsed.working_copy = true,
+            "--place" => {
+                let numbers: Vec<i32> = value()?
+                    .split(',')
+                    .map(|n| n.trim().parse().map_err(|e| format!("--place: {e}")))
+                    .collect::<Result<_, _>>()?;
+                parsed.place = Some(
+                    numbers
+                        .try_into()
+                        .map_err(|_| "--place は x,y,幅,高さ".to_owned())?,
+                );
+            }
             // SAFETY: スレッドを作る前（引数を読んでいるところ）で、ほかに環境を読む者はいない。
             "--profile" => unsafe { std::env::set_var("AMONHEN_PROFILE", "1") },
             _ if a.starts_with("--") => return Err(format!("知らない引数: {a}")),
-            _ => parsed.repo = a.into(),
+            _ => {
+                parsed.repo = a.into();
+                parsed.repo_given = true;
+            }
         }
     }
     parsed.measure = measuring.then_some(rows);
@@ -110,6 +153,11 @@ fn parse() -> Result<Args, String> {
 
 fn main() {
     let started = Instant::now();
+    // git・ssh が資格情報を尋ねてきた（`GIT_ASKPASS`・`SSH_ASKPASS` がこの実行ファイル）。
+    if let Some(prompt) = askpass::prompt() {
+        amonhen_model::i18n::set_default(language());
+        askpass::run(prompt);
+    }
     let mut raw = std::env::args().skip(1);
     if raw.next().as_deref() == Some("--listen") {
         if let Err(e) = listen::run(raw.next().unwrap_or_else(|| "listen.txt".into()).into()) {
@@ -119,13 +167,32 @@ fn main() {
         return;
     }
     amonhen_model::i18n::set_default(language());
-    let args = match parse() {
+    // git・ssh が尋ねる資格情報は、この実行ファイルの小さな窓で尋ねる（ほかのスレッドを動かす前に）。
+    askpass::install();
+    // status で git の fsmonitor を使うか（Settings > Performance。変えたら Settings が渡し直す）。
+    amonhen_backend_cli::set_fsmonitor(prefs::bool(prefs::USE_FSMONITOR));
+    // Settings > Git > Environment Variables で選んだ名前を、git と ssh に渡す（ほかのスレッドを動かす前に）。
+    settingsview::apply_env_added();
+    render::set_one_line(prefs::bool(prefs::COMPACT_HISTORY_ROWS));
+    render::set_history_items(prefs::history_items());
+    render::set_highlight_ancestors(prefs::bool(prefs::HIGHLIGHT_ANCESTORS));
+    let mut args = match parse() {
         Ok(a) => a,
         Err(e) => {
             eprintln!("{e}");
             std::process::exit(2);
         }
     };
+    // 引数なしで起動したら、最後に閉じた窓のリポジトリを開く（なくなっていれば今のフォルダ）。
+    if !args.repo_given
+        && !args.repositories
+        && let Some(last) = prefs::string(prefs::LAST_REPOSITORY)
+        && std::path::Path::new(&last).join(".git").exists()
+    {
+        args.repo = last.into();
+    }
+    let opened = std::fs::canonicalize(&args.repo).unwrap_or_else(|_| args.repo.clone());
+    let app_window = args.host == "app";
     let result = match args.host.as_str() {
         "app" => app::run(args, started),
         "win32" => win32::run(args, started),
@@ -135,6 +202,14 @@ fn main() {
     if let Err(e) = result {
         eprintln!("{e}");
         std::process::exit(1);
+    }
+    // 閉じた窓のリポジトリを覚える（いちばん後に閉じた窓のものが残る）。
+    if app_window && opened.join(".git").exists() {
+        let path = opened.display().to_string();
+        let path = path.strip_prefix(r"\\?\").unwrap_or(&path);
+        if let Err(e) = prefs::set_string(prefs::LAST_REPOSITORY, path) {
+            eprintln!("最後のリポジトリを覚えられない: {e}");
+        }
     }
 }
 
@@ -238,12 +313,20 @@ impl Session {
     }
 
     fn max_scroll(&self) -> f32 {
-        (self.data.row_count() as f32 * ROW_HEIGHT - self.height()).max(0.0)
+        (self.data.row_count() as f32 * row_height() - self.height()).max(0.0)
     }
 
     pub fn scroll_by(&mut self, dy: f32) {
         self.scroll_y = (self.scroll_y + dy).clamp(0.0, self.max_scroll());
         self.dirty = true;
+    }
+
+    /// History の行の見せ方（1 行か・出す項目）を変える。行の高さが変わることがあるので、上の端の行を保つ。
+    pub fn set_display(&mut self, change: impl FnOnce()) {
+        let row = self.scroll_y / row_height();
+        change();
+        self.scroll_to(row * row_height());
+        self.invalidate();
     }
 
     pub fn scroll_to(&mut self, y: f32) {
@@ -253,12 +336,12 @@ impl Session {
 
     /// 行の上の端の、窓の中の高さ（DIP）。
     pub fn row_top(&self, row: u32) -> f32 {
-        row as f32 * ROW_HEIGHT - self.scroll_y
+        row as f32 * row_height() - self.scroll_y
     }
 
     /// 窓の中の高さ `y`（DIP）にある行。
     pub fn row_at(&self, y: f32) -> Option<u32> {
-        let row = ((self.scroll_y + y) / ROW_HEIGHT).floor();
+        let row = ((self.scroll_y + y) / row_height()).floor();
         (row >= 0.0 && (row as u32) < self.data.row_count()).then_some(row as u32)
     }
 
@@ -272,20 +355,20 @@ impl Session {
             .history
             .as_ref()
             .and_then(|h| h.graph.ids().get(row as usize).copied());
-        let top = row as f32 * ROW_HEIGHT;
+        let top = row as f32 * row_height();
         if top < self.scroll_y {
             self.scroll_to(top);
-        } else if top + ROW_HEIGHT > self.scroll_y + self.height() {
-            self.scroll_to(top + ROW_HEIGHT - self.height());
+        } else if top + row_height() > self.scroll_y + self.height() {
+            self.scroll_to(top + row_height() - self.height());
         }
         self.dirty = true;
     }
 
     /// 行を選び、見えていなければ真ん中に出す（サイドバーで ref を選んだとき）。
     pub fn reveal(&mut self, row: u32) {
-        let top = row as f32 * ROW_HEIGHT;
-        if top < self.scroll_y || top + ROW_HEIGHT > self.scroll_y + self.height() {
-            self.scroll_to(top - (self.height() - ROW_HEIGHT) / 2.0);
+        let top = row as f32 * row_height();
+        if top < self.scroll_y || top + row_height() > self.scroll_y + self.height() {
+            self.scroll_to(top - (self.height() - row_height()) / 2.0);
         }
         self.select(row);
     }
@@ -343,7 +426,7 @@ impl Session {
 
     /// 1 画面分の行の数。
     pub fn page_rows(&self) -> i64 {
-        ((self.height() / ROW_HEIGHT) as i64 - 1).max(1)
+        ((self.height() / row_height()) as i64 - 1).max(1)
     }
 
     pub fn page(&self) -> f32 {
@@ -352,8 +435,8 @@ impl Session {
 
     fn visible(&self) -> std::ops::Range<u32> {
         let count = self.data.row_count();
-        let first = ((self.scroll_y / ROW_HEIGHT) as u32).min(count);
-        let last = (((self.scroll_y + self.height()) / ROW_HEIGHT).ceil() as u32).min(count);
+        let first = ((self.scroll_y / row_height()) as u32).min(count);
+        let last = (((self.scroll_y + self.height()) / row_height()).ceil() as u32).min(count);
         first..last
     }
 
@@ -405,6 +488,13 @@ impl Session {
                 self.selected_id = None;
             }
             self.scroll_by(0.0);
+            // 範囲を変えたら、選んだコミットを見せる（なければ先頭）。
+            if std::mem::take(&mut self.data.scope_changed) {
+                match self.selected {
+                    Some(row) => self.reveal(row),
+                    None => self.scroll_to(0.0),
+                }
+            }
         }
         Ok(())
     }
@@ -416,7 +506,7 @@ impl Session {
         }
         let start = match (&self.phase, &mut self.measure) {
             (Phase::Running, Some(m)) => {
-                let (t, dy) = (m.frame_started(), m.rows_per_frame * ROW_HEIGHT);
+                let (t, dy) = (m.frame_started(), m.rows_per_frame * row_height());
                 self.scroll_by(dy);
                 t
             }
@@ -436,7 +526,8 @@ impl Session {
         if let Some(input) = &mut self.input {
             input.presented(&surface.chain);
         }
-        self.dirty = false;
+        // 祖先が描く行まで届いていなければ、次のフレームで続ける。
+        self.dirty = self.renderer.lineage_pending;
 
         let ready = self.data.has_rows(self.visible());
         if ready && !self.first_paint {

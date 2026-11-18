@@ -55,12 +55,66 @@ pub struct Callbacks<'a> {
     pub menu: Box<dyn Fn() -> Callback<String> + 'a>,
 }
 
+/// stash の詳しい中身（GTK4 版の `Info` と `Base`）: 作った時刻、untracked のファイルを含むか、土台（1 つ目の
+/// 親）、土台と今の HEAD の離れ具合（HEAD にだけあるコミットの数、土台にだけあるコミットの数）。
+#[derive(Clone, Default)]
+pub struct Detail {
+    pub time: i64,
+    pub untracked: bool,
+    pub base: Option<String>,
+    pub ahead_behind: Option<(u64, u64)>,
+}
+
+/// どのくらい前か（GTK4 版の `ago`）。
+pub fn ago(time: i64) -> String {
+    const MIN: i64 = 60;
+    const HOUR: i64 = 60 * MIN;
+    const DAY: i64 = 24 * HOUR;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64);
+    let s = (now - time).max(0);
+    match s {
+        _ if s < MIN => tr!("{count} sec. ago", count = s),
+        _ if s < HOUR => tr!("{count} min. ago", count = s / MIN),
+        _ if s < DAY => tr!("{count} hr. ago", count = s / HOUR),
+        _ if s < 2 * DAY => tr!("{count} day ago", count = 1),
+        _ if s < 7 * DAY => tr!("{count} days ago", count = s / DAY),
+        _ if s < 30 * DAY => tr!("{count} wk. ago", count = s / (7 * DAY)),
+        _ if s < 365 * DAY => tr!("{count} mo. ago", count = s / (30 * DAY)),
+        _ => tr!("{count} yr. ago", count = s / (365 * DAY)),
+    }
+}
+
+/// 2 行目の、ブランチの後ろに並べるもの（GTK4 版の `subtitle_markup`）。土台が HEAD の履歴にないと、戻すときに
+/// 重なりやすいので知らせる。
+fn detail_parts(detail: &Detail) -> Vec<String> {
+    let mut parts = Vec::new();
+    match detail.ahead_behind {
+        Some((_, behind)) if behind > 0 => parts.push(tr!("not in HEAD’s history")),
+        Some((0, _)) => parts.push(tr!("at HEAD")),
+        Some((ahead, _)) => parts.push(tr!("{count} behind HEAD", count = ahead)),
+        None => {}
+    }
+    if detail.time > 0 {
+        parts.push(ago(detail.time));
+    }
+    if detail.untracked {
+        parts.push(tr!("with untracked files"));
+    }
+    if let Some(base) = &detail.base {
+        parts.push(base[..base.len().min(7)].to_owned());
+    }
+    parts
+}
+
 /// `stashes` は新しい順、`selected` は選んでいる stash の名前、`current` は今のブランチ（ほかのブランチで作った
-/// stash は、ブランチの名前を薄くして見分ける）。
+/// stash は、ブランチの名前を薄くして見分ける）、`details` は stash の名前ごとの詳しい中身。
 pub fn view(
     stashes: &[&RefEntry],
     selected: Option<&str>,
     current: Option<&str>,
+    details: &std::collections::HashMap<String, Detail>,
     callbacks: Callbacks,
 ) -> View {
     let enabled = selected.is_some();
@@ -104,10 +158,12 @@ pub fn view(
     let rows = stashes.iter().map(|entry| {
         let (title, branch) = title(entry.detail.as_deref());
         let other = branch.as_deref().is_some_and(|b| Some(b) != current);
-        let second = match &branch {
-            Some(b) => format!("{b} · {}", entry.name),
-            None => entry.name.clone(),
-        };
+        let mut second: Vec<String> = branch.iter().cloned().collect();
+        if let Some(detail) = details.get(&entry.name) {
+            second.extend(detail_parts(detail));
+        }
+        second.push(entry.name.clone());
+        let second = second.join(" · ");
         let row = StackPanel::new().spacing(1.0).children((
             TextBlock::new()
                 .text(title)

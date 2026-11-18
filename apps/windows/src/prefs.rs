@@ -8,8 +8,47 @@ use serde_json::{Map, Value};
 
 /// マージエディタを開いたときに、間違えようのないコンフリクトを解く（既定は解く）。
 pub const AUTO_MAGIC_MERGE: &str = "autoMagicMerge";
+/// リポジトリを開いたときに commit-graph を書き出す・書き足す（既定はしない。GTK4 版・macOS 版と同じ鍵）。
+pub const WRITE_COMMIT_GRAPH: &str = "writeCommitGraph";
+/// status で git の fsmonitor を使う（既定は使わない。GTK4 版・macOS 版と同じ鍵）。
+pub const USE_FSMONITOR: &str = "useFSMonitor";
+/// 自動の fetch の間隔（分。0 はしない。GTK4 版・macOS 版と同じ鍵）。
+pub const AUTO_FETCH_MINUTES: &str = "autoFetchMinutes";
+/// Working Copy の一覧の見せ方（`list`・`tree`・`flat`）。
+pub const WORKING_COPY_LAYOUT: &str = "workingCopyLayout";
 /// File History に merge コミットも出す（既定は出さない）。
 pub const FILE_HISTORY_MERGES: &str = "fileHistoryMerges";
+/// 開いたリポジトリを Repositories のブックマークに入れる（既定は入れる。GTK4 版・macOS 版と同じ鍵）。
+pub const AUTO_BOOKMARK: &str = "autoBookmark";
+/// History を 1 行で出す（View の One Line per Commit。GTK4 版・macOS 版と同じ鍵）。
+pub const COMPACT_HISTORY_ROWS: &str = "compactHistoryRows";
+/// 最後に閉じた窓のリポジトリ（引数なしで起動したら開く。GTK4 版・macOS 版の、開いていた窓を戻すのにあたる）。
+pub const LAST_REPOSITORY: &str = "lastRepository";
+/// History でマージ済みブランチを折りたたむ（既定は折りたたまない。GTK4 版・macOS 版と同じ鍵）。
+pub const FOLD_MERGED_BRANCHES: &str = "foldMergedBranches";
+/// コミットの差分で全ファイルを縦に並べる（既定は並べる。macOS 版・GTK4 版と同じ鍵）。
+pub const STACKED_COMMIT_DIFF: &str = "stackedCommitDiff";
+/// コミットの変更ファイルを差分の左に木で出す（既定は差分の上に一覧。macOS 版・GTK4 版と同じ鍵）。
+pub const HISTORY_FILE_TREE: &str = "historyFileTree";
+/// 選んだコミットの祖先を強調する（既定は強調する。GTK4 版・macOS 版と同じ鍵）。
+pub const HIGHLIGHT_ANCESTORS: &str = "highlightAncestors";
+/// History の行に出す項目（`render::items` のビットを 10 進の文字で。GTK4 版・macOS 版と同じ鍵）。
+pub const HISTORY_ITEMS: &str = "historyItems";
+
+pub fn history_items() -> u32 {
+    string(HISTORY_ITEMS)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(crate::render::items::ALL)
+}
+/// History の並び順（`date`・`topo`。GTK4 版・macOS 版と同じ鍵）。
+pub const HISTORY_ORDER: &str = "historyOrder";
+
+/// History の並び順（既定は日付順）。
+pub fn history_order() -> amonhen_model::HistoryOrder {
+    string(HISTORY_ORDER)
+        .and_then(|s| amonhen_model::HistoryOrder::from_name(&s))
+        .unwrap_or_default()
+}
 
 thread_local! {
     static VALUES: RefCell<Map<String, Value>> = RefCell::new(load());
@@ -29,14 +68,59 @@ fn load() -> Map<String, Value> {
 pub fn bool(key: &str) -> bool {
     VALUES
         .with(|v| v.borrow().get(key).and_then(Value::as_bool))
-        .unwrap_or(key == AUTO_MAGIC_MERGE)
+        .unwrap_or(
+            key == AUTO_MAGIC_MERGE
+                || key == AUTO_BOOKMARK
+                || key == HIGHLIGHT_ANCESTORS
+                || key == STACKED_COMMIT_DIFF,
+        )
+}
+
+pub fn string(key: &str) -> Option<String> {
+    VALUES.with(|v| {
+        v.borrow()
+            .get(key)
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    })
+}
+
+/// 数（なければ・読めなければ None）。
+pub fn number(key: &str) -> Option<f64> {
+    string(key)?.parse().ok()
 }
 
 /// 書いて保存する（書けなければ理由）。
 pub fn set_bool(key: &str, value: bool) -> Result<(), String> {
+    set(key, Value::Bool(value))
+}
+
+pub fn set_string(key: &str, value: &str) -> Result<(), String> {
+    set(key, Value::String(value.to_owned()))
+}
+
+/// 鍵ごと消す（なければ何もしない）。
+pub fn remove(key: &str) -> Result<(), String> {
+    if VALUES.with(|v| !v.borrow().contains_key(key)) {
+        return Ok(());
+    }
+    write(|v| {
+        v.remove(key);
+    })
+}
+
+fn set(key: &str, value: Value) -> Result<(), String> {
+    write(|v| {
+        v.insert(key.to_owned(), value);
+    })
+}
+
+fn write(change: impl FnOnce(&mut Map<String, Value>)) -> Result<(), String> {
     let text = VALUES.with(|v| {
         let mut v = v.borrow_mut();
-        v.insert(key.to_owned(), Value::Bool(value));
+        // 窓ごとに別のプロセスなので、ほかの窓が書いた分を消さないよう、書く前に読み直す。
+        *v = load();
+        change(&mut v);
         serde_json::to_string_pretty(&*v).unwrap_or_default()
     });
     let path = path().ok_or("no settings folder")?;
@@ -44,4 +128,22 @@ pub fn set_bool(key: &str, value: bool) -> Result<(), String> {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
     std::fs::write(path, text).map_err(|e| e.to_string())
+}
+
+/// コミットのメッセージの下書きを覚える鍵（worktree ごと。GTK4 版と同じ形）。
+pub fn draft_key(workdir: &std::path::Path) -> String {
+    let hex: String = workdir
+        .display()
+        .to_string()
+        .bytes()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    format!("commitDraft.{hex}")
+}
+
+/// 自動の fetch の間隔（分。0 はしない）。
+pub fn auto_fetch_minutes() -> u32 {
+    string(AUTO_FETCH_MINUTES)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0)
 }
