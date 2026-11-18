@@ -20,12 +20,33 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # macOS のジョブを流すか（scripts/ci-needs-macos.sh。Windows のアプリと文書だけを変えた PR では流さない）。
+  changes:
+    name: Changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read # コミットを取ってくる
+      pull-requests: read # PR が変えたファイルの一覧
+    outputs:
+      macos: ${{ steps.decide.outputs.macos }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: decide
+        run: scripts/ci-needs-macos.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+
   test:
     name: Rust (${{ matrix.os }})
+    needs: changes
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest, windows-latest]
+        os: ${{ fromJSON(needs.changes.outputs.macos == 'true' && '["macos-latest","ubuntu-latest","windows-latest"]' || '["ubuntu-latest","windows-latest"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     permissions:
@@ -122,6 +143,8 @@ jobs:
 
   swift:
     name: Swift
+    needs: changes
+    if: needs.changes.outputs.macos == 'true'
     runs-on: macos-latest
     timeout-minutes: 30
     permissions:
@@ -234,10 +257,11 @@ jobs:
   # VSCode 拡張（apps/vscode）。daemon の試験に、このリポジトリのエンジンを使う（Windows は名前付きパイプ）。
   vscode:
     name: VSCode extension (${{ matrix.os }})
+    needs: changes
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest, windows-latest]
+        os: ${{ fromJSON(needs.changes.outputs.macos == 'true' && '["macos-latest","ubuntu-latest","windows-latest"]' || '["ubuntu-latest","windows-latest"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     permissions:
