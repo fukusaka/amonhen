@@ -309,10 +309,10 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 
 | 機能 | macOS | GTK4 | Windows | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
-| 帯でつないだ 3 つの列（Current / Result / Incoming） | ✓ | ✓ | △ | n/a | n/a | VSCode: VSCode 自身の 3-way のマージエディター。<br>Windows: 3 列。左右の欄はコンフリクトを塗り（Current は青、Incoming は緑、Base は灰、選んでいるものは濃く、解決済みは薄く）、≫・≪ でその側に解決する。スクロールは揃わない。 |
+| 帯でつないだ 3 つの列（Current / Result / Incoming） | ✓ | ✓ | △ | n/a | n/a | VSCode: VSCode 自身の 3-way のマージエディター。<br>Windows: 3 列。左右の欄はコンフリクトを塗り（Current は青、Incoming は緑、Base は灰、選んでいるものは濃く、解決済みは薄く）、≫・≪ でその側に解決し、選んだコンフリクトへスクロールする。Result はいっしょにスクロールしない。 |
 | Show Base | ✓ | ✓ | ✓ | n/a | n/a |  |
 | Magic Merge（ファイルを開いたときの確かな規則も） | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: コンフリクトは VSCode 標準の 3-way マージエディターで開く。<br>CLI: `merge-file`（git の mergetool にも）。 |
-| 直せる Result とコンフリクトごとの Undo | ✓ | ✓ | △ | n/a | n/a |<br>Windows: 欄の Undo だけ。 |
+| 直せる Result とコンフリクトごとの Undo | ✓ | ✓ | ✓ | n/a | n/a |  |
 | ファイルを Current / Incoming で解く | ✓ | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
 | 外のマージツールで開く | — | — | — | n/a | n/a |  |
 | エディターを別の窓に出す | ✓ | ✓ | — | n/a | n/a |  |
@@ -353,7 +353,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 共有の操作の表（`crates/commands`）から作るメニュー | ✓ | ✓ | ✓ | n/a | n/a | VSCode: VSCode のコマンドパレットと右クリックのメニューが代わり。 |
 | メニューバーなしで全部の操作に届く（≡） | ✓ | ✓ | — | ✓ | n/a | GTK4: ≡ のメニューに、メニューバーの File・Edit・View・Navigate・Commit・Window を macOS と同じ項目と並びで置き（Edit の取り消す・カット・コピーなどはフォーカスのある欄に効く）、その後に設定…・Amon Hen について・終了。<br>VSCode: コマンドパレットとコンテキストメニュー。 |
 | キーボードの近道 | ✓ | ✓ | ✓ | n/a | n/a | GTK4: Linux のデスクトップやほかの操作が使うキーは違う: サイドバーを表示は F9（GNOME のユーティリティの欄のキー）。ブランチを絞り込む・親へ・子へ・New Tag にはない（GNOME が Ctrl+Alt+矢印と Ctrl+Alt+T を使い、HIG では Alt+Up が別の意味）。マージエディターの前・次のコンフリクトは Alt+Up・Down。<br>VSCode: VSCode のキー割り当てが代わり。拡張は割り当てを持たず、どのコマンドにも割り当てられる。 |
-| メニューと同じ名前のコンテキストメニュー | ✓ | ✓ | △ | ✓ | n/a | VSCode: VSCode のメニューの項目は決まった文なので、アプリが入れる名前を除いた同じ言葉（Checkout main… は Checkout…、Delete main… は Delete…）。<br>Windows: History・サイドバー・Working Copy・Stashes・File History・Blame。 |
+| メニューと同じ名前のコンテキストメニュー | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: VSCode のメニューの項目は決まった文なので、アプリが入れる名前を除いた同じ言葉（Checkout main… は Checkout…、Delete main… は Delete…）。<br>Windows: History とその変更ファイル・サイドバー・Working Copy・Stashes・File History・Blame。 |
 | キーボードの近道の窓 | — | ✓ | — | n/a | n/a | macOS: 代わりに macOS の App Shortcuts で変える。 |
 
 ## ステータスバー

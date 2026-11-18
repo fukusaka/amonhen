@@ -79,6 +79,8 @@ thread_local! {
     static MARK_DRAG: std::cell::Cell<Option<(usize, usize, bool)>> = const { std::cell::Cell::new(None) };
     /// History でコミットを運んでいる間（押した行、押した高さ、動かし始めたか）。
     static HISTORY_DRAG: std::cell::Cell<Option<(u32, f64, bool)>> = const { std::cell::Cell::new(None) };
+    /// マージエディタで、Ctrl+Z で戻せる・Ctrl+Y でやり直せる書き換えがあるか（描くたびに書き直す）。
+    static MERGE_UNDO: std::cell::Cell<(bool, bool)> = const { std::cell::Cell::new((false, false)) };
     /// 右クリックで外しておいた差分のメニュー（作り直したら付き直す）。
     static DIFF_FLYOUT: RefCell<Option<xaml::FlyoutBase>> = const { RefCell::new(None) };
     /// History と差分に付けたイベント（持っている間だけ届く）。
@@ -209,6 +211,10 @@ struct Root {
     /// 帯を開いた回数（開くたびに欄にフォーカスを入れる）。
     diff_find_opened: u64,
     diff_find_box: ElementRef<TextBox>,
+    /// マージエディタの Result の欄（Ctrl+Z・Ctrl+Y を付ける）。
+    merge_result_box: ElementRef<TextBox>,
+    /// マージエディタの左右と Base の欄の、選んでいるコンフリクトの所。
+    merge_chosen: [ElementRef<Grid>; 3],
     diff_find_query: String,
     diff_find_status: String,
     /// Working Copy の一部だけ含めているチェック（キーごと）と、直前の画面で使ったキー。
@@ -767,6 +773,8 @@ enum Message {
     WorkingSide(Option<usize>),
     /// 差分のファイルの見出しのメニュー（GTK4 版の `commitfiles` の見出しのメニュー）。
     DiffFileMenu(String),
+    /// 変更ファイルの一覧（木も）の右クリック（ファイルの番号、差分の見出しと同じ項目の鍵）。
+    ChangedFileMenu(usize, String),
     FileHistoryLoaded(String, Result<Vec<crate::filehistory::Entry>, String>),
     FileHistorySelected(Option<usize>),
     CloseFileHistory,
@@ -790,6 +798,10 @@ enum Message {
     /// マージエディタの Base の欄を出すか。
     MergeBase(bool),
     MergeResult(String),
+    /// マージエディタの Accept などの書き換えを戻す（true ならやり直す）。
+    MergeUndo(bool),
+    /// マージエディタの左右と Base の欄で、選んでいるコンフリクトを見える所へ出す。
+    MergeBringIntoView,
     /// Settings: git の名前とメールを読んだ・欄を書き換えた・保存・チェックを替えた・閉じる。
     SettingsGit(String, String, Vec<crate::reposettings::Entry>),
     /// Settings > Git の Operations・Working Copy で選んだ（行の id と番号）。
@@ -1161,6 +1173,8 @@ impl Component for Root {
             diff_find_open: false,
             diff_find_opened: 0,
             diff_find_box: ElementRef::new(),
+            merge_result_box: ElementRef::new(),
+            merge_chosen: std::array::from_fn(|_| ElementRef::new()),
             diff_find_query: String::new(),
             diff_find_status: String::new(),
             mixed_checks: RefCell::default(),
@@ -4739,14 +4753,35 @@ impl Component for Root {
                     && state.path == path
                 {
                     state.load(info);
+                    merge_scroll_later(context);
                 }
+            }
+            Message::MergeBringIntoView => {
+                for r in &self.merge_chosen {
+                    let _ = r.request_native_element(|result| {
+                        if let Ok(element) = result
+                            && let Ok(ui) = element.cast::<xaml::UIElement>()
+                        {
+                            let _ = ui.StartBringIntoView();
+                        }
+                    });
+                }
+            }
+            Message::MergeUndo(redo) => {
+                if let Some(state) = self.merge.as_mut() {
+                    state.undo(redo);
+                }
+                merge_scroll_later(context);
             }
             Message::MergeResult(text) => {
                 if let Some(state) = self.merge.as_mut() {
                     state.edit(&text);
                 }
             }
-            Message::MergeButton(key) => self.merge_button(key, context),
+            Message::MergeButton(key) => {
+                self.merge_button(key, context);
+                merge_scroll_later(context);
+            }
             Message::MergePick(key) => {
                 let Some(state) = self.merge.as_mut() else {
                     return;
@@ -4760,6 +4795,7 @@ impl Component for Root {
                 if !picked {
                     beep();
                 }
+                merge_scroll_later(context);
             }
             Message::MergeBase(on) => {
                 if let Some(state) = self.merge.as_mut() {
@@ -6360,6 +6396,15 @@ impl Component for Root {
                 self.diff_file = None;
             }
             Message::DiffFileMenu(key) => self.diff_file_action(&key, context),
+            Message::ChangedFileMenu(index, key) => {
+                let mut file = None;
+                with_history(|h| file = h.session.data.file_of(index));
+                if file.is_none() {
+                    return beep();
+                }
+                self.diff_file = file;
+                self.diff_file_action(&key, context);
+            }
             Message::WorkingFileMenu(path, key) => match key.as_str() {
                 "history" => self.update(Message::OpenFileHistory(path), context),
                 "blame" => self.update(Message::OpenBlame(path, None), context),
@@ -6850,6 +6895,24 @@ impl Component for Root {
                 let _ = field.request_focus();
                 None
             });
+        }
+        // マージエディタの Result の欄に Ctrl+Z・Ctrl+Y を付ける（開いたとき、Base の欄の出し入れで作り直したとき）。
+        if let (Page::Merge, Some(state)) = (self.page, &self.merge) {
+            let field = self.merge_result_box.clone();
+            context.use_effect(
+                "merge-keys",
+                (state.path.clone(), state.show_base, state.sides.is_some()),
+                move || {
+                    let _ = field.request_native_element(|result| {
+                        if let Ok(element) = result
+                            && let Err(e) = attach_merge_keys(&element)
+                        {
+                            eprintln!("マージエディタの欄にキーを付けられない: {e}");
+                        }
+                    });
+                    None
+                },
+            );
         }
         // 検索の欄を開いたら、フォーカスを入れて Enter・Esc を受ける（描き直した後に）。
         if self.search_opened > 0 {
@@ -9826,6 +9889,24 @@ impl Root {
         let Some(file) = &self.diff_file else {
             return Vec::new();
         };
+        self.file_menu(file)
+    }
+
+    /// 変更ファイルの一覧の行の右クリック（差分の見出しと同じ項目。GTK4 版の `commitfiles`）。
+    fn changed_file_menu(
+        &self,
+        file: Option<&crate::data::DiffFile>,
+        context: &ViewContext<Self>,
+    ) -> Menu {
+        let index = file.map_or(usize::MAX, |f| f.index);
+        Menu::new(
+            file.map(|f| self.file_menu(f)).unwrap_or_default(),
+            context.callback(move |key| Message::ChangedFileMenu(index, key)),
+        )
+    }
+
+    /// ファイルの右クリックの項目（差分の見出しと、変更ファイルの一覧。GTK4 版の `list_menu_items`）。
+    fn file_menu(&self, file: &crate::data::DiffFile) -> Vec<MenuItem> {
         let mut items = vec![MenuItem::item(
             "collapse",
             if file.collapsed {
@@ -11365,6 +11446,8 @@ impl Root {
         let selected = self
             .changed_file
             .and_then(|f| tree.iter().position(|r| r.file == Some(f)));
+        let mut files = Vec::new();
+        with_history(|h| files = h.session.data.files());
         let rows = tree.iter().enumerate().map(|(i, r)| {
             let indent = Thickness::new(r.depth as f64 * 14.0, 0.0, 0.0, 0.0);
             let content: View = match r.file.and_then(|f| self.changed_files.get(f)) {
@@ -11382,7 +11465,8 @@ impl Root {
                             .font_size(12.0)
                             .text_trimming(TextTrimming::CharacterEllipsis)
                             .grid_column(1),
-                    )),
+                    ))
+                    .menu(self.changed_file_menu(r.file.and_then(|f| files.get(f)), context)),
                 None => TextBlock::new()
                     .text(format!("🗀 {}", r.name))
                     .font_size(12.0)
@@ -11411,7 +11495,10 @@ impl Root {
         if !self.shows_changed_files() || crate::prefs::bool(crate::prefs::HISTORY_FILE_TREE) {
             return View::empty();
         }
+        let mut files = Vec::new();
+        with_history(|h| files = h.session.data.files());
         let rows = self.changed_files.iter().enumerate().map(|(i, f)| {
+            let menu = self.changed_file_menu(files.get(i), context);
             let counts = if f.binary {
                 tr!("binary")
             } else {
@@ -11440,7 +11527,8 @@ impl Root {
                         .opacity(0.6)
                         .margin(Thickness::new(8.0, 0.0, 0.0, 0.0))
                         .grid_column(2),
-                ));
+                ))
+                .menu(menu);
             (
                 format!("{i}"),
                 ListViewItem::new()
@@ -11836,9 +11924,12 @@ impl Root {
         let (Page::Merge, Some(state)) = (self.page, &self.merge) else {
             return View::empty();
         };
+        MERGE_UNDO.with(|u| u.set((state.can_undo(), state.can_redo())));
         let view = crate::merge::view(
             state,
             crate::merge::Callbacks {
+                result_box: &self.merge_result_box,
+                chosen: &self.merge_chosen,
                 button: Box::new(|key| context.callback(move |()| Message::MergeButton(key))),
                 pick: Box::new(|key: String| {
                     context.callback(move |()| Message::MergePick(key.clone()))
@@ -14520,6 +14611,45 @@ fn attach_search_keys(element: &IInspectable) -> windows_core_reactor::Result<()
         let _ = args.SetHandled(true);
         with_history(|h| {
             h.sender.send(message);
+        });
+    })?;
+    REVOKERS.with(|r| r.borrow_mut().push(revoker));
+    Ok(())
+}
+
+/// マージエディタの左右と Base の欄で、選んでいるコンフリクトを見える所へ出す（欄の位置をそろえる。GTK4 版と
+/// 同じ）。描き直した直後は並べ終わっていないので、少し待ってから。
+fn merge_scroll_later(context: &ComponentContext<Root>) {
+    context.spawn_background(|_| {
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        Message::MergeBringIntoView
+    });
+}
+
+/// マージエディタの Result の欄: Accept などで書き換えた直後なら、Ctrl+Z でそれを戻し、Ctrl+Y・Ctrl+Shift+Z で
+/// やり直す（手で打った後は TextBox の Undo のまま）。
+fn attach_merge_keys(element: &IInspectable) -> windows_core_reactor::Result<()> {
+    let ui: xaml::UIElement = element.cast()?;
+    let revoker = ui.PreviewKeyDown(|_, args: Ref<xaml::KeyRoutedEventArgs>| {
+        let Some(args) = args.as_ref() else { return };
+        let down = |key: xaml::VirtualKey| {
+            xaml::InputKeyboardSource::GetKeyStateForCurrentThread(key)
+                .is_ok_and(|s| s.contains(xaml::CoreVirtualKeyStates::Down))
+        };
+        if !down(xaml::VirtualKey::Control) {
+            return;
+        }
+        let shift = down(xaml::VirtualKey::Shift);
+        let (can_undo, can_redo) = MERGE_UNDO.with(std::cell::Cell::get);
+        let redo = match args.Key() {
+            Ok(xaml::VirtualKey::Z) if !shift && can_undo => false,
+            Ok(xaml::VirtualKey::Z) if shift && can_redo => true,
+            Ok(xaml::VirtualKey::Y) if can_redo => true,
+            _ => return,
+        };
+        let _ = args.SetHandled(true);
+        with_history(|h| {
+            h.sender.send(Message::MergeUndo(redo));
         });
     })?;
     REVOKERS.with(|r| r.borrow_mut().push(revoker));

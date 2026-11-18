@@ -1570,15 +1570,43 @@ impl Data {
                 .count()
                 .checked_sub(1)?,
         );
+        self.file_of(index)
+    }
+
+    /// コミットの `index` 番目の変更ファイル（変更ファイルの一覧の右クリック）。
+    pub fn file_of(&self, index: usize) -> Option<DiffFile> {
+        let commit = self.commit.as_ref()?;
+        let oid = commit.info["oid"].as_str()?;
+        self.file_with(index, &crate::viewed::paths(oid))
+    }
+
+    /// コミットの変更ファイルすべて（変更ファイルの一覧の行ごとの右クリック。見たことにしたパスは 1 度だけ読む）。
+    pub fn files(&self) -> Vec<DiffFile> {
+        let Some(commit) = self.commit.as_ref() else {
+            return Vec::new();
+        };
+        let viewed = commit.info["oid"]
+            .as_str()
+            .map(crate::viewed::paths)
+            .unwrap_or_default();
+        (0..commit.stacked.files.len())
+            .filter_map(|i| self.file_with(i, &viewed))
+            .collect()
+    }
+
+    fn file_with(
+        &self,
+        index: usize,
+        viewed: &std::collections::HashSet<String>,
+    ) -> Option<DiffFile> {
+        let commit = self.commit.as_ref()?;
         let path = commit.stacked.files.get(index)?.0.clone();
         // 足した・消したファイルか（GTK4 版の `deleted` の手元の決め方と同じく、前後の中身が空か）。
         let diff = &commit.stacked.files.get(index)?.1;
         let deleted = diff.new.is_empty() && !diff.old.is_empty();
         let added = diff.old.is_empty() && !diff.new.is_empty();
         let oid = commit.info["oid"].as_str().map(str::to_owned);
-        let viewed = oid
-            .as_deref()
-            .is_some_and(|o| crate::viewed::paths(o).contains(&path));
+        let viewed = viewed.contains(&path);
         Some(DiffFile {
             index,
             collapsed: commit.collapsed.get(index).copied().unwrap_or(false),
