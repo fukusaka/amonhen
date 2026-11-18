@@ -168,8 +168,9 @@ enum SubmoduleSheet {
         note.textColor = .secondaryLabelColor
         note.preferredMaxLayoutWidth = 360
         alert.accessoryView = stack([deleteGitDir, note], height: 64)
-        alert.addButton(withTitle: L("Remove"))
-        alert.addButton(withTitle: L("Cancel"))
+        // 戻せないので、赤く、↩ では押せない（↩ は Cancel）。
+        alert.addButton(withTitle: L("Remove")).markDestructive()
+        alert.addButton(withTitle: L("Cancel")).keyEquivalent = "\r"
         alert.beginSheetModal(for: window) { response in
             guard response == .alertFirstButtonReturn else { return }
             perform(["op": "changeSubmodule",

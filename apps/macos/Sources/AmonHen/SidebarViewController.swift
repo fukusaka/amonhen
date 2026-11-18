@@ -1371,7 +1371,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                         L("Prune %@?", remote),
                         message: L("Removes the remote-tracking branches whose branches are gone from %@ (git remote prune).", remote)
                             + sentenceGap + Actions.cantUndo,
-                        ok: "Prune", destructive: false
+                        ok: "Prune"
                     ) {
                         actions.perform(["op": "changeRemote", "change": ["kind": "prune", "name": remote]])
                     }
@@ -1662,7 +1662,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             tags.count == 1 ? L("Push %@ to %@?", tags[0], remote) : L("Push %ld tags to %@?", tags.count, remote),
             message: tags.joined(separator: "\n") + "\n\n"
                 + L("Everyone who fetches from %@ gets them.", remote) + sentenceGap + Actions.cantUndo,
-            ok: "Push", destructive: false
+            ok: "Push"
         ) { [weak self] in
             self?.actions?.perform(["op": "pushTags", "remote": remote, "names": tags])
         }

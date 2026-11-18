@@ -357,7 +357,7 @@ fn prune_remote(s: &Rc<RepoSettings>, name: String) {
                 crate::sheets::cant_undo()
             ),
         );
-        sheet.buttons("Prune", false, None);
+        sheet.buttons("Prune", true, None);
         if sheet.run().await == Response::Ok
             && let Some(s) = w.upgrade()
         {

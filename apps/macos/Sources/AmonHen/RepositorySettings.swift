@@ -552,8 +552,9 @@ private struct RemotesTab: View {
         alert.messageText = L("Prune %@?", list)
         alert.informativeText = L("Removes the remote-tracking branches whose branches are gone from %@ (git remote prune).", list)
             + sentenceGap + Actions.cantUndo
-        alert.addButton(withTitle: "Prune")
-        alert.addButton(withTitle: L("Cancel"))
+        // 戻せないので、赤く、↩ では押せない（↩ は Cancel）。
+        alert.addButton(withTitle: "Prune").markDestructive()
+        alert.addButton(withTitle: L("Cancel")).keyEquivalent = "\r"
         let run = { (response: NSApplication.ModalResponse) in
             guard response == .alertFirstButtonReturn else { return }
             for name in names { model.changeRemote(["kind": "prune", "name": name]) }

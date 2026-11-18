@@ -1005,13 +1005,9 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             ? L("%@ has uncommitted changes in %ld files. They are lost with the folder. The branch stays.", info.path, changes)
                 + sentenceGap + Actions.cantUndo
             : L("Removes the folder %@. The branch stays.", info.path) + sentenceGap + Actions.cantUndo
-        let button = alert.addButton(withTitle: L("Remove Worktree"))
-        let cancel = alert.addButton(withTitle: L("Cancel"))
-        // 作業中の変更があれば、消えたら戻せない（赤く、↩ では押せない）。
-        if changes > 0 {
-            button.markDestructive()
-            cancel.keyEquivalent = "\r"
-        }
+        // 消えたフォルダは戻せない（赤く、↩ では押せない）。
+        alert.addButton(withTitle: L("Remove Worktree")).markDestructive()
+        alert.addButton(withTitle: L("Cancel")).keyEquivalent = "\r"
         alert.beginSheetModal(for: window) { [weak self] response in
             guard let self, response == .alertFirstButtonReturn else { return }
             if info.isSame(editing.path) { activate(opened) }

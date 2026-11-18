@@ -230,7 +230,7 @@ fn remote_menu(actions: &Rc<Actions>, data: &Data) -> Vec<Item> {
                     sheets::cant_undo()
                 ),
                 "Prune".to_owned(),
-                false,
+                true,
                 vec![json!({ "op": "changeRemote", "change": { "kind": "prune", "name": r } })],
             )
         });
@@ -663,7 +663,7 @@ pub fn confirm_push_tags(actions: &Rc<Actions>, tags: &[String], remote: &str) {
         title,
         message,
         "Push".to_owned(),
-        false,
+        true,
         vec![json!({ "op": "pushTags", "remote": remote, "names": tags })],
     );
 }

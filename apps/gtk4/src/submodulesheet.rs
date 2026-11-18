@@ -300,7 +300,7 @@ pub fn remove(actions: &Rc<Actions>, submodule: &SubmoduleState) {
         sheet.add(&sheets::note(&tr!(
             "Kept, it brings back the submodule’s commits and stashes when you add it again, including ones not pushed."
         )));
-        sheet.buttons(&tr!("Remove"), false, None);
+        sheet.buttons(&tr!("Remove"), true, None);
         if sheet.run().await != Response::Ok {
             return;
         }
