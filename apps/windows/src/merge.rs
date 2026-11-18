@@ -285,6 +285,8 @@ pub struct Callbacks<'a> {
     pub result: Callback<String>,
     /// Result の欄（Ctrl+Z・Ctrl+Y を付ける）。
     pub result_box: &'a ElementRef<TextBox>,
+    /// 左右と Base の欄の、選んでいるコンフリクトの所（見える所へスクロールして、欄の位置をそろえる）。
+    pub chosen: &'a [ElementRef<Grid>; 3],
     /// Base の欄を出すか。
     pub base: Callback<bool>,
 }
@@ -432,6 +434,11 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                         _ => View::empty(),
                     };
                     let body = lines[start..end].concat();
+                    let inner = if chosen == Some(i) {
+                        Grid::new().element_ref(&callbacks.chosen[which])
+                    } else {
+                        Grid::new()
+                    };
                     parts.push((
                         format!("c{i}:{alpha}"),
                         Border::new()
@@ -439,7 +446,7 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                             .min_height(16.0)
                             .opacity(if open { 1.0 } else { 0.6 })
                             .content(
-                                Grid::new().children((
+                                inner.children((
                                     TextBlock::new()
                                         .text(body.trim_end_matches('\n').to_owned())
                                         .font_size(12.0)

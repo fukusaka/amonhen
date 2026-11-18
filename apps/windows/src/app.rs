@@ -213,6 +213,8 @@ struct Root {
     diff_find_box: ElementRef<TextBox>,
     /// マージエディタの Result の欄（Ctrl+Z・Ctrl+Y を付ける）。
     merge_result_box: ElementRef<TextBox>,
+    /// マージエディタの左右と Base の欄の、選んでいるコンフリクトの所。
+    merge_chosen: [ElementRef<Grid>; 3],
     diff_find_query: String,
     diff_find_status: String,
     /// Working Copy の一部だけ含めているチェック（キーごと）と、直前の画面で使ったキー。
@@ -796,6 +798,8 @@ enum Message {
     MergeResult(String),
     /// マージエディタの Accept などの書き換えを戻す（true ならやり直す）。
     MergeUndo(bool),
+    /// マージエディタの左右と Base の欄で、選んでいるコンフリクトを見える所へ出す。
+    MergeBringIntoView,
     /// Settings: git の名前とメールを読んだ・欄を書き換えた・保存・チェックを替えた・閉じる。
     SettingsGit(String, String, Vec<crate::reposettings::Entry>),
     /// Settings > Git の Operations・Working Copy で選んだ（行の id と番号）。
@@ -1168,6 +1172,7 @@ impl Component for Root {
             diff_find_opened: 0,
             diff_find_box: ElementRef::new(),
             merge_result_box: ElementRef::new(),
+            merge_chosen: std::array::from_fn(|_| ElementRef::new()),
             diff_find_query: String::new(),
             diff_find_status: String::new(),
             mixed_checks: RefCell::default(),
@@ -4746,19 +4751,35 @@ impl Component for Root {
                     && state.path == path
                 {
                     state.load(info);
+                    merge_scroll_later(context);
+                }
+            }
+            Message::MergeBringIntoView => {
+                for r in &self.merge_chosen {
+                    let _ = r.request_native_element(|result| {
+                        if let Ok(element) = result
+                            && let Ok(ui) = element.cast::<xaml::UIElement>()
+                        {
+                            let _ = ui.StartBringIntoView();
+                        }
+                    });
                 }
             }
             Message::MergeUndo(redo) => {
                 if let Some(state) = self.merge.as_mut() {
                     state.undo(redo);
                 }
+                merge_scroll_later(context);
             }
             Message::MergeResult(text) => {
                 if let Some(state) = self.merge.as_mut() {
                     state.edit(&text);
                 }
             }
-            Message::MergeButton(key) => self.merge_button(key, context),
+            Message::MergeButton(key) => {
+                self.merge_button(key, context);
+                merge_scroll_later(context);
+            }
             Message::MergePick(key) => {
                 let Some(state) = self.merge.as_mut() else {
                     return;
@@ -4772,6 +4793,7 @@ impl Component for Root {
                 if !picked {
                     beep();
                 }
+                merge_scroll_later(context);
             }
             Message::MergeBase(on) => {
                 if let Some(state) = self.merge.as_mut() {
@@ -11871,6 +11893,7 @@ impl Root {
             state,
             crate::merge::Callbacks {
                 result_box: &self.merge_result_box,
+                chosen: &self.merge_chosen,
                 button: Box::new(|key| context.callback(move |()| Message::MergeButton(key))),
                 pick: Box::new(|key: String| {
                     context.callback(move |()| Message::MergePick(key.clone()))
@@ -14556,6 +14579,15 @@ fn attach_search_keys(element: &IInspectable) -> windows_core_reactor::Result<()
     })?;
     REVOKERS.with(|r| r.borrow_mut().push(revoker));
     Ok(())
+}
+
+/// マージエディタの左右と Base の欄で、選んでいるコンフリクトを見える所へ出す（欄の位置をそろえる。GTK4 版と
+/// 同じ）。描き直した直後は並べ終わっていないので、少し待ってから。
+fn merge_scroll_later(context: &ComponentContext<Root>) {
+    context.spawn_background(|_| {
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        Message::MergeBringIntoView
+    });
 }
 
 /// マージエディタの Result の欄: Accept などで書き換えた直後なら、Ctrl+Z でそれを戻し、Ctrl+Y・Ctrl+Shift+Z で
