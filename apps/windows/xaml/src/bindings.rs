@@ -454,6 +454,15 @@ impl Control {
             .ok()
         }
     }
+    pub fn StartBringIntoView(&self) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).StartBringIntoView)(
+                windows_core::Interface::as_raw(this),
+            )
+            .ok()
+        }
+    }
     pub fn Focus(&self, value: FocusState) -> windows_core::Result<bool> {
         let this = &windows_core::Interface::cast::<IUIElement>(self)?;
         unsafe {
@@ -1361,6 +1370,15 @@ impl FrameworkElement {
             (windows_core::Interface::vtable(this).ReleasePointerCapture)(
                 windows_core::Interface::as_raw(this),
                 value.param().abi(),
+            )
+            .ok()
+        }
+    }
+    pub fn StartBringIntoView(&self) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).StartBringIntoView)(
+                windows_core::Interface::as_raw(this),
             )
             .ok()
         }
@@ -2632,7 +2650,8 @@ pub struct IUIElement_Vtbl {
     UpdateLayout: usize,
     CancelDirectManipulations: usize,
     StartDragAsync: usize,
-    StartBringIntoView: usize,
+    pub StartBringIntoView:
+        unsafe extern "system" fn(*mut core::ffi::c_void) -> windows_core::HRESULT,
     StartBringIntoViewWithOptions: usize,
     TryInvokeKeyboardAccelerator: usize,
     pub Focus: unsafe extern "system" fn(
@@ -3304,6 +3323,15 @@ impl ItemsControl {
             .ok()
         }
     }
+    pub fn StartBringIntoView(&self) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).StartBringIntoView)(
+                windows_core::Interface::as_raw(this),
+            )
+            .ok()
+        }
+    }
     pub fn Focus(&self, value: FocusState) -> windows_core::Result<bool> {
         let this = &windows_core::Interface::cast::<IUIElement>(self)?;
         unsafe {
@@ -3907,6 +3935,15 @@ impl ListViewBase {
             (windows_core::Interface::vtable(this).ReleasePointerCapture)(
                 windows_core::Interface::as_raw(this),
                 value.param().abi(),
+            )
+            .ok()
+        }
+    }
+    pub fn StartBringIntoView(&self) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).StartBringIntoView)(
+                windows_core::Interface::as_raw(this),
             )
             .ok()
         }
@@ -4732,6 +4769,15 @@ impl Selector {
             .ok()
         }
     }
+    pub fn StartBringIntoView(&self) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).StartBringIntoView)(
+                windows_core::Interface::as_raw(this),
+            )
+            .ok()
+        }
+    }
     pub fn Focus(&self, value: FocusState) -> windows_core::Result<bool> {
         let this = &windows_core::Interface::cast::<IUIElement>(self)?;
         unsafe {
@@ -5178,6 +5224,14 @@ impl UIElement {
             (windows_core::Interface::vtable(self).ReleasePointerCapture)(
                 windows_core::Interface::as_raw(self),
                 value.param().abi(),
+            )
+            .ok()
+        }
+    }
+    pub fn StartBringIntoView(&self) -> windows_core::Result<()> {
+        unsafe {
+            (windows_core::Interface::vtable(self).StartBringIntoView)(
+                windows_core::Interface::as_raw(self),
             )
             .ok()
         }
