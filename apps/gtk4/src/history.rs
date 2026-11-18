@@ -176,6 +176,10 @@ pub struct State {
     labels: HashMap<Oid, Vec<Label>>,
     ref_labels: HashMap<Oid, Vec<Label>>,
     worktree_labels: HashMap<Oid, Vec<Label>>,
+    /// 開いたリポジトリの HEAD と、書き込む先の worktree の HEAD（worktree が 2 つ以上のとき）。グラフでは後者を
+    /// 優先して輪で描く（macOS 版の `head`）。
+    ref_head: Option<Oid>,
+    editing_head: Option<Oid>,
     /// ほかの worktree（メインのものを除く）が checkout しているブランチ。
     elsewhere: HashSet<String>,
     label_layouts: HashMap<String, pango::Layout>,
@@ -1018,6 +1022,7 @@ impl HistoryView {
         }
         let mut st = self.state();
         st.ref_labels = labels;
+        st.ref_head = refs.refs.head;
         Self::merge_labels(&mut st);
         drop(st);
         self.queue_draw();
@@ -1035,6 +1040,10 @@ impl HistoryView {
     /// 各 worktree の HEAD の札（コミット、札の文字、書き込む先か）と、ほかの worktree が checkout している
     /// ブランチ（緑の札にする）。worktree が 1 つなら空で呼ぶ。
     pub fn set_worktrees(&self, heads: Vec<(Oid, String, bool)>, elsewhere: HashSet<String>) {
+        let editing_head = heads
+            .iter()
+            .find(|(_, _, editing)| *editing)
+            .map(|(id, _, _)| *id);
         let mut labels: HashMap<Oid, Vec<Label>> = HashMap::new();
         for (head, name, editing) in heads {
             labels.entry(head).or_default().push(Label {
@@ -1047,6 +1056,7 @@ impl HistoryView {
         }
         let mut st = self.state();
         st.worktree_labels = labels;
+        st.editing_head = editing_head;
         st.elsewhere = elsewhere;
         Self::merge_labels(&mut st);
         drop(st);
@@ -1788,6 +1798,7 @@ impl HistoryView {
                 &st.metrics,
                 lineage,
                 &st.boundary,
+                st.editing_head.or(st.ref_head),
             );
             snapshot.pop();
             if (st.lanes.animating || st.lineage_pending) && st.tick.is_none() {
