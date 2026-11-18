@@ -1977,7 +1977,7 @@
 "Bottom Left" = "左下";
 "Bottom Right" = "右下";
 "Push %ld tags to %@?" = "%1$ld 個のタグを %2$@ に Push しますか？";
-"Everyone who fetches from %@ gets them." = "%@ から fetch する人みんなに届きます。";
+"Everyone who fetches from %@ gets them." = "%@ から Fetch する全員に届きます。";
 "Fast-Forward %@ to %@…" = "%1$@ を %2$@ まで Fast-Forward…";
 "Publish %@…" = "%@ を Publish…";
 "Prune %@?" = "%@ を Prune しますか？";

@@ -2315,7 +2315,7 @@
 "Use a different background for {name}" = "{name} は別の背景にする";
 "Otherwise this window follows Settings > Theme." = "しなければ、この窓は設定 > テーマに従います。";
 "Push {count} tags to {remote}?" = "{count} 個のタグを {remote} に Push しますか？";
-"Everyone who fetches from {remote} gets them." = "{remote} から fetch する人みんなに届きます。";
+"Everyone who fetches from {remote} gets them." = "{remote} から Fetch する全員に届きます。";
 "Prune {remote}?" = "{remote} を Prune しますか？";
 "Removes the remote-tracking branches whose branches are gone from {remote} (git remote prune)." = "{remote} で消えたブランチの、手元の写し（リモートのブランチ）を消します（git remote prune）。";
 "Fast-Forward {name} to {upstream}…" = "{name} を {upstream} まで Fast-Forward…";
