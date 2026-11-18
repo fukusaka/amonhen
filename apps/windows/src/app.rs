@@ -276,6 +276,10 @@ struct Root {
     repo_settings_from: Page,
     /// Repositories の画面と、閉じたら戻る画面・リポジトリの一覧を包む Grid（ダブルクリック・Enter を付ける）。
     repositories: Option<crate::repositories::State>,
+    /// Repositories の画面を出している間、スキャンするフォルダを見張る（GTK4 版の `watch_scan_roots`）と、
+    /// 見張り直した回数（前の見張りの知らせを捨てる）。
+    scan_watch: Option<amonhen_watch::DirsWatch>,
+    scan_watch_generation: u64,
     repositories_from: Page,
     repositories_list: ElementRef<Grid>,
     /// Activity の画面と、閉じたら戻る画面。
@@ -1173,6 +1177,8 @@ impl Component for Root {
             submodules: Value::Null,
             subtrees: Value::Null,
             repositories: None,
+            scan_watch: None,
+            scan_watch_generation: 0,
             repositories_from: Page::History,
             repositories_list: ElementRef::new(),
             settings_from: Page::History,
@@ -2566,9 +2572,8 @@ impl Component for Root {
                 self.repositories = Some(state);
                 self.page = Page::Repositories;
                 context.spawn_background(move |_| {
-                    Message::Repos(crate::repositories::Event::Scanned(
-                        crate::repositories::scan(roots),
-                    ))
+                    let (found, dirs) = crate::repositories::scan_with_dirs(roots);
+                    Message::Repos(crate::repositories::Event::Scanned(found, dirs))
                 });
             }
             Message::Command(id) if id == "activity" => {
@@ -11789,12 +11794,62 @@ impl Root {
     }
 
     /// Repositories の画面の知らせを扱う（状態を変え、要る操作をする）。
+    /// スキャンするフォルダ（探す深さまでのフォルダと、見つけたリポジトリ）を見張り、中でフォルダが増えた・
+    /// 消えた、`.git` ができた・消えたら探し直す（GTK4 版の `watch_dirs`。知らせは 1 秒まとめる）。
+    fn watch_scan_folders(
+        &mut self,
+        dirs: &[std::path::PathBuf],
+        context: &ComponentContext<Self>,
+    ) {
+        // 前の見張りを止めてから（落とすと、前の待ちは終わる）。
+        self.scan_watch = None;
+        self.scan_watch_generation += 1;
+        if dirs.is_empty() {
+            return;
+        }
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        let watch = amonhen_watch::DirsWatch::new(dirs, move |paths| {
+            if paths
+                .iter()
+                .any(|p| crate::repositories::scan_change_matters(p))
+            {
+                let _ = tx.send(());
+            }
+        });
+        let Ok(watch) = watch else {
+            return;
+        };
+        self.scan_watch = Some(watch);
+        let generation = self.scan_watch_generation;
+        context.spawn_background(move |_| {
+            if rx.recv().is_err() {
+                // 見張りを止めた（捨てられる知らせ）。
+                return Message::Repos(crate::repositories::Event::ScanChanged(u64::MAX));
+            }
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            while rx.try_recv().is_ok() {}
+            Message::Repos(crate::repositories::Event::ScanChanged(generation))
+        });
+    }
+
     fn repositories_event(
         &mut self,
         event: crate::repositories::Event,
         context: &ComponentContext<Self>,
     ) {
         use crate::repositories::Action;
+        // 前の見張りの知らせは捨てる。探し終えたら、読んだフォルダを見張り直す。
+        match &event {
+            crate::repositories::Event::ScanChanged(generation)
+                if *generation != self.scan_watch_generation =>
+            {
+                return;
+            }
+            crate::repositories::Event::Scanned(_, dirs) if self.repositories.is_some() => {
+                self.watch_scan_folders(dirs, context);
+            }
+            _ => {}
+        }
         let Some(state) = self.repositories.as_mut() else {
             return;
         };
@@ -11802,13 +11857,13 @@ impl Root {
             Action::None => {}
             Action::Close => {
                 self.repositories = None;
+                self.scan_watch = None;
                 self.page = self.repositories_from;
             }
             Action::Scan(roots) => {
                 context.spawn_background(move |_| {
-                    Message::Repos(crate::repositories::Event::Scanned(
-                        crate::repositories::scan(roots),
-                    ))
+                    let (found, dirs) = crate::repositories::scan_with_dirs(roots);
+                    Message::Repos(crate::repositories::Event::Scanned(found, dirs))
                 });
             }
             Action::Peek(locations) if locations.is_empty() => {}

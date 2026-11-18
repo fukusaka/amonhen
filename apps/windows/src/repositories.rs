@@ -229,9 +229,22 @@ fn roots(data: &Value) -> Vec<Root> {
 
 /// フォルダの下のリポジトリを探す（`.git` のあるフォルダ。その中には入らない。GTK4 版の `scan_local` と同じ）。
 pub fn scan(roots: Vec<Root>) -> Vec<(String, Vec<String>)> {
-    fn walk(dir: &Path, depth: u32, excludes: &[String], found: &mut Vec<String>) {
+    scan_with_dirs(roots).0
+}
+
+/// [`scan`] と、中を読んだフォルダ（その中でリポジトリが増えたら見つかるフォルダ。見張る先）と、見つけた
+/// リポジトリ（`.git` ができた・消えたを知る。GTK4 版の `scan_local_with_dirs`）。
+pub fn scan_with_dirs(roots: Vec<Root>) -> (Vec<(String, Vec<String>)>, Vec<PathBuf>) {
+    fn walk(
+        dir: &Path,
+        depth: u32,
+        excludes: &[String],
+        found: &mut Vec<String>,
+        dirs: &mut Vec<PathBuf>,
+    ) {
         if dir.join(".git").exists() {
             found.push(dir.display().to_string());
+            dirs.push(dir.to_path_buf());
             return;
         }
         if depth == 0 {
@@ -240,6 +253,7 @@ pub fn scan(roots: Vec<Root>) -> Vec<(String, Vec<String>)> {
         let Ok(entries) = std::fs::read_dir(dir) else {
             return;
         };
+        dirs.push(dir.to_path_buf());
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
             let is_dir = entry
@@ -248,18 +262,36 @@ pub fn scan(roots: Vec<Root>) -> Vec<(String, Vec<String>)> {
             if !is_dir || name.starts_with('.') || excludes.contains(&name) {
                 continue;
             }
-            walk(&entry.path(), depth - 1, excludes, found);
+            walk(&entry.path(), depth - 1, excludes, found, dirs);
         }
     }
-    roots
+    let mut dirs = Vec::new();
+    let found = roots
         .into_iter()
         .map(|(path, depth, excludes)| {
             let mut found = Vec::new();
-            walk(&expand(&path), depth, &excludes, &mut found);
+            walk(&expand(&path), depth, &excludes, &mut found, &mut dirs);
             found.sort_by_key(|p| p.to_lowercase());
             (path, found)
         })
-        .collect()
+        .collect();
+    (found, dirs)
+}
+
+/// スキャンするフォルダの中の `path` の変化が、リポジトリの増減かもしれないか（GTK4 版の
+/// `scan_change_matters`）。
+pub fn scan_change_matters(path: &Path) -> bool {
+    let name = path.file_name().map(|n| n.to_string_lossy());
+    // `git init`・`.git` を消した。
+    if name.as_deref() == Some(".git") {
+        return true;
+    }
+    // 見つけたリポジトリの中の、ほかの変化は増減ではない。
+    if path.parent().is_some_and(|p| p.join(".git").exists()) {
+        return false;
+    }
+    // 隠しフォルダと、今あるファイル（フォルダでないもの）の出入りも増減ではない。
+    !name.is_some_and(|n| n.starts_with('.')) && (path.is_dir() || !path.exists())
 }
 
 /// 行の状態を読む（4 つずつ並べて。GTK4 版と同じ数）。
@@ -485,7 +517,10 @@ pub enum Event {
     AddRepository,
     AddScanFolder,
     Close,
-    Scanned(Vec<(String, Vec<String>)>),
+    /// 探し終えた（見つけたものと、見張るフォルダ）。
+    Scanned(Vec<(String, Vec<String>)>, Vec<PathBuf>),
+    /// 見張っているフォルダでリポジトリが増えた・消えたかもしれない（見張りの何回目か）。
+    ScanChanged(u64),
     Peeked(Vec<(String, Peek)>),
     /// fetch が終わった（場所と、失敗なら理由）。
     Fetched(String, Option<String>),
@@ -812,7 +847,11 @@ impl State {
                 return Action::Scan(roots(&self.data));
             }
             Event::Close => return Action::Close,
-            Event::Scanned(found) => {
+            Event::ScanChanged(_) => {
+                self.scanned = None;
+                return Action::Scan(roots(&self.data));
+            }
+            Event::Scanned(found, _) => {
                 self.scanned = Some(found);
                 return Action::Peek(self.unpeeked());
             }
@@ -929,6 +968,21 @@ impl State {
                 self.scanned = None;
                 return Action::Scan(roots(&self.data));
             }
+            // 探す深さ（GTK4 版・macOS 版の Search Depth）。変えたら探し直す。
+            "depth" => {
+                let Ok(depth) = value.parse::<u32>() else {
+                    return Action::None;
+                };
+                self.change(|d| {
+                    for r in array_mut(d, "scanRoots") {
+                        if r["path"].as_str().is_some_and(|p| same(p, &location)) {
+                            r["depth"] = json!(depth);
+                        }
+                    }
+                });
+                self.scanned = None;
+                return Action::Scan(roots(&self.data));
+            }
             "delete-group" => {
                 self.change(|d| {
                     array_mut(d, "groups").retain(|g| g.as_str() != Some(&location));
@@ -1030,14 +1084,30 @@ fn row_menu(state: &State, location: &str) -> Vec<MenuItem> {
     ]
 }
 
-/// 分類の右クリックのメニュー。
-fn category_menu(category: &Category) -> Vec<MenuItem> {
+/// 分類の右クリックのメニュー（`data` は今の探す深さに印を付けるため）。
+fn category_menu(category: &Category, data: &Value) -> Vec<MenuItem> {
     let add = [
         MenuItem::item("add-group:", tr!("New Group…")),
         MenuItem::separator("-add"),
     ];
     match category {
         Category::Root(path) => vec![
+            MenuItem::submenu("depth", tr!("Search Depth"), {
+                let depth = roots(data)
+                    .into_iter()
+                    .find(|(p, ..)| same(p, path))
+                    .map_or(3, |(_, d, _)| d);
+                (1..=6u32)
+                    .map(|d| {
+                        let label = if d == depth {
+                            format!("✓ {d}")
+                        } else {
+                            d.to_string()
+                        };
+                        MenuItem::item(format!("depth:{d}|{path}"), label)
+                    })
+                    .collect::<Vec<_>>()
+            }),
             MenuItem::item("rescan:", tr!("Search Again")),
             MenuItem::item(format!("reveal:{path}"), tr!("Show in Files")),
             MenuItem::separator("-remove"),
@@ -1253,7 +1323,8 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                 )),
                 None => line,
             };
-            let content = content.menu(Menu::new(category_menu(c), (callbacks.menu)()));
+            let content =
+                content.menu(Menu::new(category_menu(c, &state.data), (callbacks.menu)()));
             (
                 format!("{i}:{name}"),
                 ListViewItem::new().tag(name.clone()).content(content),
@@ -1442,4 +1513,35 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
         .rows([GridLength::Auto, GridLength::Star(1.0)])
         .columns([GridLength::Pixel(240.0), GridLength::Star(1.0)])
         .children((head, side, main))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scan_reports_repositories_and_the_folders_to_watch() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos());
+        let root =
+            std::env::temp_dir().join(format!("amonhen-scan-{}-{nanos}", std::process::id()));
+        // root/a/.git（リポジトリ）、root/b/c/.git（深さ 2）、root/.hidden/d/.git（隠しフォルダは見ない）。
+        for dir in ["a/.git", "b/c/.git", ".hidden/d/.git"] {
+            std::fs::create_dir_all(root.join(dir)).unwrap();
+        }
+        let path = root.display().to_string();
+        let (found, dirs) = scan_with_dirs(vec![(path.clone(), 1, Vec::new())]);
+        assert_eq!(found[0].1, [root.join("a").display().to_string()]);
+        assert!(dirs.contains(&root) && dirs.contains(&root.join("a")));
+        // 深さ 2 なら b/c も見つかり、b も見張る。
+        let (found, dirs) = scan_with_dirs(vec![(path, 2, Vec::new())]);
+        assert_eq!(found[0].1.len(), 2);
+        assert!(dirs.contains(&root.join("b")));
+        // リポジトリの中の変化は増減ではない。`.git` と新しいフォルダは増減かもしれない。
+        assert!(!scan_change_matters(&root.join("a").join("src")));
+        assert!(scan_change_matters(&root.join("a").join(".git")));
+        assert!(scan_change_matters(&root.join("b")));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 }
