@@ -4,18 +4,29 @@
 //! ✨ Magic Merge は決まった規則で解けるコンフリクトをまとめて解く。解決の計算はコアの `amonhen_core::conflict`、
 //! 読むのは `mergeSides`、書くのは `saveMerge`。
 //!
-//! まだないもの: 列の間の帯と ≫・≪、コンフリクトの色・位置で揃えるスクロール、Base の欄、等幅のフォント（reactor
-//! の TextBox にない）、AI、別の窓。
+//! 共通の祖先（diff3）があれば、Base を左端に出せる（GTK4 版と同じく、出すかは開くたびに切った状態から）。
+//!
+//! まだないもの: 列の間の帯と ≫・≪、コンフリクトの色・位置で揃えるスクロール、等幅のフォント（reactor の TextBox
+//! にない）、AI、別の窓。
 
 use amonhen_core::conflict::{self, Choice, MagicRules};
 use amonhen_model::tr;
 use serde_json::Value;
 use windows_reactor::*;
 
+/// 両側と共通の祖先の中身（Current、Incoming、Base）。
+pub type Sides = (String, String, Option<String>);
+
 pub struct State {
     pub path: String,
-    /// 読んでいる間は None。読めなければ理由。
-    pub sides: Option<Result<(String, String), String>>,
+    /// 読んでいる間は None。読めなければ理由。Current、Incoming、Base（共通の祖先があれば）。
+    pub sides: Option<Result<Sides, String>>,
+    /// Base の欄を出すか。
+    pub show_base: bool,
+    /// マーカーの残っていないファイル（rerere が解決を当てた、ほかのエディタで直した）の案内。
+    pub banner: Option<String>,
+    /// rerere が解決を当てた（忘れてコンフリクトからやり直せる）。
+    pub rerere: bool,
     /// 編集している Result と、最後に保存した（開いた）Result。
     pub result: String,
     pub saved: String,
@@ -25,6 +36,42 @@ pub struct State {
     pub note: String,
     /// ファイルの改行が CRLF か（Result の欄から戻る文字の改行を、これに揃える）。
     pub crlf: bool,
+    /// Result の欄に打ったままの文字（None なら `result` を出す）。揃えた値で欄を書き直すと、打つたびにカーソルが
+    /// 先頭に戻るので、打っている間は欄の文字をそのまま返す。
+    pub typed: Option<String>,
+    /// 左右と Base の欄で、各コンフリクトがその欄の何行目から何行目か（0 始まり、終わりは含まない）。
+    pub regions: [Vec<(usize, usize)>; 3],
+    /// 開いたときのコンフリクトの両側（今残っているものが、左右の欄のどれに当たるかを決める）。
+    originals: Vec<(String, String)>,
+    /// Accept・Magic Merge などで書き換えた前と後（Result の欄の Ctrl+Z・Ctrl+Y で 1 つずつ行き来する。WinUI の
+    /// TextBox は中身を書き換えると自分の Undo を忘れるので）。
+    undo: Vec<(String, String)>,
+    redo: Vec<(String, String)>,
+}
+
+/// Result に残っているコンフリクトの両側（GTK4 版の `regions`）。
+fn found(text: &str) -> Vec<(String, String)> {
+    let data = text.as_bytes();
+    let ls = conflict::line_ranges(data);
+    let join = |r: &std::ops::Range<usize>| -> String {
+        r.clone()
+            .map(|i| String::from_utf8_lossy(&data[ls[i].clone()]))
+            .collect()
+    };
+    conflict::parse(data)
+        .iter()
+        .map(|c| (join(&c.ours), join(&c.theirs)))
+        .collect()
+}
+
+/// `mergeSides` の欄の、コンフリクトの行範囲。
+fn regions_of(side: &Value) -> Vec<(usize, usize)> {
+    side["regions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|r| Some((r[0].as_u64()? as usize, r[1].as_u64()? as usize)))
+        .collect()
 }
 
 impl State {
@@ -32,11 +79,19 @@ impl State {
         Self {
             path,
             sides: None,
+            show_base: false,
+            banner: None,
+            rerere: false,
             result: String::new(),
             saved: String::new(),
             selected: 0,
             note: String::new(),
             crlf: false,
+            typed: None,
+            regions: Default::default(),
+            originals: Vec::new(),
+            undo: Vec::new(),
+            redo: Vec::new(),
         }
     }
 
@@ -46,16 +101,39 @@ impl State {
             Ok(info) => {
                 let text = |k: &str| info[k]["text"].as_str().unwrap_or_default().to_owned();
                 self.result = info["result"].as_str().unwrap_or_default().to_owned();
+                self.typed = None;
                 self.crlf = self.result.contains("\r\n");
                 self.saved = self.result.clone();
-                self.sides = Some(Ok((text("current"), text("incoming"))));
+                let base = info["base"]["text"].as_str().map(str::to_owned);
+                // マーカーが残っていなければ、その案内（GTK4 版の `load` と同じ）。
+                self.rerere = info["rerere"].as_bool() == Some(true);
+                self.banner = (info["markers"].as_u64() == Some(0)).then(|| {
+                    if self.rerere {
+                        tr!(
+                            "git rerere applied the earlier resolution. Check the result, then Mark Resolved."
+                        )
+                    } else {
+                        tr!("No conflict markers are left. Check the result, then Mark Resolved.")
+                    }
+                });
+                self.sides = Some(Ok((text("current"), text("incoming"), base)));
+                self.regions = [
+                    regions_of(&info["current"]),
+                    regions_of(&info["incoming"]),
+                    regions_of(&info["base"]),
+                ];
+                self.originals = found(&self.result);
                 self.selected = 0;
                 // 開いたときに、間違えようのないコンフリクトを解く（設定。GTK4 版と同じく、保存はしない）。
                 if crate::prefs::bool(crate::prefs::AUTO_MAGIC_MERGE) {
                     let (merged, solved) =
                         conflict::magic(self.result.as_bytes(), MagicRules::Safe, None);
                     if solved > 0 {
-                        self.result = String::from_utf8_lossy(&merged).into_owned();
+                        let before = std::mem::replace(
+                            &mut self.result,
+                            String::from_utf8_lossy(&merged).into_owned(),
+                        );
+                        self.record(before);
                         self.note = tr!(
                             "Resolved {count} when opened (Ctrl+Z to undo).",
                             count = solved
@@ -69,6 +147,7 @@ impl State {
 
     /// Result の欄で書き換えた文字を取り込む。WinUI の TextBox は改行を `\r` で返すので、ファイルの改行に戻す。
     pub fn edit(&mut self, text: &str) {
+        self.typed = Some(text.to_owned());
         let text = text.replace("\r\n", "\n").replace('\r', "\n");
         self.result = if self.crlf {
             text.replace('\n', "\r\n")
@@ -79,6 +158,21 @@ impl State {
     }
 
     /// Result に残っているコンフリクトの数。
+    /// 今残っている各コンフリクトが、開いたときの何番目か（わからなければ None）。
+    pub fn original_of(&self) -> Vec<Option<usize>> {
+        conflict::match_originals(&self.originals, &found(&self.result))
+    }
+
+    /// 左右の欄の `original` 番目のコンフリクトを、その側（`choice`）で解決する（帯の ≫・≪）。
+    pub fn pick(&mut self, original: usize, choice: Choice) -> bool {
+        let Some(index) = self.original_of().iter().position(|o| *o == Some(original)) else {
+            return false;
+        };
+        self.selected = index;
+        self.accept(choice);
+        true
+    }
+
     pub fn conflicts(&self) -> usize {
         conflict::parse(self.result.as_bytes()).len()
     }
@@ -88,9 +182,57 @@ impl State {
     }
 
     /// 選んでいるコンフリクトを `choice` で解く（次のコンフリクトが同じ番号に来る）。
+    /// 書き換えた（`before` から今の Result へ）ことを覚える。
+    fn record(&mut self, before: String) {
+        if before != self.result {
+            self.undo.push((before, self.result.clone()));
+            self.redo.clear();
+        }
+    }
+
+    /// Ctrl+Z で戻せる書き換えか（最後に覚えた書き換えの後、手で打っていない）。
+    pub fn can_undo(&self) -> bool {
+        self.undo
+            .last()
+            .is_some_and(|(_, after)| *after == self.result)
+    }
+
+    /// Ctrl+Y・Ctrl+Shift+Z でやり直せるか。
+    pub fn can_redo(&self) -> bool {
+        self.redo
+            .last()
+            .is_some_and(|(before, _)| *before == self.result)
+    }
+
+    /// 最後の書き換えを戻す（`redo` ならやり直す）。
+    pub fn undo(&mut self, redo: bool) {
+        let entry = if redo {
+            self.redo.pop().filter(|(before, _)| *before == self.result)
+        } else {
+            self.undo.pop().filter(|(_, after)| *after == self.result)
+        };
+        let Some((before, after)) = entry else {
+            return;
+        };
+        self.result = if redo { after.clone() } else { before.clone() };
+        if redo {
+            self.undo.push((before, after));
+        } else {
+            self.redo.push((before, after));
+        }
+        self.typed = None;
+        self.clamp();
+        self.note.clear();
+    }
+
     pub fn accept(&mut self, choice: Choice) {
         if let Some(text) = conflict::resolve(self.result.as_bytes(), self.selected, choice) {
-            self.result = String::from_utf8_lossy(&text).into_owned();
+            let before = std::mem::replace(
+                &mut self.result,
+                String::from_utf8_lossy(&text).into_owned(),
+            );
+            self.record(before);
+            self.typed = None;
             self.clamp();
             self.note.clear();
         }
@@ -100,7 +242,12 @@ impl State {
     pub fn magic(&mut self) {
         let (merged, solved) = conflict::magic(self.result.as_bytes(), MagicRules::All, None);
         if solved > 0 {
-            self.result = String::from_utf8_lossy(&merged).into_owned();
+            let before = std::mem::replace(
+                &mut self.result,
+                String::from_utf8_lossy(&merged).into_owned(),
+            );
+            self.record(before);
+            self.typed = None;
             self.clamp();
         }
         // Undo は 1 つずつではなく、Result の欄の Ctrl+Z でまとめて戻る（GTK4 版の文言の後半は当てはまらない）。
@@ -109,6 +256,15 @@ impl State {
         } else {
             tr!("Nothing to resolve")
         };
+    }
+
+    /// 選んでいるコンフリクトが Result の何割目の行から始まるか（Result の欄をそこへスクロールする）。
+    pub fn selected_fraction(&self) -> Option<f64> {
+        let text = self.typed.as_deref().unwrap_or(&self.result);
+        let data = text.as_bytes();
+        let lines = conflict::line_ranges(data).len();
+        let start = conflict::parse(data).get(self.selected)?.lines.start;
+        (lines > 0).then(|| start as f64 / lines as f64)
     }
 
     pub fn step(&mut self, forward: bool) {
@@ -130,10 +286,18 @@ impl State {
 }
 
 pub struct Callbacks<'a> {
-    /// 操作のボタン（`accept-ours`・`accept-theirs`・`accept-both`・`magic`・`previous`・`next`・`save`・
-    /// `resolve`・`close`）。
+    /// 操作のボタン（`accept-ours`・`accept-theirs`・`accept-both`・`accept-base`・`magic`・`previous`・
+    /// `next`・`save`・`resolve`・`forget`・`close`）。
     pub button: Box<dyn Fn(&'static str) -> Callback<()> + 'a>,
+    /// 左右の欄のコンフリクトの ≫・≪（`ours:<番号>`・`theirs:<番号>`。番号は開いたときの何番目か）。
+    pub pick: Box<dyn Fn(String) -> Callback<()> + 'a>,
     pub result: Callback<String>,
+    /// Result の欄（Ctrl+Z・Ctrl+Y を付ける）。
+    pub result_box: &'a ElementRef<TextBox>,
+    /// 左右と Base の欄の、選んでいるコンフリクトの所（見える所へスクロールして、欄の位置をそろえる）。
+    pub chosen: &'a [ElementRef<Grid>; 3],
+    /// Base の欄を出すか。
+    pub base: Callback<bool>,
 }
 
 pub fn view(state: &State, callbacks: Callbacks) -> View {
@@ -155,11 +319,29 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
             .content(TextBlock::new().text(title))
     };
     let has = ready && count > 0;
+    let has_base = matches!(&state.sides, Some(Ok((_, _, Some(_)))));
+    let accept_base: View = if has_base {
+        button(
+            "accept-base",
+            amonhen_model::i18n::translate("Accept Base").into_owned(),
+            has,
+        )
+    } else {
+        View::empty()
+    };
+    let base_toggle: View = if has_base {
+        CheckBox::new()
+            .is_checked(state.show_base)
+            .on_is_checked_changed(callbacks.base.clone())
+            .content(TextBlock::new().text("Base"))
+            .tooltip(tr!("Show the common ancestor on the left."))
+    } else {
+        View::empty()
+    };
     let bar = StackPanel::new()
         .orientation(Orientation::Horizontal)
         .spacing(6.0)
         .margin(Thickness::new(10.0, 6.0, 8.0, 6.0))
-        .grid_row(0)
         .children((
             TextBlock::new()
                 .text(format!("{} — {position}", state.path))
@@ -182,6 +364,8 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                 amonhen_model::i18n::translate("Accept Both").into_owned(),
                 has,
             ),
+            accept_base,
+            base_toggle,
             button("save", tr!("Save"), ready && state.dirty()),
             button("resolve", tr!("Save & Mark Resolved"), ready),
             button("close", tr!("Close"), true),
@@ -195,30 +379,116 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
             .text(tr!("Loading…"))
             .opacity(0.6)
             .margin(16.0)
-            .grid_row(1)
+            .grid_row(2)
             .into(),
         Some(Err(e)) => TextBlock::new()
             .text(e.clone())
             .text_wrapping(TextWrapping::Wrap)
             .margin(16.0)
-            .grid_row(1)
+            .grid_row(2)
             .into(),
-        Some(Ok((current, incoming))) => {
-            let pane = |title: String, text: &str, column: i32, editable: bool| -> View {
-                // 左右は読むだけ（reactor の TextBox に読むだけの設定がないので、選べる TextBlock）。
-                let content: View = if editable {
-                    TextBox::new()
+        Some(Ok((current, incoming, base))) => {
+            let original_of = state.original_of();
+            let chosen = original_of.get(state.selected).copied().flatten();
+            // 左右と Base の欄: コンフリクトの所を塗る（Current は青、Incoming は緑、Base は灰。選んでいるものは
+            // 濃く、解決済みは薄く）。左右の塗った所の ≫・≪ で、その側に解決する（GTK4 版の帯）。
+            let side = |text: &str, which: usize| -> View {
+                let lines: Vec<&str> = text.split_inclusive('\n').collect();
+                let (r, g, b) = match which {
+                    0 => (0x4d, 0x80, 0xe6),
+                    1 => (0x33, 0xb3, 0x4d),
+                    _ => (0x80, 0x80, 0x80),
+                };
+                let mut parts: Vec<(String, View)> = Vec::new();
+                let mut at = 0;
+                let plain = |from: usize, to: usize| -> View {
+                    TextBlock::new()
+                        .text(lines[from..to].concat().trim_end_matches('\n').to_owned())
+                        .font_size(12.0)
+                        .is_text_selection_enabled(true)
+                        .margin(Thickness::new(10.0, 0.0, 6.0, 0.0))
+                        .into()
+                };
+                for (i, &(start, end)) in state.regions[which].iter().enumerate() {
+                    let (start, end) = (start.min(lines.len()), end.min(lines.len()));
+                    if start < at {
+                        continue;
+                    }
+                    if at < start {
+                        parts.push((format!("t{i}"), plain(at, start)));
+                    }
+                    let open = original_of.contains(&Some(i));
+                    let alpha = if chosen == Some(i) {
+                        0x55
+                    } else if open {
+                        0x2e
+                    } else {
+                        0x14
+                    };
+                    let arrow: View = match (which, open) {
+                        (0, true) => Button::new()
+                            .on_click((callbacks.pick)(format!("ours:{i}")))
+                            .horizontal_alignment(HorizontalAlignment::Right)
+                            .vertical_alignment(VerticalAlignment::Top)
+                            .content(TextBlock::new().text("≫").font_size(11.0))
+                            .tooltip(amonhen_model::i18n::translate("Accept Current").into_owned()),
+                        (1, true) => Button::new()
+                            .on_click((callbacks.pick)(format!("theirs:{i}")))
+                            .horizontal_alignment(HorizontalAlignment::Left)
+                            .vertical_alignment(VerticalAlignment::Top)
+                            .content(TextBlock::new().text("≪").font_size(11.0))
+                            .tooltip(
+                                amonhen_model::i18n::translate("Accept Incoming").into_owned(),
+                            ),
+                        _ => View::empty(),
+                    };
+                    let body = lines[start..end].concat();
+                    let inner = if chosen == Some(i) {
+                        Grid::new().element_ref(&callbacks.chosen[which])
+                    } else {
+                        Grid::new()
+                    };
+                    parts.push((
+                        format!("c{i}:{alpha}"),
+                        Border::new()
+                            .background(Brush::Solid(Color::argb(alpha, r, g, b)))
+                            .min_height(16.0)
+                            .opacity(if open { 1.0 } else { 0.6 })
+                            .content(
+                                inner.children((
+                                    TextBlock::new()
+                                        .text(body.trim_end_matches('\n').to_owned())
+                                        .font_size(12.0)
+                                        .is_text_selection_enabled(true)
+                                        // ≫ は右、≪ は左に置くので、その側を空ける。
+                                        .margin(if which == 1 {
+                                            Thickness::new(30.0, 0.0, 10.0, 0.0)
+                                        } else {
+                                            Thickness::new(10.0, 0.0, 30.0, 0.0)
+                                        }),
+                                    arrow,
+                                )),
+                            ),
+                    ));
+                    at = end;
+                }
+                if at < lines.len() {
+                    parts.push(("end".to_owned(), plain(at, lines.len())));
+                }
+                StackPanel::new()
+                    .margin(Thickness::new(0.0, 6.0, 0.0, 6.0))
+                    .children((View::keyed_fragment(parts),))
+            };
+            let pane = |title: String, text: &str, column: i32, editable: Option<usize>| -> View {
+                // 左右は読むだけ（塗った文字の欄）。真ん中の Result は書き換えられる。
+                let content: View = match editable {
+                    None => TextBox::new()
+                        .element_ref(callbacks.result_box)
                         .text(text)
                         .accepts_return(true)
                         .on_text_changed(callbacks.result.clone())
-                        .into()
-                } else {
-                    TextBlock::new()
-                        .text(text)
-                        .font_size(12.0)
-                        .is_text_selection_enabled(true)
-                        .margin(Thickness::new(10.0, 6.0, 6.0, 6.0))
-                        .into()
+                        .into(),
+                    Some(which) => side(text, which),
                 };
                 Grid::new()
                     .rows([GridLength::Auto, GridLength::Star(1.0)])
@@ -234,21 +504,131 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                         ScrollViewer::new().grid_row(1).content(content),
                     ))
             };
+            // 列: Base（出すとき）・Current・Result・Incoming（同じ幅に分ける）。
+            let base = base.as_deref().filter(|_| state.show_base);
+            let first = i32::from(base.is_some());
+            let base_pane: View = match base {
+                Some(text) => pane(tr!("Base (common ancestor)"), text, 0, Some(2)),
+                None => View::empty(),
+            };
             Grid::new()
-                .columns([
-                    GridLength::Star(1.0),
-                    GridLength::Star(1.0),
-                    GridLength::Star(1.0),
-                ])
-                .grid_row(1)
+                .columns(vec![GridLength::Star(1.0); 3 + first as usize])
+                .grid_row(2)
                 .children((
-                    pane(tr!("Current (your branch)"), current, 0, false),
-                    pane(tr!("Result (editable)"), &state.result, 1, true),
-                    pane(tr!("Incoming (being merged in)"), incoming, 2, false),
+                    base_pane,
+                    pane(tr!("Current (your branch)"), current, first, Some(0)),
+                    pane(
+                        tr!("Result (editable)"),
+                        state.typed.as_deref().unwrap_or(&state.result),
+                        first + 1,
+                        None,
+                    ),
+                    pane(
+                        tr!("Incoming (being merged in)"),
+                        incoming,
+                        first + 2,
+                        Some(1),
+                    ),
                 ))
         }
     };
+    // マーカーの残っていないファイルの案内。rerere が当てた解決が違っていれば、忘れてコンフリクトからやり直せる
+    // （GTK4 版・macOS 版と同じ）。
+    let banner: View = match &state.banner {
+        Some(text) => {
+            let forget: View = if state.rerere {
+                Button::new()
+                    .on_click((callbacks.button)("forget"))
+                    .vertical_alignment(VerticalAlignment::Center)
+                    .content(TextBlock::new().text(tr!("Forget This Resolution")))
+                    .tooltip(tr!(
+                        "Forgets what git rerere recorded for this file and brings its conflict back (git rerere forget). Undo brings back the file as it is now."
+                    ))
+            } else {
+                View::empty()
+            };
+            Border::new()
+                .background(Brush::Solid(Color::rgb(0xff, 0xf4, 0xce)))
+                .padding(Thickness::new(10.0, 6.0, 10.0, 6.0))
+                .grid_row(1)
+                .content(
+                    StackPanel::new()
+                        .orientation(Orientation::Horizontal)
+                        .spacing(12.0)
+                        .children((
+                            TextBlock::new()
+                                .text(text.clone())
+                                .vertical_alignment(VerticalAlignment::Center),
+                            forget,
+                        )),
+                )
+        }
+        None => View::empty(),
+    };
     Grid::new()
-        .rows([GridLength::Auto, GridLength::Star(1.0)])
-        .children((bar, body))
+        .rows([GridLength::Auto, GridLength::Auto, GridLength::Star(1.0)])
+        .children((
+            // 窓が狭くても右端のボタン（閉じる）に届くよう、帯は横にスクロールできる。
+            ScrollViewer::new()
+                .horizontal_scroll_bar_visibility(ScrollBarVisibility::Auto)
+                .vertical_scroll_bar_visibility(ScrollBarVisibility::Disabled)
+                .grid_row(0)
+                .content(bar),
+            banner,
+            body,
+        ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn pick_resolves_the_matching_conflict() {
+        let mut s = State::new("f".into());
+        let result = "a\n<<<<<<< ours\nx\n=======\ny\n>>>>>>> theirs\nb\n<<<<<<< ours\np\n=======\nq\n>>>>>>> theirs\n";
+        s.load(Ok(json!({
+            "result": result,
+            "current": { "text": "a\nx\nb\np\n", "regions": [[1, 2], [3, 4]] },
+            "incoming": { "text": "a\ny\nb\nq\n", "regions": [[1, 2], [3, 4]] },
+        })));
+        assert_eq!(s.regions[0], [(1, 2), (3, 4)]);
+        // 2 つ目を Incoming で解くと、残る 1 つ目は開いたときの 0 番目。
+        assert!(s.pick(1, Choice::Theirs));
+        assert_eq!(s.original_of(), [Some(0)]);
+        assert!(s.result.contains("\nq\n"));
+        // 解いたものはもう選べない。
+        assert!(!s.pick(1, Choice::Ours));
+    }
+
+    #[test]
+    fn selected_fraction_points_at_the_conflict_start() {
+        let mut s = State::new("f".into());
+        let result = "a\nb\n<<<<<<< ours\nx\n=======\ny\n>>>>>>> theirs\nc\n<<<<<<< ours\np\n=======\nq\n>>>>>>> theirs\n";
+        s.load(Ok(json!({ "result": result })));
+        // 13 行のうち、1 つ目は 2 行目、2 つ目は 8 行目から。
+        assert_eq!(s.selected_fraction(), Some(2.0 / 13.0));
+        s.step(true);
+        assert_eq!(s.selected_fraction(), Some(8.0 / 13.0));
+    }
+
+    #[test]
+    fn undo_steps_through_accepts_until_typed() {
+        let mut s = State::new("f".into());
+        let result = "<<<<<<< ours\nx\n=======\ny\n>>>>>>> theirs\n<<<<<<< ours\np\n=======\nq\n>>>>>>> theirs\n";
+        s.load(Ok(json!({ "result": result })));
+        s.accept(Choice::Ours);
+        s.accept(Choice::Theirs);
+        assert!(s.can_undo() && !s.can_redo());
+        s.undo(false);
+        assert_eq!(s.conflicts(), 1);
+        s.undo(false);
+        assert_eq!(s.result, result);
+        s.undo(true);
+        assert_eq!(s.conflicts(), 1);
+        // 手で打ったら、TextBox の Undo に任せる。
+        s.edit("typed");
+        assert!(!s.can_undo() && !s.can_redo());
+    }
 }

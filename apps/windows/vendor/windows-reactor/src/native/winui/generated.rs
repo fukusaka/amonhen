@@ -2881,6 +2881,20 @@ pub fn set_property(
                         .and_then(|run| run.SetFontStyle(bindings::FontStyle::Italic))
                         .map_err(native_error)?;
                 }
+                if let Some(color) = value.foreground {
+                    let brush = SolidColorBrush::new().map_err(native_error)?;
+                    brush
+                        .SetColor(bindings::Color {
+                            a: color.a,
+                            r: color.r,
+                            g: color.g,
+                            b: color.b,
+                        })
+                        .map_err(native_error)?;
+                    run.cast::<ITextElement>()
+                        .and_then(|run| run.SetForeground(&brush))
+                        .map_err(native_error)?;
+                }
                 let run = run.cast::<Inline>().map_err(native_error)?;
                 inlines.Append(&run).map_err(native_error)
             };
@@ -5350,12 +5364,8 @@ pub fn subscribe_event(
                         revision,
                         EventPayload::Bool(value),
                     ),
-                    Err(error) => sink.error(
-                        node,
-                        EventId::CheckBoxIsCheckedChanged,
-                        revision,
-                        native_error(error),
-                    ),
+                    // Neither checked nor unchecked (set by `set_check_mixed`): not a bool to report.
+                    Err(_) => {}
                 }
             });
             let token = object

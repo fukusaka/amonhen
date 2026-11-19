@@ -18,7 +18,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 use windows::core::w;
 
-use crate::render::{ROW_HEIGHT, Surface};
+use crate::render::{Surface, row_height};
 use crate::{Args, Session};
 
 enum Input {
@@ -160,11 +160,11 @@ pub fn run(args: Args, started: Instant) -> Result<(), String> {
                 }
                 Input::Click(at) => session.clicked(at),
                 Input::Wheel(delta) => {
-                    session.scroll_by(-(delta as f32) / 120.0 * 3.0 * ROW_HEIGHT)
+                    session.scroll_by(-(delta as f32) / 120.0 * 3.0 * row_height())
                 }
                 Input::Key(key) => match key {
-                    VK_DOWN => session.scroll_by(ROW_HEIGHT),
-                    VK_UP => session.scroll_by(-ROW_HEIGHT),
+                    VK_DOWN => session.scroll_by(row_height()),
+                    VK_UP => session.scroll_by(-row_height()),
                     VK_NEXT => session.scroll_by(session.page()),
                     VK_PRIOR => session.scroll_by(-session.page()),
                     VK_HOME => session.scroll_to(0.0),

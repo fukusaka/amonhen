@@ -145,6 +145,7 @@ dependencies = [
 name = "amonhen-win"
 version = "0.1.0"
 dependencies = [
+ "amonhen-backend-cli",
  "amonhen-backend-gix",
  "amonhen-commands",
  "amonhen-core",
@@ -152,6 +153,7 @@ dependencies = [
  "amonhen-model",
  "amonhen-projection",
  "amonhen-remote",
+ "amonhen-syntax",
  "amonhen-watch",
  "amonhen-win-xaml",
  "serde_json",
@@ -166,6 +168,7 @@ dependencies = [
 name = "amonhen-win-xaml"
 version = "0.1.0"
 dependencies = [
+ "windows-collections 0.100.0",
  "windows-core 0.100.0",
  "windows-reference",
 ]

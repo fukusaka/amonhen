@@ -1,9 +1,7 @@
 //! `amonhen log` のグラフを端末の文字で描く。
 //!
-//! 点と線はコアのレイアウト（アプリと同じ）をそのまま使う。曲線はどれも隣り合う 2 行をつなぐので、コミットの行の
-//! 間に、曲線があるときだけ「つなぎの行」を挟む。レーンが多いリポジトリ（linux で 1 行を横切る線が数百本）でも
-//! 幅に収まるよう、表示する行の範囲に点か曲線のあるレーンだけに列を取り、線が通るだけのレーンは隣り合うものを
-//! 細い 1 列（┆）にまとめる（アプリの魚眼と同じ考え）。
+//! 点と線をセルにする所（レーンから列への割り当て・罫線の文字）は `amonhen_projection::terminal` で、TUI と同じ。
+//! ここでは、コミットの行の間に、曲線があるときだけ「つなぎの行」を挟む形で、ANSI の文字列にする。
 
 use std::collections::HashMap;
 use std::fmt::Write;
@@ -11,6 +9,7 @@ use std::fmt::Write;
 use amonhen_front::Reply;
 use amonhen_layout::{Edge, Node};
 use amonhen_model::{Oid, tr};
+use amonhen_projection::terminal::{Graph, Line, palette};
 use serde_json::Value;
 
 pub struct Style {
@@ -18,32 +17,6 @@ pub struct Style {
     /// 端末の幅（tty でなければ None で、切り詰めない）。
     pub width: Option<usize>,
 }
-
-const UP: u8 = 1;
-const DOWN: u8 = 2;
-const LEFT: u8 = 4;
-const RIGHT: u8 = 8;
-
-/// 線の向きの組から罫線の文字。
-fn line_char(dirs: u8) -> char {
-    match dirs {
-        0 => ' ',
-        d if d == UP | DOWN || d == UP || d == DOWN => '│',
-        d if d == LEFT | RIGHT || d == LEFT || d == RIGHT => '─',
-        d if d == UP | RIGHT => '╰',
-        d if d == UP | LEFT => '╯',
-        d if d == DOWN | RIGHT => '╭',
-        d if d == DOWN | LEFT => '╮',
-        d if d == UP | DOWN | RIGHT => '├',
-        d if d == UP | DOWN | LEFT => '┤',
-        d if d == LEFT | RIGHT | DOWN => '┬',
-        d if d == LEFT | RIGHT | UP => '┴',
-        _ => '┼',
-    }
-}
-
-/// 線の色（アプリの色の番号を、端末の 256 色に寄せる）。
-const PALETTE: [u8; 8] = [75, 114, 179, 176, 80, 209, 141, 150];
 
 pub fn paint(out: &mut String, text: &str, color: Option<u8>, enabled: bool) {
     match (color, enabled) {
@@ -54,37 +27,13 @@ pub fn paint(out: &mut String, text: &str, color: Option<u8>, enabled: bool) {
     }
 }
 
-/// 1 行分の格子（半列単位: 偶数がレーン、奇数がその間）。
-struct Line {
-    dirs: Vec<u8>,
-    glyph: Vec<Option<char>>,
-    color: Vec<Option<u8>>,
-}
-
-impl Line {
-    fn new(width: usize) -> Self {
-        Self {
-            dirs: vec![0; width],
-            glyph: vec![None; width],
-            color: vec![None; width],
-        }
+/// 格子の 1 行を文字列に。
+fn line_text(line: &Line, color: bool) -> String {
+    let mut out = String::new();
+    for (ch, c) in line.cells() {
+        paint(&mut out, &ch.to_string(), c.map(palette), color);
     }
-
-    fn add(&mut self, x: usize, dirs: u8, color: u8) {
-        if x < self.dirs.len() {
-            self.dirs[x] |= dirs;
-            self.color[x].get_or_insert(color);
-        }
-    }
-
-    fn text(&self, color: bool) -> String {
-        let mut out = String::new();
-        for x in 0..self.dirs.len() {
-            let ch = self.glyph[x].unwrap_or_else(|| line_char(self.dirs[x]));
-            paint(&mut out, &ch.to_string(), self.color[x], color && ch != ' ');
-        }
-        out
-    }
+    out
 }
 
 /// 窓口（`historyRows`）から受け取った行。
@@ -168,7 +117,7 @@ pub fn render(rows: &Rows, refs: &Value, show_graph: bool, style: &Style) -> Str
     let labels = labels(refs);
     let head = refs["headBranch"].as_str();
     let graph = if show_graph {
-        Some(Graph::new(rows))
+        Some(Graph::new(&rows.nodes, &rows.edges))
     } else {
         None
     };
@@ -178,9 +127,9 @@ pub fn render(rows: &Rows, refs: &Value, show_graph: bool, style: &Style) -> Str
         let mut visible = 0;
         if let Some(g) = &graph {
             let l = g.commit_line(row, &rows.nodes[i]);
-            line.push_str(&l.text(style.color));
+            line.push_str(&line_text(&l, style.color));
             line.push(' ');
-            visible += l.dirs.len() + 1;
+            visible += l.len() + 1;
         }
         let id = rows.ids[i].to_string();
         paint(&mut line, &id[..8], Some(179), style.color);
@@ -238,7 +187,7 @@ pub fn render(rows: &Rows, refs: &Value, show_graph: bool, style: &Style) -> Str
             && *next == row + 1
             && let Some(l) = g.connector_line(row)
         {
-            out.push_str(l.text(style.color).trim_end());
+            out.push_str(line_text(&l, style.color).trim_end());
             out.push('\n');
         }
     }
@@ -273,129 +222,4 @@ pub fn json_rows(rows: &Rows, refs: &Value) -> Value {
             })
             .collect(),
     )
-}
-
-/// 表示する行の範囲の点と線と、レーンから列への対応。
-struct Graph<'a> {
-    edges: &'a [Edge],
-    /// レーン → 半列の位置。
-    column: HashMap<u16, usize>,
-    /// 細い列にまとめたレーン。
-    thin: std::collections::HashSet<u16>,
-    width: usize,
-}
-
-impl<'a> Graph<'a> {
-    fn new(rows: &'a Rows) -> Self {
-        let edges = &rows.edges[..];
-        // 点か曲線の端があるレーンは広く、線が通るだけのレーンは細く。
-        let mut wide = std::collections::BTreeSet::new();
-        for n in &rows.nodes {
-            wide.insert(n.lane);
-        }
-        let mut through = std::collections::BTreeSet::new();
-        for e in edges {
-            if e.lane_start != e.lane_end {
-                wide.insert(e.lane_start);
-                wide.insert(e.lane_end);
-            } else {
-                through.insert(e.lane_start);
-            }
-        }
-        let max_lane = wide
-            .iter()
-            .chain(through.iter())
-            .copied()
-            .max()
-            .unwrap_or(0);
-        let mut column = HashMap::new();
-        let mut thin = std::collections::HashSet::new();
-        let mut col = 0;
-        let mut in_thin_run = false;
-        for lane in 0..=max_lane {
-            if wide.contains(&lane) {
-                column.insert(lane, col);
-                col += 1;
-                in_thin_run = false;
-            } else if through.contains(&lane) {
-                if !in_thin_run {
-                    col += 1;
-                    in_thin_run = true;
-                }
-                column.insert(lane, col - 1);
-                thin.insert(lane);
-            }
-        }
-        Self {
-            edges,
-            column,
-            thin,
-            width: col * 2,
-        }
-    }
-
-    fn x(&self, lane: u16) -> usize {
-        self.column.get(&lane).copied().unwrap_or(0) * 2
-    }
-
-    fn color(e: &Edge) -> u8 {
-        PALETTE[e.color as usize % PALETTE.len()]
-    }
-
-    fn commit_line(&self, row: u32, node: &Node) -> Line {
-        let mut line = Line::new(self.width);
-        for e in self.edges {
-            if e.row_start <= row && row <= e.row_end {
-                // 曲線は、端の行ではそのレーンの縦線として出す（向きを変えるのはつなぎの行）。
-                let lane = if e.lane_start == e.lane_end || e.row_start == row {
-                    e.lane_start
-                } else {
-                    e.lane_end
-                };
-                line.add(self.x(lane), UP | DOWN, Self::color(e));
-                if self.thin.contains(&lane) {
-                    line.glyph[self.x(lane)] = Some('┆');
-                }
-            }
-        }
-        let x = self.x(node.lane);
-        line.glyph[x] = Some(if node.flags & Node::HEAD != 0 {
-            '◉'
-        } else if node.flags & Node::MERGE != 0 {
-            '◆'
-        } else {
-            '●'
-        });
-        line.color[x] = Some(PALETTE[node.color as usize % PALETTE.len()]);
-        line
-    }
-
-    /// `row` と次の行の間（曲線がなければ None）。
-    fn connector_line(&self, row: u32) -> Option<Line> {
-        let mut line = Line::new(self.width);
-        let mut curved = false;
-        for e in self.edges {
-            let c = Self::color(e);
-            if e.lane_start != e.lane_end && e.row_start == row {
-                curved = true;
-                let (a, b) = (self.x(e.lane_start), self.x(e.lane_end));
-                if b > a {
-                    line.add(a, UP | RIGHT, c);
-                    (a + 1..b).for_each(|x| line.add(x, LEFT | RIGHT, c));
-                    line.add(b, LEFT | DOWN, c);
-                } else {
-                    line.add(a, UP | LEFT, c);
-                    (b + 1..a).for_each(|x| line.add(x, LEFT | RIGHT, c));
-                    line.add(b, RIGHT | DOWN, c);
-                }
-            } else if e.lane_start == e.lane_end && e.row_start <= row && row < e.row_end {
-                let x = self.x(e.lane_start);
-                line.add(x, UP | DOWN, c);
-                if self.thin.contains(&e.lane_start) {
-                    line.glyph[x] = Some('┆');
-                }
-            }
-        }
-        curved.then_some(line)
-    }
 }

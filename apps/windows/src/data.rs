@@ -21,7 +21,7 @@ pub const CHUNK_ROWS: u32 = 256;
 const KEPT_CHUNKS: usize = 24;
 
 /// Windows の FE の形。文字列は ASCII ならそのまま、それ以外は UTF-16（DirectWrite に `PCWSTR` で渡す）。
-const PROFILE: FrontendProfile = FrontendProfile {
+pub(crate) const PROFILE: FrontendProfile = FrontendProfile {
     string: StringEncoding::Utf16,
     columns: ColumnSet::ALL,
     page_aligned: false,
@@ -50,6 +50,11 @@ impl Chunk {
 
     pub fn time(&self, i: usize) -> i64 {
         self.0.author_times[i]
+    }
+
+    /// 署名のあるコミット（検証はまだ。History の行の印）。
+    pub fn signed(&self, i: usize) -> bool {
+        self.0.signatures.get(i).is_some_and(|&k| k != 0)
     }
 
     /// `s` を UTF-16 で `out` に足す。
@@ -85,6 +90,8 @@ pub struct DiffContent<'a> {
     pub view: &'a DiffView,
     pub highlights: &'a HashMap<u32, Vec<(u32, u32)>>,
     pub syntax: &'a HashMap<u32, Vec<(u32, u32, u8)>>,
+    /// ファイルの見出しの行の番号（昇順。上に張り付かせる見出しを探す）。
+    pub file_rows: &'a [u32],
     /// 行ごとに次のコミットに含めるかの印を出す（Working Copy の 1 本の差分）。
     pub marks: bool,
 }
@@ -121,6 +128,7 @@ impl WorkingShown {
             view: &self.diff.view,
             highlights: &self.highlights,
             syntax: &self.syntax,
+            file_rows: &[],
             marks: self.diff.combined.is_some(),
         }
     }
@@ -141,13 +149,26 @@ pub struct CommitShown {
     pub stacked: Arc<StackedDiff>,
     /// ファイルごとに畳んでいるか（コミットの変更ファイルの順）。
     pub collapsed: Vec<bool>,
+    /// ファイルの見出しの行の番号（表示を作り直すたびに求める）。
+    pub file_rows: Vec<u32>,
+    /// 1 ファイルずつ出すときの、出しているファイル（変更ファイルの順）。None なら全ファイルを並べる。
+    pub only: Option<usize>,
     /// 表示を作り直した回数（古い表示の構文の色を捨てるため）。
     version: u32,
 }
 
 impl CommitShown {
     fn new(row: u32, info: serde_json::Value, stacked: Arc<StackedDiff>) -> Self {
-        let collapsed = vec![false; stacked.files.len()];
+        // 見たことにしたファイル（Viewed）は畳んで出す（GTK4 版と同じ）。
+        let viewed = info["oid"]
+            .as_str()
+            .map(crate::viewed::paths)
+            .unwrap_or_default();
+        let collapsed: Vec<bool> = stacked
+            .files
+            .iter()
+            .map(|(path, _)| viewed.contains(path))
+            .collect();
         let mut shown = Self {
             row,
             info,
@@ -157,6 +178,8 @@ impl CommitShown {
             extras: None,
             stacked,
             collapsed,
+            file_rows: Vec::new(),
+            only: None,
             version: 0,
         };
         shown.index_highlights();
@@ -168,10 +191,40 @@ impl CommitShown {
             view: &self.diff,
             highlights: &self.highlights,
             syntax: &self.syntax,
+            file_rows: &self.file_rows,
             marks: false,
         }
     }
 
+    /// 表示に出すファイルと、畳んでいるか（1 ファイルずつなら、そのファイルだけ）。
+    fn shown_files(&self) -> (Arc<StackedDiff>, Vec<bool>) {
+        match self.only.filter(|&i| i < self.stacked.files.len()) {
+            Some(i) => (
+                Arc::new(StackedDiff {
+                    files: vec![self.stacked.files[i].clone()],
+                }),
+                vec![self.collapsed.get(i).copied().unwrap_or(false)],
+            ),
+            None => (self.stacked.clone(), self.collapsed.clone()),
+        }
+    }
+
+    /// 表示の `n` 番目のファイルの、変更ファイルの中での番号（1 ファイルずつなら、出しているファイル）。
+    pub fn file_index(&self, n: usize) -> usize {
+        self.only.unwrap_or(n)
+    }
+
+    /// 表示を作り直す（構文の色は捨てる）。色を付け直すための、出したファイルと畳んでいるかを返す。
+    fn rebuild_view(&mut self) -> (Arc<StackedDiff>, Vec<bool>) {
+        let (stacked, collapsed) = self.shown_files();
+        self.diff = stacked.view(&collapsed, &PROFILE);
+        self.index_highlights();
+        self.syntax.clear();
+        self.version += 1;
+        (stacked, collapsed)
+    }
+
+    /// 単語の範囲とファイルの見出しの行を、表示から引けるようにする。
     fn index_highlights(&mut self) {
         self.highlights.clear();
         for h in &self.diff.highlights {
@@ -180,6 +233,15 @@ impl CommitShown {
                 .or_default()
                 .push((h.start, h.end));
         }
+        // ファイルの見出しの行（描くたびに全部の行を見なくて済むように）。
+        self.file_rows = self
+            .diff
+            .rows
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| r.kind == amonhen_layout::DiffRow::FILE)
+            .map(|(i, _)| i as u32)
+            .collect();
     }
 }
 
@@ -209,10 +271,125 @@ fn send_syntax(
     });
 }
 
+/// `f` にかかった時間を Activity の Performance に `metric`（訳す前の名前）で記録する。
+fn timed<T>(metric: &'static str, f: impl FnOnce() -> T) -> T {
+    let started = std::time::Instant::now();
+    let value = f();
+    crate::activity::record(metric, started.elapsed().as_secs_f64() * 1000.0);
+    value
+}
+
 /// 届いた検索の答え。
 pub enum SearchDone {
     Found(String),
     Failed(String, String),
+}
+
+/// 署名の検証の結果（History の行の印の色。GTK4 版の `signature::Status` をまとめたもの）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Signature {
+    Verified,
+    /// 鍵の信用度が決まっていない・署名者がコミッターと違う（黄色）。
+    Caution,
+    Expired,
+    /// 失効した鍵・正しくない署名（赤）。
+    Bad,
+    /// 鍵がない・検証できない。
+    Unknown,
+}
+
+impl Signature {
+    /// `verifySignatures` の答えの 1 件から決める（GTK4 版の `signature::Status::new` と同じ判定）。
+    pub fn of(check: &serde_json::Value) -> Self {
+        let status = check["status"].as_str().unwrap_or_default();
+        match status {
+            "G" | "U" => {
+                let signer = check["signer"].as_str().unwrap_or_default();
+                let key = check["key"].as_str().unwrap_or_default();
+                let ssh = !signer.contains('<') && key.starts_with("SHA256:");
+                let level = if ssh {
+                    3
+                } else {
+                    match check["trust"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_lowercase()
+                        .as_str()
+                    {
+                        "ultimate" | "full" | "fully" => 3,
+                        "marginal" => 2,
+                        "never" => 0,
+                        _ => 1,
+                    }
+                };
+                if status == "U" || level < 2 || signer_mismatch(check) {
+                    Self::Caution
+                } else {
+                    Self::Verified
+                }
+            }
+            "X" | "Y" => Self::Expired,
+            "R" | "B" => Self::Bad,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+/// 鍵のメールにコミッターのメールが（有効なものとして）ない（GTK4 版の `CommitterMatch::Mismatched`）。
+fn signer_mismatch(check: &serde_json::Value) -> bool {
+    let committer = check["committerEmail"]
+        .as_str()
+        .unwrap_or_default()
+        .to_lowercase();
+    let emails: Vec<(String, String)> = check["emails"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|e| {
+            (
+                e["email"].as_str().unwrap_or_default().to_lowercase(),
+                e["validity"].as_str().unwrap_or_default().to_owned(),
+            )
+        })
+        .collect();
+    if emails.is_empty() || committer.is_empty() {
+        return false;
+    }
+    !emails
+        .iter()
+        .any(|(e, v)| *e == committer && !matches!(v.as_str(), "r" | "e" | "n"))
+}
+
+/// 差分の `hunk` 行目（hunk の見出し）に続く、変わった行（次の hunk かファイルの見出しまで）。見出しでなければ空。
+pub fn hunk_rows(rows: &[amonhen_layout::DiffRow], hunk: usize) -> Vec<usize> {
+    use amonhen_layout::DiffRow;
+    if rows.get(hunk).is_none_or(|r| r.kind != DiffRow::HUNK) {
+        return Vec::new();
+    }
+    rows.iter()
+        .enumerate()
+        .skip(hunk + 1)
+        .take_while(|(_, r)| !matches!(r.kind, DiffRow::HUNK | DiffRow::FILE))
+        .filter(|(_, r)| matches!(r.kind, DiffRow::ADDED | DiffRow::REMOVED))
+        .map(|(i, _)| i)
+        .collect()
+}
+
+/// History の差分のファイル（見出しの右クリックのメニュー）。
+#[derive(Clone, Debug, PartialEq)]
+pub struct DiffFile {
+    /// コミットの変更ファイルの順の番号。
+    pub index: usize,
+    pub path: String,
+    pub collapsed: bool,
+    /// 1 つのコミットの差分ならその ID（複数選んだときは None）。
+    pub commit: Option<String>,
+    /// そのコミットで消したファイル（Blame できない）。
+    pub deleted: bool,
+    /// そのコミットで足したファイル（その前の版はない）。
+    pub added: bool,
+    /// 見たことにしたファイル（Viewed）。
+    pub viewed: bool,
 }
 
 /// History の行に付ける ref の名前（ブランチ・リモートブランチ・タグ）。
@@ -220,8 +397,10 @@ pub enum SearchDone {
 pub struct RefLabel {
     pub name: String,
     pub kind: RefKind,
-    /// チェックアウト中のブランチ。
+    /// チェックアウト中のブランチ（worktree の札なら、書き込む先の worktree）。
     pub head: bool,
+    /// worktree の HEAD の札（✎ ⌂ ⑂ と名前と変更の数。GTK4 版・macOS 版と同じ）。
+    pub worktree: bool,
 }
 
 /// 行ごとのラベル。行の番号は `generation` の History のもの。
@@ -237,6 +416,10 @@ enum Event {
     Working(Box<WorkingShown>),
     /// History の検索の答え（History の世代、問い合わせ、一致した行）。
     Search(u64, String, Result<Vec<u32>, String>),
+    /// 一致したコミットだけの History（元の History の世代、作った History、その行の ref の印、元の一致）。
+    Filtered(u64, Arc<HistorySnapshot>, Labels, Vec<u32>),
+    /// 署名の検証の結果（History の世代）。
+    Signatures(u64, Vec<(amonhen_model::Oid, Signature)>),
     Chunk(u64, u32, Chunk),
     Failed(String),
 }
@@ -253,6 +436,21 @@ pub struct Data {
     pub working_changed: bool,
     /// 今の History の行の、ref のラベル。
     pub labels: Labels,
+    /// 一致したコミットだけを出している間の、元の History とその一致・ref の印（検索の欄の Show Only Matching
+    /// Commits。GTK4 版の `search::apply_filter`）。探すのはいつも元の History。
+    base: Option<(Arc<HistorySnapshot>, Vec<u32>, Labels)>,
+    /// 一致したコミットだけを出したい（一致が届いたら作る）。
+    matching_only: bool,
+    /// 署名の検証の結果と、検証している・これから検証するコミット（見えている行のものだけ、裏で）。
+    pub signatures: HashMap<amonhen_model::Oid, Signature>,
+    verifying: HashSet<amonhen_model::Oid>,
+    unverified: Vec<amonhen_model::Oid>,
+    /// 今の History の行の、worktree の HEAD の札（ref のラベルの前に出す）と、その元（コミット、札の文字、
+    /// 書き込む先か）。
+    pub worktree_labels: Labels,
+    worktree_heads: Vec<(amonhen_model::Oid, String, bool)>,
+    /// 書き込む先・メインでない worktree が checkout しているブランチ（札を緑にする）。
+    pub elsewhere: HashSet<String>,
     /// History の検索で一致した行（昇順）。描くときに塗る。
     pub matches: Vec<u32>,
     /// History で複数選んでいる行（昇順。2 つ以上のときだけ）。描くときに塗る。
@@ -265,6 +463,8 @@ pub struct Data {
     pub search: Option<SearchDone>,
     /// 選んだコミットの詳細と差分（届いたもの）。
     pub commit: Option<Box<CommitShown>>,
+    /// コミットの差分を 1 ファイルずつ出す（View の All Files in One Diff を切った）。
+    pub single_file: bool,
     /// 読んでいるコミットの行（届いたものがこれと違えば捨てる）。
     commit_wanted: Option<u32>,
     /// 出している差分に構文の色が届いた（描き直す。見たら `false` に戻す）。
@@ -282,10 +482,61 @@ pub struct Data {
     rx: Receiver<Event>,
     wake: Wake,
     changed_tx: Sender<u32>,
+    /// History を位相順に並べるか（裏のスレッドと共有）。
+    topo: Arc<std::sync::atomic::AtomicBool>,
+    /// マージ済みブランチを折りたたむか、取り込んだ側も見せる merge（裏のスレッドと共有）。
+    fold: Arc<std::sync::atomic::AtomicBool>,
+    expanded: Arc<std::sync::Mutex<Vec<amonhen_model::Oid>>>,
+    /// History の範囲（裏のスレッドと共有）。
+    scope: Arc<std::sync::Mutex<Scope>>,
+    /// 範囲を変えた（作り直した History が届いたら、選んだ行を見せる）。
+    pub scope_changed: bool,
+}
+
+/// History の範囲（GTK4 版の `historydisplay::Scope`）。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum Scope {
+    /// 全ブランチ。
+    #[default]
+    All,
+    /// 今のブランチ（HEAD から辿れるもの）。
+    Current,
+    /// サイドバーで選んだ ref（種類と名前）。それぞれから辿れるコミット。
+    Refs(Vec<(RefKind, String)>),
+}
+
+impl Scope {
+    /// 起点のコミット（ref がなくなっていれば、その分は除く）。
+    pub fn tips(&self, refs: &Refs) -> Vec<amonhen_model::Oid> {
+        match self {
+            Scope::All => Vec::new(),
+            Scope::Current => refs.head.into_iter().collect(),
+            Scope::Refs(list) => list
+                .iter()
+                .filter_map(|(kind, name)| {
+                    refs.entries
+                        .iter()
+                        .find(|e| e.kind == *kind && &e.name == name)
+                        .and_then(|e| e.target)
+                })
+                .collect(),
+        }
+    }
 }
 
 /// 変化の知らせのビットのうち、History を作り直す頼み（`amonhen_watch::Changes` が使わない上のビット）。
 const REBUILD: u32 = 1 << 31;
+/// 並び順を変えて History を並べ直す頼み（並び順は `Data::topo`）。
+const REORDER: u32 = 1 << 30;
+/// 読み直しのスレッドを終える頼み（`Data` を捨てた。タブを替えたときなど）。見張りが送り口を持っているので、送り口が
+/// なくなるのを待っても終わらない。
+const STOP: u32 = 1 << 29;
+
+impl Drop for Data {
+    fn drop(&mut self) {
+        let _ = self.changed_tx.send(STOP);
+    }
+}
 
 impl Data {
     /// `path` を裏のスレッドで開き、前回の History をすぐ送ってから最新を読む。
@@ -295,6 +546,27 @@ impl Data {
         // 変化の知らせ（`amonhen_watch::Changes` のビット）。見張りのほか、Refresh などで自分でも送る。
         let (changed_tx, changed_rx) = channel::<u32>();
         let watch_tx = changed_tx.clone();
+        // History の並び順（View の Date Order・Topological Order。設定は UI のスレッドで読む）。
+        let topo = Arc::new(std::sync::atomic::AtomicBool::new(
+            crate::prefs::history_order() == amonhen_model::HistoryOrder::Topo,
+        ));
+        let thread_topo = topo.clone();
+        // マージ済みブランチを折りたたむか（View の Fold Merged Branches）と、取り込んだ側も見せる merge。
+        let fold = Arc::new(std::sync::atomic::AtomicBool::new(crate::prefs::bool(
+            crate::prefs::FOLD_MERGED_BRANCHES,
+        )));
+        let expanded: Arc<std::sync::Mutex<Vec<amonhen_model::Oid>>> = Arc::default();
+        let (thread_fold, thread_expanded) = (fold.clone(), expanded.clone());
+        // History の範囲（全ブランチ・今のブランチ・選んだ ref）。
+        let scope: Arc<std::sync::Mutex<Scope>> = Arc::default();
+        let thread_scope = scope.clone();
+        let order_of = move || {
+            if thread_topo.load(std::sync::atomic::Ordering::Relaxed) {
+                amonhen_model::HistoryOrder::Topo
+            } else {
+                amonhen_model::HistoryOrder::Date
+            }
+        };
         std::thread::spawn(move || {
             let send = |e| {
                 let _ = thread_tx.send(e);
@@ -304,11 +576,53 @@ impl Data {
                 Ok(repo) => Arc::new(repo),
                 Err(e) => return send(Event::Failed(format!("リポジトリを開けない: {e}"))),
             };
+            // 並び順は読む前にコアへ（既定の日付順なら何もしない。GTK4 版と同じ）。
+            let order = order_of();
+            if order != amonhen_model::HistoryOrder::Date
+                && let Err(e) = repo.set_history_order(order)
+            {
+                eprintln!("History の並び順を変えられない: {e}");
+            }
+            // 出す History: 折りたたむなら、マージ済みブランチを折りたたんだもの（GTK4 版の `reshape`）。作れない・
+            // 空になったときは全体のまま。
+            let shape = |full: Arc<HistorySnapshot>| -> Arc<HistorySnapshot> {
+                let fold = thread_fold.load(std::sync::atomic::Ordering::Relaxed);
+                // 範囲を絞るなら、その起点（ref は今の指す先。ほかのプログラムで動いても付け替わる）。
+                let scope = thread_scope.lock().unwrap().clone();
+                let tips: Vec<amonhen_model::Oid> = match &scope {
+                    Scope::All => Vec::new(),
+                    Scope::Current | Scope::Refs(_) => match repo.load_refs() {
+                        Ok(refs) => scope.tips(&refs.refs),
+                        Err(e) => {
+                            eprintln!("ref を読めない: {e}");
+                            Vec::new()
+                        }
+                    },
+                };
+                if !fold && tips.is_empty() {
+                    return full;
+                }
+                let expanded = thread_expanded.lock().unwrap().clone();
+                let some = (!tips.is_empty()).then_some(&tips[..]);
+                let shaped = if fold {
+                    repo.history_folded(some, &expanded)
+                } else {
+                    repo.history_filtered(&tips)
+                };
+                match shaped {
+                    Ok(folded) if !(folded.graph.is_empty() && !full.graph.is_empty()) => folded,
+                    Ok(_) => full,
+                    Err(e) => {
+                        eprintln!("History を折りたためない: {e}");
+                        full
+                    }
+                }
+            };
             if let Some(cached) = repo.load_cached_history() {
-                send(Event::History(repo.clone(), cached));
+                send(Event::History(repo.clone(), shape(cached)));
             }
             let history = match repo.load_history() {
-                Ok(history) => history,
+                Ok(history) => shape(history),
                 Err(e) => return send(Event::Failed(format!("History を読めない: {e}"))),
             };
             send(Event::History(repo.clone(), history.clone()));
@@ -323,7 +637,18 @@ impl Data {
             if let Some(event) = refs(&history) {
                 send(event);
             }
-            let status = || match repo.load_status() {
+            // Activity の Events に出すリポジトリの名前（作業ツリーのフォルダ、なければ .git の場所）。
+            let name = {
+                let paths = repo.paths();
+                paths
+                    .workdir
+                    .as_deref()
+                    .unwrap_or(&paths.git_dir)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+            };
+            let status = || match timed("Reload status", || repo.load_status()) {
                 Ok(status) => Some(Event::Status(status)),
                 Err(e) => {
                     eprintln!("status を読めない: {e}");
@@ -352,20 +677,53 @@ impl Data {
                 while let Ok(more) = changed_rx.try_recv() {
                     bits |= more;
                 }
+                if bits & STOP != 0 {
+                    break;
+                }
+                if bits & REORDER != 0 {
+                    if let Err(e) = repo.set_history_order(order_of()) {
+                        eprintln!("History を並べ直せない: {e}");
+                    }
+                    // 並べ直した History と、その行の ref の印を読み直す。
+                    bits |= amonhen_watch::Changes::REFS.0;
+                }
                 let changes = amonhen_watch::Changes(bits);
+                // 何が変わったかを Activity の Events に（GTK4 版と同じ言い方）。
+                let what: Vec<String> = [
+                    (amonhen_watch::Changes::REFS, "ref".to_owned()),
+                    (amonhen_watch::Changes::INDEX, "index".to_owned()),
+                    (
+                        amonhen_watch::Changes::WORKTREE,
+                        amonhen_model::tr!("working tree"),
+                    ),
+                    (amonhen_watch::Changes::CONFIG, amonhen_model::tr!("config")),
+                ]
+                .into_iter()
+                .filter(|(bit, _)| changes.contains(*bit))
+                .map(|(_, name)| name)
+                .collect();
+                if !what.is_empty() {
+                    crate::activity::event(
+                        &name,
+                        amonhen_model::tr!(
+                            "Changed: {what}",
+                            what = what.join(&amonhen_model::tr!(", "))
+                        ),
+                    );
+                }
                 if bits & REBUILD != 0 {
                     // History の永続キャッシュを捨てて作り直す（View > Rebuild History）。
                     match repo.rebuild_history() {
                         Ok(h) => {
-                            history = h;
+                            history = shape(h);
                             send(Event::History(repo.clone(), history.clone()));
                         }
                         Err(e) => eprintln!("History を作り直せない: {e}"),
                     }
                 } else if changes.contains(amonhen_watch::Changes::REFS) {
-                    match repo.load_history() {
+                    match timed("Reload History", || repo.load_history()) {
                         Ok(h) => {
-                            history = h;
+                            history = shape(h);
                             send(Event::History(repo.clone(), history.clone()));
                         }
                         Err(e) => eprintln!("History を読み直せない: {e}"),
@@ -398,12 +756,21 @@ impl Data {
             working_wanted: None,
             working_changed: false,
             labels: HashMap::new(),
+            signatures: HashMap::new(),
+            verifying: HashSet::new(),
+            unverified: Vec::new(),
+            worktree_labels: HashMap::new(),
+            worktree_heads: Vec::new(),
+            elsewhere: HashSet::new(),
             matches: Vec::new(),
+            base: None,
+            matching_only: false,
             multi: Vec::new(),
             selection_seq: 0,
             searching: None,
             search: None,
             commit: None,
+            single_file: false,
             commit_wanted: None,
             syntax_changed: false,
             extras_changed: false,
@@ -416,6 +783,11 @@ impl Data {
             rx,
             wake,
             changed_tx,
+            topo,
+            fold,
+            expanded,
+            scope,
+            scope_changed: false,
         }
     }
 
@@ -425,9 +797,71 @@ impl Data {
         let _ = self.changed_tx.send(all);
     }
 
+    /// 出す History を替える（行の番号が変わるので、行ごとのものは捨てる）。
+    fn show(&mut self, history: Arc<HistorySnapshot>, labels: Labels, matches: Vec<u32>) {
+        self.history = Some(history);
+        self.history_changed = true;
+        self.labels = labels;
+        self.place_worktrees();
+        // 署名の結果はコミットのものなので残すが、検証中のものは新しい世代で頼み直す。
+        self.verifying.clear();
+        self.matches = matches;
+        self.multi.clear();
+        self.commit = None;
+        self.commit_wanted = None;
+        self.chunks.clear();
+        self.loading.clear();
+    }
+
+    /// 探す History（一致したコミットだけを出している間も、元の History）。
+    fn searched(&self) -> Option<&Arc<HistorySnapshot>> {
+        self.base
+            .as_ref()
+            .map(|(h, _, _)| h)
+            .or(self.history.as_ref())
+    }
+
+    /// 一致したコミットだけを出しているか。
+    pub fn is_filtered(&self) -> bool {
+        self.base.is_some()
+    }
+
+    /// 一致したコミットだけを出すか（一致がなければ元の History のまま。GTK4 版と同じ）。
+    pub fn set_matching_only(&mut self, on: bool) {
+        self.matching_only = on;
+        if !on {
+            if let Some((history, matches, labels)) = self.base.take() {
+                self.show(history, labels, matches);
+            }
+            return;
+        }
+        if self.base.is_none() {
+            let matches = self.matches.clone();
+            self.filter(matches);
+        }
+    }
+
+    /// 一致したコミットだけの History を裏で作る（linux の 25 万件で 50 ms ほど。GTK4 版と同じく裏で）。
+    fn filter(&mut self, matches: Vec<u32>) {
+        let (Some(repo), Some(base)) = (self.repo.clone(), self.searched().cloned()) else {
+            return;
+        };
+        if matches.is_empty() {
+            return;
+        }
+        let refs = self.refs.clone();
+        let (tx, wake) = (self.tx.clone(), self.wake.clone());
+        std::thread::spawn(move || {
+            let filtered = repo.history_matching(&base, &matches);
+            let labels = refs.map_or_else(Labels::new, |r| labels(&filtered, &r.refs));
+            let _ = tx.send(Event::Filtered(base.generation, filtered, labels, matches));
+            wake();
+        });
+    }
+
     /// History を `query`（コアの問い合わせの書き方）で探す。答えは `search` に届く。
     pub fn search(&mut self, query: String) {
-        let (Some(repo), Some(history)) = (self.repo.clone(), self.history.clone()) else {
+        let (Some(repo), Some(history)) = (self.repo.clone(), self.searched().cloned()) else {
             return;
         };
         self.searching = Some(query.clone());
@@ -443,7 +877,8 @@ impl Data {
 
     /// Working Copy のファイルの差分を裏で読む。1 本の差分で表せれば HEAD と作業ツリーの差分、表せなければ変更の
     /// ある側（両方なら作業ツリーの側）。`None` なら出さない。
-    pub fn want_working(&mut self, entry: Option<amonhen_model::StatusEntry>) {
+    /// `prefer_staged`: 両側に変更があって 1 本の差分で表せないとき、stage 済みの側を読むか。
+    pub fn want_working(&mut self, entry: Option<amonhen_model::StatusEntry>, prefer_staged: bool) {
         let Some(entry) = entry else {
             self.working_wanted = None;
             self.working = None;
@@ -458,7 +893,15 @@ impl Data {
         std::thread::spawn(move || {
             let diff = match repo.working_diff_combined(&entry, &PROFILE).ok().flatten() {
                 Some(diff) => Ok(diff),
-                None => repo.working_diff(&entry, !entry.is_unstaged(), &PROFILE),
+                // 1 本の差分で表せなければ、選んだ側（片側にしか変更がなければその側。GTK4 版と同じ）。
+                None => {
+                    let staged = if entry.is_staged() && entry.is_unstaged() {
+                        prefer_staged
+                    } else {
+                        !entry.is_unstaged()
+                    };
+                    repo.working_diff(&entry, staged, &PROFILE)
+                }
             };
             let event = match diff {
                 Ok(diff) => {
@@ -507,9 +950,176 @@ impl Data {
         });
     }
 
+    /// Working Copy の差分の `row` の行を含めているか（変わった行でなければ None）。
+    pub fn working_row_staged(&self, row: usize) -> Option<bool> {
+        use amonhen_layout::DiffRow;
+        let working = self.working.as_ref()?;
+        let kind = working.diff.view.rows.get(row)?.kind;
+        if !matches!(kind, DiffRow::ADDED | DiffRow::REMOVED) {
+            return None;
+        }
+        working.diff.combined.as_ref()?.get(row).copied()
+    }
+
+    /// Working Copy の差分の `a`〜`b` の変わった行を、まとめて `stage`（含める・外す）にする（印の上を引いた
+    /// ときと Shift+クリック。GTK4 版の印の範囲）。
+    pub fn set_working_range(&self, a: usize, b: usize, stage: bool) {
+        use amonhen_layout::DiffRow;
+        let Some(working) = &self.working else { return };
+        let Some(combined) = working.diff.combined.as_ref() else {
+            return;
+        };
+        let rows: Vec<usize> = (a.min(b)..=a.max(b))
+            .filter(|&r| {
+                working
+                    .diff
+                    .view
+                    .rows
+                    .get(r)
+                    .is_some_and(|x| matches!(x.kind, DiffRow::ADDED | DiffRow::REMOVED))
+                    && combined.get(r).copied() != Some(stage)
+            })
+            .collect();
+        if rows.is_empty() {
+            return;
+        }
+        let (Some(repo), diff, changed) = (
+            self.repo.clone(),
+            working.diff.clone(),
+            self.changed_tx.clone(),
+        ) else {
+            return;
+        };
+        std::thread::spawn(move || {
+            if let Err(e) = repo.set_rows_staged(&diff, &rows, stage) {
+                eprintln!("行を含められない: {e}");
+            }
+            let _ = changed.send(amonhen_watch::Changes::INDEX.0);
+        });
+    }
+
+    /// Working Copy の差分の hunk の見出し（`row`）の行をまとめて含める・外す（GTK4 版の hunk の印）。1 行でも
+    /// 含めていなければすべて含め、すべて含めていればすべて外す。
+    pub fn toggle_working_hunk(&self, row: usize) {
+        let Some(working) = &self.working else { return };
+        let Some(combined) = working.diff.combined.as_ref() else {
+            return;
+        };
+        let rows = hunk_rows(&working.diff.view.rows, row);
+        if rows.is_empty() {
+            return;
+        }
+        let stage = rows
+            .iter()
+            .any(|&r| !combined.get(r).copied().unwrap_or(false));
+        let (Some(repo), diff, changed) = (
+            self.repo.clone(),
+            working.diff.clone(),
+            self.changed_tx.clone(),
+        ) else {
+            return;
+        };
+        std::thread::spawn(move || {
+            if let Err(e) = repo.set_rows_staged(&diff, &rows, stage) {
+                eprintln!("hunk を含められない: {e}");
+            }
+            let _ = changed.send(amonhen_watch::Changes::INDEX.0);
+        });
+    }
+
+    /// Working Copy の差分で右クリックした `row` の行（変わった行ならその行、hunk の見出しならその hunk の行）と、
+    /// そのうちに含めている行があるか（含めている行は捨てられない）。stage 済みの側の差分では None。
+    pub fn working_rows_at(&self, row: usize) -> Option<(Vec<usize>, bool)> {
+        use amonhen_layout::DiffRow;
+        let working = self.working.as_ref()?;
+        if working.diff.staged {
+            return None;
+        }
+        let rows = match working.diff.view.rows.get(row)?.kind {
+            DiffRow::ADDED | DiffRow::REMOVED => vec![row],
+            DiffRow::HUNK => hunk_rows(&working.diff.view.rows, row),
+            _ => return None,
+        };
+        let staged = working
+            .diff
+            .combined
+            .as_ref()
+            .is_some_and(|c| rows.iter().any(|&r| c.get(r).copied().unwrap_or(false)));
+        (!rows.is_empty()).then_some((rows, staged))
+    }
+
+    /// Working Copy の今の差分（行を捨てるのに使う）。
+    pub fn working_diff(&self) -> Option<(Arc<Repository>, Arc<amonhen_core::WorkingDiff>)> {
+        Some((self.repo.clone()?, self.working.as_ref()?.diff.clone()))
+    }
+
     /// Working Copy の status を読み直す（stage・コミットの後。見張りが拾う前に出す）。
     pub fn reload_status(&self) {
         let _ = self.changed_tx.send(amonhen_watch::Changes::INDEX.0);
+    }
+
+    /// History の並び順を変えて並べ直す（View の Date Order・Topological Order）。
+    pub fn reorder(&self, order: amonhen_model::HistoryOrder) {
+        self.topo.store(
+            order == amonhen_model::HistoryOrder::Topo,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        let _ = self.changed_tx.send(REORDER);
+    }
+
+    /// History の範囲。
+    pub fn scope(&self) -> Scope {
+        self.scope.lock().unwrap().clone()
+    }
+
+    /// History の範囲を変えて作り直す（GTK4 版の `set_scope`）。
+    pub fn set_scope(&mut self, scope: Scope) {
+        {
+            let mut current = self.scope.lock().unwrap();
+            if *current == scope {
+                return;
+            }
+            *current = scope;
+        }
+        self.scope_changed = true;
+        let _ = self.changed_tx.send(REORDER);
+    }
+
+    /// マージ済みブランチを折りたたむかを変えて、出し直す（View の Fold Merged Branches）。
+    pub fn set_fold(&self, value: bool) {
+        self.fold.store(value, std::sync::atomic::Ordering::Relaxed);
+        let _ = self.changed_tx.send(REORDER);
+    }
+
+    /// 折りたたんだ History での、コミット `id` の merge の隠しているコミットの数（取り込んだ側を見せていれば 0。
+    /// 右クリックの Show n Merged Commits・Fold Merged Commits。どちらでもなければ None）。
+    pub fn merge_fold(&self, id: &str) -> Option<u32> {
+        if !self.fold.load(std::sync::atomic::Ordering::Relaxed) {
+            return None;
+        }
+        let oid = amonhen_model::Oid::from_hex(id)?;
+        let history = self.history.as_ref()?;
+        let row = history.row_of(&oid)?;
+        let hidden = history.folded.get(row as usize).copied().unwrap_or(0);
+        let open = self.expanded.lock().unwrap().contains(&oid);
+        (hidden > 0 || open).then_some(hidden)
+    }
+
+    /// 折りたたんだ merge の取り込んだ側を見せる・たたむ。
+    pub fn toggle_merge(&self, id: &str) {
+        let Some(oid) = amonhen_model::Oid::from_hex(id) else {
+            return;
+        };
+        {
+            let mut expanded = self.expanded.lock().unwrap();
+            match expanded.iter().position(|e| *e == oid) {
+                Some(i) => {
+                    expanded.remove(i);
+                }
+                None => expanded.push(oid),
+            }
+        }
+        let _ = self.changed_tx.send(REORDER);
     }
 
     /// History の永続キャッシュを捨てて作り直し、ref も読み直す（View > Rebuild History）。
@@ -533,16 +1143,9 @@ impl Data {
                         continue;
                     }
                     self.repo = Some(repo);
-                    self.history = Some(history);
-                    self.history_changed = true;
-                    self.labels.clear();
-                    // 行の番号が変わるので、検索の一致も捨てる（探し直すのは FE）。
-                    self.matches.clear();
-                    self.multi.clear();
-                    self.commit = None;
-                    self.commit_wanted = None;
-                    self.chunks.clear();
-                    self.loading.clear();
+                    // 新しい History では、一致したコミットだけの History も作り直す（探し直すのは FE）。
+                    self.base = None;
+                    self.show(history, Labels::new(), Vec::new());
                     changed = true;
                 }
                 Event::Chunk(generation, index, chunk) => {
@@ -556,6 +1159,19 @@ impl Data {
                         changed = true;
                     }
                 }
+                Event::Signatures(generation, found) => {
+                    if self
+                        .history
+                        .as_ref()
+                        .is_some_and(|h| h.generation == generation)
+                    {
+                        for (id, signature) in found {
+                            self.verifying.remove(&id);
+                            self.signatures.insert(id, signature);
+                        }
+                        changed = true;
+                    }
+                }
                 Event::Refs(generation, refs, labels) => {
                     if self
                         .history
@@ -563,6 +1179,10 @@ impl Data {
                         .is_some_and(|h| h.generation == generation)
                     {
                         self.labels = labels;
+                    } else if let Some((h, _, base_labels)) = &mut self.base
+                        && h.generation == generation
+                    {
+                        *base_labels = labels;
                     }
                     self.refs = Some(refs);
                     changed = true;
@@ -582,6 +1202,9 @@ impl Data {
                         }
                         self.commit = Some(shown);
                         changed = true;
+                        if self.single_file {
+                            self.show_only(Some(0));
+                        }
                     }
                 }
                 Event::Syntax(generation, row, version, syntax) => {
@@ -614,15 +1237,19 @@ impl Data {
                     }
                 }
                 Event::Search(generation, query, rows) => {
-                    let current = self
-                        .history
-                        .as_ref()
-                        .is_some_and(|h| h.generation == generation);
+                    let current = self.searched().is_some_and(|h| h.generation == generation);
                     if current && self.searching.as_deref() == Some(query.as_str()) {
                         self.searching = None;
+                        // 一致したコミットだけを出している間に探し直したら、元の History に戻してから作り直す。
+                        if let Some((history, _, labels)) = self.base.take() {
+                            self.show(history, labels, Vec::new());
+                        }
                         self.search = Some(match rows {
                             Ok(rows) => {
                                 self.matches = rows;
+                                if self.matching_only {
+                                    self.filter(self.matches.clone());
+                                }
                                 SearchDone::Found(query)
                             }
                             Err(e) => {
@@ -630,6 +1257,21 @@ impl Data {
                                 SearchDone::Failed(query, e)
                             }
                         });
+                        changed = true;
+                    }
+                }
+                Event::Filtered(generation, filtered, labels, matches) => {
+                    let current = self
+                        .history
+                        .as_ref()
+                        .is_some_and(|h| h.generation == generation);
+                    if current && self.matching_only && self.base.is_none() {
+                        let base = self.history.clone().expect("History");
+                        let base_labels = std::mem::take(&mut self.labels);
+                        self.base = Some((base, matches, base_labels));
+                        // すべて一致なので塗らない（次・前は行を 1 つずつ。GTK4 版と同じ）。
+                        let rows = (0..filtered.graph.len() as u32).collect();
+                        self.show(filtered, labels, rows);
                         changed = true;
                     }
                 }
@@ -687,7 +1329,7 @@ impl Data {
                 let stacked = repo.stacked_diff(&changes).map_err(|e| e.to_string())?;
                 Ok(CommitShown::new(row, info, Arc::new(stacked)))
             };
-            let shown = match load() {
+            let shown = match timed("Load diff", load) {
                 Ok(shown) => shown,
                 Err(e) => {
                     let _ = tx.send(Event::Failed(format!("コミットを読めない: {e}")));
@@ -788,6 +1430,51 @@ impl Data {
         });
     }
 
+    /// `base` から `tip` までの変更すべてを裏で読む（Push で送る変更すべて。macOS 版の PushSheet の range）。
+    /// 詳細の欄の見出しは `title`・`note` と、コミットの 1 行（短い ID・件名・作者）の `lines`。
+    pub fn want_range(
+        &mut self,
+        base: Option<amonhen_model::Oid>,
+        tip: amonhen_model::Oid,
+        title: String,
+        note: String,
+        lines: Vec<[String; 3]>,
+    ) {
+        let (Some(repo), Some(history)) = (self.repo.clone(), self.history.clone()) else {
+            return;
+        };
+        self.selection_seq = self.selection_seq.wrapping_add(1) & 0x7fff_ffff;
+        let key = 0x8000_0000 | self.selection_seq;
+        self.commit_wanted = Some(key);
+        self.early_extras = None;
+        let generation = history.generation;
+        let (tx, wake) = (self.tx.clone(), self.wake.clone());
+        std::thread::spawn(move || {
+            let load = || -> Result<CommitShown, String> {
+                let changes = repo
+                    .changes_between(base.as_ref(), &tip)
+                    .map_err(|e| e.to_string())?;
+                let stacked = repo.stacked_diff(&changes).map_err(|e| e.to_string())?;
+                let info = serde_json::json!({ "selection": {
+                    "kind": "range", "count": lines.len(), "lines": lines,
+                    "title": title, "note": note,
+                }});
+                Ok(CommitShown::new(key, info, Arc::new(stacked)))
+            };
+            let shown = match load() {
+                Ok(shown) => shown,
+                Err(e) => {
+                    let _ = tx.send(Event::Failed(format!("差分を読めない: {e}")));
+                    return wake();
+                }
+            };
+            let (stacked, collapsed) = (shown.stacked.clone(), shown.collapsed.clone());
+            let _ = tx.send(Event::Commit(generation, Box::new(shown)));
+            wake();
+            send_syntax(tx, wake, generation, key, 0, stacked, collapsed);
+        });
+    }
+
     /// 複数選んだ行（`rows`、昇順で 2 つ以上）の差分と、詳細の欄の見出しを裏で読む（GTK4 版と同じく、コアの
     /// `selection_diff` が範囲・2 つ・とびとびで差分の取り方を決める）。
     pub fn want_selection(&mut self, rows: Vec<u32>) {
@@ -843,12 +1530,109 @@ impl Data {
         });
     }
 
+    /// 行のコミットの署名の印（署名がなければ None、まだ検証していなければ Some(None) で、裏で検証を頼む）。
+    pub fn signature_mark(&mut self, id: amonhen_model::Oid) -> Option<Signature> {
+        let known = self.signatures.get(&id).copied();
+        if known.is_none() && !self.verifying.contains(&id) && !self.unverified.contains(&id) {
+            self.unverified.push(id);
+        }
+        known
+    }
+
+    /// 頼まれた署名を裏でまとめて検証する（描いた後に呼ぶ。GTK4 版は 8 個ずつ）。
+    pub fn verify_signatures(&mut self) {
+        if self.unverified.is_empty() {
+            return;
+        }
+        let (Some(repo), Some(history)) = (self.repo.clone(), self.history.as_ref()) else {
+            return;
+        };
+        let generation = history.generation;
+        let pending = std::mem::take(&mut self.unverified);
+        self.verifying.extend(pending.iter().copied());
+        let (tx, wake) = (self.tx.clone(), self.wake.clone());
+        std::thread::spawn(move || {
+            for batch in pending.chunks(8) {
+                let oids: Vec<String> = batch.iter().map(ToString::to_string).collect();
+                let command = serde_json::json!({ "op": "verifySignatures", "oids": oids });
+                let reply: serde_json::Value =
+                    serde_json::from_str(&repo.run_json(&command.to_string())).unwrap_or_default();
+                let checks = reply["info"]["checks"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default();
+                let found = batch
+                    .iter()
+                    .zip(checks.iter())
+                    .map(|(id, c)| (*id, Signature::of(c)))
+                    .collect();
+                let _ = tx.send(Event::Signatures(generation, found));
+                wake();
+            }
+        });
+    }
+
+    /// History の差分の `diff_row` 行目が入っているファイル（右クリックのメニュー）。
+    pub fn file_at(&self, diff_row: usize) -> Option<DiffFile> {
+        let commit = self.commit.as_ref()?;
+        let rows = commit.diff.rows.get(..=diff_row)?;
+        let index = commit.file_index(
+            rows.iter()
+                .filter(|r| r.kind == amonhen_layout::DiffRow::FILE)
+                .count()
+                .checked_sub(1)?,
+        );
+        self.file_of(index)
+    }
+
+    /// コミットの `index` 番目の変更ファイル（変更ファイルの一覧の右クリック）。
+    pub fn file_of(&self, index: usize) -> Option<DiffFile> {
+        let commit = self.commit.as_ref()?;
+        let oid = commit.info["oid"].as_str()?;
+        self.file_with(index, &crate::viewed::paths(oid))
+    }
+
+    /// コミットの変更ファイルすべて（変更ファイルの一覧の行ごとの右クリック。見たことにしたパスは 1 度だけ読む）。
+    pub fn files(&self) -> Vec<DiffFile> {
+        let Some(commit) = self.commit.as_ref() else {
+            return Vec::new();
+        };
+        let viewed = commit.info["oid"]
+            .as_str()
+            .map(crate::viewed::paths)
+            .unwrap_or_default();
+        (0..commit.stacked.files.len())
+            .filter_map(|i| self.file_with(i, &viewed))
+            .collect()
+    }
+
+    fn file_with(
+        &self,
+        index: usize,
+        viewed: &std::collections::HashSet<String>,
+    ) -> Option<DiffFile> {
+        let commit = self.commit.as_ref()?;
+        let path = commit.stacked.files.get(index)?.0.clone();
+        // 足した・消したファイルか（GTK4 版の `deleted` の手元の決め方と同じく、前後の中身が空か）。
+        let diff = &commit.stacked.files.get(index)?.1;
+        let deleted = diff.new.is_empty() && !diff.old.is_empty();
+        let added = diff.old.is_empty() && !diff.new.is_empty();
+        let oid = commit.info["oid"].as_str().map(str::to_owned);
+        let viewed = viewed.contains(&path);
+        Some(DiffFile {
+            index,
+            collapsed: commit.collapsed.get(index).copied().unwrap_or(false),
+            commit: oid,
+            viewed,
+            deleted,
+            added,
+            path,
+        })
+    }
+
     /// 差分の `diff_row` 行目（ファイルの見出し）のファイルを畳む・開く。見出しでなければ何もしない。
     pub fn toggle_file(&mut self, diff_row: usize) -> bool {
-        let Some(generation) = self.history.as_ref().map(|h| h.generation) else {
-            return false;
-        };
-        let Some(commit) = self.commit.as_mut() else {
+        let Some(commit) = self.commit.as_ref() else {
             return false;
         };
         let rows = &commit.diff.rows;
@@ -862,25 +1646,103 @@ impl Data {
             .iter()
             .filter(|r| r.kind == amonhen_layout::DiffRow::FILE)
             .count();
-        commit.collapsed[file] = !commit.collapsed[file];
-        commit.diff = commit.stacked.view(&commit.collapsed, &PROFILE);
-        commit.index_highlights();
-        commit.syntax.clear();
-        commit.version += 1;
+        let file = commit.file_index(file);
+        self.toggle_file_index(file)
+    }
+
+    /// 差分の `file` 番目のファイルを畳む・開く。
+    pub fn toggle_file_index(&mut self, file: usize) -> bool {
+        let Some(generation) = self.history.as_ref().map(|h| h.generation) else {
+            return false;
+        };
+        let Some(commit) = self.commit.as_mut() else {
+            return false;
+        };
+        let Some(collapsed) = commit.collapsed.get_mut(file) else {
+            return false;
+        };
+        *collapsed = !*collapsed;
+        let (stacked, collapsed) = commit.rebuild_view();
         send_syntax(
             self.tx.clone(),
             self.wake.clone(),
             generation,
             commit.row,
             commit.version,
-            commit.stacked.clone(),
-            commit.collapsed.clone(),
+            stacked,
+            collapsed,
+        );
+        true
+    }
+
+    /// 1 ファイルずつ出すか（View の All Files in One Diff を切ったとき）。今のコミットも出し直す。
+    pub fn set_single_file(&mut self, single: bool) -> bool {
+        self.single_file = single;
+        let index = self
+            .commit
+            .as_ref()
+            .map(|c| c.only.unwrap_or(0))
+            .filter(|_| single);
+        self.show_only(index)
+    }
+
+    /// 出しているコミットの `index` 番目のファイルだけを出す（None なら全ファイル）。変わったら true。
+    pub fn show_only(&mut self, index: Option<usize>) -> bool {
+        let Some(generation) = self.history.as_ref().map(|h| h.generation) else {
+            return false;
+        };
+        let Some(commit) = self.commit.as_mut() else {
+            return false;
+        };
+        // ファイルが 1 つなら、並べても同じ。
+        let index = index.filter(|_| commit.stacked.files.len() > 1);
+        if commit.only == index {
+            return false;
+        }
+        commit.only = index;
+        let (stacked, collapsed) = commit.rebuild_view();
+        send_syntax(
+            self.tx.clone(),
+            self.wake.clone(),
+            generation,
+            commit.row,
+            commit.version,
+            stacked,
+            collapsed,
         );
         true
     }
 
     pub fn repo(&self) -> Option<Arc<Repository>> {
         self.repo.clone()
+    }
+
+    /// 各 worktree の HEAD の札と、ほかの worktree が checkout しているブランチ（GTK4 版の
+    /// `HistoryView::set_worktrees`）。worktree が 1 つなら空で呼ぶ。
+    pub fn set_worktrees(
+        &mut self,
+        heads: Vec<(amonhen_model::Oid, String, bool)>,
+        elsewhere: HashSet<String>,
+    ) {
+        self.worktree_heads = heads;
+        self.elsewhere = elsewhere;
+        self.place_worktrees();
+    }
+
+    /// worktree の札を今の History の行に置く。
+    fn place_worktrees(&mut self) {
+        let mut labels = Labels::new();
+        for (head, name, editing) in &self.worktree_heads {
+            if let Some(row) = self.row_of(head) {
+                labels.entry(row).or_default().push(RefLabel {
+                    name: name.clone(),
+                    kind: RefKind::Local,
+                    head: *editing,
+                    worktree: true,
+                });
+            }
+        }
+        self.worktree_labels = labels;
     }
 
     /// コミットの行（今の History の）。
@@ -965,6 +1827,7 @@ fn labels(history: &HistorySnapshot, refs: &Refs) -> Labels {
             name: entry.name.clone(),
             kind: entry.kind,
             head,
+            worktree: false,
         });
     }
     for row in labels.values_mut() {

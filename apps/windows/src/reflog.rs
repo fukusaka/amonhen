@@ -96,11 +96,14 @@ pub fn view(
 ) -> View {
     let chosen = selected.and_then(|i| entries.get(i));
     let button = |title: &str, key: Option<String>, tip: String| {
-        Button::new()
-            .is_enabled(key.is_some())
-            .on_click((callbacks.button)(key.unwrap_or_default()))
-            .content(TextBlock::new().text(title))
-            .tooltip(tip)
+        crate::tip::holder(
+            Button::new()
+                .is_enabled(key.is_some())
+                .on_click((callbacks.button)(key.unwrap_or_default()))
+                .content(TextBlock::new().text(title)),
+            tip,
+            0,
+        )
     };
     // 上の帯: 選んだ行のコミットにブランチを作る・detached でチェックアウトする（GTK4 版と同じ言葉）。
     let bar = StackPanel::new()

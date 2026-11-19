@@ -21,7 +21,7 @@ use windows::Win32::System::Threading::WaitForSingleObjectEx;
 use windows_core_reactor::{IInspectable, Interface as _, Ref};
 use windows_reactor::*;
 
-use crate::render::{DIFF_ROW_HEIGHT, Options, ROW_HEIGHT, Renderer, Surface};
+use crate::render::{DIFF_ROW_HEIGHT, Options, Renderer, Surface, row_height};
 use crate::sidebar::{self, BranchGroups};
 use crate::{Args, Session};
 
@@ -36,12 +36,53 @@ thread_local! {
     static HISTORY_FLYOUT: RefCell<Option<xaml::FlyoutBase>> = const { RefCell::new(None) };
     /// サイドバーの木の生の要素と、右クリックで開く位置（キーボードで開いたときは項目そのものに出す）。
     static SIDEBAR_ELEMENT: RefCell<Option<xaml::UIElement>> = const { RefCell::new(None) };
+    /// ツールチップを付けたサイドバーの項目（要素の identity と付けた文字。同じなら付け直さない）。
+    static SIDEBAR_TIP: RefCell<Option<(usize, Option<String>)>> = const { RefCell::new(None) };
+    /// ほかの worktree の変更を最後に数えた時刻と、全部を数え直した時刻（10 秒ごと・5 分ごと。GTK4 版と同じ）。
+    static WORKTREE_TICK: std::cell::Cell<(Instant, Instant)> =
+        std::cell::Cell::new((Instant::now(), Instant::now()));
+    /// 今のブランチの名前（終わった操作の一言に使う。ref を読むたびに書く）。
+    static HEAD_NAME: RefCell<String> = const { RefCell::new(String::new()) };
+    /// Push の画面を出しているか（出していれば、Enter で既定のボタンを押せるか。Force Push は押せない）。
+    static PUSH_KEYS: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+    /// 窓を出す位置・大きさ（`--place`）と、試した回数（窓ができるまで描くたびに試す）。
+    static PENDING_PLACE: std::cell::Cell<Option<([i32; 4], u32)>> = const { std::cell::Cell::new(None) };
+    /// 境目の今の大きさ（サイドバーの幅、右の列の幅、詳細の高さ。描くたびに書く）と、動かしている境目と、押した
+    /// 位置とそのときの大きさ。
+    static SPLIT_SIZES: std::cell::Cell<(f64, Option<f64>, f64)> =
+        const { std::cell::Cell::new((260.0, None, 240.0)) };
+    static SPLIT_DRAG: std::cell::Cell<Option<(Split, f64, f64)>> = const { std::cell::Cell::new(None) };
+    /// 押す・動かすをまだ付けていない境目のつまみ。
+    static SPLIT_PENDING: RefCell<Vec<(ElementRef<Grid>, Split)>> = const { RefCell::new(Vec::new()) };
+    /// 動かしている境目の親（位置を測る Grid）。
+    static SPLIT_PARENT: RefCell<Option<xaml::UIElement>> = const { RefCell::new(None) };
+    /// 等幅にするのを待っている要素と、試した回数（`retry_monospace`）。
+    static PENDING_MONOSPACE: RefCell<Vec<(IInspectable, u32)>> = const { RefCell::new(Vec::new()) };
+    /// 終わった操作の一言を消す時刻。
+    static FLASH_UNTIL: std::cell::Cell<Option<Instant>> = const { std::cell::Cell::new(None) };
     /// Activity を開いている間、読み直しを頼んだ最後の時刻（0.5 秒ごとに頼む）。
     static ACTIVITY_TICK: std::cell::Cell<Option<Instant>> = const { std::cell::Cell::new(None) };
+    /// 走っている操作の数と、最後に数えた時（ステータスバーの ⟳ n。0.5 秒ごとに数える）。
+    static RUNNING: std::cell::Cell<(usize, Option<Instant>)> = const { std::cell::Cell::new((0, None)) };
+    /// 自動の fetch の間隔（分。0 はしない）と、最後に数え始めた時。
+    static AUTO_FETCH: std::cell::Cell<(u32, Instant)> =
+        std::cell::Cell::new((crate::prefs::auto_fetch_minutes(), Instant::now()));
     /// サイドバーのメニューを付けておく、押されない空の Grid。
     static SIDEBAR_MENU_HOST: RefCell<Option<xaml::UIElement>> = const { RefCell::new(None) };
     static SIDEBAR_AT: RefCell<Option<(xaml::UIElement, Option<xaml::Point>)>> =
         const { RefCell::new(None) };
+    /// 差分の欄と、右クリックした位置（メニューを作り直してから、そこで開く）。
+    static DIFF_AT: RefCell<Option<(xaml::UIElement, xaml::Point)>> = const { RefCell::new(None) };
+    /// Working Copy の差分で最後に押した印の行と、その行にした状態（Shift+クリックの起点）。
+    static MARK_ANCHOR: std::cell::Cell<Option<(usize, bool)>> = const { std::cell::Cell::new(None) };
+    /// 印の上を引いている間（起点の行、今の行、起点にした状態）。離したら間の行をまとめて同じ状態にする。
+    static MARK_DRAG: std::cell::Cell<Option<(usize, usize, bool)>> = const { std::cell::Cell::new(None) };
+    /// History でコミットを運んでいる間（押した行、押した高さ、動かし始めたか）。
+    static HISTORY_DRAG: std::cell::Cell<Option<(u32, f64, bool)>> = const { std::cell::Cell::new(None) };
+    /// マージエディタで、Ctrl+Z で戻せる・Ctrl+Y でやり直せる書き換えがあるか（描くたびに書き直す）。
+    static MERGE_UNDO: std::cell::Cell<(bool, bool)> = const { std::cell::Cell::new((false, false)) };
+    /// 右クリックで外しておいた差分のメニュー（作り直したら付き直す）。
+    static DIFF_FLYOUT: RefCell<Option<xaml::FlyoutBase>> = const { RefCell::new(None) };
     /// History と差分に付けたイベント（持っている間だけ届く）。
     static REVOKERS: RefCell<Vec<windows_core_reactor::EventRevoker>> =
         const { RefCell::new(Vec::new()) };
@@ -51,8 +92,60 @@ thread_local! {
 const WHEEL_ROWS: f32 = 3.0;
 
 pub fn run(args: Args, started: Instant) -> Result<(), String> {
+    // Repositories の「開いた日時」・すべての一覧に出す（まだどこにもなければブックマークにも入れる）。
+    if let Ok(path) = std::path::absolute(&args.repo)
+        && path.join(".git").exists()
+    {
+        crate::repositories::record_opened(&path);
+    }
     ARGS.with(|a| *a.borrow_mut() = Some((args, started)));
-    App::run_component::<Root>(()).map_err(|e| format!("WinUI を始められない: {e}"))
+    App::run_component::<Shell>(()).map_err(|e| format!("WinUI を始められない: {e}"))
+}
+
+/// 前に出すタブのリポジトリと画面を、次に作る根の部品に渡す（`tabs` がタブを替えるときに呼ぶ）。
+pub fn set_target(tab: &crate::tabs::Tab) {
+    ARGS.with(|a| {
+        if let Some((args, _)) = a.borrow_mut().as_mut() {
+            args.repo = tab.location.clone().into();
+            args.repositories = tab.repositories;
+            args.working_copy = tab.working_copy;
+            args.place = None;
+        }
+    });
+    if let Ok(path) = std::path::absolute(&tab.location)
+        && path.join(".git").exists()
+    {
+        crate::repositories::record_opened(&path);
+    }
+}
+
+/// 窓の外側の部品。前のタブのリポジトリの根の部品（`Root`）を 1 つだけ置き、タブを替えたら作り直す。
+struct Shell {
+    generation: u64,
+}
+
+impl Component for Shell {
+    type Input = ();
+    type Message = ();
+
+    fn create(_input: &(), context: &ComponentContext<Self>) -> Self {
+        let sender = context.sender();
+        crate::tabs::set_remount(move || {
+            sender.send(());
+        });
+        Self { generation: 0 }
+    }
+
+    fn update(&mut self, _message: (), _context: &ComponentContext<Self>) {
+        self.generation += 1;
+    }
+
+    fn view(&self, _input: &(), _context: &mut ViewContext<Self>) -> View {
+        Grid::new().children((View::keyed_fragment([(
+            self.generation.to_string(),
+            View::component::<Root>(()),
+        )]),))
+    }
 }
 
 fn with_history(f: impl FnOnce(&mut HistoryView)) {
@@ -64,13 +157,66 @@ fn with_history(f: impl FnOnce(&mut HistoryView)) {
 struct Root {
     /// 窓の根の Grid（メニューのショートカットを、フォーカスのある部品より先に受ける）。
     root: ElementRef<Grid>,
+    /// ツールバーを包む部品（Pull・Push のバッジを付けるため）。
+    toolbar: ElementRef<Grid>,
     panel: ElementRef<SwapChainPanel>,
     area: ElementRef<Grid>,
     diff_panel: ElementRef<SwapChainPanel>,
     diff_area: ElementRef<Grid>,
+    /// 差分で右クリックしたファイル（見出しのメニューの中身）。
+    diff_file: Option<crate::data::DiffFile>,
+    /// Working Copy の差分で右クリックした行（その行か hunk の行）と、含めている行があるか。
+    diff_rows: Option<(Vec<usize>, bool)>,
+    /// 署名のあるタグの状態と署名者（サイドバーの印とタグのメニュー）。
+    tag_signatures: std::collections::HashMap<String, (crate::signature::Status, String)>,
+    /// 始めた clone が sparse か（終わったら、取り出すフォルダを尋ねる）。
+    clone_sparse: bool,
     refs: Option<Arc<RefsSnapshot>>,
     /// ローカルブランチの分け方（コアの `branchGroups`）。
     groups: Option<BranchGroups>,
+    /// タグのリモートでの様子（コアの `tagRemotes` の info。リモートと読んだ時刻、タグごとの same・different・
+    /// missing）。
+    tag_remotes: Value,
+    /// Pull・Push のダイアログのコミットの一覧（見出し・数・(oid, 件名, 作者, 時刻)・消えるものか）。
+    sync_lists: Vec<SyncList>,
+    /// ステータスバーに出している、終わった操作の一言。
+    flash: Option<String>,
+    /// ステータスバーの上に出している失敗（閉じるか、次の失敗・成功で消える。GTK4 版の `show_failure`）と、
+    /// 出した回数（取り消しの帯を、出し直した後に消さないため）。
+    failure: Option<(Arc<Repository>, crate::failure::Failure)>,
+    failure_generation: u64,
+    /// 走っている操作の数（GTK4 版の Activity のボタンの回る印と数）。
+    running: usize,
+    /// History で複数選んでいるコミット（上から。右クリックのメニューを複数のもの用にする）。
+    multi: Vec<(String, bool)>,
+    /// 複数選んだ行が続いているか（Combine N Commits… を出す）。
+    multi_consecutive: bool,
+    /// Push のダイアログの注意（GTK4 版の `push_warnings`）。
+    sync_warnings: Vec<String>,
+    /// Pull で手元に新しいコミットがないときの、先へ進める前と後の絵と、Push で送った後の形の絵（`movePreview` の
+    /// 答え）。
+    sync_drawing: Option<Value>,
+    /// Push の画面で選んでいる行（0 は送る変更すべて。`push_rows` の位置）。
+    push_row: Option<usize>,
+    /// 出しているコミットの変更ファイル（詳細と差分の間の一覧）と、選んでいるもの。
+    changed_files: Vec<ChangedFile>,
+    changed_file: Option<usize>,
+    /// Pull で両方に新しいコミットがあるときの、取り込み方ごとの前と後の絵。
+    pull_drawings: Option<PullDrawings>,
+    /// Merge・Rebase の確認の前と後の絵（相手の rev と `mergePreview`・`rewritePreview` の答え）。
+    integrate_drawing: Option<(String, Value, Value)>,
+    /// いくつもの merge の、順ごとのコンフリクトの見込み（調べた順と答え。答えが None なら調べられなかった）。
+    merge_several_steps: Option<(Vec<String>, Option<crate::merge_several::Steps>)>,
+    /// いくつもの merge の前と後の絵（`octopusPreview` の答え。順は描くときに渡す）。
+    merge_several_drawing: Option<Value>,
+    /// stash の詳しい中身（名前 → 中身。ref が変わるたびに読み直す）。
+    stash_details: std::collections::HashMap<String, crate::stashes::Detail>,
+    /// ほかの worktree の変更の数（パス → 数）。
+    worktree_counts: std::collections::HashMap<String, u64>,
+    /// submodule の様子（コアの `submodules` の info の `submodules`）。
+    submodules: Value,
+    /// subtree（コアの `subtrees` の info。`available` と `subtrees`）。
+    subtrees: Value,
     /// 選んだコミットの詳細（`commit_info` の答え）と、時間のかかる分（`commit_extras`）。
     info: Option<(Value, Option<Value>)>,
     error: Option<String>,
@@ -85,12 +231,18 @@ struct Root {
     sidebar_menu_host: ElementRef<Grid>,
     sidebar_key: Option<String>,
     sidebar_request: u64,
+    /// 差分のファイルのメニューを開く頼み（数が変わったら、描き直した後に開く）。
+    diff_menu_request: u64,
     /// 出している画面（サイドバーの Workspace）。
     page: Page,
     repo: Option<Arc<Repository>>,
     status: Option<Arc<StatusSnapshot>>,
     /// Working Copy のコミットの件名と本文。
     summary: String,
+    /// 下書きを覚える鍵（開いている worktree のもの）。
+    draft_key: Option<String>,
+    /// コミットできたら、ref を読み直したところで push する（Commit and Push）。
+    push_after_commit: bool,
     description: String,
     committing: bool,
     amend: bool,
@@ -98,11 +250,37 @@ struct Root {
     search_open: bool,
     query: String,
     search_status: String,
+    /// 一致したコミットだけを出しているか、最後に探した問い合わせ（探すまでは切り替えを押せない）。
+    search_only: bool,
+    /// 詳細だけを右の列いっぱいに広げている（⤢）。
+    details_expanded: bool,
+    /// Working Copy で最後にマウスを載せたファイルの行。
+    working_hovered: Option<String>,
+    last_search: Option<String>,
     search_box: ElementRef<TextBox>,
+    /// 差分の中を探す帯（開いているか、欄、探す文字、件数）。
+    diff_find_open: bool,
+    /// 帯を開いた回数（開くたびに欄にフォーカスを入れる）。
+    diff_find_opened: u64,
+    diff_find_box: ElementRef<TextBox>,
+    /// マージエディタの Result の欄（Ctrl+Z・Ctrl+Y を付ける）。
+    merge_result_box: ElementRef<TextBox>,
+    /// マージエディタの左右と Base の欄の、選んでいるコンフリクトの所。
+    merge_chosen: [ElementRef<Grid>; 3],
+    diff_find_query: String,
+    diff_find_status: String,
+    /// Working Copy の一部だけ含めているチェック（キーごと）と、直前の画面で使ったキー。
+    mixed_checks: RefCell<std::collections::HashMap<String, ElementRef<CheckBox>>>,
+    mixed_used: RefCell<Vec<String>>,
     /// 検索の欄を開いた回数（開いた後にフォーカスとキーを付ける）。
     search_opened: u64,
     /// Working Copy の一覧で選んでいるファイル（パス）。
     working_file: Option<String>,
+    /// 両側に変更があって 1 本の差分で表せないファイルで、stage 済みの側を見るか（GTK4 版の Unstaged / Staged の
+    /// 切り替え。別のファイルを選ぶと作業ツリーの側に戻す）。
+    working_staged: bool,
+    /// 切り替えを出すなら、出している側（stage 済みなら true）。
+    working_sides: Option<bool>,
     /// 走っている操作（ステータスバーに出す）。
     busy: Option<String>,
     /// Range Diff の画面（開いている間だけ。サイドバーに行を出す）と、比べた回数（古い答えを捨てる）。
@@ -110,7 +288,28 @@ struct Root {
     range_request: u64,
     /// Reflog の画面の行（読むまでは None）と、選んでいる行。
     reflog: Option<Vec<crate::reflog::Entry>>,
+    /// History の編集モード（開いている間）。
+    edit: Option<crate::historyedit::State>,
     reflog_selected: Option<usize>,
+    /// worktree（`worktrees` の答え。開いたリポジトリのもの）。
+    worktrees: Vec<WorktreeInfo>,
+    /// リポジトリの形（shallow・partial clone、sparse checkout の印）。
+    form: sidebar::RepositoryForm,
+    /// サイドバーの絞り込み（Branches・Remotes・Tags）。
+    sidebar_filter: String,
+    /// ステータスバーに添える知らせ（自動の fetch の失敗など）。
+    status_note: Option<String>,
+    /// Working Copy のパスの絞り込み。
+    working_filter: String,
+    /// Working Copy の木で畳んでいるディレクトリ。
+    working_collapsed: std::collections::HashSet<String>,
+    /// Working Copy の一覧の見せ方と、切り替えのボタンを押した回数。
+    working_layout: crate::workcopy::Layout,
+    layout_clicks: u64,
+    /// Working Copy のファイルごとの行数（`workingStats`。status が替わるたびに読み直す）。
+    working_stats: std::collections::HashMap<String, (Option<u64>, Option<u64>)>,
+    /// 最近のコミットの（メッセージ, 作者, メール）。最近のメッセージと Co-authored-by の候補。
+    recent_messages: Vec<(String, String, String)>,
     /// Stashes の画面で選んでいる stash の名前。
     stash: Option<String>,
     /// File History の画面（パス、読んだコミット、選んでいる行）。
@@ -121,6 +320,14 @@ struct Root {
     /// Repository Settings の画面と、閉じたら戻る画面。
     repo_settings: Option<crate::reposettings::State>,
     repo_settings_from: Page,
+    /// Repositories の画面と、閉じたら戻る画面・リポジトリの一覧を包む Grid（ダブルクリック・Enter を付ける）。
+    repositories: Option<crate::repositories::State>,
+    /// Repositories の画面を出している間、スキャンするフォルダを見張る（GTK4 版の `watch_scan_roots`）と、
+    /// 見張り直した回数（前の見張りの知らせを捨てる）。
+    scan_watch: Option<amonhen_watch::DirsWatch>,
+    scan_watch_generation: u64,
+    repositories_from: Page,
+    repositories_list: ElementRef<Grid>,
     /// Activity の画面と、閉じたら戻る画面。
     activity: Option<crate::activity::State>,
     activity_from: Page,
@@ -134,6 +341,26 @@ struct Root {
     /// ダイアログの入力の欄（Enter で既定のボタンを押す）と、開いた回数（開いた後にキーを付ける）。
     dialog_input: ElementRef<TextBox>,
     dialog_inputs: u64,
+    /// Working Copy の一覧を包む Grid（Space で含める・外す、Delete・Backspace で捨てる）。
+    working_list: ElementRef<Grid>,
+    /// Working Copy の件名の欄と、Alt+↑・Alt+↓ で呼び出している最近のメッセージ（-1 は呼び出していない）・
+    /// 呼び出す前の件名と本文（GTK4 版の `recall`）。
+    summary_box: ElementRef<TextBox>,
+    /// コミットの説明の欄（等幅の字にする）。
+    description_box: ElementRef<TextBox>,
+    /// Blame の行番号と中身の列（等幅の字にする）。
+    blame_code: ElementRef<Grid>,
+    /// サイドバーの幅、右の列の幅（None なら History と半分ずつ）、右の列の詳細の高さ（DIP。境目を動かして
+    /// 変える。macOS 版の分割の位置と同じく覚えておく）。
+    sidebar_width: f64,
+    right_width: Option<f64>,
+    details_height: f64,
+    /// 境目のつまみ（サイドバー、右の列、詳細の下）。
+    split_handles: [ElementRef<Grid>; 3],
+    /// Repositories の見出しの列の境目のつまみ。
+    column_handles: [ElementRef<Grid>; 4],
+    recall_cursor: isize,
+    before_recall: Option<(String, String)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -147,8 +374,11 @@ enum Page {
     Settings,
     Activity,
     RepoSettings,
+    Repositories,
     Reflog,
     RangeDiff,
+    /// History の編集モード（History の画面と入れ替える）。
+    EditCommits,
 }
 
 /// 窓に重ねるダイアログ（macOS 版のシート、GTK4 版の `sheets`）。
@@ -162,11 +392,75 @@ enum Dialog {
     },
     /// 操作の失敗。
     Failed { title: String, message: String },
+    /// タグのリモートの様子（macOS 版の `TagStatusPopover`、GTK4 版の `refmarks::tag`）。`actions` は Push・
+    /// 置き換えのメニューの項目（キーと見出し。初めの 2 つを主・副のボタンにする）。
+    TagStatus {
+        name: String,
+        actions: Vec<(String, String)>,
+    },
+    /// ファイルをある版に戻す（GTK4 版の `restoresheet::ask`）。
+    Restore {
+        repo: Arc<Repository>,
+        title: String,
+        rev: String,
+        paths: Vec<String>,
+        staged: bool,
+    },
+    /// ブランチの切り替え（GTK4 版の `branchswitcher`）: 打った問い合わせと、選んでいる候補。
+    /// File > Clone…（GTK4 版の `repos::clone`）。欄は URL・置き場所・フォルダの名前、取得する範囲
+    /// （すべて・中身は必要なときに・最近の履歴だけ）と最近の履歴の数、一部のフォルダだけ・submodule も。
+    Clone {
+        url: String,
+        folder: String,
+        name: String,
+        download: usize,
+        depth: usize,
+        sparse: bool,
+        submodules: bool,
+        /// HEAD のない bundle から取り出すブランチ（None なら main・master・最初のブランチ）。
+        branch: Option<String>,
+        /// 最近の履歴の「その他…」で打った数。
+        depth_other: String,
+    },
+    /// View > Customize Toolbar…（GTK4 版はパレットへのドラッグ。ここではチェックと ↑↓ で並べる）。
+    Toolbar(Vec<crate::menus::ToolbarEntry>),
+    /// Quick Open（リポジトリをあいまい検索して新しい窓で開く）。
+    QuickOpen {
+        query: String,
+        selected: usize,
+        candidates: Vec<crate::repositories::Candidate>,
+    },
+    Switcher {
+        repo: Arc<Repository>,
+        query: String,
+        selected: usize,
+        recent: Vec<String>,
+    },
+    /// 履歴のない新しいブランチ（GTK4 版の `new_orphan_branch`）。`keep` は今のファイルを残すか。
+    NewOrphan {
+        repo: Arc<Repository>,
+        name: String,
+        keep: bool,
+    },
+    /// ignore されたファイルを消す（git clean -X）。消すものを先に一覧で見せる（GTK4 版の `delete_ignored_files`）。
+    DeleteIgnored {
+        repo: Arc<Repository>,
+        paths: Vec<String>,
+    },
+    /// Clean Up Branches（GTK4 版の `clean_up_branches`）: `branchCleanup` の答えのブランチと、消すか。
+    CleanUp {
+        repo: Arc<Repository>,
+        base: String,
+        branches: Vec<(Value, bool)>,
+    },
     /// Fetch の確認（リモートが 2 つ以上なら、どこから取るかを選ぶ。0 はすべて）。
     Fetch {
         repo: Arc<Repository>,
         remotes: Vec<String>,
         from: usize,
+        /// リモートごとの、消えたブランチを片づける設定（`remote.<name>.prune`、なければ `fetch.prune`）が
+        /// true ならその名前。
+        prune: Vec<Option<String>>,
     },
     /// Pull の確認（上流から取り込む。取り込み方を選ぶ）。
     Pull {
@@ -215,6 +509,8 @@ enum Dialog {
         name: String,
         fetch: String,
         push: String,
+        /// 接続の確認の結果（つながったか、まだなら None）と言葉。確かめていなければ None。
+        check: Option<(Option<bool>, String)>,
     },
     /// stash から新しいブランチを作る（`git stash branch`。GTK4 版の `stashes::branch`）。
     StashBranch {
@@ -229,6 +525,9 @@ enum Dialog {
         oid: String,
         message: String,
         squash: bool,
+        /// 選んだ連続したコミットを 1 つにまとめる（Combine N Commits…）: いちばん新しいコミットと数。`oid` は
+        /// いちばん古いコミット。
+        last: Option<(String, usize)>,
     },
     /// コミット（古い順）をパッチにする（GTK4 版の `patches::save`）。形・送り状・版を選んでから、書き出す場所を選ぶ。
     Patch {
@@ -238,6 +537,75 @@ enum Dialog {
         single: bool,
         cover: bool,
         version: String,
+    },
+    /// `rev` の時点のファイルを書き出す（GTK4 版の `archive::export`）。形と先頭のフォルダを選んでから、保存する
+    /// ファイルを選ぶ。1 つのフォルダだけを書き出すこと、partial clone の中身を先に取る確認はまだない。
+    Archive {
+        repo: Arc<Repository>,
+        rev: String,
+        format: usize,
+        top: String,
+        /// 書き出すフォルダ（そのコミットの根からのパス。空ならすべてのファイル）。
+        folder: String,
+    },
+    /// `refs`（空なら HEAD とすべてのブランチ・タグ）を bundle に書く（GTK4 版の `bundle::save`）。入れる範囲を
+    /// 選んでから、コミットの数を確かめ、保存するファイルを選ぶ。partial clone の中身を先に取る確認はまだない。
+    Bundle {
+        repo: Arc<Repository>,
+        refs: Vec<String>,
+        /// 見せる名前と、既定のファイル名に使う名前。
+        what: String,
+        label: String,
+        /// ある基点より後だけ（`base`）。
+        newer: bool,
+        base: String,
+    },
+    /// bundle のブランチを `refs/remotes/<名前>/*` に取り込む（GTK4 版の `bundle::fetch`）。
+    FetchBundle {
+        repo: Arc<Repository>,
+        file: String,
+        message: String,
+        name: String,
+    },
+    /// 新しい worktree（GTK4 版の `worktrees::new_worktree`）: `start` からブランチを作って新しいフォルダに checkout
+    /// する。フォルダの既定は、リポジトリの隣の「<名前>-<ブランチ>」。
+    NewWorktree {
+        repo: Arc<Repository>,
+        start: String,
+        branch: String,
+        folder: String,
+    },
+    /// worktree をロックする（理由は任意）。
+    LockWorktree {
+        repo: Arc<Repository>,
+        path: String,
+        name: String,
+        reason: String,
+    },
+    /// worktree のフォルダを移す（`repair` なら、手で移した先を教えてつなぎ直す）。GTK4 版の `move_to`・`locate`。
+    WorktreeFolder {
+        repo: Arc<Repository>,
+        path: String,
+        name: String,
+        to: String,
+        repair: bool,
+    },
+    /// パッチを当てる前の確認（GTK4 版の `patches::confirm`）。mbox ならパッチごとにコミットにする（git am）、
+    /// でなければ作業ツリーに入れる（git apply）。前後の絵はまだない。
+    ApplyPatch {
+        repo: Arc<Repository>,
+        paths: Vec<String>,
+        mailbox: bool,
+        title: String,
+        what: String,
+        /// パッチとファイルの一覧（件名・作者、ファイルごとの印と増減）。
+        list: String,
+        /// そのまま当たるか（当たらなければその理由）。
+        applies: Result<(), String>,
+        three_way: bool,
+        index: bool,
+        /// git am なら、前と後の絵（`pickPreview` の答え）。
+        drawing: Value,
     },
     /// 作業中の変更を stash する（GTK4 版の `Actions::stash_paths`）。`paths` があればそのファイルだけ。
     Stash {
@@ -252,6 +620,36 @@ enum Dialog {
     CloseMerge,
     /// コンフリクトが残っているファイルを解決済みにしてよいか。
     MarkResolved { path: String, count: u64 },
+    /// 入力の欄（見出し・値・薄い文字）とチェック（名前・値）のダイアログ（submodule のシートなど）。押すと
+    /// `kind` で命令にする。
+    Form {
+        repo: Arc<Repository>,
+        title: String,
+        message: String,
+        button: String,
+        fields: Vec<(String, String, String)>,
+        checks: Vec<(String, bool)>,
+        kind: FormKind,
+    },
+    /// HEAD の木からフォルダを選んで、sparse checkout で取り出すフォルダに足す（GTK4 版の `add_folder`）。
+    TreeFolder {
+        repo: Arc<Repository>,
+        /// 見ているフォルダ（`/` から）と、その中のフォルダ（読むまでは None）。
+        path: String,
+        entries: Option<Result<Vec<String>, String>>,
+        selected: Option<usize>,
+        /// 今取り出しているフォルダ（空なら sparse checkout を始める）。
+        existing: Vec<String>,
+        /// clone した直後なら、そのリポジトリ（選んでも取り消しても、その後で新しい窓で開く）。
+        cloned: Option<String>,
+    },
+    /// Repositories の行の表示名を変える。
+    RenameRepository { location: String, name: String },
+    /// Repositories のグループを作る（リポジトリがあればそこに移す）。
+    NewGroup {
+        location: Option<String>,
+        name: String,
+    },
     /// ブランチの名前を変える（GTK4 版の `refops::ask_rename_branch`）。
     Rename {
         repo: Arc<Repository>,
@@ -265,6 +663,28 @@ enum Dialog {
         message: String,
         button: String,
         command: Value,
+    },
+    /// partial clone で、手元にない中身を先にまとめて取ってよいか（GTK4 版の archive・bundle の確かめるシート）。
+    FetchFirst {
+        message: String,
+        button: String,
+        then: PendingSave,
+    },
+    /// 失敗した操作（要点、次にどうするか、git の文。次の一手があればそのボタン。GTK4 版の失敗の帯と Details）。
+    Failure {
+        repo: Arc<Repository>,
+        failure: crate::failure::Failure,
+    },
+    /// 前と後の絵を添えた確認（Fast-Forward・Cherry-pick・Revert。GTK4 版の `rewritedraw` の絵を埋めたシート）。
+    ConfirmDrawn {
+        repo: Arc<Repository>,
+        title: String,
+        message: String,
+        button: String,
+        command: Value,
+        /// `movePreview`・`pickPreview` の答えと、その絵の見せ方。
+        preview: Value,
+        how: Arc<crate::drawing::How>,
     },
     /// Checkout の確認（GTK4 版の `sheets::checkout`）。
     Checkout {
@@ -282,7 +702,7 @@ enum Dialog {
         mode: usize,
     },
     /// Merge・Rebase（GTK4 版の `sheets::integrate_sheet`）。`choices` は名前と rev。2 つ以上なら相手を選ぶ。
-    /// merge なら取り込み方も選ぶ。前後の絵・コンフリクトの見込みはまだない。
+    /// merge なら取り込み方も選ぶ。前と後の絵とコンフリクトの見込みを添える。
     Integrate {
         repo: Arc<Repository>,
         rebase: bool,
@@ -292,6 +712,15 @@ enum Dialog {
         chooser: bool,
         chosen: usize,
         mode: usize,
+    },
+    /// いくつもを今のブランチに 1 つの merge コミットで merge する（octopus。GTK4 版の `mergeseveral::confirm`）。
+    /// 順はドラッグで変える。`mode` は [`SEVERAL_MERGE_MODES`] の位置。
+    MergeSeveral {
+        repo: Arc<Repository>,
+        branch: Option<String>,
+        sources: Vec<crate::merge_several::Source>,
+        mode: usize,
+        one_by_one: bool,
     },
     /// Working Copy のファイルの変更を捨てる（untracked なら消す）確認。
     Discard {
@@ -323,9 +752,70 @@ enum Message {
     RangePrevious(u64, Result<(Vec<String>, String), String>),
     RangeDiffLoaded(u64, Result<Vec<crate::rangediff::Pair>, String>),
     RangeDiffSelected(Option<usize>),
+    /// 一覧の行を選んだ（一覧に出している組の番号）と、Changes Only を切り替えた。
+    RangeDiffRow(Option<usize>),
+    RangeDiffChangesOnly(bool),
     RangeDiffRanges(String),
     RangeDiffCompare,
     CloseRangeDiff,
+    /// worktree を読んだ。
+    Worktrees(Vec<WorktreeInfo>),
+    /// 裏で調べてから確かめる（題、説明、ボタン、命令）。
+    Confirm(Arc<Repository>, String, String, String, Value),
+    /// Working Copy のパスの絞り込み。
+    WorkingFilter(String),
+    /// Repository Settings の Operations の選ぶ欄（行の id と、選んだ番号）。
+    RepoSettingsChoice(&'static str, Option<usize>),
+    /// サイドバーの絞り込み。
+    SidebarFilter(String),
+    /// リポジトリの形を読んだ。
+    Form(sidebar::RepositoryForm),
+    /// 戻したファイルを stage もする。
+    RestoreStaged(bool),
+    /// ブランチの切り替えで候補を選んだ。
+    SwitcherSelect(Option<usize>),
+    /// Clone の欄（0 は URL、1 は置き場所、2 はフォルダの名前）・取得する範囲・数・チェック（0 は一部のフォルダ
+    /// だけ、1 は submodule も）・置き場所を選ぶ。
+    CloneField(usize, String),
+    CloneDownload(Option<usize>),
+    CloneDepth(Option<usize>),
+    CloneCheck(usize, bool),
+    CloneChoose,
+    /// Clone する bundle のファイルを選ぶ。
+    CloneBundle,
+    /// Clone の最近の履歴の「その他…」で打った数。
+    CloneDepthOther(String),
+    /// HEAD のない bundle から取り出すブランチ。
+    CloneBranch(Option<usize>),
+    /// clone が終わった（作ったフォルダと、失敗なら理由）。
+    Cloned(std::path::PathBuf, Option<String>),
+    /// Quick Open の候補を、スキャンで見つけたものも入れて読み直した。
+    QuickOpenCandidates(Vec<crate::repositories::Candidate>),
+    /// New Orphan Branch の「今のファイルを残す」。
+    OrphanKeep(bool),
+    /// ignore されたファイルを読んだ（`ignoredFiles` の答え）。
+    IgnoredLoaded(Arc<Repository>, Value),
+    /// Clean Up Branches の候補を読んだ（`branchCleanup` の答え）。
+    CleanUpLoaded(Arc<Repository>, Value),
+    /// Clean Up Branches のブランチのチェック。
+    CleanUpCheck(usize, bool),
+    /// Working Copy の一覧の見せ方を替える。
+    WorkingLayout(crate::workcopy::Layout),
+    /// ディレクトリの中のファイルをまとめて含める・外す。
+    StageAll(Vec<String>, bool),
+    /// Working Copy のファイルごとの行数を読んだ（読んだ status の generation と、パスごとの行数）。
+    WorkingStats(
+        u64,
+        std::collections::HashMap<String, (Option<u64>, Option<u64>)>,
+    ),
+    /// Working Copy の一覧のキー（true は Delete・Backspace で捨てる、false は Space で含める・外す）。
+    WorkingKey(bool),
+    /// 下書きのない worktree を開いたときに読んだテンプレート（下書きの鍵と中身）。
+    CommitTemplate(String, String),
+    /// 最近のコミットのメッセージを読んだ。
+    RecentMessages(Vec<(String, String, String)>),
+    /// 最近のメッセージ・「+」のメニューの項目。
+    CommitTextMenu(String),
     /// Reflog を読んだ・一覧で選んだ。
     ReflogLoaded(Vec<crate::reflog::Entry>),
     ReflogSelected(Option<usize>),
@@ -333,6 +823,23 @@ enum Message {
     StashSelected(Option<usize>),
     /// File History を開く（パス）・読み終えた・一覧で選んだ・閉じる。
     OpenFileHistory(String),
+    /// 差分で右クリックしたファイル。
+    DiffFileAt(Option<crate::data::DiffFile>),
+    /// Working Copy の差分で右クリックした行。
+    DiffRowsAt(Option<(Vec<usize>, bool)>),
+    /// 行を捨て終えた（失敗ならそのわけ）。
+    LinesDiscarded(Option<String>),
+    /// 出した差分の側（切り替えを出すなら Some）。
+    WorkingSides(Option<bool>),
+    /// 切り替えで選んだ側（stage 済みなら true）。
+    WorkingSide(Option<usize>),
+    /// 差分のファイルの見出しのメニュー（GTK4 版の `commitfiles` の見出しのメニュー）。
+    DiffFileMenu(String),
+    /// 変更ファイルの一覧（木も）の右クリック（ファイルの番号、差分の見出しと同じ項目の鍵）。
+    ChangedFileMenu(usize, String),
+    /// ツールバーの Pull・Push のバッジを付け直す（並べ終えるのを少し待ってから）。
+    ToolbarBadgesLater,
+    ToolbarBadges,
     FileHistoryLoaded(String, Result<Vec<crate::filehistory::Entry>, String>),
     FileHistorySelected(Option<usize>),
     CloseFileHistory,
@@ -351,27 +858,191 @@ enum Message {
     OpenMerge(String),
     MergeLoaded(String, Result<Value, String>),
     MergeButton(&'static str),
+    /// マージエディタの左右の欄の ≫・≪（`ours:<番号>`・`theirs:<番号>`）。
+    MergePick(String),
+    /// マージエディタの Base の欄を出すか。
+    MergeBase(bool),
     MergeResult(String),
+    /// マージエディタの Accept などの書き換えを戻す（true ならやり直す）。
+    MergeUndo(bool),
+    /// マージエディタの左右と Base の欄で、選んでいるコンフリクトを見える所へ出す。
+    MergeBringIntoView,
     /// Settings: git の名前とメールを読んだ・欄を書き換えた・保存・チェックを替えた・閉じる。
-    SettingsGit(String, String),
+    SettingsGit(String, String, Vec<crate::reposettings::Entry>),
+    /// Settings > Git の Operations・Working Copy で選んだ（行の id と番号）。
+    SettingsGitChoice(&'static str, Option<usize>),
+    /// Settings の左の一覧でページを選んだ。
+    SettingsPage(Option<usize>),
+    /// Git > Programs の候補と使う git。
+    SettingsPrograms(crate::programs::State),
+    /// Settings > Git の Keys and Values の欄（`query`・`key`・`value`）とボタン（`add`・`remove:<key>`）。
+    SettingsKeysField(&'static str, String),
+    SettingsKeysButton(String),
     SettingsField(usize, String),
     SettingsSaveGit,
     SettingsToggle(&'static str, bool),
+    /// Settings > Appearance の History の見せ方（View の項目の id と、チェックの値）。
+    SettingsDisplay(&'static str, bool),
+    /// Settings > Appearance の並び順（0 は日付順、1 はトポロジー順）。
+    SettingsOrder(Option<usize>),
+    /// Settings > Theme: 構文の色のテーマ（`theme::names` の番号）。
+    SettingsSyntaxTheme(Option<usize>),
+    /// Settings > Theme のボタン（`import`・`remove:<name>`）。
+    SettingsThemeButton(String),
     CloseSettings,
     /// Activity: タブを選んだ・Undo の記録を読んだ・戻す数を選んだ・読み直す時刻・閉じる。
     ActivityTab(Option<usize>),
     ActivityUndoLog(Vec<Value>),
     ActivityUndo(usize),
     ActivityTick,
+    /// 走っている操作の数が変わった。
+    Running(usize),
+    /// History の下の帯から shallow clone の履歴を取り足す（`deepen:N`・`deepen-other`・`deepen-since`・`unshallow`）。
+    ShallowFetch(String),
+    /// 自動の fetch の間隔を選んだ（Settings）。
+    SettingsAutoFetch(Option<usize>),
+    /// Settings > General の外のエディタを選んだ（項目の番号）。
+    SettingsEditor(Option<usize>),
+    /// Settings > Git > Environment Variables: 渡すかの切り替えと、探す文字。
+    SettingsEnv(String, bool),
+    SettingsEnvQuery(String),
+    /// Settings > Git の共有のテンプレート: 書き換え（番号、0 は名前・1 は本文、文字）、足す、外す。
+    SettingsTemplate(usize, usize, String),
+    SettingsTemplateAdd,
+    SettingsTemplateRemove(usize),
+    /// History のキャッシュの大きさを読んだ。
+    CacheSize(u64),
+    /// History のキャッシュを消す。
+    ClearCache,
+    /// 自動の fetch の時が来た。
+    AutoFetch,
+    /// 自動の fetch が終わった（失敗なら理由）。
+    AutoFetched(Option<String>),
+    /// Activity の Operations の記録を JSON に書き出す。
+    ActivityExport,
+    /// Activity の History のキャッシュを読んだ（リポジトリの名前と `historyCache` の info）。
+    ActivityCache(String, Value),
     CloseActivity,
+    /// Repositories の操作。
+    Repos(crate::repositories::Event),
+    /// Export Archive の書き出すフォルダの欄。
+    ArchiveFolder(String),
+    /// 操作が終わった（失敗はなく、ステータスバーに一言を出す）。
+    Done(String),
+    /// History の編集モードを開く（このコミットから HEAD まで、最初の変更）。
+    EditOpen(String, Option<crate::historyedit::Preset>),
+    /// 編集モードの行を読んだ（読めなければ理由）。
+    EditLoaded(
+        Result<Vec<crate::historyedit::Row>, String>,
+        Option<crate::historyedit::Preset>,
+    ),
+    /// 編集モードで押したもの・選んだもの・打ったもの。
+    Edit(crate::historyedit::Event),
+    EditChoice(usize, Option<usize>),
+    EditText(String),
+    /// History でコミットを運んで落とした（動かすコミット、落とした行のコミット、最後の行の下か）。
+    HistoryDrop(String, Option<String>, bool),
+    /// 動かせない（ベルを鳴らす）。
+    Bell,
+    EditReordered(Vec<String>),
+    EditStacked(bool),
+    /// 見通し（数と `rewritePreview` の info）。
+    EditPreview(u64, Value),
+    /// 書き換えた（失敗なら答え）。
+    EditApplied(Option<Value>, Value),
+    /// 終わった操作の一言を消す。
+    FlashExpired,
+    /// 失敗の帯のボタン: 次の一手（何番目か）、詳細、閉じる、取り消しの帯の時間切れ（出した回数）。
+    FailureRemedy(usize),
+    FailureDetails,
+    FailureClose,
+    FailureExpired(u64),
+    /// History で複数選んだコミット（上から。1 つ以下なら空）。
+    /// 複数選んだコミット（上から。merge か）と、行が続いているか。
+    MultiSelected(Vec<(String, bool)>, bool),
+    /// 件名の欄の Alt+↑（1）・Alt+↓（-1）。
+    RecallRecent(isize),
+    /// Pull・Push のダイアログのコミットの一覧を読んだ。
+    SyncLists(Vec<SyncList>, Vec<String>, Option<Value>),
+    /// Push の画面で行を選んだ。
+    PushRow(Option<usize>),
+    /// 出すコミットの変更ファイルが替わった・一覧で選んだ。
+    ChangedFiles(Vec<ChangedFile>),
+    ChangedFileSelected(Option<usize>),
+    /// 変更ファイルの木で選んだ行（`file_tree` の番号。ディレクトリの行は選ばない）。
+    ChangedTreeSelected(Option<usize>),
+    /// 選んだリポジトリを fetch する。
+    FetchRepositories(Vec<String>),
+    /// 境目を動かした（新しい幅・高さ）・離した。
+    SplitTo(Split, f64),
+    SplitDone,
+    /// Pull の取り込み方ごとの前と後の絵を読んだ。
+    PullDrawn(Box<PullDrawings>),
+    /// Merge・Rebase の確認の前と後の絵を読んだ（相手の rev と `mergePreview`・`rewritePreview` の答え）。
+    IntegrateDrawn(String, Value, Value),
+    /// stash の詳しい中身を読んだ。
+    StashDetails(std::collections::HashMap<String, crate::stashes::Detail>),
+    /// ほかの worktree の変更を数える（true なら全部を数え直す）と、その答え（パスと数）。
+    CountWorktrees(bool),
+    WorktreeCounts(Vec<(String, u64)>),
+    /// タグのリモートでの様子を読んだ（`tagRemotes` の info）。
+    TagRemotes(Value),
+    /// タグの署名（名前 → 状態と署名者）。
+    TagSignatures(std::collections::HashMap<String, (crate::signature::Status, String)>),
+    /// submodule の様子を読んだ。
+    Submodules(Value),
+    /// subtree を読んだ（`subtrees` の info）。
+    Subtrees(Value),
+    /// 入力の欄とチェックのダイアログ（`Dialog::Form`）の欄・チェックを変えた。
+    FormField(usize, String),
+    FormCheck(usize, bool),
     /// まとめるときのメッセージの初期値を読んだ（コミット、メッセージ）。
     SquashText(String, Result<String, String>),
+    /// まとめる連続したコミットの、いちばん古い・新しいコミット、数と、まとめたメッセージ（`squashRangeMessage`）。
+    CombineText(Result<(String, String, usize, String), String>),
+    /// bundle に入るコミットを数えた（`bundlePreview` の答えと、書く命令）。
+    /// archive・bundle を書く前に、手元にない中身の数を調べた（なければ None）。
+    SaveChecked(PendingSave, Option<String>),
+    BundlePreview(Arc<Repository>, String, Value, Value),
+    /// 取り込む bundle を調べた（ファイル、`bundleCheck` の答え）。
+    BundleChecked(Arc<Repository>, String, Value),
+    /// 新しい worktree の欄（0 はブランチ、1 はフォルダ）。
+    WorktreeField(usize, String),
+    /// bundle の範囲（全体か、基点より後か）を選んだ。
+    BundleNewer(bool),
+    /// 当てるパッチを読んだ（パス、`readPatch` の答え）。
+    PatchRead(Arc<Repository>, Vec<String>, Value),
+    /// パッチを当てるダイアログの選択（`three-way`・`index`）。
+    ApplyOption(&'static str, bool),
+    /// 書き出す形を選んだ。
+    ArchiveFormat(Option<usize>),
     /// パッチのダイアログの選択（`single`・`cover`）。
     PatchOption(&'static str, bool),
     /// Stash のダイアログの選択（`all`・`staged`・`keep-index`・`untracked`）。
     StashOption(&'static str, bool),
     /// Repository Settings: 設定を読んだ・欄を書き換えた・ボタン。
     RepoSettingsLoaded(Vec<crate::reposettings::Entry>),
+    /// 集めた署名の鍵（すべてのリポジトリの段の Settings > Git なら true）。
+    SigningKeysLoaded(
+        bool,
+        Vec<(&'static str, Vec<crate::reposettings::SigningKey>)>,
+    ),
+    /// Repository Settings のフックの有効を切り替えた。
+    HookEnabled(String, bool),
+    /// Repository Settings の専用のテンプレートを読んだ（中身、置き場所）。
+    RepoTemplateLoaded(Option<String>, String),
+    /// Repository Settings の既定のブランチを判定した。
+    RepoDetectedBase(Option<String>),
+    /// Repository Settings のリポジトリの形を読んだ（`repositoryForm` の info）。
+    RepoFormLoaded(Value),
+    /// rerere が覚えた解決（`rr-cache`）があるか。
+    RepoRerereCache(bool),
+    /// Repository Settings のフック・LFS を読んだ（`hooksAndLfs` の info）。
+    RepoHooksLoaded(Value),
+    /// Repository Settings で見るフックの中身を読んだ（名前と中身）。
+    HookScript(String, String),
+    /// Repository Settings の `.gitignore` と `.git/info/exclude` を読んだ。
+    RepoIgnoreLoaded(String, String),
     RepoSettingsField(&'static str, String),
     RepoSettingsButton(String),
     /// 解決済みにする前に、残っているコンフリクトを数えた（パス、数）。
@@ -385,6 +1056,21 @@ enum Message {
     RemoteLoaded(Arc<Repository>, Option<(String, String, String)>),
     /// リモートのシートの欄（0 は名前、1 は fetch、2 は push の URL）。
     RemoteField(usize, String),
+    /// ツールバーのカスタマイズ: 出すか、上下に動かす（`true` で上）、スペースを外す・足す、既定に戻す。
+    ToolbarShown(usize, bool),
+    ToolbarMove(usize, bool),
+    ToolbarRemove(usize),
+    ToolbarAddSpace,
+    ToolbarDefaults,
+    /// フォルダを選ぶダイアログ: 読んだ中身、選んだ行、選んだフォルダに入る、上に戻る。
+    TreeFolderLoaded(String, Result<Vec<String>, String>),
+    TreeFolderSelect(Option<usize>),
+    TreeFolderOpen,
+    TreeFolderUp,
+    /// リモートの fetch の URL につないで確かめる。
+    RemoteCheck,
+    /// 接続の確認の結果（確かめた URL、つながったか、言葉）。
+    RemoteChecked(String, bool, String),
     /// 消すブランチを調べ終えた（名前、ほかのブランチにないコミットの数と一覧、または調べられなかった理由）。
     DeleteChecked(Arc<Repository>, String, Result<(u64, Vec<String>), String>),
     Status(Arc<StatusSnapshot>),
@@ -395,15 +1081,32 @@ enum Message {
     Stage(String, bool),
     /// Working Copy の Commit を押した。
     CommitChanges,
-    /// コミットが終わった（失敗ならその文）。
-    Committed(Option<String>),
+    /// コミットが終わった（失敗ならその文と、成功して hooks が何か書いていればその出力）。
+    Committed(Option<String>, Option<String>),
     /// 検索の欄の問い合わせが変わった。
     Query(String),
     /// 検索の欄で Enter（`true` なら Shift+Enter で前へ）。
     SearchSubmit(bool),
+    /// 差分の中を探す帯を開く・閉じる、探す文字、前・次へ、件数の文字。
+    DiffFindOpen(bool),
+    DiffFindQuery(String),
+    DiffFindStep(i32),
+    DiffFindStatus(String),
+    /// Working Copy のファイルの行にマウスが載った。
+    WorkingHover(String),
+    /// 窓に落としたもの。
+    Dropped(DroppedData),
+    /// パッチのファイルを当てる（読んで、何を変えるかを見せてから）。
+    ApplyPatches(Vec<String>),
+    /// 詳細だけを右の列いっぱいに広げる（⤢）。
+    ExpandDetails(bool),
+    /// 一致したコミットだけを出すか。
+    SearchOnly(bool),
     CloseSearch,
     /// 件数の文字（「N / M」「No Matches」）。
     SearchStatus(String),
+    /// 検索の欄の ▾ で選んだ書き方（`author:` など）。
+    SearchScope(String),
     /// Amend を切り替えた。
     Amend(bool),
     /// Amend にしたときの、HEAD のメッセージ（件名と本文）。
@@ -417,18 +1120,37 @@ enum Message {
     /// Pull のダイアログで、取り込み方を選んだ。
     PullMode(Option<usize>),
     /// Fetch のダイアログに出すリモート（なければ空）。
-    Remotes(Arc<Repository>, Vec<String>),
+    /// Fetch の相手（リモートの名前と、片づける設定が効いていればその設定の名前）。
+    Remotes(Arc<Repository>, Vec<(String, Option<String>)>),
     /// Fetch のダイアログで、取るリモートを選んだ（0 はすべて）。
     FetchFrom(Option<usize>),
     /// Reset の動かし方・Merge の相手・Merge の取り込み方を選んだ。
     ResetMode(Option<usize>),
     IntegrateRev(Option<usize>),
     MergeMode(Option<usize>),
+    /// いくつもの merge: 順ごとの見込みを読んだ・取り込み方を選んだ・ドラッグで並べ替えた（新しい順の rev）・
+    /// 最後に回した・1 つずつ merge するかを切り替えた。
+    MergeSeveralSteps(Vec<String>, Option<crate::merge_several::Steps>),
+    MergeSeveralMode(Option<usize>),
+    MergeSeveralReordered(Vec<String>),
+    MergeSeveralDrawn(Value),
+    MergeSeveralPutLast(usize),
+    MergeSeveralOneByOne(bool),
     /// ダイアログを閉じた（押したボタン）。
     DialogClosed(ContentDialogResult),
     /// 書き込む操作が終わった（失敗ならそのダイアログの見出しと文）。
     Performed(Option<(String, String)>),
+    /// 前と後の絵を読んだので、確認を出す。
+    ConfirmWithDrawing(Box<Dialog>),
+    /// 命令が失敗した（種類が分かれば、要点と次の一手を出す）。
+    OperationFailed(Arc<Repository>, crate::failure::Failure),
     Failed(String),
+    /// タブを選んだ・閉じようとした（タブの番号）・引いて並べ替えた（番号の並び）。
+    TabSelected(Option<usize>),
+    TabClose(String),
+    TabsReordered(Vec<String>),
+    /// clone して取り出した後: 新しいタブで開く（取り出しに失敗していれば、そのダイアログの見出しと文）。
+    OpenClone(String, Option<(String, String)>),
 }
 
 impl Component for Root {
@@ -438,10 +1160,15 @@ impl Component for Root {
     fn create(_input: &(), _context: &ComponentContext<Self>) -> Self {
         Self {
             root: ElementRef::new(),
+            toolbar: ElementRef::new(),
             panel: ElementRef::new(),
             area: ElementRef::new(),
             diff_panel: ElementRef::new(),
             diff_area: ElementRef::new(),
+            diff_file: None,
+            diff_rows: None,
+            tag_signatures: std::collections::HashMap::new(),
+            clone_sparse: false,
             refs: None,
             groups: None,
             info: None,
@@ -453,7 +1180,22 @@ impl Component for Root {
             sidebar_menu_host: ElementRef::new(),
             sidebar_key: None,
             stash: None,
+            worktrees: Vec::new(),
+            working_filter: String::new(),
+            status_note: None,
+            sidebar_filter: String::new(),
+            form: Default::default(),
+            working_layout: crate::workcopy::Layout::from_name(
+                &crate::prefs::string(crate::prefs::WORKING_COPY_LAYOUT).unwrap_or_default(),
+            ),
+            layout_clicks: 0,
+            working_collapsed: Default::default(),
+            working_stats: Default::default(),
+            draft_key: None,
+            push_after_commit: false,
+            recent_messages: Vec::new(),
             reflog: None,
+            edit: None,
             range_diff: None,
             range_request: 0,
             reflog_selected: None,
@@ -467,8 +1209,35 @@ impl Component for Root {
             repo_settings: None,
             repo_settings_from: Page::History,
             activity_from: Page::History,
+            tag_remotes: Value::Null,
+            worktree_counts: std::collections::HashMap::new(),
+            stash_details: std::collections::HashMap::new(),
+            sync_lists: Vec::new(),
+            flash: None,
+            failure: None,
+            failure_generation: 0,
+            running: 0,
+            multi: Vec::new(),
+            multi_consecutive: false,
+            sync_warnings: Vec::new(),
+            sync_drawing: None,
+            push_row: None,
+            changed_files: Vec::new(),
+            changed_file: None,
+            pull_drawings: None,
+            integrate_drawing: None,
+            merge_several_steps: None,
+            merge_several_drawing: None,
+            submodules: Value::Null,
+            subtrees: Value::Null,
+            repositories: None,
+            scan_watch: None,
+            scan_watch_generation: 0,
+            repositories_from: Page::History,
+            repositories_list: ElementRef::new(),
             settings_from: Page::History,
             sidebar_request: 0,
+            diff_menu_request: 0,
             page: Page::History,
             repo: None,
             status: None,
@@ -479,29 +1248,511 @@ impl Component for Root {
             search_open: false,
             query: String::new(),
             search_status: String::new(),
+            search_only: false,
+            details_expanded: false,
+            working_hovered: None,
+            last_search: None,
             search_box: ElementRef::new(),
+            diff_find_open: false,
+            diff_find_opened: 0,
+            diff_find_box: ElementRef::new(),
+            merge_result_box: ElementRef::new(),
+            merge_chosen: std::array::from_fn(|_| ElementRef::new()),
+            diff_find_query: String::new(),
+            diff_find_status: String::new(),
+            mixed_checks: RefCell::default(),
+            mixed_used: RefCell::default(),
             search_opened: 0,
             working_file: None,
+            working_staged: false,
+            working_sides: None,
             busy: None,
             dialog_input: ElementRef::new(),
             dialog_inputs: 0,
+            working_list: ElementRef::new(),
+            summary_box: ElementRef::new(),
+            description_box: ElementRef::new(),
+            blame_code: ElementRef::new(),
+            sidebar_width: crate::prefs::number(SIDEBAR_WIDTH_KEY).unwrap_or(260.0),
+            right_width: crate::prefs::number(RIGHT_WIDTH_KEY),
+            details_height: crate::prefs::number(DETAILS_HEIGHT_KEY).unwrap_or(240.0),
+            split_handles: [ElementRef::new(), ElementRef::new(), ElementRef::new()],
+            column_handles: std::array::from_fn(|_| ElementRef::new()),
+            recall_cursor: -1,
+            before_recall: None,
         }
     }
 
     fn update(&mut self, message: Message, context: &ComponentContext<Self>) {
+        // Push の画面を閉じたら、右の列を元の画面のものに戻す。
+        if matches!(message, Message::DialogClosed(_))
+            && matches!(self.dialog, Some(Dialog::Push { .. }))
+        {
+            self.push_row = None;
+            let page = self.page;
+            self.show_page(page);
+            with_history(|h| h.reload_selected());
+        }
         match message {
             Message::Refs(refs, repo) => {
+                HEAD_NAME
+                    .with(|h| *h.borrow_mut() = refs.refs.head_branch.clone().unwrap_or_default());
                 self.refs = Some(refs);
                 self.repo = Some(repo.clone());
+                self.switch_draft(&repo, context);
+                // 最近切り替えたブランチを覚える（ブランチの切り替えの並び）。
+                if let (Some(workdir), Some(head)) = (
+                    repo.paths().workdir,
+                    self.refs.as_ref().and_then(|r| r.refs.head_branch.clone()),
+                ) {
+                    crate::branchswitcher::remember(&workdir.display().to_string(), &head);
+                }
+                // Commit and Push: コミットした後の ref で push する。
+                if std::mem::take(&mut self.push_after_commit) {
+                    self.push_committed(context);
+                }
+                // worktree も読み直す（作る・消す・ブランチを替えると ref も変わる）。
+                let r = repo.clone();
                 // ブランチの分け方は ref が変わるたびに読み直す（数十 ms かかるので裏で）。
+                load_groups(repo, context);
+                // タグのリモートでの様子も（fetch でリモートのタグを読み直す）。
+                load_tag_remotes(r.clone(), context);
+                // stash の詳しい中身（作った時刻・untracked・土台と HEAD の離れ具合）。
+                let stashes: Vec<(String, amonhen_model::Oid)> = self
+                    .stash_entries()
+                    .into_iter()
+                    .filter_map(|e| Some((e.name.clone(), e.target?)))
+                    .collect();
+                if !stashes.is_empty() {
+                    let s = r.clone();
+                    context.spawn_background(move |_| {
+                        let bases: Value =
+                            serde_json::from_str(&s.run_json(r#"{"op":"stashBases"}"#))
+                                .unwrap_or_default();
+                        let details = stashes
+                            .into_iter()
+                            .map(|(name, id)| {
+                                let info = s.commit_info(&id).unwrap_or_default();
+                                let parents: Vec<&str> = info["parents"]
+                                    .as_array()
+                                    .into_iter()
+                                    .flatten()
+                                    .filter_map(Value::as_str)
+                                    .collect();
+                                let base = bases["info"]["stashes"]
+                                    .as_array()
+                                    .into_iter()
+                                    .flatten()
+                                    .find(|b| b["name"].as_str() == Some(&name));
+                                let detail = crate::stashes::Detail {
+                                    time: info["committerTime"].as_i64().unwrap_or_default(),
+                                    untracked: parents.len() > 2,
+                                    base: parents.first().map(|p| (*p).to_owned()),
+                                    ahead_behind: base.and_then(|b| {
+                                        Some((b["ahead"].as_u64()?, b["behind"].as_u64()?))
+                                    }),
+                                };
+                                (name, detail)
+                            })
+                            .collect();
+                        Message::StashDetails(details)
+                    });
+                }
+                load_recent_messages(r.clone(), context);
+                // リポジトリの形（unshallow・sparse checkout の切り替えも ref・status の変化のときに読み直す）。
+                let f = r.clone();
                 context.spawn_background(move |_| {
-                    let reply = repo.run_json(r#"{"op":"branchGroups"}"#);
-                    let reply = serde_json::from_str(&reply).unwrap_or_default();
-                    Message::Groups(BranchGroups::from_reply(&reply))
+                    let reply: Value =
+                        serde_json::from_str(&f.run_json(r#"{"op":"repositoryForm"}"#))
+                            .unwrap_or_default();
+                    Message::Form(sidebar::RepositoryForm::from_info(&reply["info"]))
                 });
+                load_worktrees(r, context);
                 // Reflog を出していれば読み直す（HEAD が動くと ref も変わる）。
                 if self.page == Page::Reflog {
                     self.load_reflog(context);
+                }
+            }
+            Message::TagRemotes(info) => {
+                self.tag_remotes = info;
+                // タグの署名も（署名のあるものだけをコアが検証し、覚えている）。
+                if let (Some(repo), Some(refs)) = (self.repo.clone(), self.refs.as_ref()) {
+                    let names: Vec<String> = refs
+                        .refs
+                        .entries
+                        .iter()
+                        .filter(|e| e.kind == amonhen_model::RefKind::Tag)
+                        .map(|e| e.name.clone())
+                        .collect();
+                    if !names.is_empty() {
+                        context.spawn_background(move |_| {
+                            let command = json!({ "op": "tagSignatures", "names": names });
+                            let reply: Value =
+                                serde_json::from_str(&repo.run_json(&command.to_string()))
+                                    .unwrap_or_default();
+                            let found = reply["info"]["tags"]
+                                .as_array()
+                                .into_iter()
+                                .flatten()
+                                .filter_map(|t| {
+                                    let name = t["name"].as_str()?.to_owned();
+                                    Some((name, crate::signature::of_tag(t)?))
+                                })
+                                .collect();
+                            Message::TagSignatures(found)
+                        });
+                    }
+                }
+            }
+            Message::TagSignatures(found) => self.tag_signatures = found,
+            Message::StashDetails(details) => self.stash_details = details,
+            Message::EditOpen(start, preset) => {
+                let Some(repo) = self.repo.clone() else {
+                    return beep();
+                };
+                if self.edit.is_some() {
+                    return beep();
+                }
+                context.spawn_background(move |_| {
+                    let reply: Value = serde_json::from_str(
+                        &repo.run_json(r#"{"op":"editableCommits","throughMerges":true}"#),
+                    )
+                    .unwrap_or_default();
+                    // merge を越えて first-parent で辿る（merge は git の --rebase-merges で作り直す）。
+                    let line: Vec<(String, bool)> = reply["text"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .lines()
+                        .filter_map(|l| {
+                            let mut parts = l.split(' ');
+                            let oid = parts.next().filter(|o| !o.is_empty())?.to_owned();
+                            Some((oid, parts.next().is_some()))
+                        })
+                        .collect();
+                    let at = |id: &str| {
+                        line.iter()
+                            .position(|(o, _)| o.starts_with(id) || id.starts_with(o.as_str()))
+                    };
+                    let several = match &preset {
+                        Some(crate::historyedit::Preset::Combine(ids)) if ids.len() > 1 => {
+                            Some(ids.clone())
+                        }
+                        _ => None,
+                    };
+                    let including_older =
+                        matches!(preset, Some(crate::historyedit::Preset::Combine(_)));
+                    let end = match &several {
+                        // いくつかをまとめるなら、いちばん古いものまで。どれかが HEAD の first-parent の並びに
+                        // なければ断る（黙って減らさない）。
+                        Some(ids) => ids
+                            .iter()
+                            .map(|id| at(id))
+                            .collect::<Option<Vec<usize>>>()
+                            .and_then(|a| a.into_iter().max()),
+                        None => at(&start)
+                            .map(|e| e + usize::from(including_older))
+                            .filter(|&e| e < line.len()),
+                    };
+                    let Some(end) = end else {
+                        return Message::EditLoaded(
+                            Err(tr!(
+                                "Only commits on HEAD’s first-parent line can be edited."
+                            )),
+                            preset,
+                        );
+                    };
+                    // 隣り合っていなければ断る（一致したコミットだけの History では、間のコミットが隠れている）。
+                    if let Some(ids) = &several {
+                        let mut found: Vec<usize> = ids.iter().filter_map(|id| at(id)).collect();
+                        found.sort_unstable();
+                        if found.windows(2).any(|w| w[1] != w[0] + 1) {
+                            return Message::EditLoaded(
+                                Err(tr!("Only commits next to each other can be combined.")),
+                                preset,
+                            );
+                        }
+                    }
+                    let chosen = &line[..=end];
+                    let ids: Vec<amonhen_model::Oid> = chosen
+                        .iter()
+                        .filter_map(|(o, _)| amonhen_model::Oid::from_hex(o))
+                        .collect();
+                    let texts = repo.commit_texts(&ids).unwrap_or_default();
+                    // 作者は mailmap で置き換えたもの（History・詳細と同じ）。
+                    let mailmap = repo.mailmap();
+                    let rows = chosen
+                        .iter()
+                        .enumerate()
+                        .map(|(i, (oid, merge))| {
+                            let message = amonhen_model::Oid::from_hex(oid)
+                                .and_then(|id| repo.commit_message(&id).ok())
+                                .unwrap_or_default();
+                            let author = texts
+                                .get(i)
+                                .map(|t| {
+                                    String::from_utf8_lossy(&t.author(mailmap.as_deref()).name)
+                                        .into_owned()
+                                })
+                                .unwrap_or_default();
+                            crate::historyedit::Row::new(oid.clone(), message, author, *merge)
+                        })
+                        .collect();
+                    Message::EditLoaded(Ok(rows), preset)
+                });
+            }
+            Message::EditLoaded(rows, preset) => match rows {
+                Ok(rows) if !rows.is_empty() && self.edit.is_none() => {
+                    self.edit = Some(crate::historyedit::State::new(rows, preset));
+                    self.page = Page::EditCommits;
+                    self.edit_preview(context);
+                }
+                Ok(_) => {}
+                Err(message) => {
+                    self.dialog = Some(Dialog::Failed {
+                        title: tr!("Edit Commits"),
+                        message,
+                    });
+                }
+            },
+            Message::EditChoice(row, Some(index)) => {
+                let Some(state) = self.edit.as_mut() else {
+                    return;
+                };
+                let Some(action) = crate::historyedit::chosen(state, row, index) else {
+                    return;
+                };
+                if state.rows.get(row).map(|r| r.action) == Some(action) {
+                    return;
+                }
+                state.set_action(row, action);
+                self.edit_preview(context);
+            }
+            Message::EditChoice(_, None) => {}
+            Message::Bell => beep(),
+            // 編集できる並び（HEAD から最初の merge まで）の中なら、編集モードを開いて動かしておく（範囲は、動かす
+            // 2 か所の古い方から HEAD まで。GTK4 版の `move_by_drop`）。並びの外ならベル。
+            Message::HistoryDrop(oid, below, past_end) => {
+                let (Some(repo), Some(below)) = (self.repo.clone(), below) else {
+                    return beep();
+                };
+                context.spawn_background(move |_| {
+                    let reply: Value =
+                        serde_json::from_str(&repo.run_json(r#"{"op":"editableCommits"}"#))
+                            .unwrap_or_default();
+                    let chain: Vec<String> = reply["text"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .lines()
+                        .filter_map(|l| l.split(' ').next().map(str::to_owned))
+                        .filter(|o| !o.is_empty())
+                        .collect();
+                    let at = |o: &str| chain.iter().position(|c| c == o);
+                    let (Some(from), Some(mut to)) = (at(&oid), at(&below)) else {
+                        return Message::Bell;
+                    };
+                    if past_end {
+                        to = chain.len() - 1;
+                    } else if from < to {
+                        to -= 1;
+                    }
+                    if from == to {
+                        return Message::Performed(None);
+                    }
+                    let preset = crate::historyedit::Preset::Move(oid, to);
+                    Message::EditOpen(chain[from.max(to)].clone(), Some(preset))
+                });
+            }
+            Message::EditReordered(order) => {
+                if self.edit.as_mut().is_some_and(|s| s.reorder(&order)) {
+                    self.edit_preview(context);
+                }
+            }
+            Message::EditStacked(on) => {
+                let Some(state) = self.edit.as_mut() else {
+                    return;
+                };
+                if state.moves_stacked() != on {
+                    state.update_refs = Some(on);
+                    self.edit_preview(context);
+                }
+            }
+            Message::EditText(text) => {
+                if let Some(state) = self.edit.as_mut() {
+                    state.message_text = text;
+                }
+            }
+            Message::EditPreview(generation, info) => {
+                if let Some(state) = self.edit.as_mut()
+                    && state.generation == generation
+                {
+                    state.take_preview(&info);
+                }
+            }
+            Message::Edit(event) => {
+                use crate::historyedit::Event;
+                let Some(state) = self.edit.as_mut() else {
+                    return;
+                };
+                match event {
+                    Event::Move(row, up) => {
+                        if !state.move_row(row, up) {
+                            return beep();
+                        }
+                    }
+                    Event::MessageDone(keep) => state.close_message(keep),
+                    Event::Cancel => {
+                        self.edit = None;
+                        self.page = Page::History;
+                        return;
+                    }
+                    Event::Apply => {
+                        if !state.has_changes() {
+                            self.edit = None;
+                            self.page = Page::History;
+                            return;
+                        }
+                        let Some(repo) = self.repo.clone() else {
+                            return beep();
+                        };
+                        state.busy = true;
+                        let command = state.command();
+                        context.spawn_background(move |_| {
+                            let reply: Value =
+                                serde_json::from_str(&repo.run_json(&command.to_string()))
+                                    .unwrap_or_else(|e| json!({ "error": e.to_string() }));
+                            Message::EditApplied(
+                                reply["error"].is_string().then_some(reply),
+                                command,
+                            )
+                        });
+                        return;
+                    }
+                }
+                self.edit_preview(context);
+            }
+            // 書き換えが終わってから編集モードを閉じる。書き換えられなければ編集モードと選んだものを残す。
+            Message::EditApplied(error, command) => {
+                if let Some(reply) = error {
+                    if let Some(state) = self.edit.as_mut() {
+                        state.busy = false;
+                    }
+                    if let Some(repo) = self.repo.clone() {
+                        let failure = crate::failure::Failure::from_reply(&reply, Some(command));
+                        self.update(Message::OperationFailed(repo, failure), context);
+                    }
+                    return;
+                }
+                self.edit = None;
+                self.page = Page::History;
+                let done = command["label"].as_str().unwrap_or_default().to_owned();
+                self.update(Message::Done(done), context);
+            }
+            Message::Done(text) => {
+                // 終わった後の読み直しは同じ（`Performed`）。一言は 5 秒（GTK4 版と同じ）。前の失敗の帯は消す。
+                self.failure = None;
+                self.update(Message::Performed(None), context);
+                self.flash = Some(text);
+                FLASH_UNTIL
+                    .with(|f| f.set(Some(Instant::now() + std::time::Duration::from_secs(5))));
+            }
+            Message::FlashExpired => self.flash = None,
+            Message::ArchiveFolder(text) => {
+                if let Some(Dialog::Archive { folder, .. }) = &mut self.dialog {
+                    *folder = text;
+                }
+            }
+            Message::MultiSelected(ids, consecutive) => {
+                self.multi_consecutive = consecutive;
+                self.multi = if ids.len() > 1 { ids } else { Vec::new() }
+            }
+            Message::SyncLists(lists, warnings, drawing) => {
+                if matches!(self.dialog, Some(Dialog::Pull { .. } | Dialog::Push { .. })) {
+                    self.sync_lists = lists;
+                    self.sync_warnings = warnings;
+                    self.sync_drawing = drawing;
+                    // Push は、送る変更すべてを右の列に出しておく（macOS 版の PushSheet と同じ）。
+                    if matches!(self.dialog, Some(Dialog::Push { .. })) {
+                        self.select_push_row(Some(0));
+                    }
+                }
+            }
+            Message::PushRow(index) => self.select_push_row(index),
+            Message::ChangedFiles(files) => {
+                // 1 ファイルずつなら、最初のファイルを出している。
+                let single = !crate::prefs::bool(crate::prefs::STACKED_COMMIT_DIFF);
+                self.changed_file = (single && files.len() > 1).then_some(0);
+                self.changed_files = files;
+            }
+            Message::ChangedFileSelected(index) => {
+                self.changed_file = index;
+                if let Some(index) = index {
+                    with_history(|h| h.show_file(index));
+                }
+            }
+            Message::ChangedTreeSelected(index) => {
+                let file =
+                    index.and_then(|i| file_tree(&self.changed_files).get(i).and_then(|r| r.file));
+                if let Some(file) = file {
+                    self.update(Message::ChangedFileSelected(Some(file)), context);
+                }
+            }
+            // View の Changed Files as Tree（変更ファイルを差分の左に木で。macOS 版・GTK4 版と同じ設定）。
+            Message::Command(id) if id == "changed-files-as-tree" => {
+                let tree = !crate::prefs::bool(crate::prefs::HISTORY_FILE_TREE);
+                if let Err(e) = crate::prefs::set_bool(crate::prefs::HISTORY_FILE_TREE, tree) {
+                    eprintln!("変更ファイルを木で出すかを覚えられない: {e}");
+                }
+            }
+            // View の All Files in One Diff（切ると、コミットの差分は一覧で選んだファイルだけ。macOS 版・GTK4 版と
+            // 同じ）。
+            Message::Command(id) if id == "all-files-in-one-diff" => {
+                let stacked = !crate::prefs::bool(crate::prefs::STACKED_COMMIT_DIFF);
+                if let Err(e) = crate::prefs::set_bool(crate::prefs::STACKED_COMMIT_DIFF, stacked) {
+                    eprintln!("全ファイルを並べるかを覚えられない: {e}");
+                }
+                let selected = self.changed_file.unwrap_or(0);
+                self.changed_file = (!stacked && self.changed_files.len() > 1).then_some(selected);
+                with_history(|h| {
+                    if h.session.data.set_single_file(!stacked) {
+                        h.diff_replaced();
+                    }
+                    if !stacked {
+                        h.show_file(selected);
+                    }
+                });
+            }
+            Message::SplitTo(split, size) => match split {
+                Split::Sidebar => self.sidebar_width = size.clamp(160.0, 520.0),
+                Split::Right => self.right_width = Some(size.max(240.0)),
+                Split::Details => self.details_height = size.clamp(60.0, 800.0),
+                Split::Column(i) => crate::repositories::set_column_width(i, size),
+            },
+            Message::SplitDone if self.page == Page::Repositories => {
+                crate::repositories::save_column_widths();
+            }
+            Message::SplitDone => {
+                let _ =
+                    crate::prefs::set_string(SIDEBAR_WIDTH_KEY, &self.sidebar_width.to_string());
+                let _ =
+                    crate::prefs::set_string(DETAILS_HEIGHT_KEY, &self.details_height.to_string());
+                if let Some(width) = self.right_width {
+                    let _ = crate::prefs::set_string(RIGHT_WIDTH_KEY, &width.to_string());
+                }
+            }
+            Message::Submodules(states) => self.submodules = states,
+            Message::Subtrees(info) => self.subtrees = info,
+            Message::FormField(index, text) => {
+                if let Some(Dialog::Form { fields, .. }) = &mut self.dialog
+                    && let Some(field) = fields.get_mut(index)
+                {
+                    field.1 = text;
+                }
+            }
+            Message::FormCheck(index, on) => {
+                if let Some(Dialog::Form { checks, .. }) = &mut self.dialog
+                    && let Some(check) = checks.get_mut(index)
+                {
+                    check.1 = on;
                 }
             }
             Message::Groups(groups) => {
@@ -512,7 +1763,10 @@ impl Component for Root {
             Message::Commit(info, extras) => self.info = Some((info, extras)),
             Message::Failed(e) => self.error = Some(e),
             Message::Command(id) if id == "undo" => self.undo(context),
-            Message::Command(id) if id == "pull" => self.pull(),
+            Message::Command(id) if id == "pull" => {
+                self.pull();
+                self.load_sync_lists(context);
+            }
             Message::Command(id) if id == "new-branch" => {
                 // 選んでいるコミットから（なければ今のブランチから。GTK4 版の `start_point`）。
                 let start = self
@@ -525,7 +1779,12 @@ impl Component for Root {
             }
             Message::BranchName(name) => match &mut self.dialog {
                 Some(Dialog::NewBranch { name: current, .. })
+                | Some(Dialog::NewOrphan { name: current, .. })
+                | Some(Dialog::Switcher { query: current, .. })
+                | Some(Dialog::QuickOpen { query: current, .. })
                 | Some(Dialog::Rename { name: current, .. })
+                | Some(Dialog::NewGroup { name: current, .. })
+                | Some(Dialog::RenameRepository { name: current, .. })
                 | Some(Dialog::StashBranch { name: current, .. })
                 | Some(Dialog::Publish { name: current, .. })
                 | Some(Dialog::Stash {
@@ -536,11 +1795,26 @@ impl Component for Root {
                 })
                 | Some(Dialog::Patch {
                     version: current, ..
-                }) => *current = name.replace("\r\n", "\n").replace('\r', "\n"),
+                })
+                | Some(Dialog::Archive { top: current, .. })
+                | Some(Dialog::Bundle { base: current, .. })
+                | Some(Dialog::FetchBundle { name: current, .. })
+                | Some(Dialog::LockWorktree {
+                    reason: current, ..
+                })
+                | Some(Dialog::WorktreeFolder { to: current, .. }) => {
+                    *current = name.replace("\r\n", "\n").replace('\r', "\n")
+                }
                 _ => {}
             },
-            Message::Command(id) if id == "push" => self.push(false),
-            Message::Command(id) if id == "force-push" => self.push(true),
+            Message::Command(id) if id == "push" => {
+                self.push(false);
+                self.load_sync_lists(context);
+            }
+            Message::Command(id) if id == "force-push" => {
+                self.push(true);
+                self.load_sync_lists(context);
+            }
             Message::PullSource(Some(index)) => {
                 if let Some(Dialog::Pull { source, .. }) = &mut self.dialog {
                     *source = index;
@@ -623,11 +1897,43 @@ impl Component for Root {
                 context.spawn_background(move |_| {
                     let reply: Value = serde_json::from_str(&repo.run_json(r#"{"op":"remotes"}"#))
                         .unwrap_or_default();
+                    // 片づけるかは git と同じく、remote.<name>.prune、なければ fetch.prune（GTK4 版と同じ）。
+                    let config: Value =
+                        serde_json::from_str(&repo.run_json(r#"{"op":"configList"}"#))
+                            .unwrap_or_default();
+                    let entries: Vec<(String, String)> = config["info"]["entries"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|e| {
+                            Some((
+                                e["key"].as_str()?.to_lowercase(),
+                                e["value"].as_str()?.to_lowercase(),
+                            ))
+                        })
+                        .collect();
+                    let value = |key: &str| {
+                        entries
+                            .iter()
+                            .rev()
+                            .find(|(k, _)| *k == key.to_lowercase())
+                            .map(|(_, v)| v.clone())
+                    };
                     let remotes = reply["info"]["remotes"]
                         .as_array()
                         .into_iter()
                         .flatten()
                         .filter_map(|r| r["name"].as_str().map(str::to_owned))
+                        .map(|name| {
+                            let own = format!("remote.{name}.prune");
+                            let key = if value(&own).is_some() {
+                                own
+                            } else {
+                                "fetch.prune".to_owned()
+                            };
+                            let prune = (value(&key).as_deref() == Some("true")).then_some(key);
+                            (name, prune)
+                        })
                         .collect();
                     Message::Remotes(repo, remotes)
                 });
@@ -636,10 +1942,12 @@ impl Component for Root {
                 if remotes.is_empty() {
                     beep();
                 } else {
+                    let (remotes, prune) = remotes.into_iter().unzip();
                     self.dialog = Some(Dialog::Fetch {
                         repo,
                         remotes,
                         from: 0,
+                        prune,
                     });
                 }
             }
@@ -652,6 +1960,17 @@ impl Component for Root {
                 if let Some(Dialog::Integrate { chosen, .. }) = &mut self.dialog {
                     *chosen = index;
                 }
+                self.load_integrate_drawing(context);
+            }
+            Message::PullDrawn(drawings) => {
+                if matches!(self.dialog, Some(Dialog::Pull { .. })) {
+                    self.pull_drawings = Some(*drawings);
+                }
+            }
+            Message::IntegrateDrawn(rev, info, forecast) => {
+                if matches!(self.dialog, Some(Dialog::Integrate { .. })) {
+                    self.integrate_drawing = Some((rev, info, forecast));
+                }
             }
             Message::MergeMode(Some(index)) => {
                 if let Some(Dialog::Integrate { mode, .. }) = &mut self.dialog {
@@ -659,8 +1978,51 @@ impl Component for Root {
                 }
             }
             Message::ResetMode(None) | Message::IntegrateRev(None) | Message::MergeMode(None) => {}
+            Message::MergeSeveralDrawn(info) => {
+                if matches!(self.dialog, Some(Dialog::MergeSeveral { .. })) {
+                    self.merge_several_drawing = Some(info);
+                }
+            }
+            Message::MergeSeveralSteps(revs, answer) => {
+                self.merge_several_steps = Some((revs, answer));
+            }
+            Message::MergeSeveralMode(index) => {
+                if let (Some(Dialog::MergeSeveral { mode, .. }), Some(index)) =
+                    (&mut self.dialog, index)
+                {
+                    *mode = index;
+                }
+            }
+            Message::MergeSeveralOneByOne(on) => {
+                if let Some(Dialog::MergeSeveral { one_by_one, .. }) = &mut self.dialog {
+                    *one_by_one = on;
+                }
+            }
+            Message::MergeSeveralReordered(order) => {
+                if let Some(Dialog::MergeSeveral { sources, .. }) = &mut self.dialog {
+                    // 並べ替えた順に（知らない rev が来たら何もしない）。
+                    let moved: Vec<crate::merge_several::Source> = order
+                        .iter()
+                        .filter_map(|rev| sources.iter().find(|s| s.rev == *rev).cloned())
+                        .collect();
+                    if moved.len() == sources.len() {
+                        *sources = moved;
+                        self.load_merge_several_steps(context);
+                    }
+                }
+            }
+            Message::MergeSeveralPutLast(index) => {
+                if let Some(Dialog::MergeSeveral { sources, .. }) = &mut self.dialog
+                    && index < sources.len()
+                {
+                    let moved = sources.remove(index);
+                    sources.push(moved);
+                    self.load_merge_several_steps(context);
+                }
+            }
             Message::Command(id) if id == "merge" || id == "rebase" => {
-                self.integrate_choosing(id == "rebase")
+                self.integrate_choosing(id == "rebase");
+                self.load_integrate_drawing(context);
             }
             Message::FetchFrom(index) => {
                 if let (Some(Dialog::Fetch { from, .. }), Some(index)) = (&mut self.dialog, index) {
@@ -680,13 +2042,70 @@ impl Component for Root {
                 }
             }
             Message::Query(text) => self.query = text,
+            Message::SearchScope(prefix) => {
+                // 欄の後ろに書き方を足し、欄にフォーカスを戻す（GTK4 版の `with_prefix`）。
+                let current = self.query.trim();
+                self.query = if current.is_empty() {
+                    prefix
+                } else {
+                    format!("{current} {prefix}")
+                };
+                self.search_opened += 1;
+            }
             Message::SearchSubmit(backwards) => {
                 let query = self.query.trim().to_owned();
+                self.last_search = (!query.is_empty()).then(|| query.clone());
                 with_history(|h| h.search(query, backwards));
+            }
+            Message::ExpandDetails(on) => self.details_expanded = on,
+            Message::DiffFindOpen(open) => {
+                self.diff_find_open = open;
+                if open {
+                    self.diff_find_opened += 1;
+                }
+                if !open {
+                    self.diff_find_query.clear();
+                    self.diff_find_status.clear();
+                    with_history(|h| {
+                        h.find_in_diff(String::new(), 0);
+                    });
+                }
+            }
+            Message::DiffFindQuery(query) => {
+                self.diff_find_query = query.clone();
+                let mut status = String::new();
+                with_history(|h| status = h.find_in_diff(query, 0));
+                self.diff_find_status = status;
+            }
+            Message::DiffFindStep(step) => {
+                let query = self.diff_find_query.clone();
+                let mut status = String::new();
+                with_history(|h| status = h.find_in_diff(query, step));
+                self.diff_find_status = status;
+            }
+            Message::DiffFindStatus(status) => self.diff_find_status = status,
+            Message::WorkingHover(path) => {
+                if self.working_hovered.as_deref() != Some(path.as_str()) {
+                    self.working_hovered = Some(path);
+                }
+            }
+            Message::SearchOnly(on) => {
+                if self.search_only == on {
+                    return;
+                }
+                self.search_only = on;
+                with_history(|h| {
+                    h.session.data.set_matching_only(on);
+                    h.session.invalidate();
+                });
             }
             Message::CloseSearch => {
                 self.search_open = false;
                 self.search_status.clear();
+                self.last_search = None;
+                if std::mem::take(&mut self.search_only) {
+                    with_history(|h| h.session.data.set_matching_only(false));
+                }
                 with_history(|h| h.search(String::new(), false));
             }
             Message::SearchStatus(text) => self.search_status = text,
@@ -709,14 +2128,546 @@ impl Component for Root {
                 self.repo_settings = Some(crate::reposettings::State::new());
                 self.page = Page::RepoSettings;
                 self.write_repo_settings(Vec::new(), context);
+                if let Some(repo) = self.repo.clone() {
+                    load_signing_keys(repo, false, context);
+                }
             }
             Message::Command(id) if id == "stash" => self.ask_stash(Vec::new()),
+            Message::Command(id) if id == "am-three-way" => {
+                if let Some(repo) = self.repo.clone() {
+                    perform(
+                        context,
+                        repo,
+                        json!({ "op": "amThreeWay" }),
+                        tr!("Retry with 3-Way Merge"),
+                    );
+                }
+            }
+            Message::Command(id)
+                if matches!(
+                    id.as_str(),
+                    "open-in-terminal" | "open-in-editor" | "reveal-in-files"
+                ) =>
+            {
+                let Some(dir) = self.repo.as_ref().and_then(|r| r.paths().workdir) else {
+                    return beep();
+                };
+                // エディタは起動を待つので裏で（code.cmd がすぐ返す）。
+                if id == "open-in-editor" {
+                    context.spawn_background(move |_| {
+                        Message::Performed(
+                            crate::editor::open_folder(&dir)
+                                .err()
+                                .map(|e| (tr!("Couldn’t Open in Editor"), e)),
+                        )
+                    });
+                    return;
+                }
+                let opened = if id == "open-in-terminal" {
+                    crate::files::open_terminal(&dir)
+                } else {
+                    crate::files::open_folder(&dir)
+                };
+                if !opened {
+                    beep();
+                }
+            }
+            Message::Command(id) if id == "delete-ignored-files" => {
+                if let Some(repo) = self.repo.clone() {
+                    context.spawn_background(move |_| {
+                        let reply: Value =
+                            serde_json::from_str(&repo.run_json(r#"{"op":"ignoredFiles"}"#))
+                                .unwrap_or_else(|e| json!({ "error": e.to_string() }));
+                        Message::IgnoredLoaded(repo, reply)
+                    });
+                }
+            }
             Message::Command(id) if id == "pop-stash" => {
                 // いちばん新しい stash を Pop（確かめてから。GTK4 版の `pop_stash`）。
                 match self.stash_entries().first().map(|e| e.name.clone()) {
                     Some(name) => self.stash_action("pop", name),
                     None => beep(),
                 }
+            }
+            Message::Command(id) if id == "new-worktree" => {
+                let Some(repo) = self.repo.clone() else {
+                    return beep();
+                };
+                // 選んでいるコミットから（なければ今のブランチから。New Branch と同じ）。
+                let start = self
+                    .selected
+                    .as_ref()
+                    .map(|(id, _)| id.clone())
+                    .or_else(|| self.refs.as_ref()?.refs.head_branch.clone())
+                    .unwrap_or_else(|| "HEAD".to_owned());
+                self.dialog = Some(Dialog::NewWorktree {
+                    repo,
+                    start,
+                    branch: String::new(),
+                    folder: String::new(),
+                });
+                self.dialog_inputs += 1;
+            }
+            Message::Command(id) if id == "switch-branch" => {
+                let Some(repo) = self.repo.clone() else {
+                    return beep();
+                };
+                let recent = repo
+                    .paths()
+                    .workdir
+                    .map(|w| crate::branchswitcher::recent(&w.display().to_string()))
+                    .unwrap_or_default();
+                self.dialog = Some(Dialog::Switcher {
+                    repo,
+                    query: String::new(),
+                    selected: 0,
+                    recent,
+                });
+                self.dialog_inputs += 1;
+            }
+            Message::SwitcherSelect(index) => {
+                if let (
+                    Some(Dialog::Switcher { selected, .. } | Dialog::QuickOpen { selected, .. }),
+                    Some(index),
+                ) = (&mut self.dialog, index)
+                {
+                    *selected = index;
+                }
+            }
+            // File > New Window: 新しい窓（別のプロセス）に Repositories の画面を出す（窓にタブがないので、今の
+            // リポジトリを開いた窓。GTK4 版・macOS 版の New Window）。
+            // View の One Line per Commit（GTK4 版の History の見せ方）。
+            Message::Command(id) if id == "one-line-history" => {
+                let value = !crate::render::one_line();
+                if let Err(e) = crate::prefs::set_bool(crate::prefs::COMPACT_HISTORY_ROWS, value) {
+                    eprintln!("1 行表示を覚えられない: {e}");
+                }
+                with_history(|h| h.session.set_display(|| crate::render::set_one_line(value)));
+            }
+            // View の All Branches・Current Branch と、上の帯の All Branches（History の範囲）。
+            Message::Command(id) if id == "scope-all" || id == "scope-current" => {
+                let scope = if id == "scope-all" {
+                    crate::data::Scope::All
+                } else {
+                    crate::data::Scope::Current
+                };
+                with_history(|h| h.session.data.set_scope(scope));
+            }
+            // View の Fold Merged Branches（GTK4 版の History の見せ方）。
+            Message::Command(id) if id == "fold-merged-branches" => {
+                let value = !crate::prefs::bool(crate::prefs::FOLD_MERGED_BRANCHES);
+                if let Err(e) = crate::prefs::set_bool(crate::prefs::FOLD_MERGED_BRANCHES, value) {
+                    eprintln!("折りたたみを覚えられない: {e}");
+                }
+                with_history(|h| h.session.data.set_fold(value));
+            }
+            // View の Highlight Ancestors（GTK4 版の History の見せ方）。
+            Message::Command(id) if id == "highlight-ancestors" => {
+                let value = !crate::render::highlight_ancestors();
+                if let Err(e) = crate::prefs::set_bool(crate::prefs::HIGHLIGHT_ANCESTORS, value) {
+                    eprintln!("祖先の強調を覚えられない: {e}");
+                }
+                with_history(|h| {
+                    crate::render::set_highlight_ancestors(value);
+                    h.session.invalidate();
+                });
+            }
+            // View の行に出す項目（GTK4 版の History の見せ方の項目）。
+            Message::Command(id) if id.starts_with("history-item-") => {
+                let bit = match id.as_str() {
+                    "history-item-refs" => crate::render::items::REFS,
+                    "history-item-author" => crate::render::items::AUTHOR,
+                    "history-item-date" => crate::render::items::DATE,
+                    "history-item-id" => crate::render::items::ID,
+                    "history-item-signature" => crate::render::items::SIGNATURE,
+                    _ => return,
+                };
+                let value = crate::render::history_items() ^ bit;
+                if let Err(e) =
+                    crate::prefs::set_string(crate::prefs::HISTORY_ITEMS, &value.to_string())
+                {
+                    eprintln!("行の項目を覚えられない: {e}");
+                }
+                with_history(|h| {
+                    h.session
+                        .set_display(|| crate::render::set_history_items(value))
+                });
+            }
+            // View の Date Order・Topological Order（GTK4 版の History の見せ方の並び順）。
+            Message::Command(id) if id.starts_with("history-order-") => {
+                let order = if id == "history-order-topo" {
+                    amonhen_model::HistoryOrder::Topo
+                } else {
+                    amonhen_model::HistoryOrder::Date
+                };
+                if order == crate::prefs::history_order() {
+                    return;
+                }
+                if let Err(e) = crate::prefs::set_string(crate::prefs::HISTORY_ORDER, order.name())
+                {
+                    eprintln!("並び順を覚えられない: {e}");
+                }
+                with_history(|h| h.session.data.reorder(order));
+            }
+            Message::Command(id) if id == "customize-toolbar" => {
+                self.dialog = Some(Dialog::Toolbar(crate::menus::toolbar_entries()));
+            }
+            Message::ToolbarShown(i, on) => {
+                if let Some(Dialog::Toolbar(entries)) = &mut self.dialog
+                    && let Some(crate::menus::ToolbarEntry::Item(_, shown)) = entries.get_mut(i)
+                {
+                    *shown = on;
+                }
+            }
+            Message::ToolbarMove(i, up) => {
+                if let Some(Dialog::Toolbar(entries)) = &mut self.dialog {
+                    let j = if up { i.checked_sub(1) } else { Some(i + 1) };
+                    if let Some(j) = j.filter(|&j| j < entries.len()) {
+                        entries.swap(i, j);
+                    }
+                }
+            }
+            Message::ToolbarRemove(i) => {
+                if let Some(Dialog::Toolbar(entries)) = &mut self.dialog
+                    && i < entries.len()
+                {
+                    entries.remove(i);
+                }
+            }
+            Message::ToolbarAddSpace => {
+                if let Some(Dialog::Toolbar(entries)) = &mut self.dialog {
+                    entries.push(crate::menus::ToolbarEntry::Space);
+                }
+            }
+            Message::ToolbarDefaults => {
+                if let Some(Dialog::Toolbar(entries)) = &mut self.dialog {
+                    *entries = crate::menus::default_toolbar();
+                }
+            }
+            Message::Command(id) if id == "new-tab" => {
+                crate::tabs::note_page(self.page == Page::WorkingCopy);
+                crate::tabs::new_tab();
+            }
+            Message::Command(id) if id == "close-tab" => {
+                if crate::tabs::close_current() {
+                    close_window();
+                }
+            }
+            Message::Command(id) if id == "next-tab" || id == "previous-tab" => {
+                crate::tabs::note_page(self.page == Page::WorkingCopy);
+                crate::tabs::step(if id == "next-tab" { 1 } else { -1 });
+            }
+            Message::TabSelected(Some(index)) => {
+                if index != crate::tabs::active() {
+                    crate::tabs::note_page(self.page == Page::WorkingCopy);
+                    crate::tabs::select(index);
+                }
+            }
+            Message::TabSelected(None) => {}
+            Message::TabClose(id) => {
+                if let Ok(id) = id.parse()
+                    && crate::tabs::close(id)
+                {
+                    close_window();
+                }
+            }
+            Message::TabsReordered(order) => crate::tabs::reorder(&order),
+            Message::OpenClone(dest, failed) => {
+                if let Some((title, message)) = failed {
+                    self.dialog = Some(Dialog::Failed { title, message });
+                }
+                if let Err(message) = crate::tabs::open(&dest) {
+                    self.dialog = Some(Dialog::Failed {
+                        title: tr!("Couldn’t clone"),
+                        message,
+                    });
+                }
+            }
+            Message::Command(id) if id == "new-window" => {
+                let location = self
+                    .repo
+                    .as_ref()
+                    .and_then(|r| r.paths().workdir)
+                    .map(|d| d.display().to_string());
+                let result = match location {
+                    Some(location) => {
+                        crate::repositories::open_window_with(&location, &["--repositories"])
+                    }
+                    None => Err(tr!("Not found — {path}", path = "")),
+                };
+                if let Err(message) = result {
+                    self.dialog = Some(Dialog::Failed {
+                        title: tr!("New Window"),
+                        message,
+                    });
+                }
+            }
+            Message::Command(id) if id == "open" => {
+                // 新しいタブで開く（macOS 版・GTK4 版と同じ）。
+                let Some(path) = crate::files::pick_folder(&tr!("Open…"), &tr!("Open")) else {
+                    return;
+                };
+                if let Err(e) = crate::tabs::open(&path.display().to_string()) {
+                    self.dialog = Some(Dialog::Failed {
+                        title: tr!("Open…"),
+                        message: e,
+                    });
+                }
+            }
+            Message::Command(id) if id == "clone" => {
+                self.dialog = Some(Dialog::Clone {
+                    url: String::new(),
+                    folder: crate::repositories::clone_folder(),
+                    name: String::new(),
+                    download: 0,
+                    depth: 1,
+                    sparse: false,
+                    submodules: false,
+                    branch: None,
+                    depth_other: "100".to_owned(),
+                });
+                self.dialog_inputs += 1;
+            }
+            Message::CloneField(index, text) => {
+                if let Some(Dialog::Clone {
+                    url, folder, name, ..
+                }) = &mut self.dialog
+                {
+                    *[url, folder, name].into_iter().nth(index).expect("field") = text;
+                }
+            }
+            Message::CloneDownload(Some(index)) => {
+                if let Some(Dialog::Clone { download, .. }) = &mut self.dialog {
+                    *download = index;
+                }
+            }
+            Message::CloneDepth(Some(index)) => {
+                if let Some(Dialog::Clone { depth, .. }) = &mut self.dialog {
+                    *depth = index;
+                }
+            }
+            Message::CloneDepthOther(text) => {
+                if let Some(Dialog::Clone { depth_other, .. }) = &mut self.dialog {
+                    *depth_other = text;
+                }
+            }
+            Message::CloneDownload(None) | Message::CloneDepth(None) => {}
+            Message::CloneCheck(index, on) => {
+                if let Some(Dialog::Clone {
+                    sparse, submodules, ..
+                }) = &mut self.dialog
+                {
+                    *[sparse, submodules].into_iter().nth(index).expect("check") = on;
+                }
+            }
+            Message::CloneBundle => {
+                let chosen = crate::files::open_files(&tr!(
+                    "Choose a bundle file (git bundle) to clone from."
+                ));
+                if let Some(path) = chosen.into_iter().next()
+                    && let Some(Dialog::Clone { url, branch, .. }) = &mut self.dialog
+                {
+                    *url = path.display().to_string();
+                    *branch = None;
+                    self.dialog_inputs += 1;
+                }
+            }
+            Message::CloneBranch(Some(index)) => {
+                if let Some(Dialog::Clone { url, branch, .. }) = &mut self.dialog {
+                    let names = crate::repositories::clone_bundle(url)
+                        .map(|i| crate::repositories::bundle_branches(&i))
+                        .unwrap_or_default();
+                    *branch = names.get(index).cloned();
+                }
+            }
+            Message::CloneBranch(None) => {}
+            Message::CloneChoose => {
+                if let Some(path) =
+                    crate::files::pick_folder(&tr!("Clone Location"), &tr!("Choose"))
+                    && let Some(Dialog::Clone { folder, .. }) = &mut self.dialog
+                {
+                    *folder = path.display().to_string();
+                }
+            }
+            Message::Cloned(dest, failed) => {
+                self.busy = None;
+                match failed {
+                    Some(message) => {
+                        self.dialog = Some(Dialog::Failed {
+                            title: tr!("Couldn’t clone"),
+                            message,
+                        })
+                    }
+                    None => {
+                        let dest = dest.display().to_string();
+                        crate::repositories::add_bookmark(&dest);
+                        // 根のファイルだけを取り出した clone なら、取り出すフォルダを先に選ぶ（GTK4 版の
+                        // `choose_folder`）。選んでも取り消しても、その後で開く。
+                        if std::mem::take(&mut self.clone_sparse)
+                            && let Some(repo) = open_repository(&dest)
+                        {
+                            load_tree_folders(repo.clone(), "/".to_owned(), context);
+                            self.dialog = Some(Dialog::TreeFolder {
+                                repo,
+                                path: "/".to_owned(),
+                                entries: None,
+                                selected: None,
+                                existing: Vec::new(),
+                                cloned: Some(dest),
+                            });
+                            return;
+                        }
+                        if let Err(message) = crate::tabs::open(&dest) {
+                            self.dialog = Some(Dialog::Failed {
+                                title: tr!("Couldn’t clone"),
+                                message,
+                            });
+                        }
+                    }
+                }
+            }
+            // Repository > Add Submodule…・Update Submodules…（サイドバーの Submodules の見出しと同じ）。
+            Message::Command(id) if id == "add-submodule" => self.submodule_menu("sm-add", context),
+            Message::Command(id) if id == "add-subtree" => self.submodule_menu("st-add", context),
+            Message::Command(id) if id == "update-submodules" => {
+                self.submodule_menu("sm-update:", context)
+            }
+            Message::Command(id) if id == "quick-open" => {
+                self.dialog = Some(Dialog::QuickOpen {
+                    query: String::new(),
+                    selected: 0,
+                    candidates: crate::repositories::candidates(Vec::new()),
+                });
+                self.dialog_inputs += 1;
+                // スキャンするフォルダの下のリポジトリは、探し終えてから足す。
+                let roots = crate::repositories::scan_roots();
+                if !roots.is_empty() {
+                    context.spawn_background(move |_| {
+                        let found = crate::repositories::scan(roots);
+                        Message::QuickOpenCandidates(crate::repositories::candidates(found))
+                    });
+                }
+            }
+            Message::QuickOpenCandidates(found) => {
+                if let Some(Dialog::QuickOpen { candidates, .. }) = &mut self.dialog {
+                    *candidates = found;
+                }
+            }
+            Message::Command(id) if id == "new-orphan-branch" => {
+                let Some(repo) = self.repo.clone() else {
+                    return beep();
+                };
+                self.dialog = Some(Dialog::NewOrphan {
+                    repo,
+                    name: String::new(),
+                    keep: false,
+                });
+                self.dialog_inputs += 1;
+            }
+            Message::OrphanKeep(on) => {
+                if let Some(Dialog::NewOrphan { keep, .. }) = &mut self.dialog {
+                    *keep = on;
+                }
+            }
+            Message::Command(id) if id == "prune-worktrees" => {
+                let Some(repo) = self.repo.clone() else {
+                    return beep();
+                };
+                perform(
+                    context,
+                    repo,
+                    json!({ "op": "worktreePrune" }),
+                    tr!("Prune Worktrees"),
+                );
+            }
+            Message::Command(id) if id == "save-bundle" => {
+                self.ask_bundle(Vec::new(), String::new(), "all".to_owned())
+            }
+            Message::Command(id) if id == "fetch-bundle" => {
+                let Some(repo) = self.repo.clone() else {
+                    return beep();
+                };
+                let Some(file) = crate::files::open_files(&tr!(
+                    "Choose a bundle file (git bundle) to fetch from."
+                ))
+                .into_iter()
+                .next()
+                .map(|p| p.to_string_lossy().into_owned()) else {
+                    return;
+                };
+                context.spawn_background(move |_| {
+                    let command = json!({ "op": "bundleCheck", "file": &file });
+                    let check: Value = serde_json::from_str(&repo.run_json(&command.to_string()))
+                        .unwrap_or_else(|e| json!({ "error": e.to_string() }));
+                    Message::BundleChecked(repo, file, check)
+                });
+            }
+            Message::Command(id) if id == "apply-patch" => {
+                if self.repo.is_none() {
+                    return beep();
+                }
+                let paths: Vec<String> = crate::files::open_files(&tr!(
+                    "Choose patch files (.patch, .diff, .mbox, .eml)."
+                ))
+                .into_iter()
+                .map(|p| p.to_string_lossy().into_owned())
+                .collect();
+                if !paths.is_empty() {
+                    self.update(Message::ApplyPatches(paths), context);
+                }
+            }
+            // 窓に落としたファイル: すべてパッチなら当てる（GTK4 版・macOS 版の `install_drop`。merge などの途中や、
+            // パッチでないものが混じっていれば受けない）。
+            Message::Dropped(data) => {
+                let DroppedData::StorageItems(items) = data else {
+                    return beep();
+                };
+                let paths: Vec<String> = items.into_iter().map(|i| i.path).collect();
+                if self.sequence.is_some() || !crate::patch_files::all_patches(&paths) {
+                    return beep();
+                }
+                self.update(Message::ApplyPatches(paths), context);
+            }
+            // パッチのファイルを読んで、何を変えるかと当たるかを見せてから当てる（名前の順につなぐ）。
+            Message::ApplyPatches(mut paths) => {
+                let Some(repo) = self.repo.clone() else {
+                    return beep();
+                };
+                paths.sort_by(|a, b| crate::patch_files::natural(a, b));
+                context.spawn_background(move |_| {
+                    let command = json!({ "op": "readPatch", "paths": &paths });
+                    let mut reply: Value =
+                        serde_json::from_str(&repo.run_json(&command.to_string()))
+                            .unwrap_or_else(|e| json!({ "error": e.to_string() }));
+                    // コミットになるなら（git am）、前と後の絵（今の先端の上に、パッチごとのコミット。GTK4 版と
+                    // 同じ）。
+                    if reply["info"]["kind"].as_str() == Some("mailbox") {
+                        let subjects: Vec<&str> = reply["info"]["patches"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .map(|p| p["subject"].as_str().unwrap_or_default())
+                            .collect();
+                        let query = json!({ "op": "pickPreview", "subjects": subjects });
+                        let preview: Value =
+                            serde_json::from_str(&repo.run_json(&query.to_string()))
+                                .unwrap_or_default();
+                        reply["drawing"] = preview["info"].clone();
+                    }
+                    Message::PatchRead(repo, paths, reply)
+                });
+            }
+            Message::Command(id) if id == "repositories" => {
+                if self.page != Page::Repositories {
+                    self.repositories_from = self.page;
+                }
+                let (state, roots) = crate::repositories::State::new();
+                self.repositories = Some(state);
+                self.page = Page::Repositories;
+                context.spawn_background(move |_| {
+                    let (found, dirs) = crate::repositories::scan_with_dirs(roots);
+                    Message::Repos(crate::repositories::Event::Scanned(found, dirs))
+                });
             }
             Message::Command(id) if id == "activity" => {
                 if self.page != Page::Activity {
@@ -734,12 +2685,40 @@ impl Component for Root {
                 if self.page != Page::Settings {
                     self.settings_from = self.page;
                 }
+                let editor = crate::prefs::string(crate::editor::KEY).unwrap_or_default();
                 self.settings = Some(crate::settingsview::State {
+                    page: 0,
                     git: None,
+                    global: None,
+                    programs: None,
                     auto_magic_merge: crate::prefs::bool(crate::prefs::AUTO_MAGIC_MERGE),
                     file_history_merges: crate::prefs::bool(crate::prefs::FILE_HISTORY_MERGES),
+                    auto_bookmark: crate::prefs::bool(crate::prefs::AUTO_BOOKMARK),
+                    auto_fetch: crate::prefs::auto_fetch_minutes(),
+                    write_commit_graph: crate::prefs::bool(crate::prefs::WRITE_COMMIT_GRAPH),
+                    use_fsmonitor: crate::prefs::bool(crate::prefs::USE_FSMONITOR),
+                    cache_size: None,
+                    editors: crate::settingsview::editor_choices(&editor),
+                    editor,
+                    editor_epoch: 0,
+                    env: {
+                        let mut env: Vec<(String, String)> = std::env::vars().collect();
+                        env.sort_by_key(|(n, _)| n.to_lowercase());
+                        env
+                    },
+                    env_added: crate::settingsview::env_added_names(),
+                    env_query: String::new(),
+                    templates: crate::templates::all(),
+                });
+                context.spawn_background(|_| {
+                    Message::CacheSize(
+                        amonhen_remote::local::cache_dir()
+                            .map_or(0, |d| amonhen_core::cache::total_size(&d)),
+                    )
                 });
                 self.page = Page::Settings;
+                load_signing_keys(repo.clone(), true, context);
+                load_programs(repo.clone(), context);
                 // `--global` の段の値（いくつもあれば最後のもの。git と同じ）。
                 context.spawn_background(move |_| {
                     let reply: Value =
@@ -761,7 +2740,11 @@ impl Component for Root {
                             .unwrap_or_default()
                             .to_owned()
                     };
-                    Message::SettingsGit(value("user.name"), value("user.email"))
+                    Message::SettingsGit(
+                        value("user.name"),
+                        value("user.email"),
+                        global_entries(&reply),
+                    )
                 });
             }
             Message::Command(id) if id == "compare-with-previous" => {
@@ -812,6 +2795,17 @@ impl Component for Root {
                     Message::RangePrevious(request, found)
                 });
             }
+            // Refresh: History と一緒に、worktree・ブランチの分け方も読み直す（フォルダを手で動かした worktree など、
+            // ref の変わらない変化）。
+            Message::Command(id) if id == "refresh" => {
+                if let Some(repo) = self.repo.clone() {
+                    load_groups(repo.clone(), context);
+                    // タグのリモートでの様子も（タグを push・削除しても手元の ref は変わらない）。
+                    load_tag_remotes(repo.clone(), context);
+                    load_worktrees(repo, context);
+                }
+                with_history(|h| h.command(&id));
+            }
             Message::Command(id) => with_history(|h| h.command(&id)),
             Message::UndoPeek(repo, peek) => match peek {
                 Some((label, what)) => self.dialog = Some(Dialog::Undo { repo, label, what }),
@@ -840,6 +2834,39 @@ impl Component for Root {
                         perform(context, repo, command, tr!("Create"));
                     }
                 }
+                (Some(Dialog::Failure { repo, failure }), ContentDialogResult::Primary) => {
+                    if let Some(remedy) = failure.remedies(true).into_iter().next() {
+                        self.failure = None;
+                        self.run_remedy(repo, &failure, remedy, context);
+                    }
+                }
+                // 押したボタンの確認を出す。同じ ContentDialog を開いたまま中身だけ替えると開き直らないので、
+                // 一度閉じた形で描いてから開く。
+                (Some(Dialog::TagStatus { actions, .. }), ContentDialogResult::Primary) => {
+                    if let Some((key, _)) = actions.into_iter().next() {
+                        menu_later(context, key);
+                    }
+                }
+                (Some(Dialog::TagStatus { actions, .. }), ContentDialogResult::Secondary) => {
+                    if let Some((key, _)) = actions.into_iter().nth(1) {
+                        menu_later(context, key);
+                    }
+                }
+                (Some(Dialog::Failure { .. }), ContentDialogResult::Secondary) => {
+                    self.update(Message::Command("activity".to_owned()), context);
+                }
+                (
+                    Some(Dialog::ConfirmDrawn {
+                        repo,
+                        command,
+                        button,
+                        ..
+                    }),
+                    ContentDialogResult::Primary,
+                ) => perform(context, repo, command, button),
+                (Some(Dialog::FetchFirst { then, .. }), ContentDialogResult::Primary) => {
+                    self.save(then, context);
+                }
                 (
                     Some(Dialog::Confirm {
                         repo,
@@ -865,6 +2892,27 @@ impl Component for Root {
                         json!({ "op": "reset", "oid": oid, "mode": mode }),
                         "Reset".to_owned(),
                     );
+                }
+                (
+                    Some(Dialog::MergeSeveral {
+                        repo,
+                        sources,
+                        mode,
+                        one_by_one,
+                        ..
+                    }),
+                    ContentDialogResult::Primary,
+                ) => {
+                    let revs: Vec<String> = sources.into_iter().map(|s| s.rev).collect();
+                    let mut command = json!({ "op": "merge", "rev": revs });
+                    if one_by_one {
+                        command["oneByOne"] = json!(true);
+                    }
+                    if let Some(m) = SEVERAL_MERGE_MODES.get(mode).filter(|m| **m != "git") {
+                        command["mode"] = json!(m);
+                    }
+                    self.busy = Some("Merge…".to_owned());
+                    perform(context, repo, command, "Merge".to_owned());
                 }
                 (
                     Some(Dialog::Integrate {
@@ -899,6 +2947,7 @@ impl Component for Root {
                         name,
                         fetch,
                         push,
+                        ..
                     }),
                     ContentDialogResult::Primary,
                 ) => {
@@ -910,6 +2959,169 @@ impl Component for Root {
                     let commands =
                         remote_changes(original.as_ref(), name.trim(), fetch.trim(), push.trim());
                     perform_all(context, repo, commands, title);
+                }
+                (
+                    Some(Dialog::Clone {
+                        url,
+                        folder,
+                        name,
+                        download,
+                        depth,
+                        sparse,
+                        submodules,
+                        branch,
+                        depth_other,
+                    }),
+                    ContentDialogResult::Primary,
+                ) => {
+                    // bundle のファイルなら、取得する範囲は選べない（git は中身をすべて写す）。HEAD がなければ、選んだ
+                    // ブランチ（既定は main・master・最初のブランチ）を取り出す。
+                    let bundle = crate::repositories::clone_bundle(&url);
+                    let url = match &bundle {
+                        Some(_) => crate::repositories::path_of(&url).display().to_string(),
+                        None => url.trim().to_owned(),
+                    };
+                    let name = match name.trim() {
+                        "" => crate::repositories::name_from_url(&url),
+                        n => n.to_owned(),
+                    };
+                    let parent = crate::repositories::path_of(&folder);
+                    if url.is_empty() || name.is_empty() || folder.trim().is_empty() {
+                        return beep();
+                    }
+                    let dest = parent.join(&name);
+                    let download = if bundle.is_some() { 0 } else { download };
+                    let branch = bundle.as_ref().and_then(|info| {
+                        let names = crate::repositories::bundle_branches(info);
+                        if names.is_empty() {
+                            return None;
+                        }
+                        branch
+                            .filter(|b| names.contains(b))
+                            .or_else(|| amonhen_backend_cli::bundle_default_branch(info))
+                    });
+                    let options = amonhen_backend_cli::CloneOptions {
+                        filter: (download == 1).then(|| "blob:none".to_owned()),
+                        depth: (download == 2).then(|| {
+                            CLONE_DEPTHS.get(depth).copied().unwrap_or_else(|| {
+                                depth_count(&depth_other).unwrap_or(CLONE_DEPTHS[1])
+                            })
+                        }),
+                        sparse,
+                        recurse_submodules: submodules,
+                        branch,
+                    };
+                    if dest.exists() {
+                        // ダイアログを閉じた同じ更新では次のダイアログを出せないので、知らせで出す。
+                        let title = tr!("{path} already exists", path = dest.display());
+                        context.spawn_background(move |_| {
+                            Message::Performed(Some((
+                                title,
+                                tr!("Choose a different name or location."),
+                            )))
+                        });
+                        return;
+                    }
+                    crate::repositories::remember_clone_folder(folder.trim());
+                    self.busy = Some(tr!("Cloning {url}…", url = url));
+                    self.clone_sparse = options.sparse;
+                    context.spawn_background(move |_| {
+                        let result = amonhen_backend_cli::clone(&url, &dest, &options);
+                        Message::Cloned(dest, result.err().map(|e| e.to_string()))
+                    });
+                }
+                (
+                    Some(Dialog::QuickOpen {
+                        query,
+                        selected,
+                        candidates,
+                    }),
+                    ContentDialogResult::Primary,
+                ) => {
+                    let shown = crate::repositories::matches(&candidates, &query);
+                    // 打ち替えて候補が減っていれば、先頭。
+                    match shown.get(selected).or(shown.first()) {
+                        Some(c) => {
+                            if let Err(e) = crate::tabs::open(&c.location) {
+                                self.error = Some(e);
+                            }
+                        }
+                        None => beep(),
+                    }
+                }
+                (
+                    Some(Dialog::Switcher {
+                        repo,
+                        query,
+                        selected,
+                        recent,
+                    }),
+                    ContentDialogResult::Primary,
+                ) => {
+                    let Some(refs) = self.refs.as_ref() else {
+                        return beep();
+                    };
+                    let shown = crate::branchswitcher::candidates(&refs.refs, &recent, &query);
+                    // 打ち替えて候補が減っていれば、先頭。
+                    match shown.get(selected).or(shown.first()) {
+                        Some(choice) => {
+                            perform(context, repo, choice.command(), tr!("Switch Branch"))
+                        }
+                        None => beep(),
+                    }
+                }
+                (
+                    Some(Dialog::Restore {
+                        repo,
+                        rev,
+                        paths,
+                        staged,
+                        ..
+                    }),
+                    ContentDialogResult::Primary,
+                ) => {
+                    perform(
+                        context,
+                        repo,
+                        json!({ "op": "restoreFiles", "rev": rev, "paths": paths, "staged": staged }),
+                        tr!("Restore"),
+                    );
+                }
+                (Some(Dialog::NewOrphan { repo, name, keep }), ContentDialogResult::Primary) => {
+                    let name = name.trim().to_owned();
+                    if name.is_empty() {
+                        return beep();
+                    }
+                    perform(
+                        context,
+                        repo,
+                        json!({ "op": "createOrphanBranch", "name": name, "keepFiles": keep }),
+                        tr!("Create"),
+                    );
+                }
+                (Some(Dialog::DeleteIgnored { repo, paths }), ContentDialogResult::Primary) => {
+                    perform(
+                        context,
+                        repo,
+                        json!({ "op": "deleteIgnored", "paths": paths }),
+                        tr!("Delete"),
+                    );
+                }
+                (Some(Dialog::CleanUp { repo, branches, .. }), ContentDialogResult::Primary) => {
+                    // まとめて消す（Undo は 1 回でまとめて戻す）。
+                    let chosen: Vec<Value> = branches
+                        .iter()
+                        .filter(|(_, on)| *on)
+                        .map(|(b, _)| json!({ "name": b["name"], "force": b["force"] }))
+                        .collect();
+                    if !chosen.is_empty() {
+                        perform(
+                            context,
+                            repo,
+                            json!({ "op": "deleteBranches", "branches": chosen }),
+                            tr!("Clean Up Branches"),
+                        );
+                    }
                 }
                 (Some(Dialog::StashBranch { repo, stash, name }), ContentDialogResult::Primary) => {
                     let branch = name.trim().to_owned();
@@ -953,7 +3165,31 @@ impl Component for Root {
                         repo,
                         oid,
                         message,
+                        last: Some((last, count)),
+                        ..
+                    }),
+                    ContentDialogResult::Primary,
+                ) => {
+                    let label = tr!("Combine {count} Commits…", count = count)
+                        .trim_end_matches('…')
+                        .to_owned();
+                    perform(
+                        context,
+                        repo,
+                        json!({
+                            "op": "rewrite", "label": label,
+                            "edit": { "kind": "squashRange", "oid": oid, "last": last, "message": message },
+                        }),
+                        label.clone(),
+                    );
+                }
+                (
+                    Some(Dialog::Reword {
+                        repo,
+                        oid,
+                        message,
                         squash,
+                        ..
                     }),
                     ContentDialogResult::Primary,
                 ) => {
@@ -1042,12 +3278,275 @@ impl Component for Root {
                         Message::Performed(None)
                     });
                 }
+                (
+                    Some(Dialog::Archive {
+                        repo,
+                        rev,
+                        format,
+                        top,
+                        folder,
+                    }),
+                    ContentDialogResult::Primary,
+                ) => {
+                    let picked = ARCHIVE_FORMATS[format.min(ARCHIVE_FORMATS.len() - 1)];
+                    let _ = crate::prefs::set_string(ARCHIVE_FORMAT, picked);
+                    let prefix = top.trim().trim_matches('/').to_owned();
+                    let stem = if prefix.is_empty() {
+                        "archive"
+                    } else {
+                        prefix.as_str()
+                    };
+                    // 1 つのフォルダだけ（GTK4 版の「Folder」。区切りは / にそろえる）。
+                    let folder = folder
+                        .trim()
+                        .replace('\\', "/")
+                        .trim_matches('/')
+                        .to_owned();
+                    let paths: Vec<String> =
+                        (!folder.is_empty()).then_some(folder).into_iter().collect();
+                    let save = PendingSave::Archive {
+                        repo: repo.clone(),
+                        name: format!("{stem}.{picked}"),
+                        command: json!({
+                            "op": "archive",
+                            "rev": rev,
+                            "format": picked,
+                            "prefix": if prefix.is_empty() { String::new() } else { format!("{prefix}/") },
+                            "paths": paths,
+                        }),
+                    };
+                    // partial clone で手元にない中身があれば、先にまとめて取ることを確かめる（GTK4 版と同じ）。
+                    let check = json!({ "op": "archiveContents", "rev": rev, "paths": paths });
+                    context.spawn_background(move |_| {
+                        let need: Value = serde_json::from_str(&repo.run_json(&check.to_string()))
+                            .unwrap_or_default();
+                        Message::SaveChecked(save, missing_count(&need["info"], "count"))
+                    });
+                }
+                (
+                    Some(Dialog::ApplyPatch {
+                        repo,
+                        paths,
+                        mailbox,
+                        three_way,
+                        index,
+                        ..
+                    }),
+                    ContentDialogResult::Primary,
+                ) => {
+                    let command = if mailbox {
+                        json!({ "op": "am", "paths": paths, "threeWay": three_way })
+                    } else {
+                        json!({
+                            "op": "applyPatch", "paths": paths,
+                            "index": index, "threeWay": three_way,
+                        })
+                    };
+                    perform(context, repo, command, "Apply".to_owned());
+                }
+                (
+                    Some(Dialog::Bundle {
+                        repo,
+                        refs,
+                        label,
+                        newer,
+                        base,
+                        ..
+                    }),
+                    ContentDialogResult::Primary,
+                ) => {
+                    let base = base.trim().to_owned();
+                    let bases: Vec<String> = if newer && !base.is_empty() {
+                        vec![base]
+                    } else {
+                        Vec::new()
+                    };
+                    let command = json!({ "op": "bundlePreview", "refs": refs, "bases": bases });
+                    context.spawn_background(move |_| {
+                        let preview: Value =
+                            serde_json::from_str(&repo.run_json(&command.to_string()))
+                                .unwrap_or_else(|e| json!({ "error": e.to_string() }));
+                        Message::BundlePreview(repo, label, preview, command)
+                    });
+                }
+                (
+                    Some(Dialog::FetchBundle {
+                        repo, file, name, ..
+                    }),
+                    ContentDialogResult::Primary,
+                ) => {
+                    let name = name.trim().to_owned();
+                    if !name.is_empty() {
+                        perform(
+                            context,
+                            repo,
+                            json!({ "op": "fetchBundle", "file": file, "name": name }),
+                            "Fetch".to_owned(),
+                        );
+                    }
+                }
+                (
+                    Some(Dialog::NewWorktree {
+                        repo,
+                        start,
+                        branch,
+                        folder,
+                    }),
+                    ContentDialogResult::Primary,
+                ) => {
+                    let name = branch.trim().to_owned();
+                    if name.is_empty() {
+                        return beep();
+                    }
+                    let mut path = folder.trim().to_owned();
+                    if path.is_empty() {
+                        path = default_worktree_folder(&repo, &name);
+                    }
+                    perform(
+                        context,
+                        repo,
+                        json!({ "op": "worktreeAdd", "path": path, "newBranch": name, "start": start }),
+                        tr!("New Worktree"),
+                    );
+                }
+                (
+                    Some(Dialog::LockWorktree {
+                        repo, path, reason, ..
+                    }),
+                    ContentDialogResult::Primary,
+                ) => {
+                    let text = reason.trim().to_owned();
+                    perform(
+                        context,
+                        repo,
+                        json!({ "op": "worktreeLock", "path": path, "reason": (!text.is_empty()).then_some(text) }),
+                        tr!("Lock"),
+                    );
+                }
+                (
+                    Some(Dialog::WorktreeFolder {
+                        repo,
+                        path,
+                        to,
+                        repair,
+                        ..
+                    }),
+                    ContentDialogResult::Primary,
+                ) => {
+                    let to = to.trim().to_owned();
+                    if to.is_empty() {
+                        return beep();
+                    }
+                    let (command, title) = if repair {
+                        (
+                            json!({ "op": "worktreeRepair", "paths": [to] }),
+                            tr!("Reconnect"),
+                        )
+                    } else {
+                        (
+                            json!({ "op": "worktreeMove", "path": path, "to": to }),
+                            tr!("Move"),
+                        )
+                    };
+                    perform(context, repo, command, title);
+                }
                 (Some(Dialog::CloseMerge), ContentDialogResult::Primary) => {
                     self.merge = None;
                     self.page = Page::WorkingCopy;
                 }
                 (Some(Dialog::MarkResolved { path, .. }), ContentDialogResult::Primary) => {
                     self.update(Message::Stage(path, true), context);
+                }
+                (
+                    Some(Dialog::Form {
+                        repo,
+                        title,
+                        fields,
+                        checks,
+                        kind,
+                        ..
+                    }),
+                    ContentDialogResult::Primary,
+                ) => match kind.command(&fields, &checks) {
+                    Some(command) => perform(context, repo, command, title),
+                    None => beep(),
+                },
+                (
+                    Some(Dialog::TreeFolder {
+                        repo,
+                        path,
+                        entries,
+                        selected,
+                        existing,
+                        cloned,
+                    }),
+                    ContentDialogResult::Primary,
+                ) => {
+                    // 選んだ行のフォルダ（選んでいなければ、見ているフォルダ。根は選べない）。
+                    let chosen = match selected
+                        .and_then(|i| entries.as_ref()?.as_ref().ok()?.get(i).cloned())
+                    {
+                        Some(name) => format!("{}/{name}", path.trim_end_matches('/')),
+                        None => path,
+                    };
+                    let chosen = chosen.trim_start_matches('/').to_owned();
+                    if chosen.is_empty() {
+                        return beep();
+                    }
+                    if existing.contains(&chosen) {
+                        return;
+                    }
+                    let mut folders = existing;
+                    folders.push(chosen.clone());
+                    let command = json!({ "op": "sparseCheckout", "folders": folders });
+                    // clone した直後: 取り出してから新しい窓で開く。
+                    if let Some(dest) = cloned {
+                        self.busy = Some(tr!("Checking out {folder}…", folder = &chosen));
+                        context.spawn_background(move |_| {
+                            let reply: Value =
+                                serde_json::from_str(&repo.run_json(&command.to_string()))
+                                    .unwrap_or_else(|e| json!({ "error": e.to_string() }));
+                            let failed = reply["error"].as_str().map(|e| {
+                                (
+                                    tr!("Couldn’t check out {folder}", folder = &chosen),
+                                    e.to_owned(),
+                                )
+                            });
+                            Message::OpenClone(dest, failed)
+                        });
+                        return;
+                    }
+                    perform(context, repo, command, tr!("Check Out One More Folder"));
+                }
+                // clone した直後に取り消した: そのまま開く。
+                (
+                    Some(Dialog::TreeFolder {
+                        cloned: Some(dest), ..
+                    }),
+                    _,
+                ) => {
+                    if let Err(message) = crate::tabs::open(&dest) {
+                        self.dialog = Some(Dialog::Failed {
+                            title: tr!("Couldn’t clone"),
+                            message,
+                        });
+                    }
+                }
+                (Some(Dialog::Toolbar(entries)), ContentDialogResult::Primary) => {
+                    crate::menus::save_toolbar(&entries);
+                }
+                (
+                    Some(Dialog::RenameRepository { location, name }),
+                    ContentDialogResult::Primary,
+                ) => {
+                    if let Some(state) = self.repositories.as_mut() {
+                        state.rename(&location, &name);
+                    }
+                }
+                (Some(Dialog::NewGroup { location, name }), ContentDialogResult::Primary) => {
+                    if let Some(state) = self.repositories.as_mut() {
+                        state.add_group(&name, location.as_deref());
+                    }
                 }
                 (Some(Dialog::Rename { repo, from, name }), ContentDialogResult::Primary) => {
                     let to = name.trim().to_owned();
@@ -1175,6 +3674,7 @@ impl Component for Root {
                         repo,
                         remotes,
                         from,
+                        ..
                     }),
                     ContentDialogResult::Primary,
                 ) => {
@@ -1225,6 +3725,7 @@ impl Component for Root {
                         name,
                         fetch,
                         push: shown_push,
+                        check: None,
                     });
                     self.dialog_inputs += 1;
                 }
@@ -1232,10 +3733,112 @@ impl Component for Root {
             },
             Message::RemoteField(index, text) => {
                 if let Some(Dialog::Remote {
-                    name, fetch, push, ..
+                    name,
+                    fetch,
+                    push,
+                    check,
+                    ..
                 }) = &mut self.dialog
                 {
+                    // fetch の URL を変えたら、前の確認の結果は消す。
+                    if index == 1 && *fetch != text {
+                        *check = None;
+                    }
                     *[name, fetch, push].into_iter().nth(index).expect("field") = text;
+                }
+            }
+            Message::TreeFolderLoaded(at, entries) => {
+                if let Some(Dialog::TreeFolder {
+                    path,
+                    entries: shown,
+                    selected,
+                    ..
+                }) = &mut self.dialog
+                    && *path == at
+                {
+                    *shown = Some(entries);
+                    *selected = None;
+                }
+            }
+            Message::TreeFolderSelect(index) => {
+                if let Some(Dialog::TreeFolder { selected, .. }) = &mut self.dialog {
+                    *selected = index;
+                }
+            }
+            Message::TreeFolderOpen | Message::TreeFolderUp => {
+                let up = matches!(message, Message::TreeFolderUp);
+                let Some(Dialog::TreeFolder {
+                    repo,
+                    path,
+                    entries,
+                    selected,
+                    ..
+                }) = &mut self.dialog
+                else {
+                    return;
+                };
+                let next = if up {
+                    match path.trim_end_matches('/').rsplit_once('/') {
+                        Some((parent, _)) if !parent.is_empty() => parent.to_owned(),
+                        _ => "/".to_owned(),
+                    }
+                } else {
+                    let Some(name) =
+                        selected.and_then(|i| entries.as_ref()?.as_ref().ok()?.get(i).cloned())
+                    else {
+                        return;
+                    };
+                    format!("{}/{name}", path.trim_end_matches('/'))
+                };
+                *path = next.clone();
+                *entries = None;
+                *selected = None;
+                load_tree_folders(repo.clone(), next, context);
+            }
+            Message::RemoteCheck => {
+                // 保存する前に、fetch の URL につないで確かめる（GTK4 版の Check Connection。コアの `checkRemote`）。
+                if let Some(Dialog::Remote {
+                    repo, fetch, check, ..
+                }) = &mut self.dialog
+                {
+                    let url = fetch.trim().to_owned();
+                    if url.is_empty() {
+                        return beep();
+                    }
+                    *check = Some((None, tr!("Connecting…")));
+                    let repo = repo.clone();
+                    context.spawn_background(move |_| {
+                        let command = json!({ "op": "checkRemote", "url": &url });
+                        let reply: Value =
+                            serde_json::from_str(&repo.run_json(&command.to_string()))
+                                .unwrap_or_else(|e| json!({ "error": e.to_string() }));
+                        let result = if reply["ok"].as_bool() == Some(true) {
+                            let info = &reply["info"];
+                            let mut text = tr!(
+                                "Reachable: {branches} branches, {tags} tags",
+                                branches = info["branches"].as_u64().unwrap_or(0),
+                                tags = info["tags"].as_u64().unwrap_or(0)
+                            );
+                            if let Some(head) = info["head"].as_str() {
+                                text.push_str(&tr!(", HEAD at {head}", head = head));
+                            }
+                            (true, text)
+                        } else {
+                            (
+                                false,
+                                reply["error"].as_str().unwrap_or_default().to_owned(),
+                            )
+                        };
+                        Message::RemoteChecked(url, result.0, result.1)
+                    });
+                }
+            }
+            Message::RemoteChecked(url, ok, text) => {
+                // 確かめている間に URL を変えていなければ、結果を出す。
+                if let Some(Dialog::Remote { fetch, check, .. }) = &mut self.dialog
+                    && fetch.trim() == url
+                {
+                    *check = Some((Some(ok), text));
                 }
             }
             Message::DeleteChecked(repo, name, checked) => match checked {
@@ -1288,6 +3891,33 @@ impl Component for Root {
                 }
             }
             Message::Status(status) => {
+                // submodule の中の変更（✎）も status の変化で読み直す（submodule があるときだけ）。
+                if let Some(repo) = self.repo.clone()
+                    && self.submodules.as_array().is_some_and(|s| !s.is_empty())
+                {
+                    load_submodules(repo, context);
+                }
+                // 行数は裏で読む（数がなくても一覧は先に出す。GTK4 版の `load_stats`）。
+                if let Some(repo) = self.repo.clone() {
+                    let generation = status.generation;
+                    context.spawn_background(move |_| {
+                        let reply: Value =
+                            serde_json::from_str(&repo.run_json(r#"{"op":"workingStats"}"#))
+                                .unwrap_or_default();
+                        let stats = reply["info"]["stats"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|s| {
+                                Some((
+                                    s["path"].as_str()?.to_owned(),
+                                    (s["added"].as_u64(), s["removed"].as_u64()),
+                                ))
+                            })
+                            .collect();
+                        Message::WorkingStats(generation, stats)
+                    });
+                }
                 self.status = Some(status);
                 // 途中の操作も読み直す（merge・rebase などは status と一緒に変わる）。
                 if let Some(repo) = self.repo.clone() {
@@ -1301,8 +3931,56 @@ impl Component for Root {
                 // 選んでいるファイルの差分も読み直す（stage で行の印が、外での変更で中身が変わる）。
                 self.load_working_diff();
             }
-            Message::Summary(text) => self.summary = text,
-            Message::Description(text) => self.description = text,
+            Message::Summary(text) => {
+                if text != self.summary {
+                    // 打って変えたら、呼び出しをやめる（呼び出した文が欄から戻ってきたときは同じ文）。
+                    self.recall_cursor = -1;
+                    self.before_recall = None;
+                    self.summary = text;
+                    self.store_draft();
+                }
+            }
+            Message::RecallRecent(step) => {
+                // Alt+↑（古い方へ）・Alt+↓ で、最近のメッセージを順に呼び出す。戻りきったら呼び出す前の下書き。
+                let count = self.recent_messages.len() as isize;
+                if count == 0 {
+                    return;
+                }
+                if self.recall_cursor < 0 {
+                    self.before_recall = Some((self.summary.clone(), self.description.clone()));
+                }
+                let cursor = (self.recall_cursor + step).clamp(-1, count - 1);
+                self.recall_cursor = cursor;
+                if cursor < 0 {
+                    if let Some((s, b)) = self.before_recall.take() {
+                        self.summary = s;
+                        self.description = b;
+                    }
+                } else {
+                    let message = self.recent_messages[cursor as usize].0.clone();
+                    let (s, b) = message.split_once('\n').unwrap_or((&message, ""));
+                    self.summary = s.to_owned();
+                    self.description = b.trim().to_owned();
+                }
+            }
+            Message::Description(text) => {
+                if text != self.description {
+                    self.description = text;
+                    self.store_draft();
+                }
+            }
+            Message::CommitTemplate(key, text) => {
+                // 読む間にほかの worktree に替えた・打ち始めた・Amend にしたなら入れない。
+                if self.draft_key.as_deref() == Some(key.as_str())
+                    && self.summary.is_empty()
+                    && self.description.is_empty()
+                    && !self.amend
+                {
+                    let (s, b) = text.split_once('\n').unwrap_or((&text, ""));
+                    self.summary = s.to_owned();
+                    self.description = b.trim_matches('\n').to_owned();
+                }
+            }
             Message::Stage(path, include) => {
                 let Some(repo) = self.repo.clone() else {
                     return;
@@ -1324,8 +4002,27 @@ impl Component for Root {
                 let message = crate::workcopy::message(&self.summary, &self.description);
                 let amend = self.amend;
                 self.committing = true;
+                // hooks の出力を探すため、始めた時刻（Activity の記録と同じ UNIX 時刻のミリ秒）を覚えておく。
+                let started = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_millis() as u64);
                 context.spawn_background(move |_| {
-                    Message::Committed(repo.commit(&message, amend).err().map(|e| e.to_string()))
+                    let failed = repo.commit(&message, amend).err().map(|e| e.to_string());
+                    // hooks（pre-commit・commit-msg など）が何か書いていれば見せる（GTK4 版と同じ）。
+                    let output = failed.is_none().then(|| {
+                        amonhen_model::activity::records()
+                            .into_iter()
+                            .rev()
+                            .find(|r| {
+                                r.kind == "git"
+                                    && r.label.starts_with("git commit")
+                                    && r.started >= started
+                                    && r.ok == Some(true)
+                            })
+                            .and_then(|r| r.output)
+                            .filter(|o| !o.trim().is_empty())
+                    });
+                    Message::Committed(failed, output.flatten())
                 });
             }
             Message::Amend(amend) => {
@@ -1373,24 +4070,78 @@ impl Component for Root {
             Message::WorkingFile(index) => {
                 // 一覧は status が替わるたびに作り直すので、選び直しの知らせ（None）は無視して前の選択を保つ。
                 if let Some(index) = index {
-                    let path = self
-                        .status
-                        .as_ref()
-                        .and_then(|s| s.status.entries.get(index))
-                        .map(|e| e.path.clone());
-                    self.working_file = path;
+                    let path = self.status.as_ref().and_then(|s| {
+                        let visible =
+                            crate::workcopy::visible(&s.status.entries, &self.working_filter);
+                        match crate::workcopy::rows(
+                            &visible,
+                            self.working_layout,
+                            &self.working_collapsed,
+                        )
+                        .get(index)
+                        {
+                            Some(crate::workcopy::Row::File { entry, .. }) => {
+                                Some(Ok(entry.path.clone()))
+                            }
+                            Some(crate::workcopy::Row::Dir { path, .. }) => Some(Err(path.clone())),
+                            None => None,
+                        }
+                    });
+                    // ディレクトリの行を選んだら、畳む・開く（差分は前のファイルのまま）。
+                    let path = match path {
+                        Some(Err(dir)) => {
+                            if !self.working_collapsed.remove(&dir) {
+                                self.working_collapsed.insert(dir);
+                            }
+                            return;
+                        }
+                        Some(Ok(path)) => Some(path),
+                        None => None,
+                    };
+                    // コンフリクトのあるファイルを選び直したら、マージエディタで開く（GTK4 版・macOS 版は右の列に
+                    // 埋め込む）。同じファイルの選び直しの知らせでは開き直さない（閉じた後にまた開かないように）。
+                    let changed = path != self.working_file;
+                    let conflicted = path.as_ref().and_then(|p| {
+                        let s = self.status.as_ref()?;
+                        s.status
+                            .entries
+                            .iter()
+                            .find(|e| &e.path == p)
+                            .map(|e| e.kind == amonhen_model::StatusKind::Unmerged)
+                    });
+                    if changed {
+                        self.working_staged = false;
+                    }
+                    self.working_file = path.clone();
                     self.load_working_diff();
+                    if changed
+                        && conflicted == Some(true)
+                        && let Some(path) = path
+                    {
+                        self.update(Message::OpenMerge(path), context);
+                    }
                 }
             }
-            Message::Committed(failed) => {
+            Message::Committed(failed, hooks) => {
                 self.committing = false;
+                if let Some(output) = hooks {
+                    self.dialog = Some(Dialog::Failed {
+                        title: tr!("Committed (hooks output)"),
+                        message: output,
+                    });
+                }
                 match failed {
                     None => {
                         self.summary.clear();
                         self.description.clear();
                         self.amend = false;
+                        if let Some(key) = &self.draft_key {
+                            let _ = crate::prefs::remove(key);
+                        }
+                        // push は、コミットで動いた ref を読み直してから（`Message::Refs`）。
                     }
                     Some(message) => {
+                        self.push_after_commit = false;
                         self.dialog = Some(Dialog::Failed {
                             title: tr!("Couldn’t Commit"),
                             message,
@@ -1399,7 +4150,9 @@ impl Component for Root {
                 }
             }
             Message::HistoryMenu(key) => {
-                if let Some(text) = key.strip_prefix("copy:") {
+                if let Some(id) = key.strip_prefix("toggle-merge:") {
+                    with_history(|h| h.session.data.toggle_merge(id));
+                } else if let Some(text) = key.strip_prefix("copy:") {
                     copy_text(text);
                 } else if let Some(name) = key.strip_prefix("checkout:") {
                     self.checkout(CheckoutTarget::Branch(name.to_owned()));
@@ -1411,14 +4164,97 @@ impl Component for Root {
                     self.new_branch(oid.to_owned());
                 } else if let Some(oid) = key.strip_prefix("tag:") {
                     self.ask_name(oid.to_owned(), true);
-                } else if let Some(oid) = key.strip_prefix("cherry-pick:") {
-                    self.pick(oid.to_owned(), false);
-                } else if let Some(oid) = key.strip_prefix("revert:") {
-                    self.pick(oid.to_owned(), true);
+                } else if let Some(oids) = key.strip_prefix("cherry-pick:") {
+                    self.pick(oids.split(',').map(str::to_owned).collect(), false, context);
+                } else if let Some(oids) = key.strip_prefix("revert:") {
+                    self.pick(oids.split(',').map(str::to_owned).collect(), true, context);
                 } else if let Some(oid) = key.strip_prefix("reset:") {
                     self.reset(oid.to_owned());
                 } else if let Some(name) = key.strip_prefix("delete-branch:") {
                     self.check_delete(context, name.to_owned());
+                } else if let Some(name) = key.strip_prefix("favorite:") {
+                    if let Some(repo) = self.repo.clone() {
+                        let commands = self.favorite_commands(name);
+                        perform_all(context, repo, commands, tr!("Add to Favorites"));
+                    }
+                } else if let Some(name) = key.strip_prefix("archive:") {
+                    if let Some(repo) = self.repo.clone() {
+                        let archived = self
+                            .groups
+                            .as_ref()
+                            .and_then(|g| g.branches.get(name))
+                            .is_some_and(|b| b.archived);
+                        let value = if archived { json!(null) } else { json!("true") };
+                        perform_all(
+                            context,
+                            repo,
+                            vec![json!({
+                                "op": "configSet",
+                                "key": format!("branch.{name}.amonhenArchived"),
+                                "value": value,
+                            })],
+                            tr!("Archive"),
+                        );
+                    }
+                } else if let Some(name) = key.strip_prefix("push-branch:") {
+                    let entry = self.refs.as_ref().and_then(|r| {
+                        r.refs
+                            .entries
+                            .iter()
+                            .find(|e| e.kind == amonhen_model::RefKind::Local && e.name == name)
+                            .cloned()
+                    });
+                    match entry {
+                        Some(entry) => {
+                            self.push_branch(entry, false);
+                            self.load_sync_lists(context);
+                        }
+                        None => beep(),
+                    }
+                } else if let Some(name) = key.strip_prefix("fast-forward:") {
+                    // チェックアウトしないで上流まで進める（GTK4 版の `sheets::fast_forward`）。
+                    let upstream =
+                        self.refs
+                            .as_ref()
+                            .and_then(|r| {
+                                r.refs.entries.iter().find(|e| {
+                                    e.kind == amonhen_model::RefKind::Local && e.name == name
+                                })
+                            })
+                            .and_then(|e| e.detail.clone())
+                            .unwrap_or_default();
+                    // 前と後の絵（GTK4 版の `sheets::fast_forward`）。読んでから確かめる。
+                    if let Some(repo) = self.repo.clone() {
+                        let name = name.to_owned();
+                        context.spawn_background(move |_| {
+                            let query = json!({
+                                "op": "movePreview", "from": name, "to": upstream, "branch": name,
+                            });
+                            let reply: Value =
+                                serde_json::from_str(&repo.run_json(&query.to_string()))
+                                    .unwrap_or_default();
+                            Message::ConfirmWithDrawing(Box::new(Dialog::ConfirmDrawn {
+                                repo,
+                                title: tr!(
+                                    "Fast-forward {branch} to {upstream}?",
+                                    branch = &name,
+                                    upstream = &upstream
+                                ),
+                                message: tr!("You can Undo this (Ctrl+Alt+Z)."),
+                                button: "Fast-Forward".to_owned(),
+                                command: json!({ "op": "fastForward", "branch": &name }),
+                                preview: reply["info"].clone(),
+                                how: Arc::new(crate::drawing::How::Move(crate::drawing::Move {
+                                    moving: name.clone(),
+                                    kind: "local",
+                                    after_title: tr!("After the fast-forward"),
+                                    lost_note: String::new(),
+                                    lost_red: false,
+                                    removes: false,
+                                })),
+                            }))
+                        });
+                    }
                 } else if let Some(name) = key.strip_prefix("rename:") {
                     if let Some(repo) = self.repo.clone() {
                         self.dialog = Some(Dialog::Rename {
@@ -1428,6 +4264,31 @@ impl Component for Root {
                         });
                         self.dialog_inputs += 1;
                     }
+                } else if let Some(rest) = key.strip_prefix("tag-status:") {
+                    let name = rest.split_once('|').map_or(rest, |(_, name)| name);
+                    // ボタンは短い名前（macOS 版の吹き出しと同じ。タグの名前は見出しにある）。
+                    let actions = self
+                        .tag_pushes(name)
+                        .into_iter()
+                        .map(|(key, label)| {
+                            let remote = key
+                                .split_once(':')
+                                .and_then(|(_, rest)| rest.split_once('|'))
+                                .map_or("", |(remote, _)| remote);
+                            let short = if key.starts_with("push-tag:") {
+                                tr!("Push to {remote}…", remote = remote)
+                            } else if key.starts_with("replace-tag:") {
+                                tr!("Replace on {remote}…", remote = remote)
+                            } else {
+                                label
+                            };
+                            (key, short)
+                        })
+                        .collect();
+                    self.dialog = Some(Dialog::TagStatus {
+                        name: name.to_owned(),
+                        actions,
+                    });
                 } else if let Some(name) = key.strip_prefix("delete-tag:") {
                     if let Some(repo) = self.repo.clone() {
                         // GTK4 版の `refops::tag_items` の Delete。リモートのタグは残る。
@@ -1441,6 +4302,88 @@ impl Component for Root {
                             ),
                             button: tr!("Delete"),
                             command: json!({ "op": "deleteTag", "name": name }),
+                        });
+                    }
+                } else if let Some(rest) = key
+                    .strip_prefix("push-tag:")
+                    .or_else(|| key.strip_prefix("replace-tag:"))
+                    .or_else(|| key.strip_prefix("delete-remote-tag:"))
+                {
+                    // GTK4 版の `confirm_push_tags`・`confirm_replace`・リモートから消す確認。どれも戻せない。
+                    let mut parts = rest.split('|');
+                    let (Some(remote), Some(tag), Some(repo)) =
+                        (parts.next(), parts.next(), self.repo.clone())
+                    else {
+                        return;
+                    };
+                    let unchecked = parts.next() == Some("1");
+                    let cant_undo = tr!("This can’t be undone.");
+                    let (title, message, button, command) = if key.starts_with("push-tag:") {
+                        (
+                            tr!("Push {branch} to {target}?", branch = tag, target = remote),
+                            format!(
+                                "{tag}\n\n{} {cant_undo}",
+                                tr!(
+                                    "Everyone who fetches from {remote} gets them.",
+                                    remote = remote
+                                )
+                            ),
+                            "Push".to_owned(),
+                            json!({ "op": "pushTags", "remote": remote, "names": [tag] }),
+                        )
+                    } else if key.starts_with("replace-tag:") {
+                        (
+                            tr!("Replace {tag} on {remote}?", tag = tag, remote = remote),
+                            format!(
+                                "{tag}\n{} {cant_undo}",
+                                tr!(
+                                    "{remote} has a different tag with this name; yours replaces it for everyone who fetches.",
+                                    remote = remote
+                                )
+                            ),
+                            tr!("Replace"),
+                            json!({ "op": "pushTags", "remote": remote, "names": [tag], "force": true }),
+                        )
+                    } else {
+                        let mut message = format!(
+                            "{tag}\n\n{} {cant_undo}",
+                            tr!(
+                                "Everyone who fetches from {remote} loses them; yours stay.",
+                                remote = remote
+                            )
+                        );
+                        if unchecked {
+                            message.push(' ');
+                            message.push_str(&tr!(
+                                "Whether {remote} has them hasn’t been checked yet (Fetch reads it).",
+                                remote = remote
+                            ));
+                        }
+                        (
+                            tr!("Delete {tag} from {remote}?", tag = tag, remote = remote),
+                            message,
+                            tr!("Delete"),
+                            json!({ "op": "pushTags", "remote": remote, "names": [tag], "delete": true }),
+                        )
+                    };
+                    self.dialog = Some(Dialog::Confirm {
+                        repo,
+                        title,
+                        message,
+                        button,
+                        command,
+                    });
+                } else if key.starts_with("sm-") || key.starts_with("st-") {
+                    self.submodule_menu(&key, context);
+                } else if key == "clean-up-branches" {
+                    // 消してよいブランチの候補（GitHub のプルリクエストはまだ読まない）。
+                    if let Some(repo) = self.repo.clone() {
+                        context.spawn_background(move |_| {
+                            let command = json!({ "op": "branchCleanup", "pullRequests": [] });
+                            let reply: Value =
+                                serde_json::from_str(&repo.run_json(&command.to_string()))
+                                    .unwrap_or_else(|e| json!({ "error": e.to_string() }));
+                            Message::CleanUpLoaded(repo, reply)
                         });
                     }
                 } else if key == "remote-add" {
@@ -1462,6 +4405,7 @@ impl Component for Root {
                             },
                             fetch: String::new(),
                             push: String::new(),
+                            check: None,
                         });
                         self.dialog_inputs += 1;
                     }
@@ -1530,6 +4474,23 @@ impl Component for Root {
                     // History に戻ってそのコミットを選ぶ（Reflog から）。
                     self.show_page(Page::History);
                     with_history(|h| h.select_commit(&id));
+                } else if let Some(oid) = key.strip_prefix("edit-from:") {
+                    self.update(Message::EditOpen(oid.to_owned(), None), context);
+                } else if let Some(oid) = key.strip_prefix("edit-reword:") {
+                    let preset = crate::historyedit::Preset::Reword(oid.to_owned());
+                    self.update(Message::EditOpen(oid.to_owned(), Some(preset)), context);
+                } else if let Some(oid) = key.strip_prefix("edit-combine:") {
+                    let preset = crate::historyedit::Preset::Combine(vec![oid.to_owned()]);
+                    self.update(Message::EditOpen(oid.to_owned(), Some(preset)), context);
+                } else if let Some(ids) = key.strip_prefix("edit-combine-many:") {
+                    // 選んだものを、いちばん古いものへまとめて編集モードを開く（GTK4 版・macOS 版と同じ）。
+                    let ids: Vec<String> = ids.split(',').map(str::to_owned).collect();
+                    let start = ids.first().cloned().unwrap_or_default();
+                    let preset = crate::historyedit::Preset::Combine(ids);
+                    self.update(Message::EditOpen(start, Some(preset)), context);
+                } else if let Some(oid) = key.strip_prefix("edit-drop:") {
+                    let preset = crate::historyedit::Preset::Drop(oid.to_owned());
+                    self.update(Message::EditOpen(oid.to_owned(), Some(preset)), context);
                 } else if let Some(oid) = key.strip_prefix("reword:") {
                     // 出している詳細のメッセージから（右クリックは先にその行を選ぶ）。
                     let message = self
@@ -1544,6 +4505,7 @@ impl Component for Root {
                                 oid: oid.to_owned(),
                                 message: message.trim_end().to_owned(),
                                 squash: false,
+                                last: None,
                             });
                             self.dialog_inputs += 1;
                         }
@@ -1568,10 +4530,84 @@ impl Component for Root {
                     if let Some(repo) = self.repo.clone() {
                         self.dialog = Some(Dialog::Patch {
                             repo,
-                            oids: vec![oid.to_owned()],
+                            oids: oid.split(',').map(str::to_owned).collect(),
                             single: crate::prefs::bool(PATCH_SINGLE_FILE),
                             cover: crate::prefs::bool(PATCH_COVER_LETTER),
                             version: String::new(),
+                        });
+                    }
+                } else if let Some(path) = key.strip_prefix("edit-worktree:") {
+                    self.edit_worktree(path);
+                } else if let Some(path) = key.strip_prefix("wt-remove:") {
+                    self.ask_remove_worktree(path.to_owned(), context);
+                } else if let Some(path) = key.strip_prefix("wt-lock:") {
+                    if let Some(repo) = self.repo.clone() {
+                        let name = worktree_name(path);
+                        self.dialog = Some(Dialog::LockWorktree {
+                            repo,
+                            path: path.to_owned(),
+                            name,
+                            reason: String::new(),
+                        });
+                        self.dialog_inputs += 1;
+                    }
+                } else if let Some(rest) = key
+                    .strip_prefix("wt-move:")
+                    .map(|p| (p, false))
+                    .or_else(|| key.strip_prefix("wt-locate:").map(|p| (p, true)))
+                {
+                    let (path, repair) = rest;
+                    if let Some(repo) = self.repo.clone() {
+                        self.dialog = Some(Dialog::WorktreeFolder {
+                            repo,
+                            path: path.to_owned(),
+                            name: worktree_name(path),
+                            to: path.to_owned(),
+                            repair,
+                        });
+                        self.dialog_inputs += 1;
+                    }
+                } else if let Some(path) = key.strip_prefix("wt-unlock:") {
+                    if let Some(repo) = self.repo.clone() {
+                        perform(
+                            context,
+                            repo,
+                            json!({ "op": "worktreeUnlock", "path": path }),
+                            tr!("Unlock"),
+                        );
+                    }
+                } else if key == "prune-worktrees" {
+                    self.update(Message::Command(key), context);
+                } else if let Some(rest) = key.strip_prefix("bundle:") {
+                    // `bundle:<完全な ref の名前>:<名前>`（サイドバーのブランチ・タグ）。
+                    if let Some((full, name)) = rest.split_once(':') {
+                        self.ask_bundle(vec![full.to_owned()], name.to_owned(), name.to_owned());
+                    }
+                } else if let Some(rest) = key.strip_prefix("export-archive:") {
+                    // `export-archive:<rev>:<既定の名前>`（既定の名前はタグ・ブランチの名前、なければ短い ID。ブランチの `archive:` と分ける）。
+                    if let (Some(repo), Some((rev, label))) =
+                        (self.repo.clone(), rest.split_once(':'))
+                    {
+                        let base = repo
+                            .paths()
+                            .workdir
+                            .and_then(|w| w.file_name().map(|n| n.to_string_lossy().into_owned()))
+                            .unwrap_or_default();
+                        let top = archive_name(&if base.is_empty() {
+                            label.to_owned()
+                        } else {
+                            format!("{base}-{label}")
+                        });
+                        let remembered = crate::prefs::string(ARCHIVE_FORMAT).unwrap_or_default();
+                        self.dialog = Some(Dialog::Archive {
+                            repo,
+                            rev: rev.to_owned(),
+                            format: ARCHIVE_FORMATS
+                                .iter()
+                                .position(|f| *f == remembered)
+                                .unwrap_or(0),
+                            top,
+                            folder: String::new(),
                         });
                     }
                 } else if let Some(oid) = key.strip_prefix("drop:") {
@@ -1613,12 +4649,112 @@ impl Component for Root {
                     self.open_ranges(vec![range.to_owned()], String::new(), context);
                 } else if let Some(rev) = key.strip_prefix("merge:") {
                     self.integrate(rev.to_owned(), false);
+                    self.load_integrate_drawing(context);
+                } else if let Some(ids) = key.strip_prefix("combine:") {
+                    // 選んだ連続したコミットを 1 つに（GTK4 版の Combine N Commits…。ここではダイアログで
+                    // メッセージを直して、すぐ書き換える）。
+                    if let Some(repo) = self.repo.clone() {
+                        let oids: Vec<String> = ids.split(',').map(str::to_owned).collect();
+                        context.spawn_background(move |_| {
+                            let command = json!({ "op": "squashRangeMessage", "oids": &oids });
+                            let reply: Value =
+                                serde_json::from_str(&repo.run_json(&command.to_string()))
+                                    .unwrap_or_default();
+                            Message::CombineText(match reply["error"].as_str() {
+                                Some(e) => Err(e.to_owned()),
+                                None => Ok((
+                                    reply["info"]["oldest"]
+                                        .as_str()
+                                        .unwrap_or_default()
+                                        .to_owned(),
+                                    reply["info"]["newest"]
+                                        .as_str()
+                                        .unwrap_or_default()
+                                        .to_owned(),
+                                    oids.len(),
+                                    reply["text"].as_str().unwrap_or_default().to_owned(),
+                                )),
+                            })
+                        });
+                    }
+                } else if let Some(ids) = key.strip_prefix("merge-several:") {
+                    self.merge_several(ids.split(',').collect(), context);
                 } else if let Some(rev) = key.strip_prefix("rebase:") {
                     self.integrate(rev.to_owned(), true);
+                    self.load_integrate_drawing(context);
+                }
+            }
+            Message::ConfirmWithDrawing(dialog) => self.dialog = Some(*dialog),
+            Message::OperationFailed(repo, failure) => {
+                self.update(Message::Performed(None), context);
+                // いくつもを 1 つのコミットにまとめるのを git が断ったら（何も変わっていない）、失敗は知らせずに、
+                // 1 つずつ merge するかを尋ねる（GTK4 版の `mergeseveral::merge`）。
+                if failure.kind.as_deref() == Some("octopus")
+                    && let Some(command) = failure.command.as_ref()
+                    && command["op"] == "merge"
+                    && command["oneByOne"] != true
+                {
+                    let mut command = command.clone();
+                    command["oneByOne"] = json!(true);
+                    self.dialog = Some(Dialog::Confirm {
+                        repo,
+                        title: tr!("Can’t Merge Them in One Commit"),
+                        message: tr!(
+                            "git stopped because one of them conflicts before the last, and nothing was changed. Merge them one by one instead? Each makes its own merge commit, and you resolve conflicts as they come. Undo puts them all back."
+                        ),
+                        button: tr!("Merge One by One"),
+                        command,
+                    });
+                    return;
+                }
+                // ステータスバーの上の帯で知らせる（作業を止めない。GTK4 版・macOS 版と同じ）。取り消したことは
+                // しばらくしたら消す。
+                self.failure_generation += 1;
+                if failure.cancelled() {
+                    let generation = self.failure_generation;
+                    context.spawn_background(move |_| {
+                        std::thread::sleep(std::time::Duration::from_secs(5));
+                        Message::FailureExpired(generation)
+                    });
+                }
+                self.failure = Some((repo, failure));
+            }
+            Message::FailureRemedy(index) => {
+                let Some((repo, failure)) = self.failure.take() else {
+                    return;
+                };
+                if let Some(remedy) = failure.remedies(true).into_iter().nth(index) {
+                    self.run_remedy(repo, &failure, remedy, context);
+                }
+            }
+            Message::FailureDetails => {
+                if let Some((repo, failure)) = self.failure.clone() {
+                    self.dialog = Some(Dialog::Failure { repo, failure });
+                }
+            }
+            Message::FailureClose => self.failure = None,
+            Message::FailureExpired(generation) => {
+                if generation == self.failure_generation
+                    && self.failure.as_ref().is_some_and(|(_, f)| f.cancelled())
+                {
+                    self.failure = None;
                 }
             }
             Message::Performed(failed) => {
                 self.busy = None;
+                // Repository Settings を出していれば読み直す（リモートの編集などは設定を書く）。
+                if self.repo_settings.is_some() {
+                    self.write_repo_settings(Vec::new(), context);
+                }
+                // worktree も読み直す（`git worktree add` は作っている間ロックするので、ref が変わったときに読んだ
+                // ものはロック中のことがある）。
+                // ブランチの分け方も（お気に入り・アーカイブは git の設定だけが変わり、ref は変わらない）。
+                if let Some(repo) = self.repo.clone() {
+                    load_groups(repo.clone(), context);
+                    // タグのリモートでの様子も（タグを push・削除しても手元の ref は変わらない）。
+                    load_tag_remotes(repo.clone(), context);
+                    load_worktrees(repo, context);
+                }
                 if let Some((title, message)) = failed {
                     self.dialog = Some(Dialog::Failed { title, message });
                 }
@@ -1627,7 +4763,26 @@ impl Component for Root {
                 self.show_page(Page::WorkingCopy)
             }
             Message::Invoked(key) if key == "page:history" => self.show_page(Page::History),
+            // worktree の行を選んだら、その worktree を書き込む先にする（macOS 版・GTK4 版と同じ）。
+            Message::Invoked(key) if key.starts_with("worktree:") => {
+                self.edit_worktree(&key["worktree:".len()..]);
+            }
             Message::Invoked(key) if key == "page:stashes" => self.show_page(Page::Stashes),
+            // Conflicts: Working Copy で最初のコンフリクトのファイルを開く（GTK4 版と同じ）。
+            Message::Invoked(key) if key == "page:conflicts" => {
+                self.show_page(Page::WorkingCopy);
+                let first = self.status.as_ref().and_then(|s| {
+                    s.status
+                        .entries
+                        .iter()
+                        .find(|e| e.kind == amonhen_model::StatusKind::Unmerged)
+                        .map(|e| e.path.clone())
+                });
+                if let Some(path) = first {
+                    self.working_file = Some(path);
+                    self.load_working_diff();
+                }
+            }
             Message::Invoked(key) if key == "page:range-diff" => self.show_page(Page::RangeDiff),
             Message::RangePrevious(request, found) => {
                 if request != self.range_request {
@@ -1662,6 +4817,27 @@ impl Component for Root {
                         }
                         Err(e) => state.error = Some(e),
                     }
+                }
+            }
+            Message::RangeDiffRow(row) => {
+                let index = self
+                    .range_diff
+                    .as_ref()
+                    .and_then(|s| s.shown().get(row?).copied());
+                if index.is_some() {
+                    self.update(Message::RangeDiffSelected(index), context);
+                }
+            }
+            Message::RangeDiffChangesOnly(on) => {
+                let Some(state) = self.range_diff.as_mut() else {
+                    return;
+                };
+                state.changes_only = on;
+                // 選んでいた組が隠れたら、最初の変わった組を選ぶ（GTK4 版の `filter`）。
+                let shown = state.shown();
+                if state.selected.is_some_and(|s| !shown.contains(&s)) {
+                    let first = shown.first().copied();
+                    self.update(Message::RangeDiffSelected(first), context);
                 }
             }
             Message::RangeDiffSelected(index) => {
@@ -1749,21 +4925,151 @@ impl Component for Root {
                     && state.path == path
                 {
                     state.load(info);
+                    merge_scroll_later(context);
                 }
+            }
+            Message::ToolbarBadgesLater => {
+                context.spawn_background(|_| {
+                    std::thread::sleep(std::time::Duration::from_millis(150));
+                    Message::ToolbarBadges
+                });
+            }
+            Message::ToolbarBadges => {
+                let tracking = self.tracking();
+                let _ = self.toolbar.request_native_element(move |result| {
+                    if let Ok(element) = result
+                        && let Err(e) = crate::menus::put_badges(&element, tracking)
+                    {
+                        eprintln!("ツールバーのバッジを付けられない: {e}");
+                    }
+                });
+            }
+            Message::MergeBringIntoView => {
+                // Result の欄も、選んだコンフリクトへ（左右の欄と同じ所が見えるように）。
+                if let Some(fraction) = self.merge.as_ref().and_then(|m| m.selected_fraction()) {
+                    let _ = self.merge_result_box.request_native_element(move |result| {
+                        if let Ok(element) = result {
+                            xaml::scroll_to_fraction(&element, fraction);
+                        }
+                    });
+                }
+                for r in &self.merge_chosen {
+                    let _ = r.request_native_element(|result| {
+                        if let Ok(element) = result
+                            && let Ok(ui) = element.cast::<xaml::UIElement>()
+                        {
+                            let _ = ui.StartBringIntoView();
+                        }
+                    });
+                }
+            }
+            Message::MergeUndo(redo) => {
+                if let Some(state) = self.merge.as_mut() {
+                    state.undo(redo);
+                }
+                merge_scroll_later(context);
             }
             Message::MergeResult(text) => {
                 if let Some(state) = self.merge.as_mut() {
                     state.edit(&text);
                 }
             }
-            Message::MergeButton(key) => self.merge_button(key, context),
+            Message::MergeButton(key) => {
+                self.merge_button(key, context);
+                merge_scroll_later(context);
+            }
+            Message::MergePick(key) => {
+                let Some(state) = self.merge.as_mut() else {
+                    return;
+                };
+                let (choice, index) = match key.split_once(':') {
+                    Some(("ours", i)) => (amonhen_core::conflict::Choice::Ours, i),
+                    Some(("theirs", i)) => (amonhen_core::conflict::Choice::Theirs, i),
+                    _ => return,
+                };
+                let picked = index.parse().is_ok_and(|i| state.pick(i, choice));
+                if !picked {
+                    beep();
+                }
+                merge_scroll_later(context);
+            }
+            Message::MergeBase(on) => {
+                if let Some(state) = self.merge.as_mut() {
+                    state.show_base = on;
+                }
+            }
             Message::ActivityTab(Some(tab)) => {
                 if let Some(state) = self.activity.as_mut() {
                     state.tab = tab;
                 }
                 self.load_undo_log(context);
+                if tab == 2
+                    && let Some(repo) = self.repo.clone()
+                {
+                    let name = repo
+                        .paths()
+                        .workdir
+                        .and_then(|w| w.file_name().map(|n| n.to_string_lossy().into_owned()))
+                        .unwrap_or_default();
+                    context.spawn_background(move |_| {
+                        let reply: Value =
+                            serde_json::from_str(&repo.run_json(r#"{"op":"historyCache"}"#))
+                                .unwrap_or_default();
+                        Message::ActivityCache(name, reply["info"].clone())
+                    });
+                }
+            }
+            Message::ActivityCache(name, info) => {
+                if let Some(state) = self.activity.as_mut() {
+                    state.cache = Some((name, info));
+                }
+            }
+            Message::ActivityExport => {
+                // 題は付けない（GTK4 版・macOS 版と同じ）。
+                let Some(path) =
+                    crate::files::save_file("", "amonhen-activity.json", "JSON", "json")
+                else {
+                    return;
+                };
+                let records: Vec<Value> = amonhen_model::activity::entries()
+                    .into_iter()
+                    .map(|e| {
+                        json!({
+                            "seq": e.seq, "kind": e.kind, "repo": e.repo, "label": e.label,
+                            "started": e.started, "duration": e.duration, "ok": e.ok, "error": e.error,
+                        })
+                    })
+                    .collect();
+                let text = serde_json::to_string_pretty(&records).unwrap_or_default();
+                if let Err(e) = std::fs::write(&path, text) {
+                    self.dialog = Some(Dialog::Failed {
+                        title: tr!("Export JSON…").trim_end_matches('…').to_owned(),
+                        message: e.to_string(),
+                    });
+                }
             }
             Message::ActivityTab(None) => {}
+            Message::CombineText(answer) => match (self.repo.clone(), answer) {
+                (Some(repo), Ok((oldest, newest, count, message))) => {
+                    self.dialog = Some(Dialog::Reword {
+                        repo,
+                        oid: oldest,
+                        message,
+                        squash: true,
+                        last: Some((newest, count)),
+                    });
+                    self.dialog_inputs += 1;
+                }
+                (_, Err(message)) => {
+                    self.dialog = Some(Dialog::Failed {
+                        title: tr!("Combine {count} Commits…", count = self.multi.len())
+                            .trim_end_matches('…')
+                            .to_owned(),
+                        message,
+                    })
+                }
+                _ => {}
+            },
             Message::SquashText(oid, message) => match (self.repo.clone(), message) {
                 (Some(repo), Ok(message)) => {
                     self.dialog = Some(Dialog::Reword {
@@ -1771,6 +5077,7 @@ impl Component for Root {
                         oid,
                         message,
                         squash: true,
+                        last: None,
                     });
                     self.dialog_inputs += 1;
                 }
@@ -1782,6 +5089,284 @@ impl Component for Root {
                 }
                 _ => {}
             },
+            Message::ArchiveFormat(Some(index)) => {
+                if let Some(Dialog::Archive { format, .. }) = &mut self.dialog {
+                    *format = index;
+                }
+            }
+            Message::ArchiveFormat(None) => {}
+            Message::BundleChecked(repo, file, check) => {
+                if check["ok"] != true {
+                    self.dialog = Some(Dialog::Failed {
+                        title: tr!("Can’t Fetch the Bundle"),
+                        message: check["error"].as_str().unwrap_or_default().to_owned(),
+                    });
+                    return;
+                }
+                let info = &check["info"];
+                let missing = info["missing"].as_u64().unwrap_or(0);
+                if missing > 0 {
+                    self.dialog = Some(Dialog::Failed {
+                        title: tr!("Can’t Fetch the Bundle"),
+                        message: tr!(
+                            "This repository lacks {count} commits the bundle needs (it has only the commits after them).",
+                            count = missing
+                        ),
+                    });
+                    return;
+                }
+                let branches: Vec<String> = info["refs"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|r| r.as_str()?.strip_prefix("refs/heads/").map(str::to_owned))
+                    .collect();
+                if branches.is_empty() {
+                    self.dialog = Some(Dialog::Failed {
+                        title: tr!("Nothing to Fetch"),
+                        message: tr!("The bundle has no branches."),
+                    });
+                    return;
+                }
+                let mut shown = branches
+                    .iter()
+                    .take(5)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                if branches.len() > 5 {
+                    shown.push_str(", …");
+                }
+                let message = tr!(
+                    "{file} has {count} branches ({names}). They are fetched under the name below, like a remote’s branches; tags aren’t fetched.",
+                    file = std::path::Path::new(&file)
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default(),
+                    count = branches.len(),
+                    names = shown
+                );
+                self.dialog = Some(Dialog::FetchBundle {
+                    repo,
+                    file,
+                    message,
+                    name: info["name"].as_str().unwrap_or("bundle").to_owned(),
+                });
+                self.dialog_inputs += 1;
+            }
+            Message::Worktrees(list) => {
+                self.worktrees = list;
+                self.show_worktree_labels();
+                self.update(Message::CountWorktrees(true), context);
+            }
+            Message::CountWorktrees(fresh) => {
+                // 開いている worktree は status で見ているので数えない。消えかけ（prunable）も。
+                let Some(repo) = self.repo.clone() else {
+                    return;
+                };
+                let open = repo.paths().workdir.map(|d| d.display().to_string());
+                let paths: Vec<String> = self
+                    .worktrees
+                    .iter()
+                    .filter(|w| !w.prunable)
+                    .filter(|w| !open.as_deref().is_some_and(|o| same_path(o, &w.path)))
+                    .map(|w| w.path.clone())
+                    .collect();
+                if self.worktrees.len() < 2 || paths.is_empty() {
+                    return;
+                }
+                context.spawn_background(move |_| {
+                    let command =
+                        json!({ "op": "worktreeChanges", "paths": paths, "fresh": fresh });
+                    let reply: Value = serde_json::from_str(&repo.run_json(&command.to_string()))
+                        .unwrap_or_default();
+                    Message::WorktreeCounts(
+                        reply["info"]["worktrees"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|w| {
+                                Some((w["path"].as_str()?.to_owned(), w["count"].as_u64()?))
+                            })
+                            .collect(),
+                    )
+                });
+            }
+            Message::WorktreeCounts(counts) => {
+                for (path, count) in counts {
+                    if let Some(w) = self.worktrees.iter().find(|w| same_path(&w.path, &path)) {
+                        self.worktree_counts.insert(w.path.clone(), count);
+                    }
+                }
+                self.show_worktree_labels();
+            }
+            Message::Confirm(repo, title, message, button, command) => {
+                self.dialog = Some(Dialog::Confirm {
+                    repo,
+                    title,
+                    message,
+                    button,
+                    command,
+                })
+            }
+            Message::WorktreeField(index, text) => {
+                if let Some(Dialog::NewWorktree { branch, folder, .. }) = &mut self.dialog {
+                    *[branch, folder].into_iter().nth(index).expect("field") = text;
+                }
+            }
+            Message::BundleNewer(on) => {
+                if let Some(Dialog::Bundle { newer, .. }) = &mut self.dialog {
+                    *newer = on;
+                }
+            }
+            Message::BundlePreview(repo, label, preview, command) => {
+                if preview["ok"] != true {
+                    self.dialog = Some(Dialog::Failed {
+                        title: tr!("Can’t Save the Bundle"),
+                        message: preview["error"].as_str().unwrap_or_default().to_owned(),
+                    });
+                    return;
+                }
+                let info = &preview["info"];
+                let commits = info["commits"].as_u64().unwrap_or(0);
+                if commits == 0 {
+                    self.dialog = Some(Dialog::Failed {
+                        title: tr!("Nothing to Save"),
+                        message: tr!("There are no commits to put in the bundle."),
+                    });
+                    return;
+                }
+                if info["beyondShallow"] == true {
+                    self.dialog = Some(Dialog::Failed {
+                        title: tr!("Can’t Save the Bundle"),
+                        message: tr!(
+                            "This shallow clone doesn’t have all the history the bundle needs. Fetch more history, or choose a newer base."
+                        ),
+                    });
+                    return;
+                }
+                let mut command = command;
+                command["op"] = json!("bundle");
+                let save = PendingSave::Bundle {
+                    repo,
+                    label,
+                    commits,
+                    command,
+                };
+                self.update(
+                    Message::SaveChecked(save, missing_count(info, "contents")),
+                    context,
+                );
+            }
+            // 手元にない中身があれば先に確かめ、なければそのまま保存する場所を選ぶ。
+            Message::SaveChecked(save, missing) => match missing {
+                Some(count) => {
+                    let (message, button) = match &save {
+                        PendingSave::Archive { .. } => (
+                            tr!(
+                                "This is a partial clone: the contents of {count} files in the archive aren’t here yet. They are fetched from the remote in one go before the archive is written.",
+                                count = count
+                            ),
+                            tr!("Fetch and Export"),
+                        ),
+                        PendingSave::Bundle { .. } => (
+                            tr!(
+                                "This is a partial clone: the contents of {count} files in the bundle aren’t here yet. They are fetched from the remote in one go before the bundle is written.",
+                                count = count
+                            ),
+                            tr!("Fetch and Save"),
+                        ),
+                    };
+                    self.dialog = Some(Dialog::FetchFirst {
+                        message,
+                        button,
+                        then: save,
+                    });
+                }
+                None => self.save(save, context),
+            },
+            Message::PatchRead(repo, paths, reply) => {
+                let summary = &reply["info"];
+                let patches = summary["patches"].as_array().cloned().unwrap_or_default();
+                let empty = patches
+                    .iter()
+                    .all(|p| p["files"].as_array().is_none_or(|f| f.is_empty()));
+                if reply["ok"].as_bool() != Some(true) || empty {
+                    self.dialog = Some(Dialog::Failed {
+                        title: tr!("Can’t Read the Patch"),
+                        message: reply["error"].as_str().map_or_else(
+                            || tr!("There are no changes in the patch."),
+                            str::to_owned,
+                        ),
+                    });
+                    return;
+                }
+                let mailbox = summary["kind"].as_str() == Some("mailbox");
+                let branch = self.head_name();
+                let (title, what) = if mailbox {
+                    let title = match &patches[..] {
+                        [one] => tr!(
+                            "Apply “{subject}”?",
+                            subject = one["subject"].as_str().unwrap_or_default()
+                        ),
+                        _ => tr!("Apply {count} Patches?", count = patches.len()),
+                    };
+                    (
+                        title,
+                        tr!(
+                            "Each patch becomes a commit on {branch} (git am).",
+                            branch = branch
+                        ),
+                    )
+                } else {
+                    let names: Vec<String> = paths
+                        .iter()
+                        .map(|p| {
+                            std::path::Path::new(p)
+                                .file_name()
+                                .map_or_else(|| p.clone(), |n| n.to_string_lossy().into_owned())
+                        })
+                        .collect();
+                    let title = match &names[..] {
+                        [one] => tr!("Apply {name}?", name = one),
+                        _ => tr!("Apply {count} Patches?", count = names.len()),
+                    };
+                    (
+                        title,
+                        tr!("The changes go into the working tree (git apply)."),
+                    )
+                };
+                let applies = if summary["applies"].as_bool() == Some(true) {
+                    Ok(())
+                } else {
+                    Err(patch_error_line(
+                        summary["error"].as_str().unwrap_or_default(),
+                    ))
+                };
+                self.dialog = Some(Dialog::ApplyPatch {
+                    repo,
+                    paths,
+                    mailbox,
+                    title,
+                    what,
+                    list: patch_list(&patches),
+                    applies,
+                    three_way: mailbox && summary["threeWay"].as_bool() == Some(true),
+                    index: false,
+                    drawing: reply["drawing"].clone(),
+                });
+            }
+            Message::ApplyOption(option, on) => {
+                if let Some(Dialog::ApplyPatch {
+                    three_way, index, ..
+                }) = &mut self.dialog
+                {
+                    match option {
+                        "three-way" => *three_way = on,
+                        _ => *index = on,
+                    }
+                }
+            }
             Message::PatchOption(option, on) => {
                 if let Some(Dialog::Patch { single, cover, .. }) = &mut self.dialog {
                     match option {
@@ -1815,6 +5400,103 @@ impl Component for Root {
             Message::RepoSettingsLoaded(entries) => {
                 if let Some(state) = self.repo_settings.as_mut() {
                     state.load(entries);
+                    let mut locals: Vec<String> = self
+                        .refs
+                        .as_ref()
+                        .map(|r| {
+                            r.refs
+                                .entries
+                                .iter()
+                                .filter(|e| e.kind == amonhen_model::RefKind::Local)
+                                .map(|e| e.name.clone())
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    locals.sort();
+                    state.local_branches = locals;
+                }
+                // フック・LFS・exclude も、書いた後に読み直す（同時に読むと、書く前のものが届く）。
+                self.load_repo_files(context);
+            }
+            Message::RepoHooksLoaded(info) => {
+                if let Some(state) = self.repo_settings.as_mut() {
+                    state.load_hooks(&info);
+                }
+            }
+            Message::HookScript(name, text) => {
+                if let Some(state) = self.repo_settings.as_mut() {
+                    state.hook_script = Some((name, text));
+                }
+            }
+            Message::HookEnabled(name, on) if name == "maintenance" => {
+                let now = self
+                    .repo_settings
+                    .as_ref()
+                    .and_then(|s| s.form.as_ref())
+                    .is_some_and(|f| f["maintenance"].as_bool() == Some(true));
+                if now != on {
+                    self.write_repo_settings(
+                        vec![json!({ "op": "maintenance", "on": on })],
+                        context,
+                    );
+                }
+            }
+            Message::RepoTemplateLoaded(text, path) => {
+                if let Some(state) = self.repo_settings.as_mut() {
+                    let text = text.unwrap_or_default();
+                    // 書きかけなら欄はそのまま。
+                    let editing = state.template.as_deref().is_some_and(|t| {
+                        crate::reposettings::lf(t) != state.template_saved
+                            && crate::reposettings::lf(t) != text
+                    });
+                    state.template_saved = text.clone();
+                    state.template_path = path;
+                    if !editing {
+                        state.template = Some(text);
+                    }
+                }
+            }
+            Message::RepoDetectedBase(base) => {
+                if let Some(state) = self.repo_settings.as_mut() {
+                    state.detected_base = base;
+                }
+            }
+            Message::RepoFormLoaded(info) => {
+                if let Some(state) = self.repo_settings.as_mut() {
+                    state.form = Some(info);
+                }
+            }
+            Message::RepoRerereCache(on) => {
+                if let Some(state) = self.repo_settings.as_mut() {
+                    state.rerere_cache = on;
+                }
+            }
+            Message::HookEnabled(name, on) => {
+                let current = self
+                    .repo_settings
+                    .as_ref()
+                    .and_then(|s| s.hooks.as_ref())
+                    .and_then(|h| h.iter().find(|(n, _)| *n == name))
+                    .map(|(_, e)| *e);
+                if current != Some(on) {
+                    self.write_repo_settings(
+                        vec![json!({ "op": "setHookEnabled", "name": name, "enabled": on })],
+                        context,
+                    );
+                }
+            }
+            Message::RepoIgnoreLoaded(gitignore, exclude) => {
+                if let Some(state) = self.repo_settings.as_mut() {
+                    // 書きかけ（読んだものと違う）なら、欄はそのまま。
+                    let editing = state.exclude.as_deref().is_some_and(|t| {
+                        crate::reposettings::lf(t) != state.exclude_saved
+                            && crate::reposettings::lf(t) != exclude
+                    });
+                    state.gitignore = gitignore;
+                    state.exclude_saved = exclude.clone();
+                    if !editing {
+                        state.exclude = Some(exclude);
+                    }
                 }
             }
             Message::RepoSettingsField(field, text) => {
@@ -1824,6 +5506,11 @@ impl Component for Root {
                         "email" => state.email = text,
                         "query" => state.query = text,
                         "key" => state.new_key = text,
+                        // 打ったまま持つ（揃えた値で欄を書き直すと、カーソルが先頭に戻る）。改行は書くときに揃える。
+                        "exclude" => state.exclude = Some(text),
+                        "lfs" => state.new_pattern = text,
+                        "template" => state.template = Some(text),
+                        "signing-other" => state.signing_other = Some(text),
                         _ => state.new_value = text,
                     }
                 }
@@ -1840,7 +5527,205 @@ impl Component for Root {
                         "value": (!value.is_empty()).then_some(value),
                     })
                 };
-                let commands = if key == "close" {
+                // 鍵の「その他…」で打った値。
+                if key == "signing-other" {
+                    if let Some(commands) =
+                        crate::reposettings::signing_other_commands(state, "local")
+                    {
+                        self.write_repo_settings(commands, context);
+                    }
+                    return;
+                }
+                // sparse checkout: すべてのフォルダを取り出す（確かめる）・フォルダを外す・足す。
+                if key == "sparse-all" {
+                    let Some(repo) = self.repo.clone() else {
+                        return beep();
+                    };
+                    self.dialog = Some(Dialog::Confirm {
+                        repo,
+                        title: tr!("Check Out All Folders?"),
+                        message: tr!(
+                            "Every folder is checked out again (git sparse-checkout disable). In a large repository this can take long and use a lot of disk."
+                        ),
+                        button: tr!("Check Out All"),
+                        command: json!({ "op": "disableSparseCheckout" }),
+                    });
+                    return;
+                }
+                let sparse_folders = || -> Vec<String> {
+                    state
+                        .form
+                        .as_ref()
+                        .and_then(|f| f["sparse"]["folders"].as_array().cloned())
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|v| v.as_str().map(str::to_owned))
+                        .collect()
+                };
+                if let Some(folder) = key.strip_prefix("sparse-remove:") {
+                    let Some(repo) = self.repo.clone() else {
+                        return beep();
+                    };
+                    let rest: Vec<String> = sparse_folders()
+                        .into_iter()
+                        .filter(|f| f != folder)
+                        .collect();
+                    let command = json!({ "op": "sparseCheckout", "folders": rest });
+                    return perform(context, repo, command, tr!("Stop checking out this folder"));
+                }
+                if key == "sparse-add" {
+                    let Some(repo) = self.repo.clone() else {
+                        return beep();
+                    };
+                    let existing = if state.form.as_ref().is_some_and(|f| f["sparse"].is_object()) {
+                        sparse_folders()
+                    } else {
+                        Vec::new()
+                    };
+                    load_tree_folders(repo.clone(), "/".to_owned(), context);
+                    self.dialog = Some(Dialog::TreeFolder {
+                        repo,
+                        path: "/".to_owned(),
+                        entries: None,
+                        selected: None,
+                        existing,
+                        cloned: None,
+                    });
+                    return;
+                }
+                // 覚えた解決をすべて忘れる（戻せないので確かめる。GTK4 版の `forget_resolutions_row`）。
+                if key == "forget-resolutions" {
+                    let Some(repo) = self.repo.clone() else {
+                        return beep();
+                    };
+                    self.dialog = Some(Dialog::Confirm {
+                        repo,
+                        title: tr!("Forget All Recorded Resolutions?"),
+                        message: format!(
+                            "{} {}",
+                            tr!(
+                                "git rerere then no longer reuses the resolutions it recorded in this repository."
+                            ),
+                            tr!("This can’t be undone.")
+                        ),
+                        button: tr!("Forget All"),
+                        command: json!({ "op": "forgetAllResolutions" }),
+                    });
+                    return;
+                }
+                // フックをエディタで開く・ファイルの場所を開く（GTK4 版の `open_hook`）。
+                if let Some((how, name)) = key
+                    .strip_prefix("hook-edit:")
+                    .map(|n| ("edit", n))
+                    .or_else(|| key.strip_prefix("hook-reveal:").map(|n| ("reveal", n)))
+                {
+                    let Some(file) =
+                        hooks_directory(self.repo.as_deref(), state.hooks_path.as_deref())
+                            .map(|d| d.join(name))
+                    else {
+                        return beep();
+                    };
+                    if how == "reveal" {
+                        crate::files::reveal(&file);
+                    } else {
+                        context.spawn_background(move |_| {
+                            Message::Performed(
+                                crate::editor::open_file(&file)
+                                    .err()
+                                    .map(|e| (tr!("Couldn’t Open in Editor"), e)),
+                            )
+                        });
+                    }
+                    return;
+                }
+                if let Some(name) = key.strip_prefix("hook-show:") {
+                    let (Some(repo), name) = (self.repo.clone(), name.to_owned()) else {
+                        return;
+                    };
+                    context.spawn_background(move |_| {
+                        let command = json!({ "op": "hook", "name": &name });
+                        let reply: Value =
+                            serde_json::from_str(&repo.run_json(&command.to_string()))
+                                .unwrap_or_default();
+                        let text = reply["info"]["text"]
+                            .as_str()
+                            .or(reply["text"].as_str())
+                            .unwrap_or_default()
+                            .to_owned();
+                        Message::HookScript(name, text)
+                    });
+                    return;
+                }
+                // リモートの操作は、サイドバーのリモートの右クリックと同じ（`Message::HistoryMenu`）。
+                if key.starts_with("remote-") {
+                    self.update(Message::HistoryMenu(key), context);
+                    return;
+                }
+                if key == "template-revert" {
+                    state.template = Some(state.template_saved.clone());
+                    return;
+                }
+                if key == "exclude-revert" {
+                    state.exclude = Some(state.exclude_saved.clone());
+                    return;
+                }
+                if key == "fetch-all-contents" {
+                    // 大きなリポジトリでは長くかかるので、先に聞く（GTK4 版と同じ）。
+                    let remote = state
+                        .form
+                        .as_ref()
+                        .and_then(|f| f["partial"]["remote"].as_str())
+                        .unwrap_or("origin")
+                        .to_owned();
+                    if let Some(repo) = self.repo.clone() {
+                        self.dialog = Some(Dialog::Confirm {
+                            repo,
+                            title: tr!("Fetch All Contents?"),
+                            message: tr!(
+                                "Fetches the contents of every file in the history from {remote} (git fetch --refetch). In a large repository this can take long and use a lot of disk. Afterwards it’s no longer a partial clone.",
+                                remote = remote
+                            ),
+                            button: tr!("Fetch All Contents"),
+                            command: json!({ "op": "fetchAllContents" }),
+                        });
+                    }
+                    return;
+                }
+                let commands = if key == "template-save" {
+                    let text =
+                        crate::reposettings::lf(state.template.as_deref().unwrap_or_default());
+                    vec![json!({ "op": "saveCommitTemplate", "text": text })]
+                } else if key == "deepen-other" || key == "deepen-since" {
+                    self.deepen_dialog(key == "deepen-since");
+                    return;
+                } else if let Some(n) = key.strip_prefix("deepen:") {
+                    vec![json!({ "op": "deepen", "commits": n.parse::<u64>().unwrap_or(100) })]
+                } else if key == "unshallow" {
+                    vec![json!({ "op": "unshallow" })]
+                } else if key == "hook-create" {
+                    let missing = state.missing_hooks();
+                    let Some(name) =
+                        missing.get(state.new_hook.min(missing.len().saturating_sub(1)))
+                    else {
+                        return;
+                    };
+                    vec![json!({ "op": "createHook", "name": name })]
+                } else if let Some(pattern) = key.strip_prefix("lfs-untrack:") {
+                    vec![json!({ "op": "lfsTrack", "pattern": pattern, "track": false })]
+                } else if key == "lfs-track" {
+                    let pattern = state.new_pattern.trim().to_owned();
+                    state.new_pattern.clear();
+                    vec![json!({ "op": "lfsTrack", "pattern": pattern, "track": true })]
+                } else if key == "exclude-save" {
+                    // TextBox は改行を `\r` で返すので、ファイルの改行（LF）に揃える。
+                    let text =
+                        crate::reposettings::lf(state.exclude.as_deref().unwrap_or_default());
+                    vec![json!({
+                        "op": "saveIgnoreFiles",
+                        "gitignore": state.gitignore,
+                        "exclude": text,
+                    })]
+                } else if key == "close" {
                     self.repo_settings = None;
                     self.page = self.repo_settings_from;
                     return;
@@ -1852,13 +5737,10 @@ impl Component for Root {
                         }
                     }
                     commands
-                } else if key == "add" {
-                    let command = set(state.new_key.trim(), &state.new_value);
-                    state.new_key.clear();
-                    state.new_value.clear();
-                    vec![command]
-                } else if let Some(k) = key.strip_prefix("remove:") {
-                    vec![json!({ "op": "configSet", "key": k, "value": null })]
+                } else if let Some(commands) =
+                    crate::reposettings::keys_commands(state, &key, "local")
+                {
+                    commands
                 } else {
                     return;
                 };
@@ -1868,6 +5750,28 @@ impl Component for Root {
                 if let Some(state) = self.activity.as_mut() {
                     state.undo = entries;
                 }
+            }
+            Message::Running(count) => self.running = count,
+            Message::ShallowFetch(key) => {
+                // History の下の帯（GTK4 版の `shallow::band`）。
+                let Some(repo) = self.repo.clone() else {
+                    return beep();
+                };
+                let command = match key.as_str() {
+                    "deepen-other" | "deepen-since" => {
+                        return self.deepen_dialog(key == "deepen-since");
+                    }
+                    "unshallow" => json!({ "op": "unshallow" }),
+                    _ => {
+                        let n = key
+                            .strip_prefix("deepen:")
+                            .and_then(|n| n.parse::<u64>().ok())
+                            .unwrap_or(100);
+                        json!({ "op": "deepen", "commits": n })
+                    }
+                };
+                self.busy = Some(tr!("Fetch More"));
+                perform(context, repo, command, tr!("Fetch More"));
             }
             Message::ActivityTick => {
                 if let Some(state) = self.activity.as_mut() {
@@ -1901,15 +5805,175 @@ impl Component for Root {
                     command: Value::Array(vec![json!({ "op": "undo" }); count]),
                 });
             }
+            // 選んだ行の Fetch は、選んでいるリポジトリすべて（一覧の選択は部品から読む）。
+            Message::Repos(crate::repositories::Event::Menu(id)) if id.starts_with("fetch:") => {
+                let clicked = id["fetch:".len()..].to_owned();
+                let requested = self
+                    .repositories_list
+                    .request_native_element(move |result| {
+                        let selected = result
+                            .ok()
+                            .map(|element| xaml::selected_tags(&element))
+                            .unwrap_or_default();
+                        let locations = if selected.len() > 1 && selected.contains(&clicked) {
+                            selected
+                        } else {
+                            vec![clicked.clone()]
+                        };
+                        with_history(|h| {
+                            h.sender.send(Message::FetchRepositories(locations.clone()));
+                        });
+                    });
+                if !requested {
+                    let location = id["fetch:".len()..].to_owned();
+                    self.repositories_event(
+                        crate::repositories::Event::Menu(format!("fetch:{location}")),
+                        context,
+                    );
+                }
+            }
+            Message::FetchRepositories(locations) => {
+                for location in locations {
+                    self.repositories_event(
+                        crate::repositories::Event::Menu(format!("fetch:{location}")),
+                        context,
+                    );
+                }
+            }
+            Message::Repos(event) => self.repositories_event(event, context),
             Message::CloseActivity => {
                 self.activity = None;
                 ACTIVITY_TICK.with(|t| t.set(None));
                 self.page = self.activity_from;
             }
-            Message::SettingsGit(name, email) => {
+            Message::SettingsGit(name, email, entries) => {
                 if let Some(state) = self.settings.as_mut() {
-                    state.git = Some([(name.clone(), name), (email.clone(), email)]);
+                    // 書いた後に読み直したときは、打ちかけの名前とメールを消さない。
+                    if state.git.is_none() {
+                        state.git = Some([(name.clone(), name), (email.clone(), email)]);
+                    }
+                    // 読み直しでは、探す文字と打ちかけのキー・値を残す。
+                    let global = state
+                        .global
+                        .get_or_insert_with(crate::reposettings::State::new);
+                    global.entries = Some(entries);
                 }
+            }
+            Message::SettingsPrograms(programs) => {
+                if let Some(state) = self.settings.as_mut() {
+                    state.programs = Some(programs);
+                }
+            }
+            Message::SettingsPage(page) => {
+                if let (Some(state), Some(page)) = (self.settings.as_mut(), page) {
+                    state.page = page;
+                }
+            }
+            Message::SettingsGitChoice(id, Some(index)) if id.starts_with("program:") => {
+                let Some(repo) = self.repo.clone() else {
+                    return;
+                };
+                let Some(state) = self.settings.as_mut() else {
+                    return;
+                };
+                let (Some(programs), Some(global)) =
+                    (state.programs.as_mut(), state.global.as_ref())
+                else {
+                    return;
+                };
+                let choice = match crate::programs::choose(programs, global, id, index) {
+                    Some(crate::programs::Choice::Pick(name)) => {
+                        let Some(path) =
+                            crate::files::open_files(&tr!("Program")).into_iter().next()
+                        else {
+                            return;
+                        };
+                        crate::programs::set(name, &path.display().to_string(), global)
+                    }
+                    Some(choice) => choice,
+                    None => return,
+                };
+                if let crate::programs::Choice::Write(commands, git) = choice {
+                    if git {
+                        // 使う git は Amon Hen の設定なので、書いてから候補と一緒に読み直す。
+                        context.spawn_background(move |_| {
+                            for command in commands {
+                                let reply: Value =
+                                    serde_json::from_str(&repo.run_json(&command.to_string()))
+                                        .unwrap_or_default();
+                                if let Some(e) = reply["error"].as_str() {
+                                    return Message::Performed(Some((
+                                        "Settings".to_owned(),
+                                        e.to_owned(),
+                                    )));
+                                }
+                            }
+                            Message::SettingsPrograms(crate::programs::load(|c| repo.run_json(c)))
+                        });
+                    } else {
+                        write_global_settings(repo, commands, context);
+                    }
+                }
+            }
+            Message::SettingsGitChoice(id, Some(index)) => {
+                if let Some((key, title)) = self
+                    .settings
+                    .as_mut()
+                    .and_then(|s| s.global.as_mut())
+                    .and_then(|g| crate::reposettings::file_pick(g, id, index))
+                {
+                    if let (Some(repo), Some(path)) = (
+                        self.repo.clone(),
+                        crate::files::open_files(&title).into_iter().next(),
+                    ) {
+                        let path = path.display().to_string();
+                        write_global_settings(
+                            repo,
+                            vec![crate::reposettings::file_command(key, &path, "global")],
+                            context,
+                        );
+                    }
+                    return;
+                }
+                let (Some(repo), Some(commands)) = (
+                    self.repo.clone(),
+                    self.settings
+                        .as_mut()
+                        .and_then(|s| s.global.as_mut())
+                        .and_then(|g| crate::reposettings::choose(g, id, index, "global")),
+                ) else {
+                    return;
+                };
+                write_global_settings(repo, commands, context);
+            }
+            Message::SettingsGitChoice(_, None) => {}
+            Message::SettingsKeysField(field, text) => {
+                if let Some(global) = self.settings.as_mut().and_then(|s| s.global.as_mut()) {
+                    match field {
+                        "signing-other" => global.signing_other = Some(text),
+                        "query" => global.query = text,
+                        "key" => global.new_key = text,
+                        _ => global.new_value = text,
+                    }
+                }
+            }
+            Message::SettingsKeysButton(key) => {
+                let (Some(repo), Some(commands)) = (
+                    self.repo.clone(),
+                    self.settings
+                        .as_mut()
+                        .and_then(|s| s.global.as_mut())
+                        .and_then(|g| {
+                            if key == "signing-other" {
+                                crate::reposettings::signing_other_commands(g, "global")
+                            } else {
+                                crate::reposettings::keys_commands(g, &key, "global")
+                            }
+                        }),
+                ) else {
+                    return;
+                };
+                write_global_settings(repo, commands, context);
             }
             Message::SettingsField(index, text) => {
                 if let Some(field) = self
@@ -1944,7 +6008,163 @@ impl Component for Root {
                     .collect();
                 perform_all(context, repo, commands, tr!("Save"));
             }
+            Message::SettingsAutoFetch(Some(index)) => {
+                let minutes = crate::settingsview::AUTO_FETCH_CHOICES
+                    .get(index)
+                    .copied()
+                    .unwrap_or(0);
+                if self.settings.as_ref().map(|s| s.auto_fetch) == Some(minutes) {
+                    return;
+                }
+                if let Err(e) =
+                    crate::prefs::set_string(crate::prefs::AUTO_FETCH_MINUTES, &minutes.to_string())
+                {
+                    self.dialog = Some(Dialog::Failed {
+                        title: tr!("Save"),
+                        message: e,
+                    });
+                }
+                if let Some(state) = self.settings.as_mut() {
+                    state.auto_fetch = minutes;
+                }
+                // 間隔を変えたら、そこから数え直す（GTK4 版・macOS 版と同じ）。
+                AUTO_FETCH.with(|a| a.set((minutes, Instant::now())));
+            }
+            Message::SettingsAutoFetch(None) => {}
+            Message::SettingsEditor(Some(index)) => {
+                let Some(state) = self.settings.as_mut() else {
+                    return;
+                };
+                let (items, selected) = state.editor_items();
+                if index == selected {
+                    return;
+                }
+                let value = if index == 0 {
+                    Some(String::new())
+                } else if index + 1 == items.len() {
+                    // Other…: 実行ファイルを選ぶ（取り消したら元のまま）。
+                    crate::files::open_files(&tr!("Choose the app to open files in."))
+                        .into_iter()
+                        .next()
+                        .map(|p| p.display().to_string())
+                } else {
+                    state.editors.get(index - 1).map(|a| a.id.clone())
+                };
+                if let Some(value) = value {
+                    let saved = if value.is_empty() {
+                        crate::prefs::remove(crate::editor::KEY)
+                    } else {
+                        crate::prefs::set_string(crate::editor::KEY, &value)
+                    };
+                    if let Err(e) = saved {
+                        self.dialog = Some(Dialog::Failed {
+                            title: tr!("Save"),
+                            message: e,
+                        });
+                    }
+                    state.editors = crate::settingsview::editor_choices(&value);
+                    state.editor = value;
+                }
+                state.editor_epoch += 1;
+            }
+            Message::SettingsEditor(None) => {}
+            Message::CacheSize(bytes) => {
+                if let Some(state) = self.settings.as_mut() {
+                    state.cache_size = Some(bytes);
+                }
+            }
+            Message::ClearCache => {
+                // 開いているリポジトリの分も消える（次に開くとき git から読み直す。GTK4 版と同じ）。
+                context.spawn_background(|_| {
+                    if let Some(dir) = amonhen_remote::local::cache_dir()
+                        && let Err(e) = amonhen_core::cache::remove_all(&dir)
+                    {
+                        return Message::Performed(Some((tr!("Clear"), e.to_string())));
+                    }
+                    Message::CacheSize(
+                        amonhen_remote::local::cache_dir()
+                            .map_or(0, |d| amonhen_core::cache::total_size(&d)),
+                    )
+                });
+            }
+            Message::AutoFetch => {
+                // 聞かずにすべてのリモートから（GTK4 版と同じ）。ほかの操作の最中なら見送る。
+                if let (Some(repo), None) = (self.repo.clone(), &self.busy) {
+                    context.spawn_background(move |_| {
+                        let reply: Value =
+                            serde_json::from_str(&repo.run_json(r#"{"op":"fetch"}"#))
+                                .unwrap_or_else(|e| json!({ "error": e.to_string() }));
+                        Message::AutoFetched(reply["error"].as_str().map(str::to_owned))
+                    });
+                }
+            }
+            Message::AutoFetched(error) => {
+                // 失敗はステータスバーに（次に成功するまで。GTK4 版はステータスバーの失敗の知らせ）。
+                self.status_note = error.map(|e| {
+                    format!(
+                        "{}: {}",
+                        tr!("Couldn’t Fetch Automatically"),
+                        e.lines().next().unwrap_or_default()
+                    )
+                });
+            }
+            Message::SettingsEnv(name, on) => {
+                // 渡す名前を足す・外して、すぐ効かせる（GTK4 版の `set_added_text`）。
+                let Some(state) = self.settings.as_mut() else {
+                    return;
+                };
+                state.env_added.retain(|n| !n.eq_ignore_ascii_case(&name));
+                if on {
+                    state.env_added.push(name);
+                }
+                state.env_added.sort();
+                let _ = crate::prefs::set_string(
+                    crate::settingsview::ENV_ADDED,
+                    &state.env_added.join(", "),
+                );
+                crate::settingsview::apply_env_added();
+            }
+            Message::SettingsTemplate(i, field, text) => {
+                // 書き換えるたびに保存する（GTK4 版はシートで書いて保存）。WinUI の欄は改行を `\r` で返す。
+                if let Some(state) = self.settings.as_mut()
+                    && let Some(t) = state.templates.get_mut(i)
+                {
+                    let text = text.replace("\r\n", "\n").replace('\r', "\n");
+                    if field == 0 {
+                        t.name = text;
+                    } else {
+                        t.text = text;
+                    }
+                    crate::templates::save(&state.templates);
+                }
+            }
+            Message::SettingsTemplateAdd => {
+                if let Some(state) = self.settings.as_mut() {
+                    state.templates.push(crate::templates::Template {
+                        id: crate::templates::new_id(),
+                        name: String::new(),
+                        text: String::new(),
+                    });
+                    crate::templates::save(&state.templates);
+                }
+            }
+            Message::SettingsTemplateRemove(i) => {
+                if let Some(state) = self.settings.as_mut()
+                    && i < state.templates.len()
+                {
+                    state.templates.remove(i);
+                    crate::templates::save(&state.templates);
+                }
+            }
+            Message::SettingsEnvQuery(text) => {
+                if let Some(state) = self.settings.as_mut() {
+                    state.env_query = text;
+                }
+            }
             Message::SettingsToggle(key, value) => {
+                if key == crate::prefs::USE_FSMONITOR {
+                    amonhen_backend_cli::set_fsmonitor(value);
+                }
                 if let Err(e) = crate::prefs::set_bool(key, value) {
                     self.dialog = Some(Dialog::Failed {
                         title: tr!("Save"),
@@ -1954,9 +6174,96 @@ impl Component for Root {
                 if let Some(state) = self.settings.as_mut() {
                     match key {
                         crate::prefs::AUTO_MAGIC_MERGE => state.auto_magic_merge = value,
+                        crate::prefs::WRITE_COMMIT_GRAPH => state.write_commit_graph = value,
+                        crate::prefs::USE_FSMONITOR => state.use_fsmonitor = value,
+                        crate::prefs::AUTO_BOOKMARK => state.auto_bookmark = value,
                         _ => state.file_history_merges = value,
                     }
                 }
+            }
+            Message::SettingsSyntaxTheme(index) => {
+                let Some(name) = index.and_then(|i| crate::theme::names().get(i).cloned()) else {
+                    return;
+                };
+                if name != crate::theme::selected() {
+                    let _ = crate::prefs::set_string(crate::theme::SYNTAX_THEME_LIGHT, &name);
+                    crate::theme::reload();
+                    with_history(|h| h.diff.dirty = true);
+                }
+            }
+            Message::SettingsThemeButton(key) => {
+                let mut themes = crate::theme::imported();
+                if let Some(name) = key.strip_prefix("remove:") {
+                    themes.retain(|t| t.name != name);
+                } else {
+                    // 読み込んだ明るいテーマは、そのまま明るい外観のテーマにする（GTK4 版・macOS 版と同じ）。
+                    let paths = crate::files::open_files(&tr!("Import VSCode Theme…"));
+                    for path in paths {
+                        match crate::theme::import_vscode(&path) {
+                            Ok(t) => {
+                                themes.retain(|x| x.name != t.name);
+                                if !t.dark {
+                                    let _ = crate::prefs::set_string(
+                                        crate::theme::SYNTAX_THEME_LIGHT,
+                                        &t.name,
+                                    );
+                                }
+                                themes.push(t);
+                            }
+                            Err(e) => {
+                                self.dialog = Some(Dialog::Failed {
+                                    title: tr!("Import VSCode Theme…"),
+                                    message: tr!(
+                                        "Couldn’t read {file}: {error}",
+                                        file =
+                                            path.file_name().unwrap_or_default().to_string_lossy(),
+                                        error = e
+                                    ),
+                                });
+                            }
+                        }
+                    }
+                }
+                crate::theme::set_imported(&themes);
+                crate::theme::reload();
+                with_history(|h| h.diff.dirty = true);
+            }
+            Message::SettingsDisplay("diff-standard-colors", value) => {
+                if value != crate::prefs::bool(crate::theme::DIFF_STANDARD_COLORS) {
+                    let _ = crate::prefs::set_bool(crate::theme::DIFF_STANDARD_COLORS, value);
+                    crate::theme::reload();
+                    with_history(|h| h.diff.dirty = true);
+                }
+            }
+            Message::SettingsDisplay(id, value) => {
+                // 今の値と違うときだけ、View の項目と同じく切り替える（作り直しで同じ値が来ても切り替えない）。
+                let bit = |b: u32| crate::render::history_items() & b != 0;
+                let now = match id {
+                    "one-line-history" => crate::render::one_line(),
+                    "highlight-ancestors" => crate::render::highlight_ancestors(),
+                    "all-files-in-one-diff" => {
+                        crate::prefs::bool(crate::prefs::STACKED_COMMIT_DIFF)
+                    }
+                    "changed-files-as-tree" => crate::prefs::bool(crate::prefs::HISTORY_FILE_TREE),
+                    "history-item-refs" => bit(crate::render::items::REFS),
+                    "history-item-author" => bit(crate::render::items::AUTHOR),
+                    "history-item-date" => bit(crate::render::items::DATE),
+                    "history-item-id" => bit(crate::render::items::ID),
+                    "history-item-signature" => bit(crate::render::items::SIGNATURE),
+                    _ => return,
+                };
+                if now != value {
+                    self.update(Message::Command(id.to_owned()), context);
+                }
+            }
+            Message::SettingsOrder(index) => {
+                let Some(index) = index else { return };
+                let id = if index == 1 {
+                    "history-order-topo"
+                } else {
+                    "history-order-date"
+                };
+                self.update(Message::Command(id.to_owned()), context);
             }
             Message::CloseSettings => {
                 self.settings = None;
@@ -1996,6 +6303,308 @@ impl Component for Root {
                         Message::ConflictCounted(path, reply["info"]["count"].as_u64().unwrap_or(0))
                     });
                 }
+            }
+            Message::WorkingFileMenu(_, key) if key.starts_with("ignore:") => {
+                if let Some(repo) = self.repo.clone() {
+                    add_to_gitignore(context, repo, key["ignore:".len()..].to_owned());
+                }
+            }
+            Message::WorkingFilter(text) => self.working_filter = text,
+            Message::RepoSettingsChoice("template", Some(index)) => {
+                let Some(state) = self.repo_settings.as_ref() else {
+                    return;
+                };
+                let names = crate::templates::names();
+                let now = crate::reposettings::template_choice(state, &names);
+                if index == now && index != 2 {
+                    return;
+                }
+                let key = crate::reposettings::TEMPLATE_KEY;
+                let library = crate::templates::LIBRARY_KEY;
+                // 共有のテンプレートを選んだら名前を書き、このリポジトリのファイルの選びは消す（GTK4 版と同じ）。
+                if let Some(name) = index.checked_sub(3).and_then(|i| names.get(i)) {
+                    let mut commands =
+                        vec![json!({ "op": "configSet", "key": library, "value": name })];
+                    if state.at("local", key).is_some() {
+                        commands.push(json!({ "op": "configSet", "key": key, "value": null }));
+                    }
+                    self.write_repo_settings(commands, context);
+                    return;
+                }
+                // ほかを選んだら、このリポジトリの共有のテンプレートの選びを消す。すべてのリポジトリの段で選んでいて
+                // 「なし」にするなら、空で打ち消す。
+                let mut clear_library = Vec::new();
+                if state.at("local", library).is_some_and(|v| !v.is_empty()) {
+                    clear_library.push(json!({ "op": "configSet", "key": library, "value": null }));
+                }
+                if index == 0
+                    && state.at("local", library).is_none()
+                    && state.effective(library).is_some_and(|(v, _)| !v.is_empty())
+                {
+                    clear_library.push(json!({ "op": "configSet", "key": library, "value": "" }));
+                }
+                let commands = match index {
+                    0 => vec![json!({ "op": "configSet", "key": key, "value": null })],
+                    // 専用のファイルがまだなければ空で作る（commit.template もそれを向く）。あれば向け直すだけ。
+                    1 if state.template_path.is_empty() => {
+                        vec![json!({ "op": "saveCommitTemplate", "text": "" })]
+                    }
+                    1 => {
+                        vec![json!({ "op": "configSet", "key": key, "value": state.template_path })]
+                    }
+                    _ => {
+                        // 作り直した欄が今の値を知らせてきたときは、選び直さない。
+                        if now == 2 {
+                            return;
+                        }
+                        let Some(path) =
+                            crate::files::open_files(&tr!("Choose a commit message template file"))
+                                .into_iter()
+                                .next()
+                        else {
+                            return;
+                        };
+                        vec![json!({
+                            "op": "configSet",
+                            "key": key,
+                            "value": path.display().to_string().replace('\\', "/"),
+                        })]
+                    }
+                };
+                let mut commands = commands;
+                commands.extend(clear_library);
+                self.write_repo_settings(commands, context);
+            }
+            Message::RepoSettingsChoice("default-branch", Some(index)) => {
+                let Some(state) = self.repo_settings.as_ref() else {
+                    return;
+                };
+                let values = crate::reposettings::default_branch_values(state);
+                let Some(value) = values.get(index) else {
+                    return;
+                };
+                let now = state
+                    .at("local", crate::reposettings::DEFAULT_BRANCH)
+                    .unwrap_or_default();
+                if value != now {
+                    self.write_repo_settings(
+                        vec![json!({
+                            "op": "configSet",
+                            "key": crate::reposettings::DEFAULT_BRANCH,
+                            "value": (!value.is_empty()).then_some(value),
+                        })],
+                        context,
+                    );
+                }
+            }
+            Message::RepoSettingsChoice("hook-new", Some(index)) => {
+                if let Some(state) = self.repo_settings.as_mut() {
+                    state.new_hook = index;
+                }
+            }
+            Message::SigningKeysLoaded(global, keys) => {
+                let state = if global {
+                    self.settings
+                        .as_mut()
+                        .map(|s| s.global.get_or_insert_with(crate::reposettings::State::new))
+                } else {
+                    self.repo_settings.as_mut()
+                };
+                if let Some(state) = state {
+                    state.signing_keys = keys;
+                }
+            }
+            Message::RepoSettingsChoice(id, Some(index)) => {
+                if let Some((key, title)) = self
+                    .repo_settings
+                    .as_mut()
+                    .and_then(|state| crate::reposettings::file_pick(state, id, index))
+                {
+                    if let Some(path) = crate::files::open_files(&title).into_iter().next() {
+                        let path = path.display().to_string();
+                        self.write_repo_settings(
+                            vec![crate::reposettings::file_command(key, &path, "local")],
+                            context,
+                        );
+                    }
+                    return;
+                }
+                let Some(commands) = self
+                    .repo_settings
+                    .as_mut()
+                    .and_then(|state| crate::reposettings::choose(state, id, index, "local"))
+                else {
+                    return;
+                };
+                self.write_repo_settings(commands, context);
+            }
+            Message::RepoSettingsChoice(_, None) => {}
+            Message::SidebarFilter(text) => self.sidebar_filter = text,
+            Message::Form(form) => self.form = form,
+            Message::IgnoredLoaded(repo, reply) => {
+                let paths: Vec<String> = reply["info"]["paths"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|p| p.as_str().map(str::to_owned))
+                    .collect();
+                self.dialog = Some(if let Some(error) = reply["error"].as_str() {
+                    Dialog::Failed {
+                        title: tr!("Delete Ignored Files…")
+                            .trim_end_matches('…')
+                            .to_owned(),
+                        message: error.to_owned(),
+                    }
+                } else if paths.is_empty() {
+                    Dialog::Failed {
+                        title: tr!("No Ignored Files"),
+                        message: tr!("Nothing in the working tree matches .gitignore."),
+                    }
+                } else {
+                    Dialog::DeleteIgnored { repo, paths }
+                });
+            }
+            Message::CleanUpLoaded(repo, reply) => {
+                if let Some(error) = reply["error"].as_str() {
+                    self.dialog = Some(Dialog::Failed {
+                        title: tr!("Clean Up Branches"),
+                        message: error.to_owned(),
+                    });
+                    return;
+                }
+                let info = &reply["info"];
+                let base = info["base"].as_str().unwrap_or("main").to_owned();
+                let branches: Vec<(Value, bool)> = info["branches"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|b| (b.clone(), b["checked"] == true))
+                    .collect();
+                self.dialog = Some(if branches.is_empty() {
+                    Dialog::Failed {
+                        title: tr!("No Branches to Clean Up"),
+                        message: tr!(
+                            "No branch is merged into {base}, merged by a pull request, or left without its upstream.",
+                            base = base
+                        ),
+                    }
+                } else {
+                    Dialog::CleanUp {
+                        repo,
+                        base,
+                        branches,
+                    }
+                });
+            }
+            Message::CleanUpCheck(index, on) => {
+                if let Some(Dialog::CleanUp { branches, .. }) = &mut self.dialog
+                    && let Some(b) = branches.get_mut(index)
+                {
+                    b.1 = on;
+                }
+            }
+            Message::WorkingLayout(layout) => {
+                self.layout_clicks += 1;
+                if layout != self.working_layout {
+                    self.working_layout = layout;
+                    let _ =
+                        crate::prefs::set_string(crate::prefs::WORKING_COPY_LAYOUT, layout.name());
+                }
+            }
+            Message::StageAll(paths, include) => {
+                let Some(repo) = self.repo.clone() else {
+                    return;
+                };
+                context.spawn_background(move |_| {
+                    let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
+                    let result = if include {
+                        repo.stage(&paths)
+                    } else {
+                        repo.unstage(&paths)
+                    };
+                    with_status_reload();
+                    Message::Performed(result.err().map(|e| (tr!("Couldn’t Stage"), e.to_string())))
+                });
+            }
+            Message::WorkingStats(generation, stats) => {
+                // 読む間に status が替わっていれば捨てる（替わった分が別に届く）。
+                if self.status.as_ref().map(|s| s.generation) == Some(generation) {
+                    self.working_stats = stats;
+                }
+            }
+            Message::WorkingKey(discard) => {
+                // 選んでいるファイル（GTK4 版・macOS 版の一覧のキーと同じ）。
+                let entry = self.working_file.as_ref().and_then(|path| {
+                    self.status
+                        .as_ref()?
+                        .status
+                        .entries
+                        .iter()
+                        .find(|e| &e.path == path)
+                        .cloned()
+                });
+                let Some(entry) = entry else {
+                    return beep();
+                };
+                if !discard {
+                    let include = !crate::workcopy::included(&entry);
+                    self.update(Message::Stage(entry.path, include), context);
+                } else if entry.kind != amonhen_model::StatusKind::Unmerged && entry.is_unstaged() {
+                    self.update(Message::DiscardFile(entry.path), context);
+                } else {
+                    beep();
+                }
+            }
+            Message::RecentMessages(recent) => self.recent_messages = recent,
+            Message::CommitTextMenu(key) => self.message_menu(&key, context),
+            Message::DiffFileAt(file) => {
+                if file.is_some() {
+                    self.diff_menu_request += 1;
+                }
+                self.diff_file = file;
+                self.diff_rows = None;
+            }
+            Message::WorkingSides(sides) => {
+                self.working_sides = sides;
+                if let Some(staged) = sides {
+                    self.working_staged = staged;
+                }
+            }
+            Message::WorkingSide(index) => {
+                let Some(index) = index else { return };
+                let staged = index == 1;
+                if self.working_sides == Some(staged) {
+                    return;
+                }
+                self.working_staged = staged;
+                self.load_working_diff();
+            }
+            Message::LinesDiscarded(failed) => {
+                // ファイルの状態（M）は変わらず status が届かないことがあるので、差分を読み直す。
+                self.load_working_diff();
+                if let Some(message) = failed {
+                    self.dialog = Some(Dialog::Failed {
+                        title: "Discard Lines".to_owned(),
+                        message,
+                    });
+                }
+            }
+            Message::DiffRowsAt(rows) => {
+                if rows.is_some() {
+                    self.diff_menu_request += 1;
+                }
+                self.diff_rows = rows;
+                self.diff_file = None;
+            }
+            Message::DiffFileMenu(key) => self.diff_file_action(&key, context),
+            Message::ChangedFileMenu(index, key) => {
+                let mut file = None;
+                with_history(|h| file = h.session.data.file_of(index));
+                if file.is_none() {
+                    return beep();
+                }
+                self.diff_file = file;
+                self.diff_file_action(&key, context);
             }
             Message::WorkingFileMenu(path, key) => match key.as_str() {
                 "history" => self.update(Message::OpenFileHistory(path), context),
@@ -2048,6 +6657,57 @@ impl Component for Root {
                     self.show_file_change(&entry);
                 }
             }
+            Message::FileHistoryMenu(key) if key.starts_with("restore") => {
+                // ファイルをその版（その前の版）に戻す（GTK4 版の `restoresheet::ask`）。
+                let before = key.starts_with("restore-before:");
+                let oid = key.split_once(':').map_or("", |(_, o)| o).to_owned();
+                let (Some(repo), Some(state)) = (self.repo.clone(), self.file_history.as_ref())
+                else {
+                    return beep();
+                };
+                let at = state
+                    .entries
+                    .as_ref()
+                    .and_then(|e| e.as_ref().ok())
+                    .and_then(|e| e.iter().find(|e| e.oid == oid))
+                    .map_or_else(|| state.path.clone(), |e| e.path.clone());
+                // 前の版に戻すときは、そのコミットでの名前と今の名前の両方（名前を変えていれば今の名前は消える）。
+                let mut paths = vec![at];
+                if before && !paths.contains(&state.path) {
+                    paths.push(state.path.clone());
+                }
+                let short = &oid[..oid.len().min(8)];
+                let title = if before {
+                    tr!(
+                        "Restore {path} as It Was Before {commit}?",
+                        path = &state.path,
+                        commit = short
+                    )
+                } else {
+                    tr!(
+                        "Restore {path} as It Is in {commit}?",
+                        path = &state.path,
+                        commit = short
+                    )
+                };
+                let rev = if before {
+                    format!("{oid}^")
+                } else {
+                    oid.clone()
+                };
+                self.dialog = Some(Dialog::Restore {
+                    repo,
+                    title,
+                    rev,
+                    paths,
+                    staged: false,
+                });
+            }
+            Message::RestoreStaged(on) => {
+                if let Some(Dialog::Restore { staged, .. }) = &mut self.dialog {
+                    *staged = on;
+                }
+            }
             Message::FileHistoryMenu(key) => {
                 if let Some(oid) = key.strip_prefix("blame:") {
                     let path = self.file_history.as_ref().and_then(|state| {
@@ -2078,7 +6738,7 @@ impl Component for Root {
                         .unwrap_or_else(|e| json!({ "error": e.to_string() }));
                     let data = match reply["error"].as_str() {
                         Some(e) => Err(e.to_owned()),
-                        None => Ok(crate::blame::data_of(&reply["info"])),
+                        None => Ok(crate::blame::data_of(&reply["info"], &path)),
                     };
                     Message::BlameLoaded(path, rev, data)
                 });
@@ -2130,10 +6790,47 @@ impl Component for Root {
                 ) {
                     self.show_page(Page::History);
                 }
+                // ブランチ・リモートブランチ・タグなら、History をその ref から辿れるものに絞り、指すコミットを
+                // 選ぶ（GTK4 版・macOS 版の `scope_to_ref`。上の帯の All Branches で戻す）。
                 if let Some(entry) = self.entry(&key)
                     && let Some(target) = entry.target
                 {
-                    with_history(|h| h.select_commit(&target));
+                    let scoped = matches!(
+                        entry.kind,
+                        amonhen_model::RefKind::Local
+                            | amonhen_model::RefKind::Remote
+                            | amonhen_model::RefKind::Tag
+                    );
+                    // Ctrl を押していれば、今の範囲に足す（もう入っていれば外す）。いくつもの ref から辿れるものを
+                    // まとめて出す（macOS 版・GTK4 版でいくつも選んだときと同じ）。
+                    let ctrl = xaml::InputKeyboardSource::GetKeyStateForCurrentThread(
+                        xaml::VirtualKey::Control,
+                    )
+                    .is_ok_and(|s| s.contains(xaml::CoreVirtualKeyStates::Down));
+                    with_history(|h| {
+                        if !scoped {
+                            h.select_commit(&target);
+                            return;
+                        }
+                        let this = (entry.kind, entry.name.clone());
+                        let list = match h.session.data.scope() {
+                            crate::data::Scope::Refs(mut list) if ctrl => {
+                                if let Some(at) = list.iter().position(|r| *r == this) {
+                                    list.remove(at);
+                                } else {
+                                    list.push(this);
+                                }
+                                list
+                            }
+                            _ => vec![this],
+                        };
+                        if list.is_empty() {
+                            h.session.data.set_scope(crate::data::Scope::All);
+                        } else {
+                            h.session.data.set_scope(crate::data::Scope::Refs(list));
+                        }
+                        h.select_commit(&target);
+                    });
                 }
             }
         }
@@ -2145,7 +6842,26 @@ impl Component for Root {
             .ok()
             .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
             .unwrap_or_else(|| args.repo.display().to_string());
-        context.window_title(name);
+        // 未コミットの変更（●）と上流との差（↑↓）を添える（GTK4 版・macOS 版はタブの名前に。ここはタブがないので窓の
+        // 名前に）。
+        let mut title = name;
+        if self
+            .status
+            .as_ref()
+            .is_some_and(|s| !s.status.entries.is_empty())
+        {
+            title.push_str(" ●");
+        }
+        if let Some(head) = self.head_entry() {
+            if head.ahead > 0 {
+                title.push_str(&format!(" ↑{}", head.ahead));
+            }
+            if head.behind > 0 {
+                title.push_str(&format!(" ↓{}", head.behind));
+            }
+        }
+        context.window_title(title.clone());
+        let tab_strip = tab_strip(&title, context);
         let root = self.root.clone();
         let refs = (
             self.panel.clone(),
@@ -2159,8 +6875,21 @@ impl Component for Root {
         context.use_effect("history", (), move || {
             let (panel, area, diff_panel, diff_area, sidebar, sidebar_menu_host) = refs;
             let (args, started) = ARGS.with(|a| a.borrow().clone()).expect("args");
+            // File > New Window で開いた窓は、Repositories の画面から（GTK4 版の `show_home`）。
+            if args.repositories {
+                sender.send(Message::Command("repositories".to_owned()));
+            }
+            // 書き込む先の worktree を替えた窓は、前の窓と同じ所・同じ画面に。
+            if args.working_copy {
+                sender.send(Message::Command("show-working-copy".to_owned()));
+            }
+            PENDING_PLACE.with(|p| p.set(args.place.map(|r| (r, 0))));
             let session = match Session::new(&args, "app", started, Arc::new(|| {})) {
-                Ok(s) => s,
+                Ok(mut s) => {
+                    // View の All Files in One Diff を切っていれば、コミットの差分は 1 ファイルずつ。
+                    s.data.single_file = !crate::prefs::bool(crate::prefs::STACKED_COMMIT_DIFF);
+                    s
+                }
                 Err(e) => {
                     sender.send(Message::Failed(e));
                     return None;
@@ -2168,6 +6897,7 @@ impl Component for Root {
             };
             let view = Rc::new(RefCell::new(HistoryView {
                 session,
+                diff_query: String::new(),
                 root,
                 root_input: false,
                 sidebar,
@@ -2175,6 +6905,7 @@ impl Component for Root {
                 sidebar_input: false,
                 sidebar_host_input: false,
                 sidebar_menu_ready: false,
+                diff_menu_ready: false,
                 panel: panel.clone(),
                 area,
                 options: args.options,
@@ -2241,6 +6972,14 @@ impl Component for Root {
             });
         }
 
+        // 差分の右クリック: メニューをそのファイルのものに作り直した後、次のフレームで開く。
+        if self.diff_menu_request > 0 {
+            context.use_effect("diff-menu", self.diff_menu_request, || {
+                with_history(|h| h.diff_menu_ready = true);
+                None
+            });
+        }
+
         // サイドバーの右クリック: メニューを押した項目のものに作り直した後、次のフレームで開く。
         if self.sidebar_request > 0 {
             context.use_effect("sidebar-menu", self.sidebar_request, || {
@@ -2250,19 +6989,59 @@ impl Component for Root {
         }
         // 木（TreeView）には参照を付けられないので、包む Grid に右クリックを付ける。メニューは押されない空の
         // Grid に付けておき、そこから取って開く（右クリックした所に付けると、WinUI が作り直す前のメニューを開く）。
+        // 絞り込みの欄（Branches・Remotes・Tags。GTK4 版の Filter branches）。
+        let conflicts = self.status.as_ref().map_or(0, |s| {
+            s.status
+                .entries
+                .iter()
+                .filter(|e| e.kind == amonhen_model::StatusKind::Unmerged)
+                .count()
+        });
         let sidebar = Grid::new()
             .element_ref(&self.sidebar_tree)
+            .rows([GridLength::Auto, GridLength::Star(1.0)])
             .grid_column(0)
             .children((
+                TextBox::new()
+                    .text(self.sidebar_filter.clone())
+                    .placeholder_text(tr!("Filter branches"))
+                    .margin(Thickness::new(8.0, 6.0, 8.0, 4.0))
+                    .grid_row(0)
+                    .on_text_changed(context.callback(Message::SidebarFilter)),
                 TreeView::new()
+                    .grid_row(1)
                     .on_item_invoked(context.callback(Message::Invoked))
                     .nodes(sidebar::nodes(
                         self.refs.as_ref().map(|r| &r.refs),
                         self.groups.as_ref(),
                         self.range_diff.is_some(),
+                        &self
+                            .worktrees
+                            .iter()
+                            .map(|w| {
+                                let editing = self
+                                    .repo
+                                    .as_ref()
+                                    .and_then(|r| r.paths().workdir)
+                                    .is_some_and(|d| same_path(&d.display().to_string(), &w.path));
+                                let changes =
+                                    self.worktree_counts.get(&w.path).copied().unwrap_or(0);
+                                (format!("worktree:{}", w.path), w.title(editing, changes))
+                            })
+                            .collect::<Vec<_>>(),
+                        sidebar::Marks {
+                            form: &self.form,
+                            conflicts,
+                            tag_remotes: &self.tag_remotes,
+                            tag_signatures: &self.tag_signatures,
+                            submodules: &self.submodules,
+                            subtrees: &self.subtrees["subtrees"],
+                        },
+                        &self.sidebar_filter,
                     )),
                 Grid::new()
                     .element_ref(&self.sidebar_menu_host)
+                    .grid_row(1)
                     .width(0.0)
                     .height(0.0)
                     .horizontal_alignment(HorizontalAlignment::Left)
@@ -2281,27 +7060,106 @@ impl Component for Root {
             None => SwapChainPanel::new().element_ref(&self.panel).into(),
         };
         let right = Grid::new()
-            .rows([
-                GridLength::Pixel(if self.page == Page::WorkingCopy {
-                    0.0
-                } else {
-                    240.0
-                }),
-                GridLength::Star(1.0),
-            ])
+            .rows(if self.page == Page::WorkingCopy {
+                [GridLength::Auto, GridLength::Auto, GridLength::Star(1.0)]
+            } else if self.details_expanded {
+                // ⤢: 詳細だけを右の列いっぱいに（差分を隠す。GTK4 版の `expand_button`）。
+                [
+                    GridLength::Star(1.0),
+                    GridLength::Auto,
+                    GridLength::Pixel(0.0),
+                ]
+            } else {
+                [
+                    GridLength::Pixel(self.details_height),
+                    GridLength::Auto,
+                    GridLength::Star(1.0),
+                ]
+            })
             .grid_column(2)
             .children((
-                ScrollViewer::new()
-                    .grid_row(0)
-                    .content(details(self.info.as_ref().map(|(i, e)| (i, e.as_ref())))),
+                self.top_of_diff(context),
+                StackPanel::new().grid_row(1).children((
+                    self.changed_files_view(context),
+                    self.diff_find_bar(context),
+                )),
+                // 差分（木を出すときは、その左に変更ファイルの木）。
                 Grid::new()
-                    .background(Brush::Solid(Color::transparent()))
-                    .element_ref(&self.diff_area)
-                    .grid_row(1)
-                    .children((SwapChainPanel::new().element_ref(&self.diff_panel),)),
+                    .grid_row(2)
+                    .columns([
+                        if self.shows_changed_files()
+                            && crate::prefs::bool(crate::prefs::HISTORY_FILE_TREE)
+                        {
+                            GridLength::Pixel(220.0)
+                        } else {
+                            GridLength::Pixel(0.0)
+                        },
+                        GridLength::Star(1.0),
+                    ])
+                    .children((
+                        self.changed_tree_view(context),
+                        Grid::new()
+                            .background(Brush::Solid(Color::transparent()))
+                            .element_ref(&self.diff_area)
+                            .grid_column(1)
+                            .children((SwapChainPanel::new().element_ref(&self.diff_panel),))
+                            .menu(Menu::new(
+                                self.diff_file_menu(),
+                                context.callback(Message::DiffFileMenu),
+                            )),
+                    )),
             ));
         let menu_bar = crate::menus::menu_bar(|| context.callback(Message::Command));
-        let toolbar = crate::menus::toolbar(context.callback(Message::Command));
+        let tracking = self.tracking();
+        let toolbar = Grid::new()
+            .grid_row(1)
+            .element_ref(&self.toolbar)
+            .children((crate::menus::toolbar(
+                context.callback(Message::Command),
+                tracking,
+            ),));
+        // 数かツールバーの並びが変わったら、Pull・Push のバッジを付け直す（並べ終えてから）。
+        let order: String = crate::menus::toolbar_entries()
+            .iter()
+            .map(|e| format!("{e:?}"))
+            .collect();
+        context.use_effect(
+            "toolbar-badges",
+            (tracking.ahead, tracking.behind, order),
+            {
+                let sender = context.sender();
+                move || {
+                    sender.send(Message::ToolbarBadgesLater);
+                    None
+                }
+            },
+        );
+        // 差分の検索の帯を開いたら、欄にフォーカスを入れる（描き直した後に）。
+        if self.diff_find_opened > 0 {
+            let field = self.diff_find_box.clone();
+            context.use_effect("diff-find-box", self.diff_find_opened, move || {
+                let _ = field.request_focus();
+                None
+            });
+        }
+        // マージエディタの Result の欄に Ctrl+Z・Ctrl+Y を付ける（開いたとき、Base の欄の出し入れで作り直したとき）。
+        if let (Page::Merge, Some(state)) = (self.page, &self.merge) {
+            let field = self.merge_result_box.clone();
+            context.use_effect(
+                "merge-keys",
+                (state.path.clone(), state.show_base, state.sides.is_some()),
+                move || {
+                    let _ = field.request_native_element(|result| {
+                        if let Ok(element) = result
+                            && let Err(e) = attach_merge_keys(&element)
+                        {
+                            eprintln!("マージエディタの欄にキーを付けられない: {e}");
+                        }
+                    });
+                    None
+                },
+            );
+        }
         // 検索の欄を開いたら、フォーカスを入れて Enter・Esc を受ける（描き直した後に）。
         if self.search_opened > 0 {
             let search_box = self.search_box.clone();
@@ -2318,40 +7176,99 @@ impl Component for Root {
             });
         }
         let search_bar: View = if self.search_open {
+            // ▾: 作者・パス・内容・日時で探す書き方を入れる（GTK4 版・macOS 版の検索の欄の ▾ のメニュー）。
+            let scopes = SEARCH_SCOPES
+                .iter()
+                .map(|(title, prefix)| {
+                    MenuItem::item(*prefix, amonhen_model::i18n::translate(title).into_owned())
+                })
+                .collect::<Vec<_>>();
             Grid::new()
-                .columns([GridLength::Star(1.0), GridLength::Auto])
+                .columns([
+                    GridLength::Auto,
+                    GridLength::Star(1.0),
+                    GridLength::Auto,
+                    GridLength::Auto,
+                ])
+                .column_spacing(4.0)
                 .margin(Thickness::new(8.0, 4.0, 8.0, 4.0))
                 .grid_row(0)
                 .children((
+                    DropDownButton::new()
+                        .grid_column(0)
+                        .content(TextBlock::new().text("🔍"))
+                        .menu(Menu::new(scopes, context.callback(Message::SearchScope))),
                     TextBox::new()
                         .element_ref(&self.search_box)
                         .text(self.query.clone())
                         .placeholder_text(tr!("Search"))
                         .on_text_changed(context.callback(Message::Query))
-                        .grid_column(0),
+                        .grid_column(1),
                     TextBlock::new()
                         .text(self.search_status.clone())
                         .margin(Thickness::new(8.0, 0.0, 4.0, 0.0))
                         .vertical_alignment(VerticalAlignment::Center)
-                        .grid_column(1),
+                        .grid_column(2),
+                    // 一致したコミットだけを出す（GTK4 版・macOS 版の検索の欄の切り替え。探すまでは押せない）。
+                    crate::tip::holder(
+                        ToggleButton::new()
+                            .is_checked(self.search_only)
+                            .is_enabled(self.last_search.is_some())
+                            .on_is_checked_changed(context.callback(Message::SearchOnly))
+                            .content(TextBlock::new().text("⊟")),
+                        tr!("Show Only Matching Commits"),
+                        3,
+                    ),
                 ))
         } else {
             View::empty()
         };
+        let working_copy = self.working_copy_view(context);
+        let details_split = self.page != Page::WorkingCopy && !self.details_expanded;
+        SPLIT_SIZES.with(|s| s.set((self.sidebar_width, self.right_width, self.details_height)));
+        // 境目のつまみに押す・動かすを付ける（つまみができたとき。詳細の下のつまみは出すたびにできる）。部品は
+        // まだできていないことがあるので、描くたびに頼み直す（`retry_splitters`）。
+        for (i, split, shown) in [
+            (0, Split::Sidebar, true),
+            (1, Split::Right, true),
+            (2, Split::Details, details_split),
+        ] {
+            let handle = self.split_handles[i].clone();
+            context.use_effect(format!("split-{i}"), shown, move || {
+                if shown {
+                    SPLIT_PENDING.with(|p| p.borrow_mut().push((handle, split)));
+                }
+                None
+            });
+        }
+        // 見出しの境目のつまみに押す・動かすを付ける（画面を出すたび。`retry_splitters` が付け終える）。
+        let shown = self.page == Page::Repositories && self.repositories.is_some();
+        for (i, handle) in self.column_handles.iter().enumerate() {
+            let handle = handle.clone();
+            context.use_effect(format!("column-{i}"), shown, move || {
+                if shown {
+                    SPLIT_PENDING.with(|p| p.borrow_mut().push((handle, Split::Column(i))));
+                }
+                None
+            });
+        }
         let body = Grid::new()
-            .grid_row(2)
             .columns([
-                GridLength::Pixel(260.0),
+                GridLength::Pixel(self.sidebar_width),
                 GridLength::Star(1.0),
-                GridLength::Star(1.0),
+                self.right_width
+                    .map_or(GridLength::Star(1.0), GridLength::Pixel),
             ])
             .children((
                 sidebar,
                 Grid::new()
-                    .rows([GridLength::Auto, GridLength::Star(1.0)])
+                    .rows([GridLength::Auto, GridLength::Star(1.0), GridLength::Auto])
                     .grid_column(1)
                     .children((
-                        search_bar,
+                        self.shallow_band(context),
+                        StackPanel::new()
+                            .grid_row(0)
+                            .children((self.scope_band(context), search_bar)),
                         Grid::new()
                             .background(Brush::Solid(Color::transparent()))
                             .element_ref(&self.area)
@@ -2365,17 +7282,100 @@ impl Component for Root {
                 right,
                 // Working Copy は History の上に重ねる（History の描画は SwapChainPanel の毎フレームの知らせで回って
                 // いて、外すと止まる）。
-                self.working_copy_view(context),
+                working_copy,
                 self.stashes_view(context),
-                self.reflog_view(context),
+                View::fragment((self.reflog_view(context), self.edit_view(context))),
                 self.range_diff_view(context),
                 self.file_history_view(context),
                 self.blame_view(context),
                 self.merge_view(context),
                 self.settings_view(context),
                 self.activity_view(context),
+                self.repositories_view(context),
                 self.repo_settings_view(context),
+                // Push の確認は、どの画面の上にも重ねる。
+                self.push_view(context),
+                // 列の境目（動かして幅を変える）。いちばん上に重ねる。
+                View::fragment((
+                    splitter(&self.split_handles[0], Split::Sidebar, 0.0),
+                    splitter(&self.split_handles[1], Split::Right, 0.0),
+                    if details_split {
+                        splitter(&self.split_handles[2], Split::Details, self.details_height)
+                    } else {
+                        View::empty()
+                    },
+                )),
             ));
+        // Blame の行番号と中身の列を等幅に（読み終えて列ができてから）。
+        let blame_lines = (self.page == Page::Blame)
+            .then_some(self.blame.as_ref())
+            .flatten()
+            .and_then(|b| Some((b.path.clone(), b.data.as_ref()?.as_ref().ok()?.lines.len())));
+        let host = self.blame_code.clone();
+        context.use_effect("blame-monospace", blame_lines, move || {
+            let _ = host.request_native_element(|result| {
+                if let Ok(element) = result {
+                    PENDING_MONOSPACE.with(|p| p.borrow_mut().push((element, 0)));
+                }
+            });
+            None
+        });
+        // Working Copy の一覧のキー: 画面を出すたびに Grid が作り直されるので、そのたびに付ける。
+        let host = self.working_list.clone();
+        context.use_effect("working-keys", self.page == Page::WorkingCopy, move || {
+            let _ = host.request_native_element(|result| {
+                if let Ok(element) = result
+                    && let Err(e) = attach_working_keys(&element)
+                {
+                    eprintln!("Working Copy の一覧にキーを付けられない: {e}");
+                }
+            });
+            None
+        });
+        // Repositories の一覧のダブルクリック・Enter で開く（画面を出すたびに Grid が作り直される）。
+        let host = self.repositories_list.clone();
+        context.use_effect(
+            "repositories-open",
+            self.page == Page::Repositories,
+            move || {
+                let _ = host.request_native_element(|result| {
+                    if let Ok(element) = result
+                        && let Err(e) = attach_repositories_open(&element)
+                    {
+                        eprintln!("Repositories の一覧に開く操作を付けられない: {e}");
+                    }
+                });
+                None
+            },
+        );
+        // 説明の欄を等幅に（Working Copy を出すたびに欄が作り直される。TextBox は Control なので、そのものに付ける）。
+        let description_box = self.description_box.clone();
+        context.use_effect(
+            "description-monospace",
+            self.page == Page::WorkingCopy,
+            move || {
+                let _ = description_box.request_native_element(|result| {
+                    if let Ok(element) = result
+                        && let Err(e) = monospace(&element)
+                    {
+                        eprintln!("説明の欄を等幅にできない: {e}");
+                    }
+                });
+                None
+            },
+        );
+        // 件名の欄の Alt+↑・Alt+↓（Working Copy を出すたびに欄が作り直される）。
+        let summary_box = self.summary_box.clone();
+        context.use_effect("summary-keys", self.page == Page::WorkingCopy, move || {
+            let _ = summary_box.request_native_element(|result| {
+                if let Ok(element) = result
+                    && let Err(e) = attach_recall_keys(&element)
+                {
+                    eprintln!("件名の欄にキーを付けられない: {e}");
+                }
+            });
+            None
+        });
         // ダイアログの入力の欄: フォーカスを入れ、Enter で既定のボタン（ContentDialog は Enter を既定のボタンに
         // 回さない）。
         if self.dialog_inputs > 0 {
@@ -2383,10 +7383,12 @@ impl Component for Root {
             context.use_effect("dialog-input", self.dialog_inputs, move || {
                 let _ = input.request_focus();
                 let _ = input.request_native_element(|result| {
-                    if let Ok(element) = result
-                        && let Err(e) = attach_enter(&element)
-                    {
-                        eprintln!("入力の欄にキーを付けられない: {e}");
+                    if let Ok(element) = result {
+                        if let Err(e) = attach_enter(&element) {
+                            eprintln!("入力の欄にキーを付けられない: {e}");
+                        }
+                        // 入れてある文字（Rename の今の名前など）は選んでおき、打てば置き換わるように。
+                        let _ = xaml::select_all(&element);
                     }
                 });
                 None
@@ -2398,14 +7400,76 @@ impl Component for Root {
             .rows([
                 GridLength::Auto,
                 GridLength::Auto,
+                GridLength::Auto,
                 GridLength::Star(1.0),
                 GridLength::Auto,
             ])
-            .children((menu_bar, toolbar, body, self.status_bar(), dialog))
+            .children((
+                menu_bar,
+                toolbar,
+                tab_strip,
+                // パッチのファイルを落とせる（GTK4 版・macOS 版と同じく窓のどこにでも）。
+                Border::new()
+                    .grid_row(3)
+                    .drop_policy(
+                        DragDropPolicy::new()
+                            .storage_items(DragDropAction::new(DragDropOperation::Copy)),
+                    )
+                    .on_drop(context.callback(Message::Dropped))
+                    .content(body),
+                self.status_bar(context),
+                dialog,
+            ))
     }
 }
 
 impl Root {
+    /// 保存する場所を選んで archive・bundle を書き、書けたらエクスプローラーで見せる（GTK4 版と同じ）。
+    fn save(&mut self, save: PendingSave, context: &ComponentContext<Self>) {
+        let (repo, mut command, path, title) = match save {
+            PendingSave::Archive {
+                repo,
+                name,
+                command,
+            } => {
+                let picked = command["format"].as_str().unwrap_or("zip").to_owned();
+                let Some(path) =
+                    crate::files::save_file(&tr!("Export Archive"), &name, &picked, &picked)
+                else {
+                    return;
+                };
+                (repo, command, path, tr!("Export Archive"))
+            }
+            PendingSave::Bundle {
+                repo,
+                label,
+                commits,
+                command,
+            } => {
+                // 入るコミットの数は、保存する場所を選ぶ窓の題に（GTK4 版と同じ）。
+                let Some(path) = crate::files::save_file(
+                    &tr!("{count} commits", count = commits),
+                    &format!("{label}.bundle"),
+                    "bundle",
+                    "bundle",
+                ) else {
+                    return;
+                };
+                (repo, command, path, tr!("Save as Bundle"))
+            }
+        };
+        command["file"] = json!(path.to_string_lossy());
+        context.spawn_background(move |_| {
+            let reply: Value = serde_json::from_str(&repo.run_json(&command.to_string()))
+                .unwrap_or_else(|e| json!({ "error": e.to_string() }));
+            if let Some(e) = reply["error"].as_str() {
+                return Message::Performed(Some((title, e.to_owned())));
+            }
+            crate::files::reveal(&path);
+            Message::Performed(None)
+        });
+    }
+
     /// Repository > Undo…: 最後の操作を見せて、確かめてから戻す（GTK4 版の `sheets::undo`）。
     fn undo(&self, context: &ComponentContext<Self>) {
         let mut repo = None;
@@ -2441,6 +7505,38 @@ impl Root {
                 .content(
                     TextBlock::new()
                         .text(what.clone())
+                        .text_wrapping(TextWrapping::Wrap),
+                ),
+            Some(Dialog::ConfirmDrawn {
+                title,
+                message,
+                button,
+                preview,
+                how,
+                ..
+            }) => dialog
+                .is_open(true)
+                .title(title.clone())
+                .primary_button_text(button.clone())
+                .close_button_text(tr!("Cancel"))
+                .content(
+                    StackPanel::new().spacing(10.0).children((
+                        TextBlock::new()
+                            .text(message.clone())
+                            .text_wrapping(TextWrapping::Wrap),
+                        crate::drawing::for_how(preview, how).unwrap_or_else(View::empty),
+                    )),
+                ),
+            Some(Dialog::FetchFirst {
+                message, button, ..
+            }) => dialog
+                .is_open(true)
+                .title(tr!("Fetch File Contents First?"))
+                .primary_button_text(button.clone())
+                .close_button_text(tr!("Cancel"))
+                .content(
+                    TextBlock::new()
+                        .text(message.clone())
                         .text_wrapping(TextWrapping::Wrap),
                 ),
             Some(Dialog::Confirm {
@@ -2490,8 +7586,29 @@ impl Root {
                 name,
                 fetch,
                 push,
+                check,
                 ..
             }) => {
+                // 接続の確認の結果（つながれば緑、だめなら赤）。
+                let result: View = match check {
+                    None => View::empty(),
+                    Some((ok, text)) => {
+                        let mut block = TextBlock::new()
+                            .text(text.clone())
+                            .font_size(12.0)
+                            .text_wrapping(TextWrapping::Wrap)
+                            .is_text_selection_enabled(true)
+                            .max_width(360.0)
+                            .vertical_alignment(VerticalAlignment::Center);
+                        block = match ok {
+                            Some(true) => block.foreground(Brush::Solid(Color::rgb(0x2b, 0x9a, 0x45))),
+                            Some(false) => block.foreground(Brush::Solid(Color::rgb(0xc4, 0x2b, 0x1c))),
+                            None => block.opacity(0.6),
+                        };
+                        block.into()
+                    }
+                };
+                let checking = matches!(check, Some((None, _)));
                 let field = |label: String, text: &str, index: usize, placeholder: String| {
                     StackPanel::new().spacing(2.0).children((
                         TextBlock::new().text(label),
@@ -2528,6 +7645,16 @@ impl Root {
                             )),
                             field(tr!("Fetch URL"), fetch, 1, String::new()),
                             field(tr!("Push URL"), push, 2, tr!("Same as the fetch URL")),
+                            StackPanel::new()
+                                .orientation(Orientation::Horizontal)
+                                .spacing(10.0)
+                                .children((
+                                    Button::new()
+                                        .is_enabled(!fetch.trim().is_empty() && !checking)
+                                        .on_click(context.callback(|()| Message::RemoteCheck))
+                                        .content(TextBlock::new().text(tr!("Check Connection"))),
+                                    result,
+                                )),
                         )),
                     )
             }
@@ -2617,13 +7744,18 @@ impl Root {
                 oid,
                 message,
                 squash,
+                last,
                 ..
             }) => dialog
                 .is_open(true)
-                .title(if *squash {
-                    tr!("Combine with Older Commit…").trim_end_matches('…').to_owned()
-                } else {
-                    tr!("Edit Message")
+                .title(match last {
+                    Some((_, count)) => tr!("Combine {count} Commits…", count = count)
+                        .trim_end_matches('…')
+                        .to_owned(),
+                    None if *squash => {
+                        tr!("Combine with Older Commit…").trim_end_matches('…').to_owned()
+                    }
+                    None => tr!("Edit Message"),
                 })
                 .primary_button_text(if *squash { "Combine" } else { "Save" })
                 .close_button_text(tr!("Cancel"))
@@ -2685,6 +7817,252 @@ impl Root {
                             .on_text_changed(context.callback(Message::BranchName)),
                     )),
                 ),
+            Some(Dialog::Archive {
+                format,
+                top,
+                folder,
+                ..
+            }) => dialog
+                .is_open(true)
+                .title(tr!("Export Archive"))
+                .primary_button_text(tr!("Export…"))
+                .close_button_text(tr!("Cancel"))
+                .content(
+                    StackPanel::new().spacing(6.0).children((
+                        TextBlock::new()
+                            .text(tr!(
+                                "The files of this commit, as git archive writes them; .gitattributes decides what is left out (export-ignore)."
+                            ))
+                            .text_wrapping(TextWrapping::Wrap),
+                        TextBlock::new().text(tr!("Format:")),
+                        ComboBox::new()
+                            .items_source(ARCHIVE_FORMATS.to_vec())
+                            .selected_index(*format)
+                            .on_selection_changed(context.callback(Message::ArchiveFormat)),
+                        TextBlock::new().text(tr!("Top folder:")),
+                        TextBox::new()
+                            .text(top.clone())
+                            .placeholder_text(tr!("None"))
+                            .on_text_changed(context.callback(Message::BranchName)),
+                        TextBlock::new().text(tr!("Folder:")),
+                        TextBox::new()
+                            .text(folder.clone())
+                            .placeholder_text(tr!("All files"))
+                            .on_text_changed(context.callback(Message::ArchiveFolder)),
+                    )),
+                ),
+            Some(Dialog::ApplyPatch {
+                mailbox,
+                title,
+                what,
+                list,
+                applies,
+                three_way,
+                index,
+                drawing,
+                ..
+            }) => {
+                let drawing = crate::drawing::for_pick(
+                    drawing,
+                    &self.head_name(),
+                    crate::drawing::PickKind::Patches,
+                )
+                .unwrap_or_else(View::empty);
+                let status = match applies {
+                    Ok(()) => tr!("Applies cleanly."),
+                    Err(reason) => tr!("Doesn’t apply cleanly: {reason}", reason = reason),
+                };
+                let check = |key: &'static str, label: String, on: bool| -> View {
+                    CheckBox::new()
+                        .is_checked(on)
+                        .on_is_checked_changed(context.callback(move |v| Message::ApplyOption(key, v)))
+                        .content(TextBlock::new().text(label))
+                };
+                dialog
+                    .is_open(true)
+                    .title(title.clone())
+                    .primary_button_text(tr!("Apply"))
+                    .close_button_text(tr!("Cancel"))
+                    .content(
+                        StackPanel::new().spacing(6.0).children((
+                            TextBlock::new()
+                                .text(format!("{what} {}", tr!("You can Undo this (Ctrl+Alt+Z).")))
+                                .text_wrapping(TextWrapping::Wrap),
+                            drawing,
+                            ScrollViewer::new().max_height(180.0).content(
+                                TextBlock::new()
+                                    .text(list.clone())
+                                    .font_size(12.0)
+                                    .is_text_selection_enabled(true),
+                            ),
+                            TextBlock::new()
+                                .text(status)
+                                .font_size(12.0)
+                                .foreground_optional(
+                                    applies
+                                        .is_err()
+                                        .then_some(Brush::Solid(Color::rgb(0xc4, 0x6a, 0x00))),
+                                )
+                                .text_wrapping(TextWrapping::Wrap),
+                            if *mailbox {
+                                View::empty()
+                            } else {
+                                check("index", tr!("Stage the changes too (--index)"), *index)
+                            },
+                            check(
+                                "three-way",
+                                tr!("3-way merge where it doesn’t apply"),
+                                *three_way,
+                            ),
+                        )),
+                    )
+            }
+            Some(Dialog::Bundle {
+                what, newer, base, ..
+            }) => dialog
+                .is_open(true)
+                .title(tr!("Save as Bundle"))
+                .primary_button_text(tr!("Save…"))
+                .close_button_text(tr!("Cancel"))
+                // 「後だけ」を選んで基点が空なら押せない（黙って全体を保存しない。GTK4 版と同じ）。
+                .is_primary_button_enabled(!*newer || !base.trim().is_empty())
+                .content(
+                    StackPanel::new().spacing(6.0).children((
+                        TextBlock::new()
+                            .text(tr!(
+                                "{what}, in one file that git can clone or fetch from (git bundle).",
+                                what = what
+                            ))
+                            .text_wrapping(TextWrapping::Wrap),
+                        RadioButtons::new()
+                            .items_source(vec![tr!("All history"), tr!("Only commits after:")])
+                            .selected_index(usize::from(*newer))
+                            .on_selection_changed(
+                                context.callback(|i: Option<usize>| Message::BundleNewer(i == Some(1))),
+                            ),
+                        TextBox::new()
+                            .text(base.clone())
+                            .placeholder_text(tr!("Tag, branch or commit"))
+                            .is_enabled(*newer)
+                            .on_text_changed(context.callback(Message::BranchName)),
+                        TextBlock::new()
+                            .text(tr!("Whoever receives the bundle needs that commit already."))
+                            .font_size(12.0)
+                            .opacity(0.6)
+                            .text_wrapping(TextWrapping::Wrap),
+                    )),
+                ),
+            Some(Dialog::FetchBundle { message, name, .. }) => dialog
+                .is_open(true)
+                .title(tr!("Fetch from Bundle"))
+                .primary_button_text("Fetch")
+                .close_button_text(tr!("Cancel"))
+                .is_primary_button_enabled(!name.trim().is_empty())
+                .content(
+                    StackPanel::new().spacing(6.0).children((
+                        TextBlock::new()
+                            .text(message.clone())
+                            .text_wrapping(TextWrapping::Wrap),
+                        TextBlock::new().text(tr!("Name:")),
+                        TextBox::new()
+                            .element_ref(&self.dialog_input)
+                            .text(name.clone())
+                            .on_text_changed(context.callback(Message::BranchName)),
+                    )),
+                ),
+            Some(Dialog::NewWorktree {
+                repo,
+                start,
+                branch,
+                folder,
+            }) => {
+                let field = |label: String, text: &str, index: usize, placeholder: String| {
+                    StackPanel::new().spacing(2.0).children((
+                        TextBlock::new().text(label),
+                        TextBox::new()
+                            .text(text)
+                            .placeholder_text(placeholder)
+                            .on_text_changed(context.callback(move |t| Message::WorktreeField(index, t))),
+                    ))
+                };
+                let hint = if branch.trim().is_empty() {
+                    String::new()
+                } else {
+                    default_worktree_folder(repo, branch.trim())
+                };
+                dialog
+                    .is_open(true)
+                    .title(tr!("New Worktree"))
+                    .primary_button_text(tr!("Create"))
+                    .close_button_text(tr!("Cancel"))
+                    .is_primary_button_enabled(!branch.trim().is_empty())
+                    .content(
+                        StackPanel::new().spacing(8.0).children((
+                            TextBlock::new()
+                                .text(tr!(
+                                    "Creates a branch from {start} and checks it out in a new folder.",
+                                    start = shown_start(start)
+                                ))
+                                .text_wrapping(TextWrapping::Wrap),
+                            StackPanel::new().spacing(2.0).children((
+                                TextBlock::new().text(tr!("Branch name")),
+                                TextBox::new()
+                                    .element_ref(&self.dialog_input)
+                                    .text(branch.clone())
+                                    .on_text_changed(context.callback(|t| Message::WorktreeField(0, t))),
+                            )),
+                            field(tr!("Folder"), folder, 1, hint),
+                        )),
+                    )
+            }
+            Some(Dialog::LockWorktree { name, reason, .. }) => dialog
+                .is_open(true)
+                .title(tr!("Lock the Worktree “{name}”?", name = name))
+                .primary_button_text(tr!("Lock"))
+                .close_button_text(tr!("Cancel"))
+                .content(
+                    StackPanel::new().spacing(6.0).children((
+                        TextBlock::new()
+                            .text(tr!(
+                                "git then won’t prune, remove or move it, for example while it is on a disk that isn’t always connected (git worktree lock)."
+                            ))
+                            .text_wrapping(TextWrapping::Wrap),
+                        TextBox::new()
+                            .element_ref(&self.dialog_input)
+                            .text(reason.clone())
+                            .placeholder_text(tr!("Reason (optional)"))
+                            .on_text_changed(context.callback(Message::BranchName)),
+                    )),
+                ),
+            Some(Dialog::WorktreeFolder {
+                name, to, repair, ..
+            }) => dialog
+                .is_open(true)
+                .title(if *repair {
+                    tr!("Locate the Worktree “{name}”", name = name)
+                } else {
+                    tr!("Move the Worktree “{name}”", name = name)
+                })
+                .primary_button_text(if *repair { tr!("Reconnect") } else { tr!("Move") })
+                .close_button_text(tr!("Cancel"))
+                .is_primary_button_enabled(!to.trim().is_empty())
+                .content(
+                    StackPanel::new().spacing(6.0).children((
+                        TextBlock::new()
+                            .text(if *repair {
+                                tr!(
+                                    "If you moved its folder yourself, give where it is now, and git reconnects it (git worktree repair)."
+                                )
+                            } else {
+                                tr!("Moves the folder and tells git where it is now (git worktree move).")
+                            })
+                            .text_wrapping(TextWrapping::Wrap),
+                        TextBox::new()
+                            .element_ref(&self.dialog_input)
+                            .text(to.clone())
+                            .on_text_changed(context.callback(Message::BranchName)),
+                    )),
+                ),
             Some(Dialog::CloseMerge) => dialog
                 .is_open(true)
                 .title(tr!("Close without saving?"))
@@ -2708,6 +8086,243 @@ impl Root {
                     TextBlock::new()
                         .text(tr!("The conflict markers stay in the file."))
                         .text_wrapping(TextWrapping::Wrap),
+                ),
+            Some(Dialog::Form {
+                title,
+                message,
+                button,
+                fields,
+                checks,
+                ..
+            }) => {
+                // 欄（見出しがあれば上に）とチェックを縦に並べる。最初の欄にフォーカスと Enter。
+                let mut rows: Vec<(String, View)> = vec![(
+                    "message".to_owned(),
+                    TextBlock::new()
+                        .text(message.clone())
+                        .text_wrapping(TextWrapping::Wrap)
+                        .into(),
+                )];
+                for (i, (label, value, placeholder)) in fields.iter().enumerate() {
+                    if !label.is_empty() {
+                        rows.push((format!("label{i}"), TextBlock::new().text(label.clone()).into()));
+                    }
+                    let field = TextBox::new()
+                        .text(value.clone())
+                        .placeholder_text(placeholder.clone())
+                        .on_text_changed(context.callback(move |t| Message::FormField(i, t)));
+                    let field: View = if i == 0 {
+                        field.element_ref(&self.dialog_input).into()
+                    } else {
+                        field.into()
+                    };
+                    rows.push((format!("field{i}"), field));
+                }
+                for (i, (label, on)) in checks.iter().enumerate() {
+                    rows.push((
+                        format!("check{i}"),
+                        CheckBox::new()
+                            .is_checked(*on)
+                            .on_is_checked_changed(context.callback(move |v| Message::FormCheck(i, v)))
+                            .content(TextBlock::new().text(label.clone()).text_wrapping(TextWrapping::Wrap)),
+                    ));
+                }
+                dialog
+                    .is_open(true)
+                    .title(title.clone())
+                    .primary_button_text(button.clone())
+                    .close_button_text(tr!("Cancel"))
+                    .content(
+                        StackPanel::new()
+                            .spacing(6.0)
+                            .width(440.0)
+                            .children((View::keyed_fragment(rows),)),
+                    )
+            }
+            Some(Dialog::TreeFolder {
+                path,
+                entries,
+                selected,
+                existing,
+                cloned,
+                ..
+            }) => {
+                let first = existing.is_empty();
+                let body: View = match entries {
+                    None => TextBlock::new().text(tr!("Loading…")).opacity(0.6).into(),
+                    Some(Err(e)) => TextBlock::new()
+                        .text(e.clone())
+                        .text_wrapping(TextWrapping::Wrap)
+                        .into(),
+                    Some(Ok(names)) => {
+                        let rows = names.iter().map(|n| {
+                            (
+                                n.clone(),
+                                ListViewItem::new()
+                                    .tag(n.clone())
+                                    .content(TextBlock::new().text(format!("📁 {n}"))),
+                            )
+                        });
+                        // 読み直すたびに一覧ごと作り直す（reactor の ListView は消した項目の場所が残る）。
+                        View::keyed_fragment([(
+                            path.clone(),
+                            ListView::new()
+                                .height(240.0)
+                                .selected_index(*selected)
+                                .on_selection_changed(context.callback(Message::TreeFolderSelect))
+                                .collection_slot(ListViewSlot::Items, rows),
+                        )])
+                    }
+                };
+                let can_open = selected.is_some();
+                dialog
+                    .is_open(true)
+                    .title(if first {
+                        tr!("Check Out Only Some Folders")
+                    } else {
+                        tr!("Check Out One More Folder")
+                    })
+                    .primary_button_text(tr!("Choose"))
+                    .close_button_text(tr!("Cancel"))
+                    .is_primary_button_enabled(selected.is_some() || path != "/")
+                    .content(
+                        StackPanel::new().spacing(6.0).width(440.0).children((
+                            TextBlock::new()
+                                .text(if cloned.is_some() {
+                                    tr!(
+                                        "Only the files at the top are checked out. Choose a folder to check out too; add more later in Settings > Fetching and Folders."
+                                    )
+                                } else if first {
+                                    tr!(
+                                        "Only this folder is checked out, with the files at the top. Others are removed from disk until you check them out again; add more folders here later."
+                                    )
+                                } else {
+                                    tr!("Folders in the latest commit, including ones not checked out.")
+                                })
+                                .text_wrapping(TextWrapping::Wrap),
+                            StackPanel::new()
+                                .orientation(Orientation::Horizontal)
+                                .spacing(6.0)
+                                .children((
+                                    Button::new()
+                                        .is_enabled(path != "/")
+                                        .on_click(context.callback(|()| Message::TreeFolderUp))
+                                        .content(TextBlock::new().text("↑")),
+                                    Button::new()
+                                        .is_enabled(can_open)
+                                        .on_click(context.callback(|()| Message::TreeFolderOpen))
+                                        .content(TextBlock::new().text("→")),
+                                    TextBlock::new()
+                                        .text(path.clone())
+                                        .vertical_alignment(VerticalAlignment::Center),
+                                )),
+                            body,
+                        )),
+                    )
+            }
+            Some(Dialog::Toolbar(entries)) => {
+                use crate::menus::ToolbarEntry;
+                let last = entries.len().saturating_sub(1);
+                let rows = entries.iter().enumerate().map(|(i, entry)| {
+                    let arrows = StackPanel::new()
+                        .orientation(Orientation::Horizontal)
+                        .spacing(4.0)
+                        .grid_column(1)
+                        .children((
+                            Button::new()
+                                .is_enabled(i > 0)
+                                .on_click(context.callback(move |()| Message::ToolbarMove(i, true)))
+                                .content(TextBlock::new().text("↑")),
+                            Button::new()
+                                .is_enabled(i < last)
+                                .on_click(context.callback(move |()| Message::ToolbarMove(i, false)))
+                                .content(TextBlock::new().text("↓")),
+                        ));
+                    let head: View = match entry {
+                        ToolbarEntry::Item(id, shown) => CheckBox::new()
+                            .is_checked(*shown)
+                            .on_is_checked_changed(
+                                context.callback(move |on| Message::ToolbarShown(i, on)),
+                            )
+                            .content(TextBlock::new().text(crate::menus::toolbar_name(id)))
+                            ,
+                        ToolbarEntry::Space => StackPanel::new()
+                            .orientation(Orientation::Horizontal)
+                            .spacing(8.0)
+                            .children((
+                                TextBlock::new()
+                                    .text(format!("— {} —", tr!("Space")))
+                                    .opacity(0.6)
+                                    .vertical_alignment(VerticalAlignment::Center),
+                                Button::new()
+                                    .on_click(context.callback(move |()| Message::ToolbarRemove(i)))
+                                    .content(TextBlock::new().text("−")),
+                            ))
+                            ,
+                    };
+                    (
+                        format!("{i}:{entry:?}"),
+                        Grid::new()
+                            .columns([GridLength::Star(1.0), GridLength::Auto])
+                            .children((Border::new().grid_column(0).content(head), arrows)),
+                    )
+                });
+                dialog
+                    .is_open(true)
+                    .title(tr!("Customize Toolbar"))
+                    .primary_button_text(tr!("Save"))
+                    .close_button_text(tr!("Cancel"))
+                    .content(
+                        StackPanel::new().spacing(6.0).width(380.0).children((
+                            ScrollViewer::new().max_height(380.0).content(
+                                StackPanel::new()
+                                    .spacing(2.0)
+                                    .children((View::keyed_fragment(rows),)),
+                            ),
+                            StackPanel::new()
+                                .orientation(Orientation::Horizontal)
+                                .spacing(8.0)
+                                .children((
+                                    Button::new()
+                                        .on_click(context.callback(|()| Message::ToolbarAddSpace))
+                                        .content(TextBlock::new().text(format!("+ {}", tr!("Space")))),
+                                    Button::new()
+                                        .on_click(context.callback(|()| Message::ToolbarDefaults))
+                                        .content(TextBlock::new().text(tr!("Restore Default"))),
+                                )),
+                        )),
+                    )
+            }
+            Some(Dialog::RenameRepository { name, .. }) => dialog
+                .is_open(true)
+                .title(tr!("Rename"))
+                .primary_button_text(tr!("Rename"))
+                .close_button_text(tr!("Cancel"))
+                .content(
+                    StackPanel::new().spacing(6.0).children((
+                        TextBlock::new()
+                            .text(tr!("Name shown in the list (leave empty for the folder name)"))
+                            .text_wrapping(TextWrapping::Wrap),
+                        TextBox::new()
+                            .element_ref(&self.dialog_input)
+                            .text(name.clone())
+                            .on_text_changed(context.callback(Message::BranchName)),
+                    )),
+                ),
+            Some(Dialog::NewGroup { name, .. }) => dialog
+                .is_open(true)
+                .title(tr!("New Group"))
+                .primary_button_text(tr!("Add"))
+                .close_button_text(tr!("Cancel"))
+                .is_primary_button_enabled(!name.trim().is_empty())
+                .content(
+                    StackPanel::new().spacing(6.0).children((
+                        TextBlock::new().text(tr!("Group name")),
+                        TextBox::new()
+                            .element_ref(&self.dialog_input)
+                            .text(name.clone())
+                            .on_text_changed(context.callback(Message::BranchName)),
+                    )),
                 ),
             Some(Dialog::Rename { from, name, .. }) => dialog
                 .is_open(true)
@@ -2739,10 +8354,96 @@ impl Root {
             Some(Dialog::Pull {
                 title,
                 mode,
+                branch,
                 sources,
                 source,
                 ..
             }) => {
+                // 選んだ取り込み方が今の状態で何をするか、押せないならそのわけ（GTK4 版の `describe`）。
+                let (explain, blocked) = self.pull_explain(*mode, branch, sources, *source);
+                // 選んだ取り込み方の絵（git の設定のとおりなら、その設定の取り込み方。押せないときは出さない）。
+                let method = match PULL_MODES.get(*mode).copied() {
+                    Some("git") => self.pull_drawings.as_ref().map(|p| p.by_git.as_str()),
+                    other => other,
+                };
+                let diverged = self
+                    .pull_drawings
+                    .as_ref()
+                    .filter(|_| blocked.is_none())
+                    .and_then(|p| match method {
+                        Some("rebase") => crate::drawing::for_rewrite(p.rebase.as_ref()?),
+                        Some("merge") => crate::drawing::for_merge(
+                            p.merge.as_ref()?,
+                            branch,
+                            tr!("After the pull"),
+                        ),
+                        _ => None,
+                    });
+                let drawing = self
+                    .sync_drawing
+                    .as_ref()
+                    .and_then(|preview| {
+                        crate::drawing::for_move(
+                            preview,
+                            &crate::drawing::Move {
+                                moving: branch.clone(),
+                                kind: "local",
+                                after_title: tr!("After the pull"),
+                                lost_note: String::new(),
+                                lost_red: false,
+                                removes: false,
+                            },
+                        )
+                    })
+                    .or(diverged)
+                    .unwrap_or_else(View::empty);
+                // 説明（押せないときは空のことがあり、そのときは出さない）。
+                let explain_view: View = if explain.is_empty() {
+                    View::empty()
+                } else {
+                    TextBlock::new()
+                        .text(explain)
+                        .font_size(12.0)
+                        .foreground(Brush::Solid(Color::argb(0xa0, 0, 0, 0)))
+                        .text_wrapping(TextWrapping::Wrap)
+                        .into()
+                };
+                // 両方に新しいコミットがあれば、コンフリクトの見込み（Fast-Forward Only と押せないときは出さない。
+                // rebase なら目安と書き添える。GTK4 版と同じ）。
+                let pull_forecast: View = match self.head_entry() {
+                    Some(e) if e.ahead > 0 && e.behind > 0 && sources.is_empty() => {
+                        if blocked.is_some() || method == Some("fastForwardOnly") {
+                            View::empty()
+                        } else {
+                            match self.pull_drawings.as_ref().and_then(|p| p.forecast.as_ref()) {
+                                None => forecast_view(&tr!("Checking for conflicts…"), false),
+                                Some(reply) => crate::forecast::merge_text(
+                                    reply,
+                                    method == Some("rebase"),
+                                )
+                                .map_or_else(View::empty, |(line, conflicts)| {
+                                    forecast_view(&line, conflicts)
+                                }),
+                            }
+                        }
+                    }
+                    _ => View::empty(),
+                };
+                // 押せないときは、絵の代わりに「Pull できません」とそのわけを（GTK4 版と同じ）。
+                let blocked_view: View = match &blocked {
+                    Some(reason) => StackPanel::new()
+                        .spacing(2.0)
+                        .children((
+                            TextBlock::new()
+                                .text(format!("⚠ {}", tr!("Can’t pull")))
+                                .font_weight(FontWeight::SEMI_BOLD)
+                                .foreground(Brush::Solid(Color::rgb(0xc4, 0x6a, 0x00))),
+                            TextBlock::new()
+                                .text(reason.clone())
+                                .text_wrapping(TextWrapping::Wrap),
+                        )),
+                    None => View::empty(),
+                };
                 let modes: Vec<String> = PULL_MODES.iter().map(|m| pull_mode_title(m)).collect();
                 // 上流がなければ、取り込み元を選ぶ欄を先に。
                 let from: View = if sources.is_empty() {
@@ -2760,6 +8461,7 @@ impl Root {
                     .is_open(true)
                     .title(title.clone())
                     .primary_button_text("Pull")
+                    .is_primary_button_enabled(blocked.is_none())
                     .close_button_text(tr!("Cancel"))
                     .content(
                         StackPanel::new().spacing(6.0).children((
@@ -2769,34 +8471,16 @@ impl Root {
                                 .items_source(modes)
                                 .selected_index(*mode)
                                 .on_selection_changed(context.callback(Message::PullMode)),
+                            explain_view,
+                            pull_forecast,
+                            blocked_view,
+                            drawing,
+                            self.sync_lists_view(),
                         )),
                     )
             }
-            Some(Dialog::Push {
-                title,
-                message,
-                replace,
-                diverged,
-                ..
-            }) => {
-                let dialog = dialog
-                    .is_open(true)
-                    .title(title.clone())
-                    .close_button_text(tr!("Cancel"));
-                // 分かれていれば Pull…（Enter）と Force Push、でなければ Push か Force Push（GTK4 版と同じ並び）。
-                let dialog = if *diverged {
-                    dialog
-                        .primary_button_text("Pull…")
-                        .secondary_button_text("Force Push")
-                } else {
-                    dialog.primary_button_text(if *replace { "Force Push" } else { "Push" })
-                };
-                dialog.content(
-                    TextBlock::new()
-                        .text(message.clone())
-                        .text_wrapping(TextWrapping::Wrap),
-                )
-            }
+            // Push は窓の中の画面に出す（`push_view`。右の列に中身を出すため）。
+            Some(Dialog::Push { .. }) => dialog.is_open(false).into(),
             Some(Dialog::Publish {
                 branch,
                 remotes,
@@ -2828,7 +8512,12 @@ impl Root {
                             .on_text_changed(context.callback(Message::BranchName)),
                     )),
                 ),
-            Some(Dialog::Fetch { remotes, from, .. }) => {
+            Some(Dialog::Fetch {
+                remotes,
+                from,
+                prune,
+                ..
+            }) => {
                 // GTK4 版の `sheets::fetch` と同じ: リモートが 1 つならその名前を見出しに、2 つ以上なら選ぶ。
                 let title = match remotes.as_slice() {
                     [only] => tr!("Fetch from {remote}?", remote = only),
@@ -2850,6 +8539,42 @@ impl Root {
                 } else {
                     TextBlock::new().into()
                 };
+                // 選んだリモートで、消えたブランチを片づける設定が効いていれば知らせる（GTK4 版の `prune_line`）。
+                let chosen: Vec<usize> = match from.checked_sub(1) {
+                    Some(i) => vec![i],
+                    None => (0..remotes.len()).collect(),
+                };
+                let pruned: Vec<&String> = chosen
+                    .iter()
+                    .filter(|&&i| prune.get(i).is_some_and(Option::is_some))
+                    .map(|&i| &remotes[i])
+                    .collect();
+                let mut keys: Vec<String> = Vec::new();
+                for key in chosen.iter().filter_map(|&i| prune.get(i).cloned().flatten()) {
+                    if !keys.contains(&key) {
+                        keys.push(key);
+                    }
+                }
+                let note = if pruned.is_empty() {
+                    String::new()
+                } else if pruned.len() == chosen.len() {
+                    tr!(
+                        "Remote branches deleted there are removed here too ({settings}).",
+                        settings = amonhen_model::i18n::list(&keys)
+                    )
+                } else {
+                    tr!(
+                        "Remote branches deleted on {remotes} are removed here too ({settings}).",
+                        remotes = amonhen_model::i18n::list(&pruned),
+                        settings = amonhen_model::i18n::list(&keys)
+                    )
+                };
+                let content = StackPanel::new().spacing(8.0).children((
+                    TextBlock::new()
+                        .text(note)
+                        .text_wrapping(TextWrapping::Wrap),
+                    content,
+                ));
                 dialog
                     .is_open(true)
                     .title(title)
@@ -2916,6 +8641,123 @@ impl Root {
                         )),
                     )
             }
+            Some(Dialog::MergeSeveral {
+                branch,
+                sources,
+                mode,
+                one_by_one,
+                ..
+            }) => {
+                let revs: Vec<String> = sources.iter().map(|s| s.rev.clone()).collect();
+                // 今の順の答え（まだなら「調べています」）。
+                let answer = self
+                    .merge_several_steps
+                    .as_ref()
+                    .filter(|(r, _)| *r == revs)
+                    .map(|(_, a)| a.as_ref());
+                let (forecast, conflicts, put_last) = match answer {
+                    None => (tr!("Checking for conflicts…"), false, None),
+                    Some(a) => crate::merge_several::forecast(sources, a),
+                };
+                let steps: Vec<Vec<String>> = answer
+                    .flatten()
+                    .and_then(|s| s.clone())
+                    .unwrap_or_default();
+                // 順の一覧（ドラッグで並べ替える）。ぶつかる見込みなら ⚠ とファイル。
+                let rows: Vec<(String, View)> = sources
+                    .iter()
+                    .enumerate()
+                    .map(|(i, s)| {
+                        let files = steps.get(i).filter(|f| !f.is_empty());
+                        let text = match files {
+                            Some(f) => format!("{}. {}  ⚠ {}", i + 1, s.rev, f.join(", ")),
+                            None => format!("{}. {}", i + 1, s.rev),
+                        };
+                        // 並べ替えた順は項目の Tag で知らされるので、ListViewItem に rev を持たせる。
+                        let view = ListViewItem::new()
+                            .tag(s.rev.clone())
+                            .content(
+                                TextBlock::new()
+                                    .text(text)
+                                    .text_trimming(TextTrimming::CharacterEllipsis)
+                                    .foreground_optional(
+                                        files.map(|_| Brush::Solid(Color::rgb(0xc4, 0x6a, 0x00))),
+                                    ),
+                            );
+                        (s.rev.clone(), view)
+                    })
+                    .collect();
+                let put_last_view: View = match put_last.and_then(|i| sources.get(i).map(|s| (i, s))) {
+                    Some((i, s)) => Button::new()
+                        .on_click(context.callback(move |_| Message::MergeSeveralPutLast(i)))
+                        .content(tr!("Put {name} Last", name = &s.rev)),
+                    None => View::empty(),
+                };
+                let message = crate::merge_several::merge_message(sources, branch.as_deref());
+                // 前と後の絵（取り込み方が git の設定のとおりのときだけ。GTK4 版と同じ）。
+                let drawing = self
+                    .merge_several_drawing
+                    .as_ref()
+                    .filter(|_| SEVERAL_MERGE_MODES.get(*mode) == Some(&"git"))
+                    .and_then(|info| {
+                        crate::drawing::for_octopus(
+                            info,
+                            branch.as_deref().unwrap_or("HEAD"),
+                            &revs,
+                            &message,
+                        )
+                    })
+                    .unwrap_or_else(View::empty);
+                dialog
+                    .is_open(true)
+                    .title(tr!(
+                        "Merge {count} into {branch}?",
+                        count = sources.len(),
+                        branch = branch.as_deref().unwrap_or("HEAD")
+                    ))
+                    .primary_button_text("Merge")
+                    .close_button_text(tr!("Cancel"))
+                    .content(
+                        StackPanel::new().spacing(6.0).children((
+                            TextBlock::new()
+                                .text(tr!(
+                                    "This makes one merge commit with all of them as parents, as git merge does with several branches. Drag to change the order. Undo puts it back."
+                                ))
+                                .text_wrapping(TextWrapping::Wrap),
+                            ListView::new()
+                                .can_drag_items(true)
+                                .can_reorder_items(true)
+                                .allow_drop(true)
+                                .max_height(200.0)
+                                .on_reordered(context.callback(Message::MergeSeveralReordered))
+                                .collection_slot(ListViewSlot::Items, rows),
+                            ComboBox::new()
+                                .items_source(
+                                    SEVERAL_MERGE_MODES
+                                        .iter()
+                                        .map(|m| merge_mode_title(m))
+                                        .collect::<Vec<_>>(),
+                                )
+                                .selected_index(*mode)
+                                .on_selection_changed(context.callback(Message::MergeSeveralMode)),
+                            drawing,
+                            forecast_view(&forecast, conflicts),
+                            put_last_view,
+                            CheckBox::new()
+                                .is_checked(*one_by_one)
+                                .on_is_checked_changed(context.callback(Message::MergeSeveralOneByOne))
+                                .content(TextBlock::new().text(tr!(
+                                    "Merge them one by one (a merge commit for each)"
+                                ))),
+                            TextBlock::new()
+                                .text(tr!("Message: {message}", message = message))
+                                .font_size(12.0)
+                                .foreground(Brush::Solid(Color::argb(0xa0, 0, 0, 0)))
+                                .text_wrapping(TextWrapping::Wrap)
+                                .max_lines(2),
+                        )),
+                    )
+            }
             Some(Dialog::Integrate {
                 rebase,
                 current,
@@ -2967,6 +8809,35 @@ impl Root {
                         View::empty(),
                     )
                 };
+                // 選んだ相手の前と後の絵（選び直すと替わる）。merge は、取り込み方が git の設定のとおりのときだけ
+                // （GTK4 版と同じ）。
+                let rev = choices.get(*chosen).map(|c| c.1.as_str());
+                let answer = self
+                    .integrate_drawing
+                    .as_ref()
+                    .filter(|(r, ..)| Some(r.as_str()) == rev);
+                // コンフリクトの見込み（rebase は、一緒に動くブランチ・push 済みも。GTK4 版と同じ）。
+                let forecast = match answer {
+                    None => forecast_view(&tr!("Checking for conflicts…"), false),
+                    Some((_, info, _)) if *rebase => {
+                        let (lines, conflicts) = crate::forecast::rewrite_lines(info);
+                        forecast_view(&lines.join("\n"), conflicts)
+                    }
+                    Some((_, _, reply)) => crate::forecast::merge_text(reply, false)
+                        .map_or_else(View::empty, |(line, conflicts)| {
+                            forecast_view(&line, conflicts)
+                        }),
+                };
+                let drawing = answer
+                    .filter(|_| *rebase || MERGE_MODES.get(*mode) == Some(&"git"))
+                    .and_then(|(_, info, _)| {
+                        if *rebase {
+                            crate::drawing::for_rewrite(info)
+                        } else {
+                            crate::drawing::for_merge(info, current, tr!("After the merge"))
+                        }
+                    })
+                    .unwrap_or_else(View::empty);
                 let modes: View = if *rebase {
                     View::empty()
                 } else {
@@ -2989,8 +8860,466 @@ impl Root {
                     .content(
                         StackPanel::new()
                             .spacing(6.0)
-                            .children((head, picker, modes)),
+                            .children((head, picker, modes, drawing, forecast)),
                     )
+            }
+            Some(Dialog::Clone {
+                url,
+                folder,
+                name,
+                download,
+                depth,
+                sparse,
+                submodules,
+                branch,
+                depth_other,
+            }) => {
+                let bundle = crate::repositories::clone_bundle(url);
+                let field = |index: usize, text: &str, placeholder: String| {
+                    TextBox::new()
+                        .text(text.to_owned())
+                        .placeholder_text(placeholder)
+                        .on_text_changed(context.callback(move |t| Message::CloneField(index, t)))
+                };
+                let label = |text: String| TextBlock::new().text(text).margin(Thickness::new(0.0, 4.0, 0.0, 0.0));
+                let downloads = vec![
+                    tr!("Everything"),
+                    tr!("File contents when needed"),
+                    tr!("Recent history only"),
+                ];
+                let help = match (&bundle, download) {
+                    (Some(info), _) if info.prerequisites > 0 => format!(
+                        "⚠ {}",
+                        tr!(
+                            "This bundle has only the commits after ones it doesn’t include, so it can’t be cloned."
+                        )
+                    ),
+                    (Some(_), _) => tr!("From a bundle file, everything in it is copied."),
+                    (None, 1) => tr!(
+                        "Good for large repositories: file contents are fetched when a diff or file needs them."
+                    ),
+                    (None, 2) => tr!("Older history can be fetched later from the end of History."),
+                    (None, _) => tr!(
+                        "The whole history and the contents of every file, as git does by default."
+                    ),
+                };
+                // 決まった数と「その他…」（数を打つ。GTK4 版と同じ）。
+                let mut depths: Vec<String> = CLONE_DEPTHS
+                    .iter()
+                    .map(|&d| match d {
+                        1 => tr!("1 Commit"),
+                        100 => tr!("100 Commits"),
+                        1_000 => tr!("1,000 Commits"),
+                        _ => tr!("10,000 Commits"),
+                    })
+                    .collect();
+                depths.push(tr!("Other…"));
+                let download = if bundle.is_some() { &0 } else { download };
+                // HEAD のない bundle: 取り出すブランチ（GTK4 版の Branch: の行）。
+                let names = bundle
+                    .as_ref()
+                    .map(crate::repositories::bundle_branches)
+                    .unwrap_or_default();
+                let branch_row: View = if names.is_empty() {
+                    View::empty()
+                } else {
+                    let chosen = branch
+                        .clone()
+                        .filter(|b| names.contains(b))
+                        .or_else(|| {
+                            bundle
+                                .as_ref()
+                                .and_then(amonhen_backend_cli::bundle_default_branch)
+                        });
+                    let at = chosen.and_then(|c| names.iter().position(|n| *n == c));
+                    StackPanel::new()
+                        .spacing(4.0)
+                        .children((
+                            label(tr!("Branch:")),
+                            ComboBox::new()
+                                .items_source(names)
+                                .selected_index(at)
+                                .on_selection_changed(context.callback(Message::CloneBranch)),
+                        ))
+                };
+                let depth_box: View = if *download == 2 {
+                    ComboBox::new()
+                        .items_source(depths)
+                        .selected_index(*depth)
+                        .on_selection_changed(context.callback(Message::CloneDepth))
+                        .into()
+                } else {
+                    View::empty()
+                };
+                let other = *download == 2 && *depth >= CLONE_DEPTHS.len();
+                let other_box: View = if other {
+                    TextBox::new()
+                        .text(depth_other.clone())
+                        .width(90.0)
+                        .on_text_changed(context.callback(Message::CloneDepthOther))
+                        .into()
+                } else {
+                    View::empty()
+                };
+                let ready = !url.trim().is_empty()
+                    && !folder.trim().is_empty()
+                    && bundle.as_ref().is_none_or(|i| i.prerequisites == 0)
+                    && (!other || depth_count(depth_other).is_some());
+                dialog
+                    .is_open(true)
+                    .title(tr!("Clone Repository"))
+                    .primary_button_text("Clone")
+                    .close_button_text(tr!("Cancel"))
+                    .is_primary_button_enabled(ready)
+                    .content(
+                        StackPanel::new().spacing(4.0).width(480.0).children((
+                            Grid::new()
+                                .columns([GridLength::Star(1.0), GridLength::Auto])
+                                .column_spacing(6.0)
+                                .children((
+                                    field(
+                                        0,
+                                        url,
+                                        tr!(
+                                            "https://github.com/owner/repo.git, git@host:owner/repo.git or a bundle file"
+                                        ),
+                                    )
+                                    .element_ref(&self.dialog_input)
+                                    .grid_column(0),
+                                    Button::new()
+                                        .on_click(context.callback(|()| Message::CloneBundle))
+                                        .grid_column(1)
+                                        .content(TextBlock::new().text(tr!("Choose Bundle…"))),
+                                )),
+                            label(tr!("Location:")),
+                            Grid::new()
+                                .columns([GridLength::Star(1.0), GridLength::Auto])
+                                .column_spacing(6.0)
+                                .children((
+                                    field(1, folder, String::new()).grid_column(0),
+                                    Button::new()
+                                        .on_click(context.callback(|()| Message::CloneChoose))
+                                        .grid_column(1)
+                                        .content(TextBlock::new().text(tr!("Choose…"))),
+                                )),
+                            label(tr!("Folder Name:")),
+                            field(2, name, tr!("Taken from the URL")),
+                            label(tr!("Download:")),
+                            StackPanel::new()
+                                .orientation(Orientation::Horizontal)
+                                .spacing(6.0)
+                                .children((
+                                    ComboBox::new()
+                                        .items_source(downloads)
+                                        .selected_index(*download)
+                                        .is_enabled(bundle.is_none())
+                                        .on_selection_changed(
+                                            context.callback(Message::CloneDownload),
+                                        ),
+                                    depth_box,
+                                    other_box,
+                                )),
+                            branch_row,
+                            TextBlock::new()
+                                .text(help)
+                                .font_size(12.0)
+                                .opacity(0.65)
+                                .text_wrapping(TextWrapping::Wrap),
+                            CheckBox::new()
+                                .is_checked(*sparse)
+                                .on_is_checked_changed(
+                                    context.callback(|on| Message::CloneCheck(0, on)),
+                                )
+                                .content(TextBlock::new().text(tr!("Check out only some folders"))),
+                            CheckBox::new()
+                                .is_checked(*submodules)
+                                .on_is_checked_changed(
+                                    context.callback(|on| Message::CloneCheck(1, on)),
+                                )
+                                .content(TextBlock::new().text(tr!("Check out submodules too"))),
+                        )),
+                    )
+            }
+            Some(Dialog::QuickOpen {
+                query,
+                selected,
+                candidates,
+            }) => {
+                let shown = crate::repositories::matches(candidates, query);
+                let selected = (*selected).min(shown.len().saturating_sub(1));
+                let rows = shown.iter().map(|c| {
+                    (
+                        c.location.clone(),
+                        ListViewItem::new().tag(c.location.clone()).content(
+                            StackPanel::new().spacing(1.0).children((
+                                TextBlock::new().text(c.name.clone()),
+                                TextBlock::new()
+                                    .text(crate::repositories::shown_path(&c.location))
+                                    .font_size(11.0)
+                                    .opacity(0.6)
+                                    .text_trimming(TextTrimming::CharacterEllipsis),
+                            )),
+                        ),
+                    )
+                });
+                // 打つたび・候補が増えるたびに一覧ごと作り直す（reactor の ListView は消した項目の場所が空いた
+                // まま残る）。
+                let key = format!("{query}\n{}", shown.len());
+                let list = ListView::new()
+                    .selected_index((!shown.is_empty()).then_some(selected))
+                    .on_selection_changed(context.callback(Message::SwitcherSelect))
+                    .collection_slot(ListViewSlot::Items, rows);
+                dialog
+                    .is_open(true)
+                    .title("Quick Open")
+                    .primary_button_text(tr!("Open"))
+                    .close_button_text(tr!("Cancel"))
+                    .is_primary_button_enabled(!shown.is_empty())
+                    .content(
+                        StackPanel::new().spacing(6.0).width(480.0).children((
+                            TextBox::new()
+                                .element_ref(&self.dialog_input)
+                                .text(query.clone())
+                                .placeholder_text(tr!(
+                                    "Open a repository (fuzzy search by name or path)"
+                                ))
+                                .on_text_changed(context.callback(Message::BranchName)),
+                            ScrollViewer::new()
+                                .height(320.0)
+                                .content(View::keyed_fragment([(key, list)])),
+                        )),
+                    )
+            }
+            Some(Dialog::Switcher {
+                query,
+                selected,
+                recent,
+                ..
+            }) => {
+                let shown = self
+                    .refs
+                    .as_ref()
+                    .map(|r| crate::branchswitcher::candidates(&r.refs, recent, query))
+                    .unwrap_or_default();
+                let selected = (*selected).min(shown.len().saturating_sub(1));
+                let rows = shown.iter().map(|c| {
+                    let key = c.label(&[]);
+                    (
+                        key.clone(),
+                        ListViewItem::new()
+                            .tag(key)
+                            .content(TextBlock::new().text(c.label(recent))),
+                    )
+                });
+                // 打つたびに一覧ごと作り直す（reactor の ListView は消した項目の場所が空いたまま残る）。
+                let list = ListView::new()
+                    .selected_index((!shown.is_empty()).then_some(selected))
+                    .on_selection_changed(context.callback(Message::SwitcherSelect))
+                    .collection_slot(ListViewSlot::Items, rows);
+                dialog
+                    .is_open(true)
+                    .title(tr!("Switch Branch"))
+                    .primary_button_text(tr!("Switch"))
+                    .close_button_text(tr!("Cancel"))
+                    .is_primary_button_enabled(!shown.is_empty())
+                    .content(
+                        StackPanel::new().spacing(6.0).width(420.0).children((
+                            TextBox::new()
+                                .element_ref(&self.dialog_input)
+                                .text(query.clone())
+                                .placeholder_text(tr!("Branch name"))
+                                .on_text_changed(context.callback(Message::BranchName)),
+                            ScrollViewer::new().height(300.0).content(View::keyed_fragment([(
+                                query.clone(),
+                                list,
+                            )])),
+                        )),
+                    )
+            }
+            Some(Dialog::Restore { title, staged, .. }) => dialog
+                .is_open(true)
+                .title(title.clone())
+                .primary_button_text(tr!("Restore"))
+                .close_button_text(tr!("Cancel"))
+                .content(
+                    StackPanel::new().spacing(8.0).children((
+                        TextBlock::new()
+                            .text(tr!(
+                                "Replaces the file in the working tree with that version (git restore); a file that version doesn’t have is deleted. Undo brings back the file as it is now."
+                            ))
+                            .text_wrapping(TextWrapping::Wrap),
+                        CheckBox::new()
+                            .is_checked(*staged)
+                            .on_is_checked_changed(context.callback(Message::RestoreStaged))
+                            .content(TextBlock::new().text(tr!("Stage it too"))),
+                    )),
+                ),
+            Some(Dialog::NewOrphan { name, keep, .. }) => dialog
+                .is_open(true)
+                .title(tr!("New Orphan Branch"))
+                .primary_button_text(tr!("Create"))
+                .close_button_text(tr!("Cancel"))
+                .is_primary_button_enabled(!name.trim().is_empty())
+                .content(
+                    StackPanel::new().spacing(8.0).children((
+                        TextBlock::new()
+                            .text(tr!(
+                                "A branch with no history. It is checked out, and is created by its first commit."
+                            ))
+                            .text_wrapping(TextWrapping::Wrap),
+                        TextBox::new()
+                            .element_ref(&self.dialog_input)
+                            .text(name.clone())
+                            .placeholder_text(tr!("Name of the branch"))
+                            .on_text_changed(context.callback(Message::BranchName)),
+                        CheckBox::new()
+                            .is_checked(*keep)
+                            .on_is_checked_changed(context.callback(Message::OrphanKeep))
+                            .content(TextBlock::new().text(tr!(
+                                "Keep the current files, staged for the first commit"
+                            ))),
+                    )),
+                ),
+            Some(Dialog::DeleteIgnored { paths, .. }) => dialog
+                .is_open(true)
+                .title(tr!("Delete {count} Ignored Items?", count = paths.len()))
+                .primary_button_text(tr!("Delete"))
+                .close_button_text(tr!("Cancel"))
+                .content(
+                    StackPanel::new().spacing(8.0).children((
+                        TextBlock::new()
+                            .text(format!(
+                                "{} {}",
+                                tr!(
+                                    "These are removed from the working tree (git clean -X); folders go with everything in them."
+                                ),
+                                tr!("This can’t be undone.")
+                            ))
+                            .text_wrapping(TextWrapping::Wrap),
+                        // パスを選んで写せる（長いパスは折り返す。GTK4 版と同じ）。
+                        ScrollViewer::new().max_height(160.0).content(
+                            TextBlock::new()
+                                .text(paths.join("\n"))
+                                .font_size(12.0)
+                                .text_wrapping(TextWrapping::Wrap)
+                                .is_text_selection_enabled(true),
+                        ),
+                    )),
+                ),
+            Some(Dialog::CleanUp {
+                base, branches, ..
+            }) => {
+                // 理由ごとに見出しを付けて並べる（GTK4 版と同じ）。
+                let mut rows: Vec<(String, View)> = Vec::new();
+                for (reason, title) in [
+                    ("merged", tr!("Merged into {base}", base = base)),
+                    (
+                        "pullRequest",
+                        tr!("Merged by a pull request (squash or rebase)"),
+                    ),
+                    (
+                        "gone",
+                        tr!("Upstream gone, not merged (their own commits go with them)"),
+                    ),
+                ] {
+                    let group: Vec<(usize, &(Value, bool))> = branches
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, (b, _))| b["reason"] == reason)
+                        .collect();
+                    if group.is_empty() {
+                        continue;
+                    }
+                    rows.push((
+                        format!("h:{reason}"),
+                        TextBlock::new()
+                            .text(title)
+                            .font_size(12.0)
+                            .opacity(0.6)
+                            .margin(Thickness::new(0.0, 6.0, 0.0, 0.0))
+                            .into(),
+                    ));
+                    for (i, (b, on)) in group {
+                        let mut label = b["name"].as_str().unwrap_or_default().to_owned();
+                        if let Some(n) = b["pullRequest"].as_u64() {
+                            label.push_str(&format!("  #{n}"));
+                        }
+                        if reason == "gone"
+                            && let Some(u) = b["upstream"].as_str()
+                        {
+                            label.push_str(&format!("  ({u})"));
+                        }
+                        rows.push((
+                            format!("b:{i}"),
+                            CheckBox::new()
+                                .is_checked(*on)
+                                .on_is_checked_changed(
+                                    context.callback(move |v| Message::CleanUpCheck(i, v)),
+                                )
+                                .content(TextBlock::new().text(label)),
+                        ));
+                    }
+                }
+                let count = branches.iter().filter(|(_, on)| *on).count();
+                let button = if count == 1 {
+                    tr!("Delete 1 Branch")
+                } else {
+                    tr!("Delete {count} Branches", count = count)
+                };
+                dialog
+                    .is_open(true)
+                    .title(tr!("Clean Up Branches"))
+                    .primary_button_text(button)
+                    .is_primary_button_enabled(count > 0)
+                    .close_button_text(tr!("Cancel"))
+                    .content(
+                        StackPanel::new().spacing(4.0).children((
+                            TextBlock::new()
+                                .text(format!(
+                                    "{} {}",
+                                    tr!(
+                                        "Delete the checked branches. The current branch, favorites and branches used by a worktree aren’t listed."
+                                    ),
+                                    tr!("You can Undo this (Ctrl+Alt+Z).")
+                                ))
+                                .text_wrapping(TextWrapping::Wrap),
+                            ScrollViewer::new().max_height(280.0).content(
+                                StackPanel::new()
+                                    .spacing(2.0)
+                                    .children((View::keyed_fragment(rows),)),
+                            ),
+                        )),
+                    )
+            }
+            Some(Dialog::Failure { failure, .. }) => {
+                let remedy = failure.remedies(true).into_iter().next();
+                dialog
+                    .is_open(true)
+                    .title(failure.op_title())
+                    .primary_button_text_optional(remedy.map(|r| r.title()))
+                    .secondary_button_text("Activity")
+                    .close_button_text(tr!("Close"))
+                    .content(
+                        TextBlock::new()
+                            .text(failure.details())
+                            .text_wrapping(TextWrapping::Wrap)
+                            .is_text_selection_enabled(true),
+                    )
+            }
+            Some(Dialog::TagStatus { name, actions }) => {
+                let dialog = dialog
+                    .is_open(true)
+                    .title(self.tag_status_title(name))
+                    .close_button_text(tr!("Close"));
+                let dialog = match actions.first() {
+                    Some((_, title)) => dialog.primary_button_text(title.clone()),
+                    None => dialog,
+                };
+                let dialog = match actions.get(1) {
+                    Some((_, title)) => dialog.secondary_button_text(title.clone()),
+                    None => dialog,
+                };
+                dialog.content(self.tag_status_view(name))
             }
             Some(Dialog::Failed { title, message }) => dialog
                 .is_open(true)
@@ -3023,8 +9352,9 @@ impl Root {
         self.dialog_inputs += 1;
     }
 
-    /// Cherry-pick・Revert の確認（GTK4 版の `sheets::pick`: 今のブランチに足す。前後の絵はまだない）。
-    fn pick(&mut self, oid: String, revert: bool) {
+    /// Cherry-pick・Revert の確認（GTK4 版の `sheets::pick`: 今のブランチに足す。前と後の絵を読んでから出す）。
+    /// いくつでも 1 つの命令で（コンフリクトで止まったら、残りは git が覚えていて Continue・Skip で続く）。
+    fn pick(&mut self, oids: Vec<String>, revert: bool, context: &ComponentContext<Self>) {
         let Some(repo) = self.repo.clone() else {
             return beep();
         };
@@ -3033,7 +9363,10 @@ impl Root {
             .as_ref()
             .and_then(|r| r.refs.head_branch.clone())
             .unwrap_or_else(|| "HEAD".to_owned());
-        let what = oid[..8].to_owned();
+        let what = match &oids[..] {
+            [one] => one[..8.min(one.len())].to_owned(),
+            _ => tr!("{count} commits", count = oids.len()),
+        };
         let title = if revert {
             tr!("Revert {what} on {onto}?", what = what, onto = onto)
         } else {
@@ -3048,18 +9381,36 @@ impl Root {
             },
             tr!("You can Undo this (Ctrl+Alt+Z).")
         );
-        // マージかは、出している詳細の親の数で（同じコミットのとき）。
-        let merge = self.info.as_ref().is_some_and(|(info, _)| {
-            info["oid"].as_str() == Some(oid.as_str())
-                && info["parents"].as_array().is_some_and(|p| p.len() > 1)
+        // マージかは、複数なら選んだ行の印で、1 つなら出している詳細の親の数で（同じコミットのとき）。
+        let merge = oids.iter().any(|oid| {
+            self.multi.iter().any(|(id, merge)| id == oid && *merge)
+                || self.info.as_ref().is_some_and(|(info, _)| {
+                    info["oid"].as_str() == Some(oid.as_str())
+                        && info["parents"].as_array().is_some_and(|p| p.len() > 1)
+                })
         });
         let op = if revert { "revert" } else { "cherryPick" };
-        self.dialog = Some(Dialog::Confirm {
-            repo,
-            title,
-            message,
-            button: if revert { "Revert" } else { "Cherry-pick" }.to_owned(),
-            command: json!({ "op": op, "oids": [oid], "isMerge": merge }),
+        let kind = if revert {
+            crate::drawing::PickKind::Revert
+        } else {
+            crate::drawing::PickKind::CherryPick
+        };
+        context.spawn_background(move |_| {
+            let query = json!({ "op": "pickPreview", "oids": &oids, "revert": revert });
+            let reply: Value =
+                serde_json::from_str(&repo.run_json(&query.to_string())).unwrap_or_default();
+            Message::ConfirmWithDrawing(Box::new(Dialog::ConfirmDrawn {
+                repo,
+                title,
+                message,
+                button: if revert { "Revert" } else { "Cherry-pick" }.to_owned(),
+                command: json!({ "op": op, "oids": oids, "isMerge": merge }),
+                preview: reply["info"].clone(),
+                how: Arc::new(crate::drawing::How::Pick {
+                    current: onto,
+                    kind,
+                }),
+            }))
         });
     }
 
@@ -3116,6 +9467,101 @@ impl Root {
         });
     }
 
+    /// History で選んだいくつものコミットを merge する確認を出す（GTK4 版の `mergeseveral::confirm`）。取り込む
+    /// ものが 1 つだけなら、ふつうの Merge の確認。
+    fn merge_several(&mut self, ids: Vec<&str>, context: &ComponentContext<Self>) {
+        let Some(repo) = self.repo.clone() else {
+            return beep();
+        };
+        let refs = self.refs.as_ref().map(|r| &r.refs);
+        let sources = crate::merge_several::sources(refs, &ids);
+        if sources.len() < 2 {
+            if let Some(s) = sources.first() {
+                self.integrate(s.rev.clone(), false);
+                self.load_integrate_drawing(context);
+            }
+            return;
+        }
+        // 前と後の絵（並べ替えると、線の順も変わる。答えは最初の順で 1 度だけ読む。GTK4 版と同じ）。
+        self.merge_several_drawing = None;
+        let revs: Vec<String> = sources.iter().map(|s| s.rev.clone()).collect();
+        let git = repo.clone();
+        context.spawn_background(move |_| {
+            let query = json!({ "op": "octopusPreview", "theirs": revs });
+            let reply: Value =
+                serde_json::from_str(&git.run_json(&query.to_string())).unwrap_or_default();
+            Message::MergeSeveralDrawn(reply["info"].clone())
+        });
+        self.dialog = Some(Dialog::MergeSeveral {
+            repo,
+            branch: refs.and_then(|r| r.head_branch.clone()),
+            sources,
+            mode: 0,
+            one_by_one: false,
+        });
+        self.load_merge_several_steps(context);
+    }
+
+    /// いくつもの merge の、今の順でのコンフリクトの見込みを裏で読む（順を変えるたびに。古い答えは順で捨てる）。
+    fn load_merge_several_steps(&mut self, context: &ComponentContext<Self>) {
+        let Some(Dialog::MergeSeveral { repo, sources, .. }) = &self.dialog else {
+            return;
+        };
+        let revs: Vec<String> = sources.iter().map(|s| s.rev.clone()).collect();
+        if self
+            .merge_several_steps
+            .as_ref()
+            .is_some_and(|(r, _)| *r == revs)
+        {
+            return;
+        }
+        self.merge_several_steps = None;
+        let repo = repo.clone();
+        context.spawn_background(move |_| {
+            let query = json!({ "op": "predictMerge", "ours": "HEAD", "theirs": &revs });
+            let reply: Value =
+                serde_json::from_str(&repo.run_json(&query.to_string())).unwrap_or_default();
+            Message::MergeSeveralSteps(revs, crate::merge_several::steps(&reply))
+        });
+    }
+
+    /// Merge・Rebase の確認に出す前と後の絵を裏で読む（選んだ相手の `mergePreview`・`rewritePreview`）。
+    fn load_integrate_drawing(&mut self, context: &ComponentContext<Self>) {
+        self.integrate_drawing = None;
+        let Some(Dialog::Integrate {
+            repo,
+            rebase,
+            choices,
+            chosen,
+            ..
+        }) = &self.dialog
+        else {
+            return;
+        };
+        let Some((_, rev)) = choices.get(*chosen) else {
+            return;
+        };
+        let (repo, rev, rebase) = (repo.clone(), rev.clone(), *rebase);
+        context.spawn_background(move |_| {
+            let query = if rebase {
+                json!({ "op": "rewritePreview", "onto": &rev })
+            } else {
+                json!({ "op": "mergePreview", "theirs": &rev })
+            };
+            let ask = |query: &Value| -> Value {
+                serde_json::from_str(&repo.run_json(&query.to_string())).unwrap_or_default()
+            };
+            let reply = ask(&query);
+            // merge なら、コンフリクトの見込み（rebase は rewritePreview の答えにある）。
+            let forecast = if rebase {
+                Value::Null
+            } else {
+                ask(&json!({ "op": "predictMerge", "ours": "HEAD", "theirs": &rev }))
+            };
+            Message::IntegrateDrawn(rev, reply["info"].clone(), forecast)
+        });
+    }
+
     /// 決まった相手との Merge・Rebase の確認（サイドバーの右クリックから。GTK4 版の `sheets::integrate`）。
     fn integrate(&mut self, rev: String, rebase: bool) {
         let Some(repo) = self.repo.clone() else {
@@ -3136,10 +9582,95 @@ impl Root {
     /// 右クリックと同じ形（`Message::HistoryMenu` で受ける）。
     fn sidebar_menu(&self) -> Vec<MenuItem> {
         use amonhen_model::RefKind;
+        // worktree の行（GTK4 版の `worktrees::menu` のうち、編集する worktree を替える以外）。
+        if let Some(path) = self
+            .sidebar_key
+            .as_deref()
+            .and_then(|k| k.strip_prefix("worktree:"))
+        {
+            let Some(w) = self.worktrees.iter().find(|w| w.path == path) else {
+                return Vec::new();
+            };
+            let mut items = Vec::new();
+            // ほかの worktree なら、書き込む先にできる（macOS 版の Edit This Worktree）。
+            let editing = self
+                .repo
+                .as_ref()
+                .and_then(|r| r.paths().workdir)
+                .is_some_and(|d| same_path(&d.display().to_string(), path));
+            if !editing && !w.prunable {
+                items.push(MenuItem::item(
+                    format!("edit-worktree:{path}"),
+                    tr!("Edit This Worktree"),
+                ));
+                items.push(MenuItem::separator("-edit"));
+            }
+            items.push(MenuItem::item(format!("copy:{path}"), tr!("Copy Path")));
+            if w.prunable {
+                items.push(MenuItem::separator("-prune"));
+                // フォルダを手で移したなら、つながりを直せる（git worktree repair。GTK4 版と同じ）。
+                items.push(MenuItem::item(
+                    format!("wt-locate:{path}"),
+                    tr!("Locate Moved Folder…"),
+                ));
+                items.push(MenuItem::item("prune-worktrees", tr!("Prune Worktrees")));
+            } else if !w.main {
+                items.push(MenuItem::separator("-lock"));
+                if w.locked {
+                    items.push(MenuItem::item(format!("wt-unlock:{path}"), tr!("Unlock")));
+                } else {
+                    items.push(MenuItem::item(format!("wt-lock:{path}"), tr!("Lock…")));
+                    // 開いているリポジトリの worktree は移さない（窓が古いパスを指したままになる）。
+                    let opened = self
+                        .repo
+                        .as_ref()
+                        .and_then(|r| r.paths().workdir)
+                        .is_some_and(|d| same_path(&d.display().to_string(), path));
+                    if !opened {
+                        items.push(MenuItem::item(format!("wt-move:{path}"), tr!("Move…")));
+                    }
+                }
+                items.push(MenuItem::separator("-remove"));
+                items.push(MenuItem::item(
+                    format!("wt-remove:{path}"),
+                    tr!("Remove Worktree…"),
+                ));
+            }
+            return items;
+        }
         // リモートと Remotes の見出し（GTK4 版の `refops::remote_menu`）。
         match self.sidebar_key.as_deref() {
+            Some("group:branches") => {
+                return vec![MenuItem::item(
+                    "clean-up-branches",
+                    tr!("Clean Up Branches…"),
+                )];
+            }
             Some("group:remotes") => {
                 return vec![MenuItem::item("remote-add", tr!("Add Remote…"))];
+            }
+            // subtree と Subtrees の見出し（GTK4 版の `remote_menu`）。
+            Some("group:subtrees") => {
+                return vec![MenuItem::item("st-add", tr!("Add Subtree…"))];
+            }
+            Some(key) if key.starts_with("subtree:") => {
+                let dir = &key["subtree:".len()..];
+                return vec![
+                    MenuItem::item(format!("st-pull:{dir}"), "Pull…"),
+                    MenuItem::item(format!("st-push:{dir}"), "Push…"),
+                    MenuItem::item(format!("st-split:{dir}"), "Split…"),
+                ];
+            }
+            // Submodules の見出し（GTK4 版の `remote_menu` の Submodules）。
+            Some("group:submodules") => {
+                return vec![
+                    MenuItem::item("sm-update-all", "Update All"),
+                    MenuItem::item("sm-update:", "Update Submodules…"),
+                    MenuItem::item("sm-sync", "Sync URLs"),
+                    MenuItem::item("sm-foreach", tr!("Run in Each Submodule…")),
+                    MenuItem::separator("-add"),
+                    MenuItem::item("sm-add", tr!("Add Submodule…")),
+                ];
             }
             Some(key) if key.starts_with("folder:remotes/") => {
                 let remote = &key["folder:remotes/".len()..];
@@ -3171,6 +9702,38 @@ impl Root {
             _ => tr!("Copy Name"),
         };
         items.push(MenuItem::item(format!("copy:{name}"), copy));
+        // submodule（GTK4 版の `refops::items` の Submodule）。
+        if entry.kind == RefKind::Submodule {
+            let state = crate::sidebar::submodule_state(&self.submodules, name);
+            let on = |k: &str| state.is_some_and(|s| s[k].as_bool() == Some(true));
+            items.push(MenuItem::separator("-copy"));
+            items.push(MenuItem::item(
+                format!("sm-update1:{name}"),
+                format!("Update {name}"),
+            ));
+            items.push(MenuItem::item(format!("sm-update:{name}"), "Update…"));
+            if state.is_none() || on("initialized") {
+                items.push(MenuItem::item(
+                    format!("sm-open:{name}"),
+                    tr!("Open in New Window"),
+                ));
+            }
+            items.push(MenuItem::separator("-edit"));
+            items.push(MenuItem::item(format!("sm-url:{name}"), tr!("Edit URL…")));
+            items.push(MenuItem::item(
+                format!("sm-branch:{name}"),
+                tr!("Branch to Follow…"),
+            ));
+            if on("ownGitDir") {
+                items.push(MenuItem::item(
+                    format!("sm-absorb:{name}"),
+                    tr!("Move Repository Data into .git/modules"),
+                ));
+            }
+            items.push(MenuItem::separator("-remove"));
+            items.push(MenuItem::item(format!("sm-remove:{name}"), tr!("Remove…")));
+            return items;
+        }
         if !matches!(entry.kind, RefKind::Local | RefKind::Remote | RefKind::Tag) {
             return items;
         }
@@ -3192,6 +9755,7 @@ impl Root {
                 items.push(merge);
                 items.push(rebase);
                 items.push(MenuItem::separator("-integrate"));
+                items.extend(self.sync_items(entry));
             }
             RefKind::Remote => {
                 items.push(MenuItem::item(
@@ -3209,12 +9773,40 @@ impl Root {
             format!("branch:{name}"),
             tr!("New Branch from {name}…", name = name),
         ));
+        // bundle に書く（GTK4 版の `save_bundle`。ブランチ・リモートのブランチ・タグ 1 つ）。
+        let full = match entry.kind {
+            RefKind::Local => format!("refs/heads/{name}"),
+            RefKind::Remote => format!("refs/remotes/{name}"),
+            _ => format!("refs/tags/{name}"),
+        };
+        items.push(MenuItem::item(
+            format!("bundle:{full}:{name}"),
+            tr!("Save as Bundle…"),
+        ));
         if entry.kind == RefKind::Local {
             items.push(MenuItem::item(
                 format!("tag:{name}"),
                 tr!("New Tag at {name}…", name = name),
             ));
             items.push(MenuItem::item(format!("rename:{name}"), tr!("Rename…")));
+            // お気に入りとアーカイブ（git の設定に書く。GTK4 版の `favorite_items`）。
+            let branch = self.groups.as_ref().and_then(|g| g.branches.get(name));
+            items.push(MenuItem::item(
+                format!("favorite:{name}"),
+                if branch.is_some_and(|b| b.pinned.is_some()) {
+                    tr!("Remove from Favorites")
+                } else {
+                    tr!("Add to Favorites")
+                },
+            ));
+            items.push(MenuItem::item(
+                format!("archive:{name}"),
+                if branch.is_some_and(|b| b.archived) {
+                    tr!("Unarchive")
+                } else {
+                    tr!("Archive")
+                },
+            ));
             if !is_head {
                 items.push(MenuItem::item(
                     format!("delete-branch:{name}"),
@@ -3224,11 +9816,865 @@ impl Root {
         }
         if entry.kind == RefKind::Tag {
             items.push(MenuItem::separator("-tag"));
+            items.extend(self.tag_items(name));
+        }
+        items
+    }
+
+    /// submodule と Submodules の見出しのメニュー（GTK4 版の `refops` と `submodulesheet`）。
+    fn submodule_menu(&mut self, key: &str, context: &ComponentContext<Self>) {
+        let Some(repo) = self.repo.clone() else {
+            return beep();
+        };
+        let (what, path) = key.split_once(':').unwrap_or((key, ""));
+        let path = path.to_owned();
+        let state = crate::sidebar::submodule_state(&self.submodules, &path).cloned();
+        let text = |k: &str| {
+            state
+                .as_ref()
+                .and_then(|s| s[k].as_str())
+                .unwrap_or_default()
+                .to_owned()
+        };
+        let form =
+            |title: String, message: String, button: String, fields, checks, kind| Dialog::Form {
+                repo: repo.clone(),
+                title,
+                message,
+                button,
+                fields,
+                checks,
+                kind,
+            };
+        let dialog = match what {
+            "sm-update-all" => {
+                return perform(
+                    context,
+                    repo,
+                    json!({ "op": "updateSubmodules", "paths": [] }),
+                    "Update All".to_owned(),
+                );
+            }
+            "sm-update1" => {
+                return perform(
+                    context,
+                    repo,
+                    json!({ "op": "updateSubmodules", "paths": [path] }),
+                    format!("Update {path}"),
+                );
+            }
+            "sm-sync" => {
+                return perform(
+                    context,
+                    repo,
+                    json!({ "op": "changeSubmodule", "change": { "kind": "sync", "recursive": true } }),
+                    "Sync URLs".to_owned(),
+                );
+            }
+            "sm-absorb" => {
+                return perform(
+                    context,
+                    repo,
+                    json!({ "op": "changeSubmodule", "change": { "kind": "absorb", "paths": [path] } }),
+                    tr!("Move Repository Data into .git/modules"),
+                );
+            }
+            "sm-open" => {
+                if let Some(dir) = repo.paths().workdir
+                    && let Err(e) =
+                        crate::repositories::open_window(&dir.join(&path).display().to_string())
+                {
+                    self.dialog = Some(Dialog::Failed {
+                        title: tr!("Open in New Window"),
+                        message: e,
+                    });
+                }
+                return;
+            }
+            "sm-update" => {
+                let paths: Vec<String> = (!path.is_empty())
+                    .then(|| path.clone())
+                    .into_iter()
+                    .collect();
+                form(
+                    if path.is_empty() {
+                        tr!("Update All Submodules")
+                    } else {
+                        tr!("Update {path}", path = &path)
+                    },
+                    tr!(
+                        "Checks out the commit recorded in this repository, unless you choose otherwise."
+                    ),
+                    "Update".to_owned(),
+                    Vec::new(),
+                    vec![
+                        (
+                            tr!("Also update the submodules inside it (--recursive)"),
+                            false,
+                        ),
+                        (
+                            tr!("Use the latest commit of the branch it follows (--remote)"),
+                            false,
+                        ),
+                    ],
+                    FormKind::UpdateSubmodules(paths),
+                )
+            }
+            "sm-foreach" => form(
+                tr!("Run in Each Submodule"),
+                tr!(
+                    "Runs the command with the shell in each submodule’s folder (git submodule foreach). Its output is in Activity."
+                ),
+                tr!("Run"),
+                vec![(String::new(), String::new(), tr!("Command"))],
+                vec![(
+                    tr!("Also in the submodules inside them (--recursive)"),
+                    false,
+                )],
+                FormKind::RunInEach,
+            ),
+            "sm-add" => form(
+                tr!("Add Submodule"),
+                tr!(
+                    "Clones the repository into a folder of this one and records it in .gitmodules (git submodule add). Commit to keep it."
+                ),
+                tr!("Add"),
+                vec![
+                    (tr!("Repository URL"), String::new(), String::new()),
+                    (tr!("Folder"), String::new(), String::new()),
+                    (tr!("Branch to follow"), String::new(), tr!("(optional)")),
+                ],
+                Vec::new(),
+                FormKind::AddSubmodule,
+            ),
+            "sm-url" => form(
+                tr!("Edit URL of {path}", path = &path),
+                tr!(
+                    "Changes the URL in .gitmodules and copies it to this repository’s settings (git submodule set-url). Commit .gitmodules to share it."
+                ),
+                tr!("Save"),
+                vec![(String::new(), text("url"), tr!("Repository URL"))],
+                Vec::new(),
+                FormKind::SetUrl(path.clone()),
+            ),
+            "sm-branch" => form(
+                tr!("Branch to Follow for {path}", path = &path),
+                tr!(
+                    "Updating with “the latest commit of the branch it follows” moves to this branch’s latest commit. Leave it empty for the remote’s default branch."
+                ),
+                tr!("Save"),
+                vec![(String::new(), text("branch"), tr!("Default branch"))],
+                Vec::new(),
+                FormKind::SetBranch(path.clone()),
+            ),
+            // subtree（GTK4 版の `subtreesheet`）。この機械の git に subtree がなければ鳴らす。
+            "st-add" | "st-pull" | "st-push" | "st-split"
+                if self.subtrees["available"].as_bool() != Some(true) =>
+            {
+                return beep();
+            }
+            "st-add" => form(
+                tr!("Add Subtree"),
+                tr!(
+                    "Brings another repository’s branch into a folder of this one as a commit (git subtree add). Pull and Push later use the same repository and branch."
+                ),
+                tr!("Add"),
+                vec![
+                    (tr!("Repository URL"), String::new(), String::new()),
+                    (tr!("Branch or tag"), String::new(), String::new()),
+                    (tr!("Folder"), String::new(), String::new()),
+                ],
+                vec![(tr!("Squash its history into one commit (--squash)"), false)],
+                FormKind::AddSubtree,
+            ),
+            "st-pull" | "st-push" => {
+                let push = what == "st-push";
+                let subtree = self.subtrees["subtrees"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .find(|s| s["dir"].as_str() == Some(&path))
+                    .cloned()
+                    .unwrap_or_default();
+                let known = |k: &str| subtree[k].as_str().unwrap_or_default().to_owned();
+                let rev = if push && !known("pushRef").is_empty() {
+                    known("pushRef")
+                } else {
+                    known("ref")
+                };
+                let (title, message) = if push {
+                    (
+                        tr!("Push {dir}", dir = &path),
+                        tr!(
+                            "Sends the commits that changed this folder to the repository’s branch, as that repository’s own history (git subtree push)."
+                        ),
+                    )
+                } else {
+                    (
+                        tr!("Pull {dir}", dir = &path),
+                        tr!(
+                            "Merges the repository’s branch into this folder (git subtree pull). Conflicts stop it like a merge."
+                        ),
+                    )
+                };
+                let checks = if push {
+                    Vec::new()
+                } else {
+                    vec![(
+                        tr!("Squash its history into one commit (--squash)"),
+                        subtree["squash"].as_bool() == Some(true),
+                    )]
+                };
+                form(
+                    title,
+                    message,
+                    if push { "Push" } else { "Pull" }.to_owned(),
+                    vec![
+                        (tr!("Repository URL"), known("url"), String::new()),
+                        (tr!("Branch or tag"), rev, String::new()),
+                    ],
+                    checks,
+                    FormKind::PullOrPushSubtree(path.clone(), push),
+                )
+            }
+            "st-split" => {
+                let name = path.rsplit('/').next().unwrap_or(&path);
+                form(
+                    tr!("Split {dir}", dir = &path),
+                    tr!(
+                        "Creates a branch with only the history of this folder, its files at the top (git subtree split)."
+                    ),
+                    tr!("Create"),
+                    vec![(String::new(), String::new(), format!("{name}-split"))],
+                    Vec::new(),
+                    FormKind::SplitSubtree(path.clone()),
+                )
+            }
+            "sm-remove" => {
+                let name = match text("name") {
+                    n if n.is_empty() => path.clone(),
+                    n => n,
+                };
+                form(
+                    tr!("Remove {name}?", name = &path),
+                    format!(
+                        "{} {}\n\n{}",
+                        tr!(
+                            "Removes the folder and its entry in .gitmodules, and stages that. Commit to keep it."
+                        ),
+                        tr!("This can’t be undone."),
+                        tr!(
+                            "Kept, it brings back the submodule’s commits and stashes when you add it again, including ones not pushed."
+                        )
+                    ),
+                    tr!("Remove"),
+                    Vec::new(),
+                    vec![(
+                        tr!(
+                            "Also delete its repository data (.git/modules/{name})",
+                            name = &name
+                        ),
+                        false,
+                    )],
+                    FormKind::RemoveSubmodule(path.clone()),
+                )
+            }
+            _ => return,
+        };
+        self.dialog = Some(dialog);
+        self.dialog_inputs += 1;
+    }
+
+    /// タグのメニュー（GTK4 版の `refops::tag_items`）: リモートごとに Push（ないもの）・Replace（同じ名前の別の
+    /// タグがあるもの）、Delete、リモートごとの Delete from（あるもの）。まだ読んでいないリモートは、どれも出す。
+    /// History に各 worktree の HEAD の札（✎ ⌂ ⑂ と名前と変更の数）と、追加した worktree が checkout している
+    /// ブランチの緑を出す（GTK4 版の `worktrees::heads`・`branches_elsewhere`）。worktree が 1 つなら出さない。
+    fn show_worktree_labels(&self) {
+        let workdir = self
+            .repo
+            .as_ref()
+            .and_then(|r| r.paths().workdir)
+            .map(|d| d.display().to_string());
+        let editing = |w: &WorktreeInfo| workdir.as_deref().is_some_and(|d| same_path(d, &w.path));
+        let mut heads = Vec::new();
+        let mut elsewhere = std::collections::HashSet::new();
+        if self.worktrees.len() > 1 {
+            // 同じコミットにいくつもあれば、書き込む先、メイン、名前の順。
+            let mut ordered: Vec<&WorktreeInfo> = self.worktrees.iter().collect();
+            ordered.sort_by(|a, b| {
+                editing(b)
+                    .cmp(&editing(a))
+                    .then(b.main.cmp(&a.main))
+                    .then_with(|| worktree_name(&a.path).cmp(&worktree_name(&b.path)))
+            });
+            for w in ordered {
+                let Some(head) = w.head.as_deref().and_then(amonhen_model::Oid::from_hex) else {
+                    continue;
+                };
+                let is_editing = editing(w);
+                let mark = if is_editing {
+                    "✎"
+                } else if w.main {
+                    "⌂"
+                } else {
+                    "⑂"
+                };
+                let mut name = format!("{mark} {}", worktree_name(&w.path));
+                let changes = self.worktree_counts.get(&w.path).copied().unwrap_or(0);
+                if changes > 0 {
+                    name.push_str(&format!(" · {changes}"));
+                }
+                heads.push((head, name, is_editing));
+                if !is_editing
+                    && !w.main
+                    && let Some(branch) = &w.branch
+                {
+                    elsewhere.insert(branch.clone());
+                }
+            }
+        }
+        with_history(|h| {
+            h.session.data.set_worktrees(heads, elsewhere);
+            h.session.invalidate();
+        });
+    }
+
+    /// 差分で右クリックしたファイルのメニュー（GTK4 版の `commitfiles` の見出しのメニュー: 畳む・Blame・
+    /// File History・パスのコピー・ファイルで表示・エディタ・既定のアプリ）。
+    fn diff_file_menu(&self) -> Vec<MenuItem> {
+        // Working Copy の差分: その行（hunk）の変更を捨てる。含めている行は捨てられない（先に外す。GTK4 版と同じ）。
+        if let Some((_, staged)) = &self.diff_rows {
+            let title = "Discard Lines";
+            return vec![if *staged {
+                MenuItem::disabled("discard-lines", title)
+            } else {
+                MenuItem::item("discard-lines", title)
+            }];
+        }
+        let Some(file) = &self.diff_file else {
+            return Vec::new();
+        };
+        self.file_menu(file)
+    }
+
+    /// 変更ファイルの一覧の行の右クリック（差分の見出しと同じ項目。GTK4 版の `commitfiles`）。
+    fn changed_file_menu(
+        &self,
+        file: Option<&crate::data::DiffFile>,
+        context: &ViewContext<Self>,
+    ) -> Menu {
+        let index = file.map_or(usize::MAX, |f| f.index);
+        Menu::new(
+            file.map(|f| self.file_menu(f)).unwrap_or_default(),
+            context.callback(move |key| Message::ChangedFileMenu(index, key)),
+        )
+    }
+
+    /// ファイルの右クリックの項目（差分の見出しと、変更ファイルの一覧。GTK4 版の `list_menu_items`）。
+    fn file_menu(&self, file: &crate::data::DiffFile) -> Vec<MenuItem> {
+        let mut items = vec![MenuItem::item(
+            "collapse",
+            if file.collapsed {
+                tr!("Expand")
+            } else {
+                tr!("Collapse")
+            },
+        )];
+        // 見たことにする（畳んでコミットごとに覚える。GTK4 版の見出しの Viewed）。
+        if file.commit.is_some() {
+            let mark = if file.viewed { "✓ " } else { "" };
             items.push(MenuItem::item(
-                format!("delete-tag:{name}"),
-                tr!("Delete {name}…", name = name),
+                "viewed",
+                format!("{mark}{}", tr!("Toggle Viewed")),
             ));
         }
+        items.push(MenuItem::separator("-file"));
+        // 消したファイルは、そのコミットにはない（Blame を出さない）。
+        if !file.deleted {
+            items.push(MenuItem::item("blame", "Blame"));
+        }
+        items.push(MenuItem::item("history", "File History"));
+        // そのコミットの版・その前の版に戻す（File History の行と同じ。GTK4 版の `restoresheet::items`）。
+        if file.commit.is_some() {
+            items.push(MenuItem::separator("-restore"));
+            let this = tr!("Restore This Version…");
+            items.push(if file.deleted {
+                MenuItem::disabled("restore", this)
+            } else {
+                MenuItem::item("restore", this)
+            });
+            let before = tr!("Restore Version Before This Commit…");
+            items.push(if file.added {
+                MenuItem::disabled("restore-before", before)
+            } else {
+                MenuItem::item("restore-before", before)
+            });
+        }
+        items.push(MenuItem::separator("-copy"));
+        items.push(MenuItem::item("copy-path", tr!("Copy Path")));
+        // 手元にあるファイルだけ、エクスプローラーとほかのアプリで開ける。
+        let local = self.local_file(&file.path).is_some();
+        for (key, title) in [
+            ("reveal", tr!("Show in Files")),
+            ("editor", tr!("Open in Editor")),
+            ("default-app", tr!("Open with Default App")),
+        ] {
+            items.push(if local {
+                MenuItem::item(key, title)
+            } else {
+                MenuItem::disabled(key, title)
+            });
+        }
+        items
+    }
+
+    /// 作業ツリーにある `path` のファイル。
+    fn local_file(&self, path: &str) -> Option<std::path::PathBuf> {
+        let file = self.repo.as_ref()?.paths().workdir?.join(path);
+        file.exists().then_some(file)
+    }
+
+    fn diff_file_action(&mut self, key: &str, context: &ComponentContext<Self>) {
+        if key == "discard-lines" {
+            let Some((rows, false)) = self.diff_rows.clone() else {
+                return beep();
+            };
+            let mut target = None;
+            with_history(|h| target = h.session.data.working_diff());
+            let Some((repo, diff)) = target else {
+                return beep();
+            };
+            context.spawn_background(move |_| {
+                let result = repo.discard_rows(&diff, &rows);
+                Message::LinesDiscarded(result.err().map(|e| e.to_string()))
+            });
+            return;
+        }
+        let Some(file) = self.diff_file.clone() else {
+            return;
+        };
+        match key {
+            "collapse" => with_history(|h| {
+                if h.session.data.toggle_file_index(file.index) {
+                    h.session.renderer.forget_diff();
+                    let rows = h.diff_rows();
+                    h.diff.scroll_by(0.0, rows);
+                }
+            }),
+            "viewed" => {
+                let Some(oid) = file.commit.as_deref() else {
+                    return;
+                };
+                // 見たことにしたら畳み、戻したら開く（GTK4 版と同じ）。
+                let viewed = crate::viewed::toggle(oid, &file.path);
+                if viewed != file.collapsed {
+                    with_history(|h| {
+                        if h.session.data.toggle_file_index(file.index) {
+                            h.session.renderer.forget_diff();
+                            let rows = h.diff_rows();
+                            h.diff.scroll_by(0.0, rows);
+                        }
+                    });
+                }
+            }
+            "blame" => self.update(Message::OpenBlame(file.path, file.commit), context),
+            "history" => self.update(Message::OpenFileHistory(file.path), context),
+            "restore" | "restore-before" => {
+                let (Some(repo), Some(oid)) = (self.repo.clone(), file.commit.clone()) else {
+                    return beep();
+                };
+                let before = key == "restore-before";
+                let short = &oid[..oid.len().min(8)];
+                let title = if before {
+                    tr!(
+                        "Restore {path} as It Was Before {commit}?",
+                        path = &file.path,
+                        commit = short
+                    )
+                } else {
+                    tr!(
+                        "Restore {path} as It Is in {commit}?",
+                        path = &file.path,
+                        commit = short
+                    )
+                };
+                let rev = if before {
+                    format!("{oid}^")
+                } else {
+                    oid.clone()
+                };
+                self.dialog = Some(Dialog::Restore {
+                    repo,
+                    title,
+                    rev,
+                    paths: vec![file.path],
+                    staged: false,
+                });
+            }
+            "copy-path" => copy_text(&file.path),
+            _ => {
+                let Some(local) = self.local_file(&file.path) else {
+                    return beep();
+                };
+                match key {
+                    "reveal" => crate::files::reveal(&local),
+                    "editor" => {
+                        context.spawn_background(move |_| {
+                            Message::Performed(
+                                crate::editor::open_file(&local)
+                                    .err()
+                                    .map(|e| (tr!("Couldn’t Open in Editor"), e)),
+                            )
+                        });
+                    }
+                    _ => {
+                        if !crate::files::open_default(&local) {
+                            beep();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// shallow clone の履歴を、数か日付まで取り足すダイアログ（GTK4 版の「さらに取る」の Other… と Up to a Date…）。
+    fn deepen_dialog(&mut self, since: bool) {
+        let Some(repo) = self.repo.clone() else {
+            return beep();
+        };
+        self.dialog = Some(Dialog::Form {
+            repo,
+            title: if since {
+                tr!("Fetch History Up to a Date")
+            } else {
+                tr!("Fetch More History")
+            },
+            message: if since {
+                tr!("Fetches the commits made after this date (git fetch --shallow-since).")
+            } else {
+                tr!("How many older commits to fetch (git fetch --deepen).")
+            },
+            button: "Fetch".to_owned(),
+            fields: vec![if since {
+                (String::new(), String::new(), "YYYY-MM-DD".to_owned())
+            } else {
+                (String::new(), "100".to_owned(), String::new())
+            }],
+            checks: Vec::new(),
+            kind: if since {
+                FormKind::DeepenSince
+            } else {
+                FormKind::Deepen
+            },
+        });
+        self.dialog_inputs += 1;
+    }
+
+    /// タグのリモートの様子の見出し: 印とその意味（印がなければタグの名前）。
+    fn tag_status_title(&self, name: &str) -> String {
+        match crate::sidebar::tag_mark(&self.tag_remotes, name) {
+            Some(mark) => {
+                let lines = crate::sidebar::tag_tooltip(&self.tag_remotes, name);
+                format!("{mark} {}", lines.first().map_or(name, String::as_str))
+            }
+            None => name.to_owned(),
+        }
+    }
+
+    /// タグのリモートの様子（macOS 版の `TagStatusPopover`）: どこから分かったか、タグとコミット、リモートごとの
+    /// 様子と読んだ時刻。
+    fn tag_status_view(&self, name: &str) -> View {
+        let info = &self.tag_remotes;
+        let remotes: Vec<(String, Option<i64>)> = info["remotes"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|r| Some((r["name"].as_str()?.to_owned(), r["checked"].as_i64())))
+            .collect();
+        let state = |remote: &str| info["tags"][name][remote].as_str();
+        let different = remotes
+            .iter()
+            .any(|(r, checked)| checked.is_some() && state(r) == Some("different"));
+        let explanation = if different {
+            tr!(
+                "There, a tag with the same name is a different tag: it points to another commit, or it is another annotated tag on the same commit. Fetch doesn’t overwrite your tag and Push is refused, so the two stay apart until one of them is replaced."
+            )
+        } else {
+            tr!(
+                "Tags have no remote copies here the way branches do, so this was read from each remote at the last Fetch. Push doesn’t send tags; push this one to share it."
+            )
+        };
+        let target = self.refs.as_ref().and_then(|r| {
+            r.refs
+                .entries
+                .iter()
+                .find(|e| e.kind == amonhen_model::RefKind::Tag && e.name == name)
+                .and_then(|e| e.target)
+                .map(|t| t.to_string())
+        });
+        // 見出しと値（値の色: 別のタグは橙、ない・まだ読んでいないは薄く）。
+        let mut rows: Vec<(String, String, Option<Color>, f64)> =
+            vec![(tr!("Tag"), name.to_owned(), None, 1.0)];
+        if let Some(hex) = target {
+            rows.push((
+                tr!("Commit"),
+                hex[..hex.len().min(12)].to_owned(),
+                None,
+                1.0,
+            ));
+        }
+        for (remote, checked) in &remotes {
+            let (text, color, opacity) = match (checked, state(remote)) {
+                (None, _) => (tr!("Not checked yet (Fetch reads it)"), None, 0.5),
+                (Some(_), Some("same")) => (tr!("Has it"), None, 1.0),
+                (Some(_), Some("different")) => (
+                    tr!("Has a different tag with this name"),
+                    Some(Color::rgb(0xc2, 0x5e, 0x00)),
+                    1.0,
+                ),
+                (Some(_), _) => (tr!("Doesn’t have it"), None, 0.65),
+            };
+            let when = checked
+                .map(|ms| {
+                    let time = crate::stashes::ago(ms / 1000);
+                    format!(" · {}", tr!("read {time}", time = time))
+                })
+                .unwrap_or_default();
+            rows.push((remote.clone(), format!("{text}{when}"), color, opacity));
+        }
+        let grid_rows: Vec<(String, View)> = rows
+            .into_iter()
+            .enumerate()
+            .map(|(i, (label, value, color, opacity))| {
+                let value = TextBlock::new()
+                    .text(value)
+                    .font_size(13.0)
+                    .opacity(opacity)
+                    .text_wrapping(TextWrapping::Wrap)
+                    .is_text_selection_enabled(true);
+                let value = match color {
+                    Some(c) => value.foreground(Brush::Solid(c)),
+                    None => value,
+                };
+                (
+                    format!("{i}"),
+                    Grid::new()
+                        .columns([GridLength::Pixel(110.0), GridLength::Star(1.0)])
+                        .column_spacing(10.0)
+                        .children((
+                            TextBlock::new()
+                                .text(label)
+                                .font_size(12.0)
+                                .opacity(0.6)
+                                .horizontal_alignment(HorizontalAlignment::Right)
+                                .text_trimming(TextTrimming::CharacterEllipsis)
+                                .grid_column(0),
+                            value.grid_column(1),
+                        )),
+                )
+            })
+            .collect();
+        StackPanel::new().spacing(12.0).width(440.0).children((
+            TextBlock::new()
+                .text(explanation)
+                .font_size(12.0)
+                .opacity(0.7)
+                .text_wrapping(TextWrapping::Wrap),
+            StackPanel::new()
+                .spacing(5.0)
+                .children((View::keyed_fragment(grid_rows),)),
+        ))
+    }
+
+    /// タグを送る・置き換える操作（キーと見出し）: 読んでいない・ないリモートへの Push、別のタグがあるリモートでの
+    /// 置き換え。タグのメニューと、リモートの様子の確認で使う。
+    fn tag_pushes(&self, name: &str) -> Vec<(String, String)> {
+        let mut pushes = Vec::new();
+        for remote in self.tag_remotes["remotes"].as_array().into_iter().flatten() {
+            let Some(remote_name) = remote["name"].as_str() else {
+                continue;
+            };
+            let checked = remote["checked"].is_i64();
+            let st = self.tag_remotes["tags"][name][remote_name].as_str();
+            if !checked || st.is_none_or(|s| s == "missing") {
+                pushes.push((
+                    format!("push-tag:{remote_name}|{name}"),
+                    tr!(
+                        "Push {branch} to {target}…",
+                        branch = name,
+                        target = remote_name
+                    ),
+                ));
+            }
+            if checked && st == Some("different") {
+                pushes.push((
+                    format!("replace-tag:{remote_name}|{name}"),
+                    tr!(
+                        "Replace {tag} on {remote}…",
+                        tag = name,
+                        remote = remote_name
+                    ),
+                ));
+            }
+        }
+        pushes
+    }
+
+    fn tag_items(&self, name: &str) -> Vec<MenuItem> {
+        let remotes: Vec<(String, bool)> = self.tag_remotes["remotes"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|r| Some((r["name"].as_str()?.to_owned(), r["checked"].is_i64())))
+            .collect();
+        let state = |remote: &str| self.tag_remotes["tags"][name][remote].as_str();
+        let pushes: Vec<MenuItem> = self
+            .tag_pushes(name)
+            .into_iter()
+            .map(|(key, label)| MenuItem::item(key, label))
+            .collect();
+        let mut deletes = Vec::new();
+        for (remote, checked) in &remotes {
+            let st = state(remote);
+            let missing = *checked && st.is_none_or(|s| s == "missing");
+            if !missing {
+                deletes.push(MenuItem::item(
+                    format!("delete-remote-tag:{remote}|{name}|{}", u8::from(!*checked)),
+                    tr!("Delete {tag} from {remote}…", tag = name, remote = remote),
+                ));
+            }
+        }
+        // 署名の様子とリモートごとの様子（GTK4 版はタグの印のポップオーバーに出す）。
+        let signature = self.tag_signatures.get(name).map(|(status, signer)| {
+            let text = if signer.is_empty() {
+                format!("Signature: {}", status.label())
+            } else {
+                format!("Signature: {} — {signer}", status.label())
+            };
+            MenuItem::disabled("-signature", text)
+        });
+        let mut items: Vec<MenuItem> = signature
+            .into_iter()
+            // 押すと、リモートごとの様子と、それがどこから分かったかを出す（macOS 版・GTK4 版はタグの印の吹き出し）。
+            .chain(remotes.iter().map(|(remote, _)| {
+                MenuItem::item(
+                    format!("tag-status:{remote}|{name}"),
+                    crate::sidebar::tag_state_text(&self.tag_remotes, name, remote),
+                )
+            }))
+            .collect();
+        if !items.is_empty() {
+            items.push(MenuItem::separator("-states"));
+        }
+        let pushed = !pushes.is_empty();
+        items.extend(pushes);
+        if pushed {
+            items.push(MenuItem::separator("-push-tag"));
+        }
+        items.push(MenuItem::item(
+            format!("delete-tag:{name}"),
+            tr!("Delete {name}…", name = name),
+        ));
+        items.extend(deletes);
+        items
+    }
+
+    /// `name` をお気に入りに入れる・外す命令（GTK4 版の `favorite_commands`。外すときは残りの順を詰める）。
+    fn favorite_commands(&self, name: &str) -> Vec<Value> {
+        let mut pinned: Vec<(&String, i64)> = self
+            .groups
+            .as_ref()
+            .map(|g| {
+                g.branches
+                    .iter()
+                    .filter_map(|(n, b)| Some((n, b.pinned?)))
+                    .collect()
+            })
+            .unwrap_or_default();
+        pinned.sort_by_key(|(n, rank)| (*rank, n.to_string()));
+        let mut order: Vec<String> = pinned.into_iter().map(|(n, _)| n.clone()).collect();
+        let order_commands = |order: &[String]| -> Vec<Value> {
+            order
+                .iter()
+                .enumerate()
+                .map(|(i, n)| {
+                    json!({
+                        "op": "configSet",
+                        "key": format!("branch.{n}.amonhenPinned"),
+                        "value": (i + 1).to_string(),
+                    })
+                })
+                .collect()
+        };
+        if order.iter().any(|n| n == name) {
+            order.retain(|n| n != name);
+            let mut commands = order_commands(&order);
+            commands.push(json!({
+                "op": "configSet",
+                "key": format!("branch.{name}.amonhenPinned"),
+                "value": null,
+            }));
+            commands
+        } else {
+            order.push(name.to_owned());
+            order_commands(&order)
+        }
+    }
+
+    /// チェックアウトしていないブランチを上流と合わせる項目（GTK4 版の `refops::sync_items`。最後の Fetch の
+    /// 時点）: 上流がなければ Publish、遅れているだけなら Fast-Forward（チェックアウトしないで進める）、先にある
+    /// だけなら Push。分かれていればチェックアウトして merge か rebase をする（上の項目）。
+    fn sync_items(&self, entry: &RefEntry) -> Vec<MenuItem> {
+        let name = &entry.name;
+        let mut items = Vec::new();
+        match &entry.detail {
+            Some(upstream) if !entry.gone => {
+                if (entry.ahead == 0) == (entry.behind == 0) {
+                    return items;
+                }
+                if entry.ahead > 0 {
+                    items.push(MenuItem::item(
+                        format!("push-branch:{name}"),
+                        tr!(
+                            "Push {branch} to {target}…",
+                            branch = name,
+                            target = upstream
+                        ),
+                    ));
+                } else if !self
+                    .worktrees
+                    .iter()
+                    .any(|w| w.branch.as_deref() == Some(name.as_str()))
+                {
+                    // ほかの worktree が checkout しているなら動かせない（その作業ツリーとずれる）。
+                    items.push(MenuItem::item(
+                        format!("fast-forward:{name}"),
+                        tr!(
+                            "Fast-Forward {name} to {upstream}…",
+                            name = name,
+                            upstream = upstream
+                        ),
+                    ));
+                }
+            }
+            _ => {
+                // リモートがなければ Publish の先がないので出さない（GTK4 版と同じ）。
+                let has_remote = self.refs.as_ref().is_some_and(|r| {
+                    r.refs
+                        .entries
+                        .iter()
+                        .any(|e| e.kind == amonhen_model::RefKind::Remote)
+                });
+                if !has_remote {
+                    return items;
+                }
+                items.push(MenuItem::item(
+                    format!("push-branch:{name}"),
+                    tr!("Publish {name}…", name = name),
+                ));
+            }
+        }
+        items.push(MenuItem::separator("-sync"));
         items
     }
 
@@ -3346,7 +10792,279 @@ impl Root {
         });
     }
 
+    /// 出した Pull・Push のダイアログに並べるコミットの一覧を裏で読む（GTK4 版の `commit_lists`。取り込むもの・
+    /// 手元にだけあるもの、送るもの・上流が失うもの）。
+    fn load_sync_lists(&mut self, context: &ComponentContext<Self>) {
+        self.sync_lists.clear();
+        self.sync_warnings.clear();
+        self.sync_drawing = None;
+        self.pull_drawings = None;
+        // Push の注意を出すための、上流と送るブランチのコミット。
+        let mut push_range: Option<(String, amonhen_model::Oid, amonhen_model::Oid)> = None;
+        // 手元に新しいコミットがない Pull は、どの取り込み方でも先へ進めるだけなので、その絵（GTK4 版と同じ）。
+        // Push なら、送った後の形の絵。
+        let mut move_query: Option<Value> = None;
+        let (repo, lists) = match &self.dialog {
+            Some(Dialog::Pull { repo, sources, .. }) if sources.is_empty() => {
+                let Some(entry) = self.head_entry() else {
+                    return;
+                };
+                let Some(upstream) = entry.detail.clone() else {
+                    return;
+                };
+                if entry.ahead == 0 && entry.behind > 0 {
+                    move_query = Some(json!({
+                        "op": "movePreview", "from": "HEAD", "to": &upstream, "branch": &entry.name,
+                    }));
+                }
+                // git の設定（取り込み方と、決まっていなければ断るか）と、両方に新しいコミットがあれば merge と
+                // rebase の絵（GTK4 版の `pull_in`）。
+                let diverged = entry.ahead > 0 && entry.behind > 0;
+                let (git, onto) = (repo.clone(), upstream.clone());
+                context.spawn_background(move |_| {
+                    let ask = |query: Value| -> Value {
+                        serde_json::from_str::<Value>(&git.run_json(&query.to_string()))
+                            .unwrap_or_default()["info"]
+                            .clone()
+                    };
+                    let defaults = ask(json!({ "op": "syncDefaults" }));
+                    Message::PullDrawn(Box::new(PullDrawings {
+                        by_git: defaults["pull"].as_str().unwrap_or("merge").to_owned(),
+                        refuses: defaults["pullRefuses"].as_str().map(str::to_owned),
+                        merge: diverged.then(|| {
+                            ask(json!({
+                                "op": "mergePreview", "theirs": &onto, "ffSetting": "pull.ff",
+                            }))
+                        }),
+                        rebase: diverged
+                            .then(|| ask(json!({ "op": "rewritePreview", "onto": &onto }))),
+                        forecast: diverged.then(|| {
+                            serde_json::from_str::<Value>(
+                                &git.run_json(
+                                    &json!({ "op": "predictMerge", "ours": "HEAD", "theirs": &onto })
+                                        .to_string(),
+                                ),
+                            )
+                            .unwrap_or_default()
+                        }),
+                    }))
+                });
+                (
+                    repo.clone(),
+                    vec![
+                        (
+                            tr!("Commits to pull"),
+                            "HEAD".to_owned(),
+                            upstream.clone(),
+                            false,
+                        ),
+                        (tr!("Commits only here"), upstream, "HEAD".to_owned(), false),
+                    ],
+                )
+            }
+            Some(Dialog::Push {
+                repo,
+                remote,
+                branch,
+                remote_branch,
+                replace,
+                diverged,
+                ..
+            }) => {
+                let upstream = format!("{remote}/{remote_branch}");
+                // 送った後の形（上流の札が手元の先端へ。Force Push なら上流から消えるコミット。GTK4 版と同じ）。
+                move_query = Some(json!({ "op": "movePreview", "from": &upstream, "to": branch }));
+                let target = |kind: amonhen_model::RefKind, name: &str| {
+                    self.refs
+                        .as_ref()?
+                        .refs
+                        .entries
+                        .iter()
+                        .find(|e| e.kind == kind && e.name == name)?
+                        .target
+                };
+                if let (Some(base), Some(tip)) = (
+                    target(amonhen_model::RefKind::Remote, &upstream),
+                    target(amonhen_model::RefKind::Local, branch),
+                ) {
+                    push_range = Some((upstream.clone(), base, tip));
+                }
+                let mut lists = vec![(
+                    tr!("Commits to send"),
+                    upstream.clone(),
+                    branch.clone(),
+                    false,
+                )];
+                if *replace || *diverged {
+                    lists.push((
+                        tr!("Commits {upstream} will lose", upstream = &upstream),
+                        branch.clone(),
+                        upstream,
+                        true,
+                    ));
+                }
+                (repo.clone(), lists)
+            }
+            _ => return,
+        };
+        context.spawn_background(move |_| {
+            let lists = lists
+                .into_iter()
+                .map(|(title, base, tip, warn)| {
+                    let command = json!({ "op": "between", "base": base, "tip": tip, "limit": 20 });
+                    let reply: Value = serde_json::from_str(&repo.run_json(&command.to_string()))
+                        .unwrap_or_default();
+                    let info = &reply["info"];
+                    SyncList {
+                        title,
+                        count: info["count"].as_u64().unwrap_or(0),
+                        commits: info["commits"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .map(|c| {
+                                (
+                                    c["oid"].as_str().unwrap_or_default().to_owned(),
+                                    c["subject"].as_str().unwrap_or_default().to_owned(),
+                                    c["author"].as_str().unwrap_or_default().to_owned(),
+                                    c["time"].as_i64().unwrap_or(0),
+                                )
+                            })
+                            .collect(),
+                        warn,
+                    }
+                })
+                .collect::<Vec<SyncList>>();
+            // 送る範囲があれば注意（送るものがない Force Push などには出さない。GTK4 版と同じ）。
+            let warnings = match push_range {
+                Some((upstream, base, tip)) if lists.first().is_some_and(|l| l.count > 0) => {
+                    push_warnings(&repo, &upstream, &lists[0].commits, &base, &tip)
+                }
+                _ => Vec::new(),
+            };
+            let drawing = move_query
+                .and_then(|query| {
+                    serde_json::from_str::<Value>(&repo.run_json(&query.to_string())).ok()
+                })
+                .map(|reply| reply["info"].clone())
+                .filter(|info| !info["drawing"].is_null());
+            Message::SyncLists(lists, warnings, drawing)
+        });
+    }
+
+    /// Pull・Push のダイアログのコミットの一覧（空の一覧は出さない。消えるものは赤）と、Push の注意。
+    fn sync_lists_view(&self) -> View {
+        let warnings: Vec<(String, View)> = self
+            .sync_warnings
+            .iter()
+            .enumerate()
+            .map(|(i, w)| {
+                (
+                    format!("warning{i}"),
+                    TextBlock::new()
+                        .text(format!("⚠︎ {w}"))
+                        .text_wrapping(TextWrapping::Wrap)
+                        .foreground(Brush::Solid(Color::rgb(0x9c, 0x6a, 0x00)))
+                        .into(),
+                )
+            })
+            .collect();
+        let lists = self.sync_lists.iter().filter(|l| l.count > 0).map(|list| {
+            let red = Color::rgb(0xc0, 0x1c, 0x28);
+            let header = TextBlock::new()
+                .text(format!("{} ({})", list.title, list.count))
+                .font_size(13.0)
+                .margin(Thickness::new(0.0, 6.0, 0.0, 2.0));
+            let header = if list.warn {
+                header.foreground(Brush::Solid(red))
+            } else {
+                header
+            };
+            let rows = list.commits.iter().map(|(oid, subject, author, time)| {
+                let subject = TextBlock::new()
+                    .text(subject.clone())
+                    .text_trimming(TextTrimming::CharacterEllipsis)
+                    .grid_column(1);
+                let subject = if list.warn {
+                    subject.foreground(Brush::Solid(red))
+                } else {
+                    subject
+                };
+                (
+                    oid.clone(),
+                    Grid::new()
+                        .columns([
+                            GridLength::Pixel(70.0),
+                            GridLength::Star(1.0),
+                            GridLength::Auto,
+                        ])
+                        .children((
+                            TextBlock::new()
+                                .text(oid[..oid.len().min(8)].to_owned())
+                                .font_size(12.0)
+                                .opacity(0.6)
+                                .grid_column(0),
+                            subject,
+                            TextBlock::new()
+                                .text(format!("{author} · {}", crate::stashes::ago(*time)))
+                                .font_size(11.0)
+                                .opacity(0.6)
+                                .margin(Thickness::new(8.0, 0.0, 0.0, 0.0))
+                                .grid_column(2),
+                        )),
+                )
+            });
+            let mut items: Vec<(String, View)> = rows.collect();
+            let more = list.count.saturating_sub(list.commits.len() as u64);
+            if more > 0 {
+                items.push((
+                    "more".to_owned(),
+                    TextBlock::new()
+                        .text(tr!("and {count} more", count = more))
+                        .font_size(11.0)
+                        .opacity(0.6)
+                        .into(),
+                ));
+            }
+            (
+                list.title.clone(),
+                StackPanel::new().children((
+                    header,
+                    ScrollViewer::new().max_height(8.0 * 22.0).content(
+                        StackPanel::new()
+                            .spacing(2.0)
+                            .children((View::keyed_fragment(items),)),
+                    ),
+                )),
+            )
+        });
+        let lists: Vec<(String, View)> = lists.collect();
+        StackPanel::new()
+            .width(460.0)
+            .spacing(4.0)
+            .children((View::keyed_fragment(warnings), View::keyed_fragment(lists)))
+    }
+
     /// 今のブランチの、ref の一覧の行（上流は `detail`、上流との差は `ahead`・`behind`）。
+    /// ツールバーの Pull・Push の様子（今のブランチの上流との差、上流があるか、リモートがないか）。
+    fn tracking(&self) -> crate::menus::Tracking {
+        let entry = self.head_entry();
+        let no_remote = !self.refs.as_ref().is_some_and(|r| {
+            r.refs
+                .entries
+                .iter()
+                .any(|e| e.kind == amonhen_model::RefKind::Remote)
+        });
+        crate::menus::Tracking {
+            ahead: entry.map_or(0, |e| e.ahead),
+            behind: entry.map_or(0, |e| e.behind),
+            // 上流があって、そのリモートブランチもある（Push で送れる）。今のブランチがなければ（HEAD が
+            // 外れている）送れないので、Publish にもしない。
+            published: entry.is_none_or(|e| e.detail.is_some() && !e.gone),
+            no_remote,
+        }
+    }
+
     fn head_entry(&self) -> Option<&RefEntry> {
         let refs = &self.refs.as_ref()?.refs;
         let head = refs.head_branch.as_deref()?;
@@ -3355,8 +11073,91 @@ impl Root {
             .find(|e| e.kind == amonhen_model::RefKind::Local && e.name == head)
     }
 
+    /// Pull の確認で、選んだ取り込み方が今の状態で何をするかの文と、押せないならそのわけ（GTK4 版の
+    /// `pull_in` の `describe`。数は最後の Fetch の時点のもの）。
+    fn pull_explain(
+        &self,
+        mode: usize,
+        branch: &str,
+        sources: &[String],
+        source: usize,
+    ) -> (String, Option<String>) {
+        let mut lines = Vec::new();
+        let mut blocked = None;
+        let entry = self.head_entry();
+        let (incoming, outgoing) = entry.map_or((0, 0), |e| (e.behind, e.ahead));
+        let m = PULL_MODES.get(mode).copied().unwrap_or("git");
+        let defaults = self.pull_drawings.as_ref();
+        // 取り込み方を何も決めていなければ、git（2.33.1 から）は分かれたブランチの pull を断る（GTK4 版と同じ）。
+        let refused = defaults.is_some_and(|d| {
+            d.refuses.is_some()
+                && outgoing > 0
+                && (incoming > 0 || d.refuses.as_deref() == Some("notFastForward"))
+        });
+        let method = if m == "git" {
+            defaults.map_or("merge", |d| d.by_git.as_str())
+        } else {
+            m
+        };
+        if !sources.is_empty() {
+            lines.push(tr!(
+                "Sets {source} as the upstream, then pulls.",
+                source = sources.get(source).map_or("", String::as_str)
+            ));
+        } else if m == "git" && refused {
+            blocked = Some(tr!(
+                "git won’t pull: the branches have diverged, and neither pull.rebase nor pull.ff says how to reconcile them. Choose Merge or Rebase for this pull (your settings stay as they are)."
+            ));
+        } else if incoming == 0 {
+            lines.push(tr!(
+                "Nothing new as of the last Fetch (Pull fetches first)."
+            ));
+        } else if outgoing == 0 {
+            lines.push(tr!(
+                "Moves {branch} forward (fast-forward).",
+                branch = branch
+            ));
+        } else {
+            match method {
+                "rebase" => lines.push(tr!(
+                    "Your {count} local commits are replayed on top (their IDs change).",
+                    count = outgoing
+                )),
+                "fastForwardOnly" => {
+                    blocked = Some(tr!(
+                        "Fast-Forward Only can’t pull these: you have {count} local commits. Choose Merge or Rebase.",
+                        count = outgoing
+                    ));
+                }
+                _ => lines.push(tr!(
+                    "You have {count} local commits, so this makes a merge commit.",
+                    count = outgoing
+                )),
+            }
+        }
+        let changed = self.status.as_ref().map_or(0, |s| {
+            s.status
+                .entries
+                .iter()
+                .filter(|e| e.kind != amonhen_model::StatusKind::Untracked)
+                .count()
+        });
+        if changed > 0 {
+            lines.push(tr!(
+                "{count} files have uncommitted changes. Pull stops if the incoming changes touch them.",
+                count = changed
+            ));
+        }
+        // 押せないときは、戻すものもない。
+        if blocked.is_none() {
+            lines.push(tr!("You can Undo this (Ctrl+Alt+Z)."));
+        }
+        (lines.join("\n"), blocked)
+    }
+
     /// Repository > Pull…: 上流から取り込む（GTK4 版の `sheets::pull_in` の見出しと取り込み方）。上流がなければ、
-    /// 取り込み元のリモートのブランチ（同じ名前のものから）を選び、それを上流にして取り込む。前後の絵はまだない。
+    /// 取り込み元のリモートのブランチ（同じ名前のものから）を選び、それを上流にして取り込む。前後の絵は、選んだ
+    /// 取り込み方のもの（先へ進めるだけなら、どの取り込み方でも同じ）。
     fn pull(&mut self) {
         let (Some(repo), Some(entry)) = (self.repo.clone(), self.head_entry().cloned()) else {
             return beep();
@@ -3419,7 +11220,15 @@ impl Root {
     /// いれば、Pull… か Force Push を選んでもらう。Force Push は、最後の Fetch の時点の上流のときだけ置き換える。
     /// 送るコミットの一覧・前後の絵・注意はまだない。
     fn push(&mut self, force: bool) {
-        let (Some(repo), Some(entry)) = (self.repo.clone(), self.head_entry().cloned()) else {
+        match self.head_entry().cloned() {
+            Some(entry) => self.push_branch(entry, force),
+            None => beep(),
+        }
+    }
+
+    /// ブランチ `entry` を上流へ送る（上流がなければ Publish）。チェックアウトしていないブランチもサイドバーから。
+    fn push_branch(&mut self, entry: RefEntry, force: bool) {
+        let Some(repo) = self.repo.clone() else {
             return beep();
         };
         let branch = entry.name.clone();
@@ -3492,6 +11301,32 @@ impl Root {
         });
     }
 
+    /// Commit and Push のあとの push（GTK4 版の `push_after_commit`）: 上流があって先に進んでいなければ、聞かずに
+    /// 送る。上流がない・上流が先に進んでいるときは、Push と同じく聞く。
+    fn push_committed(&mut self, context: &ComponentContext<Root>) {
+        let (Some(repo), Some(entry)) = (self.repo.clone(), self.head_entry().cloned()) else {
+            return beep();
+        };
+        let upstream = entry.detail.clone().filter(|_| !entry.gone);
+        let Some((remote, remote_branch)) = upstream
+            .as_deref()
+            .filter(|_| entry.behind == 0 && entry.ahead > 0)
+            .and_then(|u| u.split_once('/'))
+        else {
+            return self.push(false);
+        };
+        self.busy = Some("Push…".to_owned());
+        perform(
+            context,
+            repo,
+            json!({
+                "op": "push", "remote": remote, "branch": entry.name,
+                "remoteBranch": remote_branch, "force": false, "setUpstream": false,
+            }),
+            "Push".to_owned(),
+        );
+    }
+
     /// 上流のないブランチを初めて送る前に、送り先のリモートとそこでの名前を聞く（GTK4 版の `publish_in`。
     /// 既定のリモートは、1 つならそれ、なければ origin）。
     fn publish(&mut self, repo: Arc<Repository>, branch: String) {
@@ -3530,8 +11365,177 @@ impl Root {
     }
 
     /// 窓の下のステータスバー: 走っている操作（なければ今のブランチ）。
-    fn status_bar(&self) -> View {
-        let text = match &self.busy {
+    /// shallow clone なら History の下に帯（GTK4 版の `shallow::band`）: さらに取る ▾（100・1,000・その他…・この日付
+    /// まで…）とすべて取る。
+    fn shallow_band(&self, context: &ViewContext<Self>) -> View {
+        if !self.form.shallow || self.page != Page::History {
+            return View::empty();
+        }
+        let more = [
+            ("deepen:100", tr!("100 Commits")),
+            ("deepen:1000", tr!("1,000 Commits")),
+            ("deepen-other", tr!("Other…")),
+            ("deepen-since", tr!("Up to a Date…")),
+        ]
+        .into_iter()
+        .map(|(key, title)| MenuItem::item(key, title))
+        .collect::<Vec<_>>();
+        Border::new()
+            .grid_row(2)
+            .background(Brush::Solid(Color::rgb(0xf3, 0xf3, 0xf3)))
+            .padding(Thickness::new(10.0, 4.0, 10.0, 4.0))
+            .content(
+                StackPanel::new()
+                    .orientation(Orientation::Horizontal)
+                    .spacing(8.0)
+                    .children((
+                        TextBlock::new()
+                            .text(tr!("Older history isn’t fetched (shallow clone)"))
+                            .font_size(12.0)
+                            .opacity(0.65)
+                            .vertical_alignment(VerticalAlignment::Center),
+                        DropDownButton::new()
+                            .content(TextBlock::new().text(tr!("Fetch More")).font_size(12.0))
+                            .menu(Menu::new(more, context.callback(Message::ShallowFetch))),
+                        Button::new()
+                            .on_click(
+                                context
+                                    .callback(|()| Message::ShallowFetch("unshallow".to_owned())),
+                            )
+                            .content(TextBlock::new().text(tr!("Fetch All")).font_size(12.0))
+                            .tooltip(tr!(
+                                "Fetch the whole history from the remote (git fetch --unshallow)"
+                            )),
+                    )),
+            )
+    }
+
+    /// 失敗の次の一手をする（帯のボタンと、詳細のダイアログの主のボタン）。
+    fn run_remedy(
+        &mut self,
+        repo: Arc<Repository>,
+        failure: &crate::failure::Failure,
+        remedy: crate::failure::Remedy,
+        context: &ComponentContext<Self>,
+    ) {
+        use crate::failure::Remedy;
+        match remedy {
+            Remedy::Retry => {
+                if let Some(command) = failure.command.clone() {
+                    perform(context, repo, command, String::new());
+                }
+            }
+            Remedy::Pull => self.update(Message::Command("pull".to_owned()), context),
+            Remedy::WorkingCopy => self.show_page(Page::WorkingCopy),
+            Remedy::OpenTerminal => {
+                self.update(Message::Command("open-in-terminal".to_owned()), context)
+            }
+        }
+    }
+
+    /// 失敗の帯（ステータスバーの上。GTK4 版の `show_failure`）: 何が失敗したか、なぜか（git の全文は
+    /// ツールチップと Details）、次の一手、Details・Activity・Close。取り消したときは見出しと Activity・Close だけ。
+    fn failure_band(&self, context: &ViewContext<Self>) -> View {
+        let Some((_, failure)) = &self.failure else {
+            return View::empty();
+        };
+        let cancelled = failure.cancelled();
+        let button = |title: String, accent: bool, on: Callback<()>| -> View {
+            let b = Button::new().on_click(on);
+            let b = if accent {
+                b.style(ButtonStyle::Accent)
+            } else {
+                b
+            };
+            b.content(TextBlock::new().text(title).font_size(12.0))
+        };
+        let mut buttons: Vec<(String, View)> = Vec::new();
+        if !cancelled {
+            for (i, remedy) in failure.remedies(true).into_iter().enumerate() {
+                buttons.push((
+                    format!("remedy{i}"),
+                    button(
+                        remedy.title(),
+                        i == 0,
+                        context.callback(move |()| Message::FailureRemedy(i)),
+                    ),
+                ));
+            }
+            buttons.push((
+                "details".to_owned(),
+                button(
+                    tr!("Details"),
+                    false,
+                    context.callback(|()| Message::FailureDetails),
+                ),
+            ));
+        }
+        buttons.push((
+            "activity".to_owned(),
+            button(
+                "Activity".to_owned(),
+                false,
+                context.callback(|()| Message::Command("activity".to_owned())),
+            ),
+        ));
+        buttons.push((
+            "close".to_owned(),
+            button(
+                tr!("Close"),
+                false,
+                context.callback(|()| Message::FailureClose),
+            ),
+        ));
+        let (icon, title, summary) = if cancelled {
+            ("⏹", tr!("Operation Cancelled"), String::new())
+        } else {
+            ("⛔", failure.op_title(), failure.summary())
+        };
+        Border::new()
+            .background(Brush::Solid(if cancelled {
+                Color::rgb(0xf0, 0xf0, 0xf0)
+            } else {
+                Color::rgb(0xfd, 0xe7, 0xe9)
+            }))
+            .padding(Thickness::new(10.0, 5.0, 10.0, 5.0))
+            .content(
+                Grid::new()
+                    .columns([
+                        GridLength::Auto,
+                        GridLength::Auto,
+                        GridLength::Star(1.0),
+                        GridLength::Auto,
+                    ])
+                    .column_spacing(8.0)
+                    .children((
+                        TextBlock::new()
+                            .text(icon)
+                            .vertical_alignment(VerticalAlignment::Center)
+                            .grid_column(0),
+                        TextBlock::new()
+                            .text(title)
+                            .font_size(12.0)
+                            .font_weight(FontWeight::SEMI_BOLD)
+                            .vertical_alignment(VerticalAlignment::Center)
+                            .grid_column(1),
+                        TextBlock::new()
+                            .text(summary)
+                            .font_size(12.0)
+                            .text_trimming(TextTrimming::CharacterEllipsis)
+                            .vertical_alignment(VerticalAlignment::Center)
+                            .grid_column(2)
+                            .tooltip(failure.message.clone()),
+                        StackPanel::new()
+                            .orientation(Orientation::Horizontal)
+                            .spacing(6.0)
+                            .grid_column(3)
+                            .children((View::keyed_fragment(buttons),)),
+                    )),
+            )
+    }
+
+    fn status_bar(&self, context: &ViewContext<Self>) -> View {
+        let mut text = match &self.busy {
             Some(busy) => busy.clone(),
             None => self
                 .refs
@@ -3539,12 +11543,618 @@ impl Root {
                 .and_then(|r| r.refs.head_branch.clone())
                 .unwrap_or_default(),
         };
-        TextBlock::new()
-            .text(text)
-            .font_size(12.0)
-            .margin(Thickness::new(12.0, 3.0, 12.0, 4.0))
-            .grid_row(3)
-            .into()
+        if let Some(note) = &self.status_note {
+            text.push_str(&format!("  ·  {note}"));
+        }
+        if let (None, Some(flash)) = (&self.busy, &self.flash) {
+            text.push_str(&format!("  ·  ✓ {flash}"));
+        }
+        // 走っている操作があれば右に ⟳ n（押すと Activity。GTK4 版の Activity のボタンの回る印）。
+        let running: View = if self.running > 0 {
+            Button::new()
+                .style(ButtonStyle::Subtle)
+                .on_click(context.callback(|()| Message::Command("activity".to_owned())))
+                .content(
+                    TextBlock::new()
+                        .text(format!("⟳ {}", self.running))
+                        .font_size(12.0),
+                )
+                .tooltip(tr!(
+                    "{count} operations running (click for Activity)",
+                    count = self.running
+                ))
+        } else {
+            View::empty()
+        };
+        let bar = Grid::new()
+            .columns([GridLength::Star(1.0), GridLength::Auto])
+            .children((
+                TextBlock::new()
+                    .text(text)
+                    .font_size(12.0)
+                    .margin(Thickness::new(12.0, 3.0, 12.0, 4.0))
+                    .grid_column(0),
+                Border::new()
+                    .margin(Thickness::new(0.0, 0.0, 8.0, 0.0))
+                    .grid_column(1)
+                    .content(running),
+            ));
+        StackPanel::new().grid_row(4).children((
+            self.failure_band(context),
+            self.sequence_band(context),
+            bar,
+        ))
+    }
+
+    /// 途中の操作の帯（ステータスバーの上。どの画面でも出す。macOS 版・GTK4 版のステータスバーの行）。
+    fn sequence_band(&self, context: &ViewContext<Self>) -> View {
+        // 見出しと説明（コンフリクトの数は status から）。
+        let conflicts = self.status.as_ref().map_or(0, |s| {
+            s.status
+                .entries
+                .iter()
+                .filter(|e| e.kind == amonhen_model::StatusKind::Unmerged)
+                .count()
+        });
+        let sequence = self.sequence.as_ref().map(|s| {
+            (
+                crate::sequence::title(s),
+                crate::sequence::detail(s, conflicts),
+                crate::sequence::can_skip(s),
+            )
+        });
+        crate::workcopy::sequence_band(
+            sequence
+                .as_ref()
+                .map(|(t, d, skip)| (t.as_str(), d.as_str(), *skip)),
+            // 止まった git am: コンフリクトがなく、まだ 3-way でやり直していなければ（GTK4 版の `retry`）。
+            self.sequence.as_ref().is_some_and(|s| {
+                s["kind"] == "am"
+                    && conflicts == 0
+                    && s["threeWay"].as_bool() != Some(true)
+                    && s["retried"].as_bool() != Some(true)
+                    && s["empty"].as_bool() != Some(true)
+            }),
+            &|key: &'static str| context.callback(move |()| Message::Command(key.to_owned())),
+        )
+    }
+
+    /// Push の画面の行: 送る変更すべて、送るコミット、上流から消えるコミットの見出しとそのコミット（macOS 版の
+    /// PushSheet の `rows`）。
+    fn push_rows(&self) -> Vec<PushRow> {
+        let mut rows = Vec::new();
+        let mut lists = self.sync_lists.iter();
+        if let Some(send) = lists.next() {
+            rows.push(PushRow::All(send.count));
+            rows.extend(
+                send.commits
+                    .iter()
+                    .map(|c| PushRow::Commit(c.clone(), false)),
+            );
+        }
+        for lost in lists.filter(|l| l.count > 0) {
+            rows.push(PushRow::Heading(lost.count));
+            rows.extend(
+                lost.commits
+                    .iter()
+                    .map(|c| PushRow::Commit(c.clone(), true)),
+            );
+        }
+        rows
+    }
+
+    /// Push の画面で行を選び、その中身を右の列に出す（見出しは選べない）。
+    fn select_push_row(&mut self, index: Option<usize>) {
+        let Some(Dialog::Push {
+            remote,
+            branch,
+            remote_branch,
+            ..
+        }) = &self.dialog
+        else {
+            return;
+        };
+        let rows = self.push_rows();
+        let Some(row) = index.and_then(|i| rows.get(i)) else {
+            return;
+        };
+        let target = |kind: amonhen_model::RefKind, name: &str| {
+            self.refs
+                .as_ref()?
+                .refs
+                .entries
+                .iter()
+                .find(|e| e.kind == kind && e.name == name)?
+                .target
+        };
+        match row {
+            PushRow::Heading(_) => return,
+            PushRow::All(count) => {
+                let upstream = format!("{remote}/{remote_branch}");
+                let Some(tip) = target(amonhen_model::RefKind::Local, branch) else {
+                    return;
+                };
+                let base = target(amonhen_model::RefKind::Remote, &upstream);
+                let lines: Vec<[String; 3]> = self
+                    .sync_lists
+                    .first()
+                    .map(|l| {
+                        l.commits
+                            .iter()
+                            .map(|(oid, subject, author, _)| {
+                                [
+                                    oid[..oid.len().min(8)].to_owned(),
+                                    subject.clone(),
+                                    author.clone(),
+                                ]
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let title = tr!("All changes to send ({count})", count = count);
+                let note = tr!("From upstream to HEAD, all files");
+                with_history(|h| {
+                    h.set_working_page(false);
+                    h.session.data.want_range(base, tip, title, note, lines);
+                });
+            }
+            PushRow::Commit((oid, ..), _) => {
+                let Some(id) = amonhen_model::Oid::from_hex(oid) else {
+                    return;
+                };
+                with_history(|h| {
+                    h.set_working_page(false);
+                    h.session.data.want_commit_id(id);
+                });
+            }
+        }
+        self.push_row = index;
+    }
+
+    /// Push の確認（macOS 版の PushSheet）: 上に題・説明・注意・送った後の形、左に送るコミット（一番上は送る変更
+    /// すべて。Force Push と分岐では上流から消えるコミットも）、下にボタン。選んだものの中身は右の列（History の
+    /// 詳細と同じ表示）に出す。ContentDialog には右の列を入れられないので、Stashes などと同じく窓の中に出す。
+    fn push_view(&self, context: &ViewContext<Self>) -> View {
+        let Some(Dialog::Push {
+            title,
+            message,
+            replace,
+            diverged,
+            remote,
+            remote_branch,
+            ..
+        }) = &self.dialog
+        else {
+            PUSH_KEYS.with(|k| k.set(None));
+            return View::empty();
+        };
+        // Enter は Push か（分かれていれば）Pull…。Force Push は Enter では押せない（macOS 版と同じ）。
+        PUSH_KEYS.with(|k| k.set(Some(*diverged || !*replace)));
+        let upstream = format!("{remote}/{remote_branch}");
+        let drawing = self.sync_drawing.as_ref().and_then(|preview| {
+            crate::drawing::for_move(
+                preview,
+                &crate::drawing::Move {
+                    moving: upstream.clone(),
+                    kind: "remote",
+                    after_title: if *replace || *diverged {
+                        tr!("After the force push")
+                    } else {
+                        tr!("After the push")
+                    },
+                    lost_note: tr!("removed from {upstream}", upstream = &upstream),
+                    lost_red: true,
+                    removes: false,
+                },
+            )
+        });
+        let warnings: Vec<(String, View)> = self
+            .sync_warnings
+            .iter()
+            .enumerate()
+            .map(|(i, w)| {
+                (
+                    format!("warning{i}"),
+                    TextBlock::new()
+                        .text(format!("⚠︎ {w}"))
+                        .text_wrapping(TextWrapping::Wrap)
+                        .foreground(Brush::Solid(Color::rgb(0x9c, 0x6a, 0x00)))
+                        .into(),
+                )
+            })
+            .collect();
+        // 上の帯は、ある物だけを鍵付きで並べる（空の場所を挟むと、後から絵が届いたときに reactor が差し込む位置を
+        // 誤る）。
+        let mut band: Vec<(String, View)> = vec![(
+            "title".to_owned(),
+            TextBlock::new()
+                .text(title.clone())
+                .font_size(15.0)
+                .font_weight(FontWeight::SEMI_BOLD)
+                .text_wrapping(TextWrapping::Wrap)
+                .into(),
+        )];
+        if !message.is_empty() {
+            band.push((
+                "message".to_owned(),
+                TextBlock::new()
+                    .text(message.clone())
+                    .font_size(12.0)
+                    .opacity(0.7)
+                    .text_wrapping(TextWrapping::Wrap)
+                    .into(),
+            ));
+        }
+        band.extend(warnings);
+        if let Some(drawing) = drawing {
+            band.push(("drawing".to_owned(), drawing));
+        }
+        let top = StackPanel::new()
+            .spacing(4.0)
+            .margin(Thickness::new(14.0, 10.0, 14.0, 8.0))
+            .children((View::keyed_fragment(band),));
+        let red = Color::rgb(0xc0, 0x1c, 0x28);
+        let rows = self.push_rows();
+        let items = rows.iter().enumerate().map(|(i, row)| {
+            let (first, second, bold, lost) = match row {
+                PushRow::All(count) => (
+                    tr!("All changes to send ({count})", count = count),
+                    tr!("From upstream to HEAD, all files"),
+                    true,
+                    false,
+                ),
+                PushRow::Heading(count) => (
+                    tr!("Commits upstream will lose ({count})", count = count),
+                    String::new(),
+                    true,
+                    true,
+                ),
+                PushRow::Commit((oid, subject, author, time), lost) => (
+                    subject.clone(),
+                    format!(
+                        "{} · {author} · {}",
+                        &oid[..oid.len().min(8)],
+                        crate::stashes::ago(*time)
+                    ),
+                    false,
+                    *lost,
+                ),
+            };
+            let first = TextBlock::new()
+                .text(first)
+                .text_trimming(TextTrimming::CharacterEllipsis);
+            let first = if bold {
+                first.font_weight(FontWeight::SEMI_BOLD)
+            } else {
+                first
+            };
+            let first = if lost {
+                first.foreground(Brush::Solid(red))
+            } else {
+                first
+            };
+            let second: View = if second.is_empty() {
+                View::empty()
+            } else {
+                TextBlock::new()
+                    .text(second)
+                    .font_size(11.0)
+                    .opacity(0.6)
+                    .text_trimming(TextTrimming::CharacterEllipsis)
+                    .into()
+            };
+            (
+                format!("{i}"),
+                ListViewItem::new()
+                    .tag(format!("{i}"))
+                    .content(StackPanel::new().spacing(1.0).children((first, second))),
+            )
+        });
+        let list = ListView::new()
+            .selected_index(self.push_row)
+            .on_selection_changed(context.callback(Message::PushRow))
+            .collection_slot(ListViewSlot::Items, items);
+        // 行の数が変わったら一覧ごと作り直す（reactor の ListView は消した項目の場所が空いたまま残る）。
+        let list = Border::new()
+            .grid_row(1)
+            .content(View::keyed_fragment([(format!("{}", rows.len()), list)]));
+        // 下: キャンセル、（分かれていれば Pull…）、Push か Force Push。Force Push は戻せないので、目立たせない。
+        let destructive = *replace || *diverged;
+        let force = *replace;
+        let ok = Button::new().on_click(context.callback(move |()| {
+            Message::DialogClosed(if destructive && !force {
+                ContentDialogResult::Secondary
+            } else {
+                ContentDialogResult::Primary
+            })
+        }));
+        let ok = if destructive {
+            ok
+        } else {
+            ok.style(ButtonStyle::Accent)
+        };
+        let ok = ok.content(TextBlock::new().text(if destructive { "Force Push" } else { "Push" }));
+        let pull: View = if *diverged {
+            Button::new()
+                .on_click(
+                    context.callback(|()| Message::DialogClosed(ContentDialogResult::Primary)),
+                )
+                .style(ButtonStyle::Accent)
+                .content(TextBlock::new().text("Pull…"))
+        } else {
+            View::empty()
+        };
+        let buttons = StackPanel::new()
+            .orientation(Orientation::Horizontal)
+            .horizontal_alignment(HorizontalAlignment::Right)
+            .spacing(8.0)
+            .margin(Thickness::new(14.0, 8.0, 14.0, 10.0))
+            .grid_row(2)
+            .children((
+                Button::new()
+                    .on_click(
+                        context.callback(|()| Message::DialogClosed(ContentDialogResult::None)),
+                    )
+                    .content(TextBlock::new().text(tr!("Cancel"))),
+                pull,
+                ok,
+            ));
+        Border::new()
+            .background(Brush::Solid(Color::rgb(0xff, 0xff, 0xff)))
+            .grid_column(1)
+            .content(
+                Grid::new()
+                    .rows([GridLength::Auto, GridLength::Star(1.0), GridLength::Auto])
+                    .children((
+                        ScrollViewer::new().max_height(360.0).content(top),
+                        list,
+                        buttons,
+                    )),
+            )
+    }
+
+    /// Repositories の画面の知らせを扱う（状態を変え、要る操作をする）。
+    /// スキャンするフォルダ（探す深さまでのフォルダと、見つけたリポジトリ）を見張り、中でフォルダが増えた・
+    /// 消えた、`.git` ができた・消えたら探し直す（GTK4 版の `watch_dirs`。知らせは 1 秒まとめる）。
+    fn watch_scan_folders(
+        &mut self,
+        dirs: &[std::path::PathBuf],
+        context: &ComponentContext<Self>,
+    ) {
+        // 前の見張りを止めてから（落とすと、前の待ちは終わる）。
+        self.scan_watch = None;
+        self.scan_watch_generation += 1;
+        if dirs.is_empty() {
+            return;
+        }
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        let watch = amonhen_watch::DirsWatch::new(dirs, move |paths| {
+            if paths
+                .iter()
+                .any(|p| crate::repositories::scan_change_matters(p))
+            {
+                let _ = tx.send(());
+            }
+        });
+        let Ok(watch) = watch else {
+            return;
+        };
+        self.scan_watch = Some(watch);
+        let generation = self.scan_watch_generation;
+        context.spawn_background(move |_| {
+            if rx.recv().is_err() {
+                // 見張りを止めた（捨てられる知らせ）。
+                return Message::Repos(crate::repositories::Event::ScanChanged(u64::MAX));
+            }
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            while rx.try_recv().is_ok() {}
+            Message::Repos(crate::repositories::Event::ScanChanged(generation))
+        });
+    }
+
+    fn repositories_event(
+        &mut self,
+        event: crate::repositories::Event,
+        context: &ComponentContext<Self>,
+    ) {
+        use crate::repositories::Action;
+        // 前の見張りの知らせは捨てる。探し終えたら、読んだフォルダを見張り直す。
+        match &event {
+            crate::repositories::Event::ScanChanged(generation)
+                if *generation != self.scan_watch_generation =>
+            {
+                return;
+            }
+            crate::repositories::Event::Scanned(_, dirs) if self.repositories.is_some() => {
+                self.watch_scan_folders(dirs, context);
+            }
+            _ => {}
+        }
+        let Some(state) = self.repositories.as_mut() else {
+            return;
+        };
+        match state.handle(event) {
+            Action::None => {}
+            Action::Close => {
+                self.repositories = None;
+                self.scan_watch = None;
+                self.page = self.repositories_from;
+            }
+            Action::Scan(roots) => {
+                context.spawn_background(move |_| {
+                    let (found, dirs) = crate::repositories::scan_with_dirs(roots);
+                    Message::Repos(crate::repositories::Event::Scanned(found, dirs))
+                });
+            }
+            Action::Peek(locations) if locations.is_empty() => {}
+            Action::Peek(locations) => {
+                context.spawn_background(move |_| {
+                    Message::Repos(crate::repositories::Event::Peeked(
+                        crate::repositories::peek(locations),
+                    ))
+                });
+            }
+            Action::Rename(location, name) => {
+                self.dialog = Some(Dialog::RenameRepository { location, name });
+                self.dialog_inputs += 1;
+            }
+            Action::Fetch(location) => {
+                context.spawn_background(move |_| {
+                    let error = crate::repositories::fetch(&location);
+                    Message::Repos(crate::repositories::Event::Fetched(location, error))
+                });
+            }
+            Action::NewGroup(location) => {
+                self.dialog = Some(Dialog::NewGroup {
+                    location,
+                    name: String::new(),
+                });
+                self.dialog_inputs += 1;
+            }
+        }
+    }
+
+    /// `path` の worktree を書き込む先にする（macOS 版・GTK4 版の Edit This Worktree）。今のタブでその worktree を
+    /// 同じ画面で開き直す。操作の途中なら替えない。
+    fn edit_worktree(&mut self, path: &str) {
+        let editing = self
+            .repo
+            .as_ref()
+            .and_then(|r| r.paths().workdir)
+            .is_some_and(|d| same_path(&d.display().to_string(), path));
+        if editing {
+            return;
+        }
+        if self.running > 0 || self.busy.is_some() {
+            return beep();
+        }
+        if let Err(message) = crate::tabs::replace(path, self.page == Page::WorkingCopy) {
+            self.dialog = Some(Dialog::Failed {
+                title: tr!("Can’t open the worktree"),
+                message,
+            });
+        }
+    }
+
+    /// 詳細と差分の間の、変更ファイルの一覧（macOS 版・GTK4 版の、木にしないときの一覧）。選ぶとそのファイルの
+    /// 見出しまで差分をスクロールする。History で 2 つ以上のファイルを変えたコミットのときだけ。
+    /// 変更ファイルを出すか（History などで 2 つ以上のとき）。
+    fn shows_changed_files(&self) -> bool {
+        self.page != Page::WorkingCopy && !self.details_expanded && self.changed_files.len() >= 2
+    }
+
+    /// 変更ファイルの木（差分の左。View の Changed Files as Tree を入れたとき）。ディレクトリの行と、その中の
+    /// ファイル（名前だけ、深さで字下げ）。ファイルを選ぶと、そのファイルへ。
+    fn changed_tree_view(&self, context: &ViewContext<Self>) -> View {
+        if !self.shows_changed_files() || !crate::prefs::bool(crate::prefs::HISTORY_FILE_TREE) {
+            return View::empty();
+        }
+        let tree = file_tree(&self.changed_files);
+        let selected = self
+            .changed_file
+            .and_then(|f| tree.iter().position(|r| r.file == Some(f)));
+        let mut files = Vec::new();
+        with_history(|h| files = h.session.data.files());
+        let rows = tree.iter().enumerate().map(|(i, r)| {
+            let indent = Thickness::new(r.depth as f64 * 14.0, 0.0, 0.0, 0.0);
+            let content: View = match r.file.and_then(|f| self.changed_files.get(f)) {
+                Some(f) => Grid::new()
+                    .columns([GridLength::Pixel(16.0), GridLength::Star(1.0)])
+                    .margin(indent)
+                    .children((
+                        TextBlock::new()
+                            .text(f.mark.to_string())
+                            .font_size(12.0)
+                            .opacity(0.7)
+                            .grid_column(0),
+                        TextBlock::new()
+                            .text(r.name.clone())
+                            .font_size(12.0)
+                            .text_trimming(TextTrimming::CharacterEllipsis)
+                            .grid_column(1),
+                    ))
+                    .menu(self.changed_file_menu(r.file.and_then(|f| files.get(f)), context)),
+                None => TextBlock::new()
+                    .text(format!("🗀 {}", r.name))
+                    .font_size(12.0)
+                    .opacity(0.8)
+                    .margin(indent)
+                    .into(),
+            };
+            (
+                format!("{i}"),
+                ListViewItem::new().min_height(22.0).content(content),
+            )
+        });
+        let key: String = self.changed_files.iter().map(|f| f.path.as_str()).collect();
+        let list = ListView::new()
+            .selected_index(selected)
+            .on_selection_changed(context.callback(Message::ChangedTreeSelected))
+            .collection_slot(ListViewSlot::Items, rows);
+        Border::new()
+            .grid_column(0)
+            .border_thickness(Thickness::new(0.0, 0.0, 1.0, 0.0))
+            .border_brush(Brush::Solid(Color::rgb(0xe5, 0xe5, 0xe5)))
+            .content(View::keyed_fragment([(key, list)]))
+    }
+
+    fn changed_files_view(&self, context: &ViewContext<Self>) -> View {
+        if !self.shows_changed_files() || crate::prefs::bool(crate::prefs::HISTORY_FILE_TREE) {
+            return View::empty();
+        }
+        let mut files = Vec::new();
+        with_history(|h| files = h.session.data.files());
+        let rows = self.changed_files.iter().enumerate().map(|(i, f)| {
+            let menu = self.changed_file_menu(files.get(i), context);
+            let counts = if f.binary {
+                tr!("binary")
+            } else {
+                format!("+{}  −{}", f.added, f.removed)
+            };
+            let row = Grid::new()
+                .columns([
+                    GridLength::Pixel(18.0),
+                    GridLength::Star(1.0),
+                    GridLength::Auto,
+                ])
+                .children((
+                    TextBlock::new()
+                        .text(f.mark.to_string())
+                        .font_size(12.0)
+                        .opacity(0.7)
+                        .grid_column(0),
+                    TextBlock::new()
+                        .text(f.path.clone())
+                        .font_size(12.0)
+                        .text_trimming(TextTrimming::CharacterEllipsis)
+                        .grid_column(1),
+                    TextBlock::new()
+                        .text(counts)
+                        .font_size(11.0)
+                        .opacity(0.6)
+                        .margin(Thickness::new(8.0, 0.0, 0.0, 0.0))
+                        .grid_column(2),
+                ))
+                .menu(menu);
+            (
+                format!("{i}"),
+                ListViewItem::new()
+                    .tag(f.path.clone())
+                    .min_height(24.0)
+                    .content(row),
+            )
+        });
+        // ファイルが替わったら一覧ごと作り直す（reactor の ListView は消した項目の場所が空いたまま残る）。
+        let key: String = self.changed_files.iter().map(|f| f.path.as_str()).collect();
+        let list = ListView::new()
+            .selected_index(self.changed_file)
+            .on_selection_changed(context.callback(Message::ChangedFileSelected))
+            .collection_slot(ListViewSlot::Items, rows);
+        Border::new()
+            .max_height(5.0 * 24.0 + 8.0)
+            .border_thickness(Thickness::new(0.0, 1.0, 0.0, 0.0))
+            .border_brush(Brush::Solid(Color::rgb(0xe5, 0xe5, 0xe5)))
+            .content(View::keyed_fragment([(key, list)]))
     }
 
     fn show_page(&mut self, page: Page) {
@@ -3609,6 +12219,22 @@ impl Root {
             "accept-ours" => state.accept(amonhen_core::conflict::Choice::Ours),
             "accept-theirs" => state.accept(amonhen_core::conflict::Choice::Theirs),
             "accept-both" => state.accept(amonhen_core::conflict::Choice::Both),
+            "accept-base" => state.accept(amonhen_core::conflict::Choice::Base),
+            "forget" => {
+                // rerere が当てた解決を忘れ、コンフリクトのある形から読み直す（失敗したら今の Result を残す）。
+                let path = state.path.clone();
+                context.spawn_background(move |_| {
+                    let command = json!({ "op": "forgetResolution", "path": &path });
+                    let reply: Value = serde_json::from_str(&repo.run_json(&command.to_string()))
+                        .unwrap_or_else(|e| json!({ "error": e.to_string() }));
+                    match reply["error"].as_str() {
+                        Some(e) => {
+                            Message::Performed(Some((tr!("Forget This Resolution"), e.to_owned())))
+                        }
+                        None => Message::OpenMerge(path),
+                    }
+                });
+            }
             "magic" => state.magic(),
             "previous" => state.step(false),
             "next" => state.step(true),
@@ -3676,6 +12302,75 @@ impl Root {
         });
     }
 
+    /// Repository Settings のフック・LFS と、`.gitignore`・`.git/info/exclude` を裏で読む。
+    fn load_repo_files(&self, context: &ComponentContext<Self>) {
+        // このリポジトリ専用のテンプレート。
+        if let Some(repo) = self.repo.clone() {
+            context.spawn_background(move |_| {
+                let reply: Value =
+                    serde_json::from_str(&repo.run_json(r#"{"op":"commitTemplate"}"#))
+                        .unwrap_or_default();
+                Message::RepoTemplateLoaded(
+                    reply["info"]["text"].as_str().map(str::to_owned),
+                    reply["info"]["path"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_owned(),
+                )
+            });
+        }
+        // 判定した既定のブランチ（`branchGroups` の base）。
+        if let Some(repo) = self.repo.clone() {
+            context.spawn_background(move |_| {
+                let reply: Value = serde_json::from_str(&repo.run_json(r#"{"op":"branchGroups"}"#))
+                    .unwrap_or_default();
+                Message::RepoDetectedBase(reply["info"]["base"].as_str().map(str::to_owned))
+            });
+        }
+        // リポジトリの形（shallow・partial・maintenance）も。
+        if let Some(repo) = self.repo.clone() {
+            context.spawn_background(move |_| {
+                let reply: Value =
+                    serde_json::from_str(&repo.run_json(r#"{"op":"repositoryForm"}"#))
+                        .unwrap_or_default();
+                Message::RepoFormLoaded(reply["info"].clone())
+            });
+        }
+        // 覚えた解決があるか（Forget All Recorded Resolutions… を出す）。
+        if let Some(repo) = self.repo.clone() {
+            context.spawn_background(move |_| {
+                let reply: Value = serde_json::from_str(&repo.run_json(r#"{"op":"gitVersion"}"#))
+                    .unwrap_or_default();
+                Message::RepoRerereCache(reply["info"]["rerereCache"].as_bool() == Some(true))
+            });
+        }
+        // フックと LFS も。
+        if let Some(repo) = self.repo.clone() {
+            context.spawn_background(move |_| {
+                let reply: Value = serde_json::from_str(&repo.run_json(r#"{"op":"hooksAndLfs"}"#))
+                    .unwrap_or_default();
+                Message::RepoHooksLoaded(reply["info"].clone())
+            });
+        }
+        // .git/info/exclude も（読めなければ欄を出さない。空として書くと中身を失う）。
+        if let Some(repo) = self.repo.clone() {
+            context.spawn_background(move |_| {
+                let files: Value = serde_json::from_str(&repo.run_json(r#"{"op":"ignoreFiles"}"#))
+                    .unwrap_or_default();
+                match (
+                    files["info"]["gitignore"].as_str(),
+                    files["info"]["exclude"].as_str(),
+                ) {
+                    (Some(g), Some(e)) => Message::RepoIgnoreLoaded(g.to_owned(), e.to_owned()),
+                    _ => Message::Performed(Some((
+                        tr!("Repository Settings"),
+                        files["error"].as_str().unwrap_or("ignoreFiles").to_owned(),
+                    ))),
+                }
+            });
+        }
+    }
+
     fn repo_settings_view(&self, context: &ViewContext<Self>) -> View {
         let (Page::RepoSettings, Some(state)) = (self.page, &self.repo_settings) else {
             return View::empty();
@@ -3687,6 +12382,13 @@ impl Root {
                 button: Box::new(|k: String| {
                     context.callback(move |()| Message::RepoSettingsButton(k.clone()))
                 }),
+                choice: Box::new(|id: &'static str| {
+                    context.callback(move |i: Option<usize>| Message::RepoSettingsChoice(id, i))
+                }),
+                toggle: Box::new(|name: String| {
+                    context.callback(move |on| Message::HookEnabled(name.clone(), on))
+                }),
+                menu: Box::new(|| context.callback(Message::RepoSettingsButton)),
             },
         );
         Border::new()
@@ -3714,6 +12416,42 @@ impl Root {
         });
     }
 
+    fn repositories_view(&self, context: &ViewContext<Self>) -> View {
+        use crate::repositories::Event;
+        let (Page::Repositories, Some(state)) = (self.page, &self.repositories) else {
+            return View::empty();
+        };
+        let view = crate::repositories::view(
+            state,
+            crate::repositories::Callbacks {
+                category: context.callback(|i| Message::Repos(Event::Category(i))),
+                selected: context.callback(|i| Message::Repos(Event::Selected(i))),
+                filter: context.callback(|t| Message::Repos(Event::Filter(t))),
+                menu: Box::new(|| context.callback(|id| Message::Repos(Event::Menu(id)))),
+                button: Box::new(|key| {
+                    context.callback(move |()| {
+                        Message::Repos(match key {
+                            "add-repository" => Event::AddRepository,
+                            "add-scan-folder" => Event::AddScanFolder,
+                            _ => match key.strip_prefix("sort:") {
+                                Some(column) => Event::Sort(column),
+                                None => Event::Close,
+                            },
+                        })
+                    })
+                }),
+                list_host: &self.repositories_list,
+                column_handles: &self.column_handles,
+            },
+        );
+
+        Border::new()
+            .background(Brush::Solid(Color::rgb(0xff, 0xff, 0xff)))
+            .grid_column(1)
+            .grid_column_span(2)
+            .content(view)
+    }
+
     fn activity_view(&self, context: &ViewContext<Self>) -> View {
         let (Page::Activity, Some(state)) = (self.page, &self.activity) else {
             return View::empty();
@@ -3724,6 +12462,13 @@ impl Root {
                 tab: context.callback(Message::ActivityTab),
                 undo: Box::new(|n| context.callback(move |()| Message::ActivityUndo(n))),
                 close: context.callback(|()| Message::CloseActivity),
+                export: context.callback(|()| Message::ActivityExport),
+                cancel: Box::new(|seq| {
+                    context.callback(move |()| {
+                        amonhen_model::activity::cancel(seq);
+                        Message::ActivityTick
+                    })
+                }),
             },
         );
         Border::new()
@@ -3742,8 +12487,42 @@ impl Root {
             crate::settingsview::Callbacks {
                 field: Box::new(|i| context.callback(move |t| Message::SettingsField(i, t))),
                 save_git: context.callback(|()| Message::SettingsSaveGit),
+                git_choice: Box::new(|id| {
+                    context.callback(move |index| Message::SettingsGitChoice(id, index))
+                }),
+                page: context.callback(Message::SettingsPage),
+                // ↩︎ は「自動」（どの行も最初の項目）を選んだのと同じ。
+                program_revert: Box::new(|id| {
+                    context.callback(move |()| Message::SettingsGitChoice(id, Some(0)))
+                }),
+                keys_field: Box::new(|field| {
+                    context.callback(move |text| Message::SettingsKeysField(field, text))
+                }),
+                keys_button: Box::new(|key| {
+                    context.callback(move |()| Message::SettingsKeysButton(key.clone()))
+                }),
                 toggle: Box::new(|key| context.callback(move |v| Message::SettingsToggle(key, v))),
                 close: context.callback(|()| Message::CloseSettings),
+                auto_fetch: context.callback(Message::SettingsAutoFetch),
+                clear_cache: context.callback(|()| Message::ClearCache),
+                editor: context.callback(Message::SettingsEditor),
+                env: Box::new(|name: String| {
+                    context.callback(move |on| Message::SettingsEnv(name.clone(), on))
+                }),
+                env_query: context.callback(Message::SettingsEnvQuery),
+                template: Box::new(|i, field| {
+                    context.callback(move |text| Message::SettingsTemplate(i, field, text))
+                }),
+                template_add: context.callback(|()| Message::SettingsTemplateAdd),
+                display: Box::new(|id| context.callback(move |v| Message::SettingsDisplay(id, v))),
+                order: context.callback(Message::SettingsOrder),
+                syntax_theme: context.callback(Message::SettingsSyntaxTheme),
+                theme_button: Box::new(|key: String| {
+                    context.callback(move |()| Message::SettingsThemeButton(key.clone()))
+                }),
+                template_remove: Box::new(|i| {
+                    context.callback(move |()| Message::SettingsTemplateRemove(i))
+                }),
             },
         );
         Border::new()
@@ -3757,11 +12536,18 @@ impl Root {
         let (Page::Merge, Some(state)) = (self.page, &self.merge) else {
             return View::empty();
         };
+        MERGE_UNDO.with(|u| u.set((state.can_undo(), state.can_redo())));
         let view = crate::merge::view(
             state,
             crate::merge::Callbacks {
+                result_box: &self.merge_result_box,
+                chosen: &self.merge_chosen,
                 button: Box::new(|key| context.callback(move |()| Message::MergeButton(key))),
+                pick: Box::new(|key: String| {
+                    context.callback(move |()| Message::MergePick(key.clone()))
+                }),
                 result: context.callback(Message::MergeResult),
+                base: context.callback(Message::MergeBase),
             },
         );
         Border::new()
@@ -3780,6 +12566,7 @@ impl Root {
             crate::blame::Callbacks {
                 close: context.callback(|()| Message::CloseBlame),
                 menu: Box::new(|| context.callback(Message::BlameMenu)),
+                code: &self.blame_code,
             },
         );
         // コードの幅が要るので、History と右の列の両方を覆う。
@@ -3788,6 +12575,75 @@ impl Root {
             .grid_column(1)
             .grid_column_span(2)
             .content(view)
+    }
+
+    /// worktree を消す前に、残っている変更を数えてから確かめる（GTK4 版の `confirm_remove`）。
+    fn ask_remove_worktree(&mut self, path: String, context: &ComponentContext<Self>) {
+        let Some(repo) = self.repo.clone() else {
+            return beep();
+        };
+        let locked = self.worktrees.iter().any(|w| w.path == path && w.locked);
+        context.spawn_background(move |_| {
+            let command = json!({ "op": "worktreeChanges", "paths": [&path], "fresh": true });
+            let reply: Value =
+                serde_json::from_str(&repo.run_json(&command.to_string())).unwrap_or_default();
+            let changes = reply["info"]["worktrees"][0]["count"].as_u64().unwrap_or(0);
+            let name = worktree_name(&path);
+            let message = if changes > 0 {
+                format!(
+                    "{} {}",
+                    tr!(
+                        "{path} has uncommitted changes in {count} files. They are lost with the folder. The branch stays.",
+                        path = &path,
+                        count = changes
+                    ),
+                    tr!("This can’t be undone.")
+                )
+            } else {
+                format!(
+                    "{} {}",
+                    tr!("Removes the folder {path}. The branch stays.", path = &path),
+                    tr!("This can’t be undone.")
+                )
+            };
+            Message::Confirm(
+                repo,
+                tr!("Remove the worktree “{name}”?", name = name),
+                message,
+                tr!("Remove Worktree"),
+                json!({ "op": "worktreeRemove", "path": path, "force": changes > 0 || locked }),
+            )
+        });
+    }
+
+    /// Save as Bundle のダイアログを出す（`refs` が空なら HEAD とすべてのブランチ・タグ。`names` は見せる名前、
+    /// `label` は既定のファイル名に使う）。
+    fn ask_bundle(&mut self, refs: Vec<String>, names: String, label: String) {
+        let Some(repo) = self.repo.clone() else {
+            return beep();
+        };
+        let base = repo
+            .paths()
+            .workdir
+            .and_then(|w| w.file_name().map(|n| n.to_string_lossy().into_owned()))
+            .unwrap_or_default();
+        let label = archive_name(&if base.is_empty() {
+            label
+        } else {
+            format!("{base}-{label}")
+        });
+        self.dialog = Some(Dialog::Bundle {
+            repo,
+            refs,
+            what: if names.is_empty() {
+                tr!("HEAD and all branches and tags")
+            } else {
+                names
+            },
+            label,
+            newer: false,
+            base: String::new(),
+        });
     }
 
     /// Stash のダイアログを出す（`paths` があればそのファイルだけ。untracked のファイルを選んでいれば、最初から
@@ -3864,8 +12720,9 @@ impl Root {
                 crate::rangediff::Callbacks {
                     ranges: context.callback(Message::RangeDiffRanges),
                     compare: context.callback(|()| Message::RangeDiffCompare),
-                    selected: context.callback(Message::RangeDiffSelected),
+                    selected: context.callback(Message::RangeDiffRow),
                     close: context.callback(|()| Message::CloseRangeDiff),
+                    changes_only: context.callback(Message::RangeDiffChangesOnly),
                 },
             ));
         // 変わった組は、右の列に差分の差分を重ねる。
@@ -3889,6 +12746,46 @@ impl Root {
                 serde_json::from_str(&repo.run_json(r#"{"op":"reflog","limit":500}"#))
                     .unwrap_or_default();
             Message::ReflogLoaded(crate::reflog::entries_of(&reply["info"]))
+        });
+    }
+
+    /// History の編集モード（History と詳細の列に重ねる）。
+    fn edit_view(&self, context: &ViewContext<Self>) -> View {
+        let (Page::EditCommits, Some(state)) = (self.page, &self.edit) else {
+            return View::empty();
+        };
+        let view = crate::historyedit::view(
+            state,
+            crate::historyedit::Callbacks {
+                event: Box::new(|event| context.callback(move |()| Message::Edit(event.clone()))),
+                choice: Box::new(|row| context.callback(move |i| Message::EditChoice(row, i))),
+                text: context.callback(Message::EditText),
+                reordered: context.callback(Message::EditReordered),
+                stacked: context.callback(Message::EditStacked),
+            },
+        );
+        Border::new()
+            .background(Brush::Solid(Color::rgb(0xff, 0xff, 0xff)))
+            .grid_column(1)
+            .grid_column_span(2)
+            .content(view)
+    }
+
+    /// 編集モードの見通しを読み直す（裏で。古い答えは数で捨てる）。
+    fn edit_preview(&mut self, context: &ComponentContext<Self>) {
+        let (Some(repo), Some(state)) = (self.repo.clone(), self.edit.as_mut()) else {
+            return;
+        };
+        state.generation += 1;
+        if !state.has_changes() {
+            state.preview = None;
+            return;
+        }
+        let (generation, command) = (state.generation, state.preview_command());
+        context.spawn_background(move |_| {
+            let reply: Value =
+                serde_json::from_str(&repo.run_json(&command.to_string())).unwrap_or_default();
+            Message::EditPreview(generation, reply["info"].clone())
         });
     }
 
@@ -4001,6 +12898,7 @@ impl Root {
             self.refs
                 .as_ref()
                 .and_then(|r| r.refs.head_branch.as_deref()),
+            &self.stash_details,
             callbacks,
         );
         Border::new()
@@ -4020,57 +12918,349 @@ impl Root {
                 .find(|e| &e.path == path)
                 .cloned()
         });
-        with_history(|h| h.session.data.want_working(entry));
+        let staged = self.working_staged;
+        with_history(|h| h.session.data.want_working(entry, staged));
     }
 
-    fn working_copy_view(&self, context: &ViewContext<Self>) -> View {
+    /// 欄の中身を、開いている worktree の下書きとして覚える（どちらも空なら消す。GTK4 版の `save_draft`）。
+    fn store_draft(&self) {
+        let Some(key) = &self.draft_key else {
+            return;
+        };
+        let result = if self.summary.trim().is_empty() && self.description.trim().is_empty() {
+            crate::prefs::remove(key)
+        } else {
+            crate::prefs::set_string(key, &json!([self.summary, self.description]).to_string())
+        };
+        if let Err(e) = result {
+            eprintln!("下書きを覚えられない: {e}");
+        }
+    }
+
+    /// 開いた worktree が替わったら、その下書きを入れる。なければ欄を空にして、テンプレート（`commit.template`）を
+    /// 裏で読んで入れる（GTK4 版の `restore_draft_or_template`）。前の worktree の下書きは打つたびに覚えてある。
+    fn switch_draft(&mut self, repo: &Arc<Repository>, context: &ComponentContext<Root>) {
+        let Some(workdir) = repo.paths().workdir else {
+            return;
+        };
+        let key = crate::prefs::draft_key(&workdir);
+        if self.draft_key.as_deref() == Some(key.as_str()) {
+            return;
+        }
+        self.draft_key = Some(key.clone());
+        self.amend = false;
+        // Settings > Performance: commit-graph がなければ書き出し、あれば増えた分を書き足す（開いた worktree が
+        // 替わったとき。GTK4 版はリポジトリを開いたとき）。
+        if crate::prefs::bool(crate::prefs::WRITE_COMMIT_GRAPH) {
+            let repo = repo.clone();
+            std::thread::spawn(move || {
+                if let Err(e) = repo.update_commit_graph() {
+                    eprintln!("commit-graph を書き出せない: {e}");
+                }
+            });
+        }
+        let draft = crate::prefs::string(&key)
+            .and_then(|d| serde_json::from_str::<(String, String)>(&d).ok());
+        if let Some((summary, description)) = draft {
+            self.summary = summary;
+            self.description = description;
+            return;
+        }
+        self.summary.clear();
+        self.description.clear();
+        let repo = repo.clone();
+        // 共有のテンプレートの一覧は設定（この糸のもの）から先に読んでおく。
+        let library = crate::templates::all();
+        context.spawn_background(move |_| {
+            Message::CommitTemplate(
+                key,
+                commit_template(&repo, &workdir, &library).unwrap_or_default(),
+            )
+        });
+    }
+
+    /// 最近のメッセージ・「+」のメニューの項目を選んだ（GTK4 版の `MessageAids`）。
+    fn message_menu(&mut self, key: &str, context: &ComponentContext<Root>) {
+        if key == "commit-push" {
+            self.push_after_commit = true;
+            self.update(Message::CommitChanges, context);
+        } else if key == "amend" {
+            self.update(Message::Amend(true), context);
+        } else if let Some(subject) = key.strip_prefix("fixup:") {
+            // fixup! は件名だけ（元のメッセージを残す）、squash! は本文に書き足せる（GTK4 版と同じ）。
+            self.summary = format!("fixup! {subject}");
+            self.description.clear();
+            self.amend = false;
+        } else if let Some(subject) = key.strip_prefix("squash:") {
+            self.summary = format!("squash! {subject}");
+            self.amend = false;
+        } else if let Some(t) = key.strip_prefix("type:") {
+            // 件名の先頭を `type: ` にする（もう型があれば置き換える）。
+            self.summary = format!(
+                "{t}: {}",
+                crate::workcopy::without_commit_type(&self.summary)
+            );
+        } else if let Some(line) = key.strip_prefix("trailer:") {
+            if let Some(body) = crate::workcopy::with_trailer(&self.description, line) {
+                self.description = body;
+            }
+        } else if key == "signoff" {
+            let Some(repo) = self.repo.clone() else {
+                return beep();
+            };
+            context.spawn_background(move |_| {
+                let config: Value = serde_json::from_str(&repo.run_json(r#"{"op":"configList"}"#))
+                    .unwrap_or_default();
+                let value = |key: &str| {
+                    config["info"]["entries"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .rev()
+                        .find(|e| {
+                            e["key"]
+                                .as_str()
+                                .is_some_and(|k| k.eq_ignore_ascii_case(key))
+                        })
+                        .and_then(|e| e["value"].as_str().map(str::to_owned))
+                };
+                match (value("user.name"), value("user.email")) {
+                    (Some(name), Some(email)) => {
+                        Message::CommitTextMenu(format!("trailer:Signed-off-by: {name} <{email}>"))
+                    }
+                    // user.name か user.email がなければ、音で知らせる（GTK4 版・macOS 版と同じ）。
+                    _ => Message::CommitTextMenu("beep".to_owned()),
+                }
+            });
+        } else if let Some(index) = key.strip_prefix("recent:") {
+            if let Some((message, _, _)) = index
+                .parse::<usize>()
+                .ok()
+                .and_then(|i| self.recent_messages.get(i))
+            {
+                let (s, b) = message.split_once('\n').unwrap_or((message, ""));
+                self.summary = s.to_owned();
+                self.description = b.trim().to_owned();
+            }
+        } else if key == "beep" {
+            beep();
+        }
+    }
+
+    /// 差分の上: History ではコミットの詳細。Working Copy では、両側に変更があって 1 本の差分で表せないファイルの
+    /// Unstaged / Staged の切り替え（GTK4 版の `workcopy.rs` の `sides`）。
+    /// History を絞っているときの、上の帯（範囲の名前と All Branches。GTK4 版の History のバーの範囲）。
+    fn scope_band(&self, context: &ViewContext<Self>) -> View {
+        let mut scope = crate::data::Scope::All;
+        with_history(|h| scope = h.session.data.scope());
+        let title = match &scope {
+            crate::data::Scope::All => return View::empty(),
+            crate::data::Scope::Current => tr!("Current Branch"),
+            crate::data::Scope::Refs(list) if list.len() == 1 => list[0].1.clone(),
+            crate::data::Scope::Refs(list) => tr!("{count} branches", count = list.len()),
+        };
+        Grid::new()
+            .columns([GridLength::Star(1.0), GridLength::Auto])
+            .margin(Thickness::new(8.0, 4.0, 8.0, 0.0))
+            .children((
+                TextBlock::new()
+                    .text(format!("History · {title}"))
+                    .vertical_alignment(VerticalAlignment::Center)
+                    .text_trimming(TextTrimming::CharacterEllipsis),
+                Button::new()
+                    .grid_column(1)
+                    .on_click(context.callback(|()| Message::Command("scope-all".to_owned())))
+                    .content(TextBlock::new().text(tr!("All Branches"))),
+            ))
+    }
+
+    fn top_of_diff(&self, context: &ViewContext<Self>) -> View {
+        if self.page != Page::WorkingCopy {
+            // 右上に ⤢（詳細だけを右の列いっぱいに広げる。もう一度押すと戻す）。
+            return Grid::new()
+                .grid_row(0)
+                .children((
+                    ScrollViewer::new()
+                        .content(details(
+                            self.info.as_ref().map(|(i, e)| (i, e.as_ref())),
+                            // 差分の中を探しているときは、メッセージの中の一致にも色を付ける。
+                            if self.diff_find_open {
+                                &self.diff_find_query
+                            } else {
+                                ""
+                            },
+                        )),
+                    StackPanel::new()
+                        .orientation(Orientation::Horizontal)
+                        .spacing(4.0)
+                        .horizontal_alignment(HorizontalAlignment::Right)
+                        .vertical_alignment(VerticalAlignment::Top)
+                        .margin(Thickness::new(0.0, 4.0, 8.0, 0.0))
+                        .children((
+                            self.diff_find_button(context),
+                            ToggleButton::new()
+                                .is_checked(self.details_expanded)
+                                .on_is_checked_changed(context.callback(Message::ExpandDetails))
+                                .content(TextBlock::new().text("⤢"))
+                                .tooltip(tr!(
+                                    "Expand the commit details to fill the right column (click again to restore)."
+                                )),
+                        )),
+                ));
+        }
+        let sides: View = match self.working_sides {
+            Some(staged) => RadioButtons::new()
+                .max_columns(2)
+                .margin(Thickness::new(10.0, 0.0, 10.0, 0.0))
+                .items_source(vec!["Unstaged".to_owned(), "Staged".to_owned()])
+                .selected_index(usize::from(staged))
+                .on_selection_changed(context.callback(Message::WorkingSide))
+                .into(),
+            None => View::empty(),
+        };
+        // 差分の中を探すボタンは右上に（Working Copy の差分にも）。
+        Grid::new()
+            .grid_row(0)
+            .columns([GridLength::Star(1.0), GridLength::Auto])
+            .children((
+                sides,
+                Border::new()
+                    .grid_column(1)
+                    .margin(Thickness::new(0.0, 2.0, 8.0, 2.0))
+                    .content(self.diff_find_button(context)),
+            ))
+    }
+
+    /// 差分の中を探す帯を開くボタン（GTK4 版の `find_button`。詳細の右上に置く）。
+    fn diff_find_button(&self, context: &ViewContext<Self>) -> View {
+        Button::new()
+            .on_click(context.callback(|()| Message::DiffFindOpen(true)))
+            .content(TextBlock::new().text("🔍"))
+            .tooltip(tr!("Find in the diff (Ctrl+F)"))
+    }
+
+    /// 差分の中を探す帯（GTK4 版の `difffind`: 欄、件数、前・次、Done）。
+    fn diff_find_bar(&self, context: &ViewContext<Self>) -> View {
+        if !self.diff_find_open {
+            return View::empty();
+        }
+        Grid::new()
+            .grid_row(1)
+            .columns([
+                GridLength::Star(1.0),
+                GridLength::Auto,
+                GridLength::Auto,
+                GridLength::Auto,
+                GridLength::Auto,
+            ])
+            .column_spacing(4.0)
+            .margin(Thickness::new(8.0, 4.0, 8.0, 4.0))
+            .children((
+                TextBox::new()
+                    .element_ref(&self.diff_find_box)
+                    .text(self.diff_find_query.clone())
+                    .placeholder_text(tr!("Search Diff"))
+                    .on_text_changed(context.callback(Message::DiffFindQuery)),
+                TextBlock::new()
+                    .grid_column(1)
+                    .text(self.diff_find_status.clone())
+                    .vertical_alignment(VerticalAlignment::Center)
+                    .margin(Thickness::new(4.0, 0.0, 4.0, 0.0)),
+                Button::new()
+                    .grid_column(2)
+                    .on_click(context.callback(|()| Message::DiffFindStep(-1)))
+                    .content(TextBlock::new().text("↑"))
+                    .tooltip(tr!("Previous")),
+                Button::new()
+                    .grid_column(3)
+                    .on_click(context.callback(|()| Message::DiffFindStep(1)))
+                    .content(TextBlock::new().text("↓"))
+                    .tooltip(tr!("Next")),
+                Button::new()
+                    .grid_column(4)
+                    .on_click(context.callback(|()| Message::DiffFindOpen(false)))
+                    .content(TextBlock::new().text(tr!("Done"))),
+            ))
+    }
+
+    fn working_copy_view(&self, context: &mut ViewContext<Self>) -> View {
         if self.page != Page::WorkingCopy {
             return View::empty();
         }
         let callbacks = crate::workcopy::Callbacks {
             summary: context.callback(Message::Summary),
+            summary_box: &self.summary_box,
+            description_box: &self.description_box,
             description: context.callback(Message::Description),
             commit: context.callback(|()| Message::CommitChanges),
             stage: Box::new(|path: String| {
                 context.callback(move |include| Message::Stage(path.clone(), include))
             }),
             selected: context.callback(Message::WorkingFile),
+            filter: context.callback(Message::WorkingFilter),
+            layout: Box::new(|layout| context.callback(move |_| Message::WorkingLayout(layout))),
+            stage_all: Box::new(|paths: Vec<String>, include: bool| {
+                context.callback(move |_| Message::StageAll(paths.clone(), include))
+            }),
+            message_menu: context.callback(Message::CommitTextMenu),
             amend: context.callback(Message::Amend),
+            hover: Box::new(|path: String| {
+                context.callback(move |_: PointerEventInfo| Message::WorkingHover(path.clone()))
+            }),
+            discard: Box::new(|path: String| {
+                context.callback(move |()| Message::DiscardFile(path.clone()))
+            }),
             file_menu: Box::new(|path: String| {
                 context.callback(move |key| Message::WorkingFileMenu(path.clone(), key))
             }),
-            sequence: Box::new(|key: &'static str| {
-                context.callback(move |()| Message::Command(key.to_owned()))
-            }),
         };
-        // 途中の操作の帯の見出しと説明（コンフリクトの数は status から）。
-        let conflicts = self.status.as_ref().map_or(0, |s| {
-            s.status
-                .entries
-                .iter()
-                .filter(|e| e.kind == amonhen_model::StatusKind::Unmerged)
-                .count()
-        });
-        let sequence = self.sequence.as_ref().map(|s| {
-            (
-                crate::sequence::title(s),
-                crate::sequence::detail(s, conflicts),
-                crate::sequence::can_skip(s),
-            )
-        });
         let view = crate::workcopy::view(
             crate::workcopy::Input {
                 status: self.status.as_deref(),
+                filter: &self.working_filter,
+                sparse: self.form.sparse.as_deref(),
+                layout: self.working_layout,
+                collapsed: &self.working_collapsed,
+                layout_clicks: self.layout_clicks,
+                stats: &self.working_stats,
+                list_host: &self.working_list,
+                recent: &self.recent_messages,
                 summary: &self.summary,
                 description: &self.description,
                 committing: self.committing,
                 amend: self.amend,
-                sequence: sequence
-                    .as_ref()
-                    .map(|(t, d, skip)| (t.as_str(), d.as_str(), *skip)),
+                hovered: self.working_hovered.as_deref(),
+                mixed: &|key: &str| {
+                    self.mixed_used.borrow_mut().push(key.to_owned());
+                    self.mixed_checks
+                        .borrow_mut()
+                        .entry(key.to_owned())
+                        .or_default()
+                        .clone()
+                },
             },
             callbacks,
         );
+        // 一部だけ含めているチェックを、描いた後に ▣ にする（status が変わるたびに。作り直したチェックは
+        // 含めている状態に戻っている）。
+        let used = std::mem::take(&mut *self.mixed_used.borrow_mut());
+        let refs: Vec<ElementRef<CheckBox>> = {
+            let checks = self.mixed_checks.borrow();
+            used.iter().filter_map(|k| checks.get(k).cloned()).collect()
+        };
+        let generation = self.status.as_ref().map(|s| s.generation);
+        context.use_effect("mixed-checks", (used, generation), move || {
+            for r in &refs {
+                let _ = r.request_native_element(|result| {
+                    if let Ok(element) = result
+                        && let Err(e) = windows_reactor::set_check_mixed(&element)
+                    {
+                        eprintln!("チェックを ▣ にできない: {e}");
+                    }
+                });
+            }
+            None
+        });
         // まん中の列だけを覆う。右の列は差分の欄（詳細の行は畳む）。
         Border::new()
             .background(Brush::Solid(Color::rgb(0xff, 0xff, 0xff)))
@@ -4081,11 +13271,93 @@ impl Root {
     /// History の右クリックのメニュー（GTK4 版の `commitops::menu`、macOS 版の `HistoryViewController` と同じ並び）。
     /// まだ動かない操作は出さない。右クリックは先に行を選ぶので、選んでいるコミットのメニューになる。
     fn history_menu(&self) -> Vec<MenuItem> {
+        // 複数選んでいれば、まとめて使える操作だけ（GTK4 版の `commitops::multi_menu` のうち、この FE にあるもの）。
+        if self.multi.len() > 1 {
+            let n = self.multi.len();
+            let ids: Vec<&str> = self.multi.iter().map(|(id, _)| id.as_str()).collect();
+            // Cherry-pick は古い順に、Revert は新しい順に（GTK4 版の `menu_many` と同じ）。
+            let oldest_first: Vec<&str> = ids.iter().rev().copied().collect();
+            let mut items = vec![
+                MenuItem::item(
+                    format!("cherry-pick:{}", oldest_first.join(",")),
+                    tr!("Cherry-pick {count} Commits…", count = n),
+                ),
+                MenuItem::item(
+                    format!("revert:{}", ids.join(",")),
+                    tr!("Revert {count} Commits…", count = n),
+                ),
+            ];
+            // マージはパッチにできない（git format-patch は飛ばす）。押せない項目で残す。古い順に（GTK4 版と同じ）。
+            let title = tr!("Save {count} Commits as Patches…", count = n);
+            if self.multi.iter().any(|(_, merge)| *merge) {
+                items.push(MenuItem::disabled("patch-merge", title));
+            } else {
+                items.push(MenuItem::item(
+                    format!("patch:{}", oldest_first.join(",")),
+                    title,
+                ));
+            }
+            // 連続した行（first-parent で続いているかはコアで確かめる）なら、1 つにまとめられる（GTK4 版と同じ）。
+            if self.multi_consecutive && !self.multi.iter().any(|(_, merge)| *merge) {
+                items.push(MenuItem::item(
+                    format!("edit-combine-many:{}", ids.join(",")),
+                    tr!("Combine {count} Commits…", count = n),
+                ));
+            }
+            // 今のコミット以外を、上の行から順に 1 つのコミットで merge する（octopus。GTK4 版と同じ）。
+            let sources = crate::merge_several::sources(self.refs.as_ref().map(|r| &r.refs), &ids);
+            if sources.len() > 1 {
+                items.push(MenuItem::item(
+                    format!("merge-several:{}", ids.join(",")),
+                    tr!(
+                        "Merge {count} into {branch}…",
+                        count = sources.len(),
+                        branch = self.head_name()
+                    ),
+                ));
+            }
+            items.push(MenuItem::separator("-pick"));
+            // 2 つなら、それぞれを先端とする 2 つの版として比べられる（rebase の前と後など）。
+            if let [newer, older] = &ids[..] {
+                items.push(MenuItem::item(
+                    format!("rangediff:{older}...{newer}"),
+                    tr!("Compare as Two Versions (Range Diff)"),
+                ));
+                items.push(MenuItem::separator("-copy"));
+            }
+            items.push(MenuItem::item(
+                format!("copy:{}", ids.join("\n")),
+                tr!("Copy Commit IDs"),
+            ));
+            items.push(MenuItem::item(
+                format!(
+                    "copy:{}",
+                    ids.iter()
+                        .map(|id| &id[..id.len().min(8)])
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                ),
+                tr!("Copy Short IDs"),
+            ));
+            return items;
+        }
         let Some((id, labels)) = &self.selected else {
             return Vec::new();
         };
         let head = self.refs.as_ref().and_then(|r| r.refs.head_branch.clone());
         let mut items = Vec::new();
+        // 折りたたんだ merge なら、取り込んだ側を開く・たたむ（GTK4 版の `merge_items`。メニューの先頭）。
+        let mut fold = None;
+        with_history(|h| fold = h.session.data.merge_fold(id));
+        if let Some(hidden) = fold {
+            let title = if hidden > 0 {
+                tr!("Show {count} Merged Commits", count = hidden)
+            } else {
+                tr!("Fold Merged Commits")
+            };
+            items.push(MenuItem::item(format!("toggle-merge:{id}"), title));
+            items.push(MenuItem::separator("-fold"));
+        }
         // Checkout: このコミットを指すローカルブランチ（今のブランチは除く）、リモートブランチ、なければコミット。
         let mut checkouts = 0;
         for label in labels.iter().take(5) {
@@ -4145,19 +13417,41 @@ impl Root {
         });
         if !merge {
             items.push(MenuItem::separator("-edit"));
-            items.push(MenuItem::item(format!("reword:{id}"), tr!("Edit Message…")));
+            // 近道は、最初の変更を入れて編集モードを開く（GTK4 版・macOS 版と同じ）。
             items.push(MenuItem::item(
-                format!("squash:{id}"),
+                format!("edit-reword:{id}"),
+                tr!("Edit Message…"),
+            ));
+            items.push(MenuItem::item(
+                format!("edit-combine:{id}"),
                 tr!("Combine with Older Commit…"),
             ));
-            items.push(MenuItem::item(format!("drop:{id}"), "Drop…"));
+            items.push(MenuItem::item(format!("edit-drop:{id}"), "Drop…"));
+            items.push(MenuItem::item(
+                format!("edit-from:{id}"),
+                tr!("Edit Commits from Here…"),
+            ));
             items.push(MenuItem::item(format!("split:{id}"), "Split…"));
         }
         // マージはパッチにできない（git format-patch は飛ばす）。
+        items.push(MenuItem::separator("-patch"));
         if !merge {
-            items.push(MenuItem::separator("-patch"));
             items.push(MenuItem::item(format!("patch:{id}"), tr!("Save as Patch…")));
         }
+        // 既定の名前はタグ、なければローカルブランチ、なければ短い ID（GTK4 版の `archive_label`）。
+        let label = labels
+            .iter()
+            .find(|l| l.kind == amonhen_model::RefKind::Tag)
+            .or_else(|| {
+                labels
+                    .iter()
+                    .find(|l| l.kind == amonhen_model::RefKind::Local)
+            })
+            .map_or_else(|| id[..8].to_owned(), |l| l.name.clone());
+        items.push(MenuItem::item(
+            format!("export-archive:{id}:{label}"),
+            tr!("Export Archive…"),
+        ));
         items.push(MenuItem::separator("-copy"));
         items.push(MenuItem::item(format!("copy:{id}"), tr!("Copy Commit ID")));
         // このコミットを指すブランチ・タグの名前（リモートブランチは origin/ を付けたまま。5 つまで）。
@@ -4201,6 +13495,349 @@ fn shown_start(rev: &str) -> &str {
 }
 
 /// Pull の取り込み方（GTK4 版の `PULL_MODES`。Settings の Pull の既定と同じ名前）。
+/// 保存する場所を選んでから書く archive・bundle（コアの命令。`file` は選んだ場所で埋める）。
+#[derive(Clone)]
+enum PendingSave {
+    Archive {
+        repo: Arc<Repository>,
+        name: String,
+        command: Value,
+    },
+    Bundle {
+        repo: Arc<Repository>,
+        label: String,
+        commits: u64,
+        command: Value,
+    },
+}
+
+/// partial clone で手元にない中身の数（`archiveContents`・`bundlePreview` の答え。数え切れなければ「n+」）。0 なら
+/// None。
+fn missing_count(info: &Value, key: &str) -> Option<String> {
+    let count = info[key].as_u64().unwrap_or(0);
+    (count > 0).then(|| {
+        if info["more"] == true {
+            format!("{count}+")
+        } else {
+            count.to_string()
+        }
+    })
+}
+
+/// 書き出せる形（コアの `archive` の `format`）。先頭が既定（GTK4 版と同じ）。
+const ARCHIVE_FORMATS: [&str; 3] = ["zip", "tar.gz", "tar"];
+/// 前の形を覚えておく鍵（GTK4 版と同じ）。
+const ARCHIVE_FORMAT: &str = "archiveFormat";
+
+/// ファイル名と先頭のフォルダに使える名前（`/` と空白などは `-` に。GTK4 版の `archive::file_name`）。
+fn archive_name(text: &str) -> String {
+    let mut out = String::new();
+    for c in text.chars() {
+        if c.is_alphanumeric() || matches!(c, '.' | '_' | '-') {
+            out.push(c);
+        } else if !out.ends_with('-') {
+            out.push('-');
+        }
+    }
+    let trimmed = out.trim_matches(|c| c == '-' || c == '.');
+    if trimmed.is_empty() {
+        "archive".to_owned()
+    } else {
+        trimmed.to_owned()
+    }
+}
+
+/// 当てるパッチの一覧（件名・作者、その下にファイルごとの印と増減。GTK4 版の `list_markup` の文字だけの形）。
+fn patch_list(patches: &[Value]) -> String {
+    let mut out = Vec::new();
+    for patch in patches {
+        let subject = patch["subject"].as_str().unwrap_or_default();
+        let files = patch["files"].as_array().cloned().unwrap_or_default();
+        if subject.is_empty() && files.is_empty() {
+            continue;
+        }
+        if !subject.is_empty() {
+            let mut line = subject.to_owned();
+            if let Some(author) = patch["author"]
+                .as_str()
+                .or_else(|| patch["authorEmail"].as_str())
+            {
+                line.push_str(&format!("  ({author})"));
+            }
+            out.push(line);
+        }
+        for file in &files {
+            let path = file["path"].as_str().unwrap_or_default();
+            let name = match file["oldPath"].as_str() {
+                Some(old) => format!("{old} → {path}"),
+                None => path.to_owned(),
+            };
+            let change = if file["binary"].as_bool() == Some(true) {
+                "bin".to_owned()
+            } else {
+                format!(
+                    "+{} −{}",
+                    file["added"].as_u64().unwrap_or(0),
+                    file["removed"].as_u64().unwrap_or(0)
+                )
+            };
+            let mark = match file["status"].as_str() {
+                Some("added") => "A",
+                Some("deleted") => "D",
+                Some("renamed") => "R",
+                Some("copied") => "C",
+                _ => "M",
+            };
+            out.push(format!("  {mark} {name}  {change}"));
+        }
+    }
+    out.join("\n")
+}
+
+/// git の答えの最初の `error:` の行（なければ最初の行。GTK4 版の `first_line`）。
+fn patch_error_line(text: &str) -> String {
+    let lines: Vec<&str> = text.lines().map(str::trim).collect();
+    lines
+        .iter()
+        .find_map(|l| l.strip_prefix("error:").map(str::trim))
+        .or_else(|| lines.first().copied())
+        .unwrap_or_default()
+        .to_owned()
+}
+
+/// worktree 1 つ（`worktrees` の答えの 1 つ）。
+#[derive(Clone)]
+pub struct WorktreeInfo {
+    pub path: String,
+    pub branch: Option<String>,
+    /// HEAD のコミット（まだコミットのないブランチなら None）。
+    pub head: Option<String>,
+    pub locked: bool,
+    pub prunable: bool,
+    pub main: bool,
+}
+
+impl WorktreeInfo {
+    fn list(info: &Value) -> Vec<Self> {
+        info["worktrees"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|w| w["bare"].as_bool() != Some(true))
+            .map(|w| Self {
+                path: w["path"].as_str().unwrap_or_default().to_owned(),
+                branch: w["branch"].as_str().map(str::to_owned),
+                head: w["head"].as_str().map(str::to_owned),
+                locked: !w["locked"].is_null() && w["locked"] != false,
+                prunable: !w["prunable"].is_null() && w["prunable"] != false,
+                main: w["main"].as_bool() == Some(true),
+            })
+            .collect()
+    }
+
+    /// サイドバーの見出し（フォルダの名前とブランチ。ロック・なくなったフォルダは、細いサイドバーでも切れない
+    /// よう前に印をつける）。
+    /// サイドバーの行の見出し。`editing` は開いている worktree か、`changes` は変更の数（GTK4 版と同じく、
+    /// ✎ 開いているもの・⌂ メイン・⑂ ほかの印と、` · n`）。
+    fn title(&self, editing: bool, changes: u64) -> String {
+        let mut text = String::new();
+        text.push_str(if editing {
+            "✎ "
+        } else if self.main {
+            "⌂ "
+        } else {
+            "⑂ "
+        });
+        if self.prunable {
+            text.push_str("⚠ ");
+        }
+        if self.locked {
+            text.push_str("🔒 ");
+        }
+        text.push_str(&worktree_name(&self.path));
+        if let Some(branch) = &self.branch {
+            text.push_str(&format!("  {branch}"));
+        }
+        if changes > 0 {
+            text.push_str(&format!(" · {changes}"));
+        }
+        text
+    }
+}
+
+/// コミット欄に入れるテンプレート（# の行を除く）: 共有のテンプレート（`amonhen.commitTemplate`。`commit.template` の
+/// ファイルがリポジトリに近い段で決まっていればそちら。GTK4 版と同じ決め方）か、`commit.template` の中身。この
+/// リポジトリ専用のもの（Settings で書いたもの）はコアから、ほかは手元で読む。
+fn commit_template(
+    repo: &Repository,
+    workdir: &std::path::Path,
+    library: &[crate::templates::Template],
+) -> Option<String> {
+    let config: Value =
+        serde_json::from_str(&repo.run_json(r#"{"op":"configList"}"#)).unwrap_or_default();
+    let entries = config["info"]["entries"].as_array()?;
+    let entry = |key: &str| {
+        entries
+            .iter()
+            .rev()
+            .find(|e| {
+                e["key"]
+                    .as_str()
+                    .is_some_and(|k| k.eq_ignore_ascii_case(key))
+            })
+            .map(|e| {
+                (
+                    e["scope"].as_str().unwrap_or_default().to_owned(),
+                    e["value"].as_str().unwrap_or_default().to_owned(),
+                )
+            })
+    };
+    let file = entry("commit.template").filter(|(_, v)| !v.is_empty());
+    let shared = entry(crate::templates::LIBRARY_KEY)
+        .filter(|(scope, _)| {
+            !crate::templates::shared_yields(scope, file.as_ref().map(|(s, _)| s.as_str()))
+        })
+        .and_then(|(_, name)| {
+            library
+                .iter()
+                .find(|t| t.name == name)
+                .map(|t| t.text.clone())
+        });
+    let text = match (shared, file) {
+        (Some(text), _) => text,
+        (None, Some((_, path))) => file_template(repo, workdir, &path)?,
+        (None, None) => return None,
+    };
+    let lines: Vec<&str> = text.lines().filter(|l| !l.starts_with('#')).collect();
+    let text = lines.join("\n");
+    let text = text.trim();
+    (!text.is_empty()).then(|| text.to_owned())
+}
+
+/// `commit.template` のファイルの中身。
+fn file_template(repo: &Repository, workdir: &std::path::Path, path: &str) -> Option<String> {
+    let path = path.to_owned();
+    let text = if path
+        .replace('\\', "/")
+        .ends_with("/amonhen/commit-template")
+    {
+        let reply: Value =
+            serde_json::from_str(&repo.run_json(r#"{"op":"commitTemplate"}"#)).ok()?;
+        reply["info"]["text"].as_str()?.to_owned()
+    } else {
+        let file = match path.strip_prefix("~/") {
+            Some(rest) => std::env::var_os("USERPROFILE")
+                .map(std::path::PathBuf::from)?
+                .join(rest),
+            None if std::path::Path::new(&path).is_absolute() => path.into(),
+            None => workdir.join(&path),
+        };
+        std::fs::read_to_string(file).ok()?
+    };
+    Some(text)
+}
+
+/// 最近のコミット 30 個のメッセージと作者を裏で読む（最近のメッセージと Co-authored-by の候補。GTK4 版と同じ）。
+fn load_recent_messages(repo: Arc<Repository>, context: &ComponentContext<Root>) {
+    context.spawn_background(move |_| {
+        let recent = repo.history().map_or_else(Vec::new, |history| {
+            history
+                .graph
+                .ids()
+                .iter()
+                .take(30)
+                .filter_map(|id| {
+                    let info = repo.commit_info(id).ok()?;
+                    Some((
+                        info["message"].as_str()?.trim().to_owned(),
+                        info["author"].as_str().unwrap_or_default().to_owned(),
+                        info["authorEmail"].as_str().unwrap_or_default().to_owned(),
+                    ))
+                })
+                .collect()
+        });
+        Message::RecentMessages(recent)
+    });
+}
+
+/// ブランチの分け方（`branchGroups`）を裏で読む。
+fn load_groups(repo: Arc<Repository>, context: &ComponentContext<Root>) {
+    context.spawn_background(move |_| {
+        let reply = repo.run_json(r#"{"op":"branchGroups"}"#);
+        let reply = serde_json::from_str(&reply).unwrap_or_default();
+        Message::Groups(BranchGroups::from_reply(&reply))
+    });
+}
+
+/// 同じパスか（区切りの向きと大文字小文字を区別しない。Windows のパス）。
+fn same_path(a: &str, b: &str) -> bool {
+    let norm = |p: &str| p.replace('\\', "/").trim_end_matches('/').to_lowercase();
+    norm(a) == norm(b)
+}
+
+/// タグのリモートでの様子（`tagRemotes`）と submodule の様子（`submodules`）を裏で読む。
+fn load_tag_remotes(repo: Arc<Repository>, context: &ComponentContext<Root>) {
+    let r = repo.clone();
+    context.spawn_background(move |_| {
+        let reply: Value =
+            serde_json::from_str(&r.run_json(r#"{"op":"tagRemotes"}"#)).unwrap_or_default();
+        Message::TagRemotes(reply["info"].clone())
+    });
+    let r = repo.clone();
+    context.spawn_background(move |_| {
+        let reply: Value =
+            serde_json::from_str(&r.run_json(r#"{"op":"subtrees"}"#)).unwrap_or_default();
+        Message::Subtrees(reply["info"].clone())
+    });
+    load_submodules(repo, context);
+}
+
+/// submodule の様子（`submodules`）を裏で読む。
+fn load_submodules(repo: Arc<Repository>, context: &ComponentContext<Root>) {
+    context.spawn_background(move |_| {
+        let reply: Value =
+            serde_json::from_str(&repo.run_json(r#"{"op":"submodules"}"#)).unwrap_or_default();
+        Message::Submodules(reply["info"]["submodules"].clone())
+    });
+}
+
+/// worktree の一覧を裏で読む。
+fn load_worktrees(repo: Arc<Repository>, context: &ComponentContext<Root>) {
+    context.spawn_background(move |_| {
+        let reply: Value =
+            serde_json::from_str(&repo.run_json(r#"{"op":"worktrees"}"#)).unwrap_or_default();
+        Message::Worktrees(WorktreeInfo::list(&reply["info"]))
+    });
+}
+
+/// worktree のフォルダの名前。
+fn worktree_name(path: &str) -> String {
+    path.trim_end_matches(['/', '\\'])
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(path)
+        .to_owned()
+}
+
+/// 新しい worktree のフォルダの既定: リポジトリの隣の「<名前>-<ブランチ>」（GTK4 版と同じ）。
+fn default_worktree_folder(repo: &Repository, branch: &str) -> String {
+    let Some(workdir) = repo.paths().workdir else {
+        return String::new();
+    };
+    let name = workdir
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let parent = workdir
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_default();
+    parent
+        .join(format!("{name}-{}", branch.replace('/', "-")))
+        .to_string_lossy()
+        .into_owned()
+}
+
 /// パッチの形と送り状を覚えておく鍵（GTK4 版と同じ）。
 const PATCH_SINGLE_FILE: &str = "patchSingleFile";
 const PATCH_COVER_LETTER: &str = "patchCoverLetter";
@@ -4228,6 +13865,9 @@ const RESET_MODES: [&str; 3] = ["soft", "mixed", "hard"];
 
 /// Merge の取り込み方（GTK4 版の `MERGE_MODES`。相手が 1 つなので Fast-Forward Only も選べる）。
 const MERGE_MODES: [&str; 4] = ["git", "fastForwardOnly", "noFastForward", "squash"];
+
+/// いくつもの merge の取り込み方（いくつもなので Fast-Forward Only はない。GTK4 版の `MergeModes::new(false)`）。
+const SEVERAL_MERGE_MODES: [&str; 3] = ["git", "noFastForward", "squash"];
 
 fn merge_mode_title(mode: &str) -> String {
     match mode {
@@ -4266,12 +13906,84 @@ fn beep() {
 }
 
 /// 書き込む操作を裏で実行する。終わると `Performed`（変化は見張りが拾って読み直す）。`title` は失敗の見出し。
-fn perform(context: &ComponentContext<Root>, repo: Arc<Repository>, command: Value, title: String) {
+/// `pattern` を作業ツリーの直下の .gitignore の最後に足す（コアで読み書きするので、SSH 先でも同じ。GTK4 版の
+/// `add_to_gitignore`）。
+fn add_to_gitignore(context: &ComponentContext<Root>, repo: Arc<Repository>, pattern: String) {
     context.spawn_background(move |_| {
+        let title = tr!("Add “{pattern}” to .gitignore", pattern = &pattern);
+        let files: Value =
+            serde_json::from_str(&repo.run_json(r#"{"op":"ignoreFiles"}"#)).unwrap_or_default();
+        // 読めなければ書かない（空として書くと、.gitignore と info/exclude の中身を失う）。
+        let (Some(current), Some(exclude)) = (
+            files["info"]["gitignore"].as_str(),
+            files["info"]["exclude"].as_str(),
+        ) else {
+            let e = files["error"]
+                .as_str()
+                .map_or_else(|| tr!("The operation failed"), str::to_owned);
+            return Message::Performed(Some((title, e)));
+        };
+        let Some(gitignore) = crate::workcopy::with_ignore_pattern(current, &pattern) else {
+            return Message::Performed(None);
+        };
+        let command =
+            json!({ "op": "saveIgnoreFiles", "gitignore": gitignore, "exclude": exclude });
         let reply: Value = serde_json::from_str(&repo.run_json(&command.to_string()))
             .unwrap_or_else(|e| json!({ "error": e.to_string() }));
         Message::Performed(reply["error"].as_str().map(|e| (title, e.to_owned())))
     });
+}
+
+fn perform(context: &ComponentContext<Root>, repo: Arc<Repository>, command: Value, title: String) {
+    let done = done_text(&command);
+    let _ = title;
+    context.spawn_background(move |_| {
+        let reply: Value = serde_json::from_str(&repo.run_json(&command.to_string()))
+            .unwrap_or_else(|e| json!({ "error": e.to_string() }));
+        match (reply["error"].as_str(), done) {
+            // 何が失敗したか・なぜか・次に何ができるか（GTK4 版の失敗の帯と Details）。
+            (Some(_), _) => Message::OperationFailed(
+                repo,
+                crate::failure::Failure::from_reply(&reply, Some(command)),
+            ),
+            (None, Some(done)) => Message::Done(done),
+            (None, None) => Message::Performed(None),
+        }
+    });
+}
+
+/// 操作が終わったときの一言（知らせる値打ちのある操作だけ。GTK4 版の `statusbar::done_text`）。
+fn done_text(command: &Value) -> Option<String> {
+    let s = |key: &str| command[key].as_str().unwrap_or_default().to_owned();
+    let head = HEAD_NAME.with(|h| h.borrow().clone());
+    let head = if head.is_empty() {
+        "HEAD".to_owned()
+    } else {
+        head
+    };
+    Some(match command["op"].as_str()? {
+        "fetch" => tr!("Fetched"),
+        "pull" => tr!("Pulled into {branch}", branch = head),
+        "push" => tr!(
+            "Pushed {branch} to {target}",
+            branch = s("branch"),
+            target = format!("{}/{}", s("remote"), s("remoteBranch"))
+        ),
+        "merge" => tr!("Merged into {branch}", branch = head),
+        "mergeInto" => tr!(
+            "Merged {rev} into {target}",
+            rev = s("rev"),
+            target = s("target")
+        ),
+        "rebase" => tr!("Rebased onto {onto}", onto = s("onto")),
+        "checkout" => tr!("Checked out {name}", name = s("branch")),
+        "track" => tr!("Checked out {name}", name = s("remoteBranch")),
+        "stashPush" => tr!("Stashed the changes"),
+        "stashApply" => tr!("Applied {name}", name = s("name")),
+        "deleteBranch" => tr!("Deleted {name}", name = s("name")),
+        "undo" => tr!("Undone"),
+        _ => return None,
+    })
 }
 
 /// 命令を順に裏で実行する（失敗したらそこで止める）。
@@ -4282,6 +13994,8 @@ fn perform_all(
     title: String,
 ) {
     context.spawn_background(move |_| {
+        // 終わったときの一言は、最後の命令のもの（設定を書いてから pull するなど）。
+        let done = commands.last().and_then(done_text);
         for command in commands {
             let reply: Value = serde_json::from_str(&repo.run_json(&command.to_string()))
                 .unwrap_or_else(|e| json!({ "error": e.to_string() }));
@@ -4289,7 +14003,10 @@ fn perform_all(
                 return Message::Performed(Some((title, e.to_owned())));
             }
         }
-        Message::Performed(None)
+        match done {
+            Some(done) => Message::Done(done),
+            None => Message::Performed(None),
+        }
     });
 }
 
@@ -4337,7 +14054,7 @@ fn remote_changes(
 }
 
 /// 文字をクリップボードに入れる。
-fn copy_text(text: &str) {
+pub(crate) fn copy_text(text: &str) {
     use windows::Win32::Foundation::{HANDLE, HGLOBAL};
     use windows::Win32::System::DataExchange::{
         CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
@@ -4399,7 +14116,81 @@ fn person(info: &Value, role: &str) -> String {
 }
 
 /// コミットの詳細（作者、コミッター、Commit・Parent・Refs の表、件名と本文）。
-fn details(info: Option<(&Value, Option<&Value>)>) -> View {
+/// `text` の中の `query` の一致（大文字・小文字を区別しない）に色を付けた runs。一致がなければ None。
+fn highlighted(text: &str, query: &str, bold: bool) -> Option<RichText> {
+    let query = query.trim();
+    if query.is_empty() {
+        return None;
+    }
+    let lower = text.to_lowercase();
+    let needle = query.to_lowercase();
+    // 小文字にして長さが変わる文字があれば、位置がずれるので色を付けない。
+    if lower.len() != text.len() {
+        return None;
+    }
+    let mut inlines = Vec::new();
+    let mut at = 0;
+    for (start, _) in lower.match_indices(&needle) {
+        let end = start + needle.len();
+        if start < at || !text.is_char_boundary(start) || !text.is_char_boundary(end) {
+            continue;
+        }
+        if at < start {
+            inlines.push(RichTextInline::Run(RichTextRun {
+                text: text[at..start].to_owned(),
+                is_bold: bold,
+                ..RichTextRun::default()
+            }));
+        }
+        inlines.push(RichTextInline::Run(RichTextRun {
+            text: text[start..end].to_owned(),
+            is_bold: true,
+            foreground: Some(Color::rgb(0xb2, 0x5f, 0x00)),
+            ..RichTextRun::default()
+        }));
+        at = end;
+    }
+    if at == 0 {
+        return None;
+    }
+    if at < text.len() {
+        inlines.push(RichTextInline::Run(RichTextRun {
+            text: text[at..].to_owned(),
+            is_bold: bold,
+            ..RichTextRun::default()
+        }));
+    }
+    Some(RichText::single_paragraph(inlines))
+}
+
+/// メッセージの 1 つの欄（`query` の一致があれば色を付ける）。
+fn message_text(text: &str, query: &str, size: f64, bold: bool) -> View {
+    // 色を付けるときと付けないときで部品が違うので、鍵を分けて作り直させる。
+    let runs = highlighted(text, query, bold);
+    let key = if runs.is_some() { "found" } else { "plain" };
+    let view: View = match runs {
+        Some(runs) => RichTextBlock::new()
+            .paragraphs(runs)
+            .font_size(size)
+            .text_wrapping(TextWrapping::Wrap)
+            .into(),
+        None => {
+            let block = TextBlock::new()
+                .text(text)
+                .font_size(size)
+                .is_text_selection_enabled(true)
+                .text_wrapping(TextWrapping::Wrap);
+            if bold {
+                block.font_weight(FontWeight::SEMI_BOLD).into()
+            } else {
+                block.into()
+            }
+        }
+    };
+    View::keyed_fragment([(key, view)])
+}
+
+fn details(info: Option<(&Value, Option<&Value>)>, query: &str) -> View {
     let Some((info, extras)) = info else {
         return TextBlock::new().margin(12.0).into();
     };
@@ -4476,8 +14267,37 @@ fn details(info: Option<(&Value, Option<&Value>)>) -> View {
             rows.push(line("Rev", rev.to_owned()).into());
         }
     }
-    if let Some(status) = signature_status(info, extras) {
-        rows.push(line("Signature", status).into());
+    // 署名: 状態（と署名者）を押すと、吹き出しで詳しく（GTK4 版・macOS 版と同じ）。
+    if let Some((status, check, kind)) = crate::signature::of(info, extras) {
+        let signer = check
+            .and_then(|c| c["signer"].as_str())
+            .filter(|s| !s.is_empty());
+        let text = match signer {
+            Some(signer) => format!("{} — {signer}", status.label()),
+            None => status.label().to_owned(),
+        };
+        let mut value = TextBlock::new().text(text).font_size(12.0);
+        if let Some(color) = status.color() {
+            value = value.foreground(Brush::Solid(color));
+        }
+        let committer = info["committerEmail"].as_str().unwrap_or_default();
+        let popover = crate::signature::popover(status, check, &kind, committer);
+        rows.push(
+            StackPanel::new()
+                .orientation(Orientation::Horizontal)
+                .spacing(2.0)
+                .children((
+                    TextBlock::new()
+                        .text("Signature")
+                        .font_size(12.0)
+                        .foreground(secondary)
+                        .vertical_alignment(VerticalAlignment::Center),
+                    Button::new()
+                        .style(ButtonStyle::Subtle)
+                        .content(value)
+                        .flyout_with(Flyout::rich(popover).placement(FlyoutPlacement::Bottom)),
+                )),
+        );
     }
     let refs = list("refs");
     if !refs.is_empty() {
@@ -4522,25 +14342,13 @@ fn details(info: Option<(&Value, Option<&Value>)>) -> View {
     let message = info["message"].as_str().unwrap_or_default().trim_end();
     let (subject, body) = message.split_once('\n').unwrap_or((message, ""));
     rows.push(
-        TextBlock::new()
-            .text(subject)
-            .font_size(14.0)
-            .font_weight(FontWeight::SEMI_BOLD)
-            .is_text_selection_enabled(true)
-            .text_wrapping(TextWrapping::Wrap)
+        Border::new()
             .margin(Thickness::new(0.0, 8.0, 0.0, 0.0))
-            .into(),
+            .content(message_text(subject, query, 14.0, true)),
     );
     let body = body.trim();
     if !body.is_empty() {
-        rows.push(
-            TextBlock::new()
-                .text(body)
-                .font_size(13.0)
-                .is_text_selection_enabled(true)
-                .text_wrapping(TextWrapping::Wrap)
-                .into(),
-        );
+        rows.push(message_text(body, query, 13.0, false));
     }
     StackPanel::new()
         .spacing(4.0)
@@ -4551,7 +14359,21 @@ fn details(info: Option<(&Value, Option<&Value>)>) -> View {
 /// 複数のコミットを選んだときの見出し（GTK4 版の `show_selection`）: 数、差分の取り方の説明、各コミットの 1 行。
 fn selection_details(selection: &Value) -> View {
     let count = selection["count"].as_u64().unwrap_or(0);
-    let note = match selection["kind"].as_str() {
+    // Push で送る変更すべてには、題と説明が付いてくる。
+    let title = selection["title"].as_str().map_or_else(
+        || tr!("{count} commits selected", count = count),
+        str::to_owned,
+    );
+    let note = match selection["note"].as_str() {
+        Some(note) => note.to_owned(),
+        None => selection_note(selection),
+    };
+    selection_view(selection, title, note)
+}
+
+/// 複数のコミットを選んだときの、差分の取り方の説明。
+fn selection_note(selection: &Value) -> String {
+    match selection["kind"].as_str() {
         Some("range") => tr!(
             "They are consecutive, so this is the diff from the parent of the oldest to the newest (the same as squashing them into one)."
         ),
@@ -4561,11 +14383,15 @@ fn selection_details(selection: &Value) -> View {
         _ => tr!(
             "They are not contiguous, so each commit’s diff is listed file by file (headed by the path and short ID)."
         ),
-    };
+    }
+}
+
+/// 複数のコミットの見出し: 題、説明、各コミットの 1 行。
+fn selection_view(selection: &Value, title: String, note: String) -> View {
     let secondary = Brush::Solid(Color::argb(0x99, 0x1c, 0x1c, 0x1f));
     let mut rows: Vec<View> = vec![
         TextBlock::new()
-            .text(tr!("{count} commits selected", count = count))
+            .text(title)
             .font_size(14.0)
             .font_weight(FontWeight::SEMI_BOLD)
             .into(),
@@ -4597,44 +14423,6 @@ fn selection_details(selection: &Value) -> View {
         .children((View::keyed_fragment(rows.into_iter().enumerate()),))
 }
 
-/// 署名の行の文字（署名がなければ `None`）。言葉は GTK4 版の `signature::Status::label` と同じ（署名者の
-/// メールとコミッターの照合はまだしない）。検証の結果は時間のかかる分で届く。
-fn signature_status(info: &Value, extras: Option<&Value>) -> Option<String> {
-    let kind = info["signed"].as_str();
-    let check = extras.map(|e| &e["signature"]).filter(|s| !s.is_null());
-    if kind.is_none() && check.is_none() {
-        return None;
-    }
-    let label = match (extras, check) {
-        (None, _) => "Checking…",
-        (Some(_), None) => "No key",
-        (Some(_), Some(check)) => match check["status"].as_str().unwrap_or_default() {
-            "G" | "U" => {
-                let trust = check["trust"].as_str().unwrap_or_default().to_lowercase();
-                let trusted = kind == Some("ssh")
-                    || matches!(trust.as_str(), "ultimate" | "full" | "fully" | "marginal");
-                if check["status"] == "U" || !trusted {
-                    "Untrusted key"
-                } else {
-                    "Verified"
-                }
-            }
-            "X" | "Y" => "Expired",
-            "R" => "Revoked key",
-            "B" => "Bad signature",
-            "V" => "Can’t verify",
-            _ => "No key",
-        },
-    };
-    let signer = check
-        .and_then(|c| c["signer"].as_str())
-        .filter(|s| !s.is_empty());
-    Some(match signer {
-        Some(signer) => format!("{label} — {signer}"),
-        None => label.to_owned(),
-    })
-}
-
 /// SwapChainPanel に swap chain をつなぐ（reactor が使う windows-core の型で渡す）。受け付けられたら `true`。
 fn attach_chain(panel: &ElementRef<SwapChainPanel>, surface: &Surface) -> Result<bool, String> {
     use windows::core::Interface as _;
@@ -4650,6 +14438,49 @@ fn attach_chain(panel: &ElementRef<SwapChainPanel>, surface: &Surface) -> Result
             eprintln!("SwapChainPanel に swap chain をつなげない: {e:?}");
         }
     }))
+}
+
+/// 開いていないリポジトリを、その場で開く（clone した直後に取り出すフォルダを選ぶ）。
+fn open_repository(location: &str) -> Option<Arc<Repository>> {
+    let backend = amonhen_backend_gix::GixBackend::open(location).ok()?;
+    Some(Arc::new(Repository::new(backend)))
+}
+
+/// HEAD の木の `path` にあるフォルダを裏で読む（コアの `treeFolders`）。
+fn load_tree_folders(repo: Arc<Repository>, path: String, context: &ComponentContext<Root>) {
+    context.spawn_background(move |_| {
+        let command = json!({ "op": "treeFolders", "path": &path });
+        let reply: Value = serde_json::from_str(&repo.run_json(&command.to_string()))
+            .unwrap_or_else(|e| json!({ "error": e.to_string() }));
+        let entries = match reply["error"].as_str() {
+            Some(e) => Err(e.to_owned()),
+            None => Ok(reply["info"]["entries"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|e| e["name"].as_str().map(str::to_owned))
+                .collect()),
+        };
+        Message::TreeFolderLoaded(path, entries)
+    });
+}
+
+/// フックの置き場所（GTK4 版の `hooks_directory`）: `core.hooksPath` がなければ $GIT_COMMON_DIR/hooks、相対なら
+/// 作業ツリーから、`~` はホームから。
+fn hooks_directory(
+    repo: Option<&Repository>,
+    hooks_path: Option<&str>,
+) -> Option<std::path::PathBuf> {
+    let paths = repo?.paths();
+    match hooks_path {
+        None => Some(paths.common_dir.join("hooks")),
+        Some(p) if std::path::Path::new(p).is_absolute() || p.starts_with('/') => Some(p.into()),
+        Some(p) if p.starts_with('~') => Some(
+            std::path::PathBuf::from(std::env::var_os("USERPROFILE")?)
+                .join(p[1..].trim_start_matches(['/', '\\'])),
+        ),
+        Some(p) => paths.workdir.map(|w| w.join(p)),
+    }
 }
 
 /// 大きさが変わった swap chain を作り直す（なければ作る）。
@@ -4729,6 +14560,8 @@ impl DiffPane {
 
 struct HistoryView {
     session: Session,
+    /// 差分の中を探している文字（空なら探していない）。
+    diff_query: String,
     root: ElementRef<Grid>,
     /// 根にショートカットを付けた（付けるのを頼んだ）。
     root_input: bool,
@@ -4758,6 +14591,8 @@ struct HistoryView {
     sidebar_input: bool,
     sidebar_host_input: bool,
     sidebar_menu_ready: bool,
+    /// 差分のファイルのメニューを作り直したので、次のフレームで開く。
+    diff_menu_ready: bool,
     /// メニューを作り直した（次のフレームで開く）。
     menu_ready: bool,
     /// Working Copy を出している（差分の欄は選んだファイルの差分）。
@@ -4798,6 +14633,9 @@ impl HistoryView {
 
     /// 届いたものを取り込み、描くものがあれば描く。
     fn render(&mut self) -> Result<(), String> {
+        retry_monospace();
+        retry_splitters();
+        retry_place();
         if !self.input_requested {
             self.input_requested = request_input(&self.area, Target::History);
         }
@@ -4838,6 +14676,45 @@ impl HistoryView {
         }
         if std::mem::take(&mut self.sidebar_menu_ready) {
             open_sidebar_menu();
+        }
+        if std::mem::take(&mut self.diff_menu_ready) {
+            open_diff_menu();
+        }
+        // 自動の fetch（Settings > General で決めた間隔）。
+        let (minutes, since) = AUTO_FETCH.with(|a| a.get());
+        if minutes > 0 && since.elapsed() >= std::time::Duration::from_secs(u64::from(minutes) * 60)
+        {
+            AUTO_FETCH.with(|a| a.set((minutes, Instant::now())));
+            self.sender.send(Message::AutoFetch);
+        }
+        // ほかの worktree の変更の数（10 秒ごと、5 分ごとに全部を数え直す。変わっていなければエンジンは git を
+        // 動かさない）。
+        let (counted, fresh) = WORKTREE_TICK.with(|t| t.get());
+        if counted.elapsed() >= std::time::Duration::from_secs(10) {
+            let all = fresh.elapsed() >= std::time::Duration::from_secs(300);
+            WORKTREE_TICK
+                .with(|t| t.set((Instant::now(), if all { Instant::now() } else { fresh })));
+            self.sender.send(Message::CountWorktrees(all));
+        }
+        // 終わった操作の一言を、出してから 5 秒で消す。
+        if FLASH_UNTIL
+            .with(|f| f.get())
+            .is_some_and(|until| Instant::now() >= until)
+        {
+            FLASH_UNTIL.with(|f| f.set(None));
+            self.sender.send(Message::FlashExpired);
+        }
+        // 走っている操作の数を 0.5 秒ごとに数え、変わったら知らせる（ステータスバーの ⟳ n）。
+        let (count, last) = RUNNING.with(|r| r.get());
+        if last.is_none_or(|l| l.elapsed() >= std::time::Duration::from_millis(500)) {
+            let now = amonhen_model::activity::records()
+                .iter()
+                .filter(|r| r.ok.is_none())
+                .count();
+            RUNNING.with(|r| r.set((now, Some(Instant::now()))));
+            if now != count {
+                self.sender.send(Message::Running(now));
+            }
         }
         // Activity を開いている間は 0.5 秒ごとに読み直してもらう（GTK4 版と同じ間隔）。
         if let Some(last) = ACTIVITY_TICK.with(|t| t.get())
@@ -4888,6 +14765,24 @@ impl HistoryView {
         // 複数選んだ行が変わったら、まとめた差分を読む。
         if s.data.multi != self.multi_sent {
             self.multi_sent = s.data.multi.clone();
+            // 右クリックのメニュー（2 つなら Range Diff で比べる）のために、選んだコミットを知らせる（上から）。
+            let mut rows = self.multi_sent.clone();
+            rows.sort_unstable();
+            let ids: Vec<(String, bool)> = s.data.history.as_ref().map_or_else(Vec::new, |h| {
+                rows.iter()
+                    .filter_map(|&r| {
+                        let id = h.graph.ids().get(r as usize)?.to_string();
+                        let merge = h
+                            .layout
+                            .nodes()
+                            .get(r as usize)
+                            .is_some_and(|n| n.flags & amonhen_layout::Node::MERGE != 0);
+                        Some((id, merge))
+                    })
+                    .collect()
+            });
+            let consecutive = rows.windows(2).all(|w| w[1] == w[0] + 1);
+            self.sender.send(Message::MultiSelected(ids, consecutive));
             if self.multi_sent.len() > 1 {
                 s.data.want_selection(self.multi_sent.clone());
             } else {
@@ -4943,6 +14838,7 @@ impl HistoryView {
             self.menu_requested = true;
             self.sender.send(Message::OpenHistoryMenu);
         }
+        let mut diff_replaced = false;
         if let Some(commit) = &s.data.commit
             && self.shown != Some(commit.row)
         {
@@ -4950,9 +14846,12 @@ impl HistoryView {
             s.data.extras_changed = false;
             self.sender
                 .send(Message::Commit(commit.info.clone(), commit.extras.clone()));
+            self.sender
+                .send(Message::ChangedFiles(changed_files(&commit.stacked)));
             s.renderer.forget_diff();
             self.diff.scroll_y = 0.0;
             self.diff.dirty = true;
+            diff_replaced = true;
         }
         if std::mem::take(&mut s.data.extras_changed)
             && let Some(commit) = &s.data.commit
@@ -4965,9 +14864,38 @@ impl HistoryView {
             self.diff.dirty = true;
         }
         if std::mem::take(&mut s.data.working_changed) && self.working_page {
+            let sides = s.data.working.as_ref().and_then(|w| {
+                let d = &w.diff;
+                (d.combined.is_none() && d.entry.is_staged() && d.entry.is_unstaged())
+                    .then_some(d.staged)
+            });
+            self.sender.send(Message::WorkingSides(sides));
             s.renderer.forget_diff();
             self.diff.scroll_y = 0.0;
             self.diff.dirty = true;
+            diff_replaced = true;
+        }
+        // 差分が替わったら、差分の中の検索をし直す（一致の数だけ。移るのは次・前を押したとき）。
+        if diff_replaced && !self.diff_query.is_empty() {
+            let view = if self.working_page {
+                s.data.working.as_ref().map(|w| &w.diff.view)
+            } else {
+                s.data.commit.as_ref().map(|c| &c.diff)
+            };
+            let found = view.map_or_else(Vec::new, |v| {
+                crate::render::find_in_diff(v, &self.diff_query)
+            });
+            let status = if found.is_empty() {
+                tr!("No Matches")
+            } else {
+                found.len().to_string()
+            };
+            s.renderer.diff_find = found;
+            s.renderer.diff_current = None;
+            self.sender.send(Message::DiffFindStatus(status));
+        } else if diff_replaced {
+            s.renderer.diff_find.clear();
+            s.renderer.diff_current = None;
         }
         if self.diff.dirty
             && let Some(surface) = self.diff.surface.as_mut()
@@ -5000,6 +14928,83 @@ impl HistoryView {
             std::process::exit(0);
         }
         Ok(())
+    }
+
+    /// 差分で次・前の変更（hunk の見出し。`files` ならファイルの見出し）を一番上に出す。行き先がなければ false。
+    fn move_in_diff(&mut self, step: i32, files: bool) -> bool {
+        use amonhen_layout::DiffRow;
+        let data = &self.session.data;
+        let view = if self.working_page {
+            data.working.as_ref().map(|w| &w.diff.view)
+        } else {
+            data.commit.as_ref().map(|c| &c.diff)
+        };
+        let Some(view) = view else { return false };
+        let kind = if files { DiffRow::FILE } else { DiffRow::HUNK };
+        let marks: Vec<usize> = view
+            .rows
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| r.kind == kind)
+            .map(|(i, _)| i)
+            .collect();
+        let rows = view.rows.len();
+        // 一番上に見えている行（の見出し）から数える。
+        let top = (self.diff.scroll_y / DIFF_ROW_HEIGHT + 0.5) as usize;
+        let target = if step > 0 {
+            marks.iter().copied().find(|&r| r > top)
+        } else {
+            marks.iter().copied().rev().find(|&r| r < top)
+        };
+        let Some(row) = target else { return false };
+        self.diff.scroll_y = row as f32 * DIFF_ROW_HEIGHT;
+        self.diff.scroll_by(0.0, rows);
+        true
+    }
+
+    /// 差分の中を `query` で探し、`step` だけ一致を移る（0 なら今見えている所から最初の一致）。件数の文字を返す。
+    fn find_in_diff(&mut self, query: String, step: i32) -> String {
+        if query != self.diff_query {
+            self.diff_query = query;
+            self.session.renderer.diff_current = None;
+        }
+        let rows = self.diff_rows();
+        let data = &self.session.data;
+        let view = if self.working_page {
+            data.working.as_ref().map(|w| &w.diff.view)
+        } else {
+            data.commit.as_ref().map(|c| &c.diff)
+        };
+        let found = view.map_or_else(Vec::new, |v| {
+            crate::render::find_in_diff(v, &self.diff_query)
+        });
+        self.diff.dirty = true;
+        let r = &mut self.session.renderer;
+        if found.is_empty() {
+            r.diff_find.clear();
+            r.diff_current = None;
+            return if self.diff_query.is_empty() {
+                String::new()
+            } else {
+                tr!("No Matches")
+            };
+        }
+        let n = found.len();
+        let top = (self.diff.scroll_y / DIFF_ROW_HEIGHT) as u32;
+        let index = match (step, r.diff_current) {
+            (0, _) | (_, None) => found.iter().position(|m| m.0 >= top).unwrap_or(0),
+            (s, Some(c)) => (c as i64 + i64::from(s)).rem_euclid(n as i64) as usize,
+        };
+        let row = found[index].0;
+        r.diff_find = found;
+        r.diff_current = Some(index);
+        // 今の一致の行が見えていなければ、上から 3 分の 1 の所へ。
+        let (row_top, height) = (row as f32 * DIFF_ROW_HEIGHT, self.diff.height());
+        if row_top < self.diff.scroll_y || row_top + DIFF_ROW_HEIGHT > self.diff.scroll_y + height {
+            self.diff.scroll_y = row_top - height / 3.0;
+        }
+        self.diff.scroll_by(0.0, rows);
+        format!("{} / {n}", index + 1)
     }
 
     /// History を探す。同じ問い合わせをもう探してあれば、選んでいる行から次（`backwards` なら前）の一致へ。空なら
@@ -5109,6 +15114,35 @@ impl HistoryView {
         }
     }
 
+    /// 差分の中身を替えた（取っておいた行の文字を捨て、上から描き直す）。
+    fn diff_replaced(&mut self) {
+        self.session.renderer.forget_diff();
+        self.diff.scroll_y = 0.0;
+        self.diff.dirty = true;
+    }
+
+    /// 変更ファイルの一覧で `index` 番目を選んだ: 1 ファイルずつならそのファイルを出し、並べているなら見出しまで
+    /// スクロールする。
+    fn show_file(&mut self, index: usize) {
+        if self.session.data.single_file {
+            if self.session.data.show_only(Some(index)) {
+                self.diff_replaced();
+            }
+            return;
+        }
+        let row = self
+            .session
+            .data
+            .commit
+            .as_ref()
+            .and_then(|c| c.file_rows.get(index).copied());
+        if let Some(row) = row {
+            self.diff.scroll_y = row as f32 * DIFF_ROW_HEIGHT;
+            let rows = self.diff_rows();
+            self.diff.scroll_by(0.0, rows);
+        }
+    }
+
     fn diff_rows(&self) -> usize {
         let data = &self.session.data;
         if self.working_page {
@@ -5166,6 +15200,53 @@ fn attach_search_keys(element: &IInspectable) -> windows_core_reactor::Result<()
     Ok(())
 }
 
+/// マージエディタの左右と Base の欄で、選んでいるコンフリクトを見える所へ出す（欄の位置をそろえる。GTK4 版と
+/// 同じ）。描き直した直後は並べ終わっていないので、少し待ってから。
+/// メニューの `key` の操作を、少し後で行う（閉じた ContentDialog を描き終えてから次の確認を開くため）。
+fn menu_later(context: &ComponentContext<Root>, key: String) {
+    context.spawn_background(move |_| {
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        Message::HistoryMenu(key)
+    });
+}
+
+fn merge_scroll_later(context: &ComponentContext<Root>) {
+    context.spawn_background(|_| {
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        Message::MergeBringIntoView
+    });
+}
+
+/// マージエディタの Result の欄: Accept などで書き換えた直後なら、Ctrl+Z でそれを戻し、Ctrl+Y・Ctrl+Shift+Z で
+/// やり直す（手で打った後は TextBox の Undo のまま）。
+fn attach_merge_keys(element: &IInspectable) -> windows_core_reactor::Result<()> {
+    let ui: xaml::UIElement = element.cast()?;
+    let revoker = ui.PreviewKeyDown(|_, args: Ref<xaml::KeyRoutedEventArgs>| {
+        let Some(args) = args.as_ref() else { return };
+        let down = |key: xaml::VirtualKey| {
+            xaml::InputKeyboardSource::GetKeyStateForCurrentThread(key)
+                .is_ok_and(|s| s.contains(xaml::CoreVirtualKeyStates::Down))
+        };
+        if !down(xaml::VirtualKey::Control) {
+            return;
+        }
+        let shift = down(xaml::VirtualKey::Shift);
+        let (can_undo, can_redo) = MERGE_UNDO.with(std::cell::Cell::get);
+        let redo = match args.Key() {
+            Ok(xaml::VirtualKey::Z) if !shift && can_undo => false,
+            Ok(xaml::VirtualKey::Z) if shift && can_redo => true,
+            Ok(xaml::VirtualKey::Y) if can_redo => true,
+            _ => return,
+        };
+        let _ = args.SetHandled(true);
+        with_history(|h| {
+            h.sender.send(Message::MergeUndo(redo));
+        });
+    })?;
+    REVOKERS.with(|r| r.borrow_mut().push(revoker));
+    Ok(())
+}
+
 /// ダイアログの入力の欄の Enter で、既定のボタンを押したことにする。
 fn attach_enter(element: &IInspectable) -> windows_core_reactor::Result<()> {
     let ui: xaml::UIElement = element.cast()?;
@@ -5181,6 +15262,742 @@ fn attach_enter(element: &IInspectable) -> windows_core_reactor::Result<()> {
         });
     })?;
     REVOKERS.with(|r| r.borrow_mut().push(revoker));
+    Ok(())
+}
+
+/// Working Copy の一覧のキー（GTK4 版・macOS 版と同じ）: Space で含める・外す、Delete・Backspace で捨てる。
+/// ListView が先に使うキーなので、包んだ Grid の PreviewKeyDown で受ける。
+fn attach_working_keys(element: &IInspectable) -> windows_core_reactor::Result<()> {
+    let ui: xaml::UIElement = element.cast()?;
+    let revoker = ui.PreviewKeyDown(|_, args: Ref<xaml::KeyRoutedEventArgs>| {
+        let Some(args) = args.as_ref() else { return };
+        let discard = match args.Key() {
+            Ok(xaml::VirtualKey::Space) => false,
+            Ok(xaml::VirtualKey::Delete | xaml::VirtualKey::Back) => true,
+            _ => return,
+        };
+        let _ = args.SetHandled(true);
+        with_history(|h| {
+            h.sender.send(Message::WorkingKey(discard));
+        });
+    })?;
+    REVOKERS.with(|r| r.borrow_mut().push(revoker));
+    Ok(())
+}
+
+/// Push の前の注意（GTK4 版の `push_warnings`）: 既定のブランチへ直接、整理し忘れのコミット、秘密らしきファイル・
+/// バイナリの追加（`base`〜`tip` で足すファイルから。バイナリは先頭の 100 ファイルまで数える）。
+fn push_warnings(
+    repo: &Repository,
+    upstream: &str,
+    outgoing: &[(String, String, String, i64)],
+    base: &amonhen_model::Oid,
+    tip: &amonhen_model::Oid,
+) -> Vec<String> {
+    use amonhen_model::ChangeKind;
+    let mut out = Vec::new();
+    let remote_branch = upstream.split_once('/').map_or(upstream, |(_, b)| b);
+    if ["main", "master", "trunk", "develop"].contains(&remote_branch) {
+        out.push(tr!(
+            "This pushes straight to {upstream}.",
+            upstream = upstream
+        ));
+    }
+    let unfinished = outgoing
+        .iter()
+        .filter(|(_, subject, _, _)| {
+            let s = subject.to_lowercase();
+            s.starts_with("fixup!")
+                || s.starts_with("squash!")
+                || s.starts_with("amend!")
+                || s.starts_with("wip")
+                || s.contains(" wip ")
+                || s.ends_with(" wip")
+        })
+        .count();
+    if unfinished > 0 {
+        out.push(tr!(
+            "{count} commits look unfinished (fixup!, squash! or WIP).",
+            count = unfinished
+        ));
+    }
+    let changes = repo.changes_between(Some(base), tip).unwrap_or_default();
+    let secret_like: Vec<&str> = changes
+        .iter()
+        .filter(|c| c.kind == ChangeKind::Added)
+        .map(|c| c.path.as_str())
+        .filter(|path| {
+            let name = path.rsplit('/').next().unwrap_or(path).to_lowercase();
+            name == ".env"
+                || name.starts_with(".env.")
+                || [".pem", ".key", ".p12", ".pfx"]
+                    .iter()
+                    .any(|e| name.ends_with(e))
+                || name.starts_with("id_rsa")
+                || name.starts_with("id_ed25519")
+                || name.contains("credential")
+                || name.contains("secret")
+        })
+        .take(3)
+        .collect();
+    if !secret_like.is_empty() {
+        out.push(tr!(
+            "Adds files that may hold secrets: {files}",
+            files = secret_like.join(", ")
+        ));
+    }
+    let binaries = changes
+        .iter()
+        .take(100)
+        .filter(|c| c.kind == ChangeKind::Added)
+        .filter(|c| {
+            repo.file_diff(c, &crate::data::PROFILE)
+                .is_ok_and(|d| d.binary)
+        })
+        .count();
+    if binaries > 0 {
+        out.push(tr!("Adds {count} binary files.", count = binaries));
+    }
+    out
+}
+
+/// コンフリクトの見込みの行（ありそうならオレンジ）。
+fn forecast_view(text: &str, conflicts: bool) -> View {
+    TextBlock::new()
+        .text(text.to_owned())
+        .font_size(12.0)
+        .foreground(Brush::Solid(if conflicts {
+            Color::rgb(0xc4, 0x6a, 0x00)
+        } else {
+            Color::argb(0xa0, 0, 0, 0)
+        }))
+        .text_wrapping(TextWrapping::Wrap)
+        .into()
+}
+
+/// Pull の確認に要る、git の設定と取り込み方ごとの前と後の絵の材料。
+pub struct PullDrawings {
+    /// git の設定のとおりのときの取り込み方（`syncDefaults` の `pull`）と、取り込み方が決まっていないときに git が
+    /// 断る場合（`pullRefuses`。決まっていれば None）。
+    by_git: String,
+    refuses: Option<String>,
+    /// 両方に新しいコミットがあるときの `mergePreview`・`rewritePreview`・`predictMerge` の答え。
+    merge: Option<Value>,
+    rebase: Option<Value>,
+    forecast: Option<Value>,
+}
+
+/// 動かせる境目: サイドバーの右、右の列の左、右の列の詳細と差分の間。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Split {
+    Sidebar,
+    Right,
+    Details,
+    /// Repositories の見出しの列（Branch から数えた番号）の左端。
+    Column(usize),
+}
+
+/// 境目の幅・高さを覚える設定の鍵。
+const SIDEBAR_WIDTH_KEY: &str = "sidebarWidth";
+const RIGHT_WIDTH_KEY: &str = "detailsColumnWidth";
+const DETAILS_HEIGHT_KEY: &str = "detailsHeight";
+
+/// 境目のつまみ（細く透明な帯。押して動かすと幅・高さが変わる。`attach_splitter` が押す・動かすを受ける）。
+/// `top` は詳細の下端の位置。
+fn splitter(handle: &ElementRef<Grid>, split: Split, top: f64) -> View {
+    let grid = Grid::new()
+        .element_ref(handle)
+        .background(Brush::Solid(Color::transparent()));
+    match split {
+        // サイドバーの右端。
+        Split::Sidebar => grid
+            .width(6.0)
+            .grid_column(0)
+            .horizontal_alignment(HorizontalAlignment::Right)
+            .into(),
+        // 右の列の左端。
+        Split::Right => grid
+            .width(6.0)
+            .grid_column(2)
+            .horizontal_alignment(HorizontalAlignment::Left)
+            .into(),
+        // 詳細の下端（右の列の 1 行目の下）。
+        Split::Details => grid
+            .height(6.0)
+            .grid_column(2)
+            .vertical_alignment(VerticalAlignment::Top)
+            .margin(Thickness::new(0.0, top - 3.0, 0.0, 0.0))
+            .into(),
+        // Repositories の列のつまみは、repositories.rs の見出しが置く。
+        Split::Column(_) => grid.width(6.0).into(),
+    }
+}
+
+/// Git > Programs の候補と使う git を読む（裏で）。
+fn load_programs(repo: Arc<Repository>, context: &ComponentContext<Root>) {
+    context.spawn_background(move |_| {
+        Message::SettingsPrograms(crate::programs::load(|c| repo.run_json(c)))
+    });
+}
+
+/// 署名の鍵を形式ごとに集める（裏で。集められなければ空）。
+fn load_signing_keys(repo: Arc<Repository>, global: bool, context: &ComponentContext<Root>) {
+    context.spawn_background(move |_| {
+        let keys = crate::reposettings::SIGNING_FORMATS
+            .iter()
+            .map(|f| {
+                let reply: Value = serde_json::from_str(
+                    &repo.run_json(&json!({ "op": "signingKeys", "format": f }).to_string()),
+                )
+                .unwrap_or_default();
+                (*f, crate::reposettings::signing_keys_of(&reply["info"]))
+            })
+            .collect();
+        Message::SigningKeysLoaded(global, keys)
+    });
+}
+
+/// Settings > Git の値を書いてから読み直し、効いている値と設定元を出し直す（失敗したらそこで止めて知らせる）。
+fn write_global_settings(
+    repo: Arc<Repository>,
+    commands: Vec<Value>,
+    context: &ComponentContext<Root>,
+) {
+    context.spawn_background(move |_| {
+        for command in commands {
+            let reply: Value =
+                serde_json::from_str(&repo.run_json(&command.to_string())).unwrap_or_default();
+            if let Some(e) = reply["error"].as_str() {
+                return Message::Performed(Some(("Settings".to_owned(), e.to_owned())));
+            }
+        }
+        let reply: Value =
+            serde_json::from_str(&repo.run_json(r#"{"op":"configList"}"#)).unwrap_or_default();
+        Message::SettingsGit(String::new(), String::new(), global_entries(&reply))
+    });
+}
+
+/// `configList` の答えのうち、システムとすべてのリポジトリの段の項目（Settings > Git の行が読む）。
+fn global_entries(reply: &Value) -> Vec<crate::reposettings::Entry> {
+    crate::reposettings::entries_of(&reply["info"])
+        .into_iter()
+        .filter(|e| e.scope == "system" || e.scope == "global")
+        .collect()
+}
+
+/// タブの帯（タブが 2 つ以上のときだけ。macOS 版の窓のタブと同じ）。前のタブの名前は窓の名前と同じく ● と ↑↓ を
+/// 添える。
+fn tab_strip(title: &str, context: &ViewContext<Root>) -> View {
+    let tabs = crate::tabs::tabs();
+    if tabs.len() < 2 {
+        return View::empty();
+    }
+    let active = crate::tabs::active();
+    let items: Vec<(String, View)> = tabs
+        .iter()
+        .enumerate()
+        .map(|(i, tab)| {
+            let header = if i == active {
+                title.to_owned()
+            } else {
+                crate::tabs::name(&tab.location)
+            };
+            let item = TabViewItem::new()
+                .header(header)
+                .tag(tab.id.to_string())
+                .tooltip(tab.location.clone());
+            (tab.id.to_string(), item)
+        })
+        .collect();
+    TabView::new()
+        .grid_row(2)
+        .selected_index(active)
+        .can_reorder_tabs(true)
+        .is_add_tab_button_visible(true)
+        .on_selection_changed(context.callback(Message::TabSelected))
+        .on_close_requested(context.callback(Message::TabClose))
+        .on_add_tab_button_click(context.callback(|()| Message::Command("new-tab".to_owned())))
+        .on_reordered(context.callback(Message::TabsReordered))
+        .collection_slot(TabViewSlot::TabItems, items)
+}
+
+/// この窓を閉じる（最後のタブを閉じた）。
+fn close_window() {
+    use windows::Win32::Foundation::{LPARAM, WPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_CLOSE};
+    let window = unsafe { windows::Win32::UI::Input::KeyboardAndMouse::GetActiveWindow() };
+    if !window.is_invalid() {
+        let _ = unsafe { PostMessageW(Some(window), WM_CLOSE, WPARAM(0), LPARAM(0)) };
+    }
+}
+
+/// `--place` の位置・大きさに窓を動かす（窓ができて前に出るまで、描くたびに試す。2 秒ほどであきらめる）。
+fn retry_place() {
+    let Some((rect, tries)) = PENDING_PLACE.with(std::cell::Cell::get) else {
+        return;
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{SWP_NOACTIVATE, SWP_NOZORDER, SetWindowPos};
+    let window = unsafe { windows::Win32::UI::Input::KeyboardAndMouse::GetActiveWindow() };
+    if window.is_invalid() {
+        PENDING_PLACE.with(|p| p.set((tries < 120).then_some((rect, tries + 1))));
+        return;
+    }
+    let [x, y, w, h] = rect;
+    if let Err(e) = unsafe { SetWindowPos(window, None, x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE) }
+    {
+        eprintln!("窓を動かせない: {e}");
+    }
+    PENDING_PLACE.with(|p| p.set(None));
+}
+
+/// まだ付けていない境目のつまみに、押す・動かすを付ける（部品ができていれば頼み、頼めたものは外す）。
+fn retry_splitters() {
+    SPLIT_PENDING.with(|p| {
+        p.borrow_mut().retain(|(handle, split)| {
+            let split = *split;
+            !handle.request_native_element(move |result| match result {
+                Ok(element) => {
+                    if let Err(e) = attach_splitter(&element, split) {
+                        eprintln!("境目に操作を付けられない: {e}");
+                    }
+                }
+                Err(e) => eprintln!("境目の部品を取れない: {e:?}"),
+            })
+        });
+    });
+}
+
+/// 境目のつまみに、押す・動かす・離すを付ける。押したら指を捕まえ、動かすたびに新しい幅・高さを送る。
+fn attach_splitter(element: &IInspectable, split: Split) -> windows_core_reactor::Result<()> {
+    let ui: xaml::UIElement = element.cast()?;
+    // 指を載せたら、動かせる向きの矢印のカーソル。
+    let shape = if split == Split::Details {
+        xaml::InputSystemCursorShape::SizeNorthSouth
+    } else {
+        xaml::InputSystemCursorShape::SizeWestEast
+    };
+    let cursor: xaml::InputCursor = xaml::InputSystemCursor::Create(shape)?.cast()?;
+    ui.SetProtectedCursor(&cursor)?;
+    let source = ui.clone();
+    let pressed = ui.PointerPressed(move |_, args: Ref<xaml::PointerRoutedEventArgs>| {
+        let Some(args) = args.as_ref() else { return };
+        let left = args
+            .GetCurrentPoint(&source)
+            .and_then(|p| p.Properties())
+            .and_then(|p| p.IsLeftButtonPressed())
+            .unwrap_or(false);
+        // 位置は親（列を並べる Grid。つまみが動いても動かない）の中で測る。
+        let Some(parent) = source
+            .cast::<xaml::DependencyObject>()
+            .ok()
+            .and_then(|o| xaml::VisualTreeHelper::GetParent(&o).ok())
+            .and_then(|p| p.cast::<xaml::UIElement>().ok())
+            .filter(|_| left)
+        else {
+            return;
+        };
+        let Some(position) = split_position(args, &parent, split) else {
+            return;
+        };
+        let (sidebar, right, details) = SPLIT_SIZES.with(std::cell::Cell::get);
+        let size = match split {
+            Split::Sidebar => sidebar,
+            Split::Details => details,
+            Split::Column(i) => crate::repositories::column_width(i),
+            // 半分ずつのままなら、今の幅を差分の面の大きさから求める。
+            Split::Right => right.unwrap_or_else(|| {
+                let mut width = 400.0;
+                with_history(|h| {
+                    if let Some(s) = h.diff.surface.as_ref() {
+                        width = f64::from(s.width) / f64::from(h.diff.scale.max(0.1));
+                    }
+                });
+                width
+            }),
+        };
+        if let Ok(pointer) = args.Pointer() {
+            let _ = source.CapturePointer(&pointer);
+        }
+        SPLIT_DRAG.with(|d| d.set(Some((split, position, size))));
+        SPLIT_PARENT.with(|p| *p.borrow_mut() = Some(parent));
+        let _ = args.SetHandled(true);
+    })?;
+    let moved = ui.PointerMoved(move |_, args: Ref<xaml::PointerRoutedEventArgs>| {
+        if let Some(args) = args.as_ref()
+            && split_moved(args)
+        {
+            let _ = args.SetHandled(true);
+        }
+    })?;
+    let source = ui.clone();
+    let released = ui.PointerReleased(move |_, args: Ref<xaml::PointerRoutedEventArgs>| {
+        let Some(args) = args.as_ref() else { return };
+        if let Ok(pointer) = args.Pointer() {
+            let _ = source.ReleasePointerCapture(&pointer);
+        }
+        if split_released() {
+            let _ = args.SetHandled(true);
+        }
+    })?;
+    REVOKERS.with(|r| r.borrow_mut().extend([pressed, moved, released]));
+    Ok(())
+}
+
+/// `parent` の中の指の位置（DIP）の、境目の向きの成分。
+fn split_position(
+    args: &xaml::PointerRoutedEventArgs,
+    parent: &xaml::UIElement,
+    split: Split,
+) -> Option<f64> {
+    let position = args.GetCurrentPoint(parent).ok()?.Position().ok()?;
+    Some(f64::from(if split == Split::Details {
+        position.Y
+    } else {
+        position.X
+    }))
+}
+
+/// 境目を動かしていれば、指の位置から新しい幅・高さを送る（扱ったら true）。
+fn split_moved(args: &xaml::PointerRoutedEventArgs) -> bool {
+    let Some((split, start, size)) = SPLIT_DRAG.with(std::cell::Cell::get) else {
+        return false;
+    };
+    let Some(parent) = SPLIT_PARENT.with(|p| p.borrow().clone()) else {
+        return false;
+    };
+    let Some(position) = split_position(args, &parent, split) else {
+        return false;
+    };
+    // 右の列は左へ動かすと広がる。
+    let size = match split {
+        // 右の列と Repositories の列は、左端を左へ動かすと広がる。
+        Split::Right | Split::Column(_) => size - (position - start),
+        _ => size + (position - start),
+    };
+    with_history(|h| {
+        h.sender.send(Message::SplitTo(split, size));
+    });
+    true
+}
+
+/// 境目を動かしていれば終える（覚える。扱ったら true）。
+fn split_released() -> bool {
+    if SPLIT_DRAG.with(|d| d.take()).is_none() {
+        return false;
+    }
+    SPLIT_PARENT.with(|p| *p.borrow_mut() = None);
+    with_history(|h| {
+        h.sender.send(Message::SplitDone);
+    });
+    true
+}
+
+/// コミットの変更ファイルの一覧の 1 行。
+#[derive(Clone)]
+struct ChangedFile {
+    path: String,
+    /// 足した（A）・消した（D）・変えた（M）。
+    mark: char,
+    added: u32,
+    removed: u32,
+    binary: bool,
+}
+
+/// 変更ファイルの木の 1 行: 深さ、出す名前、ファイルなら `changed_files` の番号（ディレクトリなら None）。
+#[derive(Debug, PartialEq)]
+struct TreeRow {
+    depth: usize,
+    name: String,
+    file: Option<usize>,
+}
+
+/// 変更ファイルを木に並べる（ディレクトリが先、名前の順。子が 1 つのディレクトリだけなら名前をつなぐ。
+/// GTK4 版の変更ファイルの木と同じ）。
+fn file_tree(files: &[ChangedFile]) -> Vec<TreeRow> {
+    #[derive(Default)]
+    struct Dir {
+        dirs: std::collections::BTreeMap<String, Dir>,
+        files: Vec<(String, usize)>,
+    }
+    let mut root = Dir::default();
+    for (i, f) in files.iter().enumerate() {
+        let parts: Vec<&str> = f.path.split('/').collect();
+        let mut dir = &mut root;
+        for part in &parts[..parts.len() - 1] {
+            dir = dir.dirs.entry((*part).to_owned()).or_default();
+        }
+        dir.files.push((parts[parts.len() - 1].to_owned(), i));
+    }
+    fn walk(dir: &Dir, depth: usize, out: &mut Vec<TreeRow>) {
+        for (name, child) in &dir.dirs {
+            let (mut name, mut child) = (name.clone(), child);
+            while child.files.is_empty() && child.dirs.len() == 1 {
+                let (n, c) = child.dirs.iter().next().expect("one");
+                name = format!("{name}/{n}");
+                child = c;
+            }
+            out.push(TreeRow {
+                depth,
+                name,
+                file: None,
+            });
+            walk(child, depth + 1, out);
+        }
+        let mut files = dir.files.clone();
+        files.sort();
+        for (name, i) in files {
+            out.push(TreeRow {
+                depth,
+                name,
+                file: Some(i),
+            });
+        }
+    }
+    let mut out = Vec::new();
+    walk(&root, 0, &mut out);
+    out
+}
+
+/// 全ファイルの差分から、変更ファイルの一覧を作る（足した・消したは、前後の中身が空か。`file_at` と同じ決め方）。
+fn changed_files(stacked: &amonhen_core::diff::StackedDiff) -> Vec<ChangedFile> {
+    stacked
+        .files
+        .iter()
+        .map(|(path, diff)| ChangedFile {
+            path: path.clone(),
+            mark: if diff.old.is_empty() && !diff.new.is_empty() {
+                'A'
+            } else if diff.new.is_empty() && !diff.old.is_empty() {
+                'D'
+            } else {
+                'M'
+            },
+            added: diff.added,
+            removed: diff.removed,
+            binary: diff.binary,
+        })
+        .collect()
+}
+
+/// Push の画面の行。
+enum PushRow {
+    /// 送る変更すべて（送るコミットの数）。
+    All(u64),
+    /// 上流から消えるコミットの見出し（数）。選べない。
+    Heading(u64),
+    /// コミット（oid, 件名, 作者, 時刻）と、上流から消えるものか。
+    Commit((String, String, String, i64), bool),
+}
+
+/// Pull・Push のダイアログのコミットの一覧の 1 つ（コアの `between` の答え）。
+#[derive(Clone)]
+struct SyncList {
+    title: String,
+    count: u64,
+    /// (oid, 件名, 作者, 時刻)。新しい順。
+    commits: Vec<(String, String, String, i64)>,
+    /// 消えるもの（赤で出す）。
+    warn: bool,
+}
+
+/// `Dialog::Form` の答えをどの命令にするか（GTK4 版の `submodulesheet`）。
+#[derive(Clone)]
+enum FormKind {
+    AddSubmodule,
+    UpdateSubmodules(Vec<String>),
+    RunInEach,
+    SetUrl(String),
+    SetBranch(String),
+    RemoveSubmodule(String),
+    AddSubtree,
+    /// subtree の場所と、Push か（でなければ Pull）。
+    PullOrPushSubtree(String, bool),
+    SplitSubtree(String),
+    /// shallow clone の履歴を、決めた数だけ取り足す（`git fetch --deepen`）。
+    Deepen,
+    /// shallow clone の履歴を、決めた日付まで取り足す（`git fetch --shallow-since`）。
+    DeepenSince,
+}
+
+impl FormKind {
+    /// 欄とチェックの値からコアの命令（欄が足りなければ None）。
+    fn command(
+        &self,
+        fields: &[(String, String, String)],
+        checks: &[(String, bool)],
+    ) -> Option<Value> {
+        let field = |i: usize| fields.get(i).map_or("", |f| f.1.trim()).to_owned();
+        let check = |i: usize| checks.get(i).is_some_and(|c| c.1);
+        let optional = |t: String| (!t.is_empty()).then_some(t);
+        Some(match self {
+            FormKind::AddSubmodule => {
+                let url = field(0);
+                let path = optional(field(1)).unwrap_or_else(|| submodule_path(&url));
+                if url.is_empty() || path.is_empty() {
+                    return None;
+                }
+                json!({
+                    "op": "changeSubmodule",
+                    "change": { "kind": "add", "url": url, "path": path, "branch": optional(field(2)) },
+                })
+            }
+            FormKind::UpdateSubmodules(paths) => json!({
+                "op": "updateSubmodules",
+                "paths": paths,
+                "recursive": check(0),
+                "remote": check(1),
+            }),
+            FormKind::RunInEach => {
+                let command = optional(field(0))?;
+                json!({
+                    "op": "changeSubmodule",
+                    "change": { "kind": "foreach", "command": command, "recursive": check(0) },
+                })
+            }
+            FormKind::Deepen => {
+                let commits = field(0).parse::<u32>().ok().filter(|&n| n > 0)?;
+                json!({ "op": "deepen", "commits": commits })
+            }
+            FormKind::DeepenSince => {
+                let since = field(0);
+                // YYYY-MM-DD だけ受ける（GTK4 版は暦で選ぶ）。
+                let ok = since.len() == 10
+                    && since.chars().enumerate().all(|(i, c)| {
+                        if i == 4 || i == 7 {
+                            c == '-'
+                        } else {
+                            c.is_ascii_digit()
+                        }
+                    });
+                if !ok {
+                    return None;
+                }
+                json!({ "op": "deepen", "since": since })
+            }
+            FormKind::SetUrl(path) => json!({
+                "op": "changeSubmodule",
+                "change": { "kind": "setUrl", "path": path, "url": optional(field(0))? },
+            }),
+            FormKind::SetBranch(path) => json!({
+                "op": "changeSubmodule",
+                "change": { "kind": "setBranch", "path": path, "branch": optional(field(0)) },
+            }),
+            FormKind::AddSubtree => {
+                let (url, rev) = (field(0), field(1));
+                let dir = optional(field(2)).unwrap_or_else(|| submodule_path(&url));
+                if url.is_empty() || rev.is_empty() || dir.is_empty() {
+                    return None;
+                }
+                json!({
+                    "op": "subtree",
+                    "action": { "kind": "add", "dir": dir, "url": url, "ref": rev, "squash": check(0) },
+                })
+            }
+            FormKind::PullOrPushSubtree(dir, push) => {
+                let (url, rev) = (optional(field(0))?, optional(field(1))?);
+                let mut action = json!({
+                    "kind": if *push { "push" } else { "pull" },
+                    "dir": dir,
+                    "url": url,
+                    "ref": rev,
+                });
+                if !*push {
+                    action["squash"] = json!(check(0));
+                }
+                json!({ "op": "subtree", "action": action })
+            }
+            FormKind::SplitSubtree(dir) => {
+                let name = dir.rsplit('/').next().unwrap_or(dir);
+                let branch = optional(field(0)).unwrap_or_else(|| format!("{name}-split"));
+                json!({
+                    "op": "subtree",
+                    "action": { "kind": "split", "dir": dir, "branch": branch },
+                })
+            }
+            FormKind::RemoveSubmodule(path) => json!({
+                "op": "changeSubmodule",
+                "change": { "kind": "remove", "path": path, "deleteGitDir": check(0) },
+            }),
+        })
+    }
+}
+
+/// URL の最後の部分から `.git` を除いたもの（git が submodule の場所の既定にするもの。GTK4 版の `default_path`）。
+fn submodule_path(url: &str) -> String {
+    let last = url
+        .trim()
+        .trim_end_matches('/')
+        .rsplit(['/', ':'])
+        .next()
+        .unwrap_or_default();
+    last.strip_suffix(".git").unwrap_or(last).to_owned()
+}
+
+/// Clone の「最近の履歴だけ」で選べるコミットの数（GTK4 版の `shallow::more_choices` と 1）。
+/// 検索の欄の ▾ のメニュー（題と入れる書き方。GTK4 版の `search::SCOPES` と同じ順）。
+const SEARCH_SCOPES: [(&str, &str); 5] = [
+    ("Search by Author (author:)", "author:"),
+    ("Search by Path (path:)", "path:"),
+    ("Search by Contents (contents:)", "contents:"),
+    ("Committed After (after:)", "after:"),
+    ("Committed Before (before:)", "before:"),
+];
+
+const CLONE_DEPTHS: [u32; 4] = [1, 100, 1_000, 10_000];
+
+/// 打ったコミットの数（1 以上。カンマや空白は除く）。
+fn depth_count(text: &str) -> Option<u32> {
+    text.chars()
+        .filter(|c| !matches!(c, ',' | ' '))
+        .collect::<String>()
+        .parse::<u32>()
+        .ok()
+        .filter(|&n| n > 0)
+}
+
+/// 件名の欄の Alt+↑・Alt+↓ で、最近のコミットのメッセージを順に呼び出す（GTK4 版の `commitmsg` と同じ）。
+fn attach_recall_keys(element: &IInspectable) -> windows_core_reactor::Result<()> {
+    let ui: xaml::UIElement = element.cast()?;
+    let revoker = ui.PreviewKeyDown(|_, args: Ref<xaml::KeyRoutedEventArgs>| {
+        let Some(args) = args.as_ref() else { return };
+        let alt = xaml::InputKeyboardSource::GetKeyStateForCurrentThread(xaml::VirtualKey::Menu)
+            .is_ok_and(|s| s.contains(xaml::CoreVirtualKeyStates::Down));
+        if !alt {
+            return;
+        }
+        let step = match args.Key() {
+            Ok(xaml::VirtualKey::Up) => 1,
+            Ok(xaml::VirtualKey::Down) => -1,
+            _ => return,
+        };
+        let _ = args.SetHandled(true);
+        with_history(|h| {
+            h.sender.send(Message::RecallRecent(step));
+        });
+    })?;
+    REVOKERS.with(|r| r.borrow_mut().push(revoker));
+    Ok(())
+}
+
+/// Repositories の一覧: ダブルクリックと Enter で、選んでいるリポジトリを開く（GTK4 版と同じ）。
+fn attach_repositories_open(element: &IInspectable) -> windows_core_reactor::Result<()> {
+    let ui: xaml::UIElement = element.cast()?;
+    let open = || {
+        with_history(|h| {
+            h.sender
+                .send(Message::Repos(crate::repositories::Event::Open));
+        });
+    };
+    let keys = ui.PreviewKeyDown(move |_, args: Ref<xaml::KeyRoutedEventArgs>| {
+        let Some(args) = args.as_ref() else { return };
+        if args.Key().ok() != Some(xaml::VirtualKey::Enter) {
+            return;
+        }
+        let _ = args.SetHandled(true);
+        open();
+    })?;
+    let taps = ui.DoubleTapped(move |_, _| open())?;
+    REVOKERS.with(|r| r.borrow_mut().extend([keys, taps]));
     Ok(())
 }
 
@@ -5201,6 +16018,25 @@ fn attach_shortcuts(element: &IInspectable) -> windows_core_reactor::Result<()> 
             shift: down(xaml::VirtualKey::Shift),
             alt: down(xaml::VirtualKey::Menu),
         };
+        // Push の画面: Enter で既定のボタン、Esc でキャンセル（ダイアログと同じ）。
+        if !pressed.control
+            && !pressed.alt
+            && !pressed.shift
+            && let Some(enter) = PUSH_KEYS.with(std::cell::Cell::get)
+        {
+            let result = match key {
+                xaml::VirtualKey::Escape => Some(ContentDialogResult::None),
+                xaml::VirtualKey::Enter if enter => Some(ContentDialogResult::Primary),
+                _ => None,
+            };
+            if let Some(result) = result {
+                let _ = args.SetHandled(true);
+                with_history(|h| {
+                    h.sender.send(Message::DialogClosed(result));
+                });
+                return;
+            }
+        }
         // 修飾キーなしのキー（文字の入力・矢印）は部品に任せる。
         if !pressed.control && !pressed.alt {
             return;
@@ -5244,7 +16080,77 @@ fn attach_sidebar(element: &IInspectable) -> windows_core_reactor::Result<()> {
         });
     })?;
     REVOKERS.with(|r| r.borrow_mut().push(revoker));
+    // 行のツールチップ（印の意味など。reactor の木の項目は文字だけなので、指の下の項目に付ける。項目の要素は
+    // 使い回されるので、指が別の項目に移るたびに付け直す）。
+    let revoker = ui.PointerMoved(move |_, args: Ref<xaml::PointerRoutedEventArgs>| {
+        let Some(args) = args.as_ref() else { return };
+        let Ok(original) = args.OriginalSource() else {
+            return;
+        };
+        let Some((item, key)) = tree_item_key(&original) else {
+            return;
+        };
+        let identity = item
+            .cast::<windows_core_reactor::IUnknown>()
+            .map_or(0, |u| u.as_raw() as usize);
+        let text = sidebar::tooltip(&key);
+        let changed = SIDEBAR_TIP.with(|t| {
+            let mut t = t.borrow_mut();
+            let next = (identity, text.clone());
+            let changed = t.as_ref() != Some(&next);
+            *t = Some(next);
+            changed
+        });
+        if changed && let Ok(item) = item.cast::<IInspectable>() {
+            let _ = windows_reactor::set_tooltip_text(&item, text.as_deref());
+        }
+    })?;
+    REVOKERS.with(|r| r.borrow_mut().push(revoker));
     Ok(())
+}
+
+/// 等幅の字（Windows の既定の等幅。なければ Consolas）。
+const MONOSPACE: &str = "Cascadia Mono, Consolas";
+
+/// `element` から親をたどって最初の Control の字を等幅にする（中の TextBlock はその字を継ぐ。reactor の部品には
+/// 字体の指定がない）。まだ画面の木に入っていなければ（親がない）false。
+fn monospace_above(element: &IInspectable) -> windows_core_reactor::Result<bool> {
+    let mut node: xaml::DependencyObject = element.cast()?;
+    for _ in 0..8 {
+        let Ok(parent) = xaml::VisualTreeHelper::GetParent(&node) else {
+            return Ok(false);
+        };
+        node = parent;
+        if let Ok(control) = node.cast::<xaml::Control>() {
+            let font = xaml::FontFamily::CreateInstanceWithName(&MONOSPACE.into())?;
+            control.SetFontFamily(&font)?;
+            return Ok(true);
+        }
+    }
+    Ok(true)
+}
+
+/// Control（TextBox など）そのものの字を等幅にする。
+fn monospace(element: &IInspectable) -> windows_core_reactor::Result<()> {
+    let font = xaml::FontFamily::CreateInstanceWithName(&MONOSPACE.into())?;
+    element.cast::<xaml::Control>()?.SetFontFamily(&font)
+}
+
+/// 等幅にするのを待っている要素（部品ができた直後はまだ画面の木に入っていないので、描くたびに試す）と、試した回数。
+fn retry_monospace() {
+    PENDING_MONOSPACE.with(|p| {
+        p.borrow_mut().retain_mut(|(element, tries)| {
+            *tries += 1;
+            match monospace_above(element) {
+                Ok(false) => *tries < 120,
+                Ok(true) => false,
+                Err(e) => {
+                    eprintln!("等幅にできない: {e}");
+                    false
+                }
+            }
+        });
+    });
 }
 
 /// `from` から親へたどり、木の項目の要素とそのキーを返す。
@@ -5284,6 +16190,33 @@ fn open_sidebar_menu() {
     }
 }
 
+/// 作り直した差分のファイルのメニューを、右クリックした所で開く。
+fn open_diff_menu() {
+    let Some((element, at)) = DIFF_AT.with(|a| a.borrow_mut().take()) else {
+        return;
+    };
+    let open = || -> windows_core_reactor::Result<()> {
+        // reactor が作り直したメニューは要素に付き直しているので、外してから開く（付いていなければ前のもの）。
+        let flyout = match element.ContextFlyout() {
+            Ok(flyout) => {
+                element.SetContextFlyout(None::<&xaml::FlyoutBase>)?;
+                DIFF_FLYOUT.with(|f| *f.borrow_mut() = Some(flyout.clone()));
+                flyout
+            }
+            Err(_) => match DIFF_FLYOUT.with(|f| f.borrow().clone()) {
+                Some(flyout) => flyout,
+                None => return Ok(()),
+            },
+        };
+        let options = xaml::FlyoutShowOptions::new()?;
+        options.SetPosition(Some(at))?;
+        flyout.ShowAtWithOptions(&element, &options)
+    };
+    if let Err(e) = open() {
+        eprintln!("差分のメニューを開けない: {e}");
+    }
+}
+
 /// `area` の生の要素に入力を付ける（まだ載っていなければ `false`、次のフレームでまた試す）。
 fn request_input(area: &ElementRef<Grid>, target: Target) -> bool {
     area.request_native_element(move |result| match result {
@@ -5319,12 +16252,12 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
             }
             let _ = source.Focus(xaml::FocusState::Pointer);
             // 右クリック: WinUI が今のメニュー（選び直す前の行のもの）を開かないよう、要素から外しておく。
-            if right
-                && target == Target::History
-                && let Ok(flyout) = source.ContextFlyout()
-            {
+            if right && let Ok(flyout) = source.ContextFlyout() {
                 let _ = source.SetContextFlyout(None::<&xaml::FlyoutBase>);
-                HISTORY_FLYOUT.with(|f| *f.borrow_mut() = Some(flyout));
+                match target {
+                    Target::History => HISTORY_FLYOUT.with(|f| *f.borrow_mut() = Some(flyout)),
+                    Target::Diff => DIFF_FLYOUT.with(|f| *f.borrow_mut() = Some(flyout)),
+                }
             }
             with_history(|h| match target {
                 // 右クリックも、先にその行を選ぶ（メニューはそのコミットのもの）。
@@ -5344,6 +16277,14 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
                             h.session.select_range(row);
                         } else {
                             h.session.select(row);
+                            // そのまま運べば、編集モードで動かす（GTK4 版・macOS 版の、コミットを運んで落とす）。
+                            if left {
+                                HISTORY_DRAG
+                                    .with(|d| d.set(Some((row, f64::from(position.Y), false))));
+                                if let Ok(pointer) = args.Pointer() {
+                                    let _ = source.CapturePointer(&pointer);
+                                }
+                            }
                         }
                     }
                 }
@@ -5353,25 +16294,70 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
                     let row = ((h.diff.scroll_y + position.Y) / DIFF_ROW_HEIGHT).floor();
                     if row >= 0.0 && position.X < crate::render::DIFF_MARK_WIDTH {
                         let row = row as usize;
-                        let change = h.session.data.working.as_ref().is_some_and(|w| {
-                            w.diff.view.rows.get(row).is_some_and(|r| {
-                                matches!(
-                                    r.kind,
-                                    amonhen_layout::DiffRow::ADDED
-                                        | amonhen_layout::DiffRow::REMOVED
-                                )
-                            })
-                        });
-                        if change {
-                            h.session.data.toggle_working_row(row);
+                        let kind = h
+                            .session
+                            .data
+                            .working
+                            .as_ref()
+                            .and_then(|w| w.diff.view.rows.get(row).map(|r| r.kind));
+                        let shift = xaml::InputKeyboardSource::GetKeyStateForCurrentThread(
+                            xaml::VirtualKey::Shift,
+                        )
+                        .is_ok_and(|s| s.contains(xaml::CoreVirtualKeyStates::Down));
+                        match kind {
+                            // Shift+クリック: 前に押した印の行からここまでを、その行と同じ状態に。
+                            Some(
+                                amonhen_layout::DiffRow::ADDED | amonhen_layout::DiffRow::REMOVED,
+                            ) if shift && MARK_ANCHOR.with(std::cell::Cell::get).is_some() => {
+                                if let Some((anchor, stage)) =
+                                    MARK_ANCHOR.with(std::cell::Cell::get)
+                                {
+                                    h.session.data.set_working_range(anchor, row, stage);
+                                }
+                            }
+                            // 押した行を切り替え、引いたら離したときに間の行も同じ状態にする。
+                            Some(
+                                amonhen_layout::DiffRow::ADDED | amonhen_layout::DiffRow::REMOVED,
+                            ) => {
+                                let stage = !h.session.data.working_row_staged(row).unwrap_or(true);
+                                h.session.data.toggle_working_row(row);
+                                MARK_ANCHOR.with(|a| a.set(Some((row, stage))));
+                                MARK_DRAG.with(|d| d.set(Some((row, row, stage))));
+                                if let Ok(pointer) = args.Pointer() {
+                                    let _ = source.CapturePointer(&pointer);
+                                }
+                            }
+                            // hunk の見出しの印: その hunk の行をまとめて。
+                            Some(amonhen_layout::DiffRow::HUNK) => {
+                                h.session.data.toggle_working_hunk(row)
+                            }
+                            _ => {}
                         }
                     }
                 }
                 // ファイルの見出しを押すと、そのファイルを畳む・開く。
                 Target::Diff => {
-                    let row = ((h.diff.scroll_y + position.Y) / DIFF_ROW_HEIGHT).floor();
+                    // 上に張り付いた見出しを押したら、そのファイルの見出しの行（畳んだら見出しを一番上に）。
+                    let stuck =
+                        h.session.data.commit.as_ref().and_then(|c| {
+                            crate::render::sticky_header(&c.file_rows, h.diff.scroll_y)
+                        });
+                    let (row, stuck) = match stuck {
+                        Some((file, top))
+                            if position.Y >= top && position.Y < top + DIFF_ROW_HEIGHT =>
+                        {
+                            (file as f32, true)
+                        }
+                        _ => (
+                            ((h.diff.scroll_y + position.Y) / DIFF_ROW_HEIGHT).floor(),
+                            false,
+                        ),
+                    };
                     if row >= 0.0 && h.session.data.toggle_file(row as usize) {
                         h.session.renderer.forget_diff();
+                        if stuck {
+                            h.diff.scroll_y = row * DIFF_ROW_HEIGHT;
+                        }
                         let rows = h.diff_rows();
                         h.diff.scroll_by(0.0, rows);
                     }
@@ -5385,6 +16371,53 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
     );
 
     if target == Target::History {
+        // コミットを運ぶ: 少し動かしたら運び始め、離した行の上へ動かす（行の外の下なら最後へ）。
+        let source = ui.clone();
+        revokers.push(
+            ui.PointerMoved(move |_, args: Ref<xaml::PointerRoutedEventArgs>| {
+                let Some(args) = args.as_ref() else { return };
+                let Some((row, y, dragging)) = HISTORY_DRAG.with(std::cell::Cell::get) else {
+                    return;
+                };
+                let Ok(position) = args.GetCurrentPoint(&source).and_then(|p| p.Position()) else {
+                    return;
+                };
+                if !dragging && (f64::from(position.Y) - y).abs() > 8.0 {
+                    HISTORY_DRAG.with(|d| d.set(Some((row, y, true))));
+                }
+            })?,
+        );
+        let source = ui.clone();
+        revokers.push(
+            ui.PointerReleased(move |_, args: Ref<xaml::PointerRoutedEventArgs>| {
+                let Some(args) = args.as_ref() else { return };
+                let Some((from, _, dragging)) = HISTORY_DRAG.with(std::cell::Cell::take) else {
+                    return;
+                };
+                if let Ok(pointer) = args.Pointer() {
+                    let _ = source.ReleasePointerCapture(&pointer);
+                }
+                if !dragging {
+                    return;
+                }
+                let Ok(position) = args.GetCurrentPoint(&source).and_then(|p| p.Position()) else {
+                    return;
+                };
+                with_history(|h| {
+                    let count = h.session.data.row_count();
+                    let row = h.session.row_at(position.Y).unwrap_or(count);
+                    let ids = h.session.data.history.as_ref().map(|h| h.graph.ids());
+                    let id = |r: u32| ids.and_then(|i| i.get(r as usize)).map(ToString::to_string);
+                    if let Some(oid) = id(from)
+                        && row != from
+                    {
+                        let below = id(row.min(count.saturating_sub(1)));
+                        h.sender
+                            .send(Message::HistoryDrop(oid, below, row >= count));
+                    }
+                });
+            })?,
+        );
         HISTORY_ELEMENT.with(|e| *e.borrow_mut() = Some(ui.clone()));
         // 右クリックで選び直す前のメニューが開かないよう、押したときにメニューを外してある。ここで位置を覚え、選んだ
         // 行のメニューに作り直してから開く（キーボードで開くときは、付いたままのメニューを WinUI が開く）。
@@ -5402,10 +16435,80 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
                         let Some(row) = s.selected else { return };
                         at = xaml::Point {
                             X: 40.0,
-                            Y: s.row_top(row) + ROW_HEIGHT / 2.0,
+                            Y: s.row_top(row) + row_height() / 2.0,
                         };
                     }
                     h.context_at = Some(at);
+                });
+            },
+        )?);
+    }
+
+    if target == Target::Diff {
+        // 印の上を引く: 指の下の行を覚え、離したら起点からその行までをまとめて同じ状態にする。
+        let source = ui.clone();
+        revokers.push(
+            ui.PointerMoved(move |_, args: Ref<xaml::PointerRoutedEventArgs>| {
+                let Some(args) = args.as_ref() else { return };
+                let Some((anchor, _, stage)) = MARK_DRAG.with(std::cell::Cell::get) else {
+                    return;
+                };
+                let Ok(position) = args.GetCurrentPoint(&source).and_then(|p| p.Position()) else {
+                    return;
+                };
+                with_history(|h| {
+                    let row = ((h.diff.scroll_y + position.Y) / DIFF_ROW_HEIGHT).floor();
+                    if row >= 0.0 {
+                        MARK_DRAG.with(|d| d.set(Some((anchor, row as usize, stage))));
+                    }
+                });
+                let _ = args.SetHandled(true);
+            })?,
+        );
+        let source = ui.clone();
+        revokers.push(
+            ui.PointerReleased(move |_, args: Ref<xaml::PointerRoutedEventArgs>| {
+                let Some(args) = args.as_ref() else { return };
+                let Some((anchor, current, stage)) = MARK_DRAG.with(std::cell::Cell::take) else {
+                    return;
+                };
+                if let Ok(pointer) = args.Pointer() {
+                    let _ = source.ReleasePointerCapture(&pointer);
+                }
+                if current != anchor {
+                    with_history(|h| h.session.data.set_working_range(anchor, current, stage));
+                }
+                let _ = args.SetHandled(true);
+            })?,
+        );
+        // 右クリック: 押した行のファイルのメニューに作り直してから開く（WinUI が今のメニューを開かないよう、
+        // 扱ったことにする）。Working Copy の差分では、押した行（hunk）を捨てるメニュー。
+        let source = ui.clone();
+        revokers.push(ui.ContextRequested(
+            move |_, args: Ref<xaml::ContextRequestedEventArgs>| {
+                let Some(args) = args.as_ref() else { return };
+                let _ = args.SetHandled(true);
+                let mut at = xaml::Point { X: 24.0, Y: 8.0 };
+                let _ = args.TryGetPosition(&source, &mut at);
+                with_history(|h| {
+                    let row = ((h.diff.scroll_y + at.Y) / DIFF_ROW_HEIGHT).floor();
+                    if row < 0.0 {
+                        return;
+                    }
+                    // Working Copy の差分なら行（hunk）の、History の差分ならファイルのメニュー。
+                    if h.working_page {
+                        let rows = h.session.data.working_rows_at(row as usize);
+                        if rows.is_some() {
+                            DIFF_AT.with(|a| *a.borrow_mut() = Some((source.clone(), at)));
+                        }
+                        h.sender.send(Message::DiffRowsAt(rows));
+                        return;
+                    }
+                    let file = h.session.data.file_at(row as usize);
+                    if file.is_some() {
+                        DIFF_AT.with(|a| *a.borrow_mut() = Some((source.clone(), at)));
+                    }
+                    h.sender.send(Message::DiffFileAt(file));
                 });
             },
         )?);
@@ -5425,7 +16528,7 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
             }
             let notches = -(properties.MouseWheelDelta().unwrap_or(0) as f32) / 120.0;
             with_history(|h| match target {
-                Target::History => h.session.scroll_by(notches * WHEEL_ROWS * ROW_HEIGHT),
+                Target::History => h.session.scroll_by(notches * WHEEL_ROWS * row_height()),
                 Target::Diff => {
                     let rows = h.diff_rows();
                     h.diff
@@ -5451,6 +16554,27 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
                     xaml::VirtualKey::Home => s.move_selection(-(s.data.row_count() as i64)),
                     xaml::VirtualKey::End => s.move_selection(s.data.row_count() as i64),
                     _ => handled.set(false),
+                }
+            }
+            // 差分にフォーカスがあれば、Ctrl+F で差分の中を探す帯を開く（GTK4 版の `find_in_focused`）。
+            Target::Diff
+                if key == xaml::VirtualKey::F
+                    && xaml::InputKeyboardSource::GetKeyStateForCurrentThread(
+                        xaml::VirtualKey::Control,
+                    )
+                    .is_ok_and(|s| s.contains(xaml::CoreVirtualKeyStates::Down)) =>
+            {
+                h.sender.send(Message::DiffFindOpen(true));
+            }
+            Target::Diff if matches!(key, xaml::VirtualKey::J | xaml::VirtualKey::K) => {
+                // J・K で次・前の変更（hunk）へ、Alt+J・Alt+K で次・前のファイルへ（GTK4 版の `move_hunk`・
+                // `move_file`）。
+                let alt =
+                    xaml::InputKeyboardSource::GetKeyStateForCurrentThread(xaml::VirtualKey::Menu)
+                        .is_ok_and(|s| s.contains(xaml::CoreVirtualKeyStates::Down));
+                let step = if key == xaml::VirtualKey::J { 1 } else { -1 };
+                if !h.move_in_diff(step, alt) {
+                    beep();
                 }
             }
             Target::Diff => {
@@ -5479,4 +16603,61 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
 
     REVOKERS.with(|r| r.borrow_mut().extend(revokers));
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn file_tree_joins_single_directories() {
+        let file = |path: &str| ChangedFile {
+            path: path.into(),
+            mark: 'M',
+            added: 0,
+            removed: 0,
+            binary: false,
+        };
+        let files = [file("src/a/b.rs"), file("README.md"), file("src/c.rs")];
+        assert_eq!(
+            file_tree(&files),
+            [
+                TreeRow {
+                    depth: 0,
+                    name: "src".into(),
+                    file: None
+                },
+                TreeRow {
+                    depth: 1,
+                    name: "a".into(),
+                    file: None
+                },
+                TreeRow {
+                    depth: 2,
+                    name: "b.rs".into(),
+                    file: Some(0)
+                },
+                TreeRow {
+                    depth: 1,
+                    name: "c.rs".into(),
+                    file: Some(2)
+                },
+                TreeRow {
+                    depth: 0,
+                    name: "README.md".into(),
+                    file: Some(1)
+                },
+            ]
+        );
+        // 子が 1 つのディレクトリだけなら、つないだ名前で 1 行。
+        let tree = file_tree(&[file("x/y/z.rs"), file("w.rs")]);
+        assert_eq!(tree[0].name, "x/y");
+    }
+
+    #[test]
+    fn highlights_matches_ignoring_case() {
+        assert!(highlighted("Fix the Bug", "", false).is_none());
+        assert!(highlighted("Fix the Bug", "nothing", false).is_none());
+        assert!(highlighted("Fix the Bug and a bug", "bug", true).is_some());
+    }
 }
