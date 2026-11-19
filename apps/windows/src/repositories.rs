@@ -915,6 +915,15 @@ impl State {
         match what {
             "open" => self.open(&location),
             "open-tab" => self.open_with(&location, crate::tabs::open(&location)),
+            "open-daemon" => {
+                let through = if is_remote(&location) {
+                    format!("daemon:{location}")
+                } else {
+                    amonhen_remote::local::canonical_path(&expand(&location).to_string_lossy())
+                        .map_or_else(|_| format!("daemon:{location}"), |p| format!("daemon:{p}"))
+                };
+                self.open_with(&location, crate::tabs::replace(&through, false));
+            }
             "open-window" => self.open_with(&location, open_window(&location)),
             "favorite" | "unfavorite" => {
                 let yes = what == "favorite";
@@ -1085,6 +1094,15 @@ fn row_menu(state: &State, location: &str) -> Vec<MenuItem> {
         MenuItem::item(format!("open:{location}"), tr!("Open")),
         MenuItem::item(format!("open-tab:{location}"), tr!("Open in New Tab")),
         MenuItem::item(format!("open-window:{location}"), tr!("Open in New Window")),
+    ];
+    // 共有の daemon 越しに（SSH 先も `daemon:ssh://…`。GTK4 版と同じく、いつも daemon 越しなら出さない）。
+    if !location.starts_with("daemon:") && !crate::prefs::bool(crate::prefs::OPEN_THROUGH_DAEMON) {
+        items.push(MenuItem::item(
+            format!("open-daemon:{location}"),
+            tr!("Open Through the Shared daemon"),
+        ));
+    }
+    items.extend([
         MenuItem::separator("-fetch"),
         MenuItem::item(format!("fetch:{location}"), "Fetch"),
         MenuItem::separator("-favorite"),
@@ -1100,7 +1118,7 @@ fn row_menu(state: &State, location: &str) -> Vec<MenuItem> {
         MenuItem::submenu("colors", tr!("Color Label"), colors),
         MenuItem::item(format!("rename:{location}"), tr!("Rename…")),
         MenuItem::separator("-files"),
-    ];
+    ]);
     // SSH 先のフォルダは、この機械では開けない。
     if !is_remote(location) {
         items.extend([

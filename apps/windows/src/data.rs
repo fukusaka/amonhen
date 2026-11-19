@@ -562,6 +562,19 @@ impl Data {
         let thread_scope = scope.clone();
         // SSH 先ごとの選択（設定は UI のスレッドで読む）。
         let location = path.to_string_lossy().into_owned();
+        // Settings > Performance で共有の daemon 越しに開くなら、手元も SSH 先も `daemon:` に（GTK4 版と同じ）。
+        let location = if crate::prefs::bool(crate::prefs::OPEN_THROUGH_DAEMON)
+            && !location.starts_with("daemon:")
+        {
+            if location.starts_with("ssh://") {
+                format!("daemon:{location}")
+            } else {
+                amonhen_remote::local::canonical_path(&location)
+                    .map_or(location, |p| format!("daemon:{p}"))
+            }
+        } else {
+            location
+        };
         let host_options =
             crate::remote::is_remote(&location).then(|| crate::remote::options_for(&location));
         let order_of = move || {

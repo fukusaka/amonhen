@@ -134,7 +134,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Diff & Merge: unified/split・空白・前後の行・折り返し・タブの幅 | — | — | — | — | n/a |  |
 | AI: 使う AI・CLI の場所と版・モデル・言語・リポジトリごとの許可 | ✓ | ✓ | — | — | n/a | どちらのアプリも CLI のログインの状態は読まない。CLI がなければ、入れてサインインするよう案内する。 |
 | 目的ごとの AI のプロンプト（編集・既定に戻す・試す） | ✓ | ✓ | — | — | n/a |  |
-| Performance: commit-graph・共有の daemon | ✓ | ✓ | △ | ✓ | n/a | VSCode: VSCode の設定の `amonhen.writeCommitGraph`・`amonhen.daemon.enabled`・`amonhen.daemon.path`。<br>Windows: Windows: commit-graph だけ。共有の daemon はない。 |
+| Performance: commit-graph・共有の daemon | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: VSCode の設定の `amonhen.writeCommitGraph`・`amonhen.daemon.enabled`・`amonhen.daemon.path`。 |
 | Performance: fsmonitor | ✓ | ✓ | ✓ | ✓ | n/a | GTK4: Linux・BSD では、エンジンを git の fsmonitor の hook（`amonhen fsmonitor-watchman`）にして Watchman を使う。Watchman がないか、git が 2.26 より古い（hook の版 2 がない）と押せない。<br>VSCode: VSCode の設定の `amonhen.fsmonitor`（既定はオン）。 |
 | Performance: 永続キャッシュの場所・大きさ・消す | ✓ | ✓ | ✓ | — | △ | History と AI の結果を 1 行ずつ、大きさと「消す」。CLI: `log --rebuild`・`daemon rebuild`。<br>Windows: History だけ（AI はない）。 |
 | 設定の変更の Undo・Redo | △ | △ | — | n/a | n/a | macOS: Git のページとリポジトリの設定だけ。<br>GTK4: Git のページとリポジトリの設定だけ。 |
@@ -344,7 +344,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | History のキャッシュの書き込み（リポジトリごとの大きさ・回数・量・最後の書き込み） | ✓ | ✓ | ✓ | — | △ | CLI: `amonhen run`（`historyCache`）。<br>Windows: その窓のリポジトリ（1 つの窓に 1 つのリポジトリ）。 |
 | Events | ✓ | ✓ | ✓ | n/a | n/a | VSCode: VSCode の出力（Amon Hen のログ）が代わり。 |
 | JSON で書き出す | ✓ | ✓ | ✓ | n/a | n/a | VSCode: VSCode の出力（Amon Hen のログ）が代わり。 |
-| Daemon のタブ（起動・停止・つながり） | ✓ | ✓ | — | ✓ | △ | VSCode: メインビューのページ（サイドバーの ⋯ とコマンドパレットの Show Daemon）。窓のつながりは手元の daemon だけ。<br>CLI: `daemon status / start / stop`。 |
+| Daemon のタブ（起動・停止・つながり） | ✓ | ✓ | △ | ✓ | △ | VSCode: メインビューのページ（サイドバーの ⋯ とコマンドパレットの Show Daemon）。窓のつながりは手元の daemon だけ。<br>CLI: `daemon status / start / stop`。<br>Windows: このアプリのつながりの一覧はない。切れたつながりは History の場所に「もう一度」を出す。 |
 
 ## 11. メニュー
 
@@ -408,7 +408,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 機能 | macOS | GTK4 | Windows | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
 | SSH 先のリポジトリ（ssh 越しのエンジン） | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: Remote-SSH が拡張をホストで動かす。<br>CLI: `-C ssh://host/path`。 |
-| 共有の daemon を通す | ✓ | ✓ | — | ✓ | ✓ | CLI: `-C daemon:<path>`。 |
+| 共有の daemon を通す | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `-C daemon:<path>`。 |
 | 合うものがなければホストにエンジンを送る | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: 拡張が動くホストで、同梱したエンジンを使う。<br>Windows: 他のアプリと同じく、先に聞く。 |
 | Windows の SSH 先 | ✓ | ✓ | ✓ | ✓ | ✓ |  |
 | パスワード・パスフレーズを尋ねる askpass のダイアログ | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: VSCode の入力欄。拡張が git・ssh・共有の daemon に渡すスクリプトから尋ねる。<br>CLI: ダイアログはアプリのもの。 |

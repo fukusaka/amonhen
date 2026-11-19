@@ -931,6 +931,11 @@ enum Message {
     ActivityExport,
     /// Activity の History のキャッシュを読んだ（リポジトリの名前と `historyCache` の info）。
     ActivityCache(String, Value),
+    /// 共有の daemon の様子（動いていなければ None）。
+    DaemonStatus(Option<Value>),
+    DaemonToggle,
+    /// 起動・停止が終わった（できなければ理由）。
+    DaemonToggled(Option<String>),
     CloseActivity,
     /// Repositories の操作。
     Repos(crate::repositories::Event),
@@ -2744,6 +2749,7 @@ impl Root {
                     auto_bookmark: crate::prefs::bool(crate::prefs::AUTO_BOOKMARK),
                     auto_fetch: crate::prefs::auto_fetch_minutes(),
                     write_commit_graph: crate::prefs::bool(crate::prefs::WRITE_COMMIT_GRAPH),
+                    open_through_daemon: crate::prefs::bool(crate::prefs::OPEN_THROUGH_DAEMON),
                     use_fsmonitor: crate::prefs::bool(crate::prefs::USE_FSMONITOR),
                     cache_size: None,
                     editors: crate::settingsview::editor_choices(&editor),
@@ -5079,6 +5085,9 @@ impl Root {
                     state.tab = tab;
                 }
                 self.load_undo_log(context);
+                if tab == 5 {
+                    load_daemon_status(context);
+                }
                 if tab == 2
                     && let Some(repo) = self.repo.clone()
                 {
@@ -5092,6 +5101,38 @@ impl Root {
                             serde_json::from_str(&repo.run_json(r#"{"op":"historyCache"}"#))
                                 .unwrap_or_default();
                         Message::ActivityCache(name, reply["info"].clone())
+                    });
+                }
+            }
+            Message::DaemonStatus(status) => {
+                if let Some(state) = self.activity.as_mut() {
+                    state.daemon = Some(status);
+                }
+            }
+            Message::DaemonToggle => {
+                let running = self
+                    .activity
+                    .as_ref()
+                    .is_some_and(|s| matches!(s.daemon, Some(Some(_))));
+                let engine = crate::remote::engine();
+                context.spawn_background(move |_| {
+                    let result = if running {
+                        let _ = amonhen_remote::local::control("stop");
+                        Ok(())
+                    } else {
+                        amonhen_remote::local::start(&engine.to_string_lossy())
+                            .map_err(|e| e.to_string())
+                    };
+                    Message::DaemonToggled(result.err())
+                });
+            }
+            Message::DaemonToggled(error) => {
+                // 2 秒待たずに、すぐ様子を読み直す。起動できなければ、そのエラーを出す（GTK4 版と同じ）。
+                load_daemon_status(context);
+                if let Some(message) = error {
+                    self.dialog = Some(Dialog::Failed {
+                        title: tr!("The shared daemon isn’t running"),
+                        message,
                     });
                 }
             }
@@ -5850,11 +5891,20 @@ impl Root {
                 perform(context, repo, command, tr!("Fetch More"));
             }
             Message::ActivityTick => {
+                let mut undo = false;
                 if let Some(state) = self.activity.as_mut() {
                     state.refresh();
-                    if state.tab == 1 {
-                        self.load_undo_log(context);
+                    undo = state.tab == 1;
+                    // Daemon は 2 秒ごと（4 回に 1 回）。
+                    if state.tab == 5 {
+                        state.daemon_tick = state.daemon_tick.wrapping_add(1);
+                        if state.daemon_tick % 4 == 0 {
+                            load_daemon_status(context);
+                        }
                     }
+                }
+                if undo {
+                    self.load_undo_log(context);
                 }
             }
             Message::ActivityUndo(count) => {
@@ -6251,6 +6301,7 @@ impl Root {
                     match key {
                         crate::prefs::AUTO_MAGIC_MERGE => state.auto_magic_merge = value,
                         crate::prefs::WRITE_COMMIT_GRAPH => state.write_commit_graph = value,
+                        crate::prefs::OPEN_THROUGH_DAEMON => state.open_through_daemon = value,
                         crate::prefs::USE_FSMONITOR => state.use_fsmonitor = value,
                         crate::prefs::AUTO_BOOKMARK => state.auto_bookmark = value,
                         _ => state.file_history_merges = value,
@@ -12628,6 +12679,7 @@ impl Root {
                         Message::ActivityTick
                     })
                 }),
+                daemon_toggle: context.callback(|()| Message::DaemonToggle),
             },
         );
         Border::new()
@@ -14600,13 +14652,26 @@ fn attach_chain(panel: &ElementRef<SwapChainPanel>, surface: &Surface) -> Result
     }))
 }
 
+/// 共有の daemon の様子を裏で読む（`amonhen daemon status` と同じ答え）。
+fn load_daemon_status(context: &ComponentContext<Root>) {
+    context.spawn_background(|_| {
+        Message::DaemonStatus(
+            amonhen_remote::local::control("status")
+                .ok()
+                .flatten()
+                .and_then(|s| serde_json::from_str::<Value>(&s).ok()),
+        )
+    });
+}
+
 /// つないでいる間（`error` が None）と、つなげなかったとき（GTK4 版の `Connecting`）。
 fn connecting_view(location: &str, error: Option<&String>, context: &ViewContext<Root>) -> View {
     let host = crate::remote::host_of(location).unwrap_or_else(|| "daemon".to_owned());
-    let path =
-        amonhen_remote::ssh::Target::parse(location.strip_prefix("daemon:").unwrap_or(location))
-            .map(|t| t.path)
-            .unwrap_or_else(|_| location.to_owned());
+    // SSH 先ならその上のパス、手元の daemon 越しなら手元のパス。
+    let inner = location.strip_prefix("daemon:").unwrap_or(location);
+    let path = amonhen_remote::ssh::Target::parse(inner)
+        .map(|t| t.path)
+        .unwrap_or_else(|_| inner.to_owned());
     let button = |text: String, id: &'static str, accent: bool| -> View {
         let b = Button::new()
             .on_click(context.callback(move |()| Message::Command(id.to_owned())))

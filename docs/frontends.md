@@ -134,7 +134,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Diff & Merge: unified/split, whitespace, context, wrap, tab width | — | — | — | — | n/a |  |
 | AI: backend, CLI location and version, model, language, per-repository permission | ✓ | ✓ | — | — | n/a | Neither app reads the CLI's login state; a missing CLI says to install it and sign in. |
 | AI prompts per purpose (edit, Restore Default, Try) | ✓ | ✓ | — | — | n/a |  |
-| Performance: commit-graph, shared daemon | ✓ | ✓ | △ | ✓ | n/a | VSCode: `amonhen.writeCommitGraph`, `amonhen.daemon.enabled` and `amonhen.daemon.path` as VSCode settings.<br>Windows: Windows: commit-graph only; there is no shared daemon. |
+| Performance: commit-graph, shared daemon | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: `amonhen.writeCommitGraph`, `amonhen.daemon.enabled` and `amonhen.daemon.path` as VSCode settings. |
 | Performance: fsmonitor | ✓ | ✓ | ✓ | ✓ | n/a | GTK4: On Linux and the BSDs, uses Watchman through the engine as git's fsmonitor hook (`amonhen fsmonitor-watchman`); disabled when Watchman isn't installed or git is older than 2.26 (hook protocol 2).<br>VSCode: `amonhen.fsmonitor` as a VSCode setting, on by default. |
 | Performance: persistent cache location, size, clearing | ✓ | ✓ | ✓ | — | △ | History and AI results, one row each with its size and Clear. CLI: `log --rebuild`, `daemon rebuild`.<br>Windows: History only (there is no AI). |
 | Undo / Redo of settings changes | △ | △ | — | n/a | n/a | macOS: Git pages and repository settings only.<br>GTK4: Git pages and repository settings only. |
@@ -344,7 +344,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | History cache writes (size, count, bytes, last write per repository) | ✓ | ✓ | ✓ | — | △ | CLI: Via `amonhen run` (`historyCache`).<br>Windows: The window's repository (one repository per window). |
 | Events | ✓ | ✓ | ✓ | n/a | n/a | VSCode: VSCode's Output channel (the Amon Hen log). |
 | Export as JSON | ✓ | ✓ | ✓ | n/a | n/a | VSCode: VSCode's Output channel (the Amon Hen log). |
-| Daemon tab (start, stop, connections) | ✓ | ✓ | — | ✓ | △ | VSCode: A page of the main view (Show Daemon in the sidebar's ⋯ and the command palette); the window's connections are to the local daemon only.<br>CLI: `daemon status / start / stop`. |
+| Daemon tab (start, stop, connections) | ✓ | ✓ | △ | ✓ | △ | VSCode: A page of the main view (Show Daemon in the sidebar's ⋯ and the command palette); the window's connections are to the local daemon only.<br>CLI: `daemon status / start / stop`.<br>Windows: No list of this app's connections; a dropped connection shows Try Again in the History area. |
 
 ## 11. Menus
 
@@ -408,7 +408,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Feature | macOS | GTK4 | Windows | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
 | Repositories on SSH hosts (engine over ssh) | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: Remote-SSH runs the extension on the host.<br>CLI: `-C ssh://host/path`. |
-| Through the shared daemon | ✓ | ✓ | — | ✓ | ✓ | CLI: `-C daemon:<path>`. |
+| Through the shared daemon | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `-C daemon:<path>`. |
 | Engine sent to a host when none fits | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: The bundled engine is used on the host the extension runs on.<br>Windows: Asks first, as in the other apps. |
 | Windows SSH hosts | ✓ | ✓ | ✓ | ✓ | ✓ |  |
 | askpass dialog for passwords and passphrases | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: VSCode's input box, through a script the extension passes to git, ssh and the shared daemon.<br>CLI: The dialog belongs to the apps. |
