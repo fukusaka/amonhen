@@ -25,7 +25,19 @@ const FILTER: &[&str] = &[
     "Microsoft.UI.Xaml.IFrameworkElement::{DataContext,Tag,put_HorizontalAlignment,put_VerticalAlignment,put_Margin}",
     // Repositories の一覧で選んだ行（複数）。
     "Microsoft.UI.Xaml.Controls.ListViewBase",
-    "Microsoft.UI.Xaml.Controls.IListViewBase::{SelectedItems}",
+    "Microsoft.UI.Xaml.Controls.IListViewBase::{SelectedItems,DragItemsStarting,remove_DragItemsStarting}",
+    // Repositories の行を、左のお気に入り・グループへ引いて入れる（引いた行の Tag を文字で載せる）。
+    "Microsoft.UI.Xaml.Controls.DragItemsStartingEventArgs",
+    "Microsoft.UI.Xaml.Controls.IDragItemsStartingEventArgs::{Items,Data}",
+    "Microsoft.UI.Xaml.Controls.DragItemsStartingEventHandler",
+    "Windows.ApplicationModel.DataTransfer.DataPackage",
+    "Windows.ApplicationModel.DataTransfer.IDataPackage::{SetText,put_RequestedOperation}",
+    "Windows.ApplicationModel.DataTransfer.DataPackageOperation",
+    // 左のお気に入り・グループで、引いてきた行を受ける（reactor の Border の受け口は、外側の一覧が受けないに
+    // 戻すので、一覧で直に受けて処理済みにする）。
+    "Microsoft.UI.Xaml.DragEventArgs",
+    "Microsoft.UI.Xaml.IDragEventArgs::{AcceptedOperation,put_AcceptedOperation,Handled,put_Handled}",
+    "Microsoft.UI.Xaml.DragEventHandler",
     "Microsoft.UI.Xaml.Controls.IListViewBaseFactory::{}",
     "Microsoft.UI.Xaml.Controls.IListViewBaseStatics::{}",
     "Microsoft.UI.Xaml.Controls.IItemsControlFactory::{}",
@@ -97,7 +109,7 @@ const FILTER: &[&str] = &[
      PointerMoved,remove_PointerMoved,PointerReleased,remove_PointerReleased,PointerWheelChanged,\
      remove_PointerWheelChanged,DoubleTapped,remove_DoubleTapped,ContextRequested,remove_ContextRequested,\
      IsTabStop,put_IsTabStop,Focus,CapturePointer,ReleasePointerCapture,ContextFlyout,put_ContextFlyout,PreviewKeyDown,remove_PreviewKeyDown,\
-     StartBringIntoView,put_IsHitTestVisible,put_Visibility}",
+     StartBringIntoView,put_IsHitTestVisible,put_Visibility,DragOver,remove_DragOver,Drop,remove_Drop,put_AllowDrop}",
     "Microsoft.UI.Xaml.Controls.Primitives.IFlyoutBase::{ShowAt,ShowAtWithOptions,Hide}",
     "Microsoft.UI.Xaml.Controls.Primitives.IFlyoutShowOptions::{put_Position}",
     "Microsoft.UI.Xaml.IRoutedEventArgs::{OriginalSource}",

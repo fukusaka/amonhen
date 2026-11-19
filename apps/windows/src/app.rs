@@ -330,6 +330,8 @@ struct Root {
     scan_watch_generation: u64,
     repositories_from: Page,
     repositories_list: ElementRef<Grid>,
+    /// Repositories の左の分類の一覧を包む Grid（引いてきた行を受ける）。
+    repositories_side: ElementRef<Grid>,
     /// Activity の画面と、閉じたら戻る画面。
     activity: Option<crate::activity::State>,
     activity_from: Page,
@@ -1257,6 +1259,7 @@ impl Component for Root {
             scan_watch_generation: 0,
             repositories_from: Page::History,
             repositories_list: ElementRef::new(),
+            repositories_side: ElementRef::new(),
             settings_from: Page::History,
             sidebar_request: 0,
             diff_menu_request: 0,
@@ -7492,6 +7495,51 @@ impl Root {
                 None
             },
         );
+        // Repositories の行を引いたら引いた行の場所を覚え、左のお気に入り・グループで受ける（どちらの一覧も、並びが
+        // 変わるたびに作り直されるので、そのたびに付け直す。左の行の受け口は、引き始めたときに付く）。
+        let host = self.repositories_list.clone();
+        let shown = (self.page == Page::Repositories)
+            .then(|| self.repositories.as_ref().map(|s| s.shown_key()))
+            .flatten();
+        context.use_effect("repositories-drag", shown.clone(), move || {
+            if shown.is_some() {
+                let _ = host.request_native_element(|result| {
+                    if let Ok(element) = result
+                        && let Some(revoker) = xaml::drag_tags(&element)
+                    {
+                        REVOKERS.with(|r| r.borrow_mut().push(revoker));
+                    }
+                });
+            }
+            None
+        });
+        let side = self.repositories_side.clone();
+        let targets = (self.page == Page::Repositories)
+            .then(|| {
+                self.repositories
+                    .as_ref()
+                    .map(|s| (s.side_key(), s.drop_targets()))
+            })
+            .flatten();
+        context.use_effect("repositories-drop", targets.clone(), move || {
+            if let Some((_, targets)) = targets.clone() {
+                let _ = side.request_native_element(move |result| {
+                    if let Ok(element) = result {
+                        xaml::drop_on_rows(&element, targets.clone(), |target, locations| {
+                            with_history(|h| {
+                                h.sender.send(Message::Repos(
+                                    crate::repositories::Event::DroppedOn(
+                                        target.clone(),
+                                        locations.clone(),
+                                    ),
+                                ));
+                            });
+                        });
+                    }
+                });
+            }
+            None
+        });
         // 説明の欄を等幅に（Working Copy を出すたびに欄が作り直される。TextBox は Control なので、そのものに付ける）。
         let description_box = self.description_box.clone();
         context.use_effect(
@@ -12650,6 +12698,7 @@ impl Root {
                         })
                     })
                 }),
+                side_host: &self.repositories_side,
                 list_host: &self.repositories_list,
                 column_handles: &self.column_handles,
             },

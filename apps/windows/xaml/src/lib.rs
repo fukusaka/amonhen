@@ -17,5 +17,5 @@ mod list;
 mod textbox;
 pub use badge::put_badges;
 pub use bindings::*;
-pub use list::selected_tags;
+pub use list::{drag_tags, drop_on_rows, selected_tags};
 pub use textbox::{scroll_to_fraction, select_all};
