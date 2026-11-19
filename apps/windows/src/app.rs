@@ -2427,6 +2427,18 @@ impl Root {
                 crate::tabs::note_page(self.page == Page::WorkingCopy);
                 crate::tabs::new_tab();
             }
+            Message::Command(id) if id.starts_with("switch-repository:") => {
+                // このタブを選んだリポジトリに替える（GTK4 版・macOS 版のリポジトリ名のポップオーバー）。
+                let location = id["switch-repository:".len()..].to_owned();
+                if crate::tabs::current()
+                    .is_some_and(|t| t.location.eq_ignore_ascii_case(&location))
+                {
+                    return;
+                }
+                if let Err(e) = crate::tabs::replace(&location, false) {
+                    self.error = Some(e);
+                }
+            }
             Message::Command(id) if id == "try-again" => {
                 if let Some(tab) = crate::tabs::current()
                     && let Err(e) = crate::tabs::replace(&tab.location, tab.working_copy)
@@ -7300,11 +7312,17 @@ impl Root {
         let tracking = self.tracking();
         let toolbar = Grid::new()
             .grid_row(1)
-            .element_ref(&self.toolbar)
-            .children((crate::menus::toolbar(
-                context.callback(Message::Command),
-                tracking,
-            ),));
+            .columns([GridLength::Auto, GridLength::Star(1.0)])
+            .children((
+                self.repository_switcher(context),
+                Grid::new()
+                    .grid_column(1)
+                    .element_ref(&self.toolbar)
+                    .children((crate::menus::toolbar(
+                        context.callback(Message::Command),
+                        tracking,
+                    ),)),
+            ));
         // 数かツールバーの並びが変わったら、Pull・Push のバッジを付け直す（並べ終えてから）。
         let order: String = crate::menus::toolbar_entries()
             .iter()
@@ -11875,6 +11893,43 @@ impl Root {
             self.sequence_band(context),
             bar,
         ))
+    }
+
+    /// ツールバーの左のリポジトリ名（GTK4 版・macOS 版と同じ）: 押すと、ブックマークのリポジトリを、お気に入り
+    /// （★）を先に、その後は最後に開いた順に出し、選んだものにこのタブを替える。終わりに Repositories。
+    fn repository_switcher(&self, context: &ViewContext<Self>) -> View {
+        let Some(tab) = crate::tabs::current().filter(|t| !t.repositories) else {
+            return View::empty();
+        };
+        let mut items: Vec<MenuItem> = crate::repositories::switch_targets()
+            .into_iter()
+            .take(30)
+            .map(|(location, name, favorite)| {
+                let current = location.eq_ignore_ascii_case(&tab.location);
+                let label = match (current, favorite) {
+                    (true, _) => format!("✓ {name}"),
+                    (false, true) => format!("★ {name}"),
+                    (false, false) => name,
+                };
+                MenuItem::item(format!("switch-repository:{location}"), label)
+            })
+            .collect();
+        if !items.is_empty() {
+            items.push(MenuItem::separator("-repositories"));
+        }
+        items.push(MenuItem::item("repositories", "Repositories…"));
+        DropDownButton::new()
+            .grid_column(0)
+            .margin(Thickness::new(8.0, 0.0, 4.0, 0.0))
+            .vertical_alignment(VerticalAlignment::Center)
+            .content(
+                TextBlock::new()
+                    .text(crate::repositories::display_name(&tab.location))
+                    .font_weight(FontWeight::SEMI_BOLD)
+                    .max_width(220.0)
+                    .text_trimming(TextTrimming::CharacterEllipsis),
+            )
+            .menu(Menu::new(items, context.callback(Message::Command)))
     }
 
     /// つながりが切れた帯（ステータスバーの上。GTK4 版の `show_disconnected`、macOS 版と同じ）: どこと切れたか、

@@ -378,6 +378,78 @@ pub fn shown_path(location: &str) -> String {
     tilde(location)
 }
 
+/// [`switch_targets`] の前の結果（bookmarks.json の更新時刻、開いた日時の記録、結果）。
+type SwitchCache = (
+    Option<std::time::SystemTime>,
+    Option<String>,
+    Vec<(String, String, bool)>,
+);
+
+/// ツールバーのリポジトリ名から切り替える先（GTK4 版・macOS 版のポップオーバー）: ブックマークのリポジトリを、
+/// お気に入りを先に、その後は最後に開いた順に（開いたことがなければ名前の順で後ろに）。場所・表示名・お気に入りか。
+pub fn switch_targets() -> Vec<(String, String, bool)> {
+    // 描くたびに呼ぶので、bookmarks.json の更新時刻と開いた日時の記録が同じなら前の結果を使う。
+    thread_local! {
+        static CACHE: std::cell::RefCell<Option<SwitchCache>> =
+            const { std::cell::RefCell::new(None) };
+    }
+    let modified = file()
+        .and_then(|p| std::fs::metadata(p).ok())
+        .and_then(|m| m.modified().ok());
+    let opened_text = crate::prefs::string(OPENED);
+    if let Some(list) = CACHE.with(|c| {
+        c.borrow()
+            .as_ref()
+            .filter(|(m, o, _)| *m == modified && *o == opened_text)
+            .map(|(_, _, l)| l.clone())
+    }) {
+        return list;
+    }
+    let data = read();
+    let opened = opened();
+    let mut list: Vec<(String, String, bool, i64)> = items(&data)
+        .filter_map(|b| {
+            let location = b["path"].as_str()?.to_owned();
+            let name = b["name"]
+                .as_str()
+                .filter(|n| !n.is_empty())
+                .map(str::to_owned)
+                .unwrap_or_else(|| folder_name(&location));
+            let favorite = b["favorite"].as_bool() == Some(true);
+            let when = opened.get(&key(&location)).copied().unwrap_or(i64::MIN);
+            Some((location, name, favorite, when))
+        })
+        .collect();
+    list.sort_by(|a, b| {
+        b.2.cmp(&a.2)
+            .then(b.3.cmp(&a.3))
+            .then_with(|| a.1.to_lowercase().cmp(&b.1.to_lowercase()))
+    });
+    let list: Vec<(String, String, bool)> =
+        list.into_iter().map(|(l, n, f, _)| (l, n, f)).collect();
+    CACHE.with(|c| *c.borrow_mut() = Some((modified, opened_text, list.clone())));
+    list
+}
+
+/// 場所の表示名（ブックマークの上書きがなければフォルダの名前）。
+pub fn display_name(location: &str) -> String {
+    switch_targets()
+        .into_iter()
+        .find(|(l, ..)| same(l, location))
+        .map_or_else(|| folder_name(location), |(_, n, _)| n)
+}
+
+/// 場所の最後のフォルダの名前（表示名の上書きがないとき）。
+fn folder_name(location: &str) -> String {
+    location
+        .trim_end_matches(['\\', '/'])
+        .rsplit(['\\', '/'])
+        .next()
+        .filter(|s| !s.is_empty())
+        .unwrap_or(location)
+        .to_owned()
+}
+
 /// Places にある SSH 先（リポジトリかスキャンするフォルダ。Settings > SSH Hosts の一覧）。
 pub fn remote_hosts() -> Vec<String> {
     let data = read();
