@@ -1370,8 +1370,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                     self?.confirmDestructive(
                         L("Prune %@?", remote),
                         message: L("Removes the remote-tracking branches whose branches are gone from %@ (git remote prune).", remote)
-                            + " " + Actions.cantUndo,
-                        ok: "Prune", destructive: false
+                            + sentenceGap + Actions.cantUndo,
+                        ok: "Prune"
                     ) {
                         actions.perform(["op": "changeRemote", "change": ["kind": "prune", "name": remote]])
                     }
@@ -1400,9 +1400,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                 return
             }
             if isGroup, node.title == "Submodules" {
-                menu.addItem(ClosureMenuItem(title: "Update All") { actions.perform(["op": "updateSubmodules", "paths": [String]()]) })
-                menu.addItem(ClosureMenuItem(title: "Update Submodules…") { [weak self] in self?.onSubmoduleAction?(nil, .update) })
-                menu.addItem(ClosureMenuItem(title: "Sync URLs") { [weak self] in self?.onSubmoduleAction?(nil, .sync) })
+                menu.addItem(ClosureMenuItem(title: L("Update All")) { actions.perform(["op": "updateSubmodules", "paths": [String]()]) })
+                menu.addItem(ClosureMenuItem(title: L("Update Submodules…")) { [weak self] in self?.onSubmoduleAction?(nil, .update) })
+                menu.addItem(ClosureMenuItem(title: L("Sync URLs")) { [weak self] in self?.onSubmoduleAction?(nil, .sync) })
                 menu.addItem(ClosureMenuItem(title: L("Run in Each Submodule…")) { [weak self] in self?.onSubmoduleAction?(nil, .foreach) })
                 menu.addItem(.separator())
                 menu.addItem(ClosureMenuItem(title: L("Add Submodule…")) { [weak self] in self?.onSubmoduleAction?(nil, .add) })
@@ -1637,7 +1637,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         add(names.count == 1 ? L("Delete %@…", names[0]) : L("Delete %ld Tags…", names.count)) { [weak self] in
             self?.confirmDestructive(
                 names.count == 1 ? L("Delete tag %@?", names[0]) : L("Delete %ld tags?", names.count),
-                message: list(names) + L("The remotes keep theirs.") + " " + Actions.canUndo, destructive: false
+                message: list(names) + L("The remotes keep theirs.") + sentenceGap + Actions.canUndo, destructive: false
             ) {
                 actions.perform(sequence: names.map { ["op": "deleteTag", "name": $0] })
             }
@@ -1647,8 +1647,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             add(tags.count == 1 ? L("Delete %@ from %@…", tags[0], remote) : L("Delete %ld Tags from %@…", tags.count, remote)) { [weak self] in
                 self?.confirmDestructive(
                     tags.count == 1 ? L("Delete %@ from %@?", tags[0], remote) : L("Delete %ld tags from %@?", tags.count, remote),
-                    message: list(tags) + L("Everyone who fetches from %@ loses them; yours stay.", remote) + " " + Actions.cantUndo
-                        + (unchecked ? " " + L("Whether %@ has them hasn’t been checked yet (Fetch reads it).", remote) : "")
+                    message: list(tags) + L("Everyone who fetches from %@ loses them; yours stay.", remote) + sentenceGap + Actions.cantUndo
+                        + (unchecked ? sentenceGap + L("Whether %@ has them hasn’t been checked yet (Fetch reads it).", remote) : "")
                 ) {
                     actions.perform(["op": "pushTags", "remote": remote, "names": tags, "delete": true])
                 }
@@ -1661,8 +1661,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         confirmDestructive(
             tags.count == 1 ? L("Push %@ to %@?", tags[0], remote) : L("Push %ld tags to %@?", tags.count, remote),
             message: tags.joined(separator: "\n") + "\n\n"
-                + L("Everyone who fetches from %@ gets them.", remote) + " " + Actions.cantUndo,
-            ok: "Push", destructive: false
+                + L("Everyone who fetches from %@ gets them.", remote) + sentenceGap + Actions.cantUndo,
+            ok: "Push"
         ) { [weak self] in
             self?.actions?.perform(["op": "pushTags", "remote": remote, "names": tags])
         }
@@ -1673,7 +1673,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         confirmDestructive(
             tags.count == 1 ? L("Replace %@ on %@?", tags[0], remote) : L("Replace %ld tags on %@?", tags.count, remote),
             message: tags.joined(separator: "\n") + "\n"
-                + L("%@ has a different tag with this name; yours replaces it for everyone who fetches.", remote) + " " + Actions.cantUndo,
+                + L("%@ has a different tag with this name; yours replaces it for everyone who fetches.", remote) + sentenceGap + Actions.cantUndo,
             ok: L("Replace")
         ) {
             actions.perform(["op": "pushTags", "remote": remote, "names": tags, "force": true])

@@ -1162,14 +1162,14 @@ impl SshHosts {
             if !paths.is_empty() || !roots.is_empty() {
                 let sheet = Sheet::new(
                     parent.as_ref(),
-                    &tr!("Remove {host}?", host = host),
+                    &tr!("Remove {host} from List?", host = host),
                     &tr!(
                         "This removes its {repositories} repositories and {folders} folders to scan from the list. Nothing on the host is touched.",
                         repositories = paths.len(),
                         folders = roots.len()
                     ),
                 );
-                sheet.buttons(&tr!("Remove"), true, None);
+                sheet.buttons(&tr!("Remove from List"), false, None);
                 if sheet.run().await != Response::Ok {
                     return;
                 }

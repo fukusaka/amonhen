@@ -287,7 +287,7 @@ pub fn fetch(actions: &Rc<Actions>) {
             .width_chars(24)
             .activates_default(true)
             .build();
-        sheet.add(&sheets::row(&tr!("Name:"), &name));
+        sheet.add(&sheets::row(&tr!("Name"), &name));
         sheet.buttons("Fetch", false, None);
         // 名前の欄から始める（macOS 版と同じ）。
         name.grab_focus();

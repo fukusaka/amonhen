@@ -558,7 +558,7 @@ struct FilePickerView: View {
             }
             if let hosts = model.hosts {
                 HStack(spacing: 6) {
-                    Text(L("Host:"))
+                    Text(L("Host"))
                     HostComboBox(hosts: hosts, host: model.host) { model.connect($0) }
                 }
             }

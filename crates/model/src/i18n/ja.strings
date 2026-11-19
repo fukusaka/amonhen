@@ -560,7 +560,6 @@
 "Discard" = "捨てる";
 "Mark {path} as resolved with {count} conflicts left?" = "{path} にコンフリクトが {count} 残っていますが、解決済みにしますか？";
 "The conflict markers stay in the file." = "コンフリクトのマーカーはファイルに残ります。";
-"Can’t open the merge editor" = "マージエディタを開けません";
 "Current (your branch)" = "Current（今のブランチ）";
 "Result (editable)" = "Result（結果、編集できる）";
 "Incoming (being merged in)" = "Incoming（取り込む側）";
@@ -610,7 +609,6 @@
 "Clear" = "消す";
 "Opens History right away next time. Cleared, it is read from git again." = "次に開くとき History をすぐ出します。消すと git から読み直します。";
 "Answers the same question again without asking the AI." = "同じ問い合わせには、AI に聞かずに前の結果を出します。";
-"Can’t clear the cache" = "キャッシュを消せません";
 "What each open repository’s History cache wrote since the app started (through the shared daemon, what the daemon wrote). It writes only what changed." = "開いているリポジトリの History のキャッシュが、アプリを起動してから書いたもの（共有の daemon 越しなら、daemon が書いたもの）。変わった所だけを書く。";
 "Performance" = "パフォーマンス";
 "Item" = "項目";
@@ -684,14 +682,14 @@
 "Fetch from {remote}?" = "{remote} から Fetch しますか？";
 "Fetch?" = "Fetch しますか？";
 "All Remotes ({names})" = "すべてのリモート（{names}）";
-"From:" = "取り込み元:";
+"From" = "取り込み元";
 "Follow git’s settings" = "git の設定に従う";
 "No remote branch to pull from" = "取り込み元のリモートのブランチがありません";
 "Fetch, or add a remote in Repository Settings." = "Fetch するか、リポジトリの設定でリモートを追加してください。";
 "Pull {count} commits from {upstream}?" = "{upstream} から {count} コミット取り込みますか？";
 "Pull from {upstream}?" = "{upstream} から Pull しますか？";
 "Pull into {branch}?" = "{branch} に Pull しますか？";
-"Integrate with:" = "取り込み方:";
+"Integrate with" = "取り込み方";
 "Commits to pull" = "取り込むコミット";
 "Commits only here" = "手元にだけあるコミット";
 "Sets {source} as the upstream, then pulls." = "{source} を上流にしてから取り込みます。";
@@ -1004,8 +1002,7 @@
 "Taken from the URL" = "URL から決める";
 "Choose from My GitHub Repositories" = "自分の GitHub のリポジトリから選ぶ";
 "None found" = "見つかりません";
-"Location:" = "置き場所:";
-"Folder Name:" = "フォルダの名前:";
+"Folder Name" = "フォルダの名前";
 "Clone Location" = "Clone する場所";
 "{path} already exists" = "{path} はもうあります";
 "Choose a different name or location." = "別の名前か置き場所にしてください。";
@@ -1018,14 +1015,12 @@
 "Numbering, recipients and sign-offs follow git’s format.* settings." = "番号の付け方・宛先・Signed-off-by は git の format.* の設定に従います。";
 "One file per commit" = "1 コミット 1 ファイル";
 "One mbox file" = "1 つの mbox ファイル";
-"Format:" = "形:";
 "Cover letter" = "送り状（cover letter）";
-"Version (-v):" = "版（-v）:";
+"Version (-v)" = "版（-v）";
 "Save…" = "保存…";
 "Choose the folder for the patches. Files with the same names are replaced." = "パッチを書き出すフォルダを選んでください。同じ名前のファイルは置き換えます。";
 "Choose patch files (.patch, .diff, .mbox, .eml)." = "パッチのファイル（.patch・.diff・.mbox・.eml）を選んでください。";
 "There are no changes in the patch." = "パッチに変更がありません。";
-"Can’t Read the Patch" = "パッチを読めません";
 "Apply “{subject}”?" = "「{subject}」を当てますか？";
 "Apply {count} Patches?" = "{count} 個のパッチを当てますか？";
 "Each patch becomes a commit on {branch} (git am)." = "パッチごとに {branch} のコミットになります（git am）。";
@@ -1053,9 +1048,8 @@
 "From {branch}" = "{branch} から";
 "Create" = "作成";
 "Create as Draft" = "Draft として作る";
-"Title:" = "タイトル:";
 "Title" = "タイトル";
-"Body:" = "本文:";
+"Body" = "本文";
 "Open in Browser" = "ブラウザで開く";
 "Pull Request Created" = "プルリクエストを作りました";
 /* GTK4 の FE: リポジトリの設定 */
@@ -1471,7 +1465,7 @@
 "Opened" = "開いた日時";
 "Places" = "場所";
 "Remove" = "削除";
-"Remove {host}?" = "{host} を削除しますか？";
+"Remove {host} from List?" = "{host} を一覧から外しますか？";
 "Remove {name} from List…" = "{name} を一覧から外す…";
 "Remove from Favorites" = "お気に入りから外す";
 "Remove from Group" = "グループから外す";
@@ -1536,7 +1530,7 @@
 "Forget this host" = "この SSH 先を忘れる";
 "Connection" = "接続";
 "unreachable" = "つながらない";
-"Add an SSH host with +, or open one from Places." = "＋ で SSH 先を追加するか、Places から開きます。";
+"Add an SSH host with +, or open one from Places." = "＋ で SSH 先を追加するか、場所から開きます。";
 "Applies to every repository on {host} (its ~/.gitconfig). git in a terminal there follows these too." = "{host} のすべてのリポジトリに効きます（そこの ~/.gitconfig）。そこの端末の git も同じ設定に従います。";
 "Connecting to {host}…" = "{host} につないでいます…";
 "Couldn’t connect to {host}" = "{host} につなげませんでした";
@@ -1557,7 +1551,6 @@
 "Signatures of commits in repositories on this host are checked with these." = "この SSH 先のリポジトリのコミットの署名を、これで検証します。";
 "Write it as ssh knows it: user@host:port, or a name in ~/.ssh/config." = "ssh が知っている名前で書きます: user@host:port か、~/.ssh/config の名前。";
 "Add" = "追加";
-"Remove {host}?" = "{host} を削除しますか？";
 "This removes its {repositories} repositories and {folders} folders to scan from the list. Nothing on the host is touched." = "そのホストのリポジトリ {repositories} 個とスキャンするフォルダ {folders} 個を一覧から外します。ホストの中には触れません。";
 "Engine on {host}" = "{host} のエンジン";
 "Choose amonhen on the host. It must be this build." = "SSH 先の amonhen を選びます。このビルドのものである必要があります。";
@@ -1926,7 +1919,6 @@
 "{name} — click to switch repository" = "{name} — 押すとリポジトリを切り替える";
 "{name} — editing the worktree {worktree}. Click to switch repository" = "{name} — worktree {worktree} を編集中。押すとリポジトリを切り替える";
 /* GTK4: パスを列で選ぶシート */
-"Host:" = "接続先:";
 "You can still type the path above and choose it." = "上の欄にパスを打ち込んで選ぶこともできます。";
 "Show hidden files" = "隠しファイルを表示";
 "New Folder…" = "新規フォルダ…";
@@ -2081,7 +2073,7 @@
 "{count} Commits" = "{count} コミット";
 "Recent History" = "最近の履歴";
 "How many recent commits to fetch (git clone --depth)." = "新しいほうからいくつのコミットを取るか（git clone --depth）。";
-"Download:" = "取得する範囲:";
+"Download" = "取得する範囲";
 "Check out only some folders" = "一部のフォルダだけ取り出す";
 "Only the files at the top are checked out; right after the clone, choose a folder to check out." = "最上位のファイルだけを取り出し、clone の後で取り出すフォルダを選びます。";
 "Needs git 2.27 or later. This computer’s git is {version}." = "git 2.27 以降が必要です。このコンピューターの git は {version} です。";
@@ -2097,8 +2089,7 @@
 "Export Archive" = "アーカイブとして書き出す";
 "The files of this commit, as git archive writes them; .gitattributes decides what is left out (export-ignore)." = "このコミットのファイルを git archive と同じく書き出します。何を外すかは .gitattributes（export-ignore）に従います。";
 "Export…" = "書き出す…";
-"Top folder:" = "先頭のフォルダ:";
-"Folder:" = "フォルダ:";
+"Top folder" = "先頭のフォルダ";
 "All files" = "すべてのファイル";
 "All Files" = "すべてのファイル";
 "Export One Folder" = "1 つのフォルダだけを書き出す";
@@ -2135,7 +2126,6 @@
 "Choose a bundle file (git bundle) to clone from." = "clone する bundle のファイル（git bundle）を選んでください。";
 "This bundle has only the commits after ones it doesn’t include, so it can’t be cloned." = "この bundle には、入っていないコミットより後のコミットしかないので、clone できません。";
 "From a bundle file, everything in it is copied." = "bundle のファイルからは、入っているものをすべて写します。";
-"Branch:" = "ブランチ:";
 "“{name}” can’t be used as a name" = "「{name}」は名前に使えません";
 "There is already a remote named “{name}”. Choose another name" = "「{name}」という名前の remote がもうあります。ほかの名前にしてください";
 "The bundle is {size} MB, more than can be sent at once (1 GB). Copy it to where the repository is and fetch it there" = "bundle が {size} MB あり、一度に送れる大きさ（1 GB）を超えています。リポジトリのある所にコピーして、そこで取り込んでください";
@@ -2150,7 +2140,6 @@
 "Can’t Fetch the Bundle" = "bundle を取り込めません";
 "Nothing to Fetch" = "取り込むものがありません";
 "The bundle has no branches." = "この bundle にはブランチがありません。";
-"Name:" = "名前:";
 "This repository lacks {count} commits the bundle needs (it has only the commits after them)." = "bundle に要るコミットのうち {count} 個が、このリポジトリにありません（bundle にはそれより後のコミットしかありません）。";
 "{file} has {count} branches ({names}). They are fetched under the name below, like a remote’s branches; tags aren’t fetched." = "{file} には {count} 個のブランチ（{names}）があります。remote のブランチのように、下の名前の下に取り込みます。タグは取り込みません。";
 "Stage or discard the changes to .gitmodules first" = ".gitmodules の変更を先に stage するか取り消してください";
@@ -2266,6 +2255,11 @@
 "Apply the stash {name}?" = "{name} を Apply しますか？";
 "New Worktree…" = "新しい worktree…";
 "Update Submodules…" = "submodule を Update…";
+"Amend Last Commit" = "直前のコミットを Amend";
+"Fixup Commit For" = "Fixup で直すコミット";
+"Squash Commit For" = "Squash でまとめるコミット";
+"Update All" = "すべて Update";
+"Sync URLs" = "URL を Sync";
 "Stash Changes" = "変更を Stash";
 "Stash Changes in {name}" = "{name} の変更を Stash";
 "Stash Changes in {count} Files" = "{count} ファイルの変更を Stash";
@@ -2319,9 +2313,9 @@
 "Light" = "明るい";
 "Couldn’t read {file}: {error}" = "{file} を読めませんでした: {error}";
 "Use a different background for {name}" = "{name} は別の背景にする";
-"Otherwise this window follows Settings > Theme." = "しなければ、この窓は Settings > Theme に従います。";
+"Otherwise this window follows Settings > Theme." = "しなければ、この窓は設定 > テーマに従います。";
 "Push {count} tags to {remote}?" = "{count} 個のタグを {remote} に Push しますか？";
-"Everyone who fetches from {remote} gets them." = "{remote} から fetch する人みんなに届きます。";
+"Everyone who fetches from {remote} gets them." = "{remote} から Fetch する全員に届きます。";
 "Prune {remote}?" = "{remote} を Prune しますか？";
 "Removes the remote-tracking branches whose branches are gone from {remote} (git remote prune)." = "{remote} で消えたブランチの、手元の写し（リモートのブランチ）を消します（git remote prune）。";
 "Fast-Forward {name} to {upstream}…" = "{name} を {upstream} まで Fast-Forward…";
@@ -2334,3 +2328,12 @@
 "Branch to follow" = "追うブランチ";
 "Send" = "送る";
 "Don’t Send" = "送らない";
+
+/* 失敗の知らせ（docs/ux.md: 「Couldn’t <操作>」） */
+"Couldn’t clear the cache" = "キャッシュを消せませんでした";
+"Couldn’t list the ignored files" = "ignore されたファイルを読めませんでした";
+"Couldn’t list the branches to clean up" = "片付けるブランチを読めませんでした";
+"Couldn’t start the shared daemon" = "共有の daemon を起動できませんでした";
+"Couldn’t reload {path}" = "{path} を読み直せませんでした";
+"Couldn’t apply the patch" = "パッチを当てられませんでした";
+"Couldn’t open {path} in the merge editor" = "{path} をマージエディタで開けませんでした";

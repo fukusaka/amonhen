@@ -699,14 +699,14 @@ impl MessageAids {
                 let section = gio::Menu::new();
                 for (title, name, tip) in [
                     (
-                        "Fixup Commit For",
+                        tr!("Fixup Commit For"),
                         "message.fixup",
                         tr!(
                             "Commit as a fixup! of the chosen commit (combine later with rebase -i --autosquash)"
                         ),
                     ),
                     (
-                        "Squash Commit For",
+                        tr!("Squash Commit For"),
                         "message.squash",
                         tr!(
                             "Commit as a squash! of the chosen commit (its message is added when combined)"
@@ -719,7 +719,7 @@ impl MessageAids {
                         item.set_action_and_target_value(Some(name), Some(&subject.to_variant()));
                         sub.append_item(&item);
                     }
-                    let item = gio::MenuItem::new_submenu(Some(title), &sub);
+                    let item = gio::MenuItem::new_submenu(Some(&title), &sub);
                     item.set_attribute_value(crate::menu::TOOLTIP, Some(&tip.to_variant()));
                     section.append_item(&item);
                 }

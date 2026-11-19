@@ -75,8 +75,8 @@ extension Actions {
         let version = NSTextField(string: "")
         version.placeholderString = "1"
         version.widthAnchor.constraint(equalToConstant: 48).isActive = true
-        let versionRow = NSStackView(views: [NSTextField(labelWithString: L("Version (-v):")), version])
-        let formatRow = NSStackView(views: [NSTextField(labelWithString: L("Format:")), format])
+        let versionRow = NSStackView(views: [NSTextField(labelWithString: L("Version (-v)")), version])
+        let formatRow = NSStackView(views: [NSTextField(labelWithString: L("Format")), format])
         let stack = NSStackView(views: [formatRow, cover, versionRow])
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -129,10 +129,10 @@ extension Actions {
             }
             switch result {
             case let .failure(error):
-                await alert(L("Can’t Read the Patch"), "\(error)")
+                await alert(L("Couldn’t apply the patch"), "\(error)")
             case let .success(summary):
                 if summary.patches.allSatisfy(\.files.isEmpty) {
-                    await alert(L("Can’t Read the Patch"), L("There are no changes in the patch."))
+                    await alert(L("Couldn’t apply the patch"), L("There are no changes in the patch."))
                 } else {
                     await confirmApply(summary, paths: paths)
                 }
@@ -150,10 +150,10 @@ extension Actions {
             alert.messageText = summary.patches.count == 1
                 ? L("Apply “%@”?", summary.patches[0].subject)
                 : L("Apply %ld Patches?", summary.patches.count)
-            alert.informativeText = L("Each patch becomes a commit on %@ (git am).", branch) + " " + Self.canUndo
+            alert.informativeText = L("Each patch becomes a commit on %@ (git am).", branch) + sentenceGap + Self.canUndo
         } else {
             alert.messageText = names.count == 1 ? L("Apply %@?", names[0]) : L("Apply %ld Patches?", names.count)
-            alert.informativeText = L("The changes go into the working tree (git apply).") + " " + Self.canUndo
+            alert.informativeText = L("The changes go into the working tree (git apply).") + sentenceGap + Self.canUndo
         }
         alert.informativeText = sheetMessage(alert.informativeText)
         alert.addButton(withTitle: L("Apply"))

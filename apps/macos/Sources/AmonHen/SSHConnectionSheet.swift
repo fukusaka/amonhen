@@ -23,12 +23,11 @@ enum SSHConnectionSheet {
     @MainActor
     static func confirmRemove(host: String, repositories: Int, folders: Int, in window: NSWindow?) async -> Bool {
         let alert = NSAlert()
-        alert.messageText = L("Remove %@?", host)
+        alert.messageText = L("Remove %@ from List?", host)
         alert.informativeText = L("This removes its %ld repositories and %ld folders to scan from the list. Nothing on the host is touched.", repositories, folders)
-        // 戻せないので、赤く、↩ では押せない（↩ は Cancel）。
-        let delete = alert.addButton(withTitle: L("Remove"))
-        delete.markDestructive()
-        alert.addButton(withTitle: L("Cancel")).keyEquivalent = "\r"
+        // ホストの中には触れず、リポジトリを一覧から外すのと同じなので、同じ言葉で赤くしない。
+        alert.addButton(withTitle: L("Remove from List"))
+        alert.addButton(withTitle: L("Cancel"))
         guard let window else { return alert.runModal() == .alertFirstButtonReturn }
         return await alert.beginSheetModal(for: window) == .alertFirstButtonReturn
     }
