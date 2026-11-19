@@ -2020,6 +2020,8 @@ impl App {
                 ("j k", tr!("Move")),
                 ("g G", tr!("Top and bottom")),
                 ("PgUp PgDn", tr!("Move by a page")),
+                ("@", tr!("Go to HEAD")),
+                ("] [", tr!("Go to the parent, the child")),
                 ("Enter Space", tr!("Go to the details")),
                 ("/", tr!("Search")),
                 ("n N", tr!("Next and previous match")),
@@ -2442,6 +2444,10 @@ impl App {
             KeyCode::PageUp => Some(self.history.move_selection(-page)),
             KeyCode::Char('g') | KeyCode::Home => Some(self.history.select(0)),
             KeyCode::Char('G') | KeyCode::End => Some(self.history.select(u32::MAX)),
+            // HEAD・親・子へ（アプリの Navigate）。`]` は下（古い方）、`[` は上へ動く。
+            KeyCode::Char('@') => Some(self.history.go_to_head()),
+            KeyCode::Char(']') => Some(self.history.go_to_parent()),
+            KeyCode::Char('[') => Some(self.history.go_to_child()),
             _ => None,
         };
         if let Some(moved) = moved {

@@ -736,6 +736,35 @@ fn colon_lists_commands_and_runs_the_selected_one() {
     assert!(tag.contains(": v1"));
 }
 
+/// History の `@` `]` `[`: HEAD・親（1 つ目の親）・すぐ上の子へ移る。
+#[test]
+fn go_to_head_parent_and_child() {
+    let dir = tempfile::tempdir().unwrap();
+    merged(dir.path());
+    let at = |keys: &str| -> String {
+        let out = amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), keys).unwrap();
+        out.lines()
+            .last()
+            .unwrap()
+            .split_whitespace()
+            .last()
+            .unwrap()
+            .to_owned()
+    };
+    // 0: マージ（HEAD）、1: Bump the version、2: topic のコミット、3: Add the graph、4: Start。
+    // マージの 1 つ目の親は main の側。
+    assert_eq!(at("]"), "2/5");
+    // topic のコミットの親は Add the graph。
+    assert_eq!(at("jj]"), "4/5");
+    // Add the graph の子のうち、すぐ上は topic のコミット。
+    assert_eq!(at("jjj["), "3/5");
+    // いちばん上には子がない。
+    assert_eq!(at("["), "1/5");
+    assert_eq!(at("G@"), "1/5");
+    // コマンドの一覧からも。
+    assert_eq!(at("G:go to head\n"), "1/5");
+}
+
 /// Space は、History とサイドバーで Enter と同じ（詳細へ入る・選んでいる行を開く）
 #[test]
 fn space_opens_like_enter() {

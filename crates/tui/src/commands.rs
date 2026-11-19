@@ -74,6 +74,9 @@ pub static ENTRIES: &[Entry] = &[
     entry("show-sidebar", '0', Place::Anywhere),
     entry("filter-branches", '/', Place::Sidebar),
     entry("find-in-history", '/', Place::History),
+    entry("go-to-head", '@', Place::History),
+    entry("go-to-parent", ']', Place::History),
+    entry("go-to-child", '[', Place::History),
 ];
 
 impl Entry {

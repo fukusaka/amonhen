@@ -364,6 +364,43 @@ impl History {
         i64::from(self.height.saturating_sub(1).max(1))
     }
 
+    /// HEAD のコミットを選ぶ（HEAD が History になければ、何もしない）。
+    pub fn go_to_head(&mut self) -> bool {
+        self.head_row.is_some_and(|row| self.select(row))
+    }
+
+    /// 選んでいるコミットの親（1 つ目の親。なければいちばん近い親）を選ぶ。線は、両端の行のどちらかが読んである
+    /// 範囲にあれば、窓に入っている。
+    pub fn go_to_parent(&mut self) -> bool {
+        let Some(window) = &self.window else {
+            return false;
+        };
+        let selected = self.selected;
+        let from = |first: bool| {
+            (window.edges.iter())
+                .filter(|e| e.child == selected && e.parent != selected)
+                .filter(|e| !first || e.kind & Edge::FIRST_PARENT != 0)
+                .map(|e| e.parent)
+                .min()
+        };
+        from(true)
+            .or_else(|| from(false))
+            .is_some_and(|row| self.select(row))
+    }
+
+    /// 選んでいるコミットの子のうち、いちばん近いもの（すぐ上の子）を選ぶ。
+    pub fn go_to_child(&mut self) -> bool {
+        let Some(window) = &self.window else {
+            return false;
+        };
+        let selected = self.selected;
+        let child = (window.edges.iter())
+            .filter(|e| e.parent == selected && e.child != selected)
+            .map(|e| e.child)
+            .max();
+        child.is_some_and(|row| self.select(row))
+    }
+
     pub fn select(&mut self, row: u32) -> bool {
         let row = row.min(self.last());
         let before = (self.selected, self.top);
