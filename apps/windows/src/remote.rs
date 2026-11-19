@@ -12,6 +12,8 @@ use serde_json::{Map, Value};
 
 /// SSH 先ごとの選択（エンジン・送り込み・ログインシェル。GTK4 版と同じ鍵）。
 const HOST_OPTIONS: &str = "sshHostOptions";
+/// SSH 先ごとの、署名を手元の鍵で検証するか（SSH 先 → bool の JSON。GTK4 版・macOS 版と同じ鍵）。
+const SIGNATURE_BY_HOST: &str = "checkRemoteSignaturesLocallyByHost";
 
 /// つなぐ必要のある場所か（`ssh://`・`daemon:`）。
 pub fn is_remote(location: &str) -> bool {
@@ -66,28 +68,58 @@ fn all_options() -> Map<String, Value> {
 
 /// `location` の SSH 先ごとの選択（手元・選んでいなければ既定）。UI のスレッドで読む。
 pub fn options_for(location: &str) -> HostOptions {
-    host_of(location)
-        .and_then(|host| {
-            all_options()
-                .get(&host)
-                .and_then(Value::as_str)
-                .map(HostOptions::from_json)
-        })
+    host_of(location).map_or_else(HostOptions::default, |host| host_options(&host))
+}
+
+/// SSH 先ごとの選択（選んでいなければ既定）。UI のスレッドで。
+pub fn host_options(host: &str) -> HostOptions {
+    all_options()
+        .get(host)
+        .and_then(Value::as_str)
+        .map(HostOptions::from_json)
         .unwrap_or_default()
+}
+
+/// SSH 先ごとの選択を変える（次につなぐときから効く。UI のスレッドで）。
+pub fn set_host_options(host: &str, options: &HostOptions) {
+    let mut all = all_options();
+    if options.is_empty() {
+        all.remove(host);
+    } else {
+        all.insert(host.to_owned(), Value::String(options.to_json()));
+    }
+    if let Err(e) = crate::prefs::set_string(HOST_OPTIONS, &Value::Object(all).to_string()) {
+        eprintln!("SSH 先の選択を書けない: {e}");
+    }
 }
 
 /// SSH 先にエンジンを送り込むか（送ってよいかを聞いたときの答え。UI のスレッドで）。
 fn set_push(host: &str, push: bool) {
-    let mut all = all_options();
-    let mut options = all
-        .get(host)
-        .and_then(Value::as_str)
-        .map(HostOptions::from_json)
-        .unwrap_or_default();
+    let mut options = host_options(host);
     options.push = Some(push);
-    all.insert(host.to_owned(), Value::String(options.to_json()));
-    if let Err(e) = crate::prefs::set_string(HOST_OPTIONS, &Value::Object(all).to_string()) {
-        eprintln!("SSH 先の選択を書けない: {e}");
+    set_host_options(host, &options);
+}
+
+fn signature_hosts() -> Map<String, Value> {
+    crate::prefs::string(SIGNATURE_BY_HOST)
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+/// `location`（SSH 先のリポジトリ）の署名を手元の鍵で検証するか。SSH 先ごとの値、なければ手元（GTK4 版の既定と
+/// 同じ。SSH でない daemon 越しも手元）。UI のスレッドで読む。
+pub fn checks_signatures_locally(location: &str) -> bool {
+    host_of(location)
+        .and_then(|host| signature_hosts().get(&host).and_then(Value::as_bool))
+        .unwrap_or(true)
+}
+
+/// SSH 先の署名を検証する鍵を選ぶ（次につなぐときから効く。UI のスレッドで）。
+pub fn set_checks_locally(host: &str, local: bool) {
+    let mut all = signature_hosts();
+    all.insert(host.to_owned(), Value::Bool(local));
+    if let Err(e) = crate::prefs::set_string(SIGNATURE_BY_HOST, &Value::Object(all).to_string()) {
+        eprintln!("署名の検証の選択を書けない: {e}");
     }
 }
 
@@ -120,13 +152,18 @@ pub fn take_ask() -> Option<Ask> {
     (!asks.is_empty()).then(|| asks.remove(0))
 }
 
-/// つなぐ（裏のスレッドから）。`options` は UI のスレッドで読んだ SSH 先ごとの選択、`wake` は問いを置いたことを
-/// UI のスレッドに知らせる。エンジンを送る承認が要れば、
+/// つなぐ（裏のスレッドから）。`options` は UI のスレッドで読んだ SSH 先ごとの選択、`local_signatures` は署名を
+/// 手元の鍵で検証するか（[`checks_signatures_locally`]）、`wake` は問いを置いたことを UI のスレッドに知らせる。エンジンを送る承認が要れば、
 /// UI のスレッドに聞いて待ち、送るならその中身への承認を添えてつなぎ直す（GTK4 版の `connecting`）。
-pub fn open(location: &str, options: HostOptions, wake: &dyn Fn()) -> Result<Repository, String> {
+pub fn open(
+    location: &str,
+    options: HostOptions,
+    local_signatures: bool,
+    wake: &dyn Fn(),
+) -> Result<Repository, String> {
     // 同じ SSH 先を同時に開いても、聞くのは 1 回（後のものは、前の答えの後でつなぎ直す）。
     static ASKING: Mutex<()> = Mutex::new(());
-    let first = match attempt(location, &options) {
+    let first = match attempt(location, &options, local_signatures) {
         Ok(repo) => return Ok(repo),
         Err(e) => e,
     };
@@ -134,7 +171,7 @@ pub fn open(location: &str, options: HostOptions, wake: &dyn Fn()) -> Result<Rep
         return Err(EngineConsent::strip(&first).to_owned());
     };
     let _asking = ASKING.lock().unwrap_or_else(|e| e.into_inner());
-    let err = match attempt(location, &options) {
+    let err = match attempt(location, &options, local_signatures) {
         Ok(repo) => return Ok(repo),
         Err(e) => e,
     };
@@ -156,10 +193,14 @@ pub fn open(location: &str, options: HostOptions, wake: &dyn Fn()) -> Result<Rep
         send_engine: Some(consent.hash),
         ..options
     };
-    attempt(location, &options).map_err(|e| EngineConsent::strip(&e).to_owned())
+    attempt(location, &options, local_signatures).map_err(|e| EngineConsent::strip(&e).to_owned())
 }
 
-fn attempt(location: &str, options: &HostOptions) -> Result<Repository, String> {
+fn attempt(
+    location: &str,
+    options: &HostOptions,
+    local_signatures: bool,
+) -> Result<Repository, String> {
     use amonhen_remote::ssh;
     let daemon = engine();
     let conn = if location.starts_with("ssh://") {
@@ -185,15 +226,20 @@ fn attempt(location: &str, options: &HostOptions) -> Result<Repository, String> 
         }
         _ => Repository::new(backend),
     };
-    apply_signature_check(&repo);
+    apply_signature_check(&repo, local_signatures);
     Ok(repo)
 }
 
-/// 署名を手元の鍵で検証する（コミットのオブジェクトだけを書く作業用のリポジトリで。GTK4 版の既定と同じ）。
-fn apply_signature_check(repo: &Repository) {
+/// 署名を検証する側を決める。手元の鍵なら、コミットのオブジェクトだけを書く作業用のリポジトリで検証する（GTK4
+/// 版の既定と同じ）。SSH 先の鍵なら、SSH 先の git が検証する。
+fn apply_signature_check(repo: &Repository, local: bool) {
     static VERIFIER: std::sync::OnceLock<std::sync::Arc<amonhen_backend_cli::LocalVerifier>> =
         std::sync::OnceLock::new();
     if repo.connection_state().is_none() {
+        return;
+    }
+    if !local {
+        repo.set_signature_verifier(None);
         return;
     }
     let verifier = VERIFIER

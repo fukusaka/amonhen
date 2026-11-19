@@ -118,9 +118,9 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Git > Programs: git, gpg, ssh-keygen, gpgsm | ✓ | ✓ | ✓ | n/a | △ | VSCode: The extension runs the git chosen here for the machine, and VSCode's `git.path` only when none is chosen; gpg and ssh-keygen come from git's settings.<br>CLI: Via `amonhen run` (`programs`, `setMachineGit`).<br>Windows: In Settings > Git. |
 | Git > Environment Variables of this machine (pass, masked secrets) | ✓ | ✓ | ✓ | n/a | n/a | VSCode: VSCode's own environment, which the extension passes to the daemon.<br>Windows: In the one Settings page under Git; no Passed / All switch or value detail |
 | Environment Variables: use the login shell's (Read Again, SSH agent) | ✓ | — | — | n/a | n/a | GTK4: Left out: Linux sessions already carry it.<br>VSCode: VSCode's own environment, which the extension passes to the daemon. |
-| SSH Hosts: hosts with + / −, unreachable dimmed | ✓ | ✓ | — | n/a | n/a | VSCode: Remote-SSH takes this role. |
-| SSH Hosts > Connection: state, Check Connection, engine | ✓ | ✓ | — | n/a | n/a |  |
-| SSH Hosts > Connection: signature verification | ✓ | ✓ | — | n/a | n/a |  |
+| SSH Hosts: hosts with + / −, unreachable dimmed | ✓ | ✓ | ✓ | n/a | n/a | VSCode: Remote-SSH takes this role. |
+| SSH Hosts > Connection: state, Check Connection, engine | ✓ | ✓ | ✓ | n/a | n/a |  |
+| SSH Hosts > Connection: signature verification | ✓ | ✓ | ✓ | n/a | n/a |  |
 | SSH Hosts > Connection: folders to scan | ✓ | ✓ | — | n/a | n/a |  |
 | SSH Hosts: git pages for every repository on the host | ✓ | ✓ | — | n/a | n/a |  |
 | SSH Hosts: the host's Environment Variables (login shell switch) | ✓ | ✓ | — | n/a | n/a |  |
@@ -412,7 +412,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Engine sent to a host when none fits | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: The bundled engine is used on the host the extension runs on.<br>Windows: Asks first, as in the other apps. |
 | Windows SSH hosts | ✓ | ✓ | ✓ | ✓ | ✓ |  |
 | askpass dialog for passwords and passphrases | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: VSCode's input box, through a script the extension passes to git, ssh and the shared daemon.<br>CLI: The dialog belongs to the apps. |
-| Signature verification (this machine's keys or the host's) | ✓ | ✓ | △ | n/a | △ | VSCode: The extension opens no `ssh://` repositories; under Remote-SSH it runs on the host, so git verifies there with the host's keys, as for any repository the extension opens.<br>CLI: Checked in `show` and `refs --verify`; no choice.<br>Windows: Always with this machine's keys. |
+| Signature verification (this machine's keys or the host's) | ✓ | ✓ | ✓ | n/a | △ | VSCode: The extension opens no `ssh://` repositories; under Remote-SSH it runs on the host, so git verifies there with the host's keys, as for any repository the extension opens.<br>CLI: Checked in `show` and `refs --verify`; no choice. |
 
 ## Terminal front end (TUI)
 

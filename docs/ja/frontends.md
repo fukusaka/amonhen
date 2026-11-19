@@ -118,9 +118,9 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Git > Programs: git・gpg・ssh-keygen・gpgsm | ✓ | ✓ | ✓ | n/a | △ | VSCode: 拡張は、ここで機械に選んだ git を動かし、選んでいなければ VSCode の `git.path`。gpg・ssh-keygen は git の設定で決まる。<br>CLI: `amonhen run`（`programs`・`setMachineGit`）から。<br>Windows: Settings の Git に。 |
 | Git > この機械の Environment Variables（渡す・秘密を隠す） | ✓ | ✓ | ✓ | n/a | n/a | VSCode: VSCode の環境が代わり（拡張はそれを daemon に渡す）。<br>Windows: Settings の 1 ページの Git の下。Passed / All の切り替えと値の詳細はない |
 | Environment Variables: ログインシェルのものを使う（Read Again・SSH agent） | ✓ | — | — | n/a | n/a | GTK4: 外した。Linux のセッションはすでに持っている。<br>VSCode: VSCode の環境が代わり（拡張はそれを daemon に渡す）。 |
-| SSH Hosts: + / − の付いたホスト、届かないものは薄く | ✓ | ✓ | — | n/a | n/a | VSCode: Remote-SSH が受け持つ。 |
-| SSH Hosts > Connection: 状態・Check Connection・エンジン | ✓ | ✓ | — | n/a | n/a |  |
-| SSH Hosts > Connection: 署名の確かめ方 | ✓ | ✓ | — | n/a | n/a |  |
+| SSH Hosts: + / − の付いたホスト、届かないものは薄く | ✓ | ✓ | ✓ | n/a | n/a | VSCode: Remote-SSH が受け持つ。 |
+| SSH Hosts > Connection: 状態・Check Connection・エンジン | ✓ | ✓ | ✓ | n/a | n/a |  |
+| SSH Hosts > Connection: 署名の確かめ方 | ✓ | ✓ | ✓ | n/a | n/a |  |
 | SSH Hosts > Connection: 探すフォルダー | ✓ | ✓ | — | n/a | n/a |  |
 | SSH Hosts: ホストのすべてのリポジトリの git のページ | ✓ | ✓ | — | n/a | n/a |  |
 | SSH Hosts: ホストの Environment Variables（ログインシェルの切り替え） | ✓ | ✓ | — | n/a | n/a |  |
@@ -412,7 +412,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 合うものがなければホストにエンジンを送る | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: 拡張が動くホストで、同梱したエンジンを使う。<br>Windows: 他のアプリと同じく、先に聞く。 |
 | Windows の SSH 先 | ✓ | ✓ | ✓ | ✓ | ✓ |  |
 | パスワード・パスフレーズを尋ねる askpass のダイアログ | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: VSCode の入力欄。拡張が git・ssh・共有の daemon に渡すスクリプトから尋ねる。<br>CLI: ダイアログはアプリのもの。 |
-| 署名の確かめ（この機械か、ホストの鍵） | ✓ | ✓ | △ | n/a | △ | VSCode: 拡張は `ssh://` のリポジトリを開かない。Remote-SSH では拡張がホストで動くので、開くほかのリポジトリと同じく、git がホストの鍵で確かめる。<br>CLI: `show`・`refs --verify` で確かめ、選択はない。<br>Windows: いつもこの機械の鍵で。 |
+| 署名の確かめ（この機械か、ホストの鍵） | ✓ | ✓ | ✓ | n/a | △ | VSCode: 拡張は `ssh://` のリポジトリを開かない。Remote-SSH では拡張がホストで動くので、開くほかのリポジトリと同じく、git がホストの鍵で確かめる。<br>CLI: `show`・`refs --verify` で確かめ、選択はない。 |
 
 ## 端末の FE（TUI）
 

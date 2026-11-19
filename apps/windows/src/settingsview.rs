@@ -36,6 +36,8 @@ pub struct State {
     pub env_query: String,
     /// 共有のコミットのメッセージのテンプレート（Git > Commits の Shared Templates）。
     pub templates: Vec<crate::templates::Template>,
+    /// SSH Hosts（ページを初めて出したときに作る。選んだ SSH 先につなぎに行くので、出すまではつながない）。
+    pub ssh: Option<crate::sshhosts::State>,
 }
 
 /// 足した名前の設定の鍵（GTK4 版・macOS 版と同じ）。
@@ -166,6 +168,7 @@ pub struct Callbacks<'a> {
     pub syntax_theme_dark: Callback<Option<usize>>,
     /// Theme のボタン（`import`・`remove:<name>`）。
     pub theme_button: Box<dyn Fn(String) -> Callback<()> + 'a>,
+    pub ssh: crate::sshhosts::Callbacks<'a>,
 }
 
 /// Git > Operations・Working Copy（すべてのリポジトリの段。Repository Settings と同じ行で、効いている値の設定元を
@@ -490,9 +493,10 @@ fn templates(state: &State, callbacks: &Callbacks) -> View {
 }
 
 /// Settings のページ（左の一覧の見出し。訳は `tr!` と同じ表から）。
-pub const PAGES: [&str; 5] = [
+pub const PAGES: [&str; 6] = [
     "General",
     "Git",
+    "SSH Hosts",
     "Appearance",
     "Diff & Merge",
     "Performance",
@@ -560,7 +564,11 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
         .margin(Thickness::new(0.0, 8.0, 0.0, 0.0))
         .content(bookmark);
     // ページ（GTK4 版・macOS 版のタブ。Windows 版にあるものだけ）。左の一覧で選んだものを出す。
-    let pages: [View; 5] = [
+    let ssh = match &state.ssh {
+        Some(ssh) => crate::sshhosts::view(ssh, &callbacks.ssh),
+        None => View::empty(),
+    };
+    let pages: [View; 6] = [
         StackPanel::new().children((
             heading(tr!("General")),
             StackPanel::new()
@@ -613,6 +621,7 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
             heading("Git".to_owned()),
             StackPanel::new().children((git, git_choices, shared_templates, env)),
         )),
+        ssh,
         appearance,
         StackPanel::new().children((
             heading(tr!("Diff & Merge")),
@@ -720,7 +729,8 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                 .content(View::keyed_fragment([(
                     format!("page-{page}"),
                     Border::new()
-                        .max_width(560.0)
+                        // SSH Hosts は SSH 先の一覧と接続のページを並べるので広く。
+                        .max_width(if page == 2 { 820.0 } else { 560.0 })
                         .horizontal_alignment(HorizontalAlignment::Left)
                         .margin(Thickness::new(24.0, 0.0, 24.0, 24.0))
                         .content(content),

@@ -38,6 +38,7 @@ mod sequence;
 mod settingsview;
 mod sidebar;
 mod signature;
+mod sshhosts;
 mod stashes;
 mod tabs;
 mod templates;

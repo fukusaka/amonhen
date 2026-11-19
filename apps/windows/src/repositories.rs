@@ -378,6 +378,53 @@ pub fn shown_path(location: &str) -> String {
     tilde(location)
 }
 
+/// Places にある SSH 先（リポジトリかスキャンするフォルダ。Settings > SSH Hosts の一覧）。
+pub fn remote_hosts() -> Vec<String> {
+    let data = read();
+    items(&data)
+        .filter_map(|b| b["path"].as_str())
+        .chain(
+            data["scanRoots"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|r| r["path"].as_str()),
+        )
+        .filter_map(crate::remote::host_of)
+        .collect()
+}
+
+/// Places のリポジトリとスキャンするフォルダのうち、SSH 先 `host` のものの数。
+pub fn places_on_host(host: &str) -> (usize, usize) {
+    let data = read();
+    let count = |values: Vec<&Value>| {
+        values
+            .into_iter()
+            .filter_map(|v| v["path"].as_str())
+            .filter(|p| crate::remote::host_of(p).as_deref() == Some(host))
+            .count()
+    };
+    (
+        count(items(&data).collect()),
+        count(data["scanRoots"].as_array().into_iter().flatten().collect()),
+    )
+}
+
+/// SSH 先 `host` のリポジトリとスキャンするフォルダを Places から外す（SSH 先には触れない。GTK4 版と同じ）。
+pub fn forget_host(host: &str) {
+    let on = |v: &Value| {
+        v["path"]
+            .as_str()
+            .and_then(crate::remote::host_of)
+            .as_deref()
+            == Some(host)
+    };
+    let _ = edit(|d| {
+        array_mut(d, "items").retain(|b| !on(b));
+        array_mut(d, "scanRoots").retain(|r| !on(r));
+    });
+}
+
 /// ブックマークに入れる（clone したもの。macOS 版・GTK4 版と同じ）。
 pub fn add_bookmark(path: &str) {
     let _ = edit(|d| update(d, path, |_| {}));

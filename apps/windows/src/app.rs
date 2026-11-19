@@ -884,6 +884,8 @@ enum Message {
     SettingsGitChoice(&'static str, Option<usize>),
     /// Settings の左の一覧でページを選んだ。
     SettingsPage(Option<usize>),
+    /// Settings > SSH Hosts の操作とつないだ結果。
+    SshHosts(crate::sshhosts::Event),
     /// Git > Programs の候補と使う git。
     SettingsPrograms(crate::programs::State),
     /// Settings > Git の Keys and Values の欄（`query`・`key`・`value`）とボタン（`add`・`remove:<key>`）。
@@ -2766,6 +2768,7 @@ impl Root {
                     env_added: crate::settingsview::env_added_names(),
                     env_query: String::new(),
                     templates: crate::templates::all(),
+                    ssh: None,
                 });
                 context.spawn_background(|_| {
                     Message::CacheSize(
@@ -5996,6 +5999,24 @@ impl Root {
             Message::SettingsPage(page) => {
                 if let (Some(state), Some(page)) = (self.settings.as_mut(), page) {
                     state.page = page;
+                    // SSH Hosts は初めて出したときに作り、選んだ SSH 先につなぐ。
+                    if crate::settingsview::PAGES.get(page) == Some(&"SSH Hosts")
+                        && state.ssh.is_none()
+                    {
+                        let (ssh, jobs) = crate::sshhosts::State::new();
+                        state.ssh = Some(ssh);
+                        for job in jobs {
+                            context.spawn_background(move |_| Message::SshHosts(job.run()));
+                        }
+                    }
+                }
+            }
+            Message::SshHosts(event) => {
+                let Some(ssh) = self.settings.as_mut().and_then(|s| s.ssh.as_mut()) else {
+                    return;
+                };
+                for job in ssh.handle(event) {
+                    context.spawn_background(move |_| Message::SshHosts(job.run()));
                 }
             }
             Message::SettingsGitChoice(id, Some(index)) if id.starts_with("program:") => {
@@ -12784,6 +12805,11 @@ impl Root {
                 template_remove: Box::new(|i| {
                     context.callback(move |()| Message::SettingsTemplateRemove(i))
                 }),
+                ssh: crate::sshhosts::Callbacks {
+                    event: Box::new(|f| context.callback(move |v| Message::SshHosts(f(v)))),
+                    text: Box::new(|f| context.callback(move |v| Message::SshHosts(f(v)))),
+                    button: Box::new(|f| context.callback(move |()| Message::SshHosts(f()))),
+                },
             },
         );
         Border::new()
