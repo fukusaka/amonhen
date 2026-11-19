@@ -1193,6 +1193,44 @@ fn worktrees_are_listed_in_the_sidebar() {
     assert_eq!(side[at + 2], "  other (topic)");
 }
 
+/// サイドバーの worktree の行で `x`: 確かめてから消す。変更が残っていれば git が断り、開いている worktree は
+/// 消せない。
+#[test]
+fn a_worktree_is_removed_from_the_sidebar() {
+    let dir = tempfile::tempdir().unwrap();
+    let main = dir.path().join("main");
+    std::fs::create_dir(&main).unwrap();
+    merged(&main);
+    let other = dir.path().join("other");
+    git(
+        &main,
+        BASE,
+        &["worktree", "add", "-q", other.to_str().unwrap(), "topic"],
+    );
+    // 一番下の行が other。その上が、開いている main。
+    let open_one = amonhen_tui::snapshot(open(&main), 160, 16, clock(), "0Gkx").unwrap();
+    println!("{open_one}");
+    assert!(open_one.contains("This worktree is the one that is open"));
+    let asked = amonhen_tui::snapshot(open(&main), 200, 16, clock(), "0Gx").unwrap();
+    println!("{asked}");
+    assert!(asked.contains("Remove the worktree at"));
+    assert!(asked.contains("y remove   n cancel"));
+    assert!(other.exists());
+    // 変更が残っていると、git が断る（理由が出て、フォルダは残る）。
+    std::fs::write(other.join("new.txt"), "new\n").unwrap();
+    let refused = amonhen_tui::snapshot(open(&main), 200, 16, clock(), "0Gxy").unwrap();
+    println!("{refused}");
+    assert!(!refused.contains("Removed the worktree"));
+    assert!(other.exists());
+    std::fs::remove_file(other.join("new.txt")).unwrap();
+    let removed = amonhen_tui::snapshot(open(&main), 200, 16, clock(), "0Gxy").unwrap();
+    println!("{removed}");
+    assert!(removed.contains("Removed the worktree"));
+    assert!(!other.exists());
+    // worktree が 1 つになったので、サイドバーからも消える。
+    assert!(!removed.contains("Worktrees"));
+}
+
 /// 上流のないブランチの `P` は、リモートに同じ名前で publish して上流にする
 #[test]
 fn push_publishes_a_branch_without_an_upstream() {

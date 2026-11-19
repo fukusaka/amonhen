@@ -1269,6 +1269,7 @@ impl App {
             }
             "apply" => self.notice = Some(tr!("Applied the stash")),
             "drop" => self.notice = Some(tr!("Dropped the stash")),
+            "removeWorktree" => self.notice = Some(tr!("Removed the worktree")),
             "merge" | "rebase" | "continue" | "skip" | "cherryPick" | "revert" | "rewrite" => {
                 // コンフリクトで止まったら、Working Copy で解決する。
                 match reply["outcome"].as_str() {
@@ -1671,6 +1672,27 @@ impl App {
 
     /// サイドバーで選んでいる stash を戻す（`pop` なら、戻して消す）か、消す（先に確かめる）。
     fn stash_key(&mut self, code: KeyCode) -> bool {
+        // worktree の行の `x` は、その worktree を消す（確かめてから。変更が残っていれば git が断る）。
+        if let (KeyCode::Char('x'), Some(("worktree", path, _))) = (code, self.sidebar.picked_ref())
+        {
+            let path = path.to_owned();
+            if self.sidebar.picked_is_current() {
+                self.error = Some(tr!("This worktree is the one that is open"));
+                return true;
+            }
+            self.confirm = Some((
+                tr!(
+                    "Remove the worktree at {path}? Undo can’t bring it back.",
+                    path = path
+                ),
+                tr!("remove"),
+                Request::Run {
+                    name: "removeWorktree",
+                    command: json!({"op": "worktreeRemove", "path": path}),
+                },
+            ));
+            return true;
+        }
         let Some(("stash", name, _)) = self.sidebar.picked_ref() else {
             return false;
         };
@@ -1850,6 +1872,7 @@ impl App {
                 ("m", tr!("Merge it into the current branch")),
                 ("r", tr!("Rebase the current branch onto it")),
                 ("a o x", tr!("On a stash: apply, pop, drop")),
+                ("x", tr!("On a worktree: remove it")),
                 ("n D", tr!("Rename a branch; delete a branch or a tag")),
                 ("L", tr!("The branch's reflog")),
                 ("/", tr!("Filter branches and tags")),
