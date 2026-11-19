@@ -40,6 +40,16 @@ const fn entry(id: &'static str, key: char, place: Place) -> Entry {
     }
 }
 
+/// キーのない操作（一覧からだけ動かす。中身は `App::run_keyless`）。
+const fn keyless(id: &'static str, place: Place) -> Entry {
+    Entry {
+        id,
+        key: KeyCode::Null,
+        control: false,
+        place,
+    }
+}
+
 const fn control(id: &'static str, key: char, place: Place) -> Entry {
     Entry {
         id,
@@ -59,6 +69,7 @@ pub static ENTRIES: &[Entry] = &[
     entry("new-tag", 'T', Place::Anywhere),
     entry("new-worktree", 'w', Place::Sidebar),
     entry("set-upstream", 'U', Place::Sidebar),
+    keyless("prune-worktrees", Place::Anywhere),
     entry("merge", 'm', Place::Sidebar),
     entry("rebase", 'r', Place::Sidebar),
     entry("continue", 'C', Place::Sequence),

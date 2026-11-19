@@ -1308,6 +1308,35 @@ fn worktrees_are_listed_in_the_sidebar() {
     assert_eq!(side[at + 2], "  other (topic)");
 }
 
+/// コマンドの一覧の Prune Worktrees: フォルダのなくなった worktree の記録を片付ける（キーはない）
+#[test]
+fn prune_worktrees_from_the_command_list() {
+    let dir = tempfile::tempdir().unwrap();
+    let main = dir.path().join("main");
+    std::fs::create_dir(&main).unwrap();
+    merged(&main);
+    let other = dir.path().join("other");
+    git(
+        &main,
+        BASE,
+        &["worktree", "add", "-q", other.to_str().unwrap(), "topic"],
+    );
+    std::fs::remove_dir_all(&other).unwrap();
+    let count = || git_out(&main, &["worktree", "list"]).lines().count();
+    assert_eq!(count(), 2);
+    let list = amonhen_tui::snapshot(open(&main), 120, 30, clock(), ":prune").unwrap();
+    println!("{list}");
+    // キーのない操作は、キーの欄が空。
+    let row = list
+        .lines()
+        .find(|l| l.contains("Prune Worktrees"))
+        .unwrap();
+    assert!(row.trim_end().ends_with("│"), "{row}");
+    let pruned = amonhen_tui::snapshot(open(&main), 120, 30, clock(), ":prune\n").unwrap();
+    assert!(pruned.contains("Pruned the worktrees"));
+    assert_eq!(count(), 1);
+}
+
 /// サイドバーのブランチで `w`: 場所を聞いて（初めは作業ツリーの隣）、そのブランチの worktree を作る。
 #[test]
 fn a_worktree_is_added_for_the_selected_branch() {

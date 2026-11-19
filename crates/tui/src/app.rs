@@ -1233,11 +1233,27 @@ impl App {
             Place::Changes if self.focus == Focus::Side => self.focus = Focus::Main,
             _ => {}
         }
+        if entry.key == KeyCode::Null {
+            self.run_keyless(entry.id);
+            return;
+        }
         let modifiers = match entry.control {
             true => KeyModifiers::CONTROL,
             false => KeyModifiers::NONE,
         };
         self.key(KeyEvent::new(entry.key, modifiers));
+    }
+
+    /// コマンドの一覧からだけ動かす操作（キーを持たない）。
+    fn run_keyless(&mut self, id: &str) {
+        if id == "prune-worktrees" {
+            // フォルダのなくなった worktree の記録を片付ける（フォルダには触らない）。
+            self.run(
+                "pruneWorktrees",
+                tr!("Pruning worktrees…"),
+                json!({"op": "worktreePrune"}),
+            );
+        }
     }
 
     /// メインの画面を替える。
@@ -1323,6 +1339,7 @@ impl App {
             "restoreFile" => self.notice = Some(tr!("Restored the version")),
             "addWorktree" => self.notice = Some(tr!("Added the worktree")),
             "setUpstream" => self.notice = Some(tr!("Set the upstream")),
+            "pruneWorktrees" => self.notice = Some(tr!("Pruned the worktrees")),
             "merge" | "rebase" | "continue" | "skip" | "cherryPick" | "revert" | "rewrite" => {
                 // コンフリクトで止まったら、Working Copy で解決する。
                 match reply["outcome"].as_str() {
