@@ -66,6 +66,7 @@ pub static ENTRIES: &[Entry] = &[
     entry("stash", 's', Place::NotSide),
     entry("pop-stash", 'S', Place::NotSide),
     entry("undo", 'u', Place::Anywhere),
+    entry("stage-all", '+', Place::Changes),
     control("commit", 's', Place::Changes),
     control("commit-and-push", 'p', Place::Changes),
     entry("show-working-copy", '1', Place::Anywhere),

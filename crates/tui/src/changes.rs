@@ -267,6 +267,15 @@ impl Changes {
         })
     }
 
+    /// Stage All: stage していない変更のあるファイルをすべて（コンフリクトのファイルは除く。アプリと同じ）。
+    pub fn stage_all(&self) -> Option<Request> {
+        let paths: Vec<String> = (self.entries.iter())
+            .filter(|e| e.unstaged && e.letter != 'U')
+            .map(|e| e.path.clone())
+            .collect();
+        (!paths.is_empty()).then_some(Request::Stage { paths, stage: true })
+    }
+
     // MARK: 一覧
 
     /// stage 済みの変更があるファイルの数。

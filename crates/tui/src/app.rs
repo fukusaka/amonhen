@@ -2057,6 +2057,7 @@ impl App {
             (View::Changes, Focus::Main) | (_, Focus::Message) => vec![
                 ("j k", tr!("Move")),
                 ("Space", tr!("Stage or unstage the file")),
+                ("+", tr!("Stage all (not conflicted files)")),
                 ("d", tr!("Discard the file's changes")),
                 ("B L", tr!("Blame, File History of the file")),
                 ("e", tr!("Open the file in git's editor")),
@@ -2220,6 +2221,14 @@ impl App {
                     self.send(request);
                 }
                 false
+            }
+            // Stage All（コンフリクトのファイルは除く）。
+            KeyCode::Char('+') => {
+                match self.changes.stage_all() {
+                    Some(request) => self.send(request),
+                    None => self.notice = Some(tr!("Nothing to stage")),
+                }
+                true
             }
             KeyCode::Char('h') | KeyCode::Left => {
                 self.focus = Focus::Sidebar;

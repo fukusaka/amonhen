@@ -335,6 +335,35 @@ fn working_copy_lists_files_beside_the_diff() {
 }
 
 /// Space で、選んでいるファイルを stage する。もう一度で unstage
+/// `+` は Stage All: 変更のあるファイルをすべて stage する（コマンドの一覧からも）
+#[test]
+fn plus_stages_all() {
+    let dir = tempfile::tempdir().unwrap();
+    dirty(dir.path());
+    let staged = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "1+").unwrap();
+    println!("{staged}");
+    assert!(staged.contains("[x] M lane.rs"));
+    assert!(staged.contains("[x] A untracked.txt"), "{staged}");
+    // 作業ツリーに、stage していない変更は残らない。
+    assert_eq!(git_out(dir.path(), &["diff", "--name-only"]), "");
+    assert!(!git_out(dir.path(), &["status", "--porcelain"]).contains("??"));
+    // もう stage するものはない。
+    let none = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "1+").unwrap();
+    assert!(none.contains("Nothing to stage"));
+}
+
+/// コマンドの一覧の Stage All
+#[test]
+fn stage_all_from_the_command_list() {
+    let dir = tempfile::tempdir().unwrap();
+    dirty(dir.path());
+    amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "1:stage all\n").unwrap();
+    assert_eq!(
+        git_out(dir.path(), &["diff", "--cached", "--name-only"]),
+        "lane.rs\nstaged.txt\nuntracked.txt\n"
+    );
+}
+
 #[test]
 fn space_stages_and_unstages_the_file() {
     let dir = tempfile::tempdir().unwrap();
