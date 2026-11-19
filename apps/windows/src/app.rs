@@ -26,6 +26,9 @@ use crate::sidebar::{self, BranchGroups};
 use crate::{Args, Session};
 
 thread_local! {
+    /// 見張っている、daemon・SSH 越しのリポジトリと、最後に見た時刻（切れたら知らせる。GTK4 版・macOS 版と同じく
+    /// 0.25 秒ごとに見て、切れたら見るのをやめる）。
+    static WATCHED_CONNECTION: RefCell<Option<(Arc<Repository>, Instant)>> = const { RefCell::new(None) };
     /// 根の部品に渡す引数（`Component::Input` は比べられる値でなければならないので、ここに置く）。
     static ARGS: RefCell<Option<(Args, Instant)>> = const { RefCell::new(None) };
     /// History と差分の描き手。
@@ -185,6 +188,8 @@ struct Root {
     /// 出した回数（取り消しの帯を、出し直した後に消さないため）。
     failure: Option<(Arc<Repository>, crate::failure::Failure)>,
     failure_generation: u64,
+    /// daemon・SSH 越しのつながりが切れた（そのリポジトリと理由。ステータスバーの上に Reconnect と一緒に出す）。
+    disconnected: Option<(Arc<Repository>, String)>,
     /// 走っている操作の数（GTK4 版の Activity のボタンの回る印と数）。
     running: usize,
     /// History で複数選んでいるコミット（上から。右クリックのメニューを複数のもの用にする）。
@@ -887,6 +892,8 @@ enum Message {
     SettingsPage(Option<usize>),
     /// Settings > SSH Hosts の操作とつないだ結果。
     SshHosts(crate::sshhosts::Event),
+    /// daemon・SSH 越しのつながりが切れた（そのリポジトリと理由）。
+    Disconnected(Arc<Repository>, String),
     /// Git > Programs の候補と使う git。
     SettingsPrograms(u64, crate::programs::State),
     /// Settings > Git の Keys and Values の欄（`query`・`key`・`value`）とボタン（`add`・`remove:<key>`）。
@@ -1243,6 +1250,7 @@ impl Component for Root {
             flash: None,
             failure: None,
             failure_generation: 0,
+            disconnected: None,
             running: 0,
             multi: Vec::new(),
             multi_consecutive: false,
@@ -1313,6 +1321,25 @@ impl Component for Root {
 
     fn update(&mut self, message: Message, context: &ComponentContext<Self>) {
         self.handle(message, context);
+        // daemon・SSH 越しに開いたリポジトリなら、切れたかを見張る（手元のものは見ない）。
+        let watch = self.repo.clone().filter(|repo| {
+            repo.connection_state().is_some()
+                && !self
+                    .disconnected
+                    .as_ref()
+                    .is_some_and(|(r, _)| Arc::ptr_eq(r, repo))
+        });
+        WATCHED_CONNECTION.with(|w| {
+            let mut w = w.borrow_mut();
+            let same = match (&*w, &watch) {
+                (Some((a, _)), Some(b)) => Arc::ptr_eq(a, b),
+                (None, None) => true,
+                _ => false,
+            };
+            if !same {
+                *w = watch.map(|repo| (repo, Instant::now()));
+            }
+        });
         // 待っていた、エンジンを送ってよいかの問いを、ダイアログが空いたら出す。
         if self.dialog.is_none() && !self.asks.is_empty() {
             let ask = self.asks.remove(0);
@@ -5990,6 +6017,9 @@ impl Root {
                         }
                     }
                 }
+            }
+            Message::Disconnected(repo, reason) => {
+                self.disconnected = Some((repo, reason));
             }
             Message::SshHosts(event) => {
                 let Some(ssh) = self.settings.as_mut().and_then(|s| s.ssh.as_mut()) else {
@@ -11840,10 +11870,73 @@ impl Root {
                     .content(running),
             ));
         StackPanel::new().grid_row(4).children((
+            self.connection_band(context),
             self.failure_band(context),
             self.sequence_band(context),
             bar,
         ))
+    }
+
+    /// つながりが切れた帯（ステータスバーの上。GTK4 版の `show_disconnected`、macOS 版と同じ）: どこと切れたか、
+    /// 理由、Reconnect（同じ場所をこのタブで開き直す）。
+    fn connection_band(&self, context: &ViewContext<Self>) -> View {
+        let Some((repo, reason)) = &self.disconnected else {
+            return View::empty();
+        };
+        if !self.repo.as_ref().is_some_and(|r| Arc::ptr_eq(r, repo)) {
+            return View::empty();
+        }
+        let location = crate::tabs::current()
+            .map(|t| t.location)
+            .unwrap_or_default();
+        let host = crate::remote::host_of(&location).unwrap_or_else(|| "daemon".to_owned());
+        let heading = tr!("Lost connection to {host}", host = host);
+        // 理由が見出しで始まっていれば、その後ろだけ（GTK4 版の `reason_detail`）。
+        let detail = match reason.strip_prefix(heading.as_str()) {
+            Some(rest) => rest.strip_prefix(": ").unwrap_or(rest).to_owned(),
+            None => reason.clone(),
+        };
+        Border::new()
+            .background(Brush::Solid(crate::palette::note_band()))
+            .padding(Thickness::new(10.0, 5.0, 10.0, 5.0))
+            .content(
+                Grid::new()
+                    .columns([
+                        GridLength::Auto,
+                        GridLength::Auto,
+                        GridLength::Star(1.0),
+                        GridLength::Auto,
+                    ])
+                    .column_spacing(8.0)
+                    .children((
+                        TextBlock::new()
+                            .text("⚡")
+                            .foreground(Brush::Solid(crate::palette::warning_text()))
+                            .vertical_alignment(VerticalAlignment::Center)
+                            .grid_column(0),
+                        TextBlock::new()
+                            .text(heading)
+                            .font_size(12.0)
+                            .font_weight(FontWeight::SEMI_BOLD)
+                            .vertical_alignment(VerticalAlignment::Center)
+                            .grid_column(1),
+                        TextBlock::new()
+                            .text(detail)
+                            .font_size(12.0)
+                            .opacity(0.7)
+                            .text_trimming(TextTrimming::CharacterEllipsis)
+                            .vertical_alignment(VerticalAlignment::Center)
+                            .grid_column(2)
+                            .tooltip(reason.clone()),
+                        Button::new()
+                            .style(ButtonStyle::Accent)
+                            .grid_column(3)
+                            .on_click(
+                                context.callback(|()| Message::Command("try-again".to_owned())),
+                            )
+                            .content(TextBlock::new().text(tr!("Reconnect")).font_size(12.0)),
+                    )),
+            )
     }
 
     /// 途中の操作の帯（ステータスバーの上。どの画面でも出す。macOS 版・GTK4 版のステータスバーの行）。
@@ -15112,6 +15205,21 @@ impl HistoryView {
             WORKTREE_TICK
                 .with(|t| t.set((Instant::now(), if all { Instant::now() } else { fresh })));
             self.sender.send(Message::CountWorktrees(all));
+        }
+        // daemon・SSH 越しのつながりが切れたら、ステータスバーの上で知らせる（0.25 秒ごとに見る）。
+        if let Some(closed) = WATCHED_CONNECTION.with(|w| {
+            let mut w = w.borrow_mut();
+            let (repo, seen) = w.as_mut()?;
+            if seen.elapsed() < std::time::Duration::from_millis(250) {
+                return None;
+            }
+            *seen = Instant::now();
+            let reason = repo.connection_state()?.closed?;
+            let repo = repo.clone();
+            *w = None;
+            Some((repo, reason))
+        }) {
+            self.sender.send(Message::Disconnected(closed.0, closed.1));
         }
         // 裏のスレッドが SSH 先にエンジンを送ってよいかを聞いていれば、ダイアログで聞く。
         if let Some(ask) = crate::remote::take_ask() {
