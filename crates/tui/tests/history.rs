@@ -942,14 +942,22 @@ fn stash_and_pop() {
     let dir = tempfile::tempdir().unwrap();
     two_lines(dir.path());
     let read = |dir: &Path| std::fs::read_to_string(dir.join("a.txt")).unwrap();
-    let asked = amonhen_tui::snapshot(open(dir.path()), 120, 10, clock(), "s").unwrap();
+    // 先にメッセージを聞く（Enter だけなら付けない）。Esc でやめる。
+    let message = amonhen_tui::snapshot(open(dir.path()), 120, 10, clock(), "swip").unwrap();
+    assert!(message.contains("Stash message (Enter for none): wip"));
+    let left = amonhen_tui::snapshot(open(dir.path()), 120, 10, clock(), "swip\x1b").unwrap();
+    assert!(!left.contains("Stash"));
+    assert_eq!(git_out(dir.path(), &["stash", "list"]), "");
+    let asked = amonhen_tui::snapshot(open(dir.path()), 120, 10, clock(), "s\n").unwrap();
     assert!(asked.contains(
         "Stash the working changes?   y tracked files   u with untracked files   k keep what is staged   n cancel"
     ));
-    let stashed = amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "sy").unwrap();
+    let keys = "sbefore lunch\ny";
+    let stashed = amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), keys).unwrap();
     println!("{stashed}");
     assert!(stashed.contains("Stashed"));
     assert_eq!(read(dir.path()), "one\ntwo\nthree\nfour\n");
+    assert!(git_out(dir.path(), &["stash", "list"]).contains(": before lunch\n"));
     let popped = amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "S").unwrap();
     assert!(popped.contains("Popped the stash"));
     assert_eq!(read(dir.path()), "ONE\ntwo\nTHREE\nfour\n");
@@ -978,6 +986,34 @@ fn conflicts_are_resolved_by_side() {
     println!("{resolved}");
     assert!(resolved.contains("Resolved"));
     assert_eq!(read(dir.path()), "topic\n");
+}
+
+/// `a` は、コンフリクトを共通の祖先の側にする。その側が入っていないコンフリクトでは、理由を出す。
+#[test]
+fn a_conflict_can_take_the_base_side() {
+    let dir = tempfile::tempdir().unwrap();
+    diverged(dir.path());
+    let read = |dir: &Path| std::fs::read_to_string(dir.join("a.txt")).unwrap();
+    amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjjmy").unwrap();
+    assert!(read(dir.path()).contains("<<<<<<<"));
+    assert!(!read(dir.path()).contains("|||||||"));
+    let refused = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "1\tjja").unwrap();
+    println!("{refused}");
+    assert!(refused.contains("This conflict has no base side"));
+    assert!(read(dir.path()).contains("<<<<<<<"));
+    // やり直して、diff3 の形で止める。
+    git(dir.path(), BASE, &["merge", "--abort"]);
+    git(
+        dir.path(),
+        BASE,
+        &["config", "merge.conflictStyle", "diff3"],
+    );
+    amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjjmy").unwrap();
+    assert!(read(dir.path()).contains("|||||||"));
+    let resolved = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "1\tjja").unwrap();
+    println!("{resolved}");
+    assert!(resolved.contains("Resolved"));
+    assert_eq!(read(dir.path()), "one\n");
 }
 
 /// 一覧の `o` は、ファイルごと Current の側にして解決済みにする（先に確かめる）
@@ -1038,6 +1074,32 @@ fn reflog_lists_where_head_was() {
     let details: Vec<String> = next.lines().filter_map(|l| column(l, 2)).collect();
     assert_eq!(details[0], "Bump the version");
     assert!(next.lines().last().unwrap().ends_with("2/7"), "{next}");
+}
+
+/// サイドバーのブランチで `L`: そのブランチの reflog。`3` で HEAD のものに戻る。
+#[test]
+fn reflog_of_the_selected_branch() {
+    let dir = tempfile::tempdir().unwrap();
+    merged(dir.path());
+    // サイドバーの 3 つ下が topic。
+    let text = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjjL").unwrap();
+    println!("{text}");
+    let list: Vec<String> = text.lines().skip(1).filter_map(|l| column(l, 1)).collect();
+    assert!(list[0].starts_with("topic@{0}"), "{list:?}");
+    assert!(
+        list[0].contains("commit: 日本語の件名のコミット"),
+        "{list:?}"
+    );
+    assert!(text.lines().last().unwrap().contains("Reflog of topic"));
+    // HEAD の reflog より短い（topic が動いたのは、作ったときとコミットの 2 回）。
+    assert!(text.lines().last().unwrap().ends_with("1/2"), "{text}");
+    let head = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjjL3").unwrap();
+    let list: Vec<String> = head.lines().skip(1).filter_map(|l| column(l, 1)).collect();
+    assert!(list[0].starts_with("HEAD@{0}"), "{list:?}");
+    assert!(!head.contains("Reflog of"));
+    // ブランチでない行では、理由を出す。
+    let none = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0L").unwrap();
+    assert!(none.contains("Select a branch to see its reflog"));
 }
 
 /// `R` は、今のブランチを選んでいるコミットへ動かす。どう動かすかを選ばせる
@@ -1129,6 +1191,74 @@ fn worktrees_are_listed_in_the_sidebar() {
     let at = side.iter().position(|l| l == "Worktrees").unwrap();
     assert_eq!(side[at + 1], "● main (main)");
     assert_eq!(side[at + 2], "  other (topic)");
+}
+
+/// サイドバーのブランチで `w`: 場所を聞いて（初めは作業ツリーの隣）、そのブランチの worktree を作る。
+#[test]
+fn a_worktree_is_added_for_the_selected_branch() {
+    let dir = tempfile::tempdir().unwrap();
+    let main = dir.path().join("main");
+    std::fs::create_dir(&main).unwrap();
+    merged(&main);
+    // サイドバーの 3 つ下が topic、その上が今の main。
+    let here = amonhen_tui::snapshot(open(&main), 200, 16, clock(), "0jjw").unwrap();
+    assert!(here.contains("This branch is checked out here"));
+    let asked = amonhen_tui::snapshot(open(&main), 200, 16, clock(), "0jjjw").unwrap();
+    println!("{asked}");
+    assert!(asked.contains("New worktree for topic at: "));
+    assert!(asked.lines().last().unwrap().contains("main-topic"));
+    // 場所を打ち直して作る（初めの場所の末尾を消して、別の名前に）。
+    let keys = "0jjjw\x7f\x7f\x7f\x7f\x7fside\n";
+    let added = amonhen_tui::snapshot(open(&main), 200, 16, clock(), keys).unwrap();
+    println!("{added}");
+    assert!(added.contains("Added the worktree"));
+    let other = dir.path().join("main-side");
+    assert_eq!(git_out(&other, &["branch", "--show-current"]), "topic\n");
+    let side: Vec<String> = added.lines().skip(1).filter_map(|l| column(l, 0)).collect();
+    assert!(side.iter().any(|l| l == "  main-side (topic)"), "{side:?}");
+    // 同じブランチをもう 1 つの worktree には出せない（git が断る）。
+    let refused = amonhen_tui::snapshot(open(&main), 200, 16, clock(), "0jjjw\n").unwrap();
+    println!("{refused}");
+    assert!(!refused.contains("Added the worktree"));
+    assert!(!dir.path().join("main-topic").exists());
+}
+
+/// サイドバーの worktree の行で `x`: 確かめてから消す。変更が残っていれば git が断り、開いている worktree は
+/// 消せない。
+#[test]
+fn a_worktree_is_removed_from_the_sidebar() {
+    let dir = tempfile::tempdir().unwrap();
+    let main = dir.path().join("main");
+    std::fs::create_dir(&main).unwrap();
+    merged(&main);
+    let other = dir.path().join("other");
+    git(
+        &main,
+        BASE,
+        &["worktree", "add", "-q", other.to_str().unwrap(), "topic"],
+    );
+    // 一番下の行が other。その上が、開いている main。
+    let open_one = amonhen_tui::snapshot(open(&main), 160, 16, clock(), "0Gkx").unwrap();
+    println!("{open_one}");
+    assert!(open_one.contains("This worktree is the one that is open"));
+    let asked = amonhen_tui::snapshot(open(&main), 200, 16, clock(), "0Gx").unwrap();
+    println!("{asked}");
+    assert!(asked.contains("Remove the worktree at"));
+    assert!(asked.contains("y remove   n cancel"));
+    assert!(other.exists());
+    // 変更が残っていると、git が断る（理由が出て、フォルダは残る）。
+    std::fs::write(other.join("new.txt"), "new\n").unwrap();
+    let refused = amonhen_tui::snapshot(open(&main), 200, 16, clock(), "0Gxy").unwrap();
+    println!("{refused}");
+    assert!(!refused.contains("Removed the worktree"));
+    assert!(other.exists());
+    std::fs::remove_file(other.join("new.txt")).unwrap();
+    let removed = amonhen_tui::snapshot(open(&main), 200, 16, clock(), "0Gxy").unwrap();
+    println!("{removed}");
+    assert!(removed.contains("Removed the worktree"));
+    assert!(!other.exists());
+    // worktree が 1 つになったので、サイドバーからも消える。
+    assert!(!removed.contains("Worktrees"));
 }
 
 /// 上流のないブランチの `P` は、リモートに同じ名前で publish して上流にする
@@ -1298,10 +1428,10 @@ fn stash_can_include_untracked_files() {
     let dir = tempfile::tempdir().unwrap();
     two_lines(dir.path());
     std::fs::write(dir.path().join("new.txt"), "new\n").unwrap();
-    amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "sy").unwrap();
+    amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "s\ny").unwrap();
     assert!(dir.path().join("new.txt").exists());
     amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "S").unwrap();
-    amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "su").unwrap();
+    amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "s\nu").unwrap();
     assert!(!dir.path().join("new.txt").exists());
     assert_eq!(git_out(dir.path(), &["status", "--porcelain"]), "");
 }

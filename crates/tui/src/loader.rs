@@ -5,6 +5,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Sender};
+use std::time::Duration;
 
 use amonhen_front::{Front, Reply};
 use amonhen_model::tr;
@@ -40,8 +41,8 @@ pub enum Request {
     Syntax { id: String, of: Value },
     /// 作業ツリーの状態（変わったファイルの一覧）。
     Status,
-    /// HEAD の reflog。
-    Reflog,
+    /// `name` の ref の reflog（`None` は HEAD）。
+    Reflog { name: Option<String> },
     /// ファイルの Blame（`blame`。`rev` があれば、そのコミットの時点の）か、そのファイルを変えたコミット。
     File {
         path: String,
@@ -116,8 +117,8 @@ pub enum Loaded {
         blame: bool,
         result: std::result::Result<Value, String>,
     },
-    /// `reflog` の答え。だめなら理由。
-    Reflog(std::result::Result<Value, String>),
+    /// `reflog` の答えと、どの ref のものか（`None` は HEAD）。だめなら理由。
+    Reflog(Option<String>, std::result::Result<Value, String>),
     /// `status` の答え。だめなら理由。
     Status(std::result::Result<Value, String>),
     WorkingDiff {
@@ -169,7 +170,7 @@ impl Loader {
             Request::Run { .. } => &self.operations,
             Request::Commit { .. } | Request::Syntax { .. } => &self.details,
             Request::Status
-            | Request::Reflog
+            | Request::Reflog { .. }
             | Request::File { .. }
             | Request::WorkingDiff { .. }
             | Request::Stage { .. }
@@ -189,7 +190,7 @@ fn worker(name: &str, front: Arc<dyn Front>, events: Sender<Event>) -> Sender<Re
         .name(name.into())
         .spawn(move || {
             for request in rx {
-                let event = match load(&*front, request) {
+                let event = match load(&*front, request, &events) {
                     Ok(loaded) => Event::Loaded(loaded),
                     Err(e) => Event::Failed(e.to_string()),
                 };
@@ -201,7 +202,61 @@ fn worker(name: &str, front: Arc<dyn Front>, events: Sender<Event>) -> Sender<Re
     tx
 }
 
-fn load(front: &dyn Front, request: Request) -> Result<Loaded> {
+/// 動いている検索に、分かった分を聞く間隔。
+const PARTIAL_EVERY: Duration = Duration::from_millis(200);
+
+/// `history` の `query` の検索を動かし、終わるまでの間、分かった分（`historySearchPartial`）を `events` に知らせる。
+fn search(
+    front: &dyn Front,
+    history: &Value,
+    query: &str,
+    cancelled: &AtomicBool,
+    events: &Sender<Event>,
+) -> Result<Reply> {
+    let finished = AtomicBool::new(false);
+    std::thread::scope(|scope| {
+        let events = events.clone();
+        let finished = &finished;
+        let asking = scope.spawn(move || {
+            // 前に知らせた分（合った行の数と、調べ終えた割合）。変わらなければ知らせない。
+            let mut told = (0, 0.0);
+            loop {
+                std::thread::park_timeout(PARTIAL_EVERY);
+                if finished.load(Ordering::Relaxed) || cancelled.load(Ordering::Relaxed) {
+                    return;
+                }
+                let Ok(reply) = front.call(
+                    json!({"op": "historySearchPartial", "history": history, "query": query}),
+                ) else {
+                    return;
+                };
+                let rows = reply.u32s("rows");
+                let done = reply.json["done"].as_f64().unwrap_or(0.0) as f32;
+                if (rows.len(), done) == told || finished.load(Ordering::Relaxed) {
+                    continue;
+                }
+                told = (rows.len(), done);
+                let partial = Event::Partial {
+                    query: query.to_owned(),
+                    rows,
+                    done,
+                };
+                if events.send(partial).is_err() {
+                    return;
+                }
+            }
+        });
+        let result = front.call_until(
+            json!({"op": "historySearch", "history": history, "query": query}),
+            &|| cancelled.load(Ordering::Relaxed),
+        );
+        finished.store(true, Ordering::Relaxed);
+        asking.thread().unpark();
+        result
+    })
+}
+
+fn load(front: &dyn Front, request: Request, events: &Sender<Event>) -> Result<Loaded> {
     Ok(match request {
         Request::Open => Loaded::Opened {
             workdir: front.call(json!({"op": "hello"}))?.json["workdir"]
@@ -235,11 +290,7 @@ fn load(front: &dyn Front, request: Request) -> Result<Loaded> {
             query,
             cancelled,
         } => {
-            let result = front
-                .call_until(
-                    json!({"op": "historySearch", "history": history, "query": query}),
-                    &|| cancelled.load(Ordering::Relaxed),
-                )
+            let result = search(front, &history, &query, &cancelled, events)
                 .map(|r| r.u32s("rows"))
                 .map_err(|e| e.to_string());
             Loaded::Search { query, result }
@@ -281,8 +332,9 @@ fn load(front: &dyn Front, request: Request) -> Result<Loaded> {
                 result,
             }
         }
-        Request::Reflog => {
-            Loaded::Reflog(run(front, json!({"op": "reflog"})).map_err(|e| e.to_string()))
+        Request::Reflog { name } => {
+            let reply = run(front, json!({"op": "reflog", "name": name}));
+            Loaded::Reflog(name, reply.map_err(|e| e.to_string()))
         }
         Request::Status => Loaded::Status(
             front
@@ -369,4 +421,90 @@ fn commit(front: &dyn Front, id: &str, stash: bool) -> Result<(Value, Reply)> {
     let of = if stash { "stash" } else { "id" };
     let diff = front.call(json!({"op": "commitDiff", of: id}))?;
     Ok((info["info"].take(), diff))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::AtomicU32;
+
+    use amonhen_front::Records;
+
+    use super::*;
+
+    /// 検索が、分かった分を 2 回聞かれるまで終わらない窓口。
+    struct Slow {
+        asked: AtomicU32,
+    }
+
+    fn rows(rows: &[u32], json: Value) -> Reply {
+        let mut r = Records::new();
+        r.put_slice("rows", rows);
+        r.finish(json)
+    }
+
+    impl Front for Slow {
+        fn call_until(
+            &self,
+            request: Value,
+            _cancelled: &(dyn Fn() -> bool + Sync),
+        ) -> Result<Reply> {
+            match request["op"].as_str() {
+                Some("historySearch") => {
+                    while self.asked.load(Ordering::Relaxed) < 2 {
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    Ok(rows(&[3, 5, 8], json!({"count": 3})))
+                }
+                Some("historySearchPartial") => {
+                    Ok(match self.asked.fetch_add(1, Ordering::Relaxed) {
+                        0 => rows(&[3], json!({"count": 1, "done": 0.25})),
+                        _ => rows(&[3, 5], json!({"count": 2, "done": 0.5})),
+                    })
+                }
+                op => Err(format!("unexpected {op:?}").into()),
+            }
+        }
+
+        fn subscribe(&self, _: Box<dyn Fn(u32) + Send + Sync>) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    /// 検索が動いている間、分かった分が届く。最後の答えは、その後。
+    #[test]
+    fn a_running_search_reports_what_it_found_so_far() {
+        let front = Slow {
+            asked: AtomicU32::new(0),
+        };
+        let (tx, rx) = mpsc::channel();
+        let cancelled = AtomicBool::new(false);
+        let reply = search(&front, &json!(1), "contents:x", &cancelled, &tx).unwrap();
+        assert_eq!(reply.u32s("rows"), [3, 5, 8]);
+        let partial: Vec<(String, Vec<u32>, f32)> = rx
+            .try_iter()
+            .map(|e| match e {
+                Event::Partial { query, rows, done } => (query, rows, done),
+                _ => panic!("only partial results are expected"),
+            })
+            .collect();
+        assert_eq!(partial[0], ("contents:x".to_owned(), vec![3], 0.25));
+        // 2 回目は、検索が終わるのと同時になることがある（終わっていれば知らせない）。
+        assert!(partial.len() <= 2);
+        if let Some(second) = partial.get(1) {
+            assert_eq!(second.1, [3, 5]);
+        }
+    }
+
+    /// 取り消した検索には、もう聞かない。
+    #[test]
+    fn a_cancelled_search_is_not_asked_again() {
+        let front = Slow {
+            asked: AtomicU32::new(2),
+        };
+        let (tx, rx) = mpsc::channel();
+        let cancelled = AtomicBool::new(true);
+        search(&front, &json!(1), "x", &cancelled, &tx).unwrap();
+        assert_eq!(rx.try_iter().count(), 0);
+        assert_eq!(front.asked.load(Ordering::Relaxed), 2);
+    }
 }

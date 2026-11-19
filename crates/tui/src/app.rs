@@ -36,6 +36,12 @@ pub enum Event {
     #[cfg(unix)]
     Ask(crate::askpass::Question),
     Loaded(Loaded),
+    /// 動いている検索の、ここまでに合った行と、調べ終えた割合（0〜1。内容の検索でなければ 0 のまま）。
+    Partial {
+        query: String,
+        rows: Vec<u32>,
+        done: f32,
+    },
     Failed(String),
 }
 
@@ -123,6 +129,10 @@ enum Naming {
     Tag,
     /// ブランチの新しい名前。
     Rename,
+    /// stash のメッセージ（空でもよい）。
+    Stash,
+    /// ブランチを出す新しい worktree の場所。
+    Worktree,
 }
 
 /// 選択肢 1 つ: 押すキー、名前、頼む中身。
@@ -207,6 +217,8 @@ pub struct App {
     palette: Option<Palette>,
     /// 今の検索: 語と、動いている検索を取り消す印（結果が届いたら `None`）。
     search: Option<(String, Option<Arc<AtomicBool>>)>,
+    /// 動いている検索の、調べ終えた割合（0〜1。内容の検索でなければ 0 のまま）。
+    search_done: f32,
     theme: Theme,
     /// リポジトリの名前（作業ツリーのフォルダ名）。
     name: String,
@@ -287,6 +299,7 @@ impl App {
             help_top: 0,
             palette: None,
             search: None,
+            search_done: 0.0,
             theme: Theme::detect(),
             name: String::new(),
             workdir: None,
@@ -677,8 +690,8 @@ impl App {
                             self.error = Some(error);
                         }
                     }
-                    Loaded::Reflog(reply) => {
-                        if let Some(error) = self.reflog.set(reply) {
+                    Loaded::Reflog(name, reply) => {
+                        if let Some(error) = self.reflog.set(name, reply) {
                             self.error = Some(error);
                         }
                     }
@@ -784,6 +797,16 @@ impl App {
                         // 変化の知らせを待たずに読み直す。
                         self.changes.refresh();
                     }
+                }
+            }
+            // 取り消した検索（語を替えた・やめた）のものは捨てる。
+            Event::Partial { query, rows, done } => {
+                if let Some((current, Some(_))) = &self.search
+                    && *current == query
+                {
+                    self.search_done = done;
+                    self.history.set_partial_matches(rows);
+                    self.dirty = true;
                 }
             }
             Event::Failed(error) => {
@@ -959,12 +982,23 @@ impl App {
         if let Some((_, _, name)) = &mut self.typing_branch {
             self.dirty = true;
             match key.code {
+                KeyCode::Enter if matches!(self.naming, Naming::Stash) => {
+                    if let Some((_, _, message)) = self.typing_branch.take() {
+                        self.ask_stash(message.trim());
+                    }
+                }
                 KeyCode::Enter => {
                     if let Some((start, _, name)) = self.typing_branch.take()
                         && !name.trim().is_empty()
                     {
                         let name = name.trim();
                         let (op, label, command) = match self.naming {
+                            Naming::Stash => return,
+                            Naming::Worktree => (
+                                "addWorktree",
+                                tr!("Adding the worktree…"),
+                                json!({"op": "worktreeAdd", "path": name, "start": start}),
+                            ),
                             Naming::Branch => (
                                 "createBranch",
                                 tr!("Creating {name}…", name = name),
@@ -1064,23 +1098,10 @@ impl App {
             KeyCode::Char('R') if self.view != View::Changes && self.focus == Focus::Main => {
                 self.ask_reset();
             }
-            // stash する前に、何を含めるかを選ばせる。
+            // stash する前に、メッセージ（なくてもよい）を聞き、何を含めるかを選ばせる。
             KeyCode::Char('s') if !control && self.focus != Focus::Side => {
-                let stash = |untracked: bool, keep_index: bool| Request::Run {
-                    name: "stash",
-                    command: json!({
-                        "op": "stashPush", "message": null,
-                        "includeUntracked": untracked, "keepIndex": keep_index,
-                    }),
-                };
-                self.choices = Some((
-                    tr!("Stash the working changes?"),
-                    vec![
-                        ('y', tr!("tracked files"), stash(false, false)),
-                        ('u', tr!("with untracked files"), stash(true, false)),
-                        ('k', tr!("keep what is staged"), stash(false, true)),
-                    ],
-                ));
+                self.naming = Naming::Stash;
+                self.typing_branch = Some((String::new(), String::new(), String::new()));
                 self.dirty = true;
             }
             KeyCode::Char('S') if self.focus != Focus::Side => match self.stash.clone() {
@@ -1178,6 +1199,11 @@ impl App {
 
     /// メインの画面を替える。
     fn show(&mut self, view: View) {
+        // Reflog を開き直すと、HEAD のものに戻る（ブランチのものは、サイドバーの `L` で）。
+        if view == View::Reflog {
+            self.dirty |= self.reflog.name().is_some();
+            self.reflog.show(None);
+        }
         self.dirty |= self.view != view || self.focus != Focus::Main;
         self.pinned = None;
         self.view = view;
@@ -1250,6 +1276,8 @@ impl App {
             }
             "apply" => self.notice = Some(tr!("Applied the stash")),
             "drop" => self.notice = Some(tr!("Dropped the stash")),
+            "removeWorktree" => self.notice = Some(tr!("Removed the worktree")),
+            "addWorktree" => self.notice = Some(tr!("Added the worktree")),
             "merge" | "rebase" | "continue" | "skip" | "cherryPick" | "revert" | "rewrite" => {
                 // コンフリクトで止まったら、Working Copy で解決する。
                 match reply["outcome"].as_str() {
@@ -1510,6 +1538,30 @@ impl App {
     }
 
     /// 新しいブランチかタグの名前を聞く（始まりは `ask_branch` のとおり）。
+    /// stash に何を含めるかを選ばせる（メッセージは聞いてある。空なら付けない）。
+    fn ask_stash(&mut self, message: &str) {
+        let message = match message.is_empty() {
+            true => Value::Null,
+            false => json!(message),
+        };
+        let stash = |untracked: bool, keep_index: bool| Request::Run {
+            name: "stash",
+            command: json!({
+                "op": "stashPush", "message": message,
+                "includeUntracked": untracked, "keepIndex": keep_index,
+            }),
+        };
+        self.choices = Some((
+            tr!("Stash the working changes?"),
+            vec![
+                ('y', tr!("tracked files"), stash(false, false)),
+                ('u', tr!("with untracked files"), stash(true, false)),
+                ('k', tr!("keep what is staged"), stash(false, true)),
+            ],
+        ));
+        self.dirty = true;
+    }
+
     fn ask_name(&mut self, naming: Naming) {
         let picked = match self.focus {
             Focus::Sidebar => self
@@ -1628,6 +1680,27 @@ impl App {
 
     /// サイドバーで選んでいる stash を戻す（`pop` なら、戻して消す）か、消す（先に確かめる）。
     fn stash_key(&mut self, code: KeyCode) -> bool {
+        // worktree の行の `x` は、その worktree を消す（確かめてから。変更が残っていれば git が断る）。
+        if let (KeyCode::Char('x'), Some(("worktree", path, _))) = (code, self.sidebar.picked_ref())
+        {
+            let path = path.to_owned();
+            if self.sidebar.picked_is_current() {
+                self.error = Some(tr!("This worktree is the one that is open"));
+                return true;
+            }
+            self.confirm = Some((
+                tr!(
+                    "Remove the worktree at {path}? Undo can’t bring it back.",
+                    path = path
+                ),
+                tr!("remove"),
+                Request::Run {
+                    name: "removeWorktree",
+                    command: json!({"op": "worktreeRemove", "path": path}),
+                },
+            ));
+            return true;
+        }
         let Some(("stash", name, _)) = self.sidebar.picked_ref() else {
             return false;
         };
@@ -1668,6 +1741,8 @@ impl App {
             cancelled: cancelled.clone(),
         });
         self.search = Some((query, Some(cancelled)));
+        self.search_done = 0.0;
+        self.history.begin_search();
     }
 
     fn cancel_search(&mut self) {
@@ -1765,6 +1840,41 @@ impl App {
             KeyCode::Char('n') => self.ask_rename(),
             KeyCode::Char('m') => self.ask_merge_or_rebase(true),
             KeyCode::Char('r') => self.ask_merge_or_rebase(false),
+            // ブランチを、新しい worktree に出す。場所を聞く（今の作業ツリーの隣を、初めに入れておく）。
+            KeyCode::Char('w') => {
+                let picked = (self.sidebar.picked_ref())
+                    .filter(|r| r.0 == "branch")
+                    .map(|r| r.1.to_owned());
+                match picked {
+                    Some(_) if self.sidebar.picked_is_current() => {
+                        self.error = Some(tr!("This branch is checked out here"));
+                    }
+                    Some(branch) => {
+                        let path = self.workdir.as_deref().map_or(String::new(), |workdir| {
+                            let workdir = workdir.trim_end_matches(['/', '\\']);
+                            format!("{workdir}-{}", branch.replace(['/', '\\'], "-"))
+                        });
+                        self.naming = Naming::Worktree;
+                        self.typing_branch = Some((branch.clone(), branch, path));
+                    }
+                    None => self.error = Some(tr!("Select a local branch for the new worktree")),
+                }
+                true
+            }
+            // ブランチの reflog（そのブランチが動いた記録）を、Reflog の画面に出す。
+            KeyCode::Char('L') => {
+                let picked = (self.sidebar.picked_ref())
+                    .filter(|r| matches!(r.0, "branch" | "remote"))
+                    .map(|r| r.1.to_owned());
+                match picked {
+                    Some(name) => {
+                        self.show(View::Reflog);
+                        self.reflog.show(Some(name));
+                    }
+                    None => self.error = Some(tr!("Select a branch to see its reflog")),
+                }
+                true
+            }
             // 絞り込んでいれば、まずそれをやめる。
             KeyCode::Esc if !self.sidebar.filter().is_empty() => {
                 self.sidebar.set_filter("");
@@ -1791,7 +1901,10 @@ impl App {
                 ("m", tr!("Merge it into the current branch")),
                 ("r", tr!("Rebase the current branch onto it")),
                 ("a o x", tr!("On a stash: apply, pop, drop")),
+                ("x", tr!("On a worktree: remove it")),
+                ("w", tr!("New worktree for the branch")),
                 ("n D", tr!("Rename a branch; delete a branch or a tag")),
+                ("L", tr!("The branch's reflog")),
                 ("/", tr!("Filter branches and tags")),
                 ("Esc", tr!("Clear the filter, or go back")),
             ],
@@ -1858,8 +1971,8 @@ impl App {
                     tr!("Start a range of lines; Space and d then act on all of it"),
                 ),
                 (
-                    "o t b",
-                    tr!("In a conflict: take current, incoming, or both"),
+                    "o t b a",
+                    tr!("In a conflict: take current, incoming, both, or the base"),
                 ),
                 ("h l", tr!("Pan long lines; h at the left edge goes back")),
                 ("Esc", tr!("Go back to the list")),
@@ -1872,7 +1985,10 @@ impl App {
                 "b T",
                 tr!("New branch, new tag at the selected commit or ref"),
             ),
-            ("s S", tr!("Stash, and pop the newest stash")),
+            (
+                "s S",
+                tr!("Stash (asks for a message), and pop the newest stash"),
+            ),
             (
                 "C K A",
                 tr!("Continue, skip, abort a merge or rebase in progress"),
@@ -2109,11 +2225,23 @@ impl App {
             // 行の範囲: `v` で始まりを決め、動かした所までを選ぶ。もう一度で、やめる。
             KeyCode::Char('v') => self.changes.toggle_mark(),
             KeyCode::Esc if self.changes.has_mark() => self.changes.toggle_mark(),
-            // コンフリクトの中では、そのコンフリクトを Current・Incoming・両方のどれかにする（Undo できる）。
-            KeyCode::Char('o' | 't' | 'b') if self.changes.conflict_at_cursor().is_some() => {
+            // 共通の祖先の側は、コンフリクトに入っているとき（diff3 の形）だけ選べる。
+            KeyCode::Char('a')
+                if self.changes.conflict_at_cursor().is_some()
+                    && !self.changes.conflict_has_base() =>
+            {
+                self.error = Some(tr!(
+                    "This conflict has no base side (git writes it with merge.conflictStyle diff3 or zdiff3)"
+                ));
+                true
+            }
+            // コンフリクトの中では、そのコンフリクトを Current・Incoming・両方・共通の祖先のどれかにする（Undo
+            // できる）。
+            KeyCode::Char('o' | 't' | 'b' | 'a') if self.changes.conflict_at_cursor().is_some() => {
                 let choice = match code {
                     KeyCode::Char('o') => "ours",
                     KeyCode::Char('t') => "theirs",
+                    KeyCode::Char('a') => "base",
                     _ => "both",
                 };
                 if let Some((path, index)) = self.changes.conflict_at_cursor() {
@@ -2593,6 +2721,10 @@ impl App {
                     Naming::Branch => tr!("New branch at {at}: {name}", at = at, name = name),
                     Naming::Tag => tr!("New tag at {at}: {name}", at = at, name = name),
                     Naming::Rename => tr!("Rename {at} to: {name}", at = at, name = name),
+                    Naming::Stash => tr!("Stash message (Enter for none): {name}", name = name),
+                    Naming::Worktree => {
+                        tr!("New worktree for {at} at: {name}", at = at, name = name)
+                    }
                 };
                 let x = buf.set_stringn(area.x + 1, y, text, room, Style::new()).0;
                 cursor = Some((x.min(position_x.saturating_sub(1)), y));
@@ -2650,6 +2782,15 @@ impl App {
                         Some((query, running)) => {
                             let (at, of) = self.history.match_position();
                             let found = match (running, at) {
+                                // 動いている間は、ここまでに合った数（と、内容の検索なら調べ終えた割合）。
+                                (Some(_), _) if self.search_done > 0.0 => tr!(
+                                    "searching… {percent}%, {count} so far",
+                                    percent = (self.search_done * 100.0) as u32,
+                                    count = of
+                                ),
+                                (Some(_), _) if of > 0 => {
+                                    tr!("searching… {count} so far", count = of)
+                                }
                                 (Some(_), _) => tr!("searching…"),
                                 (None, Some(at)) => format!("{at}/{of}"),
                                 (None, None) => of.to_string(),
@@ -2671,9 +2812,15 @@ impl App {
                     (View::History | View::Reflog | View::File, Focus::Side) => {
                         tr!("j/k scroll   [/] file   h/l pan   Esc back")
                     }
-                    (View::Reflog, Focus::Main) => {
-                        tr!("j/k move   Enter details   b new branch   0 sidebar   q quit")
-                    }
+                    (View::Reflog, Focus::Main) => match self.reflog.name() {
+                        Some(name) => tr!(
+                            "Reflog of {name}   j/k move   Enter details   3 HEAD’s reflog",
+                            name = name
+                        ),
+                        None => {
+                            tr!("j/k move   Enter details   b new branch   0 sidebar   q quit")
+                        }
+                    },
                     (View::Changes, Focus::Main) => {
                         tr!(
                             "j/k move   Space stage/unstage   c message   a amend   d discard   q quit"
@@ -2856,4 +3003,91 @@ fn frame_box(buf: &mut Buffer, area: Rect, at: Rect, title: &str) {
         usize::from(at.width.saturating_sub(4)),
         Style::new().add_modifier(Modifier::BOLD),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use amonhen_front::InProcess;
+
+    use super::*;
+
+    /// コミットが 6 つの History を開いたアプリ。
+    fn app_with_history() -> (tempfile::TempDir, App, std::sync::mpsc::Receiver<Event>) {
+        amonhen_model::testing::isolate_from_user_settings();
+        let dir = tempfile::tempdir().unwrap();
+        let git = |args: &[&str]| {
+            let out = amonhen_model::process::command("git")
+                .args(["-c", "user.name=Ann", "-c", "user.email=ann@example.com"])
+                .args(["-c", "commit.gpgsign=false"])
+                .args(args)
+                .current_dir(dir.path())
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "git {args:?}");
+        };
+        git(&["init", "-q"]);
+        for i in 0..6 {
+            git(&[
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                &format!("Commit {i}"),
+            ]);
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        let clock = Clock {
+            now: 0,
+            local: |t| t.to_string(),
+        };
+        let mut app = App::new(
+            Arc::new(InProcess::open(dir.path(), None).unwrap()),
+            tx,
+            clock,
+        );
+        app.resize(100, 12);
+        app.start();
+        crate::settle(&mut app, &rx).unwrap();
+        (dir, app, rx)
+    }
+
+    fn bottom_line(app: &mut App) -> String {
+        let mut buf = Buffer::empty(Rect::new(0, 0, 100, 12));
+        app.draw(&mut buf, Damage::ALL);
+        (0..100).map(|x| buf[(x, 11)].symbol()).collect()
+    }
+
+    /// 動いている検索の途中の結果: 最初に届いた分で合った行へ移り、後から届く分では動かさない。一番下の行に、
+    /// ここまでの数と割合を出す。
+    #[test]
+    fn partial_matches_show_while_the_search_runs() {
+        let (_dir, mut app, _rx) = app_with_history();
+        let partial = |query: &str, rows: &[u32], done: f32| Event::Partial {
+            query: query.to_owned(),
+            rows: rows.to_vec(),
+            done,
+        };
+        app.search = Some(("x".to_owned(), Some(Arc::new(AtomicBool::new(false)))));
+        app.history.begin_search();
+        assert!(bottom_line(&mut app).contains("/x: searching…   n/N"));
+
+        app.handle(partial("x", &[2, 4], 0.0));
+        assert_eq!(app.history.selected(), 2);
+        assert!(bottom_line(&mut app).contains("/x: searching… 2 so far"));
+
+        // 見ている所を動かしたら、後から届く分はそのまま。
+        app.handle(Event::Input(Input::Key(KeyEvent::new(
+            KeyCode::Char('j'),
+            KeyModifiers::NONE,
+        ))));
+        assert_eq!(app.history.selected(), 3);
+        app.handle(partial("x", &[1, 2, 4], 0.5));
+        assert_eq!(app.history.selected(), 3);
+        assert_eq!(app.history.match_position(), (None, 3));
+        assert!(bottom_line(&mut app).contains("/x: searching… 50%, 3 so far"));
+
+        // ほかの検索のものは捨てる。
+        app.handle(partial("y", &[0], 0.9));
+        assert_eq!(app.history.match_position(), (None, 3));
+    }
 }

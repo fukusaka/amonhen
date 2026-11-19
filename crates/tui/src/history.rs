@@ -106,6 +106,8 @@ pub struct History {
     incomplete: bool,
     /// 検索に合った行（上から順）。検索していなければ空。
     matches: Vec<u32>,
+    /// 動いている検索の、途中の結果を入れた。
+    partial: bool,
     /// 祖先を強調しているコミットの行と、その祖先（行ごとに 1 ビット）、線ごとの光らせ始める行（History の
     /// すべての線の並び）。
     lineage: Option<(u32, Vec<u64>, Vec<u32>)>,
@@ -173,6 +175,22 @@ impl History {
         let at = self.matches.partition_point(|&r| r < self.selected);
         if let Some(&row) = self.matches.get(at).or(self.matches.first()) {
             self.select(row);
+        }
+    }
+
+    /// 新しい検索を始めた（前の検索で合った行は、答えが届くまで残す）。
+    pub fn begin_search(&mut self) {
+        self.partial = false;
+    }
+
+    /// 動いている検索の、ここまでに合った行を入れる。最初に合った行が届いたときだけ、選ぶ行を動かす（後から
+    /// 届く分で、見ている所を動かさない）。
+    pub fn set_partial_matches(&mut self, rows: Vec<u32>) {
+        if !std::mem::replace(&mut self.partial, true) {
+            self.set_matches(rows);
+        } else if rows != self.matches {
+            self.matches = rows;
+            self.generation += 1;
         }
     }
 

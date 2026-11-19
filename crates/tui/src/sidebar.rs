@@ -303,6 +303,14 @@ impl Sidebar {
         }
     }
 
+    /// 選んでいる行が、今のもの（今のブランチ、開いている worktree）か。
+    pub fn picked_is_current(&self) -> bool {
+        matches!(
+            self.rows.get(self.selected),
+            Some(Row::Ref { current: true, .. })
+        )
+    }
+
     pub fn draw(&self, area: Rect, buf: &mut Buffer, focused: bool, changes: usize) {
         if area.width < 4 || area.height == 0 {
             return;
