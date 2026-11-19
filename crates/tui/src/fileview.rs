@@ -28,6 +28,8 @@ struct Line {
     text: String,
     /// Blame で、同じコミットが続く行の最初（左の列を出す）。
     first: bool,
+    /// File History で、そのコミットの時点のパス（名前を変えていれば今と違う）。
+    path: Option<String>,
 }
 
 #[derive(Default)]
@@ -102,6 +104,7 @@ impl FileView {
                         time: commit["time"].as_i64().unwrap_or(0),
                         text: line["t"].as_str().unwrap_or("").replace('\t', "    "),
                         first,
+                        path: None,
                     }
                 })
                 .collect()
@@ -116,6 +119,7 @@ impl FileView {
                     time: e["time"].as_i64().unwrap_or(0),
                     text: e["subject"].as_str().unwrap_or("").to_owned(),
                     first: true,
+                    path: e["path"].as_str().map(str::to_owned),
                 })
                 .collect()
         };
@@ -135,6 +139,19 @@ impl FileView {
             (true, None) => tr!("Blame: {path}", path = self.path),
             (false, _) => tr!("File History: {path}", path = self.path),
         }
+    }
+
+    /// File History で選んでいる版: コミットと、今のパスと、そのコミットの時点のパス。Blame では `None`。
+    pub fn selected_version(&self) -> Option<(Oid, &str, &str)> {
+        if self.blame {
+            return None;
+        }
+        let line = self.lines.get(self.selected)?;
+        Some((
+            line.oid?,
+            &self.path,
+            line.path.as_deref().unwrap_or(&self.path),
+        ))
     }
 
     pub fn selected_id(&self) -> Option<Oid> {

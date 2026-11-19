@@ -1500,6 +1500,50 @@ fn blame_and_file_history_of_a_file() {
     assert!(back.contains("[ ] M lane.rs"));
 }
 
+/// File History で `V`: 作業ツリーのファイルを、選んだ版に戻す（確かめてから。Undo で元に戻る）
+#[test]
+fn file_history_restores_a_version() {
+    let dir = tempfile::tempdir().unwrap();
+    changed(dir.path());
+    let read = || std::fs::read_to_string(dir.path().join("lane.rs")).unwrap();
+    let now = read();
+    // 何もしないコミットを足して、lane.rs が Working Copy に出るように書き換える。
+    std::fs::write(dir.path().join("lane.rs"), format!("{now}// later\n")).unwrap();
+    let edited = read();
+    // 2 行目が最初のコミット（Start）。
+    let asked = amonhen_tui::snapshot(open(dir.path()), 200, 12, clock(), "1LjV").unwrap();
+    println!("{asked}");
+    assert!(asked.contains("Restore lane.rs to its version at "));
+    assert!(asked.contains("y restore   n cancel"));
+    assert_eq!(read(), edited);
+    let restored = amonhen_tui::snapshot(open(dir.path()), 200, 12, clock(), "1LjVy").unwrap();
+    println!("{restored}");
+    assert!(restored.contains("Restored the version"));
+    assert_eq!(read(), git_out(dir.path(), &["show", "HEAD~1:lane.rs"]));
+    // Undo で、戻す前の中身に。
+    amonhen_tui::snapshot(open(dir.path()), 200, 12, clock(), "uy").unwrap();
+    assert_eq!(read(), edited);
+    // Blame では、File History を開くように知らせる。
+    let blame = amonhen_tui::snapshot(open(dir.path()), 200, 12, clock(), "1BV").unwrap();
+    assert!(blame.contains("Open File History (L) to restore a version"));
+    // 名前を変える前の版は、戻さない（理由を出す）。
+    git(
+        dir.path(),
+        BASE + DAY * 3,
+        &["checkout", "-q", "--", "lane.rs"],
+    );
+    git(dir.path(), BASE + DAY * 3, &["mv", "lane.rs", "road.rs"]);
+    git(
+        dir.path(),
+        BASE + DAY * 3,
+        &["commit", "-q", "-m", "Rename"],
+    );
+    std::fs::write(dir.path().join("road.rs"), format!("{now}// later\n")).unwrap();
+    let renamed = amonhen_tui::snapshot(open(dir.path()), 200, 12, clock(), "1LjV").unwrap();
+    println!("{renamed}");
+    assert!(renamed.contains("The file was lane.rs at that commit"));
+}
+
 /// コミットの詳細で `B`: 見ているファイルの、そのコミットの時点の Blame。Esc で元の画面に戻る
 #[test]
 fn blame_from_a_commits_file() {

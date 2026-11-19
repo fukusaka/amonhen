@@ -1277,6 +1277,7 @@ impl App {
             "apply" => self.notice = Some(tr!("Applied the stash")),
             "drop" => self.notice = Some(tr!("Dropped the stash")),
             "removeWorktree" => self.notice = Some(tr!("Removed the worktree")),
+            "restoreFile" => self.notice = Some(tr!("Restored the version")),
             "addWorktree" => self.notice = Some(tr!("Added the worktree")),
             "merge" | "rebase" | "continue" | "skip" | "cherryPick" | "revert" | "rewrite" => {
                 // コンフリクトで止まったら、Working Copy で解決する。
@@ -1772,6 +1773,35 @@ impl App {
                 self.focus = Focus::Side;
                 true
             }
+            // File History で、作業ツリーのファイルをその版に戻す（確かめてから。Undo で元に戻る）。
+            KeyCode::Char('V') => {
+                let version = (self.file.selected_version())
+                    .map(|(id, path, then)| (id.to_string(), path.to_owned(), then.to_owned()));
+                match version {
+                    Some((_, path, then)) if path != then => {
+                        self.error = Some(tr!(
+                            "The file was {then} at that commit; a version from before a rename can’t be restored here",
+                            then = then
+                        ));
+                    }
+                    Some((id, path, _)) => {
+                        self.confirm = Some((
+                            tr!(
+                                "Restore {path} to its version at {commit}? Undo brings back what it has now.",
+                                path = path,
+                                commit = &id[..id.len().min(8)]
+                            ),
+                            tr!("restore"),
+                            Request::Run {
+                                name: "restoreFile",
+                                command: json!({"op": "restoreFiles", "rev": id, "paths": [path]}),
+                            },
+                        ));
+                    }
+                    None => self.error = Some(tr!("Open File History (L) to restore a version")),
+                }
+                true
+            }
             // その行のコミットを、History で選ぶ。
             KeyCode::Char('H') => {
                 if let Some(id) = self.file.selected_id() {
@@ -1931,6 +1961,10 @@ impl App {
                 ("g G", tr!("Top and bottom")),
                 ("Enter", tr!("Go to the commit's details")),
                 ("H", tr!("Select the commit in History")),
+                (
+                    "V",
+                    tr!("In File History: restore the file to that version"),
+                ),
                 ("Esc", tr!("Go back")),
             ],
             (View::History | View::Reflog | View::File, Focus::Side) => vec![
