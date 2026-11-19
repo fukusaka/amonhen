@@ -600,6 +600,8 @@ enum Category {
     Favorites,
     Local,
     Root(String),
+    /// この PC の、スキャンするフォルダの外にあるリポジトリを入れているフォルダ（木の 1 つ）。
+    Folder(String),
     Group(String),
 }
 
@@ -705,6 +707,18 @@ impl State {
         groups
     }
 
+    /// この PC のリポジトリのうち、スキャンするフォルダの下にないもの（Places のフォルダの木に出す）。
+    fn unscanned(&self) -> Vec<String> {
+        let roots: Vec<String> = roots(&self.data)
+            .into_iter()
+            .map(|(p, ..)| key(&expand(&p).display().to_string()) + "/")
+            .collect();
+        self.all()
+            .into_iter()
+            .filter(|p| !is_remote(p) && !roots.iter().any(|r| key(p).starts_with(r)))
+            .collect()
+    }
+
     fn scanned_all(&self) -> impl Iterator<Item = &String> {
         self.scanned.iter().flatten().flat_map(|(_, found)| found)
     }
@@ -724,24 +738,33 @@ impl State {
             .collect()
     }
 
-    /// 左の分類（分類・名前・見出しか・字下げするか）。
-    fn categories(&self) -> Vec<(Category, String, Option<String>, bool)> {
+    /// 左の分類（分類・名前・見出し・字下げの段）。
+    fn categories(&self) -> Vec<(Category, String, Option<String>, usize)> {
         let mut out = vec![
-            (Category::All, tr!("All"), None, false),
-            (Category::Favorites, tr!("Favorites"), None, false),
+            (Category::All, tr!("All"), None, 0),
+            (Category::Favorites, tr!("Favorites"), None, 0),
             (
                 Category::Local,
                 tr!("This Computer"),
                 Some(tr!("Places")),
-                false,
+                0,
             ),
         ];
         for (path, ..) in roots(&self.data) {
-            out.push((Category::Root(path.clone()), tilde(&path), None, true));
+            out.push((
+                Category::Root(path.clone()),
+                format!("🔍 {}", tilde(&path)),
+                None,
+                1,
+            ));
+        }
+        // スキャンするフォルダの外のリポジトリを、入れているフォルダの木で（GTK4 版・macOS 版と同じ）。
+        for (path, depth, label) in folder_tree(&self.unscanned()) {
+            out.push((Category::Folder(path), label, None, depth + 1));
         }
         for (i, g) in self.groups().into_iter().enumerate() {
             let head = (i == 0).then(|| tr!("Groups"));
-            out.push((Category::Group(g.clone()), g, head, false));
+            out.push((Category::Group(g.clone()), g, head, 0));
         }
         out
     }
@@ -754,6 +777,13 @@ impl State {
                 .filter_map(|b| b["path"].as_str().map(str::to_owned))
                 .collect(),
             Category::Local => self.all().into_iter().filter(|p| !is_remote(p)).collect(),
+            Category::Folder(folder) => {
+                let prefix = key(folder) + "/";
+                self.unscanned()
+                    .into_iter()
+                    .filter(|p| key(p).starts_with(&prefix))
+                    .collect()
+            }
             Category::Root(root) => self
                 .scanned
                 .iter()
@@ -1333,6 +1363,10 @@ fn category_menu(category: &Category, data: &Value) -> Vec<MenuItem> {
             MenuItem::separator("-remove"),
             MenuItem::item(format!("remove-root:{path}"), tr!("Stop Scanning")),
         ],
+        Category::Folder(path) => vec![
+            MenuItem::item(format!("reveal:{path}"), tr!("Show in Files")),
+            MenuItem::item(format!("copy:{path}"), tr!("Copy Path")),
+        ],
         Category::Group(name) => vec![
             add[0].clone(),
             MenuItem::separator("-delete"),
@@ -1574,16 +1608,11 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
     let side_rows = categories
         .iter()
         .enumerate()
-        .map(|(i, (c, name, head, indent))| {
+        .map(|(i, (c, name, head, depth))| {
             let count = state.locations(c).len();
             let line = Grid::new()
                 .columns([GridLength::Star(1.0), GridLength::Auto])
-                .margin(Thickness::new(
-                    if *indent { 16.0 } else { 0.0 },
-                    0.0,
-                    0.0,
-                    0.0,
-                ))
+                .margin(Thickness::new(*depth as f64 * 14.0, 0.0, 0.0, 0.0))
                 .children((
                     TextBlock::new()
                         .text(name.clone())
@@ -1828,9 +1857,90 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
         .children((head, side, main))
 }
 
+/// `repos` を入れているフォルダの木（GTK4 版・macOS 版の Places の下）。行は（フォルダ・段・名前）で、上から順。
+/// 子が 1 つだけで自分のリポジトリもないフォルダは、子と 1 行にまとめる（`~\prj\oss` のように）。一番上の行は
+/// ホームの下を `~` で、下の行は親からの相対の名前で出す。
+fn folder_tree(repos: &[String]) -> Vec<(String, usize, String)> {
+    use std::collections::BTreeMap;
+    #[derive(Default)]
+    struct Node {
+        /// 元の綴りのフォルダ（区切りは元のまま）。
+        path: String,
+        holds: bool,
+        children: BTreeMap<String, Node>,
+    }
+    let mut root = Node::default();
+    for repo in repos {
+        let trimmed = repo.trim_end_matches(['\\', '/']);
+        let Some(cut) = trimmed.rfind(['\\', '/']) else {
+            continue;
+        };
+        let parent = &trimmed[..cut];
+        let mut node = &mut root;
+        let mut at = 0;
+        for part in parent.split(['\\', '/']) {
+            at += part.len();
+            let path = parent[..at].to_owned();
+            at += 1;
+            if part.is_empty() {
+                continue;
+            }
+            node = node.children.entry(part.to_lowercase()).or_default();
+            if node.path.is_empty() {
+                node.path = path;
+            }
+        }
+        node.holds = true;
+    }
+    fn walk(node: &Node, depth: usize, from: Option<&str>, out: &mut Vec<(String, usize, String)>) {
+        for child in node.children.values() {
+            // 子が 1 つだけで自分のリポジトリもなければ、子へ下りる。
+            let mut shown = child;
+            while !shown.holds && shown.children.len() == 1 {
+                shown = shown.children.values().next().expect("1 つある");
+            }
+            let label = match from {
+                Some(parent) => shown.path[parent.len()..]
+                    .trim_start_matches(['\\', '/'])
+                    .to_owned(),
+                None => tilde(&shown.path),
+            };
+            out.push((shown.path.clone(), depth, label));
+            walk(shown, depth + 1, Some(&shown.path), out);
+        }
+    }
+    let mut out = Vec::new();
+    walk(&root, 0, None, &mut out);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn folders_holding_repositories_form_a_folded_tree() {
+        let repos = [
+            r"D:\src\prj\oss\a".to_owned(),
+            r"D:\src\prj\oss\b".to_owned(),
+            r"D:\src\prj\work\c".to_owned(),
+            r"D:\src\prj\work\deep\d".to_owned(),
+            r"E:\x\y\z\e".to_owned(),
+        ];
+        let rows: Vec<(String, usize, String)> = folder_tree(&repos);
+        let shown: Vec<(usize, &str)> = rows.iter().map(|(_, d, l)| (*d, l.as_str())).collect();
+        assert_eq!(
+            shown,
+            [
+                (0, r"D:\src\prj"),
+                (1, "oss"),
+                (1, "work"),
+                (2, "deep"),
+                (0, r"E:\x\y\z"),
+            ]
+        );
+        assert_eq!(rows[2].0, r"D:\src\prj\work");
+    }
 
     #[test]
     fn column_order_keeps_known_columns_once() {
