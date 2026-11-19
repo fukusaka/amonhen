@@ -26,6 +26,8 @@ use crate::sidebar::{self, BranchGroups};
 use crate::{Args, Session};
 
 thread_local! {
+    /// 設定の画面（Settings・Repository Settings）を出しているか（Ctrl+Z・Ctrl+Shift+Z を設定の Undo・Redo にする）。
+    static SETTINGS_SHOWN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// サイドバーの木で引いてよい項目（お気に入りのブランチの鍵。上から順）。木のドラッグの始まりで見る。
     static FAVORITE_KEYS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     /// ドラッグを付けた木（同一性）と、その受け口、最後に木を探した時刻。木は作り直すと別のものになる。
@@ -198,6 +200,9 @@ struct Root {
     disconnected: Option<(Arc<Repository>, String)>,
     /// サイドバーの木を作り直す数（お気に入りを引いて並べ替えた後。WinUI が動かした項目を元の形に戻す）。
     sidebar_epoch: u32,
+    /// 設定の画面で書いた変更の Undo・Redo（macOS 版・GTK4 版と同じく、画面を出している間。閉じたら忘れる）。
+    settings_undo: Vec<SettingsChange>,
+    settings_redo: Vec<SettingsChange>,
     /// 走っている操作の数（GTK4 版の Activity のボタンの回る印と数）。
     running: usize,
     /// History で複数選んでいるコミット（上から。右クリックのメニューを複数のもの用にする）。
@@ -1264,6 +1269,8 @@ impl Component for Root {
             failure_generation: 0,
             disconnected: None,
             sidebar_epoch: 0,
+            settings_undo: Vec::new(),
+            settings_redo: Vec::new(),
             running: 0,
             multi: Vec::new(),
             multi_consecutive: false,
@@ -1334,6 +1341,13 @@ impl Component for Root {
 
     fn update(&mut self, message: Message, context: &ComponentContext<Self>) {
         self.handle(message, context);
+        let shown = matches!(self.page, Page::Settings | Page::RepoSettings);
+        if !shown && (!self.settings_undo.is_empty() || !self.settings_redo.is_empty()) {
+            // 設定の画面を閉じたら、Undo・Redo は忘れる（macOS 版・GTK4 版と同じ）。
+            self.settings_undo.clear();
+            self.settings_redo.clear();
+        }
+        SETTINGS_SHOWN.with(|s| s.set(shown));
         // 木で引いてよいもの（お気に入りのブランチ。順は木と同じ）。
         let favorites: Vec<String> = {
             let mut pinned: Vec<(i64, &RefEntry)> = self
@@ -2463,6 +2477,9 @@ impl Root {
             Message::Command(id) if id == "new-tab" => {
                 crate::tabs::note_page(self.page == Page::WorkingCopy);
                 crate::tabs::new_tab();
+            }
+            Message::Command(id) if id == "settings-undo" || id == "settings-redo" => {
+                self.undo_settings(id == "settings-redo", context);
             }
             Message::Command(id) if id.starts_with("switch-repository:") => {
                 // このタブを選んだリポジトリに替える（GTK4 版・macOS 版のリポジトリ名のポップオーバー）。
@@ -6290,6 +6307,7 @@ impl Root {
                             )
                         });
                     } else {
+                        self.record_settings_change(true, &commands);
                         write_global_settings(repo, epoch, commands, context);
                     }
                 }
@@ -6324,6 +6342,7 @@ impl Root {
                 ) else {
                     return;
                 };
+                self.record_settings_change(true, &commands);
                 write_global_settings(repo, epoch, commands, context);
             }
             Message::SettingsGitChoice(_, None) => {}
@@ -6353,6 +6372,7 @@ impl Root {
                 ) else {
                     return;
                 };
+                self.record_settings_change(true, &commands);
                 write_global_settings(repo, epoch, commands, context);
             }
             Message::SettingsField(index, text) => {
@@ -13130,7 +13150,70 @@ impl Root {
         }
     }
 
-    fn write_repo_settings(&self, commands: Vec<Value>, context: &ComponentContext<Self>) {
+    fn write_repo_settings(&mut self, commands: Vec<Value>, context: &ComponentContext<Self>) {
+        self.record_settings_change(false, &commands);
+        self.send_repo_settings(commands, context);
+    }
+
+    /// 設定の画面で書く前に、戻す命令を覚える（やり直しは捨てる）。
+    fn record_settings_change(&mut self, global: bool, commands: &[Value]) {
+        let entries = if global {
+            self.settings
+                .as_ref()
+                .and_then(|s| s.global.as_ref())
+                .and_then(|g| g.entries.clone())
+        } else {
+            self.repo_settings.as_ref().and_then(|s| s.entries.clone())
+        };
+        let Some(entries) = entries else { return };
+        let undo = crate::reposettings::undo_commands(&entries, commands);
+        if undo.is_empty() {
+            return;
+        }
+        self.settings_undo.push(SettingsChange {
+            global,
+            git_target: self.settings.as_ref().and_then(|s| s.git_target.clone()),
+            undo,
+            redo: commands.to_vec(),
+        });
+        self.settings_redo.clear();
+    }
+
+    /// 設定の画面の Undo（`redo` なら Redo）。戻す先が今の画面と違えば（Settings > Git の読み書きの先が変わった）
+    /// 何もしない。
+    fn undo_settings(&mut self, redo: bool, context: &ComponentContext<Self>) {
+        let stack = if redo {
+            &mut self.settings_redo
+        } else {
+            &mut self.settings_undo
+        };
+        let Some(change) = stack.pop() else {
+            return beep();
+        };
+        let target = self.settings.as_ref().and_then(|s| s.git_target.clone());
+        if change.global && change.git_target != target {
+            return beep();
+        }
+        let apply = if redo {
+            change.redo.clone()
+        } else {
+            change.undo.clone()
+        };
+        if change.global {
+            if let Some((repo, epoch)) = self.settings_git_repo() {
+                write_global_settings(repo, epoch, apply, context);
+            }
+        } else {
+            self.send_repo_settings(apply, context);
+        }
+        if redo {
+            self.settings_undo.push(change);
+        } else {
+            self.settings_redo.push(change);
+        }
+    }
+
+    fn send_repo_settings(&self, commands: Vec<Value>, context: &ComponentContext<Self>) {
         let Some(repo) = self.repo.clone() else {
             return;
         };
@@ -14333,6 +14416,15 @@ impl Root {
             .iter()
             .find(|e| e.kind as u8 == kind && e.name == name)
     }
+}
+
+/// 設定の画面で書いた 1 つの変更（戻す命令と、やり直す命令）。`global` なら Settings > Git（`git_target` はその
+/// 読み書きの先）、でなければ Repository Settings。
+struct SettingsChange {
+    global: bool,
+    git_target: Option<String>,
+    undo: Vec<Value>,
+    redo: Vec<Value>,
 }
 
 /// 切り替える先（GTK4 版の `sheets::CheckoutTarget`）。
@@ -17124,6 +17216,28 @@ fn attach_shortcuts(element: &IInspectable) -> windows_core_reactor::Result<()> 
         }
         // 修飾キーなしのキー（文字の入力・矢印）は部品に任せる。
         if !pressed.control && !pressed.alt {
+            return;
+        }
+        // 設定の画面: 文字の欄の外の Ctrl+Z・Ctrl+Shift+Z（Ctrl+Y）は、設定の変更の Undo・Redo（macOS 版・GTK4 版の
+        // ⌘Z・⇧⌘Z）。欄の中は欄の Undo に任せる。
+        if pressed.control
+            && !pressed.alt
+            && SETTINGS_SHOWN.with(std::cell::Cell::get)
+            && (pressed.key == 0x5A || pressed.key == 0x59)
+            && !args.OriginalSource().is_ok_and(|s| xaml::is_text_box(&s))
+        {
+            let redo = pressed.key == 0x59 || pressed.shift;
+            let _ = args.SetHandled(true);
+            with_history(|h| {
+                h.sender.send(Message::Command(
+                    if redo {
+                        "settings-redo"
+                    } else {
+                        "settings-undo"
+                    }
+                    .to_owned(),
+                ));
+            });
             return;
         }
         if let Some(id) = crate::menus::command_for(pressed) {
