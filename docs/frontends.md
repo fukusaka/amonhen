@@ -75,11 +75,11 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 
 | Feature | macOS | GTK4 | Windows | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
-| Repository tabs in a window | ✓ | ✓ | — | n/a | n/a |  |
+| Repository tabs in a window | ✓ | ✓ | △ | n/a | n/a | Windows: Only the front tab's repository stays open; switching tabs opens the other one again (History comes from the persistent cache), at the page it was left on. Tabs can be reordered but not dragged out into a window. |
 | Separate windows (New Window) | ✓ | ✓ | ✓ | n/a | n/a | Windows: A window is a separate process; New Window opens one on the current repository showing Repositories |
-| Open windows and tabs restored at launch | ✓ | ✓ | △ | n/a | n/a | Windows: The repository of the last window closed, when started without one; no tabs. |
+| Open windows and tabs restored at launch | ✓ | ✓ | △ | n/a | n/a | Windows: The tabs of the last window closed, when started without a repository. |
 | Connecting tab for SSH and daemon repositories (Cancel, Try Again) | ✓ | ✓ | — | n/a | n/a |  |
-| Title shows uncommitted ● and ahead/behind | ✓ | ✓ | ✓ | n/a | n/a | GTK4: On the tab names.<br>Windows: Windows: On the window title (there are no tabs yet). |
+| Title shows uncommitted ● and ahead/behind | ✓ | ✓ | ✓ | n/a | n/a | GTK4: On the tab names.<br>Windows: On the window title and the front tab's name. |
 | App keeps running after its last window closes | ✓ | — | — | n/a | n/a | GTK4: Quits, as GNOME apps do. |
 
 ## 2. Bookmarks (the repository list)
@@ -94,7 +94,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Manual groups; rows dragged onto Favorites or a group | △ | △ | △ | n/a | n/a | macOS: Groups themselves can't be reordered by dragging.<br>GTK4: Groups themselves can't be reordered by dragging.<br>Windows: Group on the row's menu; no dragging. |
 | Status columns (branch, changes, ahead/behind, last commit, opened), sortable and reorderable | ✓ | ✓ | ✓ | n/a | n/a | Windows: Sortable by clicking a header, resized by dragging a header's left edge, and moved left or right from a header's right-click menu. |
 | Favorites, display name, color label | ✓ | ✓ | ✓ | n/a | n/a |  |
-| Open in a tab or window; Finder / Files, Terminal, Editor | ✓ | ✓ | △ | n/a | n/a | GTK4: An app other than a known code editor or a program chosen with Other… opens a folder only if it declares inode/directory.<br>Windows: Explorer, Windows Terminal (or cmd) and the editor chosen in Settings; no tabs, so a repository opens in a new window. |
+| Open in a tab or window; Finder / Files, Terminal, Editor | ✓ | ✓ | ✓ | n/a | n/a | GTK4: An app other than a known code editor or a program chosen with Other… opens a folder only if it declares inode/directory.<br>Windows: Explorer, Windows Terminal (or cmd) and the editor chosen in Settings. |
 | Fetch the selected repositories | ✓ | ✓ | ✓ | n/a | n/a | Windows: Rows are selected with Ctrl or Shift, and Fetch on a selected row's menu fetches them all. |
 | Quick Open (fuzzy search) | ✓ | ✓ | ✓ | n/a | n/a | Windows: Opens in a new window. |
 | Repository name in the toolbar switches the repository | ✓ | ✓ | — | ✓ | n/a | VSCode: Select Repository picks among workspace repositories. |

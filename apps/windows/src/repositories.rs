@@ -155,7 +155,7 @@ fn is_remote(location: &str) -> bool {
     amonhen_remote::location::is_remote(location)
 }
 
-fn is_repository(location: &str) -> bool {
+pub fn is_repository(location: &str) -> bool {
     is_remote(location) || expand(location).join(".git").exists()
 }
 
@@ -877,8 +877,13 @@ impl State {
         Action::None
     }
 
+    /// このタブで開く（GTK4 版・macOS 版の Open。選んだリポジトリがこのタブに替わる）。
     fn open(&mut self, location: &str) {
-        match open_window(location) {
+        self.open_with(location, crate::tabs::replace(location, false));
+    }
+
+    fn open_with(&mut self, location: &str, result: Result<(), String>) {
+        match result {
             Ok(_) => {
                 self.note.clear();
                 self.opened.insert(key(location), now());
@@ -896,6 +901,8 @@ impl State {
         let location = location.to_owned();
         match what {
             "open" => self.open(&location),
+            "open-tab" => self.open_with(&location, crate::tabs::open(&location)),
+            "open-window" => self.open_with(&location, open_window(&location)),
             "favorite" | "unfavorite" => {
                 let yes = what == "favorite";
                 self.change(|d| {
@@ -1062,7 +1069,9 @@ fn row_menu(state: &State, location: &str) -> Vec<MenuItem> {
         ));
     }
     vec![
-        MenuItem::item(format!("open:{location}"), tr!("Open in New Window")),
+        MenuItem::item(format!("open:{location}"), tr!("Open")),
+        MenuItem::item(format!("open-tab:{location}"), tr!("Open in New Tab")),
+        MenuItem::item(format!("open-window:{location}"), tr!("Open in New Window")),
         MenuItem::separator("-fetch"),
         MenuItem::item(format!("fetch:{location}"), "Fetch"),
         MenuItem::separator("-favorite"),

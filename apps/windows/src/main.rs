@@ -37,6 +37,7 @@ mod settingsview;
 mod sidebar;
 mod signature;
 mod stashes;
+mod tabs;
 mod templates;
 mod theme;
 mod tip;
@@ -184,15 +185,31 @@ fn main() {
             std::process::exit(2);
         }
     };
-    // 引数なしで起動したら、最後に閉じた窓のリポジトリを開く（なくなっていれば今のフォルダ）。
-    if !args.repo_given
-        && !args.repositories
-        && let Some(last) = prefs::string(prefs::LAST_REPOSITORY)
-        && std::path::Path::new(&last).join(".git").exists()
-    {
-        args.repo = last.into();
+    // 引数なしで起動したら、最後に閉じた窓のタブを開き直す（なくなったものは除く。タブを覚えていなければ最後の
+    // リポジトリ、それもなくなっていれば今のフォルダ）。
+    let mut restored = (Vec::new(), 0);
+    if !args.repo_given && !args.repositories {
+        if let Some(text) = prefs::string(prefs::LAST_TABS) {
+            restored = tabs::parse_saved(&text, |l| std::path::Path::new(l).join(".git").exists());
+        }
+        if let Some(first) = restored.0.get(restored.1) {
+            args.repo = first.into();
+        } else if let Some(last) = prefs::string(prefs::LAST_REPOSITORY)
+            && std::path::Path::new(&last).join(".git").exists()
+        {
+            args.repo = last.into();
+        }
     }
     let opened = std::fs::canonicalize(&args.repo).unwrap_or_else(|_| args.repo.clone());
+    let opened = opened.display().to_string();
+    let opened = opened.strip_prefix(r"\\?\").unwrap_or(&opened).to_owned();
+    tabs::init(
+        &restored.0,
+        restored.1,
+        &opened,
+        args.repositories,
+        args.working_copy,
+    );
     let app_window = args.host == "app";
     let result = match args.host.as_str() {
         "app" => app::run(args, started),
@@ -204,11 +221,14 @@ fn main() {
         eprintln!("{e}");
         std::process::exit(1);
     }
-    // 閉じた窓のリポジトリを覚える（いちばん後に閉じた窓のものが残る）。
-    if app_window && opened.join(".git").exists() {
-        let path = opened.display().to_string();
-        let path = path.strip_prefix(r"\\?\").unwrap_or(&path);
-        if let Err(e) = prefs::set_string(prefs::LAST_REPOSITORY, path) {
+    // 閉じた窓のタブと前のリポジトリを覚える（いちばん後に閉じた窓のものが残る）。
+    if app_window && let Some(tab) = tabs::current() {
+        if let Err(e) = prefs::set_string(prefs::LAST_TABS, &tabs::saved()) {
+            eprintln!("タブを覚えられない: {e}");
+        }
+        if std::path::Path::new(&tab.location).join(".git").exists()
+            && let Err(e) = prefs::set_string(prefs::LAST_REPOSITORY, &tab.location)
+        {
             eprintln!("最後のリポジトリを覚えられない: {e}");
         }
     }
