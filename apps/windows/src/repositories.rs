@@ -515,6 +515,8 @@ pub enum Event {
     /// 選んでいるリポジトリを開く（ダブルクリック・Enter）。
     Open,
     AddRepository,
+    /// SSH 先のリポジトリを加える（Add SSH Connection…）。
+    AddSsh,
     AddScanFolder,
     Close,
     /// 探し終えた（見つけたものと、見張るフォルダ）。
@@ -542,6 +544,8 @@ pub enum Action {
     Rename(String, String),
     /// 裏で fetch する。
     Fetch(String),
+    /// SSH 先のリポジトリの接続先とパスを聞く。
+    AddSsh,
 }
 
 impl State {
@@ -772,6 +776,14 @@ impl State {
         });
     }
 
+    /// SSH 先のリポジトリを一覧に加えて、このタブで開く（GTK4 版の `add_remote`）。つながらなくても一覧には
+    /// 残る。
+    pub fn add_remote(&mut self, location: &str) {
+        self.change(|d| update(d, location, |_| {}));
+        self.selected = Some(location.to_owned());
+        self.open(location);
+    }
+
     /// グループを足し、`location` があればそこに移す。
     pub fn add_group(&mut self, name: &str, location: Option<&str>) {
         let name = name.trim();
@@ -808,6 +820,7 @@ impl State {
                     self.open(&location);
                 }
             }
+            Event::AddSsh => return Action::AddSsh,
             Event::AddRepository => {
                 let Some(path) = crate::files::pick_folder(&tr!("Add Repositories"), &tr!("Add"))
                 else {
@@ -902,6 +915,15 @@ impl State {
         match what {
             "open" => self.open(&location),
             "open-tab" => self.open_with(&location, crate::tabs::open(&location)),
+            "open-daemon" => {
+                let through = if is_remote(&location) {
+                    format!("daemon:{location}")
+                } else {
+                    amonhen_remote::local::canonical_path(&expand(&location).to_string_lossy())
+                        .map_or_else(|_| format!("daemon:{location}"), |p| format!("daemon:{p}"))
+                };
+                self.open_with(&location, crate::tabs::replace(&through, false));
+            }
             "open-window" => self.open_with(&location, open_window(&location)),
             "favorite" | "unfavorite" => {
                 let yes = what == "favorite";
@@ -1068,10 +1090,19 @@ fn row_menu(state: &State, location: &str) -> Vec<MenuItem> {
             ),
         ));
     }
-    vec![
+    let mut items = vec![
         MenuItem::item(format!("open:{location}"), tr!("Open")),
         MenuItem::item(format!("open-tab:{location}"), tr!("Open in New Tab")),
         MenuItem::item(format!("open-window:{location}"), tr!("Open in New Window")),
+    ];
+    // 共有の daemon 越しに（SSH 先も `daemon:ssh://…`。GTK4 版と同じく、いつも daemon 越しなら出さない）。
+    if !location.starts_with("daemon:") && !crate::prefs::bool(crate::prefs::OPEN_THROUGH_DAEMON) {
+        items.push(MenuItem::item(
+            format!("open-daemon:{location}"),
+            tr!("Open Through the Shared daemon"),
+        ));
+    }
+    items.extend([
         MenuItem::separator("-fetch"),
         MenuItem::item(format!("fetch:{location}"), "Fetch"),
         MenuItem::separator("-favorite"),
@@ -1087,13 +1118,21 @@ fn row_menu(state: &State, location: &str) -> Vec<MenuItem> {
         MenuItem::submenu("colors", tr!("Color Label"), colors),
         MenuItem::item(format!("rename:{location}"), tr!("Rename…")),
         MenuItem::separator("-files"),
-        MenuItem::item(format!("reveal:{location}"), tr!("Show in Files")),
-        MenuItem::item(format!("terminal:{location}"), tr!("Open in Terminal")),
-        MenuItem::item(format!("editor:{location}"), tr!("Open in Editor")),
+    ]);
+    // SSH 先のフォルダは、この機械では開けない。
+    if !is_remote(location) {
+        items.extend([
+            MenuItem::item(format!("reveal:{location}"), tr!("Show in Files")),
+            MenuItem::item(format!("terminal:{location}"), tr!("Open in Terminal")),
+            MenuItem::item(format!("editor:{location}"), tr!("Open in Editor")),
+        ]);
+    }
+    items.extend([
         MenuItem::item(format!("copy:{location}"), tr!("Copy Path")),
         MenuItem::separator("-remove"),
         MenuItem::item(format!("remove:{location}"), tr!("Remove from List")),
-    ]
+    ]);
+    items
 }
 
 /// 分類の右クリックのメニュー（`data` は今の探す深さに印を付けるため）。
@@ -1325,6 +1364,7 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
             GridLength::Auto,
             GridLength::Auto,
             GridLength::Auto,
+            GridLength::Auto,
         ])
         .column_spacing(6.0)
         .margin(Thickness::new(10.0, 6.0, 8.0, 6.0))
@@ -1348,12 +1388,16 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                 .grid_column(2)
                 .content(TextBlock::new().text(tr!("Add Local Repository…"))),
             Button::new()
-                .on_click((callbacks.button)("add-scan-folder"))
+                .on_click((callbacks.button)("add-ssh"))
                 .grid_column(3)
+                .content(TextBlock::new().text(tr!("Add SSH Connection…"))),
+            Button::new()
+                .on_click((callbacks.button)("add-scan-folder"))
+                .grid_column(4)
                 .content(TextBlock::new().text(tr!("Add Folder to Scan…"))),
             Button::new()
                 .on_click((callbacks.button)("close"))
-                .grid_column(4)
+                .grid_column(5)
                 .content(TextBlock::new().text(tr!("Close"))),
         ));
     // 左: 分類と件数。

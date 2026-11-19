@@ -560,6 +560,23 @@ impl Data {
         // History の範囲（全ブランチ・今のブランチ・選んだ ref）。
         let scope: Arc<std::sync::Mutex<Scope>> = Arc::default();
         let thread_scope = scope.clone();
+        // SSH 先ごとの選択（設定は UI のスレッドで読む）。
+        let location = path.to_string_lossy().into_owned();
+        // Settings > Performance で共有の daemon 越しに開くなら、手元も SSH 先も `daemon:` に（GTK4 版と同じ）。
+        let location = if crate::prefs::bool(crate::prefs::OPEN_THROUGH_DAEMON)
+            && !location.starts_with("daemon:")
+        {
+            if location.starts_with("ssh://") {
+                format!("daemon:{location}")
+            } else {
+                amonhen_remote::local::canonical_path(&location)
+                    .map_or(location, |p| format!("daemon:{p}"))
+            }
+        } else {
+            location
+        };
+        let host_options =
+            crate::remote::is_remote(&location).then(|| crate::remote::options_for(&location));
         let order_of = move || {
             if thread_topo.load(std::sync::atomic::Ordering::Relaxed) {
                 amonhen_model::HistoryOrder::Topo
@@ -572,7 +589,11 @@ impl Data {
                 let _ = thread_tx.send(e);
                 thread_wake();
             };
-            let repo = match open(&path) {
+            let opened = match host_options {
+                Some(options) => crate::remote::open(&location, options, &*thread_wake),
+                None => open(&path),
+            };
+            let repo = match opened {
                 Ok(repo) => Arc::new(repo),
                 Err(e) => return send(Event::Failed(format!("リポジトリを開けない: {e}"))),
             };
@@ -662,13 +683,22 @@ impl Data {
             // ref が変わったら History と ref を、設定が変わったら ref を読み直す（GTK4 版の `watch` と同じ）。
             // 知らせは監視のスレッドから来るので、このスレッドで受けて読む。読み直しの失敗は出さない（macOS 版と
             // 同じく、開いて最初の読み込みだけ）。
-            let _watcher = match amonhen_watch::Watcher::new(repo.paths(), move |changes| {
-                let _ = watch_tx.send(changes.0);
-            }) {
-                Ok(w) => w,
-                Err(e) => {
-                    eprintln!("リポジトリを見張れない: {e}");
-                    return;
+            // daemon 越し・SSH 先なら、daemon の知らせを受ける（GTK4 版と同じ）。
+            let remote_tx = watch_tx.clone();
+            let remote = repo.subscribe_changes(Box::new(move |bits| {
+                let _ = remote_tx.send(bits);
+            }));
+            let _watcher = if remote {
+                None
+            } else {
+                match amonhen_watch::Watcher::new(repo.paths(), move |changes| {
+                    let _ = watch_tx.send(changes.0);
+                }) {
+                    Ok(w) => Some(w),
+                    Err(e) => {
+                        eprintln!("リポジトリを見張れない: {e}");
+                        return;
+                    }
                 }
             };
             let mut history = history;

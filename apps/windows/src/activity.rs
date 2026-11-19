@@ -3,7 +3,8 @@
 //! 操作（`undoLog`）と「ここまで戻す」。開いている間は 0.5 秒ごとに読み直す。GTK4 版・macOS 版は別の窓にするが、
 //! ここではまだ History と右の列の場所に重ねる。History Cache のタブ（開いているリポジトリだけ）と JSON への書き出しもある。
 //! Performance（読み込みの速さ）と Events（ファイルの変化の知らせ・読み直し）も、GTK4 版と同じく最近の 500 まで覚えて
-//! 出す（裏のスレッドからも記録するので、ロックで守る）。Daemon のタブはまだない。
+//! 出す（裏のスレッドからも記録するので、ロックで守る）。Daemon は共有の daemon の様子（`amonhen daemon status` と
+//! 同じ答え）と起動・停止、daemon が開いているリポジトリ（GTK4 版と同じ。出している間は 2 秒ごとに読み直す）。
 
 use amonhen_model::tr;
 use serde_json::Value;
@@ -94,6 +95,10 @@ pub struct State {
     /// Performance の行と、Events（新しい順）。
     pub speeds: Vec<Speed>,
     pub events: Vec<(u64, String, String)>,
+    /// 共有の daemon の様子（読む前は None、動いていなければ Some(None)）。
+    pub daemon: Option<Option<Value>>,
+    /// Daemon のタブを出している間の数え（4 回に 1 回、2 秒ごとに読み直す）。
+    pub daemon_tick: u32,
 }
 
 impl State {
@@ -105,6 +110,8 @@ impl State {
             cache: None,
             speeds: Vec::new(),
             events: Vec::new(),
+            daemon: None,
+            daemon_tick: 0,
         };
         state.refresh();
         state
@@ -133,6 +140,8 @@ pub struct Callbacks<'a> {
     pub export: Callback<()>,
     /// 走っている操作を取り消す（記録の通し番号）。
     pub cancel: Box<dyn Fn(u64) -> Callback<()> + 'a>,
+    /// 共有の daemon を起動する・止める。
+    pub daemon_toggle: Callback<()>,
 }
 
 /// バイト数を読みやすく（GTK4 版の `glib::format_size` に近い形）。
@@ -188,9 +197,10 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                     tr!("History Cache"),
                     tr!("Performance"),
                     tr!("Events"),
+                    "Daemon".to_owned(),
                 ])
                 .selected_index(state.tab)
-                .max_columns(5)
+                .max_columns(6)
                 .on_selection_changed(callbacks.tab)
                 .grid_column(1),
             StackPanel::new()
@@ -210,7 +220,9 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                         .content(TextBlock::new().text(tr!("Close"))),
                 )),
         ));
-    let body: View = if state.tab == 0 {
+    let body: View = if state.tab == 5 {
+        daemon_view(state.daemon.as_ref(), callbacks.daemon_toggle)
+    } else if state.tab == 0 {
         let rows = state.records.iter().map(|r| {
             let status = match r.ok {
                 None => "…",
@@ -433,6 +445,190 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
     Grid::new()
         .rows([GridLength::Auto, GridLength::Star(1.0)])
         .children((head, body))
+}
+
+/// 時間（ミリ秒）を、秒・分・時間で（GTK4 版・macOS 版の Daemon のタブと同じ）。
+fn span(ms: u64) -> String {
+    match ms / 1000 {
+        s if s < 60 => tr!("{s} s", s = s),
+        s if s < 3600 && s % 60 == 0 => tr!("{m} min", m = s / 60),
+        s if s < 3600 => tr!("{m} min {s} s", m = s / 60, s = s % 60),
+        s => tr!("{h} h {m} min", h = s / 3600, m = s % 3600 / 60),
+    }
+}
+
+/// Daemon のタブ（GTK4 版の Daemon）: 動いているか（pid・版・動いている時間・つながりの数とソケット）と起動・停止、
+/// daemon が開いているリポジトリの表。
+fn daemon_view(status: Option<&Option<Value>>, toggle: Callback<()>) -> View {
+    let running = matches!(status, Some(Some(_)));
+    let (mark, title, detail) = match status {
+        None => ("○", tr!("Checking…"), not_running()),
+        Some(None) => ("○", tr!("The shared daemon isn’t running"), not_running()),
+        Some(Some(d)) => (
+            "●",
+            tr!("The shared daemon is running"),
+            tr!(
+                "pid {pid} · version {version} (build {build}) · up {uptime} · connections {connections}",
+                pid = d["pid"],
+                version = d["version"].as_str().unwrap_or_default(),
+                build = d["build"].as_str().unwrap_or_default(),
+                uptime = span(d["uptimeMs"].as_u64().unwrap_or(0)),
+                connections = d["connections"],
+            ),
+        ),
+    };
+    let green = Brush::Solid(Color::rgb(0x2e, 0x9e, 0x44));
+    let headline = StackPanel::new()
+        .orientation(Orientation::Horizontal)
+        .spacing(6.0)
+        .children((
+            if running {
+                TextBlock::new().text(mark).foreground(green)
+            } else {
+                TextBlock::new().text(mark).opacity(0.6)
+            },
+            if running {
+                TextBlock::new()
+                    .text(title)
+                    .font_size(15.0)
+                    .foreground(green)
+            } else {
+                TextBlock::new().text(title).font_size(15.0).opacity(0.6)
+            },
+        ));
+    let socket = match status {
+        Some(Some(d)) => TextBlock::new()
+            .text(d["socket"].as_str().unwrap_or_default())
+            .font_size(12.0)
+            .opacity(0.6)
+            .is_text_selection_enabled(true)
+            .into(),
+        _ => View::empty(),
+    };
+    let button = Button::new()
+        .on_click(toggle)
+        .vertical_alignment(VerticalAlignment::Top);
+    let top = Grid::new()
+        .columns([GridLength::Star(1.0), GridLength::Auto])
+        .children((
+            StackPanel::new().spacing(2.0).grid_column(0).children((
+                headline,
+                TextBlock::new()
+                    .text(detail)
+                    .font_size(12.0)
+                    .opacity(if running { 1.0 } else { 0.6 })
+                    .text_wrapping(TextWrapping::Wrap),
+                socket,
+            )),
+            button
+                .grid_column(1)
+                .content(TextBlock::new().text(if running { tr!("Stop") } else { tr!("Start") })),
+        ));
+    let columns = || {
+        [
+            GridLength::Star(1.0),
+            GridLength::Pixel(150.0),
+            GridLength::Pixel(150.0),
+            GridLength::Pixel(70.0),
+            GridLength::Pixel(70.0),
+            GridLength::Pixel(170.0),
+        ]
+    };
+    let header = Grid::new().columns(columns()).children((
+        heading(tr!("Repository"), 0),
+        heading("SSH".to_owned(), 1),
+        heading(tr!("Connections"), 2),
+        heading("History".to_owned(), 3),
+        heading(tr!("Watching"), 4),
+        heading(tr!("Search Index"), 5),
+    ));
+    let repos: Vec<Value> = match status {
+        Some(Some(d)) => d["repos"].as_array().cloned().unwrap_or_default(),
+        _ => Vec::new(),
+    };
+    let rows = repos.iter().map(|r| {
+        let yes = |key: &str| {
+            if r[key].as_bool() == Some(true) {
+                tr!("Yes")
+            } else {
+                "—".to_owned()
+            }
+        };
+        let clients = match r["clients"].as_u64().unwrap_or(0) {
+            0 => tr!(
+                "None (for {duration})",
+                duration = span(r["idleMs"].as_u64().unwrap_or(0))
+            ),
+            n => n.to_string(),
+        };
+        let bytes = |key: &str| size(r[key].as_u64().unwrap_or(0));
+        let ssh = if r["ssh"].as_bool() != Some(true) {
+            "—".to_owned()
+        } else if r["closed"].as_str().is_some() {
+            tr!("Disconnected")
+        } else {
+            format!("{} · {}", bytes("sent"), bytes("received"))
+        };
+        let index = match r["indexRows"].as_u64() {
+            Some(rows) => tr!(
+                "{rows} rows · {size}",
+                rows = rows,
+                size = bytes("indexBytes")
+            ),
+            None => "—".to_owned(),
+        };
+        let path = r["path"].as_str().unwrap_or_default().to_owned();
+        (
+            path.clone(),
+            Grid::new().columns(columns()).children((
+                cell(path.clone(), 0)
+                    .text_trimming(TextTrimming::CharacterEllipsis)
+                    .tooltip(path),
+                cell(ssh, 1),
+                cell(clients, 2),
+                cell(yes("history"), 3),
+                cell(yes("watching"), 4),
+                cell(index, 5),
+            )),
+        )
+    });
+    let idle = match status {
+        Some(Some(d)) => d["idleExitMs"].as_u64().unwrap_or(600_000),
+        _ => 600_000,
+    };
+    StackPanel::new()
+        .grid_row(1)
+        .spacing(8.0)
+        .margin(Thickness::new(12.0, 0.0, 12.0, 8.0))
+        .children((
+            top,
+            TextBlock::new()
+                .text(tr!("Open Repositories"))
+                .font_size(14.0)
+                .margin(Thickness::new(0.0, 8.0, 0.0, 0.0)),
+            header,
+            ScrollViewer::new()
+                .max_height(320.0)
+                .content(StackPanel::new().children((View::keyed_fragment(rows),))),
+            note(tr!(
+                "The daemon exits after {duration} with no connections. From a terminal, run amonhen daemon status to see it.",
+                duration = span(idle)
+            )),
+            // 止めたときのこと（GTK4 版では Stop のツールチップ）。
+            if running {
+                note(tr!(
+                    "Repositories opened through the daemon get disconnected (Reconnect starts it again)."
+                ))
+            } else {
+                View::empty()
+            },
+        ))
+}
+
+fn not_running() -> String {
+    tr!(
+        "It starts automatically when you open a repository through the daemon (right-click in the repository list, or Settings > Performance)."
+    )
 }
 
 /// 見出しの文字（薄く）と、表の文字。

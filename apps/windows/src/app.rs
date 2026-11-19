@@ -220,6 +220,8 @@ struct Root {
     /// 選んだコミットの詳細（`commit_info` の答え）と、時間のかかる分（`commit_extras`）。
     info: Option<(Value, Option<Value>)>,
     error: Option<String>,
+    /// ダイアログが空くのを待っている、エンジンを送ってよいかの問い。
+    asks: Vec<crate::remote::Ask>,
     /// 出している確認・知らせのダイアログ。
     dialog: Option<Dialog>,
     /// History で選んでいるコミット（ID と、指している ref）。右クリックのメニューを作る。
@@ -384,6 +386,11 @@ enum Page {
 /// 窓に重ねるダイアログ（macOS 版のシート、GTK4 版の `sheets`）。
 #[derive(Clone)]
 enum Dialog {
+    /// SSH 先にエンジンを送ってよいか（GTK4 版の `ask_send_engine`）。`always` は「今後は聞かずに送る」。
+    SendEngine {
+        ask: crate::remote::Ask,
+        always: bool,
+    },
     /// Undo の確認（`undoPeek` の名前と、何が戻るか）。
     Undo {
         repo: Arc<Repository>,
@@ -650,6 +657,8 @@ enum Dialog {
         location: Option<String>,
         name: String,
     },
+    /// SSH 先のリポジトリを加える（接続先とパス。GTK4 版の `ssh_connection_sheet`）。
+    AddSsh { host: String, path: String },
     /// ブランチの名前を変える（GTK4 版の `refops::ask_rename_branch`）。
     Rename {
         repo: Arc<Repository>,
@@ -922,6 +931,11 @@ enum Message {
     ActivityExport,
     /// Activity の History のキャッシュを読んだ（リポジトリの名前と `historyCache` の info）。
     ActivityCache(String, Value),
+    /// 共有の daemon の様子（動いていなければ None）。
+    DaemonStatus(Option<Value>),
+    DaemonToggle,
+    /// 起動・停止が終わった（できなければ理由）。
+    DaemonToggled(Option<String>),
     CloseActivity,
     /// Repositories の操作。
     Repos(crate::repositories::Event),
@@ -1147,6 +1161,11 @@ enum Message {
     Failed(String),
     /// Windows の外観が変わった（描き直す）。
     AppearanceChanged,
+    /// 裏のスレッドが、SSH 先にエンジンを送ってよいかを聞いている。
+    AskSendEngine(crate::remote::Ask),
+    /// Add SSH Connection の、SSH 先のパス。
+    SshPath(String),
+    SendEngineAlways(bool),
     /// タブを選んだ・閉じようとした（タブの番号）・引いて並べ替えた（番号の並び）。
     TabSelected(Option<usize>),
     TabClose(String),
@@ -1175,6 +1194,7 @@ impl Component for Root {
             groups: None,
             info: None,
             error: None,
+            asks: Vec::new(),
             dialog: None,
             selected: None,
             menu_request: 0,
@@ -1286,6 +1306,21 @@ impl Component for Root {
     }
 
     fn update(&mut self, message: Message, context: &ComponentContext<Self>) {
+        self.handle(message, context);
+        // 待っていた、エンジンを送ってよいかの問いを、ダイアログが空いたら出す。
+        if self.dialog.is_none() && !self.asks.is_empty() {
+            let ask = self.asks.remove(0);
+            self.dialog = Some(Dialog::SendEngine { ask, always: false });
+        }
+    }
+
+    fn view(&self, input: &(), context: &mut ViewContext<Self>) -> View {
+        self.root_view(input, context)
+    }
+}
+
+impl Root {
+    fn handle(&mut self, message: Message, context: &ComponentContext<Self>) {
         // Push の画面を閉じたら、右の列を元の画面のものに戻す。
         if matches!(message, Message::DialogClosed(_))
             && matches!(self.dialog, Some(Dialog::Push { .. }))
@@ -1786,6 +1821,7 @@ impl Component for Root {
                 | Some(Dialog::QuickOpen { query: current, .. })
                 | Some(Dialog::Rename { name: current, .. })
                 | Some(Dialog::NewGroup { name: current, .. })
+                | Some(Dialog::AddSsh { host: current, .. })
                 | Some(Dialog::RenameRepository { name: current, .. })
                 | Some(Dialog::StashBranch { name: current, .. })
                 | Some(Dialog::Publish { name: current, .. })
@@ -2151,7 +2187,15 @@ impl Component for Root {
                     "open-in-terminal" | "open-in-editor" | "reveal-in-files"
                 ) =>
             {
-                let Some(dir) = self.repo.as_ref().and_then(|r| r.paths().workdir) else {
+                // SSH 先・daemon 越しのフォルダは、この機械では開けない（GTK4 版と同じく手元だけ）。
+                let remote =
+                    crate::tabs::current().is_some_and(|t| crate::remote::is_remote(&t.location));
+                let Some(dir) = self
+                    .repo
+                    .as_ref()
+                    .and_then(|r| r.paths().workdir)
+                    .filter(|_| !remote)
+                else {
                     return beep();
                 };
                 // エディタは起動を待つので裏で（code.cmd がすぐ返す）。
@@ -2349,6 +2393,13 @@ impl Component for Root {
             Message::Command(id) if id == "new-tab" => {
                 crate::tabs::note_page(self.page == Page::WorkingCopy);
                 crate::tabs::new_tab();
+            }
+            Message::Command(id) if id == "try-again" => {
+                if let Some(tab) = crate::tabs::current()
+                    && let Err(e) = crate::tabs::replace(&tab.location, tab.working_copy)
+                {
+                    self.error = Some(e);
+                }
             }
             Message::Command(id) if id == "close-tab" => {
                 if crate::tabs::close_current() {
@@ -2698,6 +2749,7 @@ impl Component for Root {
                     auto_bookmark: crate::prefs::bool(crate::prefs::AUTO_BOOKMARK),
                     auto_fetch: crate::prefs::auto_fetch_minutes(),
                     write_commit_graph: crate::prefs::bool(crate::prefs::WRITE_COMMIT_GRAPH),
+                    open_through_daemon: crate::prefs::bool(crate::prefs::OPEN_THROUGH_DAEMON),
                     use_fsmonitor: crate::prefs::bool(crate::prefs::USE_FSMONITOR),
                     cache_size: None,
                     editors: crate::settingsview::editor_choices(&editor),
@@ -2813,7 +2865,27 @@ impl Component for Root {
                 Some((label, what)) => self.dialog = Some(Dialog::Undo { repo, label, what }),
                 None => beep(),
             },
+            Message::AskSendEngine(ask) => {
+                if self.dialog.is_none() {
+                    self.dialog = Some(Dialog::SendEngine { ask, always: false });
+                } else {
+                    self.asks.push(ask);
+                }
+            }
+            Message::SshPath(text) => {
+                if let Some(Dialog::AddSsh { path, .. }) = &mut self.dialog {
+                    *path = text;
+                }
+            }
+            Message::SendEngineAlways(on) => {
+                if let Some(Dialog::SendEngine { always, .. }) = &mut self.dialog {
+                    *always = on;
+                }
+            }
             Message::DialogClosed(result) => match (self.dialog.take(), result) {
+                (Some(Dialog::SendEngine { ask, always }), result) => {
+                    ask.answer(result == ContentDialogResult::Primary, always);
+                }
                 (Some(Dialog::Undo { repo, .. }), ContentDialogResult::Primary) => {
                     perform(context, repo, json!({ "op": "undo" }), tr!("Couldn’t Undo"));
                 }
@@ -3543,6 +3615,14 @@ impl Component for Root {
                 ) => {
                     if let Some(state) = self.repositories.as_mut() {
                         state.rename(&location, &name);
+                    }
+                }
+                (Some(Dialog::AddSsh { host, path }), ContentDialogResult::Primary) => {
+                    if let Some(location) = crate::remote::ssh_location(&host, &path) {
+                        let _ = crate::prefs::set_string(LAST_SSH_HOST, host.trim());
+                        if let Some(state) = self.repositories.as_mut() {
+                            state.add_remote(&location);
+                        }
                     }
                 }
                 (Some(Dialog::NewGroup { location, name }), ContentDialogResult::Primary) => {
@@ -5005,6 +5085,9 @@ impl Component for Root {
                     state.tab = tab;
                 }
                 self.load_undo_log(context);
+                if tab == 5 {
+                    load_daemon_status(context);
+                }
                 if tab == 2
                     && let Some(repo) = self.repo.clone()
                 {
@@ -5018,6 +5101,38 @@ impl Component for Root {
                             serde_json::from_str(&repo.run_json(r#"{"op":"historyCache"}"#))
                                 .unwrap_or_default();
                         Message::ActivityCache(name, reply["info"].clone())
+                    });
+                }
+            }
+            Message::DaemonStatus(status) => {
+                if let Some(state) = self.activity.as_mut() {
+                    state.daemon = Some(status);
+                }
+            }
+            Message::DaemonToggle => {
+                let running = self
+                    .activity
+                    .as_ref()
+                    .is_some_and(|s| matches!(s.daemon, Some(Some(_))));
+                let engine = crate::remote::engine();
+                context.spawn_background(move |_| {
+                    let result = if running {
+                        let _ = amonhen_remote::local::control("stop");
+                        Ok(())
+                    } else {
+                        amonhen_remote::local::start(&engine.to_string_lossy())
+                            .map_err(|e| e.to_string())
+                    };
+                    Message::DaemonToggled(result.err())
+                });
+            }
+            Message::DaemonToggled(error) => {
+                // 2 秒待たずに、すぐ様子を読み直す。起動できなければ、そのエラーを出す（GTK4 版と同じ）。
+                load_daemon_status(context);
+                if let Some(message) = error {
+                    self.dialog = Some(Dialog::Failed {
+                        title: tr!("The shared daemon isn’t running"),
+                        message,
                     });
                 }
             }
@@ -5776,11 +5891,20 @@ impl Component for Root {
                 perform(context, repo, command, tr!("Fetch More"));
             }
             Message::ActivityTick => {
+                let mut undo = false;
                 if let Some(state) = self.activity.as_mut() {
                     state.refresh();
-                    if state.tab == 1 {
-                        self.load_undo_log(context);
+                    undo = state.tab == 1;
+                    // Daemon は 2 秒ごと（4 回に 1 回）。
+                    if state.tab == 5 {
+                        state.daemon_tick = state.daemon_tick.wrapping_add(1);
+                        if state.daemon_tick % 4 == 0 {
+                            load_daemon_status(context);
+                        }
                     }
+                }
+                if undo {
+                    self.load_undo_log(context);
                 }
             }
             Message::ActivityUndo(count) => {
@@ -6177,6 +6301,7 @@ impl Component for Root {
                     match key {
                         crate::prefs::AUTO_MAGIC_MERGE => state.auto_magic_merge = value,
                         crate::prefs::WRITE_COMMIT_GRAPH => state.write_commit_graph = value,
+                        crate::prefs::OPEN_THROUGH_DAEMON => state.open_through_daemon = value,
                         crate::prefs::USE_FSMONITOR => state.use_fsmonitor = value,
                         crate::prefs::AUTO_BOOKMARK => state.auto_bookmark = value,
                         _ => state.file_history_merges = value,
@@ -6834,7 +6959,7 @@ impl Component for Root {
         }
     }
 
-    fn view(&self, _input: &(), context: &mut ViewContext<Self>) -> View {
+    fn root_view(&self, _input: &(), context: &mut ViewContext<Self>) -> View {
         let (args, _) = ARGS.with(|a| a.borrow().clone()).expect("args");
         let name = std::fs::canonicalize(&args.repo)
             .ok()
@@ -7055,13 +7180,28 @@ impl Component for Root {
                         context.callback(Message::HistoryMenu),
                     )),
             ));
+        // SSH 先・daemon 越しは、つないでいる間とつなげなかったときに、そのことを History の上に出す（GTK4 版の
+        // `Connecting`）。
+        let location = crate::tabs::current()
+            .map(|t| t.location)
+            .unwrap_or_default();
         let history: View = match &self.error {
+            Some(e) if crate::remote::is_remote(&location) => {
+                connecting_view(&location, Some(e), context)
+            }
             Some(e) => TextBlock::new()
                 .text(e.clone())
                 .text_wrapping(TextWrapping::Wrap)
                 .margin(16.0)
                 .into(),
-            None => SwapChainPanel::new().element_ref(&self.panel).into(),
+            None => {
+                let connecting = (self.repo.is_none() && crate::remote::is_remote(&location))
+                    .then(|| connecting_view(&location, None, context));
+                Grid::new().children((
+                    SwapChainPanel::new().element_ref(&self.panel),
+                    View::keyed_fragment(connecting.map(|v| ("connecting".to_owned(), v))),
+                ))
+            }
         };
         let right = Grid::new()
             .rows(if self.page == Page::WorkingCopy {
@@ -7503,6 +7643,36 @@ impl Root {
         let dialog = ContentDialog::new().on_closed(context.callback(Message::DialogClosed));
         match &self.dialog {
             None => dialog.is_open(false).into(),
+            Some(Dialog::SendEngine { ask, always }) => {
+                let consent = &ask.consent;
+                let title = if consent.update {
+                    tr!("Send a new version of the engine to {host}?", host = ask.host)
+                } else {
+                    tr!("Send the engine to {host}?", host = ask.host)
+                };
+                dialog
+                    .is_open(true)
+                    .title(title)
+                    .primary_button_text(tr!("Send"))
+                    .close_button_text(tr!("Don’t Send"))
+                    .content(
+                        StackPanel::new().spacing(8.0).width(440.0).children((
+                            TextBlock::new()
+                                .text(tr!(
+                                    "To open repositories on this host, Amon Hen puts its engine (amonhen, {size} MB, {platform}) on the host and runs it there. If you don’t send it, Amon Hen won’t send one to this host until you turn it back on in Settings > SSH Hosts.",
+                                    size = consent.megabytes(),
+                                    platform = consent.platform
+                                ))
+                                .text_wrapping(TextWrapping::Wrap),
+                            CheckBox::new()
+                                .is_checked(*always)
+                                .on_is_checked_changed(context.callback(Message::SendEngineAlways))
+                                .content(TextBlock::new().text(tr!(
+                                    "Send without asking to this host from now on"
+                                ))),
+                        )),
+                    )
+            }
             Some(Dialog::Undo { label, what, .. }) => dialog
                 .is_open(true)
                 .title(tr!("Undo “{label}”?", label = label))
@@ -8313,6 +8483,32 @@ impl Root {
                             .element_ref(&self.dialog_input)
                             .text(name.clone())
                             .on_text_changed(context.callback(Message::BranchName)),
+                    )),
+                ),
+            Some(Dialog::AddSsh { host, path }) => dialog
+                .is_open(true)
+                .title(tr!("Add SSH Connection"))
+                .primary_button_text(tr!("Add and Open"))
+                .close_button_text(tr!("Cancel"))
+                .is_primary_button_enabled(crate::remote::ssh_location(host, path).is_some())
+                .content(
+                    StackPanel::new().spacing(6.0).width(440.0).children((
+                        TextBlock::new()
+                            .text(tr!(
+                                "Connects over SSH. Use a host you can log in to without a password (with a key or ssh-agent)."
+                            ))
+                            .text_wrapping(TextWrapping::Wrap),
+                        TextBlock::new().text(tr!("Host")),
+                        TextBox::new()
+                            .element_ref(&self.dialog_input)
+                            .text(host.clone())
+                            .placeholder_text(tr!("user@host:port (or a name in ~/.ssh/config)"))
+                            .on_text_changed(context.callback(Message::BranchName)),
+                        TextBlock::new().text(tr!("Path")),
+                        TextBox::new()
+                            .text(path.clone())
+                            .placeholder_text(tr!("Folder of the repository on the host"))
+                            .on_text_changed(context.callback(Message::SshPath)),
                     )),
                 ),
             Some(Dialog::NewGroup { name, .. }) => dialog
@@ -12010,6 +12206,13 @@ impl Root {
                     Message::Repos(crate::repositories::Event::Fetched(location, error))
                 });
             }
+            Action::AddSsh => {
+                self.dialog = Some(Dialog::AddSsh {
+                    host: crate::prefs::string(LAST_SSH_HOST).unwrap_or_default(),
+                    path: "~".to_owned(),
+                });
+                self.dialog_inputs += 1;
+            }
             Action::NewGroup(location) => {
                 self.dialog = Some(Dialog::NewGroup {
                     location,
@@ -12439,6 +12642,7 @@ impl Root {
                         Message::Repos(match key {
                             "add-repository" => Event::AddRepository,
                             "add-scan-folder" => Event::AddScanFolder,
+                            "add-ssh" => Event::AddSsh,
                             _ => match key.strip_prefix("sort:") {
                                 Some(column) => Event::Sort(column),
                                 None => Event::Close,
@@ -12475,6 +12679,7 @@ impl Root {
                         Message::ActivityTick
                     })
                 }),
+                daemon_toggle: context.callback(|()| Message::DaemonToggle),
             },
         );
         Border::new()
@@ -14447,6 +14652,113 @@ fn attach_chain(panel: &ElementRef<SwapChainPanel>, surface: &Surface) -> Result
     }))
 }
 
+/// 共有の daemon の様子を裏で読む（`amonhen daemon status` と同じ答え）。
+fn load_daemon_status(context: &ComponentContext<Root>) {
+    context.spawn_background(|_| {
+        Message::DaemonStatus(
+            amonhen_remote::local::control("status")
+                .ok()
+                .flatten()
+                .and_then(|s| serde_json::from_str::<Value>(&s).ok()),
+        )
+    });
+}
+
+/// つないでいる間（`error` が None）と、つなげなかったとき（GTK4 版の `Connecting`）。
+fn connecting_view(location: &str, error: Option<&String>, context: &ViewContext<Root>) -> View {
+    let host = crate::remote::host_of(location).unwrap_or_else(|| "daemon".to_owned());
+    // SSH 先ならその上のパス、手元の daemon 越しなら手元のパス。
+    let inner = location.strip_prefix("daemon:").unwrap_or(location);
+    let path = amonhen_remote::ssh::Target::parse(inner)
+        .map(|t| t.path)
+        .unwrap_or_else(|_| inner.to_owned());
+    let button = |text: String, id: &'static str, accent: bool| -> View {
+        let b = Button::new()
+            .on_click(context.callback(move |()| Message::Command(id.to_owned())))
+            .horizontal_alignment(HorizontalAlignment::Center);
+        let b = if accent {
+            b.style(ButtonStyle::Accent)
+        } else {
+            b
+        };
+        b.content(TextBlock::new().text(text))
+    };
+    let rows: Vec<(String, View)> = match error {
+        None => vec![
+            (
+                "title".into(),
+                StackPanel::new()
+                    .orientation(Orientation::Horizontal)
+                    .spacing(8.0)
+                    .horizontal_alignment(HorizontalAlignment::Center)
+                    .children((
+                        ProgressRing::new().is_active(true).width(20.0).height(20.0),
+                        TextBlock::new()
+                            .text(tr!("Connecting to {host}…", host = host))
+                            .font_size(16.0),
+                    )),
+            ),
+            (
+                "path".into(),
+                TextBlock::new()
+                    .text(path)
+                    .opacity(0.6)
+                    .horizontal_alignment(HorizontalAlignment::Center)
+                    .into(),
+            ),
+            ("cancel".into(), button(tr!("Cancel"), "close-tab", false)),
+        ],
+        Some(e) => vec![
+            (
+                "title".into(),
+                TextBlock::new()
+                    .text(tr!("Couldn’t connect to {host}", host = host))
+                    .font_size(16.0)
+                    .horizontal_alignment(HorizontalAlignment::Center)
+                    .into(),
+            ),
+            (
+                "path".into(),
+                TextBlock::new()
+                    .text(path)
+                    .opacity(0.6)
+                    .horizontal_alignment(HorizontalAlignment::Center)
+                    .into(),
+            ),
+            (
+                "detail".into(),
+                TextBlock::new()
+                    .text(e.clone())
+                    .opacity(0.7)
+                    .text_wrapping(TextWrapping::Wrap)
+                    .is_text_selection_enabled(true)
+                    .max_width(560.0)
+                    .into(),
+            ),
+            (
+                "buttons".into(),
+                StackPanel::new()
+                    .orientation(Orientation::Horizontal)
+                    .spacing(8.0)
+                    .horizontal_alignment(HorizontalAlignment::Center)
+                    .children((
+                        button(tr!("Close Tab"), "close-tab", false),
+                        button(tr!("Try Again"), "try-again", true),
+                    )),
+            ),
+        ],
+    };
+    // 下の History の面を隠す。
+    Grid::new()
+        .background(Brush::Solid(crate::palette::window()))
+        .children((StackPanel::new()
+            .spacing(10.0)
+            .horizontal_alignment(HorizontalAlignment::Center)
+            .vertical_alignment(VerticalAlignment::Center)
+            .margin(24.0)
+            .children((View::keyed_fragment(rows),)),))
+}
+
 /// 開いていないリポジトリを、その場で開く（clone した直後に取り出すフォルダを選ぶ）。
 fn open_repository(location: &str) -> Option<Arc<Repository>> {
     let backend = amonhen_backend_gix::GixBackend::open(location).ok()?;
@@ -14702,6 +15014,10 @@ impl HistoryView {
             WORKTREE_TICK
                 .with(|t| t.set((Instant::now(), if all { Instant::now() } else { fresh })));
             self.sender.send(Message::CountWorktrees(all));
+        }
+        // 裏のスレッドが SSH 先にエンジンを送ってよいかを聞いていれば、ダイアログで聞く。
+        if let Some(ask) = crate::remote::take_ask() {
+            self.sender.send(Message::AskSendEngine(ask));
         }
         // 終わった操作の一言を、出してから 5 秒で消す。
         if FLASH_UNTIL
@@ -15414,6 +15730,8 @@ enum Split {
 const SIDEBAR_WIDTH_KEY: &str = "sidebarWidth";
 const RIGHT_WIDTH_KEY: &str = "detailsColumnWidth";
 const DETAILS_HEIGHT_KEY: &str = "detailsHeight";
+/// Add SSH Connection で最後に使った接続先（GTK4 版と同じ鍵）。
+const LAST_SSH_HOST: &str = "lastRemoteHost";
 
 /// 境目のつまみ（細く透明な帯。押して動かすと幅・高さが変わる。`attach_splitter` が押す・動かすを受ける）。
 /// `top` は詳細の下端の位置。

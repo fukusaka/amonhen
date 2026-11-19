@@ -22,6 +22,7 @@ pub struct State {
     pub auto_fetch: u32,
     pub write_commit_graph: bool,
     pub use_fsmonitor: bool,
+    pub open_through_daemon: bool,
     /// History のキャッシュの大きさ（バイト。読むまでは None）。
     pub cache_size: Option<u64>,
     /// 外のエディタの選べるもの（自動・Other… を除く）と、選んでいる値（空なら自動）。選び直すたびに欄を
@@ -646,6 +647,17 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                 tr!("Speed up status with fsmonitor"),
             ),
             note(tr!("A git fsmonitor--daemon runs for each repository.")),
+            // Shared daemon（GTK4 版の Performance の節）。次に開くリポジトリから効く。
+            TextBlock::new()
+                .text(tr!("Shared daemon"))
+                .font_size(13.0)
+                .opacity(0.8)
+                .margin(Thickness::new(0.0, 12.0, 0.0, 0.0)),
+            check(
+                crate::prefs::OPEN_THROUGH_DAEMON,
+                state.open_through_daemon,
+                tr!("Open repositories through the shared daemon (SSH hosts too)"),
+            ),
             // キャッシュ（GTK4 版の Caches の節。AI がないので History だけ）。
             StackPanel::new().children((
                 TextBlock::new()
