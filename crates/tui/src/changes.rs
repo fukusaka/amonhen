@@ -658,6 +658,27 @@ impl Changes {
         (opened > closed).then(|| (shown.path.as_str(), opened - 1))
     }
 
+    /// 差分で選んでいる行を含むコンフリクトに、共通の祖先の側（`|||||||` の区切り。diff3 の形）があるか。
+    pub fn conflict_has_base(&self) -> bool {
+        let Some(shown) = self.shown.as_ref().filter(|s| s.conflict) else {
+            return false;
+        };
+        let Some(row) = self.cursor.checked_sub(1).map(|r| r as usize) else {
+            return false;
+        };
+        let marker = |r: usize, start: &str| {
+            shown.diff.kind(r).0 == DiffRow::MARKER && shown.diff.row_text(r).starts_with(start)
+        };
+        let len = shown.diff.len() as usize;
+        // このコンフリクトの始まりから終わりまでの間に、区切りがあるか。
+        let Some(start) = (0..len.min(row + 1)).rev().find(|&r| marker(r, "<<<<<<<")) else {
+            return false;
+        };
+        (start..len)
+            .take_while(|&r| !marker(r, ">>>>>>>"))
+            .any(|r| marker(r, "|||||||"))
+    }
+
     /// 選んでいるファイルの変更を捨てる中身と、そのパス。
     pub fn discard_file(&self) -> Option<(String, Request)> {
         let entry = self.selected_entry()?;

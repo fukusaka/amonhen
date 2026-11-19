@@ -988,6 +988,34 @@ fn conflicts_are_resolved_by_side() {
     assert_eq!(read(dir.path()), "topic\n");
 }
 
+/// `a` は、コンフリクトを共通の祖先の側にする。その側が入っていないコンフリクトでは、理由を出す。
+#[test]
+fn a_conflict_can_take_the_base_side() {
+    let dir = tempfile::tempdir().unwrap();
+    diverged(dir.path());
+    let read = |dir: &Path| std::fs::read_to_string(dir.join("a.txt")).unwrap();
+    amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjjmy").unwrap();
+    assert!(read(dir.path()).contains("<<<<<<<"));
+    assert!(!read(dir.path()).contains("|||||||"));
+    let refused = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "1\tjja").unwrap();
+    println!("{refused}");
+    assert!(refused.contains("This conflict has no base side"));
+    assert!(read(dir.path()).contains("<<<<<<<"));
+    // やり直して、diff3 の形で止める。
+    git(dir.path(), BASE, &["merge", "--abort"]);
+    git(
+        dir.path(),
+        BASE,
+        &["config", "merge.conflictStyle", "diff3"],
+    );
+    amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjjmy").unwrap();
+    assert!(read(dir.path()).contains("|||||||"));
+    let resolved = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "1\tjja").unwrap();
+    println!("{resolved}");
+    assert!(resolved.contains("Resolved"));
+    assert_eq!(read(dir.path()), "one\n");
+}
+
 /// 一覧の `o` は、ファイルごと Current の側にして解決済みにする（先に確かめる）
 #[test]
 fn take_one_side_of_a_conflicted_file() {

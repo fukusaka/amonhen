@@ -1898,8 +1898,8 @@ impl App {
                     tr!("Start a range of lines; Space and d then act on all of it"),
                 ),
                 (
-                    "o t b",
-                    tr!("In a conflict: take current, incoming, or both"),
+                    "o t b a",
+                    tr!("In a conflict: take current, incoming, both, or the base"),
                 ),
                 ("h l", tr!("Pan long lines; h at the left edge goes back")),
                 ("Esc", tr!("Go back to the list")),
@@ -2152,11 +2152,23 @@ impl App {
             // 行の範囲: `v` で始まりを決め、動かした所までを選ぶ。もう一度で、やめる。
             KeyCode::Char('v') => self.changes.toggle_mark(),
             KeyCode::Esc if self.changes.has_mark() => self.changes.toggle_mark(),
-            // コンフリクトの中では、そのコンフリクトを Current・Incoming・両方のどれかにする（Undo できる）。
-            KeyCode::Char('o' | 't' | 'b') if self.changes.conflict_at_cursor().is_some() => {
+            // 共通の祖先の側は、コンフリクトに入っているとき（diff3 の形）だけ選べる。
+            KeyCode::Char('a')
+                if self.changes.conflict_at_cursor().is_some()
+                    && !self.changes.conflict_has_base() =>
+            {
+                self.error = Some(tr!(
+                    "This conflict has no base side (git writes it with merge.conflictStyle diff3 or zdiff3)"
+                ));
+                true
+            }
+            // コンフリクトの中では、そのコンフリクトを Current・Incoming・両方・共通の祖先のどれかにする（Undo
+            // できる）。
+            KeyCode::Char('o' | 't' | 'b' | 'a') if self.changes.conflict_at_cursor().is_some() => {
                 let choice = match code {
                     KeyCode::Char('o') => "ours",
                     KeyCode::Char('t') => "theirs",
+                    KeyCode::Char('a') => "base",
                     _ => "both",
                 };
                 if let Some((path, index)) = self.changes.conflict_at_cursor() {
