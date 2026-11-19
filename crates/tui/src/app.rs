@@ -36,6 +36,12 @@ pub enum Event {
     #[cfg(unix)]
     Ask(crate::askpass::Question),
     Loaded(Loaded),
+    /// 動いている検索の、ここまでに合った行と、調べ終えた割合（0〜1。内容の検索でなければ 0 のまま）。
+    Partial {
+        query: String,
+        rows: Vec<u32>,
+        done: f32,
+    },
     Failed(String),
 }
 
@@ -207,6 +213,8 @@ pub struct App {
     palette: Option<Palette>,
     /// 今の検索: 語と、動いている検索を取り消す印（結果が届いたら `None`）。
     search: Option<(String, Option<Arc<AtomicBool>>)>,
+    /// 動いている検索の、調べ終えた割合（0〜1。内容の検索でなければ 0 のまま）。
+    search_done: f32,
     theme: Theme,
     /// リポジトリの名前（作業ツリーのフォルダ名）。
     name: String,
@@ -287,6 +295,7 @@ impl App {
             help_top: 0,
             palette: None,
             search: None,
+            search_done: 0.0,
             theme: Theme::detect(),
             name: String::new(),
             workdir: None,
@@ -784,6 +793,16 @@ impl App {
                         // 変化の知らせを待たずに読み直す。
                         self.changes.refresh();
                     }
+                }
+            }
+            // 取り消した検索（語を替えた・やめた）のものは捨てる。
+            Event::Partial { query, rows, done } => {
+                if let Some((current, Some(_))) = &self.search
+                    && *current == query
+                {
+                    self.search_done = done;
+                    self.history.set_partial_matches(rows);
+                    self.dirty = true;
                 }
             }
             Event::Failed(error) => {
@@ -1668,6 +1687,8 @@ impl App {
             cancelled: cancelled.clone(),
         });
         self.search = Some((query, Some(cancelled)));
+        self.search_done = 0.0;
+        self.history.begin_search();
     }
 
     fn cancel_search(&mut self) {
@@ -2650,6 +2671,15 @@ impl App {
                         Some((query, running)) => {
                             let (at, of) = self.history.match_position();
                             let found = match (running, at) {
+                                // 動いている間は、ここまでに合った数（と、内容の検索なら調べ終えた割合）。
+                                (Some(_), _) if self.search_done > 0.0 => tr!(
+                                    "searching… {percent}%, {count} so far",
+                                    percent = (self.search_done * 100.0) as u32,
+                                    count = of
+                                ),
+                                (Some(_), _) if of > 0 => {
+                                    tr!("searching… {count} so far", count = of)
+                                }
                                 (Some(_), _) => tr!("searching…"),
                                 (None, Some(at)) => format!("{at}/{of}"),
                                 (None, None) => of.to_string(),
@@ -2856,4 +2886,91 @@ fn frame_box(buf: &mut Buffer, area: Rect, at: Rect, title: &str) {
         usize::from(at.width.saturating_sub(4)),
         Style::new().add_modifier(Modifier::BOLD),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use amonhen_front::InProcess;
+
+    use super::*;
+
+    /// コミットが 6 つの History を開いたアプリ。
+    fn app_with_history() -> (tempfile::TempDir, App, std::sync::mpsc::Receiver<Event>) {
+        amonhen_model::testing::isolate_from_user_settings();
+        let dir = tempfile::tempdir().unwrap();
+        let git = |args: &[&str]| {
+            let out = amonhen_model::process::command("git")
+                .args(["-c", "user.name=Ann", "-c", "user.email=ann@example.com"])
+                .args(["-c", "commit.gpgsign=false"])
+                .args(args)
+                .current_dir(dir.path())
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "git {args:?}");
+        };
+        git(&["init", "-q"]);
+        for i in 0..6 {
+            git(&[
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                &format!("Commit {i}"),
+            ]);
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        let clock = Clock {
+            now: 0,
+            local: |t| t.to_string(),
+        };
+        let mut app = App::new(
+            Arc::new(InProcess::open(dir.path(), None).unwrap()),
+            tx,
+            clock,
+        );
+        app.resize(100, 12);
+        app.start();
+        crate::settle(&mut app, &rx).unwrap();
+        (dir, app, rx)
+    }
+
+    fn bottom_line(app: &mut App) -> String {
+        let mut buf = Buffer::empty(Rect::new(0, 0, 100, 12));
+        app.draw(&mut buf, Damage::ALL);
+        (0..100).map(|x| buf[(x, 11)].symbol()).collect()
+    }
+
+    /// 動いている検索の途中の結果: 最初に届いた分で合った行へ移り、後から届く分では動かさない。一番下の行に、
+    /// ここまでの数と割合を出す。
+    #[test]
+    fn partial_matches_show_while_the_search_runs() {
+        let (_dir, mut app, _rx) = app_with_history();
+        let partial = |query: &str, rows: &[u32], done: f32| Event::Partial {
+            query: query.to_owned(),
+            rows: rows.to_vec(),
+            done,
+        };
+        app.search = Some(("x".to_owned(), Some(Arc::new(AtomicBool::new(false)))));
+        app.history.begin_search();
+        assert!(bottom_line(&mut app).contains("/x: searching…   n/N"));
+
+        app.handle(partial("x", &[2, 4], 0.0));
+        assert_eq!(app.history.selected(), 2);
+        assert!(bottom_line(&mut app).contains("/x: searching… 2 so far"));
+
+        // 見ている所を動かしたら、後から届く分はそのまま。
+        app.handle(Event::Input(Input::Key(KeyEvent::new(
+            KeyCode::Char('j'),
+            KeyModifiers::NONE,
+        ))));
+        assert_eq!(app.history.selected(), 3);
+        app.handle(partial("x", &[1, 2, 4], 0.5));
+        assert_eq!(app.history.selected(), 3);
+        assert_eq!(app.history.match_position(), (None, 3));
+        assert!(bottom_line(&mut app).contains("/x: searching… 50%, 3 so far"));
+
+        // ほかの検索のものは捨てる。
+        app.handle(partial("y", &[0], 0.9));
+        assert_eq!(app.history.match_position(), (None, 3));
+    }
 }
