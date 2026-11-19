@@ -50,6 +50,8 @@ pub struct Line {
     dirs: Vec<u8>,
     glyph: Vec<Option<char>>,
     color: Vec<Option<u16>>,
+    /// 光らせる線か点が通るセル（[`Graph::lit_from`] を渡していなければ、どれも真）。
+    lit: Vec<bool>,
 }
 
 impl Line {
@@ -58,13 +60,20 @@ impl Line {
             dirs: vec![0; width],
             glyph: vec![None; width],
             color: vec![None; width],
+            lit: vec![false; width],
         }
     }
 
-    fn add(&mut self, x: usize, dirs: u8, color: u16) {
+    /// 線を足す。光らせる線は、同じセルの光らせない線より色を優先する。
+    fn add(&mut self, x: usize, dirs: u8, color: u16, lit: bool) {
         if x < self.dirs.len() {
             self.dirs[x] |= dirs;
-            self.color[x].get_or_insert(color);
+            if lit && !self.lit[x] {
+                self.lit[x] = true;
+                self.color[x] = Some(color);
+            } else {
+                self.color[x].get_or_insert(color);
+            }
         }
     }
 
@@ -84,11 +93,18 @@ impl Line {
             (ch, if ch == ' ' { None } else { self.color[x] })
         })
     }
+
+    /// セルごとの、光らせるかどうか（[`Line::cells`] と同じ並び）。
+    pub fn lit(&self) -> &[bool] {
+        &self.lit
+    }
 }
 
 /// 表示する行の範囲の点と線と、レーンから列への対応。
 pub struct Graph<'a> {
     edges: &'a [Edge],
+    /// 線ごとの、光らせ始める行（`edges` と同じ並び。光らせない線は `u32::MAX`）。
+    lit_from: Option<&'a [u32]>,
     /// レーン → 半列の位置。
     column: HashMap<u16, usize>,
     /// 細い列にまとめたレーン。
@@ -139,9 +155,25 @@ impl<'a> Graph<'a> {
         }
         Self {
             edges,
+            lit_from: None,
             column,
             thin,
             width: col * 2,
+        }
+    }
+
+    /// 祖先の強調: 線ごとの光らせ始める行（`edges` と同じ並びで、光らせない線は `u32::MAX`）を渡す。渡すと、
+    /// [`Graph::row_line`] のセルに、光らせるかどうかが付く（点は呼ぶ側が決める）。
+    pub fn lit_from(mut self, lit_from: &'a [u32]) -> Self {
+        self.lit_from = Some(lit_from);
+        self
+    }
+
+    /// `row` の行で、`edge` 番目の線を光らせるか。
+    fn lit(&self, edge: usize, row: u32) -> bool {
+        match self.lit_from {
+            Some(from) => from.get(edge).is_some_and(|&from| row >= from),
+            None => true,
         }
     }
 
@@ -182,15 +214,15 @@ impl<'a> Graph<'a> {
     }
 
     /// `a` から `b` へ横に渡す線（`a` の側は `at_a`、`b` の側は `at_b` の向きを足す）。
-    fn across(line: &mut Line, a: usize, b: usize, at_a: u8, at_b: u8, color: u16) {
+    fn across(line: &mut Line, a: usize, b: usize, at_a: u8, at_b: u8, color: u16, lit: bool) {
         if b > a {
-            line.add(a, at_a | RIGHT, color);
-            (a + 1..b).for_each(|x| line.add(x, LEFT | RIGHT, color));
-            line.add(b, LEFT | at_b, color);
+            line.add(a, at_a | RIGHT, color, lit);
+            (a + 1..b).for_each(|x| line.add(x, LEFT | RIGHT, color, lit));
+            line.add(b, LEFT | at_b, color, lit);
         } else {
-            line.add(a, at_a | LEFT, color);
-            (b + 1..a).for_each(|x| line.add(x, LEFT | RIGHT, color));
-            line.add(b, RIGHT | at_b, color);
+            line.add(a, at_a | LEFT, color, lit);
+            (b + 1..a).for_each(|x| line.add(x, LEFT | RIGHT, color, lit));
+            line.add(b, RIGHT | at_b, color, lit);
         }
     }
 
@@ -205,7 +237,7 @@ impl<'a> Graph<'a> {
                 } else {
                     e.lane_end
                 };
-                line.add(self.x(lane), UP | DOWN, e.color);
+                line.add(self.x(lane), UP | DOWN, e.color, true);
                 self.mark_thin(&mut line, lane);
             }
         }
@@ -227,9 +259,10 @@ impl<'a> Graph<'a> {
                     UP,
                     DOWN,
                     e.color,
+                    true,
                 );
             } else if e.lane_start == e.lane_end && e.row_start <= row && row < e.row_end {
-                line.add(self.x(e.lane_start), UP | DOWN, e.color);
+                line.add(self.x(e.lane_start), UP | DOWN, e.color, true);
                 self.mark_thin(&mut line, e.lane_start);
             }
         }
@@ -239,11 +272,17 @@ impl<'a> Graph<'a> {
     /// コミットの行（1 コミット 1 行の形）。曲線もこの行に描く: コミットの点から出る曲線（始まりの曲線）は
     /// その点の行に、親の点に入る曲線（終わりの曲線）は親の行に。`node` が None なら線だけ（まだ読んでいない行）。
     pub fn row_line(&self, row: u32, node: Option<&Node>) -> Line {
+        self.row_line_lit(row, node, true)
+    }
+
+    /// [`Graph::row_line`] の、点を光らせるかどうかを決める形（祖先の強調。線は [`Graph::lit_from`] で決まる）。
+    pub fn row_line_lit(&self, row: u32, node: Option<&Node>, node_lit: bool) -> Line {
         let mut line = Line::new(self.width);
-        for e in self.edges {
+        for (index, e) in self.edges.iter().enumerate() {
             if row < e.row_start || e.row_end < row {
                 continue;
             }
+            let lit = self.lit(index, row);
             if e.lane_start == e.lane_end {
                 let mut dirs = 0;
                 if row > e.row_start {
@@ -252,7 +291,7 @@ impl<'a> Graph<'a> {
                 if row < e.row_end {
                     dirs |= DOWN;
                 }
-                line.add(self.x(e.lane_start), dirs, e.color);
+                line.add(self.x(e.lane_start), dirs, e.color, lit);
                 self.mark_thin(&mut line, e.lane_start);
                 continue;
             }
@@ -263,14 +302,18 @@ impl<'a> Graph<'a> {
             let turns_at_start = e.child == e.row_start
                 && (e.parent != e.row_end || e.kind & Edge::FIRST_PARENT == 0);
             match (row == e.row_start, turns_at_start) {
-                (true, true) => Self::across(&mut line, a, b, 0, DOWN, e.color),
-                (true, false) => line.add(a, DOWN, e.color),
-                (false, true) => line.add(b, UP, e.color),
-                (false, false) => Self::across(&mut line, a, b, UP, 0, e.color),
+                (true, true) => Self::across(&mut line, a, b, 0, DOWN, e.color, lit),
+                (true, false) => line.add(a, DOWN, e.color, lit),
+                (false, true) => line.add(b, UP, e.color, lit),
+                (false, false) => Self::across(&mut line, a, b, UP, 0, e.color, lit),
             }
         }
         if let Some(node) = node {
             self.put_node(&mut line, node);
+            let x = self.x(node.lane);
+            if x < line.lit.len() {
+                line.lit[x] = node_lit;
+            }
         }
         line
     }
@@ -324,6 +367,34 @@ mod tests {
                 edge((1, 2), (1, 0), 1, 2),
             ],
         )
+    }
+
+    /// 祖先の強調: 光らせる線と点のセルだけに印が付く。同じセルを通る線は、光らせるほうの色になる。
+    #[test]
+    fn lit_lines_mark_their_cells() {
+        let (nodes, mut edges) = merge();
+        edges[0].color = 1;
+        edges[1].color = 2;
+        edges[2].color = 3;
+        // 1（横のブランチ）を選んだ: 1 から 2 への線だけが、1 の行から光る。
+        let lit_from = [u32::MAX, u32::MAX, 1];
+        let g = Graph::new(&nodes, &edges).lit_from(&lit_from);
+        let lit = |row: u32, node_lit: bool| -> String {
+            let line = g.row_line_lit(row, Some(&nodes[row as usize]), node_lit);
+            line.lit()
+                .iter()
+                .map(|&l| if l { '^' } else { '.' })
+                .collect()
+        };
+        assert_eq!(lit(0, false), "....");
+        assert_eq!(lit(1, true), "..^.");
+        // 2 の行: 点と、1 から入ってくる曲線。
+        let line = g.row_line_lit(2, Some(&nodes[2]), true);
+        assert_eq!(text(&line), "●─╯");
+        assert_eq!(&line.lit()[..3], [true, true, true]);
+        // 渡さなければ、どれも光らせる（線のあるセル）。
+        let plain = Graph::new(&nodes, &edges).row_line(1, Some(&nodes[1]));
+        assert_eq!(&plain.lit()[..3], [true, false, true]);
     }
 
     /// 1 コミット 1 行: 始まりの曲線は子の行、終わりの曲線は親の行に描く

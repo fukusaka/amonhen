@@ -19,6 +19,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::Clock;
 use crate::Result;
 use crate::changes::Changes;
+use crate::commands::{self, Place};
 use crate::details::Details;
 use crate::diff::{PAN, Theme};
 use crate::fileview::FileView;
@@ -127,6 +128,13 @@ enum Naming {
 /// 選択肢 1 つ: 押すキー、名前、頼む中身。
 type Choice = (char, String, Request);
 
+/// コマンドの一覧（`:`）で打っている語と、選んでいる行。
+#[derive(Default)]
+struct Palette {
+    query: String,
+    selected: usize,
+}
+
 pub struct App {
     loader: Loader,
     history: History,
@@ -195,6 +203,8 @@ pub struct App {
     help: bool,
     /// キーの一覧の、一番上に見えている行（収まらないときに動かす）。
     help_top: usize,
+    /// コマンドの一覧を出している（`:`）。
+    palette: Option<Palette>,
     /// 今の検索: 語と、動いている検索を取り消す印（結果が届いたら `None`）。
     search: Option<(String, Option<Arc<AtomicBool>>)>,
     theme: Theme,
@@ -275,6 +285,7 @@ impl App {
             typing_filter: None,
             help: false,
             help_top: 0,
+            palette: None,
             search: None,
             theme: Theme::detect(),
             name: String::new(),
@@ -376,11 +387,12 @@ impl App {
         }
     }
 
-    /// 描き直す所があれば、その所（聞いたら、なかったことにする）。キーの一覧はペインに重なるので、出している
-    /// 間はすべてを描き直す。
+    /// 描き直す所があれば、その所（聞いたら、なかったことにする）。キーの一覧とコマンドの一覧はペインに重なる
+    /// ので、出している間はすべてを描き直す。
     pub fn take_damage(&mut self) -> Option<Damage> {
         let damage = std::mem::take(&mut self.damage);
-        if std::mem::take(&mut self.dirty) || (self.help && damage != Damage::default()) {
+        let over = self.help || self.palette.is_some();
+        if std::mem::take(&mut self.dirty) || (over && damage != Damage::default()) {
             return Some(Damage::ALL);
         }
         (damage != Damage::default()).then_some(damage)
@@ -889,6 +901,39 @@ impl App {
             }
             return;
         }
+        // コマンドの一覧は、打った語で絞る。Enter で選んでいる行を動かす、Esc でやめる。
+        if let Some(mut palette) = self.palette.take() {
+            self.dirty = true;
+            match key.code {
+                KeyCode::Esc => return,
+                KeyCode::Enter => {
+                    let entries = self.palette_entries(&palette.query);
+                    if let Some((entry, _)) = entries.get(palette.selected) {
+                        self.run_entry(entry);
+                    }
+                    return;
+                }
+                KeyCode::Down => palette.selected += 1,
+                KeyCode::Char('n') if control => palette.selected += 1,
+                KeyCode::Up => palette.selected = palette.selected.saturating_sub(1),
+                KeyCode::Char('p') if control => {
+                    palette.selected = palette.selected.saturating_sub(1);
+                }
+                KeyCode::Backspace => {
+                    palette.query.pop();
+                    palette.selected = 0;
+                }
+                KeyCode::Char(ch) if !control => {
+                    palette.query.push(ch);
+                    palette.selected = 0;
+                }
+                _ => {}
+            }
+            let count = self.palette_entries(&palette.query).len();
+            palette.selected = palette.selected.min(count.saturating_sub(1));
+            self.palette = Some(palette);
+            return;
+        }
         // 絞り込みの語は、打つたびに効く。Enter で確定、Esc で絞り込みをやめる。
         if let Some(filter) = &mut self.typing_filter {
             self.dirty = true;
@@ -1073,6 +1118,10 @@ impl App {
                 self.help_top = 0;
                 self.dirty = true;
             }
+            KeyCode::Char(':') => {
+                self.palette = Some(Palette::default());
+                self.dirty = true;
+            }
             KeyCode::Char('0') => {
                 self.dirty |= self.focus != Focus::Sidebar;
                 self.focus = Focus::Sidebar;
@@ -1095,6 +1144,36 @@ impl App {
                 }
             }
         }
+    }
+
+    /// コマンドの一覧に出す操作: 今いる所で動かせて、名前が `query` に合うもの。
+    fn palette_entries(&self, query: &str) -> Vec<(&'static commands::Entry, String)> {
+        commands::ENTRIES
+            .iter()
+            .filter(|e| match e.place {
+                Place::Anywhere | Place::History => true,
+                Place::NotSide => self.focus != Focus::Side,
+                Place::Sidebar => self.focus == Focus::Sidebar,
+                Place::Changes => self.view == View::Changes,
+                Place::Sequence => self.sequence.is_some(),
+            })
+            .map(|e| (e, e.title()))
+            .filter(|(_, title)| commands::matches(title, query))
+            .collect()
+    }
+
+    /// コマンドの一覧で選んだ操作を動かす: その操作のキーを押したのと同じ。
+    fn run_entry(&mut self, entry: &commands::Entry) {
+        match entry.place {
+            Place::History => self.show(View::History),
+            Place::Changes if self.focus == Focus::Side => self.focus = Focus::Main,
+            _ => {}
+        }
+        let modifiers = match entry.control {
+            true => KeyModifiers::CONTROL,
+            false => KeyModifiers::NONE,
+        };
+        self.key(KeyEvent::new(entry.key, modifiers));
     }
 
     /// メインの画面を替える。
@@ -1807,6 +1886,7 @@ impl App {
                 "M",
                 tr!("Mouse on or off (off lets the terminal select text)"),
             ),
+            (":", tr!("Commands by name")),
             ("Ctrl-l", tr!("Redraw the screen")),
             #[cfg(unix)]
             ("Ctrl-z", tr!("Suspend (fg in the shell comes back)")),
@@ -2633,34 +2713,7 @@ impl App {
                 width,
                 height,
             );
-            for y in at.y..at.bottom() {
-                // 枠の左端が全角の文字の後ろ半分に重なるなら、その文字を消す。
-                if at.x > area.x && buf[(at.x - 1, y)].symbol().width() > 1 {
-                    buf[(at.x - 1, y)].set_char(' ');
-                }
-                for x in at.x..at.right() {
-                    let edge_y = y == at.y || y == at.bottom() - 1;
-                    let edge_x = x == at.x || x == at.right() - 1;
-                    let ch = match (edge_y, edge_x) {
-                        (true, true) if y == at.y && x == at.x => '┌',
-                        (true, true) if y == at.y => '┐',
-                        (true, true) if x == at.x => '└',
-                        (true, true) => '┘',
-                        (true, false) => '─',
-                        (false, true) => '│',
-                        (false, false) => ' ',
-                    };
-                    buf[(x, y)].reset();
-                    buf[(x, y)].set_char(ch);
-                }
-            }
-            buf.set_stringn(
-                at.x + 2,
-                at.y,
-                tr!(" Keys "),
-                usize::from(width.saturating_sub(4)),
-                Style::new().add_modifier(Modifier::BOLD),
-            );
+            frame_box(buf, area, at, &tr!(" Keys "));
             // 収まらない分は、`j` `k` で動かす。
             let inside = usize::from(height.saturating_sub(2));
             self.help_top = self.help_top.min(lines.len().saturating_sub(inside));
@@ -2697,7 +2750,110 @@ impl App {
                 }
             }
         }
+        if let Some(palette) = &self.palette {
+            let entries = self.palette_entries(&palette.query);
+            let keys: Vec<String> = entries.iter().map(|(e, _)| e.key_label()).collect();
+            let key_width = keys.iter().map(|k| k.width()).max().unwrap_or(0) as u16;
+            let title_width = entries.iter().map(|(_, t)| t.width()).max().unwrap_or(0) as u16;
+            let none = tr!("No command matches");
+            let wanted = (title_width + key_width + 7)
+                .max(none.width() as u16 + 4)
+                .max(palette.query.width() as u16 + 7)
+                .max(36);
+            let width = wanted.min(area.width);
+            // 枠・打っている語の行・操作の行（なければ、ないと書く 1 行）。
+            let height = (entries.len().max(1) as u16 + 3).min(area.height);
+            let at = Rect::new(
+                area.x + (area.width - width) / 2,
+                area.y + (area.height - height) / 2,
+                width,
+                height,
+            );
+            frame_box(buf, area, at, &tr!(" Commands "));
+            let inner = usize::from(width.saturating_sub(4));
+            if height >= 3 {
+                let x = buf
+                    .set_stringn(at.x + 2, at.y + 1, ":", inner, Style::new())
+                    .0;
+                let x = buf
+                    .set_stringn(
+                        x,
+                        at.y + 1,
+                        &palette.query,
+                        inner.saturating_sub(1),
+                        Style::new(),
+                    )
+                    .0;
+                cursor = Some((x.min(at.right().saturating_sub(2)), at.y + 1));
+            }
+            // 収まらない分は、選んでいる行が見えるように送る。
+            let rows = usize::from(height.saturating_sub(3));
+            let top = (palette.selected + 1).saturating_sub(rows);
+            if entries.is_empty() && rows > 0 {
+                buf.set_stringn(
+                    at.x + 2,
+                    at.y + 2,
+                    none,
+                    inner,
+                    Style::new().fg(Color::Indexed(244)),
+                );
+            }
+            for (y, i) in (at.y + 2..at.bottom().saturating_sub(1)).zip(top..entries.len()) {
+                let selected = i == palette.selected;
+                let style = match selected {
+                    true => Style::new().add_modifier(Modifier::REVERSED),
+                    false => Style::new(),
+                };
+                if selected {
+                    for x in at.x + 1..at.right() - 1 {
+                        buf[(x, y)].set_style(style);
+                    }
+                }
+                buf.set_stringn(at.x + 2, y, &entries[i].1, inner, style);
+                let key = &keys[i];
+                let key_x = at.right().saturating_sub(key.width() as u16 + 2);
+                if key_x > at.x + 2 + entries[i].1.width() as u16 {
+                    let style = match selected {
+                        true => style,
+                        false => Style::new().fg(Color::Cyan),
+                    };
+                    buf.set_string(key_x, y, key, style);
+                }
+            }
+        }
         // 入力しているときだけ、カーソルを出す。
         cursor
     }
+}
+
+/// 画面に重ねる枠を描く（中は空に。題は上の線に）。
+fn frame_box(buf: &mut Buffer, area: Rect, at: Rect, title: &str) {
+    for y in at.y..at.bottom() {
+        // 枠の左端が全角の文字の後ろ半分に重なるなら、その文字を消す。
+        if at.x > area.x && buf[(at.x - 1, y)].symbol().width() > 1 {
+            buf[(at.x - 1, y)].set_char(' ');
+        }
+        for x in at.x..at.right() {
+            let edge_y = y == at.y || y == at.bottom() - 1;
+            let edge_x = x == at.x || x == at.right() - 1;
+            let ch = match (edge_y, edge_x) {
+                (true, true) if y == at.y && x == at.x => '┌',
+                (true, true) if y == at.y => '┐',
+                (true, true) if x == at.x => '└',
+                (true, true) => '┘',
+                (true, false) => '─',
+                (false, true) => '│',
+                (false, false) => ' ',
+            };
+            buf[(x, y)].reset();
+            buf[(x, y)].set_char(ch);
+        }
+    }
+    buf.set_stringn(
+        at.x + 2,
+        at.y,
+        title,
+        usize::from(at.width.saturating_sub(4)),
+        Style::new().add_modifier(Modifier::BOLD),
+    );
 }

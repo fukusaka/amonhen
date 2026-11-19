@@ -63,6 +63,8 @@ struct Window {
     text: Vec<u8>,
     /// この範囲に重なる線。
     edges: Vec<Edge>,
+    /// `edges` の線の、History のすべての線の中での番号（祖先の強調で、光らせる線を引くのに使う）。
+    edge_ids: Vec<u32>,
 }
 
 impl Window {
@@ -104,8 +106,9 @@ pub struct History {
     incomplete: bool,
     /// 検索に合った行（上から順）。検索していなければ空。
     matches: Vec<u32>,
-    /// 祖先を強調しているコミットの行と、その祖先（行ごとに 1 ビット）。
-    lineage: Option<(u32, Vec<u64>)>,
+    /// 祖先を強調しているコミットの行と、その祖先（行ごとに 1 ビット）、線ごとの光らせ始める行（History の
+    /// すべての線の並び）。
+    lineage: Option<(u32, Vec<u64>, Vec<u32>)>,
     /// 祖先を頼んで、答えを待っている。
     lineage_loading: bool,
     /// 前のフレームで組み立てた行の、グラフより右のセル（ラベル・件名・作者・日付。選択と祖先の色は入れない）。
@@ -222,12 +225,12 @@ impl History {
     }
 
     /// 祖先が届いた。待つ間に選択が動いていたら捨てる（`lineage_request` が次を頼む）。
-    pub fn set_lineage(&mut self, row: u32, bits: Option<Vec<u64>>) {
+    pub fn set_lineage(&mut self, row: u32, bits: Option<(Vec<u64>, Vec<u32>)>) {
         self.lineage_loading = false;
         self.lineage = match bits {
-            Some(bits) if row == self.selected => Some((row, bits)),
+            Some((bits, edge_from)) if row == self.selected => Some((row, bits, edge_from)),
             // 取れなかった行は、頼み直さない。
-            None if row == self.selected => Some((row, Vec::new())),
+            None if row == self.selected => Some((row, Vec::new(), Vec::new())),
             _ => self.lineage.take(),
         };
     }
@@ -325,6 +328,7 @@ impl History {
             spans: reply.u32s("spans"),
             text: reply.section("text").to_vec(),
             edges: reply.items("edges"),
+            edge_ids: reply.u32s("edgeIds"),
         });
     }
 
@@ -388,21 +392,31 @@ impl History {
         // 見えている行の点と、そこに重なる線だけで列を決める。
         let visible =
             window.index(rows.start).unwrap_or(0)..window.index(rows.end - 1).map_or(0, |i| i + 1);
-        let edges: Vec<Edge> = window
-            .edges
-            .iter()
-            .filter(|e| e.row_start < rows.end && rows.start <= e.row_end)
-            .copied()
-            .collect();
-        let graph = Graph::new(&window.nodes[visible], &edges);
-        let graph_width = (graph.width() as u16).min(area.width / GRAPH_SHARE);
-        let wide = area.width >= NARROW;
+        let shown = |e: &&Edge| e.row_start < rows.end && rows.start <= e.row_end;
+        let edges: Vec<Edge> = window.edges.iter().filter(shown).copied().collect();
         // 選んでいるコミットの祖先でない行は薄くする（祖先がまだ届いていなければ、薄くしない）。
         let lineage = self
             .lineage
             .as_ref()
-            .filter(|l| l.0 == self.selected && !l.1.is_empty())
-            .map(|l| l.1.as_slice());
+            .filter(|l| l.0 == self.selected && !l.1.is_empty());
+        // グラフは、祖先へ続く線と祖先の点だけを光らせる（線ごとの、光らせ始める行。線の番号が届いていれば）。
+        let lit_from: Option<Vec<u32>> = lineage
+            .filter(|_| window.edge_ids.len() == window.edges.len())
+            .map(|l| {
+                let from = |id: &u32| l.2.get(*id as usize).copied().unwrap_or(u32::MAX);
+                (window.edges.iter().zip(&window.edge_ids))
+                    .filter(|(e, _)| shown(e))
+                    .map(|(_, id)| from(id))
+                    .collect()
+            });
+        let lineage = lineage.map(|l| l.1.as_slice());
+        let graph = Graph::new(&window.nodes[visible], &edges);
+        let graph = match &lit_from {
+            Some(lit_from) => graph.lit_from(lit_from),
+            None => graph,
+        };
+        let graph_width = (graph.width() as u16).min(area.width / GRAPH_SHARE);
+        let wide = area.width >= NARROW;
         // グラフより右は、前のフレームで組み立てた行なら写すだけ。
         let text_x = (area.x + graph_width + 1).min(area.right());
         let text_width = usize::from(area.right() - text_x);
@@ -422,13 +436,26 @@ impl History {
             if Some(row) == self.head_row {
                 node.flags |= Node::HEAD;
             }
-            for (x, (ch, color)) in
-                (area.x..area.x + graph_width).zip(graph.row_line(row, Some(&node)).cells())
+            let ancestor = lineage.is_none_or(|bits| {
+                bits.get((row / 64) as usize)
+                    .is_some_and(|word| word & (1 << (row % 64)) != 0)
+            });
+            let line = graph.row_line_lit(row, Some(&node), ancestor);
+            for (x, ((ch, color), lit)) in
+                (area.x..area.x + graph_width).zip(line.cells().zip(line.lit()))
             {
                 let cell = &mut buf[(x, y)];
                 cell.set_char(ch);
                 if let Some(color) = color {
                     cell.set_fg(Color::Indexed(palette(color)));
+                }
+                // 線ごとの印がなければ（古いエンジン）、祖先でない行のグラフをまとめて薄くする。
+                let dim = match lit_from {
+                    Some(_) => lineage.is_some() && !lit,
+                    None => !ancestor,
+                };
+                if dim {
+                    cell.set_style(Style::new().add_modifier(Modifier::DIM));
                 }
             }
             let text = buf.index_of(text_x, y);
@@ -438,13 +465,9 @@ impl History {
                 self.text(window, i, row, at, wide, buf, now);
                 self.cache.store(row, &buf.content[text]);
             }
-            if let Some(bits) = lineage
-                && bits
-                    .get((row / 64) as usize)
-                    .is_none_or(|word| word & (1 << (row % 64)) == 0)
-            {
+            if !ancestor {
                 buf.set_style(
-                    Rect::new(area.x, y, area.width, 1),
+                    Rect::new(text_x, y, text_width as u16, 1),
                     Style::new().add_modifier(Modifier::DIM),
                 );
             }

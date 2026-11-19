@@ -60,7 +60,7 @@ amonhen daemon status          # 共有の daemon の様子
 
 ## 端末（TUI）
 
-`amonhen tui [<path> | ssh://host/path | daemon:<path>]` は、端末の中でリポジトリを見せる。SSH のセッションや、エディタの横の端末のためのもの。まだ最初の段階で、作ったものと作っていないものは [tui.md](tui.md) にある。`?` で、フォーカスのある枠のキーの一覧。
+`amonhen tui [<path> | ssh://host/path | daemon:<path>]` は、端末の中でリポジトリを見せる。SSH のセッションや、エディタの横の端末のためのもの。まだ最初の段階で、作ったものと作っていないものは [tui.md](tui.md) にある。`?` で、フォーカスのある枠のキーの一覧、`:` で名前から選べる命令の一覧。
 
 - 枠: サイドバー（100 桁から。狭ければ `0`）、メインの画面（`1` Changes、`2` History、`3` Reflog）、その横か Enter で開く、コミットの詳細かファイルの差分。Tab で順に回り、Esc で戻り、`q` で終わる。
 - History: `j` `k` などで動く。`/` で History の検索の書き方で検索し、`n` `N` で次と前の合った行へ。選んでいるコミットを `y` で cherry-pick、`v` で revert、`c` でチェックアウト。`e` でメッセージを書き換え、`F` で親にまとめ、`X` で消す。
