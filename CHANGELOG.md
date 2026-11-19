@@ -1184,6 +1184,13 @@ First release.
 
 ## VSCode extension
 
+### Unreleased
+
+#### Fixed
+
+- Working Copy no longer reports "File has no changes" when the selected file is changed again while its diff is
+  being read.
+
 ### [0.2.8] - 2026-11-18
 
 History search with the engine can match the author's email, the committer and the whole message, and Repository
