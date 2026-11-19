@@ -1208,6 +1208,8 @@ First release.
 
 - Working Copy no longer reports "File has no changes" when the selected file is changed again while its diff is
   being read.
+- Working Copy: in a narrow diff pane, the buttons above the diff move to their own row instead of wrapping their
+  labels and hiding the file name.
 
 ### [0.2.8] - 2026-11-18
 
