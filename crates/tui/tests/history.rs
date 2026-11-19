@@ -1076,6 +1076,32 @@ fn reflog_lists_where_head_was() {
     assert!(next.lines().last().unwrap().ends_with("2/7"), "{next}");
 }
 
+/// サイドバーのブランチで `L`: そのブランチの reflog。`3` で HEAD のものに戻る。
+#[test]
+fn reflog_of_the_selected_branch() {
+    let dir = tempfile::tempdir().unwrap();
+    merged(dir.path());
+    // サイドバーの 3 つ下が topic。
+    let text = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjjL").unwrap();
+    println!("{text}");
+    let list: Vec<String> = text.lines().skip(1).filter_map(|l| column(l, 1)).collect();
+    assert!(list[0].starts_with("topic@{0}"), "{list:?}");
+    assert!(
+        list[0].contains("commit: 日本語の件名のコミット"),
+        "{list:?}"
+    );
+    assert!(text.lines().last().unwrap().contains("Reflog of topic"));
+    // HEAD の reflog より短い（topic が動いたのは、作ったときとコミットの 2 回）。
+    assert!(text.lines().last().unwrap().ends_with("1/2"), "{text}");
+    let head = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjjL3").unwrap();
+    let list: Vec<String> = head.lines().skip(1).filter_map(|l| column(l, 1)).collect();
+    assert!(list[0].starts_with("HEAD@{0}"), "{list:?}");
+    assert!(!head.contains("Reflog of"));
+    // ブランチでない行では、理由を出す。
+    let none = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0L").unwrap();
+    assert!(none.contains("Select a branch to see its reflog"));
+}
+
 /// `R` は、今のブランチを選んでいるコミットへ動かす。どう動かすかを選ばせる
 #[test]
 fn reset_offers_the_modes() {

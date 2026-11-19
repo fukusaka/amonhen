@@ -1,4 +1,4 @@
-//! Reflog: HEAD が動いた記録を新しい順に。選んだ行のコミットの詳細と差分は、History と同じ枠に出す。
+//! Reflog: HEAD（か、選んだブランチ）が動いた記録を新しい順に。選んだ行のコミットの詳細と差分は、History と同じ枠に出す。
 
 use amonhen_model::{Oid, tr};
 use ratatui_core::buffer::Buffer;
@@ -13,7 +13,7 @@ use crate::loader::Request;
 
 const SELECTED: Color = Color::Indexed(238);
 const SELECTED_UNFOCUSED: Color = Color::Indexed(236);
-/// 「HEAD@{12}」の幅。
+/// 「HEAD@{12}」の幅（これより狭くはしない）。
 const SELECTOR_WIDTH: u16 = 10;
 const DATE_WIDTH: u16 = 4;
 
@@ -29,6 +29,8 @@ struct Entry {
 
 #[derive(Default)]
 pub struct Reflog {
+    /// どの ref のものか（`None` は HEAD）。
+    name: Option<String>,
     entries: Vec<Entry>,
     loaded: bool,
     loading: bool,
@@ -40,6 +42,22 @@ pub struct Reflog {
 }
 
 impl Reflog {
+    /// 出す ref を替える（`None` は HEAD）。替わったら、中身は読み直すまで空。
+    pub fn show(&mut self, name: Option<String>) {
+        if name != self.name {
+            *self = Self {
+                name,
+                height: self.height,
+                ..Self::default()
+            };
+        }
+    }
+
+    /// 出している ref（HEAD なら `None`）。
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+
     /// 読み直す（次の `request` で頼む）。
     pub fn refresh(&mut self) {
         self.stale = true;
@@ -52,12 +70,21 @@ impl Reflog {
         }
         self.stale = false;
         self.loading = true;
-        Some(Request::Reflog)
+        Some(Request::Reflog {
+            name: self.name.clone(),
+        })
     }
 
-    /// `reflog` の答え（`info.entries`）。
-    pub fn set(&mut self, reply: std::result::Result<Value, String>) -> Option<String> {
+    /// `name` の ref の `reflog` の答え（`info.entries`）。待つ間に出す ref を替えていたら捨てて、頼み直す。
+    pub fn set(
+        &mut self,
+        name: Option<String>,
+        reply: std::result::Result<Value, String>,
+    ) -> Option<String> {
         self.loading = false;
+        if name != self.name {
+            return None;
+        }
         self.loaded = true;
         let reply = match reply {
             Ok(reply) => reply,
@@ -157,7 +184,14 @@ impl Reflog {
         }
         let dim = Style::new().fg(DIM);
         let date_x = area.right().saturating_sub(DATE_WIDTH);
-        let text_x = area.x + SELECTOR_WIDTH + 1;
+        // ブランチの名前は長いことがある（「HEAD@{12}」より）。見えている行に合わせ、幅の 3 分の 1 まで。
+        let selector_width = (self.entries.iter().skip(self.top))
+            .take(usize::from(area.height))
+            .map(|e| e.selector.width() as u16)
+            .max()
+            .unwrap_or(0)
+            .clamp(SELECTOR_WIDTH, (area.width / 3).max(SELECTOR_WIDTH));
+        let text_x = area.x + selector_width + 1;
         for (y, (index, entry)) in (area.y..area.bottom()).zip(
             self.entries
                 .iter()
@@ -168,7 +202,7 @@ impl Reflog {
             buf.set_stringn(
                 area.x,
                 y,
-                fit(&entry.selector, usize::from(SELECTOR_WIDTH)),
+                fit(&entry.selector, usize::from(selector_width)),
                 usize::from(area.width),
                 dim,
             );

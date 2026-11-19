@@ -688,8 +688,8 @@ impl App {
                             self.error = Some(error);
                         }
                     }
-                    Loaded::Reflog(reply) => {
-                        if let Some(error) = self.reflog.set(reply) {
+                    Loaded::Reflog(name, reply) => {
+                        if let Some(error) = self.reflog.set(name, reply) {
                             self.error = Some(error);
                         }
                     }
@@ -1192,6 +1192,11 @@ impl App {
 
     /// メインの画面を替える。
     fn show(&mut self, view: View) {
+        // Reflog を開き直すと、HEAD のものに戻る（ブランチのものは、サイドバーの `L` で）。
+        if view == View::Reflog {
+            self.dirty |= self.reflog.name().is_some();
+            self.reflog.show(None);
+        }
         self.dirty |= self.view != view || self.focus != Focus::Main;
         self.pinned = None;
         self.view = view;
@@ -1805,6 +1810,20 @@ impl App {
             KeyCode::Char('n') => self.ask_rename(),
             KeyCode::Char('m') => self.ask_merge_or_rebase(true),
             KeyCode::Char('r') => self.ask_merge_or_rebase(false),
+            // ブランチの reflog（そのブランチが動いた記録）を、Reflog の画面に出す。
+            KeyCode::Char('L') => {
+                let picked = (self.sidebar.picked_ref())
+                    .filter(|r| matches!(r.0, "branch" | "remote"))
+                    .map(|r| r.1.to_owned());
+                match picked {
+                    Some(name) => {
+                        self.show(View::Reflog);
+                        self.reflog.show(Some(name));
+                    }
+                    None => self.error = Some(tr!("Select a branch to see its reflog")),
+                }
+                true
+            }
             // 絞り込んでいれば、まずそれをやめる。
             KeyCode::Esc if !self.sidebar.filter().is_empty() => {
                 self.sidebar.set_filter("");
@@ -1832,6 +1851,7 @@ impl App {
                 ("r", tr!("Rebase the current branch onto it")),
                 ("a o x", tr!("On a stash: apply, pop, drop")),
                 ("n D", tr!("Rename a branch; delete a branch or a tag")),
+                ("L", tr!("The branch's reflog")),
                 ("/", tr!("Filter branches and tags")),
                 ("Esc", tr!("Clear the filter, or go back")),
             ],
@@ -2736,9 +2756,15 @@ impl App {
                     (View::History | View::Reflog | View::File, Focus::Side) => {
                         tr!("j/k scroll   [/] file   h/l pan   Esc back")
                     }
-                    (View::Reflog, Focus::Main) => {
-                        tr!("j/k move   Enter details   b new branch   0 sidebar   q quit")
-                    }
+                    (View::Reflog, Focus::Main) => match self.reflog.name() {
+                        Some(name) => tr!(
+                            "Reflog of {name}   j/k move   Enter details   3 HEAD’s reflog",
+                            name = name
+                        ),
+                        None => {
+                            tr!("j/k move   Enter details   b new branch   0 sidebar   q quit")
+                        }
+                    },
                     (View::Changes, Focus::Main) => {
                         tr!(
                             "j/k move   Space stage/unstage   c message   a amend   d discard   q quit"

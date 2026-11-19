@@ -41,8 +41,8 @@ pub enum Request {
     Syntax { id: String, of: Value },
     /// 作業ツリーの状態（変わったファイルの一覧）。
     Status,
-    /// HEAD の reflog。
-    Reflog,
+    /// `name` の ref の reflog（`None` は HEAD）。
+    Reflog { name: Option<String> },
     /// ファイルの Blame（`blame`。`rev` があれば、そのコミットの時点の）か、そのファイルを変えたコミット。
     File {
         path: String,
@@ -117,8 +117,8 @@ pub enum Loaded {
         blame: bool,
         result: std::result::Result<Value, String>,
     },
-    /// `reflog` の答え。だめなら理由。
-    Reflog(std::result::Result<Value, String>),
+    /// `reflog` の答えと、どの ref のものか（`None` は HEAD）。だめなら理由。
+    Reflog(Option<String>, std::result::Result<Value, String>),
     /// `status` の答え。だめなら理由。
     Status(std::result::Result<Value, String>),
     WorkingDiff {
@@ -170,7 +170,7 @@ impl Loader {
             Request::Run { .. } => &self.operations,
             Request::Commit { .. } | Request::Syntax { .. } => &self.details,
             Request::Status
-            | Request::Reflog
+            | Request::Reflog { .. }
             | Request::File { .. }
             | Request::WorkingDiff { .. }
             | Request::Stage { .. }
@@ -332,8 +332,9 @@ fn load(front: &dyn Front, request: Request, events: &Sender<Event>) -> Result<L
                 result,
             }
         }
-        Request::Reflog => {
-            Loaded::Reflog(run(front, json!({"op": "reflog"})).map_err(|e| e.to_string()))
+        Request::Reflog { name } => {
+            let reply = run(front, json!({"op": "reflog", "name": name}));
+            Loaded::Reflog(name, reply.map_err(|e| e.to_string()))
         }
         Request::Status => Loaded::Status(
             front
