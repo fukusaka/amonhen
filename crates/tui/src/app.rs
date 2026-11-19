@@ -129,6 +129,8 @@ enum Naming {
     Tag,
     /// ブランチの新しい名前。
     Rename,
+    /// stash のメッセージ（空でもよい）。
+    Stash,
 }
 
 /// 選択肢 1 つ: 押すキー、名前、頼む中身。
@@ -978,12 +980,18 @@ impl App {
         if let Some((_, _, name)) = &mut self.typing_branch {
             self.dirty = true;
             match key.code {
+                KeyCode::Enter if matches!(self.naming, Naming::Stash) => {
+                    if let Some((_, _, message)) = self.typing_branch.take() {
+                        self.ask_stash(message.trim());
+                    }
+                }
                 KeyCode::Enter => {
                     if let Some((start, _, name)) = self.typing_branch.take()
                         && !name.trim().is_empty()
                     {
                         let name = name.trim();
                         let (op, label, command) = match self.naming {
+                            Naming::Stash => return,
                             Naming::Branch => (
                                 "createBranch",
                                 tr!("Creating {name}…", name = name),
@@ -1083,23 +1091,10 @@ impl App {
             KeyCode::Char('R') if self.view != View::Changes && self.focus == Focus::Main => {
                 self.ask_reset();
             }
-            // stash する前に、何を含めるかを選ばせる。
+            // stash する前に、メッセージ（なくてもよい）を聞き、何を含めるかを選ばせる。
             KeyCode::Char('s') if !control && self.focus != Focus::Side => {
-                let stash = |untracked: bool, keep_index: bool| Request::Run {
-                    name: "stash",
-                    command: json!({
-                        "op": "stashPush", "message": null,
-                        "includeUntracked": untracked, "keepIndex": keep_index,
-                    }),
-                };
-                self.choices = Some((
-                    tr!("Stash the working changes?"),
-                    vec![
-                        ('y', tr!("tracked files"), stash(false, false)),
-                        ('u', tr!("with untracked files"), stash(true, false)),
-                        ('k', tr!("keep what is staged"), stash(false, true)),
-                    ],
-                ));
+                self.naming = Naming::Stash;
+                self.typing_branch = Some((String::new(), String::new(), String::new()));
                 self.dirty = true;
             }
             KeyCode::Char('S') if self.focus != Focus::Side => match self.stash.clone() {
@@ -1529,6 +1524,30 @@ impl App {
     }
 
     /// 新しいブランチかタグの名前を聞く（始まりは `ask_branch` のとおり）。
+    /// stash に何を含めるかを選ばせる（メッセージは聞いてある。空なら付けない）。
+    fn ask_stash(&mut self, message: &str) {
+        let message = match message.is_empty() {
+            true => Value::Null,
+            false => json!(message),
+        };
+        let stash = |untracked: bool, keep_index: bool| Request::Run {
+            name: "stash",
+            command: json!({
+                "op": "stashPush", "message": message,
+                "includeUntracked": untracked, "keepIndex": keep_index,
+            }),
+        };
+        self.choices = Some((
+            tr!("Stash the working changes?"),
+            vec![
+                ('y', tr!("tracked files"), stash(false, false)),
+                ('u', tr!("with untracked files"), stash(true, false)),
+                ('k', tr!("keep what is staged"), stash(false, true)),
+            ],
+        ));
+        self.dirty = true;
+    }
+
     fn ask_name(&mut self, naming: Naming) {
         let picked = match self.focus {
             Focus::Sidebar => self
@@ -1893,7 +1912,10 @@ impl App {
                 "b T",
                 tr!("New branch, new tag at the selected commit or ref"),
             ),
-            ("s S", tr!("Stash, and pop the newest stash")),
+            (
+                "s S",
+                tr!("Stash (asks for a message), and pop the newest stash"),
+            ),
             (
                 "C K A",
                 tr!("Continue, skip, abort a merge or rebase in progress"),
@@ -2614,6 +2636,7 @@ impl App {
                     Naming::Branch => tr!("New branch at {at}: {name}", at = at, name = name),
                     Naming::Tag => tr!("New tag at {at}: {name}", at = at, name = name),
                     Naming::Rename => tr!("Rename {at} to: {name}", at = at, name = name),
+                    Naming::Stash => tr!("Stash message (Enter for none): {name}", name = name),
                 };
                 let x = buf.set_stringn(area.x + 1, y, text, room, Style::new()).0;
                 cursor = Some((x.min(position_x.saturating_sub(1)), y));

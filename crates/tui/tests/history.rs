@@ -942,14 +942,22 @@ fn stash_and_pop() {
     let dir = tempfile::tempdir().unwrap();
     two_lines(dir.path());
     let read = |dir: &Path| std::fs::read_to_string(dir.join("a.txt")).unwrap();
-    let asked = amonhen_tui::snapshot(open(dir.path()), 120, 10, clock(), "s").unwrap();
+    // 先にメッセージを聞く（Enter だけなら付けない）。Esc でやめる。
+    let message = amonhen_tui::snapshot(open(dir.path()), 120, 10, clock(), "swip").unwrap();
+    assert!(message.contains("Stash message (Enter for none): wip"));
+    let left = amonhen_tui::snapshot(open(dir.path()), 120, 10, clock(), "swip\x1b").unwrap();
+    assert!(!left.contains("Stash"));
+    assert_eq!(git_out(dir.path(), &["stash", "list"]), "");
+    let asked = amonhen_tui::snapshot(open(dir.path()), 120, 10, clock(), "s\n").unwrap();
     assert!(asked.contains(
         "Stash the working changes?   y tracked files   u with untracked files   k keep what is staged   n cancel"
     ));
-    let stashed = amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "sy").unwrap();
+    let keys = "sbefore lunch\ny";
+    let stashed = amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), keys).unwrap();
     println!("{stashed}");
     assert!(stashed.contains("Stashed"));
     assert_eq!(read(dir.path()), "one\ntwo\nthree\nfour\n");
+    assert!(git_out(dir.path(), &["stash", "list"]).contains(": before lunch\n"));
     let popped = amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "S").unwrap();
     assert!(popped.contains("Popped the stash"));
     assert_eq!(read(dir.path()), "ONE\ntwo\nTHREE\nfour\n");
@@ -1298,10 +1306,10 @@ fn stash_can_include_untracked_files() {
     let dir = tempfile::tempdir().unwrap();
     two_lines(dir.path());
     std::fs::write(dir.path().join("new.txt"), "new\n").unwrap();
-    amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "sy").unwrap();
+    amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "s\ny").unwrap();
     assert!(dir.path().join("new.txt").exists());
     amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "S").unwrap();
-    amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "su").unwrap();
+    amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "s\nu").unwrap();
     assert!(!dir.path().join("new.txt").exists());
     assert_eq!(git_out(dir.path(), &["status", "--porcelain"]), "");
 }
