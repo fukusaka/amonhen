@@ -973,7 +973,7 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
 
     @objc private func newGroup() {
         Task { @MainActor in
-            guard let name = await ask(L("New Group"), message: L("Group name"), initial: "") else { return }
+            guard let name = await ask(L("New Group"), message: L("Group name"), initial: "", ok: L("Create")) else { return }
             Bookmarks.shared.addGroup(name)
             category = .group(name)
             reload()
@@ -1000,16 +1000,18 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
     }
 
     /// 名前を聞く。Cancel なら nil。空なら nil（`allowEmpty` なら ""。空にして元に戻すとき）。
-    private func ask(_ title: String, message: String, initial: String, allowEmpty: Bool = false) async -> String? {
+    private func ask(_ title: String, message: String, initial: String, ok: String, allowEmpty: Bool = false) async -> String? {
         let alert = NSAlert()
         alert.messageText = title
         alert.informativeText = message
-        alert.addButton(withTitle: "OK")
+        let button = alert.addButton(withTitle: ok)
         alert.addButton(withTitle: L("Cancel"))
         let field = NSTextField(string: initial)
         field.frame = NSRect(x: 0, y: 0, width: 280, height: 24)
         alert.accessoryView = field
         alert.window.initialFirstResponder = field
+        let watching = allowEmpty ? [] : AlertForm.require([field], for: button)
+        defer { AlertForm.release(watching) }
         guard await present(alert) == .alertFirstButtonReturn else { return nil }
         let value = field.stringValue.trimmingCharacters(in: .whitespaces)
         return value.isEmpty && !allowEmpty ? nil : value
@@ -1211,7 +1213,7 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
         case let .group(name):
             add(L("Rename…")) { [weak self] in Task { @MainActor in
                 // 同じ名前のままなら何もしない（下で元のグループを消すと、グループがなくなる）。
-                guard let self, let new = await self.ask(L("Rename Group"), message: L("Group name"), initial: name), new != name
+                guard let self, let new = await self.ask(L("Rename Group"), message: L("Group name"), initial: name, ok: L("Rename")), new != name
                 else { return }
                 Bookmarks.shared.renameGroup(name, to: new)
                 // 選んでいたグループなら、新しい名前のグループを選んだままに（「すべて」に戻さない）。
@@ -1283,7 +1285,7 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
         }
         groups.addItem(.separator())
         groups.addItem(ClosureMenuItem(title: L("New Group…")) { [weak self] in Task { @MainActor in
-            guard let name = await self?.ask(L("New Group"), message: L("Group name"), initial: "") else { return }
+            guard let name = await self?.ask(L("New Group"), message: L("Group name"), initial: "", ok: L("Create")) else { return }
             Bookmarks.shared.addGroup(name)
             for p in targets { Bookmarks.shared.move(p, to: name) }
         } })
@@ -1308,7 +1310,7 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
             // Cancel なら変えない（空にして OK ならフォルダの名前に戻す）。
             guard let name = await self?.ask(
                 L("Rename"), message: L("Name shown in the list (leave empty for the folder name)"), initial: current,
-                allowEmpty: true
+                ok: L("Rename"), allowEmpty: true
             ) else { return }
             Bookmarks.shared.rename(path, to: name.isEmpty ? nil : name)
         } }

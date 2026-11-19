@@ -422,18 +422,13 @@ impl Actions {
             fields.append(&name);
             fields.append(&keep);
             sheet.add(&fields);
-            sheet.buttons(&tr!("Create"), false, None);
+            let create = sheet.buttons(&tr!("Create"), false, None);
+            crate::sheets::require(&[&name], &create);
             name.grab_focus();
             if sheet.run().await != crate::sheets::Response::Ok {
                 return;
             }
             let branch = name.text().trim().to_owned();
-            if branch.is_empty() {
-                if let Some(window) = this.window() {
-                    window.error_bell();
-                }
-                return;
-            }
             this.perform(json!({ "op": "createOrphanBranch", "name": branch, "keepFiles": keep.is_active() }));
         });
     }
@@ -449,7 +444,12 @@ impl Actions {
             let reply = crate::sheets::run(&target.repo, json!({ "op": "ignoredFiles" })).await;
             let parent = crate::sheets::parent(&this);
             if let Some(error) = reply["error"].as_str() {
-                return crate::sheets::alert(parent.as_ref(), error, "").await;
+                return crate::sheets::alert(
+                    parent.as_ref(),
+                    &tr!("Couldn’t list the ignored files"),
+                    error,
+                )
+                .await;
             }
             let paths: Vec<String> = reply["info"]["paths"]
                 .as_array()
@@ -470,11 +470,11 @@ impl Actions {
                 parent.as_ref(),
                 &tr!("Delete {count} Ignored Items?", count = paths.len()),
                 &format!(
-                    "{} {}",
+                    "{}{}{}",
                     tr!(
                         "These are removed from the working tree (git clean -X); folders go with everything in them."
                     ),
-                    crate::sheets::cant_undo()
+                    amonhen_model::i18n::sentence_gap(), crate::sheets::cant_undo()
                 ),
             );
             // パスを選んで写せる（長いパスは折り返す。macOS 版と同じ）。ラベルだと、開いたときに全体が選ばれる。
@@ -550,7 +550,12 @@ impl Actions {
             .await;
             let parent = crate::sheets::parent(&this);
             if let Some(error) = reply["error"].as_str() {
-                return crate::sheets::alert(parent.as_ref(), error, "").await;
+                return crate::sheets::alert(
+                    parent.as_ref(),
+                    &tr!("Couldn’t list the branches to clean up"),
+                    error,
+                )
+                .await;
             }
             let info = &reply["info"];
             let base = info["base"].as_str().unwrap_or("main").to_owned();
@@ -572,11 +577,11 @@ impl Actions {
                 parent.as_ref(),
                 &tr!("Clean Up Branches"),
                 &format!(
-                    "{} {}{note}",
+                    "{}{}{}{note}",
                     tr!(
                         "Delete the checked branches. The current branch, favorites and branches used by a worktree aren’t listed."
                     ),
-                    crate::sheets::can_undo()
+                    amonhen_model::i18n::sentence_gap(), crate::sheets::can_undo()
                 ),
             );
             // 理由ごとに見出しを付けて並べる。
@@ -932,7 +937,14 @@ impl Actions {
             content.append(c);
         }
         if !self
-            .run_dialog(title, message, content.upcast_ref(), entry.upcast_ref(), ok)
+            .run_dialog(
+                title,
+                message,
+                content.upcast_ref(),
+                entry.upcast_ref(),
+                ok,
+                Some(&entry),
+            )
             .await
         {
             return None;
@@ -959,7 +971,14 @@ impl Actions {
             .has_frame(true)
             .build();
         if !self
-            .run_dialog(title, "", scrolled.upcast_ref(), text.upcast_ref(), ok)
+            .run_dialog(
+                title,
+                "",
+                scrolled.upcast_ref(),
+                text.upcast_ref(),
+                ok,
+                None,
+            )
             .await
         {
             return None;
@@ -999,6 +1018,7 @@ impl Actions {
                 dropdown.upcast_ref(),
                 dropdown.upcast_ref(),
                 ok,
+                None,
             )
             .await
         {
@@ -1018,12 +1038,17 @@ impl Actions {
         content: &gtk::Widget,
         focus: &gtk::Widget,
         ok: &str,
+        required: Option<&gtk::Entry>,
     ) -> bool {
         let parent = self.window();
         let sheet =
             crate::sheets::Sheet::unnamed(parent.as_ref().map(|w| w.upcast_ref()), title, message);
         sheet.add(content);
-        sheet.buttons(ok, false, None);
+        let button = sheet.buttons(ok, false, None);
+        // 名前のない枝やタグは作れないので、空のあいだは押せなくする（macOS 版と同じ）。
+        if let Some(entry) = required {
+            crate::sheets::require(&[entry], &button);
+        }
         sheet.window.present();
         focus.grab_focus();
         sheet.run().await == crate::sheets::Response::Ok

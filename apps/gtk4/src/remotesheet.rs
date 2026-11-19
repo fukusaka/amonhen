@@ -74,11 +74,12 @@ pub async fn ask_remove(parent: Option<&gtk::Window>, name: &str) -> bool {
         parent,
         &tr!("Remove {name}?", name = name),
         &format!(
-            "{} {}",
+            "{}{}{}",
             tr!(
                 "This removes the remote’s settings and its remote-tracking branches ({name}/…). The remote repository isn’t touched.",
                 name = name
             ),
+            amonhen_model::i18n::sentence_gap(),
             sheets::cant_undo()
         ),
     );

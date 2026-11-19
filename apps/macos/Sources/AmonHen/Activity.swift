@@ -238,7 +238,7 @@ final class ActivityModel {
             do {
                 try await Task.detached { try SharedDaemon.start(daemon: path) }.value
             } catch {
-                NSAlert(error: error).runModal()
+                Actions.showFailure(L("Couldn’t start the shared daemon"), error, in: NSApp.keyWindow)
             }
             loadDaemon(force: true)
         }

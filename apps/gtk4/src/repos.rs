@@ -401,7 +401,7 @@ pub fn clone(parent: &gtk::Window, open: Rc<dyn Fn(PathBuf)>) {
         let url_line = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         url_line.append(&url);
         url_line.append(&bundle_button);
-        sheet.add(&row("URL:", &url_line));
+        sheet.add(&row("URL", &url_line));
         // gh があれば、自分のリポジトリから選べる（読み終えたら一覧に入れる）。
         if crate::github::available() {
             // 読み終えるまでは「読み込み中…」（macOS 版と同じ）。macOS 版のプルダウンと同じく、選んだ後も見出しに
@@ -477,8 +477,8 @@ pub fn clone(parent: &gtk::Window, open: Rc<dyn Fn(PathBuf)>) {
                 mine.set_selected(0);
             });
         }
-        sheet.add(&row(&tr!("Location:"), &location));
-        sheet.add(&row(&tr!("Folder Name:"), &name));
+        sheet.add(&row(&tr!("Location"), &location));
+        sheet.add(&row(&tr!("Folder Name"), &name));
         // 取得する範囲と、最近の履歴だけなら何コミットか（既定は 100）。下に選んだものの説明。
         let titles: Vec<String> = Download::ALL.iter().map(|d| d.title()).collect();
         let refs: Vec<&str> = titles.iter().map(String::as_str).collect();
@@ -566,7 +566,7 @@ pub fn clone(parent: &gtk::Window, open: Rc<dyn Fn(PathBuf)>) {
         }
         // bundle のファイルで HEAD がなければ、取り出すブランチ（既定は main・master・最初のブランチ）。
         let branch = gtk::DropDown::from_strings(&[]);
-        let branch_row = row(&tr!("Branch:"), &branch);
+        let branch_row = row(&tr!("Branch"), &branch);
         branch_row.set_visible(false);
         sheet.add(&branch_row);
         let bundle: Rc<std::cell::RefCell<Option<amonhen_backend_cli::BundleInfo>>> = Rc::default();
@@ -574,7 +574,7 @@ pub fn clone(parent: &gtk::Window, open: Rc<dyn Fn(PathBuf)>) {
         let download_line = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         download_line.append(&download);
         download_line.append(&depth);
-        sheet.add(&row(&tr!("Download:"), &download_line));
+        sheet.add(&row(&tr!("Download"), &download_line));
         let download_help = clone_help();
         sheet.add(&row("", &download_help));
         // 一部のフォルダだけ取り出す（git 2.27 から）。下に説明か、使えなければ ⚠ と理由。

@@ -639,7 +639,7 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
                 updateConflicts(settle: true) { [weak self] in self?.reveal() }
             case let .failure(error):
                 settled()
-                NSAlert(error: error).runModal()
+                Actions.showFailure(L("Couldn’t resolve the conflict"), error, in: view.window)
             }
         }
     }
@@ -1056,7 +1056,7 @@ final class MergeEditorWindowController: NSWindowController, NSWindowDelegate {
                 show(try await MergeEditorViewController.load(path: path, repository: repository, actions: actions),
                      actions: actions, from: source)
             } catch {
-                NSAlert(error: error).runModal()
+                Actions.showFailure(L("Couldn’t open %@ in the merge editor", path), error, in: source)
             }
         }
     }
@@ -1145,7 +1145,7 @@ final class MergeEditorWindowController: NSWindowController, NSWindowDelegate {
                 if let frame { window?.setFrame(frame, display: true) }
                 applyBackdrop()
             } catch {
-                NSAlert(error: error).runModal()
+                Actions.showFailure(L("Couldn’t reload %@", editor.path), error, in: window)
             }
         }
     }
