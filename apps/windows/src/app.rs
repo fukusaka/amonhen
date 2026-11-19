@@ -886,7 +886,7 @@ enum Message {
     /// Settings > Appearance の並び順（0 は日付順、1 はトポロジー順）。
     SettingsOrder(Option<usize>),
     /// Settings > Theme: 構文の色のテーマ（`theme::names` の番号）。
-    SettingsSyntaxTheme(Option<usize>),
+    SettingsSyntaxTheme(bool, Option<usize>),
     /// Settings > Theme のボタン（`import`・`remove:<name>`）。
     SettingsThemeButton(String),
     CloseSettings,
@@ -1145,6 +1145,8 @@ enum Message {
     /// 命令が失敗した（種類が分かれば、要点と次の一手を出す）。
     OperationFailed(Arc<Repository>, crate::failure::Failure),
     Failed(String),
+    /// Windows の外観が変わった（描き直す）。
+    AppearanceChanged,
     /// タブを選んだ・閉じようとした（タブの番号）・引いて並べ替えた（番号の並び）。
     TabSelected(Option<usize>),
     TabClose(String),
@@ -2363,7 +2365,7 @@ impl Component for Root {
                     crate::tabs::select(index);
                 }
             }
-            Message::TabSelected(None) => {}
+            Message::TabSelected(None) | Message::AppearanceChanged => {}
             Message::TabClose(id) => {
                 if let Ok(id) = id.parse()
                     && crate::tabs::close(id)
@@ -6181,12 +6183,12 @@ impl Component for Root {
                     }
                 }
             }
-            Message::SettingsSyntaxTheme(index) => {
+            Message::SettingsSyntaxTheme(dark, index) => {
                 let Some(name) = index.and_then(|i| crate::theme::names().get(i).cloned()) else {
                     return;
                 };
-                if name != crate::theme::selected() {
-                    let _ = crate::prefs::set_string(crate::theme::SYNTAX_THEME_LIGHT, &name);
+                if name != crate::theme::selected(dark) {
+                    let _ = crate::prefs::set_string(crate::theme::key(dark), &name);
                     crate::theme::reload();
                     with_history(|h| h.diff.dirty = true);
                 }
@@ -6196,18 +6198,14 @@ impl Component for Root {
                 if let Some(name) = key.strip_prefix("remove:") {
                     themes.retain(|t| t.name != name);
                 } else {
-                    // 読み込んだ明るいテーマは、そのまま明るい外観のテーマにする（GTK4 版・macOS 版と同じ）。
+                    // 読み込んだテーマは、そのまま同じ外観のテーマにする（GTK4 版・macOS 版と同じ）。
                     let paths = crate::files::open_files(&tr!("Import VSCode Theme…"));
                     for path in paths {
                         match crate::theme::import_vscode(&path) {
                             Ok(t) => {
                                 themes.retain(|x| x.name != t.name);
-                                if !t.dark {
-                                    let _ = crate::prefs::set_string(
-                                        crate::theme::SYNTAX_THEME_LIGHT,
-                                        &t.name,
-                                    );
-                                }
+                                let _ =
+                                    crate::prefs::set_string(crate::theme::key(t.dark), &t.name);
                                 themes.push(t);
                             }
                             Err(e) => {
@@ -6861,6 +6859,12 @@ impl Component for Root {
             }
         }
         context.window_title(title.clone());
+        // 外観は Windows の設定に合わせる（描く色と同じ判断にするため、ここで決めて渡す）。
+        context.window_visuals(WindowVisuals::new().theme(if crate::palette::dark() {
+            WindowTheme::Dark
+        } else {
+            WindowTheme::Light
+        }));
         let tab_strip = tab_strip(&title, context);
         let root = self.root.clone();
         let refs = (
@@ -7397,6 +7401,8 @@ impl Component for Root {
         let dialog = self.dialog_view(context);
         Grid::new()
             .element_ref(&self.root)
+            // 窓の地（WinUI は外観を替えても窓の地を塗り直さないので、ここで塗る）。
+            .background(Brush::Solid(crate::palette::window()))
             .rows([
                 GridLength::Auto,
                 GridLength::Auto,
@@ -7901,7 +7907,7 @@ impl Root {
                                 .foreground_optional(
                                     applies
                                         .is_err()
-                                        .then_some(Brush::Solid(Color::rgb(0xc4, 0x6a, 0x00))),
+                                        .then_some(Brush::Solid(crate::palette::warning_text())),
                                 )
                                 .text_wrapping(TextWrapping::Wrap),
                             if *mailbox {
@@ -8404,7 +8410,7 @@ impl Root {
                     TextBlock::new()
                         .text(explain)
                         .font_size(12.0)
-                        .foreground(Brush::Solid(Color::argb(0xa0, 0, 0, 0)))
+                        .foreground(Brush::Solid(crate::palette::faint()))
                         .text_wrapping(TextWrapping::Wrap)
                         .into()
                 };
@@ -8437,7 +8443,7 @@ impl Root {
                             TextBlock::new()
                                 .text(format!("⚠ {}", tr!("Can’t pull")))
                                 .font_weight(FontWeight::SEMI_BOLD)
-                                .foreground(Brush::Solid(Color::rgb(0xc4, 0x6a, 0x00))),
+                                .foreground(Brush::Solid(crate::palette::warning_text())),
                             TextBlock::new()
                                 .text(reason.clone())
                                 .text_wrapping(TextWrapping::Wrap),
@@ -8681,7 +8687,7 @@ impl Root {
                                     .text(text)
                                     .text_trimming(TextTrimming::CharacterEllipsis)
                                     .foreground_optional(
-                                        files.map(|_| Brush::Solid(Color::rgb(0xc4, 0x6a, 0x00))),
+                                        files.map(|_| Brush::Solid(crate::palette::warning_text())),
                                     ),
                             );
                         (s.rev.clone(), view)
@@ -8752,7 +8758,7 @@ impl Root {
                             TextBlock::new()
                                 .text(tr!("Message: {message}", message = message))
                                 .font_size(12.0)
-                                .foreground(Brush::Solid(Color::argb(0xa0, 0, 0, 0)))
+                                .foreground(Brush::Solid(crate::palette::faint()))
                                 .text_wrapping(TextWrapping::Wrap)
                                 .max_lines(2),
                         )),
@@ -11382,7 +11388,7 @@ impl Root {
         .collect::<Vec<_>>();
         Border::new()
             .grid_row(2)
-            .background(Brush::Solid(Color::rgb(0xf3, 0xf3, 0xf3)))
+            .background(Brush::Solid(crate::palette::bar()))
             .padding(Thickness::new(10.0, 4.0, 10.0, 4.0))
             .content(
                 StackPanel::new()
@@ -11493,9 +11499,9 @@ impl Root {
         };
         Border::new()
             .background(Brush::Solid(if cancelled {
-                Color::rgb(0xf0, 0xf0, 0xf0)
+                crate::palette::done_band()
             } else {
-                Color::rgb(0xfd, 0xe7, 0xe9)
+                crate::palette::failure_band()
             }))
             .padding(Thickness::new(10.0, 5.0, 10.0, 5.0))
             .content(
@@ -11900,7 +11906,7 @@ impl Root {
                 ok,
             ));
         Border::new()
-            .background(Brush::Solid(Color::rgb(0xff, 0xff, 0xff)))
+            .background(Brush::Solid(crate::palette::background()))
             .grid_column(1)
             .content(
                 Grid::new()
@@ -12094,7 +12100,7 @@ impl Root {
         Border::new()
             .grid_column(0)
             .border_thickness(Thickness::new(0.0, 0.0, 1.0, 0.0))
-            .border_brush(Brush::Solid(Color::rgb(0xe5, 0xe5, 0xe5)))
+            .border_brush(Brush::Solid(crate::palette::border()))
             .content(View::keyed_fragment([(key, list)]))
     }
 
@@ -12153,7 +12159,7 @@ impl Root {
         Border::new()
             .max_height(5.0 * 24.0 + 8.0)
             .border_thickness(Thickness::new(0.0, 1.0, 0.0, 0.0))
-            .border_brush(Brush::Solid(Color::rgb(0xe5, 0xe5, 0xe5)))
+            .border_brush(Brush::Solid(crate::palette::border()))
             .content(View::keyed_fragment([(key, list)]))
     }
 
@@ -12202,7 +12208,7 @@ impl Root {
             },
         );
         Border::new()
-            .background(Brush::Solid(Color::rgb(0xff, 0xff, 0xff)))
+            .background(Brush::Solid(crate::palette::background()))
             .grid_column(1)
             .content(view)
     }
@@ -12392,7 +12398,7 @@ impl Root {
             },
         );
         Border::new()
-            .background(Brush::Solid(Color::rgb(0xff, 0xff, 0xff)))
+            .background(Brush::Solid(crate::palette::background()))
             .grid_column(1)
             .grid_column_span(2)
             .content(view)
@@ -12446,7 +12452,7 @@ impl Root {
         );
 
         Border::new()
-            .background(Brush::Solid(Color::rgb(0xff, 0xff, 0xff)))
+            .background(Brush::Solid(crate::palette::background()))
             .grid_column(1)
             .grid_column_span(2)
             .content(view)
@@ -12472,7 +12478,7 @@ impl Root {
             },
         );
         Border::new()
-            .background(Brush::Solid(Color::rgb(0xff, 0xff, 0xff)))
+            .background(Brush::Solid(crate::palette::background()))
             .grid_column(1)
             .grid_column_span(2)
             .content(view)
@@ -12516,7 +12522,8 @@ impl Root {
                 template_add: context.callback(|()| Message::SettingsTemplateAdd),
                 display: Box::new(|id| context.callback(move |v| Message::SettingsDisplay(id, v))),
                 order: context.callback(Message::SettingsOrder),
-                syntax_theme: context.callback(Message::SettingsSyntaxTheme),
+                syntax_theme: context.callback(|i| Message::SettingsSyntaxTheme(false, i)),
+                syntax_theme_dark: context.callback(|i| Message::SettingsSyntaxTheme(true, i)),
                 theme_button: Box::new(|key: String| {
                     context.callback(move |()| Message::SettingsThemeButton(key.clone()))
                 }),
@@ -12526,7 +12533,7 @@ impl Root {
             },
         );
         Border::new()
-            .background(Brush::Solid(Color::rgb(0xff, 0xff, 0xff)))
+            .background(Brush::Solid(crate::palette::background()))
             .grid_column(1)
             .grid_column_span(2)
             .content(view)
@@ -12551,7 +12558,7 @@ impl Root {
             },
         );
         Border::new()
-            .background(Brush::Solid(Color::rgb(0xff, 0xff, 0xff)))
+            .background(Brush::Solid(crate::palette::background()))
             .grid_column(1)
             .grid_column_span(2)
             .content(view)
@@ -12571,7 +12578,7 @@ impl Root {
         );
         // コードの幅が要るので、History と右の列の両方を覆う。
         Border::new()
-            .background(Brush::Solid(Color::rgb(0xff, 0xff, 0xff)))
+            .background(Brush::Solid(crate::palette::background()))
             .grid_column(1)
             .grid_column_span(2)
             .content(view)
@@ -12713,7 +12720,7 @@ impl Root {
             return View::empty();
         };
         let list = Border::new()
-            .background(Brush::Solid(Color::rgb(0xff, 0xff, 0xff)))
+            .background(Brush::Solid(crate::palette::background()))
             .grid_column(1)
             .content(crate::rangediff::view(
                 state,
@@ -12728,7 +12735,7 @@ impl Root {
         // 変わった組は、右の列に差分の差分を重ねる。
         let diff: View = match state.selected_pair().filter(|p| p.status == "changed") {
             Some(pair) => Border::new()
-                .background(Brush::Solid(Color::rgb(0xff, 0xff, 0xff)))
+                .background(Brush::Solid(crate::palette::background()))
                 .grid_column(2)
                 .content(crate::rangediff::diff_view(pair)),
             None => View::empty(),
@@ -12765,7 +12772,7 @@ impl Root {
             },
         );
         Border::new()
-            .background(Brush::Solid(Color::rgb(0xff, 0xff, 0xff)))
+            .background(Brush::Solid(crate::palette::background()))
             .grid_column(1)
             .grid_column_span(2)
             .content(view)
@@ -12806,7 +12813,7 @@ impl Root {
             },
         );
         Border::new()
-            .background(Brush::Solid(Color::rgb(0xff, 0xff, 0xff)))
+            .background(Brush::Solid(crate::palette::background()))
             .grid_column(1)
             .content(view)
     }
@@ -12902,7 +12909,7 @@ impl Root {
             callbacks,
         );
         Border::new()
-            .background(Brush::Solid(Color::rgb(0xff, 0xff, 0xff)))
+            .background(Brush::Solid(crate::palette::background()))
             .grid_column(1)
             .content(view)
     }
@@ -13263,7 +13270,7 @@ impl Root {
         });
         // まん中の列だけを覆う。右の列は差分の欄（詳細の行は畳む）。
         Border::new()
-            .background(Brush::Solid(Color::rgb(0xff, 0xff, 0xff)))
+            .background(Brush::Solid(crate::palette::background()))
             .grid_column(1)
             .content(view)
     }
@@ -14197,7 +14204,7 @@ fn details(info: Option<(&Value, Option<&Value>)>, query: &str) -> View {
     if !info["selection"].is_null() {
         return selection_details(&info["selection"]);
     }
-    let secondary = Brush::Solid(Color::argb(0x99, 0x1c, 0x1c, 0x1f));
+    let secondary = Brush::Solid(crate::palette::secondary());
     let line = |label: &str, value: String| {
         TextBlock::new()
             .text(format!("{label}  {value}"))
@@ -14388,7 +14395,7 @@ fn selection_note(selection: &Value) -> String {
 
 /// 複数のコミットの見出し: 題、説明、各コミットの 1 行。
 fn selection_view(selection: &Value, title: String, note: String) -> View {
-    let secondary = Brush::Solid(Color::argb(0x99, 0x1c, 0x1c, 0x1f));
+    let secondary = Brush::Solid(crate::palette::secondary());
     let mut rows: Vec<View> = vec![
         TextBlock::new()
             .text(title)
@@ -14714,6 +14721,12 @@ impl HistoryView {
             RUNNING.with(|r| r.set((now, Some(Instant::now()))));
             if now != count {
                 self.sender.send(Message::Running(now));
+            }
+            // Windows の外観（アプリ モード）が変わったら、色を替えて描き直す。
+            if crate::palette::refresh() {
+                self.session.invalidate();
+                self.diff.dirty = true;
+                self.sender.send(Message::AppearanceChanged);
             }
         }
         // Activity を開いている間は 0.5 秒ごとに読み直してもらう（GTK4 版と同じ間隔）。
@@ -15367,9 +15380,9 @@ fn forecast_view(text: &str, conflicts: bool) -> View {
         .text(text.to_owned())
         .font_size(12.0)
         .foreground(Brush::Solid(if conflicts {
-            Color::rgb(0xc4, 0x6a, 0x00)
+            crate::palette::warning_text()
         } else {
-            Color::argb(0xa0, 0, 0, 0)
+            crate::palette::faint()
         }))
         .text_wrapping(TextWrapping::Wrap)
         .into()

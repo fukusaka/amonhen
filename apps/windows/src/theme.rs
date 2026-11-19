@@ -1,5 +1,5 @@
 //! 構文と差分の色のテーマ（GTK4 版の `theme.rs`、macOS 版の `SyntaxColors.swift`）。Settings > Theme で選ぶ。
-//! この FE は明るい外観だけなので、明るい外観のテーマ（`syntaxThemeLight`）を使う。System はこれまでの色。
+//! 外観（明るい・暗い）ごとに選んだテーマ（`syntaxThemeLight`・`syntaxThemeDark`）を使う。System はこれまでの色。
 //! 差分の色は「差分は標準の色」（`diffStandardColors`）なら、テーマによらず標準の色。
 
 use std::collections::HashMap;
@@ -11,6 +11,7 @@ use amonhen_layout::SyntaxSpan;
 use serde_json::{Map, Value, json};
 
 pub const SYNTAX_THEME_LIGHT: &str = "syntaxThemeLight";
+pub const SYNTAX_THEME_DARK: &str = "syntaxThemeDark";
 pub const DIFF_STANDARD_COLORS: &str = "diffStandardColors";
 /// 読み込んだ VSCode のテーマ（JSON。形は GTK4 版・macOS 版と同じ）。
 pub const IMPORTED_SYNTAX_THEMES: &str = "importedSyntaxThemes";
@@ -242,12 +243,21 @@ pub fn names() -> Vec<String> {
         .collect()
 }
 
-/// 選んだテーマの名前。
-pub fn selected() -> String {
-    crate::prefs::string(SYNTAX_THEME_LIGHT).unwrap_or_else(|| SYSTEM.into())
+/// 外観ごとに選んだテーマの名前。
+pub fn selected(dark: bool) -> String {
+    crate::prefs::string(key(dark)).unwrap_or_else(|| SYSTEM.into())
 }
 
-/// 選んだテーマ（System なら None）と、差分を標準の色にするか。設定を変えるまで覚えておく。
+/// 外観ごとのテーマの設定の鍵。
+pub fn key(dark: bool) -> &'static str {
+    if dark {
+        SYNTAX_THEME_DARK
+    } else {
+        SYNTAX_THEME_LIGHT
+    }
+}
+
+/// 今の外観で選んだテーマ（System なら None）と、差分を標準の色にするか。設定か外観が変わるまで覚えておく。
 static CURRENT: Mutex<Option<(Option<SyntaxTheme>, bool)>> = Mutex::new(None);
 /// テーマを変えた回数（色を付けて取っておいた差分の行を捨てる目印）。
 static GENERATION: AtomicU32 = AtomicU32::new(0);
@@ -269,7 +279,7 @@ fn with_current<T>(f: impl FnOnce(Option<&SyntaxTheme>, bool) -> T) -> T {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let (theme, standard) = c.get_or_insert_with(|| {
-        let name = selected();
+        let name = selected(crate::palette::dark());
         (
             all().into_iter().find(|t| t.name == name),
             crate::prefs::bool(DIFF_STANDARD_COLORS),

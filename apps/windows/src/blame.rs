@@ -192,9 +192,9 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                     _ => String::new(),
                 };
                 let background = if block % 2 == 1 {
-                    Color::rgb(0xf3, 0xf3, 0xf3)
+                    crate::palette::bar()
                 } else {
-                    Color::rgb(0xff, 0xff, 0xff)
+                    crate::palette::background()
                 };
                 let info = TextBlock::new()
                     .text(info)

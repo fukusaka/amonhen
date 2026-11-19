@@ -111,9 +111,15 @@ const PALETTE: [[f32; 3]; 8] = [
     [0.60, 0.60, 0.65],
 ];
 
-const BACKGROUND: D2D1_COLOR_F = rgba(1.0, 1.0, 1.0, 1.0);
-const FOREGROUND: D2D1_COLOR_F = rgba(0.11, 0.11, 0.12, 1.0);
-const SECONDARY: D2D1_COLOR_F = rgba(0.11, 0.11, 0.12, 0.6);
+fn background() -> D2D1_COLOR_F {
+    themed((1.0, 1.0, 1.0, 1.0), (0.118, 0.118, 0.118, 1.0))
+}
+fn foreground() -> D2D1_COLOR_F {
+    themed((0.11, 0.11, 0.12, 1.0), (0.91, 0.91, 0.91, 1.0))
+}
+fn secondary() -> D2D1_COLOR_F {
+    themed((0.11, 0.11, 0.12, 0.6), (0.91, 0.91, 0.91, 0.6))
+}
 /// 検索で一致した行の背景。
 const MATCH: D2D1_COLOR_F = rgba(1.0, 0.80, 0.0, 0.22);
 /// 選んだ行の背景（Windows の既定のアクセントの色を薄く）。
@@ -125,7 +131,9 @@ const LABEL_REMOTE: (f32, f32, f32) = (0.57, 0.38, 0.84);
 const LABEL_TAG: (f32, f32, f32) = (0.90, 0.55, 0.15);
 /// worktree の HEAD の札と、ほかの worktree が checkout しているブランチ。
 const LABEL_WORKTREE: (f32, f32, f32) = (0.20, 0.66, 0.30);
-const LABEL_TEXT: D2D1_COLOR_F = rgba(0.11, 0.11, 0.12, 0.9);
+fn label_text() -> D2D1_COLOR_F {
+    themed((0.11, 0.11, 0.12, 0.9), (0.91, 0.91, 0.91, 0.9))
+}
 const LABEL_HEAD_TEXT: D2D1_COLOR_F = rgba(1.0, 1.0, 1.0, 1.0);
 const LABEL_HEIGHT: f32 = 17.0;
 /// 差分の行の高さ（DIP）と、行番号の列の幅。
@@ -138,11 +146,15 @@ fn diff_color(kind: crate::theme::DiffColor) -> D2D1_COLOR_F {
     let (r, g, b, a) = crate::theme::diff(kind);
     rgba(r, g, b, a)
 }
-const DIFF_FILE: D2D1_COLOR_F = rgba(0.11, 0.11, 0.12, 0.07);
+fn diff_file() -> D2D1_COLOR_F {
+    themed((0.11, 0.11, 0.12, 0.07), (1.0, 1.0, 1.0, 0.08))
+}
 /// Working Copy の差分の、行ごとの含める印の列の幅。
 pub const DIFF_MARK_WIDTH: f32 = 22.0;
 const DIFF_MARK: D2D1_COLOR_F = rgba(0.0, 0.47, 0.84, 1.0);
-const DIFF_GUTTER: D2D1_COLOR_F = rgba(0.11, 0.11, 0.12, 0.035);
+fn diff_gutter() -> D2D1_COLOR_F {
+    themed((0.11, 0.11, 0.12, 0.035), (1.0, 1.0, 1.0, 0.04))
+}
 const LABEL_PADDING: f32 = 6.0;
 const LABEL_GAP: f32 = 4.0;
 /// ラベルを並べる幅の上限（文字の幅に対する割合）。残りは件名に回す。
@@ -164,9 +176,19 @@ fn signature_color(mark: Option<crate::data::Signature>) -> D2D1_COLOR_F {
         Some(Signature::Caution) => rgba(0.90, 0.75, 0.10, 1.0),
         Some(Signature::Expired) => rgba(0.95, 0.55, 0.15, 1.0),
         Some(Signature::Bad) => rgba(0.90, 0.25, 0.25, 1.0),
-        Some(Signature::Unknown) => rgba(0.11, 0.11, 0.12, 0.55),
-        None => rgba(0.11, 0.11, 0.12, 0.25),
+        Some(Signature::Unknown) => with_alpha(foreground(), 0.55),
+        None => with_alpha(foreground(), 0.25),
     }
+}
+
+/// 外観（明るい・暗い）ごとの色。
+fn themed(light: (f32, f32, f32, f32), dark: (f32, f32, f32, f32)) -> D2D1_COLOR_F {
+    let (r, g, b, a) = if crate::palette::dark() { dark } else { light };
+    rgba(r, g, b, a)
+}
+
+fn with_alpha(c: D2D1_COLOR_F, a: f32) -> D2D1_COLOR_F {
+    D2D1_COLOR_F { a, ..c }
 }
 
 const fn rgba(r: f32, g: f32, b: f32, a: f32) -> D2D1_COLOR_F {
@@ -457,7 +479,7 @@ impl Renderer {
                 w!("ja-jp"),
             )?;
             file_format.SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP)?;
-            let brush = d2d.CreateSolidColorBrush(&FOREGROUND, None)?;
+            let brush = d2d.CreateSolidColorBrush(&foreground(), None)?;
             let base: &ID2D1Factory = &d2d_factory;
             let round = base.CreateStrokeStyle(
                 &D2D1_STROKE_STYLE_PROPERTIES {
@@ -558,7 +580,7 @@ impl Renderer {
             self.d2d.SetTarget(&target);
             self.d2d.SetDpi(96.0 * scale, 96.0 * scale);
             self.d2d.BeginDraw();
-            self.d2d.Clear(Some(&BACKGROUND));
+            self.d2d.Clear(Some(&background()));
         }
         let mut stages = [0.0; 5];
         let result = self.draw_history(data, scroll_y, width, height, selected, &mut stages);
@@ -804,14 +826,14 @@ impl Renderer {
                         &self.brush,
                     );
                 }
-                self.brush.SetColor(&FOREGROUND);
+                self.brush.SetColor(&foreground());
                 self.d2d.DrawTextLayout(
                     point(subject_x, top + if compact { 3.0 } else { 2.0 }),
                     &line.subject,
                     &self.brush,
                     D2D1_DRAW_TEXT_OPTIONS_NONE,
                 );
-                self.brush.SetColor(&SECONDARY);
+                self.brush.SetColor(&secondary());
                 self.d2d.DrawTextLayout(
                     point(meta_x, meta_y),
                     &line.meta,
@@ -989,7 +1011,7 @@ impl Renderer {
             self.d2d.SetTarget(&target);
             self.d2d.SetDpi(96.0 * scale, 96.0 * scale);
             self.d2d.BeginDraw();
-            self.d2d.Clear(Some(&BACKGROUND));
+            self.d2d.Clear(Some(&background()));
         }
         let result = match content {
             Some(content) => self.draw_diff_rows(content, scroll_y, width, height),
@@ -1036,12 +1058,12 @@ impl Renderer {
                 DiffRow::ADDED => Some(diff_color(crate::theme::DiffColor::Added)),
                 DiffRow::REMOVED => Some(diff_color(crate::theme::DiffColor::Removed)),
                 DiffRow::HUNK => Some(diff_color(crate::theme::DiffColor::Hunk)),
-                DiffRow::FILE => Some(DIFF_FILE),
+                DiffRow::FILE => Some(diff_file()),
                 _ => None,
             };
             unsafe {
                 if !file {
-                    self.brush.SetColor(&DIFF_GUTTER);
+                    self.brush.SetColor(&diff_gutter());
                     self.d2d
                         .FillRectangle(&rect(0.0, left + DIFF_NUMBER_WIDTH * 2.0), &self.brush);
                 }
@@ -1093,7 +1115,7 @@ impl Renderer {
                 }
             }
             unsafe {
-                self.brush.SetColor(&FOREGROUND);
+                self.brush.SetColor(&foreground());
                 let x = if file { DIFF_TEXT_INSET } else { text_x };
                 self.d2d.DrawTextLayout(
                     point(x, top + 1.0),
@@ -1137,7 +1159,7 @@ impl Renderer {
             self.diff_layout(view, commit.syntax, i as u32)?;
             let layout = &self.diff_rows[&(i as u32)];
             unsafe {
-                self.brush.SetColor(&BACKGROUND);
+                self.brush.SetColor(&background());
                 self.d2d.FillRectangle(
                     &D2D_RECT_F {
                         left: 0.0,
@@ -1147,7 +1169,7 @@ impl Renderer {
                     },
                     &self.brush,
                 );
-                self.brush.SetColor(&DIFF_FILE);
+                self.brush.SetColor(&diff_file());
                 self.d2d.FillRectangle(
                     &D2D_RECT_F {
                         left: 0.0,
@@ -1157,7 +1179,7 @@ impl Renderer {
                     },
                     &self.brush,
                 );
-                self.brush.SetColor(&FOREGROUND);
+                self.brush.SetColor(&foreground());
                 self.d2d.DrawTextLayout(
                     point(DIFF_TEXT_INSET, top + 1.0),
                     layout,
@@ -1255,7 +1277,7 @@ impl Renderer {
                 Mark::All => {
                     self.brush.SetColor(&DIFF_MARK);
                     self.d2d.FillRoundedRectangle(&rect, &self.brush);
-                    self.brush.SetColor(&BACKGROUND);
+                    self.brush.SetColor(&background());
                     let a = point(x + 2.8, y + 6.2);
                     let b = point(x + 5.2, y + 8.8);
                     let c = point(x + 9.4, y + 3.6);
@@ -1265,12 +1287,12 @@ impl Renderer {
                 Mark::Some => {
                     self.brush.SetColor(&DIFF_MARK);
                     self.d2d.FillRoundedRectangle(&rect, &self.brush);
-                    self.brush.SetColor(&BACKGROUND);
+                    self.brush.SetColor(&background());
                     let (a, b) = (point(x + 3.0, y + 6.0), point(x + 9.0, y + 6.0));
                     self.d2d.DrawLine(a, b, &self.brush, 1.6, &self.round);
                 }
                 Mark::None => {
-                    self.brush.SetColor(&SECONDARY);
+                    self.brush.SetColor(&secondary());
                     self.d2d.DrawRoundedRectangle(&rect, &self.brush, 1.0, None);
                 }
             }
@@ -1292,7 +1314,7 @@ impl Renderer {
                 DIFF_ROW_HEIGHT,
             )?;
             layout.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING)?;
-            self.brush.SetColor(&SECONDARY);
+            self.brush.SetColor(&secondary());
             self.d2d.DrawTextLayout(
                 point(x, top + 2.0),
                 &layout,
@@ -1356,10 +1378,10 @@ impl Renderer {
         unsafe {
             self.brush.SetColor(&fill);
             self.d2d.FillRoundedRectangle(&rect, &self.brush);
-            self.brush.SetColor(if label.head {
-                &LABEL_HEAD_TEXT
+            self.brush.SetColor(&if label.head {
+                LABEL_HEAD_TEXT
             } else {
-                &LABEL_TEXT
+                label_text()
             });
             self.d2d.DrawTextLayout(
                 point(x + LABEL_PADDING, y + 1.0),
@@ -1537,21 +1559,26 @@ pub fn syntax_rgb(kind: u8) -> Option<(f32, f32, f32)> {
     crate::theme::syntax(kind, system_syntax_rgb)
 }
 
-/// System のテーマの構文の色（GTK4 版の System の明るい外観と同じ）。
+/// System のテーマの構文の色（GTK4 版の System の色と同じ。暗い外観では明るく）。
 fn system_syntax_rgb(kind: u8) -> Option<(f32, f32, f32)> {
     use amonhen_layout::SyntaxSpan;
-    Some(match kind {
-        SyntaxSpan::KEYWORD | SyntaxSpan::TAG | SyntaxSpan::VARIABLE => (0.80, 0.18, 0.45),
-        SyntaxSpan::STRING => (0.77, 0.16, 0.16),
-        SyntaxSpan::COMMENT => (0.45, 0.45, 0.48),
-        SyntaxSpan::NUMBER | SyntaxSpan::CONSTANT => (0.50, 0.25, 0.75),
-        SyntaxSpan::FUNCTION => (0.10, 0.40, 0.85),
-        SyntaxSpan::TYPE => (0.10, 0.55, 0.60),
-        SyntaxSpan::PROPERTY => (0.10, 0.50, 0.70),
-        SyntaxSpan::ATTRIBUTE | SyntaxSpan::ESCAPE => (0.80, 0.45, 0.05),
-        SyntaxSpan::MODULE => (0.55, 0.40, 0.25),
-        _ => return None,
-    })
+    let dark = crate::palette::dark();
+    let pick =
+        |light: (f32, f32, f32), on_dark: (f32, f32, f32)| Some(if dark { on_dark } else { light });
+    match kind {
+        SyntaxSpan::KEYWORD | SyntaxSpan::TAG | SyntaxSpan::VARIABLE => {
+            pick((0.80, 0.18, 0.45), (1.0, 0.45, 0.65))
+        }
+        SyntaxSpan::STRING => pick((0.77, 0.16, 0.16), (1.0, 0.45, 0.40)),
+        SyntaxSpan::COMMENT => pick((0.45, 0.45, 0.48), (0.60, 0.60, 0.64)),
+        SyntaxSpan::NUMBER | SyntaxSpan::CONSTANT => pick((0.50, 0.25, 0.75), (0.78, 0.55, 1.0)),
+        SyntaxSpan::FUNCTION => pick((0.10, 0.40, 0.85), (0.40, 0.65, 1.0)),
+        SyntaxSpan::TYPE => pick((0.10, 0.55, 0.60), (0.35, 0.80, 0.85)),
+        SyntaxSpan::PROPERTY => pick((0.10, 0.50, 0.70), (0.40, 0.80, 0.95)),
+        SyntaxSpan::ATTRIBUTE | SyntaxSpan::ESCAPE => pick((0.80, 0.45, 0.05), (1.0, 0.65, 0.30)),
+        SyntaxSpan::MODULE => pick((0.55, 0.40, 0.25), (0.80, 0.65, 0.45)),
+        _ => None,
+    }
 }
 
 /// 上に張り付かせるファイルの見出し（見出しの行の番号と、見えている範囲の上端からの位置）。見出しの行が見えている
