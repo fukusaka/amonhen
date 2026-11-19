@@ -48,14 +48,14 @@ pub fn export(actions: &Rc<Actions>, rev: String, label: String) {
         let format = gtk::DropDown::from_strings(FORMATS);
         let remembered = crate::settings::string(FORMAT).unwrap_or_default();
         format.set_selected(format_index(&remembered) as u32);
-        sheet.add(&sheets::row(&tr!("Format:"), &format));
+        sheet.add(&sheets::row(&tr!("Format"), &format));
         let top = gtk::Entry::builder()
             .text(&name)
             .placeholder_text(tr!("None"))
             .width_chars(28)
             .activates_default(true)
             .build();
-        sheet.add(&sheets::row(&tr!("Top folder:"), &top));
+        sheet.add(&sheets::row(&tr!("Top folder"), &top));
         // 書き出すフォルダ（選ばなければ全体）。その時点の木から選ぶ。
         let chosen: Rc<RefCell<Option<String>>> = Rc::default();
         let folder = gtk::Label::new(Some(&tr!("All files")));
@@ -68,7 +68,7 @@ pub fn export(actions: &Rc<Actions>, rev: String, label: String) {
         folder_row.append(&folder);
         folder_row.append(&choose);
         folder_row.append(&all);
-        sheet.add(&sheets::row(&tr!("Folder:"), &folder_row));
+        sheet.add(&sheets::row(&tr!("Folder"), &folder_row));
         {
             let (repo, rev, chosen) = (repo.clone(), rev.clone(), chosen.clone());
             let (window, folder, all) = (sheet.window.downgrade(), folder.clone(), all.clone());

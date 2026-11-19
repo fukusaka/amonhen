@@ -201,7 +201,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         commitMenuButton.controlSize = .small
         commitMenuButton.isBordered = false
         commitMenuButton.toolTip = L("Commit and Push (⌘⇧↩), Amend")
-        for (title, action) in [("Commit and Push", #selector(commitAndPush)), ("Amend Last Commit", #selector(startAmend))] {
+        for (title, action) in [("Commit and Push", #selector(commitAndPush)), (L("Amend Last Commit"), #selector(startAmend))] {
             let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
             item.target = self
             commitMenuButton.menu?.addItem(item)
@@ -471,7 +471,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     /// untracked のファイルを消す前に確かめる（Undo では戻せない）。
     private func confirmDeleteUntracked(_ path: String, actions: Actions) {
         Task { @MainActor in
-            guard await actions.confirm(L("Delete %@?", path), message: L("It’s untracked.") + " " + Actions.cantUndo,
+            guard await actions.confirm(L("Delete %@?", path), message: L("It’s untracked.") + sentenceGap + Actions.cantUndo,
                                         ok: L("Delete"), destructive: true) else { return }
             // ファイルの操作はコアに任せる（SSH 越しのリポジトリでも同じに動く）。
             actions.perform(["op": "deleteUntracked", "paths": [path]])
@@ -745,7 +745,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
 
     private func buildFixupMenus() {
         guard let menu = commitMenuButton.menu else { return }
-        for title in ["Fixup Commit For", "Squash Commit For"] {
+        for title in [L("Fixup Commit For"), L("Squash Commit For")] {
             if let old = menu.item(withTitle: title) { menu.removeItem(old) }
         }
         // 前に足した区切りも外す（作り直すたびに区切りが増えないように）。
@@ -762,7 +762,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         let separator = NSMenuItem.separator()
         separator.tag = Self.fixupSeparatorTag
         menu.addItem(separator)
-        for (title, prefix, keepBody) in [("Fixup Commit For", "fixup! ", false), ("Squash Commit For", "squash! ", true)] {
+        for (title, prefix, keepBody) in [(L("Fixup Commit For"), "fixup! ", false), (L("Squash Commit For"), "squash! ", true)] {
             let sub = NSMenu(title: title)
             for subject in subjects {
                 sub.addItem(ClosureMenuItem(title: subject) { [weak self] in

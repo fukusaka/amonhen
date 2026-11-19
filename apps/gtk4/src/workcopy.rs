@@ -290,7 +290,10 @@ impl WorkingCopy {
         commit_menu.add_css_class("compact-icon");
         let menu = gio::Menu::new();
         menu.append(Some("Commit and Push"), Some("win.commit-and-push"));
-        menu.append(Some("Amend Last Commit"), Some("win.amend-last-commit"));
+        menu.append(
+            Some(&tr!("Amend Last Commit")),
+            Some("win.amend-last-commit"),
+        );
         commit_menu.set_menu_model(Some(&menu));
         let aids = crate::commitmsg::MessageAids::new(&subject, &body, &amend);
         aids.install_fixups(&commit_menu, menu);
@@ -2554,7 +2557,12 @@ impl Inner {
                 &actions,
                 repo,
                 tr!("Delete {path}?", path = path),
-                format!("{} {}", tr!("It’s untracked."), crate::sheets::cant_undo()),
+                format!(
+                    "{}{}{}",
+                    tr!("It’s untracked."),
+                    amonhen_model::i18n::sentence_gap(),
+                    crate::sheets::cant_undo()
+                ),
                 tr!("Delete"),
                 true,
                 vec![json!({ "op": "deleteUntracked", "paths": [path] })],

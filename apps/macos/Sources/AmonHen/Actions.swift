@@ -136,6 +136,15 @@ final class Actions {
         }
     }
 
+    /// 失敗を知らせる（docs/ux.md: 題は「Couldn’t <操作>」、窓があればそのシートで）。
+    @MainActor
+    static func showFailure(_ title: String, _ error: Error, in window: NSWindow?) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = "\(error)"
+        if let window { alert.beginSheetModal(for: window) } else { alert.runModal() }
+    }
+
     /// 確認の文の終わりに置く定型（docs/ux.md の「Confirmations and wording」）。この 2 つ以外の言い方はしない。
     static let canUndo = L("You can Undo this (⌥⌘Z).")
     static let cantUndo = L("This can’t be undone.")
@@ -146,12 +155,15 @@ final class Actions {
         let alert = NSAlert()
         alert.messageText = title
         alert.informativeText = message
-        alert.addButton(withTitle: ok)
+        let button = alert.addButton(withTitle: ok)
         alert.addButton(withTitle: L("Cancel"))
         let field = NSTextField(string: initial)
         field.frame = NSRect(x: 0, y: 0, width: 280, height: 24)
         alert.accessoryView = field
         alert.window.initialFirstResponder = field
+        // 名前のない枝やタグは作れないので、空のあいだは押せなくする。
+        let watching = AlertForm.require([field], for: button)
+        defer { AlertForm.release(watching) }
         guard await present(alert) == .alertFirstButtonReturn else { return nil }
         let value = field.stringValue.trimmingCharacters(in: .whitespaces)
         return value.isEmpty ? nil : value
@@ -204,7 +216,7 @@ final class Actions {
             let json = try Repository.json(command)
             return try await Task.detached { try repository.run(json: json).text }.value
         } catch {
-            await alert(L("Can’t Read"), "\(error)")
+            await alert(L("Couldn’t read the commits to edit"), "\(error)")
             return nil
         }
     }
@@ -272,11 +284,11 @@ final class Actions {
             stack.frame = NSRect(x: 0, y: 0, width: 320, height: stack.fittingSize.height)
             alert.accessoryView = stack
             alert.window.initialFirstResponder = name
-            alert.addButton(withTitle: L("Create"))
+            let watching = AlertForm.require([name], for: alert.addButton(withTitle: L("Create")))
+            defer { AlertForm.release(watching) }
             alert.addButton(withTitle: L("Cancel"))
             guard await present(alert) == .alertFirstButtonReturn else { return }
             let branch = name.stringValue.trimmingCharacters(in: .whitespaces)
-            guard !branch.isEmpty else { return NSSound.beep() }
             perform(["op": "createOrphanBranch", "name": branch, "keepFiles": keep.state == .on])
         }
     }
@@ -311,7 +323,7 @@ final class Actions {
             let short = String(target.prefix(8))
             let name = currentBranch ?? "HEAD"
             let preview = await movePreview(from: "HEAD", to: target, branch: currentBranch)
-            let alert = makeAlert(L("Reset %@ to %@?", name, short), L("Commits taken off stay in Reflog.") + " " + Self.canUndo)
+            let alert = makeAlert(L("Reset %@ to %@?", name, short), L("Commits taken off stay in Reflog.") + sentenceGap + Self.canUndo)
             alert.addButton(withTitle: "Reset")
             alert.addButton(withTitle: L("Cancel"))
             let modes: [(String, String)] = [
@@ -390,12 +402,12 @@ final class Actions {
                     try repository.info(["op": "ignoredFiles"], as: Ignored.self)
                 }.value.paths
             } catch {
-                NSAlert(error: error).runModal()
+                Self.showFailure(L("Couldn’t list the ignored files"), error, in: window)
                 return
             }
             let alert = makeAlert(paths.isEmpty ? L("No Ignored Files") : L("Delete %ld Ignored Items?", paths.count),
                                   paths.isEmpty ? L("Nothing in the working tree matches .gitignore.")
-                                      : L("These are removed from the working tree (git clean -X); folders go with everything in them.") + " " + Self.cantUndo)
+                                      : L("These are removed from the working tree (git clean -X); folders go with everything in them.") + sentenceGap + Self.cantUndo)
             if paths.isEmpty {
                 alert.addButton(withTitle: "OK")
                 _ = await present(alert)
@@ -454,7 +466,7 @@ final class Actions {
                     return try repository.info(["op": "branchCleanup", "pullRequests": prs], as: Cleanup.self)
                 }.value
             } catch {
-                NSAlert(error: error).runModal()
+                Self.showFailure(L("Couldn’t list the branches to clean up"), error, in: window)
                 return
             }
             let base = cleanup.base ?? "main"
@@ -468,7 +480,7 @@ final class Actions {
             }
             let alert = makeAlert(L("Clean Up Branches"),
                                   L("Delete the checked branches. The current branch, favorites and branches used by a worktree aren’t listed.")
-                                      + " " + Self.canUndo + (note.map { "\n\n" + $0 } ?? ""))
+                                      + sentenceGap + Self.canUndo + (note.map { "\n\n" + $0 } ?? ""))
             let delete = alert.addButton(withTitle: "")
             alert.addButton(withTitle: L("Cancel"))
             // 理由ごとに見出しを付けて並べる。

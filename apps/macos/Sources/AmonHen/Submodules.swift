@@ -161,15 +161,16 @@ enum SubmoduleSheet {
     static func remove(in window: NSWindow, actions: Actions, submodule: SubmoduleState, perform: @escaping ([String: Any]) -> Void) {
         let alert = NSAlert()
         alert.messageText = L("Remove %@?", submodule.path)
-        alert.informativeText = actions.sheetMessage(L("Removes the folder and its entry in .gitmodules, and stages that. Commit to keep it.") + " " + Actions.cantUndo)
+        alert.informativeText = actions.sheetMessage(L("Removes the folder and its entry in .gitmodules, and stages that. Commit to keep it.") + sentenceGap + Actions.cantUndo)
         let deleteGitDir = NSButton(checkboxWithTitle: L("Also delete its repository data (.git/modules/%@)", submodule.name), target: nil, action: nil)
         let note = NSTextField(wrappingLabelWithString: L("Kept, it brings back the submodule’s commits and stashes when you add it again, including ones not pushed."))
         note.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         note.textColor = .secondaryLabelColor
         note.preferredMaxLayoutWidth = 360
         alert.accessoryView = stack([deleteGitDir, note], height: 64)
-        alert.addButton(withTitle: L("Remove"))
-        alert.addButton(withTitle: L("Cancel"))
+        // 戻せないので、赤く、↩ では押せない（↩ は Cancel）。
+        alert.addButton(withTitle: L("Remove")).markDestructive()
+        alert.addButton(withTitle: L("Cancel")).keyEquivalent = "\r"
         alert.beginSheetModal(for: window) { response in
             guard response == .alertFirstButtonReturn else { return }
             perform(["op": "changeSubmodule",

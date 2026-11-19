@@ -108,9 +108,9 @@ extension Actions {
         all.target = clear
         all.action = #selector(ClosureTarget.fire)
         let grid = NSGridView(views: [
-            [NSTextField(labelWithString: L("Format:")), format],
-            [NSTextField(labelWithString: L("Top folder:")), top],
-            [NSTextField(labelWithString: L("Folder:")), NSStackView(views: [folder, choose, all])],
+            [NSTextField(labelWithString: L("Format")), format],
+            [NSTextField(labelWithString: L("Top folder")), top],
+            [NSTextField(labelWithString: L("Folder")), NSStackView(views: [folder, choose, all])],
         ])
         grid.column(at: 0).xPlacement = .trailing
         grid.rowSpacing = 8

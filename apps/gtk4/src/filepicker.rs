@@ -542,7 +542,7 @@ impl Picker {
                 entry.set_text(h);
             }
             let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-            row.append(&gtk::Label::new(Some(&tr!("Host:"))));
+            row.append(&gtk::Label::new(Some(&tr!("Host"))));
             row.append(&entry);
             let candidates = host_candidates();
             if !candidates.is_empty() {

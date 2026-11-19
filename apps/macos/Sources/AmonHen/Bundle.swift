@@ -181,7 +181,7 @@ extension Actions {
         alert.addButton(withTitle: L("Cancel"))
         let field = NSTextField(string: suggested)
         field.widthAnchor.constraint(equalToConstant: 220).isActive = true
-        let row = NSStackView(views: [NSTextField(labelWithString: L("Name:")), field])
+        let row = NSStackView(views: [NSTextField(labelWithString: L("Name")), field])
         row.frame = NSRect(x: 0, y: 0, width: 300, height: 24)
         alert.accessoryView = row
         alert.window.initialFirstResponder = field

@@ -77,9 +77,9 @@ pub fn menu(
             let (a, h, s) = (a.clone(), h.clone(), s.clone());
             glib::spawn_future_local(async move {
                 let message = format!(
-                    "{} {}",
+                    "{}{}{}",
                     tr!("Its changes go back to the working tree; commit them in parts, then Continue."),
-                    crate::sheets::can_undo()
+                    amonhen_model::i18n::sentence_gap(), crate::sheets::can_undo()
                 );
                 // worktree の今のブランチを書き換えるので、Cherry-pick・Revert と同じく、どの worktree かを書く
                 // （macOS 版と同じ）。
@@ -183,8 +183,9 @@ fn ask_reset(actions: &Rc<Actions>, hex: &str) {
                 id = crate::titles::short(&hex)
             ),
             &format!(
-                "{} {}",
+                "{}{}{}",
                 tr!("Commits taken off stay in Reflog."),
+                amonhen_model::i18n::sentence_gap(),
                 crate::sheets::can_undo()
             ),
         );

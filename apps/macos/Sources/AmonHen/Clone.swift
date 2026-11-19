@@ -79,9 +79,9 @@ enum CloneSheet {
         choose.target = chooser
         choose.action = #selector(ClosureTarget.fire)
         var rows: [[NSView]] = [
-            [NSTextField(labelWithString: "URL:"), NSStackView(views: [url, bundleButton])],
-            [NSTextField(labelWithString: L("Location:")), NSStackView(views: [folder, choose])],
-            [NSTextField(labelWithString: L("Folder Name:")), name],
+            [NSTextField(labelWithString: "URL"), NSStackView(views: [url, bundleButton])],
+            [NSTextField(labelWithString: L("Location")), NSStackView(views: [folder, choose])],
+            [NSTextField(labelWithString: L("Folder Name")), name],
         ]
         // gh があれば、自分のリポジトリから選べる（読み終えたら一覧に入れる）。
         let mine = NSPopUpButton(frame: .zero, pullsDown: true)
@@ -158,7 +158,7 @@ enum CloneSheet {
         let submodules = NSButton(checkboxWithTitle: L("Check out submodules too"), target: nil, action: nil)
         // bundle のファイルなら: 取得する範囲は選べない（git は中身をすべて写す）。HEAD がなければ取り出すブランチを選ぶ。
         let branch = NSPopUpButton(frame: .zero, pullsDown: false)
-        let branchLabel = NSTextField(labelWithString: L("Branch:"))
+        let branchLabel = NSTextField(labelWithString: L("Branch"))
         var bundle: BundleFileInfo?
         let update = {
             let source = (url.stringValue.trimmingCharacters(in: .whitespaces) as NSString).expandingTildeInPath
@@ -237,7 +237,7 @@ enum CloneSheet {
         }
         rows += [
             [branchLabel, branch],
-            [NSTextField(labelWithString: L("Download:")), NSStackView(views: [download, depth])],
+            [NSTextField(labelWithString: L("Download")), NSStackView(views: [download, depth])],
             [NSGridCell.emptyContentView, downloadHelp],
             [NSGridCell.emptyContentView, sparse],
             [NSGridCell.emptyContentView, sparseHelp],
@@ -300,7 +300,7 @@ enum CloneSheet {
                 depth: choice == .recentHistory ? depth.selectedTag() : nil,
                 sparse: sparse.isEnabled && sparse.state == .on,
                 branch: branch.isHidden ? nil : branch.titleOfSelectedItem, submodules: submodules.state == .on,
-                onCloned: onCloned)
+                window: window, onCloned: onCloned)
             return false
         }
     }
@@ -325,7 +325,7 @@ enum CloneSheet {
     /// clone している間は、進み具合の小さなウィンドウを出す。`sparse` なら、clone の後で取り出すフォルダを選んで
     /// もらってから開く（取り消したら根のファイルだけのまま。フォルダは Settings の「取得とフォルダ」で足せる）。
     private static func run(url: String, dest: String, filter: String?, depth: Int?, sparse: Bool, branch: String?,
-                            submodules: Bool, onCloned: @escaping (String) -> Void) {
+                            submodules: Bool, window: NSWindow?, onCloned: @escaping (String) -> Void) {
         let panel = progressPanel(L("Cloning %@…", url))
         RunningOperations.begin()
         Task {
@@ -343,10 +343,7 @@ enum CloneSheet {
                 }
             } catch {
                 panel.close()
-                let alert = NSAlert(error: error)
-                alert.messageText = L("Couldn’t clone")
-                alert.informativeText = "\(error)"
-                alert.runModal()
+                Actions.showFailure(L("Couldn’t clone"), error, in: window)
             }
         }
     }

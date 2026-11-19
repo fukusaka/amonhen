@@ -231,20 +231,25 @@ export class WorkingCopyController implements vscode.Disposable {
     }
     this.selected = { group: change.group, path: change.path };
     let daemon: DaemonDiff | undefined;
-    try {
-      daemon = await this.daemonDiff(change);
-    } catch (err) {
-      // daemon は拡張より新しい status を読むので、その間に変更がなくなったファイルは断られる。読み直して、もう変更が
-      // なければ選びを外す（エラーにしない）
-      await this.repo?.refresh();
-      if (this.repo?.current.status?.entries.some((e) => e.path === change.path)) {
-        throw err;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        daemon = await this.daemonDiff(change);
+        break;
+      } catch (err) {
+        // daemon は拡張より新しい status を読むので、その間に変更がなくなったファイルは断られる。読み直して、もう変更が
+        // なければ選びを外す（エラーにしない）
+        await this.repo?.refresh();
+        if (this.repo?.current.status?.entries.some((e) => e.path === change.path)) {
+          // 読み直している間に、また変更された（daemon が見たのは、その間の変更のない一瞬）。もう一度だけ頼む
+          if (attempt === 0) continue;
+          throw err;
+        }
+        if (this.selected?.path === change.path) {
+          this.selected = undefined;
+          this.post({ type: 'wcDiff', diff: undefined });
+        }
+        return;
       }
-      if (this.selected?.path === change.path) {
-        this.selected = undefined;
-        this.post({ type: 'wcDiff', diff: undefined });
-      }
-      return;
     }
     const diff = daemon ? daemon.diff : (await this.loadDiff(change)).diff;
     this.post({ type: 'wcDiff', group: change.group, diff });

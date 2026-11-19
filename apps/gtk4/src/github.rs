@@ -1322,9 +1322,9 @@ fn create_pull_request_in(
             .has_frame(true)
             .build();
         let draft = gtk::CheckButton::with_label(&tr!("Create as Draft"));
-        sheet.add(&row(&tr!("Title:"), &title_field));
-        sheet.add(&row("base:", &base_field));
-        sheet.add(&row(&tr!("Body:"), &body_scrolled));
+        sheet.add(&row(&tr!("Title"), &title_field));
+        sheet.add(&row("base", &base_field));
+        sheet.add(&row(&tr!("Body"), &body_scrolled));
         sheet.add(&row("", &draft));
         let create = sheet.buttons(&tr!("Create"), false, None);
         // 題と base が空の間は Create を押せない（押してもシートと打った文を黙って捨てないように。macOS 版と同じ）。

@@ -395,7 +395,7 @@ final class HistoryEditController: NSViewController, NSTableViewDataSource, NSTa
         if count(.drop) > 0 { parts.append(L("%ld dropped", count(.drop))) }
         if count(.edit) > 0 { parts.append(L("%ld to change files", count(.edit))) }
         summary.stringValue = parts.isEmpty ? L("No changes yet.")
-            : L("Changes: %@.", ListFormatter.localizedString(byJoining: parts)) + " " + Actions.canUndo
+            : L("Changes: %@.", ListFormatter.localizedString(byJoining: parts)) + sentenceGap + Actions.canUndo
         updatePreview()
     }
 

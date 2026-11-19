@@ -1750,9 +1750,9 @@ impl RepoSettings {
                     this.window().as_ref(),
                     &tr!("Forget All Recorded Resolutions?"),
                     &format!(
-                        "{} {}",
+                        "{}{}{}",
                         tr!("git rerere then no longer reuses the resolutions it recorded in this repository."),
-                        crate::sheets::cant_undo()
+                        amonhen_model::i18n::sentence_gap(), crate::sheets::cant_undo()
                     ),
                 );
                 sheet.buttons(&tr!("Forget All"), true, None);

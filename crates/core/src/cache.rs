@@ -961,7 +961,12 @@ impl WriterInner {
         };
         pending.writing = true;
         drop(pending);
+        let unwinding = Unwinding {
+            inner: self,
+            thread: false,
+        };
         let result = self.write(history.as_ref());
+        std::mem::forget(unwinding);
         self.pending.lock().unwrap().writing = false;
         self.wake.notify_all();
         result
@@ -1008,8 +1013,13 @@ impl WriterInner {
             pending.writing = true;
             let epoch = pending.epoch;
             drop(pending);
+            let unwinding = Unwinding {
+                inner: &self,
+                thread: true,
+            };
             // 書けなくても History は使える。次の起動が遅くなるだけ。
             let _ = self.write(history.as_ref());
+            std::mem::forget(unwinding);
             pending = self.pending.lock().unwrap();
             pending.writing = false;
             if pending.epoch != epoch {
@@ -1021,10 +1031,36 @@ impl WriterInner {
     }
 }
 
+/// 書いている途中で panic したときに、「書いている最中」の印を戻す。戻さないと、`flush`（`Writer` を手放すときも）が
+/// 終わりを待ち続ける。
+struct Unwinding<'a> {
+    inner: &'a WriterInner,
+    /// 裏のスレッドで書いていた（スレッドが終わるので、次の `schedule` が新しく起こせるようにする）。
+    thread: bool,
+}
+
+impl Drop for Unwinding<'_> {
+    fn drop(&mut self) {
+        let mut pending = self.inner.pending.lock().unwrap_or_else(|e| e.into_inner());
+        pending.writing = false;
+        if self.thread {
+            pending.running = false;
+        }
+        drop(pending);
+        self.inner.wake.notify_all();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::graph::synthetic;
+
+    /// `flush_all` はほかのテストの `Writer` も書くので、`Writer` を使うテストは 1 つずつ走らせる。
+    fn one_writer_test() -> std::sync::MutexGuard<'static, ()> {
+        static ONE: Mutex<()> = Mutex::new(());
+        ONE.lock().unwrap_or_else(|e| e.into_inner())
+    }
 
     fn history(graph: CommitGraph) -> CachedHistory {
         CachedHistory {
@@ -1279,6 +1315,7 @@ mod tests {
     /// 続けて渡した History は、最後のものを 1 回だけ書く。手放すときは待たずに書く。
     #[test]
     fn the_writer_gathers_changes_and_writes_on_drop() {
+        let _one = one_writer_test();
         let (old, _) = synthetic::graph(1000, 2);
         let (grown, _) = synthetic::extended(1000, 3, 2);
         let dir = tempfile::tempdir().unwrap();
@@ -1292,7 +1329,13 @@ mod tests {
         );
         writer.schedule(Arc::new(history(old.clone())));
         writer.schedule(Arc::new(history(grown.clone())));
-        std::thread::sleep(Duration::from_millis(600));
+        // 機械が混んでいると、書き終わるまでに何秒もかかる。
+        let until = Instant::now() + Duration::from_secs(60);
+        while writes.lock().unwrap().is_empty() {
+            assert!(Instant::now() < until, "the write never happened");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        std::thread::sleep(Duration::from_millis(400));
         assert_eq!(writes.lock().unwrap().len(), 1);
         assert_eq!(read(&path, HistoryOrder::Date).unwrap().graph, grown);
 
@@ -1332,9 +1375,39 @@ mod tests {
         assert!(dir.path().join("assist").exists());
     }
 
+    /// 書いている途中で panic しても、`Writer` は止まらない（手放すときに待ち続けず、次の書き込みも書く）。
+    #[test]
+    fn a_panic_while_writing_does_not_block_the_writer() {
+        let _one = one_writer_test();
+        let (old, _) = synthetic::graph(100, 2);
+        let (grown, _) = synthetic::extended(100, 3, 2);
+        let dir = tempfile::tempdir().unwrap();
+        let path = path_for(dir.path(), "/r");
+        let first = std::sync::atomic::AtomicBool::new(true);
+        let writer = Writer::with_delay(
+            path.clone(),
+            Duration::ZERO,
+            Some(Box::new(move |_: &Written| {
+                if first.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                    panic!("the first write fails after it is written");
+                }
+            })),
+        );
+        writer.schedule(Arc::new(history(old)));
+        let until = Instant::now() + Duration::from_secs(60);
+        while writer.stats().count == 0 {
+            assert!(Instant::now() < until, "the first write never happened");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        writer.schedule(Arc::new(history(grown.clone())));
+        drop(writer);
+        assert_eq!(read(&path, HistoryOrder::Date).unwrap().graph, grown);
+    }
+
     /// `flush_all`（プロセスが終わるとき）は、手放されていない `Writer` の待っている書き込みを書く。
     #[test]
     fn flush_all_writes_what_is_waiting() {
+        let _one = one_writer_test();
         let (g, _) = synthetic::graph(100, 3);
         let dir = tempfile::tempdir().unwrap();
         let path = path_for(dir.path(), "/r");
