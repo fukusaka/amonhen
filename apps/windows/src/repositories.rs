@@ -508,6 +508,8 @@ pub struct State {
 /// ページの操作。
 pub enum Event {
     Category(Option<usize>),
+    /// お気に入り・グループ（分類の名前）に、一覧から引いた行（場所）を落とした。
+    DroppedOn(String, Vec<String>),
     Selected(Option<usize>),
     Filter(String),
     /// 行・分類の右クリックのメニュー。
@@ -655,6 +657,25 @@ impl State {
     }
 
     /// 右に出すリポジトリ（絞り込んだもの）。
+    /// 左の分類の並び（変わったら一覧が作り直される）。
+    pub fn side_key(&self) -> String {
+        self.categories().iter().map(|c| c.1.as_str()).collect()
+    }
+
+    /// 引いてきた行を落とせる左の行の名前（お気に入りとグループ）。
+    pub fn drop_targets(&self) -> Vec<String> {
+        self.categories()
+            .into_iter()
+            .filter(|c| matches!(c.0, Category::Favorites | Category::Group(_)))
+            .map(|c| c.1)
+            .collect()
+    }
+
+    /// 出している並び（変わったら一覧が作り直される）。
+    pub fn shown_key(&self) -> String {
+        self.shown().iter().map(|l| key(l) + "\n").collect()
+    }
+
     fn shown(&self) -> Vec<String> {
         let filter = self.filter.trim().to_lowercase();
         let mut shown: Vec<(String, String)> = self
@@ -821,6 +842,33 @@ impl State {
                 }
             }
             Event::AddSsh => return Action::AddSsh,
+            Event::DroppedOn(target, locations) => {
+                // 同じ名前なら、お気に入りを先に（グループに「お気に入り」と名付けたときも、上の行に入る）。
+                let category = self
+                    .categories()
+                    .into_iter()
+                    .find(|c| {
+                        c.1 == target && matches!(c.0, Category::Favorites | Category::Group(_))
+                    })
+                    .map(|c| c.0);
+                match category {
+                    Some(Category::Favorites) if !locations.is_empty() => self.change(|d| {
+                        for l in &locations {
+                            update(d, l, |b| {
+                                b.insert("favorite".into(), json!(true));
+                            });
+                        }
+                    }),
+                    Some(Category::Group(name)) if !locations.is_empty() => self.change(|d| {
+                        for l in &locations {
+                            update(d, l, |b| {
+                                b.insert("group".into(), json!(name));
+                            });
+                        }
+                    }),
+                    _ => {}
+                }
+            }
             Event::AddRepository => {
                 let Some(path) = crate::files::pick_folder(&tr!("Add Repositories"), &tr!("Add"))
                 else {
@@ -1049,6 +1097,8 @@ pub struct Callbacks<'a> {
     pub filter: Callback<String>,
     pub menu: Box<dyn Fn() -> Callback<String> + 'a>,
     pub button: Box<dyn Fn(&'static str) -> Callback<()> + 'a>,
+    /// 左の分類の一覧を包む Grid（引いてきた行を受ける）。
+    pub side_host: &'a ElementRef<Grid>,
     /// リポジトリの一覧を包む Grid（ダブルクリック・Enter を付ける）。
     pub list_host: &'a ElementRef<Grid>,
     /// 見出しの列の境目のつまみ（Branch・Status・Last Commit・Opened の左端。動かすと幅が変わる）。
@@ -1447,15 +1497,17 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                 ListViewItem::new().tag(name.clone()).content(content),
             )
         });
-    let side_key: String = categories.iter().map(|c| c.1.as_str()).collect();
+    let side_key = state.side_key();
+    // お気に入り・グループには、右の一覧の行を引いて入れられる（`xaml::drop_on_rows`。GTK4 版・macOS 版と同じ）。
     let side = ListView::new()
         .selected_index(Some(state.category))
         .on_selection_changed(callbacks.category.clone())
         .collection_slot(ListViewSlot::Items, side_rows);
-    let side = Border::new()
+    let side = Grid::new()
+        .element_ref(callbacks.side_host)
         .grid_column(0)
         .grid_row(1)
-        .content(View::keyed_fragment([(side_key, side)]));
+        .children((View::keyed_fragment([(side_key, side)]),));
     // 右: リポジトリの一覧。
     let shown = state.shown();
     // 見出しを押すとその列で並べる（並べている列に ▲・▼）。
@@ -1622,6 +1674,8 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
     // Ctrl・Shift で複数選べる（選んだ行の右クリックの Fetch は、選んだものすべて。macOS 版と同じ）。
     let list = ListView::new()
         .selection_mode(ListViewSelectionMode::Extended)
+        // 左のお気に入り・グループへ引いて入れる（引いた行の場所は `xaml::drag_tags` が覚える）。
+        .can_drag_items(true)
         .selected_index(index)
         .on_selection_changed(callbacks.selected)
         .collection_slot(ListViewSlot::Items, rows);
