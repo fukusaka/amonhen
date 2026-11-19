@@ -29,6 +29,8 @@ pub enum Conn {
         git: Option<String>,
         /// 共有の daemon 越しにつないだか。
         through_daemon: bool,
+        /// エンジンが持っている環境（名前の順。そのまま SSH 先の git に渡る）。
+        env: Vec<(String, String)>,
     },
     Failed(String),
 }
@@ -40,12 +42,23 @@ pub struct Session {
 }
 
 /// つないだ結果（裏のスレッドから）。
-pub type Connected = Result<(Arc<Repository>, Option<String>, Option<String>), String>;
+pub type Connected = Result<Reached, String>;
+
+/// つながった SSH 先から読んだもの。
+pub struct Reached {
+    repo: Arc<Repository>,
+    engine: Option<String>,
+    git: Option<String>,
+    env: Vec<(String, String)>,
+}
 
 pub enum Event {
     Select(Option<usize>),
     /// 真ん中の列のページ（[`PAGES`] の番号）を選んだ。
     Page(Option<usize>),
+    /// Environment Variables: 探す文字、ログインシェル経由で起動するか。
+    EnvQuery(String),
+    LoginShell(bool),
     /// ＋（加える欄を出す）・打った名前・候補を選んだ・加える・やめる。
     Add,
     AddText(String),
@@ -79,12 +92,32 @@ impl Job {
         let result =
             crate::remote::open(&self.location, self.options, self.local_signatures, &|| {}).map(
                 |repo| {
+                    let call = |command: &str| -> Value {
+                        serde_json::from_str(&repo.run_json(command)).unwrap_or_default()
+                    };
                     let engine = repo.connection_state().and_then(|c| c.engine);
-                    let reply: Value =
-                        serde_json::from_str(&repo.run_json(r#"{"op":"gitVersion"}"#))
-                            .unwrap_or_default();
-                    let git = reply["info"]["version"].as_str().map(str::to_owned);
-                    (Arc::new(repo), engine, git)
+                    let git = call(r#"{"op":"gitVersion"}"#)["info"]["version"]
+                        .as_str()
+                        .map(str::to_owned);
+                    let mut env: Vec<(String, String)> =
+                        call(r#"{"op":"processEnvironment"}"#)["info"]["vars"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|v| {
+                                Some((
+                                    v["name"].as_str()?.to_owned(),
+                                    v["value"].as_str()?.to_owned(),
+                                ))
+                            })
+                            .collect();
+                    env.sort_by_key(|(n, _)| n.to_lowercase());
+                    Reached {
+                        repo: Arc::new(repo),
+                        engine,
+                        git,
+                        env,
+                    }
                 },
             );
         Event::Connected(self.host, self.attempt, self.through_daemon, result)
@@ -105,12 +138,15 @@ pub struct State {
     pub epoch: u32,
     /// 出しているページ（[`PAGES`] の番号）。
     pub page: usize,
+    /// Environment Variables で探す文字。
+    pub env_query: String,
 }
 
 /// SSH 先ごとのページ（真ん中の列。訳は `tr!` と同じ表から）: 接続と、そこにあるすべてのリポジトリに効く
 /// Settings > Git と同じページ。
-pub const PAGES: [&str; 2] = ["Connection", "Git"];
+pub const PAGES: [&str; 3] = ["Connection", "Git", "Environment Variables"];
 const GIT_PAGE: usize = 1;
+const ENV_PAGE: usize = 2;
 
 impl State {
     pub fn new() -> (Self, Vec<Job>) {
@@ -124,6 +160,7 @@ impl State {
             engine_path: None,
             epoch: 0,
             page: 0,
+            env_query: String::new(),
         };
         let jobs = state.session_for_selected().into_iter().collect();
         (state, jobs)
@@ -210,6 +247,10 @@ impl State {
                 }
             }
             Event::Page(None) => {}
+            Event::EnvQuery(text) => self.env_query = text,
+            Event::LoginShell(on) => {
+                jobs.extend(self.save_options(|o| o.login_shell = on.then_some(true)));
+            }
             Event::Select(Some(i)) => {
                 if let Some(host) = self.hosts.get(i).cloned()
                     && self.selected.as_ref() != Some(&host)
@@ -280,11 +321,17 @@ impl State {
                     && session.attempt == attempt
                 {
                     session.conn = match result {
-                        Ok((repo, engine, git)) => Conn::Connected {
+                        Ok(Reached {
+                            repo,
+                            engine,
+                            git,
+                            env,
+                        }) => Conn::Connected {
                             repo,
                             engine,
                             git,
                             through_daemon,
+                            env,
                         },
                         Err(e) => Conn::Failed(e),
                     };
@@ -507,6 +554,7 @@ pub struct Callbacks<'a> {
     pub event: Make<'a, Option<usize>, OnPick>,
     pub text: Make<'a, String, fn(String) -> Event>,
     pub button: Make<'a, (), fn() -> Event>,
+    pub check: Make<'a, bool, fn(bool) -> Event>,
 }
 
 fn heading(text: String) -> TextBlock {
@@ -618,6 +666,7 @@ pub fn view(state: &State, callbacks: &Callbacks<'_>, git: Option<View>) -> View
     let right: View = match &state.selected {
         None => note(tr!("Add an SSH host with +, or open one from Places.")).into(),
         Some(host) if state.page == GIT_PAGE => git_view(state, host, callbacks, git, error),
+        Some(host) if state.page == ENV_PAGE => env_view(state, host, callbacks, error),
         Some(host) => connection_view(state, host, callbacks, ok, error),
     };
     // 真ん中: 選んだ SSH 先のページ。
@@ -685,15 +734,114 @@ fn git_view(
     git: Option<View>,
     error: Color,
 ) -> View {
-    match state.sessions.get(host).map(|s| &s.conn) {
-        Some(Conn::Connected { .. }) => StackPanel::new().children((
+    let Some(Conn::Connected { .. }) = state.sessions.get(host).map(|s| &s.conn) else {
+        return not_connected(state, host, callbacks, error);
+    };
+    StackPanel::new().children((
+        note(tr!(
+            "Applies to every repository on {host} (its ~/.gitconfig). git in a terminal there follows these too.",
+            host = host
+        ))
+        .margin(Thickness::new(0.0, 0.0, 0.0, 8.0)),
+        git.unwrap_or_else(|| note(tr!("Loading…")).into()),
+    ))
+}
+
+/// Environment Variables のページ: エンジンを SSH 先のログインシェル経由で起動するか（Windows の SSH 先には
+/// ログインシェルがないので出さない）と、エンジンが実際に持っている環境（そのまま git に渡る。GTK4 版の
+/// `environment::host_page`）。
+fn env_view(state: &State, host: &str, callbacks: &Callbacks<'_>, error: Color) -> View {
+    let Some(Conn::Connected { env, .. }) = state.sessions.get(host).map(|s| &s.conn) else {
+        return not_connected(state, host, callbacks, error);
+    };
+    let windows = env.iter().any(|(n, v)| n == "OS" && v == "Windows_NT");
+    let query = state.env_query.to_lowercase();
+    let secret = crate::settingsview::is_secret;
+    let rows = env
+        .iter()
+        .filter(|(name, value)| {
+            query.is_empty()
+                || name.to_lowercase().contains(&query)
+                || (!secret(name) && value.to_lowercase().contains(&query))
+        })
+        .map(|(name, value)| {
+            (
+                name.clone(),
+                Grid::new()
+                    .columns([GridLength::Pixel(200.0), GridLength::Star(1.0)])
+                    .margin(Thickness::new(0.0, 1.0, 0.0, 1.0))
+                    .children((
+                        TextBlock::new()
+                            .text(name.clone())
+                            .font_size(12.0)
+                            .is_text_selection_enabled(true)
+                            .text_trimming(TextTrimming::CharacterEllipsis)
+                            .grid_column(0),
+                        TextBlock::new()
+                            .text(if secret(name) {
+                                "••••••••".to_owned()
+                            } else {
+                                value.clone()
+                            })
+                            .font_size(12.0)
+                            .opacity(0.7)
+                            .is_text_selection_enabled(!secret(name))
+                            .text_trimming(TextTrimming::CharacterEllipsis)
+                            .grid_column(1),
+                    )),
+            )
+        });
+    let mut parts: Vec<(String, View)> = Vec::new();
+    if !windows {
+        let login = crate::remote::host_options(host).login_shell == Some(true);
+        parts.push((
+            format!("login-{login}"),
+            CheckBox::new()
+                .is_checked(login)
+                .on_is_checked_changed((callbacks.check)(Event::LoginShell))
+                .content(TextBlock::new().text(tr!("Use the login shell’s environment variables"))),
+        ));
+        parts.push((
+            "login-note".into(),
             note(tr!(
-                "Applies to every repository on {host} (its ~/.gitconfig). git in a terminal there follows these too.",
+                "Starts the engine on {host} through its login shell, so it and git get the PATH and GIT_* set in ~/.profile and the like, which a command run over ssh lacks. Changing it reconnects.",
                 host = host
             ))
-            .margin(Thickness::new(0.0, 0.0, 0.0, 8.0)),
-            git.unwrap_or_else(|| note(tr!("Loading…")).into()),
-        )),
+            .margin(Thickness::new(28.0, 0.0, 0.0, 10.0))
+            .into(),
+        ));
+    }
+    parts.extend([
+        (
+            "caption".into(),
+            note(tr!(
+                "The engine’s environment, which git on {host} gets",
+                host = host
+            ))
+            .into(),
+        ),
+        (
+            "query".into(),
+            TextBox::new()
+                .text(state.env_query.clone())
+                .placeholder_text(tr!("Search by name or value"))
+                .margin(Thickness::new(0.0, 4.0, 0.0, 4.0))
+                .on_text_changed((callbacks.text)(Event::EnvQuery))
+                .into(),
+        ),
+        (
+            "rows".into(),
+            ScrollViewer::new()
+                .max_height(360.0)
+                .content(StackPanel::new().children([View::keyed_fragment(rows)])),
+        ),
+    ]);
+    StackPanel::new().children([View::keyed_fragment(parts)])
+}
+
+/// つないでいる途中・つながらない SSH 先のページ。
+fn not_connected(state: &State, host: &str, callbacks: &Callbacks<'_>, error: Color) -> View {
+    match state.sessions.get(host).map(|s| &s.conn) {
         Some(Conn::Failed(reason)) => StackPanel::new().spacing(8.0).children((
             TextBlock::new().text(tr!("Couldn’t connect to {host}", host = host)),
             note(reason.clone())

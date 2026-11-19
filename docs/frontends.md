@@ -123,7 +123,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | SSH Hosts > Connection: signature verification | ✓ | ✓ | ✓ | n/a | n/a |  |
 | SSH Hosts > Connection: folders to scan | ✓ | ✓ | — | n/a | n/a |  |
 | SSH Hosts: git pages for every repository on the host | ✓ | ✓ | ✓ | n/a | n/a |  |
-| SSH Hosts: the host's Environment Variables (login shell switch) | ✓ | ✓ | — | n/a | n/a |  |
+| SSH Hosts: the host's Environment Variables (login shell switch) | ✓ | ✓ | ✓ | n/a | n/a |  |
 | Path picker in columns for a host or this machine | ✓ | ✓ | — | n/a | n/a |  |
 | Accounts: GitHub (CI status, avatars) | ✓ | ✓ | — | — | n/a |  |
 | Appearance: History order, one line, row items, avatars | ✓ | ✓ | △ | n/a | n/a | Windows: History's order, one line, ancestor highlight and row items (no CI status); no avatars. |

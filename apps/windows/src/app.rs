@@ -12831,6 +12831,7 @@ impl Root {
                     event: Box::new(|f| context.callback(move |v| Message::SshHosts(f(v)))),
                     text: Box::new(|f| context.callback(move |v| Message::SshHosts(f(v)))),
                     button: Box::new(|f| context.callback(move |()| Message::SshHosts(f()))),
+                    check: Box::new(|f| context.callback(move |v| Message::SshHosts(f(v)))),
                 },
             },
         );
