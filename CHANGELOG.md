@@ -16,6 +16,17 @@ becomes the GitHub Release notes.
   ancestor emphasis, and fetch, pull, push, checkout, new branch, merge, rebase, stash and undo,
   resolving conflicts by side, and asking for passwords inside the screen; `?` lists the keys. These are its first stages; see `docs/tui.md`.
 
+#### Changed
+
+- Name prompts (new branch, tag, group, LFS pattern) name their button after the action instead of OK and keep it
+  disabled until a name is typed.
+- Failures read "Couldn't …" with the error below, in a sheet on the window rather than an app-wide alert; forgetting
+  rerere resolutions and adding an SSH host ask in a sheet too.
+
+#### Fixed
+
+- Repository Settings > Remotes' Prune asks first, as the sidebar's does.
+
 ### [0.2.12] - 2026-11-18
 
 History search can match the author's email, the committer and the whole message. Amon Hen asks before sending its
@@ -39,10 +50,6 @@ drawings wrap long branch labels instead of leaving them out.
 - The submodule, subtree and New Worktree sheets label their fields on the left and enable their button once the
   required fields are filled; Merge One by One became a checkbox in the merge sheet.
 - Publish is disabled when the repository has no remote, and a remote's Rename… and Edit URL… are one Edit….
-- Name prompts (new branch, tag, group, LFS pattern) name their button after the action instead of OK and keep it
-  disabled until a name is typed.
-- Failures read "Couldn't …" with the error below, in a sheet on the window rather than an app-wide alert; forgetting
-  rerere resolutions and adding an SSH host ask in a sheet too.
 - In the before-and-after drawings, branch labels that don't fit on a commit's line wrap onto up to three lines
   below it instead of being left out, with the rest gathered into a "+n" label that lists them in its tooltip; a very
   tall drawing scrolls inside the sheet.
@@ -50,7 +57,6 @@ drawings wrap long branch labels instead of leaving them out.
 #### Fixed
 
 - The confirmation for closing the merge editor without saving keeps its buttons side by side.
-- Repository Settings > Remotes' Prune asks first, as the sidebar's does.
 - macOS: in a see-through window, the sidebar's divider line stops below the toolbar instead of running up to the
   window's top edge.
 - A long branch name no longer widens History's context menu: its Copy Branch Name item cuts the name in the middle.
