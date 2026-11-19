@@ -31,6 +31,8 @@ becomes the GitHub Release notes.
 #### Fixed
 
 - Repository Settings > Remotes' Prune asks first, as the sidebar's does.
+- The engine on Windows opens repositories on SSH hosts (`-C ssh://…`): it no longer relies on ssh's connection
+  sharing, which Windows' OpenSSH lacks, and sends the engine to the host with scp correctly.
 
 ### [0.2.12] - 2026-11-18
 

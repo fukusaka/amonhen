@@ -1,7 +1,8 @@
 //! SSH 先のエンジン（`amonhen --stdio`）。SSH 先に入っていなければ、手元に同梱したものを送り込んでから起動する
 //! （VSCode の Remote-SSH・Zed のリモート開発と同じ形）。
 //!
-//! 1. SSH の接続は使い回す（ControlMaster）。調べる・送る・起動するを少ないログインで済ませる。
+//! 1. SSH の接続は使い回す（ControlMaster。Windows からつなぐときは使えないので毎回つなぐ）。調べる・送る・起動する
+//!    を少ないログインで済ませる。
 //! 2. SSH 先の OS と CPU（`uname -sm`）、`PATH` の `amonhen` の版、置いてあるエンジンを 1 回で調べる。
 //! 3. 使うエンジンを決める: `AMONHEN_REMOTE_ENGINE` で指定したもの → `PATH` の `amonhen`（通信の形の版が合えば）
 //!    → 置いてある同じ中身のもの → 送り込む（`AMONHEN_PUSH=0` なら送らずにやめる）。
@@ -267,7 +268,9 @@ fn base_args(target: &Target, share: bool) -> Vec<String> {
         "-o".into(),
         "BatchMode=yes".into(),
     ];
-    if share {
+    // Windows の OpenSSH は ControlMaster を使えない（`getsockname failed: Not a socket` で切れる）。Windows から
+    // つなぐときは、毎回つなぐ。
+    if share && !cfg!(windows) {
         args.extend([
             "-o".into(),
             "ControlMaster=auto".into(),
@@ -874,7 +877,7 @@ fn push_windows(
             a.clone()
         }
     }));
-    args.push(local.display().to_string());
+    args.push(scp_local_path(local));
     args.push(format!(
         "{}:{}/{tmp}",
         target.destination,
@@ -926,6 +929,19 @@ fn push_windows(
         .into());
     }
     Ok(())
+}
+
+/// scp に渡す手元のパス。Windows の `\\?\` で始まるパス（`canonicalize` の形）は、scp が `:` の前を接続先と
+/// 読む（`hostname contains invalid characters`）ので、ふつうの形にする。
+fn scp_local_path(local: &std::path::Path) -> String {
+    let text = local.display().to_string();
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{rest}")
+    } else if let Some(rest) = text.strip_prefix(r"\\?\") {
+        rest.to_owned()
+    } else {
+        text
+    }
 }
 
 /// `ssh` の隣の scp。隣になければ（`ssh` だけ、`AMONHEN_SSH` で差し替えたもの）PATH の scp。
@@ -1082,6 +1098,18 @@ mod tests {
         assert!(!is_engine_path("installed"));
         assert!(!is_engine_path("sent"));
         assert!(!is_engine_path("C:amonhen.exe"));
+        assert_eq!(
+            scp_local_path(std::path::Path::new(r"\\?\C:\src\amonhen.exe")),
+            r"C:\src\amonhen.exe"
+        );
+        assert_eq!(
+            scp_local_path(std::path::Path::new(r"\\?\UNC\server\share\amonhen.exe")),
+            r"\\server\share\amonhen.exe"
+        );
+        assert_eq!(
+            scp_local_path(std::path::Path::new("/opt/amonhen")),
+            "/opt/amonhen"
+        );
         assert_eq!(scp_program("ssh"), "scp");
         let dir = std::env::temp_dir().join(format!("amonhen-scp-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();

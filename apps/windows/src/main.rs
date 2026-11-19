@@ -30,6 +30,7 @@ mod prefs;
 mod programs;
 mod rangediff;
 mod reflog;
+mod remote;
 mod render;
 mod reposettings;
 mod repositories;

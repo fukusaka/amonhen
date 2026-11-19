@@ -10,6 +10,8 @@ use serde_json::{Map, Value};
 pub const AUTO_MAGIC_MERGE: &str = "autoMagicMerge";
 /// リポジトリを開いたときに commit-graph を書き出す・書き足す（既定はしない。GTK4 版・macOS 版と同じ鍵）。
 pub const WRITE_COMMIT_GRAPH: &str = "writeCommitGraph";
+/// リポジトリを共有の daemon 越しに開く（SSH 先も。GTK4 版と同じ鍵）。
+pub const OPEN_THROUGH_DAEMON: &str = "openThroughDaemon";
 /// status で git の fsmonitor を使う（既定は使わない。GTK4 版・macOS 版と同じ鍵）。
 pub const USE_FSMONITOR: &str = "useFSMonitor";
 /// 自動の fetch の間隔（分。0 はしない。GTK4 版・macOS 版と同じ鍵）。
