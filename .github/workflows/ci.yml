@@ -57,7 +57,11 @@ jobs:
           persist-credentials: false
       # runner の rustup で、その時点の stable を入れる。
       - run: rustup toolchain install stable --profile minimal --component clippy,rustfmt && rustup default stable
+      # macOS では Swift の試験のために release のコアも作るので、キャッシュを別の名前にする。同じ名前のキャッシュが
+      # あると置き直さないので、debug だけのキャッシュが残り、release を毎回作り直してしまう。
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: ${{ runner.os == 'macOS' && 'swift' || '' }}
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       # 1 つの crate で落ちても、ほかの crate の試験は最後まで流す。
