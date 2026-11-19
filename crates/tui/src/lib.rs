@@ -49,9 +49,10 @@ pub struct Clock {
     pub local: fn(i64) -> String,
 }
 
-/// 端末を取って、終わる（`q`）まで動かす。
-pub fn run(front: Arc<dyn Front>, local: fn(i64) -> String) -> Result<()> {
-    run_with(front, local, |_| Ok(()))
+/// 端末を取って、終わる（`q`）まで動かす。`files_here` は、作業ツリーのファイルがこの機械にあるか（`ssh://` の先
+/// なら false。エディタで開けない）。
+pub fn run(front: Arc<dyn Front>, local: fn(i64) -> String, files_here: bool) -> Result<()> {
+    run_with(front, local, files_here, |_| Ok(()))
 }
 
 /// `run` と同じ。`askpass` があれば、git や ssh が尋ねてきたことを画面で聞く。
@@ -59,14 +60,16 @@ pub fn run(front: Arc<dyn Front>, local: fn(i64) -> String) -> Result<()> {
 pub fn run_asking(
     front: Arc<dyn Front>,
     local: fn(i64) -> String,
+    files_here: bool,
     askpass: &askpass::Askpass,
 ) -> Result<()> {
-    run_with(front, local, |events| askpass.serve(events))
+    run_with(front, local, files_here, |events| askpass.serve(events))
 }
 
 fn run_with(
     front: Arc<dyn Front>,
     local: fn(i64) -> String,
+    files_here: bool,
     serve: impl FnOnce(mpsc::Sender<Event>) -> Result<()>,
 ) -> Result<()> {
     let (tx, rx) = mpsc::channel();
@@ -81,6 +84,7 @@ fn run_with(
         }
     }));
     let mut app = App::new(front, tx, Clock { now: now(), local });
+    app.set_files_here(files_here);
     let (cols, rows) = terminal::size()?;
     app.resize(cols, rows);
     app.start();
@@ -124,8 +128,65 @@ fn run_with(
             app.resize(cols, rows);
             app.message_edited(edited);
         }
+        // 作業ツリーのファイルを、エディタで開く。閉じるまで端末を渡す。
+        if let Some((file, workdir)) = app.take_open_file() {
+            input_paused.store(true, Ordering::Relaxed);
+            std::thread::sleep(terminal::INPUT_POLL * 2);
+            let opened = screen.outside(app.mouse_captured(), || {
+                open_in_editor(std::path::Path::new(&file), workdir.as_deref())
+            })?;
+            input_paused.store(false, Ordering::Relaxed);
+            let (cols, rows) = terminal::size()?;
+            app.resize(cols, rows);
+            app.file_opened(opened);
+        }
     }
     Ok(())
+}
+
+/// git のエディタ（`git var GIT_EDITOR`: `GIT_EDITOR`・`core.editor`・`VISUAL`・`EDITOR` の順）。`dir` は、その
+/// 設定を読むリポジトリ。
+fn git_editor(dir: &std::path::Path) -> Result<String> {
+    let out = amonhen_model::process::command("git")
+        .args(["var", "GIT_EDITOR"])
+        .current_dir(dir)
+        .output()?;
+    let editor = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+    if !out.status.success() || editor.is_empty() {
+        return Err(amonhen_model::tr!(
+            "git has no editor set (GIT_EDITOR, core.editor, VISUAL, EDITOR)"
+        )
+        .into());
+    }
+    Ok(editor)
+}
+
+/// `file` を git のエディタで開き、閉じるまで待つ（git と同じく、シェルに渡す。エディタの指定に引数があってもよい）。
+fn run_editor(
+    editor: &str,
+    file: &std::path::Path,
+    dir: &std::path::Path,
+) -> std::io::Result<bool> {
+    Ok(amonhen_model::process::command("sh")
+        .args(["-c", &format!("{editor} \"$@\""), "sh"])
+        .arg(file)
+        .current_dir(dir)
+        .status()?
+        .success())
+}
+
+/// 作業ツリーのファイル `file` を git のエディタで開く。
+fn open_in_editor(file: &std::path::Path, workdir: Option<&str>) -> Result<()> {
+    let dir = workdir
+        .map(std::path::Path::new)
+        .filter(|d| d.is_dir())
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_else(|| ".".into());
+    let editor = git_editor(&dir)?;
+    match run_editor(&editor, file, &dir)? {
+        true => Ok(()),
+        false => Err(amonhen_model::tr!("The editor ended with an error").into()),
+    }
 }
 
 /// `message` を一時ファイルに書いて git のエディタ（`git var GIT_EDITOR`: `GIT_EDITOR`・`core.editor`・
@@ -136,31 +197,16 @@ fn edit(message: &str, workdir: Option<&str>) -> Result<String> {
         .filter(|d| d.is_dir())
         .map(std::path::Path::to_path_buf)
         .unwrap_or_else(|| ".".into());
-    let out = amonhen_model::process::command("git")
-        .args(["var", "GIT_EDITOR"])
-        .current_dir(&dir)
-        .output()?;
-    let editor = String::from_utf8_lossy(&out.stdout).trim().to_owned();
-    if !out.status.success() || editor.is_empty() {
-        return Err(amonhen_model::tr!(
-            "git has no editor set (GIT_EDITOR, core.editor, VISUAL, EDITOR)"
-        )
-        .into());
-    }
+    let editor = git_editor(&dir)?;
     let file =
         std::env::temp_dir().join(format!("amonhen-tui-{}-COMMIT_EDITMSG", std::process::id()));
     std::fs::write(&file, format!("{message}\n"))?;
-    // git と同じく、シェルに渡す（エディタの指定に引数があってもよい）。
-    let status = amonhen_model::process::command("sh")
-        .args(["-c", &format!("{editor} \"$@\""), "sh"])
-        .arg(&file)
-        .current_dir(&dir)
-        .status();
+    let status = run_editor(&editor, &file, &dir);
     let text = std::fs::read_to_string(&file);
     let _ = std::fs::remove_file(&file);
     match status {
-        Ok(status) if status.success() => Ok(text?),
-        Ok(_) => Err(amonhen_model::tr!(
+        Ok(true) => Ok(text?),
+        Ok(false) => Err(amonhen_model::tr!(
             "The editor ended with an error; the message is unchanged"
         )
         .into()),
@@ -508,4 +554,39 @@ fn now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs() as i64)
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    /// git のエディタ（ここではリポジトリの `core.editor`）でファイルを開き、閉じるまで待つ。エディタが失敗すれば
+    /// エラー。
+    #[test]
+    fn opens_a_file_in_gits_editor() {
+        amonhen_model::testing::isolate_from_user_settings();
+        let dir = tempfile::tempdir().unwrap();
+        let git = |args: &[&str]| {
+            let out = amonhen_model::process::command("git")
+                .args(args)
+                .current_dir(dir.path())
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "git {args:?}");
+        };
+        git(&["init", "-q"]);
+        // 引数のあるエディタの指定も、git と同じくシェルが読む。
+        git(&["config", "core.editor", "sed -i.bak s/one/two/"]);
+        let file = dir.path().join("a.txt");
+        std::fs::write(&file, "one\n").unwrap();
+        let workdir = dir.path().to_str();
+        // GIT_EDITOR が設定された機械では、それが先に効く。そのときは確かめない。
+        if std::env::var_os("GIT_EDITOR").is_some() {
+            return;
+        }
+        open_in_editor(&file, workdir).unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "two\n");
+        git(&["config", "core.editor", "false"]);
+        assert!(open_in_editor(&file, workdir).is_err());
+    }
 }

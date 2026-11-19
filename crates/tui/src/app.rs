@@ -169,6 +169,10 @@ pub struct App {
     confirm: Option<(String, String, Request)>,
     /// push を確かめている: `t` で、送り先のブランチを打てる。
     push_to_offered: bool,
+    /// 作業ツリーのファイルがこの機械にある（`ssh://` の先でない）。エディタで開けるか。
+    files_here: bool,
+    /// エディタで開く作業ツリーのファイル（絶対パス）。
+    open_file: Option<String>,
     /// いくつかから選んで行う操作: 尋ねる文と、キー・名前・頼む中身の組。
     choices: Option<(String, Vec<Choice>)>,
     /// マウスを取り込んでいる（切ると、端末で文字を選べる）。
@@ -303,6 +307,8 @@ impl App {
             help_top: 0,
             palette: None,
             push_to_offered: false,
+            files_here: true,
+            open_file: None,
             search: None,
             search_done: 0.0,
             theme: Theme::detect(),
@@ -502,6 +508,26 @@ impl App {
         }
         std::mem::take(&mut self.edit_message)
             .then(|| (self.changes.message.text(), self.workdir.clone()))
+    }
+
+    /// 作業ツリーのファイルがこの機械にあるか（`ssh://` の先なら false）。
+    pub fn set_files_here(&mut self, here: bool) {
+        self.files_here = here;
+    }
+
+    /// エディタで開くファイルと、作業ツリーの場所（聞いたら、なかったことにする）。
+    pub fn take_open_file(&mut self) -> Option<(String, Option<String>)> {
+        let file = self.open_file.take()?;
+        Some((file, self.workdir.clone()))
+    }
+
+    /// エディタを閉じた。だめなら理由を出す。中身が変わったかもしれないので、状態を読み直す。
+    pub fn file_opened(&mut self, result: Result<()>) {
+        if let Err(error) = result {
+            self.error = Some(error.to_string());
+        }
+        self.changes.refresh();
+        self.dirty = true;
     }
 
     /// エディタを閉じた後のメッセージ。だめなら理由を出し、メッセージはそのまま。
@@ -2031,6 +2057,7 @@ impl App {
                 ("Space", tr!("Stage or unstage the file")),
                 ("d", tr!("Discard the file's changes")),
                 ("B L", tr!("Blame, File History of the file")),
+                ("e", tr!("Open the file in git's editor")),
                 (
                     "o t",
                     tr!("Take the current or the incoming side of a conflicted file"),
@@ -2197,6 +2224,30 @@ impl App {
                 true
             }
             // 選んでいるファイルの Blame・File History を開く。
+            // 作業ツリーのファイルを、git のエディタで開く（端末を渡す）。
+            KeyCode::Char('e') => {
+                match (self.changes.selected_path(), self.workdir.as_deref()) {
+                    _ if !self.files_here => {
+                        self.error = Some(tr!(
+                            "The files are on another machine; open them in a terminal there"
+                        ));
+                    }
+                    (Some(path), Some(workdir)) => {
+                        let file = std::path::Path::new(workdir).join(path);
+                        match file.is_file() {
+                            true => self.open_file = Some(file.to_string_lossy().into_owned()),
+                            false => {
+                                self.error = Some(tr!(
+                                    "{path} isn’t a file in the working tree",
+                                    path = path
+                                ))
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+                true
+            }
             KeyCode::Char('B' | 'L') => match self.changes.selected_path() {
                 Some(path) => {
                     self.file.open(path, code == KeyCode::Char('B'), None);
@@ -3147,6 +3198,36 @@ mod tests {
         let mut buf = Buffer::empty(Rect::new(0, 0, 100, 12));
         app.draw(&mut buf, Damage::ALL);
         (0..100).map(|x| buf[(x, 11)].symbol()).collect()
+    }
+
+    /// Working Copy の `e`: 選んでいるファイルを、作業ツリーの絶対パスでエディタに渡す。`ssh://` の先なら断る。
+    #[test]
+    fn e_opens_the_selected_file_only_when_the_files_are_here() {
+        let (dir, mut app, rx) = app_with_history();
+        std::fs::write(dir.path().join("a.txt"), "a\n").unwrap();
+        // 変化の知らせは来ないので、読み直させる。
+        app.changes.refresh();
+        let key = |app: &mut App, ch: char| {
+            app.handle(Event::Input(Input::Key(KeyEvent::new(
+                KeyCode::Char(ch),
+                KeyModifiers::NONE,
+            ))));
+        };
+        key(&mut app, '1');
+        crate::settle(&mut app, &rx).unwrap();
+        key(&mut app, 'e');
+        let (file, workdir) = app.take_open_file().expect("a file to open");
+        assert_eq!(
+            std::fs::canonicalize(&file).unwrap(),
+            std::fs::canonicalize(dir.path().join("a.txt")).unwrap()
+        );
+        assert!(workdir.is_some());
+        assert!(app.take_open_file().is_none());
+        // ほかの機械のファイルは開かない。
+        app.set_files_here(false);
+        key(&mut app, 'e');
+        assert!(app.take_open_file().is_none());
+        assert!(bottom_line(&mut app).contains("The files are on another machine"));
     }
 
     /// 動いている検索の途中の結果: 最初に届いた分で合った行へ移り、後から届く分では動かさない。一番下の行に、
