@@ -1,5 +1,5 @@
 #!/bin/sh
-# PR の CI で macOS のジョブ（Rust・VSCode 拡張・Swift・CodeQL の Swift）を流すかを決め、GITHUB_OUTPUT に
+# PR の CI で macOS のジョブ（Rust と Swift・VSCode 拡張）を流すかを決め、GITHUB_OUTPUT に
 # `macos=true` か `macos=false` を書く。macOS のランナーは数が少なく待ちが長いので、Windows のアプリ
 # （apps/windows）と文書だけを変えた PR では流さない。main への push（snapshot・正式版の前の確認）や、ほかの
 # ファイルに触れた PR では流す。
