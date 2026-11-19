@@ -758,6 +758,7 @@ pub enum CommandBarCommand {
         label: String,
         icon: Option<Symbol>,
         enabled: bool,
+        tooltip: Option<String>,
     },
     Separator {
         key: Key,
@@ -771,6 +772,7 @@ impl CommandBarCommand {
             label: label.into(),
             icon: None,
             enabled: true,
+            tooltip: None,
         }
     }
 
@@ -780,11 +782,20 @@ impl CommandBarCommand {
             label: label.into(),
             icon: Some(icon),
             enabled: true,
+            tooltip: None,
         }
     }
 
     pub fn separator(key: impl Into<Key>) -> Self {
         Self::Separator { key: key.into() }
+    }
+
+    /// Gives a button a text tooltip (separators are returned unchanged).
+    pub fn tooltip(mut self, value: impl Into<String>) -> Self {
+        if let Self::Button { tooltip, .. } = &mut self {
+            *tooltip = Some(value.into());
+        }
+        self
     }
 
     /// Makes a button enabled or disabled (separators are returned unchanged).
@@ -808,6 +819,7 @@ impl CommandBarCommand {
                 label,
                 icon,
                 enabled,
+                tooltip,
             } => {
                 let callback = on_click.clone();
                 // Report the button's key, so buttons with the same label can be told apart.
@@ -824,6 +836,10 @@ impl CommandBarCommand {
                         SymbolIcon::new().symbol(icon),
                     )]),
                     None => button.into(),
+                };
+                let view = match tooltip {
+                    Some(text) => view.tooltip(text),
+                    None => view,
                 };
                 KeyedView { key, view }
             }
@@ -937,12 +953,13 @@ pub enum RichTextInline {
     LineBreak,
 }
 
-/// A text run with optional bold and italic styling.
+/// A text run with optional bold and italic styling and text color.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RichTextRun {
     pub text: String,
     pub is_bold: bool,
     pub is_italic: bool,
+    pub foreground: Option<Color>,
 }
 
 impl RichTextRun {

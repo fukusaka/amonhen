@@ -108,11 +108,20 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                     TextBlock::new().text(meta).font_size(11.0).opacity(0.7),
                 ));
                 // そのコミットの時点の Blame（GTK4 版の変更ファイルのメニューと同じ）。
+                // その版に戻す・その前の版に戻す（GTK4 版の `restoresheet::items`）。
                 let row = row.menu(Menu::new(
-                    [MenuItem::item(
-                        format!("blame:{}", e.oid),
-                        tr!("Blame at {commit}", commit = &e.oid[..e.oid.len().min(8)]),
-                    )],
+                    [
+                        MenuItem::item(
+                            format!("blame:{}", e.oid),
+                            tr!("Blame at {commit}", commit = &e.oid[..e.oid.len().min(8)]),
+                        ),
+                        MenuItem::separator("-restore"),
+                        MenuItem::item(format!("restore:{}", e.oid), tr!("Restore This Version…")),
+                        MenuItem::item(
+                            format!("restore-before:{}", e.oid),
+                            tr!("Restore Version Before This Commit…"),
+                        ),
+                    ],
                     (callbacks.menu)(),
                 ));
                 (

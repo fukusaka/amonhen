@@ -305,6 +305,68 @@ struct NativeOwnedMenu {
     kind: OwnedMenuKind,
     _flyout: Option<MenuFlyout>,
     _revokers: Vec<windows_core::EventRevoker>,
+    /// The items the native menu was built from.
+    items: Vec<MenuItem>,
+    /// The revision the items' click handlers report (updated when the items change in place).
+    revision: Rc<Cell<u32>>,
+}
+
+/// Whether two item lists differ only in labels and enabled states, so the native items can be
+/// updated in place.
+fn same_menu_shape(a: &[MenuItem], b: &[MenuItem]) -> bool {
+    a.len() == b.len()
+        && a.iter().zip(b).all(|(a, b)| match (a, b) {
+            (
+                MenuItem::Item {
+                    key: ka,
+                    shortcut: sa,
+                    ..
+                },
+                MenuItem::Item {
+                    key: kb,
+                    shortcut: sb,
+                    ..
+                },
+            ) => ka == kb && sa == sb,
+            (MenuItem::Separator { key: ka }, MenuItem::Separator { key: kb }) => ka == kb,
+            (
+                MenuItem::Submenu {
+                    key: ka, items: ia, ..
+                },
+                MenuItem::Submenu {
+                    key: kb, items: ib, ..
+                },
+            ) => ka == kb && same_menu_shape(ia, ib),
+            _ => false,
+        })
+}
+
+/// Updates the labels and enabled states of native menu items built from an item list of the same
+/// shape.
+fn update_menu_items(
+    items: &[MenuItem],
+    output: &windows_collections::IVector<MenuFlyoutItemBase>,
+) -> Result<(), RuntimeError> {
+    for (i, item) in items.iter().enumerate() {
+        let native = output.GetAt(i as u32).map_err(native_error)?;
+        match item {
+            MenuItem::Item { label, enabled, .. } => {
+                let native = native.cast::<MenuFlyoutItem>().map_err(native_error)?;
+                native.SetText(label).map_err(native_error)?;
+                native
+                    .cast::<IControl>()
+                    .and_then(|control| control.SetIsEnabled(*enabled))
+                    .map_err(native_error)?;
+            }
+            MenuItem::Separator { .. } => {}
+            MenuItem::Submenu { label, items, .. } => {
+                let native = native.cast::<MenuFlyoutSubItem>().map_err(native_error)?;
+                native.SetText(label).map_err(native_error)?;
+                update_menu_items(items, &native.Items().map_err(native_error)?)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 struct NativeCommandBarFlyout {
@@ -414,7 +476,7 @@ fn build_command_bar_element(
 fn build_menu_items(
     items: &[MenuItem],
     owner: NodeId,
-    revision: u32,
+    revision: &Rc<Cell<u32>>,
     sink: &EventSink,
     output: &windows_collections::IVector<MenuFlyoutItemBase>,
     revokers: &mut Vec<windows_core::EventRevoker>,
@@ -458,12 +520,13 @@ fn build_menu_items(
                 // Report the item's key, so items with the same label can be told apart.
                 let key = key.text();
                 let sink = sink.clone();
+                let revision = revision.clone();
                 revokers.push(
                     item.Click(move |_, _| {
                         sink.enqueue(
                             owner,
                             EventId::OwnedMenuItemInvoked,
-                            revision,
+                            revision.get(),
                             EventPayload::String(key.clone()),
                         );
                     })
@@ -534,6 +597,30 @@ fn tree_node_identity(node: &impl Interface) -> Option<usize> {
 /// view item under the pointer) back to the key it gave the node.
 pub fn tree_node_key_by_identity(identity: usize) -> Option<String> {
     TREE_NODE_KEYS.with(|keys| keys.borrow().get(&identity).cloned())
+}
+
+/// Sets the text tooltip of an element the app found itself (for example the tree view item
+/// under the pointer), or clears it with `None`.
+pub fn set_tooltip_text(
+    element: &windows_core::IInspectable,
+    text: Option<&str>,
+) -> windows_core::Result<()> {
+    let target = element.cast::<DependencyObject>()?;
+    match text {
+        Some(text) => {
+            let content: windows_core::IInspectable =
+                windows_reference::IReference::from(windows_core::HSTRING::from(text)).into();
+            ToolTipService::SetToolTip(&target, &content)
+        }
+        None => ToolTipService::SetToolTip(&target, None::<&windows_core::IInspectable>),
+    }
+}
+
+/// Shows a check box (or toggle button) the app found itself as neither checked nor unchecked.
+/// Its declared `is_checked` stays as it was, so the app recreates the element (for example under
+/// a new key) when the state should change again.
+pub fn set_check_mixed(element: &windows_core::IInspectable) -> windows_core::Result<()> {
+    element.cast::<IToggleButton>()?.SetIsChecked(None)
 }
 
 /// The key of an invoked tree view node.
@@ -2285,6 +2372,39 @@ impl WinUiRuntime {
                 items,
                 revision,
             } => {
+                // A menu bar item whose items keep their shape is updated in place: clearing and
+                // rebuilding the items of a menu bar item that is open (or closing, as when one of
+                // its items was just chosen) leaves the old items listed alongside the new ones.
+                if *kind == OwnedMenuKind::MenuBarItem
+                    && let Some(items) = items
+                    && let Some(previous) = self.owned_menus.get_mut(owner)
+                    && previous.kind == OwnedMenuKind::MenuBarItem
+                    && previous.target == *target
+                    && same_menu_shape(&previous.items, items)
+                    && let Some(Handle::MenuBarItem(item)) = self.handles.get(target)
+                {
+                    update_menu_items(items, &item.Items().map_err(native_error)?)?;
+                    previous.items = items.clone();
+                    previous.revision.set(*revision);
+                    return Ok(());
+                }
+                // A context or button flyout of the same shape is updated in place too: replacing it
+                // while it is open leaves the open flyout's items reporting the old revision, so
+                // choosing one of them does nothing (as when a right click also re-renders the
+                // owner).
+                if *kind != OwnedMenuKind::MenuBarItem
+                    && let Some(items) = items
+                    && let Some(previous) = self.owned_menus.get_mut(owner)
+                    && previous.kind == *kind
+                    && previous.target == *target
+                    && same_menu_shape(&previous.items, items)
+                    && let Some(flyout) = &previous._flyout
+                {
+                    update_menu_items(items, &flyout.Items().map_err(native_error)?)?;
+                    previous.items = items.clone();
+                    previous.revision.set(*revision);
+                    return Ok(());
+                }
                 if let Some(previous) = self.owned_menus.remove(owner) {
                     match previous.kind {
                         OwnedMenuKind::ButtonFlyout | OwnedMenuKind::DropDownButtonFlyout => {
@@ -2321,13 +2441,14 @@ impl WinUiRuntime {
                 };
                 let sink = self.event_sink()?;
                 let mut revokers = Vec::new();
+                let revision = Rc::new(Cell::new(*revision));
                 let flyout = match kind {
                     OwnedMenuKind::ButtonFlyout | OwnedMenuKind::DropDownButtonFlyout => {
                         let flyout = MenuFlyout::new().map_err(native_error)?;
                         build_menu_items(
                             items,
                             *owner,
-                            *revision,
+                            &revision,
                             &sink,
                             &flyout.Items().map_err(native_error)?,
                             &mut revokers,
@@ -2343,7 +2464,7 @@ impl WinUiRuntime {
                         build_menu_items(
                             items,
                             *owner,
-                            *revision,
+                            &revision,
                             &sink,
                             &flyout.Items().map_err(native_error)?,
                             &mut revokers,
@@ -2361,7 +2482,7 @@ impl WinUiRuntime {
                         build_menu_items(
                             items,
                             *owner,
-                            *revision,
+                            &revision,
                             &sink,
                             &item.Items().map_err(native_error)?,
                             &mut revokers,
@@ -2376,6 +2497,8 @@ impl WinUiRuntime {
                         kind: *kind,
                         _flyout: flyout,
                         _revokers: revokers,
+                        items: items.clone(),
+                        revision,
                     },
                 );
             }

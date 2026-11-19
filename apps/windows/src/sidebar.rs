@@ -10,12 +10,78 @@
 
 use std::collections::{HashMap, HashSet};
 
-use amonhen_model::{RefEntry, RefKind, Refs};
+use amonhen_model::{RefEntry, RefKind, Refs, tr};
 use serde_json::Value;
 use windows_reactor::TreeNode;
 
+thread_local! {
+    /// 絞り込んでいる間（フォルダを開いて、合うものを見せる）。`nodes` が作る間だけ。
+    static EXPAND: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// 行のツールチップ（項目のキーごと。印の意味など）。`nodes` が作り直す。
+    static TIPS: std::cell::RefCell<HashMap<String, String>> = std::cell::RefCell::new(HashMap::new());
+}
+
+/// 項目のツールチップ（GTK4 版の行のツールチップ: 印の意味と、submodule・subtree・タグの様子）。
+pub fn tooltip(key: &str) -> Option<String> {
+    TIPS.with(|t| t.borrow().get(key).cloned())
+}
+
+fn set_tooltip(key: &str, lines: Vec<String>) {
+    if !lines.is_empty() {
+        TIPS.with(|t| t.borrow_mut().insert(key.to_owned(), lines.join("\n")));
+    }
+}
+
 /// Inactive とみなす日数（最後のコミットからこれだけ経ったブランチ）。
 const STALE_DAYS: i64 = 90;
+
+/// リポジトリの形（`repositoryForm` の答えのうち、印に使うもの。GTK4 版の `repoform::Form`）。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RepositoryForm {
+    pub shallow: bool,
+    /// partial clone なら取らずにおいたもの（`blob:none` など）。
+    pub partial: Option<String>,
+    /// sparse checkout なら 1 文の説明（Working Copy の一覧の上に出す）。
+    pub sparse: Option<String>,
+}
+
+impl RepositoryForm {
+    pub fn from_info(info: &Value) -> Self {
+        let sparse = info["sparse"].as_object().map(|s| {
+            let cone = s.get("cone").and_then(Value::as_bool).unwrap_or(false);
+            let folders = s
+                .get("folders")
+                .and_then(Value::as_array)
+                .map_or(0, Vec::len);
+            if !cone {
+                amonhen_model::tr!(
+                    "Sparse checkout: only the files matching its patterns are checked out."
+                )
+            } else {
+                match folders {
+                    0 => amonhen_model::tr!(
+                        "Sparse checkout: only the files at the top are checked out."
+                    ),
+                    1 => amonhen_model::tr!("Sparse checkout: only 1 folder is checked out."),
+                    n => amonhen_model::tr!(
+                        "Sparse checkout: only {count} folders are checked out.",
+                        count = n
+                    ),
+                }
+            }
+        });
+        Self {
+            shallow: info["shallow"].as_bool().unwrap_or(false),
+            partial: info["partial"].as_object().map(|p| {
+                p.get("filter")
+                    .and_then(Value::as_str)
+                    .unwrap_or("?")
+                    .to_owned()
+            }),
+            sparse,
+        }
+    }
+}
 
 /// ブランチ 1 本の分け方（`branchGroups` の 1 件）。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -73,19 +139,110 @@ pub fn parse_ref_key(key: &str) -> Option<(u8, &str)> {
     Some((kind.parse().ok()?, name))
 }
 
+/// 行に付ける印のもと: リポジトリの形、コンフリクトの数、タグのリモートでの様子（`tagRemotes` の info）。
+pub struct Marks<'a> {
+    pub form: &'a RepositoryForm,
+    pub conflicts: usize,
+    pub tag_remotes: &'a serde_json::Value,
+    /// submodule の様子（コアの `submodules` の info の `submodules`）。
+    pub submodules: &'a serde_json::Value,
+    /// subtree（コアの `subtrees` の info の `subtrees`）。
+    pub subtrees: &'a serde_json::Value,
+    /// 署名のあるタグの状態と署名者（コアの `tagSignatures`）。
+    pub tag_signatures: &'a std::collections::HashMap<String, (crate::signature::Status, String)>,
+}
+
 /// サイドバーの木。`refs` がまだなければ Workspace だけ。
 /// `range_diff` なら、Workspace に Range Diff の行を出す（開いている間だけ）。
+/// `worktrees` は worktree の行（キーと見出し。2 つ以上あるときだけ Working Copy の下に出す）。
+/// `form` はリポジトリの形の印（History の行の後ろ・Working Copy の行の後ろ。GTK4 版の `history_marks` と
+/// sparse checkout の印）。
 pub fn nodes(
     refs: Option<&Refs>,
     groups: Option<&BranchGroups>,
     range_diff: bool,
+    worktrees: &[(String, String)],
+    marks: Marks,
+    filter: &str,
 ) -> Vec<TreeNode> {
-    let mut workspace = vec![
-        TreeNode::new("page:working-copy", "Working Copy"),
-        TreeNode::new("page:history", "History"),
-    ];
+    let Marks {
+        form,
+        conflicts,
+        tag_remotes,
+        submodules: submodule_states,
+        subtrees,
+        tag_signatures,
+    } = marks;
+    TIPS.with(|t| t.borrow_mut().clear());
+    let mut history_tips = Vec::new();
+    if form.shallow {
+        history_tips.push(tr!("Shallow clone: older history isn’t fetched"));
+    }
+    if let Some(filter) = &form.partial {
+        history_tips.push(tr!(
+            "Partial clone: file contents are fetched when needed ({filter})",
+            filter = filter
+        ));
+    }
+    set_tooltip("page:history", history_tips);
+    set_tooltip("page:working-copy", form.sparse.iter().cloned().collect());
+    let mut history = String::from("History");
+    if form.shallow {
+        history.push_str("  ✂");
+    }
+    if form.partial.is_some() {
+        history.push_str("  ☁");
+    }
+    let working = if form.sparse.is_some() {
+        "Working Copy  ⊟"
+    } else {
+        "Working Copy"
+    };
+    // worktree が 2 つ以上あれば、Working Copy の下に並べる（GTK4 版・macOS 版と同じ。✎ ⌂ ⑂ と変更の数つき）。
+    let mut working = TreeNode::new("page:working-copy", working);
+    if worktrees.len() > 1 {
+        working = working
+            .children(
+                worktrees
+                    .iter()
+                    .map(|(key, text)| TreeNode::new(key.as_str(), text.as_str())),
+            )
+            .expanded(true);
+    }
+    let mut workspace = vec![working, TreeNode::new("page:history", history)];
+    // コンフリクトのファイルがあるときだけ、History の下に数を添えて（GTK4 版と同じ）。
+    if conflicts > 0 {
+        workspace.push(TreeNode::new(
+            "page:conflicts",
+            format!("Conflicts  {conflicts}"),
+        ));
+    }
     let Some(refs) = refs else {
         return vec![group("workspace", "Workspace", workspace).expanded(true)];
+    };
+    // 絞り込み: ブランチ・リモートのブランチ・タグを、名前にすべての語を含むものだけに（大文字小文字を区別しない。
+    // GTK4 版の `set_filter`）。
+    let words: Vec<String> = filter.split_whitespace().map(str::to_lowercase).collect();
+    EXPAND.with(|e| e.set(!words.is_empty()));
+    let filtered;
+    let refs = if words.is_empty() {
+        refs
+    } else {
+        filtered = Refs {
+            entries: refs
+                .entries
+                .iter()
+                .filter(|e| {
+                    !matches!(e.kind, RefKind::Local | RefKind::Remote | RefKind::Tag) || {
+                        let name = e.name.to_lowercase();
+                        words.iter().all(|w| name.contains(w.as_str()))
+                    }
+                })
+                .cloned()
+                .collect(),
+            ..refs.clone()
+        };
+        &filtered
     };
     let of = |kind: RefKind| refs.entries.iter().filter(move |e| e.kind == kind);
     let head = refs.head_branch.as_deref();
@@ -120,7 +277,9 @@ pub fn nodes(
     by_remote.sort_by(|a, b| a.0.cmp(b.0));
     if !by_remote.is_empty() {
         let remotes = by_remote.into_iter().map(|(remote, nodes)| {
-            TreeNode::new(format!("folder:remotes/{remote}"), remote).children(nodes)
+            TreeNode::new(format!("folder:remotes/{remote}"), remote)
+                .children(nodes)
+                .expanded(EXPAND.with(|e| e.get()))
         });
         out.push(group("remotes", "Remotes", remotes).expanded(true));
     }
@@ -129,7 +288,25 @@ pub fn nodes(
     let mut tags = Tree::default();
     for e in of(RefKind::Tag) {
         let parts: Vec<&str> = e.name.split('/').collect();
-        tags.insert(&parts, TreeNode::new(ref_key(e), parts[parts.len() - 1]));
+        // 署名の印（検証できた署名は 🔏、それ以外の署名は 🔓。GTK4 版・macOS 版は状態の色の印）と、リモートの印。
+        let signature = tag_signatures.get(&e.name).map(|(status, _)| {
+            if matches!(status, crate::signature::Status::Verified(_)) {
+                "🔏"
+            } else {
+                "🔓"
+            }
+        });
+        let shown: Vec<&str> = signature
+            .into_iter()
+            .chain(tag_mark(tag_remotes, &e.name))
+            .collect();
+        set_tooltip(&ref_key(e), tag_tooltip(tag_remotes, &e.name));
+        let title = if shown.is_empty() {
+            parts[parts.len() - 1].to_owned()
+        } else {
+            format!("{}  {}", parts[parts.len() - 1], shown.join(" "))
+        };
+        tags.insert(&parts, TreeNode::new(ref_key(e), title));
     }
     let tags = tags.into_nodes("tags");
     if !tags.is_empty() {
@@ -137,12 +314,189 @@ pub fn nodes(
     }
 
     let submodules: Vec<TreeNode> = of(RefKind::Submodule)
-        .map(|e| TreeNode::new(ref_key(e), e.name.as_str()))
+        .map(|e| {
+            set_tooltip(&ref_key(e), submodule_tooltip(submodule_states, &e.name));
+            let title = match submodule_mark(submodule_states, &e.name) {
+                Some(mark) => format!("{}  {mark}", e.name),
+                None => e.name.clone(),
+            };
+            TreeNode::new(ref_key(e), title)
+        })
         .collect();
     if !submodules.is_empty() {
         out.push(group("submodules", "Submodules", submodules));
     }
+
+    // subtree（取り込んだフォルダ。GTK4 版と同じく、Pull の squash の記録があれば印）。
+    let subtrees: Vec<TreeNode> = subtrees
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|s| {
+            let dir = s["dir"].as_str()?;
+            let about = [
+                s["url"].as_str().map(|u| match s["ref"].as_str() {
+                    Some(r) => format!("{u} {r}"),
+                    None => u.to_owned(),
+                }),
+                (s["squashed"].as_bool() == Some(true)).then(|| tr!("Squashed when last pulled")),
+            ];
+            set_tooltip(
+                &format!("subtree:{dir}"),
+                about.into_iter().flatten().collect(),
+            );
+            let title = if s["squashed"].as_bool() == Some(true) {
+                format!("{dir}  ⊟")
+            } else {
+                dir.to_owned()
+            };
+            Some(TreeNode::new(format!("subtree:{dir}"), title))
+        })
+        .collect();
+    if !subtrees.is_empty() {
+        out.push(group("subtrees", "Subtrees", subtrees));
+    }
     out
+}
+
+/// submodule の様子（`submodules` の答えの 1 つ）。
+pub fn submodule_state<'a>(
+    states: &'a serde_json::Value,
+    path: &str,
+) -> Option<&'a serde_json::Value> {
+    states
+        .as_array()?
+        .iter()
+        .find(|s| s["path"].as_str() == Some(path))
+}
+
+/// submodule の行の後ろの印（GTK4 版の `finish_submodule`）: コンフリクト ⚠、取り出していない ○、記録と違う
+/// コミット ≠、中に変更 ✎。
+fn submodule_mark(states: &serde_json::Value, path: &str) -> Option<String> {
+    let s = submodule_state(states, path)?;
+    let on = |k: &str| s[k].as_bool() == Some(true);
+    if on("conflict") {
+        return Some("⚠".to_owned());
+    }
+    if !on("initialized") {
+        return Some("○".to_owned());
+    }
+    let marks: Vec<&str> = [(on("moved"), "≠"), (on("changed"), "✎")]
+        .into_iter()
+        .filter_map(|(yes, m)| yes.then_some(m))
+        .collect();
+    (!marks.is_empty()).then(|| marks.join(" "))
+}
+
+/// submodule の行のツールチップ（GTK4 版の `finish_submodule`）: 印の意味、URL、追うブランチ。
+fn submodule_tooltip(states: &serde_json::Value, path: &str) -> Vec<String> {
+    let Some(s) = submodule_state(states, path) else {
+        return Vec::new();
+    };
+    let on = |k: &str| s[k].as_bool() == Some(true);
+    let mut lines = Vec::new();
+    if on("conflict") {
+        lines.push(tr!("In conflict"));
+    } else if !on("initialized") {
+        lines.push(tr!("Not checked out (Update checks it out)"));
+    } else {
+        if on("moved") {
+            lines.push(tr!(
+                "At another commit than the one recorded (Update goes back to it)"
+            ));
+        }
+        if on("changed") {
+            lines.push(tr!("Has uncommitted changes inside"));
+        }
+    }
+    lines.extend(s["url"].as_str().map(str::to_owned));
+    lines.extend(
+        s["branch"]
+            .as_str()
+            .map(|b| tr!("Follows {branch}", branch = b)),
+    );
+    lines
+}
+
+/// タグの行のツールチップ（GTK4 版の `finish_tag`）: 印の意味と、リモートごとの様子。
+pub fn tag_tooltip(info: &serde_json::Value, tag: &str) -> Vec<String> {
+    let mut lines = Vec::new();
+    let checked: Vec<&str> = info["remotes"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|r| r["checked"].is_i64())
+        .filter_map(|r| r["name"].as_str())
+        .collect();
+    match tag_mark(info, tag) {
+        Some("⚠") => {
+            let different: Vec<&str> = checked
+                .iter()
+                .copied()
+                .filter(|r| info["tags"][tag][*r].as_str() == Some("different"))
+                .collect();
+            lines.push(tr!(
+                "A different tag with this name is on {remotes}",
+                remotes = different.join(", ")
+            ));
+        }
+        Some(_) => lines.push(tr!("Not on any remote (as of the last fetch)")),
+        None => {}
+    }
+    lines.extend(
+        info["remotes"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|r| r["name"].as_str())
+            .map(|r| tag_state_text(info, tag, r)),
+    );
+    lines
+}
+
+/// タグの行の後ろの印（GTK4 版の `TagRemotes::mark`）: 読んだリモートのどれかに同じ名前の別のタグがあれば ⚠、
+/// 読んだどのリモートにもなければ ∅。`info` はコアの `tagRemotes` の info。
+pub fn tag_mark(info: &serde_json::Value, tag: &str) -> Option<&'static str> {
+    let checked: Vec<&str> = info["remotes"]
+        .as_array()?
+        .iter()
+        .filter(|r| r["checked"].is_i64())
+        .filter_map(|r| r["name"].as_str())
+        .collect();
+    if checked.is_empty() {
+        return None;
+    }
+    let state = |remote: &str| info["tags"][tag][remote].as_str();
+    if checked.iter().any(|r| state(r) == Some("different")) {
+        return Some("⚠");
+    }
+    checked
+        .iter()
+        .all(|r| state(r).is_none_or(|s| s == "missing"))
+        .then_some("∅")
+}
+
+/// タグの、リモート 1 つでの様子の一文（GTK4 版の `tag_state_text`。タグのメニューの先頭に並べる）。
+pub fn tag_state_text(info: &serde_json::Value, tag: &str, remote: &str) -> String {
+    let checked = info["remotes"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .any(|r| r["name"].as_str() == Some(remote) && r["checked"].is_i64());
+    if !checked {
+        return tr!(
+            "{remote}: not checked yet (Fetch reads it)",
+            remote = remote
+        );
+    }
+    match info["tags"][tag][remote].as_str() {
+        Some("same") => tr!("{remote}: has it", remote = remote),
+        Some("different") => tr!(
+            "{remote}: has a different tag with this name",
+            remote = remote
+        ),
+        _ => tr!("{remote}: doesn’t have it", remote = remote),
+    }
 }
 
 fn group(key: &str, title: &str, children: impl IntoIterator<Item = TreeNode>) -> TreeNode {
@@ -212,7 +566,9 @@ impl Tree {
                 TreeItem::Leaf(node) => node,
                 TreeItem::Folder(name, tree) => {
                     let path = format!("{path}/{name}");
-                    TreeNode::new(format!("folder:{path}"), name).children(tree.into_nodes(&path))
+                    TreeNode::new(format!("folder:{path}"), name)
+                        .children(tree.into_nodes(&path))
+                        .expanded(EXPAND.with(|e| e.get()))
                 }
             })
             .collect()

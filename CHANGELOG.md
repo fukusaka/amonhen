@@ -11,6 +11,19 @@ becomes the GitHub Release notes.
 
 #### Added
 
+- `amonhen tui` is a front end in the terminal: History with commit details and diffs, the Working Copy with staging
+  by file, hunk and line, discard, commit and amend, a sidebar of branches and tags, History search and
+  ancestor emphasis, and fetch, pull, push, checkout, new branch, merge, rebase, stash and undo,
+  resolving conflicts by side, and asking for passwords inside the screen; `?` lists the keys. These are its first stages; see `docs/tui.md`.
+
+### [0.2.12] - 2026-11-18
+
+History search can match the author's email, the committer and the whole message. Amon Hen asks before sending its
+engine to an SSH host, Repository Settings sets the allowed signers file for SSH signatures, and the before-and-after
+drawings wrap long branch labels instead of leaving them out.
+
+#### Added
+
 - Repository Settings > Author and Signing has Allowed signers, the file (`gpg.ssh.allowedSignersFile`) for verifying
   SSH signatures; changing a `gpg.*` setting there verifies the shown signatures again. For an SSH host whose
   signatures are verified with this Mac's keys, the row notes that it isn't used there.
@@ -1180,7 +1193,11 @@ First release.
 
 ## VSCode extension
 
-### Unreleased
+### [0.2.8] - 2026-11-18
+
+History search with the engine can match the author's email, the committer and the whole message, and Repository
+Settings sets the allowed signers file for SSH signatures. The before-and-after drawings wrap long branch labels, and
+a signature that can't be verified shows No key.
 
 #### Added
 

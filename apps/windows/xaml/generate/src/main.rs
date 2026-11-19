@@ -21,8 +21,59 @@ const FILTER: &[&str] = &[
     // サイドバーの右クリックで、押した所から親をたどって木の項目（DataContext が TreeViewNode）を探す。
     "Microsoft.UI.Xaml.DependencyObject",
     "Microsoft.UI.Xaml.Media.VisualTreeHelper",
-    "Microsoft.UI.Xaml.Media.IVisualTreeHelperStatics::{GetParent}",
-    "Microsoft.UI.Xaml.IFrameworkElement::{DataContext}",
+    "Microsoft.UI.Xaml.Media.IVisualTreeHelperStatics::{GetParent,GetChild,GetChildrenCount}",
+    "Microsoft.UI.Xaml.IFrameworkElement::{DataContext,Tag,put_HorizontalAlignment,put_VerticalAlignment,put_Margin}",
+    // Repositories の一覧で選んだ行（複数）。
+    "Microsoft.UI.Xaml.Controls.ListViewBase",
+    "Microsoft.UI.Xaml.Controls.IListViewBase::{SelectedItems}",
+    "Microsoft.UI.Xaml.Controls.IListViewBaseFactory::{}",
+    "Microsoft.UI.Xaml.Controls.IListViewBaseStatics::{}",
+    "Microsoft.UI.Xaml.Controls.IItemsControlFactory::{}",
+    "Microsoft.UI.Xaml.Controls.IItemsControlStatics::{}",
+    "Microsoft.UI.Xaml.Controls.Primitives.ISelectorStatics::{}",
+    "Microsoft.UI.Xaml.Controls.Primitives.ISelectorFactory::{}",
+    // 等幅の字（Control に付けると、中の TextBlock が継ぐ。reactor の部品には字体の指定がない）。
+    "Microsoft.UI.Xaml.Media.FontFamily",
+    "Microsoft.UI.Xaml.Media.IFontFamilyFactory::{CreateInstanceWithName}",
+    "Microsoft.UI.Xaml.Media.IFontFamilyStatics::{}",
+    "Microsoft.UI.Xaml.Controls.Control",
+    "Microsoft.UI.Xaml.Controls.IControlFactory::{}",
+    "Microsoft.UI.Xaml.Controls.IControlStatics::{}",
+    "Microsoft.UI.Xaml.Controls.IControl::{put_FontFamily}",
+    // 境目のつまみの、左右・上下の矢印のカーソル（ProtectedCursor は派生した部品向けだが、インターフェースを
+    // 引けば外から付けられる）。
+    "Microsoft.UI.Xaml.IUIElementProtected::{put_ProtectedCursor}",
+    "Microsoft.UI.Input.InputCursor",
+    "Microsoft.UI.Input.InputSystemCursor",
+    "Microsoft.UI.Input.IInputSystemCursorStatics::{Create}",
+    "Microsoft.UI.Input.InputSystemCursorShape",
+    "Microsoft.UI.Input.IInputCursorFactory::{}",
+    "Microsoft.UI.Input.IInputCursorStatics::{}",
+    // ツールバーの Pull・Push のボタンに、上流との差の数のバッジ（InfoBadge）を足す（reactor の AppBarButton には
+    // 中身を足す口がないので、ボタンのテンプレートの根の Panel に入れる。Panel.Children は UIElementCollection
+    // を返し、その生成物は IIterable の First を引けずに通らないので、`badge.rs` で IPanel を手で引く）。
+    "Microsoft.UI.Xaml.Controls.InfoBadge",
+    "Microsoft.UI.Xaml.Controls.IInfoBadge::{Value,put_Value}",
+    "Microsoft.UI.Xaml.Controls.IInfoBadgeFactory::{CreateInstance}",
+    "Microsoft.UI.Xaml.Controls.IInfoBadgeStatics::{}",
+    "Microsoft.UI.Xaml.Controls.AppBarButton",
+    "Microsoft.UI.Xaml.Controls.IAppBarButton::{Label}",
+    "Microsoft.UI.Xaml.Controls.IAppBarButtonFactory::{}",
+    "Microsoft.UI.Xaml.Controls.IAppBarButtonStatics::{}",
+    "Microsoft.UI.Xaml.Controls.IButtonFactory::{}",
+    "Microsoft.UI.Xaml.Controls.IButtonStatics::{}",
+    "Microsoft.UI.Xaml.Controls.Primitives.IButtonBaseFactory::{}",
+    "Microsoft.UI.Xaml.Controls.Primitives.IButtonBaseStatics::{}",
+    "Microsoft.UI.Xaml.Controls.IContentControlFactory::{}",
+    "Microsoft.UI.Xaml.Controls.IContentControlStatics::{}",
+    "Microsoft.UI.Xaml.HorizontalAlignment",
+    "Microsoft.UI.Xaml.VerticalAlignment",
+    "Microsoft.UI.Xaml.Thickness",
+    "Microsoft.UI.Xaml.Visibility",
+    // マージエディタの Result の欄（TextBox）を、選んだコンフリクトの行へスクロールする（中の ScrollViewer を動かす）。
+    "Microsoft.UI.Xaml.Controls.ScrollViewer",
+    "Microsoft.UI.Xaml.Controls.IScrollViewer::{ExtentHeight,ViewportHeight,ScrollToVerticalOffset}",
+    "Microsoft.UI.Xaml.Controls.IScrollViewerStatics::{}",
     // ハンドラーの型は丸ごと（`new` が要る）。
     "Microsoft.UI.Xaml.Input.KeyEventHandler",
     "Microsoft.UI.Xaml.Input.PointerEventHandler",
@@ -45,7 +96,8 @@ const FILTER: &[&str] = &[
     "Microsoft.UI.Xaml.IUIElement::{KeyDown,remove_KeyDown,PointerPressed,remove_PointerPressed,\
      PointerMoved,remove_PointerMoved,PointerReleased,remove_PointerReleased,PointerWheelChanged,\
      remove_PointerWheelChanged,DoubleTapped,remove_DoubleTapped,ContextRequested,remove_ContextRequested,\
-     IsTabStop,put_IsTabStop,Focus,CapturePointer,ReleasePointerCapture,ContextFlyout,put_ContextFlyout,PreviewKeyDown,remove_PreviewKeyDown}",
+     IsTabStop,put_IsTabStop,Focus,CapturePointer,ReleasePointerCapture,ContextFlyout,put_ContextFlyout,PreviewKeyDown,remove_PreviewKeyDown,\
+     StartBringIntoView,put_IsHitTestVisible,put_Visibility}",
     "Microsoft.UI.Xaml.Controls.Primitives.IFlyoutBase::{ShowAt,ShowAtWithOptions,Hide}",
     "Microsoft.UI.Xaml.Controls.Primitives.IFlyoutShowOptions::{put_Position}",
     "Microsoft.UI.Xaml.IRoutedEventArgs::{OriginalSource}",

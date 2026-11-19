@@ -5,6 +5,7 @@
 
 mod history;
 mod strings;
+pub mod terminal;
 
 pub use history::HistoryChunk;
 pub use strings::{StringTable, StringTableBuilder};
