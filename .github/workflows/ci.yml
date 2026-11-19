@@ -57,13 +57,24 @@ jobs:
           persist-credentials: false
       # runner の rustup で、その時点の stable を入れる。
       - run: rustup toolchain install stable --profile minimal --component clippy,rustfmt && rustup default stable
+      # macOS では Swift の試験のために release のコアも作るので、キャッシュを別の名前にする。同じ名前のキャッシュが
+      # あると置き直さないので、debug だけのキャッシュが残り、release を毎回作り直してしまう。
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: ${{ runner.os == 'macOS' && 'swift' || '' }}
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       # 1 つの crate で落ちても、ほかの crate の試験は最後まで流す。
       - run: cargo test --workspace --no-fail-fast
       # build.rs が生成する C のヘッダーがコミット済みのものと一致するか。
       - run: git diff --exit-code crates/ffi-c/include
+      # macOS のアプリ（apps/macos）の試験。macOS のランナーは数が少なく待ちが長いので、別のジョブにせずここで流す。
+      # Rust の試験が落ちても流す。
+      - if: ${{ runner.os == 'macOS' && !cancelled() }}
+        run: scripts/build-core.sh
+      - if: ${{ runner.os == 'macOS' && !cancelled() }}
+        run: swift test
+        working-directory: apps/macos
 
   # サポートする最低の git（docs/install.md の「Requirements」）で試験を流し、新しい git にしかない機能を使って
   # いないか（使うなら古いやり方に戻しているか）を確かめる。git はソースから作り、作ったものをキャッシュする。
@@ -140,25 +151,6 @@ jobs:
         run: |
           export PATH="$HOME/git-minimum/bin:$PATH"
           AMONHEN_E2E_GIT="$HOME/git-minimum/bin/git" xvfb-run -a npm run test:e2e
-
-  swift:
-    name: Swift
-    needs: changes
-    if: needs.changes.outputs.macos == 'true'
-    runs-on: macos-latest
-    timeout-minutes: 30
-    permissions:
-      contents: read # コミットを取ってくる
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      # runner の rustup で、その時点の stable を入れる。
-      - run: rustup toolchain install stable --profile minimal && rustup default stable
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - run: scripts/build-core.sh
-      - run: swift test
-        working-directory: apps/macos
 
   # コアに OS 固有のコードが紛れ込まないよう、全ターゲットで型検査だけ通す。
   targets:
@@ -306,7 +298,7 @@ jobs:
   # 作るのは build.yml。署名の鍵は build.yml が環境 release から読む。
   snapshot-build:
     name: Snapshot build
-    needs: [test, git-minimum, swift, targets, gtk, licenses, vscode]
+    needs: [test, git-minimum, targets, gtk, licenses, vscode]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     # actionlint がまだ $/ の書き方を読めないので、./ で呼ぶ。
     uses: ./.github/workflows/build.yml # zizmor: ignore[self-repository]
