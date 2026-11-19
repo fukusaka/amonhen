@@ -260,10 +260,10 @@ pub fn diff_view(pair: &Pair) -> View {
     let lines = pair.diff.iter().enumerate().map(|(i, line)| {
         let outer = line.chars().next().unwrap_or(' ');
         let background = match outer {
-            '+' => Color::rgb(0xe6, 0xf4, 0xea),
-            '-' => Color::rgb(0xfb, 0xe9, 0xeb),
-            '@' => Color::rgb(0xee, 0xf1, 0xf8),
-            _ => Color::rgb(0xff, 0xff, 0xff),
+            '+' => crate::palette::diff_added(),
+            '-' => crate::palette::diff_removed(),
+            '@' => crate::palette::diff_hunk(),
+            _ => crate::palette::background(),
         };
         (
             i,

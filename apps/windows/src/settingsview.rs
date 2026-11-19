@@ -162,6 +162,7 @@ pub struct Callbacks<'a> {
     pub order: Callback<Option<usize>>,
     /// Theme: 構文の色のテーマを選んだ（`theme::names` の番号）。
     pub syntax_theme: Callback<Option<usize>>,
+    pub syntax_theme_dark: Callback<Option<usize>>,
     /// Theme のボタン（`import`・`remove:<name>`）。
     pub theme_button: Box<dyn Fn(String) -> Callback<()> + 'a>,
 }
@@ -284,24 +285,10 @@ fn appearance(callbacks: &Callbacks) -> View {
         note(tr!("What each commit’s row shows besides the subject.")),
         // 子の数がタプルの上限を超えないよう、後半を 1 つにまとめる。
         StackPanel::new().children((
-            // 構文と差分の色（GTK4 版の Theme の Color Theme。この FE は明るい外観だけ）。
+            // 構文と差分の色（GTK4 版の Theme の Color Theme。外観ごとに 1 つ）。
             heading(tr!("Color Theme")),
-            StackPanel::new()
-                .orientation(Orientation::Horizontal)
-                .spacing(12.0)
-                .children((
-                    TextBlock::new()
-                        .text(tr!("Light appearance"))
-                        .vertical_alignment(VerticalAlignment::Center),
-                    {
-                        let names = crate::theme::names();
-                        let selected = crate::theme::selected();
-                        ComboBox::new()
-                            .selected_index(names.iter().position(|n| *n == selected).unwrap_or(0))
-                            .items_source(names)
-                            .on_selection_changed(callbacks.syntax_theme.clone())
-                    },
-                )),
+            theme_choice(tr!("Light appearance"), false, &callbacks.syntax_theme),
+            theme_choice(tr!("Dark appearance"), true, &callbacks.syntax_theme_dark),
             StackPanel::new()
                 .spacing(4.0)
                 .children((View::keyed_fragment(
@@ -714,7 +701,7 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
             Border::new()
                 .grid_column(0)
                 .border_thickness(Thickness::new(0.0, 0.0, 1.0, 0.0))
-                .border_brush(Brush::Solid(Color::rgb(0xe5, 0xe5, 0xe5)))
+                .border_brush(Brush::Solid(crate::palette::border()))
                 .content(nav),
             ScrollViewer::new()
                 .grid_column(1)
@@ -730,4 +717,23 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
     Grid::new()
         .rows([GridLength::Auto, GridLength::Star(1.0)])
         .children((head, body))
+}
+
+/// 外観ごとのテーマを選ぶ行。
+fn theme_choice(label: String, dark: bool, on: &Callback<Option<usize>>) -> View {
+    let names = crate::theme::names();
+    let selected = crate::theme::selected(dark);
+    StackPanel::new()
+        .orientation(Orientation::Horizontal)
+        .spacing(12.0)
+        .children((
+            TextBlock::new()
+                .text(label)
+                .width(120.0)
+                .vertical_alignment(VerticalAlignment::Center),
+            ComboBox::new()
+                .selected_index(names.iter().position(|n| *n == selected).unwrap_or(0))
+                .items_source(names)
+                .on_selection_changed(on.clone()),
+        ))
 }

@@ -49,7 +49,6 @@ pub struct Move {
     pub removes: bool,
 }
 
-const FG: Color = Color::rgb(0x1f, 0x1f, 0x1f);
 /// ローカルの札・強調する点の青（GTK4 版・macOS 版と同じ）。
 const BLUE: Color = Color::rgb(0x36, 0x85, 0xe3);
 const RED: Color = Color::rgb(0xe3, 0x4a, 0x4a);
@@ -273,7 +272,7 @@ fn column(
 ) {
     let lane_x = |lane: u8| x + 10.0 + f64::from(lane) * LANE;
     let center = |y: f64| y + ROW / 2.0;
-    let line = alpha(FG, 0.4);
+    let line = alpha(crate::palette::foreground(), 0.4);
     // まっすぐな線を、省いたところ（前の点から次の点まで）だけ点線にして引く。
     let vertical = |c: &mut Canvas2, lane: u8, top: f64, bottom: f64| {
         let mut sorted: Vec<&Gap> = gaps.iter().filter(|g| g.0 == lane).collect();
@@ -357,9 +356,9 @@ fn column(
         let dot = if highlighted {
             BLUE
         } else if dim {
-            alpha(FG, 0.35)
+            alpha(crate::palette::foreground(), 0.35)
         } else {
-            alpha(FG, 0.65)
+            alpha(crate::palette::foreground(), 0.65)
         };
         let dot = if hollow {
             note.and_then(|n| n.1).unwrap_or(dot)
@@ -383,7 +382,11 @@ fn column(
         if right - tx <= 20.0 {
             return;
         }
-        let color = if dim { alpha(FG, 0.45) } else { FG };
+        let color = if dim {
+            alpha(crate::palette::foreground(), 0.45)
+        } else {
+            crate::palette::foreground()
+        };
         match note {
             None => c.text(subject, tx, y + 2.0, color, highlighted, right - tx, 11.0),
             // 件名の後ろに、添える文を別の色で。
@@ -403,7 +406,7 @@ fn column(
                     &format!("— {note}"),
                     tx + subject_width + 4.0,
                     y + 2.0,
-                    note_color.unwrap_or(alpha(FG, 0.5)),
+                    note_color.unwrap_or(alpha(crate::palette::foreground(), 0.5)),
                     false,
                     width - subject_width - 4.0,
                     11.0,
@@ -430,7 +433,7 @@ fn column(
             &tr!("and {count} more", count = count),
             text_x,
             y + 2.0,
-            alpha(FG, 0.5),
+            alpha(crate::palette::foreground(), 0.5),
             false,
             right - text_x,
             11.0,
@@ -496,12 +499,20 @@ pub fn for_move(info: &Value, how: &Move) -> Option<View> {
         )
     });
     let mut c = Canvas2 { items: Vec::new() };
-    c.text(&tr!("Now"), 4.0, 2.0, alpha(FG, 0.6), true, COLUMN, 11.0);
+    c.text(
+        &tr!("Now"),
+        4.0,
+        2.0,
+        alpha(crate::palette::foreground(), 0.6),
+        true,
+        COLUMN,
+        11.0,
+    );
     c.text(
         &how.after_title,
         COLUMN + 28.0,
         2.0,
-        alpha(FG, 0.6),
+        alpha(crate::palette::foreground(), 0.6),
         true,
         COLUMN,
         11.0,
@@ -604,7 +615,7 @@ fn finish(mut c: Canvas2, rows: usize, arrow_rows: usize) -> View {
         "→",
         COLUMN + 6.0,
         TOP + arrow_rows.saturating_sub(1) as f64 * ROW / 2.0,
-        alpha(FG, 0.4),
+        alpha(crate::palette::foreground(), 0.4),
         false,
         20.0,
         15.0,
@@ -645,12 +656,20 @@ pub fn for_rewrite(info: &Value) -> Option<View> {
         )
     });
     let mut c = Canvas2 { items: Vec::new() };
-    c.text(&tr!("Now"), 4.0, 2.0, alpha(FG, 0.6), true, COLUMN, 11.0);
+    c.text(
+        &tr!("Now"),
+        4.0,
+        2.0,
+        alpha(crate::palette::foreground(), 0.6),
+        true,
+        COLUMN,
+        11.0,
+    );
     c.text(
         &tr!("After the rebase"),
         COLUMN + 28.0,
         2.0,
-        alpha(FG, 0.6),
+        alpha(crate::palette::foreground(), 0.6),
         true,
         COLUMN,
         11.0,
@@ -831,12 +850,20 @@ pub fn for_merge(info: &Value, current: &str, after_title: String) -> Option<Vie
         .map(|c| c.0.clone())
         .or_else(|| base.as_ref().map(|b| b.0.clone()));
     let mut c = Canvas2 { items: Vec::new() };
-    c.text(&tr!("Now"), 4.0, 2.0, alpha(FG, 0.6), true, COLUMN, 11.0);
+    c.text(
+        &tr!("Now"),
+        4.0,
+        2.0,
+        alpha(crate::palette::foreground(), 0.6),
+        true,
+        COLUMN,
+        11.0,
+    );
     c.text(
         &after_title,
         COLUMN + 28.0,
         2.0,
-        alpha(FG, 0.6),
+        alpha(crate::palette::foreground(), 0.6),
         true,
         COLUMN,
         11.0,
@@ -973,7 +1000,15 @@ pub fn for_pick(info: &Value, current: &str, kind: PickKind) -> Option<View> {
     let tip = head.first().map(|c| c.0.clone());
     let first_new = picks.first().map(|c| format!("new:{}", c.0));
     let mut c = Canvas2 { items: Vec::new() };
-    c.text(&tr!("Now"), 4.0, 2.0, alpha(FG, 0.6), true, COLUMN, 11.0);
+    c.text(
+        &tr!("Now"),
+        4.0,
+        2.0,
+        alpha(crate::palette::foreground(), 0.6),
+        true,
+        COLUMN,
+        11.0,
+    );
     c.text(
         &match kind {
             PickKind::CherryPick => tr!("After the cherry-pick"),
@@ -982,7 +1017,7 @@ pub fn for_pick(info: &Value, current: &str, kind: PickKind) -> Option<View> {
         },
         COLUMN + 28.0,
         2.0,
-        alpha(FG, 0.6),
+        alpha(crate::palette::foreground(), 0.6),
         true,
         COLUMN,
         11.0,
@@ -1123,12 +1158,20 @@ pub fn for_octopus(info: &Value, current: &str, order: &[String], subject: &str)
         })
         .collect();
     let mut c = Canvas2 { items: Vec::new() };
-    c.text(&tr!("Now"), 4.0, 2.0, alpha(FG, 0.6), true, COLUMN, 11.0);
+    c.text(
+        &tr!("Now"),
+        4.0,
+        2.0,
+        alpha(crate::palette::foreground(), 0.6),
+        true,
+        COLUMN,
+        11.0,
+    );
     c.text(
         &tr!("After the merge"),
         COLUMN + 28.0,
         2.0,
-        alpha(FG, 0.6),
+        alpha(crate::palette::foreground(), 0.6),
         true,
         COLUMN,
         11.0,
@@ -1189,7 +1232,7 @@ pub fn for_octopus(info: &Value, current: &str, order: &[String], subject: &str)
                 &tr!("and {count} more branches", count = rest),
                 text_x,
                 y + 2.0,
-                alpha(FG, 0.5),
+                alpha(crate::palette::foreground(), 0.5),
                 false,
                 x + COLUMN - text_x,
                 11.0,

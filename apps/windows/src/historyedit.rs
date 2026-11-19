@@ -608,7 +608,7 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
         .grid_row(2)
         .columns([GridLength::Star(1.0), GridLength::Auto])
         .column_spacing(8.0)
-        .background(Brush::Solid(Color::rgb(0xf3, 0xf3, 0xf3)))
+        .background(Brush::Solid(crate::palette::bar()))
         .children((
             StackPanel::new()
                 .spacing(2.0)
@@ -627,7 +627,7 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                             .foreground(if conflicts {
                                 Brush::Solid(Color::rgb(0xb2, 0x5f, 0x00))
                             } else {
-                                Brush::Solid(Color::rgb(0, 0, 0))
+                                Brush::Solid(crate::palette::foreground())
                             })
                             .text_wrapping(TextWrapping::Wrap)
                             .into()

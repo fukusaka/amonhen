@@ -493,7 +493,7 @@ fn git_line(form: Option<&Value>) -> View {
         (
             title.clone(),
             Border::new()
-                .background(Brush::Solid(Color::rgb(0xec, 0xec, 0xec)))
+                .background(Brush::Solid(crate::palette::bar_strong()))
                 .corner_radius(4.0)
                 .padding(Thickness::new(6.0, 1.0, 6.0, 1.0))
                 .content(TextBlock::new().text(title).font_size(11.0).opacity(0.75))
@@ -1606,7 +1606,7 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                     .children((
                         TextBlock::new().text(name.clone()).opacity(0.75),
                         Border::new()
-                            .background(Brush::Solid(Color::rgb(0xf6, 0xf6, 0xf6)))
+                            .background(Brush::Solid(crate::palette::bar_soft()))
                             .padding(Thickness::new(8.0, 6.0, 8.0, 6.0))
                             .content(
                                 TextBlock::new()
