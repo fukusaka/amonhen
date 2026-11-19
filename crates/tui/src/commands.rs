@@ -57,6 +57,7 @@ pub static ENTRIES: &[Entry] = &[
     entry("new-branch", 'b', Place::Anywhere),
     entry("rename-branch", 'n', Place::Sidebar),
     entry("new-tag", 'T', Place::Anywhere),
+    entry("new-worktree", 'w', Place::Sidebar),
     entry("merge", 'm', Place::Sidebar),
     entry("rebase", 'r', Place::Sidebar),
     entry("continue", 'C', Place::Sequence),

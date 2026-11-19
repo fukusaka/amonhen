@@ -1193,6 +1193,36 @@ fn worktrees_are_listed_in_the_sidebar() {
     assert_eq!(side[at + 2], "  other (topic)");
 }
 
+/// サイドバーのブランチで `w`: 場所を聞いて（初めは作業ツリーの隣）、そのブランチの worktree を作る。
+#[test]
+fn a_worktree_is_added_for_the_selected_branch() {
+    let dir = tempfile::tempdir().unwrap();
+    let main = dir.path().join("main");
+    std::fs::create_dir(&main).unwrap();
+    merged(&main);
+    // サイドバーの 3 つ下が topic、その上が今の main。
+    let here = amonhen_tui::snapshot(open(&main), 200, 16, clock(), "0jjw").unwrap();
+    assert!(here.contains("This branch is checked out here"));
+    let asked = amonhen_tui::snapshot(open(&main), 200, 16, clock(), "0jjjw").unwrap();
+    println!("{asked}");
+    assert!(asked.contains("New worktree for topic at: "));
+    assert!(asked.lines().last().unwrap().contains("main-topic"));
+    // 場所を打ち直して作る（初めの場所の末尾を消して、別の名前に）。
+    let keys = "0jjjw\x7f\x7f\x7f\x7f\x7fside\n";
+    let added = amonhen_tui::snapshot(open(&main), 200, 16, clock(), keys).unwrap();
+    println!("{added}");
+    assert!(added.contains("Added the worktree"));
+    let other = dir.path().join("main-side");
+    assert_eq!(git_out(&other, &["branch", "--show-current"]), "topic\n");
+    let side: Vec<String> = added.lines().skip(1).filter_map(|l| column(l, 0)).collect();
+    assert!(side.iter().any(|l| l == "  main-side (topic)"), "{side:?}");
+    // 同じブランチをもう 1 つの worktree には出せない（git が断る）。
+    let refused = amonhen_tui::snapshot(open(&main), 200, 16, clock(), "0jjjw\n").unwrap();
+    println!("{refused}");
+    assert!(!refused.contains("Added the worktree"));
+    assert!(!dir.path().join("main-topic").exists());
+}
+
 /// サイドバーの worktree の行で `x`: 確かめてから消す。変更が残っていれば git が断り、開いている worktree は
 /// 消せない。
 #[test]

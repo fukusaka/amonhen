@@ -131,6 +131,8 @@ enum Naming {
     Rename,
     /// stash のメッセージ（空でもよい）。
     Stash,
+    /// ブランチを出す新しい worktree の場所。
+    Worktree,
 }
 
 /// 選択肢 1 つ: 押すキー、名前、頼む中身。
@@ -992,6 +994,11 @@ impl App {
                         let name = name.trim();
                         let (op, label, command) = match self.naming {
                             Naming::Stash => return,
+                            Naming::Worktree => (
+                                "addWorktree",
+                                tr!("Adding the worktree…"),
+                                json!({"op": "worktreeAdd", "path": name, "start": start}),
+                            ),
                             Naming::Branch => (
                                 "createBranch",
                                 tr!("Creating {name}…", name = name),
@@ -1270,6 +1277,7 @@ impl App {
             "apply" => self.notice = Some(tr!("Applied the stash")),
             "drop" => self.notice = Some(tr!("Dropped the stash")),
             "removeWorktree" => self.notice = Some(tr!("Removed the worktree")),
+            "addWorktree" => self.notice = Some(tr!("Added the worktree")),
             "merge" | "rebase" | "continue" | "skip" | "cherryPick" | "revert" | "rewrite" => {
                 // コンフリクトで止まったら、Working Copy で解決する。
                 match reply["outcome"].as_str() {
@@ -1832,6 +1840,27 @@ impl App {
             KeyCode::Char('n') => self.ask_rename(),
             KeyCode::Char('m') => self.ask_merge_or_rebase(true),
             KeyCode::Char('r') => self.ask_merge_or_rebase(false),
+            // ブランチを、新しい worktree に出す。場所を聞く（今の作業ツリーの隣を、初めに入れておく）。
+            KeyCode::Char('w') => {
+                let picked = (self.sidebar.picked_ref())
+                    .filter(|r| r.0 == "branch")
+                    .map(|r| r.1.to_owned());
+                match picked {
+                    Some(_) if self.sidebar.picked_is_current() => {
+                        self.error = Some(tr!("This branch is checked out here"));
+                    }
+                    Some(branch) => {
+                        let path = self.workdir.as_deref().map_or(String::new(), |workdir| {
+                            let workdir = workdir.trim_end_matches(['/', '\\']);
+                            format!("{workdir}-{}", branch.replace(['/', '\\'], "-"))
+                        });
+                        self.naming = Naming::Worktree;
+                        self.typing_branch = Some((branch.clone(), branch, path));
+                    }
+                    None => self.error = Some(tr!("Select a local branch for the new worktree")),
+                }
+                true
+            }
             // ブランチの reflog（そのブランチが動いた記録）を、Reflog の画面に出す。
             KeyCode::Char('L') => {
                 let picked = (self.sidebar.picked_ref())
@@ -1873,6 +1902,7 @@ impl App {
                 ("r", tr!("Rebase the current branch onto it")),
                 ("a o x", tr!("On a stash: apply, pop, drop")),
                 ("x", tr!("On a worktree: remove it")),
+                ("w", tr!("New worktree for the branch")),
                 ("n D", tr!("Rename a branch; delete a branch or a tag")),
                 ("L", tr!("The branch's reflog")),
                 ("/", tr!("Filter branches and tags")),
@@ -2692,6 +2722,9 @@ impl App {
                     Naming::Tag => tr!("New tag at {at}: {name}", at = at, name = name),
                     Naming::Rename => tr!("Rename {at} to: {name}", at = at, name = name),
                     Naming::Stash => tr!("Stash message (Enter for none): {name}", name = name),
+                    Naming::Worktree => {
+                        tr!("New worktree for {at} at: {name}", at = at, name = name)
+                    }
                 };
                 let x = buf.set_stringn(area.x + 1, y, text, room, Style::new()).0;
                 cursor = Some((x.min(position_x.saturating_sub(1)), y));
