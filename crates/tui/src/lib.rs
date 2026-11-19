@@ -9,6 +9,7 @@ mod app;
 pub mod askpass;
 mod canvas;
 mod changes;
+mod commands;
 mod details;
 mod diff;
 mod editor;

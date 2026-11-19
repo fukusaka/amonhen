@@ -667,6 +667,44 @@ fn question_mark_lists_the_keys() {
     assert!(diff.contains("Previous and next hunk"));
 }
 
+/// `:` はコマンドの一覧: 名前はアプリのメニューと同じ、打った語で絞って、Enter でそのキーを押したのと同じに動かす。
+#[test]
+fn colon_lists_commands_and_runs_the_selected_one() {
+    let dir = tempfile::tempdir().unwrap();
+    merged(dir.path());
+    let list = amonhen_tui::snapshot(open(dir.path()), 80, 30, clock(), ":").unwrap();
+    println!("{list}");
+    assert!(list.contains("┌─ Commands ─"));
+    assert!(list.contains("Fetch…"));
+    assert!(list.contains("Find in History…"));
+    // 途中の操作がないので Continue は出ない。サイドバーにいないので Merge も出ない。
+    assert!(!list.contains("Continue"));
+    assert!(!list.contains("Merge…"));
+    let side = amonhen_tui::snapshot(open(dir.path()), 160, 30, clock(), "0:").unwrap();
+    assert!(side.contains("Merge…"));
+    // 打った語で絞る。合うものがなければ、そう書く。
+    let narrowed = amonhen_tui::snapshot(open(dir.path()), 80, 30, clock(), ":hist").unwrap();
+    println!("{narrowed}");
+    assert!(narrowed.contains(":hist"));
+    assert!(narrowed.contains("Find in History…"));
+    assert!(!narrowed.contains("Fetch…"));
+    let none = amonhen_tui::snapshot(open(dir.path()), 80, 30, clock(), ":zzz").unwrap();
+    assert!(none.contains("No command matches"));
+    // Esc で閉じる。
+    let closed = amonhen_tui::snapshot(open(dir.path()), 80, 30, clock(), ":\x1b").unwrap();
+    assert!(!closed.contains("Commands"));
+    // Enter で動かす: Working Copy から「Find in History…」は、History に移って検索の語を聞く。
+    let find = amonhen_tui::snapshot(open(dir.path()), 80, 30, clock(), "1:find\ngraph").unwrap();
+    println!("{find}");
+    assert!(!find.contains("Commands"));
+    assert!(find.contains("/graph"));
+    // Ctrl-n で次の行を選ぶ: 「new」に合うのは New Branch… と New Tag…。
+    let tag = amonhen_tui::snapshot(open(dir.path()), 80, 30, clock(), ":new\x0e\nv1").unwrap();
+    println!("{tag}");
+    assert!(tag.contains("New tag at"));
+    assert!(tag.contains(": v1"));
+}
+
 /// Space は、History とサイドバーで Enter と同じ（詳細へ入る・選んでいる行を開く）
 #[test]
 fn space_opens_like_enter() {

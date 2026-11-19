@@ -60,7 +60,7 @@ amonhen daemon status          # state of the shared daemon
 
 ## Terminal (TUI)
 
-`amonhen tui [<path> | ssh://host/path | daemon:<path>]` shows the repository inside the terminal, for an SSH session or a pane beside an editor. It is in its first stages; [tui.md](tui.md) says what is built and what is not. `?` lists the keys of the focused pane.
+`amonhen tui [<path> | ssh://host/path | daemon:<path>]` shows the repository inside the terminal, for an SSH session or a pane beside an editor. It is in its first stages; [tui.md](tui.md) says what is built and what is not. `?` lists the keys of the focused pane, and `:` lists the commands by name.
 
 - Panes: the sidebar (from 100 columns; `0` otherwise), the main view (`1` Changes, `2` History, `3` Reflog) and, beside it or on Enter, the commit's details or the file's diff. Tab goes round them, Esc goes back, `q` quits.
 - History: `j` `k` and the usual keys move, `/` searches with the History search syntax, `n` `N` go to the next and previous match; `y` cherry-picks, `v` reverts and `c` checks out the selected commit; `e` edits its message, `F` fixes it up into its parent and `X` drops it.

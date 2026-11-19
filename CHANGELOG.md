@@ -14,7 +14,8 @@ becomes the GitHub Release notes.
 - `amonhen tui` is a front end in the terminal: History with commit details and diffs, the Working Copy with staging
   by file, hunk and line, discard, commit and amend, a sidebar of branches and tags, History search and
   ancestor emphasis, and fetch, pull, push, checkout, new branch, merge, rebase, stash and undo,
-  resolving conflicts by side, and asking for passwords inside the screen; `?` lists the keys. These are its first stages; see `docs/tui.md`.
+  resolving conflicts by side, and asking for passwords inside the screen; `?` lists the keys and `:` the commands by
+  name. These are its first stages; see `docs/tui.md`.
 
 ### [0.2.12] - 2026-11-18
 
