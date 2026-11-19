@@ -155,7 +155,7 @@ fn is_remote(location: &str) -> bool {
     amonhen_remote::location::is_remote(location)
 }
 
-fn is_repository(location: &str) -> bool {
+pub fn is_repository(location: &str) -> bool {
     is_remote(location) || expand(location).join(".git").exists()
 }
 
@@ -229,9 +229,22 @@ fn roots(data: &Value) -> Vec<Root> {
 
 /// フォルダの下のリポジトリを探す（`.git` のあるフォルダ。その中には入らない。GTK4 版の `scan_local` と同じ）。
 pub fn scan(roots: Vec<Root>) -> Vec<(String, Vec<String>)> {
-    fn walk(dir: &Path, depth: u32, excludes: &[String], found: &mut Vec<String>) {
+    scan_with_dirs(roots).0
+}
+
+/// [`scan`] と、中を読んだフォルダ（その中でリポジトリが増えたら見つかるフォルダ。見張る先）と、見つけた
+/// リポジトリ（`.git` ができた・消えたを知る。GTK4 版の `scan_local_with_dirs`）。
+pub fn scan_with_dirs(roots: Vec<Root>) -> (Vec<(String, Vec<String>)>, Vec<PathBuf>) {
+    fn walk(
+        dir: &Path,
+        depth: u32,
+        excludes: &[String],
+        found: &mut Vec<String>,
+        dirs: &mut Vec<PathBuf>,
+    ) {
         if dir.join(".git").exists() {
             found.push(dir.display().to_string());
+            dirs.push(dir.to_path_buf());
             return;
         }
         if depth == 0 {
@@ -240,6 +253,7 @@ pub fn scan(roots: Vec<Root>) -> Vec<(String, Vec<String>)> {
         let Ok(entries) = std::fs::read_dir(dir) else {
             return;
         };
+        dirs.push(dir.to_path_buf());
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
             let is_dir = entry
@@ -248,18 +262,36 @@ pub fn scan(roots: Vec<Root>) -> Vec<(String, Vec<String>)> {
             if !is_dir || name.starts_with('.') || excludes.contains(&name) {
                 continue;
             }
-            walk(&entry.path(), depth - 1, excludes, found);
+            walk(&entry.path(), depth - 1, excludes, found, dirs);
         }
     }
-    roots
+    let mut dirs = Vec::new();
+    let found = roots
         .into_iter()
         .map(|(path, depth, excludes)| {
             let mut found = Vec::new();
-            walk(&expand(&path), depth, &excludes, &mut found);
+            walk(&expand(&path), depth, &excludes, &mut found, &mut dirs);
             found.sort_by_key(|p| p.to_lowercase());
             (path, found)
         })
-        .collect()
+        .collect();
+    (found, dirs)
+}
+
+/// スキャンするフォルダの中の `path` の変化が、リポジトリの増減かもしれないか（GTK4 版の
+/// `scan_change_matters`）。
+pub fn scan_change_matters(path: &Path) -> bool {
+    let name = path.file_name().map(|n| n.to_string_lossy());
+    // `git init`・`.git` を消した。
+    if name.as_deref() == Some(".git") {
+        return true;
+    }
+    // 見つけたリポジトリの中の、ほかの変化は増減ではない。
+    if path.parent().is_some_and(|p| p.join(".git").exists()) {
+        return false;
+    }
+    // 隠しフォルダと、今あるファイル（フォルダでないもの）の出入りも増減ではない。
+    !name.is_some_and(|n| n.starts_with('.')) && (path.is_dir() || !path.exists())
 }
 
 /// 行の状態を読む（4 つずつ並べて。GTK4 版と同じ数）。
@@ -485,7 +517,10 @@ pub enum Event {
     AddRepository,
     AddScanFolder,
     Close,
-    Scanned(Vec<(String, Vec<String>)>),
+    /// 探し終えた（見つけたものと、見張るフォルダ）。
+    Scanned(Vec<(String, Vec<String>)>, Vec<PathBuf>),
+    /// 見張っているフォルダでリポジトリが増えた・消えたかもしれない（見張りの何回目か）。
+    ScanChanged(u64),
     Peeked(Vec<(String, Peek)>),
     /// fetch が終わった（場所と、失敗なら理由）。
     Fetched(String, Option<String>),
@@ -812,7 +847,11 @@ impl State {
                 return Action::Scan(roots(&self.data));
             }
             Event::Close => return Action::Close,
-            Event::Scanned(found) => {
+            Event::ScanChanged(_) => {
+                self.scanned = None;
+                return Action::Scan(roots(&self.data));
+            }
+            Event::Scanned(found, _) => {
                 self.scanned = Some(found);
                 return Action::Peek(self.unpeeked());
             }
@@ -838,8 +877,13 @@ impl State {
         Action::None
     }
 
+    /// このタブで開く（GTK4 版・macOS 版の Open。選んだリポジトリがこのタブに替わる）。
     fn open(&mut self, location: &str) {
-        match open_window(location) {
+        self.open_with(location, crate::tabs::replace(location, false));
+    }
+
+    fn open_with(&mut self, location: &str, result: Result<(), String>) {
+        match result {
             Ok(_) => {
                 self.note.clear();
                 self.opened.insert(key(location), now());
@@ -857,6 +901,8 @@ impl State {
         let location = location.to_owned();
         match what {
             "open" => self.open(&location),
+            "open-tab" => self.open_with(&location, crate::tabs::open(&location)),
+            "open-window" => self.open_with(&location, open_window(&location)),
             "favorite" | "unfavorite" => {
                 let yes = what == "favorite";
                 self.change(|d| {
@@ -925,7 +971,25 @@ impl State {
                 self.scanned = None;
                 return Action::Scan(roots(&self.data));
             }
+            "column-left" | "column-right" => {
+                move_column(&location, what == "column-left");
+            }
             "rescan" => {
+                self.scanned = None;
+                return Action::Scan(roots(&self.data));
+            }
+            // 探す深さ（GTK4 版・macOS 版の Search Depth）。変えたら探し直す。
+            "depth" => {
+                let Ok(depth) = value.parse::<u32>() else {
+                    return Action::None;
+                };
+                self.change(|d| {
+                    for r in array_mut(d, "scanRoots") {
+                        if r["path"].as_str().is_some_and(|p| same(p, &location)) {
+                            r["depth"] = json!(depth);
+                        }
+                    }
+                });
                 self.scanned = None;
                 return Action::Scan(roots(&self.data));
             }
@@ -1005,7 +1069,9 @@ fn row_menu(state: &State, location: &str) -> Vec<MenuItem> {
         ));
     }
     vec![
-        MenuItem::item(format!("open:{location}"), tr!("Open in New Window")),
+        MenuItem::item(format!("open:{location}"), tr!("Open")),
+        MenuItem::item(format!("open-tab:{location}"), tr!("Open in New Tab")),
+        MenuItem::item(format!("open-window:{location}"), tr!("Open in New Window")),
         MenuItem::separator("-fetch"),
         MenuItem::item(format!("fetch:{location}"), "Fetch"),
         MenuItem::separator("-favorite"),
@@ -1030,14 +1096,30 @@ fn row_menu(state: &State, location: &str) -> Vec<MenuItem> {
     ]
 }
 
-/// 分類の右クリックのメニュー。
-fn category_menu(category: &Category) -> Vec<MenuItem> {
+/// 分類の右クリックのメニュー（`data` は今の探す深さに印を付けるため）。
+fn category_menu(category: &Category, data: &Value) -> Vec<MenuItem> {
     let add = [
         MenuItem::item("add-group:", tr!("New Group…")),
         MenuItem::separator("-add"),
     ];
     match category {
         Category::Root(path) => vec![
+            MenuItem::submenu("depth", tr!("Search Depth"), {
+                let depth = roots(data)
+                    .into_iter()
+                    .find(|(p, ..)| same(p, path))
+                    .map_or(3, |(_, d, _)| d);
+                (1..=6u32)
+                    .map(|d| {
+                        let label = if d == depth {
+                            format!("✓ {d}")
+                        } else {
+                            d.to_string()
+                        };
+                        MenuItem::item(format!("depth:{d}|{path}"), label)
+                    })
+                    .collect::<Vec<_>>()
+            }),
             MenuItem::item("rescan:", tr!("Search Again")),
             MenuItem::item(format!("reveal:{path}"), tr!("Show in Files")),
             MenuItem::separator("-remove"),
@@ -1123,9 +1205,66 @@ const COLUMNS: [f64; 4] = [150.0, 110.0, 280.0, 110.0];
 /// 列の幅を覚える設定の鍵（`,` 区切り）。
 const COLUMN_WIDTHS_KEY: &str = "repositoryColumnWidths";
 
+/// 状態の列（Name の後ろ。並べ替えられる。幅はこの順の列ごとに覚える）。
+const COLUMN_IDS: [&str; 4] = ["branch", "status", "commit", "opened"];
+/// 列の並びを覚える設定の鍵（`COLUMN_IDS` の名前を `,` 区切りで。GTK4 版の `repositoryPageColumnOrder`）。
+const COLUMN_ORDER_KEY: &str = "repositoryColumnOrder";
+
 thread_local! {
-    /// 列の幅（見出しの境目を動かすと変わる）。
+    /// 列の幅（見出しの境目を動かすと変わる。`COLUMN_IDS` の順）。
     static COLUMN_WIDTHS: std::cell::Cell<[f64; 4]> = std::cell::Cell::new(load_column_widths());
+    /// 並べている列（左から。`COLUMN_IDS` の何番目か）。
+    static COLUMN_ORDER: std::cell::Cell<[usize; 4]> = std::cell::Cell::new(load_column_order());
+}
+
+fn load_column_order() -> [usize; 4] {
+    parse_column_order(&crate::prefs::string(COLUMN_ORDER_KEY).unwrap_or_default())
+}
+
+/// 覚えた並び（知らない・足りない列は、残りを元の順で後ろに足す）。
+fn parse_column_order(text: &str) -> [usize; 4] {
+    let mut order: Vec<usize> = Vec::new();
+    for id in text.split(',').map(str::trim) {
+        if let Some(i) = COLUMN_IDS.iter().position(|c| *c == id)
+            && !order.contains(&i)
+        {
+            order.push(i);
+        }
+    }
+    for i in 0..4 {
+        if !order.contains(&i) {
+            order.push(i);
+        }
+    }
+    [order[0], order[1], order[2], order[3]]
+}
+
+/// 並べている列（左から。`COLUMN_IDS` の何番目か）。
+fn column_order() -> [usize; 4] {
+    COLUMN_ORDER.with(std::cell::Cell::get)
+}
+
+/// 列 `id` を左（`left`）か右に 1 つ動かして覚える。動かせなければ何もしない。
+fn move_column(id: &str, left: bool) {
+    let Some(column) = COLUMN_IDS.iter().position(|c| *c == id) else {
+        return;
+    };
+    let mut order = column_order();
+    let Some(at) = order.iter().position(|&c| c == column) else {
+        return;
+    };
+    let to = if left {
+        at.checked_sub(1)
+    } else {
+        Some(at + 1).filter(|&t| t < 4)
+    };
+    let Some(to) = to else {
+        return;
+    };
+    order.swap(at, to);
+    COLUMN_ORDER.with(|c| c.set(order));
+    let ids: Vec<&str> = order.iter().map(|&i| COLUMN_IDS[i]).collect();
+    let _ = crate::prefs::set_string(COLUMN_ORDER_KEY, &ids.join(","));
 }
 
 fn load_column_widths() -> [f64; 4] {
@@ -1140,16 +1279,17 @@ fn load_column_widths() -> [f64; 4] {
     widths
 }
 
-/// `i` 番目（Branch から）の列の幅。
+/// 左から `i` 番目（Name の後ろから）の列の幅。
 pub fn column_width(i: usize) -> f64 {
-    COLUMN_WIDTHS.with(std::cell::Cell::get)[i.min(3)]
+    COLUMN_WIDTHS.with(std::cell::Cell::get)[column_order()[i.min(3)]]
 }
 
-/// `i` 番目の列の幅を変える（狭すぎ・広すぎにはしない）。
+/// 左から `i` 番目の列の幅を変える（狭すぎ・広すぎにはしない。幅はその列に付いていく）。
 pub fn set_column_width(i: usize, width: f64) {
+    let column = column_order()[i.min(3)];
     COLUMN_WIDTHS.with(|c| {
         let mut widths = c.get();
-        widths[i.min(3)] = width.clamp(60.0, 600.0);
+        widths[column] = width.clamp(60.0, 600.0);
         c.set(widths);
     });
 }
@@ -1165,13 +1305,16 @@ pub fn save_column_widths() {
 }
 
 fn columns() -> Vec<GridLength> {
+    let widths = COLUMN_WIDTHS.with(std::cell::Cell::get);
     let mut c = vec![GridLength::Star(1.0)];
-    c.extend(
-        COLUMN_WIDTHS
-            .with(std::cell::Cell::get)
-            .map(GridLength::Pixel),
-    );
+    c.extend(column_order().map(|i| GridLength::Pixel(widths[i])));
     c
+}
+
+/// 列 `id`（`COLUMN_IDS` の名前）を出している列の番号（Name が 0）。
+fn grid_column_of(id: &str) -> i32 {
+    let i = COLUMN_IDS.iter().position(|c| *c == id).unwrap_or(0);
+    column_order().iter().position(|&c| c == i).unwrap_or(0) as i32 + 1
 }
 
 pub fn view(state: &State, callbacks: Callbacks) -> View {
@@ -1253,7 +1396,8 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                 )),
                 None => line,
             };
-            let content = content.menu(Menu::new(category_menu(c), (callbacks.menu)()));
+            let content =
+                content.menu(Menu::new(category_menu(c, &state.data), (callbacks.menu)()));
             (
                 format!("{i}:{name}"),
                 ListViewItem::new().tag(name.clone()).content(content),
@@ -1277,7 +1421,8 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
             (true, false) => format!("{text} ▼"),
             _ => text,
         };
-        Button::new()
+        let title = text.trim_end_matches([' ', '▲', '▼']).to_owned();
+        let button = Button::new()
             .style(ButtonStyle::Subtle)
             .horizontal_alignment(HorizontalAlignment::Stretch)
             .horizontal_content_alignment(HorizontalAlignment::Left)
@@ -1288,8 +1433,30 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                 "commit" => "sort:commit",
                 _ => "sort:opened",
             }))
+            .content(TextBlock::new().text(text).font_size(11.0).opacity(0.6));
+        // 右クリックで、その列を左右に動かす（Name は動かさない。GTK4 版・macOS 版は見出しを引いて動かす）。
+        let mut items = Vec::new();
+        if column > 1 {
+            items.push(MenuItem::item(
+                format!("column-left:{id}"),
+                format!("◀ {title}"),
+            ));
+        }
+        if (1..4).contains(&column) {
+            items.push(MenuItem::item(
+                format!("column-right:{id}"),
+                format!("{title} ▶"),
+            ));
+        }
+        let cell = Grid::new()
             .grid_column(column)
-            .content(TextBlock::new().text(text).font_size(11.0).opacity(0.6))
+            .background(Brush::Solid(Color::transparent()))
+            .children((button,));
+        if items.is_empty() {
+            cell
+        } else {
+            cell.menu(Menu::new(items, (callbacks.menu)()))
+        }
     };
     let header = Grid::new()
         .columns(columns())
@@ -1297,10 +1464,10 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
         .grid_row(0)
         .children((
             header_cell(tr!("Name"), "name", 0),
-            header_cell(tr!("Branch"), "branch", 1),
-            header_cell(tr!("Status"), "status", 2),
-            header_cell(tr!("Last Commit"), "commit", 3),
-            header_cell(tr!("Opened"), "opened", 4),
+            header_cell(tr!("Branch"), "branch", grid_column_of("branch")),
+            header_cell(tr!("Status"), "status", grid_column_of("status")),
+            header_cell(tr!("Last Commit"), "commit", grid_column_of("commit")),
+            header_cell(tr!("Opened"), "opened", grid_column_of("opened")),
             View::keyed_fragment(callbacks.column_handles.iter().enumerate().map(|(i, h)| {
                 (
                     format!("handle-{i}"),
@@ -1383,7 +1550,7 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
             .opened
             .get(&key(location))
             .map_or("—".to_owned(), |t| crate::render::local_date(*t));
-        let status_cell = cell(status, 2);
+        let status_cell = cell(status, grid_column_of("status"));
         let status_cell: View = match tip {
             Some(tip) => status_cell.tooltip(tip),
             None => status_cell.into(),
@@ -1393,10 +1560,10 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
             .margin(Thickness::new(0.0, 3.0, 0.0, 3.0))
             .children((
                 name_cell,
-                cell(branch, 1),
+                cell(branch, grid_column_of("branch")),
                 status_cell,
-                cell(commit, 3),
-                cell(opened, 4).opacity(0.7),
+                cell(commit, grid_column_of("commit")),
+                cell(opened, grid_column_of("opened")).opacity(0.7),
             ))
             .menu(Menu::new(row_menu(state, location), (callbacks.menu)()));
         (
@@ -1442,4 +1609,42 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
         .rows([GridLength::Auto, GridLength::Star(1.0)])
         .columns([GridLength::Pixel(240.0), GridLength::Star(1.0)])
         .children((head, side, main))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn column_order_keeps_known_columns_once() {
+        assert_eq!(parse_column_order(""), [0, 1, 2, 3]);
+        assert_eq!(parse_column_order("opened,branch"), [3, 0, 1, 2]);
+        assert_eq!(parse_column_order("commit,commit,x,status"), [2, 1, 0, 3]);
+    }
+
+    #[test]
+    fn scan_reports_repositories_and_the_folders_to_watch() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos());
+        let root =
+            std::env::temp_dir().join(format!("amonhen-scan-{}-{nanos}", std::process::id()));
+        // root/a/.git（リポジトリ）、root/b/c/.git（深さ 2）、root/.hidden/d/.git（隠しフォルダは見ない）。
+        for dir in ["a/.git", "b/c/.git", ".hidden/d/.git"] {
+            std::fs::create_dir_all(root.join(dir)).unwrap();
+        }
+        let path = root.display().to_string();
+        let (found, dirs) = scan_with_dirs(vec![(path.clone(), 1, Vec::new())]);
+        assert_eq!(found[0].1, [root.join("a").display().to_string()]);
+        assert!(dirs.contains(&root) && dirs.contains(&root.join("a")));
+        // 深さ 2 なら b/c も見つかり、b も見張る。
+        let (found, dirs) = scan_with_dirs(vec![(path, 2, Vec::new())]);
+        assert_eq!(found[0].1.len(), 2);
+        assert!(dirs.contains(&root.join("b")));
+        // リポジトリの中の変化は増減ではない。`.git` と新しいフォルダは増減かもしれない。
+        assert!(!scan_change_matters(&root.join("a").join("src")));
+        assert!(scan_change_matters(&root.join("a").join(".git")));
+        assert!(scan_change_matters(&root.join("b")));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 }

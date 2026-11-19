@@ -99,7 +99,53 @@ pub fn run(args: Args, started: Instant) -> Result<(), String> {
         crate::repositories::record_opened(&path);
     }
     ARGS.with(|a| *a.borrow_mut() = Some((args, started)));
-    App::run_component::<Root>(()).map_err(|e| format!("WinUI を始められない: {e}"))
+    App::run_component::<Shell>(()).map_err(|e| format!("WinUI を始められない: {e}"))
+}
+
+/// 前に出すタブのリポジトリと画面を、次に作る根の部品に渡す（`tabs` がタブを替えるときに呼ぶ）。
+pub fn set_target(tab: &crate::tabs::Tab) {
+    ARGS.with(|a| {
+        if let Some((args, _)) = a.borrow_mut().as_mut() {
+            args.repo = tab.location.clone().into();
+            args.repositories = tab.repositories;
+            args.working_copy = tab.working_copy;
+            args.place = None;
+        }
+    });
+    if let Ok(path) = std::path::absolute(&tab.location)
+        && path.join(".git").exists()
+    {
+        crate::repositories::record_opened(&path);
+    }
+}
+
+/// 窓の外側の部品。前のタブのリポジトリの根の部品（`Root`）を 1 つだけ置き、タブを替えたら作り直す。
+struct Shell {
+    generation: u64,
+}
+
+impl Component for Shell {
+    type Input = ();
+    type Message = ();
+
+    fn create(_input: &(), context: &ComponentContext<Self>) -> Self {
+        let sender = context.sender();
+        crate::tabs::set_remount(move || {
+            sender.send(());
+        });
+        Self { generation: 0 }
+    }
+
+    fn update(&mut self, _message: (), _context: &ComponentContext<Self>) {
+        self.generation += 1;
+    }
+
+    fn view(&self, _input: &(), _context: &mut ViewContext<Self>) -> View {
+        Grid::new().children((View::keyed_fragment([(
+            self.generation.to_string(),
+            View::component::<Root>(()),
+        )]),))
+    }
 }
 
 fn with_history(f: impl FnOnce(&mut HistoryView)) {
@@ -276,6 +322,10 @@ struct Root {
     repo_settings_from: Page,
     /// Repositories の画面と、閉じたら戻る画面・リポジトリの一覧を包む Grid（ダブルクリック・Enter を付ける）。
     repositories: Option<crate::repositories::State>,
+    /// Repositories の画面を出している間、スキャンするフォルダを見張る（GTK4 版の `watch_scan_roots`）と、
+    /// 見張り直した回数（前の見張りの知らせを捨てる）。
+    scan_watch: Option<amonhen_watch::DirsWatch>,
+    scan_watch_generation: u64,
     repositories_from: Page,
     repositories_list: ElementRef<Grid>,
     /// Activity の画面と、閉じたら戻る画面。
@@ -821,6 +871,8 @@ enum Message {
     SettingsGit(String, String, Vec<crate::reposettings::Entry>),
     /// Settings > Git の Operations・Working Copy で選んだ（行の id と番号）。
     SettingsGitChoice(&'static str, Option<usize>),
+    /// Settings の左の一覧でページを選んだ。
+    SettingsPage(Option<usize>),
     /// Git > Programs の候補と使う git。
     SettingsPrograms(crate::programs::State),
     /// Settings > Git の Keys and Values の欄（`query`・`key`・`value`）とボタン（`add`・`remove:<key>`）。
@@ -1093,6 +1145,12 @@ enum Message {
     /// 命令が失敗した（種類が分かれば、要点と次の一手を出す）。
     OperationFailed(Arc<Repository>, crate::failure::Failure),
     Failed(String),
+    /// タブを選んだ・閉じようとした（タブの番号）・引いて並べ替えた（番号の並び）。
+    TabSelected(Option<usize>),
+    TabClose(String),
+    TabsReordered(Vec<String>),
+    /// clone して取り出した後: 新しいタブで開く（取り出しに失敗していれば、そのダイアログの見出しと文）。
+    OpenClone(String, Option<(String, String)>),
 }
 
 impl Component for Root {
@@ -1173,6 +1231,8 @@ impl Component for Root {
             submodules: Value::Null,
             subtrees: Value::Null,
             repositories: None,
+            scan_watch: None,
+            scan_watch_generation: 0,
             repositories_from: Page::History,
             repositories_list: ElementRef::new(),
             settings_from: Page::History,
@@ -2284,6 +2344,45 @@ impl Component for Root {
                     *entries = crate::menus::default_toolbar();
                 }
             }
+            Message::Command(id) if id == "new-tab" => {
+                crate::tabs::note_page(self.page == Page::WorkingCopy);
+                crate::tabs::new_tab();
+            }
+            Message::Command(id) if id == "close-tab" => {
+                if crate::tabs::close_current() {
+                    close_window();
+                }
+            }
+            Message::Command(id) if id == "next-tab" || id == "previous-tab" => {
+                crate::tabs::note_page(self.page == Page::WorkingCopy);
+                crate::tabs::step(if id == "next-tab" { 1 } else { -1 });
+            }
+            Message::TabSelected(Some(index)) => {
+                if index != crate::tabs::active() {
+                    crate::tabs::note_page(self.page == Page::WorkingCopy);
+                    crate::tabs::select(index);
+                }
+            }
+            Message::TabSelected(None) => {}
+            Message::TabClose(id) => {
+                if let Ok(id) = id.parse()
+                    && crate::tabs::close(id)
+                {
+                    close_window();
+                }
+            }
+            Message::TabsReordered(order) => crate::tabs::reorder(&order),
+            Message::OpenClone(dest, failed) => {
+                if let Some((title, message)) = failed {
+                    self.dialog = Some(Dialog::Failed { title, message });
+                }
+                if let Err(message) = crate::tabs::open(&dest) {
+                    self.dialog = Some(Dialog::Failed {
+                        title: tr!("Couldn’t clone"),
+                        message,
+                    });
+                }
+            }
             Message::Command(id) if id == "new-window" => {
                 let location = self
                     .repo
@@ -2304,11 +2403,11 @@ impl Component for Root {
                 }
             }
             Message::Command(id) if id == "open" => {
-                // 開いているものとは別の窓で開く（窓にタブがない）。
+                // 新しいタブで開く（macOS 版・GTK4 版と同じ）。
                 let Some(path) = crate::files::pick_folder(&tr!("Open…"), &tr!("Open")) else {
                     return;
                 };
-                if let Err(e) = crate::repositories::open_window(&path.display().to_string()) {
+                if let Err(e) = crate::tabs::open(&path.display().to_string()) {
                     self.dialog = Some(Dialog::Failed {
                         title: tr!("Open…"),
                         message: e,
@@ -2418,7 +2517,7 @@ impl Component for Root {
                             });
                             return;
                         }
-                        if let Err(message) = crate::repositories::open_window(&dest) {
+                        if let Err(message) = crate::tabs::open(&dest) {
                             self.dialog = Some(Dialog::Failed {
                                 title: tr!("Couldn’t clone"),
                                 message,
@@ -2566,9 +2665,8 @@ impl Component for Root {
                 self.repositories = Some(state);
                 self.page = Page::Repositories;
                 context.spawn_background(move |_| {
-                    Message::Repos(crate::repositories::Event::Scanned(
-                        crate::repositories::scan(roots),
-                    ))
+                    let (found, dirs) = crate::repositories::scan_with_dirs(roots);
+                    Message::Repos(crate::repositories::Event::Scanned(found, dirs))
                 });
             }
             Message::Command(id) if id == "activity" => {
@@ -2589,6 +2687,7 @@ impl Component for Root {
                 }
                 let editor = crate::prefs::string(crate::editor::KEY).unwrap_or_default();
                 self.settings = Some(crate::settingsview::State {
+                    page: 0,
                     git: None,
                     global: None,
                     programs: None,
@@ -2943,7 +3042,7 @@ impl Component for Root {
                     // 打ち替えて候補が減っていれば、先頭。
                     match shown.get(selected).or(shown.first()) {
                         Some(c) => {
-                            if let Err(e) = crate::repositories::open_window(&c.location) {
+                            if let Err(e) = crate::tabs::open(&c.location) {
                                 self.error = Some(e);
                             }
                         }
@@ -3413,10 +3512,7 @@ impl Component for Root {
                                     e.to_owned(),
                                 )
                             });
-                            let opened = crate::repositories::open_window(&dest)
-                                .err()
-                                .map(|e| (tr!("Couldn’t clone"), e));
-                            Message::Performed(failed.or(opened))
+                            Message::OpenClone(dest, failed)
                         });
                         return;
                     }
@@ -3429,7 +3525,7 @@ impl Component for Root {
                     }),
                     _,
                 ) => {
-                    if let Err(message) = crate::repositories::open_window(&dest) {
+                    if let Err(message) = crate::tabs::open(&dest) {
                         self.dialog = Some(Dialog::Failed {
                             title: tr!("Couldn’t clone"),
                             message,
@@ -5768,6 +5864,11 @@ impl Component for Root {
                     state.programs = Some(programs);
                 }
             }
+            Message::SettingsPage(page) => {
+                if let (Some(state), Some(page)) = (self.settings.as_mut(), page) {
+                    state.page = page;
+                }
+            }
             Message::SettingsGitChoice(id, Some(index)) if id.starts_with("program:") => {
                 let Some(repo) = self.repo.clone() else {
                     return;
@@ -6700,14 +6801,35 @@ impl Component for Root {
                             | amonhen_model::RefKind::Remote
                             | amonhen_model::RefKind::Tag
                     );
+                    // Ctrl を押していれば、今の範囲に足す（もう入っていれば外す）。いくつもの ref から辿れるものを
+                    // まとめて出す（macOS 版・GTK4 版でいくつも選んだときと同じ）。
+                    let ctrl = xaml::InputKeyboardSource::GetKeyStateForCurrentThread(
+                        xaml::VirtualKey::Control,
+                    )
+                    .is_ok_and(|s| s.contains(xaml::CoreVirtualKeyStates::Down));
                     with_history(|h| {
-                        h.select_commit(&target);
-                        if scoped {
-                            h.session.data.set_scope(crate::data::Scope::Refs(vec![(
-                                entry.kind,
-                                entry.name.clone(),
-                            )]));
+                        if !scoped {
+                            h.select_commit(&target);
+                            return;
                         }
+                        let this = (entry.kind, entry.name.clone());
+                        let list = match h.session.data.scope() {
+                            crate::data::Scope::Refs(mut list) if ctrl => {
+                                if let Some(at) = list.iter().position(|r| *r == this) {
+                                    list.remove(at);
+                                } else {
+                                    list.push(this);
+                                }
+                                list
+                            }
+                            _ => vec![this],
+                        };
+                        if list.is_empty() {
+                            h.session.data.set_scope(crate::data::Scope::All);
+                        } else {
+                            h.session.data.set_scope(crate::data::Scope::Refs(list));
+                        }
+                        h.select_commit(&target);
                     });
                 }
             }
@@ -6738,7 +6860,8 @@ impl Component for Root {
                 title.push_str(&format!(" ↓{}", head.behind));
             }
         }
-        context.window_title(title);
+        context.window_title(title.clone());
+        let tab_strip = tab_strip(&title, context);
         let root = self.root.clone();
         let refs = (
             self.panel.clone(),
@@ -7277,15 +7400,17 @@ impl Component for Root {
             .rows([
                 GridLength::Auto,
                 GridLength::Auto,
+                GridLength::Auto,
                 GridLength::Star(1.0),
                 GridLength::Auto,
             ])
             .children((
                 menu_bar,
                 toolbar,
+                tab_strip,
                 // パッチのファイルを落とせる（GTK4 版・macOS 版と同じく窓のどこにでも）。
                 Border::new()
-                    .grid_row(2)
+                    .grid_row(3)
                     .drop_policy(
                         DragDropPolicy::new()
                             .storage_items(DragDropAction::new(DragDropOperation::Copy)),
@@ -11454,7 +11579,7 @@ impl Root {
                     .grid_column(1)
                     .content(running),
             ));
-        StackPanel::new().grid_row(3).children((
+        StackPanel::new().grid_row(4).children((
             self.failure_band(context),
             self.sequence_band(context),
             bar,
@@ -11789,12 +11914,62 @@ impl Root {
     }
 
     /// Repositories の画面の知らせを扱う（状態を変え、要る操作をする）。
+    /// スキャンするフォルダ（探す深さまでのフォルダと、見つけたリポジトリ）を見張り、中でフォルダが増えた・
+    /// 消えた、`.git` ができた・消えたら探し直す（GTK4 版の `watch_dirs`。知らせは 1 秒まとめる）。
+    fn watch_scan_folders(
+        &mut self,
+        dirs: &[std::path::PathBuf],
+        context: &ComponentContext<Self>,
+    ) {
+        // 前の見張りを止めてから（落とすと、前の待ちは終わる）。
+        self.scan_watch = None;
+        self.scan_watch_generation += 1;
+        if dirs.is_empty() {
+            return;
+        }
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        let watch = amonhen_watch::DirsWatch::new(dirs, move |paths| {
+            if paths
+                .iter()
+                .any(|p| crate::repositories::scan_change_matters(p))
+            {
+                let _ = tx.send(());
+            }
+        });
+        let Ok(watch) = watch else {
+            return;
+        };
+        self.scan_watch = Some(watch);
+        let generation = self.scan_watch_generation;
+        context.spawn_background(move |_| {
+            if rx.recv().is_err() {
+                // 見張りを止めた（捨てられる知らせ）。
+                return Message::Repos(crate::repositories::Event::ScanChanged(u64::MAX));
+            }
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            while rx.try_recv().is_ok() {}
+            Message::Repos(crate::repositories::Event::ScanChanged(generation))
+        });
+    }
+
     fn repositories_event(
         &mut self,
         event: crate::repositories::Event,
         context: &ComponentContext<Self>,
     ) {
         use crate::repositories::Action;
+        // 前の見張りの知らせは捨てる。探し終えたら、読んだフォルダを見張り直す。
+        match &event {
+            crate::repositories::Event::ScanChanged(generation)
+                if *generation != self.scan_watch_generation =>
+            {
+                return;
+            }
+            crate::repositories::Event::Scanned(_, dirs) if self.repositories.is_some() => {
+                self.watch_scan_folders(dirs, context);
+            }
+            _ => {}
+        }
         let Some(state) = self.repositories.as_mut() else {
             return;
         };
@@ -11802,13 +11977,13 @@ impl Root {
             Action::None => {}
             Action::Close => {
                 self.repositories = None;
+                self.scan_watch = None;
                 self.page = self.repositories_from;
             }
             Action::Scan(roots) => {
                 context.spawn_background(move |_| {
-                    Message::Repos(crate::repositories::Event::Scanned(
-                        crate::repositories::scan(roots),
-                    ))
+                    let (found, dirs) = crate::repositories::scan_with_dirs(roots);
+                    Message::Repos(crate::repositories::Event::Scanned(found, dirs))
                 });
             }
             Action::Peek(locations) if locations.is_empty() => {}
@@ -11839,9 +12014,8 @@ impl Root {
         }
     }
 
-    /// `path` の worktree を書き込む先にする（macOS 版・GTK4 版の Edit This Worktree）。この版は窓ごとに 1 つの
-    /// リポジトリを開くので、その worktree を同じ位置・大きさ・画面の窓で開き直し、この窓を閉じる。操作の途中なら
-    /// 替えない。
+    /// `path` の worktree を書き込む先にする（macOS 版・GTK4 版の Edit This Worktree）。今のタブでその worktree を
+    /// 同じ画面で開き直す。操作の途中なら替えない。
     fn edit_worktree(&mut self, path: &str) {
         let editing = self
             .repo
@@ -11854,23 +12028,11 @@ impl Root {
         if self.running > 0 || self.busy.is_some() {
             return beep();
         }
-        let mut extra: Vec<String> = Vec::new();
-        if let Some([x, y, w, h]) = window_rect() {
-            extra.push("--place".to_owned());
-            extra.push(format!("{x},{y},{w},{h}"));
-        }
-        if self.page == Page::WorkingCopy {
-            extra.push("--working-copy".to_owned());
-        }
-        let extra: Vec<&str> = extra.iter().map(String::as_str).collect();
-        match crate::repositories::open_window_with(path, &extra) {
-            Ok(()) => std::process::exit(0),
-            Err(message) => {
-                self.dialog = Some(Dialog::Failed {
-                    title: tr!("Can’t open the worktree"),
-                    message,
-                });
-            }
+        if let Err(message) = crate::tabs::replace(path, self.page == Page::WorkingCopy) {
+            self.dialog = Some(Dialog::Failed {
+                title: tr!("Can’t open the worktree"),
+                message,
+            });
         }
     }
 
@@ -12327,6 +12489,11 @@ impl Root {
                 save_git: context.callback(|()| Message::SettingsSaveGit),
                 git_choice: Box::new(|id| {
                     context.callback(move |index| Message::SettingsGitChoice(id, index))
+                }),
+                page: context.callback(Message::SettingsPage),
+                // ↩︎ は「自動」（どの行も最初の項目）を選んだのと同じ。
+                program_revert: Box::new(|id| {
+                    context.callback(move |()| Message::SettingsGitChoice(id, Some(0)))
                 }),
                 keys_field: Box::new(|field| {
                     context.callback(move |text| Message::SettingsKeysField(field, text))
@@ -15318,22 +15485,50 @@ fn global_entries(reply: &Value) -> Vec<crate::reposettings::Entry> {
         .collect()
 }
 
-/// この窓の位置と大きさ（画面のピクセル。x, y, 幅, 高さ）。
-fn window_rect() -> Option<[i32; 4]> {
-    use windows::Win32::Foundation::RECT;
-    use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
-    let window = unsafe { windows::Win32::UI::Input::KeyboardAndMouse::GetActiveWindow() };
-    if window.is_invalid() {
-        return None;
+/// タブの帯（タブが 2 つ以上のときだけ。macOS 版の窓のタブと同じ）。前のタブの名前は窓の名前と同じく ● と ↑↓ を
+/// 添える。
+fn tab_strip(title: &str, context: &ViewContext<Root>) -> View {
+    let tabs = crate::tabs::tabs();
+    if tabs.len() < 2 {
+        return View::empty();
     }
-    let mut rect = RECT::default();
-    unsafe { GetWindowRect(window, &mut rect) }.ok()?;
-    Some([
-        rect.left,
-        rect.top,
-        rect.right - rect.left,
-        rect.bottom - rect.top,
-    ])
+    let active = crate::tabs::active();
+    let items: Vec<(String, View)> = tabs
+        .iter()
+        .enumerate()
+        .map(|(i, tab)| {
+            let header = if i == active {
+                title.to_owned()
+            } else {
+                crate::tabs::name(&tab.location)
+            };
+            let item = TabViewItem::new()
+                .header(header)
+                .tag(tab.id.to_string())
+                .tooltip(tab.location.clone());
+            (tab.id.to_string(), item)
+        })
+        .collect();
+    TabView::new()
+        .grid_row(2)
+        .selected_index(active)
+        .can_reorder_tabs(true)
+        .is_add_tab_button_visible(true)
+        .on_selection_changed(context.callback(Message::TabSelected))
+        .on_close_requested(context.callback(Message::TabClose))
+        .on_add_tab_button_click(context.callback(|()| Message::Command("new-tab".to_owned())))
+        .on_reordered(context.callback(Message::TabsReordered))
+        .collection_slot(TabViewSlot::TabItems, items)
+}
+
+/// この窓を閉じる（最後のタブを閉じた）。
+fn close_window() {
+    use windows::Win32::Foundation::{LPARAM, WPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_CLOSE};
+    let window = unsafe { windows::Win32::UI::Input::KeyboardAndMouse::GetActiveWindow() };
+    if !window.is_invalid() {
+        let _ = unsafe { PostMessageW(Some(window), WM_CLOSE, WPARAM(0), LPARAM(0)) };
+    }
 }
 
 /// `--place` の位置・大きさに窓を動かす（窓ができて前に出るまで、描くたびに試す。2 秒ほどであきらめる）。

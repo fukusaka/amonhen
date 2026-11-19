@@ -55,6 +55,7 @@ pub const IMPLEMENTED: &[&str] = &[
 /// 表にない、この FE が File メニューの先頭に置く項目（GTK4 版の `appmenu` の Open…・Clone…。macOS 版の
 /// ⌘O・⌘⌃C）。
 const FILE_ITEMS: &[(&str, &str)] = &[
+    ("new-tab", "Primary+T"),
     ("new-window", "Primary+N"),
     ("open", "Primary+O"),
     ("clone", "Primary+Alt+C"),
@@ -62,6 +63,7 @@ const FILE_ITEMS: &[(&str, &str)] = &[
 
 fn file_item_title(id: &str) -> String {
     match id {
+        "new-tab" => amonhen_model::tr!("New Tab"),
         "new-window" => amonhen_model::tr!("New Window"),
         "open" => amonhen_model::tr!("Open…"),
         _ => "Clone…".to_owned(),
@@ -230,6 +232,41 @@ pub fn menu_bar(on_click: impl Fn() -> Callback<String>) -> View {
                 "customize-toolbar",
                 amonhen_model::tr!("Customize Toolbar…"),
             ));
+        }
+        // File の終わりに Close Tab（GTK4 版の Close。最後のタブなら窓を閉じる）。
+        if menu == Menu::File {
+            items.push(MenuItem::separator("-close"));
+            let item = MenuItem::item("close-tab", amonhen_model::tr!("Close Tab"));
+            items.push(match shortcut("Primary+W") {
+                Some(s) => item.with_shortcut(s),
+                None => item,
+            });
+        }
+        // Window の先頭に、タブを替える項目（macOS 版の Show Next Tab・Show Previous Tab）。
+        if menu == Menu::Window {
+            let mut tabs = Vec::new();
+            for (id, key, title) in [
+                (
+                    "next-tab",
+                    "Primary+Tab",
+                    amonhen_model::tr!("Show Next Tab"),
+                ),
+                (
+                    "previous-tab",
+                    "Primary+Shift+Tab",
+                    amonhen_model::tr!("Show Previous Tab"),
+                ),
+            ] {
+                let item = MenuItem::item(id, title);
+                tabs.push(match shortcut(key) {
+                    Some(s) => item.with_shortcut(s),
+                    None => item,
+                });
+            }
+            if !items.is_empty() {
+                tabs.push(MenuItem::separator("-tabs"));
+            }
+            items.splice(0..0, tabs);
         }
         if items.is_empty() {
             continue;
@@ -517,6 +554,7 @@ fn virtual_key(key: &str) -> Option<u16> {
     let bytes = key.as_bytes();
     Some(match key {
         "Return" => 0x0D,
+        "Tab" => 0x09,
         "Left" => 0x25,
         "Up" => 0x26,
         "Right" => 0x27,
@@ -552,6 +590,7 @@ mod tests {
         assert_eq!((s.key, s.control, s.alt), (0x28, true, true));
         assert_eq!(shortcut("Primary+2").unwrap().key, 0x32);
         assert_eq!(shortcut("F9").unwrap().key, 0x78);
-        assert!(shortcut("Primary+Tab").is_none());
+        assert_eq!(shortcut("Primary+Shift+Tab").unwrap().key, 0x09);
+        assert!(shortcut("Primary+Escape").is_none());
     }
 }

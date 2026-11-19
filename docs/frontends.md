@@ -75,11 +75,11 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 
 | Feature | macOS | GTK4 | Windows | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
-| Repository tabs in a window | ✓ | ✓ | — | n/a | n/a |  |
+| Repository tabs in a window | ✓ | ✓ | △ | n/a | n/a | Windows: Only the front tab's repository stays open; switching tabs opens the other one again (History comes from the persistent cache), at the page it was left on. Tabs can be reordered but not dragged out into a window. |
 | Separate windows (New Window) | ✓ | ✓ | ✓ | n/a | n/a | Windows: A window is a separate process; New Window opens one on the current repository showing Repositories |
-| Open windows and tabs restored at launch | ✓ | ✓ | △ | n/a | n/a | Windows: The repository of the last window closed, when started without one; no tabs. |
+| Open windows and tabs restored at launch | ✓ | ✓ | △ | n/a | n/a | Windows: The tabs of the last window closed, when started without a repository. |
 | Connecting tab for SSH and daemon repositories (Cancel, Try Again) | ✓ | ✓ | — | n/a | n/a |  |
-| Title shows uncommitted ● and ahead/behind | ✓ | ✓ | ✓ | n/a | n/a | GTK4: On the tab names.<br>Windows: Windows: On the window title (there are no tabs yet). |
+| Title shows uncommitted ● and ahead/behind | ✓ | ✓ | ✓ | n/a | n/a | GTK4: On the tab names.<br>Windows: On the window title and the front tab's name. |
 | App keeps running after its last window closes | ✓ | — | — | n/a | n/a | GTK4: Quits, as GNOME apps do. |
 
 ## 2. Bookmarks (the repository list)
@@ -88,13 +88,13 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
 | Repository page with All, Favorites, Places and groups | ✓ | ✓ | ✓ | n/a | n/a |  |
 | Add a local or an SSH repository | ✓ | ✓ | △ | n/a | n/a | Windows: Local repositories only. |
-| Folders to scan on this machine (depth, watched) | △ | △ | △ | n/a | n/a | macOS: Excludes are a fixed list.<br>GTK4: Excludes are a fixed list.<br>Windows: The depth can't be changed and the folders aren't watched (Search Again on the folder's menu). |
+| Folders to scan on this machine (depth, watched) | △ | △ | △ | n/a | n/a | macOS: Excludes are a fixed list.<br>GTK4: Excludes are a fixed list.<br>Windows: Excludes are a fixed list; the folders are watched while Repositories is open. |
 | Folders to scan on SSH hosts | ✓ | ✓ | — | n/a | △ | CLI: `find-repositories` does the scan for the apps. |
 | Folder tree of the repositories under a place | ✓ | ✓ | — | n/a | n/a |  |
 | Manual groups; rows dragged onto Favorites or a group | △ | △ | △ | n/a | n/a | macOS: Groups themselves can't be reordered by dragging.<br>GTK4: Groups themselves can't be reordered by dragging.<br>Windows: Group on the row's menu; no dragging. |
-| Status columns (branch, changes, ahead/behind, last commit, opened), sortable and reorderable | ✓ | ✓ | △ | n/a | n/a | Windows: Sortable by clicking a header and resized by dragging a header's left edge; columns can't be reordered. |
+| Status columns (branch, changes, ahead/behind, last commit, opened), sortable and reorderable | ✓ | ✓ | ✓ | n/a | n/a | Windows: Sortable by clicking a header, resized by dragging a header's left edge, and moved left or right from a header's right-click menu. |
 | Favorites, display name, color label | ✓ | ✓ | ✓ | n/a | n/a |  |
-| Open in a tab or window; Finder / Files, Terminal, Editor | ✓ | ✓ | △ | n/a | n/a | GTK4: An app other than a known code editor or a program chosen with Other… opens a folder only if it declares inode/directory.<br>Windows: Explorer, Windows Terminal (or cmd) and the editor chosen in Settings; no tabs, so a repository opens in a new window. |
+| Open in a tab or window; Finder / Files, Terminal, Editor | ✓ | ✓ | ✓ | n/a | n/a | GTK4: An app other than a known code editor or a program chosen with Other… opens a folder only if it declares inode/directory.<br>Windows: Explorer, Windows Terminal (or cmd) and the editor chosen in Settings. |
 | Fetch the selected repositories | ✓ | ✓ | ✓ | n/a | n/a | Windows: Rows are selected with Ctrl or Shift, and Fetch on a selected row's menu fetches them all. |
 | Quick Open (fuzzy search) | ✓ | ✓ | ✓ | n/a | n/a | Windows: Opens in a new window. |
 | Repository name in the toolbar switches the repository | ✓ | ✓ | — | ✓ | n/a | VSCode: Select Repository picks among workspace repositories. |
@@ -115,7 +115,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | General: terminal and diff tool | — | — | — | n/a | n/a |  |
 | Git: machine-wide pages (Author and Signing, Commits, Operations, Working Copy, Keys and Values) | ✓ | ✓ | ✓ | — | △ | CLI: Via `amonhen run`. |
 | Git > Commits: shared message template library | ✓ | ✓ | ✓ | — | — | Windows: Edited inline in the one Settings page (no sheet) |
-| Git > Programs: git, gpg, ssh-keygen, gpgsm | ✓ | ✓ | △ | n/a | △ | VSCode: The extension runs the git chosen here for the machine, and VSCode's `git.path` only when none is chosen; gpg and ssh-keygen come from git's settings.<br>CLI: Via `amonhen run` (`programs`, `setMachineGit`).<br>Windows: In Settings > Git; Automatic clears a choice, with no ↩︎ or ⓘ. |
+| Git > Programs: git, gpg, ssh-keygen, gpgsm | ✓ | ✓ | ✓ | n/a | △ | VSCode: The extension runs the git chosen here for the machine, and VSCode's `git.path` only when none is chosen; gpg and ssh-keygen come from git's settings.<br>CLI: Via `amonhen run` (`programs`, `setMachineGit`).<br>Windows: In Settings > Git. |
 | Git > Environment Variables of this machine (pass, masked secrets) | ✓ | ✓ | ✓ | n/a | n/a | VSCode: VSCode's own environment, which the extension passes to the daemon.<br>Windows: In the one Settings page under Git; no Passed / All switch or value detail |
 | Environment Variables: use the login shell's (Read Again, SSH agent) | ✓ | — | — | n/a | n/a | GTK4: Left out: Linux sessions already carry it.<br>VSCode: VSCode's own environment, which the extension passes to the daemon. |
 | SSH Hosts: hosts with + / −, unreachable dimmed | ✓ | ✓ | — | n/a | n/a | VSCode: Remote-SSH takes this role. |
@@ -143,7 +143,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 
 | Feature | macOS | GTK4 | Windows | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
-| Settings page (pages, git line, source / ↩︎ / ⓘ per row) | ✓ | ✓ | △ | ✓ | n/a | VSCode: Repository Settings in the main view (with the engine), this repository only.<br>Windows: Every section on one page; the setting rows have the source, ↩︎ and ⓘ (each level's value as a tooltip). |
+| Settings page (pages, git line, source / ↩︎ / ⓘ per row) | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: Repository Settings in the main view (with the engine), this repository only.<br>Windows: Pages listed on the left (General, Git, Appearance, Diff & Merge, Performance); the setting rows have the source, ↩︎ and ⓘ (each level's value as a tooltip). |
 | Author and Signing (signing choice, collected keys, mailmap) | ✓ | ✓ | ✓ | ✓ | △ | VSCode: Keys are collected for the current format only.<br>CLI: Via `amonhen run` (`signingKeys`, `configSet`). |
 | Commits: message template (none, shared, own, file) | ✓ | ✓ | ✓ | △ | △ | VSCode: None, this repository's own (edited there) or a file; no shared templates.<br>CLI: Via `amonhen run`. |
 | Branches: default branch override | ✓ | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
@@ -258,7 +258,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Go to HEAD, Parent, Child | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: The HEAD button above History, Go to Parent and Go to Child on a commit's menu, and parent and child links in the details (with the engine). |
 | Go to Ref | — | — | — | — | n/a |  |
 | Several commits selected (range, two, scattered) | ✓ | ✓ | ✓ | ✓ | △ | VSCode: With the engine.<br>CLI: `diff <rev> <rev>` for two. |
-| History of several selected refs | ✓ | ✓ | △ | ✓ | ✓ | CLI: `log --branch` repeated.<br>Windows: One ref at a time: selecting it in the sidebar shows its History; View has All Branches and Current Branch. |
+| History of several selected refs | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `log --branch` repeated.<br>Windows: Selecting a ref in the sidebar shows its History, and Ctrl+click adds or removes refs; View has All Branches and Current Branch. |
 | Commit menu: checkout, new branch or tag, cherry-pick, revert, copy ID | ✓ | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
 | Edit mode (keep, reword, squash, fixup, drop, edit; drag to reorder) | ✓ | ✓ | ✓ | ✓ | △ | VSCode: With the engine; without it, one commit at a time.<br>CLI: Via `amonhen run`. |
 | Rewrite preview (stacked and pushed branches, expected conflicts) | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: Through the daemon. Rebasing another branch gives the conflict estimate instead, as in the app.<br>CLI: `rewrite-preview`. |

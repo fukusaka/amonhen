@@ -24,6 +24,8 @@ pub const AUTO_BOOKMARK: &str = "autoBookmark";
 pub const COMPACT_HISTORY_ROWS: &str = "compactHistoryRows";
 /// 最後に閉じた窓のリポジトリ（引数なしで起動したら開く。GTK4 版・macOS 版の、開いていた窓を戻すのにあたる）。
 pub const LAST_REPOSITORY: &str = "lastRepository";
+/// 最後に閉じた窓のタブ（場所の並びと前のタブ。JSON）。
+pub const LAST_TABS: &str = "lastTabs";
 /// History でマージ済みブランチを折りたたむ（既定は折りたたまない。GTK4 版・macOS 版と同じ鍵）。
 pub const FOLD_MERGED_BRANCHES: &str = "foldMergedBranches";
 /// コミットの差分で全ファイルを縦に並べる（既定は並べる。macOS 版・GTK4 版と同じ鍵）。

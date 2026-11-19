@@ -75,11 +75,11 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 
 | 機能 | macOS | GTK4 | Windows | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
-| 窓の中のリポジトリのタブ | ✓ | ✓ | — | n/a | n/a |  |
+| 窓の中のリポジトリのタブ | ✓ | ✓ | △ | n/a | n/a | Windows: 前のタブのリポジトリだけを開いておき、タブを替えるとそのリポジトリを開き直す（History は永続のキャッシュから）。画面は離れたときのもの。タブは並べ替えられるが、引き出して窓にはできない。 |
 | 別の窓（New Window） | ✓ | ✓ | ✓ | n/a | n/a | Windows: 窓は別のプロセス。New Window は今のリポジトリの窓を開き、Repositories を出す |
-| 起動時に窓とタブを戻す | ✓ | ✓ | △ | n/a | n/a | Windows: 引数なしで起動したら、最後に閉じた窓のリポジトリ。タブはない。 |
+| 起動時に窓とタブを戻す | ✓ | ✓ | △ | n/a | n/a | Windows: リポジトリなしで起動したら、最後に閉じた窓のタブ。 |
 | SSH・daemon のリポジトリのつなぎ中のタブ（Cancel・Try Again） | ✓ | ✓ | — | n/a | n/a |  |
-| 題に未コミットの ● と ahead/behind | ✓ | ✓ | ✓ | n/a | n/a | GTK4: タブの名前に出る。<br>Windows: Windows: 窓のタイトルに（タブはまだない）。 |
+| 題に未コミットの ● と ahead/behind | ✓ | ✓ | ✓ | n/a | n/a | GTK4: タブの名前に出る。<br>Windows: 窓のタイトルと前のタブの名前に。 |
 | 最後の窓を閉じてもアプリは終わらない | ✓ | — | — | n/a | n/a | GTK4: GNOME のアプリと同じく終わる。 |
 
 ## 2. ブックマーク（リポジトリの一覧）
@@ -88,13 +88,13 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
 | All・Favorites・Places・グループのあるリポジトリのページ | ✓ | ✓ | ✓ | n/a | n/a |  |
 | 手元・SSH のリポジトリを足す | ✓ | ✓ | △ | n/a | n/a | Windows: 手元のリポジトリだけ。 |
-| この機械の探すフォルダー（深さ・見張り） | △ | △ | △ | n/a | n/a | macOS: 除くものは決まった一覧。<br>GTK4: 除くものは決まった一覧。<br>Windows: 深さは変えられず、フォルダの見張りもない（フォルダのメニューの Search Again）。 |
+| この機械の探すフォルダー（深さ・見張り） | △ | △ | △ | n/a | n/a | macOS: 除くものは決まった一覧。<br>GTK4: 除くものは決まった一覧。<br>Windows: 除外は決まったもの。フォルダは Repositories を出している間だけ見張る。 |
 | SSH 先の探すフォルダー | ✓ | ✓ | — | n/a | △ | CLI: `find-repositories` がアプリのために探す。 |
 | 場所の下のリポジトリのフォルダーの木 | ✓ | ✓ | — | n/a | n/a |  |
 | 手で作るグループ・行を Favorites やグループへドラッグ | △ | △ | △ | n/a | n/a | macOS: グループそのものはドラッグで並べ替えられない。<br>GTK4: グループそのものはドラッグで並べ替えられない。<br>Windows: 行のメニューの Group で。ドラッグはない。 |
-| 状態の列（ブランチ・変更・ahead/behind・最後のコミット・開いた時）、並べ替え、列の順の入れ替え | ✓ | ✓ | △ | n/a | n/a | Windows: 見出しを押すと並べ替え、見出しの左端を動かすと幅が変わる。列の並べ替えはできない。 |
+| 状態の列（ブランチ・変更・ahead/behind・最後のコミット・開いた時）、並べ替え、列の順の入れ替え | ✓ | ✓ | ✓ | n/a | n/a | Windows: 見出しを押して並べ替え、見出しの左端を引いて幅を変え、見出しの右クリックで左右に動かす。 |
 | お気に入り・表示名・色のラベル | ✓ | ✓ | ✓ | n/a | n/a |  |
-| タブ・窓で開く、Finder（ファイル）・Terminal・エディタ | ✓ | ✓ | △ | n/a | n/a | GTK4: 知っているコードエディタと「その他…」で選んだプログラム以外は、inode/directory を宣言しているアプリだけがフォルダを開く。<br>Windows: エクスプローラー・Windows Terminal（なければ cmd）・Settings で選んだエディタ。タブはなく新しいウィンドウで開く。 |
+| タブ・窓で開く、Finder（ファイル）・Terminal・エディタ | ✓ | ✓ | ✓ | n/a | n/a | GTK4: 知っているコードエディタと「その他…」で選んだプログラム以外は、inode/directory を宣言しているアプリだけがフォルダを開く。<br>Windows: エクスプローラー・Windows Terminal（なければ cmd）・Settings で選んだエディタ。 |
 | 選んだリポジトリを Fetch | ✓ | ✓ | ✓ | n/a | n/a | Windows: Ctrl・Shift で行を選び、選んだ行のメニューの Fetch で、選んだものすべてを fetch する。 |
 | Quick Open（あいまい検索） | ✓ | ✓ | ✓ | n/a | n/a | Windows: 新しいウィンドウで開く。 |
 | ツールバーのリポジトリ名で切り替える | ✓ | ✓ | — | ✓ | n/a | VSCode: Select Repository でワークスペースのリポジトリから選ぶ。 |
@@ -115,7 +115,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | General: 端末と diff のツール | — | — | — | n/a | n/a |  |
 | Git: 機械全体のページ（Author and Signing・Commits・Operations・Working Copy・Keys and Values） | ✓ | ✓ | ✓ | — | △ | CLI: `amonhen run` から。 |
 | Git > Commits: 共有のメッセージのテンプレート | ✓ | ✓ | ✓ | — | — | Windows: Settings の 1 ページでその場で書く（シートはない） |
-| Git > Programs: git・gpg・ssh-keygen・gpgsm | ✓ | ✓ | △ | n/a | △ | VSCode: 拡張は、ここで機械に選んだ git を動かし、選んでいなければ VSCode の `git.path`。gpg・ssh-keygen は git の設定で決まる。<br>CLI: `amonhen run`（`programs`・`setMachineGit`）から。<br>Windows: Settings > Git に。選びを消すのは「自動」で、↩︎・ⓘ はない。 |
+| Git > Programs: git・gpg・ssh-keygen・gpgsm | ✓ | ✓ | ✓ | n/a | △ | VSCode: 拡張は、ここで機械に選んだ git を動かし、選んでいなければ VSCode の `git.path`。gpg・ssh-keygen は git の設定で決まる。<br>CLI: `amonhen run`（`programs`・`setMachineGit`）から。<br>Windows: Settings の Git に。 |
 | Git > この機械の Environment Variables（渡す・秘密を隠す） | ✓ | ✓ | ✓ | n/a | n/a | VSCode: VSCode の環境が代わり（拡張はそれを daemon に渡す）。<br>Windows: Settings の 1 ページの Git の下。Passed / All の切り替えと値の詳細はない |
 | Environment Variables: ログインシェルのものを使う（Read Again・SSH agent） | ✓ | — | — | n/a | n/a | GTK4: 外した。Linux のセッションはすでに持っている。<br>VSCode: VSCode の環境が代わり（拡張はそれを daemon に渡す）。 |
 | SSH Hosts: + / − の付いたホスト、届かないものは薄く | ✓ | ✓ | — | n/a | n/a | VSCode: Remote-SSH が受け持つ。 |
@@ -143,7 +143,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 
 | 機能 | macOS | GTK4 | Windows | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
-| 設定のページ（ページの一覧・git の行・行ごとの出どころ・↩︎・ⓘ） | ✓ | ✓ | △ | ✓ | n/a | VSCode: メインビューの Repository Settings（エンジンがあるとき）で、このリポジトリの設定だけ。<br>Windows: すべての節を 1 ページに。設定の行に設定元・↩︎・ⓘ（段ごとの値をツールチップで）がある。 |
+| 設定のページ（ページの一覧・git の行・行ごとの出どころ・↩︎・ⓘ） | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: メインビューの Repository Settings（エンジンがあるとき）で、このリポジトリの設定だけ。<br>Windows: ページを左に並べる（一般・Git・表示・差分とマージ・パフォーマンス）。設定の行には設定元・↩︎・ⓘ（段ごとの値をツールチップで）。 |
 | Author and Signing（署名の選択・集めた鍵・mailmap） | ✓ | ✓ | ✓ | ✓ | △ | VSCode: 鍵は今の形式のものだけを集める。<br>CLI: `amonhen run`（`signingKeys`・`configSet`）から。 |
 | Commits: メッセージのテンプレート（なし・共有・独自・ファイル） | ✓ | ✓ | ✓ | △ | △ | VSCode: なし・このリポジトリ専用（その場で書く）・ファイル。共有のテンプレートはない。<br>CLI: `amonhen run` から。 |
 | Branches: 既定のブランチを選ぶ | ✓ | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
@@ -258,7 +258,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Go to HEAD・Parent・Child | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: History の上の HEAD のボタン、コミットのメニューの Go to Parent・Go to Child、詳細の親と子へのリンク（エンジンがあるとき）。 |
 | Go to Ref | — | — | — | — | n/a |  |
 | いくつものコミットを選ぶ（範囲・2 つ・飛び飛び） | ✓ | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあるとき。<br>CLI: 2 つは `diff <rev> <rev>`。 |
-| 選んだいくつもの ref の History | ✓ | ✓ | △ | ✓ | ✓ | CLI: `log --branch` を重ねる。<br>Windows: 1 つずつ: サイドバーで選んだ ref の History。View に All Branches と Current Branch。 |
+| 選んだいくつもの ref の History | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `log --branch` を重ねる。<br>Windows: サイドバーで ref を選ぶとその History、Ctrl+クリックで ref を足す・外す。View に All Branches と Current Branch。 |
 | コミットのメニュー: checkout・新しいブランチやタグ・cherry-pick・revert・ID のコピー | ✓ | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
 | 編集モード（keep・reword・squash・fixup・drop・edit、ドラッグで並べ替え） | ✓ | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあるとき。ないときは 1 つずつ。<br>CLI: `amonhen run` から。 |
 | 書き換えの見込み（積み重ね・push 済みのブランチ、コンフリクトの見込み） | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: daemon 越し。ほかのブランチの rebase では、アプリと同じく代わりにコンフリクトの見込みを出す。<br>CLI: `rewrite-preview`。 |

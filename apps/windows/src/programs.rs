@@ -69,6 +69,8 @@ pub fn candidates(info: &Value) -> Vec<Candidate> {
 #[derive(Clone, Debug, Default)]
 pub struct MachineGit {
     pub chosen: Option<String>,
+    /// Amon Hen の設定のファイル（ⓘ に出す）。
+    pub file: Option<String>,
     pub program: String,
     pub source: String,
     pub problem: Option<String>,
@@ -79,6 +81,7 @@ impl MachineGit {
         let s = |k: &str| info[k].as_str().map(str::to_owned);
         Self {
             chosen: s("chosen"),
+            file: s("file"),
             program: s("program").unwrap_or_default(),
             source: s("source").unwrap_or_default(),
             problem: s("problem"),
@@ -214,11 +217,45 @@ pub fn set(name: &str, value: &str, global: &crate::reposettings::State) -> Choi
     )
 }
 
-/// Programs の行（読むまでは「読み込み中…」）。
+/// ⓘ に出す、どこで何に決めているか（GTK4 版の `git_details`、git の設定は段ごとの値）。
+fn details(state: &State, name: &str, global: &crate::reposettings::State) -> Vec<String> {
+    if name == "git" {
+        let Some(git) = state.git.as_ref() else {
+            return Vec::new();
+        };
+        let mut lines: Vec<String> = git.file.iter().cloned().collect();
+        lines.push(match &git.chosen {
+            Some(c) => format!("\"git\": \"{c}\""),
+            None => tr!("No git chosen: the first git on the PATH"),
+        });
+        return lines;
+    }
+    config_keys(name)
+        .iter()
+        .flat_map(|k| {
+            global
+                .entries
+                .iter()
+                .flatten()
+                .filter(|e| e.key.eq_ignore_ascii_case(k))
+                .map(|e| {
+                    format!(
+                        "{}: {} = {}",
+                        crate::reposettings::scope_label(&e.scope),
+                        e.key,
+                        e.value
+                    )
+                })
+        })
+        .collect()
+}
+
+/// Programs の行（読むまでは「読み込み中…」）。`revert` は ↩︎（自動に戻す）。
 pub fn view(
     state: Option<&State>,
     global: &crate::reposettings::State,
     choice: &dyn Fn(&'static str) -> Callback<Option<usize>>,
+    revert: &dyn Fn(&'static str) -> Callback<()>,
 ) -> View {
     let Some(state) = state else {
         return TextBlock::new().text(tr!("Loading…")).opacity(0.6).into();
@@ -264,6 +301,27 @@ pub fn view(
                         program = g.program.as_str()
                     )
                 });
+            // ↩︎: 選んでいれば、やめて自動に戻す（git の設定は上の段、なければ git の既定。リポジトリの
+            // 設定の行と同じ）。
+            let revert_button: View = if current.is_empty() {
+                View::empty()
+            } else {
+                Button::new()
+                    .on_click(revert(id))
+                    .content(TextBlock::new().text("↩︎").font_size(12.0))
+                    .tooltip(tr!("Stop overriding here. The value above takes over."))
+            };
+            // ⓘ: どこで何に決めているか（マウスを載せると出す）。
+            let lines = details(state, name, global);
+            let info: View = if lines.is_empty() {
+                View::empty()
+            } else {
+                TextBlock::new()
+                    .text("ⓘ")
+                    .opacity(0.6)
+                    .vertical_alignment(VerticalAlignment::Center)
+                    .tooltip(lines.join("\n"))
+            };
             let note = problem
                 .map(|p| format!("⚠ {p}"))
                 .or(overridden)
@@ -284,11 +342,13 @@ pub fn view(
                                 .min_width(300.0)
                                 .on_selection_changed(choice(id))
                                 .tooltip(path),
+                            revert_button,
                             TextBlock::new()
                                 .text(source)
                                 .font_size(12.0)
                                 .opacity(0.6)
                                 .vertical_alignment(VerticalAlignment::Center),
+                            info,
                         )),
                     if note.is_empty() {
                         View::empty()
