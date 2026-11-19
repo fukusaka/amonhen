@@ -8,8 +8,8 @@ use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance, CoTask
 use windows::Win32::UI::Input::KeyboardAndMouse::GetActiveWindow;
 use windows::Win32::UI::Shell::Common::COMDLG_FILTERSPEC;
 use windows::Win32::UI::Shell::{
-    FOS_PICKFOLDERS, FileOpenDialog, FileSaveDialog, IFileDialog, IFileOpenDialog, IFileSaveDialog,
-    SIGDN_FILESYSPATH,
+    FOS_ALLOWMULTISELECT, FOS_PICKFOLDERS, FileOpenDialog, FileSaveDialog, IFileDialog,
+    IFileOpenDialog, IFileSaveDialog, SIGDN_FILESYSPATH,
 };
 use windows::core::{HSTRING, PCWSTR};
 
@@ -64,6 +64,36 @@ pub fn pick_folder(title: &str, button: &str) -> Option<PathBuf> {
     }
 }
 
+/// 開くファイルを選ぶ（いくつでも）。種類では絞らない（GTK4 版の Apply Patch… と同じ）。
+pub fn open_files(title: &str) -> Vec<PathBuf> {
+    // SAFETY: `save_file` と同じ。返る文字列は CoTaskMemAlloc のもので、読んだら放す。
+    unsafe {
+        let open = || -> Option<Vec<PathBuf>> {
+            let dialog: IFileOpenDialog =
+                CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER).ok()?;
+            let options = dialog.GetOptions().ok()?;
+            dialog.SetOptions(options | FOS_ALLOWMULTISELECT).ok()?;
+            dialog.SetTitle(&HSTRING::from(title)).ok()?;
+            dialog.Show(Some(GetActiveWindow())).ok()?;
+            let items = dialog.GetResults().ok()?;
+            let mut paths = Vec::new();
+            for i in 0..items.GetCount().ok()? {
+                let name = items
+                    .GetItemAt(i)
+                    .ok()?
+                    .GetDisplayName(SIGDN_FILESYSPATH)
+                    .ok()?;
+                if let Ok(path) = name.to_string() {
+                    paths.push(PathBuf::from(path));
+                }
+                CoTaskMemFree(Some(name.0 as *const _));
+            }
+            Some(paths)
+        };
+        open().unwrap_or_default()
+    }
+}
+
 /// `path` をエクスプローラーで選んだ形で見せる（GTK4 版の `open_containing_folder`）。
 // エクスプローラーの窓を出すのが目的なので、process::command（窓を出さない）は使わない。
 #[allow(clippy::disallowed_methods)]
@@ -71,4 +101,48 @@ pub fn reveal(path: &std::path::Path) {
     let _ = std::process::Command::new("explorer.exe")
         .arg(format!("/select,{}", path.display()))
         .spawn();
+}
+
+/// ファイルを既定のアプリで開く（エクスプローラーに渡す）。
+// アプリの窓を出すのが目的なので、process::command（窓を出さない）は使わない。
+#[allow(clippy::disallowed_methods)]
+pub fn open_default(path: &std::path::Path) -> bool {
+    std::process::Command::new("explorer.exe")
+        .arg(path)
+        .spawn()
+        .is_ok()
+}
+
+/// フォルダをエクスプローラーで開く（Repository > Show in Files）。
+// エクスプローラーの窓を出すのが目的なので、process::command（窓を出さない）は使わない。
+#[allow(clippy::disallowed_methods)]
+pub fn open_folder(path: &std::path::Path) -> bool {
+    std::process::Command::new("explorer.exe")
+        .arg(path)
+        .spawn()
+        .is_ok()
+}
+
+/// フォルダでターミナルを開く（Repository > Open in Terminal）。Windows Terminal があればそれ、なければ新しい
+/// コンソールの cmd。
+// ターミナルの窓を出すのが目的なので、process::command（窓を出さない）は使わない。
+#[allow(clippy::disallowed_methods)]
+pub fn open_terminal(path: &std::path::Path) -> bool {
+    use std::os::windows::process::CommandExt;
+    /// 新しいコンソールを作る（CREATE_NEW_CONSOLE）。
+    const NEW_CONSOLE: u32 = 0x0000_0010;
+    if std::process::Command::new("wt.exe")
+        .arg("-d")
+        .arg(path)
+        .spawn()
+        .is_ok()
+    {
+        return true;
+    }
+    std::process::Command::new("cmd.exe")
+        .arg("/K")
+        .current_dir(path)
+        .creation_flags(NEW_CONSOLE)
+        .spawn()
+        .is_ok()
 }

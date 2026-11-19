@@ -1,0 +1,27 @@
+[package]
+name = "amonhen-tui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+amonhen-front.workspace = true
+amonhen-layout.workspace = true
+amonhen-model.workspace = true
+amonhen-projection.workspace = true
+# ratatui の本体（セルのバッファ・フレームの差分）とバックエンドだけを使う。部品（ratatui-widgets）は入れない:
+# 画面はどれも自前で描く
+ratatui-core = { version = "0.1.2", features = ["std"] }
+ratatui-crossterm = "0.1.2"
+serde_json = "1.0.154"
+unicode-width = "0.2"
+
+[target.'cfg(unix)'.dependencies]
+# 計測で、スレッドが使った CPU の時間を読む
+libc = "0.2"
+
+[dev-dependencies]
+ratatui-core = { version = "0.1.2", features = ["std"] }
+tempfile = "3"

@@ -9,7 +9,7 @@ import type { FileStat } from '../src/workingCopy/protocol.ts';
 import assert from 'node:assert/strict';
 import childProcess from 'node:child_process';
 import http from 'node:http';
-import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, cpSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import * as vscode from 'vscode';
 import { DaemonClient } from '../src/daemon/client.ts';
@@ -171,7 +171,64 @@ function lockHolders(message: string): string {
   } catch (e) {
     processes = `一覧を取れません: ${e}`;
   }
-  return `${file}。動いている git: ${processes.trim() || 'なし'}`;
+  return `${file}。動いている git: ${processes.trim() || 'なし'}。直前の git: ${recentGits()}`;
+}
+
+/**
+ * 直前の 3 秒に動いていた git（trace2 の記録から）。引数と、始まり・終わりが今の何 ms 前か。index に書かないと
+ * 決めてあるもの（`GIT_OPTIONAL_LOCKS=0`）は鍵を取らないので、数だけ言う
+ */
+function recentGits(): string {
+  const trace = process.env['GIT_TRACE2_EVENT'];
+  if (!trace) {
+    return '記録していません';
+  }
+  const now = Date.now();
+  type Run = { argv?: string[]; start?: number; end?: number; locks?: string };
+  const runs = new Map<string, Run>();
+  try {
+    // 終わりのほうだけ読む（全体は数 MB になる）
+    const size = statSync(trace).size;
+    const length = Math.min(size, 4 << 20);
+    const buffer = Buffer.alloc(length);
+    const fd = openSync(trace, 'r');
+    try {
+      readSync(fd, buffer, 0, length, size - length);
+    } finally {
+      closeSync(fd);
+    }
+    for (const line of buffer.toString('utf8').split('\n')) {
+      let e: { event?: string; sid?: string; time?: string; argv?: string[]; param?: string; value?: string };
+      try {
+        e = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (!e.sid) {
+        continue;
+      }
+      const run = runs.get(e.sid) ?? {};
+      runs.set(e.sid, run);
+      const at = e.time ? Date.parse(e.time) : undefined;
+      if (e.event === 'start') {
+        run.argv = e.argv;
+        run.start = at;
+      } else if (e.event === 'atexit') {
+        run.end = at;
+      } else if (e.event === 'def_param' && e.param === 'GIT_OPTIONAL_LOCKS') {
+        run.locks = e.value;
+      }
+    }
+  } catch (e) {
+    return `記録を読めません: ${e}`;
+  }
+  const recent = [...runs.values()].filter((r) => r.argv && r.start !== undefined && (r.end ?? now) >= now - 3000);
+  const reading = (r: Run) => r.locks === '0' || r.argv!.includes('--no-optional-locks');
+  const lines = recent
+    .filter((r) => !reading(r))
+    .sort((a, b) => a.start! - b.start!)
+    .map((r) => `[${r.start! - now}〜${r.end === undefined ? '動作中' : r.end - now} ms] ${r.argv!.join(' ')}`);
+  return `${lines.join(' / ') || 'なし'}（ほかに鍵を取らないもの ${recent.length - lines.length}）`;
 }
 
 /** daemon の様子（`amonhen daemon status --json`）。動いていなければ undefined */
@@ -3590,11 +3647,18 @@ suite('Amon Hen in VSCode', () => {
       });
     } finally {
       await config().update('fsmonitor', false, vscode.ConfigurationTarget.Global);
-      try {
-        git('fsmonitor--daemon', 'stop');
-      } catch {
-        // 起きていなかった
-      }
+      // 設定は daemon に後から届く。届く前の status は fsmonitor--daemon を起こし直すので、止めて、読み直しても
+      // 起きないところまで待つ（残ると、Windows では一時ディレクトリを掴んだままになり、消せない）
+      await until('fsmonitor--daemon が止まったまま', async () => {
+        try {
+          git('fsmonitor--daemon', 'stop');
+        } catch {
+          // 起きていなかった
+        }
+        await vscode.commands.executeCommand('amonhen.refresh');
+        await vscode.commands.executeCommand('amonhen.refresh');
+        return !watching();
+      });
     }
   });
 

@@ -11,6 +11,7 @@ use std::sync::Arc;
 use amonhen_core::HistorySnapshot;
 use amonhen_core::lanes::{LaneMetrics, lane_positions};
 use amonhen_layout::Edge;
+use amonhen_model::RefKind;
 use windows::Win32::Foundation::HANDLE;
 use windows::Win32::Graphics::Direct2D::Common::*;
 use windows::Win32::Graphics::Direct2D::*;
@@ -25,8 +26,71 @@ use windows_numerics::Vector2;
 
 use crate::data::{Chunk, Data};
 
-/// History の行の高さ（件名と、作者・日時の 2 行。DIP）。
-pub const ROW_HEIGHT: f32 = 38.0;
+/// History を 1 行で出すか（View の One Line per Commit。GTK4 版の `Display::one_line`）。
+static ONE_LINE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// 選んだコミットの祖先を強調するか（View の Highlight Ancestors。GTK4 版の `Display::highlight_ancestors`）。
+static HIGHLIGHT_ANCESTORS: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(true);
+
+pub fn highlight_ancestors() -> bool {
+    HIGHLIGHT_ANCESTORS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn set_highlight_ancestors(value: bool) {
+    HIGHLIGHT_ANCESTORS.store(value, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// 描く線と、その描く範囲（始まりの行、終わりの行）。
+type EdgeSpan<'a> = (&'a Edge, u32, u32);
+
+/// 祖先を強調するときの、ほかの点と線の不透明度（GTK4 版・macOS 版と同じ）。
+const DIMMED_ALPHA: f32 = 0.18;
+/// 祖先を 1 フレームに伸ばす行数の上限（GTK4 版と同じ。遠くへ飛んだとき、届くまでは強調せずに描く）。
+const LINEAGE_ROWS_PER_FRAME: u32 = 150_000;
+
+/// History の行に出す項目（View の Branches and Tags・Author・Date・Commit ID・Signature。GTK4 版の
+/// `settings::items` と同じビット。CI の状態はこの FE にない）。
+pub mod items {
+    pub const REFS: u32 = 1;
+    pub const AUTHOR: u32 = 2;
+    pub const DATE: u32 = 4;
+    pub const ID: u32 = 8;
+    pub const SIGNATURE: u32 = 16;
+    /// GitHub の CI の状態（この FE は出さないが、ビットは GTK4 版・macOS 版と同じ設定に残す）。
+    pub const CI: u32 = 32;
+    pub const ALL: u32 = REFS | AUTHOR | DATE | ID | SIGNATURE | CI;
+    /// 作者・日時の行に出すもの。
+    pub const META: u32 = AUTHOR | DATE | ID;
+}
+
+static ITEMS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(items::ALL);
+
+pub fn history_items() -> u32 {
+    ITEMS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn set_history_items(value: u32) {
+    ITEMS.store(value, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// History の行の高さ（DIP）: ふだんは件名と、作者・日時の 2 行。1 行で出すなら件名の右に作者・日時。
+pub fn row_height() -> f32 {
+    if compact() { 24.0 } else { 38.0 }
+}
+
+pub fn one_line() -> bool {
+    ONE_LINE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// 実際に 1 行で出すか: 1 行にしたか、作者・日時の行に出す項目が 1 つもないとき（GTK4 版の `Display::compact`）。
+fn compact() -> bool {
+    one_line() || history_items() & items::META == 0
+}
+
+pub fn set_one_line(value: bool) {
+    ONE_LINE.store(value, std::sync::atomic::Ordering::Relaxed);
+}
 const LANE_WIDTH: f32 = 14.0;
 const LEFT_INSET: f32 = 10.0;
 const NODE_RADIUS: f32 = 4.0;
@@ -54,24 +118,26 @@ const SECONDARY: D2D1_COLOR_F = rgba(0.11, 0.11, 0.12, 0.6);
 const MATCH: D2D1_COLOR_F = rgba(1.0, 0.80, 0.0, 0.22);
 /// 選んだ行の背景（Windows の既定のアクセントの色を薄く）。
 const SELECTION: D2D1_COLOR_F = rgba(0.0, 0.47, 0.84, 0.16);
-/// ref のラベル（ローカルブランチ・リモートブランチ・タグ）の地の色と、文字の色。
-const LABEL_LOCAL: D2D1_COLOR_F = rgba(0.16, 0.60, 0.30, 0.18);
-const LABEL_REMOTE: D2D1_COLOR_F = rgba(0.0, 0.47, 0.84, 0.16);
-const LABEL_TAG: D2D1_COLOR_F = rgba(0.85, 0.55, 0.0, 0.20);
+/// ref のラベルの色（ローカルブランチは青、リモートブランチは紫、タグは橙。macOS 版・GTK4 版と同じ）。地は薄く、
+/// チェックアウト中のブランチは濃く塗って白い文字にする。
+const LABEL_LOCAL: (f32, f32, f32) = (0.21, 0.52, 0.89);
+const LABEL_REMOTE: (f32, f32, f32) = (0.57, 0.38, 0.84);
+const LABEL_TAG: (f32, f32, f32) = (0.90, 0.55, 0.15);
+/// worktree の HEAD の札と、ほかの worktree が checkout しているブランチ。
+const LABEL_WORKTREE: (f32, f32, f32) = (0.20, 0.66, 0.30);
 const LABEL_TEXT: D2D1_COLOR_F = rgba(0.11, 0.11, 0.12, 0.9);
-/// チェックアウト中のブランチのラベルの枠。
-const LABEL_HEAD: D2D1_COLOR_F = rgba(0.16, 0.60, 0.30, 0.9);
+const LABEL_HEAD_TEXT: D2D1_COLOR_F = rgba(1.0, 1.0, 1.0, 1.0);
 const LABEL_HEIGHT: f32 = 17.0;
 /// 差分の行の高さ（DIP）と、行番号の列の幅。
 pub const DIFF_ROW_HEIGHT: f32 = 18.0;
 const DIFF_NUMBER_WIDTH: f32 = 44.0;
 const DIFF_TEXT_INSET: f32 = 10.0;
 // 差分の色（GTK4 版・macOS 版の標準の色と同じ）。
-const DIFF_ADDED: D2D1_COLOR_F = rgba(0.2, 0.7, 0.3, 0.16);
-const DIFF_REMOVED: D2D1_COLOR_F = rgba(0.9, 0.25, 0.25, 0.16);
-const DIFF_ADDED_WORD: D2D1_COLOR_F = rgba(0.2, 0.7, 0.3, 0.35);
-const DIFF_REMOVED_WORD: D2D1_COLOR_F = rgba(0.9, 0.25, 0.25, 0.35);
-const DIFF_HUNK: D2D1_COLOR_F = rgba(0.3, 0.5, 0.9, 0.10);
+/// 差分の地の色（Settings > Theme のテーマの色。標準の色にしていればこれまでの色）。
+fn diff_color(kind: crate::theme::DiffColor) -> D2D1_COLOR_F {
+    let (r, g, b, a) = crate::theme::diff(kind);
+    rgba(r, g, b, a)
+}
 const DIFF_FILE: D2D1_COLOR_F = rgba(0.11, 0.11, 0.12, 0.07);
 /// Working Copy の差分の、行ごとの含める印の列の幅。
 pub const DIFF_MARK_WIDTH: f32 = 22.0;
@@ -81,6 +147,27 @@ const LABEL_PADDING: f32 = 6.0;
 const LABEL_GAP: f32 = 4.0;
 /// ラベルを並べる幅の上限（文字の幅に対する割合）。残りは件名に回す。
 const LABEL_SHARE: f32 = 0.6;
+
+/// 差分の行（hunk）を次のコミットに含めているか。
+#[derive(Clone, Copy)]
+enum Mark {
+    All,
+    Some,
+    None,
+}
+
+/// 署名の検証の結果の色（GTK4 版の `signature_color`。まだ検証していなければ薄い灰色）。
+fn signature_color(mark: Option<crate::data::Signature>) -> D2D1_COLOR_F {
+    use crate::data::Signature;
+    match mark {
+        Some(Signature::Verified) => rgba(0.20, 0.70, 0.30, 1.0),
+        Some(Signature::Caution) => rgba(0.90, 0.75, 0.10, 1.0),
+        Some(Signature::Expired) => rgba(0.95, 0.55, 0.15, 1.0),
+        Some(Signature::Bad) => rgba(0.90, 0.25, 0.25, 1.0),
+        Some(Signature::Unknown) => rgba(0.11, 0.11, 0.12, 0.55),
+        None => rgba(0.11, 0.11, 0.12, 0.25),
+    }
+}
 
 const fn rgba(r: f32, g: f32, b: f32, a: f32) -> D2D1_COLOR_F {
     D2D1_COLOR_F { r, g, b, a }
@@ -256,6 +343,17 @@ pub struct Renderer {
     /// UTC から地方時への差（秒）。
     utc_offset: i64,
     rows: HashMap<u32, RowText>,
+    /// 選んだコミットの祖先（History の世代、選んだ行、求めた範囲）。
+    lineage: Option<(u64, u32, amonhen_core::lineage::LineageWindow)>,
+    /// 祖先が描く行まで届いていない（次のフレームで続ける）。
+    pub lineage_pending: bool,
+    /// 差分の中の検索の一致（行、UTF-16 の始まりと終わり。行の文字の形の中の位置）と、今の一致。
+    pub diff_find: Vec<(u32, u32, u32)>,
+    pub diff_current: Option<usize>,
+    /// shallow clone の境界のコミットの行（History の世代ごと）。
+    boundary: (u64, std::collections::HashSet<u32>),
+    /// `rows` を作ったときの行の項目（変わったら作り直す）。
+    rows_items: u32,
     /// ラベルの文字（名前ごと）と、その幅。
     labels: HashMap<String, (IDWriteTextLayout, f32)>,
     label_format: IDWriteTextFormat,
@@ -266,6 +364,8 @@ pub struct Renderer {
     diff_rows: HashMap<u32, IDWriteTextLayout>,
     /// 構文の種類ごとの文字の色。
     syntax_brushes: HashMap<u8, ID2D1SolidColorBrush>,
+    /// 色を付けた行を作ったときのテーマ（変わったら行と筆を作り直す）。
+    theme_generation: u32,
     history: Option<Arc<HistorySnapshot>>,
     /// `AMONHEN_PROFILE` があれば、段階ごとの時間（ms）を残す。段階の間で `Flush` して、溜めた描画も
     /// その段階に数える（その分だけ全体は遅くなる）。
@@ -386,12 +486,19 @@ impl Renderer {
                 tearing_supported,
                 utc_offset: -(tz.Bias as i64) * 60,
                 rows: HashMap::new(),
+                lineage: None,
+                lineage_pending: false,
+                diff_find: Vec::new(),
+                diff_current: None,
+                boundary: (u64::MAX, std::collections::HashSet::new()),
+                rows_items: items::ALL,
                 labels: HashMap::new(),
                 label_format,
                 code_format,
                 file_format,
                 diff_rows: HashMap::new(),
                 syntax_brushes: HashMap::new(),
+                theme_generation: crate::theme::generation(),
                 history: None,
                 profile: std::env::var_os("AMONHEN_PROFILE").map(|_| Vec::new()),
             })
@@ -491,16 +598,22 @@ impl Renderer {
             self.history = Some(history.clone());
         }
         let count = history.layout.nodes().len() as u32;
-        let first = ((scroll_y / ROW_HEIGHT).floor().max(0.0) as u32).min(count);
-        let last = (((scroll_y + height) / ROW_HEIGHT).ceil() as u32 + 1).min(count);
+        let first = ((scroll_y / row_height()).floor().max(0.0) as u32).min(count);
+        let last = (((scroll_y + height) / row_height()).ceil() as u32 + 1).min(count);
         // 前後 1 画面分も読んでおく。
         let screen = last - first;
         data.want(first.saturating_sub(screen)..(last + screen).min(count));
 
         // 検索で一致した行の背景（見えている分だけ）。
-        let from = data.matches.partition_point(|&r| r < first);
-        for &row in data.matches[from..].iter().take_while(|&&r| r < last) {
-            let top = row as f32 * ROW_HEIGHT - scroll_y;
+        // 一致したコミットだけを出しているときは、すべて一致なので塗らない。
+        let matches: &[u32] = if data.is_filtered() {
+            &[]
+        } else {
+            &data.matches
+        };
+        let from = matches.partition_point(|&r| r < first);
+        for &row in matches[from..].iter().take_while(|&&r| r < last) {
+            let top = row as f32 * row_height() - scroll_y;
             unsafe {
                 self.brush.SetColor(&MATCH);
                 self.d2d.FillRectangle(
@@ -508,7 +621,7 @@ impl Renderer {
                         left: 0.0,
                         top,
                         right: width,
-                        bottom: top + ROW_HEIGHT,
+                        bottom: top + row_height(),
                     },
                     &self.brush,
                 );
@@ -520,7 +633,7 @@ impl Renderer {
             if Some(row) == selected {
                 continue;
             }
-            let top = row as f32 * ROW_HEIGHT - scroll_y;
+            let top = row as f32 * row_height() - scroll_y;
             unsafe {
                 self.brush.SetColor(&SELECTION);
                 self.d2d.FillRectangle(
@@ -528,7 +641,7 @@ impl Renderer {
                         left: 0.0,
                         top,
                         right: width,
-                        bottom: top + ROW_HEIGHT,
+                        bottom: top + row_height(),
                     },
                     &self.brush,
                 );
@@ -536,7 +649,7 @@ impl Renderer {
         }
         // 選んだ行の背景（グラフの下に敷く）。
         if let Some(row) = selected.filter(|r| (first..last).contains(r)) {
-            let top = row as f32 * ROW_HEIGHT - scroll_y;
+            let top = row as f32 * row_height() - scroll_y;
             unsafe {
                 self.brush.SetColor(&SELECTION);
                 self.d2d.FillRectangle(
@@ -544,7 +657,7 @@ impl Renderer {
                         left: 0.0,
                         top,
                         right: width,
-                        bottom: top + ROW_HEIGHT,
+                        bottom: top + row_height(),
                     },
                     &self.brush,
                 );
@@ -557,7 +670,49 @@ impl Renderer {
             .clamp(40.0, GRAPH_WIDTH)
             .min(width * 0.4);
         let mut t = std::time::Instant::now();
-        self.draw_graph(&history, first..last, scroll_y, graph_width, height)?;
+        // 祖先は描く行まで求める（スクロールしたら続きから。GTK4 版の `update_lineage` と描くときの伸ばし方）。
+        let target = selected.filter(|_| highlight_ancestors());
+        match target {
+            None => self.lineage = None,
+            Some(row) => {
+                if !self
+                    .lineage
+                    .as_ref()
+                    .is_some_and(|(g, r, _)| *g == history.generation && *r == row)
+                {
+                    self.lineage = Some((
+                        history.generation,
+                        row,
+                        amonhen_core::lineage::LineageWindow::new(&history.graph, row),
+                    ));
+                }
+            }
+        }
+        let lineage = self.lineage.as_mut().map(|(_, _, w)| {
+            let end = last.min(w.end().saturating_add(LINEAGE_ROWS_PER_FRAME));
+            w.extend(&history.graph, &history.layout, end);
+            w
+        });
+        self.lineage_pending = lineage.as_ref().is_some_and(|w| w.end() < last);
+        let lineage = self
+            .lineage
+            .as_ref()
+            .map(|(_, _, w)| w)
+            .filter(|w| w.end() >= last);
+        if self.boundary.0 != history.generation {
+            self.boundary = (
+                history.generation,
+                history.boundary_rows().into_iter().collect(),
+            );
+        }
+        self.draw_graph(
+            &history,
+            first..last,
+            scroll_y,
+            graph_width,
+            height,
+            lineage,
+        )?;
         stages[0] = lap(&mut t);
         if profiling {
             unsafe { self.d2d.Flush(None, None)? };
@@ -567,8 +722,9 @@ impl Renderer {
         // 文字。
         let text_x = graph_width + TEXT_INSET;
         let text_width = (width - TEXT_INSET - text_x).max(0.0);
-        if self.rows.len() > 4096 {
+        if self.rows.len() > 4096 || self.rows_items != history_items() {
             self.rows.clear();
+            self.rows_items = history_items();
         }
         for row in first..last {
             let Some(chunk) = data.chunks.get(&(row / crate::data::CHUNK_ROWS)).cloned() else {
@@ -580,36 +736,84 @@ impl Renderer {
                 self.rows.insert(row, text);
                 stages[2] += made.elapsed().as_secs_f64() * 1000.0;
             }
-            let top = row as f32 * ROW_HEIGHT - scroll_y;
+            let top = row as f32 * row_height() - scroll_y;
+            let compact = compact();
+            let shown = history_items();
+            let label_top = if compact {
+                (row_height() - LABEL_HEIGHT) / 2.0
+            } else {
+                2.0
+            };
+            let signed = shown & items::SIGNATURE != 0 && chunk.signed(chunk.index(row));
+            let mark_width = if signed { 14.0 } else { 0.0 };
+            // 1 行なら、作者・日時を右端に寄せ（GTK4 版の 1 行表示と同じく件名の右）、ラベルと件名はその手前まで。
+            let (meta_x, meta_y, subject_right) = unsafe {
+                let meta = &self.rows[&row].meta;
+                if compact {
+                    meta.SetMaxWidth((text_width * 0.5 - mark_width).max(0.0))?;
+                    let mut metrics = DWRITE_TEXT_METRICS::default();
+                    meta.GetMetrics(&mut metrics)?;
+                    let meta_x = text_x + text_width - mark_width - metrics.width;
+                    (meta_x, top + 4.0, meta_x - 12.0)
+                } else {
+                    meta.SetMaxWidth((text_width - mark_width).max(0.0))?;
+                    (text_x, top + 20.0, text_x + text_width)
+                }
+            };
             // ref のラベルを件名の前に並べる。
             let mut subject_x = text_x;
-            if let Some(labels) = data.labels.get(&row) {
-                let limit = text_x + text_width * LABEL_SHARE;
+            // worktree の HEAD の札を先に。
+            let labels = data
+                .worktree_labels
+                .get(&row)
+                .into_iter()
+                .chain(data.labels.get(&row))
+                .flatten()
+                .filter(|_| shown & items::REFS != 0);
+            {
+                let limit = (text_x + text_width * LABEL_SHARE).min(subject_right);
                 for label in labels {
                     let (layout, w) = self.label(&label.name)?;
                     let pill = w + LABEL_PADDING * 2.0;
                     if subject_x + pill > limit {
                         break;
                     }
-                    self.draw_label(label, &layout, subject_x, top + 2.0, pill)?;
+                    let elsewhere =
+                        label.kind == RefKind::Local && data.elsewhere.contains(&label.name);
+                    let place = (subject_x, top + label_top, pill);
+                    self.draw_label(label, elsewhere, &layout, place)?;
                     subject_x += pill + LABEL_GAP;
                 }
             }
+            // 署名があれば、作者・日時の後ろに検証の結果の色の丸（GTK4 版・macOS 版の印）。
+            let mark = signed.then(|| data.signature_mark(history.graph.ids()[row as usize]));
             let line = &self.rows[&row];
             unsafe {
                 line.subject
-                    .SetMaxWidth((text_x + text_width - subject_x).max(0.0))?;
-                line.meta.SetMaxWidth(text_width)?;
+                    .SetMaxWidth((subject_right - subject_x).max(0.0))?;
+                if let Some(mark) = mark {
+                    let mut metrics = DWRITE_TEXT_METRICS::default();
+                    line.meta.GetMetrics(&mut metrics)?;
+                    self.brush.SetColor(&signature_color(mark));
+                    self.d2d.FillEllipse(
+                        &D2D1_ELLIPSE {
+                            point: point(meta_x + metrics.width + 8.0, meta_y + 7.0),
+                            radiusX: 3.5,
+                            radiusY: 3.5,
+                        },
+                        &self.brush,
+                    );
+                }
                 self.brush.SetColor(&FOREGROUND);
                 self.d2d.DrawTextLayout(
-                    point(subject_x, top + 2.0),
+                    point(subject_x, top + if compact { 3.0 } else { 2.0 }),
                     &line.subject,
                     &self.brush,
                     D2D1_DRAW_TEXT_OPTIONS_NONE,
                 );
                 self.brush.SetColor(&SECONDARY);
                 self.d2d.DrawTextLayout(
-                    point(text_x, top + 20.0),
+                    point(meta_x, meta_y),
                     &line.meta,
                     &self.brush,
                     D2D1_DRAW_TEXT_OPTIONS_NONE,
@@ -620,6 +824,8 @@ impl Renderer {
             unsafe { self.d2d.Flush(None, None)? };
         }
         stages[3] = lap(&mut t) - stages[2];
+        // 描いた行で頼まれた署名を、裏で検証する。
+        data.verify_signatures();
         Ok(())
     }
 
@@ -630,6 +836,7 @@ impl Renderer {
         scroll_y: f32,
         graph_width: f32,
         height: f32,
+        lineage: Option<&amonhen_core::lineage::LineageWindow>,
     ) -> Result<()> {
         let metrics = LaneMetrics {
             full: LANE_WIDTH,
@@ -648,18 +855,37 @@ impl Renderer {
                 .unwrap_or(lane as f32 * LANE_WIDTH + LANE_WIDTH / 2.0);
             LEFT_INSET - LANE_WIDTH / 2.0 + c
         };
-        let row_y = |row: u32| (row as f32 + 0.5) * ROW_HEIGHT - scroll_y;
+        let row_y = |row: u32| (row as f32 + 0.5) * row_height() - scroll_y;
 
-        // 色と太さが同じ線を 1 つのパスにまとめる。
-        let mut groups: HashMap<(u16, bool), Vec<&Edge>> = HashMap::new();
+        // 色と太さと薄さが同じ線を 1 つのパスにまとめる。祖先を強調するときは、光らない線（や縦線の光らない上の
+        // 部分）を薄くする（GTK4 版の `graph::draw`）。線は (始まりの行, 終わりの行) を描く範囲として持つ。
+        let mut groups: HashMap<(u16, bool, bool), Vec<EdgeSpan>> = HashMap::new();
         let edges = history.layout.edges();
         for i in history.layout.edges_in(rows.clone()) {
             let e = &edges[i as usize];
             let first_parent = e.kind & Edge::FIRST_PARENT != 0;
-            groups
-                .entry((e.color % PALETTE.len() as u16, first_parent))
-                .or_default()
-                .push(e);
+            let color = e.color % PALETTE.len() as u16;
+            let from = lineage.map_or(e.row_start, |l| l.edge_from(i));
+            if from == amonhen_core::lineage::NOT_LIT {
+                groups
+                    .entry((color, first_parent, true))
+                    .or_default()
+                    .push((e, e.row_start, e.row_end));
+            } else if from > e.row_start && e.lane_start == e.lane_end {
+                groups
+                    .entry((color, first_parent, true))
+                    .or_default()
+                    .push((e, e.row_start, from));
+                groups
+                    .entry((color, first_parent, false))
+                    .or_default()
+                    .push((e, from, e.row_end));
+            } else {
+                groups
+                    .entry((color, first_parent, false))
+                    .or_default()
+                    .push((e, e.row_start, e.row_end));
+            }
         }
         unsafe {
             self.d2d.PushAxisAlignedClip(
@@ -671,17 +897,17 @@ impl Renderer {
                 },
                 D2D1_ANTIALIAS_MODE_ALIASED,
             );
-            for ((color, first_parent), edges) in groups {
+            for ((color, first_parent, dimmed), edges) in groups {
                 let geometry = self.d2d_factory.CreatePathGeometry()?;
                 let sink = geometry.Open()?;
-                for e in edges {
-                    let (ax, ay) = (x(e.lane_start), row_y(e.row_start));
-                    let (bx, by) = (x(e.lane_end), row_y(e.row_end));
+                for (e, start, end) in edges {
+                    let (ax, ay) = (x(e.lane_start), row_y(start));
+                    let (bx, by) = (x(e.lane_end), row_y(end));
                     if e.lane_start == e.lane_end {
                         // 何十万行にまたがる線もあるので、見えている所に切り詰めてから渡す（Direct2D は
                         // 画面の外の分まで輪郭を作る）。
-                        let top = ay.max(-ROW_HEIGHT);
-                        let bottom = by.min(height + ROW_HEIGHT);
+                        let top = ay.max(-row_height());
+                        let bottom = by.min(height + row_height());
                         sink.BeginFigure(point(ax, top), D2D1_FIGURE_BEGIN_HOLLOW);
                         sink.AddLine(point(bx, bottom));
                     } else {
@@ -696,7 +922,8 @@ impl Renderer {
                     sink.EndFigure(D2D1_FIGURE_END_OPEN);
                 }
                 sink.Close()?;
-                self.brush.SetColor(&palette(color, 1.0));
+                self.brush
+                    .SetColor(&palette(color, if dimmed { DIMMED_ALPHA } else { 1.0 }));
                 let width = if first_parent {
                     FIRST_PARENT_WIDTH
                 } else {
@@ -707,7 +934,27 @@ impl Renderer {
             }
             let nodes = history.layout.nodes();
             for n in &nodes[rows.start as usize..rows.end as usize] {
-                self.brush.SetColor(&palette(n.color, 1.0));
+                let dimmed = lineage.is_some_and(|l| !l.contains(n.row));
+                // shallow clone の境界のコミット（親はあるが取っていない）は、点から下へ短い点線（GTK4 版・
+                // macOS 版の `unfetched_stub`。行の下半分に、点の縁から 3.5 離して 4 ずつ）。
+                if self.boundary.1.contains(&n.row) {
+                    let alpha = if dimmed { DIMMED_ALPHA } else { 1.0 } * 0.8;
+                    self.brush.SetColor(&palette(n.color, alpha));
+                    let mut y = NODE_RADIUS + 3.5;
+                    while y <= row_height() / 2.0 + 1.0 {
+                        self.d2d.FillEllipse(
+                            &D2D1_ELLIPSE {
+                                point: point(x(n.lane), row_y(n.row) + y),
+                                radiusX: 1.1,
+                                radiusY: 1.1,
+                            },
+                            &self.brush,
+                        );
+                        y += 4.0;
+                    }
+                }
+                self.brush
+                    .SetColor(&palette(n.color, if dimmed { DIMMED_ALPHA } else { 1.0 }));
                 self.d2d.FillEllipse(
                     &D2D1_ELLIPSE {
                         point: point(x(n.lane), row_y(n.row)),
@@ -767,6 +1014,11 @@ impl Renderer {
         if self.diff_rows.len() > 2048 {
             self.diff_rows.clear();
         }
+        if self.theme_generation != crate::theme::generation() {
+            self.theme_generation = crate::theme::generation();
+            self.diff_rows.clear();
+            self.syntax_brushes.clear();
+        }
         // 行ごとの含める印（Working Copy の 1 本の差分）があれば、その列の右から行番号。
         let left = if commit.marks { DIFF_MARK_WIDTH } else { 0.0 };
         let text_x = left + DIFF_NUMBER_WIDTH * 2.0 + DIFF_TEXT_INSET;
@@ -781,9 +1033,9 @@ impl Renderer {
             };
             let file = row.kind == DiffRow::FILE;
             let fill = match row.kind {
-                DiffRow::ADDED => Some(DIFF_ADDED),
-                DiffRow::REMOVED => Some(DIFF_REMOVED),
-                DiffRow::HUNK => Some(DIFF_HUNK),
+                DiffRow::ADDED => Some(diff_color(crate::theme::DiffColor::Added)),
+                DiffRow::REMOVED => Some(diff_color(crate::theme::DiffColor::Removed)),
+                DiffRow::HUNK => Some(diff_color(crate::theme::DiffColor::Hunk)),
                 DiffRow::FILE => Some(DIFF_FILE),
                 _ => None,
             };
@@ -798,55 +1050,36 @@ impl Renderer {
                     self.d2d.FillRectangle(&rect(0.0, width), &self.brush);
                 }
             }
-            if !self.diff_rows.contains_key(&i) {
-                let mut text = Vec::with_capacity(128);
-                if file {
-                    // 畳んだファイルは ▸、開いているファイルは ▾（見出しを押すと切り替わる）。
-                    let mark = if row.flags & DiffRow::COLLAPSED != 0 {
-                        "▸ "
-                    } else {
-                        "▾ "
-                    };
-                    text.extend(mark.encode_utf16());
-                }
-                crate::data::push_utf16(
-                    view.strings.bytes(row.text),
-                    row.text.is_ascii(),
-                    &mut text,
-                );
-                if file {
-                    text.extend(format!("    +{}  −{}", row.new_no, row.old_no).encode_utf16());
-                }
-                let format = if file {
-                    &self.file_format
-                } else {
-                    &self.code_format
-                };
-                let layout = unsafe {
-                    self.dwrite
-                        .CreateTextLayout(&text, format, 100_000.0, DIFF_ROW_HEIGHT)?
-                };
-                if let Some(spans) = commit.syntax.get(&i) {
-                    for &(start, end, kind) in spans {
-                        let Some(brush) = self.syntax_brush(kind)? else {
-                            continue;
-                        };
-                        let range = DWRITE_TEXT_RANGE {
-                            startPosition: start,
-                            length: end.saturating_sub(start),
-                        };
-                        unsafe { layout.SetDrawingEffect(&brush, range)? };
-                    }
-                }
-                self.diff_rows.insert(i, layout);
-            }
+            self.diff_layout(view, commit.syntax, i)?;
             let layout = &self.diff_rows[&i];
+            // 差分の中の検索の一致（黄色、今の一致は橙。GTK4 版の差分の検索の帯）。
+            let from = self.diff_find.partition_point(|m| m.0 < i);
+            for (k, &(_, start, end)) in self.diff_find[from..]
+                .iter()
+                .enumerate()
+                .take_while(|(_, m)| m.0 == i)
+            {
+                let (left, right) = (x_of(layout, start)?, x_of(layout, end)?);
+                let base = if file { DIFF_TEXT_INSET } else { text_x };
+                let fill = if self.diff_current == Some(from + k) {
+                    rgba(1.0, 0.6, 0.1, 0.65)
+                } else {
+                    rgba(1.0, 0.85, 0.2, 0.55)
+                };
+                unsafe {
+                    self.brush.SetColor(&fill);
+                    self.d2d.FillRectangle(
+                        &rect(base + left, base + right.max(left + 2.0)),
+                        &self.brush,
+                    );
+                }
+            }
             // 削除行と追加行の組の中で、変わった単語の地。
             if let Some(ranges) = commit.highlights.get(&i) {
                 let fill = if row.kind == DiffRow::REMOVED {
-                    DIFF_REMOVED_WORD
+                    diff_color(crate::theme::DiffColor::RemovedWord)
                 } else {
-                    DIFF_ADDED_WORD
+                    diff_color(crate::theme::DiffColor::AddedWord)
                 };
                 for &(start, end) in ranges {
                     let (left, right) = (x_of(layout, start)?, x_of(layout, end)?);
@@ -874,37 +1107,134 @@ impl Renderer {
                 self.draw_number(row.new_no, left + DIFF_NUMBER_WIDTH, top)?;
             }
             if commit.marks && matches!(row.kind, DiffRow::ADDED | DiffRow::REMOVED) {
-                self.draw_mark(row.flags & DiffRow::STAGED != 0, top)?;
+                let mark = if row.flags & DiffRow::STAGED != 0 {
+                    Mark::All
+                } else {
+                    Mark::None
+                };
+                self.draw_mark(mark, top)?;
             }
+            // hunk の見出し: その hunk の行をすべて（☑）・一部（▣）・どれも（☐）含めているか。
+            if commit.marks && row.kind == DiffRow::HUNK {
+                let rows = crate::data::hunk_rows(&view.rows, i as usize);
+                let staged = rows
+                    .iter()
+                    .filter(|&&r| view.rows[r].flags & DiffRow::STAGED != 0)
+                    .count();
+                let mark = match staged {
+                    0 => Mark::None,
+                    n if n == rows.len() => Mark::All,
+                    _ => Mark::Some,
+                };
+                if !rows.is_empty() {
+                    self.draw_mark(mark, top)?;
+                }
+            }
+        }
+        // 見出しの行が上に隠れたファイルは、見出しを上に張り付かせる（次のファイルの見出しが来たら押し上げる。
+        // macOS 版・GTK4 版と同じ）。
+        if let Some((i, top)) = sticky_header(commit.file_rows, scroll_y) {
+            self.diff_layout(view, commit.syntax, i as u32)?;
+            let layout = &self.diff_rows[&(i as u32)];
+            unsafe {
+                self.brush.SetColor(&BACKGROUND);
+                self.d2d.FillRectangle(
+                    &D2D_RECT_F {
+                        left: 0.0,
+                        top,
+                        right: width,
+                        bottom: top + DIFF_ROW_HEIGHT,
+                    },
+                    &self.brush,
+                );
+                self.brush.SetColor(&DIFF_FILE);
+                self.d2d.FillRectangle(
+                    &D2D_RECT_F {
+                        left: 0.0,
+                        top,
+                        right: width,
+                        bottom: top + DIFF_ROW_HEIGHT,
+                    },
+                    &self.brush,
+                );
+                self.brush.SetColor(&FOREGROUND);
+                self.d2d.DrawTextLayout(
+                    point(DIFF_TEXT_INSET, top + 1.0),
+                    layout,
+                    &self.brush,
+                    D2D1_DRAW_TEXT_OPTIONS_CLIP,
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// 差分の `i` 行目の文字の配置を作って取っておく（あれば何もしない）。
+    fn diff_layout(
+        &mut self,
+        view: &amonhen_core::diff::DiffView,
+        syntax: &std::collections::HashMap<u32, Vec<(u32, u32, u8)>>,
+        i: u32,
+    ) -> Result<()> {
+        use amonhen_layout::DiffRow;
+        let row = &view.rows[i as usize];
+        let file = row.kind == DiffRow::FILE;
+        if !self.diff_rows.contains_key(&i) {
+            let mut text = Vec::with_capacity(128);
+            if file {
+                // 畳んだファイルは ▸、開いているファイルは ▾（見出しを押すと切り替わる）。
+                let mark = if row.flags & DiffRow::COLLAPSED != 0 {
+                    "▸ "
+                } else {
+                    "▾ "
+                };
+                text.extend(mark.encode_utf16());
+            }
+            crate::data::push_utf16(view.strings.bytes(row.text), row.text.is_ascii(), &mut text);
+            if file {
+                text.extend(format!("    +{}  −{}", row.new_no, row.old_no).encode_utf16());
+            }
+            let format = if file {
+                &self.file_format
+            } else {
+                &self.code_format
+            };
+            let layout = unsafe {
+                self.dwrite
+                    .CreateTextLayout(&text, format, 100_000.0, DIFF_ROW_HEIGHT)?
+            };
+            if let Some(spans) = syntax.get(&i) {
+                for &(start, end, kind) in spans {
+                    let Some(brush) = self.syntax_brush(kind)? else {
+                        continue;
+                    };
+                    let range = DWRITE_TEXT_RANGE {
+                        startPosition: start,
+                        length: end.saturating_sub(start),
+                    };
+                    unsafe { layout.SetDrawingEffect(&brush, range)? };
+                }
+            }
+            self.diff_rows.insert(i, layout);
         }
         Ok(())
     }
 
     /// 構文の種類の文字の色（GTK4 版の System のテーマの明るい外観と同じ。ない種類は本文の色）。
     fn syntax_brush(&mut self, kind: u8) -> Result<Option<ID2D1SolidColorBrush>> {
-        use amonhen_layout::SyntaxSpan;
         if let Some(brush) = self.syntax_brushes.get(&kind) {
             return Ok(Some(brush.clone()));
         }
-        let (r, g, b) = match kind {
-            SyntaxSpan::KEYWORD | SyntaxSpan::TAG | SyntaxSpan::VARIABLE => (0.80, 0.18, 0.45),
-            SyntaxSpan::STRING => (0.77, 0.16, 0.16),
-            SyntaxSpan::COMMENT => (0.45, 0.45, 0.48),
-            SyntaxSpan::NUMBER | SyntaxSpan::CONSTANT => (0.50, 0.25, 0.75),
-            SyntaxSpan::FUNCTION => (0.10, 0.40, 0.85),
-            SyntaxSpan::TYPE => (0.10, 0.55, 0.60),
-            SyntaxSpan::PROPERTY => (0.10, 0.50, 0.70),
-            SyntaxSpan::ATTRIBUTE | SyntaxSpan::ESCAPE => (0.80, 0.45, 0.05),
-            SyntaxSpan::MODULE => (0.55, 0.40, 0.25),
-            _ => return Ok(None),
+        let Some((r, g, b)) = syntax_rgb(kind) else {
+            return Ok(None);
         };
         let brush = unsafe { self.d2d.CreateSolidColorBrush(&rgba(r, g, b, 1.0), None)? };
         self.syntax_brushes.insert(kind, brush.clone());
         Ok(Some(brush))
     }
 
-    /// 行を次のコミットに含めているかの印（含めていれば塗った四角にチェック、いなければ枠だけ）。
-    fn draw_mark(&self, staged: bool, top: f32) -> Result<()> {
+    /// 行を次のコミットに含めているかの印（含めていれば塗った四角にチェック、一部なら横線、いなければ枠だけ）。
+    fn draw_mark(&self, mark: Mark, top: f32) -> Result<()> {
         let size = 12.0;
         let (x, y) = (
             (DIFF_MARK_WIDTH - size) / 2.0,
@@ -921,18 +1251,28 @@ impl Renderer {
             radiusY: 2.5,
         };
         unsafe {
-            if staged {
-                self.brush.SetColor(&DIFF_MARK);
-                self.d2d.FillRoundedRectangle(&rect, &self.brush);
-                self.brush.SetColor(&BACKGROUND);
-                let a = point(x + 2.8, y + 6.2);
-                let b = point(x + 5.2, y + 8.8);
-                let c = point(x + 9.4, y + 3.6);
-                self.d2d.DrawLine(a, b, &self.brush, 1.6, &self.round);
-                self.d2d.DrawLine(b, c, &self.brush, 1.6, &self.round);
-            } else {
-                self.brush.SetColor(&SECONDARY);
-                self.d2d.DrawRoundedRectangle(&rect, &self.brush, 1.0, None);
+            match mark {
+                Mark::All => {
+                    self.brush.SetColor(&DIFF_MARK);
+                    self.d2d.FillRoundedRectangle(&rect, &self.brush);
+                    self.brush.SetColor(&BACKGROUND);
+                    let a = point(x + 2.8, y + 6.2);
+                    let b = point(x + 5.2, y + 8.8);
+                    let c = point(x + 9.4, y + 3.6);
+                    self.d2d.DrawLine(a, b, &self.brush, 1.6, &self.round);
+                    self.d2d.DrawLine(b, c, &self.brush, 1.6, &self.round);
+                }
+                Mark::Some => {
+                    self.brush.SetColor(&DIFF_MARK);
+                    self.d2d.FillRoundedRectangle(&rect, &self.brush);
+                    self.brush.SetColor(&BACKGROUND);
+                    let (a, b) = (point(x + 3.0, y + 6.0), point(x + 9.0, y + 6.0));
+                    self.d2d.DrawLine(a, b, &self.brush, 1.6, &self.round);
+                }
+                Mark::None => {
+                    self.brush.SetColor(&SECONDARY);
+                    self.d2d.DrawRoundedRectangle(&rect, &self.brush, 1.0, None);
+                }
             }
         }
         Ok(())
@@ -986,17 +1326,23 @@ impl Renderer {
     fn draw_label(
         &self,
         label: &crate::data::RefLabel,
+        elsewhere: bool,
         layout: &IDWriteTextLayout,
-        x: f32,
-        y: f32,
-        width: f32,
+        (x, y, width): (f32, f32, f32),
     ) -> Result<()> {
-        use amonhen_model::RefKind;
-        let fill = match label.kind {
+        // worktree の札と、ほかの worktree が checkout しているブランチは緑（macOS 版と同じ）。
+        let (r, g, b) = match label.kind {
+            _ if label.worktree || elsewhere => LABEL_WORKTREE,
             RefKind::Local => LABEL_LOCAL,
             RefKind::Remote => LABEL_REMOTE,
             _ => LABEL_TAG,
         };
+        let alpha = match (label.head, label.worktree) {
+            (true, _) => 0.85,
+            (false, true) => 0.25,
+            (false, false) => 0.22,
+        };
+        let fill = rgba(r, g, b, alpha);
         let rect = D2D1_ROUNDED_RECT {
             rect: D2D_RECT_F {
                 left: x,
@@ -1010,11 +1356,11 @@ impl Renderer {
         unsafe {
             self.brush.SetColor(&fill);
             self.d2d.FillRoundedRectangle(&rect, &self.brush);
-            if label.head {
-                self.brush.SetColor(&LABEL_HEAD);
-                self.d2d.DrawRoundedRectangle(&rect, &self.brush, 1.2, None);
-            }
-            self.brush.SetColor(&LABEL_TEXT);
+            self.brush.SetColor(if label.head {
+                &LABEL_HEAD_TEXT
+            } else {
+                &LABEL_TEXT
+            });
             self.d2d.DrawTextLayout(
                 point(x + LABEL_PADDING, y + 1.0),
                 layout,
@@ -1029,28 +1375,99 @@ impl Renderer {
         let i = chunk.index(row);
         let mut subject = Vec::with_capacity(96);
         chunk.push_utf16(chunk.subject(i), &mut subject);
-        let mut meta = Vec::with_capacity(64);
-        chunk.push_utf16(chunk.author(i), &mut meta);
-        let id = history.graph.ids()[row as usize].to_string();
-        let date = date(chunk.time(i) + self.utc_offset);
-        meta.extend(format!("  ·  {date}  ·  {}", &id[..8]).encode_utf16());
+        // 作者・日時・ID のうち、出す項目だけを「  ·  」でつなぐ。
+        let shown = history_items();
+        let mut parts: Vec<Vec<u16>> = Vec::new();
+        if shown & items::AUTHOR != 0 {
+            let mut author = Vec::with_capacity(32);
+            chunk.push_utf16(chunk.author(i), &mut author);
+            parts.push(author);
+        }
+        if shown & items::DATE != 0 {
+            parts.push(
+                date(chunk.time(i) + self.utc_offset)
+                    .encode_utf16()
+                    .collect(),
+            );
+        }
+        if shown & items::ID != 0 {
+            let id = history.graph.ids()[row as usize].to_string();
+            parts.push(id[..8].encode_utf16().collect());
+        }
+        // 折りたたんだ merge は、隠しているコミットの数を添える（GTK4 版と同じ）。
+        if let Some(&hidden) = history.folded.get(row as usize)
+            && hidden > 0
+        {
+            parts.push(
+                format!("⊕ {}", amonhen_model::tr!("{count} folded", count = hidden))
+                    .encode_utf16()
+                    .collect(),
+            );
+        }
+        let separator: Vec<u16> = "  ·  ".encode_utf16().collect();
+        let meta = parts.join(&separator[..]);
         unsafe {
             Ok(RowText {
                 subject: self.dwrite.CreateTextLayout(
                     &subject,
                     &self.subject_format,
                     10000.0,
-                    ROW_HEIGHT,
+                    row_height(),
                 )?,
                 meta: self.dwrite.CreateTextLayout(
                     &meta,
                     &self.meta_format,
                     10000.0,
-                    ROW_HEIGHT,
+                    row_height(),
                 )?,
             })
         }
     }
+}
+
+/// 差分の行から `query` を探す（大文字小文字を区別しない。GTK4 版の `find_all` と同じく、ファイルの見出しも含め
+/// すべての行から）。位置は行の文字の形（`draw_diff_rows` が作るもの）の中の UTF-16 の位置。
+pub fn find_in_diff(view: &amonhen_core::diff::DiffView, query: &str) -> Vec<(u32, u32, u32)> {
+    let needle: Vec<char> = query.chars().flat_map(char::to_lowercase).collect();
+    if needle.is_empty() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for (i, row) in view.rows.iter().enumerate() {
+        let text = String::from_utf8_lossy(view.strings.bytes(row.text));
+        // ファイルの見出しは前に「▾ 」が付く。
+        let prefix: u32 = if row.kind == amonhen_layout::DiffRow::FILE {
+            2
+        } else {
+            0
+        };
+        // 文字ごとの（小文字、UTF-16 の位置）。
+        let mut chars: Vec<(char, u32)> = Vec::new();
+        let mut at = prefix;
+        for c in text.chars() {
+            let lower: Vec<char> = c.to_lowercase().collect();
+            let lower = if lower.len() == 1 { lower[0] } else { c };
+            chars.push((lower, at));
+            at += c.len_utf16() as u32;
+        }
+        let mut k = 0;
+        while k + needle.len() <= chars.len() {
+            if chars[k..k + needle.len()]
+                .iter()
+                .zip(&needle)
+                .all(|((c, _), n)| c == n)
+            {
+                let end = chars
+                    .get(k + needle.len())
+                    .map_or(at, |&(_, position)| position);
+                out.push((i as u32, chars[k].1, end));
+                k += needle.len();
+            } else {
+                k += 1;
+            }
+        }
+    }
+    out
 }
 
 /// UTC の秒を、この機械の時間帯で `YYYY-MM-DD HH:MM` にする（History の行と同じ書き方）。
@@ -1112,4 +1529,89 @@ fn x_of(layout: &IDWriteTextLayout, position: u32) -> Result<f32> {
     let mut metrics = DWRITE_HIT_TEST_METRICS::default();
     unsafe { layout.HitTestTextPosition(position, false, &mut x, &mut y, &mut metrics)? };
     Ok(x)
+}
+
+/// 構文の種類の文字の色（GTK4 版の System のテーマの明るい外観と同じ。0〜1。本文の色のままの種類は None）。
+/// 差分と Blame で使う。
+pub fn syntax_rgb(kind: u8) -> Option<(f32, f32, f32)> {
+    crate::theme::syntax(kind, system_syntax_rgb)
+}
+
+/// System のテーマの構文の色（GTK4 版の System の明るい外観と同じ）。
+fn system_syntax_rgb(kind: u8) -> Option<(f32, f32, f32)> {
+    use amonhen_layout::SyntaxSpan;
+    Some(match kind {
+        SyntaxSpan::KEYWORD | SyntaxSpan::TAG | SyntaxSpan::VARIABLE => (0.80, 0.18, 0.45),
+        SyntaxSpan::STRING => (0.77, 0.16, 0.16),
+        SyntaxSpan::COMMENT => (0.45, 0.45, 0.48),
+        SyntaxSpan::NUMBER | SyntaxSpan::CONSTANT => (0.50, 0.25, 0.75),
+        SyntaxSpan::FUNCTION => (0.10, 0.40, 0.85),
+        SyntaxSpan::TYPE => (0.10, 0.55, 0.60),
+        SyntaxSpan::PROPERTY => (0.10, 0.50, 0.70),
+        SyntaxSpan::ATTRIBUTE | SyntaxSpan::ESCAPE => (0.80, 0.45, 0.05),
+        SyntaxSpan::MODULE => (0.55, 0.40, 0.25),
+        _ => return None,
+    })
+}
+
+/// 上に張り付かせるファイルの見出し（見出しの行の番号と、見えている範囲の上端からの位置）。見出しの行が見えている
+/// 範囲より上にあるファイルのものを出し、次のファイルの見出しが近づいたら押し上げる（GTK4 版の `sticky`）。
+/// `file_rows` は見出しの行の番号（昇順）。
+pub fn sticky_header(file_rows: &[u32], scroll_y: f32) -> Option<(usize, f32)> {
+    let first = (scroll_y / DIFF_ROW_HEIGHT).floor().max(0.0) as u32;
+    let at = file_rows.partition_point(|&r| r <= first).checked_sub(1)?;
+    let file = file_rows[at] as usize;
+    if file as f32 * DIFF_ROW_HEIGHT >= scroll_y {
+        return None;
+    }
+    let top = file_rows.get(at + 1).map_or(0.0, |&next| {
+        (next as f32 * DIFF_ROW_HEIGHT - scroll_y - DIFF_ROW_HEIGHT).min(0.0)
+    });
+    Some((file, top))
+}
+
+/// 等幅の字（Cascadia Mono）の「0」の幅（DIP）。コミットの説明の欄の 72 桁の目安の線の位置に使う（macOS 版・
+/// GTK4 版と同じく「0」の幅から決める）。測れなければ None。
+pub fn monospace_zero_width(size: f32) -> Option<f32> {
+    let measure = || -> Result<f32> {
+        unsafe {
+            let dwrite: IDWriteFactory = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)?;
+            let format = dwrite.CreateTextFormat(
+                w!("Cascadia Mono"),
+                None,
+                DWRITE_FONT_WEIGHT_NORMAL,
+                DWRITE_FONT_STYLE_NORMAL,
+                DWRITE_FONT_STRETCH_NORMAL,
+                size,
+                w!("ja-jp"),
+            )?;
+            // 1 字では丸めが効くので、72 字の幅から求める。
+            let text: Vec<u16> = "0".repeat(72).encode_utf16().collect();
+            let layout = dwrite.CreateTextLayout(&text, &format, 100_000.0, 100.0)?;
+            let mut metrics = DWRITE_TEXT_METRICS::default();
+            layout.GetMetrics(&mut metrics)?;
+            Ok(metrics.widthIncludingTrailingWhitespace / 72.0)
+        }
+    };
+    measure().ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sticky_header_sticks_and_is_pushed_up() {
+        let rh = DIFF_ROW_HEIGHT;
+        let files = [0, 10];
+        // 一番上で見出しが見えていれば張り付かせない。
+        assert_eq!(sticky_header(&files, 0.0), None);
+        // 見出しが上に隠れたら、上端に張り付く。
+        assert_eq!(sticky_header(&files, 3.0 * rh), Some((0, 0.0)));
+        // 次の見出しが 2 行目に来たら、その分だけ押し上げる。
+        assert_eq!(sticky_header(&files, 9.5 * rh), Some((0, -0.5 * rh)));
+        // 次のファイルに入ったら、そのファイルの見出し。
+        assert_eq!(sticky_header(&files, 12.0 * rh), Some((10, 0.0)));
+        assert_eq!(sticky_header(&[], 5.0 * rh), None);
+    }
 }

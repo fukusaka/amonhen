@@ -91,7 +91,10 @@ pub struct State {
     /// 比べた組（比べている間・比べられなかったときは None と理由）。
     pub pairs: Option<Vec<Pair>>,
     pub error: Option<String>,
+    /// 選んでいる組（`pairs` の番号）。
     pub selected: Option<usize>,
+    /// 両方で同じ組を隠す（Changes Only。GTK4 版と同じ）。
+    pub changes_only: bool,
 }
 
 impl State {
@@ -102,7 +105,19 @@ impl State {
             pairs: None,
             error: None,
             selected: None,
+            changes_only: false,
         }
+    }
+
+    /// 一覧に出している組の番号（Changes Only なら同じ組を除く）。
+    pub fn shown(&self) -> Vec<usize> {
+        self.pairs
+            .iter()
+            .flatten()
+            .enumerate()
+            .filter(|(_, p)| !self.changes_only || p.status != "same")
+            .map(|(i, _)| i)
+            .collect()
     }
 
     pub fn selected_pair(&self) -> Option<&Pair> {
@@ -113,8 +128,10 @@ impl State {
 pub struct Callbacks {
     pub ranges: Callback<String>,
     pub compare: Callback<()>,
+    /// 一覧の行を選んだ（`shown` の番号）。
     pub selected: Callback<Option<usize>>,
     pub close: Callback<()>,
+    pub changes_only: Callback<bool>,
 }
 
 /// 左の列（範囲と組の一覧）。
@@ -164,48 +181,69 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                 .font_size(12.0)
                 .opacity(0.7)
                 .text_wrapping(TextWrapping::Wrap),
-            TextBlock::new()
-                .text(counts)
-                .font_size(12.0)
-                .opacity(0.7)
-                .text_wrapping(TextWrapping::Wrap),
+            Grid::new()
+                .columns([GridLength::Star(1.0), GridLength::Auto])
+                .children((
+                    TextBlock::new()
+                        .text(counts)
+                        .font_size(12.0)
+                        .opacity(0.7)
+                        .vertical_alignment(VerticalAlignment::Center)
+                        .text_wrapping(TextWrapping::Wrap)
+                        .grid_column(0),
+                    CheckBox::new()
+                        .is_checked(state.changes_only)
+                        .on_is_checked_changed(callbacks.changes_only)
+                        .grid_column(1)
+                        .content(TextBlock::new().text(tr!("Changes Only")).font_size(12.0))
+                        .tooltip(tr!("Hide the commits that are the same in both versions")),
+                )),
         ));
-    let pairs = state.pairs.as_deref().unwrap_or_default();
-    let rows = pairs.iter().enumerate().map(|(i, p)| {
-        let (sign, color, what) = mark(&p.status);
-        let index = |s: &Option<Side>| s.as_ref().map_or("-".to_owned(), |s| s.index.to_string());
-        let sign = TextBlock::new()
-            .text(sign)
-            .foreground_optional(color.map(Brush::Solid))
-            .grid_column(0)
-            .tooltip(what);
-        let row = Grid::new()
-            .columns([
-                GridLength::Pixel(20.0),
-                GridLength::Pixel(56.0),
-                GridLength::Star(1.0),
-            ])
-            .children((
-                sign,
-                TextBlock::new()
-                    .text(format!("{}:{}", index(&p.old), index(&p.new)))
-                    .font_size(12.0)
-                    .opacity(0.6)
-                    .vertical_alignment(VerticalAlignment::Center)
-                    .grid_column(1),
-                TextBlock::new()
-                    .text(p.subject.clone())
-                    .text_trimming(TextTrimming::CharacterEllipsis)
-                    .grid_column(2),
-            ));
-        (i, ListViewItem::new().content(row))
-    });
+    let all = state.pairs.as_deref().unwrap_or_default();
+    let shown = state.shown();
+    let rows = shown
+        .iter()
+        .filter_map(|&i| Some((i, all.get(i)?)))
+        .map(|(i, p)| {
+            let (sign, color, what) = mark(&p.status);
+            let index =
+                |s: &Option<Side>| s.as_ref().map_or("-".to_owned(), |s| s.index.to_string());
+            let sign = TextBlock::new()
+                .text(sign)
+                .foreground_optional(color.map(Brush::Solid))
+                .grid_column(0)
+                .tooltip(what);
+            let row = Grid::new()
+                .columns([
+                    GridLength::Pixel(20.0),
+                    GridLength::Pixel(56.0),
+                    GridLength::Star(1.0),
+                ])
+                .children((
+                    sign,
+                    TextBlock::new()
+                        .text(format!("{}:{}", index(&p.old), index(&p.new)))
+                        .font_size(12.0)
+                        .opacity(0.6)
+                        .vertical_alignment(VerticalAlignment::Center)
+                        .grid_column(1),
+                    TextBlock::new()
+                        .text(p.subject.clone())
+                        .text_trimming(TextTrimming::CharacterEllipsis)
+                        .grid_column(2),
+                ));
+            (i, ListViewItem::new().content(row))
+        });
     let list = ListView::new()
-        .selected_index(state.selected)
+        .selected_index(
+            state
+                .selected
+                .and_then(|s| shown.iter().position(|&i| i == s)),
+        )
         .on_selection_changed(callbacks.selected)
         .collection_slot(ListViewSlot::Items, rows);
     // 比べ直すたびに一覧ごと作り直す（reactor の ListView は消した項目の場所が空いたまま残る）。
-    let key = format!("{}:{}", state.ranges, pairs.len());
+    let key = format!("{}:{}:{}", state.ranges, all.len(), state.changes_only);
     Grid::new()
         .rows([GridLength::Auto, GridLength::Auto, GridLength::Star(1.0)])
         .children((
