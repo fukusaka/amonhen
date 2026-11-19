@@ -879,11 +879,12 @@ Make every operation available from the menus. Shortcuts do not follow other cli
   is 削除, adding is 追加, and an optional field says （任意）.
 - **Names in menus** longer than 40 characters are cut in the middle ("feature/a-rather-lo…graph-cope-with-it"), so a
   long branch name doesn't widen the menu; what is copied or acted on is the whole name.
-- **Fields** in a sheet are labeled on the left, as in the remote and SSH sheets, with the default shown faintly in
-  an empty field, and the button stays disabled until the required fields are filled.
-- **Red** is only for what can't be undone (Force Push, deleting or replacing tags on a remote, deleting an
-  untracked file, removing a worktree with uncommitted changes, closing the merge editor without saving); Return
-  doesn't press it. "…" is only on items that open a sheet.
+- **Fields** in a sheet are labeled on the left without a colon, as in the remote and SSH sheets, with the default
+  shown faintly in an empty field, and the button stays disabled until the required fields are filled.
+- **Red** is for what can't be undone, and for all of it: every confirmation whose message ends with "This can't be
+  undone." (Force Push, pushing, deleting or replacing tags on a remote, Prune, removing a remote, a submodule or a
+  worktree, deleting untracked or ignored files, forgetting rerere's resolutions), and closing the merge editor
+  without saving; Return doesn't press it. "…" is only on items that open a sheet.
 
 ## 12. Integration with GitHub and others
 

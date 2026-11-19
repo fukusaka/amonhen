@@ -514,7 +514,7 @@ private struct RemotesTab: View {
             }
             .contextMenu(forSelectionType: String.self) { names in
                 Button(L("Edit…")) { names.first.map(edit) }.disabled(names.count != 1)
-                Button("Prune") { for n in names { model.changeRemote(["kind": "prune", "name": n]) } }.disabled(names.isEmpty)
+                Button("Prune…") { prune(Array(names)) }.disabled(names.isEmpty)
                 Divider()
                 Button(L("Remove…")) { names.first.map(remove) }.disabled(names.count != 1)
             } primaryAction: { names in
@@ -523,7 +523,7 @@ private struct RemotesTab: View {
             HStack {
                 Button(L("Add…")) { present(nil) }
                 Button(L("Edit…")) { selection.map(edit) }.disabled(selection == nil)
-                Button("Prune") { selection.map { model.changeRemote(["kind": "prune", "name": $0]) } }
+                Button("Prune…") { selection.map { prune([$0]) } }
                     .disabled(selection == nil)
                     .help(L("Remove remote-tracking branches that no longer exist on the remote."))
                 Spacer()
@@ -542,6 +542,28 @@ private struct RemotesTab: View {
     private func present(_ remote: RemoteEntry?) {
         guard let window = NSApp.keyWindow ?? NSApp.mainWindow else { return }
         RemoteSheet.present(in: window, repository: model.repository, remote: remote) { model.perform($0) }
+    }
+
+    /// Prune もリモートと話す（消えたブランチを読む）ので、サイドバーと同じく先に聞く（docs/ux.md）。
+    private func prune(_ names: [String]) {
+        guard !names.isEmpty else { return }
+        let list = names.sorted().joined(separator: ", ")
+        let alert = NSAlert()
+        alert.messageText = L("Prune %@?", list)
+        alert.informativeText = L("Removes the remote-tracking branches whose branches are gone from %@ (git remote prune).", list)
+            + sentenceGap + Actions.cantUndo
+        // 戻せないので、赤く、↩ では押せない（↩ は Cancel）。
+        alert.addButton(withTitle: "Prune").markDestructive()
+        alert.addButton(withTitle: L("Cancel")).keyEquivalent = "\r"
+        let run = { (response: NSApplication.ModalResponse) in
+            guard response == .alertFirstButtonReturn else { return }
+            for name in names { model.changeRemote(["kind": "prune", "name": name]) }
+        }
+        if let window = NSApp.keyWindow ?? NSApp.mainWindow {
+            alert.beginSheetModal(for: window, completionHandler: run)
+        } else {
+            run(alert.runModal())
+        }
     }
 
     private func remove(_ name: String) {
@@ -1916,11 +1938,19 @@ private struct OperationsPage: View {
                         Button(L("Forget All Recorded Resolutions…")) {
                             let alert = NSAlert()
                             alert.messageText = L("Forget All Recorded Resolutions?")
-                            alert.informativeText = L("git rerere then no longer reuses the resolutions it recorded in this repository.") + " " + Actions.cantUndo
+                            alert.informativeText = L("git rerere then no longer reuses the resolutions it recorded in this repository.") + sentenceGap + Actions.cantUndo
                             let forget = alert.addButton(withTitle: L("Forget All"))
                             forget.markDestructive()
                             alert.addButton(withTitle: L("Cancel")).keyEquivalent = "\r"
-                            if alert.runModal() == .alertFirstButtonReturn { model.perform([["op": "forgetAllResolutions"]]) }
+                            let run = { (response: NSApplication.ModalResponse) in
+                                if response == .alertFirstButtonReturn { model.perform([["op": "forgetAllResolutions"]]) }
+                            }
+                            // 窓のシートで聞く（docs/ux.md: アプリ全体を止めない）。
+                            if let window = NSApp.keyWindow ?? NSApp.mainWindow {
+                                alert.beginSheetModal(for: window, completionHandler: run)
+                            } else {
+                                run(alert.runModal())
+                            }
                         }
                     }
                 }
@@ -2180,14 +2210,16 @@ private struct HooksLFSPage: View {
         let alert = NSAlert()
         alert.messageText = L("Track Pattern")
         alert.informativeText = L("Files matching the pattern are stored in LFS from now on (git lfs track).")
-        alert.addButton(withTitle: "OK")
+        let button = alert.addButton(withTitle: L("Track"))
         alert.addButton(withTitle: L("Cancel"))
         let field = NSTextField(string: "")
         field.placeholderString = "*.psd"
         field.frame = NSRect(x: 0, y: 0, width: 300, height: 24)
         alert.accessoryView = field
         alert.window.initialFirstResponder = field
+        let watching = AlertForm.require([field], for: button)
         Task { @MainActor in
+            defer { AlertForm.release(watching) }
             guard await Self.ask(alert) == .alertFirstButtonReturn else { return }
             let pattern = field.stringValue.trimmingCharacters(in: .whitespaces)
             if !pattern.isEmpty { model.lfsTrack(pattern, true) }

@@ -217,6 +217,14 @@ pub fn is_cancelled(message: &str) -> bool {
     message == "Cancelled" || japanese().get("Cancelled").is_some_and(|ja| ja == message)
 }
 
+/// 文と文のあいだ。英語は空白、日本語は詰める（「…残ります。元に戻せません。」）。
+pub fn sentence_gap() -> &'static str {
+    match current() {
+        Lang::Ja => "",
+        Lang::En => " ",
+    }
+}
+
 /// 名前の並びを、今の言語の書き方でつなぐ（macOS の `ListFormatter`）。英語は「a, b, and c」（2 つなら
 /// 「a and b」）、日本語は「a、b、c」。
 pub fn list<S: AsRef<str>>(parts: &[S]) -> String {
@@ -254,6 +262,12 @@ mod tests {
         assert_eq!(list(&["a", "b"]), "a and b");
         assert_eq!(list(&["a", "b", "c"]), "a, b, and c");
         with(Lang::Ja, || assert_eq!(list(&["a", "b", "c"]), "a、b、c"));
+    }
+
+    #[test]
+    fn joins_sentences_without_a_space_in_japanese() {
+        assert_eq!(sentence_gap(), " ");
+        with(Lang::Ja, || assert_eq!(sentence_gap(), ""));
     }
 
     #[test]

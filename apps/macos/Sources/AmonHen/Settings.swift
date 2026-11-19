@@ -845,9 +845,9 @@ private struct CacheRow: View {
                         try clear()
                     } catch {
                         let alert = NSAlert()
-                        alert.messageText = L("Can’t clear the cache")
+                        alert.messageText = L("Couldn’t clear the cache")
                         alert.informativeText = error.localizedDescription
-                        alert.runModal()
+                        if let window = NSApp.keyWindow { alert.beginSheetModal(for: window) } else { alert.runModal() }
                     }
                     bytes = size()
                 }

@@ -54,7 +54,7 @@ pub fn save(actions: &Rc<Actions>, oids: Vec<String>) {
             tr!("One mbox file").as_str(),
         ]);
         format.set_selected(u32::from(crate::settings::bool(SINGLE_FILE)));
-        sheet.add(&sheets::row(&tr!("Format:"), &format));
+        sheet.add(&sheets::row(&tr!("Format"), &format));
         let cover = gtk::CheckButton::with_label(&tr!("Cover letter"));
         cover.set_active(crate::settings::bool(COVER_LETTER));
         sheet.add(&sheets::row("", &cover));
@@ -64,7 +64,7 @@ pub fn save(actions: &Rc<Actions>, oids: Vec<String>) {
             .max_width_chars(4)
             .activates_default(true)
             .build();
-        sheet.add(&sheets::row(&tr!("Version (-v):"), &version));
+        sheet.add(&sheets::row(&tr!("Version (-v)"), &version));
         sheet.buttons(&tr!("Save…"), false, None);
         if sheet.run().await != Response::Ok {
             return;
@@ -245,7 +245,9 @@ pub fn apply(actions: &Rc<Actions>, mut paths: Vec<PathBuf>) {
                 Some(e) => e.to_owned(),
                 None => tr!("There are no changes in the patch."),
             };
-            actions.alert(&tr!("Can’t Read the Patch"), &detail).await;
+            actions
+                .alert(&tr!("Couldn’t apply the patch"), &detail)
+                .await;
             return;
         }
         confirm(&actions, &target, &branch, summary, &patches, paths).await;
@@ -298,7 +300,11 @@ async fn confirm(
     let sheet = target.sheet(
         sheets::parent(actions).as_ref(),
         &title,
-        &format!("{what} {}", sheets::can_undo()),
+        &format!(
+            "{what}{}{}",
+            amonhen_model::i18n::sentence_gap(),
+            sheets::can_undo()
+        ),
     );
     // コミットになるなら（git am）、一覧の上に前と後の絵（今の先端の上に、パッチごとのコミット。
     // macOS 版と同じ）。

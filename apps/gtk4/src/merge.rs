@@ -407,7 +407,7 @@ pub fn open(
             }
             Err(error) => {
                 let dialog = gtk::AlertDialog::builder()
-                    .message(tr!("Can’t open the merge editor"))
+                    .message(tr!("Couldn’t open {path} in the merge editor", path = path))
                     .detail(error)
                     .modal(true)
                     .build();
@@ -625,7 +625,8 @@ fn adopt_in_window(
                     Editor::opened(&next, true);
                 }
                 Err(error) => {
-                    crate::sheets::alert(Some(&window), &error, "").await;
+                    let title = tr!("Couldn’t reload {path}", path = editor.path);
+                    crate::sheets::alert(Some(&window), &title, &error).await;
                 }
             }
         });

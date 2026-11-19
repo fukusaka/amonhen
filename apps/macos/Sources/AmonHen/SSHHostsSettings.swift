@@ -119,7 +119,13 @@ struct SSHHostsSettings: View {
         alert.window.initialFirstResponder = box
         alert.addButton(withTitle: L("Add"))
         alert.addButton(withTitle: L("Cancel"))
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        // 設定の窓のシートで聞く（docs/ux.md: アプリ全体を止めない）。
+        guard let window = NSApp.keyWindow else { return added(alert.runModal(), box) }
+        alert.beginSheetModal(for: window) { added($0, box) }
+    }
+
+    private func added(_ response: NSApplication.ModalResponse, _ box: NSComboBox) {
+        guard response == .alertFirstButtonReturn else { return }
         let host = box.stringValue.trimmingCharacters(in: .whitespaces)
         guard !host.isEmpty, !host.contains(where: { $0 == "/" || $0.isWhitespace }) else { return }
         if !Settings.sshHosts.contains(host) { Settings.sshHosts.append(host) }

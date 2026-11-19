@@ -35,7 +35,9 @@ nonisolated struct MergeForecast: Decodable, Sendable {
         guard let conflicts else { return L("Can’t check for conflicts ahead (needs git 2.38 or newer).") }
         let names = conflicts.prefix(3).joined(separator: ", ") + (conflicts.count > 3 ? ", …" : "")
         let line = conflicts.isEmpty ? L("No conflicts expected.") : L("⚠︎ Conflicts expected in %ld files: %@", conflicts.count, names)
-        return estimate ? line + " " + L("Rebase applies the commits one at a time, so this is only an estimate.") : line
+        // コンフリクトするファイルの名前で終わる行は、日本語でも空白で区切る。
+        let gap = line.hasSuffix("。") ? sentenceGap : " "
+        return estimate ? line + gap + L("Rebase applies the commits one at a time, so this is only an estimate.") : line
     }
 }
 
@@ -490,8 +492,8 @@ extension Actions {
                     showForecast()
                 }
             }
-            let grid = NSGridView(views: (sources.isEmpty ? [] : [[NSTextField(labelWithString: L("From:")), source]])
-                + [[NSTextField(labelWithString: L("Integrate with:")), popup]])
+            let grid = NSGridView(views: (sources.isEmpty ? [] : [[NSTextField(labelWithString: L("From")), source]])
+                + [[NSTextField(labelWithString: L("Integrate with")), popup]])
             grid.rowSpacing = 6
             grid.column(at: 0).xPlacement = .trailing
             let stack = NSStackView(views: [grid] + (shownDrawings.isEmpty ? [] : [drawingBox]) + [note]
@@ -623,7 +625,7 @@ extension Actions {
             let there = refs?.items.first { $0.kind == .remote && $0.name == target }?.target
                 .map { $0.map { String(format: "%02x", $0) }.joined() }
             let title = force ? L("Force push %@ to %@?", branch, target) : L("Push %@ to %@?", branch, target)
-            let message = force ? L("%@ loses the commits %@ doesn’t have.", target, branch) + " " + Self.cantUndo
+            let message = force ? L("%@ loses the commits %@ doesn’t have.", target, branch) + sentenceGap + Self.cantUndo
                 : there == nil ? L("Creates %@.", target) : ""
             guard await confirm(title, message: message, ok: force ? "Force Push" : "Push", destructive: force) else { return }
             var command: [String: Any] = ["op": "push", "remote": remote, "branch": branch, "remoteBranch": remoteBranch,
@@ -682,7 +684,7 @@ extension Actions {
                 }
                 popup.target = target
                 popup.action = #selector(ClosureTarget.fire)
-                let row = NSStackView(views: [NSTextField(labelWithString: L("From:")), popup])
+                let row = NSStackView(views: [NSTextField(labelWithString: L("From")), popup])
                 row.spacing = 6
                 row.frame.size = row.fittingSize
                 alert.accessoryView = row
@@ -733,7 +735,7 @@ extension Actions {
             let what = commits.count == 1 ? String(commits[0].hex.prefix(8)) : L("%ld commits", commits.count)
             let onto = currentBranch ?? "HEAD"
             let title = revert ? L("Revert %@ on %@?", what, onto) : L("Cherry-pick %@ onto %@?", what, onto)
-            let message = (revert ? L("Adds commits that undo them.") : L("Adds copies of them.")) + " " + Self.canUndo
+            let message = (revert ? L("Adds commits that undo them.") : L("Adds copies of them.")) + sentenceGap + Self.canUndo
             // 前と後の絵（今の先端の上に、作るコミット）。読んでからシートを出す。
             let drawing = pickDrawing(await pickPreview(oids: commits.map(\.hex), revert: revert), kind: revert ? .revert : .cherryPick)
             let alert = makeAlert(title, message)
@@ -760,7 +762,7 @@ extension Actions {
             let what = pop ? L("Applies it to the working tree and removes it from the list.")
                 : L("Applies it to the working tree. It stays in the list.")
             let alert = makeAlert(pop ? L("Pop %@?", name) : L("Apply the stash %@?", name),
-                                  (message.map { "“\($0)”\n" } ?? "") + what + " " + Self.canUndo)
+                                  (message.map { "“\($0)”\n" } ?? "") + what + sentenceGap + Self.canUndo)
             alert.addButton(withTitle: pop ? "Pop" : "Apply")
             alert.addButton(withTitle: L("Cancel"))
             if await present(alert) == .alertFirstButtonReturn {
@@ -848,7 +850,7 @@ extension Actions {
             popup.lastItem?.representedObject = mode.rawValue
             popup.lastItem?.toolTip = mode.toolTip
         }
-        let row = NSStackView(views: [NSTextField(labelWithString: L("Integrate with:")), popup])
+        let row = NSStackView(views: [NSTextField(labelWithString: L("Integrate with")), popup])
         row.spacing = 6
         return (row, popup)
     }
@@ -1136,8 +1138,8 @@ extension Actions {
             let title = names.count == 1 ? L("Delete %@?", names[0]) : L("Delete %ld branches?", names.count)
             let list = names.count == 1 ? "" : names.joined(separator: ", ") + "\n"
             let merged = byPullRequest.map { names.count == 1 ? L("Pull request #%ld merged its changes.", $0.1) : "\($0.0) (#\($0.1))" }
-            let prNote = merged.isEmpty ? "" : (names.count == 1 ? merged[0] : L("Merged by pull request: %@", merged.joined(separator: ", "))) + " "
-            let message = list + prNote + (unmerged.isEmpty ? "" : L("Some commits are on no other branch; they go with the branch.") + " ") + Self.canUndo
+            let prNote = merged.isEmpty ? "" : (names.count == 1 ? merged[0] : L("Merged by pull request: %@", merged.joined(separator: ", "))) + sentenceGap
+            let message = list + prNote + (unmerged.isEmpty ? "" : L("Some commits are on no other branch; they go with the branch.") + sentenceGap) + Self.canUndo
             let alert = makeAlert(title, message)
             if !unmerged.isEmpty {
                 let lists = Self.commitLists(unmerged.map { (L("Commits only on %@", $0.0), $0.1, true) })

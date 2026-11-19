@@ -828,8 +828,9 @@ impl Mode {
             tr!("No changes yet.")
         } else {
             format!(
-                "{} {}",
+                "{}{}{}",
                 tr!("Changes: {list}.", list = crate::titles::list(&parts)),
+                amonhen_model::i18n::sentence_gap(),
                 crate::sheets::can_undo()
             )
         });

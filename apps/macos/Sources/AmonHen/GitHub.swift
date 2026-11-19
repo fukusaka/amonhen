@@ -482,9 +482,9 @@ enum CreatePullRequestSheet {
         scroll.documentView = bodyView
         let draft = NSButton(checkboxWithTitle: L("Create as Draft"), target: nil, action: nil)
         let grid = NSGridView(views: [
-            [NSTextField(labelWithString: L("Title:")), titleField],
-            [NSTextField(labelWithString: "base:"), baseField],
-            [NSTextField(labelWithString: L("Body:")), scroll],
+            [NSTextField(labelWithString: L("Title")), titleField],
+            [NSTextField(labelWithString: "base"), baseField],
+            [NSTextField(labelWithString: L("Body")), scroll],
             [NSGridCell.emptyContentView, draft],
         ])
         grid.column(at: 0).xPlacement = .trailing
