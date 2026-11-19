@@ -528,6 +528,15 @@ impl Scope {
 const REBUILD: u32 = 1 << 31;
 /// 並び順を変えて History を並べ直す頼み（並び順は `Data::topo`）。
 const REORDER: u32 = 1 << 30;
+/// 読み直しのスレッドを終える頼み（`Data` を捨てた。タブを替えたときなど）。見張りが送り口を持っているので、送り口が
+/// なくなるのを待っても終わらない。
+const STOP: u32 = 1 << 29;
+
+impl Drop for Data {
+    fn drop(&mut self) {
+        let _ = self.changed_tx.send(STOP);
+    }
+}
 
 impl Data {
     /// `path` を裏のスレッドで開き、前回の History をすぐ送ってから最新を読む。
@@ -667,6 +676,9 @@ impl Data {
                 // まとめて来た知らせは 1 回の読み直しにする。
                 while let Ok(more) = changed_rx.try_recv() {
                     bits |= more;
+                }
+                if bits & STOP != 0 {
+                    break;
                 }
                 if bits & REORDER != 0 {
                     if let Err(e) = repo.set_history_order(order_of()) {
