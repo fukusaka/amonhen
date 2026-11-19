@@ -879,7 +879,8 @@ enum Message {
     /// マージエディタの左右と Base の欄で、選んでいるコンフリクトを見える所へ出す。
     MergeBringIntoView,
     /// Settings: git の名前とメールを読んだ・欄を書き換えた・保存・チェックを替えた・閉じる。
-    SettingsGit(String, String, Vec<crate::reposettings::Entry>),
+    /// Settings > Git を読んだ（読み始めたときの `git_epoch`、名前、メール、設定）。
+    SettingsGit(u64, String, String, Vec<crate::reposettings::Entry>),
     /// Settings > Git の Operations・Working Copy で選んだ（行の id と番号）。
     SettingsGitChoice(&'static str, Option<usize>),
     /// Settings の左の一覧でページを選んだ。
@@ -887,7 +888,7 @@ enum Message {
     /// Settings > SSH Hosts の操作とつないだ結果。
     SshHosts(crate::sshhosts::Event),
     /// Git > Programs の候補と使う git。
-    SettingsPrograms(crate::programs::State),
+    SettingsPrograms(u64, crate::programs::State),
     /// Settings > Git の Keys and Values の欄（`query`・`key`・`value`）とボタン（`add`・`remove:<key>`）。
     SettingsKeysField(&'static str, String),
     SettingsKeysButton(String),
@@ -1040,9 +1041,9 @@ enum Message {
     StashOption(&'static str, bool),
     /// Repository Settings: 設定を読んだ・欄を書き換えた・ボタン。
     RepoSettingsLoaded(Vec<crate::reposettings::Entry>),
-    /// 集めた署名の鍵（すべてのリポジトリの段の Settings > Git なら true）。
+    /// 集めた署名の鍵（Settings > Git なら読み始めたときの `git_epoch`、Repository Settings なら None）。
     SigningKeysLoaded(
-        bool,
+        Option<u64>,
         Vec<(&'static str, Vec<crate::reposettings::SigningKey>)>,
     ),
     /// Repository Settings のフックの有効を切り替えた。
@@ -2172,7 +2173,7 @@ impl Root {
                 self.page = Page::RepoSettings;
                 self.write_repo_settings(Vec::new(), context);
                 if let Some(repo) = self.repo.clone() {
-                    load_signing_keys(repo, false, context);
+                    load_signing_keys(repo, None, context);
                 }
             }
             Message::Command(id) if id == "stash" => self.ask_stash(Vec::new()),
@@ -2769,6 +2770,8 @@ impl Root {
                     env_query: String::new(),
                     templates: crate::templates::all(),
                     ssh: None,
+                    git_target: None,
+                    git_epoch: 0,
                 });
                 context.spawn_background(|_| {
                     Message::CacheSize(
@@ -2777,35 +2780,7 @@ impl Root {
                     )
                 });
                 self.page = Page::Settings;
-                load_signing_keys(repo.clone(), true, context);
-                load_programs(repo.clone(), context);
-                // `--global` の段の値（いくつもあれば最後のもの。git と同じ）。
-                context.spawn_background(move |_| {
-                    let reply: Value =
-                        serde_json::from_str(&repo.run_json(r#"{"op":"configList"}"#))
-                            .unwrap_or_default();
-                    let value = |key: &str| {
-                        reply["info"]["entries"]
-                            .as_array()
-                            .into_iter()
-                            .flatten()
-                            .rev()
-                            .find(|e| {
-                                e["scope"].as_str() == Some("global")
-                                    && e["key"]
-                                        .as_str()
-                                        .is_some_and(|k| k.eq_ignore_ascii_case(key))
-                            })
-                            .and_then(|e| e["value"].as_str())
-                            .unwrap_or_default()
-                            .to_owned()
-                    };
-                    Message::SettingsGit(
-                        value("user.name"),
-                        value("user.email"),
-                        global_entries(&reply),
-                    )
-                });
+                load_git_settings(repo, 0, context);
             }
             Message::Command(id) if id == "compare-with-previous" => {
                 let Some(repo) = self.repo.clone() else {
@@ -5978,8 +5953,8 @@ impl Root {
                 ACTIVITY_TICK.with(|t| t.set(None));
                 self.page = self.activity_from;
             }
-            Message::SettingsGit(name, email, entries) => {
-                if let Some(state) = self.settings.as_mut() {
+            Message::SettingsGit(epoch, name, email, entries) => {
+                if let Some(state) = self.settings.as_mut().filter(|s| s.git_epoch == epoch) {
                     // 書いた後に読み直したときは、打ちかけの名前とメールを消さない。
                     if state.git.is_none() {
                         state.git = Some([(name.clone(), name), (email.clone(), email)]);
@@ -5991,14 +5966,19 @@ impl Root {
                     global.entries = Some(entries);
                 }
             }
-            Message::SettingsPrograms(programs) => {
-                if let Some(state) = self.settings.as_mut() {
+            Message::SettingsPrograms(epoch, programs) => {
+                if let Some(state) = self.settings.as_mut().filter(|s| s.git_epoch == epoch) {
                     state.programs = Some(programs);
                 }
             }
             Message::SettingsPage(page) => {
                 if let (Some(state), Some(page)) = (self.settings.as_mut(), page) {
                     state.page = page;
+                    // Settings > Git はこの機械の git（SSH Hosts で SSH 先の git を出していたら読み直す）。
+                    if crate::settingsview::PAGES.get(page) == Some(&"Git") {
+                        self.retarget_git(None, context);
+                        return;
+                    }
                     // SSH Hosts は初めて出したときに作り、選んだ SSH 先につなぐ。
                     if crate::settingsview::PAGES.get(page) == Some(&"SSH Hosts")
                         && state.ssh.is_none()
@@ -6018,9 +5998,13 @@ impl Root {
                 for job in ssh.handle(event) {
                     context.spawn_background(move |_| Message::SshHosts(job.run()));
                 }
+                // SSH 先の Git のページなら、Settings > Git の部品をその SSH 先のエンジンに向ける。
+                if let Some(host) = ssh.git_host() {
+                    self.retarget_git(Some(host), context);
+                }
             }
             Message::SettingsGitChoice(id, Some(index)) if id.starts_with("program:") => {
-                let Some(repo) = self.repo.clone() else {
+                let Some((repo, epoch)) = self.settings_git_repo() else {
                     return;
                 };
                 let Some(state) = self.settings.as_mut() else {
@@ -6058,10 +6042,13 @@ impl Root {
                                     )));
                                 }
                             }
-                            Message::SettingsPrograms(crate::programs::load(|c| repo.run_json(c)))
+                            Message::SettingsPrograms(
+                                epoch,
+                                crate::programs::load(|c| repo.run_json(c)),
+                            )
                         });
                     } else {
-                        write_global_settings(repo, commands, context);
+                        write_global_settings(repo, epoch, commands, context);
                     }
                 }
             }
@@ -6072,21 +6059,22 @@ impl Root {
                     .and_then(|s| s.global.as_mut())
                     .and_then(|g| crate::reposettings::file_pick(g, id, index))
                 {
-                    if let (Some(repo), Some(path)) = (
-                        self.repo.clone(),
+                    if let (Some((repo, epoch)), Some(path)) = (
+                        self.settings_git_repo(),
                         crate::files::open_files(&title).into_iter().next(),
                     ) {
                         let path = path.display().to_string();
                         write_global_settings(
                             repo,
+                            epoch,
                             vec![crate::reposettings::file_command(key, &path, "global")],
                             context,
                         );
                     }
                     return;
                 }
-                let (Some(repo), Some(commands)) = (
-                    self.repo.clone(),
+                let (Some((repo, epoch)), Some(commands)) = (
+                    self.settings_git_repo(),
                     self.settings
                         .as_mut()
                         .and_then(|s| s.global.as_mut())
@@ -6094,7 +6082,7 @@ impl Root {
                 ) else {
                     return;
                 };
-                write_global_settings(repo, commands, context);
+                write_global_settings(repo, epoch, commands, context);
             }
             Message::SettingsGitChoice(_, None) => {}
             Message::SettingsKeysField(field, text) => {
@@ -6108,8 +6096,8 @@ impl Root {
                 }
             }
             Message::SettingsKeysButton(key) => {
-                let (Some(repo), Some(commands)) = (
-                    self.repo.clone(),
+                let (Some((repo, epoch)), Some(commands)) = (
+                    self.settings_git_repo(),
                     self.settings
                         .as_mut()
                         .and_then(|s| s.global.as_mut())
@@ -6123,7 +6111,7 @@ impl Root {
                 ) else {
                     return;
                 };
-                write_global_settings(repo, commands, context);
+                write_global_settings(repo, epoch, commands, context);
             }
             Message::SettingsField(index, text) => {
                 if let Some(field) = self
@@ -6136,8 +6124,8 @@ impl Root {
                 }
             }
             Message::SettingsSaveGit => {
-                let (Some(repo), Some(git)) = (
-                    self.repo.clone(),
+                let (Some((repo, _)), Some(git)) = (
+                    self.settings_git_repo(),
                     self.settings.as_mut().and_then(|s| s.git.as_mut()),
                 ) else {
                     return;
@@ -6549,10 +6537,11 @@ impl Root {
                     state.new_hook = index;
                 }
             }
-            Message::SigningKeysLoaded(global, keys) => {
-                let state = if global {
+            Message::SigningKeysLoaded(epoch, keys) => {
+                let state = if let Some(epoch) = epoch {
                     self.settings
                         .as_mut()
+                        .filter(|s| s.git_epoch == epoch)
                         .map(|s| s.global.get_or_insert_with(crate::reposettings::State::new))
                 } else {
                     self.repo_settings.as_mut()
@@ -12562,6 +12551,39 @@ impl Root {
     }
 
     /// Repository Settings: `commands` を順に書いてから（失敗したらそこで止めて知らせる）、設定を読み直す。
+    /// Settings > Git が読み書きする先（この機械なら開いているリポジトリ、SSH 先ならそこにつないだエンジン）と、
+    /// 今の `git_epoch`。
+    fn settings_git_repo(&self) -> Option<(Arc<Repository>, u64)> {
+        let settings = self.settings.as_ref()?;
+        let repo = match &settings.git_target {
+            None => self.repo.clone()?,
+            Some(host) => settings.ssh.as_ref()?.repo_of(host)?,
+        };
+        Some((repo, settings.git_epoch))
+    }
+
+    /// Settings > Git が読み書きする先を変える（この機械なら None）。変わったら、出していた値を捨てて読み直す。
+    /// SSH 先にまだつながっていなければ、つながったときに呼び直す。
+    fn retarget_git(&mut self, target: Option<String>, context: &ComponentContext<Self>) {
+        let Some(settings) = self.settings.as_mut() else {
+            return;
+        };
+        let loaded = settings.git.is_some() || settings.global.is_some();
+        if settings.git_target == target && loaded {
+            return;
+        }
+        if settings.git_target != target || loaded {
+            settings.git_target = target;
+            settings.git_epoch += 1;
+            settings.git = None;
+            settings.global = None;
+            settings.programs = None;
+        }
+        if let Some((repo, epoch)) = self.settings_git_repo() {
+            load_git_settings(repo, epoch, context);
+        }
+    }
+
     fn write_repo_settings(&self, commands: Vec<Value>, context: &ComponentContext<Self>) {
         let Some(repo) = self.repo.clone() else {
             return;
@@ -15840,14 +15862,48 @@ fn splitter(handle: &ElementRef<Grid>, split: Split, top: f64) -> View {
 }
 
 /// Git > Programs の候補と使う git を読む（裏で）。
-fn load_programs(repo: Arc<Repository>, context: &ComponentContext<Root>) {
+fn load_programs(repo: Arc<Repository>, epoch: u64, context: &ComponentContext<Root>) {
     context.spawn_background(move |_| {
-        Message::SettingsPrograms(crate::programs::load(|c| repo.run_json(c)))
+        Message::SettingsPrograms(epoch, crate::programs::load(|c| repo.run_json(c)))
+    });
+}
+
+/// Settings > Git を読む（`repo` のすべてのリポジトリの段の名前とメール・設定、署名の鍵、Programs）。`epoch` は
+/// 読み始めたときの `git_epoch`（読む先が変わった後に届いた答えは捨てる）。
+fn load_git_settings(repo: Arc<Repository>, epoch: u64, context: &ComponentContext<Root>) {
+    load_signing_keys(repo.clone(), Some(epoch), context);
+    load_programs(repo.clone(), epoch, context);
+    // `--global` の段の値（いくつもあれば最後のもの。git と同じ）。
+    context.spawn_background(move |_| {
+        let reply: Value =
+            serde_json::from_str(&repo.run_json(r#"{"op":"configList"}"#)).unwrap_or_default();
+        let value = |key: &str| {
+            reply["info"]["entries"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .rev()
+                .find(|e| {
+                    e["scope"].as_str() == Some("global")
+                        && e["key"]
+                            .as_str()
+                            .is_some_and(|k| k.eq_ignore_ascii_case(key))
+                })
+                .and_then(|e| e["value"].as_str())
+                .unwrap_or_default()
+                .to_owned()
+        };
+        Message::SettingsGit(
+            epoch,
+            value("user.name"),
+            value("user.email"),
+            global_entries(&reply),
+        )
     });
 }
 
 /// 署名の鍵を形式ごとに集める（裏で。集められなければ空）。
-fn load_signing_keys(repo: Arc<Repository>, global: bool, context: &ComponentContext<Root>) {
+fn load_signing_keys(repo: Arc<Repository>, epoch: Option<u64>, context: &ComponentContext<Root>) {
     context.spawn_background(move |_| {
         let keys = crate::reposettings::SIGNING_FORMATS
             .iter()
@@ -15859,13 +15915,14 @@ fn load_signing_keys(repo: Arc<Repository>, global: bool, context: &ComponentCon
                 (*f, crate::reposettings::signing_keys_of(&reply["info"]))
             })
             .collect();
-        Message::SigningKeysLoaded(global, keys)
+        Message::SigningKeysLoaded(epoch, keys)
     });
 }
 
 /// Settings > Git の値を書いてから読み直し、効いている値と設定元を出し直す（失敗したらそこで止めて知らせる）。
 fn write_global_settings(
     repo: Arc<Repository>,
+    epoch: u64,
     commands: Vec<Value>,
     context: &ComponentContext<Root>,
 ) {
@@ -15879,7 +15936,7 @@ fn write_global_settings(
         }
         let reply: Value =
             serde_json::from_str(&repo.run_json(r#"{"op":"configList"}"#)).unwrap_or_default();
-        Message::SettingsGit(String::new(), String::new(), global_entries(&reply))
+        Message::SettingsGit(epoch, String::new(), String::new(), global_entries(&reply))
     });
 }
 

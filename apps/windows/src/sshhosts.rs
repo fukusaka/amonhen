@@ -21,8 +21,8 @@ const SSH_HOSTS: &str = "sshHosts";
 pub enum Conn {
     Connecting,
     Connected {
-        /// 開いておく（つなぎを保つ）。
-        _repo: Arc<Repository>,
+        /// SSH 先でリポジトリなしに動かしたエンジン（Git のページはこれで SSH 先の `--global` を読み書きする）。
+        repo: Arc<Repository>,
         /// SSH 先で使っているエンジンと、その用意のしかた（共有の daemon 越しなら None）。
         engine: Option<String>,
         /// SSH 先の git の版（読めなければ None）。
@@ -44,6 +44,8 @@ pub type Connected = Result<(Arc<Repository>, Option<String>, Option<String>), S
 
 pub enum Event {
     Select(Option<usize>),
+    /// 真ん中の列のページ（[`PAGES`] の番号）を選んだ。
+    Page(Option<usize>),
     /// ＋（加える欄を出す）・打った名前・候補を選んだ・加える・やめる。
     Add,
     AddText(String),
@@ -101,7 +103,14 @@ pub struct State {
     pub engine_path: Option<String>,
     /// 選ぶ欄を作り直す数（取りやめたとき、欄を今の値に戻す）。
     pub epoch: u32,
+    /// 出しているページ（[`PAGES`] の番号）。
+    pub page: usize,
 }
+
+/// SSH 先ごとのページ（真ん中の列。訳は `tr!` と同じ表から）: 接続と、そこにあるすべてのリポジトリに効く
+/// Settings > Git と同じページ。
+pub const PAGES: [&str; 2] = ["Connection", "Git"];
+const GIT_PAGE: usize = 1;
 
 impl State {
     pub fn new() -> (Self, Vec<Job>) {
@@ -114,6 +123,7 @@ impl State {
             removing: None,
             engine_path: None,
             epoch: 0,
+            page: 0,
         };
         let jobs = state.session_for_selected().into_iter().collect();
         (state, jobs)
@@ -176,9 +186,30 @@ impl State {
         Some(self.connect(&host))
     }
 
+    /// Git のページで選んでいる SSH 先（Settings > Git の部品をそこに向ける）。
+    pub fn git_host(&self) -> Option<String> {
+        (self.page == GIT_PAGE)
+            .then(|| self.selected.clone())
+            .flatten()
+    }
+
+    /// つながっている SSH 先のエンジン。
+    pub fn repo_of(&self, host: &str) -> Option<Arc<Repository>> {
+        match &self.sessions.get(host)?.conn {
+            Conn::Connected { repo, .. } => Some(repo.clone()),
+            _ => None,
+        }
+    }
+
     pub fn handle(&mut self, event: Event) -> Vec<Job> {
         let mut jobs = Vec::new();
         match event {
+            Event::Page(Some(i)) => {
+                if i < PAGES.len() {
+                    self.page = i;
+                }
+            }
+            Event::Page(None) => {}
             Event::Select(Some(i)) => {
                 if let Some(host) = self.hosts.get(i).cloned()
                     && self.selected.as_ref() != Some(&host)
@@ -250,7 +281,7 @@ impl State {
                 {
                     session.conn = match result {
                         Ok((repo, engine, git)) => Conn::Connected {
-                            _repo: repo,
+                            repo,
                             engine,
                             git,
                             through_daemon,
@@ -519,7 +550,8 @@ fn button(text: String, on: Callback<()>, enabled: bool, accent: bool) -> View {
     b.content(TextBlock::new().text(text))
 }
 
-pub fn view(state: &State, callbacks: &Callbacks<'_>) -> View {
+/// `git` は、Git のページで出す Settings > Git の部品（SSH 先に向けたもの。読み終えていなければ None）。
+pub fn view(state: &State, callbacks: &Callbacks<'_>, git: Option<View>) -> View {
     let ok = Color::rgb(0x2e, 0x9e, 0x4f);
     let error = Color::rgb(0xd0, 0x3a, 0x3a);
     // 左: SSH 先の一覧と ＋／−。
@@ -585,18 +617,104 @@ pub fn view(state: &State, callbacks: &Callbacks<'_>) -> View {
 
     let right: View = match &state.selected {
         None => note(tr!("Add an SSH host with +, or open one from Places.")).into(),
+        Some(host) if state.page == GIT_PAGE => git_view(state, host, callbacks, git, error),
         Some(host) => connection_view(state, host, callbacks, ok, error),
     };
+    // 真ん中: 選んだ SSH 先のページ。
+    let pages = ListView::new()
+        .selected_index(Some(state.page))
+        .on_selection_changed((callbacks.event)(Event::Page))
+        .collection_slot(
+            ListViewSlot::Items,
+            PAGES.iter().map(|title| {
+                (
+                    (*title).to_owned(),
+                    ListViewItem::new().content(
+                        TextBlock::new().text(amonhen_model::i18n::translate(title).into_owned()),
+                    ),
+                )
+            }),
+        );
     StackPanel::new().children((
         TextBlock::new()
             .text(tr!("SSH Hosts"))
             .font_size(20.0)
             .margin(Thickness::new(0.0, 16.0, 0.0, 10.0)),
         Grid::new()
-            .columns([GridLength::Pixel(170.0), GridLength::Star(1.0)])
-            .column_spacing(20.0)
-            .children((left, Border::new().grid_column(1).content(right))),
+            .columns([
+                GridLength::Pixel(160.0),
+                GridLength::Pixel(110.0),
+                GridLength::Star(1.0),
+            ])
+            .column_spacing(16.0)
+            .children((
+                left,
+                Border::new().grid_column(1).content(pages),
+                // 選んだ SSH 先・ページ・つながりの状態が変わったら作り直す（同じ形の部品を使い回すと、つながった
+                // ときに中身が出し直されないことがある）。
+                Border::new()
+                    .grid_column(2)
+                    .content(View::keyed_fragment([(right_key(state), right)])),
+            )),
     ))
+}
+
+/// 右の列の中身の鍵。
+fn right_key(state: &State) -> String {
+    let conn = state
+        .selected
+        .as_ref()
+        .and_then(|h| state.sessions.get(h))
+        .map_or("none", |s| match s.conn {
+            Conn::Connecting => "connecting",
+            Conn::Connected { .. } => "connected",
+            Conn::Failed(_) => "failed",
+        });
+    format!(
+        "{}|{}|{conn}",
+        state.selected.as_deref().unwrap_or_default(),
+        state.page
+    )
+}
+
+/// Git のページ: SSH 先の `--global`（Settings > Git と同じ部品）。つないでいる途中・つながらないなら、そう出す。
+fn git_view(
+    state: &State,
+    host: &str,
+    callbacks: &Callbacks<'_>,
+    git: Option<View>,
+    error: Color,
+) -> View {
+    match state.sessions.get(host).map(|s| &s.conn) {
+        Some(Conn::Connected { .. }) => StackPanel::new().children((
+            note(tr!(
+                "Applies to every repository on {host} (its ~/.gitconfig). git in a terminal there follows these too.",
+                host = host
+            ))
+            .margin(Thickness::new(0.0, 0.0, 0.0, 8.0)),
+            git.unwrap_or_else(|| note(tr!("Loading…")).into()),
+        )),
+        Some(Conn::Failed(reason)) => StackPanel::new().spacing(8.0).children((
+            TextBlock::new().text(tr!("Couldn’t connect to {host}", host = host)),
+            note(reason.clone())
+                .foreground(Brush::Solid(error))
+                .is_text_selection_enabled(true),
+            button(
+                tr!("Check Connection"),
+                (callbacks.button)(|| Event::Check),
+                true,
+                false,
+            ),
+        )),
+        _ => StackPanel::new()
+            .orientation(Orientation::Horizontal)
+            .vertical_alignment(VerticalAlignment::Top)
+            .spacing(8.0)
+            .children((
+                ProgressRing::new().is_active(true).width(16.0).height(16.0),
+                TextBlock::new().text(tr!("Connecting to {host}…", host = host)),
+            )),
+    }
 }
 
 /// ＋ の欄: 名前と、~/.ssh/config・known_hosts の候補。

@@ -122,7 +122,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | SSH Hosts > Connection: 状態・Check Connection・エンジン | ✓ | ✓ | ✓ | n/a | n/a |  |
 | SSH Hosts > Connection: 署名の確かめ方 | ✓ | ✓ | ✓ | n/a | n/a |  |
 | SSH Hosts > Connection: 探すフォルダー | ✓ | ✓ | — | n/a | n/a |  |
-| SSH Hosts: ホストのすべてのリポジトリの git のページ | ✓ | ✓ | — | n/a | n/a |  |
+| SSH Hosts: ホストのすべてのリポジトリの git のページ | ✓ | ✓ | ✓ | n/a | n/a |  |
 | SSH Hosts: ホストの Environment Variables（ログインシェルの切り替え） | ✓ | ✓ | — | n/a | n/a |  |
 | ホスト・この機械の列で選ぶパスのシート | ✓ | ✓ | — | n/a | n/a |  |
 | Accounts: GitHub（CI の状態・アバター） | ✓ | ✓ | — | — | n/a |  |
