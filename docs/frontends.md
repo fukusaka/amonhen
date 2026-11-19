@@ -43,7 +43,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Stashes row with a count only when there are stashes | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: The Stashes section. |
 | Range Diff row while a range diff is open | ✓ | ✓ | ✓ | ✓ | n/a |  |
 | Filter field over Branches, Remotes and Tags | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: The filter button on the sidebar's title asks for the words; the matches are listed flat. |
-| Several branches or tags selected at once | ✓ | ✓ | — | ✓ | n/a | VSCode: Merge into Current Branch, Delete Branch, favorites and Archive act on all of them. |
+| Several branches or tags selected at once | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: Merge into Current Branch, Delete Branch, favorites and Archive act on all of them. |
 | Pull Requests and Worktrees shown only when not empty | ✓ | ✓ | △ | △ | n/a | VSCode: Worktrees only (GitHub is left out).<br>Windows: Worktrees only, under Working Copy. |
 
 ## Sidebar

@@ -1099,6 +1099,8 @@ enum Message {
     RemoteChecked(String, bool, String),
     /// 消すブランチを調べ終えた（名前、ほかのブランチにないコミットの数と一覧、または調べられなかった理由）。
     DeleteChecked(Arc<Repository>, String, Result<(u64, Vec<String>), String>),
+    /// いくつものブランチの、ほかのブランチにないコミットの数を調べた。
+    DeleteSeveralChecked(Arc<Repository>, Vec<Result<(String, u64), String>>),
     Status(Arc<StatusSnapshot>),
     /// Working Copy の件名・本文が変わった。
     Summary(String),
@@ -3983,6 +3985,48 @@ impl Root {
                     });
                 }
             },
+            Message::DeleteSeveralChecked(repo, checked) => {
+                let checked: Result<Vec<(String, u64)>, String> = checked.into_iter().collect();
+                match checked {
+                    Err(message) => {
+                        self.dialog = Some(Dialog::Failed {
+                            title: tr!("Couldn’t check the branches"),
+                            message,
+                        })
+                    }
+                    Ok(counts) => {
+                        // GTK4 版の `sheets::delete_branches`: 名前を並べ、ほかにないコミットがあればそう言って
+                        // Delete Anyway で消す。
+                        let names: Vec<&str> = counts.iter().map(|(n, _)| n.as_str()).collect();
+                        let unmerged = counts.iter().any(|(_, c)| *c > 0);
+                        let mut message = format!("{}\n", names.join(", "));
+                        if unmerged {
+                            message.push_str(&tr!(
+                                "Some commits are on no other branch; they go with the branch."
+                            ));
+                            message.push(' ');
+                        }
+                        message.push_str(&tr!("You can Undo this (Ctrl+Alt+Z)."));
+                        let commands: Vec<Value> = counts
+                            .iter()
+                            .map(|(name, count)| {
+                                json!({ "op": "deleteBranch", "name": name, "force": *count > 0 })
+                            })
+                            .collect();
+                        self.dialog = Some(Dialog::Confirm {
+                            repo,
+                            title: tr!("Delete {count} branches?", count = counts.len()),
+                            message,
+                            button: if unmerged {
+                                tr!("Delete Anyway")
+                            } else {
+                                tr!("Delete")
+                            },
+                            command: Value::Array(commands),
+                        });
+                    }
+                }
+            }
             Message::SidebarMenu(key) => {
                 // 操作のない項目（見出し・Workspace のページ）では開かない。
                 self.sidebar_key = Some(key);
@@ -4274,6 +4318,107 @@ impl Root {
                     self.reset(oid.to_owned());
                 } else if let Some(name) = key.strip_prefix("delete-branch:") {
                     self.check_delete(context, name.to_owned());
+                } else if let Some(list) = key.strip_prefix("delete-several:") {
+                    self.check_delete_several(
+                        context,
+                        list.split('\n').map(str::to_owned).collect(),
+                    );
+                } else if let Some(list) = key.strip_prefix("favorite-several:") {
+                    // 全部入っていれば外す、そうでなければまだのものを入れる（GTK4 版の `favorite_commands`）。
+                    if let Some(repo) = self.repo.clone() {
+                        let names: Vec<&str> = list.split('\n').collect();
+                        let pinned = |n: &str| {
+                            self.groups
+                                .as_ref()
+                                .and_then(|g| g.branches.get(n))
+                                .is_some_and(|b| b.pinned.is_some())
+                        };
+                        let all = names.iter().all(|n| pinned(n));
+                        let commands = self.favorite_several_commands(&names, all);
+                        perform_all(context, repo, commands, tr!("Add to Favorites"));
+                    }
+                } else if let Some(list) = key.strip_prefix("archive-several:") {
+                    if let Some(repo) = self.repo.clone() {
+                        let names: Vec<&str> = list.split('\n').collect();
+                        let all = names.iter().all(|n| {
+                            self.groups
+                                .as_ref()
+                                .and_then(|g| g.branches.get(*n))
+                                .is_some_and(|b| b.archived)
+                        });
+                        let value = if all { json!(null) } else { json!("true") };
+                        let commands = names
+                            .iter()
+                            .map(|n| {
+                                json!({
+                                    "op": "configSet",
+                                    "key": format!("branch.{n}.amonhenArchived"),
+                                    "value": value,
+                                })
+                            })
+                            .collect();
+                        perform_all(context, repo, commands, tr!("Archive"));
+                    }
+                } else if let Some(list) = key.strip_prefix("bundle-several:") {
+                    let refs: Vec<String> = list.split('\n').map(str::to_owned).collect();
+                    let names: Vec<String> = refs
+                        .iter()
+                        .map(|r| {
+                            r.trim_start_matches("refs/heads/")
+                                .trim_start_matches("refs/remotes/")
+                                .trim_start_matches("refs/tags/")
+                                .to_owned()
+                        })
+                        .collect();
+                    let label = names.first().cloned().unwrap_or_default();
+                    self.ask_bundle(refs, names.join(", "), label);
+                } else if let Some(list) = key.strip_prefix("delete-tags:") {
+                    if let Some(repo) = self.repo.clone() {
+                        let names: Vec<&str> = list.split('\n').collect();
+                        self.dialog = Some(Dialog::Confirm {
+                            repo,
+                            title: tr!("Delete {count} tags?", count = names.len()),
+                            message: format!(
+                                "{}\n\n{} {}",
+                                names.join("\n"),
+                                tr!("The remotes keep theirs."),
+                                tr!("You can Undo this (Ctrl+Alt+Z).")
+                            ),
+                            button: tr!("Delete"),
+                            command: Value::Array(
+                                names
+                                    .iter()
+                                    .map(|n| json!({ "op": "deleteTag", "name": n }))
+                                    .collect(),
+                            ),
+                        });
+                    }
+                } else if let Some(rest) = key.strip_prefix("push-tags:") {
+                    // GTK4 版の `confirm_push_tags`（戻せない）。
+                    if let (Some(repo), Some((remote, list))) =
+                        (self.repo.clone(), rest.split_once('|'))
+                    {
+                        let names: Vec<&str> = list.split('\n').collect();
+                        self.dialog = Some(Dialog::Confirm {
+                            repo,
+                            title: tr!(
+                                "Push {count} tags to {remote}?",
+                                count = names.len(),
+                                remote = remote
+                            ),
+                            message: format!(
+                                "{}\n\n{} {}",
+                                names.join("\n"),
+                                tr!(
+                                    "Everyone who fetches from {remote} gets them.",
+                                    remote = remote
+                                ),
+                                tr!("This can’t be undone.")
+                            ),
+                            button: "Push".to_owned(),
+                            command: json!({ "op": "pushTags", "remote": remote, "names": names }),
+                        });
+                    }
                 } else if let Some(name) = key.strip_prefix("favorite:") {
                     if let Some(repo) = self.repo.clone() {
                         let commands = self.favorite_commands(name);
@@ -9739,38 +9884,7 @@ impl Root {
             })
             .and_then(|e| if e.gone { None } else { e.detail.clone() });
         context.spawn_background(move |_| {
-            let between = |base: &str| -> Result<(u64, Vec<String>), String> {
-                let command = json!({ "op": "between", "base": base, "tip": &name, "limit": 30 });
-                let reply: Value = serde_json::from_str(&repo.run_json(&command.to_string()))
-                    .map_err(|e| e.to_string())?;
-                if reply["ok"].as_bool() != Some(true) {
-                    return Err(reply["error"]
-                        .as_str()
-                        .map_or_else(|| tr!("Couldn’t check the branches"), str::to_owned));
-                }
-                let info = &reply["info"];
-                let commits = info["commits"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .map(|c| {
-                        let oid = c["oid"].as_str().unwrap_or_default();
-                        format!(
-                            "{}  {}",
-                            &oid[..oid.len().min(8)],
-                            c["subject"].as_str().unwrap_or_default()
-                        )
-                    })
-                    .collect();
-                Ok((info["count"].as_u64().unwrap_or(0), commits))
-            };
-            let checked = between("HEAD").and_then(|head| match upstream {
-                Some(u) if head.0 > 0 => {
-                    let up = between(&u)?;
-                    Ok(if up.0 < head.0 { up } else { head })
-                }
-                _ => Ok(head),
-            });
+            let checked = unique_commits(&repo, &name, upstream);
             Message::DeleteChecked(repo, name, checked)
         });
     }
@@ -9994,6 +10108,15 @@ impl Root {
         let Some(entry) = self.sidebar_key.as_deref().and_then(|k| self.entry(k)) else {
             return Vec::new();
         };
+        // いくつも選んでいて、その 1 つを右クリックしたなら、選んだものすべてに効くメニュー。
+        let selected = selected_refs();
+        if selected.len() > 1
+            && selected
+                .iter()
+                .any(|(kind, name)| *kind == entry.kind && *name == entry.name)
+        {
+            return self.several_menu(&selected);
+        }
         let name = entry.name.as_str();
         let current = self.head_name();
         let is_head = entry.kind == RefKind::Local
@@ -10127,6 +10250,179 @@ impl Root {
             items.extend(self.tag_items(name));
         }
         items
+    }
+
+    /// いくつも選んだブランチ・タグのメニュー（GTK4 版の `refops::several`）: 名前をコピー、今のブランチ以外を 1 つの
+    /// コミットで merge、bundle に、ローカルブランチだけならまとめてお気に入り・アーカイブ・削除、タグだけなら
+    /// まとめて Push・削除。いくつもの名前は改行でつなぐ（ref の名前に入らない）。
+    fn several_menu(&self, selected: &[(amonhen_model::RefKind, String)]) -> Vec<MenuItem> {
+        use amonhen_model::RefKind;
+        let names: Vec<&str> = selected.iter().map(|(_, n)| n.as_str()).collect();
+        let head = self.refs.as_ref().and_then(|r| r.refs.head_branch.clone());
+        let mut items = vec![MenuItem::item(
+            format!("copy:{}", names.join("\n")),
+            tr!("Copy {count} Names", count = names.len()),
+        )];
+        // 今のブランチ以外を、選んだ順に 1 つのコミットで merge する（octopus）。
+        let merged: Vec<String> = selected
+            .iter()
+            .filter(|(kind, name)| {
+                matches!(kind, RefKind::Local | RefKind::Remote | RefKind::Tag)
+                    && !(*kind == RefKind::Local && Some(name) == head.as_ref())
+            })
+            .filter_map(|(kind, name)| {
+                self.refs
+                    .as_ref()?
+                    .refs
+                    .entries
+                    .iter()
+                    .find(|e| e.kind == *kind && e.name == *name)?
+                    .target
+                    .map(|t| t.to_string())
+            })
+            .collect();
+        if merged.len() > 1 {
+            items.push(MenuItem::item(
+                format!("merge-several:{}", merged.join(",")),
+                tr!(
+                    "Merge {count} into {branch}…",
+                    count = merged.len(),
+                    branch = self.head_name()
+                ),
+            ));
+        }
+        let full: Vec<String> = selected
+            .iter()
+            .filter_map(|(kind, name)| match kind {
+                RefKind::Local => Some(format!("refs/heads/{name}")),
+                RefKind::Remote => Some(format!("refs/remotes/{name}")),
+                RefKind::Tag => Some(format!("refs/tags/{name}")),
+                _ => None,
+            })
+            .collect();
+        if full.len() == selected.len() {
+            items.push(MenuItem::item(
+                format!("bundle-several:{}", full.join("\n")),
+                tr!("Save {count} as Bundle…", count = full.len()),
+            ));
+        }
+        let locals: Vec<&str> = selected
+            .iter()
+            .filter(|(kind, _)| *kind == RefKind::Local)
+            .map(|(_, n)| n.as_str())
+            .collect();
+        if locals.len() == selected.len() {
+            items.push(MenuItem::separator("-branches"));
+            let branch = |n: &str| self.groups.as_ref().and_then(|g| g.branches.get(n));
+            let all_pinned = locals
+                .iter()
+                .all(|n| branch(n).is_some_and(|b| b.pinned.is_some()));
+            items.push(MenuItem::item(
+                format!("favorite-several:{}", locals.join("\n")),
+                if all_pinned {
+                    tr!("Remove {count} from Favorites", count = locals.len())
+                } else {
+                    tr!("Add {count} to Favorites", count = locals.len())
+                },
+            ));
+            let all_archived = locals.iter().all(|n| branch(n).is_some_and(|b| b.archived));
+            items.push(MenuItem::item(
+                format!("archive-several:{}", locals.join("\n")),
+                if all_archived {
+                    tr!("Unarchive {count} Branches", count = locals.len())
+                } else {
+                    tr!("Archive {count} Branches", count = locals.len())
+                },
+            ));
+            // 今のブランチと、ほかの worktree が checkout しているブランチは消せない（git が断る）。
+            let used = |n: &str| {
+                Some(n) == head.as_deref()
+                    || self
+                        .worktrees
+                        .iter()
+                        .any(|w| w.branch.as_deref() == Some(n))
+            };
+            if !locals.iter().any(|n| used(n)) {
+                items.push(MenuItem::item(
+                    format!("delete-several:{}", locals.join("\n")),
+                    tr!("Delete {count} Branches…", count = locals.len()),
+                ));
+            }
+        }
+        let tags: Vec<&str> = selected
+            .iter()
+            .filter(|(kind, _)| *kind == RefKind::Tag)
+            .map(|(_, n)| n.as_str())
+            .collect();
+        if tags.len() == selected.len() {
+            items.push(MenuItem::separator("-tags"));
+            // リモートごとに、まだないタグだけ（fetch のときに読んだ様子。まだ読んでいなければ全部。GTK4 版の
+            // `tag_items`）。
+            for remote in self.tag_remotes["remotes"].as_array().into_iter().flatten() {
+                let Some(name) = remote["name"].as_str() else {
+                    continue;
+                };
+                let checked = remote["checked"].is_i64();
+                let missing: Vec<&str> = tags
+                    .iter()
+                    .copied()
+                    .filter(|t| {
+                        !checked
+                            || self.tag_remotes["tags"][*t][name]
+                                .as_str()
+                                .is_none_or(|s| s == "missing")
+                    })
+                    .collect();
+                if missing.is_empty() {
+                    continue;
+                }
+                items.push(MenuItem::item(
+                    format!("push-tags:{name}|{}", missing.join("\n")),
+                    tr!(
+                        "Push {count} Tags to {remote}…",
+                        count = missing.len(),
+                        remote = name
+                    ),
+                ));
+            }
+            items.push(MenuItem::item(
+                format!("delete-tags:{}", tags.join("\n")),
+                tr!("Delete {count} Tags…", count = tags.len()),
+            ));
+        }
+        items
+    }
+
+    /// いくつものブランチを消す前に、ほかのブランチにないコミットがあるかを調べる（GTK4 版の
+    /// `sheets::delete_branches`）。
+    fn check_delete_several(&mut self, context: &ComponentContext<Self>, names: Vec<String>) {
+        let Some(repo) = self.repo.clone() else {
+            return beep();
+        };
+        let upstreams: Vec<Option<String>> = names
+            .iter()
+            .map(|name| {
+                self.refs
+                    .as_ref()
+                    .and_then(|r| {
+                        r.refs
+                            .entries
+                            .iter()
+                            .find(|e| e.kind == amonhen_model::RefKind::Local && e.name == *name)
+                    })
+                    .and_then(|e| if e.gone { None } else { e.detail.clone() })
+            })
+            .collect();
+        context.spawn_background(move |_| {
+            let counts = names
+                .iter()
+                .zip(upstreams)
+                .map(|(name, upstream)| {
+                    unique_commits(&repo, name, upstream).map(|(count, _)| (name.clone(), count))
+                })
+                .collect();
+            Message::DeleteSeveralChecked(repo, counts)
+        });
     }
 
     /// submodule と Submodules の見出しのメニュー（GTK4 版の `refops` と `submodulesheet`）。
@@ -10885,6 +11181,48 @@ impl Root {
         ));
         items.extend(deletes);
         items
+    }
+
+    /// いくつものブランチをお気に入りに入れる（まだのものを後ろに）・外す（`remove`）命令（GTK4 版の
+    /// `favorite_commands`。外すときは残りの順を詰める）。
+    fn favorite_several_commands(&self, names: &[&str], remove: bool) -> Vec<Value> {
+        let mut pinned: Vec<(String, i64)> = self
+            .groups
+            .as_ref()
+            .map(|g| {
+                g.branches
+                    .iter()
+                    .filter_map(|(n, b)| Some((n.clone(), b.pinned?)))
+                    .collect()
+            })
+            .unwrap_or_default();
+        pinned.sort_by_key(|(n, rank)| (*rank, n.clone()));
+        let mut order: Vec<String> = pinned.into_iter().map(|(n, _)| n).collect();
+        let mut commands = Vec::new();
+        if remove {
+            order.retain(|n| !names.contains(&n.as_str()));
+            for n in names {
+                commands.push(json!({
+                    "op": "configSet",
+                    "key": format!("branch.{n}.amonhenPinned"),
+                    "value": null,
+                }));
+            }
+        } else {
+            for n in names {
+                if !order.iter().any(|o| o == n) {
+                    order.push((*n).to_owned());
+                }
+            }
+        }
+        commands.extend(order.iter().enumerate().map(|(i, n)| {
+            json!({
+                "op": "configSet",
+                "key": format!("branch.{n}.amonhenPinned"),
+                "value": (i + 1).to_string(),
+            })
+        }));
+        commands
     }
 
     /// `name` をお気に入りに入れる・外す命令（GTK4 版の `favorite_commands`。外すときは残りの順を詰める）。
@@ -16102,6 +16440,58 @@ fn write_global_settings(
             serde_json::from_str(&repo.run_json(r#"{"op":"configList"}"#)).unwrap_or_default();
         Message::SettingsGit(epoch, String::new(), String::new(), global_entries(&reply))
     });
+}
+
+/// `name` にしかないコミットの数と、はじめの 30 件（HEAD と、上流があればそれのうち少ないほう。GTK4 版の
+/// `unique_commits`）。
+fn unique_commits(
+    repo: &Repository,
+    name: &str,
+    upstream: Option<String>,
+) -> Result<(u64, Vec<String>), String> {
+    let between = |base: &str| -> Result<(u64, Vec<String>), String> {
+        let command = json!({ "op": "between", "base": base, "tip": name, "limit": 30 });
+        let reply: Value = serde_json::from_str(&repo.run_json(&command.to_string()))
+            .map_err(|e| e.to_string())?;
+        if reply["ok"].as_bool() != Some(true) {
+            return Err(reply["error"]
+                .as_str()
+                .map_or_else(|| tr!("Couldn’t check the branches"), str::to_owned));
+        }
+        let info = &reply["info"];
+        let commits = info["commits"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|c| {
+                let oid = c["oid"].as_str().unwrap_or_default();
+                format!(
+                    "{}  {}",
+                    &oid[..oid.len().min(8)],
+                    c["subject"].as_str().unwrap_or_default()
+                )
+            })
+            .collect();
+        Ok((info["count"].as_u64().unwrap_or(0), commits))
+    };
+    between("HEAD").and_then(|head| match upstream {
+        Some(u) if head.0 > 0 => {
+            let up = between(&u)?;
+            Ok(if up.0 < head.0 { up } else { head })
+        }
+        _ => Ok(head),
+    })
+}
+
+/// サイドバーでいくつも選んでいる ref（History の範囲。1 つ以下なら空）。
+fn selected_refs() -> Vec<(amonhen_model::RefKind, String)> {
+    let mut list = Vec::new();
+    with_history(|h| {
+        if let crate::data::Scope::Refs(refs) = h.session.data.scope() {
+            list = refs;
+        }
+    });
+    list
 }
 
 /// `configList` の答えのうち、システムとすべてのリポジトリの段の項目（Settings > Git の行が読む）。
