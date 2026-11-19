@@ -21,6 +21,8 @@ const OUTPUT_BUFFER: usize = 1 << 16;
 
 pub struct Screen {
     pub canvas: Canvas<BufWriter<Stdout>>,
+    /// 端末が左右の余白（DECSLRM）を持つ（取るときに問い合わせた）。
+    margins: bool,
 }
 
 /// 端末の大きさ（列、行）。
@@ -40,10 +42,73 @@ impl Screen {
             restore();
             previous(info);
         }));
-        Ok(Self {
-            canvas: Canvas::new(out),
-        })
+        // 入力を読むスレッドを始める前に、端末に聞く。
+        let margins = has_margins(&mut out);
+        let mut canvas = Canvas::new(out);
+        canvas.set_margins(margins);
+        Ok(Self { canvas, margins })
     }
+}
+
+/// 端末が答えるのを待つ長さ。答えない端末では、起動がこれだけ遅れる。
+#[cfg(unix)]
+const ANSWER_TIMEOUT: Duration = Duration::from_millis(300);
+
+/// 端末が左右の余白（DECSLRM）を持つか。モード 69（DECLRMM）を知っているかを聞き（DECRQM）、続けて、どの端末も
+/// 答える問い（DA1）を送る。DA1 の答えが先に来たら、聞いたことを知らない端末。raw モードで、入力を読む
+/// スレッドを始める前に呼ぶ（答えは、入力として届く）。
+#[cfg(unix)]
+fn has_margins(out: &mut impl std::io::Write) -> bool {
+    // 入力が端末でなければ、答えを読めない。
+    if unsafe { libc::isatty(libc::STDIN_FILENO) } != 1 {
+        return false;
+    }
+    if out
+        .write_all(b"\x1b[?69$p\x1b[c")
+        .and_then(|()| out.flush())
+        .is_err()
+    {
+        return false;
+    }
+    let deadline = std::time::Instant::now() + ANSWER_TIMEOUT;
+    let mut answer = Vec::new();
+    loop {
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        let mut fd = libc::pollfd {
+            fd: libc::STDIN_FILENO,
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        // SAFETY: `fd` と `byte` は、呼び出しの間だけ使う手元の値。
+        if left.is_zero() || unsafe { libc::poll(&mut fd, 1, left.as_millis() as libc::c_int) } <= 0
+        {
+            return false;
+        }
+        let mut byte = 0u8;
+        if unsafe { libc::read(libc::STDIN_FILENO, (&raw mut byte).cast(), 1) } != 1 {
+            return false;
+        }
+        answer.push(byte);
+        // DA1 の答え（`CSI ? … c`）まで読んだら終わり。
+        if byte == b'c' && answer.windows(3).any(|w| w == b"\x1b[?") {
+            return margins_answer(&answer);
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn has_margins(_: &mut impl std::io::Write) -> bool {
+    false
+}
+
+/// DECRQM の答え（`CSI ? 69 ; Ps $ y`）が、モード 69 を知っていると言っているか: `Ps` が 1（入っている）か
+/// 2（切ってある）。0 は知らない、3 と 4 は変えられない。
+#[cfg_attr(not(unix), allow(dead_code))]
+fn margins_answer(answer: &[u8]) -> bool {
+    let start = b"\x1b[?69;";
+    answer.windows(start.len() + 3).any(|w| {
+        w.starts_with(start) && matches!(w[start.len()], b'1' | b'2') && w.ends_with(b"$y")
+    })
 }
 
 impl Screen {
@@ -80,6 +145,7 @@ impl Screen {
         }
         // 代替画面は空なので、前のフレームを持たないものに取り替える（次のフレームはすべて書く）。
         self.canvas = Canvas::new(out);
+        self.canvas.set_margins(self.margins);
         Ok(result)
     }
 }
@@ -128,4 +194,21 @@ pub fn read_input(tx: Sender<Event>) -> Arc<AtomicBool> {
             }
         });
     paused
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 端末の答えから、左右の余白を持つかを読む
+    #[test]
+    fn margins_are_read_from_the_answer() {
+        // 知っている（切ってある）。後ろは DA1 の答え。
+        assert!(margins_answer(b"\x1b[?69;2$y\x1b[?62;4c"));
+        assert!(margins_answer(b"\x1b[?69;1$y\x1b[?1;2c"));
+        // 知らない。変えられない。答えない。
+        assert!(!margins_answer(b"\x1b[?69;0$y\x1b[?1;2;4c"));
+        assert!(!margins_answer(b"\x1b[?69;4$y\x1b[?1;2c"));
+        assert!(!margins_answer(b"\x1b[?1;2c"));
+    }
 }

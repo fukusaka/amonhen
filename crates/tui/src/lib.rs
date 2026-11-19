@@ -16,6 +16,7 @@ mod fileview;
 mod history;
 mod loader;
 mod reflog;
+mod rowcache;
 mod sidebar;
 mod terminal;
 
@@ -98,6 +99,12 @@ fn run_with(
         if let Some(capture) = app.take_mouse_change() {
             screen.set_mouse(capture)?;
         }
+        if app.take_redraw() {
+            screen.canvas.forget();
+            // 大きさの知らせを取りこぼしていても、ここで合う。
+            let (cols, rows) = terminal::size()?;
+            app.resize(cols, rows);
+        }
         #[cfg(unix)]
         if app.take_suspend() {
             screen.suspend(app.mouse_captured())?;
@@ -163,7 +170,8 @@ fn edit(message: &str, workdir: Option<&str>) -> Result<String> {
 /// 1 フレームを出す: `damage` の所だけを描き直す。
 fn paint<W: Write>(canvas: &mut Canvas<W>, app: &mut App, damage: Damage) -> Result<()> {
     let areas = app.areas(damage);
-    canvas.draw(app.size(), &areas, |buf, all| {
+    let scrolls = app.scrolls(damage);
+    canvas.draw(app.size(), &areas, &scrolls, |buf, all| {
         app.draw(buf, if all { Damage::ALL } else { damage })
     })?;
     Ok(())
@@ -187,6 +195,23 @@ fn settle(app: &mut App, rx: &mpsc::Receiver<Event>) -> Result<()> {
         Some(e) => Err(e.to_owned().into()),
         None => Ok(()),
     }
+}
+
+/// `--keys` の 1 文字が表すキー: 改行は Enter、タブは Tab、`\x1b` は Esc、`\x7f` は Backspace、ほかの制御文字は
+/// Ctrl と文字（`\x13` は Ctrl-s）。
+fn key(ch: char) -> Event {
+    let (code, modifiers) = match ch {
+        '\n' => (KeyCode::Enter, KeyModifiers::NONE),
+        '\t' => (KeyCode::Tab, KeyModifiers::NONE),
+        '\x1b' => (KeyCode::Esc, KeyModifiers::NONE),
+        '\x7f' => (KeyCode::Backspace, KeyModifiers::NONE),
+        '\x01'..='\x1a' => (
+            KeyCode::Char((b'a' + ch as u8 - 1) as char),
+            KeyModifiers::CONTROL,
+        ),
+        ch => (KeyCode::Char(ch), KeyModifiers::NONE),
+    };
+    Event::Input(Input::Key(KeyEvent::new(code, modifiers)))
 }
 
 /// 1 フレームを文字で（`--snapshot`。テストと、見た目の確認に）。`keys` は、描く前に押すキー（1 文字ずつ。
@@ -234,19 +259,7 @@ pub fn frame(
         paint(&mut canvas, &mut app, damage)?;
     }
     for ch in keys.chars() {
-        let (code, modifiers) = match ch {
-            '\n' => (KeyCode::Enter, KeyModifiers::NONE),
-            '\t' => (KeyCode::Tab, KeyModifiers::NONE),
-            '\x1b' => (KeyCode::Esc, KeyModifiers::NONE),
-            '\x7f' => (KeyCode::Backspace, KeyModifiers::NONE),
-            // ほかの制御文字は Ctrl と文字（`\x13` は Ctrl-s）。
-            '\x01'..='\x1a' => (
-                KeyCode::Char((b'a' + ch as u8 - 1) as char),
-                KeyModifiers::CONTROL,
-            ),
-            ch => (KeyCode::Char(ch), KeyModifiers::NONE),
-        };
-        app.handle(Event::Input(Input::Key(KeyEvent::new(code, modifiers))));
+        app.handle(key(ch));
         // 操作がだめだったときの理由は、画面に出る（スナップショットは続ける）。
         wait(&mut app, &rx)?;
         if let Some(damage) = app.take_damage() {
@@ -259,6 +272,8 @@ pub fn frame(
 /// すべてを描いたフレーム。変わった所だけを描き直してきた画面（`shown`）がこれと違えば、失敗。
 fn whole(app: &mut App, shown: &Buffer) -> Result<Buffer> {
     let mut whole = Buffer::empty(shown.area);
+    // 前のフレームから写さずに、すべてを組み立て直したものと比べる。
+    app.forget_drawn();
     app.draw(&mut whole, Damage::ALL);
     let width = usize::from(shown.area.width);
     match (0..whole.content.len()).find(|&i| whole.content[i] != shown.content[i]) {
@@ -279,6 +294,8 @@ fn whole(app: &mut App, shown: &Buffer) -> Result<Buffer> {
 pub struct Measure {
     pub frames: usize,
     pub rows: u32,
+    /// スクロールした所の行の数（詳細なら頭の部分と差分、Working Copy なら選んでいるファイルの差分）。
+    pub details_lines: u32,
     /// イベントを受けてからフレームのバイト列を出し終えるまで（µs）。
     pub median_us: u64,
     pub p95_us: u64,
@@ -330,14 +347,39 @@ impl Write for Counter {
     }
 }
 
-/// History を `frames` 回スクロールし（ホイール 1 目盛り、`interval` おき）、1 フレームにかかる時間とバイト数を
-/// 測る。入力から出力までは本物と同じ道を通し、出力先だけを数えるものに替える。
+/// 計測で、フレームごとにすること。
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Step {
+    /// History の上でホイールを 1 目盛り回す。
+    Wheel,
+    /// History の選択を `j`（端に着いたら `k`）で動かす。
+    Move,
+    /// 選んでいるコミットの詳細に入り、差分を `j`（端に着いたら `k`）で 1 行ずつスクロールする。
+    Diff,
+    /// Working Copy で、選んでいるファイルの差分に入り、選んでいる行を `j`（端に着いたら `k`）で動かす。行が
+    /// ペインを出るときに、差分がスクロールする。
+    Changes,
+    /// `Diff` と同じ所で、差分を `l` で横に動かす（`PAN_STEPS` 回で折り返して `h`）。
+    DiffPan,
+    /// `Changes` と同じ所で、差分を `l` で横に動かす。
+    ChangesPan,
+}
+
+/// 横に動かす計測で、折り返すまでの回数（1 回で 8 セル）。左の端での `h` は一覧へ戻るので、端では押さない。
+const PAN_STEPS: usize = 20;
+
+/// `step` を `frames` 回くり返し（`interval` おき）、1 フレームにかかる時間とバイト数を測る。`keys` は、測る前に
+/// 押すキー（`--snapshot` と同じ書き方。測るコミットを選ぶのに）。入力から出力までは本物と同じ道を通し、出力先
+/// だけを数えるものに替える。
+#[allow(clippy::too_many_arguments)]
 pub fn measure_scroll(
     front: Arc<dyn Front>,
     cols: u16,
     rows: u16,
     frames: usize,
     interval: Duration,
+    step: Step,
+    keys: &str,
     local: fn(i64) -> String,
 ) -> Result<Measure> {
     let (tx, rx) = mpsc::channel();
@@ -349,6 +391,18 @@ pub fn measure_scroll(
     let mut canvas = Canvas::new(Counter(written.clone()));
     if let Some(damage) = app.take_damage() {
         paint(&mut canvas, &mut app, damage)?;
+    }
+    let enter = match step {
+        Step::Wheel | Step::Move => "",
+        Step::Diff | Step::DiffPan => "\n",
+        Step::Changes | Step::ChangesPan => "1\n",
+    };
+    for ch in keys.chars().chain(enter.chars()) {
+        app.handle(key(ch));
+        wait(&mut app, &rx)?;
+        if let Some(damage) = app.take_damage() {
+            paint(&mut canvas, &mut app, damage)?;
+        }
     }
     let column = app.main_column();
     let wheel = |kind| {
@@ -366,19 +420,22 @@ pub fn measure_scroll(
     let mut sizes = Vec::with_capacity(frames);
     let mut incomplete = 0;
     let mut down = true;
-    for _ in 0..frames {
+    for frame in 0..frames {
         let before = written.load(Ordering::Relaxed);
         let cpu_start = thread_cpu();
         let start = Instant::now();
         // 端に着いたら折り返す。
-        if app.history_at_end(down) {
+        if matches!(step, Step::DiffPan | Step::ChangesPan) {
+            down = (frame / PAN_STEPS).is_multiple_of(2);
+        } else if app.at_end(down, step) {
             down = !down;
         }
-        app.handle(wheel(if down {
-            MouseEventKind::ScrollDown
-        } else {
-            MouseEventKind::ScrollUp
-        }));
+        app.handle(match (step, down) {
+            (Step::DiffPan | Step::ChangesPan, _) => key(if down { 'l' } else { 'h' }),
+            (Step::Move | Step::Diff | Step::Changes, _) => key(if down { 'j' } else { 'k' }),
+            (Step::Wheel, true) => wheel(MouseEventKind::ScrollDown),
+            (Step::Wheel, false) => wheel(MouseEventKind::ScrollUp),
+        });
         let mut replies = 0;
         while let Ok(event) = rx.try_recv() {
             app.handle(event);
@@ -388,7 +445,8 @@ pub fn measure_scroll(
         let mut built = Duration::ZERO;
         if let Some(damage) = app.take_damage() {
             let areas = app.areas(damage);
-            canvas.draw(app.size(), &areas, |buf, all| {
+            let scrolls = app.scrolls(damage);
+            canvas.draw(app.size(), &areas, &scrolls, |buf, all| {
                 let before = Instant::now();
                 let cursor = app.draw(buf, if all { Damage::ALL } else { damage });
                 built = before.elapsed();
@@ -431,6 +489,7 @@ pub fn measure_scroll(
     Ok(Measure {
         frames,
         rows: app.history_rows(),
+        details_lines: app.details_lines(step),
         median_us: at(0.5),
         p95_us: at(0.95),
         max_us: at(1.0),

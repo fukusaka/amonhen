@@ -9,7 +9,7 @@ use ratatui_core::style::{Color, Modifier, Style};
 use serde_json::Value;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::diff::{DIM, Diff, Scroll, Theme, counts, draw_row, fit_path};
+use crate::diff::{DIM, Diff, KeptRows, Scroll, Theme, counts, draw_row_kept, fit_path};
 
 use crate::Clock;
 use crate::history::ago;
@@ -180,6 +180,8 @@ pub struct Details {
     /// 読めなかったコミットと、その理由。
     failed: Option<(Oid, String)>,
     scroll: Scroll,
+    /// 前のフレームで組み立てた差分の行。
+    kept: KeptRows,
     width: u16,
     /// `[` `]` で移ったファイル（その後にスクロールしたら忘れる）。文書の終わり近くでは、見出しを一番上まで
     /// 動かせないので、どのファイルへ移ったかを覚えておく。
@@ -286,6 +288,25 @@ impl Details {
         self.scroll.by(delta, self.lines())
     }
 
+    /// 最後に描いてから、縦に何行ずれたか（正なら、中身が上へ）。
+    pub fn scrolled(&self) -> i32 {
+        self.scroll.scrolled()
+    }
+
+    /// 前のフレームで組み立てた行を捨てる。
+    pub fn forget_drawn(&mut self) {
+        self.kept.forget();
+    }
+
+    /// `down` の向きに、もうスクロールできない。
+    pub fn at_end(&self, down: bool) -> bool {
+        if down {
+            self.scroll.position(self.lines()).0 >= self.lines()
+        } else {
+            self.scroll.top == 0
+        }
+    }
+
     pub fn scroll_to(&mut self, top: u32) -> bool {
         self.jumped = None;
         self.scroll.to(top, self.lines())
@@ -294,6 +315,11 @@ impl Details {
     /// 差分を横に動かす。
     pub fn pan(&mut self, delta: i32) -> bool {
         self.scroll.pan(delta)
+    }
+
+    /// 差分を横に動かしてあるか。
+    pub fn panned(&self) -> bool {
+        self.scroll.left > 0
     }
 
     /// 今見ているファイルのパスと、出しているコミット。ファイルは、見えている最初の見出しのもの。見出しが
@@ -356,6 +382,7 @@ impl Details {
         commit.build_head(area.width, clock);
         let commit = &*commit;
         self.scroll.clamp(commit.lines());
+        self.scroll.drawn();
         // 読めなかったコミットを選んでいる間は、理由を 1 行目に重ねる。
         let failed = self
             .failed
@@ -378,7 +405,9 @@ impl Details {
                     draw_file(at, buf, file);
                 }
             } else {
-                draw_row(
+                draw_row_kept(
+                    &mut self.kept,
+                    area.height,
                     at,
                     buf,
                     &commit.diff,

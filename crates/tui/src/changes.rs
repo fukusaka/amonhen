@@ -11,7 +11,7 @@ use ratatui_core::layout::Rect;
 use ratatui_core::style::{Color, Modifier, Style};
 use serde_json::Value;
 
-use crate::diff::{DIM, Diff, Scroll, Theme, counts, draw_row, fit_path};
+use crate::diff::{DIM, Diff, KeptRows, Scroll, Theme, counts, draw_row_kept, fit_path};
 use crate::editor::Editor;
 use crate::loader::Request;
 
@@ -75,6 +75,8 @@ pub struct Changes {
     /// 読めなかった差分と、その理由。
     failed: Option<(String, u64, String)>,
     scroll: Scroll,
+    /// 前のフレームで組み立てた差分の行。
+    kept: KeptRows,
     /// 差分の中で選んでいる行（文書の行。0 はパスの行）。
     cursor: u32,
     /// 行の範囲の始まり（あれば、ここから選んでいる行までが相手）。
@@ -477,6 +479,26 @@ impl Changes {
         ((self.cursor + 1).min(lines), lines)
     }
 
+    /// 最後に描いてから、差分が縦に何行ずれたか（正なら、中身が上へ）。
+    pub fn diff_scrolled(&self) -> i32 {
+        self.scroll.scrolled()
+    }
+
+    /// 前のフレームで組み立てた行を捨てる。
+    pub fn forget_drawn(&mut self) {
+        self.kept.forget();
+    }
+
+    /// 選んでいる行を、`down` の向きにはもう動かせない。
+    pub fn at_end(&self, down: bool) -> bool {
+        self.cursor
+            == if down {
+                self.lines().saturating_sub(1)
+            } else {
+                0
+            }
+    }
+
     pub fn diff_page(&self) -> i64 {
         self.scroll.page()
     }
@@ -681,6 +703,7 @@ impl Changes {
             return;
         };
         self.scroll.clamp(1 + shown.diff.len());
+        self.scroll.drawn();
         // 左の 1 列は、選んでいる行の印。
         let body = Rect::new(area.x + 1, area.y, area.width - 1, area.height);
         for y in 0..area.height {
@@ -693,7 +716,9 @@ impl Changes {
                 if line == 0 {
                     draw_title(at, buf, shown);
                 } else {
-                    draw_row(
+                    draw_row_kept(
+                        &mut self.kept,
+                        area.height,
                         at,
                         buf,
                         &shown.diff,

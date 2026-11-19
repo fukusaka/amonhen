@@ -185,18 +185,59 @@ fn scrolling_is_measured_without_a_terminal() {
     for i in 0..40 {
         commit(dir.path(), BASE + i, &format!("Commit {i}"));
     }
+    // ホイールと、`j` `k` での選択の移動（端で折り返すまで）、詳細のスクロール。
+    use amonhen_tui::Step;
+    for (step, frames) in [(Step::Wheel, 30), (Step::Move, 100), (Step::Diff, 30)] {
+        let m = amonhen_tui::measure_scroll(
+            open(dir.path()),
+            80,
+            12,
+            frames,
+            Duration::from_millis(1),
+            step,
+            "",
+            local,
+        )
+        .unwrap();
+        assert_eq!((m.frames, m.rows), (frames, 40));
+        // 詳細は 1 画面に収まるので、スクロールしても何も変わらない。
+        assert!((m.mean_bytes > 0 || step == Step::Diff) && m.max_bytes >= m.mean_bytes);
+        assert_eq!(m.incomplete_frames, 0);
+    }
+}
+
+/// Working Copy の差分で選んでいる行を動かすのも測れる（最後の画面は、すべてを描いたものと同じ）
+#[test]
+fn moving_through_the_working_copy_diff_is_measured() {
+    let dir = tempfile::tempdir().unwrap();
+    two_lines(dir.path());
     let m = amonhen_tui::measure_scroll(
         open(dir.path()),
         80,
         12,
-        30,
+        20,
         Duration::from_millis(1),
+        amonhen_tui::Step::Changes,
+        "",
         local,
     )
     .unwrap();
-    assert_eq!((m.frames, m.rows), (30, 40));
-    assert!(m.mean_bytes > 0 && m.max_bytes >= m.mean_bytes);
-    assert_eq!(m.incomplete_frames, 0);
+    assert!(m.details_lines > 2 && m.mean_bytes > 0);
+    // 横に動かすのも（行は短いので、消えていくだけ）。
+    for step in [amonhen_tui::Step::ChangesPan, amonhen_tui::Step::DiffPan] {
+        let m = amonhen_tui::measure_scroll(
+            open(dir.path()),
+            80,
+            12,
+            50,
+            Duration::from_millis(1),
+            step,
+            "",
+            local,
+        )
+        .unwrap();
+        assert!(m.mean_bytes > 0, "{m:?}");
+    }
 }
 
 /// 区切りの線で分けた `index` 番目の列（右の空白は除く）。
@@ -617,13 +658,48 @@ fn question_mark_lists_the_keys() {
     let help = amonhen_tui::snapshot(open(dir.path()), 80, 30, clock(), "?").unwrap();
     println!("{help}");
     assert!(help.contains("┌─ Keys ─"));
-    assert!(help.contains("│ n N        Next and previous match"));
-    assert!(help.contains("│ q          Quit"));
+    assert!(help.contains("│ n N          Next and previous match"));
+    assert!(help.contains("│ q            Quit"));
     let closed = amonhen_tui::snapshot(open(dir.path()), 80, 30, clock(), "?x").unwrap();
     assert!(!closed.contains("Keys"));
     // Working Copy の差分では、その枠のキー。
     let diff = amonhen_tui::snapshot(open(dir.path()), 80, 30, clock(), "1\n?").unwrap();
     assert!(diff.contains("Previous and next hunk"));
+}
+
+/// Space は、History とサイドバーで Enter と同じ（詳細へ入る・選んでいる行を開く）
+#[test]
+fn space_opens_like_enter() {
+    let dir = tempfile::tempdir().unwrap();
+    merged(dir.path());
+    let shot = |keys: &str| amonhen_tui::snapshot(open(dir.path()), 80, 30, clock(), keys).unwrap();
+    // 狭いので、詳細は History の所に開く。
+    assert_ne!(shot("j "), shot("j"));
+    assert_eq!(shot("j "), shot("j\n"));
+    // サイドバーの Changes の行を開く。
+    assert_ne!(shot("0gj "), shot("0gj"));
+    assert_eq!(shot("0gj "), shot("0gj\n"));
+}
+
+/// `l` で右の枠へ入り、`h` で戻る。横に動かしてあれば、`h` はまず左へ戻す
+#[test]
+fn h_goes_back_from_the_right_pane() {
+    let dir = tempfile::tempdir().unwrap();
+    merged(dir.path());
+    let shot = |keys: &str| amonhen_tui::snapshot(open(dir.path()), 80, 30, clock(), keys).unwrap();
+    // 狭いので、詳細は History の所に開く。
+    assert_ne!(shot("jl"), shot("j"));
+    assert_eq!(shot("jlh"), shot("j"));
+    // 右へ動かしてからの `h` は、詳細のまま左へ戻す。次の `h` で History へ。
+    assert_eq!(shot("jllh"), shot("jl"));
+    assert_eq!(shot("jllhh"), shot("j"));
+    // Working Copy の差分でも同じ。
+    let dir = tempfile::tempdir().unwrap();
+    two_lines(dir.path());
+    let shot = |keys: &str| amonhen_tui::snapshot(open(dir.path()), 80, 12, clock(), keys).unwrap();
+    assert_ne!(shot("1l"), shot("1"));
+    assert_eq!(shot("1lh"), shot("1"));
+    assert_eq!(shot("1llh"), shot("1l"));
 }
 
 /// 上流のあるリポジトリ: 空のリモートに main を push してから、手元で 1 つ進める。

@@ -156,6 +156,8 @@ pub struct App {
     /// `Ctrl-z` で止める（端末を戻してから）。
     #[cfg(unix)]
     suspend: bool,
+    /// `Ctrl-l` で、端末に出ているものを当てにせずにすべて書き直す。
+    redraw: bool,
     /// 新しいブランチの名前を打っている: 始まり（ref かコミット）、その出し方、打った名前。
     typing_branch: Option<(String, String, String)>,
     /// 打っている名前が何のものか。
@@ -251,6 +253,7 @@ impl App {
             mouse_changed: false,
             #[cfg(unix)]
             suspend: false,
+            redraw: false,
             typing_branch: None,
             naming: Naming::Branch,
             #[cfg(unix)]
@@ -407,6 +410,28 @@ impl App {
         areas
     }
 
+    /// `damage` で描き直すペインのうち、最後に描いてから中身が縦にずれたものと、その行数（正なら上へ）。
+    /// フレームの出力が、端末のスクロールに使う。当てにならなくてもよい（中身が替わっていても、違うセルは書く）。
+    pub fn scrolls(&self, damage: Damage) -> Vec<(Rect, i32)> {
+        let layout = self.layout();
+        let main = match self.view {
+            View::History => self.history.scrolled(),
+            _ => 0,
+        };
+        let side = match self.view {
+            View::Changes => self.changes.diff_scrolled(),
+            _ => self.details.scrolled(),
+        };
+        [
+            (Damage::MAIN, layout.main, main),
+            (Damage::SIDE, layout.side, side),
+        ]
+        .into_iter()
+        .filter(|&(pane, _, lines)| damage.has(pane) && lines != 0)
+        .filter_map(|(_, area, lines)| Some((area?, lines)))
+        .collect()
+    }
+
     pub fn quit(&self) -> bool {
         self.quit
     }
@@ -426,6 +451,11 @@ impl App {
         let suspend = std::mem::take(&mut self.suspend);
         self.dirty |= suspend;
         suspend
+    }
+
+    /// `Ctrl-l` を押した（聞いたら、なかったことにする）。
+    pub fn take_redraw(&mut self) -> bool {
+        std::mem::take(&mut self.redraw)
     }
 
     /// メッセージをエディタで開くなら、今のメッセージと作業ツリーの場所（聞いたら、なかったことにする）。
@@ -494,6 +524,13 @@ impl App {
     }
 
     /// メインの画面の中の 1 列（計測で、そこにホイールを送る）。
+    /// 前のフレームで組み立てたものを捨てる（次は、すべてを組み立て直す）。
+    pub fn forget_drawn(&mut self) {
+        self.history.forget_drawn();
+        self.changes.forget_drawn();
+        self.details.forget_drawn();
+    }
+
     pub fn main_column(&self) -> u16 {
         self.layout().main.map_or(0, |at| at.x + 1)
     }
@@ -502,8 +539,27 @@ impl App {
         self.history.total()
     }
 
-    pub fn history_at_end(&self, down: bool) -> bool {
-        self.history.at_end(down)
+    /// 計測の `step` を、`down` の向きにはもう進められない。
+    pub fn at_end(&self, down: bool, step: crate::Step) -> bool {
+        match step {
+            crate::Step::Wheel => self.history.at_end(down),
+            crate::Step::Move => {
+                let last = self.history.total().saturating_sub(1);
+                self.history.selected() == if down { last } else { 0 }
+            }
+            crate::Step::Diff => self.details.at_end(down),
+            crate::Step::Changes => self.changes.at_end(down),
+            // 回数で折り返す。
+            crate::Step::DiffPan | crate::Step::ChangesPan => false,
+        }
+    }
+
+    /// 詳細に出ている行の数（差分を含む）。
+    pub fn details_lines(&self, step: crate::Step) -> u32 {
+        match step {
+            crate::Step::Changes | crate::Step::ChangesPan => self.changes.diff_position().1,
+            _ => self.details.position().1,
+        }
     }
 
     pub fn last_frame_incomplete(&self) -> bool {
@@ -774,6 +830,12 @@ impl App {
             return;
         }
         let control = key.modifiers.contains(KeyModifiers::CONTROL);
+        // 画面が乱れたときに、どこからでもすべて書き直す（中身は読み直さない）。
+        if control && key.code == KeyCode::Char('l') {
+            self.redraw = true;
+            self.dirty = true;
+            return;
+        }
         // 詳細・差分が、一覧の所に開いている（並んでいない）。
         let covering = self.focus == Focus::Side && self.layout().main.is_none();
         // エラーは、次のキーまで出しておく。
@@ -1610,7 +1672,7 @@ impl App {
             KeyCode::PageUp => self.sidebar.move_selection(-page),
             KeyCode::Char('g') | KeyCode::Home => self.sidebar.move_selection(i64::MIN / 2),
             KeyCode::Char('G') | KeyCode::End => self.sidebar.move_selection(i64::MAX / 2),
-            KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right => {
+            KeyCode::Enter | KeyCode::Char(' ' | 'l') | KeyCode::Right => {
                 self.pick();
                 true
             }
@@ -1643,7 +1705,7 @@ impl App {
             (_, Focus::Sidebar) => vec![
                 ("j k", tr!("Move")),
                 (
-                    "Enter",
+                    "Enter Space",
                     tr!("Open the view, or select the ref's commit in History"),
                 ),
                 ("c", tr!("Check out the branch")),
@@ -1658,7 +1720,7 @@ impl App {
                 ("j k", tr!("Move")),
                 ("g G", tr!("Top and bottom")),
                 ("PgUp PgDn", tr!("Move by a page")),
-                ("Enter", tr!("Go to the details")),
+                ("Enter Space", tr!("Go to the details")),
                 ("/", tr!("Search")),
                 ("n N", tr!("Next and previous match")),
                 ("y v", tr!("Cherry-pick, revert the selected commit")),
@@ -1683,7 +1745,7 @@ impl App {
                 ("j k", tr!("Scroll")),
                 ("[ ]", tr!("Previous and next file")),
                 ("B L", tr!("Blame, File History of the file in view")),
-                ("h l", tr!("Pan long lines")),
+                ("h l", tr!("Pan long lines; h at the left edge goes back")),
                 ("Esc", tr!("Go back to History")),
             ],
             (View::Changes, Focus::Main) | (_, Focus::Message) => vec![
@@ -1720,7 +1782,7 @@ impl App {
                     "o t b",
                     tr!("In a conflict: take current, incoming, or both"),
                 ),
-                ("h l", tr!("Pan long lines")),
+                ("h l", tr!("Pan long lines; h at the left edge goes back")),
                 ("Esc", tr!("Go back to the list")),
             ],
         };
@@ -1745,6 +1807,7 @@ impl App {
                 "M",
                 tr!("Mouse on or off (off lets the terminal select text)"),
             ),
+            ("Ctrl-l", tr!("Redraw the screen")),
             #[cfg(unix)]
             ("Ctrl-z", tr!("Suspend (fg in the shell comes back)")),
             ("1 2 3", tr!("Changes, History and Reflog")),
@@ -1925,22 +1988,47 @@ impl App {
 
     fn changes_diff_key(&mut self, code: KeyCode, control: bool) -> bool {
         let page = self.changes.diff_page();
+        // 選んでいる行を動かすだけなら、差分の中だけが変わる。
+        let moved = match code {
+            KeyCode::Char('d') if control => Some(self.changes.move_cursor(page / 2)),
+            KeyCode::Char('u') if control => Some(self.changes.move_cursor(-page / 2)),
+            KeyCode::Char('j') | KeyCode::Down => Some(self.changes.move_cursor(1)),
+            KeyCode::Char('k') | KeyCode::Up => Some(self.changes.move_cursor(-1)),
+            KeyCode::PageDown => Some(self.changes.move_cursor(page)),
+            KeyCode::PageUp => Some(self.changes.move_cursor(-page)),
+            KeyCode::Char('g') | KeyCode::Home => Some(self.changes.cursor_to(0)),
+            KeyCode::Char('G') | KeyCode::End => Some(self.changes.cursor_to(u32::MAX)),
+            KeyCode::Char(']') => Some(self.changes.jump_hunk(true)),
+            KeyCode::Char('[') => Some(self.changes.jump_hunk(false)),
+            _ => None,
+        };
+        if let Some(moved) = moved {
+            if moved {
+                self.damage |= Damage::SIDE;
+            }
+            return false;
+        }
         match code {
-            KeyCode::Char('d') if control => self.changes.move_cursor(page / 2),
-            KeyCode::Char('u') if control => self.changes.move_cursor(-page / 2),
-            KeyCode::Char('j') | KeyCode::Down => self.changes.move_cursor(1),
-            KeyCode::Char('k') | KeyCode::Up => self.changes.move_cursor(-1),
-            KeyCode::PageDown => self.changes.move_cursor(page),
-            KeyCode::PageUp => self.changes.move_cursor(-page),
-            KeyCode::Char('g') | KeyCode::Home => self.changes.cursor_to(0),
-            KeyCode::Char('G') | KeyCode::End => self.changes.cursor_to(u32::MAX),
-            KeyCode::Char('l') | KeyCode::Right => self.changes.pan(PAN),
-            KeyCode::Char('h') | KeyCode::Left => self.changes.pan(-PAN),
+            // 横に動かすのも、差分の中だけが変わる。
+            KeyCode::Char('l') | KeyCode::Right => {
+                if self.changes.pan(PAN) {
+                    self.damage |= Damage::SIDE;
+                }
+                false
+            }
+            // 左の端にいるなら、動かさずに一覧へ戻る。
+            KeyCode::Char('h') | KeyCode::Left => {
+                if self.changes.pan(-PAN) {
+                    self.damage |= Damage::SIDE;
+                    false
+                } else {
+                    self.focus = Focus::Main;
+                    true
+                }
+            }
             // 行の範囲: `v` で始まりを決め、動かした所までを選ぶ。もう一度で、やめる。
             KeyCode::Char('v') => self.changes.toggle_mark(),
             KeyCode::Esc if self.changes.has_mark() => self.changes.toggle_mark(),
-            KeyCode::Char(']') => self.changes.jump_hunk(true),
-            KeyCode::Char('[') => self.changes.jump_hunk(false),
             // コンフリクトの中では、そのコンフリクトを Current・Incoming・両方のどれかにする（Undo できる）。
             KeyCode::Char('o' | 't' | 'b') if self.changes.conflict_at_cursor().is_some() => {
                 let choice = match code {
@@ -2005,7 +2093,7 @@ impl App {
             KeyCode::Char('u') if control => Some(self.history.move_selection(-page / 2)),
             KeyCode::Char('j') | KeyCode::Down => Some(self.history.move_selection(1)),
             KeyCode::Char('k') | KeyCode::Up => Some(self.history.move_selection(-1)),
-            KeyCode::PageDown | KeyCode::Char(' ') => Some(self.history.move_selection(page)),
+            KeyCode::PageDown => Some(self.history.move_selection(page)),
             KeyCode::PageUp => Some(self.history.move_selection(-page)),
             KeyCode::Char('g') | KeyCode::Home => Some(self.history.select(0)),
             KeyCode::Char('G') | KeyCode::End => Some(self.history.select(u32::MAX)),
@@ -2033,7 +2121,7 @@ impl App {
                 self.focus = Focus::Sidebar;
                 true
             }
-            KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right => {
+            KeyCode::Enter | KeyCode::Char(' ' | 'l') | KeyCode::Right => {
                 self.focus = Focus::Side;
                 true
             }
@@ -2054,7 +2142,10 @@ impl App {
             KeyCode::Char('g') | KeyCode::Home => Some(self.details.scroll_to(0)),
             KeyCode::Char('G') | KeyCode::End => Some(self.details.scroll_to(u32::MAX)),
             KeyCode::Char('l') | KeyCode::Right => Some(self.details.pan(PAN)),
-            KeyCode::Char('h') | KeyCode::Left => Some(self.details.pan(-PAN)),
+            // 左の端にいるなら、動かさずに一覧へ戻る（下で）。
+            KeyCode::Char('h') | KeyCode::Left if self.details.panned() => {
+                Some(self.details.pan(-PAN))
+            }
             KeyCode::Char(']') => Some(self.details.jump_file(true)),
             KeyCode::Char('[') => Some(self.details.jump_file(false)),
             _ => None,
@@ -2081,7 +2172,7 @@ impl App {
                     None => false,
                 }
             }
-            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Backspace => {
+            KeyCode::Esc | KeyCode::Char('q' | 'h') | KeyCode::Backspace | KeyCode::Left => {
                 self.focus = Focus::Main;
                 true
             }
