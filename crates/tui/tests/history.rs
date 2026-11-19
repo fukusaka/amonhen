@@ -882,6 +882,27 @@ fn push_asks_then_pushes_to_the_upstream() {
     assert!(!pushed.lines().next().unwrap().contains("↑"));
 }
 
+/// サイドバーのリモートのブランチで `U`: 今のブランチの上流にする（確かめてから）
+#[test]
+fn set_upstream_from_a_remote_branch() {
+    let dir = tempfile::tempdir().unwrap();
+    let work = with_remote(dir.path());
+    git(&work, BASE, &["push", "-q", "origin", "HEAD:review"]);
+    git(&work, BASE, &["fetch", "-q"]);
+    let upstream = || git_out(&work, &["rev-parse", "--abbrev-ref", "main@{upstream}"]);
+    assert_eq!(upstream(), "origin/main\n");
+    // サイドバーの一番下が origin/review。
+    let asked = amonhen_tui::snapshot(open(&work), 120, 16, clock(), "0GU").unwrap();
+    println!("{asked}");
+    assert!(asked.contains("Set the upstream of main to origin/review?   y set   n cancel"));
+    let set = amonhen_tui::snapshot(open(&work), 120, 16, clock(), "0GUy").unwrap();
+    assert!(set.contains("Set the upstream"));
+    assert_eq!(upstream(), "origin/review\n");
+    // リモートのブランチでない行では、理由を出す。
+    let wrong = amonhen_tui::snapshot(open(&work), 120, 16, clock(), "0U").unwrap();
+    assert!(wrong.contains("Select a remote branch to be the upstream"));
+}
+
 /// push を確かめているときの `t`: 送り先を打って、ほかのブランチへ送る（上流は変えない）。
 #[test]
 fn push_to_another_branch() {

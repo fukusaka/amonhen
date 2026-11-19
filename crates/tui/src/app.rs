@@ -1322,6 +1322,7 @@ impl App {
             "removeWorktree" => self.notice = Some(tr!("Removed the worktree")),
             "restoreFile" => self.notice = Some(tr!("Restored the version")),
             "addWorktree" => self.notice = Some(tr!("Added the worktree")),
+            "setUpstream" => self.notice = Some(tr!("Set the upstream")),
             "merge" | "rebase" | "continue" | "skip" | "cherryPick" | "revert" | "rewrite" => {
                 // コンフリクトで止まったら、Working Copy で解決する。
                 match reply["outcome"].as_str() {
@@ -1457,6 +1458,50 @@ impl App {
             return;
         }
         self.confirm = Some((ask, tr!("push"), push(remote, remote_branch, false, false)));
+    }
+
+    /// サイドバーで選んでいるリモートのブランチを、今のブランチの上流にする（確かめてから）。
+    fn ask_set_upstream(&mut self) {
+        let Some(branch) = self.branch.clone() else {
+            self.error = Some(tr!("No branch is checked out"));
+            return;
+        };
+        let picked = (self.sidebar.picked_ref())
+            .filter(|r| r.0 == "remote")
+            .map(|r| r.1.to_owned());
+        // リモートの名前は、知っているもののうち合うもの（名前に `/` があってもよいよう、長いほうから）。
+        let split = picked.as_deref().and_then(|name| {
+            let mut remotes: Vec<&String> = self.remotes.iter().collect();
+            remotes.sort_by_key(|r| std::cmp::Reverse(r.len()));
+            remotes.into_iter().find_map(|r| {
+                let rest = name.strip_prefix(r.as_str())?.strip_prefix('/')?;
+                (!rest.is_empty()).then(|| (r.clone(), rest.to_owned()))
+            })
+        });
+        let Some((remote, remote_branch)) = split else {
+            self.error = Some(tr!("Select a remote branch to be the upstream"));
+            return;
+        };
+        let set = |key: &str, value: String| json!({"op": "configSet", "key": key, "value": value});
+        self.confirm = Some((
+            tr!(
+                "Set the upstream of {branch} to {remote}/{remote_branch}?",
+                branch = branch,
+                remote = remote,
+                remote_branch = remote_branch
+            ),
+            tr!("set"),
+            Request::Run {
+                name: "setUpstream",
+                command: json!([
+                    set(&format!("branch.{branch}.remote"), remote),
+                    set(
+                        &format!("branch.{branch}.merge"),
+                        format!("refs/heads/{remote_branch}")
+                    ),
+                ]),
+            },
+        ));
     }
 
     /// push の送り先を打たせる（初めは上流）。
@@ -1948,6 +1993,11 @@ impl App {
             KeyCode::Char('n') => self.ask_rename(),
             KeyCode::Char('m') => self.ask_merge_or_rebase(true),
             KeyCode::Char('r') => self.ask_merge_or_rebase(false),
+            // 今のブランチの上流を、選んでいるリモートのブランチにする（アプリの Set Upstream）。
+            KeyCode::Char('U') => {
+                self.ask_set_upstream();
+                true
+            }
             // ブランチを、新しい worktree に出す。場所を聞く（今の作業ツリーの隣を、初めに入れておく）。
             KeyCode::Char('w') => {
                 let picked = (self.sidebar.picked_ref())
@@ -2011,6 +2061,10 @@ impl App {
                 ("a o x", tr!("On a stash: apply, pop, drop")),
                 ("x", tr!("On a worktree: remove it")),
                 ("w", tr!("New worktree for the branch")),
+                (
+                    "U",
+                    tr!("On a remote branch: make it the upstream of the current branch"),
+                ),
                 ("n D", tr!("Rename a branch; delete a branch or a tag")),
                 ("L", tr!("The branch's reflog")),
                 ("/", tr!("Filter branches and tags")),
