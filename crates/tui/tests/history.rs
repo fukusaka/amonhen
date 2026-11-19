@@ -808,7 +808,11 @@ fn push_asks_then_pushes_to_the_upstream() {
     println!("{asked}");
     // 一番上の行に、上流より進んでいる数。
     assert!(asked.lines().next().unwrap().contains("main ↑1"));
-    assert!(asked.contains("Push main to origin/main (1 commit)?   y push   n cancel"));
+    assert!(
+        asked.contains(
+            "Push main to origin/main (1 commit)?   y push   t another branch…   n cancel"
+        )
+    );
     assert_eq!(remote_head(), "Start\n");
     // やめる。
     amonhen_tui::snapshot(open(&work), 100, 8, clock(), "Pn").unwrap();
@@ -818,6 +822,38 @@ fn push_asks_then_pushes_to_the_upstream() {
     assert!(pushed.contains("Pushed"));
     assert_eq!(remote_head(), "Ahead of the remote\n");
     assert!(!pushed.lines().next().unwrap().contains("↑"));
+}
+
+/// push を確かめているときの `t`: 送り先を打って、ほかのブランチへ送る（上流は変えない）。
+#[test]
+fn push_to_another_branch() {
+    let dir = tempfile::tempdir().unwrap();
+    let work = with_remote(dir.path());
+    let origin = dir.path().join("origin.git");
+    // 初めは上流が入っている。
+    let typing = amonhen_tui::snapshot(open(&work), 120, 8, clock(), "Pt").unwrap();
+    println!("{typing}");
+    assert!(typing.contains("Push main to (remote/branch): origin/main"));
+    // 打ち直して、origin/review へ。
+    let keys = "Pt\x7f\x7f\x7f\x7freview\n";
+    let pushed = amonhen_tui::snapshot(open(&work), 120, 8, clock(), keys).unwrap();
+    println!("{pushed}");
+    assert!(pushed.contains("Pushed"));
+    assert_eq!(
+        git_out(&origin, &["log", "-1", "--format=%s", "review"]),
+        "Ahead of the remote\n"
+    );
+    // 上流はそのまま（まだ 1 つ進んでいる）。
+    assert_eq!(
+        git_out(&origin, &["log", "-1", "--format=%s", "main"]),
+        "Start\n"
+    );
+    assert!(pushed.lines().next().unwrap().contains("main ↑1"));
+    // リモートの名前がなければ、書き方を出す。
+    let keys = "Pt\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7freview\n";
+    let wrong = amonhen_tui::snapshot(open(&work), 120, 8, clock(), keys).unwrap();
+    println!("{wrong}");
+    assert!(wrong.contains("Write the remote and the branch, like origin/main"));
 }
 
 /// `f` で fetch、`p` で pull: リモートに増えたコミットを取り込む
@@ -1309,7 +1345,7 @@ fn diverged_branches_offer_force_push_and_pull_modes() {
     let asked = amonhen_tui::snapshot(open(&work), 140, 8, clock(), "P").unwrap();
     println!("{asked}");
     assert!(
-        asked.contains("y push   f force push (with lease), replacing 1 on the remote   n cancel")
+        asked.contains("y push   f force push (with lease), replacing 1 on the remote   t another branch…   n cancel")
     );
     // ふつうの push は断られる（理由が出る）。
     let refused = amonhen_tui::snapshot(open(&work), 140, 8, clock(), "Py").unwrap();
@@ -1454,7 +1490,11 @@ fn commit_and_push() {
         git_out(&work, &["log", "-1", "--format=%s"]),
         "Add a file\n"
     );
-    assert!(asked.contains("Push main to origin/main (1 commit)?   y push   n cancel"));
+    assert!(
+        asked.contains(
+            "Push main to origin/main (1 commit)?   y push   t another branch…   n cancel"
+        )
+    );
     let remote = dir.path().join("origin.git");
     assert_eq!(
         git_out(&remote, &["log", "-1", "--format=%s", "main"]),

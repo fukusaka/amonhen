@@ -133,6 +133,8 @@ enum Naming {
     Stash,
     /// ブランチを出す新しい worktree の場所。
     Worktree,
+    /// push の送り先（`<remote>/<branch>`）。
+    PushTo,
 }
 
 /// 選択肢 1 つ: 押すキー、名前、頼む中身。
@@ -165,6 +167,8 @@ pub struct App {
     reopen: bool,
     /// 確かめてから行う操作: 尋ねる文と、`y` で頼む中身。
     confirm: Option<(String, String, Request)>,
+    /// push を確かめている: `t` で、送り先のブランチを打てる。
+    push_to_offered: bool,
     /// いくつかから選んで行う操作: 尋ねる文と、キー・名前・頼む中身の組。
     choices: Option<(String, Vec<Choice>)>,
     /// マウスを取り込んでいる（切ると、端末で文字を選べる）。
@@ -298,6 +302,7 @@ impl App {
             help: false,
             help_top: 0,
             palette: None,
+            push_to_offered: false,
             search: None,
             search_done: 0.0,
             theme: Theme::detect(),
@@ -875,6 +880,14 @@ impl App {
         let covering = self.focus == Focus::Side && self.layout().main.is_none();
         // エラーは、次のキーまで出しておく。
         self.dirty |= self.error.take().is_some() | self.notice.take().is_some();
+        // push を確かめている間の `t`: 送り先のブランチを打つ。
+        if std::mem::take(&mut self.push_to_offered) && key.code == KeyCode::Char('t') {
+            self.confirm = None;
+            self.choices = None;
+            self.ask_push_to();
+            self.dirty = true;
+            return;
+        }
         // 確かめている間は、`y`（か Enter）で行い、ほかのキーでやめる。
         if let Some((_, options)) = self.choices.take() {
             if let KeyCode::Char(pressed) = key.code
@@ -994,6 +1007,10 @@ impl App {
                         let name = name.trim();
                         let (op, label, command) = match self.naming {
                             Naming::Stash => return,
+                            Naming::PushTo => {
+                                self.push_to(&start, name);
+                                return;
+                            }
                             Naming::Worktree => (
                                 "addWorktree",
                                 tr!("Adding the worktree…"),
@@ -1393,6 +1410,8 @@ impl App {
         };
         // 上流に手元にないコミットがあれば、ふつうの push は断られる。置き換える push（上流が最後に見たときの
         // ままのときだけ）も選べるようにする。
+        // `t` で、ほかのブランチへ送れる（`ask_push_to`。選ぶ前に横取りするので、中身は送らない）。
+        self.push_to_offered = true;
         if self.behind > 0 {
             self.choices = Some((
                 ask,
@@ -1406,11 +1425,44 @@ impl App {
                         ),
                         push(remote, remote_branch, true, false),
                     ),
+                    ('t', tr!("another branch…"), Request::Status),
                 ],
             ));
             return;
         }
         self.confirm = Some((ask, tr!("push"), push(remote, remote_branch, false, false)));
+    }
+
+    /// push の送り先を打たせる（初めは上流）。
+    fn ask_push_to(&mut self) {
+        let Some(branch) = self.branch.clone() else {
+            return;
+        };
+        let start = self.upstream.clone().unwrap_or_default();
+        self.naming = Naming::PushTo;
+        self.typing_branch = Some((branch.clone(), branch, start));
+    }
+
+    /// `branch` を `target`（`<remote>/<branch>`）へ push する。上流は変えない。
+    fn push_to(&mut self, branch: &str, target: &str) {
+        let parsed = target
+            .split_once('/')
+            .filter(|(remote, to)| !to.is_empty() && self.remotes.iter().any(|r| r == remote));
+        let Some((remote, to)) = parsed else {
+            self.error = Some(tr!(
+                "Write the remote and the branch, like {example}",
+                example = format!("{}/{branch}", self.remotes.first().map_or("origin", |r| r))
+            ));
+            return;
+        };
+        self.run(
+            "push",
+            tr!("Pushing to {target}…", target = target),
+            json!({
+                "op": "push", "remote": remote, "branch": branch, "remoteBranch": to,
+                "force": false, "setUpstream": false,
+            }),
+        );
     }
 
     /// History で選んでいるコミットへの操作: `y` cherry-pick、`v` revert、`c` そのコミットをチェックアウト
@@ -2741,7 +2793,10 @@ impl App {
                 buf.set_stringn(
                     x + 3,
                     y,
-                    tr!("y {yes}   n cancel", yes = yes),
+                    match self.push_to_offered {
+                        true => tr!("y {yes}   t another branch…   n cancel", yes = yes),
+                        false => tr!("y {yes}   n cancel", yes = yes),
+                    },
                     usize::from(position_x.saturating_sub(x + 3)),
                     Style::new(),
                 );
@@ -2758,6 +2813,9 @@ impl App {
                     Naming::Stash => tr!("Stash message (Enter for none): {name}", name = name),
                     Naming::Worktree => {
                         tr!("New worktree for {at} at: {name}", at = at, name = name)
+                    }
+                    Naming::PushTo => {
+                        tr!("Push {at} to (remote/branch): {name}", at = at, name = name)
                     }
                 };
                 let x = buf.set_stringn(area.x + 1, y, text, room, Style::new()).0;
