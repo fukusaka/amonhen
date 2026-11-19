@@ -89,7 +89,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | All・Favorites・Places・グループのあるリポジトリのページ | ✓ | ✓ | ✓ | n/a | n/a |  |
 | 手元・SSH のリポジトリを足す | ✓ | ✓ | △ | n/a | n/a | Windows: ホストとパスは打ち込む。接続の確認とホストのフォルダを選ぶ画面はない。 |
 | この機械の探すフォルダー（深さ・見張り） | △ | △ | △ | n/a | n/a | macOS: 除くものは決まった一覧。<br>GTK4: 除くものは決まった一覧。<br>Windows: 除外は決まったもの。フォルダは Repositories を出している間だけ見張る。 |
-| SSH 先の探すフォルダー | ✓ | ✓ | — | n/a | △ | CLI: `find-repositories` がアプリのために探す。 |
+| SSH 先の探すフォルダー | ✓ | ✓ | △ | n/a | △ | CLI: `find-repositories` がアプリのために探す。<br>Windows: Settings > SSH Hosts で決める。Repositories の画面はまだ探さない。 |
 | 場所の下のリポジトリのフォルダーの木 | ✓ | ✓ | ✓ | n/a | n/a |  |
 | 手で作るグループ・行を Favorites やグループへドラッグ | △ | △ | △ | n/a | n/a | macOS: グループそのものはドラッグで並べ替えられない。<br>GTK4: グループそのものはドラッグで並べ替えられない。<br>Windows: グループそのものはドラッグで並べ替えられない。 |
 | 状態の列（ブランチ・変更・ahead/behind・最後のコミット・開いた時）、並べ替え、列の順の入れ替え | ✓ | ✓ | ✓ | n/a | n/a | Windows: 見出しを押して並べ替え、見出しの左端を引いて幅を変え、見出しの右クリックで左右に動かす。 |
@@ -121,10 +121,10 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | SSH Hosts: + / − の付いたホスト、届かないものは薄く | ✓ | ✓ | ✓ | n/a | n/a | VSCode: Remote-SSH が受け持つ。 |
 | SSH Hosts > Connection: 状態・Check Connection・エンジン | ✓ | ✓ | ✓ | n/a | n/a |  |
 | SSH Hosts > Connection: 署名の確かめ方 | ✓ | ✓ | ✓ | n/a | n/a |  |
-| SSH Hosts > Connection: 探すフォルダー | ✓ | ✓ | — | n/a | n/a |  |
+| SSH Hosts > Connection: 探すフォルダー | ✓ | ✓ | ✓ | n/a | n/a |  |
 | SSH Hosts: ホストのすべてのリポジトリの git のページ | ✓ | ✓ | ✓ | n/a | n/a |  |
 | SSH Hosts: ホストの Environment Variables（ログインシェルの切り替え） | ✓ | ✓ | ✓ | n/a | n/a |  |
-| ホスト・この機械の列で選ぶパスのシート | ✓ | ✓ | — | n/a | n/a |  |
+| ホスト・この機械の列で選ぶパスのシート | ✓ | ✓ | △ | n/a | n/a | Windows: SSH 先のフォルダだけ（SSH 接続を追加、探すフォルダー）。この機械はシステムのダイアログ。 |
 | Accounts: GitHub（CI の状態・アバター） | ✓ | ✓ | — | — | n/a |  |
 | Appearance: History の順・1 行・行の項目・アバター | ✓ | ✓ | △ | n/a | n/a | Windows: History の並び順・1 行表示・祖先の強調・行の項目（CI の状態はない）。アバターはない。 |
 | Appearance: フォント・グラフの色 | — | — | — | n/a | n/a |  |

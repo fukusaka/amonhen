@@ -56,6 +56,10 @@ pub enum Event {
     Select(Option<usize>),
     /// 真ん中の列のページ（[`PAGES`] の番号）を選んだ。
     Page(Option<usize>),
+    /// 接続のページのスキャンするフォルダ: 深さ（その場所と、`levels` の番号）、外す、足す（列で選ぶ）。
+    ScanDepth(String, Option<usize>),
+    ScanRemove(String),
+    ScanAdd,
     /// Environment Variables: 探す文字、ログインシェル経由で起動するか。
     EnvQuery(String),
     LoginShell(bool),
@@ -140,6 +144,8 @@ pub struct State {
     pub page: usize,
     /// Environment Variables で探す文字。
     pub env_query: String,
+    /// スキャンするフォルダを足すために、列で選ぶ画面を開く SSH 先（窓が見て開く）。
+    pub pick_scan_root: Option<String>,
 }
 
 /// SSH 先ごとのページ（真ん中の列。訳は `tr!` と同じ表から）: 接続と、そこにあるすべてのリポジトリに効く
@@ -161,6 +167,7 @@ impl State {
             epoch: 0,
             page: 0,
             env_query: String::new(),
+            pick_scan_root: None,
         };
         let jobs = state.session_for_selected().into_iter().collect();
         (state, jobs)
@@ -247,6 +254,12 @@ impl State {
                 }
             }
             Event::Page(None) => {}
+            Event::ScanDepth(path, Some(i)) => {
+                crate::repositories::set_scan_depth(&path, i as u32 + 1);
+            }
+            Event::ScanDepth(_, None) => {}
+            Event::ScanRemove(path) => crate::repositories::remove_scan_root(&path),
+            Event::ScanAdd => self.pick_scan_root = self.selected.clone(),
             Event::EnvQuery(text) => self.env_query = text,
             Event::LoginShell(on) => {
                 jobs.extend(self.save_options(|o| o.login_shell = on.then_some(true)));
@@ -555,6 +568,9 @@ pub struct Callbacks<'a> {
     pub text: Make<'a, String, fn(String) -> Event>,
     pub button: Make<'a, (), fn() -> Event>,
     pub check: Make<'a, bool, fn(bool) -> Event>,
+    /// スキャンするフォルダの行（場所ごと）: 深さ、外す。
+    pub scan_depth: Box<dyn Fn(String) -> Callback<Option<usize>> + 'a>,
+    pub scan_remove: Box<dyn Fn(String) -> Callback<()> + 'a>,
 }
 
 fn heading(text: String) -> TextBlock {
@@ -704,6 +720,65 @@ pub fn view(state: &State, callbacks: &Callbacks<'_>, git: Option<View>) -> View
                 Border::new()
                     .grid_column(2)
                     .content(View::keyed_fragment([(right_key(state), right)])),
+            )),
+    ))
+}
+
+/// 「スキャンするフォルダ」: この SSH 先でスキャンするフォルダ（Places の、この SSH 先の下と同じ設定）。深さを
+/// 選べ、− で外し、＋ で SSH 先のフォルダを列で見て足す（GTK4 版の `scan_folders`）。
+fn scan_folders(host: &str, callbacks: &Callbacks<'_>) -> View {
+    let levels: Vec<String> = (1..=6u32)
+        .map(|d| tr!("{count} levels", count = d))
+        .collect();
+    let rows = crate::repositories::host_scan_roots(host)
+        .into_iter()
+        .map(|(path, depth)| {
+            let shown = amonhen_remote::ssh::Target::parse(&path).map_or_else(
+                |_| path.clone(),
+                |t| t.path.trim_start_matches('/').to_owned(),
+            );
+            (
+                format!("{path}|{depth}"),
+                Grid::new()
+                    .columns([GridLength::Star(1.0), GridLength::Auto, GridLength::Auto])
+                    .column_spacing(6.0)
+                    .margin(Thickness::new(0.0, 2.0, 0.0, 2.0))
+                    .children((
+                        TextBlock::new()
+                            .text(shown)
+                            .is_text_selection_enabled(true)
+                            .vertical_alignment(VerticalAlignment::Center)
+                            .text_trimming(TextTrimming::CharacterEllipsis)
+                            .grid_column(0),
+                        ComboBox::new()
+                            .grid_column(1)
+                            .items_source(levels.clone())
+                            .selected_index(depth.clamp(1, 6) as usize - 1)
+                            .on_selection_changed((callbacks.scan_depth)(path.clone())),
+                        Button::new()
+                            .grid_column(2)
+                            .on_click((callbacks.scan_remove)(path))
+                            .content(TextBlock::new().text("−")),
+                    )),
+            )
+        });
+    StackPanel::new().children((
+        heading(tr!("Folders to Scan")),
+        StackPanel::new().children([View::keyed_fragment(rows)]),
+        StackPanel::new()
+            .orientation(Orientation::Horizontal)
+            .spacing(8.0)
+            .margin(Thickness::new(0.0, 4.0, 0.0, 0.0))
+            .children((
+                button(
+                    "+".into(),
+                    (callbacks.button)(|| Event::ScanAdd),
+                    true,
+                    false,
+                )
+                .tooltip(tr!("Add a Folder to Scan")),
+                note(tr!("The same list as under the host in Places."))
+                    .vertical_alignment(VerticalAlignment::Center),
             )),
     ))
 }
@@ -1184,6 +1259,7 @@ fn connection_view(
             ))
             .into(),
         ),
+        ("scan".into(), scan_folders(host, callbacks)),
     ]);
     StackPanel::new().children([View::keyed_fragment(rows)])
 }

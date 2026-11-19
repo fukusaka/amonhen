@@ -466,6 +466,56 @@ pub fn remote_hosts() -> Vec<String> {
         .collect()
 }
 
+/// SSH 先 `host` でスキャンするフォルダ（場所と深さ。Settings > SSH Hosts の接続のページ）。
+pub fn host_scan_roots(host: &str) -> Vec<(String, u32)> {
+    read()["scanRoots"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|r| {
+            let path = r["path"].as_str()?;
+            (crate::remote::host_of(path).as_deref() == Some(host))
+                .then(|| (path.to_owned(), r["depth"].as_u64().unwrap_or(3) as u32))
+        })
+        .collect()
+}
+
+/// スキャンするフォルダを足す（もうあれば何もしない。深さと入らない名前は、この機械のものと同じ既定）。
+pub fn add_scan_root(location: &str) {
+    let _ = edit(|d| {
+        let roots = array_mut(d, "scanRoots");
+        if !roots
+            .iter()
+            .any(|r| r["path"].as_str().is_some_and(|p| same(p, location)))
+        {
+            roots.push(json!({
+                "path": location,
+                "depth": 3,
+                "excludes": ["node_modules", "target", "build", ".build", "vendor",
+                    "Pods", "DerivedData", "dist"],
+            }));
+        }
+    });
+}
+
+/// スキャンするフォルダの深さを変える。
+pub fn set_scan_depth(location: &str, depth: u32) {
+    let _ = edit(|d| {
+        for r in array_mut(d, "scanRoots") {
+            if r["path"].as_str().is_some_and(|p| same(p, location)) {
+                r["depth"] = json!(depth);
+            }
+        }
+    });
+}
+
+/// スキャンするフォルダを外す。
+pub fn remove_scan_root(location: &str) {
+    let _ = edit(|d| {
+        array_mut(d, "scanRoots").retain(|r| !r["path"].as_str().is_some_and(|p| same(p, location)))
+    });
+}
+
 /// Places のリポジトリとスキャンするフォルダのうち、SSH 先 `host` のものの数。
 pub fn places_on_host(host: &str) -> (usize, usize) {
     let data = read();

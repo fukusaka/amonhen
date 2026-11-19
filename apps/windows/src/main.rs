@@ -26,6 +26,7 @@ mod merge;
 mod merge_several;
 mod palette;
 mod patch_files;
+mod pathpicker;
 mod prefs;
 mod programs;
 mod rangediff;

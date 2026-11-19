@@ -89,7 +89,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Repository page with All, Favorites, Places and groups | ✓ | ✓ | ✓ | n/a | n/a |  |
 | Add a local or an SSH repository | ✓ | ✓ | △ | n/a | n/a | Windows: The host and path are typed; no Check Connection or folder picker for the host. |
 | Folders to scan on this machine (depth, watched) | △ | △ | △ | n/a | n/a | macOS: Excludes are a fixed list.<br>GTK4: Excludes are a fixed list.<br>Windows: Excludes are a fixed list; the folders are watched while Repositories is open. |
-| Folders to scan on SSH hosts | ✓ | ✓ | — | n/a | △ | CLI: `find-repositories` does the scan for the apps. |
+| Folders to scan on SSH hosts | ✓ | ✓ | △ | n/a | △ | CLI: `find-repositories` does the scan for the apps.<br>Windows: Set in Settings > SSH Hosts; the Repositories page doesn't scan them yet. |
 | Folder tree of the repositories under a place | ✓ | ✓ | ✓ | n/a | n/a |  |
 | Manual groups; rows dragged onto Favorites or a group | △ | △ | △ | n/a | n/a | macOS: Groups themselves can't be reordered by dragging.<br>GTK4: Groups themselves can't be reordered by dragging.<br>Windows: Groups themselves can't be reordered by dragging. |
 | Status columns (branch, changes, ahead/behind, last commit, opened), sortable and reorderable | ✓ | ✓ | ✓ | n/a | n/a | Windows: Sortable by clicking a header, resized by dragging a header's left edge, and moved left or right from a header's right-click menu. |
@@ -121,10 +121,10 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | SSH Hosts: hosts with + / −, unreachable dimmed | ✓ | ✓ | ✓ | n/a | n/a | VSCode: Remote-SSH takes this role. |
 | SSH Hosts > Connection: state, Check Connection, engine | ✓ | ✓ | ✓ | n/a | n/a |  |
 | SSH Hosts > Connection: signature verification | ✓ | ✓ | ✓ | n/a | n/a |  |
-| SSH Hosts > Connection: folders to scan | ✓ | ✓ | — | n/a | n/a |  |
+| SSH Hosts > Connection: folders to scan | ✓ | ✓ | ✓ | n/a | n/a |  |
 | SSH Hosts: git pages for every repository on the host | ✓ | ✓ | ✓ | n/a | n/a |  |
 | SSH Hosts: the host's Environment Variables (login shell switch) | ✓ | ✓ | ✓ | n/a | n/a |  |
-| Path picker in columns for a host or this machine | ✓ | ✓ | — | n/a | n/a |  |
+| Path picker in columns for a host or this machine | ✓ | ✓ | △ | n/a | n/a | Windows: Folders on SSH hosts only (Add SSH Connection, folders to scan); this machine uses the system dialog. |
 | Accounts: GitHub (CI status, avatars) | ✓ | ✓ | — | — | n/a |  |
 | Appearance: History order, one line, row items, avatars | ✓ | ✓ | △ | n/a | n/a | Windows: History's order, one line, ancestor highlight and row items (no CI status); no avatars. |
 | Appearance: fonts, graph colors | — | — | — | n/a | n/a |  |

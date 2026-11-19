@@ -203,6 +203,8 @@ struct Root {
     /// 設定の画面で書いた変更の Undo・Redo（macOS 版・GTK4 版と同じく、画面を出している間。閉じたら忘れる）。
     settings_undo: Vec<SettingsChange>,
     settings_redo: Vec<SettingsChange>,
+    /// エンジンを送ってよいかを聞く間、脇に置いたダイアログ（列で選ぶ画面）。
+    suspended_dialog: Option<Dialog>,
     /// 走っている操作の数（GTK4 版の Activity のボタンの回る印と数）。
     running: usize,
     /// History で複数選んでいるコミット（上から。右クリックのメニューを複数のもの用にする）。
@@ -679,6 +681,8 @@ enum Dialog {
     },
     /// SSH 先のリポジトリを加える（接続先とパス。GTK4 版の `ssh_connection_sheet`）。
     AddSsh { host: String, path: String },
+    /// SSH 先のフォルダを列で選ぶ（SSH 接続を追加するダイアログの「選ぶ…」、SSH Hosts のスキャンするフォルダ）。
+    PathPicker(Box<crate::pathpicker::Picker>),
     /// ブランチの名前を変える（GTK4 版の `refops::ask_rename_branch`）。
     Rename {
         repo: Arc<Repository>,
@@ -907,6 +911,10 @@ enum Message {
     SshHosts(crate::sshhosts::Event),
     /// daemon・SSH 越しのつながりが切れた（そのリポジトリと理由）。
     Disconnected(Arc<Repository>, String),
+    /// 列で選ぶ画面の操作とつないだ・読んだ結果。
+    Picker(crate::pathpicker::Event),
+    /// 脇に置いたダイアログを戻す。
+    RestoreDialog,
     /// サイドバーの木でお気に入りを引いて落とした（新しい順の名前。お気に入りの間でなければ None）。
     FavoritesDropped(Option<Vec<String>>),
     /// Git > Programs の候補と使う git。
@@ -1271,6 +1279,7 @@ impl Component for Root {
             sidebar_epoch: 0,
             settings_undo: Vec::new(),
             settings_redo: Vec::new(),
+            suspended_dialog: None,
             running: 0,
             multi: Vec::new(),
             multi_consecutive: false,
@@ -2481,6 +2490,23 @@ impl Root {
             Message::Command(id) if id == "settings-undo" || id == "settings-redo" => {
                 self.undo_settings(id == "settings-redo", context);
             }
+            Message::Command(id) if id == "ssh-browse" => {
+                // SSH 接続を追加するダイアログから、打った SSH 先のフォルダを列で選ぶ。
+                if let Some(Dialog::AddSsh { host, path }) = &self.dialog
+                    && crate::remote::ssh_location(host, "~").is_some()
+                {
+                    let (picker, job) = crate::pathpicker::Picker::new(
+                        crate::pathpicker::Purpose::AddSsh,
+                        host.trim(),
+                        path,
+                        None,
+                    );
+                    self.dialog = Some(Dialog::PathPicker(Box::new(picker)));
+                    context.spawn_background(move |_| Message::Picker(job.run()));
+                } else {
+                    beep();
+                }
+            }
             Message::Command(id) if id.starts_with("switch-repository:") => {
                 // このタブを選んだリポジトリに替える（GTK4 版・macOS 版のリポジトリ名のポップオーバー）。
                 let location = id["switch-repository:".len()..].to_owned();
@@ -2940,6 +2966,10 @@ impl Root {
                 None => beep(),
             },
             Message::AskSendEngine(ask) => {
+                // 列で選ぶ画面は、つなぐのにこの答えを待っているので、脇に置いて先に聞く（答えたら戻す）。
+                if matches!(self.dialog, Some(Dialog::PathPicker(_))) {
+                    self.suspended_dialog = self.dialog.take();
+                }
                 if self.dialog.is_none() {
                     self.dialog = Some(Dialog::SendEngine { ask, always: false });
                 } else {
@@ -2957,8 +2987,41 @@ impl Root {
                 }
             }
             Message::DialogClosed(result) => match (self.dialog.take(), result) {
+                (Some(Dialog::PathPicker(picker)), result) => {
+                    let chosen = (result == ContentDialogResult::Primary)
+                        .then(|| picker.chosen_shown())
+                        .flatten();
+                    match picker.purpose {
+                        crate::pathpicker::Purpose::AddSsh => {
+                            // 閉じたのを一度描いてから戻す（同じ描画で開き直しても開かない）。
+                            self.suspended_dialog = Some(Dialog::AddSsh {
+                                host: picker.host.clone(),
+                                path: chosen.unwrap_or(picker.start.clone()),
+                            });
+                            self.dialog_inputs += 1;
+                            context.spawn_background(|_| {
+                                std::thread::sleep(std::time::Duration::from_millis(250));
+                                Message::RestoreDialog
+                            });
+                        }
+                        crate::pathpicker::Purpose::ScanRoot => {
+                            if let Some(location) =
+                                chosen.and_then(|c| crate::remote::ssh_location(&picker.host, &c))
+                            {
+                                crate::repositories::add_scan_root(&location);
+                            }
+                        }
+                    }
+                }
                 (Some(Dialog::SendEngine { ask, always }), result) => {
                     ask.answer(result == ContentDialogResult::Primary, always);
+                    // 脇に置いたダイアログは、閉じたのを一度描いてから戻す（同じ描画で開き直しても開かない）。
+                    if self.suspended_dialog.is_some() {
+                        context.spawn_background(|_| {
+                            std::thread::sleep(std::time::Duration::from_millis(250));
+                            Message::RestoreDialog
+                        });
+                    }
                 }
                 (Some(Dialog::Undo { repo, .. }), ContentDialogResult::Primary) => {
                     perform(context, repo, json!({ "op": "undo" }), tr!("Couldn’t Undo"));
@@ -6230,6 +6293,18 @@ impl Root {
             Message::Disconnected(repo, reason) => {
                 self.disconnected = Some((repo, reason));
             }
+            Message::RestoreDialog => {
+                if self.dialog.is_none() {
+                    self.dialog = self.suspended_dialog.take();
+                }
+            }
+            Message::Picker(event) => {
+                if let Some(Dialog::PathPicker(picker)) = &mut self.dialog {
+                    for job in picker.handle(event) {
+                        context.spawn_background(move |_| Message::Picker(job.run()));
+                    }
+                }
+            }
             Message::FavoritesDropped(order) => {
                 // 木は WinUI が自分で並べ替えたので、作り直して git の設定の順に合わせる。
                 self.sidebar_epoch += 1;
@@ -6256,6 +6331,18 @@ impl Root {
                 };
                 for job in ssh.handle(event) {
                     context.spawn_background(move |_| Message::SshHosts(job.run()));
+                }
+                if let Some(host) = ssh.pick_scan_root.take() {
+                    let repo = ssh.repo_of(&host);
+                    let (picker, job) = crate::pathpicker::Picker::new(
+                        crate::pathpicker::Purpose::ScanRoot,
+                        &host,
+                        "",
+                        repo,
+                    );
+                    self.dialog = Some(Dialog::PathPicker(Box::new(picker)));
+                    context.spawn_background(move |_| Message::Picker(job.run()));
+                    return;
                 }
                 // SSH 先の Git のページなら、Settings > Git の部品をその SSH 先のエンジンに向ける。
                 if let Some(host) = ssh.git_host() {
@@ -8814,6 +8901,29 @@ impl Root {
                             .on_text_changed(context.callback(Message::BranchName)),
                     )),
                 ),
+            Some(Dialog::PathPicker(picker)) => dialog
+                .is_open(true)
+                .title(match picker.purpose {
+                    crate::pathpicker::Purpose::AddSsh => tr!("Choose a Repository"),
+                    crate::pathpicker::Purpose::ScanRoot => tr!("Add a Folder to Scan"),
+                })
+                .primary_button_text(tr!("Choose"))
+                .close_button_text(tr!("Cancel"))
+                .is_primary_button_enabled(picker.chosen().is_some())
+                .content(crate::pathpicker::view(
+                    picker,
+                    &crate::pathpicker::Callbacks {
+                        pick: Box::new(|at| {
+                            context.callback(move |i| {
+                                Message::Picker(crate::pathpicker::Event::Pick(at, i))
+                            })
+                        }),
+                        typed: context.callback(|t| {
+                            Message::Picker(crate::pathpicker::Event::Typed(t))
+                        }),
+                        go: context.callback(|()| Message::Picker(crate::pathpicker::Event::Go)),
+                    },
+                )),
             Some(Dialog::AddSsh { host, path }) => dialog
                 .is_open(true)
                 .title(tr!("Add SSH Connection"))
@@ -8834,10 +8944,23 @@ impl Root {
                             .placeholder_text(tr!("user@host:port (or a name in ~/.ssh/config)"))
                             .on_text_changed(context.callback(Message::BranchName)),
                         TextBlock::new().text(tr!("Path")),
-                        TextBox::new()
-                            .text(path.clone())
-                            .placeholder_text(tr!("Folder of the repository on the host"))
-                            .on_text_changed(context.callback(Message::SshPath)),
+                        Grid::new()
+                            .columns([GridLength::Star(1.0), GridLength::Auto])
+                            .column_spacing(6.0)
+                            .children((
+                                TextBox::new()
+                                    .grid_column(0)
+                                    .text(path.clone())
+                                    .placeholder_text(tr!("Folder of the repository on the host"))
+                                    .on_text_changed(context.callback(Message::SshPath)),
+                                Button::new()
+                                    .grid_column(1)
+                                    .is_enabled(crate::remote::ssh_location(host, "~").is_some())
+                                    .on_click(context.callback(|()| {
+                                        Message::Command("ssh-browse".to_owned())
+                                    }))
+                                    .content(TextBlock::new().text(tr!("Choose…"))),
+                            )),
                     )),
                 ),
             Some(Dialog::NewGroup { name, .. }) => dialog
@@ -13459,6 +13582,16 @@ impl Root {
                     text: Box::new(|f| context.callback(move |v| Message::SshHosts(f(v)))),
                     button: Box::new(|f| context.callback(move |()| Message::SshHosts(f()))),
                     check: Box::new(|f| context.callback(move |v| Message::SshHosts(f(v)))),
+                    scan_depth: Box::new(|path| {
+                        context.callback(move |i| {
+                            Message::SshHosts(crate::sshhosts::Event::ScanDepth(path.clone(), i))
+                        })
+                    }),
+                    scan_remove: Box::new(|path| {
+                        context.callback(move |()| {
+                            Message::SshHosts(crate::sshhosts::Event::ScanRemove(path.clone()))
+                        })
+                    }),
                 },
             },
         );
