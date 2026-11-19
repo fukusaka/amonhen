@@ -92,10 +92,11 @@ pub enum Loaded {
         query: String,
         result: std::result::Result<Vec<u32>, String>,
     },
-    /// `row` 行目のコミットの祖先（行ごとに 1 ビット）。取れなければ `None`。
+    /// `row` 行目のコミットの祖先（行ごとに 1 ビット）と、線ごとの光らせ始める行（History のすべての線の並び。
+    /// 光らせない線は `u32::MAX`）。取れなければ `None`。
     Lineage {
         row: u32,
-        bits: Option<Vec<u64>>,
+        bits: Option<(Vec<u64>, Vec<u32>)>,
     },
     /// コミットの行（History になければ `None`）。
     RowOf(Option<u32>),
@@ -248,7 +249,7 @@ fn load(front: &dyn Front, request: Request) -> Result<Loaded> {
             bits: front
                 .call(json!({"op": "historyLineage", "history": history, "row": row}))
                 .ok()
-                .map(|r| r.items::<u64>("rows")),
+                .map(|r| (r.items::<u64>("rows"), r.u32s("edgeFrom"))),
         },
         Request::RowOf { history, id } => Loaded::RowOf(
             front

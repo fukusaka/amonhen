@@ -618,6 +618,37 @@ fn rows_outside_the_selected_commits_ancestry_are_dimmed() {
     assert_eq!(dim("jj"), [true, true, false, false, false]);
 }
 
+/// グラフは、祖先へ続く線と祖先の点だけが光る（行ごとではなく、線ごと）。
+#[test]
+fn graph_lines_are_lit_along_the_ancestry() {
+    use ratatui_core::style::Modifier;
+    let dir = tempfile::tempdir().unwrap();
+    merged(dir.path());
+    // グラフの 3 セルを、行ごとに: 薄ければ `.`、光っていれば文字のまま。
+    let graph = |keys: &str| -> Vec<String> {
+        let frame = amonhen_tui::frame(open(dir.path()), 64, 8, clock(), keys).unwrap();
+        (1..6)
+            .map(|y| {
+                (0..3)
+                    .map(|x| {
+                        let cell = &frame[(x, y)];
+                        match cell.modifier.contains(Modifier::DIM) && cell.symbol() != " " {
+                            true => ".",
+                            false => cell.symbol(),
+                        }
+                    })
+                    .collect()
+            })
+            .collect()
+    };
+    // マージを選んでいる間は、すべてが光る。
+    assert_eq!(graph(""), ["◉─╮", "● │", "│ ●", "●─╯", "●  "]);
+    // 「Bump the version」: main の側の線と点だけ。topic へ行く線と、topic から戻る線は薄い。
+    assert_eq!(graph("j"), ["...", "● .", "│ .", "●..", "●  "]);
+    // topic のコミット: topic から分かれた所へ戻る線と、その先。main の側の線は、合流する行（Add the graph）から下だけ。
+    assert_eq!(graph("jj"), ["...", ". .", ". ●", "●─╯", "●  "]);
+}
+
 /// サイドバーで `/`: 打った語を名前に含む ref だけを出す。Esc でやめる
 #[test]
 fn sidebar_filter_narrows_refs() {
