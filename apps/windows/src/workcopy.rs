@@ -956,7 +956,7 @@ pub fn sequence_band(
                     .children((text, buttons(1)))
             };
             Border::new()
-                .background(Brush::Solid(Color::rgb(0xff, 0xf4, 0xce)))
+                .background(Brush::Solid(crate::palette::note_band()))
                 .padding(Thickness::new(10.0, 6.0, 10.0, 6.0))
                 .content(content)
         }

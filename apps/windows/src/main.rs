@@ -24,6 +24,7 @@ mod measure;
 mod menus;
 mod merge;
 mod merge_several;
+mod palette;
 mod patch_files;
 mod prefs;
 mod programs;
@@ -129,6 +130,12 @@ fn parse() -> Result<Args, String> {
             "--out" => parsed.out = Some(value()?.into()),
             "--repositories" => parsed.repositories = true,
             "--working-copy" => parsed.working_copy = true,
+            // 試し: Windows の設定を変えずに外観を決める。
+            "--appearance" => match value()?.as_str() {
+                "dark" => palette::force(true),
+                "light" => palette::force(false),
+                other => return Err(format!("--appearance は light か dark: {other}")),
+            },
             "--place" => {
                 let numbers: Vec<i32> = value()?
                     .split(',')
@@ -178,6 +185,7 @@ fn main() {
     render::set_one_line(prefs::bool(prefs::COMPACT_HISTORY_ROWS));
     render::set_history_items(prefs::history_items());
     render::set_highlight_ancestors(prefs::bool(prefs::HIGHLIGHT_ANCESTORS));
+    palette::refresh();
     let mut args = match parse() {
         Ok(a) => a,
         Err(e) => {

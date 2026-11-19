@@ -490,7 +490,7 @@ fn performance_view(speeds: &[Speed]) -> View {
         heading(tr!("Max ms"), 4),
         heading(tr!("Last ms"), 5),
     ));
-    let orange = Brush::Solid(Color::rgb(0xc4, 0x6a, 0x00));
+    let orange = Brush::Solid(crate::palette::warning_text());
     let rows = speeds.iter().map(|s| {
         let slow = s.p95 > 16.7;
         let p95 = cell(ms(s.p95), 3);
