@@ -7,6 +7,15 @@ becomes the GitHub Release notes.
 
 ## App and engine
 
+### Unreleased
+
+#### Added
+
+- `amonhen tui` is a front end in the terminal: History with commit details and diffs, the Working Copy with staging
+  by file, hunk and line, discard, commit and amend, a sidebar of branches and tags, History search and
+  ancestor emphasis, and fetch, pull, push, checkout, new branch, merge, rebase, stash and undo,
+  resolving conflicts by side, and asking for passwords inside the screen; `?` lists the keys. These are its first stages; see `docs/tui.md`.
+
 ### [0.2.12] - 2026-11-18
 
 History search can match the author's email, the committer and the whole message. Amon Hen asks before sending its

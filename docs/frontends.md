@@ -413,3 +413,19 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Windows SSH hosts | ✓ | ✓ | — | ✓ | ✓ |  |
 | askpass dialog for passwords and passphrases | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: VSCode's input box, through a script the extension passes to git, ssh and the shared daemon.<br>CLI: The dialog belongs to the apps. |
 | Signature verification (this machine's keys or the host's) | ✓ | ✓ | — | n/a | △ | VSCode: The extension opens no `ssh://` repositories; under Remote-SSH it runs on the host, so git verifies there with the host's keys, as for any repository the extension opens.<br>CLI: Checked in `show` and `refs --verify`; no choice. |
+
+## Terminal front end (TUI)
+
+`amonhen tui` (`crates/tui`) is in its first stages and has no column in the tables above yet; it gets one when its features settle. What it has today, by the chapters above ([tui.md](tui.md) has the details and what is left):
+
+- Sidebar: Workspace rows, Branches (current marked, ahead and behind), Remotes, Tags, Stashes and Worktrees (listed only) in flat lists, with a filter. No folders, favorites, submodules or context menus; operations are keys.
+- Toolbar: fetch, pull (merge or rebase offered when diverged), push to the upstream, publish, force push with lease when the upstream is ahead, new branch, rename and delete, new tag and delete, stash (tracked, with untracked, or keeping the index; no message), pop, undo, merge and rebase from the sidebar. Confirmations and names are asked on the bottom line, not in sheets.
+- Stashes: apply, pop and drop from the sidebar; Enter shows a stash's diff.
+- Working Copy: one list with a check per file, the HEAD-to-working-tree diff with staged marks, staging by file, hunk, line and a range of lines, discard, the message with commit, amend, commit and push (the push is asked) and git's editor, conflicts shown with markers and resolved by side per conflict or per file (no base side, no Magic Merge, no merge editor).
+- History: the graph on one line per commit, ref labels, search with matches colored and stepped through (no partial results, no matches-only view), ancestor emphasis by dimming rows, one selected commit with cherry-pick, revert, detached checkout, new branch, new tag, reset, edit message, fixup into parent and drop as keys (no multi-selection, folding, density band or edit mode with several edits).
+- History's right column: message, author and date, committer when different, ID and parents, the refs at the commit, whether it is signed (not verified), changed files, the unified diff with changed words and syntax colors. No signature verification, notes or the detailed table.
+- Status bar: the bottom line shows a merge, rebase, cherry-pick or revert in progress with continue, skip and abort.
+- SSH hosts, shared daemon, askpass: opens `ssh://` and `daemon:` locations like the CLI (not tested yet); askpass on Unix.
+- Blame / File History: for a file in the Working Copy list, or a commit's file (Blame at that commit); the line's commit in the details pane and in History. No file tree to pick an unchanged file, no restore.
+- Reflog: HEAD's entries with the selected commit's details and a new branch there; no other refs, no reset, restore or compare.
+- Not there: tabs and windows, the repository list, Settings and Repository settings, Range Diff, patches, AI, Activity, GitHub, worktrees, selecting text in diffs.
