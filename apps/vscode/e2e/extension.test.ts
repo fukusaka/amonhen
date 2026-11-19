@@ -2800,6 +2800,7 @@ async function reflogFlow(): Promise<void> {
   const branch = git('symbolic-ref', '--short', 'HEAD').trim();
   const rev = (r: string) => git('rev-parse', r).trim();
   const file = join(root, 'reflog-e2e.txt');
+  const stashes = git('stash', 'list').split('\n').filter(Boolean).length;
   git('switch', '-q', '-c', 'reflog-e2e');
   writeFileSync(file, 'reflog\n');
   git('add', 'reflog-e2e.txt');
@@ -2907,9 +2908,21 @@ async function reflogFlow(): Promise<void> {
     assert.deepEqual(compared.pairs!.map((p) => [p.status, p.subject]), [['added', 'reflog e2e']]);
     await panel.rangeDiff.handle({ type: 'rangeDiffClose' });
   } finally {
-    git('switch', '-q', branch);
-    git('branch', '-D', 'reflog-e2e');
-    if (git('branch', '--list', 'reflog-rescue')) git('branch', '-D', 'reflog-rescue');
+    // 途中で落ちても、作業ツリー・stash・ブランチを始めの形に戻す（1 つの失敗をほかの試験に広げない）。
+    // 後片付けが失敗しても、元の失敗を隠さない
+    try {
+      git('reset', '-q', '--hard');
+      git('switch', '-q', '--discard-changes', branch);
+      rmSync(file, { force: true });
+      while (git('stash', 'list').split('\n').filter(Boolean).length > stashes && /Before reset --hard to /.test(git('stash', 'list', '-n', '1', '--format=%s'))) {
+        git('stash', 'drop', '-q');
+      }
+      for (const name of ['reflog-e2e', 'reflog-rescue']) {
+        if (git('branch', '--list', name)) git('branch', '-D', name);
+      }
+    } catch (e) {
+      console.error(`      reflog の後片付けに失敗: ${e}`);
+    }
     await vscode.commands.executeCommand('amonhen.refresh');
   }
 }
