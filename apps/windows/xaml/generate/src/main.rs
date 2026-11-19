@@ -44,6 +44,22 @@ const FILTER: &[&str] = &[
     "Microsoft.UI.Xaml.Controls.IItemsControlStatics::{}",
     "Microsoft.UI.Xaml.Controls.Primitives.ISelectorStatics::{}",
     "Microsoft.UI.Xaml.Controls.Primitives.ISelectorFactory::{}",
+    // サイドバーの木のドラッグ（WinUI の TreeView は、もとから項目を引いて別の項目の中・間へ動かせる）。お気に入りの
+    // ブランチだけを引けるようにし、落とした後の並びをお気に入りの順にする。
+    "Microsoft.UI.Xaml.Controls.TreeView",
+    "Microsoft.UI.Xaml.Controls.ITreeView2::{DragItemsStarting,remove_DragItemsStarting,DragItemsCompleted,remove_DragItemsCompleted}",
+    "Microsoft.UI.Xaml.Controls.ITreeViewFactory::{}",
+    "Microsoft.UI.Xaml.Controls.ITreeViewStatics::{}",
+    "Microsoft.UI.Xaml.Controls.ITreeViewStatics2::{}",
+    "Microsoft.UI.Xaml.Controls.TreeViewDragItemsStartingEventArgs",
+    "Microsoft.UI.Xaml.Controls.ITreeViewDragItemsStartingEventArgs::{Items,Cancel,put_Cancel}",
+    "Microsoft.UI.Xaml.Controls.TreeViewDragItemsCompletedEventArgs",
+    "Microsoft.UI.Xaml.Controls.ITreeViewDragItemsCompletedEventArgs::{Items}",
+    "Microsoft.UI.Xaml.Controls.ITreeViewDragItemsCompletedEventArgs2::{NewParentItem}",
+    "Microsoft.UI.Xaml.Controls.TreeViewNode",
+    "Microsoft.UI.Xaml.Controls.ITreeViewNode::{Children}",
+    "Microsoft.UI.Xaml.Controls.ITreeViewNodeFactory::{}",
+    "Microsoft.UI.Xaml.Controls.ITreeViewNodeStatics::{}",
     // 等幅の字（Control に付けると、中の TextBlock が継ぐ。reactor の部品には字体の指定がない）。
     "Microsoft.UI.Xaml.Media.FontFamily",
     "Microsoft.UI.Xaml.Media.IFontFamilyFactory::{CreateInstanceWithName}",

@@ -26,6 +26,12 @@ use crate::sidebar::{self, BranchGroups};
 use crate::{Args, Session};
 
 thread_local! {
+    /// サイドバーの木で引いてよい項目（お気に入りのブランチの鍵。上から順）。木のドラッグの始まりで見る。
+    static FAVORITE_KEYS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    /// ドラッグを付けた木（同一性）と、その受け口、最後に木を探した時刻。木は作り直すと別のものになる。
+    static TREE_DRAG: RefCell<(usize, Vec<windows_core_reactor::EventRevoker>)> =
+        const { RefCell::new((0, Vec::new())) };
+    static TREE_DRAG_AT: std::cell::Cell<Option<Instant>> = const { std::cell::Cell::new(None) };
     /// 見張っている、daemon・SSH 越しのリポジトリと、最後に見た時刻（切れたら知らせる。GTK4 版・macOS 版と同じく
     /// 0.25 秒ごとに見て、切れたら見るのをやめる）。
     static WATCHED_CONNECTION: RefCell<Option<(Arc<Repository>, Instant)>> = const { RefCell::new(None) };
@@ -190,6 +196,8 @@ struct Root {
     failure_generation: u64,
     /// daemon・SSH 越しのつながりが切れた（そのリポジトリと理由。ステータスバーの上に Reconnect と一緒に出す）。
     disconnected: Option<(Arc<Repository>, String)>,
+    /// サイドバーの木を作り直す数（お気に入りを引いて並べ替えた後。WinUI が動かした項目を元の形に戻す）。
+    sidebar_epoch: u32,
     /// 走っている操作の数（GTK4 版の Activity のボタンの回る印と数）。
     running: usize,
     /// History で複数選んでいるコミット（上から。右クリックのメニューを複数のもの用にする）。
@@ -894,6 +902,8 @@ enum Message {
     SshHosts(crate::sshhosts::Event),
     /// daemon・SSH 越しのつながりが切れた（そのリポジトリと理由）。
     Disconnected(Arc<Repository>, String),
+    /// サイドバーの木でお気に入りを引いて落とした（新しい順の名前。お気に入りの間でなければ None）。
+    FavoritesDropped(Option<Vec<String>>),
     /// Git > Programs の候補と使う git。
     SettingsPrograms(u64, crate::programs::State),
     /// Settings > Git の Keys and Values の欄（`query`・`key`・`value`）とボタン（`add`・`remove:<key>`）。
@@ -1253,6 +1263,7 @@ impl Component for Root {
             failure: None,
             failure_generation: 0,
             disconnected: None,
+            sidebar_epoch: 0,
             running: 0,
             multi: Vec::new(),
             multi_consecutive: false,
@@ -1323,6 +1334,30 @@ impl Component for Root {
 
     fn update(&mut self, message: Message, context: &ComponentContext<Self>) {
         self.handle(message, context);
+        // 木で引いてよいもの（お気に入りのブランチ。順は木と同じ）。
+        let favorites: Vec<String> = {
+            let mut pinned: Vec<(i64, &RefEntry)> = self
+                .refs
+                .as_ref()
+                .map(|r| {
+                    r.refs
+                        .entries
+                        .iter()
+                        .filter(|e| e.kind == amonhen_model::RefKind::Local)
+                        .filter_map(|e| {
+                            let rank = self.groups.as_ref()?.branches.get(&e.name)?.pinned?;
+                            Some((rank, e))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            pinned.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.name.cmp(&b.1.name)));
+            pinned
+                .into_iter()
+                .map(|(_, e)| sidebar::ref_key(e))
+                .collect()
+        };
+        FAVORITE_KEYS.with(|f| *f.borrow_mut() = favorites);
         // daemon・SSH 越しに開いたリポジトリなら、切れたかを見張る（手元のものは見ない）。
         let watch = self.repo.clone().filter(|repo| {
             repo.connection_state().is_some()
@@ -6178,6 +6213,26 @@ impl Root {
             Message::Disconnected(repo, reason) => {
                 self.disconnected = Some((repo, reason));
             }
+            Message::FavoritesDropped(order) => {
+                // 木は WinUI が自分で並べ替えたので、作り直して git の設定の順に合わせる。
+                self.sidebar_epoch += 1;
+                let Some(names) = order else { return };
+                let Some(repo) = self.repo.clone() else {
+                    return;
+                };
+                let commands: Vec<Value> = names
+                    .iter()
+                    .enumerate()
+                    .map(|(i, n)| {
+                        json!({
+                            "op": "configSet",
+                            "key": format!("branch.{n}.amonhenPinned"),
+                            "value": (i + 1).to_string(),
+                        })
+                    })
+                    .collect();
+                perform_all(context, repo, commands, tr!("Favorites"));
+            }
             Message::SshHosts(event) => {
                 let Some(ssh) = self.settings.as_mut().and_then(|s| s.ssh.as_mut()) else {
                     return;
@@ -7337,37 +7392,42 @@ impl Root {
                     .margin(Thickness::new(8.0, 6.0, 8.0, 4.0))
                     .grid_row(0)
                     .on_text_changed(context.callback(Message::SidebarFilter)),
-                TreeView::new()
-                    .grid_row(1)
-                    .on_item_invoked(context.callback(Message::Invoked))
-                    .nodes(sidebar::nodes(
-                        self.refs.as_ref().map(|r| &r.refs),
-                        self.groups.as_ref(),
-                        self.range_diff.is_some(),
-                        &self
-                            .worktrees
-                            .iter()
-                            .map(|w| {
-                                let editing = self
-                                    .repo
-                                    .as_ref()
-                                    .and_then(|r| r.paths().workdir)
-                                    .is_some_and(|d| same_path(&d.display().to_string(), &w.path));
-                                let changes =
-                                    self.worktree_counts.get(&w.path).copied().unwrap_or(0);
-                                (format!("worktree:{}", w.path), w.title(editing, changes))
-                            })
-                            .collect::<Vec<_>>(),
-                        sidebar::Marks {
-                            form: &self.form,
-                            conflicts,
-                            tag_remotes: &self.tag_remotes,
-                            tag_signatures: &self.tag_signatures,
-                            submodules: &self.submodules,
-                            subtrees: &self.subtrees["subtrees"],
-                        },
-                        &self.sidebar_filter,
-                    )),
+                View::keyed_fragment([(
+                    format!("tree-{}", self.sidebar_epoch),
+                    TreeView::new()
+                        .grid_row(1)
+                        .on_item_invoked(context.callback(Message::Invoked))
+                        .nodes(sidebar::nodes(
+                            self.refs.as_ref().map(|r| &r.refs),
+                            self.groups.as_ref(),
+                            self.range_diff.is_some(),
+                            &self
+                                .worktrees
+                                .iter()
+                                .map(|w| {
+                                    let editing = self
+                                        .repo
+                                        .as_ref()
+                                        .and_then(|r| r.paths().workdir)
+                                        .is_some_and(|d| {
+                                            same_path(&d.display().to_string(), &w.path)
+                                        });
+                                    let changes =
+                                        self.worktree_counts.get(&w.path).copied().unwrap_or(0);
+                                    (format!("worktree:{}", w.path), w.title(editing, changes))
+                                })
+                                .collect::<Vec<_>>(),
+                            sidebar::Marks {
+                                form: &self.form,
+                                conflicts,
+                                tag_remotes: &self.tag_remotes,
+                                tag_signatures: &self.tag_signatures,
+                                submodules: &self.submodules,
+                                subtrees: &self.subtrees["subtrees"],
+                            },
+                            &self.sidebar_filter,
+                        )),
+                )]),
                 Grid::new()
                     .element_ref(&self.sidebar_menu_host)
                     .grid_row(1)
@@ -15599,6 +15659,14 @@ impl HistoryView {
                 .with(|t| t.set((Instant::now(), if all { Instant::now() } else { fresh })));
             self.sender.send(Message::CountWorktrees(all));
         }
+        // サイドバーの木にドラッグの受け口を付ける（作り直すと別の木になるので、0.5 秒ごとに見て付け直す）。
+        if TREE_DRAG_AT
+            .with(|t| t.get())
+            .is_none_or(|t| t.elapsed() >= std::time::Duration::from_millis(500))
+        {
+            TREE_DRAG_AT.with(|t| t.set(Some(Instant::now())));
+            hook_tree_drag();
+        }
         // daemon・SSH 越しのつながりが切れたら、ステータスバーの上で知らせる（0.25 秒ごとに見る）。
         if let Some(closed) = WATCHED_CONNECTION.with(|w| {
             let mut w = w.borrow_mut();
@@ -17184,6 +17252,85 @@ fn tree_item_key(from: &IInspectable) -> Option<(xaml::UIElement, String)> {
         node = xaml::VisualTreeHelper::GetParent(&node).ok()?;
     }
     None
+}
+
+/// 木の項目（TreeViewNode）の鍵。
+fn node_key(node: &IInspectable) -> Option<String> {
+    let unknown = node.cast::<windows_core_reactor::IUnknown>().ok()?;
+    windows_reactor::tree_node_key_by_identity(unknown.as_raw() as usize)
+}
+
+/// サイドバーの木のドラッグ（GTK4 版・macOS 版のお気に入りの並べ替え）。WinUI の TreeView は、もとから項目を引いて
+/// 別の項目の中・間へ動かせる。お気に入りのブランチだけを引けるようにし、Branches の中で落としたら、その並びを
+/// お気に入りの順にする（ほかの所なら何もしない）。どちらでも木は作り直す。
+fn hook_tree_drag() {
+    fn find(node: &xaml::DependencyObject, depth: u32) -> Option<xaml::TreeView> {
+        if let Ok(tree) = node.cast::<xaml::TreeView>() {
+            return Some(tree);
+        }
+        if depth == 0 {
+            return None;
+        }
+        let count = xaml::VisualTreeHelper::GetChildrenCount(node).ok()?;
+        (0..count).find_map(|i| find(&xaml::VisualTreeHelper::GetChild(node, i).ok()?, depth - 1))
+    }
+    let Some(tree) = SIDEBAR_ELEMENT
+        .with(|e| e.borrow().clone())
+        .and_then(|ui| find(&ui.cast().ok()?, 6))
+    else {
+        return;
+    };
+    let identity = tree
+        .cast::<windows_core_reactor::IUnknown>()
+        .map_or(0, |u| u.as_raw() as usize);
+    if TREE_DRAG.with(|d| d.borrow().0 == identity) {
+        return;
+    }
+    let mut revokers = Vec::new();
+    // お気に入り以外を引き始めたら取りやめる。
+    if let Ok(r) =
+        tree.DragItemsStarting(|_, args: Ref<xaml::TreeViewDragItemsStartingEventArgs>| {
+            let Some(args) = args.as_ref() else { return };
+            let Ok(items) = args.Items() else { return };
+            let favorites = FAVORITE_KEYS.with(|f| f.borrow().clone());
+            let all = (0..items.Size().unwrap_or(0)).all(|i| {
+                items
+                    .GetAt(i)
+                    .ok()
+                    .and_then(|n| node_key(&n))
+                    .is_some_and(|k| favorites.contains(&k))
+            });
+            if !all {
+                let _ = args.SetCancel(true);
+            }
+        })
+    {
+        revokers.push(r);
+    }
+    if let Ok(r) =
+        tree.DragItemsCompleted(|_, args: Ref<xaml::TreeViewDragItemsCompletedEventArgs>| {
+            let order = args.as_ref().and_then(|args| {
+                let parent = args.NewParentItem().ok()?;
+                if node_key(&parent).as_deref() != Some("group:branches") {
+                    return None;
+                }
+                let children = parent.cast::<xaml::TreeViewNode>().ok()?.Children().ok()?;
+                let favorites = FAVORITE_KEYS.with(|f| f.borrow().clone());
+                let names: Vec<String> = (0..children.Size().unwrap_or(0))
+                    .filter_map(|i| node_key(&children.GetAt(i).ok()?.cast().ok()?))
+                    .filter(|k| favorites.contains(k))
+                    .filter_map(|k| sidebar::parse_ref_key(&k).map(|(_, n)| n.to_owned()))
+                    .collect();
+                (names.len() == favorites.len()).then_some(names)
+            });
+            with_history(|h| {
+                h.sender.send(Message::FavoritesDropped(order));
+            });
+        })
+    {
+        revokers.push(r);
+    }
+    TREE_DRAG.with(|d| *d.borrow_mut() = (identity, revokers));
 }
 
 /// 作り直したサイドバーのメニューを、右クリックした所で開く。
