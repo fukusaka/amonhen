@@ -9,6 +9,14 @@ becomes the GitHub Release notes.
 
 ### Unreleased
 
+#### Added
+
+- `amonhen tui` is a front end in the terminal: History with commit details and diffs, the Working Copy with staging
+  by file, hunk and line, discard, commit and amend, a sidebar of branches and tags, History search and
+  ancestor emphasis, and fetch, pull, push, checkout, new branch, merge, rebase, stash and undo,
+  resolving conflicts by side, and asking for passwords inside the screen; `?` lists the keys and `:` the commands by
+  name. These are its first stages; see `docs/tui.md`.
+
 #### Fixed
 
 - The engine on Windows opens repositories on SSH hosts (`-C ssh://…`): it no longer relies on ssh's connection
@@ -1181,6 +1189,13 @@ First release.
 - Repositories on SSH hosts through a daemon on the host.
 
 ## VSCode extension
+
+### Unreleased
+
+#### Fixed
+
+- Working Copy no longer reports "File has no changes" when the selected file is changed again while its diff is
+  being read.
 
 ### [0.2.8] - 2026-11-18
 
