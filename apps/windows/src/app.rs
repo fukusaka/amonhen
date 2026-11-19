@@ -6324,12 +6324,10 @@ impl Root {
                         crate::files::open_files(&title).into_iter().next(),
                     ) {
                         let path = path.display().to_string();
-                        write_global_settings(
-                            repo,
-                            epoch,
-                            vec![crate::reposettings::file_command(key, &path, "global")],
-                            context,
-                        );
+                        let commands =
+                            vec![crate::reposettings::file_command(key, &path, "global")];
+                        self.record_settings_change(true, &commands);
+                        write_global_settings(repo, epoch, commands, context);
                     }
                     return;
                 }
