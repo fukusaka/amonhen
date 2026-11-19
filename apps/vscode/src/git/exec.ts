@@ -57,6 +57,17 @@ export class GitError extends Error {
   }
 }
 
+/**
+ * git が設定ファイルを読めずに、何もしないまま止まったか。Windows では、ほかの git が `.git/config` を書き換えて
+ * いる間（`config.lock` を置き換える瞬間）に読むと「Permission denied」でこうなる
+ */
+export function configUnreadable(e: unknown): boolean {
+  return e instanceof GitError && e.stderr.includes('unknown error occurred while reading the configuration files');
+}
+
+/** 設定ファイルを読めなかったときに、やり直す前に待つ時間（ミリ秒） */
+const CONFIG_RETRY_MS = [50, 150, 400];
+
 const BASE_ENV = {
   GIT_TERMINAL_PROMPT: '0',
   // エディタを待って止まらないようにする。メッセージが必要な操作は引数で渡す
@@ -87,7 +98,23 @@ export class GitExecutor {
     return this.choose().path;
   }
 
-  exec(args: readonly string[], opts: ExecOptions): Promise<Buffer> {
+  /**
+   * git を動かす。設定ファイルを読めずに止まったとき（[`configUnreadable`]。git はまだ何もしていない）は、少し
+   * 待ってやり直す
+   */
+  async exec(args: readonly string[], opts: ExecOptions): Promise<Buffer> {
+    for (const wait of CONFIG_RETRY_MS) {
+      try {
+        return await this.execOnce(args, opts);
+      } catch (e) {
+        if (!configUnreadable(e)) throw e;
+        await new Promise((resolve) => setTimeout(resolve, wait));
+      }
+    }
+    return this.execOnce(args, opts);
+  }
+
+  private execOnce(args: readonly string[], opts: ExecOptions): Promise<Buffer> {
     // --progress はサブコマンドのすぐ後に（後ろだと `--` の後のリモートの名前になりうる）
     const withProgress = opts.network && args.length > 0 ? [args[0]!, '--progress', ...args.slice(1)] : [...args];
     const fullArgs = opts.readOnly ? ['--no-optional-locks', ...withProgress] : withProgress;

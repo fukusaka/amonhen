@@ -1210,6 +1210,8 @@ First release.
   being read.
 - Working Copy: in a narrow diff pane, the buttons above the diff move to their own row instead of wrapping their
   labels and hiding the file name.
+- On Windows, a git command that starts while another git rewrites `.git/config` is run again instead of failing with
+  "unable to access '.git/config': Permission denied".
 
 ### [0.2.8] - 2026-11-18
 
