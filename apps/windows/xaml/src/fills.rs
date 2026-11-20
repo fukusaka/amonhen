@@ -36,8 +36,18 @@ const KEYS: [(&str, u32, u32, f32); 12] = [
     ("ComboBoxBackgroundPressed", 0x4DF9_F9F9, 0x08FF_FFFF, 1.0),
     // 切り替えるボタン（詳細を広げる ⤢ など）。入っているときは強調の色のまま。
     ("ToggleButtonBackground", 0xB3FF_FFFF, 0x0FFF_FFFF, 0.15),
-    ("ToggleButtonBackgroundPointerOver", 0x80F9_F9F9, 0x15FF_FFFF, 1.0),
-    ("ToggleButtonBackgroundPressed", 0x4DF9_F9F9, 0x08FF_FFFF, 1.0),
+    (
+        "ToggleButtonBackgroundPointerOver",
+        0x80F9_F9F9,
+        0x15FF_FFFF,
+        1.0,
+    ),
+    (
+        "ToggleButtonBackgroundPressed",
+        0x4DF9_F9F9,
+        0x08FF_FFFF,
+        1.0,
+    ),
 ];
 
 /// 窓の根に入れた部品の地。
