@@ -7479,12 +7479,25 @@ impl Root {
             }
         }
         context.window_title(title.clone());
-        // 外観は Windows の設定に合わせる（描く色と同じ判断にするため、ここで決めて渡す）。
-        context.window_visuals(WindowVisuals::new().theme(if crate::palette::dark() {
-            WindowTheme::Dark
-        } else {
-            WindowTheme::Light
-        }));
+        // 窓の背景（透かす場所・ツールバーの色・背景画像。リポジトリだけの設定があればそれ）。
+        let backdrop = crate::backdrop::current(
+            &crate::tabs::current().map_or_else(|| args.repo.display().to_string(), |t| t.location),
+        );
+        // 外観は Windows の設定に合わせる（描く色と同じ判断にするため、ここで決めて渡す）。窓の後ろを透かすなら
+        // Acrylic を敷く。
+        context.window_visuals(
+            WindowVisuals::new()
+                .theme(if crate::palette::dark() {
+                    WindowTheme::Dark
+                } else {
+                    WindowTheme::Light
+                })
+                .backdrop(if backdrop.see_through() {
+                    WindowBackdrop::Acrylic
+                } else {
+                    WindowBackdrop::None
+                }),
+        );
         let tab_strip = Grid::new()
             .grid_row(2)
             .element_ref(&self.tab_host)
@@ -8127,10 +8140,30 @@ impl Root {
             });
         }
         let dialog = self.dialog_view(context);
-        // 窓の背景（ツールバーの色と背景画像。リポジトリだけの設定があればそれ）。
-        let backdrop = crate::backdrop::current(
-            &crate::tabs::current().map_or_else(|| args.repo.display().to_string(), |t| t.location),
-        );
+        // 透かすときの地: メニュー・ツールバー・タブ、サイドバー、下の帯は窓の色を透過率の分だけ薄く、読む面
+        // （一覧・詳細・差分）は不透明に塗る。透かさなければ窓全体を窓の色で塗る。
+        let window = crate::palette::window();
+        let grounds: View = if backdrop.see_through() {
+            let ground = Brush::Solid(backdrop.ground(window));
+            View::fragment((
+                Border::new()
+                    .grid_row(0)
+                    .grid_row_span(3)
+                    .background(ground),
+                Grid::new()
+                    .grid_row(3)
+                    .columns([GridLength::Pixel(self.sidebar_width), GridLength::Star(1.0)])
+                    .children((
+                        Border::new().background(ground),
+                        Border::new()
+                            .grid_column(1)
+                            .background(Brush::Solid(window)),
+                    )),
+                Border::new().grid_row(4).background(ground),
+            ))
+        } else {
+            View::empty()
+        };
         let toolbar_tint: View = match backdrop.toolbar_tint() {
             Some(color) => Border::new()
                 .grid_row(0)
@@ -8157,8 +8190,12 @@ impl Root {
         );
         Grid::new()
             .element_ref(&self.root)
-            // 窓の地（WinUI は外観を替えても窓の地を塗り直さないので、ここで塗る）。
-            .background(Brush::Solid(crate::palette::window()))
+            // 窓の地（WinUI は外観を替えても窓の地を塗り直さないので、ここで塗る）。透かすときは場所ごとに塗る。
+            .background(Brush::Solid(if backdrop.see_through() {
+                Color::transparent()
+            } else {
+                window
+            }))
             .rows([
                 GridLength::Auto,
                 GridLength::Auto,
@@ -8167,6 +8204,7 @@ impl Root {
                 GridLength::Auto,
             ])
             .children((
+                grounds,
                 toolbar_tint,
                 menu_bar,
                 toolbar,
@@ -13926,6 +13964,8 @@ impl Root {
                 }),
                 backdrop_placement: context
                     .callback(|i| Message::Backdrop(crate::backdrop::Event::Placement(i))),
+                backdrop_style: context
+                    .callback(|i| Message::Backdrop(crate::backdrop::Event::Style(i))),
                 backdrop_number: Box::new(|f| context.callback(move |v| Message::Backdrop(f(v)))),
                 backdrop_tint: context
                     .callback(|on| Message::Backdrop(crate::backdrop::Event::Tint(on))),

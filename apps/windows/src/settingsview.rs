@@ -178,6 +178,7 @@ pub struct Callbacks<'a> {
     /// 窓の背景の欄（Choose…・Remove、位置、横棒、ツールバーの色を敷くか・色）。
     pub backdrop_button: Box<dyn Fn(crate::backdrop::Event) -> Callback<()> + 'a>,
     pub backdrop_placement: Callback<Option<usize>>,
+    pub backdrop_style: Callback<Option<usize>>,
     pub backdrop_number: Box<dyn Fn(BackdropNumber) -> Callback<f64> + 'a>,
     pub backdrop_tint: Callback<bool>,
     pub backdrop_color: Callback<Color>,
@@ -774,7 +775,7 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
 }
 
 /// 外観ごとのテーマを選ぶ行。
-/// 窓の背景（macOS 版・GTK4 版の Theme の Background Image と Toolbar）。窓の後ろを透かす欄はまだない。
+/// 窓の背景（macOS 版・GTK4 版の Theme の Window Transparency・Background Image・Toolbar）。
 fn backdrop_section(callbacks: &Callbacks) -> View {
     use crate::backdrop::{Event, Placement};
     let b = crate::backdrop::Backdrop::app();
@@ -838,6 +839,14 @@ fn backdrop_section(callbacks: &Callbacks) -> View {
     } else {
         View::empty()
     };
+    let transparency: View = if b.see_through() {
+        labeled(
+            tr!("Transparency"),
+            percent(b.transparency, 10.0, 90.0, Event::Transparency),
+        )
+    } else {
+        View::empty()
+    };
     let tint = b.toolbar_tint();
     let tint_rows: View = match tint {
         Some(color) => StackPanel::new().children((
@@ -860,6 +869,21 @@ fn backdrop_section(callbacks: &Callbacks) -> View {
         None => View::empty(),
     };
     StackPanel::new().children((
+        heading(tr!("Window Transparency")),
+        labeled(
+            tr!("See through in"),
+            ComboBox::new()
+                .items_source(
+                    crate::backdrop::STYLES
+                        .iter()
+                        .map(|s| crate::backdrop::style_title(s))
+                        .collect::<Vec<_>>(),
+                )
+                .selected_index(b.style_index())
+                .on_selection_changed(callbacks.backdrop_style.clone())
+                .into(),
+        ),
+        transparency,
         heading(tr!("Background Image")),
         labeled(
             tr!("Image"),
