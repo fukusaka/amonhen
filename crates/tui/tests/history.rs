@@ -979,6 +979,16 @@ fn h_goes_back_from_the_right_pane() {
     assert_eq!(shot("1llh"), shot("1l"));
 }
 
+/// git がコンフリクトの見込み（`merge-tree --write-tree`、2.38 から）を出せるか。
+fn predicts_conflicts(dir: &Path) -> bool {
+    let version = git_out(dir, &["--version"]);
+    let numbers: Vec<u32> = version
+        .split(|c: char| !c.is_ascii_digit())
+        .filter_map(|n| n.parse().ok())
+        .collect();
+    (numbers[0], numbers[1]) >= (2, 38)
+}
+
 /// 上流のあるリポジトリ: 空のリモートに main を push してから、手元で 1 つ進める。
 fn with_remote(dir: &Path) -> std::path::PathBuf {
     let remote = dir.join("origin.git");
@@ -1180,12 +1190,7 @@ fn merge_stops_at_conflicts_and_can_be_aborted() {
         "{line}"
     );
     assert!(line.contains("   y merge   n cancel"), "{line}");
-    let version = git_out(dir.path(), &["--version"]);
-    let numbers: Vec<u32> = version
-        .split(|c: char| !c.is_ascii_digit())
-        .filter_map(|n| n.parse().ok())
-        .collect();
-    if (numbers[0], numbers[1]) >= (2, 38) {
+    if predicts_conflicts(dir.path()) {
         assert!(line.contains("Conflicts are likely in a.txt."), "{line}");
     }
     let stopped = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjjmy").unwrap();
@@ -2022,6 +2027,32 @@ fn push_publishes_a_branch_without_an_upstream() {
     );
 }
 
+/// 分かれた上流を pull する前に、コンフリクトしそうなファイルを言う
+#[test]
+fn pull_names_the_files_likely_to_conflict() {
+    let dir = tempfile::tempdir().unwrap();
+    diverged(dir.path());
+    // topic（同じ行を別に書き換えた）を main の上流にする。
+    git(
+        dir.path(),
+        BASE,
+        &["branch", "-q", "--set-upstream-to=topic"],
+    );
+    let pull = amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), "p").unwrap();
+    let line = pull.lines().last().unwrap();
+    println!("{line}");
+    assert!(
+        line.contains(" How?   y as git is set   m merge   r rebase   n cancel"),
+        "{line}"
+    );
+    if predicts_conflicts(dir.path()) {
+        assert!(
+            line.contains("have diverged. Conflicts are likely in a.txt. How?"),
+            "{line}"
+        );
+    }
+}
+
 /// 上流と分かれていれば、`P` は置き換える push も選ばせ、`p` は取り込み方を選ばせる
 #[test]
 fn diverged_branches_offer_force_push_and_pull_modes() {
@@ -2047,9 +2078,18 @@ fn diverged_branches_offer_force_push_and_pull_modes() {
             &["log", "-1", "--format=%s", "main"],
         )
     };
-    let pull = amonhen_tui::snapshot(open(&work), 120, 8, clock(), "p").unwrap();
+    let pull = amonhen_tui::snapshot(open(&work), 160, 8, clock(), "p").unwrap();
     println!("{pull}");
-    assert!(pull.contains("have diverged. How?   y as git is set   m merge   r rebase   n cancel"));
+    assert!(pull.contains(" How?   y as git is set   m merge   r rebase   n cancel"));
+    // 先にコンフリクトの見込みを読む（空のコミットどうしなので、ない）。
+    if predicts_conflicts(&work) {
+        assert!(
+            pull.contains("have diverged. No conflicts are expected. How?"),
+            "{pull}"
+        );
+    } else {
+        assert!(pull.contains("have diverged. How?"), "{pull}");
+    }
     let asked = amonhen_tui::snapshot(open(&work), 140, 8, clock(), "P").unwrap();
     println!("{asked}");
     assert!(

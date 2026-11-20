@@ -1737,13 +1737,13 @@ impl App {
                 return;
             }
             "mergeConflicts" => {
-                let conflicts = (reply["info"]["conflicts"].as_array()).map(|files| {
-                    files
-                        .iter()
-                        .filter_map(|f| f.as_str().map(str::to_owned))
-                        .collect()
-                });
+                let conflicts = conflict_files(&reply["info"]["conflicts"]);
                 self.ask_with_preview(conflicts);
+                return;
+            }
+            "pullConflicts" => {
+                let conflicts = conflict_files(&reply["info"]["conflicts"]);
+                self.ask_pull_with(conflicts);
                 return;
             }
             "resetPreview" => {
@@ -1843,25 +1843,43 @@ impl App {
         self.open();
     }
 
-    /// pull する。上流と分かれているときは、どう取り込むかを選ばせる（ほかは git の設定のとおり）。
+    /// pull する。上流と分かれているときは、コンフリクトの見込みを読んでから、どう取り込むかを選ばせる（ほかは
+    /// git の設定のとおり）。
     fn ask_pull(&mut self) {
+        if self.ahead > 0 && self.behind > 0 {
+            if let Some(upstream) = self.upstream.clone() {
+                self.run(
+                    "pullConflicts",
+                    tr!("Looking ahead…"),
+                    json!({"op": "predictMerge", "ours": null, "theirs": upstream}),
+                );
+            } else {
+                self.ask_pull_with(None);
+            }
+            return;
+        }
+        self.run("pull", tr!("Pulling…"), json!({"op": "pull"}));
+    }
+
+    /// 分かれているときの pull の選択。`conflicts` は上流を merge したときにコンフリクトしそうなファイル（分から
+    /// なければ `None`。rebase でも最後の結果は同じなので目安になる）。
+    fn ask_pull_with(&mut self, conflicts: Option<Vec<String>>) {
         let pull = |mode: &str| Request::Run {
             name: "pull",
             command: json!({"op": "pull", "mode": mode}),
         };
-        if self.ahead > 0 && self.behind > 0 {
-            self.choices = Some((
-                tr!("Pull: the branch and its upstream have diverged. How?"),
-                vec![
-                    ('y', tr!("as git is set"), pull("git")),
-                    ('m', tr!("merge"), pull("merge")),
-                    ('r', tr!("rebase"), pull("rebase")),
-                ],
-            ));
-            self.dirty = true;
-            return;
-        }
-        self.run("pull", tr!("Pulling…"), json!({"op": "pull"}));
+        self.choices = Some((
+            tr!(
+                "Pull: the branch and its upstream have diverged.{risk} How?",
+                risk = risk_text(conflicts)
+            ),
+            vec![
+                ('y', tr!("as git is set"), pull("git")),
+                ('m', tr!("merge"), pull("merge")),
+                ('r', tr!("rebase"), pull("rebase")),
+            ],
+        ));
+        self.dirty = true;
     }
 
     /// 今のブランチを上流へ push する前に確かめる。
@@ -2469,22 +2487,7 @@ impl App {
         let count = |shown: &Value, more: &Value| {
             shown.as_array().map_or(0, Vec::len) as u64 + more.as_u64().unwrap_or(0)
         };
-        let risk = match conflicts {
-            Some(files) if !files.is_empty() => {
-                let shown: Vec<&str> = files.iter().take(3).map(String::as_str).collect();
-                let mut names = amonhen_model::i18n::list(&shown);
-                if files.len() > 3 {
-                    names = tr!(
-                        "{names} and {count} more",
-                        names = names,
-                        count = files.len() - 3
-                    );
-                }
-                tr!(" Conflicts are likely in {files}.", files = names)
-            }
-            Some(_) => tr!(" No conflicts are expected."),
-            None => String::new(),
-        };
+        let risk = risk_text(conflicts);
         let (ask, yes, request) = if merge {
             let request = Request::Run {
                 name: "merge",
@@ -4060,6 +4063,36 @@ fn frame_box(buf: &mut Buffer, area: Rect, at: Rect, title: &str) {
         usize::from(at.width.saturating_sub(4)),
         Style::new().add_modifier(Modifier::BOLD),
     );
+}
+
+/// `predictMerge` の `conflicts`（ファイルの配列。git が古くて調べられなければ null）。
+fn conflict_files(conflicts: &Value) -> Option<Vec<String>> {
+    conflicts.as_array().map(|files| {
+        files
+            .iter()
+            .filter_map(|f| f.as_str().map(str::to_owned))
+            .collect()
+    })
+}
+
+/// コンフリクトの見込みを、確かめる文に足す一文にする（分からなければ空）。
+fn risk_text(conflicts: Option<Vec<String>>) -> String {
+    match conflicts {
+        Some(files) if !files.is_empty() => {
+            let shown: Vec<&str> = files.iter().take(3).map(String::as_str).collect();
+            let mut names = amonhen_model::i18n::list(&shown);
+            if files.len() > 3 {
+                names = tr!(
+                    "{names} and {count} more",
+                    names = names,
+                    count = files.len() - 3
+                );
+            }
+            tr!(" Conflicts are likely in {files}.", files = names)
+        }
+        Some(_) => tr!(" No conflicts are expected."),
+        None => String::new(),
+    }
 }
 
 #[cfg(test)]
