@@ -6192,7 +6192,23 @@ impl Root {
             }
             Message::ActivityTick => {
                 let mut undo = false;
+                // この窓のリポジトリの daemon・SSH 越しのつながり（Daemon のタブの表）。
+                let connection = self.repo.as_ref().and_then(|repo| {
+                    let state = repo.connection_state()?;
+                    let location = crate::tabs::current()
+                        .map(|t| t.location)
+                        .unwrap_or_default();
+                    Some(crate::activity::Connection {
+                        name: crate::repositories::display_name(&location),
+                        location,
+                        closed: state.closed,
+                        sent: state.sent,
+                        received: state.received,
+                        engine: state.engine,
+                    })
+                });
                 if let Some(state) = self.activity.as_mut() {
+                    state.connection = connection;
                     state.refresh();
                     undo = state.tab == 1;
                     // Daemon は 2 秒ごと（4 回に 1 回）。
