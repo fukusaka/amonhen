@@ -165,6 +165,13 @@ struct Palette {
     selected: usize,
 }
 
+/// 操作ログ（アプリの Activity の Operation Log）: Undo の記録を新しい順に。選んだところまで戻せる。
+struct OperationLog {
+    /// 名前・時刻（UNIX 時刻の秒）。
+    entries: Vec<(String, i64)>,
+    selected: usize,
+}
+
 pub struct App {
     loader: Loader,
     history: History,
@@ -261,6 +268,7 @@ pub struct App {
     help_top: usize,
     /// コマンドの一覧を出している（`:`）。
     palette: Option<Palette>,
+    operation_log: Option<OperationLog>,
     /// 今の検索: 語と、動いている検索を取り消す印（結果が届いたら `None`）。
     search: Option<(String, Option<Arc<AtomicBool>>)>,
     /// 動いている検索の、調べ終えた割合（0〜1。内容の検索でなければ 0 のまま）。
@@ -344,6 +352,7 @@ impl App {
             help: false,
             help_top: 0,
             palette: None,
+            operation_log: None,
             push_to_offered: false,
             bundle_file: None,
             patch_file: None,
@@ -465,7 +474,7 @@ impl App {
     /// ので、出している間はすべてを描き直す。
     pub fn take_damage(&mut self) -> Option<Damage> {
         let damage = std::mem::take(&mut self.damage);
-        let over = self.help || self.palette.is_some();
+        let over = self.help || self.palette.is_some() || self.operation_log.is_some();
         if std::mem::take(&mut self.dirty) || (over && damage != Damage::default()) {
             return Some(Damage::ALL);
         }
@@ -1018,6 +1027,39 @@ impl App {
             }
             return;
         }
+        // 操作ログ: 選んでいる記録まで（新しいものから順に）戻す。確かめてから。ほかのキーで閉じる。
+        if let Some(mut log) = self.operation_log.take() {
+            self.dirty = true;
+            match key.code {
+                KeyCode::Char('j') | KeyCode::Down => {
+                    log.selected = (log.selected + 1).min(log.entries.len().saturating_sub(1));
+                }
+                KeyCode::Char('k') | KeyCode::Up => log.selected = log.selected.saturating_sub(1),
+                KeyCode::Char('n') if control => {
+                    log.selected = (log.selected + 1).min(log.entries.len().saturating_sub(1));
+                }
+                KeyCode::Char('p') if control => log.selected = log.selected.saturating_sub(1),
+                KeyCode::Enter => {
+                    let count = log.selected + 1;
+                    let ask = match count {
+                        1 => tr!("Undo “{label}”?", label = log.entries[0].0),
+                        _ => tr!("Undo the last {count} operations?", count = count),
+                    };
+                    self.confirm = Some((
+                        ask,
+                        tr!("undo"),
+                        Request::Run {
+                            name: "undo",
+                            command: Value::Array(vec![json!({"op": "undo"}); count]),
+                        },
+                    ));
+                    return;
+                }
+                _ => return,
+            }
+            self.operation_log = Some(log);
+            return;
+        }
         // コマンドの一覧は、打った語で絞る。Enter で選んでいる行を動かす、Esc でやめる。
         if let Some(mut palette) = self.palette.take() {
             self.dirty = true;
@@ -1379,6 +1421,15 @@ impl App {
 
     /// コマンドの一覧からだけ動かす操作（キーを持たない）。
     fn run_keyless(&mut self, id: &str) {
+        if id == "activity" {
+            // アプリの Activity のうち、このリポジトリの操作ログ（git の記録・画面の速さは端末では出さない）。
+            self.run(
+                "undoLog",
+                tr!("Reading the operation log…"),
+                json!({"op": "undoLog"}),
+            );
+            return;
+        }
         if id == "compare-with-previous" {
             self.run(
                 "previousVersion",
@@ -1538,6 +1589,27 @@ impl App {
             }
         };
         match name {
+            "undoLog" => {
+                let entries: Vec<(String, i64)> = reply["info"]["entries"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|e| {
+                        let label = e["label"].as_str().unwrap_or_default().to_owned();
+                        (label, e["time"].as_f64().unwrap_or(0.0) as i64 / 1000)
+                    })
+                    .collect();
+                match entries.is_empty() {
+                    true => self.notice = Some(tr!("Nothing to undo")),
+                    false => {
+                        self.operation_log = Some(OperationLog {
+                            entries,
+                            selected: 0,
+                        })
+                    }
+                }
+                return;
+            }
             // 戻す操作があれば、名前を出して確かめる。
             "undoPeek" => {
                 match reply["label"].as_str() {
@@ -3961,6 +4033,70 @@ impl App {
                         Style::new(),
                     );
                 }
+            }
+        }
+        if let Some(log) = &self.operation_log {
+            let times: Vec<String> = log
+                .entries
+                .iter()
+                .map(|(_, time)| crate::history::ago(self.clock.now, *time))
+                .collect();
+            let label_width = log
+                .entries
+                .iter()
+                .map(|(l, _)| l.width())
+                .max()
+                .unwrap_or(0) as u16;
+            let hint = tr!("Enter undoes back to the selected one");
+            let width = (label_width + 10)
+                .max(hint.width() as u16 + 4)
+                .max(36)
+                .min(area.width);
+            // 枠・記録の行・案内の行。
+            let height = (log.entries.len() as u16 + 3).min(area.height);
+            let at = Rect::new(
+                area.x + (area.width - width) / 2,
+                area.y + (area.height - height) / 2,
+                width,
+                height,
+            );
+            frame_box(buf, area, at, &tr!(" Operation Log "));
+            let inner = usize::from(width.saturating_sub(4));
+            let rows = usize::from(height.saturating_sub(3));
+            let top = (log.selected + 1).saturating_sub(rows);
+            for (y, i) in (at.y + 1..at.bottom().saturating_sub(2)).zip(top..log.entries.len()) {
+                // 選んでいる記録まで（戻るもの）を、すべて反転する。
+                let undone = i <= log.selected;
+                let style = match undone {
+                    true => Style::new().add_modifier(Modifier::REVERSED),
+                    false => Style::new(),
+                };
+                if undone {
+                    for x in at.x + 1..at.right() - 1 {
+                        buf[(x, y)].set_style(style);
+                    }
+                }
+                let time_style = match undone {
+                    true => style,
+                    false => Style::new().fg(Color::Indexed(244)),
+                };
+                buf.set_stringn(at.x + 2, y, &times[i], 4, time_style);
+                buf.set_stringn(
+                    at.x + 7,
+                    y,
+                    &log.entries[i].0,
+                    inner.saturating_sub(5),
+                    style,
+                );
+            }
+            if height >= 3 {
+                buf.set_stringn(
+                    at.x + 2,
+                    at.bottom() - 2,
+                    &hint,
+                    inner,
+                    Style::new().fg(Color::Indexed(244)),
+                );
             }
         }
         if let Some(palette) = &self.palette {

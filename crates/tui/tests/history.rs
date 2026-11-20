@@ -1463,6 +1463,43 @@ fn reset_offers_the_modes() {
     assert_eq!(head(), "Merge branch 'topic'\n");
 }
 
+/// コマンドの一覧の Activity: 操作ログを新しい順に出し、選んだところまで確かめてから戻す
+#[test]
+fn operation_log_undoes_back_to_the_selected_one() {
+    let dir = tempfile::tempdir().unwrap();
+    merged(dir.path());
+    let head = || git_out(dir.path(), &["log", "-1", "--format=%s"]);
+    let none = amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), ":activity\n").unwrap();
+    assert!(none.contains("Nothing to undo"), "{none}");
+    // 2 回 reset する（Bump the version へ、次に Add the graph へ。merge はタグ v1 があるので残る）。
+    amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), "jRs").unwrap();
+    assert_eq!(head(), "Bump the version\n");
+    amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), "jjjRs").unwrap();
+    let moved = head();
+    assert_eq!(moved, "Add the graph\n");
+    let log = amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), ":activity\n").unwrap();
+    println!("{log}");
+    assert!(log.contains(" Operation Log "), "{log}");
+    assert_eq!(log.matches("Reset").count(), 2, "{log}");
+    assert!(log.contains("Enter undoes back to the selected one"));
+    // 1 つ目だけなら、その名前で確かめる。
+    let one = amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), ":activity\n\n").unwrap();
+    assert!(one.lines().last().unwrap().contains("Undo “Reset"), "{one}");
+    // 2 つ目まで選ぶと、いくつ戻すかで確かめる。やめれば何も変わらない。
+    let two = amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), ":activity\nj\n").unwrap();
+    assert!(
+        two.lines()
+            .last()
+            .unwrap()
+            .contains("Undo the last 2 operations?   y undo   n cancel"),
+        "{two}"
+    );
+    amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), ":activity\nj\nn").unwrap();
+    assert_eq!(head(), moved);
+    amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), ":activity\nj\ny").unwrap();
+    assert_eq!(head(), "Merge branch 'topic'\n");
+}
+
 /// 上流が持っているコミットを外す reset では、push に Force Push が要ると先に言う
 #[test]
 fn reset_warns_when_the_upstream_has_the_commits() {
