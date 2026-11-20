@@ -1392,6 +1392,33 @@ fn stashes_are_listed_and_applied_from_the_sidebar() {
     assert_eq!(git_out(dir.path(), &["stash", "list"]), "");
 }
 
+/// サイドバーの stash で `b`: 名前を聞いて、stash を作ったところにブランチを作り、そこに戻す（git stash branch）
+#[test]
+fn a_branch_is_made_from_a_stash() {
+    let dir = tempfile::tempdir().unwrap();
+    two_lines(dir.path());
+    git(dir.path(), BASE, &["stash", "push", "-q", "-m", "Capitals"]);
+    let asked = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0Gbwip").unwrap();
+    let line = asked.lines().last().unwrap();
+    assert!(
+        line.contains("New branch where stash@{0} was made, with it applied: wip"),
+        "{line}"
+    );
+    let done = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0Gbwip\n").unwrap();
+    println!("{done}");
+    assert!(
+        done.contains("Applied the stash on the new branch"),
+        "{done}"
+    );
+    assert_eq!(git_out(dir.path(), &["branch", "--show-current"]), "wip\n");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+        "ONE\ntwo\nTHREE\nfour\n"
+    );
+    // 戻せた stash は消える。
+    assert_eq!(git_out(dir.path(), &["stash", "list"]), "");
+}
+
 /// `3` で Reflog: HEAD が動いた記録が新しい順に並び、選んだ行のコミットの詳細が出る
 #[test]
 fn reflog_lists_where_head_was() {

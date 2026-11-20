@@ -131,6 +131,8 @@ enum Naming {
     Rename,
     /// stash のメッセージ（空でもよい）。
     Stash,
+    /// stash を戻す新しいブランチ（stash を作ったところに作る。git stash branch）。
+    StashBranch,
     /// ブランチを出す新しい worktree の場所。
     Worktree,
     /// push の送り先（`<remote>/<branch>`）。
@@ -1199,6 +1201,11 @@ impl App {
                                 tr!("Adding the worktree…"),
                                 json!({"op": "worktreeAdd", "path": name, "start": start}),
                             ),
+                            Naming::StashBranch => (
+                                "stashBranch",
+                                tr!("Creating {name}…", name = name),
+                                json!({"op": "stashBranch", "name": start, "branch": name}),
+                            ),
                             Naming::Branch => (
                                 "createBranch",
                                 tr!("Creating {name}…", name = name),
@@ -1295,7 +1302,12 @@ impl App {
             KeyCode::Char('u') if !control => {
                 self.run("undoPeek", tr!("Undo…"), json!({"op": "undoPeek"}))
             }
-            KeyCode::Char('b') if !control => self.ask_branch(),
+            // サイドバーの stash なら、そこにブランチを作って戻す（`stash_key`）。
+            KeyCode::Char('b') if !control => {
+                if !(self.focus == Focus::Sidebar && self.stash_key(KeyCode::Char('b'))) {
+                    self.ask_branch();
+                }
+            }
             KeyCode::Char('T') => self.ask_name(Naming::Tag),
             KeyCode::Char('R') if self.view != View::Changes && self.focus == Focus::Main => {
                 self.ask_reset();
@@ -1649,6 +1661,7 @@ impl App {
             }
             "apply" => self.notice = Some(tr!("Applied the stash")),
             "drop" => self.notice = Some(tr!("Dropped the stash")),
+            "stashBranch" => self.notice = Some(tr!("Applied the stash on the new branch")),
             "removeWorktree" => self.notice = Some(tr!("Removed the worktree")),
             "restoreFile" => self.notice = Some(tr!("Restored the version")),
             "addWorktree" => self.notice = Some(tr!("Added the worktree")),
@@ -2678,6 +2691,12 @@ impl App {
                 tr!("Popping the stash…"),
                 json!({"op": "stashApply", "name": name, "pop": true}),
             ),
+            // stash を作ったところに新しいブランチを作って切り替え、そこに戻す（アプリの Branch…）。
+            KeyCode::Char('b') => {
+                self.naming = Naming::StashBranch;
+                self.typing_branch = Some((name.clone(), name, String::new()));
+                self.dirty = true;
+            }
             KeyCode::Char('x') => {
                 self.confirm = Some((
                     tr!("Drop {name}? Undo brings it back.", name = name),
@@ -2897,6 +2916,10 @@ impl App {
                 ("m", tr!("Merge it into the current branch")),
                 ("r", tr!("Rebase the current branch onto it")),
                 ("a o x", tr!("On a stash: apply, pop, drop")),
+                (
+                    "b",
+                    tr!("On a stash: a branch where it was made, with it applied"),
+                ),
                 ("x", tr!("On a worktree: remove it")),
                 ("w", tr!("New worktree for the branch")),
                 (
@@ -3830,6 +3853,11 @@ impl App {
                 let text = match self.naming {
                     Naming::Branch => tr!("New branch at {at}: {name}", at = at, name = name),
                     Naming::Tag => tr!("New tag at {at}: {name}", at = at, name = name),
+                    Naming::StashBranch => tr!(
+                        "New branch where {at} was made, with it applied: {name}",
+                        at = at,
+                        name = name
+                    ),
                     Naming::Rename => tr!("Rename {at} to: {name}", at = at, name = name),
                     Naming::Stash => tr!("Stash message (Enter for none): {name}", name = name),
                     Naming::Worktree => {
