@@ -135,6 +135,16 @@ enum Naming {
     Worktree,
     /// push の送り先（`<remote>/<branch>`）。
     PushTo,
+    /// 履歴のない新しいブランチの名前。
+    Orphan,
+    /// 足すリモートの名前（次に URL を聞く）。
+    RemoteName,
+    /// 足すリモートの URL（名前は聞いてある）。
+    RemoteUrl,
+    /// 選んでいるコミットを書き出すアーカイブのファイル（この機械の）。
+    Archive,
+    /// リポジトリをまとめる bundle のファイル（この機械の）。
+    Bundle,
 }
 
 /// 選択肢 1 つ: 押すキー、名前、頼む中身。
@@ -1037,6 +1047,38 @@ impl App {
                                 self.push_to(&start, name);
                                 return;
                             }
+                            Naming::Orphan => {
+                                self.ask_orphan(name);
+                                return;
+                            }
+                            Naming::RemoteName => {
+                                if self.remotes.iter().any(|r| r == name) {
+                                    self.error =
+                                        Some(tr!("There is a remote named {name}", name = name));
+                                    return;
+                                }
+                                self.naming = Naming::RemoteUrl;
+                                self.typing_branch =
+                                    Some((name.to_owned(), name.to_owned(), String::new()));
+                                return;
+                            }
+                            Naming::Archive => {
+                                self.export_archive(&start, name);
+                                return;
+                            }
+                            Naming::Bundle => (
+                                "bundle",
+                                tr!("Saving the bundle…"),
+                                json!({"op": "bundle", "refs": [], "bases": [], "file": local_path(name)}),
+                            ),
+                            Naming::RemoteUrl => (
+                                "addRemote",
+                                tr!("Adding {name}…", name = start),
+                                json!({
+                                    "op": "changeRemote",
+                                    "change": {"kind": "add", "name": start, "url": name},
+                                }),
+                            ),
                             Naming::Worktree => (
                                 "addWorktree",
                                 tr!("Adding the worktree…"),
@@ -1071,6 +1113,8 @@ impl App {
                 KeyCode::Backspace => {
                     name.pop();
                 }
+                // 端末の行と同じく、Ctrl-u で打ったものを消す（初めに入れてあるパスを打ち直すときなど）。
+                KeyCode::Char('u') if control => name.clear(),
                 KeyCode::Char(ch) if !control => name.push(ch),
                 _ => {}
             }
@@ -1246,6 +1290,69 @@ impl App {
 
     /// コマンドの一覧からだけ動かす操作（キーを持たない）。
     fn run_keyless(&mut self, id: &str) {
+        if id == "save-bundle" {
+            // HEAD とすべてのブランチ・タグを、今のフォルダ（この機械）の 1 つのファイルに。
+            let name = match self.name.is_empty() {
+                true => "repository".to_owned(),
+                false => self.name.clone(),
+            };
+            self.naming = Naming::Bundle;
+            let file = local_path(&format!("{name}.bundle"));
+            self.typing_branch = Some((String::new(), String::new(), file));
+            self.dirty = true;
+        }
+        if id == "export-archive" {
+            // History で選んでいるコミットを、今のフォルダ（TUI を始めた所。SSH 先でも、この機械）に書き出す。
+            let Some(id) = self.history.selected_id() else {
+                return;
+            };
+            let id = id.to_string();
+            let short = id[..id.len().min(8)].to_owned();
+            let name = match self.name.is_empty() {
+                true => short.clone(),
+                false => format!("{}-{short}", self.name),
+            };
+            let file = local_path(&format!("{name}.zip"));
+            self.naming = Naming::Archive;
+            self.typing_branch = Some((id, short, file));
+            self.dirty = true;
+        }
+        if id == "delete-ignored-files" {
+            self.run(
+                "ignoredFiles",
+                tr!("Finding ignored files…"),
+                json!({"op": "ignoredFiles"}),
+            );
+        }
+        if id == "update-submodules" {
+            self.run(
+                "submodules",
+                tr!("Reading the submodules…"),
+                json!({"op": "submodules"}),
+            );
+        }
+        if id == "add-remote" {
+            self.naming = Naming::RemoteName;
+            // 初めは、まだリモートがなければ origin。
+            let name = match self.remotes.is_empty() {
+                true => "origin".to_owned(),
+                false => String::new(),
+            };
+            self.typing_branch = Some((String::new(), String::new(), name));
+            self.dirty = true;
+        }
+        if id == "clean-up-branches" {
+            self.run(
+                "cleanupList",
+                tr!("Finding branches to clean up…"),
+                json!({"op": "branchCleanup"}),
+            );
+        }
+        if id == "new-orphan-branch" {
+            self.naming = Naming::Orphan;
+            self.typing_branch = Some((String::new(), String::new(), String::new()));
+            self.dirty = true;
+        }
         if id == "prune-worktrees" {
             // フォルダのなくなった worktree の記録を片付ける（フォルダには触らない）。
             self.run(
@@ -1340,6 +1447,63 @@ impl App {
             "addWorktree" => self.notice = Some(tr!("Added the worktree")),
             "setUpstream" => self.notice = Some(tr!("Set the upstream")),
             "pruneWorktrees" => self.notice = Some(tr!("Pruned the worktrees")),
+            "orphan" => self.notice = Some(tr!("Created the branch")),
+            // 片付けてよいブランチが分かった: 選んでおくもの（取り込み済み）を消すか、上流の消えたものも含めるか。
+            "cleanupList" => {
+                self.ask_clean_up(&reply["info"]);
+                return;
+            }
+            "cleanUp" => self.notice = Some(tr!("Deleted the branches")),
+            "addRemote" => self.notice = Some(tr!("Added the remote")),
+            "submodules" => {
+                self.ask_update_submodules(&reply["info"]);
+                return;
+            }
+            "updateSubmodules" => self.notice = Some(tr!("Updated the submodules")),
+            // ignore されたものが分かった: 数と最初のいくつかを出して、確かめてから消す（Undo では戻らない）。
+            "ignoredFiles" => {
+                let paths: Vec<String> = (reply["info"]["paths"].as_array().into_iter().flatten())
+                    .filter_map(|p| p.as_str().map(str::to_owned))
+                    .collect();
+                self.dirty = true;
+                if paths.is_empty() {
+                    self.notice = Some(tr!(
+                        "No ignored files: nothing in the working tree matches .gitignore"
+                    ));
+                    return;
+                }
+                const SHOWN: usize = 3;
+                let mut names = amonhen_model::i18n::list(&paths[..paths.len().min(SHOWN)]);
+                if paths.len() > SHOWN {
+                    names = tr!(
+                        "{names} and {count} more",
+                        names = names,
+                        count = paths.len() - SHOWN
+                    );
+                }
+                self.confirm = Some((
+                    tr!(
+                        "Delete {count} ignored items ({names})? Undo can’t bring them back.",
+                        count = paths.len(),
+                        names = names
+                    ),
+                    tr!("delete"),
+                    Request::Run {
+                        name: "deleteIgnored",
+                        command: json!({"op": "deleteIgnored", "paths": paths}),
+                    },
+                ));
+                return;
+            }
+            "deleteIgnored" => self.notice = Some(tr!("Deleted the ignored files")),
+            "bundle" => {
+                let file = reply["info"]["file"].as_str().unwrap_or("");
+                self.notice = Some(tr!("Saved the bundle to {file}", file = file));
+            }
+            "archive" => {
+                let file = reply["info"]["file"].as_str().unwrap_or("");
+                self.notice = Some(tr!("Exported to {file}", file = file));
+            }
             "merge" | "rebase" | "continue" | "skip" | "cherryPick" | "revert" | "rewrite" => {
                 // コンフリクトで止まったら、Working Copy で解決する。
                 match reply["outcome"].as_str() {
@@ -1519,6 +1683,138 @@ impl App {
                 ]),
             },
         ));
+    }
+
+    /// `rev` の時点のファイルを `file` に書き出す（`git archive`）。形はファイルの拡張子で決め、中身はファイルの名前の
+    /// フォルダに入れる（アプリと同じ）。相対のパスは、TUI を始めたフォルダから。
+    fn export_archive(&mut self, rev: &str, file: &str) {
+        let format = [
+            (".zip", "zip"),
+            (".tar.gz", "tar.gz"),
+            (".tgz", "tar.gz"),
+            (".tar", "tar"),
+        ]
+        .into_iter()
+        .find(|(ext, _)| file.ends_with(ext));
+        let Some((ext, format)) = format else {
+            self.error = Some(tr!("End the file name with .zip, .tar.gz or .tar"));
+            return;
+        };
+        let path = std::path::PathBuf::from(local_path(file));
+        let stem = path
+            .file_name()
+            .map(|n| n.to_string_lossy().trim_end_matches(ext).to_owned())
+            .unwrap_or_default();
+        let prefix = match stem.is_empty() {
+            true => String::new(),
+            false => format!("{stem}/"),
+        };
+        self.run(
+            "archive",
+            tr!("Exporting…"),
+            json!({
+                "op": "archive", "rev": rev, "format": format, "prefix": prefix, "paths": [],
+                "file": path.to_string_lossy(),
+            }),
+        );
+    }
+
+    /// Update Submodules: `submodules` の答えから、すべての submodule を取り出して記録したコミットにするか、中の
+    /// submodule までか、追うブランチの最新にするかを選ばせる（アプリのシートの選び方と同じ）。
+    fn ask_update_submodules(&mut self, info: &Value) {
+        let paths: Vec<String> = (info["submodules"].as_array().into_iter().flatten())
+            .filter_map(|s| s["path"].as_str().map(str::to_owned))
+            .collect();
+        self.dirty = true;
+        if paths.is_empty() {
+            self.notice = Some(tr!("There are no submodules"));
+            return;
+        }
+        let update = |recursive: bool, remote: bool| Request::Run {
+            name: "updateSubmodules",
+            command: json!({
+                "op": "updateSubmodules", "paths": paths, "recursive": recursive, "remote": remote,
+            }),
+        };
+        self.choices = Some((
+            tr!("Update {names}?", names = amonhen_model::i18n::list(&paths)),
+            vec![
+                ('y', tr!("to the recorded commits"), update(false, false)),
+                ('r', tr!("recursively"), update(true, false)),
+                ('t', tr!("to their branches' latest"), update(false, true)),
+            ],
+        ));
+    }
+
+    /// Clean Up Branches: `branchCleanup` の答えから、消すブランチを確かめる。最初に選んでおくもの（既定の
+    /// ブランチに取り込み済み）を消すか、上流の消えたものも含めるかを選ばせる（アプリのシートと同じく、上流が消えた
+    /// だけのものは最初は選ばない）。
+    fn ask_clean_up(&mut self, info: &Value) {
+        let branches: Vec<&Value> = info["branches"].as_array().into_iter().flatten().collect();
+        let pick = |all: bool| -> Vec<Value> {
+            (branches.iter())
+                .filter(|b| all || b["checked"] == true)
+                .map(|b| json!({"name": b["name"], "force": b["force"]}))
+                .collect()
+        };
+        let names = |picked: &[Value]| -> String {
+            let names: Vec<&str> = picked.iter().filter_map(|b| b["name"].as_str()).collect();
+            amonhen_model::i18n::list(&names)
+        };
+        let (checked, all) = (pick(false), pick(true));
+        let delete = |branches: Vec<Value>| Request::Run {
+            name: "cleanUp",
+            command: json!({"op": "deleteBranches", "branches": branches}),
+        };
+        self.dirty = true;
+        if all.is_empty() {
+            self.notice = Some(tr!("No branches to clean up"));
+            return;
+        }
+        let base = info["base"].as_str().unwrap_or("");
+        let mut options = Vec::new();
+        if !checked.is_empty() {
+            options.push((
+                'y',
+                tr!("delete those merged into {base}", base = base),
+                delete(checked.clone()),
+            ));
+        }
+        if all.len() > checked.len() {
+            let gone = all.len() - checked.len();
+            let label = match checked.is_empty() {
+                true => tr!(
+                    "delete those whose upstream is gone ({count})",
+                    count = gone
+                ),
+                false => tr!("also those whose upstream is gone ({count})", count = gone),
+            };
+            options.push(('a', label, delete(all.clone())));
+        }
+        let shown = match checked.is_empty() {
+            true => names(&all),
+            false => names(&checked),
+        };
+        self.choices = Some((
+            tr!("Clean up {names}? Undo brings them back.", names = shown),
+            options,
+        ));
+    }
+
+    /// 履歴のない新しいブランチ `name` を、空から作るか、今のファイルを stage したまま作るかを選ばせる。
+    fn ask_orphan(&mut self, name: &str) {
+        let orphan = |keep_files: bool| Request::Run {
+            name: "orphan",
+            command: json!({"op": "createOrphanBranch", "name": name, "keepFiles": keep_files}),
+        };
+        self.choices = Some((
+            tr!("Start {name} with no history?", name = name),
+            vec![
+                ('e', tr!("empty"), orphan(false)),
+                ('k', tr!("keeping the current files staged"), orphan(true)),
+            ],
+        ));
+        self.dirty = true;
     }
 
     /// push の送り先を打たせる（初めは上流）。
@@ -2954,6 +3250,19 @@ impl App {
                     Naming::PushTo => {
                         tr!("Push {at} to (remote/branch): {name}", at = at, name = name)
                     }
+                    Naming::Orphan => tr!("New orphan branch: {name}", name = name),
+                    Naming::RemoteName => tr!("New remote's name: {name}", name = name),
+                    Naming::RemoteUrl => tr!("URL of {at}: {name}", at = at, name = name),
+                    Naming::Bundle => {
+                        tr!("Save the repository as a bundle at: {name}", name = name)
+                    }
+                    Naming::Archive => {
+                        tr!(
+                            "Export {at} to (.zip, .tar.gz or .tar): {name}",
+                            at = at,
+                            name = name
+                        )
+                    }
                 };
                 let x = buf.set_stringn(area.x + 1, y, text, room, Style::new()).0;
                 cursor = Some((x.min(position_x.saturating_sub(1)), y));
@@ -3199,6 +3508,17 @@ impl App {
         }
         // 入力しているときだけ、カーソルを出す。
         cursor
+    }
+}
+
+/// この機械のファイルのパス: 相対なら、TUI を始めたフォルダから。
+fn local_path(file: &str) -> String {
+    let path = std::path::Path::new(file);
+    match path.is_absolute() {
+        true => file.to_owned(),
+        false => (std::env::current_dir().unwrap_or_default().join(path))
+            .to_string_lossy()
+            .into_owned(),
     }
 }
 
