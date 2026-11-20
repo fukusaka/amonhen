@@ -256,6 +256,10 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         redrawText()
     }
     private var labelText: [String: TextRenderer.ShapedLine] = [:]
+    /// 見えている行の、名前を全部は出していない札（中央を切った札・「+N」）の横の範囲（表の座標）。押すと名前の
+    /// 一覧を出す。
+    private var clippedLabels: [Int: [ClosedRange<CGFloat>]] = [:]
+    private var refsPopover: NSPopover?
     private let graphColumn = NSTableColumn(identifier: .init("graph"))
     private var chunks: [Int: HistoryChunk] = [:]
     /// 裏で読んでいるチャンク。
@@ -346,7 +350,11 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     /// HEAD のコミット（Current Branch で使う）。
     var head: Data? {
         // ほかのプログラムで commit・rebase すると HEAD が動く。今のブランチに絞っていれば絞り込み直す。
-        didSet { if head != oldValue, scope == .current, history != nil { scheduleReloadScope() } }
+        didSet {
+            renderer.head = head
+            if head != oldValue { redrawGraph() }
+            if head != oldValue, scope == .current, history != nil { scheduleReloadScope() }
+        }
     }
     /// 選んだコミット（20 バイト）。選択がなくなれば nil。
     /// History の編集モードに入る（そのコミットから HEAD まで、最初の変更つき）。
@@ -399,6 +407,11 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         tableView.addTableColumn(subject)
         // 行の右端の CI の印（描くのと同じ位置: 2 列目の右端から 18 pt）を押したら、行を選ばずに詳細の吹き出し。
         tableView.onClickMark = { [weak self] row, point in
+            // 名前を全部は出していない札（中央を切った札・「+N」）を押したら、行を選ばずに名前の一覧の吹き出し。
+            if let self, let range = clippedLabels[row]?.first(where: { $0.contains(point.x) }) {
+                showRefs(row: row, range: range)
+                return true
+            }
             guard let self, onClickCI != nil, Settings.historyItems.contains(.ci), let history,
                   let id = history.commitID(row: row), let ci = ciStatus[id]
             else { return false }
@@ -980,6 +993,69 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         FrameProfile.measure("text: submit") { renderThread.submit(text.job(layer: textView.metalLayer, background: .zero)) }
     }
 
+    /// `row` のコミットに付いている ref の名前をすべて並べた吹き出しを、押した札の下に出す。
+    private func showRefs(row: Int, range: ClosedRange<CGFloat>) {
+        guard let id = history?.commitID(row: row) else { return }
+        let labels = (worktreeLabels[id] ?? []) + (refLabels[id] ?? [])
+        guard !labels.isEmpty else { return }
+        // 署名の吹き出しと同じ組み方: 見出しと、1 行に 1 つの名前（札と同じ色の印つき、選んでコピーできる）。
+        // 名前は切らない。吹き出しは一番長い名前の幅に合わせ、480 pt を超える名前は折り返す。
+        let font = NSFont.systemFont(ofSize: 12), headFont = NSFont.systemFont(ofSize: 12, weight: .semibold)
+        let widest = labels.map { label in
+            NSString(string: label.name).size(withAttributes: [.font: label.isHead ? headFont : font]).width
+        }.max() ?? 0
+        let nameWidth = min(480, ceil(widest) + 2)
+        let title = NSTextField(labelWithString: L("Branches and Tags"))
+        title.font = .systemFont(ofSize: 13, weight: .semibold)
+        var rows: [NSView] = [title]
+        for label in labels {
+            // 色の印は名前の 1 行目の高さの中ほどに置く（名前が折り返しても 1 行目に並ぶ）。
+            let lineHeight = ceil(NSLayoutManager().defaultLineHeight(for: label.isHead ? headFont : font))
+            let mark = NSView(frame: NSRect(x: 0, y: 0, width: 8, height: lineHeight))
+            let dot = CALayer()
+            dot.frame = CGRect(x: 0, y: ((lineHeight - 8) / 2).rounded(), width: 8, height: 8)
+            dot.cornerRadius = 2
+            dot.backgroundColor = Self.labelBase(label).cgColor
+            mark.wantsLayer = true
+            mark.layer?.addSublayer(dot)
+            mark.translatesAutoresizingMaskIntoConstraints = false
+            mark.widthAnchor.constraint(equalToConstant: 8).isActive = true
+            mark.heightAnchor.constraint(equalToConstant: lineHeight).isActive = true
+            let name = NSTextField(wrappingLabelWithString: label.name)
+            name.isSelectable = true
+            name.font = label.isHead ? headFont : font
+            // ブランチ名には空白がないので、どこででも折り返す。
+            name.lineBreakMode = .byCharWrapping
+            name.preferredMaxLayoutWidth = nameWidth
+            name.widthAnchor.constraint(equalToConstant: nameWidth).isActive = true
+            let line = NSStackView(views: [mark, name])
+            line.spacing = 6
+            line.alignment = .top
+            rows.append(line)
+        }
+        let stack = NSStackView(views: rows)
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 5
+        stack.setCustomSpacing(8, after: title)
+        stack.edgeInsets = NSEdgeInsets(top: 12, left: 16, bottom: 12, right: 16)
+        stack.widthAnchor.constraint(equalToConstant: max(nameWidth + 8 + 6, title.intrinsicContentSize.width) + 32)
+            .isActive = true
+        let content = NSViewController()
+        content.view = stack
+        // 吹き出しの大きさを中身に合わせる。
+        stack.layoutSubtreeIfNeeded()
+        content.preferredContentSize = stack.fittingSize
+        let rowRect = tableView.rect(ofRow: row)
+        let anchor = NSRect(x: range.lowerBound, y: rowRect.minY + 2, width: range.upperBound - range.lowerBound, height: 20)
+        refsPopover?.close()
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.contentViewController = content
+        popover.show(relativeTo: anchor, of: tableView, preferredEdge: .maxY)
+        refsPopover = popover
+    }
+
     /// 1 行・2 行の表示に合わせて、行の高さ（表とグラフで共通）を決める。
     private func applyRowStyle() {
         renderer.metrics.rowHeight = Settings.oneLineHistoryRows ? 24 : 38
@@ -1067,6 +1143,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             : NSColor.secondaryLabelColor).rgba
         let selection = tableView.selectedRowIndexes
         if rowText.count > 4096 { rowText.removeAll() }
+        clippedLabels.removeAll(keepingCapacity: true)
         var unverified: [Data] = []
         // History を差し替えた直後（表を読み直す前）は、表が前の History の行を返すことがある（絞り込みで行が
         // 減ったときは、見えている行が全部新しい History の外）。
@@ -1079,7 +1156,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             // 文字はその行のグラフの右端のすぐ右から（行ごとに左端が違う。グラフと文字のビューは左端が同じ）。
             // グラフを描いていない行（History を隠しているとき）は列の位置。
             let start = renderer.rightExtent(row: row).map { CGFloat($0) + Self.graphGap } ?? (column.minX - originX)
-            let end = column.maxX - originX
+            // 右端は列の右端。スクロールバーが場所を取っていれば、見えている所まで（「…」が隠れないように）。
+            let end = min(column.maxX - originX, textView.bounds.width - 5)
             if !isSelected, searchRowSet.contains(row) {
                 text.addRoundedRect(
                     CGRect(x: start - 3, y: rowTop + 1, width: end - start + 6, height: tableView.rowHeight - 2),
@@ -1090,10 +1168,6 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             let labels = id.flatMap { id -> [RefLabel]? in
                 let all = (worktreeLabels[id] ?? []) + (refLabels[id] ?? [])
                 return all.isEmpty ? nil : all
-            }
-            if let labels, items.contains(.refs) {
-                x = drawLabels(labels, x: x, maxX: end - 40, baseline: rowTop + subjectBaseline, scale: scale,
-                               selected: isSelected && focused)
             }
             // 署名があれば、作者・日時の行に検証の結果の色の丸を置く。結果をまだ知らなければ、裏で検証する。
             let kind = chunks[row / Self.chunkRows]?.signature(row: row) ?? 0
@@ -1114,6 +1188,17 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             // 1 行なら、作者・日時・ID を右に寄せ、件名はその手前まで。
             let metaWidth = compact ? min(line.meta.width, column.width * 0.45) : 0
             let subjectEnd = compact ? right - metaWidth - 12 - dot : right
+            // 札は件名の場所の 6 割まで（残りは件名に残す）。入りきらない札は「+N」にまとめる。
+            var clipped: [ClosedRange<CGFloat>] = []
+            if let labels, items.contains(.refs) {
+                (x, clipped) = drawLabels(
+                    labels, x: x, maxX: start + (subjectEnd - start) * 0.6, baseline: rowTop + subjectBaseline,
+                    scale: scale, selected: isSelected && focused)
+            }
+            // 名前を全部は出していない札は、押すと名前の一覧を出す（表の座標で覚える）。
+            if !clipped.isEmpty {
+                clippedLabels[row] = clipped.map { ($0.lowerBound + originX)...($0.upperBound + originX) }
+            }
             text.addLine(
                 line.subject, origin: CGPoint(x: x, y: rowTop + subjectBaseline), color: isSelected ? selected : primary,
                 scale: scale, maxWidth: max(0, subjectEnd - x), ellipsis: ellipsis)
@@ -1181,27 +1266,56 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
     }
 
-    /// 件名の前に ref のラベルを並べ、件名を始める位置を返す。入りきらない分は「+N」にまとめる。
+    /// 件名の前に ref のラベルを並べ、件名を始める位置と、名前を全部は出していない札（中央を切った・「+N」に
+    /// まとめた）の横の範囲を返す。
     private func drawLabels(
         _ labels: [RefLabel], x start: CGFloat, maxX: CGFloat, baseline: CGFloat, scale: CGFloat, selected: Bool
-    ) -> CGFloat {
+    ) -> (CGFloat, [ClosedRange<CGFloat>]) {
         let ascent = CTFontGetAscent(labelFont), descent = CTFontGetDescent(labelFont)
         let height = (ascent + descent + 4).rounded()
         let top = (baseline - ascent - 2).rounded()
-        var x = start
-        for (i, label) in labels.enumerated() {
-            let shown = i < 3 ? label.name : "+\(labels.count - i)"
-            let line = labelText[shown] ?? text.shape(shown as CFString, font: labelFont, scale: scale)
-            labelText[shown] = line
-            let width = (line.width + 10).rounded()
-            if x + width > maxX, i > 0 { break }
-            let (fill, ink) = labelColors(i < 3 ? label : nil, selected: selected)
-            text.addRoundedRect(CGRect(x: x, y: top, width: width, height: height), radius: 4, color: fill)
-            text.addLine(line, origin: CGPoint(x: x + 5, y: baseline - 1), color: ink, scale: scale)
-            x += width + 4
-            if i >= 3 { break }
+        func shaped(_ string: String) -> TextRenderer.ShapedLine {
+            if let line = labelText[string] { return line }
+            let line = text.shape(string as CFString, font: labelFont, scale: scale)
+            labelText[string] = line
+            return line
         }
-        return x + 2
+        let slots = LabelFit.place(
+            widths: labels.prefix(LabelFit.names).map { (shaped($0.name).width + 10).rounded() }, count: labels.count,
+            start: start, maxX: maxX, rest: { (shaped("+\($0)").width + 10).rounded() })
+        var x = start
+        var clipped: [ClosedRange<CGFloat>] = []
+        for slot in slots {
+            let label: RefLabel?, line: TextRenderer.ShapedLine
+            switch slot.content {
+            case .name(let i): (label, line) = (labels[i], shaped(labels[i].name))
+            case .rest(let n): (label, line) = (nil, shaped("+\(n)"))
+            }
+            let (fill, ink) = labelColors(label, selected: selected)
+            text.addRoundedRect(CGRect(x: slot.x, y: top, width: slot.width, height: height), radius: 4, color: fill)
+            let origin = CGPoint(x: slot.x + 5, y: baseline - 1)
+            if slot.width < (line.width + 10).rounded() {
+                // 入りきらない名前は中央を切る（頭と、版番号などの末尾を残す）。
+                clipped.append(slot.x...(slot.x + slot.width))
+                text.addLineMiddle(
+                    line, origin: origin, color: ink, scale: scale, maxWidth: slot.width - 10, ellipsis: shaped("…"))
+            } else {
+                if label == nil { clipped.append(slot.x...(slot.x + slot.width)) }
+                text.addLine(line, origin: origin, color: ink, scale: scale)
+            }
+            x = slot.x + slot.width + 4
+        }
+        return (x + 2, clipped)
+    }
+
+    /// 札の種類の色（worktree とほかの worktree のブランチは緑、ローカルは青、リモートは紫、タグは橙）。
+    private static func labelBase(_ label: RefLabel) -> NSColor {
+        if label.worktree || label.elsewhere { return .systemGreen }
+        return switch label.kind {
+        case .local: .systemBlue
+        case .remote: .systemPurple
+        default: .systemOrange
+        }
     }
 
     private func labelColors(_ label: RefLabel?, selected: Bool) -> (SIMD4<Float>, SIMD4<Float>) {
@@ -1216,11 +1330,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             if label.isHead { return (base.withAlphaComponent(0.85).rgba, NSColor.white.rgba) }
             return (base.withAlphaComponent(selected ? 0.45 : 0.25).rgba, (selected ? NSColor.white : NSColor.labelColor).rgba)
         }
-        let base: NSColor = switch label.kind {
-        case .local: .systemBlue
-        case .remote: .systemPurple
-        default: .systemOrange
-        }
+        let base = Self.labelBase(label)
         if label.isHead { return (base.withAlphaComponent(0.85).rgba, NSColor.white.rgba) }
         return (base.withAlphaComponent(selected ? 0.45 : 0.22).rgba, (selected ? NSColor.white : NSColor.labelColor).rgba)
     }
@@ -2056,6 +2166,58 @@ final class ScrollMotionLog {
             (last.t - first.t) * 1000, abs(last.y - first.y), peak?.v ?? 0, (peak?.t ?? 0) * 1000, tailSpeed))
         print("速度の推移（100 ms ごと）: " + profile.joined(separator: " ") + "\n")
         fflush(stdout)
+    }
+}
+
+/// History の行の ref の札の置き方。名前は `names` 個までで、残りと入りきらない分は「+N」にまとめる。
+enum LabelFit {
+    static let names = 3
+    /// 切り詰めた札に残す幅（これより狭くはしない）。
+    static let minimum: CGFloat = 40
+
+    enum Content: Equatable {
+        /// `labels` の中の位置。
+        case name(Int)
+        /// まとめた札の数（「+N」）。
+        case rest(Int)
+    }
+
+    struct Slot: Equatable {
+        var content: Content
+        var x: CGFloat
+        /// 札の幅。名前の幅より狭ければ、名前を「…」で切る。
+        var width: CGFloat
+    }
+
+    /// `widths` は先頭から `names` 個までの札の幅、`count` は札の総数、`rest` は「+N」の札の幅。
+    /// 札は `maxX` を越えない。1 つ目が入らなければ切り詰め、2 つ目からは入らなければ「+N」にまとめる
+    /// （「+N」の分の幅は先に取っておくので、まとめた札は必ず出る）。
+    static func place(
+        widths: [CGFloat], count: Int, start: CGFloat, maxX: CGFloat, gap: CGFloat = 4, rest: (Int) -> CGFloat
+    ) -> [Slot] {
+        var slots: [Slot] = []
+        var x = start
+        for (i, width) in widths.prefix(names).enumerated() {
+            let after = count - i - 1
+            let room = maxX - x - (after > 0 ? gap + rest(after) : 0)
+            if width > room {
+                if i > 0 {
+                    slots.append(Slot(content: .rest(count - i), x: x, width: rest(count - i)))
+                    return slots
+                }
+                let clipped = min(width, max(minimum, room))
+                slots.append(Slot(content: .name(0), x: x, width: clipped))
+                if after > 0 { slots.append(Slot(content: .rest(after), x: x + clipped + gap, width: rest(after))) }
+                return slots
+            }
+            slots.append(Slot(content: .name(i), x: x, width: width))
+            x += width + gap
+        }
+        if count > widths.prefix(names).count {
+            let n = count - widths.prefix(names).count
+            slots.append(Slot(content: .rest(n), x: x, width: rest(n)))
+        }
+        return slots
     }
 }
 
