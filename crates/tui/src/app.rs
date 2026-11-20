@@ -135,6 +135,8 @@ enum Naming {
     Worktree,
     /// push の送り先（`<remote>/<branch>`）。
     PushTo,
+    /// 履歴のない新しいブランチの名前。
+    Orphan,
 }
 
 /// 選択肢 1 つ: 押すキー、名前、頼む中身。
@@ -1037,6 +1039,10 @@ impl App {
                                 self.push_to(&start, name);
                                 return;
                             }
+                            Naming::Orphan => {
+                                self.ask_orphan(name);
+                                return;
+                            }
                             Naming::Worktree => (
                                 "addWorktree",
                                 tr!("Adding the worktree…"),
@@ -1246,6 +1252,11 @@ impl App {
 
     /// コマンドの一覧からだけ動かす操作（キーを持たない）。
     fn run_keyless(&mut self, id: &str) {
+        if id == "new-orphan-branch" {
+            self.naming = Naming::Orphan;
+            self.typing_branch = Some((String::new(), String::new(), String::new()));
+            self.dirty = true;
+        }
         if id == "prune-worktrees" {
             // フォルダのなくなった worktree の記録を片付ける（フォルダには触らない）。
             self.run(
@@ -1340,6 +1351,7 @@ impl App {
             "addWorktree" => self.notice = Some(tr!("Added the worktree")),
             "setUpstream" => self.notice = Some(tr!("Set the upstream")),
             "pruneWorktrees" => self.notice = Some(tr!("Pruned the worktrees")),
+            "orphan" => self.notice = Some(tr!("Created the branch")),
             "merge" | "rebase" | "continue" | "skip" | "cherryPick" | "revert" | "rewrite" => {
                 // コンフリクトで止まったら、Working Copy で解決する。
                 match reply["outcome"].as_str() {
@@ -1519,6 +1531,22 @@ impl App {
                 ]),
             },
         ));
+    }
+
+    /// 履歴のない新しいブランチ `name` を、空から作るか、今のファイルを stage したまま作るかを選ばせる。
+    fn ask_orphan(&mut self, name: &str) {
+        let orphan = |keep_files: bool| Request::Run {
+            name: "orphan",
+            command: json!({"op": "createOrphanBranch", "name": name, "keepFiles": keep_files}),
+        };
+        self.choices = Some((
+            tr!("Start {name} with no history?", name = name),
+            vec![
+                ('e', tr!("empty"), orphan(false)),
+                ('k', tr!("keeping the current files staged"), orphan(true)),
+            ],
+        ));
+        self.dirty = true;
     }
 
     /// push の送り先を打たせる（初めは上流）。
@@ -2954,6 +2982,7 @@ impl App {
                     Naming::PushTo => {
                         tr!("Push {at} to (remote/branch): {name}", at = at, name = name)
                     }
+                    Naming::Orphan => tr!("New orphan branch: {name}", name = name),
                 };
                 let x = buf.set_stringn(area.x + 1, y, text, room, Style::new()).0;
                 cursor = Some((x.min(position_x.saturating_sub(1)), y));

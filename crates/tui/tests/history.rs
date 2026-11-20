@@ -1308,6 +1308,35 @@ fn worktrees_are_listed_in_the_sidebar() {
     assert_eq!(side[at + 2], "  other (topic)");
 }
 
+/// コマンドの一覧の New Orphan Branch: 名前を聞き、空からか、今のファイルを stage したままかを選ぶ
+#[test]
+fn new_orphan_branch_from_the_command_list() {
+    let dir = tempfile::tempdir().unwrap();
+    two_lines(dir.path());
+    let branch = || git_out(dir.path(), &["branch", "--show-current"]);
+    let asked =
+        amonhen_tui::snapshot(open(dir.path()), 140, 10, clock(), ":orphan\npages\n").unwrap();
+    println!("{asked}");
+    assert!(asked.contains(
+        "Start pages with no history?   e empty   k keeping the current files staged   n cancel"
+    ));
+    // 作業中の変更があると、空からは git が断る。今のファイルを残すほうは作れる。
+    let refused =
+        amonhen_tui::snapshot(open(dir.path()), 140, 10, clock(), ":orphan\npages\ne").unwrap();
+    println!("{refused}");
+    assert!(!refused.contains("Created the branch"));
+    assert_eq!(branch(), "main\n");
+    let kept =
+        amonhen_tui::snapshot(open(dir.path()), 140, 10, clock(), ":orphan\npages\nk").unwrap();
+    assert!(kept.contains("Created the branch"));
+    assert_eq!(branch(), "pages\n");
+    // 履歴はなく、ファイルはすべて新しく足すものとして index にある（作業中の変更は、そのまま残る）。
+    assert_eq!(
+        git_out(dir.path(), &["status", "--porcelain"]),
+        "AM a.txt\n"
+    );
+}
+
 /// コマンドの一覧の Prune Worktrees: フォルダのなくなった worktree の記録を片付ける（キーはない）
 #[test]
 fn prune_worktrees_from_the_command_list() {
