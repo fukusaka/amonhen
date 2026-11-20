@@ -16,6 +16,8 @@ pub struct Tab {
     pub repositories: bool,
     /// Working Copy から出す（前に出していたとき Working Copy だった）。
     pub working_copy: bool,
+    /// File History のタブ（そのファイルのパス。macOS 版・GTK4 版と同じく、リポジトリのタブの隣に開く）。
+    pub file_history: Option<String>,
 }
 
 thread_local! {
@@ -40,6 +42,7 @@ fn tab(location: &str, repositories: bool, working_copy: bool) -> Tab {
         location: location.to_owned(),
         repositories,
         working_copy,
+        file_history: None,
     }
 }
 
@@ -144,6 +147,22 @@ fn insert(tab: Tab) {
     activate(index);
 }
 
+/// `location` のリポジトリの `path` の File History を、今のタブの右のタブで開く（もう開いていればそのタブを前に）。
+pub fn open_file_history(location: &str, path: &str) {
+    let found = TABS.with(|t| {
+        t.borrow()
+            .iter()
+            .position(|tab| tab.file_history.as_deref() == Some(path) && tab.location == location)
+    });
+    match found {
+        Some(index) => select(index),
+        None => insert(Tab {
+            file_history: Some(path.to_owned()),
+            ..tab(location, false, false)
+        }),
+    }
+}
+
 /// リポジトリを新しいタブで開く。
 pub fn open(location: &str) -> Result<(), String> {
     check(location)?;
@@ -221,9 +240,30 @@ pub fn reorder(order: &[String]) {
 
 /// 覚えておく形（次に引数なしで起動したときに開き直す）。
 pub fn saved() -> String {
-    let locations: Vec<String> =
-        TABS.with(|t| t.borrow().iter().map(|tab| tab.location.clone()).collect());
-    json!({ "tabs": locations, "active": active() }).to_string()
+    // File History のタブは覚えない（リポジトリのタブだけを戻す）。前のタブがそれなら、その左のリポジトリのタブ。
+    let now = active();
+    let (locations, active) = TABS.with(|t| {
+        let tabs = t.borrow();
+        let before = tabs[..now.min(tabs.len())]
+            .iter()
+            .filter(|tab| tab.file_history.is_none())
+            .count();
+        let kept = tabs.get(now).is_some_and(|tab| tab.file_history.is_none());
+        let locations: Vec<String> = tabs
+            .iter()
+            .filter(|tab| tab.file_history.is_none())
+            .map(|tab| tab.location.clone())
+            .collect();
+        (
+            locations,
+            if kept {
+                before
+            } else {
+                before.saturating_sub(1)
+            },
+        )
+    });
+    json!({ "tabs": locations, "active": active }).to_string()
 }
 
 /// 覚えていたタブ（場所と前のタブ。なくなったリポジトリは除く）。
@@ -266,6 +306,32 @@ mod tests {
         assert_eq!(tabs, ["a"]);
         assert_eq!(active, 0);
         assert_eq!(parse_saved("", |_| true), (Vec::new(), 0));
+    }
+
+    #[test]
+    fn file_history_tabs_open_beside_and_are_not_remembered() {
+        init(&["a".into(), "b".into()], 0, "", false, false);
+        open_file_history("a", "src/x.rs");
+        let shown: Vec<(String, Option<String>)> = tabs()
+            .iter()
+            .map(|t| (t.location.clone(), t.file_history.clone()))
+            .collect();
+        assert_eq!(
+            shown,
+            [
+                ("a".into(), None),
+                ("a".into(), Some("src/x.rs".into())),
+                ("b".into(), None),
+            ]
+        );
+        assert_eq!(active(), 1);
+        // 同じファイルをもう一度開けば、そのタブを前に出すだけ。
+        select(2);
+        open_file_history("a", "src/x.rs");
+        assert_eq!((tabs().len(), active()), (3, 1));
+        // 覚えるのはリポジトリのタブだけ（前のタブが File History なら、その左のタブ）。
+        let saved: Value = serde_json::from_str(&saved()).unwrap();
+        assert_eq!(saved, json!({ "tabs": ["a", "b"], "active": 0 }));
     }
 
     #[test]

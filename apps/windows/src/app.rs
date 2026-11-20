@@ -125,6 +125,7 @@ pub fn set_target(tab: &crate::tabs::Tab) {
             args.repo = tab.location.clone().into();
             args.repositories = tab.repositories;
             args.working_copy = tab.working_copy;
+            args.file_history = tab.file_history.clone();
             args.place = None;
         }
     });
@@ -205,6 +206,8 @@ struct Root {
     disconnected: Option<(Arc<Repository>, String)>,
     /// サイドバーの木を作り直す数（お気に入りを引いて並べ替えた後。WinUI が動かした項目を元の形に戻す）。
     sidebar_epoch: u32,
+    /// File History のタブで、リポジトリを読んだら出すファイル。
+    pending_file_history: Option<String>,
     /// 窓の背景画像（押す・引くを下へ通すため）。
     backdrop_image: ElementRef<Image>,
     /// ツールバーのリポジトリ名の一覧に添える、各リポジトリのブランチと状態（場所ごと）と、最後に読んだ時刻。
@@ -1304,6 +1307,7 @@ impl Component for Root {
             failure_generation: 0,
             disconnected: None,
             sidebar_epoch: 0,
+            pending_file_history: None,
             backdrop_image: ElementRef::new(),
             switch_peeks: std::collections::HashMap::new(),
             switch_peeked_at: None,
@@ -1465,6 +1469,9 @@ impl Root {
                     .with(|h| *h.borrow_mut() = refs.refs.head_branch.clone().unwrap_or_default());
                 self.refs = Some(refs);
                 self.repo = Some(repo.clone());
+                if let Some(path) = self.pending_file_history.take() {
+                    self.update(Message::OpenFileHistory(path), context);
+                }
                 self.switch_draft(&repo, context);
                 self.peek_switch_targets(context);
                 // 最近切り替えたブランチを覚える（ブランチの切り替えの並び）。
@@ -7237,7 +7244,7 @@ impl Root {
                 self.diff_file_action(&key, context);
             }
             Message::WorkingFileMenu(path, key) => match key.as_str() {
-                "history" => self.update(Message::OpenFileHistory(path), context),
+                "history" => self.open_file_history_tab(path, context),
                 "blame" => self.update(Message::OpenBlame(path, None), context),
                 "merge-editor" => self.update(Message::OpenMerge(path), context),
                 "stash" => self.ask_stash(vec![path]),
@@ -7245,7 +7252,9 @@ impl Root {
             },
             Message::OpenFileHistory(path) => {
                 let Some(repo) = self.repo.clone() else {
-                    return beep();
+                    // File History のタブを開いたところ: リポジトリを読んだら出す。
+                    self.pending_file_history = Some(path);
+                    return;
                 };
                 self.file_history = Some(crate::filehistory::State {
                     path: path.clone(),
@@ -7398,6 +7407,13 @@ impl Root {
                 }
             }
             Message::CloseFileHistory => {
+                // File History のタブなら、タブを閉じる（最後のタブなら窓を閉じる）。
+                if crate::tabs::current().is_some_and(|t| t.file_history.is_some()) {
+                    if crate::tabs::close_current() {
+                        close_window();
+                    }
+                    return;
+                }
                 self.file_history = None;
                 self.show_page(Page::History);
             }
@@ -7616,6 +7632,10 @@ impl Root {
             // 書き込む先の worktree を替えた窓は、前の窓と同じ所・同じ画面に。
             if args.working_copy {
                 sender.send(Message::Command("show-working-copy".to_owned()));
+            }
+            // File History のタブは、そのファイルの File History から（リポジトリを読んでから出す）。
+            if let Some(path) = args.file_history.clone() {
+                sender.send(Message::OpenFileHistory(path));
             }
             PENDING_PLACE.with(|p| p.set(args.place.map(|r| (r, 0))));
             let session = match Session::new(&args, "app", started, Arc::new(|| {})) {
@@ -8375,6 +8395,14 @@ fn backdrop_image(backdrop: &crate::backdrop::Backdrop, host: &ElementRef<Image>
 }
 
 impl Root {
+    /// File History を、リポジトリのタブの隣のタブで開く（macOS 版・GTK4 版と同じ。タブがなければこの窓に重ねる）。
+    fn open_file_history_tab(&mut self, path: String, context: &ComponentContext<Self>) {
+        match crate::tabs::current() {
+            Some(tab) => crate::tabs::open_file_history(&tab.location, &path),
+            None => self.update(Message::OpenFileHistory(path), context),
+        }
+    }
+
     /// 保存する場所を選んで archive・bundle を書き、書けたらエクスプローラーで見せる（GTK4 版と同じ）。
     fn save(&mut self, save: PendingSave, context: &ComponentContext<Self>) {
         let (repo, mut command, path, title) = match save {
@@ -11507,7 +11535,7 @@ impl Root {
                 }
             }
             "blame" => self.update(Message::OpenBlame(file.path, file.commit), context),
-            "history" => self.update(Message::OpenFileHistory(file.path), context),
+            "history" => self.open_file_history_tab(file.path, context),
             "restore" | "restore-before" => {
                 let (Some(repo), Some(oid)) = (self.repo.clone(), file.commit.clone()) else {
                     return beep();
@@ -17416,15 +17444,19 @@ fn tab_strip(title: &str, context: &ViewContext<Root>) -> View {
         .iter()
         .enumerate()
         .map(|(i, tab)| {
-            let header = if i == active {
-                title.to_owned()
-            } else {
-                crate::tabs::name(&tab.location)
+            // File History のタブはファイルの名前（GTK4 版・macOS 版と同じ）。
+            let (header, tip) = match &tab.file_history {
+                Some(path) => (
+                    format!("File History — {}", crate::tabs::name(path)),
+                    format!("{} — {}", path, crate::tabs::name(&tab.location)),
+                ),
+                None if i == active => (title.to_owned(), tab.location.clone()),
+                None => (crate::tabs::name(&tab.location), tab.location.clone()),
             };
             let item = TabViewItem::new()
                 .header(header)
                 .tag(tab.id.to_string())
-                .tooltip(tab.location.clone());
+                .tooltip(tip);
             (tab.id.to_string(), item)
         })
         .collect();
