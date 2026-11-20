@@ -9,7 +9,26 @@ import type { FileStat } from '../src/workingCopy/protocol.ts';
 import assert from 'node:assert/strict';
 import childProcess from 'node:child_process';
 import http from 'node:http';
-import { chmodSync, closeSync, cpSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, cpSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync as writeFileOnce } from 'node:fs';
+
+/**
+ * ファイルを書く。Windows では、書いた直後のファイルをほかのプロセス（Defender の検査など）がメモリに写している
+ * 間は、書き直しが UNKNOWN（ERROR_USER_MAPPED_FILE）・EBUSY・EPERM で失敗するので、少し待ってやり直す。
+ */
+function writeFileSync(...args: Parameters<typeof writeFileOnce>): void {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      writeFileOnce(...args);
+      return;
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code ?? '';
+      if (process.platform !== 'win32' || attempt >= 6 || !['UNKNOWN', 'EBUSY', 'EPERM'].includes(code)) {
+        throw e;
+      }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50 * attempt);
+    }
+  }
+}
 import { basename, dirname, join, resolve } from 'node:path';
 import * as vscode from 'vscode';
 import { DaemonClient } from '../src/daemon/client.ts';
