@@ -289,7 +289,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Blame | ✓ | ✓ | ✓ | ✓ | △ | VSCode: A page of the main view.<br>CLI: Via `amonhen run` (`blame`).<br>Windows: A line's menu shows its commit in History. |
 | Restore a file from a commit (this version, the version before; staged if chosen) | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: With the engine, from a file's right-click in History's details; Restore and Stage is the second button.<br>CLI: `restore --source <rev> [--staged]`. |
 | File History | ✓ | ✓ | ✓ | ✓ | △ | VSCode: A page of the main view, opened from the Explorer, an editor tab, the Command Palette or a file in the main view.<br>CLI: Via `amonhen run` (`fileHistory`).<br>Windows: From a Working Copy file. |
-| Opened as a tab beside the repository tab, with the repository toolbar | ✓ | ✓ | — | n/a | n/a | GTK4: When the repository tab is in front in another window, the tab gets a title bar without the toolbar.<br>Windows: Over History in the same window. |
+| Opened as a tab beside the repository tab, with the repository toolbar | ✓ | ✓ | ✓ | n/a | n/a | GTK4: When the repository tab is in front in another window, the tab gets a title bar without the toolbar. |
 | Line history | — | — | — | — | — |  |
 
 ## 7a. Patches
