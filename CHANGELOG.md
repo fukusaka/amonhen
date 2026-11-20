@@ -31,6 +31,8 @@ becomes the GitHub Release notes.
 #### Fixed
 
 - Repository Settings > Remotes' Prune asks first, as the sidebar's does.
+- The Undo log is no longer emptied when it is read while being written or can't be read for a moment: it is replaced
+  as a whole, an unreadable log is an error, and a broken one is set aside as `undo.json.broken-<time>`.
 - The engine on Windows opens repositories on SSH hosts (`-C ssh://…`): it no longer relies on ssh's connection
   sharing, which Windows' OpenSSH lacks, and sends the engine to the host with scp correctly.
 
