@@ -1530,6 +1530,133 @@ fn save_the_repository_as_a_bundle() {
     }
 }
 
+/// コマンドの一覧の Fetch from Bundle: ファイルを読み、名前を聞いて、そのブランチを refs/remotes/<名前>/ に取り込む
+#[test]
+fn fetch_from_a_bundle() {
+    let dir = tempfile::tempdir().unwrap();
+    let (from, to) = (dir.path().join("from"), dir.path().join("to"));
+    std::fs::create_dir(&from).unwrap();
+    merged(&from);
+    let file = dir.path().join("work.bundle");
+    git(
+        &from,
+        BASE,
+        // `-q` は git 2.35 から（サポートする最低の git にはない）。
+        &["bundle", "create", file.to_str().unwrap(), "--all"],
+    );
+    std::fs::create_dir(&to).unwrap();
+    git(&to, BASE, &["init", "-q", "-b", "main"]);
+    commit(&to, BASE, "Elsewhere");
+    let keys = format!(":fetch from bundle\n\x15{}\n", file.display());
+    let named = amonhen_tui::snapshot(open(&to), 200, 8, clock(), &keys).unwrap();
+    println!("{named}");
+    assert!(named.contains("Fetch its branches as remote: work"));
+    let done = amonhen_tui::snapshot(open(&to), 200, 8, clock(), &format!("{keys}\n")).unwrap();
+    println!("{done}");
+    assert!(done.contains("Fetched"));
+    let refs = git_out(
+        &to,
+        &["for-each-ref", "--format=%(refname)", "refs/remotes/work"],
+    );
+    assert!(refs.contains("refs/remotes/work/main"), "{refs}");
+    assert!(refs.contains("refs/remotes/work/topic"), "{refs}");
+    // bundle でないファイルは、エンジンが断る（理由が出る）。
+    let keys = format!(
+        ":fetch from bundle\n\x15{}\n",
+        from.join("lane.rs").display()
+    );
+    let wrong = amonhen_tui::snapshot(open(&to), 200, 8, clock(), &keys).unwrap();
+    assert!(!wrong.contains("Fetch its branches"));
+}
+
+/// コマンドの一覧の Apply Patch: メールの形はコミットとして（git am）、ただの diff は作業ツリーに当てる
+#[test]
+fn apply_patch_from_the_command_list() {
+    let dir = tempfile::tempdir().unwrap();
+    changed(dir.path());
+    let out = tempfile::tempdir().unwrap();
+    // いちばん新しいコミットをパッチにして、そのコミットを外す。
+    let mail = out.path().join("change.patch");
+    let patch = git_out(dir.path(), &["format-patch", "-1", "--stdout"]);
+    std::fs::write(&mail, patch).unwrap();
+    let subject = git_out(dir.path(), &["log", "-1", "--format=%s"]);
+    git(dir.path(), BASE, &["reset", "-q", "--hard", "HEAD~1"]);
+    let keys = format!(":apply patch\n\x15{}\n", mail.display());
+    let asked = amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), &keys).unwrap();
+    println!("{asked}");
+    assert!(
+        asked.contains("Apply the patch to the current branch as a commit?   y apply   n cancel")
+    );
+    amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), &format!("{keys}y")).unwrap();
+    assert_eq!(git_out(dir.path(), &["log", "-1", "--format=%s"]), subject);
+    // ただの diff は作業ツリーだけに。
+    // ただの diff は、git で作った作業ツリーの変更を、戻してから当てる。
+    let diff = out.path().join("change.diff");
+    let lane = dir.path().join("lane.rs");
+    let before = std::fs::read_to_string(&lane).unwrap();
+    std::fs::write(&lane, before.replace("u32", "u64")).unwrap();
+    std::fs::write(&diff, git_out(dir.path(), &["diff"])).unwrap();
+    std::fs::write(&lane, &before).unwrap();
+    let keys = format!(":apply patch\n\x15{}\n", diff.display());
+    let asked = amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), &keys).unwrap();
+    println!("{asked}");
+    assert!(asked.contains("Apply the diff to the working tree?"));
+    amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), &format!("{keys}y")).unwrap();
+    assert_eq!(git_out(dir.path(), &["diff", "--name-only"]), "lane.rs\n");
+    assert_eq!(
+        git_out(dir.path(), &["diff", "--cached", "--name-only"]),
+        ""
+    );
+    // もう当たらない（同じ diff をもう一度）。
+    let again = amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), &keys).unwrap();
+    assert!(again.contains("The patch doesn’t apply"));
+}
+
+/// コマンドの一覧の Save as Patch: History で選んでいるコミットを、git の名前のパッチにしてフォルダに書く
+#[test]
+fn save_the_selected_commit_as_a_patch() {
+    let dir = tempfile::tempdir().unwrap();
+    changed(dir.path());
+    let out = tempfile::tempdir().unwrap();
+    let folder = out.path().join("patches");
+    let keys = format!(":save as patch\n\x15{}\n", folder.display());
+    let done = amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), &keys).unwrap();
+    println!("{done}");
+    assert!(done.contains("Saved "));
+    let patch = folder.join("0001-Take-the-lane-from-the-trunk.patch");
+    let text = std::fs::read_to_string(&patch).unwrap();
+    assert!(text.contains("Subject: [PATCH] Take the lane from the trunk"));
+    assert!(text.contains("+    let lane = trunk();"));
+}
+
+/// コマンドの一覧の Compare with Previous Version: 今のブランチを、最後に書き換える前の版と比べる（range-diff）
+#[test]
+fn compare_with_the_previous_version() {
+    let dir = tempfile::tempdir().unwrap();
+    changed(dir.path());
+    let none = amonhen_tui::snapshot(open(dir.path()), 160, 10, clock(), ":compare\n").unwrap();
+    assert!(none.contains("The branch hasn’t been rewritten"));
+    // いちばん新しいコミットの中身を変えて amend する。
+    std::fs::write(dir.path().join("notes.txt"), "two\n").unwrap();
+    git(
+        dir.path(),
+        BASE + DAY * 4,
+        &["commit", "-q", "-a", "--amend", "--no-edit"],
+    );
+    let shown = amonhen_tui::snapshot(open(dir.path()), 160, 10, clock(), ":compare\n").unwrap();
+    println!("{shown}");
+    let last = shown.lines().last().unwrap();
+    assert!(last.contains("main compared with main@{1}"), "{last}");
+    let row = shown
+        .lines()
+        .find(|l| l.contains("Take the lane from the trunk"))
+        .unwrap();
+    assert!(row.contains("1: ") && row.contains(" ! 1: "), "{row}");
+    // 選んだ組のコミット（今の版）の詳細が、横に出る。
+    let new = git_out(dir.path(), &["rev-parse", "--short=8", "HEAD"]);
+    assert!(row.contains(new.trim()), "{row}");
+}
+
 /// コマンドの一覧の Prune Worktrees: フォルダのなくなった worktree の記録を片付ける（キーはない）
 #[test]
 fn prune_worktrees_from_the_command_list() {
