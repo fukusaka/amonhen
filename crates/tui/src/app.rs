@@ -196,6 +196,8 @@ pub struct App {
     /// merge か rebase を確かめる前に、見通しを読んでいる: 何を（ref の名前）、どのブランチに、merge か。merge は
     /// 見通し（`mergePreview`）を読んだ後に、コンフリクトの見込みも読む。
     preview: Option<(String, String, bool, Value)>,
+    /// reset する先（見通しを読んでいる間、覚えておく）。
+    reset_to: Option<String>,
     /// History でマージ済みのブランチを折りたたんでいる（アプリの Fold Merged Branches。この TUI の間だけ）。
     fold: bool,
     /// 折りたたんでいる間に、取り込んだ側を開いたマージ（16 進の ID）。
@@ -347,6 +349,7 @@ impl App {
             topo_order: false,
             fold: false,
             preview: None,
+            reset_to: None,
             expanded: Vec::new(),
             files_here: true,
             open_file: None,
@@ -1743,6 +1746,11 @@ impl App {
                 self.ask_with_preview(conflicts);
                 return;
             }
+            "resetPreview" => {
+                let info = reply["info"].clone();
+                self.ask_reset_with(&info);
+                return;
+            }
             "rebasePreview" => {
                 let info = reply["info"].clone();
                 // コンフリクトしそうなコミットのファイルを、まとめて。
@@ -2250,7 +2258,32 @@ impl App {
         let Some(id) = id.map(|id| id.to_string()) else {
             return;
         };
+        // 先に見通し（外れるコミット・加わるコミット・上流が持っているか）を読み、確かめる文に書く。
+        self.reset_to = Some(id.clone());
+        self.run(
+            "resetPreview",
+            tr!("Looking ahead…"),
+            json!({"op": "movePreview", "from": "HEAD", "to": id, "branch": self.branch}),
+        );
+    }
+
+    /// reset の見通し（`movePreview` の `info`）から、どう reset するかを選ばせる。
+    fn ask_reset_with(&mut self, preview: &Value) {
+        let Some(id) = self.reset_to.take() else {
+            return;
+        };
         let branch = self.branch.clone().unwrap_or_else(|| "HEAD".to_owned());
+        let lost = preview["lostCount"].as_u64().unwrap_or(0);
+        let gained = preview["gainedCount"].as_u64().unwrap_or(0);
+        let pushed = preview["upstreamHas"].as_u64().unwrap_or(0);
+        let force = match (pushed, preview["upstream"].as_str()) {
+            (1.., Some(upstream)) => tr!(
+                " {upstream} has {count} of the commits it leaves, so pushing will need Force Push.",
+                upstream = upstream,
+                count = pushed
+            ),
+            _ => String::new(),
+        };
         let option = |key: char, mode: &'static str, label: String| {
             (
                 key,
@@ -2263,9 +2296,12 @@ impl App {
         };
         self.choices = Some((
             tr!(
-                "Reset {branch} to {commit}? Undo brings it back.",
+                "Reset {branch} to {commit} (−{lost} +{gained} commits)? Undo brings it back.{force}",
                 branch = branch,
-                commit = &id[..id.len().min(8)]
+                commit = &id[..id.len().min(8)],
+                lost = lost,
+                gained = gained,
+                force = force
             ),
             vec![
                 option('s', "soft", tr!("soft (keep the index and files)")),

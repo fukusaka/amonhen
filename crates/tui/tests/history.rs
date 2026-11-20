@@ -1441,6 +1441,11 @@ fn reset_offers_the_modes() {
     println!("{asked}");
     let last = asked.lines().last().unwrap();
     assert!(last.contains("Reset main to "), "{last}");
+    // 外れるコミット（merge と topic の 1 つ）の数を先に見せる。
+    assert!(
+        last.contains(" (−2 +0 commits)? Undo brings it back."),
+        "{last}"
+    );
     assert!(last.contains("s soft (keep the index and files)   m mixed (keep the files)"));
     // ほかのキーでやめる。
     amonhen_tui::snapshot(open(dir.path()), 160, 10, clock(), "jRn").unwrap();
@@ -1451,6 +1456,30 @@ fn reset_offers_the_modes() {
     // Undo で戻る。
     amonhen_tui::snapshot(open(dir.path()), 160, 10, clock(), "uy").unwrap();
     assert_eq!(head(), "Merge branch 'topic'\n");
+}
+
+/// 上流が持っているコミットを外す reset では、push に Force Push が要ると先に言う
+#[test]
+fn reset_warns_when_the_upstream_has_the_commits() {
+    let dir = tempfile::tempdir().unwrap();
+    let work = with_remote(dir.path());
+    git(&work, BASE, &["push", "-q"]);
+    // 1 つ下（Start）を選んで `R`。
+    let asked = amonhen_tui::snapshot(open(&work), 260, 10, clock(), "jR").unwrap();
+    let last = asked.lines().last().unwrap();
+    assert!(last.contains(" (−1 +0 commits)?"), "{last}");
+    assert!(
+        last.contains(
+            "origin/main has 1 of the commits it leaves, so pushing will need Force Push."
+        ),
+        "{last}"
+    );
+    // 上流にないコミットだけを外すなら、言わない。
+    commit(&work, BASE + 2 * DAY, "Local only");
+    let local = amonhen_tui::snapshot(open(&work), 260, 10, clock(), "jR").unwrap();
+    let last = local.lines().last().unwrap();
+    assert!(last.contains(" (−1 +0 commits)?"), "{last}");
+    assert!(!last.contains("Force Push"), "{last}");
 }
 
 /// `M` でマウスの取り込みを切り替える
