@@ -715,7 +715,8 @@ fn sidebar_filter_narrows_refs() {
 fn question_mark_lists_the_keys() {
     let dir = tempfile::tempdir().unwrap();
     merged(dir.path());
-    let help = amonhen_tui::snapshot(open(dir.path()), 80, 30, clock(), "?").unwrap();
+    // History のキーは、収まるだけの高さで（収まらなければ `j` `k` で送る。それは別の試験）。
+    let help = amonhen_tui::snapshot(open(dir.path()), 80, 40, clock(), "?").unwrap();
     println!("{help}");
     assert!(help.contains("┌─ Keys ─"));
     assert!(help.contains("│ n N          Next and previous match"));
@@ -765,6 +766,63 @@ fn colon_lists_commands_and_runs_the_selected_one() {
     assert!(tag.contains(": v1"));
 }
 
+/// 署名したコミットの詳細には、検証の結果（アプリと同じ言葉）と署名した人を出す。SSH の署名は git 2.34 から
+#[test]
+fn details_show_the_signature_check() {
+    let version = git_out(Path::new("."), &["--version"]);
+    let numbers: Vec<u32> = version
+        .split(|c: char| !c.is_ascii_digit())
+        .filter_map(|n| n.parse().ok())
+        .collect();
+    if numbers.len() < 2 || (numbers[0], numbers[1]) < (2, 34) {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let keys = tempfile::tempdir().unwrap();
+    let key = keys.path().join("key");
+    let made = amonhen_model::process::command("ssh-keygen")
+        .args(["-q", "-t", "ed25519", "-N", "", "-C", "ann", "-f"])
+        .arg(&key)
+        .output();
+    let Ok(made) = made else { return };
+    assert!(made.status.success());
+    let public = std::fs::read_to_string(keys.path().join("key.pub")).unwrap();
+    let allowed = keys.path().join("allowed");
+    std::fs::write(&allowed, format!("ann@example.com {public}")).unwrap();
+    git(dir.path(), BASE, &["init", "-q", "-b", "main"]);
+    for (k, v) in [
+        ("gpg.format", "ssh"),
+        ("user.signingkey", key.to_str().unwrap()),
+    ] {
+        git(dir.path(), BASE, &["config", k, v]);
+    }
+    git(
+        dir.path(),
+        BASE,
+        &["commit", "-q", "-S", "--allow-empty", "-m", "Signed"],
+    );
+    // 許可した署名者の一覧がなければ、検証できない。
+    let unknown = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "").unwrap();
+    println!("{unknown}");
+    assert!(unknown.contains("Signature"), "{unknown}");
+    assert!(!unknown.contains("Verified"));
+    git(
+        dir.path(),
+        BASE,
+        &[
+            "config",
+            "gpg.ssh.allowedSignersFile",
+            allowed.to_str().unwrap(),
+        ],
+    );
+    let verified = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "").unwrap();
+    println!("{verified}");
+    assert!(
+        verified.contains("Signature  Verified, ann@example.com"),
+        "{verified}"
+    );
+}
+
 /// History の `@` `]` `[`: HEAD・親（1 つ目の親）・すぐ上の子へ移る。
 #[test]
 fn go_to_head_parent_and_child() {
@@ -792,6 +850,98 @@ fn go_to_head_parent_and_child() {
     assert_eq!(at("G@"), "1/5");
     // コマンドの一覧からも。
     assert_eq!(at("G:go to head\n"), "1/5");
+}
+
+/// History の `o`: 日付順とトポロジー順（ブランチのコミットをそのマージの下にまとめる）を替える
+#[test]
+fn o_switches_history_between_date_and_topological_order() {
+    let dir = tempfile::tempdir().unwrap();
+    merged(dir.path());
+    let subjects = |text: &str| -> Vec<String> {
+        text.lines()
+            .skip(1)
+            .take(5)
+            .map(|l| {
+                [
+                    "Merge branch",
+                    "Bump the version",
+                    "日本語の件名",
+                    "Add the graph",
+                    "Start",
+                ]
+                .into_iter()
+                .find(|s| l.contains(s))
+                .unwrap_or("")
+                .to_owned()
+            })
+            .collect()
+    };
+    let date = amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "").unwrap();
+    assert_eq!(
+        subjects(&date),
+        [
+            "Merge branch",
+            "Bump the version",
+            "日本語の件名",
+            "Add the graph",
+            "Start"
+        ]
+    );
+    let topo = amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "o").unwrap();
+    println!("{topo}");
+    assert!(topo.contains("History in topological order"));
+    // topic のコミットが、マージのすぐ下に来る。
+    assert_eq!(
+        subjects(&topo),
+        [
+            "Merge branch",
+            "日本語の件名",
+            "Bump the version",
+            "Add the graph",
+            "Start"
+        ]
+    );
+    let back = amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "oo").unwrap();
+    assert!(back.contains("History in date order"));
+    assert_eq!(subjects(&back), subjects(&date));
+}
+
+/// History の `z`: マージ済みのブランチを折りたたむ（マージの行に隠した数）。`Z` で選んでいるマージを開く・閉じる
+#[test]
+fn z_folds_merged_branches() {
+    let dir = tempfile::tempdir().unwrap();
+    merged(dir.path());
+    let count = |text: &str| {
+        text.lines()
+            .last()
+            .unwrap()
+            .split('/')
+            .next_back()
+            .unwrap()
+            .trim()
+            .to_owned()
+    };
+    let all = amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "").unwrap();
+    assert_eq!(count(&all), "5");
+    let folded = amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "z").unwrap();
+    println!("{folded}");
+    assert!(folded.contains("Merged branches folded"));
+    assert!(!folded.contains("日本語の件名"));
+    let merge = folded.lines().find(|l| l.contains("Merge branch")).unwrap();
+    assert!(merge.contains("+1 Merge branch"), "{merge}");
+    assert_eq!(count(&folded), "4");
+    // マージの行で `Z`: 取り込んだ側を出す。もう一度で閉じる。
+    let opened = amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "zZ").unwrap();
+    println!("{opened}");
+    assert!(opened.contains("日本語の件名"));
+    let closed = amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "zZZ").unwrap();
+    assert!(!closed.contains("日本語の件名"));
+    // 折りたたむものがない行では、そう知らせる。
+    let none = amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "zjZ").unwrap();
+    assert!(none.contains("This commit has nothing folded"));
+    // `z` をもう一度で、すべて出す。
+    let back = amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "zz").unwrap();
+    assert!(back.contains("日本語の件名"));
 }
 
 /// Space は、History とサイドバーで Enter と同じ（詳細へ入る・選んでいる行を開く）
@@ -1101,6 +1251,40 @@ fn conflicts_are_resolved_by_side() {
     println!("{resolved}");
     assert!(resolved.contains("Resolved"));
     assert_eq!(read(dir.path()), "topic\n");
+}
+
+/// コンフリクトのファイルで `m`: Magic Merge。規則で解けるものを解き（空白だけの違い）、解けないものは残す
+#[test]
+fn magic_merge_on_a_conflicted_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let read = |dir: &Path| std::fs::read_to_string(dir.join("a.txt")).unwrap();
+    git(dir.path(), BASE, &["init", "-q", "-b", "main"]);
+    std::fs::write(dir.path().join("a.txt"), "x = 1\n").unwrap();
+    git(dir.path(), BASE, &["add", "."]);
+    git(dir.path(), BASE, &["commit", "-q", "-m", "Start"]);
+    git(dir.path(), BASE, &["switch", "-q", "-c", "topic"]);
+    std::fs::write(dir.path().join("a.txt"), "x = 2\n").unwrap();
+    git(dir.path(), BASE + DAY, &["commit", "-q", "-am", "On topic"]);
+    git(dir.path(), BASE, &["switch", "-q", "main"]);
+    std::fs::write(dir.path().join("a.txt"), "x =  2\n").unwrap();
+    git(
+        dir.path(),
+        BASE + DAY * 2,
+        &["commit", "-q", "-am", "On main"],
+    );
+    amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjjmy").unwrap();
+    assert!(read(dir.path()).contains("<<<<<<<"));
+    let done = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "1m").unwrap();
+    println!("{done}");
+    assert!(done.contains("Magic Merge resolved 1; none left"));
+    assert_eq!(read(dir.path()), "x =  2\n");
+    // 両側が別に変えたものは解けない。
+    let other = tempfile::tempdir().unwrap();
+    diverged(other.path());
+    amonhen_tui::snapshot(open(other.path()), 160, 12, clock(), "0jjjmy").unwrap();
+    let none = amonhen_tui::snapshot(open(other.path()), 160, 12, clock(), "1m").unwrap();
+    assert!(none.contains("Magic Merge found nothing it can resolve on its own"));
+    assert!(read(other.path()).contains("<<<<<<<"));
 }
 
 /// `a` は、コンフリクトを共通の祖先の側にする。その側が入っていないコンフリクトでは、理由を出す。

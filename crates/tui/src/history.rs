@@ -65,6 +65,8 @@ struct Window {
     edges: Vec<Edge>,
     /// `edges` の線の、History のすべての線の中での番号（祖先の強調で、光らせる線を引くのに使う）。
     edge_ids: Vec<u32>,
+    /// 折りたたんだ History で、行ごとの、取り込んだ側の隠したコミットの数（折りたたんでいなければ空）。
+    folded: Vec<u32>,
 }
 
 impl Window {
@@ -347,6 +349,7 @@ impl History {
             text: reply.section("text").to_vec(),
             edges: reply.items("edges"),
             edge_ids: reply.u32s("edgeIds"),
+            folded: reply.u32s("folded"),
         });
     }
 
@@ -362,6 +365,17 @@ impl History {
 
     pub fn page(&self) -> i64 {
         i64::from(self.height.saturating_sub(1).max(1))
+    }
+
+    /// 選んでいる行で、折りたたんで隠したコミットの数（折りたたんでいない、読んでいなければ 0）。
+    pub fn selected_folded(&self) -> u32 {
+        let Some(window) = &self.window else {
+            return 0;
+        };
+        (window.index(self.selected))
+            .and_then(|i| window.folded.get(i))
+            .copied()
+            .unwrap_or(0)
     }
 
     /// HEAD のコミットを選ぶ（HEAD が History になければ、何もしない）。
@@ -578,6 +592,21 @@ impl History {
                 .set_stringn(x, y, format!("[{name}]"), usize::from(text_end - x), style)
                 .0
                 + 1;
+        }
+        // 折りたたんだマージは、取り込んだ側の隠したコミットの数を、件名の前に（アプリと同じ）。
+        if let Some(&count) = window.folded.get(i).filter(|&&c| c > 0)
+            && x + 2 < text_end
+        {
+            let folded = format!("+{count}");
+            x =
+                buf.set_stringn(
+                    x,
+                    y,
+                    &folded,
+                    usize::from(text_end - x),
+                    Style::new().fg(DIM),
+                )
+                .0 + 1;
         }
         if x < text_end {
             let subject = fit(window.string(i, 0), usize::from(text_end - x));

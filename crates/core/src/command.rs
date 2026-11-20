@@ -454,6 +454,11 @@ pub enum Command {
     SquashRangeMessage {
         oids: Vec<String>,
     },
+    /// Magic Merge を作業ツリーのファイル `path` に当てて書く（Undo できる）。決まった規則で解けるコンフリクトを
+    /// すべて解き、解けないものはマーカーごと残す。`info.resolved`・`info.remaining`。
+    MagicMergeFile {
+        path: String,
+    },
     /// `path` の `index` 番目のコンフリクトを解決する（Undo できる）。
     ResolveConflict {
         path: String,
@@ -4652,6 +4657,25 @@ impl Repository {
                 Ok(Response {
                     ok: true,
                     text: Some(String::from_utf8_lossy(&resolved).into_owned()),
+                    ..Default::default()
+                })
+            }
+            Command::MagicMergeFile { path } => {
+                let files = self.backend().files();
+                let data = files
+                    .read(Root::Workdir, &path)?
+                    .ok_or_else(|| tr!("File not found"))?;
+                let (merged, resolved) =
+                    crate::conflict::magic(&data, crate::conflict::MagicRules::All, None);
+                let remaining = crate::conflict::parse(&merged).len();
+                if resolved > 0 {
+                    undo.record_files(ops, &format!("Magic Merge {path}"), &[&path], || {
+                        files.write(Root::Workdir, &path, &merged)
+                    })?;
+                }
+                Ok(Response {
+                    ok: true,
+                    info: Some(serde_json::json!({ "resolved": resolved, "remaining": remaining })),
                     ..Default::default()
                 })
             }
@@ -10004,6 +10028,36 @@ mod tests {
         assert_eq!(git(&dir, &["rev-list", "--count", "--merges", "HEAD"]), "1");
     }
 
+    /// `magicMergeFile` は、規則で解けるコンフリクトを作業ツリーのファイルで解いて書く（Undo できる）。
+    #[test]
+    fn magic_merge_resolves_a_file() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        git(dir, &["switch", "-q", "-c", "topic"]);
+        commit_file(dir, "a.txt", "1\nx = 1\n3\n");
+        git(dir, &["switch", "-q", "main"]);
+        // 空白だけが違う: Current（main）の側にして解ける。
+        commit_file(dir, "a.txt", "1\nx =  1\n3\n");
+        assert_eq!(
+            run(&repo, r#"{"op":"merge","rev":"topic"}"#)["outcome"],
+            "conflict"
+        );
+        let r = run(&repo, r#"{"op":"magicMergeFile","path":"a.txt"}"#);
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(r["info"]["resolved"], 1, "{r}");
+        assert_eq!(r["info"]["remaining"], 0, "{r}");
+        assert_eq!(
+            std::fs::read_to_string(dir.join("a.txt")).unwrap(),
+            "1\nx =  1\n3\n"
+        );
+        assert_eq!(run(&repo, r#"{"op":"undo"}"#)["ok"], true);
+        assert!(
+            std::fs::read_to_string(dir.join("a.txt"))
+                .unwrap()
+                .contains("<<<<<<<")
+        );
+    }
+
     #[test]
     fn resolves_merge_conflicts() {
         let (tmp, repo) = setup();
@@ -10032,6 +10086,10 @@ mod tests {
         );
         // 解決は Undo できる。
         assert_eq!(run(&repo, r#"{"op":"undo"}"#)["ok"], true);
+        // 両側が違う変更なので、Magic Merge では解けない（ファイルはそのまま）。
+        let r = run(&repo, r#"{"op":"magicMergeFile","path":"a.txt"}"#);
+        assert_eq!(r["info"]["resolved"], 0, "{r}");
+        assert_eq!(r["info"]["remaining"], 1, "{r}");
         assert!(
             std::fs::read_to_string(dir.join("a.txt"))
                 .unwrap()

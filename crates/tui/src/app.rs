@@ -193,6 +193,13 @@ pub struct App {
     patch_file: Option<String>,
     /// 前の版と比べている間の題（比べた結果が届くまで覚えておく）。
     range_title: Option<String>,
+    /// History でマージ済みのブランチを折りたたんでいる（アプリの Fold Merged Branches。この TUI の間だけ）。
+    fold: bool,
+    /// 折りたたんでいる間に、取り込んだ側を開いたマージ（16 進の ID）。
+    expanded: Vec<String>,
+    /// History の並び順を、トポロジー順（ブランチのコミットをそのマージの下にまとめる）にしている。この TUI の
+    /// 間だけ（アプリの設定には書かない）。
+    topo_order: bool,
     /// 作業ツリーのファイルがこの機械にある（`ssh://` の先でない）。エディタで開けるか。
     files_here: bool,
     /// エディタで開く作業ツリーのファイル（絶対パス）。
@@ -334,6 +341,9 @@ impl App {
             bundle_file: None,
             patch_file: None,
             range_title: None,
+            topo_order: false,
+            fold: false,
+            expanded: Vec::new(),
             files_here: true,
             open_file: None,
             search: None,
@@ -371,7 +381,10 @@ impl App {
         self.opening = true;
         // HEAD が動いたかもしれない。
         self.reflog.refresh();
-        self.send(Request::Open);
+        self.send(Request::Open {
+            fold: self.fold,
+            expanded: self.expanded.clone(),
+        });
     }
 
     fn send(&mut self, request: Request) {
@@ -1333,6 +1346,22 @@ impl App {
         self.key(KeyEvent::new(entry.key, modifiers));
     }
 
+    /// Working Copy で選んでいるコンフリクトのファイルに、Magic Merge を当てる（決まった規則で解けるものを解く。
+    /// Undo できる）。差分で開いていれば、そのファイルに。
+    fn magic_merge(&mut self) {
+        match self.changes.conflicted_path().map(str::to_owned) {
+            Some(path) => self.run(
+                "magicMerge",
+                tr!("Magic Merge…"),
+                json!({"op": "magicMergeFile", "path": path}),
+            ),
+            None => {
+                self.error = Some(tr!("Select a conflicted file in the Working Copy"));
+                self.dirty = true;
+            }
+        }
+    }
+
     /// コマンドの一覧からだけ動かす操作（キーを持たない）。
     fn run_keyless(&mut self, id: &str) {
         if id == "compare-with-previous" {
@@ -1459,6 +1488,24 @@ impl App {
         }
         self.running = Some(label);
         self.send(Request::Run { name, command });
+    }
+
+    /// History の並び順を、日付順とトポロジー順で替える（この TUI の間だけ）。
+    fn toggle_history_order(&mut self) {
+        self.dirty = true;
+        if self.running.is_some() {
+            self.error = Some(tr!("Another operation is still running"));
+            return;
+        }
+        let order = match self.topo_order {
+            true => "date",
+            false => "topo",
+        };
+        self.running = Some(tr!("Reordering History…"));
+        self.send(Request::Call {
+            name: "historyOrder",
+            request: json!({"op": "historyOrder", "order": order}),
+        });
     }
 
     /// 命令が済んだ。だめなら理由を出し、どちらでも状態・ref・History を読み直す。
@@ -1616,6 +1663,19 @@ impl App {
                 return;
             }
             "applyPatch" => self.notice = Some(tr!("Applied the patch")),
+            "magicMerge" => {
+                let resolved = reply["info"]["resolved"].as_u64().unwrap_or(0);
+                let remaining = reply["info"]["remaining"].as_u64().unwrap_or(0);
+                self.notice = Some(match (resolved, remaining) {
+                    (0, _) => tr!("Magic Merge found nothing it can resolve on its own"),
+                    (_, 0) => tr!("Magic Merge resolved {count}; none left", count = resolved),
+                    _ => tr!(
+                        "Magic Merge resolved {count}; {left} left",
+                        count = resolved,
+                        left = remaining
+                    ),
+                });
+            }
             // 今のブランチの、最後に書き換える前の版が分かった: その範囲で range-diff を頼む。
             "previousVersion" => {
                 let previous = &reply["info"]["previous"];
@@ -1649,6 +1709,16 @@ impl App {
                 self.focus = Focus::Main;
                 self.dirty = true;
                 return;
+            }
+            // 並び順が替わった: History を読み直す（ref と状態も、ほかの操作と同じく下で読み直す）。
+            "historyOrder" => {
+                self.topo_order = reply["order"] == "topo";
+                self.notice = Some(match self.topo_order {
+                    true => tr!(
+                        "History in topological order: a branch's commits stay together under its merge"
+                    ),
+                    false => tr!("History in date order"),
+                });
             }
             "savePatch" => {
                 let file = (reply["info"]["files"].as_array())
@@ -2578,6 +2648,11 @@ impl App {
                 ("g G", tr!("Top and bottom")),
                 ("PgUp PgDn", tr!("Move by a page")),
                 ("@", tr!("Go to HEAD")),
+                ("o", tr!("Date or topological order")),
+                (
+                    "z Z",
+                    tr!("Fold merged branches; open or close the selected merge"),
+                ),
                 ("] [", tr!("Go to the parent, the child")),
                 ("Enter Space", tr!("Go to the details")),
                 ("/", tr!("Search")),
@@ -2622,6 +2697,10 @@ impl App {
                     "o t",
                     tr!("Take the current or the incoming side of a conflicted file"),
                 ),
+                (
+                    "m",
+                    tr!("Magic Merge: resolve what rules can in a conflicted file"),
+                ),
                 ("Enter", tr!("Go to the diff")),
                 (
                     "c",
@@ -2647,6 +2726,7 @@ impl App {
                     "o t b a",
                     tr!("In a conflict: take current, incoming, both, or the base"),
                 ),
+                ("m", tr!("Magic Merge on the whole file")),
                 ("h l", tr!("Pan long lines; h at the left edge goes back")),
                 ("Esc", tr!("Go back to the list")),
             ],
@@ -2826,6 +2906,11 @@ impl App {
                 None => false,
             },
             // コンフリクトのあるファイルを、片側にして解決済みにする（先に確かめる）。
+            // コンフリクトのファイルで `m`: Magic Merge（決まった規則で解けるものを解く）。
+            KeyCode::Char('m') if self.changes.conflicted_path().is_some() => {
+                self.magic_merge();
+                true
+            }
             KeyCode::Char('o' | 't') if self.changes.conflicted_path().is_some() => {
                 let ours = code == KeyCode::Char('o');
                 let path = self.changes.conflicted_path().unwrap_or("").to_owned();
@@ -2942,6 +3027,11 @@ impl App {
             }
             // コンフリクトの中では、そのコンフリクトを Current・Incoming・両方・共通の祖先のどれかにする（Undo
             // できる）。
+            // コンフリクトのファイルの差分でも `m` で Magic Merge（ファイルのすべてのコンフリクトに）。
+            KeyCode::Char('m') if self.changes.conflicted_path().is_some() => {
+                self.magic_merge();
+                true
+            }
             KeyCode::Char('o' | 't' | 'b' | 'a') if self.changes.conflict_at_cursor().is_some() => {
                 let choice = match code {
                     KeyCode::Char('o') => "ours",
@@ -3012,6 +3102,40 @@ impl App {
             KeyCode::Char('G') | KeyCode::End => Some(self.history.select(u32::MAX)),
             // HEAD・親・子へ（アプリの Navigate）。`]` は下（古い方）、`[` は上へ動く。
             KeyCode::Char('@') => Some(self.history.go_to_head()),
+            KeyCode::Char('o') => {
+                self.toggle_history_order();
+                None
+            }
+            // マージ済みのブランチを折りたたむ・戻す。
+            KeyCode::Char('z') => {
+                self.fold = !self.fold;
+                self.expanded.clear();
+                self.notice = Some(match self.fold {
+                    true => tr!(
+                        "Merged branches folded: a merge shows how many commits it brought in; Z opens one"
+                    ),
+                    false => tr!("Merged branches shown"),
+                });
+                self.dirty = true;
+                self.open();
+                None
+            }
+            // 折りたたんだマージの、取り込んだ側を開く・閉じる。
+            KeyCode::Char('Z') if self.fold => {
+                if let Some(id) = self.history.selected_id() {
+                    let id = id.to_string();
+                    match self.expanded.iter().position(|e| *e == id) {
+                        Some(i) => {
+                            self.expanded.remove(i);
+                        }
+                        None if self.history.selected_folded() > 0 => self.expanded.push(id),
+                        None => self.notice = Some(tr!("This commit has nothing folded")),
+                    }
+                    self.dirty = true;
+                    self.open();
+                }
+                None
+            }
             KeyCode::Char(']') => Some(self.history.go_to_parent()),
             KeyCode::Char('[') => Some(self.history.go_to_child()),
             _ => None,
