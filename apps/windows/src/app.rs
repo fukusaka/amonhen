@@ -7833,9 +7833,21 @@ impl Root {
                 ))
             }
         };
-        // 窓全体を透かすとき、ほかの画面を重ねている間は下の History と右の列を隠す（Working Copy は右の列を使う）。
+        // 窓全体を透かすとき、ほかの画面を重ねている間は下の History を隠す。右の列は、まん中と右の 2 列を覆う画面
+        // のときだけ隠す（Working Copy・Stashes・Reflog・Range Diff・File History は、まん中だけを覆い、右の列に差分を
+        // 出す）。
         let history_covered = content_ground < 1.0 && self.page != Page::History;
-        let right_covered = history_covered && self.page != Page::WorkingCopy;
+        let right_covered = history_covered
+            && matches!(
+                self.page,
+                Page::EditCommits
+                    | Page::Blame
+                    | Page::Merge
+                    | Page::Settings
+                    | Page::Activity
+                    | Page::Repositories
+                    | Page::RepoSettings
+            );
         let right = Grid::new()
             .opacity(if right_covered { 0.0 } else { 1.0 })
             .rows(if self.page == Page::WorkingCopy {
