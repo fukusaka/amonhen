@@ -499,10 +499,6 @@ enum MergeMode: String, CaseIterable {
 @Observable
 final class SettingsModel {
     var autoFetchMinutes = Settings.autoFetchMinutes { didSet { Settings.autoFetchMinutes = autoFetchMinutes } }
-    var compactHistoryRows = Settings.compactHistoryRows { didSet { Settings.compactHistoryRows = compactHistoryRows } }
-    var historyOrder = Settings.historyOrder { didSet { Settings.historyOrder = historyOrder } }
-    var historyItems = Settings.historyItems { didSet { Settings.historyItems = historyItems } }
-    var highlightAncestors = Settings.highlightAncestors { didSet { Settings.highlightAncestors = highlightAncestors } }
     var monospacedCommitMessage = Settings.monospacedCommitMessage {
         didSet { Settings.monospacedCommitMessage = monospacedCommitMessage }
     }
@@ -545,10 +541,6 @@ final class SettingsModel {
     /// メニューで変えた分を拾う（同じ値なら書き戻さない）。
     func reload() {
         if autoFetchMinutes != Settings.autoFetchMinutes { autoFetchMinutes = Settings.autoFetchMinutes }
-        if compactHistoryRows != Settings.compactHistoryRows { compactHistoryRows = Settings.compactHistoryRows }
-        if historyOrder != Settings.historyOrder { historyOrder = Settings.historyOrder }
-        if historyItems != Settings.historyItems { historyItems = Settings.historyItems }
-        if highlightAncestors != Settings.highlightAncestors { highlightAncestors = Settings.highlightAncestors }
         if monospacedCommitMessage != Settings.monospacedCommitMessage {
             monospacedCommitMessage = Settings.monospacedCommitMessage
         }
@@ -753,22 +745,7 @@ private struct AppearanceSettings: View {
     @Bindable var model: SettingsModel
     var body: some View {
         Form {
-            Section("History") {
-                Picker(L("Order"), selection: $model.historyOrder) {
-                    ForEach(HistoryOrder.allCases, id: \.self) { Text($0.title).tag($0) }
-                }
-                Note(L("Topological order keeps a branch’s commits together under the merge that brought them in."))
-                Toggle(L("Show each commit on one line"), isOn: $model.compactHistoryRows)
-                Toggle(L("Highlight the selected commit’s ancestors"), isOn: $model.highlightAncestors)
-            }
-            Section(L("Items")) {
-                ForEach(HistoryDisplayMenu.entries, id: \.0.rawValue) { item, title in
-                    Toggle(L(title), isOn: Binding(
-                        get: { model.historyItems.contains(item) },
-                        set: { on in if on { model.historyItems.insert(item) } else { model.historyItems.remove(item) } }))
-                }
-                Note(L("What each commit’s row shows besides the subject."))
-            }
+            // History の並び順・1 行表示・祖先の強調・行に出す項目は、History の上の表示のボタンで変える（ここには置かない）。
             Section(L("Commit Details")) {
                 Toggle(L("Show the message in a monospaced font"), isOn: $model.monospacedCommitMessage)
                 Toggle(L("Show avatars"), isOn: $model.showAvatars)

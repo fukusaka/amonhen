@@ -297,60 +297,6 @@ fn check(key: &'static str, title: &str) -> gtk::Box {
     switch_row(title, key, move || bool(key), move |on| set_bool(key, on))
 }
 
-/// History の行に出す項目の 1 つ（`bit`）を出すか。
-fn item_check(bit: u32, title: &str) -> gtk::Box {
-    switch_row(
-        title,
-        HISTORY_ITEMS,
-        move || history_items() & bit != 0,
-        move |on| {
-            let items = history_items();
-            let next = if on { items | bit } else { items & !bit };
-            if next != items {
-                set_history_items(next);
-            }
-        },
-    )
-}
-
-/// History の並び順を選ぶ行と、その説明（Settings > Appearance）。
-fn order_row() -> gtk::Box {
-    use amonhen_model::HistoryOrder;
-    const ORDERS: [HistoryOrder; 2] = [HistoryOrder::Date, HistoryOrder::Topo];
-    let titles = [tr!("Date Order"), tr!("Topological Order")];
-    let refs: Vec<&str> = titles.iter().map(String::as_str).collect();
-    let choice = gtk::DropDown::from_strings(&refs);
-    let index = |o: HistoryOrder| ORDERS.iter().position(|&x| x == o).unwrap_or(0) as u32;
-    choice.set_selected(index(history_order()));
-    choice.connect_selected_notify(move |d| {
-        let order = ORDERS[d.selected() as usize];
-        if order != history_order() {
-            set_string(HISTORY_ORDER, order.name());
-        }
-    });
-    let weak = choice.downgrade();
-    connect_changed_while(&choice, move |changed| {
-        if changed == HISTORY_ORDER
-            && let Some(d) = weak.upgrade()
-        {
-            d.set_selected(index(history_order()));
-        }
-    });
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-    let l = gtk::Label::new(Some(&tr!("Order")));
-    l.set_hexpand(true);
-    l.set_xalign(0.0);
-    row.append(&l);
-    row.append(&choice);
-    let n = note(&tr!(
-        "Topological order keeps a branch’s commits together under the merge that brought them in."
-    ));
-    let b = gtk::Box::new(gtk::Orientation::Vertical, 4);
-    b.append(&row);
-    b.append(&n);
-    b
-}
-
 /// 選ぶ行（名前と、`titles` から選ぶ欄）。`get`・`set` で `key` の設定を読み書きする。
 fn choice_row(
     title: &str,
@@ -680,30 +626,8 @@ pub fn show(near: &impl IsA<gtk::Widget>) {
     // Appearance
     stack.add_titled(
         &page(&[
-            section(
-                Some("History"),
-                &[
-                    order_row().upcast(),
-                    check(COMPACT_HISTORY_ROWS, &tr!("Show each commit on one line")).upcast(),
-                    check(
-                        HIGHLIGHT_ANCESTORS,
-                        &tr!("Highlight the selected commit’s ancestors"),
-                    )
-                    .upcast(),
-                ],
-            ),
-            section(
-                Some(&tr!("Items")),
-                &[
-                    item_check(items::REFS, &tr!("Branches and Tags")).upcast(),
-                    item_check(items::AUTHOR, &tr!("Author")).upcast(),
-                    item_check(items::DATE, &tr!("Date")).upcast(),
-                    item_check(items::ID, &tr!("Commit ID")).upcast(),
-                    item_check(items::SIGNATURE, &tr!("Signature")).upcast(),
-                    item_check(items::CI, &tr!("CI Status")).upcast(),
-                    note(&tr!("What each commit’s row shows besides the subject.")).upcast(),
-                ],
-            ),
+            // History の並び順・1 行表示・祖先の強調・行に出す項目は、History の上の表示のボタンで変える（macOS
+            // 版と同じ。ここには置かない）。
             section(
                 Some(&tr!("Commit Details")),
                 &[
