@@ -87,7 +87,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Feature | macOS | GTK4 | Windows | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
 | Repository page with All, Favorites, Places and groups | ✓ | ✓ | ✓ | n/a | n/a |  |
-| Add a local or an SSH repository | ✓ | ✓ | △ | n/a | n/a | Windows: The host and path are typed; no Check Connection or folder picker for the host. |
+| Add a local or an SSH repository | ✓ | ✓ | ✓ | n/a | n/a |  |
 | Folders to scan on this machine (depth, watched) | △ | △ | △ | n/a | n/a | macOS: Excludes are a fixed list.<br>GTK4: Excludes are a fixed list.<br>Windows: Excludes are a fixed list; the folders are watched while Repositories is open. |
 | Folders to scan on SSH hosts | ✓ | ✓ | ✓ | n/a | △ | CLI: `find-repositories` does the scan for the apps. |
 | Folder tree of the repositories under a place | ✓ | ✓ | ✓ | n/a | n/a |  |

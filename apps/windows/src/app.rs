@@ -205,6 +205,8 @@ struct Root {
     settings_redo: Vec<SettingsChange>,
     /// エンジンを送ってよいかを聞く間、脇に置いたダイアログ（列で選ぶ画面）。
     suspended_dialog: Option<Dialog>,
+    /// SSH 接続を追加するダイアログの「接続を確認」: 確かめた SSH 先と、結果（文と、入れたか。確かめている間は None）。
+    ssh_check: Option<(String, Option<(String, bool)>)>,
     /// 走っている操作の数（GTK4 版の Activity のボタンの回る印と数）。
     running: usize,
     /// History で複数選んでいるコミット（上から。右クリックのメニューを複数のもの用にする）。
@@ -915,6 +917,8 @@ enum Message {
     Picker(crate::pathpicker::Event),
     /// 脇に置いたダイアログを戻す。
     RestoreDialog,
+    /// SSH 接続を追加するダイアログで確かめた結果（SSH 先と、文と、入れたか）。
+    SshChecked(String, String, bool),
     /// サイドバーの木でお気に入りを引いて落とした（新しい順の名前。お気に入りの間でなければ None）。
     FavoritesDropped(Option<Vec<String>>),
     /// Git > Programs の候補と使う git。
@@ -1280,6 +1284,7 @@ impl Component for Root {
             settings_undo: Vec::new(),
             settings_redo: Vec::new(),
             suspended_dialog: None,
+            ssh_check: None,
             running: 0,
             multi: Vec::new(),
             multi_consecutive: false,
@@ -2489,6 +2494,20 @@ impl Root {
             }
             Message::Command(id) if id == "settings-undo" || id == "settings-redo" => {
                 self.undo_settings(id == "settings-redo", context);
+            }
+            Message::Command(id) if id == "ssh-check" => {
+                let Some(Dialog::AddSsh { host, .. }) = &self.dialog else {
+                    return;
+                };
+                let host = host.trim().to_owned();
+                if host.is_empty() {
+                    return beep();
+                }
+                self.ssh_check = Some((host.clone(), None));
+                context.spawn_background(move |_| {
+                    let (text, ok) = crate::remote::check_host(&host);
+                    Message::SshChecked(host, text, ok)
+                });
             }
             Message::Command(id) if id == "ssh-browse" => {
                 // SSH 接続を追加するダイアログから、打った SSH 先のフォルダを列で選ぶ。
@@ -6294,6 +6313,11 @@ impl Root {
             Message::Disconnected(repo, reason) => {
                 self.disconnected = Some((repo, reason));
             }
+            Message::SshChecked(host, text, ok) => {
+                if self.ssh_check.as_ref().is_some_and(|(h, _)| *h == host) {
+                    self.ssh_check = Some((host, Some((text, ok))));
+                }
+            }
             Message::RestoreDialog => {
                 if self.dialog.is_none() {
                     self.dialog = self.suspended_dialog.take();
@@ -8962,6 +8986,7 @@ impl Root {
                                     }))
                                     .content(TextBlock::new().text(tr!("Choose…"))),
                             )),
+                        self.ssh_check_line(host, context),
                     )),
                 ),
             Some(Dialog::NewGroup { name, .. }) => dialog
@@ -12470,6 +12495,53 @@ impl Root {
                     .text_trimming(TextTrimming::CharacterEllipsis),
             )
             .menu(Menu::new(items, context.callback(Message::Command)))
+    }
+
+    /// SSH 接続を追加するダイアログの「接続を確認」と、その結果（打った SSH 先を確かめたときだけ）。
+    fn ssh_check_line(&self, host: &str, context: &ViewContext<Self>) -> View {
+        let result = self
+            .ssh_check
+            .as_ref()
+            .filter(|(h, _)| h == host.trim())
+            .map(|(_, r)| r.clone());
+        let checking = matches!(result, Some(None));
+        let status: View = match result {
+            Some(None) => StackPanel::new()
+                .orientation(Orientation::Horizontal)
+                .spacing(6.0)
+                .children((
+                    ProgressRing::new().is_active(true).width(14.0).height(14.0),
+                    TextBlock::new().text(tr!("Connecting…")).font_size(12.0),
+                )),
+            Some(Some((text, ok))) => TextBlock::new()
+                .text(text)
+                .font_size(12.0)
+                .text_wrapping(TextWrapping::Wrap)
+                .is_text_selection_enabled(true)
+                .foreground(Brush::Solid(if ok {
+                    Color::rgb(0x2e, 0x9e, 0x4f)
+                } else {
+                    Color::rgb(0xd0, 0x3a, 0x3a)
+                }))
+                .into(),
+            None => View::empty(),
+        };
+        Grid::new()
+            .columns([GridLength::Auto, GridLength::Star(1.0)])
+            .column_spacing(8.0)
+            .margin(Thickness::new(0.0, 4.0, 0.0, 0.0))
+            .children((
+                Button::new()
+                    .grid_column(0)
+                    .vertical_alignment(VerticalAlignment::Top)
+                    .is_enabled(!host.trim().is_empty() && !checking)
+                    .on_click(context.callback(|()| Message::Command("ssh-check".to_owned())))
+                    .content(TextBlock::new().text(tr!("Check Connection"))),
+                Border::new()
+                    .grid_column(1)
+                    .vertical_alignment(VerticalAlignment::Center)
+                    .content(status),
+            ))
     }
 
     /// つながりが切れた帯（ステータスバーの上。GTK4 版の `show_disconnected`、macOS 版と同じ）: どこと切れたか、

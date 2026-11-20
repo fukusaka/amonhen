@@ -287,6 +287,152 @@ fn apply_signature_check(repo: &Repository, local: bool) {
     ));
 }
 
+/// SSH で `host` に入れるかを確かめる（GTK4 版の `check_ssh_host`。裏のスレッドから）。入れたら git の版と、
+/// エンジンが入っているかを、文と、入れたか（git があるか）で返す。Unix の SSH 先で動かなければ、Windows の
+/// SSH 先として PowerShell で試す。
+pub fn check_host(host: &str) -> (String, bool) {
+    use amonhen_model::tr;
+    let program = std::env::var("AMONHEN_SSH").unwrap_or_else(|_| "ssh".into());
+    let run = |command: &str| {
+        amonhen_model::process::command(&program)
+            .args([
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=10",
+                host,
+                command,
+            ])
+            .stdin(std::process::Stdio::null())
+            .output()
+            .ok()
+    };
+    let Some(mut out) =
+        run("git --version 2>/dev/null; command -v amonhen >/dev/null 2>&1 && echo engine; true")
+    else {
+        return (tr!("Couldn’t run ssh"), false);
+    };
+    // ssh そのものの失敗は 255。
+    let code = out.status.code().unwrap_or(-1);
+    if code != 0 && code != 255 {
+        let script = "git --version; if (Get-Command amonhen -CommandType Application -ErrorAction SilentlyContinue) { 'engine' }";
+        // `-EncodedCommand` は UTF-16LE の base64（cmd.exe・pwsh・Windows PowerShell のどれでも同じ意味に）。
+        let bytes: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
+        if let Some(windows) = run(&format!(
+            "powershell -NoProfile -NonInteractive -EncodedCommand {}",
+            base64(&bytes)
+        )) && windows.status.success()
+        {
+            out = windows;
+        }
+    }
+    if !out.status.success() {
+        let message = ssh_message(&out.stderr);
+        return (
+            if message.is_empty() {
+                tr!(
+                    "Couldn’t connect (exit {code})",
+                    code = out.status.code().unwrap_or(-1)
+                )
+            } else {
+                message
+            },
+            false,
+        );
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    let git = text
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("git version ").map(str::to_owned));
+    let engine = text.lines().any(|l| l.trim() == "engine");
+    let mut shown = match &git {
+        Some(v) => tr!("Reachable: git {version}", version = v),
+        None => tr!("Reachable, but git wasn’t found on the host"),
+    };
+    shown += &if engine {
+        tr!(", engine found")
+    } else {
+        tr!(", engine not installed (Amon Hen sends one)")
+    };
+    (shown, git.is_some())
+}
+
+/// Windows の ssh の出したメッセージ。OpenSSH は ASCII でない字を `\202\273` のような 8 進の形で書くので、バイトに
+/// 戻してから、この機械の文字コード（日本語なら Shift_JIS）で読む。
+fn ssh_message(stderr: &[u8]) -> String {
+    let text = String::from_utf8_lossy(stderr);
+    let bytes = unescape_octal(text.trim());
+    if bytes.is_ascii() {
+        return String::from_utf8_lossy(&bytes).into_owned();
+    }
+    if let Ok(text) = std::str::from_utf8(&bytes) {
+        return text.to_owned();
+    }
+    ansi_to_string(&bytes).unwrap_or_else(|| String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// `\ooo`（3 桁の 8 進）をそのバイトに戻す。ほかの字はそのまま。
+fn unescape_octal(text: &str) -> Vec<u8> {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'\\'
+            && i + 3 < bytes.len()
+            && bytes[i + 1..i + 4]
+                .iter()
+                .all(|b| (b'0'..=b'7').contains(b))
+        {
+            let n = bytes[i + 1..i + 4]
+                .iter()
+                .fold(0u32, |n, b| n * 8 + u32::from(b - b'0'));
+            if let Ok(b) = u8::try_from(n) {
+                out.push(b);
+                i += 4;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    out
+}
+
+/// この機械の ANSI の文字コードのバイトを読む。
+fn ansi_to_string(bytes: &[u8]) -> Option<String> {
+    use windows::Win32::Globalization::{
+        CP_ACP, MULTI_BYTE_TO_WIDE_CHAR_FLAGS, MultiByteToWideChar,
+    };
+    let flags = MULTI_BYTE_TO_WIDE_CHAR_FLAGS(0);
+    let n = unsafe { MultiByteToWideChar(CP_ACP, flags, bytes, None) };
+    if n <= 0 {
+        return None;
+    }
+    let mut wide = vec![0u16; n as usize];
+    let n = unsafe { MultiByteToWideChar(CP_ACP, flags, bytes, Some(&mut wide)) };
+    (n > 0).then(|| String::from_utf16_lossy(&wide[..n as usize]))
+}
+
+/// base64（標準の文字、`=` で埋める）。
+fn base64(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::new();
+    for chunk in bytes.chunks(3) {
+        let n = chunk
+            .iter()
+            .enumerate()
+            .fold(0u32, |n, (i, b)| n | (u32::from(*b) << (16 - 8 * i)));
+        for i in 0..4 {
+            if i <= chunk.len() {
+                out.push(TABLE[(n >> (18 - 6 * i) & 63) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
 /// SSH 先に送るエンジン（`amonhen-<os>-<arch>`）の置き場所: `AMONHEN_ENGINES`、なければ実行ファイルの隣の
 /// `engines`、開発中はチェックアウトの `dist/engine`（GTK4 版と同じ）。
 fn engines_dir() -> PathBuf {
@@ -342,6 +488,22 @@ pub fn engine() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_octal_escapes_back_to_bytes() {
+        assert_eq!(unescape_octal(r"a\202\273b"), [b'a', 0o202, 0o273, b'b']);
+        assert_eq!(unescape_octal(r"no \x escape"), br"no \x escape");
+        assert_eq!(ssh_message(b"ssh: plain\n"), "ssh: plain");
+    }
+
+    #[test]
+    fn encodes_base64() {
+        assert_eq!(base64(b""), "");
+        assert_eq!(base64(b"f"), "Zg==");
+        assert_eq!(base64(b"fo"), "Zm8=");
+        assert_eq!(base64(b"foo"), "Zm9v");
+        assert_eq!(base64(b"foobar"), "Zm9vYmFy");
+    }
 
     #[test]
     fn locations_on_ssh_hosts() {
