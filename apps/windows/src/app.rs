@@ -3161,6 +3161,22 @@ impl Root {
                                 crate::repositories::add_scan_root(&location);
                             }
                         }
+                        crate::pathpicker::Purpose::AddLocal => {
+                            if let Some(path) = chosen {
+                                self.repositories_event(
+                                    crate::repositories::Event::AddRepositoryAt(path),
+                                    context,
+                                );
+                            }
+                        }
+                        crate::pathpicker::Purpose::ScanLocal => {
+                            if let Some(path) = chosen {
+                                self.repositories_event(
+                                    crate::repositories::Event::AddScanFolderAt(path),
+                                    context,
+                                );
+                            }
+                        }
                     }
                 }
                 (Some(Dialog::SendEngine { ask, always }), result) => {
@@ -9483,7 +9499,10 @@ impl Root {
                 .is_open(true)
                 .title(match picker.purpose {
                     crate::pathpicker::Purpose::AddSsh => tr!("Choose a Repository"),
-                    crate::pathpicker::Purpose::ScanRoot => tr!("Add a Folder to Scan"),
+                    crate::pathpicker::Purpose::ScanRoot | crate::pathpicker::Purpose::ScanLocal => {
+                        tr!("Add a Folder to Scan")
+                    }
+                    crate::pathpicker::Purpose::AddLocal => tr!("Add Repositories"),
                 })
                 .primary_button_text(tr!("Choose"))
                 .close_button_text(tr!("Cancel"))
@@ -13622,6 +13641,11 @@ impl Root {
                 self.dialog_inputs += 1;
             }
             Action::Backdrop(location) => self.dialog = Some(Dialog::Backdrop { location }),
+            Action::PickLocal(purpose) => {
+                let (picker, job) = crate::pathpicker::Picker::new_local(purpose);
+                self.dialog = Some(Dialog::PathPicker(Box::new(picker)));
+                context.spawn_background(move |_| Message::Picker(job.run()));
+            }
             Action::Fetch(location) => {
                 context.spawn_background(move |_| {
                     let error = crate::repositories::fetch(&location);
