@@ -135,6 +135,9 @@ pub fn editor_choices(value: &str) -> Vec<crate::editor::App> {
 /// 自動の fetch の間隔の選べる値（GTK4 版・macOS 版と同じ）。
 pub const AUTO_FETCH_CHOICES: [u32; 5] = [0, 5, 15, 30, 60];
 
+/// 窓の背景の横棒の値から、その操作を作る。
+pub type BackdropNumber = fn(f64) -> crate::backdrop::Event;
+
 pub struct Callbacks<'a> {
     pub field: Box<dyn Fn(usize) -> Callback<String> + 'a>,
     pub save_git: Callback<()>,
@@ -172,6 +175,12 @@ pub struct Callbacks<'a> {
     pub syntax_theme_dark: Callback<Option<usize>>,
     /// Theme のボタン（`import`・`remove:<name>`）。
     pub theme_button: Box<dyn Fn(String) -> Callback<()> + 'a>,
+    /// 窓の背景の欄（Choose…・Remove、位置、横棒、ツールバーの色を敷くか・色）。
+    pub backdrop_button: Box<dyn Fn(crate::backdrop::Event) -> Callback<()> + 'a>,
+    pub backdrop_placement: Callback<Option<usize>>,
+    pub backdrop_number: Box<dyn Fn(BackdropNumber) -> Callback<f64> + 'a>,
+    pub backdrop_tint: Callback<bool>,
+    pub backdrop_color: Callback<Color>,
     pub ssh: crate::sshhosts::Callbacks<'a>,
 }
 
@@ -293,6 +302,7 @@ fn appearance(callbacks: &Callbacks) -> View {
         note(tr!("What each commit’s row shows besides the subject.")),
         // 子の数がタプルの上限を超えないよう、後半を 1 つにまとめる。
         StackPanel::new().children((
+            backdrop_section(callbacks),
             // 構文と差分の色（GTK4 版の Theme の Color Theme。外観ごとに 1 つ）。
             heading(tr!("Color Theme")),
             theme_choice(tr!("Light appearance"), false, &callbacks.syntax_theme),
@@ -764,6 +774,127 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
 }
 
 /// 外観ごとのテーマを選ぶ行。
+/// 窓の背景（macOS 版・GTK4 版の Theme の Background Image と Toolbar）。窓の後ろを透かす欄はまだない。
+fn backdrop_section(callbacks: &Callbacks) -> View {
+    use crate::backdrop::{Event, Placement};
+    let b = crate::backdrop::Backdrop::app();
+    let labeled = |label: String, control: View| {
+        Grid::new()
+            .columns([GridLength::Pixel(140.0), GridLength::Star(1.0)])
+            .column_spacing(8.0)
+            .margin(Thickness::new(0.0, 4.0, 0.0, 4.0))
+            .children((
+                TextBlock::new()
+                    .text(label)
+                    .vertical_alignment(VerticalAlignment::Center),
+                Border::new().grid_column(1).content(control),
+            ))
+    };
+    let percent = |value: f64, min: f64, max: f64, event: fn(f64) -> Event| -> View {
+        StackPanel::new()
+            .orientation(Orientation::Horizontal)
+            .spacing(8.0)
+            .children((
+                Slider::new()
+                    .minimum(min)
+                    .maximum(max)
+                    .step_frequency(5.0)
+                    .value((value * 100.0).round())
+                    .width(200.0)
+                    .on_value_changed((callbacks.backdrop_number)(event)),
+                TextBlock::new()
+                    .text(format!("{}%", (value * 100.0).round()))
+                    .vertical_alignment(VerticalAlignment::Center),
+            ))
+    };
+    let image_name = b.image.as_deref().map_or_else(
+        || tr!("None"),
+        |p| {
+            std::path::Path::new(p)
+                .file_name()
+                .map_or_else(|| p.to_owned(), |n| n.to_string_lossy().into_owned())
+        },
+    );
+    let image_rows: View = if b.image.is_some() {
+        StackPanel::new().children((
+            labeled(
+                tr!("Position"),
+                ComboBox::new()
+                    .items_source(Placement::ALL.iter().map(|p| p.title()).collect::<Vec<_>>())
+                    .selected_index(
+                        Placement::ALL
+                            .iter()
+                            .position(|p| *p == b.placement)
+                            .unwrap_or(0),
+                    )
+                    .on_selection_changed(callbacks.backdrop_placement.clone())
+                    .into(),
+            ),
+            labeled(
+                tr!("Transparency"),
+                percent(b.image_transparency, 50.0, 95.0, Event::ImageTransparency),
+            ),
+        ))
+    } else {
+        View::empty()
+    };
+    let tint = b.toolbar_tint();
+    let tint_rows: View = match tint {
+        Some(color) => StackPanel::new().children((
+            labeled(
+                tr!("Toolbar color"),
+                ColorPicker::new()
+                    .color(Color::rgb(color.r, color.g, color.b))
+                    .is_alpha_enabled(false)
+                    .is_hex_input_visible(true)
+                    .is_color_channel_text_input_visible(false)
+                    .horizontal_alignment(HorizontalAlignment::Left)
+                    .on_color_changed(callbacks.backdrop_color.clone())
+                    .into(),
+            ),
+            labeled(
+                tr!("Toolbar tint"),
+                percent(b.toolbar_opacity, 10.0, 100.0, Event::ToolbarOpacity),
+            ),
+        )),
+        None => View::empty(),
+    };
+    StackPanel::new().children((
+        heading(tr!("Background Image")),
+        labeled(
+            tr!("Image"),
+            StackPanel::new()
+                .orientation(Orientation::Horizontal)
+                .spacing(8.0)
+                .children((
+                    TextBlock::new()
+                        .text(image_name)
+                        .opacity(0.7)
+                        .max_width(220.0)
+                        .text_trimming(TextTrimming::CharacterEllipsis)
+                        .vertical_alignment(VerticalAlignment::Center),
+                    Button::new()
+                        .on_click((callbacks.backdrop_button)(Event::ChooseImage))
+                        .content(TextBlock::new().text(tr!("Choose…"))),
+                    if b.image.is_some() {
+                        Button::new()
+                            .on_click((callbacks.backdrop_button)(Event::RemoveImage))
+                            .content(TextBlock::new().text(tr!("Remove")))
+                    } else {
+                        View::empty()
+                    },
+                )),
+        ),
+        image_rows,
+        heading(tr!("Toolbar")),
+        CheckBox::new()
+            .is_checked(tint.is_some())
+            .on_is_checked_changed(callbacks.backdrop_tint.clone())
+            .content(TextBlock::new().text(tr!("Tint the toolbar"))),
+        tint_rows,
+    ))
+}
+
 fn theme_choice(label: String, dark: bool, on: &Callback<Option<usize>>) -> View {
     let names = crate::theme::names();
     let selected = crate::theme::selected(dark);

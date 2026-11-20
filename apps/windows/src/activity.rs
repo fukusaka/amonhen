@@ -99,6 +99,19 @@ pub struct State {
     pub daemon: Option<Option<Value>>,
     /// Daemon のタブを出している間の数え（4 回に 1 回、2 秒ごとに読み直す）。
     pub daemon_tick: u32,
+    /// この窓のリポジトリの、daemon・SSH 越しのつながり（手元のリポジトリなら None。窓が読むたびに入れる）。
+    pub connection: Option<Connection>,
+}
+
+/// この窓のリポジトリのつながり（GTK4 版の「このアプリのつながり」の 1 行）。
+#[derive(Clone, PartialEq)]
+pub struct Connection {
+    pub name: String,
+    pub location: String,
+    pub closed: Option<String>,
+    pub sent: u64,
+    pub received: u64,
+    pub engine: Option<String>,
 }
 
 impl State {
@@ -112,6 +125,7 @@ impl State {
             events: Vec::new(),
             daemon: None,
             daemon_tick: 0,
+            connection: None,
         };
         state.refresh();
         state
@@ -221,7 +235,11 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                 )),
         ));
     let body: View = if state.tab == 5 {
-        daemon_view(state.daemon.as_ref(), callbacks.daemon_toggle)
+        daemon_view(
+            state.daemon.as_ref(),
+            state.connection.as_ref(),
+            callbacks.daemon_toggle,
+        )
     } else if state.tab == 0 {
         let rows = state.records.iter().map(|r| {
             let status = match r.ok {
@@ -459,7 +477,73 @@ fn span(ms: u64) -> String {
 
 /// Daemon のタブ（GTK4 版の Daemon）: 動いているか（pid・版・動いている時間・つながりの数とソケット）と起動・停止、
 /// daemon が開いているリポジトリの表。
-fn daemon_view(status: Option<&Option<Value>>, toggle: Callback<()>) -> View {
+/// つながりの種類（GTK4 版の `location_kind`）。
+fn location_kind(location: &str) -> String {
+    if location.starts_with("ssh://") {
+        tr!("SSH host (direct)")
+    } else if location.starts_with("daemon:ssh://") {
+        tr!("Shared daemon → SSH host")
+    } else {
+        tr!("Local shared daemon")
+    }
+}
+
+/// 「このアプリの daemon へのつながり」（GTK4 版・macOS 版の表。Windows 版は窓ごとにプロセスが分かれ、開いて
+/// いるのは前のタブのリポジトリだけなので、この窓のもの）。
+fn connections_view(connection: Option<&Connection>) -> View {
+    let columns = || {
+        [
+            GridLength::Star(1.0),
+            GridLength::Pixel(170.0),
+            GridLength::Pixel(100.0),
+            GridLength::Pixel(150.0),
+            GridLength::Pixel(220.0),
+        ]
+    };
+    let header = Grid::new().columns(columns()).children((
+        heading(tr!("Repository"), 0),
+        heading(tr!("Location"), 1),
+        heading(tr!("Status"), 2),
+        heading(tr!("Sent · Received"), 3),
+        heading(tr!("Engine on the SSH Host"), 4),
+    ));
+    let row: View = match connection {
+        None => cell("—".to_owned(), 0).opacity(0.6).into(),
+        Some(c) => {
+            let (status, color) = match &c.closed {
+                Some(_) => (tr!("Disconnected"), Color::rgb(0xd0, 0x3a, 0x3a)),
+                None => (tr!("Connected"), Color::rgb(0x2e, 0x9e, 0x44)),
+            };
+            let status = cell(status, 2).foreground(Brush::Solid(color));
+            let status: View = match &c.closed {
+                Some(reason) => status.tooltip(reason.clone()),
+                None => status.into(),
+            };
+            let engine = c.engine.clone().unwrap_or_else(|| "—".to_owned());
+            Grid::new().columns(columns()).children((
+                cell(c.name.clone(), 0).tooltip(c.location.clone()),
+                cell(location_kind(&c.location), 1).opacity(0.7),
+                status,
+                cell(format!("{} · {}", size(c.sent), size(c.received)), 3),
+                cell(engine.clone(), 4).opacity(0.7).tooltip(engine),
+            ))
+        }
+    };
+    StackPanel::new().spacing(4.0).children((
+        TextBlock::new()
+            .text(tr!("This App’s Connections to the Daemon"))
+            .font_size(14.0)
+            .margin(Thickness::new(0.0, 8.0, 0.0, 0.0)),
+        header,
+        row,
+    ))
+}
+
+fn daemon_view(
+    status: Option<&Option<Value>>,
+    connection: Option<&Connection>,
+    toggle: Callback<()>,
+) -> View {
     let running = matches!(status, Some(Some(_)));
     let (mark, title, detail) = match status {
         None => ("○", tr!("Checking…"), not_running()),
@@ -610,6 +694,7 @@ fn daemon_view(status: Option<&Option<Value>>, toggle: Callback<()>) -> View {
             ScrollViewer::new()
                 .max_height(320.0)
                 .content(StackPanel::new().children((View::keyed_fragment(rows),))),
+            connections_view(connection),
             note(tr!(
                 "The daemon exits after {duration} with no connections. From a terminal, run amonhen daemon status to see it.",
                 duration = span(idle)

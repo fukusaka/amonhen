@@ -94,6 +94,40 @@ pub fn drag_tags(element: &IInspectable) -> Option<EventRevoker> {
     .ok()
 }
 
+/// `element` の中の最初の一覧の行のうち、Tag が `allowed` のどれかのものだけを引けるようにする（ほかの行は
+/// 引き始めたら取りやめる）。引いた行の Tag は `prefix` を付けて覚え（`drop_on_rows` の落とした先が受け取る）、
+/// 引いてきたほかの一覧の行と見分けられるようにする。
+pub fn drag_some_tags(
+    element: &IInspectable,
+    allowed: Vec<String>,
+    prefix: &'static str,
+) -> Option<EventRevoker> {
+    let list = find_list(element)?;
+    list.DragItemsStarting(move |_, args: Ref<DragItemsStartingEventArgs>| {
+        let Some(args) = args.as_ref() else { return };
+        let Ok(items) = args.Items() else { return };
+        let count = items.Size().unwrap_or(0);
+        let tags: Vec<String> = (0..count)
+            .filter_map(|i| tag_up(&items.GetAt(i).ok()?))
+            .collect();
+        if tags.is_empty() || !tags.iter().all(|t| allowed.contains(t)) {
+            let _ = args.SetCancel(true);
+            return;
+        }
+        if let Ok(data) = args.Data() {
+            let _ = data.SetText(&HSTRING::from(tags.join("\n")));
+            // 落とす先の受け口は Copy で受ける（右の一覧から引いた行と同じ）。
+            let _ = data.SetRequestedOperation(DataPackageOperation(
+                DataPackageOperation::Copy.0 | DataPackageOperation::Move.0,
+            ));
+        }
+        *DRAGGED.lock().unwrap_or_else(|e| e.into_inner()) =
+            tags.into_iter().map(|t| format!("{prefix}{t}")).collect();
+        attach_drop();
+    })
+    .ok()
+}
+
 /// 落とす先（左の一覧を包む部品・落とせる行の Tag・落としたときに呼ぶもの）。行は画面に出てから作られるので、
 /// 受け口は行を引き始めたときに付ける（`attach_drop`）。
 type DropTarget = (

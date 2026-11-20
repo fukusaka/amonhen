@@ -94,6 +94,20 @@ fn item<'a>(data: &'a Value, path: &str) -> Option<&'a Value> {
     items(data).find(|b| b["path"].as_str().is_some_and(|p| same(p, path)))
 }
 
+/// `path` のリポジトリだけの窓の背景（ブックマークの `backdrop`。macOS 版・GTK4 版と同じ形）。
+pub fn backdrop(path: &str) -> Option<Value> {
+    item(&read(), path)
+        .map(|b| b["backdrop"].clone())
+        .filter(Value::is_object)
+}
+
+/// `bookmarks.json` を最後に書いた時刻（読んだものを使い回してよいか）。
+pub fn modified() -> Option<std::time::SystemTime> {
+    file()
+        .and_then(|p| std::fs::metadata(p).ok())
+        .and_then(|m| m.modified().ok())
+}
+
 /// `path` のブックマークを変える（なければ作る）。
 fn update(data: &mut Value, path: &str, change: impl FnOnce(&mut Map<String, Value>)) {
     let items = array_mut(data, "items");
@@ -151,7 +165,7 @@ fn tilde(path: &str) -> String {
     path.to_owned()
 }
 
-fn is_remote(location: &str) -> bool {
+pub fn is_remote(location: &str) -> bool {
     amonhen_remote::location::is_remote(location)
 }
 
@@ -657,6 +671,9 @@ pub fn open_window_with(location: &str, extra: &[&str]) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// 左のグループを引いたときに、引いた名前の前に付ける印（右の一覧から引いたリポジトリと見分ける）。
+pub const GROUP_DRAG: &str = "\u{1}group:";
+
 // 画面の状態
 
 #[derive(Clone, PartialEq)]
@@ -957,6 +974,15 @@ impl State {
             .collect()
     }
 
+    /// 左の行のうち、引いて並べ替えられるもの（グループ）。
+    pub fn draggable_groups(&self) -> Vec<String> {
+        self.categories()
+            .into_iter()
+            .filter(|c| matches!(c.0, Category::Group(_)))
+            .map(|c| c.1)
+            .collect()
+    }
+
     /// 出している並び（変わったら一覧が作り直される）。
     pub fn shown_key(&self) -> String {
         self.shown().iter().map(|l| key(l) + "\n").collect()
@@ -1128,6 +1154,29 @@ impl State {
                 }
             }
             Event::AddSsh => return Action::AddSsh,
+            // グループを引いて、ほかのグループに落とした: その前に移す（GTK4 版・macOS 版のグループの並べ替え）。
+            Event::DroppedOn(target, dragged)
+                if dragged.iter().all(|d| d.starts_with(GROUP_DRAG)) =>
+            {
+                let moved: Vec<String> = dragged
+                    .iter()
+                    .map(|d| d[GROUP_DRAG.len()..].to_owned())
+                    .collect();
+                let groups = self.groups();
+                if !groups.contains(&target) || moved.contains(&target) {
+                    return Action::None;
+                }
+                let mut order: Vec<String> =
+                    groups.into_iter().filter(|g| !moved.contains(g)).collect();
+                let at = order
+                    .iter()
+                    .position(|g| *g == target)
+                    .unwrap_or(order.len());
+                for (i, g) in moved.into_iter().enumerate() {
+                    order.insert(at + i, g);
+                }
+                self.change(|d| d["groups"] = json!(order));
+            }
             Event::DroppedOn(target, locations) => {
                 // 同じ名前なら、お気に入りを先に（グループに「お気に入り」と名付けたときも、上の行に入る）。
                 let category = self
@@ -1521,6 +1570,21 @@ fn category_menu(category: &Category, data: &Value) -> Vec<MenuItem> {
     }
 }
 
+/// ツールバーのリポジトリ名の一覧に添える、ブランチと状態の短い文字（GTK4 版の `show_compact`）。
+pub fn peek_summary(p: &Peek) -> String {
+    let mut parts = vec![p.branch.clone().unwrap_or_else(|| tr!("detached HEAD"))];
+    if p.changed > 0 {
+        parts.push(tr!("Changes {count}", count = p.changed));
+    }
+    if p.ahead > 0 {
+        parts.push(format!("↑{}", p.ahead));
+    }
+    if p.behind > 0 {
+        parts.push(format!("↓{}", p.behind));
+    }
+    parts.join("  ")
+}
+
 /// 状態の列（変更の数・上流との差。なければ ✓）とツールチップ。
 fn status(
     location: &str,
@@ -1793,6 +1857,7 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
     let side_key = state.side_key();
     // お気に入り・グループには、右の一覧の行を引いて入れられる（`xaml::drop_on_rows`。GTK4 版・macOS 版と同じ）。
     let side = ListView::new()
+        .can_drag_items(true)
         .selected_index(Some(state.category))
         .on_selection_changed(callbacks.category.clone())
         .collection_slot(ListViewSlot::Items, side_rows);

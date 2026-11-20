@@ -200,11 +200,18 @@ struct Root {
     disconnected: Option<(Arc<Repository>, String)>,
     /// サイドバーの木を作り直す数（お気に入りを引いて並べ替えた後。WinUI が動かした項目を元の形に戻す）。
     sidebar_epoch: u32,
+    /// 窓の背景画像（押す・引くを下へ通すため）。
+    backdrop_image: ElementRef<Image>,
+    /// ツールバーのリポジトリ名の一覧に添える、各リポジトリのブランチと状態（場所ごと）と、最後に読んだ時刻。
+    switch_peeks: std::collections::HashMap<String, amonhen_backend_cli::Peek>,
+    switch_peeked_at: Option<std::time::Instant>,
     /// 設定の画面で書いた変更の Undo・Redo（macOS 版・GTK4 版と同じく、画面を出している間。閉じたら忘れる）。
     settings_undo: Vec<SettingsChange>,
     settings_redo: Vec<SettingsChange>,
     /// エンジンを送ってよいかを聞く間、脇に置いたダイアログ（列で選ぶ画面）。
     suspended_dialog: Option<Dialog>,
+    /// SSH 接続を追加するダイアログの「接続を確認」: 確かめた SSH 先と、結果（文と、入れたか。確かめている間は None）。
+    ssh_check: Option<(String, Option<(String, bool)>)>,
     /// 走っている操作の数（GTK4 版の Activity のボタンの回る印と数）。
     running: usize,
     /// History で複数選んでいるコミット（上から。右クリックのメニューを複数のもの用にする）。
@@ -291,6 +298,8 @@ struct Root {
     merge_chosen: [ElementRef<Grid>; 3],
     diff_find_query: String,
     diff_find_status: String,
+    /// 今の一致がメッセージの中なら、その番号（件名から数えて）。差分の中なら None。
+    diff_find_message: Option<usize>,
     /// Working Copy の一部だけ含めているチェック（キーごと）と、直前の画面で使ったキー。
     mixed_checks: RefCell<std::collections::HashMap<String, ElementRef<CheckBox>>>,
     mixed_used: RefCell<Vec<String>>,
@@ -364,6 +373,8 @@ struct Root {
     sequence: Option<Value>,
     /// ダイアログの入力の欄（Enter で既定のボタンを押す）と、開いた回数（開いた後にキーを付ける）。
     dialog_input: ElementRef<TextBox>,
+    /// タブの帯を包む Grid（タブを窓の外へ引き出したのを受ける）。
+    tab_host: ElementRef<Grid>,
     dialog_inputs: u64,
     /// Working Copy の一覧を包む Grid（Space で含める・外す、Delete・Backspace で捨てる）。
     working_list: ElementRef<Grid>,
@@ -915,6 +926,10 @@ enum Message {
     Picker(crate::pathpicker::Event),
     /// 脇に置いたダイアログを戻す。
     RestoreDialog,
+    /// タブを窓の外へ引き出した（タブの番号）。
+    TabDroppedOut(String),
+    /// SSH 接続を追加するダイアログで確かめた結果（SSH 先と、文と、入れたか）。
+    SshChecked(String, String, bool),
     /// サイドバーの木でお気に入りを引いて落とした（新しい順の名前。お気に入りの間でなければ None）。
     FavoritesDropped(Option<Vec<String>>),
     /// Git > Programs の候補と使う git。
@@ -933,6 +948,8 @@ enum Message {
     SettingsSyntaxTheme(bool, Option<usize>),
     /// Settings > Theme のボタン（`import`・`remove:<name>`）。
     SettingsThemeButton(String),
+    /// Settings > Appearance の窓の背景の欄。
+    Backdrop(crate::backdrop::Event),
     CloseSettings,
     /// Activity: タブを選んだ・Undo の記録を読んだ・戻す数を選んだ・読み直す時刻・閉じる。
     ActivityTab(Option<usize>),
@@ -974,6 +991,8 @@ enum Message {
     CloseActivity,
     /// Repositories の操作。
     Repos(crate::repositories::Event),
+    /// ツールバーのリポジトリ名の一覧の、各リポジトリのブランチと状態を読んだ。
+    SwitchPeeked(Vec<(String, amonhen_backend_cli::Peek)>),
     /// Export Archive の書き出すフォルダの欄。
     ArchiveFolder(String),
     /// 操作が終わった（失敗はなく、ステータスバーに一言を出す）。
@@ -1142,7 +1161,8 @@ enum Message {
     DiffFindOpen(bool),
     DiffFindQuery(String),
     DiffFindStep(i32),
-    DiffFindStatus(String),
+    /// 差分が替わって数え直した、差分の中の一致の数（メッセージの一致と合わせて出す）。
+    DiffFindCount(usize),
     /// Working Copy のファイルの行にマウスが載った。
     WorkingHover(String),
     /// 窓に落としたもの。
@@ -1277,9 +1297,13 @@ impl Component for Root {
             failure_generation: 0,
             disconnected: None,
             sidebar_epoch: 0,
+            backdrop_image: ElementRef::new(),
+            switch_peeks: std::collections::HashMap::new(),
+            switch_peeked_at: None,
             settings_undo: Vec::new(),
             settings_redo: Vec::new(),
             suspended_dialog: None,
+            ssh_check: None,
             running: 0,
             multi: Vec::new(),
             multi_consecutive: false,
@@ -1325,6 +1349,7 @@ impl Component for Root {
             merge_chosen: std::array::from_fn(|_| ElementRef::new()),
             diff_find_query: String::new(),
             diff_find_status: String::new(),
+            diff_find_message: None,
             mixed_checks: RefCell::default(),
             mixed_used: RefCell::default(),
             search_opened: 0,
@@ -1333,6 +1358,7 @@ impl Component for Root {
             working_sides: None,
             busy: None,
             dialog_input: ElementRef::new(),
+            tab_host: ElementRef::new(),
             dialog_inputs: 0,
             working_list: ElementRef::new(),
             summary_box: ElementRef::new(),
@@ -1424,12 +1450,16 @@ impl Root {
             with_history(|h| h.reload_selected());
         }
         match message {
+            Message::SwitchPeeked(peeks) => {
+                self.switch_peeks.extend(peeks);
+            }
             Message::Refs(refs, repo) => {
                 HEAD_NAME
                     .with(|h| *h.borrow_mut() = refs.refs.head_branch.clone().unwrap_or_default());
                 self.refs = Some(refs);
                 self.repo = Some(repo.clone());
                 self.switch_draft(&repo, context);
+                self.peek_switch_targets(context);
                 // 最近切り替えたブランチを覚える（ブランチの切り替えの並び）。
                 if let (Some(workdir), Some(head)) = (
                     repo.paths().workdir,
@@ -2197,24 +2227,64 @@ impl Root {
                 if !open {
                     self.diff_find_query.clear();
                     self.diff_find_status.clear();
+                    self.diff_find_message = None;
                     with_history(|h| {
-                        h.find_in_diff(String::new(), 0);
+                        h.find_in_diff(String::new(), Some(0));
                     });
                 }
             }
             Message::DiffFindQuery(query) => {
                 self.diff_find_query = query.clone();
-                let mut status = String::new();
-                with_history(|h| status = h.find_in_diff(query, 0));
-                self.diff_find_status = status;
+                // メッセージの中に一致があれば、そこから（詳細の上にあるので）。なければ差分の、見えている所から。
+                let in_message = self.message_matches();
+                let mut found = (0, None);
+                with_history(|h| found = h.find_in_diff(query, (in_message == 0).then_some(0)));
+                self.diff_find_message = (in_message > 0).then_some(0);
+                self.diff_find_status = self.find_status(in_message, found);
             }
             Message::DiffFindStep(step) => {
+                // メッセージの一致と差分の一致を、上から 1 つの並びとして ↑・↓ で動く。
+                let in_message = self.message_matches();
                 let query = self.diff_find_query.clone();
-                let mut status = String::new();
-                with_history(|h| status = h.find_in_diff(query, step));
-                self.diff_find_status = status;
+                let mut found = (0, None);
+                with_history(|h| found = h.find_in_diff(query.clone(), None));
+                let total = in_message + found.0;
+                if total == 0 {
+                    self.diff_find_status = self.find_status(0, found);
+                    return;
+                }
+                let now = match (self.diff_find_message, found.1) {
+                    (Some(m), _) => m,
+                    (None, Some(d)) => in_message + d,
+                    (None, None) => 0,
+                };
+                let next = (now as i64 + i64::from(step)).rem_euclid(total as i64) as usize;
+                if next < in_message {
+                    self.diff_find_message = Some(next);
+                    with_history(|h| {
+                        h.select_diff_match(None);
+                    });
+                    found.1 = None;
+                } else {
+                    self.diff_find_message = None;
+                    let d = next - in_message;
+                    with_history(|h| {
+                        h.select_diff_match(Some(d));
+                    });
+                    found.1 = Some(d);
+                }
+                self.diff_find_status = self.find_status(in_message, found);
             }
-            Message::DiffFindStatus(status) => self.diff_find_status = status,
+            Message::DiffFindCount(count) => {
+                // 選んだものが替わった: 今の一致はなくし、数だけを出す（移るのは ↑・↓ を押したとき）。
+                self.diff_find_message = None;
+                let total = self.message_matches() + count;
+                self.diff_find_status = if total == 0 {
+                    tr!("No Matches")
+                } else {
+                    total.to_string()
+                };
+            }
             Message::WorkingHover(path) => {
                 if self.working_hovered.as_deref() != Some(path.as_str()) {
                     self.working_hovered = Some(path);
@@ -2490,6 +2560,20 @@ impl Root {
             Message::Command(id) if id == "settings-undo" || id == "settings-redo" => {
                 self.undo_settings(id == "settings-redo", context);
             }
+            Message::Command(id) if id == "ssh-check" => {
+                let Some(Dialog::AddSsh { host, .. }) = &self.dialog else {
+                    return;
+                };
+                let host = host.trim().to_owned();
+                if host.is_empty() {
+                    return beep();
+                }
+                self.ssh_check = Some((host.clone(), None));
+                context.spawn_background(move |_| {
+                    let (text, ok) = crate::remote::check_host(&host);
+                    Message::SshChecked(host, text, ok)
+                });
+            }
             Message::Command(id) if id == "ssh-browse" => {
                 // SSH 接続を追加するダイアログから、打った SSH 先のフォルダを列で選ぶ。
                 if let Some(Dialog::AddSsh { host, path }) = &self.dialog
@@ -2526,6 +2610,7 @@ impl Root {
                     self.error = Some(e);
                 }
             }
+            Message::Command(id) if id == "quit" => crate::session::quit_all(),
             Message::Command(id) if id == "close-tab" => {
                 if crate::tabs::close_current() {
                     close_window();
@@ -2550,6 +2635,29 @@ impl Root {
                 }
             }
             Message::TabsReordered(order) => crate::tabs::reorder(&order),
+            // タブを窓の外へ引き出した: そのリポジトリを新しい窓で開き、このタブを閉じる（GTK4 版・macOS 版と同じ）。
+            Message::TabDroppedOut(id) => {
+                let Some(tab) = id
+                    .parse::<u64>()
+                    .ok()
+                    .and_then(|id| crate::tabs::tabs().into_iter().find(|t| t.id == id))
+                else {
+                    return;
+                };
+                match crate::repositories::open_window(&tab.location) {
+                    Ok(()) => {
+                        if crate::tabs::close(tab.id) {
+                            close_window();
+                        }
+                    }
+                    Err(message) => {
+                        self.dialog = Some(Dialog::Failed {
+                            title: tr!("Open in New Window"),
+                            message,
+                        })
+                    }
+                }
+            }
             Message::OpenClone(dest, failed) => {
                 if let Some((title, message)) = failed {
                     self.dialog = Some(Dialog::Failed { title, message });
@@ -6173,7 +6281,23 @@ impl Root {
             }
             Message::ActivityTick => {
                 let mut undo = false;
+                // この窓のリポジトリの daemon・SSH 越しのつながり（Daemon のタブの表）。
+                let connection = self.repo.as_ref().and_then(|repo| {
+                    let state = repo.connection_state()?;
+                    let location = crate::tabs::current()
+                        .map(|t| t.location)
+                        .unwrap_or_default();
+                    Some(crate::activity::Connection {
+                        name: crate::repositories::display_name(&location),
+                        location,
+                        closed: state.closed,
+                        sent: state.sent,
+                        received: state.received,
+                        engine: state.engine,
+                    })
+                });
                 if let Some(state) = self.activity.as_mut() {
+                    state.connection = connection;
                     state.refresh();
                     undo = state.tab == 1;
                     // Daemon は 2 秒ごと（4 回に 1 回）。
@@ -6293,6 +6417,11 @@ impl Root {
             }
             Message::Disconnected(repo, reason) => {
                 self.disconnected = Some((repo, reason));
+            }
+            Message::SshChecked(host, text, ok) => {
+                if self.ssh_check.as_ref().is_some_and(|(h, _)| *h == host) {
+                    self.ssh_check = Some((host, Some((text, ok))));
+                }
             }
             Message::RestoreDialog => {
                 if self.dialog.is_none() {
@@ -6676,6 +6805,11 @@ impl Root {
                     let _ = crate::prefs::set_string(crate::theme::key(dark), &name);
                     crate::theme::reload();
                     with_history(|h| h.diff.dirty = true);
+                }
+            }
+            Message::Backdrop(event) => {
+                if let Err(e) = crate::backdrop::apply(event) {
+                    self.error = Some(e);
                 }
             }
             Message::SettingsThemeButton(key) => {
@@ -7351,7 +7485,30 @@ impl Root {
         } else {
             WindowTheme::Light
         }));
-        let tab_strip = tab_strip(&title, context);
+        let tab_strip = Grid::new()
+            .grid_row(2)
+            .element_ref(&self.tab_host)
+            .children((tab_strip(&title, context),));
+        // タブを窓の外へ引き出したら、そのリポジトリを新しい窓で開く（タブの並びが変わるたびに付け直す）。
+        let tab_ids: String = crate::tabs::tabs()
+            .iter()
+            .map(|t| format!("{},", t.id))
+            .collect();
+        let host = self.tab_host.clone();
+        context.use_effect("tab-drop-out", tab_ids, move || {
+            let _ = host.request_native_element(|result| {
+                if let Ok(element) = result
+                    && let Some(revoker) = xaml::on_tab_dropped_outside(&element, |id| {
+                        with_history(|h| {
+                            h.sender.send(Message::TabDroppedOut(id.clone()));
+                        });
+                    })
+                {
+                    REVOKERS.with(|r| r.borrow_mut().push(revoker));
+                }
+            });
+            None
+        });
         let root = self.root.clone();
         let refs = (
             self.panel.clone(),
@@ -7890,10 +8047,24 @@ impl Root {
                     .map(|s| (s.side_key(), s.drop_targets()))
             })
             .flatten();
+        let groups = self
+            .repositories
+            .as_ref()
+            .map(|s| s.draggable_groups())
+            .unwrap_or_default();
         context.use_effect("repositories-drop", targets.clone(), move || {
             if let Some((_, targets)) = targets.clone() {
+                let groups = groups.clone();
                 let _ = side.request_native_element(move |result| {
                     if let Ok(element) = result {
+                        // 左のグループは引いて、ほかのグループの前に移せる。
+                        if let Some(revoker) = xaml::drag_some_tags(
+                            &element,
+                            groups.clone(),
+                            crate::repositories::GROUP_DRAG,
+                        ) {
+                            REVOKERS.with(|r| r.borrow_mut().push(revoker));
+                        }
                         xaml::drop_on_rows(&element, targets.clone(), |target, locations| {
                             with_history(|h| {
                                 h.sender.send(Message::Repos(
@@ -7956,6 +8127,34 @@ impl Root {
             });
         }
         let dialog = self.dialog_view(context);
+        // 窓の背景（ツールバーの色と背景画像。リポジトリだけの設定があればそれ）。
+        let backdrop = crate::backdrop::current(
+            &crate::tabs::current().map_or_else(|| args.repo.display().to_string(), |t| t.location),
+        );
+        let toolbar_tint: View = match backdrop.toolbar_tint() {
+            Some(color) => Border::new()
+                .grid_row(0)
+                .grid_row_span(2)
+                .background(Brush::Solid(color))
+                .into(),
+            None => View::empty(),
+        };
+        let image = backdrop_image(&backdrop, &self.backdrop_image);
+        let host = self.backdrop_image.clone();
+        context.use_effect(
+            "backdrop-image",
+            (backdrop.image.clone(), format!("{:?}", backdrop.placement)),
+            move || {
+                let _ = host.request_native_element(|result| {
+                    if let Ok(element) = result
+                        && let Err(e) = xaml::pass_through(&element)
+                    {
+                        eprintln!("背景画像を押せないようにできない: {e}");
+                    }
+                });
+                None
+            },
+        );
         Grid::new()
             .element_ref(&self.root)
             // 窓の地（WinUI は外観を替えても窓の地を塗り直さないので、ここで塗る）。
@@ -7968,6 +8167,7 @@ impl Root {
                 GridLength::Auto,
             ])
             .children((
+                toolbar_tint,
                 menu_bar,
                 toolbar,
                 tab_strip,
@@ -7981,9 +8181,57 @@ impl Root {
                     .on_drop(context.callback(Message::Dropped))
                     .content(body),
                 self.status_bar(context),
+                image,
                 dialog,
             ))
     }
+}
+
+/// 窓の中身の上に薄く重ねる背景画像（なければ空）。押す・引くは下の部品へ通す（描いた後に外す）。
+fn backdrop_image(backdrop: &crate::backdrop::Backdrop, host: &ElementRef<Image>) -> View {
+    use crate::backdrop::Placement;
+    let Some(path) = backdrop.image.as_deref() else {
+        return View::empty();
+    };
+    let Ok(image) = Image::new().source_file(path) else {
+        return View::empty();
+    };
+    let (horizontal, vertical, stretch) = match backdrop.placement {
+        Placement::Fill => (
+            HorizontalAlignment::Stretch,
+            VerticalAlignment::Stretch,
+            Stretch::UniformToFill,
+        ),
+        Placement::TopLeft => (
+            HorizontalAlignment::Left,
+            VerticalAlignment::Top,
+            Stretch::None,
+        ),
+        Placement::TopRight => (
+            HorizontalAlignment::Right,
+            VerticalAlignment::Top,
+            Stretch::None,
+        ),
+        Placement::BottomLeft => (
+            HorizontalAlignment::Left,
+            VerticalAlignment::Bottom,
+            Stretch::None,
+        ),
+        Placement::BottomRight => (
+            HorizontalAlignment::Right,
+            VerticalAlignment::Bottom,
+            Stretch::None,
+        ),
+    };
+    image
+        .element_ref(host)
+        .grid_row(0)
+        .grid_row_span(5)
+        .stretch(stretch)
+        .horizontal_alignment(horizontal)
+        .vertical_alignment(vertical)
+        .opacity(backdrop.image_opacity())
+        .into()
 }
 
 impl Root {
@@ -8962,6 +9210,7 @@ impl Root {
                                     }))
                                     .content(TextBlock::new().text(tr!("Choose…"))),
                             )),
+                        self.ssh_check_line(host, context),
                     )),
                 ),
             Some(Dialog::NewGroup { name, .. }) => dialog
@@ -12435,6 +12684,26 @@ impl Root {
         ))
     }
 
+    /// ツールバーのリポジトリ名の一覧に出す、この PC のリポジトリのブランチと状態を裏で読む（ref が変わるたびに
+    /// 呼ばれるので、読むのは 1 分に 1 回まで）。
+    fn peek_switch_targets(&mut self, context: &ComponentContext<Self>) {
+        if self
+            .switch_peeked_at
+            .is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(60))
+        {
+            return;
+        }
+        self.switch_peeked_at = Some(std::time::Instant::now());
+        let locations: Vec<String> = crate::repositories::switch_targets()
+            .into_iter()
+            .take(SWITCH_ITEMS)
+            .map(|(location, ..)| location)
+            .filter(|l| !crate::repositories::is_remote(l))
+            .collect();
+        context
+            .spawn_background(move |_| Message::SwitchPeeked(crate::repositories::peek(locations)));
+    }
+
     /// ツールバーの左のリポジトリ名（GTK4 版・macOS 版と同じ）: 押すと、ブックマークのリポジトリを、お気に入り
     /// （★）を先に、その後は最後に開いた順に出し、選んだものにこのタブを替える。終わりに Repositories。
     fn repository_switcher(&self, context: &ViewContext<Self>) -> View {
@@ -12443,9 +12712,13 @@ impl Root {
         };
         let mut items: Vec<MenuItem> = crate::repositories::switch_targets()
             .into_iter()
-            .take(30)
+            .take(SWITCH_ITEMS)
             .map(|(location, name, favorite)| {
                 let current = location.eq_ignore_ascii_case(&tab.location);
+                let name = match self.switch_peeks.get(&location) {
+                    Some(peek) => format!("{name}    {}", crate::repositories::peek_summary(peek)),
+                    None => name,
+                };
                 let label = match (current, favorite) {
                     (true, _) => format!("✓ {name}"),
                     (false, true) => format!("★ {name}"),
@@ -12470,6 +12743,78 @@ impl Root {
                     .text_trimming(TextTrimming::CharacterEllipsis),
             )
             .menu(Menu::new(items, context.callback(Message::Command)))
+    }
+
+    /// SSH 接続を追加するダイアログの「接続を確認」と、その結果（打った SSH 先を確かめたときだけ）。
+    fn ssh_check_line(&self, host: &str, context: &ViewContext<Self>) -> View {
+        let result = self
+            .ssh_check
+            .as_ref()
+            .filter(|(h, _)| h == host.trim())
+            .map(|(_, r)| r.clone());
+        let checking = matches!(result, Some(None));
+        let status: View = match result {
+            Some(None) => StackPanel::new()
+                .orientation(Orientation::Horizontal)
+                .spacing(6.0)
+                .children((
+                    ProgressRing::new().is_active(true).width(14.0).height(14.0),
+                    TextBlock::new().text(tr!("Connecting…")).font_size(12.0),
+                )),
+            Some(Some((text, ok))) => TextBlock::new()
+                .text(text)
+                .font_size(12.0)
+                .text_wrapping(TextWrapping::Wrap)
+                .is_text_selection_enabled(true)
+                .foreground(Brush::Solid(if ok {
+                    Color::rgb(0x2e, 0x9e, 0x4f)
+                } else {
+                    Color::rgb(0xd0, 0x3a, 0x3a)
+                }))
+                .into(),
+            None => View::empty(),
+        };
+        Grid::new()
+            .columns([GridLength::Auto, GridLength::Star(1.0)])
+            .column_spacing(8.0)
+            .margin(Thickness::new(0.0, 4.0, 0.0, 0.0))
+            .children((
+                Button::new()
+                    .grid_column(0)
+                    .vertical_alignment(VerticalAlignment::Top)
+                    .is_enabled(!host.trim().is_empty() && !checking)
+                    .on_click(context.callback(|()| Message::Command("ssh-check".to_owned())))
+                    .content(TextBlock::new().text(tr!("Check Connection"))),
+                Border::new()
+                    .grid_column(1)
+                    .vertical_alignment(VerticalAlignment::Center)
+                    .content(status),
+            ))
+    }
+
+    /// 詳細のメッセージの中の、探している文字の一致の数（History のコミットを出しているときだけ）。
+    fn message_matches(&self) -> usize {
+        if self.page == Page::WorkingCopy {
+            return 0;
+        }
+        message_match_count(self.info.as_ref().map(|(i, _)| i), &self.diff_find_query)
+    }
+
+    /// 探す帯の数（「今 / 全部」。メッセージの一致を先に数える）。`found` は差分の一致の数と今の一致。
+    fn find_status(&self, in_message: usize, found: (usize, Option<usize>)) -> String {
+        let total = in_message + found.0;
+        if self.diff_find_query.trim().is_empty() {
+            return String::new();
+        }
+        if total == 0 {
+            return tr!("No Matches");
+        }
+        let now = match (self.diff_find_message, found.1) {
+            (Some(m), _) => m,
+            (None, Some(d)) => in_message + d,
+            (None, None) => 0,
+        };
+        format!("{} / {total}", now + 1)
     }
 
     /// つながりが切れた帯（ステータスバーの上。GTK4 版の `show_disconnected`、macOS 版と同じ）: どこと切れたか、
@@ -13576,6 +13921,16 @@ impl Root {
                 theme_button: Box::new(|key: String| {
                     context.callback(move |()| Message::SettingsThemeButton(key.clone()))
                 }),
+                backdrop_button: Box::new(|event| {
+                    context.callback(move |()| Message::Backdrop(event.clone()))
+                }),
+                backdrop_placement: context
+                    .callback(|i| Message::Backdrop(crate::backdrop::Event::Placement(i))),
+                backdrop_number: Box::new(|f| context.callback(move |v| Message::Backdrop(f(v)))),
+                backdrop_tint: context
+                    .callback(|on| Message::Backdrop(crate::backdrop::Event::Tint(on))),
+                backdrop_color: context
+                    .callback(|c| Message::Backdrop(crate::backdrop::Event::ToolbarColor(c))),
                 template_remove: Box::new(|i| {
                     context.callback(move |()| Message::SettingsTemplateRemove(i))
                 }),
@@ -14161,6 +14516,9 @@ impl Root {
                             } else {
                                 ""
                             },
+                            self.diff_find_open
+                                .then_some(self.diff_find_message)
+                                .flatten(),
                         )),
                     StackPanel::new()
                         .orientation(Orientation::Horizontal)
@@ -14550,6 +14908,9 @@ impl Root {
             .find(|e| e.kind as u8 == kind && e.name == name)
     }
 }
+
+/// ツールバーのリポジトリ名の一覧に出す数。
+const SWITCH_ITEMS: usize = 30;
 
 /// 設定の画面で書いた 1 つの変更（戻す命令と、やり直す命令）。`global` なら Settings > Git（`git_target` はその
 /// 読み書きの先）、でなければ Repository Settings。
@@ -15198,7 +15559,13 @@ fn person(info: &Value, role: &str) -> String {
 
 /// コミットの詳細（作者、コミッター、Commit・Parent・Refs の表、件名と本文）。
 /// `text` の中の `query` の一致（大文字・小文字を区別しない）に色を付けた runs。一致がなければ None。
+#[cfg(test)]
 fn highlighted(text: &str, query: &str, bold: bool) -> Option<RichText> {
+    highlighted_at(text, query, bold, None)
+}
+
+/// [`highlighted`] の、`current` 番目の一致を今の一致として地の色で目立たせるもの（↑・↓ で動く先）。
+fn highlighted_at(text: &str, query: &str, bold: bool, current: Option<usize>) -> Option<RichText> {
     let query = query.trim();
     if query.is_empty() {
         return None;
@@ -15211,11 +15578,14 @@ fn highlighted(text: &str, query: &str, bold: bool) -> Option<RichText> {
     }
     let mut inlines = Vec::new();
     let mut at = 0;
+    let mut nth = 0;
     for (start, _) in lower.match_indices(&needle) {
         let end = start + needle.len();
         if start < at || !text.is_char_boundary(start) || !text.is_char_boundary(end) {
             continue;
         }
+        let is_current = current == Some(nth);
+        nth += 1;
         if at < start {
             inlines.push(RichTextInline::Run(RichTextRun {
                 text: text[at..start].to_owned(),
@@ -15226,8 +15596,13 @@ fn highlighted(text: &str, query: &str, bold: bool) -> Option<RichText> {
         inlines.push(RichTextInline::Run(RichTextRun {
             text: text[start..end].to_owned(),
             is_bold: true,
-            foreground: Some(Color::rgb(0xb2, 0x5f, 0x00)),
-            ..RichTextRun::default()
+            // 今の一致は濃く、ほかは橙（差分の中の今の一致と同じ見分け方）。
+            foreground: Some(if is_current {
+                Color::rgb(0xd0, 0x3a, 0x3a)
+            } else {
+                Color::rgb(0xb2, 0x5f, 0x00)
+            }),
+            is_italic: is_current,
         }));
         at = end;
     }
@@ -15244,11 +15619,52 @@ fn highlighted(text: &str, query: &str, bold: bool) -> Option<RichText> {
     Some(RichText::single_paragraph(inlines))
 }
 
+/// `text` の中の `query` の一致の数（[`highlighted`] が色を付けるものと同じ数え方）。
+fn match_count(text: &str, query: &str) -> usize {
+    let query = query.trim();
+    let lower = text.to_lowercase();
+    if query.is_empty() || lower.len() != text.len() {
+        return 0;
+    }
+    let needle = query.to_lowercase();
+    let mut at = 0;
+    let mut n = 0;
+    for (start, _) in lower.match_indices(&needle) {
+        let end = start + needle.len();
+        if start < at || !text.is_char_boundary(start) || !text.is_char_boundary(end) {
+            continue;
+        }
+        n += 1;
+        at = end;
+    }
+    n
+}
+
+/// コミットのメッセージの件名と本文（詳細に出す形）。
+fn message_parts(info: &Value) -> (&str, &str) {
+    let message = info["message"].as_str().unwrap_or_default().trim_end();
+    let (subject, body) = message.split_once('\n').unwrap_or((message, ""));
+    (subject, body.trim())
+}
+
+/// 詳細のメッセージの中の `query` の一致の数（件名と本文）。
+fn message_match_count(info: Option<&Value>, query: &str) -> usize {
+    let Some(info) = info.filter(|i| i["selection"].is_null()) else {
+        return 0;
+    };
+    let (subject, body) = message_parts(info);
+    match_count(subject, query) + match_count(body, query)
+}
+
 /// メッセージの 1 つの欄（`query` の一致があれば色を付ける）。
-fn message_text(text: &str, query: &str, size: f64, bold: bool) -> View {
-    // 色を付けるときと付けないときで部品が違うので、鍵を分けて作り直させる。
-    let runs = highlighted(text, query, bold);
-    let key = if runs.is_some() { "found" } else { "plain" };
+fn message_text(text: &str, query: &str, size: f64, bold: bool, current: Option<usize>) -> View {
+    // 色を付けるときと付けないときで部品が違うので、鍵を分けて作り直させる（今の一致が動いたときも）。
+    let runs = highlighted_at(text, query, bold, current);
+    let key = match (&runs, current) {
+        (None, _) => "plain".to_owned(),
+        (Some(_), Some(c)) => format!("found-{c}"),
+        (Some(_), None) => "found".to_owned(),
+    };
     let view: View = match runs {
         Some(runs) => RichTextBlock::new()
             .paragraphs(runs)
@@ -15271,7 +15687,8 @@ fn message_text(text: &str, query: &str, size: f64, bold: bool) -> View {
     View::keyed_fragment([(key, view)])
 }
 
-fn details(info: Option<(&Value, Option<&Value>)>, query: &str) -> View {
+/// `current` は、メッセージの中の今の一致（件名から数えて何番目か。差分の中にあれば None）。
+fn details(info: Option<(&Value, Option<&Value>)>, query: &str, current: Option<usize>) -> View {
     let Some((info, extras)) = info else {
         return TextBlock::new().margin(12.0).into();
     };
@@ -15420,16 +15837,21 @@ fn details(info: Option<(&Value, Option<&Value>)>, query: &str) -> View {
             rows.push(line("Pushed", text).into());
         }
     }
-    let message = info["message"].as_str().unwrap_or_default().trim_end();
-    let (subject, body) = message.split_once('\n').unwrap_or((message, ""));
+    let (subject, body) = message_parts(info);
+    // 今の一致が件名の中か本文の中か。
+    let in_subject = match_count(subject, query);
+    let (subject_current, body_current) = match current {
+        Some(c) if c < in_subject => (Some(c), None),
+        Some(c) => (None, Some(c - in_subject)),
+        None => (None, None),
+    };
     rows.push(
         Border::new()
             .margin(Thickness::new(0.0, 8.0, 0.0, 0.0))
-            .content(message_text(subject, query, 14.0, true)),
+            .content(message_text(subject, query, 14.0, true, subject_current)),
     );
-    let body = body.trim();
     if !body.is_empty() {
-        rows.push(message_text(body, query, 13.0, false));
+        rows.push(message_text(body, query, 13.0, false, body_current));
     }
     StackPanel::new()
         .spacing(4.0)
@@ -16106,14 +16528,10 @@ impl HistoryView {
             let found = view.map_or_else(Vec::new, |v| {
                 crate::render::find_in_diff(v, &self.diff_query)
             });
-            let status = if found.is_empty() {
-                tr!("No Matches")
-            } else {
-                found.len().to_string()
-            };
+            let count = found.len();
             s.renderer.diff_find = found;
             s.renderer.diff_current = None;
-            self.sender.send(Message::DiffFindStatus(status));
+            self.sender.send(Message::DiffFindCount(count));
         } else if diff_replaced {
             s.renderer.diff_find.clear();
             s.renderer.diff_current = None;
@@ -16184,12 +16602,15 @@ impl HistoryView {
     }
 
     /// 差分の中を `query` で探し、`step` だけ一致を移る（0 なら今見えている所から最初の一致）。件数の文字を返す。
-    fn find_in_diff(&mut self, query: String, step: i32) -> String {
-        if query != self.diff_query {
+    /// 差分の中の `query` の一致を探す（数と、今の一致）。`start` が Some なら、0 なら見えている所から、それ
+    /// 以外はその番号を今の一致にする。None なら、問い合わせが同じ限り今の一致はそのまま（今の一致がなければ
+    /// 付けない）。
+    fn find_in_diff(&mut self, query: String, start: Option<usize>) -> (usize, Option<usize>) {
+        let changed = query != self.diff_query;
+        if changed {
             self.diff_query = query;
             self.session.renderer.diff_current = None;
         }
-        let rows = self.diff_rows();
         let data = &self.session.data;
         let view = if self.working_page {
             data.working.as_ref().map(|w| &w.diff.view)
@@ -16200,32 +16621,42 @@ impl HistoryView {
             crate::render::find_in_diff(v, &self.diff_query)
         });
         self.diff.dirty = true;
-        let r = &mut self.session.renderer;
-        if found.is_empty() {
-            r.diff_find.clear();
-            r.diff_current = None;
-            return if self.diff_query.is_empty() {
-                String::new()
-            } else {
-                tr!("No Matches")
-            };
-        }
         let n = found.len();
-        let top = (self.diff.scroll_y / DIFF_ROW_HEIGHT) as u32;
-        let index = match (step, r.diff_current) {
-            (0, _) | (_, None) => found.iter().position(|m| m.0 >= top).unwrap_or(0),
-            (s, Some(c)) => (c as i64 + i64::from(s)).rem_euclid(n as i64) as usize,
-        };
-        let row = found[index].0;
+        let r = &mut self.session.renderer;
         r.diff_find = found;
+        if n == 0 {
+            r.diff_current = None;
+            return (0, None);
+        }
+        match start {
+            Some(_) => {
+                let top = (self.diff.scroll_y / DIFF_ROW_HEIGHT) as u32;
+                let index = r.diff_find.iter().position(|m| m.0 >= top).unwrap_or(0);
+                self.select_diff_match(Some(index));
+                (n, Some(index))
+            }
+            None => (n, self.session.renderer.diff_current),
+        }
+    }
+
+    /// 差分の中の `index` 番目の一致を今の一致にして、見えていなければ上から 3 分の 1 の所へ（None なら今の一致を
+    /// 外す。メッセージの中に移ったとき）。
+    fn select_diff_match(&mut self, index: Option<usize>) {
+        let rows = self.diff_rows();
+        let r = &mut self.session.renderer;
+        let Some(index) = index.filter(|i| *i < r.diff_find.len()) else {
+            r.diff_current = None;
+            self.diff.dirty = true;
+            return;
+        };
         r.diff_current = Some(index);
-        // 今の一致の行が見えていなければ、上から 3 分の 1 の所へ。
+        let row = r.diff_find[index].0;
         let (row_top, height) = (row as f32 * DIFF_ROW_HEIGHT, self.diff.height());
         if row_top < self.diff.scroll_y || row_top + DIFF_ROW_HEIGHT > self.diff.scroll_y + height {
             self.diff.scroll_y = row_top - height / 3.0;
         }
         self.diff.scroll_by(0.0, rows);
-        format!("{} / {n}", index + 1)
+        self.diff.dirty = true;
     }
 
     /// History を探す。同じ問い合わせをもう探してあれば、選んでいる行から次（`backwards` なら前）の一致へ。空なら
@@ -16832,7 +17263,6 @@ fn tab_strip(title: &str, context: &ViewContext<Root>) -> View {
         })
         .collect();
     TabView::new()
-        .grid_row(2)
         .selected_index(active)
         .can_reorder_tabs(true)
         .is_add_tab_button_visible(true)
@@ -18082,5 +18512,11 @@ mod tests {
         assert!(highlighted("Fix the Bug", "", false).is_none());
         assert!(highlighted("Fix the Bug", "nothing", false).is_none());
         assert!(highlighted("Fix the Bug and a bug", "bug", true).is_some());
+        assert_eq!(match_count("Fix the Bug and a bug", "bug"), 2);
+        assert_eq!(match_count("aaaa", "aa"), 2);
+        assert_eq!(match_count("Fix", ""), 0);
+        let info = serde_json::json!({ "message": "Fix bug\n\nThe bug and another bug\n" });
+        assert_eq!(message_match_count(Some(&info), "bug"), 3);
+        assert_eq!(message_parts(&info), ("Fix bug", "The bug and another bug"));
     }
 }

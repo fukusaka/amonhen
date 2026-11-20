@@ -75,9 +75,9 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 
 | Feature | macOS | GTK4 | Windows | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
-| Repository tabs in a window | ✓ | ✓ | △ | n/a | n/a | Windows: Only the front tab's repository stays open; switching tabs opens the other one again (History comes from the persistent cache), at the page it was left on. Tabs can be reordered but not dragged out into a window. |
+| Repository tabs in a window | ✓ | ✓ | △ | n/a | n/a | Windows: Only the front tab's repository stays open; switching tabs opens the other one again (History comes from the persistent cache), at the page it was left on. |
 | Separate windows (New Window) | ✓ | ✓ | ✓ | n/a | n/a | Windows: A window is a separate process; New Window opens one on the current repository showing Repositories |
-| Open windows and tabs restored at launch | ✓ | ✓ | △ | n/a | n/a | Windows: The tabs of the last window closed, when started without a repository. |
+| Open windows and tabs restored at launch | ✓ | ✓ | ✓ | n/a | n/a |  |
 | Connecting tab for SSH and daemon repositories (Cancel, Try Again) | ✓ | ✓ | ✓ | n/a | n/a |  |
 | Title shows uncommitted ● and ahead/behind | ✓ | ✓ | ✓ | n/a | n/a | GTK4: On the tab names.<br>Windows: On the window title and the front tab's name. |
 | App keeps running after its last window closes | ✓ | — | — | n/a | n/a | GTK4: Quits, as GNOME apps do. |
@@ -87,17 +87,17 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Feature | macOS | GTK4 | Windows | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
 | Repository page with All, Favorites, Places and groups | ✓ | ✓ | ✓ | n/a | n/a |  |
-| Add a local or an SSH repository | ✓ | ✓ | △ | n/a | n/a | Windows: The host and path are typed; no Check Connection or folder picker for the host. |
+| Add a local or an SSH repository | ✓ | ✓ | ✓ | n/a | n/a |  |
 | Folders to scan on this machine (depth, watched) | △ | △ | △ | n/a | n/a | macOS: Excludes are a fixed list.<br>GTK4: Excludes are a fixed list.<br>Windows: Excludes are a fixed list; the folders are watched while Repositories is open. |
 | Folders to scan on SSH hosts | ✓ | ✓ | ✓ | n/a | △ | CLI: `find-repositories` does the scan for the apps. |
 | Folder tree of the repositories under a place | ✓ | ✓ | ✓ | n/a | n/a |  |
-| Manual groups; rows dragged onto Favorites or a group | △ | △ | △ | n/a | n/a | macOS: Groups themselves can't be reordered by dragging.<br>GTK4: Groups themselves can't be reordered by dragging.<br>Windows: Groups themselves can't be reordered by dragging. |
+| Manual groups; rows dragged onto Favorites or a group | △ | △ | ✓ | n/a | n/a | macOS: Groups themselves can't be reordered by dragging.<br>GTK4: Groups themselves can't be reordered by dragging. |
 | Status columns (branch, changes, ahead/behind, last commit, opened), sortable and reorderable | ✓ | ✓ | ✓ | n/a | n/a | Windows: Sortable by clicking a header, resized by dragging a header's left edge, and moved left or right from a header's right-click menu. |
 | Favorites, display name, color label | ✓ | ✓ | ✓ | n/a | n/a |  |
 | Open in a tab or window; Finder / Files, Terminal, Editor | ✓ | ✓ | ✓ | n/a | n/a | GTK4: An app other than a known code editor or a program chosen with Other… opens a folder only if it declares inode/directory.<br>Windows: Explorer, Windows Terminal (or cmd) and the editor chosen in Settings. |
 | Fetch the selected repositories | ✓ | ✓ | ✓ | n/a | n/a | Windows: Rows are selected with Ctrl or Shift, and Fetch on a selected row's menu fetches them all. |
 | Quick Open (fuzzy search) | ✓ | ✓ | ✓ | n/a | n/a | Windows: Opens in a new window. |
-| Repository name in the toolbar switches the repository | ✓ | ✓ | △ | ✓ | n/a | VSCode: Select Repository picks among workspace repositories.<br>Windows: Names only (★ for favorites), without each repository's status. |
+| Repository name in the toolbar switches the repository | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: Select Repository picks among workspace repositories. |
 | Clone (choosing from your own GitHub repositories) | ✓ | ✓ | △ | n/a | △ | VSCode: VSCode's own Git: Clone.<br>CLI: `clone <url>` only.<br>Windows: No list of your own GitHub repositories; the clone opens in a new window. |
 | Clone: what to download (everything, contents when needed, recent history) and only some folders | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: VSCode's own Git: Clone.<br>CLI: `clone --filter`, `--depth`, `--sparse`. |
 | Subtrees group (shown when git has git subtree): Add, Pull, Push, Split, remembering the source and squash | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: The values are asked in input boxes and the squash in a list, not a sheet.<br>CLI: `subtree`.<br>Windows: ⊟ after a subtree last pulled with squash, without a tooltip. |
@@ -128,7 +128,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Accounts: GitHub (CI status, avatars) | ✓ | ✓ | — | — | n/a |  |
 | Appearance: History order, one line, row items, avatars | ✓ | ✓ | △ | n/a | n/a | Windows: History's order, one line, ancestor highlight and row items (no CI status); no avatars. |
 | Appearance: fonts, graph colors | — | — | — | n/a | n/a |  |
-| Theme: window background (transparency and blur, image, toolbar tint, per repository) | ✓ | ✓ | — | n/a | n/a | GTK4: No blur (GNOME can't blur what is behind the window); a see-through window needs a compositor. |
+| Theme: window background (transparency and blur, image, toolbar tint, per repository) | ✓ | ✓ | △ | n/a | n/a | GTK4: No blur (GNOME can't blur what is behind the window); a see-through window needs a compositor.<br>Windows: Background image and toolbar tint only; no see-through window or per-repository background yet. |
 | Theme: syntax and diff colors (built-in themes, VSCode themes, standard diff colors) | ✓ | ✓ | ✓ | n/a | n/a | VSCode: follows VSCode's own theme.<br>Windows: The app follows Windows' app mode (light or dark), with a theme for each. |
 | Diff & Merge: resolve unambiguous conflicts on open | ✓ | ✓ | ✓ | n/a | n/a |  |
 | Diff & Merge: unified/split, whitespace, context, wrap, tab width | — | — | — | — | n/a |  |
@@ -272,7 +272,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Feature | macOS | GTK4 | Windows | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
 | Full message, draggable panes, ⤢ to expand | ✓ | ✓ | ✓ | ✓ | n/a |  |
-| Find inside the details | ✓ | ✓ | △ | ✓ | n/a | VSCode: ⌘F searches the whole main view; diffs not loaded yet aren't searched.<br>Windows: Ctrl+F or 🔍 searches the diff (matches highlighted, ↑ / ↓ to move) and highlights the matches in the message too; ↑ / ↓ don't move through the message. |
+| Find inside the details | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: ⌘F searches the whole main view; diffs not loaded yet aren't searched. |
 | All files stacked (sticky headers, collapse, Viewed) | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `show`.<br>Windows: Toggle Viewed is in a file header's menu. |
 | Changed files as a tree beside the diff | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: Tree / List above the files. |
 | File header menu (Blame, File History, copy path, open) | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: Blame, File History and Copy Path on the right-click; Open in VSCode's diff editor. |
@@ -344,7 +344,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | History cache writes (size, count, bytes, last write per repository) | ✓ | ✓ | ✓ | — | △ | CLI: Via `amonhen run` (`historyCache`).<br>Windows: The window's repository (one repository per window). |
 | Events | ✓ | ✓ | ✓ | n/a | n/a | VSCode: VSCode's Output channel (the Amon Hen log). |
 | Export as JSON | ✓ | ✓ | ✓ | n/a | n/a | VSCode: VSCode's Output channel (the Amon Hen log). |
-| Daemon tab (start, stop, connections) | ✓ | ✓ | △ | ✓ | △ | VSCode: A page of the main view (Show Daemon in the sidebar's ⋯ and the command palette); the window's connections are to the local daemon only.<br>CLI: `daemon status / start / stop`.<br>Windows: No list of this app's connections; a dropped connection shows Try Again in the History area. |
+| Daemon tab (start, stop, connections) | ✓ | ✓ | ✓ | ✓ | △ | VSCode: A page of the main view (Show Daemon in the sidebar's ⋯ and the command palette); the window's connections are to the local daemon only.<br>CLI: `daemon status / start / stop`. |
 
 ## 11. Menus
 
