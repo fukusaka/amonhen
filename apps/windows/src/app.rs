@@ -2605,6 +2605,7 @@ impl Root {
                     self.error = Some(e);
                 }
             }
+            Message::Command(id) if id == "quit" => crate::session::quit_all(),
             Message::Command(id) if id == "close-tab" => {
                 if crate::tabs::close_current() {
                     close_window();

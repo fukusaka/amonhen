@@ -36,6 +36,7 @@ mod render;
 mod reposettings;
 mod repositories;
 mod sequence;
+mod session;
 mod settingsview;
 mod sidebar;
 mod signature;
@@ -81,6 +82,8 @@ pub struct Args {
     pub place: Option<[i32; 4]>,
     /// 開いたら Working Copy の画面を出す。
     pub working_copy: bool,
+    /// 戻す窓のタブ（`--tabs`。`tabs::saved` の形）。
+    pub tabs: Option<String>,
 }
 
 fn parse() -> Result<Args, String> {
@@ -104,6 +107,7 @@ fn parse() -> Result<Args, String> {
         repo_given: false,
         place: None,
         working_copy: false,
+        tabs: None,
     };
     let mut rows = measure::ROWS_PER_FRAME;
     let mut measuring = false;
@@ -133,6 +137,8 @@ fn parse() -> Result<Args, String> {
             "--out" => parsed.out = Some(value()?.into()),
             "--repositories" => parsed.repositories = true,
             "--working-copy" => parsed.working_copy = true,
+            // 起動したときに戻す窓のタブ（`tabs::saved` の形。1 つ目の窓が残りの窓を開くときに渡す）。
+            "--tabs" => parsed.tabs = Some(value()?),
             // 試し: Windows の設定を変えずに外観を決める。
             "--appearance" => match value()?.as_str() {
                 "dark" => palette::force(true),
@@ -196,13 +202,34 @@ fn main() {
             std::process::exit(2);
         }
     };
-    // 引数なしで起動したら、最後に閉じた窓のタブを開き直す（なくなったものは除く。タブを覚えていなければ最後の
-    // リポジトリ、それもなくなっていれば今のフォルダ）。
+    // 引数なしで起動したら、終了したときに開いていた窓を開き直す（1 つ目をこの窓に、残りは新しい窓に。なくなった
+    // リポジトリは除く）。記録がなければ最後に閉じた窓のタブ、それもなければ最後のリポジトリ、それもなくなって
+    // いれば今のフォルダ。
     let mut restored = (Vec::new(), 0);
-    if !args.repo_given && !args.repositories {
-        if let Some(text) = prefs::string(prefs::LAST_TABS) {
-            restored = tabs::parse_saved(&text, |l| std::path::Path::new(l).join(".git").exists());
+    let exists = |l: &str| std::path::Path::new(l).join(".git").exists();
+    if let Some(text) = args.tabs.take() {
+        restored = tabs::parse_saved(&text, exists);
+    } else if !args.repo_given && !args.repositories {
+        let mut windows = session::take()
+            .into_iter()
+            .filter(|w| !tabs::parse_saved(w, exists).0.is_empty());
+        if let Some(first) = windows.next() {
+            restored = tabs::parse_saved(&first, exists);
+            if let Ok(exe) = std::env::current_exe() {
+                for rest in windows {
+                    if let Err(e) = amonhen_model::process::command(&exe)
+                        .args(["--tabs", &rest])
+                        .spawn()
+                    {
+                        eprintln!("窓を開き直せない: {e}");
+                    }
+                }
+            }
+        } else if let Some(text) = prefs::string(prefs::LAST_TABS) {
+            restored = tabs::parse_saved(&text, exists);
         }
+    }
+    if !args.repo_given && !args.repositories {
         if let Some(first) = restored.0.get(restored.1) {
             args.repo = first.into();
         } else if let Some(last) = prefs::string(prefs::LAST_REPOSITORY)
@@ -232,8 +259,10 @@ fn main() {
         eprintln!("{e}");
         std::process::exit(1);
     }
-    // 閉じた窓のタブと前のリポジトリを覚える（いちばん後に閉じた窓のものが残る）。
+    // 閉じた窓のタブと前のリポジトリを覚える（いちばん後に閉じた窓のものが残る）。終了したとき・最後の窓を
+    // 閉じたときは、窓ごとのタブも（[`session`]）。
     if app_window && let Some(tab) = tabs::current() {
+        session::remember(&tabs::saved());
         if let Err(e) = prefs::set_string(prefs::LAST_TABS, &tabs::saved()) {
             eprintln!("タブを覚えられない: {e}");
         }

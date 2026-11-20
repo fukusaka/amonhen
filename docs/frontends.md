@@ -77,7 +77,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
 | Repository tabs in a window | ✓ | ✓ | △ | n/a | n/a | Windows: Only the front tab's repository stays open; switching tabs opens the other one again (History comes from the persistent cache), at the page it was left on. |
 | Separate windows (New Window) | ✓ | ✓ | ✓ | n/a | n/a | Windows: A window is a separate process; New Window opens one on the current repository showing Repositories |
-| Open windows and tabs restored at launch | ✓ | ✓ | △ | n/a | n/a | Windows: The tabs of the last window closed, when started without a repository. |
+| Open windows and tabs restored at launch | ✓ | ✓ | ✓ | n/a | n/a |  |
 | Connecting tab for SSH and daemon repositories (Cancel, Try Again) | ✓ | ✓ | ✓ | n/a | n/a |  |
 | Title shows uncommitted ● and ahead/behind | ✓ | ✓ | ✓ | n/a | n/a | GTK4: On the tab names.<br>Windows: On the window title and the front tab's name. |
 | App keeps running after its last window closes | ✓ | — | — | n/a | n/a | GTK4: Quits, as GNOME apps do. |
