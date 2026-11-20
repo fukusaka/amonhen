@@ -137,6 +137,16 @@ const LOG_FILE: &str = "amonhen/undo.json";
 /// 途中で止まった操作（edit・split）の、操作の前の状態。rebase が終わったら確定する。
 const PENDING_FILE: &str = "amonhen/undo-pending.json";
 
+/// 記録が読めない・壊れているときに読み直す回数と間隔。
+const LOAD_TRIES: u32 = 5;
+const LOAD_RETRY: std::time::Duration = std::time::Duration::from_millis(20);
+
+enum LoadError {
+    Unreadable(String),
+    /// JSON として読めない中身。
+    Broken(Vec<u8>),
+}
+
 pub struct UndoLog {
     /// 記録と作業ツリーのファイルの読み書き（SSH 越しのリポジトリでも同じに扱う）。
     files: Arc<dyn RepoFiles>,
@@ -167,13 +177,54 @@ impl UndoLog {
         Ok(self.files.read(Root::Workdir, path)?.map(|d| sha1_hex(&d)))
     }
 
-    fn load(&self) -> Vec<Entry> {
-        self.files
-            .read(Root::GitDir, LOG_FILE)
-            .ok()
-            .flatten()
-            .and_then(|d| serde_json::from_slice(&d).ok())
-            .unwrap_or_default()
+    /// 見せるための記録（名前・一覧）。読めない・壊れているときは空（Undo するときに `load` が理由を言う）。
+    fn peek_log(&self) -> Vec<Entry> {
+        self.read_log(1).unwrap_or_default()
+    }
+
+    /// 書き換える前に読む記録。ない記録は空。読めないときはエラーにする（空として上書きすると、それまでの
+    /// 記録が消える）。壊れているときは、`undo.json.broken-<時刻>` に退けてから空で始め、Undo ではそう言う。
+    fn load(&self, undoing: bool) -> Result<Vec<Entry>> {
+        match self.read_log(LOAD_TRIES) {
+            Ok(entries) => Ok(entries),
+            Err(LoadError::Unreadable(error)) => {
+                Err(tr!("Can’t read the Undo log: {error}", error = error).into())
+            }
+            Err(LoadError::Broken(data)) => {
+                let aside = format!("{LOG_FILE}.broken-{}", now_ms());
+                self.files.write(Root::GitDir, &aside, &data)?;
+                self.files.remove(Root::GitDir, LOG_FILE)?;
+                if undoing {
+                    return Err(tr!(
+                        "The Undo log was broken and has been set aside as {file}",
+                        file = aside
+                    )
+                    .into());
+                }
+                Ok(Vec::new())
+            }
+        }
+    }
+
+    /// 記録を読む。読めない・壊れているときは、`tries` 回まで少し待って読み直す（Windows でほかのプロセスが
+    /// 一時的に掴んでいる、置き換えずに書く古い版が書いている途中、など）。
+    fn read_log(&self, tries: u32) -> std::result::Result<Vec<Entry>, LoadError> {
+        let mut tried = 1;
+        loop {
+            let error = match self.files.read(Root::GitDir, LOG_FILE) {
+                Ok(None) => return Ok(Vec::new()),
+                Ok(Some(data)) => match serde_json::from_slice(&data) {
+                    Ok(entries) => return Ok(entries),
+                    Err(_) => LoadError::Broken(data),
+                },
+                Err(e) => LoadError::Unreadable(e.to_string()),
+            };
+            if tried >= tries {
+                return Err(error);
+            }
+            tried += 1;
+            std::thread::sleep(LOAD_RETRY);
+        }
     }
 
     fn save(&self, entries: &[Entry]) -> Result<()> {
@@ -188,7 +239,7 @@ impl UndoLog {
 
     /// `push` の中身。呼ぶ側が `lock` を取っておく。
     fn append(&self, entry: Entry) -> Result<()> {
-        let mut entries = self.load();
+        let mut entries = self.load(false)?;
         entries.push(entry);
         let excess = entries.len().saturating_sub(MAX_ENTRIES);
         entries.drain(..excess);
@@ -197,7 +248,7 @@ impl UndoLog {
 
     /// 記録した操作の名前・時刻（UNIX 時刻のミリ秒）・何を戻すか（`kind`）。新しい順。
     pub fn entries(&self) -> Vec<serde_json::Value> {
-        self.load()
+        self.peek_log()
             .iter()
             .rev()
             .map(|e| serde_json::json!({ "label": e.label, "time": e.time, "kind": e.kind() }))
@@ -206,18 +257,18 @@ impl UndoLog {
 
     /// 次に Undo される操作の名前。
     pub fn peek(&self) -> Option<String> {
-        self.load().last().map(|e| e.label.clone())
+        self.peek_log().last().map(|e| e.label.clone())
     }
 
     /// 次に Undo される操作の名前と、何を戻すか（`Entry::kind`）。
     pub fn peek_kind(&self) -> Option<(String, &'static str)> {
-        self.load().last().map(|e| (e.label.clone(), e.kind()))
+        self.peek_log().last().map(|e| (e.label.clone(), e.kind()))
     }
 
     /// 次の Undo で動くもの: HEAD のブランチ（操作の後の名前）と、動いたブランチごとの（完全な名前、今の oid、
     /// 戻る先の oid）。ない・作られた・消されたものは oid が None。確認の前と後の絵に使う。
     pub fn peek_moves(&self) -> Option<(Option<String>, Vec<RefMove>)> {
-        let entry = self.load().into_iter().last()?;
+        let entry = self.peek_log().into_iter().last()?;
         let mut moves: Vec<_> = entry
             .after
             .refs
@@ -572,7 +623,7 @@ impl UndoLog {
     /// 最後の操作を戻す。戻した操作の名前を返す。
     pub fn undo(&self, ops: &dyn Operations) -> Result<Option<String>> {
         let _guard = self.lock.lock().unwrap();
-        let mut entries = self.load();
+        let mut entries = self.load(true)?;
         let Some(entry) = entries.last().cloned() else {
             return Ok(None);
         };
@@ -767,6 +818,75 @@ mod tests {
         assert_eq!(git.head_state().unwrap().oid, Some(before_merge));
         assert!(git.status().unwrap().entries.is_empty());
         assert_eq!(log.peek(), None);
+    }
+
+    fn record_commit(log: &UndoLog, git: &Git, tmp: &tempfile::TempDir, content: &str) {
+        std::fs::write(tmp.path().join("a.txt"), content).unwrap();
+        git.stage(&["a.txt"]).unwrap();
+        log.record(
+            git,
+            "Commit",
+            &[],
+            true,
+            || git.commit(content, false),
+            |_| false,
+        )
+        .unwrap();
+    }
+
+    /// 壊れた記録は、空として黙って上書きしない。Undo はそう言い、壊れた中身は退けて残す。
+    #[test]
+    fn sets_a_broken_log_aside_instead_of_overwriting_it() {
+        let (tmp, git, log) = repo();
+        commit(&tmp, &git, "a.txt", "1\n");
+        let file = tmp.path().join(".git").join(LOG_FILE);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, b"[{\"label\": \"half").unwrap();
+        let aside = || {
+            std::fs::read_dir(file.parent().unwrap())
+                .unwrap()
+                .map(|e| e.unwrap().path())
+                .filter(|p| p.to_string_lossy().contains("undo.json.broken-"))
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(log.peek(), None);
+        let error = log.undo(&git).unwrap_err().to_string();
+        assert!(error.contains("undo.json.broken-"), "{error}");
+        assert_eq!(std::fs::read(&aside()[0]).unwrap(), b"[{\"label\": \"half");
+        assert!(!file.exists());
+        assert_eq!(log.undo(&git).unwrap(), None, "退けた後は空");
+
+        // 記録するときも同じに退けてから始める
+        std::fs::write(&file, b"not json").unwrap();
+        record_commit(&log, &git, &tmp, "2\n");
+        assert_eq!(log.peek().as_deref(), Some("Commit"));
+        assert_eq!(aside().len(), 2);
+    }
+
+    /// 読めない記録（ここではディレクトリ）は、エラーにして上書きしない。
+    #[test]
+    fn refuses_to_overwrite_a_log_it_cannot_read() {
+        let (tmp, git, log) = repo();
+        commit(&tmp, &git, "a.txt", "1\n");
+        let file = tmp.path().join(".git").join(LOG_FILE);
+        std::fs::create_dir_all(&file).unwrap();
+        std::fs::write(tmp.path().join("a.txt"), "2\n").unwrap();
+        git.stage(&["a.txt"]).unwrap();
+        let error = log
+            .record(
+                &git,
+                "Commit",
+                &[],
+                true,
+                || git.commit("2", false),
+                |_| false,
+            )
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("Undo"), "{error}");
+        assert!(log.undo(&git).is_err());
+        assert!(file.is_dir());
     }
 
     #[test]

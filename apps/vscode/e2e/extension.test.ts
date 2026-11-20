@@ -72,6 +72,39 @@ async function until<T>(
 /** 時間切れのときに添える、直近に出たエラー（操作が失敗した理由） */
 const lastErrors = (): string => errors.slice(-3).map((e) => `エラー「${e}」`).join('、') || 'エラーなし';
 
+/** 拡張が出した、エラーでない知らせ（「Nothing to Undo」など）。操作が黙って何もしなかったときの理由 */
+const notices: string[] = [];
+
+/**
+ * Undo の記録（`<git dir>/amonhen/undo.json`）の様子: 件数と最後の label、保留の記録の有無。読めない・壊れて
+ * いるときはそう言う（コアと拡張が同じファイルを読み書きするので、Windows でまれに Undo が空振りする件の手がかり）
+ */
+function undoLogState(): string {
+  const dir = join(git('rev-parse', '--absolute-git-dir').trim(), 'amonhen');
+  const pending = existsSync(join(dir, 'undo-pending.json')) ? '、保留の記録あり' : '';
+  let text: string;
+  try {
+    text = readFileSync(join(dir, 'undo.json'), 'utf8');
+  } catch (e) {
+    return `undo.json を読めません（${(e as NodeJS.ErrnoException).code ?? String(e)}）${pending}`;
+  }
+  try {
+    const entries = JSON.parse(text) as { label?: string }[];
+    return `undo.json は ${entries.length} 件、最後は「${entries.at(-1)?.label ?? 'なし'}」${pending}`;
+  } catch {
+    return `undo.json が壊れています（${text.length} 字: ${JSON.stringify(text.slice(0, 80))}）${pending}`;
+  }
+}
+
+/** amonhen.undo を実行し、そのときの様子（前後の記録・知らせ・エラー）を返す。assert に添える */
+async function undoWithDiagnosis(): Promise<string> {
+  const before = undoLogState();
+  const noticed = notices.length;
+  await vscode.commands.executeCommand('amonhen.undo');
+  const said = notices.slice(noticed).map((n) => `知らせ「${n}」`).join('、') || '知らせなし';
+  return `Undo の前: ${before}。後: ${undoLogState()}。${said}、${lastErrors()}`;
+}
+
 /** since 番目より後に Webview に送られた type のメッセージで、match に合う最初のもの */
 function waitPosted<T extends HostMessage['type']>(
   type: T,
@@ -141,6 +174,14 @@ function recordErrors(): void {
     errors.push(message.includes('index.lock') ? `${message}（${lockHolders(message)}）` : message);
     return show(message, ...rest);
   };
+  // 尋ねない知らせ（modal でないもの）も記録する。試験が差し替えている間は、差し替えた方が受ける
+  for (const name of ['showInformationMessage', 'showWarningMessage'] as const) {
+    const original = vscode.window[name].bind(vscode.window) as (message: string, ...rest: unknown[]) => Thenable<unknown>;
+    (vscode.window as Record<string, unknown>)[name] = (message: string, ...rest: unknown[]) => {
+      if (!(rest[0] as { modal?: boolean } | undefined)?.modal) notices.push(message);
+      return original(message, ...rest);
+    };
+  }
 }
 
 /**
@@ -2759,6 +2800,7 @@ async function reflogFlow(): Promise<void> {
   const branch = git('symbolic-ref', '--short', 'HEAD').trim();
   const rev = (r: string) => git('rev-parse', r).trim();
   const file = join(root, 'reflog-e2e.txt');
+  const stashes = git('stash', 'list').split('\n').filter(Boolean).length;
   git('switch', '-q', '-c', 'reflog-e2e');
   writeFileSync(file, 'reflog\n');
   git('add', 'reflog-e2e.txt');
@@ -2807,9 +2849,9 @@ async function reflogFlow(): Promise<void> {
     assert.equal(git('status', '--porcelain', '--', 'reflog-e2e.txt'), '?? reflog-e2e.txt\n');
     const after = await reflog(mark, (m) => m.entries[0]?.oid === parent);
     assert.equal(after.entries.find((e) => e.oid === lost)?.reachable, false);
-    await vscode.commands.executeCommand('amonhen.undo');
-    assert.equal(rev('HEAD'), lost);
-    assert.equal(git('status', '--porcelain'), '');
+    let undone = await undoWithDiagnosis();
+    assert.equal(rev('HEAD'), lost, undone);
+    assert.equal(git('status', '--porcelain'), '', undone);
 
     // Hard: 作業中の変更を stash に残してから、作業ツリーもそのコミットに合わせる
     writeFileSync(file, 'changed\n');
@@ -2818,9 +2860,9 @@ async function reflogFlow(): Promise<void> {
     assert.equal(rev('HEAD'), parent, lastErrors());
     assert.equal(existsSync(file), false);
     assert.match(git('stash', 'list', '-n', '1', '--format=%s'), /Before reset --hard to [0-9a-f]{8}/);
-    await vscode.commands.executeCommand('amonhen.undo');
-    assert.equal(rev('HEAD'), lost);
-    assert.equal(readFileSync(file, 'utf8').replaceAll('\r\n', '\n'), 'reflog\n');
+    undone = await undoWithDiagnosis();
+    assert.equal(rev('HEAD'), lost, undone);
+    assert.equal(readFileSync(file, 'utf8').replaceAll('\r\n', '\n'), 'reflog\n', undone);
     git('stash', 'drop', '-q');
 
     // 一覧の上のボタン: どのブランチからも辿れなくなったコミットから、ブランチを作って取り戻す
@@ -2866,9 +2908,21 @@ async function reflogFlow(): Promise<void> {
     assert.deepEqual(compared.pairs!.map((p) => [p.status, p.subject]), [['added', 'reflog e2e']]);
     await panel.rangeDiff.handle({ type: 'rangeDiffClose' });
   } finally {
-    git('switch', '-q', branch);
-    git('branch', '-D', 'reflog-e2e');
-    if (git('branch', '--list', 'reflog-rescue')) git('branch', '-D', 'reflog-rescue');
+    // 途中で落ちても、作業ツリー・stash・ブランチを始めの形に戻す（1 つの失敗をほかの試験に広げない）。
+    // 後片付けが失敗しても、元の失敗を隠さない
+    try {
+      git('reset', '-q', '--hard');
+      git('switch', '-q', '--discard-changes', branch);
+      rmSync(file, { force: true });
+      while (git('stash', 'list').split('\n').filter(Boolean).length > stashes && /Before reset --hard to /.test(git('stash', 'list', '-n', '1', '--format=%s'))) {
+        git('stash', 'drop', '-q');
+      }
+      for (const name of ['reflog-e2e', 'reflog-rescue']) {
+        if (git('branch', '--list', name)) git('branch', '-D', name);
+      }
+    } catch (e) {
+      console.error(`      reflog の後片付けに失敗: ${e}`);
+    }
     await vscode.commands.executeCommand('amonhen.refresh');
   }
 }
