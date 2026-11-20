@@ -218,8 +218,9 @@ function lockHolders(message: string): string {
 }
 
 /**
- * 直前の 3 秒に動いていた git（trace2 の記録から）。引数と、始まり・終わりが今の何 ms 前か。index に書かないと
- * 決めてあるもの（`GIT_OPTIONAL_LOCKS=0`）は鍵を取らないので、数だけ言う
+ * 直前の 3 秒に動いていた git（trace2 の記録から）。引数と、始まり・終わりが今の何 ms 前か、失敗したものは終わりの
+ * コード（鍵を取れずに落ちたのがどれかを見分ける）。index に書かないと決めてあるもの（`GIT_OPTIONAL_LOCKS=0`）は
+ * 鍵を取らないので、数だけ言う
  */
 function recentGits(): string {
   const trace = process.env['GIT_TRACE2_EVENT'];
@@ -227,7 +228,7 @@ function recentGits(): string {
     return '記録していません';
   }
   const now = Date.now();
-  type Run = { argv?: string[]; start?: number; end?: number; locks?: string };
+  type Run = { argv?: string[]; start?: number; end?: number; locks?: string; code?: number };
   const runs = new Map<string, Run>();
   try {
     // 終わりのほうだけ読む（全体は数 MB になる）
@@ -241,7 +242,15 @@ function recentGits(): string {
       closeSync(fd);
     }
     for (const line of buffer.toString('utf8').split('\n')) {
-      let e: { event?: string; sid?: string; time?: string; argv?: string[]; param?: string; value?: string };
+      let e: {
+        event?: string;
+        sid?: string;
+        time?: string;
+        argv?: string[];
+        param?: string;
+        value?: string;
+        code?: number;
+      };
       try {
         e = JSON.parse(line);
       } catch {
@@ -258,6 +267,7 @@ function recentGits(): string {
         run.start = at;
       } else if (e.event === 'atexit') {
         run.end = at;
+        run.code = e.code;
       } else if (e.event === 'def_param' && e.param === 'GIT_OPTIONAL_LOCKS') {
         run.locks = e.value;
       }
@@ -270,7 +280,10 @@ function recentGits(): string {
   const lines = recent
     .filter((r) => !reading(r))
     .sort((a, b) => a.start! - b.start!)
-    .map((r) => `[${r.start! - now}〜${r.end === undefined ? '動作中' : r.end - now} ms] ${r.argv!.join(' ')}`);
+    .map((r) => {
+      const failed = r.code ? ` → 終わりのコード ${r.code}` : '';
+      return `[${r.start! - now}〜${r.end === undefined ? '動作中' : r.end - now} ms] ${r.argv!.join(' ')}${failed}`;
+    });
   return `${lines.join(' / ') || 'なし'}（ほかに鍵を取らないもの ${recent.length - lines.length}）`;
 }
 
