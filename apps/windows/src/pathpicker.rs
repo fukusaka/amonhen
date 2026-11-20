@@ -1,6 +1,7 @@
-//! SSH 先のフォルダを列で選ぶ画面（GTK4 版の `filepicker.rs`、macOS 版の `FilePicker.swift` のうち、SSH 先の
-//! フォルダを選ぶ分）。上にパスの欄（打ち込める。`~` はその機械のホーム）、下に根（`/`・`C:\`）から選んだところまで
-//! の列。中身は SSH 先でリポジトリなしに動かしたエンジンの `listDirectory` が読む。リポジトリは緑で出す。
+//! フォルダを列で選ぶ画面（GTK4 版の `filepicker.rs`、macOS 版の `FilePicker.swift` のうち、フォルダを選ぶ分）。
+//! この機械のものも、SSH 先のものも同じ形で選ぶ。上にパスの欄（打ち込める。`~` はその機械のホーム）、下に根
+//! （`/`・`C:\`）から選んだところまでの列。中身は、この機械ならコア（`amonhen_backend_cli::list_directory`）が、
+//! SSH 先ならリポジトリなしに動かしたエンジンの `listDirectory` が読む。リポジトリは緑で出す。
 
 use std::sync::Arc;
 
@@ -19,6 +20,10 @@ pub enum Purpose {
     AddSsh,
     /// その SSH 先でスキャンするフォルダ（Settings > SSH Hosts・Places）。
     ScanRoot,
+    /// この機械のリポジトリを Repositories に足す（Add Repositories）。
+    AddLocal,
+    /// この機械でスキャンするフォルダ（Add a Folder to Scan）。
+    ScanLocal,
 }
 
 /// 列の 1 行（フォルダだけ）。
@@ -50,6 +55,8 @@ pub struct Picker {
     /// パスの欄（選んだら、そのフォルダにする）と、欄を作り直す数。
     pub typed: String,
     pub epoch: u32,
+    /// この機械のフォルダを選ぶ（つながずに、コアが読む）。
+    pub local: bool,
 }
 
 pub enum Event {
@@ -70,7 +77,8 @@ pub enum Job {
         options: amonhen_remote::ssh::HostOptions,
         local: bool,
     },
-    List(Arc<Repository>, String),
+    /// フォルダを読む（エンジンがなければ、この機械のもの）。
+    List(Option<Arc<Repository>>, String),
 }
 
 impl Job {
@@ -83,7 +91,13 @@ impl Job {
             } => Event::Connected(
                 crate::remote::open(&location, options, local, &|| {}).map(Arc::new),
             ),
-            Job::List(repo, path) => {
+            Job::List(None, path) => {
+                let result = amonhen_backend_cli::list_directory(&path)
+                    .map(|d| directory_json(&d))
+                    .map_err(|e| e.to_string());
+                Event::Listed(path, result)
+            }
+            Job::List(Some(repo), path) => {
                 let command = json!({ "op": "listDirectory", "path": &path });
                 let reply: Value =
                     serde_json::from_str(&repo.run_json(&command.to_string())).unwrap_or_default();
@@ -95,6 +109,19 @@ impl Job {
             }
         }
     }
+}
+
+/// この機械のフォルダの中身を、エンジンの `listDirectory` の答えと同じ形に。
+fn directory_json(d: &amonhen_model::Directory) -> Value {
+    json!({
+        "path": d.path,
+        "home": d.home,
+        "entries": d.entries.iter().map(|e| json!({
+            "name": e.name,
+            "kind": e.kind,
+            "repository": e.repository,
+        })).collect::<Vec<_>>(),
+    })
 }
 
 /// Windows のパスか（`C:\…`・`C:/…`・`\\server\…`）。
@@ -163,7 +190,7 @@ impl Picker {
             start.clone()
         };
         let job = match &repo {
-            Some(repo) => Job::List(repo.clone(), typed.clone()),
+            Some(repo) => Job::List(Some(repo.clone()), typed.clone()),
             None => job,
         };
         (
@@ -177,8 +204,28 @@ impl Picker {
                 home: None,
                 columns: Vec::new(),
                 epoch: 0,
+                local: false,
             },
             job,
+        )
+    }
+
+    /// この機械のフォルダを、ホームから選ぶ（GTK4 版・macOS 版と同じ）。最初の仕事を返す。
+    pub fn new_local(purpose: Purpose) -> (Self, Job) {
+        (
+            Self {
+                purpose,
+                host: String::new(),
+                typed: "~".to_owned(),
+                start: String::new(),
+                repo: None,
+                error: None,
+                home: None,
+                columns: Vec::new(),
+                epoch: 0,
+                local: true,
+            },
+            Job::List(None, "~".to_owned()),
         )
     }
 
@@ -190,6 +237,10 @@ impl Picker {
     /// 選んだフォルダを、ホームの下なら `~/…` で（ssh の場所に書く形）。
     pub fn chosen_shown(&self) -> Option<String> {
         let path = self.chosen()?;
+        // この機械のフォルダは、そのままのパス。
+        if self.local {
+            return Some(path.to_owned());
+        }
         Some(match &self.home {
             Some(home) if path == home => "~".to_owned(),
             Some(home)
@@ -204,7 +255,10 @@ impl Picker {
     }
 
     fn list(&self, path: String) -> Option<Job> {
-        Some(Job::List(self.repo.clone()?, path))
+        if self.local {
+            return Some(Job::List(None, path));
+        }
+        Some(Job::List(Some(self.repo.clone()?), path))
     }
 
     pub fn handle(&mut self, event: Event) -> Vec<Job> {
@@ -327,7 +381,7 @@ pub fn view(picker: &Picker, callbacks: &Callbacks<'_>) -> View {
             )]),
             Button::new()
                 .grid_column(1)
-                .is_enabled(picker.repo.is_some())
+                .is_enabled(picker.local || picker.repo.is_some())
                 .on_click(callbacks.go.clone())
                 .content(TextBlock::new().text("→")),
         ));
@@ -343,7 +397,11 @@ pub fn view(picker: &Picker, callbacks: &Callbacks<'_>) -> View {
             .spacing(8.0)
             .children((
                 ProgressRing::new().is_active(true).width(16.0).height(16.0),
-                TextBlock::new().text(tr!("Connecting to {host}…", host = &picker.host)),
+                TextBlock::new().text(if picker.local {
+                    tr!("Loading…")
+                } else {
+                    tr!("Connecting to {host}…", host = &picker.host)
+                }),
             ))
     } else {
         let green = Color::rgb(0x2e, 0x9e, 0x4f);
