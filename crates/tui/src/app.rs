@@ -141,6 +141,8 @@ enum Naming {
     RemoteName,
     /// 足すリモートの URL（名前は聞いてある）。
     RemoteUrl,
+    /// 選んでいるコミットを書き出すアーカイブのファイル（この機械の）。
+    Archive,
 }
 
 /// 選択肢 1 つ: 押すキー、名前、頼む中身。
@@ -1058,6 +1060,10 @@ impl App {
                                     Some((name.to_owned(), name.to_owned(), String::new()));
                                 return;
                             }
+                            Naming::Archive => {
+                                self.export_archive(&start, name);
+                                return;
+                            }
                             Naming::RemoteUrl => (
                                 "addRemote",
                                 tr!("Adding {name}…", name = start),
@@ -1100,6 +1106,8 @@ impl App {
                 KeyCode::Backspace => {
                     name.pop();
                 }
+                // 端末の行と同じく、Ctrl-u で打ったものを消す（初めに入れてあるパスを打ち直すときなど）。
+                KeyCode::Char('u') if control => name.clear(),
                 KeyCode::Char(ch) if !control => name.push(ch),
                 _ => {}
             }
@@ -1275,6 +1283,24 @@ impl App {
 
     /// コマンドの一覧からだけ動かす操作（キーを持たない）。
     fn run_keyless(&mut self, id: &str) {
+        if id == "export-archive" {
+            // History で選んでいるコミットを、今のフォルダ（TUI を始めた所。SSH 先でも、この機械）に書き出す。
+            let Some(id) = self.history.selected_id() else {
+                return;
+            };
+            let id = id.to_string();
+            let short = id[..id.len().min(8)].to_owned();
+            let name = match self.name.is_empty() {
+                true => short.clone(),
+                false => format!("{}-{short}", self.name),
+            };
+            let file = std::env::current_dir()
+                .map(|d| d.join(format!("{name}.zip")).to_string_lossy().into_owned())
+                .unwrap_or_else(|_| format!("{name}.zip"));
+            self.naming = Naming::Archive;
+            self.typing_branch = Some((id, short, file));
+            self.dirty = true;
+        }
         if id == "delete-ignored-files" {
             self.run(
                 "ignoredFiles",
@@ -1454,6 +1480,10 @@ impl App {
                 return;
             }
             "deleteIgnored" => self.notice = Some(tr!("Deleted the ignored files")),
+            "archive" => {
+                let file = reply["info"]["file"].as_str().unwrap_or("");
+                self.notice = Some(tr!("Exported to {file}", file = file));
+            }
             "merge" | "rebase" | "continue" | "skip" | "cherryPick" | "revert" | "rewrite" => {
                 // コンフリクトで止まったら、Working Copy で解決する。
                 match reply["outcome"].as_str() {
@@ -1633,6 +1663,44 @@ impl App {
                 ]),
             },
         ));
+    }
+
+    /// `rev` の時点のファイルを `file` に書き出す（`git archive`）。形はファイルの拡張子で決め、中身はファイルの名前の
+    /// フォルダに入れる（アプリと同じ）。相対のパスは、TUI を始めたフォルダから。
+    fn export_archive(&mut self, rev: &str, file: &str) {
+        let format = [
+            (".zip", "zip"),
+            (".tar.gz", "tar.gz"),
+            (".tgz", "tar.gz"),
+            (".tar", "tar"),
+        ]
+        .into_iter()
+        .find(|(ext, _)| file.ends_with(ext));
+        let Some((ext, format)) = format else {
+            self.error = Some(tr!("End the file name with .zip, .tar.gz or .tar"));
+            return;
+        };
+        let path = std::path::Path::new(file);
+        let path = match path.is_absolute() {
+            true => path.to_path_buf(),
+            false => std::env::current_dir().unwrap_or_default().join(path),
+        };
+        let stem = path
+            .file_name()
+            .map(|n| n.to_string_lossy().trim_end_matches(ext).to_owned())
+            .unwrap_or_default();
+        let prefix = match stem.is_empty() {
+            true => String::new(),
+            false => format!("{stem}/"),
+        };
+        self.run(
+            "archive",
+            tr!("Exporting…"),
+            json!({
+                "op": "archive", "rev": rev, "format": format, "prefix": prefix, "paths": [],
+                "file": path.to_string_lossy(),
+            }),
+        );
     }
 
     /// Update Submodules: `submodules` の答えから、すべての submodule を取り出して記録したコミットにするか、中の
@@ -3169,6 +3237,13 @@ impl App {
                     Naming::Orphan => tr!("New orphan branch: {name}", name = name),
                     Naming::RemoteName => tr!("New remote's name: {name}", name = name),
                     Naming::RemoteUrl => tr!("URL of {at}: {name}", at = at, name = name),
+                    Naming::Archive => {
+                        tr!(
+                            "Export {at} to (.zip, .tar.gz or .tar): {name}",
+                            at = at,
+                            name = name
+                        )
+                    }
                 };
                 let x = buf.set_stringn(area.x + 1, y, text, room, Style::new()).0;
                 cursor = Some((x.min(position_x.saturating_sub(1)), y));

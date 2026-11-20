@@ -1481,6 +1481,31 @@ fn delete_ignored_files_from_the_command_list() {
     assert!(dir.path().join("keep.txt").exists());
 }
 
+/// コマンドの一覧の Export Archive: History で選んでいるコミットのファイルを、拡張子の形で書き出す
+#[test]
+fn export_archive_of_the_selected_commit() {
+    let dir = tempfile::tempdir().unwrap();
+    changed(dir.path());
+    let asked = amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), ":export\n").unwrap();
+    println!("{asked}");
+    assert!(asked.contains("Export "));
+    assert!(asked.contains(".zip"));
+    let out = tempfile::tempdir().unwrap();
+    let zip = out.path().join("snap.zip");
+    let keys = format!(":export\n\x15{}\n", zip.display());
+    let done = amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), &keys).unwrap();
+    println!("{done}");
+    assert!(done.contains("Exported to"));
+    let bytes = std::fs::read(&zip).unwrap();
+    assert_eq!(&bytes[..2], b"PK");
+    // 中身は、ファイルの名前のフォルダの下に。
+    assert!(bytes.windows(11).any(|w| w == b"snap/lane.r"));
+    // 分からない拡張子は断る。
+    let keys = format!(":export\n\x15{}\n", out.path().join("snap.rar").display());
+    let wrong = amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), &keys).unwrap();
+    assert!(wrong.contains("End the file name with .zip, .tar.gz or .tar"));
+}
+
 /// コマンドの一覧の Prune Worktrees: フォルダのなくなった worktree の記録を片付ける（キーはない）
 #[test]
 fn prune_worktrees_from_the_command_list() {
