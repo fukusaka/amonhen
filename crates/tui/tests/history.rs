@@ -1417,6 +1417,46 @@ fn add_remote_from_the_command_list() {
     assert!(first.contains("New remote's name: origin"));
 }
 
+/// コマンドの一覧の Update Submodules: すべての submodule を取り出す。なければ、そう知らせる
+#[test]
+fn update_submodules_from_the_command_list() {
+    let dir = tempfile::tempdir().unwrap();
+    let (sub, main, clone) = (
+        dir.path().join("sub"),
+        dir.path().join("main"),
+        dir.path().join("clone"),
+    );
+    for d in [&sub, &main] {
+        std::fs::create_dir(d).unwrap();
+        git(d, BASE, &["init", "-q", "-b", "main"]);
+        commit(d, BASE, "Start");
+    }
+    let file = ["-c", "protocol.file.allow=always"];
+    let add = [
+        &file[..],
+        &["submodule", "add", "-q", sub.to_str().unwrap(), "lib"],
+    ]
+    .concat();
+    git(&main, BASE, &add);
+    git(&main, BASE, &["commit", "-q", "-m", "Add lib"]);
+    git(
+        dir.path(),
+        BASE,
+        &["clone", "-q", main.to_str().unwrap(), "clone"],
+    );
+    git(&clone, BASE, &["config", "protocol.file.allow", "always"]);
+    assert!(!clone.join("lib/.git").exists());
+    let asked = amonhen_tui::snapshot(open(&clone), 160, 8, clock(), ":update sub\n").unwrap();
+    println!("{asked}");
+    assert!(asked.contains("Update lib?   y to the recorded commits   r recursively   t to their branches' latest   n cancel"));
+    let done = amonhen_tui::snapshot(open(&clone), 160, 8, clock(), ":update sub\ny").unwrap();
+    println!("{done}");
+    assert!(done.contains("Updated the submodules"));
+    assert!(clone.join("lib/.git").exists());
+    let none = amonhen_tui::snapshot(open(&sub), 160, 8, clock(), ":update sub\n").unwrap();
+    assert!(none.contains("There are no submodules"));
+}
+
 /// コマンドの一覧の Prune Worktrees: フォルダのなくなった worktree の記録を片付ける（キーはない）
 #[test]
 fn prune_worktrees_from_the_command_list() {

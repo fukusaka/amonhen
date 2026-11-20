@@ -1275,6 +1275,13 @@ impl App {
 
     /// コマンドの一覧からだけ動かす操作（キーを持たない）。
     fn run_keyless(&mut self, id: &str) {
+        if id == "update-submodules" {
+            self.run(
+                "submodules",
+                tr!("Reading the submodules…"),
+                json!({"op": "submodules"}),
+            );
+        }
         if id == "add-remote" {
             self.naming = Naming::RemoteName;
             // 初めは、まだリモートがなければ origin。
@@ -1399,6 +1406,11 @@ impl App {
             }
             "cleanUp" => self.notice = Some(tr!("Deleted the branches")),
             "addRemote" => self.notice = Some(tr!("Added the remote")),
+            "submodules" => {
+                self.ask_update_submodules(&reply["info"]);
+                return;
+            }
+            "updateSubmodules" => self.notice = Some(tr!("Updated the submodules")),
             "merge" | "rebase" | "continue" | "skip" | "cherryPick" | "revert" | "rewrite" => {
                 // コンフリクトで止まったら、Working Copy で解決する。
                 match reply["outcome"].as_str() {
@@ -1577,6 +1589,33 @@ impl App {
                     ),
                 ]),
             },
+        ));
+    }
+
+    /// Update Submodules: `submodules` の答えから、すべての submodule を取り出して記録したコミットにするか、中の
+    /// submodule までか、追うブランチの最新にするかを選ばせる（アプリのシートの選び方と同じ）。
+    fn ask_update_submodules(&mut self, info: &Value) {
+        let paths: Vec<String> = (info["submodules"].as_array().into_iter().flatten())
+            .filter_map(|s| s["path"].as_str().map(str::to_owned))
+            .collect();
+        self.dirty = true;
+        if paths.is_empty() {
+            self.notice = Some(tr!("There are no submodules"));
+            return;
+        }
+        let update = |recursive: bool, remote: bool| Request::Run {
+            name: "updateSubmodules",
+            command: json!({
+                "op": "updateSubmodules", "paths": paths, "recursive": recursive, "remote": remote,
+            }),
+        };
+        self.choices = Some((
+            tr!("Update {names}?", names = amonhen_model::i18n::list(&paths)),
+            vec![
+                ('y', tr!("to the recorded commits"), update(false, false)),
+                ('r', tr!("recursively"), update(true, false)),
+                ('t', tr!("to their branches' latest"), update(false, true)),
+            ],
         ));
     }
 
