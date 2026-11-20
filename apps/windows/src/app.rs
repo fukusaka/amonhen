@@ -7489,6 +7489,8 @@ impl Root {
         // 外観は Windows の設定に合わせる（描く色と同じ判断にするため、ここで決めて渡す）。窓の後ろを透かすなら
         // 色の層のない Acrylic を自分で敷く（当てられなければ WinUI の Acrylic）。
         let see_through = backdrop.see_through();
+        // 窓全体を透かすときは、読む面の地も薄く（変わったら次のフレームで描き直す）。
+        crate::palette::set_ground(backdrop.content_ground());
         let dark = crate::palette::dark();
         context.use_effect("acrylic", (see_through, dark), move || {
             ACRYLIC.with(|a| {
@@ -8174,7 +8176,14 @@ impl Root {
         // 透かすときの地: メニュー・ツールバー・タブ、サイドバー、下の帯は窓の色を透過率の分だけ薄く、読む面
         // （一覧・詳細・差分）は不透明に塗る。透かさなければ窓全体を窓の色で塗る。
         let window = crate::palette::window();
-        let grounds: View = if backdrop.see_through() {
+        let grounds: View = if backdrop.style == "single" {
+            // 窓全体: どこも同じ濃さの地（読む面は自分の地を薄く塗る）。
+            Border::new()
+                .grid_row(0)
+                .grid_row_span(5)
+                .background(Brush::Solid(backdrop.ground(window)))
+                .into()
+        } else if backdrop.see_through() {
             let ground = Brush::Solid(backdrop.ground(window));
             View::fragment((
                 Border::new()
@@ -16423,8 +16432,8 @@ impl HistoryView {
             if now != count {
                 self.sender.send(Message::Running(now));
             }
-            // Windows の外観（アプリ モード）が変わったら、色を替えて描き直す。
-            if crate::palette::refresh() {
+            // Windows の外観（アプリ モード）か、窓全体を透かす地の濃さが変わったら、色を替えて描き直す。
+            if crate::palette::refresh() | crate::palette::take_ground_changed() {
                 self.session.invalidate();
                 self.diff.dirty = true;
                 self.sender.send(Message::AppearanceChanged);

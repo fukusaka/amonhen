@@ -4,8 +4,8 @@
 //!
 //! 窓の後ろを透かすときは、窓に WinUI の Acrylic（後ろをぼかす）を敷き、透かす場所（メニュー・ツールバー・
 //! タブ・サイドバー・下の帯）に窓の色を `1 - 透過率` の濃さで塗る。読む面（一覧・詳細・差分）は不透明のまま。
-//! 窓全体を透かす（`single`）は、まだサイドバーとツールバーと同じに当てる。ぼかしの強さは Acrylic で決まって
-//! いるので、値は記録を保つだけ。背景画像は窓の中身の上に薄く重ね（押す・引くは下へ通す）、ツールバーの色は
+//! 窓全体を透かす（`single`）ときは、読む面の地（History・差分の自前の描画も、XAML の一覧も）も同じ濃さで
+//! 塗る。ぼかしの強さは Acrylic で決まっているので、値は記録を保つだけ。背景画像は窓の中身の上に薄く重ね（押す・引くは下へ通す）、ツールバーの色は
 //! メニューとツールバーの行の後ろに敷く。
 
 use amonhen_model::tr;
@@ -21,13 +21,14 @@ const IMAGE_TRANSPARENCY: &str = "backdropImageTransparency";
 const TOOLBAR_COLOR: &str = "backdropToolbarColor";
 const TOOLBAR_OPACITY: &str = "backdropToolbarOpacity";
 
-/// 窓の後ろを透かす場所（選べるもの。記録の `single` は `chrome` と同じに当てる）。
-pub const STYLES: [&str; 2] = ["system", "chrome"];
+/// 窓の後ろを透かす場所（なし・サイドバーとツールバー・窓全体）。
+pub const STYLES: [&str; 3] = ["system", "chrome", "single"];
 
 /// [`STYLES`] の名前。
 pub fn style_title(style: &str) -> String {
     match style {
         "chrome" => tr!("Sidebar and Toolbar"),
+        "single" => tr!("Whole Window"),
         _ => tr!("Nowhere (Standard)"),
     }
 }
@@ -221,9 +222,18 @@ impl Backdrop {
         matches!(self.style.as_str(), "chrome" | "single")
     }
 
-    /// 選べる場所の番号（[`STYLES`]。`single` はサイドバーとツールバー）。
+    /// 選べる場所の番号（[`STYLES`]。知らない名前はなし）。
     pub fn style_index(&self) -> usize {
-        usize::from(self.see_through())
+        STYLES.iter().position(|s| *s == self.style).unwrap_or(0)
+    }
+
+    /// 読む面の地の濃さ（窓全体を透かすときだけ `1 - 透過率`）。
+    pub fn content_ground(&self) -> f32 {
+        if self.style == "single" {
+            (1.0 - self.transparency.clamp(0.0, 1.0)) as f32
+        } else {
+            1.0
+        }
     }
 
     /// 透かす場所に塗る窓の色（濃さは `1 - 透過率`）。
@@ -265,13 +275,7 @@ pub fn apply(event: Event) -> Result<(), String> {
     // 横棒は 5% ずつ（GTK4 版と同じ）。
     let step = |v: f64| (v * 20.0).round() / 20.0;
     match event {
-        Event::Style(Some(i)) => {
-            let style = STYLES[i.min(STYLES.len() - 1)];
-            // 記録が `single` のままなら、サイドバーとツールバーを選び直しても変えない。
-            if b.style_index() != i {
-                b.style = style.to_owned();
-            }
-        }
+        Event::Style(Some(i)) => b.style = STYLES[i.min(STYLES.len() - 1)].to_owned(),
         Event::Style(None) => return Ok(()),
         Event::Transparency(v) => b.transparency = step(v / 100.0),
         Event::ChooseImage => {

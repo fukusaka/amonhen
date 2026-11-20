@@ -111,8 +111,10 @@ const PALETTE: [[f32; 3]; 8] = [
     [0.60, 0.60, 0.65],
 ];
 
+/// 地（窓全体を透かすときは地の濃さで薄く。swap chain はアルファを合成に使う）。
 fn background() -> D2D1_COLOR_F {
-    themed((1.0, 1.0, 1.0, 1.0), (0.118, 0.118, 0.118, 1.0))
+    let c = themed((1.0, 1.0, 1.0, 1.0), (0.118, 0.118, 0.118, 1.0));
+    with_alpha(c, crate::palette::ground())
 }
 fn foreground() -> D2D1_COLOR_F {
     themed((0.11, 0.11, 0.12, 1.0), (0.91, 0.91, 0.91, 1.0))
@@ -223,6 +225,8 @@ pub struct Surface {
     pub height: u32,
     flags: DXGI_SWAP_CHAIN_FLAG,
     options: Options,
+    /// アルファを合成に使うか（Composition の swap chain。窓全体を透かすときに地が透ける）。
+    premultiplied: bool,
 }
 
 impl Surface {
@@ -234,13 +238,13 @@ impl Surface {
         height: u32,
         options: Options,
     ) -> Result<Self> {
-        let (desc, flags, options) = renderer.desc(width, height, options);
+        let (desc, flags, options) = renderer.desc(width, height, options, false);
         let chain = unsafe {
             renderer
                 .factory
                 .CreateSwapChainForHwnd(&renderer.d3d, hwnd, &desc, None, None)?
         };
-        Self::new(chain, width, height, flags, options)
+        Self::new(chain, width, height, flags, options, false)
     }
 
     /// Composition（WinUI 3 の SwapChainPanel）に出す swap chain。
@@ -250,13 +254,13 @@ impl Surface {
         height: u32,
         options: Options,
     ) -> Result<Self> {
-        let (desc, flags, options) = renderer.desc(width, height, options);
+        let (desc, flags, options) = renderer.desc(width, height, options, true);
         let chain = unsafe {
             renderer
                 .factory
                 .CreateSwapChainForComposition(&renderer.d3d, &desc, None)?
         };
-        Self::new(chain, width, height, flags, options)
+        Self::new(chain, width, height, flags, options, true)
     }
 
     fn new(
@@ -265,6 +269,7 @@ impl Surface {
         height: u32,
         flags: DXGI_SWAP_CHAIN_FLAG,
         options: Options,
+        premultiplied: bool,
     ) -> Result<Self> {
         let chain: IDXGISwapChain2 = chain.cast()?;
         let waitable = if options.waitable {
@@ -283,6 +288,7 @@ impl Surface {
             height,
             flags,
             options,
+            premultiplied,
         })
     }
 
@@ -319,7 +325,11 @@ impl Surface {
         let props = D2D1_BITMAP_PROPERTIES1 {
             pixelFormat: D2D1_PIXEL_FORMAT {
                 format: DXGI_FORMAT_B8G8R8A8_UNORM,
-                alphaMode: D2D1_ALPHA_MODE_IGNORE,
+                alphaMode: if self.premultiplied {
+                    D2D1_ALPHA_MODE_PREMULTIPLIED
+                } else {
+                    D2D1_ALPHA_MODE_IGNORE
+                },
             },
             dpiX: 96.0 * scale,
             dpiY: 96.0 * scale,
@@ -532,6 +542,7 @@ impl Renderer {
         width: u32,
         height: u32,
         mut options: Options,
+        premultiplied: bool,
     ) -> (DXGI_SWAP_CHAIN_DESC1, DXGI_SWAP_CHAIN_FLAG, Options) {
         options.tearing &= self.tearing_supported;
         let mut flags = DXGI_SWAP_CHAIN_FLAG(0);
@@ -553,7 +564,11 @@ impl Renderer {
             BufferCount: 2,
             Scaling: DXGI_SCALING_STRETCH,
             SwapEffect: DXGI_SWAP_EFFECT_FLIP_DISCARD,
-            AlphaMode: DXGI_ALPHA_MODE_IGNORE,
+            AlphaMode: if premultiplied {
+                DXGI_ALPHA_MODE_PREMULTIPLIED
+            } else {
+                DXGI_ALPHA_MODE_IGNORE
+            },
             Flags: flags.0 as u32,
             ..Default::default()
         };
@@ -580,6 +595,13 @@ impl Renderer {
             self.d2d.SetTarget(&target);
             self.d2d.SetDpi(96.0 * scale, 96.0 * scale);
             self.d2d.BeginDraw();
+            // 地が透けるときは、ClearType（不透明な地が要る）でなく濃淡で文字をなめらかにする。
+            self.d2d
+                .SetTextAntialiasMode(if crate::palette::ground() < 1.0 {
+                    D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE
+                } else {
+                    D2D1_TEXT_ANTIALIAS_MODE_DEFAULT
+                });
             self.d2d.Clear(Some(&background()));
         }
         let mut stages = [0.0; 5];
@@ -1011,6 +1033,13 @@ impl Renderer {
             self.d2d.SetTarget(&target);
             self.d2d.SetDpi(96.0 * scale, 96.0 * scale);
             self.d2d.BeginDraw();
+            // 地が透けるときは、ClearType（不透明な地が要る）でなく濃淡で文字をなめらかにする。
+            self.d2d
+                .SetTextAntialiasMode(if crate::palette::ground() < 1.0 {
+                    D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE
+                } else {
+                    D2D1_TEXT_ANTIALIAS_MODE_DEFAULT
+                });
             self.d2d.Clear(Some(&background()));
         }
         let result = match content {
