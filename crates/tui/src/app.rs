@@ -193,6 +193,9 @@ pub struct App {
     patch_file: Option<String>,
     /// 前の版と比べている間の題（比べた結果が届くまで覚えておく）。
     range_title: Option<String>,
+    /// History の並び順を、トポロジー順（ブランチのコミットをそのマージの下にまとめる）にしている。この TUI の
+    /// 間だけ（アプリの設定には書かない）。
+    topo_order: bool,
     /// 作業ツリーのファイルがこの機械にある（`ssh://` の先でない）。エディタで開けるか。
     files_here: bool,
     /// エディタで開く作業ツリーのファイル（絶対パス）。
@@ -334,6 +337,7 @@ impl App {
             bundle_file: None,
             patch_file: None,
             range_title: None,
+            topo_order: false,
             files_here: true,
             open_file: None,
             search: None,
@@ -1461,6 +1465,24 @@ impl App {
         self.send(Request::Run { name, command });
     }
 
+    /// History の並び順を、日付順とトポロジー順で替える（この TUI の間だけ）。
+    fn toggle_history_order(&mut self) {
+        self.dirty = true;
+        if self.running.is_some() {
+            self.error = Some(tr!("Another operation is still running"));
+            return;
+        }
+        let order = match self.topo_order {
+            true => "date",
+            false => "topo",
+        };
+        self.running = Some(tr!("Reordering History…"));
+        self.send(Request::Call {
+            name: "historyOrder",
+            request: json!({"op": "historyOrder", "order": order}),
+        });
+    }
+
     /// 命令が済んだ。だめなら理由を出し、どちらでも状態・ref・History を読み直す。
     fn ran(&mut self, name: &'static str, result: std::result::Result<Value, String>) {
         self.running = None;
@@ -1649,6 +1671,16 @@ impl App {
                 self.focus = Focus::Main;
                 self.dirty = true;
                 return;
+            }
+            // 並び順が替わった: History を読み直す（ref と状態も、ほかの操作と同じく下で読み直す）。
+            "historyOrder" => {
+                self.topo_order = reply["order"] == "topo";
+                self.notice = Some(match self.topo_order {
+                    true => tr!(
+                        "History in topological order: a branch's commits stay together under its merge"
+                    ),
+                    false => tr!("History in date order"),
+                });
             }
             "savePatch" => {
                 let file = (reply["info"]["files"].as_array())
@@ -2578,6 +2610,7 @@ impl App {
                 ("g G", tr!("Top and bottom")),
                 ("PgUp PgDn", tr!("Move by a page")),
                 ("@", tr!("Go to HEAD")),
+                ("o", tr!("Date or topological order")),
                 ("] [", tr!("Go to the parent, the child")),
                 ("Enter Space", tr!("Go to the details")),
                 ("/", tr!("Search")),
@@ -3012,6 +3045,10 @@ impl App {
             KeyCode::Char('G') | KeyCode::End => Some(self.history.select(u32::MAX)),
             // HEAD・親・子へ（アプリの Navigate）。`]` は下（古い方）、`[` は上へ動く。
             KeyCode::Char('@') => Some(self.history.go_to_head()),
+            KeyCode::Char('o') => {
+                self.toggle_history_order();
+                None
+            }
             KeyCode::Char(']') => Some(self.history.go_to_parent()),
             KeyCode::Char('[') => Some(self.history.go_to_child()),
             _ => None,

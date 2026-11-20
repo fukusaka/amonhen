@@ -73,6 +73,8 @@ pub enum Request {
     /// コアの命令（fetch・push・checkout など）を動かす。`name` は、答えを見分ける名前。`command` が配列なら、
     /// その命令を順に（失敗したら、そこでやめる）。
     Run { name: &'static str, command: Value },
+    /// 窓口の命令（`run` を通さないもの。History の並び順など）を、操作として動かす。答えは `Ran` で返す。
+    Call { name: &'static str, request: Value },
     /// コミットを作る（`amend` なら、直前のコミットを作り直す）。
     MakeCommit { message: String, amend: bool },
     /// コミット（16 進の ID）のメッセージ（amend で欄に入れる）。
@@ -168,7 +170,7 @@ impl Loader {
             | Request::RowOf { .. }
             | Request::Lineage { .. } => &self.rows,
             Request::Search { .. } => &self.search,
-            Request::Run { .. } => &self.operations,
+            Request::Run { .. } | Request::Call { .. } => &self.operations,
             Request::Commit { .. } | Request::Syntax { .. } => &self.details,
             Request::Status
             | Request::Reflog { .. }
@@ -383,6 +385,13 @@ fn load(front: &dyn Front, request: Request, events: &Sender<Event>) -> Result<L
             done(front.call(json!({"op": "discardRows", "diff": diff, "rows": rows})))
         }
         Request::Discard { paths } => done(run(front, json!({"op": "discard", "paths": paths}))),
+        Request::Call { name, request } => Loaded::Ran {
+            name,
+            result: front
+                .call(request)
+                .map(|r| r.json)
+                .map_err(|e| e.to_string()),
+        },
         Request::Run { name, command } => Loaded::Ran {
             name,
             result: match command {

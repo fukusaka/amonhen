@@ -715,7 +715,8 @@ fn sidebar_filter_narrows_refs() {
 fn question_mark_lists_the_keys() {
     let dir = tempfile::tempdir().unwrap();
     merged(dir.path());
-    let help = amonhen_tui::snapshot(open(dir.path()), 80, 30, clock(), "?").unwrap();
+    // History のキーは、収まるだけの高さで（収まらなければ `j` `k` で送る。それは別の試験）。
+    let help = amonhen_tui::snapshot(open(dir.path()), 80, 40, clock(), "?").unwrap();
     println!("{help}");
     assert!(help.contains("┌─ Keys ─"));
     assert!(help.contains("│ n N          Next and previous match"));
@@ -792,6 +793,60 @@ fn go_to_head_parent_and_child() {
     assert_eq!(at("G@"), "1/5");
     // コマンドの一覧からも。
     assert_eq!(at("G:go to head\n"), "1/5");
+}
+
+/// History の `o`: 日付順とトポロジー順（ブランチのコミットをそのマージの下にまとめる）を替える
+#[test]
+fn o_switches_history_between_date_and_topological_order() {
+    let dir = tempfile::tempdir().unwrap();
+    merged(dir.path());
+    let subjects = |text: &str| -> Vec<String> {
+        text.lines()
+            .skip(1)
+            .take(5)
+            .map(|l| {
+                [
+                    "Merge branch",
+                    "Bump the version",
+                    "日本語の件名",
+                    "Add the graph",
+                    "Start",
+                ]
+                .into_iter()
+                .find(|s| l.contains(s))
+                .unwrap_or("")
+                .to_owned()
+            })
+            .collect()
+    };
+    let date = amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "").unwrap();
+    assert_eq!(
+        subjects(&date),
+        [
+            "Merge branch",
+            "Bump the version",
+            "日本語の件名",
+            "Add the graph",
+            "Start"
+        ]
+    );
+    let topo = amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "o").unwrap();
+    println!("{topo}");
+    assert!(topo.contains("History in topological order"));
+    // topic のコミットが、マージのすぐ下に来る。
+    assert_eq!(
+        subjects(&topo),
+        [
+            "Merge branch",
+            "日本語の件名",
+            "Bump the version",
+            "Add the graph",
+            "Start"
+        ]
+    );
+    let back = amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "oo").unwrap();
+    assert!(back.contains("History in date order"));
+    assert_eq!(subjects(&back), subjects(&date));
 }
 
 /// Space は、History とサイドバーで Enter と同じ（詳細へ入る・選んでいる行を開く）
