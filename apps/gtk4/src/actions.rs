@@ -17,6 +17,9 @@ type FailureCallback = Rc<dyn Fn(crate::statusbar::Failure)>;
 /// 操作が終わった（ステータスバーの一言）。
 type DoneCallback = Rc<dyn Fn(&Value)>;
 
+/// HEAD から first-parent で辿った並び（新しい順、コミットの ID と merge かどうか）。
+pub type FirstParentLine = Vec<(String, bool)>;
+
 pub struct Actions {
     repo: RefCell<Option<Arc<Repository>>>,
     /// タブの中身（今どの窓にあるかは、ここから辿る。タブは窓を移れる）。
@@ -56,6 +59,10 @@ pub struct Actions {
     /// squash・rebase でマージされたプルリクエストのブランチと、その番号（サイドバーが `branchGroups` から入れる）。
     /// 消すときは、取り込んでいないコミットを並べる確認でなく、そのプルリクエストを添えた確認にする。
     merged_by_pull_request: RefCell<std::collections::HashMap<String, u64>>,
+    /// HEAD から first-parent で辿った並び（新しい順、merge かどうか）。右クリックで、編集の項目を出すかを決める。
+    /// 読む前は None（そのときは項目を出し、押してから確かめる。macOS 版の `firstParentLine`）。
+    first_parent_line: Rc<RefCell<Option<FirstParentLine>>>,
+    first_parent_request: Rc<std::cell::Cell<u64>>,
 }
 
 impl Actions {
@@ -91,7 +98,47 @@ impl Actions {
             undo_label: Rc::default(),
             publishes: std::cell::Cell::default(),
             merged_by_pull_request: RefCell::default(),
+            first_parent_line: Rc::default(),
+            first_parent_request: Rc::default(),
         })
+    }
+
+    /// HEAD・ref が動いたら、first-parent の並びを読み直す（[`Actions::first_parent_line`]）。
+    pub fn refresh_first_parent_line(&self) {
+        let Some(repo) = self.repo() else {
+            return;
+        };
+        let request = self.first_parent_request.get() + 1;
+        self.first_parent_request.set(request);
+        let (line, latest) = (
+            self.first_parent_line.clone(),
+            self.first_parent_request.clone(),
+        );
+        glib::spawn_future_local(async move {
+            let reply = crate::sheets::run(
+                &repo,
+                serde_json::json!({ "op": "editableCommits", "throughMerges": true }),
+            )
+            .await;
+            if latest.get() != request {
+                return;
+            }
+            let read = reply["text"].as_str().map(|text| {
+                text.lines()
+                    .filter_map(|l| {
+                        let mut parts = l.split(' ');
+                        let oid = parts.next().filter(|o| !o.is_empty())?;
+                        Some((oid.to_owned(), parts.next().is_some()))
+                    })
+                    .collect()
+            });
+            line.replace(read);
+        });
+    }
+
+    /// HEAD から first-parent で辿った並び（新しい順、merge かどうか）。読む前・読めなければ None。
+    pub fn first_parent_line(&self) -> Option<FirstParentLine> {
+        self.first_parent_line.borrow().clone()
     }
 
     /// squash・rebase でマージされたプルリクエストの番号（`branch` がそうなら）。

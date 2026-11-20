@@ -2339,3 +2339,8 @@
 "Couldn’t reload {path}" = "{path} を読み直せませんでした";
 "Couldn’t apply the patch" = "パッチを当てられませんでした";
 "Couldn’t open {path} in the merge editor" = "{path} をマージエディタで開けませんでした";
+"A merge can’t be saved as a patch." = "merge はパッチにできません。";
+"Select two or more commits other than the current one." = "今のコミットのほかに 2 つ以上選んでください。";
+"Select exactly two commits." = "コミットをちょうど 2 つ選んでください。";
+"Squash into Previous…" = "前のコミットに Squash…";
+"Interactive Rebase from Here…" = "ここから Interactive Rebase…";

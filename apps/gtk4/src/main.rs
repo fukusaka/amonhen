@@ -1652,9 +1652,9 @@ fn build_tab(
             let items = if rows.len() > 1 && rows.contains(&row) {
                 commitops::menu_many(&a, &history, &rows, view.upcast_ref(), &rd, &eo)
             } else {
-                // 折りたたんだ merge なら、取り込んだ側を開く・たたむ項目を先に。
-                let mut items = sh.merge_items(&history, row);
-                items.extend(commitops::menu(&a, &history, row, view.upcast_ref(), &eo));
+                // 折りたたんだ merge なら、取り込んだ側を開く・たたむ項目を最後に（macOS 版と同じ）。
+                let mut items = commitops::menu(&a, &history, row, view.upcast_ref(), &eo);
+                items.extend(sh.merge_items(&history, row));
                 items
             };
             if let Some(popover) = menu::popup_returning(&view, x, y, items) {
@@ -2375,8 +2375,7 @@ fn build_tab(
                                     move || {
                                         if let Some((_, history)) = v.current() {
                                             let y = (row as f32 + 0.5) * v.row_height();
-                                            let mut items = sh.merge_items(&history, row);
-                                            items.extend(if many {
+                                            let items = if many {
                                                 let rows = v.selection();
                                                 commitops::menu_many(
                                                     &a,
@@ -2387,14 +2386,16 @@ fn build_tab(
                                                     &eo,
                                                 )
                                             } else {
-                                                commitops::menu(
+                                                let mut items = commitops::menu(
                                                     &a,
                                                     &history,
                                                     row,
                                                     v.upcast_ref(),
                                                     &eo,
-                                                )
-                                            });
+                                                );
+                                                items.extend(sh.merge_items(&history, row));
+                                                items
+                                            };
                                             eprintln!("{}", menu::titles(&items).join("\n"));
                                             match &item {
                                                 Some(path) => {
@@ -2592,6 +2593,8 @@ fn build_tab(
                             reload_details_info(&details, repo);
                         }
                         actions.set_head(refs.refs.head_branch.clone());
+                        // HEAD・ref が動いた: 右クリックの編集の項目を決める並びを読み直す。
+                        actions.refresh_first_parent_line();
                         // push・fetch の後はプルリクエストや CI も変わりうる（読みすぎないよう、間を空ける）。
                         if github_started {
                             github_loader.load(false);
