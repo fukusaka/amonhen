@@ -1165,8 +1165,29 @@ fn merge_stops_at_conflicts_and_can_be_aborted() {
     let dir = tempfile::tempdir().unwrap();
     diverged(dir.path());
     // History の 2 つ下が topic。
-    let asked = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjjm").unwrap();
-    assert!(asked.contains("Merge topic into main?   y merge   n cancel"));
+    // 確かめる文に、取り込む数・分かれてからの数・merge コミットの件名・コンフリクトの見込み。
+    let asked = amonhen_tui::snapshot(open(dir.path()), 200, 12, clock(), "0jjjm").unwrap();
+    println!("{asked}");
+    // 件名の「into main」の有無は git の版と設定による。コンフリクトの見込みは git 2.38 から（merge-tree
+    // --write-tree）で、古い git では何も足さない。
+    let line = asked.lines().last().unwrap();
+    assert!(
+        line.contains("Merge topic into main as “Merge branch 'topic'"),
+        "{line}"
+    );
+    assert!(
+        line.contains("(+1 in, 1 on main since they split)."),
+        "{line}"
+    );
+    assert!(line.contains("   y merge   n cancel"), "{line}");
+    let version = git_out(dir.path(), &["--version"]);
+    let numbers: Vec<u32> = version
+        .split(|c: char| !c.is_ascii_digit())
+        .filter_map(|n| n.parse().ok())
+        .collect();
+    if (numbers[0], numbers[1]) >= (2, 38) {
+        assert!(line.contains("Conflicts are likely in a.txt."), "{line}");
+    }
     let stopped = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjjmy").unwrap();
     println!("{stopped}");
     assert!(stopped.contains("Stopped at conflicts"));
@@ -1193,7 +1214,15 @@ fn rebase_onto_the_picked_ref() {
     amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjjc").unwrap();
     let asked = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjr").unwrap();
     println!("{asked}");
+    // 見通しでコンフリクトを調べられなかったときは、何も足さない。
     assert!(asked.contains("Rebase topic onto main?   y rebase   n cancel"));
+    // main を topic に merge するのは fast-forward。取り込む数を言う。
+    let ff = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjm").unwrap();
+    println!("{ff}");
+    assert!(
+        ff.contains("Fast-forward topic to main (+2)?   y merge   n cancel"),
+        "{ff}"
+    );
     amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjry").unwrap();
     assert_eq!(
         git_out(dir.path(), &["merge-base", "topic", "main"]),

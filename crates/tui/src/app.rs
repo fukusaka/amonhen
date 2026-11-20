@@ -193,6 +193,9 @@ pub struct App {
     patch_file: Option<String>,
     /// 前の版と比べている間の題（比べた結果が届くまで覚えておく）。
     range_title: Option<String>,
+    /// merge か rebase を確かめる前に、見通しを読んでいる: 何を（ref の名前）、どのブランチに、merge か。merge は
+    /// 見通し（`mergePreview`）を読んだ後に、コンフリクトの見込みも読む。
+    preview: Option<(String, String, bool, Value)>,
     /// History でマージ済みのブランチを折りたたんでいる（アプリの Fold Merged Branches。この TUI の間だけ）。
     fold: bool,
     /// 折りたたんでいる間に、取り込んだ側を開いたマージ（16 進の ID）。
@@ -343,6 +346,7 @@ impl App {
             range_title: None,
             topo_order: false,
             fold: false,
+            preview: None,
             expanded: Vec::new(),
             files_here: true,
             open_file: None,
@@ -1710,6 +1714,54 @@ impl App {
                 self.dirty = true;
                 return;
             }
+            // merge の見通しが分かった: コンフリクトの見込みも読んでから確かめる（fast-forward・取り込むものなしは
+            // コンフリクトしない）。
+            "mergePreview" => {
+                let Some(preview) = self.preview.as_mut() else {
+                    return;
+                };
+                preview.3 = reply["info"].clone();
+                if reply["info"]["fastForward"] == true || reply["info"]["upToDate"] == true {
+                    self.ask_with_preview(None);
+                    return;
+                }
+                let name = preview.0.clone();
+                self.run(
+                    "mergeConflicts",
+                    tr!("Looking ahead…"),
+                    json!({"op": "predictMerge", "ours": null, "theirs": name}),
+                );
+                return;
+            }
+            "mergeConflicts" => {
+                let conflicts = (reply["info"]["conflicts"].as_array()).map(|files| {
+                    files
+                        .iter()
+                        .filter_map(|f| f.as_str().map(str::to_owned))
+                        .collect()
+                });
+                self.ask_with_preview(conflicts);
+                return;
+            }
+            "rebasePreview" => {
+                let info = reply["info"].clone();
+                // コンフリクトしそうなコミットのファイルを、まとめて。
+                let conflicts = info["conflicts"].as_array().map(|commits| {
+                    let mut files: Vec<String> = commits
+                        .iter()
+                        .flat_map(|c| c["files"].as_array().cloned().unwrap_or_default())
+                        .filter_map(|f| f.as_str().map(str::to_owned))
+                        .collect();
+                    files.sort();
+                    files.dedup();
+                    files
+                });
+                if let Some(preview) = self.preview.as_mut() {
+                    preview.3 = info;
+                }
+                self.ask_with_preview(conflicts);
+                return;
+            }
             // 並び順が替わった: History を読み直す（ref と状態も、ほかの操作と同じく下で読み直す）。
             "historyOrder" => {
                 self.topo_order = reply["order"] == "topo";
@@ -2353,26 +2405,120 @@ impl App {
             self.error = Some(tr!("No branch is checked out"));
             return true;
         };
-        self.confirm = Some(if merge {
-            (
-                tr!("Merge {name} into {branch}?", name = name, branch = branch),
-                tr!("merge"),
-                Request::Run {
-                    name: "merge",
-                    command: json!({"op": "merge", "rev": name}),
-                },
-            )
-        } else {
-            (
-                tr!("Rebase {branch} onto {name}?", name = name, branch = branch),
-                tr!("rebase"),
-                Request::Run {
-                    name: "rebase",
-                    command: json!({"op": "rebase", "onto": name}),
-                },
-            )
-        });
+        // アプリが確かめるときに描く前と後の代わりに、エンジンの見通しを読んで、確かめる文に書く。
+        let name = name.to_owned();
+        self.preview = Some((name.clone(), branch, merge, Value::Null));
+        match merge {
+            true => self.run(
+                "mergePreview",
+                tr!("Looking ahead…"),
+                json!({"op": "mergePreview", "theirs": name}),
+            ),
+            false => self.run(
+                "rebasePreview",
+                tr!("Looking ahead…"),
+                json!({"op": "rewritePreview", "onto": name}),
+            ),
+        }
         true
+    }
+
+    /// merge・rebase の見通しから、確かめる文を作る。`conflicts` はコンフリクトしそうなファイル（分からなければ
+    /// `None`）。
+    fn ask_with_preview(&mut self, conflicts: Option<Vec<String>>) {
+        let Some((name, branch, merge, preview)) = self.preview.take() else {
+            return;
+        };
+        self.dirty = true;
+        let count = |shown: &Value, more: &Value| {
+            shown.as_array().map_or(0, Vec::len) as u64 + more.as_u64().unwrap_or(0)
+        };
+        let risk = match conflicts {
+            Some(files) if !files.is_empty() => {
+                let shown: Vec<&str> = files.iter().take(3).map(String::as_str).collect();
+                let mut names = amonhen_model::i18n::list(&shown);
+                if files.len() > 3 {
+                    names = tr!(
+                        "{names} and {count} more",
+                        names = names,
+                        count = files.len() - 3
+                    );
+                }
+                tr!(" Conflicts are likely in {files}.", files = names)
+            }
+            Some(_) => tr!(" No conflicts are expected."),
+            None => String::new(),
+        };
+        let (ask, yes, request) = if merge {
+            let request = Request::Run {
+                name: "merge",
+                command: json!({"op": "merge", "rev": name}),
+            };
+            if preview["upToDate"] == true {
+                self.notice = Some(tr!(
+                    "{branch} already has {name}",
+                    branch = branch,
+                    name = name
+                ));
+                return;
+            }
+            if preview["fastForward"] == true {
+                let drawing = &preview["move"]["drawing"];
+                let n = count(&drawing["gained"], &drawing["gainedMore"]);
+                let ask = tr!(
+                    "Fast-forward {branch} to {name} (+{count})?",
+                    branch = branch,
+                    name = name,
+                    count = n
+                );
+                (ask, tr!("merge"), request)
+            } else {
+                let drawing = &preview["drawing"];
+                let theirs = count(&drawing["theirs"], &drawing["theirsMore"]);
+                let ours = count(&drawing["ours"], &drawing["oursMore"]);
+                let ask = tr!(
+                    "Merge {name} into {branch} as “{subject}” (+{theirs} in, {ours} on {branch} since they split).{risk}",
+                    name = name,
+                    branch = branch,
+                    theirs = theirs,
+                    ours = ours,
+                    subject = drawing["subject"].as_str().unwrap_or(""),
+                    risk = risk
+                );
+                (ask, tr!("merge"), request)
+            }
+        } else {
+            let force = match preview["currentPushed"] == true {
+                true => tr!(
+                    " Its upstream has the commits it rewrites, so pushing will need Force Push."
+                ),
+                false => String::new(),
+            };
+            let moving: Vec<&str> = (preview["moving"].as_array().into_iter().flatten())
+                .filter_map(|b| b["name"].as_str())
+                .collect();
+            let along = match moving.is_empty() {
+                true => String::new(),
+                false => tr!(
+                    " {names} move along.",
+                    names = amonhen_model::i18n::list(&moving)
+                ),
+            };
+            let ask = tr!(
+                "Rebase {branch} onto {name}?{risk}{along}{force}",
+                branch = branch,
+                name = name,
+                risk = risk,
+                along = along,
+                force = force
+            );
+            let request = Request::Run {
+                name: "rebase",
+                command: json!({"op": "rebase", "onto": name}),
+            };
+            (ask, tr!("rebase"), request)
+        };
+        self.confirm = Some((ask, yes, request));
     }
 
     /// サイドバーで選んでいる stash を戻す（`pop` なら、戻して消す）か、消す（先に確かめる）。
