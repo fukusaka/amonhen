@@ -209,6 +209,8 @@ pub struct App {
     files_here: bool,
     /// エディタで開く作業ツリーのファイル（絶対パス）。
     open_file: Option<String>,
+    /// 開き直す worktree（サイドバーの Enter。TUI を閉じて、そこで開き直す）。
+    open_worktree: Option<String>,
     /// いくつかから選んで行う操作: 尋ねる文と、キー・名前・頼む中身の組。
     choices: Option<(String, Vec<Choice>)>,
     /// マウスを取り込んでいる（切ると、端末で文字を選べる）。
@@ -353,6 +355,7 @@ impl App {
             expanded: Vec::new(),
             files_here: true,
             open_file: None,
+            open_worktree: None,
             search: None,
             search_done: 0.0,
             theme: Theme::detect(),
@@ -563,6 +566,11 @@ impl App {
     }
 
     /// エディタで開くファイルと、作業ツリーの場所（聞いたら、なかったことにする）。
+    /// 開き直す worktree のパス（選んだときだけ。そのとき `quit` も立っている）。
+    pub fn take_open_worktree(&mut self) -> Option<String> {
+        self.open_worktree.take()
+    }
+
     pub fn take_open_file(&mut self) -> Option<(String, Option<String>)> {
         let file = self.open_file.take()?;
         Some((file, self.workdir.clone()))
@@ -2966,12 +2974,21 @@ impl App {
                 self.focus = Focus::Side;
                 self.pinned = Oid::from_hex(&id);
             }
-            // worktree は、その場所を知らせるだけ（開くのは、そこで `amonhen tui`）。
+            // ほかの worktree は、TUI をそこで開き直す（アプリが新しい窓で開くのの代わり）。開いているものは、
+            // その場所を知らせるだけ。
             Some(Picked::Commit(_))
                 if self.sidebar.picked_ref().is_some_and(|r| r.0 == "worktree") =>
             {
                 let path = self.sidebar.picked_ref().map_or("", |r| r.1).to_owned();
-                self.notice = Some(tr!("Worktree at {path}", path = path));
+                if self.sidebar.picked_is_current() {
+                    self.notice = Some(tr!(
+                        "This is the worktree that is open, at {path}",
+                        path = path
+                    ));
+                } else {
+                    self.open_worktree = Some(path);
+                    self.quit = true;
+                }
             }
             Some(Picked::Commit(id)) => {
                 self.pinned = None;
@@ -4145,6 +4162,51 @@ mod tests {
         let mut buf = Buffer::empty(Rect::new(0, 0, 100, 12));
         app.draw(&mut buf, Damage::ALL);
         (0..100).map(|x| buf[(x, 11)].symbol()).collect()
+    }
+
+    /// サイドバーの worktree で Enter: ほかの worktree なら TUI を閉じてそのパスを返し、開いているものなら場所を
+    /// 知らせるだけ。
+    #[test]
+    fn enter_on_another_worktree_reopens_there() {
+        let (dir, mut app, rx) = app_with_history();
+        let other = tempfile::tempdir().unwrap();
+        let path = other.path().join("other");
+        let out = amonhen_model::process::command("git")
+            .args(["worktree", "add", "-q", "-b", "topic"])
+            .arg(&path)
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        app.open();
+        crate::settle(&mut app, &rx).unwrap();
+        let key = |app: &mut App, code: KeyCode| {
+            app.handle(Event::Input(Input::Key(KeyEvent::new(
+                code,
+                KeyModifiers::NONE,
+            ))));
+        };
+        // 一番下の行が other。その上が、開いているもの。
+        for code in [
+            KeyCode::Char('0'),
+            KeyCode::Char('G'),
+            KeyCode::Char('k'),
+            KeyCode::Enter,
+        ] {
+            key(&mut app, code);
+        }
+        assert!(app.take_open_worktree().is_none());
+        assert!(!app.quit());
+        assert!(bottom_line(&mut app).contains("This is the worktree that is open"));
+        for code in [KeyCode::Char('j'), KeyCode::Enter] {
+            key(&mut app, code);
+        }
+        let opened = app.take_open_worktree().expect("a worktree to open");
+        assert_eq!(
+            std::fs::canonicalize(opened).unwrap(),
+            std::fs::canonicalize(&path).unwrap()
+        );
+        assert!(app.quit());
     }
 
     /// Working Copy の `e`: 選んでいるファイルを、作業ツリーの絶対パスでエディタに渡す。`ssh://` の先なら断る。

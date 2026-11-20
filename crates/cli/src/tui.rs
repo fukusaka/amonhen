@@ -151,16 +151,69 @@ pub fn run(args: &[String]) -> Result<ExitCode> {
         }
         return Ok(ExitCode::SUCCESS);
     }
-    #[cfg(unix)]
-    if let Some(askpass) = askpass {
-        amonhen_tui::run_asking(front, local, files_here, &askpass)?;
-        return Ok(ExitCode::SUCCESS);
+    // サイドバーでほかの worktree を選ぶと、TUI が終わってそのパスを返す。同じ開き方（手元・daemon・SSH 先）で
+    // 開き直す。
+    let mut front = front;
+    loop {
+        #[cfg(unix)]
+        let next = match &askpass {
+            Some(askpass) => amonhen_tui::run_asking(front, local, files_here, askpass)?,
+            None => amonhen_tui::run(front, local, files_here)?,
+        };
+        #[cfg(not(unix))]
+        let next = amonhen_tui::run(front, local, files_here)?;
+        let Some(path) = next else {
+            return Ok(ExitCode::SUCCESS);
+        };
+        front = Arc::from(open_repository(std::path::Path::new(&worktree_location(
+            &given, &path,
+        )))?);
     }
-    amonhen_tui::run(front, local, files_here)?;
-    Ok(ExitCode::SUCCESS)
+}
+
+/// 開いている場所 `given` と同じ開き方で、worktree の `path`（エンジンが返す、その機械の絶対パス）を開く場所。
+fn worktree_location(given: &str, path: &str) -> String {
+    for scheme in ["daemon:ssh://", "ssh://"] {
+        if let Some(rest) = given.strip_prefix(scheme) {
+            let authority = rest.split('/').next().unwrap_or(rest);
+            let slash = if path.starts_with('/') { "" } else { "/" };
+            return format!("{scheme}{authority}{slash}{path}");
+        }
+    }
+    match given.starts_with("daemon:") {
+        true => format!("daemon:{path}"),
+        false => path.to_owned(),
+    }
 }
 
 /// 手元の日付と時刻。
 fn local(time: i64) -> String {
     crate::term::local_time(time, true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::worktree_location;
+
+    /// worktree は、開いているリポジトリと同じ開き方で開く。
+    #[test]
+    fn worktrees_open_the_same_way() {
+        assert_eq!(worktree_location(".", "/w/other"), "/w/other");
+        assert_eq!(
+            worktree_location("daemon:/w/main", "/w/other"),
+            "daemon:/w/other"
+        );
+        assert_eq!(
+            worktree_location("ssh://me@host:22/w/main", "/w/other"),
+            "ssh://me@host:22/w/other"
+        );
+        assert_eq!(
+            worktree_location("daemon:ssh://host/~/main", "/home/me/other"),
+            "daemon:ssh://host/home/me/other"
+        );
+        assert_eq!(
+            worktree_location("ssh://host/C:/w/main", "C:/w/other"),
+            "ssh://host/C:/w/other"
+        );
+    }
 }
