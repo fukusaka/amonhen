@@ -1457,6 +1457,30 @@ fn update_submodules_from_the_command_list() {
     assert!(none.contains("There are no submodules"));
 }
 
+/// コマンドの一覧の Delete Ignored Files: 数と名前を出して確かめ、ignore されたものを消す
+#[test]
+fn delete_ignored_files_from_the_command_list() {
+    let dir = tempfile::tempdir().unwrap();
+    merged(dir.path());
+    let none = amonhen_tui::snapshot(open(dir.path()), 160, 8, clock(), ":ignored\n").unwrap();
+    assert!(none.contains("No ignored files"));
+    std::fs::write(dir.path().join(".gitignore"), "*.log\nbuild/\n").unwrap();
+    std::fs::write(dir.path().join("a.log"), "x").unwrap();
+    std::fs::create_dir(dir.path().join("build")).unwrap();
+    std::fs::write(dir.path().join("build/out"), "x").unwrap();
+    std::fs::write(dir.path().join("keep.txt"), "x").unwrap();
+    let asked = amonhen_tui::snapshot(open(dir.path()), 160, 8, clock(), ":ignored\n").unwrap();
+    println!("{asked}");
+    assert!(
+        asked.contains("Delete 2 ignored items (a.log and build/)? Undo can’t bring them back.")
+    );
+    assert!(dir.path().join("a.log").exists());
+    amonhen_tui::snapshot(open(dir.path()), 160, 8, clock(), ":ignored\ny").unwrap();
+    assert!(!dir.path().join("a.log").exists());
+    assert!(!dir.path().join("build").exists());
+    assert!(dir.path().join("keep.txt").exists());
+}
+
 /// コマンドの一覧の Prune Worktrees: フォルダのなくなった worktree の記録を片付ける（キーはない）
 #[test]
 fn prune_worktrees_from_the_command_list() {

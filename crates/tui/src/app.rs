@@ -1275,6 +1275,13 @@ impl App {
 
     /// コマンドの一覧からだけ動かす操作（キーを持たない）。
     fn run_keyless(&mut self, id: &str) {
+        if id == "delete-ignored-files" {
+            self.run(
+                "ignoredFiles",
+                tr!("Finding ignored files…"),
+                json!({"op": "ignoredFiles"}),
+            );
+        }
         if id == "update-submodules" {
             self.run(
                 "submodules",
@@ -1411,6 +1418,42 @@ impl App {
                 return;
             }
             "updateSubmodules" => self.notice = Some(tr!("Updated the submodules")),
+            // ignore されたものが分かった: 数と最初のいくつかを出して、確かめてから消す（Undo では戻らない）。
+            "ignoredFiles" => {
+                let paths: Vec<String> = (reply["info"]["paths"].as_array().into_iter().flatten())
+                    .filter_map(|p| p.as_str().map(str::to_owned))
+                    .collect();
+                self.dirty = true;
+                if paths.is_empty() {
+                    self.notice = Some(tr!(
+                        "No ignored files: nothing in the working tree matches .gitignore"
+                    ));
+                    return;
+                }
+                const SHOWN: usize = 3;
+                let mut names = amonhen_model::i18n::list(&paths[..paths.len().min(SHOWN)]);
+                if paths.len() > SHOWN {
+                    names = tr!(
+                        "{names} and {count} more",
+                        names = names,
+                        count = paths.len() - SHOWN
+                    );
+                }
+                self.confirm = Some((
+                    tr!(
+                        "Delete {count} ignored items ({names})? Undo can’t bring them back.",
+                        count = paths.len(),
+                        names = names
+                    ),
+                    tr!("delete"),
+                    Request::Run {
+                        name: "deleteIgnored",
+                        command: json!({"op": "deleteIgnored", "paths": paths}),
+                    },
+                ));
+                return;
+            }
+            "deleteIgnored" => self.notice = Some(tr!("Deleted the ignored files")),
             "merge" | "rebase" | "continue" | "skip" | "cherryPick" | "revert" | "rewrite" => {
                 // コンフリクトで止まったら、Working Copy で解決する。
                 match reply["outcome"].as_str() {

@@ -73,6 +73,7 @@ pub static ENTRIES: &[Entry] = &[
     keyless("clean-up-branches", Place::Anywhere),
     keyless("add-remote", Place::Anywhere),
     keyless("update-submodules", Place::Anywhere),
+    keyless("delete-ignored-files", Place::Anywhere),
     keyless("prune-worktrees", Place::Anywhere),
     entry("merge", 'm', Place::Sidebar),
     entry("rebase", 'r', Place::Sidebar),
