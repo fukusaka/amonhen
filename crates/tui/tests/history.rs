@@ -1530,6 +1530,45 @@ fn save_the_repository_as_a_bundle() {
     }
 }
 
+/// コマンドの一覧の Fetch from Bundle: ファイルを読み、名前を聞いて、そのブランチを refs/remotes/<名前>/ に取り込む
+#[test]
+fn fetch_from_a_bundle() {
+    let dir = tempfile::tempdir().unwrap();
+    let (from, to) = (dir.path().join("from"), dir.path().join("to"));
+    std::fs::create_dir(&from).unwrap();
+    merged(&from);
+    let file = dir.path().join("work.bundle");
+    git(
+        &from,
+        BASE,
+        // `-q` は git 2.35 から（サポートする最低の git にはない）。
+        &["bundle", "create", file.to_str().unwrap(), "--all"],
+    );
+    std::fs::create_dir(&to).unwrap();
+    git(&to, BASE, &["init", "-q", "-b", "main"]);
+    commit(&to, BASE, "Elsewhere");
+    let keys = format!(":fetch from bundle\n\x15{}\n", file.display());
+    let named = amonhen_tui::snapshot(open(&to), 200, 8, clock(), &keys).unwrap();
+    println!("{named}");
+    assert!(named.contains("Fetch its branches as remote: work"));
+    let done = amonhen_tui::snapshot(open(&to), 200, 8, clock(), &format!("{keys}\n")).unwrap();
+    println!("{done}");
+    assert!(done.contains("Fetched"));
+    let refs = git_out(
+        &to,
+        &["for-each-ref", "--format=%(refname)", "refs/remotes/work"],
+    );
+    assert!(refs.contains("refs/remotes/work/main"), "{refs}");
+    assert!(refs.contains("refs/remotes/work/topic"), "{refs}");
+    // bundle でないファイルは、エンジンが断る（理由が出る）。
+    let keys = format!(
+        ":fetch from bundle\n\x15{}\n",
+        from.join("lane.rs").display()
+    );
+    let wrong = amonhen_tui::snapshot(open(&to), 200, 8, clock(), &keys).unwrap();
+    assert!(!wrong.contains("Fetch its branches"));
+}
+
 /// コマンドの一覧の Prune Worktrees: フォルダのなくなった worktree の記録を片付ける（キーはない）
 #[test]
 fn prune_worktrees_from_the_command_list() {

@@ -76,6 +76,7 @@ pub static ENTRIES: &[Entry] = &[
     keyless("delete-ignored-files", Place::Anywhere),
     keyless("export-archive", Place::History),
     keyless("save-bundle", Place::Anywhere),
+    keyless("fetch-bundle", Place::Anywhere),
     keyless("prune-worktrees", Place::Anywhere),
     entry("merge", 'm', Place::Sidebar),
     entry("rebase", 'r', Place::Sidebar),

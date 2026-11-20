@@ -145,6 +145,10 @@ enum Naming {
     Archive,
     /// リポジトリをまとめる bundle のファイル（この機械の）。
     Bundle,
+    /// 取り込む bundle のファイル（この機械の）。
+    BundleFile,
+    /// bundle のブランチを取り込む名前（`refs/remotes/<名前>/*`。ファイルは聞いてある）。
+    BundleName,
 }
 
 /// 選択肢 1 つ: 押すキー、名前、頼む中身。
@@ -179,6 +183,8 @@ pub struct App {
     confirm: Option<(String, String, Request)>,
     /// push を確かめている: `t` で、送り先のブランチを打てる。
     push_to_offered: bool,
+    /// 読んでいる bundle のファイル（取り込む名前を聞く間、覚えておく）。
+    bundle_file: Option<String>,
     /// 作業ツリーのファイルがこの機械にある（`ssh://` の先でない）。エディタで開けるか。
     files_here: bool,
     /// エディタで開く作業ツリーのファイル（絶対パス）。
@@ -317,6 +323,7 @@ impl App {
             help_top: 0,
             palette: None,
             push_to_offered: false,
+            bundle_file: None,
             files_here: true,
             open_file: None,
             search: None,
@@ -1066,6 +1073,20 @@ impl App {
                                 self.export_archive(&start, name);
                                 return;
                             }
+                            Naming::BundleFile => {
+                                let file = local_path(name);
+                                self.bundle_file = Some(file.clone());
+                                (
+                                    "bundleCheck",
+                                    tr!("Reading the bundle…"),
+                                    json!({"op": "bundleCheck", "file": file}),
+                                )
+                            }
+                            Naming::BundleName => (
+                                "fetchBundle",
+                                tr!("Fetching from the bundle…"),
+                                json!({"op": "fetchBundle", "file": start, "name": name}),
+                            ),
                             Naming::Bundle => (
                                 "bundle",
                                 tr!("Saving the bundle…"),
@@ -1290,6 +1311,11 @@ impl App {
 
     /// コマンドの一覧からだけ動かす操作（キーを持たない）。
     fn run_keyless(&mut self, id: &str) {
+        if id == "fetch-bundle" {
+            self.naming = Naming::BundleFile;
+            self.typing_branch = Some((String::new(), String::new(), local_path("")));
+            self.dirty = true;
+        }
         if id == "save-bundle" {
             // HEAD とすべてのブランチ・タグを、今のフォルダ（この機械）の 1 つのファイルに。
             let name = match self.name.is_empty() {
@@ -1496,6 +1522,33 @@ impl App {
                 return;
             }
             "deleteIgnored" => self.notice = Some(tr!("Deleted the ignored files")),
+            // bundle の中身が分かった: 足りないコミットがあれば断り、なければ取り込む名前を聞く。
+            "bundleCheck" => {
+                let info = &reply["info"];
+                let missing = info["missing"].as_u64().unwrap_or(0);
+                self.dirty = true;
+                if missing > 0 {
+                    self.error = Some(tr!(
+                        "The bundle needs {count} commits this repository doesn’t have",
+                        count = missing
+                    ));
+                    return;
+                }
+                let Some(file) = self.bundle_file.take() else {
+                    return;
+                };
+                let name = info["name"].as_str().unwrap_or("bundle").to_owned();
+                self.naming = Naming::BundleName;
+                self.typing_branch = Some((file.clone(), file, name));
+                return;
+            }
+            "fetchBundle" => {
+                let count = reply["info"]["refs"].as_array().map_or(0, Vec::len);
+                self.notice = Some(tr!(
+                    "Fetched {count} branches from the bundle",
+                    count = count
+                ));
+            }
             "bundle" => {
                 let file = reply["info"]["file"].as_str().unwrap_or("");
                 self.notice = Some(tr!("Saved the bundle to {file}", file = file));
@@ -3253,6 +3306,10 @@ impl App {
                     Naming::Orphan => tr!("New orphan branch: {name}", name = name),
                     Naming::RemoteName => tr!("New remote's name: {name}", name = name),
                     Naming::RemoteUrl => tr!("URL of {at}: {name}", at = at, name = name),
+                    Naming::BundleFile => tr!("Fetch from the bundle at: {name}", name = name),
+                    Naming::BundleName => {
+                        tr!("Fetch its branches as remote: {name}", name = name)
+                    }
                     Naming::Bundle => {
                         tr!("Save the repository as a bundle at: {name}", name = name)
                     }
