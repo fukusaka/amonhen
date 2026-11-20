@@ -151,6 +151,18 @@ const FILTER: &[&str] = &[
     "Microsoft.UI.Input.IPointerPointProperties::{MouseWheelDelta,IsHorizontalMouseWheel,\
      IsLeftButtonPressed,IsRightButtonPressed,IsMiddleButtonPressed}",
     "Microsoft.UI.Input.IInputKeyboardSourceStatics::{GetKeyStateForCurrentThread}",
+    // 窓の後ろを透かす Acrylic を自分で当てる（Window.SystemBackdrop の Acrylic は色の層の濃さを変えられず、透過率を
+    // 上げても透けにくい）。色の層は 0 にして、透け具合はアプリが塗る地の濃さで決める。
+    "Microsoft.UI.Composition.SystemBackdrops.DesktopAcrylicController",
+    "Microsoft.UI.Composition.SystemBackdrops.IDesktopAcrylicController::{put_TintOpacity,put_LuminosityOpacity}",
+    "Microsoft.UI.Composition.SystemBackdrops.ISystemBackdropControllerWithTargets::{AddSystemBackdropTarget,\
+     RemoveAllSystemBackdropTargets,SetSystemBackdropConfiguration}",
+    "Microsoft.UI.Composition.SystemBackdrops.SystemBackdropConfiguration",
+    "Microsoft.UI.Composition.SystemBackdrops.ISystemBackdropConfiguration::{put_IsInputActive,put_Theme}",
+    "Microsoft.UI.Composition.SystemBackdrops.SystemBackdropTheme",
+    "Microsoft.UI.Composition.ICompositionSupportsSystemBackdrop",
+    "Microsoft.UI.Composition.SystemBackdrops.IDesktopAcrylicControllerStatics::{}",
+    "Microsoft.UI.Composition.ICompositionObjectStatics::{}",
 ];
 
 fn main() {

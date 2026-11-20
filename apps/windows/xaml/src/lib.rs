@@ -11,11 +11,13 @@
     clippy::all
 )]
 
+mod acrylic;
 mod badge;
 mod bindings;
 mod list;
 mod tabview;
 mod textbox;
+pub use acrylic::Acrylic;
 pub use badge::{pass_through, put_badges};
 pub use bindings::*;
 pub use list::{drag_some_tags, drag_tags, drop_on_rows, selected_tags};

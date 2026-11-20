@@ -26,6 +26,9 @@ use crate::sidebar::{self, BranchGroups};
 use crate::{Args, Session};
 
 thread_local! {
+    /// 窓の後ろを透かす Acrylic（透かしている間）と、当てられなかったか（WinUI の Acrylic に替える）。
+    static ACRYLIC: RefCell<Option<xaml::Acrylic>> = const { RefCell::new(None) };
+    static ACRYLIC_FAILED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// 設定の画面（Settings・Repository Settings）を出しているか（Ctrl+Z・Ctrl+Shift+Z を設定の Undo・Redo にする）。
     static SETTINGS_SHOWN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// サイドバーの木で引いてよい項目（お気に入りのブランチの鍵。上から順）。木のドラッグの始まりで見る。
@@ -7484,7 +7487,33 @@ impl Root {
             &crate::tabs::current().map_or_else(|| args.repo.display().to_string(), |t| t.location),
         );
         // 外観は Windows の設定に合わせる（描く色と同じ判断にするため、ここで決めて渡す）。窓の後ろを透かすなら
-        // Acrylic を敷く。
+        // 色の層のない Acrylic を自分で敷く（当てられなければ WinUI の Acrylic）。
+        let see_through = backdrop.see_through();
+        let dark = crate::palette::dark();
+        context.use_effect("acrylic", (see_through, dark), move || {
+            ACRYLIC.with(|a| {
+                let mut a = a.borrow_mut();
+                if !see_through {
+                    *a = None;
+                    return;
+                }
+                if let Some(acrylic) = a.as_ref() {
+                    let _ = acrylic.set_dark(dark);
+                    return;
+                }
+                match windows_reactor::native_window()
+                    .ok_or_else(|| "窓がない".to_owned())
+                    .and_then(|w| xaml::Acrylic::new(&w, dark).map_err(|e| e.to_string()))
+                {
+                    Ok(acrylic) => *a = Some(acrylic),
+                    Err(e) => {
+                        eprintln!("窓の後ろの Acrylic を当てられない: {e}");
+                        ACRYLIC_FAILED.with(|f| f.set(true));
+                    }
+                }
+            });
+            None
+        });
         context.window_visuals(
             WindowVisuals::new()
                 .theme(if crate::palette::dark() {
@@ -7492,11 +7521,13 @@ impl Root {
                 } else {
                     WindowTheme::Light
                 })
-                .backdrop(if backdrop.see_through() {
-                    WindowBackdrop::Acrylic
-                } else {
-                    WindowBackdrop::None
-                }),
+                .backdrop(
+                    if see_through && ACRYLIC_FAILED.with(std::cell::Cell::get) {
+                        WindowBackdrop::Acrylic
+                    } else {
+                        WindowBackdrop::None
+                    },
+                ),
         );
         let tab_strip = Grid::new()
             .grid_row(2)
