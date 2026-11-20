@@ -766,6 +766,63 @@ fn colon_lists_commands_and_runs_the_selected_one() {
     assert!(tag.contains(": v1"));
 }
 
+/// 署名したコミットの詳細には、検証の結果（アプリと同じ言葉）と署名した人を出す。SSH の署名は git 2.34 から
+#[test]
+fn details_show_the_signature_check() {
+    let version = git_out(Path::new("."), &["--version"]);
+    let numbers: Vec<u32> = version
+        .split(|c: char| !c.is_ascii_digit())
+        .filter_map(|n| n.parse().ok())
+        .collect();
+    if numbers.len() < 2 || (numbers[0], numbers[1]) < (2, 34) {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let keys = tempfile::tempdir().unwrap();
+    let key = keys.path().join("key");
+    let made = amonhen_model::process::command("ssh-keygen")
+        .args(["-q", "-t", "ed25519", "-N", "", "-C", "ann", "-f"])
+        .arg(&key)
+        .output();
+    let Ok(made) = made else { return };
+    assert!(made.status.success());
+    let public = std::fs::read_to_string(keys.path().join("key.pub")).unwrap();
+    let allowed = keys.path().join("allowed");
+    std::fs::write(&allowed, format!("ann@example.com {public}")).unwrap();
+    git(dir.path(), BASE, &["init", "-q", "-b", "main"]);
+    for (k, v) in [
+        ("gpg.format", "ssh"),
+        ("user.signingkey", key.to_str().unwrap()),
+    ] {
+        git(dir.path(), BASE, &["config", k, v]);
+    }
+    git(
+        dir.path(),
+        BASE,
+        &["commit", "-q", "-S", "--allow-empty", "-m", "Signed"],
+    );
+    // 許可した署名者の一覧がなければ、検証できない。
+    let unknown = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "").unwrap();
+    println!("{unknown}");
+    assert!(unknown.contains("Signature"), "{unknown}");
+    assert!(!unknown.contains("Verified"));
+    git(
+        dir.path(),
+        BASE,
+        &[
+            "config",
+            "gpg.ssh.allowedSignersFile",
+            allowed.to_str().unwrap(),
+        ],
+    );
+    let verified = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "").unwrap();
+    println!("{verified}");
+    assert!(
+        verified.contains("Signature  Verified, ann@example.com"),
+        "{verified}"
+    );
+}
+
 /// History の `@` `]` `[`: HEAD・親（1 つ目の親）・すぐ上の子へ移る。
 #[test]
 fn go_to_head_parent_and_child() {

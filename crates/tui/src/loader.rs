@@ -441,6 +441,12 @@ fn run(front: &dyn Front, command: Value) -> Result<Value> {
 
 fn commit(front: &dyn Front, id: &str, stash: bool) -> Result<(Value, Reply)> {
     let mut info = run(front, json!({"op": "commitInfo", "oid": id}))?;
+    // 署名があれば、検証もする（gpg・ssh を動かす。だめなら検証の結果なしで出す）。
+    if info["info"]["signed"].is_string()
+        && let Ok(mut checked) = run(front, json!({"op": "verifySignatures", "oids": [id]}))
+    {
+        info["info"]["signatureCheck"] = checked["info"]["checks"][0].take();
+    }
     let of = if stash { "stash" } else { "id" };
     let diff = front.call(json!({"op": "commitDiff", of: id}))?;
     Ok((info["info"].take(), diff))
