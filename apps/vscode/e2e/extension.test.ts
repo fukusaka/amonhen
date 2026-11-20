@@ -171,7 +171,8 @@ async function showView(command: 'amonhen.showWorkingCopy' | 'amonhen.showHistor
 function recordErrors(): void {
   const show = vscode.window.showErrorMessage.bind(vscode.window) as (message: string, ...rest: unknown[]) => Thenable<unknown>;
   (vscode.window as { showErrorMessage: unknown }).showErrorMessage = (message: string, ...rest: unknown[]) => {
-    errors.push(message.includes('index.lock') ? `${message}（${lockHolders(message)}）` : message);
+    const lock = message.includes('index.lock') || message.includes('could not lock config file');
+    errors.push(lock ? `${message}（${lockHolders(message)}）` : message);
     return show(message, ...rest);
   };
   // 尋ねない知らせ（modal でないもの）も記録する。試験が差し替えている間は、差し替えた方が受ける
@@ -185,11 +186,12 @@ function recordErrors(): void {
 }
 
 /**
- * index の鍵とぶつかったときの、その場の様子（鍵のファイルと、動いている git）。CI でまれに落ちる件で、
- * 鍵を持っていたのが誰かを残す
+ * index か設定の鍵とぶつかったときの、その場の様子（鍵のファイルと、動いている git）。CI でまれに落ちる件で、
+ * 鍵を持っていたのが誰かを残す。設定の鍵は git が場所を言わないので、`<ファイル>.lock` をリポジトリから探す
  */
 function lockHolders(message: string): string {
-  const lock = /'([^']*index\.lock)'/.exec(message)?.[1];
+  const config = /could not lock config file (\S+?): /.exec(message)?.[1];
+  const lock = /'([^']*index\.lock)'/.exec(message)?.[1] ?? (config && resolve(root, `${config}.lock`));
   let file = '鍵のファイルの場所が分かりません';
   if (lock) {
     try {
