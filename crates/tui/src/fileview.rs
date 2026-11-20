@@ -1,4 +1,5 @@
 //! 1 つのファイルの画面: Blame（行ごとに、最後に変えたコミット）か File History（そのファイルを変えたコミット）。
+//! 同じ画面に、ブランチを前の版と比べた結果（range-diff の組）も出す。
 //! 選んだ行のコミットの詳細と差分は、History と同じ枠に出す。
 
 use amonhen_model::{Oid, tr};
@@ -30,10 +31,14 @@ struct Line {
     first: bool,
     /// File History で、そのコミットの時点のパス（名前を変えていれば今と違う）。
     path: Option<String>,
+    /// range-diff で、今の版にない（前の版にだけある）組。
+    removed: bool,
 }
 
 #[derive(Default)]
 pub struct FileView {
+    /// range-diff を出しているなら、その題（「main against main@{1}」）。
+    range: Option<String>,
     path: String,
     blame: bool,
     /// Blame するコミット（16 進の ID。なければ作業ツリーの内容）。
@@ -105,6 +110,7 @@ impl FileView {
                         text: line["t"].as_str().unwrap_or("").replace('\t', "    "),
                         first,
                         path: None,
+                        removed: false,
                     }
                 })
                 .collect()
@@ -120,6 +126,7 @@ impl FileView {
                     text: e["subject"].as_str().unwrap_or("").to_owned(),
                     first: true,
                     path: e["path"].as_str().map(str::to_owned),
+                    removed: false,
                 })
                 .collect()
         };
@@ -128,8 +135,55 @@ impl FileView {
         None
     }
 
+    /// ブランチを前の版と比べた結果（`rangeDiff` の `info.pairs`）を出す。行は git range-diff の 1 行と同じ形
+    /// （前の版の番号と ID、`=` 同じ・`!` 変わった・`<` 消えた・`>` 足した、今の版の番号と ID、件名）。
+    pub fn show_range_diff(&mut self, title: String, pairs: &Value) {
+        let side = |p: &Value| -> (String, Option<Oid>) {
+            match p["index"].as_u64() {
+                Some(i) => {
+                    let oid = p["oid"].as_str().and_then(Oid::from_hex);
+                    let short = oid.map_or(String::new(), |o| o.to_string()[..ID_WIDTH].to_owned());
+                    (format!("{i}: {short}"), oid)
+                }
+                None => ("-:  ".to_owned() + &"-".repeat(ID_WIDTH), None),
+            }
+        };
+        let lines = (pairs.as_array().into_iter().flatten())
+            .map(|p| {
+                let (old, old_oid) = side(&p["old"]);
+                let (new, new_oid) = side(&p["new"]);
+                let mark = match p["status"].as_str() {
+                    Some("same") => '=',
+                    Some("changed") => '!',
+                    Some("removed") => '<',
+                    _ => '>',
+                };
+                let subject = p["subject"].as_str().unwrap_or("");
+                Line {
+                    oid: new_oid.or(old_oid),
+                    author: String::new(),
+                    time: 0,
+                    text: format!("{old} {mark} {new}  {subject}"),
+                    first: true,
+                    path: None,
+                    removed: new_oid.is_none(),
+                }
+            })
+            .collect();
+        *self = Self {
+            range: Some(title),
+            lines,
+            loaded: true,
+            height: self.height,
+            ..Self::default()
+        };
+    }
+
     /// 一番上の行に出す名前（「Blame: a.rs」）。
     pub fn title(&self) -> String {
+        if let Some(range) = &self.range {
+            return range.clone();
+        }
         match (self.blame, &self.rev) {
             (true, Some(rev)) => tr!(
                 "Blame at {commit}: {path}",
@@ -143,7 +197,7 @@ impl FileView {
 
     /// File History で選んでいる版: コミットと、今のパスと、そのコミットの時点のパス。Blame では `None`。
     pub fn selected_version(&self) -> Option<(Oid, &str, &str)> {
-        if self.blame {
+        if self.blame || self.range.is_some() {
             return None;
         }
         let line = self.lines.get(self.selected)?;
@@ -237,7 +291,14 @@ impl FileView {
                 .skip(self.top)
                 .take(usize::from(area.height)),
         ) {
-            if self.blame {
+            if self.range.is_some() {
+                // 前の版にだけある組は薄く。
+                let style = match line.removed {
+                    true => dim,
+                    false => Style::new(),
+                };
+                buf.set_stringn(area.x, y, fit(&line.text, width), width, style);
+            } else if self.blame {
                 // 左の列は、同じコミットが続く行の最初だけ。
                 let meta = ID_WIDTH + 1 + AUTHOR_WIDTH + 1 + usize::from(DATE_WIDTH) + 1;
                 if line.first {

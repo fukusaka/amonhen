@@ -1629,6 +1629,34 @@ fn save_the_selected_commit_as_a_patch() {
     assert!(text.contains("+    let lane = trunk();"));
 }
 
+/// コマンドの一覧の Compare with Previous Version: 今のブランチを、最後に書き換える前の版と比べる（range-diff）
+#[test]
+fn compare_with_the_previous_version() {
+    let dir = tempfile::tempdir().unwrap();
+    changed(dir.path());
+    let none = amonhen_tui::snapshot(open(dir.path()), 160, 10, clock(), ":compare\n").unwrap();
+    assert!(none.contains("The branch hasn’t been rewritten"));
+    // いちばん新しいコミットの中身を変えて amend する。
+    std::fs::write(dir.path().join("notes.txt"), "two\n").unwrap();
+    git(
+        dir.path(),
+        BASE + DAY * 4,
+        &["commit", "-q", "-a", "--amend", "--no-edit"],
+    );
+    let shown = amonhen_tui::snapshot(open(dir.path()), 160, 10, clock(), ":compare\n").unwrap();
+    println!("{shown}");
+    let last = shown.lines().last().unwrap();
+    assert!(last.contains("main compared with main@{1}"), "{last}");
+    let row = shown
+        .lines()
+        .find(|l| l.contains("Take the lane from the trunk"))
+        .unwrap();
+    assert!(row.contains("1: ") && row.contains(" ! 1: "), "{row}");
+    // 選んだ組のコミット（今の版）の詳細が、横に出る。
+    let new = git_out(dir.path(), &["rev-parse", "--short=8", "HEAD"]);
+    assert!(row.contains(new.trim()), "{row}");
+}
+
 /// コマンドの一覧の Prune Worktrees: フォルダのなくなった worktree の記録を片付ける（キーはない）
 #[test]
 fn prune_worktrees_from_the_command_list() {

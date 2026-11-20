@@ -191,6 +191,8 @@ pub struct App {
     bundle_file: Option<String>,
     /// 読んでいるパッチのファイル（当てるかを聞く間、覚えておく）。
     patch_file: Option<String>,
+    /// 前の版と比べている間の題（比べた結果が届くまで覚えておく）。
+    range_title: Option<String>,
     /// 作業ツリーのファイルがこの機械にある（`ssh://` の先でない）。エディタで開けるか。
     files_here: bool,
     /// エディタで開く作業ツリーのファイル（絶対パス）。
@@ -331,6 +333,7 @@ impl App {
             push_to_offered: false,
             bundle_file: None,
             patch_file: None,
+            range_title: None,
             files_here: true,
             open_file: None,
             search: None,
@@ -1332,6 +1335,13 @@ impl App {
 
     /// コマンドの一覧からだけ動かす操作（キーを持たない）。
     fn run_keyless(&mut self, id: &str) {
+        if id == "compare-with-previous" {
+            self.run(
+                "previousVersion",
+                tr!("Finding the previous version…"),
+                json!({"op": "previousVersion"}),
+            );
+        }
         if id == "save-patch" {
             // History で選んでいるコミットを、git の名前のファイルにして、今のフォルダ（この機械）に。
             let Some(id) = self.history.selected_id() else {
@@ -1606,6 +1616,40 @@ impl App {
                 return;
             }
             "applyPatch" => self.notice = Some(tr!("Applied the patch")),
+            // 今のブランチの、最後に書き換える前の版が分かった: その範囲で range-diff を頼む。
+            "previousVersion" => {
+                let previous = &reply["info"]["previous"];
+                if previous.is_null() {
+                    self.notice = Some(tr!(
+                        "The branch hasn’t been rewritten (its reflog has no previous version)"
+                    ));
+                    self.dirty = true;
+                    return;
+                }
+                self.range_title = Some(tr!(
+                    "{branch} compared with {selector}",
+                    branch = previous["branch"].as_str().unwrap_or(""),
+                    selector = previous["selector"].as_str().unwrap_or("")
+                ));
+                self.run(
+                    "rangeDiff",
+                    tr!("Comparing…"),
+                    json!({"op": "rangeDiff", "ranges": previous["ranges"], "creationFactor": null}),
+                );
+                return;
+            }
+            // 比べた結果は、Blame・File History と同じ画面に（選んだ組のコミットの詳細も同じ）。
+            "rangeDiff" => {
+                let title = self.range_title.take().unwrap_or_default();
+                self.file.show_range_diff(title, &reply["info"]["pairs"]);
+                if self.view != View::File {
+                    self.file_back = self.view;
+                }
+                self.view = View::File;
+                self.focus = Focus::Main;
+                self.dirty = true;
+                return;
+            }
             "savePatch" => {
                 let file = (reply["info"]["files"].as_array())
                     .and_then(|f| f.first())
