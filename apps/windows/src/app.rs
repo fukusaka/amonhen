@@ -366,6 +366,8 @@ struct Root {
     sequence: Option<Value>,
     /// ダイアログの入力の欄（Enter で既定のボタンを押す）と、開いた回数（開いた後にキーを付ける）。
     dialog_input: ElementRef<TextBox>,
+    /// タブの帯を包む Grid（タブを窓の外へ引き出したのを受ける）。
+    tab_host: ElementRef<Grid>,
     dialog_inputs: u64,
     /// Working Copy の一覧を包む Grid（Space で含める・外す、Delete・Backspace で捨てる）。
     working_list: ElementRef<Grid>,
@@ -917,6 +919,8 @@ enum Message {
     Picker(crate::pathpicker::Event),
     /// 脇に置いたダイアログを戻す。
     RestoreDialog,
+    /// タブを窓の外へ引き出した（タブの番号）。
+    TabDroppedOut(String),
     /// SSH 接続を追加するダイアログで確かめた結果（SSH 先と、文と、入れたか）。
     SshChecked(String, String, bool),
     /// サイドバーの木でお気に入りを引いて落とした（新しい順の名前。お気に入りの間でなければ None）。
@@ -1338,6 +1342,7 @@ impl Component for Root {
             working_sides: None,
             busy: None,
             dialog_input: ElementRef::new(),
+            tab_host: ElementRef::new(),
             dialog_inputs: 0,
             working_list: ElementRef::new(),
             summary_box: ElementRef::new(),
@@ -2569,6 +2574,29 @@ impl Root {
                 }
             }
             Message::TabsReordered(order) => crate::tabs::reorder(&order),
+            // タブを窓の外へ引き出した: そのリポジトリを新しい窓で開き、このタブを閉じる（GTK4 版・macOS 版と同じ）。
+            Message::TabDroppedOut(id) => {
+                let Some(tab) = id
+                    .parse::<u64>()
+                    .ok()
+                    .and_then(|id| crate::tabs::tabs().into_iter().find(|t| t.id == id))
+                else {
+                    return;
+                };
+                match crate::repositories::open_window(&tab.location) {
+                    Ok(()) => {
+                        if crate::tabs::close(tab.id) {
+                            close_window();
+                        }
+                    }
+                    Err(message) => {
+                        self.dialog = Some(Dialog::Failed {
+                            title: tr!("Open in New Window"),
+                            message,
+                        })
+                    }
+                }
+            }
             Message::OpenClone(dest, failed) => {
                 if let Some((title, message)) = failed {
                     self.dialog = Some(Dialog::Failed { title, message });
@@ -7391,7 +7419,30 @@ impl Root {
         } else {
             WindowTheme::Light
         }));
-        let tab_strip = tab_strip(&title, context);
+        let tab_strip = Grid::new()
+            .grid_row(2)
+            .element_ref(&self.tab_host)
+            .children((tab_strip(&title, context),));
+        // タブを窓の外へ引き出したら、そのリポジトリを新しい窓で開く（タブの並びが変わるたびに付け直す）。
+        let tab_ids: String = crate::tabs::tabs()
+            .iter()
+            .map(|t| format!("{},", t.id))
+            .collect();
+        let host = self.tab_host.clone();
+        context.use_effect("tab-drop-out", tab_ids, move || {
+            let _ = host.request_native_element(|result| {
+                if let Ok(element) = result
+                    && let Some(revoker) = xaml::on_tab_dropped_outside(&element, |id| {
+                        with_history(|h| {
+                            h.sender.send(Message::TabDroppedOut(id.clone()));
+                        });
+                    })
+                {
+                    REVOKERS.with(|r| r.borrow_mut().push(revoker));
+                }
+            });
+            None
+        });
         let root = self.root.clone();
         let refs = (
             self.panel.clone(),
@@ -16934,7 +16985,6 @@ fn tab_strip(title: &str, context: &ViewContext<Root>) -> View {
         })
         .collect();
     TabView::new()
-        .grid_row(2)
         .selected_index(active)
         .can_reorder_tabs(true)
         .is_add_tab_button_visible(true)
