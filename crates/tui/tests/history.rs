@@ -849,6 +849,44 @@ fn o_switches_history_between_date_and_topological_order() {
     assert_eq!(subjects(&back), subjects(&date));
 }
 
+/// History の `z`: マージ済みのブランチを折りたたむ（マージの行に隠した数）。`Z` で選んでいるマージを開く・閉じる
+#[test]
+fn z_folds_merged_branches() {
+    let dir = tempfile::tempdir().unwrap();
+    merged(dir.path());
+    let count = |text: &str| {
+        text.lines()
+            .last()
+            .unwrap()
+            .split('/')
+            .next_back()
+            .unwrap()
+            .trim()
+            .to_owned()
+    };
+    let all = amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "").unwrap();
+    assert_eq!(count(&all), "5");
+    let folded = amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "z").unwrap();
+    println!("{folded}");
+    assert!(folded.contains("Merged branches folded"));
+    assert!(!folded.contains("日本語の件名"));
+    let merge = folded.lines().find(|l| l.contains("Merge branch")).unwrap();
+    assert!(merge.contains("+1 Merge branch"), "{merge}");
+    assert_eq!(count(&folded), "4");
+    // マージの行で `Z`: 取り込んだ側を出す。もう一度で閉じる。
+    let opened = amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "zZ").unwrap();
+    println!("{opened}");
+    assert!(opened.contains("日本語の件名"));
+    let closed = amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "zZZ").unwrap();
+    assert!(!closed.contains("日本語の件名"));
+    // 折りたたむものがない行では、そう知らせる。
+    let none = amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "zjZ").unwrap();
+    assert!(none.contains("This commit has nothing folded"));
+    // `z` をもう一度で、すべて出す。
+    let back = amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "zz").unwrap();
+    assert!(back.contains("日本語の件名"));
+}
+
 /// Space は、History とサイドバーで Enter と同じ（詳細へ入る・選んでいる行を開く）
 #[test]
 fn space_opens_like_enter() {

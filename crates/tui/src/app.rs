@@ -193,6 +193,10 @@ pub struct App {
     patch_file: Option<String>,
     /// 前の版と比べている間の題（比べた結果が届くまで覚えておく）。
     range_title: Option<String>,
+    /// History でマージ済みのブランチを折りたたんでいる（アプリの Fold Merged Branches。この TUI の間だけ）。
+    fold: bool,
+    /// 折りたたんでいる間に、取り込んだ側を開いたマージ（16 進の ID）。
+    expanded: Vec<String>,
     /// History の並び順を、トポロジー順（ブランチのコミットをそのマージの下にまとめる）にしている。この TUI の
     /// 間だけ（アプリの設定には書かない）。
     topo_order: bool,
@@ -338,6 +342,8 @@ impl App {
             patch_file: None,
             range_title: None,
             topo_order: false,
+            fold: false,
+            expanded: Vec::new(),
             files_here: true,
             open_file: None,
             search: None,
@@ -375,7 +381,10 @@ impl App {
         self.opening = true;
         // HEAD が動いたかもしれない。
         self.reflog.refresh();
-        self.send(Request::Open);
+        self.send(Request::Open {
+            fold: self.fold,
+            expanded: self.expanded.clone(),
+        });
     }
 
     fn send(&mut self, request: Request) {
@@ -2611,6 +2620,10 @@ impl App {
                 ("PgUp PgDn", tr!("Move by a page")),
                 ("@", tr!("Go to HEAD")),
                 ("o", tr!("Date or topological order")),
+                (
+                    "z Z",
+                    tr!("Fold merged branches; open or close the selected merge"),
+                ),
                 ("] [", tr!("Go to the parent, the child")),
                 ("Enter Space", tr!("Go to the details")),
                 ("/", tr!("Search")),
@@ -3047,6 +3060,36 @@ impl App {
             KeyCode::Char('@') => Some(self.history.go_to_head()),
             KeyCode::Char('o') => {
                 self.toggle_history_order();
+                None
+            }
+            // マージ済みのブランチを折りたたむ・戻す。
+            KeyCode::Char('z') => {
+                self.fold = !self.fold;
+                self.expanded.clear();
+                self.notice = Some(match self.fold {
+                    true => tr!(
+                        "Merged branches folded: a merge shows how many commits it brought in; Z opens one"
+                    ),
+                    false => tr!("Merged branches shown"),
+                });
+                self.dirty = true;
+                self.open();
+                None
+            }
+            // 折りたたんだマージの、取り込んだ側を開く・閉じる。
+            KeyCode::Char('Z') if self.fold => {
+                if let Some(id) = self.history.selected_id() {
+                    let id = id.to_string();
+                    match self.expanded.iter().position(|e| *e == id) {
+                        Some(i) => {
+                            self.expanded.remove(i);
+                        }
+                        None if self.history.selected_folded() > 0 => self.expanded.push(id),
+                        None => self.notice = Some(tr!("This commit has nothing folded")),
+                    }
+                    self.dirty = true;
+                    self.open();
+                }
                 None
             }
             KeyCode::Char(']') => Some(self.history.go_to_parent()),
