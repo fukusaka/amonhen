@@ -65,7 +65,14 @@ const errors: string[] = [];
 let api: Api;
 
 function git(...args: string[]): string {
-  return childProcess.execFileSync('git', args, { cwd: root, encoding: 'utf8' });
+  const start = Date.now();
+  try {
+    return childProcess.execFileSync('git', args, { cwd: root, encoding: 'utf8' });
+  } finally {
+    // 同期で待つ間は拡張ホストが止まる。遅かったものを残す（CI の Windows で遅れる件の手がかり）
+    const ms = Date.now() - start;
+    if (ms >= 1000) console.log(`      遅い git（${ms} ms）: git ${args.join(' ')}`);
+  }
 }
 
 /** fn が値を返すまで待つ。来なければ、seen（そこまでに来たもの）を添えて失敗する */
