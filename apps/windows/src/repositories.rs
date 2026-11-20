@@ -151,7 +151,7 @@ fn tilde(path: &str) -> String {
     path.to_owned()
 }
 
-fn is_remote(location: &str) -> bool {
+pub fn is_remote(location: &str) -> bool {
     amonhen_remote::location::is_remote(location)
 }
 
@@ -1554,6 +1554,21 @@ fn category_menu(category: &Category, data: &Value) -> Vec<MenuItem> {
         ],
         _ => vec![add[0].clone()],
     }
+}
+
+/// ツールバーのリポジトリ名の一覧に添える、ブランチと状態の短い文字（GTK4 版の `show_compact`）。
+pub fn peek_summary(p: &Peek) -> String {
+    let mut parts = vec![p.branch.clone().unwrap_or_else(|| tr!("detached HEAD"))];
+    if p.changed > 0 {
+        parts.push(tr!("Changes {count}", count = p.changed));
+    }
+    if p.ahead > 0 {
+        parts.push(format!("↑{}", p.ahead));
+    }
+    if p.behind > 0 {
+        parts.push(format!("↓{}", p.behind));
+    }
+    parts.join("  ")
 }
 
 /// 状態の列（変更の数・上流との差。なければ ✓）とツールチップ。

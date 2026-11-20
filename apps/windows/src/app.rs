@@ -200,6 +200,9 @@ struct Root {
     disconnected: Option<(Arc<Repository>, String)>,
     /// サイドバーの木を作り直す数（お気に入りを引いて並べ替えた後。WinUI が動かした項目を元の形に戻す）。
     sidebar_epoch: u32,
+    /// ツールバーのリポジトリ名の一覧に添える、各リポジトリのブランチと状態（場所ごと）と、最後に読んだ時刻。
+    switch_peeks: std::collections::HashMap<String, amonhen_backend_cli::Peek>,
+    switch_peeked_at: Option<std::time::Instant>,
     /// 設定の画面で書いた変更の Undo・Redo（macOS 版・GTK4 版と同じく、画面を出している間。閉じたら忘れる）。
     settings_undo: Vec<SettingsChange>,
     settings_redo: Vec<SettingsChange>,
@@ -984,6 +987,8 @@ enum Message {
     CloseActivity,
     /// Repositories の操作。
     Repos(crate::repositories::Event),
+    /// ツールバーのリポジトリ名の一覧の、各リポジトリのブランチと状態を読んだ。
+    SwitchPeeked(Vec<(String, amonhen_backend_cli::Peek)>),
     /// Export Archive の書き出すフォルダの欄。
     ArchiveFolder(String),
     /// 操作が終わった（失敗はなく、ステータスバーに一言を出す）。
@@ -1288,6 +1293,8 @@ impl Component for Root {
             failure_generation: 0,
             disconnected: None,
             sidebar_epoch: 0,
+            switch_peeks: std::collections::HashMap::new(),
+            switch_peeked_at: None,
             settings_undo: Vec::new(),
             settings_redo: Vec::new(),
             suspended_dialog: None,
@@ -1438,12 +1445,16 @@ impl Root {
             with_history(|h| h.reload_selected());
         }
         match message {
+            Message::SwitchPeeked(peeks) => {
+                self.switch_peeks.extend(peeks);
+            }
             Message::Refs(refs, repo) => {
                 HEAD_NAME
                     .with(|h| *h.borrow_mut() = refs.refs.head_branch.clone().unwrap_or_default());
                 self.refs = Some(refs);
                 self.repo = Some(repo.clone());
                 self.switch_draft(&repo, context);
+                self.peek_switch_targets(context);
                 // 最近切り替えたブランチを覚える（ブランチの切り替えの並び）。
                 if let (Some(workdir), Some(head)) = (
                     repo.paths().workdir,
@@ -12585,6 +12596,26 @@ impl Root {
         ))
     }
 
+    /// ツールバーのリポジトリ名の一覧に出す、この PC のリポジトリのブランチと状態を裏で読む（ref が変わるたびに
+    /// 呼ばれるので、読むのは 1 分に 1 回まで）。
+    fn peek_switch_targets(&mut self, context: &ComponentContext<Self>) {
+        if self
+            .switch_peeked_at
+            .is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(60))
+        {
+            return;
+        }
+        self.switch_peeked_at = Some(std::time::Instant::now());
+        let locations: Vec<String> = crate::repositories::switch_targets()
+            .into_iter()
+            .take(SWITCH_ITEMS)
+            .map(|(location, ..)| location)
+            .filter(|l| !crate::repositories::is_remote(l))
+            .collect();
+        context
+            .spawn_background(move |_| Message::SwitchPeeked(crate::repositories::peek(locations)));
+    }
+
     /// ツールバーの左のリポジトリ名（GTK4 版・macOS 版と同じ）: 押すと、ブックマークのリポジトリを、お気に入り
     /// （★）を先に、その後は最後に開いた順に出し、選んだものにこのタブを替える。終わりに Repositories。
     fn repository_switcher(&self, context: &ViewContext<Self>) -> View {
@@ -12593,9 +12624,13 @@ impl Root {
         };
         let mut items: Vec<MenuItem> = crate::repositories::switch_targets()
             .into_iter()
-            .take(30)
+            .take(SWITCH_ITEMS)
             .map(|(location, name, favorite)| {
                 let current = location.eq_ignore_ascii_case(&tab.location);
+                let name = match self.switch_peeks.get(&location) {
+                    Some(peek) => format!("{name}    {}", crate::repositories::peek_summary(peek)),
+                    None => name,
+                };
                 let label = match (current, favorite) {
                     (true, _) => format!("✓ {name}"),
                     (false, true) => format!("★ {name}"),
@@ -14775,6 +14810,9 @@ impl Root {
             .find(|e| e.kind as u8 == kind && e.name == name)
     }
 }
+
+/// ツールバーのリポジトリ名の一覧に出す数。
+const SWITCH_ITEMS: usize = 30;
 
 /// 設定の画面で書いた 1 つの変更（戻す命令と、やり直す命令）。`global` なら Settings > Git（`git_target` はその
 /// 読み書きの先）、でなければ Repository Settings。
