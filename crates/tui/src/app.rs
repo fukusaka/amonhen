@@ -1346,6 +1346,22 @@ impl App {
         self.key(KeyEvent::new(entry.key, modifiers));
     }
 
+    /// Working Copy で選んでいるコンフリクトのファイルに、Magic Merge を当てる（決まった規則で解けるものを解く。
+    /// Undo できる）。差分で開いていれば、そのファイルに。
+    fn magic_merge(&mut self) {
+        match self.changes.conflicted_path().map(str::to_owned) {
+            Some(path) => self.run(
+                "magicMerge",
+                tr!("Magic Merge…"),
+                json!({"op": "magicMergeFile", "path": path}),
+            ),
+            None => {
+                self.error = Some(tr!("Select a conflicted file in the Working Copy"));
+                self.dirty = true;
+            }
+        }
+    }
+
     /// コマンドの一覧からだけ動かす操作（キーを持たない）。
     fn run_keyless(&mut self, id: &str) {
         if id == "compare-with-previous" {
@@ -1647,6 +1663,19 @@ impl App {
                 return;
             }
             "applyPatch" => self.notice = Some(tr!("Applied the patch")),
+            "magicMerge" => {
+                let resolved = reply["info"]["resolved"].as_u64().unwrap_or(0);
+                let remaining = reply["info"]["remaining"].as_u64().unwrap_or(0);
+                self.notice = Some(match (resolved, remaining) {
+                    (0, _) => tr!("Magic Merge found nothing it can resolve on its own"),
+                    (_, 0) => tr!("Magic Merge resolved {count}; none left", count = resolved),
+                    _ => tr!(
+                        "Magic Merge resolved {count}; {left} left",
+                        count = resolved,
+                        left = remaining
+                    ),
+                });
+            }
             // 今のブランチの、最後に書き換える前の版が分かった: その範囲で range-diff を頼む。
             "previousVersion" => {
                 let previous = &reply["info"]["previous"];
@@ -2668,6 +2697,10 @@ impl App {
                     "o t",
                     tr!("Take the current or the incoming side of a conflicted file"),
                 ),
+                (
+                    "m",
+                    tr!("Magic Merge: resolve what rules can in a conflicted file"),
+                ),
                 ("Enter", tr!("Go to the diff")),
                 (
                     "c",
@@ -2693,6 +2726,7 @@ impl App {
                     "o t b a",
                     tr!("In a conflict: take current, incoming, both, or the base"),
                 ),
+                ("m", tr!("Magic Merge on the whole file")),
                 ("h l", tr!("Pan long lines; h at the left edge goes back")),
                 ("Esc", tr!("Go back to the list")),
             ],
@@ -2872,6 +2906,11 @@ impl App {
                 None => false,
             },
             // コンフリクトのあるファイルを、片側にして解決済みにする（先に確かめる）。
+            // コンフリクトのファイルで `m`: Magic Merge（決まった規則で解けるものを解く）。
+            KeyCode::Char('m') if self.changes.conflicted_path().is_some() => {
+                self.magic_merge();
+                true
+            }
             KeyCode::Char('o' | 't') if self.changes.conflicted_path().is_some() => {
                 let ours = code == KeyCode::Char('o');
                 let path = self.changes.conflicted_path().unwrap_or("").to_owned();
@@ -2988,6 +3027,11 @@ impl App {
             }
             // コンフリクトの中では、そのコンフリクトを Current・Incoming・両方・共通の祖先のどれかにする（Undo
             // できる）。
+            // コンフリクトのファイルの差分でも `m` で Magic Merge（ファイルのすべてのコンフリクトに）。
+            KeyCode::Char('m') if self.changes.conflicted_path().is_some() => {
+                self.magic_merge();
+                true
+            }
             KeyCode::Char('o' | 't' | 'b' | 'a') if self.changes.conflict_at_cursor().is_some() => {
                 let choice = match code {
                     KeyCode::Char('o') => "ours",

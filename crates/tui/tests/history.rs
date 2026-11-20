@@ -1196,6 +1196,40 @@ fn conflicts_are_resolved_by_side() {
     assert_eq!(read(dir.path()), "topic\n");
 }
 
+/// コンフリクトのファイルで `m`: Magic Merge。規則で解けるものを解き（空白だけの違い）、解けないものは残す
+#[test]
+fn magic_merge_on_a_conflicted_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let read = |dir: &Path| std::fs::read_to_string(dir.join("a.txt")).unwrap();
+    git(dir.path(), BASE, &["init", "-q", "-b", "main"]);
+    std::fs::write(dir.path().join("a.txt"), "x = 1\n").unwrap();
+    git(dir.path(), BASE, &["add", "."]);
+    git(dir.path(), BASE, &["commit", "-q", "-m", "Start"]);
+    git(dir.path(), BASE, &["switch", "-q", "-c", "topic"]);
+    std::fs::write(dir.path().join("a.txt"), "x = 2\n").unwrap();
+    git(dir.path(), BASE + DAY, &["commit", "-q", "-am", "On topic"]);
+    git(dir.path(), BASE, &["switch", "-q", "main"]);
+    std::fs::write(dir.path().join("a.txt"), "x =  2\n").unwrap();
+    git(
+        dir.path(),
+        BASE + DAY * 2,
+        &["commit", "-q", "-am", "On main"],
+    );
+    amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjjmy").unwrap();
+    assert!(read(dir.path()).contains("<<<<<<<"));
+    let done = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "1m").unwrap();
+    println!("{done}");
+    assert!(done.contains("Magic Merge resolved 1; none left"));
+    assert_eq!(read(dir.path()), "x =  2\n");
+    // 両側が別に変えたものは解けない。
+    let other = tempfile::tempdir().unwrap();
+    diverged(other.path());
+    amonhen_tui::snapshot(open(other.path()), 160, 12, clock(), "0jjjmy").unwrap();
+    let none = amonhen_tui::snapshot(open(other.path()), 160, 12, clock(), "1m").unwrap();
+    assert!(none.contains("Magic Merge found nothing it can resolve on its own"));
+    assert!(read(other.path()).contains("<<<<<<<"));
+}
+
 /// `a` は、コンフリクトを共通の祖先の側にする。その側が入っていないコンフリクトでは、理由を出す。
 #[test]
 fn a_conflict_can_take_the_base_side() {
