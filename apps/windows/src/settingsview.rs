@@ -36,6 +36,12 @@ pub struct State {
     pub env_query: String,
     /// 共有のコミットのメッセージのテンプレート（Git > Commits の Shared Templates）。
     pub templates: Vec<crate::templates::Template>,
+    /// SSH Hosts（ページを初めて出したときに作る。選んだ SSH 先につなぎに行くので、出すまではつながない）。
+    pub ssh: Option<crate::sshhosts::State>,
+    /// Git の部品（`git`・`global`・`programs`）が読み書きする先: この機械なら None、SSH Hosts の Git のページなら
+    /// その SSH 先。変えるたびに `git_epoch` を増やし、前の先から遅れて届いた答えを捨てる。
+    pub git_target: Option<String>,
+    pub git_epoch: u64,
 }
 
 /// 足した名前の設定の鍵（GTK4 版・macOS 版と同じ）。
@@ -166,6 +172,7 @@ pub struct Callbacks<'a> {
     pub syntax_theme_dark: Callback<Option<usize>>,
     /// Theme のボタン（`import`・`remove:<name>`）。
     pub theme_button: Box<dyn Fn(String) -> Callback<()> + 'a>,
+    pub ssh: crate::sshhosts::Callbacks<'a>,
 }
 
 /// Git > Operations・Working Copy（すべてのリポジトリの段。Repository Settings と同じ行で、効いている値の設定元を
@@ -489,10 +496,41 @@ fn templates(state: &State, callbacks: &Callbacks) -> View {
         ))
 }
 
+/// Git の名前とメール（Settings > Git が読み書きする先の `--global`）。
+fn git_identity(state: &State, callbacks: &Callbacks) -> View {
+    match &state.git {
+        None => TextBlock::new().text(tr!("Loading…")).opacity(0.6).into(),
+        Some(fields) => {
+            let changed = fields.iter().any(|(read, now)| read != now);
+            let field = |index: usize, label: String| {
+                StackPanel::new().spacing(2.0).children((
+                    TextBlock::new().text(label).font_size(12.0).opacity(0.75),
+                    TextBox::new()
+                        .text(fields[index].1.clone())
+                        .on_text_changed((callbacks.field)(index)),
+                ))
+            };
+            StackPanel::new().spacing(8.0).children((
+                field(0, tr!("Name")),
+                field(1, tr!("Email")),
+                TextBlock::new()
+                    .text("git config --global user.name / user.email")
+                    .font_size(12.0)
+                    .opacity(0.6),
+                Button::new()
+                    .is_enabled(changed)
+                    .on_click(callbacks.save_git.clone())
+                    .content(TextBlock::new().text(tr!("Save"))),
+            ))
+        }
+    }
+}
+
 /// Settings のページ（左の一覧の見出し。訳は `tr!` と同じ表から）。
-pub const PAGES: [&str; 5] = [
+pub const PAGES: [&str; 6] = [
     "General",
     "Git",
+    "SSH Hosts",
     "Appearance",
     "Diff & Merge",
     "Performance",
@@ -514,36 +552,11 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                 .vertical_alignment(VerticalAlignment::Center)
                 .grid_column(0),
             Button::new()
-                .on_click(callbacks.close)
+                .on_click(callbacks.close.clone())
                 .grid_column(1)
                 .content(TextBlock::new().text(tr!("Close"))),
         ));
-    let git: View = match &state.git {
-        None => TextBlock::new().text(tr!("Loading…")).opacity(0.6).into(),
-        Some(fields) => {
-            let changed = fields.iter().any(|(read, now)| read != now);
-            let field = |index: usize, label: String| {
-                StackPanel::new().spacing(2.0).children((
-                    TextBlock::new().text(label).font_size(12.0).opacity(0.75),
-                    TextBox::new()
-                        .text(fields[index].1.clone())
-                        .on_text_changed((callbacks.field)(index)),
-                ))
-            };
-            StackPanel::new().spacing(8.0).children((
-                field(0, tr!("Name")),
-                field(1, tr!("Email")),
-                TextBlock::new()
-                    .text("git config --global user.name / user.email")
-                    .font_size(12.0)
-                    .opacity(0.6),
-                Button::new()
-                    .is_enabled(changed)
-                    .on_click(callbacks.save_git)
-                    .content(TextBlock::new().text(tr!("Save"))),
-            ))
-        }
-    };
+    let git = git_identity(state, &callbacks);
     let check = |key: &'static str, value: bool, label: String| {
         CheckBox::new()
             .is_checked(value)
@@ -560,7 +573,24 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
         .margin(Thickness::new(0.0, 8.0, 0.0, 0.0))
         .content(bookmark);
     // ページ（GTK4 版・macOS 版のタブ。Windows 版にあるものだけ）。左の一覧で選んだものを出す。
-    let pages: [View; 5] = [
+    let ssh = match &state.ssh {
+        Some(ssh) => {
+            // SSH 先の Git のページ: Settings > Git の部品のうち、その SSH 先の `--global` に効くもの（読む先が
+            // その SSH 先に変わって、読み終えたときだけ）。
+            let git = (ssh.git_host().is_some()
+                && state.git_target == ssh.git_host()
+                && state.global.is_some())
+            .then(|| {
+                StackPanel::new().children((
+                    git_identity(state, &callbacks),
+                    crate::settingsview::git_choices(state, &callbacks),
+                ))
+            });
+            crate::sshhosts::view(ssh, &callbacks.ssh, git)
+        }
+        None => View::empty(),
+    };
+    let pages: [View; 6] = [
         StackPanel::new().children((
             heading(tr!("General")),
             StackPanel::new()
@@ -613,6 +643,7 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
             heading("Git".to_owned()),
             StackPanel::new().children((git, git_choices, shared_templates, env)),
         )),
+        ssh,
         appearance,
         StackPanel::new().children((
             heading(tr!("Diff & Merge")),
@@ -720,7 +751,8 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                 .content(View::keyed_fragment([(
                     format!("page-{page}"),
                     Border::new()
-                        .max_width(560.0)
+                        // SSH Hosts は SSH 先の一覧と接続のページを並べるので広く。
+                        .max_width(if page == 2 { 820.0 } else { 560.0 })
                         .horizontal_alignment(HorizontalAlignment::Left)
                         .margin(Thickness::new(24.0, 0.0, 24.0, 24.0))
                         .content(content),

@@ -5739,6 +5739,240 @@ pub struct ISelectorStatics_Vtbl {
     pub base__: windows_core::IInspectable_Vtbl,
 }
 windows_core::imp::define_interface!(
+    ITreeView,
+    ITreeView_Vtbl,
+    0x1bef9af4_712c_50ef_9bb4_881b975232ab
+);
+impl windows_core::RuntimeType for ITreeView {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+    const NAME: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::from_slice(b"Microsoft.UI.Xaml.Controls.ITreeView");
+}
+#[repr(C)]
+pub struct ITreeView_Vtbl {
+    pub base__: windows_core::IInspectable_Vtbl,
+}
+windows_core::imp::define_interface!(
+    ITreeView2,
+    ITreeView2_Vtbl,
+    0xb947ca7d_0f6f_594c_83ec_14153d343225
+);
+impl windows_core::RuntimeType for ITreeView2 {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+    const NAME: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::from_slice(b"Microsoft.UI.Xaml.Controls.ITreeView2");
+}
+#[repr(C)]
+pub struct ITreeView2_Vtbl {
+    pub base__: windows_core::IInspectable_Vtbl,
+    NodeFromContainer: usize,
+    ContainerFromNode: usize,
+    ItemFromContainer: usize,
+    ContainerFromItem: usize,
+    CanDragItems: usize,
+    SetCanDragItems: usize,
+    CanReorderItems: usize,
+    SetCanReorderItems: usize,
+    ItemTemplate: usize,
+    SetItemTemplate: usize,
+    ItemTemplateSelector: usize,
+    SetItemTemplateSelector: usize,
+    ItemContainerStyle: usize,
+    SetItemContainerStyle: usize,
+    ItemContainerStyleSelector: usize,
+    SetItemContainerStyleSelector: usize,
+    ItemContainerTransitions: usize,
+    SetItemContainerTransitions: usize,
+    ItemsSource: usize,
+    SetItemsSource: usize,
+    pub DragItemsStarting: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *mut core::ffi::c_void,
+        *mut i64,
+    ) -> windows_core::HRESULT,
+    pub RemoveDragItemsStarting:
+        unsafe extern "system" fn(*mut core::ffi::c_void, i64) -> windows_core::HRESULT,
+    pub DragItemsCompleted: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *mut core::ffi::c_void,
+        *mut i64,
+    ) -> windows_core::HRESULT,
+    pub RemoveDragItemsCompleted:
+        unsafe extern "system" fn(*mut core::ffi::c_void, i64) -> windows_core::HRESULT,
+}
+windows_core::imp::define_interface!(
+    ITreeViewDragItemsCompletedEventArgs,
+    ITreeViewDragItemsCompletedEventArgs_Vtbl,
+    0xe5b8547e_f839_55db_9c26_2a95f57a60dc
+);
+impl windows_core::RuntimeType for ITreeViewDragItemsCompletedEventArgs {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+    const NAME: windows_core::imp::ConstBuffer = windows_core::imp::ConstBuffer::from_slice(
+        b"Microsoft.UI.Xaml.Controls.ITreeViewDragItemsCompletedEventArgs",
+    );
+}
+#[repr(C)]
+pub struct ITreeViewDragItemsCompletedEventArgs_Vtbl {
+    pub base__: windows_core::IInspectable_Vtbl,
+    DropResult: usize,
+    pub Items: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *mut *mut core::ffi::c_void,
+    ) -> windows_core::HRESULT,
+}
+windows_core::imp::define_interface!(
+    ITreeViewDragItemsCompletedEventArgs2,
+    ITreeViewDragItemsCompletedEventArgs2_Vtbl,
+    0x060d3921_57a0_5bc5_be26_320bd9c1a6e8
+);
+impl windows_core::RuntimeType for ITreeViewDragItemsCompletedEventArgs2 {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+    const NAME: windows_core::imp::ConstBuffer = windows_core::imp::ConstBuffer::from_slice(
+        b"Microsoft.UI.Xaml.Controls.ITreeViewDragItemsCompletedEventArgs2",
+    );
+}
+#[repr(C)]
+pub struct ITreeViewDragItemsCompletedEventArgs2_Vtbl {
+    pub base__: windows_core::IInspectable_Vtbl,
+    pub NewParentItem: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *mut *mut core::ffi::c_void,
+    ) -> windows_core::HRESULT,
+}
+windows_core::imp::define_interface!(
+    ITreeViewDragItemsStartingEventArgs,
+    ITreeViewDragItemsStartingEventArgs_Vtbl,
+    0x1b6c4ffc_cd32_5e06_b782_df9f077546c7
+);
+impl windows_core::RuntimeType for ITreeViewDragItemsStartingEventArgs {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+    const NAME: windows_core::imp::ConstBuffer = windows_core::imp::ConstBuffer::from_slice(
+        b"Microsoft.UI.Xaml.Controls.ITreeViewDragItemsStartingEventArgs",
+    );
+}
+#[repr(C)]
+pub struct ITreeViewDragItemsStartingEventArgs_Vtbl {
+    pub base__: windows_core::IInspectable_Vtbl,
+    pub Cancel:
+        unsafe extern "system" fn(*mut core::ffi::c_void, *mut bool) -> windows_core::HRESULT,
+    pub SetCancel: unsafe extern "system" fn(*mut core::ffi::c_void, bool) -> windows_core::HRESULT,
+    Data: usize,
+    pub Items: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *mut *mut core::ffi::c_void,
+    ) -> windows_core::HRESULT,
+}
+windows_core::imp::define_interface!(
+    ITreeViewFactory,
+    ITreeViewFactory_Vtbl,
+    0x9c6220be_f9eb_518a_b30e_7e41de5efda9
+);
+impl windows_core::RuntimeType for ITreeViewFactory {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+    const NAME: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::from_slice(b"Microsoft.UI.Xaml.Controls.ITreeViewFactory");
+}
+#[repr(C)]
+pub struct ITreeViewFactory_Vtbl {
+    pub base__: windows_core::IInspectable_Vtbl,
+}
+windows_core::imp::define_interface!(
+    ITreeViewNode,
+    ITreeViewNode_Vtbl,
+    0x00378a74_790b_5328_8afa_7d65e22da426
+);
+impl windows_core::RuntimeType for ITreeViewNode {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+    const NAME: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::from_slice(b"Microsoft.UI.Xaml.Controls.ITreeViewNode");
+}
+#[repr(C)]
+pub struct ITreeViewNode_Vtbl {
+    pub base__: windows_core::IInspectable_Vtbl,
+    Content: usize,
+    SetContent: usize,
+    Parent: usize,
+    IsExpanded: usize,
+    SetIsExpanded: usize,
+    HasChildren: usize,
+    Depth: usize,
+    HasUnrealizedChildren: usize,
+    SetHasUnrealizedChildren: usize,
+    pub Children: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *mut *mut core::ffi::c_void,
+    ) -> windows_core::HRESULT,
+}
+windows_core::imp::define_interface!(
+    ITreeViewNodeFactory,
+    ITreeViewNodeFactory_Vtbl,
+    0xc105a5e5_cea8_5efd_8be8_3d89b54cbd5f
+);
+impl windows_core::RuntimeType for ITreeViewNodeFactory {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+    const NAME: windows_core::imp::ConstBuffer = windows_core::imp::ConstBuffer::from_slice(
+        b"Microsoft.UI.Xaml.Controls.ITreeViewNodeFactory",
+    );
+}
+#[repr(C)]
+pub struct ITreeViewNodeFactory_Vtbl {
+    pub base__: windows_core::IInspectable_Vtbl,
+}
+windows_core::imp::define_interface!(
+    ITreeViewNodeStatics,
+    ITreeViewNodeStatics_Vtbl,
+    0xf5bb217c_66b9_5b62_b2d6_fb47843c8f6f
+);
+impl windows_core::RuntimeType for ITreeViewNodeStatics {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+    const NAME: windows_core::imp::ConstBuffer = windows_core::imp::ConstBuffer::from_slice(
+        b"Microsoft.UI.Xaml.Controls.ITreeViewNodeStatics",
+    );
+}
+#[repr(C)]
+pub struct ITreeViewNodeStatics_Vtbl {
+    pub base__: windows_core::IInspectable_Vtbl,
+}
+windows_core::imp::define_interface!(
+    ITreeViewStatics,
+    ITreeViewStatics_Vtbl,
+    0x71efaf86_4d73_5f5f_8ea6_a42dfe044917
+);
+impl windows_core::RuntimeType for ITreeViewStatics {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+    const NAME: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::from_slice(b"Microsoft.UI.Xaml.Controls.ITreeViewStatics");
+}
+#[repr(C)]
+pub struct ITreeViewStatics_Vtbl {
+    pub base__: windows_core::IInspectable_Vtbl,
+}
+windows_core::imp::define_interface!(
+    ITreeViewStatics2,
+    ITreeViewStatics2_Vtbl,
+    0xddd01c44_a883_583b_9181_dca583da0ad9
+);
+impl windows_core::RuntimeType for ITreeViewStatics2 {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+    const NAME: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::from_slice(b"Microsoft.UI.Xaml.Controls.ITreeViewStatics2");
+}
+#[repr(C)]
+pub struct ITreeViewStatics2_Vtbl {
+    pub base__: windows_core::IInspectable_Vtbl,
+}
+windows_core::imp::define_interface!(
     IUIElement,
     IUIElement_Vtbl,
     0xc3c01020_320c_5cf6_9d24_d396bbfa4d8b
@@ -9779,6 +10013,772 @@ impl windows_core::RuntimeType for Thickness {
     const NAME: windows_core::imp::ConstBuffer =
         windows_core::imp::ConstBuffer::from_slice(b"Microsoft.UI.Xaml.Thickness");
 }
+#[repr(transparent)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TreeView(windows_core::IUnknown);
+windows_core::imp::interface_hierarchy!(
+    TreeView,
+    windows_core::IUnknown,
+    windows_core::IInspectable
+);
+windows_core::imp::required_hierarchy!(
+    TreeView,
+    Control,
+    FrameworkElement,
+    UIElement,
+    DependencyObject
+);
+impl TreeView {
+    pub fn SetFontFamily<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<FontFamily>,
+    {
+        let this = &windows_core::Interface::cast::<IControl>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetFontFamily)(
+                windows_core::Interface::as_raw(this),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
+    pub fn Tag(&self) -> windows_core::Result<windows_core::IInspectable> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).Tag)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub fn SetTag<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<windows_core::IInspectable>,
+    {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetTag)(
+                windows_core::Interface::as_raw(this),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
+    pub fn SetHorizontalAlignment(&self, value: HorizontalAlignment) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetHorizontalAlignment)(
+                windows_core::Interface::as_raw(this),
+                value,
+            )
+            .ok()
+        }
+    }
+    pub fn SetVerticalAlignment(&self, value: VerticalAlignment) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetVerticalAlignment)(
+                windows_core::Interface::as_raw(this),
+                value,
+            )
+            .ok()
+        }
+    }
+    pub fn SetMargin(&self, value: Thickness) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetMargin)(
+                windows_core::Interface::as_raw(this),
+                value,
+            )
+            .ok()
+        }
+    }
+    pub fn DataContext(&self) -> windows_core::Result<windows_core::IInspectable> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).DataContext)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub fn SetDataContext<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<windows_core::IInspectable>,
+    {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetDataContext)(
+                windows_core::Interface::as_raw(this),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
+    pub fn DragItemsStarting<F>(
+        &self,
+        handler: F,
+    ) -> windows_core::Result<windows_core::EventRevoker>
+    where
+        F: Fn(windows_core::Ref<Self>, windows_core::Ref<TreeViewDragItemsStartingEventArgs>)
+            + Send
+            + 'static,
+    {
+        let this = &windows_core::Interface::cast::<ITreeView2>(self)?;
+        let handler =
+            <TypedEventHandler<Self, TreeViewDragItemsStartingEventArgs>>::new(move |a0, a1| {
+                handler(a0, a1);
+                Ok(())
+            });
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            let token__ = (windows_core::Interface::vtable(this).DragItemsStarting)(
+                windows_core::Interface::as_raw(this),
+                windows_core::Interface::as_raw(&handler),
+                &mut result__,
+            )
+            .map(|| result__)?;
+            Ok(windows_core::EventRevoker::new(
+                this.clone(),
+                token__,
+                windows_core::Interface::vtable(this).RemoveDragItemsStarting,
+            ))
+        }
+    }
+    pub fn DragItemsCompleted<F>(
+        &self,
+        handler: F,
+    ) -> windows_core::Result<windows_core::EventRevoker>
+    where
+        F: Fn(windows_core::Ref<Self>, windows_core::Ref<TreeViewDragItemsCompletedEventArgs>)
+            + Send
+            + 'static,
+    {
+        let this = &windows_core::Interface::cast::<ITreeView2>(self)?;
+        let handler =
+            <TypedEventHandler<Self, TreeViewDragItemsCompletedEventArgs>>::new(move |a0, a1| {
+                handler(a0, a1);
+                Ok(())
+            });
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            let token__ = (windows_core::Interface::vtable(this).DragItemsCompleted)(
+                windows_core::Interface::as_raw(this),
+                windows_core::Interface::as_raw(&handler),
+                &mut result__,
+            )
+            .map(|| result__)?;
+            Ok(windows_core::EventRevoker::new(
+                this.clone(),
+                token__,
+                windows_core::Interface::vtable(this).RemoveDragItemsCompleted,
+            ))
+        }
+    }
+    pub fn SetAllowDrop(&self, value: bool) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetAllowDrop)(
+                windows_core::Interface::as_raw(this),
+                value,
+            )
+            .ok()
+        }
+    }
+    pub fn SetIsHitTestVisible(&self, value: bool) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetIsHitTestVisible)(
+                windows_core::Interface::as_raw(this),
+                value,
+            )
+            .ok()
+        }
+    }
+    pub fn SetVisibility(&self, value: Visibility) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetVisibility)(
+                windows_core::Interface::as_raw(this),
+                value,
+            )
+            .ok()
+        }
+    }
+    pub fn ContextFlyout(&self) -> windows_core::Result<FlyoutBase> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).ContextFlyout)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub fn SetContextFlyout<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<FlyoutBase>,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetContextFlyout)(
+                windows_core::Interface::as_raw(this),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
+    pub fn IsTabStop(&self) -> windows_core::Result<bool> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).IsTabStop)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
+    pub fn SetIsTabStop(&self, value: bool) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetIsTabStop)(
+                windows_core::Interface::as_raw(this),
+                value,
+            )
+            .ok()
+        }
+    }
+    pub fn KeyDown<F>(&self, handler: F) -> windows_core::Result<windows_core::EventRevoker>
+    where
+        F: Fn(windows_core::Ref<windows_core::IInspectable>, windows_core::Ref<KeyRoutedEventArgs>)
+            + Send
+            + 'static,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        let handler = <KeyEventHandler>::new(move |a0, a1| {
+            handler(a0, a1);
+            Ok(())
+        });
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            let token__ = (windows_core::Interface::vtable(this).KeyDown)(
+                windows_core::Interface::as_raw(this),
+                windows_core::Interface::as_raw(&handler),
+                &mut result__,
+            )
+            .map(|| result__)?;
+            Ok(windows_core::EventRevoker::new(
+                this.clone(),
+                token__,
+                windows_core::Interface::vtable(this).RemoveKeyDown,
+            ))
+        }
+    }
+    pub fn DragOver<F>(&self, handler: F) -> windows_core::Result<windows_core::EventRevoker>
+    where
+        F: Fn(windows_core::Ref<windows_core::IInspectable>, windows_core::Ref<DragEventArgs>)
+            + Send
+            + 'static,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        let handler = <DragEventHandler>::new(move |a0, a1| {
+            handler(a0, a1);
+            Ok(())
+        });
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            let token__ = (windows_core::Interface::vtable(this).DragOver)(
+                windows_core::Interface::as_raw(this),
+                windows_core::Interface::as_raw(&handler),
+                &mut result__,
+            )
+            .map(|| result__)?;
+            Ok(windows_core::EventRevoker::new(
+                this.clone(),
+                token__,
+                windows_core::Interface::vtable(this).RemoveDragOver,
+            ))
+        }
+    }
+    pub fn Drop<F>(&self, handler: F) -> windows_core::Result<windows_core::EventRevoker>
+    where
+        F: Fn(windows_core::Ref<windows_core::IInspectable>, windows_core::Ref<DragEventArgs>)
+            + Send
+            + 'static,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        let handler = <DragEventHandler>::new(move |a0, a1| {
+            handler(a0, a1);
+            Ok(())
+        });
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            let token__ = (windows_core::Interface::vtable(this).Drop)(
+                windows_core::Interface::as_raw(this),
+                windows_core::Interface::as_raw(&handler),
+                &mut result__,
+            )
+            .map(|| result__)?;
+            Ok(windows_core::EventRevoker::new(
+                this.clone(),
+                token__,
+                windows_core::Interface::vtable(this).RemoveDrop,
+            ))
+        }
+    }
+    pub fn PointerPressed<F>(&self, handler: F) -> windows_core::Result<windows_core::EventRevoker>
+    where
+        F: Fn(
+                windows_core::Ref<windows_core::IInspectable>,
+                windows_core::Ref<PointerRoutedEventArgs>,
+            ) + Send
+            + 'static,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        let handler = <PointerEventHandler>::new(move |a0, a1| {
+            handler(a0, a1);
+            Ok(())
+        });
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            let token__ = (windows_core::Interface::vtable(this).PointerPressed)(
+                windows_core::Interface::as_raw(this),
+                windows_core::Interface::as_raw(&handler),
+                &mut result__,
+            )
+            .map(|| result__)?;
+            Ok(windows_core::EventRevoker::new(
+                this.clone(),
+                token__,
+                windows_core::Interface::vtable(this).RemovePointerPressed,
+            ))
+        }
+    }
+    pub fn PointerMoved<F>(&self, handler: F) -> windows_core::Result<windows_core::EventRevoker>
+    where
+        F: Fn(
+                windows_core::Ref<windows_core::IInspectable>,
+                windows_core::Ref<PointerRoutedEventArgs>,
+            ) + Send
+            + 'static,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        let handler = <PointerEventHandler>::new(move |a0, a1| {
+            handler(a0, a1);
+            Ok(())
+        });
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            let token__ = (windows_core::Interface::vtable(this).PointerMoved)(
+                windows_core::Interface::as_raw(this),
+                windows_core::Interface::as_raw(&handler),
+                &mut result__,
+            )
+            .map(|| result__)?;
+            Ok(windows_core::EventRevoker::new(
+                this.clone(),
+                token__,
+                windows_core::Interface::vtable(this).RemovePointerMoved,
+            ))
+        }
+    }
+    pub fn PointerReleased<F>(&self, handler: F) -> windows_core::Result<windows_core::EventRevoker>
+    where
+        F: Fn(
+                windows_core::Ref<windows_core::IInspectable>,
+                windows_core::Ref<PointerRoutedEventArgs>,
+            ) + Send
+            + 'static,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        let handler = <PointerEventHandler>::new(move |a0, a1| {
+            handler(a0, a1);
+            Ok(())
+        });
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            let token__ = (windows_core::Interface::vtable(this).PointerReleased)(
+                windows_core::Interface::as_raw(this),
+                windows_core::Interface::as_raw(&handler),
+                &mut result__,
+            )
+            .map(|| result__)?;
+            Ok(windows_core::EventRevoker::new(
+                this.clone(),
+                token__,
+                windows_core::Interface::vtable(this).RemovePointerReleased,
+            ))
+        }
+    }
+    pub fn PointerWheelChanged<F>(
+        &self,
+        handler: F,
+    ) -> windows_core::Result<windows_core::EventRevoker>
+    where
+        F: Fn(
+                windows_core::Ref<windows_core::IInspectable>,
+                windows_core::Ref<PointerRoutedEventArgs>,
+            ) + Send
+            + 'static,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        let handler = <PointerEventHandler>::new(move |a0, a1| {
+            handler(a0, a1);
+            Ok(())
+        });
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            let token__ = (windows_core::Interface::vtable(this).PointerWheelChanged)(
+                windows_core::Interface::as_raw(this),
+                windows_core::Interface::as_raw(&handler),
+                &mut result__,
+            )
+            .map(|| result__)?;
+            Ok(windows_core::EventRevoker::new(
+                this.clone(),
+                token__,
+                windows_core::Interface::vtable(this).RemovePointerWheelChanged,
+            ))
+        }
+    }
+    pub fn DoubleTapped<F>(&self, handler: F) -> windows_core::Result<windows_core::EventRevoker>
+    where
+        F: Fn(
+                windows_core::Ref<windows_core::IInspectable>,
+                windows_core::Ref<DoubleTappedRoutedEventArgs>,
+            ) + Send
+            + 'static,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        let handler = <DoubleTappedEventHandler>::new(move |a0, a1| {
+            handler(a0, a1);
+            Ok(())
+        });
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            let token__ = (windows_core::Interface::vtable(this).DoubleTapped)(
+                windows_core::Interface::as_raw(this),
+                windows_core::Interface::as_raw(&handler),
+                &mut result__,
+            )
+            .map(|| result__)?;
+            Ok(windows_core::EventRevoker::new(
+                this.clone(),
+                token__,
+                windows_core::Interface::vtable(this).RemoveDoubleTapped,
+            ))
+        }
+    }
+    pub fn ContextRequested<F>(
+        &self,
+        handler: F,
+    ) -> windows_core::Result<windows_core::EventRevoker>
+    where
+        F: Fn(windows_core::Ref<UIElement>, windows_core::Ref<ContextRequestedEventArgs>)
+            + Send
+            + 'static,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        let handler =
+            <TypedEventHandler<UIElement, ContextRequestedEventArgs>>::new(move |a0, a1| {
+                handler(a0, a1);
+                Ok(())
+            });
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            let token__ = (windows_core::Interface::vtable(this).ContextRequested)(
+                windows_core::Interface::as_raw(this),
+                windows_core::Interface::as_raw(&handler),
+                &mut result__,
+            )
+            .map(|| result__)?;
+            Ok(windows_core::EventRevoker::new(
+                this.clone(),
+                token__,
+                windows_core::Interface::vtable(this).RemoveContextRequested,
+            ))
+        }
+    }
+    pub fn PreviewKeyDown<F>(&self, handler: F) -> windows_core::Result<windows_core::EventRevoker>
+    where
+        F: Fn(windows_core::Ref<windows_core::IInspectable>, windows_core::Ref<KeyRoutedEventArgs>)
+            + Send
+            + 'static,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        let handler = <KeyEventHandler>::new(move |a0, a1| {
+            handler(a0, a1);
+            Ok(())
+        });
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            let token__ = (windows_core::Interface::vtable(this).PreviewKeyDown)(
+                windows_core::Interface::as_raw(this),
+                windows_core::Interface::as_raw(&handler),
+                &mut result__,
+            )
+            .map(|| result__)?;
+            Ok(windows_core::EventRevoker::new(
+                this.clone(),
+                token__,
+                windows_core::Interface::vtable(this).RemovePreviewKeyDown,
+            ))
+        }
+    }
+    pub fn CapturePointer<P0>(&self, value: P0) -> windows_core::Result<bool>
+    where
+        P0: windows_core::Param<Pointer>,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).CapturePointer)(
+                windows_core::Interface::as_raw(this),
+                value.param().abi(),
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
+    pub fn ReleasePointerCapture<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<Pointer>,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).ReleasePointerCapture)(
+                windows_core::Interface::as_raw(this),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
+    pub fn StartBringIntoView(&self) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).StartBringIntoView)(
+                windows_core::Interface::as_raw(this),
+            )
+            .ok()
+        }
+    }
+    pub fn Focus(&self, value: FocusState) -> windows_core::Result<bool> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).Focus)(
+                windows_core::Interface::as_raw(this),
+                value,
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
+    pub fn SetProtectedCursor<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<InputCursor>,
+    {
+        let this = &windows_core::Interface::cast::<IUIElementProtected>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetProtectedCursor)(
+                windows_core::Interface::as_raw(this),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
+    fn ITreeViewFactory<R, F: FnOnce(&ITreeViewFactory) -> windows_core::Result<R>>(
+        callback: F,
+    ) -> windows_core::Result<R> {
+        static SHARED: windows_core::imp::FactoryCache<TreeView, ITreeViewFactory> =
+            windows_core::imp::FactoryCache::new();
+        SHARED.call(callback)
+    }
+    fn ITreeViewStatics<R, F: FnOnce(&ITreeViewStatics) -> windows_core::Result<R>>(
+        callback: F,
+    ) -> windows_core::Result<R> {
+        static SHARED: windows_core::imp::FactoryCache<TreeView, ITreeViewStatics> =
+            windows_core::imp::FactoryCache::new();
+        SHARED.call(callback)
+    }
+    fn ITreeViewStatics2<R, F: FnOnce(&ITreeViewStatics2) -> windows_core::Result<R>>(
+        callback: F,
+    ) -> windows_core::Result<R> {
+        static SHARED: windows_core::imp::FactoryCache<TreeView, ITreeViewStatics2> =
+            windows_core::imp::FactoryCache::new();
+        SHARED.call(callback)
+    }
+}
+impl windows_core::RuntimeType for TreeView {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_class::<Self, ITreeView>();
+}
+unsafe impl windows_core::Interface for TreeView {
+    type Vtable = <ITreeView as windows_core::Interface>::Vtable;
+    const IID: windows_core::GUID = <ITreeView as windows_core::Interface>::IID;
+}
+impl windows_core::RuntimeName for TreeView {
+    const NAME: &'static str = "Microsoft.UI.Xaml.Controls.TreeView";
+}
+unsafe impl Send for TreeView {}
+unsafe impl Sync for TreeView {}
+#[repr(transparent)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TreeViewDragItemsCompletedEventArgs(windows_core::IUnknown);
+windows_core::imp::interface_hierarchy!(
+    TreeViewDragItemsCompletedEventArgs,
+    windows_core::IUnknown,
+    windows_core::IInspectable
+);
+impl TreeViewDragItemsCompletedEventArgs {
+    pub fn Items(
+        &self,
+    ) -> windows_core::Result<windows_collections::IVectorView<windows_core::IInspectable>> {
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(self).Items)(
+                windows_core::Interface::as_raw(self),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub fn NewParentItem(&self) -> windows_core::Result<windows_core::IInspectable> {
+        let this = &windows_core::Interface::cast::<ITreeViewDragItemsCompletedEventArgs2>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).NewParentItem)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+}
+impl windows_core::RuntimeType for TreeViewDragItemsCompletedEventArgs {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_class::<Self, ITreeViewDragItemsCompletedEventArgs>();
+}
+unsafe impl windows_core::Interface for TreeViewDragItemsCompletedEventArgs {
+    type Vtable = <ITreeViewDragItemsCompletedEventArgs as windows_core::Interface>::Vtable;
+    const IID: windows_core::GUID =
+        <ITreeViewDragItemsCompletedEventArgs as windows_core::Interface>::IID;
+}
+impl windows_core::RuntimeName for TreeViewDragItemsCompletedEventArgs {
+    const NAME: &'static str = "Microsoft.UI.Xaml.Controls.TreeViewDragItemsCompletedEventArgs";
+}
+unsafe impl Send for TreeViewDragItemsCompletedEventArgs {}
+unsafe impl Sync for TreeViewDragItemsCompletedEventArgs {}
+#[repr(transparent)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TreeViewDragItemsStartingEventArgs(windows_core::IUnknown);
+windows_core::imp::interface_hierarchy!(
+    TreeViewDragItemsStartingEventArgs,
+    windows_core::IUnknown,
+    windows_core::IInspectable
+);
+impl TreeViewDragItemsStartingEventArgs {
+    pub fn Cancel(&self) -> windows_core::Result<bool> {
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(self).Cancel)(
+                windows_core::Interface::as_raw(self),
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
+    pub fn SetCancel(&self, value: bool) -> windows_core::Result<()> {
+        unsafe {
+            (windows_core::Interface::vtable(self).SetCancel)(
+                windows_core::Interface::as_raw(self),
+                value,
+            )
+            .ok()
+        }
+    }
+    pub fn Items(
+        &self,
+    ) -> windows_core::Result<windows_collections::IVector<windows_core::IInspectable>> {
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(self).Items)(
+                windows_core::Interface::as_raw(self),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+}
+impl windows_core::RuntimeType for TreeViewDragItemsStartingEventArgs {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_class::<Self, ITreeViewDragItemsStartingEventArgs>();
+}
+unsafe impl windows_core::Interface for TreeViewDragItemsStartingEventArgs {
+    type Vtable = <ITreeViewDragItemsStartingEventArgs as windows_core::Interface>::Vtable;
+    const IID: windows_core::GUID =
+        <ITreeViewDragItemsStartingEventArgs as windows_core::Interface>::IID;
+}
+impl windows_core::RuntimeName for TreeViewDragItemsStartingEventArgs {
+    const NAME: &'static str = "Microsoft.UI.Xaml.Controls.TreeViewDragItemsStartingEventArgs";
+}
+unsafe impl Send for TreeViewDragItemsStartingEventArgs {}
+unsafe impl Sync for TreeViewDragItemsStartingEventArgs {}
+#[repr(transparent)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TreeViewNode(windows_core::IUnknown);
+windows_core::imp::interface_hierarchy!(
+    TreeViewNode,
+    windows_core::IUnknown,
+    windows_core::IInspectable
+);
+windows_core::imp::required_hierarchy!(TreeViewNode, DependencyObject);
+impl TreeViewNode {
+    pub fn Children(&self) -> windows_core::Result<windows_collections::IVector<Self>> {
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(self).Children)(
+                windows_core::Interface::as_raw(self),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    fn ITreeViewNodeFactory<R, F: FnOnce(&ITreeViewNodeFactory) -> windows_core::Result<R>>(
+        callback: F,
+    ) -> windows_core::Result<R> {
+        static SHARED: windows_core::imp::FactoryCache<TreeViewNode, ITreeViewNodeFactory> =
+            windows_core::imp::FactoryCache::new();
+        SHARED.call(callback)
+    }
+    fn ITreeViewNodeStatics<R, F: FnOnce(&ITreeViewNodeStatics) -> windows_core::Result<R>>(
+        callback: F,
+    ) -> windows_core::Result<R> {
+        static SHARED: windows_core::imp::FactoryCache<TreeViewNode, ITreeViewNodeStatics> =
+            windows_core::imp::FactoryCache::new();
+        SHARED.call(callback)
+    }
+}
+impl windows_core::RuntimeType for TreeViewNode {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_class::<Self, ITreeViewNode>();
+}
+unsafe impl windows_core::Interface for TreeViewNode {
+    type Vtable = <ITreeViewNode as windows_core::Interface>::Vtable;
+    const IID: windows_core::GUID = <ITreeViewNode as windows_core::Interface>::IID;
+}
+impl windows_core::RuntimeName for TreeViewNode {
+    const NAME: &'static str = "Microsoft.UI.Xaml.Controls.TreeViewNode";
+}
+unsafe impl Send for TreeViewNode {}
+unsafe impl Sync for TreeViewNode {}
 #[repr(transparent)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TypedEventHandler<TSender, TResult>(

@@ -213,6 +213,21 @@ fn opened() -> HashMap<String, i64> {
 /// スキャンするフォルダ（パス・深さ・入らない名前）。
 pub type Root = (String, u32, Vec<String>);
 
+/// SSH 先でスキャンするフォルダ（`ssh://host/path`・深さ・入らない名前）。
+fn remote_roots(data: &Value) -> Vec<Root> {
+    data["scanRoots"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|r| {
+            let path = r["path"].as_str()?.to_owned();
+            let depth = r["depth"].as_u64().unwrap_or(3) as u32;
+            Some((path, depth, strings(&r["excludes"])))
+        })
+        .filter(|(path, ..)| is_remote(path))
+        .collect()
+}
+
 fn roots(data: &Value) -> Vec<Root> {
     data["scanRoots"]
         .as_array()
@@ -378,6 +393,175 @@ pub fn shown_path(location: &str) -> String {
     tilde(location)
 }
 
+/// [`switch_targets`] の前の結果（bookmarks.json の更新時刻、開いた日時の記録、結果）。
+type SwitchCache = (
+    Option<std::time::SystemTime>,
+    Option<String>,
+    Vec<(String, String, bool)>,
+);
+
+/// ツールバーのリポジトリ名から切り替える先（GTK4 版・macOS 版のポップオーバー）: ブックマークのリポジトリを、
+/// お気に入りを先に、その後は最後に開いた順に（開いたことがなければ名前の順で後ろに）。場所・表示名・お気に入りか。
+pub fn switch_targets() -> Vec<(String, String, bool)> {
+    // 描くたびに呼ぶので、bookmarks.json の更新時刻と開いた日時の記録が同じなら前の結果を使う。
+    thread_local! {
+        static CACHE: std::cell::RefCell<Option<SwitchCache>> =
+            const { std::cell::RefCell::new(None) };
+    }
+    let modified = file()
+        .and_then(|p| std::fs::metadata(p).ok())
+        .and_then(|m| m.modified().ok());
+    let opened_text = crate::prefs::string(OPENED);
+    if let Some(list) = CACHE.with(|c| {
+        c.borrow()
+            .as_ref()
+            .filter(|(m, o, _)| *m == modified && *o == opened_text)
+            .map(|(_, _, l)| l.clone())
+    }) {
+        return list;
+    }
+    let data = read();
+    let opened = opened();
+    let mut list: Vec<(String, String, bool, i64)> = items(&data)
+        .filter_map(|b| {
+            let location = b["path"].as_str()?.to_owned();
+            let name = b["name"]
+                .as_str()
+                .filter(|n| !n.is_empty())
+                .map(str::to_owned)
+                .unwrap_or_else(|| folder_name(&location));
+            let favorite = b["favorite"].as_bool() == Some(true);
+            let when = opened.get(&key(&location)).copied().unwrap_or(i64::MIN);
+            Some((location, name, favorite, when))
+        })
+        .collect();
+    list.sort_by(|a, b| {
+        b.2.cmp(&a.2)
+            .then(b.3.cmp(&a.3))
+            .then_with(|| a.1.to_lowercase().cmp(&b.1.to_lowercase()))
+    });
+    let list: Vec<(String, String, bool)> =
+        list.into_iter().map(|(l, n, f, _)| (l, n, f)).collect();
+    CACHE.with(|c| *c.borrow_mut() = Some((modified, opened_text, list.clone())));
+    list
+}
+
+/// 場所の表示名（ブックマークの上書きがなければフォルダの名前）。
+pub fn display_name(location: &str) -> String {
+    switch_targets()
+        .into_iter()
+        .find(|(l, ..)| same(l, location))
+        .map_or_else(|| folder_name(location), |(_, n, _)| n)
+}
+
+/// 場所の最後のフォルダの名前（表示名の上書きがないとき）。
+fn folder_name(location: &str) -> String {
+    location
+        .trim_end_matches(['\\', '/'])
+        .rsplit(['\\', '/'])
+        .next()
+        .filter(|s| !s.is_empty())
+        .unwrap_or(location)
+        .to_owned()
+}
+
+/// Places にある SSH 先（リポジトリかスキャンするフォルダ。Settings > SSH Hosts の一覧）。
+pub fn remote_hosts() -> Vec<String> {
+    let data = read();
+    items(&data)
+        .filter_map(|b| b["path"].as_str())
+        .chain(
+            data["scanRoots"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|r| r["path"].as_str()),
+        )
+        .filter_map(crate::remote::host_of)
+        .collect()
+}
+
+/// SSH 先 `host` でスキャンするフォルダ（場所と深さ。Settings > SSH Hosts の接続のページ）。
+pub fn host_scan_roots(host: &str) -> Vec<(String, u32)> {
+    read()["scanRoots"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|r| {
+            let path = r["path"].as_str()?;
+            (crate::remote::host_of(path).as_deref() == Some(host))
+                .then(|| (path.to_owned(), r["depth"].as_u64().unwrap_or(3) as u32))
+        })
+        .collect()
+}
+
+/// スキャンするフォルダを足す（もうあれば何もしない。深さと入らない名前は、この機械のものと同じ既定）。
+pub fn add_scan_root(location: &str) {
+    let _ = edit(|d| {
+        let roots = array_mut(d, "scanRoots");
+        if !roots
+            .iter()
+            .any(|r| r["path"].as_str().is_some_and(|p| same(p, location)))
+        {
+            roots.push(json!({
+                "path": location,
+                "depth": 3,
+                "excludes": ["node_modules", "target", "build", ".build", "vendor",
+                    "Pods", "DerivedData", "dist"],
+            }));
+        }
+    });
+}
+
+/// スキャンするフォルダの深さを変える。
+pub fn set_scan_depth(location: &str, depth: u32) {
+    let _ = edit(|d| {
+        for r in array_mut(d, "scanRoots") {
+            if r["path"].as_str().is_some_and(|p| same(p, location)) {
+                r["depth"] = json!(depth);
+            }
+        }
+    });
+}
+
+/// スキャンするフォルダを外す。
+pub fn remove_scan_root(location: &str) {
+    let _ = edit(|d| {
+        array_mut(d, "scanRoots").retain(|r| !r["path"].as_str().is_some_and(|p| same(p, location)))
+    });
+}
+
+/// Places のリポジトリとスキャンするフォルダのうち、SSH 先 `host` のものの数。
+pub fn places_on_host(host: &str) -> (usize, usize) {
+    let data = read();
+    let count = |values: Vec<&Value>| {
+        values
+            .into_iter()
+            .filter_map(|v| v["path"].as_str())
+            .filter(|p| crate::remote::host_of(p).as_deref() == Some(host))
+            .count()
+    };
+    (
+        count(items(&data).collect()),
+        count(data["scanRoots"].as_array().into_iter().flatten().collect()),
+    )
+}
+
+/// SSH 先 `host` のリポジトリとスキャンするフォルダを Places から外す（SSH 先には触れない。GTK4 版と同じ）。
+pub fn forget_host(host: &str) {
+    let on = |v: &Value| {
+        v["path"]
+            .as_str()
+            .and_then(crate::remote::host_of)
+            .as_deref()
+            == Some(host)
+    };
+    let _ = edit(|d| {
+        array_mut(d, "items").retain(|b| !on(b));
+        array_mut(d, "scanRoots").retain(|r| !on(r));
+    });
+}
+
 /// ブックマークに入れる（clone したもの。macOS 版・GTK4 版と同じ）。
 pub fn add_bookmark(path: &str) {
     let _ = edit(|d| update(d, path, |_| {}));
@@ -481,6 +665,10 @@ enum Category {
     Favorites,
     Local,
     Root(String),
+    /// SSH 先（そこのリポジトリすべて）。
+    Host(String),
+    /// この PC の、スキャンするフォルダの外にあるリポジトリを入れているフォルダ（木の 1 つ）。
+    Folder(String),
     Group(String),
 }
 
@@ -488,6 +676,8 @@ pub struct State {
     data: Value,
     /// スキャンするフォルダごとの見つけたもの（探している間は None）。
     scanned: Option<Vec<(String, Vec<String>)>>,
+    /// SSH 先のスキャンするフォルダごとの見つけたもの（つながらなければその理由。探している間はない）。
+    remote_scanned: HashMap<String, Result<Vec<String>, String>>,
     peeks: HashMap<String, Peek>,
     opened: HashMap<String, i64>,
     recent: Vec<String>,
@@ -523,6 +713,8 @@ pub enum Event {
     Close,
     /// 探し終えた（見つけたものと、見張るフォルダ）。
     Scanned(Vec<(String, Vec<String>)>, Vec<PathBuf>),
+    /// SSH 先のスキャンするフォルダを探した（その場所と、見つけたもの・つながらなかった理由）。
+    RemoteScanned(String, Result<Vec<String>, String>),
     /// 見張っているフォルダでリポジトリが増えた・消えたかもしれない（見張りの何回目か）。
     ScanChanged(u64),
     Peeked(Vec<(String, Peek)>),
@@ -558,6 +750,7 @@ impl State {
             Self {
                 data,
                 scanned: None,
+                remote_scanned: HashMap::new(),
                 peeks: HashMap::new(),
                 opened: opened(),
                 recent: recent(),
@@ -586,8 +779,51 @@ impl State {
         groups
     }
 
+    /// SSH 先でスキャンするフォルダ（探しに行く先。窓が SSH 先ごとに探す）。
+    pub fn remote_roots(&self) -> Vec<Root> {
+        remote_roots(&self.data)
+    }
+
+    /// Places の SSH 先（ブックマークのリポジトリかスキャンするフォルダがあるもの。名前の順）。
+    fn hosts(&self) -> Vec<String> {
+        let mut hosts: Vec<String> = items(&self.data)
+            .filter_map(|b| b["path"].as_str())
+            .chain(
+                self.data["scanRoots"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|r| r["path"].as_str()),
+            )
+            .filter_map(crate::remote::host_of)
+            .collect();
+        hosts.sort_by_key(|h| h.to_lowercase());
+        hosts.dedup();
+        hosts
+    }
+
+    /// この PC のリポジトリのうち、スキャンするフォルダの下にないもの（Places のフォルダの木に出す）。
+    fn unscanned(&self) -> Vec<String> {
+        let roots: Vec<String> = roots(&self.data)
+            .into_iter()
+            .map(|(p, ..)| key(&expand(&p).display().to_string()) + "/")
+            .collect();
+        self.all()
+            .into_iter()
+            .filter(|p| !is_remote(p) && !roots.iter().any(|r| key(p).starts_with(r)))
+            .collect()
+    }
+
     fn scanned_all(&self) -> impl Iterator<Item = &String> {
-        self.scanned.iter().flatten().flat_map(|(_, found)| found)
+        self.scanned
+            .iter()
+            .flatten()
+            .flat_map(|(_, found)| found)
+            .chain(
+                self.remote_scanned
+                    .values()
+                    .flat_map(|r| r.iter().flatten()),
+            )
     }
 
     /// すべて（お気に入り・ブックマーク・最近開いたもの・スキャンで見つけたもの。同じものは 1 つ）。
@@ -605,24 +841,52 @@ impl State {
             .collect()
     }
 
-    /// 左の分類（分類・名前・見出しか・字下げするか）。
-    fn categories(&self) -> Vec<(Category, String, Option<String>, bool)> {
+    /// 左の分類（分類・名前・見出し・字下げの段）。
+    fn categories(&self) -> Vec<(Category, String, Option<String>, usize)> {
         let mut out = vec![
-            (Category::All, tr!("All"), None, false),
-            (Category::Favorites, tr!("Favorites"), None, false),
+            (Category::All, tr!("All"), None, 0),
+            (Category::Favorites, tr!("Favorites"), None, 0),
             (
                 Category::Local,
                 tr!("This Computer"),
                 Some(tr!("Places")),
-                false,
+                0,
             ),
         ];
         for (path, ..) in roots(&self.data) {
-            out.push((Category::Root(path.clone()), tilde(&path), None, true));
+            out.push((
+                Category::Root(path.clone()),
+                format!("🔍 {}", tilde(&path)),
+                None,
+                1,
+            ));
+        }
+        // スキャンするフォルダの外のリポジトリを、入れているフォルダの木で（GTK4 版・macOS 版と同じ）。
+        for (path, depth, label) in folder_tree(&self.unscanned()) {
+            out.push((Category::Folder(path), label, None, depth + 1));
+        }
+        // SSH 先ごとに、その下にスキャンするフォルダ（GTK4 版・macOS 版の Places の SSH 先）。
+        let remote = remote_roots(&self.data);
+        for host in self.hosts() {
+            out.push((Category::Host(host.clone()), host.clone(), None, 0));
+            for (path, ..) in remote
+                .iter()
+                .filter(|(p, ..)| crate::remote::host_of(p).as_deref() == Some(host.as_str()))
+            {
+                let shown = amonhen_remote::ssh::Target::parse(path).map_or_else(
+                    |_| path.clone(),
+                    |t| t.path.trim_start_matches('/').to_owned(),
+                );
+                let shown = match self.remote_scanned.get(path) {
+                    Some(Err(_)) => format!("🔍 {shown} ⚠"),
+                    _ => format!("🔍 {shown}"),
+                };
+                out.push((Category::Root(path.clone()), shown, None, 1));
+            }
         }
         for (i, g) in self.groups().into_iter().enumerate() {
             let head = (i == 0).then(|| tr!("Groups"));
-            out.push((Category::Group(g.clone()), g, head, false));
+            out.push((Category::Group(g.clone()), g, head, 0));
         }
         out
     }
@@ -635,12 +899,30 @@ impl State {
                 .filter_map(|b| b["path"].as_str().map(str::to_owned))
                 .collect(),
             Category::Local => self.all().into_iter().filter(|p| !is_remote(p)).collect(),
+            Category::Folder(folder) => {
+                let prefix = key(folder) + "/";
+                self.unscanned()
+                    .into_iter()
+                    .filter(|p| key(p).starts_with(&prefix))
+                    .collect()
+            }
+            Category::Root(root) if is_remote(root) => self
+                .remote_scanned
+                .get(root)
+                .and_then(|r| r.as_ref().ok())
+                .cloned()
+                .unwrap_or_default(),
             Category::Root(root) => self
                 .scanned
                 .iter()
                 .flatten()
                 .filter(|(r, _)| r == root)
                 .flat_map(|(_, found)| found.clone())
+                .collect(),
+            Category::Host(host) => self
+                .all()
+                .into_iter()
+                .filter(|p| crate::remote::host_of(p).as_deref() == Some(host.as_str()))
                 .collect(),
             Category::Group(g) => items(&self.data)
                 .filter(|b| b["group"].as_str() == Some(g))
@@ -659,7 +941,11 @@ impl State {
     /// 右に出すリポジトリ（絞り込んだもの）。
     /// 左の分類の並び（変わったら一覧が作り直される）。
     pub fn side_key(&self) -> String {
-        self.categories().iter().map(|c| c.1.as_str()).collect()
+        // 件数も含める（SSH 先を探し終えたら、件数の変わった行を作り直す）。
+        self.categories()
+            .iter()
+            .map(|c| format!("{}:{}\n", c.1, self.locations(&c.0).len()))
+            .collect()
     }
 
     /// 引いてきた行を落とせる左の行の名前（お気に入りとグループ）。
@@ -915,6 +1201,9 @@ impl State {
             Event::Scanned(found, _) => {
                 self.scanned = Some(found);
                 return Action::Peek(self.unpeeked());
+            }
+            Event::RemoteScanned(root, found) => {
+                self.remote_scanned.insert(root, found);
             }
             Event::Fetched(location, error) => {
                 self.fetching.remove(&key(&location));
@@ -1196,6 +1485,7 @@ fn category_menu(category: &Category, data: &Value) -> Vec<MenuItem> {
             MenuItem::submenu("depth", tr!("Search Depth"), {
                 let depth = roots(data)
                     .into_iter()
+                    .chain(remote_roots(data))
                     .find(|(p, ..)| same(p, path))
                     .map_or(3, |(_, d, _)| d);
                 (1..=6u32)
@@ -1210,9 +1500,17 @@ fn category_menu(category: &Category, data: &Value) -> Vec<MenuItem> {
                     .collect::<Vec<_>>()
             }),
             MenuItem::item("rescan:", tr!("Search Again")),
-            MenuItem::item(format!("reveal:{path}"), tr!("Show in Files")),
+            if is_remote(path) {
+                MenuItem::item(format!("copy:{path}"), tr!("Copy Path"))
+            } else {
+                MenuItem::item(format!("reveal:{path}"), tr!("Show in Files"))
+            },
             MenuItem::separator("-remove"),
             MenuItem::item(format!("remove-root:{path}"), tr!("Stop Scanning")),
+        ],
+        Category::Folder(path) => vec![
+            MenuItem::item(format!("reveal:{path}"), tr!("Show in Files")),
+            MenuItem::item(format!("copy:{path}"), tr!("Copy Path")),
         ],
         Category::Group(name) => vec![
             add[0].clone(),
@@ -1455,16 +1753,11 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
     let side_rows = categories
         .iter()
         .enumerate()
-        .map(|(i, (c, name, head, indent))| {
+        .map(|(i, (c, name, head, depth))| {
             let count = state.locations(c).len();
             let line = Grid::new()
                 .columns([GridLength::Star(1.0), GridLength::Auto])
-                .margin(Thickness::new(
-                    if *indent { 16.0 } else { 0.0 },
-                    0.0,
-                    0.0,
-                    0.0,
-                ))
+                .margin(Thickness::new(*depth as f64 * 14.0, 0.0, 0.0, 0.0))
                 .children((
                     TextBlock::new()
                         .text(name.clone())
@@ -1709,9 +2002,90 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
         .children((head, side, main))
 }
 
+/// `repos` を入れているフォルダの木（GTK4 版・macOS 版の Places の下）。行は（フォルダ・段・名前）で、上から順。
+/// 子が 1 つだけで自分のリポジトリもないフォルダは、子と 1 行にまとめる（`~\prj\oss` のように）。一番上の行は
+/// ホームの下を `~` で、下の行は親からの相対の名前で出す。
+fn folder_tree(repos: &[String]) -> Vec<(String, usize, String)> {
+    use std::collections::BTreeMap;
+    #[derive(Default)]
+    struct Node {
+        /// 元の綴りのフォルダ（区切りは元のまま）。
+        path: String,
+        holds: bool,
+        children: BTreeMap<String, Node>,
+    }
+    let mut root = Node::default();
+    for repo in repos {
+        let trimmed = repo.trim_end_matches(['\\', '/']);
+        let Some(cut) = trimmed.rfind(['\\', '/']) else {
+            continue;
+        };
+        let parent = &trimmed[..cut];
+        let mut node = &mut root;
+        let mut at = 0;
+        for part in parent.split(['\\', '/']) {
+            at += part.len();
+            let path = parent[..at].to_owned();
+            at += 1;
+            if part.is_empty() {
+                continue;
+            }
+            node = node.children.entry(part.to_lowercase()).or_default();
+            if node.path.is_empty() {
+                node.path = path;
+            }
+        }
+        node.holds = true;
+    }
+    fn walk(node: &Node, depth: usize, from: Option<&str>, out: &mut Vec<(String, usize, String)>) {
+        for child in node.children.values() {
+            // 子が 1 つだけで自分のリポジトリもなければ、子へ下りる。
+            let mut shown = child;
+            while !shown.holds && shown.children.len() == 1 {
+                shown = shown.children.values().next().expect("1 つある");
+            }
+            let label = match from {
+                Some(parent) => shown.path[parent.len()..]
+                    .trim_start_matches(['\\', '/'])
+                    .to_owned(),
+                None => tilde(&shown.path),
+            };
+            out.push((shown.path.clone(), depth, label));
+            walk(shown, depth + 1, Some(&shown.path), out);
+        }
+    }
+    let mut out = Vec::new();
+    walk(&root, 0, None, &mut out);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn folders_holding_repositories_form_a_folded_tree() {
+        let repos = [
+            r"D:\src\prj\oss\a".to_owned(),
+            r"D:\src\prj\oss\b".to_owned(),
+            r"D:\src\prj\work\c".to_owned(),
+            r"D:\src\prj\work\deep\d".to_owned(),
+            r"E:\x\y\z\e".to_owned(),
+        ];
+        let rows: Vec<(String, usize, String)> = folder_tree(&repos);
+        let shown: Vec<(usize, &str)> = rows.iter().map(|(_, d, l)| (*d, l.as_str())).collect();
+        assert_eq!(
+            shown,
+            [
+                (0, r"D:\src\prj"),
+                (1, "oss"),
+                (1, "work"),
+                (2, "deep"),
+                (0, r"E:\x\y\z"),
+            ]
+        );
+        assert_eq!(rows[2].0, r"D:\src\prj\work");
+    }
 
     #[test]
     fn column_order_keeps_known_columns_once() {
