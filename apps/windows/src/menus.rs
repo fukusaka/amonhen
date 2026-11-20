@@ -241,6 +241,12 @@ pub fn menu_bar(on_click: impl Fn() -> Callback<String>) -> View {
                 Some(s) => item.with_shortcut(s),
                 None => item,
             });
+            // すべての窓を閉じて終わる（macOS 版・GTK4 版の Quit。開いていた窓は次に起動したときに戻る）。
+            let item = MenuItem::item("quit", amonhen_model::tr!("Quit Amon Hen"));
+            items.push(match shortcut("Primary+Q") {
+                Some(s) => item.with_shortcut(s),
+                None => item,
+            });
         }
         // Window の先頭に、タブを替える項目（macOS 版の Show Next Tab・Show Previous Tab）。
         if menu == Menu::Window {

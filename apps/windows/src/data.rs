@@ -575,8 +575,12 @@ impl Data {
         } else {
             location
         };
-        let host_options =
-            crate::remote::is_remote(&location).then(|| crate::remote::options_for(&location));
+        let host_options = crate::remote::is_remote(&location).then(|| {
+            (
+                crate::remote::options_for(&location),
+                crate::remote::checks_signatures_locally(&location),
+            )
+        });
         let order_of = move || {
             if thread_topo.load(std::sync::atomic::Ordering::Relaxed) {
                 amonhen_model::HistoryOrder::Topo
@@ -590,7 +594,9 @@ impl Data {
                 thread_wake();
             };
             let opened = match host_options {
-                Some(options) => crate::remote::open(&location, options, &*thread_wake),
+                Some((options, local)) => {
+                    crate::remote::open(&location, options, local, &*thread_wake)
+                }
                 None => open(&path),
             };
             let repo = match opened {

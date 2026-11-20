@@ -36,6 +36,12 @@ pub struct State {
     pub env_query: String,
     /// 共有のコミットのメッセージのテンプレート（Git > Commits の Shared Templates）。
     pub templates: Vec<crate::templates::Template>,
+    /// SSH Hosts（ページを初めて出したときに作る。選んだ SSH 先につなぎに行くので、出すまではつながない）。
+    pub ssh: Option<crate::sshhosts::State>,
+    /// Git の部品（`git`・`global`・`programs`）が読み書きする先: この機械なら None、SSH Hosts の Git のページなら
+    /// その SSH 先。変えるたびに `git_epoch` を増やし、前の先から遅れて届いた答えを捨てる。
+    pub git_target: Option<String>,
+    pub git_epoch: u64,
 }
 
 /// 足した名前の設定の鍵（GTK4 版・macOS 版と同じ）。
@@ -129,6 +135,9 @@ pub fn editor_choices(value: &str) -> Vec<crate::editor::App> {
 /// 自動の fetch の間隔の選べる値（GTK4 版・macOS 版と同じ）。
 pub const AUTO_FETCH_CHOICES: [u32; 5] = [0, 5, 15, 30, 60];
 
+/// 窓の背景の横棒の値から、その操作を作る。
+pub type BackdropNumber = fn(f64) -> crate::backdrop::Event;
+
 pub struct Callbacks<'a> {
     pub field: Box<dyn Fn(usize) -> Callback<String> + 'a>,
     pub save_git: Callback<()>,
@@ -166,6 +175,13 @@ pub struct Callbacks<'a> {
     pub syntax_theme_dark: Callback<Option<usize>>,
     /// Theme のボタン（`import`・`remove:<name>`）。
     pub theme_button: Box<dyn Fn(String) -> Callback<()> + 'a>,
+    /// 窓の背景の欄（Choose…・Remove、位置、横棒、ツールバーの色を敷くか・色）。
+    pub backdrop_button: Box<dyn Fn(crate::backdrop::Event) -> Callback<()> + 'a>,
+    pub backdrop_placement: Callback<Option<usize>>,
+    pub backdrop_number: Box<dyn Fn(BackdropNumber) -> Callback<f64> + 'a>,
+    pub backdrop_tint: Callback<bool>,
+    pub backdrop_color: Callback<Color>,
+    pub ssh: crate::sshhosts::Callbacks<'a>,
 }
 
 /// Git > Operations・Working Copy（すべてのリポジトリの段。Repository Settings と同じ行で、効いている値の設定元を
@@ -286,6 +302,7 @@ fn appearance(callbacks: &Callbacks) -> View {
         note(tr!("What each commit’s row shows besides the subject.")),
         // 子の数がタプルの上限を超えないよう、後半を 1 つにまとめる。
         StackPanel::new().children((
+            backdrop_section(callbacks),
             // 構文と差分の色（GTK4 版の Theme の Color Theme。外観ごとに 1 つ）。
             heading(tr!("Color Theme")),
             theme_choice(tr!("Light appearance"), false, &callbacks.syntax_theme),
@@ -489,10 +506,41 @@ fn templates(state: &State, callbacks: &Callbacks) -> View {
         ))
 }
 
+/// Git の名前とメール（Settings > Git が読み書きする先の `--global`）。
+fn git_identity(state: &State, callbacks: &Callbacks) -> View {
+    match &state.git {
+        None => TextBlock::new().text(tr!("Loading…")).opacity(0.6).into(),
+        Some(fields) => {
+            let changed = fields.iter().any(|(read, now)| read != now);
+            let field = |index: usize, label: String| {
+                StackPanel::new().spacing(2.0).children((
+                    TextBlock::new().text(label).font_size(12.0).opacity(0.75),
+                    TextBox::new()
+                        .text(fields[index].1.clone())
+                        .on_text_changed((callbacks.field)(index)),
+                ))
+            };
+            StackPanel::new().spacing(8.0).children((
+                field(0, tr!("Name")),
+                field(1, tr!("Email")),
+                TextBlock::new()
+                    .text("git config --global user.name / user.email")
+                    .font_size(12.0)
+                    .opacity(0.6),
+                Button::new()
+                    .is_enabled(changed)
+                    .on_click(callbacks.save_git.clone())
+                    .content(TextBlock::new().text(tr!("Save"))),
+            ))
+        }
+    }
+}
+
 /// Settings のページ（左の一覧の見出し。訳は `tr!` と同じ表から）。
-pub const PAGES: [&str; 5] = [
+pub const PAGES: [&str; 6] = [
     "General",
     "Git",
+    "SSH Hosts",
     "Appearance",
     "Diff & Merge",
     "Performance",
@@ -514,36 +562,11 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                 .vertical_alignment(VerticalAlignment::Center)
                 .grid_column(0),
             Button::new()
-                .on_click(callbacks.close)
+                .on_click(callbacks.close.clone())
                 .grid_column(1)
                 .content(TextBlock::new().text(tr!("Close"))),
         ));
-    let git: View = match &state.git {
-        None => TextBlock::new().text(tr!("Loading…")).opacity(0.6).into(),
-        Some(fields) => {
-            let changed = fields.iter().any(|(read, now)| read != now);
-            let field = |index: usize, label: String| {
-                StackPanel::new().spacing(2.0).children((
-                    TextBlock::new().text(label).font_size(12.0).opacity(0.75),
-                    TextBox::new()
-                        .text(fields[index].1.clone())
-                        .on_text_changed((callbacks.field)(index)),
-                ))
-            };
-            StackPanel::new().spacing(8.0).children((
-                field(0, tr!("Name")),
-                field(1, tr!("Email")),
-                TextBlock::new()
-                    .text("git config --global user.name / user.email")
-                    .font_size(12.0)
-                    .opacity(0.6),
-                Button::new()
-                    .is_enabled(changed)
-                    .on_click(callbacks.save_git)
-                    .content(TextBlock::new().text(tr!("Save"))),
-            ))
-        }
-    };
+    let git = git_identity(state, &callbacks);
     let check = |key: &'static str, value: bool, label: String| {
         CheckBox::new()
             .is_checked(value)
@@ -560,7 +583,24 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
         .margin(Thickness::new(0.0, 8.0, 0.0, 0.0))
         .content(bookmark);
     // ページ（GTK4 版・macOS 版のタブ。Windows 版にあるものだけ）。左の一覧で選んだものを出す。
-    let pages: [View; 5] = [
+    let ssh = match &state.ssh {
+        Some(ssh) => {
+            // SSH 先の Git のページ: Settings > Git の部品のうち、その SSH 先の `--global` に効くもの（読む先が
+            // その SSH 先に変わって、読み終えたときだけ）。
+            let git = (ssh.git_host().is_some()
+                && state.git_target == ssh.git_host()
+                && state.global.is_some())
+            .then(|| {
+                StackPanel::new().children((
+                    git_identity(state, &callbacks),
+                    crate::settingsview::git_choices(state, &callbacks),
+                ))
+            });
+            crate::sshhosts::view(ssh, &callbacks.ssh, git)
+        }
+        None => View::empty(),
+    };
+    let pages: [View; 6] = [
         StackPanel::new().children((
             heading(tr!("General")),
             StackPanel::new()
@@ -613,6 +653,7 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
             heading("Git".to_owned()),
             StackPanel::new().children((git, git_choices, shared_templates, env)),
         )),
+        ssh,
         appearance,
         StackPanel::new().children((
             heading(tr!("Diff & Merge")),
@@ -720,7 +761,8 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                 .content(View::keyed_fragment([(
                     format!("page-{page}"),
                     Border::new()
-                        .max_width(560.0)
+                        // SSH Hosts は SSH 先の一覧と接続のページを並べるので広く。
+                        .max_width(if page == 2 { 820.0 } else { 560.0 })
                         .horizontal_alignment(HorizontalAlignment::Left)
                         .margin(Thickness::new(24.0, 0.0, 24.0, 24.0))
                         .content(content),
@@ -732,6 +774,127 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
 }
 
 /// 外観ごとのテーマを選ぶ行。
+/// 窓の背景（macOS 版・GTK4 版の Theme の Background Image と Toolbar）。窓の後ろを透かす欄はまだない。
+fn backdrop_section(callbacks: &Callbacks) -> View {
+    use crate::backdrop::{Event, Placement};
+    let b = crate::backdrop::Backdrop::app();
+    let labeled = |label: String, control: View| {
+        Grid::new()
+            .columns([GridLength::Pixel(140.0), GridLength::Star(1.0)])
+            .column_spacing(8.0)
+            .margin(Thickness::new(0.0, 4.0, 0.0, 4.0))
+            .children((
+                TextBlock::new()
+                    .text(label)
+                    .vertical_alignment(VerticalAlignment::Center),
+                Border::new().grid_column(1).content(control),
+            ))
+    };
+    let percent = |value: f64, min: f64, max: f64, event: fn(f64) -> Event| -> View {
+        StackPanel::new()
+            .orientation(Orientation::Horizontal)
+            .spacing(8.0)
+            .children((
+                Slider::new()
+                    .minimum(min)
+                    .maximum(max)
+                    .step_frequency(5.0)
+                    .value((value * 100.0).round())
+                    .width(200.0)
+                    .on_value_changed((callbacks.backdrop_number)(event)),
+                TextBlock::new()
+                    .text(format!("{}%", (value * 100.0).round()))
+                    .vertical_alignment(VerticalAlignment::Center),
+            ))
+    };
+    let image_name = b.image.as_deref().map_or_else(
+        || tr!("None"),
+        |p| {
+            std::path::Path::new(p)
+                .file_name()
+                .map_or_else(|| p.to_owned(), |n| n.to_string_lossy().into_owned())
+        },
+    );
+    let image_rows: View = if b.image.is_some() {
+        StackPanel::new().children((
+            labeled(
+                tr!("Position"),
+                ComboBox::new()
+                    .items_source(Placement::ALL.iter().map(|p| p.title()).collect::<Vec<_>>())
+                    .selected_index(
+                        Placement::ALL
+                            .iter()
+                            .position(|p| *p == b.placement)
+                            .unwrap_or(0),
+                    )
+                    .on_selection_changed(callbacks.backdrop_placement.clone())
+                    .into(),
+            ),
+            labeled(
+                tr!("Transparency"),
+                percent(b.image_transparency, 50.0, 95.0, Event::ImageTransparency),
+            ),
+        ))
+    } else {
+        View::empty()
+    };
+    let tint = b.toolbar_tint();
+    let tint_rows: View = match tint {
+        Some(color) => StackPanel::new().children((
+            labeled(
+                tr!("Toolbar color"),
+                ColorPicker::new()
+                    .color(Color::rgb(color.r, color.g, color.b))
+                    .is_alpha_enabled(false)
+                    .is_hex_input_visible(true)
+                    .is_color_channel_text_input_visible(false)
+                    .horizontal_alignment(HorizontalAlignment::Left)
+                    .on_color_changed(callbacks.backdrop_color.clone())
+                    .into(),
+            ),
+            labeled(
+                tr!("Toolbar tint"),
+                percent(b.toolbar_opacity, 10.0, 100.0, Event::ToolbarOpacity),
+            ),
+        )),
+        None => View::empty(),
+    };
+    StackPanel::new().children((
+        heading(tr!("Background Image")),
+        labeled(
+            tr!("Image"),
+            StackPanel::new()
+                .orientation(Orientation::Horizontal)
+                .spacing(8.0)
+                .children((
+                    TextBlock::new()
+                        .text(image_name)
+                        .opacity(0.7)
+                        .max_width(220.0)
+                        .text_trimming(TextTrimming::CharacterEllipsis)
+                        .vertical_alignment(VerticalAlignment::Center),
+                    Button::new()
+                        .on_click((callbacks.backdrop_button)(Event::ChooseImage))
+                        .content(TextBlock::new().text(tr!("Choose…"))),
+                    if b.image.is_some() {
+                        Button::new()
+                            .on_click((callbacks.backdrop_button)(Event::RemoveImage))
+                            .content(TextBlock::new().text(tr!("Remove")))
+                    } else {
+                        View::empty()
+                    },
+                )),
+        ),
+        image_rows,
+        heading(tr!("Toolbar")),
+        CheckBox::new()
+            .is_checked(tint.is_some())
+            .on_is_checked_changed(callbacks.backdrop_tint.clone())
+            .content(TextBlock::new().text(tr!("Tint the toolbar"))),
+        tint_rows,
+    ))
+}
+
 fn theme_choice(label: String, dark: bool, on: &Callback<Option<usize>>) -> View {
     let names = crate::theme::names();
     let selected = crate::theme::selected(dark);

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
@@ -176,4 +176,49 @@ test('undo a rename recorded by the engine by renaming back', async () => {
   assert.equal((await log.undo())?.label, 'Rename main to trunk');
   assert.equal(git('branch', '--show-current'), 'main');
   assert.equal(git('config', 'branch.main.description'), 'keep me');
+});
+
+/** 壊れた記録は、空として黙って上書きしない。Undo はそう言い、壊れた中身は退けて残す（コアと同じ） */
+test('a broken log is set aside instead of being overwritten', async () => {
+  const store = join(dir, '.git', 'amonhen');
+  mkdirSync(store, { recursive: true });
+  const file = join(store, 'undo.json');
+  writeFileSync(file, '[{"label": "half');
+  const aside = () => readdirSync(store).filter((n) => n.startsWith('undo.json.broken-'));
+
+  assert.equal(await log.peek(), undefined);
+  await assert.rejects(log.undo(), /undo\.json\.broken-/);
+  assert.equal(readFileSync(join(store, aside()[0]!), 'utf8'), '[{"label": "half');
+  assert.ok(!existsSync(file));
+  assert.equal(await log.undo(), undefined);
+
+  // 記録するときも同じに退けてから始める
+  writeFileSync(file, 'not json');
+  writeFileSync(join(dir, 'a.txt'), 'changed\n');
+  git('add', 'a.txt');
+  await log.record('Commit', ['refs/heads/main'], 'soft', () => backend.commit('change'));
+  assert.equal((await log.peek())?.label, 'Commit');
+  assert.equal(aside().length, 2);
+});
+
+/** 読めない記録（ここではディレクトリ）は、エラーにして上書きしない */
+test('a log that cannot be read is not overwritten', async () => {
+  const file = join(dir, '.git', 'amonhen', 'undo.json');
+  mkdirSync(file, { recursive: true });
+  writeFileSync(join(dir, 'a.txt'), 'changed\n');
+  git('add', 'a.txt');
+  await assert.rejects(
+    log.record('Commit', ['refs/heads/main'], 'soft', () => backend.commit('change')),
+    /Can’t read the Undo log/,
+  );
+  await assert.rejects(log.undo(), /Can’t read the Undo log/);
+  assert.ok(statSync(file).isDirectory());
+});
+
+/** 書くときは置き換えるので、一時ファイルが残らない */
+test('saving leaves no temporary files', async () => {
+  writeFileSync(join(dir, 'a.txt'), 'changed\n');
+  git('add', 'a.txt');
+  await log.record('Commit', ['refs/heads/main'], 'soft', () => backend.commit('change'));
+  assert.deepEqual(readdirSync(join(dir, '.git', 'amonhen')), ['undo.json']);
 });

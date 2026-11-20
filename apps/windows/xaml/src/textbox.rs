@@ -62,3 +62,8 @@ pub fn scroll_to_fraction(element: &windows_core::IInspectable, fraction: f64) {
         node = parent;
     }
 }
+
+/// `element` が文字の欄（TextBox）か。欄の中のキー（Ctrl+Z など）は欄に任せるため。
+pub fn is_text_box(element: &windows_core::IInspectable) -> bool {
+    element.cast::<ITextBoxSelection>().is_ok()
+}

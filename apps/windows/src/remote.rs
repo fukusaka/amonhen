@@ -12,6 +12,8 @@ use serde_json::{Map, Value};
 
 /// SSH 先ごとの選択（エンジン・送り込み・ログインシェル。GTK4 版と同じ鍵）。
 const HOST_OPTIONS: &str = "sshHostOptions";
+/// SSH 先ごとの、署名を手元の鍵で検証するか（SSH 先 → bool の JSON。GTK4 版・macOS 版と同じ鍵）。
+const SIGNATURE_BY_HOST: &str = "checkRemoteSignaturesLocallyByHost";
 
 /// つなぐ必要のある場所か（`ssh://`・`daemon:`）。
 pub fn is_remote(location: &str) -> bool {
@@ -66,28 +68,58 @@ fn all_options() -> Map<String, Value> {
 
 /// `location` の SSH 先ごとの選択（手元・選んでいなければ既定）。UI のスレッドで読む。
 pub fn options_for(location: &str) -> HostOptions {
-    host_of(location)
-        .and_then(|host| {
-            all_options()
-                .get(&host)
-                .and_then(Value::as_str)
-                .map(HostOptions::from_json)
-        })
+    host_of(location).map_or_else(HostOptions::default, |host| host_options(&host))
+}
+
+/// SSH 先ごとの選択（選んでいなければ既定）。UI のスレッドで。
+pub fn host_options(host: &str) -> HostOptions {
+    all_options()
+        .get(host)
+        .and_then(Value::as_str)
+        .map(HostOptions::from_json)
         .unwrap_or_default()
+}
+
+/// SSH 先ごとの選択を変える（次につなぐときから効く。UI のスレッドで）。
+pub fn set_host_options(host: &str, options: &HostOptions) {
+    let mut all = all_options();
+    if options.is_empty() {
+        all.remove(host);
+    } else {
+        all.insert(host.to_owned(), Value::String(options.to_json()));
+    }
+    if let Err(e) = crate::prefs::set_string(HOST_OPTIONS, &Value::Object(all).to_string()) {
+        eprintln!("SSH 先の選択を書けない: {e}");
+    }
 }
 
 /// SSH 先にエンジンを送り込むか（送ってよいかを聞いたときの答え。UI のスレッドで）。
 fn set_push(host: &str, push: bool) {
-    let mut all = all_options();
-    let mut options = all
-        .get(host)
-        .and_then(Value::as_str)
-        .map(HostOptions::from_json)
-        .unwrap_or_default();
+    let mut options = host_options(host);
     options.push = Some(push);
-    all.insert(host.to_owned(), Value::String(options.to_json()));
-    if let Err(e) = crate::prefs::set_string(HOST_OPTIONS, &Value::Object(all).to_string()) {
-        eprintln!("SSH 先の選択を書けない: {e}");
+    set_host_options(host, &options);
+}
+
+fn signature_hosts() -> Map<String, Value> {
+    crate::prefs::string(SIGNATURE_BY_HOST)
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+/// `location`（SSH 先のリポジトリ）の署名を手元の鍵で検証するか。SSH 先ごとの値、なければ手元（GTK4 版の既定と
+/// 同じ。SSH でない daemon 越しも手元）。UI のスレッドで読む。
+pub fn checks_signatures_locally(location: &str) -> bool {
+    host_of(location)
+        .and_then(|host| signature_hosts().get(&host).and_then(Value::as_bool))
+        .unwrap_or(true)
+}
+
+/// SSH 先の署名を検証する鍵を選ぶ（次につなぐときから効く。UI のスレッドで）。
+pub fn set_checks_locally(host: &str, local: bool) {
+    let mut all = signature_hosts();
+    all.insert(host.to_owned(), Value::Bool(local));
+    if let Err(e) = crate::prefs::set_string(SIGNATURE_BY_HOST, &Value::Object(all).to_string()) {
+        eprintln!("署名の検証の選択を書けない: {e}");
     }
 }
 
@@ -120,22 +152,40 @@ pub fn take_ask() -> Option<Ask> {
     (!asks.is_empty()).then(|| asks.remove(0))
 }
 
-/// つなぐ（裏のスレッドから）。`options` は UI のスレッドで読んだ SSH 先ごとの選択、`wake` は問いを置いたことを
-/// UI のスレッドに知らせる。エンジンを送る承認が要れば、
+/// つなぐ（裏のスレッドから）。`options` は UI のスレッドで読んだ SSH 先ごとの選択、`local_signatures` は署名を
+/// 手元の鍵で検証するか（[`checks_signatures_locally`]）、`wake` は問いを置いたことを UI のスレッドに知らせる。エンジンを送る承認が要れば、
 /// UI のスレッドに聞いて待ち、送るならその中身への承認を添えてつなぎ直す（GTK4 版の `connecting`）。
-pub fn open(location: &str, options: HostOptions, wake: &dyn Fn()) -> Result<Repository, String> {
+pub fn open(
+    location: &str,
+    options: HostOptions,
+    local_signatures: bool,
+    wake: &dyn Fn(),
+) -> Result<Repository, String> {
+    with_consent(location, options, wake, |options| {
+        attempt(location, options, local_signatures)
+    })
+}
+
+/// `attempt` を SSH 先ごとの選択で試し、エンジンを送る承認が要れば UI のスレッドに聞いて待ち、送るならその中身への
+/// 承認を添えて試し直す（GTK4 版の `connecting`）。
+fn with_consent<T>(
+    location: &str,
+    options: HostOptions,
+    wake: &dyn Fn(),
+    attempt: impl Fn(&HostOptions) -> Result<T, String>,
+) -> Result<T, String> {
     // 同じ SSH 先を同時に開いても、聞くのは 1 回（後のものは、前の答えの後でつなぎ直す）。
     static ASKING: Mutex<()> = Mutex::new(());
-    let first = match attempt(location, &options) {
-        Ok(repo) => return Ok(repo),
+    let first = match attempt(&options) {
+        Ok(v) => return Ok(v),
         Err(e) => e,
     };
     let (Some(host), Some(_)) = (host_of(location), EngineConsent::find(&first)) else {
         return Err(EngineConsent::strip(&first).to_owned());
     };
     let _asking = ASKING.lock().unwrap_or_else(|e| e.into_inner());
-    let err = match attempt(location, &options) {
-        Ok(repo) => return Ok(repo),
+    let err = match attempt(&options) {
+        Ok(v) => return Ok(v),
         Err(e) => e,
     };
     let Some(consent) = EngineConsent::find(&err) else {
@@ -156,10 +206,34 @@ pub fn open(location: &str, options: HostOptions, wake: &dyn Fn()) -> Result<Rep
         send_engine: Some(consent.hash),
         ..options
     };
-    attempt(location, &options).map_err(|e| EngineConsent::strip(&e).to_owned())
+    attempt(&options).map_err(|e| EngineConsent::strip(&e).to_owned())
 }
 
-fn attempt(location: &str, options: &HostOptions) -> Result<Repository, String> {
+/// SSH 先のフォルダ（`ssh://host/path`）の下のリポジトリを、SSH 先のエンジンで探す（裏のスレッドから。GTK4 版の
+/// `bookmarks::scan_root`）。見つけたものは同じ形の場所（`ssh://host/…`）で返す。
+pub fn find_repositories(
+    location: &str,
+    options: HostOptions,
+    depth: u32,
+    excludes: &[String],
+) -> Result<Vec<String>, String> {
+    use amonhen_remote::ssh;
+    let target = ssh::Target::parse(location).map_err(|e| e.to_string())?;
+    let program = std::env::var("AMONHEN_SSH").unwrap_or_else(|_| "ssh".into());
+    let daemons = ssh::Daemons::new(engines_dir(), Some((ssh::local_platform(), engine())));
+    let found = with_consent(location, options, &|| {}, |options| {
+        ssh::find_repositories(&program, &target, &daemons, options, depth, excludes)
+            .map_err(|e| e.to_string())
+    })?;
+    let prefix = &location[..location.len() - target.path.len()];
+    Ok(found.iter().map(|p| format!("{prefix}{p}")).collect())
+}
+
+fn attempt(
+    location: &str,
+    options: &HostOptions,
+    local_signatures: bool,
+) -> Result<Repository, String> {
     use amonhen_remote::ssh;
     let daemon = engine();
     let conn = if location.starts_with("ssh://") {
@@ -185,15 +259,20 @@ fn attempt(location: &str, options: &HostOptions) -> Result<Repository, String> 
         }
         _ => Repository::new(backend),
     };
-    apply_signature_check(&repo);
+    apply_signature_check(&repo, local_signatures);
     Ok(repo)
 }
 
-/// 署名を手元の鍵で検証する（コミットのオブジェクトだけを書く作業用のリポジトリで。GTK4 版の既定と同じ）。
-fn apply_signature_check(repo: &Repository) {
+/// 署名を検証する側を決める。手元の鍵なら、コミットのオブジェクトだけを書く作業用のリポジトリで検証する（GTK4
+/// 版の既定と同じ）。SSH 先の鍵なら、SSH 先の git が検証する。
+fn apply_signature_check(repo: &Repository, local: bool) {
     static VERIFIER: std::sync::OnceLock<std::sync::Arc<amonhen_backend_cli::LocalVerifier>> =
         std::sync::OnceLock::new();
     if repo.connection_state().is_none() {
+        return;
+    }
+    if !local {
+        repo.set_signature_verifier(None);
         return;
     }
     let verifier = VERIFIER
@@ -206,6 +285,152 @@ fn apply_signature_check(repo: &Repository) {
     repo.set_signature_verifier(Some(
         verifier as std::sync::Arc<dyn amonhen_model::SignatureVerifier>,
     ));
+}
+
+/// SSH で `host` に入れるかを確かめる（GTK4 版の `check_ssh_host`。裏のスレッドから）。入れたら git の版と、
+/// エンジンが入っているかを、文と、入れたか（git があるか）で返す。Unix の SSH 先で動かなければ、Windows の
+/// SSH 先として PowerShell で試す。
+pub fn check_host(host: &str) -> (String, bool) {
+    use amonhen_model::tr;
+    let program = std::env::var("AMONHEN_SSH").unwrap_or_else(|_| "ssh".into());
+    let run = |command: &str| {
+        amonhen_model::process::command(&program)
+            .args([
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=10",
+                host,
+                command,
+            ])
+            .stdin(std::process::Stdio::null())
+            .output()
+            .ok()
+    };
+    let Some(mut out) =
+        run("git --version 2>/dev/null; command -v amonhen >/dev/null 2>&1 && echo engine; true")
+    else {
+        return (tr!("Couldn’t run ssh"), false);
+    };
+    // ssh そのものの失敗は 255。
+    let code = out.status.code().unwrap_or(-1);
+    if code != 0 && code != 255 {
+        let script = "git --version; if (Get-Command amonhen -CommandType Application -ErrorAction SilentlyContinue) { 'engine' }";
+        // `-EncodedCommand` は UTF-16LE の base64（cmd.exe・pwsh・Windows PowerShell のどれでも同じ意味に）。
+        let bytes: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
+        if let Some(windows) = run(&format!(
+            "powershell -NoProfile -NonInteractive -EncodedCommand {}",
+            base64(&bytes)
+        )) && windows.status.success()
+        {
+            out = windows;
+        }
+    }
+    if !out.status.success() {
+        let message = ssh_message(&out.stderr);
+        return (
+            if message.is_empty() {
+                tr!(
+                    "Couldn’t connect (exit {code})",
+                    code = out.status.code().unwrap_or(-1)
+                )
+            } else {
+                message
+            },
+            false,
+        );
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    let git = text
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("git version ").map(str::to_owned));
+    let engine = text.lines().any(|l| l.trim() == "engine");
+    let mut shown = match &git {
+        Some(v) => tr!("Reachable: git {version}", version = v),
+        None => tr!("Reachable, but git wasn’t found on the host"),
+    };
+    shown += &if engine {
+        tr!(", engine found")
+    } else {
+        tr!(", engine not installed (Amon Hen sends one)")
+    };
+    (shown, git.is_some())
+}
+
+/// Windows の ssh の出したメッセージ。OpenSSH は ASCII でない字を `\202\273` のような 8 進の形で書くので、バイトに
+/// 戻してから、この機械の文字コード（日本語なら Shift_JIS）で読む。
+fn ssh_message(stderr: &[u8]) -> String {
+    let text = String::from_utf8_lossy(stderr);
+    let bytes = unescape_octal(text.trim());
+    if bytes.is_ascii() {
+        return String::from_utf8_lossy(&bytes).into_owned();
+    }
+    if let Ok(text) = std::str::from_utf8(&bytes) {
+        return text.to_owned();
+    }
+    ansi_to_string(&bytes).unwrap_or_else(|| String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// `\ooo`（3 桁の 8 進）をそのバイトに戻す。ほかの字はそのまま。
+fn unescape_octal(text: &str) -> Vec<u8> {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'\\'
+            && i + 3 < bytes.len()
+            && bytes[i + 1..i + 4]
+                .iter()
+                .all(|b| (b'0'..=b'7').contains(b))
+        {
+            let n = bytes[i + 1..i + 4]
+                .iter()
+                .fold(0u32, |n, b| n * 8 + u32::from(b - b'0'));
+            if let Ok(b) = u8::try_from(n) {
+                out.push(b);
+                i += 4;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    out
+}
+
+/// この機械の ANSI の文字コードのバイトを読む。
+fn ansi_to_string(bytes: &[u8]) -> Option<String> {
+    use windows::Win32::Globalization::{
+        CP_ACP, MULTI_BYTE_TO_WIDE_CHAR_FLAGS, MultiByteToWideChar,
+    };
+    let flags = MULTI_BYTE_TO_WIDE_CHAR_FLAGS(0);
+    let n = unsafe { MultiByteToWideChar(CP_ACP, flags, bytes, None) };
+    if n <= 0 {
+        return None;
+    }
+    let mut wide = vec![0u16; n as usize];
+    let n = unsafe { MultiByteToWideChar(CP_ACP, flags, bytes, Some(&mut wide)) };
+    (n > 0).then(|| String::from_utf16_lossy(&wide[..n as usize]))
+}
+
+/// base64（標準の文字、`=` で埋める）。
+fn base64(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::new();
+    for chunk in bytes.chunks(3) {
+        let n = chunk
+            .iter()
+            .enumerate()
+            .fold(0u32, |n, (i, b)| n | (u32::from(*b) << (16 - 8 * i)));
+        for i in 0..4 {
+            if i <= chunk.len() {
+                out.push(TABLE[(n >> (18 - 6 * i) & 63) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
 }
 
 /// SSH 先に送るエンジン（`amonhen-<os>-<arch>`）の置き場所: `AMONHEN_ENGINES`、なければ実行ファイルの隣の
@@ -263,6 +488,22 @@ pub fn engine() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_octal_escapes_back_to_bytes() {
+        assert_eq!(unescape_octal(r"a\202\273b"), [b'a', 0o202, 0o273, b'b']);
+        assert_eq!(unescape_octal(r"no \x escape"), br"no \x escape");
+        assert_eq!(ssh_message(b"ssh: plain\n"), "ssh: plain");
+    }
+
+    #[test]
+    fn encodes_base64() {
+        assert_eq!(base64(b""), "");
+        assert_eq!(base64(b"f"), "Zg==");
+        assert_eq!(base64(b"fo"), "Zm8=");
+        assert_eq!(base64(b"foo"), "Zm9v");
+        assert_eq!(base64(b"foobar"), "Zm9vYmFy");
+    }
 
     #[test]
     fn locations_on_ssh_hosts() {

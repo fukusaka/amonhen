@@ -43,7 +43,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Stashes row with a count only when there are stashes | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: The Stashes section. |
 | Range Diff row while a range diff is open | ✓ | ✓ | ✓ | ✓ | n/a |  |
 | Filter field over Branches, Remotes and Tags | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: The filter button on the sidebar's title asks for the words; the matches are listed flat. |
-| Several branches or tags selected at once | ✓ | ✓ | — | ✓ | n/a | VSCode: Merge into Current Branch, Delete Branch, favorites and Archive act on all of them. |
+| Several branches or tags selected at once | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: Merge into Current Branch, Delete Branch, favorites and Archive act on all of them. |
 | Pull Requests and Worktrees shown only when not empty | ✓ | ✓ | △ | △ | n/a | VSCode: Worktrees only (GitHub is left out).<br>Windows: Worktrees only, under Working Copy. |
 
 ## Sidebar
@@ -55,7 +55,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Archived branches | ✓ | ✓ | ✓ | ✓ | — |  |
 | Clean Up Branches (merged, merged by a pull request, upstream gone; one Undo) | ✓ | ✓ | △ | ✓ | △ | VSCode: With the engine, a multi-select list with a heading per reason (Command Palette, the Branches heading's right-click). CLI: Via `amonhen run` (`branchCleanup`, `deleteBranches`); merged pull requests are read by the apps and VSCode with gh.<br>Windows: Windows: Pull requests aren't read yet (no GitHub support). |
 | Merged-by-pull-request mark on a branch (squash or rebase on GitHub) | ✓ | ✓ | — | ✓ | △ | VSCode: With the engine; the number is in the row's tooltip. CLI: Via `amonhen run` (`branchGroups` with `pullRequests`); the apps and VSCode read merged pull requests with gh. |
-| Favorites reordered by dragging | ✓ | ✓ | — | ✓ | n/a | VSCode: Move Up and Move Down in Favorites on the menu (a drop on a branch offers Merge and Rebase). |
+| Favorites reordered by dragging | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: Move Up and Move Down in Favorites on the menu (a drop on a branch offers Merge and Rebase). |
 | Branch menu: checkout, rename, delete (Delete Anyway when unmerged) | ✓ | ✓ | ✓ | ✓ | △ | macOS: Set Upstream is only in the Repository menu.<br>GTK4: Set Upstream is only in the Repository menu.<br>CLI: Via `amonhen run`. |
 | Sync a branch that is not checked out (Fast-Forward, Push, Publish) | ✓ | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
 | Tags listed | ✓ | ✓ | ✓ | ✓ | ✓ |  |
@@ -75,9 +75,9 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 
 | Feature | macOS | GTK4 | Windows | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
-| Repository tabs in a window | ✓ | ✓ | △ | n/a | n/a | Windows: Only the front tab's repository stays open; switching tabs opens the other one again (History comes from the persistent cache), at the page it was left on. Tabs can be reordered but not dragged out into a window. |
+| Repository tabs in a window | ✓ | ✓ | △ | n/a | n/a | Windows: Only the front tab's repository stays open; switching tabs opens the other one again (History comes from the persistent cache), at the page it was left on. |
 | Separate windows (New Window) | ✓ | ✓ | ✓ | n/a | n/a | Windows: A window is a separate process; New Window opens one on the current repository showing Repositories |
-| Open windows and tabs restored at launch | ✓ | ✓ | △ | n/a | n/a | Windows: The tabs of the last window closed, when started without a repository. |
+| Open windows and tabs restored at launch | ✓ | ✓ | ✓ | n/a | n/a |  |
 | Connecting tab for SSH and daemon repositories (Cancel, Try Again) | ✓ | ✓ | ✓ | n/a | n/a |  |
 | Title shows uncommitted ● and ahead/behind | ✓ | ✓ | ✓ | n/a | n/a | GTK4: On the tab names.<br>Windows: On the window title and the front tab's name. |
 | App keeps running after its last window closes | ✓ | — | — | n/a | n/a | GTK4: Quits, as GNOME apps do. |
@@ -87,17 +87,17 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Feature | macOS | GTK4 | Windows | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
 | Repository page with All, Favorites, Places and groups | ✓ | ✓ | ✓ | n/a | n/a |  |
-| Add a local or an SSH repository | ✓ | ✓ | △ | n/a | n/a | Windows: The host and path are typed; no Check Connection or folder picker for the host. |
+| Add a local or an SSH repository | ✓ | ✓ | ✓ | n/a | n/a |  |
 | Folders to scan on this machine (depth, watched) | △ | △ | △ | n/a | n/a | macOS: Excludes are a fixed list.<br>GTK4: Excludes are a fixed list.<br>Windows: Excludes are a fixed list; the folders are watched while Repositories is open. |
-| Folders to scan on SSH hosts | ✓ | ✓ | — | n/a | △ | CLI: `find-repositories` does the scan for the apps. |
-| Folder tree of the repositories under a place | ✓ | ✓ | — | n/a | n/a |  |
-| Manual groups; rows dragged onto Favorites or a group | △ | △ | △ | n/a | n/a | macOS: Groups themselves can't be reordered by dragging.<br>GTK4: Groups themselves can't be reordered by dragging.<br>Windows: Groups themselves can't be reordered by dragging. |
+| Folders to scan on SSH hosts | ✓ | ✓ | ✓ | n/a | △ | CLI: `find-repositories` does the scan for the apps. |
+| Folder tree of the repositories under a place | ✓ | ✓ | ✓ | n/a | n/a |  |
+| Manual groups; rows dragged onto Favorites or a group | △ | △ | ✓ | n/a | n/a | macOS: Groups themselves can't be reordered by dragging.<br>GTK4: Groups themselves can't be reordered by dragging. |
 | Status columns (branch, changes, ahead/behind, last commit, opened), sortable and reorderable | ✓ | ✓ | ✓ | n/a | n/a | Windows: Sortable by clicking a header, resized by dragging a header's left edge, and moved left or right from a header's right-click menu. |
 | Favorites, display name, color label | ✓ | ✓ | ✓ | n/a | n/a |  |
 | Open in a tab or window; Finder / Files, Terminal, Editor | ✓ | ✓ | ✓ | n/a | n/a | GTK4: An app other than a known code editor or a program chosen with Other… opens a folder only if it declares inode/directory.<br>Windows: Explorer, Windows Terminal (or cmd) and the editor chosen in Settings. |
 | Fetch the selected repositories | ✓ | ✓ | ✓ | n/a | n/a | Windows: Rows are selected with Ctrl or Shift, and Fetch on a selected row's menu fetches them all. |
 | Quick Open (fuzzy search) | ✓ | ✓ | ✓ | n/a | n/a | Windows: Opens in a new window. |
-| Repository name in the toolbar switches the repository | ✓ | ✓ | — | ✓ | n/a | VSCode: Select Repository picks among workspace repositories. |
+| Repository name in the toolbar switches the repository | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: Select Repository picks among workspace repositories. |
 | Clone (choosing from your own GitHub repositories) | ✓ | ✓ | △ | n/a | △ | VSCode: VSCode's own Git: Clone.<br>CLI: `clone <url>` only.<br>Windows: No list of your own GitHub repositories; the clone opens in a new window. |
 | Clone: what to download (everything, contents when needed, recent history) and only some folders | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: VSCode's own Git: Clone.<br>CLI: `clone --filter`, `--depth`, `--sparse`. |
 | Subtrees group (shown when git has git subtree): Add, Pull, Push, Split, remembering the source and squash | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: The values are asked in input boxes and the squash in a list, not a sheet.<br>CLI: `subtree`.<br>Windows: ⊟ after a subtree last pulled with squash, without a tooltip. |
@@ -118,17 +118,17 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Git > Programs: git, gpg, ssh-keygen, gpgsm | ✓ | ✓ | ✓ | n/a | △ | VSCode: The extension runs the git chosen here for the machine, and VSCode's `git.path` only when none is chosen; gpg and ssh-keygen come from git's settings.<br>CLI: Via `amonhen run` (`programs`, `setMachineGit`).<br>Windows: In Settings > Git. |
 | Git > Environment Variables of this machine (pass, masked secrets) | ✓ | ✓ | ✓ | n/a | n/a | VSCode: VSCode's own environment, which the extension passes to the daemon.<br>Windows: In the one Settings page under Git; no Passed / All switch or value detail |
 | Environment Variables: use the login shell's (Read Again, SSH agent) | ✓ | — | — | n/a | n/a | GTK4: Left out: Linux sessions already carry it.<br>VSCode: VSCode's own environment, which the extension passes to the daemon. |
-| SSH Hosts: hosts with + / −, unreachable dimmed | ✓ | ✓ | — | n/a | n/a | VSCode: Remote-SSH takes this role. |
-| SSH Hosts > Connection: state, Check Connection, engine | ✓ | ✓ | — | n/a | n/a |  |
-| SSH Hosts > Connection: signature verification | ✓ | ✓ | — | n/a | n/a |  |
-| SSH Hosts > Connection: folders to scan | ✓ | ✓ | — | n/a | n/a |  |
-| SSH Hosts: git pages for every repository on the host | ✓ | ✓ | — | n/a | n/a |  |
-| SSH Hosts: the host's Environment Variables (login shell switch) | ✓ | ✓ | — | n/a | n/a |  |
-| Path picker in columns for a host or this machine | ✓ | ✓ | — | n/a | n/a |  |
+| SSH Hosts: hosts with + / −, unreachable dimmed | ✓ | ✓ | ✓ | n/a | n/a | VSCode: Remote-SSH takes this role. |
+| SSH Hosts > Connection: state, Check Connection, engine | ✓ | ✓ | ✓ | n/a | n/a |  |
+| SSH Hosts > Connection: signature verification | ✓ | ✓ | ✓ | n/a | n/a |  |
+| SSH Hosts > Connection: folders to scan | ✓ | ✓ | ✓ | n/a | n/a |  |
+| SSH Hosts: git pages for every repository on the host | ✓ | ✓ | ✓ | n/a | n/a |  |
+| SSH Hosts: the host's Environment Variables (login shell switch) | ✓ | ✓ | ✓ | n/a | n/a |  |
+| Path picker in columns for a host or this machine | ✓ | ✓ | △ | n/a | n/a | Windows: Folders on SSH hosts only (Add SSH Connection, folders to scan); this machine uses the system dialog. |
 | Accounts: GitHub (CI status, avatars) | ✓ | ✓ | — | — | n/a |  |
 | Appearance: History order, one line, row items, avatars | ✓ | ✓ | △ | n/a | n/a | Windows: History's order, one line, ancestor highlight and row items (no CI status); no avatars. |
 | Appearance: fonts, graph colors | — | — | — | n/a | n/a |  |
-| Theme: window background (transparency and blur, image, toolbar tint, per repository) | ✓ | ✓ | — | n/a | n/a | GTK4: No blur (GNOME can't blur what is behind the window); a see-through window needs a compositor. |
+| Theme: window background (transparency and blur, image, toolbar tint, per repository) | ✓ | ✓ | △ | n/a | n/a | GTK4: No blur (GNOME can't blur what is behind the window); a see-through window needs a compositor.<br>Windows: Background image and toolbar tint only; no see-through window or per-repository background yet. |
 | Theme: syntax and diff colors (built-in themes, VSCode themes, standard diff colors) | ✓ | ✓ | ✓ | n/a | n/a | VSCode: follows VSCode's own theme.<br>Windows: The app follows Windows' app mode (light or dark), with a theme for each. |
 | Diff & Merge: resolve unambiguous conflicts on open | ✓ | ✓ | ✓ | n/a | n/a |  |
 | Diff & Merge: unified/split, whitespace, context, wrap, tab width | — | — | — | — | n/a |  |
@@ -137,7 +137,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Performance: commit-graph, shared daemon | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: `amonhen.writeCommitGraph`, `amonhen.daemon.enabled` and `amonhen.daemon.path` as VSCode settings. |
 | Performance: fsmonitor | ✓ | ✓ | ✓ | ✓ | n/a | GTK4: On Linux and the BSDs, uses Watchman through the engine as git's fsmonitor hook (`amonhen fsmonitor-watchman`); disabled when Watchman isn't installed or git is older than 2.26 (hook protocol 2).<br>VSCode: `amonhen.fsmonitor` as a VSCode setting, on by default. |
 | Performance: persistent cache location, size, clearing | ✓ | ✓ | ✓ | — | △ | History and AI results, one row each with its size and Clear. CLI: `log --rebuild`, `daemon rebuild`.<br>Windows: History only (there is no AI). |
-| Undo / Redo of settings changes | △ | △ | — | n/a | n/a | macOS: Git pages and repository settings only.<br>GTK4: Git pages and repository settings only. |
+| Undo / Redo of settings changes | △ | △ | △ | n/a | n/a | macOS: Git pages and repository settings only.<br>GTK4: Git pages and repository settings only.<br>Windows: Git pages and repository settings only (Ctrl+Z / Ctrl+Shift+Z outside a text field). |
 
 ## 4. Repository settings
 
@@ -272,7 +272,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Feature | macOS | GTK4 | Windows | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
 | Full message, draggable panes, ⤢ to expand | ✓ | ✓ | ✓ | ✓ | n/a |  |
-| Find inside the details | ✓ | ✓ | △ | ✓ | n/a | VSCode: ⌘F searches the whole main view; diffs not loaded yet aren't searched.<br>Windows: Ctrl+F or 🔍 searches the diff (matches highlighted, ↑ / ↓ to move) and highlights the matches in the message too; ↑ / ↓ don't move through the message. |
+| Find inside the details | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: ⌘F searches the whole main view; diffs not loaded yet aren't searched. |
 | All files stacked (sticky headers, collapse, Viewed) | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `show`.<br>Windows: Toggle Viewed is in a file header's menu. |
 | Changed files as a tree beside the diff | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: Tree / List above the files. |
 | File header menu (Blame, File History, copy path, open) | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: Blame, File History and Copy Path on the right-click; Open in VSCode's diff editor. |
@@ -344,7 +344,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | History cache writes (size, count, bytes, last write per repository) | ✓ | ✓ | ✓ | — | △ | CLI: Via `amonhen run` (`historyCache`).<br>Windows: The window's repository (one repository per window). |
 | Events | ✓ | ✓ | ✓ | n/a | n/a | VSCode: VSCode's Output channel (the Amon Hen log). |
 | Export as JSON | ✓ | ✓ | ✓ | n/a | n/a | VSCode: VSCode's Output channel (the Amon Hen log). |
-| Daemon tab (start, stop, connections) | ✓ | ✓ | △ | ✓ | △ | VSCode: A page of the main view (Show Daemon in the sidebar's ⋯ and the command palette); the window's connections are to the local daemon only.<br>CLI: `daemon status / start / stop`.<br>Windows: No list of this app's connections; a dropped connection shows Try Again in the History area. |
+| Daemon tab (start, stop, connections) | ✓ | ✓ | ✓ | ✓ | △ | VSCode: A page of the main view (Show Daemon in the sidebar's ⋯ and the command palette); the window's connections are to the local daemon only.<br>CLI: `daemon status / start / stop`. |
 
 ## 11. Menus
 
@@ -362,7 +362,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
 | Operation in progress with Continue / Skip / Abort | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: A sidebar row. |
 | Failure with its cause and Details | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: The notification gives the cause (git's fatal: and error: lines); Details shows the whole output and the git command in an output panel. |
-| Lost connection with Reconnect | ✓ | ✓ | — | n/a | n/a |  |
+| Lost connection with Reconnect | ✓ | ✓ | ✓ | n/a | n/a |  |
 | What a finished operation did, for a few seconds | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: A status bar message or a notification with Undo. |
 
 ## Confirmations and Undo
@@ -412,7 +412,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Engine sent to a host when none fits | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: The bundled engine is used on the host the extension runs on.<br>Windows: Asks first, as in the other apps. |
 | Windows SSH hosts | ✓ | ✓ | ✓ | ✓ | ✓ |  |
 | askpass dialog for passwords and passphrases | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: VSCode's input box, through a script the extension passes to git, ssh and the shared daemon.<br>CLI: The dialog belongs to the apps. |
-| Signature verification (this machine's keys or the host's) | ✓ | ✓ | △ | n/a | △ | VSCode: The extension opens no `ssh://` repositories; under Remote-SSH it runs on the host, so git verifies there with the host's keys, as for any repository the extension opens.<br>CLI: Checked in `show` and `refs --verify`; no choice.<br>Windows: Always with this machine's keys. |
+| Signature verification (this machine's keys or the host's) | ✓ | ✓ | ✓ | n/a | △ | VSCode: The extension opens no `ssh://` repositories; under Remote-SSH it runs on the host, so git verifies there with the host's keys, as for any repository the extension opens.<br>CLI: Checked in `show` and `refs --verify`; no choice. |
 
 ## Terminal front end (TUI)
 

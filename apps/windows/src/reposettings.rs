@@ -1387,6 +1387,26 @@ pub fn choice_commands(state: &State, id: &str, index: usize, scope: &str) -> Op
     Some(vec![config_set(key, Some(value), scope)])
 }
 
+/// `commands` を戻す命令（`entries` は書く前の設定）。`configSet` ごとに、その段の前の値に（なければ消す）。
+/// 後ろから戻す。ほかの命令は戻さない。
+pub fn undo_commands(entries: &[Entry], commands: &[Value]) -> Vec<Value> {
+    commands
+        .iter()
+        .rev()
+        .filter(|c| c["op"] == "configSet")
+        .filter_map(|c| {
+            let key = c["key"].as_str()?;
+            let scope = c["scope"].as_str().unwrap_or("local");
+            let old = entries
+                .iter()
+                .rev()
+                .find(|e| e.scope == scope && e.key.eq_ignore_ascii_case(key))
+                .map(|e| e.value.as_str());
+            Some(config_set(key, old, scope))
+        })
+        .collect()
+}
+
 /// `key` を `scope` の段（`local` か `global`）で `value` にする命令（None なら消す）。
 fn config_set(key: &str, value: Option<&str>, scope: &str) -> Value {
     if scope == "global" {
@@ -2198,6 +2218,30 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn undoing_puts_back_the_values_before() {
+        let entry = |scope: &str, key: &str, value: &str| Entry {
+            scope: scope.to_owned(),
+            key: key.to_owned(),
+            value: value.to_owned(),
+        };
+        let entries = [
+            entry("global", "pull.rebase", "true"),
+            entry("local", "pull.rebase", "false"),
+        ];
+        let commands = [
+            config_set("pull.rebase", Some("merges"), "local"),
+            config_set("fetch.prune", Some("true"), "global"),
+        ];
+        assert_eq!(
+            undo_commands(&entries, &commands),
+            [
+                config_set("fetch.prune", None, "global"),
+                config_set("pull.rebase", Some("false"), "local"),
+            ]
+        );
+    }
 
     fn state(entries: &[(&str, &str, &str)]) -> State {
         let mut s = State::new();

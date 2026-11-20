@@ -26,6 +26,17 @@ use crate::sidebar::{self, BranchGroups};
 use crate::{Args, Session};
 
 thread_local! {
+    /// 設定の画面（Settings・Repository Settings）を出しているか（Ctrl+Z・Ctrl+Shift+Z を設定の Undo・Redo にする）。
+    static SETTINGS_SHOWN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// サイドバーの木で引いてよい項目（お気に入りのブランチの鍵。上から順）。木のドラッグの始まりで見る。
+    static FAVORITE_KEYS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    /// ドラッグを付けた木（同一性）と、その受け口、最後に木を探した時刻。木は作り直すと別のものになる。
+    static TREE_DRAG: RefCell<(usize, Vec<windows_core_reactor::EventRevoker>)> =
+        const { RefCell::new((0, Vec::new())) };
+    static TREE_DRAG_AT: std::cell::Cell<Option<Instant>> = const { std::cell::Cell::new(None) };
+    /// 見張っている、daemon・SSH 越しのリポジトリと、最後に見た時刻（切れたら知らせる。GTK4 版・macOS 版と同じく
+    /// 0.25 秒ごとに見て、切れたら見るのをやめる）。
+    static WATCHED_CONNECTION: RefCell<Option<(Arc<Repository>, Instant)>> = const { RefCell::new(None) };
     /// 根の部品に渡す引数（`Component::Input` は比べられる値でなければならないので、ここに置く）。
     static ARGS: RefCell<Option<(Args, Instant)>> = const { RefCell::new(None) };
     /// History と差分の描き手。
@@ -185,6 +196,22 @@ struct Root {
     /// 出した回数（取り消しの帯を、出し直した後に消さないため）。
     failure: Option<(Arc<Repository>, crate::failure::Failure)>,
     failure_generation: u64,
+    /// daemon・SSH 越しのつながりが切れた（そのリポジトリと理由。ステータスバーの上に Reconnect と一緒に出す）。
+    disconnected: Option<(Arc<Repository>, String)>,
+    /// サイドバーの木を作り直す数（お気に入りを引いて並べ替えた後。WinUI が動かした項目を元の形に戻す）。
+    sidebar_epoch: u32,
+    /// 窓の背景画像（押す・引くを下へ通すため）。
+    backdrop_image: ElementRef<Image>,
+    /// ツールバーのリポジトリ名の一覧に添える、各リポジトリのブランチと状態（場所ごと）と、最後に読んだ時刻。
+    switch_peeks: std::collections::HashMap<String, amonhen_backend_cli::Peek>,
+    switch_peeked_at: Option<std::time::Instant>,
+    /// 設定の画面で書いた変更の Undo・Redo（macOS 版・GTK4 版と同じく、画面を出している間。閉じたら忘れる）。
+    settings_undo: Vec<SettingsChange>,
+    settings_redo: Vec<SettingsChange>,
+    /// エンジンを送ってよいかを聞く間、脇に置いたダイアログ（列で選ぶ画面）。
+    suspended_dialog: Option<Dialog>,
+    /// SSH 接続を追加するダイアログの「接続を確認」: 確かめた SSH 先と、結果（文と、入れたか。確かめている間は None）。
+    ssh_check: Option<(String, Option<(String, bool)>)>,
     /// 走っている操作の数（GTK4 版の Activity のボタンの回る印と数）。
     running: usize,
     /// History で複数選んでいるコミット（上から。右クリックのメニューを複数のもの用にする）。
@@ -271,6 +298,8 @@ struct Root {
     merge_chosen: [ElementRef<Grid>; 3],
     diff_find_query: String,
     diff_find_status: String,
+    /// 今の一致がメッセージの中なら、その番号（件名から数えて）。差分の中なら None。
+    diff_find_message: Option<usize>,
     /// Working Copy の一部だけ含めているチェック（キーごと）と、直前の画面で使ったキー。
     mixed_checks: RefCell<std::collections::HashMap<String, ElementRef<CheckBox>>>,
     mixed_used: RefCell<Vec<String>>,
@@ -344,6 +373,8 @@ struct Root {
     sequence: Option<Value>,
     /// ダイアログの入力の欄（Enter で既定のボタンを押す）と、開いた回数（開いた後にキーを付ける）。
     dialog_input: ElementRef<TextBox>,
+    /// タブの帯を包む Grid（タブを窓の外へ引き出したのを受ける）。
+    tab_host: ElementRef<Grid>,
     dialog_inputs: u64,
     /// Working Copy の一覧を包む Grid（Space で含める・外す、Delete・Backspace で捨てる）。
     working_list: ElementRef<Grid>,
@@ -661,6 +692,8 @@ enum Dialog {
     },
     /// SSH 先のリポジトリを加える（接続先とパス。GTK4 版の `ssh_connection_sheet`）。
     AddSsh { host: String, path: String },
+    /// SSH 先のフォルダを列で選ぶ（SSH 接続を追加するダイアログの「選ぶ…」、SSH Hosts のスキャンするフォルダ）。
+    PathPicker(Box<crate::pathpicker::Picker>),
     /// ブランチの名前を変える（GTK4 版の `refops::ask_rename_branch`）。
     Rename {
         repo: Arc<Repository>,
@@ -879,13 +912,28 @@ enum Message {
     /// マージエディタの左右と Base の欄で、選んでいるコンフリクトを見える所へ出す。
     MergeBringIntoView,
     /// Settings: git の名前とメールを読んだ・欄を書き換えた・保存・チェックを替えた・閉じる。
-    SettingsGit(String, String, Vec<crate::reposettings::Entry>),
+    /// Settings > Git を読んだ（読み始めたときの `git_epoch`、名前、メール、設定）。
+    SettingsGit(u64, String, String, Vec<crate::reposettings::Entry>),
     /// Settings > Git の Operations・Working Copy で選んだ（行の id と番号）。
     SettingsGitChoice(&'static str, Option<usize>),
     /// Settings の左の一覧でページを選んだ。
     SettingsPage(Option<usize>),
+    /// Settings > SSH Hosts の操作とつないだ結果。
+    SshHosts(crate::sshhosts::Event),
+    /// daemon・SSH 越しのつながりが切れた（そのリポジトリと理由）。
+    Disconnected(Arc<Repository>, String),
+    /// 列で選ぶ画面の操作とつないだ・読んだ結果。
+    Picker(crate::pathpicker::Event),
+    /// 脇に置いたダイアログを戻す。
+    RestoreDialog,
+    /// タブを窓の外へ引き出した（タブの番号）。
+    TabDroppedOut(String),
+    /// SSH 接続を追加するダイアログで確かめた結果（SSH 先と、文と、入れたか）。
+    SshChecked(String, String, bool),
+    /// サイドバーの木でお気に入りを引いて落とした（新しい順の名前。お気に入りの間でなければ None）。
+    FavoritesDropped(Option<Vec<String>>),
     /// Git > Programs の候補と使う git。
-    SettingsPrograms(crate::programs::State),
+    SettingsPrograms(u64, crate::programs::State),
     /// Settings > Git の Keys and Values の欄（`query`・`key`・`value`）とボタン（`add`・`remove:<key>`）。
     SettingsKeysField(&'static str, String),
     SettingsKeysButton(String),
@@ -900,6 +948,8 @@ enum Message {
     SettingsSyntaxTheme(bool, Option<usize>),
     /// Settings > Theme のボタン（`import`・`remove:<name>`）。
     SettingsThemeButton(String),
+    /// Settings > Appearance の窓の背景の欄。
+    Backdrop(crate::backdrop::Event),
     CloseSettings,
     /// Activity: タブを選んだ・Undo の記録を読んだ・戻す数を選んだ・読み直す時刻・閉じる。
     ActivityTab(Option<usize>),
@@ -941,6 +991,8 @@ enum Message {
     CloseActivity,
     /// Repositories の操作。
     Repos(crate::repositories::Event),
+    /// ツールバーのリポジトリ名の一覧の、各リポジトリのブランチと状態を読んだ。
+    SwitchPeeked(Vec<(String, amonhen_backend_cli::Peek)>),
     /// Export Archive の書き出すフォルダの欄。
     ArchiveFolder(String),
     /// 操作が終わった（失敗はなく、ステータスバーに一言を出す）。
@@ -1038,9 +1090,9 @@ enum Message {
     StashOption(&'static str, bool),
     /// Repository Settings: 設定を読んだ・欄を書き換えた・ボタン。
     RepoSettingsLoaded(Vec<crate::reposettings::Entry>),
-    /// 集めた署名の鍵（すべてのリポジトリの段の Settings > Git なら true）。
+    /// 集めた署名の鍵（Settings > Git なら読み始めたときの `git_epoch`、Repository Settings なら None）。
     SigningKeysLoaded(
-        bool,
+        Option<u64>,
         Vec<(&'static str, Vec<crate::reposettings::SigningKey>)>,
     ),
     /// Repository Settings のフックの有効を切り替えた。
@@ -1089,6 +1141,8 @@ enum Message {
     RemoteChecked(String, bool, String),
     /// 消すブランチを調べ終えた（名前、ほかのブランチにないコミットの数と一覧、または調べられなかった理由）。
     DeleteChecked(Arc<Repository>, String, Result<(u64, Vec<String>), String>),
+    /// いくつものブランチの、ほかのブランチにないコミットの数を調べた。
+    DeleteSeveralChecked(Arc<Repository>, Vec<Result<(String, u64), String>>),
     Status(Arc<StatusSnapshot>),
     /// Working Copy の件名・本文が変わった。
     Summary(String),
@@ -1107,7 +1161,8 @@ enum Message {
     DiffFindOpen(bool),
     DiffFindQuery(String),
     DiffFindStep(i32),
-    DiffFindStatus(String),
+    /// 差分が替わって数え直した、差分の中の一致の数（メッセージの一致と合わせて出す）。
+    DiffFindCount(usize),
     /// Working Copy のファイルの行にマウスが載った。
     WorkingHover(String),
     /// 窓に落としたもの。
@@ -1240,6 +1295,15 @@ impl Component for Root {
             flash: None,
             failure: None,
             failure_generation: 0,
+            disconnected: None,
+            sidebar_epoch: 0,
+            backdrop_image: ElementRef::new(),
+            switch_peeks: std::collections::HashMap::new(),
+            switch_peeked_at: None,
+            settings_undo: Vec::new(),
+            settings_redo: Vec::new(),
+            suspended_dialog: None,
+            ssh_check: None,
             running: 0,
             multi: Vec::new(),
             multi_consecutive: false,
@@ -1285,6 +1349,7 @@ impl Component for Root {
             merge_chosen: std::array::from_fn(|_| ElementRef::new()),
             diff_find_query: String::new(),
             diff_find_status: String::new(),
+            diff_find_message: None,
             mixed_checks: RefCell::default(),
             mixed_used: RefCell::default(),
             search_opened: 0,
@@ -1293,6 +1358,7 @@ impl Component for Root {
             working_sides: None,
             busy: None,
             dialog_input: ElementRef::new(),
+            tab_host: ElementRef::new(),
             dialog_inputs: 0,
             working_list: ElementRef::new(),
             summary_box: ElementRef::new(),
@@ -1310,6 +1376,56 @@ impl Component for Root {
 
     fn update(&mut self, message: Message, context: &ComponentContext<Self>) {
         self.handle(message, context);
+        let shown = matches!(self.page, Page::Settings | Page::RepoSettings);
+        if !shown && (!self.settings_undo.is_empty() || !self.settings_redo.is_empty()) {
+            // 設定の画面を閉じたら、Undo・Redo は忘れる（macOS 版・GTK4 版と同じ）。
+            self.settings_undo.clear();
+            self.settings_redo.clear();
+        }
+        SETTINGS_SHOWN.with(|s| s.set(shown));
+        // 木で引いてよいもの（お気に入りのブランチ。順は木と同じ）。
+        let favorites: Vec<String> = {
+            let mut pinned: Vec<(i64, &RefEntry)> = self
+                .refs
+                .as_ref()
+                .map(|r| {
+                    r.refs
+                        .entries
+                        .iter()
+                        .filter(|e| e.kind == amonhen_model::RefKind::Local)
+                        .filter_map(|e| {
+                            let rank = self.groups.as_ref()?.branches.get(&e.name)?.pinned?;
+                            Some((rank, e))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            pinned.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.name.cmp(&b.1.name)));
+            pinned
+                .into_iter()
+                .map(|(_, e)| sidebar::ref_key(e))
+                .collect()
+        };
+        FAVORITE_KEYS.with(|f| *f.borrow_mut() = favorites);
+        // daemon・SSH 越しに開いたリポジトリなら、切れたかを見張る（手元のものは見ない）。
+        let watch = self.repo.clone().filter(|repo| {
+            repo.connection_state().is_some()
+                && !self
+                    .disconnected
+                    .as_ref()
+                    .is_some_and(|(r, _)| Arc::ptr_eq(r, repo))
+        });
+        WATCHED_CONNECTION.with(|w| {
+            let mut w = w.borrow_mut();
+            let same = match (&*w, &watch) {
+                (Some((a, _)), Some(b)) => Arc::ptr_eq(a, b),
+                (None, None) => true,
+                _ => false,
+            };
+            if !same {
+                *w = watch.map(|repo| (repo, Instant::now()));
+            }
+        });
         // 待っていた、エンジンを送ってよいかの問いを、ダイアログが空いたら出す。
         if self.dialog.is_none() && !self.asks.is_empty() {
             let ask = self.asks.remove(0);
@@ -1334,12 +1450,16 @@ impl Root {
             with_history(|h| h.reload_selected());
         }
         match message {
+            Message::SwitchPeeked(peeks) => {
+                self.switch_peeks.extend(peeks);
+            }
             Message::Refs(refs, repo) => {
                 HEAD_NAME
                     .with(|h| *h.borrow_mut() = refs.refs.head_branch.clone().unwrap_or_default());
                 self.refs = Some(refs);
                 self.repo = Some(repo.clone());
                 self.switch_draft(&repo, context);
+                self.peek_switch_targets(context);
                 // 最近切り替えたブランチを覚える（ブランチの切り替えの並び）。
                 if let (Some(workdir), Some(head)) = (
                     repo.paths().workdir,
@@ -2107,24 +2227,64 @@ impl Root {
                 if !open {
                     self.diff_find_query.clear();
                     self.diff_find_status.clear();
+                    self.diff_find_message = None;
                     with_history(|h| {
-                        h.find_in_diff(String::new(), 0);
+                        h.find_in_diff(String::new(), Some(0));
                     });
                 }
             }
             Message::DiffFindQuery(query) => {
                 self.diff_find_query = query.clone();
-                let mut status = String::new();
-                with_history(|h| status = h.find_in_diff(query, 0));
-                self.diff_find_status = status;
+                // メッセージの中に一致があれば、そこから（詳細の上にあるので）。なければ差分の、見えている所から。
+                let in_message = self.message_matches();
+                let mut found = (0, None);
+                with_history(|h| found = h.find_in_diff(query, (in_message == 0).then_some(0)));
+                self.diff_find_message = (in_message > 0).then_some(0);
+                self.diff_find_status = self.find_status(in_message, found);
             }
             Message::DiffFindStep(step) => {
+                // メッセージの一致と差分の一致を、上から 1 つの並びとして ↑・↓ で動く。
+                let in_message = self.message_matches();
                 let query = self.diff_find_query.clone();
-                let mut status = String::new();
-                with_history(|h| status = h.find_in_diff(query, step));
-                self.diff_find_status = status;
+                let mut found = (0, None);
+                with_history(|h| found = h.find_in_diff(query.clone(), None));
+                let total = in_message + found.0;
+                if total == 0 {
+                    self.diff_find_status = self.find_status(0, found);
+                    return;
+                }
+                let now = match (self.diff_find_message, found.1) {
+                    (Some(m), _) => m,
+                    (None, Some(d)) => in_message + d,
+                    (None, None) => 0,
+                };
+                let next = (now as i64 + i64::from(step)).rem_euclid(total as i64) as usize;
+                if next < in_message {
+                    self.diff_find_message = Some(next);
+                    with_history(|h| {
+                        h.select_diff_match(None);
+                    });
+                    found.1 = None;
+                } else {
+                    self.diff_find_message = None;
+                    let d = next - in_message;
+                    with_history(|h| {
+                        h.select_diff_match(Some(d));
+                    });
+                    found.1 = Some(d);
+                }
+                self.diff_find_status = self.find_status(in_message, found);
             }
-            Message::DiffFindStatus(status) => self.diff_find_status = status,
+            Message::DiffFindCount(count) => {
+                // 選んだものが替わった: 今の一致はなくし、数だけを出す（移るのは ↑・↓ を押したとき）。
+                self.diff_find_message = None;
+                let total = self.message_matches() + count;
+                self.diff_find_status = if total == 0 {
+                    tr!("No Matches")
+                } else {
+                    total.to_string()
+                };
+            }
             Message::WorkingHover(path) => {
                 if self.working_hovered.as_deref() != Some(path.as_str()) {
                     self.working_hovered = Some(path);
@@ -2170,7 +2330,7 @@ impl Root {
                 self.page = Page::RepoSettings;
                 self.write_repo_settings(Vec::new(), context);
                 if let Some(repo) = self.repo.clone() {
-                    load_signing_keys(repo, false, context);
+                    load_signing_keys(repo, None, context);
                 }
             }
             Message::Command(id) if id == "stash" => self.ask_stash(Vec::new()),
@@ -2397,6 +2557,52 @@ impl Root {
                 crate::tabs::note_page(self.page == Page::WorkingCopy);
                 crate::tabs::new_tab();
             }
+            Message::Command(id) if id == "settings-undo" || id == "settings-redo" => {
+                self.undo_settings(id == "settings-redo", context);
+            }
+            Message::Command(id) if id == "ssh-check" => {
+                let Some(Dialog::AddSsh { host, .. }) = &self.dialog else {
+                    return;
+                };
+                let host = host.trim().to_owned();
+                if host.is_empty() {
+                    return beep();
+                }
+                self.ssh_check = Some((host.clone(), None));
+                context.spawn_background(move |_| {
+                    let (text, ok) = crate::remote::check_host(&host);
+                    Message::SshChecked(host, text, ok)
+                });
+            }
+            Message::Command(id) if id == "ssh-browse" => {
+                // SSH 接続を追加するダイアログから、打った SSH 先のフォルダを列で選ぶ。
+                if let Some(Dialog::AddSsh { host, path }) = &self.dialog
+                    && crate::remote::ssh_location(host, "~").is_some()
+                {
+                    let (picker, job) = crate::pathpicker::Picker::new(
+                        crate::pathpicker::Purpose::AddSsh,
+                        host.trim(),
+                        path,
+                        None,
+                    );
+                    self.dialog = Some(Dialog::PathPicker(Box::new(picker)));
+                    context.spawn_background(move |_| Message::Picker(job.run()));
+                } else {
+                    beep();
+                }
+            }
+            Message::Command(id) if id.starts_with("switch-repository:") => {
+                // このタブを選んだリポジトリに替える（GTK4 版・macOS 版のリポジトリ名のポップオーバー）。
+                let location = id["switch-repository:".len()..].to_owned();
+                if crate::tabs::current()
+                    .is_some_and(|t| t.location.eq_ignore_ascii_case(&location))
+                {
+                    return;
+                }
+                if let Err(e) = crate::tabs::replace(&location, false) {
+                    self.error = Some(e);
+                }
+            }
             Message::Command(id) if id == "try-again" => {
                 if let Some(tab) = crate::tabs::current()
                     && let Err(e) = crate::tabs::replace(&tab.location, tab.working_copy)
@@ -2404,6 +2610,7 @@ impl Root {
                     self.error = Some(e);
                 }
             }
+            Message::Command(id) if id == "quit" => crate::session::quit_all(),
             Message::Command(id) if id == "close-tab" => {
                 if crate::tabs::close_current() {
                     close_window();
@@ -2428,6 +2635,29 @@ impl Root {
                 }
             }
             Message::TabsReordered(order) => crate::tabs::reorder(&order),
+            // タブを窓の外へ引き出した: そのリポジトリを新しい窓で開き、このタブを閉じる（GTK4 版・macOS 版と同じ）。
+            Message::TabDroppedOut(id) => {
+                let Some(tab) = id
+                    .parse::<u64>()
+                    .ok()
+                    .and_then(|id| crate::tabs::tabs().into_iter().find(|t| t.id == id))
+                else {
+                    return;
+                };
+                match crate::repositories::open_window(&tab.location) {
+                    Ok(()) => {
+                        if crate::tabs::close(tab.id) {
+                            close_window();
+                        }
+                    }
+                    Err(message) => {
+                        self.dialog = Some(Dialog::Failed {
+                            title: tr!("Open in New Window"),
+                            message,
+                        })
+                    }
+                }
+            }
             Message::OpenClone(dest, failed) => {
                 if let Some((title, message)) = failed {
                     self.dialog = Some(Dialog::Failed { title, message });
@@ -2718,6 +2948,7 @@ impl Root {
                     self.repositories_from = self.page;
                 }
                 let (state, roots) = crate::repositories::State::new();
+                scan_remote_roots(&state, context);
                 self.repositories = Some(state);
                 self.page = Page::Repositories;
                 context.spawn_background(move |_| {
@@ -2766,6 +2997,9 @@ impl Root {
                     env_added: crate::settingsview::env_added_names(),
                     env_query: String::new(),
                     templates: crate::templates::all(),
+                    ssh: None,
+                    git_target: None,
+                    git_epoch: 0,
                 });
                 context.spawn_background(|_| {
                     Message::CacheSize(
@@ -2774,35 +3008,7 @@ impl Root {
                     )
                 });
                 self.page = Page::Settings;
-                load_signing_keys(repo.clone(), true, context);
-                load_programs(repo.clone(), context);
-                // `--global` の段の値（いくつもあれば最後のもの。git と同じ）。
-                context.spawn_background(move |_| {
-                    let reply: Value =
-                        serde_json::from_str(&repo.run_json(r#"{"op":"configList"}"#))
-                            .unwrap_or_default();
-                    let value = |key: &str| {
-                        reply["info"]["entries"]
-                            .as_array()
-                            .into_iter()
-                            .flatten()
-                            .rev()
-                            .find(|e| {
-                                e["scope"].as_str() == Some("global")
-                                    && e["key"]
-                                        .as_str()
-                                        .is_some_and(|k| k.eq_ignore_ascii_case(key))
-                            })
-                            .and_then(|e| e["value"].as_str())
-                            .unwrap_or_default()
-                            .to_owned()
-                    };
-                    Message::SettingsGit(
-                        value("user.name"),
-                        value("user.email"),
-                        global_entries(&reply),
-                    )
-                });
+                load_git_settings(repo, 0, context);
             }
             Message::Command(id) if id == "compare-with-previous" => {
                 let Some(repo) = self.repo.clone() else {
@@ -2869,6 +3075,10 @@ impl Root {
                 None => beep(),
             },
             Message::AskSendEngine(ask) => {
+                // 列で選ぶ画面は、つなぐのにこの答えを待っているので、脇に置いて先に聞く（答えたら戻す）。
+                if matches!(self.dialog, Some(Dialog::PathPicker(_))) {
+                    self.suspended_dialog = self.dialog.take();
+                }
                 if self.dialog.is_none() {
                     self.dialog = Some(Dialog::SendEngine { ask, always: false });
                 } else {
@@ -2886,8 +3096,41 @@ impl Root {
                 }
             }
             Message::DialogClosed(result) => match (self.dialog.take(), result) {
+                (Some(Dialog::PathPicker(picker)), result) => {
+                    let chosen = (result == ContentDialogResult::Primary)
+                        .then(|| picker.chosen_shown())
+                        .flatten();
+                    match picker.purpose {
+                        crate::pathpicker::Purpose::AddSsh => {
+                            // 閉じたのを一度描いてから戻す（同じ描画で開き直しても開かない）。
+                            self.suspended_dialog = Some(Dialog::AddSsh {
+                                host: picker.host.clone(),
+                                path: chosen.unwrap_or(picker.start.clone()),
+                            });
+                            self.dialog_inputs += 1;
+                            context.spawn_background(|_| {
+                                std::thread::sleep(std::time::Duration::from_millis(250));
+                                Message::RestoreDialog
+                            });
+                        }
+                        crate::pathpicker::Purpose::ScanRoot => {
+                            if let Some(location) =
+                                chosen.and_then(|c| crate::remote::ssh_location(&picker.host, &c))
+                            {
+                                crate::repositories::add_scan_root(&location);
+                            }
+                        }
+                    }
+                }
                 (Some(Dialog::SendEngine { ask, always }), result) => {
                     ask.answer(result == ContentDialogResult::Primary, always);
+                    // 脇に置いたダイアログは、閉じたのを一度描いてから戻す（同じ描画で開き直しても開かない）。
+                    if self.suspended_dialog.is_some() {
+                        context.spawn_background(|_| {
+                            std::thread::sleep(std::time::Duration::from_millis(250));
+                            Message::RestoreDialog
+                        });
+                    }
                 }
                 (Some(Dialog::Undo { repo, .. }), ContentDialogResult::Primary) => {
                     perform(context, repo, json!({ "op": "undo" }), tr!("Couldn’t Undo"));
@@ -3966,6 +4209,48 @@ impl Root {
                     });
                 }
             },
+            Message::DeleteSeveralChecked(repo, checked) => {
+                let checked: Result<Vec<(String, u64)>, String> = checked.into_iter().collect();
+                match checked {
+                    Err(message) => {
+                        self.dialog = Some(Dialog::Failed {
+                            title: tr!("Couldn’t check the branches"),
+                            message,
+                        })
+                    }
+                    Ok(counts) => {
+                        // GTK4 版の `sheets::delete_branches`: 名前を並べ、ほかにないコミットがあればそう言って
+                        // Delete Anyway で消す。
+                        let names: Vec<&str> = counts.iter().map(|(n, _)| n.as_str()).collect();
+                        let unmerged = counts.iter().any(|(_, c)| *c > 0);
+                        let mut message = format!("{}\n", names.join(", "));
+                        if unmerged {
+                            message.push_str(&tr!(
+                                "Some commits are on no other branch; they go with the branch."
+                            ));
+                            message.push(' ');
+                        }
+                        message.push_str(&tr!("You can Undo this (Ctrl+Alt+Z)."));
+                        let commands: Vec<Value> = counts
+                            .iter()
+                            .map(|(name, count)| {
+                                json!({ "op": "deleteBranch", "name": name, "force": *count > 0 })
+                            })
+                            .collect();
+                        self.dialog = Some(Dialog::Confirm {
+                            repo,
+                            title: tr!("Delete {count} branches?", count = counts.len()),
+                            message,
+                            button: if unmerged {
+                                tr!("Delete Anyway")
+                            } else {
+                                tr!("Delete")
+                            },
+                            command: Value::Array(commands),
+                        });
+                    }
+                }
+            }
             Message::SidebarMenu(key) => {
                 // 操作のない項目（見出し・Workspace のページ）では開かない。
                 self.sidebar_key = Some(key);
@@ -4257,6 +4542,107 @@ impl Root {
                     self.reset(oid.to_owned());
                 } else if let Some(name) = key.strip_prefix("delete-branch:") {
                     self.check_delete(context, name.to_owned());
+                } else if let Some(list) = key.strip_prefix("delete-several:") {
+                    self.check_delete_several(
+                        context,
+                        list.split('\n').map(str::to_owned).collect(),
+                    );
+                } else if let Some(list) = key.strip_prefix("favorite-several:") {
+                    // 全部入っていれば外す、そうでなければまだのものを入れる（GTK4 版の `favorite_commands`）。
+                    if let Some(repo) = self.repo.clone() {
+                        let names: Vec<&str> = list.split('\n').collect();
+                        let pinned = |n: &str| {
+                            self.groups
+                                .as_ref()
+                                .and_then(|g| g.branches.get(n))
+                                .is_some_and(|b| b.pinned.is_some())
+                        };
+                        let all = names.iter().all(|n| pinned(n));
+                        let commands = self.favorite_several_commands(&names, all);
+                        perform_all(context, repo, commands, tr!("Add to Favorites"));
+                    }
+                } else if let Some(list) = key.strip_prefix("archive-several:") {
+                    if let Some(repo) = self.repo.clone() {
+                        let names: Vec<&str> = list.split('\n').collect();
+                        let all = names.iter().all(|n| {
+                            self.groups
+                                .as_ref()
+                                .and_then(|g| g.branches.get(*n))
+                                .is_some_and(|b| b.archived)
+                        });
+                        let value = if all { json!(null) } else { json!("true") };
+                        let commands = names
+                            .iter()
+                            .map(|n| {
+                                json!({
+                                    "op": "configSet",
+                                    "key": format!("branch.{n}.amonhenArchived"),
+                                    "value": value,
+                                })
+                            })
+                            .collect();
+                        perform_all(context, repo, commands, tr!("Archive"));
+                    }
+                } else if let Some(list) = key.strip_prefix("bundle-several:") {
+                    let refs: Vec<String> = list.split('\n').map(str::to_owned).collect();
+                    let names: Vec<String> = refs
+                        .iter()
+                        .map(|r| {
+                            r.trim_start_matches("refs/heads/")
+                                .trim_start_matches("refs/remotes/")
+                                .trim_start_matches("refs/tags/")
+                                .to_owned()
+                        })
+                        .collect();
+                    let label = names.first().cloned().unwrap_or_default();
+                    self.ask_bundle(refs, names.join(", "), label);
+                } else if let Some(list) = key.strip_prefix("delete-tags:") {
+                    if let Some(repo) = self.repo.clone() {
+                        let names: Vec<&str> = list.split('\n').collect();
+                        self.dialog = Some(Dialog::Confirm {
+                            repo,
+                            title: tr!("Delete {count} tags?", count = names.len()),
+                            message: format!(
+                                "{}\n\n{} {}",
+                                names.join("\n"),
+                                tr!("The remotes keep theirs."),
+                                tr!("You can Undo this (Ctrl+Alt+Z).")
+                            ),
+                            button: tr!("Delete"),
+                            command: Value::Array(
+                                names
+                                    .iter()
+                                    .map(|n| json!({ "op": "deleteTag", "name": n }))
+                                    .collect(),
+                            ),
+                        });
+                    }
+                } else if let Some(rest) = key.strip_prefix("push-tags:") {
+                    // GTK4 版の `confirm_push_tags`（戻せない）。
+                    if let (Some(repo), Some((remote, list))) =
+                        (self.repo.clone(), rest.split_once('|'))
+                    {
+                        let names: Vec<&str> = list.split('\n').collect();
+                        self.dialog = Some(Dialog::Confirm {
+                            repo,
+                            title: tr!(
+                                "Push {count} tags to {remote}?",
+                                count = names.len(),
+                                remote = remote
+                            ),
+                            message: format!(
+                                "{}\n\n{} {}",
+                                names.join("\n"),
+                                tr!(
+                                    "Everyone who fetches from {remote} gets them.",
+                                    remote = remote
+                                ),
+                                tr!("This can’t be undone.")
+                            ),
+                            button: "Push".to_owned(),
+                            command: json!({ "op": "pushTags", "remote": remote, "names": names }),
+                        });
+                    }
                 } else if let Some(name) = key.strip_prefix("favorite:") {
                     if let Some(repo) = self.repo.clone() {
                         let commands = self.favorite_commands(name);
@@ -5895,7 +6281,23 @@ impl Root {
             }
             Message::ActivityTick => {
                 let mut undo = false;
+                // この窓のリポジトリの daemon・SSH 越しのつながり（Daemon のタブの表）。
+                let connection = self.repo.as_ref().and_then(|repo| {
+                    let state = repo.connection_state()?;
+                    let location = crate::tabs::current()
+                        .map(|t| t.location)
+                        .unwrap_or_default();
+                    Some(crate::activity::Connection {
+                        name: crate::repositories::display_name(&location),
+                        location,
+                        closed: state.closed,
+                        sent: state.sent,
+                        received: state.received,
+                        engine: state.engine,
+                    })
+                });
                 if let Some(state) = self.activity.as_mut() {
+                    state.connection = connection;
                     state.refresh();
                     undo = state.tab == 1;
                     // Daemon は 2 秒ごと（4 回に 1 回）。
@@ -5975,8 +6377,8 @@ impl Root {
                 ACTIVITY_TICK.with(|t| t.set(None));
                 self.page = self.activity_from;
             }
-            Message::SettingsGit(name, email, entries) => {
-                if let Some(state) = self.settings.as_mut() {
+            Message::SettingsGit(epoch, name, email, entries) => {
+                if let Some(state) = self.settings.as_mut().filter(|s| s.git_epoch == epoch) {
                     // 書いた後に読み直したときは、打ちかけの名前とメールを消さない。
                     if state.git.is_none() {
                         state.git = Some([(name.clone(), name), (email.clone(), email)]);
@@ -5988,18 +6390,97 @@ impl Root {
                     global.entries = Some(entries);
                 }
             }
-            Message::SettingsPrograms(programs) => {
-                if let Some(state) = self.settings.as_mut() {
+            Message::SettingsPrograms(epoch, programs) => {
+                if let Some(state) = self.settings.as_mut().filter(|s| s.git_epoch == epoch) {
                     state.programs = Some(programs);
                 }
             }
             Message::SettingsPage(page) => {
                 if let (Some(state), Some(page)) = (self.settings.as_mut(), page) {
                     state.page = page;
+                    // Settings > Git はこの機械の git（SSH Hosts で SSH 先の git を出していたら読み直す）。
+                    if crate::settingsview::PAGES.get(page) == Some(&"Git") {
+                        self.retarget_git(None, context);
+                        return;
+                    }
+                    // SSH Hosts は初めて出したときに作り、選んだ SSH 先につなぐ。
+                    if crate::settingsview::PAGES.get(page) == Some(&"SSH Hosts")
+                        && state.ssh.is_none()
+                    {
+                        let (ssh, jobs) = crate::sshhosts::State::new();
+                        state.ssh = Some(ssh);
+                        for job in jobs {
+                            context.spawn_background(move |_| Message::SshHosts(job.run()));
+                        }
+                    }
+                }
+            }
+            Message::Disconnected(repo, reason) => {
+                self.disconnected = Some((repo, reason));
+            }
+            Message::SshChecked(host, text, ok) => {
+                if self.ssh_check.as_ref().is_some_and(|(h, _)| *h == host) {
+                    self.ssh_check = Some((host, Some((text, ok))));
+                }
+            }
+            Message::RestoreDialog => {
+                if self.dialog.is_none() {
+                    self.dialog = self.suspended_dialog.take();
+                }
+            }
+            Message::Picker(event) => {
+                if let Some(Dialog::PathPicker(picker)) = &mut self.dialog {
+                    for job in picker.handle(event) {
+                        context.spawn_background(move |_| Message::Picker(job.run()));
+                    }
+                }
+            }
+            Message::FavoritesDropped(order) => {
+                // 木は WinUI が自分で並べ替えたので、作り直して git の設定の順に合わせる。
+                self.sidebar_epoch += 1;
+                let Some(names) = order else { return };
+                let Some(repo) = self.repo.clone() else {
+                    return;
+                };
+                let commands: Vec<Value> = names
+                    .iter()
+                    .enumerate()
+                    .map(|(i, n)| {
+                        json!({
+                            "op": "configSet",
+                            "key": format!("branch.{n}.amonhenPinned"),
+                            "value": (i + 1).to_string(),
+                        })
+                    })
+                    .collect();
+                perform_all(context, repo, commands, tr!("Favorites"));
+            }
+            Message::SshHosts(event) => {
+                let Some(ssh) = self.settings.as_mut().and_then(|s| s.ssh.as_mut()) else {
+                    return;
+                };
+                for job in ssh.handle(event) {
+                    context.spawn_background(move |_| Message::SshHosts(job.run()));
+                }
+                if let Some(host) = ssh.pick_scan_root.take() {
+                    let repo = ssh.repo_of(&host);
+                    let (picker, job) = crate::pathpicker::Picker::new(
+                        crate::pathpicker::Purpose::ScanRoot,
+                        &host,
+                        "",
+                        repo,
+                    );
+                    self.dialog = Some(Dialog::PathPicker(Box::new(picker)));
+                    context.spawn_background(move |_| Message::Picker(job.run()));
+                    return;
+                }
+                // SSH 先の Git のページなら、Settings > Git の部品をその SSH 先のエンジンに向ける。
+                if let Some(host) = ssh.git_host() {
+                    self.retarget_git(Some(host), context);
                 }
             }
             Message::SettingsGitChoice(id, Some(index)) if id.starts_with("program:") => {
-                let Some(repo) = self.repo.clone() else {
+                let Some((repo, epoch)) = self.settings_git_repo() else {
                     return;
                 };
                 let Some(state) = self.settings.as_mut() else {
@@ -6037,10 +6518,14 @@ impl Root {
                                     )));
                                 }
                             }
-                            Message::SettingsPrograms(crate::programs::load(|c| repo.run_json(c)))
+                            Message::SettingsPrograms(
+                                epoch,
+                                crate::programs::load(|c| repo.run_json(c)),
+                            )
                         });
                     } else {
-                        write_global_settings(repo, commands, context);
+                        self.record_settings_change(true, &commands);
+                        write_global_settings(repo, epoch, commands, context);
                     }
                 }
             }
@@ -6051,21 +6536,20 @@ impl Root {
                     .and_then(|s| s.global.as_mut())
                     .and_then(|g| crate::reposettings::file_pick(g, id, index))
                 {
-                    if let (Some(repo), Some(path)) = (
-                        self.repo.clone(),
+                    if let (Some((repo, epoch)), Some(path)) = (
+                        self.settings_git_repo(),
                         crate::files::open_files(&title).into_iter().next(),
                     ) {
                         let path = path.display().to_string();
-                        write_global_settings(
-                            repo,
-                            vec![crate::reposettings::file_command(key, &path, "global")],
-                            context,
-                        );
+                        let commands =
+                            vec![crate::reposettings::file_command(key, &path, "global")];
+                        self.record_settings_change(true, &commands);
+                        write_global_settings(repo, epoch, commands, context);
                     }
                     return;
                 }
-                let (Some(repo), Some(commands)) = (
-                    self.repo.clone(),
+                let (Some((repo, epoch)), Some(commands)) = (
+                    self.settings_git_repo(),
                     self.settings
                         .as_mut()
                         .and_then(|s| s.global.as_mut())
@@ -6073,7 +6557,8 @@ impl Root {
                 ) else {
                     return;
                 };
-                write_global_settings(repo, commands, context);
+                self.record_settings_change(true, &commands);
+                write_global_settings(repo, epoch, commands, context);
             }
             Message::SettingsGitChoice(_, None) => {}
             Message::SettingsKeysField(field, text) => {
@@ -6087,8 +6572,8 @@ impl Root {
                 }
             }
             Message::SettingsKeysButton(key) => {
-                let (Some(repo), Some(commands)) = (
-                    self.repo.clone(),
+                let (Some((repo, epoch)), Some(commands)) = (
+                    self.settings_git_repo(),
                     self.settings
                         .as_mut()
                         .and_then(|s| s.global.as_mut())
@@ -6102,7 +6587,8 @@ impl Root {
                 ) else {
                     return;
                 };
-                write_global_settings(repo, commands, context);
+                self.record_settings_change(true, &commands);
+                write_global_settings(repo, epoch, commands, context);
             }
             Message::SettingsField(index, text) => {
                 if let Some(field) = self
@@ -6115,8 +6601,8 @@ impl Root {
                 }
             }
             Message::SettingsSaveGit => {
-                let (Some(repo), Some(git)) = (
-                    self.repo.clone(),
+                let (Some((repo, _)), Some(git)) = (
+                    self.settings_git_repo(),
                     self.settings.as_mut().and_then(|s| s.git.as_mut()),
                 ) else {
                     return;
@@ -6319,6 +6805,11 @@ impl Root {
                     let _ = crate::prefs::set_string(crate::theme::key(dark), &name);
                     crate::theme::reload();
                     with_history(|h| h.diff.dirty = true);
+                }
+            }
+            Message::Backdrop(event) => {
+                if let Err(e) = crate::backdrop::apply(event) {
+                    self.error = Some(e);
                 }
             }
             Message::SettingsThemeButton(key) => {
@@ -6528,10 +7019,11 @@ impl Root {
                     state.new_hook = index;
                 }
             }
-            Message::SigningKeysLoaded(global, keys) => {
-                let state = if global {
+            Message::SigningKeysLoaded(epoch, keys) => {
+                let state = if let Some(epoch) = epoch {
                     self.settings
                         .as_mut()
+                        .filter(|s| s.git_epoch == epoch)
                         .map(|s| s.global.get_or_insert_with(crate::reposettings::State::new))
                 } else {
                     self.repo_settings.as_mut()
@@ -6993,7 +7485,30 @@ impl Root {
         } else {
             WindowTheme::Light
         }));
-        let tab_strip = tab_strip(&title, context);
+        let tab_strip = Grid::new()
+            .grid_row(2)
+            .element_ref(&self.tab_host)
+            .children((tab_strip(&title, context),));
+        // タブを窓の外へ引き出したら、そのリポジトリを新しい窓で開く（タブの並びが変わるたびに付け直す）。
+        let tab_ids: String = crate::tabs::tabs()
+            .iter()
+            .map(|t| format!("{},", t.id))
+            .collect();
+        let host = self.tab_host.clone();
+        context.use_effect("tab-drop-out", tab_ids, move || {
+            let _ = host.request_native_element(|result| {
+                if let Ok(element) = result
+                    && let Some(revoker) = xaml::on_tab_dropped_outside(&element, |id| {
+                        with_history(|h| {
+                            h.sender.send(Message::TabDroppedOut(id.clone()));
+                        });
+                    })
+                {
+                    REVOKERS.with(|r| r.borrow_mut().push(revoker));
+                }
+            });
+            None
+        });
         let root = self.root.clone();
         let refs = (
             self.panel.clone(),
@@ -7140,37 +7655,42 @@ impl Root {
                     .margin(Thickness::new(8.0, 6.0, 8.0, 4.0))
                     .grid_row(0)
                     .on_text_changed(context.callback(Message::SidebarFilter)),
-                TreeView::new()
-                    .grid_row(1)
-                    .on_item_invoked(context.callback(Message::Invoked))
-                    .nodes(sidebar::nodes(
-                        self.refs.as_ref().map(|r| &r.refs),
-                        self.groups.as_ref(),
-                        self.range_diff.is_some(),
-                        &self
-                            .worktrees
-                            .iter()
-                            .map(|w| {
-                                let editing = self
-                                    .repo
-                                    .as_ref()
-                                    .and_then(|r| r.paths().workdir)
-                                    .is_some_and(|d| same_path(&d.display().to_string(), &w.path));
-                                let changes =
-                                    self.worktree_counts.get(&w.path).copied().unwrap_or(0);
-                                (format!("worktree:{}", w.path), w.title(editing, changes))
-                            })
-                            .collect::<Vec<_>>(),
-                        sidebar::Marks {
-                            form: &self.form,
-                            conflicts,
-                            tag_remotes: &self.tag_remotes,
-                            tag_signatures: &self.tag_signatures,
-                            submodules: &self.submodules,
-                            subtrees: &self.subtrees["subtrees"],
-                        },
-                        &self.sidebar_filter,
-                    )),
+                View::keyed_fragment([(
+                    format!("tree-{}", self.sidebar_epoch),
+                    TreeView::new()
+                        .grid_row(1)
+                        .on_item_invoked(context.callback(Message::Invoked))
+                        .nodes(sidebar::nodes(
+                            self.refs.as_ref().map(|r| &r.refs),
+                            self.groups.as_ref(),
+                            self.range_diff.is_some(),
+                            &self
+                                .worktrees
+                                .iter()
+                                .map(|w| {
+                                    let editing = self
+                                        .repo
+                                        .as_ref()
+                                        .and_then(|r| r.paths().workdir)
+                                        .is_some_and(|d| {
+                                            same_path(&d.display().to_string(), &w.path)
+                                        });
+                                    let changes =
+                                        self.worktree_counts.get(&w.path).copied().unwrap_or(0);
+                                    (format!("worktree:{}", w.path), w.title(editing, changes))
+                                })
+                                .collect::<Vec<_>>(),
+                            sidebar::Marks {
+                                form: &self.form,
+                                conflicts,
+                                tag_remotes: &self.tag_remotes,
+                                tag_signatures: &self.tag_signatures,
+                                submodules: &self.submodules,
+                                subtrees: &self.subtrees["subtrees"],
+                            },
+                            &self.sidebar_filter,
+                        )),
+                )]),
                 Grid::new()
                     .element_ref(&self.sidebar_menu_host)
                     .grid_row(1)
@@ -7260,11 +7780,17 @@ impl Root {
         let tracking = self.tracking();
         let toolbar = Grid::new()
             .grid_row(1)
-            .element_ref(&self.toolbar)
-            .children((crate::menus::toolbar(
-                context.callback(Message::Command),
-                tracking,
-            ),));
+            .columns([GridLength::Auto, GridLength::Star(1.0)])
+            .children((
+                self.repository_switcher(context),
+                Grid::new()
+                    .grid_column(1)
+                    .element_ref(&self.toolbar)
+                    .children((crate::menus::toolbar(
+                        context.callback(Message::Command),
+                        tracking,
+                    ),)),
+            ));
         // 数かツールバーの並びが変わったら、Pull・Push のバッジを付け直す（並べ終えてから）。
         let order: String = crate::menus::toolbar_entries()
             .iter()
@@ -7521,10 +8047,24 @@ impl Root {
                     .map(|s| (s.side_key(), s.drop_targets()))
             })
             .flatten();
+        let groups = self
+            .repositories
+            .as_ref()
+            .map(|s| s.draggable_groups())
+            .unwrap_or_default();
         context.use_effect("repositories-drop", targets.clone(), move || {
             if let Some((_, targets)) = targets.clone() {
+                let groups = groups.clone();
                 let _ = side.request_native_element(move |result| {
                     if let Ok(element) = result {
+                        // 左のグループは引いて、ほかのグループの前に移せる。
+                        if let Some(revoker) = xaml::drag_some_tags(
+                            &element,
+                            groups.clone(),
+                            crate::repositories::GROUP_DRAG,
+                        ) {
+                            REVOKERS.with(|r| r.borrow_mut().push(revoker));
+                        }
                         xaml::drop_on_rows(&element, targets.clone(), |target, locations| {
                             with_history(|h| {
                                 h.sender.send(Message::Repos(
@@ -7587,6 +8127,34 @@ impl Root {
             });
         }
         let dialog = self.dialog_view(context);
+        // 窓の背景（ツールバーの色と背景画像。リポジトリだけの設定があればそれ）。
+        let backdrop = crate::backdrop::current(
+            &crate::tabs::current().map_or_else(|| args.repo.display().to_string(), |t| t.location),
+        );
+        let toolbar_tint: View = match backdrop.toolbar_tint() {
+            Some(color) => Border::new()
+                .grid_row(0)
+                .grid_row_span(2)
+                .background(Brush::Solid(color))
+                .into(),
+            None => View::empty(),
+        };
+        let image = backdrop_image(&backdrop, &self.backdrop_image);
+        let host = self.backdrop_image.clone();
+        context.use_effect(
+            "backdrop-image",
+            (backdrop.image.clone(), format!("{:?}", backdrop.placement)),
+            move || {
+                let _ = host.request_native_element(|result| {
+                    if let Ok(element) = result
+                        && let Err(e) = xaml::pass_through(&element)
+                    {
+                        eprintln!("背景画像を押せないようにできない: {e}");
+                    }
+                });
+                None
+            },
+        );
         Grid::new()
             .element_ref(&self.root)
             // 窓の地（WinUI は外観を替えても窓の地を塗り直さないので、ここで塗る）。
@@ -7599,6 +8167,7 @@ impl Root {
                 GridLength::Auto,
             ])
             .children((
+                toolbar_tint,
                 menu_bar,
                 toolbar,
                 tab_strip,
@@ -7612,9 +8181,57 @@ impl Root {
                     .on_drop(context.callback(Message::Dropped))
                     .content(body),
                 self.status_bar(context),
+                image,
                 dialog,
             ))
     }
+}
+
+/// 窓の中身の上に薄く重ねる背景画像（なければ空）。押す・引くは下の部品へ通す（描いた後に外す）。
+fn backdrop_image(backdrop: &crate::backdrop::Backdrop, host: &ElementRef<Image>) -> View {
+    use crate::backdrop::Placement;
+    let Some(path) = backdrop.image.as_deref() else {
+        return View::empty();
+    };
+    let Ok(image) = Image::new().source_file(path) else {
+        return View::empty();
+    };
+    let (horizontal, vertical, stretch) = match backdrop.placement {
+        Placement::Fill => (
+            HorizontalAlignment::Stretch,
+            VerticalAlignment::Stretch,
+            Stretch::UniformToFill,
+        ),
+        Placement::TopLeft => (
+            HorizontalAlignment::Left,
+            VerticalAlignment::Top,
+            Stretch::None,
+        ),
+        Placement::TopRight => (
+            HorizontalAlignment::Right,
+            VerticalAlignment::Top,
+            Stretch::None,
+        ),
+        Placement::BottomLeft => (
+            HorizontalAlignment::Left,
+            VerticalAlignment::Bottom,
+            Stretch::None,
+        ),
+        Placement::BottomRight => (
+            HorizontalAlignment::Right,
+            VerticalAlignment::Bottom,
+            Stretch::None,
+        ),
+    };
+    image
+        .element_ref(host)
+        .grid_row(0)
+        .grid_row_span(5)
+        .stretch(stretch)
+        .horizontal_alignment(horizontal)
+        .vertical_alignment(vertical)
+        .opacity(backdrop.image_opacity())
+        .into()
 }
 
 impl Root {
@@ -8533,6 +9150,29 @@ impl Root {
                             .on_text_changed(context.callback(Message::BranchName)),
                     )),
                 ),
+            Some(Dialog::PathPicker(picker)) => dialog
+                .is_open(true)
+                .title(match picker.purpose {
+                    crate::pathpicker::Purpose::AddSsh => tr!("Choose a Repository"),
+                    crate::pathpicker::Purpose::ScanRoot => tr!("Add a Folder to Scan"),
+                })
+                .primary_button_text(tr!("Choose"))
+                .close_button_text(tr!("Cancel"))
+                .is_primary_button_enabled(picker.chosen().is_some())
+                .content(crate::pathpicker::view(
+                    picker,
+                    &crate::pathpicker::Callbacks {
+                        pick: Box::new(|at| {
+                            context.callback(move |i| {
+                                Message::Picker(crate::pathpicker::Event::Pick(at, i))
+                            })
+                        }),
+                        typed: context.callback(|t| {
+                            Message::Picker(crate::pathpicker::Event::Typed(t))
+                        }),
+                        go: context.callback(|()| Message::Picker(crate::pathpicker::Event::Go)),
+                    },
+                )),
             Some(Dialog::AddSsh { host, path }) => dialog
                 .is_open(true)
                 .title(tr!("Add SSH Connection"))
@@ -8553,10 +9193,24 @@ impl Root {
                             .placeholder_text(tr!("user@host:port (or a name in ~/.ssh/config)"))
                             .on_text_changed(context.callback(Message::BranchName)),
                         TextBlock::new().text(tr!("Path")),
-                        TextBox::new()
-                            .text(path.clone())
-                            .placeholder_text(tr!("Folder of the repository on the host"))
-                            .on_text_changed(context.callback(Message::SshPath)),
+                        Grid::new()
+                            .columns([GridLength::Star(1.0), GridLength::Auto])
+                            .column_spacing(6.0)
+                            .children((
+                                TextBox::new()
+                                    .grid_column(0)
+                                    .text(path.clone())
+                                    .placeholder_text(tr!("Folder of the repository on the host"))
+                                    .on_text_changed(context.callback(Message::SshPath)),
+                                Button::new()
+                                    .grid_column(1)
+                                    .is_enabled(crate::remote::ssh_location(host, "~").is_some())
+                                    .on_click(context.callback(|()| {
+                                        Message::Command("ssh-browse".to_owned())
+                                    }))
+                                    .content(TextBlock::new().text(tr!("Choose…"))),
+                            )),
+                        self.ssh_check_line(host, context),
                     )),
                 ),
             Some(Dialog::NewGroup { name, .. }) => dialog
@@ -9681,38 +10335,7 @@ impl Root {
             })
             .and_then(|e| if e.gone { None } else { e.detail.clone() });
         context.spawn_background(move |_| {
-            let between = |base: &str| -> Result<(u64, Vec<String>), String> {
-                let command = json!({ "op": "between", "base": base, "tip": &name, "limit": 30 });
-                let reply: Value = serde_json::from_str(&repo.run_json(&command.to_string()))
-                    .map_err(|e| e.to_string())?;
-                if reply["ok"].as_bool() != Some(true) {
-                    return Err(reply["error"]
-                        .as_str()
-                        .map_or_else(|| tr!("Couldn’t check the branches"), str::to_owned));
-                }
-                let info = &reply["info"];
-                let commits = info["commits"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .map(|c| {
-                        let oid = c["oid"].as_str().unwrap_or_default();
-                        format!(
-                            "{}  {}",
-                            &oid[..oid.len().min(8)],
-                            c["subject"].as_str().unwrap_or_default()
-                        )
-                    })
-                    .collect();
-                Ok((info["count"].as_u64().unwrap_or(0), commits))
-            };
-            let checked = between("HEAD").and_then(|head| match upstream {
-                Some(u) if head.0 > 0 => {
-                    let up = between(&u)?;
-                    Ok(if up.0 < head.0 { up } else { head })
-                }
-                _ => Ok(head),
-            });
+            let checked = unique_commits(&repo, &name, upstream);
             Message::DeleteChecked(repo, name, checked)
         });
     }
@@ -9936,6 +10559,15 @@ impl Root {
         let Some(entry) = self.sidebar_key.as_deref().and_then(|k| self.entry(k)) else {
             return Vec::new();
         };
+        // いくつも選んでいて、その 1 つを右クリックしたなら、選んだものすべてに効くメニュー。
+        let selected = selected_refs();
+        if selected.len() > 1
+            && selected
+                .iter()
+                .any(|(kind, name)| *kind == entry.kind && *name == entry.name)
+        {
+            return self.several_menu(&selected);
+        }
         let name = entry.name.as_str();
         let current = self.head_name();
         let is_head = entry.kind == RefKind::Local
@@ -10069,6 +10701,179 @@ impl Root {
             items.extend(self.tag_items(name));
         }
         items
+    }
+
+    /// いくつも選んだブランチ・タグのメニュー（GTK4 版の `refops::several`）: 名前をコピー、今のブランチ以外を 1 つの
+    /// コミットで merge、bundle に、ローカルブランチだけならまとめてお気に入り・アーカイブ・削除、タグだけなら
+    /// まとめて Push・削除。いくつもの名前は改行でつなぐ（ref の名前に入らない）。
+    fn several_menu(&self, selected: &[(amonhen_model::RefKind, String)]) -> Vec<MenuItem> {
+        use amonhen_model::RefKind;
+        let names: Vec<&str> = selected.iter().map(|(_, n)| n.as_str()).collect();
+        let head = self.refs.as_ref().and_then(|r| r.refs.head_branch.clone());
+        let mut items = vec![MenuItem::item(
+            format!("copy:{}", names.join("\n")),
+            tr!("Copy {count} Names", count = names.len()),
+        )];
+        // 今のブランチ以外を、選んだ順に 1 つのコミットで merge する（octopus）。
+        let merged: Vec<String> = selected
+            .iter()
+            .filter(|(kind, name)| {
+                matches!(kind, RefKind::Local | RefKind::Remote | RefKind::Tag)
+                    && !(*kind == RefKind::Local && Some(name) == head.as_ref())
+            })
+            .filter_map(|(kind, name)| {
+                self.refs
+                    .as_ref()?
+                    .refs
+                    .entries
+                    .iter()
+                    .find(|e| e.kind == *kind && e.name == *name)?
+                    .target
+                    .map(|t| t.to_string())
+            })
+            .collect();
+        if merged.len() > 1 {
+            items.push(MenuItem::item(
+                format!("merge-several:{}", merged.join(",")),
+                tr!(
+                    "Merge {count} into {branch}…",
+                    count = merged.len(),
+                    branch = self.head_name()
+                ),
+            ));
+        }
+        let full: Vec<String> = selected
+            .iter()
+            .filter_map(|(kind, name)| match kind {
+                RefKind::Local => Some(format!("refs/heads/{name}")),
+                RefKind::Remote => Some(format!("refs/remotes/{name}")),
+                RefKind::Tag => Some(format!("refs/tags/{name}")),
+                _ => None,
+            })
+            .collect();
+        if full.len() == selected.len() {
+            items.push(MenuItem::item(
+                format!("bundle-several:{}", full.join("\n")),
+                tr!("Save {count} as Bundle…", count = full.len()),
+            ));
+        }
+        let locals: Vec<&str> = selected
+            .iter()
+            .filter(|(kind, _)| *kind == RefKind::Local)
+            .map(|(_, n)| n.as_str())
+            .collect();
+        if locals.len() == selected.len() {
+            items.push(MenuItem::separator("-branches"));
+            let branch = |n: &str| self.groups.as_ref().and_then(|g| g.branches.get(n));
+            let all_pinned = locals
+                .iter()
+                .all(|n| branch(n).is_some_and(|b| b.pinned.is_some()));
+            items.push(MenuItem::item(
+                format!("favorite-several:{}", locals.join("\n")),
+                if all_pinned {
+                    tr!("Remove {count} from Favorites", count = locals.len())
+                } else {
+                    tr!("Add {count} to Favorites", count = locals.len())
+                },
+            ));
+            let all_archived = locals.iter().all(|n| branch(n).is_some_and(|b| b.archived));
+            items.push(MenuItem::item(
+                format!("archive-several:{}", locals.join("\n")),
+                if all_archived {
+                    tr!("Unarchive {count} Branches", count = locals.len())
+                } else {
+                    tr!("Archive {count} Branches", count = locals.len())
+                },
+            ));
+            // 今のブランチと、ほかの worktree が checkout しているブランチは消せない（git が断る）。
+            let used = |n: &str| {
+                Some(n) == head.as_deref()
+                    || self
+                        .worktrees
+                        .iter()
+                        .any(|w| w.branch.as_deref() == Some(n))
+            };
+            if !locals.iter().any(|n| used(n)) {
+                items.push(MenuItem::item(
+                    format!("delete-several:{}", locals.join("\n")),
+                    tr!("Delete {count} Branches…", count = locals.len()),
+                ));
+            }
+        }
+        let tags: Vec<&str> = selected
+            .iter()
+            .filter(|(kind, _)| *kind == RefKind::Tag)
+            .map(|(_, n)| n.as_str())
+            .collect();
+        if tags.len() == selected.len() {
+            items.push(MenuItem::separator("-tags"));
+            // リモートごとに、まだないタグだけ（fetch のときに読んだ様子。まだ読んでいなければ全部。GTK4 版の
+            // `tag_items`）。
+            for remote in self.tag_remotes["remotes"].as_array().into_iter().flatten() {
+                let Some(name) = remote["name"].as_str() else {
+                    continue;
+                };
+                let checked = remote["checked"].is_i64();
+                let missing: Vec<&str> = tags
+                    .iter()
+                    .copied()
+                    .filter(|t| {
+                        !checked
+                            || self.tag_remotes["tags"][*t][name]
+                                .as_str()
+                                .is_none_or(|s| s == "missing")
+                    })
+                    .collect();
+                if missing.is_empty() {
+                    continue;
+                }
+                items.push(MenuItem::item(
+                    format!("push-tags:{name}|{}", missing.join("\n")),
+                    tr!(
+                        "Push {count} Tags to {remote}…",
+                        count = missing.len(),
+                        remote = name
+                    ),
+                ));
+            }
+            items.push(MenuItem::item(
+                format!("delete-tags:{}", tags.join("\n")),
+                tr!("Delete {count} Tags…", count = tags.len()),
+            ));
+        }
+        items
+    }
+
+    /// いくつものブランチを消す前に、ほかのブランチにないコミットがあるかを調べる（GTK4 版の
+    /// `sheets::delete_branches`）。
+    fn check_delete_several(&mut self, context: &ComponentContext<Self>, names: Vec<String>) {
+        let Some(repo) = self.repo.clone() else {
+            return beep();
+        };
+        let upstreams: Vec<Option<String>> = names
+            .iter()
+            .map(|name| {
+                self.refs
+                    .as_ref()
+                    .and_then(|r| {
+                        r.refs
+                            .entries
+                            .iter()
+                            .find(|e| e.kind == amonhen_model::RefKind::Local && e.name == *name)
+                    })
+                    .and_then(|e| if e.gone { None } else { e.detail.clone() })
+            })
+            .collect();
+        context.spawn_background(move |_| {
+            let counts = names
+                .iter()
+                .zip(upstreams)
+                .map(|(name, upstream)| {
+                    unique_commits(&repo, name, upstream).map(|(count, _)| (name.clone(), count))
+                })
+                .collect();
+            Message::DeleteSeveralChecked(repo, counts)
+        });
     }
 
     /// submodule と Submodules の見出しのメニュー（GTK4 版の `refops` と `submodulesheet`）。
@@ -10827,6 +11632,48 @@ impl Root {
         ));
         items.extend(deletes);
         items
+    }
+
+    /// いくつものブランチをお気に入りに入れる（まだのものを後ろに）・外す（`remove`）命令（GTK4 版の
+    /// `favorite_commands`。外すときは残りの順を詰める）。
+    fn favorite_several_commands(&self, names: &[&str], remove: bool) -> Vec<Value> {
+        let mut pinned: Vec<(String, i64)> = self
+            .groups
+            .as_ref()
+            .map(|g| {
+                g.branches
+                    .iter()
+                    .filter_map(|(n, b)| Some((n.clone(), b.pinned?)))
+                    .collect()
+            })
+            .unwrap_or_default();
+        pinned.sort_by_key(|(n, rank)| (*rank, n.clone()));
+        let mut order: Vec<String> = pinned.into_iter().map(|(n, _)| n).collect();
+        let mut commands = Vec::new();
+        if remove {
+            order.retain(|n| !names.contains(&n.as_str()));
+            for n in names {
+                commands.push(json!({
+                    "op": "configSet",
+                    "key": format!("branch.{n}.amonhenPinned"),
+                    "value": null,
+                }));
+            }
+        } else {
+            for n in names {
+                if !order.iter().any(|o| o == n) {
+                    order.push((*n).to_owned());
+                }
+            }
+        }
+        commands.extend(order.iter().enumerate().map(|(i, n)| {
+            json!({
+                "op": "configSet",
+                "key": format!("branch.{n}.amonhenPinned"),
+                "value": (i + 1).to_string(),
+            })
+        }));
+        commands
     }
 
     /// `name` をお気に入りに入れる・外す命令（GTK4 版の `favorite_commands`。外すときは残りの順を詰める）。
@@ -11830,10 +12677,206 @@ impl Root {
                     .content(running),
             ));
         StackPanel::new().grid_row(4).children((
+            self.connection_band(context),
             self.failure_band(context),
             self.sequence_band(context),
             bar,
         ))
+    }
+
+    /// ツールバーのリポジトリ名の一覧に出す、この PC のリポジトリのブランチと状態を裏で読む（ref が変わるたびに
+    /// 呼ばれるので、読むのは 1 分に 1 回まで）。
+    fn peek_switch_targets(&mut self, context: &ComponentContext<Self>) {
+        if self
+            .switch_peeked_at
+            .is_some_and(|t| t.elapsed() < std::time::Duration::from_secs(60))
+        {
+            return;
+        }
+        self.switch_peeked_at = Some(std::time::Instant::now());
+        let locations: Vec<String> = crate::repositories::switch_targets()
+            .into_iter()
+            .take(SWITCH_ITEMS)
+            .map(|(location, ..)| location)
+            .filter(|l| !crate::repositories::is_remote(l))
+            .collect();
+        context
+            .spawn_background(move |_| Message::SwitchPeeked(crate::repositories::peek(locations)));
+    }
+
+    /// ツールバーの左のリポジトリ名（GTK4 版・macOS 版と同じ）: 押すと、ブックマークのリポジトリを、お気に入り
+    /// （★）を先に、その後は最後に開いた順に出し、選んだものにこのタブを替える。終わりに Repositories。
+    fn repository_switcher(&self, context: &ViewContext<Self>) -> View {
+        let Some(tab) = crate::tabs::current().filter(|t| !t.repositories) else {
+            return View::empty();
+        };
+        let mut items: Vec<MenuItem> = crate::repositories::switch_targets()
+            .into_iter()
+            .take(SWITCH_ITEMS)
+            .map(|(location, name, favorite)| {
+                let current = location.eq_ignore_ascii_case(&tab.location);
+                let name = match self.switch_peeks.get(&location) {
+                    Some(peek) => format!("{name}    {}", crate::repositories::peek_summary(peek)),
+                    None => name,
+                };
+                let label = match (current, favorite) {
+                    (true, _) => format!("✓ {name}"),
+                    (false, true) => format!("★ {name}"),
+                    (false, false) => name,
+                };
+                MenuItem::item(format!("switch-repository:{location}"), label)
+            })
+            .collect();
+        if !items.is_empty() {
+            items.push(MenuItem::separator("-repositories"));
+        }
+        items.push(MenuItem::item("repositories", "Repositories…"));
+        DropDownButton::new()
+            .grid_column(0)
+            .margin(Thickness::new(8.0, 0.0, 4.0, 0.0))
+            .vertical_alignment(VerticalAlignment::Center)
+            .content(
+                TextBlock::new()
+                    .text(crate::repositories::display_name(&tab.location))
+                    .font_weight(FontWeight::SEMI_BOLD)
+                    .max_width(220.0)
+                    .text_trimming(TextTrimming::CharacterEllipsis),
+            )
+            .menu(Menu::new(items, context.callback(Message::Command)))
+    }
+
+    /// SSH 接続を追加するダイアログの「接続を確認」と、その結果（打った SSH 先を確かめたときだけ）。
+    fn ssh_check_line(&self, host: &str, context: &ViewContext<Self>) -> View {
+        let result = self
+            .ssh_check
+            .as_ref()
+            .filter(|(h, _)| h == host.trim())
+            .map(|(_, r)| r.clone());
+        let checking = matches!(result, Some(None));
+        let status: View = match result {
+            Some(None) => StackPanel::new()
+                .orientation(Orientation::Horizontal)
+                .spacing(6.0)
+                .children((
+                    ProgressRing::new().is_active(true).width(14.0).height(14.0),
+                    TextBlock::new().text(tr!("Connecting…")).font_size(12.0),
+                )),
+            Some(Some((text, ok))) => TextBlock::new()
+                .text(text)
+                .font_size(12.0)
+                .text_wrapping(TextWrapping::Wrap)
+                .is_text_selection_enabled(true)
+                .foreground(Brush::Solid(if ok {
+                    Color::rgb(0x2e, 0x9e, 0x4f)
+                } else {
+                    Color::rgb(0xd0, 0x3a, 0x3a)
+                }))
+                .into(),
+            None => View::empty(),
+        };
+        Grid::new()
+            .columns([GridLength::Auto, GridLength::Star(1.0)])
+            .column_spacing(8.0)
+            .margin(Thickness::new(0.0, 4.0, 0.0, 0.0))
+            .children((
+                Button::new()
+                    .grid_column(0)
+                    .vertical_alignment(VerticalAlignment::Top)
+                    .is_enabled(!host.trim().is_empty() && !checking)
+                    .on_click(context.callback(|()| Message::Command("ssh-check".to_owned())))
+                    .content(TextBlock::new().text(tr!("Check Connection"))),
+                Border::new()
+                    .grid_column(1)
+                    .vertical_alignment(VerticalAlignment::Center)
+                    .content(status),
+            ))
+    }
+
+    /// 詳細のメッセージの中の、探している文字の一致の数（History のコミットを出しているときだけ）。
+    fn message_matches(&self) -> usize {
+        if self.page == Page::WorkingCopy {
+            return 0;
+        }
+        message_match_count(self.info.as_ref().map(|(i, _)| i), &self.diff_find_query)
+    }
+
+    /// 探す帯の数（「今 / 全部」。メッセージの一致を先に数える）。`found` は差分の一致の数と今の一致。
+    fn find_status(&self, in_message: usize, found: (usize, Option<usize>)) -> String {
+        let total = in_message + found.0;
+        if self.diff_find_query.trim().is_empty() {
+            return String::new();
+        }
+        if total == 0 {
+            return tr!("No Matches");
+        }
+        let now = match (self.diff_find_message, found.1) {
+            (Some(m), _) => m,
+            (None, Some(d)) => in_message + d,
+            (None, None) => 0,
+        };
+        format!("{} / {total}", now + 1)
+    }
+
+    /// つながりが切れた帯（ステータスバーの上。GTK4 版の `show_disconnected`、macOS 版と同じ）: どこと切れたか、
+    /// 理由、Reconnect（同じ場所をこのタブで開き直す）。
+    fn connection_band(&self, context: &ViewContext<Self>) -> View {
+        let Some((repo, reason)) = &self.disconnected else {
+            return View::empty();
+        };
+        if !self.repo.as_ref().is_some_and(|r| Arc::ptr_eq(r, repo)) {
+            return View::empty();
+        }
+        let location = crate::tabs::current()
+            .map(|t| t.location)
+            .unwrap_or_default();
+        let host = crate::remote::host_of(&location).unwrap_or_else(|| "daemon".to_owned());
+        let heading = tr!("Lost connection to {host}", host = host);
+        // 理由が見出しで始まっていれば、その後ろだけ（GTK4 版の `reason_detail`）。
+        let detail = match reason.strip_prefix(heading.as_str()) {
+            Some(rest) => rest.strip_prefix(": ").unwrap_or(rest).to_owned(),
+            None => reason.clone(),
+        };
+        Border::new()
+            .background(Brush::Solid(crate::palette::note_band()))
+            .padding(Thickness::new(10.0, 5.0, 10.0, 5.0))
+            .content(
+                Grid::new()
+                    .columns([
+                        GridLength::Auto,
+                        GridLength::Auto,
+                        GridLength::Star(1.0),
+                        GridLength::Auto,
+                    ])
+                    .column_spacing(8.0)
+                    .children((
+                        TextBlock::new()
+                            .text("⚡")
+                            .foreground(Brush::Solid(crate::palette::warning_text()))
+                            .vertical_alignment(VerticalAlignment::Center)
+                            .grid_column(0),
+                        TextBlock::new()
+                            .text(heading)
+                            .font_size(12.0)
+                            .font_weight(FontWeight::SEMI_BOLD)
+                            .vertical_alignment(VerticalAlignment::Center)
+                            .grid_column(1),
+                        TextBlock::new()
+                            .text(detail)
+                            .font_size(12.0)
+                            .opacity(0.7)
+                            .text_trimming(TextTrimming::CharacterEllipsis)
+                            .vertical_alignment(VerticalAlignment::Center)
+                            .grid_column(2)
+                            .tooltip(reason.clone()),
+                        Button::new()
+                            .style(ButtonStyle::Accent)
+                            .grid_column(3)
+                            .on_click(
+                                context.callback(|()| Message::Command("try-again".to_owned())),
+                            )
+                            .content(TextBlock::new().text(tr!("Reconnect")).font_size(12.0)),
+                    )),
+            )
     }
 
     /// 途中の操作の帯（ステータスバーの上。どの画面でも出す。macOS 版・GTK4 版のステータスバーの行）。
@@ -12231,6 +13274,7 @@ impl Root {
                 self.page = self.repositories_from;
             }
             Action::Scan(roots) => {
+                scan_remote_roots(state, context);
                 context.spawn_background(move |_| {
                     let (found, dirs) = crate::repositories::scan_with_dirs(roots);
                     Message::Repos(crate::repositories::Event::Scanned(found, dirs))
@@ -12541,7 +13585,103 @@ impl Root {
     }
 
     /// Repository Settings: `commands` を順に書いてから（失敗したらそこで止めて知らせる）、設定を読み直す。
-    fn write_repo_settings(&self, commands: Vec<Value>, context: &ComponentContext<Self>) {
+    /// Settings > Git が読み書きする先（この機械なら開いているリポジトリ、SSH 先ならそこにつないだエンジン）と、
+    /// 今の `git_epoch`。
+    fn settings_git_repo(&self) -> Option<(Arc<Repository>, u64)> {
+        let settings = self.settings.as_ref()?;
+        let repo = match &settings.git_target {
+            None => self.repo.clone()?,
+            Some(host) => settings.ssh.as_ref()?.repo_of(host)?,
+        };
+        Some((repo, settings.git_epoch))
+    }
+
+    /// Settings > Git が読み書きする先を変える（この機械なら None）。変わったら、出していた値を捨てて読み直す。
+    /// SSH 先にまだつながっていなければ、つながったときに呼び直す。
+    fn retarget_git(&mut self, target: Option<String>, context: &ComponentContext<Self>) {
+        let Some(settings) = self.settings.as_mut() else {
+            return;
+        };
+        let loaded = settings.git.is_some() || settings.global.is_some();
+        if settings.git_target == target && loaded {
+            return;
+        }
+        if settings.git_target != target || loaded {
+            settings.git_target = target;
+            settings.git_epoch += 1;
+            settings.git = None;
+            settings.global = None;
+            settings.programs = None;
+        }
+        if let Some((repo, epoch)) = self.settings_git_repo() {
+            load_git_settings(repo, epoch, context);
+        }
+    }
+
+    fn write_repo_settings(&mut self, commands: Vec<Value>, context: &ComponentContext<Self>) {
+        self.record_settings_change(false, &commands);
+        self.send_repo_settings(commands, context);
+    }
+
+    /// 設定の画面で書く前に、戻す命令を覚える（やり直しは捨てる）。
+    fn record_settings_change(&mut self, global: bool, commands: &[Value]) {
+        let entries = if global {
+            self.settings
+                .as_ref()
+                .and_then(|s| s.global.as_ref())
+                .and_then(|g| g.entries.clone())
+        } else {
+            self.repo_settings.as_ref().and_then(|s| s.entries.clone())
+        };
+        let Some(entries) = entries else { return };
+        let undo = crate::reposettings::undo_commands(&entries, commands);
+        if undo.is_empty() {
+            return;
+        }
+        self.settings_undo.push(SettingsChange {
+            global,
+            git_target: self.settings.as_ref().and_then(|s| s.git_target.clone()),
+            undo,
+            redo: commands.to_vec(),
+        });
+        self.settings_redo.clear();
+    }
+
+    /// 設定の画面の Undo（`redo` なら Redo）。戻す先が今の画面と違えば（Settings > Git の読み書きの先が変わった）
+    /// 何もしない。
+    fn undo_settings(&mut self, redo: bool, context: &ComponentContext<Self>) {
+        let stack = if redo {
+            &mut self.settings_redo
+        } else {
+            &mut self.settings_undo
+        };
+        let Some(change) = stack.pop() else {
+            return beep();
+        };
+        let target = self.settings.as_ref().and_then(|s| s.git_target.clone());
+        if change.global && change.git_target != target {
+            return beep();
+        }
+        let apply = if redo {
+            change.redo.clone()
+        } else {
+            change.undo.clone()
+        };
+        if change.global {
+            if let Some((repo, epoch)) = self.settings_git_repo() {
+                write_global_settings(repo, epoch, apply, context);
+            }
+        } else {
+            self.send_repo_settings(apply, context);
+        }
+        if redo {
+            self.settings_undo.push(change);
+        } else {
+            self.settings_redo.push(change);
+        }
+    }
+
+    fn send_repo_settings(&self, commands: Vec<Value>, context: &ComponentContext<Self>) {
         let Some(repo) = self.repo.clone() else {
             return;
         };
@@ -12781,9 +13921,35 @@ impl Root {
                 theme_button: Box::new(|key: String| {
                     context.callback(move |()| Message::SettingsThemeButton(key.clone()))
                 }),
+                backdrop_button: Box::new(|event| {
+                    context.callback(move |()| Message::Backdrop(event.clone()))
+                }),
+                backdrop_placement: context
+                    .callback(|i| Message::Backdrop(crate::backdrop::Event::Placement(i))),
+                backdrop_number: Box::new(|f| context.callback(move |v| Message::Backdrop(f(v)))),
+                backdrop_tint: context
+                    .callback(|on| Message::Backdrop(crate::backdrop::Event::Tint(on))),
+                backdrop_color: context
+                    .callback(|c| Message::Backdrop(crate::backdrop::Event::ToolbarColor(c))),
                 template_remove: Box::new(|i| {
                     context.callback(move |()| Message::SettingsTemplateRemove(i))
                 }),
+                ssh: crate::sshhosts::Callbacks {
+                    event: Box::new(|f| context.callback(move |v| Message::SshHosts(f(v)))),
+                    text: Box::new(|f| context.callback(move |v| Message::SshHosts(f(v)))),
+                    button: Box::new(|f| context.callback(move |()| Message::SshHosts(f()))),
+                    check: Box::new(|f| context.callback(move |v| Message::SshHosts(f(v)))),
+                    scan_depth: Box::new(|path| {
+                        context.callback(move |i| {
+                            Message::SshHosts(crate::sshhosts::Event::ScanDepth(path.clone(), i))
+                        })
+                    }),
+                    scan_remove: Box::new(|path| {
+                        context.callback(move |()| {
+                            Message::SshHosts(crate::sshhosts::Event::ScanRemove(path.clone()))
+                        })
+                    }),
+                },
             },
         );
         Border::new()
@@ -13350,6 +14516,9 @@ impl Root {
                             } else {
                                 ""
                             },
+                            self.diff_find_open
+                                .then_some(self.diff_find_message)
+                                .flatten(),
                         )),
                     StackPanel::new()
                         .orientation(Orientation::Horizontal)
@@ -13738,6 +14907,18 @@ impl Root {
             .iter()
             .find(|e| e.kind as u8 == kind && e.name == name)
     }
+}
+
+/// ツールバーのリポジトリ名の一覧に出す数。
+const SWITCH_ITEMS: usize = 30;
+
+/// 設定の画面で書いた 1 つの変更（戻す命令と、やり直す命令）。`global` なら Settings > Git（`git_target` はその
+/// 読み書きの先）、でなければ Repository Settings。
+struct SettingsChange {
+    global: bool,
+    git_target: Option<String>,
+    undo: Vec<Value>,
+    redo: Vec<Value>,
 }
 
 /// 切り替える先（GTK4 版の `sheets::CheckoutTarget`）。
@@ -14378,7 +15559,13 @@ fn person(info: &Value, role: &str) -> String {
 
 /// コミットの詳細（作者、コミッター、Commit・Parent・Refs の表、件名と本文）。
 /// `text` の中の `query` の一致（大文字・小文字を区別しない）に色を付けた runs。一致がなければ None。
+#[cfg(test)]
 fn highlighted(text: &str, query: &str, bold: bool) -> Option<RichText> {
+    highlighted_at(text, query, bold, None)
+}
+
+/// [`highlighted`] の、`current` 番目の一致を今の一致として地の色で目立たせるもの（↑・↓ で動く先）。
+fn highlighted_at(text: &str, query: &str, bold: bool, current: Option<usize>) -> Option<RichText> {
     let query = query.trim();
     if query.is_empty() {
         return None;
@@ -14391,11 +15578,14 @@ fn highlighted(text: &str, query: &str, bold: bool) -> Option<RichText> {
     }
     let mut inlines = Vec::new();
     let mut at = 0;
+    let mut nth = 0;
     for (start, _) in lower.match_indices(&needle) {
         let end = start + needle.len();
         if start < at || !text.is_char_boundary(start) || !text.is_char_boundary(end) {
             continue;
         }
+        let is_current = current == Some(nth);
+        nth += 1;
         if at < start {
             inlines.push(RichTextInline::Run(RichTextRun {
                 text: text[at..start].to_owned(),
@@ -14406,8 +15596,13 @@ fn highlighted(text: &str, query: &str, bold: bool) -> Option<RichText> {
         inlines.push(RichTextInline::Run(RichTextRun {
             text: text[start..end].to_owned(),
             is_bold: true,
-            foreground: Some(Color::rgb(0xb2, 0x5f, 0x00)),
-            ..RichTextRun::default()
+            // 今の一致は濃く、ほかは橙（差分の中の今の一致と同じ見分け方）。
+            foreground: Some(if is_current {
+                Color::rgb(0xd0, 0x3a, 0x3a)
+            } else {
+                Color::rgb(0xb2, 0x5f, 0x00)
+            }),
+            is_italic: is_current,
         }));
         at = end;
     }
@@ -14424,11 +15619,52 @@ fn highlighted(text: &str, query: &str, bold: bool) -> Option<RichText> {
     Some(RichText::single_paragraph(inlines))
 }
 
+/// `text` の中の `query` の一致の数（[`highlighted`] が色を付けるものと同じ数え方）。
+fn match_count(text: &str, query: &str) -> usize {
+    let query = query.trim();
+    let lower = text.to_lowercase();
+    if query.is_empty() || lower.len() != text.len() {
+        return 0;
+    }
+    let needle = query.to_lowercase();
+    let mut at = 0;
+    let mut n = 0;
+    for (start, _) in lower.match_indices(&needle) {
+        let end = start + needle.len();
+        if start < at || !text.is_char_boundary(start) || !text.is_char_boundary(end) {
+            continue;
+        }
+        n += 1;
+        at = end;
+    }
+    n
+}
+
+/// コミットのメッセージの件名と本文（詳細に出す形）。
+fn message_parts(info: &Value) -> (&str, &str) {
+    let message = info["message"].as_str().unwrap_or_default().trim_end();
+    let (subject, body) = message.split_once('\n').unwrap_or((message, ""));
+    (subject, body.trim())
+}
+
+/// 詳細のメッセージの中の `query` の一致の数（件名と本文）。
+fn message_match_count(info: Option<&Value>, query: &str) -> usize {
+    let Some(info) = info.filter(|i| i["selection"].is_null()) else {
+        return 0;
+    };
+    let (subject, body) = message_parts(info);
+    match_count(subject, query) + match_count(body, query)
+}
+
 /// メッセージの 1 つの欄（`query` の一致があれば色を付ける）。
-fn message_text(text: &str, query: &str, size: f64, bold: bool) -> View {
-    // 色を付けるときと付けないときで部品が違うので、鍵を分けて作り直させる。
-    let runs = highlighted(text, query, bold);
-    let key = if runs.is_some() { "found" } else { "plain" };
+fn message_text(text: &str, query: &str, size: f64, bold: bool, current: Option<usize>) -> View {
+    // 色を付けるときと付けないときで部品が違うので、鍵を分けて作り直させる（今の一致が動いたときも）。
+    let runs = highlighted_at(text, query, bold, current);
+    let key = match (&runs, current) {
+        (None, _) => "plain".to_owned(),
+        (Some(_), Some(c)) => format!("found-{c}"),
+        (Some(_), None) => "found".to_owned(),
+    };
     let view: View = match runs {
         Some(runs) => RichTextBlock::new()
             .paragraphs(runs)
@@ -14451,7 +15687,8 @@ fn message_text(text: &str, query: &str, size: f64, bold: bool) -> View {
     View::keyed_fragment([(key, view)])
 }
 
-fn details(info: Option<(&Value, Option<&Value>)>, query: &str) -> View {
+/// `current` は、メッセージの中の今の一致（件名から数えて何番目か。差分の中にあれば None）。
+fn details(info: Option<(&Value, Option<&Value>)>, query: &str, current: Option<usize>) -> View {
     let Some((info, extras)) = info else {
         return TextBlock::new().margin(12.0).into();
     };
@@ -14600,16 +15837,21 @@ fn details(info: Option<(&Value, Option<&Value>)>, query: &str) -> View {
             rows.push(line("Pushed", text).into());
         }
     }
-    let message = info["message"].as_str().unwrap_or_default().trim_end();
-    let (subject, body) = message.split_once('\n').unwrap_or((message, ""));
+    let (subject, body) = message_parts(info);
+    // 今の一致が件名の中か本文の中か。
+    let in_subject = match_count(subject, query);
+    let (subject_current, body_current) = match current {
+        Some(c) if c < in_subject => (Some(c), None),
+        Some(c) => (None, Some(c - in_subject)),
+        None => (None, None),
+    };
     rows.push(
         Border::new()
             .margin(Thickness::new(0.0, 8.0, 0.0, 0.0))
-            .content(message_text(subject, query, 14.0, true)),
+            .content(message_text(subject, query, 14.0, true, subject_current)),
     );
-    let body = body.trim();
     if !body.is_empty() {
-        rows.push(message_text(body, query, 13.0, false));
+        rows.push(message_text(body, query, 13.0, false, body_current));
     }
     StackPanel::new()
         .spacing(4.0)
@@ -15064,6 +16306,29 @@ impl HistoryView {
                 .with(|t| t.set((Instant::now(), if all { Instant::now() } else { fresh })));
             self.sender.send(Message::CountWorktrees(all));
         }
+        // サイドバーの木にドラッグの受け口を付ける（作り直すと別の木になるので、0.5 秒ごとに見て付け直す）。
+        if TREE_DRAG_AT
+            .with(|t| t.get())
+            .is_none_or(|t| t.elapsed() >= std::time::Duration::from_millis(500))
+        {
+            TREE_DRAG_AT.with(|t| t.set(Some(Instant::now())));
+            hook_tree_drag();
+        }
+        // daemon・SSH 越しのつながりが切れたら、ステータスバーの上で知らせる（0.25 秒ごとに見る）。
+        if let Some(closed) = WATCHED_CONNECTION.with(|w| {
+            let mut w = w.borrow_mut();
+            let (repo, seen) = w.as_mut()?;
+            if seen.elapsed() < std::time::Duration::from_millis(250) {
+                return None;
+            }
+            *seen = Instant::now();
+            let reason = repo.connection_state()?.closed?;
+            let repo = repo.clone();
+            *w = None;
+            Some((repo, reason))
+        }) {
+            self.sender.send(Message::Disconnected(closed.0, closed.1));
+        }
         // 裏のスレッドが SSH 先にエンジンを送ってよいかを聞いていれば、ダイアログで聞く。
         if let Some(ask) = crate::remote::take_ask() {
             self.sender.send(Message::AskSendEngine(ask));
@@ -15263,14 +16528,10 @@ impl HistoryView {
             let found = view.map_or_else(Vec::new, |v| {
                 crate::render::find_in_diff(v, &self.diff_query)
             });
-            let status = if found.is_empty() {
-                tr!("No Matches")
-            } else {
-                found.len().to_string()
-            };
+            let count = found.len();
             s.renderer.diff_find = found;
             s.renderer.diff_current = None;
-            self.sender.send(Message::DiffFindStatus(status));
+            self.sender.send(Message::DiffFindCount(count));
         } else if diff_replaced {
             s.renderer.diff_find.clear();
             s.renderer.diff_current = None;
@@ -15341,12 +16602,15 @@ impl HistoryView {
     }
 
     /// 差分の中を `query` で探し、`step` だけ一致を移る（0 なら今見えている所から最初の一致）。件数の文字を返す。
-    fn find_in_diff(&mut self, query: String, step: i32) -> String {
-        if query != self.diff_query {
+    /// 差分の中の `query` の一致を探す（数と、今の一致）。`start` が Some なら、0 なら見えている所から、それ
+    /// 以外はその番号を今の一致にする。None なら、問い合わせが同じ限り今の一致はそのまま（今の一致がなければ
+    /// 付けない）。
+    fn find_in_diff(&mut self, query: String, start: Option<usize>) -> (usize, Option<usize>) {
+        let changed = query != self.diff_query;
+        if changed {
             self.diff_query = query;
             self.session.renderer.diff_current = None;
         }
-        let rows = self.diff_rows();
         let data = &self.session.data;
         let view = if self.working_page {
             data.working.as_ref().map(|w| &w.diff.view)
@@ -15357,32 +16621,42 @@ impl HistoryView {
             crate::render::find_in_diff(v, &self.diff_query)
         });
         self.diff.dirty = true;
-        let r = &mut self.session.renderer;
-        if found.is_empty() {
-            r.diff_find.clear();
-            r.diff_current = None;
-            return if self.diff_query.is_empty() {
-                String::new()
-            } else {
-                tr!("No Matches")
-            };
-        }
         let n = found.len();
-        let top = (self.diff.scroll_y / DIFF_ROW_HEIGHT) as u32;
-        let index = match (step, r.diff_current) {
-            (0, _) | (_, None) => found.iter().position(|m| m.0 >= top).unwrap_or(0),
-            (s, Some(c)) => (c as i64 + i64::from(s)).rem_euclid(n as i64) as usize,
-        };
-        let row = found[index].0;
+        let r = &mut self.session.renderer;
         r.diff_find = found;
+        if n == 0 {
+            r.diff_current = None;
+            return (0, None);
+        }
+        match start {
+            Some(_) => {
+                let top = (self.diff.scroll_y / DIFF_ROW_HEIGHT) as u32;
+                let index = r.diff_find.iter().position(|m| m.0 >= top).unwrap_or(0);
+                self.select_diff_match(Some(index));
+                (n, Some(index))
+            }
+            None => (n, self.session.renderer.diff_current),
+        }
+    }
+
+    /// 差分の中の `index` 番目の一致を今の一致にして、見えていなければ上から 3 分の 1 の所へ（None なら今の一致を
+    /// 外す。メッセージの中に移ったとき）。
+    fn select_diff_match(&mut self, index: Option<usize>) {
+        let rows = self.diff_rows();
+        let r = &mut self.session.renderer;
+        let Some(index) = index.filter(|i| *i < r.diff_find.len()) else {
+            r.diff_current = None;
+            self.diff.dirty = true;
+            return;
+        };
         r.diff_current = Some(index);
-        // 今の一致の行が見えていなければ、上から 3 分の 1 の所へ。
+        let row = r.diff_find[index].0;
         let (row_top, height) = (row as f32 * DIFF_ROW_HEIGHT, self.diff.height());
         if row_top < self.diff.scroll_y || row_top + DIFF_ROW_HEIGHT > self.diff.scroll_y + height {
             self.diff.scroll_y = row_top - height / 3.0;
         }
         self.diff.scroll_by(0.0, rows);
-        format!("{} / {n}", index + 1)
+        self.diff.dirty = true;
     }
 
     /// History を探す。同じ問い合わせをもう探してあれば、選んでいる行から次（`backwards` なら前）の一致へ。空なら
@@ -15814,14 +17088,48 @@ fn splitter(handle: &ElementRef<Grid>, split: Split, top: f64) -> View {
 }
 
 /// Git > Programs の候補と使う git を読む（裏で）。
-fn load_programs(repo: Arc<Repository>, context: &ComponentContext<Root>) {
+fn load_programs(repo: Arc<Repository>, epoch: u64, context: &ComponentContext<Root>) {
     context.spawn_background(move |_| {
-        Message::SettingsPrograms(crate::programs::load(|c| repo.run_json(c)))
+        Message::SettingsPrograms(epoch, crate::programs::load(|c| repo.run_json(c)))
+    });
+}
+
+/// Settings > Git を読む（`repo` のすべてのリポジトリの段の名前とメール・設定、署名の鍵、Programs）。`epoch` は
+/// 読み始めたときの `git_epoch`（読む先が変わった後に届いた答えは捨てる）。
+fn load_git_settings(repo: Arc<Repository>, epoch: u64, context: &ComponentContext<Root>) {
+    load_signing_keys(repo.clone(), Some(epoch), context);
+    load_programs(repo.clone(), epoch, context);
+    // `--global` の段の値（いくつもあれば最後のもの。git と同じ）。
+    context.spawn_background(move |_| {
+        let reply: Value =
+            serde_json::from_str(&repo.run_json(r#"{"op":"configList"}"#)).unwrap_or_default();
+        let value = |key: &str| {
+            reply["info"]["entries"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .rev()
+                .find(|e| {
+                    e["scope"].as_str() == Some("global")
+                        && e["key"]
+                            .as_str()
+                            .is_some_and(|k| k.eq_ignore_ascii_case(key))
+                })
+                .and_then(|e| e["value"].as_str())
+                .unwrap_or_default()
+                .to_owned()
+        };
+        Message::SettingsGit(
+            epoch,
+            value("user.name"),
+            value("user.email"),
+            global_entries(&reply),
+        )
     });
 }
 
 /// 署名の鍵を形式ごとに集める（裏で。集められなければ空）。
-fn load_signing_keys(repo: Arc<Repository>, global: bool, context: &ComponentContext<Root>) {
+fn load_signing_keys(repo: Arc<Repository>, epoch: Option<u64>, context: &ComponentContext<Root>) {
     context.spawn_background(move |_| {
         let keys = crate::reposettings::SIGNING_FORMATS
             .iter()
@@ -15833,13 +17141,14 @@ fn load_signing_keys(repo: Arc<Repository>, global: bool, context: &ComponentCon
                 (*f, crate::reposettings::signing_keys_of(&reply["info"]))
             })
             .collect();
-        Message::SigningKeysLoaded(global, keys)
+        Message::SigningKeysLoaded(epoch, keys)
     });
 }
 
 /// Settings > Git の値を書いてから読み直し、効いている値と設定元を出し直す（失敗したらそこで止めて知らせる）。
 fn write_global_settings(
     repo: Arc<Repository>,
+    epoch: u64,
     commands: Vec<Value>,
     context: &ComponentContext<Root>,
 ) {
@@ -15853,8 +17162,72 @@ fn write_global_settings(
         }
         let reply: Value =
             serde_json::from_str(&repo.run_json(r#"{"op":"configList"}"#)).unwrap_or_default();
-        Message::SettingsGit(String::new(), String::new(), global_entries(&reply))
+        Message::SettingsGit(epoch, String::new(), String::new(), global_entries(&reply))
     });
+}
+
+/// `name` にしかないコミットの数と、はじめの 30 件（HEAD と、上流があればそれのうち少ないほう。GTK4 版の
+/// `unique_commits`）。
+fn unique_commits(
+    repo: &Repository,
+    name: &str,
+    upstream: Option<String>,
+) -> Result<(u64, Vec<String>), String> {
+    let between = |base: &str| -> Result<(u64, Vec<String>), String> {
+        let command = json!({ "op": "between", "base": base, "tip": name, "limit": 30 });
+        let reply: Value = serde_json::from_str(&repo.run_json(&command.to_string()))
+            .map_err(|e| e.to_string())?;
+        if reply["ok"].as_bool() != Some(true) {
+            return Err(reply["error"]
+                .as_str()
+                .map_or_else(|| tr!("Couldn’t check the branches"), str::to_owned));
+        }
+        let info = &reply["info"];
+        let commits = info["commits"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|c| {
+                let oid = c["oid"].as_str().unwrap_or_default();
+                format!(
+                    "{}  {}",
+                    &oid[..oid.len().min(8)],
+                    c["subject"].as_str().unwrap_or_default()
+                )
+            })
+            .collect();
+        Ok((info["count"].as_u64().unwrap_or(0), commits))
+    };
+    between("HEAD").and_then(|head| match upstream {
+        Some(u) if head.0 > 0 => {
+            let up = between(&u)?;
+            Ok(if up.0 < head.0 { up } else { head })
+        }
+        _ => Ok(head),
+    })
+}
+
+/// サイドバーでいくつも選んでいる ref（History の範囲。1 つ以下なら空）。
+fn selected_refs() -> Vec<(amonhen_model::RefKind, String)> {
+    let mut list = Vec::new();
+    with_history(|h| {
+        if let crate::data::Scope::Refs(refs) = h.session.data.scope() {
+            list = refs;
+        }
+    });
+    list
+}
+
+/// SSH 先のスキャンするフォルダを、それぞれ裏で探す（SSH 先のエンジンの `find-repositories`。GTK4 版の
+/// `bookmarks::scan_root`）。SSH 先ごとの選択は UI のスレッドで読む。
+fn scan_remote_roots(state: &crate::repositories::State, context: &ComponentContext<Root>) {
+    for (path, depth, excludes) in state.remote_roots() {
+        let options = crate::remote::options_for(&path);
+        context.spawn_background(move |_| {
+            let found = crate::remote::find_repositories(&path, options, depth, &excludes);
+            Message::Repos(crate::repositories::Event::RemoteScanned(path, found))
+        });
+    }
 }
 
 /// `configList` の答えのうち、システムとすべてのリポジトリの段の項目（Settings > Git の行が読む）。
@@ -15890,7 +17263,6 @@ fn tab_strip(title: &str, context: &ViewContext<Root>) -> View {
         })
         .collect();
     TabView::new()
-        .grid_row(2)
         .selected_index(active)
         .can_reorder_tabs(true)
         .is_add_tab_button_visible(true)
@@ -16421,6 +17793,28 @@ fn attach_shortcuts(element: &IInspectable) -> windows_core_reactor::Result<()> 
         if !pressed.control && !pressed.alt {
             return;
         }
+        // 設定の画面: 文字の欄の外の Ctrl+Z・Ctrl+Shift+Z（Ctrl+Y）は、設定の変更の Undo・Redo（macOS 版・GTK4 版の
+        // ⌘Z・⇧⌘Z）。欄の中は欄の Undo に任せる。
+        if pressed.control
+            && !pressed.alt
+            && SETTINGS_SHOWN.with(std::cell::Cell::get)
+            && (pressed.key == 0x5A || pressed.key == 0x59)
+            && !args.OriginalSource().is_ok_and(|s| xaml::is_text_box(&s))
+        {
+            let redo = pressed.key == 0x59 || pressed.shift;
+            let _ = args.SetHandled(true);
+            with_history(|h| {
+                h.sender.send(Message::Command(
+                    if redo {
+                        "settings-redo"
+                    } else {
+                        "settings-undo"
+                    }
+                    .to_owned(),
+                ));
+            });
+            return;
+        }
         if let Some(id) = crate::menus::command_for(pressed) {
             let _ = args.SetHandled(true);
             with_history(|h| {
@@ -16547,6 +17941,85 @@ fn tree_item_key(from: &IInspectable) -> Option<(xaml::UIElement, String)> {
         node = xaml::VisualTreeHelper::GetParent(&node).ok()?;
     }
     None
+}
+
+/// 木の項目（TreeViewNode）の鍵。
+fn node_key(node: &IInspectable) -> Option<String> {
+    let unknown = node.cast::<windows_core_reactor::IUnknown>().ok()?;
+    windows_reactor::tree_node_key_by_identity(unknown.as_raw() as usize)
+}
+
+/// サイドバーの木のドラッグ（GTK4 版・macOS 版のお気に入りの並べ替え）。WinUI の TreeView は、もとから項目を引いて
+/// 別の項目の中・間へ動かせる。お気に入りのブランチだけを引けるようにし、Branches の中で落としたら、その並びを
+/// お気に入りの順にする（ほかの所なら何もしない）。どちらでも木は作り直す。
+fn hook_tree_drag() {
+    fn find(node: &xaml::DependencyObject, depth: u32) -> Option<xaml::TreeView> {
+        if let Ok(tree) = node.cast::<xaml::TreeView>() {
+            return Some(tree);
+        }
+        if depth == 0 {
+            return None;
+        }
+        let count = xaml::VisualTreeHelper::GetChildrenCount(node).ok()?;
+        (0..count).find_map(|i| find(&xaml::VisualTreeHelper::GetChild(node, i).ok()?, depth - 1))
+    }
+    let Some(tree) = SIDEBAR_ELEMENT
+        .with(|e| e.borrow().clone())
+        .and_then(|ui| find(&ui.cast().ok()?, 6))
+    else {
+        return;
+    };
+    let identity = tree
+        .cast::<windows_core_reactor::IUnknown>()
+        .map_or(0, |u| u.as_raw() as usize);
+    if TREE_DRAG.with(|d| d.borrow().0 == identity) {
+        return;
+    }
+    let mut revokers = Vec::new();
+    // お気に入り以外を引き始めたら取りやめる。
+    if let Ok(r) =
+        tree.DragItemsStarting(|_, args: Ref<xaml::TreeViewDragItemsStartingEventArgs>| {
+            let Some(args) = args.as_ref() else { return };
+            let Ok(items) = args.Items() else { return };
+            let favorites = FAVORITE_KEYS.with(|f| f.borrow().clone());
+            let all = (0..items.Size().unwrap_or(0)).all(|i| {
+                items
+                    .GetAt(i)
+                    .ok()
+                    .and_then(|n| node_key(&n))
+                    .is_some_and(|k| favorites.contains(&k))
+            });
+            if !all {
+                let _ = args.SetCancel(true);
+            }
+        })
+    {
+        revokers.push(r);
+    }
+    if let Ok(r) =
+        tree.DragItemsCompleted(|_, args: Ref<xaml::TreeViewDragItemsCompletedEventArgs>| {
+            let order = args.as_ref().and_then(|args| {
+                let parent = args.NewParentItem().ok()?;
+                if node_key(&parent).as_deref() != Some("group:branches") {
+                    return None;
+                }
+                let children = parent.cast::<xaml::TreeViewNode>().ok()?.Children().ok()?;
+                let favorites = FAVORITE_KEYS.with(|f| f.borrow().clone());
+                let names: Vec<String> = (0..children.Size().unwrap_or(0))
+                    .filter_map(|i| node_key(&children.GetAt(i).ok()?.cast().ok()?))
+                    .filter(|k| favorites.contains(k))
+                    .filter_map(|k| sidebar::parse_ref_key(&k).map(|(_, n)| n.to_owned()))
+                    .collect();
+                (names.len() == favorites.len()).then_some(names)
+            });
+            with_history(|h| {
+                h.sender.send(Message::FavoritesDropped(order));
+            });
+        })
+    {
+        revokers.push(r);
+    }
+    TREE_DRAG.with(|d| *d.borrow_mut() = (identity, revokers));
 }
 
 /// 作り直したサイドバーのメニューを、右クリックした所で開く。
@@ -17039,5 +18512,11 @@ mod tests {
         assert!(highlighted("Fix the Bug", "", false).is_none());
         assert!(highlighted("Fix the Bug", "nothing", false).is_none());
         assert!(highlighted("Fix the Bug and a bug", "bug", true).is_some());
+        assert_eq!(match_count("Fix the Bug and a bug", "bug"), 2);
+        assert_eq!(match_count("aaaa", "aa"), 2);
+        assert_eq!(match_count("Fix", ""), 0);
+        let info = serde_json::json!({ "message": "Fix bug\n\nThe bug and another bug\n" });
+        assert_eq!(message_match_count(Some(&info), "bug"), 3);
+        assert_eq!(message_parts(&info), ("Fix bug", "The bug and another bug"));
     }
 }

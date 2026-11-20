@@ -43,7 +43,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | stash があるときだけ Stashes の行と数 | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: Stashes の節。 |
 | Range Diff を開いているあいだの Range Diff の行 | ✓ | ✓ | ✓ | ✓ | n/a |  |
 | Branches・Remotes・Tags を絞り込む欄 | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: サイドバーの上の絞り込みのボタンで言葉を入れ、合うものを平らに並べる。 |
-| ブランチ・タグをいくつも選ぶ | ✓ | ✓ | — | ✓ | n/a | VSCode: Merge into Current Branch・Delete Branch・お気に入り・Archive が選んだものすべてに効く。 |
+| ブランチ・タグをいくつも選ぶ | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: Merge into Current Branch・Delete Branch・お気に入り・Archive が選んだものすべてに効く。 |
 | Pull Requests・Worktrees は中身があるときだけ出す | ✓ | ✓ | △ | △ | n/a | VSCode: Worktrees だけ（GitHub は入れない）。<br>Windows: Worktrees だけ（Working Copy の下）。 |
 
 ## サイドバー
@@ -55,7 +55,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | ブランチのアーカイブ | ✓ | ✓ | ✓ | ✓ | — |  |
 | ブランチを片付ける（取り込み済み・PR でマージ済み・上流が消えた。Undo 1 回） | ✓ | ✓ | △ | ✓ | △ | VSCode: エンジンがあるとき、理由ごとの見出しを付けた複数選択の一覧（コマンドパレット、Branches の見出しの右クリック）。CLI: `amonhen run`（`branchCleanup`・`deleteBranches`）から。マージ済みの PR はアプリと VSCode が gh で読む。<br>Windows: Windows: プルリクエストはまだ読まない（GitHub に未対応）。 |
 | PR でマージ済みのブランチの印（GitHub で squash・rebase） | ✓ | ✓ | — | ✓ | △ | VSCode: エンジンがあるとき。番号は行のツールチップに出る。CLI: `amonhen run`（`pullRequests` を渡した `branchGroups`）から。マージ済みの PR はアプリと VSCode が gh で読む。 |
-| お気に入りをドラッグで並べ替える | ✓ | ✓ | — | ✓ | n/a | VSCode: メニューの Move Up・Move Down in Favorites（ブランチに落とすと Merge・Rebase）。 |
+| お気に入りをドラッグで並べ替える | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: メニューの Move Up・Move Down in Favorites（ブランチに落とすと Merge・Rebase）。 |
 | ブランチのメニュー: checkout・名前の変更・削除（未マージは Delete Anyway） | ✓ | ✓ | ✓ | ✓ | △ | macOS: Set Upstream は Repository メニューだけ。<br>GTK4: Set Upstream は Repository メニューだけ。<br>CLI: `amonhen run` から。 |
 | checkout していないブランチの同期（Fast-Forward・Push・Publish） | ✓ | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
 | タグの一覧 | ✓ | ✓ | ✓ | ✓ | ✓ |  |
@@ -75,9 +75,9 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 
 | 機能 | macOS | GTK4 | Windows | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
-| 窓の中のリポジトリのタブ | ✓ | ✓ | △ | n/a | n/a | Windows: 前のタブのリポジトリだけを開いておき、タブを替えるとそのリポジトリを開き直す（History は永続のキャッシュから）。画面は離れたときのもの。タブは並べ替えられるが、引き出して窓にはできない。 |
+| 窓の中のリポジトリのタブ | ✓ | ✓ | △ | n/a | n/a | Windows: 開いておくのは前のタブのリポジトリだけ。タブを替えると、もう一方を開き直す（History は永続のキャッシュから）。前に出していたページで。 |
 | 別の窓（New Window） | ✓ | ✓ | ✓ | n/a | n/a | Windows: 窓は別のプロセス。New Window は今のリポジトリの窓を開き、Repositories を出す |
-| 起動時に窓とタブを戻す | ✓ | ✓ | △ | n/a | n/a | Windows: リポジトリなしで起動したら、最後に閉じた窓のタブ。 |
+| 起動時に窓とタブを戻す | ✓ | ✓ | ✓ | n/a | n/a |  |
 | SSH・daemon のリポジトリのつなぎ中のタブ（Cancel・Try Again） | ✓ | ✓ | ✓ | n/a | n/a |  |
 | 題に未コミットの ● と ahead/behind | ✓ | ✓ | ✓ | n/a | n/a | GTK4: タブの名前に出る。<br>Windows: 窓のタイトルと前のタブの名前に。 |
 | 最後の窓を閉じてもアプリは終わらない | ✓ | — | — | n/a | n/a | GTK4: GNOME のアプリと同じく終わる。 |
@@ -87,17 +87,17 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 機能 | macOS | GTK4 | Windows | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
 | All・Favorites・Places・グループのあるリポジトリのページ | ✓ | ✓ | ✓ | n/a | n/a |  |
-| 手元・SSH のリポジトリを足す | ✓ | ✓ | △ | n/a | n/a | Windows: ホストとパスは打ち込む。接続の確認とホストのフォルダを選ぶ画面はない。 |
+| 手元・SSH のリポジトリを足す | ✓ | ✓ | ✓ | n/a | n/a |  |
 | この機械の探すフォルダー（深さ・見張り） | △ | △ | △ | n/a | n/a | macOS: 除くものは決まった一覧。<br>GTK4: 除くものは決まった一覧。<br>Windows: 除外は決まったもの。フォルダは Repositories を出している間だけ見張る。 |
-| SSH 先の探すフォルダー | ✓ | ✓ | — | n/a | △ | CLI: `find-repositories` がアプリのために探す。 |
-| 場所の下のリポジトリのフォルダーの木 | ✓ | ✓ | — | n/a | n/a |  |
-| 手で作るグループ・行を Favorites やグループへドラッグ | △ | △ | △ | n/a | n/a | macOS: グループそのものはドラッグで並べ替えられない。<br>GTK4: グループそのものはドラッグで並べ替えられない。<br>Windows: グループそのものはドラッグで並べ替えられない。 |
+| SSH 先の探すフォルダー | ✓ | ✓ | ✓ | n/a | △ | CLI: `find-repositories` がアプリのために探す。 |
+| 場所の下のリポジトリのフォルダーの木 | ✓ | ✓ | ✓ | n/a | n/a |  |
+| 手で作るグループ・行を Favorites やグループへドラッグ | △ | △ | ✓ | n/a | n/a | macOS: グループそのものはドラッグで並べ替えられない。<br>GTK4: グループそのものはドラッグで並べ替えられない。 |
 | 状態の列（ブランチ・変更・ahead/behind・最後のコミット・開いた時）、並べ替え、列の順の入れ替え | ✓ | ✓ | ✓ | n/a | n/a | Windows: 見出しを押して並べ替え、見出しの左端を引いて幅を変え、見出しの右クリックで左右に動かす。 |
 | お気に入り・表示名・色のラベル | ✓ | ✓ | ✓ | n/a | n/a |  |
 | タブ・窓で開く、Finder（ファイル）・Terminal・エディタ | ✓ | ✓ | ✓ | n/a | n/a | GTK4: 知っているコードエディタと「その他…」で選んだプログラム以外は、inode/directory を宣言しているアプリだけがフォルダを開く。<br>Windows: エクスプローラー・Windows Terminal（なければ cmd）・Settings で選んだエディタ。 |
 | 選んだリポジトリを Fetch | ✓ | ✓ | ✓ | n/a | n/a | Windows: Ctrl・Shift で行を選び、選んだ行のメニューの Fetch で、選んだものすべてを fetch する。 |
 | Quick Open（あいまい検索） | ✓ | ✓ | ✓ | n/a | n/a | Windows: 新しいウィンドウで開く。 |
-| ツールバーのリポジトリ名で切り替える | ✓ | ✓ | — | ✓ | n/a | VSCode: Select Repository でワークスペースのリポジトリから選ぶ。 |
+| ツールバーのリポジトリ名で切り替える | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: Select Repository でワークスペースのリポジトリから選ぶ。 |
 | Clone（自分の GitHub のリポジトリから選ぶ） | ✓ | ✓ | △ | n/a | △ | VSCode: VSCode 自身の Git: Clone。<br>CLI: `clone <url>` だけ。<br>Windows: 自分の GitHub のリポジトリの一覧はない。clone したものは新しいウィンドウで開く。 |
 | Clone: 取得する範囲（すべて・中身は必要なときに・最近の履歴）と、一部のフォルダだけ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: VSCode の Git: Clone が代わり。<br>CLI: `clone --filter`・`--depth`・`--sparse`。 |
 | Subtrees のグループ（git に git subtree があるとき）: 追加・Pull・Push・Split、相手と squash を覚える | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: 値は入力欄、squash は一覧で聞く（シートではない）。<br>CLI: `subtree`。<br>Windows: squash で最後に取り込んだ subtree は名前の後ろに ⊟（ツールチップはない）。 |
@@ -118,17 +118,17 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Git > Programs: git・gpg・ssh-keygen・gpgsm | ✓ | ✓ | ✓ | n/a | △ | VSCode: 拡張は、ここで機械に選んだ git を動かし、選んでいなければ VSCode の `git.path`。gpg・ssh-keygen は git の設定で決まる。<br>CLI: `amonhen run`（`programs`・`setMachineGit`）から。<br>Windows: Settings の Git に。 |
 | Git > この機械の Environment Variables（渡す・秘密を隠す） | ✓ | ✓ | ✓ | n/a | n/a | VSCode: VSCode の環境が代わり（拡張はそれを daemon に渡す）。<br>Windows: Settings の 1 ページの Git の下。Passed / All の切り替えと値の詳細はない |
 | Environment Variables: ログインシェルのものを使う（Read Again・SSH agent） | ✓ | — | — | n/a | n/a | GTK4: 外した。Linux のセッションはすでに持っている。<br>VSCode: VSCode の環境が代わり（拡張はそれを daemon に渡す）。 |
-| SSH Hosts: + / − の付いたホスト、届かないものは薄く | ✓ | ✓ | — | n/a | n/a | VSCode: Remote-SSH が受け持つ。 |
-| SSH Hosts > Connection: 状態・Check Connection・エンジン | ✓ | ✓ | — | n/a | n/a |  |
-| SSH Hosts > Connection: 署名の確かめ方 | ✓ | ✓ | — | n/a | n/a |  |
-| SSH Hosts > Connection: 探すフォルダー | ✓ | ✓ | — | n/a | n/a |  |
-| SSH Hosts: ホストのすべてのリポジトリの git のページ | ✓ | ✓ | — | n/a | n/a |  |
-| SSH Hosts: ホストの Environment Variables（ログインシェルの切り替え） | ✓ | ✓ | — | n/a | n/a |  |
-| ホスト・この機械の列で選ぶパスのシート | ✓ | ✓ | — | n/a | n/a |  |
+| SSH Hosts: + / − の付いたホスト、届かないものは薄く | ✓ | ✓ | ✓ | n/a | n/a | VSCode: Remote-SSH が受け持つ。 |
+| SSH Hosts > Connection: 状態・Check Connection・エンジン | ✓ | ✓ | ✓ | n/a | n/a |  |
+| SSH Hosts > Connection: 署名の確かめ方 | ✓ | ✓ | ✓ | n/a | n/a |  |
+| SSH Hosts > Connection: 探すフォルダー | ✓ | ✓ | ✓ | n/a | n/a |  |
+| SSH Hosts: ホストのすべてのリポジトリの git のページ | ✓ | ✓ | ✓ | n/a | n/a |  |
+| SSH Hosts: ホストの Environment Variables（ログインシェルの切り替え） | ✓ | ✓ | ✓ | n/a | n/a |  |
+| ホスト・この機械の列で選ぶパスのシート | ✓ | ✓ | △ | n/a | n/a | Windows: SSH 先のフォルダだけ（SSH 接続を追加、探すフォルダー）。この機械はシステムのダイアログ。 |
 | Accounts: GitHub（CI の状態・アバター） | ✓ | ✓ | — | — | n/a |  |
 | Appearance: History の順・1 行・行の項目・アバター | ✓ | ✓ | △ | n/a | n/a | Windows: History の並び順・1 行表示・祖先の強調・行の項目（CI の状態はない）。アバターはない。 |
 | Appearance: フォント・グラフの色 | — | — | — | n/a | n/a |  |
-| Theme: 窓の背景（透過とぼかし・背景画像・ツールバーの色・リポジトリごと） | ✓ | ✓ | — | n/a | n/a | GTK4: ぼかしはない（GNOME では窓の後ろをぼかせない）。透かすにはコンポジタが要る。 |
+| Theme: 窓の背景（透過とぼかし・背景画像・ツールバーの色・リポジトリごと） | ✓ | ✓ | △ | n/a | n/a | GTK4: ぼかしはない（GNOME では窓の後ろをぼかせない）。透かすにはコンポジタが要る。<br>Windows: 背景画像とツールバーの色だけ。窓を透かすこととリポジトリごとの背景はまだない。 |
 | Theme: 構文と差分の色（内蔵のテーマ・VSCode のテーマ・差分は標準の色） | ✓ | ✓ | ✓ | n/a | n/a | VSCode: VSCode 自身のテーマに従う。<br>Windows: Windows のアプリ モード（明るい・暗い）に合わせ、外観ごとにテーマを選ぶ。 |
 | Diff & Merge: 開いたときに迷わないコンフリクトを解く | ✓ | ✓ | ✓ | n/a | n/a |  |
 | Diff & Merge: unified/split・空白・前後の行・折り返し・タブの幅 | — | — | — | — | n/a |  |
@@ -137,7 +137,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Performance: commit-graph・共有の daemon | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: VSCode の設定の `amonhen.writeCommitGraph`・`amonhen.daemon.enabled`・`amonhen.daemon.path`。 |
 | Performance: fsmonitor | ✓ | ✓ | ✓ | ✓ | n/a | GTK4: Linux・BSD では、エンジンを git の fsmonitor の hook（`amonhen fsmonitor-watchman`）にして Watchman を使う。Watchman がないか、git が 2.26 より古い（hook の版 2 がない）と押せない。<br>VSCode: VSCode の設定の `amonhen.fsmonitor`（既定はオン）。 |
 | Performance: 永続キャッシュの場所・大きさ・消す | ✓ | ✓ | ✓ | — | △ | History と AI の結果を 1 行ずつ、大きさと「消す」。CLI: `log --rebuild`・`daemon rebuild`。<br>Windows: History だけ（AI はない）。 |
-| 設定の変更の Undo・Redo | △ | △ | — | n/a | n/a | macOS: Git のページとリポジトリの設定だけ。<br>GTK4: Git のページとリポジトリの設定だけ。 |
+| 設定の変更の Undo・Redo | △ | △ | △ | n/a | n/a | macOS: Git のページとリポジトリの設定だけ。<br>GTK4: Git のページとリポジトリの設定だけ。<br>Windows: Git のページとリポジトリの設定だけ（文字の欄の外で Ctrl+Z・Ctrl+Shift+Z）。 |
 
 ## 4. リポジトリの設定
 
@@ -272,7 +272,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 機能 | macOS | GTK4 | Windows | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
 | メッセージ全体・ドラッグできる境・⤢ で広げる | ✓ | ✓ | ✓ | ✓ | n/a |  |
-| 詳細の中を探す | ✓ | ✓ | △ | ✓ | n/a | VSCode: ⌘F でメインビュー全体を探す。まだ読んでいない差分は探さない。<br>Windows: Ctrl+F か 🔍 で差分を探し（一致に色、↑・↓ で移る）、メッセージの中の一致にも色を付ける。↑・↓ はメッセージの中は移らない。 |
+| 詳細の中を探す | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: ⌘F でメインビュー全体を探す。まだ読んでいない差分は探さない。 |
 | すべてのファイルを積む（貼り付く見出し・畳む・Viewed） | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `show`。<br>Windows: Viewed の切り替えはファイルの見出しのメニューにある。 |
 | 差分の横の、変更したファイルの木 | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: 一覧の上の Tree / List で切り替える。 |
 | ファイルの見出しのメニュー（Blame・File History・パスのコピー・開く） | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: 右クリックの Blame・File History・Copy Path と、VSCode の差分のエディターで開く。 |
@@ -344,7 +344,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | History のキャッシュの書き込み（リポジトリごとの大きさ・回数・量・最後の書き込み） | ✓ | ✓ | ✓ | — | △ | CLI: `amonhen run`（`historyCache`）。<br>Windows: その窓のリポジトリ（1 つの窓に 1 つのリポジトリ）。 |
 | Events | ✓ | ✓ | ✓ | n/a | n/a | VSCode: VSCode の出力（Amon Hen のログ）が代わり。 |
 | JSON で書き出す | ✓ | ✓ | ✓ | n/a | n/a | VSCode: VSCode の出力（Amon Hen のログ）が代わり。 |
-| Daemon のタブ（起動・停止・つながり） | ✓ | ✓ | △ | ✓ | △ | VSCode: メインビューのページ（サイドバーの ⋯ とコマンドパレットの Show Daemon）。窓のつながりは手元の daemon だけ。<br>CLI: `daemon status / start / stop`。<br>Windows: このアプリのつながりの一覧はない。切れたつながりは History の場所に「もう一度」を出す。 |
+| Daemon のタブ（起動・停止・つながり） | ✓ | ✓ | ✓ | ✓ | △ | VSCode: メインビューのページ（サイドバーの ⋯ とコマンドパレットの Show Daemon）。窓のつながりは手元の daemon だけ。<br>CLI: `daemon status / start / stop`。 |
 
 ## 11. メニュー
 
@@ -362,7 +362,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
 | 進行中の操作と Continue / Skip / Abort | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: サイドバーの行。 |
 | 失敗とその原因・Details | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: 知らせに原因（git の fatal:・error: の行）を出し、Details で全文と git の命令を出力パネルに出す。 |
-| 切れたつながりと Reconnect | ✓ | ✓ | — | n/a | n/a |  |
+| 切れたつながりと Reconnect | ✓ | ✓ | ✓ | n/a | n/a |  |
 | 終わった操作が何をしたか、数秒 | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: ステータスバーの文か、Undo 付きの知らせ。 |
 
 ## 確認と Undo
@@ -412,7 +412,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 合うものがなければホストにエンジンを送る | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: 拡張が動くホストで、同梱したエンジンを使う。<br>Windows: 他のアプリと同じく、先に聞く。 |
 | Windows の SSH 先 | ✓ | ✓ | ✓ | ✓ | ✓ |  |
 | パスワード・パスフレーズを尋ねる askpass のダイアログ | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: VSCode の入力欄。拡張が git・ssh・共有の daemon に渡すスクリプトから尋ねる。<br>CLI: ダイアログはアプリのもの。 |
-| 署名の確かめ（この機械か、ホストの鍵） | ✓ | ✓ | △ | n/a | △ | VSCode: 拡張は `ssh://` のリポジトリを開かない。Remote-SSH では拡張がホストで動くので、開くほかのリポジトリと同じく、git がホストの鍵で確かめる。<br>CLI: `show`・`refs --verify` で確かめ、選択はない。<br>Windows: いつもこの機械の鍵で。 |
+| 署名の確かめ（この機械か、ホストの鍵） | ✓ | ✓ | ✓ | n/a | △ | VSCode: 拡張は `ssh://` のリポジトリを開かない。Remote-SSH では拡張がホストで動くので、開くほかのリポジトリと同じく、git がホストの鍵で確かめる。<br>CLI: `show`・`refs --verify` で確かめ、選択はない。 |
 
 ## 端末の FE（TUI）
 

@@ -49,6 +49,25 @@ pub fn save_file(title: &str, name: &str, kind: &str, extension: &str) -> Option
     }
 }
 
+/// 開く画像を 1 つ選ぶ（窓の背景画像）。`kind` は種類の名前。
+pub fn open_image(title: &str, kind: &str) -> Option<PathBuf> {
+    // SAFETY: `save_file` と同じ。
+    unsafe {
+        let dialog: IFileOpenDialog =
+            CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER).ok()?;
+        let kind = HSTRING::from(kind);
+        let pattern = HSTRING::from("*.png;*.jpg;*.jpeg;*.gif;*.bmp;*.tif;*.tiff;*.webp");
+        let filters = [COMDLG_FILTERSPEC {
+            pszName: PCWSTR(kind.as_ptr()),
+            pszSpec: PCWSTR(pattern.as_ptr()),
+        }];
+        dialog.SetTitle(&HSTRING::from(title)).ok()?;
+        dialog.SetFileTypes(&filters).ok()?;
+        dialog.Show(Some(GetActiveWindow())).ok()?;
+        result(&dialog.into())
+    }
+}
+
 /// フォルダを選ぶ。`button` は選ぶボタンの名前。
 pub fn pick_folder(title: &str, button: &str) -> Option<PathBuf> {
     // SAFETY: `save_file` と同じ。

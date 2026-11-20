@@ -962,6 +962,9 @@ What git says, and what the app keeps:
   edited and the two edited before it stay open.
 - The Undo log is per worktree (`<git dir>/amonhen/undo.json`, and a linked worktree has its own git dir), like
   HEAD; undoing something that moved a shared branch is seen from every worktree.
+- The app, the engine and the VSCode extension all write that log, so it is replaced as a whole (written to a
+  temporary file, then renamed) and never read half-written. A log that can't be read is an error rather than an
+  empty log, so it is never overwritten; a broken one is set aside as `undo.json.broken-<time>`, and Undo says so.
 
 Viewing mixes them, editing names one:
 
