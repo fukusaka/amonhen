@@ -1506,6 +1506,30 @@ fn export_archive_of_the_selected_commit() {
     assert!(wrong.contains("End the file name with .zip, .tar.gz or .tar"));
 }
 
+/// コマンドの一覧の Save Repository as Bundle: HEAD とすべてのブランチ・タグを 1 つのファイルに（clone できる）
+#[test]
+fn save_the_repository_as_a_bundle() {
+    let dir = tempfile::tempdir().unwrap();
+    merged(dir.path());
+    let asked = amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), ":bundle\n").unwrap();
+    assert!(asked.contains("Save the repository as a bundle at: "));
+    assert!(asked.contains(".bundle"));
+    let out = tempfile::tempdir().unwrap();
+    let file = out.path().join("all.bundle");
+    let keys = format!(":bundle\n\x15{}\n", file.display());
+    let done = amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), &keys).unwrap();
+    println!("{done}");
+    assert!(done.contains("Saved the bundle to"));
+    // git が読めて、ブランチとタグが入っている。
+    let heads = git_out(
+        out.path(),
+        &["bundle", "list-heads", file.to_str().unwrap()],
+    );
+    for name in ["refs/heads/main", "refs/heads/topic", "refs/tags/v1"] {
+        assert!(heads.contains(name), "{heads}");
+    }
+}
+
 /// コマンドの一覧の Prune Worktrees: フォルダのなくなった worktree の記録を片付ける（キーはない）
 #[test]
 fn prune_worktrees_from_the_command_list() {

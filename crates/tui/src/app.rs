@@ -143,6 +143,8 @@ enum Naming {
     RemoteUrl,
     /// 選んでいるコミットを書き出すアーカイブのファイル（この機械の）。
     Archive,
+    /// リポジトリをまとめる bundle のファイル（この機械の）。
+    Bundle,
 }
 
 /// 選択肢 1 つ: 押すキー、名前、頼む中身。
@@ -1064,6 +1066,11 @@ impl App {
                                 self.export_archive(&start, name);
                                 return;
                             }
+                            Naming::Bundle => (
+                                "bundle",
+                                tr!("Saving the bundle…"),
+                                json!({"op": "bundle", "refs": [], "bases": [], "file": local_path(name)}),
+                            ),
                             Naming::RemoteUrl => (
                                 "addRemote",
                                 tr!("Adding {name}…", name = start),
@@ -1283,6 +1290,17 @@ impl App {
 
     /// コマンドの一覧からだけ動かす操作（キーを持たない）。
     fn run_keyless(&mut self, id: &str) {
+        if id == "save-bundle" {
+            // HEAD とすべてのブランチ・タグを、今のフォルダ（この機械）の 1 つのファイルに。
+            let name = match self.name.is_empty() {
+                true => "repository".to_owned(),
+                false => self.name.clone(),
+            };
+            self.naming = Naming::Bundle;
+            let file = local_path(&format!("{name}.bundle"));
+            self.typing_branch = Some((String::new(), String::new(), file));
+            self.dirty = true;
+        }
         if id == "export-archive" {
             // History で選んでいるコミットを、今のフォルダ（TUI を始めた所。SSH 先でも、この機械）に書き出す。
             let Some(id) = self.history.selected_id() else {
@@ -1294,9 +1312,7 @@ impl App {
                 true => short.clone(),
                 false => format!("{}-{short}", self.name),
             };
-            let file = std::env::current_dir()
-                .map(|d| d.join(format!("{name}.zip")).to_string_lossy().into_owned())
-                .unwrap_or_else(|_| format!("{name}.zip"));
+            let file = local_path(&format!("{name}.zip"));
             self.naming = Naming::Archive;
             self.typing_branch = Some((id, short, file));
             self.dirty = true;
@@ -1480,6 +1496,10 @@ impl App {
                 return;
             }
             "deleteIgnored" => self.notice = Some(tr!("Deleted the ignored files")),
+            "bundle" => {
+                let file = reply["info"]["file"].as_str().unwrap_or("");
+                self.notice = Some(tr!("Saved the bundle to {file}", file = file));
+            }
             "archive" => {
                 let file = reply["info"]["file"].as_str().unwrap_or("");
                 self.notice = Some(tr!("Exported to {file}", file = file));
@@ -1680,11 +1700,7 @@ impl App {
             self.error = Some(tr!("End the file name with .zip, .tar.gz or .tar"));
             return;
         };
-        let path = std::path::Path::new(file);
-        let path = match path.is_absolute() {
-            true => path.to_path_buf(),
-            false => std::env::current_dir().unwrap_or_default().join(path),
-        };
+        let path = std::path::PathBuf::from(local_path(file));
         let stem = path
             .file_name()
             .map(|n| n.to_string_lossy().trim_end_matches(ext).to_owned())
@@ -3237,6 +3253,9 @@ impl App {
                     Naming::Orphan => tr!("New orphan branch: {name}", name = name),
                     Naming::RemoteName => tr!("New remote's name: {name}", name = name),
                     Naming::RemoteUrl => tr!("URL of {at}: {name}", at = at, name = name),
+                    Naming::Bundle => {
+                        tr!("Save the repository as a bundle at: {name}", name = name)
+                    }
                     Naming::Archive => {
                         tr!(
                             "Export {at} to (.zip, .tar.gz or .tar): {name}",
@@ -3489,6 +3508,17 @@ impl App {
         }
         // 入力しているときだけ、カーソルを出す。
         cursor
+    }
+}
+
+/// この機械のファイルのパス: 相対なら、TUI を始めたフォルダから。
+fn local_path(file: &str) -> String {
+    let path = std::path::Path::new(file);
+    match path.is_absolute() {
+        true => file.to_owned(),
+        false => (std::env::current_dir().unwrap_or_default().join(path))
+            .to_string_lossy()
+            .into_owned(),
     }
 }
 
