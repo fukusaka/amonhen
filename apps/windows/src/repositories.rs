@@ -101,6 +101,21 @@ pub fn backdrop(path: &str) -> Option<Value> {
         .filter(Value::is_object)
 }
 
+/// `path` のリポジトリだけの窓の背景を書く（None なら消して、アプリの設定に従う）。
+pub fn set_backdrop(path: &str, backdrop: Option<Value>) -> Result<(), String> {
+    edit(|d| {
+        update(d, path, |b| match backdrop {
+            Some(v) => {
+                b.insert("backdrop".into(), v);
+            }
+            None => {
+                b.remove("backdrop");
+            }
+        })
+    })
+    .map(|_| ())
+}
+
 /// `bookmarks.json` を最後に書いた時刻（読んだものを使い回してよいか）。
 pub fn modified() -> Option<std::time::SystemTime> {
     file()
@@ -757,6 +772,8 @@ pub enum Action {
     Fetch(String),
     /// SSH 先のリポジトリの接続先とパスを聞く。
     AddSsh,
+    /// そのリポジトリだけの窓の背景を決めるダイアログを出す。
+    Backdrop(String),
 }
 
 impl State {
@@ -1330,6 +1347,7 @@ impl State {
             }),
             "new-group" => return Action::NewGroup(Some(location)),
             "rename" => return Action::Rename(location.clone(), self.name(&location)),
+            "backdrop" => return Action::Backdrop(location),
             "fetch" => {
                 if is_remote(&location) || !is_repository(&location) {
                     return Action::None;
@@ -1505,6 +1523,7 @@ fn row_menu(state: &State, location: &str) -> Vec<MenuItem> {
         MenuItem::submenu("groups", tr!("Group"), groups),
         MenuItem::submenu("colors", tr!("Color Label"), colors),
         MenuItem::item(format!("rename:{location}"), tr!("Rename…")),
+        MenuItem::item(format!("backdrop:{location}"), tr!("Window Background…")),
         MenuItem::separator("-files"),
     ]);
     // SSH 先のフォルダは、この機械では開けない。

@@ -690,6 +690,8 @@ enum Dialog {
     },
     /// Repositories の行の表示名を変える。
     RenameRepository { location: String, name: String },
+    /// そのリポジトリだけの窓の背景（GTK4 版の `themesettings::show_repository`）。
+    Backdrop { location: String },
     /// Repositories のグループを作る（リポジトリがあればそこに移す）。
     NewGroup {
         location: Option<String>,
@@ -6813,7 +6815,12 @@ impl Root {
                 }
             }
             Message::Backdrop(event) => {
-                if let Err(e) = crate::backdrop::apply(event) {
+                // 「窓の背景…」のダイアログを出していれば、そのリポジトリだけの背景を変える。
+                let target = match &self.dialog {
+                    Some(Dialog::Backdrop { location }) => Some(location.clone()),
+                    _ => None,
+                };
+                if let Err(e) = crate::backdrop::apply(target.as_deref(), event) {
                     self.error = Some(e);
                 }
             }
@@ -8306,6 +8313,20 @@ impl Root {
     }
 }
 
+/// 窓の背景の欄の操作（Settings > Appearance と「窓の背景…」のダイアログ。どちらに書くかは `Message::Backdrop`
+/// を受けたときに、ダイアログを出しているかで決める）。
+fn backdrop_callbacks(context: &ViewContext<Root>) -> crate::settingsview::BackdropCallbacks<'_> {
+    use crate::backdrop::Event;
+    crate::settingsview::BackdropCallbacks {
+        button: Box::new(|event| context.callback(move |()| Message::Backdrop(event.clone()))),
+        placement: context.callback(|i| Message::Backdrop(Event::Placement(i))),
+        style: context.callback(|i| Message::Backdrop(Event::Style(i))),
+        number: Box::new(|f| context.callback(move |v| Message::Backdrop(f(v)))),
+        tint: context.callback(|on| Message::Backdrop(Event::Tint(on))),
+        color: context.callback(|c| Message::Backdrop(Event::ToolbarColor(c))),
+    }
+}
+
 /// 窓の中身の上に薄く重ねる背景画像（なければ空）。押す・引くは下の部品へ通す（描いた後に外す）。
 fn backdrop_image(backdrop: &crate::backdrop::Backdrop, host: &ElementRef<Image>) -> View {
     use crate::backdrop::Placement;
@@ -8427,6 +8448,40 @@ impl Root {
         let dialog = ContentDialog::new().on_closed(context.callback(Message::DialogClosed));
         match &self.dialog {
             None => dialog.is_open(false).into(),
+            Some(Dialog::Backdrop { location }) => {
+                let own = crate::repositories::backdrop(location)
+                    .and_then(|v| crate::backdrop::Backdrop::from_json(&v));
+                let section: View = match &own {
+                    Some(b) => ScrollViewer::new()
+                        .max_height(460.0)
+                        .content(crate::settingsview::backdrop_section(
+                            b,
+                            &backdrop_callbacks(context),
+                        )),
+                    None => View::empty(),
+                };
+                dialog
+                    .is_open(true)
+                    .title(tr!("Window Background"))
+                    .close_button_text(tr!("Done"))
+                    .content(StackPanel::new().spacing(8.0).width(460.0).children((
+                        CheckBox::new()
+                            .is_checked(own.is_some())
+                            .on_is_checked_changed(context.callback(|on| {
+                                Message::Backdrop(crate::backdrop::Event::Override(on))
+                            }))
+                            .content(TextBlock::new().text(tr!(
+                                "Use a different background for {name}",
+                                name = crate::repositories::display_name(location)
+                            ))),
+                        TextBlock::new()
+                            .text(tr!("Otherwise this window follows Settings > Theme."))
+                            .opacity(0.7)
+                            .font_size(12.0)
+                            .text_wrapping(TextWrapping::Wrap),
+                        section,
+                    )))
+            }
             Some(Dialog::SendEngine { ask, always }) => {
                 let consent = &ask.consent;
                 let title = if consent.update {
@@ -13411,6 +13466,7 @@ impl Root {
                 self.dialog = Some(Dialog::RenameRepository { location, name });
                 self.dialog_inputs += 1;
             }
+            Action::Backdrop(location) => self.dialog = Some(Dialog::Backdrop { location }),
             Action::Fetch(location) => {
                 context.spawn_background(move |_| {
                     let error = crate::repositories::fetch(&location);
@@ -14040,18 +14096,7 @@ impl Root {
                 theme_button: Box::new(|key: String| {
                     context.callback(move |()| Message::SettingsThemeButton(key.clone()))
                 }),
-                backdrop_button: Box::new(|event| {
-                    context.callback(move |()| Message::Backdrop(event.clone()))
-                }),
-                backdrop_placement: context
-                    .callback(|i| Message::Backdrop(crate::backdrop::Event::Placement(i))),
-                backdrop_style: context
-                    .callback(|i| Message::Backdrop(crate::backdrop::Event::Style(i))),
-                backdrop_number: Box::new(|f| context.callback(move |v| Message::Backdrop(f(v)))),
-                backdrop_tint: context
-                    .callback(|on| Message::Backdrop(crate::backdrop::Event::Tint(on))),
-                backdrop_color: context
-                    .callback(|c| Message::Backdrop(crate::backdrop::Event::ToolbarColor(c))),
+                backdrop: backdrop_callbacks(context),
                 template_remove: Box::new(|i| {
                     context.callback(move |()| Message::SettingsTemplateRemove(i))
                 }),

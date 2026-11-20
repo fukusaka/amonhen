@@ -138,6 +138,18 @@ pub const AUTO_FETCH_CHOICES: [u32; 5] = [0, 5, 15, 30, 60];
 /// 窓の背景の横棒の値から、その操作を作る。
 pub type BackdropNumber = fn(f64) -> crate::backdrop::Event;
 
+/// 窓の背景の欄の操作（Settings > Appearance と、Repositories の「窓の背景…」のダイアログで同じもの）。
+pub struct BackdropCallbacks<'a> {
+    /// Choose…・Remove。
+    pub button: Box<dyn Fn(crate::backdrop::Event) -> Callback<()> + 'a>,
+    pub placement: Callback<Option<usize>>,
+    pub style: Callback<Option<usize>>,
+    /// 横棒（透過率・画像の透過率・ツールバーの色の濃さ）。
+    pub number: Box<dyn Fn(BackdropNumber) -> Callback<f64> + 'a>,
+    pub tint: Callback<bool>,
+    pub color: Callback<Color>,
+}
+
 pub struct Callbacks<'a> {
     pub field: Box<dyn Fn(usize) -> Callback<String> + 'a>,
     pub save_git: Callback<()>,
@@ -176,12 +188,7 @@ pub struct Callbacks<'a> {
     /// Theme のボタン（`import`・`remove:<name>`）。
     pub theme_button: Box<dyn Fn(String) -> Callback<()> + 'a>,
     /// 窓の背景の欄（Choose…・Remove、位置、横棒、ツールバーの色を敷くか・色）。
-    pub backdrop_button: Box<dyn Fn(crate::backdrop::Event) -> Callback<()> + 'a>,
-    pub backdrop_placement: Callback<Option<usize>>,
-    pub backdrop_style: Callback<Option<usize>>,
-    pub backdrop_number: Box<dyn Fn(BackdropNumber) -> Callback<f64> + 'a>,
-    pub backdrop_tint: Callback<bool>,
-    pub backdrop_color: Callback<Color>,
+    pub backdrop: BackdropCallbacks<'a>,
     pub ssh: crate::sshhosts::Callbacks<'a>,
 }
 
@@ -303,7 +310,7 @@ fn appearance(callbacks: &Callbacks) -> View {
         note(tr!("What each commit’s row shows besides the subject.")),
         // 子の数がタプルの上限を超えないよう、後半を 1 つにまとめる。
         StackPanel::new().children((
-            backdrop_section(callbacks),
+            backdrop_section(&crate::backdrop::Backdrop::app(), &callbacks.backdrop),
             // 構文と差分の色（GTK4 版の Theme の Color Theme。外観ごとに 1 つ）。
             heading(tr!("Color Theme")),
             theme_choice(tr!("Light appearance"), false, &callbacks.syntax_theme),
@@ -776,9 +783,8 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
 
 /// 外観ごとのテーマを選ぶ行。
 /// 窓の背景（macOS 版・GTK4 版の Theme の Window Transparency・Background Image・Toolbar）。
-fn backdrop_section(callbacks: &Callbacks) -> View {
+pub fn backdrop_section(b: &crate::backdrop::Backdrop, callbacks: &BackdropCallbacks) -> View {
     use crate::backdrop::{Event, Placement};
-    let b = crate::backdrop::Backdrop::app();
     let labeled = |label: String, control: View| {
         Grid::new()
             .columns([GridLength::Pixel(140.0), GridLength::Star(1.0)])
@@ -802,7 +808,7 @@ fn backdrop_section(callbacks: &Callbacks) -> View {
                     .step_frequency(5.0)
                     .value((value * 100.0).round())
                     .width(200.0)
-                    .on_value_changed((callbacks.backdrop_number)(event)),
+                    .on_value_changed((callbacks.number)(event)),
                 TextBlock::new()
                     .text(format!("{}%", (value * 100.0).round()))
                     .vertical_alignment(VerticalAlignment::Center),
@@ -828,7 +834,7 @@ fn backdrop_section(callbacks: &Callbacks) -> View {
                             .position(|p| *p == b.placement)
                             .unwrap_or(0),
                     )
-                    .on_selection_changed(callbacks.backdrop_placement.clone())
+                    .on_selection_changed(callbacks.placement.clone())
                     .into(),
             ),
             labeled(
@@ -858,7 +864,7 @@ fn backdrop_section(callbacks: &Callbacks) -> View {
                     .is_hex_input_visible(true)
                     .is_color_channel_text_input_visible(false)
                     .horizontal_alignment(HorizontalAlignment::Left)
-                    .on_color_changed(callbacks.backdrop_color.clone())
+                    .on_color_changed(callbacks.color.clone())
                     .into(),
             ),
             labeled(
@@ -880,7 +886,7 @@ fn backdrop_section(callbacks: &Callbacks) -> View {
                         .collect::<Vec<_>>(),
                 )
                 .selected_index(b.style_index())
-                .on_selection_changed(callbacks.backdrop_style.clone())
+                .on_selection_changed(callbacks.style.clone())
                 .into(),
         ),
         transparency,
@@ -898,11 +904,11 @@ fn backdrop_section(callbacks: &Callbacks) -> View {
                         .text_trimming(TextTrimming::CharacterEllipsis)
                         .vertical_alignment(VerticalAlignment::Center),
                     Button::new()
-                        .on_click((callbacks.backdrop_button)(Event::ChooseImage))
+                        .on_click((callbacks.button)(Event::ChooseImage))
                         .content(TextBlock::new().text(tr!("Choose…"))),
                     if b.image.is_some() {
                         Button::new()
-                            .on_click((callbacks.backdrop_button)(Event::RemoveImage))
+                            .on_click((callbacks.button)(Event::RemoveImage))
                             .content(TextBlock::new().text(tr!("Remove")))
                     } else {
                         View::empty()
@@ -913,7 +919,7 @@ fn backdrop_section(callbacks: &Callbacks) -> View {
         heading(tr!("Toolbar")),
         CheckBox::new()
             .is_checked(tint.is_some())
-            .on_is_checked_changed(callbacks.backdrop_tint.clone())
+            .on_is_checked_changed(callbacks.tint.clone())
             .content(TextBlock::new().text(tr!("Tint the toolbar"))),
         tint_rows,
     ))

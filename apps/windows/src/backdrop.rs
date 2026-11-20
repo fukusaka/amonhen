@@ -177,8 +177,7 @@ impl Backdrop {
             .unwrap_or_else(Self::app)
     }
 
-    /// macOS 版の JSON（ブックマークの `backdrop`）。リポジトリだけの設定を書くときに使う（まだ書く口はない）。
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// macOS 版の JSON（ブックマークの `backdrop`）。
     pub fn to_json(&self) -> Value {
         let mut m = Map::new();
         m.insert("style".into(), json!(self.style));
@@ -259,6 +258,8 @@ impl Backdrop {
 /// Settings > Appearance の窓の背景の欄の操作。
 #[derive(Clone, Debug)]
 pub enum Event {
+    /// リポジトリだけの背景を使うか（Repositories の「窓の背景…」）。
+    Override(bool),
     Style(Option<usize>),
     Transparency(f64),
     ChooseImage,
@@ -270,9 +271,20 @@ pub enum Event {
     ToolbarOpacity(f64),
 }
 
-/// 欄の操作をアプリの設定に当てて書く（書けなければ理由）。
-pub fn apply(event: Event) -> Result<(), String> {
-    let mut b = Backdrop::app();
+/// 欄の操作を当てて書く（書けなければ理由）。`target` があればそのリポジトリだけの背景（ブックマークの
+/// `backdrop`）、なければアプリの設定。
+pub fn apply(target: Option<&str>, event: Event) -> Result<(), String> {
+    if let Event::Override(on) = event {
+        let Some(location) = target else {
+            return Ok(());
+        };
+        return crate::repositories::set_backdrop(location, on.then(|| Backdrop::app().to_json()));
+    }
+    let old = match target {
+        Some(location) => Backdrop::resolved(location),
+        None => Backdrop::app(),
+    };
+    let mut b = old.clone();
     // 横棒は 5% ずつ（GTK4 版と同じ）。
     let step = |v: f64| (v * 20.0).round() / 20.0;
     match event {
@@ -301,13 +313,19 @@ pub fn apply(event: Event) -> Result<(), String> {
             }
         }
         Event::ToolbarOpacity(v) => b.toolbar_opacity = step(v / 100.0),
+        Event::Override(_) => {}
     }
-    if b == Backdrop::app() {
+    if b == old {
         return Ok(());
     }
-    b.set_app()?;
-    changed();
-    Ok(())
+    match target {
+        Some(location) => crate::repositories::set_backdrop(location, Some(b.to_json())),
+        None => {
+            b.set_app()?;
+            changed();
+            Ok(())
+        }
+    }
 }
 
 /// [`current`] の前の結果の形。
