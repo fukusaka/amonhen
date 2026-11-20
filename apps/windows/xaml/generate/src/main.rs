@@ -22,7 +22,8 @@ const FILTER: &[&str] = &[
     "Microsoft.UI.Xaml.DependencyObject",
     "Microsoft.UI.Xaml.Media.VisualTreeHelper",
     "Microsoft.UI.Xaml.Media.IVisualTreeHelperStatics::{GetParent,GetChild,GetChildrenCount}",
-    "Microsoft.UI.Xaml.IFrameworkElement::{DataContext,Tag,put_HorizontalAlignment,put_VerticalAlignment,put_Margin}",
+    "Microsoft.UI.Xaml.IFrameworkElement::{DataContext,Tag,put_HorizontalAlignment,put_VerticalAlignment,put_Margin,\
+     Resources,RequestedTheme,put_RequestedTheme}",
     // Repositories の一覧で選んだ行（複数）。
     "Microsoft.UI.Xaml.Controls.ListViewBase",
     "Microsoft.UI.Xaml.Controls.IListViewBase::{SelectedItems,DragItemsStarting,remove_DragItemsStarting}",
@@ -163,6 +164,16 @@ const FILTER: &[&str] = &[
     "Microsoft.UI.Composition.ICompositionSupportsSystemBackdrop",
     "Microsoft.UI.Composition.SystemBackdrops.IDesktopAcrylicControllerStatics::{}",
     "Microsoft.UI.Composition.ICompositionObjectStatics::{}",
+    // 窓を透かすとき、ボタン・文字の欄・選ぶ欄の地を窓の地と同じ薄さにする（窓の根の Resources で上書きする）。
+    "Microsoft.UI.Xaml.ResourceDictionary",
+    "Microsoft.UI.Xaml.IResourceDictionaryFactory::{}",
+    "Microsoft.UI.Xaml.ElementTheme",
+    "Microsoft.UI.Xaml.Media.SolidColorBrush",
+    "Microsoft.UI.Xaml.Media.ISolidColorBrush::{Color,put_Color}",
+    "Microsoft.UI.Xaml.Media.ISolidColorBrushFactory::{CreateInstanceWithColor}",
+    "Microsoft.UI.Xaml.Media.ISolidColorBrushStatics::{}",
+    "Microsoft.UI.Xaml.Media.IBrushFactory::{}",
+    "Microsoft.UI.Xaml.Media.IBrushStatics::{}",
 ];
 
 fn main() {
@@ -191,4 +202,25 @@ fn main() {
             .map(|t| t.split_whitespace().collect::<String>()),
     );
     windows_bindgen::bindgen(&args);
+    drop_into_iterator(&out, "ResourceDictionary");
+}
+
+/// `name` の `impl IntoIterator`（値と参照の 2 つ）を取り除く。生成物は IIterable の `First` をクラスに付けずに
+/// 呼ぶので通らない（Resources に鍵を入れるだけで、繰り返しはしない）。
+fn drop_into_iterator(out: &Path, name: &str) {
+    let mut text = std::fs::read_to_string(out).expect("生成したバインディングを読む");
+    for head in [
+        format!("impl IntoIterator for {name} {{"),
+        format!("impl IntoIterator for &{name} {{"),
+    ] {
+        let Some(start) = text.find(&head) else {
+            continue;
+        };
+        let end = text[start..]
+            .find("\n}\n")
+            .map(|i| start + i + 3)
+            .expect("impl の終わり");
+        text.replace_range(start..end, "");
+    }
+    std::fs::write(out, text).expect("生成したバインディングを書く");
 }

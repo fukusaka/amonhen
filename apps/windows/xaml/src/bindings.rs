@@ -49,6 +49,30 @@ impl AppBarButton {
             .ok()
         }
     }
+    pub fn Resources(&self) -> windows_core::Result<ResourceDictionary> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).Resources)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub fn SetResources<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<ResourceDictionary>,
+    {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetResources)(
+                windows_core::Interface::as_raw(this),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
     pub fn Tag(&self) -> windows_core::Result<windows_core::IInspectable> {
         let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
         unsafe {
@@ -123,6 +147,27 @@ impl AppBarButton {
             (windows_core::Interface::vtable(this).SetDataContext)(
                 windows_core::Interface::as_raw(this),
                 value.param().abi(),
+            )
+            .ok()
+        }
+    }
+    pub fn RequestedTheme(&self) -> windows_core::Result<ElementTheme> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).RequestedTheme)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
+    pub fn SetRequestedTheme(&self, value: ElementTheme) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetRequestedTheme)(
+                windows_core::Interface::as_raw(this),
+                value,
             )
             .ok()
         }
@@ -571,6 +616,40 @@ unsafe impl Send for AppBarButton {}
 unsafe impl Sync for AppBarButton {}
 #[repr(transparent)]
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Brush(windows_core::IUnknown);
+windows_core::imp::interface_hierarchy!(Brush, windows_core::IUnknown, windows_core::IInspectable);
+windows_core::imp::required_hierarchy!(Brush, DependencyObject);
+impl Brush {
+    fn IBrushFactory<R, F: FnOnce(&IBrushFactory) -> windows_core::Result<R>>(
+        callback: F,
+    ) -> windows_core::Result<R> {
+        static SHARED: windows_core::imp::FactoryCache<Brush, IBrushFactory> =
+            windows_core::imp::FactoryCache::new();
+        SHARED.call(callback)
+    }
+    fn IBrushStatics<R, F: FnOnce(&IBrushStatics) -> windows_core::Result<R>>(
+        callback: F,
+    ) -> windows_core::Result<R> {
+        static SHARED: windows_core::imp::FactoryCache<Brush, IBrushStatics> =
+            windows_core::imp::FactoryCache::new();
+        SHARED.call(callback)
+    }
+}
+impl windows_core::RuntimeType for Brush {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_class::<Self, IBrush>();
+}
+unsafe impl windows_core::Interface for Brush {
+    type Vtable = <IBrush as windows_core::Interface>::Vtable;
+    const IID: windows_core::GUID = <IBrush as windows_core::Interface>::IID;
+}
+impl windows_core::RuntimeName for Brush {
+    const NAME: &'static str = "Microsoft.UI.Xaml.Media.Brush";
+}
+unsafe impl Send for Brush {}
+unsafe impl Sync for Brush {}
+#[repr(transparent)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Button(windows_core::IUnknown);
 windows_core::imp::interface_hierarchy!(Button, windows_core::IUnknown, windows_core::IInspectable);
 windows_core::imp::required_hierarchy!(
@@ -590,6 +669,30 @@ impl Button {
         let this = &windows_core::Interface::cast::<IControl>(self)?;
         unsafe {
             (windows_core::Interface::vtable(this).SetFontFamily)(
+                windows_core::Interface::as_raw(this),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
+    pub fn Resources(&self) -> windows_core::Result<ResourceDictionary> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).Resources)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub fn SetResources<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<ResourceDictionary>,
+    {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetResources)(
                 windows_core::Interface::as_raw(this),
                 value.param().abi(),
             )
@@ -670,6 +773,27 @@ impl Button {
             (windows_core::Interface::vtable(this).SetDataContext)(
                 windows_core::Interface::as_raw(this),
                 value.param().abi(),
+            )
+            .ok()
+        }
+    }
+    pub fn RequestedTheme(&self) -> windows_core::Result<ElementTheme> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).RequestedTheme)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
+    pub fn SetRequestedTheme(&self, value: ElementTheme) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetRequestedTheme)(
+                windows_core::Interface::as_raw(this),
+                value,
             )
             .ok()
         }
@@ -1146,6 +1270,30 @@ impl ButtonBase {
             .ok()
         }
     }
+    pub fn Resources(&self) -> windows_core::Result<ResourceDictionary> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).Resources)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub fn SetResources<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<ResourceDictionary>,
+    {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetResources)(
+                windows_core::Interface::as_raw(this),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
     pub fn Tag(&self) -> windows_core::Result<windows_core::IInspectable> {
         let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
         unsafe {
@@ -1220,6 +1368,27 @@ impl ButtonBase {
             (windows_core::Interface::vtable(this).SetDataContext)(
                 windows_core::Interface::as_raw(this),
                 value.param().abi(),
+            )
+            .ok()
+        }
+    }
+    pub fn RequestedTheme(&self) -> windows_core::Result<ElementTheme> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).RequestedTheme)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
+    pub fn SetRequestedTheme(&self, value: ElementTheme) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetRequestedTheme)(
+                windows_core::Interface::as_raw(this),
+                value,
             )
             .ok()
         }
@@ -1666,6 +1835,23 @@ impl windows_core::RuntimeName for ButtonBase {
 }
 unsafe impl Send for ButtonBase {}
 unsafe impl Sync for ButtonBase {}
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct Color {
+    pub A: u8,
+    pub R: u8,
+    pub G: u8,
+    pub B: u8,
+}
+impl windows_core::imp::TypeKind for Color {
+    type TypeKind = windows_core::imp::CopyType;
+}
+impl windows_core::RuntimeType for Color {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::from_slice(b"struct(Windows.UI.Color;u1;u1;u1;u1)");
+    const NAME: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::from_slice(b"Windows.UI.Color");
+}
 #[repr(transparent)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CompositionBrush(windows_core::IUnknown);
@@ -1752,6 +1938,30 @@ impl ContentControl {
             .ok()
         }
     }
+    pub fn Resources(&self) -> windows_core::Result<ResourceDictionary> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).Resources)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub fn SetResources<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<ResourceDictionary>,
+    {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetResources)(
+                windows_core::Interface::as_raw(this),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
     pub fn Tag(&self) -> windows_core::Result<windows_core::IInspectable> {
         let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
         unsafe {
@@ -1826,6 +2036,27 @@ impl ContentControl {
             (windows_core::Interface::vtable(this).SetDataContext)(
                 windows_core::Interface::as_raw(this),
                 value.param().abi(),
+            )
+            .ok()
+        }
+    }
+    pub fn RequestedTheme(&self) -> windows_core::Result<ElementTheme> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).RequestedTheme)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
+    pub fn SetRequestedTheme(&self, value: ElementTheme) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetRequestedTheme)(
+                windows_core::Interface::as_raw(this),
+                value,
             )
             .ok()
         }
@@ -2382,6 +2613,30 @@ impl Control {
             .ok()
         }
     }
+    pub fn Resources(&self) -> windows_core::Result<ResourceDictionary> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).Resources)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub fn SetResources<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<ResourceDictionary>,
+    {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetResources)(
+                windows_core::Interface::as_raw(this),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
     pub fn Tag(&self) -> windows_core::Result<windows_core::IInspectable> {
         let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
         unsafe {
@@ -2456,6 +2711,27 @@ impl Control {
             (windows_core::Interface::vtable(this).SetDataContext)(
                 windows_core::Interface::as_raw(this),
                 value.param().abi(),
+            )
+            .ok()
+        }
+    }
+    pub fn RequestedTheme(&self) -> windows_core::Result<ElementTheme> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).RequestedTheme)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
+    pub fn SetRequestedTheme(&self, value: ElementTheme) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetRequestedTheme)(
+                windows_core::Interface::as_raw(this),
+                value,
             )
             .ok()
         }
@@ -3720,6 +3996,23 @@ impl<
     }
 }
 #[repr(transparent)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ElementTheme(pub i32);
+impl ElementTheme {
+    pub const Default: Self = Self(0);
+    pub const Light: Self = Self(1);
+    pub const Dark: Self = Self(2);
+}
+impl windows_core::imp::TypeKind for ElementTheme {
+    type TypeKind = windows_core::imp::CopyType;
+}
+impl windows_core::RuntimeType for ElementTheme {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::from_slice(b"enum(Microsoft.UI.Xaml.ElementTheme;i4)");
+    const NAME: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::from_slice(b"Microsoft.UI.Xaml.ElementTheme");
+}
+#[repr(transparent)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FlyoutBase(windows_core::IUnknown);
 windows_core::imp::interface_hierarchy!(
@@ -3976,6 +4269,28 @@ windows_core::imp::interface_hierarchy!(
 );
 windows_core::imp::required_hierarchy!(FrameworkElement, UIElement, DependencyObject);
 impl FrameworkElement {
+    pub fn Resources(&self) -> windows_core::Result<ResourceDictionary> {
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(self).Resources)(
+                windows_core::Interface::as_raw(self),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub fn SetResources<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<ResourceDictionary>,
+    {
+        unsafe {
+            (windows_core::Interface::vtable(self).SetResources)(
+                windows_core::Interface::as_raw(self),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
     pub fn Tag(&self) -> windows_core::Result<windows_core::IInspectable> {
         unsafe {
             let mut result__ = core::mem::zeroed();
@@ -4043,6 +4358,25 @@ impl FrameworkElement {
             (windows_core::Interface::vtable(self).SetDataContext)(
                 windows_core::Interface::as_raw(self),
                 value.param().abi(),
+            )
+            .ok()
+        }
+    }
+    pub fn RequestedTheme(&self) -> windows_core::Result<ElementTheme> {
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(self).RequestedTheme)(
+                windows_core::Interface::as_raw(self),
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
+    pub fn SetRequestedTheme(&self, value: ElementTheme) -> windows_core::Result<()> {
+        unsafe {
+            (windows_core::Interface::vtable(self).SetRequestedTheme)(
+                windows_core::Interface::as_raw(self),
+                value,
             )
             .ok()
         }
@@ -4567,6 +4901,47 @@ impl windows_core::RuntimeType for IAppBarButtonStatics {
 }
 #[repr(C)]
 pub struct IAppBarButtonStatics_Vtbl {
+    pub base__: windows_core::IInspectable_Vtbl,
+}
+windows_core::imp::define_interface!(IBrush, IBrush_Vtbl, 0x2de3cb83_1329_5679_88f8_c822bc5442cb);
+impl windows_core::RuntimeType for IBrush {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+    const NAME: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::from_slice(b"Microsoft.UI.Xaml.Media.IBrush");
+}
+#[repr(C)]
+pub struct IBrush_Vtbl {
+    pub base__: windows_core::IInspectable_Vtbl,
+}
+windows_core::imp::define_interface!(
+    IBrushFactory,
+    IBrushFactory_Vtbl,
+    0xb5258717_6c49_5ba5_87fd_35df382647a5
+);
+impl windows_core::RuntimeType for IBrushFactory {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+    const NAME: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::from_slice(b"Microsoft.UI.Xaml.Media.IBrushFactory");
+}
+#[repr(C)]
+pub struct IBrushFactory_Vtbl {
+    pub base__: windows_core::IInspectable_Vtbl,
+}
+windows_core::imp::define_interface!(
+    IBrushStatics,
+    IBrushStatics_Vtbl,
+    0x5b854f50_f818_5f01_91b0_28132d3f5957
+);
+impl windows_core::RuntimeType for IBrushStatics {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+    const NAME: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::from_slice(b"Microsoft.UI.Xaml.Media.IBrushStatics");
+}
+#[repr(C)]
+pub struct IBrushStatics_Vtbl {
     pub base__: windows_core::IInspectable_Vtbl,
 }
 windows_core::imp::define_interface!(
@@ -5362,8 +5737,14 @@ impl windows_core::RuntimeType for IFrameworkElement {
 pub struct IFrameworkElement_Vtbl {
     pub base__: windows_core::IInspectable_Vtbl,
     Triggers: usize,
-    Resources: usize,
-    SetResources: usize,
+    pub Resources: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *mut *mut core::ffi::c_void,
+    ) -> windows_core::HRESULT,
+    pub SetResources: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *mut core::ffi::c_void,
+    ) -> windows_core::HRESULT,
     pub Tag: unsafe extern "system" fn(
         *mut core::ffi::c_void,
         *mut *mut core::ffi::c_void,
@@ -5412,6 +5793,31 @@ pub struct IFrameworkElement_Vtbl {
         *mut core::ffi::c_void,
         *mut core::ffi::c_void,
     ) -> windows_core::HRESULT,
+    AllowFocusOnInteraction: usize,
+    SetAllowFocusOnInteraction: usize,
+    FocusVisualMargin: usize,
+    SetFocusVisualMargin: usize,
+    FocusVisualSecondaryThickness: usize,
+    SetFocusVisualSecondaryThickness: usize,
+    FocusVisualPrimaryThickness: usize,
+    SetFocusVisualPrimaryThickness: usize,
+    FocusVisualSecondaryBrush: usize,
+    SetFocusVisualSecondaryBrush: usize,
+    FocusVisualPrimaryBrush: usize,
+    SetFocusVisualPrimaryBrush: usize,
+    AllowFocusWhenDisabled: usize,
+    SetAllowFocusWhenDisabled: usize,
+    Style: usize,
+    SetStyle: usize,
+    Parent: usize,
+    FlowDirection: usize,
+    SetFlowDirection: usize,
+    pub RequestedTheme: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *mut ElementTheme,
+    ) -> windows_core::HRESULT,
+    pub SetRequestedTheme:
+        unsafe extern "system" fn(*mut core::ffi::c_void, ElementTheme) -> windows_core::HRESULT,
 }
 windows_core::imp::define_interface!(
     IFrameworkElementFactory,
@@ -5972,6 +6378,36 @@ pub struct IPointerRoutedEventArgs_Vtbl {
     ) -> windows_core::HRESULT,
 }
 windows_core::imp::define_interface!(
+    IResourceDictionary,
+    IResourceDictionary_Vtbl,
+    0x1b690975_a710_5783_a6e1_15836f6186c2
+);
+impl windows_core::RuntimeType for IResourceDictionary {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+    const NAME: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::from_slice(b"Microsoft.UI.Xaml.IResourceDictionary");
+}
+#[repr(C)]
+pub struct IResourceDictionary_Vtbl {
+    pub base__: windows_core::IInspectable_Vtbl,
+}
+windows_core::imp::define_interface!(
+    IResourceDictionaryFactory,
+    IResourceDictionaryFactory_Vtbl,
+    0xea22a48f_ab71_56f6_a392_d82310c8aa7b
+);
+impl windows_core::RuntimeType for IResourceDictionaryFactory {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+    const NAME: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::from_slice(b"Microsoft.UI.Xaml.IResourceDictionaryFactory");
+}
+#[repr(C)]
+pub struct IResourceDictionaryFactory_Vtbl {
+    pub base__: windows_core::IInspectable_Vtbl,
+}
+windows_core::imp::define_interface!(
     IRoutedEventArgs,
     IRoutedEventArgs_Vtbl,
     0x0908c407_1c7d_5de3_9c50_d971c62ec8ec
@@ -6209,6 +6645,61 @@ impl windows_core::RuntimeType for ISelectorStatics {
 }
 #[repr(C)]
 pub struct ISelectorStatics_Vtbl {
+    pub base__: windows_core::IInspectable_Vtbl,
+}
+windows_core::imp::define_interface!(
+    ISolidColorBrush,
+    ISolidColorBrush_Vtbl,
+    0xb3865c31_37c8_55c1_8a72_d41c67642e2a
+);
+impl windows_core::RuntimeType for ISolidColorBrush {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+    const NAME: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::from_slice(b"Microsoft.UI.Xaml.Media.ISolidColorBrush");
+}
+#[repr(C)]
+pub struct ISolidColorBrush_Vtbl {
+    pub base__: windows_core::IInspectable_Vtbl,
+    pub Color:
+        unsafe extern "system" fn(*mut core::ffi::c_void, *mut Color) -> windows_core::HRESULT,
+    pub SetColor: unsafe extern "system" fn(*mut core::ffi::c_void, Color) -> windows_core::HRESULT,
+}
+windows_core::imp::define_interface!(
+    ISolidColorBrushFactory,
+    ISolidColorBrushFactory_Vtbl,
+    0x7b559384_4daa_54f4_91ef_33a23fd816ca
+);
+impl windows_core::RuntimeType for ISolidColorBrushFactory {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+    const NAME: windows_core::imp::ConstBuffer = windows_core::imp::ConstBuffer::from_slice(
+        b"Microsoft.UI.Xaml.Media.ISolidColorBrushFactory",
+    );
+}
+#[repr(C)]
+pub struct ISolidColorBrushFactory_Vtbl {
+    pub base__: windows_core::IInspectable_Vtbl,
+    pub CreateInstanceWithColor: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        Color,
+        *mut *mut core::ffi::c_void,
+    ) -> windows_core::HRESULT,
+}
+windows_core::imp::define_interface!(
+    ISolidColorBrushStatics,
+    ISolidColorBrushStatics_Vtbl,
+    0x6bc16da0_c4e6_59b8_995b_b31e48424c07
+);
+impl windows_core::RuntimeType for ISolidColorBrushStatics {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+    const NAME: windows_core::imp::ConstBuffer = windows_core::imp::ConstBuffer::from_slice(
+        b"Microsoft.UI.Xaml.Media.ISolidColorBrushStatics",
+    );
+}
+#[repr(C)]
+pub struct ISolidColorBrushStatics_Vtbl {
     pub base__: windows_core::IInspectable_Vtbl,
 }
 windows_core::imp::define_interface!(
@@ -7142,6 +7633,30 @@ impl InfoBadge {
             .ok()
         }
     }
+    pub fn Resources(&self) -> windows_core::Result<ResourceDictionary> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).Resources)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub fn SetResources<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<ResourceDictionary>,
+    {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetResources)(
+                windows_core::Interface::as_raw(this),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
     pub fn Tag(&self) -> windows_core::Result<windows_core::IInspectable> {
         let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
         unsafe {
@@ -7216,6 +7731,27 @@ impl InfoBadge {
             (windows_core::Interface::vtable(this).SetDataContext)(
                 windows_core::Interface::as_raw(this),
                 value.param().abi(),
+            )
+            .ok()
+        }
+    }
+    pub fn RequestedTheme(&self) -> windows_core::Result<ElementTheme> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).RequestedTheme)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
+    pub fn SetRequestedTheme(&self, value: ElementTheme) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetRequestedTheme)(
+                windows_core::Interface::as_raw(this),
+                value,
             )
             .ok()
         }
@@ -7942,6 +8478,30 @@ impl ItemsControl {
             .ok()
         }
     }
+    pub fn Resources(&self) -> windows_core::Result<ResourceDictionary> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).Resources)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub fn SetResources<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<ResourceDictionary>,
+    {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetResources)(
+                windows_core::Interface::as_raw(this),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
     pub fn Tag(&self) -> windows_core::Result<windows_core::IInspectable> {
         let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
         unsafe {
@@ -8016,6 +8576,27 @@ impl ItemsControl {
             (windows_core::Interface::vtable(this).SetDataContext)(
                 windows_core::Interface::as_raw(this),
                 value.param().abi(),
+            )
+            .ok()
+        }
+    }
+    pub fn RequestedTheme(&self) -> windows_core::Result<ElementTheme> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).RequestedTheme)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
+    pub fn SetRequestedTheme(&self, value: ElementTheme) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetRequestedTheme)(
+                windows_core::Interface::as_raw(this),
+                value,
             )
             .ok()
         }
@@ -8658,6 +9239,30 @@ impl ListViewBase {
             .ok()
         }
     }
+    pub fn Resources(&self) -> windows_core::Result<ResourceDictionary> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).Resources)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub fn SetResources<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<ResourceDictionary>,
+    {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetResources)(
+                windows_core::Interface::as_raw(this),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
     pub fn Tag(&self) -> windows_core::Result<windows_core::IInspectable> {
         let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
         unsafe {
@@ -8732,6 +9337,27 @@ impl ListViewBase {
             (windows_core::Interface::vtable(this).SetDataContext)(
                 windows_core::Interface::as_raw(this),
                 value.param().abi(),
+            )
+            .ok()
+        }
+    }
+    pub fn RequestedTheme(&self) -> windows_core::Result<ElementTheme> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).RequestedTheme)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
+    pub fn SetRequestedTheme(&self, value: ElementTheme) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetRequestedTheme)(
+                windows_core::Interface::as_raw(this),
+                value,
             )
             .ok()
         }
@@ -9251,6 +9877,30 @@ impl ListViewItem {
             .ok()
         }
     }
+    pub fn Resources(&self) -> windows_core::Result<ResourceDictionary> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).Resources)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub fn SetResources<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<ResourceDictionary>,
+    {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetResources)(
+                windows_core::Interface::as_raw(this),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
     pub fn Tag(&self) -> windows_core::Result<windows_core::IInspectable> {
         let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
         unsafe {
@@ -9325,6 +9975,27 @@ impl ListViewItem {
             (windows_core::Interface::vtable(this).SetDataContext)(
                 windows_core::Interface::as_raw(this),
                 value.param().abi(),
+            )
+            .ok()
+        }
+    }
+    pub fn RequestedTheme(&self) -> windows_core::Result<ElementTheme> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).RequestedTheme)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
+    pub fn SetRequestedTheme(&self, value: ElementTheme) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetRequestedTheme)(
+                windows_core::Interface::as_raw(this),
+                value,
             )
             .ok()
         }
@@ -10115,6 +10786,42 @@ unsafe impl Send for PointerRoutedEventArgs {}
 unsafe impl Sync for PointerRoutedEventArgs {}
 #[repr(transparent)]
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResourceDictionary(windows_core::IUnknown);
+windows_core::imp::interface_hierarchy!(
+    ResourceDictionary,
+    windows_core::IUnknown,
+    windows_core::IInspectable
+);
+windows_core::imp::required_hierarchy!(ResourceDictionary, DependencyObject);
+impl ResourceDictionary {
+    fn IResourceDictionaryFactory<
+        R,
+        F: FnOnce(&IResourceDictionaryFactory) -> windows_core::Result<R>,
+    >(
+        callback: F,
+    ) -> windows_core::Result<R> {
+        static SHARED: windows_core::imp::FactoryCache<
+            ResourceDictionary,
+            IResourceDictionaryFactory,
+        > = windows_core::imp::FactoryCache::new();
+        SHARED.call(callback)
+    }
+}
+impl windows_core::RuntimeType for ResourceDictionary {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_class::<Self, IResourceDictionary>();
+}
+unsafe impl windows_core::Interface for ResourceDictionary {
+    type Vtable = <IResourceDictionary as windows_core::Interface>::Vtable;
+    const IID: windows_core::GUID = <IResourceDictionary as windows_core::Interface>::IID;
+}
+impl windows_core::RuntimeName for ResourceDictionary {
+    const NAME: &'static str = "Microsoft.UI.Xaml.ResourceDictionary";
+}
+unsafe impl Send for ResourceDictionary {}
+unsafe impl Sync for ResourceDictionary {}
+#[repr(transparent)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RoutedEventArgs(windows_core::IUnknown);
 windows_core::imp::interface_hierarchy!(
     RoutedEventArgs,
@@ -10201,6 +10908,30 @@ impl ScrollViewer {
             .ok()
         }
     }
+    pub fn Resources(&self) -> windows_core::Result<ResourceDictionary> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).Resources)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub fn SetResources<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<ResourceDictionary>,
+    {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetResources)(
+                windows_core::Interface::as_raw(this),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
     pub fn Tag(&self) -> windows_core::Result<windows_core::IInspectable> {
         let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
         unsafe {
@@ -10275,6 +11006,27 @@ impl ScrollViewer {
             (windows_core::Interface::vtable(this).SetDataContext)(
                 windows_core::Interface::as_raw(this),
                 value.param().abi(),
+            )
+            .ok()
+        }
+    }
+    pub fn RequestedTheme(&self) -> windows_core::Result<ElementTheme> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).RequestedTheme)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
+    pub fn SetRequestedTheme(&self, value: ElementTheme) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetRequestedTheme)(
+                windows_core::Interface::as_raw(this),
+                value,
             )
             .ok()
         }
@@ -10773,6 +11525,30 @@ impl Selector {
             .ok()
         }
     }
+    pub fn Resources(&self) -> windows_core::Result<ResourceDictionary> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).Resources)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub fn SetResources<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<ResourceDictionary>,
+    {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetResources)(
+                windows_core::Interface::as_raw(this),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
     pub fn Tag(&self) -> windows_core::Result<windows_core::IInspectable> {
         let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
         unsafe {
@@ -10847,6 +11623,27 @@ impl Selector {
             (windows_core::Interface::vtable(this).SetDataContext)(
                 windows_core::Interface::as_raw(this),
                 value.param().abi(),
+            )
+            .ok()
+        }
+    }
+    pub fn RequestedTheme(&self) -> windows_core::Result<ElementTheme> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).RequestedTheme)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
+    pub fn SetRequestedTheme(&self, value: ElementTheme) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetRequestedTheme)(
+                windows_core::Interface::as_raw(this),
+                value,
             )
             .ok()
         }
@@ -11316,6 +12113,30 @@ impl SelectorItem {
             .ok()
         }
     }
+    pub fn Resources(&self) -> windows_core::Result<ResourceDictionary> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).Resources)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub fn SetResources<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<ResourceDictionary>,
+    {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetResources)(
+                windows_core::Interface::as_raw(this),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
     pub fn Tag(&self) -> windows_core::Result<windows_core::IInspectable> {
         let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
         unsafe {
@@ -11390,6 +12211,27 @@ impl SelectorItem {
             (windows_core::Interface::vtable(this).SetDataContext)(
                 windows_core::Interface::as_raw(this),
                 value.param().abi(),
+            )
+            .ok()
+        }
+    }
+    pub fn RequestedTheme(&self) -> windows_core::Result<ElementTheme> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).RequestedTheme)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
+    pub fn SetRequestedTheme(&self, value: ElementTheme) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetRequestedTheme)(
+                windows_core::Interface::as_raw(this),
+                value,
             )
             .ok()
         }
@@ -11838,6 +12680,95 @@ unsafe impl Send for SelectorItem {}
 unsafe impl Sync for SelectorItem {}
 #[repr(transparent)]
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SolidColorBrush(windows_core::IUnknown);
+windows_core::imp::interface_hierarchy!(
+    SolidColorBrush,
+    windows_core::IUnknown,
+    windows_core::IInspectable
+);
+windows_core::imp::required_hierarchy!(SolidColorBrush, Brush, DependencyObject);
+impl SolidColorBrush {
+    pub fn new() -> windows_core::Result<Self> {
+        Self::IActivationFactory(|f| f.ActivateInstance::<Self>())
+    }
+    fn IActivationFactory<
+        R,
+        F: FnOnce(&windows_core::imp::IGenericFactory) -> windows_core::Result<R>,
+    >(
+        callback: F,
+    ) -> windows_core::Result<R> {
+        static SHARED: windows_core::imp::FactoryCache<
+            SolidColorBrush,
+            windows_core::imp::IGenericFactory,
+        > = windows_core::imp::FactoryCache::new();
+        SHARED.call(callback)
+    }
+    pub fn Color(&self) -> windows_core::Result<Color> {
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(self).Color)(
+                windows_core::Interface::as_raw(self),
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
+    pub fn SetColor(&self, value: Color) -> windows_core::Result<()> {
+        unsafe {
+            (windows_core::Interface::vtable(self).SetColor)(
+                windows_core::Interface::as_raw(self),
+                value,
+            )
+            .ok()
+        }
+    }
+    pub fn CreateInstanceWithColor(color: Color) -> windows_core::Result<Self> {
+        Self::ISolidColorBrushFactory(|this| unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).CreateInstanceWithColor)(
+                windows_core::Interface::as_raw(this),
+                color,
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        })
+    }
+    fn ISolidColorBrushFactory<
+        R,
+        F: FnOnce(&ISolidColorBrushFactory) -> windows_core::Result<R>,
+    >(
+        callback: F,
+    ) -> windows_core::Result<R> {
+        static SHARED: windows_core::imp::FactoryCache<SolidColorBrush, ISolidColorBrushFactory> =
+            windows_core::imp::FactoryCache::new();
+        SHARED.call(callback)
+    }
+    fn ISolidColorBrushStatics<
+        R,
+        F: FnOnce(&ISolidColorBrushStatics) -> windows_core::Result<R>,
+    >(
+        callback: F,
+    ) -> windows_core::Result<R> {
+        static SHARED: windows_core::imp::FactoryCache<SolidColorBrush, ISolidColorBrushStatics> =
+            windows_core::imp::FactoryCache::new();
+        SHARED.call(callback)
+    }
+}
+impl windows_core::RuntimeType for SolidColorBrush {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_class::<Self, ISolidColorBrush>();
+}
+unsafe impl windows_core::Interface for SolidColorBrush {
+    type Vtable = <ISolidColorBrush as windows_core::Interface>::Vtable;
+    const IID: windows_core::GUID = <ISolidColorBrush as windows_core::Interface>::IID;
+}
+impl windows_core::RuntimeName for SolidColorBrush {
+    const NAME: &'static str = "Microsoft.UI.Xaml.Media.SolidColorBrush";
+}
+unsafe impl Send for SolidColorBrush {}
+unsafe impl Sync for SolidColorBrush {}
+#[repr(transparent)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SystemBackdropConfiguration(windows_core::IUnknown);
 windows_core::imp::interface_hierarchy!(
     SystemBackdropConfiguration,
@@ -11941,6 +12872,30 @@ impl TabView {
             .ok()
         }
     }
+    pub fn Resources(&self) -> windows_core::Result<ResourceDictionary> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).Resources)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub fn SetResources<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<ResourceDictionary>,
+    {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetResources)(
+                windows_core::Interface::as_raw(this),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
     pub fn Tag(&self) -> windows_core::Result<windows_core::IInspectable> {
         let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
         unsafe {
@@ -12015,6 +12970,27 @@ impl TabView {
             (windows_core::Interface::vtable(this).SetDataContext)(
                 windows_core::Interface::as_raw(this),
                 value.param().abi(),
+            )
+            .ok()
+        }
+    }
+    pub fn RequestedTheme(&self) -> windows_core::Result<ElementTheme> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).RequestedTheme)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
+    pub fn SetRequestedTheme(&self, value: ElementTheme) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetRequestedTheme)(
+                windows_core::Interface::as_raw(this),
+                value,
             )
             .ok()
         }
@@ -12538,6 +13514,30 @@ impl TabViewItem {
             .ok()
         }
     }
+    pub fn Resources(&self) -> windows_core::Result<ResourceDictionary> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).Resources)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub fn SetResources<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<ResourceDictionary>,
+    {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetResources)(
+                windows_core::Interface::as_raw(this),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
     pub fn Tag(&self) -> windows_core::Result<windows_core::IInspectable> {
         let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
         unsafe {
@@ -12612,6 +13612,27 @@ impl TabViewItem {
             (windows_core::Interface::vtable(this).SetDataContext)(
                 windows_core::Interface::as_raw(this),
                 value.param().abi(),
+            )
+            .ok()
+        }
+    }
+    pub fn RequestedTheme(&self) -> windows_core::Result<ElementTheme> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).RequestedTheme)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
+    pub fn SetRequestedTheme(&self, value: ElementTheme) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetRequestedTheme)(
+                windows_core::Interface::as_raw(this),
+                value,
             )
             .ok()
         }
@@ -13139,6 +14160,30 @@ impl TreeView {
             .ok()
         }
     }
+    pub fn Resources(&self) -> windows_core::Result<ResourceDictionary> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).Resources)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub fn SetResources<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<ResourceDictionary>,
+    {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetResources)(
+                windows_core::Interface::as_raw(this),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
     pub fn Tag(&self) -> windows_core::Result<windows_core::IInspectable> {
         let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
         unsafe {
@@ -13213,6 +14258,27 @@ impl TreeView {
             (windows_core::Interface::vtable(this).SetDataContext)(
                 windows_core::Interface::as_raw(this),
                 value.param().abi(),
+            )
+            .ok()
+        }
+    }
+    pub fn RequestedTheme(&self) -> windows_core::Result<ElementTheme> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).RequestedTheme)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
+    pub fn SetRequestedTheme(&self, value: ElementTheme) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetRequestedTheme)(
+                windows_core::Interface::as_raw(this),
+                value,
             )
             .ok()
         }

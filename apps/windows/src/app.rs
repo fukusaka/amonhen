@@ -29,6 +29,8 @@ thread_local! {
     /// 窓の後ろを透かす Acrylic（透かしている間）と、当てられなかったか（WinUI の Acrylic に替える）。
     static ACRYLIC: RefCell<Option<xaml::Acrylic>> = const { RefCell::new(None) };
     static ACRYLIC_FAILED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// 窓を透かしている間の、ボタン・文字の欄・選ぶ欄の地（一度入れたら、透かさないときは元の濃さに戻す）。
+    static CONTROL_FILLS: RefCell<Option<xaml::ControlFills>> = const { RefCell::new(None) };
     /// 設定の画面（Settings・Repository Settings）を出しているか（Ctrl+Z・Ctrl+Shift+Z を設定の Undo・Redo にする）。
     static SETTINGS_SHOWN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// サイドバーの木で引いてよい項目（お気に入りのブランチの鍵。上から順）。木のドラッグの始まりで見る。
@@ -7531,6 +7533,37 @@ impl Root {
                         WindowBackdrop::None
                     },
                 ),
+        );
+        // 窓を透かすときは、ボタン・文字の欄・選ぶ欄の地も窓の地と同じ薄さに（部品だけ目立たないように）。
+        let fill_alpha = if see_through {
+            (1.0 - backdrop.transparency.clamp(0.0, 1.0)) as f32
+        } else {
+            1.0
+        };
+        let host = self.root.clone();
+        context.use_effect(
+            "control-fills",
+            (see_through, dark, (fill_alpha * 100.0).round() as u32),
+            move || {
+                let _ = host.request_native_element(move |result| {
+                    let Ok(element) = result else { return };
+                    CONTROL_FILLS.with(|f| {
+                        let mut f = f.borrow_mut();
+                        let done = match f.as_ref() {
+                            Some(fills) => fills.update(dark, fill_alpha),
+                            None if see_through => {
+                                xaml::ControlFills::install(&element, dark, fill_alpha)
+                                    .map(|fills| *f = Some(fills))
+                            }
+                            None => Ok(()),
+                        };
+                        if let Err(e) = done {
+                            eprintln!("部品の地を変えられない: {e}");
+                        }
+                    });
+                });
+                None
+            },
         );
         let tab_strip = Grid::new()
             .grid_row(2)
