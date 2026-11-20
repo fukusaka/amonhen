@@ -53,7 +53,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Branches の並び（今のもの・活発・止まった・マージ済み・アーカイブ・積み重ね） | ✓ | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあるとき。なければ `/` で分けたフォルダーの木。<br>CLI: `amonhen run`（`branchGroups`）から。 |
 | お気に入りのブランチ | ✓ | ✓ | ✓ | ✓ | — |  |
 | ブランチのアーカイブ | ✓ | ✓ | ✓ | ✓ | — |  |
-| ブランチを片付ける（取り込み済み・PR でマージ済み・上流が消えた。Undo 1 回） | ✓ | ✓ | △ | ✓ | △ | VSCode: エンジンがあるとき、理由ごとの見出しを付けた複数選択の一覧（コマンドパレット、Branches の見出しの右クリック）。CLI: `amonhen run`（`branchCleanup`・`deleteBranches`）から。マージ済みの PR はアプリと VSCode が gh で読む。<br>Windows: Windows: プルリクエストはまだ読まない（GitHub に未対応）。 |
+| ブランチを片付ける（取り込み済み・PR でマージ済み・上流が消えた。Undo 1 回） | ✓ | ✓ | △ | ✓ | △ | VSCode: エンジンがあるとき、理由ごとの見出しを付けた複数選択の一覧（コマンドパレット、Branches の見出しの右クリック）。CLI: `amonhen run`（`branchCleanup`・`deleteBranches`）から。マージ済みの PR はアプリと VSCode が gh で読む。<br>Windows: pull request はまだ読まない（GitHub に対応していない）。 |
 | PR でマージ済みのブランチの印（GitHub で squash・rebase） | ✓ | ✓ | — | ✓ | △ | VSCode: エンジンがあるとき。番号は行のツールチップに出る。CLI: `amonhen run`（`pullRequests` を渡した `branchGroups`）から。マージ済みの PR はアプリと VSCode が gh で読む。 |
 | お気に入りをドラッグで並べ替える | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: メニューの Move Up・Move Down in Favorites（ブランチに落とすと Merge・Rebase）。 |
 | ブランチのメニュー: checkout・名前の変更・削除（未マージは Delete Anyway） | ✓ | ✓ | ✓ | ✓ | △ | macOS: Set Upstream は Repository メニューだけ。<br>GTK4: Set Upstream は Repository メニューだけ。<br>CLI: `amonhen run` から。 |
@@ -98,7 +98,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 選んだリポジトリを Fetch | ✓ | ✓ | ✓ | n/a | n/a | Windows: Ctrl・Shift で行を選び、選んだ行のメニューの Fetch で、選んだものすべてを fetch する。 |
 | Quick Open（あいまい検索） | ✓ | ✓ | ✓ | n/a | n/a | Windows: 新しいウィンドウで開く。 |
 | ツールバーのリポジトリ名で切り替える | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: Select Repository でワークスペースのリポジトリから選ぶ。 |
-| Clone（自分の GitHub のリポジトリから選ぶ） | ✓ | ✓ | △ | n/a | △ | VSCode: VSCode 自身の Git: Clone。<br>CLI: `clone <url>` だけ。<br>Windows: 自分の GitHub のリポジトリの一覧はない。clone したものは新しいウィンドウで開く。 |
+| Clone（自分の GitHub のリポジトリから選ぶ） | ✓ | ✓ | △ | n/a | △ | VSCode: VSCode 自身の Git: Clone。<br>CLI: `clone <url>` だけ。<br>Windows: 自分の GitHub のリポジトリの一覧はない（GitHub に対応していない）。clone したものは新しいタブで開く。 |
 | Clone: 取得する範囲（すべて・中身は必要なときに・最近の履歴）と、一部のフォルダだけ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: VSCode の Git: Clone が代わり。<br>CLI: `clone --filter`・`--depth`・`--sparse`。 |
 | Subtrees のグループ（git に git subtree があるとき）: 追加・Pull・Push・Split、相手と squash を覚える | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: 値は入力欄、squash は一覧で聞く（シートではない）。<br>CLI: `subtree`。<br>Windows: squash で最後に取り込んだ subtree は名前の後ろに ⊟（ツールチップはない）。 |
 | Clone: submodule も取り出す | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: VSCode の Git: Clone が代わり。<br>CLI: `clone --recurse-submodules`。 |
