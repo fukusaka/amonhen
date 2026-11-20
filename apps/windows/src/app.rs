@@ -46,6 +46,10 @@ thread_local! {
     static ARGS: RefCell<Option<(Args, Instant)>> = const { RefCell::new(None) };
     /// History と差分の描き手。
     static HISTORY: RefCell<Option<Rc<RefCell<HistoryView>>>> = const { RefCell::new(None) };
+    /// 後ろのタブの History（タブの番号ごとに、その場所と描き手。macOS 版・GTK4 版と同じく、タブを替えても
+    /// リポジトリを開いたままにする。前に戻すと、読んだ History・選んだ行・スクロールのまま描き直す）。
+    static PARKED: RefCell<std::collections::HashMap<u64, Parked>> =
+        RefCell::new(std::collections::HashMap::new());
     /// History を包む生の要素（右クリックのメニューを自分で開く）。
     static HISTORY_ELEMENT: RefCell<Option<xaml::UIElement>> = const { RefCell::new(None) };
     /// History から外した右クリックのメニュー（外している間、WinUI は自分では開かない）。
@@ -163,6 +167,14 @@ impl Component for Shell {
             View::component::<Root>(()),
         )]),))
     }
+}
+
+/// 後ろのタブの History（そのリポジトリの場所と描き手）。
+type Parked = (String, Rc<RefCell<HistoryView>>);
+
+/// 閉じたタブの、後ろに置いていた History を捨てる。
+pub fn forget_parked(tab: u64) {
+    PARKED.with(|p| p.borrow_mut().remove(&tab));
 }
 
 fn with_history(f: impl FnOnce(&mut HistoryView)) {
@@ -3147,6 +3159,22 @@ impl Root {
                                 chosen.and_then(|c| crate::remote::ssh_location(&picker.host, &c))
                             {
                                 crate::repositories::add_scan_root(&location);
+                            }
+                        }
+                        crate::pathpicker::Purpose::AddLocal => {
+                            if let Some(path) = chosen {
+                                self.repositories_event(
+                                    crate::repositories::Event::AddRepositoryAt(path),
+                                    context,
+                                );
+                            }
+                        }
+                        crate::pathpicker::Purpose::ScanLocal => {
+                            if let Some(path) = chosen {
+                                self.repositories_event(
+                                    crate::repositories::Event::AddScanFolderAt(path),
+                                    context,
+                                );
                             }
                         }
                     }
@@ -7682,56 +7710,109 @@ impl Root {
                 sender.send(Message::MergeWindow(path, args.merge_text.clone()));
             }
             PENDING_PLACE.with(|p| p.set(args.place.map(|r| (r, 0))));
-            let session = match Session::new(&args, "app", started, Arc::new(|| {})) {
-                Ok(mut s) => {
-                    // View の All Files in One Diff を切っていれば、コミットの差分は 1 ファイルずつ。
-                    s.data.single_file = !crate::prefs::bool(crate::prefs::STACKED_COMMIT_DIFF);
-                    s
+            // このタブを前に開いていれば、後ろに置いていた History を新しい部品につなぎ直す（開き直さない）。
+            let tab = crate::tabs::current();
+            let location = args.repo.display().to_string();
+            let parked = tab.as_ref().and_then(|t| {
+                PARKED
+                    .with(|p| p.borrow_mut().remove(&t.id))
+                    .filter(|(l, _)| *l == location)
+                    .map(|(_, view)| view)
+            });
+            let parked = parked.inspect(|view| {
+                {
+                    let mut v = view.borrow_mut();
+                    v.root = root.clone();
+                    v.root_input = false;
+                    v.sidebar = sidebar.clone();
+                    v.sidebar_menu_host = sidebar_menu_host.clone();
+                    v.sidebar_input = false;
+                    v.sidebar_host_input = false;
+                    v.sidebar_menu_ready = false;
+                    v.diff_menu_ready = false;
+                    v.panel = panel.clone();
+                    v.area = area.clone();
+                    v.attached = false;
+                    v.input_requested = false;
+                    v.session.surface = None;
+                    v.session.invalidate();
+                    v.diff.panel = diff_panel.clone();
+                    v.diff.area = diff_area.clone();
+                    v.diff.surface = None;
+                    v.diff.attached = false;
+                    v.diff.input_requested = false;
+                    v.diff.dirty = true;
+                    v.sender = sender.clone();
+                    // 新しい根の部品に、ref・status・選んだ行を送り直す。
+                    v.refs_sent = None;
+                    v.status_sent = None;
+                    v.selected = None;
+                    v.shown = None;
+                    v.context_at = None;
+                    v.menu_requested = false;
+                    v.menu_ready = false;
+                    v.working_page = false;
+                    v.last_query = None;
+                    v.multi_sent.clear();
                 }
-                Err(e) => {
-                    sender.send(Message::Failed(e));
-                    return None;
+            });
+            let view = match parked {
+                Some(view) => view,
+                None => {
+                    let session = match Session::new(&args, "app", started, Arc::new(|| {})) {
+                        Ok(mut s) => {
+                            // View の All Files in One Diff を切っていれば、コミットの差分は 1 ファイルずつ。
+                            s.data.single_file =
+                                !crate::prefs::bool(crate::prefs::STACKED_COMMIT_DIFF);
+                            s
+                        }
+                        Err(e) => {
+                            sender.send(Message::Failed(e));
+                            return None;
+                        }
+                    };
+                    Rc::new(RefCell::new(HistoryView {
+                        session,
+                        diff_query: String::new(),
+                        root,
+                        root_input: false,
+                        sidebar,
+                        sidebar_menu_host,
+                        sidebar_input: false,
+                        sidebar_host_input: false,
+                        sidebar_menu_ready: false,
+                        diff_menu_ready: false,
+                        panel: panel.clone(),
+                        area,
+                        options: args.options,
+                        attached: false,
+                        input_requested: false,
+                        diff: DiffPane {
+                            panel: diff_panel.clone(),
+                            area: diff_area,
+                            surface: None,
+                            scale: 1.0,
+                            attached: false,
+                            input_requested: false,
+                            scroll_y: 0.0,
+                            dirty: true,
+                        },
+                        sender,
+                        refs_sent: None,
+                        status_sent: None,
+                        selected: None,
+                        shown: None,
+                        context_at: None,
+                        menu_requested: false,
+                        menu_ready: false,
+                        working_page: false,
+                        last_query: None,
+                        multi_sent: Vec::new(),
+                    }))
                 }
             };
-            let view = Rc::new(RefCell::new(HistoryView {
-                session,
-                diff_query: String::new(),
-                root,
-                root_input: false,
-                sidebar,
-                sidebar_menu_host,
-                sidebar_input: false,
-                sidebar_host_input: false,
-                sidebar_menu_ready: false,
-                diff_menu_ready: false,
-                panel: panel.clone(),
-                area,
-                options: args.options,
-                attached: false,
-                input_requested: false,
-                diff: DiffPane {
-                    panel: diff_panel.clone(),
-                    area: diff_area,
-                    surface: None,
-                    scale: 1.0,
-                    attached: false,
-                    input_requested: false,
-                    scroll_y: 0.0,
-                    dirty: true,
-                },
-                sender,
-                refs_sent: None,
-                status_sent: None,
-                selected: None,
-                shown: None,
-                context_at: None,
-                menu_requested: false,
-                menu_ready: false,
-                working_page: false,
-                last_query: None,
-                multi_sent: Vec::new(),
-            }));
             HISTORY.with(|h| *h.borrow_mut() = Some(view.clone()));
+            let parked_tab = tab.map(|t| t.id);
             let history = panel.observe_surface(|event| {
                 with_history(|h| {
                     if let Err(e) = h.on_event(event) {
@@ -7757,7 +7838,13 @@ impl Root {
                 drop(history);
                 drop(diff);
                 REVOKERS.with(|r| r.borrow_mut().clear());
-                HISTORY.with(|h| h.borrow_mut().take());
+                // タブを替えた（タブがまだある）なら、History を後ろに置いておく。閉じたタブのものは捨てる。
+                let view = HISTORY.with(|h| h.borrow_mut().take());
+                if let (Some(view), Some(id)) = (view, parked_tab)
+                    && crate::tabs::tabs().iter().any(|t| t.id == id)
+                {
+                    PARKED.with(|p| p.borrow_mut().insert(id, (location, view)));
+                }
             }))
         });
 
@@ -9412,7 +9499,10 @@ impl Root {
                 .is_open(true)
                 .title(match picker.purpose {
                     crate::pathpicker::Purpose::AddSsh => tr!("Choose a Repository"),
-                    crate::pathpicker::Purpose::ScanRoot => tr!("Add a Folder to Scan"),
+                    crate::pathpicker::Purpose::ScanRoot | crate::pathpicker::Purpose::ScanLocal => {
+                        tr!("Add a Folder to Scan")
+                    }
+                    crate::pathpicker::Purpose::AddLocal => tr!("Add Repositories"),
                 })
                 .primary_button_text(tr!("Choose"))
                 .close_button_text(tr!("Cancel"))
@@ -13551,6 +13641,11 @@ impl Root {
                 self.dialog_inputs += 1;
             }
             Action::Backdrop(location) => self.dialog = Some(Dialog::Backdrop { location }),
+            Action::PickLocal(purpose) => {
+                let (picker, job) = crate::pathpicker::Picker::new_local(purpose);
+                self.dialog = Some(Dialog::PathPicker(Box::new(picker)));
+                context.spawn_background(move |_| Message::Picker(job.run()));
+            }
             Action::Fetch(location) => {
                 context.spawn_background(move |_| {
                     let error = crate::repositories::fetch(&location);

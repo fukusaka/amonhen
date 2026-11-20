@@ -75,7 +75,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 
 | Feature | macOS | GTK4 | Windows | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
-| Repository tabs in a window | ✓ | ✓ | △ | n/a | n/a | Windows: Only the front tab's repository stays open; switching tabs opens the other one again (History comes from the persistent cache), at the page it was left on. |
+| Repository tabs in a window | ✓ | ✓ | ✓ | n/a | n/a | Windows: Tabs in the back keep their repository open; coming back redraws the page they were on. |
 | Separate windows (New Window) | ✓ | ✓ | ✓ | n/a | n/a | Windows: A window is a separate process; New Window opens one on the current repository showing Repositories |
 | Open windows and tabs restored at launch | ✓ | ✓ | ✓ | n/a | n/a |  |
 | Connecting tab for SSH and daemon repositories (Cancel, Try Again) | ✓ | ✓ | ✓ | n/a | n/a |  |
@@ -124,7 +124,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | SSH Hosts > Connection: folders to scan | ✓ | ✓ | ✓ | n/a | n/a |  |
 | SSH Hosts: git pages for every repository on the host | ✓ | ✓ | ✓ | n/a | n/a |  |
 | SSH Hosts: the host's Environment Variables (login shell switch) | ✓ | ✓ | ✓ | n/a | n/a |  |
-| Path picker in columns for a host or this machine | ✓ | ✓ | △ | n/a | n/a | Windows: Folders on SSH hosts only (Add SSH Connection, folders to scan); this machine uses the system dialog. |
+| Path picker in columns for a host or this machine | ✓ | ✓ | ✓ | n/a | n/a | Windows: Repositories' Add Repositories and Add a Folder to Scan, and folders on SSH hosts; File > Open… and Clone keep the system dialog. |
 | Accounts: GitHub (CI status, avatars) | ✓ | ✓ | — | — | n/a |  |
 | Appearance: History order, one line, row items, avatars | ✓ | ✓ | △ | n/a | n/a | Windows: History's order, one line, ancestor highlight and row items (no CI status); no avatars. |
 | Appearance: fonts, graph colors | — | — | — | n/a | n/a |  |

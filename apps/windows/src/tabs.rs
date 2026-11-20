@@ -201,6 +201,8 @@ pub fn close(id: u64) -> bool {
         return true;
     }
     TABS.with(|t| t.borrow_mut().remove(index));
+    // 後ろに置いていた、そのタブのリポジトリを閉じる。
+    crate::app::forget_parked(id);
     let active = active();
     if index == active {
         activate(index.min(len - 2));

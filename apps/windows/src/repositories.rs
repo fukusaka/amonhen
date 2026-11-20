@@ -742,6 +742,9 @@ pub enum Event {
     /// SSH 先のリポジトリを加える（Add SSH Connection…）。
     AddSsh,
     AddScanFolder,
+    /// 列で選ぶ画面で選んだ: そのリポジトリを足す・そのフォルダをスキャンする。
+    AddRepositoryAt(String),
+    AddScanFolderAt(String),
     Close,
     /// 探し終えた（見つけたものと、見張るフォルダ）。
     Scanned(Vec<(String, Vec<String>)>, Vec<PathBuf>),
@@ -774,6 +777,8 @@ pub enum Action {
     AddSsh,
     /// そのリポジトリだけの窓の背景を決めるダイアログを出す。
     Backdrop(String),
+    /// この機械のフォルダを列で選ぶ画面を出す（選んだら `AddRepositoryAt`・`AddScanFolderAt`）。
+    PickLocal(crate::pathpicker::Purpose),
 }
 
 impl State {
@@ -1221,12 +1226,12 @@ impl State {
                     _ => {}
                 }
             }
-            Event::AddRepository => {
-                let Some(path) = crate::files::pick_folder(&tr!("Add Repositories"), &tr!("Add"))
-                else {
-                    return Action::None;
-                };
-                let path = path.display().to_string();
+            // この機械のフォルダは、列で選ぶ画面で選ぶ（GTK4 版・macOS 版と同じ）。
+            Event::AddRepository => return Action::PickLocal(crate::pathpicker::Purpose::AddLocal),
+            Event::AddScanFolder => {
+                return Action::PickLocal(crate::pathpicker::Purpose::ScanLocal);
+            }
+            Event::AddRepositoryAt(path) => {
                 if !is_repository(&path) {
                     self.note = tr!("Not found — {path}", path = path);
                     return Action::None;
@@ -1235,13 +1240,7 @@ impl State {
                 self.selected = Some(path);
                 return Action::Peek(self.unpeeked());
             }
-            Event::AddScanFolder => {
-                let Some(path) =
-                    crate::files::pick_folder(&tr!("Add a Folder to Scan"), &tr!("Add"))
-                else {
-                    return Action::None;
-                };
-                let path = path.display().to_string();
+            Event::AddScanFolderAt(path) => {
                 self.change(|d| {
                     let roots = array_mut(d, "scanRoots");
                     if !roots

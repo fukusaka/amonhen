@@ -75,7 +75,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 
 | 機能 | macOS | GTK4 | Windows | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
-| 窓の中のリポジトリのタブ | ✓ | ✓ | △ | n/a | n/a | Windows: 開いておくのは前のタブのリポジトリだけ。タブを替えると、もう一方を開き直す（History は永続のキャッシュから）。前に出していたページで。 |
+| 窓の中のリポジトリのタブ | ✓ | ✓ | ✓ | n/a | n/a | Windows: 後ろのタブもリポジトリを開いたまま。戻ると、離れたときの画面を描き直す。 |
 | 別の窓（New Window） | ✓ | ✓ | ✓ | n/a | n/a | Windows: 窓は別のプロセス。New Window は今のリポジトリの窓を開き、Repositories を出す |
 | 起動時に窓とタブを戻す | ✓ | ✓ | ✓ | n/a | n/a |  |
 | SSH・daemon のリポジトリのつなぎ中のタブ（Cancel・Try Again） | ✓ | ✓ | ✓ | n/a | n/a |  |
@@ -124,7 +124,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | SSH Hosts > Connection: 探すフォルダー | ✓ | ✓ | ✓ | n/a | n/a |  |
 | SSH Hosts: ホストのすべてのリポジトリの git のページ | ✓ | ✓ | ✓ | n/a | n/a |  |
 | SSH Hosts: ホストの Environment Variables（ログインシェルの切り替え） | ✓ | ✓ | ✓ | n/a | n/a |  |
-| ホスト・この機械の列で選ぶパスのシート | ✓ | ✓ | △ | n/a | n/a | Windows: SSH 先のフォルダだけ（SSH 接続を追加、探すフォルダー）。この機械はシステムのダイアログ。 |
+| ホスト・この機械の列で選ぶパスのシート | ✓ | ✓ | ✓ | n/a | n/a | Windows: Repositories の「リポジトリを追加」「スキャンするフォルダを追加」と SSH 先のフォルダ。ファイル > 開く… と Clone は Windows 標準のダイアログ。 |
 | Accounts: GitHub（CI の状態・アバター） | ✓ | ✓ | — | — | n/a |  |
 | Appearance: History の順・1 行・行の項目・アバター | ✓ | ✓ | △ | n/a | n/a | Windows: History の並び順・1 行表示・祖先の強調・行の項目（CI の状態はない）。アバターはない。 |
 | Appearance: フォント・グラフの色 | — | — | — | n/a | n/a |  |
