@@ -33,6 +33,8 @@ struct Line {
     path: Option<String>,
     /// range-diff で、今の版にない（前の版にだけある）組。
     removed: bool,
+    /// range-diff で、変わった組の下に出す差分の差分の行なら、その外側の記号（` `・`-`・`+`、見出しは `@`）。
+    outer: Option<char>,
 }
 
 #[derive(Default)]
@@ -111,6 +113,7 @@ impl FileView {
                         first,
                         path: None,
                         removed: false,
+                        outer: None,
                     }
                 })
                 .collect()
@@ -127,6 +130,7 @@ impl FileView {
                     first: true,
                     path: e["path"].as_str().map(str::to_owned),
                     removed: false,
+                    outer: None,
                 })
                 .collect()
         };
@@ -136,7 +140,8 @@ impl FileView {
     }
 
     /// ブランチを前の版と比べた結果（`rangeDiff` の `info.pairs`）を出す。行は git range-diff の 1 行と同じ形
-    /// （前の版の番号と ID、`=` 同じ・`!` 変わった・`<` 消えた・`>` 足した、今の版の番号と ID、件名）。
+    /// （前の版の番号と ID、`=` 同じ・`!` 変わった・`<` 消えた・`>` 足した、今の版の番号と ID、件名）。変わった組の
+    /// 下には、git と同じく差分の差分を字下げして並べる（その行を選ぶと、組のコミットの詳細）。
     pub fn show_range_diff(&mut self, title: String, pairs: &Value) {
         let side = |p: &Value| -> (String, Option<Oid>) {
             match p["index"].as_u64() {
@@ -149,7 +154,7 @@ impl FileView {
             }
         };
         let lines = (pairs.as_array().into_iter().flatten())
-            .map(|p| {
+            .flat_map(|p| {
                 let (old, old_oid) = side(&p["old"]);
                 let (new, new_oid) = side(&p["new"]);
                 let mark = match p["status"].as_str() {
@@ -159,15 +164,30 @@ impl FileView {
                     _ => '>',
                 };
                 let subject = p["subject"].as_str().unwrap_or("");
-                Line {
-                    oid: new_oid.or(old_oid),
+                let oid = new_oid.or(old_oid);
+                let pair = Line {
+                    oid,
                     author: String::new(),
                     time: 0,
                     text: format!("{old} {mark} {new}  {subject}"),
                     first: true,
                     path: None,
                     removed: new_oid.is_none(),
-                }
+                    outer: None,
+                };
+                let diff = (p["diff"].as_array().into_iter().flatten())
+                    .filter_map(Value::as_str)
+                    .map(move |line| Line {
+                        oid,
+                        author: String::new(),
+                        time: 0,
+                        text: format!("    {}", line.replace('\t', "    ")),
+                        first: false,
+                        path: None,
+                        removed: false,
+                        outer: line.chars().next(),
+                    });
+                std::iter::once(pair).chain(diff)
             })
             .collect();
         *self = Self {
@@ -292,10 +312,15 @@ impl FileView {
                 .take(usize::from(area.height)),
         ) {
             if self.range.is_some() {
-                // 前の版にだけある組は薄く。
-                let style = match line.removed {
-                    true => dim,
-                    false => Style::new(),
+                // 前の版にだけある組は薄く。差分の差分は、外側の記号で色を分ける（`-` は前の版だけ、`+` は今の版
+                // だけにある行）。
+                let style = match (line.removed, line.outer) {
+                    (true, _) => dim,
+                    (_, Some('-')) => Style::new().fg(Color::Red),
+                    (_, Some('+')) => Style::new().fg(Color::Green),
+                    (_, Some('@')) => Style::new().fg(Color::Cyan),
+                    (_, Some(_)) => dim,
+                    (_, None) => Style::new(),
                 };
                 buf.set_stringn(area.x, y, fit(&line.text, width), width, style);
             } else if self.blame {

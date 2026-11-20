@@ -1839,6 +1839,15 @@ fn compare_with_the_previous_version() {
     // 選んだ組のコミット（今の版）の詳細が、横に出る。
     let new = git_out(dir.path(), &["rev-parse", "--short=8", "HEAD"]);
     assert!(row.contains(new.trim()), "{row}");
+    // 変わった組の下に、差分の差分（前の版の行は `-`、今の版の行は `+` を前に付けて）。
+    let tall = amonhen_tui::snapshot(open(dir.path()), 160, 30, clock(), ":compare\n").unwrap();
+    println!("{tall}");
+    let list: Vec<String> = tall.lines().skip(1).filter_map(|l| column(l, 1)).collect();
+    assert!(list.iter().any(|l| l.trim_start() == "-+one"), "{list:?}");
+    assert!(list.iter().any(|l| l.trim_start() == "++two"), "{list:?}");
+    // 差分の差分の行でも、組のコミットの詳細が出る。
+    let below = amonhen_tui::snapshot(open(dir.path()), 160, 30, clock(), ":compare\nG").unwrap();
+    assert!(below.contains("Take the lane from the trunk"));
 }
 
 /// コマンドの一覧の Prune Worktrees: フォルダのなくなった worktree の記録を片付ける（キーはない）
