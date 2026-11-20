@@ -6,14 +6,19 @@ use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 use windows_reactor::Color;
 
 static DARK: AtomicBool = AtomicBool::new(false);
-/// 中身の地の濃さ（窓全体を透かすときは `1 - 透過率`。f32 のビット）と、変わったか（描き直す）。
+/// 中身の地の濃さ（窓全体を透かすときは 0。窓に敷いた 1 枚の地が透け具合を決める。f32 のビット）、帯と自前の
+/// 描画の地の濃さ（窓全体を透かすときは `1 - 透過率`。SwapChainPanel の下には窓の地が見えないので、History・
+/// 差分は自分で同じ濃さの地を塗る）と、変わったか（描き直す）。
 static GROUND: AtomicU32 = AtomicU32::new(0x3f80_0000);
+static BAR_GROUND: AtomicU32 = AtomicU32::new(0x3f80_0000);
 static GROUND_CHANGED: AtomicBool = AtomicBool::new(false);
 
-/// 中身の地の濃さを決める（窓全体を透かすとき 1 より小さい）。変わったら次のフレームで描き直す。
-pub fn set_ground(alpha: f32) {
-    let bits = alpha.clamp(0.0, 1.0).to_bits();
-    if GROUND.swap(bits, Ordering::Relaxed) != bits {
+/// 中身と帯の地の濃さを決める（窓全体を透かすとき 1 より小さい）。変わったら次のフレームで描き直す。
+pub fn set_ground(content: f32, bars: f32) {
+    let content = content.clamp(0.0, 1.0).to_bits();
+    let bars = bars.clamp(0.0, 1.0).to_bits();
+    let changed = GROUND.swap(content, Ordering::Relaxed) != content;
+    if BAR_GROUND.swap(bars, Ordering::Relaxed) != bars || changed {
         GROUND_CHANGED.store(true, Ordering::Relaxed);
     }
 }
@@ -28,14 +33,19 @@ pub fn take_ground_changed() -> bool {
     GROUND_CHANGED.swap(false, Ordering::Relaxed)
 }
 
-/// `color` を地の濃さで薄くする。
-fn grounded(color: Color) -> Color {
+/// `color` を `alpha` の濃さにする。
+fn grounded(color: Color, alpha: f32) -> Color {
     Color::argb(
-        (f32::from(color.a) * ground()).round() as u8,
+        (f32::from(color.a) * alpha).round() as u8,
         color.r,
         color.g,
         color.b,
     )
+}
+
+/// 帯と自前の描画（History・差分）の地の濃さ。
+pub fn bar_ground() -> f32 {
+    f32::from_bits(BAR_GROUND.load(Ordering::Relaxed))
 }
 /// 試しで外観を決めておく（`--appearance light|dark`。0 は Windows に合わせる、1 は明るい、2 は暗い）。
 static FORCED: AtomicU8 = AtomicU8::new(0);
@@ -94,28 +104,28 @@ pub fn window() -> Color {
     pick(Color::rgb(0xff, 0xff, 0xff), Color::rgb(0x20, 0x20, 0x20))
 }
 
-/// 中身の地（History・差分・一覧。窓全体を透かすときは地の濃さで薄く）。
+/// 中身の地（History・差分・一覧。窓全体を透かすときは塗らず、窓に敷いた地だけが透け具合を決める）。
 pub fn background() -> Color {
-    grounded(pick(
-        Color::rgb(0xff, 0xff, 0xff),
-        Color::rgb(0x1e, 0x1e, 0x1e),
-    ))
+    grounded(
+        pick(Color::rgb(0xff, 0xff, 0xff), Color::rgb(0x1e, 0x1e, 0x1e)),
+        ground(),
+    )
 }
 
 /// 帯の地（ステータスバー・見出し。窓全体を透かすときは地の濃さで薄く）。
 pub fn bar() -> Color {
-    grounded(pick(
-        Color::rgb(0xf3, 0xf3, 0xf3),
-        Color::rgb(0x2b, 0x2b, 0x2b),
-    ))
+    grounded(
+        pick(Color::rgb(0xf3, 0xf3, 0xf3), Color::rgb(0x2b, 0x2b, 0x2b)),
+        bar_ground(),
+    )
 }
 
 /// 少し濃い帯の地（設定の見出し・選んだ行。窓全体を透かすときは地の濃さで薄く）。
 pub fn bar_strong() -> Color {
-    grounded(pick(
-        Color::rgb(0xec, 0xec, 0xec),
-        Color::rgb(0x33, 0x33, 0x33),
-    ))
+    grounded(
+        pick(Color::rgb(0xec, 0xec, 0xec), Color::rgb(0x33, 0x33, 0x33)),
+        bar_ground(),
+    )
 }
 
 /// 少し薄い帯の地（設定の欄・交互の行）。

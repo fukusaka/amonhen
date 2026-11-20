@@ -7490,7 +7490,8 @@ impl Root {
         // 色の層のない Acrylic を自分で敷く（当てられなければ WinUI の Acrylic）。
         let see_through = backdrop.see_through();
         // 窓全体を透かすときは、読む面の地も薄く（変わったら次のフレームで描き直す）。
-        crate::palette::set_ground(backdrop.content_ground());
+        let (content_ground, bar_ground) = backdrop.content_ground();
+        crate::palette::set_ground(content_ground, bar_ground);
         let dark = crate::palette::dark();
         context.use_effect("acrylic", (see_through, dark), move || {
             ACRYLIC.with(|a| {
@@ -7772,7 +7773,11 @@ impl Root {
                 ))
             }
         };
+        // 窓全体を透かすとき、ほかの画面を重ねている間は下の History と右の列を隠す（Working Copy は右の列を使う）。
+        let history_covered = content_ground < 1.0 && self.page != Page::History;
+        let right_covered = history_covered && self.page != Page::WorkingCopy;
         let right = Grid::new()
+            .opacity(if right_covered { 0.0 } else { 1.0 })
             .rows(if self.page == Page::WorkingCopy {
                 [GridLength::Auto, GridLength::Auto, GridLength::Star(1.0)]
             } else if self.details_expanded {
@@ -7992,6 +7997,9 @@ impl Root {
                             .background(Brush::Solid(Color::transparent()))
                             .element_ref(&self.area)
                             .grid_row(1)
+                            // 窓全体を透かすときは、ほかの画面を重ねている間は隠す（重ねた画面が地を塗らないので
+                            // 透けて見える）。描画の知らせは止めないよう、外さずに見えなくする。
+                            .opacity(if history_covered { 0.0 } else { 1.0 })
                             .children((history,))
                             .menu(Menu::new(
                                 self.history_menu(),

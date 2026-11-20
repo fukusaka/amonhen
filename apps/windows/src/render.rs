@@ -111,10 +111,11 @@ const PALETTE: [[f32; 3]; 8] = [
     [0.60, 0.60, 0.65],
 ];
 
-/// 地（窓全体を透かすときは地の濃さで薄く。swap chain はアルファを合成に使う）。
+/// 地（窓全体を透かすときは窓の地と同じ濃さ。SwapChainPanel の下には窓の地が見えないので自分で塗る。swap chain
+/// はアルファを合成に使う）。
 fn background() -> D2D1_COLOR_F {
     let c = themed((1.0, 1.0, 1.0, 1.0), (0.118, 0.118, 0.118, 1.0));
-    with_alpha(c, crate::palette::ground())
+    with_alpha(c, crate::palette::bar_ground())
 }
 fn foreground() -> D2D1_COLOR_F {
     themed((0.11, 0.11, 0.12, 1.0), (0.91, 0.91, 0.91, 1.0))
@@ -597,7 +598,7 @@ impl Renderer {
             self.d2d.BeginDraw();
             // 地が透けるときは、ClearType（不透明な地が要る）でなく濃淡で文字をなめらかにする。
             self.d2d
-                .SetTextAntialiasMode(if crate::palette::ground() < 1.0 {
+                .SetTextAntialiasMode(if crate::palette::bar_ground() < 1.0 {
                     D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE
                 } else {
                     D2D1_TEXT_ANTIALIAS_MODE_DEFAULT
@@ -1035,7 +1036,7 @@ impl Renderer {
             self.d2d.BeginDraw();
             // 地が透けるときは、ClearType（不透明な地が要る）でなく濃淡で文字をなめらかにする。
             self.d2d
-                .SetTextAntialiasMode(if crate::palette::ground() < 1.0 {
+                .SetTextAntialiasMode(if crate::palette::bar_ground() < 1.0 {
                     D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE
                 } else {
                     D2D1_TEXT_ANTIALIAS_MODE_DEFAULT
