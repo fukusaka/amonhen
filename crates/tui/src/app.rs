@@ -149,6 +149,8 @@ enum Naming {
     BundleFile,
     /// bundle のブランチを取り込む名前（`refs/remotes/<名前>/*`。ファイルは聞いてある）。
     BundleName,
+    /// 当てるパッチのファイル（この機械の）。
+    Patch,
 }
 
 /// 選択肢 1 つ: 押すキー、名前、頼む中身。
@@ -185,6 +187,8 @@ pub struct App {
     push_to_offered: bool,
     /// 読んでいる bundle のファイル（取り込む名前を聞く間、覚えておく）。
     bundle_file: Option<String>,
+    /// 読んでいるパッチのファイル（当てるかを聞く間、覚えておく）。
+    patch_file: Option<String>,
     /// 作業ツリーのファイルがこの機械にある（`ssh://` の先でない）。エディタで開けるか。
     files_here: bool,
     /// エディタで開く作業ツリーのファイル（絶対パス）。
@@ -324,6 +328,7 @@ impl App {
             palette: None,
             push_to_offered: false,
             bundle_file: None,
+            patch_file: None,
             files_here: true,
             open_file: None,
             search: None,
@@ -1082,6 +1087,15 @@ impl App {
                                     json!({"op": "bundleCheck", "file": file}),
                                 )
                             }
+                            Naming::Patch => {
+                                let file = local_path(name);
+                                self.patch_file = Some(file.clone());
+                                (
+                                    "readPatch",
+                                    tr!("Reading the patch…"),
+                                    json!({"op": "readPatch", "paths": [file]}),
+                                )
+                            }
                             Naming::BundleName => (
                                 "fetchBundle",
                                 tr!("Fetching from the bundle…"),
@@ -1311,6 +1325,11 @@ impl App {
 
     /// コマンドの一覧からだけ動かす操作（キーを持たない）。
     fn run_keyless(&mut self, id: &str) {
+        if id == "apply-patch" {
+            self.naming = Naming::Patch;
+            self.typing_branch = Some((String::new(), String::new(), local_path("")));
+            self.dirty = true;
+        }
         if id == "fetch-bundle" {
             self.naming = Naming::BundleFile;
             self.typing_branch = Some((String::new(), String::new(), local_path("")));
@@ -1522,6 +1541,53 @@ impl App {
                 return;
             }
             "deleteIgnored" => self.notice = Some(tr!("Deleted the ignored files")),
+            // パッチの中身が分かった: 当たらなければ git の答えを出す。メールの形ならコミットとして（git am）、
+            // ただの diff なら作業ツリーに（git apply）当てるかを確かめる。
+            "readPatch" => {
+                self.dirty = true;
+                let Some(file) = self.patch_file.take() else {
+                    return;
+                };
+                let info = &reply["info"];
+                if info["applies"] != true {
+                    let error = info["error"].as_str().unwrap_or("");
+                    let line = error
+                        .lines()
+                        .find(|l| !l.trim().is_empty())
+                        .unwrap_or(error);
+                    self.error = Some(tr!(
+                        "The patch doesn’t apply: {reason}",
+                        reason = line.trim()
+                    ));
+                    return;
+                }
+                let patches = info["patches"].as_array().map_or(0, Vec::len);
+                let (ask, request) = match info["kind"].as_str() {
+                    Some("mailbox") => (
+                        match patches {
+                            1 => tr!("Apply the patch to the current branch as a commit?"),
+                            count => tr!(
+                                "Apply {count} patches to the current branch as commits?",
+                                count = count
+                            ),
+                        },
+                        Request::Run {
+                            name: "am",
+                            command: json!({"op": "am", "paths": [file], "threeWay": null}),
+                        },
+                    ),
+                    _ => (
+                        tr!("Apply the diff to the working tree? Undo brings the files back."),
+                        Request::Run {
+                            name: "applyPatch",
+                            command: json!({"op": "applyPatch", "paths": [file]}),
+                        },
+                    ),
+                };
+                self.confirm = Some((ask, tr!("apply"), request));
+                return;
+            }
+            "applyPatch" => self.notice = Some(tr!("Applied the patch")),
             // bundle の中身が分かった: 足りないコミットがあれば断り、なければ取り込む名前を聞く。
             "bundleCheck" => {
                 let info = &reply["info"];
@@ -1557,7 +1623,9 @@ impl App {
                 let file = reply["info"]["file"].as_str().unwrap_or("");
                 self.notice = Some(tr!("Exported to {file}", file = file));
             }
-            "merge" | "rebase" | "continue" | "skip" | "cherryPick" | "revert" | "rewrite" => {
+            // git am も、当たらなければ merge と同じく止まる（Continue・Skip・Abort）。
+            "merge" | "rebase" | "continue" | "skip" | "cherryPick" | "revert" | "rewrite"
+            | "am" => {
                 // コンフリクトで止まったら、Working Copy で解決する。
                 match reply["outcome"].as_str() {
                     Some("conflict") => {
@@ -3307,6 +3375,7 @@ impl App {
                     Naming::RemoteName => tr!("New remote's name: {name}", name = name),
                     Naming::RemoteUrl => tr!("URL of {at}: {name}", at = at, name = name),
                     Naming::BundleFile => tr!("Fetch from the bundle at: {name}", name = name),
+                    Naming::Patch => tr!("Apply the patch at: {name}", name = name),
                     Naming::BundleName => {
                         tr!("Fetch its branches as remote: {name}", name = name)
                     }

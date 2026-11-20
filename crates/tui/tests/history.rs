@@ -1569,6 +1569,49 @@ fn fetch_from_a_bundle() {
     assert!(!wrong.contains("Fetch its branches"));
 }
 
+/// コマンドの一覧の Apply Patch: メールの形はコミットとして（git am）、ただの diff は作業ツリーに当てる
+#[test]
+fn apply_patch_from_the_command_list() {
+    let dir = tempfile::tempdir().unwrap();
+    changed(dir.path());
+    let out = tempfile::tempdir().unwrap();
+    // いちばん新しいコミットをパッチにして、そのコミットを外す。
+    let mail = out.path().join("change.patch");
+    let patch = git_out(dir.path(), &["format-patch", "-1", "--stdout"]);
+    std::fs::write(&mail, patch).unwrap();
+    let subject = git_out(dir.path(), &["log", "-1", "--format=%s"]);
+    git(dir.path(), BASE, &["reset", "-q", "--hard", "HEAD~1"]);
+    let keys = format!(":apply patch\n\x15{}\n", mail.display());
+    let asked = amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), &keys).unwrap();
+    println!("{asked}");
+    assert!(
+        asked.contains("Apply the patch to the current branch as a commit?   y apply   n cancel")
+    );
+    amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), &format!("{keys}y")).unwrap();
+    assert_eq!(git_out(dir.path(), &["log", "-1", "--format=%s"]), subject);
+    // ただの diff は作業ツリーだけに。
+    // ただの diff は、git で作った作業ツリーの変更を、戻してから当てる。
+    let diff = out.path().join("change.diff");
+    let lane = dir.path().join("lane.rs");
+    let before = std::fs::read_to_string(&lane).unwrap();
+    std::fs::write(&lane, before.replace("u32", "u64")).unwrap();
+    std::fs::write(&diff, git_out(dir.path(), &["diff"])).unwrap();
+    std::fs::write(&lane, &before).unwrap();
+    let keys = format!(":apply patch\n\x15{}\n", diff.display());
+    let asked = amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), &keys).unwrap();
+    println!("{asked}");
+    assert!(asked.contains("Apply the diff to the working tree?"));
+    amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), &format!("{keys}y")).unwrap();
+    assert_eq!(git_out(dir.path(), &["diff", "--name-only"]), "lane.rs\n");
+    assert_eq!(
+        git_out(dir.path(), &["diff", "--cached", "--name-only"]),
+        ""
+    );
+    // もう当たらない（同じ diff をもう一度）。
+    let again = amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), &keys).unwrap();
+    assert!(again.contains("The patch doesn’t apply"));
+}
+
 /// コマンドの一覧の Prune Worktrees: フォルダのなくなった worktree の記録を片付ける（キーはない）
 #[test]
 fn prune_worktrees_from_the_command_list() {
