@@ -161,18 +161,31 @@ pub fn open(
     local_signatures: bool,
     wake: &dyn Fn(),
 ) -> Result<Repository, String> {
+    with_consent(location, options, wake, |options| {
+        attempt(location, options, local_signatures)
+    })
+}
+
+/// `attempt` を SSH 先ごとの選択で試し、エンジンを送る承認が要れば UI のスレッドに聞いて待ち、送るならその中身への
+/// 承認を添えて試し直す（GTK4 版の `connecting`）。
+fn with_consent<T>(
+    location: &str,
+    options: HostOptions,
+    wake: &dyn Fn(),
+    attempt: impl Fn(&HostOptions) -> Result<T, String>,
+) -> Result<T, String> {
     // 同じ SSH 先を同時に開いても、聞くのは 1 回（後のものは、前の答えの後でつなぎ直す）。
     static ASKING: Mutex<()> = Mutex::new(());
-    let first = match attempt(location, &options, local_signatures) {
-        Ok(repo) => return Ok(repo),
+    let first = match attempt(&options) {
+        Ok(v) => return Ok(v),
         Err(e) => e,
     };
     let (Some(host), Some(_)) = (host_of(location), EngineConsent::find(&first)) else {
         return Err(EngineConsent::strip(&first).to_owned());
     };
     let _asking = ASKING.lock().unwrap_or_else(|e| e.into_inner());
-    let err = match attempt(location, &options, local_signatures) {
-        Ok(repo) => return Ok(repo),
+    let err = match attempt(&options) {
+        Ok(v) => return Ok(v),
         Err(e) => e,
     };
     let Some(consent) = EngineConsent::find(&err) else {
@@ -193,7 +206,27 @@ pub fn open(
         send_engine: Some(consent.hash),
         ..options
     };
-    attempt(location, &options, local_signatures).map_err(|e| EngineConsent::strip(&e).to_owned())
+    attempt(&options).map_err(|e| EngineConsent::strip(&e).to_owned())
+}
+
+/// SSH 先のフォルダ（`ssh://host/path`）の下のリポジトリを、SSH 先のエンジンで探す（裏のスレッドから。GTK4 版の
+/// `bookmarks::scan_root`）。見つけたものは同じ形の場所（`ssh://host/…`）で返す。
+pub fn find_repositories(
+    location: &str,
+    options: HostOptions,
+    depth: u32,
+    excludes: &[String],
+) -> Result<Vec<String>, String> {
+    use amonhen_remote::ssh;
+    let target = ssh::Target::parse(location).map_err(|e| e.to_string())?;
+    let program = std::env::var("AMONHEN_SSH").unwrap_or_else(|_| "ssh".into());
+    let daemons = ssh::Daemons::new(engines_dir(), Some((ssh::local_platform(), engine())));
+    let found = with_consent(location, options, &|| {}, |options| {
+        ssh::find_repositories(&program, &target, &daemons, options, depth, excludes)
+            .map_err(|e| e.to_string())
+    })?;
+    let prefix = &location[..location.len() - target.path.len()];
+    Ok(found.iter().map(|p| format!("{prefix}{p}")).collect())
 }
 
 fn attempt(

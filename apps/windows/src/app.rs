@@ -2840,6 +2840,7 @@ impl Root {
                     self.repositories_from = self.page;
                 }
                 let (state, roots) = crate::repositories::State::new();
+                scan_remote_roots(&state, context);
                 self.repositories = Some(state);
                 self.page = Page::Repositories;
                 context.spawn_background(move |_| {
@@ -12928,6 +12929,7 @@ impl Root {
                 self.page = self.repositories_from;
             }
             Action::Scan(roots) => {
+                scan_remote_roots(state, context);
                 context.spawn_background(move |_| {
                     let (found, dirs) = crate::repositories::scan_with_dirs(roots);
                     Message::Repos(crate::repositories::Event::Scanned(found, dirs))
@@ -16783,6 +16785,18 @@ fn selected_refs() -> Vec<(amonhen_model::RefKind, String)> {
         }
     });
     list
+}
+
+/// SSH 先のスキャンするフォルダを、それぞれ裏で探す（SSH 先のエンジンの `find-repositories`。GTK4 版の
+/// `bookmarks::scan_root`）。SSH 先ごとの選択は UI のスレッドで読む。
+fn scan_remote_roots(state: &crate::repositories::State, context: &ComponentContext<Root>) {
+    for (path, depth, excludes) in state.remote_roots() {
+        let options = crate::remote::options_for(&path);
+        context.spawn_background(move |_| {
+            let found = crate::remote::find_repositories(&path, options, depth, &excludes);
+            Message::Repos(crate::repositories::Event::RemoteScanned(path, found))
+        });
+    }
 }
 
 /// `configList` の答えのうち、システムとすべてのリポジトリの段の項目（Settings > Git の行が読む）。
