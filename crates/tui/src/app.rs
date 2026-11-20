@@ -151,6 +151,8 @@ enum Naming {
     BundleName,
     /// 当てるパッチのファイル（この機械の）。
     Patch,
+    /// 選んでいるコミットのパッチを書くフォルダ（この機械の）。
+    SavePatch,
 }
 
 /// 選択肢 1 つ: 押すキー、名前、頼む中身。
@@ -1087,6 +1089,11 @@ impl App {
                                     json!({"op": "bundleCheck", "file": file}),
                                 )
                             }
+                            Naming::SavePatch => (
+                                "savePatch",
+                                tr!("Saving the patch…"),
+                                json!({"op": "formatPatch", "oids": [start], "dir": local_path(name)}),
+                            ),
                             Naming::Patch => {
                                 let file = local_path(name);
                                 self.patch_file = Some(file.clone());
@@ -1325,6 +1332,17 @@ impl App {
 
     /// コマンドの一覧からだけ動かす操作（キーを持たない）。
     fn run_keyless(&mut self, id: &str) {
+        if id == "save-patch" {
+            // History で選んでいるコミットを、git の名前のファイルにして、今のフォルダ（この機械）に。
+            let Some(id) = self.history.selected_id() else {
+                return;
+            };
+            let id = id.to_string();
+            let short = id[..id.len().min(8)].to_owned();
+            self.naming = Naming::SavePatch;
+            self.typing_branch = Some((id, short, local_path("")));
+            self.dirty = true;
+        }
         if id == "apply-patch" {
             self.naming = Naming::Patch;
             self.typing_branch = Some((String::new(), String::new(), local_path("")));
@@ -1588,6 +1606,13 @@ impl App {
                 return;
             }
             "applyPatch" => self.notice = Some(tr!("Applied the patch")),
+            "savePatch" => {
+                let file = (reply["info"]["files"].as_array())
+                    .and_then(|f| f.first())
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                self.notice = Some(tr!("Saved {file}", file = file));
+            }
             // bundle の中身が分かった: 足りないコミットがあれば断り、なければ取り込む名前を聞く。
             "bundleCheck" => {
                 let info = &reply["info"];
@@ -3376,6 +3401,13 @@ impl App {
                     Naming::RemoteUrl => tr!("URL of {at}: {name}", at = at, name = name),
                     Naming::BundleFile => tr!("Fetch from the bundle at: {name}", name = name),
                     Naming::Patch => tr!("Apply the patch at: {name}", name = name),
+                    Naming::SavePatch => {
+                        tr!(
+                            "Save {at} as a patch in the folder: {name}",
+                            at = at,
+                            name = name
+                        )
+                    }
                     Naming::BundleName => {
                         tr!("Fetch its branches as remote: {name}", name = name)
                     }

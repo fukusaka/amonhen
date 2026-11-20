@@ -1612,6 +1612,23 @@ fn apply_patch_from_the_command_list() {
     assert!(again.contains("The patch doesn’t apply"));
 }
 
+/// コマンドの一覧の Save as Patch: History で選んでいるコミットを、git の名前のパッチにしてフォルダに書く
+#[test]
+fn save_the_selected_commit_as_a_patch() {
+    let dir = tempfile::tempdir().unwrap();
+    changed(dir.path());
+    let out = tempfile::tempdir().unwrap();
+    let folder = out.path().join("patches");
+    let keys = format!(":save as patch\n\x15{}\n", folder.display());
+    let done = amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), &keys).unwrap();
+    println!("{done}");
+    assert!(done.contains("Saved "));
+    let patch = folder.join("0001-Take-the-lane-from-the-trunk.patch");
+    let text = std::fs::read_to_string(&patch).unwrap();
+    assert!(text.contains("Subject: [PATCH] Take the lane from the trunk"));
+    assert!(text.contains("+    let lane = trunk();"));
+}
+
 /// コマンドの一覧の Prune Worktrees: フォルダのなくなった worktree の記録を片付ける（キーはない）
 #[test]
 fn prune_worktrees_from_the_command_list() {

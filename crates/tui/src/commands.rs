@@ -78,6 +78,7 @@ pub static ENTRIES: &[Entry] = &[
     keyless("save-bundle", Place::Anywhere),
     keyless("fetch-bundle", Place::Anywhere),
     keyless("apply-patch", Place::Anywhere),
+    keyless("save-patch", Place::History),
     keyless("prune-worktrees", Place::Anywhere),
     entry("merge", 'm', Place::Sidebar),
     entry("rebase", 'r', Place::Sidebar),
