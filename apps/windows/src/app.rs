@@ -208,6 +208,12 @@ struct Root {
     sidebar_epoch: u32,
     /// File History のタブで、リポジトリを読んだら出すファイル。
     pending_file_history: Option<String>,
+    /// 別の窓に出したマージエディタの窓なら Some（中は、まだ取り込んでいない打ちかけの Result のファイル）と、
+    /// リポジトリを読んだら開くファイル。
+    merge_window: Option<Option<std::path::PathBuf>>,
+    pending_merge: Option<String>,
+    /// 別の窓のマージエディタで解決済みにした: 書き終えたら窓を閉じる。
+    close_when_done: bool,
     /// 窓の背景画像（押す・引くを下へ通すため）。
     backdrop_image: ElementRef<Image>,
     /// ツールバーのリポジトリ名の一覧に添える、各リポジトリのブランチと状態（場所ごと）と、最後に読んだ時刻。
@@ -910,6 +916,8 @@ enum Message {
     Sequence(Option<Value>),
     /// マージエディタを開く（パス）・読み終えた・ボタン・Result を書き換えた。
     OpenMerge(String),
+    /// この窓は別の窓に出したマージエディタ（ファイルと、打ちかけの Result を書いたファイル）。
+    MergeWindow(String, Option<std::path::PathBuf>),
     MergeLoaded(String, Result<Value, String>),
     MergeButton(&'static str),
     /// マージエディタの左右の欄の ≫・≪（`ours:<番号>`・`theirs:<番号>`）。
@@ -1308,6 +1316,9 @@ impl Component for Root {
             disconnected: None,
             sidebar_epoch: 0,
             pending_file_history: None,
+            merge_window: None,
+            pending_merge: None,
+            close_when_done: false,
             backdrop_image: ElementRef::new(),
             switch_peeks: std::collections::HashMap::new(),
             switch_peeked_at: None,
@@ -1471,6 +1482,9 @@ impl Root {
                 self.repo = Some(repo.clone());
                 if let Some(path) = self.pending_file_history.take() {
                     self.update(Message::OpenFileHistory(path), context);
+                }
+                if let Some(path) = self.pending_merge.take() {
+                    self.update(Message::OpenMerge(path), context);
                 }
                 self.switch_draft(&repo, context);
                 self.peek_switch_targets(context);
@@ -1821,6 +1835,7 @@ impl Root {
                 let done = command["label"].as_str().unwrap_or_default().to_owned();
                 self.update(Message::Done(done), context);
             }
+            Message::Done(_) if std::mem::take(&mut self.close_when_done) => close_window(),
             Message::Done(text) => {
                 // 終わった後の読み直しは同じ（`Performed`）。一言は 5 秒（GTK4 版と同じ）。前の失敗の帯は消す。
                 self.failure = None;
@@ -3785,6 +3800,9 @@ impl Root {
                     perform(context, repo, command, title);
                 }
                 (Some(Dialog::CloseMerge), ContentDialogResult::Primary) => {
+                    if self.merge.as_ref().is_some_and(|m| m.separate) {
+                        close_window();
+                    }
                     self.merge = None;
                     self.page = Page::WorkingCopy;
                 }
@@ -5226,6 +5244,10 @@ impl Root {
                 }
             }
             Message::Performed(failed) => {
+                // 失敗したら、別の窓のマージエディタを閉じない。
+                if failed.is_some() {
+                    self.close_when_done = false;
+                }
                 self.busy = None;
                 // Repository Settings を出していれば読み直す（リモートの編集などは設定を書く）。
                 if self.repo_settings.is_some() {
@@ -5388,11 +5410,22 @@ impl Root {
                 }
             }
             Message::Sequence(sequence) => self.sequence = sequence,
+            Message::MergeWindow(path, text) => {
+                self.merge_window = Some(text);
+                self.update(Message::OpenMerge(path), context);
+            }
             Message::OpenMerge(path) => {
                 let Some(repo) = self.repo.clone() else {
+                    // 別の窓に出したマージエディタ: リポジトリを読んだら開く。
+                    if self.merge_window.is_some() {
+                        self.pending_merge = Some(path);
+                        return;
+                    }
                     return beep();
                 };
-                self.merge = Some(crate::merge::State::new(path.clone()));
+                let mut state = crate::merge::State::new(path.clone());
+                state.separate = self.merge_window.is_some();
+                self.merge = Some(state);
                 self.page = Page::Merge;
                 context.spawn_background(move |_| {
                     let command = json!({ "op": "mergeSides", "path": &path });
@@ -5410,6 +5443,13 @@ impl Root {
                     && state.path == path
                 {
                     state.load(info);
+                    // 別の窓に出したときの打ちかけの Result（読んだら消す）。
+                    if let Some(file) = self.merge_window.as_mut().and_then(Option::take) {
+                        if let Ok(text) = std::fs::read_to_string(&file) {
+                            state.edit(&text);
+                        }
+                        let _ = std::fs::remove_file(file);
+                    }
                     merge_scroll_later(context);
                 }
             }
@@ -7636,6 +7676,10 @@ impl Root {
             // File History のタブは、そのファイルの File History から（リポジトリを読んでから出す）。
             if let Some(path) = args.file_history.clone() {
                 sender.send(Message::OpenFileHistory(path));
+            }
+            // 別の窓に出したマージエディタ。
+            if let Some(path) = args.merge.clone() {
+                sender.send(Message::MergeWindow(path, args.merge_text.clone()));
             }
             PENDING_PLACE.with(|p| p.set(args.place.map(|r| (r, 0))));
             let session = match Session::new(&args, "app", started, Arc::new(|| {})) {
@@ -13767,7 +13811,8 @@ impl Root {
                 });
                 let count = state.conflicts();
                 if count == 0 {
-                    // 保存して解決済みにしたら閉じる。
+                    // 保存して解決済みにしたら閉じる（別の窓なら、書き終えてから窓を閉じる）。
+                    self.close_when_done = state.separate;
                     perform(context, repo, command, tr!("Save & Mark Resolved"));
                     self.merge = None;
                     self.page = Page::WorkingCopy;
@@ -13790,9 +13835,44 @@ impl Root {
             "close" => {
                 if state.dirty() {
                     self.dialog = Some(Dialog::CloseMerge);
+                } else if state.separate {
+                    close_window();
                 } else {
                     self.merge = None;
                     self.page = Page::WorkingCopy;
+                }
+            }
+            "popout" => {
+                // 別の窓（別のプロセス）に出す。打ちかけの Result は一時ファイルで渡す。
+                let Some(tab) = crate::tabs::current() else {
+                    return beep();
+                };
+                let mut extra = vec!["--merge".to_owned(), state.path.clone()];
+                if state.dirty() {
+                    let file = std::env::temp_dir().join(format!(
+                        "amonhen-merge-{}-{}.txt",
+                        std::process::id(),
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map_or(0, |d| d.as_millis())
+                    ));
+                    if let Err(e) = std::fs::write(&file, &state.result) {
+                        self.error = Some(e.to_string());
+                        return;
+                    }
+                    extra.extend(["--merge-text".to_owned(), file.display().to_string()]);
+                }
+                let extra: Vec<&str> = extra.iter().map(String::as_str).collect();
+                match crate::repositories::open_window_with(&tab.location, &extra) {
+                    Ok(()) => {
+                        self.merge = None;
+                        self.page = Page::WorkingCopy;
+                        self.update(
+                            Message::Done(tr!("The merge editor is open in a separate window")),
+                            context,
+                        );
+                    }
+                    Err(e) => self.error = Some(e),
                 }
             }
             _ => {}

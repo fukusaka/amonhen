@@ -315,7 +315,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 直せる Result とコンフリクトごとの Undo | ✓ | ✓ | ✓ | n/a | n/a |  |
 | ファイルを Current / Incoming で解く | ✓ | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
 | 外のマージツールで開く | — | — | — | n/a | n/a |  |
-| エディターを別の窓に出す | ✓ | ✓ | — | n/a | n/a |  |
+| エディターを別の窓に出す | ✓ | ✓ | ✓ | n/a | n/a | Windows: 別の窓（別のプロセス）で同じファイルを開く。保存していない編集も持って行く。 |
 | Continue / Skip / Abort | ✓ | ✓ | ✓ | ✓ | △ | VSCode: サイドバーの進行中の行に出る。<br>CLI: `amonhen run` から。 |
 
 ## 9. AI

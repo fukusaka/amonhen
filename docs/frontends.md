@@ -315,7 +315,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Editable Result with undo per conflict | ✓ | ✓ | ✓ | n/a | n/a |  |
 | Resolve a file with Current / Incoming | ✓ | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
 | Open in an external merge tool | — | — | — | n/a | n/a |  |
-| Pop out the editor into a window | ✓ | ✓ | — | n/a | n/a |  |
+| Pop out the editor into a window | ✓ | ✓ | ✓ | n/a | n/a | Windows: A separate window (its own process) opens the same file; unsaved edits go with it. |
 | Continue / Skip / Abort | ✓ | ✓ | ✓ | ✓ | △ | VSCode: On the sidebar's in-progress row.<br>CLI: Via `amonhen run`. |
 
 ## 9. AI
