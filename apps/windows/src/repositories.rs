@@ -1672,6 +1672,8 @@ fn status(
 
 /// Branch・Status・Last Commit・Opened の列の初めの幅。
 const COLUMNS: [f64; 4] = [150.0, 110.0, 280.0, 110.0];
+/// 名前の列の最低限の幅（窓が狭ければ、表ごと横にスクロールする）。
+const NAME_MIN_WIDTH: f64 = 200.0;
 /// 列の幅を覚える設定の鍵（`,` 区切り）。
 const COLUMN_WIDTHS_KEY: &str = "repositoryColumnWidths";
 
@@ -2063,10 +2065,13 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
     } else {
         state.note.clone()
     };
+    // 窓が狭いと、幅の決まった列に押されて名前の列がなくなる。名前の列に最低限の幅を残し、足りなければ表ごと
+    // 横にスクロールする。
+    let min_width =
+        NAME_MIN_WIDTH + COLUMN_WIDTHS.with(std::cell::Cell::get).iter().sum::<f64>() + 32.0;
     let main = Grid::new()
         .rows([GridLength::Auto, GridLength::Star(1.0), GridLength::Auto])
-        .grid_column(1)
-        .grid_row(1)
+        .min_width(min_width)
         .children((
             header,
             Grid::new()
@@ -2080,6 +2085,12 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                 .margin(Thickness::new(16.0, 4.0, 8.0, 6.0))
                 .grid_row(2),
         ));
+    let main = ScrollViewer::new()
+        .horizontal_scroll_bar_visibility(ScrollBarVisibility::Auto)
+        .vertical_scroll_bar_visibility(ScrollBarVisibility::Disabled)
+        .grid_column(1)
+        .grid_row(1)
+        .content(main);
     Grid::new()
         .rows([GridLength::Auto, GridLength::Star(1.0)])
         .columns([GridLength::Pixel(240.0), GridLength::Star(1.0)])
