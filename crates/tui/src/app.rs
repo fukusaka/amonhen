@@ -137,6 +137,10 @@ enum Naming {
     PushTo,
     /// 履歴のない新しいブランチの名前。
     Orphan,
+    /// 足すリモートの名前（次に URL を聞く）。
+    RemoteName,
+    /// 足すリモートの URL（名前は聞いてある）。
+    RemoteUrl,
 }
 
 /// 選択肢 1 つ: 押すキー、名前、頼む中身。
@@ -1043,6 +1047,25 @@ impl App {
                                 self.ask_orphan(name);
                                 return;
                             }
+                            Naming::RemoteName => {
+                                if self.remotes.iter().any(|r| r == name) {
+                                    self.error =
+                                        Some(tr!("There is a remote named {name}", name = name));
+                                    return;
+                                }
+                                self.naming = Naming::RemoteUrl;
+                                self.typing_branch =
+                                    Some((name.to_owned(), name.to_owned(), String::new()));
+                                return;
+                            }
+                            Naming::RemoteUrl => (
+                                "addRemote",
+                                tr!("Adding {name}…", name = start),
+                                json!({
+                                    "op": "changeRemote",
+                                    "change": {"kind": "add", "name": start, "url": name},
+                                }),
+                            ),
                             Naming::Worktree => (
                                 "addWorktree",
                                 tr!("Adding the worktree…"),
@@ -1252,6 +1275,16 @@ impl App {
 
     /// コマンドの一覧からだけ動かす操作（キーを持たない）。
     fn run_keyless(&mut self, id: &str) {
+        if id == "add-remote" {
+            self.naming = Naming::RemoteName;
+            // 初めは、まだリモートがなければ origin。
+            let name = match self.remotes.is_empty() {
+                true => "origin".to_owned(),
+                false => String::new(),
+            };
+            self.typing_branch = Some((String::new(), String::new(), name));
+            self.dirty = true;
+        }
         if id == "clean-up-branches" {
             self.run(
                 "cleanupList",
@@ -1365,6 +1398,7 @@ impl App {
                 return;
             }
             "cleanUp" => self.notice = Some(tr!("Deleted the branches")),
+            "addRemote" => self.notice = Some(tr!("Added the remote")),
             "merge" | "rebase" | "continue" | "skip" | "cherryPick" | "revert" | "rewrite" => {
                 // コンフリクトで止まったら、Working Copy で解決する。
                 match reply["outcome"].as_str() {
@@ -3051,6 +3085,8 @@ impl App {
                         tr!("Push {at} to (remote/branch): {name}", at = at, name = name)
                     }
                     Naming::Orphan => tr!("New orphan branch: {name}", name = name),
+                    Naming::RemoteName => tr!("New remote's name: {name}", name = name),
+                    Naming::RemoteUrl => tr!("URL of {at}: {name}", at = at, name = name),
                 };
                 let x = buf.set_stringn(area.x + 1, y, text, room, Style::new()).0;
                 cursor = Some((x.min(position_x.saturating_sub(1)), y));

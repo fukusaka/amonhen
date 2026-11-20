@@ -1387,6 +1387,36 @@ fn clean_up_offers_branches_whose_upstream_is_gone() {
     );
 }
 
+/// コマンドの一覧の Add Remote: 名前、次に URL を聞いて足す。同じ名前のリモートがあれば断る
+#[test]
+fn add_remote_from_the_command_list() {
+    let dir = tempfile::tempdir().unwrap();
+    let work = with_remote(dir.path());
+    let url = dir.path().join("origin.git");
+    let url = url.to_str().unwrap();
+    let named =
+        amonhen_tui::snapshot(open(&work), 160, 8, clock(), ":add remote\nmirror\n").unwrap();
+    println!("{named}");
+    assert!(named.contains("URL of mirror: "));
+    let keys = format!(":add remote\nmirror\n{url}\n");
+    let added = amonhen_tui::snapshot(open(&work), 160, 8, clock(), &keys).unwrap();
+    assert!(added.contains("Added the remote"));
+    assert_eq!(git_out(&work, &["remote"]), "mirror\norigin\n");
+    assert_eq!(
+        git_out(&work, &["remote", "get-url", "mirror"]),
+        format!("{url}\n")
+    );
+    let taken =
+        amonhen_tui::snapshot(open(&work), 160, 8, clock(), ":add remote\norigin\n").unwrap();
+    assert!(taken.contains("There is a remote named origin"));
+    // リモートがまだなければ、初めは origin。
+    let empty = tempfile::tempdir().unwrap();
+    merged(empty.path());
+    let first =
+        amonhen_tui::snapshot(open(empty.path()), 160, 8, clock(), ":add remote\n").unwrap();
+    assert!(first.contains("New remote's name: origin"));
+}
+
 /// コマンドの一覧の Prune Worktrees: フォルダのなくなった worktree の記録を片付ける（キーはない）
 #[test]
 fn prune_worktrees_from_the_command_list() {
