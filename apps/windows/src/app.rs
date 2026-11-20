@@ -293,6 +293,8 @@ struct Root {
     merge_chosen: [ElementRef<Grid>; 3],
     diff_find_query: String,
     diff_find_status: String,
+    /// 今の一致がメッセージの中なら、その番号（件名から数えて）。差分の中なら None。
+    diff_find_message: Option<usize>,
     /// Working Copy の一部だけ含めているチェック（キーごと）と、直前の画面で使ったキー。
     mixed_checks: RefCell<std::collections::HashMap<String, ElementRef<CheckBox>>>,
     mixed_used: RefCell<Vec<String>>,
@@ -1150,7 +1152,8 @@ enum Message {
     DiffFindOpen(bool),
     DiffFindQuery(String),
     DiffFindStep(i32),
-    DiffFindStatus(String),
+    /// 差分が替わって数え直した、差分の中の一致の数（メッセージの一致と合わせて出す）。
+    DiffFindCount(usize),
     /// Working Copy のファイルの行にマウスが載った。
     WorkingHover(String),
     /// 窓に落としたもの。
@@ -1334,6 +1337,7 @@ impl Component for Root {
             merge_chosen: std::array::from_fn(|_| ElementRef::new()),
             diff_find_query: String::new(),
             diff_find_status: String::new(),
+            diff_find_message: None,
             mixed_checks: RefCell::default(),
             mixed_used: RefCell::default(),
             search_opened: 0,
@@ -2207,24 +2211,64 @@ impl Root {
                 if !open {
                     self.diff_find_query.clear();
                     self.diff_find_status.clear();
+                    self.diff_find_message = None;
                     with_history(|h| {
-                        h.find_in_diff(String::new(), 0);
+                        h.find_in_diff(String::new(), Some(0));
                     });
                 }
             }
             Message::DiffFindQuery(query) => {
                 self.diff_find_query = query.clone();
-                let mut status = String::new();
-                with_history(|h| status = h.find_in_diff(query, 0));
-                self.diff_find_status = status;
+                // メッセージの中に一致があれば、そこから（詳細の上にあるので）。なければ差分の、見えている所から。
+                let in_message = self.message_matches();
+                let mut found = (0, None);
+                with_history(|h| found = h.find_in_diff(query, (in_message == 0).then_some(0)));
+                self.diff_find_message = (in_message > 0).then_some(0);
+                self.diff_find_status = self.find_status(in_message, found);
             }
             Message::DiffFindStep(step) => {
+                // メッセージの一致と差分の一致を、上から 1 つの並びとして ↑・↓ で動く。
+                let in_message = self.message_matches();
                 let query = self.diff_find_query.clone();
-                let mut status = String::new();
-                with_history(|h| status = h.find_in_diff(query, step));
-                self.diff_find_status = status;
+                let mut found = (0, None);
+                with_history(|h| found = h.find_in_diff(query.clone(), None));
+                let total = in_message + found.0;
+                if total == 0 {
+                    self.diff_find_status = self.find_status(0, found);
+                    return;
+                }
+                let now = match (self.diff_find_message, found.1) {
+                    (Some(m), _) => m,
+                    (None, Some(d)) => in_message + d,
+                    (None, None) => 0,
+                };
+                let next = (now as i64 + i64::from(step)).rem_euclid(total as i64) as usize;
+                if next < in_message {
+                    self.diff_find_message = Some(next);
+                    with_history(|h| {
+                        h.select_diff_match(None);
+                    });
+                    found.1 = None;
+                } else {
+                    self.diff_find_message = None;
+                    let d = next - in_message;
+                    with_history(|h| {
+                        h.select_diff_match(Some(d));
+                    });
+                    found.1 = Some(d);
+                }
+                self.diff_find_status = self.find_status(in_message, found);
             }
-            Message::DiffFindStatus(status) => self.diff_find_status = status,
+            Message::DiffFindCount(count) => {
+                // 選んだものが替わった: 今の一致はなくし、数だけを出す（移るのは ↑・↓ を押したとき）。
+                self.diff_find_message = None;
+                let total = self.message_matches() + count;
+                self.diff_find_status = if total == 0 {
+                    tr!("No Matches")
+                } else {
+                    total.to_string()
+                };
+            }
             Message::WorkingHover(path) => {
                 if self.working_hovered.as_deref() != Some(path.as_str()) {
                     self.working_hovered = Some(path);
@@ -12625,6 +12669,31 @@ impl Root {
             ))
     }
 
+    /// 詳細のメッセージの中の、探している文字の一致の数（History のコミットを出しているときだけ）。
+    fn message_matches(&self) -> usize {
+        if self.page == Page::WorkingCopy {
+            return 0;
+        }
+        message_match_count(self.info.as_ref().map(|(i, _)| i), &self.diff_find_query)
+    }
+
+    /// 探す帯の数（「今 / 全部」。メッセージの一致を先に数える）。`found` は差分の一致の数と今の一致。
+    fn find_status(&self, in_message: usize, found: (usize, Option<usize>)) -> String {
+        let total = in_message + found.0;
+        if self.diff_find_query.trim().is_empty() {
+            return String::new();
+        }
+        if total == 0 {
+            return tr!("No Matches");
+        }
+        let now = match (self.diff_find_message, found.1) {
+            (Some(m), _) => m,
+            (None, Some(d)) => in_message + d,
+            (None, None) => 0,
+        };
+        format!("{} / {total}", now + 1)
+    }
+
     /// つながりが切れた帯（ステータスバーの上。GTK4 版の `show_disconnected`、macOS 版と同じ）: どこと切れたか、
     /// 理由、Reconnect（同じ場所をこのタブで開き直す）。
     fn connection_band(&self, context: &ViewContext<Self>) -> View {
@@ -14314,6 +14383,9 @@ impl Root {
                             } else {
                                 ""
                             },
+                            self.diff_find_open
+                                .then_some(self.diff_find_message)
+                                .flatten(),
                         )),
                     StackPanel::new()
                         .orientation(Orientation::Horizontal)
@@ -15351,7 +15423,13 @@ fn person(info: &Value, role: &str) -> String {
 
 /// コミットの詳細（作者、コミッター、Commit・Parent・Refs の表、件名と本文）。
 /// `text` の中の `query` の一致（大文字・小文字を区別しない）に色を付けた runs。一致がなければ None。
+#[cfg(test)]
 fn highlighted(text: &str, query: &str, bold: bool) -> Option<RichText> {
+    highlighted_at(text, query, bold, None)
+}
+
+/// [`highlighted`] の、`current` 番目の一致を今の一致として地の色で目立たせるもの（↑・↓ で動く先）。
+fn highlighted_at(text: &str, query: &str, bold: bool, current: Option<usize>) -> Option<RichText> {
     let query = query.trim();
     if query.is_empty() {
         return None;
@@ -15364,11 +15442,14 @@ fn highlighted(text: &str, query: &str, bold: bool) -> Option<RichText> {
     }
     let mut inlines = Vec::new();
     let mut at = 0;
+    let mut nth = 0;
     for (start, _) in lower.match_indices(&needle) {
         let end = start + needle.len();
         if start < at || !text.is_char_boundary(start) || !text.is_char_boundary(end) {
             continue;
         }
+        let is_current = current == Some(nth);
+        nth += 1;
         if at < start {
             inlines.push(RichTextInline::Run(RichTextRun {
                 text: text[at..start].to_owned(),
@@ -15379,8 +15460,13 @@ fn highlighted(text: &str, query: &str, bold: bool) -> Option<RichText> {
         inlines.push(RichTextInline::Run(RichTextRun {
             text: text[start..end].to_owned(),
             is_bold: true,
-            foreground: Some(Color::rgb(0xb2, 0x5f, 0x00)),
-            ..RichTextRun::default()
+            // 今の一致は濃く、ほかは橙（差分の中の今の一致と同じ見分け方）。
+            foreground: Some(if is_current {
+                Color::rgb(0xd0, 0x3a, 0x3a)
+            } else {
+                Color::rgb(0xb2, 0x5f, 0x00)
+            }),
+            is_italic: is_current,
         }));
         at = end;
     }
@@ -15397,11 +15483,52 @@ fn highlighted(text: &str, query: &str, bold: bool) -> Option<RichText> {
     Some(RichText::single_paragraph(inlines))
 }
 
+/// `text` の中の `query` の一致の数（[`highlighted`] が色を付けるものと同じ数え方）。
+fn match_count(text: &str, query: &str) -> usize {
+    let query = query.trim();
+    let lower = text.to_lowercase();
+    if query.is_empty() || lower.len() != text.len() {
+        return 0;
+    }
+    let needle = query.to_lowercase();
+    let mut at = 0;
+    let mut n = 0;
+    for (start, _) in lower.match_indices(&needle) {
+        let end = start + needle.len();
+        if start < at || !text.is_char_boundary(start) || !text.is_char_boundary(end) {
+            continue;
+        }
+        n += 1;
+        at = end;
+    }
+    n
+}
+
+/// コミットのメッセージの件名と本文（詳細に出す形）。
+fn message_parts(info: &Value) -> (&str, &str) {
+    let message = info["message"].as_str().unwrap_or_default().trim_end();
+    let (subject, body) = message.split_once('\n').unwrap_or((message, ""));
+    (subject, body.trim())
+}
+
+/// 詳細のメッセージの中の `query` の一致の数（件名と本文）。
+fn message_match_count(info: Option<&Value>, query: &str) -> usize {
+    let Some(info) = info.filter(|i| i["selection"].is_null()) else {
+        return 0;
+    };
+    let (subject, body) = message_parts(info);
+    match_count(subject, query) + match_count(body, query)
+}
+
 /// メッセージの 1 つの欄（`query` の一致があれば色を付ける）。
-fn message_text(text: &str, query: &str, size: f64, bold: bool) -> View {
-    // 色を付けるときと付けないときで部品が違うので、鍵を分けて作り直させる。
-    let runs = highlighted(text, query, bold);
-    let key = if runs.is_some() { "found" } else { "plain" };
+fn message_text(text: &str, query: &str, size: f64, bold: bool, current: Option<usize>) -> View {
+    // 色を付けるときと付けないときで部品が違うので、鍵を分けて作り直させる（今の一致が動いたときも）。
+    let runs = highlighted_at(text, query, bold, current);
+    let key = match (&runs, current) {
+        (None, _) => "plain".to_owned(),
+        (Some(_), Some(c)) => format!("found-{c}"),
+        (Some(_), None) => "found".to_owned(),
+    };
     let view: View = match runs {
         Some(runs) => RichTextBlock::new()
             .paragraphs(runs)
@@ -15424,7 +15551,8 @@ fn message_text(text: &str, query: &str, size: f64, bold: bool) -> View {
     View::keyed_fragment([(key, view)])
 }
 
-fn details(info: Option<(&Value, Option<&Value>)>, query: &str) -> View {
+/// `current` は、メッセージの中の今の一致（件名から数えて何番目か。差分の中にあれば None）。
+fn details(info: Option<(&Value, Option<&Value>)>, query: &str, current: Option<usize>) -> View {
     let Some((info, extras)) = info else {
         return TextBlock::new().margin(12.0).into();
     };
@@ -15573,16 +15701,21 @@ fn details(info: Option<(&Value, Option<&Value>)>, query: &str) -> View {
             rows.push(line("Pushed", text).into());
         }
     }
-    let message = info["message"].as_str().unwrap_or_default().trim_end();
-    let (subject, body) = message.split_once('\n').unwrap_or((message, ""));
+    let (subject, body) = message_parts(info);
+    // 今の一致が件名の中か本文の中か。
+    let in_subject = match_count(subject, query);
+    let (subject_current, body_current) = match current {
+        Some(c) if c < in_subject => (Some(c), None),
+        Some(c) => (None, Some(c - in_subject)),
+        None => (None, None),
+    };
     rows.push(
         Border::new()
             .margin(Thickness::new(0.0, 8.0, 0.0, 0.0))
-            .content(message_text(subject, query, 14.0, true)),
+            .content(message_text(subject, query, 14.0, true, subject_current)),
     );
-    let body = body.trim();
     if !body.is_empty() {
-        rows.push(message_text(body, query, 13.0, false));
+        rows.push(message_text(body, query, 13.0, false, body_current));
     }
     StackPanel::new()
         .spacing(4.0)
@@ -16259,14 +16392,10 @@ impl HistoryView {
             let found = view.map_or_else(Vec::new, |v| {
                 crate::render::find_in_diff(v, &self.diff_query)
             });
-            let status = if found.is_empty() {
-                tr!("No Matches")
-            } else {
-                found.len().to_string()
-            };
+            let count = found.len();
             s.renderer.diff_find = found;
             s.renderer.diff_current = None;
-            self.sender.send(Message::DiffFindStatus(status));
+            self.sender.send(Message::DiffFindCount(count));
         } else if diff_replaced {
             s.renderer.diff_find.clear();
             s.renderer.diff_current = None;
@@ -16337,12 +16466,15 @@ impl HistoryView {
     }
 
     /// 差分の中を `query` で探し、`step` だけ一致を移る（0 なら今見えている所から最初の一致）。件数の文字を返す。
-    fn find_in_diff(&mut self, query: String, step: i32) -> String {
-        if query != self.diff_query {
+    /// 差分の中の `query` の一致を探す（数と、今の一致）。`start` が Some なら、0 なら見えている所から、それ
+    /// 以外はその番号を今の一致にする。None なら、問い合わせが同じ限り今の一致はそのまま（今の一致がなければ
+    /// 付けない）。
+    fn find_in_diff(&mut self, query: String, start: Option<usize>) -> (usize, Option<usize>) {
+        let changed = query != self.diff_query;
+        if changed {
             self.diff_query = query;
             self.session.renderer.diff_current = None;
         }
-        let rows = self.diff_rows();
         let data = &self.session.data;
         let view = if self.working_page {
             data.working.as_ref().map(|w| &w.diff.view)
@@ -16353,32 +16485,42 @@ impl HistoryView {
             crate::render::find_in_diff(v, &self.diff_query)
         });
         self.diff.dirty = true;
-        let r = &mut self.session.renderer;
-        if found.is_empty() {
-            r.diff_find.clear();
-            r.diff_current = None;
-            return if self.diff_query.is_empty() {
-                String::new()
-            } else {
-                tr!("No Matches")
-            };
-        }
         let n = found.len();
-        let top = (self.diff.scroll_y / DIFF_ROW_HEIGHT) as u32;
-        let index = match (step, r.diff_current) {
-            (0, _) | (_, None) => found.iter().position(|m| m.0 >= top).unwrap_or(0),
-            (s, Some(c)) => (c as i64 + i64::from(s)).rem_euclid(n as i64) as usize,
-        };
-        let row = found[index].0;
+        let r = &mut self.session.renderer;
         r.diff_find = found;
+        if n == 0 {
+            r.diff_current = None;
+            return (0, None);
+        }
+        match start {
+            Some(_) => {
+                let top = (self.diff.scroll_y / DIFF_ROW_HEIGHT) as u32;
+                let index = r.diff_find.iter().position(|m| m.0 >= top).unwrap_or(0);
+                self.select_diff_match(Some(index));
+                (n, Some(index))
+            }
+            None => (n, self.session.renderer.diff_current),
+        }
+    }
+
+    /// 差分の中の `index` 番目の一致を今の一致にして、見えていなければ上から 3 分の 1 の所へ（None なら今の一致を
+    /// 外す。メッセージの中に移ったとき）。
+    fn select_diff_match(&mut self, index: Option<usize>) {
+        let rows = self.diff_rows();
+        let r = &mut self.session.renderer;
+        let Some(index) = index.filter(|i| *i < r.diff_find.len()) else {
+            r.diff_current = None;
+            self.diff.dirty = true;
+            return;
+        };
         r.diff_current = Some(index);
-        // 今の一致の行が見えていなければ、上から 3 分の 1 の所へ。
+        let row = r.diff_find[index].0;
         let (row_top, height) = (row as f32 * DIFF_ROW_HEIGHT, self.diff.height());
         if row_top < self.diff.scroll_y || row_top + DIFF_ROW_HEIGHT > self.diff.scroll_y + height {
             self.diff.scroll_y = row_top - height / 3.0;
         }
         self.diff.scroll_by(0.0, rows);
-        format!("{} / {n}", index + 1)
+        self.diff.dirty = true;
     }
 
     /// History を探す。同じ問い合わせをもう探してあれば、選んでいる行から次（`backwards` なら前）の一致へ。空なら
@@ -18234,5 +18376,11 @@ mod tests {
         assert!(highlighted("Fix the Bug", "", false).is_none());
         assert!(highlighted("Fix the Bug", "nothing", false).is_none());
         assert!(highlighted("Fix the Bug and a bug", "bug", true).is_some());
+        assert_eq!(match_count("Fix the Bug and a bug", "bug"), 2);
+        assert_eq!(match_count("aaaa", "aa"), 2);
+        assert_eq!(match_count("Fix", ""), 0);
+        let info = serde_json::json!({ "message": "Fix bug\n\nThe bug and another bug\n" });
+        assert_eq!(message_match_count(Some(&info), "bug"), 3);
+        assert_eq!(message_parts(&info), ("Fix bug", "The bug and another bug"));
     }
 }
