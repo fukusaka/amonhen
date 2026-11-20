@@ -16,7 +16,7 @@ mod bindings;
 mod list;
 mod tabview;
 mod textbox;
-pub use badge::put_badges;
+pub use badge::{pass_through, put_badges};
 pub use bindings::*;
 pub use list::{drag_some_tags, drag_tags, drop_on_rows, selected_tags};
 pub use tabview::on_tab_dropped_outside;

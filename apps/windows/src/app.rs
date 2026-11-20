@@ -200,6 +200,8 @@ struct Root {
     disconnected: Option<(Arc<Repository>, String)>,
     /// サイドバーの木を作り直す数（お気に入りを引いて並べ替えた後。WinUI が動かした項目を元の形に戻す）。
     sidebar_epoch: u32,
+    /// 窓の背景画像（押す・引くを下へ通すため）。
+    backdrop_image: ElementRef<Image>,
     /// ツールバーのリポジトリ名の一覧に添える、各リポジトリのブランチと状態（場所ごと）と、最後に読んだ時刻。
     switch_peeks: std::collections::HashMap<String, amonhen_backend_cli::Peek>,
     switch_peeked_at: Option<std::time::Instant>,
@@ -946,6 +948,8 @@ enum Message {
     SettingsSyntaxTheme(bool, Option<usize>),
     /// Settings > Theme のボタン（`import`・`remove:<name>`）。
     SettingsThemeButton(String),
+    /// Settings > Appearance の窓の背景の欄。
+    Backdrop(crate::backdrop::Event),
     CloseSettings,
     /// Activity: タブを選んだ・Undo の記録を読んだ・戻す数を選んだ・読み直す時刻・閉じる。
     ActivityTab(Option<usize>),
@@ -1293,6 +1297,7 @@ impl Component for Root {
             failure_generation: 0,
             disconnected: None,
             sidebar_epoch: 0,
+            backdrop_image: ElementRef::new(),
             switch_peeks: std::collections::HashMap::new(),
             switch_peeked_at: None,
             settings_undo: Vec::new(),
@@ -6802,6 +6807,11 @@ impl Root {
                     with_history(|h| h.diff.dirty = true);
                 }
             }
+            Message::Backdrop(event) => {
+                if let Err(e) = crate::backdrop::apply(event) {
+                    self.error = Some(e);
+                }
+            }
             Message::SettingsThemeButton(key) => {
                 let mut themes = crate::theme::imported();
                 if let Some(name) = key.strip_prefix("remove:") {
@@ -8117,6 +8127,34 @@ impl Root {
             });
         }
         let dialog = self.dialog_view(context);
+        // 窓の背景（ツールバーの色と背景画像。リポジトリだけの設定があればそれ）。
+        let backdrop = crate::backdrop::current(
+            &crate::tabs::current().map_or_else(|| args.repo.display().to_string(), |t| t.location),
+        );
+        let toolbar_tint: View = match backdrop.toolbar_tint() {
+            Some(color) => Border::new()
+                .grid_row(0)
+                .grid_row_span(2)
+                .background(Brush::Solid(color))
+                .into(),
+            None => View::empty(),
+        };
+        let image = backdrop_image(&backdrop, &self.backdrop_image);
+        let host = self.backdrop_image.clone();
+        context.use_effect(
+            "backdrop-image",
+            (backdrop.image.clone(), format!("{:?}", backdrop.placement)),
+            move || {
+                let _ = host.request_native_element(|result| {
+                    if let Ok(element) = result
+                        && let Err(e) = xaml::pass_through(&element)
+                    {
+                        eprintln!("背景画像を押せないようにできない: {e}");
+                    }
+                });
+                None
+            },
+        );
         Grid::new()
             .element_ref(&self.root)
             // 窓の地（WinUI は外観を替えても窓の地を塗り直さないので、ここで塗る）。
@@ -8129,6 +8167,7 @@ impl Root {
                 GridLength::Auto,
             ])
             .children((
+                toolbar_tint,
                 menu_bar,
                 toolbar,
                 tab_strip,
@@ -8142,9 +8181,57 @@ impl Root {
                     .on_drop(context.callback(Message::Dropped))
                     .content(body),
                 self.status_bar(context),
+                image,
                 dialog,
             ))
     }
+}
+
+/// 窓の中身の上に薄く重ねる背景画像（なければ空）。押す・引くは下の部品へ通す（描いた後に外す）。
+fn backdrop_image(backdrop: &crate::backdrop::Backdrop, host: &ElementRef<Image>) -> View {
+    use crate::backdrop::Placement;
+    let Some(path) = backdrop.image.as_deref() else {
+        return View::empty();
+    };
+    let Ok(image) = Image::new().source_file(path) else {
+        return View::empty();
+    };
+    let (horizontal, vertical, stretch) = match backdrop.placement {
+        Placement::Fill => (
+            HorizontalAlignment::Stretch,
+            VerticalAlignment::Stretch,
+            Stretch::UniformToFill,
+        ),
+        Placement::TopLeft => (
+            HorizontalAlignment::Left,
+            VerticalAlignment::Top,
+            Stretch::None,
+        ),
+        Placement::TopRight => (
+            HorizontalAlignment::Right,
+            VerticalAlignment::Top,
+            Stretch::None,
+        ),
+        Placement::BottomLeft => (
+            HorizontalAlignment::Left,
+            VerticalAlignment::Bottom,
+            Stretch::None,
+        ),
+        Placement::BottomRight => (
+            HorizontalAlignment::Right,
+            VerticalAlignment::Bottom,
+            Stretch::None,
+        ),
+    };
+    image
+        .element_ref(host)
+        .grid_row(0)
+        .grid_row_span(5)
+        .stretch(stretch)
+        .horizontal_alignment(horizontal)
+        .vertical_alignment(vertical)
+        .opacity(backdrop.image_opacity())
+        .into()
 }
 
 impl Root {
@@ -13834,6 +13921,16 @@ impl Root {
                 theme_button: Box::new(|key: String| {
                     context.callback(move |()| Message::SettingsThemeButton(key.clone()))
                 }),
+                backdrop_button: Box::new(|event| {
+                    context.callback(move |()| Message::Backdrop(event.clone()))
+                }),
+                backdrop_placement: context
+                    .callback(|i| Message::Backdrop(crate::backdrop::Event::Placement(i))),
+                backdrop_number: Box::new(|f| context.callback(move |v| Message::Backdrop(f(v)))),
+                backdrop_tint: context
+                    .callback(|on| Message::Backdrop(crate::backdrop::Event::Tint(on))),
+                backdrop_color: context
+                    .callback(|c| Message::Backdrop(crate::backdrop::Event::ToolbarColor(c))),
                 template_remove: Box::new(|i| {
                     context.callback(move |()| Message::SettingsTemplateRemove(i))
                 }),

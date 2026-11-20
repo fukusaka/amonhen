@@ -94,6 +94,20 @@ fn item<'a>(data: &'a Value, path: &str) -> Option<&'a Value> {
     items(data).find(|b| b["path"].as_str().is_some_and(|p| same(p, path)))
 }
 
+/// `path` のリポジトリだけの窓の背景（ブックマークの `backdrop`。macOS 版・GTK4 版と同じ形）。
+pub fn backdrop(path: &str) -> Option<Value> {
+    item(&read(), path)
+        .map(|b| b["backdrop"].clone())
+        .filter(Value::is_object)
+}
+
+/// `bookmarks.json` を最後に書いた時刻（読んだものを使い回してよいか）。
+pub fn modified() -> Option<std::time::SystemTime> {
+    file()
+        .and_then(|p| std::fs::metadata(p).ok())
+        .and_then(|m| m.modified().ok())
+}
+
 /// `path` のブックマークを変える（なければ作る）。
 fn update(data: &mut Value, path: &str, change: impl FnOnce(&mut Map<String, Value>)) {
     let items = array_mut(data, "items");

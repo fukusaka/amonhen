@@ -9,6 +9,7 @@
 mod activity;
 mod app;
 mod askpass;
+mod backdrop;
 mod blame;
 mod branchswitcher;
 mod data;
