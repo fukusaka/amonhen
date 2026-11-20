@@ -28,7 +28,7 @@ const FILTER: &[&str] = &[
     "Microsoft.UI.Xaml.Controls.IListViewBase::{SelectedItems,DragItemsStarting,remove_DragItemsStarting}",
     // Repositories の行を、左のお気に入り・グループへ引いて入れる（引いた行の Tag を文字で載せる）。
     "Microsoft.UI.Xaml.Controls.DragItemsStartingEventArgs",
-    "Microsoft.UI.Xaml.Controls.IDragItemsStartingEventArgs::{Items,Data}",
+    "Microsoft.UI.Xaml.Controls.IDragItemsStartingEventArgs::{Items,Data,Cancel,put_Cancel}",
     "Microsoft.UI.Xaml.Controls.DragItemsStartingEventHandler",
     "Windows.ApplicationModel.DataTransfer.DataPackage",
     "Windows.ApplicationModel.DataTransfer.IDataPackage::{SetText,put_RequestedOperation}",

@@ -3403,6 +3403,25 @@ impl DragItemsStartingEventArgs {
         > = windows_core::imp::FactoryCache::new();
         SHARED.call(callback)
     }
+    pub fn Cancel(&self) -> windows_core::Result<bool> {
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(self).Cancel)(
+                windows_core::Interface::as_raw(self),
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
+    pub fn SetCancel(&self, value: bool) -> windows_core::Result<()> {
+        unsafe {
+            (windows_core::Interface::vtable(self).SetCancel)(
+                windows_core::Interface::as_raw(self),
+                value,
+            )
+            .ok()
+        }
+    }
     pub fn Items(
         &self,
     ) -> windows_core::Result<windows_collections::IVector<windows_core::IInspectable>> {
@@ -4741,8 +4760,9 @@ impl windows_core::RuntimeType for IDragItemsStartingEventArgs {
 #[repr(C)]
 pub struct IDragItemsStartingEventArgs_Vtbl {
     pub base__: windows_core::IInspectable_Vtbl,
-    Cancel: usize,
-    SetCancel: usize,
+    pub Cancel:
+        unsafe extern "system" fn(*mut core::ffi::c_void, *mut bool) -> windows_core::HRESULT,
+    pub SetCancel: unsafe extern "system" fn(*mut core::ffi::c_void, bool) -> windows_core::HRESULT,
     pub Items: unsafe extern "system" fn(
         *mut core::ffi::c_void,
         *mut *mut core::ffi::c_void,

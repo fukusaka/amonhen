@@ -657,6 +657,9 @@ pub fn open_window_with(location: &str, extra: &[&str]) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// 左のグループを引いたときに、引いた名前の前に付ける印（右の一覧から引いたリポジトリと見分ける）。
+pub const GROUP_DRAG: &str = "\u{1}group:";
+
 // 画面の状態
 
 #[derive(Clone, PartialEq)]
@@ -957,6 +960,15 @@ impl State {
             .collect()
     }
 
+    /// 左の行のうち、引いて並べ替えられるもの（グループ）。
+    pub fn draggable_groups(&self) -> Vec<String> {
+        self.categories()
+            .into_iter()
+            .filter(|c| matches!(c.0, Category::Group(_)))
+            .map(|c| c.1)
+            .collect()
+    }
+
     /// 出している並び（変わったら一覧が作り直される）。
     pub fn shown_key(&self) -> String {
         self.shown().iter().map(|l| key(l) + "\n").collect()
@@ -1128,6 +1140,29 @@ impl State {
                 }
             }
             Event::AddSsh => return Action::AddSsh,
+            // グループを引いて、ほかのグループに落とした: その前に移す（GTK4 版・macOS 版のグループの並べ替え）。
+            Event::DroppedOn(target, dragged)
+                if dragged.iter().all(|d| d.starts_with(GROUP_DRAG)) =>
+            {
+                let moved: Vec<String> = dragged
+                    .iter()
+                    .map(|d| d[GROUP_DRAG.len()..].to_owned())
+                    .collect();
+                let groups = self.groups();
+                if !groups.contains(&target) || moved.contains(&target) {
+                    return Action::None;
+                }
+                let mut order: Vec<String> =
+                    groups.into_iter().filter(|g| !moved.contains(g)).collect();
+                let at = order
+                    .iter()
+                    .position(|g| *g == target)
+                    .unwrap_or(order.len());
+                for (i, g) in moved.into_iter().enumerate() {
+                    order.insert(at + i, g);
+                }
+                self.change(|d| d["groups"] = json!(order));
+            }
             Event::DroppedOn(target, locations) => {
                 // 同じ名前なら、お気に入りを先に（グループに「お気に入り」と名付けたときも、上の行に入る）。
                 let category = self
@@ -1793,6 +1828,7 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
     let side_key = state.side_key();
     // お気に入り・グループには、右の一覧の行を引いて入れられる（`xaml::drop_on_rows`。GTK4 版・macOS 版と同じ）。
     let side = ListView::new()
+        .can_drag_items(true)
         .selected_index(Some(state.category))
         .on_selection_changed(callbacks.category.clone())
         .collection_slot(ListViewSlot::Items, side_rows);

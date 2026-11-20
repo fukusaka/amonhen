@@ -7914,10 +7914,24 @@ impl Root {
                     .map(|s| (s.side_key(), s.drop_targets()))
             })
             .flatten();
+        let groups = self
+            .repositories
+            .as_ref()
+            .map(|s| s.draggable_groups())
+            .unwrap_or_default();
         context.use_effect("repositories-drop", targets.clone(), move || {
             if let Some((_, targets)) = targets.clone() {
+                let groups = groups.clone();
                 let _ = side.request_native_element(move |result| {
                     if let Ok(element) = result {
+                        // 左のグループは引いて、ほかのグループの前に移せる。
+                        if let Some(revoker) = xaml::drag_some_tags(
+                            &element,
+                            groups.clone(),
+                            crate::repositories::GROUP_DRAG,
+                        ) {
+                            REVOKERS.with(|r| r.borrow_mut().push(revoker));
+                        }
                         xaml::drop_on_rows(&element, targets.clone(), |target, locations| {
                             with_history(|h| {
                                 h.sender.send(Message::Repos(
