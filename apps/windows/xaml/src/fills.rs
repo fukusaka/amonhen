@@ -6,23 +6,44 @@ use crate::bindings::{Color, ElementTheme, FrameworkElement, SolidColorBrush};
 use windows_collections::IMap;
 use windows_core::{HSTRING, IInspectable, Interface, Result};
 
-/// 上書きする鍵と、もとの色（明るい外観・暗い外観。WinUI の ControlFillColor* の値、ARGB）。
-const KEYS: [(&str, u32, u32); 9] = [
-    ("ButtonBackground", 0xB3FF_FFFF, 0x0FFF_FFFF),
-    ("ButtonBackgroundPointerOver", 0x80F9_F9F9, 0x15FF_FFFF),
-    ("ButtonBackgroundPressed", 0x4DF9_F9F9, 0x08FF_FFFF),
-    ("TextControlBackground", 0xB3FF_FFFF, 0x0FFF_FFFF),
-    ("TextControlBackgroundPointerOver", 0x80F9_F9F9, 0x15FF_FFFF),
-    ("TextControlBackgroundFocused", 0xFFFF_FFFF, 0xB31E_1E1E),
-    ("ComboBoxBackground", 0xB3FF_FFFF, 0x0FFF_FFFF),
-    ("ComboBoxBackgroundPointerOver", 0x80F9_F9F9, 0x15FF_FFFF),
-    ("ComboBoxBackgroundPressed", 0x4DF9_F9F9, 0x08FF_FFFF),
+/// 上書きする鍵、もとの色（明るい外観・暗い外観。WinUI の ControlFillColor* の値、ARGB）と、窓の地の濃さに
+/// 掛ける重み。何もしていないときの地は窓の地の上に重なって一段明るく見えるので、ほとんど塗らない（枠は残るので
+/// 形は分かる）。指を乗せた・押した・打っているときは窓の地と同じ薄さで塗って、動きが分かるようにする。
+const KEYS: [(&str, u32, u32, f32); 12] = [
+    ("ButtonBackground", 0xB3FF_FFFF, 0x0FFF_FFFF, 0.15),
+    ("ButtonBackgroundPointerOver", 0x80F9_F9F9, 0x15FF_FFFF, 1.0),
+    ("ButtonBackgroundPressed", 0x4DF9_F9F9, 0x08FF_FFFF, 1.0),
+    ("TextControlBackground", 0xB3FF_FFFF, 0x0FFF_FFFF, 0.15),
+    (
+        "TextControlBackgroundPointerOver",
+        0x80F9_F9F9,
+        0x15FF_FFFF,
+        1.0,
+    ),
+    (
+        "TextControlBackgroundFocused",
+        0xFFFF_FFFF,
+        0xB31E_1E1E,
+        1.0,
+    ),
+    ("ComboBoxBackground", 0xB3FF_FFFF, 0x0FFF_FFFF, 0.15),
+    (
+        "ComboBoxBackgroundPointerOver",
+        0x80F9_F9F9,
+        0x15FF_FFFF,
+        1.0,
+    ),
+    ("ComboBoxBackgroundPressed", 0x4DF9_F9F9, 0x08FF_FFFF, 1.0),
+    // 切り替えるボタン（詳細を広げる ⤢ など）。入っているときは強調の色のまま。
+    ("ToggleButtonBackground", 0xB3FF_FFFF, 0x0FFF_FFFF, 0.15),
+    ("ToggleButtonBackgroundPointerOver", 0x80F9_F9F9, 0x15FF_FFFF, 1.0),
+    ("ToggleButtonBackgroundPressed", 0x4DF9_F9F9, 0x08FF_FFFF, 1.0),
 ];
 
 /// 窓の根に入れた部品の地。
 pub struct ControlFills {
     element: FrameworkElement,
-    brushes: Vec<(SolidColorBrush, u32, u32)>,
+    brushes: Vec<(SolidColorBrush, u32, u32, f32)>,
 }
 
 /// 外観を付ける（窓の根は外観を決めて付けているので、外観が変わったら付け直す）。
@@ -53,12 +74,12 @@ impl ControlFills {
             .Resources()?
             .cast::<IMap<IInspectable, IInspectable>>()?;
         let mut brushes = Vec::new();
-        for (key, light, dark_color) in KEYS {
+        for (key, light, dark_color, weight) in KEYS {
             let base = if dark { dark_color } else { light };
-            let brush = SolidColorBrush::CreateInstanceWithColor(color(base, alpha))?;
+            let brush = SolidColorBrush::CreateInstanceWithColor(color(base, alpha * weight))?;
             let key: IInspectable = windows_reference::IReference::from(HSTRING::from(key)).into();
             resources.Insert(&key, &brush.cast::<IInspectable>()?)?;
-            brushes.push((brush, light, dark_color));
+            brushes.push((brush, light, dark_color, weight));
         }
         // ThemeResource は外観が変わったときに引き直すので、外観を付け直して、入れた地を引かせる。
         set_theme(&element, !dark)?;
@@ -69,8 +90,13 @@ impl ControlFills {
     /// 外観と濃さを変える（入れた地の色をその場で替えるので、部品は引き直さなくてよい）。
     pub fn update(&self, dark: bool, alpha: f32) -> Result<()> {
         set_theme(&self.element, dark)?;
-        for (brush, light, dark_color) in &self.brushes {
-            brush.SetColor(color(if dark { *dark_color } else { *light }, alpha))?;
+        for (brush, light, dark_color, weight) in &self.brushes {
+            // 透かさないとき（`alpha` が 1）は、もとの色に戻す。
+            let weight = if alpha >= 1.0 { 1.0 } else { *weight };
+            brush.SetColor(color(
+                if dark { *dark_color } else { *light },
+                alpha * weight,
+            ))?;
         }
         Ok(())
     }
