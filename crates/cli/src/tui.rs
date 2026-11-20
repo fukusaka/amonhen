@@ -84,6 +84,9 @@ pub fn run(args: &[String]) -> Result<ExitCode> {
         }
         false => None,
     };
+    // `ssh://`（`daemon:ssh://` も）の先のファイルは、この機械にない（TUI のエディタで開けない）。
+    let given = dir.to_string_lossy();
+    let files_here = !given.starts_with("ssh://") && !given.starts_with("daemon:ssh://");
     let front: Arc<dyn Front> = Arc::from(open_repository(&dir)?);
     if let Some(file) = snapshot {
         let now = std::time::SystemTime::now()
@@ -150,10 +153,10 @@ pub fn run(args: &[String]) -> Result<ExitCode> {
     }
     #[cfg(unix)]
     if let Some(askpass) = askpass {
-        amonhen_tui::run_asking(front, local, &askpass)?;
+        amonhen_tui::run_asking(front, local, files_here, &askpass)?;
         return Ok(ExitCode::SUCCESS);
     }
-    amonhen_tui::run(front, local)?;
+    amonhen_tui::run(front, local, files_here)?;
     Ok(ExitCode::SUCCESS)
 }
 

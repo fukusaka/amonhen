@@ -40,6 +40,16 @@ const fn entry(id: &'static str, key: char, place: Place) -> Entry {
     }
 }
 
+/// キーのない操作（一覧からだけ動かす。中身は `App::run_keyless`）。
+const fn keyless(id: &'static str, place: Place) -> Entry {
+    Entry {
+        id,
+        key: KeyCode::Null,
+        control: false,
+        place,
+    }
+}
+
 const fn control(id: &'static str, key: char, place: Place) -> Entry {
     Entry {
         id,
@@ -58,6 +68,8 @@ pub static ENTRIES: &[Entry] = &[
     entry("rename-branch", 'n', Place::Sidebar),
     entry("new-tag", 'T', Place::Anywhere),
     entry("new-worktree", 'w', Place::Sidebar),
+    entry("set-upstream", 'U', Place::Sidebar),
+    keyless("prune-worktrees", Place::Anywhere),
     entry("merge", 'm', Place::Sidebar),
     entry("rebase", 'r', Place::Sidebar),
     entry("continue", 'C', Place::Sequence),
@@ -66,6 +78,7 @@ pub static ENTRIES: &[Entry] = &[
     entry("stash", 's', Place::NotSide),
     entry("pop-stash", 'S', Place::NotSide),
     entry("undo", 'u', Place::Anywhere),
+    entry("stage-all", '+', Place::Changes),
     control("commit", 's', Place::Changes),
     control("commit-and-push", 'p', Place::Changes),
     entry("show-working-copy", '1', Place::Anywhere),
@@ -74,6 +87,9 @@ pub static ENTRIES: &[Entry] = &[
     entry("show-sidebar", '0', Place::Anywhere),
     entry("filter-branches", '/', Place::Sidebar),
     entry("find-in-history", '/', Place::History),
+    entry("go-to-head", '@', Place::History),
+    entry("go-to-parent", ']', Place::History),
+    entry("go-to-child", '[', Place::History),
 ];
 
 impl Entry {

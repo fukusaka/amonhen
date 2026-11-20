@@ -70,7 +70,8 @@ pub enum Request {
     DiscardRows { diff: Value, rows: Vec<u32> },
     /// ファイルの変更を捨てる。
     Discard { paths: Vec<String> },
-    /// コアの命令（fetch・push・checkout など）を動かす。`name` は、答えを見分ける名前。
+    /// コアの命令（fetch・push・checkout など）を動かす。`name` は、答えを見分ける名前。`command` が配列なら、
+    /// その命令を順に（失敗したら、そこでやめる）。
     Run { name: &'static str, command: Value },
     /// コミットを作る（`amend` なら、直前のコミットを作り直す）。
     MakeCommit { message: String, amend: bool },
@@ -384,7 +385,14 @@ fn load(front: &dyn Front, request: Request, events: &Sender<Event>) -> Result<L
         Request::Discard { paths } => done(run(front, json!({"op": "discard", "paths": paths}))),
         Request::Run { name, command } => Loaded::Ran {
             name,
-            result: run(front, command).map_err(|e| e.to_string()),
+            result: match command {
+                // いくつかの命令を順に（どれかが失敗したら、そこでやめる）。答えは最後のもの。
+                Value::Array(commands) => commands
+                    .into_iter()
+                    .try_fold(Value::Null, |_, c| run(front, c))
+                    .map_err(|e| e.to_string()),
+                command => run(front, command).map_err(|e| e.to_string()),
+            },
         },
         Request::MakeCommit { message, amend } => Loaded::Committed(
             front

@@ -335,6 +335,35 @@ fn working_copy_lists_files_beside_the_diff() {
 }
 
 /// Space で、選んでいるファイルを stage する。もう一度で unstage
+/// `+` は Stage All: 変更のあるファイルをすべて stage する（コマンドの一覧からも）
+#[test]
+fn plus_stages_all() {
+    let dir = tempfile::tempdir().unwrap();
+    dirty(dir.path());
+    let staged = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "1+").unwrap();
+    println!("{staged}");
+    assert!(staged.contains("[x] M lane.rs"));
+    assert!(staged.contains("[x] A untracked.txt"), "{staged}");
+    // 作業ツリーに、stage していない変更は残らない。
+    assert_eq!(git_out(dir.path(), &["diff", "--name-only"]), "");
+    assert!(!git_out(dir.path(), &["status", "--porcelain"]).contains("??"));
+    // もう stage するものはない。
+    let none = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "1+").unwrap();
+    assert!(none.contains("Nothing to stage"));
+}
+
+/// コマンドの一覧の Stage All
+#[test]
+fn stage_all_from_the_command_list() {
+    let dir = tempfile::tempdir().unwrap();
+    dirty(dir.path());
+    amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "1:stage all\n").unwrap();
+    assert_eq!(
+        git_out(dir.path(), &["diff", "--cached", "--name-only"]),
+        "lane.rs\nstaged.txt\nuntracked.txt\n"
+    );
+}
+
 #[test]
 fn space_stages_and_unstages_the_file() {
     let dir = tempfile::tempdir().unwrap();
@@ -736,6 +765,35 @@ fn colon_lists_commands_and_runs_the_selected_one() {
     assert!(tag.contains(": v1"));
 }
 
+/// History の `@` `]` `[`: HEAD・親（1 つ目の親）・すぐ上の子へ移る。
+#[test]
+fn go_to_head_parent_and_child() {
+    let dir = tempfile::tempdir().unwrap();
+    merged(dir.path());
+    let at = |keys: &str| -> String {
+        let out = amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), keys).unwrap();
+        out.lines()
+            .last()
+            .unwrap()
+            .split_whitespace()
+            .last()
+            .unwrap()
+            .to_owned()
+    };
+    // 0: マージ（HEAD）、1: Bump the version、2: topic のコミット、3: Add the graph、4: Start。
+    // マージの 1 つ目の親は main の側。
+    assert_eq!(at("]"), "2/5");
+    // topic のコミットの親は Add the graph。
+    assert_eq!(at("jj]"), "4/5");
+    // Add the graph の子のうち、すぐ上は topic のコミット。
+    assert_eq!(at("jjj["), "3/5");
+    // いちばん上には子がない。
+    assert_eq!(at("["), "1/5");
+    assert_eq!(at("G@"), "1/5");
+    // コマンドの一覧からも。
+    assert_eq!(at("G:go to head\n"), "1/5");
+}
+
 /// Space は、History とサイドバーで Enter と同じ（詳細へ入る・選んでいる行を開く）
 #[test]
 fn space_opens_like_enter() {
@@ -808,7 +866,11 @@ fn push_asks_then_pushes_to_the_upstream() {
     println!("{asked}");
     // 一番上の行に、上流より進んでいる数。
     assert!(asked.lines().next().unwrap().contains("main ↑1"));
-    assert!(asked.contains("Push main to origin/main (1 commit)?   y push   n cancel"));
+    assert!(
+        asked.contains(
+            "Push main to origin/main (1 commit)?   y push   t another branch…   n cancel"
+        )
+    );
     assert_eq!(remote_head(), "Start\n");
     // やめる。
     amonhen_tui::snapshot(open(&work), 100, 8, clock(), "Pn").unwrap();
@@ -818,6 +880,59 @@ fn push_asks_then_pushes_to_the_upstream() {
     assert!(pushed.contains("Pushed"));
     assert_eq!(remote_head(), "Ahead of the remote\n");
     assert!(!pushed.lines().next().unwrap().contains("↑"));
+}
+
+/// サイドバーのリモートのブランチで `U`: 今のブランチの上流にする（確かめてから）
+#[test]
+fn set_upstream_from_a_remote_branch() {
+    let dir = tempfile::tempdir().unwrap();
+    let work = with_remote(dir.path());
+    git(&work, BASE, &["push", "-q", "origin", "HEAD:review"]);
+    git(&work, BASE, &["fetch", "-q"]);
+    let upstream = || git_out(&work, &["rev-parse", "--abbrev-ref", "main@{upstream}"]);
+    assert_eq!(upstream(), "origin/main\n");
+    // サイドバーの一番下が origin/review。
+    let asked = amonhen_tui::snapshot(open(&work), 120, 16, clock(), "0GU").unwrap();
+    println!("{asked}");
+    assert!(asked.contains("Set the upstream of main to origin/review?   y set   n cancel"));
+    let set = amonhen_tui::snapshot(open(&work), 120, 16, clock(), "0GUy").unwrap();
+    assert!(set.contains("Set the upstream"));
+    assert_eq!(upstream(), "origin/review\n");
+    // リモートのブランチでない行では、理由を出す。
+    let wrong = amonhen_tui::snapshot(open(&work), 120, 16, clock(), "0U").unwrap();
+    assert!(wrong.contains("Select a remote branch to be the upstream"));
+}
+
+/// push を確かめているときの `t`: 送り先を打って、ほかのブランチへ送る（上流は変えない）。
+#[test]
+fn push_to_another_branch() {
+    let dir = tempfile::tempdir().unwrap();
+    let work = with_remote(dir.path());
+    let origin = dir.path().join("origin.git");
+    // 初めは上流が入っている。
+    let typing = amonhen_tui::snapshot(open(&work), 120, 8, clock(), "Pt").unwrap();
+    println!("{typing}");
+    assert!(typing.contains("Push main to (remote/branch): origin/main"));
+    // 打ち直して、origin/review へ。
+    let keys = "Pt\x7f\x7f\x7f\x7freview\n";
+    let pushed = amonhen_tui::snapshot(open(&work), 120, 8, clock(), keys).unwrap();
+    println!("{pushed}");
+    assert!(pushed.contains("Pushed"));
+    assert_eq!(
+        git_out(&origin, &["log", "-1", "--format=%s", "review"]),
+        "Ahead of the remote\n"
+    );
+    // 上流はそのまま（まだ 1 つ進んでいる）。
+    assert_eq!(
+        git_out(&origin, &["log", "-1", "--format=%s", "main"]),
+        "Start\n"
+    );
+    assert!(pushed.lines().next().unwrap().contains("main ↑1"));
+    // リモートの名前がなければ、書き方を出す。
+    let keys = "Pt\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7freview\n";
+    let wrong = amonhen_tui::snapshot(open(&work), 120, 8, clock(), keys).unwrap();
+    println!("{wrong}");
+    assert!(wrong.contains("Write the remote and the branch, like origin/main"));
 }
 
 /// `f` で fetch、`p` で pull: リモートに増えたコミットを取り込む
@@ -1193,6 +1308,35 @@ fn worktrees_are_listed_in_the_sidebar() {
     assert_eq!(side[at + 2], "  other (topic)");
 }
 
+/// コマンドの一覧の Prune Worktrees: フォルダのなくなった worktree の記録を片付ける（キーはない）
+#[test]
+fn prune_worktrees_from_the_command_list() {
+    let dir = tempfile::tempdir().unwrap();
+    let main = dir.path().join("main");
+    std::fs::create_dir(&main).unwrap();
+    merged(&main);
+    let other = dir.path().join("other");
+    git(
+        &main,
+        BASE,
+        &["worktree", "add", "-q", other.to_str().unwrap(), "topic"],
+    );
+    std::fs::remove_dir_all(&other).unwrap();
+    let count = || git_out(&main, &["worktree", "list"]).lines().count();
+    assert_eq!(count(), 2);
+    let list = amonhen_tui::snapshot(open(&main), 120, 30, clock(), ":prune").unwrap();
+    println!("{list}");
+    // キーのない操作は、キーの欄が空。
+    let row = list
+        .lines()
+        .find(|l| l.contains("Prune Worktrees"))
+        .unwrap();
+    assert!(row.trim_end().ends_with("│"), "{row}");
+    let pruned = amonhen_tui::snapshot(open(&main), 120, 30, clock(), ":prune\n").unwrap();
+    assert!(pruned.contains("Pruned the worktrees"));
+    assert_eq!(count(), 1);
+}
+
 /// サイドバーのブランチで `w`: 場所を聞いて（初めは作業ツリーの隣）、そのブランチの worktree を作る。
 #[test]
 fn a_worktree_is_added_for_the_selected_branch() {
@@ -1309,7 +1453,7 @@ fn diverged_branches_offer_force_push_and_pull_modes() {
     let asked = amonhen_tui::snapshot(open(&work), 140, 8, clock(), "P").unwrap();
     println!("{asked}");
     assert!(
-        asked.contains("y push   f force push (with lease), replacing 1 on the remote   n cancel")
+        asked.contains("y push   f force push (with lease), replacing 1 on the remote   t another branch…   n cancel")
     );
     // ふつうの push は断られる（理由が出る）。
     let refused = amonhen_tui::snapshot(open(&work), 140, 8, clock(), "Py").unwrap();
@@ -1454,7 +1598,11 @@ fn commit_and_push() {
         git_out(&work, &["log", "-1", "--format=%s"]),
         "Add a file\n"
     );
-    assert!(asked.contains("Push main to origin/main (1 commit)?   y push   n cancel"));
+    assert!(
+        asked.contains(
+            "Push main to origin/main (1 commit)?   y push   t another branch…   n cancel"
+        )
+    );
     let remote = dir.path().join("origin.git");
     assert_eq!(
         git_out(&remote, &["log", "-1", "--format=%s", "main"]),
@@ -1498,6 +1646,50 @@ fn blame_and_file_history_of_a_file() {
     // Esc で Working Copy に戻る。
     let back = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "1L\x1b").unwrap();
     assert!(back.contains("[ ] M lane.rs"));
+}
+
+/// File History で `V`: 作業ツリーのファイルを、選んだ版に戻す（確かめてから。Undo で元に戻る）
+#[test]
+fn file_history_restores_a_version() {
+    let dir = tempfile::tempdir().unwrap();
+    changed(dir.path());
+    let read = || std::fs::read_to_string(dir.path().join("lane.rs")).unwrap();
+    let now = read();
+    // 何もしないコミットを足して、lane.rs が Working Copy に出るように書き換える。
+    std::fs::write(dir.path().join("lane.rs"), format!("{now}// later\n")).unwrap();
+    let edited = read();
+    // 2 行目が最初のコミット（Start）。
+    let asked = amonhen_tui::snapshot(open(dir.path()), 200, 12, clock(), "1LjV").unwrap();
+    println!("{asked}");
+    assert!(asked.contains("Restore lane.rs to its version at "));
+    assert!(asked.contains("y restore   n cancel"));
+    assert_eq!(read(), edited);
+    let restored = amonhen_tui::snapshot(open(dir.path()), 200, 12, clock(), "1LjVy").unwrap();
+    println!("{restored}");
+    assert!(restored.contains("Restored the version"));
+    assert_eq!(read(), git_out(dir.path(), &["show", "HEAD~1:lane.rs"]));
+    // Undo で、戻す前の中身に。
+    amonhen_tui::snapshot(open(dir.path()), 200, 12, clock(), "uy").unwrap();
+    assert_eq!(read(), edited);
+    // Blame では、File History を開くように知らせる。
+    let blame = amonhen_tui::snapshot(open(dir.path()), 200, 12, clock(), "1BV").unwrap();
+    assert!(blame.contains("Open File History (L) to restore a version"));
+    // 名前を変える前の版は、戻さない（理由を出す）。
+    git(
+        dir.path(),
+        BASE + DAY * 3,
+        &["checkout", "-q", "--", "lane.rs"],
+    );
+    git(dir.path(), BASE + DAY * 3, &["mv", "lane.rs", "road.rs"]);
+    git(
+        dir.path(),
+        BASE + DAY * 3,
+        &["commit", "-q", "-m", "Rename"],
+    );
+    std::fs::write(dir.path().join("road.rs"), format!("{now}// later\n")).unwrap();
+    let renamed = amonhen_tui::snapshot(open(dir.path()), 200, 12, clock(), "1LjV").unwrap();
+    println!("{renamed}");
+    assert!(renamed.contains("The file was lane.rs at that commit"));
 }
 
 /// コミットの詳細で `B`: 見ているファイルの、そのコミットの時点の Blame。Esc で元の画面に戻る

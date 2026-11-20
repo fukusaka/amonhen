@@ -133,6 +133,8 @@ enum Naming {
     Stash,
     /// ブランチを出す新しい worktree の場所。
     Worktree,
+    /// push の送り先（`<remote>/<branch>`）。
+    PushTo,
 }
 
 /// 選択肢 1 つ: 押すキー、名前、頼む中身。
@@ -165,6 +167,12 @@ pub struct App {
     reopen: bool,
     /// 確かめてから行う操作: 尋ねる文と、`y` で頼む中身。
     confirm: Option<(String, String, Request)>,
+    /// push を確かめている: `t` で、送り先のブランチを打てる。
+    push_to_offered: bool,
+    /// 作業ツリーのファイルがこの機械にある（`ssh://` の先でない）。エディタで開けるか。
+    files_here: bool,
+    /// エディタで開く作業ツリーのファイル（絶対パス）。
+    open_file: Option<String>,
     /// いくつかから選んで行う操作: 尋ねる文と、キー・名前・頼む中身の組。
     choices: Option<(String, Vec<Choice>)>,
     /// マウスを取り込んでいる（切ると、端末で文字を選べる）。
@@ -298,6 +306,9 @@ impl App {
             help: false,
             help_top: 0,
             palette: None,
+            push_to_offered: false,
+            files_here: true,
+            open_file: None,
             search: None,
             search_done: 0.0,
             theme: Theme::detect(),
@@ -497,6 +508,26 @@ impl App {
         }
         std::mem::take(&mut self.edit_message)
             .then(|| (self.changes.message.text(), self.workdir.clone()))
+    }
+
+    /// 作業ツリーのファイルがこの機械にあるか（`ssh://` の先なら false）。
+    pub fn set_files_here(&mut self, here: bool) {
+        self.files_here = here;
+    }
+
+    /// エディタで開くファイルと、作業ツリーの場所（聞いたら、なかったことにする）。
+    pub fn take_open_file(&mut self) -> Option<(String, Option<String>)> {
+        let file = self.open_file.take()?;
+        Some((file, self.workdir.clone()))
+    }
+
+    /// エディタを閉じた。だめなら理由を出す。中身が変わったかもしれないので、状態を読み直す。
+    pub fn file_opened(&mut self, result: Result<()>) {
+        if let Err(error) = result {
+            self.error = Some(error.to_string());
+        }
+        self.changes.refresh();
+        self.dirty = true;
     }
 
     /// エディタを閉じた後のメッセージ。だめなら理由を出し、メッセージはそのまま。
@@ -875,6 +906,14 @@ impl App {
         let covering = self.focus == Focus::Side && self.layout().main.is_none();
         // エラーは、次のキーまで出しておく。
         self.dirty |= self.error.take().is_some() | self.notice.take().is_some();
+        // push を確かめている間の `t`: 送り先のブランチを打つ。
+        if std::mem::take(&mut self.push_to_offered) && key.code == KeyCode::Char('t') {
+            self.confirm = None;
+            self.choices = None;
+            self.ask_push_to();
+            self.dirty = true;
+            return;
+        }
         // 確かめている間は、`y`（か Enter）で行い、ほかのキーでやめる。
         if let Some((_, options)) = self.choices.take() {
             if let KeyCode::Char(pressed) = key.code
@@ -994,6 +1033,10 @@ impl App {
                         let name = name.trim();
                         let (op, label, command) = match self.naming {
                             Naming::Stash => return,
+                            Naming::PushTo => {
+                                self.push_to(&start, name);
+                                return;
+                            }
                             Naming::Worktree => (
                                 "addWorktree",
                                 tr!("Adding the worktree…"),
@@ -1190,11 +1233,27 @@ impl App {
             Place::Changes if self.focus == Focus::Side => self.focus = Focus::Main,
             _ => {}
         }
+        if entry.key == KeyCode::Null {
+            self.run_keyless(entry.id);
+            return;
+        }
         let modifiers = match entry.control {
             true => KeyModifiers::CONTROL,
             false => KeyModifiers::NONE,
         };
         self.key(KeyEvent::new(entry.key, modifiers));
+    }
+
+    /// コマンドの一覧からだけ動かす操作（キーを持たない）。
+    fn run_keyless(&mut self, id: &str) {
+        if id == "prune-worktrees" {
+            // フォルダのなくなった worktree の記録を片付ける（フォルダには触らない）。
+            self.run(
+                "pruneWorktrees",
+                tr!("Pruning worktrees…"),
+                json!({"op": "worktreePrune"}),
+            );
+        }
     }
 
     /// メインの画面を替える。
@@ -1277,7 +1336,10 @@ impl App {
             "apply" => self.notice = Some(tr!("Applied the stash")),
             "drop" => self.notice = Some(tr!("Dropped the stash")),
             "removeWorktree" => self.notice = Some(tr!("Removed the worktree")),
+            "restoreFile" => self.notice = Some(tr!("Restored the version")),
             "addWorktree" => self.notice = Some(tr!("Added the worktree")),
+            "setUpstream" => self.notice = Some(tr!("Set the upstream")),
+            "pruneWorktrees" => self.notice = Some(tr!("Pruned the worktrees")),
             "merge" | "rebase" | "continue" | "skip" | "cherryPick" | "revert" | "rewrite" => {
                 // コンフリクトで止まったら、Working Copy で解決する。
                 match reply["outcome"].as_str() {
@@ -1392,6 +1454,8 @@ impl App {
         };
         // 上流に手元にないコミットがあれば、ふつうの push は断られる。置き換える push（上流が最後に見たときの
         // ままのときだけ）も選べるようにする。
+        // `t` で、ほかのブランチへ送れる（`ask_push_to`。選ぶ前に横取りするので、中身は送らない）。
+        self.push_to_offered = true;
         if self.behind > 0 {
             self.choices = Some((
                 ask,
@@ -1405,11 +1469,88 @@ impl App {
                         ),
                         push(remote, remote_branch, true, false),
                     ),
+                    ('t', tr!("another branch…"), Request::Status),
                 ],
             ));
             return;
         }
         self.confirm = Some((ask, tr!("push"), push(remote, remote_branch, false, false)));
+    }
+
+    /// サイドバーで選んでいるリモートのブランチを、今のブランチの上流にする（確かめてから）。
+    fn ask_set_upstream(&mut self) {
+        let Some(branch) = self.branch.clone() else {
+            self.error = Some(tr!("No branch is checked out"));
+            return;
+        };
+        let picked = (self.sidebar.picked_ref())
+            .filter(|r| r.0 == "remote")
+            .map(|r| r.1.to_owned());
+        // リモートの名前は、知っているもののうち合うもの（名前に `/` があってもよいよう、長いほうから）。
+        let split = picked.as_deref().and_then(|name| {
+            let mut remotes: Vec<&String> = self.remotes.iter().collect();
+            remotes.sort_by_key(|r| std::cmp::Reverse(r.len()));
+            remotes.into_iter().find_map(|r| {
+                let rest = name.strip_prefix(r.as_str())?.strip_prefix('/')?;
+                (!rest.is_empty()).then(|| (r.clone(), rest.to_owned()))
+            })
+        });
+        let Some((remote, remote_branch)) = split else {
+            self.error = Some(tr!("Select a remote branch to be the upstream"));
+            return;
+        };
+        let set = |key: &str, value: String| json!({"op": "configSet", "key": key, "value": value});
+        self.confirm = Some((
+            tr!(
+                "Set the upstream of {branch} to {remote}/{remote_branch}?",
+                branch = branch,
+                remote = remote,
+                remote_branch = remote_branch
+            ),
+            tr!("set"),
+            Request::Run {
+                name: "setUpstream",
+                command: json!([
+                    set(&format!("branch.{branch}.remote"), remote),
+                    set(
+                        &format!("branch.{branch}.merge"),
+                        format!("refs/heads/{remote_branch}")
+                    ),
+                ]),
+            },
+        ));
+    }
+
+    /// push の送り先を打たせる（初めは上流）。
+    fn ask_push_to(&mut self) {
+        let Some(branch) = self.branch.clone() else {
+            return;
+        };
+        let start = self.upstream.clone().unwrap_or_default();
+        self.naming = Naming::PushTo;
+        self.typing_branch = Some((branch.clone(), branch, start));
+    }
+
+    /// `branch` を `target`（`<remote>/<branch>`）へ push する。上流は変えない。
+    fn push_to(&mut self, branch: &str, target: &str) {
+        let parsed = target
+            .split_once('/')
+            .filter(|(remote, to)| !to.is_empty() && self.remotes.iter().any(|r| r == remote));
+        let Some((remote, to)) = parsed else {
+            self.error = Some(tr!(
+                "Write the remote and the branch, like {example}",
+                example = format!("{}/{branch}", self.remotes.first().map_or("origin", |r| r))
+            ));
+            return;
+        };
+        self.run(
+            "push",
+            tr!("Pushing to {target}…", target = target),
+            json!({
+                "op": "push", "remote": remote, "branch": branch, "remoteBranch": to,
+                "force": false, "setUpstream": false,
+            }),
+        );
     }
 
     /// History で選んでいるコミットへの操作: `y` cherry-pick、`v` revert、`c` そのコミットをチェックアウト
@@ -1772,6 +1913,35 @@ impl App {
                 self.focus = Focus::Side;
                 true
             }
+            // File History で、作業ツリーのファイルをその版に戻す（確かめてから。Undo で元に戻る）。
+            KeyCode::Char('V') => {
+                let version = (self.file.selected_version())
+                    .map(|(id, path, then)| (id.to_string(), path.to_owned(), then.to_owned()));
+                match version {
+                    Some((_, path, then)) if path != then => {
+                        self.error = Some(tr!(
+                            "The file was {then} at that commit; a version from before a rename can’t be restored here",
+                            then = then
+                        ));
+                    }
+                    Some((id, path, _)) => {
+                        self.confirm = Some((
+                            tr!(
+                                "Restore {path} to its version at {commit}? Undo brings back what it has now.",
+                                path = path,
+                                commit = &id[..id.len().min(8)]
+                            ),
+                            tr!("restore"),
+                            Request::Run {
+                                name: "restoreFile",
+                                command: json!({"op": "restoreFiles", "rev": id, "paths": [path]}),
+                            },
+                        ));
+                    }
+                    None => self.error = Some(tr!("Open File History (L) to restore a version")),
+                }
+                true
+            }
             // その行のコミットを、History で選ぶ。
             KeyCode::Char('H') => {
                 if let Some(id) = self.file.selected_id() {
@@ -1840,6 +2010,11 @@ impl App {
             KeyCode::Char('n') => self.ask_rename(),
             KeyCode::Char('m') => self.ask_merge_or_rebase(true),
             KeyCode::Char('r') => self.ask_merge_or_rebase(false),
+            // 今のブランチの上流を、選んでいるリモートのブランチにする（アプリの Set Upstream）。
+            KeyCode::Char('U') => {
+                self.ask_set_upstream();
+                true
+            }
             // ブランチを、新しい worktree に出す。場所を聞く（今の作業ツリーの隣を、初めに入れておく）。
             KeyCode::Char('w') => {
                 let picked = (self.sidebar.picked_ref())
@@ -1903,6 +2078,10 @@ impl App {
                 ("a o x", tr!("On a stash: apply, pop, drop")),
                 ("x", tr!("On a worktree: remove it")),
                 ("w", tr!("New worktree for the branch")),
+                (
+                    "U",
+                    tr!("On a remote branch: make it the upstream of the current branch"),
+                ),
                 ("n D", tr!("Rename a branch; delete a branch or a tag")),
                 ("L", tr!("The branch's reflog")),
                 ("/", tr!("Filter branches and tags")),
@@ -1912,6 +2091,8 @@ impl App {
                 ("j k", tr!("Move")),
                 ("g G", tr!("Top and bottom")),
                 ("PgUp PgDn", tr!("Move by a page")),
+                ("@", tr!("Go to HEAD")),
+                ("] [", tr!("Go to the parent, the child")),
                 ("Enter Space", tr!("Go to the details")),
                 ("/", tr!("Search")),
                 ("n N", tr!("Next and previous match")),
@@ -1931,6 +2112,10 @@ impl App {
                 ("g G", tr!("Top and bottom")),
                 ("Enter", tr!("Go to the commit's details")),
                 ("H", tr!("Select the commit in History")),
+                (
+                    "V",
+                    tr!("In File History: restore the file to that version"),
+                ),
                 ("Esc", tr!("Go back")),
             ],
             (View::History | View::Reflog | View::File, Focus::Side) => vec![
@@ -1943,8 +2128,10 @@ impl App {
             (View::Changes, Focus::Main) | (_, Focus::Message) => vec![
                 ("j k", tr!("Move")),
                 ("Space", tr!("Stage or unstage the file")),
+                ("+", tr!("Stage all (not conflicted files)")),
                 ("d", tr!("Discard the file's changes")),
                 ("B L", tr!("Blame, File History of the file")),
+                ("e", tr!("Open the file in git's editor")),
                 (
                     "o t",
                     tr!("Take the current or the incoming side of a conflicted file"),
@@ -2106,11 +2293,43 @@ impl App {
                 }
                 false
             }
+            // Stage All（コンフリクトのファイルは除く）。
+            KeyCode::Char('+') => {
+                match self.changes.stage_all() {
+                    Some(request) => self.send(request),
+                    None => self.notice = Some(tr!("Nothing to stage")),
+                }
+                true
+            }
             KeyCode::Char('h') | KeyCode::Left => {
                 self.focus = Focus::Sidebar;
                 true
             }
             // 選んでいるファイルの Blame・File History を開く。
+            // 作業ツリーのファイルを、git のエディタで開く（端末を渡す）。
+            KeyCode::Char('e') => {
+                match (self.changes.selected_path(), self.workdir.as_deref()) {
+                    _ if !self.files_here => {
+                        self.error = Some(tr!(
+                            "The files are on another machine; open them in a terminal there"
+                        ));
+                    }
+                    (Some(path), Some(workdir)) => {
+                        let file = std::path::Path::new(workdir).join(path);
+                        match file.is_file() {
+                            true => self.open_file = Some(file.to_string_lossy().into_owned()),
+                            false => {
+                                self.error = Some(tr!(
+                                    "{path} isn’t a file in the working tree",
+                                    path = path
+                                ))
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+                true
+            }
             KeyCode::Char('B' | 'L') => match self.changes.selected_path() {
                 Some(path) => {
                     self.file.open(path, code == KeyCode::Char('B'), None);
@@ -2305,6 +2524,10 @@ impl App {
             KeyCode::PageUp => Some(self.history.move_selection(-page)),
             KeyCode::Char('g') | KeyCode::Home => Some(self.history.select(0)),
             KeyCode::Char('G') | KeyCode::End => Some(self.history.select(u32::MAX)),
+            // HEAD・親・子へ（アプリの Navigate）。`]` は下（古い方）、`[` は上へ動く。
+            KeyCode::Char('@') => Some(self.history.go_to_head()),
+            KeyCode::Char(']') => Some(self.history.go_to_parent()),
+            KeyCode::Char('[') => Some(self.history.go_to_child()),
             _ => None,
         };
         if let Some(moved) = moved {
@@ -2707,7 +2930,10 @@ impl App {
                 buf.set_stringn(
                     x + 3,
                     y,
-                    tr!("y {yes}   n cancel", yes = yes),
+                    match self.push_to_offered {
+                        true => tr!("y {yes}   t another branch…   n cancel", yes = yes),
+                        false => tr!("y {yes}   n cancel", yes = yes),
+                    },
                     usize::from(position_x.saturating_sub(x + 3)),
                     Style::new(),
                 );
@@ -2724,6 +2950,9 @@ impl App {
                     Naming::Stash => tr!("Stash message (Enter for none): {name}", name = name),
                     Naming::Worktree => {
                         tr!("New worktree for {at} at: {name}", at = at, name = name)
+                    }
+                    Naming::PushTo => {
+                        tr!("Push {at} to (remote/branch): {name}", at = at, name = name)
                     }
                 };
                 let x = buf.set_stringn(area.x + 1, y, text, room, Style::new()).0;
@@ -3055,6 +3284,36 @@ mod tests {
         let mut buf = Buffer::empty(Rect::new(0, 0, 100, 12));
         app.draw(&mut buf, Damage::ALL);
         (0..100).map(|x| buf[(x, 11)].symbol()).collect()
+    }
+
+    /// Working Copy の `e`: 選んでいるファイルを、作業ツリーの絶対パスでエディタに渡す。`ssh://` の先なら断る。
+    #[test]
+    fn e_opens_the_selected_file_only_when_the_files_are_here() {
+        let (dir, mut app, rx) = app_with_history();
+        std::fs::write(dir.path().join("a.txt"), "a\n").unwrap();
+        // 変化の知らせは来ないので、読み直させる。
+        app.changes.refresh();
+        let key = |app: &mut App, ch: char| {
+            app.handle(Event::Input(Input::Key(KeyEvent::new(
+                KeyCode::Char(ch),
+                KeyModifiers::NONE,
+            ))));
+        };
+        key(&mut app, '1');
+        crate::settle(&mut app, &rx).unwrap();
+        key(&mut app, 'e');
+        let (file, workdir) = app.take_open_file().expect("a file to open");
+        assert_eq!(
+            std::fs::canonicalize(&file).unwrap(),
+            std::fs::canonicalize(dir.path().join("a.txt")).unwrap()
+        );
+        assert!(workdir.is_some());
+        assert!(app.take_open_file().is_none());
+        // ほかの機械のファイルは開かない。
+        app.set_files_here(false);
+        key(&mut app, 'e');
+        assert!(app.take_open_file().is_none());
+        assert!(bottom_line(&mut app).contains("The files are on another machine"));
     }
 
     /// 動いている検索の途中の結果: 最初に届いた分で合った行へ移り、後から届く分では動かさない。一番下の行に、
