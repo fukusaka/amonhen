@@ -1337,6 +1337,56 @@ fn new_orphan_branch_from_the_command_list() {
     );
 }
 
+/// コマンドの一覧の Clean Up Branches: 既定のブランチに取り込み済みのブランチを、確かめてからまとめて消す
+#[test]
+fn clean_up_merged_branches() {
+    let dir = tempfile::tempdir().unwrap();
+    merged(dir.path());
+    let branches = || git_out(dir.path(), &["branch", "--format=%(refname:short)"]);
+    assert_eq!(branches(), "main\ntopic\n");
+    let asked = amonhen_tui::snapshot(open(dir.path()), 140, 10, clock(), ":clean up\n").unwrap();
+    println!("{asked}");
+    assert!(asked.contains(
+        "Clean up topic? Undo brings them back.   y delete those merged into main   n cancel"
+    ));
+    let done = amonhen_tui::snapshot(open(dir.path()), 140, 10, clock(), ":clean up\ny").unwrap();
+    assert!(done.contains("Deleted the branches"));
+    assert_eq!(branches(), "main\n");
+    // 片付けるものがなければ、そう知らせる。
+    let none = amonhen_tui::snapshot(open(dir.path()), 140, 10, clock(), ":clean up\n").unwrap();
+    assert!(none.contains("No branches to clean up"));
+    // Undo で戻る。
+    amonhen_tui::snapshot(open(dir.path()), 140, 10, clock(), "uy").unwrap();
+    assert_eq!(branches(), "main\ntopic\n");
+}
+
+/// 上流が消えただけのブランチは最初は選ばず、`a` で含める
+#[test]
+fn clean_up_offers_branches_whose_upstream_is_gone() {
+    let dir = tempfile::tempdir().unwrap();
+    let work = with_remote(dir.path());
+    git(&work, BASE, &["switch", "-q", "-c", "feature"]);
+    commit(&work, BASE + DAY, "Feature work");
+    git(&work, BASE, &["push", "-q", "-u", "origin", "feature"]);
+    git(&work, BASE, &["switch", "-q", "main"]);
+    git(
+        &dir.path().join("origin.git"),
+        BASE,
+        &["branch", "-q", "-D", "feature"],
+    );
+    git(&work, BASE, &["fetch", "-q", "--prune"]);
+    let asked = amonhen_tui::snapshot(open(&work), 160, 10, clock(), ":clean up\n").unwrap();
+    println!("{asked}");
+    assert!(asked.contains("Clean up feature? Undo brings them back."));
+    assert!(asked.contains("a delete those whose upstream is gone (1)"));
+    assert!(!asked.contains("y delete"));
+    amonhen_tui::snapshot(open(&work), 160, 10, clock(), ":clean up\na").unwrap();
+    assert_eq!(
+        git_out(&work, &["branch", "--format=%(refname:short)"]),
+        "main\n"
+    );
+}
+
 /// コマンドの一覧の Prune Worktrees: フォルダのなくなった worktree の記録を片付ける（キーはない）
 #[test]
 fn prune_worktrees_from_the_command_list() {

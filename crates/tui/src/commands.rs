@@ -70,6 +70,7 @@ pub static ENTRIES: &[Entry] = &[
     entry("new-worktree", 'w', Place::Sidebar),
     entry("set-upstream", 'U', Place::Sidebar),
     keyless("new-orphan-branch", Place::Anywhere),
+    keyless("clean-up-branches", Place::Anywhere),
     keyless("prune-worktrees", Place::Anywhere),
     entry("merge", 'm', Place::Sidebar),
     entry("rebase", 'r', Place::Sidebar),

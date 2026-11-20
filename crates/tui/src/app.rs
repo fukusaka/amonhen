@@ -1252,6 +1252,13 @@ impl App {
 
     /// コマンドの一覧からだけ動かす操作（キーを持たない）。
     fn run_keyless(&mut self, id: &str) {
+        if id == "clean-up-branches" {
+            self.run(
+                "cleanupList",
+                tr!("Finding branches to clean up…"),
+                json!({"op": "branchCleanup"}),
+            );
+        }
         if id == "new-orphan-branch" {
             self.naming = Naming::Orphan;
             self.typing_branch = Some((String::new(), String::new(), String::new()));
@@ -1352,6 +1359,12 @@ impl App {
             "setUpstream" => self.notice = Some(tr!("Set the upstream")),
             "pruneWorktrees" => self.notice = Some(tr!("Pruned the worktrees")),
             "orphan" => self.notice = Some(tr!("Created the branch")),
+            // 片付けてよいブランチが分かった: 選んでおくもの（取り込み済み）を消すか、上流の消えたものも含めるか。
+            "cleanupList" => {
+                self.ask_clean_up(&reply["info"]);
+                return;
+            }
+            "cleanUp" => self.notice = Some(tr!("Deleted the branches")),
             "merge" | "rebase" | "continue" | "skip" | "cherryPick" | "revert" | "rewrite" => {
                 // コンフリクトで止まったら、Working Copy で解決する。
                 match reply["outcome"].as_str() {
@@ -1530,6 +1543,61 @@ impl App {
                     ),
                 ]),
             },
+        ));
+    }
+
+    /// Clean Up Branches: `branchCleanup` の答えから、消すブランチを確かめる。最初に選んでおくもの（既定の
+    /// ブランチに取り込み済み）を消すか、上流の消えたものも含めるかを選ばせる（アプリのシートと同じく、上流が消えた
+    /// だけのものは最初は選ばない）。
+    fn ask_clean_up(&mut self, info: &Value) {
+        let branches: Vec<&Value> = info["branches"].as_array().into_iter().flatten().collect();
+        let pick = |all: bool| -> Vec<Value> {
+            (branches.iter())
+                .filter(|b| all || b["checked"] == true)
+                .map(|b| json!({"name": b["name"], "force": b["force"]}))
+                .collect()
+        };
+        let names = |picked: &[Value]| -> String {
+            let names: Vec<&str> = picked.iter().filter_map(|b| b["name"].as_str()).collect();
+            amonhen_model::i18n::list(&names)
+        };
+        let (checked, all) = (pick(false), pick(true));
+        let delete = |branches: Vec<Value>| Request::Run {
+            name: "cleanUp",
+            command: json!({"op": "deleteBranches", "branches": branches}),
+        };
+        self.dirty = true;
+        if all.is_empty() {
+            self.notice = Some(tr!("No branches to clean up"));
+            return;
+        }
+        let base = info["base"].as_str().unwrap_or("");
+        let mut options = Vec::new();
+        if !checked.is_empty() {
+            options.push((
+                'y',
+                tr!("delete those merged into {base}", base = base),
+                delete(checked.clone()),
+            ));
+        }
+        if all.len() > checked.len() {
+            let gone = all.len() - checked.len();
+            let label = match checked.is_empty() {
+                true => tr!(
+                    "delete those whose upstream is gone ({count})",
+                    count = gone
+                ),
+                false => tr!("also those whose upstream is gone ({count})", count = gone),
+            };
+            options.push(('a', label, delete(all.clone())));
+        }
+        let shown = match checked.is_empty() {
+            true => names(&all),
+            false => names(&checked),
+        };
+        self.choices = Some((
+            tr!("Clean up {names}? Undo brings them back.", names = shown),
+            options,
         ));
     }
 
