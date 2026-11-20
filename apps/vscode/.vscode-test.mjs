@@ -34,5 +34,7 @@ export default defineConfig({
     '--skip-release-notes',
   ],
   env: testEnv(dir, process.env.AMONHEN_E2E_ENGINE),
-  mocha: { ui: 'tdd', timeout: 60_000 },
+  // CI の Windows の runner では、ほかのプロセスが静かなときでも同じテストが run ごとに 2〜3 倍ばらつく（設定の
+  // テストは 12〜42 秒）。60 秒では余裕が足りないので、Windows では倍にする（e2e/extension.test.ts の until も）
+  mocha: { ui: 'tdd', timeout: process.platform === 'win32' ? 120_000 : 60_000 },
 });

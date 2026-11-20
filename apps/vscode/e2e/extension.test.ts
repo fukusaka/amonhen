@@ -75,11 +75,17 @@ function git(...args: string[]): string {
   }
 }
 
+/**
+ * 待つ長さの既定。CI の Windows の runner は同じ操作が run ごとに 2〜3 倍ばらつくので倍にする（.vscode-test.mjs の
+ * mocha の timeout も）
+ */
+const WAIT = process.platform === 'win32' ? 40_000 : 20_000;
+
 /** fn が値を返すまで待つ。来なければ、seen（そこまでに来たもの）を添えて失敗する */
 async function until<T>(
   what: string,
   fn: () => T | undefined | false | Promise<T | undefined | false>,
-  ms = 20_000,
+  ms = WAIT,
   seen?: () => string,
 ): Promise<T> {
   const start = Date.now();
