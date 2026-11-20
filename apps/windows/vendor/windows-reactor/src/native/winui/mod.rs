@@ -599,6 +599,16 @@ pub fn tree_node_key_by_identity(identity: usize) -> Option<String> {
     TREE_NODE_KEYS.with(|keys| keys.borrow().get(&identity).cloned())
 }
 
+thread_local! {
+    // Amon Hen の足し: 最後に外観を当てた窓の WinUI の Window（窓の後ろの Acrylic をアプリが自分で当てるため）。
+    static LAST_WINDOW: RefCell<Option<windows_core::IInspectable>> = const { RefCell::new(None) };
+}
+
+/// Amon Hen の足し: 最後に外観を当てた窓の WinUI の Window（1 つの窓のプロセスで使う）。
+pub fn native_window() -> Option<windows_core::IInspectable> {
+    LAST_WINDOW.with(|w| w.borrow().clone())
+}
+
 /// Sets the text tooltip of an element the app found itself (for example the tree view item
 /// under the pointer), or clears it with `None`.
 pub fn set_tooltip_text(
@@ -920,6 +930,9 @@ impl WinUiRuntime {
             .get(&node)
             .ok_or(RuntimeError::MissingNode(node))?;
         let window_2 = window.cast::<IWindow2>().map_err(native_error)?;
+        if let Ok(inspectable) = window.cast::<windows_core::IInspectable>() {
+            LAST_WINDOW.with(|w| *w.borrow_mut() = Some(inspectable));
+        }
         let changes = window_visual_changes(self.window_visuals.get(&node).copied(), visuals);
         let mut hwnd = None;
         let mut window_handle = || {

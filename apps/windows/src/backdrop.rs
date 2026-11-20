@@ -2,9 +2,11 @@
 //! 色。アプリの設定（Settings > Appearance、`windows.json` の鍵は macOS 版の UserDefaults と同じ）と、リポジトリ
 //! ごとの上書き（ブックマークの `backdrop`。形は macOS 版・GTK4 版と同じ）。
 //!
-//! 窓の後ろを透かす場所・透過率・ぼかしは、記録の形を保つために読み書きするが、この FE ではまだ当てない。
-//! 背景画像は窓の中身の上に薄く重ね（押す・引くは下へ通す）、ツールバーの色はメニューとツールバーの行の後ろに
-//! 敷く。
+//! 窓の後ろを透かすときは、窓に WinUI の Acrylic（後ろをぼかす）を敷き、透かす場所（メニュー・ツールバー・
+//! タブ・サイドバー・下の帯）に窓の色を `1 - 透過率` の濃さで塗る。読む面（一覧・詳細・差分）は不透明のまま。
+//! 窓全体を透かす（`single`）は、まだサイドバーとツールバーと同じに当てる。ぼかしの強さは Acrylic で決まって
+//! いるので、値は記録を保つだけ。背景画像は窓の中身の上に薄く重ね（押す・引くは下へ通す）、ツールバーの色は
+//! メニューとツールバーの行の後ろに敷く。
 
 use amonhen_model::tr;
 use serde_json::{Map, Value, json};
@@ -18,6 +20,17 @@ const IMAGE_PLACEMENT: &str = "backdropImagePlacement";
 const IMAGE_TRANSPARENCY: &str = "backdropImageTransparency";
 const TOOLBAR_COLOR: &str = "backdropToolbarColor";
 const TOOLBAR_OPACITY: &str = "backdropToolbarOpacity";
+
+/// 窓の後ろを透かす場所（選べるもの。記録の `single` は `chrome` と同じに当てる）。
+pub const STYLES: [&str; 2] = ["system", "chrome"];
+
+/// [`STYLES`] の名前。
+pub fn style_title(style: &str) -> String {
+    match style {
+        "chrome" => tr!("Sidebar and Toolbar"),
+        _ => tr!("Nowhere (Standard)"),
+    }
+}
 
 /// 背景画像の置き方。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -129,6 +142,12 @@ impl Backdrop {
             Some(v) => crate::prefs::set_string(key, &v),
             None => crate::prefs::remove(key),
         };
+        if old.style != self.style {
+            set(STYLE, Some(self.style.clone()))?;
+        }
+        if old.transparency != self.transparency {
+            set(TRANSPARENCY, Some(self.transparency.to_string()))?;
+        }
         if old.image != self.image {
             set(IMAGE, self.image.clone())?;
         }
@@ -197,6 +216,22 @@ impl Backdrop {
         })
     }
 
+    /// 窓の後ろを透かすか。
+    pub fn see_through(&self) -> bool {
+        matches!(self.style.as_str(), "chrome" | "single")
+    }
+
+    /// 選べる場所の番号（[`STYLES`]。`single` はサイドバーとツールバー）。
+    pub fn style_index(&self) -> usize {
+        usize::from(self.see_through())
+    }
+
+    /// 透かす場所に塗る窓の色（濃さは `1 - 透過率`）。
+    pub fn ground(&self, window: Color) -> Color {
+        let a = ((1.0 - self.transparency.clamp(0.0, 1.0)) * 255.0).round() as u8;
+        Color::argb(a, window.r, window.g, window.b)
+    }
+
     /// ツールバーに敷く色（濃さを含めて。色がなければ None）。
     pub fn toolbar_tint(&self) -> Option<Color> {
         let (r, g, b) = parse_hex(self.toolbar_color.as_deref()?)?;
@@ -213,6 +248,8 @@ impl Backdrop {
 /// Settings > Appearance の窓の背景の欄の操作。
 #[derive(Clone, Debug)]
 pub enum Event {
+    Style(Option<usize>),
+    Transparency(f64),
     ChooseImage,
     RemoveImage,
     Placement(Option<usize>),
@@ -228,6 +265,15 @@ pub fn apply(event: Event) -> Result<(), String> {
     // 横棒は 5% ずつ（GTK4 版と同じ）。
     let step = |v: f64| (v * 20.0).round() / 20.0;
     match event {
+        Event::Style(Some(i)) => {
+            let style = STYLES[i.min(STYLES.len() - 1)];
+            // 記録が `single` のままなら、サイドバーとツールバーを選び直しても変えない。
+            if b.style_index() != i {
+                b.style = style.to_owned();
+            }
+        }
+        Event::Style(None) => return Ok(()),
+        Event::Transparency(v) => b.transparency = step(v / 100.0),
         Event::ChooseImage => {
             let Some(path) = crate::files::open_image(&tr!("Background Image"), &tr!("Image"))
             else {

@@ -1668,6 +1668,63 @@ unsafe impl Send for ButtonBase {}
 unsafe impl Sync for ButtonBase {}
 #[repr(transparent)]
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CompositionBrush(windows_core::IUnknown);
+windows_core::imp::interface_hierarchy!(
+    CompositionBrush,
+    windows_core::IUnknown,
+    windows_core::IInspectable
+);
+windows_core::imp::required_hierarchy!(CompositionBrush, CompositionObject);
+impl windows_core::RuntimeType for CompositionBrush {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_class::<Self, ICompositionBrush>();
+}
+unsafe impl windows_core::Interface for CompositionBrush {
+    type Vtable = <ICompositionBrush as windows_core::Interface>::Vtable;
+    const IID: windows_core::GUID = <ICompositionBrush as windows_core::Interface>::IID;
+}
+impl windows_core::RuntimeName for CompositionBrush {
+    const NAME: &'static str = "Windows.UI.Composition.CompositionBrush";
+}
+unsafe impl Send for CompositionBrush {}
+unsafe impl Sync for CompositionBrush {}
+#[repr(transparent)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CompositionObject(windows_core::IUnknown);
+windows_core::imp::interface_hierarchy!(
+    CompositionObject,
+    windows_core::IUnknown,
+    windows_core::IInspectable
+);
+impl CompositionObject {
+    fn ICompositionObjectStatics<
+        R,
+        F: FnOnce(&ICompositionObjectStatics) -> windows_core::Result<R>,
+    >(
+        callback: F,
+    ) -> windows_core::Result<R> {
+        static SHARED: windows_core::imp::FactoryCache<
+            CompositionObject,
+            ICompositionObjectStatics,
+        > = windows_core::imp::FactoryCache::new();
+        SHARED.call(callback)
+    }
+}
+impl windows_core::RuntimeType for CompositionObject {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_class::<Self, ICompositionObject>();
+}
+unsafe impl windows_core::Interface for CompositionObject {
+    type Vtable = <ICompositionObject as windows_core::Interface>::Vtable;
+    const IID: windows_core::GUID = <ICompositionObject as windows_core::Interface>::IID;
+}
+impl windows_core::RuntimeName for CompositionObject {
+    const NAME: &'static str = "Windows.UI.Composition.CompositionObject";
+}
+unsafe impl Send for CompositionObject {}
+unsafe impl Sync for CompositionObject {}
+#[repr(transparent)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ContentControl(windows_core::IUnknown);
 windows_core::imp::interface_hierarchy!(
     ContentControl,
@@ -3040,6 +3097,118 @@ impl windows_core::RuntimeName for DependencyObject {
 }
 unsafe impl Send for DependencyObject {}
 unsafe impl Sync for DependencyObject {}
+#[repr(transparent)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DesktopAcrylicController(windows_core::IUnknown);
+windows_core::imp::interface_hierarchy!(
+    DesktopAcrylicController,
+    windows_core::IUnknown,
+    windows_core::IInspectable
+);
+windows_core::imp::required_hierarchy!(
+    DesktopAcrylicController,
+    ISystemBackdropControllerWithTargets
+);
+impl DesktopAcrylicController {
+    pub fn new() -> windows_core::Result<Self> {
+        Self::IActivationFactory(|f| f.ActivateInstance::<Self>())
+    }
+    fn IActivationFactory<
+        R,
+        F: FnOnce(&windows_core::imp::IGenericFactory) -> windows_core::Result<R>,
+    >(
+        callback: F,
+    ) -> windows_core::Result<R> {
+        static SHARED: windows_core::imp::FactoryCache<
+            DesktopAcrylicController,
+            windows_core::imp::IGenericFactory,
+        > = windows_core::imp::FactoryCache::new();
+        SHARED.call(callback)
+    }
+    pub fn SetLuminosityOpacity(&self, value: f32) -> windows_core::Result<()> {
+        unsafe {
+            (windows_core::Interface::vtable(self).SetLuminosityOpacity)(
+                windows_core::Interface::as_raw(self),
+                value,
+            )
+            .ok()
+        }
+    }
+    pub fn SetTintOpacity(&self, value: f32) -> windows_core::Result<()> {
+        unsafe {
+            (windows_core::Interface::vtable(self).SetTintOpacity)(
+                windows_core::Interface::as_raw(self),
+                value,
+            )
+            .ok()
+        }
+    }
+    pub fn AddSystemBackdropTarget<P0>(
+        &self,
+        systembackdroptarget: P0,
+    ) -> windows_core::Result<bool>
+    where
+        P0: windows_core::Param<ICompositionSupportsSystemBackdrop>,
+    {
+        let this = &windows_core::Interface::cast::<ISystemBackdropControllerWithTargets>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).AddSystemBackdropTarget)(
+                windows_core::Interface::as_raw(this),
+                systembackdroptarget.param().abi(),
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
+    pub fn RemoveAllSystemBackdropTargets(&self) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<ISystemBackdropControllerWithTargets>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).RemoveAllSystemBackdropTargets)(
+                windows_core::Interface::as_raw(this),
+            )
+            .ok()
+        }
+    }
+    pub fn SetSystemBackdropConfiguration<P0>(&self, configuration: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<SystemBackdropConfiguration>,
+    {
+        let this = &windows_core::Interface::cast::<ISystemBackdropControllerWithTargets>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetSystemBackdropConfiguration)(
+                windows_core::Interface::as_raw(this),
+                configuration.param().abi(),
+            )
+            .ok()
+        }
+    }
+    fn IDesktopAcrylicControllerStatics<
+        R,
+        F: FnOnce(&IDesktopAcrylicControllerStatics) -> windows_core::Result<R>,
+    >(
+        callback: F,
+    ) -> windows_core::Result<R> {
+        static SHARED: windows_core::imp::FactoryCache<
+            DesktopAcrylicController,
+            IDesktopAcrylicControllerStatics,
+        > = windows_core::imp::FactoryCache::new();
+        SHARED.call(callback)
+    }
+}
+impl windows_core::RuntimeType for DesktopAcrylicController {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_class::<Self, IDesktopAcrylicController>();
+}
+unsafe impl windows_core::Interface for DesktopAcrylicController {
+    type Vtable = <IDesktopAcrylicController as windows_core::Interface>::Vtable;
+    const IID: windows_core::GUID = <IDesktopAcrylicController as windows_core::Interface>::IID;
+}
+impl windows_core::RuntimeName for DesktopAcrylicController {
+    const NAME: &'static str = "Microsoft.UI.Composition.SystemBackdrops.DesktopAcrylicController";
+}
+unsafe impl Send for DesktopAcrylicController {}
+unsafe impl Sync for DesktopAcrylicController {}
 windows_core::imp::define_interface!(
     DoubleTappedEventHandler,
     DoubleTappedEventHandler_Vtbl,
@@ -4494,6 +4663,169 @@ pub struct IButtonStatics_Vtbl {
     pub base__: windows_core::IInspectable_Vtbl,
 }
 windows_core::imp::define_interface!(
+    ICompositionBrush,
+    ICompositionBrush_Vtbl,
+    0xab0d7608_30c0_40e9_b568_b60a6bd1fb46
+);
+impl windows_core::RuntimeType for ICompositionBrush {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+    const NAME: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::from_slice(b"Windows.UI.Composition.ICompositionBrush");
+}
+#[repr(C)]
+pub struct ICompositionBrush_Vtbl {
+    pub base__: windows_core::IInspectable_Vtbl,
+}
+windows_core::imp::define_interface!(
+    ICompositionObject,
+    ICompositionObject_Vtbl,
+    0xbcb4ad45_7609_4550_934f_16002a68fded
+);
+impl windows_core::RuntimeType for ICompositionObject {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+    const NAME: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::from_slice(b"Windows.UI.Composition.ICompositionObject");
+}
+#[repr(C)]
+pub struct ICompositionObject_Vtbl {
+    pub base__: windows_core::IInspectable_Vtbl,
+}
+windows_core::imp::define_interface!(
+    ICompositionObjectStatics,
+    ICompositionObjectStatics_Vtbl,
+    0xa091356c_38ae_514c_9b58_ad5c8c7936ad
+);
+impl windows_core::RuntimeType for ICompositionObjectStatics {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+    const NAME: windows_core::imp::ConstBuffer = windows_core::imp::ConstBuffer::from_slice(
+        b"Microsoft.UI.Composition.ICompositionObjectStatics",
+    );
+}
+#[repr(C)]
+pub struct ICompositionObjectStatics_Vtbl {
+    pub base__: windows_core::IInspectable_Vtbl,
+}
+windows_core::imp::define_interface!(
+    ICompositionSupportsSystemBackdrop,
+    ICompositionSupportsSystemBackdrop_Vtbl,
+    0x397dafe4_b6c2_5bb9_951d_f5707de8b7bc
+);
+impl windows_core::RuntimeType for ICompositionSupportsSystemBackdrop {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+    const NAME: windows_core::imp::ConstBuffer = windows_core::imp::ConstBuffer::from_slice(
+        b"Microsoft.UI.Composition.ICompositionSupportsSystemBackdrop",
+    );
+}
+windows_core::imp::interface_hierarchy!(
+    ICompositionSupportsSystemBackdrop,
+    windows_core::IUnknown,
+    windows_core::IInspectable
+);
+impl ICompositionSupportsSystemBackdrop {
+    pub fn SystemBackdrop(&self) -> windows_core::Result<CompositionBrush> {
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(self).SystemBackdrop)(
+                windows_core::Interface::as_raw(self),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub fn SetSystemBackdrop<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<CompositionBrush>,
+    {
+        unsafe {
+            (windows_core::Interface::vtable(self).SetSystemBackdrop)(
+                windows_core::Interface::as_raw(self),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
+}
+impl windows_core::RuntimeName for ICompositionSupportsSystemBackdrop {
+    const NAME: &'static str = "Microsoft.UI.Composition.ICompositionSupportsSystemBackdrop";
+}
+pub trait ICompositionSupportsSystemBackdrop_Impl: windows_core::IUnknownImpl {
+    fn SystemBackdrop(&self) -> windows_core::Result<CompositionBrush>;
+    fn SetSystemBackdrop(
+        &self,
+        value: windows_core::Ref<CompositionBrush>,
+    ) -> windows_core::Result<()>;
+}
+impl ICompositionSupportsSystemBackdrop_Vtbl {
+    pub const fn new<Identity: ICompositionSupportsSystemBackdrop_Impl, const OFFSET: isize>()
+    -> Self {
+        unsafe extern "system" fn SystemBackdrop<
+            Identity: ICompositionSupportsSystemBackdrop_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            result__: *mut *mut core::ffi::c_void,
+        ) -> windows_core::HRESULT {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                match ICompositionSupportsSystemBackdrop_Impl::SystemBackdrop(this) {
+                    Ok(ok__) => {
+                        result__.write(core::mem::transmute_copy(&ok__));
+                        core::mem::forget(ok__);
+                        windows_core::HRESULT(0)
+                    }
+                    Err(err) => err.into(),
+                }
+            }
+        }
+        unsafe extern "system" fn SetSystemBackdrop<
+            Identity: ICompositionSupportsSystemBackdrop_Impl,
+            const OFFSET: isize,
+        >(
+            this: *mut core::ffi::c_void,
+            value: *mut core::ffi::c_void,
+        ) -> windows_core::HRESULT {
+            unsafe {
+                let this: &Identity =
+                    &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                ICompositionSupportsSystemBackdrop_Impl::SetSystemBackdrop(
+                    this,
+                    core::mem::transmute_copy(&value),
+                )
+                .into()
+            }
+        }
+        Self {
+            base__: windows_core::IInspectable_Vtbl::new::<
+                Identity,
+                ICompositionSupportsSystemBackdrop,
+                OFFSET,
+            >(),
+            SystemBackdrop: SystemBackdrop::<Identity, OFFSET>,
+            SetSystemBackdrop: SetSystemBackdrop::<Identity, OFFSET>,
+        }
+    }
+    pub fn matches(iid: &windows_core::GUID) -> bool {
+        iid == &<ICompositionSupportsSystemBackdrop as windows_core::Interface>::IID
+    }
+}
+#[repr(C)]
+pub struct ICompositionSupportsSystemBackdrop_Vtbl {
+    pub base__: windows_core::IInspectable_Vtbl,
+    pub SystemBackdrop: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *mut *mut core::ffi::c_void,
+    ) -> windows_core::HRESULT,
+    pub SetSystemBackdrop: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *mut core::ffi::c_void,
+    ) -> windows_core::HRESULT,
+}
+windows_core::imp::define_interface!(
     IContentControl,
     IContentControl_Vtbl,
     0x07e81761_11b2_52ae_8f8b_4d53d2b5900a
@@ -4685,6 +5017,48 @@ impl windows_core::RuntimeType for IDependencyObjectFactory {
 }
 #[repr(C)]
 pub struct IDependencyObjectFactory_Vtbl {
+    pub base__: windows_core::IInspectable_Vtbl,
+}
+windows_core::imp::define_interface!(
+    IDesktopAcrylicController,
+    IDesktopAcrylicController_Vtbl,
+    0x7c20a6af_8eb3_5f08_bdfc_6d35e35dfe45
+);
+impl windows_core::RuntimeType for IDesktopAcrylicController {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+    const NAME: windows_core::imp::ConstBuffer = windows_core::imp::ConstBuffer::from_slice(
+        b"Microsoft.UI.Composition.SystemBackdrops.IDesktopAcrylicController",
+    );
+}
+#[repr(C)]
+pub struct IDesktopAcrylicController_Vtbl {
+    pub base__: windows_core::IInspectable_Vtbl,
+    FallbackColor: usize,
+    SetFallbackColor: usize,
+    LuminosityOpacity: usize,
+    pub SetLuminosityOpacity:
+        unsafe extern "system" fn(*mut core::ffi::c_void, f32) -> windows_core::HRESULT,
+    TintColor: usize,
+    SetTintColor: usize,
+    TintOpacity: usize,
+    pub SetTintOpacity:
+        unsafe extern "system" fn(*mut core::ffi::c_void, f32) -> windows_core::HRESULT,
+}
+windows_core::imp::define_interface!(
+    IDesktopAcrylicControllerStatics,
+    IDesktopAcrylicControllerStatics_Vtbl,
+    0xa9e8f790_79ef_5416_9b67_6bcfe867c8b7
+);
+impl windows_core::RuntimeType for IDesktopAcrylicControllerStatics {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+    const NAME: windows_core::imp::ConstBuffer = windows_core::imp::ConstBuffer::from_slice(
+        b"Microsoft.UI.Composition.SystemBackdrops.IDesktopAcrylicControllerStatics",
+    );
+}
+#[repr(C)]
+pub struct IDesktopAcrylicControllerStatics_Vtbl {
     pub base__: windows_core::IInspectable_Vtbl,
 }
 windows_core::imp::define_interface!(
@@ -5836,6 +6210,111 @@ impl windows_core::RuntimeType for ISelectorStatics {
 #[repr(C)]
 pub struct ISelectorStatics_Vtbl {
     pub base__: windows_core::IInspectable_Vtbl,
+}
+windows_core::imp::define_interface!(
+    ISystemBackdropConfiguration,
+    ISystemBackdropConfiguration_Vtbl,
+    0xebcce1b9_0e0c_5431_ab0e_00f3f0669962
+);
+impl windows_core::RuntimeType for ISystemBackdropConfiguration {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+    const NAME: windows_core::imp::ConstBuffer = windows_core::imp::ConstBuffer::from_slice(
+        b"Microsoft.UI.Composition.SystemBackdrops.ISystemBackdropConfiguration",
+    );
+}
+#[repr(C)]
+pub struct ISystemBackdropConfiguration_Vtbl {
+    pub base__: windows_core::IInspectable_Vtbl,
+    HighContrastBackgroundColor: usize,
+    SetHighContrastBackgroundColor: usize,
+    IsHighContrast: usize,
+    SetIsHighContrast: usize,
+    IsInputActive: usize,
+    pub SetIsInputActive:
+        unsafe extern "system" fn(*mut core::ffi::c_void, bool) -> windows_core::HRESULT,
+    Theme: usize,
+    pub SetTheme: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        SystemBackdropTheme,
+    ) -> windows_core::HRESULT,
+}
+windows_core::imp::define_interface!(
+    ISystemBackdropControllerWithTargets,
+    ISystemBackdropControllerWithTargets_Vtbl,
+    0x9c56fe7c_98eb_5f89_ad97_dad57fc30c8c
+);
+impl windows_core::RuntimeType for ISystemBackdropControllerWithTargets {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+    const NAME: windows_core::imp::ConstBuffer = windows_core::imp::ConstBuffer::from_slice(
+        b"Microsoft.UI.Composition.SystemBackdrops.ISystemBackdropControllerWithTargets",
+    );
+}
+windows_core::imp::interface_hierarchy!(
+    ISystemBackdropControllerWithTargets,
+    windows_core::IUnknown,
+    windows_core::IInspectable
+);
+impl ISystemBackdropControllerWithTargets {
+    pub fn AddSystemBackdropTarget<P0>(
+        &self,
+        systembackdroptarget: P0,
+    ) -> windows_core::Result<bool>
+    where
+        P0: windows_core::Param<ICompositionSupportsSystemBackdrop>,
+    {
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(self).AddSystemBackdropTarget)(
+                windows_core::Interface::as_raw(self),
+                systembackdroptarget.param().abi(),
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
+    pub fn RemoveAllSystemBackdropTargets(&self) -> windows_core::Result<()> {
+        unsafe {
+            (windows_core::Interface::vtable(self).RemoveAllSystemBackdropTargets)(
+                windows_core::Interface::as_raw(self),
+            )
+            .ok()
+        }
+    }
+    pub fn SetSystemBackdropConfiguration<P0>(&self, configuration: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<SystemBackdropConfiguration>,
+    {
+        unsafe {
+            (windows_core::Interface::vtable(self).SetSystemBackdropConfiguration)(
+                windows_core::Interface::as_raw(self),
+                configuration.param().abi(),
+            )
+            .ok()
+        }
+    }
+}
+impl windows_core::RuntimeName for ISystemBackdropControllerWithTargets {
+    const NAME: &'static str =
+        "Microsoft.UI.Composition.SystemBackdrops.ISystemBackdropControllerWithTargets";
+}
+#[repr(C)]
+pub struct ISystemBackdropControllerWithTargets_Vtbl {
+    pub base__: windows_core::IInspectable_Vtbl,
+    State: usize,
+    pub AddSystemBackdropTarget: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *mut core::ffi::c_void,
+        *mut bool,
+    ) -> windows_core::HRESULT,
+    pub RemoveAllSystemBackdropTargets:
+        unsafe extern "system" fn(*mut core::ffi::c_void) -> windows_core::HRESULT,
+    RemoveSystemBackdropTarget: usize,
+    pub SetSystemBackdropConfiguration: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *mut core::ffi::c_void,
+    ) -> windows_core::HRESULT,
 }
 windows_core::imp::define_interface!(
     ITabView,
@@ -11357,6 +11836,82 @@ impl windows_core::RuntimeName for SelectorItem {
 }
 unsafe impl Send for SelectorItem {}
 unsafe impl Sync for SelectorItem {}
+#[repr(transparent)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SystemBackdropConfiguration(windows_core::IUnknown);
+windows_core::imp::interface_hierarchy!(
+    SystemBackdropConfiguration,
+    windows_core::IUnknown,
+    windows_core::IInspectable
+);
+impl SystemBackdropConfiguration {
+    pub fn new() -> windows_core::Result<Self> {
+        Self::IActivationFactory(|f| f.ActivateInstance::<Self>())
+    }
+    fn IActivationFactory<
+        R,
+        F: FnOnce(&windows_core::imp::IGenericFactory) -> windows_core::Result<R>,
+    >(
+        callback: F,
+    ) -> windows_core::Result<R> {
+        static SHARED: windows_core::imp::FactoryCache<
+            SystemBackdropConfiguration,
+            windows_core::imp::IGenericFactory,
+        > = windows_core::imp::FactoryCache::new();
+        SHARED.call(callback)
+    }
+    pub fn SetIsInputActive(&self, value: bool) -> windows_core::Result<()> {
+        unsafe {
+            (windows_core::Interface::vtable(self).SetIsInputActive)(
+                windows_core::Interface::as_raw(self),
+                value,
+            )
+            .ok()
+        }
+    }
+    pub fn SetTheme(&self, value: SystemBackdropTheme) -> windows_core::Result<()> {
+        unsafe {
+            (windows_core::Interface::vtable(self).SetTheme)(
+                windows_core::Interface::as_raw(self),
+                value,
+            )
+            .ok()
+        }
+    }
+}
+impl windows_core::RuntimeType for SystemBackdropConfiguration {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_class::<Self, ISystemBackdropConfiguration>();
+}
+unsafe impl windows_core::Interface for SystemBackdropConfiguration {
+    type Vtable = <ISystemBackdropConfiguration as windows_core::Interface>::Vtable;
+    const IID: windows_core::GUID = <ISystemBackdropConfiguration as windows_core::Interface>::IID;
+}
+impl windows_core::RuntimeName for SystemBackdropConfiguration {
+    const NAME: &'static str =
+        "Microsoft.UI.Composition.SystemBackdrops.SystemBackdropConfiguration";
+}
+unsafe impl Send for SystemBackdropConfiguration {}
+unsafe impl Sync for SystemBackdropConfiguration {}
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct SystemBackdropTheme(pub i32);
+impl SystemBackdropTheme {
+    pub const Default: Self = Self(0);
+    pub const Light: Self = Self(1);
+    pub const Dark: Self = Self(2);
+}
+impl windows_core::imp::TypeKind for SystemBackdropTheme {
+    type TypeKind = windows_core::imp::CopyType;
+}
+impl windows_core::RuntimeType for SystemBackdropTheme {
+    const SIGNATURE: windows_core::imp::ConstBuffer = windows_core::imp::ConstBuffer::from_slice(
+        b"enum(Microsoft.UI.Composition.SystemBackdrops.SystemBackdropTheme;i4)",
+    );
+    const NAME: windows_core::imp::ConstBuffer = windows_core::imp::ConstBuffer::from_slice(
+        b"Microsoft.UI.Composition.SystemBackdrops.SystemBackdropTheme",
+    );
+}
 #[repr(transparent)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TabView(windows_core::IUnknown);
