@@ -128,7 +128,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Accounts: GitHub (CI status, avatars) | ✓ | ✓ | — | — | n/a |  |
 | Appearance: History order, one line, row items, avatars | ✓ | ✓ | △ | n/a | n/a | Windows: History's order, one line, ancestor highlight and row items (no CI status); no avatars. |
 | Appearance: fonts, graph colors | — | — | — | n/a | n/a |  |
-| Theme: window background (transparency and blur, image, toolbar tint, per repository) | ✓ | ✓ | △ | n/a | n/a | GTK4: No blur (GNOME can't blur what is behind the window); a see-through window needs a compositor.<br>Windows: See-through sidebar and toolbar (Acrylic, fixed blur), background image and toolbar tint; not the whole window, and no per-repository background yet. |
+| Theme: window background (transparency and blur, image, toolbar tint, per repository) | ✓ | ✓ | ✓ | n/a | n/a | GTK4: No blur (GNOME can't blur what is behind the window); a see-through window needs a compositor.<br>Windows: The blur strength is fixed by Acrylic. |
 | Theme: syntax and diff colors (built-in themes, VSCode themes, standard diff colors) | ✓ | ✓ | ✓ | n/a | n/a | VSCode: follows VSCode's own theme.<br>Windows: The app follows Windows' app mode (light or dark), with a theme for each. |
 | Diff & Merge: resolve unambiguous conflicts on open | ✓ | ✓ | ✓ | n/a | n/a |  |
 | Diff & Merge: unified/split, whitespace, context, wrap, tab width | — | — | — | — | n/a |  |
@@ -289,7 +289,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Blame | ✓ | ✓ | ✓ | ✓ | △ | VSCode: A page of the main view.<br>CLI: Via `amonhen run` (`blame`).<br>Windows: A line's menu shows its commit in History. |
 | Restore a file from a commit (this version, the version before; staged if chosen) | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: With the engine, from a file's right-click in History's details; Restore and Stage is the second button.<br>CLI: `restore --source <rev> [--staged]`. |
 | File History | ✓ | ✓ | ✓ | ✓ | △ | VSCode: A page of the main view, opened from the Explorer, an editor tab, the Command Palette or a file in the main view.<br>CLI: Via `amonhen run` (`fileHistory`).<br>Windows: From a Working Copy file. |
-| Opened as a tab beside the repository tab, with the repository toolbar | ✓ | ✓ | — | n/a | n/a | GTK4: When the repository tab is in front in another window, the tab gets a title bar without the toolbar.<br>Windows: Over History in the same window. |
+| Opened as a tab beside the repository tab, with the repository toolbar | ✓ | ✓ | ✓ | n/a | n/a | GTK4: When the repository tab is in front in another window, the tab gets a title bar without the toolbar. |
 | Line history | — | — | — | — | — |  |
 
 ## 7a. Patches
@@ -315,7 +315,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Editable Result with undo per conflict | ✓ | ✓ | ✓ | n/a | n/a |  |
 | Resolve a file with Current / Incoming | ✓ | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
 | Open in an external merge tool | — | — | — | n/a | n/a |  |
-| Pop out the editor into a window | ✓ | ✓ | — | n/a | n/a |  |
+| Pop out the editor into a window | ✓ | ✓ | ✓ | n/a | n/a | Windows: A separate window (its own process) opens the same file; unsaved edits go with it. |
 | Continue / Skip / Abort | ✓ | ✓ | ✓ | ✓ | △ | VSCode: On the sidebar's in-progress row.<br>CLI: Via `amonhen run`. |
 
 ## 9. AI

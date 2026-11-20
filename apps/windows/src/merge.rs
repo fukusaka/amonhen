@@ -47,6 +47,8 @@ pub struct State {
     /// TextBox は中身を書き換えると自分の Undo を忘れるので）。
     undo: Vec<(String, String)>,
     redo: Vec<(String, String)>,
+    /// 別の窓に出したマージエディタか（⧉ を出さず、閉じたら窓を閉じる）。
+    pub separate: bool,
 }
 
 /// Result に残っているコンフリクトの両側（GTK4 版の `regions`）。
@@ -92,6 +94,7 @@ impl State {
             originals: Vec::new(),
             undo: Vec::new(),
             redo: Vec::new(),
+            separate: false,
         }
     }
 
@@ -369,6 +372,15 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
             button("save", tr!("Save"), ready && state.dirty()),
             button("resolve", tr!("Save & Mark Resolved"), ready),
             button("close", tr!("Close"), true),
+            // 別の窓に出す（GTK4 版・macOS 版の ⧉。打ちかけの Result も持って行く）。
+            if state.separate {
+                View::empty()
+            } else {
+                Button::new()
+                    .on_click((callbacks.button)("popout"))
+                    .content(TextBlock::new().text("⧉"))
+                    .tooltip(tr!("Open in a Separate Window"))
+            },
             TextBlock::new()
                 .text(state.note.clone())
                 .opacity(0.6)

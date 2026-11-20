@@ -29,6 +29,8 @@ thread_local! {
     /// 窓の後ろを透かす Acrylic（透かしている間）と、当てられなかったか（WinUI の Acrylic に替える）。
     static ACRYLIC: RefCell<Option<xaml::Acrylic>> = const { RefCell::new(None) };
     static ACRYLIC_FAILED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// 窓を透かしている間の、ボタン・文字の欄・選ぶ欄の地（一度入れたら、透かさないときは元の濃さに戻す）。
+    static CONTROL_FILLS: RefCell<Option<xaml::ControlFills>> = const { RefCell::new(None) };
     /// 設定の画面（Settings・Repository Settings）を出しているか（Ctrl+Z・Ctrl+Shift+Z を設定の Undo・Redo にする）。
     static SETTINGS_SHOWN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// サイドバーの木で引いてよい項目（お気に入りのブランチの鍵。上から順）。木のドラッグの始まりで見る。
@@ -123,6 +125,7 @@ pub fn set_target(tab: &crate::tabs::Tab) {
             args.repo = tab.location.clone().into();
             args.repositories = tab.repositories;
             args.working_copy = tab.working_copy;
+            args.file_history = tab.file_history.clone();
             args.place = None;
         }
     });
@@ -203,6 +206,14 @@ struct Root {
     disconnected: Option<(Arc<Repository>, String)>,
     /// サイドバーの木を作り直す数（お気に入りを引いて並べ替えた後。WinUI が動かした項目を元の形に戻す）。
     sidebar_epoch: u32,
+    /// File History のタブで、リポジトリを読んだら出すファイル。
+    pending_file_history: Option<String>,
+    /// 別の窓に出したマージエディタの窓なら Some（中は、まだ取り込んでいない打ちかけの Result のファイル）と、
+    /// リポジトリを読んだら開くファイル。
+    merge_window: Option<Option<std::path::PathBuf>>,
+    pending_merge: Option<String>,
+    /// 別の窓のマージエディタで解決済みにした: 書き終えたら窓を閉じる。
+    close_when_done: bool,
     /// 窓の背景画像（押す・引くを下へ通すため）。
     backdrop_image: ElementRef<Image>,
     /// ツールバーのリポジトリ名の一覧に添える、各リポジトリのブランチと状態（場所ごと）と、最後に読んだ時刻。
@@ -688,6 +699,8 @@ enum Dialog {
     },
     /// Repositories の行の表示名を変える。
     RenameRepository { location: String, name: String },
+    /// そのリポジトリだけの窓の背景（GTK4 版の `themesettings::show_repository`）。
+    Backdrop { location: String },
     /// Repositories のグループを作る（リポジトリがあればそこに移す）。
     NewGroup {
         location: Option<String>,
@@ -903,6 +916,8 @@ enum Message {
     Sequence(Option<Value>),
     /// マージエディタを開く（パス）・読み終えた・ボタン・Result を書き換えた。
     OpenMerge(String),
+    /// この窓は別の窓に出したマージエディタ（ファイルと、打ちかけの Result を書いたファイル）。
+    MergeWindow(String, Option<std::path::PathBuf>),
     MergeLoaded(String, Result<Value, String>),
     MergeButton(&'static str),
     /// マージエディタの左右の欄の ≫・≪（`ours:<番号>`・`theirs:<番号>`）。
@@ -1300,6 +1315,10 @@ impl Component for Root {
             failure_generation: 0,
             disconnected: None,
             sidebar_epoch: 0,
+            pending_file_history: None,
+            merge_window: None,
+            pending_merge: None,
+            close_when_done: false,
             backdrop_image: ElementRef::new(),
             switch_peeks: std::collections::HashMap::new(),
             switch_peeked_at: None,
@@ -1461,6 +1480,12 @@ impl Root {
                     .with(|h| *h.borrow_mut() = refs.refs.head_branch.clone().unwrap_or_default());
                 self.refs = Some(refs);
                 self.repo = Some(repo.clone());
+                if let Some(path) = self.pending_file_history.take() {
+                    self.update(Message::OpenFileHistory(path), context);
+                }
+                if let Some(path) = self.pending_merge.take() {
+                    self.update(Message::OpenMerge(path), context);
+                }
                 self.switch_draft(&repo, context);
                 self.peek_switch_targets(context);
                 // 最近切り替えたブランチを覚える（ブランチの切り替えの並び）。
@@ -1810,6 +1835,7 @@ impl Root {
                 let done = command["label"].as_str().unwrap_or_default().to_owned();
                 self.update(Message::Done(done), context);
             }
+            Message::Done(_) if std::mem::take(&mut self.close_when_done) => close_window(),
             Message::Done(text) => {
                 // 終わった後の読み直しは同じ（`Performed`）。一言は 5 秒（GTK4 版と同じ）。前の失敗の帯は消す。
                 self.failure = None;
@@ -3774,6 +3800,9 @@ impl Root {
                     perform(context, repo, command, title);
                 }
                 (Some(Dialog::CloseMerge), ContentDialogResult::Primary) => {
+                    if self.merge.as_ref().is_some_and(|m| m.separate) {
+                        close_window();
+                    }
                     self.merge = None;
                     self.page = Page::WorkingCopy;
                 }
@@ -5215,6 +5244,10 @@ impl Root {
                 }
             }
             Message::Performed(failed) => {
+                // 失敗したら、別の窓のマージエディタを閉じない。
+                if failed.is_some() {
+                    self.close_when_done = false;
+                }
                 self.busy = None;
                 // Repository Settings を出していれば読み直す（リモートの編集などは設定を書く）。
                 if self.repo_settings.is_some() {
@@ -5377,11 +5410,22 @@ impl Root {
                 }
             }
             Message::Sequence(sequence) => self.sequence = sequence,
+            Message::MergeWindow(path, text) => {
+                self.merge_window = Some(text);
+                self.update(Message::OpenMerge(path), context);
+            }
             Message::OpenMerge(path) => {
                 let Some(repo) = self.repo.clone() else {
+                    // 別の窓に出したマージエディタ: リポジトリを読んだら開く。
+                    if self.merge_window.is_some() {
+                        self.pending_merge = Some(path);
+                        return;
+                    }
                     return beep();
                 };
-                self.merge = Some(crate::merge::State::new(path.clone()));
+                let mut state = crate::merge::State::new(path.clone());
+                state.separate = self.merge_window.is_some();
+                self.merge = Some(state);
                 self.page = Page::Merge;
                 context.spawn_background(move |_| {
                     let command = json!({ "op": "mergeSides", "path": &path });
@@ -5399,6 +5443,13 @@ impl Root {
                     && state.path == path
                 {
                     state.load(info);
+                    // 別の窓に出したときの打ちかけの Result（読んだら消す）。
+                    if let Some(file) = self.merge_window.as_mut().and_then(Option::take) {
+                        if let Ok(text) = std::fs::read_to_string(&file) {
+                            state.edit(&text);
+                        }
+                        let _ = std::fs::remove_file(file);
+                    }
                     merge_scroll_later(context);
                 }
             }
@@ -6811,7 +6862,12 @@ impl Root {
                 }
             }
             Message::Backdrop(event) => {
-                if let Err(e) = crate::backdrop::apply(event) {
+                // 「窓の背景…」のダイアログを出していれば、そのリポジトリだけの背景を変える。
+                let target = match &self.dialog {
+                    Some(Dialog::Backdrop { location }) => Some(location.clone()),
+                    _ => None,
+                };
+                if let Err(e) = crate::backdrop::apply(target.as_deref(), event) {
                     self.error = Some(e);
                 }
             }
@@ -7228,7 +7284,7 @@ impl Root {
                 self.diff_file_action(&key, context);
             }
             Message::WorkingFileMenu(path, key) => match key.as_str() {
-                "history" => self.update(Message::OpenFileHistory(path), context),
+                "history" => self.open_file_history_tab(path, context),
                 "blame" => self.update(Message::OpenBlame(path, None), context),
                 "merge-editor" => self.update(Message::OpenMerge(path), context),
                 "stash" => self.ask_stash(vec![path]),
@@ -7236,7 +7292,9 @@ impl Root {
             },
             Message::OpenFileHistory(path) => {
                 let Some(repo) = self.repo.clone() else {
-                    return beep();
+                    // File History のタブを開いたところ: リポジトリを読んだら出す。
+                    self.pending_file_history = Some(path);
+                    return;
                 };
                 self.file_history = Some(crate::filehistory::State {
                     path: path.clone(),
@@ -7389,6 +7447,13 @@ impl Root {
                 }
             }
             Message::CloseFileHistory => {
+                // File History のタブなら、タブを閉じる（最後のタブなら窓を閉じる）。
+                if crate::tabs::current().is_some_and(|t| t.file_history.is_some()) {
+                    if crate::tabs::close_current() {
+                        close_window();
+                    }
+                    return;
+                }
                 self.file_history = None;
                 self.show_page(Page::History);
             }
@@ -7489,6 +7554,9 @@ impl Root {
         // 外観は Windows の設定に合わせる（描く色と同じ判断にするため、ここで決めて渡す）。窓の後ろを透かすなら
         // 色の層のない Acrylic を自分で敷く（当てられなければ WinUI の Acrylic）。
         let see_through = backdrop.see_through();
+        // 窓全体を透かすときは、読む面の地も薄く（変わったら次のフレームで描き直す）。
+        let (content_ground, bar_ground) = backdrop.content_ground();
+        crate::palette::set_ground(content_ground, bar_ground);
         let dark = crate::palette::dark();
         context.use_effect("acrylic", (see_through, dark), move || {
             ACRYLIC.with(|a| {
@@ -7528,6 +7596,37 @@ impl Root {
                         WindowBackdrop::None
                     },
                 ),
+        );
+        // 窓を透かすときは、ボタン・文字の欄・選ぶ欄の地も窓の地と同じ薄さに（部品だけ目立たないように）。
+        let fill_alpha = if see_through {
+            (1.0 - backdrop.transparency.clamp(0.0, 1.0)) as f32
+        } else {
+            1.0
+        };
+        let host = self.root.clone();
+        context.use_effect(
+            "control-fills",
+            (see_through, dark, (fill_alpha * 100.0).round() as u32),
+            move || {
+                let _ = host.request_native_element(move |result| {
+                    let Ok(element) = result else { return };
+                    CONTROL_FILLS.with(|f| {
+                        let mut f = f.borrow_mut();
+                        let done = match f.as_ref() {
+                            Some(fills) => fills.update(dark, fill_alpha),
+                            None if see_through => {
+                                xaml::ControlFills::install(&element, dark, fill_alpha)
+                                    .map(|fills| *f = Some(fills))
+                            }
+                            None => Ok(()),
+                        };
+                        if let Err(e) = done {
+                            eprintln!("部品の地を変えられない: {e}");
+                        }
+                    });
+                });
+                None
+            },
         );
         let tab_strip = Grid::new()
             .grid_row(2)
@@ -7573,6 +7672,14 @@ impl Root {
             // 書き込む先の worktree を替えた窓は、前の窓と同じ所・同じ画面に。
             if args.working_copy {
                 sender.send(Message::Command("show-working-copy".to_owned()));
+            }
+            // File History のタブは、そのファイルの File History から（リポジトリを読んでから出す）。
+            if let Some(path) = args.file_history.clone() {
+                sender.send(Message::OpenFileHistory(path));
+            }
+            // 別の窓に出したマージエディタ。
+            if let Some(path) = args.merge.clone() {
+                sender.send(Message::MergeWindow(path, args.merge_text.clone()));
             }
             PENDING_PLACE.with(|p| p.set(args.place.map(|r| (r, 0))));
             let session = match Session::new(&args, "app", started, Arc::new(|| {})) {
@@ -7770,7 +7877,23 @@ impl Root {
                 ))
             }
         };
+        // 窓全体を透かすとき、ほかの画面を重ねている間は下の History を隠す。右の列は、まん中と右の 2 列を覆う画面
+        // のときだけ隠す（Working Copy・Stashes・Reflog・Range Diff・File History は、まん中だけを覆い、右の列に差分を
+        // 出す）。
+        let history_covered = content_ground < 1.0 && self.page != Page::History;
+        let right_covered = history_covered
+            && matches!(
+                self.page,
+                Page::EditCommits
+                    | Page::Blame
+                    | Page::Merge
+                    | Page::Settings
+                    | Page::Activity
+                    | Page::Repositories
+                    | Page::RepoSettings
+            );
         let right = Grid::new()
+            .opacity(if right_covered { 0.0 } else { 1.0 })
             .rows(if self.page == Page::WorkingCopy {
                 [GridLength::Auto, GridLength::Auto, GridLength::Star(1.0)]
             } else if self.details_expanded {
@@ -7990,6 +8113,9 @@ impl Root {
                             .background(Brush::Solid(Color::transparent()))
                             .element_ref(&self.area)
                             .grid_row(1)
+                            // 窓全体を透かすときは、ほかの画面を重ねている間は隠す（重ねた画面が地を塗らないので
+                            // 透けて見える）。描画の知らせは止めないよう、外さずに見えなくする。
+                            .opacity(if history_covered { 0.0 } else { 1.0 })
                             .children((history,))
                             .menu(Menu::new(
                                 self.history_menu(),
@@ -8174,7 +8300,14 @@ impl Root {
         // 透かすときの地: メニュー・ツールバー・タブ、サイドバー、下の帯は窓の色を透過率の分だけ薄く、読む面
         // （一覧・詳細・差分）は不透明に塗る。透かさなければ窓全体を窓の色で塗る。
         let window = crate::palette::window();
-        let grounds: View = if backdrop.see_through() {
+        let grounds: View = if backdrop.style == "single" {
+            // 窓全体: どこも同じ濃さの地（読む面は自分の地を薄く塗る）。
+            Border::new()
+                .grid_row(0)
+                .grid_row_span(5)
+                .background(Brush::Solid(backdrop.ground(window)))
+                .into()
+        } else if backdrop.see_through() {
             let ground = Brush::Solid(backdrop.ground(window));
             View::fragment((
                 Border::new()
@@ -8256,6 +8389,20 @@ impl Root {
     }
 }
 
+/// 窓の背景の欄の操作（Settings > Appearance と「窓の背景…」のダイアログ。どちらに書くかは `Message::Backdrop`
+/// を受けたときに、ダイアログを出しているかで決める）。
+fn backdrop_callbacks(context: &ViewContext<Root>) -> crate::settingsview::BackdropCallbacks<'_> {
+    use crate::backdrop::Event;
+    crate::settingsview::BackdropCallbacks {
+        button: Box::new(|event| context.callback(move |()| Message::Backdrop(event.clone()))),
+        placement: context.callback(|i| Message::Backdrop(Event::Placement(i))),
+        style: context.callback(|i| Message::Backdrop(Event::Style(i))),
+        number: Box::new(|f| context.callback(move |v| Message::Backdrop(f(v)))),
+        tint: context.callback(|on| Message::Backdrop(Event::Tint(on))),
+        color: context.callback(|c| Message::Backdrop(Event::ToolbarColor(c))),
+    }
+}
+
 /// 窓の中身の上に薄く重ねる背景画像（なければ空）。押す・引くは下の部品へ通す（描いた後に外す）。
 fn backdrop_image(backdrop: &crate::backdrop::Backdrop, host: &ElementRef<Image>) -> View {
     use crate::backdrop::Placement;
@@ -8304,6 +8451,14 @@ fn backdrop_image(backdrop: &crate::backdrop::Backdrop, host: &ElementRef<Image>
 }
 
 impl Root {
+    /// File History を、リポジトリのタブの隣のタブで開く（macOS 版・GTK4 版と同じ。タブがなければこの窓に重ねる）。
+    fn open_file_history_tab(&mut self, path: String, context: &ComponentContext<Self>) {
+        match crate::tabs::current() {
+            Some(tab) => crate::tabs::open_file_history(&tab.location, &path),
+            None => self.update(Message::OpenFileHistory(path), context),
+        }
+    }
+
     /// 保存する場所を選んで archive・bundle を書き、書けたらエクスプローラーで見せる（GTK4 版と同じ）。
     fn save(&mut self, save: PendingSave, context: &ComponentContext<Self>) {
         let (repo, mut command, path, title) = match save {
@@ -8377,6 +8532,40 @@ impl Root {
         let dialog = ContentDialog::new().on_closed(context.callback(Message::DialogClosed));
         match &self.dialog {
             None => dialog.is_open(false).into(),
+            Some(Dialog::Backdrop { location }) => {
+                let own = crate::repositories::backdrop(location)
+                    .and_then(|v| crate::backdrop::Backdrop::from_json(&v));
+                let section: View = match &own {
+                    Some(b) => ScrollViewer::new()
+                        .max_height(460.0)
+                        .content(crate::settingsview::backdrop_section(
+                            b,
+                            &backdrop_callbacks(context),
+                        )),
+                    None => View::empty(),
+                };
+                dialog
+                    .is_open(true)
+                    .title(tr!("Window Background"))
+                    .close_button_text(tr!("Done"))
+                    .content(StackPanel::new().spacing(8.0).width(460.0).children((
+                        CheckBox::new()
+                            .is_checked(own.is_some())
+                            .on_is_checked_changed(context.callback(|on| {
+                                Message::Backdrop(crate::backdrop::Event::Override(on))
+                            }))
+                            .content(TextBlock::new().text(tr!(
+                                "Use a different background for {name}",
+                                name = crate::repositories::display_name(location)
+                            ))),
+                        TextBlock::new()
+                            .text(tr!("Otherwise this window follows Settings > Theme."))
+                            .opacity(0.7)
+                            .font_size(12.0)
+                            .text_wrapping(TextWrapping::Wrap),
+                        section,
+                    )))
+            }
             Some(Dialog::SendEngine { ask, always }) => {
                 let consent = &ask.consent;
                 let title = if consent.update {
@@ -11402,7 +11591,7 @@ impl Root {
                 }
             }
             "blame" => self.update(Message::OpenBlame(file.path, file.commit), context),
-            "history" => self.update(Message::OpenFileHistory(file.path), context),
+            "history" => self.open_file_history_tab(file.path, context),
             "restore" | "restore-before" => {
                 let (Some(repo), Some(oid)) = (self.repo.clone(), file.commit.clone()) else {
                     return beep();
@@ -13361,6 +13550,7 @@ impl Root {
                 self.dialog = Some(Dialog::RenameRepository { location, name });
                 self.dialog_inputs += 1;
             }
+            Action::Backdrop(location) => self.dialog = Some(Dialog::Backdrop { location }),
             Action::Fetch(location) => {
                 context.spawn_background(move |_| {
                     let error = crate::repositories::fetch(&location);
@@ -13621,7 +13811,8 @@ impl Root {
                 });
                 let count = state.conflicts();
                 if count == 0 {
-                    // 保存して解決済みにしたら閉じる。
+                    // 保存して解決済みにしたら閉じる（別の窓なら、書き終えてから窓を閉じる）。
+                    self.close_when_done = state.separate;
                     perform(context, repo, command, tr!("Save & Mark Resolved"));
                     self.merge = None;
                     self.page = Page::WorkingCopy;
@@ -13644,9 +13835,44 @@ impl Root {
             "close" => {
                 if state.dirty() {
                     self.dialog = Some(Dialog::CloseMerge);
+                } else if state.separate {
+                    close_window();
                 } else {
                     self.merge = None;
                     self.page = Page::WorkingCopy;
+                }
+            }
+            "popout" => {
+                // 別の窓（別のプロセス）に出す。打ちかけの Result は一時ファイルで渡す。
+                let Some(tab) = crate::tabs::current() else {
+                    return beep();
+                };
+                let mut extra = vec!["--merge".to_owned(), state.path.clone()];
+                if state.dirty() {
+                    let file = std::env::temp_dir().join(format!(
+                        "amonhen-merge-{}-{}.txt",
+                        std::process::id(),
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map_or(0, |d| d.as_millis())
+                    ));
+                    if let Err(e) = std::fs::write(&file, &state.result) {
+                        self.error = Some(e.to_string());
+                        return;
+                    }
+                    extra.extend(["--merge-text".to_owned(), file.display().to_string()]);
+                }
+                let extra: Vec<&str> = extra.iter().map(String::as_str).collect();
+                match crate::repositories::open_window_with(&tab.location, &extra) {
+                    Ok(()) => {
+                        self.merge = None;
+                        self.page = Page::WorkingCopy;
+                        self.update(
+                            Message::Done(tr!("The merge editor is open in a separate window")),
+                            context,
+                        );
+                    }
+                    Err(e) => self.error = Some(e),
                 }
             }
             _ => {}
@@ -13990,18 +14216,7 @@ impl Root {
                 theme_button: Box::new(|key: String| {
                     context.callback(move |()| Message::SettingsThemeButton(key.clone()))
                 }),
-                backdrop_button: Box::new(|event| {
-                    context.callback(move |()| Message::Backdrop(event.clone()))
-                }),
-                backdrop_placement: context
-                    .callback(|i| Message::Backdrop(crate::backdrop::Event::Placement(i))),
-                backdrop_style: context
-                    .callback(|i| Message::Backdrop(crate::backdrop::Event::Style(i))),
-                backdrop_number: Box::new(|f| context.callback(move |v| Message::Backdrop(f(v)))),
-                backdrop_tint: context
-                    .callback(|on| Message::Backdrop(crate::backdrop::Event::Tint(on))),
-                backdrop_color: context
-                    .callback(|c| Message::Backdrop(crate::backdrop::Event::ToolbarColor(c))),
+                backdrop: backdrop_callbacks(context),
                 template_remove: Box::new(|i| {
                     context.callback(move |()| Message::SettingsTemplateRemove(i))
                 }),
@@ -16423,8 +16638,8 @@ impl HistoryView {
             if now != count {
                 self.sender.send(Message::Running(now));
             }
-            // Windows の外観（アプリ モード）が変わったら、色を替えて描き直す。
-            if crate::palette::refresh() {
+            // Windows の外観（アプリ モード）か、窓全体を透かす地の濃さが変わったら、色を替えて描き直す。
+            if crate::palette::refresh() | crate::palette::take_ground_changed() {
                 self.session.invalidate();
                 self.diff.dirty = true;
                 self.sender.send(Message::AppearanceChanged);
@@ -17321,15 +17536,19 @@ fn tab_strip(title: &str, context: &ViewContext<Root>) -> View {
         .iter()
         .enumerate()
         .map(|(i, tab)| {
-            let header = if i == active {
-                title.to_owned()
-            } else {
-                crate::tabs::name(&tab.location)
+            // File History のタブはファイルの名前（GTK4 版・macOS 版と同じ）。
+            let (header, tip) = match &tab.file_history {
+                Some(path) => (
+                    format!("File History — {}", crate::tabs::name(path)),
+                    format!("{} — {}", path, crate::tabs::name(&tab.location)),
+                ),
+                None if i == active => (title.to_owned(), tab.location.clone()),
+                None => (crate::tabs::name(&tab.location), tab.location.clone()),
             };
             let item = TabViewItem::new()
                 .header(header)
                 .tag(tab.id.to_string())
-                .tooltip(tab.location.clone());
+                .tooltip(tip);
             (tab.id.to_string(), item)
         })
         .collect();

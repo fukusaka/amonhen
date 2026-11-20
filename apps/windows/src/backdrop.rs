@@ -4,8 +4,8 @@
 //!
 //! 窓の後ろを透かすときは、窓に WinUI の Acrylic（後ろをぼかす）を敷き、透かす場所（メニュー・ツールバー・
 //! タブ・サイドバー・下の帯）に窓の色を `1 - 透過率` の濃さで塗る。読む面（一覧・詳細・差分）は不透明のまま。
-//! 窓全体を透かす（`single`）は、まだサイドバーとツールバーと同じに当てる。ぼかしの強さは Acrylic で決まって
-//! いるので、値は記録を保つだけ。背景画像は窓の中身の上に薄く重ね（押す・引くは下へ通す）、ツールバーの色は
+//! 窓全体を透かす（`single`）ときは、窓全体に 1 枚の地を敷き、読む面（History・差分の自前の描画も、XAML の
+//! 一覧も）は自分の地を塗らない。重ねた画面の下の History・右の列は隠す。ぼかしの強さは Acrylic で決まっているので、値は記録を保つだけ。背景画像は窓の中身の上に薄く重ね（押す・引くは下へ通す）、ツールバーの色は
 //! メニューとツールバーの行の後ろに敷く。
 
 use amonhen_model::tr;
@@ -21,13 +21,14 @@ const IMAGE_TRANSPARENCY: &str = "backdropImageTransparency";
 const TOOLBAR_COLOR: &str = "backdropToolbarColor";
 const TOOLBAR_OPACITY: &str = "backdropToolbarOpacity";
 
-/// 窓の後ろを透かす場所（選べるもの。記録の `single` は `chrome` と同じに当てる）。
-pub const STYLES: [&str; 2] = ["system", "chrome"];
+/// 窓の後ろを透かす場所（なし・サイドバーとツールバー・窓全体）。
+pub const STYLES: [&str; 3] = ["system", "chrome", "single"];
 
 /// [`STYLES`] の名前。
 pub fn style_title(style: &str) -> String {
     match style {
         "chrome" => tr!("Sidebar and Toolbar"),
+        "single" => tr!("Whole Window"),
         _ => tr!("Nowhere (Standard)"),
     }
 }
@@ -176,8 +177,7 @@ impl Backdrop {
             .unwrap_or_else(Self::app)
     }
 
-    /// macOS 版の JSON（ブックマークの `backdrop`）。リポジトリだけの設定を書くときに使う（まだ書く口はない）。
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// macOS 版の JSON（ブックマークの `backdrop`）。
     pub fn to_json(&self) -> Value {
         let mut m = Map::new();
         m.insert("style".into(), json!(self.style));
@@ -221,9 +221,19 @@ impl Backdrop {
         matches!(self.style.as_str(), "chrome" | "single")
     }
 
-    /// 選べる場所の番号（[`STYLES`]。`single` はサイドバーとツールバー）。
+    /// 選べる場所の番号（[`STYLES`]。知らない名前はなし）。
     pub fn style_index(&self) -> usize {
-        usize::from(self.see_through())
+        STYLES.iter().position(|s| *s == self.style).unwrap_or(0)
+    }
+
+    /// 読む面の地と帯の地の濃さ。窓全体を透かすときは、読む面は塗らず（窓に敷いた 1 枚の地が透け具合を決める。
+    /// GTK4 版・macOS 版と同じ）、帯（見出し・選んだ行）は `1 - 透過率`。
+    pub fn content_ground(&self) -> (f32, f32) {
+        if self.style == "single" {
+            (0.0, (1.0 - self.transparency.clamp(0.0, 1.0)) as f32)
+        } else {
+            (1.0, 1.0)
+        }
     }
 
     /// 透かす場所に塗る窓の色（濃さは `1 - 透過率`）。
@@ -248,6 +258,8 @@ impl Backdrop {
 /// Settings > Appearance の窓の背景の欄の操作。
 #[derive(Clone, Debug)]
 pub enum Event {
+    /// リポジトリだけの背景を使うか（Repositories の「窓の背景…」）。
+    Override(bool),
     Style(Option<usize>),
     Transparency(f64),
     ChooseImage,
@@ -259,19 +271,24 @@ pub enum Event {
     ToolbarOpacity(f64),
 }
 
-/// 欄の操作をアプリの設定に当てて書く（書けなければ理由）。
-pub fn apply(event: Event) -> Result<(), String> {
-    let mut b = Backdrop::app();
+/// 欄の操作を当てて書く（書けなければ理由）。`target` があればそのリポジトリだけの背景（ブックマークの
+/// `backdrop`）、なければアプリの設定。
+pub fn apply(target: Option<&str>, event: Event) -> Result<(), String> {
+    if let Event::Override(on) = event {
+        let Some(location) = target else {
+            return Ok(());
+        };
+        return crate::repositories::set_backdrop(location, on.then(|| Backdrop::app().to_json()));
+    }
+    let old = match target {
+        Some(location) => Backdrop::resolved(location),
+        None => Backdrop::app(),
+    };
+    let mut b = old.clone();
     // 横棒は 5% ずつ（GTK4 版と同じ）。
     let step = |v: f64| (v * 20.0).round() / 20.0;
     match event {
-        Event::Style(Some(i)) => {
-            let style = STYLES[i.min(STYLES.len() - 1)];
-            // 記録が `single` のままなら、サイドバーとツールバーを選び直しても変えない。
-            if b.style_index() != i {
-                b.style = style.to_owned();
-            }
-        }
+        Event::Style(Some(i)) => b.style = STYLES[i.min(STYLES.len() - 1)].to_owned(),
         Event::Style(None) => return Ok(()),
         Event::Transparency(v) => b.transparency = step(v / 100.0),
         Event::ChooseImage => {
@@ -296,13 +313,19 @@ pub fn apply(event: Event) -> Result<(), String> {
             }
         }
         Event::ToolbarOpacity(v) => b.toolbar_opacity = step(v / 100.0),
+        Event::Override(_) => {}
     }
-    if b == Backdrop::app() {
+    if b == old {
         return Ok(());
     }
-    b.set_app()?;
-    changed();
-    Ok(())
+    match target {
+        Some(location) => crate::repositories::set_backdrop(location, Some(b.to_json())),
+        None => {
+            b.set_app()?;
+            changed();
+            Ok(())
+        }
+    }
 }
 
 /// [`current`] の前の結果の形。

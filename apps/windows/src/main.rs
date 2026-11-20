@@ -83,6 +83,11 @@ pub struct Args {
     pub place: Option<[i32; 4]>,
     /// 開いたら Working Copy の画面を出す。
     pub working_copy: bool,
+    /// 開いたら、このファイルの File History を出す（File History のタブ）。
+    pub file_history: Option<String>,
+    /// マージエディタを別の窓に出した: このファイルを開き、`merge_text` があれば Result をその中身にする。
+    pub merge: Option<String>,
+    pub merge_text: Option<PathBuf>,
     /// 戻す窓のタブ（`--tabs`。`tabs::saved` の形）。
     pub tabs: Option<String>,
 }
@@ -108,6 +113,9 @@ fn parse() -> Result<Args, String> {
         repo_given: false,
         place: None,
         working_copy: false,
+        file_history: None,
+        merge: None,
+        merge_text: None,
         tabs: None,
     };
     let mut rows = measure::ROWS_PER_FRAME;
@@ -140,6 +148,9 @@ fn parse() -> Result<Args, String> {
             "--working-copy" => parsed.working_copy = true,
             // 起動したときに戻す窓のタブ（`tabs::saved` の形。1 つ目の窓が残りの窓を開くときに渡す）。
             "--tabs" => parsed.tabs = Some(value()?),
+            // マージエディタを別の窓に出す（そのファイルと、打ちかけの Result を書いたファイル）。
+            "--merge" => parsed.merge = Some(value()?),
+            "--merge-text" => parsed.merge_text = Some(value()?.into()),
             // 試し: Windows の設定を変えずに外観を決める。
             "--appearance" => match value()?.as_str() {
                 "dark" => palette::force(true),
