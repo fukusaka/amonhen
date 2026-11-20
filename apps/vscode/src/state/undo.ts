@@ -4,8 +4,8 @@
  * Undo するときは、今の状態が記録した「操作後」と一致することを確かめてから戻す。
  */
 import { createHash } from 'node:crypto';
-import { chmod, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { basename, dirname, join } from 'node:path';
 import { recordedElsewhere } from '../daemon/delegation.ts';
 import type { ConfigBackup, HeadState, RepositoryBackend } from '../git/backend.ts';
 
@@ -59,6 +59,9 @@ export class UndoConflictError extends Error {
 }
 
 const MAX_ENTRIES = 50;
+/** 記録が読めない・壊れているときに読み直す回数と間隔 */
+const LOAD_TRIES = 5;
+const LOAD_RETRY_MS = 20;
 
 export class UndoLog {
   private readonly backend: RepositoryBackend;
@@ -76,12 +79,12 @@ export class UndoLog {
 
   /** 次に Undo される操作 */
   async peek(): Promise<UndoEntry | undefined> {
-    return (await this.load()).at(-1);
+    return (await this.peekLog()).at(-1);
   }
 
   /** Undo できる操作（新しい順） */
   async list(): Promise<UndoEntry[]> {
-    return [...(await this.load())].reverse();
+    return [...(await this.peekLog())].reverse();
   }
 
   /**
@@ -223,7 +226,7 @@ export class UndoLog {
 
   /** 最後の操作を戻す。戻したものを返す */
   async undo(): Promise<UndoEntry | undefined> {
-    const entries = await this.load();
+    const entries = await this.load(true);
     const entry = entries.at(-1);
     if (!entry) {
       return undefined;
@@ -301,17 +304,56 @@ export class UndoLog {
     return { head, refs: Object.fromEntries(values) };
   }
 
+  /** 見せるための記録（名前・一覧）。読めない・壊れているときは空（Undo するときに load が理由を言う） */
+  private async peekLog(): Promise<UndoEntry[]> {
+    const read = await this.readLog(1);
+    return 'entries' in read ? read.entries : [];
+  }
+
   /**
-   * 記録を読む。毎回ファイルから読み直す（アプリ・CLI・共有の daemon も同じファイルに書くので、覚えておくと
-   * ほかが書いた記録を見落とし、次に保存したときに消してしまう）
+   * 書き換える前に読む記録。毎回ファイルから読み直す（アプリ・CLI・共有の daemon も同じファイルに書くので、
+   * 覚えておくとほかが書いた記録を見落とし、次に保存したときに消してしまう）。ない記録は空。読めないときは
+   * エラーにする（空として上書きすると、それまでの記録が消える）。壊れているときは `undo.json.broken-<時刻>` に
+   * 退けてから空で始め、Undo ではそう言う（コアと同じ）
    */
-  private async load(): Promise<UndoEntry[]> {
-    try {
-      this.entries = JSON.parse(await readFile(this.file, 'utf8')) as UndoEntry[];
-    } catch {
+  private async load(undoing = false): Promise<UndoEntry[]> {
+    const read = await this.readLog(LOAD_TRIES);
+    if ('entries' in read) {
+      this.entries = read.entries;
+    } else if ('broken' in read) {
+      const aside = `${this.file}.broken-${Date.now()}`;
+      await rename(this.file, aside);
+      if (undoing) {
+        throw new Error(`The Undo log was broken and has been set aside as amonhen/${basename(aside)}`);
+      }
       this.entries = [];
+    } else {
+      throw new Error(`Can’t read the Undo log: ${read.unreadable}`);
     }
     return this.entries;
+  }
+
+  /**
+   * 記録を読む。読めない・壊れているときは、tries 回まで少し待って読み直す（Windows でほかのプロセスが一時的に
+   * 掴んでいる、置き換えずに書く古い版が書いている途中、など）
+   */
+  private async readLog(tries: number): Promise<{ entries: UndoEntry[] } | { broken: true } | { unreadable: string }> {
+    for (let tried = 1; ; tried++) {
+      let failed: { broken: true } | { unreadable: string };
+      try {
+        const text = await readFile(this.file, 'utf8');
+        try {
+          return { entries: JSON.parse(text) as UndoEntry[] };
+        } catch {
+          failed = { broken: true };
+        }
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') return { entries: [] };
+        failed = { unreadable: err instanceof Error ? err.message : String(err) };
+      }
+      if (tried >= tries) return failed;
+      await new Promise((r) => setTimeout(r, LOAD_RETRY_MS));
+    }
   }
 
   private async loadPending(): Promise<Omit<UndoEntry, 'after'> | null> {
@@ -325,12 +367,38 @@ export class UndoLog {
 
   private async savePending(): Promise<void> {
     await mkdir(dirname(this.pendingFile), { recursive: true });
-    await writeFile(this.pendingFile, JSON.stringify(this.pending, null, 2));
+    await replaceFile(this.pendingFile, JSON.stringify(this.pending, null, 2));
   }
 
   private async save(): Promise<void> {
     await mkdir(dirname(this.file), { recursive: true });
-    await writeFile(this.file, JSON.stringify(this.entries ?? [], null, 2));
+    await replaceFile(this.file, JSON.stringify(this.entries ?? [], null, 2));
+  }
+}
+
+let nextTemp = 0;
+
+/**
+ * 同じディレクトリの一時ファイルに書いてから置き換える。読む側（コア・ほかの窓）は前か後の中身だけを見る。
+ * Windows では、ほかのプロセス（ウイルス対策など）が開いていると置き換えが一時的に断られるので、少しやり直す
+ */
+export async function replaceFile(path: string, data: string): Promise<void> {
+  const tmp = join(dirname(path), `.${basename(path)}.${process.pid}-${nextTemp++}.tmp`);
+  try {
+    await writeFile(tmp, data);
+    for (let tried = 1; ; tried++) {
+      try {
+        await rename(tmp, path);
+        return;
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (tried >= 20 || (code !== 'EPERM' && code !== 'EACCES' && code !== 'EBUSY')) throw err;
+        await new Promise((r) => setTimeout(r, 10));
+      }
+    }
+  } catch (err) {
+    await rm(tmp, { force: true });
+    throw err;
   }
 }
 

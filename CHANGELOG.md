@@ -1212,6 +1212,8 @@ First release.
   being read.
 - Working Copy: in a narrow diff pane, the buttons above the diff move to their own row instead of wrapping their
   labels and hiding the file name.
+- Undo no longer says "Nothing to Undo" and loses the log when the log is being written or can't be read for a moment
+  (it is shared with the engine); a broken log is set aside as `undo.json.broken-<time>`.
 
 ### [0.2.8] - 2026-11-18
 
