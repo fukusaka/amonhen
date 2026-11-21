@@ -489,6 +489,8 @@ pub struct App {
     typing_query: Option<String>,
     /// サイドバーの絞り込みの語を打っている（サイドバーで `/`）。
     typing_filter: Option<String>,
+    /// 絞り込みの語は Working Copy の一覧のもの（でなければサイドバーのもの）。
+    filtering_changes: bool,
     /// キーの一覧を出している（`?`）。
     help: bool,
     /// キーの一覧の、一番上に見えている行（収まらないときに動かす）。
@@ -591,6 +593,7 @@ impl App {
             notice: None,
             typing_query: None,
             typing_filter: None,
+            filtering_changes: false,
             help: false,
             help_top: 0,
             palette: None,
@@ -1485,19 +1488,26 @@ impl App {
         // 絞り込みの語は、打つたびに効く。Enter で確定、Esc で絞り込みをやめる。
         if let Some(filter) = &mut self.typing_filter {
             self.dirty = true;
+            let changes = self.filtering_changes;
+            let mut apply = |filter: &str| match changes {
+                true => self.changes.set_filter(filter),
+                false => self.sidebar.set_filter(filter),
+            };
             match key.code {
                 KeyCode::Enter => self.typing_filter = None,
                 KeyCode::Esc => {
+                    apply("");
                     self.typing_filter = None;
-                    self.sidebar.set_filter("");
                 }
                 KeyCode::Backspace => {
                     filter.pop();
-                    self.sidebar.set_filter(filter);
+                    let filter = filter.clone();
+                    apply(&filter);
                 }
                 KeyCode::Char(ch) if !control => {
                     filter.push(ch);
-                    self.sidebar.set_filter(filter);
+                    let filter = filter.clone();
+                    apply(&filter);
                 }
                 _ => {}
             }
@@ -3650,6 +3660,7 @@ impl App {
             }
             KeyCode::Char('/') => {
                 self.typing_filter = Some(self.sidebar.filter().to_owned());
+                self.filtering_changes = false;
                 true
             }
             KeyCode::Char('c') => self.checkout_picked(),
@@ -3811,6 +3822,11 @@ impl App {
                         "Fixup or Squash Commit For: a recent commit's subject as fixup! or squash!"
                     ),
                 ),
+                (
+                    "v",
+                    tr!("List paths, a folder tree (Enter folds) or file names first"),
+                ),
+                ("/", tr!("Filter the list by path")),
                 ("R", tr!("Use a recent commit's message")),
                 (
                     "i",
@@ -4218,8 +4234,33 @@ impl App {
                 });
                 self.confirm.is_some()
             }
+            // 木のフォルダでは、Enter で畳む・開く。ファイルなら差分へ。
             KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right => {
-                self.focus = Focus::Side;
+                if !self.changes.toggle_folder() {
+                    self.focus = Focus::Side;
+                }
+                true
+            }
+            // 一覧の形: パス → 木 → ファイル名（アプリの List・Tree・File Name）。この TUI の間だけ。
+            KeyCode::Char('v') => {
+                self.changes.next_mode();
+                self.notice = Some(match self.changes.mode() {
+                    crate::changes::ListMode::Path => tr!("Listing paths"),
+                    crate::changes::ListMode::Tree => {
+                        tr!("Listing as a tree (Enter folds a folder)")
+                    }
+                    crate::changes::ListMode::Name => tr!("Listing file names first"),
+                });
+                true
+            }
+            // パスで絞り込む（打つたびに効く）。
+            KeyCode::Char('/') => {
+                self.typing_filter = Some(self.changes.filter().to_owned());
+                self.filtering_changes = true;
+                true
+            }
+            KeyCode::Esc if !self.changes.filter().is_empty() => {
+                self.changes.set_filter("");
                 true
             }
             _ => false,

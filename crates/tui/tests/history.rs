@@ -607,6 +607,60 @@ fn i_adds_an_untracked_file_to_gitignore() {
     );
 }
 
+/// Working Copy の `v`: パス → 木（フォルダの行で中をまとめて stage、Enter で畳む）→ ファイル名。`/` でパスを絞る
+#[test]
+fn the_working_copy_lists_a_tree_or_names_and_filters() {
+    let dir = tempfile::tempdir().unwrap();
+    git(dir.path(), BASE, &["init", "-q", "-b", "main"]);
+    commit(dir.path(), BASE, "Start");
+    for path in ["src/a.rs", "src/b.rs", "docs/guide.md", "top.txt"] {
+        let file = dir.path().join(path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, "x\n").unwrap();
+    }
+    let front = || {
+        amonhen_model::testing::isolate_from_user_settings();
+        open(dir.path())
+    };
+    let list = |keys: &str| -> Vec<String> {
+        let text = amonhen_tui::snapshot(front(), 100, 16, clock(), keys).unwrap();
+        println!("{text}");
+        (text.lines().skip(1).take(7))
+            .filter_map(|l| column(l, 1))
+            .map(|l| l.trim_end().to_owned())
+            .collect()
+    };
+    assert_eq!(
+        list("1v")[..6],
+        [
+            "[ ]   ▾ docs/",
+            "[ ] ?   guide.md",
+            "[ ]   ▾ src/",
+            "[ ] ?   a.rs",
+            "[ ] ?   b.rs",
+            "[ ] ? top.txt"
+        ]
+    );
+    // 選んでいたファイル（guide.md）は木でも選んだまま。1 つ下の src/ で Space: 中のすべてを stage。Enter で畳む。
+    let staged = list("1vj \n");
+    assert_eq!(staged[2..4], ["[x]   ▸ src/", "[ ] ? top.txt"]);
+    assert_eq!(
+        git_out(dir.path(), &["diff", "--cached", "--name-only"]),
+        "src/a.rs\nsrc/b.rs\n"
+    );
+    // ファイル名を先に、フォルダは後ろに。
+    let names = list("1vv");
+    assert!(
+        names
+            .iter()
+            .any(|l| l.starts_with("[x] A a.rs") && l.ends_with("src")),
+        "{names:?}"
+    );
+    // パスで絞る。
+    let filtered = list("1/src\n");
+    assert_eq!(filtered[..3], ["[x] A src/a.rs", "[x] A src/b.rs", ""]);
+}
+
 /// サイドバー: Workspace の行と、Branches・Tags。ref を開くと、History でそのコミットを選ぶ
 #[test]
 fn sidebar_lists_refs_and_jumps_to_them() {
