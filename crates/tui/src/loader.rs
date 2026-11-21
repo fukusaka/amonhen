@@ -79,6 +79,8 @@ pub enum Request {
     /// History の編集モードの行: `from`（16 進）から HEAD までの、編集できるコミットとそのメッセージ（新しい順。
     /// merge を越えて first-parent で辿る）。答えは `editRows` の `rows`（oid・merge・message）。
     EditRows { from: String },
+    /// 作業ツリーの直下の .gitignore の終わりに `pattern` を足す（もうあれば足さない。アプリの Add to .gitignore）。
+    AddToGitignore { pattern: String },
     /// 今のブランチの最近のコミット（first-parent で 30 まで）のメッセージ（`recentMessages`）。
     RecentMessages,
     /// コミットを作る（`amend` なら、直前のコミットを作り直す）。
@@ -179,7 +181,8 @@ impl Loader {
             Request::Run { .. }
             | Request::Call { .. }
             | Request::EditRows { .. }
-            | Request::RecentMessages => &self.operations,
+            | Request::RecentMessages
+            | Request::AddToGitignore { .. } => &self.operations,
             Request::Commit { .. } | Request::Syntax { .. } => &self.details,
             Request::Status
             | Request::Reflog { .. }
@@ -417,6 +420,10 @@ fn load(front: &dyn Front, request: Request, events: &Sender<Event>) -> Result<L
                 command => run(front, command).map_err(|e| e.to_string()),
             },
         },
+        Request::AddToGitignore { pattern } => Loaded::Ran {
+            name: "addToGitignore",
+            result: add_to_gitignore(front, &pattern).map_err(|e| e.to_string()),
+        },
         Request::RecentMessages => Loaded::Ran {
             name: "recentMessages",
             result: recent_messages(front).map_err(|e| e.to_string()),
@@ -453,6 +460,26 @@ fn run(front: &dyn Front, command: Value) -> Result<Value> {
             .into());
     }
     Ok(reply)
+}
+
+/// `Request::AddToGitignore` の中身。読み書きはコアがするので、SSH 先でも同じ。`added` は足したか。
+fn add_to_gitignore(front: &dyn Front, pattern: &str) -> Result<Value> {
+    let files = run(front, json!({"op": "ignoreFiles"}))?;
+    let files = &files["info"];
+    let mut gitignore = files["gitignore"].as_str().unwrap_or("").to_owned();
+    if gitignore.lines().any(|l| l.trim() == pattern) {
+        return Ok(json!({"added": false}));
+    }
+    if !gitignore.is_empty() && !gitignore.ends_with('\n') {
+        gitignore.push('\n');
+    }
+    gitignore.push_str(pattern);
+    gitignore.push('\n');
+    run(
+        front,
+        json!({"op": "saveIgnoreFiles", "gitignore": gitignore, "exclude": files["exclude"]}),
+    )?;
+    Ok(json!({"added": true}))
 }
 
 /// `Request::RecentMessages` の中身: HEAD から first-parent をたどった 30 のコミットのメッセージと作者（新しい順。

@@ -646,6 +646,13 @@ impl Changes {
         self.selected_entry().map(|e| e.path.as_str())
     }
 
+    /// 選んでいるファイルが untracked なら、そのパス。
+    pub fn untracked_path(&self) -> Option<&str> {
+        self.selected_entry()
+            .filter(|e| e.letter == '?')
+            .map(|e| e.path.as_str())
+    }
+
     /// 選んでいるファイルがコンフリクトしていれば、そのパス。
     pub fn conflicted_path(&self) -> Option<&str> {
         self.selected_entry()

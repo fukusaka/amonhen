@@ -239,7 +239,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Unstaged / Staged switch for files that can't be overlaid | ✓ | ✓ | ✓ | n/a | ✓ | △ | VSCode: Always shown separately.<br>CLI: `diff --staged`.<br>TUI: One side is shown (the unstaged changes when there are some), with no switch. |
 | Diff options (unified/split, whitespace, context, wrap) | — | — | — | — | n/a | — |  |
 | Discard lines, hunks and files (undoable) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `discard --rows`.<br>Windows: Right-click a line or a hunk header in the Working Copy diff (Discard Lines); lines can't be selected |
-| Add to .gitignore | ✓ | ✓ | ✓ | ✓ | n/a | — |  |
+| Add to .gitignore | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: `i` on an untracked file, then `p` for its path or `e` for its extension. |
 | Conflicted files open the merge editor | ✓ | ✓ | ✓ | ✓ | n/a | n/a | macOS, GTK4: A file that isn't UTF-8 doesn't open in it; take one side.<br>VSCode: Opens VSCode's merge editor.<br>Windows: Selecting the file opens the merge editor over the page (not embedded)<br>TUI: The file's diff shows the markers, and `o` `t` `b` `a` resolve the conflict under the line. |
 | Note above the list when only some folders are checked out | ✓ | ✓ | ✓ | ✓ | △ | — | CLI: `status` notes a sparse checkout. |
 

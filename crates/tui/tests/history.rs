@@ -572,6 +572,41 @@ fn fixup_and_squash_commit_for_a_recent_commit() {
     );
 }
 
+/// untracked のファイルで `i`: そのパスか拡張子のパターンを .gitignore に足す（もうあれば足さない）
+#[test]
+fn i_adds_an_untracked_file_to_gitignore() {
+    let dir = tempfile::tempdir().unwrap();
+    git(dir.path(), BASE, &["init", "-q", "-b", "main"]);
+    commit(dir.path(), BASE, "Start");
+    std::fs::write(dir.path().join("notes.log"), "x\n").unwrap();
+    let front = || {
+        amonhen_model::testing::isolate_from_user_settings();
+        open(dir.path())
+    };
+    let asked = amonhen_tui::snapshot(front(), 100, 14, clock(), "1i").unwrap();
+    println!("{asked}");
+    assert!(asked.contains("Add to .gitignore:"), "{asked}");
+    assert!(asked.contains("*.log"), "{asked}");
+    let done = amonhen_tui::snapshot(front(), 100, 14, clock(), "1ie").unwrap();
+    println!("{done}");
+    assert!(done.contains("Added to .gitignore"), "{done}");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join(".gitignore")).unwrap(),
+        "*.log\n"
+    );
+    // .gitignore だけが残る（notes.log は無視される）。`p` でそのパス。
+    std::fs::write(dir.path().join("todo.txt"), "x\n").unwrap();
+    let keys = "1jip";
+    let listed = amonhen_tui::snapshot(front(), 100, 14, clock(), "1").unwrap();
+    println!("{listed}");
+    let done = amonhen_tui::snapshot(front(), 100, 14, clock(), keys).unwrap();
+    println!("{done}");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join(".gitignore")).unwrap(),
+        "*.log\ntodo.txt\n"
+    );
+}
+
 /// サイドバー: Workspace の行と、Branches・Tags。ref を開くと、History でそのコミットを選ぶ
 #[test]
 fn sidebar_lists_refs_and_jumps_to_them() {

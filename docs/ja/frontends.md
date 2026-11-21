@@ -239,7 +239,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 重ねられないファイルの Unstaged / Staged の切り替え | ✓ | ✓ | ✓ | n/a | ✓ | △ | VSCode: いつも別々に出す。<br>CLI: `diff --staged`。<br>TUI: 片方だけを出す（stage していない変更があればそちら）。切り替えはない。 |
 | 差分の表示の選択（unified/split・空白・前後の行・折り返し） | — | — | — | — | n/a | — |  |
 | 行・hunk・ファイルを捨てる（Undo できる） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `discard --rows`。<br>Windows: Working Copy の差分で行か hunk の見出しを右クリック（Discard Lines）。行を選ぶことはできない |
-| Add to .gitignore | ✓ | ✓ | ✓ | ✓ | n/a | — |  |
+| Add to .gitignore | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: untracked のファイルで `i`、続けて `p` でそのパス、`e` で拡張子。 |
 | コンフリクトのファイルからマージエディターを開く | ✓ | ✓ | ✓ | ✓ | n/a | n/a | macOS, GTK4: UTF-8 でないファイルは開かない。片側を選ぶ。<br>VSCode: VSCode のマージエディターを開く。<br>Windows: ファイルを選ぶと、マージエディタを画面に重ねて開く（埋め込まない）<br>TUI: ファイルの差分にマーカーを出し、`o` `t` `b` `a` で選んでいる行のコンフリクトを解く。 |
 | 一部のフォルダだけを取り出しているとき、一覧の上に知らせる | ✓ | ✓ | ✓ | ✓ | △ | — | CLI: `status` が sparse checkout を添える。 |
 
