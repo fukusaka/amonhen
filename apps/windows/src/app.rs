@@ -210,6 +210,8 @@ struct Root {
     github_loaded_at: Option<std::time::Instant>,
     github_loading: bool,
     github_avatars_loaded: bool,
+    /// Create Pull Request… で先に送っているブランチ（送り終えて ref を読んだら、プルリクエストのダイアログを出す）。
+    pr_after_push: Option<String>,
     /// タグのリモートでの様子（コアの `tagRemotes` の info。リモートと読んだ時刻、タグごとの same・different・
     /// missing）。
     tag_remotes: Value,
@@ -745,6 +747,18 @@ enum Dialog {
         close: String,
         action: GitHubAction,
     },
+    /// Repository > Create Pull Request…（GTK4 版の `create_pull_request_in`）。題と本文はブランチの先頭の
+    /// コミットのメッセージから、base は既定のブランチから。`dir` は gh を動かす作業ツリー（SSH 先なら None）。
+    CreatePullRequest {
+        dir: Option<std::path::PathBuf>,
+        slug: String,
+        head: String,
+        branch: String,
+        title: String,
+        base: String,
+        body: String,
+        draft: bool,
+    },
     /// 確かめてから命令を実行する（Cherry-pick・Revert など。GTK4 版の `sheets::pick` ほか）。
     Confirm {
         repo: Arc<Repository>,
@@ -823,6 +837,11 @@ enum Message {
     Refs(Arc<RefsSnapshot>, Arc<Repository>),
     /// GitHub から読んだ（どのリポジトリのものか）。
     GitHub(String, Box<crate::github::Loaded>),
+    /// Create Pull Request… のダイアログの欄（0 は題、1 は base、2 は本文）と Draft。
+    PullRequestField(usize, String),
+    PullRequestDraft(bool),
+    /// ダイアログを出す（裏で用意したもの。閉じた同じ更新では開けないので、知らせで開く）。
+    OpenDialog(Box<Dialog>),
     Groups(Option<BranchGroups>),
     Commit(Value, Option<Value>),
     /// サイドバーの項目を選んだ（項目のキー）。
@@ -1303,6 +1322,7 @@ impl Component for Root {
             github_loaded_at: None,
             github_loading: false,
             github_avatars_loaded: false,
+            pr_after_push: None,
             info: None,
             error: None,
             asks: Vec::new(),
@@ -1530,6 +1550,13 @@ impl Root {
                     self.refs.as_ref().and_then(|r| r.refs.head_branch.clone()),
                 ) {
                     crate::branchswitcher::remember(&workdir.display().to_string(), &head);
+                }
+                // Create Pull Request…: 先に送ったブランチが送れていたら、プルリクエストのダイアログへ。
+                if let Some(branch) = self.pr_after_push.clone()
+                    && self.pushed_for_pull_request(&branch)
+                {
+                    self.pr_after_push = None;
+                    self.create_pull_request(branch, true, context);
                 }
                 // Commit and Push: コミットした後の ref で push する。
                 if std::mem::take(&mut self.push_after_commit) {
@@ -2070,6 +2097,27 @@ impl Root {
                 }
                 _ => {}
             },
+            // Repository > Open on GitHub: 今のブランチのページを開く（GTK4 版の `open_on_github`）。
+            Message::Command(id) if id == "open-on-github" => match &self.github.github {
+                Some((_, github)) => {
+                    let mut url = github.web_url();
+                    if let Some(head) = self
+                        .refs
+                        .as_ref()
+                        .and_then(|r| r.refs.head_branch.as_deref())
+                    {
+                        url.push_str(&crate::github::tree_path(head));
+                    }
+                    crate::files::open_url(&url);
+                }
+                None => beep(),
+            },
+            Message::Command(id) if id == "create-pull-request" => {
+                match self.head_entry().map(|e| e.name.clone()) {
+                    Some(branch) => self.create_pull_request(branch, false, context),
+                    None => beep(),
+                }
+            }
             Message::Command(id) if id == "push" => {
                 self.push(false);
                 self.load_sync_lists(context);
@@ -3199,6 +3247,18 @@ impl Root {
                     *always = on;
                 }
             }
+            // Create Pull Request… の前の Push・Publish をやめたら、プルリクエストも作らない。
+            Message::DialogClosed(result)
+                if result != ContentDialogResult::Primary
+                    && self.pr_after_push.is_some()
+                    && matches!(
+                        self.dialog,
+                        Some(Dialog::Push { .. } | Dialog::Publish { .. })
+                    ) =>
+            {
+                self.pr_after_push = None;
+                self.update(Message::DialogClosed(result), context);
+            }
             Message::DialogClosed(result) => match (self.dialog.take(), result) {
                 (Some(Dialog::PathPicker(picker)), result) => {
                     let chosen = (result == ContentDialogResult::Primary)
@@ -3309,6 +3369,50 @@ impl Root {
                 }
                 (Some(Dialog::GitHub { action, .. }), ContentDialogResult::Primary) => {
                     self.github_action(action, context);
+                }
+                (
+                    Some(Dialog::CreatePullRequest {
+                        dir,
+                        slug,
+                        head,
+                        title,
+                        base,
+                        body,
+                        draft,
+                        ..
+                    }),
+                    ContentDialogResult::Primary,
+                ) => {
+                    let (title, base) = (title.trim().to_owned(), base.trim().to_owned());
+                    if title.is_empty() || base.is_empty() {
+                        return;
+                    }
+                    self.busy = Some(tr!("Create Pull Request"));
+                    context.spawn_background(move |_| {
+                        let mut args = vec![
+                            "pr", "create", "-R", &slug, "--head", &head, "--title", &title,
+                            "--body", &body, "--base", &base,
+                        ];
+                        if draft {
+                            args.push("--draft");
+                        }
+                        let dialog = match crate::github::gh(&args, dir.as_deref()) {
+                            // 済んだことの知らせなので、閉じるボタンは Close（macOS 版と同じ）。
+                            Ok(url) => Dialog::GitHub {
+                                title: tr!("Pull Request Created"),
+                                message: url.clone(),
+                                button: tr!("Open in Browser"),
+                                close: tr!("Close"),
+                                action: GitHubAction::OpenUrl(url),
+                            },
+                            // gh の文を見出しにして知らせる（macOS 版の NSAlert(error:)）。
+                            Err(e) => Dialog::Failed {
+                                title: e,
+                                message: String::new(),
+                            },
+                        };
+                        Message::OpenDialog(Box::new(dialog))
+                    });
                 }
                 (
                     Some(Dialog::Confirm {
@@ -5311,7 +5415,23 @@ impl Root {
                 }
             }
             Message::ConfirmWithDrawing(dialog) => self.dialog = Some(*dialog),
+            Message::OpenDialog(dialog) => self.dialog = Some(*dialog),
+            Message::PullRequestField(index, text) => {
+                if let Some(Dialog::CreatePullRequest {
+                    title, base, body, ..
+                }) = &mut self.dialog
+                {
+                    *[title, base, body][index.min(2)] = text;
+                }
+            }
+            Message::PullRequestDraft(on) => {
+                if let Some(Dialog::CreatePullRequest { draft, .. }) = &mut self.dialog {
+                    *draft = on;
+                }
+            }
             Message::OperationFailed(repo, failure) => {
+                // 送れなかったら、プルリクエストは作らない。
+                self.pr_after_push = None;
                 self.update(Message::Performed(None), context);
                 // いくつもを 1 つのコミットにまとめるのを git が断ったら（何も変わっていない）、失敗は知らせずに、
                 // 1 つずつ merge するかを尋ねる（GTK4 版の `mergeseveral::merge`）。
@@ -8835,6 +8955,71 @@ impl Root {
                         .text(message.clone())
                         .text_wrapping(TextWrapping::Wrap),
                 ),
+            Some(Dialog::CreatePullRequest {
+                branch,
+                title,
+                base,
+                body,
+                draft,
+                ..
+            }) => {
+                let field = |label: String, view: View| {
+                    StackPanel::new()
+                        .spacing(2.0)
+                        .children((TextBlock::new().text(label).opacity(0.7), view))
+                };
+                dialog
+                    .is_open(true)
+                    .title(tr!("Create Pull Request"))
+                    .primary_button_text(tr!("Create"))
+                    .close_button_text(tr!("Cancel"))
+                    // 題と base が空の間は押せない（macOS 版と同じ）。
+                    .is_primary_button_enabled(!title.trim().is_empty() && !base.trim().is_empty())
+                    .content(
+                        StackPanel::new().spacing(8.0).min_width(460.0).children((
+                            TextBlock::new()
+                                .text(tr!("From {branch}", branch = branch.clone()))
+                                .opacity(0.7),
+                            field(
+                                tr!("Title"),
+                                TextBox::new()
+                                    .element_ref(&self.dialog_input)
+                                    .text(title.clone())
+                                    .placeholder_text(tr!("Title"))
+                                    .on_text_changed(
+                                        context.callback(|t| Message::PullRequestField(0, t)),
+                                    )
+                                    .into(),
+                            ),
+                            field(
+                                "base".to_owned(),
+                                TextBox::new()
+                                    .text(base.clone())
+                                    .placeholder_text("main")
+                                    .on_text_changed(
+                                        context.callback(|t| Message::PullRequestField(1, t)),
+                                    )
+                                    .into(),
+                            ),
+                            field(
+                                tr!("Body"),
+                                TextBox::new()
+                                    .accepts_return(true)
+                                    .text_wrapping(TextWrapping::Wrap)
+                                    .height(160.0)
+                                    .text(body.clone())
+                                    .on_text_changed(
+                                        context.callback(|t| Message::PullRequestField(2, t)),
+                                    )
+                                    .into(),
+                            ),
+                            CheckBox::new()
+                                .is_checked(*draft)
+                                .on_is_checked_changed(context.callback(Message::PullRequestDraft))
+                                .content(TextBlock::new().text(tr!("Create as Draft"))),
+                        )),
+                    )
+            }
             Some(Dialog::GitHub {
                 title,
                 message,
@@ -13309,6 +13494,113 @@ impl Root {
         }
     }
 
+    /// Create Pull Request… のために送ってあるか: fork なら fork（GitHub のリモート）の同じ名前のブランチが手元と
+    /// 同じコミット、でなければ上流があって先に進んだコミットがない（GTK4 版と同じ）。
+    fn pushed_for_pull_request(&self, branch: &str) -> bool {
+        use amonhen_model::RefKind;
+        let Some(refs) = self.refs.as_ref() else {
+            return false;
+        };
+        let entries = &refs.refs.entries;
+        let Some(item) = entries
+            .iter()
+            .find(|e| e.kind == RefKind::Local && e.name == branch)
+        else {
+            return false;
+        };
+        let fork = self.github.target.as_ref().is_some_and(|t| t.is_fork());
+        match (&self.github.github, fork) {
+            (Some((remote, _)), true) => {
+                let there = format!("{remote}/{branch}");
+                entries.iter().any(|e| {
+                    e.kind == RefKind::Remote && e.name == there && e.target == item.target
+                })
+            }
+            _ => item.detail.is_some() && !item.gone && item.ahead == 0,
+        }
+    }
+
+    /// Repository > Create Pull Request…（GTK4 版の `create_pull_request`）: `branch` からプルリクエストを作る。
+    /// まだ送っていなければ、まず Push（上流がなければ Publish）のダイアログを出し、送り終えたらそのまま作る。
+    /// origin が fork なら元のリポジトリへ出す（そのときは既定のブランチからも出せる）。
+    fn create_pull_request(
+        &mut self,
+        branch: String,
+        pushed: bool,
+        context: &ComponentContext<Self>,
+    ) {
+        let (Some(repo), Some(target)) = (self.repo.clone(), self.github.target.clone()) else {
+            return beep();
+        };
+        if !crate::github::available() {
+            return beep();
+        }
+        let local_base = self.groups.as_ref().and_then(|g| g.local_base());
+        if !target.is_fork() && local_base == Some(branch.as_str()) {
+            return beep();
+        }
+        if !pushed && !self.pushed_for_pull_request(&branch) {
+            let entry = self.refs.as_ref().and_then(|r| {
+                r.refs
+                    .entries
+                    .iter()
+                    .find(|e| e.kind == amonhen_model::RefKind::Local && e.name == branch)
+                    .cloned()
+            });
+            let Some(entry) = entry else {
+                return beep();
+            };
+            self.pr_after_push = Some(branch);
+            self.push_branch(entry, false);
+            // 送るものがなく、ダイアログも出なかった。
+            if !matches!(
+                self.dialog,
+                Some(Dialog::Push { .. } | Dialog::Publish { .. })
+            ) {
+                self.pr_after_push = None;
+            }
+            return;
+        }
+        let tip = self
+            .refs
+            .as_ref()
+            .and_then(|r| {
+                r.refs
+                    .entries
+                    .iter()
+                    .find(|e| e.kind == amonhen_model::RefKind::Local && e.name == branch)
+                    .and_then(|e| e.target)
+            })
+            .map_or_else(|| "HEAD".to_owned(), |t| t.to_string());
+        // SSH 先のパスは手元にないので、そこでは gh を起動しない（送り先は -R と --head で決まる）。
+        let dir = repo
+            .connection_state()
+            .is_none()
+            .then(|| repo.paths().workdir)
+            .flatten();
+        context.spawn_background(move |_| {
+            // 題と本文は、ブランチの先頭のコミットのメッセージから。
+            let reply: Value = serde_json::from_str(
+                &repo.run_json(&json!({ "op": "commitMessage", "oid": tip }).to_string()),
+            )
+            .unwrap_or_default();
+            let message = reply["text"].as_str().unwrap_or_default().trim().to_owned();
+            let (title, body) = message.split_once('\n').unwrap_or((&message, ""));
+            let base =
+                crate::github::default_branch(&target.repo).unwrap_or_else(|| "main".to_owned());
+            Message::OpenDialog(Box::new(Dialog::CreatePullRequest {
+                dir,
+                slug: target.repo.slug(),
+                head: target.head(&branch),
+                branch,
+                title: title.to_owned(),
+                base,
+                body: body.trim().to_owned(),
+                draft: false,
+            }))
+        });
+    }
+
     /// マージされたプルリクエスト（`branchGroups`・`branchCleanup` の `pullRequests` の形。読んでいなければ空）。
     fn merged_pull_requests(&self) -> Value {
         Value::Array(self.github.merged.clone().unwrap_or_default())
@@ -15872,7 +16164,6 @@ enum GitHubAction {
         number: u64,
         slug: String,
     },
-    #[allow(dead_code)] // Open on GitHub・Create Pull Request… で使う（続くコミット）。
     OpenUrl(String),
 }
 

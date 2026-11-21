@@ -112,6 +112,12 @@ pub struct BranchGroups {
 }
 
 impl BranchGroups {
+    /// 既定のブランチの、手元のブランチの名前（`origin/main` なら `main`）。
+    pub fn local_base(&self) -> Option<&str> {
+        let base = self.base.as_deref()?;
+        Some(base.split_once('/').map_or(base, |(_, b)| b))
+    }
+
     /// `run_json` の答え（`{"info": {...}}`）から。
     pub fn from_reply(reply: &Value) -> Option<Self> {
         let info = &reply["info"];

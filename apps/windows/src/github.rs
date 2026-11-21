@@ -62,7 +62,6 @@ impl GitHubRepository {
         }
     }
 
-    #[allow(dead_code)] // Open on GitHub・Create Pull Request… で使う（続くコミット）。
     pub fn web_url(&self) -> String {
         format!("https://{}/{}/{}", self.host, self.owner, self.name)
     }
@@ -194,12 +193,10 @@ pub struct PullRequestTarget {
 
 impl PullRequestTarget {
     /// fork から元のリポジトリへ出す。既定のブランチ（fork の main など）からも出せる。
-    #[allow(dead_code)] // CI の吹き出し・#123 の候補で使う（続くコミット）。
     pub fn is_fork(&self) -> bool {
         self.fork_owner.is_some()
     }
 
-    #[allow(dead_code)] // Open on GitHub・Create Pull Request… で使う（続くコミット）。
     /// `gh pr create --head` に渡す形。
     pub fn head(&self, branch: &str) -> String {
         match &self.fork_owner {
@@ -311,7 +308,6 @@ pub fn pull_request_target(origin: &GitHubRepository) -> PullRequestTarget {
     }
 }
 
-#[allow(dead_code)] // Open on GitHub・Create Pull Request… で使う（続くコミット）。
 /// ブランチのページの URL の後ろ。`#` や `?` を URL の区切りにしない（`/` はそのまま。macOS 版と同じ）。
 pub fn tree_path(branch: &str) -> String {
     let mut out = String::from("/tree/");
