@@ -559,6 +559,19 @@ impl App {
     }
 
     /// マウスの取り込みを替えたなら、その値（聞いたら、なかったことにする）。
+    /// 始めるときのマウスの取り込み（`settings.json` の `tui.mouse`。決めていなければ取り込む）。読めなければ、取り込んだ
+    /// まま理由を出す。
+    pub fn apply_mouse_setting(&mut self, setting: std::result::Result<Option<bool>, String>) {
+        match setting {
+            Ok(Some(false)) => {
+                self.mouse = false;
+                self.mouse_changed = true;
+            }
+            Ok(_) => {}
+            Err(reason) => self.error = Some(reason),
+        }
+    }
+
     pub fn take_mouse_change(&mut self) -> Option<bool> {
         std::mem::take(&mut self.mouse_changed).then_some(self.mouse)
     }
@@ -4752,6 +4765,22 @@ mod tests {
             std::fs::canonicalize(&path).unwrap()
         );
         assert!(app.quit());
+    }
+
+    /// settings.json の `tui.mouse` が false なら、マウスを取り込まずに始める。読めなければ取り込んだまま理由を出す。
+    #[test]
+    fn the_mouse_setting_applies_at_start() {
+        let (_dir, mut app, _rx) = app_with_history();
+        app.apply_mouse_setting(Ok(None));
+        assert_eq!(app.take_mouse_change(), None);
+        assert!(app.mouse_captured());
+        app.apply_mouse_setting(Ok(Some(false)));
+        assert_eq!(app.take_mouse_change(), Some(false));
+        assert!(!app.mouse_captured());
+        let (_dir, mut app, _rx) = app_with_history();
+        app.apply_mouse_setting(Err("Amon Hen’s settings can’t be read".into()));
+        assert_eq!(app.take_mouse_change(), None);
+        assert!(bottom_line(&mut app).contains("settings can’t be read"));
     }
 
     /// Working Copy の `e`: 選んでいるファイルを、作業ツリーの絶対パスでエディタに渡す。`ssh://` の先なら断る。
