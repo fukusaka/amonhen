@@ -99,7 +99,7 @@ fn run_with(
             let _ = tx.send(Event::Changed(bits));
         }
     }));
-    let mut app = App::new(front, tx, Clock { now: now(), local });
+    let mut app = App::new(front.clone(), tx, Clock { now: now(), local });
     app.set_files_here(files_here);
     // マウスを取り込まずに始めるか（この機械の settings.json。`M` での切り替えは書き戻さない）。
     app.apply_mouse_setting(amonhen_model::settings::tui_mouse());
@@ -161,6 +161,11 @@ fn run_with(
             app.resize(cols, rows);
             app.file_opened(opened);
         }
+    }
+    // 書きかけのメッセージは、終わる前にその場で書く（裏の仕事は待たない）。
+    if let Some(text) = app.take_unsaved_draft() {
+        let command = serde_json::json!({"op": "saveCommitDraft", "text": text});
+        let _ = front.call(serde_json::json!({"op": "run", "command": command}));
     }
     Ok(app.take_next())
 }
