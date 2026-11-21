@@ -1251,7 +1251,11 @@
 "Monospaced Commit Message" = "コミットメッセージを等幅で表示";
 "Newest first wherever the graph allows (like git log --date-order)" = "グラフが許す限り新しいものから（git log --date-order と同じ）";
 "Keep a branch’s commits together under the merge that brought them in (like git log --topo-order)" = "枝のコミットを散らさず、取り込んだ merge の下にまとめる（git log --topo-order と同じ）";
-"In History, hide the commits brought in by a merge and show their count on the merge row (right-click to expand)" = "History で、merge で取り込んだ側のコミットを隠し、merge の行に数を出す（右クリックで開く）";
+"Fold All Merged Commits" = "取り込んだコミットをすべてたたむ";
+"Hide the commits every merge brought in; each merge shows their count (click it to expand)" = "merge ごとに取り込んだコミットを隠し、点の横に数を出す（押すと開く）";
+"Show All Merged Commits" = "取り込んだコミットをすべて表示";
+"Show the commits every merge brought in" = "merge ごとに取り込んだコミットを表示する";
+"Every commit this merge brought in is shown on another branch." = "この merge が取り込んだコミットは、どれもほかのブランチに出ています。";
 "Draw only the selected commit’s ancestors and the lines between them in full color, and dim the rest" = "選んだコミットの祖先と、それをつなぐ線だけを濃く描き、ほかを薄くする";
 "Show commit messages in a monospaced font (keeps bodies wrapped at 72 columns aligned)" = "コミットの本文を等幅の字体で出す（72 桁で改行した本文が崩れない）";
 "Show Gravatar avatars in commit details (sends a hash of the email address to gravatar.com)" = "コミットの詳細に Gravatar のアバターを出す（メールアドレスのハッシュを gravatar.com に送る）";

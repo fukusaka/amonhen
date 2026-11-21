@@ -186,6 +186,11 @@ pub struct State {
     label_layouts: HashMap<String, pango::Layout>,
     /// 見えている行の、名前を全部は出していない札（中央を切った札・「+N」）の横の範囲。押すと名前の一覧を出す。
     clipped: HashMap<u32, Vec<(f32, f32)>>,
+    /// 見えている行の、たたんだ merge の「+N」の札の横の範囲。押すと開く。
+    fold_badges: HashMap<u32, (f32, f32)>,
+    /// merge を開く・たたむ（コミット、開くなら Some(true)・たたむなら Some(false)・入れ替えるなら None）。
+    /// したら true。
+    on_fold: Option<FoldCallback>,
     fonts: Option<Fonts>,
     /// 選んでいる行（複数選んでいるときは、最後に選んだ行）。
     selected: Option<u32>,
@@ -271,6 +276,9 @@ pub struct State {
     /// テーマの一覧の背景の色を読む見えない子（編集の範囲の外を薄くする）。
     base_probe: Option<gtk::Label>,
 }
+
+/// merge を開く・たたむ（コミット、開くか）。したら true。
+type FoldCallback = Rc<dyn Fn(Oid, Option<bool>) -> bool>;
 
 /// 最後の行の下に置く帯の高さ（macOS 版の `ShallowHistoryBand.height`）。
 pub const FOOTER_HEIGHT: f32 = 44.0;
@@ -491,6 +499,10 @@ mod imp {
                     }
                     // 行の右端の CI の印なら、行を選ばずに詳細の吹き出し。
                     if view.click_ci(x as f32, y as f32) {
+                        return;
+                    }
+                    // たたんだ merge の「+N」なら、行を選ばずに開く。
+                    if view.click_fold_badge(x as f32, y as f32) {
                         return;
                     }
                     // 名前を全部は出していない札なら、行を選ばずに名前の一覧の吹き出し。
@@ -719,6 +731,13 @@ mod imp {
                 }
                 if ctrl && !shift && matches!(key, gdk::Key::a | gdk::Key::A) {
                     view.select_all();
+                    return glib::Propagation::Stop;
+                }
+                // 選んだ merge を ← でたたみ、→ で開く（ツリーの開閉と同じ。macOS 版と同じ）。
+                if state.is_empty()
+                    && matches!(key, gdk::Key::Left | gdk::Key::Right)
+                    && view.fold_key(key == gdk::Key::Right)
+                {
                     return glib::Propagation::Stop;
                 }
                 if key == gdk::Key::Menu || (shift && !ctrl && key == gdk::Key::F10) {
@@ -1433,6 +1452,65 @@ impl HistoryView {
         self.state().on_menu = Some(Rc::new(f));
     }
 
+    /// merge の「+N」を押した・←/→ を押したら `f(コミット, 開くか)` を呼ぶ（入れ替えるなら None）。したら true。
+    pub fn connect_fold(&self, f: impl Fn(Oid, Option<bool>) -> bool + 'static) {
+        self.state().on_fold = Some(Rc::new(f));
+    }
+
+    /// (x, y) がたたんだ merge の「+N」の上なら、開いて true。
+    fn click_fold_badge(&self, x: f32, y: f32) -> bool {
+        let Some(row) = self.row_at(y) else {
+            return false;
+        };
+        let (id, f) = {
+            let st = self.state();
+            let Some(&(a, b)) = st.fold_badges.get(&row) else {
+                return false;
+            };
+            if !(a..=b).contains(&x) {
+                return false;
+            }
+            let id = st
+                .history
+                .as_ref()
+                .and_then(|h| h.graph.ids().get(row as usize).copied());
+            (id, st.on_fold.clone())
+        };
+        match (id, f) {
+            (Some(id), Some(f)) => f(id, None),
+            _ => false,
+        }
+    }
+
+    /// 1 つだけ選んだ merge を開く（`open`）・たたむ。編集の間は何もしない。したら true。
+    fn fold_key(&self, open: bool) -> bool {
+        let (id, f) = {
+            let st = self.state();
+            if st.edit.is_some() || !st.extra.is_empty() {
+                return false;
+            }
+            let (Some(row), Some(history)) = (st.selected, st.history.as_ref()) else {
+                return false;
+            };
+            let merge = history
+                .layout
+                .nodes()
+                .get(row as usize)
+                .is_some_and(|n| n.flags & amonhen_layout::Node::MERGE != 0);
+            if !merge {
+                return false;
+            }
+            (
+                history.graph.ids().get(row as usize).copied(),
+                st.on_fold.clone(),
+            )
+        };
+        match (id, f) {
+            (Some(id), Some(f)) => f(id, Some(open)),
+            _ => false,
+        }
+    }
+
     /// 最後に描いたグラフの列の幅（列の見出しの「Message」の位置）。
     pub fn graph_width(&self) -> f32 {
         self.state().graph_width
@@ -1888,6 +1966,7 @@ impl HistoryView {
             };
             self.fonts(st);
             st.clipped.clear();
+            st.fold_badges.clear();
             if let Some(edit) = st.edit.as_mut() {
                 edit.chips.clear();
             }
@@ -2136,6 +2215,34 @@ impl HistoryView {
                     }
                     subject_end -= w + 8.0;
                 }
+                // たたんだ merge は、点の右に隠したコミットの数の札（押すと開く）。
+                let hidden = if st.edit.is_none() {
+                    history.folded.get(src as usize).copied().unwrap_or(0)
+                } else {
+                    0
+                };
+                if hidden > 0 {
+                    let colors = if selected {
+                        (on_accent, accent)
+                    } else {
+                        (
+                            gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), fg.alpha() * 0.6),
+                            base,
+                        )
+                    };
+                    let fonts = st.fonts.as_ref().expect("fonts");
+                    let w = self.draw_fold_badge(
+                        snapshot,
+                        &mut st.label_layouts,
+                        fonts,
+                        hidden,
+                        x,
+                        top + subject_baseline,
+                        colors,
+                    );
+                    st.fold_badges.insert(row, (x, x + w));
+                    x += w + 6.0;
+                }
                 // 札は件名の場所の 6 割まで（残りは件名に残す）。入りきらない札は「+N」にまとめる。
                 let mut clipped_labels = Vec::new();
                 if st.display.items & items::REFS != 0
@@ -2314,12 +2421,6 @@ impl HistoryView {
         if shown & items::ID != 0 {
             parts.push(history.graph.ids()[row as usize].to_string()[..8].to_owned());
         }
-        // 折りたたんだ merge は、隠しているコミットの数を添える。
-        if let Some(&hidden) = history.folded.get(row as usize)
-            && hidden > 0
-        {
-            parts.push(format!("⊕ {}", tr!("{count} folded", count = hidden)));
-        }
         let meta = parts.join(if compact { "  " } else { "  ·  " });
         let meta = self.layout(&meta, &fonts.meta);
         let attrs = pango::AttrList::new();
@@ -2335,6 +2436,47 @@ impl HistoryView {
 
     /// 編集の操作の印（git の言葉の札）を、右端 `right` に描いて幅を返す。そのままは薄い灰色、取り消すは赤、
     /// ほかは濃い色、コンフリクトしそうなら橙（macOS 版の `drawEditChip`）。`colors` は文字の色と背景の色。
+    #[allow(clippy::too_many_arguments)]
+    /// たたんだ merge の札（枠だけの丸い札に「+N」。下を通る線は背景の色で隠す）。`colors` は文字・背景の色
+    /// （選んだ行なら、選択の上の文字と選択の色）。幅を返す。
+    #[allow(clippy::too_many_arguments)]
+    fn draw_fold_badge(
+        &self,
+        snapshot: &gtk::Snapshot,
+        layouts: &mut HashMap<String, pango::Layout>,
+        fonts: &Fonts,
+        count: u32,
+        x: f32,
+        baseline: f32,
+        colors: (gdk::RGBA, gdk::RGBA),
+    ) -> f32 {
+        let (ink, fill) = colors;
+        let line = fonts.label_line;
+        let shown = format!("+{count}");
+        let layout = layouts.entry(format!("\u{2}{shown}")).or_insert_with(|| {
+            let layout = self.create_pango_layout(Some(&shown));
+            layout.set_font_description(Some(&fonts.label));
+            layout
+        });
+        let height = (line.height() + 4.0).round();
+        let width = (layout.pixel_size().0 as f32 + 12.0).round().max(height);
+        let y = (baseline - line.ascent - 2.0).round();
+        let rect =
+            gsk::RoundedRect::from_rect(graphene::Rect::new(x, y, width, height), height / 2.0);
+        let path = gsk::PathBuilder::new();
+        path.add_rounded_rect(&rect);
+        let path = path.to_path();
+        snapshot.append_fill(&path, gsk::FillRule::Winding, &fill);
+        snapshot.append_stroke(&path, &gsk::Stroke::new(1.0), &ink);
+        snapshot.save();
+        let text_y = baseline - 1.0 - layout.baseline() as f32 / pango::SCALE as f32;
+        let text_x = x + (width - layout.pixel_size().0 as f32) / 2.0;
+        snapshot.translate(&graphene::Point::new(text_x, text_y));
+        snapshot.append_layout(layout, &ink);
+        snapshot.restore();
+        width
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn draw_edit_chip(
         &self,

@@ -31,9 +31,8 @@ fn item_entries() -> [(&'static str, u32, String); 6] {
 }
 
 /// 切り替えの項目（アクションの名前、設定の鍵）。
-const TOGGLES: [(&str, &str); 7] = [
+const TOGGLES: [(&str, &str); 6] = [
     ("one-line-history", settings::COMPACT_HISTORY_ROWS),
-    ("fold-merged-branches", settings::FOLD_MERGED_BRANCHES),
     ("highlight-ancestors", settings::HIGHLIGHT_ANCESTORS),
     (
         "monospaced-commit-message",
@@ -98,13 +97,6 @@ pub fn sections() -> Vec<(Option<String>, gio::Menu)> {
     for (title, action, tip) in [
         (tr!("One Line per Commit"), "win.one-line-history", None),
         (
-            tr!("Fold Merged Branches"),
-            "win.fold-merged-branches",
-            Some(tr!(
-                "In History, hide the commits brought in by a merge and show their count on the merge row (right-click to expand)"
-            )),
-        ),
-        (
             tr!("Highlight Ancestors"),
             "win.highlight-ancestors",
             Some(tr!(
@@ -113,6 +105,25 @@ pub fn sections() -> Vec<(Option<String>, gio::Menu)> {
         ),
     ] {
         menu::append_with_tip(&toggles, &title, action, tip.as_deref());
+    }
+    // merge の取り込んだ側を、すべてたたむ・すべて表示する（個々の merge は「+N」・右クリック・←/→ で開閉し、
+    // リポジトリごとに覚える。macOS 版と同じ）。
+    let folds = gio::Menu::new();
+    for (title, action, tip) in [
+        (
+            tr!("Fold All Merged Commits"),
+            "win.fold-all-merges",
+            tr!(
+                "Hide the commits every merge brought in; each merge shows their count (click it to expand)"
+            ),
+        ),
+        (
+            tr!("Show All Merged Commits"),
+            "win.show-all-merges",
+            tr!("Show the commits every merge brought in"),
+        ),
+    ] {
+        menu::append_with_tip(&folds, &title, action, Some(&tip));
     }
     let details = gio::Menu::new();
     for (title, action, tip) in [
@@ -149,6 +160,7 @@ pub fn sections() -> Vec<(Option<String>, gio::Menu)> {
         (Some(tr!("Order")), order),
         (Some(tr!("Items")), shown),
         (None, toggles),
+        (None, folds),
         (Some(tr!("Commit Details")), details),
     ]
 }
@@ -346,8 +358,12 @@ pub struct Shaper {
     pending: Rc<Cell<u32>>,
     /// 最後に受け取った、全体の History。
     full: RefCell<Option<(Arc<Repository>, Arc<HistorySnapshot>)>>,
-    /// 折りたたんだ History で開いた merge。
-    expanded: RefCell<HashSet<Oid>>,
+    /// merge を既定でたたむか（「すべてたたむ」・「すべて表示」）と、既定と逆にした merge。リポジトリの
+    /// `.git/amonhen/fold.json` に覚える（コアが読み書きし、どの FE でもそろう）。
+    fold_default: Cell<bool>,
+    fold_except: RefCell<HashSet<Oid>>,
+    /// 覚えている折りたたみを読んだ（最初の History を受け取ったときに読む）。
+    fold_loaded: Cell<bool>,
     /// 最後に出した形。同じなら作り直さない。
     shaped: RefCell<Option<Shape>>,
     /// 頼んだ回数（古い結果を捨てるため）。
@@ -395,8 +411,9 @@ pub enum Scope {
     Refs(Vec<ScopeRef>),
 }
 
-/// 作った History の形（全体の History の世代、開いた merge、絞り込む起点、折りたたむか）。
-type Shape = (u64, Vec<Oid>, Vec<Oid>, bool);
+/// 作った History の形（全体の History の世代、既定と逆にした merge、絞り込む起点、折りたたむなら merge を既定で
+/// たたむか）。
+type Shape = (u64, Vec<Oid>, Vec<Oid>, Option<bool>);
 
 /// 絞り込む ref の 1 つ（種類, 名前, コミット）。ref が動いたら、コミットを付け替える。
 pub type ScopeRef = (RefKind, String, Oid);
@@ -411,7 +428,9 @@ impl Shaper {
             search,
             pending,
             full: RefCell::default(),
-            expanded: RefCell::default(),
+            fold_default: Cell::new(false),
+            fold_except: RefCell::default(),
+            fold_loaded: Cell::new(false),
             shaped: RefCell::default(),
             request: Rc::default(),
             scope: RefCell::default(),
@@ -452,10 +471,6 @@ impl Shaper {
                 settings::COMPACT_HISTORY_ROWS
                 | settings::HISTORY_ITEMS
                 | settings::HIGHLIGHT_ANCESTORS => s.view.set_display(display()),
-                settings::FOLD_MERGED_BRANCHES => {
-                    s.expanded.borrow_mut().clear();
-                    s.reshape(None, true);
-                }
                 settings::HISTORY_ORDER => s.reorder(),
                 _ => {}
             }
@@ -474,6 +489,24 @@ impl Shaper {
             .is_some_and(|(_, old)| old.generation != full.generation);
         if reloaded {
             self.view.fade_next();
+        }
+        if !self.fold_loaded.replace(true) {
+            // 覚えている折りたたみは裏で読み（SSH 先なら daemon に聞く）、読めたら作り直す。
+            self.pending.set(self.pending.get() + 1);
+            let (r, weak) = (repo.clone(), Rc::downgrade(self));
+            glib::spawn_future_local(async move {
+                let state = gio::spawn_blocking(move || r.fold_state()).await;
+                let Some(s) = weak.upgrade() else { return };
+                s.pending.set(s.pending.get() - 1);
+                if let Ok(Ok(state)) = state {
+                    s.fold_default.set(state.folded);
+                    s.fold_except
+                        .replace(state.except_ids().into_iter().collect());
+                    if s.folds() {
+                        s.reshape(None, false);
+                    }
+                }
+            });
         }
         self.full.replace(Some((repo, full)));
         let shaped = self.folds() || !self.tips().is_empty();
@@ -557,7 +590,12 @@ impl Shaper {
 
     /// 取り込んだ枝をたたむか（編集の間は全部の行を出す）。
     fn folds(&self) -> bool {
-        settings::bool(settings::FOLD_MERGED_BRANCHES) && !self.editing.get()
+        self.folds_any() && !self.editing.get()
+    }
+
+    /// たたむ merge があるか。
+    fn folds_any(&self) -> bool {
+        self.fold_default.get() || !self.fold_except.borrow().is_empty()
     }
 
     /// History の上で編集を始める: 今のブランチの全部の行（たたまない・一致だけにしない）にし、範囲は選ばせない
@@ -567,7 +605,7 @@ impl Shaper {
             return;
         }
         let only = self.search.pause_only_matching();
-        let reshape = *self.scope.borrow() != Scope::Current || self.folds();
+        let reshape = *self.scope.borrow() != Scope::Current || self.folds_any();
         self.before_edit.replace(Some((
             self.scope.borrow().clone(),
             self.companions.borrow().clone(),
@@ -752,13 +790,14 @@ impl Shaper {
             self.finish_shape();
             return;
         }
-        let mut expanded: Vec<Oid> = if fold {
-            self.expanded.borrow().iter().copied().collect()
+        let mut except: Vec<Oid> = if fold {
+            self.fold_except.borrow().iter().copied().collect()
         } else {
             Vec::new()
         };
-        expanded.sort_unstable();
-        let key = (full.generation, expanded.clone(), tips.clone(), fold);
+        except.sort_unstable();
+        let folded = fold.then(|| self.fold_default.get());
+        let key = (full.generation, except.clone(), tips.clone(), folded);
         // 同じ History を同じ形で作っている・作ったなら、そのまま（読み直すたびに同じ History が来る）。
         if select.is_none() && self.shaped.borrow().as_ref() == Some(&key) {
             if reset_scroll {
@@ -784,8 +823,8 @@ impl Shaper {
         glib::spawn_future_local(async move {
             let shaped = gio::spawn_blocking(move || {
                 let some = (!tips.is_empty()).then_some(&tips[..]);
-                if fold {
-                    r.history_folded(some, &expanded)
+                if let Some(folded) = folded {
+                    r.history_folded(some, folded, &except)
                 } else {
                     r.history_filtered(&tips)
                 }
@@ -850,40 +889,106 @@ impl Shaper {
         });
     }
 
-    /// 折りたたんだ merge の右クリックの項目（区切りと、取り込んだ側を開く・たたむ。メニューの最後に付ける）。なければ空。
+    /// merge の右クリックの項目（区切りと、取り込んだ側を開く・たたむ。メニューの最後に付ける）。merge でなければ・
+    /// 編集の間は空。
     pub fn merge_items(self: &Rc<Self>, history: &HistorySnapshot, row: u32) -> Vec<Item> {
         let Some(&id) = history.graph.ids().get(row as usize) else {
             return Vec::new();
         };
-        let hidden = history.folded.get(row as usize).copied().unwrap_or(0);
-        if hidden == 0 && !self.expanded.borrow().contains(&id) {
+        let merge = history
+            .layout
+            .nodes()
+            .get(row as usize)
+            .is_some_and(|n| n.flags & amonhen_layout::Node::MERGE != 0);
+        if !merge || self.editing.get() {
             return Vec::new();
         }
-        let title = if hidden > 0 {
-            tr!("Show {count} Merged Commits", count = hidden)
-        } else {
-            tr!("Fold Merged Commits")
-        };
+        let hidden = history.folded.get(row as usize).copied().unwrap_or(0);
         let weak = Rc::downgrade(self);
-        vec![
-            Item::Separator,
-            menu::action(title, move || {
-                if let Some(s) = weak.upgrade() {
-                    s.toggle_merge(id);
-                }
-            }),
-        ]
+        let toggle = move || {
+            if let Some(s) = weak.upgrade() {
+                s.toggle_merge(id);
+            }
+        };
+        let item = if hidden > 0 {
+            menu::action(tr!("Show {count} Merged Commits", count = hidden), toggle)
+        } else if self.is_folded(id) {
+            // たたんでいるが、取り込んだコミットはどれもほかの枝から見えている。
+            menu::disabled_hint(
+                tr!("Fold Merged Commits"),
+                tr!("Every commit this merge brought in is shown on another branch."),
+            )
+        } else {
+            menu::action(tr!("Fold Merged Commits"), toggle)
+        };
+        vec![Item::Separator, item]
     }
 
-    /// 折りたたんだ merge を開く・たたむ。
+    /// merge がたたまれているか（覚えている状態で。隠すコミットがなくても）。
+    fn is_folded(&self, id: Oid) -> bool {
+        self.fold_default.get() != self.fold_except.borrow().contains(&id)
+    }
+
+    /// merge を開く・たたむ。覚えて、History を作り直す。
     fn toggle_merge(&self, id: Oid) {
         {
-            let mut expanded = self.expanded.borrow_mut();
-            if !expanded.remove(&id) {
-                expanded.insert(id);
+            let mut except = self.fold_except.borrow_mut();
+            if !except.remove(&id) {
+                except.insert(id);
             }
         }
-        self.reshape(Some(id), true);
+        self.save_fold();
+        self.reshape(Some(id), false);
+    }
+
+    /// merge の「+N」・←/→ から: `open` が Some なら、そうなっていないときだけ開く・たたむ。したら true。
+    pub fn fold_merge(&self, history: &HistorySnapshot, id: Oid, open: Option<bool>) -> bool {
+        if self.editing.get() {
+            return false;
+        }
+        let hidden = history
+            .row_of(&id)
+            .and_then(|r| history.folded.get(r as usize).copied())
+            .unwrap_or(0);
+        match open {
+            Some(true) if hidden == 0 => return false,
+            Some(false) if self.is_folded(id) => return false,
+            _ => {}
+        }
+        self.toggle_merge(id);
+        true
+    }
+
+    /// すべての merge をたたむ・開く（個々に開いた・たたんだものも忘れる）。
+    pub fn set_all_merges(&self, folded: bool) {
+        if self.editing.get() {
+            return;
+        }
+        self.fold_default.set(folded);
+        self.fold_except.borrow_mut().clear();
+        self.save_fold();
+        self.reshape(self.selected_commit(), false);
+    }
+
+    /// 折りたたみをリポジトリに覚える（裏で）。
+    fn save_fold(&self) {
+        let Some((repo, _)) = self.full.borrow().clone() else {
+            return;
+        };
+        let state = amonhen_core::fold::FoldState {
+            folded: self.fold_default.get(),
+            except: self
+                .fold_except
+                .borrow()
+                .iter()
+                .map(Oid::to_string)
+                .collect(),
+        };
+        glib::spawn_future_local(async move {
+            if let Ok(Err(e)) = gio::spawn_blocking(move || repo.set_fold_state(&state)).await {
+                eprintln!("折りたたみを覚えられない: {e}");
+            }
+        });
     }
 }
 

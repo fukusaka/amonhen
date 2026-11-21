@@ -53,8 +53,6 @@ pub const HISTORY_ORDER: &str = "historyOrder";
 pub const HISTORY_ITEMS: &str = "historyItems";
 /// History の行を 1 行にするか（既定は件名と作者・日時の 2 行）。
 pub const COMPACT_HISTORY_ROWS: &str = "compactHistoryRows";
-/// History でマージ済みブランチを折りたたむか（既定は折りたたまない）。
-pub const FOLD_MERGED_BRANCHES: &str = "foldMergedBranches";
 /// 選んだコミットの祖先を強調するか（既定はする）。
 pub const HIGHLIGHT_ANCESTORS: &str = "highlightAncestors";
 /// コミットの詳細に作者・コミッターのアバターを出すか（既定は出す。Gravatar にメールアドレスのハッシュを送る）。
