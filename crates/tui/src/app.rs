@@ -1661,6 +1661,22 @@ impl App {
             }
         };
         match name {
+            // 置き換える push の絵: まだ選んでいる間だけ重ねる。
+            "pushPreview" => {
+                let target = self.upstream.clone().unwrap_or_default();
+                if self.choices.is_some() {
+                    self.question_drawing = Some(&reply["info"]["drawing"])
+                        .filter(|d| d.is_object())
+                        .map(|d| {
+                            (
+                                tr!(" If you force push to {target} ", target = target),
+                                crate::drawing::from_move(d, &target),
+                            )
+                        });
+                    self.dirty = true;
+                }
+                return;
+            }
             "pickPreview" => {
                 if let Some((ask, yes, request, title)) = self.pick_question.take() {
                     let branch = self.branch.clone().unwrap_or_else(|| "HEAD".to_owned());
@@ -2174,6 +2190,14 @@ impl App {
                     ('t', tr!("another branch…"), Request::Status),
                 ],
             ));
+            // 置き換える push の前と後の絵を、裏で読んで重ねる（アプリの Force Push のシートと同じ）。
+            self.send(Request::Call {
+                name: "pushPreview",
+                request: json!({"op": "run", "command": {
+                    "op": "movePreview", "from": format!("{remote}/{remote_branch}"),
+                    "to": branch, "branch": null,
+                }}),
+            });
             return;
         }
         self.confirm = Some((ask, tr!("push"), push(remote, remote_branch, false, false)));

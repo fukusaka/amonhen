@@ -2290,6 +2290,16 @@ fn diverged_branches_offer_force_push_and_pull_modes() {
     assert!(
         asked.contains("y push   f force push (with lease), replacing 1 on the remote   t another branch…   n cancel")
     );
+    // 置き換える push の前と後の絵: 上流の 1 つが外れ、手元のものが origin/main に。
+    assert!(
+        asked.contains(" If you force push to origin/main "),
+        "{asked}"
+    );
+    assert!(
+        asked.contains("Ahead of the remote  [origin/main]  leaves the branch"),
+        "{asked}"
+    );
+    assert!(asked.contains("Rewritten  [origin/main]"), "{asked}");
     // ふつうの push は断られる（理由が出る）。
     let refused = amonhen_tui::snapshot(open(&work), 140, 8, clock(), "Py").unwrap();
     println!("{refused}");
