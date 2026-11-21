@@ -9,7 +9,7 @@ import type { FileStat } from '../src/workingCopy/protocol.ts';
 import assert from 'node:assert/strict';
 import childProcess from 'node:child_process';
 import http from 'node:http';
-import { chmodSync, closeSync, cpSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync as writeFileOnce } from 'node:fs';
+import { appendFileSync, chmodSync, closeSync, cpSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync as writeFileOnce } from 'node:fs';
 
 /**
  * ファイルを書く。Windows では、書いた直後のファイルをほかのプロセス（Defender の検査など）がメモリに写している
@@ -246,7 +246,33 @@ function lockHolders(message: string): string {
   } catch (e) {
     processes = `一覧を取れません: ${e}`;
   }
-  return `${file}。動いている git: ${processes.trim() || 'なし'}。直前の git: ${recentGits()}`;
+  const lockLog = process.env['AMONHEN_E2E_LOCK_LOG'];
+  if (lockLog) {
+    // 前後の鍵のファイルの出来事は、e2e の終わりに出す（e2e/locks-windows.mjs）
+    appendFileSync(lockLog, `${Date.now()} ${message.split('\n', 1)[0]}（${codeProcesses()}）\n`);
+  }
+  return `${file}。動いている git: ${processes.trim() || 'なし'}。直前の git: ${lockLog ? '鍵のファイルの記録を終わりに出す' : recentGits()}`;
+}
+
+/** VSCode のプロセスと種類（Windows。鍵のファイルの記録は pid と実行ファイルの名前しか言わないので、添える） */
+function codeProcesses(): string {
+  try {
+    return childProcess
+      .execFileSync(
+        'powershell',
+        [
+          '-NoProfile',
+          '-Command',
+          "Get-CimInstance Win32_Process -Filter 'Name = ''Code.exe''' | ForEach-Object { '{0} {1}' -f $_.ProcessId, $(if ($_.CommandLine -match '--utility-sub-type=(\\S+)' -or $_.CommandLine -match '--type=(\\S+)') { $Matches[1] } else { 'main' }) }",
+        ],
+        { encoding: 'utf8' },
+      )
+      .trim()
+      .split(/\r?\n/)
+      .join(', ');
+  } catch (e) {
+    return `VSCode のプロセスを取れません: ${e}`;
+  }
 }
 
 /**
