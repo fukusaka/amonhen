@@ -19,6 +19,8 @@ thread_local! {
     static EXPAND: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// 行のツールチップ（項目のキーごと。印の意味など）。`nodes` が作り直す。
     static TIPS: std::cell::RefCell<HashMap<String, String>> = std::cell::RefCell::new(HashMap::new());
+    /// 取り込み済みのブランチ（名前 → 印のツールチップ）。`branch_rows` が作る間だけ。
+    static MERGED: std::cell::RefCell<HashMap<String, String>> = std::cell::RefCell::new(HashMap::new());
 }
 
 /// 項目のツールチップ（GTK4 版の行のツールチップ: 印の意味と、submodule・subtree・タグの様子）。
@@ -93,6 +95,12 @@ pub struct Branch {
     pub archived: bool,
     /// お気に入りの順位（小さいほど上）。
     pub pinned: Option<i64>,
+    /// 既定のブランチに取り込み済み。
+    pub merged: bool,
+    /// 既定のブランチの先端と同じ（作ったばかりで、まだコミットしていない）。
+    pub at_base: bool,
+    /// squash・rebase でマージしたプルリクエストの番号（GitHub から読んだもの）。
+    pub pull_request: Option<u64>,
 }
 
 /// `branchGroups` の答え。
@@ -104,6 +112,12 @@ pub struct BranchGroups {
 }
 
 impl BranchGroups {
+    /// 既定のブランチの、手元のブランチの名前（`origin/main` なら `main`）。
+    pub fn local_base(&self) -> Option<&str> {
+        let base = self.base.as_deref()?;
+        Some(base.split_once('/').map_or(base, |(_, b)| b))
+    }
+
     /// `run_json` の答え（`{"info": {...}}`）から。
     pub fn from_reply(reply: &Value) -> Option<Self> {
         let info = &reply["info"];
@@ -118,6 +132,9 @@ impl BranchGroups {
                         parent: b["parent"].as_str().map(str::to_owned),
                         archived: b["archived"].as_bool().unwrap_or(false),
                         pinned: b["pinned"].as_i64(),
+                        merged: b["merged"].as_bool().unwrap_or(false),
+                        at_base: b["atBase"].as_bool().unwrap_or(false),
+                        pull_request: b["pullRequest"].as_u64(),
                     },
                 ))
             })
@@ -150,6 +167,8 @@ pub struct Marks<'a> {
     pub subtrees: &'a serde_json::Value,
     /// 署名のあるタグの状態と署名者（コアの `tagSignatures`）。
     pub tag_signatures: &'a std::collections::HashMap<String, (crate::signature::Status, String)>,
+    /// 開いているプルリクエスト（GitHub から読んだもの。Branches の後に見出しを出す）。
+    pub pull_requests: &'a [crate::github::PullRequest],
 }
 
 /// サイドバーの木。`refs` がまだなければ Workspace だけ。
@@ -172,6 +191,7 @@ pub fn nodes(
         submodules: submodule_states,
         subtrees,
         tag_signatures,
+        pull_requests,
     } = marks;
     TIPS.with(|t| t.borrow_mut().clear());
     let mut history_tips = Vec::new();
@@ -262,6 +282,25 @@ pub fn nodes(
     let branches = branch_rows(&locals, head, groups);
     if !branches.is_empty() {
         out.push(group("branches", "Branches", branches).expanded(true));
+    }
+    // Pull Requests は Branches の後に（開いているものがあるときだけ。絞り込み中は出さない。GTK4 版と同じ）。
+    if words.is_empty() && !pull_requests.is_empty() {
+        let rows = pull_requests.iter().map(|pr| {
+            let key = format!("pr:{}", pr.number);
+            set_tooltip(&key, vec![pr.tooltip()]);
+            let marks: Vec<&str> = [pr.is_draft.then_some("draft"), Some(pr.ci().mark())]
+                .into_iter()
+                .flatten()
+                .filter(|s| !s.is_empty())
+                .collect();
+            let mut title = format!("#{} {}", pr.number, pr.title);
+            if !marks.is_empty() {
+                title.push_str("  ");
+                title.push_str(&marks.join(" "));
+            }
+            TreeNode::new(key, title)
+        });
+        out.push(group("pull-requests", "Pull Requests", rows).expanded(true));
     }
 
     // リモートごとにまとめる（origin/feature/x → origin の下の feature/x。その下はフォルダにしない）。
@@ -525,6 +564,11 @@ fn branch_text(e: &RefEntry, title: &str, head: Option<&str>, mark: Option<&str>
     if e.gone {
         text.push_str("  gone");
     }
+    // 取り込み済み（既定のブランチ、squash・rebase でマージしたプルリクエスト）。意味はツールチップに。
+    if let Some(tip) = MERGED.with(|m| m.borrow().get(&e.name).cloned()) {
+        text.push_str("  merged");
+        set_tooltip(&ref_key(e), vec![tip]);
+    }
     text
 }
 
@@ -590,6 +634,7 @@ fn branch_rows(
         }
         tree.into_nodes("branches")
     };
+    MERGED.with(|m| m.borrow_mut().clear());
     let Some(groups) = groups else {
         return folders(locals);
     };
@@ -601,6 +646,24 @@ fn branch_rows(
             name
         } else {
             name.split_once('/').map_or(name, |(_, b)| b)
+        }
+    });
+    // 取り込み済みの印（今のブランチと既定のブランチ、作ったばかりのものは除く。GTK4 版と同じ）。
+    let base_label = groups.base.clone().unwrap_or_default();
+    MERGED.with(|m| {
+        let mut m = m.borrow_mut();
+        for (name, b) in &groups.branches {
+            if Some(name.as_str()) == head || Some(name.as_str()) == base_name {
+                continue;
+            }
+            if let Some(number) = b.pull_request {
+                m.insert(
+                    name.clone(),
+                    tr!("Merged by pull request #{number}", number = number),
+                );
+            } else if b.merged && !b.at_base {
+                m.insert(name.clone(), tr!("Merged into {base}", base = base_label));
+            }
         }
     });
     let now = std::time::SystemTime::now()

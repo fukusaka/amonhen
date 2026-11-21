@@ -180,6 +180,10 @@ pub struct Callbacks<'a> {
     pub template_remove: Box<dyn Fn(usize) -> Callback<()> + 'a>,
     /// Appearance: History の見せ方を切り替えた（View の項目の id と、チェックの値）。
     pub display: Box<dyn Fn(&'static str) -> Callback<bool> + 'a>,
+    /// Accounts: CI を読むブランチ（0 は今のブランチと既定のブランチ、1 は今のブランチだけ）と、ブランチごとに読む
+    /// コミットの数（[`GITHUB_COMMITS`] の番号）を選んだ。
+    pub github_branches: Callback<Option<usize>>,
+    pub github_commits: Callback<Option<usize>>,
     /// Appearance: History の並び順を選んだ（0 は日付順、1 はトポロジー順）。
     pub order: Callback<Option<usize>>,
     /// Theme: 構文の色のテーマを選んだ（`theme::names` の番号）。
@@ -253,7 +257,7 @@ fn git_choices(state: &State, callbacks: &Callbacks) -> View {
     ))
 }
 
-/// Appearance（GTK4 版の Appearance のタブの History と Items。CI の状態はこの FE にない）。値は View の
+/// Appearance（GTK4 版の Appearance のタブの History・Items・Commit Details のアバター）。値は View の
 /// History の見せ方と同じもの（どちらで変えても同じ設定）。
 fn appearance(callbacks: &Callbacks) -> View {
     use crate::render::items;
@@ -307,7 +311,24 @@ fn appearance(callbacks: &Callbacks) -> View {
         item("history-item-date", items::DATE, "Date"),
         item("history-item-id", items::ID, "Commit ID"),
         item("history-item-signature", items::SIGNATURE, "Signature"),
+        item("history-item-ci", items::CI, "CI Status"),
         note(tr!("What each commit’s row shows besides the subject.")),
+        TextBlock::new()
+            .text(tr!("Commit Details"))
+            .font_size(13.0)
+            .opacity(0.8)
+            .margin(Thickness::new(0.0, 12.0, 0.0, 0.0)),
+        CheckBox::new()
+            .is_checked(crate::prefs::bool(crate::prefs::SHOW_AVATARS))
+            .on_is_checked_changed((callbacks.toggle)(crate::prefs::SHOW_AVATARS))
+            .content(TextBlock::new().text(tr!("Show avatars"))),
+        TextBlock::new()
+            .text(tr!(
+                "Fetched from Gravatar (sends a hash of the email address to gravatar.com)."
+            ))
+            .font_size(12.0)
+            .opacity(0.6)
+            .text_wrapping(TextWrapping::Wrap),
         // 子の数がタプルの上限を超えないよう、後半を 1 つにまとめる。
         StackPanel::new().children((
             backdrop_section(&crate::backdrop::Backdrop::app(), &callbacks.backdrop),
@@ -544,11 +565,87 @@ fn git_identity(state: &State, callbacks: &Callbacks) -> View {
     }
 }
 
+/// Settings > Accounts で選べる、ブランチごとに読むコミットの数。
+pub const GITHUB_COMMITS: [u32; 3] = [100, 50, 30];
+
+/// Settings > Accounts（GTK4 版の `accounts`、macOS 版の `AccountsSettings`）: GitHub から History に読むもの。
+/// どちらも読まないなら、ブランチと数は選べない。アバターを使わないなら、1 回だけかも選べない。
+fn accounts(callbacks: &Callbacks) -> View {
+    use crate::prefs::{self, GITHUB_AVATARS, GITHUB_AVATARS_ONCE, GITHUB_CI_STATUS};
+    let check = |key: &'static str, label: String, enabled: bool| {
+        CheckBox::new()
+            .is_checked(prefs::bool(key))
+            .is_enabled(enabled)
+            .on_is_checked_changed((callbacks.toggle)(key))
+            .content(TextBlock::new().text(label))
+    };
+    let any = prefs::bool(GITHUB_CI_STATUS) || prefs::bool(GITHUB_AVATARS);
+    let choice =
+        |label: String, items: Vec<String>, selected: usize, on: Callback<Option<usize>>| {
+            StackPanel::new()
+                .orientation(Orientation::Horizontal)
+                .spacing(12.0)
+                .children((
+                    TextBlock::new()
+                        .text(label)
+                        .vertical_alignment(VerticalAlignment::Center),
+                    ComboBox::new()
+                        .items_source(items)
+                        .selected_index(selected)
+                        .is_enabled(any)
+                        .on_selection_changed(on),
+                ))
+        };
+    StackPanel::new().spacing(8.0).children((
+        heading(tr!("Accounts")),
+        TextBlock::new()
+            .text("GitHub")
+            .font_weight(FontWeight::SEMI_BOLD),
+        check(
+            GITHUB_CI_STATUS,
+            tr!("Show each commit’s CI status in History"),
+            true,
+        ),
+        check(
+            GITHUB_AVATARS,
+            tr!("Use commit authors’ GitHub avatars"),
+            true,
+        ),
+        choice(
+            tr!("Branches to read CI for"),
+            vec![
+                tr!("Current and default branch"),
+                tr!("Current branch only"),
+            ],
+            usize::from(!prefs::bool(prefs::GITHUB_CI_DEFAULT_BRANCH)),
+            callbacks.github_branches.clone(),
+        ),
+        choice(
+            tr!("Commits to read per branch"),
+            GITHUB_COMMITS
+                .iter()
+                .map(|n| tr!("Last {count}", count = n))
+                .collect(),
+            GITHUB_COMMITS
+                .iter()
+                .position(|&n| n == prefs::github_ci_commits())
+                .unwrap_or(0),
+            callbacks.github_commits.clone(),
+        ),
+        check(
+            GITHUB_AVATARS_ONCE,
+            tr!("Read avatar URLs only once per window"),
+            prefs::bool(GITHUB_AVATARS),
+        ),
+    ))
+}
+
 /// Settings のページ（左の一覧の見出し。訳は `tr!` と同じ表から）。
-pub const PAGES: [&str; 6] = [
+pub const PAGES: [&str; 7] = [
     "General",
     "Git",
     "SSH Hosts",
+    "Accounts",
     "Appearance",
     "Diff & Merge",
     "Performance",
@@ -556,6 +653,7 @@ pub const PAGES: [&str; 6] = [
 
 pub fn view(state: &State, callbacks: Callbacks) -> View {
     let appearance = appearance(&callbacks);
+    let accounts = accounts(&callbacks);
     let git_choices = git_choices(state, &callbacks);
     let env = environment(state, &callbacks);
     let shared_templates = templates(state, &callbacks);
@@ -608,7 +706,7 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
         }
         None => View::empty(),
     };
-    let pages: [View; 6] = [
+    let pages: [View; 7] = [
         StackPanel::new().children((
             heading(tr!("General")),
             StackPanel::new()
@@ -662,6 +760,7 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
             StackPanel::new().children((git, git_choices, shared_templates, env)),
         )),
         ssh,
+        accounts,
         appearance,
         StackPanel::new().children((
             heading(tr!("Diff & Merge")),
