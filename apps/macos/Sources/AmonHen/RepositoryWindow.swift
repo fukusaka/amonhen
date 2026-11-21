@@ -2224,6 +2224,16 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         }
     }
 
+    @objc func foldAllMerges(_ sender: Any?) {
+        sidebar.select(page: .history)
+        history.setAllMerges(folded: true)
+    }
+
+    @objc func showAllMerges(_ sender: Any?) {
+        sidebar.select(page: .history)
+        history.setAllMerges(folded: false)
+    }
+
     @objc func goToHead(_ sender: Any?) {
         guard let head = editingRefs?.head else { return NSSound.beep() }
         sidebar.select(page: .history)
@@ -2750,6 +2760,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         case #selector(popStash(_:)), #selector(showStashes(_:)): return latestStash != nil
         case #selector(undoOperation(_:)): return undoLabel != nil
         case #selector(goToHead(_:)): return latestRefs?.head != nil
+        // 編集の間は全部の行を出しているので、たたまない。
+        case #selector(foldAllMerges(_:)), #selector(showAllMerges(_:)): return commitEditor == nil
         case #selector(addSubtree(_:)): return subtreeList.available
         case #selector(updateSubmodules(_:)): return latestRefs?.items.contains { $0.kind == .submodule } ?? false
         case #selector(switchBranch(_:)): return latestRefs != nil

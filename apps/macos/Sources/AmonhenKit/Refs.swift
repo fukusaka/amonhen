@@ -73,16 +73,16 @@ extension Repository {
 }
 
 extension Repository {
-    /// マージ済みブランチを折りたたんだ History。`tips` が nil なら全ブランチ。`expanded`（20 バイトの ID）の
-    /// merge は取り込んだ側も見せる。裏のスレッドで呼ぶ。
-    public func foldedHistory(tips: [Data]?, expanded: [Data]) throws -> History {
+    /// マージ済みブランチを折りたたんだ History。`tips` が nil なら全ブランチ。`folded` なら merge を既定でたたみ、
+    /// `except`（20 バイトの ID）の merge はその逆にする。裏のスレッドで呼ぶ。
+    public func foldedHistory(tips: [Data]?, folded: Bool, except: [Data]) throws -> History {
         let tipBytes = (tips ?? []).reduce(Data(), +)
-        let expandedBytes = expanded.reduce(Data(), +)
+        let exceptBytes = except.reduce(Data(), +)
         let raw = tipBytes.withUnsafeBytes { t in
-            expandedBytes.withUnsafeBytes { e in
+            exceptBytes.withUnsafeBytes { e in
                 amonhen_history_folded(
                     self.raw, tips == nil, t.baseAddress?.assumingMemoryBound(to: UInt8.self), UInt32(tips?.count ?? 0),
-                    e.baseAddress?.assumingMemoryBound(to: UInt8.self), UInt32(expanded.count))
+                    folded, e.baseAddress?.assumingMemoryBound(to: UInt8.self), UInt32(except.count))
             }
         }
         guard let raw else { throw AmonhenError.last() }

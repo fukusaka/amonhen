@@ -999,8 +999,10 @@
 "Show Gravatar avatars in commit details (sends a hash of the email address to gravatar.com)" = "コミットの詳細に Gravatar のアバターを出す（メールアドレスのハッシュを gravatar.com に送る）";
 "All Files in One Diff" = "全ファイルを 1 つの差分に並べる";
 "Stack every file in a commit’s diff (when off, only the selected file)" = "コミットの差分で、全ファイルを縦に並べる（オフなら選んだファイルだけ）";
-"Fold Merged Branches" = "merge したブランチを畳む";
-"In History, hide the commits brought in by a merge and show their count on the merge row (right-click to expand)" = "History で、merge で取り込んだ側のコミットを隠し、merge の行に数を出す（右クリックで開く）";
+"Fold All Merged Commits" = "取り込んだコミットをすべてたたむ";
+"Hide the commits every merge brought in; each merge shows their count (click it to expand)" = "merge ごとに取り込んだコミットを隠し、点の横に数を出す（押すと開く）";
+"Show All Merged Commits" = "取り込んだコミットをすべて表示";
+"Show the commits every merge brought in" = "merge ごとに取り込んだコミットを表示する";
 "Changed Files as Tree" = "変更ファイルをツリーで表示";
 "Show a commit’s changed files as a tree to the left of the diff (when off, as a list between the message and the diff)" = "コミットの変更ファイルを、差分の左に木で出す（オフならメッセージと差分の間に一覧）";
 "Navigate" = "移動";
@@ -1041,7 +1043,7 @@
 "Show %ld Merged Commits" = "取り込んだ %ld コミットを表示";
 "Fold Merged Commits" = "取り込んだコミットをたたむ";
 "Drop %@?" = "%@ を Drop しますか？";
-"%ld folded" = "%ld 件を折りたたみ";
+"Every commit this merge brought in is shown on another branch." = "この merge が取り込んだコミットは、どれもほかのブランチに出ています。";
 
 /* CommitHeader.swift */
 "Brief" = "簡潔";

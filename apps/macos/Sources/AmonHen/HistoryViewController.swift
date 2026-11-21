@@ -300,8 +300,12 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
 
     private(set) var scope: Scope = .all
     private let scopePopup = NSPopUpButton()
-    /// 折りたたんだ History で開いた merge（コミット ID）。
-    private var expandedMerges: Set<Data> = []
+    /// merge を既定でたたむか（「すべてたたむ」・「すべて表示」）と、既定と逆にした merge（コミット ID）。
+    /// リポジトリの `.git/amonhen/fold.json` に覚える（コアが読み書きし、どの FE でもそろう）。
+    private var foldsByDefault = false
+    private var foldExceptions: Set<Data> = []
+    /// たたんだ merge の「+N」の札の横の範囲（表の座標。押すと開く）。
+    private var foldBadges: [Int: ClosedRange<CGFloat>] = [:]
     /// partial clone か（中身の検索は、取っていない中身をすべて取るので、先に確かめる）。
     var isPartialClone = false
     /// shallow clone の History の最後の行の下に置く帯（取得していない古い履歴を取り足す）。
@@ -322,8 +326,10 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     private var densityRequest = 0
     /// 全ブランチをそのまま出すか（折りたたみも絞り込みもしない）。
     private var showsFullHistory: Bool { scope == .all && !foldsMerges }
+    /// たたむ merge があるか。
+    private var foldsAny: Bool { foldsByDefault || !foldExceptions.isEmpty }
     /// 取り込んだ枝をたたむか（編集の間は全部の行を出す）。
-    private var foldsMerges: Bool { Settings.foldMergedBranches && editor == nil }
+    private var foldsMerges: Bool { foldsAny && editor == nil }
 
     // 検索
     private let searchField = NSSearchField()
@@ -419,6 +425,11 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         tableView.onClickMark = { [weak self] row, point in
             // History の上で編集しているときの、札・境目・ダブルクリック。
             if let self, editor != nil, handleEditClick(row: row, point: point) { return true }
+            // たたんだ merge の「+N」を押したら、行を選ばずに開く。
+            if let self, foldBadges[row]?.contains(point.x) == true, let id = history?.commitID(row: row) {
+                toggleMerge(id)
+                return true
+            }
             // 名前を全部は出していない札（中央を切った札・「+N」）を押したら、行を選ばずに名前の一覧の吹き出し。
             if let self, let range = clippedLabels[row]?.first(where: { $0.contains(point.x) }) {
                 showRefs(row: row, range: range)
@@ -444,7 +455,10 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             guard let chunk = chunks[row / Self.chunkRows] else { return nil }
             return chunk.subject(row: row)
         }
-        tableView.onKey = { [weak self] event in self?.handleEditKey(event) ?? false }
+        tableView.onKey = { [weak self] event in
+            guard let self else { return false }
+            return handleEditKey(event) || handleFoldKey(event)
+        }
         tableView.onFocusChange = { [weak self] in
             // フォーカスが移り終えてから（first responder が入れ替わった後で）描く。
             DispatchQueue.main.async { self?.redrawText() }
@@ -535,8 +549,6 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         }
         densityView.toolTip = L("Commit frequency (left) and branch activity (right). Click to jump there.")
         container.addSubview(densityView)
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(foldChanged), name: .foldMergedBranchesChanged, object: nil)
         loadingLabel.font = .monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
         loadingLabel.textColor = .secondaryLabelColor
         loadingLabel.alignment = .center
@@ -660,10 +672,10 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         case let .ref(_, _, target): [target] + companionTips
         case let .refs(list): list.map(\.target)
         }
-        let fold = foldsMerges, expanded = Array(expandedMerges)
+        let fold = foldsMerges, folded = foldsByDefault, except = Array(foldExceptions)
         Task {
             let next: History? = await Task.detached(priority: .userInitiated) {
-                if fold { return try? repository.foldedHistory(tips: tips, expanded: expanded) }
+                if fold { return try? repository.foldedHistory(tips: tips, folded: folded, except: except) }
                 return if let tips { try? repository.filteredHistory(tips: tips) } else { repository.latestHistory() }
             }.value
             // 起点がもう History にない（ほかのプログラムの rebase で消えた HEAD を、ref を読み直す前に使った）と
@@ -687,11 +699,13 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         let repository = self.repository, order = Settings.historyOrder
         Task {
             do {
-                let latest = try await Task.detached(priority: .userInitiated) {
+                let (latest, fold) = try await Task.detached(priority: .userInitiated) {
                     // 並び順は読む前にコアへ（既定の日付順なら何もしない）。
                     if order != .date { try repository.setHistoryOrder(order) }
-                    return try repository.loadHistory()
+                    return (try repository.loadHistory(), repository.foldState())
                 }.value
+                foldsByDefault = fold.folded
+                foldExceptions = Set(fold.except)
                 if !showsFullHistory {
                     reloadScope()
                 } else if latest.generation != (baseHistory ?? history)?.generation {
@@ -934,15 +948,45 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         densityView.visible = (CGFloat(visible.location) / CGFloat(rows), CGFloat(visible.location + visible.length) / CGFloat(rows))
     }
 
-    @objc private func foldChanged() {
-        expandedMerges.removeAll()
-        reloadScope()
+    /// merge がたたまれているか（覚えている状態で。隠すコミットがなくても）。
+    private func isFolded(_ id: Data) -> Bool { foldsByDefault != foldExceptions.contains(id) }
+
+    /// merge を開く・たたむ。覚えて、History を作り直す。
+    private func toggleMerge(_ id: Data) {
+        if foldExceptions.remove(id) == nil { foldExceptions.insert(id) }
+        saveFoldState()
+        reloadScope(select: id, resetScroll: false)
     }
 
-    /// 折りたたんだ merge を開く・たたむ。
-    private func toggleMerge(_ id: Data) {
-        if expandedMerges.remove(id) == nil { expandedMerges.insert(id) }
-        reloadScope(select: id)
+    /// すべての merge をたたむ・開く（個々に開いた・たたんだものも忘れる）。
+    func setAllMerges(folded: Bool) {
+        guard editor == nil else { return NSSound.beep() }
+        foldsByDefault = folded
+        foldExceptions.removeAll()
+        saveFoldState()
+        let selected = tableView.selectedRow >= 0 ? history?.commitID(row: tableView.selectedRow) : nil
+        reloadScope(select: selected, resetScroll: false)
+    }
+
+    private func saveFoldState() {
+        let repository = self.repository, folded = foldsByDefault, except = Array(foldExceptions)
+        Task.detached(priority: .utility) { try? repository.setFoldState(folded: folded, except: except) }
+    }
+
+    /// 選んだ merge を ← でたたみ、→ で開く（ツリーの開閉と同じ）。修飾キーがあれば何もしない。
+    private func handleFoldKey(_ event: NSEvent) -> Bool {
+        guard editor == nil, event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
+              event.keyCode == 123 || event.keyCode == 124,
+              tableView.selectedRowIndexes.count == 1, let history else { return false }
+        let row = tableView.selectedRow
+        guard row >= 0, row < history.rowCount,
+              history.withNodes({ $0[row].flags & UInt16(AmonhenNode_MERGE) != 0 }),
+              let id = history.commitID(row: row) else { return false }
+        let open = event.keyCode == 124
+        if open, history.hiddenCount(row: row) == 0 { return false }
+        if !open, isFolded(id) { return false }
+        toggleMerge(id)
+        return true
     }
 
     /// `id` の新しい行。たいていは前の行か、上に増えた分だけ下にずれた所にあるので、近くから探す（History 全体の
@@ -1174,6 +1218,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         let last = min(history.rowCount, rows.location + rows.length)
         guard rows.location < last else { return }
         editChips.removeAll(keepingCapacity: true)
+        foldBadges.removeAll(keepingCapacity: true)
         for row in rows.location..<last {
             // History の上で編集しているときは、範囲の行に並べ替えた後のコミットを描く。
             let editIndex = editSlots[row]
@@ -1225,6 +1270,13 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
                 drawEditChip(editRow.action, x: subjectEnd - w, baseline: rowTop + subjectBaseline, scale: scale, conflict: conflict)
                 editChips[row] = (subjectEnd - w + originX)...(subjectEnd + originX)
                 subjectEnd -= w + 8
+            }
+            // たたんだ merge は、点の右に隠したコミットの数の札（押すと開く）。
+            let hidden = editor == nil ? history.hiddenCount(row: source) : 0
+            if hidden > 0 {
+                let width = drawFoldBadge(hidden, x: x, baseline: rowTop + subjectBaseline, scale: scale, selected: isSelected && focused)
+                foldBadges[row] = (x + originX)...(x + width + originX)
+                x += width + 6
             }
             // 札は件名の場所の 6 割まで（残りは件名に残す）。入りきらない札は「+N」にまとめる。
             var clipped: [ClosedRange<CGFloat>] = []
@@ -1366,6 +1418,25 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             x = slot.x + slot.width + 4
         }
         return (x + 2, clipped)
+    }
+
+    /// たたんだ merge の札（枠だけの丸い札に「+N」）。幅を返す。
+    private func drawFoldBadge(_ count: Int, x: CGFloat, baseline: CGFloat, scale: CGFloat, selected: Bool) -> CGFloat {
+        let ascent = CTFontGetAscent(labelFont), descent = CTFontGetDescent(labelFont)
+        let height = (ascent + descent + 4).rounded()
+        let top = (baseline - ascent - 2).rounded()
+        let string = "+\(count)"
+        let line = labelText[string] ?? text.shape(string as CFString, font: labelFont, scale: scale)
+        labelText[string] = line
+        let width = max(height, (line.width + 12).rounded())
+        let ink = (selected ? NSColor.white : NSColor.secondaryLabelColor).rgba
+        let rect = CGRect(x: x, y: top, width: width, height: height)
+        // 枠: 外を塗ってから、内を背景の色で塗る（下を通る線を隠す）。
+        text.addRoundedRect(rect, radius: height / 2, color: ink)
+        text.addRoundedRect(rect.insetBy(dx: 1, dy: 1), radius: height / 2 - 1,
+                            color: (selected ? NSColor.selectedContentBackgroundColor : NSColor.controlBackgroundColor).rgba)
+        text.addLine(line, origin: CGPoint(x: x + (width - line.width) / 2, y: baseline - 1), color: ink, scale: scale)
+        return width
     }
 
     /// 札の種類の色（worktree とほかの worktree のブランチは緑、ローカルは青、リモートは紫、タグは橙）。
@@ -2113,11 +2184,19 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         add(L("Export Archive…")) { [weak self] in
             actions.exportArchive(rev: hex, label: self?.archiveLabel(id) ?? short)
         }
-        // 折りたたんだ merge: 取り込んだ側を開く・たたむ。
-        let hidden = history.hiddenCount(row: row)
-        if hidden > 0 || expandedMerges.contains(id) {
+        // merge: 取り込んだ側をたたむ・開く。
+        if isMerge, editor == nil {
             menu.addItem(.separator())
-            add(hidden > 0 ? L("Show %ld Merged Commits", hidden) : L("Fold Merged Commits")) { [weak self] in self?.toggleMerge(id) }
+            let hidden = history.hiddenCount(row: row)
+            if hidden > 0 {
+                add(L("Show %ld Merged Commits", hidden)) { [weak self] in self?.toggleMerge(id) }
+            } else if isFolded(id) {
+                // たたんでいるが、取り込んだコミットはどれもほかの枝から見えている。
+                menu.addItem(Self.disabledItem(
+                    L("Fold Merged Commits"), reason: L("Every commit this merge brought in is shown on another branch.")))
+            } else {
+                add(L("Fold Merged Commits")) { [weak self] in self?.toggleMerge(id) }
+            }
         }
     }
 
@@ -2292,7 +2371,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         editor.onChange = { [weak self] in self?.rebuildEditMap() }
         scopeBeforeEdit = scope
         matchOnlyBeforeEdit = matchOnlyButton.state == .on
-        let reload = scope != .current || Settings.foldMergedBranches || matchOnlyBeforeEdit
+        let reload = scope != .current || foldsAny || matchOnlyBeforeEdit
         matchOnlyButton.state = .off
         updateMatchButtons()
         scopePopup.isEnabled = false
@@ -2612,9 +2691,6 @@ enum RowPreparation {
         if items.contains(.id), let id = history?.commitID(row: row) {
             parts.append(id.prefix(4).map { String(format: "%02x", $0) }.joined())
         }
-        // 折りたたんだ merge は、隠しているコミットの数を添える。
-        let hidden = history?.hiddenCount(row: row) ?? 0
-        if hidden > 0 { parts.append("⊕ " + L("%ld folded", hidden)) }
         let shown = parts.joined(separator: compact ? "  " : "  ·  ")
         return Row(subject: subject, meta: TextRenderer.prepare(shown as CFString, font: fonts.meta))
     }
