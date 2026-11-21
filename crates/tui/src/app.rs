@@ -4006,7 +4006,7 @@ impl App {
         self.changes.message.set_text(&next);
         // 種類を入れたら件名の終わりへ、トレーラーなら終わりへ（set_text が終わりに置く）。
         if item.ends_with(':') && !item.contains(' ') {
-            self.changes.message.to_summary_end();
+            self.changes.message.move_to_summary_end();
         }
         self.recalled = None;
         self.focus = Focus::Message;

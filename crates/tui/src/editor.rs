@@ -48,7 +48,7 @@ impl Editor {
     }
 
     /// カーソルを件名（1 行目）の終わりに置く。
-    pub fn to_summary_end(&mut self) {
+    pub fn move_to_summary_end(&mut self) {
         self.row = 0;
         self.column = self.lines[0].chars().count();
         self.top = 0;

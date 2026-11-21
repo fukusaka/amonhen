@@ -478,12 +478,12 @@ fn recent_messages(front: &dyn Front) -> Result<Value> {
         .unwrap_or_default();
     let value = |key: &str| {
         (entries.as_array().into_iter().flatten())
-            .filter(|e| {
+            .rev()
+            .find(|e| {
                 e["key"]
                     .as_str()
                     .is_some_and(|k| k.eq_ignore_ascii_case(key))
             })
-            .last()
             .and_then(|e| e["value"].as_str())
             .filter(|v| !v.is_empty())
     };
