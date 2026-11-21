@@ -13,6 +13,7 @@ import { join } from 'node:path';
 import * as esbuild from 'esbuild';
 import { platformName } from '../src/daemon/engine.ts';
 import { layout, testEnv } from './env.mjs';
+import { recordLocks } from './locks-windows.mjs';
 
 const root = join(import.meta.dirname, '..');
 const exe = process.platform === 'win32' ? '.exe' : '';
@@ -120,6 +121,8 @@ const sampler =
         { stdio: 'ignore' },
       )
     : undefined;
+// 鍵のファイルを誰が作り・開き・消したか（Windows。locks-windows.mjs）
+const locks = process.platform === 'win32' ? recordLocks(dir) : undefined;
 const start = performance.now();
 const run = spawnSync(
   process.execPath,
@@ -131,6 +134,7 @@ if (sampler) {
   sampler.kill();
   if (existsSync(cpuLog)) console.log(`CPU を 1 秒以上使ったプロセス（10 秒ごと）:\n${readFileSync(cpuLog, 'utf8').trimEnd()}`);
 }
+await locks?.();
 
 // daemon を止めてから消す。Windows では、どこかのプロセスが掴んだままだと消せない（EPERM）
 spawnSync(engine, ['daemon', 'stop'], { env: { ...process.env, ...env }, stdio: 'inherit' });

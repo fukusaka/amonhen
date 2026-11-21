@@ -32,6 +32,8 @@ export function testEnv(dir, engine) {
   if (process.platform === 'win32') {
     env.LOCALAPPDATA = join(dir, 'local');
     env.APPDATA = join(dir, 'roaming');
+    // 鍵とぶつかった時刻を書く（locks-windows.mjs が、その前後の鍵のファイルの出来事を出す）
+    env.AMONHEN_E2E_LOCK_LOG = join(dir, 'lock-failures.txt');
   } else {
     env.XDG_DATA_HOME = join(home, '.local', 'share');
     env.XDG_CONFIG_HOME = join(home, '.config');
