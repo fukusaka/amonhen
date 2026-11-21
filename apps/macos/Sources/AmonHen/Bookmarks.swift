@@ -111,9 +111,11 @@ final class Bookmarks {
     }
 
     /// ほかのプロセスが書き換えていたら読み直し、一覧を描き直す（スキャンするフォルダが変わっていれば探し直す）。
+    /// 最近開いたもの（`recent.json`。GTK4 のアプリ・TUI も書く）が変わったときも描き直す。
     func reloadIfChanged() {
         let roots = data.scanRoots
-        guard refresh() else { return }
+        let recentChanged = RecentFile.shared.reloadIfChanged()
+        guard refresh() || recentChanged else { return }
         if data.scanRoots != roots {
             rescan()
             watchScanRoots()

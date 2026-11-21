@@ -35,8 +35,11 @@ struct RecentFileTests {
         defaults.set(["/w/c"], forKey: "repositories")
         let again = RecentFile(file: file, defaults: defaults)
         #expect(again.paths == ["/w/a", "/w/b"])
+        #expect(!recent.reloadIfChanged(), "nothing changed")
         again.remove(["/w/b"])
-        #expect(recent.paths == ["/w/a"], "another writer's change is read again")
+        #expect(recent.reloadIfChanged(), "another writer's change is noticed")
+        #expect(recent.paths == ["/w/a"])
+        #expect(!recent.reloadIfChanged())
     }
 
     @Test func keepsUnknownKeysAndLeavesABrokenFile() throws {
