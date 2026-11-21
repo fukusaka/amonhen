@@ -182,9 +182,11 @@ struct Args {
     menu_pair: Option<u32>,
     /// これらのパッチのファイル（`,` で区切る）を当てる前の確認を出す（確認用）。
     apply_patch: Vec<PathBuf>,
-    /// History の編集モードをこのコミットから開いておく（確認用）。`edit_plan` は行ですること（新しい順に
-    /// `pick,squash,drop` など）、`edit_move` は `from:above` で行を動かし、`edit_apply` なら Apply Changes を押す。
+    /// History の編集モードをこのコミットから開いておく（確認用）。`edit_range` は範囲を HEAD から n 個にし（境目を
+    /// 引いたのと同じ）、`edit_plan` は行ですること（新しい順に `pick,squash,drop` など）、`edit_move` は
+    /// `from:above` で行を動かし、`edit_apply` なら Apply Changes を押す。
     edit_commits: Option<String>,
+    edit_range: Option<usize>,
     edit_plan: Option<String>,
     edit_move: Option<(usize, usize)>,
     edit_apply: bool,
@@ -308,6 +310,13 @@ fn parse_args() -> Result<Args, String> {
                 args.edit_commits = Some(it.next().ok_or("--edit-commits <commit>")?)
             }
             "--edit-plan" => args.edit_plan = Some(it.next().ok_or("--edit-plan <actions>")?),
+            "--edit-range" => {
+                args.edit_range = Some(
+                    it.next()
+                        .and_then(|n| n.parse().ok())
+                        .ok_or("--edit-range <count>")?,
+                )
+            }
             "--edit-move" => {
                 let spec = it.next().ok_or("--edit-move <from>:<above>")?;
                 let (a, b) = spec.split_once(':').ok_or("--edit-move <from>:<above>")?;
@@ -1599,13 +1608,17 @@ fn build_tab(
             })),
         );
     }
-    // History の編集モード（History の画面と入れ替える）。
+    // History の編集モード（History の上でそのまま編集する）。
     let edit_opener = historyedit::Opener::new(
         actions.clone(),
-        &pages,
-        &columns,
+        &view,
+        shaper.clone(),
         sidebar.clone(),
         statusbar.clone(),
+        vec![
+            tab.side_header.clone().upcast(),
+            tab.header.clone().upcast(),
+        ],
         pending.clone(),
     );
     // 詳細の右クリックの Edit Message…: その場で書き直したメッセージで reword する（macOS 版と同じ）。
@@ -1647,6 +1660,11 @@ fn build_tab(
     let (sh, eo) = (shaper.clone(), edit_opener.clone());
     view.connect_menu(move |row, x, y| {
         let Some(view) = v.upgrade() else { return };
+        // History の上で編集している間は、範囲の行のすることとコピーだけ（macOS 版と同じ）。
+        if eo.is_open() {
+            eo.context_menu(row, x, y);
+            return;
+        }
         if let Some((_, history)) = view.current() {
             let rows = view.selection();
             let items = if rows.len() > 1 && rows.contains(&row) {
@@ -2425,27 +2443,33 @@ fn build_tab(
                                 edit_opener.open(start, None);
                                 pending.set(pending.get() + 1);
                                 let (p, eo) = (pending.clone(), edit_opener.clone());
-                                let (plan, moved, apply) =
-                                    (args.edit_plan.clone(), args.edit_move, args.edit_apply);
-                                glib::timeout_add_local_once(
-                                    std::time::Duration::from_millis(800),
-                                    move || {
-                                        if let Some(plan) = &plan {
-                                            eo.set_plan(plan);
-                                        }
-                                        if let Some((from, above)) = moved {
-                                            eo.move_row(from, above);
-                                        }
-                                        if apply {
-                                            eo.apply();
-                                        }
-                                        // 見通し（rewritePreview）が届くのを待ってから撮る。
-                                        glib::timeout_add_local_once(
-                                            std::time::Duration::from_millis(1500),
-                                            move || p.set(p.get() - 1),
-                                        );
-                                    },
+                                let (range, plan, moved, apply) = (
+                                    args.edit_range,
+                                    args.edit_plan.clone(),
+                                    args.edit_move,
+                                    args.edit_apply,
                                 );
+                                glib::spawn_future_local(async move {
+                                    glib::timeout_future(std::time::Duration::from_millis(800))
+                                        .await;
+                                    // 範囲を変えてから（読み足し終えてから）、することを入れる。
+                                    if let Some(count) = range {
+                                        eo.resize(count).await;
+                                    }
+                                    if let Some(plan) = &plan {
+                                        eo.set_plan(plan);
+                                    }
+                                    if let Some((from, above)) = moved {
+                                        eo.move_row(from, above);
+                                    }
+                                    if apply {
+                                        eo.apply();
+                                    }
+                                    // 見通し（rewritePreview）が届くのを待ってから撮る。
+                                    glib::timeout_future(std::time::Duration::from_millis(1500))
+                                        .await;
+                                    p.set(p.get() - 1);
+                                });
                             }
                             if let Some((from, to)) = args.drop_commit
                                 && let Some(id) = view

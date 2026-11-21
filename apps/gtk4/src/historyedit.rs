@@ -1,8 +1,9 @@
 //! History の編集モード（macOS 版の `HistoryEdit.swift`。docs/ux.md の「History's edit mode」）。選んだコミット
-//! から HEAD までを並べ、行ごとに何をするか（そのまま・メッセージを直す・ひとつ古いコミットとまとめる・取り消す・
-//! 止めて直す）を選び、ドラッグで並べ替える。Apply Changes を押すまで何も変わらず、まとめて 1 回の rebase
-//! （コアの `rewrite` の `plan`）で行う。Undo 1 回で全部戻る。行は History と同じく新しい順（上が HEAD）。
-//! 開いている間は History の画面と入れ替え、ステータスバーに要約・見通し（`rewritePreview`）・Cancel・Apply を出す。
+//! から HEAD までの範囲で、行ごとに何をするか（pick・reword・squash・fixup・drop・edit）を決め、並べ替える。
+//! 行は History の表がそのまま描き（範囲の行に操作の印、外は薄く。`history.rs` の [`EditMarks`]）、ここは範囲と
+//! 決めたこと、ステータスバーの帯（要約・見通し（`rewritePreview`）・Cancel・Apply）を持つ。Apply Changes を
+//! 押すまで何も変わらず、まとめて 1 回の rebase（コアの `rewrite` の `plan`）で行う。Undo 1 回で全部戻る。並びは
+//! History と同じく新しい順（上が HEAD）。
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -14,10 +15,26 @@ use gtk::{gdk, gio, glib, pango};
 use serde_json::{Value, json};
 
 use crate::actions::Actions;
+use crate::history::{EditEvent, EditMarks, EditRow, HistoryView};
+use crate::historydisplay::Shaper;
+use crate::menu::{self, Item};
 use crate::sidebar::{Page, Sidebar};
 use crate::statusbar::{self, StatusBar};
 
-/// 行ですること。git の対話的な rebase の言葉は、ツールチップにだけ出す。
+/// History の上で編集している間は止める操作（HEAD・作業ツリーを動かす。macOS 版の `movesHead`）。
+pub const MOVES_HEAD: &[&str] = &[
+    "pull",
+    "merge",
+    "rebase",
+    "pop-stash",
+    "switch-branch",
+    "commit",
+    "commit-and-push",
+    "apply-patch",
+    "undo",
+];
+
+/// 行ですること。札は git の対話的な rebase の言葉、何をするかはツールチップと選ぶ一覧の説明に。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
     Pick,
@@ -54,15 +71,29 @@ impl Action {
         Self::ALL.into_iter().find(|a| a.name() == name)
     }
 
-    fn title(self) -> String {
+    /// History で範囲の行を選んで押すキー（p・r・s・f・d・e。git の言葉の頭文字）。
+    pub fn from_key(key: char) -> Option<Self> {
+        let key = key.to_ascii_lowercase();
+        Self::ALL
+            .into_iter()
+            .find(|a| a.name().starts_with(key) && key.is_ascii_lowercase())
+    }
+
+    /// 選ぶ一覧で、言葉に添える説明。
+    fn summary(self) -> String {
         match self {
             Action::Pick => tr!("Keep"),
             Action::Reword => tr!("Edit Message"),
             Action::Squash => tr!("Combine with Older"),
             Action::Fixup => tr!("Combine with Older, Keep Its Message"),
-            Action::Drop => "Drop".to_owned(),
+            Action::Drop => tr!("Remove"),
             Action::Edit => tr!("Stop to Change Files"),
         }
+    }
+
+    /// 選ぶ一覧の項目（言葉と説明）。
+    fn menu_title(self) -> String {
+        format!("{} — {}", self.name(), self.summary())
     }
 
     fn tip(self) -> String {
@@ -92,7 +123,6 @@ impl Action {
 struct Row {
     oid: String,
     message: String,
-    author: String,
     /// merge のコミット（作り直すだけで、することは選べない）。
     merge: bool,
     action: Action,
@@ -123,17 +153,6 @@ pub enum Preset {
     Move(String, usize),
 }
 
-/// 行に落とす所の印を付ける（`Some(true)` なら下、`Some(false)` なら上、None なら消す）。
-fn set_drop_mark(row: &gtk::Widget, below: Option<bool>) {
-    row.remove_css_class("drop-above");
-    row.remove_css_class("drop-below");
-    match below {
-        Some(true) => row.add_css_class("drop-below"),
-        Some(false) => row.add_css_class("drop-above"),
-        None => {}
-    }
-}
-
 /// 行で選べること。いちばん古い行と merge のすぐ上の行は、まとめる相手がない。merge の行は作り直すだけ。
 fn choices(rows: &[Row], i: usize) -> Vec<Action> {
     if rows[i].merge {
@@ -144,86 +163,6 @@ fn choices(rows: &[Row], i: usize) -> Vec<Action> {
         .into_iter()
         .filter(|a| !(no_older && a.combines()))
         .collect()
-}
-
-/// 行ですることの一覧の項目（名前と、選んでいる印。乗せると説明）。今選んでいる項目をもう一度押したら
-/// `same` を呼ぶ（DropDown は同じ項目では選択の知らせを出さないが、macOS 版のポップアップは出す）。
-fn action_items(choice: &gtk::DropDown, same: Rc<dyn Fn()>) -> gtk::SignalListItemFactory {
-    // 印は DropDown で選んでいるものに付ける。開いた一覧の項目の「選んでいる」は、マウスを乗せた項目に付いて回る。
-    let chosen = |choice: &glib::WeakRef<gtk::DropDown>, item: &gtk::ListItem| {
-        choice
-            .upgrade()
-            .is_some_and(|c| item.item().is_some() && c.selected() == item.position())
-    };
-    let factory = gtk::SignalListItemFactory::new();
-    // 項目の印は、選択の知らせを 1 つだけつないで付け直す（項目ごとにつなぐと、作り直すたびに溜まる）。項目は
-    // 弱く持つ。
-    type Marks = Rc<RefCell<Vec<(glib::WeakRef<gtk::ListItem>, glib::WeakRef<gtk::Image>)>>>;
-    let marks: Marks = Rc::default();
-    let choice_weak = choice.downgrade();
-    let (weak, m) = (choice.downgrade(), marks.clone());
-    choice.connect_selected_notify(move |_| {
-        m.borrow_mut().retain(|(item, check)| {
-            let (Some(item), Some(check)) = (item.upgrade(), check.upgrade()) else {
-                return false;
-            };
-            check.set_opacity(if chosen(&weak, &item) { 1.0 } else { 0.0 });
-            true
-        });
-    });
-    factory.connect_setup(move |_, item| {
-        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
-            return;
-        };
-        let label = gtk::Label::new(None);
-        label.set_xalign(0.0);
-        label.set_hexpand(true);
-        let check = gtk::Image::from_icon_name("object-select-symbolic");
-        let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        row.append(&label);
-        row.append(&check);
-        item.set_child(Some(&row));
-        // 押したときにまだ選び替わっていないので、押した項目が選んでいるものなら、同じものを選び直した。
-        let click = gtk::GestureClick::new();
-        click.set_propagation_phase(gtk::PropagationPhase::Capture);
-        let (w, it, same) = (choice_weak.clone(), item.downgrade(), same.clone());
-        click.connect_released(move |_, _, _, _| {
-            if let Some(item) = it.upgrade()
-                && chosen(&w, &item)
-            {
-                let same = same.clone();
-                glib::idle_add_local_once(move || same());
-            }
-        });
-        row.add_controller(click);
-        let mut marks = marks.borrow_mut();
-        marks.retain(|(item, check)| item.upgrade().is_some() && check.upgrade().is_some());
-        marks.push((item.downgrade(), check.downgrade()));
-    });
-    let weak = choice.downgrade();
-    factory.connect_bind(move |_, item| {
-        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
-            return;
-        };
-        let title = item
-            .item()
-            .and_downcast::<gtk::StringObject>()
-            .map(|s| s.string().to_string())
-            .unwrap_or_default();
-        let Some(row) = item.child() else { return };
-        let tip = Action::ALL
-            .into_iter()
-            .find(|a| a.title() == title)
-            .map(Action::tip);
-        row.set_tooltip_text(tip.as_deref());
-        if let Some(label) = row.first_child().and_downcast::<gtk::Label>() {
-            label.set_text(&title);
-        }
-        if let Some(check) = row.last_child() {
-            check.set_opacity(if chosen(&weak, item) { 1.0 } else { 0.0 });
-        }
-    });
-    factory
 }
 
 /// `i` の行（squash）までのまとまりのメッセージを、古い順につないだもの（git の squash の既定と同じ）。
@@ -273,19 +212,102 @@ fn plan_steps(rows: &[Row]) -> Vec<Value> {
     steps
 }
 
+/// `from` の行を、新しい順の並びの `above` 番目の行の上へ動かす（`above` が行の数なら最後の行の下）。動かした
+/// ら true。
+fn move_rows(rows: &mut Vec<Row>, from: usize, above: usize) -> bool {
+    if from >= rows.len() || above > rows.len() {
+        return false;
+    }
+    let moved = rows.remove(from);
+    rows.insert(if from < above { above - 1 } else { above }, moved);
+    fix_oldest(rows);
+    true
+}
+
+/// いちばん古い行には、まとめる相手がない（squash・fixup なら pick に戻す）。
+fn fix_oldest(rows: &mut [Row]) {
+    if let Some(last) = rows.last_mut()
+        && last.action.combines()
+    {
+        last.action = Action::Pick;
+        last.new_message = None;
+    }
+}
+
+/// 範囲を狭めて残せる、いちばん少ない数: 外れる行がどれもそのまま（pick で、元の位置。`line` は HEAD から
+/// first-parent で辿った並び）のところまで（macOS 版の `canShrink`）。
+fn min_count(rows: &[Row], line: &[(String, bool)]) -> usize {
+    let mut count = rows.len();
+    while count > 1
+        && rows[count - 1].action == Action::Pick
+        && line
+            .get(count - 1)
+            .is_some_and(|(oid, _)| *oid == rows[count - 1].oid)
+    {
+        count -= 1;
+    }
+    count
+}
+
+/// 範囲を `count` 個に狭める（外れる行がそのままのときだけ。macOS 版の `resize(to:)` の狭める側）。狭めたら
+/// true。
+fn shrink(
+    rows: &mut Vec<Row>,
+    original: &mut Vec<String>,
+    line: &[(String, bool)],
+    count: usize,
+) -> bool {
+    if count == 0 || count >= rows.len() || count < min_count(rows, line) {
+        return false;
+    }
+    rows.truncate(count);
+    original.truncate(count);
+    fix_oldest(rows);
+    true
+}
+
+/// コミット `chosen`（16 進と merge か）のメッセージを読んで行にする（件名・作者は History の表が描く）。
+async fn read_rows(
+    repo: std::sync::Arc<amonhen_core::Repository>,
+    chosen: Vec<(String, bool)>,
+) -> Vec<Row> {
+    gio::spawn_blocking(move || {
+        chosen
+            .iter()
+            .map(|(oid, merge)| {
+                let message = Oid::from_hex(oid)
+                    .and_then(|id| repo.commit_message(&id).ok())
+                    .unwrap_or_default();
+                Row {
+                    oid: oid.clone(),
+                    message,
+                    merge: *merge,
+                    action: Action::Pick,
+                    new_message: None,
+                }
+            })
+            .collect::<Vec<_>>()
+    })
+    .await
+    .unwrap_or_default()
+}
+
 /// 編集モードの中身。
 struct Mode {
     actions: Rc<Actions>,
     /// 編集を始めた worktree（見通しを読むのも書き換えるのもここ。編集の間に書き込む先を替えても、読んだ
     /// コミットの並びを、ほかの worktree の HEAD に当てない）。
     repo: std::sync::Arc<amonhen_core::Repository>,
+    /// 行を描く History の表。
+    view: HistoryView,
     rows: RefCell<Vec<Row>>,
-    original: Vec<String>,
-    /// 一覧のモデル（行のコミット ID。並べ替えたら作り直す）。
-    model: gtk::StringList,
-    /// 行の選択（macOS 版の表と同じく、クリックで行が選ばれ、矢印キーで動く）。
-    selection: gtk::SingleSelection,
-    root: gtk::Box,
+    original: RefCell<Vec<String>>,
+    /// HEAD から first-parent で辿った並び（範囲を広げる・狭める先）。
+    line: Vec<(String, bool)>,
+    /// 表に渡す並び（同じものを渡し続け、表が引き直さずに済むように）。
+    line_ids: Rc<Vec<Oid>>,
+    /// 範囲を変えている途中（読み終えるまで次の変更を受けない）。
+    resizing: Cell<bool>,
     /// ステータスバーに出す行（要約・見通し・Cancel・Apply）。
     bar: gtk::Box,
     summary: gtk::Label,
@@ -309,49 +331,12 @@ impl Mode {
     fn new(
         actions: Rc<Actions>,
         repo: std::sync::Arc<amonhen_core::Repository>,
+        view: HistoryView,
         rows: Vec<Row>,
+        line: Vec<(String, bool)>,
     ) -> Rc<Self> {
         let original = rows.iter().map(|r| r.oid.clone()).collect();
-        let can_reorder = !rows.iter().any(|r| r.merge);
-        let heading = gtk::Label::new(Some(&tr!("Edit Commits")));
-        heading.add_css_class("title-4");
-        heading.set_xalign(0.0);
-        let hint = gtk::Label::new(Some(&if can_reorder {
-            tr!(
-                "Choose what to do with each commit and drag rows to reorder them. Nothing changes until Apply Changes."
-            )
-        } else {
-            tr!(
-                "Choose what to do with each commit. Merges are recreated as they are, so rows can’t be reordered across them. Nothing changes until Apply Changes."
-            )
-        }));
-        hint.add_css_class("dim-label");
-        hint.add_css_class("caption");
-        hint.set_xalign(0.0);
-        hint.set_wrap(true);
-        let top = gtk::Box::new(gtk::Orientation::Vertical, 2);
-        top.set_margin_top(12);
-        top.set_margin_bottom(8);
-        top.set_margin_start(16);
-        top.set_margin_end(16);
-        top.append(&heading);
-        top.append(&hint);
-        let model = gtk::StringList::new(&[]);
-        let selection = gtk::SingleSelection::new(Some(model.clone()));
-        selection.set_autoselect(false);
-        selection.set_can_unselect(true);
-        let list = gtk::ListView::new(Some(selection.clone()), None::<gtk::ListItemFactory>);
-        list.add_css_class("rich-list");
-        let scrolled = gtk::ScrolledWindow::builder()
-            .child(&list)
-            .hscrollbar_policy(gtk::PolicyType::Never)
-            .vexpand(true)
-            .build();
-        let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        root.add_css_class("view");
-        root.append(&top);
-        root.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
-        root.append(&scrolled);
+        let line_ids = Rc::new(line.iter().filter_map(|(o, _)| Oid::from_hex(o)).collect());
 
         // ステータスバーの行。
         let icon = crate::icon::Icon::default();
@@ -396,11 +381,12 @@ impl Mode {
         let mode = Rc::new(Self {
             actions,
             repo,
+            view,
             rows: RefCell::new(rows),
-            original,
-            model,
-            selection,
-            root,
+            original: RefCell::new(original),
+            line,
+            line_ids,
+            resizing: Cell::new(false),
             bar,
             summary,
             preview,
@@ -413,7 +399,6 @@ impl Mode {
             preview_generation: Cell::new(0),
             on_finish: RefCell::default(),
         });
-        list.set_factory(Some(&Self::factory(&mode)));
         let weak = Rc::downgrade(&mode);
         cancel.connect_clicked(move |_| {
             if let Some(m) = weak.upgrade() {
@@ -435,269 +420,137 @@ impl Mode {
                 m.update_preview();
             }
         });
-        mode.reload();
         mode
     }
 
-    fn can_reorder(&self) -> bool {
-        !self.rows.borrow().iter().any(|r| r.merge)
-    }
-
-    /// 一覧の行を作る。中身は、行のコミットか位置が変わるたびに入れ直す。
-    fn factory(mode: &Rc<Self>) -> gtk::SignalListItemFactory {
-        let factory = gtk::SignalListItemFactory::new();
-        let weak = Rc::downgrade(mode);
-        factory.connect_setup(move |_, item| {
-            let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
-                return;
-            };
-            let Some(mode) = weak.upgrade() else { return };
-            item.set_activatable(false);
-            let mark = gtk::Label::new(None);
-            mark.set_width_chars(2);
-            let merge_icon = crate::icon::Icon::default();
-            merge_icon.set(crate::icon::Kind::Merge, true);
-            merge_icon.set_valign(gtk::Align::Center);
-            let subject = gtk::Label::new(None);
-            subject.set_xalign(0.0);
-            subject.set_ellipsize(pango::EllipsizeMode::End);
-            let detail = gtk::Label::new(None);
-            detail.set_xalign(0.0);
-            detail.add_css_class("caption");
-            detail.add_css_class("dim-label");
-            detail.set_ellipsize(pango::EllipsizeMode::End);
-            let texts = gtk::Box::new(gtk::Orientation::Vertical, 1);
-            texts.set_hexpand(true);
-            texts.set_valign(gtk::Align::Center);
-            texts.append(&subject);
-            texts.append(&detail);
-            let choice = gtk::DropDown::from_strings(&[]);
-            // Edit Message を選んである行でもう一度 Edit Message を選んだら、メッセージの欄を開き直す（macOS 版と
-            // 同じ）。
-            let same: Rc<dyn Fn()> = {
-                let (w, it) = (Rc::downgrade(&mode), item.downgrade());
-                Rc::new(move || {
-                    let (Some(mode), Some(item)) = (w.upgrade(), it.upgrade()) else {
-                        return;
-                    };
-                    let i = item.position() as usize;
-                    let reword = mode
-                        .rows
-                        .borrow()
-                        .get(i)
-                        .is_some_and(|r| r.action == Action::Reword);
-                    if reword {
-                        mode.edit_message(i);
-                    }
-                })
-            };
-            // 開いた一覧の項目ごとに説明（git の言葉）を出す（macOS 版のメニューの項目の説明と同じ）。
-            choice.set_list_factory(Some(&action_items(&choice, same)));
-            choice.set_valign(gtk::Align::Center);
-            choice.set_size_request(290, -1);
-            let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-            row.set_margin_start(8);
-            row.set_margin_end(8);
-            row.set_margin_top(3);
-            row.set_margin_bottom(3);
-            row.append(&mark);
-            row.append(&merge_icon);
-            row.append(&texts);
-            row.append(&choice);
-            item.set_child(Some(&row));
-
-            // 行の中身を入れる。選択肢を入れ替える間は、選んだことにしない。
-            let filling = Rc::new(Cell::new(false));
-            let fill = {
-                let (weak, filling) = (Rc::downgrade(&mode), filling.clone());
-                let (mark, merge_icon, subject, detail, choice) = (
-                    mark.clone(),
-                    merge_icon.clone(),
-                    subject.clone(),
-                    detail.clone(),
-                    choice.clone(),
-                );
-                move |item: &gtk::ListItem| {
-                    let Some(mode) = weak.upgrade() else { return };
-                    let rows = mode.rows.borrow();
-                    let i = item.position() as usize;
-                    let Some(r) = rows.get(i) else { return };
-                    filling.set(true);
-                    let allowed = choices(&rows, i);
-                    let titles: Vec<String> = allowed.iter().map(|a| a.title()).collect();
-                    let refs: Vec<&str> = titles.iter().map(String::as_str).collect();
-                    choice.set_model(Some(&gtk::StringList::new(&refs)));
-                    choice.set_selected(
-                        allowed.iter().position(|a| *a == r.action).unwrap_or(0) as u32
-                    );
-                    choice.set_sensitive(!r.merge);
-                    filling.set(false);
-                    // 件名: 取り消す行は線で消し、まとめる行は薄く、直したメッセージは斜体。
-                    subject.set_text(&r.subject());
-                    let attrs = pango::AttrList::new();
-                    match r.action {
-                        Action::Drop => {
-                            attrs.insert(pango::AttrInt::new_strikethrough(true));
-                            attrs.insert(pango::AttrInt::new_foreground_alpha(u16::MAX / 3));
-                        }
-                        Action::Squash | Action::Fixup => {
-                            attrs.insert(pango::AttrInt::new_foreground_alpha(u16::MAX / 5 * 3));
-                        }
-                        _ => {}
-                    }
-                    if r.new_message.is_some()
-                        && matches!(r.action, Action::Reword | Action::Squash)
-                    {
-                        attrs.insert(pango::AttrInt::new_style(pango::Style::Italic));
-                    }
-                    subject.set_attributes(Some(&attrs));
-                    detail.set_text(&format!("{} · {}", &r.oid[..r.oid.len().min(8)], r.author));
-                    // 印: まとめる行は下へ向かう矢印、merge は merge の印、コンフリクトしそうなら警告。
-                    let conflict = mode.conflicting.borrow().get(&r.oid).cloned();
-                    merge_icon.set_visible(r.merge && conflict.is_none());
-                    mark.set_visible(!r.merge || conflict.is_some());
-                    mark.remove_css_class("warning");
-                    mark.remove_css_class("dim-label");
-                    mark.remove_css_class("accent");
-                    match &conflict {
-                        Some(files) => {
-                            mark.set_text("⚠");
-                            mark.add_css_class("warning");
-                            mark.set_tooltip_text(Some(&tr!(
-                                "Conflicts expected in {files}",
-                                files = files.join(", ")
-                            )));
-                        }
-                        None => {
-                            mark.set_text(if r.action.combines() { "↳" } else { "●" });
-                            mark.add_css_class(if r.action == Action::Drop {
-                                "dim-label"
-                            } else {
-                                "accent"
-                            });
-                            mark.set_tooltip_text(None);
-                        }
-                    }
-                }
-            };
-            let f = fill.clone();
-            item.connect_item_notify(move |item| f(item));
-            item.connect_position_notify(move |item| fill(item));
-
-            let (w, it) = (Rc::downgrade(&mode), item.downgrade());
-            choice.connect_selected_notify(move |choice| {
-                let (Some(mode), Some(item)) = (w.upgrade(), it.upgrade()) else {
-                    return;
-                };
-                if filling.get() {
-                    return;
-                }
-                let i = item.position() as usize;
-                let action = {
-                    let rows = mode.rows.borrow();
-                    if i >= rows.len() {
-                        return;
-                    }
-                    let allowed = choices(&rows, i);
-                    let Some(&action) = allowed.get(choice.selected() as usize) else {
-                        return;
-                    };
-                    if action == rows[i].action {
-                        return;
-                    }
-                    action
-                };
-                if action == Action::Reword {
-                    mode.edit_message(i);
-                    return;
-                }
-                mode.set(action, i);
-                mode.reload();
-            });
-
-            // ダブルクリックでメッセージを直す。
-            let click = gtk::GestureClick::new();
-            let (w, it) = (Rc::downgrade(&mode), item.downgrade());
-            click.connect_pressed(move |_, n, _, _| {
-                if n == 2
-                    && let (Some(mode), Some(item)) = (w.upgrade(), it.upgrade())
-                {
-                    mode.edit_message(item.position() as usize);
-                }
-            });
-            row.add_controller(click);
-
-            // ドラッグで並べ替える（merge をまたいでは並べ替えられない）。
-            let source = gtk::DragSource::new();
-            source.set_actions(gdk::DragAction::MOVE);
-            let (w, it) = (Rc::downgrade(&mode), item.downgrade());
-            source.connect_prepare(move |_, _, _| {
-                let (mode, item) = (w.upgrade()?, it.upgrade()?);
-                if !mode.can_reorder() {
-                    return None;
-                }
-                Some(gdk::ContentProvider::for_value(&item.position().to_value()))
-            });
-            // 運んでいる間は、行の絵を札にする（macOS 版の一覧と同じ）。
-            let r = row.downgrade();
-            source.connect_drag_begin(move |source, _| {
-                if let Some(row) = r.upgrade() {
-                    source.set_icon(Some(&gtk::WidgetPaintable::new(Some(&row))), 0, 0);
-                }
-            });
-            row.add_controller(source);
-            let target = gtk::DropTarget::new(u32::static_type(), gdk::DragAction::MOVE);
-            // 落とす所の印: 行の上半分なら上に、下半分なら下に線を引く（macOS 版の `.gap` の代わり）。
-            target.connect_motion(|target, _, y| {
-                if let Some(w) = target.widget() {
-                    let below = y >= f64::from(w.height()) / 2.0;
-                    set_drop_mark(&w, Some(below));
-                }
-                gdk::DragAction::MOVE
-            });
-            target.connect_leave(|target| {
-                if let Some(w) = target.widget() {
-                    set_drop_mark(&w, None);
-                }
-            });
-            let (w, it) = (Rc::downgrade(&mode), item.downgrade());
-            target.connect_drop(move |target, value, _, y| {
-                if let Some(w) = target.widget() {
-                    set_drop_mark(&w, None);
-                }
-                let (Some(mode), Some(item)) = (w.upgrade(), it.upgrade()) else {
-                    return false;
-                };
-                let Ok(from) = value.get::<u32>() else {
-                    return false;
-                };
-                let height = target.widget().map_or(1, |w| w.height()) as f64;
-                let above = item.position() + u32::from(y >= height / 2.0);
-                mode.move_row(from as usize, above as usize)
-            });
-            row.add_controller(target);
-        });
-        factory
-    }
-
-    /// `from` の行を、新しい順の並びの `above` 番目の行の上へ動かす。
-    fn move_row(self: &Rc<Self>, from: usize, above: usize) -> bool {
-        {
-            let mut rows = self.rows.borrow_mut();
-            if from >= rows.len() || above > rows.len() {
-                return false;
+    /// 表で起きたこと（操作の印・キー・ダブルクリック・並べ替え・境目）。
+    fn handle(self: &Rc<Self>, event: EditEvent) {
+        match event {
+            EditEvent::Choices(i, x, y) => {
+                let items = self.choice_items(i);
+                menu::popup(&self.view, x, y, items);
             }
-            let moved = rows.remove(from);
-            rows.insert(if from < above { above - 1 } else { above }, moved);
-            // いちばん古い行には、まとめる相手がない。
-            if rows.last().is_some_and(|r| r.action.combines()) {
-                let last = rows.len() - 1;
-                rows[last].action = Action::Pick;
-                rows[last].new_message = None;
+            EditEvent::Choose(i, action) => self.choose(i, action),
+            EditEvent::Reword(i) => self.edit_message(i),
+            EditEvent::Move(from, above) => {
+                self.move_row(from, above);
+            }
+            EditEvent::Resize(count) => {
+                let this = self.clone();
+                glib::spawn_future_local(async move {
+                    this.resize(count).await;
+                });
             }
         }
+    }
+
+    /// `i` 番目の行で選べること（git の言葉と説明。今のものに印、説明はツールチップ）。
+    fn choice_items(self: &Rc<Self>, i: usize) -> Vec<Item> {
+        let rows = self.rows.borrow();
+        let Some(row) = rows.get(i) else {
+            return Vec::new();
+        };
+        choices(&rows, i)
+            .into_iter()
+            .map(|action| {
+                let weak = Rc::downgrade(self);
+                menu::choice_with_tip(
+                    action.menu_title(),
+                    row.action == action,
+                    action.tip(),
+                    move || {
+                        if let Some(m) = weak.upgrade() {
+                            m.choose(i, action);
+                        }
+                    },
+                )
+            })
+            .collect()
+    }
+
+    /// 編集の間の右クリック: 範囲の行（merge でないもの）はすることの一覧、どの行もコミットの ID のコピー。
+    fn context_items(self: &Rc<Self>, index: Option<usize>, id: Oid) -> Vec<Item> {
+        let mut items = Vec::new();
+        if let Some(i) = index.filter(|&i| self.rows.borrow().get(i).is_some_and(|r| !r.merge)) {
+            items = self.choice_items(i);
+            items.push(Item::Separator);
+        }
+        let view = self.view.clone();
+        items.push(menu::action(tr!("Copy Commit ID"), move || {
+            view.clipboard().set_text(&id.to_string());
+        }));
+        items
+    }
+
+    /// `i` 番目の行のすることを変える（reword はメッセージの欄を開く）。
+    fn choose(self: &Rc<Self>, i: usize, action: Action) {
+        let allowed = {
+            let rows = self.rows.borrow();
+            i < rows.len() && choices(&rows, i).contains(&action)
+        };
+        if !allowed {
+            return;
+        }
+        if action == Action::Reword {
+            self.edit_message(i);
+            return;
+        }
+        self.set(action, i);
         self.reload();
-        true
+    }
+
+    /// `from` の行を、新しい順の並びの `above` 番目の行の上へ動かす（merge をまたいでは並べ替えられない）。
+    fn move_row(self: &Rc<Self>, from: usize, above: usize) -> bool {
+        if self.rows.borrow().iter().any(|r| r.merge) {
+            return false;
+        }
+        let moved = move_rows(&mut self.rows.borrow_mut(), from, above);
+        self.reload();
+        moved
+    }
+
+    /// 範囲を HEAD から first-parent で `count` 個にする。広げるときは古い側に読み足し、狭めるときは外れる行が
+    /// どれもそのまま（pick で、元の位置）のときだけ（macOS 版の `resize(to:)`）。変えたら true。
+    async fn resize(self: Rc<Self>, count: usize) -> bool {
+        if self.resizing.get() || self.line.is_empty() {
+            self.push();
+            return false;
+        }
+        let count = count.clamp(1, self.line.len());
+        let len = self.rows.borrow().len();
+        let changed = if count < len {
+            let mut rows = self.rows.borrow_mut();
+            shrink(
+                &mut rows,
+                &mut self.original.borrow_mut(),
+                &self.line,
+                count,
+            )
+        } else if count > len {
+            self.resizing.set(true);
+            let more = read_rows(self.repo.clone(), self.line[len..count].to_vec()).await;
+            self.resizing.set(false);
+            // 読んでいる間に終えた・変わったら捨てる。
+            if self.rows.borrow().len() != len || more.len() != count - len {
+                self.push();
+                return false;
+            }
+            self.original
+                .borrow_mut()
+                .extend(more.iter().map(|r| r.oid.clone()));
+            let mut rows = self.rows.borrow_mut();
+            rows.extend(more);
+            fix_oldest(&mut rows);
+            true
+        } else {
+            false
+        };
+        if changed {
+            self.reload();
+        } else {
+            self.push();
+        }
+        changed
     }
 
     fn set(&self, action: Action, i: usize) {
@@ -793,13 +646,15 @@ impl Mode {
 
     fn has_changes(&self) -> bool {
         let rows = self.rows.borrow();
-        rows.iter().map(|r| &r.oid).ne(self.original.iter())
+        rows.iter()
+            .map(|r| &r.oid)
+            .ne(self.original.borrow().iter())
             || rows.iter().any(|r| r.action != Action::Pick)
     }
 
-    /// 一覧と要約を作り直す。
+    /// 表の印と要約を作り直す。
     fn reload(self: &Rc<Self>) {
-        self.replace_rows();
+        self.push();
         self.update_summary();
         self.update_preview();
     }
@@ -808,7 +663,11 @@ impl Mode {
         let rows = self.rows.borrow();
         let count = |a: Action| rows.iter().filter(|r| r.action == a).count();
         let mut parts = Vec::new();
-        if rows.iter().map(|r| &r.oid).ne(self.original.iter()) {
+        if rows
+            .iter()
+            .map(|r| &r.oid)
+            .ne(self.original.borrow().iter())
+        {
             parts.push(tr!("reordered"));
         }
         if count(Action::Reword) > 0 {
@@ -848,7 +707,7 @@ impl Mode {
             self.move_stacked.set_visible(false);
             if !self.conflicting.borrow().is_empty() {
                 self.conflicting.borrow_mut().clear();
-                self.redraw_rows();
+                self.push();
             }
             return;
         }
@@ -942,29 +801,34 @@ impl Mode {
         };
         if changed {
             self.conflicting.replace(marks);
-            self.redraw_rows();
+            self.push();
         }
     }
 
-    /// 印を付け直す（要約と見通しは読み直さない）。
-    fn redraw_rows(&self) {
-        self.replace_rows();
-    }
-
-    /// 一覧のモデルを今の行で置き換える。選んでいた行は、並べ替えた後も同じコミットを選んだままにする。
-    fn replace_rows(&self) {
-        let selected = self
-            .selection
-            .selected_item()
-            .and_downcast::<gtk::StringObject>()
-            .map(|o| o.string().to_string());
-        let oids: Vec<String> = self.rows.borrow().iter().map(|r| r.oid.clone()).collect();
-        let refs: Vec<&str> = oids.iter().map(String::as_str).collect();
-        self.model.splice(0, self.model.n_items(), &refs);
-        let position = selected
-            .and_then(|s| oids.iter().position(|o| *o == s))
-            .map_or(gtk::INVALID_LIST_POSITION, |p| p as u32);
-        self.selection.set_selected(position);
+    /// 範囲の行と決めたことを表に渡して描き直させる（要約と見通しは読み直さない）。
+    fn push(&self) {
+        let marks = {
+            let rows = self.rows.borrow();
+            let conflicting = self.conflicting.borrow();
+            EditMarks {
+                rows: rows
+                    .iter()
+                    .filter_map(|r| {
+                        Some(EditRow {
+                            oid: Oid::from_hex(&r.oid)?,
+                            action: r.action,
+                            merge: r.merge,
+                            subject: r.new_message.as_ref().map(|_| r.subject()),
+                            conflict: conflicting.contains_key(&r.oid),
+                        })
+                    })
+                    .collect(),
+                line: self.line_ids.clone(),
+                min_count: min_count(&rows, &self.line),
+                reorderable: !rows.iter().any(|r| r.merge),
+            }
+        };
+        self.view.set_edit(Some(marks));
     }
 
     /// この編集での指定（git の設定と同じなら None）。
@@ -1051,9 +915,9 @@ impl Mode {
 }
 
 /// Esc で Cancel、Return で Apply Changes（macOS 版のボタンのキー: 窓のどこでも効く）。窓に付け、捕まえる段階で
-/// 受けるので、行のドロップダウンやチェックボックスに入力があっても先に効く（シートの `return_presses_default` と
-/// 同じ）。文字の欄と、開いたドロップダウンの一覧の中の Return・Esc はそのまま。窓はタブで共有するので、このタブの
-/// 編集モードの帯が出ている間だけ。
+/// 受けるので、History やチェックボックスに入力があっても先に効く（シートの `return_presses_default` と同じ）。
+/// 文字の欄と、開いた吹き出し（することの一覧など）の中の Return・Esc はそのまま。窓はタブで共有するので、この
+/// タブの編集モードの帯が出ている間だけ。
 fn window_keys(mode: &Rc<Mode>) -> gtk::EventControllerKey {
     let keys = gtk::EventControllerKey::new();
     keys.set_propagation_phase(gtk::PropagationPhase::Capture);
@@ -1122,7 +986,7 @@ impl WindowKeys {
                 }
             }
         };
-        let widget: gtk::Widget = mode.root.clone().upcast();
+        let widget: gtk::Widget = mode.view.clone().upcast();
         follow(&widget);
         let id = widget.connect_root_notify(move |w| follow(w));
         Self {
@@ -1141,17 +1005,21 @@ impl WindowKeys {
     }
 }
 
-/// 編集モードを開く・閉じる（History の画面と入れ替える）。
+/// 編集モードを開く・閉じる（History の上でそのまま編集する）。
 #[derive(Clone)]
 pub struct Opener(Rc<OpenerInner>);
 
 struct OpenerInner {
     actions: Rc<Actions>,
-    pages: gtk::Stack,
-    /// History の画面（編集モードの間は外す）。
-    history: gtk::Widget,
+    /// 行を描く History の表と、その範囲・折りたたみを決めるもの（編集の間は今のブランチの全部の行にする）。
+    view: HistoryView,
+    shaper: Rc<Shaper>,
     sidebar: Rc<Sidebar>,
     statusbar: Rc<StatusBar>,
+    /// このタブの見出し（止めた操作のボタンのツールチップを、編集の間だけ替える）。
+    headers: Vec<gtk::Widget>,
+    /// ツールチップを替えたボタンと、元のツールチップ。
+    saved_tips: RefCell<Vec<(glib::WeakRef<gtk::Widget>, Option<glib::GString>)>>,
     current: RefCell<Option<Rc<Mode>>>,
     /// 編集モードの間だけ窓に付ける、Esc・Return のキー。
     keys: RefCell<Option<WindowKeys>>,
@@ -1175,21 +1043,47 @@ impl Drop for Busy {
     }
 }
 
+/// 編集の間に止めた操作のボタンのツールチップ（macOS 版の `editingHint`）。
+fn editing_hint() -> String {
+    tr!("Apply or cancel the commit edit first.")
+}
+
+/// `widget` の下の、止める操作（`win.<MOVES_HEAD>`）のボタン。
+fn head_buttons(widget: &gtk::Widget, out: &mut Vec<gtk::Widget>) {
+    if let Some(name) = widget
+        .dynamic_cast_ref::<gtk::Actionable>()
+        .and_then(|a| a.action_name())
+        && name
+            .strip_prefix("win.")
+            .is_some_and(|n| MOVES_HEAD.contains(&n))
+    {
+        out.push(widget.clone());
+    }
+    let mut child = widget.first_child();
+    while let Some(c) = child {
+        head_buttons(&c, out);
+        child = c.next_sibling();
+    }
+}
+
 impl Opener {
     pub fn new(
         actions: Rc<Actions>,
-        pages: &gtk::Stack,
-        history: &impl IsA<gtk::Widget>,
+        view: &HistoryView,
+        shaper: Rc<Shaper>,
         sidebar: Rc<Sidebar>,
         statusbar: Rc<StatusBar>,
+        headers: Vec<gtk::Widget>,
         pending: Rc<Cell<u32>>,
     ) -> Self {
         Self(Rc::new(OpenerInner {
             actions,
-            pages: pages.clone(),
-            history: history.clone().upcast(),
+            view: view.clone(),
+            shaper,
             sidebar,
             statusbar,
+            headers,
+            saved_tips: RefCell::default(),
             current: RefCell::default(),
             keys: RefCell::default(),
             pending,
@@ -1201,7 +1095,7 @@ impl Opener {
         self.0.current.borrow().is_some()
     }
 
-    /// History の編集モードに入る（`start` から HEAD まで）。`preset` は最初の変更（右クリックの近道から）。
+    /// History の編集モードに入る（`start` から HEAD まで）。`preset` は最初の変更（右クリックの近道・ドラッグから）。
     pub fn open(&self, start: &str, preset: Option<Preset>) {
         let inner = self.0.clone();
         if inner.actions.in_sequence() || self.is_open() {
@@ -1274,48 +1168,11 @@ impl Opener {
                     return;
                 }
             }
-            let chosen: Vec<(String, bool)> = line[..=end].to_vec();
-            let source = repo.clone();
-            let rows = gio::spawn_blocking(move || {
-                let ids: Vec<Oid> = chosen
-                    .iter()
-                    .filter_map(|(o, _)| Oid::from_hex(o))
-                    .collect();
-                let texts = repo.commit_texts(&ids).unwrap_or_default();
-                // 作者は mailmap で置き換えたもの（History・詳細と同じ。macOS 版と同じ）。
-                let mailmap = repo.mailmap();
-                chosen
-                    .iter()
-                    .enumerate()
-                    .map(|(i, (oid, merge))| {
-                        let id = Oid::from_hex(oid);
-                        let message = id
-                            .and_then(|id| repo.commit_message(&id).ok())
-                            .unwrap_or_default();
-                        let author = texts
-                            .get(i)
-                            .map(|t| {
-                                String::from_utf8_lossy(&t.author(mailmap.as_deref()).name)
-                                    .into_owned()
-                            })
-                            .unwrap_or_default();
-                        Row {
-                            oid: oid.clone(),
-                            message,
-                            author,
-                            merge: *merge,
-                            action: Action::Pick,
-                            new_message: None,
-                        }
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .await
-            .unwrap_or_default();
+            let rows = read_rows(repo.clone(), line[..=end].to_vec()).await;
             if rows.is_empty() || this.is_open() {
                 return;
             }
-            let mode = Mode::new(inner.actions.clone(), source, rows);
+            let mode = Mode::new(inner.actions.clone(), repo, inner.view.clone(), rows, line);
             let weak = Rc::downgrade(&this.0);
             mode.on_finish.replace(Some(Rc::new(move || {
                 if let Some(inner) = weak.upgrade() {
@@ -1323,13 +1180,21 @@ impl Opener {
                 }
             })));
             inner.current.replace(Some(mode.clone()));
-            // History の画面と入れ替える（サイドバーの History で開いたまま）。
-            inner.pages.remove(&inner.history);
-            inner.pages.add_named(&mode.root, Some("history"));
-            inner.pages.set_visible_child_name("history");
+            // History の上でそのまま編集する（今のブランチの全部の行にし、範囲の行に操作の印、外は薄く）。
+            let weak = Rc::downgrade(&this.0);
+            inner.view.connect_edit(move |event| {
+                let mode = weak.upgrade().and_then(|i| i.current.borrow().clone());
+                if let Some(mode) = mode {
+                    mode.handle(event);
+                }
+            });
+            inner.shaper.begin_editing();
             inner.sidebar.select_page(Page::History);
             inner.statusbar.show(statusbar::Row::Editing, &mode.bar);
             inner.keys.replace(Some(WindowKeys::new(&mode)));
+            this.block_head_moves(true);
+            // 帯の要約はすぐ書く（変更がなくても「まだ変更はありません」）。
+            mode.reload();
             if let Some(preset) = preset {
                 mode.apply_preset(preset);
             }
@@ -1338,20 +1203,61 @@ impl Opener {
 
     fn close(&self) {
         let inner = &self.0;
-        let Some(mode) = inner.current.take() else {
+        let Some(_mode) = inner.current.take() else {
             return;
         };
         inner.statusbar.hide(statusbar::Row::Editing);
         if let Some(keys) = inner.keys.take() {
             keys.remove();
         }
-        // 今の画面のまま（止まった操作は Working Copy を開いている）。History を見ていたときだけ History を出す。
-        let page = inner.pages.visible_child_name();
-        inner.pages.remove(&mode.root);
-        inner.pages.add_named(&inner.history, Some("history"));
-        inner
-            .pages
-            .set_visible_child_name(page.as_deref().unwrap_or("history"));
+        // 並べ替えて描いていた行から元の行に戻し（詳細は選んでいる行のコミットに）、元の範囲・折りたたみ・一致だけの
+        // 表示に戻す。
+        inner.view.connect_edit(|_| {});
+        inner.view.set_edit(None);
+        inner.shaper.end_editing();
+        self.block_head_moves(false);
+    }
+
+    /// 編集の間は、HEAD・作業ツリーを動かす操作を止め、見出しのボタンのツールチップにわけを出す（終えたら戻す）。
+    fn block_head_moves(&self, on: bool) {
+        let inner = &self.0;
+        inner.actions.update_facts(|f| f.editing_commits = on);
+        let hint = editing_hint();
+        if on {
+            let mut buttons = Vec::new();
+            for header in &inner.headers {
+                head_buttons(header, &mut buttons);
+            }
+            let mut saved = inner.saved_tips.borrow_mut();
+            for button in buttons {
+                saved.push((button.downgrade(), button.tooltip_text()));
+                button.set_tooltip_text(Some(&hint));
+            }
+        } else {
+            for (button, tip) in inner.saved_tips.take() {
+                // 編集の間にほかで言い直したもの（Undo の操作の名前など）はそのまま。
+                if let Some(button) = button.upgrade()
+                    && button.tooltip_text().as_deref() == Some(hint.as_str())
+                {
+                    button.set_tooltip_text(tip.as_deref());
+                }
+            }
+        }
+    }
+
+    /// 編集の間の右クリック（範囲の行はすることの一覧とコピー、ほかの行はコピーだけ）。
+    pub fn context_menu(&self, row: u32, x: f64, y: f64) {
+        let inner = &self.0;
+        let Some(mode) = inner.current.borrow().clone() else {
+            return;
+        };
+        let Some(id) = inner.view.shown_commit(row) else {
+            return;
+        };
+        let items = mode.context_items(inner.view.edit_index(row), id);
+        if let Some(popover) = menu::popup_returning(&inner.view, x, y, items) {
+            inner.view.mark_menu_row(row, &popover);
+        }
     }
 
     /// 確認用（`--edit-plan`）: 行ですることを新しい順に並べたもの（`pick,squash,drop` など）を入れる。
@@ -1371,8 +1277,19 @@ impl Opener {
 
     /// 確認用（`--edit-move`）: `from` の行を `above` 番目の行の上へ動かす。
     pub fn move_row(&self, from: usize, above: usize) {
-        if let Some(mode) = self.0.current.borrow().clone() {
+        let mode = self.0.current.borrow().clone();
+        if let Some(mode) = mode {
             mode.move_row(from, above);
+        }
+    }
+
+    /// 確認用（`--edit-range`）: 範囲を HEAD から `count` 個にする（境目を引いたのと同じ）。読み終えたら返る。
+    pub fn resize(&self, count: usize) -> impl std::future::Future<Output = ()> + 'static {
+        let mode = self.0.current.borrow().clone();
+        async move {
+            if let Some(mode) = mode {
+                mode.resize(count).await;
+            }
         }
     }
 
@@ -1382,5 +1299,125 @@ impl Opener {
         if let Some(mode) = mode {
             mode.apply_clicked();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 新しい順の行（`oid` だけ、することは pick）。
+    fn rows(oids: &[&str]) -> Vec<Row> {
+        oids.iter()
+            .map(|o| Row {
+                oid: (*o).to_owned(),
+                message: format!("{o} subject"),
+                merge: false,
+                action: Action::Pick,
+                new_message: None,
+            })
+            .collect()
+    }
+
+    fn line(oids: &[&str]) -> Vec<(String, bool)> {
+        oids.iter().map(|o| ((*o).to_owned(), false)).collect()
+    }
+
+    fn oids(rows: &[Row]) -> Vec<&str> {
+        rows.iter().map(|r| r.oid.as_str()).collect()
+    }
+
+    #[test]
+    fn keys_are_the_first_letters_of_gits_words() {
+        let keys: Vec<_> = "prsfde".chars().map(Action::from_key).collect();
+        assert_eq!(
+            keys,
+            [
+                Some(Action::Pick),
+                Some(Action::Reword),
+                Some(Action::Squash),
+                Some(Action::Fixup),
+                Some(Action::Drop),
+                Some(Action::Edit),
+            ]
+        );
+        assert_eq!(Action::from_key('R'), Some(Action::Reword));
+        assert_eq!(Action::from_key('x'), None);
+        assert_eq!(Action::from_key('1'), None);
+    }
+
+    #[test]
+    fn moving_a_row_puts_it_above_the_target_and_resets_the_oldest_squash() {
+        let mut r = rows(&["c", "b", "a"]);
+        // c を a の上へ（上から下へ運ぶと、抜けた分だけ前に詰める）。
+        assert!(move_rows(&mut r, 0, 2));
+        assert_eq!(oids(&r), ["b", "c", "a"]);
+        // a をいちばん上へ。
+        assert!(move_rows(&mut r, 2, 0));
+        assert_eq!(oids(&r), ["a", "b", "c"]);
+        // 最後の行の下へ（行の数）。
+        assert!(move_rows(&mut r, 0, 3));
+        assert_eq!(oids(&r), ["b", "c", "a"]);
+        assert!(!move_rows(&mut r, 3, 0));
+        assert!(!move_rows(&mut r, 0, 4));
+        // まとめる行をいちばん古い所へ運ぶと、まとめる相手がないので pick に戻る。
+        r[0].action = Action::Squash;
+        r[0].new_message = Some("combined".into());
+        assert!(move_rows(&mut r, 0, 3));
+        assert_eq!(oids(&r), ["c", "a", "b"]);
+        assert_eq!(r[2].action, Action::Pick);
+        assert_eq!(r[2].new_message, None);
+    }
+
+    #[test]
+    fn the_range_shrinks_only_while_leaving_rows_are_untouched() {
+        let l = line(&["e", "d", "c", "b", "a"]);
+        let mut r = rows(&["e", "d", "c", "b"]);
+        let mut original: Vec<String> = r.iter().map(|r| r.oid.clone()).collect();
+        // どれもそのままなら、HEAD の 1 つまで狭められる。
+        assert_eq!(min_count(&r, &l), 1);
+        // d を取り消すと、d より上までしか狭められない。
+        r[1].action = Action::Drop;
+        assert_eq!(min_count(&r, &l), 2);
+        assert!(!shrink(&mut r, &mut original, &l, 1));
+        assert!(shrink(&mut r, &mut original, &l, 2));
+        assert_eq!(oids(&r), ["e", "d"]);
+        assert_eq!(original, ["e", "d"]);
+        // 並べ替えて元の位置にない行は外せない。
+        let mut r = rows(&["e", "c", "d", "b"]);
+        let mut original = vec!["e".into(), "d".into(), "c".into(), "b".into()];
+        assert_eq!(min_count(&r, &l), 3);
+        assert!(!shrink(&mut r, &mut original, &l, 2));
+        assert!(shrink(&mut r, &mut original, &l, 3));
+        assert_eq!(oids(&r), ["e", "c", "d"]);
+        // 広げる・同じ数は、ここでは狭めない。
+        assert!(!shrink(&mut r, &mut original, &l, 3));
+        assert!(!shrink(&mut r, &mut original, &l, 0));
+    }
+
+    #[test]
+    fn shrinking_resets_a_squash_left_at_the_oldest_row() {
+        let l = line(&["c", "b", "a"]);
+        let mut r = rows(&["c", "b", "a"]);
+        let mut original: Vec<String> = r.iter().map(|r| r.oid.clone()).collect();
+        r[1].action = Action::Squash;
+        assert!(shrink(&mut r, &mut original, &l, 2));
+        assert_eq!(r[1].action, Action::Pick);
+    }
+
+    #[test]
+    fn plan_steps_are_oldest_first_with_the_combined_message() {
+        let mut r = rows(&["c", "b", "a"]);
+        r[0].action = Action::Squash;
+        r[1].action = Action::Reword;
+        r[1].new_message = Some("new b".into());
+        let steps = plan_steps(&r);
+        let names: Vec<_> = steps
+            .iter()
+            .map(|s| (s["oid"].as_str().unwrap(), s["action"].as_str().unwrap()))
+            .collect();
+        assert_eq!(names, [("a", "pick"), ("b", "reword"), ("c", "squash")]);
+        assert_eq!(steps[1]["message"], "new b");
+        assert_eq!(steps[2]["message"], "new b\n\nc subject");
     }
 }
