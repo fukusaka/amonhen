@@ -1392,6 +1392,97 @@ fn stashes_are_listed_and_applied_from_the_sidebar() {
     assert_eq!(git_out(dir.path(), &["stash", "list"]), "");
 }
 
+/// 1 行ずつ足す 4 つのコミット（One から Four）。
+fn four_lines(dir: &Path) {
+    git(dir, BASE, &["init", "-q", "-b", "main"]);
+    let mut text = String::new();
+    for (i, line) in ["One", "Two", "Three", "Four"].iter().enumerate() {
+        text += &format!("{line}\n");
+        std::fs::write(dir.join("a.txt"), &text).unwrap();
+        git(dir, BASE + DAY * i as i64, &["add", "."]);
+        git(dir, BASE + DAY * i as i64, &["commit", "-q", "-m", line]);
+    }
+}
+
+/// History の `E`: 選んだコミットから HEAD までを並べ、行ごとにすることを選んで、確かめてからまとめて当てる
+#[test]
+fn edit_mode_applies_several_edits_at_once() {
+    let dir = tempfile::tempdir().unwrap();
+    four_lines(dir.path());
+    let log = || git_out(dir.path(), &["log", "--format=%s"]);
+    // Two を選んで `E`: Four・Three・Two の 3 行。
+    let opened = amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), "jjE").unwrap();
+    println!("{opened}");
+    assert!(opened.contains(" Edit Commits "), "{opened}");
+    assert!(opened.contains("No changes yet."));
+    assert_eq!(opened.matches("Keep").count(), 3, "{opened}");
+    // Three を Two にまとめ（メッセージは Two のまま）、Four を取り消す。
+    let keys = "jjEjfkd";
+    let chosen = amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), keys).unwrap();
+    println!("{chosen}");
+    assert!(
+        chosen.contains("Combine with Older, Keep Its Message"),
+        "{chosen}"
+    );
+    assert!(
+        chosen.contains("Changes: 1 combined and 1 dropped."),
+        "{chosen}"
+    );
+    // Enter で見通しを読んでから確かめる。やめれば何も変わらない。
+    let asked =
+        amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), &format!("{keys}\n")).unwrap();
+    let line = asked.lines().last().unwrap();
+    assert!(
+        line.contains("Apply these changes? Changes: 1 combined and 1 dropped."),
+        "{line}"
+    );
+    assert!(line.contains("Undo brings it all back."), "{line}");
+    amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), &format!("{keys}\nn")).unwrap();
+    assert_eq!(log(), "Four\nThree\nTwo\nOne\n");
+    let done =
+        amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), &format!("{keys}\ny")).unwrap();
+    assert!(!done.contains(" Edit Commits "), "{done}");
+    assert_eq!(log(), "Two\nOne\n");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+        "One\nTwo\nThree\n"
+    );
+    // Undo 1 回で全部戻る。
+    amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), "uy").unwrap();
+    assert_eq!(log(), "Four\nThree\nTwo\nOne\n");
+}
+
+/// 編集モードの並べ替え（`J` `K`）と、Esc でやめる（変更があれば 2 度）
+#[test]
+fn edit_mode_reorders_and_cancels() {
+    let dir = tempfile::tempdir().unwrap();
+    four_lines(dir.path());
+    let log = || git_out(dir.path(), &["log", "--format=%s"]);
+    // Three を選んで `E`、Four を 1 つ下へ。
+    let moved = amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), "jEJ").unwrap();
+    assert!(moved.contains("Changes: reordered."), "{moved}");
+    let once = amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), "jEJ\u{1b}").unwrap();
+    assert!(
+        once.contains("Press Esc again to discard these changes"),
+        "{once}"
+    );
+    assert!(once.contains(" Edit Commits "));
+    let twice =
+        amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), "jEJ\u{1b}\u{1b}").unwrap();
+    assert!(!twice.contains(" Edit Commits "), "{twice}");
+    assert_eq!(log(), "Four\nThree\nTwo\nOne\n");
+    // どれも同じファイルの続く行を足すので、入れ替えるとコンフリクトしそうだと先に言う。
+    let asked = amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), "jEJ\n").unwrap();
+    let line = asked.lines().last().unwrap();
+    assert!(
+        line.contains("Apply these changes? Changes: reordered."),
+        "{line}"
+    );
+    if predicts_conflicts(dir.path()) {
+        assert!(line.contains("Conflicts are likely in a.txt."), "{line}");
+    }
+}
+
 /// サイドバーの stash で `b`: 名前を聞いて、stash を作ったところにブランチを作り、そこに戻す（git stash branch）
 #[test]
 fn a_branch_is_made_from_a_stash() {
