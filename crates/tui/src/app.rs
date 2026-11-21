@@ -278,6 +278,8 @@ pub struct App {
     /// 編集モードの行のメッセージを、エディタで直す（開く中身。開いたら `editing_plan` が立つ）。
     plan_message: Option<String>,
     editing_plan: bool,
+    /// 編集モードを当てる前の、前と後の絵（`rewritePreview` の `editDrawing`。確かめている間だけ描く）。
+    edit_drawing: Option<Value>,
     /// 今の検索: 語と、動いている検索を取り消す印（結果が届いたら `None`）。
     search: Option<(String, Option<Arc<AtomicBool>>)>,
     /// 動いている検索の、調べ終えた割合（0〜1。内容の検索でなければ 0 のまま）。
@@ -366,6 +368,7 @@ impl App {
             edit_discard: false,
             plan_message: None,
             editing_plan: false,
+            edit_drawing: None,
             push_to_offered: false,
             bundle_file: None,
             patch_file: None,
@@ -1906,6 +1909,8 @@ impl App {
                     return;
                 };
                 let info = &reply["info"];
+                // merge を越える編集では描けない（アプリと同じく、そのときは文だけ）。
+                self.edit_drawing = Some(info["editDrawing"].clone()).filter(Value::is_object);
                 let ask = tr!(
                     "Apply these changes? {summary}{risk}{notes} Undo brings it all back.",
                     summary = mode.summary(),
@@ -4206,6 +4211,29 @@ impl App {
                     }
                 }
                 mode.draw(inner, buf);
+            }
+        }
+        // 編集モードを当てる前に確かめている間は、前と後の絵を重ねる。
+        if let (Some(drawing), Some(_), Some(_)) =
+            (&self.edit_drawing, &self.confirm, &self.edit_mode)
+        {
+            let width = (crate::drawing::width(drawing) + 4).max(48).min(area.width);
+            let height = (crate::drawing::height(drawing) + 2).min(area.height.saturating_sub(1));
+            let at = Rect::new(
+                area.x + (area.width - width) / 2,
+                area.y + (area.height.saturating_sub(1) - height) / 2,
+                width,
+                height,
+            );
+            frame_box(buf, area, at, &tr!(" Apply These Changes? "));
+            if at.width > 4 && at.height > 2 {
+                let inner = Rect::new(at.x + 2, at.y + 1, at.width - 4, at.height - 2);
+                for y in inner.y..inner.bottom() {
+                    for x in inner.x..inner.right() {
+                        buf[(x, y)].reset();
+                    }
+                }
+                crate::drawing::draw(drawing, inner, buf);
             }
         }
         if let Some(log) = &self.operation_log {

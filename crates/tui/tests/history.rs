@@ -1436,6 +1436,21 @@ fn edit_mode_applies_several_edits_at_once() {
         line.contains("Apply these changes? Changes: 1 combined and 1 dropped."),
         "{line}"
     );
+    // 確かめる間は、前と後の絵を重ねる（前の 3 つが、後では Two 1 つに。土台は One）。
+    println!("{asked}");
+    assert!(asked.contains(" Apply These Changes? "), "{asked}");
+    let row = |subject: &str| {
+        asked
+            .lines()
+            .find(|l| l.contains(subject))
+            .unwrap_or("")
+            .to_owned()
+    };
+    // 編集モードの行にも件名が出るので、絵の行（短い ID の後）で探す。
+    assert!(row(" Four  [main]").contains("drop"), "{asked}");
+    assert!(row(" Three  fixup").contains('●'), "{asked}");
+    assert!(row("+1 combined").contains("Two"), "{asked}");
+    assert!(row("unchanged below").contains("One"), "{asked}");
     assert!(line.contains("Undo brings it all back."), "{line}");
     amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), &format!("{keys}\nn")).unwrap();
     assert_eq!(log(), "Four\nThree\nTwo\nOne\n");
