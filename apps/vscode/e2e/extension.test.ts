@@ -248,10 +248,12 @@ function lockHolders(message: string): string {
   }
   const lockLog = process.env['AMONHEN_E2E_LOCK_LOG'];
   if (lockLog) {
-    // 前後の鍵のファイルの出来事は、e2e の終わりに出す（e2e/locks-windows.mjs）
-    appendFileSync(lockLog, `${Date.now()} ${message.split('\n', 1)[0]}（${codeProcesses()}）\n`);
+    // 前後の鍵のファイルの出来事は、e2e の終わりに出す（e2e/locks-windows.mjs・locks-macos.mjs）
+    const code = process.platform === 'win32' ? `（${codeProcesses()}）` : '';
+    appendFileSync(lockLog, `${Date.now()} ${message.split('\n', 1)[0]}${code}\n`);
   }
-  return `${file}。動いている git: ${processes.trim() || 'なし'}。直前の git: ${lockLog ? '鍵のファイルの記録を終わりに出す' : recentGits()}`;
+  const later = lockLog ? '。鍵のファイルの記録は e2e の終わりに出す' : '';
+  return `${file}。動いている git: ${processes.trim() || 'なし'}。直前の git: ${recentGits()}${later}`;
 }
 
 /** VSCode のプロセスと種類（Windows。鍵のファイルの記録は pid と実行ファイルの名前しか言わないので、添える） */

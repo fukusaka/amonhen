@@ -13,7 +13,8 @@ import { join } from 'node:path';
 import * as esbuild from 'esbuild';
 import { platformName } from '../src/daemon/engine.ts';
 import { layout, testEnv } from './env.mjs';
-import { recordLocks } from './locks-windows.mjs';
+import { recordLocks as recordLocksMacos } from './locks-macos.mjs';
+import { recordLocks as recordLocksWindows } from './locks-windows.mjs';
 
 const root = join(import.meta.dirname, '..');
 const exe = process.platform === 'win32' ? '.exe' : '';
@@ -121,9 +122,16 @@ const sampler =
         { stdio: 'ignore' },
       )
     : undefined;
-// 鍵のファイルを誰が作り・開き・消したか（Windows。locks-windows.mjs）。記録は機械全体のファイルの出来事なので、
-// 使い捨ての CI の runner でだけ取る（手元の機械のファイルの名前を集めない）
-const locks = process.platform === 'win32' && process.env.GITHUB_ACTIONS === 'true' ? recordLocks(dir) : undefined;
+// 鍵のファイルを誰が作り・開き・消したか（Windows は ETW、macOS は eslogger。locks-windows.mjs・locks-macos.mjs）。
+// 記録は機械全体のファイルの出来事なので、使い捨ての CI の runner でだけ取る（手元の機械のファイルの名前を集めない）
+const ci = process.env.GITHUB_ACTIONS === 'true';
+const locks = !ci
+  ? undefined
+  : process.platform === 'win32'
+    ? recordLocksWindows(dir)
+    : process.platform === 'darwin'
+      ? recordLocksMacos(dir)
+      : undefined;
 const start = performance.now();
 const run = spawnSync(
   process.execPath,
