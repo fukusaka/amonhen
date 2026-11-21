@@ -236,30 +236,68 @@ impl QuickOpen {
     }
 }
 
-/// Working Copy の `F`: 今のブランチの最近のコミットの件名から選び、メッセージの欄を `fixup! 件名` か
-/// `squash! 件名` にする（アプリの Commit ▾ の Fixup Commit For・Squash Commit For。後で
-/// `rebase -i --autosquash` がまとめる）。
-struct FixupPick {
+/// Working Copy で、最近のコミットから選んでメッセージの欄に入れる一覧。`F` は件名を選んで `fixup! 件名` か
+/// `squash! 件名` にし（アプリの Commit ▾ の Fixup Commit For・Squash Commit For。後で `rebase -i --autosquash`
+/// がまとめる）、`R` はメッセージをそのまま入れる（アプリの最近のメッセージの一覧）。
+struct MessagePick {
     query: String,
     selected: usize,
-    /// squash!（本文を残す）にする。Tab で切り替える。
-    squash: bool,
-    /// 件名（新しい順）。読んでいる間は None。
-    subjects: Option<Vec<String>>,
+    kind: PickKind,
+    /// 件名（Fixup・Squash）かメッセージ（Recent）。新しい順。読んでいる間は None。
+    items: Option<Vec<String>>,
 }
 
-impl FixupPick {
-    fn shown(&self) -> Vec<&String> {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PickKind {
+    Fixup,
+    /// squash!（本文を残す）。Fixup と Tab で切り替える。
+    Squash,
+    Recent,
+}
+
+impl MessagePick {
+    fn new(kind: PickKind, messages: Option<&[String]>) -> Self {
+        let mut pick = Self {
+            query: String::new(),
+            selected: 0,
+            kind,
+            items: None,
+        };
+        if let Some(messages) = messages {
+            pick.fill(messages);
+        }
+        pick
+    }
+
+    /// 読んだメッセージから並べるものを作る。
+    fn fill(&mut self, messages: &[String]) {
+        self.items = Some(match self.kind {
+            PickKind::Recent => {
+                let mut seen = Vec::new();
+                for m in messages {
+                    if !m.trim().is_empty() && !seen.contains(m) {
+                        seen.push(m.clone());
+                    }
+                }
+                seen
+            }
+            PickKind::Fixup | PickKind::Squash => fixup_subjects(messages),
+        });
+    }
+
+    /// 並べるもの（何番目か、1 行目）。打った語のすべてを含むもの（大文字と小文字は区別しない）。
+    fn shown(&self) -> Vec<(usize, &str)> {
         let words: Vec<String> = self
             .query
             .split_whitespace()
             .map(str::to_lowercase)
             .collect();
-        (self.subjects.iter().flatten())
-            .filter(|s| {
+        (self.items.iter().flatten().enumerate())
+            .filter(|(_, s)| {
                 let text = s.to_lowercase();
                 words.iter().all(|w| text.contains(w.as_str()))
             })
+            .map(|(i, s)| (i, s.lines().next().unwrap_or("")))
             .collect()
     }
 }
@@ -342,7 +380,13 @@ pub struct App {
     /// Quick Open で選んだリポジトリの場所（TUI を閉じて、そこで開き直す）。
     open_location: Option<String>,
     quick_open: Option<QuickOpen>,
-    fixup_pick: Option<FixupPick>,
+    fixup_pick: Option<MessagePick>,
+    /// 今のブランチの最近のコミットのメッセージ（新しい順。`F`・`R`・Alt-↑ が使う。コミットしたら読み直す）。
+    recent_messages: Option<Vec<String>>,
+    /// メッセージの欄の Alt-↑・Alt-↓ で呼び出している、最近のメッセージの番目と、呼び出す前に書いていたもの。
+    recalled: Option<(usize, String)>,
+    /// 最近のメッセージを読み終えたら、Alt-↑ の呼び出しをする。
+    recall_when_read: bool,
     /// いくつかから選んで行う操作: 尋ねる文と、キー・名前・頼む中身の組。
     choices: Option<(String, Vec<Choice>)>,
     /// マウスを取り込んでいる（切ると、端末で文字を選べる）。
@@ -515,6 +559,9 @@ impl App {
             open_location: None,
             quick_open: None,
             fixup_pick: None,
+            recent_messages: None,
+            recalled: None,
+            recall_when_read: false,
             search: None,
             search_done: 0.0,
             theme: Theme::detect(),
@@ -1038,6 +1085,9 @@ impl App {
                             Ok(output) => {
                                 self.changes.message.clear();
                                 self.changes.amend = false;
+                                // 最近のメッセージは、次に使うときに読み直す（今のコミットも入る）。
+                                self.recent_messages = None;
+                                self.recalled = None;
                                 self.focus = Focus::Main;
                                 // hooks が何か書いていれば、その 1 行目を出す。
                                 self.notice =
@@ -1269,18 +1319,30 @@ impl App {
             return;
         }
         // Quick Open: 打った語で絞る。Enter で選んだリポジトリを開き直す、Esc でやめる。
-        // Fixup・Squash Commit For: 打った語で絞り、Enter で欄に入れる。Tab で fixup! と squash! を切り替える。
+        // Fixup・Squash Commit For と最近のメッセージ: 打った語で絞り、Enter で欄に入れる。Tab で fixup! と
+        // squash! を切り替える。
         if let Some(mut pick) = self.fixup_pick.take() {
             self.dirty = true;
             match key.code {
                 KeyCode::Esc => return,
                 KeyCode::Enter => {
-                    if let Some(subject) = pick.shown().get(pick.selected) {
-                        self.use_fixup(subject.as_str(), pick.squash);
+                    let chosen = (pick.shown().get(pick.selected))
+                        .and_then(|(i, _)| pick.items.as_ref().map(|items| items[*i].clone()));
+                    if let Some(chosen) = chosen {
+                        match pick.kind {
+                            PickKind::Recent => self.use_message(&chosen),
+                            kind => self.use_fixup(&chosen, kind == PickKind::Squash),
+                        }
                     }
                     return;
                 }
-                KeyCode::Tab => pick.squash = !pick.squash,
+                KeyCode::Tab => {
+                    pick.kind = match pick.kind {
+                        PickKind::Fixup => PickKind::Squash,
+                        PickKind::Squash => PickKind::Fixup,
+                        PickKind::Recent => PickKind::Recent,
+                    }
+                }
                 KeyCode::Down => pick.selected += 1,
                 KeyCode::Char('n') if control => pick.selected += 1,
                 KeyCode::Up => pick.selected = pick.selected.saturating_sub(1),
@@ -2224,14 +2286,17 @@ impl App {
                 return;
             }
             "recentMessages" => {
+                let messages: Vec<String> = (reply["messages"].as_array().into_iter().flatten())
+                    .filter_map(|m| m.as_str().map(|m| m.trim_end().to_owned()))
+                    .collect();
                 if let Some(pick) = &mut self.fixup_pick {
-                    let messages: Vec<String> =
-                        (reply["messages"].as_array().into_iter().flatten())
-                            .filter_map(|m| m.as_str().map(str::to_owned))
-                            .collect();
-                    pick.subjects = Some(fixup_subjects(&messages));
-                    self.dirty = true;
+                    pick.fill(&messages);
                 }
+                self.recent_messages = Some(messages);
+                if std::mem::take(&mut self.recall_when_read) {
+                    self.recall(true);
+                }
+                self.dirty = true;
                 return;
             }
             "editRows" => {
@@ -3663,6 +3728,13 @@ impl App {
                         "Fixup or Squash Commit For: a recent commit's subject as fixup! or squash!"
                     ),
                 ),
+                ("R", tr!("Use a recent commit's message")),
+                (
+                    "Alt-↑ Alt-↓",
+                    tr!(
+                        "In the message field: recall recent messages, then back to what was written"
+                    ),
+                ),
                 ("Ctrl-s", tr!("Commit")),
                 ("Ctrl-p", tr!("Commit, then push")),
             ],
@@ -3783,11 +3855,53 @@ impl App {
             }
             KeyCode::Char('e') if control => self.edit_message = true,
             KeyCode::Enter if alt => self.commit(),
+            // 最近のメッセージを順に呼び出す（Alt-↓ で戻ると、呼び出す前に書いていたもの）。
+            KeyCode::Up | KeyCode::Down if alt => self.recall(key.code == KeyCode::Up),
             KeyCode::Char(_) if control || alt => {}
             code => {
                 self.changes.message.key(code);
             }
         }
+    }
+
+    /// 最近のメッセージを欄に呼び出す（`older` なら 1 つ古いもの）。まだ読んでいなければ読み、読んだら呼び出す。
+    fn recall(&mut self, older: bool) {
+        let Some(messages) = &self.recent_messages else {
+            self.recall_when_read = older;
+            self.send(Request::RecentMessages);
+            return;
+        };
+        let count = messages.len();
+        let next = match (&self.recalled, older) {
+            (None, true) if count > 0 => Some(0),
+            (None, _) => return,
+            (Some((i, _)), true) => Some((i + 1).min(count.saturating_sub(1))),
+            (Some((0, _)), false) => None,
+            (Some((i, _)), false) => Some(i - 1),
+        };
+        match next {
+            Some(i) => {
+                let before = match self.recalled.take() {
+                    Some((_, before)) => before,
+                    None => self.changes.message.text(),
+                };
+                let text = messages[i].clone();
+                self.changes.message.set_text(&text);
+                self.recalled = Some((i, before));
+            }
+            None => {
+                if let Some((_, before)) = self.recalled.take() {
+                    self.changes.message.set_text(&before);
+                }
+            }
+        }
+    }
+
+    /// 欄をそのメッセージにして、欄に移る（最近のメッセージの一覧で選んだもの）。
+    fn use_message(&mut self, message: &str) {
+        self.changes.message.set_text(message);
+        self.recalled = None;
+        self.focus = Focus::Message;
     }
 
     /// 欄を `fixup! 件名`（件名だけ）か `squash! 件名`（書いていた本文は残す）にして、欄に移る。amend はやめる。
@@ -3914,14 +4028,15 @@ impl App {
                 true
             }
             // Fixup・Squash Commit For: 最近のコミットから選んで、欄を fixup! にする。
-            KeyCode::Char('F') if self.changes.has_message_field() => {
-                self.fixup_pick = Some(FixupPick {
-                    query: String::new(),
-                    selected: 0,
-                    squash: false,
-                    subjects: None,
-                });
-                self.send(Request::RecentMessages);
+            KeyCode::Char('F' | 'R') if self.changes.has_message_field() => {
+                let kind = match code {
+                    KeyCode::Char('F') => PickKind::Fixup,
+                    _ => PickKind::Recent,
+                };
+                self.fixup_pick = Some(MessagePick::new(kind, self.recent_messages.as_deref()));
+                if self.recent_messages.is_none() {
+                    self.send(Request::RecentMessages);
+                }
                 true
             }
             // 直前のコミットを作り直す。欄が空なら、そのメッセージを入れる。
@@ -4899,13 +5014,13 @@ impl App {
         }
         if let Some(pick) = &self.fixup_pick {
             let shown = pick.shown();
-            let rows: Vec<(&str, &str, &str)> =
-                shown.iter().map(|s| ("", s.as_str(), "")).collect();
-            let title = match pick.squash {
-                true => tr!(" Squash Commit For (Tab: fixup!) "),
-                false => tr!(" Fixup Commit For (Tab: squash!) "),
+            let rows: Vec<(&str, &str, &str)> = shown.iter().map(|(_, s)| ("", *s, "")).collect();
+            let title = match pick.kind {
+                PickKind::Squash => tr!(" Squash Commit For (Tab: fixup!) "),
+                PickKind::Fixup => tr!(" Fixup Commit For (Tab: squash!) "),
+                PickKind::Recent => tr!(" Recent Messages "),
             };
-            let none = match &pick.subjects {
+            let none = match &pick.items {
                 None => tr!("Reading the recent commits…"),
                 Some(_) => tr!("No commit matches"),
             };
@@ -5215,6 +5330,47 @@ mod tests {
         let mut buf = Buffer::empty(Rect::new(0, 0, 100, 12));
         app.draw(&mut buf, Damage::ALL);
         (0..100).map(|x| buf[(x, 11)].symbol()).collect()
+    }
+
+    /// メッセージの欄の Alt-↑・Alt-↓: 最近のメッセージを新しい順に呼び出し、戻りきると書いていたものに戻す。
+    /// 一覧の `R` は、選んだメッセージを欄に入れる
+    #[test]
+    fn recent_messages_are_recalled_in_the_message_field() {
+        let (_dir, mut app, rx) = app_with_history();
+        let press = |app: &mut App, code: KeyCode, modifiers: KeyModifiers| {
+            app.handle(Event::Input(Input::Key(KeyEvent::new(code, modifiers))));
+        };
+        let typed = |app: &mut App, text: &str| {
+            for ch in text.chars() {
+                press(app, KeyCode::Char(ch), KeyModifiers::NONE);
+            }
+        };
+        typed(&mut app, "1");
+        crate::settle(&mut app, &rx).unwrap();
+        typed(&mut app, "cDraft");
+        press(&mut app, KeyCode::Up, KeyModifiers::ALT);
+        crate::settle(&mut app, &rx).unwrap();
+        assert_eq!(app.changes.message.text(), "Commit 5");
+        press(&mut app, KeyCode::Up, KeyModifiers::ALT);
+        assert_eq!(app.changes.message.text(), "Commit 4");
+        press(&mut app, KeyCode::Down, KeyModifiers::ALT);
+        assert_eq!(app.changes.message.text(), "Commit 5");
+        press(&mut app, KeyCode::Down, KeyModifiers::ALT);
+        assert_eq!(app.changes.message.text(), "Draft");
+        // 戻りきったら、それ以上は何もしない。
+        press(&mut app, KeyCode::Down, KeyModifiers::ALT);
+        assert_eq!(app.changes.message.text(), "Draft");
+
+        press(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+        typed(&mut app, "R");
+        let names: Vec<String> = (app.fixup_pick.as_ref().unwrap().shown().iter())
+            .map(|(_, s)| (*s).to_owned())
+            .collect();
+        assert_eq!(names[..2], ["Commit 5", "Commit 4"]);
+        typed(&mut app, "3");
+        press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+        assert_eq!(app.changes.message.text(), "Commit 3");
+        assert!(app.fixup_pick.is_none());
     }
 
     /// 編集モードの `r`: 行のメッセージを git のエディタで直す（`#` の行は捨てる）。当てるまで何も変わらない。
