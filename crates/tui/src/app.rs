@@ -439,6 +439,8 @@ pub struct App {
     open_location: Option<String>,
     quick_open: Option<QuickOpen>,
     fixup_pick: Option<MessagePick>,
+    /// 書きかけのメッセージとして最後に読んだか書いたもの（読み終えるまでは None で、書かない）。
+    draft_saved: Option<String>,
     /// 今のブランチの最近のコミット（`F`・`R`・`I`・Alt-↑ が使う。コミットしたら読み直す）。
     recent_messages: Option<Recent>,
     /// メッセージの欄の Alt-↑・Alt-↓ で呼び出している、最近のメッセージの番目と、呼び出す前に書いていたもの。
@@ -620,6 +622,7 @@ impl App {
             open_location: None,
             quick_open: None,
             fixup_pick: None,
+            draft_saved: None,
             recent_messages: None,
             recalled: None,
             recall_when_read: false,
@@ -646,7 +649,43 @@ impl App {
     pub fn start(&mut self) {
         self.open();
         self.changes.refresh();
+        // 書きかけのメッセージ（なければテンプレート）を欄に入れる。
+        self.send(Request::DraftOrTemplate {
+            local: self.files_here,
+        });
         self.request();
+    }
+
+    /// 書きかけのメッセージ（欄の中身）が覚えたものと違えば、`<git dir>/amonhen/commit-draft` に書く（空なら消す）。
+    /// amend と、最近のメッセージを呼び出している間は書かない（自分で書いたものではない）。
+    fn save_draft_if_changed(&mut self) {
+        let Some(saved) = &self.draft_saved else {
+            return;
+        };
+        if self.changes.amend || self.recalled.is_some() || self.committing {
+            return;
+        }
+        let text = self.changes.message.text();
+        if *saved == text {
+            return;
+        }
+        self.draft_saved = Some(text.clone());
+        self.send(Request::Run {
+            name: "saveCommitDraft",
+            command: json!({"op": "saveCommitDraft", "text": text}),
+        });
+    }
+
+    /// 終わる前に書く、書きかけのメッセージ。終わるときは裏の仕事（頼んだばかりの保存も）を待たないので、呼んだ
+    /// 側が今の中身をその場で書く（同じ中身でも書く）。読み終える前や amend の間は None。
+    pub fn take_unsaved_draft(&mut self) -> Option<String> {
+        self.draft_saved.as_ref()?;
+        if self.changes.amend || self.recalled.is_some() || self.committing {
+            return None;
+        }
+        let text = self.changes.message.text();
+        self.draft_saved = Some(text.clone());
+        Some(text)
     }
 
     /// リポジトリ・ref・History を読む。読んでいる間に頼まれた分は、終わってからもう一度。
@@ -990,6 +1029,14 @@ impl App {
     }
 
     pub fn handle(&mut self, event: Event) {
+        self.handle_event(event);
+        // 欄を離れていれば、書きかけのメッセージを覚える（打っている間は書かない）。
+        if self.focus != Focus::Message {
+            self.save_draft_if_changed();
+        }
+    }
+
+    fn handle_event(&mut self, event: Event) {
         match event {
             Event::Input(Input::Key(key)) => self.key(key),
             Event::Input(Input::Mouse(mouse)) => self.mouse(mouse),
@@ -1149,6 +1196,14 @@ impl App {
                                 // 最近のメッセージは、次に使うときに読み直す（今のコミットも入る）。
                                 self.recent_messages = None;
                                 self.recalled = None;
+                                // コミットしたので、書きかけのメッセージを消す。
+                                if self.draft_saved.as_deref().is_some_and(|d| !d.is_empty()) {
+                                    self.draft_saved = Some(String::new());
+                                    self.send(Request::Run {
+                                        name: "saveCommitDraft",
+                                        command: json!({"op": "saveCommitDraft", "text": ""}),
+                                    });
+                                }
                                 self.focus = Focus::Main;
                                 // hooks が何か書いていれば、その 1 行目を出す。
                                 self.notice =
@@ -2066,6 +2121,8 @@ impl App {
                 }
                 return;
             }
+            // 下書きが読めなくても、欄はそのまま使える（覚えるのをやめる）。
+            Err(_) if name == "draftOrTemplate" => return,
             Err(error) => {
                 if name == "recentMessages" {
                     self.fixup_pick = None;
@@ -2360,6 +2417,31 @@ impl App {
                 self.ask_reset_with(&info);
                 return;
             }
+            // 書きかけのメッセージかテンプレート: 欄がまだ空なら入れる。テンプレートは覚えたものとして扱い、
+            // 書き足したときだけ下書きになる。
+            "draftOrTemplate" => {
+                let draft = reply["draft"].as_str().map(str::to_owned);
+                let template = reply["template"].as_str().map(str::to_owned);
+                let free = self.changes.message.is_empty() && !self.changes.amend;
+                let baseline = match (free, draft, template) {
+                    (true, Some(draft), _) => {
+                        self.changes.message.set_text(&draft);
+                        draft.trim_end().to_owned()
+                    }
+                    (true, None, Some(template)) => {
+                        self.changes.message.set_text(&template);
+                        self.changes.message.text()
+                    }
+                    (true, None, None) => String::new(),
+                    // 待つ間に書き始めていたら、それを下書きにする。
+                    (false, Some(draft), _) => draft.trim_end().to_owned(),
+                    (false, None, _) => String::new(),
+                };
+                self.draft_saved = Some(baseline);
+                self.dirty = true;
+                return;
+            }
+            "saveCommitDraft" => return,
             "recentMessages" => {
                 let messages: Vec<String> = (reply["messages"].as_array().into_iter().flatten())
                     .filter_map(|m| m.as_str().map(|m| m.trim_end().to_owned()))

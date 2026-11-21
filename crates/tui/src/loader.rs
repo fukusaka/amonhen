@@ -79,6 +79,9 @@ pub enum Request {
     /// History の編集モードの行: `from`（16 進）から HEAD までの、編集できるコミットとそのメッセージ（新しい順。
     /// merge を越えて first-parent で辿る）。答えは `editRows` の `rows`（oid・merge・message）。
     EditRows { from: String },
+    /// 書きかけのメッセージ（`commitDraft`）。なければ `commit.template` の中身（`#` の行を除く）。リポジトリ専用の
+    /// テンプレートはコアから読み（SSH 先でも）、ほかのファイルは `local`（この機械のリポジトリ）のときだけ読む。
+    DraftOrTemplate { local: bool },
     /// 作業ツリーの直下の .gitignore の終わりに `pattern` を足す（もうあれば足さない。アプリの Add to .gitignore）。
     AddToGitignore { pattern: String },
     /// 今のブランチの最近のコミット（first-parent で 30 まで）のメッセージ（`recentMessages`）。
@@ -182,7 +185,8 @@ impl Loader {
             | Request::Call { .. }
             | Request::EditRows { .. }
             | Request::RecentMessages
-            | Request::AddToGitignore { .. } => &self.operations,
+            | Request::AddToGitignore { .. }
+            | Request::DraftOrTemplate { .. } => &self.operations,
             Request::Commit { .. } | Request::Syntax { .. } => &self.details,
             Request::Status
             | Request::Reflog { .. }
@@ -420,6 +424,10 @@ fn load(front: &dyn Front, request: Request, events: &Sender<Event>) -> Result<L
                 command => run(front, command).map_err(|e| e.to_string()),
             },
         },
+        Request::DraftOrTemplate { local } => Loaded::Ran {
+            name: "draftOrTemplate",
+            result: draft_or_template(front, local).map_err(|e| e.to_string()),
+        },
         Request::AddToGitignore { pattern } => Loaded::Ran {
             name: "addToGitignore",
             result: add_to_gitignore(front, &pattern).map_err(|e| e.to_string()),
@@ -460,6 +468,52 @@ fn run(front: &dyn Front, command: Value) -> Result<Value> {
             .into());
     }
     Ok(reply)
+}
+
+/// `Request::DraftOrTemplate` の中身: `{"draft": …}` か `{"template": …}`（どちらもなければ空）。
+fn draft_or_template(front: &dyn Front, local: bool) -> Result<Value> {
+    let draft = run(front, json!({"op": "commitDraft"}))?;
+    if let Some(text) = draft["info"]["text"]
+        .as_str()
+        .filter(|t| !t.trim().is_empty())
+    {
+        return Ok(json!({"draft": text}));
+    }
+    let own = run(front, json!({"op": "commitTemplate"}))?;
+    let entries = run(front, json!({"op": "configList"}))?;
+    let chosen = (entries["info"]["entries"].as_array().into_iter().flatten())
+        .rev()
+        .find(|e| (e["key"].as_str()).is_some_and(|k| k.eq_ignore_ascii_case("commit.template")))
+        .and_then(|e| e["value"].as_str())
+        .filter(|v| !v.is_empty());
+    let text = match chosen {
+        None => None,
+        Some(path) if Some(path) == own["info"]["path"].as_str() => {
+            own["info"]["text"].as_str().map(str::to_owned)
+        }
+        Some(path) if local => {
+            let path = match path.strip_prefix("~/") {
+                Some(rest) => std::env::var_os("HOME")
+                    .map(|home| std::path::PathBuf::from(home).join(rest))
+                    .unwrap_or_else(|| path.into()),
+                None => path.into(),
+            };
+            std::fs::read_to_string(path).ok()
+        }
+        Some(_) => None,
+    };
+    let text = text.map(|t| {
+        (t.lines())
+            .filter(|l| !l.starts_with('#'))
+            .collect::<Vec<_>>()
+            .join("\n")
+            .trim_matches(['\n', '\r'])
+            .to_owned()
+    });
+    Ok(match text.filter(|t| !t.trim().is_empty()) {
+        Some(template) => json!({"template": template}),
+        None => json!({}),
+    })
 }
 
 /// `Request::AddToGitignore` の中身。読み書きはコアがするので、SSH 先でも同じ。`added` は足したか。

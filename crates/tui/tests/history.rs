@@ -661,6 +661,44 @@ fn the_working_copy_lists_a_tree_or_names_and_filters() {
     assert_eq!(filtered[..3], ["[x] A src/a.rs", "[x] A src/b.rs", ""]);
 }
 
+/// 書きかけのメッセージは `<git dir>/amonhen/commit-draft` に残り、次に開いたときに欄に戻る。コミットすると消える。
+/// 下書きがなければ `commit.template`（`#` の行を除く）を入れ、書き足すまでは下書きにしない
+#[test]
+fn the_message_draft_is_kept_and_the_template_fills_an_empty_field() {
+    let dir = tempfile::tempdir().unwrap();
+    two_lines(dir.path());
+    let draft = dir.path().join(".git/amonhen/commit-draft");
+    let front = || {
+        amonhen_model::testing::isolate_from_user_settings();
+        open(dir.path())
+    };
+    // テンプレートで始まる。触らなければ下書きにしない。
+    std::fs::write(dir.path().join("template.txt"), "Area: \n# what changed\n").unwrap();
+    let template = dir.path().join("template.txt");
+    git(
+        dir.path(),
+        BASE,
+        &["config", "commit.template", template.to_str().unwrap()],
+    );
+    let shown = amonhen_tui::snapshot(front(), 100, 14, clock(), "1").unwrap();
+    println!("{shown}");
+    assert!(shown.contains(" Area:"), "{shown}");
+    assert!(!shown.contains("what changed"), "{shown}");
+    assert!(!draft.exists());
+    // 欄を離れると、書きかけを覚える。
+    amonhen_tui::snapshot(front(), 100, 14, clock(), "1cparser\x1b").unwrap();
+    assert_eq!(std::fs::read_to_string(&draft).unwrap(), "Area: parser");
+    let shown = amonhen_tui::snapshot(front(), 100, 14, clock(), "1").unwrap();
+    assert!(shown.contains(" Area: parser"), "{shown}");
+    // コミットすると消える。
+    amonhen_tui::snapshot(front(), 100, 14, clock(), "1 \x13").unwrap();
+    assert_eq!(
+        git_out(dir.path(), &["log", "-1", "--format=%s"]),
+        "Area: parser\n"
+    );
+    assert!(!draft.exists());
+}
+
 /// サイドバー: Workspace の行と、Branches・Tags。ref を開くと、History でそのコミットを選ぶ
 #[test]
 fn sidebar_lists_refs_and_jumps_to_them() {
