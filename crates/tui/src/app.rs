@@ -281,6 +281,8 @@ pub struct App {
     /// 確かめている間に重ねる、前と後の絵（枠の題と、`drawing` の形の絵。編集モードの `editDrawing`、reset の
     /// `movePreview` から作ったもの）。答えたら消える。
     question_drawing: Option<(String, Value)>,
+    /// cherry-pick・revert の確かめる文と頼むこと（前と後の絵を読んでから確かめる）。
+    pick_question: Option<(String, String, Request, String)>,
     /// 今の検索: 語と、動いている検索を取り消す印（結果が届いたら `None`）。
     search: Option<(String, Option<Arc<AtomicBool>>)>,
     /// 動いている検索の、調べ終えた割合（0〜1。内容の検索でなければ 0 のまま）。
@@ -370,6 +372,7 @@ impl App {
             plan_message: None,
             editing_plan: false,
             question_drawing: None,
+            pick_question: None,
             push_to_offered: false,
             bundle_file: None,
             patch_file: None,
@@ -1640,6 +1643,14 @@ impl App {
         self.running = None;
         let reply = match result {
             Ok(reply) => reply,
+            // 絵が読めなくても、cherry-pick・revert は確かめる（絵なしで）。
+            Err(_) if name == "pickPreview" => {
+                if let Some((ask, yes, request, _)) = self.pick_question.take() {
+                    self.confirm = Some((ask, yes, request));
+                    self.dirty = true;
+                }
+                return;
+            }
             Err(error) => {
                 // 長い出力は、最初の行だけ。
                 let line = error.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
@@ -1650,6 +1661,33 @@ impl App {
             }
         };
         match name {
+            // 置き換える push の絵: まだ選んでいる間だけ重ねる。
+            "pushPreview" => {
+                let target = self.upstream.clone().unwrap_or_default();
+                if self.choices.is_some() {
+                    self.question_drawing = Some(&reply["info"]["drawing"])
+                        .filter(|d| d.is_object())
+                        .map(|d| {
+                            (
+                                tr!(" If you force push to {target} ", target = target),
+                                crate::drawing::from_move(d, &target),
+                            )
+                        });
+                    self.dirty = true;
+                }
+                return;
+            }
+            "pickPreview" => {
+                if let Some((ask, yes, request, title)) = self.pick_question.take() {
+                    let branch = self.branch.clone().unwrap_or_else(|| "HEAD".to_owned());
+                    self.question_drawing = Some(&reply["info"]["drawing"])
+                        .filter(|d| d.is_object())
+                        .map(|d| (title, crate::drawing::from_pick(d, &branch)));
+                    self.confirm = Some((ask, yes, request));
+                    self.dirty = true;
+                }
+                return;
+            }
             "undoLog" => {
                 let entries: Vec<(String, i64)> = reply["info"]["entries"]
                     .as_array()
@@ -2152,6 +2190,14 @@ impl App {
                     ('t', tr!("another branch…"), Request::Status),
                 ],
             ));
+            // 置き換える push の前と後の絵を、裏で読んで重ねる（アプリの Force Push のシートと同じ）。
+            self.send(Request::Call {
+                name: "pushPreview",
+                request: json!({"op": "run", "command": {
+                    "op": "movePreview", "from": format!("{remote}/{remote_branch}"),
+                    "to": branch, "branch": null,
+                }}),
+            });
             return;
         }
         self.confirm = Some((ask, tr!("push"), push(remote, remote_branch, false, false)));
@@ -2470,6 +2516,45 @@ impl App {
             ));
             return true;
         }
+        // cherry-pick・revert は、前と後の絵を読んでから確かめる（アプリのシートと同じ）。
+        if matches!(code, KeyCode::Char('y' | 'v')) && !is_merge {
+            let revert = code == KeyCode::Char('v');
+            let (ask, yes, name, op, title) = match revert {
+                false => (
+                    tr!(
+                        "Cherry-pick {commit} “{subject}”?",
+                        commit = short,
+                        subject = subject
+                    ),
+                    tr!("cherry-pick"),
+                    "cherryPick",
+                    "cherryPick",
+                    tr!(" Cherry-pick {commit} ", commit = short),
+                ),
+                true => (
+                    tr!(
+                        "Revert {commit} “{subject}”?",
+                        commit = short,
+                        subject = subject
+                    ),
+                    tr!("revert"),
+                    "revert",
+                    "revert",
+                    tr!(" Revert {commit} ", commit = short),
+                ),
+            };
+            let request = Request::Run {
+                name,
+                command: json!({"op": op, "oid": id, "isMerge": false}),
+            };
+            self.pick_question = Some((ask, yes, request, title));
+            self.run(
+                "pickPreview",
+                tr!("Looking ahead…"),
+                json!({"op": "pickPreview", "oids": [id], "revert": revert}),
+            );
+            return true;
+        }
         self.confirm = Some(match code {
             KeyCode::Char('y') => (
                 tr!(
@@ -2768,9 +2853,10 @@ impl App {
                 }),
         };
         let (ask, yes, request) = if merge {
-            let request = Request::Run {
+            // 取り込み方（アプリの Merge のシートの選択。覚えない）。`y` は git の設定のとおり。
+            let mode = |mode: &str| Request::Run {
                 name: "merge",
-                command: json!({"op": "merge", "rev": name}),
+                command: json!({"op": "merge", "rev": name, "mode": mode}),
             };
             if preview["upToDate"] == true {
                 self.notice = Some(tr!(
@@ -2789,7 +2875,16 @@ impl App {
                     name = name,
                     count = n
                 );
-                (ask, tr!("merge"), request)
+                self.choices = Some((
+                    ask,
+                    vec![
+                        ('y', tr!("merge"), mode("git")),
+                        ('f', "fast-forward only".to_owned(), mode("fastForwardOnly")),
+                        ('c', tr!("always a merge commit"), mode("noFastForward")),
+                        ('s', tr!("squash into one commit"), mode("squash")),
+                    ],
+                ));
+                return;
             } else {
                 let drawing = &preview["drawing"];
                 let theirs = count(&drawing["theirs"], &drawing["theirsMore"]);
@@ -2803,7 +2898,15 @@ impl App {
                     subject = drawing["subject"].as_str().unwrap_or(""),
                     risk = risk
                 );
-                (ask, tr!("merge"), request)
+                // 分かれていれば fast-forward はできない（merge コミットか、まとめて 1 つのコミットか）。
+                self.choices = Some((
+                    ask,
+                    vec![
+                        ('y', tr!("merge"), mode("git")),
+                        ('s', tr!("squash into one commit"), mode("squash")),
+                    ],
+                ));
+                return;
             }
         } else {
             let ask = tr!(

@@ -1189,7 +1189,11 @@ fn merge_stops_at_conflicts_and_can_be_aborted() {
         line.contains("(+1 in, 1 on main since they split)."),
         "{line}"
     );
-    assert!(line.contains("   y merge   n cancel"), "{line}");
+    // 分かれているので、merge コミットか、まとめて 1 つのコミットか。
+    assert!(
+        line.contains("   y merge   s squash into one commit   n cancel"),
+        "{line}"
+    );
     if predicts_conflicts(dir.path()) {
         assert!(line.contains("Conflicts are likely in a.txt."), "{line}");
     }
@@ -1238,10 +1242,10 @@ fn rebase_onto_the_picked_ref() {
     // topic は main にもう入っていて、載せ直すコミットがない（前と後の絵は出ない）。
     assert!(!asked.contains(" Rebase topic onto main "), "{asked}");
     // main を topic に merge するのは fast-forward。取り込む数を言う。
-    let ff = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjm").unwrap();
+    let ff = amonhen_tui::snapshot(open(dir.path()), 200, 12, clock(), "0jjm").unwrap();
     println!("{ff}");
     assert!(
-        ff.contains("Fast-forward topic to main (+2)?   y merge   n cancel"),
+        ff.contains("Fast-forward topic to main (+2)?   y merge   f fast-forward only   c always a merge commit   s squash into one commit   n cancel"),
         "{ff}"
     );
     assert!(ff.contains(" Fast-forward topic "), "{ff}");
@@ -1250,6 +1254,50 @@ fn rebase_onto_the_picked_ref() {
         git_out(dir.path(), &["merge-base", "topic", "main"]),
         git_out(dir.path(), &["rev-parse", "main"])
     );
+}
+
+/// merge の取り込み方: fast-forward で済むときも、`c` で merge コミットを作る。`s` でまとめて 1 つのコミットにする
+#[test]
+fn merge_modes() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    // main に 2 つ足し、topic はその前にいる（main を merge すると fast-forward で済む）。
+    git(dir, BASE, &["init", "-q", "-b", "main"]);
+    std::fs::write(dir.join("a.txt"), "a\n").unwrap();
+    git(dir, BASE, &["add", "."]);
+    git(dir, BASE, &["commit", "-q", "-m", "Start"]);
+    git(dir, BASE, &["branch", "topic"]);
+    for (i, name) in ["b", "c"].iter().enumerate() {
+        std::fs::write(dir.join(format!("{name}.txt")), "x\n").unwrap();
+        git(dir, BASE + DAY * (i as i64 + 1), &["add", "."]);
+        git(
+            dir,
+            BASE + DAY * (i as i64 + 1),
+            &["commit", "-q", "-m", &format!("Add {name}")],
+        );
+    }
+    git(dir, BASE, &["switch", "-q", "topic"]);
+    let parents = || {
+        git_out(dir, &["log", "-1", "--format=%p"])
+            .split_whitespace()
+            .count()
+    };
+    let head = git_out(dir, &["rev-parse", "HEAD"]);
+    // サイドバーで 2 つ下が main。
+    let asked = amonhen_tui::snapshot(open(dir), 200, 12, clock(), "0jjm").unwrap();
+    println!("{asked}");
+    assert!(
+        asked.contains("Fast-forward topic to main (+2)?"),
+        "{asked}"
+    );
+    amonhen_tui::snapshot(open(dir), 200, 12, clock(), "0jjmc").unwrap();
+    assert_eq!(parents(), 2, "a merge commit");
+    // 戻して、まとめて 1 つのコミットに（merge コミットではなく、main の変更がすべて入る）。
+    git(dir, BASE, &["reset", "-q", "--hard", head.trim()]);
+    amonhen_tui::snapshot(open(dir), 200, 12, clock(), "0jjms").unwrap();
+    assert_eq!(parents(), 1, "an ordinary commit");
+    assert_ne!(git_out(dir, &["rev-parse", "HEAD"]), head);
+    assert!(dir.join("c.txt").exists());
 }
 
 /// `s` で作業中の変更を stash し、`S` で戻す
@@ -2290,6 +2338,16 @@ fn diverged_branches_offer_force_push_and_pull_modes() {
     assert!(
         asked.contains("y push   f force push (with lease), replacing 1 on the remote   t another branch…   n cancel")
     );
+    // 置き換える push の前と後の絵: 上流の 1 つが外れ、手元のものが origin/main に。
+    assert!(
+        asked.contains(" If you force push to origin/main "),
+        "{asked}"
+    );
+    assert!(
+        asked.contains("Ahead of the remote  [origin/main]  leaves the branch"),
+        "{asked}"
+    );
+    assert!(asked.contains("Rewritten  [origin/main]"), "{asked}");
     // ふつうの push は断られる（理由が出る）。
     let refused = amonhen_tui::snapshot(open(&work), 140, 8, clock(), "Py").unwrap();
     println!("{refused}");
@@ -2344,12 +2402,17 @@ fn cherry_pick_revert_and_detach_from_history() {
     let asked = amonhen_tui::snapshot(open(dir.path()), 120, 10, clock(), "jy").unwrap();
     println!("{asked}");
     assert!(asked.contains("“On topic”?   y cherry-pick   n cancel"));
+    // アプリのシートと同じく、前と後の絵: 後は今の先端（On main）の上に新しいコミット。
+    assert!(asked.contains(" Cherry-pick "), "{asked}");
+    assert!(asked.contains("On topic  [main]  new"), "{asked}");
     let stopped = amonhen_tui::snapshot(open(dir.path()), 120, 10, clock(), "jyy").unwrap();
     assert!(stopped.contains("Stopped at conflicts"));
     amonhen_tui::snapshot(open(dir.path()), 120, 10, clock(), "Ay").unwrap();
     // 一番上（On main）を打ち消す。
     let asked = amonhen_tui::snapshot(open(dir.path()), 120, 10, clock(), "v").unwrap();
+    println!("{asked}");
     assert!(asked.contains("Revert "));
+    assert!(asked.contains("Revert \"On main\"  [main]  new"), "{asked}");
     amonhen_tui::snapshot(open(dir.path()), 120, 10, clock(), "vy").unwrap();
     assert_eq!(subject(), "Revert \"On main\"\n");
     assert_eq!(

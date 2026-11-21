@@ -1,6 +1,6 @@
 //! 前と後の絵（アプリが確かめるときに見せるもの）。エンジンの `rewritePreview` の `editDrawing`（History の編集）か、
 //! `movePreview` の `drawing` を [`from_move`] で同じ形にしたもの（reset など、ブランチを動かす操作）、rebase・merge の
-//! 絵を [`from_rebase`]・[`from_merge`] で同じ形にしたものを、左に前、
+//! 絵を [`from_rebase`]・[`from_merge`]、cherry-pick・revert の絵を [`from_pick`] で同じ形にしたものを、左に前、
 //! 右に後の 2 列で、新しい順に描く。どちらの側も、いちばん下に変わらないいちばん新しいコミット（共通の土台）を描く。
 
 use amonhen_model::tr;
@@ -166,6 +166,34 @@ pub fn from_merge(drawing: &Value, branch: &str, theirs: &str) -> Value {
     serde_json::json!({
         "before": ours, "after": after,
         "base": drawing["base"], "labels": drawing["labels"], "branch": branch,
+    })
+}
+
+/// cherry-pick・revert の絵（`pickPreview` の `drawing`）を同じ形に。前は今の先端、後はその上に新しいコミット。
+/// 土台は先端の親（なければ土台なし）。
+pub fn from_pick(drawing: &Value, branch: &str) -> Value {
+    let tip: Vec<Value> = drawing["head"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .take(1)
+        .cloned()
+        .collect();
+    let new: Vec<Value> = marked(&drawing["picks"], "pick", Some(&tr!("new")))
+        .into_iter()
+        .map(|mut c| {
+            c["oid"] = Value::from("");
+            c
+        })
+        .collect();
+    let mut after = with_more(new, &drawing["picksMore"], &drawing["picksMoreAt"]);
+    after.extend(marked(&Value::from(tip.clone()), "keep", None));
+    serde_json::json!({
+        "before": marked(&Value::from(tip), "pick", None),
+        "after": after,
+        "base": drawing["head"].get(1).cloned().unwrap_or(Value::Null),
+        "labels": drawing["labels"],
+        "branch": branch,
     })
 }
 
@@ -538,6 +566,37 @@ mod tests {
             "{lines:?}"
         );
         assert!(lines[3].contains("● aaaaaaaa Ours"), "{lines:?}");
+    }
+
+    /// cherry-pick・revert: 後は、今の先端の上に新しいコミット（ID なし）。ブランチはその上に。
+    #[test]
+    fn a_pick() {
+        let drawing = from_pick(
+            &json!({
+                "head": [{"oid": "aaaaaaaa1", "subject": "Tip"}, {"oid": "99999999", "subject": "Parent"}],
+                "picks": [{"oid": "bbbbbbbb1", "subject": "Revert \"Old\""}], "picksMore": 0, "picksMoreAt": 0,
+                "labels": [{"oid": "aaaaaaaa1", "name": "main", "kind": "local"}],
+            }),
+            "main",
+        );
+        let area = Rect::new(0, 0, 100, height(&drawing));
+        let mut buf = Buffer::empty(area);
+        draw(&drawing, area, &mut buf);
+        let lines = text(&buf, area);
+        assert!(lines[1].starts_with("● aaaaaaaa Tip  [main]"), "{lines:?}");
+        assert!(
+            lines[1].contains("● Revert \"Old\"  [main]  new"),
+            "{lines:?}"
+        );
+        assert!(lines[2].contains("● aaaaaaaa Tip"), "{lines:?}");
+        assert!(
+            lines[2].starts_with("○ 99999999 Parent  unchanged"),
+            "{lines:?}"
+        );
+        assert!(
+            lines[3].ends_with("○ 99999999 Parent  unchanged"),
+            "{lines:?}"
+        );
     }
 
     /// 長い側は、真ん中を省いた数を出す。
