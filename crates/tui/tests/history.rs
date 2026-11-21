@@ -1450,7 +1450,7 @@ fn edit_mode_applies_several_edits_at_once() {
     assert!(row(" Four  [main]").contains("drop"), "{asked}");
     assert!(row(" Three  fixup").contains('●'), "{asked}");
     assert!(row("+1 combined").contains("Two"), "{asked}");
-    assert!(row("unchanged below").contains("One"), "{asked}");
+    assert_eq!(asked.matches("One  unchanged").count(), 2, "{asked}");
     assert!(line.contains("Undo brings it all back."), "{line}");
     amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), &format!("{keys}\nn")).unwrap();
     assert_eq!(log(), "Four\nThree\nTwo\nOne\n");

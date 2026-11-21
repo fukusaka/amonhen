@@ -1,5 +1,5 @@
 //! 書き換えの前と後の絵（アプリが当てる前に見せるもの）。エンジンの `rewritePreview` の `editDrawing` を、左に前、
-//! 右に後の 2 列で、新しい順に描く。いちばん下は、書き換えないいちばん新しいコミット（共通の土台）。
+//! 右に後の 2 列で、新しい順に描く。どちらの側も、いちばん下に書き換えないいちばん新しいコミット（共通の土台）を描く。
 
 use amonhen_model::tr;
 use ratatui_core::buffer::Buffer;
@@ -23,7 +23,9 @@ pub fn height(drawing: &Value) -> u16 {
         drawing[key].as_array().map_or(0, Vec::len)
             + usize::from(drawing[more].as_u64().unwrap_or(0) > 0)
     };
-    let rows = rows("before", "beforeMore").max(rows("after", "afterMore"));
+    // 後に何も残らないときは、そう言う 1 行。
+    let after = rows("after", "afterMore").max(1);
+    let rows = rows("before", "beforeMore").max(after);
     (rows + 1 + usize::from(drawing["base"].is_object())) as u16
 }
 
@@ -102,6 +104,20 @@ fn side(drawing: &Value, after: bool) -> Vec<Line> {
     if more > 0 && at >= lines.len() {
         lines.push(elided(more));
     }
+    // どちらの側も、書き換えない土台の上に載る。
+    if let Some(base) = drawing["base"].as_object() {
+        lines.push(Line {
+            mark: "○",
+            id: short(base.get("oid").and_then(Value::as_str).unwrap_or("")),
+            subject: base
+                .get("subject")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned(),
+            note: tr!("unchanged"),
+            style: Style::new(),
+        });
+    }
     lines
 }
 
@@ -162,39 +178,19 @@ pub fn draw(drawing: &Value, area: Rect, buf: &mut Buffer) {
     buf.set_stringn(right, area.y, tr!("After"), usize::from(column), heading);
     let before = side(drawing, false);
     let after = side(drawing, true);
-    let rows = area
-        .height
-        .saturating_sub(1 + u16::from(drawing["base"].is_object()));
-    for (y, line) in (area.y + 1..area.y + 1 + rows).zip(&before) {
+    for (y, line) in (area.y + 1..area.bottom()).zip(&before) {
         put(buf, area.x, y, column, line);
     }
-    for (y, line) in (area.y + 1..area.y + 1 + rows).zip(&after) {
-        put(buf, right, y, column, line);
-    }
-    if after.is_empty() && rows > 0 {
+    // 後に何も残らなければ、そう言ってから土台。
+    let mut y = area.y + 1;
+    if drawing["after"].as_array().is_none_or(Vec::is_empty) && y < area.bottom() {
         let none = tr!("(no commits left)");
-        buf.set_stringn(
-            right,
-            area.y + 1,
-            &none,
-            usize::from(column),
-            Style::new().fg(Color::Indexed(244)),
-        );
+        let dim = Style::new().fg(Color::Indexed(244));
+        buf.set_stringn(right, y, &none, usize::from(column), dim);
+        y += 1;
     }
-    // 土台は、両方に共通（全体の幅で 1 行）。
-    if let Some(base) = drawing["base"].as_object() {
-        let line = Line {
-            mark: "○",
-            id: short(base.get("oid").and_then(Value::as_str).unwrap_or("")),
-            subject: base
-                .get("subject")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_owned(),
-            note: tr!("unchanged below"),
-            style: Style::new(),
-        };
-        put(buf, area.x, area.bottom() - 1, area.width, &line);
+    for (y, line) in (y..area.bottom()).zip(&after) {
+        put(buf, right, y, column, line);
     }
 }
 
@@ -227,7 +223,7 @@ mod tests {
             .collect()
     }
 
-    /// 前は消えるものに印、後はまとめた数とブランチ。土台は下に 1 行。
+    /// 前は消えるものに印、後はまとめた数とブランチ。どちらの側も、コミットのすぐ下に土台。
     #[test]
     fn before_and_after_side_by_side() {
         let drawing = json!({
@@ -258,7 +254,9 @@ mod tests {
             "{lines:?}"
         );
         assert!(lines[2].starts_with("● bbbbbbbb Three  fixup"));
-        assert_eq!(lines[4], "○ 99999999 One  unchanged below");
+        // 後は Two 1 つなので、そのすぐ下が土台。前は 3 つの下。
+        assert!(lines[2].ends_with("○ 99999999 One  unchanged"), "{lines:?}");
+        assert_eq!(lines[4], "○ 99999999 One  unchanged");
     }
 
     /// 長い側は、真ん中を省いた数を出す。
