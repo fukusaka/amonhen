@@ -433,6 +433,97 @@ pub enum Step {
     ChangesPan,
 }
 
+/// criterion のベンチの 1 歩（`benches/frames.rs`）: `measure_scroll` と同じ所まで進めておき、`step` で 1 フレーム
+/// （入力・届いた答え・描いて端末に送るまで。送るものは数えるだけ）を進める。端に着いたら折り返す。
+#[doc(hidden)]
+pub struct Scroll {
+    app: App,
+    rx: mpsc::Receiver<Event>,
+    canvas: Canvas<Counter>,
+    step: Step,
+    column: u16,
+    rows: u16,
+    down: bool,
+    frame: usize,
+}
+
+impl Scroll {
+    pub fn new(front: Arc<dyn Front>, cols: u16, rows: u16, step: Step) -> Result<Self> {
+        let (tx, rx) = mpsc::channel();
+        let mut app = App::new(
+            front,
+            tx,
+            Clock {
+                now: now(),
+                local: |t| t.to_string(),
+            },
+        );
+        app.resize(cols, rows);
+        app.start();
+        settle(&mut app, &rx)?;
+        let mut canvas = Canvas::new(Counter(Arc::new(AtomicU64::new(0))));
+        if let Some(damage) = app.take_damage() {
+            paint(&mut canvas, &mut app, damage)?;
+        }
+        let enter = match step {
+            Step::Wheel | Step::Move => "",
+            Step::Diff | Step::DiffPan => "\n",
+            Step::Changes | Step::ChangesPan => "1\n",
+        };
+        for ch in enter.chars() {
+            app.handle(key(ch));
+            wait(&mut app, &rx)?;
+            if let Some(damage) = app.take_damage() {
+                paint(&mut canvas, &mut app, damage)?;
+            }
+        }
+        let column = app.main_column();
+        Ok(Self {
+            app,
+            rx,
+            canvas,
+            step,
+            column,
+            rows,
+            down: true,
+            frame: 0,
+        })
+    }
+
+    /// 1 フレーム進める。
+    pub fn step(&mut self) -> Result<()> {
+        let step = self.step;
+        if matches!(step, Step::DiffPan | Step::ChangesPan) {
+            self.down = (self.frame / PAN_STEPS).is_multiple_of(2);
+        } else if self.app.at_end(self.down, step) {
+            self.down = !self.down;
+        }
+        self.frame += 1;
+        let wheel = |kind| {
+            Event::Input(Input::Mouse(MouseEvent {
+                kind,
+                column: self.column,
+                row: self.rows / 2,
+                modifiers: KeyModifiers::NONE,
+            }))
+        };
+        let event = match (step, self.down) {
+            (Step::DiffPan | Step::ChangesPan, down) => key(if down { 'l' } else { 'h' }),
+            (Step::Move | Step::Diff | Step::Changes, down) => key(if down { 'j' } else { 'k' }),
+            (Step::Wheel, true) => wheel(MouseEventKind::ScrollDown),
+            (Step::Wheel, false) => wheel(MouseEventKind::ScrollUp),
+        };
+        self.app.handle(event);
+        while let Ok(event) = self.rx.try_recv() {
+            self.app.handle(event);
+        }
+        if let Some(damage) = self.app.take_damage() {
+            paint(&mut self.canvas, &mut self.app, damage)?;
+        }
+        Ok(())
+    }
+}
+
 /// 横に動かす計測で、折り返すまでの回数（1 回で 8 セル）。左の端での `h` は一覧へ戻るので、端では押さない。
 const PAN_STEPS: usize = 20;
 
