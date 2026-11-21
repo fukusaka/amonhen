@@ -99,6 +99,14 @@ final class FocusTableView: NSTableView {
         }
     }
 
+    /// 押したキー。true を返せば表に渡さない（History の上で編集するときの p・r・s・f・d・e）。
+    var onKey: ((NSEvent) -> Bool)?
+
+    override func keyDown(with event: NSEvent) {
+        if onKey?(event) == true { return }
+        super.keyDown(with: event)
+    }
+
     override func becomeFirstResponder() -> Bool {
         defer { onFocusChange?() }
         return super.becomeFirstResponder()
@@ -313,7 +321,9 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     private let densityView = DensityStripView()
     private var densityRequest = 0
     /// 全ブランチをそのまま出すか（折りたたみも絞り込みもしない）。
-    private var showsFullHistory: Bool { scope == .all && !Settings.foldMergedBranches }
+    private var showsFullHistory: Bool { scope == .all && !foldsMerges }
+    /// 取り込んだ枝をたたむか（編集の間は全部の行を出す）。
+    private var foldsMerges: Bool { Settings.foldMergedBranches && editor == nil }
 
     // 検索
     private let searchField = NSSearchField()
@@ -407,6 +417,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         tableView.addTableColumn(subject)
         // 行の右端の CI の印（描くのと同じ位置: 2 列目の右端から 18 pt）を押したら、行を選ばずに詳細の吹き出し。
         tableView.onClickMark = { [weak self] row, point in
+            // History の上で編集しているときの、札・境目・ダブルクリック。
+            if let self, editor != nil, handleEditClick(row: row, point: point) { return true }
             // 名前を全部は出していない札（中央を切った札・「+N」）を押したら、行を選ばずに名前の一覧の吹き出し。
             if let self, let range = clippedLabels[row]?.first(where: { $0.contains(point.x) }) {
                 showRefs(row: row, range: range)
@@ -427,9 +439,12 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         tableView.dragLabel = { [weak self] rows in
             guard let self else { return nil }
             let grabbed = tableView.mouseDownRow
-            guard let row = rows.contains(grabbed) ? grabbed : rows.first, let chunk = chunks[row / Self.chunkRows] else { return nil }
+            guard let shown = rows.contains(grabbed) ? grabbed : rows.first else { return nil }
+            let row = editSource[shown] ?? shown
+            guard let chunk = chunks[row / Self.chunkRows] else { return nil }
             return chunk.subject(row: row)
         }
+        tableView.onKey = { [weak self] event in self?.handleEditKey(event) ?? false }
         tableView.onFocusChange = { [weak self] in
             // フォーカスが移り終えてから（first responder が入れ替わった後で）描く。
             DispatchQueue.main.async { self?.redrawText() }
@@ -645,7 +660,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         case let .ref(_, _, target): [target] + companionTips
         case let .refs(list): list.map(\.target)
         }
-        let fold = Settings.foldMergedBranches, expanded = Array(expandedMerges)
+        let fold = foldsMerges, expanded = Array(expandedMerges)
         Task {
             let next: History? = await Task.detached(priority: .userInitiated) {
                 if fold { return try? repository.foldedHistory(tips: tips, expanded: expanded) }
@@ -869,10 +884,18 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         }
         updateLineage()
         updateShallowBand()
+        if editor != nil { rebuildEditMap() }
         // History が替わるとレーンの数も替わる。列の幅を合わせてから描く。
         layoutGraphView()
         updateDensity()
+        if let afterShow {
+            self.afterShow = nil
+            afterShow()
+        }
     }
+
+    /// 次に History を出したらすること（編集を終えて元の表示に戻すとき）。
+    private var afterShow: (() -> Void)?
 
     /// shallow clone の History なら、最後の行の下に帯を出す（一致したコミットだけを出しているときは出さない。
     /// その終わりは History の終わりではない）。
@@ -1150,8 +1173,14 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         // 減ったときは、見えている行が全部新しい History の外）。
         let last = min(history.rowCount, rows.location + rows.length)
         guard rows.location < last else { return }
+        editChips.removeAll(keepingCapacity: true)
         for row in rows.location..<last {
-            guard let line = FrameProfile.measure("text: row text", { shapedRow(row, scale: scale) }) else { continue }
+            // History の上で編集しているときは、範囲の行に並べ替えた後のコミットを描く。
+            let editIndex = editSlots[row]
+            let editRow = editIndex.flatMap { i in editor.map { $0.rows[i] } }
+            let source = editSource[row] ?? row
+            let outside = editor != nil && editIndex == nil
+            guard let line = FrameProfile.measure("text: row text", { shapedRow(source, scale: scale) }) else { continue }
             let rowTop = tableView.rect(ofRow: row).minY - scrollY
             let isSelected = selection.contains(row)
             // 文字はその行のグラフの右端のすぐ右から（行ごとに左端が違う。グラフと文字のビューは左端が同じ）。
@@ -1165,13 +1194,13 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
                     radius: 4, color: NSColor.systemYellow.withAlphaComponent(0.14).rgba)
             }
             var x = start
-            let id = FrameProfile.measure("text: commit id (FFI)") { history.commitID(row: row) }
+            let id = FrameProfile.measure("text: commit id (FFI)") { history.commitID(row: source) }
             let labels = id.flatMap { id -> [RefLabel]? in
                 let all = (worktreeLabels[id] ?? []) + (refLabels[id] ?? [])
                 return all.isEmpty ? nil : all
             }
             // 署名があれば、作者・日時の行に検証の結果の色の丸を置く。結果をまだ知らなければ、裏で検証する。
-            let kind = chunks[row / Self.chunkRows]?.signature(row: row) ?? 0
+            let kind = chunks[source / Self.chunkRows]?.signature(row: source) ?? 0
             let signed = kind != 0 && items.contains(.signature)
             var status = SignatureStatus.pending
             if signed, let id {
@@ -1188,7 +1217,15 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             let dot: CGFloat = signed ? 12 : 0
             // 1 行なら、作者・日時・ID を右に寄せ、件名はその手前まで。
             let metaWidth = compact ? min(line.meta.width, column.width * 0.45) : 0
-            let subjectEnd = compact ? right - metaWidth - 12 - dot : right
+            var subjectEnd = compact ? right - metaWidth - 12 - dot : right
+            // 操作の印（git の言葉）は、件名の場所の右端に。
+            if let editRow, !editRow.merge {
+                let conflict = editor?.expectedConflicts[editRow.oid] != nil
+                let w = editChipWidth(editRow.action, scale: scale)
+                drawEditChip(editRow.action, x: subjectEnd - w, baseline: rowTop + subjectBaseline, scale: scale, conflict: conflict)
+                editChips[row] = (subjectEnd - w + originX)...(subjectEnd + originX)
+                subjectEnd -= w + 8
+            }
             // 札は件名の場所の 6 割まで（残りは件名に残す）。入りきらない札は「+N」にまとめる。
             var clipped: [ClosedRange<CGFloat>] = []
             if let labels, items.contains(.refs) {
@@ -1200,9 +1237,19 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             if !clipped.isEmpty {
                 clippedLabels[row] = clipped.map { ($0.lowerBound + originX)...($0.upperBound + originX) }
             }
+            // 直したメッセージは、その件名を描く。まとめる行は薄く、取り消す行は線で消す。
+            let subjectLine = editRow.flatMap { r in r.newMessage.map { _ in editSubject(r.subject, scale: scale) } } ?? line.subject
+            let combining = editRow.map { $0.action == .squash || $0.action == .fixup } ?? false
+            let dropping = editRow?.action == .drop
             text.addLine(
-                line.subject, origin: CGPoint(x: x, y: rowTop + subjectBaseline), color: isSelected ? selected : primary,
+                subjectLine, origin: CGPoint(x: x, y: rowTop + subjectBaseline),
+                color: isSelected ? selected : (combining || dropping) ? secondary : primary,
                 scale: scale, maxWidth: max(0, subjectEnd - x), ellipsis: ellipsis)
+            if dropping {
+                let y = rowTop + subjectBaseline - CTFontGetXHeight(font) / 2
+                text.addRect(CGRect(x: x, y: y, width: min(subjectLine.width, max(0, subjectEnd - x)), height: 1),
+                             color: isSelected ? selected : secondary)
+            }
             let metaMax = end - start - dot - ciSpace
             text.addLine(
                 line.meta, origin: CGPoint(x: compact ? right - metaWidth : start, y: rowTop + metaBaseline),
@@ -1230,6 +1277,18 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
                     symbol, pointSize: size, center: CGPoint(x: end - 9, y: rowTop + tableView.rowHeight / 2),
                     color: (isSelected && focused ? selected : color.rgba), scale: scale)
             }
+            // 編集の範囲の外の行は、グラフごと薄くする（上に背景の色を重ねる）。
+            if outside {
+                text.addRect(CGRect(x: 0, y: rowTop, width: textView.bounds.width, height: tableView.rowHeight),
+                             color: NSColor.windowBackgroundColor.withAlphaComponent(0.62).rgba)
+            }
+        }
+        // 範囲のいちばん下の境目（下へ引くと広げ、上へ引くと狭める）。
+        if let boundary = editBoundaryRow, boundary >= rows.location, boundary < last {
+            let y = tableView.rect(ofRow: boundary).maxY - scrollY
+            let accent = NSColor.controlAccentColor.rgba
+            text.addRect(CGRect(x: 0, y: y - 1, width: textView.bounds.width, height: 2), color: accent)
+            text.addRoundedRect(CGRect(x: 6, y: y - 4, width: 30, height: 8), radius: 4, color: accent)
         }
         if !unverified.isEmpty { verifySoon(unverified) }
     }
@@ -1983,7 +2042,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
         let row = tableView.clickedRow
-        guard let actions, let history, row >= 0, let id = history.commitID(row: row) else { return }
+        guard let actions, let history, row >= 0, let id = history.commitID(row: editSource[row] ?? row) else { return }
+        if editor != nil { return buildEditMenu(menu, row: row, id: id) }
         // 複数選んだ行の上なら、選んだコミットまとめての操作。
         let selected = tableView.selectedRowIndexes
         if selected.count > 1, selected.contains(row) {
@@ -2118,11 +2178,11 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     private func notifySelection() {
         let rows = tableView.selectedRowIndexes
         if rows.count > 1, let history {
-            onSelectRows?(Array(rows), history)
+            onSelectRows?(rows.map { editSource[$0] ?? $0 }, history)
             return
         }
         let row = tableView.selectedRow
-        onSelectCommit?(row >= 0 ? history?.commitID(row: row) : nil)
+        onSelectCommit?(row >= 0 ? history?.commitID(row: editSource[row] ?? row) : nil)
     }
 
     // MARK: - ドラッグで並べ替え
@@ -2133,7 +2193,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
 
     func tableView(_ tableView: NSTableView, draggingSession session: NSDraggingSession, willBeginAt screenPoint: NSPoint, forRowIndexes rowIndexes: IndexSet) {
         dragChain = nil
-        guard let actions else { return }
+        guard let actions, editor == nil else { return }
         Task { @MainActor in dragChain = await actions.editableCommits() }
     }
 
@@ -2145,7 +2205,9 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         // いくつか選んだ行の 1 つをつかんだら、つかんだ行だけを動かす（落とす側は 1 つのコミットしか読まない）。
         let grabbed = self.tableView.mouseDownRow
         if grabbed >= 0, row != grabbed, tableView.selectedRowIndexes.contains(grabbed) { return nil }
-        guard let id = history?.commitID(row: row) else { return nil }
+        // 編集の間は、範囲の行だけを並べ替えられる（merge をまたがないとき）。
+        if let editor, editSlots[row] == nil || !editor.reorderable { return nil }
+        guard let id = history?.commitID(row: editSource[row] ?? row) else { return nil }
         let item = NSPasteboardItem()
         item.setString(id.map { String(format: "%02x", $0) }.joined(), forType: .commitID)
         return item
@@ -2156,6 +2218,12 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         proposedDropOperation op: NSTableView.DropOperation
     ) -> NSDragOperation {
         guard info.draggingSource as? NSTableView === tableView, let history else { return [] }
+        if editor != nil {
+            // 範囲の中か、範囲のすぐ下へ。
+            guard let last = editSlots.keys.max(), editSlots[row] != nil || row == last + 1 else { return [] }
+            tableView.setDropRow(row, dropOperation: .above)
+            return .move
+        }
         // 編集できる並びの外（最初の merge より下、HEAD でない枝）には落とせない。並びを読み終えるまでは許す。
         if let chain = dragChain {
             let hex = { (r: Int) in history.commitID(row: r).map { $0.map { String(format: "%02x", $0) }.joined() } }
@@ -2173,6 +2241,12 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         _ tableView: NSTableView, acceptDrop info: any NSDraggingInfo, row: Int, dropOperation: NSTableView.DropOperation
     ) -> Bool {
         guard let actions, let history, let oid = info.draggingPasteboard.string(forType: .commitID) else { return false }
+        if let editor {
+            guard let from = editor.rows.firstIndex(where: { $0.oid == oid }) else { return false }
+            let target = editSlots[row] ?? editor.rows.count
+            editor.move(oid, to: from < target ? target - 1 : target)
+            return true
+        }
         // 落とした位置の下にあるコミット（なければ上）が、編集できる並びの何番目かで移動先を決める。
         let below = history.commitID(row: min(row, history.rowCount - 1)).map { $0.map { String(format: "%02x", $0) }.joined() }
         Task {
@@ -2183,6 +2257,222 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             // 並べ替えも編集モードで（並びを見て Apply）。範囲は、動かす 2 か所の古い方から HEAD まで。
             await MainActor.run { self.onEditCommits?(chain[max(from, to)], .move(oid, to)) }
         }
+        return true
+    }
+
+    // MARK: - History の上で編集する
+
+    /// 編集している範囲（nil なら編集していない）。
+    private var editor: HistoryEditController?
+    private var scopeBeforeEdit: Scope?
+    private var matchOnlyBeforeEdit = false
+    /// 表の行 → 範囲の何番目（新しい順）。
+    private var editSlots: [Int: Int] = [:]
+    /// 表の行 → そこに描くコミットの History の行（並べ替えた分）。
+    private var editSource: [Int: Int] = [:]
+    /// first-parent の並びの各コミットの History の行（ない所は -1）。境目を引く先。
+    private var lineRows: [Int] = []
+    /// 見えている行の、編集の札の横の範囲（表の座標）。押すとすることを選ぶ。
+    private var editChips: [Int: ClosedRange<CGFloat>] = [:]
+    /// 境目を引いている間の、範囲の数。
+    private var boundaryPreview: Int?
+    private var editSubjects: [String: TextRenderer.ShapedLine] = [:]
+
+    /// 範囲のいちばん下の行（境目を描く）。
+    private var editBoundaryRow: Int? {
+        guard let editor else { return nil }
+        let count = boundaryPreview ?? editor.rows.count
+        guard count > 0, count <= lineRows.count, lineRows[count - 1] >= 0 else { return editSlots.keys.max() }
+        return lineRows[count - 1]
+    }
+
+    /// 編集を始める。今のブランチの全部の行（たたまない・絞り込まない）にして、終えたら元に戻す。
+    func beginEditing(_ editor: HistoryEditController) {
+        self.editor = editor
+        editor.onChange = { [weak self] in self?.rebuildEditMap() }
+        scopeBeforeEdit = scope
+        matchOnlyBeforeEdit = matchOnlyButton.state == .on
+        let reload = scope != .current || Settings.foldMergedBranches || matchOnlyBeforeEdit
+        matchOnlyButton.state = .off
+        updateMatchButtons()
+        scopePopup.isEnabled = false
+        if reload {
+            scope = .current
+            updateScopePopup()
+            reloadScope(resetScroll: false)
+        }
+        rebuildEditMap()
+    }
+
+    /// 編集を終える（Apply・Cancel）。元の表示に戻す。
+    func endEditing() {
+        editor = nil
+        editSlots = [:]
+        editSource = [:]
+        lineRows = []
+        editSubjects = [:]
+        scopePopup.isEnabled = true
+        if let saved = scopeBeforeEdit {
+            let restoreMatch = matchOnlyBeforeEdit
+            scope = saved
+            updateScopePopup()
+            if restoreMatch {
+                afterShow = { [weak self] in
+                    self?.matchOnlyButton.state = .on
+                    self?.matchOnlyClicked()
+                }
+            }
+            reloadScope(resetScroll: false)
+        }
+        scopeBeforeEdit = nil
+        redrawText()
+        // 並べ替えて描いていた行から、元の行に戻る（詳細を選んでいる行のコミットに合わせる）。
+        notifySelection()
+    }
+
+    /// 範囲の行と描くコミットを求め直す（並べ替え・範囲・History が変わったとき）。
+    private func rebuildEditMap() {
+        editSlots = [:]
+        editSource = [:]
+        guard let editor, let history else { return redrawText() }
+        let rowOf = { (hex: String) -> Int? in Data(hex: hex).flatMap { Self.locate($0, near: 0, in: history) } }
+        let slots = editor.rows.compactMap { rowOf($0.oid) }.sorted()
+        for (i, slot) in slots.enumerated() where i < editor.rows.count {
+            editSlots[slot] = i
+            editSource[slot] = rowOf(editor.rows[i].oid)
+        }
+        lineRows = editor.line.map { rowOf($0.oid) ?? -1 }
+        redrawText()
+        notifySelection()
+    }
+
+    private func editChipColors(_ action: HistoryEditController.Action, conflict: Bool) -> (SIMD4<Float>, SIMD4<Float>) {
+        if conflict { return (NSColor.systemOrange.withAlphaComponent(0.85).rgba, NSColor.white.rgba) }
+        return switch action {
+        case .pick: (NSColor.labelColor.withAlphaComponent(0.08).rgba, NSColor.secondaryLabelColor.rgba)
+        case .drop: (NSColor.systemRed.withAlphaComponent(0.8).rgba, NSColor.white.rgba)
+        default: (NSColor.labelColor.withAlphaComponent(0.7).rgba, NSColor.textBackgroundColor.rgba)
+        }
+    }
+
+    private func shapedChip(_ action: HistoryEditController.Action, scale: CGFloat) -> TextRenderer.ShapedLine {
+        let key = "edit:" + action.rawValue
+        if let line = labelText[key] { return line }
+        let line = text.shape(action.rawValue as CFString, font: labelFont, scale: scale)
+        labelText[key] = line
+        return line
+    }
+
+    private func editChipWidth(_ action: HistoryEditController.Action, scale: CGFloat) -> CGFloat {
+        (shapedChip(action, scale: scale).width + 12).rounded()
+    }
+
+    /// 編集の札を描き、幅を返す。
+    @discardableResult
+    private func drawEditChip(_ action: HistoryEditController.Action, x: CGFloat, baseline: CGFloat, scale: CGFloat,
+                              conflict: Bool) -> CGFloat {
+        let ascent = CTFontGetAscent(labelFont), descent = CTFontGetDescent(labelFont)
+        let line = shapedChip(action, scale: scale)
+        let width = editChipWidth(action, scale: scale)
+        let (fill, ink) = editChipColors(action, conflict: conflict)
+        text.addRoundedRect(CGRect(x: x, y: (baseline - ascent - 2).rounded(), width: width, height: (ascent + descent + 4).rounded()),
+                            radius: 8, color: fill)
+        text.addLine(line, origin: CGPoint(x: x + 6, y: baseline - 1), color: ink, scale: scale)
+        return width
+    }
+
+    private func editSubject(_ subject: String, scale: CGFloat) -> TextRenderer.ShapedLine {
+        if let line = editSubjects[subject] { return line }
+        let line = text.shape(subject as CFString, font: font, scale: scale)
+        editSubjects[subject] = line
+        return line
+    }
+
+    /// 編集の間に押した: 札ならすることの一覧、境目ならそれを引く、範囲の行のダブルクリックはメッセージを直す。
+    private func handleEditClick(row: Int, point: NSPoint) -> Bool {
+        guard let editor else { return false }
+        if let boundary = editBoundaryRow, abs(point.y - tableView.rect(ofRow: boundary).maxY) <= 4 {
+            dragBoundary()
+            return true
+        }
+        guard let index = editSlots[row] else { return false }
+        let oid = editor.rows[index].oid
+        if let chip = editChips[row], chip.contains(point.x) {
+            let menu = NSMenu()
+            addEditChoices(to: menu, oid: oid)
+            menu.popUp(positioning: nil, at: NSPoint(x: chip.lowerBound, y: tableView.rect(ofRow: row).maxY), in: tableView)
+            return true
+        }
+        if NSApp.currentEvent?.clickCount == 2, !editor.rows[index].merge {
+            editor.editMessage(of: oid)
+            return true
+        }
+        return false
+    }
+
+    /// 境目を、押したまま引いた先の first-parent のコミットまで動かす（離したら範囲を変える）。
+    private func dragBoundary() {
+        guard let editor, let window = view.window else { return }
+        window.trackEvents(matching: [.leftMouseDragged, .leftMouseUp], timeout: .infinity, mode: .eventTracking) { event, stop in
+            guard let event else {
+                stop.pointee = true
+                return
+            }
+            let y = tableView.convert(event.locationInWindow, from: nil).y
+            // 引いた所にいちばん近い、並びのコミットの行の下端。
+            var best: (count: Int, distance: CGFloat)?
+            for (k, row) in lineRows.enumerated() where row >= 0 {
+                let d = abs(tableView.rect(ofRow: row).maxY - y)
+                if best == nil || d < best!.distance { best = (k + 1, d) }
+            }
+            if let count = best?.count, count >= editor.rows.count || editor.canShrink(to: count) {
+                boundaryPreview = count
+                redrawText()
+            }
+            if event.type == .leftMouseUp { stop.pointee = true }
+        }
+        guard let count = boundaryPreview else { return }
+        Task { @MainActor in
+            await editor.resize(to: count)
+            boundaryPreview = nil
+            rebuildEditMap()
+        }
+    }
+
+    /// することの一覧（git の言葉と説明）。今のものに印。
+    private func addEditChoices(to menu: NSMenu, oid: String) {
+        guard let editor, let row = editor.rows.first(where: { $0.oid == oid }) else { return }
+        for action in editor.choices(for: oid) {
+            let item = ClosureMenuItem(title: action.menuTitle) { editor.choose(action, for: oid) }
+            item.state = row.action == action ? .on : .off
+            item.toolTip = action.toolTip
+            menu.addItem(item)
+        }
+    }
+
+    /// 編集の間の右クリック: 範囲の行はすることの一覧、ほかはコピーだけ。
+    private func buildEditMenu(_ menu: NSMenu, row: Int, id: Data) {
+        let hex = id.map { String(format: "%02x", $0) }.joined()
+        if let index = editSlots[row], let editor, !editor.rows[index].merge {
+            addEditChoices(to: menu, oid: hex)
+            menu.addItem(.separator())
+        }
+        menu.addItem(ClosureMenuItem(title: Titles.copyCommitID) {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(hex, forType: .string)
+        })
+    }
+
+    /// 選んだ範囲の行で p・r・s・f・d・e を押すと、することを替える。
+    private func handleEditKey(_ event: NSEvent) -> Bool {
+        guard let editor, event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
+              let index = editSlots[tableView.selectedRow], let key = event.charactersIgnoringModifiers?.lowercased()
+        else { return false }
+        let actions: [String: HistoryEditController.Action] = [
+            "p": .pick, "r": .reword, "s": .squash, "f": .fixup, "d": .drop, "e": .edit,
+        ]
+        guard let action = actions[key] else { return false }
+        editor.choose(action, for: editor.rows[index].oid)
         return true
     }
 

@@ -158,7 +158,6 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         let detailItem = NSSplitViewItem(viewController: detail)
         detailItem.minimumThickness = 420
         content.addSplitViewItem(detailItem)
-        historyPage = content
         let pages = PageViewController(pages: [.history: content, .workingCopy: workingCopy, .stashes: stashes, .reflog: reflog, .rangeDiff: rangeDiff, .settings: settings])
         self.pages = pages
         // 右側（ページ）の下にステータスバー。サイドバーの切り替えが効くよう、分割ビューはウィンドウの中身のまま。
@@ -1171,8 +1170,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
 
     // MARK: - merge・rebase の途中の帯
 
-    /// History の画面（編集モードの間は差し替える）と、編集モード。
-    private var historyPage: NSViewController?
+    /// History の編集モード（History の上で編集している間）。
     private var commitEditor: HistoryEditController?
 
     /// History の編集モードに入る（`start` から HEAD まで）。`preset` は最初の変更（右クリックの近道・ドラッグから）。
@@ -1194,7 +1192,11 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             }
             commitEditor = editor
             editor.onFinish = { [weak self] _ in self?.endEditingCommits() }
-            pages?.replace(.history, with: editor)
+            // History の上でそのまま編集する（範囲の行に操作の印、外は薄く）。
+            history.beginEditing(editor)
+            editor.refreshSummary()
+            // 止める操作をすぐ灰色にする（ツールバーは次の入力まで確かめ直さない）。
+            window.toolbar?.validateVisibleItems()
             sidebar.select(page: .history)
             statusBar?.show(.editing, editor.barRow)
             if let preset { editor.apply(preset) }
@@ -1202,10 +1204,17 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     }
 
     private func endEditingCommits() {
-        if let historyPage { pages?.replace(.history, with: historyPage) }
+        history.endEditing()
         statusBar?.hide(.editing)
         commitEditor = nil
+        window.toolbar?.validateVisibleItems()
     }
+
+    static let editingHint = L("Apply or cancel the commit edit first.")
+    private var savedToolTips: [NSToolbarItem.Identifier: String?] = [:]
+
+    /// History の上で編集している（HEAD を動かす操作は、Apply か Cancel まで止める）。
+    var isEditingCommits: Bool { commitEditor != nil }
 
     /// ウィンドウの下のステータスバー（途中の操作・失敗・接続・終わった操作の一言）。
     private var statusBar: StatusBarController!
@@ -1613,8 +1622,31 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
                     }
                 }
             }
+            // --edit-commits "START,ACTION:ID[:MESSAGE],move:ID:N,…" で、History の編集の途中を撮る。
+            let editSpec = AppDelegate.option("--edit-commits")
+            if let editSpec {
+                let parts = editSpec.split(separator: ",").map(String.init)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [self] in
+                    guard let start = parts.first else { return }
+                    editCommits(from: start)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [self] in
+                        for part in parts.dropFirst() {
+                            let f = part.split(separator: ":", maxSplits: 2).map(String.init)
+                            guard f.count >= 2 else { continue }
+                            if f[0] == "move", f.count == 3, let to = Int(f[2]) {
+                                commitEditor?.move(prefix: f[1], to: to)
+                            } else if f[0] == "range", let n = Int(f[1]) {
+                                Task { await commitEditor?.resize(to: n) }
+                            } else if let action = HistoryEditController.Action(rawValue: f[0]) {
+                                commitEditor?.set(action, prefix: f[1], message: f.count == 3 ? f[2] : nil)
+                            }
+                        }
+                    }
+                }
+            }
             // --snapshot-after SECONDS で待ちを決める（SSH 先につながるのを待つなど）。
             let delay = AppDelegate.option("--snapshot-after").flatMap(Double.init)
+                ?? (editSpec != nil ? 3.0 : nil)
                 ?? (query != nil ? 3.5 : mergeSheet != nil || syncSheet != nil ? 2.5 : wait || mergePath != nil || appSettings ? 1.5 : 0.5)
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [self] in
                 let sheetView = mergeSheet != nil || syncSheet != nil ? window.attachedSheet?.contentView : nil
@@ -2694,8 +2726,16 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         return history.moveToMatch(by: step)
     }
 
+    /// History の上で編集している間は止める操作（HEAD・作業ツリーを動かす）。
+    private static let movesHead: Set<Selector> = [
+        #selector(pull(_:)), #selector(mergeIntoCurrent(_:)), #selector(rebaseCurrent(_:)), #selector(popStash(_:)),
+        #selector(switchBranch(_:)), #selector(commitChanges(_:)), #selector(commitAndPush(_:)), #selector(applyPatch(_:)),
+        #selector(undoOperation(_:)),
+    ]
+
     private func validate(_ action: Selector?) -> Bool {
         let sequence = workingCopy.sequence
+        if commitEditor != nil, let action, Self.movesHead.contains(action) { return false }
         switch action {
         case #selector(findNext(_:)), #selector(findPrevious(_:)): return history.hasSearch
         case #selector(continueSequence(_:)), #selector(abortSequence(_:)): return sequence != nil
@@ -2818,6 +2858,14 @@ extension RepositoryWindow {
     func validateToolbarItem(_ item: NSToolbarItem) -> Bool {
         // どのエディタで開くかは Settings で変わる。
         if item.action == #selector(openInEditor(_:)) { item.toolTip = ExternalEditor.toolTip }
-        return validate(item.action)
+        let enabled = validate(item.action)
+        // 編集で止めているときは、わけをツールチップに（終われば元に戻す）。
+        if commitEditor != nil, let action = item.action, Self.movesHead.contains(action) {
+            if item.toolTip != Self.editingHint { savedToolTips[item.itemIdentifier] = item.toolTip }
+            item.toolTip = Self.editingHint
+        } else if let saved = savedToolTips.removeValue(forKey: item.itemIdentifier) {
+            item.toolTip = saved
+        }
+        return enabled
     }
 }

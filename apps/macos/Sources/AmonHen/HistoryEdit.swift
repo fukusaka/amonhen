@@ -1,22 +1,29 @@
 import AmonhenKit
 import AppKit
 
-/// History の編集モード（docs/ux.md の「History's edit mode」）。選んだコミットから HEAD までを並べ、行ごとに
-/// 何をするか（そのまま・メッセージを直す・ひとつ古いコミットとまとめる・取り消す・止めて直す）を選び、ドラッグで
-/// 並べ替える。Apply を押すまで何も変わらず、まとめて 1 回の rebase（コアの `rewrite` の `plan`）で行う。Undo 1 回で
-/// 全部戻る。行は History と同じく新しい順（上が HEAD）。
-final class HistoryEditController: NSViewController, NSTableViewDataSource, NSTableViewDelegate {
-    /// 行ですること。git の対話的な rebase の言葉は、ツールチップにだけ出す。
+/// History の編集モード（docs/ux.md の「History's edit mode」）。選んだコミットから HEAD までの範囲で、行ごとに
+/// 何をするか（pick・reword・squash・fixup・drop・edit）を決め、並べ替える。行は History がそのまま描き（範囲の
+/// 行に操作の印、外は薄く）、ここは範囲と決めたこと、下の帯（要約・Cancel・Apply）を持つ。Apply を押すまで何も
+/// 変わらず、まとめて 1 回の rebase（コアの `rewrite` の `plan`）で行う。Undo 1 回で全部戻る。並びは History と
+/// 同じく新しい順（上が HEAD）。
+final class HistoryEditController: NSObject {
+    /// 行ですること。札は git の対話的な rebase の言葉、何をするかはツールチップと選ぶ一覧の説明に。
     enum Action: String, CaseIterable {
         case pick, reword, squash, fixup, drop, edit
 
-        var title: String {
+        var title: String { rawValue }
+
+        /// 選ぶ一覧の項目（言葉と説明）。
+        var menuTitle: String { "\(rawValue) — \(summary)" }
+
+        /// 選ぶ一覧で、言葉に添える説明。
+        var summary: String {
             switch self {
             case .pick: L("Keep")
             case .reword: L("Edit Message")
             case .squash: L("Combine with Older")
             case .fixup: L("Combine with Older, Keep Its Message")
-            case .drop: "Drop"
+            case .drop: L("Remove")
             case .edit: L("Stop to Change Files")
             }
         }
@@ -59,9 +66,12 @@ final class HistoryEditController: NSViewController, NSTableViewDataSource, NSTa
     }
 
     private let actions: Actions
-    private var rows: [Row]
-    private let originalOrder: [String]
-    private let table = NSTableView()
+    private(set) var rows: [Row]
+    private(set) var originalOrder: [String]
+    /// HEAD から first-parent で辿った並び（範囲を広げる・狭める先）。
+    private(set) var line: [(oid: String, merge: Bool)] = []
+    /// 行・すること・見込みが変わった（History が描き直す）。
+    var onChange: (() -> Void)?
     private let summary = NSTextField(labelWithString: "")
     /// 一緒に動くブランチ・残るブランチ・コンフリクトの見込み（`rewritePreview`）。
     private let preview = NSTextField(wrappingLabelWithString: "")
@@ -94,10 +104,8 @@ final class HistoryEditController: NSViewController, NSTableViewDataSource, NSTa
         self.actions = actions
         self.rows = rows
         originalOrder = rows.map(\.oid)
-        super.init(nibName: nil, bundle: nil)
+        super.init()
     }
-
-    required init?(coder: NSCoder) { fatalError() }
 
     /// `start`（16 進）から HEAD までを読み、編集モードを作る。`start` が編集できる並び（HEAD から最初の merge
     /// まで）になければ nil。
@@ -112,61 +120,107 @@ final class HistoryEditController: NSViewController, NSTableViewDataSource, NSTa
             guard end + 1 < chain.count else { return nil }
             end += 1
         }
-        let oids = Array(chain[...end])
-        let repository = actions.repository
-        let rows = await Task.detached { () -> [Row] in
+        let rows = await readRows(Array(chain[...end]), merges: merges, repository: actions.repository)
+        let editor = HistoryEditController(actions: actions, rows: rows)
+        editor.line = line
+        return editor
+    }
+
+    private static func readRows(_ oids: [String], merges: Set<String>, repository: Repository) async -> [Row] {
+        await Task.detached { () -> [Row] in
             oids.map { oid in
                 let message = (try? repository.run(["op": "commitMessage", "oid": oid]).text) ?? nil
                 let author = (try? repository.commitInfo(oid: oid))?.author ?? ""
                 return Row(oid: oid, message: message ?? "", author: author, merge: merges.contains(oid))
             }
         }.value
-        return HistoryEditController(actions: actions, rows: rows)
     }
 
-    override func loadView() {
-        let column = NSTableColumn(identifier: .init("row"))
-        table.addTableColumn(column)
-        table.headerView = nil
-        table.style = .inset
-        table.rowHeight = 40
-        table.dataSource = self
-        table.delegate = self
-        table.registerForDraggedTypes([.editRow])
-        table.draggingDestinationFeedbackStyle = .gap
-        table.target = self
-        table.doubleAction = #selector(editMessageOfClickedRow)
-        let scroll = NSScrollView()
-        scroll.documentView = table
-        scroll.hasVerticalScroller = true
-        let heading = NSTextField(labelWithString: L("Edit Commits"))
-        heading.font = .boldSystemFont(ofSize: 15)
-        let hint = NSTextField(wrappingLabelWithString: canReorder
-            ? L("Choose what to do with each commit and drag rows to reorder them. Nothing changes until Apply Changes.")
-            : L("Choose what to do with each commit. Merges are recreated as they are, so rows can’t be reordered across them. Nothing changes until Apply Changes."))
-        hint.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        hint.textColor = .secondaryLabelColor
-        let top = NSStackView(views: [heading, hint])
-        top.orientation = .vertical
-        top.alignment = .leading
-        top.spacing = 2
-        let view = NSView()
-        for v in [top, scroll] {
-            v.translatesAutoresizingMaskIntoConstraints = false
-            view.addSubview(v)
+    // MARK: - History から
+
+    /// 範囲を、HEAD から first-parent で `count` 個にする。広げるときは古い側に足し、狭めるときは外れる行が
+    /// どれもそのまま（pick で、元の位置）のときだけ。できなければ false。
+    @discardableResult
+    func resize(to count: Int) async -> Bool {
+        let count = min(max(1, count), line.count)
+        if count == rows.count { return true }
+        if count < rows.count {
+            let leaving = line[count..<rows.count].map(\.oid)
+            guard Array(rows.suffix(leaving.count)).map(\.oid) == leaving,
+                  rows.suffix(leaving.count).allSatisfy({ $0.action == .pick }) else { return false }
+            rows.removeLast(leaving.count)
+            originalOrder.removeLast(leaving.count)
+        } else {
+            let adding = line[rows.count..<count]
+            let more = await Self.readRows(adding.map(\.oid), merges: Set(adding.filter(\.merge).map(\.oid)),
+                                           repository: actions.repository)
+            rows += more
+            originalOrder += more.map(\.oid)
         }
-        NSLayoutConstraint.activate([
-            top.topAnchor.constraint(equalTo: view.topAnchor, constant: 12),
-            top.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
-            top.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
-            scroll.topAnchor.constraint(equalTo: top.bottomAnchor, constant: 8),
-            scroll.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            scroll.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            scroll.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-        ])
-        self.view = view
+        // いちばん古い行には、まとめる相手がない。
+        if let last = rows.indices.last, [.squash, .fixup].contains(rows[last].action) { set(.pick, at: last) }
+        update()
+        return true
+    }
+
+    /// 範囲を狭めて `count` 個にできるか（外れる行がそのまま）。
+    func canShrink(to count: Int) -> Bool {
+        guard count >= 1, count < rows.count else { return count >= rows.count }
+        let leaving = line[count..<rows.count].map(\.oid)
+        return Array(rows.suffix(leaving.count)).map(\.oid) == leaving
+            && rows.suffix(leaving.count).allSatisfy { $0.action == .pick }
+    }
+
+    /// 行 `oid` で選べること。
+    func choices(for oid: String) -> [Action] {
+        rows.firstIndex { $0.oid == oid }.map(choices(at:)) ?? []
+    }
+
+    /// 行 `oid` のすることを変える（reword はメッセージの欄を開く）。
+    func choose(_ action: Action, for oid: String) {
+        guard let i = rows.firstIndex(where: { $0.oid == oid }), choices(at: i).contains(action) else { return }
+        if action == .reword {
+            editMessage(at: i)
+            return
+        }
+        set(action, at: i)
         update()
     }
+
+    /// 行 `oid` のメッセージを直す（ダブルクリック）。
+    func editMessage(of oid: String) {
+        if let i = rows.firstIndex(where: { $0.oid == oid }) { editMessage(at: i) }
+    }
+
+    /// 下の帯の要約を書く（始めに呼ぶ）。
+    func refreshSummary() { update() }
+
+    /// 並べ替えられるか（merge をまたいで並べ替えると、何をどこへ動かすかが一意でない）。
+    var reorderable: Bool { !rows.contains(where: \.merge) }
+
+    /// 行 `oid` を、新しい順の並びで `to` 番目へ。
+    func move(_ oid: String, to: Int) {
+        guard reorderable, let from = rows.firstIndex(where: { $0.oid == oid }), rows.indices.contains(to), from != to else { return }
+        rows.insert(rows.remove(at: from), at: to)
+        if let last = rows.indices.last, [.squash, .fixup].contains(rows[last].action) { set(.pick, at: last) }
+        update()
+    }
+
+    /// 確かめる用（--edit-commits）: `prefix` で始まる行のすることを、メッセージの欄を開かずに決める。
+    func set(_ action: Action, prefix: String, message: String? = nil) {
+        guard let i = rows.firstIndex(where: { $0.oid.hasPrefix(prefix) }) else { return }
+        set(action, at: i)
+        if let message { rows[i].newMessage = message }
+        update()
+    }
+
+    /// 確かめる用: `prefix` で始まる行を `to` 番目へ。
+    func move(prefix: String, to: Int) {
+        if let row = rows.first(where: { $0.oid.hasPrefix(prefix) }) { move(row.oid, to: to) }
+    }
+
+    /// コンフリクトしそうな行（印とツールチップ）。
+    var expectedConflicts: [String: [String]] { conflicting }
 
     /// 読んだ行（HEAD から first-parent で辿ったもの）に、`oids` がすべてある。
     func contains(_ oids: [String]) -> Bool {
@@ -198,7 +252,6 @@ final class HistoryEditController: NSViewController, NSTableViewDataSource, NSTa
                 rows.insert(rows.remove(at: from), at: to)
             }
         }
-        table.reloadData()
         update()
     }
 
@@ -209,85 +262,9 @@ final class HistoryEditController: NSViewController, NSTableViewDataSource, NSTa
         return Action.allCases.filter { !(noOlder && [.squash, .fixup].contains($0)) }
     }
 
-    // MARK: - 一覧
-
-    func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
-
-    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        let r = rows[row]
-        let popup = NSPopUpButton(frame: .zero, pullsDown: false)
-        popup.controlSize = .small
-        popup.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        for action in choices(at: row) {
-            popup.addItem(withTitle: action.title)
-            popup.lastItem?.representedObject = action.rawValue
-            popup.lastItem?.toolTip = action.toolTip
-        }
-        popup.selectItem(withTitle: r.action.title)
-        popup.isEnabled = !r.merge
-        popup.tag = row
-        popup.target = self
-        popup.action = #selector(actionChanged(_:))
-        popup.widthAnchor.constraint(equalToConstant: 230).isActive = true
-        let subject = NSTextField(labelWithString: r.subject)
-        subject.lineBreakMode = .byTruncatingTail
-        subject.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        let attributes: [NSAttributedString.Key: Any] = switch r.action {
-        case .drop: [.strikethroughStyle: NSUnderlineStyle.single.rawValue, .foregroundColor: NSColor.tertiaryLabelColor]
-        case .squash, .fixup: [.foregroundColor: NSColor.secondaryLabelColor]
-        default: [:]
-        }
-        subject.attributedStringValue = NSAttributedString(string: r.subject, attributes: attributes)
-        if r.newMessage != nil, r.action == .reword || r.action == .squash {
-            subject.font = .systemFont(ofSize: NSFont.systemFontSize).withTraits(.italic)
-        }
-        let detail = NSTextField(labelWithString: "\(r.oid.prefix(Titles.shortIDLength)) · \(r.author)")
-        detail.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        detail.textColor = .secondaryLabelColor
-        let texts = NSStackView(views: [subject, detail])
-        texts.orientation = .vertical
-        texts.alignment = .leading
-        texts.spacing = 1
-        // まとめる行は、まとめる先（下の行）へ向かう印を付ける。
-        let mark = NSImageView(image: NSImage(
-            systemSymbolName: r.merge ? "arrow.triangle.merge" : r.action == .squash || r.action == .fixup ? "arrow.turn.right.down" : "circle.fill",
-            accessibilityDescription: nil) ?? NSImage())
-        mark.symbolConfiguration = .init(pointSize: r.action == .squash || r.action == .fixup ? 11 : 6, weight: .regular)
-        mark.contentTintColor = r.action == .drop ? .tertiaryLabelColor : .controlAccentColor
-        // コンフリクトしそうな行は、印を警告にしてファイルをツールチップに。
-        if let files = conflicting[r.oid] {
-            mark.image = NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: L("Conflicts expected"))
-            mark.symbolConfiguration = .init(pointSize: 11, weight: .regular)
-            mark.contentTintColor = .systemOrange
-            mark.toolTip = L("Conflicts expected in %@", files.joined(separator: ", "))
-        }
-        mark.widthAnchor.constraint(equalToConstant: 16).isActive = true
-        let stack = NSStackView(views: [mark, texts, NSView(), popup])
-        stack.spacing = 8
-        stack.edgeInsets = NSEdgeInsets(top: 0, left: 8, bottom: 0, right: 8)
-        return stack
-    }
-
-    @objc private func actionChanged(_ sender: NSPopUpButton) {
-        guard let raw = sender.selectedItem?.representedObject as? String, let action = Action(rawValue: raw),
-              rows.indices.contains(sender.tag) else { return }
-        if action == .reword {
-            editMessage(at: sender.tag)
-            return
-        }
-        set(action, at: sender.tag)
-        table.reloadData()
-        update()
-    }
-
     private func set(_ action: Action, at i: Int) {
         rows[i].action = action
         if action == .pick || action == .drop || action == .fixup || action == .edit { rows[i].newMessage = nil }
-    }
-
-    @objc private func editMessageOfClickedRow() {
-        guard table.clickedRow >= 0 else { return }
-        editMessage(at: table.clickedRow)
     }
 
     /// メッセージの欄を開く。まとめる行なら、まとめたコミットのメッセージ（最初は、まとめるものを古い順につないだもの）。
@@ -298,13 +275,9 @@ final class HistoryEditController: NSViewController, NSTableViewDataSource, NSTa
         let initial = rows[i].newMessage ?? (combining ? combinedMessage(endingAt: i) : rows[i].message)
         Task { @MainActor in
             guard let edited = await actions.editMessage(combining ? L("Message of the Combined Commit") : L("Edit Message"),
-                                                         initial: initial, ok: L("Change")) else {
-                table.reloadData()
-                return
-            }
+                                                         initial: initial, ok: L("Change")) else { return }
             if !combining { rows[i].action = .reword }
             rows[i].newMessage = edited
-            table.reloadData()
             update()
         }
     }
@@ -316,38 +289,6 @@ final class HistoryEditController: NSViewController, NSTableViewDataSource, NSTa
         while j + 1 < rows.count, rows[j].action == .squash || rows[j].action == .fixup { j += 1 }
         return rows[i...j].reversed().filter { $0.action != .fixup }.map { $0.newMessage ?? $0.message }
             .joined(separator: "\n\n")
-    }
-
-    // MARK: - ドラッグで並べ替え
-
-    /// merge をまたいで並べ替えはできない（何をどこへ動かすかが一意でない）。
-    private var canReorder: Bool { !rows.contains(where: \.merge) }
-
-    func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> (any NSPasteboardWriting)? {
-        guard canReorder else { return nil }
-        let item = NSPasteboardItem()
-        item.setString(String(row), forType: .editRow)
-        return item
-    }
-
-    func tableView(_ tableView: NSTableView, validateDrop info: any NSDraggingInfo, proposedRow row: Int,
-                   proposedDropOperation op: NSTableView.DropOperation) -> NSDragOperation {
-        tableView.setDropRow(row, dropOperation: .above)
-        return .move
-    }
-
-    func tableView(_ tableView: NSTableView, acceptDrop info: any NSDraggingInfo, row: Int,
-                   dropOperation: NSTableView.DropOperation) -> Bool {
-        guard let from = info.draggingPasteboard.string(forType: .editRow).flatMap(Int.init), rows.indices.contains(from) else {
-            return false
-        }
-        let moved = rows.remove(at: from)
-        rows.insert(moved, at: from < row ? row - 1 : row)
-        // いちばん古い行には、まとめる相手がない。
-        if let last = rows.indices.last, [.squash, .fixup].contains(rows[last].action) { set(.pick, at: last) }
-        table.reloadData()
-        update()
-        return true
     }
 
     // MARK: - 要約と実行
@@ -397,6 +338,7 @@ final class HistoryEditController: NSViewController, NSTableViewDataSource, NSTa
         summary.stringValue = parts.isEmpty ? L("No changes yet.")
             : L("Changes: %@.", ListFormatter.localizedString(byJoining: parts)) + sentenceGap + Actions.canUndo
         updatePreview()
+        onChange?()
     }
 
     /// 変えるたびに、一緒に動くブランチとコンフリクトの見込みを読み直す（少し待ってから。続けて変えたら前のものは
@@ -410,8 +352,7 @@ final class HistoryEditController: NSViewController, NSTableViewDataSource, NSTa
             moveStacked.isHidden = true
             if !conflicting.isEmpty {
                 conflicting = [:]
-                table.reloadData()
-            }
+                    }
             return
         }
         let edit: [String: Any] = ["kind": "plan", "steps": planSteps()]
@@ -439,7 +380,7 @@ final class HistoryEditController: NSViewController, NSTableViewDataSource, NSTa
             let marks = Dictionary((answer?.conflicts ?? []).map { ($0.oid, $0.files) }, uniquingKeysWith: { a, _ in a })
             if marks.keys.sorted() != conflicting.keys.sorted() {
                 conflicting = marks
-                table.reloadData()
+                        onChange?()
             }
             NotificationCenter.default.post(name: .statusBarContentChanged, object: nil)
         }
@@ -503,16 +444,5 @@ final class HistoryEditController: NSViewController, NSTableViewDataSource, NSTa
                 completion: { [weak self] _ in self?.onFinish?(true) },
                 failed: { [weak self] in self?.barButtons.forEach { $0.isEnabled = true } })
         }
-    }
-}
-
-extension NSPasteboard.PasteboardType {
-    /// 編集モードの行のドラッグ（行の番号）。
-    static let editRow = NSPasteboard.PasteboardType("io.github.fukusaka.amonhen.edit-row")
-}
-
-private extension NSFont {
-    func withTraits(_ traits: NSFontDescriptor.SymbolicTraits) -> NSFont {
-        NSFont(descriptor: fontDescriptor.withSymbolicTraits(traits), size: pointSize) ?? self
     }
 }
