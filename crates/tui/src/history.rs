@@ -459,8 +459,12 @@ impl History {
             return;
         }
         // 見えている行の点と、そこに重なる線だけで列を決める。
-        let visible =
-            window.index(rows.start).unwrap_or(0)..window.index(rows.end - 1).map_or(0, |i| i + 1);
+        // 読み込んである範囲と重なる所だけ（速くスクロールすると、見える行がまだ届いていないことがある）。
+        let (low, high) = (rows.start.max(window.start), rows.end.min(window.end()));
+        let visible = match low < high {
+            true => (low - window.start) as usize..(high - window.start) as usize,
+            false => 0..0,
+        };
         let shown = |e: &&Edge| e.row_start < rows.end && rows.start <= e.row_end;
         let edges: Vec<Edge> = window.edges.iter().filter(shown).copied().collect();
         // 選んでいるコミットの祖先でない行は薄くする（祖先がまだ届いていなければ、薄くしない）。
