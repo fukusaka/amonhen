@@ -13,7 +13,7 @@ fn main() -> amonhen_model::Result<()> {
     println!("commits: {}", full.graph.len());
 
     let t = Instant::now();
-    let folded = repo.history_folded(None, &[])?;
+    let folded = repo.history_folded(None, true, &[])?;
     println!(
         "fold (all branches): {:?}  rows: {}  hiding merges: {}",
         t.elapsed(),

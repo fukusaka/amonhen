@@ -341,6 +341,16 @@ pub enum Command {
     /// stash ごとの土台（作ったときの HEAD）と、今の HEAD の離れ具合（`info.stashes`: name・base・`ahead`（HEAD に
     /// だけあるコミットの数）・`behind`（土台にだけあるコミットの数））。HEAD がまだなければ空。
     StashBases,
+    /// 覚えている History の折りたたみ（`info`: `folded`（merge を既定でたたむか）・`except`（既定と逆にした merge
+    /// の ID））。なければ何もたたまない。
+    FoldState,
+    /// History の折りたたみを覚える（`<common dir>/amonhen/fold.json`。どの FE でもそろう）。
+    SetFoldState {
+        #[serde(default)]
+        folded: bool,
+        #[serde(default)]
+        except: Vec<String>,
+    },
     /// ref の reflog（`info.entries`: 新しい順に `selector`（`HEAD@{0}`）・`old`（ref を作った行なら null）・`new`・
     /// `time`・`message`・`subject`（`new` の件名。読めなければ空）・`reachable`（ref から辿れる、つまり History に
     /// ある））。`name` の既定は `HEAD`（書き込む先の worktree のもの）、`limit` の既定は 500。
@@ -4214,6 +4224,15 @@ impl Repository {
                     ..Default::default()
                 })
             }
+            Command::FoldState => Ok(Response {
+                ok: true,
+                info: Some(serde_json::to_value(self.fold_state()?).map_err(|e| e.to_string())?),
+                ..Default::default()
+            }),
+            Command::SetFoldState { folded, except } => {
+                self.set_fold_state(&crate::fold::FoldState { folded, except })?;
+                ok()
+            }
             Command::StashBases => {
                 let refs = self.load_refs()?;
                 let mut stashes = Vec::new();
@@ -7744,11 +7763,11 @@ mod tests {
         let merge = git(dir, &["rev-parse", "HEAD"]);
         repo.load_history().unwrap();
         // HEAD は起点（main）にも含まれる。重複しても動くこと。
-        let folded = repo.history_folded(None, &[]).unwrap();
+        let folded = repo.history_folded(None, true, &[]).unwrap();
         // topic は merge に取り込み済みなので、ブランチが残っていても折りたたむ。
         assert_eq!(folded.graph.len(), 3);
         let all = repo
-            .history_folded(Some(&[Oid::from_hex(&merge).unwrap()]), &[])
+            .history_folded(Some(&[Oid::from_hex(&merge).unwrap()]), true, &[])
             .unwrap();
         assert_eq!(all.graph.len(), 3, "merge・m・first だけ");
         let row = all.row_of(&Oid::from_hex(&merge).unwrap()).unwrap() as usize;
@@ -7760,11 +7779,42 @@ mod tests {
         let opened = repo
             .history_folded(
                 Some(&[Oid::from_hex(&merge).unwrap()]),
+                true,
                 &[Oid::from_hex(&merge).unwrap()],
             )
             .unwrap();
         assert_eq!(opened.graph.len(), 5);
+        // 既定で開いていて、この merge だけたたむ。
+        let only = repo
+            .history_folded(None, false, &[Oid::from_hex(&merge).unwrap()])
+            .unwrap();
+        assert_eq!(only.graph.len(), 3);
+        assert_eq!(
+            repo.history_folded(None, false, &[]).unwrap().graph.len(),
+            5
+        );
         assert!(!all.density(4).is_empty());
+    }
+
+    #[test]
+    fn remembers_the_fold_state() {
+        let (tmp, repo) = setup();
+        commit_file(tmp.path(), "a.txt", "a");
+        assert_eq!(run(&repo, r#"{"op":"foldState"}"#)["info"]["folded"], false);
+        let id = "1".repeat(40);
+        let set = format!(r#"{{"op":"setFoldState","folded":true,"except":["{id}"]}}"#);
+        assert_eq!(run(&repo, &set)["ok"], true);
+        let got = run(&repo, r#"{"op":"foldState"}"#);
+        assert_eq!(got["info"]["folded"], true);
+        assert_eq!(got["info"]["except"][0], id.as_str());
+        assert!(tmp.path().join(".git/amonhen/fold.json").exists());
+        // 何もたたまなければ、ファイルを消す。
+        run(&repo, r#"{"op":"setFoldState","folded":false,"except":[]}"#);
+        assert!(!tmp.path().join(".git/amonhen/fold.json").exists());
+        assert_eq!(
+            run(&repo, r#"{"op":"foldState"}"#)["info"]["except"],
+            serde_json::json!([])
+        );
     }
 
     #[test]

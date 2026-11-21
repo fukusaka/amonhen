@@ -634,7 +634,7 @@ impl Data {
                 let expanded = thread_expanded.lock().unwrap().clone();
                 let some = (!tips.is_empty()).then_some(&tips[..]);
                 let shaped = if fold {
-                    repo.history_folded(some, &expanded)
+                    repo.history_folded(some, true, &expanded)
                 } else {
                     repo.history_filtered(&tips)
                 };
