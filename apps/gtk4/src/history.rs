@@ -245,6 +245,10 @@ pub struct State {
     /// 運んでいる間だけ覚えておく、編集できるコミット（HEAD から最初の merge まで）。読み終えるまでは None で、
     /// どこにでも落とせる（macOS 版の `dragChain`）。
     drag_chain: Option<HashSet<Oid>>,
+    /// 運んでいる行（表の行）。その行は空けて描く（点も文字も描かない。macOS 版の `draggingRow`）。
+    dragging_row: Option<u32>,
+    /// 運ぶ絵を描いている（選んだ色にしない）。
+    drawing_drag_image: bool,
     /// 運び始めたときに呼ぶ（編集できるコミットを読んで [`HistoryView::set_drag_chain`] で渡す）。
     on_drag_start: Option<Rc<dyn Fn()>>,
     /// 出す History が替わったときに呼ぶ（密度の帯が求め直す）。
@@ -587,10 +591,11 @@ mod imp {
             // コミットを運ぶ（History の中で落として並べ替える。macOS 版と同じ）。
             let drag = gtk::DragSource::new();
             drag.set_actions(gdk::DragAction::MOVE);
-            let subject = Rc::new(RefCell::new(String::new()));
             let dragged: Rc<Cell<Option<Oid>>> = Rc::default();
-            let (weak, sub, prepared) = (view.downgrade(), subject.clone(), dragged.clone());
-            drag.connect_prepare(move |_, _, y| {
+            // つかんだ行と、押した所（運ぶ絵の中のどこを指で持つか）。
+            let grabbed: Rc<Cell<Option<(u32, f64, f64)>>> = Rc::default();
+            let (weak, prepared, grab) = (view.downgrade(), dragged.clone(), grabbed.clone());
+            drag.connect_prepare(move |_, x, y| {
                 let view = weak.upgrade()?;
                 let row = view.row_at(y as f32)?;
                 // 編集の間は、範囲の行だけを並べ替えられる（merge を含まないとき。境目を引いているときは運ばない）。
@@ -603,12 +608,7 @@ mod imp {
                 view.state().drag_chain = None;
                 view.state().dragging = None;
                 prepared.set(Some(id));
-                // 運んでいる間は、件名を札にして出す。件名は読んである行のものを使う（ここで読むと、daemon・
-                // SSH 先では 1 往復ぶん画面が止まる。macOS 版と同じ）。
-                sub.replace(
-                    view.loaded_subject(shown)
-                        .unwrap_or_else(|| id.to_string()[..8].to_owned()),
-                );
+                grab.set(Some((row, x, y)));
                 let value = format!("{DRAG_PREFIX}{id}");
                 Some(gdk::ContentProvider::for_value(&value.to_value()))
             });
@@ -617,7 +617,23 @@ mod imp {
                 if let Some(view) = weak.upgrade()
                     && let Some(id) = from.get()
                 {
-                    view.state().dragging = Some((drag.clone(), id));
+                    // 運ぶ絵は、その行と同じ絵（グラフの点と線・札・件名・作者）。行の上にそのまま重ねて持ち上げる。
+                    if let Some((row, x, y)) = grabbed.get()
+                        && let Some((paintable, top)) = view.row_image(row)
+                    {
+                        gtk::DragIcon::set_from_paintable(
+                            drag,
+                            &paintable,
+                            x as i32,
+                            (y - top) as i32,
+                        );
+                    }
+                    {
+                        let mut st = view.state();
+                        st.dragging = Some((drag.clone(), id));
+                        st.dragging_row = grabbed.get().map(|(row, _, _)| row);
+                    }
+                    view.queue_draw();
                     // 編集の間は、落とせる所を表が決める（編集できるコミットを読まない）。
                     let editing = view.state().edit.is_some();
                     let f = view.state().on_drag_start.clone().filter(|_| !editing);
@@ -625,21 +641,17 @@ mod imp {
                         f();
                     }
                 }
-                let label = gtk::Label::new(Some(&subject.borrow()));
-                label.set_max_width_chars(48);
-                label.set_ellipsize(pango::EllipsizeMode::End);
-                label.add_css_class("osd");
-                label.add_css_class("card");
-                label.set_margin_start(6);
-                label.set_margin_end(6);
-                gtk::DragIcon::for_drag(drag).set_child(Some(&label));
             });
             let weak = view.downgrade();
             drag.connect_drag_end(move |_, _, _| {
                 if let Some(view) = weak.upgrade() {
-                    let mut st = view.state();
-                    st.dragging = None;
-                    st.drag_chain = None;
+                    {
+                        let mut st = view.state();
+                        st.dragging = None;
+                        st.drag_chain = None;
+                        st.dragging_row = None;
+                    }
+                    view.queue_draw();
                 }
             });
             view.add_controller(drag);
@@ -1256,14 +1268,6 @@ impl HistoryView {
             && st.unverified.is_empty()
     }
 
-    /// 読んである行の件名（まだ読んでいなければ `None`）。
-    fn loaded_subject(&self, row: u32) -> Option<String> {
-        let st = self.state();
-        let chunk = st.chunks.get(&(row / CHUNK_ROWS))?;
-        let i = chunk.index(row);
-        Some(chunk.text(chunk.0.subjects[i]).to_owned())
-    }
-
     pub fn selected(&self) -> Option<u32> {
         self.state().selected
     }
@@ -1681,7 +1685,48 @@ impl HistoryView {
         let mut st = self.state();
         if st.dragging.is_some() {
             st.drag_chain = Some(chain);
+            drop(st);
+            // 落とせない行を薄くする。
+            self.queue_draw();
         }
+    }
+
+    /// `row` の行を、画面と同じ絵（選んでいない行の色）にする。行の上端（ビューの座標）も返す。
+    fn row_image(&self, row: u32) -> Option<(gdk::Paintable, f64)> {
+        let (width, rh) = (self.width() as f32, self.row_height());
+        let scroll = self.vadjustment().map_or(0.0, |a| a.value()) as f32;
+        let top = row as f32 * rh - scroll;
+        let whole = gtk::Snapshot::new();
+        self.state().drawing_drag_image = true;
+        self.draw(&whole);
+        self.state().drawing_drag_image = false;
+        let node = whole.to_node()?;
+        // 次の描画で、選んだ色に戻す。
+        self.queue_draw();
+        let image = gtk::Snapshot::new();
+        let bounds = graphene::Rect::new(0.0, 0.0, width, rh);
+        let shape = gsk::RoundedRect::from_rect(bounds, 5.0);
+        let path = gsk::PathBuilder::new();
+        path.add_rounded_rect(&shape);
+        let path = path.to_path();
+        let base = self.base_color();
+        image.append_fill(
+            &path,
+            gsk::FillRule::Winding,
+            &gdk::RGBA::new(base.red(), base.green(), base.blue(), 0.92),
+        );
+        let fg = self.color();
+        image.append_stroke(
+            &path,
+            &gsk::Stroke::new(1.0),
+            &gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), 0.18),
+        );
+        image.push_clip(&bounds);
+        image.translate(&graphene::Point::new(0.0, -top));
+        image.append_node(&node);
+        image.pop();
+        let size = graphene::Size::new(width, rh);
+        Some((image.to_paintable(Some(&size))?, f64::from(top)))
     }
 
     /// `row` の上（その行の上の境目）に落とせるか: 運んでいるコミットが編集できる並びにあり、境目の上か下の行も
@@ -1981,12 +2026,17 @@ impl HistoryView {
             } else {
                 gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), 0.12)
             };
-            let chosen: Vec<u32> = st
-                .extra
-                .range(first..last)
-                .copied()
-                .chain(st.selected.filter(|r| (first..last).contains(r)))
-                .collect();
+            // 運ぶ絵は選んでいない行の色で。運んでいる行は空けるので、選択の背景も描かない。
+            let chosen: Vec<u32> = if st.drawing_drag_image {
+                Vec::new()
+            } else {
+                st.extra
+                    .range(first..last)
+                    .copied()
+                    .chain(st.selected.filter(|r| (first..last).contains(r)))
+                    .filter(|&r| Some(r) != st.dragging_row)
+                    .collect()
+            };
             for &row in &chosen {
                 let y = row as f32 * rh - scroll_y;
                 snapshot.append_color(&color, &graphene::Rect::new(0.0, y, width, rh));
@@ -2053,6 +2103,7 @@ impl HistoryView {
                 lineage,
                 &st.boundary,
                 st.editing_head.or(st.ref_head),
+                st.dragging_row,
             );
             snapshot.pop();
             if (st.lanes.animating || st.lineage_pending) && st.tick.is_none() {
@@ -2130,6 +2181,10 @@ impl HistoryView {
             let baseline = |layout: &pango::Layout| layout.baseline() as f32 / pango::SCALE as f32;
             let subject_font = st.fonts.as_ref().expect("fonts").subject.clone();
             for row in first..last {
+                // 運んでいる行は空けておく（つかんだ行は絵になって動いている）。
+                if st.dragging_row == Some(row) {
+                    continue;
+                }
                 // History の上で編集しているときは、範囲の行に並べ替えた後のコミットを描く（グラフはそのまま）。
                 let (slot, src) = match st.edit.as_ref() {
                     Some(e) => (
@@ -2150,7 +2205,9 @@ impl HistoryView {
                     let text = self.row_text(st, &history, &chunk, src);
                     st.rows.insert(src, text);
                 }
-                let selected = focused && (st.selected == Some(row) || st.extra.contains(&row));
+                let selected = focused
+                    && !st.drawing_drag_image
+                    && (st.selected == Some(row) || st.extra.contains(&row));
                 let top = row as f32 * rh - scroll_y;
                 let text_x = text_x_of(row);
                 let mut x = text_x;
@@ -2351,9 +2408,26 @@ impl HistoryView {
                     );
                 }
             }
+            let veil = gdk::RGBA::new(base.red(), base.green(), base.blue(), 0.62);
+            // 運んでいる間、落とせない行（編集できる並びの外）は、グラフごと薄くする（macOS 版と同じ）。並びを読み終える
+            // までは薄くしない。つかんだコミットが並びの外なら、どこにも落とせないので全部。
+            if st.edit.is_none()
+                && st.dragging_row.is_some()
+                && let (Some(chain), Some((_, dragged))) =
+                    (st.drag_chain.as_ref(), st.dragging.as_ref())
+            {
+                let movable = chain.contains(dragged);
+                let ids = history.graph.ids();
+                for row in first..last {
+                    if movable && ids.get(row as usize).is_some_and(|id| chain.contains(id)) {
+                        continue;
+                    }
+                    let y = row as f32 * rh - scroll_y;
+                    snapshot.append_color(&veil, &graphene::Rect::new(0.0, y, width, rh));
+                }
+            }
             if let Some(edit) = st.edit.as_ref() {
                 // 編集の範囲の外の行は、グラフごと薄くする（上に背景の色を重ねる。macOS 版と同じ）。
-                let veil = gdk::RGBA::new(base.red(), base.green(), base.blue(), 0.62);
                 for row in (first..last).filter(|r| !edit.slots.contains_key(r)) {
                     let y = row as f32 * rh - scroll_y;
                     snapshot.append_color(&veil, &graphene::Rect::new(0.0, y, width, rh));
