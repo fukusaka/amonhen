@@ -121,8 +121,9 @@ const sampler =
         { stdio: 'ignore' },
       )
     : undefined;
-// 鍵のファイルを誰が作り・開き・消したか（Windows。locks-windows.mjs）
-const locks = process.platform === 'win32' ? recordLocks(dir) : undefined;
+// 鍵のファイルを誰が作り・開き・消したか（Windows。locks-windows.mjs）。記録は機械全体のファイルの出来事なので、
+// 使い捨ての CI の runner でだけ取る（手元の機械のファイルの名前を集めない）
+const locks = process.platform === 'win32' && process.env.GITHUB_ACTIONS === 'true' ? recordLocks(dir) : undefined;
 const start = performance.now();
 const run = spawnSync(
   process.execPath,
