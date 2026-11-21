@@ -33,6 +33,9 @@ becomes the GitHub Release notes.
   two items after git: Squash into Previous… and Interactive Rebase from Here….
 - History's order, one-line rows, ancestor emphasis and row items left Settings > Appearance; set them from the
   display button above History.
+- History's edit mode works on History itself instead of a separate list: rows in the range get a pick, reword,
+  squash, fixup, drop or edit mark at the right end (click it or press its first letter), other rows dim, and a line
+  under the range is dragged to take in older commits.
 
 #### Fixed
 
