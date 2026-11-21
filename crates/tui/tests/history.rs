@@ -532,6 +532,46 @@ fn amend_rewrites_the_last_commit() {
     assert_eq!(git_out(dir.path(), &["status", "--porcelain"]), "");
 }
 
+/// `F`: 今のブランチの最近のコミットの件名を選び、欄を fixup! にしてコミットする（fixup! の件名は候補に出さない）。
+/// Tab で squash! にすると、書いていた本文は残る
+#[test]
+fn fixup_and_squash_commit_for_a_recent_commit() {
+    let dir = tempfile::tempdir().unwrap();
+    two_lines(dir.path());
+    commit(dir.path(), BASE + DAY, "Add the graph");
+    commit(dir.path(), BASE + DAY * 2, "fixup! Start");
+    let front = || {
+        amonhen_model::testing::isolate_from_user_settings();
+        open(dir.path())
+    };
+    let listed = amonhen_tui::snapshot(front(), 100, 16, clock(), "1 F").unwrap();
+    println!("{listed}");
+    assert!(
+        listed.contains(" Fixup Commit For (Tab: squash!) "),
+        "{listed}"
+    );
+    assert!(listed.contains("Add the graph"), "{listed}");
+    assert!(!listed.contains("fixup! Start"), "{listed}");
+    let narrowed = amonhen_tui::snapshot(front(), 100, 16, clock(), "1 Fsta").unwrap();
+    assert!(!narrowed.contains("Add the graph"), "{narrowed}");
+
+    let done = amonhen_tui::snapshot(front(), 100, 16, clock(), "1 Fgraph\n\x13").unwrap();
+    println!("{done}");
+    assert_eq!(
+        git_out(dir.path(), &["log", "-1", "--format=%B"]).trim_end(),
+        "fixup! Add the graph"
+    );
+
+    std::fs::write(dir.path().join("a.txt"), "one\n").unwrap();
+    let keys = "1 cDraft\n\nKept body\x1bF\tgraph\n\x13";
+    let done = amonhen_tui::snapshot(front(), 100, 16, clock(), keys).unwrap();
+    println!("{done}");
+    assert_eq!(
+        git_out(dir.path(), &["log", "-1", "--format=%B"]).trim_end(),
+        "squash! Add the graph\n\nKept body"
+    );
+}
+
 /// サイドバー: Workspace の行と、Branches・Tags。ref を開くと、History でそのコミットを選ぶ
 #[test]
 fn sidebar_lists_refs_and_jumps_to_them() {
