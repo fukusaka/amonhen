@@ -36,6 +36,9 @@ becomes the GitHub Release notes.
 - History's edit mode works on History itself instead of a separate list: rows in the range get a pick, reword,
   squash, fixup, drop or edit mark at the right end (click it or press its first letter), other rows dim, and a line
   under the range is dragged to take in older commits.
+- Any merge in History folds on its own: a folded merge shows a "+N" badge by its dot (click it to open), its context
+  menu always offers to fold or show it, and ←/→ fold and open the selected merge. The Fold Merged Branches mode is now
+  Fold All / Show All Merged Commits, and the fold is kept per repository.
 
 #### Fixed
 

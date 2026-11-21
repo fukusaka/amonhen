@@ -2379,11 +2379,11 @@ pub unsafe extern "C" fn amonhen_history_filtered(
 }
 
 /// マージ済みブランチを折りたたんだ History。`all` なら全ブランチ、そうでなければ `tips`（20 バイトの ID が
-/// `count` 個）から辿れるものだけ。`expanded`（20 バイトの ID が `expanded_count` 個）の merge は取り込んだ側も
-/// 見せる。`amonhen_history_release` で手放す。
+/// `count` 個）から辿れるものだけ。`folded` なら merge を既定でたたみ、`except`（20 バイトの ID が
+/// `except_count` 個）の merge はその逆にする。`amonhen_history_release` で手放す。
 ///
 /// # Safety
-/// `repo` は有効なリポジトリ、`tips` は `count * 20` バイト、`expanded` は `expanded_count * 20` バイト読める
+/// `repo` は有効なリポジトリ、`tips` は `count * 20` バイト、`except` は `except_count * 20` バイト読める
 /// 領域であること（個数が 0 なら NULL でよい）。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn amonhen_history_folded(
@@ -2391,12 +2391,13 @@ pub unsafe extern "C" fn amonhen_history_folded(
     all: bool,
     tips: *const u8,
     count: u32,
-    expanded: *const u8,
-    expanded_count: u32,
+    folded: bool,
+    except: *const u8,
+    except_count: u32,
 ) -> *const AmonhenHistory {
     let tips = if all { None } else { Some(oids!(tips, count)) };
-    let expanded = oids!(expanded, expanded_count);
-    match repo!(repo_ptr).history_folded(tips.as_deref(), &expanded) {
+    let except = oids!(except, except_count);
+    match repo!(repo_ptr).history_folded(tips.as_deref(), folded, &except) {
         Ok(s) => into_history(s),
         Err(e) => {
             set_error(e);

@@ -1349,19 +1349,20 @@ const AmonhenHistory *amonhen_history_filtered(const AmonhenRepo *repo_ptr,
 
 /**
  * マージ済みブランチを折りたたんだ History。`all` なら全ブランチ、そうでなければ `tips`（20 バイトの ID が
- * `count` 個）から辿れるものだけ。`expanded`（20 バイトの ID が `expanded_count` 個）の merge は取り込んだ側も
- * 見せる。`amonhen_history_release` で手放す。
+ * `count` 個）から辿れるものだけ。`folded` なら merge を既定でたたみ、`except`（20 バイトの ID が
+ * `except_count` 個）の merge はその逆にする。`amonhen_history_release` で手放す。
  *
  * # Safety
- * `repo` は有効なリポジトリ、`tips` は `count * 20` バイト、`expanded` は `expanded_count * 20` バイト読める
+ * `repo` は有効なリポジトリ、`tips` は `count * 20` バイト、`except` は `except_count * 20` バイト読める
  * 領域であること（個数が 0 なら NULL でよい）。
  */
 const AmonhenHistory *amonhen_history_folded(const AmonhenRepo *repo_ptr,
                                              bool all,
                                              const uint8_t *tips,
                                              uint32_t count,
-                                             const uint8_t *expanded,
-                                             uint32_t expanded_count);
+                                             bool folded,
+                                             const uint8_t *except,
+                                             uint32_t except_count);
 
 /**
  * 折りたたんだ History で、`row` の merge が隠しているコミットの数（隠していなければ 0）。

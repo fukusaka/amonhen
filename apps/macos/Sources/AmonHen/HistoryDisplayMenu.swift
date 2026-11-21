@@ -2,7 +2,7 @@ import AmonhenKit
 import AppKit
 
 /// History の見せ方を選ぶメニュー。View メニューの「History Items」「History Order」、History の上のバーの右端の
-/// ボタン、History のヘッダーの右クリックに同じものを出す（ボタンとヘッダーには 1 行表示・折りたたみ・祖先の強調も）。
+/// ボタン、History のヘッダーの右クリックに同じものを出す（ボタンとヘッダーには 1 行表示・祖先の強調・折りたたみも）。
 final class HistoryDisplayMenu: NSObject, NSMenuItemValidation {
     static let shared = HistoryDisplayMenu()
 
@@ -37,13 +37,24 @@ final class HistoryDisplayMenu: NSObject, NSMenuItemValidation {
         menu.addItem(.separator())
         for (title, action, tip) in [
             (L("One Line per Commit"), #selector(toggleOneLine(_:)), nil),
-            (L("Fold Merged Branches"), #selector(toggleFold(_:)),
-             L("In History, hide the commits brought in by a merge and show their count on the merge row (right-click to expand)")),
             (L("Highlight Ancestors"), #selector(toggleAncestors(_:)),
              L("Draw only the selected commit’s ancestors and the lines between them in full color, and dim the rest")),
         ] as [(String, Selector, String?)] {
             let entry = NSMenuItem(title: title, action: action, keyEquivalent: "")
             entry.target = self
+            entry.toolTip = tip
+            menu.addItem(entry)
+        }
+        // merge の取り込んだ側を、すべてたたむ・すべて表示する（窓の History に。個々の merge は「+N」・右クリック・
+        // ←/→ で開閉し、リポジトリごとに覚える）。
+        menu.addItem(.separator())
+        for (title, action, tip) in [
+            (L("Fold All Merged Commits"), #selector(RepositoryWindow.foldAllMerges(_:)),
+             L("Hide the commits every merge brought in; each merge shows their count (click it to expand)")),
+            (L("Show All Merged Commits"), #selector(RepositoryWindow.showAllMerges(_:)),
+             L("Show the commits every merge brought in")),
+        ] {
+            let entry = NSMenuItem(title: title, action: action, keyEquivalent: "")
             entry.toolTip = tip
             menu.addItem(entry)
         }
@@ -97,7 +108,6 @@ final class HistoryDisplayMenu: NSObject, NSMenuItemValidation {
     }
 
     @objc private func toggleOneLine(_ sender: NSMenuItem) { Settings.compactHistoryRows.toggle() }
-    @objc private func toggleFold(_ sender: NSMenuItem) { Settings.foldMergedBranches.toggle() }
     @objc private func toggleAncestors(_ sender: NSMenuItem) { Settings.highlightAncestors.toggle() }
     @objc private func toggleMonospaced(_ sender: NSMenuItem) { Settings.monospacedCommitMessage.toggle() }
     @objc private func toggleAvatars(_ sender: NSMenuItem) { Settings.showAvatars.toggle() }
@@ -109,7 +119,6 @@ final class HistoryDisplayMenu: NSObject, NSMenuItemValidation {
         case #selector(toggleItem(_:)): Settings.historyItems.contains(HistoryItems(rawValue: item.tag))
         case #selector(setOrder(_:)): Settings.historyOrder.rawValue == UInt32(item.tag)
         case #selector(toggleOneLine(_:)): Settings.compactHistoryRows
-        case #selector(toggleFold(_:)): Settings.foldMergedBranches
         case #selector(toggleAncestors(_:)): Settings.highlightAncestors
         case #selector(toggleMonospaced(_:)): Settings.monospacedCommitMessage
         case #selector(toggleAvatars(_:)): Settings.showAvatars

@@ -46,6 +46,38 @@ extension Repository {
     }
 }
 
+extension Repository {
+    /// 覚えている History の折りたたみ（`{"op":"foldState"}`）: merge を既定でたたむか（`folded`）と、既定と逆にした
+    /// merge（20 バイトの ID）。なければ何もたたまない。裏のスレッドで呼ぶ。
+    public func foldState() -> (folded: Bool, except: [Data]) {
+        guard let out = amonhen_command(raw, #"{"op":"foldState"}"#) else { return (false, []) }
+        defer { amonhen_string_free(out) }
+        let response = (try? JSONSerialization.jsonObject(with: Data(String(cString: out).utf8))) as? [String: Any]
+        let info = response?["info"] as? [String: Any] ?? [:]
+        let except = (info["except"] as? [String] ?? []).compactMap(Self.oid(hex:))
+        return (info["folded"] as? Bool ?? false, except)
+    }
+
+    /// History の折りたたみを覚える（リポジトリの `.git/amonhen/fold.json`）。裏のスレッドで呼ぶ。
+    public func setFoldState(folded: Bool, except: [Data]) throws {
+        try run(["op": "setFoldState", "folded": folded,
+                 "except": except.map { $0.map { String(format: "%02x", $0) }.joined() }])
+    }
+
+    private static func oid(hex: String) -> Data? {
+        guard hex.count == 40 else { return nil }
+        var data = Data(capacity: 20)
+        var index = hex.startIndex
+        while index < hex.endIndex {
+            let next = hex.index(index, offsetBy: 2)
+            guard let byte = UInt8(hex[index..<next], radix: 16) else { return nil }
+            data.append(byte)
+            index = next
+        }
+        return data
+    }
+}
+
 /// 次に Undo される操作（`{"op":"undoPeek"}`）。
 public struct UndoPeek: Sendable {
     public let label: String

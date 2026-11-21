@@ -764,20 +764,28 @@ impl Repository {
         self.history_shaped(Some(tips), None)
     }
 
-    /// マージ済みブランチを折りたたんだ History。`tips` があればそこから辿れるものだけ。`expanded` の merge は
-    /// 取り込んだ側も見せる。最新の History から作り、公開はしない。
+    /// マージ済みブランチを折りたたんだ History。`tips` があればそこから辿れるものだけ。`folded` なら merge を
+    /// 既定でたたみ、`except` の merge はその逆にする（たたまない・たたむ）。最新の History から作り、公開はしない。
+    /// 何もたたまなければ（`folded` でなく `except` が空）、折りたたまない History と同じ。
     pub fn history_folded(
         &self,
         tips: Option<&[Oid]>,
-        expanded: &[Oid],
+        folded: bool,
+        except: &[Oid],
     ) -> Result<Arc<HistorySnapshot>> {
-        self.history_shaped(tips, Some(expanded))
+        if !folded && except.is_empty() {
+            return match tips {
+                Some(tips) => self.history_filtered(tips),
+                None => self.history_shaped(None, None),
+            };
+        }
+        self.history_shaped(tips, Some((folded, except)))
     }
 
     fn history_shaped(
         &self,
         tips: Option<&[Oid]>,
-        fold: Option<&[Oid]>,
+        fold: Option<(bool, &[Oid])>,
     ) -> Result<Arc<HistorySnapshot>> {
         let full = match self.history.load_full() {
             Some(h) => h,
@@ -789,7 +797,7 @@ impl Repository {
         });
         let mut merges = Vec::new();
         let (graph, folded) = match (fold, filtered) {
-            (Some(expanded), filtered) => {
+            (Some((folded, except)), filtered) => {
                 let base = filtered.as_ref().unwrap_or(&full.graph);
                 // 起点（絞り込んだ ref と HEAD）は、ほかのブランチの途中にあっても幹として残す。
                 // ID から行は 1 回なめて引く（ref が数千あっても、行ごとに探さない）。
@@ -800,7 +808,7 @@ impl Repository {
                     .unwrap_or(&[])
                     .iter()
                     .chain(full.head.iter())
-                    .chain(expanded.iter())
+                    .chain(except.iter())
                 {
                     let next = wanted.len();
                     wanted.entry(*id).or_insert(next);
@@ -826,8 +834,8 @@ impl Repository {
                         .filter_map(|h| wanted.get(h).map(|&i| found[i]))
                         .filter(|&r| r != u32::MAX),
                 );
-                let expanded = rows_of(expanded);
-                let f = crate::fold::fold_merged(base, &roots, &expanded);
+                let except = rows_of(except);
+                let f = crate::fold::fold_merged(base, &roots, folded, &except);
                 merges = f.merges;
                 (f.graph, f.hidden)
             }

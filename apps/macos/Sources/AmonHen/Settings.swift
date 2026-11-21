@@ -227,14 +227,6 @@ enum Settings {
         }
     }
 
-    /// History でマージ済みブランチを折りたたむか（既定は折りたたまない）。変えたら `foldMergedBranchesChanged` を知らせる。
-    static var foldMergedBranches: Bool {
-        get { UserDefaults.standard.bool(forKey: "foldMergedBranches") }
-        set {
-            UserDefaults.standard.set(newValue, forKey: "foldMergedBranches")
-            NotificationCenter.default.post(name: .foldMergedBranchesChanged, object: nil)
-        }
-    }
 
     /// File History にマージのコミットも出すか（既定は出さない）。変えたら `fileHistoryMergesChanged` を知らせる。
     static var fileHistoryMerges: Bool {
@@ -413,7 +405,6 @@ extension Notification.Name {
     static let commitMessageStyleChanged = Notification.Name("commitMessageStyleChanged")
     static let stackedCommitDiffChanged = Notification.Name("stackedCommitDiffChanged")
     static let historyFileTreeChanged = Notification.Name("historyFileTreeChanged")
-    static let foldMergedBranchesChanged = Notification.Name("foldMergedBranchesChanged")
     static let fileHistoryMergesChanged = Notification.Name("fileHistoryMergesChanged")
     static let gitHubSettingsChanged = Notification.Name("gitHubSettingsChanged")
     static let autoFetchChanged = Notification.Name("autoFetchChanged")
@@ -1000,7 +991,7 @@ final class SettingsWindowController: NSWindowController {
         // 開いている間に View・File History のメニューで変えた分も拾う（古い値のまま書き戻さない）。
         for name in [Notification.Name.historyRowsChanged, .historyOrderChanged, .fileHistoryMergesChanged,
                      .highlightAncestorsChanged, .commitMessageStyleChanged, .stackedCommitDiffChanged,
-                     .historyFileTreeChanged, .foldMergedBranchesChanged] {
+                     .historyFileTreeChanged] {
             NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.model.reload() }
             }

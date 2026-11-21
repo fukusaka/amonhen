@@ -1245,6 +1245,21 @@ fn build_tab(
     let mut open_settings = args.page == Some(Page::Settings);
 
     historydisplay::install_actions(&tab.group);
+    // merge の取り込んだ側を、すべてたたむ・すべて表示する（タブの History に）。
+    for (name, folded) in [("fold-all-merges", true), ("show-all-merges", false)] {
+        let action = gio::SimpleAction::new(name, None);
+        let sh = shaper.clone();
+        action.connect_activate(move |_, _| sh.set_all_merges(folded));
+        tab.group.add_action(&action);
+    }
+    // 「+N」を押した・←/→ を押したら、その merge を開く・たたむ。
+    let (sh, v) = (shaper.clone(), view.downgrade());
+    view.connect_fold(move |id, open| {
+        let Some(history) = v.upgrade().and_then(|v| v.current()).map(|(_, h)| h) else {
+            return false;
+        };
+        sh.fold_merge(&history, id, open)
+    });
     tabs::add(host, &tab, select, position);
     worktrees.install_timer(&tab);
     if select {

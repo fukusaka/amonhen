@@ -209,12 +209,16 @@ impl Session {
                 let tips = oids(request, "tips")?;
                 let h = if request["rebuild"] == true {
                     repo.rebuild_history()?
-                } else if request["fold"] == true {
-                    let expanded = oids(request, "expanded")?.unwrap_or_default();
+                } else if request["fold"] == true || request["collapsed"].is_array() {
+                    // fold なら merge を既定でたたみ、expanded の merge は開く。そうでなければ collapsed の merge
+                    // だけたたむ。
+                    let folded = request["fold"] == true;
+                    let except = oids(request, if folded { "expanded" } else { "collapsed" })?
+                        .unwrap_or_default();
                     // 畳むのも絞るのも公開している History から作るので、先に最新にする（外でコミットされていると、
                     // 新しい起点がまだ History になく、何も出ない）。
                     repo.load_history()?;
-                    repo.history_folded(tips.as_deref(), &expanded)?
+                    repo.history_folded(tips.as_deref(), folded, &except)?
                 } else if let Some(tips) = &tips {
                     repo.load_history()?;
                     repo.history_filtered(tips)?
