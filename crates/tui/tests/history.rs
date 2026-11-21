@@ -979,6 +979,16 @@ fn h_goes_back_from_the_right_pane() {
     assert_eq!(shot("1llh"), shot("1l"));
 }
 
+/// git がコンフリクトの見込み（`merge-tree --write-tree`、2.38 から）を出せるか。
+fn predicts_conflicts(dir: &Path) -> bool {
+    let version = git_out(dir, &["--version"]);
+    let numbers: Vec<u32> = version
+        .split(|c: char| !c.is_ascii_digit())
+        .filter_map(|n| n.parse().ok())
+        .collect();
+    (numbers[0], numbers[1]) >= (2, 38)
+}
+
 /// 上流のあるリポジトリ: 空のリモートに main を push してから、手元で 1 つ進める。
 fn with_remote(dir: &Path) -> std::path::PathBuf {
     let remote = dir.join("origin.git");
@@ -1165,8 +1175,24 @@ fn merge_stops_at_conflicts_and_can_be_aborted() {
     let dir = tempfile::tempdir().unwrap();
     diverged(dir.path());
     // History の 2 つ下が topic。
-    let asked = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjjm").unwrap();
-    assert!(asked.contains("Merge topic into main?   y merge   n cancel"));
+    // 確かめる文に、取り込む数・分かれてからの数・merge コミットの件名・コンフリクトの見込み。
+    let asked = amonhen_tui::snapshot(open(dir.path()), 200, 12, clock(), "0jjjm").unwrap();
+    println!("{asked}");
+    // 件名の「into main」の有無は git の版と設定による。コンフリクトの見込みは git 2.38 から（merge-tree
+    // --write-tree）で、古い git では何も足さない。
+    let line = asked.lines().last().unwrap();
+    assert!(
+        line.contains("Merge topic into main as “Merge branch 'topic'"),
+        "{line}"
+    );
+    assert!(
+        line.contains("(+1 in, 1 on main since they split)."),
+        "{line}"
+    );
+    assert!(line.contains("   y merge   n cancel"), "{line}");
+    if predicts_conflicts(dir.path()) {
+        assert!(line.contains("Conflicts are likely in a.txt."), "{line}");
+    }
     let stopped = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjjmy").unwrap();
     println!("{stopped}");
     assert!(stopped.contains("Stopped at conflicts"));
@@ -1193,7 +1219,15 @@ fn rebase_onto_the_picked_ref() {
     amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjjc").unwrap();
     let asked = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjr").unwrap();
     println!("{asked}");
+    // 見通しでコンフリクトを調べられなかったときは、何も足さない。
     assert!(asked.contains("Rebase topic onto main?   y rebase   n cancel"));
+    // main を topic に merge するのは fast-forward。取り込む数を言う。
+    let ff = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjm").unwrap();
+    println!("{ff}");
+    assert!(
+        ff.contains("Fast-forward topic to main (+2)?   y merge   n cancel"),
+        "{ff}"
+    );
     amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjry").unwrap();
     assert_eq!(
         git_out(dir.path(), &["merge-base", "topic", "main"]),
@@ -1358,6 +1392,33 @@ fn stashes_are_listed_and_applied_from_the_sidebar() {
     assert_eq!(git_out(dir.path(), &["stash", "list"]), "");
 }
 
+/// サイドバーの stash で `b`: 名前を聞いて、stash を作ったところにブランチを作り、そこに戻す（git stash branch）
+#[test]
+fn a_branch_is_made_from_a_stash() {
+    let dir = tempfile::tempdir().unwrap();
+    two_lines(dir.path());
+    git(dir.path(), BASE, &["stash", "push", "-q", "-m", "Capitals"]);
+    let asked = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0Gbwip").unwrap();
+    let line = asked.lines().last().unwrap();
+    assert!(
+        line.contains("New branch where stash@{0} was made, with it applied: wip"),
+        "{line}"
+    );
+    let done = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0Gbwip\n").unwrap();
+    println!("{done}");
+    assert!(
+        done.contains("Applied the stash on the new branch"),
+        "{done}"
+    );
+    assert_eq!(git_out(dir.path(), &["branch", "--show-current"]), "wip\n");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+        "ONE\ntwo\nTHREE\nfour\n"
+    );
+    // 戻せた stash は消える。
+    assert_eq!(git_out(dir.path(), &["stash", "list"]), "");
+}
+
 /// `3` で Reflog: HEAD が動いた記録が新しい順に並び、選んだ行のコミットの詳細が出る
 #[test]
 fn reflog_lists_where_head_was() {
@@ -1412,6 +1473,11 @@ fn reset_offers_the_modes() {
     println!("{asked}");
     let last = asked.lines().last().unwrap();
     assert!(last.contains("Reset main to "), "{last}");
+    // 外れるコミット（merge と topic の 1 つ）の数を先に見せる。
+    assert!(
+        last.contains(" (−2 +0 commits)? Undo brings it back."),
+        "{last}"
+    );
     assert!(last.contains("s soft (keep the index and files)   m mixed (keep the files)"));
     // ほかのキーでやめる。
     amonhen_tui::snapshot(open(dir.path()), 160, 10, clock(), "jRn").unwrap();
@@ -1422,6 +1488,67 @@ fn reset_offers_the_modes() {
     // Undo で戻る。
     amonhen_tui::snapshot(open(dir.path()), 160, 10, clock(), "uy").unwrap();
     assert_eq!(head(), "Merge branch 'topic'\n");
+}
+
+/// コマンドの一覧の Activity: 操作ログを新しい順に出し、選んだところまで確かめてから戻す
+#[test]
+fn operation_log_undoes_back_to_the_selected_one() {
+    let dir = tempfile::tempdir().unwrap();
+    merged(dir.path());
+    let head = || git_out(dir.path(), &["log", "-1", "--format=%s"]);
+    let none = amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), ":activity\n").unwrap();
+    assert!(none.contains("Nothing to undo"), "{none}");
+    // 2 回 reset する（Bump the version へ、次に Add the graph へ。merge はタグ v1 があるので残る）。
+    amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), "jRs").unwrap();
+    assert_eq!(head(), "Bump the version\n");
+    amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), "jjjRs").unwrap();
+    let moved = head();
+    assert_eq!(moved, "Add the graph\n");
+    let log = amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), ":activity\n").unwrap();
+    println!("{log}");
+    assert!(log.contains(" Operation Log "), "{log}");
+    assert_eq!(log.matches("Reset").count(), 2, "{log}");
+    assert!(log.contains("Enter undoes back to the selected one"));
+    // 1 つ目だけなら、その名前で確かめる。
+    let one = amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), ":activity\n\n").unwrap();
+    assert!(one.lines().last().unwrap().contains("Undo “Reset"), "{one}");
+    // 2 つ目まで選ぶと、いくつ戻すかで確かめる。やめれば何も変わらない。
+    let two = amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), ":activity\nj\n").unwrap();
+    assert!(
+        two.lines()
+            .last()
+            .unwrap()
+            .contains("Undo the last 2 operations?   y undo   n cancel"),
+        "{two}"
+    );
+    amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), ":activity\nj\nn").unwrap();
+    assert_eq!(head(), moved);
+    amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), ":activity\nj\ny").unwrap();
+    assert_eq!(head(), "Merge branch 'topic'\n");
+}
+
+/// 上流が持っているコミットを外す reset では、push に Force Push が要ると先に言う
+#[test]
+fn reset_warns_when_the_upstream_has_the_commits() {
+    let dir = tempfile::tempdir().unwrap();
+    let work = with_remote(dir.path());
+    git(&work, BASE, &["push", "-q"]);
+    // 1 つ下（Start）を選んで `R`。
+    let asked = amonhen_tui::snapshot(open(&work), 260, 10, clock(), "jR").unwrap();
+    let last = asked.lines().last().unwrap();
+    assert!(last.contains(" (−1 +0 commits)?"), "{last}");
+    assert!(
+        last.contains(
+            "origin/main has 1 of the commits it leaves, so pushing will need Force Push."
+        ),
+        "{last}"
+    );
+    // 上流にないコミットだけを外すなら、言わない。
+    commit(&work, BASE + 2 * DAY, "Local only");
+    let local = amonhen_tui::snapshot(open(&work), 260, 10, clock(), "jR").unwrap();
+    let last = local.lines().last().unwrap();
+    assert!(last.contains(" (−1 +0 commits)?"), "{last}");
+    assert!(!last.contains("Force Push"), "{last}");
 }
 
 /// `M` でマウスの取り込みを切り替える
@@ -1964,6 +2091,32 @@ fn push_publishes_a_branch_without_an_upstream() {
     );
 }
 
+/// 分かれた上流を pull する前に、コンフリクトしそうなファイルを言う
+#[test]
+fn pull_names_the_files_likely_to_conflict() {
+    let dir = tempfile::tempdir().unwrap();
+    diverged(dir.path());
+    // topic（同じ行を別に書き換えた）を main の上流にする。
+    git(
+        dir.path(),
+        BASE,
+        &["branch", "-q", "--set-upstream-to=topic"],
+    );
+    let pull = amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), "p").unwrap();
+    let line = pull.lines().last().unwrap();
+    println!("{line}");
+    assert!(
+        line.contains(" How?   y as git is set   m merge   r rebase   n cancel"),
+        "{line}"
+    );
+    if predicts_conflicts(dir.path()) {
+        assert!(
+            line.contains("have diverged. Conflicts are likely in a.txt. How?"),
+            "{line}"
+        );
+    }
+}
+
 /// 上流と分かれていれば、`P` は置き換える push も選ばせ、`p` は取り込み方を選ばせる
 #[test]
 fn diverged_branches_offer_force_push_and_pull_modes() {
@@ -1989,9 +2142,18 @@ fn diverged_branches_offer_force_push_and_pull_modes() {
             &["log", "-1", "--format=%s", "main"],
         )
     };
-    let pull = amonhen_tui::snapshot(open(&work), 120, 8, clock(), "p").unwrap();
+    let pull = amonhen_tui::snapshot(open(&work), 160, 8, clock(), "p").unwrap();
     println!("{pull}");
-    assert!(pull.contains("have diverged. How?   y as git is set   m merge   r rebase   n cancel"));
+    assert!(pull.contains(" How?   y as git is set   m merge   r rebase   n cancel"));
+    // 先にコンフリクトの見込みを読む（空のコミットどうしなので、ない）。
+    if predicts_conflicts(&work) {
+        assert!(
+            pull.contains("have diverged. No conflicts are expected. How?"),
+            "{pull}"
+        );
+    } else {
+        assert!(pull.contains("have diverged. How?"), "{pull}");
+    }
     let asked = amonhen_tui::snapshot(open(&work), 140, 8, clock(), "P").unwrap();
     println!("{asked}");
     assert!(

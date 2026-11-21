@@ -81,6 +81,7 @@ pub static ENTRIES: &[Entry] = &[
     keyless("save-patch", Place::History),
     keyless("compare-with-previous", Place::Anywhere),
     keyless("prune-worktrees", Place::Anywhere),
+    keyless("activity", Place::Anywhere),
     entry("merge", 'm', Place::Sidebar),
     entry("rebase", 'r', Place::Sidebar),
     entry("continue", 'C', Place::Sequence),

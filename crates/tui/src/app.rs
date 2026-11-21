@@ -131,6 +131,8 @@ enum Naming {
     Rename,
     /// stash のメッセージ（空でもよい）。
     Stash,
+    /// stash を戻す新しいブランチ（stash を作ったところに作る。git stash branch）。
+    StashBranch,
     /// ブランチを出す新しい worktree の場所。
     Worktree,
     /// push の送り先（`<remote>/<branch>`）。
@@ -165,6 +167,13 @@ struct Palette {
     selected: usize,
 }
 
+/// 操作ログ（アプリの Activity の Operation Log）: Undo の記録を新しい順に。選んだところまで戻せる。
+struct OperationLog {
+    /// 名前・時刻（UNIX 時刻の秒）。
+    entries: Vec<(String, i64)>,
+    selected: usize,
+}
+
 pub struct App {
     loader: Loader,
     history: History,
@@ -193,6 +202,11 @@ pub struct App {
     patch_file: Option<String>,
     /// 前の版と比べている間の題（比べた結果が届くまで覚えておく）。
     range_title: Option<String>,
+    /// merge か rebase を確かめる前に、見通しを読んでいる: 何を（ref の名前）、どのブランチに、merge か。merge は
+    /// 見通し（`mergePreview`）を読んだ後に、コンフリクトの見込みも読む。
+    preview: Option<(String, String, bool, Value)>,
+    /// reset する先（見通しを読んでいる間、覚えておく）。
+    reset_to: Option<String>,
     /// History でマージ済みのブランチを折りたたんでいる（アプリの Fold Merged Branches。この TUI の間だけ）。
     fold: bool,
     /// 折りたたんでいる間に、取り込んだ側を開いたマージ（16 進の ID）。
@@ -204,6 +218,8 @@ pub struct App {
     files_here: bool,
     /// エディタで開く作業ツリーのファイル（絶対パス）。
     open_file: Option<String>,
+    /// 開き直す worktree（サイドバーの Enter。TUI を閉じて、そこで開き直す）。
+    open_worktree: Option<String>,
     /// いくつかから選んで行う操作: 尋ねる文と、キー・名前・頼む中身の組。
     choices: Option<(String, Vec<Choice>)>,
     /// マウスを取り込んでいる（切ると、端末で文字を選べる）。
@@ -254,6 +270,7 @@ pub struct App {
     help_top: usize,
     /// コマンドの一覧を出している（`:`）。
     palette: Option<Palette>,
+    operation_log: Option<OperationLog>,
     /// 今の検索: 語と、動いている検索を取り消す印（結果が届いたら `None`）。
     search: Option<(String, Option<Arc<AtomicBool>>)>,
     /// 動いている検索の、調べ終えた割合（0〜1。内容の検索でなければ 0 のまま）。
@@ -337,15 +354,19 @@ impl App {
             help: false,
             help_top: 0,
             palette: None,
+            operation_log: None,
             push_to_offered: false,
             bundle_file: None,
             patch_file: None,
             range_title: None,
             topo_order: false,
             fold: false,
+            preview: None,
+            reset_to: None,
             expanded: Vec::new(),
             files_here: true,
             open_file: None,
+            open_worktree: None,
             search: None,
             search_done: 0.0,
             theme: Theme::detect(),
@@ -455,7 +476,7 @@ impl App {
     /// ので、出している間はすべてを描き直す。
     pub fn take_damage(&mut self) -> Option<Damage> {
         let damage = std::mem::take(&mut self.damage);
-        let over = self.help || self.palette.is_some();
+        let over = self.help || self.palette.is_some() || self.operation_log.is_some();
         if std::mem::take(&mut self.dirty) || (over && damage != Damage::default()) {
             return Some(Damage::ALL);
         }
@@ -556,6 +577,11 @@ impl App {
     }
 
     /// エディタで開くファイルと、作業ツリーの場所（聞いたら、なかったことにする）。
+    /// 開き直す worktree のパス（選んだときだけ。そのとき `quit` も立っている）。
+    pub fn take_open_worktree(&mut self) -> Option<String> {
+        self.open_worktree.take()
+    }
+
     pub fn take_open_file(&mut self) -> Option<(String, Option<String>)> {
         let file = self.open_file.take()?;
         Some((file, self.workdir.clone()))
@@ -1003,6 +1029,39 @@ impl App {
             }
             return;
         }
+        // 操作ログ: 選んでいる記録まで（新しいものから順に）戻す。確かめてから。ほかのキーで閉じる。
+        if let Some(mut log) = self.operation_log.take() {
+            self.dirty = true;
+            match key.code {
+                KeyCode::Char('j') | KeyCode::Down => {
+                    log.selected = (log.selected + 1).min(log.entries.len().saturating_sub(1));
+                }
+                KeyCode::Char('k') | KeyCode::Up => log.selected = log.selected.saturating_sub(1),
+                KeyCode::Char('n') if control => {
+                    log.selected = (log.selected + 1).min(log.entries.len().saturating_sub(1));
+                }
+                KeyCode::Char('p') if control => log.selected = log.selected.saturating_sub(1),
+                KeyCode::Enter => {
+                    let count = log.selected + 1;
+                    let ask = match count {
+                        1 => tr!("Undo “{label}”?", label = log.entries[0].0),
+                        _ => tr!("Undo the last {count} operations?", count = count),
+                    };
+                    self.confirm = Some((
+                        ask,
+                        tr!("undo"),
+                        Request::Run {
+                            name: "undo",
+                            command: Value::Array(vec![json!({"op": "undo"}); count]),
+                        },
+                    ));
+                    return;
+                }
+                _ => return,
+            }
+            self.operation_log = Some(log);
+            return;
+        }
         // コマンドの一覧は、打った語で絞る。Enter で選んでいる行を動かす、Esc でやめる。
         if let Some(mut palette) = self.palette.take() {
             self.dirty = true;
@@ -1142,6 +1201,11 @@ impl App {
                                 tr!("Adding the worktree…"),
                                 json!({"op": "worktreeAdd", "path": name, "start": start}),
                             ),
+                            Naming::StashBranch => (
+                                "stashBranch",
+                                tr!("Creating {name}…", name = name),
+                                json!({"op": "stashBranch", "name": start, "branch": name}),
+                            ),
                             Naming::Branch => (
                                 "createBranch",
                                 tr!("Creating {name}…", name = name),
@@ -1238,7 +1302,12 @@ impl App {
             KeyCode::Char('u') if !control => {
                 self.run("undoPeek", tr!("Undo…"), json!({"op": "undoPeek"}))
             }
-            KeyCode::Char('b') if !control => self.ask_branch(),
+            // サイドバーの stash なら、そこにブランチを作って戻す（`stash_key`）。
+            KeyCode::Char('b') if !control => {
+                if !(self.focus == Focus::Sidebar && self.stash_key(KeyCode::Char('b'))) {
+                    self.ask_branch();
+                }
+            }
             KeyCode::Char('T') => self.ask_name(Naming::Tag),
             KeyCode::Char('R') if self.view != View::Changes && self.focus == Focus::Main => {
                 self.ask_reset();
@@ -1364,6 +1433,15 @@ impl App {
 
     /// コマンドの一覧からだけ動かす操作（キーを持たない）。
     fn run_keyless(&mut self, id: &str) {
+        if id == "activity" {
+            // アプリの Activity のうち、このリポジトリの操作ログ（git の記録・画面の速さは端末では出さない）。
+            self.run(
+                "undoLog",
+                tr!("Reading the operation log…"),
+                json!({"op": "undoLog"}),
+            );
+            return;
+        }
         if id == "compare-with-previous" {
             self.run(
                 "previousVersion",
@@ -1523,6 +1601,27 @@ impl App {
             }
         };
         match name {
+            "undoLog" => {
+                let entries: Vec<(String, i64)> = reply["info"]["entries"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|e| {
+                        let label = e["label"].as_str().unwrap_or_default().to_owned();
+                        (label, e["time"].as_f64().unwrap_or(0.0) as i64 / 1000)
+                    })
+                    .collect();
+                match entries.is_empty() {
+                    true => self.notice = Some(tr!("Nothing to undo")),
+                    false => {
+                        self.operation_log = Some(OperationLog {
+                            entries,
+                            selected: 0,
+                        })
+                    }
+                }
+                return;
+            }
             // 戻す操作があれば、名前を出して確かめる。
             "undoPeek" => {
                 match reply["label"].as_str() {
@@ -1562,6 +1661,7 @@ impl App {
             }
             "apply" => self.notice = Some(tr!("Applied the stash")),
             "drop" => self.notice = Some(tr!("Dropped the stash")),
+            "stashBranch" => self.notice = Some(tr!("Applied the stash on the new branch")),
             "removeWorktree" => self.notice = Some(tr!("Removed the worktree")),
             "restoreFile" => self.notice = Some(tr!("Restored the version")),
             "addWorktree" => self.notice = Some(tr!("Added the worktree")),
@@ -1710,6 +1810,59 @@ impl App {
                 self.dirty = true;
                 return;
             }
+            // merge の見通しが分かった: コンフリクトの見込みも読んでから確かめる（fast-forward・取り込むものなしは
+            // コンフリクトしない）。
+            "mergePreview" => {
+                let Some(preview) = self.preview.as_mut() else {
+                    return;
+                };
+                preview.3 = reply["info"].clone();
+                if reply["info"]["fastForward"] == true || reply["info"]["upToDate"] == true {
+                    self.ask_with_preview(None);
+                    return;
+                }
+                let name = preview.0.clone();
+                self.run(
+                    "mergeConflicts",
+                    tr!("Looking ahead…"),
+                    json!({"op": "predictMerge", "ours": null, "theirs": name}),
+                );
+                return;
+            }
+            "mergeConflicts" => {
+                let conflicts = conflict_files(&reply["info"]["conflicts"]);
+                self.ask_with_preview(conflicts);
+                return;
+            }
+            "pullConflicts" => {
+                let conflicts = conflict_files(&reply["info"]["conflicts"]);
+                self.ask_pull_with(conflicts);
+                return;
+            }
+            "resetPreview" => {
+                let info = reply["info"].clone();
+                self.ask_reset_with(&info);
+                return;
+            }
+            "rebasePreview" => {
+                let info = reply["info"].clone();
+                // コンフリクトしそうなコミットのファイルを、まとめて。
+                let conflicts = info["conflicts"].as_array().map(|commits| {
+                    let mut files: Vec<String> = commits
+                        .iter()
+                        .flat_map(|c| c["files"].as_array().cloned().unwrap_or_default())
+                        .filter_map(|f| f.as_str().map(str::to_owned))
+                        .collect();
+                    files.sort();
+                    files.dedup();
+                    files
+                });
+                if let Some(preview) = self.preview.as_mut() {
+                    preview.3 = info;
+                }
+                self.ask_with_preview(conflicts);
+                return;
+            }
             // 並び順が替わった: History を読み直す（ref と状態も、ほかの操作と同じく下で読み直す）。
             "historyOrder" => {
                 self.topo_order = reply["order"] == "topo";
@@ -1783,25 +1936,43 @@ impl App {
         self.open();
     }
 
-    /// pull する。上流と分かれているときは、どう取り込むかを選ばせる（ほかは git の設定のとおり）。
+    /// pull する。上流と分かれているときは、コンフリクトの見込みを読んでから、どう取り込むかを選ばせる（ほかは
+    /// git の設定のとおり）。
     fn ask_pull(&mut self) {
+        if self.ahead > 0 && self.behind > 0 {
+            if let Some(upstream) = self.upstream.clone() {
+                self.run(
+                    "pullConflicts",
+                    tr!("Looking ahead…"),
+                    json!({"op": "predictMerge", "ours": null, "theirs": upstream}),
+                );
+            } else {
+                self.ask_pull_with(None);
+            }
+            return;
+        }
+        self.run("pull", tr!("Pulling…"), json!({"op": "pull"}));
+    }
+
+    /// 分かれているときの pull の選択。`conflicts` は上流を merge したときにコンフリクトしそうなファイル（分から
+    /// なければ `None`。rebase でも最後の結果は同じなので目安になる）。
+    fn ask_pull_with(&mut self, conflicts: Option<Vec<String>>) {
         let pull = |mode: &str| Request::Run {
             name: "pull",
             command: json!({"op": "pull", "mode": mode}),
         };
-        if self.ahead > 0 && self.behind > 0 {
-            self.choices = Some((
-                tr!("Pull: the branch and its upstream have diverged. How?"),
-                vec![
-                    ('y', tr!("as git is set"), pull("git")),
-                    ('m', tr!("merge"), pull("merge")),
-                    ('r', tr!("rebase"), pull("rebase")),
-                ],
-            ));
-            self.dirty = true;
-            return;
-        }
-        self.run("pull", tr!("Pulling…"), json!({"op": "pull"}));
+        self.choices = Some((
+            tr!(
+                "Pull: the branch and its upstream have diverged.{risk} How?",
+                risk = risk_text(conflicts)
+            ),
+            vec![
+                ('y', tr!("as git is set"), pull("git")),
+                ('m', tr!("merge"), pull("merge")),
+                ('r', tr!("rebase"), pull("rebase")),
+            ],
+        ));
+        self.dirty = true;
     }
 
     /// 今のブランチを上流へ push する前に確かめる。
@@ -2198,7 +2369,32 @@ impl App {
         let Some(id) = id.map(|id| id.to_string()) else {
             return;
         };
+        // 先に見通し（外れるコミット・加わるコミット・上流が持っているか）を読み、確かめる文に書く。
+        self.reset_to = Some(id.clone());
+        self.run(
+            "resetPreview",
+            tr!("Looking ahead…"),
+            json!({"op": "movePreview", "from": "HEAD", "to": id, "branch": self.branch}),
+        );
+    }
+
+    /// reset の見通し（`movePreview` の `info`）から、どう reset するかを選ばせる。
+    fn ask_reset_with(&mut self, preview: &Value) {
+        let Some(id) = self.reset_to.take() else {
+            return;
+        };
         let branch = self.branch.clone().unwrap_or_else(|| "HEAD".to_owned());
+        let lost = preview["lostCount"].as_u64().unwrap_or(0);
+        let gained = preview["gainedCount"].as_u64().unwrap_or(0);
+        let pushed = preview["upstreamHas"].as_u64().unwrap_or(0);
+        let force = match (pushed, preview["upstream"].as_str()) {
+            (1.., Some(upstream)) => tr!(
+                " {upstream} has {count} of the commits it leaves, so pushing will need Force Push.",
+                upstream = upstream,
+                count = pushed
+            ),
+            _ => String::new(),
+        };
         let option = |key: char, mode: &'static str, label: String| {
             (
                 key,
@@ -2211,9 +2407,12 @@ impl App {
         };
         self.choices = Some((
             tr!(
-                "Reset {branch} to {commit}? Undo brings it back.",
+                "Reset {branch} to {commit} (−{lost} +{gained} commits)? Undo brings it back.{force}",
                 branch = branch,
-                commit = &id[..id.len().min(8)]
+                commit = &id[..id.len().min(8)],
+                lost = lost,
+                gained = gained,
+                force = force
             ),
             vec![
                 option('s', "soft", tr!("soft (keep the index and files)")),
@@ -2353,26 +2552,105 @@ impl App {
             self.error = Some(tr!("No branch is checked out"));
             return true;
         };
-        self.confirm = Some(if merge {
-            (
-                tr!("Merge {name} into {branch}?", name = name, branch = branch),
-                tr!("merge"),
-                Request::Run {
-                    name: "merge",
-                    command: json!({"op": "merge", "rev": name}),
-                },
-            )
-        } else {
-            (
-                tr!("Rebase {branch} onto {name}?", name = name, branch = branch),
-                tr!("rebase"),
-                Request::Run {
-                    name: "rebase",
-                    command: json!({"op": "rebase", "onto": name}),
-                },
-            )
-        });
+        // アプリが確かめるときに描く前と後の代わりに、エンジンの見通しを読んで、確かめる文に書く。
+        let name = name.to_owned();
+        self.preview = Some((name.clone(), branch, merge, Value::Null));
+        match merge {
+            true => self.run(
+                "mergePreview",
+                tr!("Looking ahead…"),
+                json!({"op": "mergePreview", "theirs": name}),
+            ),
+            false => self.run(
+                "rebasePreview",
+                tr!("Looking ahead…"),
+                json!({"op": "rewritePreview", "onto": name}),
+            ),
+        }
         true
+    }
+
+    /// merge・rebase の見通しから、確かめる文を作る。`conflicts` はコンフリクトしそうなファイル（分からなければ
+    /// `None`）。
+    fn ask_with_preview(&mut self, conflicts: Option<Vec<String>>) {
+        let Some((name, branch, merge, preview)) = self.preview.take() else {
+            return;
+        };
+        self.dirty = true;
+        let count = |shown: &Value, more: &Value| {
+            shown.as_array().map_or(0, Vec::len) as u64 + more.as_u64().unwrap_or(0)
+        };
+        let risk = risk_text(conflicts);
+        let (ask, yes, request) = if merge {
+            let request = Request::Run {
+                name: "merge",
+                command: json!({"op": "merge", "rev": name}),
+            };
+            if preview["upToDate"] == true {
+                self.notice = Some(tr!(
+                    "{branch} already has {name}",
+                    branch = branch,
+                    name = name
+                ));
+                return;
+            }
+            if preview["fastForward"] == true {
+                let drawing = &preview["move"]["drawing"];
+                let n = count(&drawing["gained"], &drawing["gainedMore"]);
+                let ask = tr!(
+                    "Fast-forward {branch} to {name} (+{count})?",
+                    branch = branch,
+                    name = name,
+                    count = n
+                );
+                (ask, tr!("merge"), request)
+            } else {
+                let drawing = &preview["drawing"];
+                let theirs = count(&drawing["theirs"], &drawing["theirsMore"]);
+                let ours = count(&drawing["ours"], &drawing["oursMore"]);
+                let ask = tr!(
+                    "Merge {name} into {branch} as “{subject}” (+{theirs} in, {ours} on {branch} since they split).{risk}",
+                    name = name,
+                    branch = branch,
+                    theirs = theirs,
+                    ours = ours,
+                    subject = drawing["subject"].as_str().unwrap_or(""),
+                    risk = risk
+                );
+                (ask, tr!("merge"), request)
+            }
+        } else {
+            let force = match preview["currentPushed"] == true {
+                true => tr!(
+                    " Its upstream has the commits it rewrites, so pushing will need Force Push."
+                ),
+                false => String::new(),
+            };
+            let moving: Vec<&str> = (preview["moving"].as_array().into_iter().flatten())
+                .filter_map(|b| b["name"].as_str())
+                .collect();
+            let along = match moving.is_empty() {
+                true => String::new(),
+                false => tr!(
+                    " {names} move along.",
+                    names = amonhen_model::i18n::list(&moving)
+                ),
+            };
+            let ask = tr!(
+                "Rebase {branch} onto {name}?{risk}{along}{force}",
+                branch = branch,
+                name = name,
+                risk = risk,
+                along = along,
+                force = force
+            );
+            let request = Request::Run {
+                name: "rebase",
+                command: json!({"op": "rebase", "onto": name}),
+            };
+            (ask, tr!("rebase"), request)
+        };
+        self.confirm = Some((ask, yes, request));
     }
 
     /// サイドバーで選んでいる stash を戻す（`pop` なら、戻して消す）か、消す（先に確かめる）。
@@ -2413,6 +2691,12 @@ impl App {
                 tr!("Popping the stash…"),
                 json!({"op": "stashApply", "name": name, "pop": true}),
             ),
+            // stash を作ったところに新しいブランチを作って切り替え、そこに戻す（アプリの Branch…）。
+            KeyCode::Char('b') => {
+                self.naming = Naming::StashBranch;
+                self.typing_branch = Some((name.clone(), name, String::new()));
+                self.dirty = true;
+            }
             KeyCode::Char('x') => {
                 self.confirm = Some((
                     tr!("Drop {name}? Undo brings it back.", name = name),
@@ -2632,6 +2916,10 @@ impl App {
                 ("m", tr!("Merge it into the current branch")),
                 ("r", tr!("Rebase the current branch onto it")),
                 ("a o x", tr!("On a stash: apply, pop, drop")),
+                (
+                    "b",
+                    tr!("On a stash: a branch where it was made, with it applied"),
+                ),
                 ("x", tr!("On a worktree: remove it")),
                 ("w", tr!("New worktree for the branch")),
                 (
@@ -2781,12 +3069,21 @@ impl App {
                 self.focus = Focus::Side;
                 self.pinned = Oid::from_hex(&id);
             }
-            // worktree は、その場所を知らせるだけ（開くのは、そこで `amonhen tui`）。
+            // ほかの worktree は、TUI をそこで開き直す（アプリが新しい窓で開くのの代わり）。開いているものは、
+            // その場所を知らせるだけ。
             Some(Picked::Commit(_))
                 if self.sidebar.picked_ref().is_some_and(|r| r.0 == "worktree") =>
             {
                 let path = self.sidebar.picked_ref().map_or("", |r| r.1).to_owned();
-                self.notice = Some(tr!("Worktree at {path}", path = path));
+                if self.sidebar.picked_is_current() {
+                    self.notice = Some(tr!(
+                        "This is the worktree that is open, at {path}",
+                        path = path
+                    ));
+                } else {
+                    self.open_worktree = Some(path);
+                    self.quit = true;
+                }
             }
             Some(Picked::Commit(id)) => {
                 self.pinned = None;
@@ -3556,6 +3853,11 @@ impl App {
                 let text = match self.naming {
                     Naming::Branch => tr!("New branch at {at}: {name}", at = at, name = name),
                     Naming::Tag => tr!("New tag at {at}: {name}", at = at, name = name),
+                    Naming::StashBranch => tr!(
+                        "New branch where {at} was made, with it applied: {name}",
+                        at = at,
+                        name = name
+                    ),
                     Naming::Rename => tr!("Rename {at} to: {name}", at = at, name = name),
                     Naming::Stash => tr!("Stash message (Enter for none): {name}", name = name),
                     Naming::Worktree => {
@@ -3761,6 +4063,70 @@ impl App {
                 }
             }
         }
+        if let Some(log) = &self.operation_log {
+            let times: Vec<String> = log
+                .entries
+                .iter()
+                .map(|(_, time)| crate::history::ago(self.clock.now, *time))
+                .collect();
+            let label_width = log
+                .entries
+                .iter()
+                .map(|(l, _)| l.width())
+                .max()
+                .unwrap_or(0) as u16;
+            let hint = tr!("Enter undoes back to the selected one");
+            let width = (label_width + 10)
+                .max(hint.width() as u16 + 4)
+                .max(36)
+                .min(area.width);
+            // 枠・記録の行・案内の行。
+            let height = (log.entries.len() as u16 + 3).min(area.height);
+            let at = Rect::new(
+                area.x + (area.width - width) / 2,
+                area.y + (area.height - height) / 2,
+                width,
+                height,
+            );
+            frame_box(buf, area, at, &tr!(" Operation Log "));
+            let inner = usize::from(width.saturating_sub(4));
+            let rows = usize::from(height.saturating_sub(3));
+            let top = (log.selected + 1).saturating_sub(rows);
+            for (y, i) in (at.y + 1..at.bottom().saturating_sub(2)).zip(top..log.entries.len()) {
+                // 選んでいる記録まで（戻るもの）を、すべて反転する。
+                let undone = i <= log.selected;
+                let style = match undone {
+                    true => Style::new().add_modifier(Modifier::REVERSED),
+                    false => Style::new(),
+                };
+                if undone {
+                    for x in at.x + 1..at.right() - 1 {
+                        buf[(x, y)].set_style(style);
+                    }
+                }
+                let time_style = match undone {
+                    true => style,
+                    false => Style::new().fg(Color::Indexed(244)),
+                };
+                buf.set_stringn(at.x + 2, y, &times[i], 4, time_style);
+                buf.set_stringn(
+                    at.x + 7,
+                    y,
+                    &log.entries[i].0,
+                    inner.saturating_sub(5),
+                    style,
+                );
+            }
+            if height >= 3 {
+                buf.set_stringn(
+                    at.x + 2,
+                    at.bottom() - 2,
+                    &hint,
+                    inner,
+                    Style::new().fg(Color::Indexed(244)),
+                );
+            }
+        }
         if let Some(palette) = &self.palette {
             let entries = self.palette_entries(&palette.query);
             let keys: Vec<String> = entries.iter().map(|(e, _)| e.key_label()).collect();
@@ -3880,6 +4246,36 @@ fn frame_box(buf: &mut Buffer, area: Rect, at: Rect, title: &str) {
     );
 }
 
+/// `predictMerge` の `conflicts`（ファイルの配列。git が古くて調べられなければ null）。
+fn conflict_files(conflicts: &Value) -> Option<Vec<String>> {
+    conflicts.as_array().map(|files| {
+        files
+            .iter()
+            .filter_map(|f| f.as_str().map(str::to_owned))
+            .collect()
+    })
+}
+
+/// コンフリクトの見込みを、確かめる文に足す一文にする（分からなければ空）。
+fn risk_text(conflicts: Option<Vec<String>>) -> String {
+    match conflicts {
+        Some(files) if !files.is_empty() => {
+            let shown: Vec<&str> = files.iter().take(3).map(String::as_str).collect();
+            let mut names = amonhen_model::i18n::list(&shown);
+            if files.len() > 3 {
+                names = tr!(
+                    "{names} and {count} more",
+                    names = names,
+                    count = files.len() - 3
+                );
+            }
+            tr!(" Conflicts are likely in {files}.", files = names)
+        }
+        Some(_) => tr!(" No conflicts are expected."),
+        None => String::new(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use amonhen_front::InProcess;
@@ -3930,6 +4326,51 @@ mod tests {
         let mut buf = Buffer::empty(Rect::new(0, 0, 100, 12));
         app.draw(&mut buf, Damage::ALL);
         (0..100).map(|x| buf[(x, 11)].symbol()).collect()
+    }
+
+    /// サイドバーの worktree で Enter: ほかの worktree なら TUI を閉じてそのパスを返し、開いているものなら場所を
+    /// 知らせるだけ。
+    #[test]
+    fn enter_on_another_worktree_reopens_there() {
+        let (dir, mut app, rx) = app_with_history();
+        let other = tempfile::tempdir().unwrap();
+        let path = other.path().join("other");
+        let out = amonhen_model::process::command("git")
+            .args(["worktree", "add", "-q", "-b", "topic"])
+            .arg(&path)
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        app.open();
+        crate::settle(&mut app, &rx).unwrap();
+        let key = |app: &mut App, code: KeyCode| {
+            app.handle(Event::Input(Input::Key(KeyEvent::new(
+                code,
+                KeyModifiers::NONE,
+            ))));
+        };
+        // 一番下の行が other。その上が、開いているもの。
+        for code in [
+            KeyCode::Char('0'),
+            KeyCode::Char('G'),
+            KeyCode::Char('k'),
+            KeyCode::Enter,
+        ] {
+            key(&mut app, code);
+        }
+        assert!(app.take_open_worktree().is_none());
+        assert!(!app.quit());
+        assert!(bottom_line(&mut app).contains("This is the worktree that is open"));
+        for code in [KeyCode::Char('j'), KeyCode::Enter] {
+            key(&mut app, code);
+        }
+        let opened = app.take_open_worktree().expect("a worktree to open");
+        assert_eq!(
+            std::fs::canonicalize(opened).unwrap(),
+            std::fs::canonicalize(&path).unwrap()
+        );
+        assert!(app.quit());
     }
 
     /// Working Copy の `e`: 選んでいるファイルを、作業ツリーの絶対パスでエディタに渡す。`ssh://` の先なら断る。
