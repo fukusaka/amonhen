@@ -33,101 +33,8 @@ pub fn menu(
         .get(row as usize)
         .is_some_and(|n| n.flags & Node::MERGE != 0);
     let mut items = Vec::new();
-    let (a, h) = (actions.clone(), hex.clone());
-    items.push(menu::action(
-        crate::titles::new_branch_from(&short),
-        move || {
-            refops::ask_new_branch(&a, &h);
-        },
-    ));
-    let (a, h) = (actions.clone(), hex.clone());
-    items.push(menu::action(
-        tr!("New Tag at {name}…", name = short),
-        move || {
-            refops::ask_new_tag(&a, &h);
-        },
-    ));
-    let (a, h) = (actions.clone(), hex.clone());
-    items.push(menu::action(
-        crate::titles::checkout_detached(&hex),
-        move || {
-            crate::sheets::checkout(&a, crate::sheets::CheckoutTarget::Detach(h.clone()));
-        },
-    ));
-    items.push(reset(actions, &hex));
-    items.push(Item::Separator);
-    if !is_merge {
-        // コミットの編集は、History の編集モードで（変更を積んで Apply）。ここにあるのは、最初の変更を入れて
-        // 編集モードを開く近道。
-        for (title, preset) in [
-            (tr!("Edit Message…"), Some(Preset::Reword(hex.clone()))),
-            (
-                tr!("Combine with Older Commit…"),
-                Some(Preset::Combine(vec![hex.clone()])),
-            ),
-            ("Drop…".to_owned(), Some(Preset::Drop(hex.clone()))),
-            (tr!("Edit Commits from Here…"), None),
-        ] {
-            let (e, h) = (edit.clone(), hex.clone());
-            items.push(menu::action(title, move || e.open(&h, preset.clone())));
-        }
-        // 分ける（止めてから Working Copy で分けてコミットする）は、編集モードの外の操作。
-        let (a, h, s) = (actions.clone(), hex.clone(), short.clone());
-        items.push(menu::action("Split…", move || {
-            let (a, h, s) = (a.clone(), h.clone(), s.clone());
-            glib::spawn_future_local(async move {
-                let message = format!(
-                    "{}{}{}",
-                    tr!("Its changes go back to the working tree; commit them in parts, then Continue."),
-                    amonhen_model::i18n::sentence_gap(), crate::sheets::can_undo()
-                );
-                // worktree の今のブランチを書き換えるので、Cherry-pick・Revert と同じく、どの worktree かを書く
-                // （macOS 版と同じ）。
-                let sheet = crate::sheets::Sheet::new(
-                    crate::sheets::parent(&a).as_ref(),
-                    &tr!("Split {commit}?", commit = s),
-                    &message,
-                );
-                sheet.buttons("Split", false, None);
-                if sheet.run().await == crate::sheets::Response::Ok {
-                    a.rewrite(&format!("Split {s}"), json!({ "kind": "split", "oid": h }));
-                }
-            });
-        }));
-        items.push(Item::Separator);
-    }
-    let (a, h) = (actions.clone(), hex.clone());
-    items.push(menu::action(crate::titles::cherry_pick(&hex), move || {
-        crate::sheets::pick(&a, false, vec![(h.clone(), is_merge)]);
-    }));
-    let (a, h) = (actions.clone(), hex.clone());
-    items.push(menu::action(crate::titles::revert(&hex), move || {
-        crate::sheets::pick(&a, true, vec![(h.clone(), is_merge)]);
-    }));
-    // マージはパッチにできない（git format-patch は飛ばす）。押せない項目で残す（macOS 版と同じ）。
-    if is_merge {
-        items.push(Item::Disabled(tr!("Save as Patch…")));
-    } else {
-        let (a, h) = (actions.clone(), hex.clone());
-        items.push(menu::action(tr!("Save as Patch…"), move || {
-            crate::patches::save(&a, vec![h.clone()]);
-        }));
-    }
-    let label = widget
-        .downcast_ref::<crate::history::HistoryView>()
-        .map(|view| crate::appmenu::archive_label(&view.ref_names(id)))
-        .unwrap_or_default();
-    let label = if label.is_empty() {
-        short.clone()
-    } else {
-        label
-    };
-    let (a, h) = (actions.clone(), hex.clone());
-    items.push(menu::action(tr!("Export Archive…"), move || {
-        crate::archive::export(&a, h.clone(), label.clone());
-    }));
-    items.push(Item::Separator);
-    let (w, h) = (widget.clone(), hex);
+    // 並びはサイドバーと同じくコピーから: コピー・作る・移る・書き換える・取り込む・書き出す・たたむ（macOS 版と同じ）。
+    let (w, h) = (widget.clone(), hex.clone());
     items.push(menu::action(tr!("Copy Commit ID"), move || {
         w.clipboard().set_text(&h);
     }));
@@ -146,7 +53,165 @@ pub fn menu(
             }));
         }
     }
+    items.push(Item::Separator);
+    let (a, h) = (actions.clone(), hex.clone());
+    items.push(menu::action(
+        crate::titles::new_branch_from(&short),
+        move || {
+            refops::ask_new_branch(&a, &h);
+        },
+    ));
+    let (a, h) = (actions.clone(), hex.clone());
+    items.push(menu::action(
+        tr!("New Tag at {name}…", name = short),
+        move || {
+            refops::ask_new_tag(&a, &h);
+        },
+    ));
+    items.push(Item::Separator);
+    let (a, h) = (actions.clone(), hex.clone());
+    items.push(menu::action(
+        crate::titles::checkout_detached(&hex),
+        move || {
+            crate::sheets::checkout(&a, crate::sheets::CheckoutTarget::Detach(h.clone()));
+        },
+    ));
+    items.push(reset(actions, &hex));
+    items.push(Item::Separator);
+    // コミットの編集は、History の編集モードで（変更を積んで Apply）。ここにあるのは、最初の変更を入れて
+    // 編集モードを開く近道。編集できないコミット（HEAD の first-parent の並びの外・merge）には出さない。
+    let edits = editable_edits(&actions.first_parent_line(), &hex, is_merge);
+    if edits.any {
+        let mut presets = vec![(tr!("Edit Message…"), Some(Preset::Reword(hex.clone())))];
+        if edits.squash {
+            presets.push((
+                tr!("Squash into Previous…"),
+                Some(Preset::Combine(vec![hex.clone()])),
+            ));
+        }
+        presets.push(("Drop…".to_owned(), Some(Preset::Drop(hex.clone()))));
+        presets.push((tr!("Interactive Rebase from Here…"), None));
+        for (title, preset) in presets {
+            let (e, h) = (edit.clone(), hex.clone());
+            items.push(menu::action(title, move || e.open(&h, preset.clone())));
+        }
+        // 分ける（止めてから Working Copy で分けてコミットする）は、編集モードの外の操作。
+        if edits.split {
+            let (a, h, s) = (actions.clone(), hex.clone(), short.clone());
+            items.push(menu::action("Split…", move || {
+                let (a, h, s) = (a.clone(), h.clone(), s.clone());
+                glib::spawn_future_local(async move {
+                    let message = format!(
+                        "{}{}{}",
+                        tr!("Its changes go back to the working tree; commit them in parts, then Continue."),
+                        amonhen_model::i18n::sentence_gap(), crate::sheets::can_undo()
+                    );
+                    // worktree の今のブランチを書き換えるので、Cherry-pick・Revert と同じく、どの worktree かを書く
+                    // （macOS 版と同じ）。
+                    let sheet = crate::sheets::Sheet::new(
+                        crate::sheets::parent(&a).as_ref(),
+                        &tr!("Split {commit}?", commit = s),
+                        &message,
+                    );
+                    sheet.buttons("Split", false, None);
+                    if sheet.run().await == crate::sheets::Response::Ok {
+                        a.rewrite(&format!("Split {s}"), json!({ "kind": "split", "oid": h }));
+                    }
+                });
+            }));
+        }
+        items.push(Item::Separator);
+    }
+    let (a, h) = (actions.clone(), hex.clone());
+    items.push(menu::action(crate::titles::cherry_pick(&hex), move || {
+        crate::sheets::pick(&a, false, vec![(h.clone(), is_merge)]);
+    }));
+    let (a, h) = (actions.clone(), hex.clone());
+    items.push(menu::action(crate::titles::revert(&hex), move || {
+        crate::sheets::pick(&a, true, vec![(h.clone(), is_merge)]);
+    }));
+    items.push(Item::Separator);
+    // マージはパッチにできない（git format-patch は飛ばす）。押せない項目で、わけを添える（macOS 版と同じ）。
+    if is_merge {
+        items.push(menu::disabled_hint(
+            tr!("Save as Patch…"),
+            tr!("A merge can’t be saved as a patch."),
+        ));
+    } else {
+        let (a, h) = (actions.clone(), hex.clone());
+        items.push(menu::action(tr!("Save as Patch…"), move || {
+            crate::patches::save(&a, vec![h.clone()]);
+        }));
+    }
+    let label = widget
+        .downcast_ref::<crate::history::HistoryView>()
+        .map(|view| crate::appmenu::archive_label(&view.ref_names(id)))
+        .unwrap_or_default();
+    let label = if label.is_empty() {
+        short.clone()
+    } else {
+        label
+    };
+    let (a, h) = (actions.clone(), hex);
+    items.push(menu::action(tr!("Export Archive…"), move || {
+        crate::archive::export(&a, h.clone(), label.clone());
+    }));
     items
+}
+
+/// コミットに出す編集の項目（macOS 版の `editableEdits`）。
+#[derive(Debug, PartialEq)]
+struct Edits {
+    /// Edit Message・Drop・Interactive Rebase（編集モードは merge を越えて first-parent の並びを書き換えられる）。
+    any: bool,
+    /// 1 つ前（古い方）が並びにあって merge でない。
+    squash: bool,
+    /// 最初の merge より新しく、最初のコミットでない。
+    split: bool,
+}
+
+/// `line` は HEAD から first-parent で辿った並び（新しい順、merge かどうか）。読む前（None）は出しておき、押して
+/// から確かめる。
+fn editable_edits(line: &Option<Vec<(String, bool)>>, hex: &str, is_merge: bool) -> Edits {
+    let none = Edits {
+        any: false,
+        squash: false,
+        split: false,
+    };
+    if is_merge {
+        return none;
+    }
+    let Some(line) = line else {
+        return Edits {
+            any: true,
+            squash: true,
+            split: true,
+        };
+    };
+    let Some(index) = line.iter().position(|(o, _)| o == hex) else {
+        return none;
+    };
+    let older = line.get(index + 1);
+    Edits {
+        any: true,
+        squash: older.is_some_and(|(_, merge)| !merge),
+        split: older.is_some() && !line[..index].iter().any(|(_, merge)| *merge),
+    }
+}
+
+/// 選んだコミット（新しい順）が、first-parent の並びで続いた、merge でないコミットか（Combine でまとめられる）。
+fn combinable(line: &Option<Vec<(String, bool)>>, oids: &[String]) -> bool {
+    let Some(line) = line else {
+        return true;
+    };
+    let Some(first) = line.iter().position(|(o, _)| Some(o) == oids.first()) else {
+        return false;
+    };
+    first + oids.len() <= line.len()
+        && line[first..]
+            .iter()
+            .zip(oids)
+            .all(|((o, merge), oid)| o == oid && !merge)
 }
 
 /// 「Reset <今のブランチ> to <コミット>…」（History と Reflog の右クリック。macOS 版の `resetMenuItem`）。動かし方
@@ -317,74 +382,7 @@ pub fn menu_many(
         .collect();
     let n = commits.len();
     let mut items = Vec::new();
-    let (a, c) = (actions.clone(), commits.clone());
-    items.push(menu::action(
-        tr!("Cherry-pick {count} Commits…", count = n),
-        move || crate::sheets::pick(&a, false, c.iter().rev().cloned().collect()),
-    ));
-    let (a, c) = (actions.clone(), commits.clone());
-    items.push(menu::action(
-        tr!("Revert {count} Commits…", count = n),
-        move || crate::sheets::pick(&a, true, c.clone()),
-    ));
-    // マージはパッチにできない（git format-patch は飛ばす）。押せない項目で残す（macOS 版と同じ）。古い順に。
-    if commits.iter().any(|(_, merge)| *merge) {
-        items.push(Item::Disabled(tr!(
-            "Save {count} Commits as Patches…",
-            count = n
-        )));
-    } else {
-        let (a, oids) = (
-            actions.clone(),
-            commits
-                .iter()
-                .rev()
-                .map(|(o, _)| o.clone())
-                .collect::<Vec<_>>(),
-        );
-        items.push(menu::action(
-            tr!("Save {count} Commits as Patches…", count = n),
-            move || crate::patches::save(&a, oids.clone()),
-        ));
-    }
-    // 連続した行（first-parent で続いているかはコアで確かめる）なら、1 つにまとめられる。
-    let consecutive = rows.windows(2).all(|w| w[1] == w[0] + 1);
-    if n >= 2 && consecutive && !commits.iter().any(|(_, merge)| *merge) {
-        let (e, oids) = (
-            edit.clone(),
-            commits.iter().map(|(o, _)| o.clone()).collect::<Vec<_>>(),
-        );
-        let oldest = oids.last().cloned().unwrap_or_default();
-        items.push(menu::action(
-            tr!("Combine {count} Commits…", count = n),
-            move || e.open(&oldest, Some(Preset::Combine(oids.clone()))),
-        ));
-    }
-    // 今のコミット以外を、上の行から順に 1 つのコミットで merge する（octopus）。
-    let sources = crate::mergeseveral::sources(actions, history, rows);
-    if sources.len() > 1 {
-        let branch = actions.head();
-        let (a, title) = (
-            actions.clone(),
-            tr!(
-                "Merge {count} into {branch}…",
-                count = sources.len(),
-                branch = branch.as_deref().unwrap_or("HEAD")
-            ),
-        );
-        items.push(menu::action(title, move || {
-            crate::mergeseveral::confirm(&a, sources.clone(), branch.clone());
-        }));
-    }
-    // 2 つなら、それぞれを先端とする 2 つの版として比べられる（rebase の前と後など）。
-    if let [(newer, _), (older, _)] = &commits[..] {
-        let (r, ranges) = (range_diff.clone(), vec![format!("{older}...{newer}")]);
-        items.push(menu::action(
-            tr!("Compare as Two Versions (Range Diff)"),
-            move || r.ranges(ranges.clone()),
-        ));
-    }
-    items.push(Item::Separator);
+    // 並びは 1 つのときと同じ: コピー・書き換える・取り込む・書き出す・比べる（macOS 版と同じ）。
     let (w, ids) = (
         widget.clone(),
         commits.iter().map(|(o, _)| o.clone()).collect::<Vec<_>>(),
@@ -402,6 +400,93 @@ pub fn menu_many(
     items.push(menu::action(tr!("Copy Short IDs"), move || {
         w.clipboard().set_text(&ids.join(" "));
     }));
+    items.push(Item::Separator);
+    // 連続した行で、first-parent の並びで続いた merge でないコミットなら、1 つにまとめられる（編集の項目なので、
+    // できなければ出さない）。
+    let oids = commits.iter().map(|(o, _)| o.clone()).collect::<Vec<_>>();
+    let consecutive = rows.windows(2).all(|w| w[1] == w[0] + 1);
+    if n >= 2
+        && consecutive
+        && !commits.iter().any(|(_, merge)| *merge)
+        && combinable(&actions.first_parent_line(), &oids)
+    {
+        let e = edit.clone();
+        let oldest = oids.last().cloned().unwrap_or_default();
+        items.push(menu::action(
+            tr!("Combine {count} Commits…", count = n),
+            move || e.open(&oldest, Some(Preset::Combine(oids.clone()))),
+        ));
+        items.push(Item::Separator);
+    }
+    let (a, c) = (actions.clone(), commits.clone());
+    items.push(menu::action(
+        tr!("Cherry-pick {count} Commits…", count = n),
+        move || crate::sheets::pick(&a, false, c.iter().rev().cloned().collect()),
+    ));
+    let (a, c) = (actions.clone(), commits.clone());
+    items.push(menu::action(
+        tr!("Revert {count} Commits…", count = n),
+        move || crate::sheets::pick(&a, true, c.clone()),
+    ));
+    // 今のコミット以外を、上の行から順に 1 つのコミットで merge する（octopus）。
+    let sources = crate::mergeseveral::sources(actions, history, rows);
+    let branch = actions.head();
+    if sources.len() > 1 {
+        let (a, title) = (
+            actions.clone(),
+            tr!(
+                "Merge {count} into {branch}…",
+                count = sources.len(),
+                branch = branch.as_deref().unwrap_or("HEAD")
+            ),
+        );
+        items.push(menu::action(title, move || {
+            crate::mergeseveral::confirm(&a, sources.clone(), branch.clone());
+        }));
+    } else {
+        // merge できる数は 1 以下なので、数は出さない。
+        items.push(menu::disabled_hint(
+            tr!(
+                "Merge into {branch}…",
+                branch = branch.as_deref().unwrap_or("HEAD")
+            ),
+            tr!("Select two or more commits other than the current one."),
+        ));
+    }
+    items.push(Item::Separator);
+    // マージはパッチにできない（git format-patch は飛ばす）。押せない項目で、わけを添える。古い順に。
+    if commits.iter().any(|(_, merge)| *merge) {
+        items.push(menu::disabled_hint(
+            tr!("Save {count} Commits as Patches…", count = n),
+            tr!("A merge can’t be saved as a patch."),
+        ));
+    } else {
+        let (a, oids) = (
+            actions.clone(),
+            commits
+                .iter()
+                .rev()
+                .map(|(o, _)| o.clone())
+                .collect::<Vec<_>>(),
+        );
+        items.push(menu::action(
+            tr!("Save {count} Commits as Patches…", count = n),
+            move || crate::patches::save(&a, oids.clone()),
+        ));
+    }
+    // 2 つなら、それぞれを先端とする 2 つの版として比べられる（rebase の前と後など）。
+    if let [(newer, _), (older, _)] = &commits[..] {
+        let (r, ranges) = (range_diff.clone(), vec![format!("{older}...{newer}")]);
+        items.push(menu::action(
+            tr!("Compare as Two Versions (Range Diff)"),
+            move || r.ranges(ranges.clone()),
+        ));
+    } else {
+        items.push(menu::disabled_hint(
+            tr!("Compare as Two Versions (Range Diff)"),
+            tr!("Select exactly two commits."),
+        ));
+    }
     items
 }
 
@@ -455,4 +540,70 @@ pub fn move_by_drop(
         }
         edit.open(&chain[from.max(to)], Some(Preset::Move(oid, to)));
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 新しい順に c・b・m（merge）・a・root。
+    fn line() -> Option<Vec<(String, bool)>> {
+        Some(
+            [
+                ("c", false),
+                ("b", false),
+                ("m", true),
+                ("a", false),
+                ("root", false),
+            ]
+            .map(|(o, m)| (o.to_owned(), m))
+            .to_vec(),
+        )
+    }
+
+    fn edits(any: bool, squash: bool, split: bool) -> Edits {
+        Edits { any, squash, split }
+    }
+
+    #[test]
+    fn edits_only_on_head_first_parent_line() {
+        assert_eq!(editable_edits(&line(), "c", false), edits(true, true, true));
+        // 1 つ前が merge なら squash できない。最初の merge より新しいので split はできる。
+        assert_eq!(
+            editable_edits(&line(), "b", false),
+            edits(true, false, true)
+        );
+        // merge を越えた先は編集モードでは書き換えられるが、split はできない。
+        assert_eq!(
+            editable_edits(&line(), "a", false),
+            edits(true, true, false)
+        );
+        // 最初のコミットは squash も split もできない。
+        assert_eq!(
+            editable_edits(&line(), "root", false),
+            edits(true, false, false)
+        );
+        // 並びの外・merge には出さない。
+        assert_eq!(
+            editable_edits(&line(), "x", false),
+            edits(false, false, false)
+        );
+        assert_eq!(
+            editable_edits(&line(), "m", true),
+            edits(false, false, false)
+        );
+        // 読む前は出しておく。
+        assert_eq!(editable_edits(&None, "x", false), edits(true, true, true));
+    }
+
+    #[test]
+    fn combines_only_consecutive_commits_on_the_line() {
+        let ids = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert!(combinable(&line(), &ids(&["c", "b"])));
+        assert!(!combinable(&line(), &ids(&["b", "m"])));
+        assert!(!combinable(&line(), &ids(&["c", "a"])));
+        assert!(!combinable(&line(), &ids(&["x", "y"])));
+        assert!(!combinable(&line(), &ids(&["a", "root", "z"])));
+        assert!(combinable(&None, &ids(&["x", "y"])));
+    }
 }

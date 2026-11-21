@@ -28,6 +28,11 @@ becomes the GitHub Release notes.
 - Sheet fields are labeled without a colon, and Japanese no longer puts a space between joined sentences or leaves a
   few menu items (Amend Last Commit, Fixup / Squash Commit For, the Submodules header's) in English.
 - History's graph draws HEAD's commit as a hollow ring and merge commits as smaller dots.
+- History's context menu shows the commit-editing items only for commits on HEAD's first-parent line and grays out
+  other items that can't be used, with the reason in a tooltip. It starts with copying, like the sidebar's, and names
+  two items after git: Squash into Previous… and Interactive Rebase from Here….
+- History's order, one-line rows, ancestor emphasis and row items left Settings > Appearance; set them from the
+  display button above History.
 
 #### Fixed
 

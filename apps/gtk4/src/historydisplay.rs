@@ -760,7 +760,7 @@ impl Shaper {
         });
     }
 
-    /// 折りたたんだ merge の右クリックの項目（取り込んだ側を開く・たたむ）。なければ空。
+    /// 折りたたんだ merge の右クリックの項目（区切りと、取り込んだ側を開く・たたむ。メニューの最後に付ける）。なければ空。
     pub fn merge_items(self: &Rc<Self>, history: &HistorySnapshot, row: u32) -> Vec<Item> {
         let Some(&id) = history.graph.ids().get(row as usize) else {
             return Vec::new();
@@ -776,12 +776,12 @@ impl Shaper {
         };
         let weak = Rc::downgrade(self);
         vec![
+            Item::Separator,
             menu::action(title, move || {
                 if let Some(s) = weak.upgrade() {
                     s.toggle_merge(id);
                 }
             }),
-            Item::Separator,
         ]
     }
 

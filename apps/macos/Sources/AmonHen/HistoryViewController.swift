@@ -352,7 +352,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         // ほかのプログラムで commit・rebase すると HEAD が動く。今のブランチに絞っていれば絞り込み直す。
         didSet {
             renderer.head = head
-            if head != oldValue { redrawGraph() }
+            if head != oldValue { redrawGraph(); refreshFirstParentLine() }
             if head != oldValue, scope == .current, history != nil { scheduleReloadScope() }
         }
     }
@@ -1079,6 +1079,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     /// ref の一覧が変わった。各コミットのラベルを作り直して描き直す。
     func show(refs: Refs) {
         lastRefs = refs
+        refreshFirstParentLine()
         // 絞り込んだ ref がほかのプログラムで動いた（rebase・commit・fetch）。前のコミットのままだと、消えた
         // コミットから辿ることになり空になるので、新しいコミットに付け替えて絞り込み直す。
         if case let .ref(kind, name, target) = scope,
@@ -1879,7 +1880,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         preparedRows = preparedRows.filter { keep.contains($0.key / Self.chunkRows) }
     }
 
-    /// 複数のコミットを選んで右クリック: 古い順に cherry-pick、新しい順に revert、連続していれば squash、ID のコピー。
+    /// 複数のコミットを選んで右クリック: ID のコピー、続いていれば squash、古い順に cherry-pick、新しい順に revert、
+    /// まとめて merge、パッチ、2 つなら Range Diff（並びは 1 つのときと同じ）。
     private func buildMultipleMenu(_ menu: NSMenu, rows: [Int], history: History, actions: Actions) {
         // 行は新しい順（0 が一番新しい）。
         let commits: [(hex: String, isMerge: Bool)] = rows.compactMap { row in
@@ -1888,22 +1890,27 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             return (id.map { String(format: "%02x", $0) }.joined(), isMerge)
         }
         func add(_ title: String, _ action: @escaping () -> Void) { menu.addItem(ClosureMenuItem(title: title, action: action)) }
-        add(L("Cherry-pick %ld Commits…", commits.count)) { actions.pickWithConfirmation(revert: false, commits.reversed()) }
-        add(L("Revert %ld Commits…", commits.count)) { actions.pickWithConfirmation(revert: true, commits) }
-        // マージはパッチにできない（git format-patch は飛ばす）。
-        if commits.contains(where: \.isMerge) {
-            menu.addItem(NSMenuItem(title: L("Save %ld Commits as Patches…", commits.count), action: nil, keyEquivalent: ""))
-        } else {
-            add(L("Save %ld Commits as Patches…", commits.count)) { actions.savePatches(commits.reversed().map(\.hex)) }
+        add(Titles.copyCommitIDs) {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(commits.map(\.hex).joined(separator: "\n"), forType: .string)
         }
-        // 連続した行（first-parent で続いているかはコアで確かめる）なら、1 つにまとめられる。
+        add(Titles.copyShortIDs) {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(commits.map { String($0.hex.prefix(Titles.shortIDLength)) }.joined(separator: " "), forType: .string)
+        }
+        menu.addItem(.separator())
+        // 連続した行で、first-parent の並びで続いた merge でないコミットなら、1 つにまとめられる（編集の項目なので、
+        // できなければ出さない）。
         let sorted = rows.sorted()
         if sorted.count >= 2, zip(sorted, sorted.dropFirst()).allSatisfy({ $1 == $0 + 1 }),
-           !commits.contains(where: \.isMerge) {
+           !commits.contains(where: \.isMerge), combinable(commits.map(\.hex)) {
             add(L("Combine %ld Commits…", commits.count)) { [weak self] in
                 self?.onEditCommits?(commits.last!.hex, .combine(commits.map(\.hex)))
             }
+            menu.addItem(.separator())
         }
+        add(L("Cherry-pick %ld Commits…", commits.count)) { actions.pickWithConfirmation(revert: false, commits.reversed()) }
+        add(L("Revert %ld Commits…", commits.count)) { actions.pickWithConfirmation(revert: true, commits) }
         // 今のコミット以外を、上の行から順に 1 つのコミットで merge する（octopus）。ブランチ・タグがあればその名前で
         // （merge のメッセージが git と同じになる）。
         let current = editingBranch ?? lastRefs?.headBranch
@@ -1922,21 +1929,26 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             add(L("Merge %ld into %@…", sources.count, current ?? "HEAD")) {
                 actions.mergeSeveralWithConfirmation(sources, into: current)
             }
+        } else {
+            // merge できる数は 1 以下なので、数は出さない。
+            menu.addItem(Self.disabledItem(L("Merge into %@…", current ?? "HEAD"),
+                                           reason: L("Select two or more commits other than the current one.")))
+        }
+        menu.addItem(.separator())
+        // マージはパッチにできない（git format-patch は飛ばす）。
+        if commits.contains(where: \.isMerge) {
+            menu.addItem(Self.disabledItem(L("Save %ld Commits as Patches…", commits.count),
+                                           reason: L("A merge can’t be saved as a patch.")))
+        } else {
+            add(L("Save %ld Commits as Patches…", commits.count)) { actions.savePatches(commits.reversed().map(\.hex)) }
         }
         // 2 つなら、それぞれを先端とする 2 つの版として比べられる（rebase の前と後など）。
         if commits.count == 2 {
             add(L("Compare as Two Versions (Range Diff)")) { [weak self] in
                 self?.onRangeDiff?(["\(commits[1].hex)...\(commits[0].hex)"])
             }
-        }
-        menu.addItem(.separator())
-        add(Titles.copyCommitIDs) {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(commits.map(\.hex).joined(separator: "\n"), forType: .string)
-        }
-        add(Titles.copyShortIDs) {
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(commits.map { String($0.hex.prefix(Titles.shortIDLength)) }.joined(separator: " "), forType: .string)
+        } else {
+            menu.addItem(Self.disabledItem(L("Compare as Two Versions (Range Diff)"), reason: L("Select exactly two commits.")))
         }
     }
 
@@ -1984,48 +1996,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         func add(_ title: String, _ action: @escaping () -> Void) {
             menu.addItem(ClosureMenuItem(title: title, action: action))
         }
-        // 折りたたんだ merge: 取り込んだ側を開く・たたむ。
-        let hidden = history.hiddenCount(row: row)
-        if hidden > 0 || expandedMerges.contains(id) {
-            add(hidden > 0 ? L("Show %ld Merged Commits", hidden) : L("Fold Merged Commits")) { [weak self] in self?.toggleMerge(id) }
-            menu.addItem(.separator())
-        }
-        add(Titles.newBranch(from: short)) { actions.newBranch(at: hex) }
-        add(Titles.newTag(at: short)) { actions.newTag(at: hex) }
-        add(Titles.checkoutDetached(short)) { actions.checkoutWithConfirmation(.detach(hex)) }
-        menu.addItem(actions.resetMenuItem(to: hex))
-        menu.addItem(.separator())
-        if !isMerge {
-            // コミットの編集は、History の編集モードで（変更を積んで Apply）。ここにあるのは、最初の変更を入れて
-            // 編集モードを開く近道。
-            add(L("Edit Message…")) { [weak self] in self?.onEditCommits?(hex, .reword(hex)) }
-            add(L("Combine with Older Commit…")) { [weak self] in self?.onEditCommits?(hex, .combine([hex])) }
-            add("Drop…") { [weak self] in self?.onEditCommits?(hex, .drop(hex)) }
-            add(L("Edit Commits from Here…")) { [weak self] in self?.onEditCommits?(hex, nil) }
-            // 分ける（止めてから Working Copy で分けてコミットする）は、編集モードの外の操作。
-            add("Split…") {
-                Task { @MainActor in
-                    // worktree の今のブランチを書き換えるので、Cherry-pick・Revert と同じく、どの worktree かを書く。
-                    guard await actions.confirm(L("Split %@?", short),
-                                                message: actions.sheetMessage(
-                                                    L("Its changes go back to the working tree; commit them in parts, then Continue.") + sentenceGap
-                                                        + Actions.canUndo), ok: "Split") else { return }
-                    actions.rewrite("Split \(short)", ["kind": "split", "oid": hex])
-                }
-            }
-            menu.addItem(.separator())
-        }
-        add(Titles.cherryPick(short)) { actions.pickWithConfirmation(revert: false, [(hex, isMerge)]) }
-        add(Titles.revert(short)) { actions.pickWithConfirmation(revert: true, [(hex, isMerge)]) }
-        if isMerge {
-            menu.addItem(NSMenuItem(title: L("Save as Patch…"), action: nil, keyEquivalent: ""))
-        } else {
-            add(L("Save as Patch…")) { actions.savePatches([hex]) }
-        }
-        add(L("Export Archive…")) { [weak self] in
-            actions.exportArchive(rev: hex, label: self?.archiveLabel(id) ?? short)
-        }
-        menu.addItem(.separator())
+        // 並びはサイドバーと同じくコピーから: コピー・作る・移る・書き換える・取り込む・書き出す・たたむ。
         add(Titles.copyCommitID) {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(hex, forType: .string)
@@ -2039,6 +2010,98 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
                 NSPasteboard.general.setString(name, forType: .string)
             }
         }
+        menu.addItem(.separator())
+        add(Titles.newBranch(from: short)) { actions.newBranch(at: hex) }
+        add(Titles.newTag(at: short)) { actions.newTag(at: hex) }
+        menu.addItem(.separator())
+        add(Titles.checkoutDetached(short)) { actions.checkoutWithConfirmation(.detach(hex)) }
+        menu.addItem(actions.resetMenuItem(to: hex))
+        menu.addItem(.separator())
+        // コミットの編集は、History の編集モードで（変更を積んで Apply）。ここにあるのは、最初の変更を入れて
+        // 編集モードを開く近道。編集できないコミット（HEAD の first-parent の並びの外・merge）には出さない。
+        let edits = editableEdits(hex, isMerge: isMerge)
+        if edits.any {
+            add(L("Edit Message…")) { [weak self] in self?.onEditCommits?(hex, .reword(hex)) }
+            if edits.squash {
+                add(L("Squash into Previous…")) { [weak self] in self?.onEditCommits?(hex, .combine([hex])) }
+            }
+            add("Drop…") { [weak self] in self?.onEditCommits?(hex, .drop(hex)) }
+            add(L("Interactive Rebase from Here…")) { [weak self] in self?.onEditCommits?(hex, nil) }
+            // 分ける（止めてから Working Copy で分けてコミットする）は、編集モードの外の操作。
+            if edits.split {
+                add("Split…") {
+                    Task { @MainActor in
+                        // worktree の今のブランチを書き換えるので、Cherry-pick・Revert と同じく、どの worktree かを書く。
+                        guard await actions.confirm(L("Split %@?", short),
+                                                    message: actions.sheetMessage(
+                                                        L("Its changes go back to the working tree; commit them in parts, then Continue.") + sentenceGap
+                                                            + Actions.canUndo), ok: "Split") else { return }
+                        actions.rewrite("Split \(short)", ["kind": "split", "oid": hex])
+                    }
+                }
+            }
+            menu.addItem(.separator())
+        }
+        add(Titles.cherryPick(short)) { actions.pickWithConfirmation(revert: false, [(hex, isMerge)]) }
+        add(Titles.revert(short)) { actions.pickWithConfirmation(revert: true, [(hex, isMerge)]) }
+        menu.addItem(.separator())
+        if isMerge {
+            menu.addItem(Self.disabledItem(L("Save as Patch…"), reason: L("A merge can’t be saved as a patch.")))
+        } else {
+            add(L("Save as Patch…")) { actions.savePatches([hex]) }
+        }
+        add(L("Export Archive…")) { [weak self] in
+            actions.exportArchive(rev: hex, label: self?.archiveLabel(id) ?? short)
+        }
+        // 折りたたんだ merge: 取り込んだ側を開く・たたむ。
+        let hidden = history.hiddenCount(row: row)
+        if hidden > 0 || expandedMerges.contains(id) {
+            menu.addItem(.separator())
+            add(hidden > 0 ? L("Show %ld Merged Commits", hidden) : L("Fold Merged Commits")) { [weak self] in self?.toggleMerge(id) }
+        }
+    }
+
+    /// 押せない項目（理由はツールチップに）。
+    private static func disabledItem(_ title: String, reason: String) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        item.toolTip = reason
+        return item
+    }
+
+    /// HEAD から first-parent で辿った並び（新しい順、merge かどうか）。右クリックで、編集の項目を出すかを決める。
+    /// 読む前は nil（そのときは項目を出し、押してから確かめる）。
+    private var firstParentLine: [(oid: String, merge: Bool)]?
+    private var firstParentRequest = 0
+
+    /// HEAD・ref が動いたら、first-parent の並びを読み直す。
+    private func refreshFirstParentLine() {
+        guard let actions else { return }
+        firstParentRequest += 1
+        let request = firstParentRequest
+        Task { @MainActor in
+            let line = await actions.firstParentCommits()
+            guard request == firstParentRequest else { return }
+            firstParentLine = line
+        }
+    }
+
+    /// コミット `hex` に出す編集の項目。編集モードは merge を越えて first-parent の並びを書き換えられる。Squash は
+    /// 1 つ前（古い方）が並びにあって merge でないとき、Split は最初の merge より新しく、最初のコミットでないとき。
+    private func editableEdits(_ hex: String, isMerge: Bool) -> (any: Bool, squash: Bool, split: Bool) {
+        guard !isMerge else { return (false, false, false) }
+        guard let line = firstParentLine else { return (true, true, true) }
+        guard let index = line.firstIndex(where: { $0.oid == hex }) else { return (false, false, false) }
+        let hasOlder = index + 1 < line.count
+        let squash = hasOlder && !line[index + 1].merge
+        let split = hasOlder && !line[..<index].contains(where: \.merge)
+        return (true, squash, split)
+    }
+
+    /// 選んだ行（新しい順）が、first-parent の並びで続いた、merge でないコミットか（Combine で 1 つにまとめられる）。
+    private func combinable(_ hexes: [String]) -> Bool {
+        guard let line = firstParentLine else { return true }
+        guard let first = line.firstIndex(where: { $0.oid == hexes.first }), first + hexes.count <= line.count else { return false }
+        return zip(line[first...], hexes).allSatisfy { $0.oid == $1 && !$0.merge }
     }
 
     /// History を入れ替えて選び直している途中（詳細には、終わってから 1 回だけ知らせる）。
