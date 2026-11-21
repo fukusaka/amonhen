@@ -183,6 +183,17 @@ fn with_history(f: impl FnOnce(&mut HistoryView)) {
     }
 }
 
+/// History の CI の印の吹き出し（macOS 版・GTK4 版のチェックのポップオーバー）。
+struct ChecksPopover {
+    sha: String,
+    status: crate::github::Ci,
+    web_url: String,
+    checks: Option<Result<Vec<crate::github::CommitCheck>, String>>,
+    /// 印の位置（History の中の DIP）。吹き出しはその下に出す。
+    x: f64,
+    y: f64,
+}
+
 struct Root {
     /// 窓の根の Grid（メニューのショートカットを、フォーカスのある部品より先に受ける）。
     root: ElementRef<Grid>,
@@ -190,6 +201,10 @@ struct Root {
     toolbar: ElementRef<Grid>,
     panel: ElementRef<SwapChainPanel>,
     area: ElementRef<Grid>,
+    /// History の CI の印の吹き出し（チェックの一覧）と、それを開く見えないボタン、開いた回数。
+    checks_popover: Option<ChecksPopover>,
+    checks_anchor: ElementRef<Button>,
+    checks_opened: u64,
     diff_panel: ElementRef<SwapChainPanel>,
     diff_area: ElementRef<Grid>,
     /// 差分で右クリックしたファイル（見出しのメニューの中身）。
@@ -870,6 +885,10 @@ enum Message {
     BranchForecast(String, Value),
     /// CI の印を押した（コミット、状態）と、そのチェックを読んだ。
     Checks(String, crate::github::Ci),
+    /// History の CI の印を押した（その位置に吹き出しを出す）。
+    ChecksAt(String, crate::github::Ci, f64, f64),
+    /// 吹き出しの Open on GitHub。
+    OpenChecksOnGitHub,
     ChecksLoaded(String, Result<Vec<crate::github::CommitCheck>, String>),
     /// Create Pull Request… のダイアログの欄（0 は題、1 は base、2 は本文）と Draft。
     PullRequestField(usize, String),
@@ -1346,6 +1365,9 @@ impl Component for Root {
             toolbar: ElementRef::new(),
             panel: ElementRef::new(),
             area: ElementRef::new(),
+            checks_popover: None,
+            checks_anchor: ElementRef::new(),
+            checks_opened: 0,
             diff_panel: ElementRef::new(),
             diff_area: ElementRef::new(),
             diff_file: None,
@@ -1557,6 +1579,32 @@ impl Component for Root {
 }
 
 impl Root {
+    /// History の CI の印の吹き出しを開く、印の位置に置いた見えないボタン（吹き出しの中身はチェックの一覧）。
+    fn checks_anchor_view(&self, context: &ViewContext<Self>) -> View {
+        let Some(popover) = &self.checks_popover else {
+            return View::empty();
+        };
+        let content = StackPanel::new().spacing(8.0).width(420.0).children((
+            TextBlock::new()
+                .text(popover.status.label())
+                .font_weight(FontWeight::SEMI_BOLD),
+            checks_view(&popover.sha, popover.checks.as_ref()),
+            Button::new()
+                .horizontal_alignment(HorizontalAlignment::Right)
+                .on_click(context.callback(|()| Message::OpenChecksOnGitHub))
+                .content(tr!("Open on GitHub")),
+        ));
+        Button::new()
+            .element_ref(&self.checks_anchor)
+            .horizontal_alignment(HorizontalAlignment::Left)
+            .vertical_alignment(VerticalAlignment::Top)
+            .margin(Thickness::new(popover.x, popover.y, 0.0, 0.0))
+            .width(1.0)
+            .height(1.0)
+            .opacity(0.0)
+            .flyout_with(Flyout::rich(content).placement(FlyoutPlacement::Bottom))
+    }
+
     fn handle(&mut self, message: Message, context: &ComponentContext<Self>) {
         // Push の画面を閉じたら、右の列を元の画面のものに戻す。
         if matches!(message, Message::DialogClosed(_))
@@ -5571,7 +5619,38 @@ impl Root {
                     Message::ChecksLoaded(sha, result)
                 });
             }
+            Message::ChecksAt(sha, status, x, y) => {
+                let Some((_, github)) = self.github.github.clone() else {
+                    return;
+                };
+                self.checks_popover = Some(ChecksPopover {
+                    sha: sha.clone(),
+                    status,
+                    web_url: github.web_url(),
+                    checks: None,
+                    x,
+                    y,
+                });
+                self.checks_opened += 1;
+                context.spawn_background(move |_| {
+                    let result = crate::github::commit_checks(&github, &sha);
+                    Message::ChecksLoaded(sha, result)
+                });
+            }
+            Message::OpenChecksOnGitHub => {
+                if let Some(popover) = &self.checks_popover {
+                    crate::files::open_url(&format!(
+                        "{}/commit/{}/checks",
+                        popover.web_url, popover.sha
+                    ));
+                }
+            }
             Message::ChecksLoaded(loaded, result) => {
+                if let Some(popover) = &mut self.checks_popover
+                    && popover.sha == loaded
+                {
+                    popover.checks = Some(result.clone());
+                }
                 if let Some(Dialog::Checks { sha, checks, .. }) = &mut self.dialog
                     && *sha == loaded
                 {
@@ -8469,6 +8548,22 @@ impl Root {
                 }
             },
         );
+        // History の CI の印を押したら、その位置の見えないボタンの吹き出しを開く（置いてから）。
+        if self.checks_opened > 0 {
+            let anchor = self.checks_anchor.clone();
+            context.use_effect("checks-popover", self.checks_opened, move || {
+                let _ = anchor.request_native_element(|result| {
+                    if let Ok(element) = result
+                        && let Ok(button) = element.cast::<xaml::Button>()
+                        && let Ok(flyout) = button.Flyout()
+                        && let Ok(target) = button.cast::<xaml::FrameworkElement>()
+                    {
+                        let _ = flyout.ShowAt(&target);
+                    }
+                });
+                None
+            });
+        }
         // 差分の検索の帯を開いたら、欄にフォーカスを入れる（描き直した後に）。
         if self.diff_find_opened > 0 {
             let field = self.diff_find_box.clone();
@@ -8611,7 +8706,7 @@ impl Root {
                             // 窓全体を透かすときは、ほかの画面を重ねている間は隠す（重ねた画面が地を塗らないので
                             // 透けて見える）。描画の知らせは止めないよう、外さずに見えなくする。
                             .opacity(if history_covered { 0.0 } else { 1.0 })
-                            .children((history,))
+                            .children((history, self.checks_anchor_view(context)))
                             .menu(Menu::new(
                                 self.history_menu(),
                                 context.callback(Message::HistoryMenu),
@@ -20207,7 +20302,12 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
                         && let Some(row) = h.session.row_at(position.Y)
                         && let Some((id, ci)) = h.session.ci_mark_at(row, position.X)
                     {
-                        h.sender.send(Message::Checks(id.to_string(), ci));
+                        h.sender.send(Message::ChecksAt(
+                            id.to_string(),
+                            ci,
+                            f64::from(position.X),
+                            f64::from(position.Y),
+                        ));
                         return;
                     }
                     if let Some(row) = h.session.row_at(position.Y) {
