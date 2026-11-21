@@ -33,7 +33,9 @@ struct BookmarkData: Codable, Equatable {
 }
 
 /// ブックマーク: 個別に登録したリポジトリ（グループ・お気に入り・表示名）と、リポジトリを探すフォルダ。
-/// `~/Library/Application Support/Amon Hen/bookmarks.json` に置く（構造があり、手で直せるように）。
+/// この Mac の Amon Hen の設定と同じフォルダの `bookmarks.json`（`~/.config/amonhen/`）に置く（構造があり、手で直せる
+/// ように）。GTK4 のアプリ・TUI も同じファイルを読む（`amonhen_model::bookmarks`）。前の置き場所
+/// `~/Library/Application Support/Amon Hen/bookmarks.json` にだけあれば、初めに写す（前のものは残す）。
 /// スキャンの結果は保存せず、一覧を開くたびと、フォルダの中でリポジトリが増えた・消えたとき（FSEvents）に裏で取り直す。
 final class Bookmarks {
     static let shared = Bookmarks()
@@ -56,10 +58,23 @@ final class Bookmarks {
     /// 行の状態（peek・fetch の結果）が変わった。一覧はその行だけ描き直す（全部作り直すとスクロールが戻る）。
     var onRowChange: ((String) -> Void)?
 
-    private static var file: URL {
-        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Amon Hen")
-        return dir.appendingPathComponent("bookmarks.json")
+    private static let file: URL = sharedFile(
+        settings: MachineGit.thisMac?.file,
+        old: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Amon Hen").appendingPathComponent("bookmarks.json"))
+
+    /// 設定のファイル `settings`（コアが決める。`XDG_CONFIG_HOME`・HOME で、CLI・TUI と同じ）と同じフォルダの
+    /// `bookmarks.json`。そこになく前の置き場所 `old` にあれば写す（前のものは残す）。設定の場所が決められなければ `old`。
+    nonisolated static func sharedFile(settings: String?, old: URL) -> URL {
+        guard let settings else { return old }
+        let file = URL(fileURLWithPath: settings).deletingLastPathComponent().appendingPathComponent("bookmarks.json")
+        let manager = FileManager.default
+        if !manager.fileExists(atPath: file.path), manager.fileExists(atPath: old.path) {
+            try? manager.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            // ほかの Amon Hen が同時に写していれば、失敗して相手のものが残る（中身は同じ）。
+            try? manager.copyItem(at: old, to: file)
+        }
+        return file
     }
 
     private init() {

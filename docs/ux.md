@@ -117,7 +117,7 @@ The list appears in two places, with the same contents and operations (`Reposito
 - **The repository name next to it** (like GitHub Desktop). It opens the list in a popover with names
   and status only, favorites first and then by when they were last opened; choosing one switches the current tab to it.
 
-Saved not in UserDefaults but in `~/Library/Application Support/Amon Hen/bookmarks.json` (structured, and editable by hand). Scan results are not saved; they are collected again in the background at launch.
+Saved not in UserDefaults but in `bookmarks.json` in the folder of Amon Hen's settings on this Mac, `~/.config/amonhen/` (structured, and editable by hand); the GTK4 app and the TUI read the same file. When only the old place, `~/Library/Application Support/Amon Hen/bookmarks.json`, has it, the app copies it there once and leaves the old file. Scan results are not saved; they are collected again in the background at launch.
 
 ### Settings per SSH host
 

@@ -109,7 +109,7 @@
 - **その隣のリポジトリ名**（GitHub Desktop と同じ）: 押すと一覧を名前と状態だけで出し（お気に入り、そのあと最後に
   開いた順）、選ぶと今のタブをそのリポジトリに切り替える。
 
-保存は UserDefaults ではなく `~/Library/Application Support/Amon Hen/bookmarks.json`（構造があり、手で直せるように）。スキャンの結果は保存せず、起動時に裏で取り直す。
+保存は UserDefaults ではなく、この Mac の Amon Hen の設定と同じフォルダ `~/.config/amonhen/` の `bookmarks.json`（構造があり、手で直せるように）。GTK4 のアプリと TUI も同じファイルを読む。前の置き場所 `~/Library/Application Support/Amon Hen/bookmarks.json` にだけあれば、一度だけそこへ写す（前のファイルは残す）。スキャンの結果は保存せず、起動時に裏で取り直す。
 
 ### SSH 先のホストごとの設定
 
