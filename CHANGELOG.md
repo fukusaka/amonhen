@@ -39,6 +39,8 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
+- A stash or another change to the working tree could fail with `index.lock: File exists` when the line counts of the
+  changes were read at the same moment; reading them no longer takes the index lock.
 - Repository Settings > Remotes' Prune asks first, as the sidebar's does.
 - The Undo log is no longer emptied when it is read while being written or can't be read for a moment: it is replaced
   as a whole, an unreadable log is an error, and a broken one is set aside as `undo.json.broken-<time>`.
