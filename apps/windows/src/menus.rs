@@ -279,6 +279,25 @@ pub fn menus() -> Vec<(String, Vec<MenuItem>)> {
             }
             items.splice(0..0, tabs);
         }
+        // Window の終わりに、開いている窓（macOS 版の Window メニューの窓の並び。選ぶとその窓を前に出す）。
+        if menu == Menu::Window {
+            let windows = crate::tabs::windows();
+            if windows.len() > 1 {
+                items.push(MenuItem::separator("-windows"));
+                let focused = crate::tabs::focused();
+                for (id, tab) in windows {
+                    let Some(tab) = tab else { continue };
+                    let name = crate::tabs::title(tab.id)
+                        .unwrap_or_else(|| crate::tabs::name(&tab.location));
+                    let label = if id == focused {
+                        format!("✓ {name}")
+                    } else {
+                        name
+                    };
+                    items.push(MenuItem::item(format!("focus-window:{id}"), label));
+                }
+            }
+        }
         if items.is_empty() {
             continue;
         }

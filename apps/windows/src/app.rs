@@ -121,6 +121,8 @@ fn args_for(tab: &crate::tabs::Tab) -> (Args, Instant) {
 }
 
 thread_local! {
+    /// 窓ごとの HWND（Window メニューから窓を前に出す）。
+    static WINDOW_HANDLES: RefCell<std::collections::HashMap<u64, u64>> = RefCell::new(Default::default());
     /// 開くのを頼まれた窓（それぞれの最初のタブ）。前のタブの根の部品が開く。
     static WINDOW_REQUESTS: RefCell<Vec<crate::tabs::Tab>> = const { RefCell::new(Vec::new()) };
 }
@@ -204,6 +206,7 @@ impl Component for Shell {
                     eprintln!("最後のリポジトリを覚えられない: {e}");
                 }
                 crate::tabs::forget_window(window);
+                WINDOW_HANDLES.with(|h| h.borrow_mut().remove(&window));
             }))
         });
         Grid::new().children((View::keyed_fragment(roots),))
@@ -1708,6 +1711,18 @@ impl Root {
         }
         match message {
             Message::WindowFocused => {}
+            Message::Command(id) if id.starts_with("focus-window:") => {
+                // Window メニューで選んだ窓を前に出す。
+                let hwnd = id["focus-window:".len()..]
+                    .parse::<u64>()
+                    .ok()
+                    .and_then(|w| WINDOW_HANDLES.with(|h| h.borrow().get(&w).copied()));
+                if let Some(hwnd) = hwnd {
+                    use windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
+                    let window = windows::Win32::Foundation::HWND(hwnd as *mut core::ffi::c_void);
+                    let _ = unsafe { SetForegroundWindow(window) };
+                }
+            }
             Message::OpenWindows => {
                 for tab in WINDOW_REQUESTS.with(|r| std::mem::take(&mut *r.borrow_mut())) {
                     let window = crate::tabs::new_window_with(vec![tab], 0);
@@ -18563,6 +18578,10 @@ impl HistoryView {
                     hwnd.set(handle);
                 }
             });
+        }
+        if self.hwnd.get() != 0 {
+            let (window, hwnd) = (self.window, self.hwnd.get());
+            WINDOW_HANDLES.with(|w| w.borrow_mut().insert(window, hwnd));
         }
         let only = crate::tabs::windows().len() == 1;
         let active =
