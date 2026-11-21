@@ -157,6 +157,8 @@ pub fn run(args: &[String]) -> Result<ExitCode> {
     let mut given = given.into_owned();
     let mut files_here = files_here;
     loop {
+        // 開いたことを覚える（アプリ・GTK4 と同じ recent.json。Quick Open・アプリの一覧に出る）。書けなくても開く。
+        let _ = amonhen_model::recent::touch(&recent_location(&given));
         #[cfg(unix)]
         let next = match &askpass {
             Some(askpass) => amonhen_tui::run_asking(front, local, files_here, askpass)?,
@@ -173,6 +175,33 @@ pub fn run(args: &[String]) -> Result<ExitCode> {
         files_here = !given.starts_with("ssh://") && !given.starts_with("daemon:ssh://");
         front = Arc::from(open_repository(std::path::Path::new(&given))?);
     }
+}
+
+/// 最近開いたものに覚える形。手元のパスは絶対パスにして、リポジトリの中のフォルダなら作業ツリーの一番上にする
+/// （アプリと同じく、リンクは解かない）。`ssh://`・`daemon:` の場所はそのまま。
+fn recent_location(given: &str) -> String {
+    if given.starts_with("ssh://") || given.starts_with("daemon:") {
+        return given.to_owned();
+    }
+    let Ok(full) = std::path::absolute(given) else {
+        return given.to_owned();
+    };
+    let mut clean = PathBuf::new();
+    for part in full.components() {
+        match part {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                clean.pop();
+            }
+            other => clean.push(other),
+        }
+    }
+    clean
+        .ancestors()
+        .find(|d| d.join(".git").exists())
+        .unwrap_or(&clean)
+        .to_string_lossy()
+        .into_owned()
 }
 
 /// 開いている場所 `given` と同じ開き方で、worktree の `path`（エンジンが返す、その機械の絶対パス）を開く場所。
@@ -197,7 +226,20 @@ fn local(time: i64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::worktree_location;
+    use super::{recent_location, worktree_location};
+
+    /// 最近開いたものには、リポジトリの一番上の絶対パスで覚える（SSH 先・daemon 越しはそのまま）。
+    #[test]
+    fn recents_keep_the_top_of_the_repository() {
+        let dir = tempfile::tempdir().unwrap();
+        let top = dir.path().join("repo");
+        std::fs::create_dir_all(top.join(".git")).unwrap();
+        std::fs::create_dir_all(top.join("src/deep")).unwrap();
+        let inside = top.join("src/deep/..").to_string_lossy().into_owned();
+        assert_eq!(recent_location(&inside), top.to_string_lossy());
+        assert_eq!(recent_location("ssh://host/w/a"), "ssh://host/w/a");
+        assert_eq!(recent_location("daemon:/w/a"), "daemon:/w/a");
+    }
 
     /// worktree は、開いているリポジトリと同じ開き方で開く。
     #[test]
