@@ -1,10 +1,11 @@
-//! 窓のメニューバー。操作の名前とメニューの区切りは、macOS 版・GTK4 版と共通の操作の表（`amonhen-commands`）から
-//! 作る。この FE にまだ機能のない操作は出さない（GTK4 版の `PENDING` と同じ考え）。
+//! 窓のメニュー（タイトルバーの ≡）とツールバー。操作の名前とメニューの区切りは、macOS 版・GTK4 版と共通の
+//! 操作の表（`amonhen-commands`）から作る。この FE にまだ機能のない操作は出さない（GTK4 版の `PENDING` と同じ
+//! 考え）。
 
 use amonhen_commands::{Command, Menu};
 use windows_reactor::{
-    Callback, CommandBar, CommandBarCommand, GridChildExt, MenuBar, MenuBarItem, MenuBarSlot,
-    MenuExt, MenuItem, MenuShortcut, SlotsControl, Symbol, View,
+    Button, Callback, CommandBar, CommandBarCommand, ContentControl, LayoutControl, MenuExt,
+    MenuItem, MenuShortcut, Symbol, TextBlock, TooltipExt, VerticalAlignment, View,
 };
 
 /// この FE で動く操作。
@@ -81,8 +82,9 @@ fn title(c: &Command) -> String {
     }
 }
 
-/// メニューバー。項目を選ぶと `on_click` が操作の id を受ける。
-pub fn menu_bar(on_click: impl Fn() -> Callback<String>) -> View {
+/// メニューの見出しと項目（タイトルバーの ≡ に入れ子で入れる）。項目を選ぶと、メニューの `on_click` が操作の
+/// id を受ける。
+pub fn menus() -> Vec<(String, Vec<MenuItem>)> {
     let menus: [(Menu, &'static str); 7] = [
         (Menu::File, "File"),
         (Menu::Edit, "Edit"),
@@ -92,7 +94,7 @@ pub fn menu_bar(on_click: impl Fn() -> Callback<String>) -> View {
         (Menu::Commit, "Commit"),
         (Menu::Window, "Window"),
     ];
-    let mut bar: Vec<(String, View)> = Vec::new();
+    let mut out = Vec::new();
     for (menu, name) in menus {
         let mut items = Vec::new();
         if menu == Menu::File {
@@ -280,16 +282,24 @@ pub fn menu_bar(on_click: impl Fn() -> Callback<String>) -> View {
         if items.is_empty() {
             continue;
         }
-        let title = amonhen_model::i18n::translate(name).into_owned();
-        let item = MenuBarItem::new()
-            .title(title)
-            .menu(windows_reactor::Menu::new(items, on_click()));
-        bar.push((name.to_owned(), item));
+        out.push((amonhen_model::i18n::translate(name).into_owned(), items));
     }
-    // 窓の上の行（根の Grid の 0 行目）に置く。
-    MenuBar::new()
-        .grid_row(0)
-        .collection_slot(MenuBarSlot::Items, bar)
+    out
+}
+
+/// タイトルバーの右の ≡。メニューバーの中身をすべて、メニューごとに入れ子で入れる（Windows にはアプリの外に
+/// 出すメニューバーがないので、窓の中の 1 つのボタンにまとめる）。
+pub fn menu_button(on_click: Callback<String>) -> View {
+    let items: Vec<MenuItem> = menus()
+        .into_iter()
+        .enumerate()
+        .map(|(i, (title, items))| MenuItem::submenu(format!("menu-{i}"), title, items))
+        .collect();
+    Button::new()
+        .vertical_alignment(VerticalAlignment::Center)
+        .content(TextBlock::new().text("\u{2261}").font_size(18.0))
+        .tooltip(amonhen_model::tr!("Commands"))
+        .menu(windows_reactor::Menu::new(items, on_click))
 }
 
 /// ツールバーの並び（macOS 版の既定の並び、GTK4 版の `toolbar::DEFAULT`）と印。`None` は区切り。
@@ -489,7 +499,8 @@ fn push_tooltip(t: Tracking) -> String {
 /// ツールバー（CommandBar）。押すと `on_click` が操作の id を受ける。まだ動かない操作のボタンは押せない。
 /// Pull・Push は `tracking` で、上流との差と、送れないわけをツールチップに出す。
 pub fn toolbar(on_click: Callback<String>, tracking: Tracking) -> View {
-    // 並びは View > Customize Toolbar… で変えられる（GTK4 版の `toolbar.rs`）。
+    // 並びは View > Customize Toolbar… で変えられる（GTK4 版の `toolbar.rs`）。タイトルバーではアイコンだけを
+    // 並べ（名前はツールチップ）、入りきらなければ CommandBar が ⋯ にたたむ。
     let commands = toolbar_entries()
         .into_iter()
         .enumerate()
@@ -513,7 +524,7 @@ pub fn toolbar(on_click: Callback<String>, tracking: Tracking) -> View {
                         .enabled(enabled)
                         .dimmed(enabled && !can_push(tracking))
                         .tooltip(push_tooltip(tracking)),
-                    _ => button.enabled(enabled),
+                    _ => button.enabled(enabled).tooltip(toolbar_name(&id)),
                 })
             }
         })
