@@ -275,6 +275,11 @@ pub fn refresh() {
     }
 }
 
+/// 一覧に出すものがほかで変わった（最近開いたもの。`crate::repos::refresh_recent`）: 聞き手に `f(None)` を回す。
+pub fn others_changed() {
+    notify(None);
+}
+
 /// `f(None)`（中身が変わった）・`f(Some(場所))`（その行の状態が変わった）を呼ぶ。false を返すと外す。
 pub fn connect(f: impl Fn(Option<&str>) -> bool + 'static) {
     STATE.with(|s| s.borrow_mut().listeners.push(Rc::new(f)));

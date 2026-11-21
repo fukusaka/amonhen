@@ -16,9 +16,13 @@ becomes the GitHub Release notes.
   ancestor emphasis, and fetch, pull, push, checkout, new branch, merge, rebase, stash and undo,
   resolving conflicts by side, and asking for passwords inside the screen; `?` lists the keys and `:` the commands by
   name. These are its first stages; see `docs/tui.md`.
+- Quick Open in `amonhen tui` also lists recently opened repositories and those found under the local folders to
+  scan, like the apps'.
 
 #### Changed
 
+- The macOS and GTK4 apps keep recently opened repositories in `recent.json` beside `bookmarks.json`, shared with
+  each other and the TUI; the old lists are copied there once.
 - Name prompts (new branch, tag, group, LFS pattern) name their button after the action instead of OK and keep it
   disabled until a name is typed.
 - Failures read "Couldn't …" with the error below, in a sheet on the window rather than an app-wide alert; forgetting
