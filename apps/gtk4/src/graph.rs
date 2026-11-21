@@ -218,7 +218,8 @@ const RING_WIDTH: f32 = 1.8;
 /// それをつなぐ線のほかは薄く描く。`boundary`（shallow clone の境界のコミットの行）の点からは、下へ短い点線を
 /// 描く（親はあるが取得していない。macOS 版の `appendUnfetchedStub`）。行ごとのグラフの右端（その行の点と、その行を
 /// 通る線のいちばん右。macOS 版の `rightExtent`）を返す。文字はそのすぐ右から始める。`head`（HEAD のコミット）の
-/// 点は、中を抜いた輪で描く（通る線も輪の中では描かない）。merge の点はほかより小さい。
+/// 点は、中を抜いた輪で描く（通る線も輪の中では描かない）。merge の点はほかより小さい。`hidden` の行（運んでいる
+/// 行）は点を描かない（行を空ける。通る線はそのまま）。
 #[allow(clippy::too_many_arguments)]
 pub fn draw(
     snapshot: &gtk::Snapshot,
@@ -230,11 +231,14 @@ pub fn draw(
     lineage: Option<&LineageWindow>,
     boundary: &HashSet<u32>,
     head: Option<Oid>,
+    hidden: Option<u32>,
 ) -> Vec<f32> {
     let row_y = |row: u32| (row as f32 + 0.5) * m.row_height - scroll_y;
     // HEAD の行は描く行の中だけで探す（全体の索引を作らせない。描く行は数十行）。
     let ids = history.graph.ids();
-    let head_row = head.and_then(|head| rows.clone().find(|&r| ids.get(r as usize) == Some(&head)));
+    let head_row = head
+        .and_then(|head| rows.clone().find(|&r| ids.get(r as usize) == Some(&head)))
+        .filter(|&r| Some(r) != hidden);
     let nodes = history.layout.nodes();
     let head_point = head_row
         .and_then(|r| nodes.get(r as usize))
@@ -345,6 +349,9 @@ pub fn draw(
             .and_then(|i| extents.get_mut(i as usize))
         {
             *x = x.max(p.x() + radius);
+        }
+        if Some(n.row) == hidden {
+            continue;
         }
         let dimmed = lineage.is_some_and(|l| !l.contains(n.row));
         if is_head {
