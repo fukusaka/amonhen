@@ -1,5 +1,6 @@
-//! 書き換えの前と後の絵（アプリが当てる前に見せるもの）。エンジンの `rewritePreview` の `editDrawing` を、左に前、
-//! 右に後の 2 列で、新しい順に描く。どちらの側も、いちばん下に書き換えないいちばん新しいコミット（共通の土台）を描く。
+//! 前と後の絵（アプリが確かめるときに見せるもの）。エンジンの `rewritePreview` の `editDrawing`（History の編集）か、
+//! `movePreview` の `drawing` を [`from_move`] で同じ形にしたもの（reset など、ブランチを動かす操作）を、左に前、
+//! 右に後の 2 列で、新しい順に描く。どちらの側も、いちばん下に変わらないいちばん新しいコミット（共通の土台）を描く。
 
 use amonhen_model::tr;
 use ratatui_core::buffer::Buffer;
@@ -44,6 +45,48 @@ fn labels_of(drawing: &Value, oid: &str, local_only: bool) -> String {
         .join(" ")
 }
 
+/// 後の側で、いちばん上（何も残らなければ土台）に付くブランチ。`branch` があればそれ（ブランチを動かす操作）、
+/// なければ前のいちばん上のローカルのブランチ（History の編集では、一緒に動く）。
+fn moved(drawing: &Value) -> String {
+    match drawing["branch"].as_str() {
+        Some(name) => format!("[{name}]"),
+        None => labels_of(
+            drawing,
+            drawing["before"][0]["oid"].as_str().unwrap_or(""),
+            true,
+        ),
+    }
+}
+
+/// `movePreview` の `drawing` を、`editDrawing` と同じ形に。前は外れるコミット、後は加わるコミット。`branch` が
+/// 動く。
+pub fn from_move(drawing: &Value, branch: &str) -> Value {
+    let commits = |key: &str, action: &str| -> Vec<Value> {
+        (drawing[key].as_array().into_iter().flatten())
+            .map(|c| {
+                let mut c = c.clone();
+                let hidden = c["hidden"] == true;
+                c["action"] = Value::from(match (action, hidden) {
+                    ("pick", true) => "hidden",
+                    _ => action,
+                });
+                c
+            })
+            .collect()
+    };
+    serde_json::json!({
+        "before": commits("lost", "leave"),
+        "beforeMore": drawing["lostMore"],
+        "beforeMoreAt": drawing["lostMoreAt"],
+        "after": commits("gained", "pick"),
+        "afterMore": drawing["gainedMore"],
+        "afterMoreAt": drawing["gainedMoreAt"],
+        "base": drawing["base"],
+        "labels": drawing["labels"],
+        "branch": branch,
+    })
+}
+
 fn short(oid: &str) -> String {
     oid[..oid.len().min(8)].to_owned()
 }
@@ -56,7 +99,6 @@ fn side(drawing: &Value, after: bool) -> Vec<Line> {
     };
     let more = drawing[more].as_u64().unwrap_or(0);
     let at = drawing[at].as_u64().unwrap_or(0) as usize;
-    let top = drawing["before"][0]["oid"].as_str().unwrap_or("");
     let mut lines = Vec::new();
     for (i, commit) in drawing[key].as_array().into_iter().flatten().enumerate() {
         if more > 0 && i == at {
@@ -68,7 +110,7 @@ fn side(drawing: &Value, after: bool) -> Vec<Line> {
         // ブランチは、後ではいちばん上の新しいコミットに付く（一緒に動く）。
         let labels = match (after, i) {
             (false, _) => labels_of(drawing, oid, false),
-            (true, 0) => labels_of(drawing, top, true),
+            (true, 0) => moved(drawing),
             (true, _) => String::new(),
         };
         if !labels.is_empty() {
@@ -78,7 +120,7 @@ fn side(drawing: &Value, after: bool) -> Vec<Line> {
             (false, "drop") => Style::new()
                 .fg(Color::Red)
                 .add_modifier(Modifier::CROSSED_OUT),
-            (false, "squash" | "fixup") => Style::new().fg(Color::Indexed(244)),
+            (false, "squash" | "fixup" | "leave") => Style::new().fg(Color::Indexed(244)),
             (false, _) => Style::new(),
             (true, _) => Style::new().fg(Color::Green),
         };
@@ -87,11 +129,19 @@ fn side(drawing: &Value, after: bool) -> Vec<Line> {
             if combined > 0 {
                 note.push(tr!("+{count} combined", count = combined));
             }
-            if action == "edit" {
-                note.push(tr!("stops here"));
+            match action {
+                "edit" => note.push(tr!("stops here")),
+                // どこからも辿れない（Reflog にだけある）コミット。
+                "hidden" => note.push(tr!("only in the reflog")),
+                _ => {}
             }
-        } else if action != "pick" {
-            note.push(action.to_owned());
+        } else {
+            match action {
+                "pick" => {}
+                // ブランチから外れる（消えはしない。Undo で戻る）。
+                "leave" => note.push(tr!("leaves the branch")),
+                action => note.push(action.to_owned()),
+            }
         }
         lines.push(Line {
             mark: "●",
@@ -104,8 +154,20 @@ fn side(drawing: &Value, after: bool) -> Vec<Line> {
     if more > 0 && at >= lines.len() {
         lines.push(elided(more));
     }
-    // どちらの側も、書き換えない土台の上に載る。
+    // どちらの側も、書き換えない土台の上に載る。前では、そこを指すブランチを添える。後では、何も残らなければ動く
+    // ブランチがそこに付く。
     if let Some(base) = drawing["base"].as_object() {
+        let oid = base.get("oid").and_then(Value::as_str).unwrap_or("");
+        let mut note = Vec::new();
+        let labels = match (after, lines.is_empty()) {
+            (false, _) => labels_of(drawing, oid, false),
+            (true, true) => moved(drawing),
+            (true, false) => String::new(),
+        };
+        if !labels.is_empty() {
+            note.push(labels);
+        }
+        note.push(tr!("unchanged"));
         lines.push(Line {
             mark: "○",
             id: short(base.get("oid").and_then(Value::as_str).unwrap_or("")),
@@ -114,7 +176,7 @@ fn side(drawing: &Value, after: bool) -> Vec<Line> {
                 .and_then(Value::as_str)
                 .unwrap_or("")
                 .to_owned(),
-            note: tr!("unchanged"),
+            note: note.join("  "),
             style: Style::new(),
         });
     }
@@ -257,6 +319,62 @@ mod tests {
         // 後は Two 1 つなので、そのすぐ下が土台。前は 3 つの下。
         assert!(lines[2].ends_with("○ 99999999 One  unchanged"), "{lines:?}");
         assert_eq!(lines[4], "○ 99999999 One  unchanged");
+    }
+
+    /// reset のようにブランチを動かす操作: 前は外れるコミット、後は加わるコミット。ブランチは後のいちばん上に付き、
+    /// 何も加わらなければ土台に付く。
+    #[test]
+    fn a_moving_branch() {
+        let back = from_move(
+            &json!({
+                "lost": [{"oid": "bbbbbbbb1", "subject": "Two"}, {"oid": "aaaaaaaa1", "subject": "One"}],
+                "lostMore": 0, "lostMoreAt": 0, "gained": [], "gainedMore": 0, "gainedMoreAt": 0,
+                "base": {"oid": "99999999", "subject": "Start", "time": 0},
+                "labels": [{"oid": "bbbbbbbb1", "name": "main", "kind": "local"}],
+            }),
+            "main",
+        );
+        let area = Rect::new(0, 0, 100, height(&back));
+        let mut buf = Buffer::empty(area);
+        draw(&back, area, &mut buf);
+        let lines = text(&buf, area);
+        assert!(
+            lines[1].starts_with("● bbbbbbbb Two  [main]  leaves the branch"),
+            "{lines:?}"
+        );
+        assert!(lines[1].contains("(no commits left)"), "{lines:?}");
+        assert!(
+            lines[2].ends_with("○ 99999999 Start  [main]  unchanged"),
+            "{lines:?}"
+        );
+        assert_eq!(lines[3], "○ 99999999 Start  unchanged");
+        // 前へ進む（加わるだけ）なら、前の側は土台だけで、そこにブランチ。
+        let ahead = from_move(
+            &json!({
+                "lost": [], "lostMore": 0, "lostMoreAt": 0,
+                "gained": [{"oid": "cccccccc1", "subject": "Three", "hidden": true}],
+                "gainedMore": 0, "gainedMoreAt": 0,
+                "base": {"oid": "99999999", "subject": "Start", "time": 0},
+                "labels": [{"oid": "99999999", "name": "main", "kind": "local"}],
+            }),
+            "main",
+        );
+        let area = Rect::new(0, 0, 110, height(&ahead));
+        let mut buf = Buffer::empty(area);
+        draw(&ahead, area, &mut buf);
+        let lines = text(&buf, area);
+        assert!(
+            lines[1].starts_with("○ 99999999 Start  [main]  unchanged"),
+            "{lines:?}"
+        );
+        assert!(
+            lines[1].contains("● cccccccc Three  [main]  only in the reflog"),
+            "{lines:?}"
+        );
+        assert!(
+            lines[2].ends_with("○ 99999999 Start  unchanged"),
+            "{lines:?}"
+        );
     }
 
     /// 長い側は、真ん中を省いた数を出す。

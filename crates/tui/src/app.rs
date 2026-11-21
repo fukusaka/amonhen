@@ -278,8 +278,9 @@ pub struct App {
     /// 編集モードの行のメッセージを、エディタで直す（開く中身。開いたら `editing_plan` が立つ）。
     plan_message: Option<String>,
     editing_plan: bool,
-    /// 編集モードを当てる前の、前と後の絵（`rewritePreview` の `editDrawing`。確かめている間だけ描く）。
-    edit_drawing: Option<Value>,
+    /// 確かめている間に重ねる、前と後の絵（枠の題と、`drawing` の形の絵。編集モードの `editDrawing`、reset の
+    /// `movePreview` から作ったもの）。答えたら消える。
+    question_drawing: Option<(String, Value)>,
     /// 今の検索: 語と、動いている検索を取り消す印（結果が届いたら `None`）。
     search: Option<(String, Option<Arc<AtomicBool>>)>,
     /// 動いている検索の、調べ終えた割合（0〜1。内容の検索でなければ 0 のまま）。
@@ -368,7 +369,7 @@ impl App {
             edit_discard: false,
             plan_message: None,
             editing_plan: false,
-            edit_drawing: None,
+            question_drawing: None,
             push_to_offered: false,
             bundle_file: None,
             patch_file: None,
@@ -1021,7 +1022,10 @@ impl App {
             self.dirty = true;
             return;
         }
-        // 確かめている間は、`y`（か Enter）で行い、ほかのキーでやめる。
+        // 確かめている間は、`y`（か Enter）で行い、ほかのキーでやめる。答えたら、重ねていた絵も消す。
+        if self.choices.is_some() || self.confirm.is_some() {
+            self.question_drawing = None;
+        }
         if let Some((_, options)) = self.choices.take() {
             if let KeyCode::Char(pressed) = key.code
                 && let Some((_, _, request)) = options.into_iter().find(|o| o.0 == pressed)
@@ -1910,7 +1914,9 @@ impl App {
                 };
                 let info = &reply["info"];
                 // merge を越える編集では描けない（アプリと同じく、そのときは文だけ）。
-                self.edit_drawing = Some(info["editDrawing"].clone()).filter(Value::is_object);
+                self.question_drawing = Some(info["editDrawing"].clone())
+                    .filter(Value::is_object)
+                    .map(|d| (tr!(" Apply These Changes? "), d));
                 let ask = tr!(
                     "Apply these changes? {summary}{risk}{notes} Undo brings it all back.",
                     summary = mode.summary(),
@@ -2526,6 +2532,13 @@ impl App {
             return;
         };
         let branch = self.branch.clone().unwrap_or_else(|| "HEAD".to_owned());
+        // アプリのシートの前と後の絵（同じなら、絵はない）。
+        self.question_drawing = preview["drawing"].as_object().map(|_| {
+            (
+                tr!(" Reset {branch} ", branch = branch),
+                crate::drawing::from_move(&preview["drawing"], &branch),
+            )
+        });
         let lost = preview["lostCount"].as_u64().unwrap_or(0);
         let gained = preview["gainedCount"].as_u64().unwrap_or(0);
         let pushed = preview["upstreamHas"].as_u64().unwrap_or(0);
@@ -4213,9 +4226,11 @@ impl App {
                 mode.draw(inner, buf);
             }
         }
-        // 編集モードを当てる前に確かめている間は、前と後の絵を重ねる。
-        if let (Some(drawing), Some(_), Some(_)) =
-            (&self.edit_drawing, &self.confirm, &self.edit_mode)
+        // 確かめている間は、前と後の絵を重ねる。
+        if let Some((title, drawing)) = self
+            .question_drawing
+            .as_ref()
+            .filter(|_| self.confirm.is_some() || self.choices.is_some())
         {
             let width = (crate::drawing::width(drawing) + 4).max(48).min(area.width);
             let height = (crate::drawing::height(drawing) + 2).min(area.height.saturating_sub(1));
@@ -4225,7 +4240,7 @@ impl App {
                 width,
                 height,
             );
-            frame_box(buf, area, at, &tr!(" Apply These Changes? "));
+            frame_box(buf, area, at, title);
             if at.width > 4 && at.height > 2 {
                 let inner = Rect::new(at.x + 2, at.y + 1, at.width - 4, at.height - 2);
                 for y in inner.y..inner.bottom() {

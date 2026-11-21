@@ -1585,6 +1585,14 @@ fn reset_offers_the_modes() {
         "{last}"
     );
     assert!(last.contains("s soft (keep the index and files)   m mixed (keep the files)"));
+    // アプリのシートと同じく、前と後の絵を重ねる（前は外れる 2 つ、後は何も加わらず、main は土台に付く）。
+    assert!(asked.contains(" Reset main "), "{asked}");
+    assert!(asked.contains("Before"), "{asked}");
+    assert_eq!(asked.matches("leaves the branch").count(), 2, "{asked}");
+    assert!(
+        asked.contains("Bump the version  [main]  unchanged"),
+        "{asked}"
+    );
     // ほかのキーでやめる。
     amonhen_tui::snapshot(open(dir.path()), 160, 10, clock(), "jRn").unwrap();
     assert_eq!(head(), "Merge branch 'topic'\n");
