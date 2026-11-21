@@ -455,21 +455,43 @@ fn run(front: &dyn Front, command: Value) -> Result<Value> {
     Ok(reply)
 }
 
-/// `Request::RecentMessages` の中身: HEAD から first-parent をたどった 30 のコミットのメッセージ（新しい順）。
+/// `Request::RecentMessages` の中身: HEAD から first-parent をたどった 30 のコミットのメッセージと作者（新しい順。
+/// `authors` は `[名前, メール]`）、Signed-off-by に書く自分（`user.name`・`user.email`。なければ null）。
 fn recent_messages(front: &dyn Front) -> Result<Value> {
     let reply = run(
         front,
         json!({"op": "editableCommits", "throughMerges": true}),
     )?;
-    let messages = (reply["text"].as_str().unwrap_or("").lines())
+    let infos = (reply["text"].as_str().unwrap_or("").lines())
         .filter_map(|l| l.split(' ').next())
         .take(30)
-        .map(|oid| {
-            let info = run(front, json!({"op": "commitInfo", "oid": oid}))?;
-            Ok(info["info"]["message"].as_str().unwrap_or("").to_owned())
-        })
+        .map(|oid| Ok(run(front, json!({"op": "commitInfo", "oid": oid}))?["info"].take()))
         .collect::<Result<Vec<_>>>()?;
-    Ok(json!({"messages": messages}))
+    let messages: Vec<&Value> = infos.iter().map(|i| &i["message"]).collect();
+    let authors: Vec<Value> = infos
+        .iter()
+        .map(|i| json!([i["author"], i["authorEmail"]]))
+        .collect();
+    // 読めなくても、ほかは使える（Signed-off-by だけ出さない）。
+    let entries = run(front, json!({"op": "configList"}))
+        .map(|r| r["info"]["entries"].clone())
+        .unwrap_or_default();
+    let value = |key: &str| {
+        (entries.as_array().into_iter().flatten())
+            .rev()
+            .find(|e| {
+                e["key"]
+                    .as_str()
+                    .is_some_and(|k| k.eq_ignore_ascii_case(key))
+            })
+            .and_then(|e| e["value"].as_str())
+            .filter(|v| !v.is_empty())
+    };
+    let me = match (value("user.name"), value("user.email")) {
+        (Some(name), Some(email)) => json!([name, email]),
+        _ => Value::Null,
+    };
+    Ok(json!({"messages": messages, "authors": authors, "me": me}))
 }
 
 /// `Request::EditRows` の中身。
