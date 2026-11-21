@@ -95,3 +95,10 @@ fn badge(button: &AppBarButton, count: u32) -> Result<()> {
 pub fn pass_through(element: &windows_core::IInspectable) -> windows_core::Result<()> {
     element.cast::<UIElement>()?.SetIsHitTestVisible(false)
 }
+
+/// `element` の窓（その窓の HWND の値。WinUI の窓では WindowId がそのまま HWND）。まだ窓に入っていなければ None。
+pub fn window_handle(element: &IInspectable) -> Option<u64> {
+    let root = element.cast::<UIElement>().ok()?.XamlRoot().ok()?;
+    let id = root.ContentIslandEnvironment().ok()?.AppWindowId().ok()?;
+    (id.Value != 0).then_some(id.Value)
+}

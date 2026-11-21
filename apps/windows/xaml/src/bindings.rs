@@ -201,6 +201,30 @@ impl AppBar {
             .ok()
         }
     }
+    pub fn XamlRoot(&self) -> windows_core::Result<XamlRoot> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).XamlRoot)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub fn SetXamlRoot<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<XamlRoot>,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetXamlRoot)(
+                windows_core::Interface::as_raw(this),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
     pub fn IsTabStop(&self) -> windows_core::Result<bool> {
         let this = &windows_core::Interface::cast::<IUIElement>(self)?;
         unsafe {
@@ -811,6 +835,30 @@ impl AppBarButton {
         let this = &windows_core::Interface::cast::<IUIElement>(self)?;
         unsafe {
             (windows_core::Interface::vtable(this).SetContextFlyout)(
+                windows_core::Interface::as_raw(this),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
+    pub fn XamlRoot(&self) -> windows_core::Result<XamlRoot> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).XamlRoot)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub fn SetXamlRoot<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<XamlRoot>,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetXamlRoot)(
                 windows_core::Interface::as_raw(this),
                 value.param().abi(),
             )
@@ -1443,6 +1491,30 @@ impl Button {
             .ok()
         }
     }
+    pub fn XamlRoot(&self) -> windows_core::Result<XamlRoot> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).XamlRoot)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub fn SetXamlRoot<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<XamlRoot>,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetXamlRoot)(
+                windows_core::Interface::as_raw(this),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
     pub fn IsTabStop(&self) -> windows_core::Result<bool> {
         let this = &windows_core::Interface::cast::<IUIElement>(self)?;
         unsafe {
@@ -2032,6 +2104,30 @@ impl ButtonBase {
         let this = &windows_core::Interface::cast::<IUIElement>(self)?;
         unsafe {
             (windows_core::Interface::vtable(this).SetContextFlyout)(
+                windows_core::Interface::as_raw(this),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
+    pub fn XamlRoot(&self) -> windows_core::Result<XamlRoot> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).XamlRoot)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub fn SetXamlRoot<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<XamlRoot>,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetXamlRoot)(
                 windows_core::Interface::as_raw(this),
                 value.param().abi(),
             )
@@ -2657,6 +2753,30 @@ impl CommandBar {
         let this = &windows_core::Interface::cast::<IUIElement>(self)?;
         unsafe {
             (windows_core::Interface::vtable(this).SetContextFlyout)(
+                windows_core::Interface::as_raw(this),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
+    pub fn XamlRoot(&self) -> windows_core::Result<XamlRoot> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).XamlRoot)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub fn SetXamlRoot<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<XamlRoot>,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetXamlRoot)(
                 windows_core::Interface::as_raw(this),
                 value.param().abi(),
             )
@@ -3333,6 +3453,30 @@ impl ContentControl {
             .ok()
         }
     }
+    pub fn XamlRoot(&self) -> windows_core::Result<XamlRoot> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).XamlRoot)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub fn SetXamlRoot<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<XamlRoot>,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetXamlRoot)(
+                windows_core::Interface::as_raw(this),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
     pub fn IsTabStop(&self) -> windows_core::Result<bool> {
         let this = &windows_core::Interface::cast::<IUIElement>(self)?;
         unsafe {
@@ -3723,6 +3867,39 @@ unsafe impl Send for ContentControl {}
 unsafe impl Sync for ContentControl {}
 #[repr(transparent)]
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContentIslandEnvironment(windows_core::IUnknown);
+windows_core::imp::interface_hierarchy!(
+    ContentIslandEnvironment,
+    windows_core::IUnknown,
+    windows_core::IInspectable
+);
+impl ContentIslandEnvironment {
+    pub fn AppWindowId(&self) -> windows_core::Result<WindowId> {
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(self).AppWindowId)(
+                windows_core::Interface::as_raw(self),
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
+}
+impl windows_core::RuntimeType for ContentIslandEnvironment {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_class::<Self, IContentIslandEnvironment>();
+}
+unsafe impl windows_core::Interface for ContentIslandEnvironment {
+    type Vtable = <IContentIslandEnvironment as windows_core::Interface>::Vtable;
+    const IID: windows_core::GUID = <IContentIslandEnvironment as windows_core::Interface>::IID;
+}
+impl windows_core::RuntimeName for ContentIslandEnvironment {
+    const NAME: &'static str = "Microsoft.UI.Content.ContentIslandEnvironment";
+}
+unsafe impl Send for ContentIslandEnvironment {}
+unsafe impl Sync for ContentIslandEnvironment {}
+#[repr(transparent)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ContextRequestedEventArgs(windows_core::IUnknown);
 windows_core::imp::interface_hierarchy!(
     ContextRequestedEventArgs,
@@ -4002,6 +4179,30 @@ impl Control {
         let this = &windows_core::Interface::cast::<IUIElement>(self)?;
         unsafe {
             (windows_core::Interface::vtable(this).SetContextFlyout)(
+                windows_core::Interface::as_raw(this),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
+    pub fn XamlRoot(&self) -> windows_core::Result<XamlRoot> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).XamlRoot)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub fn SetXamlRoot<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<XamlRoot>,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetXamlRoot)(
                 windows_core::Interface::as_raw(this),
                 value.param().abi(),
             )
@@ -5653,6 +5854,30 @@ impl FrameworkElement {
             .ok()
         }
     }
+    pub fn XamlRoot(&self) -> windows_core::Result<XamlRoot> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).XamlRoot)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub fn SetXamlRoot<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<XamlRoot>,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetXamlRoot)(
+                windows_core::Interface::as_raw(this),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
     pub fn IsTabStop(&self) -> windows_core::Result<bool> {
         let this = &windows_core::Interface::cast::<IUIElement>(self)?;
         unsafe {
@@ -6566,6 +6791,24 @@ impl windows_core::RuntimeType for IContentControlStatics {
 #[repr(C)]
 pub struct IContentControlStatics_Vtbl {
     pub base__: windows_core::IInspectable_Vtbl,
+}
+windows_core::imp::define_interface!(
+    IContentIslandEnvironment,
+    IContentIslandEnvironment_Vtbl,
+    0xc334236d_da88_566d_811d_74aef2eba978
+);
+impl windows_core::RuntimeType for IContentIslandEnvironment {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+    const NAME: windows_core::imp::ConstBuffer = windows_core::imp::ConstBuffer::from_slice(
+        b"Microsoft.UI.Content.IContentIslandEnvironment",
+    );
+}
+#[repr(C)]
+pub struct IContentIslandEnvironment_Vtbl {
+    pub base__: windows_core::IInspectable_Vtbl,
+    pub AppWindowId:
+        unsafe extern "system" fn(*mut core::ffi::c_void, *mut WindowId) -> windows_core::HRESULT,
 }
 windows_core::imp::define_interface!(
     IContextRequestedEventArgs,
@@ -8656,8 +8899,14 @@ pub struct IUIElement_Vtbl {
     SetRotationAxis: usize,
     ActualOffset: usize,
     ActualSize: usize,
-    XamlRoot: usize,
-    SetXamlRoot: usize,
+    pub XamlRoot: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *mut *mut core::ffi::c_void,
+    ) -> windows_core::HRESULT,
+    pub SetXamlRoot: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *mut core::ffi::c_void,
+    ) -> windows_core::HRESULT,
     Shadow: usize,
     SetShadow: usize,
     RasterizationScale: usize,
@@ -8924,6 +9173,40 @@ pub struct IVisualTreeHelperStatics_Vtbl {
         *mut *mut core::ffi::c_void,
     ) -> windows_core::HRESULT,
 }
+windows_core::imp::define_interface!(
+    IXamlRoot,
+    IXamlRoot_Vtbl,
+    0x60cb215a_ad15_520a_8b01_4416824f0441
+);
+impl windows_core::RuntimeType for IXamlRoot {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+    const NAME: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::from_slice(b"Microsoft.UI.Xaml.IXamlRoot");
+}
+#[repr(C)]
+pub struct IXamlRoot_Vtbl {
+    pub base__: windows_core::IInspectable_Vtbl,
+}
+windows_core::imp::define_interface!(
+    IXamlRoot2,
+    IXamlRoot2_Vtbl,
+    0xbdee0f42_71cb_50c5_829b_4614d98c5794
+);
+impl windows_core::RuntimeType for IXamlRoot2 {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+    const NAME: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::from_slice(b"Microsoft.UI.Xaml.IXamlRoot2");
+}
+#[repr(C)]
+pub struct IXamlRoot2_Vtbl {
+    pub base__: windows_core::IInspectable_Vtbl,
+    pub ContentIslandEnvironment: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *mut *mut core::ffi::c_void,
+    ) -> windows_core::HRESULT,
+}
 #[repr(transparent)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InfoBadge(windows_core::IUnknown);
@@ -9173,6 +9456,30 @@ impl InfoBadge {
         let this = &windows_core::Interface::cast::<IUIElement>(self)?;
         unsafe {
             (windows_core::Interface::vtable(this).SetContextFlyout)(
+                windows_core::Interface::as_raw(this),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
+    pub fn XamlRoot(&self) -> windows_core::Result<XamlRoot> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).XamlRoot)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub fn SetXamlRoot<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<XamlRoot>,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetXamlRoot)(
                 windows_core::Interface::as_raw(this),
                 value.param().abi(),
             )
@@ -9969,6 +10276,30 @@ impl ItemsControl {
         let this = &windows_core::Interface::cast::<IUIElement>(self)?;
         unsafe {
             (windows_core::Interface::vtable(this).SetContextFlyout)(
+                windows_core::Interface::as_raw(this),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
+    pub fn XamlRoot(&self) -> windows_core::Result<XamlRoot> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).XamlRoot)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub fn SetXamlRoot<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<XamlRoot>,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetXamlRoot)(
                 windows_core::Interface::as_raw(this),
                 value.param().abi(),
             )
@@ -10778,6 +11109,30 @@ impl ListViewBase {
             .ok()
         }
     }
+    pub fn XamlRoot(&self) -> windows_core::Result<XamlRoot> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).XamlRoot)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub fn SetXamlRoot<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<XamlRoot>,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetXamlRoot)(
+                windows_core::Interface::as_raw(this),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
     pub fn IsTabStop(&self) -> windows_core::Result<bool> {
         let this = &windows_core::Interface::cast::<IUIElement>(self)?;
         unsafe {
@@ -11368,6 +11723,30 @@ impl ListViewItem {
         let this = &windows_core::Interface::cast::<IUIElement>(self)?;
         unsafe {
             (windows_core::Interface::vtable(this).SetContextFlyout)(
+                windows_core::Interface::as_raw(this),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
+    pub fn XamlRoot(&self) -> windows_core::Result<XamlRoot> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).XamlRoot)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub fn SetXamlRoot<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<XamlRoot>,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetXamlRoot)(
                 windows_core::Interface::as_raw(this),
                 value.param().abi(),
             )
@@ -12434,6 +12813,30 @@ impl ScrollViewer {
             .ok()
         }
     }
+    pub fn XamlRoot(&self) -> windows_core::Result<XamlRoot> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).XamlRoot)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub fn SetXamlRoot<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<XamlRoot>,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetXamlRoot)(
+                windows_core::Interface::as_raw(this),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
     pub fn IsTabStop(&self) -> windows_core::Result<bool> {
         let this = &windows_core::Interface::cast::<IUIElement>(self)?;
         unsafe {
@@ -13022,6 +13425,30 @@ impl Selector {
             .ok()
         }
     }
+    pub fn XamlRoot(&self) -> windows_core::Result<XamlRoot> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).XamlRoot)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub fn SetXamlRoot<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<XamlRoot>,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetXamlRoot)(
+                windows_core::Interface::as_raw(this),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
     pub fn IsTabStop(&self) -> windows_core::Result<bool> {
         let this = &windows_core::Interface::cast::<IUIElement>(self)?;
         unsafe {
@@ -13604,6 +14031,30 @@ impl SelectorItem {
         let this = &windows_core::Interface::cast::<IUIElement>(self)?;
         unsafe {
             (windows_core::Interface::vtable(this).SetContextFlyout)(
+                windows_core::Interface::as_raw(this),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
+    pub fn XamlRoot(&self) -> windows_core::Result<XamlRoot> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).XamlRoot)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub fn SetXamlRoot<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<XamlRoot>,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetXamlRoot)(
                 windows_core::Interface::as_raw(this),
                 value.param().abi(),
             )
@@ -14407,6 +14858,30 @@ impl TabView {
             .ok()
         }
     }
+    pub fn XamlRoot(&self) -> windows_core::Result<XamlRoot> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).XamlRoot)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub fn SetXamlRoot<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<XamlRoot>,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetXamlRoot)(
+                windows_core::Interface::as_raw(this),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
     pub fn IsTabStop(&self) -> windows_core::Result<bool> {
         let this = &windows_core::Interface::cast::<IUIElement>(self)?;
         unsafe {
@@ -15005,6 +15480,30 @@ impl TabViewItem {
         let this = &windows_core::Interface::cast::<IUIElement>(self)?;
         unsafe {
             (windows_core::Interface::vtable(this).SetContextFlyout)(
+                windows_core::Interface::as_raw(this),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
+    pub fn XamlRoot(&self) -> windows_core::Result<XamlRoot> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).XamlRoot)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub fn SetXamlRoot<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<XamlRoot>,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetXamlRoot)(
                 windows_core::Interface::as_raw(this),
                 value.param().abi(),
             )
@@ -15711,6 +16210,30 @@ impl TreeView {
         let this = &windows_core::Interface::cast::<IUIElement>(self)?;
         unsafe {
             (windows_core::Interface::vtable(this).SetContextFlyout)(
+                windows_core::Interface::as_raw(this),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
+    pub fn XamlRoot(&self) -> windows_core::Result<XamlRoot> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).XamlRoot)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub fn SetXamlRoot<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<XamlRoot>,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetXamlRoot)(
                 windows_core::Interface::as_raw(this),
                 value.param().abi(),
             )
@@ -16432,6 +16955,28 @@ impl UIElement {
             .ok()
         }
     }
+    pub fn XamlRoot(&self) -> windows_core::Result<XamlRoot> {
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(self).XamlRoot)(
+                windows_core::Interface::as_raw(self),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub fn SetXamlRoot<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<XamlRoot>,
+    {
+        unsafe {
+            (windows_core::Interface::vtable(self).SetXamlRoot)(
+                windows_core::Interface::as_raw(self),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
     pub fn IsTabStop(&self) -> windows_core::Result<bool> {
         unsafe {
             let mut result__ = core::mem::zeroed();
@@ -17144,3 +17689,51 @@ impl windows_core::RuntimeName for VisualTreeHelper {
 }
 unsafe impl Send for VisualTreeHelper {}
 unsafe impl Sync for VisualTreeHelper {}
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct WindowId {
+    pub Value: u64,
+}
+impl windows_core::imp::TypeKind for WindowId {
+    type TypeKind = windows_core::imp::CopyType;
+}
+impl windows_core::RuntimeType for WindowId {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::from_slice(b"struct(Microsoft.UI.WindowId;u8)");
+    const NAME: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::from_slice(b"Microsoft.UI.WindowId");
+}
+#[repr(transparent)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct XamlRoot(windows_core::IUnknown);
+windows_core::imp::interface_hierarchy!(
+    XamlRoot,
+    windows_core::IUnknown,
+    windows_core::IInspectable
+);
+impl XamlRoot {
+    pub fn ContentIslandEnvironment(&self) -> windows_core::Result<ContentIslandEnvironment> {
+        let this = &windows_core::Interface::cast::<IXamlRoot2>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).ContentIslandEnvironment)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+}
+impl windows_core::RuntimeType for XamlRoot {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_class::<Self, IXamlRoot>();
+}
+unsafe impl windows_core::Interface for XamlRoot {
+    type Vtable = <IXamlRoot as windows_core::Interface>::Vtable;
+    const IID: windows_core::GUID = <IXamlRoot as windows_core::Interface>::IID;
+}
+impl windows_core::RuntimeName for XamlRoot {
+    const NAME: &'static str = "Microsoft.UI.Xaml.XamlRoot";
+}
+unsafe impl Send for XamlRoot {}
+unsafe impl Sync for XamlRoot {}
