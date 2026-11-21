@@ -137,6 +137,9 @@ final class GraphRenderer {
     private var rowExtents: [Float] = []
     private var extentRows: Range<Int> = 0..<0
 
+    /// 点を描かない行（ドラッグしている行を空ける）。
+    var hiddenRow: Int?
+
     func rightExtent(row: Int) -> Float? {
         extentRows.contains(row) ? rowExtents[row - extentRows.lowerBound] : nil
     }
@@ -445,6 +448,8 @@ final class GraphRenderer {
                 let isHead = headRow == Int(n.row)
                 let radius = isHead ? m.headRadius : n.flags & UInt16(AmonhenNode_MERGE) != 0 ? m.mergeRadius : m.nodeRadius
                 if i >= 0, i < rowExtents.count { rowExtents[i] = max(rowExtents[i], p.x + radius) }
+                // ドラッグしている行は点を描かない（行を空ける。通る線はそのまま）。
+                if Int(n.row) == hiddenRow { continue }
                 let alpha: Float = lineage.map { $0.contains(row: Int(n.row)) ? 1 : dimmedAlpha } ?? 1
                 // 輪の中とすぐ外には線を描かない（線が輪に触れずに止まる）。
                 if isHead { hole = [p.x, p.y, radius + 0.4, 0] }
