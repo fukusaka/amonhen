@@ -155,6 +155,8 @@ enum Naming {
     Patch,
     /// 選んでいるコミットのパッチを書くフォルダ（この機械の）。
     SavePatch,
+    /// File History を開くファイル（作業ツリーの根からのパス。Tab で補う）。
+    OpenFile,
 }
 
 /// 選択肢 1 つ: 押すキー、名前、頼む中身。
@@ -281,6 +283,8 @@ pub struct App {
     /// 確かめている間に重ねる、前と後の絵（枠の題と、`drawing` の形の絵。編集モードの `editDrawing`、reset の
     /// `movePreview` から作ったもの）。答えたら消える。
     question_drawing: Option<(String, Value)>,
+    /// パスを補うときの候補（いくつもあったとき。打っているパスの後ろに出す）。
+    path_choices: String,
     /// cherry-pick・revert の確かめる文と頼むこと（前と後の絵を読んでから確かめる）。
     pick_question: Option<(String, String, Request, String)>,
     /// 今の検索: 語と、動いている検索を取り消す印（結果が届いたら `None`）。
@@ -372,6 +376,7 @@ impl App {
             plan_message: None,
             editing_plan: false,
             question_drawing: None,
+            path_choices: String::new(),
             pick_question: None,
             push_to_offered: false,
             bundle_file: None,
@@ -1171,6 +1176,8 @@ impl App {
         // 新しいブランチの名前を打っている間は、Enter で作って切り替える、Esc でやめる。
         if let Some((_, _, name)) = &mut self.typing_branch {
             self.dirty = true;
+            // 候補は、次に補うまで。
+            self.path_choices.clear();
             match key.code {
                 KeyCode::Enter if matches!(self.naming, Naming::Stash) => {
                     if let Some((_, _, message)) = self.typing_branch.take() {
@@ -1215,6 +1222,10 @@ impl App {
                                     tr!("Reading the bundle…"),
                                     json!({"op": "bundleCheck", "file": file}),
                                 )
+                            }
+                            Naming::OpenFile => {
+                                self.open_file_view(name.trim_end_matches('/'), false);
+                                return;
                             }
                             Naming::SavePatch => (
                                 "savePatch",
@@ -1284,6 +1295,11 @@ impl App {
                     }
                 }
                 KeyCode::Esc => self.typing_branch = None,
+                // ファイルのパスは、Tab でフォルダの中身から補う（git を動かす機械のもの）。
+                KeyCode::Tab if matches!(self.naming, Naming::OpenFile) => {
+                    let typed = name.clone();
+                    self.complete_path(&typed);
+                }
                 KeyCode::Backspace => {
                     name.pop();
                 }
@@ -1324,6 +1340,12 @@ impl App {
             KeyCode::Char('c') if control => self.quit = true,
             #[cfg(unix)]
             KeyCode::Char('z') if control => self.suspend = true,
+            // 変更のないファイルも、パスを打って File History を開く（Tab で補う）。
+            KeyCode::Char('O') => {
+                self.naming = Naming::OpenFile;
+                self.typing_branch = Some((String::new(), String::new(), String::new()));
+                self.dirty = true;
+            }
             KeyCode::Char('M') => {
                 self.mouse = !self.mouse;
                 self.mouse_changed = true;
@@ -1661,6 +1683,11 @@ impl App {
             }
         };
         match name {
+            "completePath" => {
+                let entries = reply["info"]["entries"].clone();
+                self.complete_with(&entries);
+                return;
+            }
             // 置き換える push の絵: まだ選んでいる間だけ重ねる。
             "pushPreview" => {
                 let target = self.upstream.clone().unwrap_or_default();
@@ -2474,6 +2501,85 @@ impl App {
         }
     }
 
+    /// ファイルの Blame か File History を開く（戻るところは今の画面）。
+    fn open_file_view(&mut self, path: &str, blame: bool) {
+        self.file.open(path, blame, None);
+        if self.view != View::File {
+            self.file_back = self.view;
+        }
+        self.view = View::File;
+        self.focus = Focus::Main;
+        self.dirty = true;
+    }
+
+    /// 打っているパスの最後の部分を、そのフォルダの中身から補う（`completePath` の答えを `complete_with` で）。
+    fn complete_path(&mut self, typed: &str) {
+        let Some(workdir) = self.workdir.clone() else {
+            return;
+        };
+        let folder = typed.rsplit_once('/').map_or("", |(dir, _)| dir);
+        let path = match folder.is_empty() {
+            true => workdir,
+            false => format!("{}/{folder}", workdir.trim_end_matches('/')),
+        };
+        self.send(Request::Call {
+            name: "completePath",
+            request: json!({"op": "run", "command": {"op": "listDirectory", "path": path}}),
+        });
+    }
+
+    /// フォルダの中身で、打っているパスを補う。1 つに決まれば埋め（フォルダなら `/` を足す）、いくつもあれば共通の
+    /// ところまで埋めて、候補を一番下の行に出す。
+    fn complete_with(&mut self, entries: &Value) {
+        let Some((_, _, name)) = self.typing_branch.as_mut() else {
+            return;
+        };
+        let (folder, part) = match name.rsplit_once('/') {
+            Some((dir, part)) => (format!("{dir}/"), part.to_owned()),
+            None => (String::new(), name.clone()),
+        };
+        let mut matches: Vec<(String, bool)> = (entries.as_array().into_iter().flatten())
+            .filter_map(|e| {
+                let entry = e["name"].as_str()?;
+                (entry.starts_with(&part) && entry != ".git")
+                    .then(|| (entry.to_owned(), e["kind"] == "folder"))
+            })
+            .collect();
+        matches.sort();
+        match matches.as_slice() {
+            [] => self.path_choices = tr!("(no match)"),
+            [(only, folder_kind)] => {
+                *name = format!("{folder}{only}{}", if *folder_kind { "/" } else { "" });
+            }
+            several => {
+                let first = &several[0].0;
+                let common = (part.len()..=first.len())
+                    .rev()
+                    .find(|&n| {
+                        first.is_char_boundary(n)
+                            && several.iter().all(|(m, _)| m.starts_with(&first[..n]))
+                    })
+                    .unwrap_or(part.len());
+                *name = format!("{folder}{}", &first[..common]);
+                let shown: Vec<String> = several
+                    .iter()
+                    .take(8)
+                    .map(|(m, f)| format!("{m}{}", if *f { "/" } else { "" }))
+                    .collect();
+                let more = several.len().saturating_sub(8);
+                self.path_choices = match more {
+                    0 => shown.join("  "),
+                    _ => format!(
+                        "{}  {}",
+                        shown.join("  "),
+                        tr!("+{count} more", count = more)
+                    ),
+                };
+            }
+        }
+        self.dirty = true;
+    }
+
     /// History で選んでいるコミットへの操作: `y` cherry-pick、`v` revert、`c` そのコミットをチェックアウト
     /// （detached HEAD）。
     fn ask_commit_operation(&mut self, code: KeyCode) -> bool {
@@ -3026,6 +3132,12 @@ impl App {
                 true
             }
             // File History で、作業ツリーのファイルをその版に戻す（確かめてから。Undo で元に戻る）。
+            // 同じファイルの Blame（今の HEAD の）と File History を切り替える。
+            KeyCode::Char('B' | 'L') if self.file.file_path().is_some() => {
+                let path = self.file.file_path().unwrap_or("").to_owned();
+                self.open_file_view(&path, code == KeyCode::Char('B'));
+                true
+            }
             KeyCode::Char('V') => {
                 let version = (self.file.selected_version())
                     .map(|(id, path, then)| (id.to_string(), path.to_owned(), then.to_owned()));
@@ -3234,6 +3346,7 @@ impl App {
                 ("g G", tr!("Top and bottom")),
                 ("Enter", tr!("Go to the commit's details")),
                 ("H", tr!("Select the commit in History")),
+                ("B L", tr!("Switch to the Blame, File History of the file")),
                 (
                     "V",
                     tr!("In File History: restore the file to that version"),
@@ -3317,6 +3430,7 @@ impl App {
                 tr!("Mouse on or off (off lets the terminal select text)"),
             ),
             (":", tr!("Commands by name")),
+            ("O", tr!("File History of any file, by its path")),
             ("Ctrl-l", tr!("Redraw the screen")),
             #[cfg(unix)]
             ("Ctrl-z", tr!("Suspend (fg in the shell comes back)")),
@@ -4154,6 +4268,13 @@ impl App {
                     Naming::RemoteUrl => tr!("URL of {at}: {name}", at = at, name = name),
                     Naming::BundleFile => tr!("Fetch from the bundle at: {name}", name = name),
                     Naming::Patch => tr!("Apply the patch at: {name}", name = name),
+                    Naming::OpenFile => {
+                        let text = tr!("File History of (Tab completes): {name}", name = name);
+                        match self.path_choices.is_empty() {
+                            true => text,
+                            false => format!("{text}    {}", self.path_choices),
+                        }
+                    }
                     Naming::SavePatch => {
                         tr!(
                             "Save {at} as a patch in the folder: {name}",
