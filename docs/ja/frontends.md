@@ -228,7 +228,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 上のコミットの欄、50/72 の数と本文の目安の線 | ✓ | ✓ | ✓ | ✓ | n/a | △ | VSCode: 列が 72 文字より狭いので、目安の線の代わりに、72 を超える本文の行の長さを出す。<br>TUI: 一覧の下。見出しに件名の行の文字数を出し、本文の目安の線はない。 |
 | リポジトリごとの下書き、テンプレートから始める | ✓ | ✓ | ✓ | ✓ | n/a | — | VSCode: `commit.template` だけで、共有のテンプレートは使わない。 |
 | 最近のメッセージ（⌥↑ / ⌥↓・一覧） | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: メッセージの欄の Alt-↑ / Alt-↓。一覧は Working Copy の `R`。 |
-| Conventional の種類・Co-authored-by・Signed-off-by を入れる | ✓ | ✓ | ✓ | ✓ | n/a | — |  |
+| Conventional の種類・Co-authored-by・Signed-off-by を入れる | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: Working Copy の `I`。 |
 | `#issue` の補完 | ✓ | ✓ | ✓ | — | n/a | — | Windows: 件名の下に並べる（WinUI の TextBox からはメニューを出すカーソルの位置が取れない）。選ぶと # を #番号 にする。 |
 | Commit and Push・Amend | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: `commit -m … --amend`。<br>TUI: `Ctrl-p` でコミットしてから push を尋ねる。`a` で amend。 |
 | Fixup / Squash Commit For | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: Working Copy の `F`。Tab で squash! に切り替える。 |

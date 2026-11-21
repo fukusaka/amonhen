@@ -253,25 +253,55 @@ enum PickKind {
     /// squash!（本文を残す）。Fixup と Tab で切り替える。
     Squash,
     Recent,
+    /// 入れるもの（Conventional Commits の種類、Co-authored-by、Signed-off-by）。
+    Insert,
+}
+
+/// Conventional Commits の種類（アプリの Insert ▾ と同じ並び）。
+const COMMIT_TYPES: &[&str] = &[
+    "feat", "fix", "docs", "style", "refactor", "perf", "test", "build", "ci", "chore", "revert",
+];
+
+/// 最近のコミット（`F`・`R`・`I`・Alt-↑ が使う）。
+#[derive(Default)]
+struct Recent {
+    /// メッセージ（新しい順）。
+    messages: Vec<String>,
+    /// 作者（名前、メール）。同じメールは 1 つ。
+    authors: Vec<(String, String)>,
+    /// Signed-off-by に書く自分。
+    me: Option<(String, String)>,
 }
 
 impl MessagePick {
-    fn new(kind: PickKind, messages: Option<&[String]>) -> Self {
+    fn new(kind: PickKind, recent: Option<&Recent>) -> Self {
         let mut pick = Self {
             query: String::new(),
             selected: 0,
             kind,
             items: None,
         };
-        if let Some(messages) = messages {
-            pick.fill(messages);
+        if let Some(recent) = recent {
+            pick.fill(recent);
         }
         pick
     }
 
-    /// 読んだメッセージから並べるものを作る。
-    fn fill(&mut self, messages: &[String]) {
+    /// 読んだ最近のコミットから並べるものを作る。
+    fn fill(&mut self, recent: &Recent) {
+        let messages = &recent.messages;
         self.items = Some(match self.kind {
+            PickKind::Insert => {
+                let mut items: Vec<String> = COMMIT_TYPES.iter().map(|t| format!("{t}:")).collect();
+                items.extend(
+                    (recent.authors.iter())
+                        .map(|(name, email)| format!("Co-authored-by: {name} <{email}>")),
+                );
+                if let Some((name, email)) = &recent.me {
+                    items.push(format!("Signed-off-by: {name} <{email}>"));
+                }
+                items
+            }
             PickKind::Recent => {
                 let mut seen = Vec::new();
                 for m in messages {
@@ -300,6 +330,34 @@ impl MessagePick {
             .map(|(i, s)| (i, s.lines().next().unwrap_or("")))
             .collect()
     }
+}
+
+/// 件名の頭の Conventional Commits の種類（`feat: `・`fix(ui)!: ` など）を除いたもの。
+fn strip_commit_type(summary: &str) -> &str {
+    let kind_end = summary
+        .find(|c: char| !c.is_ascii_lowercase())
+        .unwrap_or(summary.len());
+    if kind_end == 0 {
+        return summary;
+    }
+    let mut rest = &summary[kind_end..];
+    if rest.starts_with('(')
+        && let Some(close) = rest.find(')')
+    {
+        rest = &rest[close + 1..];
+    }
+    rest = rest.strip_prefix('!').unwrap_or(rest);
+    match rest.strip_prefix(':') {
+        Some(rest) => rest.trim_start(),
+        None => summary,
+    }
+}
+
+/// `Key: 値` の形のトレーラーの行か。
+fn is_trailer(line: &str) -> bool {
+    line.split_once(": ").is_some_and(|(key, _)| {
+        !key.is_empty() && key.chars().all(|c| c.is_ascii_alphabetic() || c == '-')
+    })
 }
 
 /// `fixup!`・`squash!` の先にできる件名（重ねない。空・同じものは 1 つに。アプリと同じく 15 まで）。
@@ -381,8 +439,8 @@ pub struct App {
     open_location: Option<String>,
     quick_open: Option<QuickOpen>,
     fixup_pick: Option<MessagePick>,
-    /// 今のブランチの最近のコミットのメッセージ（新しい順。`F`・`R`・Alt-↑ が使う。コミットしたら読み直す）。
-    recent_messages: Option<Vec<String>>,
+    /// 今のブランチの最近のコミット（`F`・`R`・`I`・Alt-↑ が使う。コミットしたら読み直す）。
+    recent_messages: Option<Recent>,
     /// メッセージの欄の Alt-↑・Alt-↓ で呼び出している、最近のメッセージの番目と、呼び出す前に書いていたもの。
     recalled: Option<(usize, String)>,
     /// 最近のメッセージを読み終えたら、Alt-↑ の呼び出しをする。
@@ -1331,6 +1389,7 @@ impl App {
                     if let Some(chosen) = chosen {
                         match pick.kind {
                             PickKind::Recent => self.use_message(&chosen),
+                            PickKind::Insert => self.insert_into_message(&chosen),
                             kind => self.use_fixup(&chosen, kind == PickKind::Squash),
                         }
                     }
@@ -1340,7 +1399,7 @@ impl App {
                     pick.kind = match pick.kind {
                         PickKind::Fixup => PickKind::Squash,
                         PickKind::Squash => PickKind::Fixup,
-                        PickKind::Recent => PickKind::Recent,
+                        kind => kind,
                     }
                 }
                 KeyCode::Down => pick.selected += 1,
@@ -2289,10 +2348,28 @@ impl App {
                 let messages: Vec<String> = (reply["messages"].as_array().into_iter().flatten())
                     .filter_map(|m| m.as_str().map(|m| m.trim_end().to_owned()))
                     .collect();
-                if let Some(pick) = &mut self.fixup_pick {
-                    pick.fill(&messages);
+                let pair = |v: &Value| {
+                    let name = v[0].as_str().filter(|s| !s.is_empty())?;
+                    let email = v[1].as_str().filter(|s| !s.is_empty())?;
+                    Some((name.to_owned(), email.to_owned()))
+                };
+                let mut authors: Vec<(String, String)> = Vec::new();
+                for (name, email) in
+                    (reply["authors"].as_array().into_iter().flatten()).filter_map(pair)
+                {
+                    if !authors.iter().any(|(_, e)| e.eq_ignore_ascii_case(&email)) {
+                        authors.push((name, email));
+                    }
                 }
-                self.recent_messages = Some(messages);
+                let recent = Recent {
+                    messages,
+                    authors,
+                    me: pair(&reply["me"]),
+                };
+                if let Some(pick) = &mut self.fixup_pick {
+                    pick.fill(&recent);
+                }
+                self.recent_messages = Some(recent);
                 if std::mem::take(&mut self.recall_when_read) {
                     self.recall(true);
                 }
@@ -3730,6 +3807,10 @@ impl App {
                 ),
                 ("R", tr!("Use a recent commit's message")),
                 (
+                    "I",
+                    tr!("Insert a Conventional Commits type, Co-authored-by or Signed-off-by"),
+                ),
+                (
                     "Alt-↑ Alt-↓",
                     tr!(
                         "In the message field: recall recent messages, then back to what was written"
@@ -3866,7 +3947,7 @@ impl App {
 
     /// 最近のメッセージを欄に呼び出す（`older` なら 1 つ古いもの）。まだ読んでいなければ読み、読んだら呼び出す。
     fn recall(&mut self, older: bool) {
-        let Some(messages) = &self.recent_messages else {
+        let Some(Recent { messages, .. }) = &self.recent_messages else {
             self.recall_when_read = older;
             self.send(Request::RecentMessages);
             return;
@@ -3895,6 +3976,40 @@ impl App {
                 }
             }
         }
+    }
+
+    /// 欄に入れる（`I` の一覧で選んだもの）: `type:` は件名の頭を置き換え（もう種類があれば替える）、トレーラーは
+    /// 本文の終わりに足す（もうあれば足さない。前の行がトレーラーでなければ空行で分ける）。アプリの Insert ▾ と同じ。
+    fn insert_into_message(&mut self, item: &str) {
+        let text = self.changes.message.text();
+        let (summary, body) = text.split_once('\n').unwrap_or((text.as_str(), ""));
+        let next = match item.strip_suffix(':') {
+            Some(kind) if !kind.contains(' ') => {
+                let rest = strip_commit_type(summary);
+                match body {
+                    "" => format!("{kind}: {rest}"),
+                    body => format!("{kind}: {rest}\n{body}"),
+                }
+            }
+            _ if text.lines().any(|l| l == item) => text.clone(),
+            _ => {
+                let trimmed = text.trim_end();
+                let last = trimmed.lines().last().unwrap_or("");
+                let after_trailer = trimmed.contains('\n') && is_trailer(last);
+                match trimmed {
+                    "" => format!("\n\n{item}"),
+                    _ if after_trailer => format!("{trimmed}\n{item}"),
+                    _ => format!("{trimmed}\n\n{item}"),
+                }
+            }
+        };
+        self.changes.message.set_text(&next);
+        // 種類を入れたら件名の終わりへ、トレーラーなら終わりへ（set_text が終わりに置く）。
+        if item.ends_with(':') && !item.contains(' ') {
+            self.changes.message.to_summary_end();
+        }
+        self.recalled = None;
+        self.focus = Focus::Message;
     }
 
     /// 欄をそのメッセージにして、欄に移る（最近のメッセージの一覧で選んだもの）。
@@ -4028,12 +4143,13 @@ impl App {
                 true
             }
             // Fixup・Squash Commit For: 最近のコミットから選んで、欄を fixup! にする。
-            KeyCode::Char('F' | 'R') if self.changes.has_message_field() => {
+            KeyCode::Char('F' | 'R' | 'I') if self.changes.has_message_field() => {
                 let kind = match code {
                     KeyCode::Char('F') => PickKind::Fixup,
-                    _ => PickKind::Recent,
+                    KeyCode::Char('R') => PickKind::Recent,
+                    _ => PickKind::Insert,
                 };
-                self.fixup_pick = Some(MessagePick::new(kind, self.recent_messages.as_deref()));
+                self.fixup_pick = Some(MessagePick::new(kind, self.recent_messages.as_ref()));
                 if self.recent_messages.is_none() {
                     self.send(Request::RecentMessages);
                 }
@@ -5019,6 +5135,7 @@ impl App {
                 PickKind::Squash => tr!(" Squash Commit For (Tab: fixup!) "),
                 PickKind::Fixup => tr!(" Fixup Commit For (Tab: squash!) "),
                 PickKind::Recent => tr!(" Recent Messages "),
+                PickKind::Insert => tr!(" Insert into the Message "),
             };
             let none = match &pick.items {
                 None => tr!("Reading the recent commits…"),
@@ -5371,6 +5488,62 @@ mod tests {
         press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
         assert_eq!(app.changes.message.text(), "Commit 3");
         assert!(app.fixup_pick.is_none());
+    }
+
+    /// 一覧の `I`: 種類は件名の頭を置き換え、トレーラーは本文の終わりに空行で分けて足す（同じものは足さない）
+    #[test]
+    fn insert_puts_a_type_and_trailers_into_the_message() {
+        let (_dir, mut app, rx) = app_with_history();
+        let press = |app: &mut App, code: KeyCode| {
+            app.handle(Event::Input(Input::Key(KeyEvent::new(
+                code,
+                KeyModifiers::NONE,
+            ))));
+        };
+        let typed = |app: &mut App, text: &str| {
+            for ch in text.chars() {
+                press(app, KeyCode::Char(ch));
+            }
+        };
+        typed(&mut app, "1");
+        crate::settle(&mut app, &rx).unwrap();
+        typed(&mut app, "I");
+        crate::settle(&mut app, &rx).unwrap();
+        let shown: Vec<String> = (app.fixup_pick.as_ref().unwrap().shown().iter())
+            .map(|(_, s)| (*s).to_owned())
+            .collect();
+        assert_eq!(shown[..2], ["feat:", "fix:"]);
+        assert!(shown.contains(&"Co-authored-by: Ann <ann@example.com>".to_owned()));
+        typed(&mut app, "fix:");
+        press(&mut app, KeyCode::Enter);
+        typed(&mut app, "Hello");
+        assert_eq!(app.changes.message.text(), "fix: Hello");
+        press(&mut app, KeyCode::Esc);
+        for _ in 0..2 {
+            typed(&mut app, "Ico-auth");
+            press(&mut app, KeyCode::Enter);
+            press(&mut app, KeyCode::Esc);
+        }
+        assert_eq!(
+            app.changes.message.text(),
+            "fix: Hello\n\nCo-authored-by: Ann <ann@example.com>"
+        );
+        typed(&mut app, "Ifeat:");
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(
+            app.changes.message.text(),
+            "feat: Hello\n\nCo-authored-by: Ann <ann@example.com>"
+        );
+    }
+
+    #[test]
+    fn commit_types_and_trailers_are_recognized() {
+        assert_eq!(strip_commit_type("fix(ui)!: Crash"), "Crash");
+        assert_eq!(strip_commit_type("feat: Add"), "Add");
+        assert_eq!(strip_commit_type("Add a thing"), "Add a thing");
+        assert_eq!(strip_commit_type("see: below"), "below");
+        assert!(is_trailer("Signed-off-by: Ann <a@example.com>"));
+        assert!(!is_trailer("Note that: this is prose"));
     }
 
     /// 編集モードの `r`: 行のメッセージを git のエディタで直す（`#` の行は捨てる）。当てるまで何も変わらない。
