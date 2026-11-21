@@ -367,7 +367,16 @@ pub struct Shaper {
     /// 少し待ってから絞り込み直す（History と ref の読み直しが続いても 1 回にまとめる。macOS 版の
     /// `scheduleReloadScope`）。
     reshape_soon: RefCell<Option<glib::SourceId>>,
+    /// History の上で編集している（今のブランチの全部の行を出し、たたまない。範囲は選ばせない）。
+    editing: Cell<bool>,
+    /// 編集を始める前の範囲・一緒に辿る起点・一致だけを出していたか（終えたら戻す）。
+    before_edit: RefCell<Option<(Scope, Vec<Oid>, bool)>>,
+    /// 次に作り直した History を出したらすること（編集を終えて、一致だけの表示に戻すとき）。
+    after_shape: AfterShape,
 }
+
+/// 作り直した History を出したらすること。
+type AfterShape = Rc<RefCell<Option<Box<dyn FnOnce()>>>>;
 
 /// 絞り込み直すまで待つ時間（macOS 版と同じ 0.1 秒）。
 const RESHAPE_DELAY: std::time::Duration = std::time::Duration::from_millis(100);
@@ -412,6 +421,9 @@ impl Shaper {
             scope_bar,
             updating_scope: Cell::new(false),
             reshape_soon: RefCell::default(),
+            editing: Cell::new(false),
+            before_edit: RefCell::default(),
+            after_shape: Rc::default(),
         });
         shaper.update_scope_bar();
         let weak = Rc::downgrade(&shaper);
@@ -464,7 +476,7 @@ impl Shaper {
             self.view.fade_next();
         }
         self.full.replace(Some((repo, full)));
-        let shaped = settings::bool(settings::FOLD_MERGED_BRANCHES) || !self.tips().is_empty();
+        let shaped = self.folds() || !self.tips().is_empty();
         if reloaded && shaped {
             self.schedule_reshape();
         } else {
@@ -533,16 +545,90 @@ impl Shaper {
     /// 表示する範囲を変えて作り直す。`select` は作り直したら選ぶコミット、`companions` は `Scope::Ref` のときに
     /// 一緒に辿る起点（ブランチの上流）。
     pub fn set_scope(&self, scope: Scope, select: Option<Oid>, companions: Vec<Oid>) {
+        // 編集の間は今のブランチのまま（範囲を選ぶものも押せない。macOS 版と同じ）。
+        if self.editing.get() {
+            return;
+        }
         self.scope.replace(scope);
         self.companions.replace(companions);
         self.update_scope_bar();
         self.reshape(select, true);
     }
 
+    /// 取り込んだ枝をたたむか（編集の間は全部の行を出す）。
+    fn folds(&self) -> bool {
+        settings::bool(settings::FOLD_MERGED_BRANCHES) && !self.editing.get()
+    }
+
+    /// History の上で編集を始める: 今のブランチの全部の行（たたまない・一致だけにしない）にし、範囲は選ばせない
+    /// （macOS 版の `beginEditing`）。
+    pub fn begin_editing(&self) {
+        if self.editing.get() {
+            return;
+        }
+        let only = self.search.pause_only_matching();
+        let reshape = *self.scope.borrow() != Scope::Current || self.folds();
+        self.before_edit.replace(Some((
+            self.scope.borrow().clone(),
+            self.companions.borrow().clone(),
+            only,
+        )));
+        self.editing.set(true);
+        self.scope_bar.set_sensitive(false);
+        // History で p・r・s・f・d・e を押したら、することを替える（文字で検索の欄を開かない）。
+        self.search.capture_keys(false);
+        if reshape {
+            self.scope.replace(Scope::Current);
+            self.companions.replace(Vec::new());
+            self.update_scope_bar();
+            self.reshape(self.selected_commit(), false);
+        }
+    }
+
+    /// 編集を終える（Apply・Cancel）。元の範囲・折りたたみ・一致だけの表示に戻す。
+    pub fn end_editing(&self) {
+        if !self.editing.replace(false) {
+            return;
+        }
+        self.scope_bar.set_sensitive(true);
+        self.search.capture_keys(true);
+        let Some((scope, companions, only)) = self.before_edit.take() else {
+            return;
+        };
+        let reshape = scope != *self.scope.borrow() || self.folds();
+        let search = self.search.clone();
+        let resume = move || {
+            if only {
+                search.resume_only_matching();
+            }
+        };
+        if reshape {
+            self.scope.replace(scope);
+            self.companions.replace(companions);
+            self.update_scope_bar();
+            self.after_shape.replace(Some(Box::new(resume)));
+            self.reshape(self.selected_commit(), false);
+        } else {
+            resume();
+        }
+    }
+
+    /// 選んでいる行に描いているコミット（作り直した History でも選ぶ）。
+    fn selected_commit(&self) -> Option<Oid> {
+        self.view
+            .selected()
+            .and_then(|row| self.view.shown_commit(row))
+    }
+
+    /// 作り直した History を出し終えた（待っていたことをする）。
+    fn finish_shape(&self) {
+        run_after_shape(&self.after_shape);
+    }
+
     /// 全ブランチでなければ全ブランチに戻して `id` を選ぶ（今の範囲にないコミットへ移るとき。macOS 版の
     /// `set(scope: .all, select:)`）。戻したら true。
     pub fn show_all_selecting(&self, id: Oid) -> bool {
-        if *self.scope.borrow() == Scope::All {
+        if self.editing.get() || *self.scope.borrow() == Scope::All {
             return false;
         }
         self.set_scope(Scope::All, Some(id), Vec::new());
@@ -650,7 +736,7 @@ impl Shaper {
         let Some((repo, full)) = self.full.borrow().clone() else {
             return;
         };
-        let fold = settings::bool(settings::FOLD_MERGED_BRANCHES);
+        let fold = self.folds();
         let tips = self.tips();
         if !fold && tips.is_empty() {
             // 作っている途中の折りたたみ・絞り込みは捨てる。
@@ -663,6 +749,7 @@ impl Shaper {
             if let Some(id) = select {
                 select_when_found(&self.view, full, id, self.pending.clone());
             }
+            self.finish_shape();
             return;
         }
         let mut expanded: Vec<Oid> = if fold {
@@ -677,6 +764,7 @@ impl Shaper {
             if reset_scroll {
                 self.view.scroll_to_top();
             }
+            self.finish_shape();
             return;
         }
         self.shaped.replace(Some(key));
@@ -691,6 +779,7 @@ impl Shaper {
         pending.set(pending.get() + 1);
         let r = repo.clone();
         let current = self.request.clone();
+        let after = self.after_shape.clone();
         let whole = full.graph.len();
         glib::spawn_future_local(async move {
             let shaped = gio::spawn_blocking(move || {
@@ -727,6 +816,7 @@ impl Shaper {
                     if let Some(row) = row {
                         view.select(row);
                     }
+                    run_after_shape(&after);
                 }
                 Ok(Err(e)) => eprintln!("History を作れない: {e}"),
                 Err(_) => {}
@@ -794,6 +884,14 @@ impl Shaper {
             }
         }
         self.reshape(Some(id), true);
+    }
+}
+
+/// 作り直した History を出したらすることを、1 回だけする。
+fn run_after_shape(after: &AfterShape) {
+    let f = after.borrow_mut().take();
+    if let Some(f) = f {
+        f();
     }
 }
 
