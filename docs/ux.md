@@ -564,6 +564,20 @@ In addition to today's "choose a file to show only its diff", offer a view that 
 - Undo: applying mail is one operation, recorded once it finishes; a diff is undone by putting back the files it
   changed.
 
+### Folding merges
+
+Any merge in History can be folded: the commits it brought in are hidden, and the merge's dot gets a "+N" badge with
+their number. A merge whose commits are all shown through another branch has nothing to fold.
+
+- **One merge.** Click the badge to show its commits again; a merge's context menu always has Fold Merged Commits or
+  Show N Merged Commits; with the merge selected, ← folds it and → opens it, as in a tree. Opening a merge keeps the
+  merges inside it folded until they are opened too.
+- **All merges.** The display menu's Fold All Merged Commits and Show All Merged Commits set every merge at once and
+  forget the ones folded or opened one by one. It is a command, not a mode that the single merges sit on.
+- **Kept per repository.** The fold is kept in `.git/amonhen/fold.json` (beside `undo.json`; the core reads and writes
+  it with `foldState` and `setFoldState`), so it comes back the next time and is the same in every front end and
+  over SSH. History's edit mode shows every row and leaves the fold as it was.
+
 ### History's edit mode
 
 Editing commits happens in one mode instead of one menu item per git command, so what will change is visible before
@@ -834,7 +848,7 @@ Make every operation available from the menus. Shortcuts do not follow other cli
 | Amon Hen | About Amon Hen; Settings… ⌘,; Services ▸; Hide Amon Hen ⌘H, Hide Others ⌥⌘H, Show All; Quit Amon Hen ⌘Q |
 | File | New Tab ⌘T, New Window ⌘N, Open… ⌘O, Quick Open… ⌘⇧O, Clone… ⌃⌘C, Open Recent ▸; Close ⌘W |
 | Edit | Undo ⌘Z, Redo ⌘⇧Z (text edits and settings pages, not git operations); Cut, Copy, Paste, Select All; Find… ⌘F, Find Next ⌘G, Find Previous ⌘⇧G, Find in History… ⌘⇧F |
-| View | Working Copy ⌘1, History ⌘2, Stashes ⌘4, Reflog ⌘5; Refresh ⌘R, Rebuild History; Show Sidebar ⌃⌘S, Show Tab Bar ⌘⇧T; History's display menu: Order (Date Order, Topological Order), Items (Branches and Tags, Author, Date, Commit ID, Signature, CI Status), One Line per Commit, Fold Merged Branches, Highlight Ancestors, and Commit Details (Monospaced Commit Message, Show Avatars, All Files in One Diff, Changed Files as Tree) |
+| View | Working Copy ⌘1, History ⌘2, Stashes ⌘4, Reflog ⌘5; Refresh ⌘R, Rebuild History; Show Sidebar ⌃⌘S, Show Tab Bar ⌘⇧T; History's display menu: Order (Date Order, Topological Order), Items (Branches and Tags, Author, Date, Commit ID, Signature, CI Status), One Line per Commit, Highlight Ancestors, Fold All Merged Commits, Show All Merged Commits, and Commit Details (Monospaced Commit Message, Show Avatars, All Files in One Diff, Changed Files as Tree) |
 | Navigate | Switch Branch… ⌘⇧B, Filter Branches… ⌥⌘F, Go to HEAD ⌘⇧H, Go to Parent ⌥⌘↓, Go to Child ⌥⌘↑ |
 | Repository | Fetch… ⌃⌘F, Pull… ⌃⌘L, Push… ⌃⌘P (Publish… when the branch has no upstream), Force Push…; New Branch… ⌥⌘B, New Orphan Branch… (no history: empty as `git switch --orphan`, or keeping the current files staged as `git checkout --orphan`), Rename Branch…, Set Upstream…, Clean Up Branches… (one sheet with the branches merged into the default branch, merged by a pull request on GitHub, or whose upstream is gone, under a heading per reason; the last are left unchecked; also from the Branches heading's menu; one Undo), New Tag… ⌥⌘T; New Worktree…, Prune Worktrees, Add Remote…, Add Submodule…, Update Submodules…, Add Subtree…; Merge… ⌥⌘M, Rebase… ⌥⌘R, Compare with Previous Version, Apply Patch…, Save Repository as Bundle…, Fetch from Bundle…; Continue, Skip, Abort; Stash… ⌥⌘S, Pop… ⌥⌘⇧S, Delete Ignored Files… (lists what `git clean -X` would remove, folders as one entry, and deletes them behind a red button); Undo… ⌥⌘Z (Undo <operation>… when there is one); Repository Settings ⌘;; Create Pull Request…, Open on GitHub; Open in Terminal, Open in Editor, Show in Finder |
 | Commit | Commit ⌘↩, Commit and Push ⌘⇧↩ (Commit and Publish… without an upstream), Stage All; Save as Patch…, Export Archive… |
@@ -855,7 +869,7 @@ Make every operation available from the menus. Shortcuts do not follow other cli
   the selectors in `Commands.swift`. Each front end decides where the sections go (the macOS menu bar; on GTK4 the
   Repository button and the primary menu) and which commands are enabled. Context menus take their titles with a
   target from `Commands.swift` ("New Branch from …", "Copy Short ID" with 8 characters everywhere).
-- The View menu is History's display menu (order, items, one line, fold, ancestors, and the commit details: monospaced
+- The View menu is History's display menu (order, items, one line, ancestors, folding all merges, and the commit details: monospaced
   message, avatars, all files in one diff, files as a tree); History's bar button and header show the same menu.
 - Unavailable items are disabled, not removed (so their place can be remembered).
 - **Status bar.** One bar at the bottom of the window, under the page, holds what is going on: a merge, rebase or
