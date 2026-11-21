@@ -2216,6 +2216,12 @@ impl App {
                 return;
             }
             "deleteIgnored" => self.notice = Some(tr!("Deleted the ignored files")),
+            "addToGitignore" => {
+                self.notice = Some(match reply["added"] == true {
+                    true => tr!("Added to .gitignore"),
+                    false => tr!("Already in .gitignore"),
+                })
+            }
             // パッチの中身が分かった: 当たらなければ git の答えを出す。メールの形ならコミットとして（git am）、
             // ただの diff なら作業ツリーに（git apply）当てるかを確かめる。
             "readPatch" => {
@@ -3807,6 +3813,10 @@ impl App {
                 ),
                 ("R", tr!("Use a recent commit's message")),
                 (
+                    "i",
+                    tr!("Add an untracked file, or its extension, to .gitignore"),
+                ),
+                (
                     "I",
                     tr!("Insert a Conventional Commits type, Co-authored-by or Signed-off-by"),
                 ),
@@ -4140,6 +4150,27 @@ impl App {
             }
             KeyCode::Char('c') if self.changes.has_message_field() => {
                 self.focus = Focus::Message;
+                true
+            }
+            // untracked のファイルを .gitignore に足す: そのパスか、拡張子のパターン（アプリの右クリックと同じ）。
+            KeyCode::Char('i') => {
+                let Some(path) = self.changes.untracked_path().map(str::to_owned) else {
+                    self.error = Some(tr!("Only an untracked file can be added to .gitignore"));
+                    return true;
+                };
+                let add = |pattern: &str| Request::AddToGitignore {
+                    pattern: pattern.to_owned(),
+                };
+                let mut choices = vec![('p', path.clone(), add(&path))];
+                let name = path.rsplit('/').next().unwrap_or(&path);
+                if let Some((stem, ext)) = name.rsplit_once('.')
+                    && !stem.is_empty()
+                    && !ext.is_empty()
+                {
+                    let pattern = format!("*.{ext}");
+                    choices.push(('e', pattern.clone(), add(&pattern)));
+                }
+                self.choices = Some((tr!("Add to .gitignore:"), choices));
                 true
             }
             // Fixup・Squash Commit For: 最近のコミットから選んで、欄を fixup! にする。
