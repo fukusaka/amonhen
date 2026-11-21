@@ -15,6 +15,7 @@ mod oid;
 mod ops;
 pub mod process;
 mod range_diff;
+pub mod recent;
 mod refs;
 pub mod scan;
 pub mod search;
