@@ -392,6 +392,8 @@ pub struct Input<'a> {
     pub mixed: &'a dyn Fn(&str) -> ElementRef<CheckBox>,
     /// 最後にマウスを載せたファイルの行（変更を捨てるボタンを出す）。
     pub hovered: Option<&'a str>,
+    /// `#` を打った直後の、開いている Issue・PR の候補（番号とタイトル。出していなければ空）。
+    pub issues: &'a [(u64, String)],
 }
 
 /// 画面が受ける操作。
@@ -420,6 +422,8 @@ pub struct Callbacks<'a> {
     pub hover: Box<dyn Fn(String) -> Callback<PointerEventInfo> + 'a>,
     /// 行の変更を捨てるボタン（確かめてから。右クリックの Discard File と同じ）。
     pub discard: Box<dyn Fn(String) -> Callback<()> + 'a>,
+    /// `#` の候補を選んだ（番号）。
+    pub issue: Box<dyn Fn(u64) -> Callback<()> + 'a>,
 }
 
 /// 一覧の 1 行の印（M・A・D・R・?・U）。作業ツリー側に変更があればそちら、なければ index 側。
@@ -506,8 +510,37 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
                 3,
             ),
         ));
+    // `#` を打った直後の候補（GTK4 版はカーソルの下のメニュー。ここでは欄の下に並べ、選ぶと `#番号` を入れる）。
+    let issues: View = if input.issues.is_empty() {
+        View::empty()
+    } else {
+        let rows: Vec<(String, View)> = input
+            .issues
+            .iter()
+            .take(30)
+            .map(|(number, title)| {
+                (
+                    format!("i{number}"),
+                    Button::new()
+                        .horizontal_alignment(HorizontalAlignment::Stretch)
+                        .on_click((callbacks.issue)(*number))
+                        .content(
+                            TextBlock::new()
+                                .text(format!("#{number}  {title}"))
+                                .text_trimming(TextTrimming::CharacterEllipsis),
+                        ),
+                )
+            })
+            .collect();
+        ScrollViewer::new().max_height(180.0).content(
+            StackPanel::new()
+                .spacing(2.0)
+                .children((View::keyed_fragment(rows),)),
+        )
+    };
     let message = StackPanel::new().spacing(6.0).grid_row(1).children((
         summary,
+        issues,
         Grid::new().children((
             TextBox::new()
                 .element_ref(callbacks.description_box)

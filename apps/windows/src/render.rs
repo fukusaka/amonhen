@@ -57,7 +57,7 @@ pub mod items {
     pub const DATE: u32 = 4;
     pub const ID: u32 = 8;
     pub const SIGNATURE: u32 = 16;
-    /// GitHub の CI の状態（この FE は出さないが、ビットは GTK4 版・macOS 版と同じ設定に残す）。
+    /// GitHub の CI の状態（行の右端の印）。
     pub const CI: u32 = 32;
     pub const ALL: u32 = REFS | AUTHOR | DATE | ID | SIGNATURE | CI;
     /// 作者・日時の行に出すもの。
@@ -98,6 +98,14 @@ const LINE_WIDTH: f32 = 1.6;
 const FIRST_PARENT_WIDTH: f32 = 2.4;
 const GRAPH_WIDTH: f32 = 160.0;
 const TEXT_INSET: f32 = 8.0;
+/// CI の印に空ける幅（行の右端から。GTK4 版と同じ）。
+const CI_SPACE: f32 = 18.0;
+
+/// History の幅 `width`（DIP）の行で、`x` が CI の印の上か（GTK4 版の `click_ci`。印があるかは見ない）。
+pub fn on_ci_mark(width: f32, x: f32) -> bool {
+    let end = width - TEXT_INSET;
+    x >= end - CI_SPACE && x <= end + 2.0
+}
 
 /// 色は `color % PALETTE.len()` で選ぶ。0 は幹線。
 const PALETTE: [[f32; 3]; 8] = [
@@ -784,6 +792,15 @@ impl Renderer {
             let top = row as f32 * row_height() - scroll_y;
             let compact = compact();
             let shown = history_items();
+            // GitHub の CI の状態（知っていれば）。行の右端に置き、署名の印とは離す（GTK4 版と同じ）。
+            let ci = (shown & items::CI != 0)
+                .then(|| data.ci.get(&history.graph.ids()[row as usize]).copied())
+                .flatten();
+            let text_width = if ci.is_some() {
+                (text_width - CI_SPACE).max(0.0)
+            } else {
+                text_width
+            };
             let label_top = if compact {
                 (row_height() - LABEL_HEIGHT) / 2.0
             } else {
@@ -863,6 +880,9 @@ impl Renderer {
                     &self.brush,
                     D2D1_DRAW_TEXT_OPTIONS_NONE,
                 );
+            }
+            if let Some(ci) = ci {
+                self.draw_ci(ci, text_x + text_width + 9.0, top + row_height() / 2.0);
             }
         }
         if profiling {
@@ -1373,6 +1393,67 @@ impl Renderer {
         let made = (layout, metrics.widthIncludingTrailingWhitespace.ceil());
         self.labels.insert(name.to_string(), made.clone());
         Ok(made)
+    }
+
+    /// CI の印を (cx, cy) を中心に描く: 枠のないチェック・バツ・点（署名の丸と形で見分ける。GTK4 版の `draw_ci`）。
+    /// 色は macOS 版と同じく、成功は緑・失敗は赤・途中は橙。
+    fn draw_ci(&self, ci: crate::github::Ci, cx: f32, cy: f32) {
+        use crate::github::Ci;
+        let color = match ci {
+            Ci::Passing => rgba(0.20, 0.70, 0.30, 1.0),
+            Ci::Failing => rgba(0.90, 0.25, 0.25, 1.0),
+            Ci::Pending => rgba(0.95, 0.55, 0.15, 1.0),
+            Ci::None => with_alpha(foreground(), 0.55),
+        };
+        unsafe {
+            self.brush.SetColor(&color);
+            match ci {
+                Ci::Passing => {
+                    let (a, b, c) = (
+                        point(cx - 3.8, cy + 0.2),
+                        point(cx - 1.2, cy + 2.9),
+                        point(cx + 4.0, cy - 3.2),
+                    );
+                    self.d2d.DrawLine(a, b, &self.brush, 1.6, &self.round);
+                    self.d2d.DrawLine(b, c, &self.brush, 1.6, &self.round);
+                }
+                Ci::Failing => {
+                    let d = 3.2;
+                    self.d2d.DrawLine(
+                        point(cx - d, cy - d),
+                        point(cx + d, cy + d),
+                        &self.brush,
+                        1.6,
+                        &self.round,
+                    );
+                    self.d2d.DrawLine(
+                        point(cx + d, cy - d),
+                        point(cx - d, cy + d),
+                        &self.brush,
+                        1.6,
+                        &self.round,
+                    );
+                }
+                Ci::Pending => self.d2d.FillEllipse(
+                    &D2D1_ELLIPSE {
+                        point: point(cx, cy),
+                        radiusX: 3.0,
+                        radiusY: 3.0,
+                    },
+                    &self.brush,
+                ),
+                Ci::None => self.d2d.DrawEllipse(
+                    &D2D1_ELLIPSE {
+                        point: point(cx, cy),
+                        radiusX: 3.0,
+                        radiusY: 3.0,
+                    },
+                    &self.brush,
+                    1.0,
+                    None,
+                ),
+            }
+        }
     }
 
     fn draw_label(

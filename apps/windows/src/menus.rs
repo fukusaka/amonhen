@@ -9,6 +9,8 @@ use windows_reactor::{
 
 /// この FE で動く操作。
 pub const IMPLEMENTED: &[&str] = &[
+    "open-on-github",
+    "create-pull-request",
     "show-working-copy",
     "show-history",
     "refresh",
@@ -153,7 +155,7 @@ pub fn menu_bar(on_click: impl Fn() -> Callback<String>) -> View {
                 "scope-current",
                 amonhen_model::tr!("Current Branch"),
             ));
-            // 行に出す項目（GTK4 版の View の History の見せ方。CI の状態はこの FE にない）。
+            // 行に出す項目（GTK4 版の View の History の見せ方）。
             items.push(MenuItem::separator("-items"));
             let shown = crate::render::history_items();
             for (id, bit, title) in [
@@ -174,6 +176,7 @@ pub fn menu_bar(on_click: impl Fn() -> Callback<String>) -> View {
                     crate::render::items::SIGNATURE,
                     "Signature",
                 ),
+                ("history-item-ci", crate::render::items::CI, "CI Status"),
             ] {
                 let mark = if shown & bit != 0 { "✓ " } else { "" };
                 let title = amonhen_model::i18n::translate(title);

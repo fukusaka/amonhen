@@ -132,6 +132,30 @@ pub fn open_default(path: &std::path::Path) -> bool {
         .is_ok()
 }
 
+/// URL を既定のブラウザで開く（GTK4 版の `github::open_uri`）。
+pub fn open_url(url: &str) -> bool {
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+    use windows::core::HSTRING;
+    // http・https だけ（ほかのものをシェルに渡さない）。
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return false;
+    }
+    // SAFETY: 渡す文字列は呼んでいる間だけ生きていればよい。
+    let result = unsafe {
+        ShellExecuteW(
+            None,
+            &HSTRING::from("open"),
+            &HSTRING::from(url),
+            None,
+            None,
+            SW_SHOWNORMAL,
+        )
+    };
+    // 32 より大きければ成功（ShellExecute の決まり）。
+    result.0 as isize > 32
+}
+
 /// フォルダをエクスプローラーで開く（Repository > Show in Files）。
 // エクスプローラーの窓を出すのが目的なので、process::command（窓を出さない）は使わない。
 #[allow(clippy::disallowed_methods)]
