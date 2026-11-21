@@ -2434,9 +2434,6 @@ impl HistoryView {
         }
     }
 
-    /// 編集の操作の印（git の言葉の札）を、右端 `right` に描いて幅を返す。そのままは薄い灰色、取り消すは赤、
-    /// ほかは濃い色、コンフリクトしそうなら橙（macOS 版の `drawEditChip`）。`colors` は文字の色と背景の色。
-    #[allow(clippy::too_many_arguments)]
     /// たたんだ merge の札（枠だけの丸い札に「+N」。下を通る線は背景の色で隠す）。`colors` は文字・背景の色
     /// （選んだ行なら、選択の上の文字と選択の色）。幅を返す。
     #[allow(clippy::too_many_arguments)]
@@ -2477,6 +2474,8 @@ impl HistoryView {
         width
     }
 
+    /// 編集の操作の印（git の言葉の札）を、右端 `right` に描いて幅を返す。そのままは薄い灰色、取り消すは赤、
+    /// ほかは濃い色、コンフリクトしそうなら橙（macOS 版の `drawEditChip`）。`colors` は文字の色と背景の色。
     #[allow(clippy::too_many_arguments)]
     fn draw_edit_chip(
         &self,
