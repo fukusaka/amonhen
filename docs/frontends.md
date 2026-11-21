@@ -227,7 +227,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Space toggles, ⌫ discards | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: Space and `d`. |
 | Commit box on top with 50/72 counter and body guide | ✓ | ✓ | ✓ | ✓ | n/a | △ | VSCode: A description line over 72 is counted instead of a guide (the column is narrower than 72 characters).<br>TUI: Under the list; its heading counts the summary line, with no body guide. |
 | Draft per repository, starting from the template | ✓ | ✓ | ✓ | ✓ | n/a | — | VSCode: `commit.template` only, not the shared template library. |
-| Recent messages (⌥↑ / ⌥↓, list) | ✓ | ✓ | ✓ | ✓ | n/a | — |  |
+| Recent messages (⌥↑ / ⌥↓, list) | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: Alt-↑ / Alt-↓ in the message field, `R` in the list for the list. |
 | Insert Conventional types, Co-authored-by, Signed-off-by | ✓ | ✓ | ✓ | ✓ | n/a | — |  |
 | `#issue` completion | ✓ | ✓ | ✓ | — | n/a | — | Windows: Listed under the summary (a WinUI text box gives no caret position to open a menu at); choosing one puts #number in place of the #. |
 | Commit and Push, Amend | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: `commit -m … --amend`.<br>TUI: `Ctrl-p` commits and then asks to push; `a` turns amend on. |
