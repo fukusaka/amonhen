@@ -142,6 +142,11 @@ const FILTER: &[&str] = &[
      IsTabStop,put_IsTabStop,Focus,CapturePointer,ReleasePointerCapture,ContextFlyout,put_ContextFlyout,PreviewKeyDown,remove_PreviewKeyDown,\
      StartBringIntoView,put_IsHitTestVisible,put_Visibility,DragOver,remove_DragOver,Drop,remove_Drop,put_AllowDrop}",
     "Microsoft.UI.Xaml.Controls.Primitives.IFlyoutBase::{ShowAt,ShowAtWithOptions,Hide}",
+    // History の CI の印の吹き出し（印の位置に置いた見えないボタンの Flyout を開く）。
+    "Microsoft.UI.Xaml.Controls.Button",
+    "Microsoft.UI.Xaml.Controls.IButton::{Flyout}",
+    "Microsoft.UI.Xaml.Controls.IButtonFactory::{}",
+    "Microsoft.UI.Xaml.Controls.IButtonStatics::{}",
     "Microsoft.UI.Xaml.Controls.Primitives.IFlyoutShowOptions::{put_Position}",
     "Microsoft.UI.Xaml.IRoutedEventArgs::{OriginalSource}",
     "Microsoft.UI.Xaml.Input.IKeyRoutedEventArgs::{Key,OriginalKey,Handled,put_Handled}",

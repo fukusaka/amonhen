@@ -36,6 +36,30 @@ impl AppBarButton {
             .ok()
         }
     }
+    pub fn Flyout(&self) -> windows_core::Result<FlyoutBase> {
+        let this = &windows_core::Interface::cast::<IButton>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).Flyout)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub fn SetFlyout<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<FlyoutBase>,
+    {
+        let this = &windows_core::Interface::cast::<IButton>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetFlyout)(
+                windows_core::Interface::as_raw(this),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
     pub fn SetFontFamily<P0>(&self, value: P0) -> windows_core::Result<()>
     where
         P0: windows_core::Param<FontFamily>,
@@ -662,6 +686,28 @@ windows_core::imp::required_hierarchy!(
     DependencyObject
 );
 impl Button {
+    pub fn Flyout(&self) -> windows_core::Result<FlyoutBase> {
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(self).Flyout)(
+                windows_core::Interface::as_raw(self),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub fn SetFlyout<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<FlyoutBase>,
+    {
+        unsafe {
+            (windows_core::Interface::vtable(self).SetFlyout)(
+                windows_core::Interface::as_raw(self),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
     pub fn SetFontFamily<P0>(&self, value: P0) -> windows_core::Result<()>
     where
         P0: windows_core::Param<FontFamily>,
@@ -4958,6 +5004,14 @@ impl windows_core::RuntimeType for IButton {
 #[repr(C)]
 pub struct IButton_Vtbl {
     pub base__: windows_core::IInspectable_Vtbl,
+    pub Flyout: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *mut *mut core::ffi::c_void,
+    ) -> windows_core::HRESULT,
+    pub SetFlyout: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *mut core::ffi::c_void,
+    ) -> windows_core::HRESULT,
 }
 windows_core::imp::define_interface!(
     IButtonBase,
