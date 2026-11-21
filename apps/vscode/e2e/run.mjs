@@ -6,7 +6,7 @@
  * `AMONHEN_E2E_GIT` に git を渡すと、リポジトリを作るのにも拡張（VSCode の `git.path`）にもその git を使う
  * （VSCode は PATH ではなく自分で git を探すので、サポートする最低の git で試すときに要る）
  */
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -95,6 +95,31 @@ writeFileSync(
 );
 
 const env = testEnv(dir, engine);
+// Windows の CI で拡張ホストが止まる件の手がかり: 10 秒ごとに、その間に CPU を多く使ったプロセスを残し、終わりに出す
+const cpuLog = join(dir, 'cpu.log');
+const sampler =
+  process.platform === 'win32'
+    ? spawn(
+        'powershell',
+        [
+          '-NoProfile',
+          // 引用符を気にしなくて済むように、UTF-16LE の base64 で渡す
+          '-EncodedCommand',
+          // svchost はサービス名、Code はプロセスの種類（--type）を添える
+          `$names = @{}; function Label($p) { if (-not $names.ContainsKey($p.Id)) { $extra = ''; ` +
+            `if ($p.ProcessName -eq 'svchost') { $extra = (Get-CimInstance Win32_Service -Filter "ProcessId=$($p.Id)").Name -join '+' } ` +
+            `elseif ($p.ProcessName -eq 'Code') { $c = (Get-CimInstance Win32_Process -Filter "ProcessId=$($p.Id)").CommandLine; ` +
+            `$extra = if ($c -match '--type=(\\S+)') { $Matches[1] } else { 'main' } } ` +
+            `$names[$p.Id] = '{0}({1}{2})' -f $p.ProcessName, $p.Id, $(if ($extra) { ' ' + $extra } else { '' }) }; $names[$p.Id] }; ` +
+            `$prev = @{}; while ($true) { $now = @{}; $rows = foreach ($p in Get-Process) { $now[$p.Id] = $p.CPU; ` +
+            `$d = $p.CPU - $(if ($prev.ContainsKey($p.Id)) { $prev[$p.Id] } else { 0 }); ` +
+            `if ($prev.Count -gt 0 -and $d -ge 1) { [pscustomobject]@{ N = '{0} {1:N1}s' -f (Label $p), $d; D = $d } } }; ` +
+            `if ($rows) { (Get-Date -Format 'HH:mm:ss') + ' ' + (($rows | Sort-Object D -Descending | Select-Object -First 6).N -join ', ') | ` +
+            `Add-Content -LiteralPath '${cpuLog}' }; $prev = $now; Start-Sleep -Seconds 10 }`,
+        ].map((a, i) => (i === 2 ? Buffer.from(a, 'utf16le').toString('base64') : a)),
+        { stdio: 'ignore' },
+      )
+    : undefined;
 const start = performance.now();
 const run = spawnSync(
   process.execPath,
@@ -102,6 +127,10 @@ const run = spawnSync(
   { cwd: root, stdio: 'inherit', env: { ...process.env, AMONHEN_E2E_DIR: dir, AMONHEN_E2E_ENGINE: engine } },
 );
 console.log(`VSCode: ${((performance.now() - start) / 1000).toFixed(1)}s`);
+if (sampler) {
+  sampler.kill();
+  if (existsSync(cpuLog)) console.log(`CPU を 1 秒以上使ったプロセス（10 秒ごと）:\n${readFileSync(cpuLog, 'utf8').trimEnd()}`);
+}
 
 // daemon を止めてから消す。Windows では、どこかのプロセスが掴んだままだと消せない（EPERM）
 spawnSync(engine, ['daemon', 'stop'], { env: { ...process.env, ...env }, stdio: 'inherit' });
