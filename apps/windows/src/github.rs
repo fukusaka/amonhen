@@ -896,6 +896,36 @@ fn ci_tips(repo: &Repository, branches: &[String], remote: Option<&str>) -> Vec<
     tips
 }
 
+/// 自分の GitHub のリポジトリ（`nameWithOwner` と URL。名前の順、最大 200 件。File > Clone… で選ぶ。GTK4 版の
+/// `repos::clone`）。読めなければ空。待つ。
+pub fn my_repositories() -> Vec<(String, String)> {
+    let mut repos: Vec<(String, String)> = gh(
+        &[
+            "repo",
+            "list",
+            "--json",
+            "nameWithOwner,url",
+            "--limit",
+            "200",
+        ],
+        None,
+    )
+    .ok()
+    .and_then(|out| serde_json::from_str::<Value>(&out).ok())
+    .and_then(|v| v.as_array().cloned())
+    .into_iter()
+    .flatten()
+    .filter_map(|r| {
+        Some((
+            r["nameWithOwner"].as_str()?.to_owned(),
+            r["url"].as_str()?.to_owned(),
+        ))
+    })
+    .collect();
+    repos.sort_by_key(|r| r.0.to_lowercase());
+    repos
+}
+
 /// #123 の候補（番号とタイトル）と、読んだ時刻。
 type IssueCache = (std::time::Instant, Vec<(u64, String)>);
 static ISSUES: Mutex<Option<HashMap<String, IssueCache>>> = Mutex::new(None);

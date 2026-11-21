@@ -431,6 +431,10 @@ struct Root {
     column_handles: [ElementRef<Grid>; 4],
     /// `#` を打った直後の Issue・PR の候補: 本文の欄か、`#` の直後の位置（文字の数）、そのときの欄の文、候補。
     issue_offer: Option<IssueOffer>,
+    /// File > Clone… で選べる自分の GitHub のリポジトリ（名前と URL。読んでいる間は None）と、選んだ回数（選んだ
+    /// 後に一覧を見出しに戻すため、作り直す鍵）。
+    github_repos: Option<Vec<(String, String)>>,
+    github_repo_picks: u64,
     recall_cursor: isize,
     before_recall: Option<(String, String)>,
 }
@@ -849,6 +853,9 @@ enum Message {
     GitHub(String, Box<crate::github::Loaded>),
     /// `#` の候補を読んだ（本文の欄か、位置、そのときの欄の文、候補）と、選んだ。
     IssueCandidates(bool, usize, String, Vec<(u64, String)>),
+    /// File > Clone… の、自分の GitHub のリポジトリを読んだ・選んだ（一覧の番号。0 は見出し）。
+    GitHubRepos(Vec<(String, String)>),
+    PickGitHubRepo(Option<usize>),
     PickIssue(u64),
     /// CI の印を押した（コミット、状態）と、そのチェックを読んだ。
     Checks(String, crate::github::Ci),
@@ -1467,6 +1474,8 @@ impl Component for Root {
             split_handles: [ElementRef::new(), ElementRef::new(), ElementRef::new()],
             column_handles: std::array::from_fn(|_| ElementRef::new()),
             issue_offer: None,
+            github_repos: None,
+            github_repo_picks: 0,
             recall_cursor: -1,
             before_recall: None,
         }
@@ -2885,6 +2894,13 @@ impl Root {
                 }
             }
             Message::Command(id) if id == "clone" => {
+                // gh があれば、自分のリポジトリから選べる（読み終えたら一覧に入れる。GTK4 版と同じ）。
+                self.github_repos = None;
+                if crate::github::available() {
+                    context.spawn_background(|_| {
+                        Message::GitHubRepos(crate::github::my_repositories())
+                    });
+                }
                 self.dialog = Some(Dialog::Clone {
                     url: String::new(),
                     folder: crate::repositories::clone_folder(),
@@ -2898,6 +2914,23 @@ impl Root {
                 });
                 self.dialog_inputs += 1;
             }
+            Message::GitHubRepos(repos) => self.github_repos = Some(repos),
+            Message::PickGitHubRepo(Some(index)) if index > 0 => {
+                let link = self
+                    .github_repos
+                    .as_ref()
+                    .and_then(|r| r.get(index - 1))
+                    .map(|(_, link)| link.clone());
+                if let (Some(link), Some(Dialog::Clone { url, name, .. })) =
+                    (link, &mut self.dialog)
+                {
+                    *url = format!("{link}.git");
+                    name.clear();
+                }
+                // 見出しに戻す（URL を書き直した後に選んだ名前が残らず、同じものをもう一度選べる）。
+                self.github_repo_picks += 1;
+            }
+            Message::PickGitHubRepo(_) => {}
             Message::CloneField(index, text) => {
                 if let Some(Dialog::Clone {
                     url, folder, name, ..
@@ -10677,6 +10710,7 @@ impl Root {
                                         .grid_column(1)
                                         .content(TextBlock::new().text(tr!("Choose Bundle…"))),
                                 )),
+                            self.github_repo_choice(context),
                             label(tr!("Location:")),
                             Grid::new()
                                 .columns([GridLength::Star(1.0), GridLength::Auto])
@@ -13551,6 +13585,34 @@ impl Root {
             let loaded = crate::github::load(&repo, head, default_branch, options);
             Message::GitHub(key, Box::new(loaded))
         });
+    }
+
+    /// File > Clone… の「自分の GitHub のリポジトリから選ぶ」（gh がなければ出さない。読み終えるまでは「読み込み中…」。
+    /// GTK4 版・macOS 版のプルダウン）。
+    fn github_repo_choice(&self, context: &ViewContext<Self>) -> View {
+        if !crate::github::available() {
+            return View::empty();
+        }
+        let mut titles = vec![tr!("Choose from My GitHub Repositories")];
+        match &self.github_repos {
+            None => titles.push(tr!("Loading…")),
+            Some(list) if list.is_empty() => titles.push(tr!("None found")),
+            Some(list) => titles.extend(list.iter().map(|r| r.0.clone())),
+        }
+        View::keyed_fragment([(
+            format!(
+                "mine-{}-{}",
+                self.github_repo_picks,
+                self.github_repos.is_some()
+            ),
+            View::from(
+                ComboBox::new()
+                    .items_source(titles)
+                    .selected_index(0)
+                    .margin(Thickness::new(0.0, 4.0, 0.0, 0.0))
+                    .on_selection_changed(context.callback(Message::PickGitHubRepo)),
+            ),
+        )])
     }
 
     /// 件名・本文の欄に `#` を 1 文字打った直後なら、開いている Issue・PR の候補を裏で読む（GTK4 版の
