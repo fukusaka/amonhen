@@ -2736,6 +2736,37 @@ impl App {
             shown.as_array().map_or(0, Vec::len) as u64 + more.as_u64().unwrap_or(0)
         };
         let risk = risk_text(conflicts);
+        // アプリのシートと同じく、前と後の絵を重ねる（取り込むものがなければ、絵はない）。
+        self.question_drawing = match (merge, preview["fastForward"] == true) {
+            (true, true) => Some(&preview["move"]["drawing"])
+                .filter(|d| d.is_object())
+                .map(|d| {
+                    (
+                        tr!(" Fast-forward {branch} ", branch = branch),
+                        crate::drawing::from_move(d, &branch),
+                    )
+                }),
+            (true, false) => Some(&preview["drawing"])
+                .filter(|d| d.is_object())
+                .map(|d| {
+                    (
+                        tr!(" Merge {name} into {branch} ", name = name, branch = branch),
+                        crate::drawing::from_merge(d, &branch, &name),
+                    )
+                }),
+            (false, _) => Some(&preview["drawing"])
+                .filter(|d| d.is_object())
+                .map(|d| {
+                    (
+                        tr!(
+                            " Rebase {branch} onto {name} ",
+                            branch = branch,
+                            name = name
+                        ),
+                        crate::drawing::from_rebase(d, &branch, &name),
+                    )
+                }),
+        };
         let (ask, yes, request) = if merge {
             let request = Request::Run {
                 name: "merge",

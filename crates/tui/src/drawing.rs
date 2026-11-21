@@ -1,5 +1,6 @@
 //! 前と後の絵（アプリが確かめるときに見せるもの）。エンジンの `rewritePreview` の `editDrawing`（History の編集）か、
-//! `movePreview` の `drawing` を [`from_move`] で同じ形にしたもの（reset など、ブランチを動かす操作）を、左に前、
+//! `movePreview` の `drawing` を [`from_move`] で同じ形にしたもの（reset など、ブランチを動かす操作）、rebase・merge の
+//! 絵を [`from_rebase`]・[`from_merge`] で同じ形にしたものを、左に前、
 //! 右に後の 2 列で、新しい順に描く。どちらの側も、いちばん下に変わらないいちばん新しいコミット（共通の土台）を描く。
 
 use amonhen_model::tr;
@@ -87,6 +88,87 @@ pub fn from_move(drawing: &Value, branch: &str) -> Value {
     })
 }
 
+/// `shown`（新しい順）の `at` 番目の前に、省いた `more` 個の印を入れる。
+fn with_more(mut shown: Vec<Value>, more: &Value, at: &Value) -> Vec<Value> {
+    let more = more.as_u64().unwrap_or(0);
+    if more > 0 {
+        let at = (at.as_u64().unwrap_or(0) as usize).min(shown.len());
+        shown.insert(at, serde_json::json!({ "more": more }));
+    }
+    shown
+}
+
+/// 並びのコミットに、することと添える文を付ける。
+fn marked(commits: &Value, action: &str, note: Option<&str>) -> Vec<Value> {
+    (commits.as_array().into_iter().flatten())
+        .map(|c| {
+            let mut c = c.clone();
+            c["action"] = Value::from(action);
+            if let Some(note) = note {
+                c["note"] = Value::from(note);
+            }
+            c
+        })
+        .collect()
+}
+
+/// rebase の絵（`rewritePreview` の `drawing`）を同じ形に。前は今のブランチの載せ直すコミット、後はその写し
+/// （新しい ID になる）と、その下に載せ先で進んだコミット。
+pub fn from_rebase(drawing: &Value, branch: &str, onto: &str) -> Value {
+    // 載せ直すコミットは古い順で来る（省いたところは新しい順で数える）。
+    let mut picks: Vec<Value> = drawing["picks"].as_array().cloned().unwrap_or_default();
+    picks.reverse();
+    let before = with_more(
+        marked(&Value::from(picks.clone()), "leave", None),
+        &drawing["picksMore"],
+        &drawing["picksMoreAt"],
+    );
+    // 写しは新しいコミットなので、ID は出さない。
+    let copies: Vec<Value> = marked(&Value::from(picks), "pick", Some(&tr!("new copy")))
+        .into_iter()
+        .map(|mut c| {
+            c["oid"] = Value::from("");
+            c
+        })
+        .collect();
+    let mut after = with_more(copies, &drawing["picksMore"], &drawing["picksMoreAt"]);
+    let onto_note = tr!("on {name}", name = onto);
+    after.extend(with_more(
+        marked(&drawing["onto"], "keep", Some(&onto_note)),
+        &drawing["ontoMore"],
+        &drawing["ontoMoreAt"],
+    ));
+    serde_json::json!({
+        "before": before, "after": after,
+        "base": drawing["base"], "labels": drawing["labels"], "branch": branch,
+    })
+}
+
+/// merge の絵（`mergePreview` の `drawing`）を同じ形に。前は今のブランチ、後はいちばん上に新しい merge コミット、
+/// その下に取り込むコミットと今のブランチのコミット。
+pub fn from_merge(drawing: &Value, branch: &str, theirs: &str) -> Value {
+    let ours = with_more(
+        marked(&drawing["ours"], "pick", None),
+        &drawing["oursMore"],
+        &drawing["oursMoreAt"],
+    );
+    let mut after = vec![serde_json::json!({
+        "oid": "", "subject": drawing["subject"], "action": "pick",
+        "note": tr!("new merge"),
+    })];
+    let from = tr!("from {name}", name = theirs);
+    after.extend(with_more(
+        marked(&drawing["theirs"], "in", Some(&from)),
+        &drawing["theirsMore"],
+        &drawing["theirsMoreAt"],
+    ));
+    after.extend(marked(&Value::from(ours.clone()), "keep", None));
+    serde_json::json!({
+        "before": ours, "after": after,
+        "base": drawing["base"], "labels": drawing["labels"], "branch": branch,
+    })
+}
+
 fn short(oid: &str) -> String {
     oid[..oid.len().min(8)].to_owned()
 }
@@ -103,6 +185,11 @@ fn side(drawing: &Value, after: bool) -> Vec<Line> {
     for (i, commit) in drawing[key].as_array().into_iter().flatten().enumerate() {
         if more > 0 && i == at {
             lines.push(elided(more));
+        }
+        // 列の途中で省いたところ（rebase・merge の絵は、いくつかの並びをつなぐ）。
+        if let Some(count) = commit["more"].as_u64() {
+            lines.push(elided(count));
+            continue;
         }
         let oid = commit["oid"].as_str().unwrap_or("");
         let action = commit["action"].as_str().unwrap_or("pick");
@@ -122,12 +209,18 @@ fn side(drawing: &Value, after: bool) -> Vec<Line> {
                 .add_modifier(Modifier::CROSSED_OUT),
             (false, "squash" | "fixup" | "leave") => Style::new().fg(Color::Indexed(244)),
             (false, _) => Style::new(),
+            // 後の側で変わらないもの（rebase の載せ先・merge の今のブランチ）。
+            (true, "keep") => Style::new(),
+            (true, "in") => Style::new().fg(Color::Cyan),
             (true, _) => Style::new().fg(Color::Green),
         };
         if after {
             let combined = commit["combined"].as_u64().unwrap_or(0);
             if combined > 0 {
                 note.push(tr!("+{count} combined", count = combined));
+            }
+            if let Some(text) = commit["note"].as_str() {
+                note.push(text.to_owned());
             }
             match action {
                 "edit" => note.push(tr!("stops here")),
@@ -375,6 +468,76 @@ mod tests {
             lines[2].ends_with("○ 99999999 Start  unchanged"),
             "{lines:?}"
         );
+    }
+
+    /// rebase: 前は載せ直すコミット、後はその写し（ID なし）が載せ先の上に。
+    #[test]
+    fn a_rebase() {
+        let drawing = from_rebase(
+            &json!({
+                "picks": [{"oid": "aaaaaaaa1", "subject": "Mine 1"}, {"oid": "bbbbbbbb1", "subject": "Mine 2"}],
+                "picksMore": 0, "picksMoreAt": 0,
+                "onto": [{"oid": "cccccccc1", "subject": "Theirs"}], "ontoMore": 3, "ontoMoreAt": 1,
+                "base": {"oid": "99999999", "subject": "Start", "time": 0},
+                "labels": [{"oid": "bbbbbbbb1", "name": "topic", "kind": "local"},
+                           {"oid": "cccccccc1", "name": "main", "kind": "local"}],
+            }),
+            "topic",
+            "main",
+        );
+        let area = Rect::new(0, 0, 110, height(&drawing));
+        let mut buf = Buffer::empty(area);
+        draw(&drawing, area, &mut buf);
+        let lines = text(&buf, area);
+        assert!(
+            lines[1].starts_with("● bbbbbbbb Mine 2  [topic]  leaves the branch"),
+            "{lines:?}"
+        );
+        assert!(
+            lines[1].contains("● Mine 2  [topic]  new copy"),
+            "{lines:?}"
+        );
+        assert!(
+            lines[2].starts_with("● aaaaaaaa Mine 1  leaves the branch"),
+            "{lines:?}"
+        );
+        assert!(lines[3].contains("● cccccccc Theirs  on main"), "{lines:?}");
+        assert!(lines[4].contains("┆ 3 more"), "{lines:?}");
+        assert!(
+            lines[5].ends_with("○ 99999999 Start  unchanged"),
+            "{lines:?}"
+        );
+    }
+
+    /// merge: 後のいちばん上に新しい merge コミット、その下に取り込むものと今のブランチのもの。
+    #[test]
+    fn a_merge() {
+        let drawing = from_merge(
+            &json!({
+                "ours": [{"oid": "aaaaaaaa1", "subject": "Ours"}], "oursMore": 0, "oursMoreAt": 0,
+                "theirs": [{"oid": "bbbbbbbb1", "subject": "Theirs"}], "theirsMore": 0, "theirsMoreAt": 0,
+                "base": {"oid": "99999999", "subject": "Start", "time": 0},
+                "labels": [{"oid": "aaaaaaaa1", "name": "main", "kind": "local"},
+                           {"oid": "bbbbbbbb1", "name": "topic", "kind": "local"}],
+                "subject": "Merge branch 'topic'",
+            }),
+            "main",
+            "topic",
+        );
+        let area = Rect::new(0, 0, 110, height(&drawing));
+        let mut buf = Buffer::empty(area);
+        draw(&drawing, area, &mut buf);
+        let lines = text(&buf, area);
+        assert!(lines[1].starts_with("● aaaaaaaa Ours  [main]"), "{lines:?}");
+        assert!(
+            lines[1].contains("● Merge branch 'topic'  [main]  new merge"),
+            "{lines:?}"
+        );
+        assert!(
+            lines[2].contains("● bbbbbbbb Theirs  from topic"),
+            "{lines:?}"
+        );
+        assert!(lines[3].contains("● aaaaaaaa Ours"), "{lines:?}");
     }
 
     /// 長い側は、真ん中を省いた数を出す。

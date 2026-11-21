@@ -1193,6 +1193,20 @@ fn merge_stops_at_conflicts_and_can_be_aborted() {
     if predicts_conflicts(dir.path()) {
         assert!(line.contains("Conflicts are likely in a.txt."), "{line}");
     }
+    // アプリのシートと同じく、前と後の絵: 後のいちばん上に新しい merge コミット、その下に topic から来るもの。
+    assert!(asked.contains(" Merge topic into main "), "{asked}");
+    assert!(asked.contains("[main]  new merge"), "{asked}");
+    assert!(asked.contains("On topic  from topic"), "{asked}");
+    // rebase なら、前は main のコミット、後はその写しが topic のコミットの上に。
+    let rebase = amonhen_tui::snapshot(open(dir.path()), 200, 12, clock(), "0jjjr").unwrap();
+    println!("{rebase}");
+    assert!(rebase.contains(" Rebase main onto topic "), "{rebase}");
+    assert!(
+        rebase.contains("On main  [main]  leaves the branch"),
+        "{rebase}"
+    );
+    assert!(rebase.contains("On main  [main]  new copy"), "{rebase}");
+    assert!(rebase.contains("On topic  on topic"), "{rebase}");
     let stopped = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjjmy").unwrap();
     println!("{stopped}");
     assert!(stopped.contains("Stopped at conflicts"));
@@ -1221,6 +1235,8 @@ fn rebase_onto_the_picked_ref() {
     println!("{asked}");
     // 見通しでコンフリクトを調べられなかったときは、何も足さない。
     assert!(asked.contains("Rebase topic onto main?   y rebase   n cancel"));
+    // topic は main にもう入っていて、載せ直すコミットがない（前と後の絵は出ない）。
+    assert!(!asked.contains(" Rebase topic onto main "), "{asked}");
     // main を topic に merge するのは fast-forward。取り込む数を言う。
     let ff = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjm").unwrap();
     println!("{ff}");
@@ -1228,6 +1244,7 @@ fn rebase_onto_the_picked_ref() {
         ff.contains("Fast-forward topic to main (+2)?   y merge   n cancel"),
         "{ff}"
     );
+    assert!(ff.contains(" Fast-forward topic "), "{ff}");
     amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjry").unwrap();
     assert_eq!(
         git_out(dir.path(), &["merge-base", "topic", "main"]),
