@@ -248,6 +248,7 @@ dependencies = [
  "amonhen-layout",
  "amonhen-model",
  "amonhen-projection",
+ "criterion",
  "libc",
  "ratatui-core",
  "ratatui-crossterm",
