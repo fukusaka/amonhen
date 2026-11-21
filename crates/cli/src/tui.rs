@@ -152,8 +152,10 @@ pub fn run(args: &[String]) -> Result<ExitCode> {
         return Ok(ExitCode::SUCCESS);
     }
     // サイドバーでほかの worktree を選ぶと、TUI が終わってそのパスを返す。同じ開き方（手元・daemon・SSH 先）で
-    // 開き直す。
+    // 開き直す。Quick Open でブックマークを選んだときは、その場所を開く。
     let mut front = front;
+    let mut given = given.into_owned();
+    let mut files_here = files_here;
     loop {
         #[cfg(unix)]
         let next = match &askpass {
@@ -162,12 +164,14 @@ pub fn run(args: &[String]) -> Result<ExitCode> {
         };
         #[cfg(not(unix))]
         let next = amonhen_tui::run(front, local, files_here)?;
-        let Some(path) = next else {
-            return Ok(ExitCode::SUCCESS);
+        // Quick Open で選んだリポジトリは、その場所のまま開く（次の worktree はその開き方で）。
+        given = match next {
+            None => return Ok(ExitCode::SUCCESS),
+            Some(amonhen_tui::Next::Worktree(path)) => worktree_location(&given, &path),
+            Some(amonhen_tui::Next::Location(location)) => location,
         };
-        front = Arc::from(open_repository(std::path::Path::new(&worktree_location(
-            &given, &path,
-        )))?);
+        files_here = !given.starts_with("ssh://") && !given.starts_with("daemon:ssh://");
+        front = Arc::from(open_repository(std::path::Path::new(&given))?);
     }
 }
 
