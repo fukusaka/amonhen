@@ -167,6 +167,34 @@ struct Palette {
     selected: usize,
 }
 
+/// Quick Open: ブックマークを打った語で絞り、選んだリポジトリで TUI を開き直す。
+struct QuickOpen {
+    query: String,
+    selected: usize,
+    items: Vec<amonhen_model::bookmarks::Bookmark>,
+}
+
+impl QuickOpen {
+    /// 打った語のすべてを、名前か場所に含むもの（大文字と小文字は区別しない）。お気に入りを先に。
+    fn shown(&self) -> Vec<&amonhen_model::bookmarks::Bookmark> {
+        let words: Vec<String> = self
+            .query
+            .split_whitespace()
+            .map(str::to_lowercase)
+            .collect();
+        let mut shown: Vec<&amonhen_model::bookmarks::Bookmark> = self
+            .items
+            .iter()
+            .filter(|b| {
+                let text = format!("{} {}", b.display_name(), b.path).to_lowercase();
+                words.iter().all(|w| text.contains(w.as_str()))
+            })
+            .collect();
+        shown.sort_by_key(|b| !b.favorite);
+        shown
+    }
+}
+
 /// 操作ログ（アプリの Activity の Operation Log）: Undo の記録を新しい順に。選んだところまで戻せる。
 struct OperationLog {
     /// 名前・時刻（UNIX 時刻の秒）。
@@ -220,6 +248,9 @@ pub struct App {
     open_file: Option<String>,
     /// 開き直す worktree（サイドバーの Enter。TUI を閉じて、そこで開き直す）。
     open_worktree: Option<String>,
+    /// Quick Open で選んだリポジトリの場所（TUI を閉じて、そこで開き直す）。
+    open_location: Option<String>,
+    quick_open: Option<QuickOpen>,
     /// いくつかから選んで行う操作: 尋ねる文と、キー・名前・頼む中身の組。
     choices: Option<(String, Vec<Choice>)>,
     /// マウスを取り込んでいる（切ると、端末で文字を選べる）。
@@ -385,6 +416,8 @@ impl App {
             files_here: true,
             open_file: None,
             open_worktree: None,
+            open_location: None,
+            quick_open: None,
             search: None,
             search_done: 0.0,
             theme: Theme::detect(),
@@ -495,6 +528,7 @@ impl App {
     pub fn take_damage(&mut self) -> Option<Damage> {
         let damage = std::mem::take(&mut self.damage);
         let over = self.help
+            || self.quick_open.is_some()
             || self.palette.is_some()
             || self.operation_log.is_some()
             || self.edit_mode.is_some();
@@ -602,9 +636,12 @@ impl App {
         self.files_here = here;
     }
 
-    /// 開き直す worktree のパス（選んだときだけ。そのとき `quit` も立っている）。
-    pub fn take_open_worktree(&mut self) -> Option<String> {
-        self.open_worktree.take()
+    /// 終わった後に開き直すもの（worktree か、Quick Open で選んだリポジトリ）。
+    pub fn take_next(&mut self) -> Option<crate::Next> {
+        match self.open_location.take() {
+            Some(location) => Some(crate::Next::Location(location)),
+            None => self.open_worktree.take().map(crate::Next::Worktree),
+        }
     }
 
     /// エディタで開くファイルと、作業ツリーの場所（聞いたら、なかったことにする）。
@@ -1114,6 +1151,36 @@ impl App {
             self.edit_mode_key(key.code);
             return;
         }
+        // Quick Open: 打った語で絞る。Enter で選んだリポジトリを開き直す、Esc でやめる。
+        if let Some(mut quick) = self.quick_open.take() {
+            self.dirty = true;
+            match key.code {
+                KeyCode::Esc => return,
+                KeyCode::Enter => {
+                    if let Some(bookmark) = quick.shown().get(quick.selected) {
+                        self.open_location = Some(bookmark.path.clone());
+                        self.quit = true;
+                    }
+                    return;
+                }
+                KeyCode::Down => quick.selected += 1,
+                KeyCode::Char('n') if control => quick.selected += 1,
+                KeyCode::Up => quick.selected = quick.selected.saturating_sub(1),
+                KeyCode::Char('p') if control => quick.selected = quick.selected.saturating_sub(1),
+                KeyCode::Backspace => {
+                    quick.query.pop();
+                    quick.selected = 0;
+                }
+                KeyCode::Char(ch) if !control => {
+                    quick.query.push(ch);
+                    quick.selected = 0;
+                }
+                _ => {}
+            }
+            quick.selected = quick.selected.min(quick.shown().len().saturating_sub(1));
+            self.quick_open = Some(quick);
+            return;
+        }
         // コマンドの一覧は、打った語で絞る。Enter で選んでいる行を動かす、Esc でやめる。
         if let Some(mut palette) = self.palette.take() {
             self.dirty = true;
@@ -1485,6 +1552,25 @@ impl App {
 
     /// コマンドの一覧からだけ動かす操作（キーを持たない）。
     fn run_keyless(&mut self, id: &str) {
+        if id == "quick-open" {
+            // ブックマーク（アプリ・GTK4 と同じ bookmarks.json。この機械のもの）。
+            match amonhen_model::bookmarks::read() {
+                Ok(items) if items.is_empty() => {
+                    self.notice = Some(tr!(
+                        "No bookmarks yet: add repositories on the apps' Repositories page"
+                    ));
+                }
+                Ok(items) => {
+                    self.quick_open = Some(QuickOpen {
+                        query: String::new(),
+                        selected: 0,
+                        items,
+                    })
+                }
+                Err(reason) => self.error = Some(reason),
+            }
+            return;
+        }
         if id == "activity" {
             // アプリの Activity のうち、このリポジトリの操作ログ（git の記録・画面の速さは端末では出さない）。
             self.run(
@@ -4449,6 +4535,76 @@ impl App {
                 );
             }
         }
+        if let Some(quick) = &self.quick_open {
+            let shown = quick.shown();
+            let name_width = shown
+                .iter()
+                .map(|b| b.display_name().width())
+                .max()
+                .unwrap_or(0);
+            let path_width = shown.iter().map(|b| b.path.width()).max().unwrap_or(0);
+            let width = ((name_width + path_width + 9).max(44) as u16).min(area.width);
+            let height = (shown.len().max(1) as u16 + 3).min(area.height);
+            let at = Rect::new(
+                area.x + (area.width - width) / 2,
+                area.y + (area.height - height) / 2,
+                width,
+                height,
+            );
+            frame_box(buf, area, at, &tr!(" Quick Open "));
+            let inner = usize::from(width.saturating_sub(4));
+            if height >= 3 {
+                let x = buf
+                    .set_stringn(at.x + 2, at.y + 1, "> ", inner, Style::new())
+                    .0;
+                let x = buf
+                    .set_stringn(
+                        x,
+                        at.y + 1,
+                        &quick.query,
+                        inner.saturating_sub(2),
+                        Style::new(),
+                    )
+                    .0;
+                cursor = Some((x.min(at.right().saturating_sub(2)), at.y + 1));
+            }
+            let rows = usize::from(height.saturating_sub(3));
+            let top = (quick.selected + 1).saturating_sub(rows);
+            if shown.is_empty() && rows > 0 {
+                let none = tr!("No repository matches");
+                buf.set_stringn(
+                    at.x + 2,
+                    at.y + 2,
+                    none,
+                    inner,
+                    Style::new().fg(Color::Indexed(244)),
+                );
+            }
+            for (y, i) in (at.y + 2..at.bottom().saturating_sub(1)).zip(top..shown.len()) {
+                let selected = i == quick.selected;
+                let style = match selected {
+                    true => Style::new().add_modifier(Modifier::REVERSED),
+                    false => Style::new(),
+                };
+                if selected {
+                    for x in at.x + 1..at.right() - 1 {
+                        buf[(x, y)].set_style(style);
+                    }
+                }
+                let mark = if shown[i].favorite { "★ " } else { "  " };
+                let x = buf.set_stringn(at.x + 2, y, mark, inner, style).0;
+                let name = shown[i].display_name();
+                let x = buf
+                    .set_stringn(x, y, &name, inner.saturating_sub(2), style)
+                    .0;
+                let path_style = match selected {
+                    true => style,
+                    false => Style::new().fg(Color::Indexed(244)),
+                };
+                let room = usize::from(at.right().saturating_sub(x + 4));
+                buf.set_stringn(x + 2, y, &shown[i].path, room, path_style);
+            }
+        }
         if let Some(palette) = &self.palette {
             let entries = self.palette_entries(&palette.query);
             let keys: Vec<String> = entries.iter().map(|(e, _)| e.key_label()).collect();
@@ -4709,6 +4865,61 @@ mod tests {
         assert!(app.take_edit_message().is_none());
     }
 
+    /// コマンドの一覧の Quick Open: ブックマークを打った語で絞り（お気に入りを先に）、Enter で選んだ場所を開き直す
+    #[test]
+    fn quick_open_reopens_a_bookmark() {
+        let (_dir, mut app, _rx) = app_with_history();
+        let config = tempfile::tempdir().unwrap();
+        let vars = amonhen_model::settings::config_vars(config.path().to_str().unwrap());
+        let env = amonhen_model::process::ClientEnv::from_vars(vars);
+        let key = |app: &mut App, code: KeyCode| {
+            app.handle(Event::Input(Input::Key(KeyEvent::new(
+                code,
+                KeyModifiers::NONE,
+            ))));
+        };
+        let typed = |app: &mut App, text: &str| {
+            for ch in text.chars() {
+                key(app, KeyCode::Char(ch));
+            }
+        };
+        amonhen_model::process::with_client_env(&env, || {
+            // ブックマークがなければ、そう言う。
+            typed(&mut app, ":quick");
+            key(&mut app, KeyCode::Enter);
+            assert!(app.quick_open.is_none());
+            assert!(bottom_line(&mut app).contains("No bookmarks yet"));
+            let file = config.path().join("amonhen").join("bookmarks.json");
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(
+                &file,
+                r#"{"items": [{"path": "/w/alpha"}, {"path": "ssh://host/src/tool", "favorite": true}]}"#,
+            )
+            .unwrap();
+            typed(&mut app, ":quick");
+            key(&mut app, KeyCode::Enter);
+        });
+        let quick = app.quick_open.as_ref().expect("Quick Open");
+        let names: Vec<String> = quick.shown().iter().map(|b| b.display_name()).collect();
+        assert_eq!(names, ["tool", "alpha"], "favorites first");
+        let mut buf = Buffer::empty(Rect::new(0, 0, 100, 12));
+        app.draw(&mut buf, Damage::ALL);
+        let screen: String = (0..12)
+            .map(|y| (0..100).map(|x| buf[(x, y)].symbol()).collect::<String>() + "\n")
+            .collect();
+        assert!(screen.contains(" Quick Open "), "{screen}");
+        assert!(screen.contains("★ tool  ssh://host/src/tool"), "{screen}");
+        assert!(screen.contains("  alpha  /w/alpha"), "{screen}");
+        typed(&mut app, "alp");
+        assert_eq!(app.quick_open.as_ref().unwrap().shown().len(), 1);
+        key(&mut app, KeyCode::Enter);
+        assert_eq!(
+            app.take_next(),
+            Some(crate::Next::Location("/w/alpha".to_owned()))
+        );
+        assert!(app.quit());
+    }
+
     /// サイドバーの worktree で Enter: ほかの worktree なら TUI を閉じてそのパスを返し、開いているものなら場所を
     /// 知らせるだけ。
     #[test]
@@ -4740,13 +4951,15 @@ mod tests {
         ] {
             key(&mut app, code);
         }
-        assert!(app.take_open_worktree().is_none());
+        assert!(app.take_next().is_none());
         assert!(!app.quit());
         assert!(bottom_line(&mut app).contains("This is the worktree that is open"));
         for code in [KeyCode::Char('j'), KeyCode::Enter] {
             key(&mut app, code);
         }
-        let opened = app.take_open_worktree().expect("a worktree to open");
+        let Some(crate::Next::Worktree(opened)) = app.take_next() else {
+            panic!("a worktree to open");
+        };
         assert_eq!(
             std::fs::canonicalize(opened).unwrap(),
             std::fs::canonicalize(&path).unwrap()

@@ -54,11 +54,20 @@ pub struct Clock {
 /// 端末を取って、終わる（`q`）まで動かす。`files_here` は、作業ツリーのファイルがこの機械にあるか（`ssh://` の先
 /// なら false。エディタで開けない）。
 /// 終わるときに、開き直す worktree（サイドバーで選んだもの）があれば、そのパスを返す。
+/// 終わった後に開き直すもの（サイドバーの worktree か、Quick Open で選んだリポジトリ）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Next {
+    /// worktree のパス（エンジンが返す、git を動かす機械の絶対パス）。今と同じ開き方（手元・daemon・SSH 先）で開く。
+    Worktree(String),
+    /// ブックマークの場所（この機械のパス・`ssh://`・`daemon:`）。そのまま開く。
+    Location(String),
+}
+
 pub fn run(
     front: Arc<dyn Front>,
     local: fn(i64) -> String,
     files_here: bool,
-) -> Result<Option<String>> {
+) -> Result<Option<Next>> {
     run_with(front, local, files_here, |_| Ok(()))
 }
 
@@ -69,7 +78,7 @@ pub fn run_asking(
     local: fn(i64) -> String,
     files_here: bool,
     askpass: &askpass::Askpass,
-) -> Result<Option<String>> {
+) -> Result<Option<Next>> {
     run_with(front, local, files_here, |events| askpass.serve(events))
 }
 
@@ -78,7 +87,7 @@ fn run_with(
     local: fn(i64) -> String,
     files_here: bool,
     serve: impl FnOnce(mpsc::Sender<Event>) -> Result<()>,
-) -> Result<Option<String>> {
+) -> Result<Option<Next>> {
     let (tx, rx) = mpsc::channel();
     serve(tx.clone())?;
     let mut screen = terminal::Screen::enter()?;
@@ -148,7 +157,7 @@ fn run_with(
             app.file_opened(opened);
         }
     }
-    Ok(app.take_open_worktree())
+    Ok(app.take_next())
 }
 
 /// git のエディタ（`git var GIT_EDITOR`: `GIT_EDITOR`・`core.editor`・`VISUAL`・`EDITOR` の順）。`dir` は、その
