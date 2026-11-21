@@ -13,8 +13,9 @@ use std::time::SystemTime;
 
 use crate::Result;
 
-/// 設定のファイル。決められなければ（HOME もないとき）None。
-pub fn path() -> Option<PathBuf> {
+/// この機械の Amon Hen の設定のフォルダ（`settings.json`・`bookmarks.json` を置く）。決められなければ（HOME も
+/// ないとき）None。
+pub fn dir() -> Option<PathBuf> {
     #[cfg(windows)]
     let dir = crate::process::var_os("APPDATA").map(PathBuf::from);
     #[cfg(not(windows))]
@@ -22,7 +23,12 @@ pub fn path() -> Option<PathBuf> {
         .filter(|d| !d.is_empty())
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")));
-    dir.map(|d| d.join("amonhen").join("settings.json"))
+    dir.map(|d| d.join("amonhen"))
+}
+
+/// 設定のファイル。決められなければ（HOME もないとき）None。
+pub fn path() -> Option<PathBuf> {
+    dir().map(|d| d.join("settings.json"))
 }
 
 /// 設定で選んだ git（実行ファイルのパス）。決めていなければ `Ok(None)`。ファイルが読めない（JSON でない）ときは
@@ -119,7 +125,9 @@ pub fn shown(path: &std::path::Path) -> String {
     }
 }
 
-fn read(path: &std::path::Path) -> Result<serde_json::Map<String, serde_json::Value>, String> {
+pub(crate) fn read(
+    path: &std::path::Path,
+) -> Result<serde_json::Map<String, serde_json::Value>, String> {
     let unreadable = |reason: String| {
         crate::tr!(
             "Amon Hen’s settings ({path}) can’t be read: {reason}",
