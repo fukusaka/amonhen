@@ -9800,6 +9800,7 @@ impl Root {
                 button,
                 fields,
                 checks,
+                kind,
                 ..
             }) => {
                 // 欄（見出しがあれば上に）とチェックを縦に並べる。最初の欄にフォーカスと Enter。
@@ -9813,6 +9814,19 @@ impl Root {
                 for (i, (label, value, placeholder)) in fields.iter().enumerate() {
                     if !label.is_empty() {
                         rows.push((format!("label{i}"), TextBlock::new().text(label.clone()).into()));
+                    }
+                    // 日付は暦で選ぶ（macOS 版・GTK4 版と同じ）。欄には YYYY-MM-DD で入れる。
+                    if matches!(kind, FormKind::DeepenSince) {
+                        // reactor の CalendarDatePicker は選んだ日を持たせられないので、選んだ日は案内の文字に出す
+                        // （描き直しても消えないように）。
+                        let picker = CalendarDatePicker::new()
+                            .placeholder_text_optional((!value.is_empty()).then(|| value.clone()))
+                            .is_today_highlighted(true)
+                            .on_date_changed(context.callback(move |date: Option<_>| {
+                                Message::FormField(i, date.map_or_else(String::new, picked_date))
+                            }));
+                        rows.push((format!("field{i}"), picker.into()));
+                        continue;
                     }
                     let field = TextBox::new()
                         .text(value.clone())
@@ -20551,6 +20565,14 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
 
     REVOKERS.with(|r| r.borrow_mut().extend(revokers));
     Ok(())
+}
+
+/// 暦で選んだ日（WinUI の DateTime。選んだ日のこの機械の 0 時）を `YYYY-MM-DD` にする。
+fn picked_date(date: windows_reactor::DateTime) -> String {
+    // 1601-01-01 からの 100 ナノ秒を、1970-01-01 からの秒に。
+    let seconds = date.universal_time / 10_000_000 - 11_644_473_600;
+    let local = crate::render::local_date(seconds);
+    local.get(..10).unwrap_or(&local).to_owned()
 }
 
 #[cfg(test)]
