@@ -176,9 +176,15 @@ pub struct State {
     labels: HashMap<Oid, Vec<Label>>,
     ref_labels: HashMap<Oid, Vec<Label>>,
     worktree_labels: HashMap<Oid, Vec<Label>>,
+    /// 開いたリポジトリの HEAD と、書き込む先の worktree の HEAD（worktree が 2 つ以上のとき）。グラフでは後者を
+    /// 優先して輪で描く（macOS 版の `head`）。
+    ref_head: Option<Oid>,
+    editing_head: Option<Oid>,
     /// ほかの worktree（メインのものを除く）が checkout しているブランチ。
     elsewhere: HashSet<String>,
     label_layouts: HashMap<String, pango::Layout>,
+    /// 見えている行の、名前を全部は出していない札（中央を切った札・「+N」）の横の範囲。押すと名前の一覧を出す。
+    clipped: HashMap<u32, Vec<(f32, f32)>>,
     fonts: Option<Fonts>,
     /// 選んでいる行（複数選んでいるときは、最後に選んだ行）。
     selected: Option<u32>,
@@ -375,6 +381,10 @@ mod imp {
                     view.grab_focus();
                     // 行の右端の CI の印なら、行を選ばずに詳細の吹き出し。
                     if view.click_ci(x as f32, y as f32) {
+                        return;
+                    }
+                    // 名前を全部は出していない札なら、行を選ばずに名前の一覧の吹き出し。
+                    if view.click_labels(x as f32, y as f32) {
                         return;
                     }
                     if let Some(row) = view.row_at(y as f32) {
@@ -1012,6 +1022,7 @@ impl HistoryView {
         }
         let mut st = self.state();
         st.ref_labels = labels;
+        st.ref_head = refs.refs.head;
         Self::merge_labels(&mut st);
         drop(st);
         self.queue_draw();
@@ -1029,6 +1040,10 @@ impl HistoryView {
     /// 各 worktree の HEAD の札（コミット、札の文字、書き込む先か）と、ほかの worktree が checkout している
     /// ブランチ（緑の札にする）。worktree が 1 つなら空で呼ぶ。
     pub fn set_worktrees(&self, heads: Vec<(Oid, String, bool)>, elsewhere: HashSet<String>) {
+        let editing_head = heads
+            .iter()
+            .find(|(_, _, editing)| *editing)
+            .map(|(id, _, _)| *id);
         let mut labels: HashMap<Oid, Vec<Label>> = HashMap::new();
         for (head, name, editing) in heads {
             labels.entry(head).or_default().push(Label {
@@ -1041,6 +1056,7 @@ impl HistoryView {
         }
         let mut st = self.state();
         st.worktree_labels = labels;
+        st.editing_head = editing_head;
         st.elsewhere = elsewhere;
         Self::merge_labels(&mut st);
         drop(st);
@@ -1699,6 +1715,7 @@ impl HistoryView {
                 return;
             };
             self.fonts(st);
+            st.clipped.clear();
             let rh = st.metrics.row_height;
             let count = history.layout.nodes().len() as u32;
             let first = ((scroll_y / rh).floor().max(0.0) as u32).min(count);
@@ -1781,6 +1798,7 @@ impl HistoryView {
                 &st.metrics,
                 lineage,
                 &st.boundary,
+                st.editing_head.or(st.ref_head),
             );
             snapshot.pop();
             if (st.lanes.animating || st.lineage_pending) && st.tick.is_none() {
@@ -1888,19 +1906,6 @@ impl HistoryView {
                     let color = if selected { white } else { ci_color(ci, &fg) };
                     draw_ci(snapshot, ci, row_end - 9.0, top + rh / 2.0, &color);
                 }
-                if st.display.items & items::REFS != 0
-                    && let Some(labels) = st.labels.get(&id).cloned()
-                {
-                    x = self.draw_labels(
-                        snapshot,
-                        st,
-                        &labels,
-                        x,
-                        text_end - 40.0,
-                        top + subject_baseline,
-                        selected,
-                    );
-                }
                 // 署名があれば、作者・日時の行に検証の結果の色の丸を置く。結果をまだ知らなければ、裏で検証する。
                 let signed = st.rows[&row].signed && st.display.items & items::SIGNATURE != 0;
                 let mark = if signed {
@@ -1913,9 +1918,11 @@ impl HistoryView {
                     None
                 };
                 let dot = if signed { 12.0 } else { 0.0 };
-                let line = &st.rows[&row];
-                line.meta.set_width(-1);
-                let meta_natural = line.meta.pixel_size().0 as f32;
+                let meta_natural = {
+                    let meta = &st.rows[&row].meta;
+                    meta.set_width(-1);
+                    meta.pixel_size().0 as f32
+                };
                 // 1 行なら、作者・日時・ID を右に寄せ、件名はその手前まで。
                 let meta_width = if compact {
                     meta_natural.min((text_end - text_x) * 0.45)
@@ -1927,9 +1934,29 @@ impl HistoryView {
                 } else {
                     text_end
                 };
+                // 札は件名の場所の 6 割まで（残りは件名に残す）。入りきらない札は「+N」にまとめる。
+                let mut clipped_labels = Vec::new();
+                if st.display.items & items::REFS != 0
+                    && let Some(labels) = st.labels.get(&id).cloned()
+                {
+                    (x, clipped_labels) = self.draw_labels(
+                        snapshot,
+                        st,
+                        &labels,
+                        x,
+                        text_x + (subject_end - text_x) * 0.6,
+                        top + subject_baseline,
+                        selected,
+                    );
+                }
                 let meta_max = text_end - text_x - dot;
+                let line = &st.rows[&row];
                 line.subject
                     .set_width(((subject_end - x).max(0.0) * pango::SCALE as f32) as i32);
+                // 名前を全部は出していない札は、押すと名前の一覧を出す。
+                if !clipped_labels.is_empty() {
+                    st.clipped.insert(row, clipped_labels);
+                }
                 line.meta.set_width(
                     ((if compact { meta_width } else { meta_max }).max(0.0) * pango::SCALE as f32)
                         as i32,
@@ -2052,7 +2079,8 @@ impl HistoryView {
         }
     }
 
-    /// ref のラベルを `x` から並べ、次に件名を置く位置を返す。
+    /// ref のラベルを `x` から並べ、次に件名を置く位置と、名前を全部は出していない札（中央を切った・
+    /// 「+N」にまとめた）の横の範囲を返す。
     #[allow(clippy::too_many_arguments)]
     fn draw_labels(
         &self,
@@ -2063,52 +2091,155 @@ impl HistoryView {
         max_x: f32,
         baseline: f32,
         selected: bool,
-    ) -> f32 {
+    ) -> (f32, Vec<(f32, f32)>) {
         let fg = self.color();
         // 字の上下に 2 px ずつ（macOS 版の `drawLabels`）。
         let line = st.fonts.as_ref().expect("fonts").label_line;
         let height = (line.height() + 4.0).round();
         let y = (baseline - line.ascent - 2.0).round();
-        let mut x = start;
-        for (i, label) in labels.iter().enumerate() {
-            let shown = if i < 3 {
-                label.name.clone()
-            } else {
-                format!("+{}", labels.len() - i)
+        let font = st.fonts.as_ref().expect("fonts").label.clone();
+        let layouts = &mut st.label_layouts;
+        let mut width_of = |shown: &str| {
+            let layout = layouts.entry(shown.to_string()).or_insert_with(|| {
+                let layout = self.create_pango_layout(Some(shown));
+                layout.set_font_description(Some(&font));
+                // 入りきらない名前は中央を切る（頭と、版番号などの末尾を残す）。
+                layout.set_ellipsize(pango::EllipsizeMode::Middle);
+                layout
+            });
+            layout.set_width(-1);
+            (layout.pixel_size().0 as f32 + 10.0).round()
+        };
+        let widths: Vec<f32> = labels
+            .iter()
+            .take(LABEL_NAMES)
+            .map(|l| width_of(&l.name))
+            .collect();
+        let slots = place_labels(&widths, labels.len(), start, max_x, |n| {
+            width_of(&format!("+{n}"))
+        });
+        // 選んだ行の文字の色（テーマの選択の上の文字）。st を借りているので、子から直接読む。
+        let on_accent = st
+            .accent
+            .as_ref()
+            .map_or(gdk::RGBA::WHITE, |(_, f)| f.color());
+        let (mut x, mut clipped) = (start, Vec::new());
+        for slot in slots {
+            let (shown, label) = match slot.content {
+                Slot::Name(i) => (labels[i].name.clone(), Some(&labels[i])),
+                Slot::Rest(n) => (format!("+{n}"), None),
             };
-            if !st.label_layouts.contains_key(&shown) {
-                let font = &st.fonts.as_ref().expect("fonts").label;
-                let layout = self.create_pango_layout(Some(&shown));
-                layout.set_font_description(Some(font));
-                st.label_layouts.insert(shown.clone(), layout);
-            }
             let layout = &st.label_layouts[&shown];
-            let w = layout.pixel_size().0;
-            let width = (w as f32 + 10.0).round();
-            if x + width > max_x && i > 0 {
-                break;
+            // 幅が足りなければ、名前を「…」で切る。
+            layout.set_width(((slot.width - 10.0).max(0.0) * pango::SCALE as f32) as i32);
+            if label.is_none() || layout.is_ellipsized() {
+                clipped.push((slot.x, slot.x + slot.width));
             }
-            // 選んだ行の文字の色（テーマの選択の上の文字）。st を借りているので、子から直接読む。
-            let on_accent = st
-                .accent
-                .as_ref()
-                .map_or(gdk::RGBA::WHITE, |(_, f)| f.color());
-            let (fill, ink) = label_colors(i < 3, label, selected, &fg, &on_accent);
-            let rect = gsk::RoundedRect::from_rect(graphene::Rect::new(x, y, width, height), 4.0);
+            let (fill, ink) = label_colors(label, selected, &fg, &on_accent);
+            let rect = gsk::RoundedRect::from_rect(
+                graphene::Rect::new(slot.x, y, slot.width, height),
+                4.0,
+            );
             let path = gsk::PathBuilder::new();
             path.add_rounded_rect(&rect);
             snapshot.append_fill(&path.to_path(), gsk::FillRule::Winding, &fill);
             snapshot.save();
             let text_y = baseline - 1.0 - layout.baseline() as f32 / pango::SCALE as f32;
-            snapshot.translate(&graphene::Point::new(x + 5.0, text_y));
+            snapshot.translate(&graphene::Point::new(slot.x + 5.0, text_y));
             snapshot.append_layout(layout, &ink);
             snapshot.restore();
-            x += width + 4.0;
-            if i >= 3 {
-                break;
-            }
+            x = slot.x + slot.width + 4.0;
         }
-        x + 2.0
+        (x + 2.0, clipped)
+    }
+
+    /// (x, y) が名前を全部は出していない札（中央を切った札・「+N」）の上なら、そのコミットの ref の名前を
+    /// すべて並べた吹き出しを札の下に出して true。
+    fn click_labels(&self, x: f32, y: f32) -> bool {
+        let Some(row) = self.row_at(y) else {
+            return false;
+        };
+        let (range, labels) = {
+            let st = self.state();
+            let Some(&range) = st
+                .clipped
+                .get(&row)
+                .and_then(|ranges| ranges.iter().find(|(a, b)| (*a..=*b).contains(&x)))
+            else {
+                return false;
+            };
+            let labels: Vec<(String, RefKind, bool, bool)> = st
+                .history
+                .as_ref()
+                .and_then(|h| h.graph.ids().get(row as usize))
+                .and_then(|id| st.labels.get(id))
+                .map(|all| {
+                    all.iter()
+                        .map(|l| (l.name.clone(), l.kind, l.worktree || l.elsewhere, l.head))
+                        .collect()
+                })
+                .unwrap_or_default();
+            (range, labels)
+        };
+        if labels.is_empty() {
+            return false;
+        }
+        // macOS 版と同じ組み方: 見出しと、1 行に 1 つの名前（札と同じ色の印つき、選んでコピーできる）。
+        let list = gtk::Box::new(gtk::Orientation::Vertical, 5);
+        list.set_margin_top(6);
+        list.set_margin_bottom(6);
+        list.set_margin_start(8);
+        list.set_margin_end(8);
+        let title = gtk::Label::new(Some(&tr!("Branches and Tags")));
+        title.add_css_class("heading");
+        title.set_xalign(0.0);
+        title.set_margin_bottom(3);
+        list.append(&title);
+        for (name, kind, green, head) in labels {
+            // 札と同じ色の印と、選んでコピーできる名前。
+            let (r, g, b) = label_base(kind, green);
+            let mark = gtk::DrawingArea::new();
+            mark.set_content_width(8);
+            mark.set_content_height(8);
+            // 名前が折り返しても 1 行目に並ぶよう、上に寄せて 1 行目の中ほどに置く。
+            mark.set_valign(gtk::Align::Start);
+            mark.set_margin_top(5);
+            mark.set_draw_func(move |_, cr, w, h| {
+                cr.set_source_rgb(r as f64, g as f64, b as f64);
+                cr.rectangle(0.0, 0.0, w as f64, h as f64);
+                let _ = cr.fill();
+            });
+            // 名前は切らない。長い名前は折り返す（ブランチ名には空白がないので、どこででも）。
+            let text = gtk::Label::new(Some(&name));
+            text.set_selectable(true);
+            // 開いたときに名前に文字カーソルを出さない（マウスでは選べる）。
+            text.set_focusable(false);
+            text.set_xalign(0.0);
+            text.set_wrap(true);
+            text.set_wrap_mode(pango::WrapMode::Char);
+            text.set_max_width_chars(70);
+            if head {
+                text.add_css_class("heading");
+            }
+            let line = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+            line.append(&mark);
+            line.append(&text);
+            list.append(&line);
+        }
+        let rh = self.row_height();
+        let scroll = self.vadjustment().map_or(0.0, |a| a.value()) as f32;
+        let popover = gtk::Popover::new();
+        popover.set_child(Some(&list));
+        popover.set_parent(self);
+        popover.set_pointing_to(Some(&gdk::Rectangle::new(
+            range.0 as i32,
+            (row as f32 * rh - scroll) as i32 + 2,
+            (range.1 - range.0) as i32,
+            20,
+        )));
+        popover.connect_closed(|p| p.unparent());
+        popover.popup();
+        true
     }
 
     fn load_chunk(&self, index: u32) {
@@ -2232,19 +2363,117 @@ fn draw_ci(snapshot: &gtk::Snapshot, ci: Ci, cx: f32, cy: f32, color: &gdk::RGBA
     }
 }
 
+/// 名前で出す札の数。残りと入りきらない分は「+N」にまとめる。
+const LABEL_NAMES: usize = 3;
+/// 切り詰めた札に残す幅（これより狭くはしない）。
+const LABEL_MINIMUM: f32 = 40.0;
+const LABEL_GAP: f32 = 4.0;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Slot {
+    /// 札の並びの中の位置。
+    Name(usize),
+    /// まとめた札の数（「+N」）。
+    Rest(usize),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct LabelSlot {
+    content: Slot,
+    x: f32,
+    /// 札の幅。名前の幅より狭ければ、名前を「…」で切る。
+    width: f32,
+}
+
+/// 札の置き方（macOS 版の `LabelFit.place`）。`widths` は先頭から `LABEL_NAMES` 個までの札の幅、`count` は
+/// 札の総数、`rest` は「+N」の札の幅。札は `max_x` を越えない。1 つ目が入らなければ切り詰め、2 つ目からは
+/// 入らなければ「+N」にまとめる（「+N」の分の幅は先に取っておくので、まとめた札は必ず出る）。
+fn place_labels(
+    widths: &[f32],
+    count: usize,
+    start: f32,
+    max_x: f32,
+    mut rest: impl FnMut(usize) -> f32,
+) -> Vec<LabelSlot> {
+    let mut slots = Vec::new();
+    let mut x = start;
+    let names = widths.len().min(LABEL_NAMES);
+    for (i, &width) in widths.iter().take(names).enumerate() {
+        let after = count - i - 1;
+        let reserve = if after > 0 {
+            LABEL_GAP + rest(after)
+        } else {
+            0.0
+        };
+        let room = max_x - x - reserve;
+        if width > room {
+            if i > 0 {
+                let width = rest(count - i);
+                slots.push(LabelSlot {
+                    content: Slot::Rest(count - i),
+                    x,
+                    width,
+                });
+                return slots;
+            }
+            let clipped = width.min(room.max(LABEL_MINIMUM));
+            slots.push(LabelSlot {
+                content: Slot::Name(0),
+                x,
+                width: clipped,
+            });
+            if after > 0 {
+                let width = rest(after);
+                slots.push(LabelSlot {
+                    content: Slot::Rest(after),
+                    x: x + clipped + LABEL_GAP,
+                    width,
+                });
+            }
+            return slots;
+        }
+        slots.push(LabelSlot {
+            content: Slot::Name(i),
+            x,
+            width,
+        });
+        x += width + LABEL_GAP;
+    }
+    if count > names {
+        let width = rest(count - names);
+        slots.push(LabelSlot {
+            content: Slot::Rest(count - names),
+            x,
+            width,
+        });
+    }
+    slots
+}
+
+/// 札の種類の色（worktree とほかの worktree のブランチは緑、ローカルは青、リモートは紫、タグは橙）。
+fn label_base(kind: RefKind, worktree: bool) -> (f32, f32, f32) {
+    if worktree {
+        return (0.20, 0.66, 0.30);
+    }
+    match kind {
+        RefKind::Local => (0.21, 0.52, 0.89),
+        RefKind::Remote => (0.57, 0.38, 0.84),
+        _ => (0.90, 0.55, 0.15),
+    }
+}
+
 fn label_colors(
-    named: bool,
-    label: &Label,
+    label: Option<&Label>,
     selected: bool,
     fg: &gdk::RGBA,
     on_accent: &gdk::RGBA,
 ) -> (gdk::RGBA, gdk::RGBA) {
-    if !named {
+    let Some(label) = label else {
         return (gdk::RGBA::new(0.5, 0.5, 0.5, 0.25), *fg);
-    }
+    };
     let ink = if selected { *on_accent } else { *fg };
     // worktree の HEAD の札と、ほかの worktree が checkout しているブランチは緑。
-    let (r, g, b) = (0.20, 0.66, 0.30);
+    let (r, g, b) = label_base(label.kind, true);
     if label.worktree && label.head {
         return (gdk::RGBA::new(r, g, b, 0.85), gdk::RGBA::WHITE);
     }
@@ -2257,11 +2486,7 @@ fn label_colors(
         };
         return (gdk::RGBA::new(r, g, b, alpha), ink);
     }
-    let (r, g, b) = match label.kind {
-        RefKind::Local => (0.21, 0.52, 0.89),
-        RefKind::Remote => (0.57, 0.38, 0.84),
-        _ => (0.90, 0.55, 0.15),
-    };
+    let (r, g, b) = label_base(label.kind, false);
     if label.head {
         return (gdk::RGBA::new(r, g, b, 0.85), gdk::RGBA::WHITE);
     }
@@ -2276,6 +2501,59 @@ fn label_colors(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn labels_fit_before_the_limit_and_fold_the_rest() {
+        let name = |i, x, width| LabelSlot {
+            content: Slot::Name(i),
+            x,
+            width,
+        };
+        let rest = |n, x| LabelSlot {
+            content: Slot::Rest(n),
+            x,
+            width: 20.0,
+        };
+        let place =
+            |widths: &[f32], count, max_x| place_labels(widths, count, 0.0, max_x, |_| 20.0);
+        // 入れば、そのまま並べる。
+        assert_eq!(
+            place(&[30.0, 30.0], 2, 100.0),
+            vec![name(0, 0.0, 30.0), name(1, 34.0, 30.0)]
+        );
+        // 4 つ目からは「+N」。
+        assert_eq!(
+            place(&[10.0, 10.0, 10.0], 5, 100.0),
+            vec![
+                name(0, 0.0, 10.0),
+                name(1, 14.0, 10.0),
+                name(2, 28.0, 10.0),
+                rest(2, 42.0)
+            ]
+        );
+        // 2 つ目が入らなければ、黙って落とさずに「+N」にまとめる。
+        assert_eq!(
+            place(&[30.0, 60.0], 2, 80.0),
+            vec![name(0, 0.0, 30.0), rest(1, 34.0)]
+        );
+        // 1 つ目が長ければ、切り詰める（「+N」の場所は残す）。
+        assert_eq!(place(&[300.0], 1, 100.0), vec![name(0, 0.0, 100.0)]);
+        assert_eq!(
+            place(&[300.0, 30.0], 2, 100.0),
+            vec![name(0, 0.0, 76.0), rest(1, 80.0)]
+        );
+        // 場所がほとんどなくても、札は最小の幅で出す。
+        assert_eq!(place(&[300.0], 1, 10.0), vec![name(0, 0.0, 40.0)]);
+        // まとめた札は、限りを越えない。
+        for max_x in [50.0, 80.0, 120.0, 200.0] {
+            let slots = place(&[40.0, 40.0, 40.0], 6, max_x);
+            let last = slots.last().unwrap();
+            assert!(
+                last.x + last.width <= max_x.max(40.0 + 4.0 + 20.0),
+                "{slots:?}"
+            );
+        }
+    }
 
     #[test]
     fn neighbors_are_the_chunks_around_the_visible_rows() {

@@ -151,12 +151,20 @@ impl Commit {
         if !refs.is_empty() {
             fields.push((tr!("Refs"), refs.join(", ")));
         }
-        // 署名があることと、その種類（検証はしていない）。
+        // 署名: 検証の結果（アプリと同じ言葉）と、署名した人。検証できなかったら、種類だけ。
         if let Some(kind) = self.info["signed"].as_str() {
-            fields.push((
-                tr!("Signed"),
-                tr!("{kind} (not verified here)", kind = kind.to_uppercase()),
-            ));
+            let check = &self.info["signatureCheck"];
+            let value = match check["status"].as_str() {
+                Some(status) => {
+                    let label = signature_label(status, check, kind);
+                    match check["signer"].as_str().filter(|s| !s.is_empty()) {
+                        Some(signer) => format!("{label}, {signer}"),
+                        None => label,
+                    }
+                }
+                None => tr!("{kind} (not verified)", kind = kind.to_uppercase()),
+            };
+            fields.push((tr!("Signature"), value));
         }
         let column = fields.iter().map(|(l, _)| l.width()).max().unwrap_or(0) + 2;
         for (label, value) in fields {
@@ -165,6 +173,37 @@ impl Commit {
         }
         head.push((String::new(), plain));
         self.head = head;
+    }
+}
+
+/// 署名の検証の結果（git の `%G?`）を、アプリと同じ短い言葉に。正しい署名でも、鍵の信用度が足りなければ
+/// Untrusted key、鍵のメールアドレスがどれもコミッターと違えば Unverified signer。
+fn signature_label(status: &str, check: &Value, kind: &str) -> String {
+    match status {
+        "G" | "U" => {
+            let trust = check["trust"].as_str().unwrap_or("").to_lowercase();
+            let trusted = kind == "ssh"
+                || matches!(trust.as_str(), "ultimate" | "full" | "fully" | "marginal");
+            let committer = check["committerEmail"]
+                .as_str()
+                .unwrap_or("")
+                .to_lowercase();
+            let emails: Vec<String> = (check["emails"].as_array().into_iter().flatten())
+                .filter_map(|e| e["email"].as_str().map(str::to_lowercase))
+                .collect();
+            if status == "U" || !trusted {
+                tr!("Untrusted key")
+            } else if !emails.is_empty() && !committer.is_empty() && !emails.contains(&committer) {
+                tr!("Unverified signer")
+            } else {
+                tr!("Verified")
+            }
+        }
+        "X" | "Y" => tr!("Expired"),
+        "R" => tr!("Revoked key"),
+        "B" => tr!("Bad signature"),
+        "V" => tr!("Can’t verify"),
+        _ => tr!("No key"),
     }
 }
 

@@ -34,5 +34,7 @@ let package = Package(
             ]
         ),
         .testTarget(name: "AmonhenKitTests", dependencies: ["AmonhenKit"]),
+        // アプリの中の、画面に依らない計算（札の置き方など）。
+        .testTarget(name: "AmonHenTests", dependencies: ["AmonHen"]),
     ]
 )

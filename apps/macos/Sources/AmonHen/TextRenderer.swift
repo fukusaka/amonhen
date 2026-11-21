@@ -374,6 +374,32 @@ final class TextRenderer {
         addLine(ellipsis, origin: CGPoint(x: x, y: origin.y), color: color, scale: scale)
     }
 
+    /// `line` を `maxWidth`（ポイント）に収め、はみ出すなら中ほどの代わりに `ellipsis` を置く（頭と末尾を残す）。
+    func addLineMiddle(
+        _ line: ShapedLine, origin: CGPoint, color: SIMD4<Float>, scale: CGFloat, maxWidth: CGFloat,
+        ellipsis: ShapedLine
+    ) {
+        guard line.width > maxWidth else {
+            addLine(line, origin: origin, color: color, scale: scale)
+            return
+        }
+        let half = Float((maxWidth - ellipsis.width) * scale) / 2
+        guard half > 0 else { return }
+        let total = Float(line.width * scale)
+        let head = line.glyphs.prefix { $0.penX + $0.entry.left + $0.entry.width <= half }
+        let tail = line.glyphs.dropFirst(head.count).drop { $0.penX < total - half }
+        var part = line
+        part.glyphs = Array(head)
+        addLine(part, origin: origin, color: color, scale: scale)
+        let headEnd = head.count < line.glyphs.count ? min(line.glyphs[head.count].penX, half) : half
+        let x = origin.x + CGFloat(headEnd) / scale
+        addLine(ellipsis, origin: CGPoint(x: x, y: origin.y), color: color, scale: scale)
+        guard let first = tail.first else { return }
+        part.glyphs = Array(tail)
+        let shift = CGFloat(first.penX) / scale
+        addLine(part, origin: CGPoint(x: x + ellipsis.width - shift, y: origin.y), color: color, scale: scale)
+    }
+
     /// 積んだインスタンスを描く。
     func draw(
         layer: CAMetalLayer, background: SIMD4<Float>, onPresented: (@Sendable (CFTimeInterval) -> Void)? = nil

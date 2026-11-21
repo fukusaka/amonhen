@@ -15,8 +15,9 @@ use crate::Result;
 use crate::app::Event;
 
 pub enum Request {
-    /// リポジトリの名前・ref・History を読む。
-    Open,
+    /// リポジトリの名前・ref・History を読む。`fold` ならマージ済みのブランチを折りたたむ（`expanded` のマージは
+    /// 取り込んだ側も出す）。
+    Open { fold: bool, expanded: Vec<String> },
     /// History の行（`start` から `count` 行）。
     Rows {
         history: Value,
@@ -73,6 +74,8 @@ pub enum Request {
     /// コアの命令（fetch・push・checkout など）を動かす。`name` は、答えを見分ける名前。`command` が配列なら、
     /// その命令を順に（失敗したら、そこでやめる）。
     Run { name: &'static str, command: Value },
+    /// 窓口の命令（`run` を通さないもの。History の並び順など）を、操作として動かす。答えは `Ran` で返す。
+    Call { name: &'static str, request: Value },
     /// コミットを作る（`amend` なら、直前のコミットを作り直す）。
     MakeCommit { message: String, amend: bool },
     /// コミット（16 進の ID）のメッセージ（amend で欄に入れる）。
@@ -163,12 +166,12 @@ impl Loader {
 
     pub fn send(&self, request: Request) {
         let to = match request {
-            Request::Open
+            Request::Open { .. }
             | Request::Rows { .. }
             | Request::RowOf { .. }
             | Request::Lineage { .. } => &self.rows,
             Request::Search { .. } => &self.search,
-            Request::Run { .. } => &self.operations,
+            Request::Run { .. } | Request::Call { .. } => &self.operations,
             Request::Commit { .. } | Request::Syntax { .. } => &self.details,
             Request::Status
             | Request::Reflog { .. }
@@ -259,7 +262,7 @@ fn search(
 
 fn load(front: &dyn Front, request: Request, events: &Sender<Event>) -> Result<Loaded> {
     Ok(match request {
-        Request::Open => Loaded::Opened {
+        Request::Open { fold, expanded } => Loaded::Opened {
             workdir: front.call(json!({"op": "hello"}))?.json["workdir"]
                 .as_str()
                 .map(str::to_owned),
@@ -274,7 +277,12 @@ fn load(front: &dyn Front, request: Request, events: &Sender<Event>) -> Result<L
                     .unwrap_or(Value::Null);
                 refs
             },
-            history: front.call(json!({"op": "history"}))?.json,
+            history: front
+                .call(match fold {
+                    true => json!({"op": "history", "fold": true, "expanded": expanded}),
+                    false => json!({"op": "history"}),
+                })?
+                .json,
         },
         Request::Rows {
             history,
@@ -383,6 +391,13 @@ fn load(front: &dyn Front, request: Request, events: &Sender<Event>) -> Result<L
             done(front.call(json!({"op": "discardRows", "diff": diff, "rows": rows})))
         }
         Request::Discard { paths } => done(run(front, json!({"op": "discard", "paths": paths}))),
+        Request::Call { name, request } => Loaded::Ran {
+            name,
+            result: front
+                .call(request)
+                .map(|r| r.json)
+                .map_err(|e| e.to_string()),
+        },
         Request::Run { name, command } => Loaded::Ran {
             name,
             result: match command {
@@ -426,6 +441,12 @@ fn run(front: &dyn Front, command: Value) -> Result<Value> {
 
 fn commit(front: &dyn Front, id: &str, stash: bool) -> Result<(Value, Reply)> {
     let mut info = run(front, json!({"op": "commitInfo", "oid": id}))?;
+    // 署名があれば、検証もする（gpg・ssh を動かす。だめなら検証の結果なしで出す）。
+    if info["info"]["signed"].is_string()
+        && let Ok(mut checked) = run(front, json!({"op": "verifySignatures", "oids": [id]}))
+    {
+        info["info"]["signatureCheck"] = checked["info"]["checks"][0].take();
+    }
     let of = if stash { "stash" } else { "id" };
     let diff = front.call(json!({"op": "commitDiff", of: id}))?;
     Ok((info["info"].take(), diff))

@@ -20,13 +20,47 @@ pub enum Root {
 pub trait RepoFiles: Send + Sync {
     /// ファイルの中身。なければ `None`。
     fn read(&self, root: Root, path: &str) -> Result<Option<Vec<u8>>>;
-    /// 書く。途中のディレクトリがなければ作る。
+    /// 書く。途中のディレクトリがなければ作る。`.git` の下（`GitDir`・`CommonDir`）は、一時ファイルに書いて
+    /// から置き換える（ほかのプロセスが書きかけを読まない）。
     fn write(&self, root: Root, path: &str, data: &[u8]) -> Result<()>;
     /// 消す。なければ何もしない。
     fn remove(&self, root: Root, path: &str) -> Result<()>;
     /// 実行の許可などのモード（Unix）。なければ `None`。
     fn mode(&self, root: Root, path: &str) -> Result<Option<u32>>;
     fn set_mode(&self, root: Root, path: &str, mode: u32) -> Result<()>;
+}
+
+/// 同じディレクトリの一時ファイルに書いてから、`path` を置き換える。読む側は前か後の中身だけを見る。
+/// Windows では、ほかのプロセス（ウイルス対策など）が開いていると置き換えが一時的に断られるので、少しやり直す。
+pub fn replace_file(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    // pid だけだと、同じプロセスの中で並んで書いたときにぶつかる
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let tmp = path.with_file_name(format!(
+        ".{name}.{}-{}.tmp",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    let result = std::fs::write(&tmp, data).and_then(|()| {
+        let mut tries = 0;
+        loop {
+            match std::fs::rename(&tmp, path) {
+                Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied && tries < 20 => {
+                    tries += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                other => break other,
+            }
+        }
+    });
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
 }
 
 /// 手元のディスクのリポジトリ。
@@ -87,7 +121,13 @@ impl RepoFiles for LocalFiles {
         if let Some(dir) = file.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        Ok(std::fs::write(file, data)?)
+        // 作業ツリーのファイルは、権限やリンクを変えないようそのまま書く。`.git` の下でもリンクはそのまま。
+        if root == Root::Workdir
+            || std::fs::symlink_metadata(&file).is_ok_and(|m| m.file_type().is_symlink())
+        {
+            return Ok(std::fs::write(file, data)?);
+        }
+        Ok(replace_file(&file, data)?)
     }
 
     fn remove(&self, root: Root, path: &str) -> Result<()> {
@@ -150,6 +190,42 @@ mod tests {
         files.remove(Root::Workdir, "a/b.txt").unwrap();
         assert!(files.read(Root::Workdir, "../escape").is_err());
         assert!(files.write(Root::Workdir, "/etc/passwd", b"").is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// `.git` の下は置き換えて書くので、並んで読む側は書きかけ（空や途中まで）を見ない。一時ファイルも残らない。
+    #[test]
+    fn readers_never_see_a_half_written_git_dir_file() {
+        let dir = std::env::temp_dir().join(format!("amonhen-files-atomic-{}", std::process::id()));
+        let files = LocalFiles::new(dir.join(".git"), Some(dir.clone()));
+        let big = |c: u8| vec![c; 1 << 20];
+        files
+            .write(Root::GitDir, "amonhen/undo.json", &big(b'a'))
+            .unwrap();
+        let reader = {
+            let files = files.clone();
+            std::thread::spawn(move || {
+                for _ in 0..200 {
+                    let data = files
+                        .read(Root::GitDir, "amonhen/undo.json")
+                        .unwrap()
+                        .unwrap();
+                    assert_eq!(data.len(), 1 << 20);
+                    assert!(data.iter().all(|&b| b == data[0]));
+                }
+            })
+        };
+        for i in 0..50u8 {
+            files
+                .write(Root::GitDir, "amonhen/undo.json", &big(b'a' + i % 26))
+                .unwrap();
+        }
+        reader.join().unwrap();
+        let names: Vec<_> = std::fs::read_dir(dir.join(".git/amonhen"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        assert_eq!(names, ["undo.json"]);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

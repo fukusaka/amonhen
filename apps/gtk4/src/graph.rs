@@ -11,7 +11,8 @@ use std::time::Instant;
 use amonhen_core::HistorySnapshot;
 use amonhen_core::lanes::{LaneMetrics, lane_positions};
 use amonhen_core::lineage::{LineageWindow, NOT_LIT};
-use amonhen_layout::Edge;
+use amonhen_layout::{Edge, Node};
+use amonhen_model::Oid;
 use gtk::prelude::*;
 use gtk::{gdk, graphene, gsk};
 
@@ -21,6 +22,10 @@ pub struct Metrics {
     pub lane_width: f32,
     pub left_inset: f32,
     pub node_radius: f32,
+    /// merge の点の半径（合流は線でも分かるので、ほかの点より小さくする）。
+    pub merge_radius: f32,
+    /// HEAD の輪の外の半径（中を抜くので、ほかの点よりひとまわり大きくする）。
+    pub head_radius: f32,
     pub line_width: f32,
     pub first_parent_width: f32,
     /// 線だけのレーンの幅（魚眼で詰めたとき）。入りきらなければ 0 まで詰めて、薄い帯にする。
@@ -36,6 +41,8 @@ impl Default for Metrics {
             lane_width: 14.0,
             left_inset: 10.0,
             node_radius: 4.0,
+            merge_radius: 3.0,
+            head_radius: 5.2,
             line_width: 1.6,
             first_parent_width: 2.4,
             thin_lane_width: 3.0,
@@ -204,11 +211,14 @@ impl Style {
 
 /// 祖先を強調するときの、ほかの点と線の不透明度（macOS 版と同じ）。
 const DIMMED_ALPHA: f32 = 0.18;
+/// HEAD の輪の太さ（macOS 版と同じ）。
+const RING_WIDTH: f32 = 1.8;
 
 /// `rows` 行の点と線を `snapshot` に描く。y は `scroll_y` だけずらす。`lineage` があれば、祖先の点と
 /// それをつなぐ線のほかは薄く描く。`boundary`（shallow clone の境界のコミットの行）の点からは、下へ短い点線を
 /// 描く（親はあるが取得していない。macOS 版の `appendUnfetchedStub`）。行ごとのグラフの右端（その行の点と、その行を
-/// 通る線のいちばん右。macOS 版の `rightExtent`）を返す。文字はそのすぐ右から始める。
+/// 通る線のいちばん右。macOS 版の `rightExtent`）を返す。文字はそのすぐ右から始める。`head`（HEAD のコミット）の
+/// 点は、中を抜いた輪で描く（通る線も輪の中では描かない）。merge の点はほかより小さい。
 #[allow(clippy::too_many_arguments)]
 pub fn draw(
     snapshot: &gtk::Snapshot,
@@ -219,8 +229,16 @@ pub fn draw(
     m: &Metrics,
     lineage: Option<&LineageWindow>,
     boundary: &HashSet<u32>,
+    head: Option<Oid>,
 ) -> Vec<f32> {
     let row_y = |row: u32| (row as f32 + 0.5) * m.row_height - scroll_y;
+    // HEAD の行は描く行の中だけで探す（全体の索引を作らせない。描く行は数十行）。
+    let ids = history.graph.ids();
+    let head_row = head.and_then(|head| rows.clone().find(|&r| ids.get(r as usize) == Some(&head)));
+    let nodes = history.layout.nodes();
+    let head_point = head_row
+        .and_then(|r| nodes.get(r as usize))
+        .map(|n| graphene::Point::new(lanes.x(n.lane, m), row_y(n.row)));
     // 幹線の点の分は必ず取る。
     let mut extents = vec![lanes.x(0, m) + m.node_radius; rows.len()];
     let mut strokes: HashMap<Style, gsk::PathBuilder> = HashMap::new();
@@ -284,6 +302,14 @@ pub fn draw(
             path.cubic_to(ax, my, bx, my, bx, by);
         }
     }
+    // HEAD の輪の中（とすぐ外）では線を描かない（macOS 版はシェーダーで線を抜く）。
+    if let Some(p) = &head_point {
+        snapshot.push_mask(gsk::MaskMode::InvertedAlpha);
+        let hole = gsk::PathBuilder::new();
+        hole.add_circle(p, m.head_radius + 0.4);
+        snapshot.append_fill(&hole.to_path(), gsk::FillRule::Winding, &gdk::RGBA::BLACK);
+        snapshot.pop();
+    }
     for (style, path) in strokes {
         let stroke = gsk::Stroke::new(style.width as f32 / 100.0);
         stroke.set_line_cap(gsk::LineCap::Round);
@@ -293,27 +319,46 @@ pub fn draw(
             &color(style.color, style.alpha as f32 / 100.0),
         );
     }
+    if head_point.is_some() {
+        snapshot.pop();
+    }
 
     let mut fills: HashMap<(u16, bool), gsk::PathBuilder> = HashMap::new();
+    let mut rings: HashMap<(u16, bool), gsk::PathBuilder> = HashMap::new();
     let mut stubs: HashMap<(u16, bool), gsk::PathBuilder> = HashMap::new();
-    let nodes = history.layout.nodes();
     for n in &nodes[rows.start as usize..rows.end as usize] {
-        if n.flags & amonhen_layout::Node::PENDING != 0 {
+        if n.flags & Node::PENDING != 0 {
             continue;
         }
         let p = graphene::Point::new(lanes.x(n.lane, m), row_y(n.row));
+        let is_head = head_row == Some(n.row);
+        let radius = if is_head {
+            m.head_radius
+        } else if n.flags & Node::MERGE != 0 {
+            m.merge_radius
+        } else {
+            m.node_radius
+        };
         if let Some(x) = n
             .row
             .checked_sub(rows.start)
             .and_then(|i| extents.get_mut(i as usize))
         {
-            *x = x.max(p.x() + m.node_radius);
+            *x = x.max(p.x() + radius);
         }
         let dimmed = lineage.is_some_and(|l| !l.contains(n.row));
-        fills
-            .entry((n.color % PALETTE.len() as u16, dimmed))
-            .or_default()
-            .add_circle(&p, m.node_radius);
+        if is_head {
+            // 太さ 1.8 の輪（外の半径が `head_radius`）。
+            rings
+                .entry((n.color % PALETTE.len() as u16, dimmed))
+                .or_default()
+                .add_circle(&p, radius - RING_WIDTH / 2.0);
+        } else {
+            fills
+                .entry((n.color % PALETTE.len() as u16, dimmed))
+                .or_default()
+                .add_circle(&p, radius);
+        }
         if boundary.contains(&n.row) {
             let dots = stubs
                 .entry((n.color % PALETTE.len() as u16, dimmed))
@@ -326,6 +371,11 @@ pub fn draw(
     for ((c, dimmed), path) in fills {
         let alpha = if dimmed { DIMMED_ALPHA } else { 1.0 };
         snapshot.append_fill(&path.to_path(), gsk::FillRule::Winding, &color(c, alpha));
+    }
+    let ring = gsk::Stroke::new(RING_WIDTH);
+    for ((c, dimmed), path) in rings {
+        let alpha = if dimmed { DIMMED_ALPHA } else { 1.0 };
+        snapshot.append_stroke(&path.to_path(), &ring, &color(c, alpha));
     }
     for ((c, dimmed), path) in stubs {
         let alpha = if dimmed { DIMMED_ALPHA } else { 1.0 } * 0.8;

@@ -64,7 +64,8 @@ is in [front.md](front.md), and the design in item 18 of
   (over the limit, it asks to narrow the search). Matching Only swaps in the core's History of the matches
   (`historyMatching`), keeping the selected commit.
 - The Undo log is the same file in the same format as the core's (`<git dir>/amonhen/undo.json`). `delegation.ts` keeps
-  operations the core already records from being recorded again by the extension.
+  operations the core already records from being recorded again by the extension. Both replace the file as a whole and
+  treat it the same way when it can't be read or is broken (`docs/ux.md`).
 - Without a matching engine, or with `amonhen.daemon.enabled` off, everything runs on the extension's own git execution
   layer. The sections below on spawning git, `cat-file`, rebase plans and line-level staging describe that path; the
   engine does the same work in Rust.

@@ -13,6 +13,8 @@
 "Can’t undo: branches or HEAD changed after “{label}”" = "「{label}」のあとにブランチや HEAD が変わっているため、Undo できません";
 "Can’t read the recorded oid: {oid}" = "記録の oid を読めない: {oid}";
 "Can’t read the recorded blob" = "記録の blob を読めない";
+"Can’t read the Undo log: {error}" = "Undo の記録を読めません: {error}";
+"The Undo log was broken and has been set aside as {file}" = "Undo の記録が壊れていたため、{file} に退けました";
 "No commit selected" = "コミットを選んでいない";
 "Row out of range" = "行が範囲外";
 "Can’t read the History the daemon prepared" = "daemon が用意した History を読めない";

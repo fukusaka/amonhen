@@ -287,6 +287,12 @@ jobs:
         with:
           path: apps/vscode/.vscode-test
           key: vscode-test-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('apps/vscode/.vscode-test.mjs') }}
+      # Windows の runner は、起動して数分のうちに Windows Update（wuauserv・UsoSvc）とそれに続く Storage Service
+      # （StorSvc）が 1 コア以上を数十秒使う。重なると e2e の git が 10 倍ほど遅れ、拡張ホストが止まって時間切れになる
+      # ので、e2e の前に止める（使い捨ての VM なので戻さない）
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: scripts/ci-quiet-windows.ps1
       - working-directory: apps/vscode
         run: |
           if [ "$RUNNER_OS" = Linux ]; then

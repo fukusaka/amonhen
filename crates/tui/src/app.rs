@@ -135,6 +135,24 @@ enum Naming {
     Worktree,
     /// push の送り先（`<remote>/<branch>`）。
     PushTo,
+    /// 履歴のない新しいブランチの名前。
+    Orphan,
+    /// 足すリモートの名前（次に URL を聞く）。
+    RemoteName,
+    /// 足すリモートの URL（名前は聞いてある）。
+    RemoteUrl,
+    /// 選んでいるコミットを書き出すアーカイブのファイル（この機械の）。
+    Archive,
+    /// リポジトリをまとめる bundle のファイル（この機械の）。
+    Bundle,
+    /// 取り込む bundle のファイル（この機械の）。
+    BundleFile,
+    /// bundle のブランチを取り込む名前（`refs/remotes/<名前>/*`。ファイルは聞いてある）。
+    BundleName,
+    /// 当てるパッチのファイル（この機械の）。
+    Patch,
+    /// 選んでいるコミットのパッチを書くフォルダ（この機械の）。
+    SavePatch,
 }
 
 /// 選択肢 1 つ: 押すキー、名前、頼む中身。
@@ -169,6 +187,19 @@ pub struct App {
     confirm: Option<(String, String, Request)>,
     /// push を確かめている: `t` で、送り先のブランチを打てる。
     push_to_offered: bool,
+    /// 読んでいる bundle のファイル（取り込む名前を聞く間、覚えておく）。
+    bundle_file: Option<String>,
+    /// 読んでいるパッチのファイル（当てるかを聞く間、覚えておく）。
+    patch_file: Option<String>,
+    /// 前の版と比べている間の題（比べた結果が届くまで覚えておく）。
+    range_title: Option<String>,
+    /// History でマージ済みのブランチを折りたたんでいる（アプリの Fold Merged Branches。この TUI の間だけ）。
+    fold: bool,
+    /// 折りたたんでいる間に、取り込んだ側を開いたマージ（16 進の ID）。
+    expanded: Vec<String>,
+    /// History の並び順を、トポロジー順（ブランチのコミットをそのマージの下にまとめる）にしている。この TUI の
+    /// 間だけ（アプリの設定には書かない）。
+    topo_order: bool,
     /// 作業ツリーのファイルがこの機械にある（`ssh://` の先でない）。エディタで開けるか。
     files_here: bool,
     /// エディタで開く作業ツリーのファイル（絶対パス）。
@@ -307,6 +338,12 @@ impl App {
             help_top: 0,
             palette: None,
             push_to_offered: false,
+            bundle_file: None,
+            patch_file: None,
+            range_title: None,
+            topo_order: false,
+            fold: false,
+            expanded: Vec::new(),
             files_here: true,
             open_file: None,
             search: None,
@@ -344,7 +381,10 @@ impl App {
         self.opening = true;
         // HEAD が動いたかもしれない。
         self.reflog.refresh();
-        self.send(Request::Open);
+        self.send(Request::Open {
+            fold: self.fold,
+            expanded: self.expanded.clone(),
+        });
     }
 
     fn send(&mut self, request: Request) {
@@ -1037,6 +1077,66 @@ impl App {
                                 self.push_to(&start, name);
                                 return;
                             }
+                            Naming::Orphan => {
+                                self.ask_orphan(name);
+                                return;
+                            }
+                            Naming::RemoteName => {
+                                if self.remotes.iter().any(|r| r == name) {
+                                    self.error =
+                                        Some(tr!("There is a remote named {name}", name = name));
+                                    return;
+                                }
+                                self.naming = Naming::RemoteUrl;
+                                self.typing_branch =
+                                    Some((name.to_owned(), name.to_owned(), String::new()));
+                                return;
+                            }
+                            Naming::Archive => {
+                                self.export_archive(&start, name);
+                                return;
+                            }
+                            Naming::BundleFile => {
+                                let file = local_path(name);
+                                self.bundle_file = Some(file.clone());
+                                (
+                                    "bundleCheck",
+                                    tr!("Reading the bundle…"),
+                                    json!({"op": "bundleCheck", "file": file}),
+                                )
+                            }
+                            Naming::SavePatch => (
+                                "savePatch",
+                                tr!("Saving the patch…"),
+                                json!({"op": "formatPatch", "oids": [start], "dir": local_path(name)}),
+                            ),
+                            Naming::Patch => {
+                                let file = local_path(name);
+                                self.patch_file = Some(file.clone());
+                                (
+                                    "readPatch",
+                                    tr!("Reading the patch…"),
+                                    json!({"op": "readPatch", "paths": [file]}),
+                                )
+                            }
+                            Naming::BundleName => (
+                                "fetchBundle",
+                                tr!("Fetching from the bundle…"),
+                                json!({"op": "fetchBundle", "file": start, "name": name}),
+                            ),
+                            Naming::Bundle => (
+                                "bundle",
+                                tr!("Saving the bundle…"),
+                                json!({"op": "bundle", "refs": [], "bases": [], "file": local_path(name)}),
+                            ),
+                            Naming::RemoteUrl => (
+                                "addRemote",
+                                tr!("Adding {name}…", name = start),
+                                json!({
+                                    "op": "changeRemote",
+                                    "change": {"kind": "add", "name": start, "url": name},
+                                }),
+                            ),
                             Naming::Worktree => (
                                 "addWorktree",
                                 tr!("Adding the worktree…"),
@@ -1071,6 +1171,8 @@ impl App {
                 KeyCode::Backspace => {
                     name.pop();
                 }
+                // 端末の行と同じく、Ctrl-u で打ったものを消す（初めに入れてあるパスを打ち直すときなど）。
+                KeyCode::Char('u') if control => name.clear(),
                 KeyCode::Char(ch) if !control => name.push(ch),
                 _ => {}
             }
@@ -1244,8 +1346,115 @@ impl App {
         self.key(KeyEvent::new(entry.key, modifiers));
     }
 
+    /// Working Copy で選んでいるコンフリクトのファイルに、Magic Merge を当てる（決まった規則で解けるものを解く。
+    /// Undo できる）。差分で開いていれば、そのファイルに。
+    fn magic_merge(&mut self) {
+        match self.changes.conflicted_path().map(str::to_owned) {
+            Some(path) => self.run(
+                "magicMerge",
+                tr!("Magic Merge…"),
+                json!({"op": "magicMergeFile", "path": path}),
+            ),
+            None => {
+                self.error = Some(tr!("Select a conflicted file in the Working Copy"));
+                self.dirty = true;
+            }
+        }
+    }
+
     /// コマンドの一覧からだけ動かす操作（キーを持たない）。
     fn run_keyless(&mut self, id: &str) {
+        if id == "compare-with-previous" {
+            self.run(
+                "previousVersion",
+                tr!("Finding the previous version…"),
+                json!({"op": "previousVersion"}),
+            );
+        }
+        if id == "save-patch" {
+            // History で選んでいるコミットを、git の名前のファイルにして、今のフォルダ（この機械）に。
+            let Some(id) = self.history.selected_id() else {
+                return;
+            };
+            let id = id.to_string();
+            let short = id[..id.len().min(8)].to_owned();
+            self.naming = Naming::SavePatch;
+            self.typing_branch = Some((id, short, local_path("")));
+            self.dirty = true;
+        }
+        if id == "apply-patch" {
+            self.naming = Naming::Patch;
+            self.typing_branch = Some((String::new(), String::new(), local_path("")));
+            self.dirty = true;
+        }
+        if id == "fetch-bundle" {
+            self.naming = Naming::BundleFile;
+            self.typing_branch = Some((String::new(), String::new(), local_path("")));
+            self.dirty = true;
+        }
+        if id == "save-bundle" {
+            // HEAD とすべてのブランチ・タグを、今のフォルダ（この機械）の 1 つのファイルに。
+            let name = match self.name.is_empty() {
+                true => "repository".to_owned(),
+                false => self.name.clone(),
+            };
+            self.naming = Naming::Bundle;
+            let file = local_path(&format!("{name}.bundle"));
+            self.typing_branch = Some((String::new(), String::new(), file));
+            self.dirty = true;
+        }
+        if id == "export-archive" {
+            // History で選んでいるコミットを、今のフォルダ（TUI を始めた所。SSH 先でも、この機械）に書き出す。
+            let Some(id) = self.history.selected_id() else {
+                return;
+            };
+            let id = id.to_string();
+            let short = id[..id.len().min(8)].to_owned();
+            let name = match self.name.is_empty() {
+                true => short.clone(),
+                false => format!("{}-{short}", self.name),
+            };
+            let file = local_path(&format!("{name}.zip"));
+            self.naming = Naming::Archive;
+            self.typing_branch = Some((id, short, file));
+            self.dirty = true;
+        }
+        if id == "delete-ignored-files" {
+            self.run(
+                "ignoredFiles",
+                tr!("Finding ignored files…"),
+                json!({"op": "ignoredFiles"}),
+            );
+        }
+        if id == "update-submodules" {
+            self.run(
+                "submodules",
+                tr!("Reading the submodules…"),
+                json!({"op": "submodules"}),
+            );
+        }
+        if id == "add-remote" {
+            self.naming = Naming::RemoteName;
+            // 初めは、まだリモートがなければ origin。
+            let name = match self.remotes.is_empty() {
+                true => "origin".to_owned(),
+                false => String::new(),
+            };
+            self.typing_branch = Some((String::new(), String::new(), name));
+            self.dirty = true;
+        }
+        if id == "clean-up-branches" {
+            self.run(
+                "cleanupList",
+                tr!("Finding branches to clean up…"),
+                json!({"op": "branchCleanup"}),
+            );
+        }
+        if id == "new-orphan-branch" {
+            self.naming = Naming::Orphan;
+            self.typing_branch = Some((String::new(), String::new(), String::new()));
+            self.dirty = true;
+        }
         if id == "prune-worktrees" {
             // フォルダのなくなった worktree の記録を片付ける（フォルダには触らない）。
             self.run(
@@ -1279,6 +1488,24 @@ impl App {
         }
         self.running = Some(label);
         self.send(Request::Run { name, command });
+    }
+
+    /// History の並び順を、日付順とトポロジー順で替える（この TUI の間だけ）。
+    fn toggle_history_order(&mut self) {
+        self.dirty = true;
+        if self.running.is_some() {
+            self.error = Some(tr!("Another operation is still running"));
+            return;
+        }
+        let order = match self.topo_order {
+            true => "date",
+            false => "topo",
+        };
+        self.running = Some(tr!("Reordering History…"));
+        self.send(Request::Call {
+            name: "historyOrder",
+            request: json!({"op": "historyOrder", "order": order}),
+        });
     }
 
     /// 命令が済んだ。だめなら理由を出し、どちらでも状態・ref・History を読み直す。
@@ -1340,7 +1567,204 @@ impl App {
             "addWorktree" => self.notice = Some(tr!("Added the worktree")),
             "setUpstream" => self.notice = Some(tr!("Set the upstream")),
             "pruneWorktrees" => self.notice = Some(tr!("Pruned the worktrees")),
-            "merge" | "rebase" | "continue" | "skip" | "cherryPick" | "revert" | "rewrite" => {
+            "orphan" => self.notice = Some(tr!("Created the branch")),
+            // 片付けてよいブランチが分かった: 選んでおくもの（取り込み済み）を消すか、上流の消えたものも含めるか。
+            "cleanupList" => {
+                self.ask_clean_up(&reply["info"]);
+                return;
+            }
+            "cleanUp" => self.notice = Some(tr!("Deleted the branches")),
+            "addRemote" => self.notice = Some(tr!("Added the remote")),
+            "submodules" => {
+                self.ask_update_submodules(&reply["info"]);
+                return;
+            }
+            "updateSubmodules" => self.notice = Some(tr!("Updated the submodules")),
+            // ignore されたものが分かった: 数と最初のいくつかを出して、確かめてから消す（Undo では戻らない）。
+            "ignoredFiles" => {
+                let paths: Vec<String> = (reply["info"]["paths"].as_array().into_iter().flatten())
+                    .filter_map(|p| p.as_str().map(str::to_owned))
+                    .collect();
+                self.dirty = true;
+                if paths.is_empty() {
+                    self.notice = Some(tr!(
+                        "No ignored files: nothing in the working tree matches .gitignore"
+                    ));
+                    return;
+                }
+                const SHOWN: usize = 3;
+                let mut names = amonhen_model::i18n::list(&paths[..paths.len().min(SHOWN)]);
+                if paths.len() > SHOWN {
+                    names = tr!(
+                        "{names} and {count} more",
+                        names = names,
+                        count = paths.len() - SHOWN
+                    );
+                }
+                self.confirm = Some((
+                    tr!(
+                        "Delete {count} ignored items ({names})? Undo can’t bring them back.",
+                        count = paths.len(),
+                        names = names
+                    ),
+                    tr!("delete"),
+                    Request::Run {
+                        name: "deleteIgnored",
+                        command: json!({"op": "deleteIgnored", "paths": paths}),
+                    },
+                ));
+                return;
+            }
+            "deleteIgnored" => self.notice = Some(tr!("Deleted the ignored files")),
+            // パッチの中身が分かった: 当たらなければ git の答えを出す。メールの形ならコミットとして（git am）、
+            // ただの diff なら作業ツリーに（git apply）当てるかを確かめる。
+            "readPatch" => {
+                self.dirty = true;
+                let Some(file) = self.patch_file.take() else {
+                    return;
+                };
+                let info = &reply["info"];
+                if info["applies"] != true {
+                    let error = info["error"].as_str().unwrap_or("");
+                    let line = error
+                        .lines()
+                        .find(|l| !l.trim().is_empty())
+                        .unwrap_or(error);
+                    self.error = Some(tr!(
+                        "The patch doesn’t apply: {reason}",
+                        reason = line.trim()
+                    ));
+                    return;
+                }
+                let patches = info["patches"].as_array().map_or(0, Vec::len);
+                let (ask, request) = match info["kind"].as_str() {
+                    Some("mailbox") => (
+                        match patches {
+                            1 => tr!("Apply the patch to the current branch as a commit?"),
+                            count => tr!(
+                                "Apply {count} patches to the current branch as commits?",
+                                count = count
+                            ),
+                        },
+                        Request::Run {
+                            name: "am",
+                            command: json!({"op": "am", "paths": [file], "threeWay": null}),
+                        },
+                    ),
+                    _ => (
+                        tr!("Apply the diff to the working tree? Undo brings the files back."),
+                        Request::Run {
+                            name: "applyPatch",
+                            command: json!({"op": "applyPatch", "paths": [file]}),
+                        },
+                    ),
+                };
+                self.confirm = Some((ask, tr!("apply"), request));
+                return;
+            }
+            "applyPatch" => self.notice = Some(tr!("Applied the patch")),
+            "magicMerge" => {
+                let resolved = reply["info"]["resolved"].as_u64().unwrap_or(0);
+                let remaining = reply["info"]["remaining"].as_u64().unwrap_or(0);
+                self.notice = Some(match (resolved, remaining) {
+                    (0, _) => tr!("Magic Merge found nothing it can resolve on its own"),
+                    (_, 0) => tr!("Magic Merge resolved {count}; none left", count = resolved),
+                    _ => tr!(
+                        "Magic Merge resolved {count}; {left} left",
+                        count = resolved,
+                        left = remaining
+                    ),
+                });
+            }
+            // 今のブランチの、最後に書き換える前の版が分かった: その範囲で range-diff を頼む。
+            "previousVersion" => {
+                let previous = &reply["info"]["previous"];
+                if previous.is_null() {
+                    self.notice = Some(tr!(
+                        "The branch hasn’t been rewritten (its reflog has no previous version)"
+                    ));
+                    self.dirty = true;
+                    return;
+                }
+                self.range_title = Some(tr!(
+                    "{branch} compared with {selector}",
+                    branch = previous["branch"].as_str().unwrap_or(""),
+                    selector = previous["selector"].as_str().unwrap_or("")
+                ));
+                self.run(
+                    "rangeDiff",
+                    tr!("Comparing…"),
+                    json!({"op": "rangeDiff", "ranges": previous["ranges"], "creationFactor": null}),
+                );
+                return;
+            }
+            // 比べた結果は、Blame・File History と同じ画面に（選んだ組のコミットの詳細も同じ）。
+            "rangeDiff" => {
+                let title = self.range_title.take().unwrap_or_default();
+                self.file.show_range_diff(title, &reply["info"]["pairs"]);
+                if self.view != View::File {
+                    self.file_back = self.view;
+                }
+                self.view = View::File;
+                self.focus = Focus::Main;
+                self.dirty = true;
+                return;
+            }
+            // 並び順が替わった: History を読み直す（ref と状態も、ほかの操作と同じく下で読み直す）。
+            "historyOrder" => {
+                self.topo_order = reply["order"] == "topo";
+                self.notice = Some(match self.topo_order {
+                    true => tr!(
+                        "History in topological order: a branch's commits stay together under its merge"
+                    ),
+                    false => tr!("History in date order"),
+                });
+            }
+            "savePatch" => {
+                let file = (reply["info"]["files"].as_array())
+                    .and_then(|f| f.first())
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                self.notice = Some(tr!("Saved {file}", file = file));
+            }
+            // bundle の中身が分かった: 足りないコミットがあれば断り、なければ取り込む名前を聞く。
+            "bundleCheck" => {
+                let info = &reply["info"];
+                let missing = info["missing"].as_u64().unwrap_or(0);
+                self.dirty = true;
+                if missing > 0 {
+                    self.error = Some(tr!(
+                        "The bundle needs {count} commits this repository doesn’t have",
+                        count = missing
+                    ));
+                    return;
+                }
+                let Some(file) = self.bundle_file.take() else {
+                    return;
+                };
+                let name = info["name"].as_str().unwrap_or("bundle").to_owned();
+                self.naming = Naming::BundleName;
+                self.typing_branch = Some((file.clone(), file, name));
+                return;
+            }
+            "fetchBundle" => {
+                let count = reply["info"]["refs"].as_array().map_or(0, Vec::len);
+                self.notice = Some(tr!(
+                    "Fetched {count} branches from the bundle",
+                    count = count
+                ));
+            }
+            "bundle" => {
+                let file = reply["info"]["file"].as_str().unwrap_or("");
+                self.notice = Some(tr!("Saved the bundle to {file}", file = file));
+            }
+            "archive" => {
+                let file = reply["info"]["file"].as_str().unwrap_or("");
+                self.notice = Some(tr!("Exported to {file}", file = file));
+            }
+            // git am も、当たらなければ merge と同じく止まる（Continue・Skip・Abort）。
+            "merge" | "rebase" | "continue" | "skip" | "cherryPick" | "revert" | "rewrite"
+            | "am" => {
                 // コンフリクトで止まったら、Working Copy で解決する。
                 match reply["outcome"].as_str() {
                     Some("conflict") => {
@@ -1519,6 +1943,138 @@ impl App {
                 ]),
             },
         ));
+    }
+
+    /// `rev` の時点のファイルを `file` に書き出す（`git archive`）。形はファイルの拡張子で決め、中身はファイルの名前の
+    /// フォルダに入れる（アプリと同じ）。相対のパスは、TUI を始めたフォルダから。
+    fn export_archive(&mut self, rev: &str, file: &str) {
+        let format = [
+            (".zip", "zip"),
+            (".tar.gz", "tar.gz"),
+            (".tgz", "tar.gz"),
+            (".tar", "tar"),
+        ]
+        .into_iter()
+        .find(|(ext, _)| file.ends_with(ext));
+        let Some((ext, format)) = format else {
+            self.error = Some(tr!("End the file name with .zip, .tar.gz or .tar"));
+            return;
+        };
+        let path = std::path::PathBuf::from(local_path(file));
+        let stem = path
+            .file_name()
+            .map(|n| n.to_string_lossy().trim_end_matches(ext).to_owned())
+            .unwrap_or_default();
+        let prefix = match stem.is_empty() {
+            true => String::new(),
+            false => format!("{stem}/"),
+        };
+        self.run(
+            "archive",
+            tr!("Exporting…"),
+            json!({
+                "op": "archive", "rev": rev, "format": format, "prefix": prefix, "paths": [],
+                "file": path.to_string_lossy(),
+            }),
+        );
+    }
+
+    /// Update Submodules: `submodules` の答えから、すべての submodule を取り出して記録したコミットにするか、中の
+    /// submodule までか、追うブランチの最新にするかを選ばせる（アプリのシートの選び方と同じ）。
+    fn ask_update_submodules(&mut self, info: &Value) {
+        let paths: Vec<String> = (info["submodules"].as_array().into_iter().flatten())
+            .filter_map(|s| s["path"].as_str().map(str::to_owned))
+            .collect();
+        self.dirty = true;
+        if paths.is_empty() {
+            self.notice = Some(tr!("There are no submodules"));
+            return;
+        }
+        let update = |recursive: bool, remote: bool| Request::Run {
+            name: "updateSubmodules",
+            command: json!({
+                "op": "updateSubmodules", "paths": paths, "recursive": recursive, "remote": remote,
+            }),
+        };
+        self.choices = Some((
+            tr!("Update {names}?", names = amonhen_model::i18n::list(&paths)),
+            vec![
+                ('y', tr!("to the recorded commits"), update(false, false)),
+                ('r', tr!("recursively"), update(true, false)),
+                ('t', tr!("to their branches' latest"), update(false, true)),
+            ],
+        ));
+    }
+
+    /// Clean Up Branches: `branchCleanup` の答えから、消すブランチを確かめる。最初に選んでおくもの（既定の
+    /// ブランチに取り込み済み）を消すか、上流の消えたものも含めるかを選ばせる（アプリのシートと同じく、上流が消えた
+    /// だけのものは最初は選ばない）。
+    fn ask_clean_up(&mut self, info: &Value) {
+        let branches: Vec<&Value> = info["branches"].as_array().into_iter().flatten().collect();
+        let pick = |all: bool| -> Vec<Value> {
+            (branches.iter())
+                .filter(|b| all || b["checked"] == true)
+                .map(|b| json!({"name": b["name"], "force": b["force"]}))
+                .collect()
+        };
+        let names = |picked: &[Value]| -> String {
+            let names: Vec<&str> = picked.iter().filter_map(|b| b["name"].as_str()).collect();
+            amonhen_model::i18n::list(&names)
+        };
+        let (checked, all) = (pick(false), pick(true));
+        let delete = |branches: Vec<Value>| Request::Run {
+            name: "cleanUp",
+            command: json!({"op": "deleteBranches", "branches": branches}),
+        };
+        self.dirty = true;
+        if all.is_empty() {
+            self.notice = Some(tr!("No branches to clean up"));
+            return;
+        }
+        let base = info["base"].as_str().unwrap_or("");
+        let mut options = Vec::new();
+        if !checked.is_empty() {
+            options.push((
+                'y',
+                tr!("delete those merged into {base}", base = base),
+                delete(checked.clone()),
+            ));
+        }
+        if all.len() > checked.len() {
+            let gone = all.len() - checked.len();
+            let label = match checked.is_empty() {
+                true => tr!(
+                    "delete those whose upstream is gone ({count})",
+                    count = gone
+                ),
+                false => tr!("also those whose upstream is gone ({count})", count = gone),
+            };
+            options.push(('a', label, delete(all.clone())));
+        }
+        let shown = match checked.is_empty() {
+            true => names(&all),
+            false => names(&checked),
+        };
+        self.choices = Some((
+            tr!("Clean up {names}? Undo brings them back.", names = shown),
+            options,
+        ));
+    }
+
+    /// 履歴のない新しいブランチ `name` を、空から作るか、今のファイルを stage したまま作るかを選ばせる。
+    fn ask_orphan(&mut self, name: &str) {
+        let orphan = |keep_files: bool| Request::Run {
+            name: "orphan",
+            command: json!({"op": "createOrphanBranch", "name": name, "keepFiles": keep_files}),
+        };
+        self.choices = Some((
+            tr!("Start {name} with no history?", name = name),
+            vec![
+                ('e', tr!("empty"), orphan(false)),
+                ('k', tr!("keeping the current files staged"), orphan(true)),
+            ],
+        ));
+        self.dirty = true;
     }
 
     /// push の送り先を打たせる（初めは上流）。
@@ -2092,6 +2648,11 @@ impl App {
                 ("g G", tr!("Top and bottom")),
                 ("PgUp PgDn", tr!("Move by a page")),
                 ("@", tr!("Go to HEAD")),
+                ("o", tr!("Date or topological order")),
+                (
+                    "z Z",
+                    tr!("Fold merged branches; open or close the selected merge"),
+                ),
                 ("] [", tr!("Go to the parent, the child")),
                 ("Enter Space", tr!("Go to the details")),
                 ("/", tr!("Search")),
@@ -2136,6 +2697,10 @@ impl App {
                     "o t",
                     tr!("Take the current or the incoming side of a conflicted file"),
                 ),
+                (
+                    "m",
+                    tr!("Magic Merge: resolve what rules can in a conflicted file"),
+                ),
                 ("Enter", tr!("Go to the diff")),
                 (
                     "c",
@@ -2161,6 +2726,7 @@ impl App {
                     "o t b a",
                     tr!("In a conflict: take current, incoming, both, or the base"),
                 ),
+                ("m", tr!("Magic Merge on the whole file")),
                 ("h l", tr!("Pan long lines; h at the left edge goes back")),
                 ("Esc", tr!("Go back to the list")),
             ],
@@ -2340,6 +2906,11 @@ impl App {
                 None => false,
             },
             // コンフリクトのあるファイルを、片側にして解決済みにする（先に確かめる）。
+            // コンフリクトのファイルで `m`: Magic Merge（決まった規則で解けるものを解く）。
+            KeyCode::Char('m') if self.changes.conflicted_path().is_some() => {
+                self.magic_merge();
+                true
+            }
             KeyCode::Char('o' | 't') if self.changes.conflicted_path().is_some() => {
                 let ours = code == KeyCode::Char('o');
                 let path = self.changes.conflicted_path().unwrap_or("").to_owned();
@@ -2456,6 +3027,11 @@ impl App {
             }
             // コンフリクトの中では、そのコンフリクトを Current・Incoming・両方・共通の祖先のどれかにする（Undo
             // できる）。
+            // コンフリクトのファイルの差分でも `m` で Magic Merge（ファイルのすべてのコンフリクトに）。
+            KeyCode::Char('m') if self.changes.conflicted_path().is_some() => {
+                self.magic_merge();
+                true
+            }
             KeyCode::Char('o' | 't' | 'b' | 'a') if self.changes.conflict_at_cursor().is_some() => {
                 let choice = match code {
                     KeyCode::Char('o') => "ours",
@@ -2526,6 +3102,40 @@ impl App {
             KeyCode::Char('G') | KeyCode::End => Some(self.history.select(u32::MAX)),
             // HEAD・親・子へ（アプリの Navigate）。`]` は下（古い方）、`[` は上へ動く。
             KeyCode::Char('@') => Some(self.history.go_to_head()),
+            KeyCode::Char('o') => {
+                self.toggle_history_order();
+                None
+            }
+            // マージ済みのブランチを折りたたむ・戻す。
+            KeyCode::Char('z') => {
+                self.fold = !self.fold;
+                self.expanded.clear();
+                self.notice = Some(match self.fold {
+                    true => tr!(
+                        "Merged branches folded: a merge shows how many commits it brought in; Z opens one"
+                    ),
+                    false => tr!("Merged branches shown"),
+                });
+                self.dirty = true;
+                self.open();
+                None
+            }
+            // 折りたたんだマージの、取り込んだ側を開く・閉じる。
+            KeyCode::Char('Z') if self.fold => {
+                if let Some(id) = self.history.selected_id() {
+                    let id = id.to_string();
+                    match self.expanded.iter().position(|e| *e == id) {
+                        Some(i) => {
+                            self.expanded.remove(i);
+                        }
+                        None if self.history.selected_folded() > 0 => self.expanded.push(id),
+                        None => self.notice = Some(tr!("This commit has nothing folded")),
+                    }
+                    self.dirty = true;
+                    self.open();
+                }
+                None
+            }
             KeyCode::Char(']') => Some(self.history.go_to_parent()),
             KeyCode::Char('[') => Some(self.history.go_to_child()),
             _ => None,
@@ -2954,6 +3564,31 @@ impl App {
                     Naming::PushTo => {
                         tr!("Push {at} to (remote/branch): {name}", at = at, name = name)
                     }
+                    Naming::Orphan => tr!("New orphan branch: {name}", name = name),
+                    Naming::RemoteName => tr!("New remote's name: {name}", name = name),
+                    Naming::RemoteUrl => tr!("URL of {at}: {name}", at = at, name = name),
+                    Naming::BundleFile => tr!("Fetch from the bundle at: {name}", name = name),
+                    Naming::Patch => tr!("Apply the patch at: {name}", name = name),
+                    Naming::SavePatch => {
+                        tr!(
+                            "Save {at} as a patch in the folder: {name}",
+                            at = at,
+                            name = name
+                        )
+                    }
+                    Naming::BundleName => {
+                        tr!("Fetch its branches as remote: {name}", name = name)
+                    }
+                    Naming::Bundle => {
+                        tr!("Save the repository as a bundle at: {name}", name = name)
+                    }
+                    Naming::Archive => {
+                        tr!(
+                            "Export {at} to (.zip, .tar.gz or .tar): {name}",
+                            at = at,
+                            name = name
+                        )
+                    }
                 };
                 let x = buf.set_stringn(area.x + 1, y, text, room, Style::new()).0;
                 cursor = Some((x.min(position_x.saturating_sub(1)), y));
@@ -3199,6 +3834,17 @@ impl App {
         }
         // 入力しているときだけ、カーソルを出す。
         cursor
+    }
+}
+
+/// この機械のファイルのパス: 相対なら、TUI を始めたフォルダから。
+fn local_path(file: &str) -> String {
+    let path = std::path::Path::new(file);
+    match path.is_absolute() {
+        true => file.to_owned(),
+        false => (std::env::current_dir().unwrap_or_default().join(path))
+            .to_string_lossy()
+            .into_owned(),
     }
 }
 

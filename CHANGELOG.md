@@ -27,12 +27,18 @@ becomes the GitHub Release notes.
   worktree, Prune and pushing tags were blue). Removing an SSH host says "Remove from List", as it only leaves the list.
 - Sheet fields are labeled without a colon, and Japanese no longer puts a space between joined sentences or leaves a
   few menu items (Amend Last Commit, Fixup / Squash Commit For, the Submodules header's) in English.
+- History's graph draws HEAD's commit as a hollow ring and merge commits as smaller dots.
 
 #### Fixed
 
 - Repository Settings > Remotes' Prune asks first, as the sidebar's does.
+- The Undo log is no longer emptied when it is read while being written or can't be read for a moment: it is replaced
+  as a whole, an unreadable log is an error, and a broken one is set aside as `undo.json.broken-<time>`.
 - The engine on Windows opens repositories on SSH hosts (`-C ssh://…`): it no longer relies on ssh's connection
   sharing, which Windows' OpenSSH lacks, and sends the engine to the host with scp correctly.
+- History rows: a long branch or tag label is cut in the middle, keeping its start and end, instead of pushing the
+  subject out of the row; labels that don't fit are gathered into "+n" instead of being left out. Clicking a cut label
+  or "+n" lists the commit's branches and tags in full.
 
 ### [0.2.12] - 2026-11-18
 
@@ -1210,6 +1216,10 @@ First release.
   being read.
 - Working Copy: in a narrow diff pane, the buttons above the diff move to their own row instead of wrapping their
   labels and hiding the file name.
+- Undo no longer says "Nothing to Undo" and loses the log when the log is being written or can't be read for a moment
+  (it is shared with the engine); a broken log is set aside as `undo.json.broken-<time>`.
+- On Windows, a git command that starts while another git rewrites `.git/config` is run again instead of failing with
+  "unable to access '.git/config': Permission denied".
 
 ### [0.2.8] - 2026-11-18
 
