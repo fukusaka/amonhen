@@ -897,12 +897,9 @@ fn ci_tips(repo: &Repository, branches: &[String], remote: Option<&str>) -> Vec<
 }
 
 /// #123 の候補（番号とタイトル）と、読んだ時刻。
-#[allow(dead_code)] // CI の吹き出し・#123 の候補で使う（続くコミット）。
 type IssueCache = (std::time::Instant, Vec<(u64, String)>);
-#[allow(dead_code)] // CI の吹き出し・#123 の候補で使う（続くコミット）。
 static ISSUES: Mutex<Option<HashMap<String, IssueCache>>> = Mutex::new(None);
 
-#[allow(dead_code)] // CI の吹き出し・#123 の候補で使う（続くコミット）。
 /// コミットのメッセージの #123 の候補: 開いている Issue（30 件）と PR（「PR: 」を付けて）を、番号の大きい順に。
 /// 5 分は覚えておく（macOS 版と同じ）。待つ。
 pub fn issue_candidates(target: &PullRequestTarget) -> Vec<(u64, String)> {

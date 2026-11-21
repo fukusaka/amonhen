@@ -429,6 +429,8 @@ struct Root {
     split_handles: [ElementRef<Grid>; 3],
     /// Repositories の見出しの列の境目のつまみ。
     column_handles: [ElementRef<Grid>; 4],
+    /// `#` を打った直後の Issue・PR の候補: 本文の欄か、`#` の直後の位置（文字の数）、そのときの欄の文、候補。
+    issue_offer: Option<IssueOffer>,
     recall_cursor: isize,
     before_recall: Option<(String, String)>,
 }
@@ -845,6 +847,9 @@ enum Message {
     Refs(Arc<RefsSnapshot>, Arc<Repository>),
     /// GitHub から読んだ（どのリポジトリのものか）。
     GitHub(String, Box<crate::github::Loaded>),
+    /// `#` の候補を読んだ（本文の欄か、位置、そのときの欄の文、候補）と、選んだ。
+    IssueCandidates(bool, usize, String, Vec<(u64, String)>),
+    PickIssue(u64),
     /// CI の印を押した（コミット、状態）と、そのチェックを読んだ。
     Checks(String, crate::github::Ci),
     ChecksLoaded(String, Result<Vec<crate::github::CommitCheck>, String>),
@@ -1458,6 +1463,7 @@ impl Component for Root {
             details_height: crate::prefs::number(DETAILS_HEIGHT_KEY).unwrap_or(240.0),
             split_handles: [ElementRef::new(), ElementRef::new(), ElementRef::new()],
             column_handles: std::array::from_fn(|_| ElementRef::new()),
+            issue_offer: None,
             recall_cursor: -1,
             before_recall: None,
         }
@@ -2055,6 +2061,9 @@ impl Root {
                 if !self.github.avatars.is_empty() {
                     self.github_avatars_loaded = true;
                 }
+                // メッセージの #123 のリンクの先（fork なら元のリポジトリの Issue）。
+                let base = self.github.target.as_ref().map(|t| t.repo.web_url());
+                ISSUE_BASE.with(|b| *b.borrow_mut() = base);
                 // History の行の CI の印。
                 let ci = self.github.ci.clone().unwrap_or_default();
                 with_history(|h| {
@@ -4553,7 +4562,34 @@ impl Root {
                 // 選んでいるファイルの差分も読み直す（stage で行の印が、外での変更で中身が変わる）。
                 self.load_working_diff();
             }
+            Message::IssueCandidates(body, at, text, items) => {
+                // 読んでいる間に打ち進めていたら出さない（macOS 版と同じ）。
+                let now = if body {
+                    &self.description
+                } else {
+                    &self.summary
+                };
+                if *now == text && !items.is_empty() {
+                    self.issue_offer = Some((body, at, text, items));
+                }
+            }
+            Message::PickIssue(number) => {
+                if let Some((body, at, text, _)) = self.issue_offer.take() {
+                    let field = if body {
+                        &mut self.description
+                    } else {
+                        &mut self.summary
+                    };
+                    if *field == text
+                        && let Some(put) = put_issue(&text, at, number)
+                    {
+                        *field = put;
+                        self.store_draft();
+                    }
+                }
+            }
             Message::Summary(text) => {
+                self.offer_issues(false, &text, context);
                 if text != self.summary {
                     // 打って変えたら、呼び出しをやめる（呼び出した文が欄から戻ってきたときは同じ文）。
                     self.recall_cursor = -1;
@@ -4586,6 +4622,7 @@ impl Root {
                 }
             }
             Message::Description(text) => {
+                self.offer_issues(true, &text, context);
                 if text != self.description {
                     self.description = text;
                     self.store_draft();
@@ -13494,6 +13531,42 @@ impl Root {
         });
     }
 
+    /// 件名・本文の欄に `#` を 1 文字打った直後なら、開いている Issue・PR の候補を裏で読む（GTK4 版の
+    /// `offer_issues`）。ほかの打ち方をしたら、出している候補はしまう。
+    fn offer_issues(&mut self, body: bool, text: &str, context: &ComponentContext<Self>) {
+        let before = if body {
+            &self.description
+        } else {
+            &self.summary
+        };
+        if before == text {
+            return;
+        }
+        if self
+            .issue_offer
+            .as_ref()
+            .is_some_and(|(_, _, t, _)| t != text)
+        {
+            self.issue_offer = None;
+        }
+        let Some(at) = typed_hash(before, text) else {
+            return;
+        };
+        let Some(target) = self
+            .github
+            .target
+            .clone()
+            .filter(|_| crate::github::available())
+        else {
+            return;
+        };
+        let text = text.to_owned();
+        context.spawn_background(move |_| {
+            let items = crate::github::issue_candidates(&target);
+            Message::IssueCandidates(body, at, text, items)
+        });
+    }
+
     /// プルリクエスト `number` のブランチの、サイドバーの項目のキー（リモートブランチ、なければローカルブランチ）。
     fn pull_request_ref(&self, number: u64) -> Option<String> {
         use amonhen_model::RefKind;
@@ -15668,6 +15741,7 @@ impl Root {
             file_menu: Box::new(|path: String| {
                 context.callback(move |key| Message::WorkingFileMenu(path.clone(), key))
             }),
+            issue: Box::new(|number: u64| context.callback(move |()| Message::PickIssue(number))),
         };
         let view = crate::workcopy::view(
             crate::workcopy::Input {
@@ -15685,6 +15759,10 @@ impl Root {
                 committing: self.committing,
                 amend: self.amend,
                 hovered: self.working_hovered.as_deref(),
+                issues: self
+                    .issue_offer
+                    .as_ref()
+                    .map_or(&[][..], |(_, _, _, items)| &items[..]),
                 mixed: &|key: &str| {
                     self.mixed_used.borrow_mut().push(key.to_owned());
                     self.mixed_checks
@@ -16329,6 +16407,32 @@ fn checks_view(
     ))
 }
 
+/// `#` の候補: 本文の欄か、`#` の直後の位置（文字の数）、そのときの欄の文、候補（番号とタイトル）。
+type IssueOffer = (bool, usize, String, Vec<(u64, String)>);
+
+/// `before` から `after` へ、`#`（全角の ＃ も）を 1 文字だけ足したなら、その直後の位置（文字の数）。
+fn typed_hash(before: &str, after: &str) -> Option<usize> {
+    let a: Vec<char> = before.chars().collect();
+    let b: Vec<char> = after.chars().collect();
+    if b.len() != a.len() + 1 {
+        return None;
+    }
+    let at = a.iter().zip(&b).take_while(|(x, y)| x == y).count();
+    (matches!(b[at], '#' | '＃') && a[at..] == b[at + 1..]).then_some(at + 1)
+}
+
+/// `text` の `at`（`#` の直後の位置）の `#`（全角でも）を `#番号` にした文。そこが `#` でなければ None。
+fn put_issue(text: &str, at: usize, number: u64) -> Option<String> {
+    let chars: Vec<char> = text.chars().collect();
+    if at == 0 || !matches!(chars.get(at - 1), Some('#' | '＃')) {
+        return None;
+    }
+    let mut out: String = chars[..at - 1].iter().collect();
+    out.push_str(&format!("#{number}"));
+    out.extend(&chars[at..]);
+    Some(out)
+}
+
 /// GitHub のダイアログの主のボタンですること。
 #[derive(Clone)]
 enum GitHubAction {
@@ -16802,10 +16906,82 @@ fn message_match_count(info: Option<&Value>, query: &str) -> usize {
     match_count(subject, query) + match_count(body, query)
 }
 
-/// メッセージの 1 つの欄（`query` の一致があれば色を付ける）。
+thread_local! {
+    /// `#123` をリンクにする先の GitHub のリポジトリの URL（GitHub のリポジトリでなければ None）。
+    static ISSUE_BASE: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+/// メッセージの中の `#123` を、`base`（GitHub のリポジトリの URL）の Issue へのリンクにする（GTK4 版の `linked`
+/// の Issue の番号の分）。単語の途中・`&#` の後ろ・数字でないものはリンクにしない。リンクがなければ None。
+fn issue_links(text: &str, base: &str, bold: bool) -> Option<RichText> {
+    let bytes = text.as_bytes();
+    let mut inlines = Vec::new();
+    let mut at = 0;
+    let mut i = 0;
+    let run = |text: &str| {
+        RichTextInline::Run(RichTextRun {
+            text: text.to_owned(),
+            is_bold: bold,
+            ..RichTextRun::default()
+        })
+    };
+    while i < bytes.len() {
+        let before_ok = i == 0 || {
+            let b = bytes[i - 1];
+            !(b.is_ascii_alphanumeric() || b == b'&' || b == b'_')
+        };
+        if bytes[i] == b'#' && before_ok {
+            let digits = bytes[i + 1..]
+                .iter()
+                .take_while(|b| b.is_ascii_digit())
+                .count();
+            let end = i + 1 + digits;
+            let after_ok =
+                end == bytes.len() || !(bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_');
+            if digits > 0 && after_ok {
+                if at < i {
+                    inlines.push(run(&text[at..i]));
+                }
+                inlines.push(RichTextInline::Hyperlink(RichTextHyperlink {
+                    text: text[i..end].to_owned(),
+                    uri: format!("{base}/issues/{}", &text[i + 1..end]),
+                }));
+                at = end;
+                i = end;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    if at == 0 {
+        return None;
+    }
+    if at < text.len() {
+        inlines.push(run(&text[at..]));
+    }
+    Some(RichText::single_paragraph(inlines))
+}
+
+/// メッセージの 1 つの欄（`query` の一致があれば色を付ける。なければ `#123` を Issue へのリンクに）。
 fn message_text(text: &str, query: &str, size: f64, bold: bool, current: Option<usize>) -> View {
     // 色を付けるときと付けないときで部品が違うので、鍵を分けて作り直させる（今の一致が動いたときも）。
     let runs = highlighted_at(text, query, bold, current);
+    let linked = runs
+        .is_none()
+        .then(|| ISSUE_BASE.with(|b| b.borrow().clone()))
+        .flatten()
+        .and_then(|base| issue_links(text, &base, bold));
+    if let Some(linked) = linked {
+        return View::keyed_fragment([(
+            "linked".to_owned(),
+            View::from(
+                RichTextBlock::new()
+                    .paragraphs(linked)
+                    .font_size(size)
+                    .text_wrapping(TextWrapping::Wrap),
+            ),
+        )]);
+    }
     let key = match (&runs, current) {
         (None, _) => "plain".to_owned(),
         (Some(_), Some(c)) => format!("found-{c}"),
@@ -19618,6 +19794,31 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_typed_hash_offers_issues_and_takes_the_number() {
+        assert_eq!(super::typed_hash("Fix ", "Fix #"), Some(5));
+        assert_eq!(super::typed_hash("a b", "a ＃b"), Some(3));
+        assert_eq!(super::typed_hash("a", "ab"), None);
+        assert_eq!(super::typed_hash("", "##"), None);
+        assert_eq!(
+            super::put_issue("Fix ＃ now", 5, 12).as_deref(),
+            Some("Fix #12 now")
+        );
+        assert_eq!(super::put_issue("Fix x", 5, 12), None);
+    }
+
+    #[test]
+    fn issue_numbers_become_links() {
+        let base = "https://github.com/a/b";
+        let text = |rich: Option<RichText>| rich.map(|r| format!("{r:?}"));
+        assert!(
+            text(super::issue_links("Fixes #12, see", base, false))
+                .is_some_and(|t| t.contains("https://github.com/a/b/issues/12"))
+        );
+        // 単語の途中・`&#` の後ろ・数字でないものはリンクにしない。
+        assert!(super::issue_links("a#1 &#38; #x", base, false).is_none());
+    }
+
     use super::*;
 
     #[test]
