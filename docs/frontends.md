@@ -221,8 +221,8 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Feature | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
 | One checkbox list (☑ ▣ ☐, header and folder checks) | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: Separate Staged and Changes groups.<br>TUI: `[x]` `[-]` `[ ]` per file; `+` stages every file (no folders). |
-| List / Tree / File Name | ✓ | ✓ | ✓ | ✓ | n/a | — |  |
-| Filter on paths | ✓ | ✓ | ✓ | ✓ | n/a | — |  |
+| List / Tree / File Name | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: `v` in the list cycles them; a folder row stages what is under it, Enter folds it. |
+| Filter on paths | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: `/` in the list. |
 | Per-row +/− counts and Discard on hover | ✓ | ✓ | ✓ | ✓ | △ | △ | VSCode: Counts need the engine.<br>CLI: `diff --stat`.<br>Windows: The ↶ stays on the last row the pointer was on.<br>TUI: The selected file's counts head its diff; `d` discards. |
 | Space toggles, ⌫ discards | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: Space and `d`. |
 | Commit box on top with 50/72 counter and body guide | ✓ | ✓ | ✓ | ✓ | n/a | △ | VSCode: A description line over 72 is counted instead of a guide (the column is narrower than 72 characters).<br>TUI: Under the list; its heading counts the summary line, with no body guide. |

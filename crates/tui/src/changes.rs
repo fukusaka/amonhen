@@ -29,6 +29,31 @@ struct Entry {
     unstaged: bool,
 }
 
+/// 一覧の形（アプリの List・Tree・File Name）。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ListMode {
+    /// パスをそのまま。
+    #[default]
+    Path,
+    /// フォルダの木（フォルダの行でまとめて stage でき、Enter で畳む）。
+    Tree,
+    /// ファイル名を先に、フォルダを薄く後ろに。
+    Name,
+}
+
+/// 一覧の 1 行。
+enum Row {
+    /// `entries` の何番目か、木の深さ。
+    File { entry: usize, depth: u16 },
+    /// 木のフォルダ（`path` は作業ツリーからの相対パス）。`files` は中の（絞り込みに合った）ファイル。
+    Folder {
+        path: String,
+        depth: u16,
+        open: bool,
+        files: Vec<usize>,
+    },
+}
+
 /// 出している差分。
 struct Shown {
     path: String,
@@ -60,6 +85,13 @@ pub struct Target {
 #[derive(Default)]
 pub struct Changes {
     entries: Vec<Entry>,
+    /// 出している行（形・絞り込み・畳んだフォルダから作る）。`selected`・`top` はこの行の番目。
+    rows: Vec<Row>,
+    mode: ListMode,
+    /// パスの絞り込み（小文字。空白で分けた語のすべてを含むもの）。
+    filter: String,
+    /// 木で畳んだフォルダ。
+    collapsed: std::collections::HashSet<String>,
     /// 一度でも `status` が届いた。
     loaded: bool,
     selected: usize,
@@ -113,7 +145,141 @@ impl Changes {
     }
 
     fn selected_entry(&self) -> Option<&Entry> {
-        self.entries.get(self.selected)
+        match self.rows.get(self.selected)? {
+            Row::File { entry, .. } => self.entries.get(*entry),
+            Row::Folder { .. } => None,
+        }
+    }
+
+    /// 選んでいる行の鍵（ファイルかフォルダのパス、フォルダかどうか）。作り直しても同じ行を選ぶため。
+    fn selected_key(&self) -> Option<(String, bool)> {
+        match self.rows.get(self.selected)? {
+            Row::File { entry, .. } => Some((self.entries.get(*entry)?.path.clone(), false)),
+            Row::Folder { path, .. } => Some((path.clone(), true)),
+        }
+    }
+
+    pub fn mode(&self) -> ListMode {
+        self.mode
+    }
+
+    /// 一覧の形を次のものにする（パス → 木 → ファイル名）。
+    pub fn next_mode(&mut self) {
+        self.mode = match self.mode {
+            ListMode::Path => ListMode::Tree,
+            ListMode::Tree => ListMode::Name,
+            ListMode::Name => ListMode::Path,
+        };
+        self.rebuild();
+    }
+
+    pub fn filter(&self) -> &str {
+        &self.filter
+    }
+
+    /// パスで絞り込む（空なら、すべて）。
+    pub fn set_filter(&mut self, filter: &str) {
+        self.filter = filter.to_lowercase();
+        self.rebuild();
+    }
+
+    /// 木で選んでいるフォルダを畳む・開く。フォルダでなければ false。
+    pub fn toggle_folder(&mut self) -> bool {
+        let Some(Row::Folder { path, .. }) = self.rows.get(self.selected) else {
+            return false;
+        };
+        let path = path.clone();
+        if !self.collapsed.remove(&path) {
+            self.collapsed.insert(path);
+        }
+        self.rebuild();
+        true
+    }
+
+    /// 形・絞り込み・畳んだフォルダから、出す行を作り直す（選んでいた行は引き継ぐ）。
+    fn rebuild(&mut self) {
+        let key = self.selected_key();
+        self.rebuild_keeping(key);
+    }
+
+    /// 出す行を作り直し、`key`（ファイルかフォルダのパス）の行があれば、それを選ぶ。
+    fn rebuild_keeping(&mut self, key: Option<(String, bool)>) {
+        let words: Vec<&str> = self.filter.split_whitespace().collect();
+        let mut matched: Vec<usize> = (0..self.entries.len())
+            .filter(|&i| {
+                let path = self.entries[i].path.to_lowercase();
+                words.iter().all(|w| path.contains(w))
+            })
+            .collect();
+        self.rows = match self.mode {
+            ListMode::Path | ListMode::Name => matched
+                .into_iter()
+                .map(|entry| Row::File { entry, depth: 0 })
+                .collect(),
+            ListMode::Tree => {
+                // フォルダを先に、名前の順。
+                let order = |path: &str| {
+                    let parts: Vec<&str> = path.split('/').collect();
+                    let last = parts.len() - 1;
+                    parts
+                        .into_iter()
+                        .enumerate()
+                        .map(|(i, p)| (i == last, p.to_owned()))
+                        .collect::<Vec<_>>()
+                };
+                matched.sort_by_cached_key(|&i| order(&self.entries[i].path));
+                let mut rows = Vec::new();
+                let mut seen = std::collections::HashSet::new();
+                for &i in &matched {
+                    let parts: Vec<&str> = self.entries[i].path.split('/').collect();
+                    let mut hidden = false;
+                    for depth in 0..parts.len() - 1 {
+                        let folder = parts[..=depth].join("/");
+                        if seen.insert(folder.clone()) {
+                            let open = !self.collapsed.contains(&folder);
+                            rows.push(Row::Folder {
+                                path: folder.clone(),
+                                depth: depth as u16,
+                                open,
+                                files: Vec::new(),
+                            });
+                        }
+                        if self.collapsed.contains(&folder) {
+                            hidden = true;
+                            break;
+                        }
+                    }
+                    if !hidden {
+                        rows.push(Row::File {
+                            entry: i,
+                            depth: (parts.len() - 1) as u16,
+                        });
+                    }
+                }
+                for row in &mut rows {
+                    if let Row::Folder { path, files, .. } = row {
+                        let prefix = format!("{path}/");
+                        files.extend(
+                            matched
+                                .iter()
+                                .copied()
+                                .filter(|&i| self.entries[i].path.starts_with(&prefix)),
+                        );
+                    }
+                }
+                rows
+            }
+        };
+        if let Some((path, folder)) = key
+            && let Some(index) = self.rows.iter().position(|r| match r {
+                Row::File { entry, .. } => !folder && self.entries[*entry].path == path,
+                Row::Folder { path: p, .. } => folder && *p == path,
+            })
+        {
+            self.selected = index;
+        }
+        self.selected = self.selected.min(self.rows.len().saturating_sub(1));
+        self.clamp_top();
     }
 
     /// 頼むことがあれば、その中身。`diff_visible` は、差分が画面に出ているか。
@@ -152,7 +318,7 @@ impl Changes {
 
     /// `status` の答え。選んでいたファイルは、パスで引き継ぐ。
     pub fn status(&mut self, status: &Value) {
-        let selected = self.selected_entry().map(|e| e.path.clone());
+        let key = self.selected_key();
         self.entries = status["entries"]
             .as_array()
             .into_iter()
@@ -183,11 +349,8 @@ impl Changes {
         self.loaded = true;
         self.status_loading = false;
         self.serial += 1;
-        self.selected = selected
-            .and_then(|path| self.entries.iter().position(|e| e.path == path))
-            .unwrap_or(self.selected)
-            .min(self.entries.len().saturating_sub(1));
-        self.clamp_top();
+        // 選んでいた行（ファイルかフォルダ）は、パスで引き継ぐ。
+        self.rebuild_keeping(key);
         // 変更がなくなったら、差分も消す。
         if self.entries.is_empty() {
             self.shown = None;
@@ -260,6 +423,24 @@ impl Changes {
 
     /// 選んでいるファイルの stage を切り替える: stage していない変更があれば stage、なければ unstage。
     pub fn toggle(&self) -> Option<Request> {
+        // 木のフォルダ: 中に stage していない変更があれば、そのすべてを stage（コンフリクトのファイルは除く）、
+        // なければすべてを unstage。
+        if let Some(Row::Folder { files, .. }) = self.rows.get(self.selected) {
+            let files: Vec<&Entry> = files.iter().map(|&i| &self.entries[i]).collect();
+            let stage = files.iter().any(|e| e.unstaged && e.letter != 'U');
+            let paths: Vec<String> = files
+                .iter()
+                .filter(|e| {
+                    if stage {
+                        e.unstaged && e.letter != 'U'
+                    } else {
+                        e.staged
+                    }
+                })
+                .map(|e| e.path.clone())
+                .collect();
+            return (!paths.is_empty()).then_some(Request::Stage { paths, stage });
+        }
         let entry = self.selected_entry()?;
         Some(Request::Stage {
             paths: vec![entry.path.clone()],
@@ -303,7 +484,7 @@ impl Changes {
 
     fn clamp_top(&mut self) {
         let height = usize::from(self.height.max(1));
-        let last = self.entries.len().saturating_sub(height);
+        let last = self.rows.len().saturating_sub(height);
         if self.selected < self.top {
             self.top = self.selected;
         } else if self.selected >= self.top + height {
@@ -321,7 +502,7 @@ impl Changes {
     }
 
     pub fn select(&mut self, index: usize) -> bool {
-        let index = index.min(self.entries.len().saturating_sub(1));
+        let index = index.min(self.rows.len().saturating_sub(1));
         let changed = index != self.selected;
         self.selected = index;
         self.clamp_top();
@@ -331,7 +512,7 @@ impl Changes {
     /// 一覧を動かす（選択はそのまま）。
     pub fn scroll_list(&mut self, delta: i64) -> bool {
         let last = self
-            .entries
+            .rows
             .len()
             .saturating_sub(usize::from(self.height.max(1)));
         let top = (self.top as i64 + delta).clamp(0, last as i64) as usize;
@@ -343,12 +524,12 @@ impl Changes {
     /// 一覧の `line` 行目（見えている中で）を選ぶ。
     pub fn click(&mut self, line: u16) -> bool {
         let index = self.top + usize::from(line);
-        index < self.entries.len() && self.select(index)
+        index < self.rows.len() && self.select(index)
     }
 
     /// 選んでいる位置と、全体の数。
     pub fn list_position(&self) -> (u32, u32) {
-        let count = self.entries.len() as u32;
+        let count = self.rows.len() as u32;
         ((self.selected as u32 + 1).min(count), count)
     }
 
@@ -408,11 +589,11 @@ impl Changes {
         if area.width == 0 || area.height == 0 {
             return;
         }
-        if self.entries.is_empty() {
-            let text = if self.loaded {
-                tr!("No changes")
-            } else {
-                tr!("Loading…")
+        if self.rows.is_empty() {
+            let text = match (self.loaded, self.entries.is_empty()) {
+                (false, _) => tr!("Loading…"),
+                (true, true) => tr!("No changes"),
+                (true, false) => tr!("No file matches “{filter}”", filter = self.filter),
             };
             buf.set_stringn(
                 area.x + 1,
@@ -423,44 +604,88 @@ impl Changes {
             );
             return;
         }
-        for (y, (index, entry)) in (area.y..area.bottom()).zip(
-            self.entries
+        let check_of = |staged: bool, unstaged: bool| match (staged, unstaged) {
+            (true, false) => ("[x]", Style::new().fg(Color::Green)),
+            (true, true) => ("[-]", Style::new().fg(Color::Yellow)),
+            _ => ("[ ]", Style::new().fg(DIM)),
+        };
+        for (y, (index, row)) in (area.y..area.bottom()).zip(
+            self.rows
                 .iter()
                 .enumerate()
                 .skip(self.top)
                 .take(usize::from(area.height)),
         ) {
-            // stage の印: すべて stage 済み、一部だけ、まだ。
-            let (check, check_style) = match (entry.staged, entry.unstaged) {
-                (true, false) => ("[x]", Style::new().fg(Color::Green)),
-                (true, true) => ("[-]", Style::new().fg(Color::Yellow)),
-                _ => ("[ ]", Style::new().fg(DIM)),
-            };
-            buf.set_stringn(area.x, y, check, usize::from(area.width), check_style);
-            let color = match entry.letter {
-                'A' => Color::Green,
-                'D' => Color::Red,
-                'R' | 'C' => Color::Cyan,
-                'U' => Color::LightRed,
-                '?' => DIM,
-                _ => Color::Yellow,
-            };
-            if area.width > 4 {
-                buf[(area.x + 4, y)].set_char(entry.letter).set_fg(color);
-            }
-            if area.width > BEFORE_PATH {
-                let path = match &entry.orig_path {
-                    Some(old) if old != &entry.path => format!("{old} → {}", entry.path),
-                    _ => entry.path.clone(),
-                };
-                let room = usize::from(area.width - BEFORE_PATH);
-                buf.set_stringn(
-                    area.x + BEFORE_PATH,
-                    y,
-                    fit_path(&path, room),
-                    room,
-                    Style::new(),
-                );
+            match row {
+                Row::Folder {
+                    path,
+                    depth,
+                    open,
+                    files,
+                } => {
+                    // フォルダの印: 中がすべて stage 済み、一部、まだ。
+                    let staged = files.iter().any(|&i| self.entries[i].staged);
+                    let all = files
+                        .iter()
+                        .all(|&i| self.entries[i].staged && !self.entries[i].unstaged);
+                    let (check, check_style) = check_of(staged, !all);
+                    buf.set_stringn(area.x, y, check, usize::from(area.width), check_style);
+                    let indent = BEFORE_PATH + depth * 2;
+                    if area.width > indent {
+                        let name = path.rsplit('/').next().unwrap_or(path);
+                        let arrow = if *open { "▾" } else { "▸" };
+                        let text = format!("{arrow} {name}/");
+                        let room = usize::from(area.width - indent);
+                        buf.set_stringn(area.x + indent, y, text, room, Style::new().fg(DIM));
+                    }
+                }
+                Row::File { entry, depth } => {
+                    let entry = &self.entries[*entry];
+                    // stage の印: すべて stage 済み、一部だけ、まだ。
+                    let (check, check_style) = check_of(entry.staged, entry.unstaged);
+                    buf.set_stringn(area.x, y, check, usize::from(area.width), check_style);
+                    let color = match entry.letter {
+                        'A' => Color::Green,
+                        'D' => Color::Red,
+                        'R' | 'C' => Color::Cyan,
+                        'U' => Color::LightRed,
+                        '?' => DIM,
+                        _ => Color::Yellow,
+                    };
+                    if area.width > 4 {
+                        buf[(area.x + 4, y)].set_char(entry.letter).set_fg(color);
+                    }
+                    let indent = BEFORE_PATH + depth * 2;
+                    if area.width > indent {
+                        let room = usize::from(area.width - indent);
+                        let x = area.x + indent;
+                        let name = entry.path.rsplit('/').next().unwrap_or(&entry.path);
+                        let folder = entry.path.len() - name.len();
+                        match self.mode {
+                            ListMode::Path => {
+                                let path = match &entry.orig_path {
+                                    Some(old) if old != &entry.path => {
+                                        format!("{old} → {}", entry.path)
+                                    }
+                                    _ => entry.path.clone(),
+                                };
+                                buf.set_stringn(x, y, fit_path(&path, room), room, Style::new());
+                            }
+                            ListMode::Tree => {
+                                buf.set_stringn(x, y, name, room, Style::new());
+                            }
+                            ListMode::Name => {
+                                let end = buf.set_stringn(x, y, name, room, Style::new()).0;
+                                let dir = entry.path[..folder].trim_end_matches('/');
+                                let left = usize::from(area.right().saturating_sub(end + 2));
+                                if !dir.is_empty() && left > 0 {
+                                    let dim = Style::new().fg(DIM);
+                                    buf.set_stringn(end + 2, y, fit_path(dir, left), left, dim);
+                                }
+                            }
+                        }
+                    }
+                }
             }
             if index == self.selected {
                 buf.set_style(
