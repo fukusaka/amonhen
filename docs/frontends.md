@@ -53,7 +53,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Branches arranged (current, active, inactive, merged, archived, stacked) | ✓ | ✓ | ✓ | ✓ | △ | VSCode: With the engine; without it, a folder tree split on `/`.<br>CLI: Via `amonhen run` (`branchGroups`). |
 | Favorite branches | ✓ | ✓ | ✓ | ✓ | — |  |
 | Archived branches | ✓ | ✓ | ✓ | ✓ | — |  |
-| Clean Up Branches (merged, merged by a pull request, upstream gone; one Undo) | ✓ | ✓ | △ | ✓ | △ | VSCode: With the engine, a multi-select list with a heading per reason (Command Palette, the Branches heading's right-click). CLI: Via `amonhen run` (`branchCleanup`, `deleteBranches`); merged pull requests are read by the apps and VSCode with gh.<br>Windows: Windows: Pull requests aren't read yet (no GitHub support). |
+| Clean Up Branches (merged, merged by a pull request, upstream gone; one Undo) | ✓ | ✓ | △ | ✓ | △ | VSCode: With the engine, a multi-select list with a heading per reason (Command Palette, the Branches heading's right-click). CLI: Via `amonhen run` (`branchCleanup`, `deleteBranches`); merged pull requests are read by the apps and VSCode with gh.<br>Windows: Pull requests aren't read yet (no GitHub support). |
 | Merged-by-pull-request mark on a branch (squash or rebase on GitHub) | ✓ | ✓ | — | ✓ | △ | VSCode: With the engine; the number is in the row's tooltip. CLI: Via `amonhen run` (`branchGroups` with `pullRequests`); the apps and VSCode read merged pull requests with gh. |
 | Favorites reordered by dragging | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: Move Up and Move Down in Favorites on the menu (a drop on a branch offers Merge and Rebase). |
 | Branch menu: checkout, rename, delete (Delete Anyway when unmerged) | ✓ | ✓ | ✓ | ✓ | △ | macOS: Set Upstream is only in the Repository menu.<br>GTK4: Set Upstream is only in the Repository menu.<br>CLI: Via `amonhen run`. |
@@ -98,7 +98,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Fetch the selected repositories | ✓ | ✓ | ✓ | n/a | n/a | Windows: Rows are selected with Ctrl or Shift, and Fetch on a selected row's menu fetches them all. |
 | Quick Open (fuzzy search) | ✓ | ✓ | ✓ | n/a | n/a | Windows: Opens in a new window. |
 | Repository name in the toolbar switches the repository | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: Select Repository picks among workspace repositories. |
-| Clone (choosing from your own GitHub repositories) | ✓ | ✓ | △ | n/a | △ | VSCode: VSCode's own Git: Clone.<br>CLI: `clone <url>` only.<br>Windows: No list of your own GitHub repositories; the clone opens in a new window. |
+| Clone (choosing from your own GitHub repositories) | ✓ | ✓ | △ | n/a | △ | VSCode: VSCode's own Git: Clone.<br>CLI: `clone <url>` only.<br>Windows: No list of your own GitHub repositories (no GitHub support); the clone opens in a new tab. |
 | Clone: what to download (everything, contents when needed, recent history) and only some folders | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: VSCode's own Git: Clone.<br>CLI: `clone --filter`, `--depth`, `--sparse`. |
 | Subtrees group (shown when git has git subtree): Add, Pull, Push, Split, remembering the source and squash | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: The values are asked in input boxes and the squash in a list, not a sheet.<br>CLI: `subtree`.<br>Windows: ⊟ after a subtree last pulled with squash, without a tooltip. |
 | Clone: check out submodules too | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: VSCode's own Git: Clone.<br>CLI: `clone --recurse-submodules`. |
