@@ -1165,6 +1165,8 @@ pub struct Facts {
     /// Find Next・Find Previous が効く（History を探した、またはフォーカスが差分・History にある。macOS 版で
     /// ⌘G を受ける部品があるか）。
     pub find_next: bool,
+    /// History の上でコミットを編集している（HEAD・作業ツリーを動かす操作は、Apply か Cancel まで止める）。
+    pub editing_commits: bool,
 }
 
 /// リポジトリを開いていないと使えない、表の操作のメニュー（File・Window・アプリのものは開く前でも使える）。
@@ -1233,6 +1235,14 @@ pub fn enabled(f: &Facts) -> Vec<(&'static str, bool)> {
                 && (f.github_fork || f.default_branch.is_none() || f.head_name != f.default_branch),
         ),
     ];
+    // History の上でコミットを編集している間は、HEAD・作業ツリーを動かす操作を止める（macOS 版と同じ）。
+    if f.editing_commits {
+        for (name, yes) in &mut list {
+            if crate::historyedit::MOVES_HEAD.contains(name) {
+                *yes = false;
+            }
+        }
+    }
     // 開けていないタブでは、リポジトリの操作をどれも使えなくする。
     let opened = !f.unopened;
     for (_, yes) in &mut list {
@@ -1324,6 +1334,35 @@ mod tests {
             reply(json!({ "ok": true, "outcome": "done", "info": { "remaining": ["b"] } })),
             None
         );
+    }
+
+    #[test]
+    fn editing_commits_stops_what_moves_head() {
+        let facts = Facts {
+            editing_commits: true,
+            ..idle_with_all()
+        };
+        for name in crate::historyedit::MOVES_HEAD {
+            assert!(
+                of(&idle_with_all(), name),
+                "{name} は編集していなければ使える"
+            );
+            assert!(!of(&facts, name), "{name} は編集の間は止める");
+        }
+        // HEAD を動かさないものは使える。
+        assert!(of(&facts, "fetch"));
+        assert!(of(&facts, "go-to-head"));
+    }
+
+    /// [`idle`] に、stash・Undo・コミットできる変更もあるもの。
+    fn idle_with_all() -> Facts {
+        Facts {
+            stash: true,
+            undo: true,
+            working_copy: true,
+            can_commit: true,
+            ..idle()
+        }
     }
 
     #[test]

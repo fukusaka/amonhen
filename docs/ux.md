@@ -567,32 +567,41 @@ In addition to today's "choose a file to show only its diff", offer a view that 
 ### History's edit mode
 
 Editing commits happens in one mode instead of one menu item per git command, so what will change is visible before
-anything does.
+anything does. The mode works on History itself: the rows stay as they are, so the graph, labels and details pane are
+there while deciding.
 
-- **Entry.** "Interactive Rebase from Here…" on a commit's context menu opens the mode in place of History, listing
-  every commit from that one up to HEAD (newest on top, as in History). The shortcuts Edit Message…, Squash into
-  Previous…, Drop… and Combine N Commits… (several selected) open it with that change already made, and dragging a
-  commit in History opens it with the commit moved. These items are shown only for commits the mode can edit (on
-  HEAD's first-parent line, not merges; Squash into Previous… when the older commit is one, Split… before the first
-  merge); other items that can't be used are grayed out with the reason in a tooltip. The menu runs copy, create,
-  move, rewrite, pick, export, then fold, like the sidebar's.
-- **Rows.** Each row has what to do with the commit: Keep, Edit Message, Combine with Older (squash: the message can
-  be edited, starting from both messages), Combine with Older, Keep Its Message (fixup), Drop (struck through), Stop
-  to Change Files (edit). git's own names are in the tooltips. Rows are dragged into a new order; double-click edits
-  a message.
+- **Entry.** "Interactive Rebase from Here…" on a commit's context menu starts editing from that commit up to HEAD. The
+  shortcuts Edit Message…, Squash into Previous…, Drop… and Combine N Commits… (several selected) start it with that
+  change already made, and dragging a commit in History starts it with the commit moved. These items are shown only
+  for commits the mode can edit (on HEAD's first-parent line, not merges; Squash into Previous… when the older commit
+  is one, Split… before the first merge); other items that can't be used are grayed out with the reason in a tooltip.
+  The menu runs copy, create, move, rewrite, pick, export, then fold, like the sidebar's.
+- **History while editing.** History shows the current branch with every row (not folded, not limited to search
+  matches; the scope menu can't be changed) and goes back to how it was when editing ends. Rows outside the range,
+  including the commits a merge brought in, are dimmed with their graph. Actions that move HEAD or the working tree
+  (Pull, Merge, Rebase, Pop, Switch Branch, Commit, Apply Patch, Undo) are grayed out until Apply Changes or Cancel.
+- **Rows.** Each row in the range has an operation mark at the right end with git's word: pick, reword, squash (the
+  message can be edited, starting from both messages), fixup (keeps the older message), drop (the subject is struck
+  through) or edit (stops to change files). Clicking the mark lists the choices with what each does; with a row
+  selected, the keys p, r, s, f, d and e choose one; double-click edits the message, and a reworded row shows its new
+  subject. The right-click menu has the same choices. Rows are dragged within the range into a new order, drawn in
+  place.
+- **Range.** A line with a grip under the oldest row in the range is dragged down to take in older commits on the
+  first-parent line, or up to leave them out again (only rows still picked in their place can leave).
 - **Apply.** The status bar shows a summary ("Changes: reordered, 1 combined, 1 dropped") with Cancel and Apply
   Changes. Nothing changes until Apply Changes, which runs one rebase from the core's `plan` (every commit in its new
   order with its action, the messages fed to git's editor in the order git opens it). One Undo puts it all back.
   Under the summary, the core's `rewritePreview` says which stacked branches move with it or stay and why, which
-  branches are already pushed (and will need Force Push), and which commits are expected to conflict; those rows get a
-  warning mark. "Also move the stacked branches", shown when there are stacked branches, decides for this edit only
-  (it starts from `rebase.updateRefs`). The Rebase sheets draw the branch now and after the rebase like History (the
-  replayed commits as A′, the labels that move with it in green, the ones that stay on the old commits) with the same
-  checkbox; switching it redraws the picture. `amonhen rewrite-preview` prints the same.
-- **Merges.** The mode lists the first-parent line past merges too. When the range has a merge, the rebase uses git's
+  branches are already pushed (and will need Force Push), and which commits are expected to conflict; those rows'
+  marks turn orange. When a rebase stops on a conflict, it's resolved in Working Copy (with the merge editor) and
+  continued as any rebase. "Also move the stacked branches", shown when there are stacked branches, decides for this
+  edit only (it starts from `rebase.updateRefs`). The Rebase sheets draw the branch now and after the rebase like
+  History (the replayed commits as A′, the labels that move with it in green, the ones that stay on the old commits)
+  with the same checkbox; switching it redraws the picture. `amonhen rewrite-preview` prints the same.
+- **Merges.** The mode takes the first-parent line past merges too. When the range has a merge, the rebase uses git's
   `--rebase-merges`: git writes the todo with its merges, and only the commands of the edited commits are changed, so
-  merges and the commits they brought in are recreated as they were. A merge's row can only be kept, rows can't be
-  dragged across a merge, and the commit right above a merge can't be combined with it. Split stays a separate item
+  merges and the commits they brought in are recreated as they were. A merge's row has no mark (it's kept), rows can't
+  be dragged across a merge, and the commit right above a merge can't be combined with it. Split stays a separate item
   on the context menu (it stops so the changes can be committed in parts).
 
 

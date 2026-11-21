@@ -12,6 +12,8 @@ pub enum Item {
         title: String,
         color: Option<&'static str>,
         on: bool,
+        /// ツールチップ（macOS 版の項目の `toolTip`）。
+        tip: Option<String>,
         f: Box<dyn Fn()>,
     },
     /// ツールチップの付いた項目（macOS 版の `toolTip`。GMenu の項目には出せないので、自前の部品で出す）。
@@ -68,6 +70,23 @@ pub fn choice(title: impl Into<String>, on: bool, f: impl Fn() + 'static) -> Ite
         title: title.into(),
         color: None,
         on,
+        tip: None,
+        f: Box::new(f),
+    }
+}
+
+/// [`choice`] と同じ。ツールチップ `tip` を付ける。
+pub fn choice_with_tip(
+    title: impl Into<String>,
+    on: bool,
+    tip: impl Into<String>,
+    f: impl Fn() + 'static,
+) -> Item {
+    Item::Choice {
+        title: title.into(),
+        color: None,
+        on,
+        tip: Some(tip.into()),
         f: Box::new(f),
     }
 }
@@ -267,6 +286,7 @@ fn build(
                 title,
                 color,
                 on,
+                tip,
                 f,
             } => {
                 let dot = swatches.then_some(color);
@@ -274,7 +294,7 @@ fn build(
                     &section,
                     n,
                     custom,
-                    choice_row(&title, Some(on), dot, None, None, f),
+                    choice_row(&title, Some(on), dot, tip.as_deref(), None, f),
                 );
             }
             Item::Disabled(title) => {

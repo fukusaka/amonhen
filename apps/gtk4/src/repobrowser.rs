@@ -2579,6 +2579,7 @@ pub fn row_items(
             color: Some(hex),
             title,
             on: color.as_deref() == Some(*name),
+            tip: None,
             f: Box::new(move || {
                 for p in &t {
                     bookmarks::set_color(p, Some(name));

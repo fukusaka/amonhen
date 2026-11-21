@@ -1267,6 +1267,7 @@
 "Combine with Older" = "古い方とまとめる";
 "Combine with Older, Keep Its Message" = "古い方とまとめる（古い方のメッセージ）";
 "Stop to Change Files" = "止めてファイルを直す";
+"Apply or cancel the commit edit first." = "先にコミットの編集を実行するかキャンセルしてください。";
 "Leave the commit as it is (git: pick)." = "コミットをそのまま残します（git: pick）。";
 "Give the commit a new message (git: reword)." = "コミットのメッセージを直します（git: reword）。";
 "Make this and the older commit below one commit, with a message you can edit (git: squash)." = "このコミットと下の古いコミットを 1 つにし、メッセージを書き直せます（git: squash）。";
