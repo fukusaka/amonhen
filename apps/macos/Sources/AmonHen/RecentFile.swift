@@ -88,6 +88,19 @@ final class RecentFile {
         }
     }
 
+    /// ほかのプロセスが書き換えていたら読み直す。中身が変わったら `true`。
+    func reloadIfChanged() -> Bool {
+        let before = paths(of: entries), opened = openedTimes(of: entries)
+        refresh()
+        return paths(of: entries) != before || openedTimes(of: entries) != opened
+    }
+
+    private func paths(of list: [[String: Any]]) -> [String] { list.compactMap(Self.path) }
+
+    private func openedTimes(of list: [[String: Any]]) -> [Double?] {
+        list.map { ($0["openedAt"] as? NSNumber)?.doubleValue }
+    }
+
     /// ロックを取ってから読み直し、`proceed(ファイルがあるか)` なら `change` を当てて書く。読めないファイルは書き換えない。
     private func edit(if proceed: (Bool) -> Bool = { _ in true }, _ change: (inout [[String: Any]]) -> Void) {
         let directory = file.deletingLastPathComponent()
