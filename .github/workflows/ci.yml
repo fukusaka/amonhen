@@ -6,6 +6,11 @@ on:
   push:
     branches: [main]
   pull_request:
+    # 文書だけを変えた PR では流さない（検査するものがない）。main への push では、snapshot と正式版の前の確認のために
+    # いつも流す。Windows のアプリと文書だけなら、macOS のジョブだけを省く（scripts/ci-needs-macos.sh）。
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
 
 # 既定では何も許さず、要るものだけをジョブで許す。
 permissions: {}

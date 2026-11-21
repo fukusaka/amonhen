@@ -8,6 +8,10 @@ on:
   push:
     branches: [main]
   pull_request:
+    # 文書だけを変えた PR では流さない（調べるコードがない）。main への push と週 1 回では、いつも流す。
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
   schedule:
     # 依存や CodeQL の規則が新しくなったときのために、週に 1 回も流す。
     - cron: '23 4 * * 1'
