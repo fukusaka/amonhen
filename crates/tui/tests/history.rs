@@ -1193,6 +1193,20 @@ fn merge_stops_at_conflicts_and_can_be_aborted() {
     if predicts_conflicts(dir.path()) {
         assert!(line.contains("Conflicts are likely in a.txt."), "{line}");
     }
+    // アプリのシートと同じく、前と後の絵: 後のいちばん上に新しい merge コミット、その下に topic から来るもの。
+    assert!(asked.contains(" Merge topic into main "), "{asked}");
+    assert!(asked.contains("[main]  new merge"), "{asked}");
+    assert!(asked.contains("On topic  from topic"), "{asked}");
+    // rebase なら、前は main のコミット、後はその写しが topic のコミットの上に。
+    let rebase = amonhen_tui::snapshot(open(dir.path()), 200, 12, clock(), "0jjjr").unwrap();
+    println!("{rebase}");
+    assert!(rebase.contains(" Rebase main onto topic "), "{rebase}");
+    assert!(
+        rebase.contains("On main  [main]  leaves the branch"),
+        "{rebase}"
+    );
+    assert!(rebase.contains("On main  [main]  new copy"), "{rebase}");
+    assert!(rebase.contains("On topic  on topic"), "{rebase}");
     let stopped = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjjmy").unwrap();
     println!("{stopped}");
     assert!(stopped.contains("Stopped at conflicts"));
@@ -1221,6 +1235,8 @@ fn rebase_onto_the_picked_ref() {
     println!("{asked}");
     // 見通しでコンフリクトを調べられなかったときは、何も足さない。
     assert!(asked.contains("Rebase topic onto main?   y rebase   n cancel"));
+    // topic は main にもう入っていて、載せ直すコミットがない（前と後の絵は出ない）。
+    assert!(!asked.contains(" Rebase topic onto main "), "{asked}");
     // main を topic に merge するのは fast-forward。取り込む数を言う。
     let ff = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjm").unwrap();
     println!("{ff}");
@@ -1228,6 +1244,7 @@ fn rebase_onto_the_picked_ref() {
         ff.contains("Fast-forward topic to main (+2)?   y merge   n cancel"),
         "{ff}"
     );
+    assert!(ff.contains(" Fast-forward topic "), "{ff}");
     amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjry").unwrap();
     assert_eq!(
         git_out(dir.path(), &["merge-base", "topic", "main"]),
@@ -1392,6 +1409,112 @@ fn stashes_are_listed_and_applied_from_the_sidebar() {
     assert_eq!(git_out(dir.path(), &["stash", "list"]), "");
 }
 
+/// 1 行ずつ足す 4 つのコミット（One から Four）。
+fn four_lines(dir: &Path) {
+    git(dir, BASE, &["init", "-q", "-b", "main"]);
+    let mut text = String::new();
+    for (i, line) in ["One", "Two", "Three", "Four"].iter().enumerate() {
+        text += &format!("{line}\n");
+        std::fs::write(dir.join("a.txt"), &text).unwrap();
+        git(dir, BASE + DAY * i as i64, &["add", "."]);
+        git(dir, BASE + DAY * i as i64, &["commit", "-q", "-m", line]);
+    }
+}
+
+/// History の `E`: 選んだコミットから HEAD までを並べ、行ごとにすることを選んで、確かめてからまとめて当てる
+#[test]
+fn edit_mode_applies_several_edits_at_once() {
+    let dir = tempfile::tempdir().unwrap();
+    four_lines(dir.path());
+    let log = || git_out(dir.path(), &["log", "--format=%s"]);
+    // Two を選んで `E`: Four・Three・Two の 3 行。
+    let opened = amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), "jjE").unwrap();
+    println!("{opened}");
+    assert!(opened.contains(" Edit Commits "), "{opened}");
+    assert!(opened.contains("No changes yet."));
+    assert_eq!(opened.matches("Keep").count(), 3, "{opened}");
+    // Three を Two にまとめ（メッセージは Two のまま）、Four を取り消す。
+    let keys = "jjEjfkd";
+    let chosen = amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), keys).unwrap();
+    println!("{chosen}");
+    assert!(
+        chosen.contains("Combine with Older, Keep Its Message"),
+        "{chosen}"
+    );
+    assert!(
+        chosen.contains("Changes: 1 combined and 1 dropped."),
+        "{chosen}"
+    );
+    // Enter で見通しを読んでから確かめる。やめれば何も変わらない。
+    let asked =
+        amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), &format!("{keys}\n")).unwrap();
+    let line = asked.lines().last().unwrap();
+    assert!(
+        line.contains("Apply these changes? Changes: 1 combined and 1 dropped."),
+        "{line}"
+    );
+    // 確かめる間は、前と後の絵を重ねる（前の 3 つが、後では Two 1 つに。土台は One）。
+    println!("{asked}");
+    assert!(asked.contains(" Apply These Changes? "), "{asked}");
+    let row = |subject: &str| {
+        asked
+            .lines()
+            .find(|l| l.contains(subject))
+            .unwrap_or("")
+            .to_owned()
+    };
+    // 編集モードの行にも件名が出るので、絵の行（短い ID の後）で探す。
+    assert!(row(" Four  [main]").contains("drop"), "{asked}");
+    assert!(row(" Three  fixup").contains('●'), "{asked}");
+    assert!(row("+1 combined").contains("Two"), "{asked}");
+    assert_eq!(asked.matches("One  unchanged").count(), 2, "{asked}");
+    assert!(line.contains("Undo brings it all back."), "{line}");
+    amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), &format!("{keys}\nn")).unwrap();
+    assert_eq!(log(), "Four\nThree\nTwo\nOne\n");
+    let done =
+        amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), &format!("{keys}\ny")).unwrap();
+    assert!(!done.contains(" Edit Commits "), "{done}");
+    assert_eq!(log(), "Two\nOne\n");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+        "One\nTwo\nThree\n"
+    );
+    // Undo 1 回で全部戻る。
+    amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), "uy").unwrap();
+    assert_eq!(log(), "Four\nThree\nTwo\nOne\n");
+}
+
+/// 編集モードの並べ替え（`J` `K`）と、Esc でやめる（変更があれば 2 度）
+#[test]
+fn edit_mode_reorders_and_cancels() {
+    let dir = tempfile::tempdir().unwrap();
+    four_lines(dir.path());
+    let log = || git_out(dir.path(), &["log", "--format=%s"]);
+    // Three を選んで `E`、Four を 1 つ下へ。
+    let moved = amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), "jEJ").unwrap();
+    assert!(moved.contains("Changes: reordered."), "{moved}");
+    let once = amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), "jEJ\u{1b}").unwrap();
+    assert!(
+        once.contains("Press Esc again to discard these changes"),
+        "{once}"
+    );
+    assert!(once.contains(" Edit Commits "));
+    let twice =
+        amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), "jEJ\u{1b}\u{1b}").unwrap();
+    assert!(!twice.contains(" Edit Commits "), "{twice}");
+    assert_eq!(log(), "Four\nThree\nTwo\nOne\n");
+    // どれも同じファイルの続く行を足すので、入れ替えるとコンフリクトしそうだと先に言う。
+    let asked = amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), "jEJ\n").unwrap();
+    let line = asked.lines().last().unwrap();
+    assert!(
+        line.contains("Apply these changes? Changes: reordered."),
+        "{line}"
+    );
+    if predicts_conflicts(dir.path()) {
+        assert!(line.contains("Conflicts are likely in a.txt."), "{line}");
+    }
+}
+
 /// サイドバーの stash で `b`: 名前を聞いて、stash を作ったところにブランチを作り、そこに戻す（git stash branch）
 #[test]
 fn a_branch_is_made_from_a_stash() {
@@ -1479,6 +1602,14 @@ fn reset_offers_the_modes() {
         "{last}"
     );
     assert!(last.contains("s soft (keep the index and files)   m mixed (keep the files)"));
+    // アプリのシートと同じく、前と後の絵を重ねる（前は外れる 2 つ、後は何も加わらず、main は土台に付く）。
+    assert!(asked.contains(" Reset main "), "{asked}");
+    assert!(asked.contains("Before"), "{asked}");
+    assert_eq!(asked.matches("leaves the branch").count(), 2, "{asked}");
+    assert!(
+        asked.contains("Bump the version  [main]  unchanged"),
+        "{asked}"
+    );
     // ほかのキーでやめる。
     amonhen_tui::snapshot(open(dir.path()), 160, 10, clock(), "jRn").unwrap();
     assert_eq!(head(), "Merge branch 'topic'\n");

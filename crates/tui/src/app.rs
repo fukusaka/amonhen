@@ -271,6 +271,16 @@ pub struct App {
     /// コマンドの一覧を出している（`:`）。
     palette: Option<Palette>,
     operation_log: Option<OperationLog>,
+    /// History の編集モード（`E`）。
+    edit_mode: Option<crate::editmode::EditMode>,
+    /// 編集モードで、変更があるのに Esc を 1 度押した（もう 1 度で捨てる）。
+    edit_discard: bool,
+    /// 編集モードの行のメッセージを、エディタで直す（開く中身。開いたら `editing_plan` が立つ）。
+    plan_message: Option<String>,
+    editing_plan: bool,
+    /// 確かめている間に重ねる、前と後の絵（枠の題と、`drawing` の形の絵。編集モードの `editDrawing`、reset の
+    /// `movePreview` から作ったもの）。答えたら消える。
+    question_drawing: Option<(String, Value)>,
     /// 今の検索: 語と、動いている検索を取り消す印（結果が届いたら `None`）。
     search: Option<(String, Option<Arc<AtomicBool>>)>,
     /// 動いている検索の、調べ終えた割合（0〜1。内容の検索でなければ 0 のまま）。
@@ -355,6 +365,11 @@ impl App {
             help_top: 0,
             palette: None,
             operation_log: None,
+            edit_mode: None,
+            edit_discard: false,
+            plan_message: None,
+            editing_plan: false,
+            question_drawing: None,
             push_to_offered: false,
             bundle_file: None,
             patch_file: None,
@@ -476,7 +491,10 @@ impl App {
     /// ので、出している間はすべてを描き直す。
     pub fn take_damage(&mut self) -> Option<Damage> {
         let damage = std::mem::take(&mut self.damage);
-        let over = self.help || self.palette.is_some() || self.operation_log.is_some();
+        let over = self.help
+            || self.palette.is_some()
+            || self.operation_log.is_some()
+            || self.edit_mode.is_some();
         if std::mem::take(&mut self.dirty) || (over && damage != Damage::default()) {
             return Some(Damage::ALL);
         }
@@ -557,6 +575,11 @@ impl App {
 
     /// メッセージをエディタで開くなら、今のメッセージと作業ツリーの場所（聞いたら、なかったことにする）。
     pub fn take_edit_message(&mut self) -> Option<(String, Option<String>)> {
+        // 編集モードの行のメッセージ。
+        if let Some(text) = self.plan_message.take() {
+            self.editing_plan = true;
+            return Some((text, self.workdir.clone()));
+        }
         // コミットのメッセージの書き換えは、今のメッセージが届いてから。
         if let Some((_, Some(message))) = &self.rewording
             && !self.edit_message
@@ -576,12 +599,12 @@ impl App {
         self.files_here = here;
     }
 
-    /// エディタで開くファイルと、作業ツリーの場所（聞いたら、なかったことにする）。
     /// 開き直す worktree のパス（選んだときだけ。そのとき `quit` も立っている）。
     pub fn take_open_worktree(&mut self) -> Option<String> {
         self.open_worktree.take()
     }
 
+    /// エディタで開くファイルと、作業ツリーの場所（聞いたら、なかったことにする）。
     pub fn take_open_file(&mut self) -> Option<(String, Option<String>)> {
         let file = self.open_file.take()?;
         Some((file, self.workdir.clone()))
@@ -599,6 +622,25 @@ impl App {
     /// エディタを閉じた後のメッセージ。だめなら理由を出し、メッセージはそのまま。
     pub fn message_edited(&mut self, edited: Result<String>) {
         self.edit_message = false;
+        // 編集モードの行のメッセージ（当てるまで、何も変わらない）。
+        if std::mem::take(&mut self.editing_plan) {
+            self.dirty = true;
+            match edited {
+                Ok(text) => {
+                    let lines: Vec<&str> = text.lines().filter(|l| !l.starts_with('#')).collect();
+                    let message = lines.join("\n").trim().to_owned();
+                    match (message.is_empty(), self.edit_mode.as_mut()) {
+                        (true, _) => {
+                            self.error = Some(tr!("The message is empty; it is unchanged"))
+                        }
+                        (false, Some(mode)) => mode.set_message(message),
+                        (false, None) => {}
+                    }
+                }
+                Err(error) => self.error = Some(error.to_string()),
+            }
+            return;
+        }
         // コミットのメッセージを書き換えていたなら、変わっていれば書き換える。
         if let Some((oid, before)) = self.rewording.take() {
             self.dirty = true;
@@ -980,7 +1022,10 @@ impl App {
             self.dirty = true;
             return;
         }
-        // 確かめている間は、`y`（か Enter）で行い、ほかのキーでやめる。
+        // 確かめている間は、`y`（か Enter）で行い、ほかのキーでやめる。答えたら、重ねていた絵も消す。
+        if self.choices.is_some() || self.confirm.is_some() {
+            self.question_drawing = None;
+        }
         if let Some((_, options)) = self.choices.take() {
             if let KeyCode::Char(pressed) = key.code
                 && let Some((_, _, request)) = options.into_iter().find(|o| o.0 == pressed)
@@ -1060,6 +1105,10 @@ impl App {
                 _ => return,
             }
             self.operation_log = Some(log);
+            return;
+        }
+        if self.edit_mode.is_some() {
+            self.edit_mode_key(key.code);
             return;
         }
         // コマンドの一覧は、打った語で絞る。Enter で選んでいる行を動かす、Esc でやめる。
@@ -1844,19 +1893,51 @@ impl App {
                 self.ask_reset_with(&info);
                 return;
             }
+            "editRows" => {
+                let rows = (reply["rows"].as_array().into_iter().flatten())
+                    .map(|r| {
+                        crate::editmode::Row::new(
+                            r["oid"].as_str().unwrap_or("").to_owned(),
+                            r["merge"] == true,
+                            r["message"].as_str().unwrap_or("").to_owned(),
+                        )
+                    })
+                    .collect();
+                self.edit_mode = Some(crate::editmode::EditMode::new(rows));
+                self.edit_discard = false;
+                self.dirty = true;
+                return;
+            }
+            "editPreview" => {
+                let Some(mode) = &self.edit_mode else {
+                    return;
+                };
+                let info = &reply["info"];
+                // merge を越える編集では描けない（アプリと同じく、そのときは文だけ）。
+                self.question_drawing = Some(info["editDrawing"].clone())
+                    .filter(Value::is_object)
+                    .map(|d| (tr!(" Apply These Changes? "), d));
+                let ask = tr!(
+                    "Apply these changes? {summary}{risk}{notes} Undo brings it all back.",
+                    summary = mode.summary(),
+                    risk = risk_text(rewrite_conflicts(info)),
+                    notes = rewrite_notes(info)
+                );
+                let label = format!("Edit {} Commits", mode.rows.len());
+                self.confirm = Some((
+                    ask,
+                    tr!("apply"),
+                    Request::Run {
+                        name: "rewrite",
+                        command: json!({"op": "rewrite", "label": label, "edit": mode.plan()}),
+                    },
+                ));
+                self.dirty = true;
+                return;
+            }
             "rebasePreview" => {
                 let info = reply["info"].clone();
-                // コンフリクトしそうなコミットのファイルを、まとめて。
-                let conflicts = info["conflicts"].as_array().map(|commits| {
-                    let mut files: Vec<String> = commits
-                        .iter()
-                        .flat_map(|c| c["files"].as_array().cloned().unwrap_or_default())
-                        .filter_map(|f| f.as_str().map(str::to_owned))
-                        .collect();
-                    files.sort();
-                    files.dedup();
-                    files
-                });
+                let conflicts = rewrite_conflicts(&info);
                 if let Some(preview) = self.preview.as_mut() {
                     preview.3 = info;
                 }
@@ -1918,6 +1999,10 @@ impl App {
             // git am も、当たらなければ merge と同じく止まる（Continue・Skip・Abort）。
             "merge" | "rebase" | "continue" | "skip" | "cherryPick" | "revert" | "rewrite"
             | "am" => {
+                // 編集モードは、書き換えたら閉じる（書き換えられなければ、選んだものごと残る）。
+                if name == "rewrite" {
+                    self.edit_mode = None;
+                }
                 // コンフリクトで止まったら、Working Copy で解決する。
                 match reply["outcome"].as_str() {
                     Some("conflict") => {
@@ -2280,6 +2365,69 @@ impl App {
         );
     }
 
+    /// 編集モードのキー。`j` `k` で選び、`J` `K` で動かし、行ですることを選ぶ。Enter で見通しを読んでから確かめて
+    /// 当てる。Esc でやめる（変更があれば、もう 1 度押してから）。
+    fn edit_mode_key(&mut self, code: KeyCode) {
+        use crate::editmode::Action;
+        let Some(mode) = self.edit_mode.as_mut() else {
+            return;
+        };
+        self.dirty = true;
+        let last = mode.rows.len().saturating_sub(1);
+        let result = match code {
+            KeyCode::Char('j') | KeyCode::Down => {
+                mode.selected = (mode.selected + 1).min(last);
+                Ok(())
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                mode.selected = mode.selected.saturating_sub(1);
+                Ok(())
+            }
+            KeyCode::Char('J') => mode.move_selected(1),
+            KeyCode::Char('K') => mode.move_selected(-1),
+            KeyCode::Char('p') => mode.set(Action::Pick),
+            KeyCode::Char('s') => mode.set(Action::Squash),
+            KeyCode::Char('f') => mode.set(Action::Fixup),
+            KeyCode::Char('d') => mode.set(Action::Drop),
+            KeyCode::Char('e') => mode.set(Action::Edit),
+            KeyCode::Char('r') => match mode.message_to_edit() {
+                Some(text) => {
+                    self.plan_message = Some(text);
+                    Ok(())
+                }
+                None => Err(tr!("A merge is recreated as it is")),
+            },
+            KeyCode::Enter => {
+                if !mode.has_changes() {
+                    self.edit_mode = None;
+                    self.notice = Some(tr!("Nothing was changed"));
+                    return;
+                }
+                let edit = mode.plan();
+                self.run(
+                    "editPreview",
+                    tr!("Looking ahead…"),
+                    json!({"op": "rewritePreview", "edit": edit, "onto": null}),
+                );
+                Ok(())
+            }
+            KeyCode::Esc | KeyCode::Char('q') => {
+                if mode.has_changes() && !self.edit_discard {
+                    self.edit_discard = true;
+                    self.notice = Some(tr!("Press Esc again to discard these changes"));
+                    return;
+                }
+                self.edit_mode = None;
+                Ok(())
+            }
+            _ => Ok(()),
+        };
+        self.edit_discard = false;
+        if let Err(reason) = result {
+            self.error = Some(reason);
+        }
+    }
+
     /// History で選んでいるコミットへの操作: `y` cherry-pick、`v` revert、`c` そのコミットをチェックアウト
     /// （detached HEAD）。
     fn ask_commit_operation(&mut self, code: KeyCode) -> bool {
@@ -2384,6 +2532,13 @@ impl App {
             return;
         };
         let branch = self.branch.clone().unwrap_or_else(|| "HEAD".to_owned());
+        // アプリのシートの前と後の絵（同じなら、絵はない）。
+        self.question_drawing = preview["drawing"].as_object().map(|_| {
+            (
+                tr!(" Reset {branch} ", branch = branch),
+                crate::drawing::from_move(&preview["drawing"], &branch),
+            )
+        });
         let lost = preview["lostCount"].as_u64().unwrap_or(0);
         let gained = preview["gainedCount"].as_u64().unwrap_or(0);
         let pushed = preview["upstreamHas"].as_u64().unwrap_or(0);
@@ -2581,6 +2736,37 @@ impl App {
             shown.as_array().map_or(0, Vec::len) as u64 + more.as_u64().unwrap_or(0)
         };
         let risk = risk_text(conflicts);
+        // アプリのシートと同じく、前と後の絵を重ねる（取り込むものがなければ、絵はない）。
+        self.question_drawing = match (merge, preview["fastForward"] == true) {
+            (true, true) => Some(&preview["move"]["drawing"])
+                .filter(|d| d.is_object())
+                .map(|d| {
+                    (
+                        tr!(" Fast-forward {branch} ", branch = branch),
+                        crate::drawing::from_move(d, &branch),
+                    )
+                }),
+            (true, false) => Some(&preview["drawing"])
+                .filter(|d| d.is_object())
+                .map(|d| {
+                    (
+                        tr!(" Merge {name} into {branch} ", name = name, branch = branch),
+                        crate::drawing::from_merge(d, &branch, &name),
+                    )
+                }),
+            (false, _) => Some(&preview["drawing"])
+                .filter(|d| d.is_object())
+                .map(|d| {
+                    (
+                        tr!(
+                            " Rebase {branch} onto {name} ",
+                            branch = branch,
+                            name = name
+                        ),
+                        crate::drawing::from_rebase(d, &branch, &name),
+                    )
+                }),
+        };
         let (ask, yes, request) = if merge {
             let request = Request::Run {
                 name: "merge",
@@ -2620,29 +2806,12 @@ impl App {
                 (ask, tr!("merge"), request)
             }
         } else {
-            let force = match preview["currentPushed"] == true {
-                true => tr!(
-                    " Its upstream has the commits it rewrites, so pushing will need Force Push."
-                ),
-                false => String::new(),
-            };
-            let moving: Vec<&str> = (preview["moving"].as_array().into_iter().flatten())
-                .filter_map(|b| b["name"].as_str())
-                .collect();
-            let along = match moving.is_empty() {
-                true => String::new(),
-                false => tr!(
-                    " {names} move along.",
-                    names = amonhen_model::i18n::list(&moving)
-                ),
-            };
             let ask = tr!(
-                "Rebase {branch} onto {name}?{risk}{along}{force}",
+                "Rebase {branch} onto {name}?{risk}{notes}",
                 branch = branch,
                 name = name,
                 risk = risk,
-                along = along,
-                force = force
+                notes = rewrite_notes(&preview)
             );
             let request = Request::Run {
                 name: "rebase",
@@ -2949,6 +3118,7 @@ impl App {
                 ("c", tr!("Check out the selected commit (detached HEAD)")),
                 ("e", tr!("Edit the commit's message in git's editor")),
                 ("F X", tr!("Fix up into the parent; drop the commit")),
+                ("E", tr!("Edit the commits from here to HEAD at once")),
                 ("Esc", tr!("Clear the search")),
             ],
             (View::Reflog, Focus::Main) => vec![
@@ -3452,6 +3622,16 @@ impl App {
             }
             // 選んでいるコミットを今のブランチに持ってくる・打ち消す・そこをチェックアウトする（先に確かめる）。
             KeyCode::Char('y' | 'v' | 'c' | 'e' | 'F' | 'X') => self.ask_commit_operation(code),
+            // 選んでいるコミットから HEAD までを、編集モードで。
+            KeyCode::Char('E') => {
+                match self.history.selected_id() {
+                    Some(id) => self.send(Request::EditRows {
+                        from: id.to_string(),
+                    }),
+                    None => return false,
+                }
+                true
+            }
             KeyCode::Char('n') => self.history.next_match(true),
             KeyCode::Char('N') => self.history.next_match(false),
             KeyCode::Esc => self.clear_search(),
@@ -4063,6 +4243,45 @@ impl App {
                 }
             }
         }
+        if let Some(mode) = &self.edit_mode {
+            // 一番下の行を残して、画面を覆う枠。
+            let at = Rect::new(area.x, area.y, area.width, area.height.saturating_sub(1));
+            frame_box(buf, area, at, &tr!(" Edit Commits "));
+            if at.width > 4 && at.height > 2 {
+                let inner = Rect::new(at.x + 2, at.y + 1, at.width - 4, at.height - 2);
+                for y in inner.y..inner.bottom() {
+                    for x in inner.x..inner.right() {
+                        buf[(x, y)].reset();
+                    }
+                }
+                mode.draw(inner, buf);
+            }
+        }
+        // 確かめている間は、前と後の絵を重ねる。
+        if let Some((title, drawing)) = self
+            .question_drawing
+            .as_ref()
+            .filter(|_| self.confirm.is_some() || self.choices.is_some())
+        {
+            let width = (crate::drawing::width(drawing) + 4).max(48).min(area.width);
+            let height = (crate::drawing::height(drawing) + 2).min(area.height.saturating_sub(1));
+            let at = Rect::new(
+                area.x + (area.width - width) / 2,
+                area.y + (area.height.saturating_sub(1) - height) / 2,
+                width,
+                height,
+            );
+            frame_box(buf, area, at, title);
+            if at.width > 4 && at.height > 2 {
+                let inner = Rect::new(at.x + 2, at.y + 1, at.width - 4, at.height - 2);
+                for y in inner.y..inner.bottom() {
+                    for x in inner.x..inner.right() {
+                        buf[(x, y)].reset();
+                    }
+                }
+                crate::drawing::draw(drawing, inner, buf);
+            }
+        }
         if let Some(log) = &self.operation_log {
             let times: Vec<String> = log
                 .entries
@@ -4256,6 +4475,40 @@ fn conflict_files(conflicts: &Value) -> Option<Vec<String>> {
     })
 }
 
+/// 書き換えの見通し（`rewritePreview` の `info`）から、コンフリクトしそうなファイルをまとめて（分からなければ
+/// `None`）。
+fn rewrite_conflicts(info: &Value) -> Option<Vec<String>> {
+    info["conflicts"].as_array().map(|commits| {
+        let mut files: Vec<String> = commits
+            .iter()
+            .flat_map(|c| c["files"].as_array().cloned().unwrap_or_default())
+            .filter_map(|f| f.as_str().map(str::to_owned))
+            .collect();
+        files.sort();
+        files.dedup();
+        files
+    })
+}
+
+/// 書き換えの見通しから、一緒に動くブランチと、push に Force Push が要るかを、確かめる文に足す文にする。
+fn rewrite_notes(info: &Value) -> String {
+    let moving: Vec<&str> = (info["moving"].as_array().into_iter().flatten())
+        .filter_map(|b| b["name"].as_str())
+        .collect();
+    let mut notes = String::new();
+    if !moving.is_empty() {
+        notes += &tr!(
+            " {names} move along.",
+            names = amonhen_model::i18n::list(&moving)
+        );
+    }
+    if info["currentPushed"] == true {
+        notes +=
+            &tr!(" Its upstream has the commits it rewrites, so pushing will need Force Push.");
+    }
+    notes
+}
+
 /// コンフリクトの見込みを、確かめる文に足す一文にする（分からなければ空）。
 fn risk_text(conflicts: Option<Vec<String>>) -> String {
     match conflicts {
@@ -4326,6 +4579,31 @@ mod tests {
         let mut buf = Buffer::empty(Rect::new(0, 0, 100, 12));
         app.draw(&mut buf, Damage::ALL);
         (0..100).map(|x| buf[(x, 11)].symbol()).collect()
+    }
+
+    /// 編集モードの `r`: 行のメッセージを git のエディタで直す（`#` の行は捨てる）。当てるまで何も変わらない。
+    #[test]
+    fn edit_mode_rewords_through_the_editor() {
+        let (_dir, mut app, rx) = app_with_history();
+        let key = |app: &mut App, ch: char| {
+            app.handle(Event::Input(Input::Key(KeyEvent::new(
+                KeyCode::Char(ch),
+                KeyModifiers::NONE,
+            ))));
+        };
+        key(&mut app, '2');
+        key(&mut app, 'j');
+        key(&mut app, 'E');
+        crate::settle(&mut app, &rx).unwrap();
+        assert_eq!(app.edit_mode.as_ref().map(|m| m.rows.len()), Some(2));
+        key(&mut app, 'r');
+        let (text, _) = app.take_edit_message().expect("the message to edit");
+        assert_eq!(text.trim(), "Commit 5");
+        app.message_edited(Ok("Better\n# a comment\n".to_owned()));
+        let mode = app.edit_mode.as_ref().unwrap();
+        assert_eq!(mode.rows[0].action, crate::editmode::Action::Reword);
+        assert_eq!(mode.rows[0].new_message.as_deref(), Some("Better"));
+        assert!(app.take_edit_message().is_none());
     }
 
     /// サイドバーの worktree で Enter: ほかの worktree なら TUI を閉じてそのパスを返し、開いているものなら場所を

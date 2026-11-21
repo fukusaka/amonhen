@@ -76,6 +76,9 @@ pub enum Request {
     Run { name: &'static str, command: Value },
     /// 窓口の命令（`run` を通さないもの。History の並び順など）を、操作として動かす。答えは `Ran` で返す。
     Call { name: &'static str, request: Value },
+    /// History の編集モードの行: `from`（16 進）から HEAD までの、編集できるコミットとそのメッセージ（新しい順。
+    /// merge を越えて first-parent で辿る）。答えは `editRows` の `rows`（oid・merge・message）。
+    EditRows { from: String },
     /// コミットを作る（`amend` なら、直前のコミットを作り直す）。
     MakeCommit { message: String, amend: bool },
     /// コミット（16 進の ID）のメッセージ（amend で欄に入れる）。
@@ -171,7 +174,9 @@ impl Loader {
             | Request::RowOf { .. }
             | Request::Lineage { .. } => &self.rows,
             Request::Search { .. } => &self.search,
-            Request::Run { .. } | Request::Call { .. } => &self.operations,
+            Request::Run { .. } | Request::Call { .. } | Request::EditRows { .. } => {
+                &self.operations
+            }
             Request::Commit { .. } | Request::Syntax { .. } => &self.details,
             Request::Status
             | Request::Reflog { .. }
@@ -409,6 +414,10 @@ fn load(front: &dyn Front, request: Request, events: &Sender<Event>) -> Result<L
                 command => run(front, command).map_err(|e| e.to_string()),
             },
         },
+        Request::EditRows { from } => Loaded::Ran {
+            name: "editRows",
+            result: edit_rows(front, &from).map_err(|e| e.to_string()),
+        },
         Request::MakeCommit { message, amend } => Loaded::Committed(
             front
                 .call(json!({"op": "commit", "message": message, "amend": amend}))
@@ -437,6 +446,35 @@ fn run(front: &dyn Front, command: Value) -> Result<Value> {
             .into());
     }
     Ok(reply)
+}
+
+/// `Request::EditRows` の中身。
+fn edit_rows(front: &dyn Front, from: &str) -> Result<Value> {
+    let reply = run(
+        front,
+        json!({"op": "editableCommits", "throughMerges": true}),
+    )?;
+    let line: Vec<(&str, bool)> = reply["text"]
+        .as_str()
+        .unwrap_or("")
+        .lines()
+        .filter_map(|l| {
+            let mut parts = l.split(' ');
+            Some((parts.next()?, parts.next().is_some()))
+        })
+        .collect();
+    let Some(end) = line.iter().position(|(oid, _)| *oid == from) else {
+        return Err(tr!("This commit isn’t on the current branch’s first-parent line, so it can’t be edited here").into());
+    };
+    let rows = line[..=end]
+        .iter()
+        .map(|(oid, merge)| {
+            let info = run(front, json!({"op": "commitInfo", "oid": oid}))?;
+            let message = info["info"]["message"].as_str().unwrap_or("").to_owned();
+            Ok(json!({"oid": oid, "merge": merge, "message": message}))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(json!({"rows": rows}))
 }
 
 fn commit(front: &dyn Front, id: &str, stash: bool) -> Result<(Value, Reply)> {

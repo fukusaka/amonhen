@@ -12,6 +12,8 @@ mod changes;
 mod commands;
 mod details;
 mod diff;
+mod drawing;
+mod editmode;
 mod editor;
 mod fileview;
 mod history;
