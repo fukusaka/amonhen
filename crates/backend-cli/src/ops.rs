@@ -1601,9 +1601,13 @@ impl Operations for Git {
         };
         // porcelain の `git diff` は作業ツリーと比べるとき、`GIT_OPTIONAL_LOCKS=0` でも index を新しくしようとして
         // index.lock を取る（同じ作業ツリーの書き込み、stash の `reset --refresh` などを失敗させる）。plumbing の
-        // `diff-index` は取らない。数え方は同じ（時刻だけ変わったファイルは、中身を比べて出さない）。
+        // `diff-index` は取らない。古い git（2.23 など）は時刻だけ変わったファイルも 0 行・0 行で出すので除く
+        // （中身は比べてあり、数える行はない。新しい git は出さない）。
         let out = self.read(&["diff-index", "-z", "--numstat", "-M", base])?;
-        Ok(crate::extras::parse_numstat(&out))
+        Ok(crate::extras::parse_numstat(&out)
+            .into_iter()
+            .filter(|s| (s.added, s.removed) != (Some(0), Some(0)))
+            .collect())
     }
 
     fn ignore_matches(
