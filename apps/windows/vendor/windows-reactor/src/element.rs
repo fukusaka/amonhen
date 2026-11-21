@@ -759,6 +759,7 @@ pub enum CommandBarCommand {
         icon: Option<Symbol>,
         enabled: bool,
         tooltip: Option<String>,
+        dimmed: bool,
     },
     Separator {
         key: Key,
@@ -773,6 +774,7 @@ impl CommandBarCommand {
             icon: None,
             enabled: true,
             tooltip: None,
+            dimmed: false,
         }
     }
 
@@ -783,6 +785,7 @@ impl CommandBarCommand {
             icon: Some(icon),
             enabled: true,
             tooltip: None,
+            dimmed: false,
         }
     }
 
@@ -794,6 +797,15 @@ impl CommandBarCommand {
     pub fn tooltip(mut self, value: impl Into<String>) -> Self {
         if let Self::Button { tooltip, .. } = &mut self {
             *tooltip = Some(value.into());
+        }
+        self
+    }
+
+    /// Draws a button faded like a disabled one while it stays enabled, so its tooltip still shows (WinUI shows no
+    /// tooltip on a disabled control). Separators are returned unchanged.
+    pub fn dimmed(mut self, value: bool) -> Self {
+        if let Self::Button { dimmed, .. } = &mut self {
+            *dimmed = value;
         }
         self
     }
@@ -820,6 +832,7 @@ impl CommandBarCommand {
                 icon,
                 enabled,
                 tooltip,
+                dimmed,
             } => {
                 let callback = on_click.clone();
                 // Report the button's key, so buttons with the same label can be told apart.
@@ -827,6 +840,7 @@ impl CommandBarCommand {
                 let button = AppBarButton::new()
                     .label(label)
                     .is_enabled(enabled)
+                    .opacity(if dimmed { 0.4 } else { 1.0 })
                     .on_click(move || {
                         let _ = callback.call(clicked.clone());
                     });
