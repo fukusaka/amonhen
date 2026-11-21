@@ -203,6 +203,13 @@ struct Root {
     refs: Option<Arc<RefsSnapshot>>,
     /// ローカルブランチの分け方（コアの `branchGroups`）。
     groups: Option<BranchGroups>,
+    /// GitHub から読んだもの（プルリクエスト・CI の状態など）と、どのリポジトリのものか・最後に読み始めた時刻・
+    /// 読んでいる間か・アバターの URL を読んだか。
+    github: crate::github::Loaded,
+    github_for: Option<String>,
+    github_loaded_at: Option<std::time::Instant>,
+    github_loading: bool,
+    github_avatars_loaded: bool,
     /// タグのリモートでの様子（コアの `tagRemotes` の info。リモートと読んだ時刻、タグごとの same・different・
     /// missing）。
     tag_remotes: Value,
@@ -518,6 +525,8 @@ enum Dialog {
         repo: Arc<Repository>,
         base: String,
         branches: Vec<(Value, bool)>,
+        /// マージされたプルリクエストを読めなかったこと（あれば一覧の下に）。
+        note: Option<String>,
     },
     /// Fetch の確認（リモートが 2 つ以上なら、どこから取るかを選ぶ。0 はすべて）。
     Fetch {
@@ -728,6 +737,14 @@ enum Dialog {
         from: String,
         name: String,
     },
+    /// GitHub の確かめ・知らせ（プルリクエストの Checkout、作ったプルリクエストを開く）。`close` は閉じるボタン。
+    GitHub {
+        title: String,
+        message: String,
+        button: String,
+        close: String,
+        action: GitHubAction,
+    },
     /// 確かめてから命令を実行する（Cherry-pick・Revert など。GTK4 版の `sheets::pick` ほか）。
     Confirm {
         repo: Arc<Repository>,
@@ -804,6 +821,8 @@ enum Dialog {
 
 enum Message {
     Refs(Arc<RefsSnapshot>, Arc<Repository>),
+    /// GitHub から読んだ（どのリポジトリのものか）。
+    GitHub(String, Box<crate::github::Loaded>),
     Groups(Option<BranchGroups>),
     Commit(Value, Option<Value>),
     /// サイドバーの項目を選んだ（項目のキー）。
@@ -1279,6 +1298,11 @@ impl Component for Root {
             clone_sparse: false,
             refs: None,
             groups: None,
+            github: crate::github::Loaded::default(),
+            github_for: None,
+            github_loaded_at: None,
+            github_loading: false,
+            github_avatars_loaded: false,
             info: None,
             error: None,
             asks: Vec::new(),
@@ -1513,8 +1537,10 @@ impl Root {
                 }
                 // worktree も読み直す（作る・消す・ブランチを替えると ref も変わる）。
                 let r = repo.clone();
+                // push・fetch の後はプルリクエストや CI も変わりうる（読みすぎないよう、間を空ける。GTK4 版と同じ）。
+                self.load_github(false, context);
                 // ブランチの分け方は ref が変わるたびに読み直す（数十 ms かかるので裏で）。
-                load_groups(repo, context);
+                load_groups(repo, self.merged_pull_requests(), context);
                 // タグのリモートでの様子も（fetch でリモートのタグを読み直す）。
                 load_tag_remotes(r.clone(), context);
                 // stash の詳しい中身（作った時刻・untracked・土台と HEAD の離れ具合）。
@@ -1959,6 +1985,41 @@ impl Root {
             Message::Groups(groups) => {
                 if groups.is_some() {
                     self.groups = groups;
+                }
+            }
+            Message::GitHub(key, loaded) => {
+                if self.github_for.as_deref() != Some(key.as_str()) {
+                    return;
+                }
+                self.github_loading = false;
+                let loaded = *loaded;
+                let name = self
+                    .repo
+                    .as_ref()
+                    .and_then(|r| r.paths().workdir)
+                    .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+                    .unwrap_or_default();
+                for e in &loaded.errors {
+                    crate::activity::event(&name, e.clone());
+                }
+                let merged_changed = loaded.merged.is_some() && loaded.merged != self.github.merged;
+                let previous = std::mem::replace(&mut self.github, loaded);
+                // 読めなかったものは前のものを残す（CI の状態・マージされたプルリクエスト・既定のブランチ）。
+                if self.github.ci.is_none() {
+                    self.github.ci = previous.ci;
+                }
+                if self.github.merged.is_none() {
+                    self.github.merged = previous.merged;
+                }
+                if self.github.default_branch.is_none() {
+                    self.github.default_branch = previous.default_branch;
+                }
+                if !self.github.avatars.is_empty() {
+                    self.github_avatars_loaded = true;
+                }
+                // squash・rebase で取り込んだブランチの印は、ブランチの分け方を読み直して付ける。
+                if merged_changed && let Some(repo) = self.repo.clone() {
+                    load_groups(repo, self.merged_pull_requests(), context);
                 }
             }
             Message::Commit(info, extras) => self.info = Some((info, extras)),
@@ -3103,7 +3164,9 @@ impl Root {
             // ref の変わらない変化）。
             Message::Command(id) if id == "refresh" => {
                 if let Some(repo) = self.repo.clone() {
-                    load_groups(repo.clone(), context);
+                    // プルリクエストと CI も間を空けずに読み直す（macOS 版の `refreshRepository`）。
+                    self.load_github(true, context);
+                    load_groups(repo.clone(), self.merged_pull_requests(), context);
                     // タグのリモートでの様子も（タグを push・削除しても手元の ref は変わらない）。
                     load_tag_remotes(repo.clone(), context);
                     load_worktrees(repo, context);
@@ -3243,6 +3306,9 @@ impl Root {
                 ) => perform(context, repo, command, button),
                 (Some(Dialog::FetchFirst { then, .. }), ContentDialogResult::Primary) => {
                     self.save(then, context);
+                }
+                (Some(Dialog::GitHub { action, .. }), ContentDialogResult::Primary) => {
+                    self.github_action(action, context);
                 }
                 (
                     Some(Dialog::Confirm {
@@ -4584,6 +4650,13 @@ impl Root {
                     with_history(|h| h.session.data.toggle_merge(id));
                 } else if let Some(text) = key.strip_prefix("copy:") {
                     copy_text(text);
+                } else if let Some(url) = key.strip_prefix("open-url:") {
+                    crate::files::open_url(url);
+                } else if let Some(number) = key
+                    .strip_prefix("pr-checkout:")
+                    .and_then(|n| n.parse::<u64>().ok())
+                {
+                    self.confirm_pull_request_checkout(number);
                 } else if let Some(name) = key.strip_prefix("checkout:") {
                     self.checkout(CheckoutTarget::Branch(name.to_owned()));
                 } else if let Some(name) = key.strip_prefix("track:") {
@@ -4907,13 +4980,35 @@ impl Root {
                 } else if key.starts_with("sm-") || key.starts_with("st-") {
                     self.submodule_menu(&key, context);
                 } else if key == "clean-up-branches" {
-                    // 消してよいブランチの候補（GitHub のプルリクエストはまだ読まない）。
+                    // 消してよいブランチの候補。GitHub のリポジトリなら、マージされたプルリクエストを gh で読み、
+                    // squash・rebase で取り込んだものも見分ける（GTK4 版の `clean_up_branches`）。
                     if let Some(repo) = self.repo.clone() {
                         context.spawn_background(move |_| {
-                            let command = json!({ "op": "branchCleanup", "pullRequests": [] });
-                            let reply: Value =
+                            let mut note = None;
+                            let mut pull_requests = Vec::new();
+                            if crate::github::available()
+                                && let Some((_, github)) = crate::github::of_remote(&repo)
+                            {
+                                // fork なら、元のリポジトリでその fork から出したもの。
+                                let target = crate::github::pull_request_target(&github);
+                                match crate::github::merged_pull_requests(&target) {
+                                    Ok(list) => pull_requests = list,
+                                    Err(e) => {
+                                        note = Some(tr!(
+                                            "Couldn’t read the merged pull requests: {error}",
+                                            error = e
+                                        ))
+                                    }
+                                }
+                            }
+                            let command =
+                                json!({ "op": "branchCleanup", "pullRequests": pull_requests });
+                            let mut reply: Value =
                                 serde_json::from_str(&repo.run_json(&command.to_string()))
                                     .unwrap_or_else(|e| json!({ "error": e.to_string() }));
+                            if let Some(note) = note {
+                                reply["note"] = Value::String(note);
+                            }
                             Message::CleanUpLoaded(repo, reply)
                         });
                     }
@@ -5285,7 +5380,7 @@ impl Root {
                 // ものはロック中のことがある）。
                 // ブランチの分け方も（お気に入り・アーカイブは git の設定だけが変わり、ref は変わらない）。
                 if let Some(repo) = self.repo.clone() {
-                    load_groups(repo.clone(), context);
+                    load_groups(repo.clone(), self.merged_pull_requests(), context);
                     // タグのリモートでの様子も（タグを push・削除しても手元の ref は変わらない）。
                     load_tag_remotes(repo.clone(), context);
                     load_worktrees(repo, context);
@@ -7179,6 +7274,8 @@ impl Root {
                 }
                 let info = &reply["info"];
                 let base = info["base"].as_str().unwrap_or("main").to_owned();
+                // マージされたプルリクエストを読めなかったこと（GTK4 版と同じく、文の後ろに添える）。
+                let note = reply["note"].as_str().map(str::to_owned);
                 let branches: Vec<(Value, bool)> = info["branches"]
                     .as_array()
                     .into_iter()
@@ -7191,13 +7288,14 @@ impl Root {
                         message: tr!(
                             "No branch is merged into {base}, merged by a pull request, or left without its upstream.",
                             base = base
-                        ),
+                        ) + &note.map(|n| format!("\n\n{n}")).unwrap_or_default(),
                     }
                 } else {
                     Dialog::CleanUp {
                         repo,
                         base,
                         branches,
+                        note,
                     }
                 });
             }
@@ -7490,6 +7588,17 @@ impl Root {
                 self.stash = entry.as_ref().map(|e| e.name.clone());
                 if let Some(target) = entry.and_then(|e| e.target) {
                     with_history(|h| h.session.data.want_stash(target));
+                }
+            }
+            // プルリクエストの行: ブランチが手元にあれば（リモートブランチ、なければローカルブランチ）、その ref を
+            // 選んだのと同じ（GTK4 版と同じ）。
+            Message::Invoked(key) if key.starts_with("pr:") => {
+                if let Some(ref_key) = key
+                    .strip_prefix("pr:")
+                    .and_then(|n| n.parse::<u64>().ok())
+                    .and_then(|n| self.pull_request_ref(n))
+                {
+                    self.update(Message::Invoked(ref_key), context);
                 }
             }
             Message::Invoked(key) => {
@@ -7925,6 +8034,7 @@ impl Root {
                                 tag_signatures: &self.tag_signatures,
                                 submodules: &self.submodules,
                                 subtrees: &self.subtrees["subtrees"],
+                                pull_requests: &self.github.pull_requests,
                             },
                             &self.sidebar_filter,
                         )),
@@ -8724,6 +8834,23 @@ impl Root {
                     TextBlock::new()
                         .text(message.clone())
                         .text_wrapping(TextWrapping::Wrap),
+                ),
+            Some(Dialog::GitHub {
+                title,
+                message,
+                button,
+                close,
+                ..
+            }) => dialog
+                .is_open(true)
+                .title(title.clone())
+                .primary_button_text(button.clone())
+                .close_button_text(close.clone())
+                .content(
+                    TextBlock::new()
+                        .text(message.clone())
+                        .text_wrapping(TextWrapping::Wrap)
+                        .is_text_selection_enabled(true),
                 ),
             Some(Dialog::Confirm {
                 title,
@@ -10459,7 +10586,10 @@ impl Root {
                     )),
                 ),
             Some(Dialog::CleanUp {
-                base, branches, ..
+                base,
+                branches,
+                note,
+                ..
             }) => {
                 // 理由ごとに見出しを付けて並べる（GTK4 版と同じ）。
                 let mut rows: Vec<(String, View)> = Vec::new();
@@ -10528,11 +10658,12 @@ impl Root {
                         StackPanel::new().spacing(4.0).children((
                             TextBlock::new()
                                 .text(format!(
-                                    "{} {}",
+                                    "{} {}{}",
                                     tr!(
                                         "Delete the checked branches. The current branch, favorites and branches used by a worktree aren’t listed."
                                     ),
-                                    tr!("You can Undo this (Ctrl+Alt+Z).")
+                                    tr!("You can Undo this (Ctrl+Alt+Z)."),
+                                    note.as_ref().map(|n| format!("\n\n{n}")).unwrap_or_default()
                                 ))
                                 .text_wrapping(TextWrapping::Wrap),
                             ScrollViewer::new().max_height(280.0).content(
@@ -10857,6 +10988,33 @@ impl Root {
                     tr!("Remove Worktree…"),
                 ));
             }
+            return items;
+        }
+        // プルリクエストの行（GTK4 版の `github::pull_request_menu`）。
+        if let Some(pr) = self
+            .sidebar_key
+            .as_deref()
+            .and_then(|k| k.strip_prefix("pr:"))
+            .and_then(|n| n.parse::<u64>().ok())
+            .and_then(|n| self.github.pull_requests.iter().find(|p| p.number == n))
+        {
+            let mut items = Vec::new();
+            // gh pr checkout は手元のリポジトリだけ。
+            if self
+                .repo
+                .as_ref()
+                .is_some_and(|r| r.connection_state().is_none())
+            {
+                items.push(MenuItem::item(
+                    format!("pr-checkout:{}", pr.number),
+                    format!("Checkout #{}…", pr.number),
+                ));
+            }
+            items.push(MenuItem::item(
+                format!("open-url:{}", pr.url),
+                tr!("Open in Browser"),
+            ));
+            items.push(MenuItem::item(format!("copy:{}", pr.url), tr!("Copy URL")));
             return items;
         }
         // リモートと Remotes の見出し（GTK4 版の `refops::remote_menu`）。
@@ -13034,6 +13192,128 @@ impl Root {
 
     /// ツールバーのリポジトリ名の一覧に出す、この PC のリポジトリのブランチと状態を裏で読む（ref が変わるたびに
     /// 呼ばれるので、読むのは 1 分に 1 回まで）。
+    /// GitHub から読む（GTK4 版の `github::Loader::load`）: 開いているプルリクエスト（サイドバー）、マージされた
+    /// プルリクエスト（ブランチの印）、今のブランチと既定のブランチの直近のコミットの CI の状態（History の行の
+    /// 印）と作者のアバターの URL。`force` でなければ、前に読み始めてから 30 秒は読まない。gh がなければ何もしない。
+    fn load_github(&mut self, force: bool, context: &ComponentContext<Self>) {
+        if !crate::github::available() {
+            return;
+        }
+        let Some(repo) = self.repo.clone() else {
+            return;
+        };
+        let key = github_key(&repo);
+        let mut force = force;
+        if self.github_for.as_deref() != Some(key.as_str()) {
+            // 別のリポジトリ（タブ）: 前のものは捨てる。
+            self.github = crate::github::Loaded::default();
+            self.github_for = Some(key.clone());
+            self.github_avatars_loaded = false;
+            force = true;
+        }
+        if !force
+            && self
+                .github_loaded_at
+                .is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(30))
+        {
+            return;
+        }
+        self.github_loaded_at = Some(std::time::Instant::now());
+        self.github_loading = true;
+        use crate::prefs::{self, GITHUB_AVATARS, GITHUB_AVATARS_ONCE};
+        let options = crate::github::Options {
+            ci: prefs::bool(prefs::GITHUB_CI_STATUS),
+            // アバターの URL は、1 回だけにするなら、読めた後は頼まない。
+            authors: prefs::bool(GITHUB_AVATARS)
+                && !(prefs::bool(GITHUB_AVATARS_ONCE) && self.github_avatars_loaded),
+            with_default: prefs::bool(prefs::GITHUB_CI_DEFAULT_BRANCH),
+            count: prefs::github_ci_commits(),
+        };
+        let head = self.refs.as_ref().and_then(|r| r.refs.head_branch.clone());
+        let default_branch = self.github.default_branch.clone();
+        context.spawn_background(move |_| {
+            let loaded = crate::github::load(&repo, head, default_branch, options);
+            Message::GitHub(key, Box::new(loaded))
+        });
+    }
+
+    /// プルリクエスト `number` のブランチの、サイドバーの項目のキー（リモートブランチ、なければローカルブランチ）。
+    fn pull_request_ref(&self, number: u64) -> Option<String> {
+        use amonhen_model::RefKind;
+        let pr = self
+            .github
+            .pull_requests
+            .iter()
+            .find(|p| p.number == number)?;
+        let entries = &self.refs.as_ref()?.refs.entries;
+        let suffix = format!("/{}", pr.head_ref_name);
+        entries
+            .iter()
+            .find(|e| e.kind == RefKind::Remote && e.name.ends_with(&suffix))
+            .or_else(|| {
+                entries
+                    .iter()
+                    .find(|e| e.kind == RefKind::Local && e.name == pr.head_ref_name)
+            })
+            .map(sidebar::ref_key)
+    }
+
+    /// プルリクエストのブランチを Checkout してよいか（GTK4 版の `checkout_pull_request`。worktree の行は書かない）。
+    fn confirm_pull_request_checkout(&mut self, number: u64) {
+        let Some(pr) = self
+            .github
+            .pull_requests
+            .iter()
+            .find(|p| p.number == number)
+        else {
+            return;
+        };
+        let slug = self.github.target.as_ref().map(|t| t.repo.slug());
+        let dir = self
+            .repo
+            .as_ref()
+            .filter(|r| r.connection_state().is_none())
+            .and_then(|r| r.paths().workdir);
+        let (Some(slug), Some(dir)) = (slug, dir) else {
+            return;
+        };
+        self.dialog = Some(Dialog::GitHub {
+            title: tr!("Checkout #{number}?", number = number),
+            message: tr!(
+                "“{title}” is checked out as a local branch.",
+                title = pr.title.clone()
+            ),
+            button: "Checkout".to_owned(),
+            close: tr!("Cancel"),
+            action: GitHubAction::CheckoutPullRequest { dir, number, slug },
+        });
+    }
+
+    fn github_action(&mut self, action: GitHubAction, context: &ComponentContext<Self>) {
+        match action {
+            GitHubAction::OpenUrl(url) => {
+                crate::files::open_url(&url);
+            }
+            GitHubAction::CheckoutPullRequest { dir, number, slug } => {
+                self.busy = Some(format!("gh pr checkout {number}"));
+                context.spawn_background(move |_| {
+                    let n = number.to_string();
+                    // 失敗したら gh の文をそのまま知らせる（GTK4 版と同じ）。
+                    let result =
+                        crate::github::gh(&["pr", "checkout", &n, "-R", &slug], Some(&dir));
+                    Message::Performed(result.err().map(|e| (e, String::new())))
+                });
+                // プルリクエストと CI も間を空けずに読み直す（macOS 版の `refreshRepository`）。
+                self.load_github(true, context);
+            }
+        }
+    }
+
+    /// マージされたプルリクエスト（`branchGroups`・`branchCleanup` の `pullRequests` の形。読んでいなければ空）。
+    fn merged_pull_requests(&self) -> Value {
+        Value::Array(self.github.merged.clone().unwrap_or_default())
+    }
+
     fn peek_switch_targets(&mut self, context: &ComponentContext<Self>) {
         if self
             .switch_peeked_at
@@ -15583,10 +15863,30 @@ fn load_recent_messages(repo: Arc<Repository>, context: &ComponentContext<Root>)
     });
 }
 
-/// ブランチの分け方（`branchGroups`）を裏で読む。
-fn load_groups(repo: Arc<Repository>, context: &ComponentContext<Root>) {
+/// GitHub のダイアログの主のボタンですること。
+#[derive(Clone)]
+enum GitHubAction {
+    /// プルリクエストのブランチを Checkout する（`gh pr checkout`。作業ツリーで、`slug` のリポジトリから）。
+    CheckoutPullRequest {
+        dir: std::path::PathBuf,
+        number: u64,
+        slug: String,
+    },
+    #[allow(dead_code)] // Open on GitHub・Create Pull Request… で使う（続くコミット）。
+    OpenUrl(String),
+}
+
+/// GitHub から読んだものがどのリポジトリのものか（worktree ごと）。
+fn github_key(repo: &Repository) -> String {
+    repo.paths().git_dir.display().to_string()
+}
+
+/// ブランチの分け方（`branchGroups`）を裏で読む。`pull_requests` はマージされたプルリクエスト（GitHub から
+/// 読んだもの。squash・rebase で取り込んだブランチを見分ける）。
+fn load_groups(repo: Arc<Repository>, pull_requests: Value, context: &ComponentContext<Root>) {
     context.spawn_background(move |_| {
-        let reply = repo.run_json(r#"{"op":"branchGroups"}"#);
+        let command = json!({ "op": "branchGroups", "pullRequests": pull_requests });
+        let reply = repo.run_json(&command.to_string());
         let reply = serde_json::from_str(&reply).unwrap_or_default();
         Message::Groups(BranchGroups::from_reply(&reply))
     });

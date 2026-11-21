@@ -44,6 +44,28 @@ pub fn history_items() -> u32 {
         .and_then(|s| s.parse().ok())
         .unwrap_or(crate::render::items::ALL)
 }
+/// コミットの詳細に作者・コミッターのアバターを出す（既定は出す。Gravatar にメールアドレスのハッシュを送る。
+/// GTK4 版・macOS 版と同じ鍵）。
+pub const SHOW_AVATARS: &str = "showAvatars";
+/// GitHub（gh で読む。Settings > Accounts）: History のコミットごとに CI の状態を出す（既定は出す）。
+pub const GITHUB_CI_STATUS: &str = "gitHubCIStatus";
+/// コミットの作者の GitHub のアバターを使う（既定は使う。使わなければ Gravatar だけ）。
+pub const GITHUB_AVATARS: &str = "gitHubAvatars";
+/// CI を読むブランチに、既定のブランチも含める（既定は含める。外すと今のブランチだけ）。
+pub const GITHUB_CI_DEFAULT_BRANCH: &str = "gitHubCIDefaultBranch";
+/// ブランチごとに読む直近のコミットの数（30・50・100。既定は 100）。
+pub const GITHUB_CI_COMMITS: &str = "gitHubCICommits";
+/// アバターの URL は、窓を開いて最初の 1 回だけ読む（既定はそうする）。
+pub const GITHUB_AVATARS_ONCE: &str = "gitHubAvatarsOnce";
+
+/// GitHub で、ブランチごとに読む直近のコミットの数。
+pub fn github_ci_commits() -> u32 {
+    string(GITHUB_CI_COMMITS)
+        .and_then(|s| s.parse().ok())
+        .filter(|n| [30, 50, 100].contains(n))
+        .unwrap_or(100)
+}
+
 /// History の並び順（`date`・`topo`。GTK4 版・macOS 版と同じ鍵）。
 pub const HISTORY_ORDER: &str = "historyOrder";
 
@@ -74,6 +96,11 @@ pub fn bool(key: &str) -> bool {
         .with(|v| v.borrow().get(key).and_then(Value::as_bool))
         .unwrap_or(
             key == AUTO_MAGIC_MERGE
+                || key == SHOW_AVATARS
+                || key == GITHUB_CI_STATUS
+                || key == GITHUB_AVATARS
+                || key == GITHUB_CI_DEFAULT_BRANCH
+                || key == GITHUB_AVATARS_ONCE
                 || key == AUTO_BOOKMARK
                 || key == HIGHLIGHT_ANCESTORS
                 || key == STACKED_COMMIT_DIFF,
