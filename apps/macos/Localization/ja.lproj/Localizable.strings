@@ -912,6 +912,7 @@
 " (background tab: the working tree waits until the tab comes to the front)" = "（裏のタブ: 作業ツリーは前に出るまで待つ）";
 "Couldn’t Rebuild History" = "History を作り直せませんでした";
 "Merge into %@" = "%@ に Merge";
+"Merge into %@…" = "%@ に Merge…";
 "The branch, tag or commit to merge in" = "取り込むブランチ・タグ・コミット";
 "Rebase %@" = "%@ を Rebase";
 "The branch, tag or commit to rebase onto" = "上に載せる先のブランチ・タグ・コミット";

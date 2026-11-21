@@ -1930,7 +1930,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
                 actions.mergeSeveralWithConfirmation(sources, into: current)
             }
         } else {
-            menu.addItem(Self.disabledItem(L("Merge %ld into %@…", commits.count, current ?? "HEAD"),
+            // merge できる数は 1 以下なので、数は出さない。
+            menu.addItem(Self.disabledItem(L("Merge into %@…", current ?? "HEAD"),
                                            reason: L("Select two or more commits other than the current one.")))
         }
         menu.addItem(.separator())

@@ -444,10 +444,10 @@ pub fn menu_many(
             crate::mergeseveral::confirm(&a, sources.clone(), branch.clone());
         }));
     } else {
+        // merge できる数は 1 以下なので、数は出さない。
         items.push(menu::disabled_hint(
             tr!(
-                "Merge {count} into {branch}…",
-                count = n,
+                "Merge into {branch}…",
                 branch = branch.as_deref().unwrap_or("HEAD")
             ),
             tr!("Select two or more commits other than the current one."),

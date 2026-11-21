@@ -740,6 +740,7 @@
 "Rebase {target} onto {rev}?" = "{target} を {rev} の上に Rebase しますか？";
 "Merge {rev} into {target}?" = "{rev} を {target} に Merge しますか？";
 "Merge into {name}" = "{name} に Merge";
+"Merge into {branch}…" = "{branch} に Merge…";
 "The branch, tag or commit to merge in" = "取り込むブランチ・タグ・コミット";
 "Rebase {name}" = "{name} を Rebase";
 "The branch, tag or commit to rebase onto" = "上に載せる先のブランチ・タグ・コミット";
