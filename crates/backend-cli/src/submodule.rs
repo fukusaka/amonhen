@@ -136,8 +136,10 @@ impl Git {
             } => {
                 let name = self.submodule_name(path)?;
                 // `git rm` は `.gitmodules` に stage していない変更があると断る。deinit の前に確かめ、途中で止めない。
+                // porcelain の `git diff` は `GIT_OPTIONAL_LOCKS=0` でも index.lock を取るので、plumbing で見る
+                // （`--name-only` は時刻だけ変わったものも出すので、中身で比べる `--numstat`）。
                 if !self
-                    .read(&["diff", "--name-only", "--", ".gitmodules"])?
+                    .read(&["diff-files", "--numstat", "--", ".gitmodules"])?
                     .is_empty()
                 {
                     return Err(tr!("Stage or discard the changes to .gitmodules first").into());

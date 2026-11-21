@@ -9659,6 +9659,10 @@ mod tests {
         assert!(r["error"].as_str().unwrap().contains(".gitmodules"), "{r}");
         assert_eq!(submodules()[0]["initialized"], true);
         git(dir, &["commit", "-q", "-am", "url"]);
+        // 書き直しただけ（中身は同じで、時刻だけ変わる）なら、変更ではない。
+        let gitmodules = std::fs::read(dir.join(".gitmodules")).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        std::fs::write(dir.join(".gitmodules"), gitmodules).unwrap();
         // 既定は .git/modules を残す。消すと選べば消す。
         let modules = dir.join(".git/modules/lib");
         assert!(modules.is_dir());
