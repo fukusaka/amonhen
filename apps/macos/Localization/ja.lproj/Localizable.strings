@@ -2003,3 +2003,4 @@
 "A merge can’t be saved as a patch." = "merge はパッチにできません。";
 "Select two or more commits other than the current one." = "今のコミットのほかに 2 つ以上選んでください。";
 "Select exactly two commits." = "コミットをちょうど 2 つ選んでください。";
+"Apply or cancel the commit edit first." = "先にコミットの編集を実行するかキャンセルしてください。";

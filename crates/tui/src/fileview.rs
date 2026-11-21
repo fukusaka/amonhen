@@ -67,6 +67,11 @@ impl FileView {
         };
     }
 
+    /// 開いているファイル（range-diff を出しているなら None）。
+    pub fn file_path(&self) -> Option<&str> {
+        (self.range.is_none() && !self.path.is_empty()).then_some(self.path.as_str())
+    }
+
     pub fn request(&mut self) -> Option<Request> {
         std::mem::take(&mut self.wanted).then(|| Request::File {
             path: self.path.clone(),

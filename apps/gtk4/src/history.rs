@@ -21,6 +21,7 @@ use gtk::{gdk, gio, glib, graphene, gsk, pango};
 
 use crate::github::Ci;
 use crate::graph::{self, Lanes, Metrics};
+use crate::historyedit::Action;
 use crate::settings::items;
 use crate::signature::Status;
 
@@ -263,6 +264,12 @@ pub struct State {
     footer: Option<gtk::Widget>,
     /// 一致したコミットだけを出している（その終わりは History の終わりではないので、帯を出さない）。
     matching_only: bool,
+    /// History の上で編集している範囲（なければ編集していない）。
+    edit: Option<Edit>,
+    /// 編集の間に表で起きたことを知らせる先。
+    on_edit: Option<Rc<dyn Fn(EditEvent)>>,
+    /// テーマの一覧の背景の色を読む見えない子（編集の範囲の外を薄くする）。
+    base_probe: Option<gtk::Label>,
 }
 
 /// 最後の行の下に置く帯の高さ（macOS 版の `ShallowHistoryBand.height`）。
@@ -286,7 +293,8 @@ fn install_accent_css() {
     let provider = gtk::CssProvider::new();
     provider.load_from_string(
         ".history-accent-bg { color: @theme_selected_bg_color; } \
-         .history-accent-fg { color: @theme_selected_fg_color; }",
+         .history-accent-fg { color: @theme_selected_fg_color; } \
+         .history-base { color: @theme_base_color; }",
     );
     if let Some(display) = gdk::Display::default() {
         gtk::style_context_add_provider_for_display(
@@ -299,6 +307,96 @@ fn install_accent_css() {
 
 /// コミットを落としたときに呼ぶもの。
 type DropCallback = Rc<dyn Fn(Oid, u32)>;
+
+/// History の上で編集している範囲（`historyedit` が決め、表が描く。macOS 版の `HistoryViewController` の
+/// `editor`）。範囲は HEAD から first-parent で辿ったコミット（新しい順）。
+pub struct EditMarks {
+    /// 範囲の行（新しい順。並べ替えた後の並び）。
+    pub rows: Vec<EditRow>,
+    /// HEAD から first-parent で辿った並び（境目を引く先）。
+    pub line: Rc<Vec<Oid>>,
+    /// 境目を上へ引いて狭められる、いちばん少ない数（外れる行がそのままのときだけ狭められる）。
+    pub min_count: usize,
+    /// 並べ替えられる（merge を含まない）。
+    pub reorderable: bool,
+}
+
+/// 範囲の 1 行。
+#[derive(Clone)]
+pub struct EditRow {
+    pub oid: Oid,
+    pub action: Action,
+    /// merge（作り直すだけで、操作の印を出さない）。
+    pub merge: bool,
+    /// 直したメッセージの件名（直していなければ None）。
+    pub subject: Option<String>,
+    /// コンフリクトしそう（印を橙に）。
+    pub conflict: bool,
+}
+
+/// History の上で編集しているときに、表で起きたこと（`historyedit` が受ける）。
+pub enum EditEvent {
+    /// 範囲の `0` 番目の行の操作の印を押した（することの一覧を (x, y) に出す）。
+    Choices(usize, f64, f64),
+    /// 範囲の行ですることをキーで替えた。
+    Choose(usize, Action),
+    /// 範囲の行をダブルクリックした（メッセージを直す）。
+    Reword(usize),
+    /// 範囲の `0` 番目の行を、`1` 番目の行の上へ運んだ（範囲の数なら最後の行の下）。
+    Move(usize, usize),
+    /// 境目を引いて、範囲を HEAD から `0` 個にした。
+    Resize(usize),
+}
+
+/// 表の側で持つ、編集の範囲の描き方。
+struct Edit {
+    marks: EditMarks,
+    /// 表の行 → 範囲の何番目（新しい順）。
+    slots: HashMap<u32, usize>,
+    /// 表の行 → そこに描くコミットの行（並べ替えた分）。
+    source: HashMap<u32, u32>,
+    /// first-parent の並びのうち表にあるもの（表の行、並びの何番目。行の順）。境目を引く先。
+    line_rows: Vec<(u32, usize)>,
+    /// `line_rows` を求めた History の世代と並び（変わらなければ求め直さない）。
+    line_key: Option<(u64, *const Vec<Oid>)>,
+    /// 見えている行の、操作の印の横の範囲。押すとすることの一覧を出す。
+    chips: HashMap<u32, (f32, f32)>,
+    /// 境目を引いている間の、範囲の数。
+    preview: Option<usize>,
+    /// 境目を引いている。
+    dragging_boundary: bool,
+}
+
+/// 範囲のコミットの表の行（範囲の順。表になければ None）から、表の行 → 範囲の何番目と、表の行 → そこに描く
+/// コミットの行を作る。範囲の行は表の上から順に並ぶ（並べ替えても行の場所は変わらず、描くコミットが替わる）。
+fn edit_map(rows_of: &[Option<u32>]) -> (HashMap<u32, usize>, HashMap<u32, u32>) {
+    let mut slots: Vec<u32> = rows_of.iter().flatten().copied().collect();
+    slots.sort_unstable();
+    let mut index = HashMap::new();
+    let mut source = HashMap::new();
+    for (i, slot) in slots.into_iter().enumerate() {
+        index.insert(slot, i);
+        if let Some(Some(row)) = rows_of.get(i) {
+            source.insert(slot, *row);
+        }
+    }
+    (index, source)
+}
+
+/// 境目の下端 `bottom(行)` が `y` にいちばん近い、並びの行（`line_rows` の 1 つ）の並びの何番目。
+fn nearest_line_row(line_rows: &[(u32, usize)], y: f32, row_height: f32) -> Option<usize> {
+    if line_rows.is_empty() || row_height <= 0.0 {
+        return None;
+    }
+    let bottom = |row: u32| (row + 1) as f32 * row_height;
+    let at = line_rows.partition_point(|&(row, _)| bottom(row) < y);
+    [at.checked_sub(1), Some(at)]
+        .into_iter()
+        .flatten()
+        .filter_map(|i| line_rows.get(i))
+        .min_by(|a, b| (bottom(a.0) - y).abs().total_cmp(&(bottom(b.0) - y).abs()))
+        .map(|&(_, k)| k)
+}
 
 /// History の行を運ぶときの中身の頭（サイドバーのブランチ・タグの `local:`・`other:` と分ける）。
 pub const DRAG_PREFIX: &str = "commit:";
@@ -350,6 +448,9 @@ mod imp {
             if let Some(footer) = self.state.borrow_mut().footer.take() {
                 footer.unparent();
             }
+            if let Some(base) = self.state.borrow_mut().base_probe.take() {
+                base.unparent();
+            }
         }
 
         fn constructed(&self) {
@@ -369,6 +470,11 @@ mod imp {
                 p.set_parent(&*view);
             }
             self.state.borrow_mut().accent = Some(probes);
+            let base = gtk::Label::new(None);
+            base.add_css_class("history-base");
+            base.set_visible(false);
+            base.set_parent(&*view);
+            self.state.borrow_mut().base_probe = Some(base);
 
             // いくつか選んでいる行を押しただけでは、選びを変えない。離したときに 1 行にする（ドラッグならそのまま。
             // macOS 版の表と同じ）。
@@ -376,9 +482,13 @@ mod imp {
             let click = gtk::GestureClick::new();
             let weak = view.downgrade();
             let later = on_release.clone();
-            click.connect_pressed(move |gesture, _, x, y| {
+            click.connect_pressed(move |gesture, n, x, y| {
                 if let Some(view) = weak.upgrade() {
                     view.grab_focus();
+                    // History の上で編集しているときの、操作の印・境目・ダブルクリック。
+                    if view.edit_press(x as f32, y as f32, n) {
+                        return;
+                    }
                     // 行の右端の CI の印なら、行を選ばずに詳細の吹き出し。
                     if view.click_ci(x as f32, y as f32) {
                         return;
@@ -426,6 +536,25 @@ mod imp {
             click.connect_stopped(move |_| on_release.set(None));
             view.add_controller(click);
 
+            // 編集の範囲の境目を、押したまま引いた先の first-parent のコミットまで動かす（離したら範囲を変える。
+            // macOS 版の `dragBoundary`）。
+            let boundary = gtk::GestureDrag::new();
+            let weak = view.downgrade();
+            boundary.connect_drag_update(move |gesture, _, dy| {
+                if let Some(view) = weak.upgrade()
+                    && let Some((_, y)) = gesture.start_point()
+                {
+                    view.drag_boundary_to((y + dy) as f32);
+                }
+            });
+            let weak = view.downgrade();
+            boundary.connect_drag_end(move |_, _, _| {
+                if let Some(view) = weak.upgrade() {
+                    view.end_boundary_drag();
+                }
+            });
+            view.add_controller(boundary);
+
             // 右クリック: その行のコミットのメニュー。選びはせず（詳細はそのまま）、メニューの間は行を枠で示す
             // （macOS 版の `clickedRow`）。複数選んでいる行の上なら、まとめての操作のメニュー。
             let menu = gtk::GestureClick::new();
@@ -452,15 +581,20 @@ mod imp {
             drag.connect_prepare(move |_, _, y| {
                 let view = weak.upgrade()?;
                 let row = view.row_at(y as f32)?;
+                // 編集の間は、範囲の行だけを並べ替えられる（merge を含まないとき。境目を引いているときは運ばない）。
+                if !view.edit_can_drag(row) {
+                    return None;
+                }
+                let shown = view.shown_row(row);
                 let (_, history) = view.current()?;
-                let id = *history.graph.ids().get(row as usize)?;
+                let id = *history.graph.ids().get(shown as usize)?;
                 view.state().drag_chain = None;
                 view.state().dragging = None;
                 prepared.set(Some(id));
                 // 運んでいる間は、件名を札にして出す。件名は読んである行のものを使う（ここで読むと、daemon・
                 // SSH 先では 1 往復ぶん画面が止まる。macOS 版と同じ）。
                 sub.replace(
-                    view.loaded_subject(row)
+                    view.loaded_subject(shown)
                         .unwrap_or_else(|| id.to_string()[..8].to_owned()),
                 );
                 let value = format!("{DRAG_PREFIX}{id}");
@@ -472,7 +606,9 @@ mod imp {
                     && let Some(id) = from.get()
                 {
                     view.state().dragging = Some((drag.clone(), id));
-                    let f = view.state().on_drag_start.clone();
+                    // 編集の間は、落とせる所を表が決める（編集できるコミットを読まない）。
+                    let editing = view.state().edit.is_some();
+                    let f = view.state().on_drag_start.clone().filter(|_| !editing);
                     if let Some(f) = f {
                         f();
                     }
@@ -548,6 +684,9 @@ mod imp {
                     return false;
                 };
                 let row = view.drop_row_at(y as f32);
+                if view.edit_drop(id, row) {
+                    return true;
+                }
                 let f = view.state().on_drop.clone();
                 match f {
                     Some(f) => {
@@ -568,6 +707,16 @@ mod imp {
                 // Ctrl+A ですべて選ぶ、Menu・Shift+F10 で選んだ行のメニュー（macOS 版の表と同じ）。
                 let ctrl = state.contains(gdk::ModifierType::CONTROL_MASK);
                 let shift = state.contains(gdk::ModifierType::SHIFT_MASK);
+                // 編集の間、選んだ範囲の行で p・r・s・f・d・e を押すと、することを替える（macOS 版と同じ）。
+                if !state.intersects(
+                    gdk::ModifierType::CONTROL_MASK
+                        | gdk::ModifierType::ALT_MASK
+                        | gdk::ModifierType::SUPER_MASK
+                        | gdk::ModifierType::META_MASK,
+                ) && view.edit_key(key)
+                {
+                    return glib::Propagation::Stop;
+                }
                 if ctrl && !shift && matches!(key, gdk::Key::a | gdk::Key::A) {
                     view.select_all();
                     return glib::Propagation::Stop;
@@ -835,6 +984,8 @@ impl HistoryView {
         };
         self.hold_previous();
         self.configure_adjustments();
+        // 編集の範囲の行を、新しい History の行で求め直す。
+        self.rebuild_edit();
         self.update_lineage();
         self.queue_draw();
         self.queue_allocate();
@@ -1250,8 +1401,25 @@ impl HistoryView {
         self.update_lineage();
         let f = self.state().on_select.clone();
         if let Some(f) = f {
-            f(&self.selection());
+            // 編集の間は、並べ替えて描いているコミットの行（詳細はその行に描いているコミット）。
+            f(&self.shown_selection());
         }
+    }
+
+    /// 選んでいる行に描いているコミットの行（昇順。編集で並べ替えていなければ選んでいる行のまま）。
+    fn shown_selection(&self) -> Vec<u32> {
+        let rows = self.selection();
+        let st = self.state();
+        let Some(edit) = st.edit.as_ref() else {
+            return rows;
+        };
+        let mut shown: Vec<u32> = rows
+            .iter()
+            .map(|r| edit.source.get(r).copied().unwrap_or(*r))
+            .collect();
+        shown.sort_unstable();
+        shown.dedup();
+        shown
     }
 
     /// 検索に一致した行（昇順）を塗る。
@@ -1441,6 +1609,9 @@ impl HistoryView {
     /// `row` の上（その行の上の境目）に落とせるか: 運んでいるコミットが編集できる並びにあり、境目の上か下の行も
     /// 並びにある（macOS 版の `validateDrop`）。並びを読み終えるまでは落とせる。
     fn can_drop_at(&self, row: u32) -> bool {
+        if let Some(ok) = self.edit_can_drop(row) {
+            return ok;
+        }
         let st = self.state();
         let (Some(chain), Some((_, dragged)), Some(history)) = (
             st.drag_chain.as_ref(),
@@ -1707,6 +1878,7 @@ impl HistoryView {
         let focused = self.has_focus();
         let fg = self.color();
         let (accent, on_accent) = self.accent();
+        let base = self.base_color();
         let mut wanted = Vec::new();
         {
             let mut st = self.state();
@@ -1716,6 +1888,9 @@ impl HistoryView {
             };
             self.fonts(st);
             st.clipped.clear();
+            if let Some(edit) = st.edit.as_mut() {
+                edit.chips.clear();
+            }
             let rh = st.metrics.row_height;
             let count = history.layout.nodes().len() as u32;
             let first = ((scroll_y / rh).floor().max(0.0) as u32).min(count);
@@ -1874,23 +2049,33 @@ impl HistoryView {
                 (subject_baseline + subject_line.descent + ROW_GAP + meta_line.ascent).round()
             };
             let baseline = |layout: &pango::Layout| layout.baseline() as f32 / pango::SCALE as f32;
+            let subject_font = st.fonts.as_ref().expect("fonts").subject.clone();
             for row in first..last {
-                let index = row / CHUNK_ROWS;
+                // History の上で編集しているときは、範囲の行に並べ替えた後のコミットを描く（グラフはそのまま）。
+                let (slot, src) = match st.edit.as_ref() {
+                    Some(e) => (
+                        e.slots.get(&row).copied(),
+                        e.source.get(&row).copied().unwrap_or(row),
+                    ),
+                    None => (None, row),
+                };
+                let edit_row = slot.and_then(|i| st.edit.as_ref()?.marks.rows.get(i).cloned());
+                let index = src / CHUNK_ROWS;
                 let Some(chunk) = st.chunks.get(&index).cloned() else {
                     if !st.loading.contains(&index) {
                         wanted.push(index);
                     }
                     continue;
                 };
-                if !st.rows.contains_key(&row) {
-                    let text = self.row_text(st, &history, &chunk, row);
-                    st.rows.insert(row, text);
+                if !st.rows.contains_key(&src) {
+                    let text = self.row_text(st, &history, &chunk, src);
+                    st.rows.insert(src, text);
                 }
                 let selected = focused && (st.selected == Some(row) || st.extra.contains(&row));
                 let top = row as f32 * rh - scroll_y;
                 let text_x = text_x_of(row);
                 let mut x = text_x;
-                let id = history.graph.ids()[row as usize];
+                let id = history.graph.ids()[src as usize];
                 // GitHub の CI の状態（知っていれば）。行の右端に置き、署名の印とは離す。
                 let ci = if st.display.items & items::CI != 0 {
                     st.ci.get(&id).copied()
@@ -1907,7 +2092,7 @@ impl HistoryView {
                     draw_ci(snapshot, ci, row_end - 9.0, top + rh / 2.0, &color);
                 }
                 // 署名があれば、作者・日時の行に検証の結果の色の丸を置く。結果をまだ知らなければ、裏で検証する。
-                let signed = st.rows[&row].signed && st.display.items & items::SIGNATURE != 0;
+                let signed = st.rows[&src].signed && st.display.items & items::SIGNATURE != 0;
                 let mark = if signed {
                     let known = st.signatures.get(&id).copied();
                     if known.is_none() && !st.verifying.contains(&id) {
@@ -1919,7 +2104,7 @@ impl HistoryView {
                 };
                 let dot = if signed { 12.0 } else { 0.0 };
                 let meta_natural = {
-                    let meta = &st.rows[&row].meta;
+                    let meta = &st.rows[&src].meta;
                     meta.set_width(-1);
                     meta.pixel_size().0 as f32
                 };
@@ -1929,11 +2114,28 @@ impl HistoryView {
                 } else {
                     0.0
                 };
-                let subject_end = if compact {
+                let mut subject_end = if compact {
                     text_end - meta_width - 12.0 - dot
                 } else {
                     text_end
                 };
+                // 操作の印（git の言葉）は、件名の場所の右端に（merge の行には出さない）。
+                if let Some(r) = edit_row.as_ref().filter(|r| !r.merge) {
+                    let fonts = st.fonts.as_ref().expect("fonts");
+                    let w = self.draw_edit_chip(
+                        snapshot,
+                        &mut st.label_layouts,
+                        fonts,
+                        r,
+                        subject_end,
+                        top + subject_baseline,
+                        (&fg, &base),
+                    );
+                    if let Some(edit) = st.edit.as_mut() {
+                        edit.chips.insert(row, (subject_end - w, subject_end));
+                    }
+                    subject_end -= w + 8.0;
+                }
                 // 札は件名の場所の 6 割まで（残りは件名に残す）。入りきらない札は「+N」にまとめる。
                 let mut clipped_labels = Vec::new();
                 if st.display.items & items::REFS != 0
@@ -1950,9 +2152,30 @@ impl HistoryView {
                     );
                 }
                 let meta_max = text_end - text_x - dot;
-                let line = &st.rows[&row];
-                line.subject
-                    .set_width(((subject_end - x).max(0.0) * pango::SCALE as f32) as i32);
+                let line = &st.rows[&src];
+                // 直したメッセージは、その件名を描く。取り消す行は線で消す。
+                let custom = edit_row
+                    .as_ref()
+                    .filter(|r| r.subject.is_some() || r.action == Action::Drop)
+                    .map(|r| {
+                        let text = r
+                            .subject
+                            .clone()
+                            .unwrap_or_else(|| line.subject.text().to_string());
+                        let layout = self.layout(&text, &subject_font);
+                        if r.action == Action::Drop {
+                            let attrs = pango::AttrList::new();
+                            attrs.insert(pango::AttrInt::new_strikethrough(true));
+                            layout.set_attributes(Some(&attrs));
+                        }
+                        layout
+                    });
+                let subject = custom.as_ref().unwrap_or(&line.subject);
+                // まとめる行・取り消す行の件名は薄く。
+                let faint = edit_row.as_ref().is_some_and(|r| {
+                    matches!(r.action, Action::Drop | Action::Squash | Action::Fixup)
+                });
+                subject.set_width(((subject_end - x).max(0.0) * pango::SCALE as f32) as i32);
                 // 名前を全部は出していない札は、押すと名前の一覧を出す。
                 if !clipped_labels.is_empty() {
                     st.clipped.insert(row, clipped_labels);
@@ -1964,9 +2187,18 @@ impl HistoryView {
                 snapshot.save();
                 snapshot.translate(&graphene::Point::new(
                     x,
-                    top + subject_baseline - baseline(&line.subject),
+                    top + subject_baseline - baseline(subject),
                 ));
-                snapshot.append_layout(&line.subject, if selected { &white } else { &fg });
+                snapshot.append_layout(
+                    subject,
+                    if selected {
+                        &white
+                    } else if faint {
+                        &secondary
+                    } else {
+                        &fg
+                    },
+                );
                 snapshot.restore();
                 // 1 行なら件名と並べて、ベースラインをそろえる。
                 let meta_x = if compact {
@@ -2010,6 +2242,28 @@ impl HistoryView {
                         graphene::Point::new(cx, cy),
                         11.0,
                     );
+                }
+            }
+            if let Some(edit) = st.edit.as_ref() {
+                // 編集の範囲の外の行は、グラフごと薄くする（上に背景の色を重ねる。macOS 版と同じ）。
+                let veil = gdk::RGBA::new(base.red(), base.green(), base.blue(), 0.62);
+                for row in (first..last).filter(|r| !edit.slots.contains_key(r)) {
+                    let y = row as f32 * rh - scroll_y;
+                    snapshot.append_color(&veil, &graphene::Rect::new(0.0, y, width, rh));
+                }
+                // 範囲のいちばん下の境目（下へ引くと広げ、上へ引くと狭める）。
+                if let Some(row) =
+                    Self::edit_boundary_row(edit).filter(|r| (first..last).contains(r))
+                {
+                    let y = (row + 1) as f32 * rh - scroll_y;
+                    snapshot.append_color(&accent, &graphene::Rect::new(0.0, y - 1.0, width, 2.0));
+                    let grip = gsk::RoundedRect::from_rect(
+                        graphene::Rect::new(6.0, y - 4.0, 30.0, 8.0),
+                        4.0,
+                    );
+                    let path = gsk::PathBuilder::new();
+                    path.add_rounded_rect(&grip);
+                    snapshot.append_fill(&path.to_path(), gsk::FillRule::Winding, &accent);
                 }
             }
         }
@@ -2077,6 +2331,62 @@ impl HistoryView {
             meta,
             signed,
         }
+    }
+
+    /// 編集の操作の印（git の言葉の札）を、右端 `right` に描いて幅を返す。そのままは薄い灰色、取り消すは赤、
+    /// ほかは濃い色、コンフリクトしそうなら橙（macOS 版の `drawEditChip`）。`colors` は文字の色と背景の色。
+    #[allow(clippy::too_many_arguments)]
+    fn draw_edit_chip(
+        &self,
+        snapshot: &gtk::Snapshot,
+        layouts: &mut HashMap<String, pango::Layout>,
+        fonts: &Fonts,
+        row: &EditRow,
+        right: f32,
+        baseline: f32,
+        colors: (&gdk::RGBA, &gdk::RGBA),
+    ) -> f32 {
+        let (fg, base) = colors;
+        let name = row.action.name();
+        // 札の名前の置き場を使う（ブランチの名前と混ざらないよう、頭に印を付ける）。
+        let layout = layouts.entry(format!("\u{1}{name}")).or_insert_with(|| {
+            let layout = self.create_pango_layout(Some(name));
+            layout.set_font_description(Some(&fonts.label));
+            layout
+        });
+        let width = (layout.pixel_size().0 as f32 + 12.0).round();
+        let line = fonts.label_line;
+        let (fill, ink) = if row.conflict {
+            (gdk::RGBA::new(0.96, 0.55, 0.10, 0.85), gdk::RGBA::WHITE)
+        } else {
+            match row.action {
+                Action::Pick => (
+                    gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), 0.08),
+                    gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), fg.alpha() * 0.6),
+                ),
+                Action::Drop => (gdk::RGBA::new(0.90, 0.25, 0.25, 0.8), gdk::RGBA::WHITE),
+                _ => (gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), 0.7), *base),
+            }
+        };
+        let x = right - width;
+        let rect = gsk::RoundedRect::from_rect(
+            graphene::Rect::new(
+                x,
+                (baseline - line.ascent - 2.0).round(),
+                width,
+                (line.height() + 4.0).round(),
+            ),
+            8.0,
+        );
+        let path = gsk::PathBuilder::new();
+        path.add_rounded_rect(&rect);
+        snapshot.append_fill(&path.to_path(), gsk::FillRule::Winding, &fill);
+        snapshot.save();
+        let text_y = baseline - 1.0 - layout.baseline() as f32 / pango::SCALE as f32;
+        snapshot.translate(&graphene::Point::new(x + 6.0, text_y));
+        snapshot.append_layout(layout, &ink);
+        snapshot.restore();
+        width
     }
 
     /// ref のラベルを `x` から並べ、次に件名を置く位置と、名前を全部は出していない札（中央を切った・
@@ -2306,6 +2616,276 @@ impl HistoryView {
     }
 }
 
+/// History の上で編集する（macOS 版の `HistoryViewController` の「History の上で編集する」）。範囲の行に操作の
+/// 印を描き、外の行はグラフごと薄くし、範囲の下に境目を引く。することの選択・並べ替え・範囲の変更は
+/// [`EditEvent`] で `historyedit` に知らせ、決めた結果を [`HistoryView::set_edit`] で受け取って描き直す。
+impl HistoryView {
+    /// 編集の範囲を替える（None で編集を終える）。
+    pub fn set_edit(&self, marks: Option<EditMarks>) {
+        let before = self.shown_ids();
+        let ended = marks.is_none();
+        {
+            let mut st = self.state();
+            match marks {
+                Some(marks) => {
+                    // 前の並び（境目の先）を求めたものは、並びが同じならそのまま使う。
+                    let (line_rows, line_key) = st
+                        .edit
+                        .take()
+                        .map(|e| (e.line_rows, e.line_key))
+                        .unwrap_or_default();
+                    st.edit = Some(Edit {
+                        marks,
+                        slots: HashMap::new(),
+                        source: HashMap::new(),
+                        line_rows,
+                        line_key,
+                        chips: HashMap::new(),
+                        preview: None,
+                        dragging_boundary: false,
+                    });
+                }
+                None => st.edit = None,
+            }
+        }
+        self.rebuild_edit();
+        self.queue_draw();
+        // 並べ替えて描いていた行から元の行に戻ったとき・描くコミットが替わったときは、詳細を選んでいる行に描く
+        // コミットに合わせる（macOS 版と同じ）。
+        if ended || self.shown_ids() != before {
+            self.notify_selection();
+        }
+    }
+
+    /// 編集の間に表で起きたことを `f` に知らせる。
+    pub fn connect_edit(&self, f: impl Fn(EditEvent) + 'static) {
+        self.state().on_edit = Some(Rc::new(f));
+    }
+
+    /// 編集の間の、表の行が範囲の何番目か（範囲の外なら None）。
+    pub fn edit_index(&self, row: u32) -> Option<usize> {
+        self.state().edit.as_ref()?.slots.get(&row).copied()
+    }
+
+    /// 表の行に描いているコミットの行（編集で並べ替えていなければ同じ行）。
+    pub fn shown_row(&self, row: u32) -> u32 {
+        self.state()
+            .edit
+            .as_ref()
+            .and_then(|e| e.source.get(&row).copied())
+            .unwrap_or(row)
+    }
+
+    /// 表の行に描いているコミット。
+    pub fn shown_commit(&self, row: u32) -> Option<Oid> {
+        let shown = self.shown_row(row);
+        let (_, history) = self.current()?;
+        history.graph.ids().get(shown as usize).copied()
+    }
+
+    /// 選んでいる行に描いているコミット（詳細に出すもの）。
+    fn shown_ids(&self) -> Vec<Oid> {
+        let rows = self.shown_selection();
+        let Some((_, history)) = self.current() else {
+            return Vec::new();
+        };
+        let ids = history.graph.ids();
+        rows.iter()
+            .filter_map(|&r| ids.get(r as usize).copied())
+            .collect()
+    }
+
+    /// 範囲の行と描くコミット、境目を引く先を、今の History の行で求め直す。
+    fn rebuild_edit(&self) {
+        let mut st = self.state();
+        let Some(history) = st.history.clone() else {
+            return;
+        };
+        let Some(edit) = st.edit.as_mut() else {
+            return;
+        };
+        let rows_of: Vec<Option<u32>> = edit
+            .marks
+            .rows
+            .iter()
+            .map(|r| history.row_of(&r.oid))
+            .collect();
+        (edit.slots, edit.source) = edit_map(&rows_of);
+        // first-parent の並びは長いことがあるので、History か並びが替わったときだけ引き直す。
+        let key = (history.generation, Rc::as_ptr(&edit.marks.line));
+        if edit.line_key != Some(key) {
+            edit.line_rows = edit
+                .marks
+                .line
+                .iter()
+                .enumerate()
+                .filter_map(|(k, id)| Some((history.row_of(id)?, k)))
+                .collect();
+            edit.line_rows.sort_unstable();
+            edit.line_key = Some(key);
+        }
+    }
+
+    /// 範囲のいちばん下の行（その下に境目を引く）。
+    fn edit_boundary_row(edit: &Edit) -> Option<u32> {
+        let count = edit.preview.unwrap_or(edit.marks.rows.len());
+        // 並びは History の上から順に出る（行の順に並べたものは、並びの順でもある）。
+        edit.line_rows
+            .binary_search_by_key(&count.wrapping_sub(1), |&(_, k)| k)
+            .ok()
+            .map(|i| edit.line_rows[i].0)
+            .or_else(|| edit.slots.keys().max().copied())
+    }
+
+    /// 編集で起きたことを知らせる（知らせた先が表を描き直すので、状態を借りずに呼ぶ）。
+    fn emit_edit(&self, event: EditEvent) {
+        let f = self.state().on_edit.clone();
+        if let Some(f) = f {
+            f(event);
+        }
+    }
+
+    /// 編集の間に (x, y) を押した: 境目ならそれを引き始め、操作の印ならすることの一覧、範囲の行のダブルクリックは
+    /// メッセージを直す。扱ったら true。
+    fn edit_press(&self, x: f32, y: f32, presses: i32) -> bool {
+        let rh = self.row_height();
+        let scroll = self.vadjustment().map_or(0.0, |a| a.value()) as f32;
+        let event = {
+            let mut st = self.state();
+            let Some(edit) = st.edit.as_mut() else {
+                return false;
+            };
+            if let Some(boundary) = Self::edit_boundary_row(edit)
+                && ((boundary + 1) as f32 * rh - scroll - y).abs() <= 4.0
+            {
+                edit.dragging_boundary = true;
+                return true;
+            }
+            let row = ((y + scroll) / rh).floor();
+            if row < 0.0 {
+                return false;
+            }
+            let row = row as u32;
+            let Some(&index) = edit.slots.get(&row) else {
+                return false;
+            };
+            if let Some(&(a, _)) = edit.chips.get(&row).filter(|(a, b)| (*a..=*b).contains(&x)) {
+                EditEvent::Choices(index, a as f64, ((row + 1) as f32 * rh - scroll) as f64)
+            } else if presses == 2 && edit.marks.rows.get(index).is_some_and(|r| !r.merge) {
+                EditEvent::Reword(index)
+            } else {
+                return false;
+            }
+        };
+        self.emit_edit(event);
+        true
+    }
+
+    /// 境目を引いている間: `y` にいちばん近い並びのコミットの下へ（狭められないところへは動かさない）。
+    fn drag_boundary_to(&self, y: f32) {
+        let rh = self.row_height();
+        let scroll = self.vadjustment().map_or(0.0, |a| a.value()) as f32;
+        let mut st = self.state();
+        let Some(edit) = st.edit.as_mut().filter(|e| e.dragging_boundary) else {
+            return;
+        };
+        let Some(k) = nearest_line_row(&edit.line_rows, y + scroll, rh) else {
+            return;
+        };
+        let count = k + 1;
+        if (count >= edit.marks.rows.len() || count >= edit.marks.min_count)
+            && edit.preview != Some(count)
+        {
+            edit.preview = Some(count);
+            drop(st);
+            self.queue_draw();
+        }
+    }
+
+    /// 境目を離した: 範囲を変える（変わらなければ元の境目に戻す）。
+    fn end_boundary_drag(&self) {
+        let count = {
+            let mut st = self.state();
+            let Some(edit) = st.edit.as_mut().filter(|e| e.dragging_boundary) else {
+                return;
+            };
+            edit.dragging_boundary = false;
+            let count = edit.preview.filter(|&c| c != edit.marks.rows.len());
+            if count.is_none() {
+                edit.preview = None;
+            }
+            count
+        };
+        self.queue_draw();
+        // 範囲を変え終えたら（読み終えて `set_edit` が来たら）、引いた境目を消す。
+        if let Some(count) = count {
+            self.emit_edit(EditEvent::Resize(count));
+        }
+    }
+
+    /// 選んだ範囲の行で p・r・s・f・d・e を押した。扱ったら true。
+    fn edit_key(&self, key: gdk::Key) -> bool {
+        let Some(action) = key.to_unicode().and_then(Action::from_key) else {
+            return false;
+        };
+        let index = {
+            let st = self.state();
+            let Some(edit) = st.edit.as_ref() else {
+                return false;
+            };
+            let Some(index) = st.selected.and_then(|r| edit.slots.get(&r).copied()) else {
+                return false;
+            };
+            index
+        };
+        self.emit_edit(EditEvent::Choose(index, action));
+        true
+    }
+
+    /// `row` の行を運べるか（編集の間は、範囲の行で、並べ替えられるときだけ。境目を引いているときは運ばない）。
+    fn edit_can_drag(&self, row: u32) -> bool {
+        let st = self.state();
+        st.edit.as_ref().is_none_or(|e| {
+            !e.dragging_boundary && e.marks.reorderable && e.slots.contains_key(&row)
+        })
+    }
+
+    /// 編集の間に、`row` の上（その行の上の境目）に落とせるか: 範囲の中か、範囲のすぐ下。編集していなければ None。
+    fn edit_can_drop(&self, row: u32) -> Option<bool> {
+        let st = self.state();
+        let edit = st.edit.as_ref()?;
+        let last = edit.slots.keys().max().copied();
+        Some(edit.slots.contains_key(&row) || last.is_some_and(|l| row == l + 1))
+    }
+
+    /// 編集の間に `id` を `row` の上に落とした: 範囲の中で並べ替える。扱ったら true（編集していなければ false）。
+    fn edit_drop(&self, id: Oid, row: u32) -> bool {
+        let event = {
+            let st = self.state();
+            let Some(edit) = st.edit.as_ref() else {
+                return false;
+            };
+            let Some(from) = edit.marks.rows.iter().position(|r| r.oid == id) else {
+                return true;
+            };
+            let above = edit
+                .slots
+                .get(&row)
+                .copied()
+                .unwrap_or(edit.marks.rows.len());
+            EditEvent::Move(from, above)
+        };
+        self.emit_edit(event);
+        true
+    }
+
+    /// テーマの一覧の背景の色（編集の範囲の外を薄くする）。
+    fn base_color(&self) -> gdk::RGBA {
+        let probe = self.state().base_probe.clone();
+        probe.map_or(gdk::RGBA::WHITE, |p| p.color())
+    }
+}
+
 /// 見えている行（上端 `scroll_y`、高さ `height`）のチャンクの、すぐ後とすぐ前のチャンク（History の中のもの）。
 fn neighbor_chunks(scroll_y: f32, height: f32, row_height: f32, rows: u32) -> Vec<u32> {
     if rows == 0 || row_height <= 0.0 {
@@ -2500,6 +3080,30 @@ fn label_colors(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn edit_rows_keep_their_places_and_draw_the_reordered_commits() {
+        // 範囲の 3 つのコミットは表の 0・2・5 行目（間は取り込んだ枝）。並べ替えて、元の 5・0・2 行目の順にした。
+        let (slots, source) = edit_map(&[Some(5), Some(0), Some(2)]);
+        assert_eq!(slots, HashMap::from([(0, 0), (2, 1), (5, 2)]));
+        assert_eq!(source, HashMap::from([(0, 5), (2, 0), (5, 2)]));
+        // 表にないコミットは描かない。
+        let (slots, source) = edit_map(&[Some(3), None]);
+        assert_eq!(slots, HashMap::from([(3, 0)]));
+        assert_eq!(source, HashMap::from([(3, 3)]));
+    }
+
+    #[test]
+    fn the_boundary_moves_to_the_nearest_first_parent_row() {
+        // 並びの 0・1・2 番目が表の 0・3・4 行目（行の高さ 10、下端は 10・40・50）。
+        let rows = [(0, 0), (3, 1), (4, 2)];
+        assert_eq!(nearest_line_row(&rows, 0.0, 10.0), Some(0));
+        assert_eq!(nearest_line_row(&rows, 24.0, 10.0), Some(0));
+        assert_eq!(nearest_line_row(&rows, 26.0, 10.0), Some(1));
+        assert_eq!(nearest_line_row(&rows, 46.0, 10.0), Some(2));
+        assert_eq!(nearest_line_row(&rows, 500.0, 10.0), Some(2));
+        assert_eq!(nearest_line_row(&[], 5.0, 10.0), None);
+    }
     use serde_json::json;
 
     #[test]

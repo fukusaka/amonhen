@@ -466,6 +466,41 @@ impl Search {
         });
     }
 
+    /// 一致したコミットだけを出していれば、元の History に戻して true（History の上で編集する間。終えたら
+    /// [`Search::resume_only_matching`] で戻す）。
+    pub fn pause_only_matching(&self) -> bool {
+        let on = self.inner.only.is_active() && self.inner.filtered.get();
+        if on {
+            self.inner.only.set_active(false);
+        }
+        on
+    }
+
+    /// 一致したコミットだけの表示に戻す（History が替わって一致が消えていれば、欄の問い合わせで探し直す）。
+    pub fn resume_only_matching(&self) {
+        let inner = &self.inner;
+        if inner.entry.text().trim().is_empty() {
+            return;
+        }
+        let generation = inner.base.borrow().as_ref().map(|(_, h)| h.generation);
+        let same = inner
+            .searched
+            .borrow()
+            .as_ref()
+            .is_some_and(|(_, g)| Some(*g) == generation);
+        inner.only.set_sensitive(true);
+        inner.only.set_active(true);
+        if !same {
+            Inner::submit(inner, 0);
+        }
+    }
+
+    /// History で文字を打ったら検索の欄を開くか（History の上で編集する間は、文字のキーを History が使う）。
+    pub fn capture_keys(&self, on: bool) {
+        self.bar
+            .set_key_capture_widget(on.then_some(&self.inner.view));
+    }
+
     /// 一致したコミットだけを出しているか。
     pub fn is_filtered(&self) -> bool {
         self.inner.filtered.get()

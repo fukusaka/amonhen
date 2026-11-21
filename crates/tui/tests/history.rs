@@ -1590,6 +1590,50 @@ fn a_branch_is_made_from_a_stash() {
     assert_eq!(git_out(dir.path(), &["stash", "list"]), "");
 }
 
+/// `O`: 変更のないファイルも、パスを打って（Tab で補って）File History を開く。File の画面の `B` `L` で Blame と
+/// File History を切り替える
+#[test]
+fn open_a_file_by_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    git(dir, BASE, &["init", "-q", "-b", "main"]);
+    std::fs::create_dir(dir.join("src")).unwrap();
+    for (i, file) in ["src/lib.rs", "src/main.rs", "README"].iter().enumerate() {
+        std::fs::write(dir.join(file), "x\n").unwrap();
+        git(dir, BASE + DAY * i as i64, &["add", "."]);
+        git(
+            dir,
+            BASE + DAY * i as i64,
+            &["commit", "-q", "-m", &format!("Add {file}")],
+        );
+    }
+    let last = |text: &str| text.lines().last().unwrap().to_owned();
+    // 1 つに決まるところまで補う（フォルダには `/`）。
+    let folder = amonhen_tui::snapshot(open(dir), 160, 12, clock(), "Osr\t").unwrap();
+    assert!(
+        last(&folder).contains("File History of (Tab completes): src/"),
+        "{folder}"
+    );
+    // いくつもあれば、共通のところまで埋めて候補を出す。
+    let several = amonhen_tui::snapshot(open(dir), 160, 12, clock(), "Osrc/\t").unwrap();
+    println!("{several}");
+    assert!(several.contains("lib.rs  main.rs"), "{several}");
+    let file = amonhen_tui::snapshot(open(dir), 160, 12, clock(), "Osr\tl\t").unwrap();
+    assert!(last(&file).contains("src/lib.rs"), "{file}");
+    // Enter で File History（変更のないファイルでも、そのファイルを変えたコミット）。
+    let history = amonhen_tui::snapshot(open(dir), 160, 12, clock(), "Osr\tl\t\n").unwrap();
+    println!("{history}");
+    assert!(history.contains("Add src/lib.rs"), "{history}");
+    assert!(!history.contains("Add README"), "{history}");
+    // `B` で同じファイルの Blame、`L` で戻る。
+    let blame = amonhen_tui::snapshot(open(dir), 160, 12, clock(), "Osr\tl\t\nB").unwrap();
+    println!("{blame}");
+    assert!(blame.contains("Blame"), "{blame}");
+    let back = amonhen_tui::snapshot(open(dir), 160, 12, clock(), "Osr\tl\t\nBL").unwrap();
+    assert!(back.contains("Add src/lib.rs"), "{back}");
+    assert!(!back.contains("Blame"), "{back}");
+}
+
 /// `3` で Reflog: HEAD が動いた記録が新しい順に並び、選んだ行のコミットの詳細が出る
 #[test]
 fn reflog_lists_where_head_was() {
