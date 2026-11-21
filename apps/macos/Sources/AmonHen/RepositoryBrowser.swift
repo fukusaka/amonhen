@@ -2,14 +2,10 @@ import AmonhenKit
 import AppKit
 import SwiftUI
 
-/// 開いたことのあるリポジトリの一覧（新しく開いた順）。UserDefaults に置く。
+/// 開いたことのあるリポジトリの一覧（新しく開いた順。`RecentFile`）。
 enum RepositoryList {
-    private static let key = "repositories"
-
-    static var paths: [String] {
-        get { UserDefaults.standard.stringArray(forKey: key) ?? [] }
-        set { UserDefaults.standard.set(newValue, forKey: key) }
-    }
+    /// 最近開いた場所（新しい順）。共有の `recent.json`（GTK4 のアプリ・TUI と同じ）。
+    static var paths: [String] { RecentFile.shared.paths }
 
     /// 開いているリポジトリ（次の起動で開き直す）。ウィンドウごとに、タブの順。前の版の記録（ウィンドウごとに
     /// 1 つ）しかなければ、それぞれを 1 つのウィンドウにする。
@@ -23,27 +19,17 @@ enum RepositoryList {
 
     /// 最後に開いた日時（リポジトリの一覧で見渡すため）。この記録を始める前に開いたものは nil。
     static func openedAt(_ path: String) -> Date? {
-        (UserDefaults.standard.dictionary(forKey: openedKey)?[path] as? Double).map { Date(timeIntervalSince1970: $0) }
+        RecentFile.shared.openedAt[path].map { Date(timeIntervalSince1970: $0) }
     }
-
-    private static let openedKey = "repositoryOpenedAt"
 
     /// 開いたリポジトリを先頭に置き、開いた日時を覚える（Settings で付けた `daemon:` は外した形で）。
     static func touch(_ location: String) {
-        let path = RepositoryLocation.listed(location, throughDaemon: Settings.openThroughDaemon)
-        paths = [path] + paths.filter { $0 != path }
-        var opened = UserDefaults.standard.dictionary(forKey: openedKey) ?? [:]
-        opened[path] = Date().timeIntervalSince1970
-        UserDefaults.standard.set(opened, forKey: openedKey)
+        RecentFile.shared.touch(RepositoryLocation.listed(location, throughDaemon: Settings.openThroughDaemon))
     }
 
     /// `daemon:` の付いた同じ場所も外す（一覧には 1 つにまとめて出している。`withoutDaemonTwins`）。
     static func remove(_ path: String) {
-        let twins = RepositoryLocation.withTwin(path)
-        paths = paths.filter { !twins.contains($0) }
-        var opened = UserDefaults.standard.dictionary(forKey: openedKey) ?? [:]
-        for twin in twins { opened[twin] = nil }
-        UserDefaults.standard.set(opened, forKey: openedKey)
+        RecentFile.shared.remove(Set(RepositoryLocation.withTwin(path)))
     }
 
     /// `path` が Git のリポジトリ（作業ツリーの直下に `.git` がある）か。daemon 越しの場所は、つなぐまで
@@ -812,8 +798,8 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
     /// `.git/HEAD` などを読む）は、比べるたびに引かず、先に 1 度ずつ読んでおく（行が多いと数秒止まった）。
     private func sorted(_ list: [String]) -> [String] {
         let bookmarks = Bookmarks.shared
-        let openedAll = UserDefaults.standard.dictionary(forKey: "repositoryOpenedAt") ?? [:]
-        let opened = Dictionary(list.map { ($0, (openedAll[$0] as? Double) ?? -Double.infinity) }, uniquingKeysWith: { a, _ in a })
+        let openedAll = RecentFile.shared.openedAt
+        let opened = Dictionary(list.map { ($0, openedAll[$0] ?? -Double.infinity) }, uniquingKeysWith: { a, _ in a })
         guard style == .page, let sort = table.sortDescriptors.first, let key = sort.key else {
             let favorites = Set(bookmarks.data.items.filter(\.favorite).map(\.path))
             return list.sorted { a, b in
