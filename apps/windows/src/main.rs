@@ -413,6 +413,23 @@ impl Session {
         row as f32 * row_height() - self.scroll_y
     }
 
+    /// History の幅（DIP。まだ描いていなければ 0）。
+    pub fn width(&self) -> f32 {
+        self.surface
+            .as_ref()
+            .map_or(0.0, |s| s.width as f32 / self.scale.max(0.1))
+    }
+
+    /// `row` の行の右端の CI の印の上なら、そのコミットと状態（GTK4 版の `ci_mark`）。
+    pub fn ci_mark_at(&self, row: u32, x: f32) -> Option<(amonhen_model::Oid, github::Ci)> {
+        if render::history_items() & render::items::CI == 0 || !render::on_ci_mark(self.width(), x)
+        {
+            return None;
+        }
+        let id = *self.data.history.as_ref()?.graph.ids().get(row as usize)?;
+        Some((id, *self.data.ci.get(&id)?))
+    }
+
     /// 窓の中の高さ `y`（DIP）にある行。
     pub fn row_at(&self, y: f32) -> Option<u32> {
         let row = ((self.scroll_y + y) / row_height()).floor();

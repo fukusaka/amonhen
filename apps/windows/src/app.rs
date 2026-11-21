@@ -759,6 +759,14 @@ enum Dialog {
         body: String,
         draft: bool,
     },
+    /// CI の印を押したときのコミットのチェック（GTK4 版の `cipopover`、macOS 版の `CIPopover`）。チェックは
+    /// 開いてから読む（読んでいる間は None）。
+    Checks {
+        sha: String,
+        status: crate::github::Ci,
+        web_url: String,
+        checks: Option<Result<Vec<crate::github::CommitCheck>, String>>,
+    },
     /// 確かめてから命令を実行する（Cherry-pick・Revert など。GTK4 版の `sheets::pick` ほか）。
     Confirm {
         repo: Arc<Repository>,
@@ -837,6 +845,9 @@ enum Message {
     Refs(Arc<RefsSnapshot>, Arc<Repository>),
     /// GitHub から読んだ（どのリポジトリのものか）。
     GitHub(String, Box<crate::github::Loaded>),
+    /// CI の印を押した（コミット、状態）と、そのチェックを読んだ。
+    Checks(String, crate::github::Ci),
+    ChecksLoaded(String, Result<Vec<crate::github::CommitCheck>, String>),
     /// Create Pull Request… のダイアログの欄（0 は題、1 は base、2 は本文）と Draft。
     PullRequestField(usize, String),
     PullRequestDraft(bool),
@@ -2044,6 +2055,14 @@ impl Root {
                 if !self.github.avatars.is_empty() {
                     self.github_avatars_loaded = true;
                 }
+                // History の行の CI の印。
+                let ci = self.github.ci.clone().unwrap_or_default();
+                with_history(|h| {
+                    if h.session.data.ci != ci {
+                        h.session.data.ci = ci;
+                        h.session.invalidate();
+                    }
+                });
                 // squash・rebase で取り込んだブランチの印は、ブランチの分け方を読み直して付ける。
                 if merged_changed && let Some(repo) = self.repo.clone() {
                     load_groups(repo, self.merged_pull_requests(), context);
@@ -3366,6 +3385,9 @@ impl Root {
                 ) => perform(context, repo, command, button),
                 (Some(Dialog::FetchFirst { then, .. }), ContentDialogResult::Primary) => {
                     self.save(then, context);
+                }
+                (Some(Dialog::Checks { sha, web_url, .. }), ContentDialogResult::Primary) => {
+                    crate::files::open_url(&format!("{web_url}/commit/{sha}/checks"));
                 }
                 (Some(Dialog::GitHub { action, .. }), ContentDialogResult::Primary) => {
                     self.github_action(action, context);
@@ -4756,6 +4778,14 @@ impl Root {
                     copy_text(text);
                 } else if let Some(url) = key.strip_prefix("open-url:") {
                     crate::files::open_url(url);
+                } else if let Some(sha) = key.strip_prefix("pr-checks:") {
+                    let status = self
+                        .github
+                        .pull_requests
+                        .iter()
+                        .find(|p| p.head_ref_oid.as_deref() == Some(sha))
+                        .map_or(crate::github::Ci::None, |p| p.ci());
+                    self.update(Message::Checks(sha.to_owned(), status), context);
                 } else if let Some(number) = key
                     .strip_prefix("pr-checkout:")
                     .and_then(|n| n.parse::<u64>().ok())
@@ -5416,6 +5446,28 @@ impl Root {
             }
             Message::ConfirmWithDrawing(dialog) => self.dialog = Some(*dialog),
             Message::OpenDialog(dialog) => self.dialog = Some(*dialog),
+            Message::Checks(sha, status) => {
+                let Some((_, github)) = self.github.github.clone() else {
+                    return;
+                };
+                self.dialog = Some(Dialog::Checks {
+                    sha: sha.clone(),
+                    status,
+                    web_url: github.web_url(),
+                    checks: None,
+                });
+                context.spawn_background(move |_| {
+                    let result = crate::github::commit_checks(&github, &sha);
+                    Message::ChecksLoaded(sha, result)
+                });
+            }
+            Message::ChecksLoaded(loaded, result) => {
+                if let Some(Dialog::Checks { sha, checks, .. }) = &mut self.dialog
+                    && *sha == loaded
+                {
+                    *checks = Some(result);
+                }
+            }
             Message::PullRequestField(index, text) => {
                 if let Some(Dialog::CreatePullRequest {
                     title, base, body, ..
@@ -8955,6 +9007,17 @@ impl Root {
                         .text(message.clone())
                         .text_wrapping(TextWrapping::Wrap),
                 ),
+            Some(Dialog::Checks {
+                sha,
+                status,
+                checks,
+                ..
+            }) => dialog
+                .is_open(true)
+                .title(status.label())
+                .primary_button_text(tr!("Open on GitHub"))
+                .close_button_text(tr!("Close"))
+                .content(checks_view(sha, checks.as_ref())),
             Some(Dialog::CreatePullRequest {
                 branch,
                 title,
@@ -11199,6 +11262,15 @@ impl Root {
                 format!("open-url:{}", pr.url),
                 tr!("Open in Browser"),
             ));
+            // CI の印の吹き出し（GTK4 版では行の印を押す。TreeView の行には印だけを押す所がないので項目に）。
+            if pr.ci() != crate::github::Ci::None
+                && let Some(sha) = &pr.head_ref_oid
+            {
+                items.push(MenuItem::item(
+                    format!("pr-checks:{sha}"),
+                    format!("{}…", pr.ci().label()),
+                ));
+            }
             items.push(MenuItem::item(format!("copy:{}", pr.url), tr!("Copy URL")));
             return items;
         }
@@ -16155,6 +16227,108 @@ fn load_recent_messages(repo: Arc<Repository>, context: &ComponentContext<Root>)
     });
 }
 
+/// コミットのチェックの一覧（GTK4 版の `cipopover::fill`）: 失敗を上に、走っているもの、取り消し、成功の順。
+/// 名前はそのログへのリンク。
+fn checks_view(
+    sha: &str,
+    checks: Option<&Result<Vec<crate::github::CommitCheck>, String>>,
+) -> View {
+    use crate::github::{Ci, CommitCheck};
+    let badge = TextBlock::new()
+        .text(sha[..sha.len().min(8)].to_owned())
+        .font_size(12.0)
+        .opacity(0.7);
+    let note = |text: String| {
+        TextBlock::new()
+            .text(text)
+            .font_size(12.0)
+            .opacity(0.7)
+            .text_wrapping(TextWrapping::Wrap)
+    };
+    let (note, rows): (TextBlock, Vec<(String, View)>) = match checks {
+        None => (note(tr!("Loading the checks…")), Vec::new()),
+        Some(Err(e)) => (
+            note(tr!("Couldn’t read the checks: {error}", error = e.clone())),
+            Vec::new(),
+        ),
+        Some(Ok(all)) => {
+            let mut checks = CommitCheck::collapsed(all);
+            let order = |c: &CommitCheck| match c.ci() {
+                Ci::Failing => 0,
+                Ci::Pending => 1,
+                Ci::None if c.is_cancelled() => 2,
+                Ci::None => 4,
+                Ci::Passing => 3,
+            };
+            checks.sort_by(|a, b| (order(a), &a.name).cmp(&(order(b), &b.name)));
+            let text = if checks.is_empty() {
+                tr!("No checks on this commit.")
+            } else {
+                tr!("{count} checks", count = checks.len())
+            };
+            let rows = checks
+                .into_iter()
+                .enumerate()
+                .map(|(i, check)| {
+                    let (mark, color) = match check.ci() {
+                        _ if check.is_cancelled() => ("⊘", None),
+                        Ci::Passing => ("✓", Some(Color::rgb(0x2b, 0x9a, 0x45))),
+                        Ci::Failing => ("✗", Some(Color::rgb(0xc4, 0x2b, 0x1c))),
+                        Ci::Pending => ("●", Some(Color::rgb(0xd9, 0x7a, 0x10))),
+                        Ci::None => ("○", None),
+                    };
+                    let mut mark = TextBlock::new().text(mark).width(16.0);
+                    mark = match color {
+                        Some(c) => mark.foreground(Brush::Solid(c)),
+                        None => mark.opacity(0.6),
+                    };
+                    let name: View = match &check.url {
+                        Some(url) => HyperlinkButton::new()
+                            .on_click({
+                                let url = url.clone();
+                                move || {
+                                    crate::files::open_url(&url);
+                                }
+                            })
+                            .content(TextBlock::new().text(check.name.clone())),
+                        None => TextBlock::new().text(check.name.clone()).into(),
+                    };
+                    let mut result = check.result_label();
+                    if let Some(s) = check.seconds {
+                        result.push_str("  ");
+                        result.push_str(&crate::github::duration(s));
+                    }
+                    let row = Grid::new()
+                        .columns([GridLength::Auto, GridLength::Star(1.0), GridLength::Auto])
+                        .children((
+                            mark.grid_column(0)
+                                .vertical_alignment(VerticalAlignment::Center),
+                            Grid::new().grid_column(1).children((name,)),
+                            TextBlock::new()
+                                .text(result)
+                                .font_size(12.0)
+                                .opacity(0.6)
+                                .margin(Thickness::new(8.0, 0.0, 0.0, 0.0))
+                                .vertical_alignment(VerticalAlignment::Center)
+                                .grid_column(2),
+                        ));
+                    (format!("c{i}"), row)
+                })
+                .collect();
+            (note(text), rows)
+        }
+    };
+    StackPanel::new().spacing(8.0).min_width(420.0).children((
+        badge,
+        note,
+        ScrollViewer::new().max_height(320.0).content(
+            StackPanel::new()
+                .spacing(2.0)
+                .children((View::keyed_fragment(rows),)),
+        ),
+    ))
+}
+
 /// GitHub のダイアログの主のボタンですること。
 #[derive(Clone)]
 enum GitHubAction {
@@ -19091,6 +19265,14 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
             with_history(|h| match target {
                 // 右クリックも、先にその行を選ぶ（メニューはそのコミットのもの）。
                 Target::History => {
+                    // 行の右端の CI の印なら、行を選ばずにチェックの吹き出し（GTK4 版と同じ）。
+                    if left
+                        && let Some(row) = h.session.row_at(position.Y)
+                        && let Some((id, ci)) = h.session.ci_mark_at(row, position.X)
+                    {
+                        h.sender.send(Message::Checks(id.to_string(), ci));
+                        return;
+                    }
                     if let Some(row) = h.session.row_at(position.Y) {
                         // Ctrl+クリックで足す・外す、Shift+クリックで範囲（右クリックは 1 つを選び直さない）。
                         let down = |key: xaml::VirtualKey| {

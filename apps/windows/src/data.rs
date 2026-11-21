@@ -443,6 +443,8 @@ pub struct Data {
     matching_only: bool,
     /// 署名の検証の結果と、検証している・これから検証するコミット（見えている行のものだけ、裏で）。
     pub signatures: HashMap<amonhen_model::Oid, Signature>,
+    /// GitHub の CI の状態（コミットごと。窓が gh で読んで渡す。History の行の右端の印）。
+    pub ci: HashMap<amonhen_model::Oid, crate::github::Ci>,
     verifying: HashSet<amonhen_model::Oid>,
     unverified: Vec<amonhen_model::Oid>,
     /// 今の History の行の、worktree の HEAD の札（ref のラベルの前に出す）と、その元（コミット、札の文字、
@@ -793,6 +795,7 @@ impl Data {
             working_changed: false,
             labels: HashMap::new(),
             signatures: HashMap::new(),
+            ci: HashMap::new(),
             verifying: HashSet::new(),
             unverified: Vec::new(),
             worktree_labels: HashMap::new(),

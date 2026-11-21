@@ -468,7 +468,6 @@ impl PullRequest {
 }
 
 /// 1 つのコミットのチェック 1 つ（GitHub Actions のジョブ、または外部の status）。
-#[allow(dead_code)] // CI の吹き出し・#123 の候補で使う（続くコミット）。
 #[derive(Clone, Debug, PartialEq)]
 pub struct CommitCheck {
     pub name: String,
@@ -479,7 +478,6 @@ pub struct CommitCheck {
     pub seconds: Option<i64>,
 }
 
-#[allow(dead_code)] // CI の吹き出し・#123 の候補で使う（続くコミット）。
 impl CommitCheck {
     /// 吹き出しの行の見た目に使う状態。取り消しは失敗ではない（やり直す前の run や、上書きされた run）。
     pub fn ci(&self) -> Ci {
@@ -695,7 +693,6 @@ fn statuses_from(response: &Value) -> Statuses {
     (statuses, avatars)
 }
 
-#[allow(dead_code)] // CI の吹き出し・#123 の候補で使う（続くコミット）。
 /// ISO 8601 の UTC の時刻（`2026-11-21T03:04:05Z`）を UNIX 時間に。
 fn unix_time(text: &str) -> Option<i64> {
     let (date, time) = text.trim_end_matches('Z').split_once('T')?;
@@ -714,7 +711,6 @@ fn unix_time(text: &str) -> Option<i64> {
     Some(days * 86_400 + (h * 3600.0 + min * 60.0 + s) as i64)
 }
 
-#[allow(dead_code)] // CI の吹き出し・#123 の候補で使う（続くコミット）。
 /// `sha` のコミットのチェック（Actions の check run と、外部の status）。印を押したときに読む。
 pub fn commit_checks(repo: &GitHubRepository, sha: &str) -> Result<Vec<CommitCheck>, String> {
     let base = format!("repos/{}/{}/commits/{sha}", repo.owner, repo.name);
@@ -959,8 +955,26 @@ pub fn issue_candidates(target: &PullRequestTarget) -> Vec<(u64, String)> {
     items
 }
 
+/// かかった時間の短い形（GTK4 版の `cipopover::duration`）。
+pub fn duration(seconds: i64) -> String {
+    if seconds < 60 {
+        format!("{seconds}s")
+    } else if seconds < 3600 {
+        format!("{}m {}s", seconds / 60, seconds % 60)
+    } else {
+        format!("{}h {}m", seconds / 3600, seconds % 3600 / 60)
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn formats_durations() {
+        assert_eq!(super::duration(42), "42s");
+        assert_eq!(super::duration(125), "2m 5s");
+        assert_eq!(super::duration(3720), "1h 2m");
+    }
+
     use super::*;
 
     #[test]
