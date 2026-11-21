@@ -765,6 +765,15 @@ enum Dialog {
         body: String,
         draft: bool,
     },
+    /// ブランチの様子（macOS 版の `BranchStatusPopover`、GTK4 版の `refmarks::branch`）。ブランチの右クリックの
+    /// 先頭の行から。`actions` は次にできること（メニューの項目のキーと見出し。初めの 2 つを主・副のボタンに）、
+    /// `forecast` は既定のブランチに取り込んだときのコンフリクトの見込み（`predictMerge` の答え。調べないなら
+    /// 出さず、調べている間は None）。
+    BranchStatus {
+        name: String,
+        actions: Vec<(String, String)>,
+        forecast: Option<Option<Value>>,
+    },
     /// CI の印を押したときのコミットのチェック（GTK4 版の `cipopover`、macOS 版の `CIPopover`）。チェックは
     /// 開いてから読む（読んでいる間は None）。
     Checks {
@@ -857,6 +866,8 @@ enum Message {
     GitHubRepos(Vec<(String, String)>),
     PickGitHubRepo(Option<usize>),
     PickIssue(u64),
+    /// ブランチの様子の、取り込んだときのコンフリクトの見込みを読んだ（ブランチ、`predictMerge` の答え）。
+    BranchForecast(String, Value),
     /// CI の印を押した（コミット、状態）と、そのチェックを読んだ。
     Checks(String, crate::github::Ci),
     ChecksLoaded(String, Result<Vec<crate::github::CommitCheck>, String>),
@@ -3434,6 +3445,16 @@ impl Root {
                 (Some(Dialog::FetchFirst { then, .. }), ContentDialogResult::Primary) => {
                     self.save(then, context);
                 }
+                (
+                    Some(Dialog::BranchStatus { actions, .. }),
+                    result @ (ContentDialogResult::Primary | ContentDialogResult::Secondary),
+                ) => {
+                    let at = usize::from(result == ContentDialogResult::Secondary);
+                    if let Some((key, _)) = actions.get(at).cloned() {
+                        // 閉じた同じ更新では次のダイアログを開けないので、知らせで続ける。
+                        context.spawn_background(move |_| Message::HistoryMenu(key));
+                    }
+                }
                 (Some(Dialog::Checks { sha, web_url, .. }), ContentDialogResult::Primary) => {
                     crate::files::open_url(&format!("{web_url}/commit/{sha}/checks"));
                 }
@@ -4852,6 +4873,12 @@ impl Root {
                     with_history(|h| h.session.data.toggle_merge(id));
                 } else if let Some(text) = key.strip_prefix("copy:") {
                     copy_text(text);
+                } else if let Some(name) = key.strip_prefix("branch-status:") {
+                    self.open_branch_status(name, context);
+                } else if let Some(id) = key.strip_prefix("command:") {
+                    self.update(Message::Command(id.to_owned()), context);
+                } else if let Some(name) = key.strip_prefix("create-pr:") {
+                    self.create_pull_request(name.to_owned(), false, context);
                 } else if let Some(url) = key.strip_prefix("open-url:") {
                     crate::files::open_url(url);
                 } else if let Some(sha) = key.strip_prefix("pr-checks:") {
@@ -5522,6 +5549,13 @@ impl Root {
             }
             Message::ConfirmWithDrawing(dialog) => self.dialog = Some(*dialog),
             Message::OpenDialog(dialog) => self.dialog = Some(*dialog),
+            Message::BranchForecast(branch, reply) => {
+                if let Some(Dialog::BranchStatus { name, forecast, .. }) = &mut self.dialog
+                    && *name == branch
+                {
+                    *forecast = Some(Some(reply));
+                }
+            }
             Message::Checks(sha, status) => {
                 let Some((_, github)) = self.github.github.clone() else {
                     return;
@@ -9099,6 +9133,26 @@ impl Root {
                         .text(message.clone())
                         .text_wrapping(TextWrapping::Wrap),
                 ),
+            Some(Dialog::BranchStatus {
+                name,
+                actions,
+                forecast,
+            }) => {
+                let (title, view) = self.branch_status_view(name, forecast.as_ref(), context);
+                let dialog = dialog
+                    .is_open(true)
+                    .title(title)
+                    .close_button_text(tr!("Close"));
+                let dialog = match actions.first() {
+                    Some((_, title)) => dialog.primary_button_text(title.clone()),
+                    None => dialog,
+                };
+                let dialog = match actions.get(1) {
+                    Some((_, title)) => dialog.secondary_button_text(title.clone()),
+                    None => dialog,
+                };
+                dialog.content(view)
+            }
             Some(Dialog::Checks {
                 sha,
                 status,
@@ -11433,6 +11487,17 @@ impl Root {
                 .and_then(|r| r.refs.head_branch.as_deref())
                 == Some(name);
         let mut items = Vec::new();
+        // ブランチの様子（GTK4 版・macOS 版は行の右端の印を押す。木の行には印だけを押す所がないので、メニューの
+        // 先頭に今の様子を書き、押すと詳しく出す。タグのリモートの様子と同じ）。
+        if entry.kind == RefKind::Local
+            && let Some(state) = self.branch_state(name)
+        {
+            items.push(MenuItem::item(
+                format!("branch-status:{name}"),
+                format!("{} {}…", state.mark, state.title),
+            ));
+            items.push(MenuItem::separator("-status"));
+        }
         let copy = match entry.kind {
             RefKind::Local | RefKind::Remote => tr!("Copy Branch Name"),
             RefKind::Tag => tr!("Copy Tag Name"),
@@ -13649,6 +13714,510 @@ impl Root {
             let items = crate::github::issue_candidates(&target);
             Message::IssueCandidates(body, at, text, items)
         });
+    }
+
+    /// ローカルブランチ `name` の、いちばん大事な様子（GTK4 版の `refmarks::branch` の見出し）。言うことがなければ
+    /// None（メニューに行を出さない）。
+    fn branch_state(&self, name: &str) -> Option<BranchState> {
+        use amonhen_model::RefKind;
+        let item = self
+            .refs
+            .as_ref()?
+            .refs
+            .entries
+            .iter()
+            .find(|e| e.kind == RefKind::Local && e.name == name)?;
+        let fact = self.groups.as_ref().and_then(|g| g.branches.get(name));
+        let pull_request = fact.and_then(|f| f.pull_request);
+        let merged = fact.is_some_and(|f| f.merged && !f.at_base) || pull_request.is_some();
+        let base = self
+            .groups
+            .as_ref()
+            .and_then(|g| g.base.clone())
+            .unwrap_or_else(|| "main".to_owned());
+        let upstream = item.detail.clone().unwrap_or_default();
+        let is_head = self.refs.as_ref()?.refs.head_branch.as_deref() == Some(name);
+        // ほかの worktree が checkout している（名前・パス・メインか）。
+        let editing_dir = self.repo.as_ref().and_then(|r| r.paths().workdir);
+        let other = self.worktrees.iter().find(|w| {
+            w.branch.as_deref() == Some(name)
+                && !editing_dir
+                    .as_ref()
+                    .is_some_and(|d| same_path(&d.display().to_string(), &w.path))
+        });
+        let (green, orange) = (Color::rgb(0x2b, 0x9a, 0x45), Color::rgb(0xd9, 0x7a, 0x10));
+        let state = |mark: &'static str, color: Option<Color>, title: String, text: String| {
+            Some(BranchState {
+                mark,
+                color,
+                title,
+                text,
+            })
+        };
+        if let Some(number) = pull_request {
+            return state(
+                "⇲",
+                Some(green),
+                tr!("Merged by pull request #{number}", number = number),
+                tr!(
+                    "Pull request #{number} was merged into {base} by squash or rebase with this branch’s tip as its head (read from GitHub). Its commits were rewritten on the way, so they aren’t in the local history, but their changes are. It is safe to delete.",
+                    number = number,
+                    base = &base
+                ),
+            );
+        }
+        match (merged, item.gone) {
+            (true, true) => {
+                return state(
+                    "⇲",
+                    Some(green),
+                    tr!("Merged and cleaned up on the remote"),
+                    tr!(
+                        "All of this branch’s commits are in {base}, and its upstream {upstream} has been deleted on the remote (typically after the pull request was merged). It is safe to delete.",
+                        base = &base,
+                        upstream = &upstream
+                    ),
+                );
+            }
+            (true, false) => {
+                return state(
+                    "⇲",
+                    Some(green),
+                    tr!("Merged into {base}", base = &base),
+                    tr!(
+                        "All of this branch’s commits are reachable from {base} (found in the local history, not from GitHub). A branch merged by squash or rebase on GitHub does not count, because its commits were rewritten.",
+                        base = &base
+                    ),
+                );
+            }
+            (false, true) => {
+                return state(
+                    "☁",
+                    Some(orange),
+                    tr!("Upstream is gone"),
+                    tr!(
+                        "This branch tracks {upstream}, which no longer exists on the remote. Its commits are not in {base} in the local history: the pull request was merged by squash or rebase, or it was closed without merging. Check before deleting.",
+                        upstream = &upstream,
+                        base = &base
+                    ),
+                );
+            }
+            _ => {}
+        }
+        if let Some(w) = other {
+            let folder = std::path::Path::new(&w.path)
+                .file_name()
+                .map_or(w.path.clone(), |n| n.to_string_lossy().into_owned());
+            return state(
+                if w.main { "⌂" } else { "⑂" },
+                (!w.main).then_some(green),
+                tr!("Checked out in the worktree “{name}”", name = folder),
+                tr!(
+                    "Git lets a branch be checked out in only one worktree, so it can’t be checked out here. Open that worktree to work on it (its folder: {path}).",
+                    path = &w.path
+                ),
+            );
+        }
+        if item.ahead > 0 || item.behind > 0 {
+            let title = if item.ahead > 0 && item.behind > 0 {
+                tr!("Diverged from {upstream}", upstream = &upstream)
+            } else if item.ahead > 0 {
+                tr!("Ahead of {upstream}", upstream = &upstream)
+            } else {
+                tr!("Behind {upstream}", upstream = &upstream)
+            };
+            let text = if item.ahead > 0 && item.behind > 0 {
+                tr!(
+                    "{ahead} commits here are not on the upstream, and {behind} commits there are not here. Pull brings theirs in (merge or rebase), then Push sends yours.",
+                    ahead = item.ahead,
+                    behind = item.behind
+                )
+            } else if item.ahead > 0 {
+                tr!(
+                    "{count} commits here are not on the upstream yet. Push sends them.",
+                    count = item.ahead
+                )
+            } else {
+                tr!(
+                    "{count} commits on the upstream are not here yet. Pull brings them in.",
+                    count = item.behind
+                )
+            };
+            return state("⇅", None, title, text);
+        }
+        if is_head && self.worktrees.len() > 1 {
+            return state(
+                "✎",
+                Some(Color::rgb(0x00, 0x67, 0xc0)),
+                tr!("Current branch, being edited"),
+                tr!(
+                    "Working Copy shows and commits to this branch’s worktree. Other worktrees are listed under Working Copy."
+                ),
+            );
+        }
+        // 開いているプルリクエストがあれば、それを様子として出す。
+        let pr = self
+            .github
+            .pull_requests
+            .iter()
+            .find(|p| p.head_ref_name == name)?;
+        state(
+            "⎇",
+            None,
+            format!("#{} {}", pr.number, pr.title),
+            String::new(),
+        )
+    }
+
+    /// ブランチの様子のダイアログを開く（次にできることを決め、既定のブランチに取り込んだときのコンフリクトを
+    /// 裏で調べる）。
+    fn open_branch_status(&mut self, name: &str, context: &ComponentContext<Self>) {
+        use amonhen_model::RefKind;
+        let Some(item) = self.refs.as_ref().and_then(|r| {
+            r.refs
+                .entries
+                .iter()
+                .find(|e| e.kind == RefKind::Local && e.name == name)
+                .cloned()
+        }) else {
+            return;
+        };
+        let fact = self
+            .groups
+            .as_ref()
+            .and_then(|g| g.branches.get(name))
+            .cloned();
+        let merged = fact
+            .as_ref()
+            .is_some_and(|f| (f.merged && !f.at_base) || f.pull_request.is_some());
+        let base = self.groups.as_ref().and_then(|g| g.base.clone());
+        let is_head = self
+            .refs
+            .as_ref()
+            .and_then(|r| r.refs.head_branch.as_deref())
+            == Some(name);
+        let editing_dir = self.repo.as_ref().and_then(|r| r.paths().workdir);
+        let other = self.worktrees.iter().find(|w| {
+            w.branch.as_deref() == Some(name)
+                && !editing_dir
+                    .as_ref()
+                    .is_some_and(|d| same_path(&d.display().to_string(), &w.path))
+        });
+        // 次にできること（GTK4 版と同じ並び）。開いているプルリクエストは、ボタンでなくカードの題から開く
+        // （ボタンの幅では「プルリクエスト #n を開く」が切れる）。今のブランチが上流と離れていれば、まず Push・Pull。
+        let mut actions: Vec<(String, String)> = Vec::new();
+        if is_head && item.detail.is_some() && !item.gone {
+            if item.behind > 0 {
+                actions.push(("command:pull".to_owned(), "Pull…".to_owned()));
+            } else if item.ahead > 0 {
+                actions.push(("command:push".to_owned(), "Push…".to_owned()));
+            }
+        }
+        if let Some(w) = other {
+            actions.push((format!("edit-worktree:{}", w.path), tr!("Open Worktree")));
+        } else if !is_head {
+            if merged {
+                actions.push((format!("delete-branch:{name}"), tr!("Delete Branch")));
+            }
+            if !fact.as_ref().is_some_and(|f| f.archived) {
+                actions.push((format!("archive:{name}"), tr!("Archive")));
+            }
+        }
+        let pr = self
+            .github
+            .pull_requests
+            .iter()
+            .find(|p| p.head_ref_name == name);
+        let fork = self.github.target.as_ref().is_some_and(|t| t.is_fork());
+        let local_base = self.groups.as_ref().and_then(|g| g.local_base());
+        if pr.is_none()
+            && self.github.github.is_some()
+            && crate::github::available()
+            && (fork || local_base != Some(name))
+            && !merged
+            && item.detail.is_some()
+            && !item.gone
+            && item.ahead == 0
+        {
+            actions.push((format!("create-pr:{name}"), tr!("Create Pull Request…")));
+        }
+        // 既定のブランチに取り込んだらコンフリクトするか。既定のブランチが分からない・取り込み済み・既定のブランチ
+        // そのものなら調べない（macOS 版と同じ）。
+        let check = base.as_ref().is_some_and(|b| {
+            !merged
+                && !fact.as_ref().is_some_and(|f| f.at_base)
+                && b != name
+                && !b.ends_with(&format!("/{name}"))
+        });
+        let forecast = if check {
+            if let (Some(repo), Some(base)) = (self.repo.clone(), base) {
+                let branch = name.to_owned();
+                context.spawn_background(move |_| {
+                    let query = json!({ "op": "predictMerge", "ours": base, "theirs": [&branch] });
+                    let reply: Value = serde_json::from_str(&repo.run_json(&query.to_string()))
+                        .unwrap_or_default();
+                    Message::BranchForecast(branch, reply)
+                });
+            }
+            Some(None)
+        } else {
+            None
+        };
+        self.dialog = Some(Dialog::BranchStatus {
+            name: name.to_owned(),
+            actions,
+            forecast,
+        });
+    }
+
+    /// ブランチの様子のダイアログの見出しと中身: 色の付いた印と説明、ブランチ・先端・最後のコミット・上流・土台・
+    /// 取り込み先・取り込んだときの見込みの表、プルリクエストのカード（CI とレビュー。CI はチェックの一覧へ）。
+    fn branch_status_view(
+        &self,
+        name: &str,
+        forecast: Option<&Option<Value>>,
+        context: &ViewContext<Self>,
+    ) -> (String, View) {
+        use amonhen_model::RefKind;
+        let state = self.branch_state(name).unwrap_or(BranchState {
+            mark: "⎇",
+            color: None,
+            title: name.to_owned(),
+            text: String::new(),
+        });
+        let item = self.refs.as_ref().and_then(|r| {
+            r.refs
+                .entries
+                .iter()
+                .find(|e| e.kind == RefKind::Local && e.name == name)
+                .cloned()
+        });
+        let fact = self.groups.as_ref().and_then(|g| g.branches.get(name));
+        let merged = fact.is_some_and(|f| (f.merged && !f.at_base) || f.pull_request.is_some());
+        let base = self
+            .groups
+            .as_ref()
+            .and_then(|g| g.base.clone())
+            .unwrap_or_else(|| "main".to_owned());
+        let (green, orange) = (Color::rgb(0x2b, 0x9a, 0x45), Color::rgb(0xd9, 0x7a, 0x10));
+        // 見出しの印（色の付いた丸の中の記号）と説明。
+        let badge_color = state.color.unwrap_or(Color::rgb(0x80, 0x80, 0x80));
+        let badge = Border::new()
+            .width(36.0)
+            .height(36.0)
+            .corner_radius(18.0)
+            .background(Brush::Solid(Color::argb(
+                0x2a,
+                badge_color.r,
+                badge_color.g,
+                badge_color.b,
+            )))
+            .vertical_alignment(VerticalAlignment::Top)
+            .content(
+                TextBlock::new()
+                    .text(state.mark)
+                    .font_size(18.0)
+                    .foreground(Brush::Solid(badge_color))
+                    .horizontal_alignment(HorizontalAlignment::Center)
+                    .vertical_alignment(VerticalAlignment::Center),
+            );
+        let head: View = if state.text.is_empty() {
+            Grid::new().children((badge,))
+        } else {
+            Grid::new()
+                .columns([GridLength::Auto, GridLength::Star(1.0)])
+                .column_spacing(12.0)
+                .children((
+                    Grid::new().grid_column(0).children((badge,)),
+                    TextBlock::new()
+                        .text(state.text.clone())
+                        .font_size(12.0)
+                        .opacity(0.75)
+                        .text_wrapping(TextWrapping::Wrap)
+                        .vertical_alignment(VerticalAlignment::Center)
+                        .grid_column(1),
+                ))
+        };
+        // 表（見出しと値、値の色）。
+        let mut rows: Vec<(String, String, Option<Color>, f64)> =
+            vec![(tr!("Branch"), name.to_owned(), None, 1.0)];
+        if let Some(target) = item.as_ref().and_then(|i| i.target) {
+            let hex = target.to_string();
+            rows.push((tr!("Tip"), hex[..hex.len().min(12)].to_owned(), None, 1.0));
+        }
+        if let Some(time) = fact.and_then(|f| f.time) {
+            rows.push((tr!("Last commit"), crate::render::date(time), None, 1.0));
+        }
+        if let Some(item) = item.as_ref().filter(|i| i.detail.is_some()) {
+            let upstream = item.detail.clone().unwrap_or_default();
+            let text = if item.gone {
+                tr!("{upstream} (deleted on the remote)", upstream = &upstream)
+            } else {
+                let mut parts = Vec::new();
+                if item.ahead > 0 {
+                    parts.push(tr!("{count} ahead", count = item.ahead));
+                }
+                if item.behind > 0 {
+                    parts.push(tr!("{count} behind", count = item.behind));
+                }
+                if parts.is_empty() {
+                    upstream
+                } else {
+                    format!("{upstream} ({})", parts.join(&tr!(", ")))
+                }
+            };
+            rows.push((tr!("Upstream"), text, item.gone.then_some(orange), 1.0));
+        }
+        if let Some(parent) = fact.and_then(|f| f.parent.clone()) {
+            rows.push((tr!("Built on"), parent, None, 1.0));
+        }
+        if merged {
+            rows.push((tr!("Merged into"), base.clone(), Some(green), 1.0));
+        }
+        if let Some(forecast) = forecast {
+            let (text, color, opacity) = match forecast {
+                None => (tr!("Checking for conflicts…"), None, 0.55),
+                Some(reply) => match crate::forecast::merge_text(reply, false) {
+                    Some((text, true)) => (text, Some(orange), 1.0),
+                    Some((text, false)) => (text, None, 1.0),
+                    None => (tr!("Couldn’t check for conflicts."), None, 0.55),
+                },
+            };
+            rows.push((
+                tr!("Merging into {base}", base = &base),
+                text,
+                color,
+                opacity,
+            ));
+        }
+        let grid_rows: Vec<(String, View)> = rows
+            .into_iter()
+            .enumerate()
+            .map(|(i, (label, value, color, opacity))| {
+                let value = TextBlock::new()
+                    .text(value)
+                    .font_size(13.0)
+                    .opacity(opacity)
+                    .text_wrapping(TextWrapping::Wrap)
+                    .is_text_selection_enabled(true);
+                let value = match color {
+                    Some(c) => value.foreground(Brush::Solid(c)),
+                    None => value,
+                };
+                (
+                    format!("{i}"),
+                    Grid::new()
+                        .columns([GridLength::Pixel(120.0), GridLength::Star(1.0)])
+                        .column_spacing(10.0)
+                        .children((
+                            TextBlock::new()
+                                .text(label)
+                                .font_size(12.0)
+                                .opacity(0.6)
+                                .horizontal_alignment(HorizontalAlignment::Right)
+                                .text_trimming(TextTrimming::CharacterEllipsis)
+                                .grid_column(0),
+                            value.grid_column(1),
+                        )),
+                )
+            })
+            .collect();
+        // 開いているプルリクエストのカード（番号と題、draft、CI とレビュー。CI はチェックの一覧へ）。
+        let card: View = match self
+            .github
+            .pull_requests
+            .iter()
+            .find(|p| p.head_ref_name == name)
+        {
+            None => View::empty(),
+            Some(pr) => {
+                use crate::github::Ci;
+                let ci = pr.ci();
+                let ci_color = match ci {
+                    Ci::Passing => Some(green),
+                    Ci::Failing => Some(Color::rgb(0xc4, 0x2b, 0x1c)),
+                    Ci::Pending => Some(orange),
+                    Ci::None => None,
+                };
+                let mut title = format!("#{} {}", pr.number, pr.title);
+                if pr.is_draft {
+                    title.push(' ');
+                    title.push_str(&tr!("(draft)"));
+                }
+                let ci_text = TextBlock::new()
+                    .text(format!("{} {}", ci.mark(), ci.label()).trim().to_owned())
+                    .font_size(12.0);
+                let ci_text = match ci_color {
+                    Some(c) => ci_text.foreground(Brush::Solid(c)),
+                    None => ci_text.opacity(0.6),
+                };
+                let ci_view: View = match (&pr.head_ref_oid, ci) {
+                    (Some(sha), status) if status != Ci::None => {
+                        let sha = sha.clone();
+                        HyperlinkButton::new()
+                            .on_click(
+                                context.callback(move |()| Message::Checks(sha.clone(), status)),
+                            )
+                            .content(ci_text)
+                    }
+                    _ => ci_text.into(),
+                };
+                let review = pr.review_label();
+                Border::new()
+                    .padding(Thickness::new(12.0, 10.0, 12.0, 10.0))
+                    .corner_radius(6.0)
+                    .background(Brush::Solid(Color::argb(0x14, 0x80, 0x80, 0x80)))
+                    .content(
+                        StackPanel::new().spacing(4.0).children((
+                            TextBlock::new()
+                                .text(tr!("Pull Request"))
+                                .font_size(11.0)
+                                .opacity(0.6),
+                            // 題を押すとブラウザで開く（GTK4 版の Open Pull Request #n）。
+                            HyperlinkButton::new()
+                                .on_click({
+                                    let url = pr.url.clone();
+                                    move || {
+                                        crate::files::open_url(&url);
+                                    }
+                                })
+                                .content(
+                                    TextBlock::new()
+                                        .text(title)
+                                        .font_weight(FontWeight::SEMI_BOLD)
+                                        .text_wrapping(TextWrapping::Wrap),
+                                ),
+                            TextBlock::new()
+                                .text(format!(
+                                    "{} · {} → {}",
+                                    pr.author, pr.head_ref_name, pr.base_ref_name
+                                ))
+                                .font_size(12.0)
+                                .opacity(0.6)
+                                .text_trimming(TextTrimming::CharacterEllipsis),
+                            StackPanel::new()
+                                .orientation(Orientation::Horizontal)
+                                .spacing(12.0)
+                                .children((
+                                    ci_view,
+                                    TextBlock::new()
+                                        .text(review)
+                                        .font_size(12.0)
+                                        .opacity(0.7)
+                                        .vertical_alignment(VerticalAlignment::Center),
+                                )),
+                        )),
+                    )
+            }
+        };
+        let view = StackPanel::new().spacing(14.0).width(460.0).children((
+            head,
+            StackPanel::new()
+                .spacing(5.0)
+                .children((View::keyed_fragment(grid_rows),)),
+            card,
+        ));
+        (state.title, view)
     }
 
     /// プルリクエスト `number` のブランチの、サイドバーの項目のキー（リモートブランチ、なければローカルブランチ）。
@@ -16494,7 +17063,7 @@ fn checks_view(
                                 .text(result)
                                 .font_size(12.0)
                                 .opacity(0.6)
-                                .margin(Thickness::new(8.0, 0.0, 0.0, 0.0))
+                                .margin(Thickness::new(8.0, 0.0, 18.0, 0.0))
                                 .vertical_alignment(VerticalAlignment::Center)
                                 .grid_column(2),
                         ));
@@ -16539,6 +17108,14 @@ fn put_issue(text: &str, at: usize, number: u64) -> Option<String> {
     out.push_str(&format!("#{number}"));
     out.extend(&chars[at..]);
     Some(out)
+}
+
+/// ブランチの様子の見出し（印・色・題と説明）。
+struct BranchState {
+    mark: &'static str,
+    color: Option<Color>,
+    title: String,
+    text: String,
 }
 
 /// GitHub のダイアログの主のボタンですること。
