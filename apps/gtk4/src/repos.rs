@@ -1,5 +1,6 @@
 //! リポジトリを開く周り: 最近開いたもの（File > Open Recent）と、File > Clone…（macOS 版の `Clone.swift`）。
-//! 最後に開いた日時（Repositories の一覧の Opened）と、開いている窓（次の起動で開き直す）も覚える。
+//! 最後に開いた日時（Repositories の一覧の Opened）と、開いている窓（次の起動で開き直す）も覚える。最近開いたものと
+//! 開いた日時は共有の `recent.json`（`amonhen_model::recent`。macOS 版・TUI と同じ）に置く。
 
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -10,18 +11,50 @@ use gtk::{gio, glib};
 
 use crate::sheets::{Response, Sheet, row};
 
+/// 前の版が最近開いたものを置いた設定のキー（`recent.json` がなければ一度だけ写す）。
 const RECENT: &str = "recentRepositories";
 const CLONE_FOLDER: &str = "cloneFolder";
 /// File > Open Recent に並べる数（記録はすべて残す。macOS 版と同じ）。
 const MENU_ITEMS: usize = 15;
-/// 最後に開いた日時（場所 → UNIX 時間。macOS 版の `repositoryOpenedAt`）。
+/// 前の版が最後に開いた日時（場所 → UNIX 時間）を置いた設定のキー。
 const OPENED: &str = "repositoryOpenedAt";
 
 /// 最近開いたリポジトリ（新しい順。手元のパス・`daemon:`・`ssh://` の場所）。
 pub fn recent() -> Vec<String> {
-    crate::settings::string(RECENT)
-        .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
-        .unwrap_or_default()
+    recent_entries().into_iter().map(|r| r.path).collect()
+}
+
+fn recent_entries() -> Vec<amonhen_model::recent::Recent> {
+    import_old();
+    amonhen_model::recent::read().unwrap_or_else(|e| {
+        eprintln!("{e}");
+        Vec::new()
+    })
+}
+
+/// `recent.json` がまだなければ、前の版の記録（設定の `recentRepositories`・`repositoryOpenedAt`）を写す（前のものは
+/// 残す）。起動ごとに一度だけ確かめる。
+fn import_old() {
+    thread_local!(static DONE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) });
+    if DONE.replace(true) {
+        return;
+    }
+    let old: Vec<String> = crate::settings::string(RECENT)
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+    let opened: serde_json::Map<String, serde_json::Value> = crate::settings::string(OPENED)
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+    let entries: Vec<_> = old
+        .into_iter()
+        .map(|path| amonhen_model::recent::Recent {
+            opened_at: opened.get(&path).and_then(serde_json::Value::as_f64),
+            path,
+        })
+        .collect();
+    if let Err(e) = amonhen_model::recent::import(&entries) {
+        eprintln!("{e}");
+    }
 }
 
 /// 追加した worktree のフォルダーなら、そのメインのリポジトリのフォルダー（macOS 版の
@@ -154,47 +187,54 @@ pub fn record(location: &Path) {
         &standardize(location).to_string_lossy(),
         crate::settings::bool(crate::settings::OPEN_THROUGH_DAEMON),
     );
-    let mut list = recent();
-    list.retain(|l| *l != text);
-    list.insert(0, text.clone());
-    crate::settings::set_string(RECENT, &serde_json::json!(list).to_string());
-    let mut opened = opened_all();
-    opened.insert(
-        text.clone(),
-        serde_json::json!(glib::real_time() / 1_000_000),
-    );
-    crate::settings::set_string(OPENED, &serde_json::Value::Object(opened).to_string());
+    import_old();
+    if let Err(e) = amonhen_model::recent::touch(&text) {
+        eprintln!("{e}");
+    }
+    recent_changed();
     if crate::settings::bool(crate::settings::AUTO_BOOKMARK) {
         crate::bookmarks::register(&text);
     }
 }
 
-fn opened_all() -> serde_json::Map<String, serde_json::Value> {
-    crate::settings::string(OPENED)
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
-}
-
 /// 開いた日時のすべて（場所 → UNIX 時間）。たくさんの場所の日時を引くとき用（一度だけ読む）。
 pub fn opened_all_at() -> std::collections::HashMap<String, i64> {
-    opened_all()
-        .into_iter()
-        .filter_map(|(k, v)| v.as_f64().map(|t| (k, t as i64)))
-        .collect()
+    let mut all = std::collections::HashMap::new();
+    for r in recent_entries() {
+        if let Some(t) = r.opened_at {
+            all.entry(r.path).or_insert(t as i64);
+        }
+    }
+    all
 }
 
 /// 最近開いたもの・開いた日時から外す（Repositories の「一覧から外す」）。
 /// `daemon:` の付いた同じ場所も外す（一覧には 1 つにまとめて出している。`without_daemon_twins`）。
 pub fn forget(location: &str) {
     let twins = with_twin(location);
-    let mut list = recent();
-    list.retain(|l| !twins.contains(l));
-    crate::settings::set_string(RECENT, &serde_json::json!(list).to_string());
-    let mut opened = opened_all();
-    let before = opened.len();
-    opened.retain(|k, _| !twins.contains(k));
-    if opened.len() != before {
-        crate::settings::set_string(OPENED, &serde_json::Value::Object(opened).to_string());
+    import_old();
+    let twins: Vec<&str> = twins.iter().map(String::as_str).collect();
+    if let Err(e) = amonhen_model::recent::forget(&twins) {
+        eprintln!("{e}");
+    }
+    recent_changed();
+}
+
+thread_local! {
+    /// File > Open Recent のメニュー（最近のものが変わったら作り直す）。
+    static MENUS: std::cell::RefCell<Vec<glib::WeakRef<gio::Menu>>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// 最近のものが変わった: Open Recent のメニューを作り直す。
+fn recent_changed() {
+    let menus: Vec<gio::Menu> = MENUS.with(|m| {
+        let mut m = m.borrow_mut();
+        m.retain(|w| w.upgrade().is_some());
+        m.iter().filter_map(glib::WeakRef::upgrade).collect()
+    });
+    for menu in menus {
+        menu.remove_all();
+        fill(&menu);
     }
 }
 
@@ -234,16 +274,8 @@ pub fn inside_repository(dir: &Path) -> bool {
 pub fn recent_menu() -> gio::Menu {
     let menu = gio::Menu::new();
     fill(&menu);
-    // メニューがある間だけ見る（閉じたタブ・Repositories のページのメニューは手放す）。
-    let weak = menu.downgrade();
-    crate::settings::connect_changed_while(&menu, move |key| {
-        if key == RECENT
-            && let Some(m) = weak.upgrade()
-        {
-            m.remove_all();
-            fill(&m);
-        }
-    });
+    // メニューがある間だけ作り直す（閉じたタブ・Repositories のページのメニューは手放す）。
+    MENUS.with(|m| m.borrow_mut().push(menu.downgrade()));
     menu
 }
 
