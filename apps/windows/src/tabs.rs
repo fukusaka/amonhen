@@ -149,6 +149,70 @@ pub fn windows() -> Vec<(u64, Option<Tab>)> {
     out
 }
 
+/// タブ `id` のある窓。
+pub fn window_of_tab(id: u64) -> Option<u64> {
+    if tabs().iter().any(|t| t.id == id) {
+        return Some(focused());
+    }
+    WINDOWS.with(|w| {
+        w.borrow()
+            .iter()
+            .find(|(_, w)| w.tabs.iter().any(|t| t.id == id))
+            .map(|(id, _)| *id)
+    })
+}
+
+/// タブ `id` を窓から取り出す（ほかの窓へ移すため）。取り出した窓を描き直す。タブと、取り出した窓と、その窓に
+/// タブが残っていないかを返す。
+pub fn take_tab(id: u64) -> Option<(Tab, u64, bool)> {
+    let window = window_of_tab(id)?;
+    let take = |tabs: &mut Vec<Tab>, active: &mut usize| {
+        let index = tabs.iter().position(|t| t.id == id)?;
+        let tab = tabs.remove(index);
+        if index < *active || *active >= tabs.len() {
+            *active = active.saturating_sub(1);
+        }
+        Some((tab, tabs.is_empty()))
+    };
+    let taken = if window == focused() {
+        // 前の窓なら、前のタブが変わる前に、窓の入力の部品を取っておく。
+        crate::app::leave_front();
+        let mut active = active();
+        let taken = TABS.with(|t| take(&mut t.borrow_mut(), &mut active));
+        ACTIVE.with(|a| a.set(active));
+        taken
+    } else {
+        WINDOWS.with(|w| {
+            let mut w = w.borrow_mut();
+            let w = w.get_mut(&window)?;
+            take(&mut w.tabs, &mut w.active)
+        })
+    }?;
+    refresh_window(window);
+    Some((taken.0, window, taken.1))
+}
+
+/// タブを窓 `window` の終わりに入れて、前のタブにする。
+pub fn insert_tab(window: u64, tab: Tab) {
+    if window == focused() {
+        crate::app::leave_front();
+        let index = TABS.with(|t| {
+            let mut t = t.borrow_mut();
+            t.push(tab);
+            t.len() - 1
+        });
+        ACTIVE.with(|a| a.set(index));
+    } else {
+        WINDOWS.with(|w| {
+            if let Some(w) = w.borrow_mut().get_mut(&window) {
+                w.tabs.push(tab);
+                w.active = w.tabs.len() - 1;
+            }
+        });
+    }
+    refresh_window(window);
+}
+
 /// 窓 `window` を描き直す。
 fn refresh_window(window: u64) {
     if window == focused() {

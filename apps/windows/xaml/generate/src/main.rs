@@ -63,7 +63,13 @@ const FILTER: &[&str] = &[
     "Microsoft.UI.Xaml.Controls.ITreeViewNodeStatics::{}",
     // タブを窓の外へ引き出したら、そのリポジトリを新しい窓で開く（GTK4 版・macOS 版のタブの引き出し）。
     "Microsoft.UI.Xaml.Controls.TabView",
-    "Microsoft.UI.Xaml.Controls.ITabView::{TabDroppedOutside,remove_TabDroppedOutside,put_CanDragTabs}",
+    "Microsoft.UI.Xaml.Controls.ITabView::{TabDroppedOutside,remove_TabDroppedOutside,put_CanDragTabs,\
+     TabDragStarting,remove_TabDragStarting,TabStripDragOver,remove_TabStripDragOver,TabStripDrop,\
+     remove_TabStripDrop,put_AllowDropTabs,TabDragCompleted,remove_TabDragCompleted}",
+    "Microsoft.UI.Xaml.Controls.TabViewTabDragStartingEventArgs",
+    // タブを別の窓のタブの並びへ引いて移す（引き始めたタブを覚えておく。窓はどれも同じプロセス）。
+    "Microsoft.UI.Xaml.Controls.ITabViewTabDragStartingEventArgs::{Tab}",
+    "Microsoft.UI.Xaml.Controls.TabViewTabDragCompletedEventArgs",
     "Microsoft.UI.Xaml.Controls.ITabViewFactory::{}",
     "Microsoft.UI.Xaml.Controls.ITabViewStatics::{}",
     "Microsoft.UI.Xaml.Controls.TabViewTabDroppedOutsideEventArgs",

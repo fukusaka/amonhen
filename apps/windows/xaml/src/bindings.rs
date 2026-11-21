@@ -8425,6 +8425,47 @@ pub struct ITabView_Vtbl {
     CanDragTabs: usize,
     pub SetCanDragTabs:
         unsafe extern "system" fn(*mut core::ffi::c_void, bool) -> windows_core::HRESULT,
+    CanReorderTabs: usize,
+    SetCanReorderTabs: usize,
+    AllowDropTabs: usize,
+    pub SetAllowDropTabs:
+        unsafe extern "system" fn(*mut core::ffi::c_void, bool) -> windows_core::HRESULT,
+    SelectedIndex: usize,
+    SetSelectedIndex: usize,
+    SelectedItem: usize,
+    SetSelectedItem: usize,
+    ContainerFromItem: usize,
+    ContainerFromIndex: usize,
+    SelectionChanged: usize,
+    RemoveSelectionChanged: usize,
+    pub TabDragStarting: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *mut core::ffi::c_void,
+        *mut i64,
+    ) -> windows_core::HRESULT,
+    pub RemoveTabDragStarting:
+        unsafe extern "system" fn(*mut core::ffi::c_void, i64) -> windows_core::HRESULT,
+    pub TabDragCompleted: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *mut core::ffi::c_void,
+        *mut i64,
+    ) -> windows_core::HRESULT,
+    pub RemoveTabDragCompleted:
+        unsafe extern "system" fn(*mut core::ffi::c_void, i64) -> windows_core::HRESULT,
+    pub TabStripDragOver: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *mut core::ffi::c_void,
+        *mut i64,
+    ) -> windows_core::HRESULT,
+    pub RemoveTabStripDragOver:
+        unsafe extern "system" fn(*mut core::ffi::c_void, i64) -> windows_core::HRESULT,
+    pub TabStripDrop: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *mut core::ffi::c_void,
+        *mut i64,
+    ) -> windows_core::HRESULT,
+    pub RemoveTabStripDrop:
+        unsafe extern "system" fn(*mut core::ffi::c_void, i64) -> windows_core::HRESULT,
 }
 windows_core::imp::define_interface!(
     ITabViewFactory,
@@ -8517,6 +8558,46 @@ impl windows_core::RuntimeType for ITabViewStatics2 {
 #[repr(C)]
 pub struct ITabViewStatics2_Vtbl {
     pub base__: windows_core::IInspectable_Vtbl,
+}
+windows_core::imp::define_interface!(
+    ITabViewTabDragCompletedEventArgs,
+    ITabViewTabDragCompletedEventArgs_Vtbl,
+    0x791fc623_c8f6_5102_81bd_1869cde82284
+);
+impl windows_core::RuntimeType for ITabViewTabDragCompletedEventArgs {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+    const NAME: windows_core::imp::ConstBuffer = windows_core::imp::ConstBuffer::from_slice(
+        b"Microsoft.UI.Xaml.Controls.ITabViewTabDragCompletedEventArgs",
+    );
+}
+#[repr(C)]
+pub struct ITabViewTabDragCompletedEventArgs_Vtbl {
+    pub base__: windows_core::IInspectable_Vtbl,
+}
+windows_core::imp::define_interface!(
+    ITabViewTabDragStartingEventArgs,
+    ITabViewTabDragStartingEventArgs_Vtbl,
+    0x97682812_1a7b_53fd_8b4e_c2f70d2ad250
+);
+impl windows_core::RuntimeType for ITabViewTabDragStartingEventArgs {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+    const NAME: windows_core::imp::ConstBuffer = windows_core::imp::ConstBuffer::from_slice(
+        b"Microsoft.UI.Xaml.Controls.ITabViewTabDragStartingEventArgs",
+    );
+}
+#[repr(C)]
+pub struct ITabViewTabDragStartingEventArgs_Vtbl {
+    pub base__: windows_core::IInspectable_Vtbl,
+    Cancel: usize,
+    SetCancel: usize,
+    Data: usize,
+    Item: usize,
+    pub Tab: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *mut *mut core::ffi::c_void,
+    ) -> windows_core::HRESULT,
 }
 windows_core::imp::define_interface!(
     ITabViewTabDroppedOutsideEventArgs,
@@ -14804,6 +14885,123 @@ impl TabView {
             .ok()
         }
     }
+    pub fn SetAllowDropTabs(&self, value: bool) -> windows_core::Result<()> {
+        unsafe {
+            (windows_core::Interface::vtable(self).SetAllowDropTabs)(
+                windows_core::Interface::as_raw(self),
+                value,
+            )
+            .ok()
+        }
+    }
+    pub fn TabDragStarting<F>(&self, handler: F) -> windows_core::Result<windows_core::EventRevoker>
+    where
+        F: Fn(windows_core::Ref<Self>, windows_core::Ref<TabViewTabDragStartingEventArgs>)
+            + Send
+            + 'static,
+    {
+        let handler =
+            <TypedEventHandler<Self, TabViewTabDragStartingEventArgs>>::new(move |a0, a1| {
+                handler(a0, a1);
+                Ok(())
+            });
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            let token__ = (windows_core::Interface::vtable(self).TabDragStarting)(
+                windows_core::Interface::as_raw(self),
+                windows_core::Interface::as_raw(&handler),
+                &mut result__,
+            )
+            .map(|| result__)?;
+            Ok(windows_core::EventRevoker::new(
+                self.clone(),
+                token__,
+                windows_core::Interface::vtable(self).RemoveTabDragStarting,
+            ))
+        }
+    }
+    pub fn TabDragCompleted<F>(
+        &self,
+        handler: F,
+    ) -> windows_core::Result<windows_core::EventRevoker>
+    where
+        F: Fn(windows_core::Ref<Self>, windows_core::Ref<TabViewTabDragCompletedEventArgs>)
+            + Send
+            + 'static,
+    {
+        let handler =
+            <TypedEventHandler<Self, TabViewTabDragCompletedEventArgs>>::new(move |a0, a1| {
+                handler(a0, a1);
+                Ok(())
+            });
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            let token__ = (windows_core::Interface::vtable(self).TabDragCompleted)(
+                windows_core::Interface::as_raw(self),
+                windows_core::Interface::as_raw(&handler),
+                &mut result__,
+            )
+            .map(|| result__)?;
+            Ok(windows_core::EventRevoker::new(
+                self.clone(),
+                token__,
+                windows_core::Interface::vtable(self).RemoveTabDragCompleted,
+            ))
+        }
+    }
+    pub fn TabStripDragOver<F>(
+        &self,
+        handler: F,
+    ) -> windows_core::Result<windows_core::EventRevoker>
+    where
+        F: Fn(windows_core::Ref<windows_core::IInspectable>, windows_core::Ref<DragEventArgs>)
+            + Send
+            + 'static,
+    {
+        let handler = <DragEventHandler>::new(move |a0, a1| {
+            handler(a0, a1);
+            Ok(())
+        });
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            let token__ = (windows_core::Interface::vtable(self).TabStripDragOver)(
+                windows_core::Interface::as_raw(self),
+                windows_core::Interface::as_raw(&handler),
+                &mut result__,
+            )
+            .map(|| result__)?;
+            Ok(windows_core::EventRevoker::new(
+                self.clone(),
+                token__,
+                windows_core::Interface::vtable(self).RemoveTabStripDragOver,
+            ))
+        }
+    }
+    pub fn TabStripDrop<F>(&self, handler: F) -> windows_core::Result<windows_core::EventRevoker>
+    where
+        F: Fn(windows_core::Ref<windows_core::IInspectable>, windows_core::Ref<DragEventArgs>)
+            + Send
+            + 'static,
+    {
+        let handler = <DragEventHandler>::new(move |a0, a1| {
+            handler(a0, a1);
+            Ok(())
+        });
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            let token__ = (windows_core::Interface::vtable(self).TabStripDrop)(
+                windows_core::Interface::as_raw(self),
+                windows_core::Interface::as_raw(&handler),
+                &mut result__,
+            )
+            .map(|| result__)?;
+            Ok(windows_core::EventRevoker::new(
+                self.clone(),
+                token__,
+                windows_core::Interface::vtable(self).RemoveTabStripDrop,
+            ))
+        }
+    }
     pub fn SetAllowDrop(&self, value: bool) -> windows_core::Result<()> {
         let this = &windows_core::Interface::cast::<IUIElement>(self)?;
         unsafe {
@@ -15898,6 +16096,62 @@ impl windows_core::RuntimeName for TabViewItem {
 }
 unsafe impl Send for TabViewItem {}
 unsafe impl Sync for TabViewItem {}
+#[repr(transparent)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TabViewTabDragCompletedEventArgs(windows_core::IUnknown);
+windows_core::imp::interface_hierarchy!(
+    TabViewTabDragCompletedEventArgs,
+    windows_core::IUnknown,
+    windows_core::IInspectable
+);
+impl windows_core::RuntimeType for TabViewTabDragCompletedEventArgs {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_class::<Self, ITabViewTabDragCompletedEventArgs>();
+}
+unsafe impl windows_core::Interface for TabViewTabDragCompletedEventArgs {
+    type Vtable = <ITabViewTabDragCompletedEventArgs as windows_core::Interface>::Vtable;
+    const IID: windows_core::GUID =
+        <ITabViewTabDragCompletedEventArgs as windows_core::Interface>::IID;
+}
+impl windows_core::RuntimeName for TabViewTabDragCompletedEventArgs {
+    const NAME: &'static str = "Microsoft.UI.Xaml.Controls.TabViewTabDragCompletedEventArgs";
+}
+unsafe impl Send for TabViewTabDragCompletedEventArgs {}
+unsafe impl Sync for TabViewTabDragCompletedEventArgs {}
+#[repr(transparent)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TabViewTabDragStartingEventArgs(windows_core::IUnknown);
+windows_core::imp::interface_hierarchy!(
+    TabViewTabDragStartingEventArgs,
+    windows_core::IUnknown,
+    windows_core::IInspectable
+);
+impl TabViewTabDragStartingEventArgs {
+    pub fn Tab(&self) -> windows_core::Result<TabViewItem> {
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(self).Tab)(
+                windows_core::Interface::as_raw(self),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+}
+impl windows_core::RuntimeType for TabViewTabDragStartingEventArgs {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_class::<Self, ITabViewTabDragStartingEventArgs>();
+}
+unsafe impl windows_core::Interface for TabViewTabDragStartingEventArgs {
+    type Vtable = <ITabViewTabDragStartingEventArgs as windows_core::Interface>::Vtable;
+    const IID: windows_core::GUID =
+        <ITabViewTabDragStartingEventArgs as windows_core::Interface>::IID;
+}
+impl windows_core::RuntimeName for TabViewTabDragStartingEventArgs {
+    const NAME: &'static str = "Microsoft.UI.Xaml.Controls.TabViewTabDragStartingEventArgs";
+}
+unsafe impl Send for TabViewTabDragStartingEventArgs {}
+unsafe impl Sync for TabViewTabDragStartingEventArgs {}
 #[repr(transparent)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TabViewTabDroppedOutsideEventArgs(windows_core::IUnknown);
