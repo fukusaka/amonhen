@@ -236,6 +236,54 @@ impl QuickOpen {
     }
 }
 
+/// Working Copy の `F`: 今のブランチの最近のコミットの件名から選び、メッセージの欄を `fixup! 件名` か
+/// `squash! 件名` にする（アプリの Commit ▾ の Fixup Commit For・Squash Commit For。後で
+/// `rebase -i --autosquash` がまとめる）。
+struct FixupPick {
+    query: String,
+    selected: usize,
+    /// squash!（本文を残す）にする。Tab で切り替える。
+    squash: bool,
+    /// 件名（新しい順）。読んでいる間は None。
+    subjects: Option<Vec<String>>,
+}
+
+impl FixupPick {
+    fn shown(&self) -> Vec<&String> {
+        let words: Vec<String> = self
+            .query
+            .split_whitespace()
+            .map(str::to_lowercase)
+            .collect();
+        (self.subjects.iter().flatten())
+            .filter(|s| {
+                let text = s.to_lowercase();
+                words.iter().all(|w| text.contains(w.as_str()))
+            })
+            .collect()
+    }
+}
+
+/// `fixup!`・`squash!` の先にできる件名（重ねない。空・同じものは 1 つに。アプリと同じく 15 まで）。
+fn fixup_subjects(messages: &[String]) -> Vec<String> {
+    let mut subjects: Vec<String> = Vec::new();
+    for message in messages {
+        let subject = message.lines().next().unwrap_or("").trim().to_owned();
+        if subject.is_empty()
+            || subject.starts_with("fixup! ")
+            || subject.starts_with("squash! ")
+            || subjects.contains(&subject)
+        {
+            continue;
+        }
+        subjects.push(subject);
+        if subjects.len() == 15 {
+            break;
+        }
+    }
+    subjects
+}
+
 /// 操作ログ（アプリの Activity の Operation Log）: Undo の記録を新しい順に。選んだところまで戻せる。
 struct OperationLog {
     /// 名前・時刻（UNIX 時刻の秒）。
@@ -294,6 +342,7 @@ pub struct App {
     /// Quick Open で選んだリポジトリの場所（TUI を閉じて、そこで開き直す）。
     open_location: Option<String>,
     quick_open: Option<QuickOpen>,
+    fixup_pick: Option<FixupPick>,
     /// いくつかから選んで行う操作: 尋ねる文と、キー・名前・頼む中身の組。
     choices: Option<(String, Vec<Choice>)>,
     /// マウスを取り込んでいる（切ると、端末で文字を選べる）。
@@ -465,6 +514,7 @@ impl App {
             open_worktree: None,
             open_location: None,
             quick_open: None,
+            fixup_pick: None,
             search: None,
             search_done: 0.0,
             theme: Theme::detect(),
@@ -576,6 +626,7 @@ impl App {
         let damage = std::mem::take(&mut self.damage);
         let over = self.help
             || self.quick_open.is_some()
+            || self.fixup_pick.is_some()
             || self.palette.is_some()
             || self.operation_log.is_some()
             || self.edit_mode.is_some();
@@ -1218,6 +1269,36 @@ impl App {
             return;
         }
         // Quick Open: 打った語で絞る。Enter で選んだリポジトリを開き直す、Esc でやめる。
+        // Fixup・Squash Commit For: 打った語で絞り、Enter で欄に入れる。Tab で fixup! と squash! を切り替える。
+        if let Some(mut pick) = self.fixup_pick.take() {
+            self.dirty = true;
+            match key.code {
+                KeyCode::Esc => return,
+                KeyCode::Enter => {
+                    if let Some(subject) = pick.shown().get(pick.selected) {
+                        self.use_fixup(subject.as_str(), pick.squash);
+                    }
+                    return;
+                }
+                KeyCode::Tab => pick.squash = !pick.squash,
+                KeyCode::Down => pick.selected += 1,
+                KeyCode::Char('n') if control => pick.selected += 1,
+                KeyCode::Up => pick.selected = pick.selected.saturating_sub(1),
+                KeyCode::Char('p') if control => pick.selected = pick.selected.saturating_sub(1),
+                KeyCode::Backspace => {
+                    pick.query.pop();
+                    pick.selected = 0;
+                }
+                KeyCode::Char(ch) if !control => {
+                    pick.query.push(ch);
+                    pick.selected = 0;
+                }
+                _ => {}
+            }
+            pick.selected = pick.selected.min(pick.shown().len().saturating_sub(1));
+            self.fixup_pick = Some(pick);
+            return;
+        }
         if let Some(mut quick) = self.quick_open.take() {
             self.dirty = true;
             match key.code {
@@ -1855,6 +1936,9 @@ impl App {
                 return;
             }
             Err(error) => {
+                if name == "recentMessages" {
+                    self.fixup_pick = None;
+                }
                 // 長い出力は、最初の行だけ。
                 let line = error.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
                 self.error = Some(line.trim().to_owned());
@@ -2137,6 +2221,17 @@ impl App {
             "resetPreview" => {
                 let info = reply["info"].clone();
                 self.ask_reset_with(&info);
+                return;
+            }
+            "recentMessages" => {
+                if let Some(pick) = &mut self.fixup_pick {
+                    let messages: Vec<String> =
+                        (reply["messages"].as_array().into_iter().flatten())
+                            .filter_map(|m| m.as_str().map(str::to_owned))
+                            .collect();
+                    pick.subjects = Some(fixup_subjects(&messages));
+                    self.dirty = true;
+                }
                 return;
             }
             "editRows" => {
@@ -3562,6 +3657,12 @@ impl App {
                     tr!("Write the commit message (Ctrl-e there opens git's editor)"),
                 ),
                 ("a", tr!("Amend the last commit")),
+                (
+                    "F",
+                    tr!(
+                        "Fixup or Squash Commit For: a recent commit's subject as fixup! or squash!"
+                    ),
+                ),
                 ("Ctrl-s", tr!("Commit")),
                 ("Ctrl-p", tr!("Commit, then push")),
             ],
@@ -3689,6 +3790,21 @@ impl App {
         }
     }
 
+    /// 欄を `fixup! 件名`（件名だけ）か `squash! 件名`（書いていた本文は残す）にして、欄に移る。amend はやめる。
+    fn use_fixup(&mut self, subject: &str, squash: bool) {
+        let text = match squash {
+            true => {
+                let old = self.changes.message.text();
+                let body = old.split_once('\n').map_or("", |(_, b)| b);
+                format!("squash! {subject}\n{body}")
+            }
+            false => format!("fixup! {subject}"),
+        };
+        self.changes.message.set_text(text.trim_end_matches('\n'));
+        self.changes.amend = false;
+        self.focus = Focus::Message;
+    }
+
     /// 欄のメッセージでコミットを作る。できないときは、理由を出す。
     fn commit(&mut self) {
         if self.committing {
@@ -3795,6 +3911,17 @@ impl App {
             }
             KeyCode::Char('c') if self.changes.has_message_field() => {
                 self.focus = Focus::Message;
+                true
+            }
+            // Fixup・Squash Commit For: 最近のコミットから選んで、欄を fixup! にする。
+            KeyCode::Char('F') if self.changes.has_message_field() => {
+                self.fixup_pick = Some(FixupPick {
+                    query: String::new(),
+                    selected: 0,
+                    squash: false,
+                    subjects: None,
+                });
+                self.send(Request::RecentMessages);
                 true
             }
             // 直前のコミットを作り直す。欄が空なら、そのメッセージを入れる。
@@ -4753,68 +4880,36 @@ impl App {
         }
         if let Some(quick) = &self.quick_open {
             let shown = quick.shown();
-            let name_width = shown.iter().map(|b| b.name.width()).max().unwrap_or(0);
-            let path_width = shown.iter().map(|b| b.path.width()).max().unwrap_or(0);
-            let width = ((name_width + path_width + 9).max(44) as u16).min(area.width);
-            let height = (shown.len().max(1) as u16 + 3).min(area.height);
-            let at = Rect::new(
-                area.x + (area.width - width) / 2,
-                area.y + (area.height - height) / 2,
-                width,
-                height,
+            let rows: Vec<(&str, &str, &str)> = shown
+                .iter()
+                .map(|c| {
+                    let mark = if c.favorite { "★ " } else { "  " };
+                    (mark, c.name.as_str(), c.path.as_str())
+                })
+                .collect();
+            cursor = choice_list(
+                buf,
+                area,
+                &tr!(" Quick Open "),
+                &quick.query,
+                &rows,
+                quick.selected,
+                &tr!("No repository matches"),
             );
-            frame_box(buf, area, at, &tr!(" Quick Open "));
-            let inner = usize::from(width.saturating_sub(4));
-            if height >= 3 {
-                let x = buf
-                    .set_stringn(at.x + 2, at.y + 1, "> ", inner, Style::new())
-                    .0;
-                let x = buf
-                    .set_stringn(
-                        x,
-                        at.y + 1,
-                        &quick.query,
-                        inner.saturating_sub(2),
-                        Style::new(),
-                    )
-                    .0;
-                cursor = Some((x.min(at.right().saturating_sub(2)), at.y + 1));
-            }
-            let rows = usize::from(height.saturating_sub(3));
-            let top = (quick.selected + 1).saturating_sub(rows);
-            if shown.is_empty() && rows > 0 {
-                let none = tr!("No repository matches");
-                buf.set_stringn(
-                    at.x + 2,
-                    at.y + 2,
-                    none,
-                    inner,
-                    Style::new().fg(Color::Indexed(244)),
-                );
-            }
-            for (y, i) in (at.y + 2..at.bottom().saturating_sub(1)).zip(top..shown.len()) {
-                let selected = i == quick.selected;
-                let style = match selected {
-                    true => Style::new().add_modifier(Modifier::REVERSED),
-                    false => Style::new(),
-                };
-                if selected {
-                    for x in at.x + 1..at.right() - 1 {
-                        buf[(x, y)].set_style(style);
-                    }
-                }
-                let mark = if shown[i].favorite { "★ " } else { "  " };
-                let x = buf.set_stringn(at.x + 2, y, mark, inner, style).0;
-                let x = buf
-                    .set_stringn(x, y, &shown[i].name, inner.saturating_sub(2), style)
-                    .0;
-                let path_style = match selected {
-                    true => style,
-                    false => Style::new().fg(Color::Indexed(244)),
-                };
-                let room = usize::from(at.right().saturating_sub(x + 4));
-                buf.set_stringn(x + 2, y, &shown[i].path, room, path_style);
-            }
+        }
+        if let Some(pick) = &self.fixup_pick {
+            let shown = pick.shown();
+            let rows: Vec<(&str, &str, &str)> =
+                shown.iter().map(|s| ("", s.as_str(), "")).collect();
+            let title = match pick.squash {
+                true => tr!(" Squash Commit For (Tab: fixup!) "),
+                false => tr!(" Fixup Commit For (Tab: squash!) "),
+            };
+            let none = match &pick.subjects {
+                None => tr!("Reading the recent commits…"),
+                Some(_) => tr!("No commit matches"),
+            };
+            cursor = choice_list(buf, area, &title, &pick.query, &rows, pick.selected, &none);
         }
         if let Some(palette) = &self.palette {
             let entries = self.palette_entries(&palette.query);
@@ -4904,6 +4999,77 @@ fn local_path(file: &str) -> String {
 }
 
 /// 画面に重ねる枠を描く（中は空に。題は上の線に）。
+/// 打った語で絞る一覧（Quick Open など）を、画面の中ほどに重ねる。行は（印、名前、薄く添える文）。打つ欄の
+/// カーソルの位置を返す。
+fn choice_list(
+    buf: &mut Buffer,
+    area: Rect,
+    title: &str,
+    query: &str,
+    rows: &[(&str, &str, &str)],
+    selected: usize,
+    none: &str,
+) -> Option<(u16, u16)> {
+    let mark_width = rows.iter().map(|r| r.0.width()).max().unwrap_or(0);
+    let name_width = rows.iter().map(|r| r.1.width()).max().unwrap_or(0);
+    let dim_width = rows.iter().map(|r| r.2.width()).max().unwrap_or(0);
+    let wanted = (mark_width + name_width + dim_width + 7)
+        .max(title.width() + 4)
+        .max(none.width() + 4)
+        .max(44);
+    let width = (wanted as u16).min(area.width);
+    let height = (rows.len().max(1) as u16 + 3).min(area.height);
+    let at = Rect::new(
+        area.x + (area.width - width) / 2,
+        area.y + (area.height - height) / 2,
+        width,
+        height,
+    );
+    frame_box(buf, area, at, title);
+    let inner = usize::from(width.saturating_sub(4));
+    let mut cursor = None;
+    if height >= 3 {
+        let x = buf
+            .set_stringn(at.x + 2, at.y + 1, "> ", inner, Style::new())
+            .0;
+        let x = buf
+            .set_stringn(x, at.y + 1, query, inner.saturating_sub(2), Style::new())
+            .0;
+        cursor = Some((x.min(at.right().saturating_sub(2)), at.y + 1));
+    }
+    let shown = usize::from(height.saturating_sub(3));
+    let top = (selected + 1).saturating_sub(shown);
+    if rows.is_empty() && shown > 0 {
+        let dim = Style::new().fg(Color::Indexed(244));
+        buf.set_stringn(at.x + 2, at.y + 2, none, inner, dim);
+    }
+    for (y, i) in (at.y + 2..at.bottom().saturating_sub(1)).zip(top..rows.len()) {
+        let is_selected = i == selected;
+        let style = match is_selected {
+            true => Style::new().add_modifier(Modifier::REVERSED),
+            false => Style::new(),
+        };
+        if is_selected {
+            for x in at.x + 1..at.right() - 1 {
+                buf[(x, y)].set_style(style);
+            }
+        }
+        let (mark, name, dim) = rows[i];
+        let x = buf.set_stringn(at.x + 2, y, mark, inner, style).0;
+        let room = usize::from(at.right().saturating_sub(x + 2));
+        let x = buf.set_stringn(x, y, name, room, style).0;
+        if !dim.is_empty() {
+            let dim_style = match is_selected {
+                true => style,
+                false => Style::new().fg(Color::Indexed(244)),
+            };
+            let room = usize::from(at.right().saturating_sub(x + 4));
+            buf.set_stringn(x + 2, y, dim, room, dim_style);
+        }
+    }
+    cursor
+}
+
 fn frame_box(buf: &mut Buffer, area: Rect, at: Rect, title: &str) {
     for y in at.y..at.bottom() {
         // 枠の左端が全角の文字の後ろ半分に重なるなら、その文字を消す。

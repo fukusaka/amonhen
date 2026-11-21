@@ -231,7 +231,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Insert Conventional types, Co-authored-by, Signed-off-by | ✓ | ✓ | ✓ | ✓ | n/a | — |  |
 | `#issue` completion | ✓ | ✓ | ✓ | — | n/a | — | Windows: Listed under the summary (a WinUI text box gives no caret position to open a menu at); choosing one puts #number in place of the #. |
 | Commit and Push, Amend | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: `commit -m … --amend`.<br>TUI: `Ctrl-p` commits and then asks to push; `a` turns amend on. |
-| Fixup / Squash Commit For | ✓ | ✓ | ✓ | ✓ | n/a | — |  |
+| Fixup / Squash Commit For | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: `F` in the Working Copy; Tab switches to squash!. |
 | Hooks output sheet | ✓ | ✓ | ✓ | ✓ | n/a | △ | TUI: The first line of the hooks' output on the bottom line. |
 | Reason shown when Commit is disabled | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | In the button's tooltip.<br>TUI: On the bottom line. |
 | Combined HEAD → working tree diff with line and hunk checks | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: With the engine; without it, line staging on separate unstaged and staged diffs.<br>CLI: `diff --combined`, `stage --rows`. |
