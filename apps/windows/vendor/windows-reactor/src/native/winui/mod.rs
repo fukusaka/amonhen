@@ -602,6 +602,14 @@ pub fn tree_node_key_by_identity(identity: usize) -> Option<String> {
 thread_local! {
     // Amon Hen の足し: 最後に外観を当てた窓の WinUI の Window（窓の後ろの Acrylic をアプリが自分で当てるため）。
     static LAST_WINDOW: RefCell<Option<windows_core::IInspectable>> = const { RefCell::new(None) };
+    // Amon Hen の足し: 外観を当てた窓の WinUI の Window を、窓の HWND で引けるように（窓がいくつもあるとき）。
+    static WINDOWS_BY_HANDLE: RefCell<HashMap<usize, windows_core::IInspectable>> =
+        RefCell::new(HashMap::new());
+}
+
+/// Amon Hen の足し: HWND が `handle` の窓の WinUI の Window（外観を当てた窓のうち）。
+pub fn native_window_for(handle: usize) -> Option<windows_core::IInspectable> {
+    WINDOWS_BY_HANDLE.with(|w| w.borrow().get(&handle).cloned())
 }
 
 /// Amon Hen の足し: 最後に外観を当てた窓の WinUI の Window（1 つの窓のプロセスで使う）。
@@ -931,6 +939,13 @@ impl WinUiRuntime {
             .ok_or(RuntimeError::MissingNode(node))?;
         let window_2 = window.cast::<IWindow2>().map_err(native_error)?;
         if let Ok(inspectable) = window.cast::<windows_core::IInspectable>() {
+            let mut value = std::ptr::null_mut();
+            if let Ok(native) = window.cast::<IWindowNative>()
+                && unsafe { native.WindowHandle(&mut value) }.is_ok()
+            {
+                WINDOWS_BY_HANDLE
+                    .with(|w| w.borrow_mut().insert(value as usize, inspectable.clone()));
+            }
             LAST_WINDOW.with(|w| *w.borrow_mut() = Some(inspectable));
         }
         let changes = window_visual_changes(self.window_visuals.get(&node).copied(), visuals);
