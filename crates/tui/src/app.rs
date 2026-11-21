@@ -2853,9 +2853,10 @@ impl App {
                 }),
         };
         let (ask, yes, request) = if merge {
-            let request = Request::Run {
+            // 取り込み方（アプリの Merge のシートの選択。覚えない）。`y` は git の設定のとおり。
+            let mode = |mode: &str| Request::Run {
                 name: "merge",
-                command: json!({"op": "merge", "rev": name}),
+                command: json!({"op": "merge", "rev": name, "mode": mode}),
             };
             if preview["upToDate"] == true {
                 self.notice = Some(tr!(
@@ -2874,7 +2875,16 @@ impl App {
                     name = name,
                     count = n
                 );
-                (ask, tr!("merge"), request)
+                self.choices = Some((
+                    ask,
+                    vec![
+                        ('y', tr!("merge"), mode("git")),
+                        ('f', "fast-forward only".to_owned(), mode("fastForwardOnly")),
+                        ('c', tr!("always a merge commit"), mode("noFastForward")),
+                        ('s', tr!("squash into one commit"), mode("squash")),
+                    ],
+                ));
+                return;
             } else {
                 let drawing = &preview["drawing"];
                 let theirs = count(&drawing["theirs"], &drawing["theirsMore"]);
@@ -2888,7 +2898,15 @@ impl App {
                     subject = drawing["subject"].as_str().unwrap_or(""),
                     risk = risk
                 );
-                (ask, tr!("merge"), request)
+                // 分かれていれば fast-forward はできない（merge コミットか、まとめて 1 つのコミットか）。
+                self.choices = Some((
+                    ask,
+                    vec![
+                        ('y', tr!("merge"), mode("git")),
+                        ('s', tr!("squash into one commit"), mode("squash")),
+                    ],
+                ));
+                return;
             }
         } else {
             let ask = tr!(
