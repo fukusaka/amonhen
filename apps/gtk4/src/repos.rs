@@ -225,8 +225,29 @@ thread_local! {
     static MENUS: std::cell::RefCell<Vec<glib::WeakRef<gio::Menu>>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
+/// 最後に見た `recent.json` の更新時刻と大きさ（ほかのプロセスが書いたかを見分ける）。
+fn recent_stamp() -> Option<(std::time::SystemTime, u64)> {
+    let meta = std::fs::metadata(amonhen_model::recent::path()?).ok()?;
+    Some((meta.modified().ok()?, meta.len()))
+}
+
+thread_local! {
+    static SEEN: std::cell::Cell<Option<(std::time::SystemTime, u64)>> = const { std::cell::Cell::new(None) };
+}
+
+/// ほかのプロセス（macOS 版・TUI・ほかの GTK4）が `recent.json` を書き換えていたら、Open Recent のメニューと
+/// リポジトリの一覧を描き直す（窓が前に来たとき。ブックマークと同じ）。
+pub fn refresh_recent() {
+    let now = recent_stamp();
+    if SEEN.replace(now) != now {
+        recent_changed();
+        crate::bookmarks::others_changed();
+    }
+}
+
 /// 最近のものが変わった: Open Recent のメニューを作り直す。
 fn recent_changed() {
+    SEEN.set(recent_stamp());
     let menus: Vec<gio::Menu> = MENUS.with(|m| {
         let mut m = m.borrow_mut();
         m.retain(|w| w.upgrade().is_some());
