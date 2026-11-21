@@ -27,7 +27,8 @@ use crate::{Args, Session};
 
 thread_local! {
     /// 窓の後ろを透かす Acrylic（透かしている間）と、当てられなかったか（WinUI の Acrylic に替える）。
-    static ACRYLIC: RefCell<Option<xaml::Acrylic>> = const { RefCell::new(None) };
+    static ACRYLIC: RefCell<std::collections::HashMap<u64, xaml::Acrylic>> =
+        RefCell::new(std::collections::HashMap::new());
     static ACRYLIC_FAILED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// 設定の画面（Settings・Repository Settings）を出しているか（Ctrl+Z・Ctrl+Shift+Z を設定の Undo・Redo にする）。
     static SETTINGS_SHOWN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -206,6 +207,7 @@ impl Component for Shell {
                     eprintln!("最後のリポジトリを覚えられない: {e}");
                 }
                 crate::tabs::forget_window(window);
+                ACRYLIC.with(|a| a.borrow_mut().remove(&window));
                 WINDOW_HANDLES.with(|h| h.borrow_mut().remove(&window));
             }))
         });
@@ -1652,23 +1654,35 @@ impl Root {
     }
 
     /// 窓の後ろの Acrylic と、窓の外観・背景（前のタブが決める）。
-    fn window_backdrop(see_through: bool, dark: bool, context: &mut ViewContext<Self>) {
+    fn window_backdrop(
+        window: u64,
+        see_through: bool,
+        dark: bool,
+        context: &mut ViewContext<Self>,
+    ) {
         context.use_effect("acrylic", (see_through, dark), move || {
             ACRYLIC.with(|a| {
                 let mut a = a.borrow_mut();
                 if !see_through {
-                    *a = None;
+                    a.remove(&window);
                     return;
                 }
-                if let Some(acrylic) = a.as_ref() {
+                if let Some(acrylic) = a.get(&window) {
                     let _ = acrylic.set_dark(dark);
                     return;
                 }
-                match windows_reactor::native_window()
+                // この窓の WinUI の Window（HWND が分かればそれで引く。開いたばかりの窓は、外観を当てたばかりの窓）。
+                let native = WINDOW_HANDLES
+                    .with(|h| h.borrow().get(&window).copied())
+                    .and_then(|hwnd| windows_reactor::native_window_for(hwnd as usize))
+                    .or_else(windows_reactor::native_window);
+                match native
                     .ok_or_else(|| "窓がない".to_owned())
                     .and_then(|w| xaml::Acrylic::new(&w, dark).map_err(|e| e.to_string()))
                 {
-                    Ok(acrylic) => *a = Some(acrylic),
+                    Ok(acrylic) => {
+                        a.insert(window, acrylic);
+                    }
                     Err(e) => {
                         eprintln!("窓の後ろの Acrylic を当てられない: {e}");
                         ACRYLIC_FAILED.with(|f| f.set(true));
@@ -8172,7 +8186,7 @@ impl Root {
         // 窓で 1 つのもの（地の濃さ・Acrylic・外観と背景）は前のタブだけが決める。
         if input.front {
             crate::palette::set_ground(content_ground, bar_ground);
-            Self::window_backdrop(see_through, dark, context);
+            Self::window_backdrop(self.window, see_through, dark, context);
         }
         // 窓を透かすときは、ボタン・文字の欄・選ぶ欄の地も窓の地と同じ薄さに（部品だけ目立たないように）。
         // タブごとに、そのタブの根の部品に付ける。
