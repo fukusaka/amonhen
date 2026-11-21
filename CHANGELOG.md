@@ -16,6 +16,8 @@ becomes the GitHub Release notes.
   ancestor emphasis, and fetch, pull, push, checkout, new branch, merge, rebase, stash and undo,
   resolving conflicts by side, and asking for passwords inside the screen; `?` lists the keys and `:` the commands by
   name. These are its first stages; see `docs/tui.md`.
+- Quick Open in `amonhen tui` also lists recently opened repositories and those found under the local folders to
+  scan, like the apps'.
 
 #### Changed
 

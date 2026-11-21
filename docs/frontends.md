@@ -86,7 +86,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 
 | Feature | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
-| Repository page with All, Favorites, Places and groups | ✓ | ✓ | ✓ | n/a | n/a | — | TUI: No repository page; Quick Open lists the bookmarks. |
+| Repository page with All, Favorites, Places and groups | ✓ | ✓ | ✓ | n/a | n/a | — | TUI: No repository page; Quick Open lists the bookmarks, recently opened repositories and those found in the folders to scan. |
 | Add a local or an SSH repository | ✓ | ✓ | ✓ | n/a | n/a | — |  |
 | Folders to scan on this machine (depth, watched) | △ | △ | △ | n/a | n/a | — | macOS: Excludes are a fixed list.<br>GTK4: Excludes are a fixed list.<br>Windows: Excludes are a fixed list; the folders are watched while Repositories is open. |
 | Folders to scan on SSH hosts | ✓ | ✓ | ✓ | n/a | △ | — | CLI: `find-repositories` does the scan for the apps. |
@@ -96,7 +96,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Favorites, display name, color label | ✓ | ✓ | ✓ | n/a | n/a | — |  |
 | Open in a tab or window; Finder / Files, Terminal, Editor | ✓ | ✓ | ✓ | n/a | n/a | — | GTK4: An app other than a known code editor or a program chosen with Other… opens a folder only if it declares inode/directory.<br>Windows: Explorer, Windows Terminal (or cmd) and the editor chosen in Settings. |
 | Fetch the selected repositories | ✓ | ✓ | ✓ | n/a | n/a | — | Windows: Rows are selected with Ctrl or Shift, and Fetch on a selected row's menu fetches them all. |
-| Quick Open (fuzzy search) | ✓ | ✓ | ✓ | n/a | n/a | ✓ | Windows: Opens in a new window.<br>TUI: Quick Open in the command list lists the shared bookmarks (`bookmarks.json`), favorites first; Enter reopens the TUI there. |
+| Quick Open (fuzzy search) | ✓ | ✓ | ✓ | n/a | n/a | ✓ | Windows: Opens in a new window.<br>TUI: Quick Open in the command list lists what the apps' does: the shared bookmarks (`bookmarks.json`, favorites first), recently opened repositories (`recent.json`) and those found under the local folders to scan (searched in the background; folders on SSH hosts aren't); Enter reopens the TUI there. |
 | Repository name in the toolbar switches the repository | ✓ | ✓ | ✓ | ✓ | n/a | n/a | VSCode: Select Repository picks among workspace repositories.<br>TUI: Quick Open instead. |
 | Clone (choosing from your own GitHub repositories) | ✓ | ✓ | ✓ | n/a | △ | — | VSCode: VSCode's own Git: Clone.<br>CLI: `clone <url>` only.<br>Windows: The clone opens in a new tab. |
 | Clone: what to download (everything, contents when needed, recent history) and only some folders | ✓ | ✓ | ✓ | n/a | ✓ | — | VSCode: VSCode's own Git: Clone.<br>CLI: `clone --filter`, `--depth`, `--sparse`. |

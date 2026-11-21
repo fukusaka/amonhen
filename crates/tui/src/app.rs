@@ -43,6 +43,8 @@ pub enum Event {
         done: f32,
     },
     Failed(String),
+    /// Quick Open を開いたときに探し始めた、手元の探すフォルダの下のリポジトリ（フォルダごとに届く）。
+    Scanned(Vec<String>),
 }
 
 /// 描き直す所。一番上と一番下の行は、どれかを描き直すたびに描き直す。
@@ -169,26 +171,63 @@ struct Palette {
     selected: usize,
 }
 
-/// Quick Open: ブックマークを打った語で絞り、選んだリポジトリで TUI を開き直す。
+/// Quick Open の候補。
+struct Candidate {
+    path: String,
+    name: String,
+    favorite: bool,
+}
+
+impl Candidate {
+    fn new(path: String) -> Self {
+        let bookmark = amonhen_model::bookmarks::Bookmark {
+            path,
+            name: None,
+            group: None,
+            favorite: false,
+        };
+        Self {
+            name: bookmark.display_name(),
+            path: bookmark.path,
+            favorite: false,
+        }
+    }
+}
+
+/// Quick Open: アプリと同じ候補（ブックマーク、最近開いたもの、探すフォルダの下で見つけたもの）を打った語で絞り、
+/// 選んだリポジトリで TUI を開き直す。
 struct QuickOpen {
     query: String,
     selected: usize,
-    items: Vec<amonhen_model::bookmarks::Bookmark>,
+    items: Vec<Candidate>,
 }
 
 impl QuickOpen {
+    /// 候補を足す（もうある場所は足さない。`daemon:` の付いた同じ場所も、付かないものがあれば足さない）。
+    fn add(&mut self, paths: impl IntoIterator<Item = String>) {
+        for path in paths {
+            let plain = path.strip_prefix("daemon:").unwrap_or(&path);
+            if self.items.iter().any(|c| {
+                c.path == path || c.path == plain || c.path.strip_prefix("daemon:") == Some(&path)
+            }) {
+                continue;
+            }
+            self.items.push(Candidate::new(path));
+        }
+    }
+
     /// 打った語のすべてを、名前か場所に含むもの（大文字と小文字は区別しない）。お気に入りを先に。
-    fn shown(&self) -> Vec<&amonhen_model::bookmarks::Bookmark> {
+    fn shown(&self) -> Vec<&Candidate> {
         let words: Vec<String> = self
             .query
             .split_whitespace()
             .map(str::to_lowercase)
             .collect();
-        let mut shown: Vec<&amonhen_model::bookmarks::Bookmark> = self
+        let mut shown: Vec<&Candidate> = self
             .items
             .iter()
             .filter(|b| {
-                let text = format!("{} {}", b.display_name(), b.path).to_lowercase();
+                let text = format!("{} {}", b.name, b.path).to_lowercase();
                 words.iter().all(|w| text.contains(w.as_str()))
             })
             .collect();
@@ -206,6 +245,8 @@ struct OperationLog {
 
 pub struct App {
     loader: Loader,
+    /// 裏の仕事（Quick Open のスキャン）が結果を送る先。
+    events: Sender<Event>,
     history: History,
     details: Details,
     changes: Changes,
@@ -359,7 +400,8 @@ const HISTORY_MIN: u16 = 60;
 impl App {
     pub fn new(front: Arc<dyn Front>, events: Sender<Event>, clock: Clock) -> Self {
         Self {
-            loader: Loader::start(front, events),
+            loader: Loader::start(front, events.clone()),
+            events,
             history: History::default(),
             details: Details::default(),
             changes: Changes::default(),
@@ -1006,6 +1048,12 @@ impl App {
                     self.dirty = true;
                 }
             }
+            Event::Scanned(paths) => {
+                if let Some(quick) = &mut self.quick_open {
+                    quick.add(paths);
+                    self.dirty = true;
+                }
+            }
             Event::Failed(error) => {
                 self.pending = self.pending.saturating_sub(1);
                 self.history.failed();
@@ -1175,8 +1223,8 @@ impl App {
             match key.code {
                 KeyCode::Esc => return,
                 KeyCode::Enter => {
-                    if let Some(bookmark) = quick.shown().get(quick.selected) {
-                        self.open_location = Some(bookmark.path.clone());
+                    if let Some(candidate) = quick.shown().get(quick.selected) {
+                        self.open_location = Some(candidate.path.clone());
                         self.quit = true;
                     }
                     return;
@@ -1585,25 +1633,59 @@ impl App {
         }
     }
 
+    /// Quick Open を出す。候補はアプリと同じ（この機械の bookmarks.json・recent.json）: お気に入り、ブックマーク、
+    /// 最近開いたもの、探すフォルダの下で見つけたもの。探すフォルダは手元のものを裏で探し、見つかったら足す（SSH 先の
+    /// フォルダは探さない）。
+    fn open_quick(&mut self) {
+        let (bookmarks, recents, roots) = match (
+            amonhen_model::bookmarks::read(),
+            amonhen_model::recent::read(),
+            amonhen_model::bookmarks::scan_roots(),
+        ) {
+            (Ok(b), Ok(r), Ok(s)) => (b, r, s),
+            (Err(reason), _, _) | (_, Err(reason), _) | (_, _, Err(reason)) => {
+                self.error = Some(reason);
+                return;
+            }
+        };
+        let roots: Vec<_> = roots.into_iter().filter(|r| r.is_local()).collect();
+        if bookmarks.is_empty() && recents.is_empty() && roots.is_empty() {
+            self.notice = Some(tr!(
+                "No repositories yet: open one, or add bookmarks on the apps' Repositories page"
+            ));
+            return;
+        }
+        let mut quick = QuickOpen {
+            query: String::new(),
+            selected: 0,
+            items: bookmarks
+                .iter()
+                .map(|b| Candidate {
+                    path: b.path.clone(),
+                    name: b.display_name(),
+                    favorite: b.favorite,
+                })
+                .collect(),
+        };
+        quick.add(recents.into_iter().map(|r| r.path));
+        self.quick_open = Some(quick);
+        if !roots.is_empty() {
+            let events = self.events.clone();
+            std::thread::spawn(move || {
+                for root in roots {
+                    let found = root.find_local();
+                    if !found.is_empty() && events.send(Event::Scanned(found)).is_err() {
+                        return;
+                    }
+                }
+            });
+        }
+    }
+
     /// コマンドの一覧からだけ動かす操作（キーを持たない）。
     fn run_keyless(&mut self, id: &str) {
         if id == "quick-open" {
-            // ブックマーク（アプリ・GTK4 と同じ bookmarks.json。この機械のもの）。
-            match amonhen_model::bookmarks::read() {
-                Ok(items) if items.is_empty() => {
-                    self.notice = Some(tr!(
-                        "No bookmarks yet: add repositories on the apps' Repositories page"
-                    ));
-                }
-                Ok(items) => {
-                    self.quick_open = Some(QuickOpen {
-                        query: String::new(),
-                        selected: 0,
-                        items,
-                    })
-                }
-                Err(reason) => self.error = Some(reason),
-            }
+            self.open_quick();
             return;
         }
         if id == "activity" {
@@ -4671,11 +4753,7 @@ impl App {
         }
         if let Some(quick) = &self.quick_open {
             let shown = quick.shown();
-            let name_width = shown
-                .iter()
-                .map(|b| b.display_name().width())
-                .max()
-                .unwrap_or(0);
+            let name_width = shown.iter().map(|b| b.name.width()).max().unwrap_or(0);
             let path_width = shown.iter().map(|b| b.path.width()).max().unwrap_or(0);
             let width = ((name_width + path_width + 9).max(44) as u16).min(area.width);
             let height = (shown.len().max(1) as u16 + 3).min(area.height);
@@ -4727,9 +4805,8 @@ impl App {
                 }
                 let mark = if shown[i].favorite { "★ " } else { "  " };
                 let x = buf.set_stringn(at.x + 2, y, mark, inner, style).0;
-                let name = shown[i].display_name();
                 let x = buf
-                    .set_stringn(x, y, &name, inner.saturating_sub(2), style)
+                    .set_stringn(x, y, &shown[i].name, inner.saturating_sub(2), style)
                     .0;
                 let path_style = match selected {
                     true => style,
@@ -4999,10 +5076,11 @@ mod tests {
         assert!(app.take_edit_message().is_none());
     }
 
-    /// コマンドの一覧の Quick Open: ブックマークを打った語で絞り（お気に入りを先に）、Enter で選んだ場所を開き直す
+    /// コマンドの一覧の Quick Open: アプリと同じ候補（お気に入り、ブックマーク、最近開いたもの、手元の探すフォルダの
+    /// 下で見つけたもの。重ならない）を打った語で絞り、Enter で選んだ場所を開き直す。
     #[test]
     fn quick_open_reopens_a_bookmark() {
-        let (_dir, mut app, _rx) = app_with_history();
+        let (_dir, mut app, rx) = app_with_history();
         let config = tempfile::tempdir().unwrap();
         let vars = amonhen_model::settings::config_vars(config.path().to_str().unwrap());
         let env = amonhen_model::process::ClientEnv::from_vars(vars);
@@ -5017,25 +5095,45 @@ mod tests {
                 key(app, KeyCode::Char(ch));
             }
         };
+        let work = config.path().join("work");
+        std::fs::create_dir_all(work.join("found/.git")).unwrap();
+        let found = work.join("found").to_string_lossy().into_owned();
         amonhen_model::process::with_client_env(&env, || {
-            // ブックマークがなければ、そう言う。
+            // 何もなければ、そう言う。
             typed(&mut app, ":quick");
             key(&mut app, KeyCode::Enter);
             assert!(app.quick_open.is_none());
-            assert!(bottom_line(&mut app).contains("No bookmarks yet"));
-            let file = config.path().join("amonhen").join("bookmarks.json");
-            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
-            std::fs::write(
-                &file,
-                r#"{"items": [{"path": "/w/alpha"}, {"path": "ssh://host/src/tool", "favorite": true}]}"#,
-            )
-            .unwrap();
+            assert!(bottom_line(&mut app).contains("No repositories yet"));
+            let dir = config.path().join("amonhen");
+            std::fs::create_dir_all(&dir).unwrap();
+            let bookmarks = serde_json::json!({
+                "items": [{"path": "/w/alpha"}, {"path": "ssh://host/src/tool", "favorite": true}],
+                "scanRoots": [{"path": work.to_str().unwrap()}, {"path": "ssh://host/src"}]
+            });
+            std::fs::write(dir.join("bookmarks.json"), bookmarks.to_string()).unwrap();
+            amonhen_model::recent::touch("/w/beta").unwrap();
+            amonhen_model::recent::touch("daemon:/w/alpha").unwrap();
             typed(&mut app, ":quick");
             key(&mut app, KeyCode::Enter);
         });
-        let quick = app.quick_open.as_ref().expect("Quick Open");
-        let names: Vec<String> = quick.shown().iter().map(|b| b.display_name()).collect();
-        assert_eq!(names, ["tool", "alpha"], "favorites first");
+        let names = |app: &App| -> Vec<String> {
+            let quick = app.quick_open.as_ref().expect("Quick Open");
+            quick.shown().iter().map(|c| c.name.clone()).collect()
+        };
+        assert_eq!(names(&app), ["tool", "alpha", "beta"], "favorites first");
+        // 手元の探すフォルダの下のものは、見つかったら足す。
+        loop {
+            match rx.recv_timeout(std::time::Duration::from_secs(10)) {
+                Ok(Event::Scanned(paths)) => {
+                    assert_eq!(paths, std::slice::from_ref(&found));
+                    app.handle(Event::Scanned(paths));
+                    break;
+                }
+                Ok(other) => app.handle(other),
+                Err(e) => panic!("no scan: {e}"),
+            }
+        }
+        assert_eq!(names(&app), ["tool", "alpha", "beta", "found"]);
         let mut buf = Buffer::empty(Rect::new(0, 0, 100, 12));
         app.draw(&mut buf, Damage::ALL);
         let screen: String = (0..12)
@@ -5044,6 +5142,7 @@ mod tests {
         assert!(screen.contains(" Quick Open "), "{screen}");
         assert!(screen.contains("★ tool  ssh://host/src/tool"), "{screen}");
         assert!(screen.contains("  alpha  /w/alpha"), "{screen}");
+        assert!(screen.contains("  beta  /w/beta"), "{screen}");
         typed(&mut app, "alp");
         assert_eq!(app.quick_open.as_ref().unwrap().shown().len(), 1);
         key(&mut app, KeyCode::Enter);
