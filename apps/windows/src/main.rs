@@ -215,10 +215,11 @@ fn main() {
             std::process::exit(2);
         }
     };
-    // 引数なしで起動したら、終了したときに開いていた窓を開き直す（1 つ目をこの窓に、残りは新しい窓に。なくなった
+    // 引数なしで起動したら、終了したときに開いていた窓を開き直す（1 つ目を最初の窓に、残りも同じプロセスの窓に。なくなった
     // リポジトリは除く）。記録がなければ最後に閉じた窓のタブ、それもなければ最後のリポジトリ、それもなくなって
     // いれば今のフォルダ。
     let mut restored = (Vec::new(), 0);
+    let mut more: Vec<(Vec<String>, usize)> = Vec::new();
     let exists = |l: &str| std::path::Path::new(l).join(".git").exists();
     if let Some(text) = args.tabs.take() {
         restored = tabs::parse_saved(&text, exists);
@@ -228,16 +229,7 @@ fn main() {
             .filter(|w| !tabs::parse_saved(w, exists).0.is_empty());
         if let Some(first) = windows.next() {
             restored = tabs::parse_saved(&first, exists);
-            if let Ok(exe) = std::env::current_exe() {
-                for rest in windows {
-                    if let Err(e) = amonhen_model::process::command(&exe)
-                        .args(["--tabs", &rest])
-                        .spawn()
-                    {
-                        eprintln!("窓を開き直せない: {e}");
-                    }
-                }
-            }
+            more = windows.map(|w| tabs::parse_saved(&w, exists)).collect();
         } else if let Some(text) = prefs::string(prefs::LAST_TABS) {
             restored = tabs::parse_saved(&text, exists);
         }
@@ -261,9 +253,16 @@ fn main() {
         args.repositories,
         args.working_copy,
     );
-    let app_window = args.host == "app";
+    tabs::set_merge(
+        args.merge.clone(),
+        args.merge_text.as_ref().map(|p| p.display().to_string()),
+    );
+    let more: Vec<u64> = more
+        .iter()
+        .map(|(locations, active)| tabs::new_window(locations, *active))
+        .collect();
     let result = match args.host.as_str() {
-        "app" => app::run(args, started),
+        "app" => app::run(args, started, more),
         "win32" => win32::run(args, started),
         "winui" => winui::run(args, started),
         other => Err(format!("知らない --host: {other}")),
@@ -271,19 +270,6 @@ fn main() {
     if let Err(e) = result {
         eprintln!("{e}");
         std::process::exit(1);
-    }
-    // 閉じた窓のタブと前のリポジトリを覚える（いちばん後に閉じた窓のものが残る）。終了したとき・最後の窓を
-    // 閉じたときは、窓ごとのタブも（[`session`]）。
-    if app_window && let Some(tab) = tabs::current() {
-        session::remember(&tabs::saved());
-        if let Err(e) = prefs::set_string(prefs::LAST_TABS, &tabs::saved()) {
-            eprintln!("タブを覚えられない: {e}");
-        }
-        if std::path::Path::new(&tab.location).join(".git").exists()
-            && let Err(e) = prefs::set_string(prefs::LAST_REPOSITORY, &tab.location)
-        {
-            eprintln!("最後のリポジトリを覚えられない: {e}");
-        }
     }
 }
 

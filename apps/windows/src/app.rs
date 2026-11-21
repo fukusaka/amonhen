@@ -93,7 +93,7 @@ thread_local! {
 /// ホイールの 1 目盛り（120）で進む行の数（Windows の既定の 3 行）。
 const WHEEL_ROWS: f32 = 3.0;
 
-pub fn run(args: Args, started: Instant) -> Result<(), String> {
+pub fn run(args: Args, started: Instant, more: Vec<u64>) -> Result<(), String> {
     // Repositories の「開いた日時」・すべての一覧に出す（まだどこにもなければブックマークにも入れる）。
     if let Ok(path) = std::path::absolute(&args.repo)
         && path.join(".git").exists()
@@ -101,7 +101,11 @@ pub fn run(args: Args, started: Instant) -> Result<(), String> {
         crate::repositories::record_opened(&path);
     }
     ARGS.with(|a| *a.borrow_mut() = Some((args, started)));
-    App::run_component::<Shell>(()).map_err(|e| format!("WinUI を始められない: {e}"))
+    // 起動のときに戻す窓は、どれもこのプロセスの窓（1 つ目が前）。
+    let windows = std::iter::once(crate::tabs::focused())
+        .chain(more)
+        .map(View::component::<Shell>);
+    App::run_windows(windows).map_err(|e| format!("WinUI を始められない: {e}"))
 }
 
 /// タブ `tab` の根の部品に渡す引数（起動のときの引数の、リポジトリと画面をそのタブのものにしたもの）。
@@ -111,7 +115,22 @@ fn args_for(tab: &crate::tabs::Tab) -> (Args, Instant) {
     args.repositories = tab.repositories;
     args.working_copy = tab.working_copy;
     args.file_history = tab.file_history.clone();
+    args.merge = tab.merge.clone();
+    args.merge_text = tab.merge_text.clone().map(Into::into);
     (args, started)
+}
+
+thread_local! {
+    /// 開くのを頼まれた窓（それぞれの最初のタブ）。前のタブの根の部品が開く。
+    static WINDOW_REQUESTS: RefCell<Vec<crate::tabs::Tab>> = const { RefCell::new(Vec::new()) };
+}
+
+/// `tab` を新しい窓（このプロセスの窓）で開く。
+pub fn request_window(tab: crate::tabs::Tab) {
+    WINDOW_REQUESTS.with(|r| r.borrow_mut().push(tab));
+    with_history(|h| {
+        h.sender.send(Message::OpenWindows);
+    });
 }
 
 /// 起動のときの窓の位置・大きさ（`--place`）。最初に開くタブだけが使う。
@@ -131,12 +150,13 @@ struct Shell {
 }
 
 impl Component for Shell {
-    type Input = ();
+    /// 窓の番号（`tabs` の窓）。
+    type Input = u64;
     type Message = ();
 
-    fn create(_input: &(), context: &ComponentContext<Self>) -> Self {
+    fn create(window: &u64, context: &ComponentContext<Self>) -> Self {
         let sender = context.sender();
-        crate::tabs::set_remount(move || {
+        crate::tabs::set_remount(*window, move || {
             sender.send(());
         });
         Self { changes: 0 }
@@ -146,17 +166,45 @@ impl Component for Shell {
         self.changes += 1;
     }
 
-    fn view(&self, _input: &(), _context: &mut ViewContext<Self>) -> View {
-        let active = crate::tabs::active();
+    fn view(&self, window: &u64, context: &mut ViewContext<Self>) -> View {
+        let window = *window;
+        let active = crate::tabs::active_of(window);
         let titles = crate::tabs::titles_changed();
-        let roots = crate::tabs::tabs().into_iter().enumerate().map(|(i, tab)| {
-            let key = tab.id.to_string();
-            let input = RootInput {
-                tab,
-                front: i == active,
-                titles,
-            };
-            (key, View::component::<Root>(input))
+        let roots = crate::tabs::tabs_of(window)
+            .into_iter()
+            .enumerate()
+            .map(|(i, tab)| {
+                let key = tab.id.to_string();
+                let input = RootInput {
+                    tab,
+                    window,
+                    front: i == active,
+                    titles,
+                };
+                (key, View::component::<Root>(input))
+            });
+        // 窓を閉じたら、その窓のタブを覚えて（終了のときか、最後の窓なら）から捨てる。
+        context.use_effect("window", (), move || {
+            Some(Box::new(move || {
+                let saved = crate::tabs::saved_of(window);
+                let last = crate::tabs::windows().len() <= 1;
+                crate::session::remember(window, &saved, last);
+                if last && let Err(e) = crate::prefs::set_string(crate::prefs::LAST_TABS, &saved) {
+                    eprintln!("タブを覚えられない: {e}");
+                }
+                // 前のリポジトリ（引数なしで起動して、ほかに戻すものがないときに開く）。
+                if last
+                    && let Some(tab) = crate::tabs::tabs_of(window)
+                        .get(crate::tabs::active_of(window))
+                        .cloned()
+                    && std::path::Path::new(&tab.location).join(".git").exists()
+                    && let Err(e) =
+                        crate::prefs::set_string(crate::prefs::LAST_REPOSITORY, &tab.location)
+                {
+                    eprintln!("最後のリポジトリを覚えられない: {e}");
+                }
+                crate::tabs::forget_window(window);
+            }))
         });
         Grid::new().children((View::keyed_fragment(roots),))
     }
@@ -166,6 +214,8 @@ impl Component for Shell {
 #[derive(Clone, PartialEq)]
 struct RootInput {
     tab: crate::tabs::Tab,
+    /// タブのある窓。
+    window: u64,
     /// 前のタブか（見せる・窓のタイトルバーと名前を持つ）。
     front: bool,
     /// タブの名前が変わった回数（前のタブがタブの並びを描き直す）。
@@ -197,6 +247,9 @@ struct Root {
     control_fills: Rc<RefCell<Option<xaml::ControlFills>>>,
     /// 前のタブか（描くたびに書く）。窓で 1 つの値（引いてよい項目・今のブランチの名前）は前のタブだけが書く。
     front: std::cell::Cell<bool>,
+    /// このタブ（描くたびに書く）と、タブのある窓。
+    tab: RefCell<crate::tabs::Tab>,
+    window: u64,
     /// 窓の根の Grid（メニューのショートカットを、フォーカスのある部品より先に受ける）。
     root: ElementRef<Grid>,
     /// ツールバーを包む部品（Pull・Push のバッジを付けるため）。
@@ -870,6 +923,10 @@ enum Dialog {
 }
 
 enum Message {
+    /// この窓が前に出た（窓で 1 つの値を書き直すため、描き直す）。
+    WindowFocused,
+    /// 頼まれた窓を開く（`request_window`）。
+    OpenWindows,
     Refs(Arc<RefsSnapshot>, Arc<Repository>),
     /// GitHub から読んだ（どのリポジトリのものか）。
     GitHub(String, Box<crate::github::Loaded>),
@@ -1363,6 +1420,8 @@ impl Component for Root {
             history: Rc::default(),
             control_fills: Rc::default(),
             front: std::cell::Cell::new(input.front),
+            tab: RefCell::new(input.tab.clone()),
+            window: input.window,
             root: ElementRef::new(),
             toolbar: ElementRef::new(),
             panel: ElementRef::new(),
@@ -1545,7 +1604,7 @@ impl Component for Root {
                 .map(|(_, e)| sidebar::ref_key(e))
                 .collect()
         };
-        if self.front.get() {
+        if self.owns_window() {
             FAVORITE_KEYS.with(|f| *f.borrow_mut() = favorites);
         }
         // daemon・SSH 越しに開いたリポジトリなら、切れたかを見張る（手元のものは見ない）。
@@ -1579,6 +1638,16 @@ impl Component for Root {
 }
 
 impl Root {
+    /// 窓で 1 つの値（引いてよい項目・今のブランチの名前・#123 のリンクの先）を書くか（前に出ている窓の前のタブ）。
+    fn owns_window(&self) -> bool {
+        self.front.get() && crate::tabs::focused() == self.window
+    }
+
+    /// このタブ。
+    fn current_tab(&self) -> Option<crate::tabs::Tab> {
+        Some(self.tab.borrow().clone())
+    }
+
     /// 窓の後ろの Acrylic と、窓の外観・背景（前のタブが決める）。
     fn window_backdrop(see_through: bool, dark: bool, context: &mut ViewContext<Self>) {
         context.use_effect("acrylic", (see_through, dark), move || {
@@ -1638,11 +1707,24 @@ impl Root {
             self.with_history(|h| h.reload_selected());
         }
         match message {
+            Message::WindowFocused => {}
+            Message::OpenWindows => {
+                for tab in WINDOW_REQUESTS.with(|r| std::mem::take(&mut *r.borrow_mut())) {
+                    let window = crate::tabs::new_window_with(vec![tab], 0);
+                    if !context.open_window(View::component::<Shell>(window)) {
+                        crate::tabs::forget_window(window);
+                        self.dialog = Some(Dialog::Failed {
+                            title: tr!("New Window"),
+                            message: tr!("Not found — {path}", path = ""),
+                        });
+                    }
+                }
+            }
             Message::SwitchPeeked(peeks) => {
                 self.switch_peeks.extend(peeks);
             }
             Message::Refs(refs, repo) => {
-                if self.front.get() {
+                if self.owns_window() {
                     HEAD_NAME.with(|h| {
                         *h.borrow_mut() = refs.refs.head_branch.clone().unwrap_or_default();
                     });
@@ -2627,8 +2709,9 @@ impl Root {
                 ) =>
             {
                 // SSH 先・daemon 越しのフォルダは、この機械では開けない（GTK4 版と同じく手元だけ）。
-                let remote =
-                    crate::tabs::current().is_some_and(|t| crate::remote::is_remote(&t.location));
+                let remote = self
+                    .current_tab()
+                    .is_some_and(|t| crate::remote::is_remote(&t.location));
                 let Some(dir) = self
                     .repo
                     .as_ref()
@@ -2871,7 +2954,8 @@ impl Root {
             Message::Command(id) if id.starts_with("switch-repository:") => {
                 // このタブを選んだリポジトリに替える（GTK4 版・macOS 版のリポジトリ名のポップオーバー）。
                 let location = id["switch-repository:".len()..].to_owned();
-                if crate::tabs::current()
+                if self
+                    .current_tab()
                     .is_some_and(|t| t.location.eq_ignore_ascii_case(&location))
                 {
                     return;
@@ -2881,7 +2965,7 @@ impl Root {
                 }
             }
             Message::Command(id) if id == "try-again" => {
-                if let Some(tab) = crate::tabs::current()
+                if let Some(tab) = self.current_tab()
                     && let Err(e) = crate::tabs::replace(&tab.location, tab.working_copy)
                 {
                     self.error = Some(e);
@@ -2898,7 +2982,7 @@ impl Root {
                 crate::tabs::step(if id == "next-tab" { 1 } else { -1 });
             }
             Message::TabSelected(Some(index)) => {
-                if index != crate::tabs::active() {
+                if index != crate::tabs::active_of(self.window) {
                     crate::tabs::note_page(self.page == Page::WorkingCopy);
                     crate::tabs::select(index);
                 }
@@ -2914,11 +2998,11 @@ impl Root {
             Message::TabsReordered(order) => crate::tabs::reorder(&order),
             // タブを窓の外へ引き出した: そのリポジトリを新しい窓で開き、このタブを閉じる（GTK4 版・macOS 版と同じ）。
             Message::TabDroppedOut(id) => {
-                let Some(tab) = id
-                    .parse::<u64>()
-                    .ok()
-                    .and_then(|id| crate::tabs::tabs().into_iter().find(|t| t.id == id))
-                else {
+                let Some(tab) = id.parse::<u64>().ok().and_then(|id| {
+                    crate::tabs::tabs_of(self.window)
+                        .into_iter()
+                        .find(|t| t.id == id)
+                }) else {
                     return;
                 };
                 match crate::repositories::open_window(&tab.location) {
@@ -6816,9 +6900,7 @@ impl Root {
                 // この窓のリポジトリの daemon・SSH 越しのつながり（Daemon のタブの表）。
                 let connection = self.repo.as_ref().and_then(|repo| {
                     let state = repo.connection_state()?;
-                    let location = crate::tabs::current()
-                        .map(|t| t.location)
-                        .unwrap_or_default();
+                    let location = self.current_tab().map(|t| t.location).unwrap_or_default();
                     Some(crate::activity::Connection {
                         name: crate::repositories::display_name(&location),
                         location,
@@ -7946,7 +8028,7 @@ impl Root {
             }
             Message::CloseFileHistory => {
                 // File History のタブなら、タブを閉じる（最後のタブなら窓を閉じる）。
-                if crate::tabs::current().is_some_and(|t| t.file_history.is_some()) {
+                if self.current_tab().is_some_and(|t| t.file_history.is_some()) {
                     if crate::tabs::close_current() {
                         close_window();
                     }
@@ -8062,7 +8144,9 @@ impl Root {
         }
         // 窓の背景（透かす場所・ツールバーの色・背景画像。リポジトリだけの設定があればそれ）。
         let backdrop = crate::backdrop::current(
-            &crate::tabs::current().map_or_else(|| args.repo.display().to_string(), |t| t.location),
+            &self
+                .current_tab()
+                .map_or_else(|| args.repo.display().to_string(), |t| t.location),
         );
         // 外観は Windows の設定に合わせる（描く色と同じ判断にするため、ここで決めて渡す）。窓の後ろを透かすなら
         // 色の層のない Acrylic を自分で敷く（当てられなければ WinUI の Acrylic）。
@@ -8108,13 +8192,13 @@ impl Root {
             },
         );
         // タブ（2 つ以上のとき）はタイトルバーの真ん中の欄に置く（下の `menu_bar`）。
-        let tabs_in_bar = crate::tabs::tabs().len() >= 2;
+        let tabs_in_bar = crate::tabs::tabs_of(self.window).len() >= 2;
         let tab_strip = Grid::new()
             .element_ref(&self.tab_host)
             .vertical_alignment(VerticalAlignment::Bottom)
-            .children((tab_strip(&title, context),));
+            .children((tab_strip(self.window, &title, context),));
         // タブを窓の外へ引き出したら、そのリポジトリを新しい窓で開く（タブの並びが変わるたびに付け直す）。
-        let tab_ids: String = crate::tabs::tabs()
+        let tab_ids: String = crate::tabs::tabs_of(self.window)
             .iter()
             .map(|t| format!("{},", t.id))
             .collect();
@@ -8147,6 +8231,7 @@ impl Root {
         let cell = self.history.clone();
         let args = args.clone();
         let front = input.front;
+        let window = input.window;
         context.use_effect("history", (), move || {
             let (panel, area, diff_panel, diff_area, sidebar, sidebar_menu_host) = refs;
             // File > New Window で開いた窓は、Repositories の画面から（GTK4 版の `show_home`）。
@@ -8218,6 +8303,11 @@ impl Root {
                 last_query: None,
                 multi_sent: Vec::new(),
                 front,
+                owner: false,
+                window,
+                hwnd: Rc::default(),
+                hwnd_requested: false,
+                me: std::rc::Weak::new(),
                 front_parts: None,
                 auto_fetch_since: Instant::now(),
                 worktree_tick: (Instant::now(), Instant::now()),
@@ -8226,6 +8316,7 @@ impl Root {
                 activity_tick: None,
                 watched: None,
             }));
+            view.borrow_mut().me = Rc::downgrade(&view);
             *cell.borrow_mut() = Some(view.clone());
             let history_view = view.clone();
             let history = panel.observe_surface(move |event| {
@@ -8262,15 +8353,11 @@ impl Root {
                 cell.borrow_mut().take();
             }))
         });
-        // 前のタブなら、窓の入力の処理が使う History をこのタブのものにする。
-        if input.front
-            && let Some(view) = self.history.borrow().clone()
-        {
-            HISTORY.with(|h| *h.borrow_mut() = Some(view));
-        }
+        // 窓の入力の処理が使う History は、前に出ている窓の前のタブが描くときに自分にする（`HistoryView::render`）。
         with_cell(&self.history, |h| h.set_front(input.front));
         self.front.set(input.front);
-        if input.front {
+        *self.tab.borrow_mut() = input.tab.clone();
+        if self.owns_window() {
             // メッセージの #123 のリンクの先（fork なら元のリポジトリの Issue）。
             let base = self.github.target.as_ref().map(|t| t.repo.web_url());
             ISSUE_BASE.with(|b| *b.borrow_mut() = base);
@@ -8382,9 +8469,7 @@ impl Root {
             ));
         // SSH 先・daemon 越しは、つないでいる間とつなげなかったときに、そのことを History の上に出す（GTK4 版の
         // `Connecting`）。
-        let location = crate::tabs::current()
-            .map(|t| t.location)
-            .unwrap_or_default();
+        let location = self.current_tab().map(|t| t.location).unwrap_or_default();
         let history: View = match &self.error {
             Some(e) if crate::remote::is_remote(&location) => {
                 connecting_view(&location, Some(e), context)
@@ -9024,7 +9109,7 @@ fn backdrop_image(backdrop: &crate::backdrop::Backdrop, host: &ElementRef<Image>
 impl Root {
     /// File History を、リポジトリのタブの隣のタブで開く（macOS 版・GTK4 版と同じ。タブがなければこの窓に重ねる）。
     fn open_file_history_tab(&mut self, path: String, context: &ComponentContext<Self>) {
-        match crate::tabs::current() {
+        match self.current_tab() {
             Some(tab) => crate::tabs::open_file_history(&tab.location, &path),
             None => self.update(Message::OpenFileHistory(path), context),
         }
@@ -14523,7 +14608,7 @@ impl Root {
     /// ツールバーの左のリポジトリ名（GTK4 版・macOS 版と同じ）: 押すと、ブックマークのリポジトリを、お気に入り
     /// （★）を先に、その後は最後に開いた順に出し、選んだものにこのタブを替える。終わりに Repositories。
     fn repository_switcher(&self, context: &ViewContext<Self>) -> View {
-        let Some(tab) = crate::tabs::current().filter(|t| !t.repositories) else {
+        let Some(tab) = self.current_tab().filter(|t| !t.repositories) else {
             return View::empty();
         };
         let mut items: Vec<MenuItem> = crate::repositories::switch_targets()
@@ -14642,9 +14727,7 @@ impl Root {
         if !self.repo.as_ref().is_some_and(|r| Arc::ptr_eq(r, repo)) {
             return View::empty();
         }
-        let location = crate::tabs::current()
-            .map(|t| t.location)
-            .unwrap_or_default();
+        let location = self.current_tab().map(|t| t.location).unwrap_or_default();
         let host = crate::remote::host_of(&location).unwrap_or_else(|| "daemon".to_owned());
         let heading = tr!("Lost connection to {host}", host = host);
         // 理由が見出しで始まっていれば、その後ろだけ（GTK4 版の `reason_detail`）。
@@ -15335,6 +15418,7 @@ impl Root {
         let Some(repo) = self.repo.clone() else {
             return;
         };
+        let this_tab = self.current_tab();
         let Some(state) = self.merge.as_mut() else {
             return;
         };
@@ -15407,7 +15491,7 @@ impl Root {
             }
             "popout" => {
                 // 別の窓（別のプロセス）に出す。打ちかけの Result は一時ファイルで渡す。
-                let Some(tab) = crate::tabs::current() else {
+                let Some(tab) = this_tab else {
                     return beep();
                 };
                 let mut extra = vec!["--merge".to_owned(), state.path.clone()];
@@ -18370,8 +18454,16 @@ struct HistoryView {
     last_query: Option<String>,
     /// 差分を読みに行った複数選択。
     multi_sent: Vec<u32>,
-    /// 前のタブか（後ろのタブは描かず、窓の入力の部品もつながない。読み直しと見張りは続ける）。
+    /// 窓の前のタブか（後ろのタブは描かない。読み直しと見張りは続ける）。
     front: bool,
+    /// 窓の入力の部品を持っているか（前に出ている窓の、前のタブ）。
+    owner: bool,
+    /// タブのある窓（`tabs` の番号）と、その窓の HWND（分かるまで 0）、HWND を聞いたか。
+    window: u64,
+    hwnd: Rc<std::cell::Cell<u64>>,
+    hwnd_requested: bool,
+    /// 自分（窓の入力の処理が使う History にするため）。
+    me: std::rc::Weak<RefCell<HistoryView>>,
     /// 前から外れたときに取っておいた、窓の入力の部品（前に戻したら戻す）。
     front_parts: Option<FrontParts>,
     /// このタブの、自動の fetch を数え始めた時刻。
@@ -18430,12 +18522,7 @@ impl FrontParts {
 
 /// 前のタブが前から外れる（タブを替える直前に `tabs` が呼ぶ）。窓の入力の部品を、そのタブに取っておく。
 pub fn leave_front() {
-    with_history(|h| {
-        if h.front {
-            h.front_parts = Some(FrontParts::take());
-            h.front = false;
-        }
-    });
+    with_history(HistoryView::give_up);
 }
 
 impl HistoryView {
@@ -18446,11 +18533,59 @@ impl HistoryView {
         }
         self.front = front;
         if front {
-            if let Some(parts) = self.front_parts.take() {
-                parts.restore();
-            }
             self.session.invalidate();
             self.diff.dirty = true;
+        } else {
+            self.give_up();
+        }
+    }
+
+    /// 窓の入力の部品を手放す（取っておき、また持つときに戻す）。
+    fn give_up(&mut self) {
+        if self.owner {
+            self.front_parts = Some(FrontParts::take());
+            self.owner = false;
+        }
+    }
+
+    /// 窓の前のタブで、その窓が前に出ていれば、窓の入力の部品を持つ（前に持っていたタブは手放す）。窓が 1 つしか
+    /// なければ、窓が前に出ているかは見ない。
+    fn take_ownership(&mut self) {
+        if !self.front || self.owner {
+            return;
+        }
+        if !self.hwnd_requested {
+            let hwnd = self.hwnd.clone();
+            self.hwnd_requested = self.root.request_native_element(move |result| {
+                if let Ok(element) = result
+                    && let Some(handle) = xaml::window_handle(&element)
+                {
+                    hwnd.set(handle);
+                }
+            });
+        }
+        let only = crate::tabs::windows().len() == 1;
+        let active =
+            unsafe { windows::Win32::UI::Input::KeyboardAndMouse::GetActiveWindow() }.0 as u64;
+        if !only && (self.hwnd.get() == 0 || active != self.hwnd.get()) {
+            return;
+        }
+        // 前に持っていたタブ（自分ではない）に手放させる。
+        let previous = HISTORY.with(|h| h.borrow().clone());
+        if let Some(previous) = previous
+            && !std::ptr::eq(previous.as_ptr(), self as *const HistoryView)
+        {
+            previous.borrow_mut().give_up();
+        }
+        self.owner = true;
+        if let Some(parts) = self.front_parts.take() {
+            parts.restore();
+        }
+        HISTORY.with(|h| *h.borrow_mut() = self.me.upgrade());
+        if crate::tabs::focused() != self.window {
+            crate::tabs::focus(self.window);
+            // 窓で 1 つの値を、この窓の前のタブが書き直す。
+            self.sender.send(Message::WindowFocused);
         }
     }
 
@@ -18486,9 +18621,10 @@ impl HistoryView {
         retry_monospace();
         retry_splitters();
         retry_place();
-        // 窓の入力（ショートカット・右クリック・サイドバー）は、前のタブになってからつなぐ（後ろのタブが、窓で
-        // 1 つの部品を書き換えないように）。
-        if self.front {
+        self.take_ownership();
+        // 窓の入力（ショートカット・右クリック・サイドバー）は、部品を持ってからつなぐ（後ろのタブ・後ろの窓が、
+        // 窓の入力の部品を書き換えないように）。
+        if self.owner {
             if !self.input_requested {
                 self.input_requested = request_input(&self.area, Target::History);
             }
@@ -18551,7 +18687,7 @@ impl HistoryView {
             self.sender.send(Message::CountWorktrees(all));
         }
         // サイドバーの木にドラッグの受け口を付ける（作り直すと別の木になるので、0.5 秒ごとに見て付け直す）。
-        if self.front
+        if self.owner
             && TREE_DRAG_AT
                 .with(|t| t.get())
                 .is_none_or(|t| t.elapsed() >= std::time::Duration::from_millis(500))
@@ -18574,7 +18710,7 @@ impl HistoryView {
             self.sender.send(Message::Disconnected(closed.0, closed.1));
         }
         // 裏のスレッドが SSH 先にエンジンを送ってよいかを聞いていれば、ダイアログで聞く。
-        if self.front
+        if self.owner
             && let Some(ask) = crate::remote::take_ask()
         {
             self.sender.send(Message::AskSendEngine(ask));
@@ -18599,7 +18735,7 @@ impl HistoryView {
                 self.sender.send(Message::Running(now));
             }
             // Windows の外観（アプリ モード）か、窓全体を透かす地の濃さが変わったら、色を替えて描き直す。
-            if self.front && (crate::palette::refresh() | crate::palette::take_ground_changed()) {
+            if self.owner && (crate::palette::refresh() | crate::palette::take_ground_changed()) {
                 self.session.invalidate();
                 self.diff.dirty = true;
                 self.sender.send(Message::AppearanceChanged);
@@ -19488,12 +19624,12 @@ fn global_entries(reply: &Value) -> Vec<crate::reposettings::Entry> {
 
 /// タブの帯（タブが 2 つ以上のときだけ。macOS 版の窓のタブと同じ）。前のタブの名前は窓の名前と同じく ● と ↑↓ を
 /// 添える。
-fn tab_strip(title: &str, context: &ViewContext<Root>) -> View {
-    let tabs = crate::tabs::tabs();
+fn tab_strip(window: u64, title: &str, context: &ViewContext<Root>) -> View {
+    let tabs = crate::tabs::tabs_of(window);
     if tabs.len() < 2 {
         return View::empty();
     }
-    let active = crate::tabs::active();
+    let active = crate::tabs::active_of(window);
     let items: Vec<(String, View)> = tabs
         .iter()
         .enumerate()
