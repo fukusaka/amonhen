@@ -380,7 +380,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | GitHub through `gh` | ✓ | ✓ | ✓ | — | — |  |
 | Pull Requests (CI, draft, review; check out, open, copy URL) | ✓ | ✓ | ✓ | — | — | Windows: A pull request's checks are an item of its right-click (a tree row has no separate mark to click). |
 | Create Pull Request (base, draft) | ✓ | ✓ | ✓ | — | — | macOS: The base is typed (the default branch at first). From a fork, to its parent.<br>GTK4: The base is typed (the default branch at first). From a fork, to its parent.<br>Windows: The base is typed (the default branch at first). From a fork, to its parent. |
-| Branch status popover (CI, pull request) | ✓ | ✓ | — | — | — |  |
+| Branch status popover (CI, pull request) | ✓ | ✓ | ✓ | — | — | Windows: A dialog from the state at the top of a branch's right-click (a tree row has no separate mark to click). |
 | Open on GitHub | ✓ | ✓ | ✓ | — | — |  |
 | `#123` links in messages | ✓ | ✓ | ✓ | — | — |  |
 | GitHub avatars | ✓ | ✓ | ✓ | — | — |  |
