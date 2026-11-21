@@ -8727,6 +8727,12 @@ mod tests {
     fn counts_added_and_removed_lines_against_head() {
         let (tmp, repo) = setup();
         let dir = tmp.path();
+        // b.txt は書き直すだけ（中身は同じで、時刻だけ変わる）。数えない。
+        std::fs::write(dir.join("b.txt"), "same\n").unwrap();
+        git(dir, &["add", "b.txt"]);
+        git(dir, &["commit", "-q", "-m", "b"]);
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        std::fs::write(dir.join("b.txt"), "same\n").unwrap();
         // a.txt は 1 2 3 → 1 x 3 y（index に一部、作業ツリーに残り）。
         std::fs::write(dir.join("a.txt"), "1\nx\n3\n").unwrap();
         git(dir, &["add", "a.txt"]);
