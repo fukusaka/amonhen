@@ -252,7 +252,7 @@ function lockHolders(message: string): string {
 /**
  * 直前の 3 秒に動いていた git（trace2 の記録から）。引数と、始まり・終わりが今の何 ms 前か、失敗したものは終わりの
  * コード（鍵を取れずに落ちたのがどれかを見分ける）。index に書かないと決めてあるもの（`GIT_OPTIONAL_LOCKS=0`）は
- * 鍵を取らないので、数だけ言う
+ * 鍵を取らないので、直前の 300 ms のものを除いて数だけ言う
  */
 function recentGits(): string {
   const trace = process.env['GIT_TRACE2_EVENT'];
@@ -309,12 +309,16 @@ function recentGits(): string {
   }
   const recent = [...runs.values()].filter((r) => r.argv && r.start !== undefined && (r.end ?? now) >= now - 3000);
   const reading = (r: Run) => r.locks === '0' || r.argv!.includes('--no-optional-locks');
+  // 直前の 300 ms に動いていたものは、鍵を取らないはずのものも出す（それより前は数だけ）。鍵を取るものがどれも
+  // 持ち主でなかったときに、残りを見るため
+  const near = (r: Run) => (r.end ?? now) >= now - 300;
   const lines = recent
-    .filter((r) => !reading(r))
+    .filter((r) => !reading(r) || near(r))
     .sort((a, b) => a.start! - b.start!)
     .map((r) => {
       const failed = r.code ? ` → 終わりのコード ${r.code}` : '';
-      return `[${r.start! - now}〜${r.end === undefined ? '動作中' : r.end - now} ms] ${r.argv!.join(' ')}${failed}`;
+      const mark = reading(r) ? '（任意の鍵なし）' : '';
+      return `[${r.start! - now}〜${r.end === undefined ? '動作中' : r.end - now} ms] ${r.argv!.join(' ')}${mark}${failed}`;
     });
   return `${lines.join(' / ') || 'なし'}（ほかに鍵を取らないもの ${recent.length - lines.length}）`;
 }
