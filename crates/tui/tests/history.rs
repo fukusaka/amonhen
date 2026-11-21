@@ -2695,3 +2695,32 @@ fn fixup_and_drop_rewrite_history() {
     assert_eq!(subjects(), "three\none\n");
     assert!(!dir.path().join("two.txt").exists());
 }
+
+/// History をホイールで速く回し続けても（行が届く前に次の目盛り）、描けるところだけ描いて落ちない
+#[test]
+fn fast_wheel_scrolling_never_outruns_the_rows() {
+    let dir = tempfile::tempdir().unwrap();
+    git(dir.path(), BASE, &["init", "-q", "-b", "main"]);
+    let mut stream = String::new();
+    for i in 0..3000 {
+        let message = format!("Change {i}\n");
+        stream += "commit refs/heads/main\n";
+        stream += &format!("committer Ann <ann@example.com> {} +0000\n", BASE + i * 60);
+        stream += &format!("data {}\n{message}", message.len());
+        stream += &format!("M 100644 inline f{}.txt\ndata 2\n{}\n\n", i % 10, i % 10);
+    }
+    let mut child = amonhen_model::process::command("git")
+        .args(["fast-import", "--quiet"])
+        .current_dir(dir.path())
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::io::Write::write_all(&mut child.stdin.take().unwrap(), stream.as_bytes()).unwrap();
+    assert!(child.wait().unwrap().success());
+    git(dir.path(), BASE, &["checkout", "-q", "-f", "main"]);
+    let mut scroll =
+        amonhen_tui::Scroll::new(open(dir.path()), 200, 60, amonhen_tui::Step::Wheel).unwrap();
+    for _ in 0..2000 {
+        scroll.step().unwrap();
+    }
+}
