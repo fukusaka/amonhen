@@ -3,7 +3,8 @@
 //! 置き場所は `$XDG_CONFIG_HOME/amonhen/settings.json`（なければ `~/.config/amonhen/settings.json`、Windows は
 //! `%APPDATA%\amonhen\settings.json`）。git を動かす機械に置く: この Mac の分はこの Mac、SSH 先の分はその SSH 先
 //! （SSH 先のエンジン・CLI・Remote-SSH の VSCode 拡張が読む）。中身は JSON のオブジェクトで、今は使う git（`"git"`:
-//! 実行ファイルのパス）だけ。知らないキーは書き換えるときも残す。
+//! 実行ファイルのパス）と、TUI の設定（`"tui"`: `{"mouse": false}` でマウスを取り込まずに始める）。知らないキーは
+//! 書き換えるときも残す。
 //!
 //! 使うたびに更新時刻を確かめて読み直すので、アプリで変えれば、CLI・daemon にも再起動なしで効く。
 
@@ -61,6 +62,18 @@ pub fn git() -> Result<Option<String>, String> {
         git: git.clone(),
     });
     git
+}
+
+/// TUI がマウスを取り込んで始めるか（`"tui": {"mouse": …}`）。決めていなければ `Ok(None)`（取り込む）。ファイルが
+/// 読めない（JSON でない）ときはその理由。TUI の `M` での切り替えは書き戻さない。
+pub fn tui_mouse() -> Result<Option<bool>, String> {
+    let Some(path) = path().filter(|p| p.exists()) else {
+        return Ok(None);
+    };
+    Ok(read(&path)?
+        .get("tui")
+        .and_then(|tui| tui.get("mouse"))
+        .and_then(serde_json::Value::as_bool))
 }
 
 /// 使う git を設定に書く。`git` が None・空なら消す（自動: PATH の git）。ほかのキーは残す。
@@ -186,9 +199,14 @@ mod tests {
 
             set_git(None).unwrap();
             assert_eq!(git(), Ok(None));
+            // TUI のマウス（決めていなければ None）。
+            assert_eq!(tui_mouse(), Ok(None));
+            std::fs::write(&file, r#"{"tui": {"mouse": false}}"#).unwrap();
+            assert_eq!(tui_mouse(), Ok(Some(false)));
 
             std::fs::write(&file, "{").unwrap();
             assert!(git().unwrap_err().contains("settings.json"));
+            assert!(tui_mouse().unwrap_err().contains("settings.json"));
             assert!(
                 set_git(Some("/x")).is_err(),
                 "a broken file isn't overwritten"

@@ -92,6 +92,11 @@ fn run_with(
     }));
     let mut app = App::new(front, tx, Clock { now: now(), local });
     app.set_files_here(files_here);
+    // マウスを取り込まずに始めるか（この機械の settings.json。`M` での切り替えは書き戻さない）。
+    app.apply_mouse_setting(amonhen_model::settings::tui_mouse());
+    if let Some(capture) = app.take_mouse_change() {
+        screen.set_mouse(capture)?;
+    }
     let (cols, rows) = terminal::size()?;
     app.resize(cols, rows);
     app.start();
