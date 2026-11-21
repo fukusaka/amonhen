@@ -1024,6 +1024,9 @@ enum Message {
     SettingsField(usize, String),
     SettingsSaveGit,
     SettingsToggle(&'static str, bool),
+    /// Settings > Accounts の、CI を読むブランチとコミットの数。
+    GitHubBranches(Option<usize>),
+    GitHubCommits(Option<usize>),
     /// Settings > Appearance の History の見せ方（View の項目の id と、チェックの値）。
     SettingsDisplay(&'static str, bool),
     /// Settings > Appearance の並び順（0 は日付順、1 はトポロジー順）。
@@ -2060,6 +2063,8 @@ impl Root {
                 }
                 if !self.github.avatars.is_empty() {
                     self.github_avatars_loaded = true;
+                    let urls = self.github.avatars.clone();
+                    AVATAR_URLS.with(|a| a.borrow_mut().extend(urls));
                 }
                 // メッセージの #123 のリンクの先（fork なら元のリポジトリの Issue）。
                 let base = self.github.target.as_ref().map(|t| t.repo.web_url());
@@ -2667,6 +2672,7 @@ impl Root {
                     "history-item-date" => crate::render::items::DATE,
                     "history-item-id" => crate::render::items::ID,
                     "history-item-signature" => crate::render::items::SIGNATURE,
+                    "history-item-ci" => crate::render::items::CI,
                     _ => return,
                 };
                 let value = crate::render::history_items() ^ bit;
@@ -7172,6 +7178,7 @@ impl Root {
                         message: e,
                     });
                 }
+                self.github_setting_changed(key, context);
                 if let Some(state) = self.settings.as_mut() {
                     match key {
                         crate::prefs::AUTO_MAGIC_MERGE => state.auto_magic_merge = value,
@@ -7179,8 +7186,22 @@ impl Root {
                         crate::prefs::OPEN_THROUGH_DAEMON => state.open_through_daemon = value,
                         crate::prefs::USE_FSMONITOR => state.use_fsmonitor = value,
                         crate::prefs::AUTO_BOOKMARK => state.auto_bookmark = value,
-                        _ => state.file_history_merges = value,
+                        crate::prefs::FILE_HISTORY_MERGES => state.file_history_merges = value,
+                        _ => {}
                     }
+                }
+            }
+            Message::GitHubBranches(index) => {
+                if let Some(i) = index {
+                    let _ = crate::prefs::set_bool(crate::prefs::GITHUB_CI_DEFAULT_BRANCH, i == 0);
+                    self.github_setting_changed(crate::prefs::GITHUB_CI_DEFAULT_BRANCH, context);
+                }
+            }
+            Message::GitHubCommits(index) => {
+                if let Some(n) = index.and_then(|i| crate::settingsview::GITHUB_COMMITS.get(i)) {
+                    let _ =
+                        crate::prefs::set_string(crate::prefs::GITHUB_CI_COMMITS, &n.to_string());
+                    self.github_setting_changed(crate::prefs::GITHUB_CI_COMMITS, context);
                 }
             }
             Message::SettingsSyntaxTheme(dark, index) => {
@@ -7258,6 +7279,7 @@ impl Root {
                     "history-item-date" => bit(crate::render::items::DATE),
                     "history-item-id" => bit(crate::render::items::ID),
                     "history-item-signature" => bit(crate::render::items::SIGNATURE),
+                    "history-item-ci" => bit(crate::render::items::CI),
                     _ => return,
                 };
                 if now != value {
@@ -13746,6 +13768,28 @@ impl Root {
         });
     }
 
+    /// Settings > Accounts・Appearance の GitHub の設定を変えた: 読み直す（GitHub のアバターを使わないなら、読んだ
+    /// URL は忘れて Gravatar に戻す。GTK4 版の `Loader` の設定の知らせ）。
+    fn github_setting_changed(&mut self, key: &str, context: &ComponentContext<Self>) {
+        use crate::prefs::*;
+        if ![
+            GITHUB_CI_STATUS,
+            GITHUB_AVATARS,
+            GITHUB_CI_DEFAULT_BRANCH,
+            GITHUB_CI_COMMITS,
+            GITHUB_AVATARS_ONCE,
+        ]
+        .contains(&key)
+        {
+            return;
+        }
+        if !bool(GITHUB_AVATARS) {
+            AVATAR_URLS.with(|a| a.borrow_mut().clear());
+            self.github_avatars_loaded = false;
+        }
+        self.load_github(true, context);
+    }
+
     /// マージされたプルリクエスト（`branchGroups`・`branchCleanup` の `pullRequests` の形。読んでいなければ空）。
     fn merged_pull_requests(&self) -> Value {
         Value::Array(self.github.merged.clone().unwrap_or_default())
@@ -15009,6 +15053,8 @@ impl Root {
                     context.callback(move |()| Message::SettingsKeysButton(key.clone()))
                 }),
                 toggle: Box::new(|key| context.callback(move |v| Message::SettingsToggle(key, v))),
+                github_branches: context.callback(Message::GitHubBranches),
+                github_commits: context.callback(Message::GitHubCommits),
                 close: context.callback(|()| Message::CloseSettings),
                 auto_fetch: context.callback(Message::SettingsAutoFetch),
                 clear_cache: context.callback(|()| Message::ClearCache),
@@ -16907,6 +16953,61 @@ fn message_match_count(info: Option<&Value>, query: &str) -> usize {
 }
 
 thread_local! {
+    /// コミットの作者の GitHub のアバターの URL（メールアドレスの小文字 → URL）。Gravatar より優先する。
+    static AVATAR_URLS: RefCell<std::collections::HashMap<String, String>> =
+        RefCell::new(std::collections::HashMap::new());
+}
+
+/// 作者・コミッターの丸いアバター（GTK4 版の `avatars::Avatar`）。GitHub で分かった URL があればそれを、なければ
+/// Gravatar（メールアドレスの SHA-256 で引く。送るのはハッシュだけ）。読み終えるまでは名前の頭文字の丸。画像は
+/// WinUI が読んで覚える。Settings > Appearance の Show avatars を切っていれば None。
+fn avatar(name: &str, email: &str) -> Option<View> {
+    let key = email.trim().to_lowercase();
+    if !crate::prefs::bool(crate::prefs::SHOW_AVATARS) || key.is_empty() {
+        return None;
+    }
+    // 高解像度の画面のため 2 倍の大きさで取る。
+    let url = AVATAR_URLS
+        .with(|a| a.borrow().get(&key).cloned())
+        .unwrap_or_else(|| {
+            format!(
+                "https://www.gravatar.com/avatar/{}?s=96&d=identicon",
+                amonhen_assist::sha256_hex(key.as_bytes())
+            )
+        });
+    let initial: String = name
+        .trim()
+        .chars()
+        .take(1)
+        .flat_map(char::to_uppercase)
+        .collect();
+    let image = Image::new()
+        .source(url)
+        .ok()?
+        .stretch(Stretch::UniformToFill);
+    Some(
+        Border::new()
+            .width(28.0)
+            .height(28.0)
+            .corner_radius(14.0)
+            .background(Brush::Solid(Color::argb(0x5a, 0x80, 0x80, 0x80)))
+            .margin(Thickness::new(0.0, 0.0, 8.0, 0.0))
+            .vertical_alignment(VerticalAlignment::Top)
+            .content(
+                Grid::new().children((
+                    TextBlock::new()
+                        .text(initial)
+                        .font_size(13.0)
+                        .font_weight(FontWeight::SEMI_BOLD)
+                        .horizontal_alignment(HorizontalAlignment::Center)
+                        .vertical_alignment(VerticalAlignment::Center),
+                    image,
+                )),
+            ),
+    )
+}
+
+thread_local! {
     /// `#123` をリンクにする先の GitHub のリポジトリの URL（GitHub のリポジトリでなければ None）。
     static ISSUE_BASE: RefCell<Option<String>> = const { RefCell::new(None) };
 }
@@ -17026,9 +17127,30 @@ fn details(info: Option<(&Value, Option<&Value>)>, query: &str, current: Option<
             .text_wrapping(TextWrapping::Wrap)
             .foreground(secondary)
     };
-    let mut rows: Vec<View> = vec![line("Author", person(info, "author")).into()];
+    // 作者・コミッターの行（アバターを出すなら、頭に丸い絵）。
+    let with_avatar = |role: &str, text: TextBlock| -> View {
+        let name = info[role].as_str().unwrap_or_default();
+        let email = info[format!("{role}Email")].as_str().unwrap_or_default();
+        match avatar(name, email) {
+            Some(picture) => Grid::new()
+                .columns([GridLength::Auto, GridLength::Star(1.0)])
+                .children((
+                    Grid::new().grid_column(0).children((picture,)),
+                    text.grid_column(1)
+                        .vertical_alignment(VerticalAlignment::Center),
+                )),
+            None => text.into(),
+        }
+    };
+    let mut rows: Vec<View> = vec![with_avatar(
+        "author",
+        line("Author", person(info, "author")),
+    )];
     if info["committer"] != info["author"] || info["committerTime"] != info["authorTime"] {
-        rows.push(line("Committer", person(info, "committer")).into());
+        rows.push(with_avatar(
+            "committer",
+            line("Committer", person(info, "committer")),
+        ));
     }
     rows.push(
         line(
