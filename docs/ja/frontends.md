@@ -44,7 +44,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Range Diff を開いているあいだの Range Diff の行 | ✓ | ✓ | ✓ | ✓ | n/a |  |
 | Branches・Remotes・Tags を絞り込む欄 | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: サイドバーの上の絞り込みのボタンで言葉を入れ、合うものを平らに並べる。 |
 | ブランチ・タグをいくつも選ぶ | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: Merge into Current Branch・Delete Branch・お気に入り・Archive が選んだものすべてに効く。 |
-| Pull Requests・Worktrees は中身があるときだけ出す | ✓ | ✓ | △ | △ | n/a | VSCode: Worktrees だけ（GitHub は入れない）。<br>Windows: Worktrees だけ（Working Copy の下）。 |
+| Pull Requests・Worktrees は中身があるときだけ出す | ✓ | ✓ | ✓ | △ | n/a | VSCode: Worktrees だけ（GitHub は入れない）。<br>Windows: Worktrees は Working Copy の下に出す。 |
 
 ## サイドバー
 
@@ -53,8 +53,8 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Branches の並び（今のもの・活発・止まった・マージ済み・アーカイブ・積み重ね） | ✓ | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあるとき。なければ `/` で分けたフォルダーの木。<br>CLI: `amonhen run`（`branchGroups`）から。 |
 | お気に入りのブランチ | ✓ | ✓ | ✓ | ✓ | — |  |
 | ブランチのアーカイブ | ✓ | ✓ | ✓ | ✓ | — |  |
-| ブランチを片付ける（取り込み済み・PR でマージ済み・上流が消えた。Undo 1 回） | ✓ | ✓ | △ | ✓ | △ | VSCode: エンジンがあるとき、理由ごとの見出しを付けた複数選択の一覧（コマンドパレット、Branches の見出しの右クリック）。CLI: `amonhen run`（`branchCleanup`・`deleteBranches`）から。マージ済みの PR はアプリと VSCode が gh で読む。<br>Windows: pull request はまだ読まない（GitHub に対応していない）。 |
-| PR でマージ済みのブランチの印（GitHub で squash・rebase） | ✓ | ✓ | — | ✓ | △ | VSCode: エンジンがあるとき。番号は行のツールチップに出る。CLI: `amonhen run`（`pullRequests` を渡した `branchGroups`）から。マージ済みの PR はアプリと VSCode が gh で読む。 |
+| ブランチを片付ける（取り込み済み・PR でマージ済み・上流が消えた。Undo 1 回） | ✓ | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあるとき、理由ごとの見出しを付けた複数選択の一覧（コマンドパレット、Branches の見出しの右クリック）。CLI: `amonhen run`（`branchCleanup`・`deleteBranches`）から。マージ済みの PR はアプリと VSCode が gh で読む。 |
+| PR でマージ済みのブランチの印（GitHub で squash・rebase） | ✓ | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあるとき。番号は行のツールチップに出る。CLI: `amonhen run`（`pullRequests` を渡した `branchGroups`）から。マージ済みの PR はアプリと VSCode が gh で読む。<br>Windows: 名前の後ろに merged と出し、番号は行のツールチップに。 |
 | お気に入りをドラッグで並べ替える | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: メニューの Move Up・Move Down in Favorites（ブランチに落とすと Merge・Rebase）。 |
 | ブランチのメニュー: checkout・名前の変更・削除（未マージは Delete Anyway） | ✓ | ✓ | ✓ | ✓ | △ | macOS: Set Upstream は Repository メニューだけ。<br>GTK4: Set Upstream は Repository メニューだけ。<br>CLI: `amonhen run` から。 |
 | checkout していないブランチの同期（Fast-Forward・Push・Publish） | ✓ | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
@@ -64,7 +64,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | タグのメニュー: Push to・Replace on・削除・リモートから削除 | ✓ | ✓ | ✓ | ✓ | △ | VSCode: リモートがいくつもあれば一覧で選ぶ。<br>CLI: `amonhen run` から。 |
 | リモートとそのブランチ | ✓ | ✓ | ✓ | ✓ | ✓ |  |
 | リモートのメニュー: 追加・名前の変更・URL の変更・削除・Prune | ✓ | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。<br>Windows: Edit… で名前と URL を変える。 |
-| Pull Requests のグループ | ✓ | ✓ | — | — | — |  |
+| Pull Requests のグループ | ✓ | ✓ | ✓ | — | — |  |
 | Submodules のグループ（Update・新しい窓で開く） | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `submodule`・`submodule update`。 |
 | submodule の印（取り出していない・違うコミット・中の変更・コンフリクト）とメニュー: Update…（中の submodule も・追うブランチの最新）・URL の編集・追うブランチ・外す（.git/modules も消せる）・追加・Sync URLs | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: Remove は 2 つのボタンで、.git/modules を残すか一緒に消すかを聞く。<br>CLI: `submodule`（`add`・`remove`・`set-url`・`set-branch`・`sync`）。 |
 | submodule: リポジトリのデータを .git/modules に移す・それぞれで命令を動かす | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: Run in Each Submodule… の出力は出力パネルに出る（アプリの Activity にあたる）。<br>CLI: `submodule absorb`・`submodule foreach`。<br>Windows: Run in Each Submodule… の出力は Activity のその行の下に。 |
@@ -98,7 +98,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 選んだリポジトリを Fetch | ✓ | ✓ | ✓ | n/a | n/a | Windows: Ctrl・Shift で行を選び、選んだ行のメニューの Fetch で、選んだものすべてを fetch する。 |
 | Quick Open（あいまい検索） | ✓ | ✓ | ✓ | n/a | n/a | Windows: 新しいウィンドウで開く。 |
 | ツールバーのリポジトリ名で切り替える | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: Select Repository でワークスペースのリポジトリから選ぶ。 |
-| Clone（自分の GitHub のリポジトリから選ぶ） | ✓ | ✓ | △ | n/a | △ | VSCode: VSCode 自身の Git: Clone。<br>CLI: `clone <url>` だけ。<br>Windows: 自分の GitHub のリポジトリの一覧はない（GitHub に対応していない）。clone したものは新しいタブで開く。 |
+| Clone（自分の GitHub のリポジトリから選ぶ） | ✓ | ✓ | ✓ | n/a | △ | VSCode: VSCode 自身の Git: Clone。<br>CLI: `clone <url>` だけ。<br>Windows: clone したものは新しいタブで開く。 |
 | Clone: 取得する範囲（すべて・中身は必要なときに・最近の履歴）と、一部のフォルダだけ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: VSCode の Git: Clone が代わり。<br>CLI: `clone --filter`・`--depth`・`--sparse`。 |
 | Subtrees のグループ（git に git subtree があるとき）: 追加・Pull・Push・Split、相手と squash を覚える | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: 値は入力欄、squash は一覧で聞く（シートではない）。<br>CLI: `subtree`。<br>Windows: squash で最後に取り込んだ subtree は名前の後ろに ⊟（ツールチップはない）。 |
 | Clone: submodule も取り出す | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: VSCode の Git: Clone が代わり。<br>CLI: `clone --recurse-submodules`。 |
@@ -125,8 +125,8 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | SSH Hosts: ホストのすべてのリポジトリの git のページ | ✓ | ✓ | ✓ | n/a | n/a |  |
 | SSH Hosts: ホストの Environment Variables（ログインシェルの切り替え） | ✓ | ✓ | ✓ | n/a | n/a |  |
 | ホスト・この機械の列で選ぶパスのシート | ✓ | ✓ | ✓ | n/a | n/a | Windows: Repositories の「リポジトリを追加」「スキャンするフォルダを追加」と SSH 先のフォルダ。ファイル > 開く… と Clone は Windows 標準のダイアログ。 |
-| Accounts: GitHub（CI の状態・アバター） | ✓ | ✓ | — | — | n/a |  |
-| Appearance: History の順・1 行・行の項目・アバター | ✓ | ✓ | △ | n/a | n/a | Windows: History の並び順・1 行表示・祖先の強調・行の項目（CI の状態はない）。アバターはない。 |
+| Accounts: GitHub（CI の状態・アバター） | ✓ | ✓ | ✓ | — | n/a |  |
+| Appearance: History の順・1 行・行の項目・アバター | ✓ | ✓ | ✓ | n/a | n/a |  |
 | Appearance: フォント・グラフの色 | — | — | — | n/a | n/a |  |
 | Theme: 窓の背景（透過とぼかし・背景画像・ツールバーの色・リポジトリごと） | ✓ | ✓ | ✓ | n/a | n/a | GTK4: ぼかしはない（GNOME では窓の後ろをぼかせない）。透かすにはコンポジタが要る。<br>Windows: ぼかしの強さは Acrylic で決まっている。 |
 | Theme: 構文と差分の色（内蔵のテーマ・VSCode のテーマ・差分は標準の色） | ✓ | ✓ | ✓ | n/a | n/a | VSCode: VSCode 自身のテーマに従う。<br>Windows: Windows のアプリ モード（明るい・暗い）に合わせ、外観ごとにテーマを選ぶ。 |
@@ -229,7 +229,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | リポジトリごとの下書き、テンプレートから始める | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: `commit.template` だけで、共有のテンプレートは使わない。 |
 | 最近のメッセージ（⌥↑ / ⌥↓・一覧） | ✓ | ✓ | ✓ | ✓ | n/a |  |
 | Conventional の種類・Co-authored-by・Signed-off-by を入れる | ✓ | ✓ | ✓ | ✓ | n/a |  |
-| `#issue` の補完 | ✓ | ✓ | — | — | n/a |  |
+| `#issue` の補完 | ✓ | ✓ | ✓ | — | n/a | Windows: 件名の下に並べる（WinUI の TextBox からはメニューを出すカーソルの位置が取れない）。選ぶと # を #番号 にする。 |
 | Commit and Push・Amend | ✓ | ✓ | ✓ | ✓ | △ | CLI: `commit -m … --amend`。 |
 | Fixup / Squash Commit For | ✓ | ✓ | ✓ | ✓ | n/a |  |
 | hooks の出力のシート | ✓ | ✓ | ✓ | ✓ | n/a |  |
@@ -250,10 +250,10 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | ブランチ・タグのラベル付きのグラフ | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `log`。 |
 | 大きな履歴をかたまりで読み、永続キャッシュを使う | ✓ | ✓ | ✓ | ✓ | ✓ |  |
 | 一致の数・次 / 前・一致だけの検索 | ✓ | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあるとき。<br>CLI: `log <query>` が一致を並べる。 |
-| 表示: 順・1 行・行の項目・マージ済みを畳む・祖先を目立たせる | ✓ | ✓ | ✓ | ✓ | △ | VSCode: 順・畳む・目立たせるはエンジンで。<br>CLI: `--topo-order`・`--fold`。<br>Windows: View に。行の項目に CI の状態はない。 |
-| アバター | ✓ | ✓ | — | — | n/a |  |
+| 表示: 順・1 行・行の項目・マージ済みを畳む・祖先を目立たせる | ✓ | ✓ | ✓ | ✓ | △ | VSCode: 順・畳む・目立たせるはエンジンで。<br>CLI: `--topo-order`・`--fold`。<br>Windows: View に。 |
+| アバター | ✓ | ✓ | ✓ | — | n/a |  |
 | コミットの署名の印 | ✓ | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあるとき。<br>CLI: `show` に出る。 |
-| コミットごとの CI の状態とポップオーバー | ✓ | ✓ | — | — | — |  |
+| コミットごとの CI の状態とポップオーバー | ✓ | ✓ | ✓ | — | — | Windows: チェックは吹き出しでなくダイアログに出す。 |
 | worktree の HEAD のラベル（✎ ⌂ ⑂・変更の数） | ✓ | ✓ | ✓ | ✓ | — |  |
 | Go to HEAD・Parent・Child | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: History の上の HEAD のボタン、コミットのメニューの Go to Parent・Go to Child、詳細の親と子へのリンク（エンジンがあるとき）。 |
 | Go to Ref | — | — | — | — | n/a |  |
@@ -377,13 +377,13 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 
 | 機能 | macOS | GTK4 | Windows | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
-| `gh` を通す GitHub | ✓ | ✓ | — | — | — |  |
-| Pull Requests（CI・draft・レビュー、checkout・開く・URL のコピー） | ✓ | ✓ | — | — | — |  |
-| Create Pull Request（base・draft） | ✓ | ✓ | — | — | — | macOS: base は打ち込む（最初は既定のブランチ）。fork からは元のリポジトリへ。<br>GTK4: base は打ち込む（最初は既定のブランチ）。fork からは元のリポジトリへ。 |
+| `gh` を通す GitHub | ✓ | ✓ | ✓ | — | — |  |
+| Pull Requests（CI・draft・レビュー、checkout・開く・URL のコピー） | ✓ | ✓ | ✓ | — | — | Windows: プルリクエストのチェックは右クリックの項目から（木の行には押せる印を別に置けない）。 |
+| Create Pull Request（base・draft） | ✓ | ✓ | ✓ | — | — | macOS: base は打ち込む（最初は既定のブランチ）。fork からは元のリポジトリへ。<br>GTK4: base は打ち込む（最初は既定のブランチ）。fork からは元のリポジトリへ。<br>Windows: base は打ち込む（最初は既定のブランチ）。fork からは元のリポジトリへ。 |
 | ブランチの状態のポップオーバー（CI・プルリクエスト） | ✓ | ✓ | — | — | — |  |
-| Open on GitHub | ✓ | ✓ | — | — | — |  |
-| メッセージの `#123` のリンク | ✓ | ✓ | — | — | — |  |
-| GitHub のアバター | ✓ | ✓ | — | — | — |  |
+| Open on GitHub | ✓ | ✓ | ✓ | — | — |  |
+| メッセージの `#123` のリンク | ✓ | ✓ | ✓ | — | — |  |
+| GitHub のアバター | ✓ | ✓ | ✓ | — | — |  |
 
 ## 13. 言語
 

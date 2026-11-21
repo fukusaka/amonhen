@@ -44,7 +44,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Range Diff row while a range diff is open | ✓ | ✓ | ✓ | ✓ | n/a |  |
 | Filter field over Branches, Remotes and Tags | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: The filter button on the sidebar's title asks for the words; the matches are listed flat. |
 | Several branches or tags selected at once | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: Merge into Current Branch, Delete Branch, favorites and Archive act on all of them. |
-| Pull Requests and Worktrees shown only when not empty | ✓ | ✓ | △ | △ | n/a | VSCode: Worktrees only (GitHub is left out).<br>Windows: Worktrees only, under Working Copy. |
+| Pull Requests and Worktrees shown only when not empty | ✓ | ✓ | ✓ | △ | n/a | VSCode: Worktrees only (GitHub is left out).<br>Windows: Worktrees are listed under Working Copy. |
 
 ## Sidebar
 
@@ -53,8 +53,8 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Branches arranged (current, active, inactive, merged, archived, stacked) | ✓ | ✓ | ✓ | ✓ | △ | VSCode: With the engine; without it, a folder tree split on `/`.<br>CLI: Via `amonhen run` (`branchGroups`). |
 | Favorite branches | ✓ | ✓ | ✓ | ✓ | — |  |
 | Archived branches | ✓ | ✓ | ✓ | ✓ | — |  |
-| Clean Up Branches (merged, merged by a pull request, upstream gone; one Undo) | ✓ | ✓ | △ | ✓ | △ | VSCode: With the engine, a multi-select list with a heading per reason (Command Palette, the Branches heading's right-click). CLI: Via `amonhen run` (`branchCleanup`, `deleteBranches`); merged pull requests are read by the apps and VSCode with gh.<br>Windows: Pull requests aren't read yet (no GitHub support). |
-| Merged-by-pull-request mark on a branch (squash or rebase on GitHub) | ✓ | ✓ | — | ✓ | △ | VSCode: With the engine; the number is in the row's tooltip. CLI: Via `amonhen run` (`branchGroups` with `pullRequests`); the apps and VSCode read merged pull requests with gh. |
+| Clean Up Branches (merged, merged by a pull request, upstream gone; one Undo) | ✓ | ✓ | ✓ | ✓ | △ | VSCode: With the engine, a multi-select list with a heading per reason (Command Palette, the Branches heading's right-click). CLI: Via `amonhen run` (`branchCleanup`, `deleteBranches`); merged pull requests are read by the apps and VSCode with gh. |
+| Merged-by-pull-request mark on a branch (squash or rebase on GitHub) | ✓ | ✓ | ✓ | ✓ | △ | VSCode: With the engine; the number is in the row's tooltip. CLI: Via `amonhen run` (`branchGroups` with `pullRequests`); the apps and VSCode read merged pull requests with gh.<br>Windows: The word merged after the name, with the number in the row's tooltip. |
 | Favorites reordered by dragging | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: Move Up and Move Down in Favorites on the menu (a drop on a branch offers Merge and Rebase). |
 | Branch menu: checkout, rename, delete (Delete Anyway when unmerged) | ✓ | ✓ | ✓ | ✓ | △ | macOS: Set Upstream is only in the Repository menu.<br>GTK4: Set Upstream is only in the Repository menu.<br>CLI: Via `amonhen run`. |
 | Sync a branch that is not checked out (Fast-Forward, Push, Publish) | ✓ | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
@@ -64,7 +64,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Tag menu: Push to, Replace on, Delete, Delete from a remote | ✓ | ✓ | ✓ | ✓ | △ | VSCode: The remote is chosen in a list when there are several.<br>CLI: Via `amonhen run`. |
 | Remotes with their branches | ✓ | ✓ | ✓ | ✓ | ✓ |  |
 | Remote menu: Add, Rename, Edit URL, Remove, Prune | ✓ | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`.<br>Windows: Edit… changes the name and the URLs. |
-| Pull Requests group | ✓ | ✓ | — | — | — |  |
+| Pull Requests group | ✓ | ✓ | ✓ | — | — |  |
 | Submodules group (Update, Open in New Window) | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `submodule`, `submodule update`. |
 | Submodule marks (not checked out, another commit, changes inside, conflict) and menus: Update… (recursive, remote), Edit URL, Branch to Follow, Remove (optionally .git/modules), Add, Sync URLs | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: Remove asks with two buttons: keep `.git/modules` or delete it too.<br>CLI: `submodule` (`add`, `remove`, `set-url`, `set-branch`, `sync`). |
 | Submodules: move repository data into .git/modules, run a command in each | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: Run in Each Submodule…'s output goes to an Output channel (the app's Activity).<br>CLI: `submodule absorb`, `submodule foreach`.<br>Windows: Run in Each Submodule…'s output is under its row in Activity. |
@@ -98,7 +98,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Fetch the selected repositories | ✓ | ✓ | ✓ | n/a | n/a | Windows: Rows are selected with Ctrl or Shift, and Fetch on a selected row's menu fetches them all. |
 | Quick Open (fuzzy search) | ✓ | ✓ | ✓ | n/a | n/a | Windows: Opens in a new window. |
 | Repository name in the toolbar switches the repository | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: Select Repository picks among workspace repositories. |
-| Clone (choosing from your own GitHub repositories) | ✓ | ✓ | △ | n/a | △ | VSCode: VSCode's own Git: Clone.<br>CLI: `clone <url>` only.<br>Windows: No list of your own GitHub repositories (no GitHub support); the clone opens in a new tab. |
+| Clone (choosing from your own GitHub repositories) | ✓ | ✓ | ✓ | n/a | △ | VSCode: VSCode's own Git: Clone.<br>CLI: `clone <url>` only.<br>Windows: The clone opens in a new tab. |
 | Clone: what to download (everything, contents when needed, recent history) and only some folders | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: VSCode's own Git: Clone.<br>CLI: `clone --filter`, `--depth`, `--sparse`. |
 | Subtrees group (shown when git has git subtree): Add, Pull, Push, Split, remembering the source and squash | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: The values are asked in input boxes and the squash in a list, not a sheet.<br>CLI: `subtree`.<br>Windows: ⊟ after a subtree last pulled with squash, without a tooltip. |
 | Clone: check out submodules too | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: VSCode's own Git: Clone.<br>CLI: `clone --recurse-submodules`. |
@@ -125,8 +125,8 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | SSH Hosts: git pages for every repository on the host | ✓ | ✓ | ✓ | n/a | n/a |  |
 | SSH Hosts: the host's Environment Variables (login shell switch) | ✓ | ✓ | ✓ | n/a | n/a |  |
 | Path picker in columns for a host or this machine | ✓ | ✓ | ✓ | n/a | n/a | Windows: Repositories' Add Repositories and Add a Folder to Scan, and folders on SSH hosts; File > Open… and Clone keep the system dialog. |
-| Accounts: GitHub (CI status, avatars) | ✓ | ✓ | — | — | n/a |  |
-| Appearance: History order, one line, row items, avatars | ✓ | ✓ | △ | n/a | n/a | Windows: History's order, one line, ancestor highlight and row items (no CI status); no avatars. |
+| Accounts: GitHub (CI status, avatars) | ✓ | ✓ | ✓ | — | n/a |  |
+| Appearance: History order, one line, row items, avatars | ✓ | ✓ | ✓ | n/a | n/a |  |
 | Appearance: fonts, graph colors | — | — | — | n/a | n/a |  |
 | Theme: window background (transparency and blur, image, toolbar tint, per repository) | ✓ | ✓ | ✓ | n/a | n/a | GTK4: No blur (GNOME can't blur what is behind the window); a see-through window needs a compositor.<br>Windows: The blur strength is fixed by Acrylic. |
 | Theme: syntax and diff colors (built-in themes, VSCode themes, standard diff colors) | ✓ | ✓ | ✓ | n/a | n/a | VSCode: follows VSCode's own theme.<br>Windows: The app follows Windows' app mode (light or dark), with a theme for each. |
@@ -229,7 +229,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Draft per repository, starting from the template | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: `commit.template` only, not the shared template library. |
 | Recent messages (⌥↑ / ⌥↓, list) | ✓ | ✓ | ✓ | ✓ | n/a |  |
 | Insert Conventional types, Co-authored-by, Signed-off-by | ✓ | ✓ | ✓ | ✓ | n/a |  |
-| `#issue` completion | ✓ | ✓ | — | — | n/a |  |
+| `#issue` completion | ✓ | ✓ | ✓ | — | n/a | Windows: Listed under the summary (a WinUI text box gives no caret position to open a menu at); choosing one puts #number in place of the #. |
 | Commit and Push, Amend | ✓ | ✓ | ✓ | ✓ | △ | CLI: `commit -m … --amend`. |
 | Fixup / Squash Commit For | ✓ | ✓ | ✓ | ✓ | n/a |  |
 | Hooks output sheet | ✓ | ✓ | ✓ | ✓ | n/a |  |
@@ -250,10 +250,10 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Graph with branch and tag labels | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `log`. |
 | Huge histories in chunks with the persistent cache | ✓ | ✓ | ✓ | ✓ | ✓ |  |
 | Search with match count, next / previous, matching only | ✓ | ✓ | ✓ | ✓ | △ | VSCode: With the engine.<br>CLI: `log <query>` lists the matches. |
-| Display: order, one line, row items, fold merged, highlight ancestors | ✓ | ✓ | ✓ | ✓ | △ | VSCode: Order, folding and highlighting with the engine.<br>CLI: `--topo-order`, `--fold`.<br>Windows: In View; the row items have no CI status. |
-| Avatars | ✓ | ✓ | — | — | n/a |  |
+| Display: order, one line, row items, fold merged, highlight ancestors | ✓ | ✓ | ✓ | ✓ | △ | VSCode: Order, folding and highlighting with the engine.<br>CLI: `--topo-order`, `--fold`.<br>Windows: In View. |
+| Avatars | ✓ | ✓ | ✓ | — | n/a |  |
 | Signature marks on commits | ✓ | ✓ | ✓ | ✓ | △ | VSCode: With the engine.<br>CLI: In `show`. |
-| CI status per commit with a checks popover | ✓ | ✓ | — | — | — |  |
+| CI status per commit with a checks popover | ✓ | ✓ | ✓ | — | — | Windows: The checks show in a dialog rather than a popover. |
 | Worktree HEAD labels (✎ ⌂ ⑂, change counts) | ✓ | ✓ | ✓ | ✓ | — |  |
 | Go to HEAD, Parent, Child | ✓ | ✓ | ✓ | ✓ | n/a | VSCode: The HEAD button above History, Go to Parent and Go to Child on a commit's menu, and parent and child links in the details (with the engine). |
 | Go to Ref | — | — | — | — | n/a |  |
@@ -377,13 +377,13 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 
 | Feature | macOS | GTK4 | Windows | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | --- |
-| GitHub through `gh` | ✓ | ✓ | — | — | — |  |
-| Pull Requests (CI, draft, review; check out, open, copy URL) | ✓ | ✓ | — | — | — |  |
-| Create Pull Request (base, draft) | ✓ | ✓ | — | — | — | macOS: The base is typed (the default branch at first). From a fork, to its parent.<br>GTK4: The base is typed (the default branch at first). From a fork, to its parent. |
+| GitHub through `gh` | ✓ | ✓ | ✓ | — | — |  |
+| Pull Requests (CI, draft, review; check out, open, copy URL) | ✓ | ✓ | ✓ | — | — | Windows: A pull request's checks are an item of its right-click (a tree row has no separate mark to click). |
+| Create Pull Request (base, draft) | ✓ | ✓ | ✓ | — | — | macOS: The base is typed (the default branch at first). From a fork, to its parent.<br>GTK4: The base is typed (the default branch at first). From a fork, to its parent.<br>Windows: The base is typed (the default branch at first). From a fork, to its parent. |
 | Branch status popover (CI, pull request) | ✓ | ✓ | — | — | — |  |
-| Open on GitHub | ✓ | ✓ | — | — | — |  |
-| `#123` links in messages | ✓ | ✓ | — | — | — |  |
-| GitHub avatars | ✓ | ✓ | — | — | — |  |
+| Open on GitHub | ✓ | ✓ | ✓ | — | — |  |
+| `#123` links in messages | ✓ | ✓ | ✓ | — | — |  |
+| GitHub avatars | ✓ | ✓ | ✓ | — | — |  |
 
 ## 13. Language
 
