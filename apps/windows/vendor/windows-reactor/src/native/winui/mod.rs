@@ -1076,10 +1076,8 @@ impl WinUiRuntime {
             .windows
             .get(&node)
             .ok_or(RuntimeError::MissingNode(node))?;
-        window
-            .SetTitleBar(None::<&UIElement>)
-            .and_then(|()| window.SetExtendsContentIntoTitleBar(false))
-            .map_err(native_error)?;
+        // The height option can only be changed while the content extends into the title bar
+        // (otherwise AppWindowTitleBar refuses with ERROR_INVALID_STATE), so reset it first.
         window
             .cast::<IWindow2>()
             .and_then(|window| window.AppWindow())
@@ -1088,6 +1086,10 @@ impl WinUiRuntime {
             .and_then(|title_bar| {
                 title_bar.SetPreferredHeightOption(TitleBarHeightOption::Standard)
             })
+            .map_err(native_error)?;
+        window
+            .SetTitleBar(None::<&UIElement>)
+            .and_then(|()| window.SetExtendsContentIntoTitleBar(false))
             .map_err(native_error)?;
         self.window_title_bars.remove(&node);
         Ok(())

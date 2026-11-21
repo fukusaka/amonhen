@@ -8063,9 +8063,11 @@ impl Root {
                 None
             },
         );
+        // タブ（2 つ以上のとき）はタイトルバーの真ん中の欄に置く（下の `menu_bar`）。
+        let tabs_in_bar = crate::tabs::tabs().len() >= 2;
         let tab_strip = Grid::new()
-            .grid_row(2)
             .element_ref(&self.tab_host)
+            .vertical_alignment(VerticalAlignment::Bottom)
             .children((tab_strip(&title, context),));
         // タブを窓の外へ引き出したら、そのリポジトリを新しい窓で開く（タブの並びが変わるたびに付け直す）。
         let tab_ids: String = crate::tabs::tabs()
@@ -8438,21 +8440,45 @@ impl Root {
                             )),
                     )),
             ));
-        let menu_bar = crate::menus::menu_bar(|| context.callback(Message::Command));
+        // タイトルバー 1 段: 左にリポジトリの切り替えとツールバーのボタン（アイコンだけ）、右に ≡（メニューバーの
+        // 中身すべて）。メニューバーとツールバーの段はなくす。ツールバーは幅の決まる真ん中の欄に左寄せで置く
+        // （入りきらないボタンは CommandBar が ⋯ にたたむ）。残りの空きは窓をつかんで動かす所。
         let tracking = self.tracking();
-        let toolbar = Grid::new()
-            .grid_row(1)
-            .columns([GridLength::Auto, GridLength::Star(1.0)])
-            .children((
-                self.repository_switcher(context),
-                Grid::new()
-                    .grid_column(1)
+        let menu_bar = TitleBar::new().grid_row(0).slots([
+            SlotView::new(TitleBarSlot::LeftHeader, self.repository_switcher(context)),
+            SlotView::new(TitleBarSlot::Content, {
+                let toolbar: View = Grid::new()
                     .element_ref(&self.toolbar)
+                    .horizontal_alignment(HorizontalAlignment::Left)
+                    .vertical_alignment(VerticalAlignment::Center)
+                    // 窓が狭くても、右に窓をつかむ空きを残す（ボタンは先に ⋯ へたたまれる）。
+                    .margin(Thickness::new(0.0, 0.0, 64.0, 0.0))
                     .children((crate::menus::toolbar(
                         context.callback(Message::Command),
                         tracking,
+                    ),));
+                // タブがあれば左半分にタブ、右半分にツールバー（ブラウザのように、タブの段を別に取らない）。
+                if tabs_in_bar {
+                    Grid::new()
+                        .columns([GridLength::Star(1.0), GridLength::Star(1.0)])
+                        .children((
+                            Grid::new().grid_column(0).children((tab_strip,)),
+                            Grid::new().grid_column(1).children((toolbar,)),
+                        ))
+                } else {
+                    toolbar
+                }
+            }),
+            SlotView::new(
+                TitleBarSlot::RightHeader,
+                Grid::new()
+                    .margin(Thickness::new(4.0, 0.0, 8.0, 0.0))
+                    .vertical_alignment(VerticalAlignment::Center)
+                    .children((crate::menus::menu_button(
+                        context.callback(Message::Command),
                     ),)),
-            ));
+            ),
+        ]);
         // 数かツールバーの並びが変わったら、Pull・Push のバッジを付け直す（並べ終えてから）。
         let order: String = crate::menus::toolbar_entries()
             .iter()
@@ -8866,8 +8892,6 @@ impl Root {
                 grounds,
                 toolbar_tint,
                 menu_bar,
-                toolbar,
-                tab_strip,
                 // パッチのファイルを落とせる（GTK4 版・macOS 版と同じく窓のどこにでも）。
                 Border::new()
                     .grid_row(3)

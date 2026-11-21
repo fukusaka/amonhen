@@ -2,8 +2,9 @@
 //! テンプレートの根の Panel に InfoBadge を入れる）。
 
 use crate::bindings::{
-    AppBarButton, DependencyObject, HorizontalAlignment, InfoBadge, Thickness, UIElement,
-    VerticalAlignment, Visibility, VisualTreeHelper,
+    AppBarButton, CommandBar, CommandBarDefaultLabelPosition, DependencyObject,
+    HorizontalAlignment, InfoBadge, Thickness, UIElement, VerticalAlignment, Visibility,
+    VisualTreeHelper,
 };
 use windows_collections::IVector;
 use windows_core::{IInspectable, Interface, Result};
@@ -34,6 +35,11 @@ fn children(panel: &IPanel) -> Result<IVector<UIElement>> {
 pub fn put_badges(element: &IInspectable, counts: &[(String, u32)]) -> Result<()> {
     let mut stack = vec![element.cast::<DependencyObject>()?];
     while let Some(node) = stack.pop() {
+        // タイトルバーのツールバーはアイコンだけ（名前はツールチップ）。ラベルがなければ、CommandBar はラベルを
+        // 広げる ⋯ を出さず、入りきらないボタンがあるときだけ ⋯ を出す。
+        if let Ok(bar) = node.cast::<CommandBar>() {
+            bar.SetDefaultLabelPosition(CommandBarDefaultLabelPosition::Collapsed)?;
+        }
         if let Ok(button) = node.cast::<AppBarButton>() {
             let label = String::from_utf16_lossy(&button.Label()?);
             if let Some((_, count)) = counts.iter().find(|(name, _)| *name == label) {

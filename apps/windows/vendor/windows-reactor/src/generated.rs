@@ -1829,6 +1829,7 @@ pub mod public {
     pub enum TitleBarSlot {
         Content,
         RightHeader,
+        LeftHeader,
     }
     impl sealed::SlotIndex<TitleBarSlot> for TitleBar {
         fn slot_index(slot: TitleBarSlot) -> u8 {
@@ -12319,6 +12320,7 @@ pub enum SlotId {
     SliderHeader,
     TitleBarContent,
     TitleBarRightHeader,
+    TitleBarLeftHeader,
     NavigationViewContent,
     NavigationViewHeader,
     NavigationViewPaneCustomContent,
@@ -12379,6 +12381,7 @@ pub fn slot_id(kind: MountedKind, index: u8) -> Option<SlotId> {
         MountedKind::TitleBar => match index {
             0u8 => Some(SlotId::TitleBarContent),
             1u8 => Some(SlotId::TitleBarRightHeader),
+            2u8 => Some(SlotId::TitleBarLeftHeader),
             _ => None,
         },
         MountedKind::NavigationView => match index {
@@ -12503,7 +12506,11 @@ pub fn slots(kind: MountedKind) -> &'static [SlotId] {
         MountedKind::PasswordBox => &[SlotId::PasswordBoxHeader],
         MountedKind::NumberBox => &[SlotId::NumberBoxHeader],
         MountedKind::Slider => &[SlotId::SliderHeader],
-        MountedKind::TitleBar => &[SlotId::TitleBarContent, SlotId::TitleBarRightHeader],
+        MountedKind::TitleBar => &[
+            SlotId::TitleBarContent,
+            SlotId::TitleBarRightHeader,
+            SlotId::TitleBarLeftHeader,
+        ],
         MountedKind::NavigationView => &[
             SlotId::NavigationViewContent,
             SlotId::NavigationViewHeader,
@@ -15740,6 +15747,13 @@ const TITLE_BAR_SLOTS: &[SlotDescriptor] = &[
     SlotDescriptor {
         id: SlotId::TitleBarRightHeader,
         name: "RightHeader",
+        interface: "Microsoft.UI.Xaml.Controls.ITitleBar",
+        target: "ui_element",
+        collection: false,
+    },
+    SlotDescriptor {
+        id: SlotId::TitleBarLeftHeader,
+        name: "LeftHeader",
         interface: "Microsoft.UI.Xaml.Controls.ITitleBar",
         target: "ui_element",
         collection: false,
