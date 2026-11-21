@@ -148,7 +148,13 @@ const FILTER: &[&str] = &[
      PointerMoved,remove_PointerMoved,PointerReleased,remove_PointerReleased,PointerWheelChanged,\
      remove_PointerWheelChanged,DoubleTapped,remove_DoubleTapped,ContextRequested,remove_ContextRequested,\
      IsTabStop,put_IsTabStop,Focus,CapturePointer,ReleasePointerCapture,ContextFlyout,put_ContextFlyout,PreviewKeyDown,remove_PreviewKeyDown,\
-     StartBringIntoView,put_IsHitTestVisible,put_Visibility,DragOver,remove_DragOver,Drop,remove_Drop,put_AllowDrop}",
+     StartBringIntoView,put_IsHitTestVisible,put_Visibility,DragOver,remove_DragOver,Drop,remove_Drop,put_AllowDrop,XamlRoot}",
+    // 部品がどの窓のものか（窓の HWND。前に出ている窓の前のタブが、窓の入力の部品を持つ）。
+    "Microsoft.UI.Xaml.XamlRoot",
+    "Microsoft.UI.Xaml.IXamlRoot2::{ContentIslandEnvironment}",
+    "Microsoft.UI.Content.ContentIslandEnvironment",
+    "Microsoft.UI.Content.IContentIslandEnvironment::{AppWindowId}",
+    "Microsoft.UI.WindowId",
     "Microsoft.UI.Xaml.Controls.Primitives.IFlyoutBase::{ShowAt,ShowAtWithOptions,Hide}",
     "Microsoft.UI.Xaml.Controls.Primitives.IFlyoutShowOptions::{put_Position}",
     "Microsoft.UI.Xaml.IRoutedEventArgs::{OriginalSource}",
