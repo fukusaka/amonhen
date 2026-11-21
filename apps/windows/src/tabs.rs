@@ -1,6 +1,5 @@
-//! 窓のタブ（macOS 版の窓のタブ、GTK4 版の `tabs.rs`）。タブはリポジトリの場所と、出す画面だけを持つ。前に出して
-//! いるタブのリポジトリだけを開いておき、タブを替えると根の部品を作り直して、そのタブのリポジトリを開く（History は
-//! 永続のキャッシュから読むので速い）。
+//! 窓のタブ（macOS 版の窓のタブ、GTK4 版の `tabs.rs`）。タブはリポジトリの場所と、出す画面を持つ。どのタブも
+//! そのリポジトリを開いたまま持ち（窓の根の部品が、タブごとに 1 つ）、前のタブだけを見せる。
 
 use std::cell::{Cell, RefCell};
 
@@ -24,8 +23,11 @@ thread_local! {
     static TABS: RefCell<Vec<Tab>> = const { RefCell::new(Vec::new()) };
     static ACTIVE: Cell<usize> = const { Cell::new(0) };
     static NEXT_ID: Cell<u64> = const { Cell::new(1) };
-    /// 前のタブを替えたときに、根の部品を作り直させる。
+    /// タブの並び・前のタブ・名前が変わったときに、窓の外側の部品を描き直させる。
     static REMOUNT: RefCell<Option<Box<dyn Fn()>>> = const { RefCell::new(None) };
+    /// タブごとの名前（● と ↑↓ を添えたもの。それぞれのタブの根の部品が知らせる）と、変わった回数。
+    static TITLES: RefCell<std::collections::HashMap<u64, String>> = RefCell::new(Default::default());
+    static TITLES_CHANGED: Cell<u64> = const { Cell::new(0) };
 }
 
 fn new_id() -> u64 {
@@ -93,17 +95,48 @@ pub fn name(location: &str) -> String {
         .to_owned()
 }
 
-/// `index` のタブを前に出し、そのリポジトリを開き直す。
+/// `index` のタブを前に出す（どのタブもリポジトリを開いたままなので、見せるものを替えるだけ）。
 fn activate(index: usize) {
+    // 今の前のタブの、窓の入力の部品を取っておく（前に戻したら戻す）。
+    crate::app::leave_front();
     ACTIVE.with(|a| a.set(index));
-    if let Some(tab) = current() {
-        crate::app::set_target(&tab);
-    }
+    refresh();
+}
+
+/// 窓の外側の部品を描き直す。
+fn refresh() {
     REMOUNT.with(|r| {
         if let Some(f) = r.borrow().as_ref() {
             f();
         }
     });
+}
+
+/// タブ `id` の名前を知らせる（変わったときだけ描き直す）。
+pub fn set_title(id: u64, title: &str) {
+    let changed = TITLES.with(|t| {
+        let mut titles = t.borrow_mut();
+        if titles.get(&id).map(String::as_str) == Some(title) {
+            false
+        } else {
+            titles.insert(id, title.to_owned());
+            true
+        }
+    });
+    if changed {
+        TITLES_CHANGED.with(|c| c.set(c.get() + 1));
+        refresh();
+    }
+}
+
+/// タブ `id` の名前（まだ知らされていなければ None）。
+pub fn title(id: u64) -> Option<String> {
+    TITLES.with(|t| t.borrow().get(&id).cloned())
+}
+
+/// 名前が変わった回数（窓の外側の部品が、根の部品に描き直させるために渡す）。
+pub fn titles_changed() -> u64 {
+    TITLES_CHANGED.with(Cell::get)
 }
 
 /// 前のタブが今どの画面か（替えて戻ったときに同じ画面から出す）。
@@ -201,13 +234,16 @@ pub fn close(id: u64) -> bool {
         return true;
     }
     TABS.with(|t| t.borrow_mut().remove(index));
-    // 後ろに置いていた、そのタブのリポジトリを閉じる。
-    crate::app::forget_parked(id);
+    TITLES.with(|t| t.borrow_mut().remove(&id));
     let active = active();
     if index == active {
         activate(index.min(len - 2));
-    } else if index < active {
-        ACTIVE.with(|a| a.set(active - 1));
+    } else {
+        if index < active {
+            ACTIVE.with(|a| a.set(active - 1));
+        }
+        // 閉じたタブの根の部品を外す。
+        refresh();
     }
     false
 }
