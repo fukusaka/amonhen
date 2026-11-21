@@ -2344,12 +2344,17 @@ fn cherry_pick_revert_and_detach_from_history() {
     let asked = amonhen_tui::snapshot(open(dir.path()), 120, 10, clock(), "jy").unwrap();
     println!("{asked}");
     assert!(asked.contains("“On topic”?   y cherry-pick   n cancel"));
+    // アプリのシートと同じく、前と後の絵: 後は今の先端（On main）の上に新しいコミット。
+    assert!(asked.contains(" Cherry-pick "), "{asked}");
+    assert!(asked.contains("On topic  [main]  new"), "{asked}");
     let stopped = amonhen_tui::snapshot(open(dir.path()), 120, 10, clock(), "jyy").unwrap();
     assert!(stopped.contains("Stopped at conflicts"));
     amonhen_tui::snapshot(open(dir.path()), 120, 10, clock(), "Ay").unwrap();
     // 一番上（On main）を打ち消す。
     let asked = amonhen_tui::snapshot(open(dir.path()), 120, 10, clock(), "v").unwrap();
+    println!("{asked}");
     assert!(asked.contains("Revert "));
+    assert!(asked.contains("Revert \"On main\"  [main]  new"), "{asked}");
     amonhen_tui::snapshot(open(dir.path()), 120, 10, clock(), "vy").unwrap();
     assert_eq!(subject(), "Revert \"On main\"\n");
     assert_eq!(
