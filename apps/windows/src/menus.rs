@@ -441,6 +441,16 @@ pub struct Tracking {
     pub no_remote: bool,
 }
 
+/// Push で送れるものがあるか（上流がなければ、送り先のリモートがあれば Publish できる）。なければツールバーの
+/// Push を押せないように見せる（GTK4 版・macOS 版はボタンを押せなくする）。
+fn can_push(t: Tracking) -> bool {
+    if t.published {
+        t.ahead > 0
+    } else {
+        !t.no_remote
+    }
+}
+
 /// Pull のツールチップ（上流より後ろならその数。macOS 版の `setTracking` と同じ）。
 fn pull_tooltip(t: Tracking) -> String {
     if t.behind > 0 {
@@ -497,9 +507,12 @@ pub fn toolbar(on_click: Callback<String>, tracking: Tracking) -> View {
                 );
                 Some(match id.as_str() {
                     "pull" => button.enabled(enabled).tooltip(pull_tooltip(tracking)),
-                    // 送れないときも押せるままにする（WinUI は押せない部品のツールチップを出さないので、わけが
-                    // 読めなくなる。押せばベルが鳴る）。
-                    "push" => button.enabled(enabled).tooltip(push_tooltip(tracking)),
+                    // 送れないときは押せないように見せるだけにする（WinUI は押せない部品のツールチップを出さないので、
+                    // 本当に押せなくするとわけが読めない。押せばベルが鳴る）。
+                    "push" => button
+                        .enabled(enabled)
+                        .dimmed(enabled && !can_push(tracking))
+                        .tooltip(push_tooltip(tracking)),
                     _ => button.enabled(enabled),
                 })
             }
