@@ -2,6 +2,7 @@
 
 pub mod activity;
 mod backend;
+pub mod bookmarks;
 mod bundle_file;
 mod change;
 mod eol;
