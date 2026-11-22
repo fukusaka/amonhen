@@ -103,6 +103,8 @@ pub static ENTRIES: &[Entry] = &[
     entry("go-to-head", '@', Place::History),
     entry("go-to-parent", ']', Place::History),
     entry("go-to-child", '[', Place::History),
+    control("refresh", 'r', Place::Anywhere),
+    keyless("rebuild-history", Place::Anywhere),
 ];
 
 impl Entry {

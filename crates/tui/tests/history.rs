@@ -1479,6 +1479,26 @@ fn sync_a_branch_that_is_not_checked_out() {
     );
 }
 
+/// `Ctrl-r` で読み直し（アプリの Refresh）、命令の一覧の Rebuild History で History のキャッシュを作り直す
+#[test]
+fn refresh_and_rebuild_history() {
+    let dir = tempfile::tempdir().unwrap();
+    merged(dir.path());
+    let listed = amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), ":rebuild").unwrap();
+    println!("{listed}");
+    assert!(listed.contains("Rebuild History"), "{listed}");
+    let refresh = amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), ":refresh").unwrap();
+    assert!(refresh.contains("Ctrl-r"), "{refresh}");
+    let rebuilt =
+        amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), ":rebuild history\n").unwrap();
+    println!("{rebuilt}");
+    assert!(rebuilt.contains("Rebuilt History"), "{rebuilt}");
+    assert!(rebuilt.contains("Merge branch 'topic'"), "{rebuilt}");
+    // 読み直しても、History はそのまま。
+    let again = amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), "\x12").unwrap();
+    assert!(again.contains("Merge branch 'topic'"), "{again}");
+}
+
 /// サイドバーの `c` でブランチをチェックアウトし、`b` で新しいブランチを作る。`u` で戻す
 #[test]
 fn checkout_new_branch_and_undo() {

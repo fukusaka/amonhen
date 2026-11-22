@@ -17,7 +17,12 @@ use crate::app::Event;
 pub enum Request {
     /// リポジトリの名前・ref・History を読む。`fold` ならマージ済みのブランチを折りたたむ（`expanded` のマージは
     /// 取り込んだ側も出す）。
-    Open { fold: bool, expanded: Vec<String> },
+    /// `rebuild` なら、History のキャッシュを捨てて作り直してから（Rebuild History）。
+    Open {
+        fold: bool,
+        expanded: Vec<String>,
+        rebuild: bool,
+    },
     /// History の行（`start` から `count` 行）。
     Rows {
         history: Value,
@@ -292,7 +297,11 @@ fn search(
 
 fn load(front: &dyn Front, request: Request, events: &Sender<Event>) -> Result<Loaded> {
     Ok(match request {
-        Request::Open { fold, expanded } => Loaded::Opened {
+        Request::Open {
+            fold,
+            expanded,
+            rebuild,
+        } => Loaded::Opened {
             workdir: front.call(json!({"op": "hello"}))?.json["workdir"]
                 .as_str()
                 .map(str::to_owned),
@@ -307,12 +316,17 @@ fn load(front: &dyn Front, request: Request, events: &Sender<Event>) -> Result<L
                     .unwrap_or(Value::Null);
                 refs
             },
-            history: front
-                .call(match fold {
-                    true => json!({"op": "history", "fold": true, "expanded": expanded}),
-                    false => json!({"op": "history"}),
-                })?
-                .json,
+            history: {
+                if rebuild {
+                    front.call(json!({"op": "history", "rebuild": true}))?;
+                }
+                front
+                    .call(match fold {
+                        true => json!({"op": "history", "fold": true, "expanded": expanded}),
+                        false => json!({"op": "history"}),
+                    })?
+                    .json
+            },
         },
         Request::Rows {
             history,

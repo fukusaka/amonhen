@@ -415,6 +415,9 @@ pub struct App {
     opening: bool,
     /// 読んでいる間に、また ref が変わった。
     reopen: bool,
+    /// 次に読むときに History を作り直す（Rebuild History）。作り直しているときは `rebuilding`。
+    rebuild_next: bool,
+    rebuilding: bool,
     /// 確かめてから行う操作: 尋ねる文と、`y` で頼む中身。
     confirm: Option<(String, String, Request)>,
     /// push を確かめている: `t` で、送り先のブランチを打てる。
@@ -594,6 +597,8 @@ impl App {
             focus: Focus::Main,
             opening: false,
             reopen: false,
+            rebuild_next: false,
+            rebuilding: false,
             confirm: None,
             choices: None,
             mouse: true,
@@ -729,10 +734,19 @@ impl App {
         self.opening = true;
         // HEAD が動いたかもしれない。
         self.reflog.refresh();
+        self.rebuilding = std::mem::take(&mut self.rebuild_next);
         self.send(Request::Open {
             fold: self.fold,
             expanded: self.expanded.clone(),
+            rebuild: self.rebuilding,
         });
+    }
+
+    /// Working Copy・ref・History を読み直す。
+    fn refresh(&mut self) {
+        self.changes.refresh();
+        self.open();
+        self.dirty = true;
     }
 
     fn send(&mut self, request: Request) {
@@ -1152,6 +1166,9 @@ impl App {
                             self.remapping = marks;
                         }
                         self.opening = false;
+                        if std::mem::take(&mut self.rebuilding) {
+                            self.notice = Some(tr!("Rebuilt History"));
+                        }
                         if std::mem::take(&mut self.reopen) {
                             self.open();
                         }
@@ -1325,6 +1342,7 @@ impl App {
                 self.pending = self.pending.saturating_sub(1);
                 self.history.failed();
                 self.opening = false;
+                self.rebuilding = false;
                 self.error = Some(error);
                 self.dirty = true;
             }
@@ -1395,6 +1413,11 @@ impl App {
         if control && key.code == KeyCode::Char('l') {
             self.redraw = true;
             self.dirty = true;
+            return;
+        }
+        // アプリの Refresh: Working Copy・ref・History を読み直す（ふだんは変わったら読み直している）。
+        if control && key.code == KeyCode::Char('r') {
+            self.refresh();
             return;
         }
         // 詳細・差分が、一覧の所に開いている（並んでいない）。
@@ -2077,6 +2100,12 @@ impl App {
     fn run_keyless(&mut self, id: &str) {
         if id == "quick-open" {
             self.open_quick();
+            return;
+        }
+        if id == "rebuild-history" {
+            self.rebuild_next = true;
+            self.notice = Some(tr!("Rebuilding History…"));
+            self.refresh();
             return;
         }
         if id == "activity" {
@@ -4843,6 +4872,10 @@ impl App {
             (":", tr!("Commands by name")),
             ("O", tr!("File History of any file, by its path")),
             ("Ctrl-l", tr!("Redraw the screen")),
+            (
+                "Ctrl-r",
+                tr!("Refresh: read the working copy, refs and History again"),
+            ),
             #[cfg(unix)]
             ("Ctrl-z", tr!("Suspend (fg in the shell comes back)")),
             ("1 2 3", tr!("Changes, History and Reflog")),
