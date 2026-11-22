@@ -492,6 +492,8 @@ struct Root {
     /// サイドバーの幅、右の列の幅（None なら History と半分ずつ）、右の列の詳細の高さ（DIP。境目を動かして
     /// 変える。macOS 版の分割の位置と同じく覚えておく）。
     sidebar_width: f64,
+    /// サイドバーを隠している（View > Show Sidebar・ツールバーのボタンで出し入れする。macOS 版の toggleSidebar）。
+    sidebar_hidden: bool,
     right_width: Option<f64>,
     details_height: f64,
     /// 境目のつまみ（サイドバー、右の列、詳細の下）。
@@ -1559,6 +1561,7 @@ impl Component for Root {
             description_box: ElementRef::new(),
             blame_code: ElementRef::new(),
             sidebar_width: crate::prefs::number(SIDEBAR_WIDTH_KEY).unwrap_or(260.0),
+            sidebar_hidden: crate::prefs::bool(SIDEBAR_HIDDEN_KEY),
             right_width: crate::prefs::number(RIGHT_WIDTH_KEY),
             details_height: crate::prefs::number(DETAILS_HEIGHT_KEY).unwrap_or(240.0),
             split_handles: [ElementRef::new(), ElementRef::new(), ElementRef::new()],
@@ -3380,6 +3383,12 @@ impl Root {
                 self.page = Page::Activity;
                 self.with_history(|h| h.activity_tick = Some(Instant::now()));
                 self.load_undo_log(context);
+            }
+            Message::Command(id) if id == "show-sidebar" => {
+                self.sidebar_hidden = !self.sidebar_hidden;
+                if let Err(e) = crate::prefs::set_bool(SIDEBAR_HIDDEN_KEY, self.sidebar_hidden) {
+                    eprintln!("サイドバーの出し入れを覚えられない: {e}");
+                }
             }
             Message::Command(id) if id == "settings" => {
                 let Some(repo) = self.repo.clone() else {
@@ -8694,8 +8703,8 @@ impl Root {
             View::empty()
         };
         let working_copy = self.working_copy_view(context);
-        // Repositories のタブには、リポジトリのサイドバーを出さない（macOS 版の Repositories のウインドウと同じ）。
-        let sidebar_width = if crate::tabs::current_is_repositories() {
+        // サイドバーを隠しているか、Repositories のタブなら、その列の幅は 0。
+        let sidebar_width = if self.sidebar_hidden || crate::tabs::current_is_repositories() {
             0.0
         } else {
             self.sidebar_width
@@ -19461,6 +19470,8 @@ enum Split {
 
 /// 境目の幅・高さを覚える設定の鍵。
 const SIDEBAR_WIDTH_KEY: &str = "sidebarWidth";
+/// サイドバーを隠しているか（次に開いたときも同じにする）。
+const SIDEBAR_HIDDEN_KEY: &str = "sidebarHidden";
 const RIGHT_WIDTH_KEY: &str = "detailsColumnWidth";
 const DETAILS_HEIGHT_KEY: &str = "detailsHeight";
 /// Add SSH Connection で最後に使った接続先（GTK4 版と同じ鍵）。

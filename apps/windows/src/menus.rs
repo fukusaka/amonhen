@@ -7,6 +7,7 @@ use windows_reactor::*;
 
 /// この FE で動く操作。
 pub const IMPLEMENTED: &[&str] = &[
+    "show-sidebar",
     "open-on-github",
     "create-pull-request",
     "show-working-copy",
