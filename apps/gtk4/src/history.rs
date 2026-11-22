@@ -236,10 +236,16 @@ pub struct State {
     complete: bool,
     /// `--measure-scroll` の記録（1 回の `snapshot` にかかった時間）。
     snapshot_times: Option<Vec<f64>>,
-    /// コミットを運んで落としたときに呼ぶ（運んだコミット、落とした所の下の行。最後の行より下なら行の数）。
+    /// コミットを運んで落としたときに呼ぶ（運んだコミット、落とした所）。
     on_drop: Option<DropCallback>,
-    /// 運んでいる間の、落とす所（その行の上に線を引く）。
-    drop_row: Option<u32>,
+    /// 運んでいる間の、落とす所（行の間ならその行の上に線、重ねるならその行を枠で囲む）。
+    drop_row: Option<Dropped>,
+    /// 運んでいる間に、ポインタが窓の外にいる（そこで落とすと drop にする）。
+    drag_outside: bool,
+    /// 窓に、運んでいる間に窓の外へ出たかを見る受け手を付けた。
+    watching_window: bool,
+    /// 運ぶのが取り消されたあとに Esc を離した（Esc でやめた。窓の外でも drop にしない）。
+    drag_escaped: bool,
     /// この表から運んでいるもの（運び、運んでいるコミット）。ほかから運んできたものは落とさせない。
     dragging: Option<(gdk::Drag, Oid)>,
     /// 運んでいる間だけ覚えておく、編集できるコミット（HEAD から最初の merge まで）。読み終えるまでは None で、
@@ -318,7 +324,22 @@ fn install_accent_css() {
 }
 
 /// コミットを落としたときに呼ぶもの。
-type DropCallback = Rc<dyn Fn(Oid, u32)>;
+type DropCallback = Rc<dyn Fn(Oid, Dropped)>;
+
+/// 取り消されたドラッグが Esc によるものかを見分けるために待つ時間（Esc でやめると、取り消しのすぐあとに Esc を
+/// 離した知らせが届く。落としたときは届かない）。
+const DRAG_ESCAPE_WAIT: std::time::Duration = std::time::Duration::from_millis(300);
+
+/// コミットを落とした所。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Dropped {
+    /// 行の間（その下の行。最後の行より下なら行の数）: 並べ替える。
+    Above(u32),
+    /// 行の上に重ねた: その行のコミットにまとめる（squash）。
+    Onto(u32),
+    /// 窓の外: 取り除く（drop）。
+    Outside,
+}
 
 /// History の上で編集している範囲（`historyedit` が決め、表が描く。macOS 版の `HistoryViewController` の
 /// `editor`）。範囲は HEAD から first-parent で辿ったコミット（新しい順）。
@@ -356,6 +377,8 @@ pub enum EditEvent {
     Reword(usize),
     /// 範囲の `0` 番目の行を、`1` 番目の行の上へ運んだ（範囲の数なら最後の行の下）。
     Move(usize, usize),
+    /// 範囲の `0` 番目の行を、`1` 番目の行に重ねた（そのすぐ上へ動かしてまとめる）。
+    Squash(usize, usize),
     /// 境目を引いて、範囲を HEAD から `0` 個にした。
     Resize(usize),
 }
@@ -632,7 +655,9 @@ mod imp {
                         let mut st = view.state();
                         st.dragging = Some((drag.clone(), id));
                         st.dragging_row = grabbed.get().map(|(row, _, _)| row);
+                        st.drag_outside = false;
                     }
+                    view.watch_window_for_drags();
                     view.queue_draw();
                     // 編集の間は、落とせる所を表が決める（編集できるコミットを読まない）。
                     let editing = view.state().edit.is_some();
@@ -642,6 +667,36 @@ mod imp {
                     }
                 }
             });
+            // 窓の外で落とした（Esc で取り消したのではない）なら、そのコミットを drop にする（Apply まで変えない）。
+            // Wayland では、落とした先（デスクトップ・ほかのアプリの窓）が受け取らないと、理由によらず取り消しに
+            // なる。Esc でやめたときは、取り消しのすぐあとに Esc を離した知らせが届くので、少し待って見分ける
+            // （タブを窓の外へ引き出すときと同じ）。
+            let weak = view.downgrade();
+            drag.connect_drag_cancel(move |_, _, _| {
+                let Some(view) = weak.upgrade() else {
+                    return false;
+                };
+                let id = {
+                    let mut st = view.state();
+                    st.drag_escaped = false;
+                    st.dragging
+                        .as_ref()
+                        .map(|(_, id)| *id)
+                        .filter(|_| st.drag_outside)
+                };
+                let Some(id) = id.filter(|_| view.can_drop_outside()) else {
+                    return false;
+                };
+                let weak = view.downgrade();
+                glib::timeout_add_local_once(DRAG_ESCAPE_WAIT, move || {
+                    if let Some(view) = weak.upgrade()
+                        && !view.state().drag_escaped
+                    {
+                        view.dropped(id, Dropped::Outside);
+                    }
+                });
+                false
+            });
             let weak = view.downgrade();
             drag.connect_drag_end(move |_, _, _| {
                 if let Some(view) = weak.upgrade() {
@@ -650,6 +705,7 @@ mod imp {
                         st.dragging = None;
                         st.drag_chain = None;
                         st.dragging_row = None;
+                        st.drag_outside = false;
                     }
                     view.queue_draw();
                 }
@@ -672,6 +728,16 @@ mod imp {
                 let Some(view) = weak.upgrade() else {
                     return gdk::DragAction::empty();
                 };
+                // 行の真ん中に重ねたら、そのコミットにまとめる（まとめられない行なら、行の間へ並べ替える）。
+                if let Some(row) = view.onto_row_at(y as f32)
+                    && view.can_squash_onto(row)
+                {
+                    if view.state().drop_row != Some(Dropped::Onto(row)) {
+                        view.state().drop_row = Some(Dropped::Onto(row));
+                        view.queue_draw();
+                    }
+                    return gdk::DragAction::MOVE;
+                }
                 let row = view.drop_row_at(y as f32);
                 // 編集できる並びの外（最初の merge より下、HEAD でない枝）には落とせない（印も出さない）。
                 if !view.can_drop_at(row) {
@@ -680,8 +746,8 @@ mod imp {
                     }
                     return gdk::DragAction::empty();
                 }
-                if view.state().drop_row != Some(row) {
-                    view.state().drop_row = Some(row);
+                if view.state().drop_row != Some(Dropped::Above(row)) {
+                    view.state().drop_row = Some(Dropped::Above(row));
                     view.queue_draw();
                 }
                 gdk::DragAction::MOVE
@@ -698,7 +764,7 @@ mod imp {
                 let Some(view) = weak.upgrade() else {
                     return false;
                 };
-                view.state().drop_row = None;
+                let at = view.state().drop_row.take();
                 view.queue_draw();
                 let Some(id) = value
                     .get::<String>()
@@ -707,18 +773,8 @@ mod imp {
                 else {
                     return false;
                 };
-                let row = view.drop_row_at(y as f32);
-                if view.edit_drop(id, row) {
-                    return true;
-                }
-                let f = view.state().on_drop.clone();
-                match f {
-                    Some(f) => {
-                        f(id, row);
-                        true
-                    }
-                    None => false,
-                }
+                let at = at.unwrap_or(Dropped::Above(view.drop_row_at(y as f32)));
+                view.dropped(id, at)
             });
             view.add_controller(target);
 
@@ -1665,8 +1721,8 @@ impl HistoryView {
         }
     }
 
-    /// コミットを運んで落としたら `f(運んだコミット, 落とした所の下の行)` を呼ぶ。
-    pub fn connect_drop_commit(&self, f: impl Fn(Oid, u32) + 'static) {
+    /// コミットを運んで落としたら `f(運んだコミット, 落とした所)` を呼ぶ。
+    pub fn connect_drop_commit(&self, f: impl Fn(Oid, Dropped) + 'static) {
         self.state().on_drop = Some(Rc::new(f));
     }
 
@@ -1704,6 +1760,8 @@ impl HistoryView {
         // 次の描画で、選んだ色に戻す。
         self.queue_draw();
         let image = gtk::Snapshot::new();
+        // 少し透かして、下の行（重ねる行の枠）が見えるようにする（macOS の運ぶ絵と同じ）。
+        image.push_opacity(0.8);
         let bounds = graphene::Rect::new(0.0, 0.0, width, rh);
         let shape = gsk::RoundedRect::from_rect(bounds, 5.0);
         let path = gsk::PathBuilder::new();
@@ -1724,6 +1782,7 @@ impl HistoryView {
         image.push_clip(&bounds);
         image.translate(&graphene::Point::new(0.0, -top));
         image.append_node(&node);
+        image.pop();
         image.pop();
         let size = graphene::Size::new(width, rh);
         Some((image.to_paintable(Some(&size))?, f64::from(top)))
@@ -1759,17 +1818,142 @@ impl HistoryView {
         row.min(self.row_count())
     }
 
-    /// 運んでいる間、落とす所に線を引く。
+    /// 重ねる所: `y` が行の真ん中（上と下の 4 分の 1 は行の間）にあれば、その行。
+    fn onto_row_at(&self, y: f32) -> Option<u32> {
+        let row = self.row_at(y)?;
+        let scroll = self.vadjustment().map_or(0.0, |a| a.value()) as f32;
+        let within = (y + scroll) / self.row_height() - row as f32;
+        (0.25..0.75).contains(&within).then_some(row)
+    }
+
+    /// 運んでいるコミットを、`row` の行に重ねてまとめられるか: 同じコミットでも merge でもなく、どちらも編集の
+    /// 範囲（編集していなければ編集できる並び）にある（macOS 版の `squashTarget`）。並びを読み終えるまでは、落として
+    /// から確かめる。
+    fn can_squash_onto(&self, row: u32) -> bool {
+        let st = self.state();
+        let Some((_, dragged)) = st.dragging.as_ref() else {
+            return false;
+        };
+        if let Some(edit) = st.edit.as_ref() {
+            let Some(target) = edit.slots.get(&row).and_then(|&i| edit.marks.rows.get(i)) else {
+                return false;
+            };
+            return target.oid != *dragged && !target.merge;
+        }
+        let Some(history) = st.history.as_ref() else {
+            return false;
+        };
+        let Some(target) = history.graph.ids().get(row as usize) else {
+            return false;
+        };
+        target != dragged
+            && st
+                .drag_chain
+                .as_ref()
+                .is_none_or(|c| c.contains(dragged) && c.contains(target))
+    }
+
+    /// 運んでいるコミットを、窓の外に落として drop にできるか（編集の間は範囲の merge でない行、外では編集できる
+    /// 並びの行。並びを読み終えるまでは、落としてから確かめる）。
+    fn can_drop_outside(&self) -> bool {
+        let st = self.state();
+        let Some((_, dragged)) = st.dragging.as_ref() else {
+            return false;
+        };
+        if let Some(edit) = st.edit.as_ref() {
+            return edit
+                .marks
+                .rows
+                .iter()
+                .any(|r| r.oid == *dragged && !r.merge);
+        }
+        st.drag_chain.as_ref().is_none_or(|c| c.contains(dragged))
+    }
+
+    /// 運んでいる間に窓の外へ出たかを見る（窓の外で落としたら drop にする）。窓ごとに一度だけ付ける。
+    fn watch_window_for_drags(&self) {
+        if self.state().watching_window {
+            return;
+        }
+        let Some(window) = self.root().and_downcast::<gtk::Window>() else {
+            return;
+        };
+        self.state().watching_window = true;
+        let motion = gtk::DropControllerMotion::new();
+        let weak = self.downgrade();
+        motion.connect_enter(move |_, _, _| {
+            if let Some(view) = weak.upgrade() {
+                view.state().drag_outside = false;
+            }
+        });
+        let weak = self.downgrade();
+        motion.connect_leave(move |_| {
+            if let Some(view) = weak.upgrade() {
+                view.state().drag_outside = true;
+            }
+        });
+        window.add_controller(motion);
+        let keys = gtk::EventControllerKey::new();
+        keys.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let weak = self.downgrade();
+        keys.connect_key_released(move |_, key, _, _| {
+            if key == gdk::Key::Escape
+                && let Some(view) = weak.upgrade()
+            {
+                view.state().drag_escaped = true;
+            }
+        });
+        window.add_controller(keys);
+    }
+
+    /// `id` を `at` に落とした。編集の間は範囲を変え、そうでなければ窓に任せる（編集モードを開く）。扱ったら true。
+    fn dropped(&self, id: Oid, at: Dropped) -> bool {
+        if let Some(handled) = self.edit_dropped(id, at) {
+            return handled;
+        }
+        let f = self.state().on_drop.clone();
+        match f {
+            Some(f) => {
+                f(id, at);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// 運んでいる間、落とす所に印を付ける（行の間なら線、重ねるなら行を囲む枠）。
     fn draw_drop(&self, snapshot: &gtk::Snapshot) {
-        let Some(row) = self.state().drop_row else {
+        let Some(at) = self.state().drop_row else {
             return;
         };
         let scroll = self.vadjustment().map_or(0.0, |a| a.value()) as f32;
-        let y = row as f32 * self.row_height() - scroll;
-        snapshot.append_color(
-            &self.accent().0,
-            &graphene::Rect::new(4.0, y - 1.0, self.width() as f32 - 8.0, 2.0),
-        );
+        let (accent, rh, width) = (self.accent().0, self.row_height(), self.width() as f32);
+        match at {
+            Dropped::Above(row) => {
+                let y = row as f32 * rh - scroll;
+                snapshot.append_color(
+                    &accent,
+                    &graphene::Rect::new(4.0, y - 1.0, width - 8.0, 2.0),
+                );
+            }
+            Dropped::Onto(row) => {
+                let rect =
+                    graphene::Rect::new(3.0, row as f32 * rh - scroll + 1.0, width - 6.0, rh - 2.0);
+                let shape = gsk::RoundedRect::from_rect(rect, 5.0);
+                snapshot.push_rounded_clip(&shape);
+                snapshot.append_color(
+                    &gdk::RGBA::new(accent.red(), accent.green(), accent.blue(), 0.2),
+                    &rect,
+                );
+                snapshot.pop();
+                snapshot.append_border(
+                    &gsk::RoundedRect::from_rect(rect, 5.0),
+                    &[2.0; 4],
+                    &[accent; 4],
+                );
+            }
+            Dropped::Outside => {}
+        }
     }
 
     fn row_at(&self, y: f32) -> Option<u32> {
@@ -3073,25 +3257,34 @@ impl HistoryView {
         Some(edit.slots.contains_key(&row) || last.is_some_and(|l| row == l + 1))
     }
 
-    /// 編集の間に `id` を `row` の上に落とした: 範囲の中で並べ替える。扱ったら true（編集していなければ false）。
-    fn edit_drop(&self, id: Oid, row: u32) -> bool {
+    /// 編集の間に `id` を `at` に落とした: 行の間なら並べ替え、重ねたらまとめ、窓の外なら drop にする。扱ったか
+    /// （編集していなければ None）。
+    fn edit_dropped(&self, id: Oid, at: Dropped) -> Option<bool> {
         let event = {
             let st = self.state();
-            let Some(edit) = st.edit.as_ref() else {
-                return false;
-            };
+            let edit = st.edit.as_ref()?;
             let Some(from) = edit.marks.rows.iter().position(|r| r.oid == id) else {
-                return true;
+                return Some(true);
             };
-            let above = edit
-                .slots
-                .get(&row)
-                .copied()
-                .unwrap_or(edit.marks.rows.len());
-            EditEvent::Move(from, above)
+            match at {
+                Dropped::Above(row) => EditEvent::Move(
+                    from,
+                    edit.slots
+                        .get(&row)
+                        .copied()
+                        .unwrap_or(edit.marks.rows.len()),
+                ),
+                Dropped::Onto(row) => {
+                    let Some(&onto) = edit.slots.get(&row) else {
+                        return Some(false);
+                    };
+                    EditEvent::Squash(from, onto)
+                }
+                Dropped::Outside => EditEvent::Choose(from, Action::Drop),
+            }
         };
         self.emit_edit(event);
-        true
+        Some(true)
     }
 
     /// テーマの一覧の背景の色（編集の範囲の外を薄くする）。

@@ -43,6 +43,8 @@ becomes the GitHub Release notes.
 - Any merge in History folds on its own: a folded merge shows a "+N" badge by its dot (click it to open), its context
   menu always offers to fold or show it, and ←/→ fold and open the selected merge. The Fold Merged Branches mode is now
   Fold All / Show All Merged Commits, and the fold is kept per repository.
+- Dragging a commit in History onto another commit starts editing with it squashed into that one, and dragging it
+  out of the window starts editing with it dropped; Apply Changes still runs it.
 - Dragging a commit in History carries it as its row, leaves its place empty and dims the rows it can't be dropped
   among.
 

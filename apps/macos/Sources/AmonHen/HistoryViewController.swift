@@ -2333,13 +2333,66 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         }
     }
 
+    func tableView(_ tableView: NSTableView, draggingSession session: NSDraggingSession, movedTo screenPoint: NSPoint) {
+        // 窓の外では、落とすと drop にする（戻る絵を出さず、消える形のカーソル）。
+        let outside = draggedOutside(screenPoint) && canDropDragged(session)
+        session.animatesToStartingPositionsOnCancelOrFail = !outside
+        if outside { NSCursor.disappearingItem.set() }
+    }
+
     func tableView(_ tableView: NSTableView, draggingSession session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
+        let oid = session.draggingPasteboard.string(forType: .commitID)
+        // 窓の外へ落とした（Esc で取り消したのではない）なら、そのコミットを drop にする（Apply まで変えない）。
+        let dropping = operation.isEmpty && draggedOutside(screenPoint) && canDropDragged(session)
+            && NSApp.currentEvent?.type == .leftMouseUp
+        let chain = dragChain
         dragChain = nil
         dropTargets = nil
         draggingRow = nil
         renderer.hiddenRow = nil
         redrawGraph()
         redrawText()
+        guard dropping, let oid else { return }
+        NSCursor.arrow.set()
+        NSAnimationEffect.disappearingItemDefault.show(centeredAt: screenPoint, size: .zero)
+        if let editor {
+            editor.choose(.drop, for: oid)
+            return
+        }
+        guard let actions else { return }
+        Task { @MainActor in
+            let chain = if let chain { chain } else { await actions.editableCommits() }
+            guard chain.contains(oid) else { return NSSound.beep() }
+            self.onEditCommits?(oid, .drop(oid))
+        }
+    }
+
+    /// `dragged` を表の行 `row` に重ねて落としたときに、まとめる先のコミット（16 進）。まとめられなければ nil
+    /// （同じコミット、merge、編集の範囲・編集できる並びの外。並びを読み終えるまでは、落としてから確かめる）。
+    private func squashTarget(_ dragged: String, row: Int) -> String? {
+        if let editor {
+            guard let slot = editSlots[row], editor.rows.indices.contains(slot) else { return nil }
+            let target = editor.rows[slot]
+            return target.oid != dragged && !target.merge ? target.oid : nil
+        }
+        guard let history, row < history.rowCount,
+              let target = history.commitID(row: row).map({ $0.map { String(format: "%02x", $0) }.joined() }),
+              target != dragged else { return nil }
+        if let chain = dragChain, !(chain.contains(dragged) && chain.contains(target)) { return nil }
+        return target
+    }
+
+    /// 窓の外にいる。
+    private func draggedOutside(_ screenPoint: NSPoint) -> Bool {
+        view.window.map { !$0.frame.contains(screenPoint) } ?? false
+    }
+
+    /// 運んでいるコミットを drop にできる（編集の間は範囲の merge でない行、外では編集できる並びの行。並びを読み
+    /// 終えるまでは、できるものとして扱う）。
+    private func canDropDragged(_ session: NSDraggingSession) -> Bool {
+        guard let oid = session.draggingPasteboard.string(forType: .commitID) else { return false }
+        if let editor { return editor.choices(for: oid).contains(.drop) }
+        return dragChain.map { $0.contains(oid) } ?? true
     }
 
     func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> (any NSPasteboardWriting)? {
@@ -2359,6 +2412,10 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         proposedDropOperation op: NSTableView.DropOperation
     ) -> NSDragOperation {
         guard info.draggingSource as? NSTableView === tableView, let history else { return [] }
+        // 行の上に重ねたら、そのコミットにまとめる（squash）。まとめられない行なら、行の間へ並べ替える。
+        if op == .on, let dragged = info.draggingPasteboard.string(forType: .commitID), squashTarget(dragged, row: row) != nil {
+            return .move
+        }
         if editor != nil {
             // 範囲の中か、範囲のすぐ下へ。
             guard let last = editSlots.keys.max(), editSlots[row] != nil || row == last + 1 else { return [] }
@@ -2382,6 +2439,20 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         _ tableView: NSTableView, acceptDrop info: any NSDraggingInfo, row: Int, dropOperation: NSTableView.DropOperation
     ) -> Bool {
         guard let actions, let history, let oid = info.draggingPasteboard.string(forType: .commitID) else { return false }
+        if dropOperation == .on {
+            guard let target = squashTarget(oid, row: row) else { return false }
+            if let editor {
+                editor.squash(oid, onto: target)
+                return true
+            }
+            // 範囲は、2 つの古い方から HEAD まで。
+            Task {
+                let chain = await actions.editableCommits()
+                guard let from = chain.firstIndex(of: oid), let to = chain.firstIndex(of: target) else { return NSSound.beep() }
+                await MainActor.run { self.onEditCommits?(chain[max(from, to)], .squash(oid, onto: target)) }
+            }
+            return true
+        }
         if let editor {
             guard let from = editor.rows.firstIndex(where: { $0.oid == oid }) else { return false }
             let target = editSlots[row] ?? editor.rows.count
