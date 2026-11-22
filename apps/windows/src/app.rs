@@ -423,6 +423,8 @@ struct Root {
     /// サイドバーの幅、右の列の幅（None なら History と半分ずつ）、右の列の詳細の高さ（DIP。境目を動かして
     /// 変える。macOS 版の分割の位置と同じく覚えておく）。
     sidebar_width: f64,
+    /// サイドバーを隠している（View > Show Sidebar・ツールバーのボタンで出し入れする。macOS 版の toggleSidebar）。
+    sidebar_hidden: bool,
     right_width: Option<f64>,
     details_height: f64,
     /// 境目のつまみ（サイドバー、右の列、詳細の下）。
@@ -1480,6 +1482,7 @@ impl Component for Root {
             description_box: ElementRef::new(),
             blame_code: ElementRef::new(),
             sidebar_width: crate::prefs::number(SIDEBAR_WIDTH_KEY).unwrap_or(260.0),
+            sidebar_hidden: crate::prefs::bool(SIDEBAR_HIDDEN_KEY),
             right_width: crate::prefs::number(RIGHT_WIDTH_KEY),
             details_height: crate::prefs::number(DETAILS_HEIGHT_KEY).unwrap_or(240.0),
             split_handles: [ElementRef::new(), ElementRef::new(), ElementRef::new()],
@@ -3192,6 +3195,12 @@ impl Root {
                 self.page = Page::Activity;
                 ACTIVITY_TICK.with(|t| t.set(Some(Instant::now())));
                 self.load_undo_log(context);
+            }
+            Message::Command(id) if id == "show-sidebar" => {
+                self.sidebar_hidden = !self.sidebar_hidden;
+                if let Err(e) = crate::prefs::set_bool(SIDEBAR_HIDDEN_KEY, self.sidebar_hidden) {
+                    eprintln!("サイドバーの出し入れを覚えられない: {e}");
+                }
             }
             Message::Command(id) if id == "settings" => {
                 let Some(repo) = self.repo.clone() else {
@@ -8559,6 +8568,12 @@ impl Root {
             View::empty()
         };
         let working_copy = self.working_copy_view(context);
+        // サイドバーを隠していれば、その列の幅は 0。
+        let sidebar_width = if self.sidebar_hidden {
+            0.0
+        } else {
+            self.sidebar_width
+        };
         let details_split = self.page != Page::WorkingCopy && !self.details_expanded;
         SPLIT_SIZES.with(|s| s.set((self.sidebar_width, self.right_width, self.details_height)));
         // 境目のつまみに押す・動かすを付ける（つまみができたとき。詳細の下のつまみは出すたびにできる）。部品は
@@ -8589,7 +8604,7 @@ impl Root {
         }
         let body = Grid::new()
             .columns([
-                GridLength::Pixel(self.sidebar_width),
+                GridLength::Pixel(sidebar_width),
                 GridLength::Star(1.0),
                 self.right_width
                     .map_or(GridLength::Star(1.0), GridLength::Pixel),
@@ -8635,7 +8650,11 @@ impl Root {
                 self.push_view(context),
                 // 列の境目（動かして幅を変える）。いちばん上に重ねる。
                 View::fragment((
-                    splitter(&self.split_handles[0], Split::Sidebar, 0.0),
+                    if self.sidebar_hidden {
+                        View::empty()
+                    } else {
+                        splitter(&self.split_handles[0], Split::Sidebar, 0.0)
+                    },
                     splitter(&self.split_handles[1], Split::Right, 0.0),
                     if details_split {
                         splitter(&self.split_handles[2], Split::Details, self.details_height)
@@ -8811,7 +8830,7 @@ impl Root {
                     .background(ground),
                 Grid::new()
                     .grid_row(3)
-                    .columns([GridLength::Pixel(self.sidebar_width), GridLength::Star(1.0)])
+                    .columns([GridLength::Pixel(sidebar_width), GridLength::Star(1.0)])
                     .children((
                         Border::new().background(ground),
                         Border::new()
@@ -19134,6 +19153,8 @@ enum Split {
 
 /// 境目の幅・高さを覚える設定の鍵。
 const SIDEBAR_WIDTH_KEY: &str = "sidebarWidth";
+/// サイドバーを隠しているか（次に開いたときも同じにする）。
+const SIDEBAR_HIDDEN_KEY: &str = "sidebarHidden";
 const RIGHT_WIDTH_KEY: &str = "detailsColumnWidth";
 const DETAILS_HEIGHT_KEY: &str = "detailsHeight";
 /// Add SSH Connection で最後に使った接続先（GTK4 版と同じ鍵）。
