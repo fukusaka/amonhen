@@ -125,6 +125,9 @@ fn run_with(
         if let Some(capture) = app.take_mouse_change() {
             screen.set_mouse(capture)?;
         }
+        if let Some(text) = app.take_copy() {
+            screen.copy(&text)?;
+        }
         if app.take_redraw() {
             screen.canvas.forget();
             // 大きさの知らせを取りこぼしていても、ここで合う。

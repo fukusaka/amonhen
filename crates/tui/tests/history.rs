@@ -2935,3 +2935,106 @@ fn several_selected_commits_show_their_diff_together() {
     assert!(!cleared.contains("2 commits"), "{cleared}");
     assert!(cleared.contains("Parents"), "{cleared}");
 }
+
+/// main から分かれた topic に 2 つ（別のファイル）、その後に main で 1 つ。
+fn topic_of_two(dir: &Path) {
+    git(dir, BASE, &["init", "-q", "-b", "main"]);
+    commit(dir, BASE, "Start");
+    git(dir, BASE, &["switch", "-q", "-c", "topic"]);
+    for (i, name) in ["a", "b"].iter().enumerate() {
+        let time = BASE + DAY * (i as i64 + 1);
+        std::fs::write(dir.join(format!("{name}.txt")), "x\n").unwrap();
+        git(dir, time, &["add", "."]);
+        git(dir, time, &["commit", "-q", "-m", &format!("Add {name}")]);
+    }
+    git(dir, BASE, &["switch", "-q", "main"]);
+    commit(dir, BASE + DAY * 3, "Main work");
+}
+
+/// 印をつけたコミットの操作: 古い順に cherry-pick、新しい順に revert（どちらも 1 つの命令で、前と後の絵つき）
+#[test]
+fn cherry_pick_and_revert_the_selected_commits() {
+    let dir = tempfile::tempdir().unwrap();
+    topic_of_two(dir.path());
+    let log = || git_out(dir.path(), &["log", "--format=%s", "main"]);
+    // Add b と Add a に印をつけて `y`。
+    let asked = amonhen_tui::snapshot(open(dir.path()), 160, 14, clock(), "j⇣y").unwrap();
+    println!("{asked}");
+    assert!(
+        asked.contains("Cherry-pick 2 commits onto main, oldest first?"),
+        "{asked}"
+    );
+    assert!(asked.contains(" Cherry-pick 2 commits "), "{asked}");
+    amonhen_tui::snapshot(open(dir.path()), 160, 14, clock(), "j⇣yy").unwrap();
+    assert_eq!(log(), "Add b\nAdd a\nMain work\nStart\n");
+    // 上の 2 つ（今 cherry-pick したもの）を打ち消す: 新しい方から。
+    let asked = amonhen_tui::snapshot(open(dir.path()), 160, 14, clock(), "⇣v").unwrap();
+    assert!(
+        asked.contains("Revert 2 commits on main, newest first?"),
+        "{asked}"
+    );
+    amonhen_tui::snapshot(open(dir.path()), 160, 14, clock(), "⇣vy").unwrap();
+    assert_eq!(
+        log(),
+        "Revert \"Add a\"\nRevert \"Add b\"\nAdd b\nAdd a\nMain work\nStart\n"
+    );
+    // 1 つのコミットにしかできない操作は断る。
+    let refused = amonhen_tui::snapshot(open(dir.path()), 160, 14, clock(), "⇣c").unwrap();
+    assert!(
+        refused.contains("This works on one commit: Esc clears the selection first"),
+        "{refused}"
+    );
+}
+
+/// 印をつけた続くコミットを `E` で 1 つにまとめる（編集モードを、まとめる行にして開く）
+#[test]
+fn e_combines_the_selected_commits_in_edit_mode() {
+    let dir = tempfile::tempdir().unwrap();
+    four_lines(dir.path());
+    let log = || git_out(dir.path(), &["log", "--format=%s"]);
+    let opened = amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), "j⇣E").unwrap();
+    println!("{opened}");
+    assert!(opened.contains(" Edit Commits "), "{opened}");
+    assert!(opened.contains("Changes: 1 combined."), "{opened}");
+    amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), "j⇣E\ny").unwrap();
+    assert_eq!(log().lines().count(), 3, "{}", log());
+    assert!(log().ends_with("One\n"), "{}", log());
+    assert!(
+        git_out(dir.path(), &["log", "-1", "--skip=1", "--format=%B"]).contains("Three"),
+        "the combined message keeps both"
+    );
+    // 続いていなければ断る。
+    let dir = tempfile::tempdir().unwrap();
+    four_lines(dir.path());
+    let refused = amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), "mjjmE").unwrap();
+    assert!(
+        refused.contains("Only commits next to each other on the current branch can be combined"),
+        "{refused}"
+    );
+    assert!(!refused.contains(" Edit Commits "), "{refused}");
+}
+
+/// `Y` は ID をコピーし、Save as Patch は印をつけたものを古い順にパッチにする
+#[test]
+fn copy_ids_and_save_the_selected_commits_as_patches() {
+    let dir = tempfile::tempdir().unwrap();
+    four_lines(dir.path());
+    let copied = amonhen_tui::snapshot(open(dir.path()), 160, 10, clock(), "⇣Y").unwrap();
+    assert!(
+        copied.contains("Copied 2 commit IDs (to the terminal’s clipboard)"),
+        "{copied}"
+    );
+    let one = amonhen_tui::snapshot(open(dir.path()), 160, 10, clock(), "Y").unwrap();
+    assert!(one.contains("(to the terminal’s clipboard)"), "{one}");
+    let out = tempfile::tempdir().unwrap();
+    let folder = out.path().join("patches");
+    let keys = format!("⇣:save as patch\n\x15{}\n", folder.display());
+    let done = amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), &keys).unwrap();
+    assert!(done.contains("Saved 2 patches in "), "{done}");
+    let mut names: Vec<String> = std::fs::read_dir(&folder)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    assert_eq!(names, ["0001-Three.patch", "0002-Four.patch"]);
+}
