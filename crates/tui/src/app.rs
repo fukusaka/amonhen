@@ -426,6 +426,9 @@ pub struct App {
     preview: Option<(String, String, bool, Value)>,
     /// reset する先（見通しを読んでいる間、覚えておく）。
     reset_to: Option<String>,
+    /// 消すブランチの見通しを読んでいる間: その名前、まだ比べていない上流、それまでで外れるコミットが一番少ない
+    /// 見通し（`deletePreview` の `info`）。
+    deleting: Option<(String, Option<String>, Option<Value>)>,
     /// History でマージ済みのブランチを折りたたんでいる（アプリの Fold Merged Branches。この TUI の間だけ）。
     fold: bool,
     /// 折りたたんでいる間に、取り込んだ側を開いたマージ（16 進の ID）。
@@ -627,6 +630,7 @@ impl App {
             fold: false,
             preview: None,
             reset_to: None,
+            deleting: None,
             expanded: Vec::new(),
             files_here: true,
             open_file: None,
@@ -2190,6 +2194,11 @@ impl App {
             }
             // 下書きが読めなくても、欄はそのまま使える（覚えるのをやめる）。
             Err(_) if name == "draftOrTemplate" => return,
+            // 見通しが読めなくても（History にないなど）、消すかは聞く（断られれば git の理由が出る）。
+            Err(_) if name == "deletePreview" => {
+                self.ask_delete_with(None);
+                return;
+            }
             Err(error) => {
                 if name == "recentMessages" {
                     self.fixup_pick = None;
@@ -2485,6 +2494,11 @@ impl App {
             "resetPreview" => {
                 let info = reply["info"].clone();
                 self.ask_reset_with(&info);
+                return;
+            }
+            "deletePreview" => {
+                let info = reply["info"].clone();
+                self.ask_delete_with(Some(info));
                 return;
             }
             // 書きかけのメッセージかテンプレート: 欄がまだ空なら入れる。テンプレートは覚えたものとして扱い、
@@ -3571,10 +3585,19 @@ impl App {
                 self.error = Some(tr!("The current branch can’t be deleted"));
                 return true;
             }
-            "branch" => (
-                "deleteBranch",
-                json!({"op": "deleteBranch", "name": name, "force": false}),
-            ),
+            // ほかのどこにもないコミットがあれば git は `-d` を断るので、先に見通しを読む（アプリと同じく、今の
+            // ブランチか上流のどちらかに取り込まれていれば消せる）。
+            "branch" => {
+                let name = name.to_owned();
+                let upstream = self.sidebar.upstream_of(&name);
+                self.run(
+                    "deletePreview",
+                    tr!("Looking ahead…"),
+                    json!({"op": "deletePreview", "branch": name, "against": "HEAD"}),
+                );
+                self.deleting = Some((name, upstream, None));
+                return true;
+            }
             "tag" => ("deleteTag", json!({"op": "deleteTag", "name": name})),
             _ => return false,
         };
@@ -3584,6 +3607,64 @@ impl App {
             Request::Run { name: op, command },
         ));
         true
+    }
+
+    /// 消すブランチの見通し `preview` を受けて、上流とも比べるか、消すかを聞く。ほかのどこにもないコミットが
+    /// あれば、それが外れる絵と数を出し、Delete Anyway（`-D`）で消す。
+    fn ask_delete_with(&mut self, preview: Option<Value>) {
+        let Some((name, upstream, best)) = self.deleting.take() else {
+            return;
+        };
+        let lost = |p: &Value| p["lostCount"].as_u64().unwrap_or(0);
+        let best = match (best, preview) {
+            (Some(b), Some(p)) => Some(if lost(&p) < lost(&b) { p } else { b }),
+            (b, p) => p.or(b),
+        };
+        if let (Some(upstream), true) = (&upstream, best.as_ref().is_some_and(|b| lost(b) > 0)) {
+            self.run(
+                "deletePreview",
+                tr!("Looking ahead…"),
+                json!({"op": "deletePreview", "branch": name, "against": upstream}),
+            );
+            self.deleting = Some((name, None, best));
+            return;
+        }
+        let count = best.as_ref().map_or(0, lost);
+        let (ask, yes) = if count == 0 {
+            (
+                tr!("Delete {name}? Undo brings it back.", name = name),
+                tr!("delete"),
+            )
+        } else {
+            self.question_drawing = best
+                .as_ref()
+                .map(|b| &b["drawing"])
+                .filter(|d| d.is_object())
+                .map(|d| {
+                    (
+                        tr!(" After deleting {name} ", name = name),
+                        // 消した後に、そのブランチはない。
+                        crate::drawing::from_move(d, ""),
+                    )
+                });
+            (
+                tr!(
+                    "Delete {name}? Commits on no other branch ({count}) go with it. Undo brings it back.",
+                    name = name,
+                    count = count
+                ),
+                tr!("delete anyway"),
+            )
+        };
+        self.confirm = Some((
+            ask,
+            yes,
+            Request::Run {
+                name: "deleteBranch",
+                command: json!({"op": "deleteBranch", "name": name, "force": count > 0}),
+            },
+        ));
+        self.dirty = true;
     }
 
     /// サイドバーで選んでいるブランチの、新しい名前を聞く。

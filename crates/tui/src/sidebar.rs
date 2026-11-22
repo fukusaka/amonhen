@@ -294,6 +294,17 @@ impl Sidebar {
     }
 
     /// 選んでいる ref の種類（`branch`・`remote`・`tag`）・名前・指すコミット。
+    /// ローカルのブランチ `name` の上流（`origin/main` など）。なければ、なくなっていれば None。
+    pub fn upstream_of(&self, name: &str) -> Option<String> {
+        let entry = self.refs["entries"]
+            .as_array()?
+            .iter()
+            .find(|e| e["kind"] == "branch" && e["name"] == name)?;
+        (entry["gone"] != true)
+            .then(|| entry["detail"].as_str().map(str::to_owned))
+            .flatten()
+    }
+
     pub fn picked_ref(&self) -> Option<(&'static str, &str, &str)> {
         match self.rows.get(self.selected)? {
             Row::Ref {

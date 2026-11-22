@@ -2603,6 +2603,69 @@ fn rename_and_delete_branches_and_tags() {
     assert_eq!(git_out(dir.path(), &["tag"]), "v1\n");
 }
 
+/// ほかのどこにもないコミットのあるブランチは、外れるコミットの絵と数を出し、Delete Anyway（`-D`）で消す
+#[test]
+fn delete_anyway_a_branch_with_commits_on_no_other_branch() {
+    let dir = tempfile::tempdir().unwrap();
+    diverged(dir.path());
+    let branches = || git_out(dir.path(), &["branch", "--format=%(refname:short)"]);
+    // サイドバーの 2 つ下が topic（On topic は main にない）。
+    let asked = amonhen_tui::snapshot(open(dir.path()), 200, 14, clock(), "0jjjD").unwrap();
+    println!("{asked}");
+    assert!(
+        asked.contains("Delete topic? Commits on no other branch (1) go with it. Undo brings it back.   y delete anyway   n cancel"),
+        "{asked}"
+    );
+    assert!(asked.contains(" After deleting topic "), "{asked}");
+    assert!(asked.contains("On topic"), "{asked}");
+    // 後の側に、消えるブランチの名前は付かない。
+    assert!(!asked.contains("Start  [topic]"), "{asked}");
+    amonhen_tui::snapshot(open(dir.path()), 200, 14, clock(), "0jjjDn").unwrap();
+    assert_eq!(branches(), "main\ntopic\n");
+    amonhen_tui::snapshot(open(dir.path()), 200, 14, clock(), "0jjjDy").unwrap();
+    assert_eq!(branches(), "main\n");
+    // Undo で戻る。
+    amonhen_tui::snapshot(open(dir.path()), 200, 14, clock(), "uy").unwrap();
+    assert_eq!(branches(), "main\ntopic\n");
+
+    // 上流に取り込まれていれば（今のブランチになくても）、ふつうに消す。
+    git(
+        dir.path(),
+        BASE,
+        &["update-ref", "refs/remotes/origin/topic", "topic"],
+    );
+    git(
+        dir.path(),
+        BASE,
+        &["config", "branch.topic.remote", "origin"],
+    );
+    git(
+        dir.path(),
+        BASE,
+        &["config", "branch.topic.merge", "refs/heads/topic"],
+    );
+    git(
+        dir.path(),
+        BASE,
+        &["config", "remote.origin.url", "/nowhere"],
+    );
+    git(
+        dir.path(),
+        BASE,
+        &[
+            "config",
+            "remote.origin.fetch",
+            "+refs/heads/*:refs/remotes/origin/*",
+        ],
+    );
+    let asked = amonhen_tui::snapshot(open(dir.path()), 200, 14, clock(), "0jjjD").unwrap();
+    println!("{asked}");
+    assert!(
+        asked.contains("Delete topic? Undo brings it back.   y delete   n cancel"),
+        "{asked}"
+    );
+}
+
 /// History の `y` で cherry-pick、`v` で revert、`c` でそのコミットをチェックアウトする（どれも先に確かめる）
 #[test]
 fn cherry_pick_revert_and_detach_from_history() {
