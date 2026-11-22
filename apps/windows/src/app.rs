@@ -277,8 +277,6 @@ struct Root {
     window: u64,
     /// 窓の根の Grid（メニューのショートカットを、フォーカスのある部品より先に受ける）。
     root: ElementRef<Grid>,
-    /// ツールバーを包む部品（Pull・Push のバッジを付けるため）。
-    toolbar: ElementRef<Grid>,
     panel: ElementRef<SwapChainPanel>,
     area: ElementRef<Grid>,
     diff_panel: ElementRef<SwapChainPanel>,
@@ -1076,9 +1074,6 @@ enum Message {
     DiffFileMenu(String),
     /// 変更ファイルの一覧（木も）の右クリック（ファイルの番号、差分の見出しと同じ項目の鍵）。
     ChangedFileMenu(usize, String),
-    /// ツールバーの Pull・Push のバッジを付け直す（並べ終えるのを少し待ってから）。
-    ToolbarBadgesLater,
-    ToolbarBadges,
     FileHistoryLoaded(String, Result<Vec<crate::filehistory::Entry>, String>),
     FileHistorySelected(Option<usize>),
     CloseFileHistory,
@@ -1448,7 +1443,6 @@ impl Component for Root {
             tab: RefCell::new(input.tab.clone()),
             window: input.window,
             root: ElementRef::new(),
-            toolbar: ElementRef::new(),
             panel: ElementRef::new(),
             area: ElementRef::new(),
             diff_panel: ElementRef::new(),
@@ -6067,22 +6061,6 @@ impl Root {
                     merge_scroll_later(context);
                 }
             }
-            Message::ToolbarBadgesLater => {
-                context.spawn_background(|_| {
-                    std::thread::sleep(std::time::Duration::from_millis(150));
-                    Message::ToolbarBadges
-                });
-            }
-            Message::ToolbarBadges => {
-                let tracking = self.tracking();
-                let _ = self.toolbar.request_native_element(move |result| {
-                    if let Ok(element) = result
-                        && let Err(e) = crate::menus::put_badges(&element, tracking)
-                    {
-                        eprintln!("ツールバーのバッジを付けられない: {e}");
-                    }
-                });
-            }
             Message::MergeBringIntoView => {
                 // Result の欄も、選んだコンフリクトへ（左右の欄と同じ所が見えるように）。
                 if let Some(fraction) = self.merge.as_ref().and_then(|m| m.selected_fraction()) {
@@ -8243,11 +8221,10 @@ impl Root {
                 None
             },
         );
-        // タブ（2 つ以上のとき）はタイトルバーの真ん中の欄に置く（下の `menu_bar`）。
-        let tabs_in_bar = crate::tabs::tabs_of(self.window).len() >= 2;
+        // タブ（2 つ以上のとき）はタイトルバーの下の段（macOS 版のタブの段と同じ所）。
         let tab_strip = Grid::new()
+            .grid_row(2)
             .element_ref(&self.tab_host)
-            .vertical_alignment(VerticalAlignment::Bottom)
             .children((tab_strip(self.window, &title, context),));
         // タブを窓の外へ引き出したら新しい窓へ、ほかの窓のタブの並びへ落としたらその窓へ移す（タブの並びが変わる
         // たびに付け直す）。
@@ -8615,66 +8592,42 @@ impl Root {
                             )),
                     )),
             ));
-        // タイトルバー 1 段: 左にリポジトリの切り替えとツールバーのボタン（アイコンだけ）、右に ≡（メニューバーの
-        // 中身すべて）。メニューバーとツールバーの段はなくす。ツールバーは幅の決まる真ん中の欄に左寄せで置く
-        // （入りきらないボタンは CommandBar が ⋯ にたたむ）。残りの空きは窓をつかんで動かす所。
+        // タイトルバー: 左にリポジトリの切り替え、続けてツールバー（macOS 版と同じく、アイコンの下に名前）、右に
+        // ≡（メニューバーの中身すべて）。メニューバーとツールバーの段はなくし、タブは下の段に置く。ツールバーの右の
+        // 空きは窓をつかんで動かす所。
         let tracking = self.tracking();
         // 窓のタイトルバーは 1 つなので、前のタブだけが置く。
         let menu_bar: View = if !input.front {
             View::empty()
         } else {
-            TitleBar::new().grid_row(0).slots([
-                SlotView::new(TitleBarSlot::LeftHeader, self.repository_switcher(context)),
-                SlotView::new(TitleBarSlot::Content, {
-                    let toolbar: View = Grid::new()
-                        .element_ref(&self.toolbar)
-                        .horizontal_alignment(HorizontalAlignment::Left)
-                        .vertical_alignment(VerticalAlignment::Center)
-                        // 窓が狭くても、右に窓をつかむ空きを残す（ボタンは先に ⋯ へたたまれる）。
-                        .margin(Thickness::new(0.0, 0.0, 64.0, 0.0))
-                        .children((crate::menus::toolbar(
-                            context.callback(Message::Command),
-                            tracking,
-                        ),));
-                    // タブがあれば左半分にタブ、右半分にツールバー（ブラウザのように、タブの段を別に取らない）。
-                    if tabs_in_bar {
+            TitleBar::new()
+                .grid_row(0)
+                // アイコンの下に名前を出すので、背の高いタイトルバー（macOS 版の、タイトルバーに入れたツールバーと同じ）。
+                .preferred_height(WindowTitleBarHeight::Tall)
+                .slots([
+                    SlotView::new(TitleBarSlot::LeftHeader, self.repository_switcher(context)),
+                    SlotView::new(
+                        TitleBarSlot::Content,
                         Grid::new()
-                            .columns([GridLength::Star(1.0), GridLength::Star(1.0)])
-                            .children((
-                                Grid::new().grid_column(0).children((tab_strip,)),
-                                Grid::new().grid_column(1).children((toolbar,)),
-                            ))
-                    } else {
-                        toolbar
-                    }
-                }),
-                SlotView::new(
-                    TitleBarSlot::RightHeader,
-                    Grid::new()
-                        .margin(Thickness::new(4.0, 0.0, 8.0, 0.0))
-                        .vertical_alignment(VerticalAlignment::Center)
-                        .children((crate::menus::menu_button(
-                            context.callback(Message::Command),
-                        ),)),
-                ),
-            ])
+                            .horizontal_alignment(HorizontalAlignment::Left)
+                            .vertical_alignment(VerticalAlignment::Center)
+                            .margin(Thickness::new(8.0, 0.0, 64.0, 0.0))
+                            .children((crate::menus::toolbar(
+                                context.callback(Message::Command),
+                                tracking,
+                            ),)),
+                    ),
+                    SlotView::new(
+                        TitleBarSlot::RightHeader,
+                        Grid::new()
+                            .margin(Thickness::new(4.0, 0.0, 8.0, 0.0))
+                            .vertical_alignment(VerticalAlignment::Center)
+                            .children((crate::menus::menu_button(
+                                context.callback(Message::Command),
+                            ),)),
+                    ),
+                ])
         };
-        // 数かツールバーの並びが変わったら、Pull・Push のバッジを付け直す（並べ終えてから）。
-        let order: String = crate::menus::toolbar_entries()
-            .iter()
-            .map(|e| format!("{e:?}"))
-            .collect();
-        context.use_effect(
-            "toolbar-badges",
-            (tracking.ahead, tracking.behind, order),
-            {
-                let sender = context.sender();
-                move || {
-                    sender.send(Message::ToolbarBadgesLater);
-                    None
-                }
-            },
-        );
         // 差分の検索の帯を開いたら、欄にフォーカスを入れる（描き直した後に）。
         if self.diff_find_opened > 0 {
             let field = self.diff_find_box.clone();
@@ -9090,6 +9043,7 @@ impl Root {
                 grounds,
                 toolbar_tint,
                 menu_bar,
+                tab_strip,
                 // パッチのファイルを落とせる（GTK4 版・macOS 版と同じく窓のどこにでも）。
                 Border::new()
                     .grid_row(3)
