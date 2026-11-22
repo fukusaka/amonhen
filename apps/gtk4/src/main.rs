@@ -16,6 +16,7 @@ mod bookmarks;
 mod branchswitcher;
 mod bundle;
 mod cipopover;
+mod commitbrowser;
 mod commitfiles;
 mod commitmsg;
 mod commitops;
@@ -37,6 +38,7 @@ mod history;
 mod historydisplay;
 mod historyedit;
 mod icon;
+mod imagediff;
 mod measure;
 mod menu;
 mod merge;
@@ -268,10 +270,6 @@ fn parse_args() -> Result<Args, String> {
             "--keys" => workcopy::press_keys_once(&it.next().ok_or("--keys <place:key,...>")?),
             "--find-diff" => commitfiles::find_once(&it.next().ok_or("--find-diff <text>")?),
             "--find-message" => messagefind::find_once(&it.next().ok_or("--find-message <text>")?),
-            "--toggle-viewed" => {
-                let file = it.next().ok_or("--toggle-viewed <n>")?;
-                commitfiles::toggle_viewed_once(file.parse().map_err(|_| "--toggle-viewed <n>")?);
-            }
             "--signature-popover" => signature::popover_once(),
             "--diff-file-menu" => {
                 let file = it.next().ok_or("--diff-file-menu <n>")?;
@@ -918,7 +916,7 @@ fn build_tab(
     let details = Rc::new(Details::new());
     details.set_location(&text);
     details.show_style_switch();
-    // 変更ファイルの一覧と差分（macOS 版の詳細の下の部分）。
+    // 上の帯と差分（macOS 版の詳細の下の部分）。
     let commit_diff = {
         let v = view.downgrade();
         Rc::new(commitfiles::CommitDiff::new(
@@ -974,8 +972,13 @@ fn build_tab(
         let v = view.downgrade();
         Rc::new(move || v.upgrade().and_then(|v| v.current()).map(|(r, _)| r))
     };
-    aiactions::details(&details, &diff, current_repo.clone());
-    details.tools.append(&commit_diff.find_button());
+    // 帯の表示の設定: 詳細の見せ方・詳細を広げる・AI（macOS 版と同じ）。
+    let ai = aiactions::details(&details, &diff, current_repo.clone());
+    let d = Rc::downgrade(&details);
+    commit_diff.connect_view_options(move || {
+        let styles = d.upgrade().map(|d| d.style_items()).unwrap_or_default();
+        (styles, ai())
+    });
     details.tools.append(&commit_diff.expand_button());
     aiactions::auto_history_hunk(&diff, &details, current_repo);
     // 並び順・折りたたみ（View の History の表示）に合わせて History を作る。
@@ -3115,7 +3118,7 @@ fn connect_selection(
 /// 選んだコミットの詳細と差分を読む。
 struct Loader {
     details: Rc<Details>,
-    /// 変更ファイルの一覧と差分。
+    /// 上の帯と差分（変更ファイルは差分の見出し）。
     files: Rc<commitfiles::CommitDiff>,
     right: glib::WeakRef<gtk::Paned>,
     /// 裏で読んでいる数（`--snapshot` はなくなるまで待つ）。
@@ -3284,23 +3287,17 @@ impl Loader {
     ) {
         self.pending.set(self.pending.get() + 1);
         let this = self.clone();
-        // Viewed を覚える鍵（コミット ID。複数なら ID を並べ、2 つなら取り方も）。
-        let mut key = rows
-            .iter()
-            .filter_map(|&r| history.graph.ids().get(r as usize).map(|id| id.to_string()))
-            .collect::<Vec<_>>()
-            .join(",");
-        if rows.len() == 2 {
-            key.push_str(&format!("|{pair:?}"));
-        }
-        let viewed = commitfiles::viewed_paths(&key);
-        let all = commitfiles::stacked();
+        // 「すべてのファイル」で木を読むコミット（1 つのコミットを選んだときだけ）。
+        let commit = match rows[..] {
+            [row] => history.graph.ids().get(row as usize).copied(),
+            _ => None,
+        };
         glib::spawn_future_local(async move {
             let started = std::time::Instant::now();
             let result = gio::spawn_blocking(move || {
-                // 1 つのコミットは、全ファイルを並べないなら最初のファイルの差分だけを読む（macOS 版と同じ）。
+                // 1 つのコミット（ファイルの多いコミットは、開いたファイルの差分をそのときに取る）。
                 if let [row] = rows[..] {
-                    return commitfiles::Prepared::commit(&repo, &history, row, &viewed, all)
+                    return commitfiles::Prepared::commit(&repo, &history, row)
                         .map(|prepared| ("range", prepared));
                 }
                 let (selection, stacked) = repo
@@ -3311,8 +3308,7 @@ impl Loader {
                     amonhen_core::Selection::Pair { .. } => "pair",
                     amonhen_core::Selection::Each(_) => "each",
                 };
-                // 複数のコミットは、設定によらず全ファイルを並べる（macOS 版と同じ）。
-                Ok::<_, String>((kind, commitfiles::Prepared::new(stacked, &viewed, true)))
+                Ok::<_, String>((kind, commitfiles::Prepared::new(stacked, Some(repo), None)))
             })
             .await;
             this.pending.set(this.pending.get() - 1);
@@ -3324,7 +3320,7 @@ impl Loader {
             match result {
                 Ok(Ok((kind, prepared))) => {
                     activity::record(&tr!("Load diff"), loaded);
-                    this.files.show(prepared, key);
+                    this.files.show(prepared, commit);
                     then(kind);
                 }
                 Ok(Err(e)) => {

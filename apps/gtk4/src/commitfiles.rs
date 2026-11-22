@@ -1,222 +1,100 @@
-//! History の右の列の下（macOS 版の `CommitDetailViewController` の変更ファイルと差分）: 変更ファイルの一覧と差分。
-//! 変更ファイルは、木なら差分の左に、そうでなければメッセージと差分の間に並べる。全ファイルを 1 つの差分に並べる
-//! か（オフなら一覧で選んだファイルだけ）と、変更ファイルを木で出すかは、History の表示のメニューで切り替える
-//! （macOS 版と同じ設定の鍵）。
+//! History の右の列の下（macOS 版の `CommitDetailViewController` の差分の側）: 上の帯と、1 つの差分。変更ファイルの
+//! 一覧は差分のファイルの見出しそのもの（最初はすべて畳み、押すとその場で開く・畳む）で、リストか木で見せる
+//! （木ならフォルダの行が見出しの間に入り、押すと中の見出しを畳む）。
 //!
-//! 全ファイルを並べるときは、一覧で選んだファイルの見出しまでスクロールし、スクロールしたら一覧の選択を合わせる。
-//! 見たことにしたファイル（Viewed）は畳み、コミットごとに覚えておく（古いものから捨てて 500 コミットまで）。
-//! 生成されたファイル（`linguist-generated`・lock ファイルなど）と、1000 行を超える変更のファイルは、最初は畳んでおく。
+//! 上の帯: 変更／すべてのファイル、ファイルの数と行数の合計、リスト／木、フォルダ・差分をすべて開く、空白を無視
+//! （まだ使えない）、差分の中の検索、表示の設定（詳細の見せ方・詳細を広げる・AI）。見出しの ⋯（右クリックと同じ）に
+//! ファイル全体を表示・この時点のファイルを開く・Blame などを置く。hunk の見出しの左の印で前後を 20 行広げる。
+//! 画像は見出しの下に比べる欄を出す（`imagediff.rs`）。「すべてのファイル」はその時点の木と中身
+//! （`commitbrowser.rs`）。
 //!
-//! 1 つのコミットで全ファイルを並べないとき（設定がオフか、変更ファイルが 200 を超える）は、最初のファイルの
-//! 差分だけを読み、ほかは一覧で選んだときに読む（macOS 版と同じ）。
+//! 変更ファイルの多いコミット（200 を超える）は、コアが見出しだけを並べ、開いたファイルの差分をそのときに取る
+//! （`Repository::set_stacked_context`。macOS 版と同じ）。
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use crate::worktrees::natural_cmp;
-use amonhen_core::diff::{DiffView, StackedDiff};
+use amonhen_core::diff::StackedDiff;
 use amonhen_core::{HistorySnapshot, Repository};
-use amonhen_model::{ChangeKind, FileChange, tr};
-use amonhen_projection::FrontendProfile;
+use amonhen_model::{ChangeKind, FileChange, Oid, tr};
 use gtk::prelude::*;
 use gtk::{gio, glib};
-use serde_json::{Value, json};
 
 use crate::aiactions::CurrentRepo;
-use crate::diff::{DiffWidget, Lazy, Source, View};
+use crate::commitbrowser::Browser;
+use crate::diff::{Decor, DiffWidget, FileInfo, Folder, Source, View};
+use crate::imagediff;
 use crate::menu::{self, Item};
 
-/// 全ファイルを 1 つの差分に並べるか（既定は並べる）。
-pub const STACKED: &str = "stackedCommitDiff";
-/// 変更ファイルを差分の左に木で出すか（既定は差分の上に一覧）。
+/// 変更ファイルを木で見せるか（既定はパスの一覧）。
 pub const FILE_TREE: &str = "historyFileTree";
-/// 見たことにしたファイル（`{"order": [鍵], "files": {鍵: [パス]}}`）。
-const VIEWED: &str = "viewedFiles";
-/// 覚えておくコミットの数。
-const VIEWED_KEEP: usize = 500;
-/// 1 ファイルの変更がこの行数を超えたら、最初は畳む。
-const COLLAPSE_ABOVE: u32 = 1000;
-/// 1 つのコミットで全ファイルを並べるのは、変更ファイルがこの数まで（多ければ 1 ファイルずつ。macOS 版と同じ）。
-const STACK_LIMIT: usize = 200;
+/// 1 ファイルの変更がこの行数を超えたら、「差分をすべて開く」でも開かない（1 つずつなら開ける）。
+const EXPAND_ALL_LIMIT: u32 = 1000;
+/// hunk の見出しの印で広げる行数。
+const WIDEN_BY: u32 = 20;
 
-/// 全ファイルを 1 つの差分に並べるか。
-pub fn stacked() -> bool {
-    crate::settings::string(STACKED).is_none_or(|v| v == "true")
-}
-
-/// 変更ファイルを木で出すか。
+/// 変更ファイルを木で見せるか。
 pub fn file_tree() -> bool {
     crate::settings::bool(FILE_TREE)
 }
 
-fn viewed_store() -> Value {
-    crate::settings::string(VIEWED)
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_else(|| json!({ "order": [], "files": {} }))
-}
-
-/// `key`（コミット ID。複数のコミットを選んでいるときはその ID を並べたもの）で見たことにしたパス。
-pub fn viewed_paths(key: &str) -> HashSet<String> {
-    viewed_store()["files"][key]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|p| p.as_str().map(str::to_owned))
-        .collect()
-}
-
-/// `key` で見たことにしたパスを覚える（古いコミットのものから捨てる）。
-fn save_viewed(key: &str, paths: &HashSet<String>) {
-    let store = viewed_store();
-    let mut order: Vec<String> = store["order"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|k| k.as_str().map(str::to_owned))
-        .filter(|k| k != key)
-        .collect();
-    let mut files = store["files"].as_object().cloned().unwrap_or_default();
-    if paths.is_empty() {
-        files.remove(key);
-    } else {
-        let mut list: Vec<&String> = paths.iter().collect();
-        list.sort();
-        files.insert(key.to_owned(), json!(list));
-        order.push(key.to_owned());
-    }
-    while order.len() > VIEWED_KEEP {
-        let old = order.remove(0);
-        files.remove(&old);
-    }
-    let store = json!({ "order": order, "files": files });
-    crate::settings::set_string(VIEWED, &store.to_string());
-}
-
-/// 裏のスレッドで用意した差分の表示。
+/// 裏のスレッドで用意した差分の表示（すべてのファイルを畳んだもの）。
 pub struct Prepared {
     source: Arc<Source>,
     view: View,
-    collapsed: Vec<bool>,
-    /// 1 ファイルずつ見せるなら、出しているファイル。
-    single: Option<usize>,
-    /// コミットの変更ファイル（全ファイルを読んだときの、変更の種類ともとのパス。`source` の並びと同じ）。
+    names: Vec<String>,
+    generated: Vec<bool>,
+    /// コミットの変更ファイル（変更の種類ともとのパス。`source` の並びと同じ）。複数のコミットの差分では None。
     changes: Option<Arc<Vec<FileChange>>>,
 }
 
 impl Prepared {
-    /// `stacked` を、`viewed` のファイル・生成されたファイル・大きなファイルを畳んで（`all` でなければ最初の
-    /// ファイルだけを）表示にする。裏のスレッドで呼ぶ。
-    pub fn new(stacked: StackedDiff, viewed: &HashSet<String>, all: bool) -> Self {
-        Self::with_source(Arc::new(Source(stacked, None)), viewed, all)
+    /// `stacked` を、すべてのファイルを畳んだ表示にする。裏のスレッドで呼ぶ。`repo` はまだ取っていない差分を取る
+    /// リポジトリ。
+    pub fn new(
+        stacked: StackedDiff,
+        repo: Option<Arc<Repository>>,
+        changes: Option<Vec<FileChange>>,
+    ) -> Self {
+        let count = stacked.files.len();
+        let names = stacked.files.iter().map(|(n, _)| n.clone()).collect();
+        let generated = (0..count).map(|i| stacked.generated(i)).collect();
+        let view = View::build(&stacked, &vec![true; count]);
+        let changes = changes.filter(|c| c.len() == count).map(Arc::new);
+        Self {
+            source: Arc::new(Source::new(stacked, repo)),
+            view,
+            names,
+            generated,
+            changes,
+        }
     }
 
-    /// History で選んだ 1 つのコミット（行 `row`）の差分。全ファイルを並べるなら（`all` で、変更ファイルが 1〜200）
-    /// 全ファイルの差分を、そうでなければ最初のファイルの差分だけを読む。裏のスレッドで呼ぶ。
+    /// History で選んだ 1 つのコミット（行 `row`）の差分。裏のスレッドで呼ぶ。
     pub fn commit(
         repo: &Arc<Repository>,
         history: &HistorySnapshot,
         row: u32,
-        viewed: &HashSet<String>,
-        all: bool,
     ) -> Result<Self, String> {
         // 本当の親と比べる（「一致したコミットだけ」の History では、親が次に一致したコミットに替わっている）。
         let Some(id) = history.graph.ids().get(row as usize) else {
             return Err(tr!("No commit selected"));
         };
         let changes = repo.commit_changes(id).map_err(|e| e.to_string())?;
-        Self::from_changes(repo.clone(), changes, viewed, all)
+        Self::from_changes(repo.clone(), changes)
     }
 
-    /// コミットの変更ファイル `changes` から作る（`commit` と、見せ方を変えたとき、Stashes・Reflog・Range Diff の
-    /// 詳細）。裏のスレッドで呼ぶ。
-    pub fn from_changes(
-        repo: Arc<Repository>,
-        changes: Vec<FileChange>,
-        viewed: &HashSet<String>,
-        all: bool,
-    ) -> Result<Self, String> {
-        if all && (1..=STACK_LIMIT).contains(&changes.len()) {
-            let stacked = repo.stacked_diff(&changes).map_err(|e| e.to_string())?;
-            let mut prepared = Self::new(stacked, viewed, true);
-            prepared.changes = Some(Arc::new(changes));
-            return Ok(prepared);
-        }
-        // 一覧に出す名前だけを並べ、差分は選んだときに読む。
-        let empty = || {
-            amonhen_core::diff::file_diff(Arc::<Vec<u8>>::default(), Arc::<Vec<u8>>::default(), 0)
-        };
-        let files = changes.iter().map(|c| (c.path.clone(), empty())).collect();
-        let count = changes.len();
-        let source = Arc::new(Source(StackedDiff { files }, Some(Lazy { repo, changes })));
-        let (view, single) = if count == 0 {
-            (View::build(&source.0, &[]), None)
-        } else {
-            (single_view(&source, 0)?, Some(0))
-        };
-        Ok(Self {
-            source,
-            view,
-            collapsed: vec![false; count],
-            single,
-            changes: None,
-        })
+    /// コミットの変更ファイル `changes` から作る（Stashes・Reflog・Range Diff の詳細も）。裏のスレッドで呼ぶ。
+    pub fn from_changes(repo: Arc<Repository>, changes: Vec<FileChange>) -> Result<Self, String> {
+        let stacked = repo.stacked_diff(&changes).map_err(|e| e.to_string())?;
+        Ok(Self::new(stacked, Some(repo), Some(changes)))
     }
-
-    /// 読んである差分 `source` から作る（見せ方を変えたとき）。裏のスレッドで呼ぶ。
-    fn with_source(source: Arc<Source>, viewed: &HashSet<String>, all: bool) -> Self {
-        let collapsed: Vec<bool> = source
-            .0
-            .files
-            .iter()
-            .enumerate()
-            .map(|(i, (name, diff))| {
-                source.0.generated(i)
-                    || viewed.contains(name)
-                    || diff.added + diff.removed > COLLAPSE_ABOVE
-            })
-            .collect();
-        let (view, single) = if all || source.0.files.is_empty() {
-            (View::build(&source.0, &collapsed), None)
-        } else {
-            (read_view(&source, 0), Some(0))
-        };
-        Self {
-            source,
-            view,
-            collapsed,
-            single,
-            changes: None,
-        }
-    }
-}
-
-/// 1 ファイルの差分の表示（選んだファイルだけを読む元なら、ここで読む）。裏のスレッドで呼ぶ。
-fn single_view(source: &Source, file: usize) -> Result<View, String> {
-    match &source.1 {
-        Some(lazy) => {
-            let change = lazy
-                .changes
-                .get(file)
-                .ok_or_else(|| tr!("Couldn’t load the diff"))?;
-            lazy.repo
-                .file_diff(change, &FrontendProfile::GTK)
-                .map(View::new)
-                .map_err(|e| e.to_string())
-        }
-        None => Ok(read_view(source, file)),
-    }
-}
-
-/// 読んである差分の、1 ファイルの表示（裏のスレッドで呼ぶ）。
-fn read_view(source: &Source, file: usize) -> View {
-    let (name, diff) = &source.0.files[file];
-    View::new(DiffView::new(diff, &FrontendProfile::GTK).with_path(path_of(name)))
 }
 
 /// 変更の種類の印（macOS 版と同じ）。
-fn kind_mark(kind: ChangeKind) -> &'static str {
+pub fn kind_mark(kind: ChangeKind) -> &'static str {
     match kind {
         ChangeKind::Added => "A",
         ChangeKind::Deleted => "D",
@@ -231,252 +109,152 @@ fn path_of(name: &str) -> &str {
     name.split(" — ").next().unwrap_or(name)
 }
 
-/// 変更の種類の印の色（追加は緑、削除は赤、変更は橙、名前の変更・コピーは青。macOS 版と同じ）。
-fn mark_color(mark: &str) -> &'static str {
-    match mark {
-        "A" => "#2ec27e",
-        "D" => "#e01b24",
-        "M" => "#e66100",
-        _ => "#3584e4",
-    }
+/// 木で見せるときの、フォルダの行・ファイルの深さと名前・畳んだフォルダの中のファイル（並びはパスの順のまま。
+/// macOS 版の `treeLayout`）。
+#[derive(Default)]
+struct TreeLayout {
+    folders: HashMap<usize, Vec<Folder>>,
+    depths: HashMap<usize, usize>,
+    titles: HashMap<usize, String>,
+    hidden: HashSet<usize>,
 }
 
-/// ファイルの行の文字: 色の付いた種類の印、薄いフォルダ、ふつうの色のファイル名。名前の変更の `{a → b}` の中は
-/// 分けない（その後ろの `/` までをフォルダとする）。
-fn path_markup(mark: &str, path: &str) -> String {
-    let mut depth = 0;
-    let mut split = 0;
-    for (i, c) in path.char_indices() {
-        match c {
-            '{' => depth += 1,
-            '}' => depth -= 1,
-            '/' if depth == 0 => split = i + 1,
-            _ => {}
-        }
-    }
-    let mut out = String::new();
-    if !mark.is_empty() {
-        out += &format!(
-            "<span foreground=\"{}\" font_family=\"monospace\" weight=\"bold\">{mark}</span>  ",
-            mark_color(mark)
-        );
-    }
-    if split > 0 {
-        out += &format!(
-            "<span alpha=\"55%\">{}</span>",
-            glib::markup_escape_text(&path[..split])
-        );
-    }
-    out += &glib::markup_escape_text(&path[split..]);
-    out
-}
-
-/// 変更ファイルの一覧の 1 行。
-struct FileRow {
-    /// フォルダの名前か、ファイルの名前（木では名前だけ、一覧ではパス）。
-    name: String,
-    depth: usize,
-    /// ファイルの番号（フォルダの行は None）。
-    file: Option<usize>,
-    /// 変更の種類（A・D・M・R・C）と、行数。
-    mark: &'static str,
-    counts: Counts,
-    /// 説明（パス。名前を変えたファイルは「もとのパス → 今のパス」）。
-    tip: String,
-}
-
-/// 一覧の行の行数。
-#[derive(Clone, Copy)]
-enum Counts {
-    /// まだ読んでいない（選んだファイルだけを読むとき）か、フォルダの行。
-    Unknown,
-    Binary,
-    Lines(u32, u32),
-}
-
-/// 変更ファイルの一覧の行。木なら、フォルダごとにまとめ（子が 1 つだけのフォルダはつなげる）、各階層でフォルダを
-/// 先に、名前の順に並べる（macOS 版と同じ）。
-fn file_rows(
-    source: &Source,
-    changes: Option<&[FileChange]>,
-    stats: &Stats,
-    tree: bool,
-) -> Vec<FileRow> {
-    // 変更の種類ともとのパスは、コミットの変更ファイルから（macOS 版と同じ）。
-    let changes = source
-        .1
-        .as_ref()
-        .map(|lazy| lazy.changes.as_slice())
-        .or(changes)
-        .filter(|c| c.len() == source.0.files.len());
-    let file = |i: usize, name: String, depth: usize| {
-        let diff = &source.0.files[i].1;
-        let change = changes.map(|c| &c[i]);
-        // 変更ファイルがわからない差分（複数のコミットを選んだとき）は、名前だけ（種類も行数も出さない。macOS 版と
-        // 同じ）。
-        let mark = change.map_or("", |c| kind_mark(c.kind));
-        // 選んだファイルだけを読む元では、行数は `commit_extras` の数（届くまではわからない）。
-        let counts = if change.is_none() {
-            Counts::Unknown
-        } else if source.1.is_some() {
-            match stats.get(path_of(source.0.files[i].0.as_str())) {
-                Some((None, None)) => Counts::Binary,
-                Some(&(added, removed)) => Counts::Lines(added.unwrap_or(0), removed.unwrap_or(0)),
-                None => Counts::Unknown,
-            }
-        } else if diff.binary {
-            Counts::Binary
-        } else {
-            Counts::Lines(diff.added, diff.removed)
-        };
-        let path = path_of(source.0.files[i].0.as_str());
-        let tip = match change.and_then(|c| c.old_path.as_deref()) {
-            Some(old) => format!("{old} → {path}"),
-            None => path.to_owned(),
-        };
-        // 名前を変えたファイルは `src/{old.rs → new.rs}`。木では、同じフォルダの中なら名前だけ
-        // （`old.rs → new.rs`。macOS 版と同じ）。
-        let name = match change.and_then(|c| c.old_path.as_deref()) {
-            Some(old) if old != path => {
-                let folder = |p: &str| p.rsplit_once('/').map_or("", |(f, _)| f).to_owned();
-                if tree && folder(old) == folder(path) {
-                    format!("{} → {name}", old.rsplit('/').next().unwrap_or(old))
-                } else {
-                    amonhen_model::rename_label(old, path)
-                }
-            }
-            _ => name,
-        };
-        FileRow {
-            name,
-            depth,
-            file: Some(i),
-            mark,
-            counts,
-            tip,
-        }
-    };
-    let names: Vec<&str> = source.0.files.iter().map(|(n, _)| n.as_str()).collect();
-    if !tree {
-        return names
+/// `paths` のファイルを木に並べる（`labels` は名前を変えたファイルの `src/{old → new}` など、見出しに出す文字）。
+fn tree_layout(paths: &[String], labels: &[String], collapsed: &HashSet<String>) -> TreeLayout {
+    let mut out = TreeLayout::default();
+    let mut previous: Vec<&str> = Vec::new();
+    for (file, path) in paths.iter().enumerate() {
+        let mut parts: Vec<&str> = path.split('/').collect();
+        let name = parts.pop().unwrap_or_default();
+        let common = previous
             .iter()
-            .enumerate()
-            .map(|(i, n)| file(i, (*n).to_owned(), 0))
-            .collect();
-    }
-    #[derive(Default)]
-    struct Folder {
-        folders: std::collections::BTreeMap<String, Folder>,
-        files: Vec<(String, usize)>,
-    }
-    let mut root = Folder::default();
-    for (i, name) in names.iter().enumerate() {
-        let mut parts: Vec<&str> = path_of(name).split('/').collect();
-        let leaf = parts.pop().unwrap_or(name);
-        // とびとびの見出しの短い ID は、名前の後ろに残す。
-        let leaf = match name.split_once(" — ") {
-            Some((_, id)) => format!("{leaf} — {id}"),
-            None => leaf.to_owned(),
-        };
-        let mut folder = &mut root;
-        for part in parts {
-            folder = folder.folders.entry(part.to_owned()).or_default();
-        }
-        folder.files.push((leaf, i));
-    }
-    fn add(
-        folder: &Folder,
-        depth: usize,
-        out: &mut Vec<FileRow>,
-        file: &dyn Fn(usize, String, usize) -> FileRow,
-    ) {
-        // フォルダもファイルも、大文字小文字を区別せず数は数として並べる（macOS 版の localizedStandardCompare）。
-        let mut folders: Vec<_> = folder.folders.iter().collect();
-        folders.sort_by(|a, b| natural_cmp(a.0, b.0).then_with(|| a.0.cmp(b.0)));
-        for (name, child) in folders {
-            let (mut label, mut child) = (name.clone(), child);
-            while child.files.is_empty() && child.folders.len() == 1 {
-                let (next, grand) = child.folders.iter().next().expect("one");
-                label = format!("{label}/{next}");
-                child = grand;
+            .zip(&parts)
+            .take_while(|(a, b)| a == b)
+            .count();
+        // 畳んだフォルダ（いちばん外側）。その中は見出しを出さない。
+        let outer = (0..parts.len()).find(|&l| collapsed.contains(&parts[..=l].join("/")));
+        let mut folders = Vec::new();
+        for level in common..parts.len() {
+            if outer.is_some_and(|o| level > o) {
+                break;
             }
-            out.push(FileRow {
-                tip: label.clone(),
-                name: label,
-                depth,
-                file: None,
-                mark: "",
-                counts: Counts::Unknown,
+            let folder = parts[..=level].join("/");
+            folders.push(Folder {
+                name: parts[level].to_owned(),
+                depth: level,
+                collapsed: collapsed.contains(&folder),
+                path: folder,
             });
-            add(child, depth + 1, out, file);
         }
-        let mut files = folder.files.clone();
-        files.sort_by(|a, b| natural_cmp(&a.0, &b.0).then_with(|| a.cmp(b)));
-        for (name, index) in files {
-            out.push(file(index, name, depth));
+        if outer.is_some() {
+            out.hidden.insert(file);
         }
+        if !folders.is_empty() {
+            out.folders.insert(file, folders);
+        }
+        out.depths.insert(file, parts.len());
+        // 名前を変えたファイルは、同じフォルダの中なら `old → new`。
+        let folder = parts.join("/");
+        let label = &labels[file];
+        let title = if folder.is_empty() {
+            label.clone()
+        } else if let Some(rest) = label.strip_prefix(&format!("{folder}/")) {
+            rest.to_owned()
+        } else {
+            name.to_owned()
+        };
+        out.titles.insert(file, title);
+        previous = parts;
     }
-    let mut out = Vec::new();
-    add(&root, 0, &mut out, &file);
     out
 }
 
-/// 変更ファイルの右クリックのメニューに足す項目を作る（パス、差分の中の位置 y。一覧からなら None。Blame を
-/// 出すか）。
+/// 変更ファイルの右クリックのメニューに足す項目を作る（パス、差分の中の位置 y。見出しからなら None。Blame を
+/// 出すか、差分の行の上か）。
 type FileItems = Rc<dyn Fn(&str, Option<f64>, bool, bool) -> Vec<Item>>;
 /// 変更ファイルの右クリックの「この版に戻す…」など（そのファイルの変更から作る）。
-type RestoreItems = Rc<dyn Fn(&amonhen_model::FileChange) -> Vec<Item>>;
+type RestoreItems = Rc<dyn Fn(&FileChange) -> Vec<Item>>;
+/// 表示の設定のメニューに足す項目（詳細の見せ方と、AI）。
+type ViewOptions = Rc<dyn Fn() -> (Vec<Item>, Vec<Item>)>;
+/// 表示を作り直した後にすること。
+type Then = Box<dyn FnOnce(&Rc<Inner>)>;
 
 pub struct CommitDiff {
     pub root: gtk::Box,
     inner: Rc<Inner>,
 }
 
+/// 出しているコミットの、見せ方の様子。
+#[derive(Default)]
+struct St {
+    source: Option<Arc<Source>>,
+    names: Vec<String>,
+    generated: Vec<bool>,
+    changes: Option<Arc<Vec<FileChange>>>,
+    infos: Vec<FileInfo>,
+    /// 「すべてのファイル」を開けるコミット（1 つのコミット。stash・複数のコミットでは None）。
+    commit: Option<Oid>,
+    /// 開いている（差分を出す）ファイル。最初はすべて畳む。
+    open: HashSet<usize>,
+    /// ファイル全体を出しているファイルと、前後の行を広げたファイルの行数。
+    whole: HashSet<usize>,
+    contexts: HashMap<usize, u32>,
+    /// SVG をテキストで見るファイル。
+    svg_text: HashSet<usize>,
+    /// 木で畳んだフォルダ。
+    collapsed_folders: HashSet<String>,
+    /// 画像の欄（ファイルの番号 → 部品。開き直しても比べ方とスワイプの位置を保つ）。
+    panels: HashMap<usize, gtk::Widget>,
+    /// 「すべてのファイル」を出しているか。
+    files_mode: bool,
+}
+
+/// 上の帯の部品。
+struct Bar {
+    changes: gtk::ToggleButton,
+    all_files: gtk::ToggleButton,
+    totals: gtk::Label,
+    list: gtk::ToggleButton,
+    tree: gtk::ToggleButton,
+    folders: gtk::Button,
+    folders_icon: crate::icon::Icon,
+    expand_all: gtk::Button,
+    expand_icon: crate::icon::Icon,
+    whitespace: gtk::CheckButton,
+}
+
 struct Inner {
     root: gtk::Box,
     diff: DiffWidget,
-    /// 差分（の枠）。
-    diff_column: gtk::Box,
-    /// 変更ファイルの一覧（スクロールの枠）と、その下の合計（分割の片側）。
-    files_column: gtk::Box,
-    /// 一覧の下の、変更ファイルの数と行数の合計（「3 files +53 −3」）。
-    totals: gtk::Label,
-    list: gtk::ListView,
-    store: gio::ListStore,
-    selection: gtk::SingleSelection,
-    /// 一覧と差分を並べている枠（置き方を変えたら作り直す）。
-    holder: gtk::Box,
-    paned: RefCell<Option<gtk::Paned>>,
-    /// ファイルの番号 → 一覧の行。
-    row_of_file: RefCell<Vec<u32>>,
-    source: RefCell<Option<Arc<Source>>>,
-    /// Viewed を覚える鍵。
-    key: RefCell<String>,
-    /// 1 ファイルずつ見せているか。
-    single: Cell<bool>,
-    /// 1 ファイルずつ見せているとき、差分に出しているファイル（一覧でフォルダの行を選んでも替わらない）。
-    shown_file: Cell<Option<usize>>,
-    /// 差分のスクロールに合わせて一覧の選択を変えている間（選択の変化でスクロールし返さない）。
+    /// 差分の側と、すべてのファイルの側を切り替える。
+    pages: gtk::Stack,
+    bar: Bar,
+    st: RefCell<St>,
+    browser: RefCell<Option<Rc<Browser>>>,
+    /// 帯の切り替えを、こちらから合わせている間（変化の知らせで動かない）。
     syncing: Cell<bool>,
     generation: Cell<u64>,
     pending: Rc<Cell<u32>>,
     current_repo: CurrentRepo,
     file_items: RefCell<Option<FileItems>>,
     restore_items: RefCell<Option<RestoreItems>>,
+    view_options: RefCell<Option<ViewOptions>>,
+    /// 詳細を広げるボタン（詳細の右上。広げている間だけ見せる）。
+    expand: RefCell<Option<gtk::ToggleButton>>,
     /// sparse checkout なら、その様子（取り出していないフォルダのファイルは、ディスクにないので開けない）。
     sparse: RefCell<Option<crate::repoform::Sparse>>,
     find: FindBar,
-    /// 出しているコミットの変更ファイル（`Prepared::changes`）。
-    changes: RefCell<Option<Arc<Vec<FileChange>>>>,
     /// 出しているコミットのファイルごとの行数（`commit_extras` の `stats`。パス → 追加・削除、両方 None は
-    /// バイナリ）。選んだファイルだけを読むときも、一覧に行数を出す（macOS 版と同じ）。
+    /// バイナリ）。まだ差分を取っていないファイルの見出しと合計に使う（macOS 版と同じ）。
     stats: RefCell<Stats>,
+    /// 画像の比べ方（コミットを変えても保つ）。
+    image_mode: Cell<imagediff::Mode>,
 }
 
 /// ファイルごとの行数（パス → 追加・削除。両方 None はバイナリ）。
-type Stats = std::collections::HashMap<String, (Option<u32>, Option<u32>)>;
+type Stats = HashMap<String, (Option<u32>, Option<u32>)>;
 
-/// 差分の中を探す帯（差分と一覧の下）。
+/// 差分の中を探す帯（差分の上）。
 struct FindBar {
     bar: gtk::Box,
     entry: gtk::SearchEntry,
@@ -484,10 +262,8 @@ struct FindBar {
 }
 
 thread_local! {
-    /// 確認用: 最初に差分を出したら探す語（`--find-diff`）、Viewed にするファイル（`--toggle-viewed`）、メニューを
-    /// 出すファイル（`--diff-file-menu`）。
+    /// 確認用: 最初に差分を出したら探す語（`--find-diff`）、メニューを出すファイル（`--diff-file-menu`）。
     static FIND_ONCE: RefCell<Option<String>> = const { RefCell::new(None) };
-    static VIEWED_ONCE: Cell<Option<usize>> = const { Cell::new(None) };
     static MENU_ONCE: Cell<Option<usize>> = const { Cell::new(None) };
     /// 開いている差分の列（Ctrl+F を、フォーカスのある差分の検索の帯に回すため）。
     static OPEN: RefCell<Vec<std::rc::Weak<Inner>>> = RefCell::default();
@@ -496,11 +272,6 @@ thread_local! {
 /// 確認用（`--find-diff <語>`）: 最初に差分を出したら、検索の帯を開いてこの語を探す。
 pub fn find_once(query: &str) {
     FIND_ONCE.with(|f| f.replace(Some(query.to_owned())));
-}
-
-/// 確認用（`--toggle-viewed <n>`）: 最初に差分を出したら、n 番目のファイルを Viewed にする。
-pub fn toggle_viewed_once(file: usize) {
-    VIEWED_ONCE.with(|v| v.set(Some(file)));
 }
 
 /// 確認用（`--diff-file-menu <n>`）: 最初に差分を出したら、n 番目のファイルの見出しのメニューを出す。
@@ -553,8 +324,7 @@ fn in_bar(window: &gtk::Window, inner: &Inner) -> bool {
     gtk::prelude::GtkWindowExt::focus(window).is_some_and(|f| f.is_ancestor(&inner.find.bar))
 }
 
-/// `window` で、フォーカスが差分か検索の帯にある差分の列（変更ファイルの一覧は含めない。一覧で Ctrl+F・Ctrl+G を
-/// 押しても差分は探さない。macOS 版と同じ）。
+/// `window` で、フォーカスが差分か検索の帯にある差分の列。
 fn focused(window: &gtk::Window) -> Option<Rc<Inner>> {
     let focus = gtk::prelude::GtkWindowExt::focus(window)?;
     OPEN.with(|open| {
@@ -567,6 +337,29 @@ fn focused(window: &gtk::Window) -> Option<Rc<Inner>> {
                     || focus.is_ancestor(&inner.find.bar))
         })
     })
+}
+
+/// 帯の小さなアイコンのボタン。
+fn icon_button(kind: crate::icon::Kind, tip: &str) -> (gtk::Button, crate::icon::Icon) {
+    let icon = crate::icon::Icon::default();
+    icon.set(kind, false);
+    let button = gtk::Button::new();
+    button.set_child(Some(&icon));
+    button.add_css_class("flat");
+    button.set_tooltip_text(Some(tip));
+    button.update_property(&[gtk::accessible::Property::Label(tip)]);
+    (button, icon)
+}
+
+/// 帯の、アイコンで切り替える押しボタン（つないで 1 つの切り替えに見せる）。
+fn icon_toggle(kind: crate::icon::Kind, tip: &str) -> gtk::ToggleButton {
+    let icon = crate::icon::Icon::default();
+    icon.set(kind, false);
+    let button = gtk::ToggleButton::new();
+    button.set_child(Some(&icon));
+    button.set_tooltip_text(Some(tip));
+    button.update_property(&[gtk::accessible::Property::Label(tip)]);
+    button
 }
 
 impl CommitDiff {
@@ -598,82 +391,136 @@ impl CommitDiff {
         for b in [&previous, &next, &done] {
             b.add_css_class("flat");
         }
-        let bar = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        bar.set_margin_top(4);
-        bar.set_margin_bottom(4);
-        bar.set_margin_start(8);
-        bar.set_margin_end(8);
-        bar.append(&entry);
-        bar.append(&count);
-        bar.append(&previous);
-        bar.append(&next);
-        bar.append(&done);
-        bar.set_visible(false);
-        // 検索の帯は差分の上（macOS 版と同じ）。
-        let diff_column = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        diff_column.append(&bar);
-        diff_column.append(&diff_scrolled);
+        let find_bar = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        find_bar.set_margin_top(4);
+        find_bar.set_margin_bottom(4);
+        find_bar.set_margin_start(8);
+        find_bar.set_margin_end(8);
+        find_bar.append(&entry);
+        find_bar.append(&count);
+        find_bar.append(&previous);
+        find_bar.append(&next);
+        find_bar.append(&done);
+        find_bar.set_visible(false);
 
-        // 変更ファイルの一覧（見えている行だけに部品を作る）。
-        let store = gio::ListStore::new::<glib::BoxedAnyObject>();
-        let selection = gtk::SingleSelection::new(Some(store.clone()));
-        selection.set_autoselect(false);
-        selection.set_can_unselect(true);
-        let factory = gtk::SignalListItemFactory::new();
-        let list = gtk::ListView::new(Some(selection.clone()), Some(factory.clone()));
-        let files = gtk::ScrolledWindow::builder()
-            .child(&list)
-            .hscrollbar_policy(gtk::PolicyType::Never)
-            .vexpand(true)
-            .build();
-        let totals = gtk::Label::builder()
-            .xalign(0.0)
-            .margin_start(8)
-            .margin_end(8)
-            .margin_top(3)
-            .margin_bottom(4)
-            .ellipsize(gtk::pango::EllipsizeMode::End)
-            .build();
+        // 上の帯: 変更／すべてのファイル、合計、リスト／木、フォルダ・差分をすべて開く、空白、検索、表示の設定。
+        let changes = gtk::ToggleButton::with_label(&tr!("Changes"));
+        let all_files = gtk::ToggleButton::with_label(&tr!("All Files"));
+        all_files.set_group(Some(&changes));
+        changes.set_active(true);
+        let view_switch = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        view_switch.add_css_class("linked");
+        view_switch.append(&changes);
+        view_switch.append(&all_files);
+        let totals = gtk::Label::new(None);
+        totals.set_xalign(0.0);
+        totals.set_single_line_mode(true);
+        totals.set_ellipsize(gtk::pango::EllipsizeMode::End);
         totals.add_css_class("caption");
         totals.add_css_class("numeric");
-        let files_column = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        files_column.append(&files);
-        files_column.append(&totals);
-        let holder = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        holder.set_vexpand(true);
+        let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        spacer.set_hexpand(true);
+        let list = icon_toggle(
+            crate::icon::Kind::List,
+            &tr!("Show the changed files as a list"),
+        );
+        let tree = icon_toggle(
+            crate::icon::Kind::Tree,
+            &tr!("Show the changed files as a tree"),
+        );
+        tree.set_group(Some(&list));
+        if file_tree() {
+            tree.set_active(true);
+        } else {
+            list.set_active(true);
+        }
+        let tree_switch = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        tree_switch.add_css_class("linked");
+        tree_switch.append(&list);
+        tree_switch.append(&tree);
+        let (folders, folders_icon) =
+            icon_button(crate::icon::Kind::Folder, &tr!("Expand All Folders"));
+        let (expand_all, expand_icon) =
+            icon_button(crate::icon::Kind::ExpandVertical, &tr!("Expand All Diffs"));
+        let whitespace = gtk::CheckButton::with_label(&tr!("Ignore Whitespace"));
+        whitespace.set_sensitive(false);
+        whitespace.set_tooltip_text(Some(&tr!("Not available yet")));
+        let (find, _) = icon_button(crate::icon::Kind::Search, &tr!("Find in the diff (Ctrl+F)"));
+        let (options, _) = icon_button(crate::icon::Kind::Sliders, &tr!("View Options"));
+        let bar_box = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        bar_box.set_margin_start(8);
+        bar_box.set_margin_end(8);
+        bar_box.set_margin_top(3);
+        bar_box.set_margin_bottom(3);
+        for w in [
+            view_switch.upcast_ref::<gtk::Widget>(),
+            totals.upcast_ref(),
+            spacer.upcast_ref(),
+            tree_switch.upcast_ref(),
+            folders.upcast_ref(),
+            expand_all.upcast_ref(),
+            whitespace.upcast_ref(),
+            find.upcast_ref(),
+            options.upcast_ref(),
+        ] {
+            bar_box.append(w);
+        }
+        // 狭いときは右の側から切れる（右の列の幅を押し広げない。macOS 版と同じ）。
+        let bar_scroll = gtk::ScrolledWindow::builder()
+            .child(&bar_box)
+            .hscrollbar_policy(gtk::PolicyType::External)
+            .vscrollbar_policy(gtk::PolicyType::Never)
+            .propagate_natural_height(true)
+            .build();
+
+        let diff_column = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        diff_column.append(&diff_scrolled);
+        let pages = gtk::Stack::new();
+        pages.set_vexpand(true);
+        pages.add_named(&diff_column, Some("changes"));
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        root.append(&holder);
+        root.append(&find_bar);
+        root.append(&bar_scroll);
+        root.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+        root.append(&pages);
         let inner = Rc::new(Inner {
             root: root.clone(),
             diff,
-            diff_column,
-            files_column,
-            totals,
-            list,
-            store,
-            selection,
-            holder,
-            paned: RefCell::default(),
-            row_of_file: RefCell::default(),
-            source: RefCell::default(),
-            key: RefCell::default(),
-            single: Cell::new(false),
-            shown_file: Cell::new(None),
+            pages,
+            bar: Bar {
+                changes,
+                all_files,
+                totals,
+                list,
+                tree,
+                folders,
+                folders_icon,
+                expand_all,
+                expand_icon,
+                whitespace,
+            },
+            st: RefCell::default(),
+            browser: RefCell::default(),
             syncing: Cell::new(false),
             generation: Cell::new(0),
             pending,
             current_repo,
             file_items: RefCell::default(),
             restore_items: RefCell::default(),
+            view_options: RefCell::default(),
+            expand: RefCell::default(),
             sparse: RefCell::default(),
-            find: FindBar { bar, entry, count },
-            changes: RefCell::default(),
+            find: FindBar {
+                bar: find_bar,
+                entry,
+                count,
+            },
             stats: RefCell::default(),
+            image_mode: Cell::new(imagediff::Mode::default()),
         });
         OPEN.with(|open| open.borrow_mut().push(Rc::downgrade(&inner)));
-        Inner::setup_factory(&inner, &factory);
-        Inner::connect(&inner, &previous, &next, &done);
-        Inner::arrange(&inner);
+        Inner::connect(&inner, &previous, &next, &done, &find, &options);
+        Inner::update_bar(&inner);
         inner
             .diff
             .show_message(&tr!("Select a commit to see its changes."));
@@ -685,17 +532,15 @@ impl CommitDiff {
         &self.inner.diff
     }
 
-    /// 次を読んでいる間: 一覧と差分を消す。
+    /// 次を読んでいる間: 差分を消す。
     pub fn clear(&self) {
         let inner = &self.inner;
         inner.generation.set(inner.generation.get() + 1);
-        inner.source.replace(None);
-        inner.shown_file.set(None);
-        inner.syncing.set(true);
-        inner.store.remove_all();
-        inner.syncing.set(false);
-        inner.row_of_file.borrow_mut().clear();
+        *inner.st.borrow_mut() = St::default();
+        Inner::drop_browser(inner);
         inner.diff.clear();
+        Inner::sync_switches(inner);
+        Inner::update_bar(inner);
     }
 
     /// 別のコミットを読み始める: 前のコミットの行数を捨てる（`clear` は読んでいる途中にも呼ぶので、そこでは捨てない）。
@@ -703,8 +548,8 @@ impl CommitDiff {
         self.inner.stats.borrow_mut().clear();
     }
 
-    /// 出しているコミットの `commit_extras` の答えから、ファイルごとの行数を受け取る。選んだファイルだけを読む
-    /// 一覧なら、行数を出し直す（まとめて並べる一覧は、差分から数えた行数をもう出している）。
+    /// 出しているコミットの `commit_extras` の答えから、ファイルごとの行数を受け取る（まだ差分を取っていない
+    /// ファイルの見出しと、合計に出す）。
     pub fn set_stats(&self, extras: &serde_json::Value) {
         let inner = &self.inner;
         let stats: Stats = extras["stats"]
@@ -720,25 +565,20 @@ impl CommitDiff {
             })
             .collect();
         inner.stats.replace(stats);
-        let lazy = inner
-            .source
-            .borrow()
-            .as_ref()
-            .is_some_and(|source| source.1.is_some());
-        if lazy {
-            Inner::fill_list(inner);
-        }
+        let counts = Inner::pending_counts(inner);
+        inner.diff.set_counts(counts);
+        Inner::update_bar(inner);
     }
 
-    /// 一覧を消し、差分の代わりに知らせ `text` を出す（「Loading the diff…」など）。
+    /// 差分の代わりに知らせ `text` を出す（「Loading the diff…」など）。
     pub fn show_message(&self, text: &str) {
         self.clear();
         self.inner.diff.show_message(text);
     }
 
-    /// 用意した差分を出す。`key` は Viewed を覚える鍵。
-    pub fn show(&self, prepared: Prepared, key: String) {
-        Inner::show(&self.inner, prepared, key);
+    /// 用意した差分を出す。`commit` は「すべてのファイル」で木を読むコミット（stash・複数のコミットでは None）。
+    pub fn show(&self, prepared: Prepared, commit: Option<Oid>) {
+        Inner::show(&self.inner, prepared, commit);
     }
 
     /// sparse checkout の様子（ファイルのメニューで、取り出していないフォルダのファイルを開けないわけを添える）。
@@ -758,271 +598,136 @@ impl CommitDiff {
 
     /// 変更ファイルの右クリックに足す、作業ツリーのファイルを戻す項目（`f(そのファイルの変更)`）。コミットを
     /// 出しているときだけ呼ぶ。
-    pub fn connect_restore_items(
-        &self,
-        f: impl Fn(&amonhen_model::FileChange) -> Vec<Item> + 'static,
-    ) {
+    pub fn connect_restore_items(&self, f: impl Fn(&FileChange) -> Vec<Item> + 'static) {
         self.inner.restore_items.replace(Some(Rc::new(f)));
     }
 
-    /// 詳細の欄だけを右の列いっぱいに広げるボタン（⤢。変更ファイルと差分を隠す。もう一度押すと戻す）。
+    /// 帯の表示の設定に足す項目を作る `f() -> (詳細の見せ方, AI)`（開くたびに作る）。
+    pub fn connect_view_options(&self, f: impl Fn() -> (Vec<Item>, Vec<Item>) + 'static) {
+        self.inner.view_options.replace(Some(Rc::new(f)));
+    }
+
+    /// 詳細の欄だけを右の列いっぱいに広げるボタン（差分を隠す。表示の設定の「詳細を広げる」で押す）。広げている
+    /// 間だけ詳細の右上に出し、押すと戻す（隠した差分の側の帯からは戻せないので）。
     pub fn expand_button(&self) -> gtk::ToggleButton {
-        // 広げている間は、戻す形の矢印と「Restore Details」（macOS 版と同じ）。
         let icon = crate::icon::Icon::default();
-        let show = |icon: &crate::icon::Icon, button: &gtk::ToggleButton, expanded: bool| {
-            let (kind, name) = if expanded {
-                (crate::icon::Kind::Restore, tr!("Restore Details"))
-            } else {
-                (crate::icon::Kind::Expand, tr!("Expand Details"))
-            };
-            icon.set(kind, false);
-            button.update_property(&[gtk::accessible::Property::Label(&name)]);
-        };
+        icon.set(crate::icon::Kind::Restore, false);
         let button = gtk::ToggleButton::new();
         // 詳細の見せ方を変えたときに戻せるように（`Details::show_style_switch`）。
         button.set_widget_name(crate::details::EXPAND_BUTTON);
         button.set_child(Some(&icon));
-        show(&icon, &button, false);
+        button.update_property(&[gtk::accessible::Property::Label(&tr!("Restore Details"))]);
         button.add_css_class("flat");
         button.add_css_class("image-button");
         button.set_valign(gtk::Align::Start);
         button.set_tooltip_text(Some(&tr!(
             "Expand the commit details to fill the right column (click again to restore)."
         )));
+        button.set_visible(false);
         let root = self.root.downgrade();
         button.connect_toggled(move |b| {
-            show(&icon, b, b.is_active());
+            b.set_visible(b.is_active());
             if let Some(root) = root.upgrade() {
                 root.set_visible(!b.is_active());
             }
         });
-        button
-    }
-
-    /// 差分の中を探す帯を開くボタン（詳細の右上に置く。メニューバーを使わずに届くように）。
-    pub fn find_button(&self) -> gtk::Button {
-        let icon = crate::icon::Icon::default();
-        icon.set(crate::icon::Kind::Search, false);
-        let button = gtk::Button::new();
-        button.set_child(Some(&icon));
-        button.add_css_class("flat");
-        button.set_valign(gtk::Align::Start);
-        button.set_tooltip_text(Some(&tr!("Find in the diff (Ctrl+F)")));
-        let weak = Rc::downgrade(&self.inner);
-        button.connect_clicked(move |_| {
-            if let Some(inner) = weak.upgrade() {
-                Inner::show_find(&inner);
-            }
-        });
+        self.inner.expand.replace(Some(button.clone()));
         button
     }
 }
 
 impl Inner {
-    fn setup_factory(this: &Rc<Self>, factory: &gtk::SignalListItemFactory) {
+    fn connect(
+        this: &Rc<Self>,
+        previous: &gtk::Button,
+        next: &gtk::Button,
+        done: &gtk::Button,
+        find: &gtk::Button,
+        options: &gtk::Button,
+    ) {
+        // 見出しを押す: その場で開く・畳む。
         let weak = Rc::downgrade(this);
-        factory.connect_setup(move |_, item| {
-            let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
-                return;
-            };
-            let icon = crate::icon::Icon::default();
-            icon.set(crate::icon::Kind::Folder, false);
-            let name = gtk::Label::new(None);
-            name.set_xalign(0.0);
-            name.set_hexpand(true);
-            name.set_ellipsize(gtk::pango::EllipsizeMode::Start);
-            let counts = gtk::Label::new(None);
-            counts.add_css_class("caption");
-            counts.add_css_class("numeric");
-            let line = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-            line.set_margin_top(2);
-            line.set_margin_bottom(2);
-            line.set_margin_end(6);
-            line.append(&icon);
-            line.append(&name);
-            line.append(&counts);
-            // 右クリック: Blame・File History・パスのコピーなど（差分の見出しと同じ）。
-            let click = gtk::GestureClick::new();
-            click.set_button(gtk::gdk::BUTTON_SECONDARY);
-            let (w, i, l) = (weak.clone(), item.downgrade(), line.downgrade());
-            click.connect_pressed(move |_, _, x, y| {
-                let (Some(this), Some(item), Some(line)) = (w.upgrade(), i.upgrade(), l.upgrade())
-                else {
-                    return;
-                };
-                let Some(file) = item
-                    .item()
-                    .and_downcast::<glib::BoxedAnyObject>()
-                    .and_then(|o| o.borrow::<FileRow>().file)
-                else {
-                    return;
-                };
-                let items = Inner::list_menu_items(&this, file);
-                menu::popup(&line, x, y, items);
-            });
-            line.add_controller(click);
-            item.set_child(Some(&line));
-        });
-        factory.connect_bind(|_, item| {
-            let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
-                return;
-            };
-            let (Some(line), Some(object)) = (
-                item.child().and_downcast::<gtk::Box>(),
-                item.item().and_downcast::<glib::BoxedAnyObject>(),
-            ) else {
-                return;
-            };
-            let row = object.borrow::<FileRow>();
-            let children: Vec<gtk::Widget> = {
-                let mut out = Vec::new();
-                let mut child = line.first_child();
-                while let Some(c) = child {
-                    child = c.next_sibling();
-                    out.push(c);
-                }
-                out
-            };
-            let [icon, name, counts] = &children[..] else {
-                return;
-            };
-            let (name, counts) = (
-                name.downcast_ref::<gtk::Label>().expect("name"),
-                counts.downcast_ref::<gtk::Label>().expect("counts"),
-            );
-            line.set_margin_start(6 + (row.depth * 14) as i32);
-            let folder = row.file.is_none();
-            icon.set_visible(folder);
-            // フォルダの行は薄い色で（macOS 版と同じ）。
-            if folder {
-                line.add_css_class("dim-label");
-            } else {
-                line.remove_css_class("dim-label");
-            }
-            // 種類はパスの前に色を付けて、フォルダは薄く、ファイル名はふつうの色で（macOS 版と同じ）。長いパスは
-            // 真ん中を、フォルダの行は頭を省く。
-            if folder {
-                name.set_text(&row.name);
-                name.set_ellipsize(gtk::pango::EllipsizeMode::Start);
-            } else {
-                name.set_markup(&path_markup(row.mark, &row.name));
-                name.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
-            }
-            name.set_tooltip_text(Some(&row.tip));
-            // 行数（0 の側は出さない）。バイナリは「Binary」（macOS 版と同じ）。
-            match row.counts {
-                Counts::Lines(added, removed) if !folder => {
-                    let mut parts = Vec::new();
-                    if added > 0 {
-                        parts.push(format!("<span foreground=\"#2ec27e\">+{added}</span>"));
-                    }
-                    if removed > 0 {
-                        parts.push(format!("<span foreground=\"#e01b24\">−{removed}</span>"));
-                    }
-                    counts.set_markup(&parts.join("  "));
-                }
-                Counts::Binary if !folder => counts.set_markup(&format!(
-                    "<span alpha=\"55%\">{}</span>",
-                    glib::markup_escape_text(&tr!("Binary"))
-                )),
-                _ => counts.set_text(""),
-            }
-            // フォルダの行は選べない。
-            item.set_selectable(!folder);
-            item.set_activatable(!folder);
-        });
-    }
-
-    fn connect(this: &Rc<Self>, previous: &gtk::Button, next: &gtk::Button, done: &gtk::Button) {
-        // 一覧で選んだファイル: 全ファイルを並べているなら、その見出しまでスクロールし、そうでなければそのファイルの
-        // 差分を出す。
-        let weak = Rc::downgrade(this);
-        this.selection.connect_selected_notify(move |selection| {
-            let Some(this) = weak.upgrade() else { return };
-            if this.syncing.get() {
-                return;
-            }
-            let Some(file) = selection
-                .selected_item()
-                .and_downcast::<glib::BoxedAnyObject>()
-                .and_then(|o| o.borrow::<FileRow>().file)
-            else {
-                return;
-            };
-            if this.single.get() {
-                Inner::show_single(&this, file);
-            } else {
-                this.diff.scroll_to_file(file);
-            }
-        });
-        // 差分をスクロールしたら、一番上のファイルを一覧で選ぶ。
-        let weak = Rc::downgrade(this);
-        this.diff.connect_top_file(move |file| {
-            let Some(this) = weak.upgrade() else { return };
-            if this.single.get() {
-                return;
-            }
-            let Some(&row) = this.row_of_file.borrow().get(file) else {
-                return;
-            };
-            if this.selection.selected() != row {
-                this.syncing.set(true);
-                this.selection.set_selected(row);
-                this.list.scroll_to(row, gtk::ListScrollFlags::NONE, None);
-                this.syncing.set(false);
-            }
-        });
-        // ⌥J・⌥K（1 ファイルずつ見せているとき）: 一覧で次・前のファイルを選ぶ。
-        let weak = Rc::downgrade(this);
-        this.diff.connect_move_file(move |step| {
+        this.diff.connect_toggle_file(move |file| {
             if let Some(this) = weak.upgrade() {
-                Inner::move_file(&this, step);
+                Inner::toggle_open(&this, file);
             }
         });
-        // Viewed: 見たことにしたら畳み、戻したら開く（GitHub と同じ）。
+        // フォルダの行を押す: 中の見出しを畳む・出す。
         let weak = Rc::downgrade(this);
-        this.diff.connect_toggle_viewed(move |file| {
+        this.diff.connect_toggle_folder(move |folder| {
+            let Some(this) = weak.upgrade() else { return };
+            {
+                let mut st = this.st.borrow_mut();
+                if !st.collapsed_folders.remove(&folder) {
+                    st.collapsed_folders.insert(folder);
+                }
+            }
+            Inner::reshow(&this, true, Vec::new(), None);
+        });
+        // hunk の見出しの印: そのファイルの前後を広げる。
+        let weak = Rc::downgrade(this);
+        this.diff.connect_expand_hunk(move |file| {
             if let Some(this) = weak.upgrade() {
-                Inner::toggle_viewed(&this, file);
+                Inner::widen_context(&this, file);
             }
         });
-        // 見出し・差分の行の右クリック。
+        // 見出しの ⋯・右クリック、差分の行の右クリック。
         let weak = Rc::downgrade(this);
         this.diff.connect_file_menu(move |file, path, x, y| {
             let Some(this) = weak.upgrade() else { return };
             // 文字のコピーは Ctrl+C で（メニューには出さない。macOS 版と同じ）。
             let items = match file {
-                // 見出しの上: 畳む・Viewed・Blame・パスのコピーなど。
-                Some(file) => Inner::menu_items(&this, Some(file)),
-                // 差分の行の上: AI でこの hunk を解説だけ（持ち主が作る。macOS 版と同じ）。
-                None => this
-                    .file_items
-                    .borrow()
-                    .clone()
-                    .map(|f| f(path, Some(y), true, true))
-                    .unwrap_or_default(),
+                Some(file) => Inner::menu_items(&this, file),
+                None => Inner::row_items(&this, path, y),
             };
-            // AI がなく文字も選んでいなければ、メニューは出さない（macOS 版と同じ）。
             if !items.is_empty() {
                 menu::popup(&this.diff, x, y, items);
             }
         });
-        // 1 ファイルずつ見せているときは、差分にファイルの見出しがない。差分の行の右クリックは、全ファイルを
-        // 並べたときの見出しの下の行と同じ（AI でこの hunk を解説だけ）。
+        // 帯: 変更／すべてのファイル。
         let weak = Rc::downgrade(this);
-        this.diff.connect_row_menu(move |_, x, y| {
-            let Some(this) = weak.upgrade() else { return };
-            let items = this
-                .single_path()
-                .and_then(|path| {
-                    this.file_items
-                        .borrow()
-                        .clone()
-                        .map(|f| f(&path, Some(y), true, true))
-                })
-                .unwrap_or_default();
-            if !items.is_empty() {
-                menu::popup(&this.diff, x, y, items);
+        this.bar.all_files.connect_toggled(move |b| {
+            if let Some(this) = weak.upgrade()
+                && !this.syncing.get()
+            {
+                Inner::set_files_mode(&this, b.is_active());
+            }
+        });
+        // リスト／木（History の表示のメニューと同じ設定）。
+        let weak = Rc::downgrade(this);
+        this.bar.tree.connect_toggled(move |b| {
+            if let Some(this) = weak.upgrade()
+                && !this.syncing.get()
+                && b.is_active() != file_tree()
+            {
+                crate::settings::set_bool(FILE_TREE, b.is_active());
+            }
+        });
+        let weak = Rc::downgrade(this);
+        this.bar.folders.connect_clicked(move |_| {
+            if let Some(this) = weak.upgrade() {
+                Inner::toggle_all_folders(&this);
+            }
+        });
+        let weak = Rc::downgrade(this);
+        this.bar.expand_all.connect_clicked(move |_| {
+            if let Some(this) = weak.upgrade() {
+                Inner::toggle_all_diffs(&this);
+            }
+        });
+        let weak = Rc::downgrade(this);
+        find.connect_clicked(move |_| {
+            if let Some(this) = weak.upgrade() {
+                Inner::show_find(&this);
+            }
+        });
+        let weak = Rc::downgrade(this);
+        options.connect_clicked(move |b| {
+            if let Some(this) = weak.upgrade() {
+                let items = Inner::view_option_items(&this);
+                if !items.is_empty() {
+                    menu::popup(b, b.width() as f64 / 2.0, b.height() as f64, items);
+                }
             }
         });
         // 検索の帯。
@@ -1075,84 +780,47 @@ impl Inner {
                 Inner::hide_find(&this);
             }
         });
-        // 一覧の置き方と、全ファイルを並べるかを変えたら、置き直す・読み直す。
+        // リストか木かを変えたら（History の表示のメニューからも）、置き直す。
         let weak = Rc::downgrade(this);
         crate::settings::connect_changed_while(&this.root, move |key| {
-            let Some(this) = weak.upgrade() else { return };
-            match key {
-                FILE_TREE => {
-                    Inner::arrange(&this);
-                    Inner::fill_list(&this);
-                }
-                STACKED => Inner::restack(&this),
-                _ => {}
+            if key == FILE_TREE
+                && let Some(this) = weak.upgrade()
+            {
+                Inner::tree_changed(&this);
             }
         });
     }
 
-    /// 変更ファイルの一覧を、差分の左（木）か上（一覧）に置く。
-    fn arrange(this: &Rc<Self>) {
-        if let Some(old) = this.paned.take() {
-            old.set_start_child(gtk::Widget::NONE);
-            old.set_end_child(gtk::Widget::NONE);
-            this.holder.remove(&old);
-        }
-        let tree = file_tree();
-        let paned = gtk::Paned::new(if tree {
-            gtk::Orientation::Horizontal
-        } else {
-            gtk::Orientation::Vertical
-        });
-        paned.set_vexpand(true);
-        paned.set_start_child(Some(&this.files_column));
-        paned.set_end_child(Some(&this.diff_column));
-        paned.set_resize_start_child(false);
-        paned.set_shrink_start_child(false);
-        paned.set_shrink_end_child(false);
-        if tree {
-            this.files_column.set_size_request(140, -1);
-            paned.set_position(200);
-        } else {
-            this.files_column.set_size_request(-1, 60);
-            paned.set_position(110);
-        }
-        this.holder.append(&paned);
-        this.paned.replace(Some(paned));
-    }
-
-    fn show(this: &Rc<Self>, prepared: Prepared, key: String) {
+    fn show(this: &Rc<Self>, prepared: Prepared, commit: Option<Oid>) {
         let Prepared {
             source,
             view,
-            collapsed,
-            single,
+            names,
+            generated,
             changes,
         } = prepared;
-        this.changes.replace(changes);
         this.generation.set(this.generation.get() + 1);
-        let viewed = viewed_paths(&key);
-        let viewed_files: HashSet<usize> = source
-            .0
-            .files
-            .iter()
-            .enumerate()
-            .filter(|(_, (n, _))| viewed.contains(n))
-            .map(|(i, _)| i)
-            .collect();
-        this.key.replace(key);
-        this.single.set(single.is_some());
-        this.shown_file.set(single);
-        this.source.replace(Some(source.clone()));
-        // 前のコミットのファイルの番号を持ち越さない（一覧の選びが、出している差分とずれる）。
-        this.syncing.set(true);
-        this.store.remove_all();
-        this.syncing.set(false);
-        Inner::fill_list(this);
-        match single {
-            Some(_) => this.diff.show(source, view),
-            None => this.diff.show_files(source, view, collapsed, viewed_files),
+        Inner::drop_browser(this);
+        let count = names.len();
+        {
+            let mut st = this.st.borrow_mut();
+            *st = St {
+                commit: commit.filter(|_| source.repo.is_some()),
+                infos: view.file_infos(),
+                source: Some(source.clone()),
+                names,
+                generated,
+                changes,
+                ..St::default()
+            };
         }
-        // 確認用（`--find-diff`・`--toggle-viewed`）。
+        // 最初はすべて畳む。
+        let decor = Inner::decor(this, &HashSet::new(), HashMap::new());
+        this.diff
+            .show_stacked(source, view, vec![true; count], decor, false);
+        Inner::sync_switches(this);
+        Inner::update_bar(this);
+        // 確認用（`--find-diff`）。
         if let Some(query) = FIND_ONCE.with(|f| f.take()) {
             Inner::show_find(this);
             this.find.entry.set_text(&query);
@@ -1160,353 +828,713 @@ impl Inner {
             let (current, count) = this.diff.recount(&this.find.entry.text());
             this.show_count(current, count);
         }
-        if let Some(file) = VIEWED_ONCE.with(|v| v.take()) {
-            Inner::toggle_viewed(this, file);
-        }
         if let Some(file) = MENU_ONCE.with(|v| v.take()) {
-            let items = Inner::menu_items(this, Some(file));
+            let items = Inner::menu_items(this, file);
             let diff = this.diff.clone();
             // 差分が描かれてから出す。
             glib::idle_add_local_once(move || menu::popup(&diff, 60.0, 10.0, items));
         }
+        Inner::apply_snapshot_options(this);
     }
 
-    /// 変更ファイルの一覧を作り直し、最初のファイル（1 ファイルずつなら出しているファイル）を選ぶ。
-    fn fill_list(this: &Rc<Self>) {
-        let source = this.source.borrow().clone();
-        let selected_file = this
-            .selection
-            .selected_item()
-            .and_downcast::<glib::BoxedAnyObject>()
-            .and_then(|o| o.borrow::<FileRow>().file);
-        this.syncing.set(true);
-        this.store.remove_all();
-        let Some(source) = source else {
-            this.syncing.set(false);
-            this.totals.set_visible(false);
-            return;
-        };
-        Inner::show_totals(this, &source);
-        let changes = this.changes.borrow().clone();
-        let rows = file_rows(
-            &source,
-            changes.as_deref().map(Vec::as_slice),
-            &this.stats.borrow(),
-            file_tree(),
-        );
-        let mut row_of_file = vec![0; source.0.files.len()];
-        for (r, row) in rows.iter().enumerate() {
-            if let Some(i) = row.file {
-                row_of_file[i] = r as u32;
-            }
+    /// 前のコミットの「すべてのファイル」を捨てる。
+    fn drop_browser(this: &Rc<Self>) {
+        if let Some(browser) = this.browser.take() {
+            this.pages.remove(&browser.root);
         }
-        let objects: Vec<glib::BoxedAnyObject> =
-            rows.into_iter().map(glib::BoxedAnyObject::new).collect();
-        this.store.extend_from_slice(&objects);
-        let first = selected_file
-            .or_else(|| (!row_of_file.is_empty()).then_some(0))
-            .and_then(|f| row_of_file.get(f).copied());
-        this.row_of_file.replace(row_of_file);
-        if let Some(row) = first {
-            this.selection.set_selected(row);
-        }
-        this.syncing.set(false);
+        this.pages.set_visible_child_name("changes");
     }
 
-    /// 一覧の下の合計を出し直す。行数は、全ファイルの差分を読んでいればそこから、1 ファイルずつなら詳細の
-    /// 行数（届くまでは数だけ。macOS 版と同じ）。
-    fn show_totals(this: &Rc<Self>, source: &Source) {
-        let files = &source.0.files;
-        if files.is_empty() {
-            this.totals.set_visible(false);
-            return;
+    /// `file` 番目のファイルのパス（とびとびに選んだコミットの見出し「パス — 短い ID」からはパスを取り出す）。
+    fn path(st: &St, file: usize) -> String {
+        match st.changes.as_ref().and_then(|c| c.get(file)) {
+            Some(change) => change.path.clone(),
+            None => path_of(st.names.get(file).map_or("", String::as_str)).to_owned(),
         }
+    }
+
+    /// 見出しに出す名前（名前を変えたファイルは `src/{old → new}`）。
+    fn label(st: &St, file: usize) -> String {
+        match st.changes.as_ref().and_then(|c| c.get(file)) {
+            Some(FileChange {
+                path,
+                old_path: Some(old),
+                ..
+            }) if old != path => amonhen_model::rename_label(old, path),
+            Some(change) => change.path.clone(),
+            None => st.names.get(file).cloned().unwrap_or_default(),
+        }
+    }
+
+    fn change(st: &St, file: usize) -> Option<FileChange> {
+        st.changes.as_ref()?.get(file).cloned()
+    }
+
+    /// まだ差分を取っていないファイルの行数（詳細の行数から）。
+    fn pending_counts(this: &Rc<Self>) -> HashMap<usize, (u32, u32)> {
+        let st = this.st.borrow();
         let stats = this.stats.borrow();
-        let lines = if source.1.is_none() {
-            Some(
-                files
-                    .iter()
-                    .fold((0, 0), |(a, r), (_, d)| (a + d.added, r + d.removed)),
-            )
-        } else if !stats.is_empty() {
-            Some(files.iter().fold((0, 0), |(a, r), (name, _)| {
-                let (added, removed) = stats.get(path_of(name)).copied().unwrap_or_default();
-                (a + added.unwrap_or(0), r + removed.unwrap_or(0))
-            }))
-        } else {
-            None
-        };
-        let mut markup = format!(
-            "<span alpha=\"55%\">{}</span>",
-            glib::markup_escape_text(&tr!("{count} changed files", count = files.len()))
-        );
-        if let Some((added, removed)) = lines {
-            markup += &format!(
-                "  <span foreground=\"#2ec27e\">+{added}</span> <span foreground=\"#e01b24\">−{removed}</span>"
-            );
-        }
-        this.totals.set_markup(&markup);
-        this.totals.set_visible(true);
+        st.infos
+            .iter()
+            .enumerate()
+            .filter(|(_, info)| info.pending)
+            .filter_map(|(i, _)| {
+                let (a, r) = stats.get(&Inner::path(&st, i))?;
+                Some((i, (a.unwrap_or(0), r.unwrap_or(0))))
+            })
+            .collect()
     }
 
-    /// 1 ファイルずつ見せているときの、差分に出しているファイルのパス。
-    fn single_path(&self) -> Option<String> {
-        if !self.single.get() {
+    /// 木の様子（木で見せていなければ None）。
+    fn tree_layout(st: &St) -> Option<TreeLayout> {
+        if !file_tree() {
             return None;
         }
-        let source = self.source.borrow().clone()?;
-        let file = self.shown_file.get()?;
-        let (name, _) = source.0.files.get(file)?;
-        Some(path_of(name).to_owned())
+        let paths: Vec<String> = (0..st.names.len()).map(|i| Inner::path(st, i)).collect();
+        let labels: Vec<String> = (0..st.names.len()).map(|i| Inner::label(st, i)).collect();
+        Some(tree_layout(&paths, &labels, &st.collapsed_folders))
     }
 
-    /// 1 ファイルずつ見せているとき: `file` の差分を裏で作って出す。
-    fn show_single(this: &Rc<Self>, file: usize) {
-        let Some(source) = this.source.borrow().clone() else {
-            return;
+    /// 見出しの飾り（`panel_files` は欄を出すファイル、`panels` はその部品）。
+    fn decor(
+        this: &Rc<Self>,
+        panel_files: &HashSet<usize>,
+        panels: HashMap<usize, gtk::Widget>,
+    ) -> Decor {
+        let counts = Inner::pending_counts(this);
+        let st = this.st.borrow();
+        let mut decor = Decor {
+            counts,
+            open: panel_files.clone(),
+            panels,
+            ..Decor::default()
+        };
+        for file in 0..st.names.len() {
+            if let Some(change) = st.changes.as_ref().and_then(|c| c.get(file)) {
+                decor.marks.insert(file, kind_mark(change.kind));
+            }
+            let path = Inner::path(&st, file);
+            if imagediff::is_image(&path) && !imagediff::is_svg(&path) {
+                decor.notes.insert(file, tr!("Image"));
+            }
+        }
+        match Inner::tree_layout(&st) {
+            Some(tree) => {
+                decor.folders = tree.folders;
+                decor.depths = tree.depths;
+                decor.titles = tree.titles;
+                decor.hidden = tree.hidden;
+            }
+            None => {
+                // リストでは、名前を変えたファイルだけ `src/{old → new}` にする。
+                for file in 0..st.names.len() {
+                    let label = Inner::label(&st, file);
+                    if label != st.names[file] {
+                        decor.titles.insert(file, label);
+                    }
+                }
+            }
+        }
+        decor
+    }
+
+    /// 開いている・畳んでいるファイル、木、画像の欄から、差分の表示を作り直す。`ops`（ファイル、前後の行数）は、
+    /// 先にそのファイルの差分を取り直す（まだ取っていない差分もここで取る）。作り直したら `then` を呼ぶ。
+    fn reshow(this: &Rc<Self>, keep_scroll: bool, ops: Vec<(usize, u32)>, then: Option<Then>) {
+        let (source, collapsed, panel_files, blobs) = {
+            let mut st = this.st.borrow_mut();
+            let Some(source) = st.source.clone() else {
+                return;
+            };
+            let count = st.names.len();
+            let hidden = Inner::tree_layout(&st)
+                .map(|t| t.hidden)
+                .unwrap_or_default();
+            let panel_files: HashSet<usize> = st
+                .open
+                .iter()
+                .copied()
+                .filter(|&f| {
+                    imagediff::is_image(&Inner::path(&st, f))
+                        && !st.svg_text.contains(&f)
+                        && !hidden.contains(&f)
+                })
+                .collect();
+            let collapsed: Vec<bool> = (0..count)
+                .map(|f| !st.open.contains(&f) || panel_files.contains(&f) || hidden.contains(&f))
+                .collect();
+            // まだ部品のない画像の欄の、前と後の blob。
+            st.panels.retain(|f, _| panel_files.contains(f));
+            let blobs: Vec<(usize, Option<Oid>, Option<Oid>)> = panel_files
+                .iter()
+                .filter(|f| !st.panels.contains_key(f))
+                .map(|&f| {
+                    let change = Inner::change(&st, f);
+                    (
+                        f,
+                        change.as_ref().and_then(|c| c.old_id),
+                        change.as_ref().and_then(|c| c.new_id),
+                    )
+                })
+                .collect();
+            (source, collapsed, panel_files, blobs)
         };
         let generation = this.generation.get() + 1;
         this.generation.set(generation);
         this.pending.set(this.pending.get() + 1);
         let weak = Rc::downgrade(this);
         let s = source.clone();
+        let c = collapsed.clone();
         glib::spawn_future_local(async move {
-            let view = gio::spawn_blocking(move || single_view(&s, file)).await;
-            let Some(this) = weak.upgrade() else { return };
-            this.pending.set(this.pending.get() - 1);
-            if this.generation.get() != generation {
-                return;
-            }
-            match view {
-                Ok(Ok(view)) => {
-                    this.diff.show(source, view);
-                    this.shown_file.set(Some(file));
-                    if this.find.bar.is_visible() {
-                        let (current, count) = this.diff.recount(&this.find.entry.text());
-                        this.show_count(current, count);
+            let result = gio::spawn_blocking(move || {
+                let mut failed = false;
+                let mut stacked = s.lock();
+                if let Some(repo) = &s.repo {
+                    for (file, context) in ops {
+                        if let Err(e) = repo.set_stacked_context(&mut stacked, file, context) {
+                            eprintln!("差分を読めない: {e}");
+                            failed = true;
+                        }
                     }
                 }
-                Ok(Err(e)) => {
-                    eprintln!("差分を読めない: {e}");
-                    this.diff.show_message(&tr!("Couldn’t load the diff"));
-                    this.shown_file.set(Some(file));
-                }
-                Err(_) => {}
-            }
-        });
-    }
-
-    /// 全ファイルを並べるかを変えた: 出しているコミットを、その見せ方で出し直す。
-    fn restack(this: &Rc<Self>) {
-        let Some(source) = this.source.borrow().clone() else {
-            return;
-        };
-        let changes = this.changes.borrow().clone();
-        let key = this.key.borrow().clone();
-        let viewed = viewed_paths(&key);
-        let all = stacked();
-        let generation = this.generation.get() + 1;
-        this.generation.set(generation);
-        this.pending.set(this.pending.get() + 1);
-        let weak = Rc::downgrade(this);
-        glib::spawn_future_local(async move {
-            let prepared = gio::spawn_blocking(move || match &source.1 {
-                // 選んだファイルだけを読んでいたなら、その見せ方で読み直す。
-                Some(lazy) => {
-                    Prepared::from_changes(lazy.repo.clone(), lazy.changes.clone(), &viewed, all)
-                }
-                None => {
-                    // 変更ファイルの一覧がないのは複数のコミットの差分で、設定によらず全ファイルを並べる
-                    // （macOS 版と同じ）。
-                    let all = all || changes.is_none();
-                    let mut prepared = Prepared::with_source(source, &viewed, all);
-                    prepared.changes = changes;
-                    Ok(prepared)
-                }
+                let view = View::build(&stacked, &c);
+                drop(stacked);
+                type Bytes = Option<Arc<Vec<u8>>>;
+                let blobs: Vec<(usize, Bytes, Bytes)> = blobs
+                    .into_iter()
+                    .map(|(file, old, new)| {
+                        let read = |id: Option<Oid>| {
+                            id.and_then(|id| s.repo.as_ref().and_then(|r| r.blob(&id).ok()))
+                        };
+                        (file, read(old), read(new))
+                    })
+                    .collect();
+                (view, failed, blobs)
             })
             .await;
             let Some(this) = weak.upgrade() else { return };
             this.pending.set(this.pending.get() - 1);
+            let Ok((view, failed, blobs)) = result else {
+                return;
+            };
             if this.generation.get() != generation {
                 return;
             }
-            match prepared {
-                Ok(Ok(prepared)) => Inner::show(&this, prepared, key),
-                Ok(Err(e)) => {
-                    eprintln!("差分を読めない: {e}");
-                    this.diff.show_message(&tr!("Couldn’t load the diff"));
-                }
-                Err(_) => {}
+            for (file, old, new) in blobs {
+                let panel = Inner::image_panel(
+                    &this,
+                    file,
+                    old.as_ref().map(|d| d.as_slice()),
+                    new.as_ref().map(|d| d.as_slice()),
+                );
+                this.st.borrow_mut().panels.insert(file, panel);
+            }
+            this.st.borrow_mut().infos = view.file_infos();
+            let panels: HashMap<usize, gtk::Widget> = this
+                .st
+                .borrow()
+                .panels
+                .iter()
+                .map(|(f, w)| (*f, w.clone()))
+                .collect();
+            let decor = Inner::decor(&this, &panel_files, panels);
+            this.diff
+                .show_stacked(source, view, collapsed, decor, keep_scroll);
+            Inner::update_bar(&this);
+            if failed {
+                this.diff.error_bell();
+            }
+            if let Some(then) = then {
+                then(&this);
             }
         });
     }
 
-    /// ⌥J・⌥K（1 ファイルずつ見せているとき）: 一覧で次・前のファイルを選ぶ。
-    fn move_file(this: &Rc<Self>, step: i32) {
-        let n = this.store.n_items() as i64;
-        let mut row = this.selection.selected() as i64;
-        if this.selection.selected() == gtk::INVALID_LIST_POSITION {
-            row = -1;
-        }
-        loop {
-            row += step as i64;
-            if row < 0 || row >= n {
-                this.diff.error_bell();
-                return;
+    /// 画像の比べる欄。
+    fn image_panel(
+        this: &Rc<Self>,
+        file: usize,
+        before: Option<&[u8]>,
+        after: Option<&[u8]>,
+    ) -> gtk::Widget {
+        let svg = imagediff::is_svg(&Inner::path(&this.st.borrow(), file));
+        let weak = Rc::downgrade(this);
+        let on_mode: Rc<dyn Fn(imagediff::Mode)> = Rc::new(move |mode| {
+            if let Some(this) = weak.upgrade() {
+                this.image_mode.set(mode);
             }
-            let is_file = this
-                .store
-                .item(row as u32)
-                .and_downcast::<glib::BoxedAnyObject>()
-                .is_some_and(|o| o.borrow::<FileRow>().file.is_some());
-            if is_file {
-                this.selection.set_selected(row as u32);
-                this.list
-                    .scroll_to(row as u32, gtk::ListScrollFlags::NONE, None);
-                return;
-            }
-        }
+        });
+        let weak = Rc::downgrade(this);
+        let on_text: Rc<dyn Fn()> = Rc::new(move || {
+            let Some(this) = weak.upgrade() else { return };
+            let ops = Inner::load_ops(&this, &[file]);
+            this.st.borrow_mut().svg_text.insert(file);
+            Inner::reshow(&this, true, ops, None);
+        });
+        imagediff::panel(before, after, svg, this.image_mode.get(), on_mode, on_text)
     }
 
-    /// `file` を見たことにする・戻す（見たら畳み、戻したら開く）。
-    fn toggle_viewed(this: &Rc<Self>, file: usize) {
-        let Some(source) = this.source.borrow().clone() else {
-            return;
-        };
-        let Some((name, _)) = source.0.files.get(file) else {
-            return;
-        };
-        let key = this.key.borrow().clone();
-        let mut paths = viewed_paths(&key);
-        let now = !paths.remove(name);
-        if now {
-            paths.insert(name.clone());
-        }
-        save_viewed(&key, &paths);
-        let viewed: HashSet<usize> = source
-            .0
-            .files
+    /// まだ差分を取っていないファイルを取る（`reshow` に渡す）。
+    fn load_ops(this: &Rc<Self>, files: &[usize]) -> Vec<(usize, u32)> {
+        let st = this.st.borrow();
+        files
             .iter()
-            .enumerate()
-            .filter(|(_, (n, _))| paths.contains(n))
-            .map(|(i, _)| i)
-            .collect();
-        this.diff.set_viewed(viewed);
-        this.diff.set_file_collapsed(file, now);
+            .filter(|&&f| st.infos.get(f).is_some_and(|i| i.pending))
+            .map(|&f| (f, 3))
+            .collect()
     }
 
-    /// 変更ファイルの右クリックのメニュー（macOS 版と同じ）: 開く・畳む・Viewed、Blame・File History、パスの
-    /// コピー・ファイルマネージャーで見る・既定のアプリで開く。`y` は差分の中の位置（一覧からなら None）。
-    /// 変更ファイルの一覧の右クリック（macOS 版と同じ）: そのコミットでの Blame（消したファイルにはない）と
-    /// File History。持ち主が項目を作らない一覧（Stashes など）では、見出しと同じメニュー。
-    fn list_menu_items(this: &Rc<Self>, file: usize) -> Vec<Item> {
-        let Some(f) = this.file_items.borrow().clone() else {
-            return Inner::menu_items(this, Some(file));
+    /// 見出しを押した: そのファイルの差分を開く・畳む。まだ差分を取っていなければ、ここで取る。
+    fn toggle_open(this: &Rc<Self>, file: usize) {
+        let ops = if this.st.borrow_mut().open.remove(&file) {
+            Vec::new()
+        } else {
+            this.st.borrow_mut().open.insert(file);
+            Inner::load_ops(this, &[file])
         };
-        let Some(source) = this.source.borrow().clone() else {
-            return Vec::new();
-        };
-        let Some((name, _)) = source.0.files.get(file) else {
-            return Vec::new();
-        };
-        let mut items = f(
-            path_of(name),
-            None,
-            !Inner::deleted(this, &source, file),
-            false,
+        Inner::reshow(
+            this,
+            true,
+            ops,
+            Some(Box::new(move |this| this.diff.reveal_file_header(file))),
         );
-        items.extend(Inner::restore(this, &source, file));
+    }
+
+    /// hunk の見出しの印: そのファイルの前後の行を 20 行ずつ広げる。
+    fn widen_context(this: &Rc<Self>, file: usize) {
+        let context = {
+            let mut st = this.st.borrow_mut();
+            if st.whole.contains(&file) {
+                return;
+            }
+            let context = st.contexts.get(&file).copied().unwrap_or(3) + WIDEN_BY;
+            st.contexts.insert(file, context);
+            context
+        };
+        Inner::reshow(this, true, vec![(file, context)], None);
+    }
+
+    /// 見出しの ⋯ > ファイル全体を表示: そのファイルの差分の前後の行を、ファイル全体にする・戻す。
+    fn toggle_whole_file(this: &Rc<Self>, file: usize) {
+        let mut ops = Inner::load_ops(this, &[file]);
+        {
+            let mut st = this.st.borrow_mut();
+            let whole = !st.whole.contains(&file);
+            let context = if whole {
+                st.whole.insert(file);
+                u32::MAX
+            } else {
+                st.whole.remove(&file);
+                st.contexts.get(&file).copied().unwrap_or(3)
+            };
+            ops.push((file, context));
+            st.open.insert(file);
+        }
+        Inner::reshow(
+            this,
+            true,
+            ops,
+            Some(Box::new(move |this| this.diff.reveal_file_header(file))),
+        );
+    }
+
+    /// 「差分をすべて開く」で開くファイル（生成物と、変更の多いファイルは除く）。
+    fn expandable_files(this: &Rc<Self>) -> HashSet<usize> {
+        let st = this.st.borrow();
+        let stats = this.stats.borrow();
+        (0..st.names.len())
+            .filter(|&f| {
+                let info = st.infos.get(f).copied().unwrap_or_default();
+                let stat_ok = stats
+                    .get(&Inner::path(&st, f))
+                    .is_none_or(|(a, r)| a.unwrap_or(0) + r.unwrap_or(0) <= EXPAND_ALL_LIMIT);
+                !st.generated.get(f).copied().unwrap_or(false)
+                    && info.added + info.removed <= EXPAND_ALL_LIMIT
+                    && stat_ok
+            })
+            .collect()
+    }
+
+    /// 生成物などのほかは、すべて開いているか。
+    fn all_diffs_open(this: &Rc<Self>) -> bool {
+        let targets = Inner::expandable_files(this);
+        !targets.is_empty() && targets.is_subset(&this.st.borrow().open)
+    }
+
+    fn toggle_all_diffs(this: &Rc<Self>) {
+        let ops = if Inner::all_diffs_open(this) {
+            this.st.borrow_mut().open.clear();
+            Vec::new()
+        } else {
+            let targets: Vec<usize> = Inner::expandable_files(this).into_iter().collect();
+            let ops = Inner::load_ops(this, &targets);
+            this.st.borrow_mut().open.extend(targets);
+            ops
+        };
+        Inner::reshow(this, false, ops, None);
+    }
+
+    /// すべてのフォルダを開く（どれか畳んでいれば）・畳む。差分を開いているかは変えない。
+    fn toggle_all_folders(this: &Rc<Self>) {
+        let browser = this.browser.borrow().clone();
+        if this.st.borrow().files_mode {
+            if let Some(browser) = browser {
+                browser.set_all_folders(!browser.any_folder_expanded());
+                Inner::update_bar(this);
+            }
+            return;
+        }
+        {
+            let mut st = this.st.borrow_mut();
+            if st.collapsed_folders.is_empty() {
+                let mut all = HashSet::new();
+                for file in 0..st.names.len() {
+                    let path = Inner::path(&st, file);
+                    let parts: Vec<&str> = path.split('/').collect();
+                    for level in 0..parts.len().saturating_sub(1) {
+                        all.insert(parts[..=level].join("/"));
+                    }
+                }
+                st.collapsed_folders = all;
+            } else {
+                st.collapsed_folders.clear();
+            }
+        }
+        Inner::reshow(this, true, Vec::new(), None);
+    }
+
+    /// リストか木かの設定が変わった。
+    fn tree_changed(this: &Rc<Self>) {
+        Inner::sync_switches(this);
+        if this.st.borrow().files_mode {
+            Inner::update_bar(this);
+        } else {
+            Inner::reshow(this, true, Vec::new(), None);
+        }
+    }
+
+    /// 帯の切り替えを、今の様子に合わせる。
+    fn sync_switches(this: &Rc<Self>) {
+        this.syncing.set(true);
+        let (files, can) = {
+            let st = this.st.borrow();
+            (st.files_mode, st.commit.is_some())
+        };
+        this.bar.all_files.set_sensitive(can);
+        if files {
+            this.bar.all_files.set_active(true);
+        } else {
+            this.bar.changes.set_active(true);
+        }
+        if file_tree() {
+            this.bar.tree.set_active(true);
+        } else {
+            this.bar.list.set_active(true);
+        }
+        this.syncing.set(false);
+    }
+
+    /// 帯の部品を、今の見せ方で効くものだけにする（すべてのファイルでは差分にしか効かないものを隠す、フォルダの
+    /// 操作は木のとき）。合計も出し直す。
+    fn update_bar(this: &Rc<Self>) {
+        let files = this.st.borrow().files_mode;
+        let tree = file_tree();
+        let bar = &this.bar;
+        bar.expand_all.set_visible(!files);
+        bar.whitespace.set_visible(!files);
+        bar.folders.set_visible(tree);
+        let (kind, tip) = if Inner::all_diffs_open(this) {
+            (
+                crate::icon::Kind::CompressVertical,
+                tr!("Collapse All Diffs"),
+            )
+        } else {
+            (crate::icon::Kind::ExpandVertical, tr!("Expand All Diffs"))
+        };
+        bar.expand_icon.set(kind, false);
+        bar.expand_all.set_tooltip_text(Some(&tip));
+        bar.expand_all
+            .update_property(&[gtk::accessible::Property::Label(&tip)]);
+        let browser = this.browser.borrow().clone();
+        if files && let Some(browser) = &browser {
+            browser.set_flat(!tree);
+        }
+        let expanded = if files {
+            browser.as_ref().is_some_and(|b| b.any_folder_expanded())
+        } else {
+            this.st.borrow().collapsed_folders.is_empty()
+        };
+        let (kind, tip) = if expanded {
+            (crate::icon::Kind::FolderFill, tr!("Collapse All Folders"))
+        } else {
+            (crate::icon::Kind::Folder, tr!("Expand All Folders"))
+        };
+        bar.folders_icon.set(kind, false);
+        bar.folders.set_tooltip_text(Some(&tip));
+        bar.folders
+            .update_property(&[gtk::accessible::Property::Label(&tip)]);
+        Inner::show_totals(this);
+    }
+
+    /// 帯の合計（「10 ファイル +9 −8」）。まだ差分を取っていないファイルの行数は、詳細の行数で数える。
+    fn show_totals(this: &Rc<Self>) {
+        let st = this.st.borrow();
+        if st.names.is_empty() {
+            this.bar.totals.set_text("");
+            return;
+        }
+        let stats = this.stats.borrow();
+        let (mut added, mut removed) = (0, 0);
+        for (file, info) in st.infos.iter().enumerate() {
+            if info.pending {
+                if let Some((a, r)) = stats.get(&Inner::path(&st, file)) {
+                    added += a.unwrap_or(0);
+                    removed += r.unwrap_or(0);
+                }
+            } else {
+                added += info.added;
+                removed += info.removed;
+            }
+        }
+        this.bar.totals.set_markup(&format!(
+            "<span alpha=\"55%\">{}</span>  <span foreground=\"#2ec27e\">+{added}</span> <span foreground=\"#e01b24\">−{removed}</span>",
+            glib::markup_escape_text(&tr!("{count} files", count = st.names.len()))
+        ));
+    }
+
+    /// 右の列を「すべてのファイル」（その時点の木と中身）にする・変更に戻す。
+    fn set_files_mode(this: &Rc<Self>, on: bool) {
+        let (commit, repo, changes) = {
+            let st = this.st.borrow();
+            (
+                st.commit,
+                st.source.as_ref().and_then(|s| s.repo.clone()),
+                st.changes.clone(),
+            )
+        };
+        let on = on && commit.is_some();
+        if on {
+            if this.browser.borrow().is_none()
+                && let (Some(commit), Some(repo)) = (commit, repo)
+            {
+                let browser =
+                    Browser::new(repo, commit, changes, !file_tree(), this.pending.clone());
+                let weak = Rc::downgrade(this);
+                browser.connect_show_change(move |file| {
+                    let Some(this) = weak.upgrade() else { return };
+                    Inner::set_files_mode(&this, false);
+                    let ops = Inner::load_ops(&this, &[file]);
+                    this.st.borrow_mut().open.insert(file);
+                    Inner::reshow(
+                        &this,
+                        true,
+                        ops,
+                        Some(Box::new(move |this| this.diff.scroll_to_file(file))),
+                    );
+                });
+                let weak = Rc::downgrade(this);
+                browser.connect_folders_change(move || {
+                    if let Some(this) = weak.upgrade() {
+                        Inner::update_bar(&this);
+                    }
+                });
+                this.pages.add_named(&browser.root, Some("files"));
+                this.browser.replace(Some(browser));
+            }
+            this.pages.set_visible_child_name("files");
+        } else {
+            this.pages.set_visible_child_name("changes");
+        }
+        this.st.borrow_mut().files_mode = on;
+        Inner::sync_switches(this);
+        Inner::update_bar(this);
+    }
+
+    /// その時点のファイルを開く（見出しの ⋯・行の右クリック）。
+    fn open_at_commit(this: &Rc<Self>, file: usize, line: Option<u32>) {
+        Inner::set_files_mode(this, true);
+        let path = Inner::path(&this.st.borrow(), file);
+        let browser = this.browser.borrow().clone();
+        if let Some(browser) = browser {
+            browser.open(&path, line);
+        }
+    }
+
+    /// `file` 番目のファイルを、その時点のファイルとして開けるか（1 つのコミットで、そのコミットで消していない）。
+    fn can_open_at_commit(st: &St, file: usize) -> bool {
+        st.commit.is_some()
+            && st
+                .changes
+                .as_ref()
+                .and_then(|c| c.get(file))
+                .is_some_and(|c| c.kind != ChangeKind::Deleted)
+    }
+
+    /// 確かめる用（`--snapshot`）: 開くファイル・木で畳むフォルダ・差分をすべて開く・すべてのファイル
+    /// （`AMH_OPEN_FILES=1,6`・`AMH_COLLAPSED_FOLDERS=assets,src/old`・`AMH_EXPAND_ALL=1`・
+    /// `AMH_FILES_MODE=tree|path[:line]`。macOS 版の `AMHOpenFiles` などと同じ）。
+    fn apply_snapshot_options(this: &Rc<Self>) {
+        let open = std::env::var("AMH_OPEN_FILES").ok();
+        let folders = std::env::var("AMH_COLLAPSED_FOLDERS").ok();
+        let mut ops = Vec::new();
+        if let Some(open) = &open {
+            let files: Vec<usize> = open
+                .split(',')
+                .filter_map(|f| f.trim().parse().ok())
+                .collect();
+            ops = Inner::load_ops(this, &files);
+            this.st.borrow_mut().open = files.into_iter().collect();
+        }
+        if let Some(folders) = &folders {
+            this.st.borrow_mut().collapsed_folders = folders
+                .split(',')
+                .filter(|f| !f.is_empty())
+                .map(str::to_owned)
+                .collect();
+        }
+        let expand_all = std::env::var("AMH_EXPAND_ALL").is_ok_and(|v| v == "1");
+        let files_mode = std::env::var("AMH_FILES_MODE").ok();
+        if open.is_none() && folders.is_none() && !expand_all && files_mode.is_none() {
+            return;
+        }
+        Inner::reshow(
+            this,
+            false,
+            ops,
+            Some(Box::new(move |this| {
+                if expand_all {
+                    Inner::toggle_all_diffs(this);
+                }
+                if let Some(target) = files_mode {
+                    Inner::set_files_mode(this, true);
+                    if target != "tree" {
+                        let (path, line) = match target.split_once(':') {
+                            Some((p, l)) => (p.to_owned(), l.parse().ok()),
+                            None => (target.clone(), None),
+                        };
+                        let browser = this.browser.borrow().clone();
+                        if let Some(browser) = browser {
+                            browser.open(&path, line);
+                        }
+                    }
+                }
+            })),
+        );
+    }
+
+    /// 表示の設定のメニュー（開くたびに作る）: 詳細の見せ方、詳細を広げる、AI。
+    fn view_option_items(this: &Rc<Self>) -> Vec<Item> {
+        let (styles, ai) = this
+            .view_options
+            .borrow()
+            .clone()
+            .map(|f| f())
+            .unwrap_or_default();
+        let mut items = Vec::new();
+        if !styles.is_empty() {
+            items.push(Item::Disabled(tr!("Details")));
+            items.extend(styles);
+        }
+        let expand = this.expand.borrow().clone();
+        if let Some(button) = expand {
+            let on = button.is_active();
+            items.push(menu::choice_with_tip(
+                tr!("Expand Details"),
+                on,
+                tr!("Expand the commit details to fill the right column (click again to restore)."),
+                move || button.set_active(!on),
+            ));
+        }
+        if !ai.is_empty() {
+            items.push(Item::Separator);
+            items.extend(ai);
+        }
         items
     }
 
-    /// `file` 番目のファイルの変更（読み終えていなければ None）。
-    fn change(this: &Rc<Self>, source: &Source, file: usize) -> Option<amonhen_model::FileChange> {
-        let changes = this.changes.borrow().clone();
-        source
-            .1
-            .as_ref()
-            .map(|lazy| lazy.changes.as_slice())
-            .or(changes.as_deref().map(Vec::as_slice))
-            .filter(|c| c.len() == source.0.files.len())
-            .map(|c| c[file].clone())
-    }
-
-    /// 作業ツリーのファイルを戻す項目（区切りを先に。持ち主がつないでいなければ、ない）。
-    fn restore(this: &Rc<Self>, source: &Source, file: usize) -> Vec<Item> {
-        let Some(f) = this.restore_items.borrow().clone() else {
-            return Vec::new();
-        };
-        let Some(change) = Inner::change(this, source, file) else {
-            return Vec::new();
-        };
-        let items = f(&change);
-        if items.is_empty() {
-            return items;
-        }
-        std::iter::once(Item::Separator).chain(items).collect()
-    }
-
-    /// `file` 番目のファイルをそのコミットで消したか（消したファイルには Blame を出さない）。
-    fn deleted(this: &Rc<Self>, source: &Source, file: usize) -> bool {
-        let Some((_, diff)) = source.0.files.get(file) else {
-            return false;
-        };
-        let changes = this.changes.borrow().clone();
-        let change = source
-            .1
-            .as_ref()
-            .map(|lazy| lazy.changes.as_slice())
-            .or(changes.as_deref().map(Vec::as_slice))
-            .filter(|c| c.len() == source.0.files.len())
-            .map(|c| &c[file]);
-        match change {
-            Some(change) => change.kind == ChangeKind::Deleted,
-            None => diff.new.is_empty() && !diff.old.is_empty(),
-        }
-    }
-
-    /// ファイルの見出し・一覧の右クリックのメニュー（ファイルのメニューだけ。AI でこの hunk を解説は、差分の行の
-    /// 上でだけ出す。macOS 版と同じ）。
-    fn menu_items(this: &Rc<Self>, file: Option<usize>) -> Vec<Item> {
-        let Some(source) = this.source.borrow().clone() else {
-            return Vec::new();
-        };
-        let Some(file) = file.filter(|&f| f < source.0.files.len()) else {
-            return Vec::new();
-        };
-        let path = path_of(&source.0.files[file].0).to_owned();
+    /// 差分の行の右クリック: この時点のファイルをその行で開く、AI でこの hunk を解説（持ち主が作る）。
+    fn row_items(this: &Rc<Self>, path: &str, y: f64) -> Vec<Item> {
         let mut items = Vec::new();
-        if !this.single.get() {
-            let collapsed = this.diff.file_collapsed(file);
+        if let Some((file, line)) = this.diff.line_at(y)
+            && Inner::can_open_at_commit(&this.st.borrow(), file)
+        {
             let w = Rc::downgrade(this);
-            items.push(menu::action(
-                if collapsed {
-                    tr!("Expand")
-                } else {
-                    tr!("Collapse")
-                },
-                move || {
-                    if let Some(this) = w.upgrade() {
-                        this.diff.set_file_collapsed(file, !collapsed);
-                    }
-                },
-            ));
-            let w = Rc::downgrade(this);
-            items.push(menu::action(tr!("Toggle Viewed"), move || {
+            items.push(menu::action(tr!("Open File at This Commit"), move || {
                 if let Some(this) = w.upgrade() {
-                    Inner::toggle_viewed(&this, file);
+                    Inner::open_at_commit(&this, file, (line > 0).then_some(line));
                 }
             }));
-            items.push(Item::Separator);
         }
+        let f = this.file_items.borrow().clone();
+        if let Some(f) = f {
+            let ai = f(path, Some(y), true, true);
+            if !ai.is_empty() && !items.is_empty() {
+                items.push(Item::Separator);
+            }
+            items.extend(ai);
+        }
+        items
+    }
+
+    /// ファイルの見出しの ⋯・右クリックのメニュー（macOS 版と同じ）: 開く・畳む、ファイル全体を表示、この時点の
+    /// ファイルを開く、Blame・File History・戻す、パスのコピー・ファイルマネージャーで見る・既定のアプリで開く。
+    fn menu_items(this: &Rc<Self>, file: usize) -> Vec<Item> {
+        let (path, open, whole, deleted, at_commit, change) = {
+            let st = this.st.borrow();
+            if file >= st.names.len() {
+                return Vec::new();
+            }
+            let change = Inner::change(&st, file);
+            (
+                Inner::path(&st, file),
+                st.open.contains(&file),
+                st.whole.contains(&file),
+                change
+                    .as_ref()
+                    .is_some_and(|c| c.kind == ChangeKind::Deleted),
+                Inner::can_open_at_commit(&st, file),
+                change,
+            )
+        };
+        let mut items = Vec::new();
+        let w = Rc::downgrade(this);
+        items.push(menu::action(
+            if open { tr!("Collapse") } else { tr!("Expand") },
+            move || {
+                if let Some(this) = w.upgrade() {
+                    Inner::toggle_open(&this, file);
+                }
+            },
+        ));
+        let w = Rc::downgrade(this);
+        items.push(menu::choice(tr!("Show Whole File"), whole, move || {
+            if let Some(this) = w.upgrade() {
+                Inner::toggle_whole_file(&this, file);
+            }
+        }));
+        if at_commit {
+            let w = Rc::downgrade(this);
+            items.push(menu::action(tr!("Open File at This Commit"), move || {
+                if let Some(this) = w.upgrade() {
+                    Inner::open_at_commit(&this, file, None);
+                }
+            }));
+        }
+        items.push(Item::Separator);
         if let Some(f) = this.file_items.borrow().clone() {
-            // 消したファイルは、そのコミットにはない（一覧の右クリックと同じく Blame を出さない）。
-            let blame = !Inner::deleted(this, &source, file);
-            items.extend(f(&path, None, blame, false));
-            items.extend(Inner::restore(this, &source, file));
+            // 消したファイルは、そのコミットにはない（Blame を出さない）。
+            items.extend(f(&path, None, !deleted, false));
+            let restore = this.restore_items.borrow().clone();
+            if let (Some(restore), Some(change)) = (restore, &change) {
+                let more = restore(change);
+                if !more.is_empty() {
+                    items.push(Item::Separator);
+                    items.extend(more);
+                }
+            }
             items.push(Item::Separator);
         }
-        let (w, p) = (this.list.downgrade(), path.clone());
+        let (w, p) = (this.diff.downgrade(), path.clone());
         items.push(menu::action(tr!("Copy Path"), move || {
             if let Some(w) = w.upgrade() {
                 w.clipboard().set_text(&p);
@@ -1541,38 +1569,35 @@ impl Inner {
             }
         }
         if let Some(full) = local {
+            let window = || {
+                this.diff
+                    .root()
+                    .and_downcast::<gtk::Window>()
+                    .map(|w| w.downgrade())
+            };
             let file = gio::File::for_path(&full);
-            let (w, f) = (this.list.downgrade(), file.clone());
+            let (w, f) = (window(), file.clone());
             items.push(menu::action(tr!("Show in Files"), move || {
-                let window = w
-                    .upgrade()
-                    .and_then(|w| w.root())
-                    .and_downcast::<gtk::Window>();
+                let window = w.as_ref().and_then(|w| w.upgrade());
                 gtk::FileLauncher::new(Some(&f)).open_containing_folder(
                     window.as_ref(),
                     gio::Cancellable::NONE,
                     |_| {},
                 );
             }));
-            let (w, f) = (this.list.downgrade(), file.clone());
+            let (w, f) = (window(), file.clone());
             items.push(menu::hint(
                 tr!("Open in Editor"),
                 crate::editor::tooltip(),
                 move || {
-                    let window = w
-                        .upgrade()
-                        .and_then(|w| w.root())
-                        .and_downcast::<gtk::Window>();
+                    let window = w.as_ref().and_then(|w| w.upgrade());
                     let path = f.path().into_iter().collect::<Vec<_>>();
                     crate::editor::open(&path, None, window.as_ref());
                 },
             ));
-            let w = this.list.downgrade();
+            let w = window();
             items.push(menu::action(tr!("Open with Default App"), move || {
-                let window = w
-                    .upgrade()
-                    .and_then(|w| w.root())
-                    .and_downcast::<gtk::Window>();
+                let window = w.as_ref().and_then(|w| w.upgrade());
                 gtk::FileLauncher::new(Some(&file)).launch(
                     window.as_ref(),
                     gio::Cancellable::NONE,
@@ -1653,64 +1678,74 @@ mod tests {
     }
 
     #[test]
-    fn sorts_the_file_tree_like_finder() {
-        let empty = || {
-            amonhen_core::diff::file_diff(Arc::<Vec<u8>>::default(), Arc::<Vec<u8>>::default(), 0)
-        };
-        let files = [
-            "b/x", "B2/x", "a10/x", "a9/x", "z.txt", "Readme", "file10", "file9",
+    fn lays_out_folders_between_the_headers_and_hides_folded_ones() {
+        let paths: Vec<String> = [
+            "README",
+            "src/a.rs",
+            "src/old/x.rs",
+            "src/old/y.rs",
+            "src/z.rs",
         ]
         .iter()
-        .map(|n| ((*n).to_owned(), empty()))
+        .map(|p| (*p).to_owned())
         .collect();
-        let source = Source(StackedDiff { files }, None);
-        let names: Vec<String> = file_rows(&source, None, &Stats::default(), true)
-            .into_iter()
-            .map(|r| r.name)
-            .collect();
-        assert_eq!(
-            names,
-            [
-                "a9", "x", "a10", "x", "b", "x", "B2", "x", "file9", "file10", "Readme", "z.txt"
-            ]
-        );
+        let mut labels = paths.clone();
+        labels[4] = "src/{b.rs → z.rs}".to_owned();
+        let names = |tree: &TreeLayout, file: usize| -> Vec<String> {
+            tree.folders
+                .get(&file)
+                .map(|f| f.iter().map(|f| f.path.clone()).collect())
+                .unwrap_or_default()
+        };
+        let tree = tree_layout(&paths, &labels, &HashSet::new());
+        assert_eq!(names(&tree, 0), Vec::<String>::new());
+        assert_eq!(names(&tree, 1), ["src"]);
+        assert_eq!(names(&tree, 2), ["src/old"]);
+        assert_eq!(names(&tree, 3), Vec::<String>::new());
+        assert_eq!(names(&tree, 4), Vec::<String>::new());
+        assert_eq!(tree.depths[&2], 2);
+        assert_eq!(tree.titles[&2], "x.rs");
+        assert_eq!(tree.titles[&4], "{b.rs → z.rs}");
+        assert!(tree.hidden.is_empty());
+
+        // 畳んだフォルダの中は見出しを出さず、そのフォルダの行だけ残す。
+        let folded: HashSet<String> = ["src/old".to_owned()].into_iter().collect();
+        let tree = tree_layout(&paths, &labels, &folded);
+        assert_eq!(tree.hidden, [2, 3].into_iter().collect());
+        assert!(tree.folders[&2][0].collapsed);
+        let folded: HashSet<String> = ["src".to_owned()].into_iter().collect();
+        let tree = tree_layout(&paths, &labels, &folded);
+        assert_eq!(tree.hidden, [1, 2, 3, 4].into_iter().collect());
+        assert_eq!(names(&tree, 1), ["src"]);
+        assert!(!tree.folders.contains_key(&2));
     }
 
     #[test]
-    fn reads_only_the_first_file_unless_stacked() {
-        let dir = std::env::temp_dir().join(format!("amonhen-gtk-lazy-{}", std::process::id()));
+    fn shows_every_file_folded_at_first() {
+        let dir = std::env::temp_dir().join(format!("amonhen-gtk-stacked-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         commit_three_files(&dir);
         let backend = amonhen_backend_gix::GixBackend::open(&dir).unwrap();
         let repo = Arc::new(Repository::new(backend));
         let history = repo.load_history().unwrap();
-        let none = HashSet::new();
-
-        // 全ファイルを並べないなら、最初のファイルだけ読み、ほかは選んだときに読む。
-        let lazy = Prepared::commit(&repo, &history, 0, &none, false).unwrap();
-        assert_eq!(lazy.single, Some(0));
-        assert!(lazy.source.1.is_some());
-        assert_eq!(lazy.source.0.files.len(), 3);
-        assert!(lazy.source.0.files.iter().all(|(_, d)| d.added == 0));
-        assert!(!lazy.view.diff_view().rows.is_empty());
-        let marks: Vec<&str> = file_rows(&lazy.source, None, &Stats::default(), false)
+        let prepared = Prepared::commit(&repo, &history, 0).unwrap();
+        assert_eq!(prepared.names, ["a.txt", "b.txt", "c.txt"]);
+        // 見出しだけ（すべて畳んでいる）。行数は見出しの行にある。
+        assert_eq!(prepared.view.diff_view().rows.len(), 3);
+        let infos = prepared.view.file_infos();
+        assert!(infos.iter().all(|i| i.added == 1 && !i.pending));
+        let kinds: Vec<&str> = prepared
+            .changes
             .iter()
-            .map(|r| r.mark)
+            .flat_map(|c| c.iter())
+            .map(|c| kind_mark(c.kind))
             .collect();
-        assert_eq!(marks, ["A", "A", "A"]);
-        let third = single_view(&lazy.source, 2).unwrap();
-        assert_eq!(third.diff_view().added, 1);
-        // AI の解説など、全ファイルが要るときはその場で読む。
-        let added = lazy
+        assert_eq!(kinds, ["A", "A", "A"]);
+        // AI の解説など、全ファイルが要るときはそのまま読める。
+        let added = prepared
             .source
             .with_all(|all| all.files.iter().map(|(_, d)| d.added).sum::<u32>());
         assert_eq!(added, 3);
-
-        // 全ファイルを並べるなら（200 ファイルまで）、全部読む。
-        let stacked = Prepared::commit(&repo, &history, 0, &none, true).unwrap();
-        assert_eq!(stacked.single, None);
-        assert!(stacked.source.1.is_none());
-        assert!(stacked.source.0.files.iter().all(|(_, d)| d.added == 1));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
