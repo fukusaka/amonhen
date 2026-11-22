@@ -273,10 +273,12 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
 | Full message, draggable panes, ⤢ to expand | ✓ | ✓ | ✓ | ✓ | n/a | △ | TUI: The dividers can't be dragged; on a narrow terminal the details open in place of History. |
 | Find inside the details | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: ⌘F searches the whole main view; diffs not loaded yet aren't searched.<br>TUI: `/` in the details, `n` `N` for the next and previous. |
-| All files stacked (sticky headers, collapse, Viewed) | ✓ | ✓ | △ | ✓ | ✓ | △ | CLI: `show`.<br>Windows: Toggle Viewed is in a file header's menu.<br>TUI: `[` `]` move between files; no sticky headers, collapsing or Viewed. |
-| Changed files as a tree beside the diff | ✓ | ✓ | ✓ | ✓ | n/a | △ | VSCode: Tree / List above the files.<br>TUI: A flat list above the diff. |
+| Changed files as the diff's own file headers (folded at first, sticky, one bar of controls) | ✓ | ✓ | △ | △ | ✓ | △ | CLI: `show`.<br>Windows, VSCode: Still a separate changed-files list beside the stacked diff, with Viewed.<br>TUI: `[` `]` move between files; no sticky headers or folding. |
+| Changed files as a list or a tree whose folders fold | ✓ | ✓ | △ | △ | n/a | △ | Windows, VSCode: A tree beside the diff (Tree / List above the files in VSCode).<br>TUI: A flat list above the diff. |
+| Widen a hunk's context, show a whole file | ✓ | ✓ | — | — | n/a | — | |
+| Compare images (side by side, swipe, onion skin, differing pixels) | ✓ | ✓ | — | — | n/a | — | |
+| All Files: the tree at the commit and a file's contents with the commit's lines marked | ✓ | ✓ | — | — | n/a | — | |
 | File header menu (Blame, File History, copy path, open) | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: Blame, File History and Copy Path on the right-click; Open in VSCode's diff editor.<br>TUI: `B`, `L`, `Y` (copy path) and `e` (open in git's editor) for the file in view. |
-| Switch to the single-file diff | ✓ | ✓ | ✓ | ✓ | n/a | — | VSCode: One File / All Files above the files.<br>Windows: View > All Files in One Diff; when off, the file chosen in the changed files list. |
 | Diff of a selection (range squashed, A..B / A...B, scattered) | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: With the engine.<br>CLI: `diff <rev> <rev>`.<br>TUI: `m` and Shift-↑↓ (or Ctrl- or Alt-click) select; `x` swaps the direction and `.` diffs from the merge base. |
 | Actions on a selection (cherry-pick, revert, squash, copy IDs) | ✓ | ✓ | △ | ✓ | △ | ✓ | VSCode: With the engine.<br>CLI: Via `amonhen run`.<br>Windows: Combining consecutive commits edits the message in a dialog, then rewrites at once (no edit mode).<br>TUI: `y` `v` on the marked commits, `E` opens edit mode with them combined, `Y` copies the IDs, and Save as Patch saves them. |
 | Signature popover | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: A Signature row in the details (status, explanation, signer and key), no popover.<br>TUI: The check in the details, no popover. |
