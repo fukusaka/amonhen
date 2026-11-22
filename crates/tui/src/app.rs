@@ -145,6 +145,10 @@ enum Naming {
     RemoteName,
     /// 足すリモートの URL（名前は聞いてある）。
     RemoteUrl,
+    /// 直すリモートの新しい名前（次に URL を聞く）。
+    RemoteRename,
+    /// 直すリモートの URL（始まりは前の名前、出し方は新しい名前）。
+    RemoteEditUrl,
     /// 選んでいるコミットを書き出すアーカイブのファイル（この機械の）。
     Archive,
     /// リポジトリをまとめる bundle のファイル（この機械の）。
@@ -467,6 +471,10 @@ pub struct App {
     redraw: bool,
     /// 新しいブランチの名前を打っている: 始まり（ref かコミット）、その出し方、打った名前。
     typing_branch: Option<(String, String, String)>,
+    /// 直すリモート（サイドバーの `e`）の名前と、今の URL（`remotes` を読んだら）。
+    editing_remote: Option<(String, Option<String>)>,
+    /// リモートでの様子を読んでいるタグ（サイドバーの `t` は push、`X` はリモートから消す）。
+    tag_remote: Option<(String, bool)>,
     /// 打っている名前が何のものか。
     naming: Naming,
     /// git や ssh から尋ねられていること（先頭を画面で聞いている）と、打った答え。
@@ -590,6 +598,8 @@ impl App {
             suspend: false,
             redraw: false,
             typing_branch: None,
+            editing_remote: None,
+            tag_remote: None,
             naming: Naming::Branch,
             #[cfg(unix)]
             questions: std::collections::VecDeque::new(),
@@ -1628,7 +1638,7 @@ impl App {
                     }
                 }
                 KeyCode::Enter => {
-                    if let Some((start, _, name)) = self.typing_branch.take()
+                    if let Some((start, what, name)) = self.typing_branch.take()
                         && !name.trim().is_empty()
                     {
                         let name = name.trim();
@@ -1641,6 +1651,46 @@ impl App {
                             Naming::Orphan => {
                                 self.ask_orphan(name);
                                 return;
+                            }
+                            Naming::RemoteRename => {
+                                if name != start && self.remotes.iter().any(|r| r == name) {
+                                    self.error =
+                                        Some(tr!("There is a remote named {name}", name = name));
+                                    return;
+                                }
+                                let url = self
+                                    .editing_remote
+                                    .as_ref()
+                                    .and_then(|(_, url)| url.clone())
+                                    .unwrap_or_default();
+                                self.naming = Naming::RemoteEditUrl;
+                                self.typing_branch = Some((start.clone(), name.to_owned(), url));
+                                return;
+                            }
+                            Naming::RemoteEditUrl => {
+                                let old_url = self
+                                    .editing_remote
+                                    .take()
+                                    .and_then(|(_, url)| url)
+                                    .unwrap_or_default();
+                                let mut changes = Vec::new();
+                                if what != start {
+                                    changes.push(json!({"op": "changeRemote",
+                                        "change": {"kind": "rename", "from": start, "to": what}}));
+                                }
+                                if name != old_url {
+                                    changes.push(json!({"op": "changeRemote",
+                                        "change": {"kind": "setUrl", "name": what, "url": name}}));
+                                }
+                                if changes.is_empty() {
+                                    self.notice = Some(tr!("Nothing changed"));
+                                    return;
+                                }
+                                (
+                                    "editRemote",
+                                    tr!("Changing {name}…", name = start),
+                                    Value::Array(changes),
+                                )
                             }
                             Naming::RemoteName => {
                                 if self.remotes.iter().any(|r| r == name) {
@@ -1810,8 +1860,16 @@ impl App {
                 };
                 self.dirty = true;
             }
+            // アプリの Fetch のシートと同じく、どこから取るかと、片づけるか（prune の設定）を見せて確かめる。
             KeyCode::Char('f') if !control => {
-                self.run("fetch", tr!("Fetching…"), json!({"op": "fetch"}))
+                if self.remotes.is_empty() {
+                    self.error = Some(tr!("There is no remote to fetch from"));
+                } else {
+                    self.send(Request::Run {
+                        name: "fetchConfig",
+                        command: json!({"op": "configList"}),
+                    });
+                }
             }
             KeyCode::Char('p') if !control => self.ask_pull(),
             KeyCode::Char('P') if !control => self.ask_push(),
@@ -2190,6 +2248,11 @@ impl App {
             }
             // 下書きが読めなくても、欄はそのまま使える（覚えるのをやめる）。
             Err(_) if name == "draftOrTemplate" => return,
+            // 設定が読めなくても、どこから取るかは聞く（片づけるかは書かない）。
+            Err(_) if name == "fetchConfig" => {
+                self.ask_fetch(&Value::Null);
+                return;
+            }
             // 見通しが読めなくても（History にないなど）、消すかは聞く（断られれば git の理由が出る）。
             Err(_) if name == "deletePreview" => {
                 self.ask_delete_with(None);
@@ -2317,6 +2380,11 @@ impl App {
             }
             "cleanUp" => self.notice = Some(tr!("Deleted the branches")),
             "addRemote" => self.notice = Some(tr!("Added the remote")),
+            "editRemote" => self.notice = Some(tr!("Changed the remote")),
+            "pushTag" => self.notice = Some(tr!("Pushed the tag")),
+            "deleteRemoteTag" => self.notice = Some(tr!("Deleted the tag from the remote")),
+            "removeRemote" => self.notice = Some(tr!("Removed the remote")),
+            "pruneRemote" => self.notice = Some(tr!("Pruned the remote-tracking branches")),
             "submodules" => {
                 self.ask_update_submodules(&reply["info"]);
                 return;
@@ -2490,6 +2558,31 @@ impl App {
             "resetPreview" => {
                 let info = reply["info"].clone();
                 self.ask_reset_with(&info);
+                return;
+            }
+            // 直すリモートの今の URL を読んだら、名前から聞く（アプリの Edit… のシートの 2 つの欄）。
+            "remotesForEdit" => {
+                let Some((name, _)) = self.editing_remote.take() else {
+                    return;
+                };
+                let url = (reply["info"]["remotes"].as_array().into_iter().flatten())
+                    .find(|r| r["name"] == name.as_str())
+                    .and_then(|r| r["fetchUrl"].as_str())
+                    .map(str::to_owned);
+                self.editing_remote = Some((name.clone(), url));
+                self.naming = Naming::RemoteRename;
+                self.typing_branch = Some((name.clone(), name.clone(), name));
+                self.dirty = true;
+                return;
+            }
+            "tagRemotes" => {
+                let info = reply["info"].clone();
+                self.ask_tag_remote(&info);
+                return;
+            }
+            "fetchConfig" => {
+                let entries = reply["info"]["entries"].clone();
+                self.ask_fetch(&entries);
                 return;
             }
             "deletePreview" => {
@@ -3610,6 +3703,199 @@ impl App {
         true
     }
 
+    /// サイドバーで選んでいるリモートのブランチ（`origin/main`）のリモート。
+    fn picked_remote(&self) -> Option<String> {
+        let Some(("remote", name, _)) = self.sidebar.picked_ref() else {
+            return None;
+        };
+        self.remotes
+            .iter()
+            .filter(|r| name.starts_with(&format!("{r}/")))
+            .max_by_key(|r| r.len())
+            .cloned()
+    }
+
+    /// リモートの行での `e`（Edit…）・`x`（Remove…）・`X`（Prune…）。アプリの Remotes のメニューと同じ。
+    fn remote_key(&mut self, code: KeyCode) -> bool {
+        let Some(remote) = self.picked_remote() else {
+            return false;
+        };
+        match code {
+            KeyCode::Char('e') => {
+                self.editing_remote = Some((remote, None));
+                self.send(Request::Run {
+                    name: "remotesForEdit",
+                    command: json!({"op": "remotes"}),
+                });
+            }
+            KeyCode::Char('x') => {
+                self.confirm = Some((
+                    tr!(
+                        "Remove {name}? This removes the remote’s settings and its remote-tracking branches ({name}/…); the remote repository isn’t touched. Undo can’t bring it back.",
+                        name = remote
+                    ),
+                    tr!("remove"),
+                    Request::Run {
+                        name: "removeRemote",
+                        command: json!({"op": "changeRemote",
+                            "change": {"kind": "remove", "name": remote}}),
+                    },
+                ));
+            }
+            _ => {
+                self.confirm = Some((
+                    tr!(
+                        "Prune {name}? This removes the remote-tracking branches whose branches are gone from {name} (git remote prune). Undo can’t bring them back.",
+                        name = remote
+                    ),
+                    tr!("prune"),
+                    Request::Run {
+                        name: "pruneRemote",
+                        command: json!({"op": "changeRemote",
+                            "change": {"kind": "prune", "name": remote}}),
+                    },
+                ));
+            }
+        }
+        self.dirty = true;
+        true
+    }
+
+    /// タグのリモートでの様子 `info`（`tagRemotes`）を受けて、どのリモートに push するか（置き換えるか）、どこから
+    /// 消すかを選ばせる。アプリのタグのメニューと同じく、push はまだないリモートへ、置き換えは同じ名前の別のタグが
+    /// あるリモートへ、削除はあるリモートから。fetch でまだ読んでいないリモートはどれにも出し、そう書く。
+    fn ask_tag_remote(&mut self, info: &Value) {
+        let Some((tag, delete)) = self.tag_remote.take() else {
+            return;
+        };
+        let checked = |remote: &str| {
+            (info["remotes"].as_array().into_iter().flatten())
+                .any(|r| r["name"] == remote && !r["checked"].is_null())
+        };
+        let state = |remote: &str| info["tags"][tag.as_str()][remote].as_str();
+        let unchecked = |remote: &str| match checked(remote) {
+            true => String::new(),
+            false => tr!(" (not checked yet)"),
+        };
+        let mut choices: Vec<Choice> = Vec::new();
+        for remote in &self.remotes {
+            let (label, force) = match (checked(remote), state(remote), delete) {
+                (true, Some("missing"), true) | (true, Some("same"), false) => continue,
+                (_, _, true) => (format!("{remote}{}", unchecked(remote)), false),
+                (true, Some("different"), false) => {
+                    (tr!("replace on {remote}", remote = remote), true)
+                }
+                _ => (format!("{remote}{}", unchecked(remote)), false),
+            };
+            let Some(key) = char::from_digit(choices.len() as u32 + 1, 10) else {
+                break;
+            };
+            let command = json!({"op": "pushTags", "remote": remote, "names": [tag],
+                "force": force, "delete": delete});
+            let name = if delete { "deleteRemoteTag" } else { "pushTag" };
+            choices.push((key, label, Request::Run { name, command }));
+        }
+        if choices.is_empty() {
+            self.notice = Some(match delete {
+                true => tr!("No remote has {tag}", tag = tag),
+                false => tr!("Every remote has {tag}", tag = tag),
+            });
+            self.dirty = true;
+            return;
+        }
+        let ask = match delete {
+            true => tr!(
+                "Delete the tag {tag} from which remote? Everyone who fetches from it loses the tag; yours stays. Undo can’t bring it back.",
+                tag = tag
+            ),
+            false => tr!(
+                "Push the tag {tag} to which remote? Everyone who fetches from it gets the tag. Undo can’t take it back.",
+                tag = tag
+            ),
+        };
+        self.choices = Some((ask, choices));
+        self.dirty = true;
+    }
+
+    /// どこから fetch するかを聞く。リモートが 1 つなら確かめるだけ、いくつもあれば、すべて（`git fetch --all` と
+    /// 同じ）か 1 つを選ぶ。git の設定 `entries`（`configList`）で片づける（prune）なら、そう書く。
+    fn ask_fetch(&mut self, entries: &Value) {
+        let value = |key: &str| -> Option<String> {
+            (entries.as_array().into_iter().flatten())
+                .rfind(|e| {
+                    e["key"]
+                        .as_str()
+                        .is_some_and(|k| k.eq_ignore_ascii_case(key))
+                })
+                .and_then(|e| e["value"].as_str())
+                .map(str::to_lowercase)
+        };
+        // git と同じく、リモートの remote.<name>.prune、なければ fetch.prune。効いている設定の名前（片づけないなら None）。
+        let prune_key = |remote: &str| -> Option<String> {
+            let own = format!("remote.{remote}.prune");
+            let key = if value(&own).is_some() {
+                own
+            } else {
+                "fetch.prune".to_owned()
+            };
+            (value(&key).as_deref() == Some("true")).then_some(key)
+        };
+        let remotes = self.remotes.clone();
+        let pruning: Vec<&String> = remotes.iter().filter(|r| prune_key(r).is_some()).collect();
+        let mut keys: Vec<String> = Vec::new();
+        for key in remotes.iter().filter_map(|r| prune_key(r)) {
+            if !keys.contains(&key) {
+                keys.push(key);
+            }
+        }
+        let prune = match pruning.len() {
+            0 => String::new(),
+            n if n == remotes.len() => tr!(
+                " Remote branches deleted there are removed here too ({settings}).",
+                settings = keys.join(", ")
+            ),
+            _ => tr!(
+                " Remote branches deleted on {remotes} are removed here too ({settings}).",
+                remotes = pruning
+                    .iter()
+                    .map(|r| r.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                settings = keys.join(", ")
+            ),
+        };
+        let fetch = |remote: Option<&str>| Request::Run {
+            name: "fetch",
+            command: match remote {
+                Some(remote) => json!({"op": "fetch", "remote": remote}),
+                None => json!({"op": "fetch"}),
+            },
+        };
+        if let [remote] = remotes.as_slice() {
+            self.confirm = Some((
+                tr!(
+                    "Fetch from {remote}?{prune}",
+                    remote = remote,
+                    prune = prune
+                ),
+                tr!("fetch"),
+                fetch(Some(remote)),
+            ));
+        } else {
+            let mut choices: Vec<Choice> = vec![(
+                'a',
+                tr!("all remotes ({remotes})", remotes = remotes.join(", ")),
+                fetch(None),
+            )];
+            for (i, remote) in remotes.iter().take(9).enumerate() {
+                let key = char::from_digit(i as u32 + 1, 10).expect("one digit");
+                choices.push((key, remote.clone(), fetch(Some(remote))));
+            }
+            self.choices = Some((tr!("Fetch from where?{prune}", prune = prune), choices));
+        }
+        self.dirty = true;
+    }
+
     /// 消すブランチの見通し `preview` を受けて、上流とも比べるか、消すかを聞く。ほかのどこにもないコミットが
     /// あれば、それが外れる絵と数を出し、Delete Anyway（`-D`）で消す。
     fn ask_delete_with(&mut self, preview: Option<Value>) {
@@ -4109,6 +4395,26 @@ impl App {
                 true
             }
             KeyCode::Char('c') => self.checkout_picked(),
+            // リモートのブランチの行で: そのリモートを直す（名前と URL）、消す、消えたブランチを片づける。
+            KeyCode::Char('e' | 'x' | 'X') if self.picked_remote().is_some() => {
+                self.remote_key(code)
+            }
+            // タグの行で: リモートへ push（同じ名前の別のタグがあれば置き換え）、リモートから消す。
+            KeyCode::Char('t' | 'X')
+                if matches!(self.sidebar.picked_ref(), Some(("tag", _, _))) =>
+            {
+                let name = self.sidebar.picked_ref().map_or("", |r| r.1).to_owned();
+                if self.remotes.is_empty() {
+                    self.error = Some(tr!("There is no remote"));
+                    return true;
+                }
+                self.tag_remote = Some((name, code == KeyCode::Char('X')));
+                self.send(Request::Run {
+                    name: "tagRemotes",
+                    command: json!({"op": "tagRemotes"}),
+                });
+                true
+            }
             KeyCode::Char('a' | 'o' | 'x') => self.stash_key(code),
             KeyCode::Char('D') => self.ask_delete(),
             KeyCode::Char('n') => self.ask_rename(),
@@ -4185,6 +4491,14 @@ impl App {
                     tr!("On a stash: a branch where it was made, with it applied"),
                 ),
                 ("x", tr!("On a worktree: remove it")),
+                (
+                    "e x X",
+                    tr!("On a remote branch: edit its remote (name, URL), remove it, prune it"),
+                ),
+                (
+                    "t X",
+                    tr!("On a tag: push it to a remote (or replace it there); delete it from one"),
+                ),
                 ("w", tr!("New worktree for the branch")),
                 (
                     "U",
@@ -5404,7 +5718,12 @@ impl App {
                     }
                     Naming::Orphan => tr!("New orphan branch: {name}", name = name),
                     Naming::RemoteName => tr!("New remote's name: {name}", name = name),
-                    Naming::RemoteUrl => tr!("URL of {at}: {name}", at = at, name = name),
+                    Naming::RemoteUrl | Naming::RemoteEditUrl => {
+                        tr!("URL of {at}: {name}", at = at, name = name)
+                    }
+                    Naming::RemoteRename => {
+                        tr!("Rename the remote {at} to: {name}", at = at, name = name)
+                    }
                     Naming::BundleFile => tr!("Fetch from the bundle at: {name}", name = name),
                     Naming::Patch => tr!("Apply the patch at: {name}", name = name),
                     Naming::OpenFile => {

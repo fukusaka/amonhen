@@ -1262,7 +1262,7 @@ fn push_to_another_branch() {
     assert!(wrong.contains("Write the remote and the branch, like origin/main"));
 }
 
-/// `f` で fetch、`p` で pull: リモートに増えたコミットを取り込む
+/// `f` で fetch（どこから取るかを確かめる）、`p` で pull: リモートに増えたコミットを取り込む
 #[test]
 fn fetch_and_pull_bring_in_remote_commits() {
     let dir = tempfile::tempdir().unwrap();
@@ -1279,7 +1279,12 @@ fn fetch_and_pull_bring_in_remote_commits() {
     commit(&other, BASE + DAY * 2, "From elsewhere");
     git(&other, BASE, &["push", "-q"]);
 
-    let fetched = amonhen_tui::snapshot(open(&work), 100, 8, clock(), "f").unwrap();
+    let asked = amonhen_tui::snapshot(open(&work), 100, 8, clock(), "f").unwrap();
+    assert!(
+        asked.contains("Fetch from origin?   y fetch   n cancel"),
+        "{asked}"
+    );
+    let fetched = amonhen_tui::snapshot(open(&work), 100, 8, clock(), "fy").unwrap();
     println!("{fetched}");
     assert!(fetched.contains("Fetched"));
     assert!(fetched.lines().next().unwrap().contains("main ↓1"));
@@ -1291,6 +1296,136 @@ fn fetch_and_pull_bring_in_remote_commits() {
         git_out(&work, &["log", "-1", "--format=%s"]),
         "From elsewhere\n"
     );
+
+    // リモートがいくつもあれば、すべてか 1 つを選ぶ。片づける設定があれば、そう書く。
+    git(
+        &work,
+        BASE,
+        &["remote", "add", "mirror", remote.to_str().unwrap()],
+    );
+    git(&work, BASE, &["config", "remote.mirror.prune", "true"]);
+    let asked = amonhen_tui::snapshot(open(&work), 200, 8, clock(), "f").unwrap();
+    println!("{asked}");
+    assert!(
+        asked.contains("Fetch from where? Remote branches deleted on mirror are removed here too (remote.mirror.prune).   a all remotes (mirror, origin)   1 mirror   2 origin   n cancel"),
+        "{asked}"
+    );
+    amonhen_tui::snapshot(open(&work), 200, 8, clock(), "f1").unwrap();
+    assert!(git_out(&work, &["branch", "-r"]).contains("mirror/main"));
+}
+
+/// サイドバーのリモートのブランチの行で、そのリモートを `e` で直し（名前と URL）、`X` で片づけ、`x` で消す
+#[test]
+fn edit_prune_and_remove_a_remote_from_the_sidebar() {
+    let dir = tempfile::tempdir().unwrap();
+    let work = with_remote(dir.path());
+    let remote = dir.path().join("origin.git");
+    let url = remote.to_str().unwrap().to_owned();
+    let remotes = || git_out(&work, &["remote", "-v"]);
+    // 一番下の行が origin/main。`e` は今の名前、次に今の URL を入れて聞く。
+    let asked = amonhen_tui::snapshot(open(&work), 200, 10, clock(), "0Ge").unwrap();
+    println!("{asked}");
+    assert!(
+        asked.contains("Rename the remote origin to: origin"),
+        "{asked}"
+    );
+    let url_asked = amonhen_tui::snapshot(
+        open(&work),
+        200,
+        10,
+        clock(),
+        "0Ge\x7f\x7f\x7f\x7f\x7f\x7fup\n",
+    )
+    .unwrap();
+    assert!(
+        url_asked.contains(&format!("URL of up: {url}")),
+        "{url_asked}"
+    );
+    // 名前だけ変える（URL はそのまま）。
+    amonhen_tui::snapshot(
+        open(&work),
+        200,
+        10,
+        clock(),
+        "0Ge\x7f\x7f\x7f\x7f\x7f\x7fup\n\n",
+    )
+    .unwrap();
+    assert!(
+        remotes().starts_with(&format!("up\t{url} (fetch)")),
+        "{}",
+        remotes()
+    );
+    // URL だけ変える。
+    let other = dir.path().join("other.git");
+    git(
+        dir.path(),
+        BASE,
+        &["clone", "-q", "--bare", &url, "other.git"],
+    );
+    let keys = format!("0Ge\n\x15{}\n", other.to_str().unwrap());
+    amonhen_tui::snapshot(open(&work), 200, 10, clock(), &keys).unwrap();
+    assert!(
+        remotes().starts_with(&format!("up\t{} (fetch)", other.to_str().unwrap())),
+        "{}",
+        remotes()
+    );
+    // 何も変えなければ、そう知らせる。
+    let same = amonhen_tui::snapshot(open(&work), 200, 10, clock(), "0Ge\n\n").unwrap();
+    assert!(same.contains("Nothing changed"), "{same}");
+
+    // 向こうで消えたブランチの追跡を片づける。
+    git(&work, BASE, &["fetch", "-q", "up"]);
+    git(&work, BASE, &["update-ref", "refs/remotes/up/gone", "HEAD"]);
+    let asked = amonhen_tui::snapshot(open(&work), 200, 10, clock(), "0GX").unwrap();
+    println!("{asked}");
+    assert!(asked.contains("Prune up? "), "{asked}");
+    assert!(asked.contains("y prune   n cancel"), "{asked}");
+    amonhen_tui::snapshot(open(&work), 200, 10, clock(), "0GXy").unwrap();
+    assert!(!git_out(&work, &["branch", "-r"]).contains("up/gone"));
+
+    // 消す。
+    let asked = amonhen_tui::snapshot(open(&work), 200, 10, clock(), "0Gx").unwrap();
+    assert!(asked.contains("Remove up? "), "{asked}");
+    amonhen_tui::snapshot(open(&work), 200, 10, clock(), "0Gxy").unwrap();
+    assert_eq!(remotes(), "");
+}
+
+/// サイドバーのタグの行で、`t` でリモートへ push（同じ名前の別のタグがあれば置き換え）、`X` でリモートから消す
+#[test]
+fn push_replace_and_delete_a_tag_on_a_remote() {
+    let dir = tempfile::tempdir().unwrap();
+    let work = with_remote(dir.path());
+    let remote = dir.path().join("origin.git");
+    git(&work, BASE, &["tag", "v1"]);
+    let remote_tag = || git_out(&remote, &["tag", "--format=%(objectname)", "-l", "v1"]);
+    // まだ fetch でリモートを読んでいないので、そう書いて出す。一番下の行が v1。
+    let asked = amonhen_tui::snapshot(open(&work), 220, 10, clock(), "0Gt").unwrap();
+    println!("{asked}");
+    assert!(
+        asked.contains("Push the tag v1 to which remote? Everyone who fetches from it gets the tag. Undo can’t take it back.   1 origin (not checked yet)   n cancel"),
+        "{asked}"
+    );
+    amonhen_tui::snapshot(open(&work), 220, 10, clock(), "0Gt1").unwrap();
+    assert_eq!(remote_tag(), git_out(&work, &["rev-parse", "HEAD"]));
+    // fetch で読んだ後は、もうあるリモートには出さない。
+    amonhen_tui::snapshot(open(&work), 220, 10, clock(), "fy").unwrap();
+    let every = amonhen_tui::snapshot(open(&work), 220, 10, clock(), "0Gt").unwrap();
+    assert!(every.contains("Every remote has v1"), "{every}");
+    // 手元の v1 を別のコミットにすると、置き換えになる。
+    git(&work, BASE, &["tag", "-f", "v1", "HEAD~1"]);
+    let replace = amonhen_tui::snapshot(open(&work), 220, 10, clock(), "0Gt").unwrap();
+    assert!(replace.contains("1 replace on origin"), "{replace}");
+    amonhen_tui::snapshot(open(&work), 220, 10, clock(), "0Gt1").unwrap();
+    assert_eq!(remote_tag(), git_out(&work, &["rev-parse", "HEAD~1"]));
+    // リモートから消す（手元のものは残る）。
+    let asked = amonhen_tui::snapshot(open(&work), 220, 10, clock(), "0GX").unwrap();
+    assert!(
+        asked.contains("Delete the tag v1 from which remote?"),
+        "{asked}"
+    );
+    amonhen_tui::snapshot(open(&work), 220, 10, clock(), "0GX1").unwrap();
+    assert_eq!(remote_tag(), "");
+    assert_eq!(git_out(&work, &["tag"]), "v1\n");
 }
 
 /// サイドバーの `c` でブランチをチェックアウトし、`b` で新しいブランチを作る。`u` で戻す
