@@ -13449,6 +13449,7 @@ impl Root {
             // 外れている）送れないので、Publish にもしない。
             published: entry.is_none_or(|e| e.detail.is_some() && !e.gone),
             no_remote,
+            running: self.running,
         }
     }
 
@@ -13936,36 +13937,10 @@ impl Root {
         if let (None, Some(flash)) = (&self.busy, &self.flash) {
             text.push_str(&format!("  ·  ✓ {flash}"));
         }
-        // 走っている操作があれば右に ⟳ n（押すと Activity。GTK4 版の Activity のボタンの回る印）。
-        let running: View = if self.running > 0 {
-            Button::new()
-                .style(ButtonStyle::Subtle)
-                .on_click(context.callback(|()| Message::Command("activity".to_owned())))
-                .content(
-                    TextBlock::new()
-                        .text(format!("⟳ {}", self.running))
-                        .font_size(12.0),
-                )
-                .tooltip(tr!(
-                    "{count} operations running (click for Activity)",
-                    count = self.running
-                ))
-        } else {
-            View::empty()
-        };
-        let bar = Grid::new()
-            .columns([GridLength::Star(1.0), GridLength::Auto])
-            .children((
-                TextBlock::new()
-                    .text(text)
-                    .font_size(12.0)
-                    .margin(Thickness::new(12.0, 3.0, 12.0, 4.0))
-                    .grid_column(0),
-                Border::new()
-                    .margin(Thickness::new(0.0, 0.0, 8.0, 0.0))
-                    .grid_column(1)
-                    .content(running),
-            ));
+        let bar = TextBlock::new()
+            .text(text)
+            .font_size(12.0)
+            .margin(Thickness::new(12.0, 3.0, 12.0, 4.0));
         StackPanel::new().grid_row(4).children((
             self.connection_band(context),
             self.failure_band(context),
