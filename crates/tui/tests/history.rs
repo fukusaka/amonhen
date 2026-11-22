@@ -1489,7 +1489,15 @@ fn stash_and_pop() {
     assert!(stashed.contains("Stashed"));
     assert_eq!(read(dir.path()), "one\ntwo\nthree\nfour\n");
     assert!(git_out(dir.path(), &["stash", "list"]).contains(": before lunch\n"));
-    let popped = amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "S").unwrap();
+    // アプリと同じく、どの stash かを見せて確かめる。
+    let asked = amonhen_tui::snapshot(open(dir.path()), 200, 10, clock(), "S").unwrap();
+    assert!(
+        asked.contains("Pop stash@{0} “On main: before lunch”? It goes back to the working tree and leaves the list. Undo brings it back.   y pop   n cancel"),
+        "{asked}"
+    );
+    amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "Sn").unwrap();
+    assert_eq!(read(dir.path()), "one\ntwo\nthree\nfour\n");
+    let popped = amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "Sy").unwrap();
     assert!(popped.contains("Popped the stash"));
     assert_eq!(read(dir.path()), "ONE\ntwo\nTHREE\nfour\n");
     // stash がなければ、理由を出す。
@@ -1601,7 +1609,7 @@ fn take_one_side_of_a_conflicted_file() {
     );
 }
 
-/// サイドバーの Stashes: メッセージで並び、`a` で戻す、`x` で確かめてから消す
+/// サイドバーの Stashes: メッセージで並び、`a` で戻す、`x` で消す（どれも先に確かめる）
 #[test]
 fn stashes_are_listed_and_applied_from_the_sidebar() {
     let dir = tempfile::tempdir().unwrap();
@@ -1614,7 +1622,12 @@ fn stashes_are_listed_and_applied_from_the_sidebar() {
     let at = side.iter().position(|l| l == "Stashes").unwrap();
     assert!(side[at + 1].contains("Capitals"), "{side:?}");
     // 一番下の行（stash）で `a`: 変更が戻り、stash は残る。
-    let applied = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0Ga").unwrap();
+    let asked = amonhen_tui::snapshot(open(dir.path()), 200, 12, clock(), "0Ga").unwrap();
+    assert!(
+        asked.contains("Apply stash@{0} “On main: Capitals”? It goes back to the working tree and stays in the list."),
+        "{asked}"
+    );
+    let applied = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0Gay").unwrap();
     assert!(applied.contains("Applied the stash"));
     assert_eq!(read(dir.path()), "ONE\ntwo\nTHREE\nfour\n");
     assert_eq!(git_out(dir.path(), &["stash", "list"]).lines().count(), 1);
@@ -2746,7 +2759,7 @@ fn stash_can_include_untracked_files() {
     std::fs::write(dir.path().join("new.txt"), "new\n").unwrap();
     amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "s\ny").unwrap();
     assert!(dir.path().join("new.txt").exists());
-    amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "S").unwrap();
+    amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "Sy").unwrap();
     amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "s\nu").unwrap();
     assert!(!dir.path().join("new.txt").exists());
     assert_eq!(git_out(dir.path(), &["status", "--porcelain"]), "");

@@ -1836,11 +1836,7 @@ impl App {
                 self.dirty = true;
             }
             KeyCode::Char('S') if self.focus != Focus::Side => match self.stash.clone() {
-                Some(name) => self.run(
-                    "pop",
-                    tr!("Popping the stash…"),
-                    json!({"op": "stashApply", "name": name, "pop": true}),
-                ),
+                Some(name) => self.ask_stash_apply(name, true),
                 None => {
                     self.error = Some(tr!("No stash to pop"));
                     self.dirty = true;
@@ -3844,6 +3840,44 @@ impl App {
     }
 
     /// サイドバーで選んでいる stash を戻す（`pop` なら、戻して消す）か、消す（先に確かめる）。
+    /// stash を作業ツリーに戻す前に、どの stash かを見せて確かめる（アプリと同じ）。`pop` なら一覧から消す
+    /// （コンフリクトしたら残す）。
+    fn ask_stash_apply(&mut self, name: String, pop: bool) {
+        let message = self
+            .sidebar
+            .detail_of("stash", &name)
+            .map_or(String::new(), |m| format!(" “{m}”"));
+        let (ask, yes, op) = match pop {
+            true => (
+                tr!(
+                    "Pop {name}{message}? It goes back to the working tree and leaves the list. Undo brings it back.",
+                    name = name,
+                    message = message
+                ),
+                tr!("pop"),
+                "pop",
+            ),
+            false => (
+                tr!(
+                    "Apply {name}{message}? It goes back to the working tree and stays in the list. Undo brings it back.",
+                    name = name,
+                    message = message
+                ),
+                tr!("apply"),
+                "apply",
+            ),
+        };
+        self.confirm = Some((
+            ask,
+            yes,
+            Request::Run {
+                name: op,
+                command: json!({"op": "stashApply", "name": name, "pop": pop}),
+            },
+        ));
+        self.dirty = true;
+    }
+
     fn stash_key(&mut self, code: KeyCode) -> bool {
         // worktree の行の `x` は、その worktree を消す（確かめてから。変更が残っていれば git が断る）。
         if let (KeyCode::Char('x'), Some(("worktree", path, _))) = (code, self.sidebar.picked_ref())
@@ -3871,16 +3905,8 @@ impl App {
         };
         let name = name.to_owned();
         match code {
-            KeyCode::Char('a') => self.run(
-                "apply",
-                tr!("Applying the stash…"),
-                json!({"op": "stashApply", "name": name, "pop": false}),
-            ),
-            KeyCode::Char('o') => self.run(
-                "pop",
-                tr!("Popping the stash…"),
-                json!({"op": "stashApply", "name": name, "pop": true}),
-            ),
+            KeyCode::Char('a') => self.ask_stash_apply(name, false),
+            KeyCode::Char('o') => self.ask_stash_apply(name, true),
             // stash を作ったところに新しいブランチを作って切り替え、そこに戻す（アプリの Branch…）。
             KeyCode::Char('b') => {
                 self.naming = Naming::StashBranch;

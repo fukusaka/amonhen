@@ -294,6 +294,16 @@ impl Sidebar {
     }
 
     /// 選んでいる ref の種類（`branch`・`remote`・`tag`）・名前・指すコミット。
+    /// `kind` の ref `name` の添え書き（stash ならメッセージ）。
+    pub fn detail_of(&self, kind: &str, name: &str) -> Option<String> {
+        self.refs["entries"]
+            .as_array()?
+            .iter()
+            .find(|e| e["kind"] == kind && e["name"] == name)?["detail"]
+            .as_str()
+            .map(str::to_owned)
+    }
+
     /// ローカルのブランチ `name` の上流（`origin/main` など）。なければ、なくなっていれば None。
     pub fn upstream_of(&self, name: &str) -> Option<String> {
         let entry = self.refs["entries"]
