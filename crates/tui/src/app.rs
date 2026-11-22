@@ -236,32 +236,128 @@ impl QuickOpen {
     }
 }
 
-/// Working Copy の `F`: 今のブランチの最近のコミットの件名から選び、メッセージの欄を `fixup! 件名` か
-/// `squash! 件名` にする（アプリの Commit ▾ の Fixup Commit For・Squash Commit For。後で
-/// `rebase -i --autosquash` がまとめる）。
-struct FixupPick {
+/// Working Copy で、最近のコミットから選んでメッセージの欄に入れる一覧。`F` は件名を選んで `fixup! 件名` か
+/// `squash! 件名` にし（アプリの Commit ▾ の Fixup Commit For・Squash Commit For。後で `rebase -i --autosquash`
+/// がまとめる）、`R` はメッセージをそのまま入れる（アプリの最近のメッセージの一覧）。
+struct MessagePick {
     query: String,
     selected: usize,
-    /// squash!（本文を残す）にする。Tab で切り替える。
-    squash: bool,
-    /// 件名（新しい順）。読んでいる間は None。
-    subjects: Option<Vec<String>>,
+    kind: PickKind,
+    /// 件名（Fixup・Squash）かメッセージ（Recent）。新しい順。読んでいる間は None。
+    items: Option<Vec<String>>,
 }
 
-impl FixupPick {
-    fn shown(&self) -> Vec<&String> {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PickKind {
+    Fixup,
+    /// squash!（本文を残す）。Fixup と Tab で切り替える。
+    Squash,
+    Recent,
+    /// 入れるもの（Conventional Commits の種類、Co-authored-by、Signed-off-by）。
+    Insert,
+}
+
+/// Conventional Commits の種類（アプリの Insert ▾ と同じ並び）。
+const COMMIT_TYPES: &[&str] = &[
+    "feat", "fix", "docs", "style", "refactor", "perf", "test", "build", "ci", "chore", "revert",
+];
+
+/// 最近のコミット（`F`・`R`・`I`・Alt-↑ が使う）。
+#[derive(Default)]
+struct Recent {
+    /// メッセージ（新しい順）。
+    messages: Vec<String>,
+    /// 作者（名前、メール）。同じメールは 1 つ。
+    authors: Vec<(String, String)>,
+    /// Signed-off-by に書く自分。
+    me: Option<(String, String)>,
+}
+
+impl MessagePick {
+    fn new(kind: PickKind, recent: Option<&Recent>) -> Self {
+        let mut pick = Self {
+            query: String::new(),
+            selected: 0,
+            kind,
+            items: None,
+        };
+        if let Some(recent) = recent {
+            pick.fill(recent);
+        }
+        pick
+    }
+
+    /// 読んだ最近のコミットから並べるものを作る。
+    fn fill(&mut self, recent: &Recent) {
+        let messages = &recent.messages;
+        self.items = Some(match self.kind {
+            PickKind::Insert => {
+                let mut items: Vec<String> = COMMIT_TYPES.iter().map(|t| format!("{t}:")).collect();
+                items.extend(
+                    (recent.authors.iter())
+                        .map(|(name, email)| format!("Co-authored-by: {name} <{email}>")),
+                );
+                if let Some((name, email)) = &recent.me {
+                    items.push(format!("Signed-off-by: {name} <{email}>"));
+                }
+                items
+            }
+            PickKind::Recent => {
+                let mut seen = Vec::new();
+                for m in messages {
+                    if !m.trim().is_empty() && !seen.contains(m) {
+                        seen.push(m.clone());
+                    }
+                }
+                seen
+            }
+            PickKind::Fixup | PickKind::Squash => fixup_subjects(messages),
+        });
+    }
+
+    /// 並べるもの（何番目か、1 行目）。打った語のすべてを含むもの（大文字と小文字は区別しない）。
+    fn shown(&self) -> Vec<(usize, &str)> {
         let words: Vec<String> = self
             .query
             .split_whitespace()
             .map(str::to_lowercase)
             .collect();
-        (self.subjects.iter().flatten())
-            .filter(|s| {
+        (self.items.iter().flatten().enumerate())
+            .filter(|(_, s)| {
                 let text = s.to_lowercase();
                 words.iter().all(|w| text.contains(w.as_str()))
             })
+            .map(|(i, s)| (i, s.lines().next().unwrap_or("")))
             .collect()
     }
+}
+
+/// 件名の頭の Conventional Commits の種類（`feat: `・`fix(ui)!: ` など）を除いたもの。
+fn strip_commit_type(summary: &str) -> &str {
+    let kind_end = summary
+        .find(|c: char| !c.is_ascii_lowercase())
+        .unwrap_or(summary.len());
+    if kind_end == 0 {
+        return summary;
+    }
+    let mut rest = &summary[kind_end..];
+    if rest.starts_with('(')
+        && let Some(close) = rest.find(')')
+    {
+        rest = &rest[close + 1..];
+    }
+    rest = rest.strip_prefix('!').unwrap_or(rest);
+    match rest.strip_prefix(':') {
+        Some(rest) => rest.trim_start(),
+        None => summary,
+    }
+}
+
+/// `Key: 値` の形のトレーラーの行か。
+fn is_trailer(line: &str) -> bool {
+    line.split_once(": ").is_some_and(|(key, _)| {
+        !key.is_empty() && key.chars().all(|c| c.is_ascii_alphabetic() || c == '-')
+    })
 }
 
 /// `fixup!`・`squash!` の先にできる件名（重ねない。空・同じものは 1 つに。アプリと同じく 15 まで）。
@@ -342,7 +438,15 @@ pub struct App {
     /// Quick Open で選んだリポジトリの場所（TUI を閉じて、そこで開き直す）。
     open_location: Option<String>,
     quick_open: Option<QuickOpen>,
-    fixup_pick: Option<FixupPick>,
+    fixup_pick: Option<MessagePick>,
+    /// 書きかけのメッセージとして最後に読んだか書いたもの（読み終えるまでは None で、書かない）。
+    draft_saved: Option<String>,
+    /// 今のブランチの最近のコミット（`F`・`R`・`I`・Alt-↑ が使う。コミットしたら読み直す）。
+    recent_messages: Option<Recent>,
+    /// メッセージの欄の Alt-↑・Alt-↓ で呼び出している、最近のメッセージの番目と、呼び出す前に書いていたもの。
+    recalled: Option<(usize, String)>,
+    /// 最近のメッセージを読み終えたら、Alt-↑ の呼び出しをする。
+    recall_when_read: bool,
     /// いくつかから選んで行う操作: 尋ねる文と、キー・名前・頼む中身の組。
     choices: Option<(String, Vec<Choice>)>,
     /// マウスを取り込んでいる（切ると、端末で文字を選べる）。
@@ -387,6 +491,8 @@ pub struct App {
     typing_query: Option<String>,
     /// サイドバーの絞り込みの語を打っている（サイドバーで `/`）。
     typing_filter: Option<String>,
+    /// 絞り込みの語は Working Copy の一覧のもの（でなければサイドバーのもの）。
+    filtering_changes: bool,
     /// キーの一覧を出している（`?`）。
     help: bool,
     /// キーの一覧の、一番上に見えている行（収まらないときに動かす）。
@@ -489,6 +595,7 @@ impl App {
             notice: None,
             typing_query: None,
             typing_filter: None,
+            filtering_changes: false,
             help: false,
             help_top: 0,
             palette: None,
@@ -515,6 +622,10 @@ impl App {
             open_location: None,
             quick_open: None,
             fixup_pick: None,
+            draft_saved: None,
+            recent_messages: None,
+            recalled: None,
+            recall_when_read: false,
             search: None,
             search_done: 0.0,
             theme: Theme::detect(),
@@ -538,7 +649,43 @@ impl App {
     pub fn start(&mut self) {
         self.open();
         self.changes.refresh();
+        // 書きかけのメッセージ（なければテンプレート）を欄に入れる。
+        self.send(Request::DraftOrTemplate {
+            local: self.files_here,
+        });
         self.request();
+    }
+
+    /// 書きかけのメッセージ（欄の中身）が覚えたものと違えば、`<git dir>/amonhen/commit-draft` に書く（空なら消す）。
+    /// amend と、最近のメッセージを呼び出している間は書かない（自分で書いたものではない）。
+    fn save_draft_if_changed(&mut self) {
+        let Some(saved) = &self.draft_saved else {
+            return;
+        };
+        if self.changes.amend || self.recalled.is_some() || self.committing {
+            return;
+        }
+        let text = self.changes.message.text();
+        if *saved == text {
+            return;
+        }
+        self.draft_saved = Some(text.clone());
+        self.send(Request::Run {
+            name: "saveCommitDraft",
+            command: json!({"op": "saveCommitDraft", "text": text}),
+        });
+    }
+
+    /// 終わる前に書く、書きかけのメッセージ。終わるときは裏の仕事（頼んだばかりの保存も）を待たないので、呼んだ
+    /// 側が今の中身をその場で書く（同じ中身でも書く）。読み終える前や amend の間は None。
+    pub fn take_unsaved_draft(&mut self) -> Option<String> {
+        self.draft_saved.as_ref()?;
+        if self.changes.amend || self.recalled.is_some() || self.committing {
+            return None;
+        }
+        let text = self.changes.message.text();
+        self.draft_saved = Some(text.clone());
+        Some(text)
     }
 
     /// リポジトリ・ref・History を読む。読んでいる間に頼まれた分は、終わってからもう一度。
@@ -882,6 +1029,14 @@ impl App {
     }
 
     pub fn handle(&mut self, event: Event) {
+        self.handle_event(event);
+        // 欄を離れていれば、書きかけのメッセージを覚える（打っている間は書かない）。
+        if self.focus != Focus::Message {
+            self.save_draft_if_changed();
+        }
+    }
+
+    fn handle_event(&mut self, event: Event) {
         match event {
             Event::Input(Input::Key(key)) => self.key(key),
             Event::Input(Input::Mouse(mouse)) => self.mouse(mouse),
@@ -1038,6 +1193,17 @@ impl App {
                             Ok(output) => {
                                 self.changes.message.clear();
                                 self.changes.amend = false;
+                                // 最近のメッセージは、次に使うときに読み直す（今のコミットも入る）。
+                                self.recent_messages = None;
+                                self.recalled = None;
+                                // コミットしたので、書きかけのメッセージを消す。
+                                if self.draft_saved.as_deref().is_some_and(|d| !d.is_empty()) {
+                                    self.draft_saved = Some(String::new());
+                                    self.send(Request::Run {
+                                        name: "saveCommitDraft",
+                                        command: json!({"op": "saveCommitDraft", "text": ""}),
+                                    });
+                                }
                                 self.focus = Focus::Main;
                                 // hooks が何か書いていれば、その 1 行目を出す。
                                 self.notice =
@@ -1269,18 +1435,31 @@ impl App {
             return;
         }
         // Quick Open: 打った語で絞る。Enter で選んだリポジトリを開き直す、Esc でやめる。
-        // Fixup・Squash Commit For: 打った語で絞り、Enter で欄に入れる。Tab で fixup! と squash! を切り替える。
+        // Fixup・Squash Commit For と最近のメッセージ: 打った語で絞り、Enter で欄に入れる。Tab で fixup! と
+        // squash! を切り替える。
         if let Some(mut pick) = self.fixup_pick.take() {
             self.dirty = true;
             match key.code {
                 KeyCode::Esc => return,
                 KeyCode::Enter => {
-                    if let Some(subject) = pick.shown().get(pick.selected) {
-                        self.use_fixup(subject.as_str(), pick.squash);
+                    let chosen = (pick.shown().get(pick.selected))
+                        .and_then(|(i, _)| pick.items.as_ref().map(|items| items[*i].clone()));
+                    if let Some(chosen) = chosen {
+                        match pick.kind {
+                            PickKind::Recent => self.use_message(&chosen),
+                            PickKind::Insert => self.insert_into_message(&chosen),
+                            kind => self.use_fixup(&chosen, kind == PickKind::Squash),
+                        }
                     }
                     return;
                 }
-                KeyCode::Tab => pick.squash = !pick.squash,
+                KeyCode::Tab => {
+                    pick.kind = match pick.kind {
+                        PickKind::Fixup => PickKind::Squash,
+                        PickKind::Squash => PickKind::Fixup,
+                        kind => kind,
+                    }
+                }
                 KeyCode::Down => pick.selected += 1,
                 KeyCode::Char('n') if control => pick.selected += 1,
                 KeyCode::Up => pick.selected = pick.selected.saturating_sub(1),
@@ -1364,19 +1543,26 @@ impl App {
         // 絞り込みの語は、打つたびに効く。Enter で確定、Esc で絞り込みをやめる。
         if let Some(filter) = &mut self.typing_filter {
             self.dirty = true;
+            let changes = self.filtering_changes;
+            let mut apply = |filter: &str| match changes {
+                true => self.changes.set_filter(filter),
+                false => self.sidebar.set_filter(filter),
+            };
             match key.code {
                 KeyCode::Enter => self.typing_filter = None,
                 KeyCode::Esc => {
+                    apply("");
                     self.typing_filter = None;
-                    self.sidebar.set_filter("");
                 }
                 KeyCode::Backspace => {
                     filter.pop();
-                    self.sidebar.set_filter(filter);
+                    let filter = filter.clone();
+                    apply(&filter);
                 }
                 KeyCode::Char(ch) if !control => {
                     filter.push(ch);
-                    self.sidebar.set_filter(filter);
+                    let filter = filter.clone();
+                    apply(&filter);
                 }
                 _ => {}
             }
@@ -1935,6 +2121,8 @@ impl App {
                 }
                 return;
             }
+            // 下書きが読めなくても、欄はそのまま使える（覚えるのをやめる）。
+            Err(_) if name == "draftOrTemplate" => return,
             Err(error) => {
                 if name == "recentMessages" {
                     self.fixup_pick = None;
@@ -2095,6 +2283,12 @@ impl App {
                 return;
             }
             "deleteIgnored" => self.notice = Some(tr!("Deleted the ignored files")),
+            "addToGitignore" => {
+                self.notice = Some(match reply["added"] == true {
+                    true => tr!("Added to .gitignore"),
+                    false => tr!("Already in .gitignore"),
+                })
+            }
             // パッチの中身が分かった: 当たらなければ git の答えを出す。メールの形ならコミットとして（git am）、
             // ただの diff なら作業ツリーに（git apply）当てるかを確かめる。
             "readPatch" => {
@@ -2223,15 +2417,61 @@ impl App {
                 self.ask_reset_with(&info);
                 return;
             }
+            // 書きかけのメッセージかテンプレート: 欄がまだ空なら入れる。テンプレートは覚えたものとして扱い、
+            // 書き足したときだけ下書きになる。
+            "draftOrTemplate" => {
+                let draft = reply["draft"].as_str().map(str::to_owned);
+                let template = reply["template"].as_str().map(str::to_owned);
+                let free = self.changes.message.is_empty() && !self.changes.amend;
+                let baseline = match (free, draft, template) {
+                    (true, Some(draft), _) => {
+                        self.changes.message.set_text(&draft);
+                        draft.trim_end().to_owned()
+                    }
+                    (true, None, Some(template)) => {
+                        self.changes.message.set_text(&template);
+                        self.changes.message.text()
+                    }
+                    (true, None, None) => String::new(),
+                    // 待つ間に書き始めていたら、それを下書きにする。
+                    (false, Some(draft), _) => draft.trim_end().to_owned(),
+                    (false, None, _) => String::new(),
+                };
+                self.draft_saved = Some(baseline);
+                self.dirty = true;
+                return;
+            }
+            "saveCommitDraft" => return,
             "recentMessages" => {
-                if let Some(pick) = &mut self.fixup_pick {
-                    let messages: Vec<String> =
-                        (reply["messages"].as_array().into_iter().flatten())
-                            .filter_map(|m| m.as_str().map(str::to_owned))
-                            .collect();
-                    pick.subjects = Some(fixup_subjects(&messages));
-                    self.dirty = true;
+                let messages: Vec<String> = (reply["messages"].as_array().into_iter().flatten())
+                    .filter_map(|m| m.as_str().map(|m| m.trim_end().to_owned()))
+                    .collect();
+                let pair = |v: &Value| {
+                    let name = v[0].as_str().filter(|s| !s.is_empty())?;
+                    let email = v[1].as_str().filter(|s| !s.is_empty())?;
+                    Some((name.to_owned(), email.to_owned()))
+                };
+                let mut authors: Vec<(String, String)> = Vec::new();
+                for (name, email) in
+                    (reply["authors"].as_array().into_iter().flatten()).filter_map(pair)
+                {
+                    if !authors.iter().any(|(_, e)| e.eq_ignore_ascii_case(&email)) {
+                        authors.push((name, email));
+                    }
                 }
+                let recent = Recent {
+                    messages,
+                    authors,
+                    me: pair(&reply["me"]),
+                };
+                if let Some(pick) = &mut self.fixup_pick {
+                    pick.fill(&recent);
+                }
+                self.recent_messages = Some(recent);
+                if std::mem::take(&mut self.recall_when_read) {
+                    self.recall(true);
+                }
+                self.dirty = true;
                 return;
             }
             "editRows" => {
@@ -3502,6 +3742,7 @@ impl App {
             }
             KeyCode::Char('/') => {
                 self.typing_filter = Some(self.sidebar.filter().to_owned());
+                self.filtering_changes = false;
                 true
             }
             KeyCode::Char('c') => self.checkout_picked(),
@@ -3663,6 +3904,26 @@ impl App {
                         "Fixup or Squash Commit For: a recent commit's subject as fixup! or squash!"
                     ),
                 ),
+                (
+                    "v",
+                    tr!("List paths, a folder tree (Enter folds) or file names first"),
+                ),
+                ("/", tr!("Filter the list by path")),
+                ("R", tr!("Use a recent commit's message")),
+                (
+                    "i",
+                    tr!("Add an untracked file, or its extension, to .gitignore"),
+                ),
+                (
+                    "I",
+                    tr!("Insert a Conventional Commits type, Co-authored-by or Signed-off-by"),
+                ),
+                (
+                    "Alt-↑ Alt-↓",
+                    tr!(
+                        "In the message field: recall recent messages, then back to what was written"
+                    ),
+                ),
                 ("Ctrl-s", tr!("Commit")),
                 ("Ctrl-p", tr!("Commit, then push")),
             ],
@@ -3783,11 +4044,87 @@ impl App {
             }
             KeyCode::Char('e') if control => self.edit_message = true,
             KeyCode::Enter if alt => self.commit(),
+            // 最近のメッセージを順に呼び出す（Alt-↓ で戻ると、呼び出す前に書いていたもの）。
+            KeyCode::Up | KeyCode::Down if alt => self.recall(key.code == KeyCode::Up),
             KeyCode::Char(_) if control || alt => {}
             code => {
                 self.changes.message.key(code);
             }
         }
+    }
+
+    /// 最近のメッセージを欄に呼び出す（`older` なら 1 つ古いもの）。まだ読んでいなければ読み、読んだら呼び出す。
+    fn recall(&mut self, older: bool) {
+        let Some(Recent { messages, .. }) = &self.recent_messages else {
+            self.recall_when_read = older;
+            self.send(Request::RecentMessages);
+            return;
+        };
+        let count = messages.len();
+        let next = match (&self.recalled, older) {
+            (None, true) if count > 0 => Some(0),
+            (None, _) => return,
+            (Some((i, _)), true) => Some((i + 1).min(count.saturating_sub(1))),
+            (Some((0, _)), false) => None,
+            (Some((i, _)), false) => Some(i - 1),
+        };
+        match next {
+            Some(i) => {
+                let before = match self.recalled.take() {
+                    Some((_, before)) => before,
+                    None => self.changes.message.text(),
+                };
+                let text = messages[i].clone();
+                self.changes.message.set_text(&text);
+                self.recalled = Some((i, before));
+            }
+            None => {
+                if let Some((_, before)) = self.recalled.take() {
+                    self.changes.message.set_text(&before);
+                }
+            }
+        }
+    }
+
+    /// 欄に入れる（`I` の一覧で選んだもの）: `type:` は件名の頭を置き換え（もう種類があれば替える）、トレーラーは
+    /// 本文の終わりに足す（もうあれば足さない。前の行がトレーラーでなければ空行で分ける）。アプリの Insert ▾ と同じ。
+    fn insert_into_message(&mut self, item: &str) {
+        let text = self.changes.message.text();
+        let (summary, body) = text.split_once('\n').unwrap_or((text.as_str(), ""));
+        let next = match item.strip_suffix(':') {
+            Some(kind) if !kind.contains(' ') => {
+                let rest = strip_commit_type(summary);
+                match body {
+                    "" => format!("{kind}: {rest}"),
+                    body => format!("{kind}: {rest}\n{body}"),
+                }
+            }
+            _ if text.lines().any(|l| l == item) => text.clone(),
+            _ => {
+                let trimmed = text.trim_end();
+                let last = trimmed.lines().last().unwrap_or("");
+                let after_trailer = trimmed.contains('\n') && is_trailer(last);
+                match trimmed {
+                    "" => format!("\n\n{item}"),
+                    _ if after_trailer => format!("{trimmed}\n{item}"),
+                    _ => format!("{trimmed}\n\n{item}"),
+                }
+            }
+        };
+        self.changes.message.set_text(&next);
+        // 種類を入れたら件名の終わりへ、トレーラーなら終わりへ（set_text が終わりに置く）。
+        if item.ends_with(':') && !item.contains(' ') {
+            self.changes.message.move_to_summary_end();
+        }
+        self.recalled = None;
+        self.focus = Focus::Message;
+    }
+
+    /// 欄をそのメッセージにして、欄に移る（最近のメッセージの一覧で選んだもの）。
+    fn use_message(&mut self, message: &str) {
+        self.changes.message.set_text(message);
+        self.recalled = None;
+        self.focus = Focus::Message;
     }
 
     /// 欄を `fixup! 件名`（件名だけ）か `squash! 件名`（書いていた本文は残す）にして、欄に移る。amend はやめる。
@@ -3913,15 +4250,38 @@ impl App {
                 self.focus = Focus::Message;
                 true
             }
+            // untracked のファイルを .gitignore に足す: そのパスか、拡張子のパターン（アプリの右クリックと同じ）。
+            KeyCode::Char('i') => {
+                let Some(path) = self.changes.untracked_path().map(str::to_owned) else {
+                    self.error = Some(tr!("Only an untracked file can be added to .gitignore"));
+                    return true;
+                };
+                let add = |pattern: &str| Request::AddToGitignore {
+                    pattern: pattern.to_owned(),
+                };
+                let mut choices = vec![('p', path.clone(), add(&path))];
+                let name = path.rsplit('/').next().unwrap_or(&path);
+                if let Some((stem, ext)) = name.rsplit_once('.')
+                    && !stem.is_empty()
+                    && !ext.is_empty()
+                {
+                    let pattern = format!("*.{ext}");
+                    choices.push(('e', pattern.clone(), add(&pattern)));
+                }
+                self.choices = Some((tr!("Add to .gitignore:"), choices));
+                true
+            }
             // Fixup・Squash Commit For: 最近のコミットから選んで、欄を fixup! にする。
-            KeyCode::Char('F') if self.changes.has_message_field() => {
-                self.fixup_pick = Some(FixupPick {
-                    query: String::new(),
-                    selected: 0,
-                    squash: false,
-                    subjects: None,
-                });
-                self.send(Request::RecentMessages);
+            KeyCode::Char('F' | 'R' | 'I') if self.changes.has_message_field() => {
+                let kind = match code {
+                    KeyCode::Char('F') => PickKind::Fixup,
+                    KeyCode::Char('R') => PickKind::Recent,
+                    _ => PickKind::Insert,
+                };
+                self.fixup_pick = Some(MessagePick::new(kind, self.recent_messages.as_ref()));
+                if self.recent_messages.is_none() {
+                    self.send(Request::RecentMessages);
+                }
                 true
             }
             // 直前のコミットを作り直す。欄が空なら、そのメッセージを入れる。
@@ -3956,8 +4316,33 @@ impl App {
                 });
                 self.confirm.is_some()
             }
+            // 木のフォルダでは、Enter で畳む・開く。ファイルなら差分へ。
             KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right => {
-                self.focus = Focus::Side;
+                if !self.changes.toggle_folder() {
+                    self.focus = Focus::Side;
+                }
+                true
+            }
+            // 一覧の形: パス → 木 → ファイル名（アプリの List・Tree・File Name）。この TUI の間だけ。
+            KeyCode::Char('v') => {
+                self.changes.next_mode();
+                self.notice = Some(match self.changes.mode() {
+                    crate::changes::ListMode::Path => tr!("Listing paths"),
+                    crate::changes::ListMode::Tree => {
+                        tr!("Listing as a tree (Enter folds a folder)")
+                    }
+                    crate::changes::ListMode::Name => tr!("Listing file names first"),
+                });
+                true
+            }
+            // パスで絞り込む（打つたびに効く）。
+            KeyCode::Char('/') => {
+                self.typing_filter = Some(self.changes.filter().to_owned());
+                self.filtering_changes = true;
+                true
+            }
+            KeyCode::Esc if !self.changes.filter().is_empty() => {
+                self.changes.set_filter("");
                 true
             }
             _ => false,
@@ -4899,13 +5284,14 @@ impl App {
         }
         if let Some(pick) = &self.fixup_pick {
             let shown = pick.shown();
-            let rows: Vec<(&str, &str, &str)> =
-                shown.iter().map(|s| ("", s.as_str(), "")).collect();
-            let title = match pick.squash {
-                true => tr!(" Squash Commit For (Tab: fixup!) "),
-                false => tr!(" Fixup Commit For (Tab: squash!) "),
+            let rows: Vec<(&str, &str, &str)> = shown.iter().map(|(_, s)| ("", *s, "")).collect();
+            let title = match pick.kind {
+                PickKind::Squash => tr!(" Squash Commit For (Tab: fixup!) "),
+                PickKind::Fixup => tr!(" Fixup Commit For (Tab: squash!) "),
+                PickKind::Recent => tr!(" Recent Messages "),
+                PickKind::Insert => tr!(" Insert into the Message "),
             };
-            let none = match &pick.subjects {
+            let none = match &pick.items {
                 None => tr!("Reading the recent commits…"),
                 Some(_) => tr!("No commit matches"),
             };
@@ -5215,6 +5601,103 @@ mod tests {
         let mut buf = Buffer::empty(Rect::new(0, 0, 100, 12));
         app.draw(&mut buf, Damage::ALL);
         (0..100).map(|x| buf[(x, 11)].symbol()).collect()
+    }
+
+    /// メッセージの欄の Alt-↑・Alt-↓: 最近のメッセージを新しい順に呼び出し、戻りきると書いていたものに戻す。
+    /// 一覧の `R` は、選んだメッセージを欄に入れる
+    #[test]
+    fn recent_messages_are_recalled_in_the_message_field() {
+        let (_dir, mut app, rx) = app_with_history();
+        let press = |app: &mut App, code: KeyCode, modifiers: KeyModifiers| {
+            app.handle(Event::Input(Input::Key(KeyEvent::new(code, modifiers))));
+        };
+        let typed = |app: &mut App, text: &str| {
+            for ch in text.chars() {
+                press(app, KeyCode::Char(ch), KeyModifiers::NONE);
+            }
+        };
+        typed(&mut app, "1");
+        crate::settle(&mut app, &rx).unwrap();
+        typed(&mut app, "cDraft");
+        press(&mut app, KeyCode::Up, KeyModifiers::ALT);
+        crate::settle(&mut app, &rx).unwrap();
+        assert_eq!(app.changes.message.text(), "Commit 5");
+        press(&mut app, KeyCode::Up, KeyModifiers::ALT);
+        assert_eq!(app.changes.message.text(), "Commit 4");
+        press(&mut app, KeyCode::Down, KeyModifiers::ALT);
+        assert_eq!(app.changes.message.text(), "Commit 5");
+        press(&mut app, KeyCode::Down, KeyModifiers::ALT);
+        assert_eq!(app.changes.message.text(), "Draft");
+        // 戻りきったら、それ以上は何もしない。
+        press(&mut app, KeyCode::Down, KeyModifiers::ALT);
+        assert_eq!(app.changes.message.text(), "Draft");
+
+        press(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+        typed(&mut app, "R");
+        let names: Vec<String> = (app.fixup_pick.as_ref().unwrap().shown().iter())
+            .map(|(_, s)| (*s).to_owned())
+            .collect();
+        assert_eq!(names[..2], ["Commit 5", "Commit 4"]);
+        typed(&mut app, "3");
+        press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+        assert_eq!(app.changes.message.text(), "Commit 3");
+        assert!(app.fixup_pick.is_none());
+    }
+
+    /// 一覧の `I`: 種類は件名の頭を置き換え、トレーラーは本文の終わりに空行で分けて足す（同じものは足さない）
+    #[test]
+    fn insert_puts_a_type_and_trailers_into_the_message() {
+        let (_dir, mut app, rx) = app_with_history();
+        let press = |app: &mut App, code: KeyCode| {
+            app.handle(Event::Input(Input::Key(KeyEvent::new(
+                code,
+                KeyModifiers::NONE,
+            ))));
+        };
+        let typed = |app: &mut App, text: &str| {
+            for ch in text.chars() {
+                press(app, KeyCode::Char(ch));
+            }
+        };
+        typed(&mut app, "1");
+        crate::settle(&mut app, &rx).unwrap();
+        typed(&mut app, "I");
+        crate::settle(&mut app, &rx).unwrap();
+        let shown: Vec<String> = (app.fixup_pick.as_ref().unwrap().shown().iter())
+            .map(|(_, s)| (*s).to_owned())
+            .collect();
+        assert_eq!(shown[..2], ["feat:", "fix:"]);
+        assert!(shown.contains(&"Co-authored-by: Ann <ann@example.com>".to_owned()));
+        typed(&mut app, "fix:");
+        press(&mut app, KeyCode::Enter);
+        typed(&mut app, "Hello");
+        assert_eq!(app.changes.message.text(), "fix: Hello");
+        press(&mut app, KeyCode::Esc);
+        for _ in 0..2 {
+            typed(&mut app, "Ico-auth");
+            press(&mut app, KeyCode::Enter);
+            press(&mut app, KeyCode::Esc);
+        }
+        assert_eq!(
+            app.changes.message.text(),
+            "fix: Hello\n\nCo-authored-by: Ann <ann@example.com>"
+        );
+        typed(&mut app, "Ifeat:");
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(
+            app.changes.message.text(),
+            "feat: Hello\n\nCo-authored-by: Ann <ann@example.com>"
+        );
+    }
+
+    #[test]
+    fn commit_types_and_trailers_are_recognized() {
+        assert_eq!(strip_commit_type("fix(ui)!: Crash"), "Crash");
+        assert_eq!(strip_commit_type("feat: Add"), "Add");
+        assert_eq!(strip_commit_type("Add a thing"), "Add a thing");
+        assert_eq!(strip_commit_type("see: below"), "below");
+        assert!(is_trailer("Signed-off-by: Ann <a@example.com>"));
+        assert!(!is_trailer("Note that: this is prose"));
     }
 
     /// 編集モードの `r`: 行のメッセージを git のエディタで直す（`#` の行は捨てる）。当てるまで何も変わらない。

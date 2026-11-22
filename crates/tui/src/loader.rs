@@ -79,6 +79,11 @@ pub enum Request {
     /// History の編集モードの行: `from`（16 進）から HEAD までの、編集できるコミットとそのメッセージ（新しい順。
     /// merge を越えて first-parent で辿る）。答えは `editRows` の `rows`（oid・merge・message）。
     EditRows { from: String },
+    /// 書きかけのメッセージ（`commitDraft`）。なければ `commit.template` の中身（`#` の行を除く）。リポジトリ専用の
+    /// テンプレートはコアから読み（SSH 先でも）、ほかのファイルは `local`（この機械のリポジトリ）のときだけ読む。
+    DraftOrTemplate { local: bool },
+    /// 作業ツリーの直下の .gitignore の終わりに `pattern` を足す（もうあれば足さない。アプリの Add to .gitignore）。
+    AddToGitignore { pattern: String },
     /// 今のブランチの最近のコミット（first-parent で 30 まで）のメッセージ（`recentMessages`）。
     RecentMessages,
     /// コミットを作る（`amend` なら、直前のコミットを作り直す）。
@@ -179,7 +184,9 @@ impl Loader {
             Request::Run { .. }
             | Request::Call { .. }
             | Request::EditRows { .. }
-            | Request::RecentMessages => &self.operations,
+            | Request::RecentMessages
+            | Request::AddToGitignore { .. }
+            | Request::DraftOrTemplate { .. } => &self.operations,
             Request::Commit { .. } | Request::Syntax { .. } => &self.details,
             Request::Status
             | Request::Reflog { .. }
@@ -417,6 +424,14 @@ fn load(front: &dyn Front, request: Request, events: &Sender<Event>) -> Result<L
                 command => run(front, command).map_err(|e| e.to_string()),
             },
         },
+        Request::DraftOrTemplate { local } => Loaded::Ran {
+            name: "draftOrTemplate",
+            result: draft_or_template(front, local).map_err(|e| e.to_string()),
+        },
+        Request::AddToGitignore { pattern } => Loaded::Ran {
+            name: "addToGitignore",
+            result: add_to_gitignore(front, &pattern).map_err(|e| e.to_string()),
+        },
         Request::RecentMessages => Loaded::Ran {
             name: "recentMessages",
             result: recent_messages(front).map_err(|e| e.to_string()),
@@ -455,21 +470,109 @@ fn run(front: &dyn Front, command: Value) -> Result<Value> {
     Ok(reply)
 }
 
-/// `Request::RecentMessages` の中身: HEAD から first-parent をたどった 30 のコミットのメッセージ（新しい順）。
+/// `Request::DraftOrTemplate` の中身: `{"draft": …}` か `{"template": …}`（どちらもなければ空）。
+fn draft_or_template(front: &dyn Front, local: bool) -> Result<Value> {
+    let draft = run(front, json!({"op": "commitDraft"}))?;
+    if let Some(text) = draft["info"]["text"]
+        .as_str()
+        .filter(|t| !t.trim().is_empty())
+    {
+        return Ok(json!({"draft": text}));
+    }
+    let own = run(front, json!({"op": "commitTemplate"}))?;
+    let entries = run(front, json!({"op": "configList"}))?;
+    let chosen = (entries["info"]["entries"].as_array().into_iter().flatten())
+        .rev()
+        .find(|e| (e["key"].as_str()).is_some_and(|k| k.eq_ignore_ascii_case("commit.template")))
+        .and_then(|e| e["value"].as_str())
+        .filter(|v| !v.is_empty());
+    let text = match chosen {
+        None => None,
+        Some(path) if Some(path) == own["info"]["path"].as_str() => {
+            own["info"]["text"].as_str().map(str::to_owned)
+        }
+        Some(path) if local => {
+            let path = match path.strip_prefix("~/") {
+                Some(rest) => std::env::var_os("HOME")
+                    .map(|home| std::path::PathBuf::from(home).join(rest))
+                    .unwrap_or_else(|| path.into()),
+                None => path.into(),
+            };
+            std::fs::read_to_string(path).ok()
+        }
+        Some(_) => None,
+    };
+    let text = text.map(|t| {
+        (t.lines())
+            .filter(|l| !l.starts_with('#'))
+            .collect::<Vec<_>>()
+            .join("\n")
+            .trim_matches(['\n', '\r'])
+            .to_owned()
+    });
+    Ok(match text.filter(|t| !t.trim().is_empty()) {
+        Some(template) => json!({"template": template}),
+        None => json!({}),
+    })
+}
+
+/// `Request::AddToGitignore` の中身。読み書きはコアがするので、SSH 先でも同じ。`added` は足したか。
+fn add_to_gitignore(front: &dyn Front, pattern: &str) -> Result<Value> {
+    let files = run(front, json!({"op": "ignoreFiles"}))?;
+    let files = &files["info"];
+    let mut gitignore = files["gitignore"].as_str().unwrap_or("").to_owned();
+    if gitignore.lines().any(|l| l.trim() == pattern) {
+        return Ok(json!({"added": false}));
+    }
+    if !gitignore.is_empty() && !gitignore.ends_with('\n') {
+        gitignore.push('\n');
+    }
+    gitignore.push_str(pattern);
+    gitignore.push('\n');
+    run(
+        front,
+        json!({"op": "saveIgnoreFiles", "gitignore": gitignore, "exclude": files["exclude"]}),
+    )?;
+    Ok(json!({"added": true}))
+}
+
+/// `Request::RecentMessages` の中身: HEAD から first-parent をたどった 30 のコミットのメッセージと作者（新しい順。
+/// `authors` は `[名前, メール]`）、Signed-off-by に書く自分（`user.name`・`user.email`。なければ null）。
 fn recent_messages(front: &dyn Front) -> Result<Value> {
     let reply = run(
         front,
         json!({"op": "editableCommits", "throughMerges": true}),
     )?;
-    let messages = (reply["text"].as_str().unwrap_or("").lines())
+    let infos = (reply["text"].as_str().unwrap_or("").lines())
         .filter_map(|l| l.split(' ').next())
         .take(30)
-        .map(|oid| {
-            let info = run(front, json!({"op": "commitInfo", "oid": oid}))?;
-            Ok(info["info"]["message"].as_str().unwrap_or("").to_owned())
-        })
+        .map(|oid| Ok(run(front, json!({"op": "commitInfo", "oid": oid}))?["info"].take()))
         .collect::<Result<Vec<_>>>()?;
-    Ok(json!({"messages": messages}))
+    let messages: Vec<&Value> = infos.iter().map(|i| &i["message"]).collect();
+    let authors: Vec<Value> = infos
+        .iter()
+        .map(|i| json!([i["author"], i["authorEmail"]]))
+        .collect();
+    // 読めなくても、ほかは使える（Signed-off-by だけ出さない）。
+    let entries = run(front, json!({"op": "configList"}))
+        .map(|r| r["info"]["entries"].clone())
+        .unwrap_or_default();
+    let value = |key: &str| {
+        (entries.as_array().into_iter().flatten())
+            .rev()
+            .find(|e| {
+                e["key"]
+                    .as_str()
+                    .is_some_and(|k| k.eq_ignore_ascii_case(key))
+            })
+            .and_then(|e| e["value"].as_str())
+            .filter(|v| !v.is_empty())
+    };
+    let me = match (value("user.name"), value("user.email")) {
+        (Some(name), Some(email)) => json!([name, email]),
+        _ => Value::Null,
+    };
+    Ok(json!({"messages": messages, "authors": authors, "me": me}))
 }
 
 /// `Request::EditRows` の中身。

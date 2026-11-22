@@ -838,7 +838,17 @@ pub enum Command {
     SaveCommitTemplate {
         text: String,
     },
+    /// 書きかけのコミットメッセージ（`<git dir>/amonhen/commit-draft`。`info.text`、なければ null）。コミットする
+    /// まで残し、FE を閉じても戻せる。リポジトリの中に置くので、SSH 先でも同じ。
+    CommitDraft,
+    /// 書きかけのコミットメッセージを書く（空白だけなら消す）。
+    SaveCommitDraft {
+        text: String,
+    },
 }
+
+/// 書きかけのコミットメッセージの置き場所（`<git dir>` から）。
+const COMMIT_DRAFT: &str = "amonhen/commit-draft";
 
 /// リポジトリ専用のコミットのテンプレートの置き場所（`<git dir>` から）。
 const COMMIT_TEMPLATE: &str = "amonhen/commit-template";
@@ -5412,6 +5422,26 @@ impl Repository {
                 ops.config_set("commit.template", Some(&self.commit_template_path()))?;
                 ok()
             }
+            Command::CommitDraft => {
+                let text = self
+                    .backend()
+                    .files()
+                    .read(Root::GitDir, COMMIT_DRAFT)?
+                    .map(|b| String::from_utf8_lossy(&b).into_owned());
+                Ok(Response {
+                    ok: true,
+                    info: Some(serde_json::json!({ "text": text })),
+                    ..Default::default()
+                })
+            }
+            Command::SaveCommitDraft { text } => {
+                let files = self.backend().files();
+                match text.trim().is_empty() {
+                    true => files.remove(Root::GitDir, COMMIT_DRAFT)?,
+                    false => files.write(Root::GitDir, COMMIT_DRAFT, text.as_bytes())?,
+                }
+                ok()
+            }
             Command::SaveMerge { path, text, stage } => {
                 let files = self.backend().files();
                 undo.record_files(ops, &format!("Merge {path}"), &[&path], || {
@@ -9894,6 +9924,25 @@ mod tests {
         assert_eq!(
             run(&repo, r#"{"op":"saveCommitTemplate","text":"{issue}: \n"}"#)["ok"],
             true
+        );
+        // 書きかけのメッセージ: 書いて読み、空白だけなら消す。
+        assert_eq!(
+            run(&repo, r#"{"op":"commitDraft"}"#)["info"]["text"],
+            serde_json::Value::Null
+        );
+        let save = |text: &str| {
+            let json = serde_json::json!({"op": "saveCommitDraft", "text": text}).to_string();
+            assert_eq!(run(&repo, &json)["ok"], true);
+        };
+        save("Fix the thing\n\nBody\n");
+        assert_eq!(
+            run(&repo, r#"{"op":"commitDraft"}"#)["info"]["text"],
+            "Fix the thing\n\nBody\n"
+        );
+        save("  \n");
+        assert_eq!(
+            run(&repo, r#"{"op":"commitDraft"}"#)["info"]["text"],
+            serde_json::Value::Null
         );
         let t = run(&repo, r#"{"op":"commitTemplate"}"#);
         assert_eq!(t["info"]["text"], "{issue}: \n");
