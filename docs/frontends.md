@@ -259,7 +259,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Go to Ref | — | — | — | — | n/a | — |  |
 | Several commits selected (range, two, scattered) | ✓ | ✓ | ✓ | ✓ | △ | — | VSCode: With the engine.<br>CLI: `diff <rev> <rev>` for two. |
 | History of several selected refs | ✓ | ✓ | ✓ | ✓ | ✓ | — | CLI: `log --branch` repeated.<br>Windows: Selecting a ref in the sidebar shows its History, and Ctrl+click adds or removes refs; View has All Branches and Current Branch.<br>TUI: Opening a ref selects its commit in History. |
-| Commit menu: checkout, new branch or tag, cherry-pick, revert, copy ID | ✓ | ✓ | ✓ | ✓ | △ | △ | CLI: Via `amonhen run`.<br>TUI: `c`, `b`, `T`, `y` and `v`; no copying the ID. |
+| Commit menu: checkout, new branch or tag, cherry-pick, revert, copy ID | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: Via `amonhen run`.<br>TUI: `c`, `b`, `T`, `y`, `v` and `Y` (copied to the terminal's clipboard with OSC 52). |
 | Edit mode (pick, reword, squash, fixup, drop, edit; drag to reorder) | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: With the engine; without it, one commit at a time.<br>CLI: Via `amonhen run`.<br>TUI: `E`, over the screen; `J` `K` move a row. |
 | Rewrite preview (stacked and pushed branches, expected conflicts) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: Through the daemon. Rebasing another branch gives the conflict estimate instead, as in the app.<br>CLI: `rewrite-preview`. |
 | Shortcuts: Edit Message…, Squash into Previous…, Drop…, Combine N…, drag a commit | ✓ | ✓ | ✓ | ✓ | △ | △ | VSCode: With the engine they open the edit mode; without it they rewrite at once, and there's no Combine N Commits.<br>CLI: Via `amonhen run`.<br>TUI: `e` Edit Message, `F` fixup into the parent and `X` Drop; no Combine N, and merge and rebase are `m` `r` in the sidebar. |
@@ -277,8 +277,8 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Changed files as a tree beside the diff | ✓ | ✓ | ✓ | ✓ | n/a | △ | VSCode: Tree / List above the files.<br>TUI: A flat list above the diff. |
 | File header menu (Blame, File History, copy path, open) | ✓ | ✓ | ✓ | ✓ | n/a | △ | VSCode: Blame, File History and Copy Path on the right-click; Open in VSCode's diff editor.<br>TUI: `B` and `L` for the file in view; no copy path or open. |
 | Switch to the single-file diff | ✓ | ✓ | ✓ | ✓ | n/a | — | VSCode: One File / All Files above the files.<br>Windows: View > All Files in One Diff; when off, the file chosen in the changed files list. |
-| Diff of a selection (range squashed, A..B / A...B, scattered) | ✓ | ✓ | ✓ | ✓ | △ | — | VSCode: With the engine.<br>CLI: `diff <rev> <rev>`. |
-| Actions on a selection (cherry-pick, revert, squash, copy IDs) | ✓ | ✓ | △ | ✓ | △ | — | VSCode: With the engine.<br>CLI: Via `amonhen run`.<br>Windows: Combining consecutive commits edits the message in a dialog, then rewrites at once (no edit mode). |
+| Diff of a selection (range squashed, A..B / A...B, scattered) | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: With the engine.<br>CLI: `diff <rev> <rev>`.<br>TUI: `m` and Shift-↑↓ (or Ctrl- or Alt-click) select; `x` swaps the direction and `.` diffs from the merge base. |
+| Actions on a selection (cherry-pick, revert, squash, copy IDs) | ✓ | ✓ | △ | ✓ | △ | ✓ | VSCode: With the engine.<br>CLI: Via `amonhen run`.<br>Windows: Combining consecutive commits edits the message in a dialog, then rewrites at once (no edit mode).<br>TUI: `y` `v` on the marked commits, `E` opens edit mode with them combined, `Y` copies the IDs, and Save as Patch saves them. |
 | Signature popover | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: A Signature row in the details (status, explanation, signer and key), no popover.<br>TUI: The check in the details, no popover. |
 | Word highlights and syntax colors | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: Syntax colors with the engine, after the diff shows. |
 
@@ -296,7 +296,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 
 | Feature | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
-| Save as Patch (per commit or mbox, cover letter, -v) | ✓ | ✓ | ✓ | ✓ | ✓ | △ | CLI: `format-patch`.<br>TUI: The selected commit only, from the command list; no mbox, cover letter or -v. |
+| Save as Patch (per commit or mbox, cover letter, -v) | ✓ | ✓ | ✓ | ✓ | ✓ | △ | CLI: `format-patch`.<br>TUI: The selected commit, or the marked commits oldest first, from the command list; no mbox, cover letter or -v. |
 | Apply Patch (am / apply, preview, 3-way, --index) | ✓ | ✓ | ✓ | ✓ | ✓ | △ | CLI: `am`, `apply` (`--check`).<br>TUI: From the command list; no preview, 3-way or --index. |
 | Drop patch files on the window | ✓ | ✓ | ✓ | ✓ | n/a | n/a | VSCode: From the Explorer's context menu.<br>TUI: Apply Patch asks for the file's path. |
 | Export Archive (zip / tar.gz / tar, top folder, one folder) | ✓ | ✓ | △ | ✓ | ✓ | △ | VSCode: With the engine; a branch's or tag's right-click, a commit's in History, or the command palette for HEAD.<br>CLI: `archive`.<br>Windows: Format, top folder and one folder (typed as a path) from a commit's menu.<br>TUI: The selected commit, from the command list; the extension picks the format; no choice of the top folder or one folder. |

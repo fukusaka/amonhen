@@ -12,7 +12,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use crate::diff::{DIM, Diff, KeptRows, Scroll, Theme, counts, draw_row_kept, fit_path};
 
 use crate::Clock;
-use crate::history::ago;
+use crate::history::{Marked, ago};
 use crate::loader::Request;
 
 struct File {
@@ -25,9 +25,74 @@ struct File {
     binary: bool,
 }
 
+/// 2 つのコミットを選んだときの、差分の取り方（アプリの ⇄ と「merge-base から」）。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Pair {
+    /// 古い方から新しい方へ（A..B）。
+    #[default]
+    Forward,
+    /// 向きを入れ替える。
+    Reverse,
+    /// 分かれたところから新しい方へ（A...B）。
+    MergeBase,
+}
+
+impl Pair {
+    fn as_str(self) -> &'static str {
+        match self {
+            Pair::Forward => "forward",
+            Pair::Reverse => "reverse",
+            Pair::MergeBase => "mergeBase",
+        }
+    }
+}
+
+/// 出したいもの: 1 つのコミット（か stash）、または History で印をつけたコミット（複数選択）。
+#[derive(Clone, Debug, PartialEq)]
+pub enum Want {
+    Commit {
+        id: Oid,
+        stash: bool,
+    },
+    Selection {
+        /// 窓口での History の番号。
+        history: Value,
+        rows: Vec<u32>,
+        pair: Pair,
+        /// 印をつけたコミット（新しい順）。
+        commits: Vec<Marked>,
+    },
+}
+
+impl Want {
+    /// 頼んだものと届いたものを突き合わせる鍵。
+    fn key(&self) -> String {
+        match self {
+            Want::Commit { id, .. } => id.to_string(),
+            Want::Selection {
+                history,
+                rows,
+                pair,
+                ..
+            } => format!("selection {history} {rows:?} {}", pair.as_str()),
+        }
+    }
+}
+
+/// 複数選択の差分の、頭に並べるもの。
+struct Selected {
+    /// 窓口の答えの `selection`（`kind`: `range`・`pair`・`each`）。
+    how: Value,
+    commits: Vec<Marked>,
+}
+
 struct Commit {
+    /// 頼んだものの鍵（`Want::key`）。
+    key: String,
+    /// 出しているコミット。複数選択では、新しい方の端（Blame・File History をそこで開く）。
     id: Oid,
     info: Value,
+    selected: Option<Selected>,
     files: Vec<File>,
     diff: Diff,
     /// 頭の部分（件名から「Parents」まで）を、幅 `head_width` で組んだもの。
@@ -36,7 +101,7 @@ struct Commit {
 }
 
 impl Commit {
-    fn new(id: Oid, info: Value, diff: &Reply) -> Self {
+    fn new(key: String, id: Oid, info: Value, diff: &Reply) -> Self {
         let files = diff.json["files"]
             .as_array()
             .into_iter()
@@ -51,8 +116,10 @@ impl Commit {
             })
             .collect();
         Self {
+            key,
             id,
             info,
+            selected: None,
             files,
             diff: Diff::new(diff, false),
             head: Vec::new(),
@@ -80,6 +147,10 @@ impl Commit {
             return;
         }
         self.head_width = width;
+        if let Some(selected) = &self.selected {
+            self.head = self.selection_head(selected, width, clock);
+            return;
+        }
         let room = usize::from(width.max(1));
         let plain = Style::new();
         let dim = Style::new().fg(DIM);
@@ -176,6 +247,85 @@ impl Commit {
     }
 }
 
+impl Commit {
+    /// 複数選択の頭: 数・作者・期間・増減、差分の取り方、選んだコミットの一覧（アプリの上のペインと同じ）。
+    fn selection_head(
+        &self,
+        selected: &Selected,
+        width: u16,
+        clock: &Clock,
+    ) -> Vec<(String, Style)> {
+        let room = usize::from(width.max(1));
+        let plain = Style::new();
+        let dim = Style::new().fg(DIM);
+        let commits = &selected.commits;
+        let mut authors: Vec<&str> = commits.iter().map(|c| c.author.as_str()).collect();
+        authors.sort_unstable();
+        authors.dedup();
+        let (added, removed) = self
+            .files
+            .iter()
+            .fold((0, 0), |(a, r), f| (a + f.added, r + f.removed));
+        let mut summary = vec![
+            tr!("{count} commits", count = commits.len()),
+            match authors.len() {
+                1 => tr!("1 author"),
+                n => tr!("{count} authors", count = n),
+            },
+        ];
+        let newest = commits.iter().map(|c| c.time).max().unwrap_or(0);
+        let oldest = commits.iter().map(|c| c.time).min().unwrap_or(0);
+        if newest - oldest >= 60 {
+            summary.push(tr!("over {span}", span = ago(newest, oldest)));
+        }
+        summary.push(format!("+{added} −{removed}"));
+        let mut head: Vec<(String, Style)> = wrap(&summary.join(" · "), room)
+            .into_iter()
+            .map(|l| (l, plain.add_modifier(Modifier::BOLD)))
+            .collect();
+        let short = |key: &str| -> String {
+            let id = selected.how[key].as_str().unwrap_or("");
+            id[..id.len().min(8)].to_owned()
+        };
+        let how = match selected.how["kind"].as_str() {
+            Some("range") => match selected.how["base"].as_str() {
+                Some(_) => tr!(
+                    "The changes of the {count} commits together, from {base} to {tip} (as if squashed)",
+                    count = selected.how["count"].as_u64().unwrap_or(0),
+                    base = short("base"),
+                    tip = short("tip")
+                ),
+                None => tr!(
+                    "The changes of the {count} commits together, up to {tip} (as if squashed)",
+                    count = selected.how["count"].as_u64().unwrap_or(0),
+                    tip = short("tip")
+                ),
+            },
+            Some("pair") => tr!(
+                "From {from} to {to}. x swaps the direction; . diffs from where they diverged",
+                from = short("from"),
+                to = short("to")
+            ),
+            _ => tr!("Each commit's changes, under the file and the commit"),
+        };
+        head.extend(wrap(&how, room).into_iter().map(|l| (l, dim)));
+        head.push((String::new(), plain));
+        for commit in commits {
+            let id = commit.id.to_string();
+            let line = format!(
+                "{} {}  {}, {}",
+                &id[..8],
+                commit.subject,
+                commit.author,
+                tr!("{time} ago", time = ago(clock.now, commit.time))
+            );
+            head.push((crate::history::fit(&line, room).into_owned(), plain));
+        }
+        head.push((String::new(), plain));
+        head
+    }
+}
+
 /// 署名の検証の結果（git の `%G?`）を、アプリと同じ短い言葉に。正しい署名でも、鍵の信用度が足りなければ
 /// Untrusted key、鍵のメールアドレスがどれもコミッターと違えば Unverified signer。
 fn signature_label(status: &str, check: &Value, kind: &str) -> String {
@@ -209,15 +359,13 @@ fn signature_label(status: &str, check: &Value, kind: &str) -> String {
 
 #[derive(Default)]
 pub struct Details {
-    /// 出したいコミット。
-    wanted: Option<Oid>,
-    /// 出したいコミットは stash（stash としての差分を出す）。
-    wanted_stash: bool,
-    /// 頼んで、答えを待っているコミット。
-    loading: Option<Oid>,
+    /// 出したいもの。
+    wanted: Option<Want>,
+    /// 頼んで、答えを待っているものの鍵。
+    loading: Option<String>,
     commit: Option<Commit>,
-    /// 読めなかったコミットと、その理由。
-    failed: Option<(Oid, String)>,
+    /// 読めなかったものの鍵と、その理由。
+    failed: Option<(String, String)>,
     scroll: Scroll,
     /// 前のフレームで組み立てた差分の行。
     kept: KeptRows,
@@ -228,29 +376,42 @@ pub struct Details {
 }
 
 impl Details {
-    /// 出すコミットを替える。替わったら true。
-    pub fn want(&mut self, id: Oid, stash: bool) -> bool {
-        if self.wanted == Some(id) {
+    /// 出すものを替える。替わったら true。
+    pub fn want(&mut self, want: Want) -> bool {
+        if self.wanted.as_ref().is_some_and(|w| w.key() == want.key()) {
             return false;
         }
-        self.wanted = Some(id);
-        self.wanted_stash = stash;
+        self.wanted = Some(want);
         true
     }
 
     /// 頼むことがあれば、その中身（答えを待っている間は、次を頼まない）。
     pub fn request(&mut self) -> Option<Request> {
-        let wanted = self.wanted?;
+        let wanted = self.wanted.as_ref()?;
+        let key = wanted.key();
         if self.loading.is_some()
-            || self.commit.as_ref().is_some_and(|c| c.id == wanted)
-            || self.failed.as_ref().is_some_and(|f| f.0 == wanted)
+            || self.commit.as_ref().is_some_and(|c| c.key == key)
+            || self.failed.as_ref().is_some_and(|f| f.0 == key)
         {
             return None;
         }
-        self.loading = Some(wanted);
-        Some(Request::Commit {
-            id: wanted.to_string(),
-            stash: self.wanted_stash,
+        self.loading = Some(key.clone());
+        Some(match wanted {
+            Want::Commit { id, stash } => Request::Commit {
+                id: id.to_string(),
+                stash: *stash,
+            },
+            Want::Selection {
+                history,
+                rows,
+                pair,
+                ..
+            } => Request::Selection {
+                key,
+                history: history.clone(),
+                rows: rows.clone(),
+                pair: pair.as_str(),
+            },
         })
     }
 
@@ -262,16 +423,27 @@ impl Details {
         clock: &Clock,
     ) -> Option<Request> {
         self.loading = None;
-        let id = Oid::from_hex(id)?;
         // 待つ間に選択が動いていたら捨てる（`request` が次を頼む）。
-        if self.wanted != Some(id) {
-            return None;
-        }
+        let wanted = self.wanted.as_ref().filter(|w| w.key() == id)?;
         match result {
             Ok((info, diff)) => {
                 let view = diff.json["view"].clone();
+                let (oid, selected) = match wanted {
+                    Want::Commit { id, .. } => (*id, None),
+                    Want::Selection { commits, .. } => {
+                        let how = diff.json["selection"].clone();
+                        // Blame・File History は、新しい方の端で開く。
+                        let tip = ["tip", "to"]
+                            .iter()
+                            .find_map(|k| how[k].as_str().and_then(Oid::from_hex))
+                            .or(commits.first().map(|c| c.id))?;
+                        let commits = commits.clone();
+                        (tip, Some(Selected { how, commits }))
+                    }
+                };
                 // 行数が決まるよう、頭の部分は届いたときに組む。
-                let mut commit = Commit::new(id, info, &diff);
+                let mut commit = Commit::new(id.to_owned(), oid, info, &diff);
+                commit.selected = selected;
                 commit.build_head(self.width, clock);
                 self.commit = Some(commit);
                 self.failed = None;
@@ -279,12 +451,12 @@ impl Details {
                 self.scroll.left = 0;
                 self.jumped = None;
                 (!view.is_null()).then(|| Request::Syntax {
-                    id: id.to_string(),
+                    id: id.to_owned(),
                     of: serde_json::json!({"view": view}),
                 })
             }
             Err(error) => {
-                self.failed = Some((id, error));
+                self.failed = Some((id.to_owned(), error));
                 None
             }
         }
@@ -294,7 +466,7 @@ impl Details {
         let (Some(commit), Some(reply)) = (&mut self.commit, reply) else {
             return;
         };
-        if Oid::from_hex(id) == Some(commit.id) {
+        if commit.key == id {
             commit.diff.set_syntax(reply);
         }
     }
@@ -377,7 +549,18 @@ impl Details {
                 .position(|line| top <= line && line < bottom)
                 .unwrap_or_else(|| lines.filter(|&line| line < top).count().saturating_sub(1))
         });
-        Some((commit.files.get(index)?.path.as_str(), commit.id))
+        let path = commit.files.get(index)?.path.as_str();
+        // 飛び飛びの選択では、見出しが「パス — 短い ID」なので、そのコミットのファイルとして開く。
+        if let Some(selected) = &commit.selected
+            && let Some((path, short)) = path.rsplit_once(" — ")
+            && let Some(of) = selected
+                .commits
+                .iter()
+                .find(|c| c.id.to_string().starts_with(short))
+        {
+            return Some((path, of.id));
+        }
+        Some((path, commit.id))
     }
 
     /// 次（`forward`）か前のファイルの見出しを一番上に。
@@ -426,7 +609,7 @@ impl Details {
         let failed = self
             .failed
             .as_ref()
-            .filter(|f| Some(f.0) == self.wanted)
+            .filter(|f| self.wanted.as_ref().is_some_and(|w| w.key() == f.0))
             .map(|f| f.1.as_str());
         let head = commit.head.len() as u32;
         let before = commit.before_diff();

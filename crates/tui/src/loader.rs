@@ -34,9 +34,19 @@ pub enum Request {
     Lineage { history: Value, row: u32 },
     /// コミット（16 進の ID）が History の何行目か。
     RowOf { history: Value, id: String },
+    /// 印をつけていたコミット（16 進の ID）が、読み直した History の何行目か。
+    MarksOf { history: Value, ids: Vec<String> },
     /// コミットの詳細（作者・メッセージなど）と差分。`id` は 16 進の ID。`stash` なら、stash としての差分
     /// （作ったときの HEAD から、作業中の変更まで）。
     Commit { id: String, stash: bool },
+    /// History で印をつけたコミット（行）の差分（`commitDiff` の rows・pair）。答えは `Loaded::Commit` で、`id` は
+    /// `key`（詳細のものは null）。
+    Selection {
+        key: String,
+        history: Value,
+        rows: Vec<u32>,
+        pair: &'static str,
+    },
     /// 差分の構文の色。`of` は `{"view": …}`（`commitDiff` の答えのもの）か `{"diff": …}`（`workingDiff` の
     /// もの）。`id` は、答えを見分ける名前。
     Syntax { id: String, of: Value },
@@ -115,6 +125,8 @@ pub enum Loaded {
     },
     /// コミットの行（History になければ `None`）。
     RowOf(Option<u32>),
+    /// 印をつけていたコミットの行（`MarksOf` の順。なければ `None`）。
+    MarksOf(Vec<Option<u32>>),
     Commit {
         id: String,
         /// `commitInfo` の `info` と、`commitDiff` の答え。だめなら理由。
@@ -179,6 +191,7 @@ impl Loader {
             Request::Open { .. }
             | Request::Rows { .. }
             | Request::RowOf { .. }
+            | Request::MarksOf { .. }
             | Request::Lineage { .. } => &self.rows,
             Request::Search { .. } => &self.search,
             Request::Run { .. }
@@ -187,7 +200,9 @@ impl Loader {
             | Request::RecentMessages
             | Request::AddToGitignore { .. }
             | Request::DraftOrTemplate { .. } => &self.operations,
-            Request::Commit { .. } | Request::Syntax { .. } => &self.details,
+            Request::Commit { .. } | Request::Selection { .. } | Request::Syntax { .. } => {
+                &self.details
+            }
             Request::Status
             | Request::Reflog { .. }
             | Request::File { .. }
@@ -333,6 +348,29 @@ fn load(front: &dyn Front, request: Request, events: &Sender<Event>) -> Result<L
                 .and_then(|r| r.json["row"].as_u64())
                 .map(|row| row as u32),
         ),
+        Request::MarksOf { history, ids } => Loaded::MarksOf(
+            ids.iter()
+                .map(|id| {
+                    front
+                        .call(json!({"op": "historyRowOf", "history": history, "id": id}))
+                        .ok()
+                        .and_then(|r| r.json["row"].as_u64())
+                        .map(|row| row as u32)
+                })
+                .collect(),
+        ),
+        Request::Selection {
+            key,
+            history,
+            rows,
+            pair,
+        } => Loaded::Commit {
+            id: key,
+            result: front
+                .call(json!({"op": "commitDiff", "history": history, "rows": rows, "pair": pair}))
+                .map(|diff| (Value::Null, diff))
+                .map_err(|e| e.to_string()),
+        },
         Request::Commit { id, stash } => {
             let result = commit(front, &id, stash).map_err(|e| e.to_string());
             Loaded::Commit { id, result }
