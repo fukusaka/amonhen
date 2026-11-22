@@ -4862,6 +4862,8 @@ impl App {
                 self.focus = Focus::Side;
                 true
             }
+            // range-diff で、変わらなかった組を出すか（アプリの Changes Only）。
+            KeyCode::Char('c') => self.file.toggle_changes_only(),
             // File History で、作業ツリーのファイルをその版に戻す（確かめてから。Undo で元に戻る）。
             // 同じファイルの Blame（今の HEAD の）と File History を切り替える。
             KeyCode::Char('B' | 'L') if self.file.file_path().is_some() => {
@@ -5201,6 +5203,7 @@ impl App {
                     "V",
                     tr!("In File History: restore the file to that version"),
                 ),
+                ("c", tr!("In a range diff: changes only, or every pair")),
                 ("Esc", tr!("Go back")),
             ],
             (View::History | View::Reflog | View::File, Focus::Side) => vec![

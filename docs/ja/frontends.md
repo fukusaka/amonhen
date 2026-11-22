@@ -211,7 +211,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 
 | 機能 | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
-| Range Diff の表示（= ! < >・Changes Only・差分の差分） | ✓ | ✓ | ✓ | ✓ | ✓ | △ | CLI: `range-diff`。<br>TUI: Compare with Previous Version からだけで、Blame・File History と同じ画面に出す。Changes Only はない。 |
+| Range Diff の表示（= ! < >・Changes Only・差分の差分） | ✓ | ✓ | ✓ | ✓ | ✓ | △ | CLI: `range-diff`。<br>TUI: Compare with Previous Version からだけで、Blame・File History と同じ画面に出す。Changes Only は `c`。 |
 | Compare with Previous Version | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `range-diff --previous`。<br>TUI: 命令の一覧から。 |
 | History の 2 つのコミット・Reflog の行を 2 つの版として比べる | ✓ | ✓ | ✓ | ✓ | ✓ | — | CLI: どの範囲でも。 |
 | 範囲を直して比べ直す | ✓ | ✓ | ✓ | ✓ | ✓ | — |  |

@@ -211,7 +211,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 
 | Feature | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
-| Range Diff view (= ! < >, Changes Only, diff of diffs) | ✓ | ✓ | ✓ | ✓ | ✓ | △ | CLI: `range-diff`.<br>TUI: Only through Compare with Previous Version, in the Blame and File History view; no Changes Only. |
+| Range Diff view (= ! < >, Changes Only, diff of diffs) | ✓ | ✓ | ✓ | ✓ | ✓ | △ | CLI: `range-diff`.<br>TUI: Only through Compare with Previous Version, in the Blame and File History view; `c` for Changes Only. |
 | Compare with Previous Version | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `range-diff --previous`.<br>TUI: In the command list. |
 | Two History commits or a Reflog entry compared as two versions | ✓ | ✓ | ✓ | ✓ | ✓ | — | CLI: Any ranges. |
 | Editable ranges | ✓ | ✓ | ✓ | ✓ | ✓ | — |  |

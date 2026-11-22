@@ -2808,6 +2808,50 @@ fn compare_with_the_previous_version() {
     assert!(below.contains("Take the lane from the trunk"));
 }
 
+/// range-diff で `c`: 変わらなかった組（`=`）を出さない（アプリの Changes Only）。もう一度で戻る
+#[test]
+fn range_diff_shows_changes_only() {
+    let dir = tempfile::tempdir().unwrap();
+    changed(dir.path());
+    std::fs::write(dir.path().join("extra.txt"), "extra\n").unwrap();
+    git(dir.path(), BASE, &["add", "."]);
+    git(
+        dir.path(),
+        BASE + DAY * 4,
+        &["commit", "-q", "-m", "Add extra"],
+    );
+    let before = git_out(dir.path(), &["rev-parse", "HEAD"]);
+    // 1 つ前のコミットだけを変えて、その上に同じものを載せ直す。
+    git(dir.path(), BASE, &["checkout", "-q", "--detach", "HEAD~1"]);
+    std::fs::write(dir.path().join("notes.txt"), "two\n").unwrap();
+    git(
+        dir.path(),
+        BASE + DAY * 5,
+        &["commit", "-q", "-a", "--amend", "--no-edit"],
+    );
+    git(dir.path(), BASE + DAY * 5, &["cherry-pick", before.trim()]);
+    git(dir.path(), BASE, &["checkout", "-q", "-B", "main"]);
+    let same = |text: &str| {
+        text.lines()
+            .skip(1)
+            .filter_map(|l| column(l, 1))
+            .any(|l| l.contains(" = "))
+    };
+    let all = amonhen_tui::snapshot(open(dir.path()), 160, 30, clock(), ":compare\n").unwrap();
+    println!("{all}");
+    assert!(same(&all), "{all}");
+    let changes = amonhen_tui::snapshot(open(dir.path()), 160, 30, clock(), ":compare\nc").unwrap();
+    println!("{changes}");
+    assert!(!same(&changes), "{changes}");
+    assert!(changes.contains("(changes only)"), "{changes}");
+    assert!(
+        changes.contains("Take the lane from the trunk"),
+        "{changes}"
+    );
+    let back = amonhen_tui::snapshot(open(dir.path()), 160, 30, clock(), ":compare\ncc").unwrap();
+    assert!(same(&back), "{back}");
+}
+
 /// コマンドの一覧の Prune Worktrees: フォルダのなくなった worktree の記録を片付ける（キーはない）
 #[test]
 fn prune_worktrees_from_the_command_list() {
