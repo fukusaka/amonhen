@@ -155,6 +155,12 @@ enum Naming {
     ArchiveFolder,
     /// bundle に入れない基点（受け取る側が持っているコミット）。
     BundleBase,
+    /// worktree をロックする理由（始まりは worktree の場所）。
+    WorktreeLockReason,
+    /// worktree のフォルダの移し先（始まりは今の場所）。
+    WorktreeMove,
+    /// 手で移した worktree のフォルダの今の場所（始まりは記録にある場所）。
+    WorktreeLocate,
     /// 直すリモートの URL（始まりは前の名前、出し方は新しい名前）。
     RemoteEditUrl,
     /// 選んでいるコミットを書き出すアーカイブのファイル（この機械の）。
@@ -500,6 +506,8 @@ pub struct App {
     archive_folder: Option<(String, String)>,
     /// bundle に何を入れるかを選んでいる間の、書くファイル（`a` で基点を聞く）。
     bundle_save: Option<String>,
+    /// ロックするかを聞いている worktree（`r` で理由を聞く）。
+    worktree_lock: Option<String>,
     /// 打っている名前が何のものか。
     naming: Naming,
     /// git や ssh から尋ねられていること（先頭を画面で聞いている）と、打った答え。
@@ -634,6 +642,7 @@ impl App {
             patch_version: None,
             archive_folder: None,
             bundle_save: None,
+            worktree_lock: None,
             naming: Naming::Branch,
             #[cfg(unix)]
             questions: std::collections::VecDeque::new(),
@@ -1493,6 +1502,17 @@ impl App {
             self.dirty = true;
             return;
         }
+        // worktree をロックする前の `r`: 理由を打つ。
+        if self.choices.is_some()
+            && let Some(path) = self.worktree_lock.take()
+            && key.code == KeyCode::Char('r')
+        {
+            self.choices = None;
+            self.naming = Naming::WorktreeLockReason;
+            self.typing_branch = Some((path, String::new(), String::new()));
+            self.dirty = true;
+            return;
+        }
         // bundle を書く前の `a`: 入れない基点を打つ（初めは今のブランチの上流）。
         if self.choices.is_some()
             && let Some(file) = self.bundle_save.take()
@@ -1881,6 +1901,21 @@ impl App {
                                 self.ask_bundle(&local_path(name));
                                 return;
                             }
+                            Naming::WorktreeLockReason => (
+                                "lockWorktree",
+                                tr!("Locking the worktree…"),
+                                json!({"op": "worktreeLock", "path": start, "reason": name}),
+                            ),
+                            Naming::WorktreeMove => (
+                                "moveWorktree",
+                                tr!("Moving the worktree…"),
+                                json!({"op": "worktreeMove", "path": start, "to": local_path(name)}),
+                            ),
+                            Naming::WorktreeLocate => (
+                                "repairWorktree",
+                                tr!("Reconnecting the worktree…"),
+                                json!({"op": "worktreeRepair", "paths": [local_path(name)]}),
+                            ),
                             Naming::BundleBase => {
                                 let Some(file) = self.bundle_save.take() else {
                                     return;
@@ -2595,6 +2630,10 @@ impl App {
             }
             "cleanUp" => self.notice = Some(tr!("Deleted the branches")),
             "addRemote" => self.notice = Some(tr!("Added the remote")),
+            "lockWorktree" => self.notice = Some(tr!("Locked the worktree")),
+            "unlockWorktree" => self.notice = Some(tr!("Unlocked the worktree")),
+            "moveWorktree" => self.notice = Some(tr!("Moved the worktree")),
+            "repairWorktree" => self.notice = Some(tr!("Reconnected the worktree")),
             "fastForward" => self.notice = Some(tr!("Fast-forwarded")),
             "editRemote" => self.notice = Some(tr!("Changed the remote")),
             "pushTag" => self.notice = Some(tr!("Pushed the tag")),
@@ -4677,6 +4716,66 @@ impl App {
         self.dirty = true;
     }
 
+    /// worktree の行の `L`（ロックする・外す）と `n`（フォルダを移す。見つからなければ今の場所を聞いてつなぎ直す）。
+    /// アプリの worktree のメニューの Lock・Unlock・Move…・Locate…。
+    fn worktree_key(&mut self, code: KeyCode) -> bool {
+        let Some(("worktree", path, _)) = self.sidebar.picked_ref() else {
+            return false;
+        };
+        let path = path.to_owned();
+        let (locked, missing, main) = self.sidebar.worktree_state(&path);
+        match code {
+            KeyCode::Char('L') if locked => {
+                self.confirm = Some((
+                    tr!("Unlock the worktree at {path}?", path = path),
+                    tr!("unlock"),
+                    Request::Run {
+                        name: "unlockWorktree",
+                        command: json!({"op": "worktreeUnlock", "path": path}),
+                    },
+                ));
+            }
+            KeyCode::Char('L') => {
+                let lock = Request::Run {
+                    name: "lockWorktree",
+                    command: json!({"op": "worktreeLock", "path": path, "reason": null}),
+                };
+                // 選ぶ前に横取りして、理由を聞く（中身は送らない）。
+                self.worktree_lock = Some(path.clone());
+                self.choices = Some((
+                    tr!(
+                        "Lock the worktree at {path}? git then won’t prune, remove or move it.",
+                        path = path
+                    ),
+                    vec![
+                        ('y', tr!("lock"), lock),
+                        ('r', tr!("with a reason…"), Request::Status),
+                    ],
+                ));
+            }
+            KeyCode::Char('n') if missing => {
+                self.naming = Naming::WorktreeLocate;
+                self.typing_branch = Some((path.clone(), path.clone(), path));
+            }
+            KeyCode::Char('n') if main => {
+                self.error = Some(tr!("The main worktree can’t be moved"));
+            }
+            KeyCode::Char('n') if self.sidebar.picked_is_current() => {
+                self.error = Some(tr!("This worktree is the one that is open"));
+            }
+            KeyCode::Char('n') if locked => {
+                self.error = Some(tr!("The worktree is locked: unlock it (L) first"));
+            }
+            KeyCode::Char('n') => {
+                self.naming = Naming::WorktreeMove;
+                self.typing_branch = Some((path.clone(), path.clone(), path));
+            }
+            _ => return false,
+        }
+        self.dirty = true;
+        true
+    }
+
     fn stash_key(&mut self, code: KeyCode) -> bool {
         // worktree の行の `x` は、その worktree を消す。先に変更の数を読み、あればそれごと消える（`--force`）と書いて
         // 確かめる（アプリと同じ）。
@@ -4935,6 +5034,11 @@ impl App {
                 });
                 true
             }
+            KeyCode::Char('L' | 'n')
+                if matches!(self.sidebar.picked_ref(), Some(("worktree", _, _))) =>
+            {
+                self.worktree_key(code)
+            }
             KeyCode::Char('a' | 'o' | 'x') => self.stash_key(code),
             KeyCode::Char('D') => self.ask_delete(),
             KeyCode::Char('n') => self.ask_rename(),
@@ -5010,7 +5114,10 @@ impl App {
                     "b",
                     tr!("On a stash: a branch where it was made, with it applied"),
                 ),
-                ("x", tr!("On a worktree: remove it")),
+                (
+                    "x L n",
+                    tr!("On a worktree: remove, lock or unlock, move (or locate) it"),
+                ),
                 (
                     "e x X",
                     tr!("On a remote branch: edit its remote (name, URL), remove it, prune it"),
@@ -6302,6 +6409,11 @@ impl App {
                     Naming::PatchVersion => tr!("Version of the patches (-v): {name}", name = name),
                     Naming::ArchiveFolder => {
                         tr!("Export only the folder (from the top): {name}", name = name)
+                    }
+                    Naming::WorktreeLockReason => tr!("Reason for the lock: {name}", name = name),
+                    Naming::WorktreeMove => tr!("Move the worktree to: {name}", name = name),
+                    Naming::WorktreeLocate => {
+                        tr!("Where its folder is now: {name}", name = name)
                     }
                     Naming::BundleBase => tr!(
                         "Leave out what the receiver has, up to (a branch or commit): {name}",

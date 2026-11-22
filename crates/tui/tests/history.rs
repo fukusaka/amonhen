@@ -2917,6 +2917,58 @@ fn a_worktree_is_removed_from_the_sidebar() {
     );
 }
 
+/// サイドバーの worktree の行で、`L` でロックし・外し、`n` でフォルダを移す（見つからなければ今の場所を聞いて
+/// つなぎ直す）
+#[test]
+fn lock_move_and_locate_a_worktree() {
+    let dir = tempfile::tempdir().unwrap();
+    let main = dir.path().join("main");
+    std::fs::create_dir(&main).unwrap();
+    merged(&main);
+    let other = dir.path().join("other");
+    git(
+        &main,
+        BASE,
+        &["worktree", "add", "-q", other.to_str().unwrap(), "topic"],
+    );
+    let list = || git_out(&main, &["worktree", "list", "--porcelain"]);
+    // 一番下の行が other。
+    let asked = amonhen_tui::snapshot(open(&main), 200, 16, clock(), "0GL").unwrap();
+    println!("{asked}");
+    assert!(
+        asked.contains(
+            "git then won’t prune, remove or move it.   y lock   r with a reason…   n cancel"
+        ),
+        "{asked}"
+    );
+    amonhen_tui::snapshot(open(&main), 200, 16, clock(), "0GLrtravelling\n").unwrap();
+    assert!(list().contains("locked travelling"), "{}", list());
+    let locked = amonhen_tui::snapshot(open(&main), 200, 16, clock(), "0Gn").unwrap();
+    assert!(locked.contains("other (topic) · locked"), "{locked}");
+    assert!(locked.contains("The worktree is locked"), "{locked}");
+    amonhen_tui::snapshot(open(&main), 200, 16, clock(), "0GLy").unwrap();
+    assert!(!list().contains("locked"), "{}", list());
+    // 移す。
+    let moved = dir.path().join("moved");
+    let keys = format!("0Gn\x15{}\n", moved.display());
+    amonhen_tui::snapshot(open(&main), 200, 16, clock(), &keys).unwrap();
+    assert!(moved.join(".git").exists() && !other.exists());
+    // 手で移すと、見つからない印が付く。`n` で今の場所を教えて、つなぎ直す。
+    let again = dir.path().join("again");
+    std::fs::rename(&moved, &again).unwrap();
+    let missing = amonhen_tui::snapshot(open(&main), 200, 16, clock(), "").unwrap();
+    assert!(missing.contains("moved (topic) · missing"), "{missing}");
+    let keys = format!("0Gn\x15{}\n", again.display());
+    let done = amonhen_tui::snapshot(open(&main), 200, 16, clock(), &keys).unwrap();
+    println!("{done}");
+    assert!(!done.contains("· missing"), "{done}");
+    assert!(
+        list().contains(again.file_name().unwrap().to_str().unwrap()),
+        "{}",
+        list()
+    );
+}
+
 /// 上流のないブランチの `P` は、リモートに同じ名前で publish して上流にする
 #[test]
 fn push_publishes_a_branch_without_an_upstream() {

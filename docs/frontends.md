@@ -399,7 +399,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | The edited worktree (✎) and switching it | ✓ | ✓ | △ | ✓ | n/a | ✓ | VSCode: Switches the repository the extension works on; one outside the workspace isn't added to the Source Control view.<br>CLI: Works on the worktree it runs in.<br>Windows: Choosing a worktree (or Edit This Worktree) reopens the window on it at the same place and page, since only the front tab's repository is open.<br>TUI: Enter on another worktree reopens the TUI there. |
 | New Worktree… (from a branch or commit) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | TUI: `w` on a local branch, or in History with a new branch at the selected commit. |
 | Remove Worktree (asks, `--force` with changes) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | TUI: `x` after asking, naming the changes it removes with `--force`. |
-| Lock and unlock, move, locate a moved folder (repair) | ✓ | ✓ | ✓ | ✓ | ✓ | — | VSCode: The worktree's right-click; the worktree being edited moves only after switching to another.<br>CLI: `worktree lock`, `unlock`, `move`, `repair`. |
+| Lock and unlock, move, locate a moved folder (repair) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: The worktree's right-click; the worktree being edited moves only after switching to another.<br>CLI: `worktree lock`, `unlock`, `move`, `repair`.<br>TUI: `L` and `n` on a worktree in the sidebar. |
 | Prune worktrees | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | TUI: In the command list. |
 | A worktree's folder opens its repository with it edited | ✓ | ✓ | △ | ✓ | n/a | ✓ | VSCode: Opening the folder works on that worktree, with the others listed.<br>Windows: The folder opens in its own window with that worktree ✎ and the others listed. |
 
