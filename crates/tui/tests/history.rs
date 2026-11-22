@@ -3159,16 +3159,26 @@ fn file_history_restores_a_version() {
     std::fs::write(dir.path().join("lane.rs"), format!("{now}// later\n")).unwrap();
     let edited = read();
     // 2 行目が最初のコミット（Start）。
-    let asked = amonhen_tui::snapshot(open(dir.path()), 200, 12, clock(), "1LjV").unwrap();
+    let asked = amonhen_tui::snapshot(open(dir.path()), 260, 12, clock(), "1LjV").unwrap();
     println!("{asked}");
-    assert!(asked.contains("Restore lane.rs to its version at "));
-    assert!(asked.contains("y restore   n cancel"));
+    assert!(asked.contains("Restore lane.rs from "), "{asked}");
+    assert!(
+        asked.contains("y this version   s this version, staged too   b as it was before   B as it was before, staged too   n cancel"),
+        "{asked}"
+    );
     assert_eq!(read(), edited);
     let restored = amonhen_tui::snapshot(open(dir.path()), 200, 12, clock(), "1LjVy").unwrap();
     println!("{restored}");
     assert!(restored.contains("Restored the version"));
     assert_eq!(read(), git_out(dir.path(), &["show", "HEAD~1:lane.rs"]));
     // Undo で、戻す前の中身に。
+    amonhen_tui::snapshot(open(dir.path()), 200, 12, clock(), "uy").unwrap();
+    assert_eq!(read(), edited);
+    // 1 行目（最後のコミット）の前の版に、stage もして戻す。
+    amonhen_tui::snapshot(open(dir.path()), 200, 12, clock(), "1LVB").unwrap();
+    let before = git_out(dir.path(), &["show", "HEAD~1:lane.rs"]);
+    assert_eq!(read(), before);
+    assert_eq!(git_out(dir.path(), &["show", ":lane.rs"]), before);
     amonhen_tui::snapshot(open(dir.path()), 200, 12, clock(), "uy").unwrap();
     assert_eq!(read(), edited);
     // Blame では、File History を開くように知らせる。

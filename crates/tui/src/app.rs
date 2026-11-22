@@ -4543,18 +4543,35 @@ impl App {
                             then = then
                         ));
                     }
+                    // アプリと同じく、その版か、その前の版（そのコミットの親の）に戻す。stage もするかを選べる。その版に
+                    // ないファイルは消える。
                     Some((id, path, _)) => {
-                        self.confirm = Some((
+                        let restore = |rev: String, staged: bool| Request::Run {
+                            name: "restoreFile",
+                            command: json!({"op": "restoreFiles", "rev": rev, "paths": [path],
+                                "staged": staged}),
+                        };
+                        let before = format!("{id}^");
+                        self.choices = Some((
                             tr!(
-                                "Restore {path} to its version at {commit}? Undo brings back what it has now.",
+                                "Restore {path} from {commit}? A file that version doesn’t have is deleted. Undo brings back what it has now.",
                                 path = path,
                                 commit = &id[..id.len().min(8)]
                             ),
-                            tr!("restore"),
-                            Request::Run {
-                                name: "restoreFile",
-                                command: json!({"op": "restoreFiles", "rev": id, "paths": [path]}),
-                            },
+                            vec![
+                                ('y', tr!("this version"), restore(id.clone(), false)),
+                                (
+                                    's',
+                                    tr!("this version, staged too"),
+                                    restore(id.clone(), true),
+                                ),
+                                ('b', tr!("as it was before"), restore(before.clone(), false)),
+                                (
+                                    'B',
+                                    tr!("as it was before, staged too"),
+                                    restore(before, true),
+                                ),
+                            ],
                         ));
                     }
                     None => self.error = Some(tr!("Open File History (L) to restore a version")),
