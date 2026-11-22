@@ -156,7 +156,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Keys and Values（git config の表、Basic / Customized / All、Combined / Levels） | ✓ | ✓ | ✓ | ✓ | △ | n/a | VSCode: Basic / Customized / All、Combined / Levels と検索。値は入力欄で変える。<br>CLI: `amonhen run`（`configList`・`configSet`）から。 |
 | 要る git の版を添えて行を無効にする | ✓ | ✓ | ✓ | ✓ | n/a | n/a | Windows: 取得とフォルダの行（partial clone・sparse checkout・maintenance） |
 | git の行にリポジトリの形（shallow・partial・sparse・maintenance） | ✓ | ✓ | ✓ | ✓ | △ | n/a | CLI: `status` が shallow・partial・sparse を添える。 |
-| 取得とフォルダ: shallow clone の履歴を取り足す（数・日付まで・すべて） | ✓ | ✓ | △ | ✓ | △ | — | CLI: `amonhen run`（`deepen`・`unshallow`）から。<br>Windows: 日付は YYYY-MM-DD で打つ（暦はない） |
+| 取得とフォルダ: shallow clone の履歴を取り足す（数・日付まで・すべて） | ✓ | ✓ | ✓ | ✓ | △ | — | CLI: `amonhen run`（`deepen`・`unshallow`）から。 |
 | 取得とフォルダ: partial clone の中身をすべて取る（git 2.36） | ✓ | ✓ | ✓ | ✓ | △ | — | CLI: `amonhen run`（`fetchAllContents`）から。 |
 | 取得とフォルダ: sparse checkout のフォルダを HEAD の木から選ぶ（git 2.25） | ✓ | ✓ | △ | ✓ | △ | — | VSCode: フォルダは HEAD の木を一覧でたどって選ぶ。<br>CLI: `amonhen run`（`sparseCheckout`・`treeFolders`）から。<br>Windows: フォルダは HEAD の木を一覧でたどって選ぶ（↑ と →） |
 | 取得とフォルダ: git maintenance の切り替え（git 2.31） | ✓ | ✓ | ✓ | ✓ | △ | n/a | CLI: `amonhen run`（`maintenance`）から。 |
@@ -253,7 +253,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 表示: 順・1 行・行の項目・マージ済みを畳む・祖先を目立たせる | ✓ | ✓ | ✓ | ✓ | △ | △ | macOS・GTK4: merge を 1 つずつたたむ（+N の札・右クリック・←/→）。リポジトリごとに覚える。<br>VSCode: 順・畳む・目立たせるはエンジンで。<br>CLI: `--topo-order`・`--fold`。<br>Windows: View に。<br>TUI: `o` で順、`z` で畳む（その回だけ）。いつも 1 行で、行の項目は選べない。 |
 | アバター | ✓ | ✓ | ✓ | — | n/a | — |  |
 | コミットの署名の印 | ✓ | ✓ | ✓ | ✓ | △ | △ | VSCode: エンジンがあるとき。<br>CLI: `show` に出る。<br>TUI: 詳細にだけ出す。 |
-| コミットごとの CI の状態とポップオーバー | ✓ | ✓ | △ | — | — | — | Windows: チェックは吹き出しでなくダイアログに出す。 |
+| コミットごとの CI の状態とポップオーバー | ✓ | ✓ | ✓ | — | — | — |  |
 | worktree の HEAD のラベル（✎ ⌂ ⑂・変更の数） | ✓ | ✓ | ✓ | ✓ | — | — |  |
 | Go to HEAD・Parent・Child | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: History の上の HEAD のボタン、コミットのメニューの Go to Parent・Go to Child、詳細の親と子へのリンク（エンジンがあるとき）。<br>TUI: `@`・`]`・`[`。 |
 | Go to Ref | — | — | — | — | n/a | — |  |

@@ -156,7 +156,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Keys and Values (git config table, Basic / Customized / All, Combined / Levels) | ✓ | ✓ | ✓ | ✓ | △ | n/a | VSCode: Basic / Customized / All, Combined / Levels and search; values are edited in an input box.<br>CLI: Via `amonhen run` (`configList`, `configSet`). |
 | Rows disabled with the git version needed | ✓ | ✓ | ✓ | ✓ | n/a | n/a | Windows: Fetching and Folders' rows (partial clone, sparse checkout, maintenance) |
 | Repository's form on the git line (shallow, partial, sparse, maintenance) | ✓ | ✓ | ✓ | ✓ | △ | n/a | CLI: `status` notes shallow, partial and sparse repositories. |
-| Fetching and Folders: fetch more of a shallow clone (a count, up to a date, all) | ✓ | ✓ | △ | ✓ | △ | — | CLI: Via `amonhen run` (`deepen`, `unshallow`).<br>Windows: The date is typed as YYYY-MM-DD (no calendar) |
+| Fetching and Folders: fetch more of a shallow clone (a count, up to a date, all) | ✓ | ✓ | ✓ | ✓ | △ | — | CLI: Via `amonhen run` (`deepen`, `unshallow`). |
 | Fetching and Folders: fetch all contents of a partial clone (git 2.36) | ✓ | ✓ | ✓ | ✓ | △ | — | CLI: Via `amonhen run` (`fetchAllContents`). |
 | Fetching and Folders: folders of a sparse checkout picked from HEAD's tree (git 2.25) | ✓ | ✓ | △ | ✓ | △ | — | VSCode: The folder is picked by walking HEAD's tree in a list.<br>CLI: Via `amonhen run` (`sparseCheckout`, `treeFolders`).<br>Windows: The folder is picked by walking HEAD's tree in a list (↑ and →) |
 | Fetching and Folders: git maintenance switch (git 2.31) | ✓ | ✓ | ✓ | ✓ | △ | n/a | CLI: Via `amonhen run` (`maintenance`). |
@@ -253,7 +253,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Display: order, one line, row items, fold merged, highlight ancestors | ✓ | ✓ | ✓ | ✓ | △ | △ | macOS, GTK4: Any merge folds on its own (a +N badge, its context menu, ←/→), kept per repository.<br>VSCode: Order, folding and highlighting with the engine.<br>CLI: `--topo-order`, `--fold`.<br>Windows: In View.<br>TUI: `o` order and `z` fold, for the run only; always one line, no choice of row items. |
 | Avatars | ✓ | ✓ | ✓ | — | n/a | — |  |
 | Signature marks on commits | ✓ | ✓ | ✓ | ✓ | △ | △ | VSCode: With the engine.<br>CLI: In `show`.<br>TUI: In the details only. |
-| CI status per commit with a checks popover | ✓ | ✓ | △ | — | — | — | Windows: The checks show in a dialog rather than a popover. |
+| CI status per commit with a checks popover | ✓ | ✓ | ✓ | — | — | — |  |
 | Worktree HEAD labels (✎ ⌂ ⑂, change counts) | ✓ | ✓ | ✓ | ✓ | — | — |  |
 | Go to HEAD, Parent, Child | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: The HEAD button above History, Go to Parent and Go to Child on a commit's menu, and parent and child links in the details (with the engine).<br>TUI: `@`, `]` and `[`. |
 | Go to Ref | — | — | — | — | n/a | — |  |
