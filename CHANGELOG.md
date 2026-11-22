@@ -21,6 +21,8 @@ becomes the GitHub Release notes.
 
 #### Changed
 
+- Opening a repository from the repository page puts it in a new tab beside the page instead of replacing the page,
+  in the macOS and GTK4 apps.
 - The macOS and GTK4 apps keep recently opened repositories in `recent.json` beside `bookmarks.json`, shared with
   each other and the TUI; the old lists are copied there once.
 - Name prompts (new branch, tag, group, LFS pattern) name their button after the action instead of OK and keep it
@@ -43,6 +45,8 @@ becomes the GitHub Release notes.
 - Any merge in History folds on its own: a folded merge shows a "+N" badge by its dot (click it to open), its context
   menu always offers to fold or show it, and ←/→ fold and open the selected merge. The Fold Merged Branches mode is now
   Fold All / Show All Merged Commits, and the fold is kept per repository.
+- Dragging a commit in History onto another commit starts editing with it squashed into that one, and dragging it
+  out of the window starts editing with it dropped; Apply Changes still runs it.
 - Dragging a commit in History carries it as its row, leaves its place empty and dims the rows it can't be dropped
   among.
 

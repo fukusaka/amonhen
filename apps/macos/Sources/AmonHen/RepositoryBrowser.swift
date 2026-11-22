@@ -117,7 +117,7 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
 {
     enum Style { case page, compact }
 
-    /// 開き方: `here` はこのタブ（ページならページの代わりに、ツールバーの一覧なら今のリポジトリと入れ替える）。
+    /// 開き方: `here` は、ページならページの隣のタブ（ページは残す）、ツールバーの一覧なら今のリポジトリと入れ替える。
     enum OpenMode { case here, newTab, newWindow }
 
     let style: Style
@@ -1245,7 +1245,8 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
         let bookmark = Bookmarks.shared.bookmark(path)
         func add(_ title: String, _ action: @escaping () -> Void) { menu.addItem(ClosureMenuItem(title: title, action: action)) }
         add(style == .page ? L("Open") : L("Switch to This Repository")) { [weak self] in self?.open(path, .here) }
-        add(L("Open in New Tab")) { [weak self] in self?.open(path, .newTab) }
+        // ページの Open はもう新しいタブに開くので、重ねて出さない。
+        if style == .compact { add(L("Open in New Tab")) { [weak self] in self?.open(path, .newTab) } }
         add(L("Open in New Window")) { [weak self] in self?.open(path, .newWindow) }
         if !path.hasPrefix("daemon:"), !Settings.openThroughDaemon {
             let item = ClosureMenuItem(title: L("Open Through the Shared daemon")) { [weak self] in self?.onOpen?("daemon:" + path, .here) }

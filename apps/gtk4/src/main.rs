@@ -190,8 +190,9 @@ struct Args {
     edit_plan: Option<String>,
     edit_move: Option<(usize, usize)>,
     edit_apply: bool,
-    /// History の `from` 行目のコミットを運び、`to` 行目の上に落とす（確認用。`--edit-apply` で Apply Changes も）。
-    drop_commit: Option<(u32, u32)>,
+    /// History の `from` 行目のコミットを運んで落とす（確認用。`--edit-apply` で Apply Changes も）。`to` は `N`（`N`
+    /// 行目の上）、`@N`（`N` 行目に重ねる）、`out`（窓の外）。
+    drop_commit: Option<(u32, history::Dropped)>,
     /// サイドバーのこの行（ref・リモート・見出しの名前）の右クリックのメニューを出す（確認用。`--menu-item` で
     /// 項目を選ぶ）・右端の印の吹き出しを出す。
     sidebar_menu: Option<String>,
@@ -327,12 +328,17 @@ fn parse_args() -> Result<Args, String> {
             }
             "--edit-apply" => args.edit_apply = true,
             "--drop-commit" => {
-                let spec = it.next().ok_or("--drop-commit <from>:<to>")?;
-                let (a, b) = spec.split_once(':').ok_or("--drop-commit <from>:<to>")?;
-                args.drop_commit = Some((
-                    a.parse().map_err(|_| "--drop-commit <from>:<to>")?,
-                    b.parse().map_err(|_| "--drop-commit <from>:<to>")?,
-                ));
+                const USAGE: &str = "--drop-commit <from>:<to|@onto|out>";
+                let spec = it.next().ok_or(USAGE)?;
+                let (a, b) = spec.split_once(':').ok_or(USAGE)?;
+                let at = match b {
+                    "out" => history::Dropped::Outside,
+                    _ => match b.strip_prefix('@') {
+                        Some(n) => history::Dropped::Onto(n.parse().map_err(|_| USAGE)?),
+                        None => history::Dropped::Above(b.parse().map_err(|_| USAGE)?),
+                    },
+                };
+                args.drop_commit = Some((a.parse().map_err(|_| USAGE)?, at));
             }
             "--menu-item" => args.menu_item = Some(it.next().ok_or("--menu-item <title>")?),
             "--open-menu" => args.open_menu = Some(it.next().ok_or("--open-menu <name>")?),
@@ -1665,9 +1671,9 @@ fn build_tab(
     });
     // History でコミットを運んで落とす: 編集モードで並べ替える（macOS 版と同じ）。
     let (a, v, eo) = (actions.clone(), view.downgrade(), edit_opener.clone());
-    view.connect_drop_commit(move |id, row| {
+    view.connect_drop_commit(move |id, at| {
         if let Some(view) = v.upgrade() {
-            commitops::move_by_drop(&a, &view, &eo, id, row);
+            commitops::move_by_drop(&a, &view, &eo, id, at);
         }
     });
     // History のコミットの右クリック。

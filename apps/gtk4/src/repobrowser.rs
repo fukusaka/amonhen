@@ -1345,13 +1345,13 @@ impl Browser {
         // 絞り込みの欄から、↑↓ で行を選び、Enter で開く（Ctrl+Enter は新しい窓に。macOS 版の ⌘⏎）。
         let open_first = {
             let weak = Rc::downgrade(self);
-            move |close: bool| {
+            move |in_tab: bool| {
                 if let Some(b) = weak.upgrade() {
                     let rows = b.selected_rows();
                     if let Some(&row) = rows.first() {
-                        b.open_row(row, close);
+                        b.open_row(row, in_tab);
                     } else if b.selection.n_items() > 0 {
-                        b.open_row(0, close);
+                        b.open_row(0, in_tab);
                     }
                 }
             }
@@ -2000,19 +2000,19 @@ impl Browser {
 
     // 開く
 
-    /// 開く。`close` ならこのタブがそのリポジトリになり（macOS 版と同じ）、でなければ新しい窓に開く。
-    fn open_row(self: &Rc<Self>, row: u32, close: bool) {
+    /// 開く。`in_tab` ならこのページの隣のタブに（ページは残す。macOS 版と同じ）、でなければ新しい窓に開く。
+    fn open_row(self: &Rc<Self>, row: u32, in_tab: bool) {
         if let Some(location) = self.location(row) {
-            self.open_location(&location, close);
+            self.open_location(&location, in_tab);
         }
     }
 
-    fn open_location(self: &Rc<Self>, location: &str, close: bool) {
+    fn open_location(self: &Rc<Self>, location: &str, in_tab: bool) {
         let b = self.clone();
         if !found_or_offer_removal(&self.window(), location, move || b.reload()) {
             return;
         }
-        let place = if close {
+        let place = if in_tab {
             crate::tabs::Place::Tab
         } else {
             crate::tabs::Place::NewWindow
@@ -2480,11 +2480,16 @@ pub fn row_items(
     } else {
         tr!("Switch to This Repository")
     };
+    // ページの Open はもう新しいタブに開くので、「新しいタブで開く」は一覧だけに出す（macOS 版と同じ）。
+    let new_tab = (!page).then(|| (tr!("Open in New Tab"), RowOpen::NewTab));
     for (title, how) in [
-        (here, RowOpen::Here),
-        (tr!("Open in New Tab"), RowOpen::NewTab),
-        (tr!("Open in New Window"), RowOpen::NewWindow),
-    ] {
+        Some((here, RowOpen::Here)),
+        new_tab,
+        Some((tr!("Open in New Window"), RowOpen::NewWindow)),
+    ]
+    .into_iter()
+    .flatten()
+    {
         let (o, p) = (open.clone(), path.to_owned());
         items.push(menu::action(title, move || o(p.clone(), how)));
     }

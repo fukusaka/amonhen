@@ -95,6 +95,29 @@ impl EditMode {
         !self.rows[i].merge && i + 1 < self.rows.len() && !self.rows[i + 1].merge
     }
 
+    /// 一番古い行から続く `oids`（新しい順）を 1 つにまとめる行にする（History の複数選択の Combine）。`oids` が
+    /// 一番古い行で終わる、続いた merge でない行でなければ、何もせずに false。
+    pub fn combine_last(&mut self, oids: &[String]) -> bool {
+        let Some(start) = self.rows.len().checked_sub(oids.len()) else {
+            return false;
+        };
+        let tail = &self.rows[start..];
+        if oids.len() < 2
+            || tail
+                .iter()
+                .zip(oids)
+                .any(|(r, oid)| r.oid != *oid || r.merge)
+        {
+            return false;
+        }
+        let last = self.rows.len() - 1;
+        for row in &mut self.rows[start..last] {
+            row.action = Action::Squash;
+        }
+        self.selected = start;
+        true
+    }
+
     /// 選んでいる行ですることを決める。できなければ、その理由。
     pub fn set(&mut self, action: Action) -> Result<(), String> {
         let i = self.selected;

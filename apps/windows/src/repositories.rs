@@ -667,23 +667,32 @@ pub fn fetch(location: &str) -> Option<String> {
     reply["error"].as_str().map(str::to_owned)
 }
 
-/// リポジトリを新しい窓（別のプロセス）で開く。
+/// リポジトリを新しい窓（このプロセスの窓）で開く。
 pub fn open_window(location: &str) -> Result<(), String> {
     open_window_with(location, &[])
 }
 
-/// リポジトリを新しい窓で開く（`extra` は足す引数。`--repositories` なら Repositories の画面から）。
+/// リポジトリを新しい窓で開く（`extra` は足す引数。`--repositories` なら Repositories の画面から、`--merge` と
+/// `--merge-text` なら別の窓に出したマージエディタ）。
 pub fn open_window_with(location: &str, extra: &[&str]) -> Result<(), String> {
     if !is_repository(location) {
         return Err(tr!("Not found — {path}", path = location));
     }
-    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    amonhen_model::process::command(exe)
-        .arg(expand(location))
-        .args(extra)
-        .spawn()
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+    let mut tab = crate::tabs::make(
+        &expand(location).display().to_string(),
+        extra.contains(&"--repositories"),
+    );
+    let value = |name: &str| {
+        extra
+            .iter()
+            .position(|e| *e == name)
+            .and_then(|i| extra.get(i + 1))
+            .map(|v| (*v).to_owned())
+    };
+    tab.merge = value("--merge");
+    tab.merge_text = value("--merge-text");
+    crate::app::request_window(tab);
+    Ok(())
 }
 
 /// 左のグループを引いたときに、引いた名前の前に付ける印（右の一覧から引いたリポジトリと見分ける）。
@@ -1292,9 +1301,9 @@ impl State {
         Action::None
     }
 
-    /// このタブで開く（GTK4 版・macOS 版の Open。選んだリポジトリがこのタブに替わる）。
+    /// このタブの隣の新しいタブで開く（Repositories のタブは残す。GTK4 版・macOS 版の Open と同じ）。
     fn open(&mut self, location: &str) {
-        self.open_with(location, crate::tabs::replace(location, false));
+        self.open_with(location, crate::tabs::open(location));
     }
 
     fn open_with(&mut self, location: &str, result: Result<(), String>) {
@@ -1316,7 +1325,6 @@ impl State {
         let location = location.to_owned();
         match what {
             "open" => self.open(&location),
-            "open-tab" => self.open_with(&location, crate::tabs::open(&location)),
             "open-daemon" => {
                 let through = if is_remote(&location) {
                     format!("daemon:{location}")
@@ -1324,7 +1332,7 @@ impl State {
                     amonhen_remote::local::canonical_path(&expand(&location).to_string_lossy())
                         .map_or_else(|_| format!("daemon:{location}"), |p| format!("daemon:{p}"))
                 };
-                self.open_with(&location, crate::tabs::replace(&through, false));
+                self.open_with(&location, crate::tabs::open(&through));
             }
             "open-window" => self.open_with(&location, open_window(&location)),
             "favorite" | "unfavorite" => {
@@ -1497,7 +1505,6 @@ fn row_menu(state: &State, location: &str) -> Vec<MenuItem> {
     }
     let mut items = vec![
         MenuItem::item(format!("open:{location}"), tr!("Open")),
-        MenuItem::item(format!("open-tab:{location}"), tr!("Open in New Tab")),
         MenuItem::item(format!("open-window:{location}"), tr!("Open in New Window")),
     ];
     // 共有の daemon 越しに（SSH 先も `daemon:ssh://…`。GTK4 版と同じく、いつも daemon 越しなら出さない）。
