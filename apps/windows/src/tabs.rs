@@ -327,9 +327,23 @@ pub fn note_page(working_copy: bool) {
     TABS.with(|t| {
         if let Some(tab) = t.borrow_mut().get_mut(active()) {
             tab.working_copy = working_copy;
-            tab.repositories = false;
         }
     });
+}
+
+/// Repositories のタブを前に出す（macOS 版の Repositories のウインドウのタブ）。この窓にあればそれを、なければ
+/// 今のタブの右に新しく開く。そこで選んだリポジトリは、そのタブに開く。
+pub fn show_repositories() {
+    let found = TABS.with(|t| t.borrow().iter().position(|tab| tab.repositories));
+    match found {
+        Some(index) => select(index),
+        None => new_tab(),
+    }
+}
+
+/// 今のタブが Repositories のタブか。
+pub fn current_is_repositories() -> bool {
+    current().is_some_and(|tab| tab.repositories)
 }
 
 /// `index` のタブを前に出す（もう前なら何もしない）。
@@ -382,13 +396,48 @@ pub fn open_file_history(location: &str, path: &str) {
 /// リポジトリを新しいタブで開く。
 pub fn open(location: &str) -> Result<(), String> {
     check(location)?;
-    insert(tab(location, false, false));
+    if !select_open(location) {
+        insert(tab(location, false, false));
+    }
     Ok(())
+}
+
+/// 同じリポジトリ（大文字小文字・区切りの向き・末尾の区切りの違いは同じとみなす）。
+fn same_location(a: &str, b: &str) -> bool {
+    let key = |s: &str| {
+        let s = std::fs::canonicalize(s).map_or_else(|_| s.to_owned(), |p| p.display().to_string());
+        let s = s.strip_prefix(r"\\?\").unwrap_or(&s).replace('/', "\\");
+        s.trim_end_matches('\\').to_lowercase()
+    };
+    key(a) == key(b)
+}
+
+/// `location` のリポジトリをもう開いているタブ（File History・Repositories のタブは除く）があれば、そのタブを
+/// 前に出して true（macOS 版と同じく、同じリポジトリのタブを重ねて開かない）。
+fn select_open(location: &str) -> bool {
+    let found = TABS.with(|t| {
+        t.borrow().iter().position(|tab| {
+            !tab.repositories
+                && tab.file_history.is_none()
+                && same_location(&tab.location, location)
+        })
+    });
+    match found {
+        Some(index) => {
+            select(index);
+            true
+        }
+        None => false,
+    }
 }
 
 /// 今のタブのリポジトリを替える（Repositories の Open、worktree の切り替え）。
 pub fn replace(location: &str, working_copy: bool) -> Result<(), String> {
     check(location)?;
+    // もう開いているリポジトリなら、そのタブに移る（このタブはそのまま。macOS 版と同じ）。
+    if select_open(location) {
+        return Ok(());
+    }
     let index = active();
     TABS.with(|t| {
         if let Some(tab) = t.borrow_mut().get_mut(index) {

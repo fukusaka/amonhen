@@ -1301,9 +1301,9 @@ impl State {
         Action::None
     }
 
-    /// このタブで開く（GTK4 版・macOS 版の Open。選んだリポジトリがこのタブに替わる）。
+    /// このタブの隣の新しいタブで開く（Repositories のタブは残す。GTK4 版・macOS 版の Open と同じ）。
     fn open(&mut self, location: &str) {
-        self.open_with(location, crate::tabs::replace(location, false));
+        self.open_with(location, crate::tabs::open(location));
     }
 
     fn open_with(&mut self, location: &str, result: Result<(), String>) {
@@ -1325,7 +1325,6 @@ impl State {
         let location = location.to_owned();
         match what {
             "open" => self.open(&location),
-            "open-tab" => self.open_with(&location, crate::tabs::open(&location)),
             "open-daemon" => {
                 let through = if is_remote(&location) {
                     format!("daemon:{location}")
@@ -1333,7 +1332,7 @@ impl State {
                     amonhen_remote::local::canonical_path(&expand(&location).to_string_lossy())
                         .map_or_else(|_| format!("daemon:{location}"), |p| format!("daemon:{p}"))
                 };
-                self.open_with(&location, crate::tabs::replace(&through, false));
+                self.open_with(&location, crate::tabs::open(&through));
             }
             "open-window" => self.open_with(&location, open_window(&location)),
             "favorite" | "unfavorite" => {
@@ -1506,7 +1505,6 @@ fn row_menu(state: &State, location: &str) -> Vec<MenuItem> {
     }
     let mut items = vec![
         MenuItem::item(format!("open:{location}"), tr!("Open")),
-        MenuItem::item(format!("open-tab:{location}"), tr!("Open in New Tab")),
         MenuItem::item(format!("open-window:{location}"), tr!("Open in New Window")),
     ];
     // 共有の daemon 越しに（SSH 先も `daemon:ssh://…`。GTK4 版と同じく、いつも daemon 越しなら出さない）。
