@@ -987,6 +987,11 @@ impl Repository {
         Ok(DiffView::new(&diff, profile).with_path(&change.path))
     }
 
+    /// blob の中身（画像の比較など）。
+    pub fn blob(&self, id: &Oid) -> Result<Arc<Vec<u8>>> {
+        self.backend.blob(id)
+    }
+
     /// `stacked_diff` が、すべてのファイルの差分を先に取るのはこの数まで（多ければ開いたときに取る）。
     pub const STACK_EAGER: usize = 200;
 

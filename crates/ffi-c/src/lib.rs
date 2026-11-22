@@ -1473,6 +1473,78 @@ pub unsafe extern "C" fn amonhen_file_diff(
     }
 }
 
+/// blob `oid`（20 バイト）の中身。長さを `len` に書く（`amonhen_blob_free` で解放する）。読めなければ NULL
+/// （`amonhen_last_error`）。画像の比較や、その時点の画像を見せるのに使う。
+///
+/// # Safety
+/// `repo` は有効、`oid` は 20 バイトを読める領域、`len` は書ける領域であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_blob_read(
+    repo_ptr: *const AmonhenRepo,
+    oid: *const u8,
+    len: *mut usize,
+) -> *mut u8 {
+    let oid = oid!(oid);
+    match repo!(repo_ptr).blob(&oid) {
+        Ok(data) => blob_out(&data, len),
+        Err(e) => {
+            set_error(e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// `changes` の `index` 番目のファイルの、変更前（`after` が false）か変更後の中身（`amonhen_blob_free` で解放
+/// する）。その側にない（追加の前・削除の後）なら NULL で、`len` は 0。
+///
+/// # Safety
+/// `repo` と `changes` は有効、`len` は書ける領域であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_change_blob(
+    repo_ptr: *const AmonhenRepo,
+    changes: *const AmonhenChanges,
+    index: u32,
+    after: bool,
+    len: *mut usize,
+) -> *mut u8 {
+    let c = handle!(changes, ChangesHandle);
+    if let Some(len) = unsafe { len.as_mut() } {
+        *len = 0;
+    }
+    let Some(change) = c.changes.get(index as usize) else {
+        set_error(tr!("File index out of range"));
+        return std::ptr::null_mut();
+    };
+    let Some(id) = (if after { change.new_id } else { change.old_id }) else {
+        return std::ptr::null_mut();
+    };
+    match repo!(repo_ptr).blob(&id) {
+        Ok(data) => blob_out(&data, len),
+        Err(e) => {
+            set_error(e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+fn blob_out(data: &[u8], len: *mut usize) -> *mut u8 {
+    if let Some(len) = unsafe { len.as_mut() } {
+        *len = data.len();
+    }
+    Box::into_raw(data.to_vec().into_boxed_slice()).cast()
+}
+
+/// `amonhen_blob_read`・`amonhen_change_blob` が返したものを解放する。
+///
+/// # Safety
+/// `data` と `len` は、それらが返した組であること（NULL ならなにもしない）。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_blob_free(data: *mut u8, len: usize) {
+    if !data.is_null() {
+        drop(unsafe { Box::from_raw(std::ptr::slice_from_raw_parts_mut(data, len)) });
+    }
+}
+
 /// `amonhen_file_diff` の、前後 `context` 行のもの（`UINT32_MAX` ならファイル全体）。
 ///
 /// # Safety

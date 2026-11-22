@@ -959,6 +959,39 @@ AmonhenDiff *amonhen_file_diff(const AmonhenRepo *repo_ptr,
                                AmonhenEncoding encoding);
 
 /**
+ * blob `oid`（20 バイト）の中身。長さを `len` に書く（`amonhen_blob_free` で解放する）。読めなければ NULL
+ * （`amonhen_last_error`）。画像の比較や、その時点の画像を見せるのに使う。
+ *
+ * # Safety
+ * `repo` は有効、`oid` は 20 バイトを読める領域、`len` は書ける領域であること。
+ */
+uint8_t *amonhen_blob_read(const AmonhenRepo *repo_ptr,
+                           const uint8_t *oid,
+                           uintptr_t *len);
+
+/**
+ * `changes` の `index` 番目のファイルの、変更前（`after` が false）か変更後の中身（`amonhen_blob_free` で解放
+ * する）。その側にない（追加の前・削除の後）なら NULL で、`len` は 0。
+ *
+ * # Safety
+ * `repo` と `changes` は有効、`len` は書ける領域であること。
+ */
+uint8_t *amonhen_change_blob(const AmonhenRepo *repo_ptr,
+                             const AmonhenChanges *changes,
+                             uint32_t index,
+                             bool after,
+                             uintptr_t *len);
+
+/**
+ * `amonhen_blob_read`・`amonhen_change_blob` が返したものを解放する。
+ *
+ * # Safety
+ * `data` と `len` は、それらが返した組であること（NULL ならなにもしない）。
+ */
+void amonhen_blob_free(uint8_t *data,
+                       uintptr_t len);
+
+/**
  * `amonhen_file_diff` の、前後 `context` 行のもの（`UINT32_MAX` ならファイル全体）。
  *
  * # Safety
