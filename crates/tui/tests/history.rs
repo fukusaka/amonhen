@@ -2966,9 +2966,8 @@ fn lock_move_and_locate_a_worktree() {
     let keys = format!("0Gn\x15{}\n", moved.display());
     amonhen_tui::snapshot(open(&main), 200, 16, clock(), &keys).unwrap();
     assert!(moved.join(".git").exists() && !other.exists());
-    // 手で移すと、見つからない印が付く。`n` で今の場所を教えて、つなぎ直す（git が見つからないことを知らせるのは
-    // 2.31 から、つなぎ直すのは 2.29 から）。
-    if !git_at_least(2, 31) {
+    // 手で移すと、見つからない印が付く。`n` で今の場所を教えて、つなぎ直す（git worktree repair は 2.29 から）。
+    if !git_at_least(2, 29) {
         return;
     }
     let again = dir.path().join("again");

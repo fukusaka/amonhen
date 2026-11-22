@@ -5304,7 +5304,9 @@ impl Repository {
             }),
             Command::Worktrees => {
                 let paths = self.backend().paths();
-                let list = crate::worktree::parse(&ops.worktree_list()?, paths.workdir.as_deref());
+                let mut list =
+                    crate::worktree::parse(&ops.worktree_list()?, paths.workdir.as_deref());
+                crate::worktree::fill_from_records(&mut list, &paths.common_dir);
                 Ok(Response {
                     ok: true,
                     info: Some(serde_json::json!({ "worktrees": list })),

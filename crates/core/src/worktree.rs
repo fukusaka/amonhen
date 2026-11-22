@@ -76,6 +76,41 @@ pub fn parse(out: &[u8], current: Option<&Path>) -> Vec<Worktree> {
     list
 }
 
+/// git の記録（`<common dir>/worktrees/<name>/`）から、ロックとフォルダがないことを足す。`git worktree list` が
+/// それを出すのは git 2.31 からなので、古い git でも同じに見えるように（ロックの理由は `locked`、場所は `gitdir`
+/// のファイル）。一覧がもう出しているものは変えない。
+pub fn fill_from_records(list: &mut [Worktree], common_dir: &Path) {
+    let Ok(records) = std::fs::read_dir(common_dir.join("worktrees")) else {
+        return;
+    };
+    for record in records.flatten() {
+        let dir = record.path();
+        let Ok(gitdir) = std::fs::read_to_string(dir.join("gitdir")) else {
+            continue;
+        };
+        // `gitdir` は worktree の `.git` ファイルの場所。その親が worktree。
+        let dot_git = Path::new(gitdir.trim());
+        let Some(folder) = dot_git.parent() else {
+            continue;
+        };
+        let folder = canonical(folder);
+        let Some(w) = list
+            .iter_mut()
+            .find(|w| !w.main && canonical(Path::new(&w.path)) == folder)
+        else {
+            continue;
+        };
+        if w.locked.is_none()
+            && let Ok(reason) = std::fs::read_to_string(dir.join("locked"))
+        {
+            w.locked = Some(reason.trim().to_owned());
+        }
+        if w.prunable.is_none() && !dot_git.exists() && w.locked.is_none() {
+            w.prunable = Some("gitdir file points to non-existent location".to_owned());
+        }
+    }
+}
+
 /// シンボリックリンク（macOS の /var → /private/var など）を解いたパス。解けなければそのまま。
 fn canonical(path: &Path) -> std::path::PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
@@ -99,5 +134,46 @@ mod tests {
         assert!(list[1].current);
         assert_eq!(list[2].branch.as_deref(), Some("topic"));
         assert!(list[2].prunable.is_some() && !list[2].main);
+    }
+
+    /// 古い git（2.31 より前）は一覧にロックとフォルダがないことを出さないので、記録から足す。
+    #[test]
+    fn fills_locks_and_missing_folders_from_the_records() {
+        let tmp = tempfile::tempdir().unwrap();
+        let common = tmp.path().join("main/.git");
+        let here = tmp.path().join("here");
+        std::fs::create_dir_all(&here).unwrap();
+        std::fs::write(here.join(".git"), "gitdir: x").unwrap();
+        let record = |name: &str, folder: &Path, locked: Option<&str>| {
+            let dir = common.join("worktrees").join(name);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(
+                dir.join("gitdir"),
+                format!("{}\n", folder.join(".git").display()),
+            )
+            .unwrap();
+            if let Some(reason) = locked {
+                std::fs::write(dir.join("locked"), reason).unwrap();
+            }
+        };
+        let gone = tmp.path().join("gone");
+        record("here", &here, Some("on a stick\n"));
+        record("gone", &gone, None);
+        let entry = |path: &Path, main: bool| Worktree {
+            path: path.display().to_string(),
+            main,
+            ..Default::default()
+        };
+        let mut list = vec![
+            entry(&tmp.path().join("main"), true),
+            entry(&here, false),
+            entry(&gone, false),
+        ];
+        fill_from_records(&mut list, &common);
+        assert_eq!(list[0].locked, None);
+        assert_eq!(list[1].locked.as_deref(), Some("on a stick"));
+        assert_eq!(list[1].prunable, None);
+        assert_eq!(list[2].locked, None);
+        assert!(list[2].prunable.is_some());
     }
 }
