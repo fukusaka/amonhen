@@ -75,11 +75,11 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 
 | 機能 | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
-| 窓の中のリポジトリのタブ | ✓ | ✓ | △ | n/a | n/a | n/a | Windows: 開いているのは前のタブのリポジトリだけ。タブを替えると窓の中身をそのリポジトリで作り直し（History は永続のキャッシュから戻る）、後ろのタブは変化を見ない。<br>TUI: タブも窓もない。ほかの worktree で Enter、Quick Open で、TUI をそこで開き直す。 |
-| 別の窓（New Window） | ✓ | ✓ | △ | n/a | n/a | n/a | Windows: 窓は別のプロセスなので、タブを窓の間で動かせず、Window のメニューにほかの窓が並ばない。New Window は今のリポジトリの窓を開き、Repositories を出す |
+| 窓の中のリポジトリのタブ | ✓ | ✓ | ✓ | n/a | n/a | n/a | Windows: 後ろのタブもリポジトリを開いたまま。戻ると、離れたときの画面を描き直す。<br>TUI: タブも窓もない。ほかの worktree で Enter、Quick Open で、TUI をそこで開き直す。 |
+| 別の窓（New Window） | ✓ | ✓ | ✓ | n/a | n/a | n/a | Windows: New Window は今のリポジトリの窓を開き、Repositories を出す。タブは引いてほかの窓へ移すか、外へ引き出して新しい窓にする。Window のメニューに窓が並ぶ。 |
 | 起動時に窓とタブを戻す | ✓ | ✓ | ✓ | n/a | n/a | n/a |  |
 | SSH・daemon のリポジトリのつなぎ中のタブ（Cancel・Try Again） | ✓ | ✓ | ✓ | n/a | n/a | n/a |  |
-| 題に未コミットの ● と ahead/behind | ✓ | ✓ | △ | n/a | n/a | n/a | GTK4: タブの名前に出る。<br>Windows: 窓のタイトルと前のタブの名前に。<br>TUI: 一番上の行にブランチと ahead/behind。 |
+| 題に未コミットの ● と ahead/behind | ✓ | ✓ | ✓ | n/a | n/a | n/a | GTK4: タブの名前に出る。<br>Windows: 窓のタイトルとそれぞれのタブの名前に。<br>TUI: 一番上の行にブランチと ahead/behind。 |
 | 最後の窓を閉じてもアプリは終わらない | ✓ | — | — | n/a | n/a | n/a | GTK4: GNOME のアプリと同じく終わる。 |
 
 ## 2. ブックマーク（リポジトリの一覧）
@@ -96,7 +96,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | お気に入り・表示名・色のラベル | ✓ | ✓ | ✓ | n/a | n/a | — |  |
 | タブ・窓で開く、Finder（ファイル）・Terminal・エディタ | ✓ | ✓ | ✓ | n/a | n/a | — | GTK4: 知っているコードエディタと「その他…」で選んだプログラム以外は、inode/directory を宣言しているアプリだけがフォルダを開く。<br>Windows: エクスプローラー・Windows Terminal（なければ cmd）・Settings で選んだエディタ。 |
 | 選んだリポジトリを Fetch | ✓ | ✓ | ✓ | n/a | n/a | — | Windows: Ctrl・Shift で行を選び、選んだ行のメニューの Fetch で、選んだものすべてを fetch する。 |
-| Quick Open（あいまい検索） | ✓ | ✓ | △ | n/a | n/a | ✓ | Windows: 新しいウィンドウで開く。<br>TUI: 命令の一覧の Quick Open が、アプリと同じものを並べる: 共有のブックマーク（`bookmarks.json`。お気に入りを先に）、最近開いたもの（`recent.json`）、手元の探すフォルダの下で見つけたもの（裏で探す。SSH 先のフォルダは探さない）。Enter で TUI をそこで開き直す。 |
+| Quick Open（あいまい検索） | ✓ | ✓ | ✓ | n/a | n/a | ✓ | TUI: 命令の一覧の Quick Open が、アプリと同じものを並べる: 共有のブックマーク（`bookmarks.json`。お気に入りを先に）、最近開いたもの（`recent.json`）、手元の探すフォルダの下で見つけたもの（裏で探す。SSH 先のフォルダは探さない）。Enter で TUI をそこで開き直す。 |
 | ツールバーのリポジトリ名で切り替える | ✓ | ✓ | ✓ | ✓ | n/a | n/a | VSCode: Select Repository でワークスペースのリポジトリから選ぶ。<br>TUI: Quick Open が代わり。 |
 | Clone（自分の GitHub のリポジトリから選ぶ） | ✓ | ✓ | ✓ | n/a | △ | — | VSCode: VSCode 自身の Git: Clone。<br>CLI: `clone <url>` だけ。<br>Windows: clone したものは新しいタブで開く。 |
 | Clone: 取得する範囲（すべて・中身は必要なときに・最近の履歴）と、一部のフォルダだけ | ✓ | ✓ | ✓ | n/a | ✓ | — | VSCode: VSCode の Git: Clone が代わり。<br>CLI: `clone --filter`・`--depth`・`--sparse`。 |
@@ -315,7 +315,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 直せる Result とコンフリクトごとの Undo | ✓ | ✓ | ✓ | n/a | n/a | n/a | TUI: `e` でファイルを git のエディタで開く。 |
 | ファイルを Current / Incoming で解く | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: `amonhen run` から。<br>TUI: 一覧で `o` `t`。 |
 | 外のマージツールで開く | — | — | — | n/a | n/a | — |  |
-| エディターを別の窓に出す | ✓ | ✓ | △ | n/a | n/a | n/a | Windows: 別の窓（別のプロセス）で同じファイルを開く。保存していない編集も持って行く。 |
+| エディターを別の窓に出す | ✓ | ✓ | ✓ | n/a | n/a | n/a | Windows: 新しい窓で同じファイルを開く。保存していない編集も持って行く。 |
 | Continue / Skip / Abort | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: サイドバーの進行中の行に出る。<br>CLI: `amonhen run` から。<br>TUI: `C` `K` `A`。 |
 
 ## 9. AI
@@ -401,7 +401,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Remove Worktree（尋ね、変更があれば `--force`） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | TUI: `x` で尋ねてから消す。変更があればその数を書き、`--force` で消す。 |
 | ロックと解除・移動・移したフォルダを探す（repair） | ✓ | ✓ | ✓ | ✓ | ✓ | — | VSCode: worktree の右クリックから。書き込む先の worktree は、ほかに切り替えてから移す。<br>CLI: `worktree lock`・`unlock`・`move`・`repair`。 |
 | worktree の Prune | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | TUI: 命令の一覧から。 |
-| worktree のフォルダーを開くと、そのリポジトリでそれを書き込む先にする | ✓ | ✓ | △ | ✓ | n/a | ✓ | VSCode: フォルダーを開くとその worktree で働き、ほかの worktree も並ぶ。<br>Windows: フォルダはそれ自身の窓で開き、その worktree が ✎、ほかも並ぶ。 |
+| worktree のフォルダーを開くと、そのリポジトリでそれを書き込む先にする | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: フォルダーを開くとその worktree で働き、ほかの worktree も並ぶ。<br>Windows: フォルダはタブで開き、その worktree が ✎、ほかも並ぶ。 |
 
 ## SSH 先・共有の daemon・askpass
 
