@@ -140,6 +140,9 @@ fn move_tab(id: u64, to: u64) {
 }
 
 thread_local! {
+    /// タブの並びごとの（それを描くタブの番号で引く）、タブの引き出し・受け取りの知らせ（持っている間だけ届く）。
+    static TAB_MOVE_REVOKERS: RefCell<std::collections::HashMap<u64, Vec<windows_core_reactor::EventRevoker>>> =
+        RefCell::new(Default::default());
     /// 窓の外へ引き出して、新しい窓へ移すタブ（`Message::OpenWindows` が元の窓から取り出す）。
     static MOVING_TABS: RefCell<Vec<u64>> = const { RefCell::new(Vec::new()) };
     /// 窓ごとの HWND（Window メニューから窓を前に出す）。
@@ -8234,6 +8237,8 @@ impl Root {
             .collect();
         let host = self.tab_host.clone();
         let window = self.window;
+        // このタブの根の部品が描くタブの並び（タブごとに 1 つ。前のタブのものだけが見える）。
+        let strip_key = self.tab.borrow().id;
         context.use_effect("tab-drop-out", tab_ids, move || {
             let _ = host.request_native_element(move |result| {
                 if let Ok(element) = result {
@@ -8251,10 +8256,14 @@ impl Root {
                             }
                         },
                     );
-                    REVOKERS.with(|r| r.borrow_mut().extend(revokers));
+                    // このタブの並びに前に付けたもの（タブの並びが変わる前のもの）は外す。重なると、引き終わり
+                    // や窓の外へ落としたときの処理が何度も走る。
+                    TAB_MOVE_REVOKERS.with(|r| r.borrow_mut().insert(strip_key, revokers));
                 }
             });
-            None
+            Some(Box::new(move || {
+                TAB_MOVE_REVOKERS.with(|r| r.borrow_mut().remove(&strip_key));
+            }))
         });
         let root = self.root.clone();
         let refs = (
