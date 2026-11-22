@@ -3171,6 +3171,14 @@ impl Root {
                     Message::PatchRead(repo, paths, reply)
                 });
             }
+            // Repositories は、それだけのタブ（macOS 版の Repositories のウインドウと同じ）。今のタブが
+            // Repositories のタブでなければ、そのタブを前に出す（なければ開く）。
+            Message::Command(id)
+                if id == "repositories" && !crate::tabs::current_is_repositories() =>
+            {
+                crate::tabs::note_page(self.page == Page::WorkingCopy);
+                crate::tabs::show_repositories();
+            }
             Message::Command(id) if id == "repositories" => {
                 if self.page != Page::Repositories {
                     self.repositories_from = self.page;
@@ -8559,6 +8567,12 @@ impl Root {
             View::empty()
         };
         let working_copy = self.working_copy_view(context);
+        // Repositories のタブには、リポジトリのサイドバーを出さない（macOS 版の Repositories のウインドウと同じ）。
+        let sidebar_width = if crate::tabs::current_is_repositories() {
+            0.0
+        } else {
+            self.sidebar_width
+        };
         let details_split = self.page != Page::WorkingCopy && !self.details_expanded;
         SPLIT_SIZES.with(|s| s.set((self.sidebar_width, self.right_width, self.details_height)));
         // 境目のつまみに押す・動かすを付ける（つまみができたとき。詳細の下のつまみは出すたびにできる）。部品は
@@ -8589,7 +8603,7 @@ impl Root {
         }
         let body = Grid::new()
             .columns([
-                GridLength::Pixel(self.sidebar_width),
+                GridLength::Pixel(sidebar_width),
                 GridLength::Star(1.0),
                 self.right_width
                     .map_or(GridLength::Star(1.0), GridLength::Pixel),
@@ -8635,7 +8649,11 @@ impl Root {
                 self.push_view(context),
                 // 列の境目（動かして幅を変える）。いちばん上に重ねる。
                 View::fragment((
-                    splitter(&self.split_handles[0], Split::Sidebar, 0.0),
+                    if sidebar_width == 0.0 {
+                        View::empty()
+                    } else {
+                        splitter(&self.split_handles[0], Split::Sidebar, 0.0)
+                    },
                     splitter(&self.split_handles[1], Split::Right, 0.0),
                     if details_split {
                         splitter(&self.split_handles[2], Split::Details, self.details_height)
@@ -8811,7 +8829,7 @@ impl Root {
                     .background(ground),
                 Grid::new()
                     .grid_row(3)
-                    .columns([GridLength::Pixel(self.sidebar_width), GridLength::Star(1.0)])
+                    .columns([GridLength::Pixel(sidebar_width), GridLength::Star(1.0)])
                     .children((
                         Border::new().background(ground),
                         Border::new()
@@ -15009,6 +15027,13 @@ impl Root {
         match state.handle(event) {
             Action::None => {}
             Action::Close => {
+                // Repositories のタブなら、タブごと閉じる（最後のタブなら窓を閉じる）。
+                if crate::tabs::current_is_repositories() {
+                    if crate::tabs::close_current() {
+                        close_window();
+                    }
+                    return;
+                }
                 self.repositories = None;
                 self.scan_watch = None;
                 self.page = self.repositories_from;
@@ -19339,6 +19364,8 @@ fn tab_strip(title: &str, context: &ViewContext<Root>) -> View {
                     format!("File History — {}", crate::tabs::name(path)),
                     format!("{} — {}", path, crate::tabs::name(&tab.location)),
                 ),
+                // Repositories のタブは「Repositories」（macOS 版のウインドウの名前と同じ）。
+                None if tab.repositories => ("Repositories".to_owned(), String::new()),
                 None if i == active => (title.to_owned(), tab.location.clone()),
                 None => (crate::tabs::name(&tab.location), tab.location.clone()),
             };

@@ -111,9 +111,23 @@ pub fn note_page(working_copy: bool) {
     TABS.with(|t| {
         if let Some(tab) = t.borrow_mut().get_mut(active()) {
             tab.working_copy = working_copy;
-            tab.repositories = false;
         }
     });
+}
+
+/// Repositories のタブを前に出す（macOS 版の Repositories のウインドウのタブ）。この窓にあればそれを、なければ
+/// 今のタブの右に新しく開く。そこで選んだリポジトリは、そのタブに開く。
+pub fn show_repositories() {
+    let found = TABS.with(|t| t.borrow().iter().position(|tab| tab.repositories));
+    match found {
+        Some(index) => select(index),
+        None => new_tab(),
+    }
+}
+
+/// 今のタブが Repositories のタブか。
+pub fn current_is_repositories() -> bool {
+    current().is_some_and(|tab| tab.repositories)
 }
 
 /// `index` のタブを前に出す（もう前なら何もしない）。
