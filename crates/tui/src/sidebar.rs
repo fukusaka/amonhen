@@ -324,6 +324,14 @@ impl Sidebar {
         }
     }
 
+    /// 選んでいるブランチの、上流より進んでいる数と遅れている数。
+    pub fn picked_counts(&self) -> (u64, u64) {
+        match self.rows.get(self.selected) {
+            Some(Row::Ref { ahead, behind, .. }) => (*ahead, *behind),
+            _ => (0, 0),
+        }
+    }
+
     /// 選んでいる行が、今のもの（今のブランチ、開いている worktree）か。
     pub fn picked_is_current(&self) -> bool {
         matches!(

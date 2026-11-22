@@ -57,7 +57,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | PR でマージ済みのブランチの印（GitHub で squash・rebase） | ✓ | ✓ | △ | ✓ | △ | — | VSCode: エンジンがあるとき。番号は行のツールチップに出る。CLI: `amonhen run`（`pullRequests` を渡した `branchGroups`）から。マージ済みの PR はアプリと VSCode が gh で読む。<br>Windows: 名前の後ろに merged と出し、番号は行のツールチップに。 |
 | お気に入りをドラッグで並べ替える | ✓ | ✓ | ✓ | ✓ | n/a | — | VSCode: メニューの Move Up・Move Down in Favorites（ブランチに落とすと Merge・Rebase）。 |
 | ブランチのメニュー: checkout・名前の変更・削除（未マージは Delete Anyway） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | macOS: Set Upstream は Repository メニューだけ。<br>GTK4: Set Upstream は Repository メニューだけ。<br>CLI: `amonhen run` から。<br>TUI: `c` で checkout、`n` で名前の変更、`D` で削除。ほかのどこにもないコミットがあれば、その数と絵を出して Delete Anyway。 |
-| checkout していないブランチの同期（Fast-Forward・Push・Publish） | ✓ | ✓ | ✓ | ✓ | △ | — | CLI: `amonhen run` から。 |
+| checkout していないブランチの同期（Fast-Forward・Push・Publish） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: `amonhen run` から。<br>TUI: サイドバーのそのブランチで `p`・`P`。 |
 | タグの一覧 | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |
 | タグのリモートの印（ない・違う）とポップオーバー | ✓ | ✓ | △ | ✓ | △ | — | VSCode: 行の説明に出し、リモートごとの様子はツールチップに（ポップオーバーはない）。<br>CLI: `amonhen run`（`tagRemotes`）から。<br>Windows: 名前の後ろに ⚠（リモートに別のタグ）か ∅（どのリモートにもない）、リモートごとの様子を行のツールチップとタグのメニューの先頭に。そこを選ぶと、吹き出しの中身をダイアログで出す。 |
 | タグの署名の印 | ✓ | ✓ | △ | ✓ | ✓ | — | VSCode: 行のアイコンで、説明はツールチップに。<br>CLI: `refs --verify`。<br>Windows: 名前の後ろに 🔏（検証できた）か 🔓（署名はあるが検証できない）、状態と署名者はタグのメニューの先頭。吹き出しはない |
@@ -175,11 +175,11 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | いくつもを 1 つにマージ（順番・コンフリクトの見込み） | ✓ | ✓ | ✓ | ✓ | △ | — | CLI: `merge-check` で確かめ、マージは `amonhen run` から。<br>Windows: History の選択から。順（ドラッグ）、ぶつかる見込みと最後に回す、取り込み方、1 つずつ、メッセージ、前と後の絵、git が断ったら 1 つずつ Merge。 |
 | 前と後を描く Rebase のシート | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: ダイアログに、今と rebase の後のコミットをブランチの札と一緒に文で並べる。<br>CLI: `rewrite-preview` が出し、rebase は `amonhen run` から。<br>TUI: サイドバーで `r`。絵は画面に重ねる。 |
 | Stash（メッセージ・未追跡を含める） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: `amonhen run` から。<br>TUI: `s`。 |
-| Stash: stage した変更だけ・index を残す・選んだファイルだけ | ✓ | ✓ | ✓ | ✓ | △ | △ | VSCode: エンジンがあるとき、Stash の一覧に前の 2 つ、Working Copy のファイルの右クリックにそのファイルの Stash…。<br>CLI: `amonhen run`（`stashPush` の `staged`・`keepIndex`・`paths`）から。<br>TUI: index を残すだけ。stage したものだけ・選んだファイルだけはない。 |
+| Stash: stage した変更だけ・index を残す・選んだファイルだけ | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: エンジンがあるとき、Stash の一覧に前の 2 つ、Working Copy のファイルの右クリックにそのファイルの Stash…。<br>CLI: `amonhen run`（`stashPush` の `staged`・`keepIndex`・`paths`）から。<br>TUI: `s` で `k` index を残す、`s` stage したものだけ、Working Copy では `f` 選んでいるファイルだけ。 |
 | ignore されたファイルを消す（先に一覧） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: コマンドパレットと Working Copy の右クリックから。一覧は選ぶもので、はじめはすべて選んである。<br>CLI: `amonhen run`（`ignoredFiles`・`deleteIgnored`）から。<br>TUI: 命令の一覧から。 |
 | 最新の stash を Pop（先に尋ねる） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: Stashes の見出しとコマンドパレットの Pop Latest Stash…（行の Pop は尋ねない）。<br>CLI: `amonhen run` から。<br>TUI: `S`。stash の名前とメッセージを出して尋ねる。サイドバーの stash の `a`・`o` も同じ。 |
 | Activity のくるくると数 | ✓ | ✓ | △ | ✓ | n/a | ✓ | VSCode: VSCode の進み具合の知らせ。<br>Windows: 操作が走っている間、ステータスバーの右に ⟳ n（押すと Activity）。ツールバーではない<br>TUI: 一番上の行に動いている操作の名前。 |
-| Refresh と Rebuild History | ✓ | ✓ | ✓ | ✓ | △ | — | VSCode: Rebuild History はサイドバーの ⋯ とコマンドパレットから。エンジンがあれば。<br>CLI: `log --rebuild`・`daemon rebuild`。<br>TUI: `Ctrl-l` は読み直さずに画面を描き直す。 |
+| Refresh と Rebuild History | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: Rebuild History はサイドバーの ⋯ とコマンドパレットから。エンジンがあれば。<br>CLI: `log --rebuild`・`daemon rebuild`。<br>TUI: `Ctrl-r` で Refresh、命令の一覧に Rebuild History。`Ctrl-l` は読み直さずに画面を描き直す。 |
 | 直前の操作の Undo（尋ね、何を戻すか示す） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: 上の Undo とコマンドパレットは尋ねる。操作の直後に押す知らせの Undo は尋ねない。<br>CLI: `undo`（先に見るなら `--peek`）。<br>TUI: `u`。 |
 | 範囲付きの History の検索（件名・作者・ID・パス・中身） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: エンジンがあるとき。<br>CLI: `log <query>`。<br>TUI: History で `/`。 |
 | ahead/behind のバッジ | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: サイドバーのブランチの行に出る。<br>CLI: `status` に出る。<br>TUI: サイドバーのブランチと一番上の行に出る。 |
@@ -275,7 +275,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 詳細の中を探す | ✓ | ✓ | ✓ | ✓ | n/a | — | VSCode: ⌘F でメインビュー全体を探す。まだ読んでいない差分は探さない。 |
 | すべてのファイルを積む（貼り付く見出し・畳む・Viewed） | ✓ | ✓ | △ | ✓ | ✓ | △ | CLI: `show`。<br>Windows: Viewed の切り替えはファイルの見出しのメニューにある。<br>TUI: `[` `]` でファイルを移る。貼り付く見出し・畳む・Viewed はない。 |
 | 差分の横の、変更したファイルの木 | ✓ | ✓ | ✓ | ✓ | n/a | △ | VSCode: 一覧の上の Tree / List で切り替える。<br>TUI: 差分の上の平らな一覧。 |
-| ファイルの見出しのメニュー（Blame・File History・パスのコピー・開く） | ✓ | ✓ | ✓ | ✓ | n/a | △ | VSCode: 右クリックの Blame・File History・Copy Path と、VSCode の差分のエディターで開く。<br>TUI: 見ているファイルの `B`・`L`。パスのコピーと開くはない。 |
+| ファイルの見出しのメニュー（Blame・File History・パスのコピー・開く） | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: 右クリックの Blame・File History・Copy Path と、VSCode の差分のエディターで開く。<br>TUI: 見ているファイルの `B`・`L`・`Y`（パスのコピー）・`e`（git のエディタで開く）。 |
 | 1 ファイルずつの差分に切り替える | ✓ | ✓ | ✓ | ✓ | n/a | — | VSCode: 一覧の上の One File / All Files で切り替える。<br>Windows: 表示 > 全ファイルを 1 つの差分に並べる。切ると、変更ファイルの一覧で選んだファイル。 |
 | 選んだものの差分（範囲をまとめる・A..B / A...B・飛び飛び） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: エンジンがあるとき。<br>CLI: `diff <rev> <rev>`。<br>TUI: `m` と Shift-↑↓（か Ctrl・Alt を押しながらクリック）で選ぶ。`x` で向きを入れ替え、`.` で merge-base から。 |
 | 選んだものの操作（cherry-pick・revert・squash・ID のコピー） | ✓ | ✓ | △ | ✓ | △ | ✓ | VSCode: エンジンがあるとき。<br>CLI: `amonhen run` から。<br>Windows: 続いたコミットをまとめるときは、ダイアログでメッセージを直してすぐ書き換える（編集モードはない）。<br>TUI: 印をつけたコミットに `y` `v`、`E` でまとめた形の編集モード、`Y` で ID のコピー、Save as Patch で保存。 |
@@ -287,7 +287,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 機能 | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
 | Blame | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: メインビューのページ。<br>CLI: `amonhen run`（`blame`）から。<br>Windows: 行のメニューからそのコミットを History に出す。<br>TUI: Working Copy のファイルかコミットの詳細で `B`。`H` で行のコミットを History で選ぶ。 |
-| ファイルをコミットの版に戻す（この版・その前の版。選べば stage も） | ✓ | ✓ | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあるとき、History の詳細のファイルの右クリックから。Restore and Stage は 2 つめのボタン。<br>CLI: `restore --source <rev> [--staged]`。<br>TUI: File History の `V` で、作業ツリーのファイルを選んだ版に戻す。stage とその前の版はない。 |
+| ファイルをコミットの版に戻す（この版・その前の版。選べば stage も） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: エンジンがあるとき、History の詳細のファイルの右クリックから。Restore and Stage は 2 つめのボタン。<br>CLI: `restore --source <rev> [--staged]`。<br>TUI: File History の `V`。`y` この版、`b` その前の版、`s`・`B` で stage も。 |
 | File History | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: メインビューのページ。エクスプローラー・エディターのタブ・コマンドパレット・メインビューのファイルから開く。<br>CLI: `amonhen run`（`fileHistory`）から。<br>Windows: Working Copy のファイルから。<br>TUI: 同じく `L`。変更のないファイルは `O` でパスを聞く。 |
 | リポジトリのタブの隣のタブに、リポジトリのツールバー付きで開く | ✓ | ✓ | ✓ | n/a | n/a | n/a | GTK4: リポジトリのタブがほかの窓で前に出ているときは、ツールバーのない題だけの帯になる。<br>TUI: メインの画面の代わりに開き、Esc で戻る。 |
 | 行の履歴 | — | — | — | — | — | — |  |
@@ -303,7 +303,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Save as Bundle（すべて・一部の ref・基点より後） | ✓ | ✓ | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあれば。選んだブランチ・タグの右クリック、リポジトリ全体はサイドバーの ⋯ から。<br>CLI: `bundle create`。<br>TUI: 命令の一覧から。HEAD とすべてのブランチ・タグだけ。 |
 | bundle のファイルから clone（HEAD がなければブランチを選ぶ） | ✓ | ✓ | ✓ | ✓ | ✓ | — | VSCode: サイドバーの ⋯ と最初の画面から。clone したものを開く・新しい窓で開く・ワークスペースに足す。<br>CLI: `clone <file> [-b <branch>]`。 |
 | Fetch from Bundle（名前の下に、前提のコミットを確かめて） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: エンジンがあれば。サイドバーの ⋯ から。<br>CLI: `bundle fetch`。<br>TUI: 命令の一覧から。 |
-| 止まった `am` と Retry with 3-Way・Skip・Abort・Continue | ✓ | ✓ | ✓ | ✓ | ✓ | △ | VSCode: サイドバーの行に出る。<br>CLI: `am --continue / --skip / --abort / --retry-3way`。<br>Windows: Windows: Working Copy の上の帯に。<br>TUI: `C` `K` `A`。Retry with 3-Way はない。 |
+| 止まった `am` と Retry with 3-Way・Skip・Abort・Continue | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: サイドバーの行に出る。<br>CLI: `am --continue / --skip / --abort / --retry-3way`。<br>Windows: Windows: Working Copy の上の帯に。<br>TUI: `C` `K` `A`、Retry with 3-Way は `R`。 |
 
 ## 8. マージエディター
 
@@ -397,8 +397,8 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
 | worktree と変更の数 | ✓ | ✓ | ✓ | ✓ | ✓ | △ | CLI: `worktree list --changes`。<br>TUI: 2 つ以上あればサイドバーに。変更の数はない。 |
 | 書き込む先の worktree（✎）と切り替え | ✓ | ✓ | △ | ✓ | n/a | ✓ | VSCode: 拡張が働くリポジトリを切り替える。ワークスペースの外のものはソース管理のビューには足さない。<br>CLI: 動かした worktree で働く。<br>Windows: worktree を選ぶ（か Edit This Worktree）と、同じ位置・同じ画面の窓でその worktree を開き直す（開いているのは前のタブのリポジトリだけのため）。<br>TUI: ほかの worktree で Enter を押すと、TUI をそこで開き直す。 |
-| New Worktree…（ブランチ・コミットから） | ✓ | ✓ | ✓ | ✓ | ✓ | △ | TUI: 手元のブランチで `w`。コミットからはない。 |
-| Remove Worktree（尋ね、変更があれば `--force`） | ✓ | ✓ | ✓ | ✓ | ✓ | △ | TUI: `x` で尋ねてから消す。変更があれば git が断る（`--force` はない）。 |
+| New Worktree…（ブランチ・コミットから） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | TUI: 手元のブランチで `w`。History の `w` で、選んでいるコミットに新しいブランチを作って。 |
+| Remove Worktree（尋ね、変更があれば `--force`） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | TUI: `x` で尋ねてから消す。変更があればその数を書き、`--force` で消す。 |
 | ロックと解除・移動・移したフォルダを探す（repair） | ✓ | ✓ | ✓ | ✓ | ✓ | — | VSCode: worktree の右クリックから。書き込む先の worktree は、ほかに切り替えてから移す。<br>CLI: `worktree lock`・`unlock`・`move`・`repair`。 |
 | worktree の Prune | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | TUI: 命令の一覧から。 |
 | worktree のフォルダーを開くと、そのリポジトリでそれを書き込む先にする | ✓ | ✓ | △ | ✓ | n/a | ✓ | VSCode: フォルダーを開くとその worktree で働き、ほかの worktree も並ぶ。<br>Windows: フォルダはそれ自身の窓で開き、その worktree が ✎、ほかも並ぶ。 |
