@@ -969,6 +969,48 @@ impl Repository {
         Ok(DiffView::new(&diff, profile).with_path(&change.path))
     }
 
+    /// `stacked` の `file` 番目のファイルの差分を、前後 `context` 行で取り直す（`u32::MAX` ならファイル全体）。
+    /// 見出しの関数名と生成物の印は、そのファイルの属性のまま。
+    pub fn set_stacked_context(&self, stacked: &mut diff::StackedDiff, file: usize, context: u32) {
+        let Some((path, d)) = stacked.files.get_mut(file) else {
+            return;
+        };
+        if d.binary {
+            return;
+        }
+        let path = path.split(" — ").next().unwrap_or(path);
+        let attrs = self.diff_attributes(&[path]);
+        let funcname = crate::funcname::FuncName::new(attrs[0].funcname.as_ref());
+        let generated = d.generated;
+        *d = diff::file_diff_with(d.old.clone(), d.new.clone(), context, &funcname);
+        d.generated = generated;
+    }
+
+    /// コミット `commit` の `path` の中身を、変わっていない行として並べた表示（History の「すべてのファイル」で、
+    /// このコミットで変えていないファイルを開く）。
+    pub fn tree_file(
+        &self,
+        commit: &Oid,
+        path: &str,
+        profile: &FrontendProfile,
+    ) -> Result<DiffView> {
+        let path = path.trim_matches('/');
+        let (folder, name) = path.rsplit_once('/').unwrap_or(("", path));
+        let entry = self
+            .backend
+            .tree_entries(commit, folder)?
+            .into_iter()
+            .find(|e| e.name == name)
+            .ok_or_else(|| tr!("{path} isn’t in this commit", path = path))?;
+        if entry.kind == amonhen_model::TreeEntryKind::Folder
+            || entry.kind == amonhen_model::TreeEntryKind::Submodule
+        {
+            return Err(tr!("{path} isn’t a file", path = path).into());
+        }
+        let data = self.backend.blob(&entry.oid)?;
+        Ok(DiffView::new(&diff::whole_file(data), profile).with_path(path))
+    }
+
     /// `changes` のすべてのファイルの差分（History で全ファイルを縦に並べて見せる）。ファイルの数だけ blob を読んで
     /// 差分を取るので、裏のスレッドで呼ぶ。
     pub fn stacked_diff(&self, changes: &[FileChange]) -> Result<diff::StackedDiff> {
@@ -2187,6 +2229,44 @@ mod tests {
         assert!(expected[3].ends_with("@@ fn main() {"), "{expected:?}");
         let generated: Vec<Option<bool>> = stacked.files.iter().map(|(_, d)| d.generated).collect();
         assert_eq!(generated, [Some(false), None, None, None, Some(true)]);
+    }
+
+    #[test]
+    fn stacked_context_grows_per_file_and_tree_file_lists_the_whole_text() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("repo");
+        std::fs::create_dir(&dir).unwrap();
+        git(&dir, &["init", "-q"]);
+        let body = |change: &str| {
+            let mut lines: Vec<String> = (1..=30).map(|i| format!("x{i}")).collect();
+            lines[14] = change.to_owned();
+            lines.join("\n") + "\n"
+        };
+        std::fs::write(dir.join("a.txt"), body("old")).unwrap();
+        std::fs::write(dir.join("same.txt"), "one\ntwo\n").unwrap();
+        git(&dir, &["add", "-A"]);
+        git(&dir, &["commit", "-q", "-m", "first"]);
+        std::fs::write(dir.join("a.txt"), body("new")).unwrap();
+        git(&dir, &["commit", "-qam", "second"]);
+
+        let repo = Repository::with_cache(GixBackend::open(&dir).unwrap(), tmp.path().join("c"));
+        let head = repo.backend.head().unwrap().unwrap();
+        let changes = repo.commit_changes(&head).unwrap();
+        let mut stacked = repo.stacked_diff(&changes).unwrap();
+        // 前後 3 行: 見出しと 3 + 2 + 3 行。
+        assert_eq!(stacked.files[0].1.lines.len(), 9);
+        repo.set_stacked_context(&mut stacked, 0, 10);
+        assert_eq!(stacked.files[0].1.lines.len(), 1 + 10 + 2 + 10);
+        repo.set_stacked_context(&mut stacked, 0, u32::MAX);
+        assert_eq!(stacked.files[0].1.lines.len(), 1 + 29 + 2);
+        assert_eq!(stacked.files[0].1.headers, "@@ -1,30 +1,30 @@");
+
+        let profile = FrontendProfile::MACOS;
+        let view = repo.tree_file(&head, "same.txt", &profile).unwrap();
+        assert_eq!(view.rows.len(), 2);
+        assert!(view.rows.iter().all(|r| r.kind == DiffRow::CONTEXT));
+        assert_eq!((view.rows[1].old_no, view.rows[1].new_no), (2, 2));
+        assert!(repo.tree_file(&head, "missing.txt", &profile).is_err());
     }
 
     #[test]

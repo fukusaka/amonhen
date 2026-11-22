@@ -43,6 +43,37 @@ pub struct FileDiff {
     pub generated: Option<bool>,
 }
 
+/// ファイル全体を変更のない行として並べたもの（変わっていないファイルの、その時点の中身を見せる）。
+pub fn whole_file(data: impl Into<Blob>) -> FileDiff {
+    let data = data.into();
+    let binary = is_binary(&data);
+    let lines = if binary {
+        Vec::new()
+    } else {
+        line_ranges(&data)
+            .into_iter()
+            .enumerate()
+            .map(|(i, range)| Line {
+                kind: DiffRow::CONTEXT,
+                old_no: i as u32 + 1,
+                new_no: i as u32 + 1,
+                source: Source::New,
+                range,
+            })
+            .collect()
+    };
+    FileDiff {
+        old: data.clone(),
+        new: data,
+        headers: String::new(),
+        lines,
+        binary,
+        added: 0,
+        removed: 0,
+        generated: None,
+    }
+}
+
 /// 先頭 8000 バイトに NUL があればバイナリとみなす（git と同じ）。
 fn is_binary(data: &[u8]) -> bool {
     data[..data.len().min(8000)].contains(&0)
@@ -111,7 +142,11 @@ pub fn file_diff_with(
     let mut groups: Vec<Vec<imara_diff::Hunk>> = Vec::new();
     for h in hunks {
         match groups.last_mut() {
-            Some(g) if h.before.start - g.last().unwrap().before.end <= 2 * context => g.push(h),
+            Some(g)
+                if h.before.start - g.last().unwrap().before.end <= context.saturating_mul(2) =>
+            {
+                g.push(h)
+            }
             _ => groups.push(vec![h]),
         }
     }
@@ -123,7 +158,7 @@ pub fn file_diff_with(
         let first = &group[0];
         let last = group.last().unwrap();
         let start_old = first.before.start.saturating_sub(context);
-        let end_old = (last.before.end + context).min(n_old);
+        let end_old = last.before.end.saturating_add(context).min(n_old);
         // 変更前と変更後の行は、変更のない所では同じ差だけずれている。
         let start_new = first.after.start - (first.before.start - start_old);
         let end_new = last.after.end + (end_old - last.before.end);

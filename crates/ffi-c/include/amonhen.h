@@ -977,6 +977,30 @@ AmonhenDiff *amonhen_stacked_view(const AmonhenStacked *stacked,
                                   AmonhenEncoding encoding);
 
 /**
+ * `stacked` の `file` 番目のファイルの差分を、前後 `context` 行で取り直す（`UINT32_MAX` ならファイル全体）。
+ * 表示は `amonhen_stacked_view` で作り直す。
+ *
+ * # Safety
+ * `repo` と `stacked` は有効で、`stacked` をほかのスレッドで同時に使っていないこと。
+ */
+void amonhen_stacked_set_context(const AmonhenRepo *repo_ptr,
+                                 AmonhenStacked *stacked,
+                                 uint32_t file,
+                                 uint32_t context);
+
+/**
+ * コミット `commit`（20 バイト）の `path` の中身を、変わっていない行として並べた表示（`amonhen_diff_free` で
+ * 解放する）。History の「すべてのファイル」で、このコミットで変えていないファイルを開く。
+ *
+ * # Safety
+ * `repo` は有効、`commit` は 20 バイトを読める領域、`path` は NUL で終わる UTF-8 であること。
+ */
+AmonhenDiff *amonhen_tree_file(const AmonhenRepo *repo_ptr,
+                               const uint8_t *commit,
+                               const char *path,
+                               AmonhenEncoding encoding);
+
+/**
  * History で選んだコミット（`rows` は行、順不同）の全ファイルの差分（`amonhen_stacked_free` で解放する）。
  * `kind` に見せ方を書く: 0 は first-parent でつながる範囲（一番古いものの親から一番新しいものまで）、1 はつながって
  * いない 2 つ（古いほうから新しいほうまで）、2 はとびとびの 3 つ以上（コミットごとの差分を、見出し
