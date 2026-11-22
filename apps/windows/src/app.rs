@@ -109,6 +109,9 @@ pub fn run(args: Args, started: Instant, more: Vec<u64>) -> Result<(), String> {
     App::run_windows(windows).map_err(|e| format!("WinUI を始められない: {e}"))
 }
 
+/// 窓の HWND を問い合わせたが分からなかった（問い合わせ直す）。
+const HWND_UNKNOWN: u64 = u64::MAX;
+
 /// タブ `tab` の根の部品に渡す引数（起動のときの引数の、リポジトリと画面をそのタブのものにしたもの）。
 fn args_for(tab: &crate::tabs::Tab) -> (Args, Instant) {
     let (mut args, started) = ARGS.with(|a| a.borrow().clone()).expect("args");
@@ -18618,24 +18621,28 @@ impl HistoryView {
         if !self.front || self.owner {
             return;
         }
+        // 窓の HWND を問い合わせる（部品がまだ窓に入っていなくて分からなければ、次に描くときに問い合わせ直す）。
+        if self.hwnd.get() == HWND_UNKNOWN {
+            self.hwnd.set(0);
+            self.hwnd_requested = false;
+        }
         if !self.hwnd_requested {
             let hwnd = self.hwnd.clone();
             self.hwnd_requested = self.root.request_native_element(move |result| {
-                if let Ok(element) = result
-                    && let Some(handle) = xaml::window_handle(&element)
-                {
-                    hwnd.set(handle);
-                }
+                let handle = result
+                    .ok()
+                    .and_then(|element| xaml::window_handle(&element));
+                hwnd.set(handle.unwrap_or(HWND_UNKNOWN));
             });
         }
-        if self.hwnd.get() != 0 {
+        if self.hwnd.get() != 0 && self.hwnd.get() != HWND_UNKNOWN {
             let (window, hwnd) = (self.window, self.hwnd.get());
             WINDOW_HANDLES.with(|w| w.borrow_mut().insert(window, hwnd));
         }
         let only = crate::tabs::windows().len() == 1;
         let active =
             unsafe { windows::Win32::UI::Input::KeyboardAndMouse::GetActiveWindow() }.0 as u64;
-        if !only && (self.hwnd.get() == 0 || active != self.hwnd.get()) {
+        if !only && active != self.hwnd.get() {
             return;
         }
         // 前に持っていたタブ（自分ではない）に手放させる。
