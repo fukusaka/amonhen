@@ -5,7 +5,7 @@
 //!
 //! 全ファイルを並べるときは、一覧で選んだファイルの見出しまでスクロールし、スクロールしたら一覧の選択を合わせる。
 //! 見たことにしたファイル（Viewed）は畳み、コミットごとに覚えておく（古いものから捨てて 500 コミットまで）。
-//! lock ファイルなど生成されたファイルと、1000 行を超える変更のファイルは、最初は畳んでおく。
+//! 生成されたファイル（`linguist-generated`・lock ファイルなど）と、1000 行を超える変更のファイルは、最初は畳んでおく。
 //!
 //! 1 つのコミットで全ファイルを並べないとき（設定がオフか、変更ファイルが 200 を超える）は、最初のファイルの
 //! 差分だけを読み、ほかは一覧で選んだときに読む（macOS 版と同じ）。
@@ -94,26 +94,6 @@ fn save_viewed(key: &str, paths: &HashSet<String>) {
     crate::settings::set_string(VIEWED, &store.to_string());
 }
 
-/// lock ファイルや縮めたファイルなど、生成されたファイル（最初は畳む。macOS 版と同じ）。
-fn is_generated(path: &str) -> bool {
-    let name = path.rsplit('/').next().unwrap_or(path);
-    const LOCKFILES: [&str; 12] = [
-        "Cargo.lock",
-        "package-lock.json",
-        "yarn.lock",
-        "pnpm-lock.yaml",
-        "Gemfile.lock",
-        "poetry.lock",
-        "composer.lock",
-        "go.sum",
-        "Package.resolved",
-        "Podfile.lock",
-        "bun.lockb",
-        "uv.lock",
-    ];
-    LOCKFILES.contains(&name) || name.ends_with(".min.js") || name.ends_with(".min.css")
-}
-
 /// 裏のスレッドで用意した差分の表示。
 pub struct Prepared {
     source: Arc<Source>,
@@ -190,8 +170,9 @@ impl Prepared {
             .0
             .files
             .iter()
-            .map(|(name, diff)| {
-                is_generated(path_of(name))
+            .enumerate()
+            .map(|(i, (name, diff))| {
+                source.0.generated(i)
                     || viewed.contains(name)
                     || diff.added + diff.removed > COLLAPSE_ABOVE
             })

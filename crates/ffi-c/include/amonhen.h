@@ -992,6 +992,15 @@ AmonhenStacked *amonhen_selection_diff(const AmonhenRepo *repo_ptr,
 uint32_t amonhen_stacked_count(const AmonhenStacked *stacked);
 
 /**
+ * `file` 番目のファイルが生成物か（最初は畳む）。`.gitattributes` の `linguist-generated`、なければ lock ファイルなど。
+ *
+ * # Safety
+ * `stacked` は有効であること。
+ */
+bool amonhen_stacked_generated(const AmonhenStacked *stacked,
+                               uint32_t file);
+
+/**
  * # Safety
  * `stacked` は `amonhen_stacked_diff` が返したもので、まだ解放していないこと。
  */

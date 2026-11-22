@@ -70,6 +70,9 @@ public final class StackedDiff: @unchecked Sendable {
 
     public var count: Int { Int(amonhen_stacked_count(raw)) }
 
+    /// `file` 番目のファイルが生成物か（最初は畳む）。`.gitattributes` の `linguist-generated`、なければ lock ファイルなど。
+    public func isGenerated(_ file: Int) -> Bool { amonhen_stacked_generated(raw, UInt32(file)) }
+
     /// 各ファイルの見出し（ふつうはパス。とびとびに選んだコミットでは「パス — 短い ID」）。
     public private(set) lazy var names: [String] = {
         // すべて畳むと見出しの行だけになる。

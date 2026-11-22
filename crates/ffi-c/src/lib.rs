@@ -1544,6 +1544,18 @@ pub unsafe extern "C" fn amonhen_stacked_count(stacked: *const AmonhenStacked) -
         .len() as u32
 }
 
+/// `file` 番目のファイルが生成物か（最初は畳む）。`.gitattributes` の `linguist-generated`、なければ lock ファイルなど。
+///
+/// # Safety
+/// `stacked` は有効であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_stacked_generated(
+    stacked: *const AmonhenStacked,
+    file: u32,
+) -> bool {
+    handle!(stacked, amonhen_core::diff::StackedDiff).generated(file as usize)
+}
+
 /// # Safety
 /// `stacked` は `amonhen_stacked_diff` が返したもので、まだ解放していないこと。
 #[unsafe(no_mangle)]

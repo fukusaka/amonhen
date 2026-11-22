@@ -1810,16 +1810,6 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
 
     // MARK: - 全ファイルを縦に並べた差分
 
-    /// 最初から畳むファイル: lockfile などの生成物（見ても仕方がない大きな差分）。
-    private static func isGenerated(_ path: String) -> Bool {
-        let name = (path as NSString).lastPathComponent
-        let lockfiles: Set<String> = [
-            "Cargo.lock", "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "Gemfile.lock", "poetry.lock",
-            "composer.lock", "go.sum", "Package.resolved", "Podfile.lock", "bun.lockb", "uv.lock",
-        ]
-        return lockfiles.contains(name) || name.hasSuffix(".min.js") || name.hasSuffix(".min.css")
-    }
-
     /// 1 ファイルの変更がこの行数を超えたら、最初は畳む。
     private static let collapseAbove = 1000
 
@@ -1829,7 +1819,8 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
     private func showStacked(_ stacked: StackedDiff, key: String) {
         viewedKey = key
         let viewed = Self.viewed[key] ?? []
-        collapsed = stacked.names.map { Self.isGenerated($0) || viewed.contains($0) }
+        // 生成物（`linguist-generated`・lock ファイルなど）は最初から畳む。
+        collapsed = stacked.names.indices.map { stacked.isGenerated($0) || viewed.contains(stacked.names[$0]) }
         var view = stacked.view(collapsed: collapsed)
         // 行数は差分を取って初めてわかるので、大きなファイルがあれば畳んで作り直す。
         let large: [Int] = view.withRows { all in
