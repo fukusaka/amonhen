@@ -297,7 +297,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 機能 | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
 | Save as Patch（コミットごとか mbox・カバーレター・-v） | ✓ | ✓ | ✓ | ✓ | ✓ | △ | CLI: `format-patch`。<br>TUI: 命令の一覧から、選んでいるコミットか、印をつけたコミットを古い順に。mbox・カバーレター・-v はない。 |
-| Apply Patch（am / apply・下見・3-way・--index） | ✓ | ✓ | ✓ | ✓ | ✓ | △ | CLI: `am`・`apply`（`--check`）。<br>TUI: 命令の一覧から。下見・3-way・--index はない。 |
+| Apply Patch（am / apply・下見・3-way・--index） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `am`・`apply`（`--check`）。<br>TUI: 命令の一覧から。下見は確かめる文の件名かファイル、当たらなければ 3-way を勧め、`i` で index にも。 |
 | パッチのファイルを窓に落とす | ✓ | ✓ | ✓ | ✓ | n/a | n/a | VSCode: エクスプローラーのメニューから。<br>TUI: Apply Patch がファイルのパスを聞く。 |
 | Export Archive（zip・tar.gz・tar、先頭のフォルダ、1 つのフォルダ） | ✓ | ✓ | △ | ✓ | ✓ | △ | VSCode: エンジンがあれば。ブランチ・タグの右クリック、History のコミットの右クリック、HEAD はコマンドパレットから。<br>CLI: `archive`。<br>Windows: コミットのメニューから、形・先頭のフォルダ・1 つのフォルダ（パスを書く）。<br>TUI: 命令の一覧から、選んでいるコミット。形は拡張子で決まる。先頭のフォルダと 1 つのフォルダは選べない。 |
 | Save as Bundle（すべて・一部の ref・基点より後） | ✓ | ✓ | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあれば。選んだブランチ・タグの右クリック、リポジトリ全体はサイドバーの ⋯ から。<br>CLI: `bundle create`。<br>TUI: 命令の一覧から。HEAD とすべてのブランチ・タグだけ。 |

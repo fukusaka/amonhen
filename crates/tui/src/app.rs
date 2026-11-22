@@ -2568,42 +2568,68 @@ impl App {
                     return;
                 };
                 let info = &reply["info"];
+                let mailbox = info["kind"] == "mailbox";
+                let preview = patch_preview(info);
+                // 当たらなければ、git の答えを出して、3-way merge で当てるかを聞く（当たらないところはコンフリクト
+                // として残る。アプリの Apply Patch の 3-way）。
                 if info["applies"] != true {
                     let error = info["error"].as_str().unwrap_or("");
                     let line = error
                         .lines()
                         .find(|l| !l.trim().is_empty())
                         .unwrap_or(error);
-                    self.error = Some(tr!(
-                        "The patch doesn’t apply: {reason}",
-                        reason = line.trim()
+                    let request = match mailbox {
+                        true => Request::Run {
+                            name: "am",
+                            command: json!({"op": "am", "paths": [file], "threeWay": true}),
+                        },
+                        false => Request::Run {
+                            name: "applyPatch",
+                            command: json!({"op": "applyPatch", "paths": [file], "threeWay": true}),
+                        },
+                    };
+                    self.confirm = Some((
+                        tr!(
+                            "The patch doesn’t apply: {reason}. Apply it with a 3-way merge, leaving conflicts where it still doesn’t?{preview}",
+                            reason = line.trim().trim_end_matches('.'),
+                            preview = preview
+                        ),
+                        tr!("apply 3-way"),
+                        request,
                     ));
                     return;
                 }
                 let patches = info["patches"].as_array().map_or(0, Vec::len);
-                let (ask, request) = match info["kind"].as_str() {
-                    Some("mailbox") => (
-                        match patches {
-                            1 => tr!("Apply the patch to the current branch as a commit?"),
-                            count => tr!(
-                                "Apply {count} patches to the current branch as commits?",
-                                count = count
-                            ),
-                        },
-                        Request::Run {
-                            name: "am",
-                            command: json!({"op": "am", "paths": [file], "threeWay": null}),
-                        },
-                    ),
-                    _ => (
-                        tr!("Apply the diff to the working tree? Undo brings the files back."),
-                        Request::Run {
-                            name: "applyPatch",
-                            command: json!({"op": "applyPatch", "paths": [file]}),
-                        },
+                // ただの diff は、作業ツリーだけか、index にも当てるか（`--index`）を選ぶ。
+                if !mailbox {
+                    let apply = |index: bool| Request::Run {
+                        name: "applyPatch",
+                        command: json!({"op": "applyPatch", "paths": [file], "index": index}),
+                    };
+                    self.choices = Some((
+                        tr!(
+                            "Apply the diff? Undo brings the files back.{preview}",
+                            preview = preview
+                        ),
+                        vec![
+                            ('y', tr!("to the working tree"), apply(false)),
+                            ('i', tr!("to the index too (staged)"), apply(true)),
+                        ],
+                    ));
+                    return;
+                }
+                let ask = match patches {
+                    1 => tr!("Apply the patch to the current branch as a commit?"),
+                    count => tr!(
+                        "Apply {count} patches to the current branch as commits?",
+                        count = count
                     ),
                 };
-                self.confirm = Some((ask, tr!("apply"), request));
+                let request = Request::Run {
+                    name: "am",
+                    command: json!({"op": "am", "paths": [file], "threeWay": null}),
+                };
+                self.confirm = Some((format!("{ask}{preview}"), tr!("apply"), request));
                 return;
             }
             "applyPatch" => self.notice = Some(tr!("Applied the patch")),
@@ -6475,6 +6501,48 @@ impl App {
         }
         // 入力しているときだけ、カーソルを出す。
         cursor
+    }
+}
+
+/// パッチの見通し（`readPatch` の `info`）を、確かめる文の後ろに付ける短い形に: メールの形なら件名、ただの diff なら
+/// ファイルと足した・消した行の数（アプリの Apply Patch のシートの一覧の代わり）。
+fn patch_preview(info: &Value) -> String {
+    let patches: Vec<&Value> = info["patches"].as_array().into_iter().flatten().collect();
+    let mut parts: Vec<String> = Vec::new();
+    if info["kind"] == "mailbox" {
+        parts.extend(
+            patches
+                .iter()
+                .filter_map(|p| p["subject"].as_str())
+                .map(|s| format!("“{s}”")),
+        );
+    } else {
+        for file in patches
+            .iter()
+            .flat_map(|p| p["files"].as_array().into_iter().flatten())
+        {
+            let Some(path) = file["path"].as_str() else {
+                continue;
+            };
+            parts.push(match file["binary"] == true {
+                true => format!("{path} (binary)"),
+                false => format!(
+                    "{path} +{} −{}",
+                    file["added"].as_u64().unwrap_or(0),
+                    file["removed"].as_u64().unwrap_or(0)
+                ),
+            });
+        }
+    }
+    const SHOWN: usize = 3;
+    let more = parts.len().saturating_sub(SHOWN);
+    parts.truncate(SHOWN);
+    if more > 0 {
+        parts.push(tr!("{count} more", count = more));
+    }
+    match parts.is_empty() {
+        true => String::new(),
+        false => format!(" ({})", parts.join(", ")),
     }
 }
 

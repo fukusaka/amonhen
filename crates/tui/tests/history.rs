@@ -2565,8 +2565,13 @@ fn apply_patch_from_the_command_list() {
     let keys = format!(":apply patch\n\x15{}\n", mail.display());
     let asked = amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), &keys).unwrap();
     println!("{asked}");
+    // 件名を見せてから確かめる。
     assert!(
-        asked.contains("Apply the patch to the current branch as a commit?   y apply   n cancel")
+        asked.contains(&format!(
+            "Apply the patch to the current branch as a commit? (“{}”)   y apply   n cancel",
+            subject.trim()
+        )),
+        "{asked}"
     );
     amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), &format!("{keys}y")).unwrap();
     assert_eq!(git_out(dir.path(), &["log", "-1", "--format=%s"]), subject);
@@ -2579,18 +2584,31 @@ fn apply_patch_from_the_command_list() {
     std::fs::write(&diff, git_out(dir.path(), &["diff"])).unwrap();
     std::fs::write(&lane, &before).unwrap();
     let keys = format!(":apply patch\n\x15{}\n", diff.display());
-    let asked = amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), &keys).unwrap();
+    let asked = amonhen_tui::snapshot(open(dir.path()), 220, 8, clock(), &keys).unwrap();
     println!("{asked}");
-    assert!(asked.contains("Apply the diff to the working tree?"));
+    // ファイルと行の数を見せ、作業ツリーだけか index にもかを選ぶ。
+    assert!(
+        asked.contains("Apply the diff? Undo brings the files back. (lane.rs +1 −1)   y to the working tree   i to the index too (staged)   n cancel"),
+        "{asked}"
+    );
     amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), &format!("{keys}y")).unwrap();
     assert_eq!(git_out(dir.path(), &["diff", "--name-only"]), "lane.rs\n");
     assert_eq!(
         git_out(dir.path(), &["diff", "--cached", "--name-only"]),
         ""
     );
-    // もう当たらない（同じ diff をもう一度）。
-    let again = amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), &keys).unwrap();
-    assert!(again.contains("The patch doesn’t apply"));
+    // もう当たらない（同じ diff をもう一度）。3-way で当てるかを聞く。
+    let again = amonhen_tui::snapshot(open(dir.path()), 260, 8, clock(), &keys).unwrap();
+    println!("{again}");
+    assert!(again.contains("The patch doesn’t apply"), "{again}");
+    assert!(again.contains("y apply 3-way   n cancel"), "{again}");
+    // index にも当てる。
+    git(dir.path(), BASE, &["checkout", "--", "lane.rs"]);
+    amonhen_tui::snapshot(open(dir.path()), 220, 8, clock(), &format!("{keys}i")).unwrap();
+    assert_eq!(
+        git_out(dir.path(), &["diff", "--cached", "--name-only"]),
+        "lane.rs\n"
+    );
 }
 
 /// 当たらずに止まった git am のパッチを、`R` で 3-way merge で当て直す（アプリの Retry with 3-Way）
