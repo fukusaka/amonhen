@@ -149,6 +149,8 @@ enum Naming {
     RemoteRename,
     /// History のコミットから作る worktree の、新しいブランチ（次に場所を聞く）。
     WorktreeBranch,
+    /// パッチの版の番号（`git format-patch -v`）。
+    PatchVersion,
     /// 直すリモートの URL（始まりは前の名前、出し方は新しい名前）。
     RemoteEditUrl,
     /// 選んでいるコミットを書き出すアーカイブのファイル（この機械の）。
@@ -488,6 +490,8 @@ pub struct App {
     removing_worktree: Option<String>,
     /// History のコミットから作る worktree の、新しいブランチの名前（場所を聞いている間）。
     worktree_branch: Option<String>,
+    /// パッチの版の番号を聞いている間の、コミット（空白区切り）と書く場所。
+    patch_version: Option<(String, String)>,
     /// 打っている名前が何のものか。
     naming: Naming,
     /// git や ssh から尋ねられていること（先頭を画面で聞いている）と、打った答え。
@@ -619,6 +623,7 @@ impl App {
             tag_remote: None,
             removing_worktree: None,
             worktree_branch: None,
+            patch_version: None,
             naming: Naming::Branch,
             #[cfg(unix)]
             questions: std::collections::VecDeque::new(),
@@ -1466,6 +1471,18 @@ impl App {
             self.dirty = true;
             return;
         }
+        // パッチを書く前の `v`: 版の番号を打つ。ほかのキーなら、聞いていたことは忘れる。
+        if self.choices.is_some()
+            && let Some(pending) = self.patch_version.take()
+            && key.code == KeyCode::Char('v')
+        {
+            self.choices = None;
+            self.patch_version = Some(pending);
+            self.naming = Naming::PatchVersion;
+            self.typing_branch = Some((String::new(), String::new(), "2".to_owned()));
+            self.dirty = true;
+            return;
+        }
         // 確かめている間は、`y`（か Enter）で行い、ほかのキーでやめる。答えたら、重ねていた絵も消す。
         if self.choices.is_some() || self.confirm.is_some() {
             self.question_drawing = None;
@@ -1783,11 +1800,27 @@ impl App {
                                 self.open_file_view(name.trim_end_matches('/'), false);
                                 return;
                             }
-                            Naming::SavePatch => (
-                                "savePatch",
-                                tr!("Saving the patch…"),
-                                json!({"op": "formatPatch", "oids": start.split(' ').collect::<Vec<_>>(), "dir": local_path(name)}),
-                            ),
+                            // 場所の次に、アプリの Save as Patch のシートの選択肢を聞く: そのまま、送り状を付けて、
+                            // 版の番号を付けて（`-v`）。`.mbox` で終わる名前なら、1 つのファイルにまとめる。
+                            Naming::SavePatch => {
+                                self.ask_save_patch(&start, &local_path(name), None);
+                                return;
+                            }
+                            Naming::PatchVersion => {
+                                let Some((oids, place)) = self.patch_version.take() else {
+                                    return;
+                                };
+                                match name.trim().parse::<u32>() {
+                                    Ok(version) if version >= 1 => {
+                                        self.ask_save_patch(&oids, &place, Some(version))
+                                    }
+                                    _ => {
+                                        self.error =
+                                            Some(tr!("Write the version as a number, like 2"))
+                                    }
+                                }
+                                return;
+                            }
                             Naming::Patch => {
                                 let file = local_path(name);
                                 self.patch_file = Some(file.clone());
@@ -3988,6 +4021,41 @@ impl App {
         true
     }
 
+    /// コミット `oids`（空白区切り、古い順）を `place`（フォルダ、`.mbox` なら 1 つのファイル）にパッチとして書く前に、
+    /// 送り状（`--cover-letter`、2 つ以上のとき）と版の番号（`-v`）を選ばせる。`version` は聞いた後の版。
+    fn ask_save_patch(&mut self, oids: &str, place: &str, version: Option<u32>) {
+        let ids: Vec<&str> = oids.split(' ').collect();
+        let one_file = place.to_lowercase().ends_with(".mbox");
+        let save = |cover: bool| {
+            let mut command = json!({"op": "formatPatch", "oids": ids,
+                "coverLetter": cover, "reroll": version});
+            command[if one_file { "file" } else { "dir" }] = json!(place);
+            Request::Run {
+                name: "savePatch",
+                command,
+            }
+        };
+        let mut options: Vec<Choice> = vec![('y', tr!("save"), save(false))];
+        if ids.len() >= 2 {
+            options.push(('c', tr!("with a cover letter"), save(true)));
+        }
+        if version.is_none() {
+            // 選ぶ前に横取りして、版の番号を聞く（中身は送らない）。
+            options.push(('v', tr!("as a new version (-v)…"), Request::Status));
+            self.patch_version = Some((oids.to_owned(), place.to_owned()));
+        }
+        let what = match one_file {
+            true => tr!("Save as one file {place}?", place = place),
+            false => tr!("Save as patches in {place}?", place = place),
+        };
+        let ask = match version {
+            Some(v) => format!("{what} (v{v})"),
+            None => what,
+        };
+        self.choices = Some((ask, options));
+        self.dirty = true;
+    }
+
     /// サイドバーで選んでいるリモートのブランチ（`origin/main`）のリモート。
     fn picked_remote(&self) -> Option<String> {
         let Some(("remote", name, _)) = self.sidebar.picked_ref() else {
@@ -6098,11 +6166,12 @@ impl App {
                     }
                     Naming::SavePatch => {
                         tr!(
-                            "Save {at} as a patch in the folder: {name}",
+                            "Save {at} as patches in the folder (or one .mbox file): {name}",
                             at = at,
                             name = name
                         )
                     }
+                    Naming::PatchVersion => tr!("Version of the patches (-v): {name}", name = name),
                     Naming::BundleName => {
                         tr!("Fetch its branches as remote: {name}", name = name)
                     }

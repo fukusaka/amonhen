@@ -296,7 +296,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 
 | Feature | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
-| Save as Patch (per commit or mbox, cover letter, -v) | ✓ | ✓ | ✓ | ✓ | ✓ | △ | CLI: `format-patch`.<br>TUI: The selected commit, or the marked commits oldest first, from the command list; no mbox, cover letter or -v. |
+| Save as Patch (per commit or mbox, cover letter, -v) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `format-patch`.<br>TUI: The selected commit, or the marked commits oldest first, from the command list; a name ending in `.mbox` writes one file, `c` adds a cover letter and `v` asks for the version. |
 | Apply Patch (am / apply, preview, 3-way, --index) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `am`, `apply` (`--check`).<br>TUI: From the command list; the preview is the subjects or files in the question, 3-way is offered when it doesn't apply, and `i` applies to the index too. |
 | Drop patch files on the window | ✓ | ✓ | ✓ | ✓ | n/a | n/a | VSCode: From the Explorer's context menu.<br>TUI: Apply Patch asks for the file's path. |
 | Export Archive (zip / tar.gz / tar, top folder, one folder) | ✓ | ✓ | △ | ✓ | ✓ | △ | VSCode: With the engine; a branch's or tag's right-click, a commit's in History, or the command palette for HEAD.<br>CLI: `archive`.<br>Windows: Format, top folder and one folder (typed as a path) from a commit's menu.<br>TUI: The selected commit, from the command list; the extension picks the format; no choice of the top folder or one folder. |

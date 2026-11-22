@@ -2661,13 +2661,39 @@ fn save_the_selected_commit_as_a_patch() {
     let out = tempfile::tempdir().unwrap();
     let folder = out.path().join("patches");
     let keys = format!(":save as patch\n\x15{}\n", folder.display());
-    let done = amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), &keys).unwrap();
+    // 1 つなら送り状は出さない。版の番号は選べる。
+    let asked = amonhen_tui::snapshot(open(dir.path()), 240, 8, clock(), &keys).unwrap();
+    println!("{asked}");
+    assert!(
+        asked.contains("   y save   v as a new version (-v)…   n cancel"),
+        "{asked}"
+    );
+    let done =
+        amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), &format!("{keys}y")).unwrap();
     println!("{done}");
     assert!(done.contains("Saved "));
     let patch = folder.join("0001-Take-the-lane-from-the-trunk.patch");
     let text = std::fs::read_to_string(&patch).unwrap();
     assert!(text.contains("Subject: [PATCH] Take the lane from the trunk"));
     assert!(text.contains("+    let lane = trunk();"));
+    // 版の番号を付ける（-v 3）。
+    let keys = format!(":save as patch\n\x15{}\nv\x153\ny", folder.display());
+    amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), &keys).unwrap();
+    let text =
+        std::fs::read_to_string(folder.join("v3-0001-Take-the-lane-from-the-trunk.patch")).unwrap();
+    assert!(
+        text.contains("Subject: [PATCH v3] Take the lane from the trunk"),
+        "{text}"
+    );
+    // .mbox で終わる名前なら、1 つのファイルに。
+    let mbox = out.path().join("all.mbox");
+    let keys = format!(":save as patch\n\x15{}\ny", mbox.display());
+    amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), &keys).unwrap();
+    assert!(
+        std::fs::read_to_string(&mbox)
+            .unwrap()
+            .contains("Subject: [PATCH] Take the lane")
+    );
 }
 
 /// コマンドの一覧の Compare with Previous Version: 今のブランチを、最後に書き換える前の版と比べる（range-diff）
@@ -3545,13 +3571,21 @@ fn copy_ids_and_save_the_selected_commits_as_patches() {
     assert!(one.contains("(to the terminal’s clipboard)"), "{one}");
     let out = tempfile::tempdir().unwrap();
     let folder = out.path().join("patches");
-    let keys = format!("⇣:save as patch\n\x15{}\n", folder.display());
+    let keys = format!("⇣:save as patch\n\x15{}\nc", folder.display());
     let done = amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), &keys).unwrap();
-    assert!(done.contains("Saved 2 patches in "), "{done}");
+    assert!(done.contains("Saved 3 patches in "), "{done}");
     let mut names: Vec<String> = std::fs::read_dir(&folder)
         .unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
     names.sort();
-    assert_eq!(names, ["0001-Three.patch", "0002-Four.patch"]);
+    // 送り状を付けた。
+    assert_eq!(
+        names,
+        [
+            "0000-cover-letter.patch",
+            "0001-Three.patch",
+            "0002-Four.patch"
+        ]
+    );
 }
