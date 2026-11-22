@@ -1361,7 +1361,7 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
             scroll.leadingAnchor.constraint(equalTo: filesContainer.leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: filesContainer.trailingAnchor),
             totalsField.topAnchor.constraint(equalTo: scroll.bottomAnchor, constant: 3),
-            totalsField.leadingAnchor.constraint(equalTo: filesContainer.leadingAnchor, constant: 8),
+            totalsField.leadingAnchor.constraint(equalTo: filesContainer.leadingAnchor, constant: 14),
             totalsField.trailingAnchor.constraint(lessThanOrEqualTo: filesContainer.trailingAnchor, constant: -8),
             totalsField.bottomAnchor.constraint(equalTo: filesContainer.bottomAnchor, constant: -4),
         ])
