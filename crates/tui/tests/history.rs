@@ -2593,6 +2593,48 @@ fn apply_patch_from_the_command_list() {
     assert!(again.contains("The patch doesn’t apply"));
 }
 
+/// 当たらずに止まった git am のパッチを、`R` で 3-way merge で当て直す（アプリの Retry with 3-Way）
+#[test]
+fn retry_a_stopped_am_with_a_three_way_merge() {
+    let dir = tempfile::tempdir().unwrap();
+    git(dir.path(), BASE, &["init", "-q", "-b", "main"]);
+    let file = dir.path().join("n.txt");
+    std::fs::write(&file, "1\n2\n3\n4\n5\n6\n7\n").unwrap();
+    git(dir.path(), BASE, &["add", "."]);
+    git(dir.path(), BASE, &["commit", "-q", "-m", "Start"]);
+    std::fs::write(&file, "1\n2\n3\nfour\n5\n6\n7\n").unwrap();
+    git(dir.path(), BASE + DAY, &["commit", "-q", "-am", "Four"]);
+    let out = tempfile::tempdir().unwrap();
+    let mail = out.path().join("four.patch");
+    std::fs::write(
+        &mail,
+        git_out(dir.path(), &["format-patch", "-1", "--stdout"]),
+    )
+    .unwrap();
+    git(dir.path(), BASE, &["reset", "-q", "--hard", "HEAD~1"]);
+    // 近くの行を変えておくと、そのままでは当たらない（3-way なら当たる）。
+    std::fs::write(&file, "1\ntwo\n3\n4\n5\n6\n7\n").unwrap();
+    git(dir.path(), BASE + DAY * 2, &["commit", "-q", "-am", "Two"]);
+    let stopped = amonhen_model::process::command("git")
+        .current_dir(dir.path())
+        .args(["-c", "am.threeWay=false", "am", "-q"])
+        .arg(&mail)
+        .output()
+        .unwrap();
+    assert!(!stopped.status.success());
+    let band = amonhen_tui::snapshot(open(dir.path()), 200, 10, clock(), "").unwrap();
+    println!("{band}");
+    assert!(band.contains("R retry with 3-way"), "{band}");
+    let done = amonhen_tui::snapshot(open(dir.path()), 200, 10, clock(), "R").unwrap();
+    println!("{done}");
+    assert!(done.contains("Done"), "{done}");
+    assert_eq!(git_out(dir.path(), &["log", "-1", "--format=%s"]), "Four\n");
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "1\ntwo\n3\nfour\n5\n6\n7\n"
+    );
+}
+
 /// コマンドの一覧の Save as Patch: History で選んでいるコミットを、git の名前のパッチにしてフォルダに書く
 #[test]
 fn save_the_selected_commit_as_a_patch() {

@@ -503,6 +503,8 @@ pub struct App {
     behind: u64,
     /// 途中の操作（merge・rebase・cherry-pick・revert）: 種類と、何番目・全部でいくつ（rebase）。
     sequence: Option<(String, Option<(u64, u64)>)>,
+    /// 止まっている `git am` のパッチを、3-way merge で当て直せる（まだ 3-way で当てていない）。
+    retry_three_way: bool,
     /// 一番新しい stash の名前（`stash@{0}`）。
     stash: Option<String>,
     /// リモートの名前（上流のないブランチを publish する先）。
@@ -628,6 +630,7 @@ impl App {
             behind: 0,
             sequence: None,
             stash: None,
+            retry_three_way: false,
             remotes: Vec::new(),
             head: None,
             committing: false,
@@ -1261,6 +1264,10 @@ impl App {
                                 sequence["current"].as_u64().zip(sequence["total"].as_u64());
                             (kind.to_owned(), progress)
                         });
+                        self.retry_three_way = sequence["kind"] == "am"
+                            && sequence["threeWay"] == false
+                            && sequence["empty"] != true
+                            && sequence["retried"] != true;
                         self.changes.status(&status);
                         // Commit and Push: コミットの後の状態（上流より進んだ数）が届いたら、push を確かめる。
                         if !self.committing && std::mem::take(&mut self.push_after_commit) {
@@ -1965,6 +1972,14 @@ impl App {
                 }
             }
             KeyCode::Char('T') => self.ask_name(Naming::Tag),
+            // 止まった git am のパッチを 3-way merge で当て直す（アプリの Retry with 3-Way）。
+            KeyCode::Char('R') if self.retry_three_way => {
+                self.run(
+                    "amThreeWay",
+                    tr!("Retrying with a 3-way merge…"),
+                    json!({"op": "amThreeWay"}),
+                );
+            }
             KeyCode::Char('R') if self.view != View::Changes && self.focus == Focus::Main => {
                 self.ask_reset();
             }
@@ -2927,7 +2942,7 @@ impl App {
                 self.sidebar.show_view(Picked::Changes);
             }
             "merge" | "rebase" | "continue" | "skip" | "cherryPick" | "revert" | "rewrite"
-            | "split" | "am" => {
+            | "split" | "am" | "amThreeWay" => {
                 // 編集モードは、書き換えたら閉じる（書き換えられなければ、選んだものごと残る）。
                 if name == "rewrite" {
                     self.edit_mode = None;
@@ -4953,8 +4968,8 @@ impl App {
                 tr!("Stash (asks for a message), and pop the newest stash"),
             ),
             (
-                "C K A",
-                tr!("Continue, skip, abort a merge or rebase in progress"),
+                "C K A R",
+                tr!("Continue, skip, abort a merge or rebase; retry a stopped git am 3-way"),
             ),
             ("u", tr!("Undo the last operation")),
             (
@@ -6120,7 +6135,10 @@ impl App {
                 buf.set_stringn(
                     x + 3,
                     y,
-                    tr!("C continue   K skip   A abort"),
+                    match self.retry_three_way {
+                        true => tr!("C continue   K skip   A abort   R retry with 3-way"),
+                        false => tr!("C continue   K skip   A abort"),
+                    },
                     usize::from(position_x.saturating_sub(x + 3)),
                     Style::new(),
                 );

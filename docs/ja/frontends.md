@@ -303,7 +303,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Save as Bundle（すべて・一部の ref・基点より後） | ✓ | ✓ | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあれば。選んだブランチ・タグの右クリック、リポジトリ全体はサイドバーの ⋯ から。<br>CLI: `bundle create`。<br>TUI: 命令の一覧から。HEAD とすべてのブランチ・タグだけ。 |
 | bundle のファイルから clone（HEAD がなければブランチを選ぶ） | ✓ | ✓ | ✓ | ✓ | ✓ | — | VSCode: サイドバーの ⋯ と最初の画面から。clone したものを開く・新しい窓で開く・ワークスペースに足す。<br>CLI: `clone <file> [-b <branch>]`。 |
 | Fetch from Bundle（名前の下に、前提のコミットを確かめて） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: エンジンがあれば。サイドバーの ⋯ から。<br>CLI: `bundle fetch`。<br>TUI: 命令の一覧から。 |
-| 止まった `am` と Retry with 3-Way・Skip・Abort・Continue | ✓ | ✓ | ✓ | ✓ | ✓ | △ | VSCode: サイドバーの行に出る。<br>CLI: `am --continue / --skip / --abort / --retry-3way`。<br>Windows: Windows: Working Copy の上の帯に。<br>TUI: `C` `K` `A`。Retry with 3-Way はない。 |
+| 止まった `am` と Retry with 3-Way・Skip・Abort・Continue | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: サイドバーの行に出る。<br>CLI: `am --continue / --skip / --abort / --retry-3way`。<br>Windows: Windows: Working Copy の上の帯に。<br>TUI: `C` `K` `A`、Retry with 3-Way は `R`。 |
 
 ## 8. マージエディター
 

@@ -303,7 +303,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Save as Bundle (all, some refs, after a base) | ✓ | ✓ | ✓ | ✓ | ✓ | △ | VSCode: With the engine; the selected branches' and tags' right-click, or the sidebar's ⋯ for the whole repository.<br>CLI: `bundle create`.<br>TUI: HEAD and every branch and tag only, from the command list. |
 | Clone from a bundle file (branch when no HEAD) | ✓ | ✓ | ✓ | ✓ | ✓ | — | VSCode: The sidebar's ⋯ and the welcome view; then open the clone, in a new window or in the workspace.<br>CLI: `clone <file> [-b <branch>]`. |
 | Fetch from Bundle (under a name, prerequisites checked) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: With the engine; the sidebar's ⋯.<br>CLI: `bundle fetch`.<br>TUI: In the command list. |
-| Stopped `am` with Retry with 3-Way, Skip, Abort, Continue | ✓ | ✓ | ✓ | ✓ | ✓ | △ | VSCode: In a sidebar row.<br>CLI: `am --continue / --skip / --abort / --retry-3way`.<br>Windows: Windows: In the band above Working Copy.<br>TUI: `C` `K` `A`; no Retry with 3-Way. |
+| Stopped `am` with Retry with 3-Way, Skip, Abort, Continue | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: In a sidebar row.<br>CLI: `am --continue / --skip / --abort / --retry-3way`.<br>Windows: Windows: In the band above Working Copy.<br>TUI: `C` `K` `A`, and `R` for Retry with 3-Way. |
 
 ## 8. Merge editor
 
