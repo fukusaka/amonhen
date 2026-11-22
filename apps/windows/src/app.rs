@@ -40,6 +40,9 @@ thread_local! {
     static TREE_DRAG_AT: std::cell::Cell<Option<Instant>> = const { std::cell::Cell::new(None) };
     /// 根の部品に渡す引数（`Component::Input` は比べられる値でなければならないので、ここに置く）。
     static ARGS: RefCell<Option<(Args, Instant)>> = const { RefCell::new(None) };
+    /// タブごとに開いているリポジトリ（タブの id と、そのタブの場所。Activity の History のキャッシュの表が、
+    /// すべての窓のタブのリポジトリを並べる）。
+    static OPEN_REPOS: RefCell<Vec<(u64, String, Arc<Repository>)>> = const { RefCell::new(Vec::new()) };
     /// 前のタブの History と差分の描き手（窓の入力の処理が使う。タブごとの描き手は根の部品が持つ）。
     static HISTORY: RefCell<Option<Rc<RefCell<HistoryView>>>> = const { RefCell::new(None) };
     /// History を包む生の要素（右クリックのメニューを自分で開く）。
@@ -1210,8 +1213,10 @@ enum Message {
     AutoFetched(Option<String>),
     /// Activity の Operations の記録を JSON に書き出す。
     ActivityExport,
-    /// Activity の History のキャッシュを読んだ（リポジトリの名前と `historyCache` の info）。
-    ActivityCache(String, Value),
+    /// Activity の History のキャッシュを読んだ（開いているリポジトリごとの名前と `historyCache` の info）。
+    ActivityCache(u64, Vec<(String, Value)>),
+    /// Activity の History のキャッシュを読み直す時（読んだときの数え）。
+    ActivityCacheDue(u64),
     /// 共有の daemon の様子（動いていなければ None）。
     DaemonStatus(Option<Value>),
     DaemonToggle,
@@ -1849,6 +1854,12 @@ impl Root {
                 }
                 self.refs = Some(refs);
                 self.repo = Some(repo.clone());
+                let tab = self.tab.borrow().clone();
+                OPEN_REPOS.with(|r| {
+                    let mut r = r.borrow_mut();
+                    r.retain(|(id, ..)| *id != tab.id);
+                    r.push((tab.id, tab.location, repo.clone()));
+                });
                 if let Some(path) = self.pending_file_history.take() {
                     self.update(Message::OpenFileHistory(path), context);
                 }
@@ -6253,20 +6264,16 @@ impl Root {
                 if tab == 5 {
                     load_daemon_status(context);
                 }
-                if tab == 2
-                    && let Some(repo) = self.repo.clone()
-                {
-                    let name = repo
-                        .paths()
-                        .workdir
-                        .and_then(|w| w.file_name().map(|n| n.to_string_lossy().into_owned()))
-                        .unwrap_or_default();
-                    context.spawn_background(move |_| {
-                        let reply: Value =
-                            serde_json::from_str(&repo.run_json(r#"{"op":"historyCache"}"#))
-                                .unwrap_or_default();
-                        Message::ActivityCache(name, reply["info"].clone())
-                    });
+                if tab == 2 {
+                    // 数えはアプリ全体で 1 つ（Activity を開き直しても、前の読み直しと重ならない）。
+                    static CACHE_GENERATION: std::sync::atomic::AtomicU64 =
+                        std::sync::atomic::AtomicU64::new(0);
+                    let generation =
+                        CACHE_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                    if let Some(state) = self.activity.as_mut() {
+                        state.cache_generation = generation;
+                    }
+                    load_history_caches(generation, context);
                 }
             }
             Message::DaemonStatus(status) => {
@@ -6301,9 +6308,25 @@ impl Root {
                     });
                 }
             }
-            Message::ActivityCache(name, info) => {
-                if let Some(state) = self.activity.as_mut() {
-                    state.cache = Some((name, info));
+            Message::ActivityCache(generation, rows) => {
+                // 出している間は、読み終えてから 2 秒ごとに読み直す（macOS 版・GTK4 版と同じ間隔。閉じたタブの
+                // 行が消え、書き込みの数が進む）。タブを選び直したら、前の読み直しは止まる。
+                if let Some(state) = self.activity.as_mut()
+                    && state.tab == 2
+                    && state.cache_generation == generation
+                {
+                    state.cache = Some(rows);
+                    context.spawn_background(move |_| {
+                        std::thread::sleep(std::time::Duration::from_secs(2));
+                        Message::ActivityCacheDue(generation)
+                    });
+                }
+            }
+            Message::ActivityCacheDue(generation) => {
+                if self.activity.as_ref().is_some_and(|s| {
+                    s.tab == 2 && s.cache_generation == generation && self.page == Page::Activity
+                }) {
+                    load_history_caches(generation, context);
                 }
             }
             Message::ActivityExport => {
@@ -8423,6 +8446,7 @@ impl Root {
         let args = args.clone();
         let front = input.front;
         let window = input.window;
+        let tab_id = input.tab.id;
         context.use_effect("history", (), move || {
             let (panel, area, diff_panel, diff_area, sidebar, sidebar_menu_host) = refs;
             // File > New Window で開いた窓は、Repositories の画面から（GTK4 版の `show_home`）。
@@ -8534,6 +8558,7 @@ impl Root {
             Some(Box::new(move || {
                 drop(history);
                 drop(diff);
+                OPEN_REPOS.with(|r| r.borrow_mut().retain(|(id, ..)| *id != tab_id));
                 // 閉じたタブの History を、前のタブの History として残さない。
                 HISTORY.with(|h| {
                     let mut h = h.borrow_mut();
@@ -18506,6 +18531,32 @@ fn connecting_view(location: &str, error: Option<&String>, context: &ViewContext
             .vertical_alignment(VerticalAlignment::Center)
             .margin(24.0)
             .children((View::keyed_fragment(rows),)),))
+}
+
+/// すべての窓のタブで開いているリポジトリの History のキャッシュを裏で読む（macOS 版・GTK4 版と同じく、同じ場所を
+/// 開いたタブは 1 つにまとめる）。
+fn load_history_caches(generation: u64, context: &ComponentContext<Root>) {
+    let mut seen = std::collections::HashSet::new();
+    let repos: Vec<(String, Arc<Repository>)> = OPEN_REPOS.with(|r| {
+        r.borrow()
+            .iter()
+            .filter(|(_, location, _)| seen.insert(location.to_lowercase()))
+            .map(|(_, location, repo)| (crate::repositories::display_name(location), repo.clone()))
+            .collect()
+    });
+    context.spawn_background(move |_| {
+        let rows = repos
+            .into_iter()
+            .filter_map(|(name, repo)| {
+                let reply: Value =
+                    serde_json::from_str(&repo.run_json(r#"{"op":"historyCache"}"#)).ok()?;
+                reply["info"]
+                    .is_object()
+                    .then(|| (name, reply["info"].clone()))
+            })
+            .collect();
+        Message::ActivityCache(generation, rows)
+    });
 }
 
 /// 開いていないリポジトリを、その場で開く（clone した直後に取り出すフォルダを選ぶ）。
