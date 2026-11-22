@@ -1147,6 +1147,17 @@ fn h_goes_back_from_the_right_pane() {
 }
 
 /// git がコンフリクトの見込み（`merge-tree --write-tree`、2.38 から）を出せるか。
+/// 使っている git が `major.minor` 以降か。
+fn git_at_least(major: u32, minor: u32) -> bool {
+    let version = git_out(Path::new("."), &["--version"]);
+    let mut parts = version
+        .trim()
+        .trim_start_matches("git version ")
+        .split('.')
+        .map(|p| p.parse::<u32>().unwrap_or(0));
+    (parts.next().unwrap_or(0), parts.next().unwrap_or(0)) >= (major, minor)
+}
+
 fn predicts_conflicts(dir: &Path) -> bool {
     let version = git_out(dir, &["--version"]);
     let numbers: Vec<u32> = version
@@ -2932,6 +2943,8 @@ fn lock_move_and_locate_a_worktree() {
         &["worktree", "add", "-q", other.to_str().unwrap(), "topic"],
     );
     let list = || git_out(&main, &["worktree", "list", "--porcelain"]);
+    // ロックの理由は git の記録のファイルに（porcelain に理由が出るのは git 2.31 から）。
+    let lock = main.join(".git/worktrees/other/locked");
     // 一番下の行が other。
     let asked = amonhen_tui::snapshot(open(&main), 200, 16, clock(), "0GL").unwrap();
     println!("{asked}");
@@ -2942,18 +2955,22 @@ fn lock_move_and_locate_a_worktree() {
         "{asked}"
     );
     amonhen_tui::snapshot(open(&main), 200, 16, clock(), "0GLrtravelling\n").unwrap();
-    assert!(list().contains("locked travelling"), "{}", list());
+    assert_eq!(std::fs::read_to_string(&lock).unwrap().trim(), "travelling");
     let locked = amonhen_tui::snapshot(open(&main), 200, 16, clock(), "0Gn").unwrap();
     assert!(locked.contains("other (topic) · locked"), "{locked}");
     assert!(locked.contains("The worktree is locked"), "{locked}");
     amonhen_tui::snapshot(open(&main), 200, 16, clock(), "0GLy").unwrap();
-    assert!(!list().contains("locked"), "{}", list());
+    assert!(!lock.exists());
     // 移す。
     let moved = dir.path().join("moved");
     let keys = format!("0Gn\x15{}\n", moved.display());
     amonhen_tui::snapshot(open(&main), 200, 16, clock(), &keys).unwrap();
     assert!(moved.join(".git").exists() && !other.exists());
-    // 手で移すと、見つからない印が付く。`n` で今の場所を教えて、つなぎ直す。
+    // 手で移すと、見つからない印が付く。`n` で今の場所を教えて、つなぎ直す（git が見つからないことを知らせるのは
+    // 2.31 から、つなぎ直すのは 2.29 から）。
+    if !git_at_least(2, 31) {
+        return;
+    }
     let again = dir.path().join("again");
     std::fs::rename(&moved, &again).unwrap();
     let missing = amonhen_tui::snapshot(open(&main), 200, 16, clock(), "").unwrap();
