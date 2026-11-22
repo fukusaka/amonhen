@@ -8257,6 +8257,8 @@ impl Root {
         // タブ（2 つ以上のとき）はタイトルバーの下の段（macOS 版のタブの段と同じ所）。
         let tab_strip = Grid::new()
             .grid_row(2)
+            // 地を付けて、タブの並びの右の空いた所でも、ほかの窓から引いてきたタブを受ける。
+            .background(Brush::Solid(Color::transparent()))
             .element_ref(&self.tab_host)
             .children((tab_strip(self.window, &title, context),));
         // タブを窓の外へ引き出したら新しい窓へ、ほかの窓のタブの並びへ落としたらその窓へ移す（タブの並びが変わる

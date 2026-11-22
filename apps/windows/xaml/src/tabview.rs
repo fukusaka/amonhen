@@ -61,7 +61,7 @@ fn tag_of(tab: &IInspectable) -> Option<String> {
 pub fn on_tab_moves(
     element: &IInspectable,
     dropped: impl Fn(String) + Send + 'static,
-    received: impl Fn(String) + Send + 'static,
+    received: impl Fn(String) + Send + Sync + 'static,
     started: impl Fn() + Send + 'static,
     ended: impl Fn() + Send + 'static,
 ) -> Vec<EventRevoker> {
@@ -116,16 +116,45 @@ pub fn on_tab_moves(
         })
         .ok(),
     );
+    let received = std::sync::Arc::new(received);
+    let on_strip = received.clone();
     revokers.extend(
         tabs.TabStripDrop(move |_, args| {
             let Some(args) = args.as_ref() else { return };
             if let Some(tag) = dragged() {
                 let _ = args.SetHandled(true);
-                received(tag);
+                on_strip(tag);
             }
         })
         .ok(),
     );
+    // タブの段の空いた所（タブの並びの右）: TabView はそこを並びとしないので、段全体（`element`）でも受ける
+    // （macOS 版はタブの段のどこに落としても入る）。
+    if let Ok(strip) = element.cast::<UIElement>() {
+        let _ = strip.SetAllowDrop(true);
+        revokers.extend(
+            strip
+                .DragOver(|_, args| {
+                    let Some(args) = args.as_ref() else { return };
+                    if dragged().is_some() {
+                        let _ = args.SetAcceptedOperation(DataPackageOperation::Move);
+                        let _ = args.SetHandled(true);
+                    }
+                })
+                .ok(),
+        );
+        revokers.extend(
+            strip
+                .Drop(move |_, args| {
+                    let Some(args) = args.as_ref() else { return };
+                    if let Some(tag) = dragged() {
+                        let _ = args.SetHandled(true);
+                        received(tag);
+                    }
+                })
+                .ok(),
+        );
+    }
     revokers.extend(
         tabs.TabDroppedOutside(move |_, args| {
             // 引き始めに覚えたタブ。
