@@ -308,6 +308,8 @@ struct Root {
     checks_popover: Option<ChecksPopover>,
     checks_anchor: ElementRef<Button>,
     checks_opened: u64,
+    /// Activity の時計の数え（開くたびに替わり、前の時計を止める）。
+    activity_clock: u64,
     diff_panel: ElementRef<SwapChainPanel>,
     diff_area: ElementRef<Grid>,
     /// 差分で右クリックしたファイル（見出しのメニューの中身）。
@@ -1188,6 +1190,8 @@ enum Message {
     ActivityUndoLog(Vec<Value>),
     ActivityUndo(usize),
     ActivityTick,
+    /// Activity の時計（開いたときの数え。その時計が今のものなら読み直して、次を待つ）。
+    ActivityClock(u64),
     /// 走っている操作の数が変わった。
     Running(usize),
     /// History の下の帯から shallow clone の履歴を取り足す（`deepen:N`・`deepen-other`・`deepen-since`・`unshallow`）。
@@ -1487,6 +1491,7 @@ impl Component for Root {
             checks_popover: None,
             checks_anchor: ElementRef::new(),
             checks_opened: 0,
+            activity_clock: 0,
             diff_panel: ElementRef::new(),
             diff_area: ElementRef::new(),
             diff_file: None,
@@ -3497,8 +3502,14 @@ impl Root {
                 }
                 self.activity = Some(crate::activity::State::new());
                 self.page = Page::Activity;
-                self.with_history(|h| h.activity_tick = Some(Instant::now()));
                 self.load_undo_log(context);
+                // 開いている間は 0.5 秒ごとに読み直す（GTK4 版と同じ間隔）。History の描画の時計は、Activity が
+                // 覆っている間は進まないので、裏で待って知らせる。開き直したら、前の時計は止まる。
+                static ACTIVITY_CLOCK: std::sync::atomic::AtomicU64 =
+                    std::sync::atomic::AtomicU64::new(0);
+                let clock = ACTIVITY_CLOCK.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                self.activity_clock = clock;
+                activity_clock_later(clock, context);
             }
             Message::Command(id) if id == "show-sidebar" => {
                 self.sidebar_hidden = !self.sidebar_hidden;
@@ -7078,6 +7089,12 @@ impl Root {
                 self.busy = Some(tr!("Fetch More"));
                 perform(context, repo, command, tr!("Fetch More"));
             }
+            Message::ActivityClock(clock) => {
+                if self.activity.is_some() && self.activity_clock == clock {
+                    self.update(Message::ActivityTick, context);
+                    activity_clock_later(clock, context);
+                }
+            }
             Message::ActivityTick => {
                 let mut undo = false;
                 // この窓のリポジトリの daemon・SSH 越しのつながり（Daemon のタブの表）。
@@ -7172,7 +7189,6 @@ impl Root {
             Message::Repos(event) => self.repositories_event(event, context),
             Message::CloseActivity => {
                 self.activity = None;
-                self.with_history(|h| h.activity_tick = None);
                 self.page = self.activity_from;
             }
             Message::SettingsGit(epoch, name, email, entries) => {
@@ -8528,7 +8544,6 @@ impl Root {
                 worktree_tick: (Instant::now(), Instant::now()),
                 running: (0, None),
                 flash_until: None,
-                activity_tick: None,
                 watched: None,
             }));
             view.borrow_mut().me = Rc::downgrade(&view);
@@ -18533,6 +18548,14 @@ fn connecting_view(location: &str, error: Option<&String>, context: &ViewContext
             .children((View::keyed_fragment(rows),)),))
 }
 
+/// 0.5 秒後に Activity の時計を進める。
+fn activity_clock_later(clock: u64, context: &ComponentContext<Root>) {
+    context.spawn_background(move |_| {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        Message::ActivityClock(clock)
+    });
+}
+
 /// すべての窓のタブで開いているリポジトリの History のキャッシュを裏で読む（macOS 版・GTK4 版と同じく、同じ場所を
 /// 開いたタブは 1 つにまとめる）。
 fn load_history_caches(generation: u64, context: &ComponentContext<Root>) {
@@ -18740,8 +18763,6 @@ struct HistoryView {
     running: (usize, Option<Instant>),
     /// 終わった操作の一言を消す時刻。
     flash_until: Option<Instant>,
-    /// Activity を開いている間、読み直しを頼んだ最後の時刻（0.5 秒ごとに頼む）。
-    activity_tick: Option<Instant>,
     /// 見張っている、daemon・SSH 越しのリポジトリと、最後に見た時刻（切れたら知らせる。GTK4 版・macOS 版と同じく
     /// 0.25 秒ごとに見て、切れたら見るのをやめる）。
     watched: Option<(Arc<Repository>, Instant)>,
@@ -19014,13 +19035,6 @@ impl HistoryView {
                 self.diff.dirty = true;
                 self.sender.send(Message::AppearanceChanged);
             }
-        }
-        // Activity を開いている間は 0.5 秒ごとに読み直してもらう（GTK4 版と同じ間隔）。
-        if let Some(last) = self.activity_tick
-            && last.elapsed() >= std::time::Duration::from_millis(500)
-        {
-            self.activity_tick = Some(Instant::now());
-            self.sender.send(Message::ActivityTick);
         }
         let s = &mut self.session;
         if STATUS_RELOAD.swap(false, std::sync::atomic::Ordering::AcqRel) {
