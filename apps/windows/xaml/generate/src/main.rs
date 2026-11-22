@@ -92,25 +92,6 @@ const FILTER: &[&str] = &[
     "Microsoft.UI.Input.InputSystemCursorShape",
     "Microsoft.UI.Input.IInputCursorFactory::{}",
     "Microsoft.UI.Input.IInputCursorStatics::{}",
-    // ツールバーの Pull・Push のボタンに、上流との差の数のバッジ（InfoBadge）を足す（reactor の AppBarButton には
-    // 中身を足す口がないので、ボタンのテンプレートの根の Panel に入れる。Panel.Children は UIElementCollection
-    // を返し、その生成物は IIterable の First を引けずに通らないので、`badge.rs` で IPanel を手で引く）。
-    "Microsoft.UI.Xaml.Controls.InfoBadge",
-    "Microsoft.UI.Xaml.Controls.IInfoBadge::{Value,put_Value}",
-    "Microsoft.UI.Xaml.Controls.IInfoBadgeFactory::{CreateInstance}",
-    "Microsoft.UI.Xaml.Controls.IInfoBadgeStatics::{}",
-    "Microsoft.UI.Xaml.Controls.AppBarButton",
-    "Microsoft.UI.Xaml.Controls.IAppBarButton::{Label}",
-    "Microsoft.UI.Xaml.Controls.IAppBarButtonFactory::{}",
-    "Microsoft.UI.Xaml.Controls.IAppBarButtonStatics::{}",
-    // タイトルバーのツールバー（CommandBar）はアイコンだけ（ラベルを広げる ⋯ を出さない）。
-    "Microsoft.UI.Xaml.Controls.CommandBar",
-    "Microsoft.UI.Xaml.Controls.ICommandBar::{put_DefaultLabelPosition}",
-    "Microsoft.UI.Xaml.Controls.CommandBarDefaultLabelPosition",
-    "Microsoft.UI.Xaml.Controls.ICommandBarFactory::{}",
-    "Microsoft.UI.Xaml.Controls.ICommandBarStatics::{}",
-    "Microsoft.UI.Xaml.Controls.IAppBarFactory::{}",
-    "Microsoft.UI.Xaml.Controls.IAppBarStatics::{}",
     "Microsoft.UI.Xaml.Controls.IButtonFactory::{}",
     "Microsoft.UI.Xaml.Controls.IButtonStatics::{}",
     "Microsoft.UI.Xaml.Controls.Primitives.IButtonBaseFactory::{}",
