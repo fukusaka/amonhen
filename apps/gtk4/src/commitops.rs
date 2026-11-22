@@ -10,6 +10,7 @@ use gtk::prelude::*;
 use serde_json::json;
 
 use crate::actions::Actions;
+use crate::history::Dropped;
 use crate::historyedit::{Opener, Preset};
 use crate::menu::{self, Item};
 use crate::refops;
@@ -490,15 +491,17 @@ pub fn menu_many(
     items
 }
 
-/// History でコミット `id` を運び、`row` 行目の上（行の数なら最後の行の下）に落とした: 編集できる並び（HEAD から
-/// 最初の merge まで）の中なら、編集モードを開いて動かしておく（並びを見て Apply。範囲は、動かす 2 か所の古い方
-/// から HEAD まで。macOS 版と同じ）。並びの外ならベルを鳴らす。
+/// History でコミット `id` を運んで落とした: 編集できる並び（HEAD から最初の merge まで）の中なら、編集モードを
+/// 開いてその変更を入れておく（並びを見て Apply。macOS 版と同じ）。並びの外ならベルを鳴らす。
+/// - 行の間: 動かす。範囲は、動かす 2 か所の古い方から HEAD まで。
+/// - 行に重ねた: その行のすぐ上へ動かしてまとめる（squash）。範囲は、2 つの古い方から HEAD まで。
+/// - 窓の外: 取り除く（drop）。
 pub fn move_by_drop(
     actions: &Rc<Actions>,
     view: &crate::history::HistoryView,
     edit: &Opener,
     id: amonhen_model::Oid,
-    row: u32,
+    at: Dropped,
 ) {
     let Some((_, history)) = view.current() else {
         return;
@@ -509,10 +512,15 @@ pub fn move_by_drop(
     };
     let ids = history.graph.ids();
     let count = ids.len() as u32;
-    let Some(below) = ids.get(row.min(count.saturating_sub(1)) as usize) else {
+    let other = match at {
+        Dropped::Above(row) => ids.get(row.min(count.saturating_sub(1)) as usize),
+        Dropped::Onto(row) => ids.get(row as usize),
+        Dropped::Outside => Some(&id),
+    };
+    let Some(other) = other else {
         return;
     };
-    let (oid, below) = (id.to_string(), below.to_string());
+    let (oid, other) = (id.to_string(), other.to_string());
     let (actions, edit) = (actions.clone(), edit.clone());
     glib::spawn_future_local(async move {
         let reply = crate::sheets::run(&repo, json!({ "op": "editableCommits" })).await;
@@ -523,22 +531,33 @@ pub fn move_by_drop(
             .filter_map(|l| l.split(' ').next().map(str::to_owned))
             .filter(|o| !o.is_empty())
             .collect();
-        let at = |o: &str| chain.iter().position(|c| c == o);
-        let (Some(from), Some(mut to)) = (at(&oid), at(&below)) else {
+        let at_chain = |o: &str| chain.iter().position(|c| c == o);
+        let (Some(from), Some(mut to)) = (at_chain(&oid), at_chain(&other)) else {
             if let Some(w) = actions.window() {
                 w.error_bell();
             }
             return;
         };
-        if row >= count {
-            to = chain.len() - 1;
-        } else if from < to {
-            to -= 1;
+        match at {
+            Dropped::Above(row) => {
+                if row >= count {
+                    to = chain.len() - 1;
+                } else if from < to {
+                    to -= 1;
+                }
+                if from == to {
+                    return;
+                }
+                edit.open(&chain[from.max(to)], Some(Preset::Move(oid, to)));
+            }
+            Dropped::Onto(_) => {
+                if from == to {
+                    return;
+                }
+                edit.open(&chain[from.max(to)], Some(Preset::Squash(oid, other)));
+            }
+            Dropped::Outside => edit.open(&oid, Some(Preset::Drop(oid.clone()))),
         }
-        if from == to {
-            return;
-        }
-        edit.open(&chain[from.max(to)], Some(Preset::Move(oid, to)));
     });
 }
 

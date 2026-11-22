@@ -151,6 +151,8 @@ pub enum Preset {
     Drop(String),
     /// コミットを、並び（新しい順）の `to` 番目へ動かす（History でコミットを運んで落としたとき）。
     Move(String, usize),
+    /// コミット `0` を `1` のすぐ上へ動かし、`1` にまとめる（History で重ねて落としたとき）。
+    Squash(String, String),
 }
 
 /// 行で選べること。いちばん古い行と merge のすぐ上の行は、まとめる相手がない。merge の行は作り直すだけ。
@@ -220,6 +222,29 @@ fn move_rows(rows: &mut Vec<Row>, from: usize, above: usize) -> bool {
     }
     let moved = rows.remove(from);
     rows.insert(if from < above { above - 1 } else { above }, moved);
+    fix_oldest(rows);
+    true
+}
+
+/// `from` の行を `onto` の行のすぐ上（新しい側）へ動かし、squash にする（History で重ねて落とした）。並べ替えが
+/// 要るのに merge を含む、merge の行、同じ行なら false（macOS 版の `place(_:squashingInto:)`）。
+fn squash_rows(rows: &mut Vec<Row>, from: usize, onto: usize) -> bool {
+    if from == onto
+        || from >= rows.len()
+        || onto >= rows.len()
+        || rows[from].merge
+        || rows[onto].merge
+    {
+        return false;
+    }
+    if from + 1 != onto && rows.iter().any(|r| r.merge) {
+        return false;
+    }
+    let mut moved = rows.remove(from);
+    moved.action = Action::Squash;
+    moved.new_message = None;
+    let to = if from < onto { onto - 1 } else { onto };
+    rows.insert(to, moved);
     fix_oldest(rows);
     true
 }
@@ -435,6 +460,11 @@ impl Mode {
             EditEvent::Move(from, above) => {
                 self.move_row(from, above);
             }
+            EditEvent::Squash(from, onto) => {
+                if squash_rows(&mut self.rows.borrow_mut(), from, onto) {
+                    self.reload();
+                }
+            }
             EditEvent::Resize(count) => {
                 let this = self.clone();
                 glib::spawn_future_local(async move {
@@ -596,6 +626,11 @@ impl Mode {
                     && to < self.rows.borrow().len()
                 {
                     self.move_row(from, if from < to { to + 1 } else { to });
+                }
+            }
+            Preset::Squash(oid, onto) => {
+                if let (Some(from), Some(onto)) = (index(&oid), index(&onto)) {
+                    squash_rows(&mut self.rows.borrow_mut(), from, onto);
                 }
             }
         }
@@ -1367,6 +1402,36 @@ mod tests {
         assert_eq!(oids(&r), ["c", "a", "b"]);
         assert_eq!(r[2].action, Action::Pick);
         assert_eq!(r[2].new_message, None);
+    }
+
+    #[test]
+    fn squashing_by_drop_puts_the_row_above_the_target() {
+        // 上から下へ: c を a に重ねる → a のすぐ上で squash。
+        let mut r = rows(&["c", "b", "a"]);
+        assert!(squash_rows(&mut r, 0, 2));
+        assert_eq!(oids(&r), ["b", "c", "a"]);
+        assert_eq!(r[1].action, Action::Squash);
+        // 下から上へ: a を b に重ねる。動いた跡でいちばん古い行が squash なら pick に戻る。
+        let mut r = rows(&["c", "b", "a"]);
+        r[0].action = Action::Squash;
+        assert!(squash_rows(&mut r, 2, 0));
+        assert_eq!(oids(&r), ["a", "c", "b"]);
+        assert_eq!(r[0].action, Action::Squash);
+        // 隣の古い行へは、並べ替えずにそのまま。
+        let mut r = rows(&["c", "b", "a"]);
+        r[0].new_message = Some("reworded".into());
+        assert!(squash_rows(&mut r, 0, 1));
+        assert_eq!(oids(&r), ["c", "b", "a"]);
+        assert_eq!(r[0].new_message, None);
+        // 同じ行・merge には重ねられない。merge を含むと並べ替えが要るものはできない。
+        let mut r = rows(&["c", "b", "a"]);
+        assert!(!squash_rows(&mut r, 1, 1));
+        r[2].merge = true;
+        assert!(!squash_rows(&mut r, 0, 2));
+        let mut r = rows(&["d", "c", "b", "a"]);
+        r[3].merge = true;
+        assert!(!squash_rows(&mut r, 0, 2));
+        assert!(squash_rows(&mut r, 1, 2));
     }
 
     #[test]
