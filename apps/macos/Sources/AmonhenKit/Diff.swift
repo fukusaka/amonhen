@@ -11,6 +11,13 @@ public struct FileChangeItem: Hashable, Sendable {
     public let path: String
     public let oldPath: String?
     public let isSubmodule: Bool
+
+    /// 一覧に出す名前。名前を変えた・コピーしたファイルは、git の `--stat` と同じく `src/{old.rs → new.rs}`。
+    public var label: String {
+        guard let oldPath, oldPath != path, let out = amonhen_rename_label(oldPath, path) else { return path }
+        defer { amonhen_string_free(out) }
+        return String(cString: out)
+    }
 }
 
 /// コミットで変わったファイルの一覧。差分はファイルごとに `diff(at:)` で取る。

@@ -47,3 +47,67 @@ pub struct FuncNameRule {
     pub extended: bool,
 }
 
+/// 名前を変えたファイルの見せ方（git の `--stat` と同じく、共通の前と後ろをくくり出す）:
+/// `src/old.rs` → `src/new.rs` は `src/{old.rs → new.rs}`、くくれなければ `old → new`。
+pub fn rename_label(old: &str, new: &str) -> String {
+    let (a, b) = (old.as_bytes(), new.as_bytes());
+    // 共通の前: 最後の `/` まで。
+    let mut prefix = 0;
+    for (i, (x, y)) in a.iter().zip(b).enumerate() {
+        if x != y {
+            break;
+        }
+        if *x == b'/' {
+            prefix = i + 1;
+        }
+    }
+    // 共通の後ろ: `/` から。前の終わりの `/` までは重ねてよい（`src/x.rs` → `src/lib/x.rs` は
+    // `src/{ → lib}/x.rs`。git と同じ）。
+    let mut suffix = 0;
+    let room = a.len().min(b.len()) - prefix + usize::from(prefix > 0);
+    for i in 0..room {
+        let (x, y) = (a[a.len() - 1 - i], b[b.len() - 1 - i]);
+        if x != y {
+            break;
+        }
+        if x == b'/' {
+            suffix = i + 1;
+        }
+    }
+    if prefix + suffix == 0 {
+        return format!("{old} → {new}");
+    }
+    let middle = |s: &'_ str| -> String { s[prefix..(s.len() - suffix).max(prefix)].to_owned() };
+    format!(
+        "{}{{{} → {}}}{}",
+        &old[..prefix],
+        middle(old),
+        middle(new),
+        &old[old.len() - suffix..]
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::rename_label;
+
+    #[test]
+    fn renames_factor_out_the_common_folders() {
+        assert_eq!(
+            rename_label("src/old.rs", "src/new.rs"),
+            "src/{old.rs → new.rs}"
+        );
+        assert_eq!(rename_label("a/b/x.rs", "c/b/x.rs"), "{a → c}/b/x.rs");
+        assert_eq!(rename_label("src/a/x.rs", "src/b/x.rs"), "src/{a → b}/x.rs");
+        assert_eq!(rename_label("old.rs", "new.rs"), "old.rs → new.rs");
+        assert_eq!(rename_label("x.rs", "src/x.rs"), "x.rs → src/x.rs");
+        assert_eq!(
+            rename_label("src/x.rs", "src/lib/x.rs"),
+            "src/{ → lib}/x.rs"
+        );
+        assert_eq!(
+            rename_label("日本/a.txt", "日本/b.txt"),
+            "日本/{a.txt → b.txt}"
+        );
+    }
+}

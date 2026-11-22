@@ -514,6 +514,16 @@ const char *amonhen_last_error(void);
 void amonhen_set_fsmonitor(bool enabled);
 
 /**
+ * 名前を変えたファイルの見せ方（git の `--stat` と同じく、共通の前と後ろをくくり出す: `src/{old.rs → new.rs}`）。
+ * `amonhen_string_free` で解放する。引数が読めなければ NULL。
+ *
+ * # Safety
+ * `old`・`new` は NUL 終端の UTF-8 であること。
+ */
+char *amonhen_rename_label(const char *old,
+                           const char *new_);
+
+/**
  * この機械の git の版（`2.39.5`）。読めなければ NULL。`amonhen_string_free` で解放する。git を起動する
  * ことがあるので（初めの 1 回だけ）、裏のスレッドで呼ぶ。
  */

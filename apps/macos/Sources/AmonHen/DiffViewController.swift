@@ -2376,21 +2376,19 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         let display = { (path: String) in tree ? String(path.split(separator: "/").last ?? Substring(path)) : path }
         guard let item = changes?.items[index] else {
             guard let name = stacked?.names[index] else { return nil }
-            cell.path.stringValue = display(name)
+            cell.path.attributedStringValue = FileCell.pathTitle(display(name), kind: nil)
             cell.path.toolTip = name
             cell.show(stat: nil)
             return cell
         }
-        let field = cell.path
-        let mark = switch item.kind {
-        case .added: "A"
-        case .deleted: "D"
-        case .modified: "M"
-        case .renamed: "R"
-        case .copied: "C"
+        // 名前を変えたファイルは `src/{old.rs → new.rs}`。木では、同じフォルダの中なら名前だけ（`old.rs → new.rs`）。
+        var label = tree ? display(item.path) : item.label
+        if tree, let old = item.oldPath, old != item.path {
+            let folder = { (p: String) in (p as NSString).deletingLastPathComponent }
+            label = folder(old) == folder(item.path) ? "\((old as NSString).lastPathComponent) → \(label)" : item.label
         }
-        field.stringValue = "\(mark)  \(display(item.path))"
-        field.toolTip = item.oldPath.map { "\($0) → \(item.path)" } ?? item.path
+        cell.path.attributedStringValue = FileCell.pathTitle(label, kind: item.kind)
+        cell.path.toolTip = item.oldPath.map { "\($0) → \(item.path)" } ?? item.path
         cell.show(stat: fileStats[item.path])
         return cell
     }
@@ -2442,6 +2440,47 @@ final class FileCell: NSTableCellView {
     /// 木で出すときの字下げ。
     var indent: CGFloat = 0 {
         didSet { leading.constant = 2 + indent }
+    }
+
+    /// 変更の種類の印と色（追加は緑、削除は赤、変更は橙、名前の変更・コピーは青）。
+    static func mark(_ kind: ChangeKind) -> (String, NSColor) {
+        switch kind {
+        case .added: ("A", .systemGreen)
+        case .deleted: ("D", .systemRed)
+        case .modified: ("M", .systemOrange)
+        case .renamed: ("R", .systemBlue)
+        case .copied: ("C", .systemBlue)
+        }
+    }
+
+    /// ファイルの行の文字: 色の付いた種類の印、薄いフォルダ、ふつうの色のファイル名。名前の変更の `{a → b}` の
+    /// 中は分けない（その後ろの `/` までをフォルダとする）。
+    static func pathTitle(_ path: String, kind: ChangeKind?) -> NSAttributedString {
+        let text = NSMutableAttributedString()
+        let font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
+        if let kind {
+            let (mark, color) = mark(kind)
+            text.append(NSAttributedString(string: mark + "  ", attributes: [
+                .foregroundColor: color,
+                .font: NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .semibold),
+            ]))
+        }
+        var depth = 0
+        var split = path.startIndex
+        for i in path.indices {
+            switch path[i] {
+            case "{": depth += 1
+            case "}": depth -= 1
+            case "/" where depth == 0: split = path.index(after: i)
+            default: break
+            }
+        }
+        text.append(NSAttributedString(string: String(path[..<split]), attributes: [.foregroundColor: NSColor.secondaryLabelColor, .font: font]))
+        text.append(NSAttributedString(string: String(path[split...]), attributes: [.foregroundColor: NSColor.labelColor, .font: font]))
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byTruncatingMiddle
+        text.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: text.length))
+        return text
     }
 
     /// フォルダの行の文字（フォルダの印と名前、薄い色）。

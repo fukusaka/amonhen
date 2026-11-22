@@ -231,6 +231,46 @@ fn path_of(name: &str) -> &str {
     name.split(" — ").next().unwrap_or(name)
 }
 
+/// 変更の種類の印の色（追加は緑、削除は赤、変更は橙、名前の変更・コピーは青。macOS 版と同じ）。
+fn mark_color(mark: &str) -> &'static str {
+    match mark {
+        "A" => "#2ec27e",
+        "D" => "#e01b24",
+        "M" => "#e66100",
+        _ => "#3584e4",
+    }
+}
+
+/// ファイルの行の文字: 色の付いた種類の印、薄いフォルダ、ふつうの色のファイル名。名前の変更の `{a → b}` の中は
+/// 分けない（その後ろの `/` までをフォルダとする）。
+fn path_markup(mark: &str, path: &str) -> String {
+    let mut depth = 0;
+    let mut split = 0;
+    for (i, c) in path.char_indices() {
+        match c {
+            '{' => depth += 1,
+            '}' => depth -= 1,
+            '/' if depth == 0 => split = i + 1,
+            _ => {}
+        }
+    }
+    let mut out = String::new();
+    if !mark.is_empty() {
+        out += &format!(
+            "<span foreground=\"{}\" font_family=\"monospace\" weight=\"bold\">{mark}</span>  ",
+            mark_color(mark)
+        );
+    }
+    if split > 0 {
+        out += &format!(
+            "<span alpha=\"55%\">{}</span>",
+            glib::markup_escape_text(&path[..split])
+        );
+    }
+    out += &glib::markup_escape_text(&path[split..]);
+    out
+}
+
 /// 変更ファイルの一覧の 1 行。
 struct FileRow {
     /// フォルダの名前か、ファイルの名前（木では名前だけ、一覧ではパス）。
@@ -293,6 +333,19 @@ fn file_rows(
         let tip = match change.and_then(|c| c.old_path.as_deref()) {
             Some(old) => format!("{old} → {path}"),
             None => path.to_owned(),
+        };
+        // 名前を変えたファイルは `src/{old.rs → new.rs}`。木では、同じフォルダの中なら名前だけ
+        // （`old.rs → new.rs`。macOS 版と同じ）。
+        let name = match change.and_then(|c| c.old_path.as_deref()) {
+            Some(old) if old != path => {
+                let folder = |p: &str| p.rsplit_once('/').map_or("", |(f, _)| f).to_owned();
+                if tree && folder(old) == folder(path) {
+                    format!("{} → {name}", old.rsplit('/').next().unwrap_or(old))
+                } else {
+                    amonhen_model::rename_label(old, path)
+                }
+            }
+            _ => name,
         };
         FileRow {
             name,
@@ -846,16 +899,13 @@ impl Inner {
             } else {
                 line.remove_css_class("dim-label");
             }
-            // 種類はパスの前にふつうの文字で（macOS 版と同じ）。長いパスは真ん中を、フォルダは頭を省く。
+            // 種類はパスの前に色を付けて、フォルダは薄く、ファイル名はふつうの色で（macOS 版と同じ）。長いパスは
+            // 真ん中を、フォルダの行は頭を省く。
             if folder {
                 name.set_text(&row.name);
                 name.set_ellipsize(gtk::pango::EllipsizeMode::Start);
             } else {
-                name.set_text(&if row.mark.is_empty() {
-                    row.name.clone()
-                } else {
-                    format!("{}  {}", row.mark, row.name)
-                });
+                name.set_markup(&path_markup(row.mark, &row.name));
                 name.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
             }
             name.set_tooltip_text(Some(&row.tip));

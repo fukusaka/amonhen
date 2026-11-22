@@ -363,6 +363,23 @@ pub extern "C" fn amonhen_set_fsmonitor(enabled: bool) {
     amonhen_backend_cli::set_fsmonitor(enabled);
 }
 
+/// 名前を変えたファイルの見せ方（git の `--stat` と同じく、共通の前と後ろをくくり出す: `src/{old.rs → new.rs}`）。
+/// `amonhen_string_free` で解放する。引数が読めなければ NULL。
+///
+/// # Safety
+/// `old`・`new` は NUL 終端の UTF-8 であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_rename_label(
+    old: *const c_char,
+    new: *const c_char,
+) -> *mut c_char {
+    let (Ok(old), Ok(new)) = (str_arg(old), str_arg(new)) else {
+        return std::ptr::null_mut();
+    };
+    CString::new(amonhen_model::rename_label(old, new))
+        .map_or(std::ptr::null_mut(), CString::into_raw)
+}
+
 /// この機械の git の版（`2.39.5`）。読めなければ NULL。`amonhen_string_free` で解放する。git を起動する
 /// ことがあるので（初めの 1 回だけ）、裏のスレッドで呼ぶ。
 #[unsafe(no_mangle)]
