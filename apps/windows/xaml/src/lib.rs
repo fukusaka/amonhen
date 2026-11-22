@@ -22,6 +22,8 @@ pub use acrylic::Acrylic;
 pub use badge::{pass_through, window_handle};
 pub use bindings::*;
 pub use fills::ControlFills;
-pub use list::{drag_some_tags, drag_tags, drop_on_rows, selected_tags};
+pub use list::{
+    clear_drop_target, drag_some_tags, drag_tags, drop_on_rows, selected_tags, set_drop_target,
+};
 pub use tabview::on_tab_moves;
 pub use textbox::{is_text_box, scroll_to_fraction, select_all};
