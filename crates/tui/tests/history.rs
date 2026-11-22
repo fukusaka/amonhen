@@ -508,6 +508,48 @@ fn commit_from_the_message_field() {
     );
 }
 
+/// hooks が何行も書いたら、一番下の行には 1 行目と「`!` で全部」、`!` で全部を枠に出す（アプリのシートの代わり）
+#[cfg(unix)]
+#[test]
+fn the_hooks_output_shows_in_full_with_bang() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    two_lines(dir.path());
+    let hook = dir.path().join(".git/hooks/pre-commit");
+    let write_hook = |body: &str| {
+        std::fs::write(&hook, format!("#!/bin/sh\n{body}")).unwrap();
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    };
+    write_hook("echo 'lint: first' >&2\necho 'lint: second' >&2\nexit 0\n");
+    let front = || {
+        amonhen_model::testing::isolate_from_user_settings();
+        open(dir.path())
+    };
+    let none = amonhen_tui::snapshot(front(), 120, 14, clock(), "!").unwrap();
+    assert!(none.contains("No output from the hooks yet"), "{none}");
+    let done = amonhen_tui::snapshot(front(), 120, 14, clock(), "1 cFix\x13").unwrap();
+    println!("{done}");
+    assert!(
+        done.contains("Committed: lint: first (! shows all)"),
+        "{done}"
+    );
+    // 断られたとき: 1 行目と、全部を出せること。
+    std::fs::write(dir.path().join("a.txt"), "again\n").unwrap();
+    write_hook("echo 'lint: bad style' >&2\necho 'lint: see the guide' >&2\nexit 1\n");
+    let refused = amonhen_tui::snapshot(front(), 120, 14, clock(), "1 cFix\x13").unwrap();
+    println!("{refused}");
+    assert!(refused.contains("(! shows all)"), "{refused}");
+    // 上で stage したまま（断られたので）なので、そのままもう一度コミットする。
+    let all = amonhen_tui::snapshot(front(), 120, 14, clock(), "1cFix\x13\x1b!").unwrap();
+    println!("{all}");
+    assert!(all.contains(" Output of the hooks "), "{all}");
+    assert!(
+        all.contains("lint: bad style") && all.contains("lint: see the guide"),
+        "{all}"
+    );
+    assert_eq!(git_out(dir.path(), &["rev-list", "--count", "HEAD"]), "2\n");
+}
+
 /// `a` で amend: 欄に直前のメッセージが入り、コミットを作り直す
 #[test]
 fn amend_rewrites_the_last_commit() {

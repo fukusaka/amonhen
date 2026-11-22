@@ -547,6 +547,10 @@ pub struct App {
     help: bool,
     /// キーの一覧の、一番上に見えている行（収まらないときに動かす）。
     help_top: usize,
+    /// 最後のコミットで hooks が書いたもの（成功でも失敗でも。`!` で全部を出す）。
+    hook_output: Option<String>,
+    /// hooks の出力を枠に出している（そのときの一番上の行）。
+    showing_hooks: Option<usize>,
     /// コマンドの一覧を出している（`:`）。
     palette: Option<Palette>,
     operation_log: Option<OperationLog>,
@@ -665,6 +669,8 @@ impl App {
             filtering_changes: false,
             help: false,
             help_top: 0,
+            hook_output: None,
+            showing_hooks: None,
             palette: None,
             operation_log: None,
             edit_mode: None,
@@ -793,6 +799,25 @@ impl App {
         match file.is_file() {
             true => self.open_file = Some(file.to_string_lossy().into_owned()),
             false => self.error = Some(tr!("{path} isn’t a file in the working tree", path = path)),
+        }
+    }
+
+    /// コミットのときに hooks（と git）が書いたものを覚える。2 行以上あれば、一番下の行に足す「`!` で全部」を返す。
+    fn remember_hook_output(&mut self, output: &str) -> String {
+        let lines = output.lines().filter(|l| !l.trim().is_empty()).count();
+        match lines {
+            0 => {
+                self.hook_output = None;
+                String::new()
+            }
+            1 => {
+                self.hook_output = Some(output.trim_end().to_owned());
+                String::new()
+            }
+            _ => {
+                self.hook_output = Some(output.trim_end().to_owned());
+                tr!(" (! shows all)")
+            }
         }
     }
 
@@ -1330,11 +1355,13 @@ impl App {
                                     });
                                 }
                                 self.focus = Focus::Main;
-                                // hooks が何か書いていれば、その 1 行目を出す。
+                                // hooks が何か書いていれば、その 1 行目を出す。2 行以上なら、`!` で全部を
+                                // 出せる（アプリの hooks の出力のシートの代わり）。
+                                let more = self.remember_hook_output(&output);
                                 self.notice =
                                     Some(match output.lines().find(|l| !l.trim().is_empty()) {
                                         Some(line) => {
-                                            tr!("Committed: {output}", output = line.trim())
+                                            tr!("Committed: {output}", output = line.trim()) + &more
                                         }
                                         None => tr!("Committed"),
                                     });
@@ -1343,7 +1370,15 @@ impl App {
                             }
                             Err(error) => {
                                 self.push_after_commit = false;
-                                self.error = Some(error);
+                                // hooks に断られたなら、その出力を全部見られるように。
+                                let more = self.remember_hook_output(&error);
+                                let first = error
+                                    .lines()
+                                    .find(|l| !l.trim().is_empty())
+                                    .unwrap_or("")
+                                    .trim()
+                                    .to_owned();
+                                self.error = Some(first + &more);
                             }
                         }
                     }
@@ -1578,6 +1613,16 @@ impl App {
                 KeyCode::Char(ch) if !control => self.answer.push(ch),
                 _ => {}
             }
+            return;
+        }
+        // hooks の出力の枠も、`j` `k` で動かし、ほかのキーで閉じる。
+        if let Some(top) = self.showing_hooks {
+            self.dirty = true;
+            self.showing_hooks = match key.code {
+                KeyCode::Char('j') | KeyCode::Down => Some(top + 1),
+                KeyCode::Char('k') | KeyCode::Up => Some(top.saturating_sub(1)),
+                _ => None,
+            };
             return;
         }
         // キーの一覧は、`j` `k`（と矢印）で動かせる。ほかのキーで閉じる。
@@ -2136,6 +2181,14 @@ impl App {
                         command: json!({"op": "abort"}),
                     },
                 ));
+                self.dirty = true;
+            }
+            // 最後のコミットで hooks が書いたものを、全部出す。
+            KeyCode::Char('!') => {
+                match self.hook_output {
+                    Some(_) => self.showing_hooks = Some(0),
+                    None => self.notice = Some(tr!("No output from the hooks yet")),
+                }
                 self.dirty = true;
             }
             KeyCode::Char('?') => {
@@ -5303,7 +5356,10 @@ impl App {
                 "C K A R",
                 tr!("Continue, skip, abort a merge or rebase; retry a stopped git am 3-way"),
             ),
-            ("u", tr!("Undo the last operation")),
+            (
+                "u !",
+                tr!("Undo the last operation; the hooks' output of the last commit"),
+            ),
             (
                 "R",
                 tr!("In History or Reflog: reset the branch to the selected commit"),
@@ -6608,6 +6664,44 @@ impl App {
                         Style::new(),
                     );
                 }
+            }
+        }
+        if let (Some(top), Some(output)) = (self.showing_hooks, &self.hook_output) {
+            cursor = None;
+            let lines: Vec<&str> = output.lines().collect();
+            let text = lines.iter().map(|l| l.width()).max().unwrap_or(0) as u16;
+            let width = (text + 4).max(30).min(area.width);
+            let height = (lines.len() as u16 + 2).min(area.height.saturating_sub(1));
+            let at = Rect::new(
+                area.x + (area.width - width) / 2,
+                area.y + (area.height.saturating_sub(1) - height) / 2,
+                width,
+                height,
+            );
+            frame_box(buf, area, at, &tr!(" Output of the hooks "));
+            let inside = usize::from(height.saturating_sub(2));
+            let top = top.min(lines.len().saturating_sub(inside));
+            self.showing_hooks = Some(top);
+            if lines.len() > inside {
+                let more = tr!(" j/k more ");
+                let x = at.right().saturating_sub(more.width() as u16 + 2);
+                if x > at.x + 8 {
+                    buf.set_string(
+                        x,
+                        at.bottom() - 1,
+                        more,
+                        Style::new().fg(Color::Indexed(244)),
+                    );
+                }
+            }
+            for (y, line) in (at.y + 1..at.bottom().saturating_sub(1)).zip(lines.iter().skip(top)) {
+                buf.set_stringn(
+                    at.x + 2,
+                    y,
+                    line,
+                    usize::from(width.saturating_sub(4)),
+                    Style::new(),
+                );
             }
         }
         if let Some(mode) = &self.edit_mode {
