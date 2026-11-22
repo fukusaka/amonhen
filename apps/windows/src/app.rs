@@ -42,6 +42,9 @@ thread_local! {
     static ARGS: RefCell<Option<(Args, Instant)>> = const { RefCell::new(None) };
     /// 前のタブの History と差分の描き手（窓の入力の処理が使う。タブごとの描き手は根の部品が持つ）。
     static HISTORY: RefCell<Option<Rc<RefCell<HistoryView>>>> = const { RefCell::new(None) };
+    /// ツールバーのカスタマイズの帯・パレットに付けた引き始め（付け直すたびに外す）。
+    static TOOLBAR_DRAG_REVOKERS: RefCell<Vec<windows_core_reactor::EventRevoker>> =
+        const { RefCell::new(Vec::new()) };
     /// History を包む生の要素（右クリックのメニューを自分で開く）。
     static HISTORY_ELEMENT: RefCell<Option<xaml::UIElement>> = const { RefCell::new(None) };
     /// History から外した右クリックのメニュー（外している間、WinUI は自分では開かない）。
@@ -67,6 +70,8 @@ thread_local! {
     static SPLIT_PARENT: RefCell<Option<xaml::UIElement>> = const { RefCell::new(None) };
     /// 等幅にするのを待っている要素と、試した回数（`retry_monospace`）。
     static PENDING_MONOSPACE: RefCell<Vec<(IInspectable, u32)>> = const { RefCell::new(Vec::new()) };
+    /// 幅いっぱいに広げるのを待っているツールバー（画面の木に入ってから、描くたびに試す）と、試した回数。
+    static PENDING_STRETCH: RefCell<Vec<(IInspectable, u32)>> = const { RefCell::new(Vec::new()) };
     /// 自動の fetch の間隔（分。0 はしない）と、最後に数え始めた時。
     static AUTO_FETCH: std::cell::Cell<(u32, Instant)> =
         std::cell::Cell::new((crate::prefs::auto_fetch_minutes(), Instant::now()));
@@ -305,6 +310,14 @@ struct Root {
     checks_popover: Option<ChecksPopover>,
     checks_anchor: ElementRef<Button>,
     checks_opened: u64,
+    /// ツールバーをカスタマイズしている間（ツールバーは引いて並べる帯、本文の上にパレット）と、帯・パレット・既定の
+    /// セットの生の要素の置き場。
+    toolbar_customizing: bool,
+    /// ツールバーを入れる Grid（TitleBar の中身の置き場を幅いっぱいに広げる）。
+    toolbar_host: ElementRef<Grid>,
+    toolbar_strip: ElementRef<Grid>,
+    toolbar_palette: ElementRef<Grid>,
+    toolbar_defaults: ElementRef<Grid>,
     diff_panel: ElementRef<SwapChainPanel>,
     diff_area: ElementRef<Grid>,
     /// 差分で右クリックしたファイル（見出しのメニューの中身）。
@@ -620,8 +633,6 @@ enum Dialog {
         /// 最近の履歴の「その他…」で打った数。
         depth_other: String,
     },
-    /// View > Customize Toolbar…（GTK4 版はパレットへのドラッグ。ここではチェックと ↑↓ で並べる）。
-    Toolbar(Vec<crate::menus::ToolbarEntry>),
     /// Quick Open（リポジトリをあいまい検索して新しい窓で開く）。
     QuickOpen {
         query: String,
@@ -1353,12 +1364,12 @@ enum Message {
     RemoteLoaded(Arc<Repository>, Option<(String, String, String)>),
     /// リモートのシートの欄（0 は名前、1 は fetch、2 は push の URL）。
     RemoteField(usize, String),
-    /// ツールバーのカスタマイズ: 出すか、上下に動かす（`true` で上）、スペースを外す・足す、既定に戻す。
-    ToolbarShown(usize, bool),
-    ToolbarMove(usize, bool),
-    ToolbarRemove(usize),
-    ToolbarAddSpace,
-    ToolbarDefaults,
+    /// ツールバーのカスタマイズ: 帯の並べ替え（帯の項目の Tag の並び）、パレットの項目を帯のタイル（Tag）の前か
+    /// 後ろ（`true`）へ落とした、帯のタイルをパレットへ落として外した、終わった。
+    ToolbarReordered(Vec<String>),
+    ToolbarDropped(String, Vec<String>, bool),
+    ToolbarRemoved(Vec<String>),
+    ToolbarDone,
     /// フォルダを選ぶダイアログ: 読んだ中身、選んだ行、選んだフォルダに入る、上に戻る。
     TreeFolderLoaded(String, Result<Vec<String>, String>),
     TreeFolderSelect(Option<usize>),
@@ -1482,6 +1493,11 @@ impl Component for Root {
             checks_popover: None,
             checks_anchor: ElementRef::new(),
             checks_opened: 0,
+            toolbar_customizing: false,
+            toolbar_host: ElementRef::new(),
+            toolbar_strip: ElementRef::new(),
+            toolbar_palette: ElementRef::new(),
+            toolbar_defaults: ElementRef::new(),
             diff_panel: ElementRef::new(),
             diff_area: ElementRef::new(),
             diff_file: None,
@@ -1763,6 +1779,98 @@ impl Root {
     /// このタブの History で `f` を呼ぶ。
     fn with_history(&self, f: impl FnOnce(&mut HistoryView)) {
         with_cell(&self.history, f);
+    }
+
+    /// ツールバーをカスタマイズしている間の、本文の上のパレット（macOS 版の NSToolbar のシート）。帯とパレットの
+    /// 引き始め・落とし先は、並びが変わるたびに付け直す（一覧の項目が作り直される）。
+    fn toolbar_palette_view(&self, context: &mut ViewContext<Self>) -> View {
+        // TitleBar は中身を中身の幅に縮めて置くので、伸縮するスペースが余った幅を取れない。中身の置き場（TitleBar
+        // まで）を幅いっぱいに広げる。
+        let host = self.toolbar_host.clone();
+        context.use_effect("toolbar-stretch", (), move || {
+            let _ = host.request_native_element(|result| {
+                if let Ok(element) = result {
+                    PENDING_STRETCH.with(|p| p.borrow_mut().push((element, 0)));
+                }
+            });
+            None
+        });
+        if !self.toolbar_customizing {
+            return View::empty();
+        }
+        let strip = self.toolbar_strip.clone();
+        let palette = self.toolbar_palette.clone();
+        let defaults = self.toolbar_defaults.clone();
+        let entries = crate::menus::toolbar_entries();
+        let key = format!("{entries:?}");
+        context.use_effect("toolbar-drag", key, move || {
+            TOOLBAR_DRAG_REVOKERS.with(|r| r.borrow_mut().clear());
+            let strip_tags: Vec<String> = entries
+                .iter()
+                .enumerate()
+                .filter(|(_, e)| !matches!(e, crate::menus::ToolbarEntry::Item(_, false)))
+                .map(|(i, _)| crate::menus::strip_tag(i))
+                .collect();
+            let _ = strip.request_native_element(move |result| {
+                let Ok(element) = result else { return };
+                // 帯のタイルは引いて並べ替え（一覧がする）、パレットへ引いて外す。
+                if let Some(revoker) = xaml::drag_some_tags(&element, strip_tags.clone(), "bar:") {
+                    TOOLBAR_DRAG_REVOKERS.with(|r| r.borrow_mut().push(revoker));
+                }
+                let mut targets = strip_tags.clone();
+                targets.push("end".to_owned());
+                xaml::set_drop_target(
+                    "toolbar",
+                    &element,
+                    targets,
+                    Some("palette:"),
+                    |tag, ids, after| {
+                        with_history(|h| {
+                            h.sender
+                                .send(Message::ToolbarDropped(tag.clone(), ids.clone(), after));
+                        });
+                    },
+                );
+            });
+            let _ = palette.request_native_element(|result| {
+                let Ok(element) = result else { return };
+                let tags = crate::menus::palette_tags();
+                if let Some(revoker) = xaml::drag_some_tags(&element, tags.clone(), "palette:") {
+                    TOOLBAR_DRAG_REVOKERS.with(|r| r.borrow_mut().push(revoker));
+                }
+                xaml::set_drop_target(
+                    "toolbar-palette",
+                    &element,
+                    tags,
+                    Some("bar:"),
+                    |_, tags, _| {
+                        with_history(|h| {
+                            h.sender.send(Message::ToolbarRemoved(tags.clone()));
+                        });
+                    },
+                );
+            });
+            let _ = defaults.request_native_element(|result| {
+                let Ok(element) = result else { return };
+                if let Some(revoker) =
+                    xaml::drag_some_tags(&element, vec!["default".to_owned()], "palette:")
+                {
+                    TOOLBAR_DRAG_REVOKERS.with(|r| r.borrow_mut().push(revoker));
+                }
+            });
+            None
+        });
+        Border::new()
+            .grid_row(3)
+            .vertical_alignment(VerticalAlignment::Top)
+            .background(Brush::Solid(crate::palette::window()))
+            .border_thickness(Thickness::new(0.0, 0.0, 0.0, 1.0))
+            .border_brush(Brush::Solid(Color::argb(0x40, 0x80, 0x80, 0x80)))
+            .content(crate::menus::toolbar_palette(
+                &self.toolbar_palette,
+                &self.toolbar_defaults,
+                context.callback(|()| Message::ToolbarDone),
+            ))
     }
 
     /// History の CI の印の吹き出しを開く、印の位置に置いた見えないボタン（吹き出しの中身はチェックの一覧）。
@@ -2997,39 +3105,39 @@ impl Root {
                 self.with_history(|h| h.session.data.reorder(order));
             }
             Message::Command(id) if id == "customize-toolbar" => {
-                self.dialog = Some(Dialog::Toolbar(crate::menus::toolbar_entries()));
+                // macOS 版の NSToolbar と同じく、ツールバーの下にパレットを出し、ドラッグで並べる。
+                self.toolbar_customizing = true;
             }
-            Message::ToolbarShown(i, on) => {
-                if let Some(Dialog::Toolbar(entries)) = &mut self.dialog
-                    && let Some(crate::menus::ToolbarEntry::Item(_, shown)) = entries.get_mut(i)
-                {
-                    *shown = on;
-                }
+            Message::ToolbarReordered(tags) => {
+                use crate::menus::ToolbarEntry;
+                let entries = crate::menus::toolbar_entries();
+                let mut moved: Vec<ToolbarEntry> = tags
+                    .iter()
+                    .filter_map(|t| t.strip_prefix('t')?.parse::<usize>().ok())
+                    .filter_map(|i| entries.get(i).cloned())
+                    .collect();
+                // 帯にない（出していない）ボタンは後ろに残す。
+                moved.extend(
+                    entries
+                        .into_iter()
+                        .filter(|e| matches!(e, ToolbarEntry::Item(_, false))),
+                );
+                crate::menus::save_toolbar(&moved);
             }
-            Message::ToolbarMove(i, up) => {
-                if let Some(Dialog::Toolbar(entries)) = &mut self.dialog {
-                    let j = if up { i.checked_sub(1) } else { Some(i + 1) };
-                    if let Some(j) = j.filter(|&j| j < entries.len()) {
-                        entries.swap(i, j);
-                    }
-                }
+            Message::ToolbarDropped(target, ids, after) => {
+                let entries = crate::menus::toolbar_entries();
+                crate::menus::save_toolbar(&crate::menus::dropped_on_toolbar(
+                    entries, &target, &ids, after,
+                ));
             }
-            Message::ToolbarRemove(i) => {
-                if let Some(Dialog::Toolbar(entries)) = &mut self.dialog
-                    && i < entries.len()
-                {
-                    entries.remove(i);
-                }
+            Message::ToolbarRemoved(tags) => {
+                let entries = crate::menus::toolbar_entries();
+                crate::menus::save_toolbar(&crate::menus::removed_from_toolbar(entries, &tags));
             }
-            Message::ToolbarAddSpace => {
-                if let Some(Dialog::Toolbar(entries)) = &mut self.dialog {
-                    entries.push(crate::menus::ToolbarEntry::Space);
-                }
-            }
-            Message::ToolbarDefaults => {
-                if let Some(Dialog::Toolbar(entries)) = &mut self.dialog {
-                    *entries = crate::menus::default_toolbar();
-                }
+            Message::ToolbarDone => {
+                self.toolbar_customizing = false;
+                xaml::clear_drop_target("toolbar");
+                xaml::clear_drop_target("toolbar-palette");
             }
             Message::Command(id) if id == "new-tab" => {
                 crate::tabs::note_page(self.page == Page::WorkingCopy);
@@ -4474,9 +4582,6 @@ impl Root {
                             message,
                         });
                     }
-                }
-                (Some(Dialog::Toolbar(entries)), ContentDialogResult::Primary) => {
-                    crate::menus::save_toolbar(&entries);
                 }
                 (
                     Some(Dialog::RenameRepository { location, name }),
@@ -8761,14 +8866,21 @@ impl Root {
                     SlotView::new(TitleBarSlot::LeftHeader, self.repository_switcher(context)),
                     SlotView::new(
                         TitleBarSlot::Content,
+                        // 伸縮するスペースが余った幅を分けるので、幅いっぱいに置く（空いた所は窓を動かせる）。
                         Grid::new()
-                            .horizontal_alignment(HorizontalAlignment::Left)
+                            .element_ref(&self.toolbar_host)
                             .vertical_alignment(VerticalAlignment::Center)
                             .margin(Thickness::new(8.0, 0.0, 64.0, 0.0))
-                            .children((crate::menus::toolbar(
-                                context.callback(Message::Command),
-                                tracking,
-                            ),)),
+                            .children((if self.toolbar_customizing {
+                                Grid::new().element_ref(&self.toolbar_strip).children((
+                                    crate::menus::toolbar_strip(
+                                        &crate::menus::toolbar_entries(),
+                                        context.callback(Message::ToolbarReordered),
+                                    ),
+                                ))
+                            } else {
+                                crate::menus::toolbar(context.callback(Message::Command), tracking)
+                            },)),
                     ),
                     SlotView::new(
                         TitleBarSlot::RightHeader,
@@ -9232,6 +9344,7 @@ impl Root {
                     )
                     .on_drop(context.callback(Message::Dropped))
                     .content(body),
+                self.toolbar_palette_view(context),
                 self.status_bar(context),
                 image,
                 dialog,
@@ -10293,79 +10406,6 @@ impl Root {
                                         .vertical_alignment(VerticalAlignment::Center),
                                 )),
                             body,
-                        )),
-                    )
-            }
-            Some(Dialog::Toolbar(entries)) => {
-                use crate::menus::ToolbarEntry;
-                let last = entries.len().saturating_sub(1);
-                let rows = entries.iter().enumerate().map(|(i, entry)| {
-                    let arrows = StackPanel::new()
-                        .orientation(Orientation::Horizontal)
-                        .spacing(4.0)
-                        .grid_column(1)
-                        .children((
-                            Button::new()
-                                .is_enabled(i > 0)
-                                .on_click(context.callback(move |()| Message::ToolbarMove(i, true)))
-                                .content(TextBlock::new().text("↑")),
-                            Button::new()
-                                .is_enabled(i < last)
-                                .on_click(context.callback(move |()| Message::ToolbarMove(i, false)))
-                                .content(TextBlock::new().text("↓")),
-                        ));
-                    let head: View = match entry {
-                        ToolbarEntry::Item(id, shown) => CheckBox::new()
-                            .is_checked(*shown)
-                            .on_is_checked_changed(
-                                context.callback(move |on| Message::ToolbarShown(i, on)),
-                            )
-                            .content(TextBlock::new().text(crate::menus::toolbar_name(id)))
-                            ,
-                        ToolbarEntry::Space => StackPanel::new()
-                            .orientation(Orientation::Horizontal)
-                            .spacing(8.0)
-                            .children((
-                                TextBlock::new()
-                                    .text(format!("— {} —", tr!("Space")))
-                                    .opacity(0.6)
-                                    .vertical_alignment(VerticalAlignment::Center),
-                                Button::new()
-                                    .on_click(context.callback(move |()| Message::ToolbarRemove(i)))
-                                    .content(TextBlock::new().text("−")),
-                            ))
-                            ,
-                    };
-                    (
-                        format!("{i}:{entry:?}"),
-                        Grid::new()
-                            .columns([GridLength::Star(1.0), GridLength::Auto])
-                            .children((Border::new().grid_column(0).content(head), arrows)),
-                    )
-                });
-                dialog
-                    .is_open(true)
-                    .title(tr!("Customize Toolbar"))
-                    .primary_button_text(tr!("Save"))
-                    .close_button_text(tr!("Cancel"))
-                    .content(
-                        StackPanel::new().spacing(6.0).width(380.0).children((
-                            ScrollViewer::new().max_height(380.0).content(
-                                StackPanel::new()
-                                    .spacing(2.0)
-                                    .children((View::keyed_fragment(rows),)),
-                            ),
-                            StackPanel::new()
-                                .orientation(Orientation::Horizontal)
-                                .spacing(8.0)
-                                .children((
-                                    Button::new()
-                                        .on_click(context.callback(|()| Message::ToolbarAddSpace))
-                                        .content(TextBlock::new().text(format!("+ {}", tr!("Space")))),
-                                    Button::new()
-                                        .on_click(context.callback(|()| Message::ToolbarDefaults))
-                                        .content(TextBlock::new().text(tr!("Restore Default"))),
-                                )),
                         )),
                     )
             }
@@ -18817,6 +18857,7 @@ impl HistoryView {
     /// 届いたものを取り込み、描くものがあれば描く。
     fn render(&mut self) -> Result<(), String> {
         retry_monospace();
+        retry_stretch();
         retry_splitters();
         retry_place();
         self.take_ownership();
@@ -20502,6 +20543,49 @@ fn monospace_above(element: &IInspectable) -> windows_core_reactor::Result<bool>
 fn monospace(element: &IInspectable) -> windows_core_reactor::Result<()> {
     let font = xaml::FontFamily::CreateInstanceWithName(&MONOSPACE.into())?;
     element.cast::<xaml::Control>()?.SetFontFamily(&font)
+}
+
+/// ツールバーを入れる要素から TitleBar までの親を、幅いっぱいに広げる（TitleBar は中身を中身の幅に縮めて置くので、
+/// 伸縮するスペースが余った幅を取れない）。まだ画面の木に入っていなければ（TitleBar まで届かない）false。
+fn stretch_to_title_bar(element: &IInspectable) -> bool {
+    let Ok(mut node) = element.cast::<xaml::DependencyObject>() else {
+        return true;
+    };
+    let mut parents = Vec::new();
+    for _ in 0..12 {
+        let Ok(parent) = xaml::VisualTreeHelper::GetParent(&node) else {
+            return false;
+        };
+        node = parent;
+        let class = node
+            .cast::<IInspectable>()
+            .ok()
+            .and_then(|n| n.GetRuntimeClassName().ok())
+            .map(|c| c.to_string_lossy())
+            .unwrap_or_default();
+        if class.ends_with(".TitleBar") {
+            for parent in parents {
+                let _ = xaml::FrameworkElement::SetHorizontalAlignment(
+                    &parent,
+                    xaml::HorizontalAlignment::Stretch,
+                );
+            }
+            return true;
+        }
+        if let Ok(element) = node.cast::<xaml::FrameworkElement>() {
+            parents.push(element);
+        }
+    }
+    true
+}
+
+fn retry_stretch() {
+    PENDING_STRETCH.with(|p| {
+        p.borrow_mut().retain_mut(|(element, tries)| {
+            *tries += 1;
+            !stretch_to_title_bar(element) && *tries < 120
+        });
+    });
 }
 
 /// 等幅にするのを待っている要素（部品ができた直後はまだ画面の木に入っていないので、描くたびに試す）と、試した回数。
