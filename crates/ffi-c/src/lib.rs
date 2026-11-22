@@ -1473,6 +1473,32 @@ pub unsafe extern "C" fn amonhen_file_diff(
     }
 }
 
+/// `amonhen_file_diff` の、前後 `context` 行のもの（`UINT32_MAX` ならファイル全体）。
+///
+/// # Safety
+/// `repo` と `changes` は有効であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_file_diff_context(
+    repo_ptr: *const AmonhenRepo,
+    changes: *const AmonhenChanges,
+    index: u32,
+    context: u32,
+    encoding: AmonhenEncoding,
+) -> *mut AmonhenDiff {
+    let c = handle!(changes, ChangesHandle);
+    let Some(change) = c.changes.get(index as usize) else {
+        set_error(tr!("File index out of range"));
+        return std::ptr::null_mut();
+    };
+    match repo!(repo_ptr).file_diff_with_context(change, context, &profile(encoding)) {
+        Ok(view) => Box::into_raw(Box::new(view)).cast(),
+        Err(e) => {
+            set_error(e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
 /// `changes` のすべてのファイルの差分（`amonhen_stacked_free` で解放する）。ファイルの数だけ blob を読むので、
 /// 裏のスレッドで呼ぶ。
 ///

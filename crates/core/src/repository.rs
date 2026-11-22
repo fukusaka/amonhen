@@ -959,13 +959,31 @@ impl Repository {
 
     /// 変わったファイル 1 つの、前後 3 行の文脈つきの差分。
     pub fn file_diff(&self, change: &FileChange, profile: &FrontendProfile) -> Result<DiffView> {
-        let diff = match self.change_diffs(std::slice::from_ref(change))? {
+        self.file_diff_with_context(change, 3, profile)
+    }
+
+    /// `file_diff` の、前後 `context` 行のもの（`u32::MAX` ならファイル全体。History の「すべてのファイル」で、
+    /// 変えたファイルをその時点の中身として見せる）。
+    pub fn file_diff_with_context(
+        &self,
+        change: &FileChange,
+        context: u32,
+        profile: &FrontendProfile,
+    ) -> Result<DiffView> {
+        let mut diff = match self.change_diffs(std::slice::from_ref(change))? {
             Some(mut diffs) if diffs.len() == 1 => diffs.remove(0),
             _ => {
                 let attrs = self.diff_attributes(std::slice::from_ref(&change.path.as_str()));
                 self.change_diff(change, &attrs[0])?
             }
         };
+        if context != 3 && !diff.binary {
+            let attrs = self.diff_attributes(std::slice::from_ref(&change.path.as_str()));
+            let funcname = crate::funcname::FuncName::new(attrs[0].funcname.as_ref());
+            let generated = diff.generated;
+            diff = diff::file_diff_with(diff.old.clone(), diff.new.clone(), context, &funcname);
+            diff.generated = generated;
+        }
         Ok(DiffView::new(&diff, profile).with_path(&change.path))
     }
 

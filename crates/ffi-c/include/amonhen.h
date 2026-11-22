@@ -955,6 +955,18 @@ AmonhenDiff *amonhen_file_diff(const AmonhenRepo *repo_ptr,
                                AmonhenEncoding encoding);
 
 /**
+ * `amonhen_file_diff` の、前後 `context` 行のもの（`UINT32_MAX` ならファイル全体）。
+ *
+ * # Safety
+ * `repo` と `changes` は有効であること。
+ */
+AmonhenDiff *amonhen_file_diff_context(const AmonhenRepo *repo_ptr,
+                                       const AmonhenChanges *changes,
+                                       uint32_t index,
+                                       uint32_t context,
+                                       AmonhenEncoding encoding);
+
+/**
  * `changes` のすべてのファイルの差分（`amonhen_stacked_free` で解放する）。ファイルの数だけ blob を読むので、
  * 裏のスレッドで呼ぶ。
  *
