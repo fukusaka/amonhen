@@ -1904,6 +1904,17 @@ fn stashes_are_listed_and_applied_from_the_sidebar() {
     let side: Vec<String> = text.lines().skip(1).filter_map(|l| column(l, 0)).collect();
     let at = side.iter().position(|l| l == "Stashes").unwrap();
     assert!(side[at + 1].contains("Capitals"), "{side:?}");
+    // Enter で詳細に出し、一番下の行に様子（作ったブランチ・HEAD との関係・土台）を書く。
+    let base = git_out(dir.path(), &["rev-parse", "--short=8", "HEAD"]);
+    let about = amonhen_tui::snapshot(open(dir.path()), 200, 12, clock(), "0G\n").unwrap();
+    println!("{about}");
+    assert!(
+        about.contains(&format!(
+            "stash@{{0}}: made on main · at HEAD · base {}",
+            base.trim()
+        )),
+        "{about}"
+    );
     // 一番下の行（stash）で `a`: 変更が戻り、stash は残る。
     let asked = amonhen_tui::snapshot(open(dir.path()), 200, 12, clock(), "0Ga").unwrap();
     assert!(

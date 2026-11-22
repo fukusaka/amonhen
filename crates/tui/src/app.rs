@@ -508,6 +508,8 @@ pub struct App {
     bundle_save: Option<String>,
     /// ロックするかを聞いている worktree（`r` で理由を聞く）。
     worktree_lock: Option<String>,
+    /// 詳細に出した stash（土台を読んだら、一番下の行に様子を書く）。
+    stash_about: Option<String>,
     /// 打っている名前が何のものか。
     naming: Naming,
     /// git や ssh から尋ねられていること（先頭を画面で聞いている）と、打った答え。
@@ -647,6 +649,7 @@ impl App {
             archive_folder: None,
             bundle_save: None,
             worktree_lock: None,
+            stash_about: None,
             naming: Naming::Branch,
             #[cfg(unix)]
             questions: std::collections::VecDeque::new(),
@@ -2946,6 +2949,43 @@ impl App {
             "worktreeChangesForRemove" => {
                 let count = reply["info"]["worktrees"][0]["count"].as_u64().unwrap_or(0);
                 self.ask_remove_worktree(count);
+                return;
+            }
+            "stashBases" => {
+                let Some(name) = self.stash_about.take() else {
+                    return;
+                };
+                let found = (reply["info"]["stashes"].as_array().into_iter().flatten())
+                    .find(|s| s["name"] == name.as_str());
+                let message = self.sidebar.detail_of("stash", &name).unwrap_or_default();
+                let mut parts: Vec<String> = Vec::new();
+                // メッセージの「On main: …」「WIP on main: …」から、作ったブランチ。
+                if let Some(branch) = message
+                    .strip_prefix("WIP on ")
+                    .or_else(|| message.strip_prefix("On "))
+                    .and_then(|m| m.split_once(':'))
+                    .map(|(b, _)| b)
+                {
+                    parts.push(tr!("made on {branch}", branch = branch));
+                }
+                if let Some(s) = found {
+                    let ahead = s["ahead"].as_u64().unwrap_or(0);
+                    parts.push(match (s["behind"].as_u64().unwrap_or(0), ahead) {
+                        (1.., _) => tr!("its base is not in HEAD’s history"),
+                        (0, 0) => tr!("at HEAD"),
+                        (0, n) => tr!("{count} behind HEAD", count = n),
+                    });
+                    if s["untracked"] == true {
+                        parts.push(tr!("with untracked files"));
+                    }
+                    if let Some(base) = s["base"].as_str() {
+                        parts.push(tr!("base {commit}", commit = &base[..base.len().min(8)]));
+                    }
+                }
+                if !parts.is_empty() {
+                    self.notice = Some(format!("{name}: {}", parts.join(" · ")));
+                    self.dirty = true;
+                }
                 return;
             }
             "fetchConfig" => {
@@ -5398,6 +5438,13 @@ impl App {
                 self.view = View::History;
                 self.focus = Focus::Side;
                 self.pinned = Oid::from_hex(&id);
+                // アプリの Stashes の行の 2 行目と同じこと（作ったブランチ・土台と HEAD・untracked）を、一番下の行に。
+                let name = self.sidebar.picked_ref().map_or("", |r| r.1).to_owned();
+                self.stash_about = Some(name);
+                self.send(Request::Run {
+                    name: "stashBases",
+                    command: json!({"op": "stashBases"}),
+                });
             }
             // ほかの worktree は、TUI をそこで開き直す（アプリが新しい窓で開くのの代わり）。開いているものは、
             // その場所を知らせるだけ。
