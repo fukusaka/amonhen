@@ -175,6 +175,8 @@ pub enum Request {
     /// → `Option<String>`: 共有の daemon がこのリポジトリのためにつないでいる SSH 先のエンジンと、その用意のしかた
     /// （`ssh::RemoteEngine::describe`）。SSH 先でなければ・daemon でなければ `None`。手元の共有の daemon でだけ使う。
     RemoteEngine,
+    /// → `Vec<DiffAttributes>`
+    DiffAttributes(Vec<String>),
 }
 
 /// 書き込み系の操作。応答の型はそれぞれの `Operations` のメソッドの戻り値。

@@ -1,6 +1,7 @@
 //! gix による GitBackend の実装。
 
 use amonhen_model::tr;
+use std::collections::HashMap;
 use std::path::Path;
 
 use std::ops::Range;
@@ -986,6 +987,58 @@ impl GitBackend for GixBackend {
                 ToGitOutcome::Buffer(buf) => buf.to_vec(),
                 ToGitOutcome::Process(_) => unreachable!("外部のフィルターは外してある"),
             }))
+        })
+    }
+
+    fn diff_attributes(&self, paths: &[&str]) -> Result<Vec<amonhen_model::DiffAttributes>> {
+        if paths.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.with_filters(|filters, repo| {
+            let attributes = &mut filters.attributes;
+            let config = repo.config_snapshot();
+            // 同じ diff ドライバーの規則は 1 度だけ引く。
+            let mut rules: HashMap<String, Option<amonhen_model::FuncNameRule>> = HashMap::new();
+            let mut out = Vec::with_capacity(paths.len());
+            for path in paths {
+                let mut matches =
+                    attributes.selected_attribute_matches(["diff", "linguist-generated"]);
+                attributes
+                    .at_entry(*path, None, &repo.objects)?
+                    .matching_attributes(&mut matches);
+                let mut attrs = amonhen_model::DiffAttributes::default();
+                for m in matches.iter_selected() {
+                    use gix::attrs::StateRef;
+                    match (m.assignment.name.as_str(), m.assignment.state) {
+                        ("diff", StateRef::Value(driver)) => {
+                            let driver = driver.as_bstr().to_string();
+                            attrs.funcname = rules
+                                .entry(driver.clone())
+                                .or_insert_with(|| {
+                                    let rule = |key: &str, extended| {
+                                        config.string(format!("diff.{driver}.{key}").as_str()).map(
+                                            |p| amonhen_model::FuncNameRule {
+                                                pattern: p.to_string(),
+                                                extended,
+                                            },
+                                        )
+                                    };
+                                    rule("xfuncname", true).or_else(|| rule("funcname", false))
+                                })
+                                .clone();
+                        }
+                        ("linguist-generated", StateRef::Set) => attrs.generated = Some(true),
+                        ("linguist-generated", StateRef::Unset) => attrs.generated = Some(false),
+                        ("linguist-generated", StateRef::Value(v)) => {
+                            let v = v.as_bstr();
+                            attrs.generated = Some(v != "false" && v != "0");
+                        }
+                        _ => {}
+                    }
+                }
+                out.push(attrs);
+            }
+            Ok(out)
         })
     }
 

@@ -961,7 +961,10 @@ impl Repository {
     pub fn file_diff(&self, change: &FileChange, profile: &FrontendProfile) -> Result<DiffView> {
         let diff = match self.change_diffs(std::slice::from_ref(change))? {
             Some(mut diffs) if diffs.len() == 1 => diffs.remove(0),
-            _ => self.change_diff(change)?,
+            _ => {
+                let attrs = self.diff_attributes(std::slice::from_ref(&change.path.as_str()));
+                self.change_diff(change, &attrs[0])?
+            }
         };
         Ok(DiffView::new(&diff, profile).with_path(&change.path))
     }
@@ -981,20 +984,25 @@ impl Repository {
             .flatten()
             .collect();
         self.backend.prefetch_blobs(&ids)?;
-        let one = |c: &FileChange| Ok((c.path.clone(), self.change_diff(c)?));
+        let paths: Vec<&str> = changes.iter().map(|c| c.path.as_str()).collect();
+        let attrs = self.diff_attributes(&paths);
+        let items: Vec<_> = changes.iter().zip(&attrs).collect();
+        let one = |&(c, a): &(&FileChange, &amonhen_model::DiffAttributes)| {
+            Ok((c.path.clone(), self.change_diff(c, a)?))
+        };
         // ファイルごとの差分は独立しているので、多ければ分けて並列に取る（コミットを選んでから表示までの時間）。
         let threads = std::thread::available_parallelism()
             .map_or(1, |n| n.get())
             .min(8);
         if changes.len() < 4 || threads < 2 {
-            let files = changes.iter().map(one).collect::<Result<_>>()?;
+            let files = items.iter().map(one).collect::<Result<_>>()?;
             return Ok(diff::StackedDiff { files });
         }
         let chunk = changes.len().div_ceil(threads);
         // 分けたスレッドでも、共有の daemon なら要求した FE の環境と言語で動かす。
         let carried = &amonhen_model::process::carry();
         let parts: Vec<Result<Vec<_>>> = std::thread::scope(|scope| {
-            let handles: Vec<_> = changes
+            let handles: Vec<_> = items
                 .chunks(chunk)
                 .map(|part| {
                     scope.spawn(move || {
@@ -1168,7 +1176,28 @@ impl Repository {
         })
     }
 
-    fn change_diff(&self, change: &FileChange) -> Result<FileDiff> {
+    /// 差分の見せ方にかかる属性。引けなければ既定のもの（見出しの関数名が既定の規則になるだけなので、差分は出す）。
+    fn diff_attributes(&self, paths: &[&str]) -> Vec<amonhen_model::DiffAttributes> {
+        match self.backend.diff_attributes(paths) {
+            Ok(attrs) if attrs.len() == paths.len() => attrs,
+            _ => vec![amonhen_model::DiffAttributes::default(); paths.len()],
+        }
+    }
+
+    /// `path` の 2 つの版の、前後 3 行の差分（見出しの関数名は `path` の属性の規則で）。
+    fn path_diff(&self, path: &str, old: Arc<Vec<u8>>, new: Arc<Vec<u8>>) -> FileDiff {
+        let attrs = self.diff_attributes(&[path]);
+        let funcname = crate::funcname::FuncName::new(attrs[0].funcname.as_ref());
+        let mut diff = diff::file_diff_with(old, new, 3, &funcname);
+        diff.generated = attrs[0].generated;
+        diff
+    }
+
+    fn change_diff(
+        &self,
+        change: &FileChange,
+        attrs: &amonhen_model::DiffAttributes,
+    ) -> Result<FileDiff> {
         let side = |id: &Option<Oid>| -> Result<Arc<Vec<u8>>> {
             match id {
                 None => Ok(Arc::default()),
@@ -1179,11 +1208,11 @@ impl Repository {
                 Some(id) => self.backend.blob(id),
             }
         };
-        Ok(diff::file_diff(
-            side(&change.old_id)?,
-            side(&change.new_id)?,
-            3,
-        ))
+        let funcname = crate::funcname::FuncName::new(attrs.funcname.as_ref());
+        let mut diff =
+            diff::file_diff_with(side(&change.old_id)?, side(&change.new_id)?, 3, &funcname);
+        diff.generated = attrs.generated;
+        Ok(diff)
     }
 
     /// 最後に読んだ作業ツリーと index の状態（まだ読んでいなければ読む）。
@@ -1238,7 +1267,7 @@ impl Repository {
             let line_endings = self.line_endings(entry, &index)?;
             (index, worktree, line_endings)
         };
-        let file = diff::file_diff(old, new, 3);
+        let file = self.path_diff(&entry.path, old, new);
         let view = DiffView::new(&file, profile).with_path(&entry.path);
         Ok(WorkingDiff {
             entry: entry.clone(),
@@ -1307,7 +1336,7 @@ impl Repository {
             b'D' => Arc::default(),
             _ => self.backend.worktree_file(&entry.path)?,
         };
-        let file = diff::file_diff(head, worktree, 3);
+        let file = self.path_diff(&entry.path, head, worktree);
         let Some(staged) = diff::staged_lines(&file, &index) else {
             return Ok(None);
         };
@@ -2078,6 +2107,86 @@ mod tests {
         repo.flush_cache().unwrap();
         let repo = Repository::with_cache(GixBackend::open(&dir).unwrap(), cache);
         assert_eq!(repo.load_cached_history().unwrap().graph.len(), 2);
+    }
+
+    #[test]
+    fn hunk_headers_name_the_function_as_git_does_and_generated_files_are_marked() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("repo");
+        std::fs::create_dir(&dir).unwrap();
+        git(&dir, &["init", "-q"]);
+        git(
+            &dir,
+            &["config", "diff.py.xfuncname", "^[ \t]*(def [a-z_]+)"],
+        );
+        git(
+            &dir,
+            &["config", "diff.basic.funcname", "^\\(sub [a-z]*\\)"],
+        );
+        std::fs::write(
+            dir.join(".gitattributes"),
+            "*.py diff=py\n*.pl diff=basic\ngen/** linguist-generated\nCargo.lock -linguist-generated\n",
+        )
+        .unwrap();
+        let body = |change: &str| {
+            let mut lines: Vec<String> = (1..=30).map(|i| format!("    x{i} = {i}")).collect();
+            lines[20] = format!("    x21 = {change}");
+            lines.join("\n") + "\n"
+        };
+        let files = |change: &str| {
+            [
+                (
+                    "a.py",
+                    format!("class A:\n  def run_it(self):\n{}", body(change)),
+                ),
+                ("b.pl", format!("sub hello {{\n{}", body(change))),
+                ("c.rs", format!("fn main() {{\n{}", body(change))),
+                ("gen/out.js", format!("var a;\n{}", body(change))),
+                ("Cargo.lock", format!("v\n{}", body(change))),
+            ]
+        };
+        std::fs::create_dir(dir.join("gen")).unwrap();
+        for (name, text) in files("1") {
+            std::fs::write(dir.join(name), text).unwrap();
+        }
+        git(&dir, &["add", "-A"]);
+        git(&dir, &["commit", "-q", "-m", "first"]);
+        for (name, text) in files("2") {
+            std::fs::write(dir.join(name), text).unwrap();
+        }
+        git(&dir, &["commit", "-qam", "second"]);
+
+        let out = Command::new("git")
+            .args(["diff", "HEAD~", "HEAD"])
+            .current_dir(&dir)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .output()
+            .unwrap();
+        let expected: Vec<String> = String::from_utf8(out.stdout)
+            .unwrap()
+            .lines()
+            .filter(|l| l.starts_with("@@"))
+            .map(str::to_owned)
+            .collect();
+
+        let repo = Repository::with_cache(GixBackend::open(&dir).unwrap(), tmp.path().join("c"));
+        let head = repo.backend.head().unwrap().unwrap();
+        let mut changes = repo.commit_changes(&head).unwrap();
+        changes.sort_by(|a, b| a.path.cmp(&b.path));
+        let stacked = repo.stacked_diff(&changes).unwrap();
+        let headers: Vec<String> = stacked
+            .files
+            .iter()
+            .map(|(_, d)| d.headers.clone())
+            .collect();
+        // git の出力もパスの順（Cargo.lock, a.py, b.pl, c.rs, gen/out.js）。
+        assert_eq!(headers, expected);
+        assert!(expected[1].ends_with("@@ def run_it"), "{expected:?}");
+        assert!(expected[2].ends_with("@@ sub hello"), "{expected:?}");
+        assert!(expected[3].ends_with("@@ fn main() {"), "{expected:?}");
+        let generated: Vec<Option<bool>> = stacked.files.iter().map(|(_, d)| d.generated).collect();
+        assert_eq!(generated, [Some(false), None, None, None, Some(true)]);
     }
 
     #[test]
