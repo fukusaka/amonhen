@@ -403,6 +403,18 @@ pub fn select(index: usize) {
     }
 }
 
+/// 窓 `window` の前のタブを `id` のタブにして、タブの並びを描き直させる（TabView が別のタブを選んで見せて
+/// いても、こちらの前のタブに戻す）。
+pub fn reselect(window: u64, id: u64) {
+    if window != focused() {
+        return;
+    }
+    match TABS.with(|t| t.borrow().iter().position(|tab| tab.id == id)) {
+        Some(index) if index != active() => activate(index),
+        _ => refresh(),
+    }
+}
+
 /// 次（`1`）・前（`-1`）のタブ（端から反対の端へ回る）。
 pub fn step(delta: isize) {
     let len = TABS.with(|t| t.borrow().len()) as isize;

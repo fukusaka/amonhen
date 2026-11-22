@@ -56,12 +56,14 @@ fn tag_of(tab: &IInspectable) -> Option<String> {
 }
 
 /// `element` の中の TabView のタブを引けるようにする。窓の外へ落としたら `dropped(タブの Tag の文字)` を、
-/// ほかの窓から引いてきたタブをタブの並びへ落としたら `received(そのタブの Tag の文字)` を呼ぶ（UI のスレッドで）。
-/// TabView が見つからなければ空。
+/// ほかの窓から引いてきたタブをタブの並びへ落としたら `received(そのタブの Tag の文字)` を呼ぶ。タブを引き
+/// 始めたら `started` を、引き終えたら `ended` を呼ぶ（どれも UI のスレッドで）。TabView が見つからなければ空。
 pub fn on_tab_moves(
     element: &IInspectable,
     dropped: impl Fn(String) + Send + 'static,
     received: impl Fn(String) + Send + 'static,
+    started: impl Fn() + Send + 'static,
+    ended: impl Fn() + Send + 'static,
 ) -> Vec<EventRevoker> {
     let Some(tabs) = find_tab_view(element) else {
         return Vec::new();
@@ -85,7 +87,8 @@ pub fn on_tab_moves(
     }
     // 引き始め: 引くタブを覚える（終わったら忘れる）。ポインタの下のタブで、分からなければ知らせの `Tab`。
     revokers.extend(
-        tabs.TabDragStarting(|_, args| {
+        tabs.TabDragStarting(move |_, args| {
+            started();
             let tag = HOVERED.with(|h| h.borrow().clone()).or_else(|| {
                 let tab = args.as_ref()?.Tab().ok()?;
                 tag_of(&tab.into())
@@ -96,8 +99,9 @@ pub fn on_tab_moves(
         .ok(),
     );
     revokers.extend(
-        tabs.TabDragCompleted(|_, _| {
+        tabs.TabDragCompleted(move |_, _| {
             DRAGGING.with(|d| d.borrow_mut().take());
+            ended();
         })
         .ok(),
     );

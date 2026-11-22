@@ -143,6 +143,10 @@ thread_local! {
     /// タブの並びごとの（それを描くタブの番号で引く）、タブの引き出し・受け取りの知らせ（持っている間だけ届く）。
     static TAB_MOVE_REVOKERS: RefCell<std::collections::HashMap<u64, Vec<windows_core_reactor::EventRevoker>>> =
         RefCell::new(Default::default());
+    /// タブを引いている間の、引く前の前のタブ。
+    static TAB_DRAG_FRONT: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+    /// 最後にタブを引き終えたときの、前のタブと時刻。
+    static TAB_DRAG_ENDED: std::cell::Cell<Option<(u64, Instant)>> = const { std::cell::Cell::new(None) };
     /// 窓の外へ引き出して、新しい窓へ移すタブ（`Message::OpenWindows` が元の窓から取り出す）。
     static MOVING_TABS: RefCell<Vec<u64>> = const { RefCell::new(Vec::new()) };
     /// 窓ごとの HWND（Window メニューから窓を前に出す）。
@@ -1123,6 +1127,8 @@ enum Message {
     RestoreDialog,
     /// タブを窓の外へ引き出した（タブの番号）。
     TabDroppedOut(String),
+    /// タブを引き終えた（引く前の前のタブを選び直す）。
+    TabDragEnded,
     /// SSH 接続を追加するダイアログで確かめた結果（SSH 先と、文と、入れたか）。
     SshChecked(String, String, bool),
     /// サイドバーの木でお気に入りを引いて落とした（新しい順の名前。お気に入りの間でなければ None）。
@@ -3037,6 +3043,27 @@ impl Root {
             Message::Command(id) if id == "next-tab" || id == "previous-tab" => {
                 crate::tabs::note_page(self.page == Page::WorkingCopy);
                 crate::tabs::step(if id == "next-tab" { 1 } else { -1 });
+            }
+            Message::TabSelected(Some(_)) if TAB_DRAG_FRONT.with(|f| f.get().is_some()) => {}
+            // 引き終えた直後に TabView が選んだタブ（並べ替えで前のタブの位置に来た隣のタブ）にも従わず、前のタブ
+            // に戻す。この知らせは引き終わりの知らせより後に届くことがある。
+            Message::TabSelected(Some(index))
+                if TAB_DRAG_ENDED.with(|e| e.get()).is_some_and(|(id, at)| {
+                    at.elapsed() < std::time::Duration::from_millis(500)
+                        && crate::tabs::tabs_of(self.window)
+                            .get(index)
+                            .is_some_and(|t| t.id != id)
+                }) =>
+            {
+                if let Some((id, _)) = TAB_DRAG_ENDED.with(|e| e.get()) {
+                    crate::tabs::reselect(self.window, id);
+                }
+            }
+            Message::TabDragEnded => {
+                if let Some(id) = TAB_DRAG_FRONT.with(|f| f.take()) {
+                    TAB_DRAG_ENDED.with(|e| e.set(Some((id, Instant::now()))));
+                    crate::tabs::reselect(self.window, id);
+                }
             }
             Message::TabSelected(Some(index)) => {
                 if index != crate::tabs::active_of(self.window) {
@@ -8254,6 +8281,19 @@ impl Root {
                             if let Ok(id) = id.parse() {
                                 move_tab(id, window);
                             }
+                        },
+                        // 引いている間は、TabView が選ぶタブに従わない（並べ替えの途中で、前のタブの位置に来た
+                        // 隣のタブを選ぶ）。引き終えたら、引く前の前のタブを選び直す。
+                        move || {
+                            let front = crate::tabs::tabs_of(window)
+                                .get(crate::tabs::active_of(window))
+                                .map(|t| t.id);
+                            TAB_DRAG_FRONT.with(|f| f.set(front));
+                        },
+                        || {
+                            with_history(|h| {
+                                h.sender.send(Message::TabDragEnded);
+                            });
                         },
                     );
                     // このタブの並びに前に付けたもの（タブの並びが変わる前のもの）は外す。重なると、引き終わり
