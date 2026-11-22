@@ -1390,6 +1390,44 @@ fn edit_prune_and_remove_a_remote_from_the_sidebar() {
     assert_eq!(remotes(), "");
 }
 
+/// サイドバーのタグの行で、`t` でリモートへ push（同じ名前の別のタグがあれば置き換え）、`X` でリモートから消す
+#[test]
+fn push_replace_and_delete_a_tag_on_a_remote() {
+    let dir = tempfile::tempdir().unwrap();
+    let work = with_remote(dir.path());
+    let remote = dir.path().join("origin.git");
+    git(&work, BASE, &["tag", "v1"]);
+    let remote_tag = || git_out(&remote, &["tag", "--format=%(objectname)", "-l", "v1"]);
+    // まだ fetch でリモートを読んでいないので、そう書いて出す。一番下の行が v1。
+    let asked = amonhen_tui::snapshot(open(&work), 220, 10, clock(), "0Gt").unwrap();
+    println!("{asked}");
+    assert!(
+        asked.contains("Push the tag v1 to which remote? Everyone who fetches from it gets the tag. Undo can’t take it back.   1 origin (not checked yet)   n cancel"),
+        "{asked}"
+    );
+    amonhen_tui::snapshot(open(&work), 220, 10, clock(), "0Gt1").unwrap();
+    assert_eq!(remote_tag(), git_out(&work, &["rev-parse", "HEAD"]));
+    // fetch で読んだ後は、もうあるリモートには出さない。
+    amonhen_tui::snapshot(open(&work), 220, 10, clock(), "fy").unwrap();
+    let every = amonhen_tui::snapshot(open(&work), 220, 10, clock(), "0Gt").unwrap();
+    assert!(every.contains("Every remote has v1"), "{every}");
+    // 手元の v1 を別のコミットにすると、置き換えになる。
+    git(&work, BASE, &["tag", "-f", "v1", "HEAD~1"]);
+    let replace = amonhen_tui::snapshot(open(&work), 220, 10, clock(), "0Gt").unwrap();
+    assert!(replace.contains("1 replace on origin"), "{replace}");
+    amonhen_tui::snapshot(open(&work), 220, 10, clock(), "0Gt1").unwrap();
+    assert_eq!(remote_tag(), git_out(&work, &["rev-parse", "HEAD~1"]));
+    // リモートから消す（手元のものは残る）。
+    let asked = amonhen_tui::snapshot(open(&work), 220, 10, clock(), "0GX").unwrap();
+    assert!(
+        asked.contains("Delete the tag v1 from which remote?"),
+        "{asked}"
+    );
+    amonhen_tui::snapshot(open(&work), 220, 10, clock(), "0GX1").unwrap();
+    assert_eq!(remote_tag(), "");
+    assert_eq!(git_out(&work, &["tag"]), "v1\n");
+}
+
 /// サイドバーの `c` でブランチをチェックアウトし、`b` で新しいブランチを作る。`u` で戻す
 #[test]
 fn checkout_new_branch_and_undo() {

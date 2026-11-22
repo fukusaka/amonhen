@@ -473,6 +473,8 @@ pub struct App {
     typing_branch: Option<(String, String, String)>,
     /// 直すリモート（サイドバーの `e`）の名前と、今の URL（`remotes` を読んだら）。
     editing_remote: Option<(String, Option<String>)>,
+    /// リモートでの様子を読んでいるタグ（サイドバーの `t` は push、`X` はリモートから消す）。
+    tag_remote: Option<(String, bool)>,
     /// 打っている名前が何のものか。
     naming: Naming,
     /// git や ssh から尋ねられていること（先頭を画面で聞いている）と、打った答え。
@@ -597,6 +599,7 @@ impl App {
             redraw: false,
             typing_branch: None,
             editing_remote: None,
+            tag_remote: None,
             naming: Naming::Branch,
             #[cfg(unix)]
             questions: std::collections::VecDeque::new(),
@@ -2378,6 +2381,8 @@ impl App {
             "cleanUp" => self.notice = Some(tr!("Deleted the branches")),
             "addRemote" => self.notice = Some(tr!("Added the remote")),
             "editRemote" => self.notice = Some(tr!("Changed the remote")),
+            "pushTag" => self.notice = Some(tr!("Pushed the tag")),
+            "deleteRemoteTag" => self.notice = Some(tr!("Deleted the tag from the remote")),
             "removeRemote" => self.notice = Some(tr!("Removed the remote")),
             "pruneRemote" => self.notice = Some(tr!("Pruned the remote-tracking branches")),
             "submodules" => {
@@ -2568,6 +2573,11 @@ impl App {
                 self.naming = Naming::RemoteRename;
                 self.typing_branch = Some((name.clone(), name.clone(), name));
                 self.dirty = true;
+                return;
+            }
+            "tagRemotes" => {
+                let info = reply["info"].clone();
+                self.ask_tag_remote(&info);
                 return;
             }
             "fetchConfig" => {
@@ -3751,6 +3761,62 @@ impl App {
         true
     }
 
+    /// タグのリモートでの様子 `info`（`tagRemotes`）を受けて、どのリモートに push するか（置き換えるか）、どこから
+    /// 消すかを選ばせる。アプリのタグのメニューと同じく、push はまだないリモートへ、置き換えは同じ名前の別のタグが
+    /// あるリモートへ、削除はあるリモートから。fetch でまだ読んでいないリモートはどれにも出し、そう書く。
+    fn ask_tag_remote(&mut self, info: &Value) {
+        let Some((tag, delete)) = self.tag_remote.take() else {
+            return;
+        };
+        let checked = |remote: &str| {
+            (info["remotes"].as_array().into_iter().flatten())
+                .any(|r| r["name"] == remote && !r["checked"].is_null())
+        };
+        let state = |remote: &str| info["tags"][tag.as_str()][remote].as_str();
+        let unchecked = |remote: &str| match checked(remote) {
+            true => String::new(),
+            false => tr!(" (not checked yet)"),
+        };
+        let mut choices: Vec<Choice> = Vec::new();
+        for remote in &self.remotes {
+            let (label, force) = match (checked(remote), state(remote), delete) {
+                (true, Some("missing"), true) | (true, Some("same"), false) => continue,
+                (_, _, true) => (format!("{remote}{}", unchecked(remote)), false),
+                (true, Some("different"), false) => {
+                    (tr!("replace on {remote}", remote = remote), true)
+                }
+                _ => (format!("{remote}{}", unchecked(remote)), false),
+            };
+            let Some(key) = char::from_digit(choices.len() as u32 + 1, 10) else {
+                break;
+            };
+            let command = json!({"op": "pushTags", "remote": remote, "names": [tag],
+                "force": force, "delete": delete});
+            let name = if delete { "deleteRemoteTag" } else { "pushTag" };
+            choices.push((key, label, Request::Run { name, command }));
+        }
+        if choices.is_empty() {
+            self.notice = Some(match delete {
+                true => tr!("No remote has {tag}", tag = tag),
+                false => tr!("Every remote has {tag}", tag = tag),
+            });
+            self.dirty = true;
+            return;
+        }
+        let ask = match delete {
+            true => tr!(
+                "Delete the tag {tag} from which remote? Everyone who fetches from it loses the tag; yours stays. Undo can’t bring it back.",
+                tag = tag
+            ),
+            false => tr!(
+                "Push the tag {tag} to which remote? Everyone who fetches from it gets the tag. Undo can’t take it back.",
+                tag = tag
+            ),
+        };
+        self.choices = Some((ask, choices));
+        self.dirty = true;
+    }
+
     /// どこから fetch するかを聞く。リモートが 1 つなら確かめるだけ、いくつもあれば、すべて（`git fetch --all` と
     /// 同じ）か 1 つを選ぶ。git の設定 `entries`（`configList`）で片づける（prune）なら、そう書く。
     fn ask_fetch(&mut self, entries: &Value) {
@@ -4333,6 +4399,22 @@ impl App {
             KeyCode::Char('e' | 'x' | 'X') if self.picked_remote().is_some() => {
                 self.remote_key(code)
             }
+            // タグの行で: リモートへ push（同じ名前の別のタグがあれば置き換え）、リモートから消す。
+            KeyCode::Char('t' | 'X')
+                if matches!(self.sidebar.picked_ref(), Some(("tag", _, _))) =>
+            {
+                let name = self.sidebar.picked_ref().map_or("", |r| r.1).to_owned();
+                if self.remotes.is_empty() {
+                    self.error = Some(tr!("There is no remote"));
+                    return true;
+                }
+                self.tag_remote = Some((name, code == KeyCode::Char('X')));
+                self.send(Request::Run {
+                    name: "tagRemotes",
+                    command: json!({"op": "tagRemotes"}),
+                });
+                true
+            }
             KeyCode::Char('a' | 'o' | 'x') => self.stash_key(code),
             KeyCode::Char('D') => self.ask_delete(),
             KeyCode::Char('n') => self.ask_rename(),
@@ -4412,6 +4494,10 @@ impl App {
                 (
                     "e x X",
                     tr!("On a remote branch: edit its remote (name, URL), remove it, prune it"),
+                ),
+                (
+                    "t X",
+                    tr!("On a tag: push it to a remote (or replace it there); delete it from one"),
                 ),
                 ("w", tr!("New worktree for the branch")),
                 (
