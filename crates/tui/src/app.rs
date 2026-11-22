@@ -153,6 +153,8 @@ enum Naming {
     PatchVersion,
     /// アーカイブに入れる 1 つのフォルダ（作業ツリーの上からの）。
     ArchiveFolder,
+    /// bundle に入れない基点（受け取る側が持っているコミット）。
+    BundleBase,
     /// 直すリモートの URL（始まりは前の名前、出し方は新しい名前）。
     RemoteEditUrl,
     /// 選んでいるコミットを書き出すアーカイブのファイル（この機械の）。
@@ -496,6 +498,8 @@ pub struct App {
     patch_version: Option<(String, String)>,
     /// アーカイブの書き方を選んでいる間の、コミットと書くファイル（`o` で 1 つのフォルダを聞く）。
     archive_folder: Option<(String, String)>,
+    /// bundle に何を入れるかを選んでいる間の、書くファイル（`a` で基点を聞く）。
+    bundle_save: Option<String>,
     /// 打っている名前が何のものか。
     naming: Naming,
     /// git や ssh から尋ねられていること（先頭を画面で聞いている）と、打った答え。
@@ -629,6 +633,7 @@ impl App {
             worktree_branch: None,
             patch_version: None,
             archive_folder: None,
+            bundle_save: None,
             naming: Naming::Branch,
             #[cfg(unix)]
             questions: std::collections::VecDeque::new(),
@@ -1488,6 +1493,19 @@ impl App {
             self.dirty = true;
             return;
         }
+        // bundle を書く前の `a`: 入れない基点を打つ（初めは今のブランチの上流）。
+        if self.choices.is_some()
+            && let Some(file) = self.bundle_save.take()
+            && key.code == KeyCode::Char('a')
+        {
+            self.choices = None;
+            self.bundle_save = Some(file);
+            self.naming = Naming::BundleBase;
+            let start = self.upstream.clone().unwrap_or_default();
+            self.typing_branch = Some((String::new(), String::new(), start));
+            self.dirty = true;
+            return;
+        }
         // アーカイブを書く前の `o`: 入れるフォルダを打つ。
         if self.choices.is_some()
             && let Some(pending) = self.archive_folder.take()
@@ -1858,11 +1876,25 @@ impl App {
                                 tr!("Fetching from the bundle…"),
                                 json!({"op": "fetchBundle", "file": start, "name": name}),
                             ),
-                            Naming::Bundle => (
-                                "bundle",
-                                tr!("Saving the bundle…"),
-                                json!({"op": "bundle", "refs": [], "bases": [], "file": local_path(name)}),
-                            ),
+                            // 場所の次に、アプリのシートと同じく何を入れるかを選ぶ。
+                            Naming::Bundle => {
+                                self.ask_bundle(&local_path(name));
+                                return;
+                            }
+                            Naming::BundleBase => {
+                                let Some(file) = self.bundle_save.take() else {
+                                    return;
+                                };
+                                let Some(branch) = self.branch.clone() else {
+                                    return;
+                                };
+                                (
+                                    "bundle",
+                                    tr!("Saving the bundle…"),
+                                    json!({"op": "bundle", "refs": [format!("refs/heads/{branch}")],
+                                        "bases": [name], "file": file}),
+                                )
+                            }
                             Naming::RemoteUrl => (
                                 "addRemote",
                                 tr!("Adding {name}…", name = start),
@@ -4084,6 +4116,39 @@ impl App {
         true
     }
 
+    /// bundle を `file`（この機械の）に書く前に、何を入れるかを選ばせる: すべて（HEAD とブランチ・タグ）、今の
+    /// ブランチだけ、今のブランチのうち基点より後だけ（アプリのシートの「一部の ref」「基点より後」）。
+    fn ask_bundle(&mut self, file: &str) {
+        let bundle = |refs: Vec<String>| Request::Run {
+            name: "bundle",
+            command: json!({"op": "bundle", "refs": refs, "bases": [], "file": file}),
+        };
+        let mut options: Vec<Choice> = vec![(
+            'y',
+            tr!("HEAD and every branch and tag"),
+            bundle(Vec::new()),
+        )];
+        if let Some(branch) = self.branch.clone() {
+            options.push((
+                'b',
+                tr!("only {branch}", branch = branch),
+                bundle(vec![format!("refs/heads/{branch}")]),
+            ));
+            // 選ぶ前に横取りして、基点を聞く（中身は送らない）。
+            options.push((
+                'a',
+                tr!("only {branch} after a base…", branch = branch),
+                Request::Status,
+            ));
+            self.bundle_save = Some(file.to_owned());
+        }
+        self.choices = Some((
+            tr!("Save a bundle at {file} with what?", file = file),
+            options,
+        ));
+        self.dirty = true;
+    }
+
     /// コミット `oids`（空白区切り、古い順）を `place`（フォルダ、`.mbox` なら 1 つのファイル）にパッチとして書く前に、
     /// 送り状（`--cover-letter`、2 つ以上のとき）と版の番号（`-v`）を選ばせる。`version` は聞いた後の版。
     fn ask_save_patch(&mut self, oids: &str, place: &str, version: Option<u32>) {
@@ -6238,6 +6303,10 @@ impl App {
                     Naming::ArchiveFolder => {
                         tr!("Export only the folder (from the top): {name}", name = name)
                     }
+                    Naming::BundleBase => tr!(
+                        "Leave out what the receiver has, up to (a branch or commit): {name}",
+                        name = name
+                    ),
                     Naming::BundleName => {
                         tr!("Fetch its branches as remote: {name}", name = name)
                     }

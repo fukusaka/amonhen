@@ -300,7 +300,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Apply Patch（am / apply・下見・3-way・--index） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `am`・`apply`（`--check`）。<br>TUI: 命令の一覧から。下見は確かめる文の件名かファイル、当たらなければ 3-way を勧め、`i` で index にも。 |
 | パッチのファイルを窓に落とす | ✓ | ✓ | ✓ | ✓ | n/a | n/a | VSCode: エクスプローラーのメニューから。<br>TUI: Apply Patch がファイルのパスを聞く。 |
 | Export Archive（zip・tar.gz・tar、先頭のフォルダ、1 つのフォルダ） | ✓ | ✓ | △ | ✓ | ✓ | ✓ | VSCode: エンジンがあれば。ブランチ・タグの右クリック、History のコミットの右クリック、HEAD はコマンドパレットから。<br>CLI: `archive`。<br>Windows: コミットのメニューから、形・先頭のフォルダ・1 つのフォルダ（パスを書く）。<br>TUI: 命令の一覧から、選んでいるコミット。形は拡張子で決まり、`y` で先頭のフォルダ、`t` でなし、`o` で 1 つのフォルダ（パスを書く）。 |
-| Save as Bundle（すべて・一部の ref・基点より後） | ✓ | ✓ | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあれば。選んだブランチ・タグの右クリック、リポジトリ全体はサイドバーの ⋯ から。<br>CLI: `bundle create`。<br>TUI: 命令の一覧から。HEAD とすべてのブランチ・タグだけ。 |
+| Save as Bundle（すべて・一部の ref・基点より後） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: エンジンがあれば。選んだブランチ・タグの右クリック、リポジトリ全体はサイドバーの ⋯ から。<br>CLI: `bundle create`。<br>TUI: 命令の一覧から。すべて、`b` で今のブランチだけ、`a` で今のブランチの基点より後。 |
 | bundle のファイルから clone（HEAD がなければブランチを選ぶ） | ✓ | ✓ | ✓ | ✓ | ✓ | — | VSCode: サイドバーの ⋯ と最初の画面から。clone したものを開く・新しい窓で開く・ワークスペースに足す。<br>CLI: `clone <file> [-b <branch>]`。 |
 | Fetch from Bundle（名前の下に、前提のコミットを確かめて） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: エンジンがあれば。サイドバーの ⋯ から。<br>CLI: `bundle fetch`。<br>TUI: 命令の一覧から。 |
 | 止まった `am` と Retry with 3-Way・Skip・Abort・Continue | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: サイドバーの行に出る。<br>CLI: `am --continue / --skip / --abort / --retry-3way`。<br>Windows: Windows: Working Copy の上の帯に。<br>TUI: `C` `K` `A`、Retry with 3-Way は `R`。 |

@@ -2532,7 +2532,17 @@ fn save_the_repository_as_a_bundle() {
     let out = tempfile::tempdir().unwrap();
     let file = out.path().join("all.bundle");
     let keys = format!(":bundle\n\x15{}\n", file.display());
-    let done = amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), &keys).unwrap();
+    // 何を入れるかを選ぶ。
+    let choose = amonhen_tui::snapshot(open(dir.path()), 240, 8, clock(), &keys).unwrap();
+    println!("{choose}");
+    assert!(
+        choose.contains(
+            "y HEAD and every branch and tag   b only main   a only main after a base…   n cancel"
+        ),
+        "{choose}"
+    );
+    let done =
+        amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), &format!("{keys}y")).unwrap();
     println!("{done}");
     assert!(done.contains("Saved the bundle to"));
     // git が読めて、ブランチとタグが入っている。
@@ -2543,6 +2553,26 @@ fn save_the_repository_as_a_bundle() {
     for name in ["refs/heads/main", "refs/heads/topic", "refs/tags/v1"] {
         assert!(heads.contains(name), "{heads}");
     }
+    // 今のブランチだけ。
+    let main_only = out.path().join("main.bundle");
+    let keys = format!(":bundle\n\x15{}\nb", main_only.display());
+    amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), &keys).unwrap();
+    let heads = git_out(
+        out.path(),
+        &["bundle", "list-heads", main_only.to_str().unwrap()],
+    );
+    assert!(
+        heads.contains("refs/heads/main") && !heads.contains("topic"),
+        "{heads}"
+    );
+    // 今のブランチの、基点より後だけ（受け取る側が持っているはずのコミットは入れない）。
+    let after = out.path().join("after.bundle");
+    let keys = format!(":bundle\n\x15{}\na\x15main~1\n", after.display());
+    amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), &keys).unwrap();
+    let base = git_out(dir.path(), &["rev-parse", "main~1"]);
+    let header = std::fs::read(&after).unwrap();
+    let header = String::from_utf8_lossy(&header[..200.min(header.len())]).into_owned();
+    assert!(header.contains(&format!("-{}", base.trim())), "{header}");
 }
 
 /// コマンドの一覧の Fetch from Bundle: ファイルを読み、名前を聞いて、そのブランチを refs/remotes/<名前>/ に取り込む
