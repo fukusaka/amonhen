@@ -2474,13 +2474,47 @@ fn export_archive_of_the_selected_commit() {
     let out = tempfile::tempdir().unwrap();
     let zip = out.path().join("snap.zip");
     let keys = format!(":export\n\x15{}\n", zip.display());
-    let done = amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), &keys).unwrap();
+    // フォルダに入れるか、先頭に置くか、1 つのフォルダだけにするかを選ぶ。
+    let choose = amonhen_tui::snapshot(open(dir.path()), 240, 8, clock(), &keys).unwrap();
+    println!("{choose}");
+    assert!(
+        choose.contains(
+            "y in a folder snap/   t at the top, without a folder   o only one folder…   n cancel"
+        ),
+        "{choose}"
+    );
+    let done =
+        amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), &format!("{keys}y")).unwrap();
     println!("{done}");
     assert!(done.contains("Exported to"));
     let bytes = std::fs::read(&zip).unwrap();
     assert_eq!(&bytes[..2], b"PK");
     // 中身は、ファイルの名前のフォルダの下に。
     assert!(bytes.windows(11).any(|w| w == b"snap/lane.r"));
+    // 先頭に置く・1 つのフォルダだけ（tar で中身の名前を見る）。
+    std::fs::create_dir(dir.path().join("sub")).unwrap();
+    std::fs::write(dir.path().join("sub/x.txt"), "x\n").unwrap();
+    git(dir.path(), BASE, &["add", "."]);
+    git(dir.path(), BASE + DAY * 5, &["commit", "-q", "-m", "Sub"]);
+    let names = |file: &Path| {
+        let listed = amonhen_model::process::command("tar")
+            .arg("-tf")
+            .arg(file)
+            .output()
+            .unwrap();
+        String::from_utf8(listed.stdout).unwrap()
+    };
+    let top = out.path().join("top.tar");
+    let keys = format!(":export\n\x15{}\nt", top.display());
+    amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), &keys).unwrap();
+    let listed = names(&top);
+    assert!(listed.lines().any(|l| l == "lane.rs"), "{listed}");
+    let one = out.path().join("one.tar");
+    let keys = format!(":export\n\x15{}\nosub\ny", one.display());
+    amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), &keys).unwrap();
+    let listed = names(&one);
+    assert!(listed.lines().any(|l| l == "one/sub/x.txt"), "{listed}");
+    assert!(!listed.contains("lane.rs"), "{listed}");
     // 分からない拡張子は断る。
     let keys = format!(":export\n\x15{}\n", out.path().join("snap.rar").display());
     let wrong = amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), &keys).unwrap();
@@ -2565,8 +2599,13 @@ fn apply_patch_from_the_command_list() {
     let keys = format!(":apply patch\n\x15{}\n", mail.display());
     let asked = amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), &keys).unwrap();
     println!("{asked}");
+    // 件名を見せてから確かめる。
     assert!(
-        asked.contains("Apply the patch to the current branch as a commit?   y apply   n cancel")
+        asked.contains(&format!(
+            "Apply the patch to the current branch as a commit? (“{}”)   y apply   n cancel",
+            subject.trim()
+        )),
+        "{asked}"
     );
     amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), &format!("{keys}y")).unwrap();
     assert_eq!(git_out(dir.path(), &["log", "-1", "--format=%s"]), subject);
@@ -2579,18 +2618,31 @@ fn apply_patch_from_the_command_list() {
     std::fs::write(&diff, git_out(dir.path(), &["diff"])).unwrap();
     std::fs::write(&lane, &before).unwrap();
     let keys = format!(":apply patch\n\x15{}\n", diff.display());
-    let asked = amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), &keys).unwrap();
+    let asked = amonhen_tui::snapshot(open(dir.path()), 220, 8, clock(), &keys).unwrap();
     println!("{asked}");
-    assert!(asked.contains("Apply the diff to the working tree?"));
+    // ファイルと行の数を見せ、作業ツリーだけか index にもかを選ぶ。
+    assert!(
+        asked.contains("Apply the diff? Undo brings the files back. (lane.rs +1 −1)   y to the working tree   i to the index too (staged)   n cancel"),
+        "{asked}"
+    );
     amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), &format!("{keys}y")).unwrap();
     assert_eq!(git_out(dir.path(), &["diff", "--name-only"]), "lane.rs\n");
     assert_eq!(
         git_out(dir.path(), &["diff", "--cached", "--name-only"]),
         ""
     );
-    // もう当たらない（同じ diff をもう一度）。
-    let again = amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), &keys).unwrap();
-    assert!(again.contains("The patch doesn’t apply"));
+    // もう当たらない（同じ diff をもう一度）。3-way で当てるかを聞く。
+    let again = amonhen_tui::snapshot(open(dir.path()), 260, 8, clock(), &keys).unwrap();
+    println!("{again}");
+    assert!(again.contains("The patch doesn’t apply"), "{again}");
+    assert!(again.contains("y apply 3-way   n cancel"), "{again}");
+    // index にも当てる。
+    git(dir.path(), BASE, &["checkout", "--", "lane.rs"]);
+    amonhen_tui::snapshot(open(dir.path()), 220, 8, clock(), &format!("{keys}i")).unwrap();
+    assert_eq!(
+        git_out(dir.path(), &["diff", "--cached", "--name-only"]),
+        "lane.rs\n"
+    );
 }
 
 /// 当たらずに止まった git am のパッチを、`R` で 3-way merge で当て直す（アプリの Retry with 3-Way）
@@ -2643,13 +2695,39 @@ fn save_the_selected_commit_as_a_patch() {
     let out = tempfile::tempdir().unwrap();
     let folder = out.path().join("patches");
     let keys = format!(":save as patch\n\x15{}\n", folder.display());
-    let done = amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), &keys).unwrap();
+    // 1 つなら送り状は出さない。版の番号は選べる。
+    let asked = amonhen_tui::snapshot(open(dir.path()), 240, 8, clock(), &keys).unwrap();
+    println!("{asked}");
+    assert!(
+        asked.contains("   y save   v as a new version (-v)…   n cancel"),
+        "{asked}"
+    );
+    let done =
+        amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), &format!("{keys}y")).unwrap();
     println!("{done}");
     assert!(done.contains("Saved "));
     let patch = folder.join("0001-Take-the-lane-from-the-trunk.patch");
     let text = std::fs::read_to_string(&patch).unwrap();
     assert!(text.contains("Subject: [PATCH] Take the lane from the trunk"));
     assert!(text.contains("+    let lane = trunk();"));
+    // 版の番号を付ける（-v 3）。
+    let keys = format!(":save as patch\n\x15{}\nv\x153\ny", folder.display());
+    amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), &keys).unwrap();
+    let text =
+        std::fs::read_to_string(folder.join("v3-0001-Take-the-lane-from-the-trunk.patch")).unwrap();
+    assert!(
+        text.contains("Subject: [PATCH v3] Take the lane from the trunk"),
+        "{text}"
+    );
+    // .mbox で終わる名前なら、1 つのファイルに。
+    let mbox = out.path().join("all.mbox");
+    let keys = format!(":save as patch\n\x15{}\ny", mbox.display());
+    amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), &keys).unwrap();
+    assert!(
+        std::fs::read_to_string(&mbox)
+            .unwrap()
+            .contains("Subject: [PATCH] Take the lane")
+    );
 }
 
 /// コマンドの一覧の Compare with Previous Version: 今のブランチを、最後に書き換える前の版と比べる（range-diff）
@@ -3527,13 +3605,21 @@ fn copy_ids_and_save_the_selected_commits_as_patches() {
     assert!(one.contains("(to the terminal’s clipboard)"), "{one}");
     let out = tempfile::tempdir().unwrap();
     let folder = out.path().join("patches");
-    let keys = format!("⇣:save as patch\n\x15{}\n", folder.display());
+    let keys = format!("⇣:save as patch\n\x15{}\nc", folder.display());
     let done = amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), &keys).unwrap();
-    assert!(done.contains("Saved 2 patches in "), "{done}");
+    assert!(done.contains("Saved 3 patches in "), "{done}");
     let mut names: Vec<String> = std::fs::read_dir(&folder)
         .unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
     names.sort();
-    assert_eq!(names, ["0001-Three.patch", "0002-Four.patch"]);
+    // 送り状を付けた。
+    assert_eq!(
+        names,
+        [
+            "0000-cover-letter.patch",
+            "0001-Three.patch",
+            "0002-Four.patch"
+        ]
+    );
 }
