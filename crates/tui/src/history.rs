@@ -4,7 +4,7 @@
 //! 描き、端が近づいたら次の範囲を頼む。1 コミットは必ず 1 行なので、行と画面の位置は引き算で求まる。
 
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use amonhen_front::Reply;
 use amonhen_layout::{Edge, Node};
@@ -38,6 +38,9 @@ const SELECTED: Color = Color::Indexed(238);
 /// ほかの所を操作している間の、選んでいる行。
 const SELECTED_UNFOCUSED: Color = Color::Indexed(236);
 const DIM: Color = Color::Indexed(244);
+/// 印をつけた行（複数選択）。カーソルも重なれば、少し明るく。
+const MARKED: Color = Color::Indexed(24);
+const MARKED_SELECTED: Color = Color::Indexed(31);
 
 #[derive(Clone, Copy)]
 enum LabelKind {
@@ -89,6 +92,16 @@ impl Window {
     }
 }
 
+/// 印をつけたコミット（History の複数選択）。読み直しても印を残せるよう、ID と、詳細に並べる中身も持つ。
+#[derive(Clone, Debug, PartialEq)]
+pub struct Marked {
+    pub id: Oid,
+    pub subject: String,
+    pub author: String,
+    pub time: i64,
+    pub merge: bool,
+}
+
 #[derive(Default)]
 pub struct History {
     id: Value,
@@ -120,6 +133,10 @@ pub struct History {
     cache: RowCache<(u16, u16, i64, u64)>,
     /// 行の中身（ラベル・件名の色）が変わるたびに進める。
     generation: u64,
+    /// 印をつけた行（複数選択。行の番号 → コミット）。
+    marks: BTreeMap<u32, Marked>,
+    /// 読み直す前の印（新しい History での行を聞いてから戻す）。
+    remap: Vec<Marked>,
 }
 
 impl History {
@@ -159,6 +176,90 @@ impl History {
         }
         self.selected = self.selected.min(self.last());
         self.clamp_top();
+        // 印は行の番号が変わるので、新しい History での行を聞いてから戻す（`remapped`）。
+        if !self.marks.is_empty() {
+            self.remap = std::mem::take(&mut self.marks).into_values().collect();
+        }
+    }
+
+    /// 読み直す前に印をつけていたコミット（新しい History での行を聞く）。
+    pub fn take_remap(&mut self) -> Vec<Marked> {
+        std::mem::take(&mut self.remap)
+    }
+
+    /// 印をつけていたコミットの、新しい History での行（`take_remap` の順。なくなったものは `None`）。
+    pub fn remapped(&mut self, marks: Vec<Marked>, rows: Vec<Option<u32>>) {
+        for (mark, row) in marks.into_iter().zip(rows) {
+            if let Some(row) = row {
+                self.marks.insert(row, mark);
+            }
+        }
+    }
+
+    /// `row` 行目のコミット（届いていなければ `None`）。
+    fn marked_at(&self, row: u32) -> Option<Marked> {
+        let window = self.window.as_ref()?;
+        let i = window.index(row)?;
+        Some(Marked {
+            id: window.ids[i],
+            subject: window.string(i, 0).to_owned(),
+            author: window.string(i, 1).to_owned(),
+            time: window.times[i],
+            merge: window.nodes[i].flags & Node::MERGE != 0,
+        })
+    }
+
+    /// 選んでいる行の印をつける・外す。
+    pub fn toggle_mark(&mut self) -> bool {
+        let row = self.selected;
+        if self.marks.remove(&row).is_none() {
+            let Some(mark) = self.marked_at(row) else {
+                return false;
+            };
+            self.marks.insert(row, mark);
+        }
+        true
+    }
+
+    /// 選んでいる行と、`delta` 行動いた先の行に印をつける（Shift-↑↓。アプリの ⇧-クリックの代わり）。
+    pub fn mark_and_move(&mut self, delta: i64) -> bool {
+        let marked = self.mark_selected();
+        let moved = self.move_selection(delta);
+        let marked = marked | (moved && self.mark_selected());
+        marked || moved
+    }
+
+    /// 選んでいる行に印をつける（ついていなければ）。つけたら true。
+    fn mark_selected(&mut self) -> bool {
+        let row = self.selected;
+        if self.marks.contains_key(&row) {
+            return false;
+        }
+        match self.marked_at(row) {
+            Some(mark) => {
+                self.marks.insert(row, mark);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// 印をすべて外す。外したら true。
+    pub fn clear_marks(&mut self) -> bool {
+        if self.marks.is_empty() {
+            return false;
+        }
+        self.marks.clear();
+        true
+    }
+
+    /// 印をつけた行とコミット（上から、つまり新しい順）。
+    pub fn marks(&self) -> impl Iterator<Item = (u32, &Marked)> {
+        self.marks.iter().map(|(row, mark)| (*row, mark))
+    }
+
+    pub fn mark_count(&self) -> usize {
+        self.marks.len()
     }
 
     /// 前のフレームで組み立てた行を捨てる。
@@ -544,14 +645,18 @@ impl History {
                     Style::new().add_modifier(Modifier::DIM),
                 );
             }
-            if row == self.selected {
+            let marked = self.marks.contains_key(&row);
+            let background = match (row == self.selected, marked) {
+                (true, true) => Some(MARKED_SELECTED),
+                (false, true) => Some(MARKED),
+                (true, false) if focused => Some(SELECTED),
+                (true, false) => Some(SELECTED_UNFOCUSED),
+                (false, false) => None,
+            };
+            if let Some(background) = background {
                 buf.set_style(
                     Rect::new(area.x, y, area.width, 1),
-                    Style::new().bg(if focused {
-                        SELECTED
-                    } else {
-                        SELECTED_UNFOCUSED
-                    }),
+                    Style::new().bg(background),
                 );
             }
         }

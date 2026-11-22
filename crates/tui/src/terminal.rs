@@ -122,6 +122,16 @@ impl Screen {
         Ok(())
     }
 
+    /// `text` を端末のクリップボードに入れる（OSC 52。答えはないので、端末が受け付けたかは分からない。tmux では
+    /// `set-clipboard` が要る）。
+    pub fn copy(&mut self, text: &str) -> Result<()> {
+        use std::io::Write;
+        let out = self.canvas.out();
+        write!(out, "\x1b]52;c;{}\x07", base64(text.as_bytes()))?;
+        out.flush()?;
+        Ok(())
+    }
+
     /// 端末を戻してプロセスを止め（`Ctrl-z`。シェルの `fg` で続く）、続いたら端末を取り直す。
     #[cfg(unix)]
     pub fn suspend(&mut self, mouse: bool) -> Result<()> {
@@ -196,6 +206,25 @@ pub fn read_input(tx: Sender<Event>) -> Arc<AtomicBool> {
     paused
 }
 
+/// Base64（RFC 4648、詰め物つき）。OSC 52 に渡す。
+fn base64(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let n = chunk
+            .iter()
+            .enumerate()
+            .fold(0u32, |n, (i, b)| n | u32::from(*b) << (16 - 8 * i));
+        for i in 0..4 {
+            match i <= chunk.len() {
+                true => out.push(TABLE[(n >> (18 - 6 * i) & 63) as usize] as char),
+                false => out.push('='),
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -210,5 +239,21 @@ mod tests {
         assert!(!margins_answer(b"\x1b[?69;0$y\x1b[?1;2;4c"));
         assert!(!margins_answer(b"\x1b[?69;4$y\x1b[?1;2c"));
         assert!(!margins_answer(b"\x1b[?1;2c"));
+    }
+
+    /// RFC 4648 の例
+    #[test]
+    fn encodes_as_the_rfc_says() {
+        for (plain, coded) in [
+            ("", ""),
+            ("f", "Zg=="),
+            ("fo", "Zm8="),
+            ("foo", "Zm9v"),
+            ("foob", "Zm9vYg=="),
+            ("fooba", "Zm9vYmE="),
+            ("foobar", "Zm9vYmFy"),
+        ] {
+            assert_eq!(base64(plain.as_bytes()), coded);
+        }
     }
 }

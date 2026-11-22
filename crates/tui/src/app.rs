@@ -20,10 +20,10 @@ use crate::Clock;
 use crate::Result;
 use crate::changes::Changes;
 use crate::commands::{self, Place};
-use crate::details::Details;
+use crate::details::{Details, Pair, Want};
 use crate::diff::{PAN, Theme};
 use crate::fileview::FileView;
-use crate::history::{History, WHEEL_ROWS};
+use crate::history::{History, Marked, WHEEL_ROWS};
 use crate::loader::{Loaded, Loader, Request};
 use crate::reflog::Reflog;
 use crate::sidebar::{self, Picked, Sidebar};
@@ -397,6 +397,10 @@ pub struct App {
     sidebar: Sidebar,
     /// サイドバーで開いた stash（詳細の枠に、History の選択の代わりに出す）。
     pinned: Option<Oid>,
+    /// History を読み直す前に印をつけていたコミット（新しい History での行を聞いている間）。
+    remapping: Vec<Marked>,
+    /// 2 つに印をつけたときの、差分の取り方。
+    pair: Pair,
     reflog: Reflog,
     file: FileView,
     /// ファイルの画面を閉じたときに戻る画面。
@@ -502,6 +506,10 @@ pub struct App {
     operation_log: Option<OperationLog>,
     /// History の編集モード（`E`）。
     edit_mode: Option<crate::editmode::EditMode>,
+    /// 印をつけたコミット（新しい順）を、編集モードで 1 つにまとめる（`E`。行が届いたら決める）。
+    combining: Vec<String>,
+    /// 端末のクリップボードに入れる文字（OSC 52。描くループが書く）。
+    copy: Option<String>,
     /// 編集モードで、変更があるのに Esc を 1 度押した（もう 1 度で捨てる）。
     edit_discard: bool,
     /// 編集モードの行のメッセージを、エディタで直す（開く中身。開いたら `editing_plan` が立つ）。
@@ -562,6 +570,8 @@ impl App {
             changes: Changes::default(),
             sidebar: Sidebar::default(),
             pinned: None,
+            remapping: Vec::new(),
+            pair: Pair::default(),
             reflog: Reflog::default(),
             file: FileView::default(),
             file_back: View::Changes,
@@ -601,6 +611,8 @@ impl App {
             palette: None,
             operation_log: None,
             edit_mode: None,
+            combining: Vec::new(),
+            copy: None,
             edit_discard: false,
             plan_message: None,
             editing_plan: false,
@@ -856,6 +868,11 @@ impl App {
     }
 
     /// `Ctrl-z` を押した（聞いたら、なかったことにする）。止まって続いた後は、描き直す。
+    /// 端末のクリップボードに入れる文字。
+    pub fn take_copy(&mut self) -> Option<String> {
+        self.copy.take()
+    }
+
     #[cfg(unix)]
     pub fn take_suspend(&mut self) -> bool {
         let suspend = std::mem::take(&mut self.suspend);
@@ -1105,6 +1122,15 @@ impl App {
                                 id: id.to_string(),
                             });
                         }
+                        // 印も、同じコミットにつけ直す。
+                        let marks = self.history.take_remap();
+                        if !marks.is_empty() {
+                            self.send(Request::MarksOf {
+                                history: self.history.id().clone(),
+                                ids: marks.iter().map(|m| m.id.to_string()).collect(),
+                            });
+                            self.remapping = marks;
+                        }
                         self.opening = false;
                         if std::mem::take(&mut self.reopen) {
                             self.open();
@@ -1141,6 +1167,10 @@ impl App {
                         }
                     }
                     Loaded::Lineage { row, bits } => self.history.set_lineage(row, bits),
+                    Loaded::MarksOf(rows) => {
+                        let marks = std::mem::take(&mut self.remapping);
+                        self.history.remapped(marks, rows);
+                    }
                     Loaded::RowOf(row) => {
                         if let Some(row) = row {
                             self.history.select(row);
@@ -1292,8 +1322,22 @@ impl App {
             self.send(request);
         }
         let side = self.layout().side.is_some();
-        // 詳細が見えているなら、選んでいるコミットのものにする。
-        if side
+        // History で 2 つ以上に印をつけていれば、その差分を出す（アプリの複数選択）。
+        let selection = (side
+            && self.view == View::History
+            && self.pinned.is_none()
+            && self.history.mark_count() >= 2)
+            .then(|| Want::Selection {
+                history: self.history.id().clone(),
+                rows: self.history.marks().map(|(row, _)| row).collect(),
+                pair: self.pair,
+                commits: self.history.marks().map(|(_, m)| m.clone()).collect(),
+            });
+        if let Some(want) = selection {
+            if self.details.want(want) {
+                self.damage |= Damage::SIDE;
+            }
+        } else if side
             && let Some(id) = match self.view {
                 View::History => self.pinned.or(self.history.selected_id()),
                 View::Reflog => self.reflog.selected_id(),
@@ -1303,7 +1347,7 @@ impl App {
         {
             let stash = self.view == View::History && self.pinned == Some(id);
             // 詳細の中だけが変わる。
-            if self.details.want(id, stash) {
+            if self.details.want(Want::Commit { id, stash }) {
                 self.damage |= Damage::SIDE;
             }
         }
@@ -1625,7 +1669,7 @@ impl App {
                             Naming::SavePatch => (
                                 "savePatch",
                                 tr!("Saving the patch…"),
-                                json!({"op": "formatPatch", "oids": [start], "dir": local_path(name)}),
+                                json!({"op": "formatPatch", "oids": start.split(' ').collect::<Vec<_>>(), "dir": local_path(name)}),
                             ),
                             Naming::Patch => {
                                 let file = local_path(name);
@@ -1835,7 +1879,11 @@ impl App {
             KeyCode::Char('3') => self.show(View::Reflog),
             _ => {
                 self.dirty |= match (self.view, self.focus) {
-                    (View::History, Focus::Main) => self.history_key(key.code, control),
+                    (View::History, Focus::Main) => self.history_key(
+                        key.code,
+                        control,
+                        key.modifiers.contains(KeyModifiers::SHIFT),
+                    ),
                     (View::History | View::Reflog | View::File, Focus::Side) => {
                         self.details_key(key.code, control)
                     }
@@ -1972,7 +2020,26 @@ impl App {
             );
         }
         if id == "save-patch" {
-            // History で選んでいるコミットを、git の名前のファイルにして、今のフォルダ（この機械）に。
+            // History で選んでいるコミット（印があれば、印をつけたものを古い順に）を、git の名前のファイルにして、今の
+            // フォルダ（この機械）に。
+            if self.history.mark_count() >= 2 {
+                if self.history.marks().any(|(_, m)| m.merge) {
+                    self.error = Some(tr!("A merge can’t be saved as a patch"));
+                    self.dirty = true;
+                    return;
+                }
+                let mut ids: Vec<String> = self
+                    .history
+                    .marks()
+                    .map(|(_, m)| m.id.to_string())
+                    .collect();
+                ids.reverse();
+                let what = tr!("{count} commits", count = ids.len());
+                self.naming = Naming::SavePatch;
+                self.typing_branch = Some((ids.join(" "), what, local_path("")));
+                self.dirty = true;
+                return;
+            }
             let Some(id) = self.history.selected_id() else {
                 return;
             };
@@ -2126,6 +2193,9 @@ impl App {
             Err(error) => {
                 if name == "recentMessages" {
                     self.fixup_pick = None;
+                }
+                if name == "editRows" {
+                    self.combining.clear();
                 }
                 // 長い出力は、最初の行だけ。
                 let line = error.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
@@ -2484,7 +2554,16 @@ impl App {
                         )
                     })
                     .collect();
-                self.edit_mode = Some(crate::editmode::EditMode::new(rows));
+                let mut mode = crate::editmode::EditMode::new(rows);
+                let combining = std::mem::take(&mut self.combining);
+                if !combining.is_empty() && !mode.combine_last(&combining) {
+                    self.error = Some(tr!(
+                        "Only commits next to each other on the current branch can be combined"
+                    ));
+                    self.dirty = true;
+                    return;
+                }
+                self.edit_mode = Some(mode);
                 self.edit_discard = false;
                 self.dirty = true;
                 return;
@@ -2536,11 +2615,21 @@ impl App {
                 });
             }
             "savePatch" => {
-                let file = (reply["info"]["files"].as_array())
+                let files = reply["info"]["files"].as_array();
+                let file = files
                     .and_then(|f| f.first())
                     .and_then(Value::as_str)
                     .unwrap_or("");
-                self.notice = Some(tr!("Saved {file}", file = file));
+                self.notice = Some(match files.map_or(0, Vec::len) {
+                    0 | 1 => tr!("Saved {file}", file = file),
+                    n => tr!(
+                        "Saved {count} patches in {folder}",
+                        count = n,
+                        folder = std::path::Path::new(file)
+                            .parent()
+                            .map_or(String::new(), |p| p.display().to_string())
+                    ),
+                });
             }
             // bundle の中身が分かった: 足りないコミットがあれば断り、なければ取り込む名前を聞く。
             "bundleCheck" => {
@@ -3098,6 +3187,102 @@ impl App {
 
     /// History で選んでいるコミットへの操作: `y` cherry-pick、`v` revert、`c` そのコミットをチェックアウト
     /// （detached HEAD）。
+    /// 印をつけたコミットの ID（印がなければ選んでいるコミットの）を、端末のクリップボードに入れる。
+    fn copy_ids(&mut self) -> bool {
+        let ids: Vec<String> = match self.history.mark_count() {
+            0 => self
+                .history
+                .selected_id()
+                .into_iter()
+                .map(|id| id.to_string())
+                .collect(),
+            _ => self
+                .history
+                .marks()
+                .map(|(_, m)| m.id.to_string())
+                .collect(),
+        };
+        if ids.is_empty() {
+            return false;
+        }
+        self.notice = Some(match ids.len() {
+            1 => tr!(
+                "Copied {commit} (to the terminal’s clipboard)",
+                commit = &ids[0][..8]
+            ),
+            n => tr!(
+                "Copied {count} commit IDs (to the terminal’s clipboard)",
+                count = n
+            ),
+        });
+        self.copy = Some(ids.join("\n"));
+        true
+    }
+
+    /// 印をつけたコミットを、今のブランチに cherry-pick（古い順）・revert（新しい順）する前に、前と後の絵を読んで
+    /// 確かめる（アプリと同じく 1 つの命令で。コンフリクトで止まったら、残りは git が覚えていて Continue・Skip で続く）。
+    fn ask_pick_marked(&mut self, revert: bool) -> bool {
+        let mut marks: Vec<&Marked> = self.history.marks().map(|(_, m)| m).collect();
+        if !revert {
+            marks.reverse();
+        }
+        let oids: Vec<String> = marks.iter().map(|m| m.id.to_string()).collect();
+        let is_merge = marks.iter().any(|m| m.merge);
+        let count = oids.len();
+        let onto = self.branch.clone().unwrap_or_else(|| "HEAD".to_owned());
+        let (ask, yes, name, title) = match revert {
+            false => (
+                tr!(
+                    "Cherry-pick {count} commits onto {branch}, oldest first?",
+                    count = count,
+                    branch = onto
+                ),
+                tr!("cherry-pick"),
+                "cherryPick",
+                tr!(" Cherry-pick {count} commits ", count = count),
+            ),
+            true => (
+                tr!(
+                    "Revert {count} commits on {branch}, newest first?",
+                    count = count,
+                    branch = onto
+                ),
+                tr!("revert"),
+                "revert",
+                tr!(" Revert {count} commits ", count = count),
+            ),
+        };
+        let request = Request::Run {
+            name,
+            command: json!({"op": name, "oids": oids, "isMerge": is_merge}),
+        };
+        self.pick_question = Some((ask, yes, request, title));
+        self.run(
+            "pickPreview",
+            tr!("Looking ahead…"),
+            json!({"op": "pickPreview", "oids": oids, "revert": revert}),
+        );
+        true
+    }
+
+    /// 印をつけたコミット（first-parent の並びで続いたもの）を、編集モードで 1 つにまとめる（アプリの Combine）。
+    /// 一番古いものから HEAD までを開き、新しい方をひとつ古いものとまとめる行にしておく。当てるのは編集モードで。
+    fn combine_marked(&mut self) -> bool {
+        let marks: Vec<&Marked> = self.history.marks().map(|(_, m)| m).collect();
+        if marks.iter().any(|m| m.merge) {
+            self.error = Some(tr!("A merge can’t be combined with other commits"));
+            return true;
+        }
+        let Some(oldest) = marks.last() else {
+            return false;
+        };
+        self.combining = marks.iter().map(|m| m.id.to_string()).collect();
+        self.send(Request::EditRows {
+            from: oldest.id.to_string(),
+        });
+        true
+    }
+
     fn ask_commit_operation(&mut self, code: KeyCode) -> bool {
         let Some((id, is_merge, subject)) = self.history.selected_commit() else {
             return false;
@@ -3843,6 +4028,19 @@ impl App {
                     tr!("Fold merged branches; open or close the selected merge"),
                 ),
                 ("] [", tr!("Go to the parent, the child")),
+                (
+                    "m Shift-↑↓",
+                    tr!("Select several commits: one at a time, or a run"),
+                ),
+                (
+                    "x .",
+                    tr!("With two selected: swap the direction; diff from where they diverged"),
+                ),
+                (
+                    "y v E",
+                    tr!("With several selected: cherry-pick, revert them; combine them into one"),
+                ),
+                ("Y", tr!("Copy the commit IDs (the terminal’s clipboard)")),
                 ("Enter Space", tr!("Go to the details")),
                 ("/", tr!("Search")),
                 ("n N", tr!("Next and previous match")),
@@ -3851,7 +4049,7 @@ impl App {
                 ("e", tr!("Edit the commit's message in git's editor")),
                 ("F X", tr!("Fix up into the parent; drop the commit")),
                 ("E", tr!("Edit the commits from here to HEAD at once")),
-                ("Esc", tr!("Clear the search")),
+                ("Esc", tr!("Clear the selection, then the search")),
             ],
             (View::Reflog, Focus::Main) => vec![
                 ("j k", tr!("Move")),
@@ -4463,10 +4661,48 @@ impl App {
         }
     }
 
-    fn history_key(&mut self, code: KeyCode, control: bool) -> bool {
+    fn history_key(&mut self, code: KeyCode, control: bool, shift: bool) -> bool {
         // History を操作したら、開いていた stash ではなく選んでいるコミットを出す。
         self.pinned = None;
         let page = self.history.page();
+        // 複数選択: `m` で印をつける・外す（アプリの ⌘-クリック）、Shift-↑↓ で続けてつける（⇧-クリック）。
+        let marked = match code {
+            KeyCode::Char('m') => Some(self.history.toggle_mark()),
+            KeyCode::Down if shift => Some(self.history.mark_and_move(1)),
+            KeyCode::Up if shift => Some(self.history.mark_and_move(-1)),
+            // 2 つのときの差分の取り方: 向きを入れ替える、分かれたところから。
+            KeyCode::Char('x') if self.history.mark_count() == 2 => {
+                self.pair = match self.pair {
+                    Pair::Forward => Pair::Reverse,
+                    _ => Pair::Forward,
+                };
+                Some(true)
+            }
+            KeyCode::Char('.') if self.history.mark_count() == 2 => {
+                self.pair = match self.pair {
+                    Pair::MergeBase => Pair::Forward,
+                    _ => Pair::MergeBase,
+                };
+                Some(true)
+            }
+            KeyCode::Esc if self.history.clear_marks() => Some(true),
+            _ => None,
+        };
+        if let Some(marked) = marked {
+            if self.history.mark_count() < 2 {
+                self.pair = Pair::Forward;
+            }
+            if marked {
+                self.notice = match self.history.mark_count() {
+                    0 => None,
+                    n => Some(tr!(
+                        "{count} selected: m adds or removes one, Esc clears",
+                        count = n
+                    )),
+                };
+            }
+            return marked;
+        }
         // 選択を動かすだけなら、History の中だけが変わる（詳細は、頼むときに印をつける）。
         let moved = match code {
             KeyCode::Char('d') if control => Some(self.history.move_selection(page / 2)),
@@ -4528,6 +4764,19 @@ impl App {
                 // 前の語から直せるよう、入れておく。
                 self.typing_query =
                     Some(self.search.as_ref().map_or(String::new(), |s| s.0.clone()));
+                true
+            }
+            // コミットの ID を端末のクリップボードに（印があれば、印をつけたものすべて）。
+            KeyCode::Char('Y') => self.copy_ids(),
+            // 印をつけたコミット: 古い順に cherry-pick、新しい順に revert、編集モードで 1 つにまとめる。
+            KeyCode::Char('y' | 'v') if self.history.mark_count() >= 2 => {
+                self.ask_pick_marked(code == KeyCode::Char('v'))
+            }
+            KeyCode::Char('E') if self.history.mark_count() >= 2 => self.combine_marked(),
+            KeyCode::Char('c' | 'e' | 'F' | 'X') if self.history.mark_count() >= 2 => {
+                self.error = Some(tr!(
+                    "This works on one commit: Esc clears the selection first"
+                ));
                 true
             }
             // 選んでいるコミットを今のブランチに持ってくる・打ち消す・そこをチェックアウトする（先に確かめる）。
@@ -4660,6 +4909,16 @@ impl App {
                     let focused = std::mem::replace(&mut self.focus, Focus::Main);
                     let line = mouse.row - area.y;
                     let selected = match view {
+                        // Ctrl・Alt を押しながらなら、印をつける・外す（アプリの ⌘-クリック。Shift-クリックは
+                        // 端末が文字の選択に使う）。
+                        View::History
+                            if mouse
+                                .modifiers
+                                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+                        {
+                            self.history.click(line);
+                            self.history.toggle_mark()
+                        }
                         View::History => self.history.click(line),
                         View::Reflog => self.reflog.click(line),
                         View::File => self.file.click(line),

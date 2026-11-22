@@ -259,7 +259,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Go to Ref | — | — | — | — | n/a | — |  |
 | いくつものコミットを選ぶ（範囲・2 つ・飛び飛び） | ✓ | ✓ | ✓ | ✓ | △ | — | VSCode: エンジンがあるとき。<br>CLI: 2 つは `diff <rev> <rev>`。 |
 | 選んだいくつもの ref の History | ✓ | ✓ | ✓ | ✓ | ✓ | — | CLI: `log --branch` を重ねる。<br>Windows: サイドバーで ref を選ぶとその History、Ctrl+クリックで ref を足す・外す。View に All Branches と Current Branch。<br>TUI: ref を開くと History でそのコミットを選ぶ。 |
-| コミットのメニュー: checkout・新しいブランチやタグ・cherry-pick・revert・ID のコピー | ✓ | ✓ | ✓ | ✓ | △ | △ | CLI: `amonhen run` から。<br>TUI: `c`・`b`・`T`・`y`・`v`。ID のコピーはない。 |
+| コミットのメニュー: checkout・新しいブランチやタグ・cherry-pick・revert・ID のコピー | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: `amonhen run` から。<br>TUI: `c`・`b`・`T`・`y`・`v`・`Y`（OSC 52 で端末のクリップボードへ）。 |
 | 編集モード（pick・reword・squash・fixup・drop・edit、ドラッグで並べ替え） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: エンジンがあるとき。ないときは 1 つずつ。<br>CLI: `amonhen run` から。<br>TUI: `E` で画面に重ねる。`J` `K` で行を動かす。 |
 | 書き換えの見込み（積み重ね・push 済みのブランチ、コンフリクトの見込み） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: daemon 越し。ほかのブランチの rebase では、アプリと同じく代わりにコンフリクトの見込みを出す。<br>CLI: `rewrite-preview`。 |
 | 近道: Edit Message…・Squash into Previous…・Drop…・Combine N…・コミットのドラッグ | ✓ | ✓ | ✓ | ✓ | △ | △ | VSCode: エンジンがあれば編集モードを開く。ないときはすぐ書き換え、Combine N Commits はない。<br>CLI: `amonhen run` から。<br>TUI: `e` でメッセージ、`F` で親にまとめる、`X` で Drop。Combine N はなく、merge と rebase はサイドバーの `m` `r`。 |
@@ -277,8 +277,8 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 差分の横の、変更したファイルの木 | ✓ | ✓ | ✓ | ✓ | n/a | △ | VSCode: 一覧の上の Tree / List で切り替える。<br>TUI: 差分の上の平らな一覧。 |
 | ファイルの見出しのメニュー（Blame・File History・パスのコピー・開く） | ✓ | ✓ | ✓ | ✓ | n/a | △ | VSCode: 右クリックの Blame・File History・Copy Path と、VSCode の差分のエディターで開く。<br>TUI: 見ているファイルの `B`・`L`。パスのコピーと開くはない。 |
 | 1 ファイルずつの差分に切り替える | ✓ | ✓ | ✓ | ✓ | n/a | — | VSCode: 一覧の上の One File / All Files で切り替える。<br>Windows: 表示 > 全ファイルを 1 つの差分に並べる。切ると、変更ファイルの一覧で選んだファイル。 |
-| 選んだものの差分（範囲をまとめる・A..B / A...B・飛び飛び） | ✓ | ✓ | ✓ | ✓ | △ | — | VSCode: エンジンがあるとき。<br>CLI: `diff <rev> <rev>`。 |
-| 選んだものの操作（cherry-pick・revert・squash・ID のコピー） | ✓ | ✓ | ✓ | ✓ | △ | — | VSCode: エンジンがあるとき。<br>CLI: `amonhen run` から。<br>Windows: 続いたコミットをまとめるときは、ダイアログでメッセージを直してすぐ書き換える（編集モードはない）。 |
+| 選んだものの差分（範囲をまとめる・A..B / A...B・飛び飛び） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: エンジンがあるとき。<br>CLI: `diff <rev> <rev>`。<br>TUI: `m` と Shift-↑↓（か Ctrl・Alt を押しながらクリック）で選ぶ。`x` で向きを入れ替え、`.` で merge-base から。 |
+| 選んだものの操作（cherry-pick・revert・squash・ID のコピー） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: エンジンがあるとき。<br>CLI: `amonhen run` から。<br>Windows: 続いたコミットをまとめるときは、ダイアログでメッセージを直してすぐ書き換える（編集モードはない）。<br>TUI: 印をつけたコミットに `y` `v`、`E` でまとめた形の編集モード、`Y` で ID のコピー、Save as Patch で保存。 |
 | 署名のポップオーバー | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: 詳細の Signature の行（様子・説明・署名した人と鍵）。ポップオーバーはない。<br>TUI: 確かめた結果を詳細に出す。ポップオーバーはない。 |
 | 単語の強調と構文の色 | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: 構文の色はエンジンがあれば、差分を出した後に付く。 |
 
@@ -296,7 +296,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 
 | 機能 | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
-| Save as Patch（コミットごとか mbox・カバーレター・-v） | ✓ | ✓ | ✓ | ✓ | ✓ | △ | CLI: `format-patch`。<br>TUI: 命令の一覧から、選んでいるコミットだけ。mbox・カバーレター・-v はない。 |
+| Save as Patch（コミットごとか mbox・カバーレター・-v） | ✓ | ✓ | ✓ | ✓ | ✓ | △ | CLI: `format-patch`。<br>TUI: 命令の一覧から、選んでいるコミットか、印をつけたコミットを古い順に。mbox・カバーレター・-v はない。 |
 | Apply Patch（am / apply・下見・3-way・--index） | ✓ | ✓ | ✓ | ✓ | ✓ | △ | CLI: `am`・`apply`（`--check`）。<br>TUI: 命令の一覧から。下見・3-way・--index はない。 |
 | パッチのファイルを窓に落とす | ✓ | ✓ | ✓ | ✓ | n/a | n/a | VSCode: エクスプローラーのメニューから。<br>TUI: Apply Patch がファイルのパスを聞く。 |
 | Export Archive（zip・tar.gz・tar、先頭のフォルダ、1 つのフォルダ） | ✓ | ✓ | ✓ | ✓ | ✓ | △ | VSCode: エンジンがあれば。ブランチ・タグの右クリック、History のコミットの右クリック、HEAD はコマンドパレットから。<br>CLI: `archive`。<br>Windows: コミットのメニューから、形・先頭のフォルダ・1 つのフォルダ（パスを書く）。<br>TUI: 命令の一覧から、選んでいるコミット。形は拡張子で決まる。先頭のフォルダと 1 つのフォルダは選べない。 |
