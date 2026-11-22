@@ -112,6 +112,11 @@ impl Reflog {
         self.entries.get(self.selected)?.new
     }
 
+    /// 選んでいる行のコミットが History にあるか。
+    pub fn selected_reachable(&self) -> bool {
+        self.entries.get(self.selected).is_some_and(|e| e.reachable)
+    }
+
     pub fn set_height(&mut self, height: u16) {
         self.height = height;
         self.clamp_top();

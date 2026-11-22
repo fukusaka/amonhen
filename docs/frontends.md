@@ -56,7 +56,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Clean Up Branches (merged, merged by a pull request, upstream gone; one Undo) | ✓ | ✓ | ✓ | ✓ | △ | △ | VSCode: With the engine, a multi-select list with a heading per reason (Command Palette, the Branches heading's right-click). CLI: Via `amonhen run` (`branchCleanup`, `deleteBranches`); merged pull requests are read by the apps and VSCode with gh.<br>TUI: Clean Up Branches in the command list; `a` takes in branches whose upstream is gone. Branches merged by a pull request aren't looked for (no GitHub). |
 | Merged-by-pull-request mark on a branch (squash or rebase on GitHub) | ✓ | ✓ | △ | ✓ | △ | — | VSCode: With the engine; the number is in the row's tooltip. CLI: Via `amonhen run` (`branchGroups` with `pullRequests`); the apps and VSCode read merged pull requests with gh.<br>Windows: The word merged after the name, with the number in the row's tooltip. |
 | Favorites reordered by dragging | ✓ | ✓ | ✓ | ✓ | n/a | — | VSCode: Move Up and Move Down in Favorites on the menu (a drop on a branch offers Merge and Rebase). |
-| Branch menu: checkout, rename, delete (Delete Anyway when unmerged) | ✓ | ✓ | ✓ | ✓ | △ | △ | macOS: Set Upstream is only in the Repository menu.<br>GTK4: Set Upstream is only in the Repository menu.<br>CLI: Via `amonhen run`.<br>TUI: `c` checks out, `n` renames and `D` deletes; no Delete Anyway. |
+| Branch menu: checkout, rename, delete (Delete Anyway when unmerged) | ✓ | ✓ | ✓ | ✓ | △ | ✓ | macOS: Set Upstream is only in the Repository menu.<br>GTK4: Set Upstream is only in the Repository menu.<br>CLI: Via `amonhen run`.<br>TUI: `c` checks out, `n` renames and `D` deletes; with commits on no other branch, it names how many and draws them, then deletes anyway. |
 | Sync a branch that is not checked out (Fast-Forward, Push, Publish) | ✓ | ✓ | ✓ | ✓ | △ | — | CLI: Via `amonhen run`. |
 | Tags listed | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |
 | Tag marks for remotes (missing, different) with a popover | ✓ | ✓ | △ | ✓ | △ | — | VSCode: In the row's description, each remote's state in the tooltip (no popover).<br>CLI: Via `amonhen run` (`tagRemotes`).<br>Windows: ⚠ (a different tag on a remote) or ∅ (on no remote) after the name, and each remote's state in the row's tooltip and at the top of the tag's menu; choosing one of those opens the popover's content as a dialog. |
@@ -177,7 +177,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Stash (message, include untracked) | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: Via `amonhen run`.<br>TUI: `s`. |
 | Stash: only the staged changes, keep the index, selected files | ✓ | ✓ | ✓ | ✓ | △ | △ | VSCode: With the engine, the Stash list has the first two, and a Working Copy file's right-click has Stash… for that file.<br>CLI: Via `amonhen run` (`stashPush` with `staged`, `keepIndex`, `paths`).<br>TUI: Keeping the index only; no staged-only or selected files. |
 | Delete ignored files (listed first) | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: The Command Palette and Working Copy's right-click; the list is a pick list, all chosen at first.<br>CLI: Via `amonhen run` (`ignoredFiles`, `deleteIgnored`).<br>TUI: In the command list. |
-| Pop the latest stash (asks first) | ✓ | ✓ | ✓ | ✓ | △ | △ | VSCode: Pop Latest Stash… on the Stashes header and in the Command Palette (a row's Pop doesn't ask).<br>CLI: Via `amonhen run`.<br>TUI: `S` pops at once, without asking. |
+| Pop the latest stash (asks first) | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: Pop Latest Stash… on the Stashes header and in the Command Palette (a row's Pop doesn't ask).<br>CLI: Via `amonhen run`.<br>TUI: `S`, naming the stash and its message, as do `a` and `o` on a stash in the sidebar. |
 | Activity spinner and count | ✓ | ✓ | △ | ✓ | n/a | ✓ | VSCode: VSCode's progress notifications.<br>Windows: ⟳ n at the right of the status bar while operations run (click for Activity); not on the toolbar<br>TUI: The top line names the running operation. |
 | Refresh and Rebuild History | ✓ | ✓ | ✓ | ✓ | △ | — | VSCode: Rebuild History in the sidebar's ⋯ and the command palette, with the engine.<br>CLI: `log --rebuild`, `daemon rebuild`.<br>TUI: `Ctrl-l` redraws the screen without reloading. |
 | Undo the last operation (asks, names what it puts back) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: The title's Undo and the Command Palette ask; a notification's Undo, pressed right after the operation, doesn't.<br>CLI: `undo` (`--peek` to see it first).<br>TUI: `u`. |
@@ -199,7 +199,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Feature | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
 | Reflog view with "not on any branch" | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: With the engine only.<br>CLI: Via `amonhen run`.<br>TUI: `3`; entries whose commit isn't in History are dimmed, and `L` on a branch shows its reflog. |
-| Reflog actions (New Branch, Checkout, New Tag, Reset, Show in History, Copy) | ✓ | ✓ | ✓ | ✓ | △ | △ | CLI: Via `amonhen run`.<br>TUI: `b` new branch, `T` new tag and `R` reset; no checkout, Show in History or copy. |
+| Reflog actions (New Branch, Checkout, New Tag, Reset, Show in History, Copy) | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: Via `amonhen run`.<br>TUI: `b` new branch, `c` checkout, `T` new tag, `R` reset, `H` Show in History and `Y` copy. |
 
 ## 5c. Reset
 
@@ -257,7 +257,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Worktree HEAD labels (✎ ⌂ ⑂, change counts) | ✓ | ✓ | ✓ | ✓ | — | — |  |
 | Go to HEAD, Parent, Child | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: The HEAD button above History, Go to Parent and Go to Child on a commit's menu, and parent and child links in the details (with the engine).<br>TUI: `@`, `]` and `[`. |
 | Go to Ref | — | — | — | — | n/a | — |  |
-| Several commits selected (range, two, scattered) | ✓ | ✓ | ✓ | ✓ | △ | — | VSCode: With the engine.<br>CLI: `diff <rev> <rev>` for two. |
+| Several commits selected (range, two, scattered) | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: With the engine.<br>CLI: `diff <rev> <rev>` for two.<br>TUI: `m`, Shift-↑↓, or Ctrl- or Alt-click. |
 | History of several selected refs | ✓ | ✓ | ✓ | ✓ | ✓ | — | CLI: `log --branch` repeated.<br>Windows: Selecting a ref in the sidebar shows its History, and Ctrl+click adds or removes refs; View has All Branches and Current Branch.<br>TUI: Opening a ref selects its commit in History. |
 | Commit menu: checkout, new branch or tag, cherry-pick, revert, copy ID | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: Via `amonhen run`.<br>TUI: `c`, `b`, `T`, `y`, `v` and `Y` (copied to the terminal's clipboard with OSC 52). |
 | Edit mode (pick, reword, squash, fixup, drop, edit; drag to reorder) | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: With the engine; without it, one commit at a time.<br>CLI: Via `amonhen run`.<br>TUI: `E`, over the screen; `J` `K` move a row. |

@@ -56,7 +56,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | ブランチを片付ける（取り込み済み・PR でマージ済み・上流が消えた。Undo 1 回） | ✓ | ✓ | ✓ | ✓ | △ | △ | VSCode: エンジンがあるとき、理由ごとの見出しを付けた複数選択の一覧（コマンドパレット、Branches の見出しの右クリック）。CLI: `amonhen run`（`branchCleanup`・`deleteBranches`）から。マージ済みの PR はアプリと VSCode が gh で読む。<br>TUI: 命令の一覧の Clean Up Branches。`a` で上流の消えたブランチも含める。PR でマージされたブランチは探さない（GitHub はない）。 |
 | PR でマージ済みのブランチの印（GitHub で squash・rebase） | ✓ | ✓ | △ | ✓ | △ | — | VSCode: エンジンがあるとき。番号は行のツールチップに出る。CLI: `amonhen run`（`pullRequests` を渡した `branchGroups`）から。マージ済みの PR はアプリと VSCode が gh で読む。<br>Windows: 名前の後ろに merged と出し、番号は行のツールチップに。 |
 | お気に入りをドラッグで並べ替える | ✓ | ✓ | ✓ | ✓ | n/a | — | VSCode: メニューの Move Up・Move Down in Favorites（ブランチに落とすと Merge・Rebase）。 |
-| ブランチのメニュー: checkout・名前の変更・削除（未マージは Delete Anyway） | ✓ | ✓ | ✓ | ✓ | △ | △ | macOS: Set Upstream は Repository メニューだけ。<br>GTK4: Set Upstream は Repository メニューだけ。<br>CLI: `amonhen run` から。<br>TUI: `c` で checkout、`n` で名前の変更、`D` で削除。Delete Anyway はない。 |
+| ブランチのメニュー: checkout・名前の変更・削除（未マージは Delete Anyway） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | macOS: Set Upstream は Repository メニューだけ。<br>GTK4: Set Upstream は Repository メニューだけ。<br>CLI: `amonhen run` から。<br>TUI: `c` で checkout、`n` で名前の変更、`D` で削除。ほかのどこにもないコミットがあれば、その数と絵を出して Delete Anyway。 |
 | checkout していないブランチの同期（Fast-Forward・Push・Publish） | ✓ | ✓ | ✓ | ✓ | △ | — | CLI: `amonhen run` から。 |
 | タグの一覧 | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |
 | タグのリモートの印（ない・違う）とポップオーバー | ✓ | ✓ | △ | ✓ | △ | — | VSCode: 行の説明に出し、リモートごとの様子はツールチップに（ポップオーバーはない）。<br>CLI: `amonhen run`（`tagRemotes`）から。<br>Windows: 名前の後ろに ⚠（リモートに別のタグ）か ∅（どのリモートにもない）、リモートごとの様子を行のツールチップとタグのメニューの先頭に。そこを選ぶと、吹き出しの中身をダイアログで出す。 |
@@ -177,7 +177,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Stash（メッセージ・未追跡を含める） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: `amonhen run` から。<br>TUI: `s`。 |
 | Stash: stage した変更だけ・index を残す・選んだファイルだけ | ✓ | ✓ | ✓ | ✓ | △ | △ | VSCode: エンジンがあるとき、Stash の一覧に前の 2 つ、Working Copy のファイルの右クリックにそのファイルの Stash…。<br>CLI: `amonhen run`（`stashPush` の `staged`・`keepIndex`・`paths`）から。<br>TUI: index を残すだけ。stage したものだけ・選んだファイルだけはない。 |
 | ignore されたファイルを消す（先に一覧） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: コマンドパレットと Working Copy の右クリックから。一覧は選ぶもので、はじめはすべて選んである。<br>CLI: `amonhen run`（`ignoredFiles`・`deleteIgnored`）から。<br>TUI: 命令の一覧から。 |
-| 最新の stash を Pop（先に尋ねる） | ✓ | ✓ | ✓ | ✓ | △ | △ | VSCode: Stashes の見出しとコマンドパレットの Pop Latest Stash…（行の Pop は尋ねない）。<br>CLI: `amonhen run` から。<br>TUI: `S` で尋ねずにすぐ pop する。 |
+| 最新の stash を Pop（先に尋ねる） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: Stashes の見出しとコマンドパレットの Pop Latest Stash…（行の Pop は尋ねない）。<br>CLI: `amonhen run` から。<br>TUI: `S`。stash の名前とメッセージを出して尋ねる。サイドバーの stash の `a`・`o` も同じ。 |
 | Activity のくるくると数 | ✓ | ✓ | △ | ✓ | n/a | ✓ | VSCode: VSCode の進み具合の知らせ。<br>Windows: 操作が走っている間、ステータスバーの右に ⟳ n（押すと Activity）。ツールバーではない<br>TUI: 一番上の行に動いている操作の名前。 |
 | Refresh と Rebuild History | ✓ | ✓ | ✓ | ✓ | △ | — | VSCode: Rebuild History はサイドバーの ⋯ とコマンドパレットから。エンジンがあれば。<br>CLI: `log --rebuild`・`daemon rebuild`。<br>TUI: `Ctrl-l` は読み直さずに画面を描き直す。 |
 | 直前の操作の Undo（尋ね、何を戻すか示す） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: 上の Undo とコマンドパレットは尋ねる。操作の直後に押す知らせの Undo は尋ねない。<br>CLI: `undo`（先に見るなら `--peek`）。<br>TUI: `u`。 |
@@ -199,7 +199,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 機能 | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
 | 「どのブランチにもない」の付いた Reflog の表示 | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: エンジンがあるときだけ。<br>CLI: `amonhen run` から。<br>TUI: `3`。コミットが History にない行は薄くする。ブランチで `L` を押すとそのブランチの reflog。 |
-| Reflog の操作（New Branch・Checkout・New Tag・Reset・Show in History・Copy） | ✓ | ✓ | ✓ | ✓ | △ | △ | CLI: `amonhen run` から。<br>TUI: `b` で新しいブランチ、`T` で新しいタグ、`R` で reset。checkout・Show in History・コピーはない。 |
+| Reflog の操作（New Branch・Checkout・New Tag・Reset・Show in History・Copy） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: `amonhen run` から。<br>TUI: `b` で新しいブランチ、`c` で checkout、`T` で新しいタグ、`R` で reset、`H` で Show in History、`Y` でコピー。 |
 
 ## 5c. Reset
 
@@ -257,7 +257,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | worktree の HEAD のラベル（✎ ⌂ ⑂・変更の数） | ✓ | ✓ | ✓ | ✓ | — | — |  |
 | Go to HEAD・Parent・Child | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: History の上の HEAD のボタン、コミットのメニューの Go to Parent・Go to Child、詳細の親と子へのリンク（エンジンがあるとき）。<br>TUI: `@`・`]`・`[`。 |
 | Go to Ref | — | — | — | — | n/a | — |  |
-| いくつものコミットを選ぶ（範囲・2 つ・飛び飛び） | ✓ | ✓ | ✓ | ✓ | △ | — | VSCode: エンジンがあるとき。<br>CLI: 2 つは `diff <rev> <rev>`。 |
+| いくつものコミットを選ぶ（範囲・2 つ・飛び飛び） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: エンジンがあるとき。<br>CLI: 2 つは `diff <rev> <rev>`。<br>TUI: `m`・Shift-↑↓・Ctrl か Alt のクリック。 |
 | 選んだいくつもの ref の History | ✓ | ✓ | ✓ | ✓ | ✓ | — | CLI: `log --branch` を重ねる。<br>Windows: サイドバーで ref を選ぶとその History、Ctrl+クリックで ref を足す・外す。View に All Branches と Current Branch。<br>TUI: ref を開くと History でそのコミットを選ぶ。 |
 | コミットのメニュー: checkout・新しいブランチやタグ・cherry-pick・revert・ID のコピー | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: `amonhen run` から。<br>TUI: `c`・`b`・`T`・`y`・`v`・`Y`（OSC 52 で端末のクリップボードへ）。 |
 | 編集モード（pick・reword・squash・fixup・drop・edit、ドラッグで並べ替え） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: エンジンがあるとき。ないときは 1 つずつ。<br>CLI: `amonhen run` から。<br>TUI: `E` で画面に重ねる。`J` `K` で行を動かす。 |

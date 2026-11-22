@@ -47,9 +47,11 @@ fn labels_of(drawing: &Value, oid: &str, local_only: bool) -> String {
 }
 
 /// 後の側で、いちばん上（何も残らなければ土台）に付くブランチ。`branch` があればそれ（ブランチを動かす操作）、
-/// なければ前のいちばん上のローカルのブランチ（History の編集では、一緒に動く）。
+/// なければ前のいちばん上のローカルのブランチ（History の編集では、一緒に動く）。空なら何も付けない（ブランチを
+/// 消すとき）。
 fn moved(drawing: &Value) -> String {
     match drawing["branch"].as_str() {
+        Some("") => String::new(),
         Some(name) => format!("[{name}]"),
         None => labels_of(
             drawing,

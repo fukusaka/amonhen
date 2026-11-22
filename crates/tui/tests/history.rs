@@ -1489,7 +1489,15 @@ fn stash_and_pop() {
     assert!(stashed.contains("Stashed"));
     assert_eq!(read(dir.path()), "one\ntwo\nthree\nfour\n");
     assert!(git_out(dir.path(), &["stash", "list"]).contains(": before lunch\n"));
-    let popped = amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "S").unwrap();
+    // アプリと同じく、どの stash かを見せて確かめる。
+    let asked = amonhen_tui::snapshot(open(dir.path()), 200, 10, clock(), "S").unwrap();
+    assert!(
+        asked.contains("Pop stash@{0} “On main: before lunch”? It goes back to the working tree and leaves the list. Undo brings it back.   y pop   n cancel"),
+        "{asked}"
+    );
+    amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "Sn").unwrap();
+    assert_eq!(read(dir.path()), "one\ntwo\nthree\nfour\n");
+    let popped = amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "Sy").unwrap();
     assert!(popped.contains("Popped the stash"));
     assert_eq!(read(dir.path()), "ONE\ntwo\nTHREE\nfour\n");
     // stash がなければ、理由を出す。
@@ -1601,7 +1609,7 @@ fn take_one_side_of_a_conflicted_file() {
     );
 }
 
-/// サイドバーの Stashes: メッセージで並び、`a` で戻す、`x` で確かめてから消す
+/// サイドバーの Stashes: メッセージで並び、`a` で戻す、`x` で消す（どれも先に確かめる）
 #[test]
 fn stashes_are_listed_and_applied_from_the_sidebar() {
     let dir = tempfile::tempdir().unwrap();
@@ -1614,7 +1622,12 @@ fn stashes_are_listed_and_applied_from_the_sidebar() {
     let at = side.iter().position(|l| l == "Stashes").unwrap();
     assert!(side[at + 1].contains("Capitals"), "{side:?}");
     // 一番下の行（stash）で `a`: 変更が戻り、stash は残る。
-    let applied = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0Ga").unwrap();
+    let asked = amonhen_tui::snapshot(open(dir.path()), 200, 12, clock(), "0Ga").unwrap();
+    assert!(
+        asked.contains("Apply stash@{0} “On main: Capitals”? It goes back to the working tree and stays in the list."),
+        "{asked}"
+    );
+    let applied = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0Gay").unwrap();
     assert!(applied.contains("Applied the stash"));
     assert_eq!(read(dir.path()), "ONE\ntwo\nTHREE\nfour\n");
     assert_eq!(git_out(dir.path(), &["stash", "list"]).lines().count(), 1);
@@ -1816,6 +1829,43 @@ fn reflog_lists_where_head_was() {
     let details: Vec<String> = next.lines().filter_map(|l| column(l, 2)).collect();
     assert_eq!(details[0], "Bump the version");
     assert!(next.lines().last().unwrap().ends_with("2/7"), "{next}");
+}
+
+/// Reflog の `c` でそこをチェックアウト（先に確かめる）、`H` で History で選ぶ、`Y` で ID をコピー
+#[test]
+fn reflog_entries_check_out_show_in_history_and_copy() {
+    let dir = tempfile::tempdir().unwrap();
+    merged(dir.path());
+    let bump = git_out(dir.path(), &["rev-parse", "HEAD@{1}"]);
+    let bump = bump.trim();
+    // 2 行目（commit: Bump the version）を、History で選ぶ。
+    let shown = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "3jH").unwrap();
+    println!("{shown}");
+    let details: Vec<String> = shown.lines().filter_map(|l| column(l, 2)).collect();
+    assert_eq!(details[0], "Bump the version", "{shown}");
+    assert!(shown.lines().last().unwrap().ends_with("2/5"), "{shown}");
+    assert!(!shown.contains("HEAD@{1}"), "History is shown: {shown}");
+    // ID をコピーする。
+    let copied = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "3jY").unwrap();
+    assert!(
+        copied.contains(&format!(
+            "Copied {} (to the terminal’s clipboard)",
+            &bump[..8]
+        )),
+        "{copied}"
+    );
+    // そこをチェックアウトする（detached HEAD）。
+    let asked = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "3jc").unwrap();
+    assert!(
+        asked.contains(&format!(
+            "Check out {} (detached HEAD)?   y check out   n cancel",
+            &bump[..8]
+        )),
+        "{asked}"
+    );
+    amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "3jcy").unwrap();
+    assert_eq!(git_out(dir.path(), &["rev-parse", "HEAD"]).trim(), bump);
+    assert_eq!(git_out(dir.path(), &["branch", "--show-current"]), "");
 }
 
 /// サイドバーのブランチで `L`: そのブランチの reflog。`3` で HEAD のものに戻る。
@@ -2603,6 +2653,69 @@ fn rename_and_delete_branches_and_tags() {
     assert_eq!(git_out(dir.path(), &["tag"]), "v1\n");
 }
 
+/// ほかのどこにもないコミットのあるブランチは、外れるコミットの絵と数を出し、Delete Anyway（`-D`）で消す
+#[test]
+fn delete_anyway_a_branch_with_commits_on_no_other_branch() {
+    let dir = tempfile::tempdir().unwrap();
+    diverged(dir.path());
+    let branches = || git_out(dir.path(), &["branch", "--format=%(refname:short)"]);
+    // サイドバーの 2 つ下が topic（On topic は main にない）。
+    let asked = amonhen_tui::snapshot(open(dir.path()), 200, 14, clock(), "0jjjD").unwrap();
+    println!("{asked}");
+    assert!(
+        asked.contains("Delete topic? Commits on no other branch (1) go with it. Undo brings it back.   y delete anyway   n cancel"),
+        "{asked}"
+    );
+    assert!(asked.contains(" After deleting topic "), "{asked}");
+    assert!(asked.contains("On topic"), "{asked}");
+    // 後の側に、消えるブランチの名前は付かない。
+    assert!(!asked.contains("Start  [topic]"), "{asked}");
+    amonhen_tui::snapshot(open(dir.path()), 200, 14, clock(), "0jjjDn").unwrap();
+    assert_eq!(branches(), "main\ntopic\n");
+    amonhen_tui::snapshot(open(dir.path()), 200, 14, clock(), "0jjjDy").unwrap();
+    assert_eq!(branches(), "main\n");
+    // Undo で戻る。
+    amonhen_tui::snapshot(open(dir.path()), 200, 14, clock(), "uy").unwrap();
+    assert_eq!(branches(), "main\ntopic\n");
+
+    // 上流に取り込まれていれば（今のブランチになくても）、ふつうに消す。
+    git(
+        dir.path(),
+        BASE,
+        &["update-ref", "refs/remotes/origin/topic", "topic"],
+    );
+    git(
+        dir.path(),
+        BASE,
+        &["config", "branch.topic.remote", "origin"],
+    );
+    git(
+        dir.path(),
+        BASE,
+        &["config", "branch.topic.merge", "refs/heads/topic"],
+    );
+    git(
+        dir.path(),
+        BASE,
+        &["config", "remote.origin.url", "/nowhere"],
+    );
+    git(
+        dir.path(),
+        BASE,
+        &[
+            "config",
+            "remote.origin.fetch",
+            "+refs/heads/*:refs/remotes/origin/*",
+        ],
+    );
+    let asked = amonhen_tui::snapshot(open(dir.path()), 200, 14, clock(), "0jjjD").unwrap();
+    println!("{asked}");
+    assert!(
+        asked.contains("Delete topic? Undo brings it back.   y delete   n cancel"),
+        "{asked}"
+    );
+}
+
 /// History の `y` で cherry-pick、`v` で revert、`c` でそのコミットをチェックアウトする（どれも先に確かめる）
 #[test]
 fn cherry_pick_revert_and_detach_from_history() {
@@ -2683,7 +2796,7 @@ fn stash_can_include_untracked_files() {
     std::fs::write(dir.path().join("new.txt"), "new\n").unwrap();
     amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "s\ny").unwrap();
     assert!(dir.path().join("new.txt").exists());
-    amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "S").unwrap();
+    amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "Sy").unwrap();
     amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "s\nu").unwrap();
     assert!(!dir.path().join("new.txt").exists());
     assert_eq!(git_out(dir.path(), &["status", "--porcelain"]), "");
