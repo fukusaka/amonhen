@@ -1831,6 +1831,43 @@ fn reflog_lists_where_head_was() {
     assert!(next.lines().last().unwrap().ends_with("2/7"), "{next}");
 }
 
+/// Reflog の `c` でそこをチェックアウト（先に確かめる）、`H` で History で選ぶ、`Y` で ID をコピー
+#[test]
+fn reflog_entries_check_out_show_in_history_and_copy() {
+    let dir = tempfile::tempdir().unwrap();
+    merged(dir.path());
+    let bump = git_out(dir.path(), &["rev-parse", "HEAD@{1}"]);
+    let bump = bump.trim();
+    // 2 行目（commit: Bump the version）を、History で選ぶ。
+    let shown = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "3jH").unwrap();
+    println!("{shown}");
+    let details: Vec<String> = shown.lines().filter_map(|l| column(l, 2)).collect();
+    assert_eq!(details[0], "Bump the version", "{shown}");
+    assert!(shown.lines().last().unwrap().ends_with("2/5"), "{shown}");
+    assert!(!shown.contains("HEAD@{1}"), "History is shown: {shown}");
+    // ID をコピーする。
+    let copied = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "3jY").unwrap();
+    assert!(
+        copied.contains(&format!(
+            "Copied {} (to the terminal’s clipboard)",
+            &bump[..8]
+        )),
+        "{copied}"
+    );
+    // そこをチェックアウトする（detached HEAD）。
+    let asked = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "3jc").unwrap();
+    assert!(
+        asked.contains(&format!(
+            "Check out {} (detached HEAD)?   y check out   n cancel",
+            &bump[..8]
+        )),
+        "{asked}"
+    );
+    amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "3jcy").unwrap();
+    assert_eq!(git_out(dir.path(), &["rev-parse", "HEAD"]).trim(), bump);
+    assert_eq!(git_out(dir.path(), &["branch", "--show-current"]), "");
+}
+
 /// サイドバーのブランチで `L`: そのブランチの reflog。`3` で HEAD のものに戻る。
 #[test]
 fn reflog_of_the_selected_branch() {

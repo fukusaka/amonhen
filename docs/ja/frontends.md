@@ -199,7 +199,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 機能 | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
 | 「どのブランチにもない」の付いた Reflog の表示 | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: エンジンがあるときだけ。<br>CLI: `amonhen run` から。<br>TUI: `3`。コミットが History にない行は薄くする。ブランチで `L` を押すとそのブランチの reflog。 |
-| Reflog の操作（New Branch・Checkout・New Tag・Reset・Show in History・Copy） | ✓ | ✓ | ✓ | ✓ | △ | △ | CLI: `amonhen run` から。<br>TUI: `b` で新しいブランチ、`T` で新しいタグ、`R` で reset。checkout・Show in History・コピーはない。 |
+| Reflog の操作（New Branch・Checkout・New Tag・Reset・Show in History・Copy） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: `amonhen run` から。<br>TUI: `b` で新しいブランチ、`c` で checkout、`T` で新しいタグ、`R` で reset、`H` で Show in History、`Y` でコピー。 |
 
 ## 5c. Reset
 

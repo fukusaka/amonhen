@@ -199,7 +199,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Feature | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
 | Reflog view with "not on any branch" | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: With the engine only.<br>CLI: Via `amonhen run`.<br>TUI: `3`; entries whose commit isn't in History are dimmed, and `L` on a branch shows its reflog. |
-| Reflog actions (New Branch, Checkout, New Tag, Reset, Show in History, Copy) | ✓ | ✓ | ✓ | ✓ | △ | △ | CLI: Via `amonhen run`.<br>TUI: `b` new branch, `T` new tag and `R` reset; no checkout, Show in History or copy. |
+| Reflog actions (New Branch, Checkout, New Tag, Reset, Show in History, Copy) | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: Via `amonhen run`.<br>TUI: `b` new branch, `c` checkout, `T` new tag, `R` reset, `H` Show in History and `Y` copy. |
 
 ## 5c. Reset
 

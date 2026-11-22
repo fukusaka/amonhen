@@ -3221,6 +3221,11 @@ impl App {
                 .map(|(_, m)| m.id.to_string())
                 .collect(),
         };
+        self.copy_commit_ids(ids)
+    }
+
+    /// コミットの ID を端末のクリップボードに（OSC 52）。
+    fn copy_commit_ids(&mut self, ids: Vec<String>) -> bool {
         if ids.is_empty() {
             return false;
         }
@@ -4043,6 +4048,42 @@ impl App {
                 self.focus = Focus::Side;
                 true
             }
+            // アプリの Reflog のメニューと同じ: そこをチェックアウト（detached HEAD）、History で選ぶ、ID をコピー。
+            KeyCode::Char('c') => {
+                let Some(id) = self.reflog.selected_id().map(|id| id.to_string()) else {
+                    return false;
+                };
+                self.confirm = Some((
+                    tr!("Check out {commit} (detached HEAD)?", commit = &id[..8]),
+                    tr!("check out"),
+                    Request::Run {
+                        name: "checkout",
+                        command: json!({"op": "detach", "oid": id}),
+                    },
+                ));
+                true
+            }
+            KeyCode::Char('H') => {
+                let Some(id) = self.reflog.selected_id() else {
+                    return false;
+                };
+                if !self.reflog.selected_reachable() {
+                    self.error = Some(tr!("This commit isn’t in History"));
+                    return true;
+                }
+                self.view = View::History;
+                self.focus = Focus::Main;
+                self.sidebar.show_view(Picked::History);
+                self.send(Request::RowOf {
+                    history: self.history.id().clone(),
+                    id: id.to_string(),
+                });
+                true
+            }
+            KeyCode::Char('Y') => {
+                let ids = self.reflog.selected_id().map(|id| id.to_string());
+                self.copy_commit_ids(ids.into_iter().collect())
+            }
             _ => false,
         }
     }
@@ -4196,6 +4237,9 @@ impl App {
                 ("j k", tr!("Move")),
                 ("g G", tr!("Top and bottom")),
                 ("Enter", tr!("Go to the details")),
+                ("c", tr!("Check out the entry's commit (detached HEAD)")),
+                ("H", tr!("Select the entry's commit in History")),
+                ("Y", tr!("Copy the commit ID (the terminal’s clipboard)")),
             ],
             (View::File, Focus::Main) => vec![
                 ("j k", tr!("Move")),
