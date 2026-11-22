@@ -50,6 +50,9 @@ thread_local! {
     static SIDEBAR_ELEMENT: RefCell<Option<xaml::UIElement>> = const { RefCell::new(None) };
     /// ツールチップを付けたサイドバーの項目（要素の identity と付けた文字。同じなら付け直さない）。
     static SIDEBAR_TIP: RefCell<Option<(usize, Option<String>)>> = const { RefCell::new(None) };
+    /// 指が上にある、サイドバーの行の印（項目のキー、印、サイドバーの中の指の位置）。押したらその吹き出しを出す。
+    static SIDEBAR_MARK: RefCell<Option<(String, crate::sidebar::Mark, xaml::Point)>> =
+        const { RefCell::new(None) };
     /// 今のブランチの名前（終わった操作の一言に使う。ref を読むたびに書く）。
     static HEAD_NAME: RefCell<String> = const { RefCell::new(String::new()) };
     /// Push の画面を出しているか（出していれば、Enter で既定のボタンを押せるか。Force Push は押せない）。
@@ -277,6 +280,25 @@ fn with_cell(cell: &HistoryCell, f: impl FnOnce(&mut HistoryView)) {
 }
 
 /// History の CI の印の吹き出し（macOS 版・GTK4 版のチェックのポップオーバー）。
+/// サイドバーの行の印の吹き出しの中身の幅。
+const MARK_POPOVER_WIDTH: f64 = 380.0;
+
+/// サイドバーの行の印の吹き出しの中身（macOS 版・GTK4 版の行の印のポップオーバー）。
+enum MarkPopover {
+    /// ブランチの様子（ダイアログの `BranchStatus` と同じ中身。次にできることはボタンに）。
+    Branch {
+        name: String,
+        actions: Vec<(String, String)>,
+        forecast: Option<Option<Value>>,
+    },
+    /// タグの署名。
+    Signature(String),
+    /// タグのリモートの様子。
+    TagRemotes(String),
+    /// プルリクエストの CI（`checks_popover` の中身を、サイドバーの印の下に出す）。
+    Checks,
+}
+
 struct ChecksPopover {
     sha: String,
     status: crate::github::Ci,
@@ -313,6 +335,15 @@ struct Root {
     diff_rows: Option<(Vec<usize>, bool)>,
     /// 署名のあるタグの状態と署名者（サイドバーの印とタグのメニュー）。
     tag_signatures: std::collections::HashMap<String, (crate::signature::Status, String)>,
+    /// 署名のあるタグの `tagSignatures` の 1 件（署名の吹き出しの中身）。
+    tag_signature_details: std::collections::HashMap<String, Value>,
+    /// サイドバーの行の印の吹き出しと、それを持つ見えないボタン、開く位置（サイドバーの中の DIP）、開いた回数。
+    mark_popover: Option<MarkPopover>,
+    mark_anchor: ElementRef<Button>,
+    mark_at: xaml::Point,
+    mark_opened: u64,
+    /// 吹き出しのボタンを押して閉じる回数（閉じてから、その操作をする）。
+    mark_closed: u64,
     /// 始めた clone が sparse か（終わったら、取り出すフォルダを尋ねる）。
     clone_sparse: bool,
     refs: Option<Arc<RefsSnapshot>>,
@@ -1210,6 +1241,8 @@ enum Message {
     AutoFetched(Option<String>),
     /// Activity の Operations の記録を JSON に書き出す。
     ActivityExport,
+    /// サイドバーの行の印の吹き出しのボタン（メニューの項目のキー）。吹き出しを閉じてからする。
+    MarkAction(String),
     /// Activity の History のキャッシュを読んだ（リポジトリの名前と `historyCache` の info）。
     ActivityCache(String, Value),
     /// 共有の daemon の様子（動いていなければ None）。
@@ -1285,7 +1318,10 @@ enum Message {
     /// タグのリモートでの様子を読んだ（`tagRemotes` の info）。
     TagRemotes(Value),
     /// タグの署名（名前 → 状態と署名者）。
-    TagSignatures(std::collections::HashMap<String, (crate::signature::Status, String)>),
+    TagSignatures(
+        std::collections::HashMap<String, (crate::signature::Status, String)>,
+        std::collections::HashMap<String, Value>,
+    ),
     /// submodule の様子を読んだ。
     Submodules(Value),
     /// subtree を読んだ（`subtrees` の info）。
@@ -1487,6 +1523,12 @@ impl Component for Root {
             diff_file: None,
             diff_rows: None,
             tag_signatures: std::collections::HashMap::new(),
+            tag_signature_details: std::collections::HashMap::new(),
+            mark_popover: None,
+            mark_anchor: ElementRef::new(),
+            mark_at: xaml::Point::default(),
+            mark_opened: 0,
+            mark_closed: 0,
             clone_sparse: false,
             refs: None,
             groups: None,
@@ -1765,12 +1807,9 @@ impl Root {
         with_cell(&self.history, f);
     }
 
-    /// History の CI の印の吹き出しを開く、印の位置に置いた見えないボタン（吹き出しの中身はチェックの一覧）。
-    fn checks_anchor_view(&self, context: &ViewContext<Self>) -> View {
-        let Some(popover) = &self.checks_popover else {
-            return View::empty();
-        };
-        let content = StackPanel::new().spacing(8.0).width(420.0).children((
+    /// CI の吹き出しの中身（状態、チェックの一覧、Open on GitHub）。
+    fn checks_content(popover: &ChecksPopover, context: &ViewContext<Self>) -> View {
+        StackPanel::new().spacing(8.0).width(420.0).children((
             TextBlock::new()
                 .text(popover.status.label())
                 .font_weight(FontWeight::SEMI_BOLD),
@@ -1779,7 +1818,105 @@ impl Root {
                 .horizontal_alignment(HorizontalAlignment::Right)
                 .on_click(context.callback(|()| Message::OpenChecksOnGitHub))
                 .content(tr!("Open on GitHub")),
-        ));
+        ))
+    }
+
+    /// サイドバーの行の印の吹き出しを持つ見えないボタン（開くときは、押した位置を渡して自分で開く）。
+    fn mark_anchor_view(&self, context: &ViewContext<Self>) -> View {
+        let Some(popover) = &self.mark_popover else {
+            return View::empty();
+        };
+        let heading = |text: String| {
+            TextBlock::new()
+                .text(text)
+                .font_weight(FontWeight::SEMI_BOLD)
+                .text_wrapping(TextWrapping::Wrap)
+        };
+        let content: View = match popover {
+            MarkPopover::Branch {
+                name,
+                actions,
+                forecast,
+            } => {
+                let (title, view) = self.branch_status_view(name, forecast.as_ref(), context);
+                // 次にできること（ダイアログでは下のボタン。macOS 版の吹き出しと同じく中に並べる）。
+                let buttons = actions.iter().enumerate().map(|(i, (key, label))| {
+                    let key = key.clone();
+                    let button = Button::new()
+                        .on_click(context.callback(move |()| Message::MarkAction(key.clone())));
+                    let button = if i == 0 {
+                        button.style(ButtonStyle::Accent)
+                    } else {
+                        button
+                    };
+                    (format!("{i}"), button.content(label.clone()))
+                });
+                StackPanel::new()
+                    .spacing(8.0)
+                    .width(MARK_POPOVER_WIDTH)
+                    .children((
+                        heading(title),
+                        view,
+                        StackPanel::new()
+                            .orientation(Orientation::Horizontal)
+                            .spacing(8.0)
+                            .horizontal_alignment(HorizontalAlignment::Right)
+                            .children((View::keyed_fragment(buttons),)),
+                    ))
+            }
+            MarkPopover::Signature(name) => {
+                let Some(((status, _), tag)) = self
+                    .tag_signatures
+                    .get(name)
+                    .zip(self.tag_signature_details.get(name))
+                else {
+                    return View::empty();
+                };
+                let check = Some(&tag["signature"]).filter(|s| !s.is_null());
+                crate::signature::popover(
+                    *status,
+                    check,
+                    tag["signed"].as_str().unwrap_or("gpg"),
+                    tag["taggerEmail"].as_str().unwrap_or_default(),
+                )
+            }
+            MarkPopover::TagRemotes(name) => StackPanel::new()
+                .spacing(8.0)
+                .width(MARK_POPOVER_WIDTH)
+                .children((
+                    heading(self.tag_status_title(name)),
+                    self.tag_status_view(name),
+                )),
+            MarkPopover::Checks => match &self.checks_popover {
+                Some(popover) => Self::checks_content(popover, context),
+                None => return View::empty(),
+            },
+        };
+        // 右に余白を置く（吹き出しの枠は、中身の右の端を少し削る）。
+        let content = Grid::new()
+            .margin(Thickness::new(0.0, 0.0, 24.0, 0.0))
+            .children((content,));
+        Button::new()
+            .element_ref(&self.mark_anchor)
+            .grid_row(1)
+            .horizontal_alignment(HorizontalAlignment::Left)
+            .vertical_alignment(VerticalAlignment::Top)
+            .width(1.0)
+            .height(1.0)
+            .opacity(0.0)
+            .flyout_with(Flyout::rich(content).placement(FlyoutPlacement::Bottom))
+    }
+
+    /// History の CI の印の吹き出しを開く、印の位置に置いた見えないボタン（吹き出しの中身はチェックの一覧）。
+    fn checks_anchor_view(&self, context: &ViewContext<Self>) -> View {
+        let Some(popover) = &self.checks_popover else {
+            return View::empty();
+        };
+        // サイドバーのプルリクエストの CI のときは、サイドバーの側に出す。
+        if matches!(self.mark_popover, Some(MarkPopover::Checks)) {
+            return View::empty();
+        }
+        let content = Self::checks_content(popover, context);
         Button::new()
             .element_ref(&self.checks_anchor)
             .horizontal_alignment(HorizontalAlignment::Left)
@@ -1956,21 +2093,33 @@ impl Root {
                             let reply: Value =
                                 serde_json::from_str(&repo.run_json(&command.to_string()))
                                     .unwrap_or_default();
-                            let found = reply["info"]["tags"]
+                            let tags: Vec<&Value> = reply["info"]["tags"]
                                 .as_array()
                                 .into_iter()
                                 .flatten()
+                                .collect();
+                            let found = tags
+                                .iter()
                                 .filter_map(|t| {
                                     let name = t["name"].as_str()?.to_owned();
                                     Some((name, crate::signature::of_tag(t)?))
                                 })
                                 .collect();
-                            Message::TagSignatures(found)
+                            let details = tags
+                                .iter()
+                                .filter_map(|t| {
+                                    Some((t["name"].as_str()?.to_owned(), (*t).clone()))
+                                })
+                                .collect();
+                            Message::TagSignatures(found, details)
                         });
                     }
                 }
             }
-            Message::TagSignatures(found) => self.tag_signatures = found,
+            Message::TagSignatures(found, details) => {
+                self.tag_signatures = found;
+                self.tag_signature_details = details;
+            }
             Message::StashDetails(details) => self.stash_details = details,
             Message::EditOpen(start, preset) => {
                 let Some(repo) = self.repo.clone() else {
@@ -5176,7 +5325,12 @@ impl Root {
                 } else if let Some(text) = key.strip_prefix("copy:") {
                     copy_text(text);
                 } else if let Some(name) = key.strip_prefix("branch-status:") {
-                    self.open_branch_status(name, context);
+                    let (actions, forecast) = self.branch_status(name, context);
+                    self.dialog = Some(Dialog::BranchStatus {
+                        name: name.to_owned(),
+                        actions,
+                        forecast,
+                    });
                 } else if let Some(id) = key.strip_prefix("command:") {
                     self.update(Message::Command(id.to_owned()), context);
                 } else if let Some(name) = key.strip_prefix("create-pr:") {
@@ -5852,6 +6006,11 @@ impl Root {
             Message::ConfirmWithDrawing(dialog) => self.dialog = Some(*dialog),
             Message::OpenDialog(dialog) => self.dialog = Some(*dialog),
             Message::BranchForecast(branch, reply) => {
+                if let Some(MarkPopover::Branch { name, forecast, .. }) = &mut self.mark_popover
+                    && *name == branch
+                {
+                    *forecast = Some(Some(reply.clone()));
+                }
                 if let Some(Dialog::BranchStatus { name, forecast, .. }) = &mut self.dialog
                     && *name == branch
                 {
@@ -8204,6 +8363,17 @@ impl Root {
                     self.with_history(|h| h.session.data.want_stash(target));
                 }
             }
+            // 行の印を押した: 印の吹き出し（macOS 版・GTK4 版と同じ。行を選んだことにはしない）。
+            Message::Invoked(key) if pressed_mark(&key).is_some() => {
+                if let Some((mark, at)) = pressed_mark(&key) {
+                    self.open_mark(&key, mark, at, context);
+                }
+            }
+            Message::MarkAction(key) => {
+                // 吹き出しを閉じてから、その操作（確かめるダイアログなどを開く）。
+                self.mark_closed += 1;
+                context.spawn_background(move |_| Message::HistoryMenu(key));
+            }
             // プルリクエストの行: ブランチが手元にあれば（リモートブランチ、なければローカルブランチ）、その ref を
             // 選んだのと同じ（GTK4 版と同じ）。
             Message::Invoked(key) if key.starts_with("pr:") => {
@@ -8646,6 +8816,7 @@ impl Root {
                             &self.sidebar_filter,
                         )),
                 )]),
+                self.mark_anchor_view(context),
                 Grid::new()
                     .element_ref(&self.sidebar_menu_host)
                     .grid_row(1)
@@ -8781,6 +8952,48 @@ impl Root {
                     ),
                 ])
         };
+        // サイドバーの行の印を押したら、その位置に吹き出しを開く（見えないボタンを置いてから）。
+        if self.mark_opened > 0 {
+            let anchor = self.mark_anchor.clone();
+            let at = self.mark_at;
+            context.use_effect("mark-popover", self.mark_opened, move || {
+                let _ = anchor.request_native_element(move |result| {
+                    let open = || -> windows_core_reactor::Result<()> {
+                        let flyout = result
+                            .map_err(|_| windows_core_reactor::Error::empty())?
+                            .cast::<xaml::Button>()?
+                            .Flyout()?;
+                        let Some(target) = SIDEBAR_ELEMENT.with(|e| e.borrow().clone()) else {
+                            return Ok(());
+                        };
+                        let options = xaml::FlyoutShowOptions::new()?;
+                        options.SetPosition(Some(xaml::Point {
+                            X: at.X,
+                            Y: at.Y + 8.0,
+                        }))?;
+                        flyout.ShowAtWithOptions(&target, &options)
+                    };
+                    if let Err(e) = open() {
+                        eprintln!("印の吹き出しを開けない: {e}");
+                    }
+                });
+                None
+            });
+        }
+        if self.mark_closed > 0 {
+            let anchor = self.mark_anchor.clone();
+            context.use_effect("mark-popover-close", self.mark_closed, move || {
+                let _ = anchor.request_native_element(|result| {
+                    if let Ok(element) = result
+                        && let Ok(button) = element.cast::<xaml::Button>()
+                        && let Ok(flyout) = button.Flyout()
+                    {
+                        let _ = flyout.Hide();
+                    }
+                });
+                None
+            });
+        }
         // History の CI の印を押したら、その位置の見えないボタンの吹き出しを開く（置いてから）。
         if self.checks_opened > 0 {
             let anchor = self.checks_anchor.clone();
@@ -14238,9 +14451,13 @@ impl Root {
         )
     }
 
-    /// ブランチの様子のダイアログを開く（次にできることを決め、既定のブランチに取り込んだときのコンフリクトを
-    /// 裏で調べる）。
-    fn open_branch_status(&mut self, name: &str, context: &ComponentContext<Self>) {
+    /// ブランチの様子の次にできること（メニューの項目のキーと見出し）と、既定のブランチに取り込んだときの
+    /// コンフリクトの見込み（裏で調べ始める。調べないなら None）。ダイアログと印の吹き出しが使う。
+    fn branch_status(
+        &mut self,
+        name: &str,
+        context: &ComponentContext<Self>,
+    ) -> (Vec<(String, String)>, Option<Option<Value>>) {
         use amonhen_model::RefKind;
         let Some(item) = self.refs.as_ref().and_then(|r| {
             r.refs
@@ -14249,7 +14466,7 @@ impl Root {
                 .find(|e| e.kind == RefKind::Local && e.name == name)
                 .cloned()
         }) else {
-            return;
+            return (Vec::new(), None);
         };
         let fact = self
             .groups
@@ -14332,11 +14549,60 @@ impl Root {
         } else {
             None
         };
-        self.dialog = Some(Dialog::BranchStatus {
-            name: name.to_owned(),
-            actions,
-            forecast,
-        });
+        (actions, forecast)
+    }
+
+    /// サイドバーの行の印の吹き出しを、押した位置（`at`、サイドバーの中）に開く。
+    fn open_mark(
+        &mut self,
+        key: &str,
+        mark: crate::sidebar::Mark,
+        at: xaml::Point,
+        context: &ComponentContext<Self>,
+    ) {
+        use crate::sidebar::Mark;
+        let name = crate::sidebar::parse_ref_key(key).map(|(_, n)| n.to_owned());
+        let popover = match (mark, name) {
+            (Mark::Branch, Some(name)) => {
+                let (actions, forecast) = self.branch_status(&name, context);
+                MarkPopover::Branch {
+                    name,
+                    actions,
+                    forecast,
+                }
+            }
+            (Mark::Signature, Some(name)) => MarkPopover::Signature(name),
+            (Mark::TagRemotes, Some(name)) => MarkPopover::TagRemotes(name),
+            (Mark::Checks, _) => {
+                let pr = key
+                    .strip_prefix("pr:")
+                    .and_then(|n| n.parse::<u64>().ok())
+                    .and_then(|n| self.github.pull_requests.iter().find(|p| p.number == n));
+                let (Some(pr), Some((_, github))) = (pr, self.github.github.clone()) else {
+                    return;
+                };
+                let Some(sha) = pr.head_ref_oid.clone() else {
+                    return;
+                };
+                self.checks_popover = Some(ChecksPopover {
+                    sha: sha.clone(),
+                    status: pr.ci(),
+                    web_url: github.web_url(),
+                    checks: None,
+                    x: 0.0,
+                    y: 0.0,
+                });
+                context.spawn_background(move |_| {
+                    let result = crate::github::commit_checks(&github, &sha);
+                    Message::ChecksLoaded(sha, result)
+                });
+                MarkPopover::Checks
+            }
+            _ => return,
+        };
+        self.mark_popover = Some(popover);
+        self.mark_at = at;
+        self.mark_opened += 1;
     }
 
     /// ブランチの様子のダイアログの見出しと中身: 色の付いた印と説明、ブランチ・先端・最後のコミット・上流・土台・
@@ -20475,14 +20741,24 @@ fn attach_sidebar(element: &IInspectable) -> windows_core_reactor::Result<()> {
     REVOKERS.with(|r| r.borrow_mut().push(revoker));
     // 行のツールチップ（印の意味など。reactor の木の項目は文字だけなので、指の下の項目に付ける。項目の要素は
     // 使い回されるので、指が別の項目に移るたびに付け直す）。
+    let moved = ui.clone();
     let revoker = ui.PointerMoved(move |_, args: Ref<xaml::PointerRoutedEventArgs>| {
         let Some(args) = args.as_ref() else { return };
         let Ok(original) = args.OriginalSource() else {
             return;
         };
         let Some((item, key)) = tree_item_key(&original) else {
+            SIDEBAR_MARK.with(|m| *m.borrow_mut() = None);
             return;
         };
+        let mark = mark_under(&original, &key, args).and_then(|mark| {
+            Some((
+                key.clone(),
+                mark,
+                args.GetCurrentPoint(&moved).ok()?.Position().ok()?,
+            ))
+        });
+        SIDEBAR_MARK.with(|m| *m.borrow_mut() = mark);
         let identity = item
             .cast::<windows_core_reactor::IUnknown>()
             .map_or(0, |u| u.as_raw() as usize);
@@ -20500,6 +20776,45 @@ fn attach_sidebar(element: &IInspectable) -> windows_core_reactor::Result<()> {
     })?;
     REVOKERS.with(|r| r.borrow_mut().push(revoker));
     Ok(())
+}
+
+/// 押した行 `key` の印（指がその印の上にあれば）と、サイドバーの中の位置。
+fn pressed_mark(key: &str) -> Option<(crate::sidebar::Mark, xaml::Point)> {
+    SIDEBAR_MARK.with(|m| {
+        m.borrow()
+            .as_ref()
+            .filter(|(k, ..)| k == key)
+            .map(|(_, mark, at)| (*mark, *at))
+    })
+}
+
+/// 指が、木の行の文字（`original` が行の TextBlock のとき）の印の上にあれば、その印。印の字の位置は TextBlock の
+/// 中の字の矩形で求める（木の項目は文字だけで、印だけの部品がない）。
+fn mark_under(
+    original: &IInspectable,
+    key: &str,
+    args: &xaml::PointerRoutedEventArgs,
+) -> Option<crate::sidebar::Mark> {
+    let block: xaml::TextBlock = original.cast().ok()?;
+    let text = block.Text().ok()?.to_string_lossy();
+    let marks = crate::sidebar::marks_in(key, &text);
+    if marks.is_empty() {
+        return None;
+    }
+    let x = args.GetCurrentPoint(&block).ok()?.Position().ok()?.X;
+    let start = block.ContentStart().ok()?;
+    // TextBlock の中身は 1 つの Run で、字の位置は中身の始まりと Run の始まりの 2 つの記号の後から数える。
+    let rect = |offset: usize| {
+        start
+            .GetPositionAtOffset(offset as i32 + 2, xaml::LogicalDirection::Forward)
+            .and_then(|p| p.GetCharacterRect(xaml::LogicalDirection::Forward))
+            .ok()
+    };
+    marks.into_iter().find_map(|(mark, at, len)| {
+        let left = rect(at)?.X;
+        let right = rect(at + len).map_or(f32::MAX, |r| r.X);
+        (left - 2.0..right + 2.0).contains(&x).then_some(mark)
+    })
 }
 
 /// 等幅の字（Windows の既定の等幅。なければ Consolas）。

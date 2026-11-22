@@ -54,13 +54,13 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | お気に入りのブランチ | ✓ | ✓ | ✓ | ✓ | — | — |  |
 | ブランチのアーカイブ | ✓ | ✓ | ✓ | ✓ | — | — |  |
 | ブランチを片付ける（取り込み済み・PR でマージ済み・上流が消えた。Undo 1 回） | ✓ | ✓ | ✓ | ✓ | △ | △ | VSCode: エンジンがあるとき、理由ごとの見出しを付けた複数選択の一覧（コマンドパレット、Branches の見出しの右クリック）。CLI: `amonhen run`（`branchCleanup`・`deleteBranches`）から。マージ済みの PR はアプリと VSCode が gh で読む。<br>TUI: 命令の一覧の Clean Up Branches。`a` で上流の消えたブランチも含める。PR でマージされたブランチは探さない（GitHub はない）。 |
-| PR でマージ済みのブランチの印（GitHub で squash・rebase） | ✓ | ✓ | △ | ✓ | △ | — | VSCode: エンジンがあるとき。番号は行のツールチップに出る。CLI: `amonhen run`（`pullRequests` を渡した `branchGroups`）から。マージ済みの PR はアプリと VSCode が gh で読む。<br>Windows: 名前の後ろに merged と出し、番号は行のツールチップに。 |
+| PR でマージ済みのブランチの印（GitHub で squash・rebase） | ✓ | ✓ | △ | ✓ | △ | — | VSCode: エンジンがあるとき。番号は行のツールチップに出る。CLI: `amonhen run`（`pullRequests` を渡した `branchGroups`）から。マージ済みの PR はアプリと VSCode が gh で読む。<br>Windows: 名前の後ろに merged と出し、番号は行のツールチップに。押すとブランチの様子のポップオーバー。 |
 | お気に入りをドラッグで並べ替える | ✓ | ✓ | ✓ | ✓ | n/a | — | VSCode: メニューの Move Up・Move Down in Favorites（ブランチに落とすと Merge・Rebase）。 |
 | ブランチのメニュー: checkout・名前の変更・削除（未マージは Delete Anyway） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | macOS: Set Upstream は Repository メニューだけ。<br>GTK4: Set Upstream は Repository メニューだけ。<br>CLI: `amonhen run` から。<br>TUI: `c` で checkout、`n` で名前の変更、`D` で削除。ほかのどこにもないコミットがあれば、その数と絵を出して Delete Anyway。 |
 | checkout していないブランチの同期（Fast-Forward・Push・Publish） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: `amonhen run` から。<br>TUI: サイドバーのそのブランチで `p`・`P`。 |
 | タグの一覧 | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |
-| タグのリモートの印（ない・違う）とポップオーバー | ✓ | ✓ | △ | ✓ | △ | — | VSCode: 行の説明に出し、リモートごとの様子はツールチップに（ポップオーバーはない）。<br>CLI: `amonhen run`（`tagRemotes`）から。<br>Windows: 名前の後ろに ⚠（リモートに別のタグ）か ∅（どのリモートにもない）、リモートごとの様子を行のツールチップとタグのメニューの先頭に。そこを選ぶと、吹き出しの中身をダイアログで出す。 |
-| タグの署名の印 | ✓ | ✓ | △ | ✓ | ✓ | — | VSCode: 行のアイコンで、説明はツールチップに。<br>CLI: `refs --verify`。<br>Windows: 名前の後ろに 🔏（検証できた）か 🔓（署名はあるが検証できない）、状態と署名者はタグのメニューの先頭。吹き出しはない |
+| タグのリモートの印（ない・違う）とポップオーバー | ✓ | ✓ | ✓ | ✓ | △ | — | VSCode: 行の説明に出し、リモートごとの様子はツールチップに（ポップオーバーはない）。<br>CLI: `amonhen run`（`tagRemotes`）から。<br>Windows: 名前の後ろに ⚠（リモートに別のタグ）か ∅（どのリモートにもない）。押すとポップオーバー。 |
+| タグの署名の印 | ✓ | ✓ | △ | ✓ | ✓ | — | VSCode: 行のアイコンで、説明はツールチップに。<br>CLI: `refs --verify`。<br>Windows: 色の印でなく、名前の後ろに 🔏（検証できた）か 🔓（署名はあるが検証できない）。押すと署名のポップオーバー。 |
 | タグのメニュー: Push to・Replace on・削除・リモートから削除 | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: リモートがいくつもあれば一覧で選ぶ。<br>CLI: `amonhen run` から。<br>TUI: `D` で手元のタグを消し、`t` でリモートへ push か置き換え、`X` でリモートから消す。リモートは数字で選ぶ。 |
 | リモートとそのブランチ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |
 | リモートのメニュー: 追加・名前の変更・URL の変更・削除・Prune | ✓ | ✓ | △ | ✓ | △ | ✓ | CLI: `amonhen run` から。<br>Windows: Edit… で名前と URL を変える。<br>TUI: 命令の一覧の Add Remote。サイドバーのリモートのブランチの上で `e` で名前と URL を直し、`X` で Prune、`x` で消す。 |
@@ -378,9 +378,9 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 機能 | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
 | `gh` を通す GitHub | ✓ | ✓ | ✓ | — | — | — |  |
-| Pull Requests（CI・draft・レビュー、checkout・開く・URL のコピー） | ✓ | ✓ | △ | — | — | — | Windows: プルリクエストのチェックは右クリックの項目から（木の行には押せる印を別に置けない）。 |
+| Pull Requests（CI・draft・レビュー、checkout・開く・URL のコピー） | ✓ | ✓ | △ | — | — | — | Windows: 題の後ろの CI の印を押すとチェックのポップオーバー。ただしサイドバーが行より狭いと、印は題といっしょに切れる。 |
 | Create Pull Request（base・draft） | ✓ | ✓ | ✓ | — | — | — | macOS: base は打ち込む（最初は既定のブランチ）。fork からは元のリポジトリへ。<br>GTK4: base は打ち込む（最初は既定のブランチ）。fork からは元のリポジトリへ。<br>Windows: base は打ち込む（最初は既定のブランチ）。fork からは元のリポジトリへ。 |
-| ブランチの状態のポップオーバー（CI・プルリクエスト） | ✓ | ✓ | △ | — | — | — | Windows: ブランチの右クリックの先頭の様子の行から、ダイアログで（木の行には押せる印を別に置けない）。 |
+| ブランチの状態のポップオーバー（CI・プルリクエスト） | ✓ | ✓ | △ | — | — | — | Windows: 名前の後ろの merged・gone を押すと開く。どちらもないブランチには印がなく、様子は右クリックの先頭からダイアログで。 |
 | Open on GitHub | ✓ | ✓ | ✓ | — | — | — |  |
 | メッセージの `#123` のリンク | ✓ | ✓ | ✓ | — | — | — |  |
 | GitHub のアバター | ✓ | ✓ | ✓ | — | — | — |  |
