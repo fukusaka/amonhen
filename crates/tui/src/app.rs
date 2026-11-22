@@ -3761,21 +3761,50 @@ impl App {
             true => Value::Null,
             false => json!(message),
         };
-        let stash = |untracked: bool, keep_index: bool| Request::Run {
-            name: "stash",
-            command: json!({
-                "op": "stashPush", "message": message,
-                "includeUntracked": untracked, "keepIndex": keep_index,
-            }),
+        let stash = |extra: Value| {
+            let mut command = json!({"op": "stashPush", "message": message});
+            if let (Some(command), Value::Object(extra)) = (command.as_object_mut(), extra) {
+                command.extend(extra);
+            }
+            Request::Run {
+                name: "stash",
+                command,
+            }
         };
-        self.choices = Some((
-            tr!("Stash the working changes?"),
-            vec![
-                ('y', tr!("tracked files"), stash(false, false)),
-                ('u', tr!("with untracked files"), stash(true, false)),
-                ('k', tr!("keep what is staged"), stash(false, true)),
-            ],
-        ));
+        let mut options = vec![
+            (
+                'y',
+                tr!("tracked files"),
+                stash(json!({"includeUntracked": false})),
+            ),
+            (
+                'u',
+                tr!("with untracked files"),
+                stash(json!({"includeUntracked": true})),
+            ),
+            (
+                'k',
+                tr!("keep what is staged"),
+                stash(json!({"includeUntracked": false, "keepIndex": true})),
+            ),
+            // アプリの Stash のシートと同じく、stage したものだけ（git 2.35 から）と、選んでいるファイルだけ。
+            (
+                's',
+                tr!("only what is staged"),
+                stash(json!({"includeUntracked": false, "staged": true})),
+            ),
+        ];
+        if self.view == View::Changes
+            && let Some(path) = self.changes.selected_path()
+        {
+            let untracked = self.changes.untracked_path().is_some();
+            options.push((
+                'f',
+                tr!("only {path}", path = path),
+                stash(json!({"includeUntracked": untracked, "paths": [path]})),
+            ));
+        }
+        self.choices = Some((tr!("Stash the working changes?"), options));
         self.dirty = true;
     }
 

@@ -1665,10 +1665,13 @@ fn stash_and_pop() {
     let left = amonhen_tui::snapshot(open(dir.path()), 120, 10, clock(), "swip\x1b").unwrap();
     assert!(!left.contains("Stash"));
     assert_eq!(git_out(dir.path(), &["stash", "list"]), "");
-    let asked = amonhen_tui::snapshot(open(dir.path()), 120, 10, clock(), "s\n").unwrap();
-    assert!(asked.contains(
-        "Stash the working changes?   y tracked files   u with untracked files   k keep what is staged   n cancel"
-    ));
+    let asked = amonhen_tui::snapshot(open(dir.path()), 200, 10, clock(), "1s\n").unwrap();
+    assert!(
+        asked.contains(
+            "Stash the working changes?   y tracked files   u with untracked files   k keep what is staged   s only what is staged   f only a.txt   n cancel"
+        ),
+        "{asked}"
+    );
     let keys = "sbefore lunch\ny";
     let stashed = amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), keys).unwrap();
     println!("{stashed}");
@@ -2972,6 +2975,31 @@ fn details_list_the_refs_at_the_commit() {
     assert!(refs.contains("main") && refs.contains("v1"), "{refs}");
     // 署名のないコミットには、署名の行がない。
     assert!(!details.iter().any(|l| l.starts_with("Signed")));
+}
+
+/// `s` の `f` は選んでいるファイルだけ、`s` は stage したものだけを stash する（アプリの Stash のシートと同じ）
+#[test]
+fn stash_only_the_selected_file_or_what_is_staged() {
+    let dir = tempfile::tempdir().unwrap();
+    two_lines(dir.path());
+    std::fs::write(dir.path().join("b.txt"), "b\n").unwrap();
+    git(dir.path(), BASE, &["add", "b.txt"]);
+    git(dir.path(), BASE, &["commit", "-q", "-m", "Add b"]);
+    std::fs::write(dir.path().join("b.txt"), "B\n").unwrap();
+    let status = || git_out(dir.path(), &["status", "--porcelain"]);
+    // Working Copy の 2 つ目（b.txt）を選んで、それだけを stash する。
+    amonhen_tui::snapshot(open(dir.path()), 200, 10, clock(), "1js\nf").unwrap();
+    assert_eq!(status(), " M a.txt\n");
+    assert!(git_out(dir.path(), &["stash", "show", "--name-only"]).contains("b.txt"));
+    git(dir.path(), BASE, &["stash", "pop", "-q"]);
+    // stage したものだけ（git 2.35 から。前の git では理由が出る）。
+    git(dir.path(), BASE, &["add", "a.txt"]);
+    let done = amonhen_tui::snapshot(open(dir.path()), 200, 10, clock(), "1s\ns").unwrap();
+    if done.contains("Stashed") {
+        assert_eq!(status(), " M b.txt\n");
+    } else {
+        assert!(done.contains("2.35"), "{done}");
+    }
 }
 
 /// `s` の `u` は、追跡していないファイルも stash に入れる
