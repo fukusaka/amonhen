@@ -1314,6 +1314,82 @@ fn fetch_and_pull_bring_in_remote_commits() {
     assert!(git_out(&work, &["branch", "-r"]).contains("mirror/main"));
 }
 
+/// サイドバーのリモートのブランチの行で、そのリモートを `e` で直し（名前と URL）、`X` で片づけ、`x` で消す
+#[test]
+fn edit_prune_and_remove_a_remote_from_the_sidebar() {
+    let dir = tempfile::tempdir().unwrap();
+    let work = with_remote(dir.path());
+    let remote = dir.path().join("origin.git");
+    let url = remote.to_str().unwrap().to_owned();
+    let remotes = || git_out(&work, &["remote", "-v"]);
+    // 一番下の行が origin/main。`e` は今の名前、次に今の URL を入れて聞く。
+    let asked = amonhen_tui::snapshot(open(&work), 200, 10, clock(), "0Ge").unwrap();
+    println!("{asked}");
+    assert!(
+        asked.contains("Rename the remote origin to: origin"),
+        "{asked}"
+    );
+    let url_asked = amonhen_tui::snapshot(
+        open(&work),
+        200,
+        10,
+        clock(),
+        "0Ge\x7f\x7f\x7f\x7f\x7f\x7fup\n",
+    )
+    .unwrap();
+    assert!(
+        url_asked.contains(&format!("URL of up: {url}")),
+        "{url_asked}"
+    );
+    // 名前だけ変える（URL はそのまま）。
+    amonhen_tui::snapshot(
+        open(&work),
+        200,
+        10,
+        clock(),
+        "0Ge\x7f\x7f\x7f\x7f\x7f\x7fup\n\n",
+    )
+    .unwrap();
+    assert!(
+        remotes().starts_with(&format!("up\t{url} (fetch)")),
+        "{}",
+        remotes()
+    );
+    // URL だけ変える。
+    let other = dir.path().join("other.git");
+    git(
+        dir.path(),
+        BASE,
+        &["clone", "-q", "--bare", &url, "other.git"],
+    );
+    let keys = format!("0Ge\n\x15{}\n", other.to_str().unwrap());
+    amonhen_tui::snapshot(open(&work), 200, 10, clock(), &keys).unwrap();
+    assert!(
+        remotes().starts_with(&format!("up\t{} (fetch)", other.to_str().unwrap())),
+        "{}",
+        remotes()
+    );
+    // 何も変えなければ、そう知らせる。
+    let same = amonhen_tui::snapshot(open(&work), 200, 10, clock(), "0Ge\n\n").unwrap();
+    assert!(same.contains("Nothing changed"), "{same}");
+
+    // 向こうで消えたブランチの追跡を片づける。
+    git(&work, BASE, &["fetch", "-q", "up"]);
+    git(&work, BASE, &["update-ref", "refs/remotes/up/gone", "HEAD"]);
+    let asked = amonhen_tui::snapshot(open(&work), 200, 10, clock(), "0GX").unwrap();
+    println!("{asked}");
+    assert!(asked.contains("Prune up? "), "{asked}");
+    assert!(asked.contains("y prune   n cancel"), "{asked}");
+    amonhen_tui::snapshot(open(&work), 200, 10, clock(), "0GXy").unwrap();
+    assert!(!git_out(&work, &["branch", "-r"]).contains("up/gone"));
+
+    // 消す。
+    let asked = amonhen_tui::snapshot(open(&work), 200, 10, clock(), "0Gx").unwrap();
+    assert!(asked.contains("Remove up? "), "{asked}");
+    amonhen_tui::snapshot(open(&work), 200, 10, clock(), "0Gxy").unwrap();
+    assert_eq!(remotes(), "");
+}
+
 /// サイドバーの `c` でブランチをチェックアウトし、`b` で新しいブランチを作る。`u` で戻す
 #[test]
 fn checkout_new_branch_and_undo() {
