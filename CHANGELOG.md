@@ -24,10 +24,9 @@ becomes the GitHub Release notes.
 
 #### Changed
 
-- History's right column is rebuilt in the macOS app: the details stay on top and the changed files are the diff's
-  own file headers, folded at first, as a list or a tree, with one bar for Changes / All Files, totals and expanding.
-  In both apps, hunk headers name the enclosing function as `git diff` does and renames read
-  `src/{old.rs → new.rs}`; GTK4's changed files also color their kind and end with the totals.
+- History's right column is rebuilt in the macOS and GTK4 apps: the details stay on top and the changed files are
+  the diff's own file headers, folded at first, as a list or a tree, with one bar for Changes / All Files, totals and
+  expanding. Hunk headers name the enclosing function as `git diff` does and renames read `src/{old.rs → new.rs}`.
 - Opening a repository from the repository page puts it in a new tab beside the page instead of replacing the page,
   in the macOS and GTK4 apps.
 - The macOS and GTK4 apps keep recently opened repositories in `recent.json` beside `bookmarks.json`, shared with
