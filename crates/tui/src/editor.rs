@@ -37,11 +37,20 @@ impl Editor {
         self.lines.iter().all(|l| l.trim().is_empty())
     }
 
-    /// 中身を入れ替え、カーソルを終わりに置く。
+    /// 中身を入れ替え、カーソルを終わりに置く（終わりの空行は除く。行の終わりの空白は残す: `fix: ` の後に打てる）。
     pub fn set_text(&mut self, text: &str) {
-        self.lines = text.trim_end().split('\n').map(str::to_owned).collect();
+        self.lines = (text.trim_end_matches(['\n', '\r']).split('\n'))
+            .map(str::to_owned)
+            .collect();
         self.row = self.lines.len() - 1;
         self.column = self.lines[self.row].chars().count();
+        self.top = 0;
+    }
+
+    /// カーソルを件名（1 行目）の終わりに置く。
+    pub fn move_to_summary_end(&mut self) {
+        self.row = 0;
+        self.column = self.lines[0].chars().count();
         self.top = 0;
     }
 

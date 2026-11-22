@@ -99,7 +99,7 @@ fn run_with(
             let _ = tx.send(Event::Changed(bits));
         }
     }));
-    let mut app = App::new(front, tx, Clock { now: now(), local });
+    let mut app = App::new(front.clone(), tx, Clock { now: now(), local });
     app.set_files_here(files_here);
     // マウスを取り込まずに始めるか（この機械の settings.json。`M` での切り替えは書き戻さない）。
     app.apply_mouse_setting(amonhen_model::settings::tui_mouse());
@@ -124,6 +124,9 @@ fn run_with(
         }
         if let Some(capture) = app.take_mouse_change() {
             screen.set_mouse(capture)?;
+        }
+        if let Some(text) = app.take_copy() {
+            screen.copy(&text)?;
         }
         if app.take_redraw() {
             screen.canvas.forget();
@@ -161,6 +164,11 @@ fn run_with(
             app.resize(cols, rows);
             app.file_opened(opened);
         }
+    }
+    // 書きかけのメッセージは、終わる前にその場で書く（裏の仕事は待たない）。
+    if let Some(text) = app.take_unsaved_draft() {
+        let command = serde_json::json!({"op": "saveCommitDraft", "text": text});
+        let _ = front.call(serde_json::json!({"op": "run", "command": command}));
     }
     Ok(app.take_next())
 }
@@ -273,6 +281,8 @@ fn key(ch: char) -> Event {
         '\t' => (KeyCode::Tab, KeyModifiers::NONE),
         '\x1b' => (KeyCode::Esc, KeyModifiers::NONE),
         '\x7f' => (KeyCode::Backspace, KeyModifiers::NONE),
+        '⇣' => (KeyCode::Down, KeyModifiers::SHIFT),
+        '⇡' => (KeyCode::Up, KeyModifiers::SHIFT),
         '\x01'..='\x1a' => (
             KeyCode::Char((b'a' + ch as u8 - 1) as char),
             KeyModifiers::CONTROL,
@@ -283,7 +293,8 @@ fn key(ch: char) -> Event {
 }
 
 /// 1 フレームを文字で（`--snapshot`。テストと、見た目の確認に）。`keys` は、描く前に押すキー（1 文字ずつ。
-/// 改行は Enter、タブは Tab、`\x1b` は Esc、`\x7f` は Backspace、ほかの制御文字は Ctrl と文字）。
+/// 改行は Enter、タブは Tab、`\x1b` は Esc、`\x7f` は Backspace、`⇣` `⇡` は Shift-↓ Shift-↑、ほかの制御文字は Ctrl と
+/// 文字）。
 pub fn snapshot(
     front: Arc<dyn Front>,
     cols: u16,

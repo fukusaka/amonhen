@@ -20,10 +20,10 @@ use crate::Clock;
 use crate::Result;
 use crate::changes::Changes;
 use crate::commands::{self, Place};
-use crate::details::Details;
+use crate::details::{Details, Pair, Want};
 use crate::diff::{PAN, Theme};
 use crate::fileview::FileView;
-use crate::history::{History, WHEEL_ROWS};
+use crate::history::{History, Marked, WHEEL_ROWS};
 use crate::loader::{Loaded, Loader, Request};
 use crate::reflog::Reflog;
 use crate::sidebar::{self, Picked, Sidebar};
@@ -236,6 +236,150 @@ impl QuickOpen {
     }
 }
 
+/// Working Copy で、最近のコミットから選んでメッセージの欄に入れる一覧。`F` は件名を選んで `fixup! 件名` か
+/// `squash! 件名` にし（アプリの Commit ▾ の Fixup Commit For・Squash Commit For。後で `rebase -i --autosquash`
+/// がまとめる）、`R` はメッセージをそのまま入れる（アプリの最近のメッセージの一覧）。
+struct MessagePick {
+    query: String,
+    selected: usize,
+    kind: PickKind,
+    /// 件名（Fixup・Squash）かメッセージ（Recent）。新しい順。読んでいる間は None。
+    items: Option<Vec<String>>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PickKind {
+    Fixup,
+    /// squash!（本文を残す）。Fixup と Tab で切り替える。
+    Squash,
+    Recent,
+    /// 入れるもの（Conventional Commits の種類、Co-authored-by、Signed-off-by）。
+    Insert,
+}
+
+/// Conventional Commits の種類（アプリの Insert ▾ と同じ並び）。
+const COMMIT_TYPES: &[&str] = &[
+    "feat", "fix", "docs", "style", "refactor", "perf", "test", "build", "ci", "chore", "revert",
+];
+
+/// 最近のコミット（`F`・`R`・`I`・Alt-↑ が使う）。
+#[derive(Default)]
+struct Recent {
+    /// メッセージ（新しい順）。
+    messages: Vec<String>,
+    /// 作者（名前、メール）。同じメールは 1 つ。
+    authors: Vec<(String, String)>,
+    /// Signed-off-by に書く自分。
+    me: Option<(String, String)>,
+}
+
+impl MessagePick {
+    fn new(kind: PickKind, recent: Option<&Recent>) -> Self {
+        let mut pick = Self {
+            query: String::new(),
+            selected: 0,
+            kind,
+            items: None,
+        };
+        if let Some(recent) = recent {
+            pick.fill(recent);
+        }
+        pick
+    }
+
+    /// 読んだ最近のコミットから並べるものを作る。
+    fn fill(&mut self, recent: &Recent) {
+        let messages = &recent.messages;
+        self.items = Some(match self.kind {
+            PickKind::Insert => {
+                let mut items: Vec<String> = COMMIT_TYPES.iter().map(|t| format!("{t}:")).collect();
+                items.extend(
+                    (recent.authors.iter())
+                        .map(|(name, email)| format!("Co-authored-by: {name} <{email}>")),
+                );
+                if let Some((name, email)) = &recent.me {
+                    items.push(format!("Signed-off-by: {name} <{email}>"));
+                }
+                items
+            }
+            PickKind::Recent => {
+                let mut seen = Vec::new();
+                for m in messages {
+                    if !m.trim().is_empty() && !seen.contains(m) {
+                        seen.push(m.clone());
+                    }
+                }
+                seen
+            }
+            PickKind::Fixup | PickKind::Squash => fixup_subjects(messages),
+        });
+    }
+
+    /// 並べるもの（何番目か、1 行目）。打った語のすべてを含むもの（大文字と小文字は区別しない）。
+    fn shown(&self) -> Vec<(usize, &str)> {
+        let words: Vec<String> = self
+            .query
+            .split_whitespace()
+            .map(str::to_lowercase)
+            .collect();
+        (self.items.iter().flatten().enumerate())
+            .filter(|(_, s)| {
+                let text = s.to_lowercase();
+                words.iter().all(|w| text.contains(w.as_str()))
+            })
+            .map(|(i, s)| (i, s.lines().next().unwrap_or("")))
+            .collect()
+    }
+}
+
+/// 件名の頭の Conventional Commits の種類（`feat: `・`fix(ui)!: ` など）を除いたもの。
+fn strip_commit_type(summary: &str) -> &str {
+    let kind_end = summary
+        .find(|c: char| !c.is_ascii_lowercase())
+        .unwrap_or(summary.len());
+    if kind_end == 0 {
+        return summary;
+    }
+    let mut rest = &summary[kind_end..];
+    if rest.starts_with('(')
+        && let Some(close) = rest.find(')')
+    {
+        rest = &rest[close + 1..];
+    }
+    rest = rest.strip_prefix('!').unwrap_or(rest);
+    match rest.strip_prefix(':') {
+        Some(rest) => rest.trim_start(),
+        None => summary,
+    }
+}
+
+/// `Key: 値` の形のトレーラーの行か。
+fn is_trailer(line: &str) -> bool {
+    line.split_once(": ").is_some_and(|(key, _)| {
+        !key.is_empty() && key.chars().all(|c| c.is_ascii_alphabetic() || c == '-')
+    })
+}
+
+/// `fixup!`・`squash!` の先にできる件名（重ねない。空・同じものは 1 つに。アプリと同じく 15 まで）。
+fn fixup_subjects(messages: &[String]) -> Vec<String> {
+    let mut subjects: Vec<String> = Vec::new();
+    for message in messages {
+        let subject = message.lines().next().unwrap_or("").trim().to_owned();
+        if subject.is_empty()
+            || subject.starts_with("fixup! ")
+            || subject.starts_with("squash! ")
+            || subjects.contains(&subject)
+        {
+            continue;
+        }
+        subjects.push(subject);
+        if subjects.len() == 15 {
+            break;
+        }
+    }
+    subjects
+}
+
 /// 操作ログ（アプリの Activity の Operation Log）: Undo の記録を新しい順に。選んだところまで戻せる。
 struct OperationLog {
     /// 名前・時刻（UNIX 時刻の秒）。
@@ -253,6 +397,10 @@ pub struct App {
     sidebar: Sidebar,
     /// サイドバーで開いた stash（詳細の枠に、History の選択の代わりに出す）。
     pinned: Option<Oid>,
+    /// History を読み直す前に印をつけていたコミット（新しい History での行を聞いている間）。
+    remapping: Vec<Marked>,
+    /// 2 つに印をつけたときの、差分の取り方。
+    pair: Pair,
     reflog: Reflog,
     file: FileView,
     /// ファイルの画面を閉じたときに戻る画面。
@@ -294,6 +442,15 @@ pub struct App {
     /// Quick Open で選んだリポジトリの場所（TUI を閉じて、そこで開き直す）。
     open_location: Option<String>,
     quick_open: Option<QuickOpen>,
+    fixup_pick: Option<MessagePick>,
+    /// 書きかけのメッセージとして最後に読んだか書いたもの（読み終えるまでは None で、書かない）。
+    draft_saved: Option<String>,
+    /// 今のブランチの最近のコミット（`F`・`R`・`I`・Alt-↑ が使う。コミットしたら読み直す）。
+    recent_messages: Option<Recent>,
+    /// メッセージの欄の Alt-↑・Alt-↓ で呼び出している、最近のメッセージの番目と、呼び出す前に書いていたもの。
+    recalled: Option<(usize, String)>,
+    /// 最近のメッセージを読み終えたら、Alt-↑ の呼び出しをする。
+    recall_when_read: bool,
     /// いくつかから選んで行う操作: 尋ねる文と、キー・名前・頼む中身の組。
     choices: Option<(String, Vec<Choice>)>,
     /// マウスを取り込んでいる（切ると、端末で文字を選べる）。
@@ -338,6 +495,8 @@ pub struct App {
     typing_query: Option<String>,
     /// サイドバーの絞り込みの語を打っている（サイドバーで `/`）。
     typing_filter: Option<String>,
+    /// 絞り込みの語は Working Copy の一覧のもの（でなければサイドバーのもの）。
+    filtering_changes: bool,
     /// キーの一覧を出している（`?`）。
     help: bool,
     /// キーの一覧の、一番上に見えている行（収まらないときに動かす）。
@@ -347,6 +506,10 @@ pub struct App {
     operation_log: Option<OperationLog>,
     /// History の編集モード（`E`）。
     edit_mode: Option<crate::editmode::EditMode>,
+    /// 印をつけたコミット（新しい順）を、編集モードで 1 つにまとめる（`E`。行が届いたら決める）。
+    combining: Vec<String>,
+    /// 端末のクリップボードに入れる文字（OSC 52。描くループが書く）。
+    copy: Option<String>,
     /// 編集モードで、変更があるのに Esc を 1 度押した（もう 1 度で捨てる）。
     edit_discard: bool,
     /// 編集モードの行のメッセージを、エディタで直す（開く中身。開いたら `editing_plan` が立つ）。
@@ -407,6 +570,8 @@ impl App {
             changes: Changes::default(),
             sidebar: Sidebar::default(),
             pinned: None,
+            remapping: Vec::new(),
+            pair: Pair::default(),
             reflog: Reflog::default(),
             file: FileView::default(),
             file_back: View::Changes,
@@ -440,11 +605,14 @@ impl App {
             notice: None,
             typing_query: None,
             typing_filter: None,
+            filtering_changes: false,
             help: false,
             help_top: 0,
             palette: None,
             operation_log: None,
             edit_mode: None,
+            combining: Vec::new(),
+            copy: None,
             edit_discard: false,
             plan_message: None,
             editing_plan: false,
@@ -465,6 +633,11 @@ impl App {
             open_worktree: None,
             open_location: None,
             quick_open: None,
+            fixup_pick: None,
+            draft_saved: None,
+            recent_messages: None,
+            recalled: None,
+            recall_when_read: false,
             search: None,
             search_done: 0.0,
             theme: Theme::detect(),
@@ -488,7 +661,43 @@ impl App {
     pub fn start(&mut self) {
         self.open();
         self.changes.refresh();
+        // 書きかけのメッセージ（なければテンプレート）を欄に入れる。
+        self.send(Request::DraftOrTemplate {
+            local: self.files_here,
+        });
         self.request();
+    }
+
+    /// 書きかけのメッセージ（欄の中身）が覚えたものと違えば、`<git dir>/amonhen/commit-draft` に書く（空なら消す）。
+    /// amend と、最近のメッセージを呼び出している間は書かない（自分で書いたものではない）。
+    fn save_draft_if_changed(&mut self) {
+        let Some(saved) = &self.draft_saved else {
+            return;
+        };
+        if self.changes.amend || self.recalled.is_some() || self.committing {
+            return;
+        }
+        let text = self.changes.message.text();
+        if *saved == text {
+            return;
+        }
+        self.draft_saved = Some(text.clone());
+        self.send(Request::Run {
+            name: "saveCommitDraft",
+            command: json!({"op": "saveCommitDraft", "text": text}),
+        });
+    }
+
+    /// 終わる前に書く、書きかけのメッセージ。終わるときは裏の仕事（頼んだばかりの保存も）を待たないので、呼んだ
+    /// 側が今の中身をその場で書く（同じ中身でも書く）。読み終える前や amend の間は None。
+    pub fn take_unsaved_draft(&mut self) -> Option<String> {
+        self.draft_saved.as_ref()?;
+        if self.changes.amend || self.recalled.is_some() || self.committing {
+            return None;
+        }
+        let text = self.changes.message.text();
+        self.draft_saved = Some(text.clone());
+        Some(text)
     }
 
     /// リポジトリ・ref・History を読む。読んでいる間に頼まれた分は、終わってからもう一度。
@@ -576,6 +785,7 @@ impl App {
         let damage = std::mem::take(&mut self.damage);
         let over = self.help
             || self.quick_open.is_some()
+            || self.fixup_pick.is_some()
             || self.palette.is_some()
             || self.operation_log.is_some()
             || self.edit_mode.is_some();
@@ -658,6 +868,11 @@ impl App {
     }
 
     /// `Ctrl-z` を押した（聞いたら、なかったことにする）。止まって続いた後は、描き直す。
+    /// 端末のクリップボードに入れる文字。
+    pub fn take_copy(&mut self) -> Option<String> {
+        self.copy.take()
+    }
+
     #[cfg(unix)]
     pub fn take_suspend(&mut self) -> bool {
         let suspend = std::mem::take(&mut self.suspend);
@@ -831,6 +1046,14 @@ impl App {
     }
 
     pub fn handle(&mut self, event: Event) {
+        self.handle_event(event);
+        // 欄を離れていれば、書きかけのメッセージを覚える（打っている間は書かない）。
+        if self.focus != Focus::Message {
+            self.save_draft_if_changed();
+        }
+    }
+
+    fn handle_event(&mut self, event: Event) {
         match event {
             Event::Input(Input::Key(key)) => self.key(key),
             Event::Input(Input::Mouse(mouse)) => self.mouse(mouse),
@@ -899,6 +1122,15 @@ impl App {
                                 id: id.to_string(),
                             });
                         }
+                        // 印も、同じコミットにつけ直す。
+                        let marks = self.history.take_remap();
+                        if !marks.is_empty() {
+                            self.send(Request::MarksOf {
+                                history: self.history.id().clone(),
+                                ids: marks.iter().map(|m| m.id.to_string()).collect(),
+                            });
+                            self.remapping = marks;
+                        }
                         self.opening = false;
                         if std::mem::take(&mut self.reopen) {
                             self.open();
@@ -935,6 +1167,10 @@ impl App {
                         }
                     }
                     Loaded::Lineage { row, bits } => self.history.set_lineage(row, bits),
+                    Loaded::MarksOf(rows) => {
+                        let marks = std::mem::take(&mut self.remapping);
+                        self.history.remapped(marks, rows);
+                    }
                     Loaded::RowOf(row) => {
                         if let Some(row) = row {
                             self.history.select(row);
@@ -987,6 +1223,17 @@ impl App {
                             Ok(output) => {
                                 self.changes.message.clear();
                                 self.changes.amend = false;
+                                // 最近のメッセージは、次に使うときに読み直す（今のコミットも入る）。
+                                self.recent_messages = None;
+                                self.recalled = None;
+                                // コミットしたので、書きかけのメッセージを消す。
+                                if self.draft_saved.as_deref().is_some_and(|d| !d.is_empty()) {
+                                    self.draft_saved = Some(String::new());
+                                    self.send(Request::Run {
+                                        name: "saveCommitDraft",
+                                        command: json!({"op": "saveCommitDraft", "text": ""}),
+                                    });
+                                }
                                 self.focus = Focus::Main;
                                 // hooks が何か書いていれば、その 1 行目を出す。
                                 self.notice =
@@ -1075,8 +1322,22 @@ impl App {
             self.send(request);
         }
         let side = self.layout().side.is_some();
-        // 詳細が見えているなら、選んでいるコミットのものにする。
-        if side
+        // History で 2 つ以上に印をつけていれば、その差分を出す（アプリの複数選択）。
+        let selection = (side
+            && self.view == View::History
+            && self.pinned.is_none()
+            && self.history.mark_count() >= 2)
+            .then(|| Want::Selection {
+                history: self.history.id().clone(),
+                rows: self.history.marks().map(|(row, _)| row).collect(),
+                pair: self.pair,
+                commits: self.history.marks().map(|(_, m)| m.clone()).collect(),
+            });
+        if let Some(want) = selection {
+            if self.details.want(want) {
+                self.damage |= Damage::SIDE;
+            }
+        } else if side
             && let Some(id) = match self.view {
                 View::History => self.pinned.or(self.history.selected_id()),
                 View::Reflog => self.reflog.selected_id(),
@@ -1086,7 +1347,7 @@ impl App {
         {
             let stash = self.view == View::History && self.pinned == Some(id);
             // 詳細の中だけが変わる。
-            if self.details.want(id, stash) {
+            if self.details.want(Want::Commit { id, stash }) {
                 self.damage |= Damage::SIDE;
             }
         }
@@ -1218,6 +1479,49 @@ impl App {
             return;
         }
         // Quick Open: 打った語で絞る。Enter で選んだリポジトリを開き直す、Esc でやめる。
+        // Fixup・Squash Commit For と最近のメッセージ: 打った語で絞り、Enter で欄に入れる。Tab で fixup! と
+        // squash! を切り替える。
+        if let Some(mut pick) = self.fixup_pick.take() {
+            self.dirty = true;
+            match key.code {
+                KeyCode::Esc => return,
+                KeyCode::Enter => {
+                    let chosen = (pick.shown().get(pick.selected))
+                        .and_then(|(i, _)| pick.items.as_ref().map(|items| items[*i].clone()));
+                    if let Some(chosen) = chosen {
+                        match pick.kind {
+                            PickKind::Recent => self.use_message(&chosen),
+                            PickKind::Insert => self.insert_into_message(&chosen),
+                            kind => self.use_fixup(&chosen, kind == PickKind::Squash),
+                        }
+                    }
+                    return;
+                }
+                KeyCode::Tab => {
+                    pick.kind = match pick.kind {
+                        PickKind::Fixup => PickKind::Squash,
+                        PickKind::Squash => PickKind::Fixup,
+                        kind => kind,
+                    }
+                }
+                KeyCode::Down => pick.selected += 1,
+                KeyCode::Char('n') if control => pick.selected += 1,
+                KeyCode::Up => pick.selected = pick.selected.saturating_sub(1),
+                KeyCode::Char('p') if control => pick.selected = pick.selected.saturating_sub(1),
+                KeyCode::Backspace => {
+                    pick.query.pop();
+                    pick.selected = 0;
+                }
+                KeyCode::Char(ch) if !control => {
+                    pick.query.push(ch);
+                    pick.selected = 0;
+                }
+                _ => {}
+            }
+            pick.selected = pick.selected.min(pick.shown().len().saturating_sub(1));
+            self.fixup_pick = Some(pick);
+            return;
+        }
         if let Some(mut quick) = self.quick_open.take() {
             self.dirty = true;
             match key.code {
@@ -1283,19 +1587,26 @@ impl App {
         // 絞り込みの語は、打つたびに効く。Enter で確定、Esc で絞り込みをやめる。
         if let Some(filter) = &mut self.typing_filter {
             self.dirty = true;
+            let changes = self.filtering_changes;
+            let mut apply = |filter: &str| match changes {
+                true => self.changes.set_filter(filter),
+                false => self.sidebar.set_filter(filter),
+            };
             match key.code {
                 KeyCode::Enter => self.typing_filter = None,
                 KeyCode::Esc => {
+                    apply("");
                     self.typing_filter = None;
-                    self.sidebar.set_filter("");
                 }
                 KeyCode::Backspace => {
                     filter.pop();
-                    self.sidebar.set_filter(filter);
+                    let filter = filter.clone();
+                    apply(&filter);
                 }
                 KeyCode::Char(ch) if !control => {
                     filter.push(ch);
-                    self.sidebar.set_filter(filter);
+                    let filter = filter.clone();
+                    apply(&filter);
                 }
                 _ => {}
             }
@@ -1358,7 +1669,7 @@ impl App {
                             Naming::SavePatch => (
                                 "savePatch",
                                 tr!("Saving the patch…"),
-                                json!({"op": "formatPatch", "oids": [start], "dir": local_path(name)}),
+                                json!({"op": "formatPatch", "oids": start.split(' ').collect::<Vec<_>>(), "dir": local_path(name)}),
                             ),
                             Naming::Patch => {
                                 let file = local_path(name);
@@ -1568,7 +1879,11 @@ impl App {
             KeyCode::Char('3') => self.show(View::Reflog),
             _ => {
                 self.dirty |= match (self.view, self.focus) {
-                    (View::History, Focus::Main) => self.history_key(key.code, control),
+                    (View::History, Focus::Main) => self.history_key(
+                        key.code,
+                        control,
+                        key.modifiers.contains(KeyModifiers::SHIFT),
+                    ),
                     (View::History | View::Reflog | View::File, Focus::Side) => {
                         self.details_key(key.code, control)
                     }
@@ -1705,7 +2020,26 @@ impl App {
             );
         }
         if id == "save-patch" {
-            // History で選んでいるコミットを、git の名前のファイルにして、今のフォルダ（この機械）に。
+            // History で選んでいるコミット（印があれば、印をつけたものを古い順に）を、git の名前のファイルにして、今の
+            // フォルダ（この機械）に。
+            if self.history.mark_count() >= 2 {
+                if self.history.marks().any(|(_, m)| m.merge) {
+                    self.error = Some(tr!("A merge can’t be saved as a patch"));
+                    self.dirty = true;
+                    return;
+                }
+                let mut ids: Vec<String> = self
+                    .history
+                    .marks()
+                    .map(|(_, m)| m.id.to_string())
+                    .collect();
+                ids.reverse();
+                let what = tr!("{count} commits", count = ids.len());
+                self.naming = Naming::SavePatch;
+                self.typing_branch = Some((ids.join(" "), what, local_path("")));
+                self.dirty = true;
+                return;
+            }
             let Some(id) = self.history.selected_id() else {
                 return;
             };
@@ -1854,7 +2188,15 @@ impl App {
                 }
                 return;
             }
+            // 下書きが読めなくても、欄はそのまま使える（覚えるのをやめる）。
+            Err(_) if name == "draftOrTemplate" => return,
             Err(error) => {
+                if name == "recentMessages" {
+                    self.fixup_pick = None;
+                }
+                if name == "editRows" {
+                    self.combining.clear();
+                }
                 // 長い出力は、最初の行だけ。
                 let line = error.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
                 self.error = Some(line.trim().to_owned());
@@ -2011,6 +2353,12 @@ impl App {
                 return;
             }
             "deleteIgnored" => self.notice = Some(tr!("Deleted the ignored files")),
+            "addToGitignore" => {
+                self.notice = Some(match reply["added"] == true {
+                    true => tr!("Added to .gitignore"),
+                    false => tr!("Already in .gitignore"),
+                })
+            }
             // パッチの中身が分かった: 当たらなければ git の答えを出す。メールの形ならコミットとして（git am）、
             // ただの diff なら作業ツリーに（git apply）当てるかを確かめる。
             "readPatch" => {
@@ -2139,6 +2487,63 @@ impl App {
                 self.ask_reset_with(&info);
                 return;
             }
+            // 書きかけのメッセージかテンプレート: 欄がまだ空なら入れる。テンプレートは覚えたものとして扱い、
+            // 書き足したときだけ下書きになる。
+            "draftOrTemplate" => {
+                let draft = reply["draft"].as_str().map(str::to_owned);
+                let template = reply["template"].as_str().map(str::to_owned);
+                let free = self.changes.message.is_empty() && !self.changes.amend;
+                let baseline = match (free, draft, template) {
+                    (true, Some(draft), _) => {
+                        self.changes.message.set_text(&draft);
+                        draft.trim_end().to_owned()
+                    }
+                    (true, None, Some(template)) => {
+                        self.changes.message.set_text(&template);
+                        self.changes.message.text()
+                    }
+                    (true, None, None) => String::new(),
+                    // 待つ間に書き始めていたら、それを下書きにする。
+                    (false, Some(draft), _) => draft.trim_end().to_owned(),
+                    (false, None, _) => String::new(),
+                };
+                self.draft_saved = Some(baseline);
+                self.dirty = true;
+                return;
+            }
+            "saveCommitDraft" => return,
+            "recentMessages" => {
+                let messages: Vec<String> = (reply["messages"].as_array().into_iter().flatten())
+                    .filter_map(|m| m.as_str().map(|m| m.trim_end().to_owned()))
+                    .collect();
+                let pair = |v: &Value| {
+                    let name = v[0].as_str().filter(|s| !s.is_empty())?;
+                    let email = v[1].as_str().filter(|s| !s.is_empty())?;
+                    Some((name.to_owned(), email.to_owned()))
+                };
+                let mut authors: Vec<(String, String)> = Vec::new();
+                for (name, email) in
+                    (reply["authors"].as_array().into_iter().flatten()).filter_map(pair)
+                {
+                    if !authors.iter().any(|(_, e)| e.eq_ignore_ascii_case(&email)) {
+                        authors.push((name, email));
+                    }
+                }
+                let recent = Recent {
+                    messages,
+                    authors,
+                    me: pair(&reply["me"]),
+                };
+                if let Some(pick) = &mut self.fixup_pick {
+                    pick.fill(&recent);
+                }
+                self.recent_messages = Some(recent);
+                if std::mem::take(&mut self.recall_when_read) {
+                    self.recall(true);
+                }
+                self.dirty = true;
+                return;
+            }
             "editRows" => {
                 let rows = (reply["rows"].as_array().into_iter().flatten())
                     .map(|r| {
@@ -2149,7 +2554,16 @@ impl App {
                         )
                     })
                     .collect();
-                self.edit_mode = Some(crate::editmode::EditMode::new(rows));
+                let mut mode = crate::editmode::EditMode::new(rows);
+                let combining = std::mem::take(&mut self.combining);
+                if !combining.is_empty() && !mode.combine_last(&combining) {
+                    self.error = Some(tr!(
+                        "Only commits next to each other on the current branch can be combined"
+                    ));
+                    self.dirty = true;
+                    return;
+                }
+                self.edit_mode = Some(mode);
                 self.edit_discard = false;
                 self.dirty = true;
                 return;
@@ -2201,11 +2615,21 @@ impl App {
                 });
             }
             "savePatch" => {
-                let file = (reply["info"]["files"].as_array())
+                let files = reply["info"]["files"].as_array();
+                let file = files
                     .and_then(|f| f.first())
                     .and_then(Value::as_str)
                     .unwrap_or("");
-                self.notice = Some(tr!("Saved {file}", file = file));
+                self.notice = Some(match files.map_or(0, Vec::len) {
+                    0 | 1 => tr!("Saved {file}", file = file),
+                    n => tr!(
+                        "Saved {count} patches in {folder}",
+                        count = n,
+                        folder = std::path::Path::new(file)
+                            .parent()
+                            .map_or(String::new(), |p| p.display().to_string())
+                    ),
+                });
             }
             // bundle の中身が分かった: 足りないコミットがあれば断り、なければ取り込む名前を聞く。
             "bundleCheck" => {
@@ -2763,6 +3187,102 @@ impl App {
 
     /// History で選んでいるコミットへの操作: `y` cherry-pick、`v` revert、`c` そのコミットをチェックアウト
     /// （detached HEAD）。
+    /// 印をつけたコミットの ID（印がなければ選んでいるコミットの）を、端末のクリップボードに入れる。
+    fn copy_ids(&mut self) -> bool {
+        let ids: Vec<String> = match self.history.mark_count() {
+            0 => self
+                .history
+                .selected_id()
+                .into_iter()
+                .map(|id| id.to_string())
+                .collect(),
+            _ => self
+                .history
+                .marks()
+                .map(|(_, m)| m.id.to_string())
+                .collect(),
+        };
+        if ids.is_empty() {
+            return false;
+        }
+        self.notice = Some(match ids.len() {
+            1 => tr!(
+                "Copied {commit} (to the terminal’s clipboard)",
+                commit = &ids[0][..8]
+            ),
+            n => tr!(
+                "Copied {count} commit IDs (to the terminal’s clipboard)",
+                count = n
+            ),
+        });
+        self.copy = Some(ids.join("\n"));
+        true
+    }
+
+    /// 印をつけたコミットを、今のブランチに cherry-pick（古い順）・revert（新しい順）する前に、前と後の絵を読んで
+    /// 確かめる（アプリと同じく 1 つの命令で。コンフリクトで止まったら、残りは git が覚えていて Continue・Skip で続く）。
+    fn ask_pick_marked(&mut self, revert: bool) -> bool {
+        let mut marks: Vec<&Marked> = self.history.marks().map(|(_, m)| m).collect();
+        if !revert {
+            marks.reverse();
+        }
+        let oids: Vec<String> = marks.iter().map(|m| m.id.to_string()).collect();
+        let is_merge = marks.iter().any(|m| m.merge);
+        let count = oids.len();
+        let onto = self.branch.clone().unwrap_or_else(|| "HEAD".to_owned());
+        let (ask, yes, name, title) = match revert {
+            false => (
+                tr!(
+                    "Cherry-pick {count} commits onto {branch}, oldest first?",
+                    count = count,
+                    branch = onto
+                ),
+                tr!("cherry-pick"),
+                "cherryPick",
+                tr!(" Cherry-pick {count} commits ", count = count),
+            ),
+            true => (
+                tr!(
+                    "Revert {count} commits on {branch}, newest first?",
+                    count = count,
+                    branch = onto
+                ),
+                tr!("revert"),
+                "revert",
+                tr!(" Revert {count} commits ", count = count),
+            ),
+        };
+        let request = Request::Run {
+            name,
+            command: json!({"op": name, "oids": oids, "isMerge": is_merge}),
+        };
+        self.pick_question = Some((ask, yes, request, title));
+        self.run(
+            "pickPreview",
+            tr!("Looking ahead…"),
+            json!({"op": "pickPreview", "oids": oids, "revert": revert}),
+        );
+        true
+    }
+
+    /// 印をつけたコミット（first-parent の並びで続いたもの）を、編集モードで 1 つにまとめる（アプリの Combine）。
+    /// 一番古いものから HEAD までを開き、新しい方をひとつ古いものとまとめる行にしておく。当てるのは編集モードで。
+    fn combine_marked(&mut self) -> bool {
+        let marks: Vec<&Marked> = self.history.marks().map(|(_, m)| m).collect();
+        if marks.iter().any(|m| m.merge) {
+            self.error = Some(tr!("A merge can’t be combined with other commits"));
+            return true;
+        }
+        let Some(oldest) = marks.last() else {
+            return false;
+        };
+        self.combining = marks.iter().map(|m| m.id.to_string()).collect();
+        self.send(Request::EditRows {
+            from: oldest.id.to_string(),
+        });
+        true
+    }
+
     fn ask_commit_operation(&mut self, code: KeyCode) -> bool {
         let Some((id, is_merge, subject)) = self.history.selected_commit() else {
             return false;
@@ -3407,6 +3927,7 @@ impl App {
             }
             KeyCode::Char('/') => {
                 self.typing_filter = Some(self.sidebar.filter().to_owned());
+                self.filtering_changes = false;
                 true
             }
             KeyCode::Char('c') => self.checkout_picked(),
@@ -3507,6 +4028,19 @@ impl App {
                     tr!("Fold merged branches; open or close the selected merge"),
                 ),
                 ("] [", tr!("Go to the parent, the child")),
+                (
+                    "m Shift-↑↓",
+                    tr!("Select several commits: one at a time, or a run"),
+                ),
+                (
+                    "x .",
+                    tr!("With two selected: swap the direction; diff from where they diverged"),
+                ),
+                (
+                    "y v E",
+                    tr!("With several selected: cherry-pick, revert them; combine them into one"),
+                ),
+                ("Y", tr!("Copy the commit IDs (the terminal’s clipboard)")),
                 ("Enter Space", tr!("Go to the details")),
                 ("/", tr!("Search")),
                 ("n N", tr!("Next and previous match")),
@@ -3515,7 +4049,7 @@ impl App {
                 ("e", tr!("Edit the commit's message in git's editor")),
                 ("F X", tr!("Fix up into the parent; drop the commit")),
                 ("E", tr!("Edit the commits from here to HEAD at once")),
-                ("Esc", tr!("Clear the search")),
+                ("Esc", tr!("Clear the selection, then the search")),
             ],
             (View::Reflog, Focus::Main) => vec![
                 ("j k", tr!("Move")),
@@ -3562,6 +4096,32 @@ impl App {
                     tr!("Write the commit message (Ctrl-e there opens git's editor)"),
                 ),
                 ("a", tr!("Amend the last commit")),
+                (
+                    "F",
+                    tr!(
+                        "Fixup or Squash Commit For: a recent commit's subject as fixup! or squash!"
+                    ),
+                ),
+                (
+                    "v",
+                    tr!("List paths, a folder tree (Enter folds) or file names first"),
+                ),
+                ("/", tr!("Filter the list by path")),
+                ("R", tr!("Use a recent commit's message")),
+                (
+                    "i",
+                    tr!("Add an untracked file, or its extension, to .gitignore"),
+                ),
+                (
+                    "I",
+                    tr!("Insert a Conventional Commits type, Co-authored-by or Signed-off-by"),
+                ),
+                (
+                    "Alt-↑ Alt-↓",
+                    tr!(
+                        "In the message field: recall recent messages, then back to what was written"
+                    ),
+                ),
                 ("Ctrl-s", tr!("Commit")),
                 ("Ctrl-p", tr!("Commit, then push")),
             ],
@@ -3682,11 +4242,102 @@ impl App {
             }
             KeyCode::Char('e') if control => self.edit_message = true,
             KeyCode::Enter if alt => self.commit(),
+            // 最近のメッセージを順に呼び出す（Alt-↓ で戻ると、呼び出す前に書いていたもの）。
+            KeyCode::Up | KeyCode::Down if alt => self.recall(key.code == KeyCode::Up),
             KeyCode::Char(_) if control || alt => {}
             code => {
                 self.changes.message.key(code);
             }
         }
+    }
+
+    /// 最近のメッセージを欄に呼び出す（`older` なら 1 つ古いもの）。まだ読んでいなければ読み、読んだら呼び出す。
+    fn recall(&mut self, older: bool) {
+        let Some(Recent { messages, .. }) = &self.recent_messages else {
+            self.recall_when_read = older;
+            self.send(Request::RecentMessages);
+            return;
+        };
+        let count = messages.len();
+        let next = match (&self.recalled, older) {
+            (None, true) if count > 0 => Some(0),
+            (None, _) => return,
+            (Some((i, _)), true) => Some((i + 1).min(count.saturating_sub(1))),
+            (Some((0, _)), false) => None,
+            (Some((i, _)), false) => Some(i - 1),
+        };
+        match next {
+            Some(i) => {
+                let before = match self.recalled.take() {
+                    Some((_, before)) => before,
+                    None => self.changes.message.text(),
+                };
+                let text = messages[i].clone();
+                self.changes.message.set_text(&text);
+                self.recalled = Some((i, before));
+            }
+            None => {
+                if let Some((_, before)) = self.recalled.take() {
+                    self.changes.message.set_text(&before);
+                }
+            }
+        }
+    }
+
+    /// 欄に入れる（`I` の一覧で選んだもの）: `type:` は件名の頭を置き換え（もう種類があれば替える）、トレーラーは
+    /// 本文の終わりに足す（もうあれば足さない。前の行がトレーラーでなければ空行で分ける）。アプリの Insert ▾ と同じ。
+    fn insert_into_message(&mut self, item: &str) {
+        let text = self.changes.message.text();
+        let (summary, body) = text.split_once('\n').unwrap_or((text.as_str(), ""));
+        let next = match item.strip_suffix(':') {
+            Some(kind) if !kind.contains(' ') => {
+                let rest = strip_commit_type(summary);
+                match body {
+                    "" => format!("{kind}: {rest}"),
+                    body => format!("{kind}: {rest}\n{body}"),
+                }
+            }
+            _ if text.lines().any(|l| l == item) => text.clone(),
+            _ => {
+                let trimmed = text.trim_end();
+                let last = trimmed.lines().last().unwrap_or("");
+                let after_trailer = trimmed.contains('\n') && is_trailer(last);
+                match trimmed {
+                    "" => format!("\n\n{item}"),
+                    _ if after_trailer => format!("{trimmed}\n{item}"),
+                    _ => format!("{trimmed}\n\n{item}"),
+                }
+            }
+        };
+        self.changes.message.set_text(&next);
+        // 種類を入れたら件名の終わりへ、トレーラーなら終わりへ（set_text が終わりに置く）。
+        if item.ends_with(':') && !item.contains(' ') {
+            self.changes.message.move_to_summary_end();
+        }
+        self.recalled = None;
+        self.focus = Focus::Message;
+    }
+
+    /// 欄をそのメッセージにして、欄に移る（最近のメッセージの一覧で選んだもの）。
+    fn use_message(&mut self, message: &str) {
+        self.changes.message.set_text(message);
+        self.recalled = None;
+        self.focus = Focus::Message;
+    }
+
+    /// 欄を `fixup! 件名`（件名だけ）か `squash! 件名`（書いていた本文は残す）にして、欄に移る。amend はやめる。
+    fn use_fixup(&mut self, subject: &str, squash: bool) {
+        let text = match squash {
+            true => {
+                let old = self.changes.message.text();
+                let body = old.split_once('\n').map_or("", |(_, b)| b);
+                format!("squash! {subject}\n{body}")
+            }
+            false => format!("fixup! {subject}"),
+        };
+        self.changes.message.set_text(text.trim_end_matches('\n'));
+        self.changes.amend = false;
+        self.focus = Focus::Message;
     }
 
     /// 欄のメッセージでコミットを作る。できないときは、理由を出す。
@@ -3797,6 +4448,40 @@ impl App {
                 self.focus = Focus::Message;
                 true
             }
+            // untracked のファイルを .gitignore に足す: そのパスか、拡張子のパターン（アプリの右クリックと同じ）。
+            KeyCode::Char('i') => {
+                let Some(path) = self.changes.untracked_path().map(str::to_owned) else {
+                    self.error = Some(tr!("Only an untracked file can be added to .gitignore"));
+                    return true;
+                };
+                let add = |pattern: &str| Request::AddToGitignore {
+                    pattern: pattern.to_owned(),
+                };
+                let mut choices = vec![('p', path.clone(), add(&path))];
+                let name = path.rsplit('/').next().unwrap_or(&path);
+                if let Some((stem, ext)) = name.rsplit_once('.')
+                    && !stem.is_empty()
+                    && !ext.is_empty()
+                {
+                    let pattern = format!("*.{ext}");
+                    choices.push(('e', pattern.clone(), add(&pattern)));
+                }
+                self.choices = Some((tr!("Add to .gitignore:"), choices));
+                true
+            }
+            // Fixup・Squash Commit For: 最近のコミットから選んで、欄を fixup! にする。
+            KeyCode::Char('F' | 'R' | 'I') if self.changes.has_message_field() => {
+                let kind = match code {
+                    KeyCode::Char('F') => PickKind::Fixup,
+                    KeyCode::Char('R') => PickKind::Recent,
+                    _ => PickKind::Insert,
+                };
+                self.fixup_pick = Some(MessagePick::new(kind, self.recent_messages.as_ref()));
+                if self.recent_messages.is_none() {
+                    self.send(Request::RecentMessages);
+                }
+                true
+            }
             // 直前のコミットを作り直す。欄が空なら、そのメッセージを入れる。
             KeyCode::Char('a') => {
                 self.changes.amend = !self.changes.amend;
@@ -3829,8 +4514,33 @@ impl App {
                 });
                 self.confirm.is_some()
             }
+            // 木のフォルダでは、Enter で畳む・開く。ファイルなら差分へ。
             KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right => {
-                self.focus = Focus::Side;
+                if !self.changes.toggle_folder() {
+                    self.focus = Focus::Side;
+                }
+                true
+            }
+            // 一覧の形: パス → 木 → ファイル名（アプリの List・Tree・File Name）。この TUI の間だけ。
+            KeyCode::Char('v') => {
+                self.changes.next_mode();
+                self.notice = Some(match self.changes.mode() {
+                    crate::changes::ListMode::Path => tr!("Listing paths"),
+                    crate::changes::ListMode::Tree => {
+                        tr!("Listing as a tree (Enter folds a folder)")
+                    }
+                    crate::changes::ListMode::Name => tr!("Listing file names first"),
+                });
+                true
+            }
+            // パスで絞り込む（打つたびに効く）。
+            KeyCode::Char('/') => {
+                self.typing_filter = Some(self.changes.filter().to_owned());
+                self.filtering_changes = true;
+                true
+            }
+            KeyCode::Esc if !self.changes.filter().is_empty() => {
+                self.changes.set_filter("");
                 true
             }
             _ => false,
@@ -3951,10 +4661,48 @@ impl App {
         }
     }
 
-    fn history_key(&mut self, code: KeyCode, control: bool) -> bool {
+    fn history_key(&mut self, code: KeyCode, control: bool, shift: bool) -> bool {
         // History を操作したら、開いていた stash ではなく選んでいるコミットを出す。
         self.pinned = None;
         let page = self.history.page();
+        // 複数選択: `m` で印をつける・外す（アプリの ⌘-クリック）、Shift-↑↓ で続けてつける（⇧-クリック）。
+        let marked = match code {
+            KeyCode::Char('m') => Some(self.history.toggle_mark()),
+            KeyCode::Down if shift => Some(self.history.mark_and_move(1)),
+            KeyCode::Up if shift => Some(self.history.mark_and_move(-1)),
+            // 2 つのときの差分の取り方: 向きを入れ替える、分かれたところから。
+            KeyCode::Char('x') if self.history.mark_count() == 2 => {
+                self.pair = match self.pair {
+                    Pair::Forward => Pair::Reverse,
+                    _ => Pair::Forward,
+                };
+                Some(true)
+            }
+            KeyCode::Char('.') if self.history.mark_count() == 2 => {
+                self.pair = match self.pair {
+                    Pair::MergeBase => Pair::Forward,
+                    _ => Pair::MergeBase,
+                };
+                Some(true)
+            }
+            KeyCode::Esc if self.history.clear_marks() => Some(true),
+            _ => None,
+        };
+        if let Some(marked) = marked {
+            if self.history.mark_count() < 2 {
+                self.pair = Pair::Forward;
+            }
+            if marked {
+                self.notice = match self.history.mark_count() {
+                    0 => None,
+                    n => Some(tr!(
+                        "{count} selected: m adds or removes one, Esc clears",
+                        count = n
+                    )),
+                };
+            }
+            return marked;
+        }
         // 選択を動かすだけなら、History の中だけが変わる（詳細は、頼むときに印をつける）。
         let moved = match code {
             KeyCode::Char('d') if control => Some(self.history.move_selection(page / 2)),
@@ -4016,6 +4764,19 @@ impl App {
                 // 前の語から直せるよう、入れておく。
                 self.typing_query =
                     Some(self.search.as_ref().map_or(String::new(), |s| s.0.clone()));
+                true
+            }
+            // コミットの ID を端末のクリップボードに（印があれば、印をつけたものすべて）。
+            KeyCode::Char('Y') => self.copy_ids(),
+            // 印をつけたコミット: 古い順に cherry-pick、新しい順に revert、編集モードで 1 つにまとめる。
+            KeyCode::Char('y' | 'v') if self.history.mark_count() >= 2 => {
+                self.ask_pick_marked(code == KeyCode::Char('v'))
+            }
+            KeyCode::Char('E') if self.history.mark_count() >= 2 => self.combine_marked(),
+            KeyCode::Char('c' | 'e' | 'F' | 'X') if self.history.mark_count() >= 2 => {
+                self.error = Some(tr!(
+                    "This works on one commit: Esc clears the selection first"
+                ));
                 true
             }
             // 選んでいるコミットを今のブランチに持ってくる・打ち消す・そこをチェックアウトする（先に確かめる）。
@@ -4148,6 +4909,16 @@ impl App {
                     let focused = std::mem::replace(&mut self.focus, Focus::Main);
                     let line = mouse.row - area.y;
                     let selected = match view {
+                        // Ctrl・Alt を押しながらなら、印をつける・外す（アプリの ⌘-クリック。Shift-クリックは
+                        // 端末が文字の選択に使う）。
+                        View::History
+                            if mouse
+                                .modifiers
+                                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+                        {
+                            self.history.click(line);
+                            self.history.toggle_mark()
+                        }
                         View::History => self.history.click(line),
                         View::Reflog => self.reflog.click(line),
                         View::File => self.file.click(line),
@@ -4753,68 +5524,37 @@ impl App {
         }
         if let Some(quick) = &self.quick_open {
             let shown = quick.shown();
-            let name_width = shown.iter().map(|b| b.name.width()).max().unwrap_or(0);
-            let path_width = shown.iter().map(|b| b.path.width()).max().unwrap_or(0);
-            let width = ((name_width + path_width + 9).max(44) as u16).min(area.width);
-            let height = (shown.len().max(1) as u16 + 3).min(area.height);
-            let at = Rect::new(
-                area.x + (area.width - width) / 2,
-                area.y + (area.height - height) / 2,
-                width,
-                height,
+            let rows: Vec<(&str, &str, &str)> = shown
+                .iter()
+                .map(|c| {
+                    let mark = if c.favorite { "★ " } else { "  " };
+                    (mark, c.name.as_str(), c.path.as_str())
+                })
+                .collect();
+            cursor = choice_list(
+                buf,
+                area,
+                &tr!(" Quick Open "),
+                &quick.query,
+                &rows,
+                quick.selected,
+                &tr!("No repository matches"),
             );
-            frame_box(buf, area, at, &tr!(" Quick Open "));
-            let inner = usize::from(width.saturating_sub(4));
-            if height >= 3 {
-                let x = buf
-                    .set_stringn(at.x + 2, at.y + 1, "> ", inner, Style::new())
-                    .0;
-                let x = buf
-                    .set_stringn(
-                        x,
-                        at.y + 1,
-                        &quick.query,
-                        inner.saturating_sub(2),
-                        Style::new(),
-                    )
-                    .0;
-                cursor = Some((x.min(at.right().saturating_sub(2)), at.y + 1));
-            }
-            let rows = usize::from(height.saturating_sub(3));
-            let top = (quick.selected + 1).saturating_sub(rows);
-            if shown.is_empty() && rows > 0 {
-                let none = tr!("No repository matches");
-                buf.set_stringn(
-                    at.x + 2,
-                    at.y + 2,
-                    none,
-                    inner,
-                    Style::new().fg(Color::Indexed(244)),
-                );
-            }
-            for (y, i) in (at.y + 2..at.bottom().saturating_sub(1)).zip(top..shown.len()) {
-                let selected = i == quick.selected;
-                let style = match selected {
-                    true => Style::new().add_modifier(Modifier::REVERSED),
-                    false => Style::new(),
-                };
-                if selected {
-                    for x in at.x + 1..at.right() - 1 {
-                        buf[(x, y)].set_style(style);
-                    }
-                }
-                let mark = if shown[i].favorite { "★ " } else { "  " };
-                let x = buf.set_stringn(at.x + 2, y, mark, inner, style).0;
-                let x = buf
-                    .set_stringn(x, y, &shown[i].name, inner.saturating_sub(2), style)
-                    .0;
-                let path_style = match selected {
-                    true => style,
-                    false => Style::new().fg(Color::Indexed(244)),
-                };
-                let room = usize::from(at.right().saturating_sub(x + 4));
-                buf.set_stringn(x + 2, y, &shown[i].path, room, path_style);
-            }
+        }
+        if let Some(pick) = &self.fixup_pick {
+            let shown = pick.shown();
+            let rows: Vec<(&str, &str, &str)> = shown.iter().map(|(_, s)| ("", *s, "")).collect();
+            let title = match pick.kind {
+                PickKind::Squash => tr!(" Squash Commit For (Tab: fixup!) "),
+                PickKind::Fixup => tr!(" Fixup Commit For (Tab: squash!) "),
+                PickKind::Recent => tr!(" Recent Messages "),
+                PickKind::Insert => tr!(" Insert into the Message "),
+            };
+            let none = match &pick.items {
+                None => tr!("Reading the recent commits…"),
+                Some(_) => tr!("No commit matches"),
+            };
+            cursor = choice_list(buf, area, &title, &pick.query, &rows, pick.selected, &none);
         }
         if let Some(palette) = &self.palette {
             let entries = self.palette_entries(&palette.query);
@@ -4904,6 +5644,77 @@ fn local_path(file: &str) -> String {
 }
 
 /// 画面に重ねる枠を描く（中は空に。題は上の線に）。
+/// 打った語で絞る一覧（Quick Open など）を、画面の中ほどに重ねる。行は（印、名前、薄く添える文）。打つ欄の
+/// カーソルの位置を返す。
+fn choice_list(
+    buf: &mut Buffer,
+    area: Rect,
+    title: &str,
+    query: &str,
+    rows: &[(&str, &str, &str)],
+    selected: usize,
+    none: &str,
+) -> Option<(u16, u16)> {
+    let mark_width = rows.iter().map(|r| r.0.width()).max().unwrap_or(0);
+    let name_width = rows.iter().map(|r| r.1.width()).max().unwrap_or(0);
+    let dim_width = rows.iter().map(|r| r.2.width()).max().unwrap_or(0);
+    let wanted = (mark_width + name_width + dim_width + 7)
+        .max(title.width() + 4)
+        .max(none.width() + 4)
+        .max(44);
+    let width = (wanted as u16).min(area.width);
+    let height = (rows.len().max(1) as u16 + 3).min(area.height);
+    let at = Rect::new(
+        area.x + (area.width - width) / 2,
+        area.y + (area.height - height) / 2,
+        width,
+        height,
+    );
+    frame_box(buf, area, at, title);
+    let inner = usize::from(width.saturating_sub(4));
+    let mut cursor = None;
+    if height >= 3 {
+        let x = buf
+            .set_stringn(at.x + 2, at.y + 1, "> ", inner, Style::new())
+            .0;
+        let x = buf
+            .set_stringn(x, at.y + 1, query, inner.saturating_sub(2), Style::new())
+            .0;
+        cursor = Some((x.min(at.right().saturating_sub(2)), at.y + 1));
+    }
+    let shown = usize::from(height.saturating_sub(3));
+    let top = (selected + 1).saturating_sub(shown);
+    if rows.is_empty() && shown > 0 {
+        let dim = Style::new().fg(Color::Indexed(244));
+        buf.set_stringn(at.x + 2, at.y + 2, none, inner, dim);
+    }
+    for (y, i) in (at.y + 2..at.bottom().saturating_sub(1)).zip(top..rows.len()) {
+        let is_selected = i == selected;
+        let style = match is_selected {
+            true => Style::new().add_modifier(Modifier::REVERSED),
+            false => Style::new(),
+        };
+        if is_selected {
+            for x in at.x + 1..at.right() - 1 {
+                buf[(x, y)].set_style(style);
+            }
+        }
+        let (mark, name, dim) = rows[i];
+        let x = buf.set_stringn(at.x + 2, y, mark, inner, style).0;
+        let room = usize::from(at.right().saturating_sub(x + 2));
+        let x = buf.set_stringn(x, y, name, room, style).0;
+        if !dim.is_empty() {
+            let dim_style = match is_selected {
+                true => style,
+                false => Style::new().fg(Color::Indexed(244)),
+            };
+            let room = usize::from(at.right().saturating_sub(x + 4));
+            buf.set_stringn(x + 2, y, dim, room, dim_style);
+        }
+    }
+    cursor
+}
+
 fn frame_box(buf: &mut Buffer, area: Rect, at: Rect, title: &str) {
     for y in at.y..at.bottom() {
         // 枠の左端が全角の文字の後ろ半分に重なるなら、その文字を消す。
@@ -5049,6 +5860,103 @@ mod tests {
         let mut buf = Buffer::empty(Rect::new(0, 0, 100, 12));
         app.draw(&mut buf, Damage::ALL);
         (0..100).map(|x| buf[(x, 11)].symbol()).collect()
+    }
+
+    /// メッセージの欄の Alt-↑・Alt-↓: 最近のメッセージを新しい順に呼び出し、戻りきると書いていたものに戻す。
+    /// 一覧の `R` は、選んだメッセージを欄に入れる
+    #[test]
+    fn recent_messages_are_recalled_in_the_message_field() {
+        let (_dir, mut app, rx) = app_with_history();
+        let press = |app: &mut App, code: KeyCode, modifiers: KeyModifiers| {
+            app.handle(Event::Input(Input::Key(KeyEvent::new(code, modifiers))));
+        };
+        let typed = |app: &mut App, text: &str| {
+            for ch in text.chars() {
+                press(app, KeyCode::Char(ch), KeyModifiers::NONE);
+            }
+        };
+        typed(&mut app, "1");
+        crate::settle(&mut app, &rx).unwrap();
+        typed(&mut app, "cDraft");
+        press(&mut app, KeyCode::Up, KeyModifiers::ALT);
+        crate::settle(&mut app, &rx).unwrap();
+        assert_eq!(app.changes.message.text(), "Commit 5");
+        press(&mut app, KeyCode::Up, KeyModifiers::ALT);
+        assert_eq!(app.changes.message.text(), "Commit 4");
+        press(&mut app, KeyCode::Down, KeyModifiers::ALT);
+        assert_eq!(app.changes.message.text(), "Commit 5");
+        press(&mut app, KeyCode::Down, KeyModifiers::ALT);
+        assert_eq!(app.changes.message.text(), "Draft");
+        // 戻りきったら、それ以上は何もしない。
+        press(&mut app, KeyCode::Down, KeyModifiers::ALT);
+        assert_eq!(app.changes.message.text(), "Draft");
+
+        press(&mut app, KeyCode::Esc, KeyModifiers::NONE);
+        typed(&mut app, "R");
+        let names: Vec<String> = (app.fixup_pick.as_ref().unwrap().shown().iter())
+            .map(|(_, s)| (*s).to_owned())
+            .collect();
+        assert_eq!(names[..2], ["Commit 5", "Commit 4"]);
+        typed(&mut app, "3");
+        press(&mut app, KeyCode::Enter, KeyModifiers::NONE);
+        assert_eq!(app.changes.message.text(), "Commit 3");
+        assert!(app.fixup_pick.is_none());
+    }
+
+    /// 一覧の `I`: 種類は件名の頭を置き換え、トレーラーは本文の終わりに空行で分けて足す（同じものは足さない）
+    #[test]
+    fn insert_puts_a_type_and_trailers_into_the_message() {
+        let (_dir, mut app, rx) = app_with_history();
+        let press = |app: &mut App, code: KeyCode| {
+            app.handle(Event::Input(Input::Key(KeyEvent::new(
+                code,
+                KeyModifiers::NONE,
+            ))));
+        };
+        let typed = |app: &mut App, text: &str| {
+            for ch in text.chars() {
+                press(app, KeyCode::Char(ch));
+            }
+        };
+        typed(&mut app, "1");
+        crate::settle(&mut app, &rx).unwrap();
+        typed(&mut app, "I");
+        crate::settle(&mut app, &rx).unwrap();
+        let shown: Vec<String> = (app.fixup_pick.as_ref().unwrap().shown().iter())
+            .map(|(_, s)| (*s).to_owned())
+            .collect();
+        assert_eq!(shown[..2], ["feat:", "fix:"]);
+        assert!(shown.contains(&"Co-authored-by: Ann <ann@example.com>".to_owned()));
+        typed(&mut app, "fix:");
+        press(&mut app, KeyCode::Enter);
+        typed(&mut app, "Hello");
+        assert_eq!(app.changes.message.text(), "fix: Hello");
+        press(&mut app, KeyCode::Esc);
+        for _ in 0..2 {
+            typed(&mut app, "Ico-auth");
+            press(&mut app, KeyCode::Enter);
+            press(&mut app, KeyCode::Esc);
+        }
+        assert_eq!(
+            app.changes.message.text(),
+            "fix: Hello\n\nCo-authored-by: Ann <ann@example.com>"
+        );
+        typed(&mut app, "Ifeat:");
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(
+            app.changes.message.text(),
+            "feat: Hello\n\nCo-authored-by: Ann <ann@example.com>"
+        );
+    }
+
+    #[test]
+    fn commit_types_and_trailers_are_recognized() {
+        assert_eq!(strip_commit_type("fix(ui)!: Crash"), "Crash");
+        assert_eq!(strip_commit_type("feat: Add"), "Add");
+        assert_eq!(strip_commit_type("Add a thing"), "Add a thing");
+        assert_eq!(strip_commit_type("see: below"), "below");
+        assert!(is_trailer("Signed-off-by: Ann <a@example.com>"));
+        assert!(!is_trailer("Note that: this is prose"));
     }
 
     /// 編集モードの `r`: 行のメッセージを git のエディタで直す（`#` の行は捨てる）。当てるまで何も変わらない。

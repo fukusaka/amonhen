@@ -1544,7 +1544,7 @@ pub fn show_home(app: &gtk::Application, host: Option<Rc<RepoWindow>>) -> Rc<Rep
             (action == "win.toggle-tab-bar").then(|| tab_bar_title(&window))
         });
     });
-    // 開いたリポジトリは、このタブの場所に置いて、このタブを閉じる（ページがそのリポジトリになる）。
+    // 開いたリポジトリは、このタブの隣に置く（ページは残す。macOS 版と同じ）。
     let (a, t) = (app.clone(), Rc::downgrade(&tab));
     let open: crate::repobrowser::Open = Rc::new(move |location, place| {
         let (Some(tab), Place::Tab) = (t.upgrade(), place) else {
@@ -1558,9 +1558,8 @@ pub fn show_home(app: &gtk::Application, host: Option<Rc<RepoWindow>>) -> Rc<Rep
         if find_open(&location).is_some() {
             return self::open(&a, location, place);
         }
-        let position = host.position(&tab).map(|p| p as u32);
+        let position = host.position(&tab).map(|p| p as u32 + 1);
         open_in(&a, &host, location, position, None);
-        close_tab(&tab);
         host.window.present();
     });
     // Open Recent の項目。ページは残して、新しいタブに開く（macOS 版は File > Open Recent からページを置き換えない）。

@@ -63,6 +63,8 @@ final class HistoryEditController: NSObject {
         case drop(String)
         /// `oid` を、新しい順の並びで `to` 番目へ。
         case move(String, Int)
+        /// `oid` を `onto` のすぐ上へ動かし、`onto` にまとめる（History で重ねて落とした）。
+        case squash(String, onto: String)
     }
 
     private let actions: Actions
@@ -206,6 +208,27 @@ final class HistoryEditController: NSObject {
         update()
     }
 
+    /// 行 `oid` を `target` に重ねて落とした: `target` のすぐ上へ動かし、squash にする。
+    func squash(_ oid: String, onto target: String) {
+        if place(oid, squashingInto: target) { update() }
+    }
+
+    /// 行 `oid` を `target` のすぐ上（新しい側）へ動かし、squash にする。動かすのに並べ替えが要るのに並べ替えられ
+    /// ない（merge を含む）、merge の行、同じ行なら false。
+    private func place(_ oid: String, squashingInto target: String) -> Bool {
+        guard oid != target, let from = rows.firstIndex(where: { $0.oid == oid }), !rows[from].merge,
+              let at = rows.firstIndex(where: { $0.oid == target }), !rows[at].merge,
+              from + 1 == at || reorderable else { return false }
+        let row = rows.remove(at: from)
+        let to = from < at ? at - 1 : at
+        rows.insert(row, at: to)
+        rows[to].newMessage = nil
+        set(.squash, at: to)
+        // 動かした跡で、いちばん古い行が squash のままにならないように（move と同じ）。
+        if let last = rows.indices.last, [.squash, .fixup].contains(rows[last].action) { set(.pick, at: last) }
+        return true
+    }
+
     /// 確かめる用（--edit-commits）: `prefix` で始まる行のすることを、メッセージの欄を開かずに決める。
     func set(_ action: Action, prefix: String, message: String? = nil) {
         guard let i = rows.firstIndex(where: { $0.oid.hasPrefix(prefix) }) else { return }
@@ -251,6 +274,8 @@ final class HistoryEditController: NSObject {
             if let from = rows.firstIndex(where: { $0.oid == oid }), rows.indices.contains(to) {
                 rows.insert(rows.remove(at: from), at: to)
             }
+        case let .squash(oid, target):
+            _ = place(oid, squashingInto: target)
         }
         update()
     }

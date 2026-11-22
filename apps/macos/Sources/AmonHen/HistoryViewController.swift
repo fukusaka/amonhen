@@ -79,26 +79,6 @@ final class FocusTableView: NSTableView {
         if row >= 0, onClickMark?(row, point) == true { return }
         super.mouseDown(with: event)
     }
-    /// ドラッグする行の文字。セルを置いていないので、ドラッグの画像はこれから作る。
-    var dragLabel: ((IndexSet) -> String?)?
-
-    override func dragImageForRows(
-        with dragRows: IndexSet, tableColumns: [NSTableColumn], event: NSEvent, offset: NSPointPointer
-    ) -> NSImage {
-        guard let label = dragLabel?(dragRows) else {
-            return super.dragImageForRows(with: dragRows, tableColumns: tableColumns, event: event, offset: offset)
-        }
-        let text = NSAttributedString(string: label, attributes: [.font: NSFont.systemFont(ofSize: NSFont.systemFontSize)])
-        let size = NSSize(width: min(ceil(text.size().width) + 12, 480), height: rowHeight)
-        return NSImage(size: size, flipped: false) { rect in
-            NSColor.controlBackgroundColor.withAlphaComponent(0.85).setFill()
-            NSBezierPath(roundedRect: rect, xRadius: 4, yRadius: 4).fill()
-            text.draw(with: rect.insetBy(dx: 6, dy: (rect.height - text.size().height) / 2),
-                      options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
-            return true
-        }
-    }
-
     /// 押したキー。true を返せば表に渡さない（History の上で編集するときの p・r・s・f・d・e）。
     var onKey: ((NSEvent) -> Bool)?
 
@@ -447,14 +427,6 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         }
         tableView.dataSource = self
         tableView.delegate = self
-        tableView.dragLabel = { [weak self] rows in
-            guard let self else { return nil }
-            let grabbed = tableView.mouseDownRow
-            guard let shown = rows.contains(grabbed) ? grabbed : rows.first else { return nil }
-            let row = editSource[shown] ?? shown
-            guard let chunk = chunks[row / Self.chunkRows] else { return nil }
-            return chunk.subject(row: row)
-        }
         tableView.onKey = { [weak self] event in
             guard let self else { return false }
             return handleEditKey(event) || handleFoldKey(event)
@@ -1209,7 +1181,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         let selected = (focused ? NSColor.alternateSelectedControlTextColor : NSColor.labelColor).rgba
         let selectedSecondary = (focused ? NSColor.alternateSelectedControlTextColor.withAlphaComponent(0.75)
             : NSColor.secondaryLabelColor).rgba
-        let selection = tableView.selectedRowIndexes
+        // ドラッグの絵は選んでいない行の色で（表の選択の背景は絵に入らない）。
+        let selection = drawingDragImage ? IndexSet() : tableView.selectedRowIndexes
         if rowText.count > 4096 { rowText.removeAll() }
         clippedLabels.removeAll(keepingCapacity: true)
         var unverified: [Data] = []
@@ -1220,6 +1193,15 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         editChips.removeAll(keepingCapacity: true)
         foldBadges.removeAll(keepingCapacity: true)
         for row in rows.location..<last {
+            // ドラッグしている行は空けておく（つかんだ行は絵になって動いている）。どこにも落とせないときは、通る線も薄く。
+            if row == draggingRow {
+                if editor == nil, dropTargets?.isEmpty == true {
+                    text.addRect(CGRect(x: 0, y: tableView.rect(ofRow: row).minY - scrollY, width: textView.bounds.width,
+                                        height: tableView.rowHeight),
+                                 color: NSColor.windowBackgroundColor.withAlphaComponent(0.62).rgba)
+                }
+                continue
+            }
             // History の上で編集しているときは、範囲の行に並べ替えた後のコミットを描く。
             let editIndex = editSlots[row]
             let editRow = editIndex.flatMap { i in editor.map { $0.rows[i] } }
@@ -1329,8 +1311,9 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
                     symbol, pointSize: size, center: CGPoint(x: end - 9, y: rowTop + tableView.rowHeight / 2),
                     color: (isSelected && focused ? selected : color.rgba), scale: scale)
             }
-            // 編集の範囲の外の行は、グラフごと薄くする（上に背景の色を重ねる）。
-            if outside {
+            // 編集の範囲の外の行と、ドラッグで落とせない行（編集できる並びの外）は、グラフごと薄くする（上に背景の色を重ねる）。
+            let undroppable = editor == nil && draggingRow != nil && dropTargets.map { id.map($0.contains) != true } == true
+            if outside || undroppable {
                 text.addRect(CGRect(x: 0, y: rowTop, width: textView.bounds.width, height: tableView.rowHeight),
                              color: NSColor.windowBackgroundColor.withAlphaComponent(0.62).rgba)
             }
@@ -2269,15 +2252,147 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     /// ドラッグの間だけ覚えておく、編集できるコミット（HEAD から最初の merge まで、新しい順の 16 進）。落とせる所を
     /// その場で決める（落としてから「ここには動かせない」と言わない）。
     private var dragChain: [String]?
+    /// ドラッグしている行（表の行）。その行は空けて描く（点も文字も描かない）。
+    private var draggingRow: Int?
+    /// ドラッグの間に落とせる行のコミット（編集できる並び。つかんだコミットが並びの外なら空）。読み終えるまでは nil で、
+    /// それまでは薄くしない。
+    private var dropTargets: Set<Data>?
+    /// ドラッグの絵を描いている（選んだ色にしない）。
+    private var drawingDragImage = false
+
+    /// `row` の行を、画面と同じ絵（グラフの点と線・札・件名・作者）にする。置き場所は表の座標。
+    private func rowImage(_ row: Int) -> (image: NSImage, frame: NSRect)? {
+        guard let history, row < tableView.numberOfRows else { return nil }
+        let scale = view.window?.backingScaleFactor ?? 2
+        let graphScrollY = tableView.convert(NSPoint(x: 0, y: 0), from: graphView).y
+        let textScrollY = tableView.convert(NSPoint(x: 0, y: 0), from: textView).y
+        drawingDragImage = true
+        buildText(scale: scale)
+        drawingDragImage = false
+        guard let graph = renderer.image(history: history, size: graphView.bounds.size, scale: scale, scrollY: Float(graphScrollY)),
+              let text = text.image(size: textView.bounds.size, scale: scale, background: .zero) else { return nil }
+        // 次の描画で、選んだ色の文字に戻す。
+        DispatchQueue.main.async { [weak self] in self?.redrawText() }
+        let rowRect = tableView.rect(ofRow: row)
+        let left = tableView.convert(NSPoint(x: 0, y: 0), from: textView).x
+        let column = tableView.rect(ofColumn: 1).insetBy(dx: 5, dy: 0)
+        let frame = NSRect(x: left, y: rowRect.minY, width: max(1, min(column.maxX, tableView.visibleRect.maxX) - left),
+                           height: rowRect.height)
+        func crop(_ image: CGImage, top: CGFloat) -> CGImage? {
+            image.cropping(to: CGRect(x: 0, y: top * scale, width: frame.width * scale, height: frame.height * scale)
+                .integral.intersection(CGRect(x: 0, y: 0, width: image.width, height: image.height)))
+        }
+        let graphRow = crop(graph, top: rowRect.minY - graphScrollY)
+        let textRow = crop(text, top: rowRect.minY - textScrollY)
+        let appearance = view.effectiveAppearance
+        let image = NSImage(size: frame.size, flipped: false) { rect in
+            appearance.performAsCurrentDrawingAppearance {
+                let shape = NSBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), xRadius: 5, yRadius: 5)
+                NSColor.controlBackgroundColor.withAlphaComponent(0.92).setFill()
+                shape.fill()
+                NSColor.separatorColor.setStroke()
+                shape.stroke()
+            }
+            guard let context = NSGraphicsContext.current?.cgContext else { return true }
+            for image in [graphRow, textRow].compactMap({ $0 }) {
+                context.draw(image, in: CGRect(x: 0, y: rect.height - CGFloat(image.height) / scale,
+                                               width: CGFloat(image.width) / scale, height: CGFloat(image.height) / scale))
+            }
+            return true
+        }
+        return (image, frame)
+    }
 
     func tableView(_ tableView: NSTableView, draggingSession session: NSDraggingSession, willBeginAt screenPoint: NSPoint, forRowIndexes rowIndexes: IndexSet) {
         dragChain = nil
+        dropTargets = nil
+        let grabbed = self.tableView.mouseDownRow
+        let row = rowIndexes.contains(grabbed) ? grabbed : rowIndexes.first
+        // 運ぶ絵は、その行と同じ絵（セルを置いていないので作る）。行の上にそのまま重ねて持ち上げる。空ける前に描く。
+        draggingRow = nil
+        if let row, let (image, frame) = rowImage(row) {
+            session.enumerateDraggingItems(
+                options: [], for: tableView, classes: [NSPasteboardItem.self], searchOptions: [:]
+            ) { item, _, _ in
+                item.setDraggingFrame(frame, contents: image)
+            }
+        }
+        draggingRow = row
+        renderer.hiddenRow = row
+        redrawGraph()
+        redrawText()
         guard let actions, editor == nil else { return }
-        Task { @MainActor in dragChain = await actions.editableCommits() }
+        Task { @MainActor in
+            let chain = await actions.editableCommits()
+            guard draggingRow != nil else { return }
+            dragChain = chain
+            let dragged = draggingRow.flatMap { r in history?.commitID(row: editSource[r] ?? r) }
+            let ids = chain.compactMap(Data.init(hex:))
+            dropTargets = dragged.map { ids.contains($0) } == true ? Set(ids) : []
+            redrawText()
+        }
+    }
+
+    func tableView(_ tableView: NSTableView, draggingSession session: NSDraggingSession, movedTo screenPoint: NSPoint) {
+        // 窓の外では、落とすと drop にする（戻る絵を出さず、消える形のカーソル）。
+        let outside = draggedOutside(screenPoint) && canDropDragged(session)
+        session.animatesToStartingPositionsOnCancelOrFail = !outside
+        if outside { NSCursor.disappearingItem.set() }
     }
 
     func tableView(_ tableView: NSTableView, draggingSession session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
+        let oid = session.draggingPasteboard.string(forType: .commitID)
+        // 窓の外へ落とした（Esc で取り消したのではない）なら、そのコミットを drop にする（Apply まで変えない）。
+        let dropping = operation.isEmpty && draggedOutside(screenPoint) && canDropDragged(session)
+            && NSApp.currentEvent?.type == .leftMouseUp
+        let chain = dragChain
         dragChain = nil
+        dropTargets = nil
+        draggingRow = nil
+        renderer.hiddenRow = nil
+        redrawGraph()
+        redrawText()
+        guard dropping, let oid else { return }
+        NSCursor.arrow.set()
+        NSAnimationEffect.disappearingItemDefault.show(centeredAt: screenPoint, size: .zero)
+        if let editor {
+            editor.choose(.drop, for: oid)
+            return
+        }
+        guard let actions else { return }
+        Task { @MainActor in
+            let chain = if let chain { chain } else { await actions.editableCommits() }
+            guard chain.contains(oid) else { return NSSound.beep() }
+            self.onEditCommits?(oid, .drop(oid))
+        }
+    }
+
+    /// `dragged` を表の行 `row` に重ねて落としたときに、まとめる先のコミット（16 進）。まとめられなければ nil
+    /// （同じコミット、merge、編集の範囲・編集できる並びの外。並びを読み終えるまでは、落としてから確かめる）。
+    private func squashTarget(_ dragged: String, row: Int) -> String? {
+        if let editor {
+            guard let slot = editSlots[row], editor.rows.indices.contains(slot) else { return nil }
+            let target = editor.rows[slot]
+            return target.oid != dragged && !target.merge ? target.oid : nil
+        }
+        guard let history, row < history.rowCount,
+              let target = history.commitID(row: row).map({ $0.map { String(format: "%02x", $0) }.joined() }),
+              target != dragged else { return nil }
+        if let chain = dragChain, !(chain.contains(dragged) && chain.contains(target)) { return nil }
+        return target
+    }
+
+    /// 窓の外にいる。
+    private func draggedOutside(_ screenPoint: NSPoint) -> Bool {
+        view.window.map { !$0.frame.contains(screenPoint) } ?? false
+    }
+
+    /// 運んでいるコミットを drop にできる（編集の間は範囲の merge でない行、外では編集できる並びの行。並びを読み
+    /// 終えるまでは、できるものとして扱う）。
+    private func canDropDragged(_ session: NSDraggingSession) -> Bool {
+        guard let oid = session.draggingPasteboard.string(forType: .commitID) else { return false }
+        if let editor { return editor.choices(for: oid).contains(.drop) }
+        return dragChain.map { $0.contains(oid) } ?? true
     }
 
     func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> (any NSPasteboardWriting)? {
@@ -2297,6 +2412,10 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         proposedDropOperation op: NSTableView.DropOperation
     ) -> NSDragOperation {
         guard info.draggingSource as? NSTableView === tableView, let history else { return [] }
+        // 行の上に重ねたら、そのコミットにまとめる（squash）。まとめられない行なら、行の間へ並べ替える。
+        if op == .on, let dragged = info.draggingPasteboard.string(forType: .commitID), squashTarget(dragged, row: row) != nil {
+            return .move
+        }
         if editor != nil {
             // 範囲の中か、範囲のすぐ下へ。
             guard let last = editSlots.keys.max(), editSlots[row] != nil || row == last + 1 else { return [] }
@@ -2320,6 +2439,20 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         _ tableView: NSTableView, acceptDrop info: any NSDraggingInfo, row: Int, dropOperation: NSTableView.DropOperation
     ) -> Bool {
         guard let actions, let history, let oid = info.draggingPasteboard.string(forType: .commitID) else { return false }
+        if dropOperation == .on {
+            guard let target = squashTarget(oid, row: row) else { return false }
+            if let editor {
+                editor.squash(oid, onto: target)
+                return true
+            }
+            // 範囲は、2 つの古い方から HEAD まで。
+            Task {
+                let chain = await actions.editableCommits()
+                guard let from = chain.firstIndex(of: oid), let to = chain.firstIndex(of: target) else { return NSSound.beep() }
+                await MainActor.run { self.onEditCommits?(chain[max(from, to)], .squash(oid, onto: target)) }
+            }
+            return true
+        }
         if let editor {
             guard let from = editor.rows.firstIndex(where: { $0.oid == oid }) else { return false }
             let target = editSlots[row] ?? editor.rows.count

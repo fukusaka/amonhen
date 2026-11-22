@@ -1,6 +1,8 @@
-//! 窓のタブ（macOS 版の窓のタブ、GTK4 版の `tabs.rs`）。タブはリポジトリの場所と、出す画面だけを持つ。前に出して
-//! いるタブのリポジトリだけを開いておき、タブを替えると根の部品を作り直して、そのタブのリポジトリを開く（History は
-//! 永続のキャッシュから読むので速い）。
+//! 窓のタブ（macOS 版の窓のタブ、GTK4 版の `tabs.rs`）。タブはリポジトリの場所と、出す画面を持つ。どのタブも
+//! そのリポジトリを開いたまま持ち（窓の根の部品が、タブごとに 1 つ）、前のタブだけを見せる。
+//!
+//! 窓はどれも同じプロセスにある。前に出ている窓のタブの並びを `TABS`・`ACTIVE`・`REMOUNT` に置き（タブの操作は
+//! その窓に効く）、ほかの窓のものは `WINDOWS` に取っておく。窓が前に出たら入れ替える（[`focus`]）。
 
 use std::cell::{Cell, RefCell};
 
@@ -18,14 +20,146 @@ pub struct Tab {
     pub working_copy: bool,
     /// File History のタブ（そのファイルのパス。macOS 版・GTK4 版と同じく、リポジトリのタブの隣に開く）。
     pub file_history: Option<String>,
+    /// 別の窓に出したマージエディタ（そのファイルと、打ちかけの Result を入れた一時ファイル）。
+    pub merge: Option<String>,
+    pub merge_text: Option<String>,
 }
 
 thread_local! {
     static TABS: RefCell<Vec<Tab>> = const { RefCell::new(Vec::new()) };
     static ACTIVE: Cell<usize> = const { Cell::new(0) };
     static NEXT_ID: Cell<u64> = const { Cell::new(1) };
-    /// 前のタブを替えたときに、根の部品を作り直させる。
+    /// タブの並び・前のタブ・名前が変わったときに、窓の外側の部品を描き直させる。
     static REMOUNT: RefCell<Option<Box<dyn Fn()>>> = const { RefCell::new(None) };
+    /// タブごとの名前（● と ↑↓ を添えたもの。それぞれのタブの根の部品が知らせる）と、変わった回数。
+    static TITLES: RefCell<std::collections::HashMap<u64, String>> = RefCell::new(Default::default());
+    static TITLES_CHANGED: Cell<u64> = const { Cell::new(0) };
+    /// 前に出ている窓の番号と、ほかの窓のタブの並び（前のタブ、描き直させるもの）。
+    static FOCUSED: Cell<u64> = const { Cell::new(1) };
+    static WINDOWS: RefCell<std::collections::HashMap<u64, Window>> = RefCell::new(Default::default());
+    static NEXT_WINDOW: Cell<u64> = const { Cell::new(2) };
+}
+
+/// 後ろの窓のタブの並び。
+#[derive(Default)]
+struct Window {
+    tabs: Vec<Tab>,
+    active: usize,
+    remount: Option<Box<dyn Fn()>>,
+}
+
+/// 前に出ている窓の番号。
+pub fn focused() -> u64 {
+    FOCUSED.with(Cell::get)
+}
+
+/// 新しい窓のタブの並び（窓はまだ後ろ。開いて前に出たら [`focus`] で入れ替わる）。窓の番号を返す。
+pub fn new_window(locations: &[String], active: usize) -> u64 {
+    let tabs: Vec<Tab> = locations.iter().map(|l| tab(l, false, false)).collect();
+    new_window_with(tabs, active)
+}
+
+/// 新しい窓（タブをそのまま渡す。Repositories の画面から出すタブなど）。
+pub fn new_window_with(tabs: Vec<Tab>, active: usize) -> u64 {
+    let id = NEXT_WINDOW.with(|n| {
+        let id = n.get();
+        n.set(id + 1);
+        id
+    });
+    let active = active.min(tabs.len().saturating_sub(1));
+    WINDOWS.with(|w| {
+        w.borrow_mut().insert(
+            id,
+            Window {
+                tabs,
+                active,
+                remount: None,
+            },
+        );
+    });
+    id
+}
+
+/// 窓 `id` が前に出た。前の窓のタブの並びを取っておき、`id` のものを今のものにする。
+pub fn focus(id: u64) {
+    let now = focused();
+    if now == id {
+        return;
+    }
+    let Some(next) = WINDOWS.with(|w| w.borrow_mut().remove(&id)) else {
+        return;
+    };
+    let previous = Window {
+        tabs: TABS.with(|t| std::mem::replace(&mut *t.borrow_mut(), next.tabs)),
+        active: ACTIVE.with(|a| a.replace(next.active)),
+        remount: REMOUNT.with(|r| std::mem::replace(&mut *r.borrow_mut(), next.remount)),
+    };
+    // 閉じた窓のもの（タブがない）は取っておかない。
+    if !previous.tabs.is_empty() {
+        WINDOWS.with(|w| w.borrow_mut().insert(now, previous));
+    }
+    FOCUSED.with(|f| f.set(id));
+}
+
+/// 窓 `id` を閉じた（タブの並びを捨てる）。前の窓なら、ほかの窓が前に出るまで空にしておく。
+pub fn forget_window(id: u64) {
+    if id == focused() {
+        TABS.with(|t| t.borrow_mut().clear());
+        REMOUNT.with(|r| *r.borrow_mut() = None);
+    } else {
+        WINDOWS.with(|w| w.borrow_mut().remove(&id));
+    }
+}
+
+/// 窓 `window` のタブの並び。
+pub fn tabs_of(window: u64) -> Vec<Tab> {
+    if window == focused() {
+        tabs()
+    } else {
+        WINDOWS.with(|w| {
+            w.borrow()
+                .get(&window)
+                .map(|w| w.tabs.clone())
+                .unwrap_or_default()
+        })
+    }
+}
+
+/// 窓 `window` の前のタブの位置。
+pub fn active_of(window: u64) -> usize {
+    if window == focused() {
+        active()
+    } else {
+        WINDOWS.with(|w| w.borrow().get(&window).map_or(0, |w| w.active))
+    }
+}
+
+/// 開いている窓（前に出ている窓が先）の番号と、その前のタブ。
+pub fn windows() -> Vec<(u64, Option<Tab>)> {
+    let mut out = vec![(focused(), current())];
+    WINDOWS.with(|w| {
+        let w = w.borrow();
+        let mut ids: Vec<u64> = w.keys().copied().collect();
+        ids.sort_unstable();
+        for id in ids {
+            let window = &w[&id];
+            out.push((id, window.tabs.get(window.active).cloned()));
+        }
+    });
+    out
+}
+
+/// 窓 `window` を描き直す。
+fn refresh_window(window: u64) {
+    if window == focused() {
+        refresh();
+    } else {
+        WINDOWS.with(|w| {
+            if let Some(f) = w.borrow().get(&window).and_then(|w| w.remount.as_ref()) {
+                f();
+            }
+        });
+    }
 }
 
 fn new_id() -> u64 {
@@ -43,6 +177,38 @@ fn tab(location: &str, repositories: bool, working_copy: bool) -> Tab {
         repositories,
         working_copy,
         file_history: None,
+        merge: None,
+        merge_text: None,
+    }
+}
+
+/// 新しい窓に出すタブ（`repositories` なら Repositories の画面から）。
+pub fn make(location: &str, repositories: bool) -> Tab {
+    tab(location, repositories, false)
+}
+
+/// 起動したときの前のタブに、別の窓に出したマージエディタを渡す（`--merge`）。
+pub fn set_merge(merge: Option<String>, text: Option<String>) {
+    TABS.with(|t| {
+        if let Some(tab) = t.borrow_mut().get_mut(active()) {
+            tab.merge = merge;
+            tab.merge_text = text;
+        }
+    });
+}
+
+/// 窓 `window` のタブを覚える形（[`saved`] と同じ）。
+pub fn saved_of(window: u64) -> String {
+    if window == focused() {
+        saved()
+    } else {
+        let (tabs, active) = WINDOWS.with(|w| {
+            w.borrow()
+                .get(&window)
+                .map(|w| (w.tabs.clone(), w.active))
+                .unwrap_or_default()
+        });
+        saved_from(&tabs, active)
     }
 }
 
@@ -64,9 +230,17 @@ pub fn init(
     ACTIVE.with(|a| a.set(active));
 }
 
-/// タブを替えたときに呼ぶもの（窓の外側の部品が渡す）。
-pub fn set_remount(f: impl Fn() + 'static) {
-    REMOUNT.with(|r| *r.borrow_mut() = Some(Box::new(f)));
+/// 窓 `window` のタブが変わったときに呼ぶもの（その窓の外側の部品が渡す）。
+pub fn set_remount(window: u64, f: impl Fn() + 'static) {
+    if window == focused() {
+        REMOUNT.with(|r| *r.borrow_mut() = Some(Box::new(f)));
+    } else {
+        WINDOWS.with(|w| {
+            if let Some(w) = w.borrow_mut().get_mut(&window) {
+                w.remount = Some(Box::new(f));
+            }
+        });
+    }
 }
 
 pub fn tabs() -> Vec<Tab> {
@@ -93,12 +267,16 @@ pub fn name(location: &str) -> String {
         .to_owned()
 }
 
-/// `index` のタブを前に出し、そのリポジトリを開き直す。
+/// `index` のタブを前に出す（どのタブもリポジトリを開いたままなので、見せるものを替えるだけ）。
 fn activate(index: usize) {
+    // 今の前のタブの、窓の入力の部品を取っておく（前に戻したら戻す）。
+    crate::app::leave_front();
     ACTIVE.with(|a| a.set(index));
-    if let Some(tab) = current() {
-        crate::app::set_target(&tab);
-    }
+    refresh();
+}
+
+/// 窓の外側の部品を描き直す。
+fn refresh() {
     REMOUNT.with(|r| {
         if let Some(f) = r.borrow().as_ref() {
             f();
@@ -106,14 +284,66 @@ fn activate(index: usize) {
     });
 }
 
+/// タブ `id` の名前を知らせる（変わったときだけ描き直す）。
+pub fn set_title(id: u64, title: &str) {
+    let changed = TITLES.with(|t| {
+        let mut titles = t.borrow_mut();
+        if titles.get(&id).map(String::as_str) == Some(title) {
+            false
+        } else {
+            titles.insert(id, title.to_owned());
+            true
+        }
+    });
+    if changed {
+        TITLES_CHANGED.with(|c| c.set(c.get() + 1));
+        // そのタブのある窓を描き直す。
+        let window = if tabs().iter().any(|t| t.id == id) {
+            focused()
+        } else {
+            WINDOWS.with(|w| {
+                w.borrow()
+                    .iter()
+                    .find(|(_, w)| w.tabs.iter().any(|t| t.id == id))
+                    .map_or(0, |(id, _)| *id)
+            })
+        };
+        refresh_window(window);
+    }
+}
+
+/// タブ `id` の名前（まだ知らされていなければ None）。
+pub fn title(id: u64) -> Option<String> {
+    TITLES.with(|t| t.borrow().get(&id).cloned())
+}
+
+/// 名前が変わった回数（窓の外側の部品が、根の部品に描き直させるために渡す）。
+pub fn titles_changed() -> u64 {
+    TITLES_CHANGED.with(Cell::get)
+}
+
 /// 前のタブが今どの画面か（替えて戻ったときに同じ画面から出す）。
 pub fn note_page(working_copy: bool) {
     TABS.with(|t| {
         if let Some(tab) = t.borrow_mut().get_mut(active()) {
             tab.working_copy = working_copy;
-            tab.repositories = false;
         }
     });
+}
+
+/// Repositories のタブを前に出す（macOS 版の Repositories のウインドウのタブ）。この窓にあればそれを、なければ
+/// 今のタブの右に新しく開く。そこで選んだリポジトリは、そのタブに開く。
+pub fn show_repositories() {
+    let found = TABS.with(|t| t.borrow().iter().position(|tab| tab.repositories));
+    match found {
+        Some(index) => select(index),
+        None => new_tab(),
+    }
+}
+
+/// 今のタブが Repositories のタブか。
+pub fn current_is_repositories() -> bool {
+    current().is_some_and(|tab| tab.repositories)
 }
 
 /// `index` のタブを前に出す（もう前なら何もしない）。
@@ -166,13 +396,48 @@ pub fn open_file_history(location: &str, path: &str) {
 /// リポジトリを新しいタブで開く。
 pub fn open(location: &str) -> Result<(), String> {
     check(location)?;
-    insert(tab(location, false, false));
+    if !select_open(location) {
+        insert(tab(location, false, false));
+    }
     Ok(())
+}
+
+/// 同じリポジトリ（大文字小文字・区切りの向き・末尾の区切りの違いは同じとみなす）。
+fn same_location(a: &str, b: &str) -> bool {
+    let key = |s: &str| {
+        let s = std::fs::canonicalize(s).map_or_else(|_| s.to_owned(), |p| p.display().to_string());
+        let s = s.strip_prefix(r"\\?\").unwrap_or(&s).replace('/', "\\");
+        s.trim_end_matches('\\').to_lowercase()
+    };
+    key(a) == key(b)
+}
+
+/// `location` のリポジトリをもう開いているタブ（File History・Repositories のタブは除く）があれば、そのタブを
+/// 前に出して true（macOS 版と同じく、同じリポジトリのタブを重ねて開かない）。
+fn select_open(location: &str) -> bool {
+    let found = TABS.with(|t| {
+        t.borrow().iter().position(|tab| {
+            !tab.repositories
+                && tab.file_history.is_none()
+                && same_location(&tab.location, location)
+        })
+    });
+    match found {
+        Some(index) => {
+            select(index);
+            true
+        }
+        None => false,
+    }
 }
 
 /// 今のタブのリポジトリを替える（Repositories の Open、worktree の切り替え）。
 pub fn replace(location: &str, working_copy: bool) -> Result<(), String> {
     check(location)?;
+    // もう開いているリポジトリなら、そのタブに移る（このタブはそのまま。macOS 版と同じ）。
+    if select_open(location) {
+        return Ok(());
+    }
     let index = active();
     TABS.with(|t| {
         if let Some(tab) = t.borrow_mut().get_mut(index) {
@@ -201,13 +466,16 @@ pub fn close(id: u64) -> bool {
         return true;
     }
     TABS.with(|t| t.borrow_mut().remove(index));
-    // 後ろに置いていた、そのタブのリポジトリを閉じる。
-    crate::app::forget_parked(id);
+    TITLES.with(|t| t.borrow_mut().remove(&id));
     let active = active();
     if index == active {
         activate(index.min(len - 2));
-    } else if index < active {
-        ACTIVE.with(|a| a.set(active - 1));
+    } else {
+        if index < active {
+            ACTIVE.with(|a| a.set(active - 1));
+        }
+        // 閉じたタブの根の部品を外す。
+        refresh();
     }
     false
 }
@@ -242,29 +510,26 @@ pub fn reorder(order: &[String]) {
 
 /// 覚えておく形（次に引数なしで起動したときに開き直す）。
 pub fn saved() -> String {
+    TABS.with(|t| saved_from(&t.borrow(), active()))
+}
+
+fn saved_from(tabs: &[Tab], now: usize) -> String {
     // File History のタブは覚えない（リポジトリのタブだけを戻す）。前のタブがそれなら、その左のリポジトリのタブ。
-    let now = active();
-    let (locations, active) = TABS.with(|t| {
-        let tabs = t.borrow();
-        let before = tabs[..now.min(tabs.len())]
-            .iter()
-            .filter(|tab| tab.file_history.is_none())
-            .count();
-        let kept = tabs.get(now).is_some_and(|tab| tab.file_history.is_none());
-        let locations: Vec<String> = tabs
-            .iter()
-            .filter(|tab| tab.file_history.is_none())
-            .map(|tab| tab.location.clone())
-            .collect();
-        (
-            locations,
-            if kept {
-                before
-            } else {
-                before.saturating_sub(1)
-            },
-        )
-    });
+    let before = tabs[..now.min(tabs.len())]
+        .iter()
+        .filter(|tab| tab.file_history.is_none())
+        .count();
+    let kept = tabs.get(now).is_some_and(|tab| tab.file_history.is_none());
+    let locations: Vec<String> = tabs
+        .iter()
+        .filter(|tab| tab.file_history.is_none())
+        .map(|tab| tab.location.clone())
+        .collect();
+    let active = if kept {
+        before
+    } else {
+        before.saturating_sub(1)
+    };
     json!({ "tabs": locations, "active": active }).to_string()
 }
 

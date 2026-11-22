@@ -532,6 +532,173 @@ fn amend_rewrites_the_last_commit() {
     assert_eq!(git_out(dir.path(), &["status", "--porcelain"]), "");
 }
 
+/// `F`: 今のブランチの最近のコミットの件名を選び、欄を fixup! にしてコミットする（fixup! の件名は候補に出さない）。
+/// Tab で squash! にすると、書いていた本文は残る
+#[test]
+fn fixup_and_squash_commit_for_a_recent_commit() {
+    let dir = tempfile::tempdir().unwrap();
+    two_lines(dir.path());
+    commit(dir.path(), BASE + DAY, "Add the graph");
+    commit(dir.path(), BASE + DAY * 2, "fixup! Start");
+    let front = || {
+        amonhen_model::testing::isolate_from_user_settings();
+        open(dir.path())
+    };
+    let listed = amonhen_tui::snapshot(front(), 100, 16, clock(), "1 F").unwrap();
+    println!("{listed}");
+    assert!(
+        listed.contains(" Fixup Commit For (Tab: squash!) "),
+        "{listed}"
+    );
+    assert!(listed.contains("Add the graph"), "{listed}");
+    assert!(!listed.contains("fixup! Start"), "{listed}");
+    let narrowed = amonhen_tui::snapshot(front(), 100, 16, clock(), "1 Fsta").unwrap();
+    assert!(!narrowed.contains("Add the graph"), "{narrowed}");
+
+    let done = amonhen_tui::snapshot(front(), 100, 16, clock(), "1 Fgraph\n\x13").unwrap();
+    println!("{done}");
+    assert_eq!(
+        git_out(dir.path(), &["log", "-1", "--format=%B"]).trim_end(),
+        "fixup! Add the graph"
+    );
+
+    std::fs::write(dir.path().join("a.txt"), "one\n").unwrap();
+    let keys = "1 cDraft\n\nKept body\x1bF\tgraph\n\x13";
+    let done = amonhen_tui::snapshot(front(), 100, 16, clock(), keys).unwrap();
+    println!("{done}");
+    assert_eq!(
+        git_out(dir.path(), &["log", "-1", "--format=%B"]).trim_end(),
+        "squash! Add the graph\n\nKept body"
+    );
+}
+
+/// untracked のファイルで `i`: そのパスか拡張子のパターンを .gitignore に足す（もうあれば足さない）
+#[test]
+fn i_adds_an_untracked_file_to_gitignore() {
+    let dir = tempfile::tempdir().unwrap();
+    git(dir.path(), BASE, &["init", "-q", "-b", "main"]);
+    commit(dir.path(), BASE, "Start");
+    std::fs::write(dir.path().join("notes.log"), "x\n").unwrap();
+    let front = || {
+        amonhen_model::testing::isolate_from_user_settings();
+        open(dir.path())
+    };
+    let asked = amonhen_tui::snapshot(front(), 100, 14, clock(), "1i").unwrap();
+    println!("{asked}");
+    assert!(asked.contains("Add to .gitignore:"), "{asked}");
+    assert!(asked.contains("*.log"), "{asked}");
+    let done = amonhen_tui::snapshot(front(), 100, 14, clock(), "1ie").unwrap();
+    println!("{done}");
+    assert!(done.contains("Added to .gitignore"), "{done}");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join(".gitignore")).unwrap(),
+        "*.log\n"
+    );
+    // .gitignore だけが残る（notes.log は無視される）。`p` でそのパス。
+    std::fs::write(dir.path().join("todo.txt"), "x\n").unwrap();
+    let keys = "1jip";
+    let listed = amonhen_tui::snapshot(front(), 100, 14, clock(), "1").unwrap();
+    println!("{listed}");
+    let done = amonhen_tui::snapshot(front(), 100, 14, clock(), keys).unwrap();
+    println!("{done}");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join(".gitignore")).unwrap(),
+        "*.log\ntodo.txt\n"
+    );
+}
+
+/// Working Copy の `v`: パス → 木（フォルダの行で中をまとめて stage、Enter で畳む）→ ファイル名。`/` でパスを絞る
+#[test]
+fn the_working_copy_lists_a_tree_or_names_and_filters() {
+    let dir = tempfile::tempdir().unwrap();
+    git(dir.path(), BASE, &["init", "-q", "-b", "main"]);
+    commit(dir.path(), BASE, "Start");
+    for path in ["src/a.rs", "src/b.rs", "docs/guide.md", "top.txt"] {
+        let file = dir.path().join(path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, "x\n").unwrap();
+    }
+    let front = || {
+        amonhen_model::testing::isolate_from_user_settings();
+        open(dir.path())
+    };
+    let list = |keys: &str| -> Vec<String> {
+        let text = amonhen_tui::snapshot(front(), 100, 16, clock(), keys).unwrap();
+        println!("{text}");
+        (text.lines().skip(1).take(7))
+            .filter_map(|l| column(l, 1))
+            .map(|l| l.trim_end().to_owned())
+            .collect()
+    };
+    assert_eq!(
+        list("1v")[..6],
+        [
+            "[ ]   ▾ docs/",
+            "[ ] ?   guide.md",
+            "[ ]   ▾ src/",
+            "[ ] ?   a.rs",
+            "[ ] ?   b.rs",
+            "[ ] ? top.txt"
+        ]
+    );
+    // 選んでいたファイル（guide.md）は木でも選んだまま。1 つ下の src/ で Space: 中のすべてを stage。Enter で畳む。
+    let staged = list("1vj \n");
+    assert_eq!(staged[2..4], ["[x]   ▸ src/", "[ ] ? top.txt"]);
+    assert_eq!(
+        git_out(dir.path(), &["diff", "--cached", "--name-only"]),
+        "src/a.rs\nsrc/b.rs\n"
+    );
+    // ファイル名を先に、フォルダは後ろに。
+    let names = list("1vv");
+    assert!(
+        names
+            .iter()
+            .any(|l| l.starts_with("[x] A a.rs") && l.ends_with("src")),
+        "{names:?}"
+    );
+    // パスで絞る。
+    let filtered = list("1/src\n");
+    assert_eq!(filtered[..3], ["[x] A src/a.rs", "[x] A src/b.rs", ""]);
+}
+
+/// 書きかけのメッセージは `<git dir>/amonhen/commit-draft` に残り、次に開いたときに欄に戻る。コミットすると消える。
+/// 下書きがなければ `commit.template`（`#` の行を除く）を入れ、書き足すまでは下書きにしない
+#[test]
+fn the_message_draft_is_kept_and_the_template_fills_an_empty_field() {
+    let dir = tempfile::tempdir().unwrap();
+    two_lines(dir.path());
+    let draft = dir.path().join(".git/amonhen/commit-draft");
+    let front = || {
+        amonhen_model::testing::isolate_from_user_settings();
+        open(dir.path())
+    };
+    // テンプレートで始まる。触らなければ下書きにしない。
+    std::fs::write(dir.path().join("template.txt"), "Area: \n# what changed\n").unwrap();
+    let template = dir.path().join("template.txt");
+    git(
+        dir.path(),
+        BASE,
+        &["config", "commit.template", template.to_str().unwrap()],
+    );
+    let shown = amonhen_tui::snapshot(front(), 100, 14, clock(), "1").unwrap();
+    println!("{shown}");
+    assert!(shown.contains(" Area:"), "{shown}");
+    assert!(!shown.contains("what changed"), "{shown}");
+    assert!(!draft.exists());
+    // 欄を離れると、書きかけを覚える。
+    amonhen_tui::snapshot(front(), 100, 14, clock(), "1cparser\x1b").unwrap();
+    assert_eq!(std::fs::read_to_string(&draft).unwrap(), "Area: parser");
+    let shown = amonhen_tui::snapshot(front(), 100, 14, clock(), "1").unwrap();
+    assert!(shown.contains(" Area: parser"), "{shown}");
+    // コミットすると消える。
+    amonhen_tui::snapshot(front(), 100, 14, clock(), "1 \x13").unwrap();
+    assert_eq!(
+        git_out(dir.path(), &["log", "-1", "--format=%s"]),
+        "Area: parser\n"
+    );
+    assert!(!draft.exists());
+}
+
 /// サイドバー: Workspace の行と、Branches・Tags。ref を開くと、History でそのコミットを選ぶ
 #[test]
 fn sidebar_lists_refs_and_jumps_to_them() {
@@ -2723,4 +2890,151 @@ fn fast_wheel_scrolling_never_outruns_the_rows() {
     for _ in 0..2000 {
         scroll.step().unwrap();
     }
+}
+
+/// History の複数選択: Shift-↓ で続けて、`m` で 1 つずつ印をつけ、詳細にその差分を出す（アプリと同じ取り方）
+#[test]
+fn several_selected_commits_show_their_diff_together() {
+    let dir = tempfile::tempdir().unwrap();
+    four_lines(dir.path());
+    // Four と Three: 続いているので、まとめた差分（Two の後に足した 2 行）。
+    let range = amonhen_tui::snapshot(open(dir.path()), 160, 24, clock(), "⇣").unwrap();
+    println!("{range}");
+    assert!(range.contains("2 commits · 1 author"), "{range}");
+    assert!(
+        range.contains("The changes of the 2 commits together"),
+        "{range}"
+    );
+    assert!(range.contains("+2 −0"), "{range}");
+    assert!(
+        range.contains("+Three") && range.contains("+Four"),
+        "{range}"
+    );
+    assert!(!range.contains("+Two"), "{range}");
+    // Four と Two（Three を飛ばす）: 2 つの間の差分。`x` で向きを入れ替える。
+    let pair = amonhen_tui::snapshot(open(dir.path()), 160, 24, clock(), "mjjm").unwrap();
+    assert!(pair.contains("x swaps the direction"), "{pair}");
+    assert!(pair.contains("+Three") && pair.contains("+Four"), "{pair}");
+    println!("{pair}");
+    let swapped = amonhen_tui::snapshot(open(dir.path()), 160, 24, clock(), "mjjmx").unwrap();
+    assert!(
+        swapped.contains("-Three") && swapped.contains("-Four"),
+        "{swapped}"
+    );
+    // 3 つを飛び飛びに: コミットごとの差分。
+    let each = amonhen_tui::snapshot(open(dir.path()), 160, 24, clock(), "mjjmjm").unwrap();
+    println!("{each}");
+    assert!(each.contains("3 commits"), "{each}");
+    assert!(each.contains("Each commit's changes"), "{each}");
+    // History を読み直しても（タグを作った）、同じコミットに印が残る。
+    let reloaded = amonhen_tui::snapshot(open(dir.path()), 160, 24, clock(), "⇣Tv1\n").unwrap();
+    assert!(reloaded.contains("[v1]"), "{reloaded}");
+    assert!(reloaded.contains("2 commits"), "{reloaded}");
+    // Esc で外すと、選んでいるコミットだけに戻る。
+    let cleared = amonhen_tui::snapshot(open(dir.path()), 160, 24, clock(), "⇣\u{1b}").unwrap();
+    assert!(!cleared.contains("2 commits"), "{cleared}");
+    assert!(cleared.contains("Parents"), "{cleared}");
+}
+
+/// main から分かれた topic に 2 つ（別のファイル）、その後に main で 1 つ。
+fn topic_of_two(dir: &Path) {
+    git(dir, BASE, &["init", "-q", "-b", "main"]);
+    commit(dir, BASE, "Start");
+    git(dir, BASE, &["switch", "-q", "-c", "topic"]);
+    for (i, name) in ["a", "b"].iter().enumerate() {
+        let time = BASE + DAY * (i as i64 + 1);
+        std::fs::write(dir.join(format!("{name}.txt")), "x\n").unwrap();
+        git(dir, time, &["add", "."]);
+        git(dir, time, &["commit", "-q", "-m", &format!("Add {name}")]);
+    }
+    git(dir, BASE, &["switch", "-q", "main"]);
+    commit(dir, BASE + DAY * 3, "Main work");
+}
+
+/// 印をつけたコミットの操作: 古い順に cherry-pick、新しい順に revert（どちらも 1 つの命令で、前と後の絵つき）
+#[test]
+fn cherry_pick_and_revert_the_selected_commits() {
+    let dir = tempfile::tempdir().unwrap();
+    topic_of_two(dir.path());
+    let log = || git_out(dir.path(), &["log", "--format=%s", "main"]);
+    // Add b と Add a に印をつけて `y`。
+    let asked = amonhen_tui::snapshot(open(dir.path()), 160, 14, clock(), "j⇣y").unwrap();
+    println!("{asked}");
+    assert!(
+        asked.contains("Cherry-pick 2 commits onto main, oldest first?"),
+        "{asked}"
+    );
+    assert!(asked.contains(" Cherry-pick 2 commits "), "{asked}");
+    amonhen_tui::snapshot(open(dir.path()), 160, 14, clock(), "j⇣yy").unwrap();
+    assert_eq!(log(), "Add b\nAdd a\nMain work\nStart\n");
+    // 上の 2 つ（今 cherry-pick したもの）を打ち消す: 新しい方から。
+    let asked = amonhen_tui::snapshot(open(dir.path()), 160, 14, clock(), "⇣v").unwrap();
+    assert!(
+        asked.contains("Revert 2 commits on main, newest first?"),
+        "{asked}"
+    );
+    amonhen_tui::snapshot(open(dir.path()), 160, 14, clock(), "⇣vy").unwrap();
+    assert_eq!(
+        log(),
+        "Revert \"Add a\"\nRevert \"Add b\"\nAdd b\nAdd a\nMain work\nStart\n"
+    );
+    // 1 つのコミットにしかできない操作は断る。
+    let refused = amonhen_tui::snapshot(open(dir.path()), 160, 14, clock(), "⇣c").unwrap();
+    assert!(
+        refused.contains("This works on one commit: Esc clears the selection first"),
+        "{refused}"
+    );
+}
+
+/// 印をつけた続くコミットを `E` で 1 つにまとめる（編集モードを、まとめる行にして開く）
+#[test]
+fn e_combines_the_selected_commits_in_edit_mode() {
+    let dir = tempfile::tempdir().unwrap();
+    four_lines(dir.path());
+    let log = || git_out(dir.path(), &["log", "--format=%s"]);
+    let opened = amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), "j⇣E").unwrap();
+    println!("{opened}");
+    assert!(opened.contains(" Edit Commits "), "{opened}");
+    assert!(opened.contains("Changes: 1 combined."), "{opened}");
+    amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), "j⇣E\ny").unwrap();
+    assert_eq!(log().lines().count(), 3, "{}", log());
+    assert!(log().ends_with("One\n"), "{}", log());
+    assert!(
+        git_out(dir.path(), &["log", "-1", "--skip=1", "--format=%B"]).contains("Three"),
+        "the combined message keeps both"
+    );
+    // 続いていなければ断る。
+    let dir = tempfile::tempdir().unwrap();
+    four_lines(dir.path());
+    let refused = amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), "mjjmE").unwrap();
+    assert!(
+        refused.contains("Only commits next to each other on the current branch can be combined"),
+        "{refused}"
+    );
+    assert!(!refused.contains(" Edit Commits "), "{refused}");
+}
+
+/// `Y` は ID をコピーし、Save as Patch は印をつけたものを古い順にパッチにする
+#[test]
+fn copy_ids_and_save_the_selected_commits_as_patches() {
+    let dir = tempfile::tempdir().unwrap();
+    four_lines(dir.path());
+    let copied = amonhen_tui::snapshot(open(dir.path()), 160, 10, clock(), "⇣Y").unwrap();
+    assert!(
+        copied.contains("Copied 2 commit IDs (to the terminal’s clipboard)"),
+        "{copied}"
+    );
+    let one = amonhen_tui::snapshot(open(dir.path()), 160, 10, clock(), "Y").unwrap();
+    assert!(one.contains("(to the terminal’s clipboard)"), "{one}");
+    let out = tempfile::tempdir().unwrap();
+    let folder = out.path().join("patches");
+    let keys = format!("⇣:save as patch\n\x15{}\n", folder.display());
+    let done = amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), &keys).unwrap();
+    assert!(done.contains("Saved 2 patches in "), "{done}");
+    let mut names: Vec<String> = std::fs::read_dir(&folder)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    assert_eq!(names, ["0001-Three.patch", "0002-Four.patch"]);
 }

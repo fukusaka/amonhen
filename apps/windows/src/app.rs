@@ -27,10 +27,9 @@ use crate::{Args, Session};
 
 thread_local! {
     /// 窓の後ろを透かす Acrylic（透かしている間）と、当てられなかったか（WinUI の Acrylic に替える）。
-    static ACRYLIC: RefCell<Option<xaml::Acrylic>> = const { RefCell::new(None) };
+    static ACRYLIC: RefCell<std::collections::HashMap<u64, xaml::Acrylic>> =
+        RefCell::new(std::collections::HashMap::new());
     static ACRYLIC_FAILED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    /// 窓を透かしている間の、ボタン・文字の欄・選ぶ欄の地（一度入れたら、透かさないときは元の濃さに戻す）。
-    static CONTROL_FILLS: RefCell<Option<xaml::ControlFills>> = const { RefCell::new(None) };
     /// 設定の画面（Settings・Repository Settings）を出しているか（Ctrl+Z・Ctrl+Shift+Z を設定の Undo・Redo にする）。
     static SETTINGS_SHOWN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// サイドバーの木で引いてよい項目（お気に入りのブランチの鍵。上から順）。木のドラッグの始まりで見る。
@@ -39,17 +38,10 @@ thread_local! {
     static TREE_DRAG: RefCell<(usize, Vec<windows_core_reactor::EventRevoker>)> =
         const { RefCell::new((0, Vec::new())) };
     static TREE_DRAG_AT: std::cell::Cell<Option<Instant>> = const { std::cell::Cell::new(None) };
-    /// 見張っている、daemon・SSH 越しのリポジトリと、最後に見た時刻（切れたら知らせる。GTK4 版・macOS 版と同じく
-    /// 0.25 秒ごとに見て、切れたら見るのをやめる）。
-    static WATCHED_CONNECTION: RefCell<Option<(Arc<Repository>, Instant)>> = const { RefCell::new(None) };
     /// 根の部品に渡す引数（`Component::Input` は比べられる値でなければならないので、ここに置く）。
     static ARGS: RefCell<Option<(Args, Instant)>> = const { RefCell::new(None) };
-    /// History と差分の描き手。
+    /// 前のタブの History と差分の描き手（窓の入力の処理が使う。タブごとの描き手は根の部品が持つ）。
     static HISTORY: RefCell<Option<Rc<RefCell<HistoryView>>>> = const { RefCell::new(None) };
-    /// 後ろのタブの History（タブの番号ごとに、その場所と描き手。macOS 版・GTK4 版と同じく、タブを替えても
-    /// リポジトリを開いたままにする。前に戻すと、読んだ History・選んだ行・スクロールのまま描き直す）。
-    static PARKED: RefCell<std::collections::HashMap<u64, Parked>> =
-        RefCell::new(std::collections::HashMap::new());
     /// History を包む生の要素（右クリックのメニューを自分で開く）。
     static HISTORY_ELEMENT: RefCell<Option<xaml::UIElement>> = const { RefCell::new(None) };
     /// History から外した右クリックのメニュー（外している間、WinUI は自分では開かない）。
@@ -58,9 +50,6 @@ thread_local! {
     static SIDEBAR_ELEMENT: RefCell<Option<xaml::UIElement>> = const { RefCell::new(None) };
     /// ツールチップを付けたサイドバーの項目（要素の identity と付けた文字。同じなら付け直さない）。
     static SIDEBAR_TIP: RefCell<Option<(usize, Option<String>)>> = const { RefCell::new(None) };
-    /// ほかの worktree の変更を最後に数えた時刻と、全部を数え直した時刻（10 秒ごと・5 分ごと。GTK4 版と同じ）。
-    static WORKTREE_TICK: std::cell::Cell<(Instant, Instant)> =
-        std::cell::Cell::new((Instant::now(), Instant::now()));
     /// 今のブランチの名前（終わった操作の一言に使う。ref を読むたびに書く）。
     static HEAD_NAME: RefCell<String> = const { RefCell::new(String::new()) };
     /// Push の画面を出しているか（出していれば、Enter で既定のボタンを押せるか。Force Push は押せない）。
@@ -78,12 +67,6 @@ thread_local! {
     static SPLIT_PARENT: RefCell<Option<xaml::UIElement>> = const { RefCell::new(None) };
     /// 等幅にするのを待っている要素と、試した回数（`retry_monospace`）。
     static PENDING_MONOSPACE: RefCell<Vec<(IInspectable, u32)>> = const { RefCell::new(Vec::new()) };
-    /// 終わった操作の一言を消す時刻。
-    static FLASH_UNTIL: std::cell::Cell<Option<Instant>> = const { std::cell::Cell::new(None) };
-    /// Activity を開いている間、読み直しを頼んだ最後の時刻（0.5 秒ごとに頼む）。
-    static ACTIVITY_TICK: std::cell::Cell<Option<Instant>> = const { std::cell::Cell::new(None) };
-    /// 走っている操作の数と、最後に数えた時（ステータスバーの ⟳ n。0.5 秒ごとに数える）。
-    static RUNNING: std::cell::Cell<(usize, Option<Instant>)> = const { std::cell::Cell::new((0, None)) };
     /// 自動の fetch の間隔（分。0 はしない）と、最後に数え始めた時。
     static AUTO_FETCH: std::cell::Cell<(u32, Instant)> =
         std::cell::Cell::new((crate::prefs::auto_fetch_minutes(), Instant::now()));
@@ -111,7 +94,7 @@ thread_local! {
 /// ホイールの 1 目盛り（120）で進む行の数（Windows の既定の 3 行）。
 const WHEEL_ROWS: f32 = 3.0;
 
-pub fn run(args: Args, started: Instant) -> Result<(), String> {
+pub fn run(args: Args, started: Instant, more: Vec<u64>) -> Result<(), String> {
     // Repositories の「開いた日時」・すべての一覧に出す（まだどこにもなければブックマークにも入れる）。
     if let Ok(path) = std::path::absolute(&args.repo)
         && path.join(".git").exists()
@@ -119,66 +102,145 @@ pub fn run(args: Args, started: Instant) -> Result<(), String> {
         crate::repositories::record_opened(&path);
     }
     ARGS.with(|a| *a.borrow_mut() = Some((args, started)));
-    App::run_component::<Shell>(()).map_err(|e| format!("WinUI を始められない: {e}"))
+    // 起動のときに戻す窓は、どれもこのプロセスの窓（1 つ目が前）。
+    let windows = std::iter::once(crate::tabs::focused())
+        .chain(more)
+        .map(View::component::<Shell>);
+    App::run_windows(windows).map_err(|e| format!("WinUI を始められない: {e}"))
 }
 
-/// 前に出すタブのリポジトリと画面を、次に作る根の部品に渡す（`tabs` がタブを替えるときに呼ぶ）。
-pub fn set_target(tab: &crate::tabs::Tab) {
-    ARGS.with(|a| {
-        if let Some((args, _)) = a.borrow_mut().as_mut() {
-            args.repo = tab.location.clone().into();
-            args.repositories = tab.repositories;
-            args.working_copy = tab.working_copy;
-            args.file_history = tab.file_history.clone();
-            args.place = None;
-        }
+/// タブ `tab` の根の部品に渡す引数（起動のときの引数の、リポジトリと画面をそのタブのものにしたもの）。
+fn args_for(tab: &crate::tabs::Tab) -> (Args, Instant) {
+    let (mut args, started) = ARGS.with(|a| a.borrow().clone()).expect("args");
+    args.repo = tab.location.clone().into();
+    args.repositories = tab.repositories;
+    args.working_copy = tab.working_copy;
+    args.file_history = tab.file_history.clone();
+    args.merge = tab.merge.clone();
+    args.merge_text = tab.merge_text.clone().map(Into::into);
+    (args, started)
+}
+
+thread_local! {
+    /// 窓ごとの HWND（Window メニューから窓を前に出す）。
+    static WINDOW_HANDLES: RefCell<std::collections::HashMap<u64, u64>> = RefCell::new(Default::default());
+    /// 開くのを頼まれた窓（それぞれの最初のタブ）。前のタブの根の部品が開く。
+    static WINDOW_REQUESTS: RefCell<Vec<crate::tabs::Tab>> = const { RefCell::new(Vec::new()) };
+}
+
+/// `tab` を新しい窓（このプロセスの窓）で開く。
+pub fn request_window(tab: crate::tabs::Tab) {
+    WINDOW_REQUESTS.with(|r| r.borrow_mut().push(tab));
+    with_history(|h| {
+        h.sender.send(Message::OpenWindows);
     });
-    if let Ok(path) = std::path::absolute(&tab.location)
-        && path.join(".git").exists()
-    {
-        crate::repositories::record_opened(&path);
-    }
 }
 
-/// 窓の外側の部品。前のタブのリポジトリの根の部品（`Root`）を 1 つだけ置き、タブを替えたら作り直す。
+/// 起動のときの窓の位置・大きさ（`--place`）。最初に開くタブだけが使う。
+fn take_place() -> Option<[i32; 4]> {
+    ARGS.with(|a| {
+        a.borrow_mut()
+            .as_mut()
+            .and_then(|(args, _)| args.place.take())
+    })
+}
+
+/// 窓の外側の部品。タブごとに根の部品（`Root`）を 1 つずつ置き、どれもリポジトリを開いたまま持つ。前のタブの
+/// ものだけを見せる。
 struct Shell {
-    generation: u64,
+    /// タブが変わった回数（描き直すため）。
+    changes: u64,
 }
 
 impl Component for Shell {
-    type Input = ();
+    /// 窓の番号（`tabs` の窓）。
+    type Input = u64;
     type Message = ();
 
-    fn create(_input: &(), context: &ComponentContext<Self>) -> Self {
+    fn create(window: &u64, context: &ComponentContext<Self>) -> Self {
         let sender = context.sender();
-        crate::tabs::set_remount(move || {
+        crate::tabs::set_remount(*window, move || {
             sender.send(());
         });
-        Self { generation: 0 }
+        Self { changes: 0 }
     }
 
     fn update(&mut self, _message: (), _context: &ComponentContext<Self>) {
-        self.generation += 1;
+        self.changes += 1;
     }
 
-    fn view(&self, _input: &(), _context: &mut ViewContext<Self>) -> View {
-        Grid::new().children((View::keyed_fragment([(
-            self.generation.to_string(),
-            View::component::<Root>(()),
-        )]),))
+    fn view(&self, window: &u64, context: &mut ViewContext<Self>) -> View {
+        let window = *window;
+        let active = crate::tabs::active_of(window);
+        let titles = crate::tabs::titles_changed();
+        let roots = crate::tabs::tabs_of(window)
+            .into_iter()
+            .enumerate()
+            .map(|(i, tab)| {
+                let key = tab.id.to_string();
+                let input = RootInput {
+                    tab,
+                    window,
+                    front: i == active,
+                    titles,
+                };
+                (key, View::component::<Root>(input))
+            });
+        // 窓を閉じたら、その窓のタブを覚えて（終了のときか、最後の窓なら）から捨てる。
+        context.use_effect("window", (), move || {
+            Some(Box::new(move || {
+                let saved = crate::tabs::saved_of(window);
+                let last = crate::tabs::windows().len() <= 1;
+                crate::session::remember(window, &saved, last);
+                if last && let Err(e) = crate::prefs::set_string(crate::prefs::LAST_TABS, &saved) {
+                    eprintln!("タブを覚えられない: {e}");
+                }
+                // 前のリポジトリ（引数なしで起動して、ほかに戻すものがないときに開く）。
+                if last
+                    && let Some(tab) = crate::tabs::tabs_of(window)
+                        .get(crate::tabs::active_of(window))
+                        .cloned()
+                    && std::path::Path::new(&tab.location).join(".git").exists()
+                    && let Err(e) =
+                        crate::prefs::set_string(crate::prefs::LAST_REPOSITORY, &tab.location)
+                {
+                    eprintln!("最後のリポジトリを覚えられない: {e}");
+                }
+                crate::tabs::forget_window(window);
+                ACRYLIC.with(|a| a.borrow_mut().remove(&window));
+                WINDOW_HANDLES.with(|h| h.borrow_mut().remove(&window));
+            }))
+        });
+        Grid::new().children((View::keyed_fragment(roots),))
     }
 }
 
-/// 後ろのタブの History（そのリポジトリの場所と描き手）。
-type Parked = (String, Rc<RefCell<HistoryView>>);
-
-/// 閉じたタブの、後ろに置いていた History を捨てる。
-pub fn forget_parked(tab: u64) {
-    PARKED.with(|p| p.borrow_mut().remove(&tab));
+/// 根の部品（タブ 1 つ）に渡すもの。
+#[derive(Clone, PartialEq)]
+struct RootInput {
+    tab: crate::tabs::Tab,
+    /// タブのある窓。
+    window: u64,
+    /// 前のタブか（見せる・窓のタイトルバーと名前を持つ）。
+    front: bool,
+    /// タブの名前が変わった回数（前のタブがタブの並びを描き直す）。
+    titles: u64,
 }
 
+/// 前のタブの History で `f` を呼ぶ（窓の入力の処理から。入力を受けるのは前のタブだけ）。
 fn with_history(f: impl FnOnce(&mut HistoryView)) {
     if let Some(view) = HISTORY.with(|h| h.borrow().clone()) {
+        f(&mut view.borrow_mut());
+    }
+}
+
+/// 根の部品（タブ）の History（開くまでは None）。タブごとに持ち、後ろのタブも開いたままにする。
+type HistoryCell = Rc<RefCell<Option<Rc<RefCell<HistoryView>>>>>;
+
+/// `cell` の History で `f` を呼ぶ（まだ開いていなければ何もしない）。
+fn with_cell(cell: &HistoryCell, f: impl FnOnce(&mut HistoryView)) {
+    let view = cell.borrow().clone();
+    if let Some(view) = view {
         f(&mut view.borrow_mut());
     }
 }
@@ -195,10 +257,17 @@ struct ChecksPopover {
 }
 
 struct Root {
+    /// このタブの History。
+    history: HistoryCell,
+    /// このタブの根の部品に付けた、部品の地（窓を透かすとき）。
+    control_fills: Rc<RefCell<Option<xaml::ControlFills>>>,
+    /// 前のタブか（描くたびに書く）。窓で 1 つの値（引いてよい項目・今のブランチの名前）は前のタブだけが書く。
+    front: std::cell::Cell<bool>,
+    /// このタブ（描くたびに書く）と、タブのある窓。
+    tab: RefCell<crate::tabs::Tab>,
+    window: u64,
     /// 窓の根の Grid（メニューのショートカットを、フォーカスのある部品より先に受ける）。
     root: ElementRef<Grid>,
-    /// ツールバーを包む部品（Pull・Push のバッジを付けるため）。
-    toolbar: ElementRef<Grid>,
     panel: ElementRef<SwapChainPanel>,
     area: ElementRef<Grid>,
     /// History の CI の印の吹き出し（チェックの一覧）と、それを開く見えないボタン、開いた回数。
@@ -872,6 +941,10 @@ enum Dialog {
 }
 
 enum Message {
+    /// この窓が前に出た（窓で 1 つの値を書き直すため、描き直す）。
+    WindowFocused,
+    /// 頼まれた窓を開く（`request_window`）。
+    OpenWindows,
     Refs(Arc<RefsSnapshot>, Arc<Repository>),
     /// GitHub から読んだ（どのリポジトリのものか）。
     GitHub(String, Box<crate::github::Loaded>),
@@ -1000,9 +1073,6 @@ enum Message {
     DiffFileMenu(String),
     /// 変更ファイルの一覧（木も）の右クリック（ファイルの番号、差分の見出しと同じ項目の鍵）。
     ChangedFileMenu(usize, String),
-    /// ツールバーの Pull・Push のバッジを付け直す（並べ終えるのを少し待ってから）。
-    ToolbarBadgesLater,
-    ToolbarBadges,
     FileHistoryLoaded(String, Result<Vec<crate::filehistory::Entry>, String>),
     FileHistorySelected(Option<usize>),
     CloseFileHistory,
@@ -1356,13 +1426,22 @@ enum Message {
 }
 
 impl Component for Root {
-    type Input = ();
+    type Input = RootInput;
     type Message = Message;
 
-    fn create(_input: &(), _context: &ComponentContext<Self>) -> Self {
+    fn create(input: &RootInput, _context: &ComponentContext<Self>) -> Self {
+        if let Ok(path) = std::path::absolute(&input.tab.location)
+            && path.join(".git").exists()
+        {
+            crate::repositories::record_opened(&path);
+        }
         Self {
+            history: Rc::default(),
+            control_fills: Rc::default(),
+            front: std::cell::Cell::new(input.front),
+            tab: RefCell::new(input.tab.clone()),
+            window: input.window,
             root: ElementRef::new(),
-            toolbar: ElementRef::new(),
             panel: ElementRef::new(),
             area: ElementRef::new(),
             checks_popover: None,
@@ -1546,7 +1625,9 @@ impl Component for Root {
                 .map(|(_, e)| sidebar::ref_key(e))
                 .collect()
         };
-        FAVORITE_KEYS.with(|f| *f.borrow_mut() = favorites);
+        if self.owns_window() {
+            FAVORITE_KEYS.with(|f| *f.borrow_mut() = favorites);
+        }
         // daemon・SSH 越しに開いたリポジトリなら、切れたかを見張る（手元のものは見ない）。
         let watch = self.repo.clone().filter(|repo| {
             repo.connection_state().is_some()
@@ -1555,15 +1636,14 @@ impl Component for Root {
                     .as_ref()
                     .is_some_and(|(r, _)| Arc::ptr_eq(r, repo))
         });
-        WATCHED_CONNECTION.with(|w| {
-            let mut w = w.borrow_mut();
-            let same = match (&*w, &watch) {
+        self.with_history(|h| {
+            let same = match (&h.watched, &watch) {
                 (Some((a, _)), Some(b)) => Arc::ptr_eq(a, b),
                 (None, None) => true,
                 _ => false,
             };
             if !same {
-                *w = watch.map(|repo| (repo, Instant::now()));
+                h.watched = watch.map(|repo| (repo, Instant::now()));
             }
         });
         // 待っていた、エンジンを送ってよいかの問いを、ダイアログが空いたら出す。
@@ -1573,12 +1653,82 @@ impl Component for Root {
         }
     }
 
-    fn view(&self, input: &(), context: &mut ViewContext<Self>) -> View {
+    fn view(&self, input: &RootInput, context: &mut ViewContext<Self>) -> View {
         self.root_view(input, context)
     }
 }
 
 impl Root {
+    /// 窓で 1 つの値（引いてよい項目・今のブランチの名前・#123 のリンクの先）を書くか（前に出ている窓の前のタブ）。
+    fn owns_window(&self) -> bool {
+        self.front.get() && crate::tabs::focused() == self.window
+    }
+
+    /// このタブ。
+    fn current_tab(&self) -> Option<crate::tabs::Tab> {
+        Some(self.tab.borrow().clone())
+    }
+
+    /// 窓の後ろの Acrylic と、窓の外観・背景（前のタブが決める）。
+    fn window_backdrop(
+        window: u64,
+        see_through: bool,
+        dark: bool,
+        context: &mut ViewContext<Self>,
+    ) {
+        context.use_effect("acrylic", (see_through, dark), move || {
+            ACRYLIC.with(|a| {
+                let mut a = a.borrow_mut();
+                if !see_through {
+                    a.remove(&window);
+                    return;
+                }
+                if let Some(acrylic) = a.get(&window) {
+                    let _ = acrylic.set_dark(dark);
+                    return;
+                }
+                // この窓の WinUI の Window（HWND が分かればそれで引く。開いたばかりの窓は、外観を当てたばかりの窓）。
+                let native = WINDOW_HANDLES
+                    .with(|h| h.borrow().get(&window).copied())
+                    .and_then(|hwnd| windows_reactor::native_window_for(hwnd as usize))
+                    .or_else(windows_reactor::native_window);
+                match native
+                    .ok_or_else(|| "窓がない".to_owned())
+                    .and_then(|w| xaml::Acrylic::new(&w, dark).map_err(|e| e.to_string()))
+                {
+                    Ok(acrylic) => {
+                        a.insert(window, acrylic);
+                    }
+                    Err(e) => {
+                        eprintln!("窓の後ろの Acrylic を当てられない: {e}");
+                        ACRYLIC_FAILED.with(|f| f.set(true));
+                    }
+                }
+            });
+            None
+        });
+        context.window_visuals(
+            WindowVisuals::new()
+                .theme(if crate::palette::dark() {
+                    WindowTheme::Dark
+                } else {
+                    WindowTheme::Light
+                })
+                .backdrop(
+                    if see_through && ACRYLIC_FAILED.with(std::cell::Cell::get) {
+                        WindowBackdrop::Acrylic
+                    } else {
+                        WindowBackdrop::None
+                    },
+                ),
+        );
+    }
+
+    /// このタブの History で `f` を呼ぶ。
+    fn with_history(&self, f: impl FnOnce(&mut HistoryView)) {
+        with_cell(&self.history, f);
+    }
+
     /// History の CI の印の吹き出しを開く、印の位置に置いた見えないボタン（吹き出しの中身はチェックの一覧）。
     fn checks_anchor_view(&self, context: &ViewContext<Self>) -> View {
         let Some(popover) = &self.checks_popover else {
@@ -1613,15 +1763,43 @@ impl Root {
             self.push_row = None;
             let page = self.page;
             self.show_page(page);
-            with_history(|h| h.reload_selected());
+            self.with_history(|h| h.reload_selected());
         }
         match message {
+            Message::WindowFocused => {}
+            Message::Command(id) if id.starts_with("focus-window:") => {
+                // Window メニューで選んだ窓を前に出す。
+                let hwnd = id["focus-window:".len()..]
+                    .parse::<u64>()
+                    .ok()
+                    .and_then(|w| WINDOW_HANDLES.with(|h| h.borrow().get(&w).copied()));
+                if let Some(hwnd) = hwnd {
+                    use windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
+                    let window = windows::Win32::Foundation::HWND(hwnd as *mut core::ffi::c_void);
+                    let _ = unsafe { SetForegroundWindow(window) };
+                }
+            }
+            Message::OpenWindows => {
+                for tab in WINDOW_REQUESTS.with(|r| std::mem::take(&mut *r.borrow_mut())) {
+                    let window = crate::tabs::new_window_with(vec![tab], 0);
+                    if !context.open_window(View::component::<Shell>(window)) {
+                        crate::tabs::forget_window(window);
+                        self.dialog = Some(Dialog::Failed {
+                            title: tr!("New Window"),
+                            message: tr!("Not found — {path}", path = ""),
+                        });
+                    }
+                }
+            }
             Message::SwitchPeeked(peeks) => {
                 self.switch_peeks.extend(peeks);
             }
             Message::Refs(refs, repo) => {
-                HEAD_NAME
-                    .with(|h| *h.borrow_mut() = refs.refs.head_branch.clone().unwrap_or_default());
+                if self.owns_window() {
+                    HEAD_NAME.with(|h| {
+                        *h.borrow_mut() = refs.refs.head_branch.clone().unwrap_or_default();
+                    });
+                }
                 self.refs = Some(refs);
                 self.repo = Some(repo.clone());
                 if let Some(path) = self.pending_file_history.take() {
@@ -1994,8 +2172,9 @@ impl Root {
                 self.failure = None;
                 self.update(Message::Performed(None), context);
                 self.flash = Some(text);
-                FLASH_UNTIL
-                    .with(|f| f.set(Some(Instant::now() + std::time::Duration::from_secs(5))));
+                self.with_history(|h| {
+                    h.flash_until = Some(Instant::now() + std::time::Duration::from_secs(5));
+                });
             }
             Message::FlashExpired => self.flash = None,
             Message::ArchiveFolder(text) => {
@@ -2028,7 +2207,7 @@ impl Root {
             Message::ChangedFileSelected(index) => {
                 self.changed_file = index;
                 if let Some(index) = index {
-                    with_history(|h| h.show_file(index));
+                    self.with_history(|h| h.show_file(index));
                 }
             }
             Message::ChangedTreeSelected(index) => {
@@ -2054,7 +2233,7 @@ impl Root {
                 }
                 let selected = self.changed_file.unwrap_or(0);
                 self.changed_file = (!stacked && self.changed_files.len() > 1).then_some(selected);
-                with_history(|h| {
+                self.with_history(|h| {
                     if h.session.data.set_single_file(!stacked) {
                         h.diff_replaced();
                     }
@@ -2134,12 +2313,9 @@ impl Root {
                     let urls = self.github.avatars.clone();
                     AVATAR_URLS.with(|a| a.borrow_mut().extend(urls));
                 }
-                // メッセージの #123 のリンクの先（fork なら元のリポジトリの Issue）。
-                let base = self.github.target.as_ref().map(|t| t.repo.web_url());
-                ISSUE_BASE.with(|b| *b.borrow_mut() = base);
                 // History の行の CI の印。
                 let ci = self.github.ci.clone().unwrap_or_default();
-                with_history(|h| {
+                self.with_history(|h| {
                     if h.session.data.ci != ci {
                         h.session.data.ci = ci;
                         h.session.invalidate();
@@ -2467,7 +2643,7 @@ impl Root {
             Message::SearchSubmit(backwards) => {
                 let query = self.query.trim().to_owned();
                 self.last_search = (!query.is_empty()).then(|| query.clone());
-                with_history(|h| h.search(query, backwards));
+                self.with_history(|h| h.search(query, backwards));
             }
             Message::ExpandDetails(on) => self.details_expanded = on,
             Message::DiffFindOpen(open) => {
@@ -2479,7 +2655,7 @@ impl Root {
                     self.diff_find_query.clear();
                     self.diff_find_status.clear();
                     self.diff_find_message = None;
-                    with_history(|h| {
+                    self.with_history(|h| {
                         h.find_in_diff(String::new(), Some(0));
                     });
                 }
@@ -2489,7 +2665,9 @@ impl Root {
                 // メッセージの中に一致があれば、そこから（詳細の上にあるので）。なければ差分の、見えている所から。
                 let in_message = self.message_matches();
                 let mut found = (0, None);
-                with_history(|h| found = h.find_in_diff(query, (in_message == 0).then_some(0)));
+                self.with_history(|h| {
+                    found = h.find_in_diff(query, (in_message == 0).then_some(0))
+                });
                 self.diff_find_message = (in_message > 0).then_some(0);
                 self.diff_find_status = self.find_status(in_message, found);
             }
@@ -2498,7 +2676,7 @@ impl Root {
                 let in_message = self.message_matches();
                 let query = self.diff_find_query.clone();
                 let mut found = (0, None);
-                with_history(|h| found = h.find_in_diff(query.clone(), None));
+                self.with_history(|h| found = h.find_in_diff(query.clone(), None));
                 let total = in_message + found.0;
                 if total == 0 {
                     self.diff_find_status = self.find_status(0, found);
@@ -2512,14 +2690,14 @@ impl Root {
                 let next = (now as i64 + i64::from(step)).rem_euclid(total as i64) as usize;
                 if next < in_message {
                     self.diff_find_message = Some(next);
-                    with_history(|h| {
+                    self.with_history(|h| {
                         h.select_diff_match(None);
                     });
                     found.1 = None;
                 } else {
                     self.diff_find_message = None;
                     let d = next - in_message;
-                    with_history(|h| {
+                    self.with_history(|h| {
                         h.select_diff_match(Some(d));
                     });
                     found.1 = Some(d);
@@ -2546,7 +2724,7 @@ impl Root {
                     return;
                 }
                 self.search_only = on;
-                with_history(|h| {
+                self.with_history(|h| {
                     h.session.data.set_matching_only(on);
                     h.session.invalidate();
                 });
@@ -2556,9 +2734,9 @@ impl Root {
                 self.search_status.clear();
                 self.last_search = None;
                 if std::mem::take(&mut self.search_only) {
-                    with_history(|h| h.session.data.set_matching_only(false));
+                    self.with_history(|h| h.session.data.set_matching_only(false));
                 }
-                with_history(|h| h.search(String::new(), false));
+                self.with_history(|h| h.search(String::new(), false));
             }
             Message::SearchStatus(text) => self.search_status = text,
             Message::Command(id) if matches!(id.as_str(), "continue" | "skip" | "abort") => {
@@ -2602,8 +2780,9 @@ impl Root {
                 ) =>
             {
                 // SSH 先・daemon 越しのフォルダは、この機械では開けない（GTK4 版と同じく手元だけ）。
-                let remote =
-                    crate::tabs::current().is_some_and(|t| crate::remote::is_remote(&t.location));
+                let remote = self
+                    .current_tab()
+                    .is_some_and(|t| crate::remote::is_remote(&t.location));
                 let Some(dir) = self
                     .repo
                     .as_ref()
@@ -2702,7 +2881,7 @@ impl Root {
                 if let Err(e) = crate::prefs::set_bool(crate::prefs::COMPACT_HISTORY_ROWS, value) {
                     eprintln!("1 行表示を覚えられない: {e}");
                 }
-                with_history(|h| h.session.set_display(|| crate::render::set_one_line(value)));
+                self.with_history(|h| h.session.set_display(|| crate::render::set_one_line(value)));
             }
             // View の All Branches・Current Branch と、上の帯の All Branches（History の範囲）。
             Message::Command(id) if id == "scope-all" || id == "scope-current" => {
@@ -2711,7 +2890,7 @@ impl Root {
                 } else {
                     crate::data::Scope::Current
                 };
-                with_history(|h| h.session.data.set_scope(scope));
+                self.with_history(|h| h.session.data.set_scope(scope));
             }
             // View の Fold Merged Branches（GTK4 版の History の見せ方）。
             Message::Command(id) if id == "fold-merged-branches" => {
@@ -2719,7 +2898,7 @@ impl Root {
                 if let Err(e) = crate::prefs::set_bool(crate::prefs::FOLD_MERGED_BRANCHES, value) {
                     eprintln!("折りたたみを覚えられない: {e}");
                 }
-                with_history(|h| h.session.data.set_fold(value));
+                self.with_history(|h| h.session.data.set_fold(value));
             }
             // View の Highlight Ancestors（GTK4 版の History の見せ方）。
             Message::Command(id) if id == "highlight-ancestors" => {
@@ -2727,7 +2906,7 @@ impl Root {
                 if let Err(e) = crate::prefs::set_bool(crate::prefs::HIGHLIGHT_ANCESTORS, value) {
                     eprintln!("祖先の強調を覚えられない: {e}");
                 }
-                with_history(|h| {
+                self.with_history(|h| {
                     crate::render::set_highlight_ancestors(value);
                     h.session.invalidate();
                 });
@@ -2749,7 +2928,7 @@ impl Root {
                 {
                     eprintln!("行の項目を覚えられない: {e}");
                 }
-                with_history(|h| {
+                self.with_history(|h| {
                     h.session
                         .set_display(|| crate::render::set_history_items(value))
                 });
@@ -2768,7 +2947,7 @@ impl Root {
                 {
                     eprintln!("並び順を覚えられない: {e}");
                 }
-                with_history(|h| h.session.data.reorder(order));
+                self.with_history(|h| h.session.data.reorder(order));
             }
             Message::Command(id) if id == "customize-toolbar" => {
                 self.dialog = Some(Dialog::Toolbar(crate::menus::toolbar_entries()));
@@ -2846,7 +3025,8 @@ impl Root {
             Message::Command(id) if id.starts_with("switch-repository:") => {
                 // このタブを選んだリポジトリに替える（GTK4 版・macOS 版のリポジトリ名のポップオーバー）。
                 let location = id["switch-repository:".len()..].to_owned();
-                if crate::tabs::current()
+                if self
+                    .current_tab()
                     .is_some_and(|t| t.location.eq_ignore_ascii_case(&location))
                 {
                     return;
@@ -2856,7 +3036,7 @@ impl Root {
                 }
             }
             Message::Command(id) if id == "try-again" => {
-                if let Some(tab) = crate::tabs::current()
+                if let Some(tab) = self.current_tab()
                     && let Err(e) = crate::tabs::replace(&tab.location, tab.working_copy)
                 {
                     self.error = Some(e);
@@ -2873,7 +3053,7 @@ impl Root {
                 crate::tabs::step(if id == "next-tab" { 1 } else { -1 });
             }
             Message::TabSelected(Some(index)) => {
-                if index != crate::tabs::active() {
+                if index != crate::tabs::active_of(self.window) {
                     crate::tabs::note_page(self.page == Page::WorkingCopy);
                     crate::tabs::select(index);
                 }
@@ -2889,11 +3069,11 @@ impl Root {
             Message::TabsReordered(order) => crate::tabs::reorder(&order),
             // タブを窓の外へ引き出した: そのリポジトリを新しい窓で開き、このタブを閉じる（GTK4 版・macOS 版と同じ）。
             Message::TabDroppedOut(id) => {
-                let Some(tab) = id
-                    .parse::<u64>()
-                    .ok()
-                    .and_then(|id| crate::tabs::tabs().into_iter().find(|t| t.id == id))
-                else {
+                let Some(tab) = id.parse::<u64>().ok().and_then(|id| {
+                    crate::tabs::tabs_of(self.window)
+                        .into_iter()
+                        .find(|t| t.id == id)
+                }) else {
                     return;
                 };
                 match crate::repositories::open_window(&tab.location) {
@@ -3219,6 +3399,14 @@ impl Root {
                     Message::PatchRead(repo, paths, reply)
                 });
             }
+            // Repositories は、それだけのタブ（macOS 版の Repositories のウインドウと同じ）。今のタブが
+            // Repositories のタブでなければ、そのタブを前に出す（なければ開く）。
+            Message::Command(id)
+                if id == "repositories" && !crate::tabs::current_is_repositories() =>
+            {
+                crate::tabs::note_page(self.page == Page::WorkingCopy);
+                crate::tabs::show_repositories();
+            }
             Message::Command(id) if id == "repositories" => {
                 if self.page != Page::Repositories {
                     self.repositories_from = self.page;
@@ -3238,7 +3426,7 @@ impl Root {
                 }
                 self.activity = Some(crate::activity::State::new());
                 self.page = Page::Activity;
-                ACTIVITY_TICK.with(|t| t.set(Some(Instant::now())));
+                self.with_history(|h| h.activity_tick = Some(Instant::now()));
                 self.load_undo_log(context);
             }
             Message::Command(id) if id == "settings" => {
@@ -3345,9 +3533,9 @@ impl Root {
                     load_tag_remotes(repo.clone(), context);
                     load_worktrees(repo, context);
                 }
-                with_history(|h| h.command(&id));
+                self.with_history(|h| h.command(&id));
             }
-            Message::Command(id) => with_history(|h| h.command(&id)),
+            Message::Command(id) => self.with_history(|h| h.command(&id)),
             Message::UndoPeek(repo, peek) => match peek {
                 Some((label, what)) => self.dialog = Some(Dialog::Undo { repo, label, what }),
                 None => beep(),
@@ -4918,7 +5106,7 @@ impl Root {
             }
             Message::HistoryMenu(key) => {
                 if let Some(id) = key.strip_prefix("toggle-merge:") {
-                    with_history(|h| h.session.data.toggle_merge(id));
+                    self.with_history(|h| h.session.data.toggle_merge(id));
                 } else if let Some(text) = key.strip_prefix("copy:") {
                     copy_text(text);
                 } else if let Some(name) = key.strip_prefix("branch-status:") {
@@ -5384,7 +5572,7 @@ impl Root {
                 {
                     // History に戻ってそのコミットを選ぶ（Reflog から）。
                     self.show_page(Page::History);
-                    with_history(|h| h.select_commit(&id));
+                    self.with_history(|h| h.select_commit(&id));
                 } else if let Some(oid) = key.strip_prefix("edit-from:") {
                     self.update(Message::EditOpen(oid.to_owned(), None), context);
                 } else if let Some(oid) = key.strip_prefix("edit-reword:") {
@@ -5843,7 +6031,7 @@ impl Root {
                     .and_then(|p| p.new.as_ref().or(p.old.as_ref()))
                     .and_then(|s| amonhen_model::Oid::from_hex(&s.oid));
                 if let Some(id) = oid {
-                    with_history(|h| h.session.data.want_commit_id(id));
+                    self.with_history(|h| h.session.data.want_commit_id(id));
                 }
             }
             Message::RangeDiffRanges(text) => {
@@ -5890,7 +6078,7 @@ impl Root {
                 if let Some(id) = id
                     && self.page == Page::Reflog
                 {
-                    with_history(|h| h.session.data.want_commit_id(id));
+                    self.with_history(|h| h.session.data.want_commit_id(id));
                 }
             }
             Message::Sequence(sequence) => self.sequence = sequence,
@@ -5936,22 +6124,6 @@ impl Root {
                     }
                     merge_scroll_later(context);
                 }
-            }
-            Message::ToolbarBadgesLater => {
-                context.spawn_background(|_| {
-                    std::thread::sleep(std::time::Duration::from_millis(150));
-                    Message::ToolbarBadges
-                });
-            }
-            Message::ToolbarBadges => {
-                let tracking = self.tracking();
-                let _ = self.toolbar.request_native_element(move |result| {
-                    if let Ok(element) = result
-                        && let Err(e) = crate::menus::put_badges(&element, tracking)
-                    {
-                        eprintln!("ツールバーのバッジを付けられない: {e}");
-                    }
-                });
             }
             Message::MergeBringIntoView => {
                 // Result の欄も、選んだコンフリクトへ（左右の欄と同じ所が見えるように）。
@@ -6822,9 +6994,7 @@ impl Root {
                 // この窓のリポジトリの daemon・SSH 越しのつながり（Daemon のタブの表）。
                 let connection = self.repo.as_ref().and_then(|repo| {
                     let state = repo.connection_state()?;
-                    let location = crate::tabs::current()
-                        .map(|t| t.location)
-                        .unwrap_or_default();
+                    let location = self.current_tab().map(|t| t.location).unwrap_or_default();
                     Some(crate::activity::Connection {
                         name: crate::repositories::display_name(&location),
                         location,
@@ -6877,6 +7047,7 @@ impl Root {
             // 選んだ行の Fetch は、選んでいるリポジトリすべて（一覧の選択は部品から読む）。
             Message::Repos(crate::repositories::Event::Menu(id)) if id.starts_with("fetch:") => {
                 let clicked = id["fetch:".len()..].to_owned();
+                let cell = self.history.clone();
                 let requested = self
                     .repositories_list
                     .request_native_element(move |result| {
@@ -6889,7 +7060,7 @@ impl Root {
                         } else {
                             vec![clicked.clone()]
                         };
-                        with_history(|h| {
+                        with_cell(&cell, |h| {
                             h.sender.send(Message::FetchRepositories(locations.clone()));
                         });
                     });
@@ -6912,7 +7083,7 @@ impl Root {
             Message::Repos(event) => self.repositories_event(event, context),
             Message::CloseActivity => {
                 self.activity = None;
-                ACTIVITY_TICK.with(|t| t.set(None));
+                self.with_history(|h| h.activity_tick = None);
                 self.page = self.activity_from;
             }
             Message::SettingsGit(epoch, name, email, entries) => {
@@ -7357,7 +7528,7 @@ impl Root {
                 if name != crate::theme::selected(dark) {
                     let _ = crate::prefs::set_string(crate::theme::key(dark), &name);
                     crate::theme::reload();
-                    with_history(|h| h.diff.dirty = true);
+                    self.with_history(|h| h.diff.dirty = true);
                 }
             }
             Message::Backdrop(event) => {
@@ -7401,13 +7572,13 @@ impl Root {
                 }
                 crate::theme::set_imported(&themes);
                 crate::theme::reload();
-                with_history(|h| h.diff.dirty = true);
+                self.with_history(|h| h.diff.dirty = true);
             }
             Message::SettingsDisplay("diff-standard-colors", value) => {
                 if value != crate::prefs::bool(crate::theme::DIFF_STANDARD_COLORS) {
                     let _ = crate::prefs::set_bool(crate::theme::DIFF_STANDARD_COLORS, value);
                     crate::theme::reload();
-                    with_history(|h| h.diff.dirty = true);
+                    self.with_history(|h| h.diff.dirty = true);
                 }
             }
             Message::SettingsDisplay(id, value) => {
@@ -7779,7 +7950,7 @@ impl Root {
             Message::DiffFileMenu(key) => self.diff_file_action(&key, context),
             Message::ChangedFileMenu(index, key) => {
                 let mut file = None;
-                with_history(|h| file = h.session.data.file_of(index));
+                self.with_history(|h| file = h.session.data.file_of(index));
                 if file.is_none() {
                     return beep();
                 }
@@ -7946,12 +8117,12 @@ impl Root {
                     // History に戻ってそのコミットを選ぶ。
                     self.blame = None;
                     self.show_page(Page::History);
-                    with_history(|h| h.select_commit(&id));
+                    self.with_history(|h| h.select_commit(&id));
                 }
             }
             Message::CloseFileHistory => {
                 // File History のタブなら、タブを閉じる（最後のタブなら窓を閉じる）。
-                if crate::tabs::current().is_some_and(|t| t.file_history.is_some()) {
+                if self.current_tab().is_some_and(|t| t.file_history.is_some()) {
                     if crate::tabs::close_current() {
                         close_window();
                     }
@@ -7964,7 +8135,7 @@ impl Root {
                 let entry = index.and_then(|i| self.stash_entries().get(i).map(|e| (*e).clone()));
                 self.stash = entry.as_ref().map(|e| e.name.clone());
                 if let Some(target) = entry.and_then(|e| e.target) {
-                    with_history(|h| h.session.data.want_stash(target));
+                    self.with_history(|h| h.session.data.want_stash(target));
                 }
             }
             // プルリクエストの行: ブランチが手元にあれば（リモートブランチ、なければローカルブランチ）、その ref を
@@ -8007,7 +8178,7 @@ impl Root {
                         xaml::VirtualKey::Control,
                     )
                     .is_ok_and(|s| s.contains(xaml::CoreVirtualKeyStates::Down));
-                    with_history(|h| {
+                    self.with_history(|h| {
                         if !scoped {
                             h.select_commit(&target);
                             return;
@@ -8036,14 +8207,14 @@ impl Root {
         }
     }
 
-    fn root_view(&self, _input: &(), context: &mut ViewContext<Self>) -> View {
-        let (args, _) = ARGS.with(|a| a.borrow().clone()).expect("args");
+    fn root_view(&self, input: &RootInput, context: &mut ViewContext<Self>) -> View {
+        let (args, started) = args_for(&input.tab);
         let name = std::fs::canonicalize(&args.repo)
             .ok()
             .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
             .unwrap_or_else(|| args.repo.display().to_string());
-        // 未コミットの変更（●）と上流との差（↑↓）を添える（GTK4 版・macOS 版はタブの名前に。ここはタブがないので窓の
-        // 名前に）。
+        // 未コミットの変更（●）と上流との差（↑↓）を添える（GTK4 版・macOS 版と同じくタブの名前に。前のタブなら窓の
+        // 名前にも）。
         let mut title = name;
         if self
             .status
@@ -8060,94 +8231,67 @@ impl Root {
                 title.push_str(&format!(" ↓{}", head.behind));
             }
         }
-        context.window_title(title.clone());
+        // タブの名前にも添える（前のタブなら窓の名前にも）。
+        crate::tabs::set_title(input.tab.id, &title);
+        if input.front {
+            context.window_title(title.clone());
+        }
         // 窓の背景（透かす場所・ツールバーの色・背景画像。リポジトリだけの設定があればそれ）。
         let backdrop = crate::backdrop::current(
-            &crate::tabs::current().map_or_else(|| args.repo.display().to_string(), |t| t.location),
+            &self
+                .current_tab()
+                .map_or_else(|| args.repo.display().to_string(), |t| t.location),
         );
         // 外観は Windows の設定に合わせる（描く色と同じ判断にするため、ここで決めて渡す）。窓の後ろを透かすなら
         // 色の層のない Acrylic を自分で敷く（当てられなければ WinUI の Acrylic）。
         let see_through = backdrop.see_through();
         // 窓全体を透かすときは、読む面の地も薄く（変わったら次のフレームで描き直す）。
         let (content_ground, bar_ground) = backdrop.content_ground();
-        crate::palette::set_ground(content_ground, bar_ground);
         let dark = crate::palette::dark();
-        context.use_effect("acrylic", (see_through, dark), move || {
-            ACRYLIC.with(|a| {
-                let mut a = a.borrow_mut();
-                if !see_through {
-                    *a = None;
-                    return;
-                }
-                if let Some(acrylic) = a.as_ref() {
-                    let _ = acrylic.set_dark(dark);
-                    return;
-                }
-                match windows_reactor::native_window()
-                    .ok_or_else(|| "窓がない".to_owned())
-                    .and_then(|w| xaml::Acrylic::new(&w, dark).map_err(|e| e.to_string()))
-                {
-                    Ok(acrylic) => *a = Some(acrylic),
-                    Err(e) => {
-                        eprintln!("窓の後ろの Acrylic を当てられない: {e}");
-                        ACRYLIC_FAILED.with(|f| f.set(true));
-                    }
-                }
-            });
-            None
-        });
-        context.window_visuals(
-            WindowVisuals::new()
-                .theme(if crate::palette::dark() {
-                    WindowTheme::Dark
-                } else {
-                    WindowTheme::Light
-                })
-                .backdrop(
-                    if see_through && ACRYLIC_FAILED.with(std::cell::Cell::get) {
-                        WindowBackdrop::Acrylic
-                    } else {
-                        WindowBackdrop::None
-                    },
-                ),
-        );
+        // 窓で 1 つのもの（地の濃さ・Acrylic・外観と背景）は前のタブだけが決める。
+        if input.front {
+            crate::palette::set_ground(content_ground, bar_ground);
+            Self::window_backdrop(self.window, see_through, dark, context);
+        }
         // 窓を透かすときは、ボタン・文字の欄・選ぶ欄の地も窓の地と同じ薄さに（部品だけ目立たないように）。
+        // タブごとに、そのタブの根の部品に付ける。
         let fill_alpha = if see_through {
             (1.0 - backdrop.transparency.clamp(0.0, 1.0)) as f32
         } else {
             1.0
         };
         let host = self.root.clone();
+        let fills = self.control_fills.clone();
         context.use_effect(
             "control-fills",
             (see_through, dark, (fill_alpha * 100.0).round() as u32),
             move || {
+                let fills = fills.clone();
                 let _ = host.request_native_element(move |result| {
                     let Ok(element) = result else { return };
-                    CONTROL_FILLS.with(|f| {
-                        let mut f = f.borrow_mut();
-                        let done = match f.as_ref() {
-                            Some(fills) => fills.update(dark, fill_alpha),
-                            None if see_through => {
-                                xaml::ControlFills::install(&element, dark, fill_alpha)
-                                    .map(|fills| *f = Some(fills))
-                            }
-                            None => Ok(()),
-                        };
-                        if let Err(e) = done {
-                            eprintln!("部品の地を変えられない: {e}");
+                    let mut f = fills.borrow_mut();
+                    let done = match f.as_ref() {
+                        Some(installed) => installed.update(dark, fill_alpha),
+                        None if see_through => {
+                            xaml::ControlFills::install(&element, dark, fill_alpha)
+                                .map(|installed| *f = Some(installed))
                         }
-                    });
+                        None => Ok(()),
+                    };
+                    if let Err(e) = done {
+                        eprintln!("部品の地を変えられない: {e}");
+                    }
                 });
                 None
             },
         );
+        // タブ（2 つ以上のとき）はタイトルバーの下の段（macOS 版のタブの段と同じ所）。
         let tab_strip = Grid::new()
             .grid_row(2)
             .element_ref(&self.tab_host)
-            .children((tab_strip(&title, context),));
+            .children((tab_strip(self.window, &title, context),));
         // タブを窓の外へ引き出したら、そのリポジトリを新しい窓で開く（タブの並びが変わるたびに付け直す）。
-        let tab_ids: String = crate::tabs::tabs()
+        let tab_ids: String = crate::tabs::tabs_of(self.window)
             .iter()
             .map(|t| format!("{},", t.id))
             .collect();
@@ -8156,6 +8300,7 @@ impl Root {
             let _ = host.request_native_element(|result| {
                 if let Ok(element) = result
                     && let Some(revoker) = xaml::on_tab_dropped_outside(&element, |id| {
+                        // タブの並びは前のタブのもの。
                         with_history(|h| {
                             h.sender.send(Message::TabDroppedOut(id.clone()));
                         });
@@ -8176,9 +8321,12 @@ impl Root {
             self.sidebar_menu_host.clone(),
         );
         let sender = context.sender();
+        let cell = self.history.clone();
+        let args = args.clone();
+        let front = input.front;
+        let window = input.window;
         context.use_effect("history", (), move || {
             let (panel, area, diff_panel, diff_area, sidebar, sidebar_menu_host) = refs;
-            let (args, started) = ARGS.with(|a| a.borrow().clone()).expect("args");
             // File > New Window で開いた窓は、Repositories の画面から（GTK4 版の `show_home`）。
             if args.repositories {
                 sender.send(Message::Command("repositories".to_owned()));
@@ -8195,166 +8343,150 @@ impl Root {
             if let Some(path) = args.merge.clone() {
                 sender.send(Message::MergeWindow(path, args.merge_text.clone()));
             }
-            PENDING_PLACE.with(|p| p.set(args.place.map(|r| (r, 0))));
-            // このタブを前に開いていれば、後ろに置いていた History を新しい部品につなぎ直す（開き直さない）。
-            let tab = crate::tabs::current();
-            let location = args.repo.display().to_string();
-            let parked = tab.as_ref().and_then(|t| {
-                PARKED
-                    .with(|p| p.borrow_mut().remove(&t.id))
-                    .filter(|(l, _)| *l == location)
-                    .map(|(_, view)| view)
-            });
-            let parked = parked.inspect(|view| {
-                {
-                    let mut v = view.borrow_mut();
-                    v.root = root.clone();
-                    v.root_input = false;
-                    v.sidebar = sidebar.clone();
-                    v.sidebar_menu_host = sidebar_menu_host.clone();
-                    v.sidebar_input = false;
-                    v.sidebar_host_input = false;
-                    v.sidebar_menu_ready = false;
-                    v.diff_menu_ready = false;
-                    v.panel = panel.clone();
-                    v.area = area.clone();
-                    v.attached = false;
-                    v.input_requested = false;
-                    v.session.surface = None;
-                    v.session.invalidate();
-                    v.diff.panel = diff_panel.clone();
-                    v.diff.area = diff_area.clone();
-                    v.diff.surface = None;
-                    v.diff.attached = false;
-                    v.diff.input_requested = false;
-                    v.diff.dirty = true;
-                    v.sender = sender.clone();
-                    // 新しい根の部品に、ref・status・選んだ行を送り直す。
-                    v.refs_sent = None;
-                    v.status_sent = None;
-                    v.selected = None;
-                    v.shown = None;
-                    v.context_at = None;
-                    v.menu_requested = false;
-                    v.menu_ready = false;
-                    v.working_page = false;
-                    v.last_query = None;
-                    v.multi_sent.clear();
+            // 起動のときの窓の位置・大きさは、最初に開くタブが使う。
+            if let Some(place) = take_place() {
+                PENDING_PLACE.with(|p| p.set(Some((place, 0))));
+            }
+            let session = match Session::new(&args, "app", started, Arc::new(|| {})) {
+                Ok(mut s) => {
+                    // View の All Files in One Diff を切っていれば、コミットの差分は 1 ファイルずつ。
+                    s.data.single_file = !crate::prefs::bool(crate::prefs::STACKED_COMMIT_DIFF);
+                    s
                 }
-            });
-            let view = match parked {
-                Some(view) => view,
-                None => {
-                    let session = match Session::new(&args, "app", started, Arc::new(|| {})) {
-                        Ok(mut s) => {
-                            // View の All Files in One Diff を切っていれば、コミットの差分は 1 ファイルずつ。
-                            s.data.single_file =
-                                !crate::prefs::bool(crate::prefs::STACKED_COMMIT_DIFF);
-                            s
-                        }
-                        Err(e) => {
-                            sender.send(Message::Failed(e));
-                            return None;
-                        }
-                    };
-                    Rc::new(RefCell::new(HistoryView {
-                        session,
-                        diff_query: String::new(),
-                        root,
-                        root_input: false,
-                        sidebar,
-                        sidebar_menu_host,
-                        sidebar_input: false,
-                        sidebar_host_input: false,
-                        sidebar_menu_ready: false,
-                        diff_menu_ready: false,
-                        panel: panel.clone(),
-                        area,
-                        options: args.options,
-                        attached: false,
-                        input_requested: false,
-                        diff: DiffPane {
-                            panel: diff_panel.clone(),
-                            area: diff_area,
-                            surface: None,
-                            scale: 1.0,
-                            attached: false,
-                            input_requested: false,
-                            scroll_y: 0.0,
-                            dirty: true,
-                        },
-                        sender,
-                        refs_sent: None,
-                        status_sent: None,
-                        selected: None,
-                        shown: None,
-                        context_at: None,
-                        menu_requested: false,
-                        menu_ready: false,
-                        working_page: false,
-                        last_query: None,
-                        multi_sent: Vec::new(),
-                    }))
+                Err(e) => {
+                    sender.send(Message::Failed(e));
+                    return None;
                 }
             };
-            HISTORY.with(|h| *h.borrow_mut() = Some(view.clone()));
-            let parked_tab = tab.map(|t| t.id);
-            let history = panel.observe_surface(|event| {
-                with_history(|h| {
-                    if let Err(e) = h.on_event(event) {
-                        h.sender.send(Message::Failed(e));
-                    }
-                })
+            let view = Rc::new(RefCell::new(HistoryView {
+                session,
+                diff_query: String::new(),
+                root,
+                root_input: false,
+                sidebar,
+                sidebar_menu_host,
+                sidebar_input: false,
+                sidebar_host_input: false,
+                sidebar_menu_ready: false,
+                diff_menu_ready: false,
+                panel: panel.clone(),
+                area,
+                options: args.options,
+                attached: false,
+                input_requested: false,
+                diff: DiffPane {
+                    panel: diff_panel.clone(),
+                    area: diff_area,
+                    surface: None,
+                    scale: 1.0,
+                    attached: false,
+                    input_requested: false,
+                    scroll_y: 0.0,
+                    dirty: true,
+                },
+                sender,
+                refs_sent: None,
+                status_sent: None,
+                selected: None,
+                shown: None,
+                context_at: None,
+                menu_requested: false,
+                menu_ready: false,
+                working_page: false,
+                last_query: None,
+                multi_sent: Vec::new(),
+                front,
+                owner: false,
+                window,
+                hwnd: Rc::default(),
+                hwnd_requested: false,
+                me: std::rc::Weak::new(),
+                front_parts: None,
+                auto_fetch_since: Instant::now(),
+                worktree_tick: (Instant::now(), Instant::now()),
+                running: (0, None),
+                flash_until: None,
+                activity_tick: None,
+                watched: None,
+            }));
+            view.borrow_mut().me = Rc::downgrade(&view);
+            *cell.borrow_mut() = Some(view.clone());
+            let history_view = view.clone();
+            let history = panel.observe_surface(move |event| {
+                let mut h = history_view.borrow_mut();
+                if let Err(e) = h.on_event(event) {
+                    h.sender.send(Message::Failed(e));
+                }
             });
-            let diff = diff_panel.observe_surface(|event| {
-                with_history(|h| {
-                    if let SwapChainPanelEvent::Metrics {
-                        width,
-                        height,
-                        scale_x,
-                        ..
-                    } = event
-                        && let Err(e) = h.diff.resize(&h.session.renderer, width, height, scale_x)
-                    {
-                        h.sender.send(Message::Failed(e));
-                    }
-                })
+            let diff_view = view.clone();
+            let diff = diff_panel.observe_surface(move |event| {
+                let mut guard = diff_view.borrow_mut();
+                let h = &mut *guard;
+                if let SwapChainPanelEvent::Metrics {
+                    width,
+                    height,
+                    scale_x,
+                    ..
+                } = event
+                    && let Err(e) = h.diff.resize(&h.session.renderer, width, height, scale_x)
+                {
+                    h.sender.send(Message::Failed(e));
+                }
             });
             Some(Box::new(move || {
                 drop(history);
                 drop(diff);
-                REVOKERS.with(|r| r.borrow_mut().clear());
-                // タブを替えた（タブがまだある）なら、History を後ろに置いておく。閉じたタブのものは捨てる。
-                let view = HISTORY.with(|h| h.borrow_mut().take());
-                if let (Some(view), Some(id)) = (view, parked_tab)
-                    && crate::tabs::tabs().iter().any(|t| t.id == id)
-                {
-                    PARKED.with(|p| p.borrow_mut().insert(id, (location, view)));
-                }
+                // 閉じたタブの History を、前のタブの History として残さない。
+                HISTORY.with(|h| {
+                    let mut h = h.borrow_mut();
+                    if h.as_ref().is_some_and(|v| Rc::ptr_eq(v, &view)) {
+                        *h = None;
+                    }
+                });
+                cell.borrow_mut().take();
             }))
         });
+        // 窓の入力の処理が使う History は、前に出ている窓の前のタブが描くときに自分にする（`HistoryView::render`）。
+        with_cell(&self.history, |h| h.set_front(input.front));
+        self.front.set(input.front);
+        *self.tab.borrow_mut() = input.tab.clone();
+        if self.owns_window() {
+            // メッセージの #123 のリンクの先（fork なら元のリポジトリの Issue）。
+            let base = self.github.target.as_ref().map(|t| t.repo.web_url());
+            ISSUE_BASE.with(|b| *b.borrow_mut() = base);
+            if let Some(head) = self
+                .refs
+                .as_ref()
+                .map(|r| r.refs.head_branch.clone().unwrap_or_default())
+            {
+                HEAD_NAME.with(|h| *h.borrow_mut() = head);
+            }
+        }
 
         // 右クリック: メニューを選んだ行のものに作り直した後（この描き直しの後）に、押した位置で開く。
         if self.menu_request > 0 {
             // effect の時点では WinUI のメニューはまだ入れ替わっていないので、次のフレームで開く。
-            context.use_effect("history-menu", self.menu_request, || {
-                with_history(|h| h.menu_ready = true);
+            let cell = self.history.clone();
+            context.use_effect("history-menu", self.menu_request, move || {
+                with_cell(&cell, |h| h.menu_ready = true);
                 None
             });
         }
 
         // 差分の右クリック: メニューをそのファイルのものに作り直した後、次のフレームで開く。
         if self.diff_menu_request > 0 {
-            context.use_effect("diff-menu", self.diff_menu_request, || {
-                with_history(|h| h.diff_menu_ready = true);
+            let cell = self.history.clone();
+            context.use_effect("diff-menu", self.diff_menu_request, move || {
+                with_cell(&cell, |h| h.diff_menu_ready = true);
                 None
             });
         }
 
         // サイドバーの右クリック: メニューを押した項目のものに作り直した後、次のフレームで開く。
         if self.sidebar_request > 0 {
-            context.use_effect("sidebar-menu", self.sidebar_request, || {
-                with_history(|h| h.sidebar_menu_ready = true);
+            let cell = self.history.clone();
+            context.use_effect("sidebar-menu", self.sidebar_request, move || {
+                with_cell(&cell, |h| h.sidebar_menu_ready = true);
                 None
             });
         }
@@ -8430,9 +8562,7 @@ impl Root {
             ));
         // SSH 先・daemon 越しは、つないでいる間とつなげなかったときに、そのことを History の上に出す（GTK4 版の
         // `Connecting`）。
-        let location = crate::tabs::current()
-            .map(|t| t.location)
-            .unwrap_or_default();
+        let location = self.current_tab().map(|t| t.location).unwrap_or_default();
         let history: View = match &self.error {
             Some(e) if crate::remote::is_remote(&location) => {
                 connecting_view(&location, Some(e), context)
@@ -8517,37 +8647,42 @@ impl Root {
                             )),
                     )),
             ));
-        let menu_bar = crate::menus::menu_bar(|| context.callback(Message::Command));
+        // タイトルバー: 左にリポジトリの切り替え、続けてツールバー（macOS 版と同じく、アイコンの下に名前）、右に
+        // ≡（メニューバーの中身すべて）。メニューバーとツールバーの段はなくし、タブは下の段に置く。ツールバーの右の
+        // 空きは窓をつかんで動かす所。
         let tracking = self.tracking();
-        let toolbar = Grid::new()
-            .grid_row(1)
-            .columns([GridLength::Auto, GridLength::Star(1.0)])
-            .children((
-                self.repository_switcher(context),
-                Grid::new()
-                    .grid_column(1)
-                    .element_ref(&self.toolbar)
-                    .children((crate::menus::toolbar(
-                        context.callback(Message::Command),
-                        tracking,
-                    ),)),
-            ));
-        // 数かツールバーの並びが変わったら、Pull・Push のバッジを付け直す（並べ終えてから）。
-        let order: String = crate::menus::toolbar_entries()
-            .iter()
-            .map(|e| format!("{e:?}"))
-            .collect();
-        context.use_effect(
-            "toolbar-badges",
-            (tracking.ahead, tracking.behind, order),
-            {
-                let sender = context.sender();
-                move || {
-                    sender.send(Message::ToolbarBadgesLater);
-                    None
-                }
-            },
-        );
+        // 窓のタイトルバーは 1 つなので、前のタブだけが置く。
+        let menu_bar: View = if !input.front {
+            View::empty()
+        } else {
+            TitleBar::new()
+                .grid_row(0)
+                // アイコンの下に名前を出すので、背の高いタイトルバー（macOS 版の、タイトルバーに入れたツールバーと同じ）。
+                .preferred_height(WindowTitleBarHeight::Tall)
+                .slots([
+                    SlotView::new(TitleBarSlot::LeftHeader, self.repository_switcher(context)),
+                    SlotView::new(
+                        TitleBarSlot::Content,
+                        Grid::new()
+                            .horizontal_alignment(HorizontalAlignment::Left)
+                            .vertical_alignment(VerticalAlignment::Center)
+                            .margin(Thickness::new(8.0, 0.0, 64.0, 0.0))
+                            .children((crate::menus::toolbar(
+                                context.callback(Message::Command),
+                                tracking,
+                            ),)),
+                    ),
+                    SlotView::new(
+                        TitleBarSlot::RightHeader,
+                        Grid::new()
+                            .margin(Thickness::new(4.0, 0.0, 8.0, 0.0))
+                            .vertical_alignment(VerticalAlignment::Center)
+                            .children((crate::menus::menu_button(
+                                context.callback(Message::Command),
+                            ),)),
+                    ),
+                ])
+        };
         // History の CI の印を押したら、その位置の見えないボタンの吹き出しを開く（置いてから）。
         if self.checks_opened > 0 {
             let anchor = self.checks_anchor.clone();
@@ -8654,6 +8789,12 @@ impl Root {
             View::empty()
         };
         let working_copy = self.working_copy_view(context);
+        // Repositories のタブには、リポジトリのサイドバーを出さない（macOS 版の Repositories のウインドウと同じ）。
+        let sidebar_width = if crate::tabs::current_is_repositories() {
+            0.0
+        } else {
+            self.sidebar_width
+        };
         let details_split = self.page != Page::WorkingCopy && !self.details_expanded;
         SPLIT_SIZES.with(|s| s.set((self.sidebar_width, self.right_width, self.details_height)));
         // 境目のつまみに押す・動かすを付ける（つまみができたとき。詳細の下のつまみは出すたびにできる）。部品は
@@ -8684,7 +8825,7 @@ impl Root {
         }
         let body = Grid::new()
             .columns([
-                GridLength::Pixel(self.sidebar_width),
+                GridLength::Pixel(sidebar_width),
                 GridLength::Star(1.0),
                 self.right_width
                     .map_or(GridLength::Star(1.0), GridLength::Pixel),
@@ -8730,7 +8871,11 @@ impl Root {
                 self.push_view(context),
                 // 列の境目（動かして幅を変える）。いちばん上に重ねる。
                 View::fragment((
-                    splitter(&self.split_handles[0], Split::Sidebar, 0.0),
+                    if sidebar_width == 0.0 {
+                        View::empty()
+                    } else {
+                        splitter(&self.split_handles[0], Split::Sidebar, 0.0)
+                    },
                     splitter(&self.split_handles[1], Split::Right, 0.0),
                     if details_split {
                         splitter(&self.split_handles[2], Split::Details, self.details_height)
@@ -8826,6 +8971,7 @@ impl Root {
                             REVOKERS.with(|r| r.borrow_mut().push(revoker));
                         }
                         xaml::drop_on_rows(&element, targets.clone(), |target, locations| {
+                            // 落とす先の一覧は前のタブのもの。
                             with_history(|h| {
                                 h.sender.send(Message::Repos(
                                     crate::repositories::Event::DroppedOn(
@@ -8906,7 +9052,7 @@ impl Root {
                     .background(ground),
                 Grid::new()
                     .grid_row(3)
-                    .columns([GridLength::Pixel(self.sidebar_width), GridLength::Star(1.0)])
+                    .columns([GridLength::Pixel(sidebar_width), GridLength::Star(1.0)])
                     .children((
                         Border::new().background(ground),
                         Border::new()
@@ -8942,6 +9088,23 @@ impl Root {
                 None
             },
         );
+        // 後ろのタブは隠す（リポジトリは開いたまま。前に出したら見せる）。
+        let root_ref = self.root.clone();
+        let front = input.front;
+        context.use_effect("tab-shown", input.front, move || {
+            let _ = root_ref.request_native_element(move |result| {
+                if let Ok(element) = result
+                    && let Ok(element) = element.cast::<xaml::UIElement>()
+                {
+                    let _ = element.SetVisibility(if front {
+                        xaml::Visibility::Visible
+                    } else {
+                        xaml::Visibility::Collapsed
+                    });
+                }
+            });
+            None
+        });
         Grid::new()
             .element_ref(&self.root)
             // 窓の地（WinUI は外観を替えても窓の地を塗り直さないので、ここで塗る）。透かすときは場所ごとに塗る。
@@ -8961,7 +9124,6 @@ impl Root {
                 grounds,
                 toolbar_tint,
                 menu_bar,
-                toolbar,
                 tab_strip,
                 // パッチのファイルを落とせる（GTK4 版・macOS 版と同じく窓のどこにでも）。
                 Border::new()
@@ -9043,7 +9205,7 @@ fn backdrop_image(backdrop: &crate::backdrop::Backdrop, host: &ElementRef<Image>
 impl Root {
     /// File History を、リポジトリのタブの隣のタブで開く（macOS 版・GTK4 版と同じ。タブがなければこの窓に重ねる）。
     fn open_file_history_tab(&mut self, path: String, context: &ComponentContext<Self>) {
-        match crate::tabs::current() {
+        match self.current_tab() {
             Some(tab) => crate::tabs::open_file_history(&tab.location, &path),
             None => self.update(Message::OpenFileHistory(path), context),
         }
@@ -9098,7 +9260,7 @@ impl Root {
     /// Repository > Undo…: 最後の操作を見せて、確かめてから戻す（GTK4 版の `sheets::undo`）。
     fn undo(&self, context: &ComponentContext<Self>) {
         let mut repo = None;
-        with_history(|h| repo = h.session.data.repo());
+        self.with_history(|h| repo = h.session.data.repo());
         let Some(repo) = repo else { return beep() };
         context.spawn_background(move |_| {
             let peek: Value =
@@ -9895,6 +10057,7 @@ impl Root {
                 button,
                 fields,
                 checks,
+                kind,
                 ..
             }) => {
                 // 欄（見出しがあれば上に）とチェックを縦に並べる。最初の欄にフォーカスと Enter。
@@ -9908,6 +10071,19 @@ impl Root {
                 for (i, (label, value, placeholder)) in fields.iter().enumerate() {
                     if !label.is_empty() {
                         rows.push((format!("label{i}"), TextBlock::new().text(label.clone()).into()));
+                    }
+                    // 日付は暦で選ぶ（macOS 版・GTK4 版と同じ）。欄には YYYY-MM-DD で入れる。
+                    if matches!(kind, FormKind::DeepenSince) {
+                        // reactor の CalendarDatePicker は選んだ日を持たせられないので、選んだ日は案内の文字に出す
+                        // （描き直しても消えないように）。
+                        let picker = CalendarDatePicker::new()
+                            .placeholder_text_optional((!value.is_empty()).then(|| value.clone()))
+                            .is_today_highlighted(true)
+                            .on_date_changed(context.callback(move |date: Option<_>| {
+                                Message::FormField(i, date.map_or_else(String::new, picked_date))
+                            }));
+                        rows.push((format!("field{i}"), picker.into()));
+                        continue;
                     }
                     let field = TextBox::new()
                         .text(value.clone())
@@ -12204,7 +12380,7 @@ impl Root {
                 }
             }
         }
-        with_history(|h| {
+        self.with_history(|h| {
             h.session.data.set_worktrees(heads, elsewhere);
             h.session.invalidate();
         });
@@ -12311,7 +12487,7 @@ impl Root {
                 return beep();
             };
             let mut target = None;
-            with_history(|h| target = h.session.data.working_diff());
+            self.with_history(|h| target = h.session.data.working_diff());
             let Some((repo, diff)) = target else {
                 return beep();
             };
@@ -12325,7 +12501,7 @@ impl Root {
             return;
         };
         match key {
-            "collapse" => with_history(|h| {
+            "collapse" => self.with_history(|h| {
                 if h.session.data.toggle_file_index(file.index) {
                     h.session.renderer.forget_diff();
                     let rows = h.diff_rows();
@@ -12339,7 +12515,7 @@ impl Root {
                 // 見たことにしたら畳み、戻したら開く（GTK4 版と同じ）。
                 let viewed = crate::viewed::toggle(oid, &file.path);
                 if viewed != file.collapsed {
-                    with_history(|h| {
+                    self.with_history(|h| {
                         if h.session.data.toggle_file_index(file.index) {
                             h.session.renderer.forget_diff();
                             let rows = h.diff_rows();
@@ -14542,7 +14718,7 @@ impl Root {
     /// ツールバーの左のリポジトリ名（GTK4 版・macOS 版と同じ）: 押すと、ブックマークのリポジトリを、お気に入り
     /// （★）を先に、その後は最後に開いた順に出し、選んだものにこのタブを替える。終わりに Repositories。
     fn repository_switcher(&self, context: &ViewContext<Self>) -> View {
-        let Some(tab) = crate::tabs::current().filter(|t| !t.repositories) else {
+        let Some(tab) = self.current_tab().filter(|t| !t.repositories) else {
             return View::empty();
         };
         let mut items: Vec<MenuItem> = crate::repositories::switch_targets()
@@ -14661,9 +14837,7 @@ impl Root {
         if !self.repo.as_ref().is_some_and(|r| Arc::ptr_eq(r, repo)) {
             return View::empty();
         }
-        let location = crate::tabs::current()
-            .map(|t| t.location)
-            .unwrap_or_default();
+        let location = self.current_tab().map(|t| t.location).unwrap_or_default();
         let host = crate::remote::host_of(&location).unwrap_or_else(|| "daemon".to_owned());
         let heading = tr!("Lost connection to {host}", host = host);
         // 理由が見出しで始まっていれば、その後ろだけ（GTK4 版の `reason_detail`）。
@@ -14821,7 +14995,7 @@ impl Root {
                     .unwrap_or_default();
                 let title = tr!("All changes to send ({count})", count = count);
                 let note = tr!("From upstream to HEAD, all files");
-                with_history(|h| {
+                self.with_history(|h| {
                     h.set_working_page(false);
                     h.session.data.want_range(base, tip, title, note, lines);
                 });
@@ -14830,7 +15004,7 @@ impl Root {
                 let Some(id) = amonhen_model::Oid::from_hex(oid) else {
                     return;
                 };
-                with_history(|h| {
+                self.with_history(|h| {
                     h.set_working_page(false);
                     h.session.data.want_commit_id(id);
                 });
@@ -15104,6 +15278,13 @@ impl Root {
         match state.handle(event) {
             Action::None => {}
             Action::Close => {
+                // Repositories のタブなら、タブごと閉じる（最後のタブなら窓を閉じる）。
+                if crate::tabs::current_is_repositories() {
+                    if crate::tabs::close_current() {
+                        close_window();
+                    }
+                    return;
+                }
                 self.repositories = None;
                 self.scan_watch = None;
                 self.page = self.repositories_from;
@@ -15196,7 +15377,7 @@ impl Root {
             .changed_file
             .and_then(|f| tree.iter().position(|r| r.file == Some(f)));
         let mut files = Vec::new();
-        with_history(|h| files = h.session.data.files());
+        self.with_history(|h| files = h.session.data.files());
         let rows = tree.iter().enumerate().map(|(i, r)| {
             let indent = Thickness::new(r.depth as f64 * 14.0, 0.0, 0.0, 0.0);
             let content: View = match r.file.and_then(|f| self.changed_files.get(f)) {
@@ -15245,7 +15426,7 @@ impl Root {
             return View::empty();
         }
         let mut files = Vec::new();
-        with_history(|h| files = h.session.data.files());
+        self.with_history(|h| files = h.session.data.files());
         let rows = self.changed_files.iter().enumerate().map(|(i, f)| {
             let menu = self.changed_file_menu(files.get(i), context);
             let counts = if f.binary {
@@ -15306,7 +15487,7 @@ impl Root {
             .stash
             .as_deref()
             .and_then(|name| self.stash_entries().iter().find(|e| e.name == name)?.target);
-        with_history(|h| {
+        self.with_history(|h| {
             h.set_working_page(page == Page::WorkingCopy);
             if page == Page::Stashes {
                 // 選んでいた stash を出し直す。
@@ -15327,7 +15508,7 @@ impl Root {
     fn show_file_change(&self, entry: &crate::filehistory::Entry) {
         if let Some(id) = amonhen_model::Oid::from_hex(&entry.oid) {
             let path = entry.path.clone();
-            with_history(|h| h.session.data.want_file_change(id, path));
+            self.with_history(|h| h.session.data.want_file_change(id, path));
         }
     }
 
@@ -15354,6 +15535,7 @@ impl Root {
         let Some(repo) = self.repo.clone() else {
             return;
         };
+        let this_tab = self.current_tab();
         let Some(state) = self.merge.as_mut() else {
             return;
         };
@@ -15426,7 +15608,7 @@ impl Root {
             }
             "popout" => {
                 // 別の窓（別のプロセス）に出す。打ちかけの Result は一時ファイルで渡す。
-                let Some(tab) = crate::tabs::current() else {
+                let Some(tab) = this_tab else {
                     return beep();
                 };
                 let mut extra = vec!["--merge".to_owned(), state.path.clone()];
@@ -16216,7 +16398,7 @@ impl Root {
                 .cloned()
         });
         let staged = self.working_staged;
-        with_history(|h| h.session.data.want_working(entry, staged));
+        self.with_history(|h| h.session.data.want_working(entry, staged));
     }
 
     /// 欄の中身を、開いている worktree の下書きとして覚える（どちらも空なら消す。GTK4 版の `save_draft`）。
@@ -16349,7 +16531,7 @@ impl Root {
     /// History を絞っているときの、上の帯（範囲の名前と All Branches。GTK4 版の History のバーの範囲）。
     fn scope_band(&self, context: &ViewContext<Self>) -> View {
         let mut scope = crate::data::Scope::All;
-        with_history(|h| scope = h.session.data.scope());
+        self.with_history(|h| scope = h.session.data.scope());
         let title = match &scope {
             crate::data::Scope::All => return View::empty(),
             crate::data::Scope::Current => tr!("Current Branch"),
@@ -16653,7 +16835,7 @@ impl Root {
         let mut items = Vec::new();
         // 折りたたんだ merge なら、取り込んだ側を開く・たたむ（GTK4 版の `merge_items`。メニューの先頭）。
         let mut fold = None;
-        with_history(|h| fold = h.session.data.merge_fold(id));
+        self.with_history(|h| fold = h.session.data.merge_fold(id));
         if let Some(hidden) = fold {
             let title = if hidden > 0 {
                 tr!("Show {count} Merged Commits", count = hidden)
@@ -18389,9 +18571,145 @@ struct HistoryView {
     last_query: Option<String>,
     /// 差分を読みに行った複数選択。
     multi_sent: Vec<u32>,
+    /// 窓の前のタブか（後ろのタブは描かない。読み直しと見張りは続ける）。
+    front: bool,
+    /// 窓の入力の部品を持っているか（前に出ている窓の、前のタブ）。
+    owner: bool,
+    /// タブのある窓（`tabs` の番号）と、その窓の HWND（分かるまで 0）、HWND を聞いたか。
+    window: u64,
+    hwnd: Rc<std::cell::Cell<u64>>,
+    hwnd_requested: bool,
+    /// 自分（窓の入力の処理が使う History にするため）。
+    me: std::rc::Weak<RefCell<HistoryView>>,
+    /// 前から外れたときに取っておいた、窓の入力の部品（前に戻したら戻す）。
+    front_parts: Option<FrontParts>,
+    /// このタブの、自動の fetch を数え始めた時刻。
+    auto_fetch_since: Instant,
+    /// ほかの worktree の変更を最後に数えた時刻と、全部を数え直した時刻（10 秒ごと・5 分ごと。GTK4 版と同じ）。
+    worktree_tick: (Instant, Instant),
+    /// 走っている操作の数と、最後に数えた時（ステータスバーの ⟳ n。0.5 秒ごとに数える）。
+    running: (usize, Option<Instant>),
+    /// 終わった操作の一言を消す時刻。
+    flash_until: Option<Instant>,
+    /// Activity を開いている間、読み直しを頼んだ最後の時刻（0.5 秒ごとに頼む）。
+    activity_tick: Option<Instant>,
+    /// 見張っている、daemon・SSH 越しのリポジトリと、最後に見た時刻（切れたら知らせる。GTK4 版・macOS 版と同じく
+    /// 0.25 秒ごとに見て、切れたら見るのをやめる）。
+    watched: Option<(Arc<Repository>, Instant)>,
+}
+
+/// 窓の入力の処理が使う、前のタブの部品（History・サイドバー・差分の要素とメニュー、境目の親、引いてよい項目）。
+/// どれも窓で 1 つずつなので、タブを替えたら前のタブのものに入れ替える。
+#[derive(Default)]
+struct FrontParts {
+    history_element: Option<xaml::UIElement>,
+    history_flyout: Option<xaml::FlyoutBase>,
+    sidebar_element: Option<xaml::UIElement>,
+    sidebar_menu_host: Option<xaml::UIElement>,
+    diff_flyout: Option<xaml::FlyoutBase>,
+    split_parent: Option<xaml::UIElement>,
+    favorite_keys: Vec<String>,
+}
+
+impl FrontParts {
+    /// 今の部品を取り出す（窓からは外れる）。
+    fn take() -> Self {
+        Self {
+            history_element: HISTORY_ELEMENT.with(|e| e.borrow_mut().take()),
+            history_flyout: HISTORY_FLYOUT.with(|f| f.borrow_mut().take()),
+            sidebar_element: SIDEBAR_ELEMENT.with(|e| e.borrow_mut().take()),
+            sidebar_menu_host: SIDEBAR_MENU_HOST.with(|e| e.borrow_mut().take()),
+            diff_flyout: DIFF_FLYOUT.with(|f| f.borrow_mut().take()),
+            split_parent: SPLIT_PARENT.with(|p| p.borrow_mut().take()),
+            favorite_keys: FAVORITE_KEYS.with(|f| std::mem::take(&mut *f.borrow_mut())),
+        }
+    }
+
+    /// 窓の部品にする。
+    fn restore(self) {
+        HISTORY_ELEMENT.with(|e| *e.borrow_mut() = self.history_element);
+        HISTORY_FLYOUT.with(|f| *f.borrow_mut() = self.history_flyout);
+        SIDEBAR_ELEMENT.with(|e| *e.borrow_mut() = self.sidebar_element);
+        SIDEBAR_MENU_HOST.with(|e| *e.borrow_mut() = self.sidebar_menu_host);
+        DIFF_FLYOUT.with(|f| *f.borrow_mut() = self.diff_flyout);
+        SPLIT_PARENT.with(|p| *p.borrow_mut() = self.split_parent);
+        FAVORITE_KEYS.with(|f| *f.borrow_mut() = self.favorite_keys);
+    }
+}
+
+/// 前のタブが前から外れる（タブを替える直前に `tabs` が呼ぶ）。窓の入力の部品を、そのタブに取っておく。
+pub fn leave_front() {
+    with_history(HistoryView::give_up);
 }
 
 impl HistoryView {
+    /// 前のタブになった・外れた。前に戻ったら、取っておいた部品を戻して描き直す。
+    fn set_front(&mut self, front: bool) {
+        if self.front == front {
+            return;
+        }
+        self.front = front;
+        if front {
+            self.session.invalidate();
+            self.diff.dirty = true;
+        } else {
+            self.give_up();
+        }
+    }
+
+    /// 窓の入力の部品を手放す（取っておき、また持つときに戻す）。
+    fn give_up(&mut self) {
+        if self.owner {
+            self.front_parts = Some(FrontParts::take());
+            self.owner = false;
+        }
+    }
+
+    /// 窓の前のタブで、その窓が前に出ていれば、窓の入力の部品を持つ（前に持っていたタブは手放す）。窓が 1 つしか
+    /// なければ、窓が前に出ているかは見ない。
+    fn take_ownership(&mut self) {
+        if !self.front || self.owner {
+            return;
+        }
+        if !self.hwnd_requested {
+            let hwnd = self.hwnd.clone();
+            self.hwnd_requested = self.root.request_native_element(move |result| {
+                if let Ok(element) = result
+                    && let Some(handle) = xaml::window_handle(&element)
+                {
+                    hwnd.set(handle);
+                }
+            });
+        }
+        if self.hwnd.get() != 0 {
+            let (window, hwnd) = (self.window, self.hwnd.get());
+            WINDOW_HANDLES.with(|w| w.borrow_mut().insert(window, hwnd));
+        }
+        let only = crate::tabs::windows().len() == 1;
+        let active =
+            unsafe { windows::Win32::UI::Input::KeyboardAndMouse::GetActiveWindow() }.0 as u64;
+        if !only && (self.hwnd.get() == 0 || active != self.hwnd.get()) {
+            return;
+        }
+        // 前に持っていたタブ（自分ではない）に手放させる。
+        let previous = HISTORY.with(|h| h.borrow().clone());
+        if let Some(previous) = previous
+            && !std::ptr::eq(previous.as_ptr(), self as *const HistoryView)
+        {
+            previous.borrow_mut().give_up();
+        }
+        self.owner = true;
+        if let Some(parts) = self.front_parts.take() {
+            parts.restore();
+        }
+        HISTORY.with(|h| *h.borrow_mut() = self.me.upgrade());
+        if crate::tabs::focused() != self.window {
+            crate::tabs::focus(self.window);
+            // 窓で 1 つの値を、この窓の前のタブが書き直す。
+            self.sender.send(Message::WindowFocused);
+        }
+    }
+
     fn on_event(&mut self, event: SwapChainPanelEvent) -> Result<(), String> {
         match event {
             SwapChainPanelEvent::Metrics {
@@ -18424,43 +18742,48 @@ impl HistoryView {
         retry_monospace();
         retry_splitters();
         retry_place();
-        if !self.input_requested {
-            self.input_requested = request_input(&self.area, Target::History);
-        }
-        if !self.root_input {
-            self.root_input = self.root.request_native_element(|result| match result {
-                Ok(element) => {
-                    if let Err(e) = attach_shortcuts(&element) {
-                        eprintln!("ショートカットを付けられない: {e}");
-                    }
-                }
-                Err(e) => eprintln!("窓の根を取れない: {e:?}"),
-            });
-        }
-        if !self.diff.input_requested {
-            self.diff.input_requested = request_input(&self.diff.area, Target::Diff);
-        }
-        if !self.sidebar_input {
-            self.sidebar_input = self.sidebar.request_native_element(|result| match result {
-                Ok(element) => {
-                    if let Err(e) = attach_sidebar(&element) {
-                        eprintln!("サイドバーに右クリックを付けられない: {e}");
-                    }
-                }
-                Err(e) => eprintln!("サイドバーを取れない: {e:?}"),
-            });
-        }
-        if !self.sidebar_host_input {
-            self.sidebar_host_input =
-                self.sidebar_menu_host
-                    .request_native_element(|result| match result {
-                        Ok(element) => {
-                            if let Ok(ui) = element.cast::<xaml::UIElement>() {
-                                SIDEBAR_MENU_HOST.with(|e| *e.borrow_mut() = Some(ui));
-                            }
+        self.take_ownership();
+        // 窓の入力（ショートカット・右クリック・サイドバー）は、部品を持ってからつなぐ（後ろのタブ・後ろの窓が、
+        // 窓の入力の部品を書き換えないように）。
+        if self.owner {
+            if !self.input_requested {
+                self.input_requested = request_input(&self.area, Target::History);
+            }
+            if !self.root_input {
+                self.root_input = self.root.request_native_element(|result| match result {
+                    Ok(element) => {
+                        if let Err(e) = attach_shortcuts(&element) {
+                            eprintln!("ショートカットを付けられない: {e}");
                         }
-                        Err(e) => eprintln!("サイドバーのメニューの置き場を取れない: {e:?}"),
-                    });
+                    }
+                    Err(e) => eprintln!("窓の根を取れない: {e:?}"),
+                });
+            }
+            if !self.diff.input_requested {
+                self.diff.input_requested = request_input(&self.diff.area, Target::Diff);
+            }
+            if !self.sidebar_input {
+                self.sidebar_input = self.sidebar.request_native_element(|result| match result {
+                    Ok(element) => {
+                        if let Err(e) = attach_sidebar(&element) {
+                            eprintln!("サイドバーに右クリックを付けられない: {e}");
+                        }
+                    }
+                    Err(e) => eprintln!("サイドバーを取れない: {e:?}"),
+                });
+            }
+            if !self.sidebar_host_input {
+                self.sidebar_host_input =
+                    self.sidebar_menu_host
+                        .request_native_element(|result| match result {
+                            Ok(element) => {
+                                if let Ok(ui) = element.cast::<xaml::UIElement>() {
+                                    SIDEBAR_MENU_HOST.with(|e| *e.borrow_mut() = Some(ui));
+                                }
+                            }
+                            Err(e) => eprintln!("サイドバーのメニューの置き場を取れない: {e:?}"),
+                        });
+            }
         }
         if std::mem::take(&mut self.sidebar_menu_ready) {
             open_sidebar_menu();
@@ -18468,80 +18791,82 @@ impl HistoryView {
         if std::mem::take(&mut self.diff_menu_ready) {
             open_diff_menu();
         }
-        // 自動の fetch（Settings > General で決めた間隔）。
-        let (minutes, since) = AUTO_FETCH.with(|a| a.get());
+        // 自動の fetch（Settings > General で決めた間隔。間隔を変えたらそこから数え直す）。タブごと。
+        let (minutes, changed) = AUTO_FETCH.with(|a| a.get());
+        let since = self.auto_fetch_since.max(changed);
         if minutes > 0 && since.elapsed() >= std::time::Duration::from_secs(u64::from(minutes) * 60)
         {
-            AUTO_FETCH.with(|a| a.set((minutes, Instant::now())));
+            self.auto_fetch_since = Instant::now();
             self.sender.send(Message::AutoFetch);
         }
         // ほかの worktree の変更の数（10 秒ごと、5 分ごとに全部を数え直す。変わっていなければエンジンは git を
         // 動かさない）。
-        let (counted, fresh) = WORKTREE_TICK.with(|t| t.get());
+        let (counted, fresh) = self.worktree_tick;
         if counted.elapsed() >= std::time::Duration::from_secs(10) {
             let all = fresh.elapsed() >= std::time::Duration::from_secs(300);
-            WORKTREE_TICK
-                .with(|t| t.set((Instant::now(), if all { Instant::now() } else { fresh })));
+            self.worktree_tick = (Instant::now(), if all { Instant::now() } else { fresh });
             self.sender.send(Message::CountWorktrees(all));
         }
         // サイドバーの木にドラッグの受け口を付ける（作り直すと別の木になるので、0.5 秒ごとに見て付け直す）。
-        if TREE_DRAG_AT
-            .with(|t| t.get())
-            .is_none_or(|t| t.elapsed() >= std::time::Duration::from_millis(500))
+        if self.owner
+            && TREE_DRAG_AT
+                .with(|t| t.get())
+                .is_none_or(|t| t.elapsed() >= std::time::Duration::from_millis(500))
         {
             TREE_DRAG_AT.with(|t| t.set(Some(Instant::now())));
             hook_tree_drag();
         }
         // daemon・SSH 越しのつながりが切れたら、ステータスバーの上で知らせる（0.25 秒ごとに見る）。
-        if let Some(closed) = WATCHED_CONNECTION.with(|w| {
-            let mut w = w.borrow_mut();
-            let (repo, seen) = w.as_mut()?;
+        if let Some(closed) = (|| {
+            let (repo, seen) = self.watched.as_mut()?;
             if seen.elapsed() < std::time::Duration::from_millis(250) {
                 return None;
             }
             *seen = Instant::now();
             let reason = repo.connection_state()?.closed?;
             let repo = repo.clone();
-            *w = None;
+            self.watched = None;
             Some((repo, reason))
-        }) {
+        })() {
             self.sender.send(Message::Disconnected(closed.0, closed.1));
         }
         // 裏のスレッドが SSH 先にエンジンを送ってよいかを聞いていれば、ダイアログで聞く。
-        if let Some(ask) = crate::remote::take_ask() {
+        if self.owner
+            && let Some(ask) = crate::remote::take_ask()
+        {
             self.sender.send(Message::AskSendEngine(ask));
         }
         // 終わった操作の一言を、出してから 5 秒で消す。
-        if FLASH_UNTIL
-            .with(|f| f.get())
+        if self
+            .flash_until
             .is_some_and(|until| Instant::now() >= until)
         {
-            FLASH_UNTIL.with(|f| f.set(None));
+            self.flash_until = None;
             self.sender.send(Message::FlashExpired);
         }
         // 走っている操作の数を 0.5 秒ごとに数え、変わったら知らせる（ステータスバーの ⟳ n）。
-        let (count, last) = RUNNING.with(|r| r.get());
+        let (count, last) = self.running;
         if last.is_none_or(|l| l.elapsed() >= std::time::Duration::from_millis(500)) {
             let now = amonhen_model::activity::records()
                 .iter()
                 .filter(|r| r.ok.is_none())
                 .count();
-            RUNNING.with(|r| r.set((now, Some(Instant::now()))));
+            self.running = (now, Some(Instant::now()));
             if now != count {
                 self.sender.send(Message::Running(now));
             }
             // Windows の外観（アプリ モード）か、窓全体を透かす地の濃さが変わったら、色を替えて描き直す。
-            if crate::palette::refresh() | crate::palette::take_ground_changed() {
+            if self.owner && (crate::palette::refresh() | crate::palette::take_ground_changed()) {
                 self.session.invalidate();
                 self.diff.dirty = true;
                 self.sender.send(Message::AppearanceChanged);
             }
         }
         // Activity を開いている間は 0.5 秒ごとに読み直してもらう（GTK4 版と同じ間隔）。
-        if let Some(last) = ACTIVITY_TICK.with(|t| t.get())
+        if let Some(last) = self.activity_tick
             && last.elapsed() >= std::time::Duration::from_millis(500)
         {
-            ACTIVITY_TICK.with(|t| t.set(Some(Instant::now())));
+            self.activity_tick = Some(Instant::now());
             self.sender.send(Message::ActivityTick);
         }
         let s = &mut self.session;
@@ -18715,6 +19040,7 @@ impl HistoryView {
             s.renderer.diff_current = None;
         }
         if self.diff.dirty
+            && self.front
             && let Some(surface) = self.diff.surface.as_mut()
         {
             s.renderer
@@ -18732,7 +19058,8 @@ impl HistoryView {
             surface.present().map_err(|e| format!("出せない: {e}"))?;
             self.diff.dirty = false;
         }
-        if !s.needs_frame() {
+        // 後ろのタブは描かない（前に出したら描き直す）。
+        if !self.front || !s.needs_frame() {
             return Ok(());
         }
         // 前のフレームが出るのを待つ（最大 1 フレーム。UI のスレッドなので長くは待たない）。
@@ -19418,12 +19745,12 @@ fn global_entries(reply: &Value) -> Vec<crate::reposettings::Entry> {
 
 /// タブの帯（タブが 2 つ以上のときだけ。macOS 版の窓のタブと同じ）。前のタブの名前は窓の名前と同じく ● と ↑↓ を
 /// 添える。
-fn tab_strip(title: &str, context: &ViewContext<Root>) -> View {
-    let tabs = crate::tabs::tabs();
+fn tab_strip(window: u64, title: &str, context: &ViewContext<Root>) -> View {
+    let tabs = crate::tabs::tabs_of(window);
     if tabs.len() < 2 {
         return View::empty();
     }
-    let active = crate::tabs::active();
+    let active = crate::tabs::active_of(window);
     let items: Vec<(String, View)> = tabs
         .iter()
         .enumerate()
@@ -19434,8 +19761,14 @@ fn tab_strip(title: &str, context: &ViewContext<Root>) -> View {
                     format!("File History — {}", crate::tabs::name(path)),
                     format!("{} — {}", path, crate::tabs::name(&tab.location)),
                 ),
+                // Repositories のタブは「Repositories」（macOS 版のウインドウの名前と同じ）。
+                None if tab.repositories => ("Repositories".to_owned(), String::new()),
                 None if i == active => (title.to_owned(), tab.location.clone()),
-                None => (crate::tabs::name(&tab.location), tab.location.clone()),
+                // 後ろのタブも、そのタブが知らせた名前（● と ↑↓ つき）。
+                None => (
+                    crate::tabs::title(tab.id).unwrap_or_else(|| crate::tabs::name(&tab.location)),
+                    tab.location.clone(),
+                ),
             };
             let item = TabViewItem::new()
                 .header(header)
@@ -20651,6 +20984,14 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
 
     REVOKERS.with(|r| r.borrow_mut().extend(revokers));
     Ok(())
+}
+
+/// 暦で選んだ日（WinUI の DateTime。選んだ日のこの機械の 0 時）を `YYYY-MM-DD` にする。
+fn picked_date(date: windows_reactor::DateTime) -> String {
+    // 1601-01-01 からの 100 ナノ秒を、1970-01-01 からの秒に。
+    let seconds = date.universal_time / 10_000_000 - 11_644_473_600;
+    let local = crate::render::local_date(seconds);
+    local.get(..10).unwrap_or(&local).to_owned()
 }
 
 #[cfg(test)]

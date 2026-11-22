@@ -70,7 +70,7 @@ Which of these features each front end (macOS, GTK4, VSCode, CLI) has is in [Fro
 Reference: Fork (a tab per repository), Tower (window tabs).
 
 - Use standard macOS window tabs with `NSWindow.tabbingMode = .preferred`. Dragging a tab makes it a separate window, and "Merge All Windows" in the Window menu works out of the box. No custom tab bar.
-- ⌘T and the tab bar's "+": a new tab of the front window showing the repository page (chapter 2); the repository chosen there opens in that tab. ⌘N does the same in a new window, and Quick Open (⌘⇧O) finds a repository by name. Repositories opened with Open… or from the list also go into a tab of the front window. Switch tabs with ⌃Tab / ⌃⇧Tab and ⌘⇧] ⌘⇧[.
+- ⌘T and the tab bar's "+": a new tab of the front window showing the repository page (chapter 2); the repository chosen there opens in a new tab beside it, and the page stays. ⌘N does the same in a new window, and Quick Open (⌘⇧O) finds a repository by name. Repositories opened with Open… or from the list also go into a tab of the front window. Switch tabs with ⌃Tab / ⌃⇧Tab and ⌘⇧] ⌘⇧[.
 - **At launch**, reopen the windows and tabs that were open when the app quit, in the same order. A repository given as an argument or opened from the Finder or `amonhen` opens after them, in a tab of the front window. Windows closed before quitting are not reopened (the usual macOS behavior), so quitting with nothing open shows the repository page next time. Repositories whose folder is gone are left out.
 - **Clicking the Dock icon** with no window showing brings back the minimized windows if there are any, and otherwise shows the repository page in a new window (the app keeps running after its last window closes; ⌘Q quits).
 - **Repositories that need connecting** (on an SSH host, or through the daemon): opening one puts its tab in place at once (where the repository goes: a tab of the front window, a new window, or the tab it replaces), showing that it is connecting, with Cancel. When connected, the repository takes that tab's place, and comes to the front only if the tab was in front (a tab that finishes in the background does not take the focus). If connecting fails, the tab stays and shows the error with Try Again and Close Tab, instead of an alert. Restoring at launch, opening from the list and Reconnect all work this way, so the order of tabs and windows does not depend on which connects first, and a repository that could not connect is still reopened at the next launch until its tab is closed. A local repository that fails to open at launch also keeps its tab, with the error.
@@ -87,7 +87,7 @@ Extend today's "Repositories…" (a list in the order opened) into the equivalen
 | Groups | Manual groups (nested like folders) and scan groups. Reorder and move by dragging |
 | Status | Each row shows the current branch, ahead/behind and the number of changed files. Only `.git/HEAD` is read right away; for the rest, only visible rows run `git status --porcelain=v2 --branch --untracked-files=all` (takes no lock) in the background, 4 at a time. Untracked files are counted one by one, as in Working Copy |
 | Extra information | Color labels, favorites (★), display name override, last opened time |
-| Operations | Open (⏎ in a tab of the current window, ⌘⏎ in a new window), Show in Finder, Open in Terminal, Open in Editor, Fetch (all selected ones at once) |
+| Operations | Open (⏎ in a new tab beside the page, ⌘⏎ in a new window), Show in Finder, Open in Terminal, Open in Editor, Fetch (all selected ones at once) |
 | Quick Open | ⌘⇧O opens a panel (Spotlight-style) that fuzzy-searches all bookmarks |
 
 The list appears in two places, with the same contents and operations (`RepositoryBrowser`):
@@ -586,7 +586,12 @@ there while deciding.
 
 - **Entry.** "Interactive Rebase from Here…" on a commit's context menu starts editing from that commit up to HEAD. The
   shortcuts Edit Message…, Squash into Previous…, Drop… and Combine N Commits… (several selected) start it with that
-  change already made, and dragging a commit in History starts it with the commit moved. These items are shown only
+  change already made. Dragging a commit in History starts it with the commit moved when dropped between rows,
+  squashed into a commit when dropped onto it (moved right above it and marked squash), or marked drop when dropped
+  outside the window (not when the drag is cancelled with Esc); inside the edit, the same drags change the range in
+  place. Dropping onto a row highlights it; between rows, a line shows where it goes. The dragged commit is
+  carried as its own row (graph, labels, subject and author), its place is left empty, and rows it can't be dropped
+  among (off the editable line, or every row when the commit isn't on it) are dimmed. These items are shown only
   for commits the mode can edit (on HEAD's first-parent line, not merges; Squash into Previous… when the older commit
   is one, Split… before the first merge); other items that can't be used are grayed out with the reason in a tooltip.
   The menu runs copy, create, move, rewrite, pick, export, then fold, like the sidebar's.

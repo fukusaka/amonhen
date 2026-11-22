@@ -1,11 +1,9 @@
-//! 窓のメニューバー。操作の名前とメニューの区切りは、macOS 版・GTK4 版と共通の操作の表（`amonhen-commands`）から
-//! 作る。この FE にまだ機能のない操作は出さない（GTK4 版の `PENDING` と同じ考え）。
+//! 窓のメニュー（タイトルバーの ≡）とツールバー。操作の名前とメニューの区切りは、macOS 版・GTK4 版と共通の
+//! 操作の表（`amonhen-commands`）から作る。この FE にまだ機能のない操作は出さない（GTK4 版の `PENDING` と同じ
+//! 考え）。
 
 use amonhen_commands::{Command, Menu};
-use windows_reactor::{
-    Callback, CommandBar, CommandBarCommand, GridChildExt, MenuBar, MenuBarItem, MenuBarSlot,
-    MenuExt, MenuItem, MenuShortcut, SlotsControl, Symbol, View,
-};
+use windows_reactor::*;
 
 /// この FE で動く操作。
 pub const IMPLEMENTED: &[&str] = &[
@@ -81,8 +79,9 @@ fn title(c: &Command) -> String {
     }
 }
 
-/// メニューバー。項目を選ぶと `on_click` が操作の id を受ける。
-pub fn menu_bar(on_click: impl Fn() -> Callback<String>) -> View {
+/// メニューの見出しと項目（タイトルバーの ≡ に入れ子で入れる）。項目を選ぶと、メニューの `on_click` が操作の
+/// id を受ける。
+pub fn menus() -> Vec<(String, Vec<MenuItem>)> {
     let menus: [(Menu, &'static str); 7] = [
         (Menu::File, "File"),
         (Menu::Edit, "Edit"),
@@ -92,7 +91,7 @@ pub fn menu_bar(on_click: impl Fn() -> Callback<String>) -> View {
         (Menu::Commit, "Commit"),
         (Menu::Window, "Window"),
     ];
-    let mut bar: Vec<(String, View)> = Vec::new();
+    let mut out = Vec::new();
     for (menu, name) in menus {
         let mut items = Vec::new();
         if menu == Menu::File {
@@ -277,19 +276,46 @@ pub fn menu_bar(on_click: impl Fn() -> Callback<String>) -> View {
             }
             items.splice(0..0, tabs);
         }
+        // Window の終わりに、開いている窓（macOS 版の Window メニューの窓の並び。選ぶとその窓を前に出す）。
+        if menu == Menu::Window {
+            let windows = crate::tabs::windows();
+            if windows.len() > 1 {
+                items.push(MenuItem::separator("-windows"));
+                let focused = crate::tabs::focused();
+                for (id, tab) in windows {
+                    let Some(tab) = tab else { continue };
+                    let name = crate::tabs::title(tab.id)
+                        .unwrap_or_else(|| crate::tabs::name(&tab.location));
+                    let label = if id == focused {
+                        format!("✓ {name}")
+                    } else {
+                        name
+                    };
+                    items.push(MenuItem::item(format!("focus-window:{id}"), label));
+                }
+            }
+        }
         if items.is_empty() {
             continue;
         }
-        let title = amonhen_model::i18n::translate(name).into_owned();
-        let item = MenuBarItem::new()
-            .title(title)
-            .menu(windows_reactor::Menu::new(items, on_click()));
-        bar.push((name.to_owned(), item));
+        out.push((amonhen_model::i18n::translate(name).into_owned(), items));
     }
-    // 窓の上の行（根の Grid の 0 行目）に置く。
-    MenuBar::new()
-        .grid_row(0)
-        .collection_slot(MenuBarSlot::Items, bar)
+    out
+}
+
+/// タイトルバーの右の ≡。メニューバーの中身をすべて、メニューごとに入れ子で入れる（Windows にはアプリの外に
+/// 出すメニューバーがないので、窓の中の 1 つのボタンにまとめる）。
+pub fn menu_button(on_click: Callback<String>) -> View {
+    let items: Vec<MenuItem> = menus()
+        .into_iter()
+        .enumerate()
+        .map(|(i, (title, items))| MenuItem::submenu(format!("menu-{i}"), title, items))
+        .collect();
+    Button::new()
+        .vertical_alignment(VerticalAlignment::Center)
+        .content(TextBlock::new().text("\u{2261}").font_size(18.0))
+        .tooltip(amonhen_model::tr!("Commands"))
+        .menu(windows_reactor::Menu::new(items, on_click))
 }
 
 /// ツールバーの並び（macOS 版の既定の並び、GTK4 版の `toolbar::DEFAULT`）と印。`None` は区切り。
@@ -486,54 +512,99 @@ fn push_tooltip(t: Tracking) -> String {
     }
 }
 
-/// ツールバー（CommandBar）。押すと `on_click` が操作の id を受ける。まだ動かない操作のボタンは押せない。
-/// Pull・Push は `tracking` で、上流との差と、送れないわけをツールチップに出す。
+/// ツールバーのボタンの字形（Segoe Fluent Icons。macOS 版の SF Symbols に近いもの）。
+fn glyph_of(id: &str) -> &'static str {
+    match id {
+        "sidebar" => "\u{E8A0}",
+        "repositories" => "\u{F0E2}",
+        "branch" => "\u{E8AB}",
+        "fetch" => "\u{E896}",
+        "pull" => "\u{E74B}",
+        "push" => "\u{E74A}",
+        "merge" => "\u{E8B1}",
+        "rebase" => "\u{E8CB}",
+        "stash" => "\u{E7B8}",
+        "pop" => "\u{EDE1}",
+        "activity" => "\u{E95E}",
+        "refresh" => "\u{E72C}",
+        "undo" => "\u{E7A7}",
+        "search" => "\u{E721}",
+        "new-branch" => "\u{E710}",
+        "terminal" => "\u{E756}",
+        "editor" => "\u{E943}",
+        "files" => "\u{E8B7}",
+        _ => "\u{E712}",
+    }
+}
+
+/// ツールバー（macOS 版と同じく、アイコンの下に名前を出す平らなボタンの並び）。押すと `on_click` が操作の id を
+/// 受ける。まだ動かない操作のボタンは押せない。Pull・Push は `tracking` で、上流との差の数をアイコンのバッジに、
+/// 送れないわけをツールチップに出す。
 pub fn toolbar(on_click: Callback<String>, tracking: Tracking) -> View {
     // 並びは View > Customize Toolbar… で変えられる（GTK4 版の `toolbar.rs`）。
-    let commands = toolbar_entries()
+    let buttons: Vec<(String, View)> = toolbar_entries()
         .into_iter()
         .enumerate()
         .filter_map(|(i, entry)| match entry {
-            ToolbarEntry::Space => Some(CommandBarCommand::separator(format!("-{i}"))),
+            ToolbarEntry::Space => Some((format!("-{i}"), View::from(Grid::new().width(12.0)))),
             ToolbarEntry::Item(_, false) => None,
             ToolbarEntry::Item(id, true) => {
-                let icon = icon_of(&id)?;
-                let command = toolbar_command(&id);
-                let enabled = IMPLEMENTED.contains(&command);
-                let button = CommandBarCommand::button_with_icon(
-                    command.to_owned(),
-                    toolbar_name(&id),
-                    icon,
-                );
-                Some(match id.as_str() {
-                    "pull" => button.enabled(enabled).tooltip(pull_tooltip(tracking)),
-                    // 送れないときは押せないように見せるだけにする（WinUI は押せない部品のツールチップを出さないので、
-                    // 本当に押せなくするとわけが読めない。押せばベルが鳴る）。
-                    "push" => button
-                        .enabled(enabled)
-                        .dimmed(enabled && !can_push(tracking))
-                        .tooltip(push_tooltip(tracking)),
-                    _ => button.enabled(enabled),
-                })
+                icon_of(&id)?;
+                let command = toolbar_command(&id).to_owned();
+                let enabled = IMPLEMENTED.contains(&command.as_str());
+                let (tooltip, count) = match id.as_str() {
+                    "pull" => (pull_tooltip(tracking), tracking.behind),
+                    "push" => (push_tooltip(tracking), tracking.ahead),
+                    _ => (toolbar_name(&id), 0),
+                };
+                // 送れないときは押せないように見せるだけにする（WinUI は押せない部品のツールチップを出さないので、
+                // 本当に押せなくするとわけが読めない。押せばベルが鳴る）。
+                let faded = !enabled || (id == "push" && !can_push(tracking));
+                // アイコンと、上流との差の数のバッジ（macOS 版の `setTracking` の `badge`。0 なら出さない）。
+                let badge: View = if count > 0 {
+                    InfoBadge::new()
+                        .value(i32::try_from(count).unwrap_or(i32::MAX))
+                        .horizontal_alignment(HorizontalAlignment::Right)
+                        .vertical_alignment(VerticalAlignment::Top)
+                        .margin(Thickness::new(0.0, -6.0, -14.0, 0.0))
+                        .into()
+                } else {
+                    View::empty()
+                };
+                let icon = Grid::new()
+                    .horizontal_alignment(HorizontalAlignment::Center)
+                    .children((FontIcon::new().glyph(glyph_of(&id)), badge));
+                let click = on_click.clone();
+                let key = command.clone();
+                let button = Button::new()
+                    .style(ButtonStyle::Subtle)
+                    .is_enabled(enabled)
+                    .min_width(56.0)
+                    .opacity(if faded { 0.4 } else { 1.0 })
+                    .on_click(move || {
+                        let _ = click.call(key.clone());
+                    })
+                    .content(
+                        StackPanel::new()
+                            .spacing(2.0)
+                            .horizontal_alignment(HorizontalAlignment::Center)
+                            .children((
+                                icon,
+                                TextBlock::new()
+                                    .text(toolbar_name(&id))
+                                    .font_size(11.0)
+                                    .horizontal_alignment(HorizontalAlignment::Center),
+                            )),
+                    )
+                    .tooltip(tooltip);
+                Some((command, button))
             }
         })
-        .collect::<Vec<_>>();
-    CommandBar::new().owned_commands(commands, [], on_click)
-}
-
-/// ツールバーの Pull・Push のボタンに、上流との差の数のバッジを付ける（macOS 版の `setTracking` の `badge`。
-/// Push は先にある数、Pull は後ろの数。0 なら隠す）。`root` はツールバーを包む部品。
-pub fn put_badges(
-    root: &windows_core_reactor::IInspectable,
-    tracking: Tracking,
-) -> windows_core_reactor::Result<()> {
-    amonhen_win_xaml::put_badges(
-        root,
-        &[
-            (toolbar_name("pull"), tracking.behind),
-            (toolbar_name("push"), tracking.ahead),
-        ],
-    )
+        .collect();
+    StackPanel::new()
+        .orientation(Orientation::Horizontal)
+        .vertical_alignment(VerticalAlignment::Center)
+        .children((View::keyed_fragment(buttons),))
 }
 
 /// 押したキーに当たる、この FE で動く操作（メニューの項目のショートカット）。
