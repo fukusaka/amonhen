@@ -2706,8 +2706,8 @@ fn a_worktree_is_added_for_the_selected_branch() {
     assert!(!dir.path().join("main-topic").exists());
 }
 
-/// サイドバーの worktree の行で `x`: 確かめてから消す。変更が残っていれば git が断り、開いている worktree は
-/// 消せない。
+/// サイドバーの worktree の行で `x`: 確かめてから消す。変更が残っていれば、その数を書いて変更ごと消す
+/// （`--force`）。開いている worktree は消せない。
 #[test]
 fn a_worktree_is_removed_from_the_sidebar() {
     let dir = tempfile::tempdir().unwrap();
@@ -2729,19 +2729,42 @@ fn a_worktree_is_removed_from_the_sidebar() {
     assert!(asked.contains("Remove the worktree at"));
     assert!(asked.contains("y remove   n cancel"));
     assert!(other.exists());
-    // 変更が残っていると、git が断る（理由が出て、フォルダは残る）。
+    assert!(asked.contains("The branch stays."), "{asked}");
+    // 変更が残っていれば、その数を書く。消すと変更ごと消える。
     std::fs::write(other.join("new.txt"), "new\n").unwrap();
-    let refused = amonhen_tui::snapshot(open(&main), 200, 16, clock(), "0Gxy").unwrap();
-    println!("{refused}");
-    assert!(!refused.contains("Removed the worktree"));
+    let warned = amonhen_tui::snapshot(open(&main), 240, 16, clock(), "0Gx").unwrap();
+    println!("{warned}");
+    assert!(
+        warned.contains("Its uncommitted changes in 1 files are lost with the folder"),
+        "{warned}"
+    );
     assert!(other.exists());
-    std::fs::remove_file(other.join("new.txt")).unwrap();
     let removed = amonhen_tui::snapshot(open(&main), 200, 16, clock(), "0Gxy").unwrap();
     println!("{removed}");
     assert!(removed.contains("Removed the worktree"));
     assert!(!other.exists());
     // worktree が 1 つになったので、サイドバーからも消える。
     assert!(!removed.contains("Worktrees"));
+
+    // History のコミットから、新しいブランチの worktree を作る（名前、次に場所を聞く）。
+    let asked = amonhen_tui::snapshot(open(&main), 200, 16, clock(), "jw").unwrap();
+    assert!(asked.contains("New worktree from "), "{asked}");
+    assert!(asked.contains("with a new branch: "), "{asked}");
+    let place = amonhen_tui::snapshot(open(&main), 200, 16, clock(), "jwfix\n").unwrap();
+    let beside = format!("{}-fix", main.to_str().unwrap());
+    assert!(
+        place.contains(&format!("New worktree for fix at: {beside}")),
+        "{place}"
+    );
+    amonhen_tui::snapshot(open(&main), 200, 16, clock(), "jwfix\n\n").unwrap();
+    assert_eq!(
+        git_out(Path::new(&beside), &["branch", "--show-current"]),
+        "fix\n"
+    );
+    assert_eq!(
+        git_out(Path::new(&beside), &["rev-parse", "HEAD"]),
+        git_out(&main, &["rev-parse", "HEAD~1"])
+    );
 }
 
 /// 上流のないブランチの `P` は、リモートに同じ名前で publish して上流にする

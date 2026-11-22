@@ -147,6 +147,8 @@ enum Naming {
     RemoteUrl,
     /// 直すリモートの新しい名前（次に URL を聞く）。
     RemoteRename,
+    /// History のコミットから作る worktree の、新しいブランチ（次に場所を聞く）。
+    WorktreeBranch,
     /// 直すリモートの URL（始まりは前の名前、出し方は新しい名前）。
     RemoteEditUrl,
     /// 選んでいるコミットを書き出すアーカイブのファイル（この機械の）。
@@ -482,6 +484,10 @@ pub struct App {
     editing_remote: Option<(String, Option<String>)>,
     /// リモートでの様子を読んでいるタグ（サイドバーの `t` は push、`X` はリモートから消す）。
     tag_remote: Option<(String, bool)>,
+    /// 消す worktree（変更の数を読んでいる間）。
+    removing_worktree: Option<String>,
+    /// History のコミットから作る worktree の、新しいブランチの名前（場所を聞いている間）。
+    worktree_branch: Option<String>,
     /// 打っている名前が何のものか。
     naming: Naming,
     /// git や ssh から尋ねられていること（先頭を画面で聞いている）と、打った答え。
@@ -609,6 +615,8 @@ impl App {
             typing_branch: None,
             editing_remote: None,
             tag_remote: None,
+            removing_worktree: None,
+            worktree_branch: None,
             naming: Naming::Branch,
             #[cfg(unix)]
             questions: std::collections::VecDeque::new(),
@@ -1803,8 +1811,21 @@ impl App {
                             Naming::Worktree => (
                                 "addWorktree",
                                 tr!("Adding the worktree…"),
-                                json!({"op": "worktreeAdd", "path": name, "start": start}),
+                                json!({"op": "worktreeAdd", "path": name, "start": start,
+                                    "newBranch": self.worktree_branch.take()}),
                             ),
+                            // History のコミットから: ブランチの名前の次に、場所を聞く。
+                            Naming::WorktreeBranch => {
+                                let path =
+                                    self.workdir.as_deref().map_or(String::new(), |workdir| {
+                                        let workdir = workdir.trim_end_matches(['/', '\\']);
+                                        format!("{workdir}-{}", name.replace(['/', '\\'], "-"))
+                                    });
+                                self.worktree_branch = Some(name.to_owned());
+                                self.naming = Naming::Worktree;
+                                self.typing_branch = Some((start.clone(), name.to_owned(), path));
+                                return;
+                            }
                             Naming::StashBranch => (
                                 "stashBranch",
                                 tr!("Creating {name}…", name = name),
@@ -2314,6 +2335,11 @@ impl App {
             }
             // 下書きが読めなくても、欄はそのまま使える（覚えるのをやめる）。
             Err(_) if name == "draftOrTemplate" => return,
+            // 変更の数が読めなくても、消すかは聞く（変更があれば git が断る）。
+            Err(_) if name == "worktreeChangesForRemove" => {
+                self.ask_remove_worktree(0);
+                return;
+            }
             // 絵が読めなくても、fast-forward は確かめる（絵なしで）。
             Err(_) if name == "fastForwardPreview" => {
                 if let Some((branch, upstream, behind)) = self.fast_forward.take() {
@@ -2694,6 +2720,11 @@ impl App {
                     },
                 ));
                 self.dirty = true;
+                return;
+            }
+            "worktreeChangesForRemove" => {
+                let count = reply["info"]["worktrees"][0]["count"].as_u64().unwrap_or(0);
+                self.ask_remove_worktree(count);
                 return;
             }
             "fetchConfig" => {
@@ -4382,8 +4413,36 @@ impl App {
         self.dirty = true;
     }
 
+    /// 消す worktree に `changes` 個の変更があるのを受けて、確かめる。変更があれば、それごと消す（`--force`）。
+    fn ask_remove_worktree(&mut self, changes: u64) {
+        let Some(path) = self.removing_worktree.take() else {
+            return;
+        };
+        let ask = match changes {
+            0 => tr!(
+                "Remove the worktree at {path}? The branch stays. Undo can’t bring it back.",
+                path = path
+            ),
+            count => tr!(
+                "Remove the worktree at {path}? Its uncommitted changes in {count} files are lost with the folder; the branch stays. Undo can’t bring them back.",
+                path = path,
+                count = count
+            ),
+        };
+        self.confirm = Some((
+            ask,
+            tr!("remove"),
+            Request::Run {
+                name: "removeWorktree",
+                command: json!({"op": "worktreeRemove", "path": path, "force": changes > 0}),
+            },
+        ));
+        self.dirty = true;
+    }
+
     fn stash_key(&mut self, code: KeyCode) -> bool {
-        // worktree の行の `x` は、その worktree を消す（確かめてから。変更が残っていれば git が断る）。
+        // worktree の行の `x` は、その worktree を消す。先に変更の数を読み、あればそれごと消える（`--force`）と書いて
+        // 確かめる（アプリと同じ）。
         if let (KeyCode::Char('x'), Some(("worktree", path, _))) = (code, self.sidebar.picked_ref())
         {
             let path = path.to_owned();
@@ -4391,17 +4450,11 @@ impl App {
                 self.error = Some(tr!("This worktree is the one that is open"));
                 return true;
             }
-            self.confirm = Some((
-                tr!(
-                    "Remove the worktree at {path}? Undo can’t bring it back.",
-                    path = path
-                ),
-                tr!("remove"),
-                Request::Run {
-                    name: "removeWorktree",
-                    command: json!({"op": "worktreeRemove", "path": path}),
-                },
-            ));
+            self.removing_worktree = Some(path.clone());
+            self.send(Request::Run {
+                name: "worktreeChangesForRemove",
+                command: json!({"op": "worktreeChanges", "paths": [path], "fresh": true}),
+            });
             return true;
         }
         let Some(("stash", name, _)) = self.sidebar.picked_ref() else {
@@ -4751,7 +4804,10 @@ impl App {
                     "y v E",
                     tr!("With several selected: cherry-pick, revert them; combine them into one"),
                 ),
-                ("Y", tr!("Copy the commit IDs (the terminal’s clipboard)")),
+                (
+                    "Y w",
+                    tr!("Copy the commit IDs; a new worktree with a branch at the commit"),
+                ),
                 ("Enter Space", tr!("Go to the details")),
                 ("/", tr!("Search")),
                 ("n N", tr!("Next and previous match")),
@@ -5477,6 +5533,16 @@ impl App {
             }
             // コミットの ID を端末のクリップボードに（印があれば、印をつけたものすべて）。
             KeyCode::Char('Y') => self.copy_ids(),
+            // 選んでいるコミットから、新しいブランチの worktree を作る（アプリの New Worktree…）。
+            KeyCode::Char('w') => {
+                let Some(id) = self.history.selected_id().map(|id| id.to_string()) else {
+                    return false;
+                };
+                let short = id[..8].to_owned();
+                self.naming = Naming::WorktreeBranch;
+                self.typing_branch = Some((id, short, String::new()));
+                true
+            }
             // 印をつけたコミット: 古い順に cherry-pick、新しい順に revert、編集モードで 1 つにまとめる。
             KeyCode::Char('y' | 'v') if self.history.mark_count() >= 2 => {
                 self.ask_pick_marked(code == KeyCode::Char('v'))
@@ -5944,6 +6010,13 @@ impl App {
                     Naming::Stash => tr!("Stash message (Enter for none): {name}", name = name),
                     Naming::Worktree => {
                         tr!("New worktree for {at} at: {name}", at = at, name = name)
+                    }
+                    Naming::WorktreeBranch => {
+                        tr!(
+                            "New worktree from {at} with a new branch: {name}",
+                            at = at,
+                            name = name
+                        )
                     }
                     Naming::PushTo => {
                         tr!("Push {at} to (remote/branch): {name}", at = at, name = name)

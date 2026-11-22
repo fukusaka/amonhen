@@ -397,8 +397,8 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
 | worktree と変更の数 | ✓ | ✓ | ✓ | ✓ | ✓ | △ | CLI: `worktree list --changes`。<br>TUI: 2 つ以上あればサイドバーに。変更の数はない。 |
 | 書き込む先の worktree（✎）と切り替え | ✓ | ✓ | △ | ✓ | n/a | ✓ | VSCode: 拡張が働くリポジトリを切り替える。ワークスペースの外のものはソース管理のビューには足さない。<br>CLI: 動かした worktree で働く。<br>Windows: worktree を選ぶ（か Edit This Worktree）と、同じ位置・同じ画面の窓でその worktree を開き直す（開いているのは前のタブのリポジトリだけのため）。<br>TUI: ほかの worktree で Enter を押すと、TUI をそこで開き直す。 |
-| New Worktree…（ブランチ・コミットから） | ✓ | ✓ | ✓ | ✓ | ✓ | △ | TUI: 手元のブランチで `w`。コミットからはない。 |
-| Remove Worktree（尋ね、変更があれば `--force`） | ✓ | ✓ | ✓ | ✓ | ✓ | △ | TUI: `x` で尋ねてから消す。変更があれば git が断る（`--force` はない）。 |
+| New Worktree…（ブランチ・コミットから） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | TUI: 手元のブランチで `w`。History の `w` で、選んでいるコミットに新しいブランチを作って。 |
+| Remove Worktree（尋ね、変更があれば `--force`） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | TUI: `x` で尋ねてから消す。変更があればその数を書き、`--force` で消す。 |
 | ロックと解除・移動・移したフォルダを探す（repair） | ✓ | ✓ | ✓ | ✓ | ✓ | — | VSCode: worktree の右クリックから。書き込む先の worktree は、ほかに切り替えてから移す。<br>CLI: `worktree lock`・`unlock`・`move`・`repair`。 |
 | worktree の Prune | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | TUI: 命令の一覧から。 |
 | worktree のフォルダーを開くと、そのリポジトリでそれを書き込む先にする | ✓ | ✓ | △ | ✓ | n/a | ✓ | VSCode: フォルダーを開くとその worktree で働き、ほかの worktree も並ぶ。<br>Windows: フォルダはそれ自身の窓で開き、その worktree が ✎、ほかも並ぶ。 |
