@@ -2474,13 +2474,47 @@ fn export_archive_of_the_selected_commit() {
     let out = tempfile::tempdir().unwrap();
     let zip = out.path().join("snap.zip");
     let keys = format!(":export\n\x15{}\n", zip.display());
-    let done = amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), &keys).unwrap();
+    // フォルダに入れるか、先頭に置くか、1 つのフォルダだけにするかを選ぶ。
+    let choose = amonhen_tui::snapshot(open(dir.path()), 240, 8, clock(), &keys).unwrap();
+    println!("{choose}");
+    assert!(
+        choose.contains(
+            "y in a folder snap/   t at the top, without a folder   o only one folder…   n cancel"
+        ),
+        "{choose}"
+    );
+    let done =
+        amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), &format!("{keys}y")).unwrap();
     println!("{done}");
     assert!(done.contains("Exported to"));
     let bytes = std::fs::read(&zip).unwrap();
     assert_eq!(&bytes[..2], b"PK");
     // 中身は、ファイルの名前のフォルダの下に。
     assert!(bytes.windows(11).any(|w| w == b"snap/lane.r"));
+    // 先頭に置く・1 つのフォルダだけ（tar で中身の名前を見る）。
+    std::fs::create_dir(dir.path().join("sub")).unwrap();
+    std::fs::write(dir.path().join("sub/x.txt"), "x\n").unwrap();
+    git(dir.path(), BASE, &["add", "."]);
+    git(dir.path(), BASE + DAY * 5, &["commit", "-q", "-m", "Sub"]);
+    let names = |file: &Path| {
+        let listed = amonhen_model::process::command("tar")
+            .arg("-tf")
+            .arg(file)
+            .output()
+            .unwrap();
+        String::from_utf8(listed.stdout).unwrap()
+    };
+    let top = out.path().join("top.tar");
+    let keys = format!(":export\n\x15{}\nt", top.display());
+    amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), &keys).unwrap();
+    let listed = names(&top);
+    assert!(listed.lines().any(|l| l == "lane.rs"), "{listed}");
+    let one = out.path().join("one.tar");
+    let keys = format!(":export\n\x15{}\nosub\ny", one.display());
+    amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), &keys).unwrap();
+    let listed = names(&one);
+    assert!(listed.lines().any(|l| l == "one/sub/x.txt"), "{listed}");
+    assert!(!listed.contains("lane.rs"), "{listed}");
     // 分からない拡張子は断る。
     let keys = format!(":export\n\x15{}\n", out.path().join("snap.rar").display());
     let wrong = amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), &keys).unwrap();

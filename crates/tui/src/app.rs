@@ -151,6 +151,8 @@ enum Naming {
     WorktreeBranch,
     /// パッチの版の番号（`git format-patch -v`）。
     PatchVersion,
+    /// アーカイブに入れる 1 つのフォルダ（作業ツリーの上からの）。
+    ArchiveFolder,
     /// 直すリモートの URL（始まりは前の名前、出し方は新しい名前）。
     RemoteEditUrl,
     /// 選んでいるコミットを書き出すアーカイブのファイル（この機械の）。
@@ -492,6 +494,8 @@ pub struct App {
     worktree_branch: Option<String>,
     /// パッチの版の番号を聞いている間の、コミット（空白区切り）と書く場所。
     patch_version: Option<(String, String)>,
+    /// アーカイブの書き方を選んでいる間の、コミットと書くファイル（`o` で 1 つのフォルダを聞く）。
+    archive_folder: Option<(String, String)>,
     /// 打っている名前が何のものか。
     naming: Naming,
     /// git や ssh から尋ねられていること（先頭を画面で聞いている）と、打った答え。
@@ -624,6 +628,7 @@ impl App {
             removing_worktree: None,
             worktree_branch: None,
             patch_version: None,
+            archive_folder: None,
             naming: Naming::Branch,
             #[cfg(unix)]
             questions: std::collections::VecDeque::new(),
@@ -1483,6 +1488,18 @@ impl App {
             self.dirty = true;
             return;
         }
+        // アーカイブを書く前の `o`: 入れるフォルダを打つ。
+        if self.choices.is_some()
+            && let Some(pending) = self.archive_folder.take()
+            && key.code == KeyCode::Char('o')
+        {
+            self.choices = None;
+            self.archive_folder = Some(pending);
+            self.naming = Naming::ArchiveFolder;
+            self.typing_branch = Some((String::new(), String::new(), String::new()));
+            self.dirty = true;
+            return;
+        }
         // 確かめている間は、`y`（か Enter）で行い、ほかのキーでやめる。答えたら、重ねていた絵も消す。
         if self.choices.is_some() || self.confirm.is_some() {
             self.question_drawing = None;
@@ -1784,7 +1801,7 @@ impl App {
                                 return;
                             }
                             Naming::Archive => {
-                                self.export_archive(&start, name);
+                                self.export_archive(&start, name, None);
                                 return;
                             }
                             Naming::BundleFile => {
@@ -1804,6 +1821,12 @@ impl App {
                             // 版の番号を付けて（`-v`）。`.mbox` で終わる名前なら、1 つのファイルにまとめる。
                             Naming::SavePatch => {
                                 self.ask_save_patch(&start, &local_path(name), None);
+                                return;
+                            }
+                            Naming::ArchiveFolder => {
+                                if let Some((rev, file)) = self.archive_folder.take() {
+                                    self.export_archive(&rev, &file, Some(name));
+                                }
                                 return;
                             }
                             Naming::PatchVersion => {
@@ -3282,7 +3305,7 @@ impl App {
 
     /// `rev` の時点のファイルを `file` に書き出す（`git archive`）。形はファイルの拡張子で決め、中身はファイルの名前の
     /// フォルダに入れる（アプリと同じ）。相対のパスは、TUI を始めたフォルダから。
-    fn export_archive(&mut self, rev: &str, file: &str) {
+    fn export_archive(&mut self, rev: &str, file: &str, folder: Option<&str>) {
         let format = [
             (".zip", "zip"),
             (".tar.gz", "tar.gz"),
@@ -3304,14 +3327,54 @@ impl App {
             true => String::new(),
             false => format!("{stem}/"),
         };
-        self.run(
-            "archive",
-            tr!("Exporting…"),
-            json!({
-                "op": "archive", "rev": rev, "format": format, "prefix": prefix, "paths": [],
-                "file": path.to_string_lossy(),
+        let file = path.to_string_lossy().into_owned();
+        let export = |prefix: &str, paths: &[&str]| Request::Run {
+            name: "archive",
+            command: json!({
+                "op": "archive", "rev": rev, "format": format, "prefix": prefix, "paths": paths,
+                "file": file,
             }),
-        );
+        };
+        // アプリのシートと同じく、中身をフォルダに入れるか、先頭に置くか、1 つのフォルダだけにするかを選ぶ。
+        match folder {
+            Some(folder) => {
+                let folder = folder.trim_matches('/');
+                self.confirm = Some((
+                    tr!(
+                        "Export only {folder} to {file}?",
+                        folder = folder,
+                        file = file
+                    ),
+                    tr!("export"),
+                    export(&prefix, &[folder]),
+                ));
+            }
+            None => {
+                let mut options: Vec<Choice> = vec![
+                    (
+                        'y',
+                        tr!("in a folder {folder}", folder = prefix),
+                        export(&prefix, &[]),
+                    ),
+                    ('t', tr!("at the top, without a folder"), export("", &[])),
+                    // 選ぶ前に横取りして、フォルダを聞く（中身は送らない）。
+                    ('o', tr!("only one folder…"), Request::Status),
+                ];
+                if prefix.is_empty() {
+                    options.remove(0);
+                }
+                self.archive_folder = Some((rev.to_owned(), file.clone()));
+                self.choices = Some((
+                    tr!(
+                        "Export the files of {rev} to {file}?",
+                        rev = &rev[..rev.len().min(8)],
+                        file = file
+                    ),
+                    options,
+                ));
+            }
+        }
+        self.dirty = true;
     }
 
     /// Update Submodules: `submodules` の答えから、すべての submodule を取り出して記録したコミットにするか、中の
@@ -6172,6 +6235,9 @@ impl App {
                         )
                     }
                     Naming::PatchVersion => tr!("Version of the patches (-v): {name}", name = name),
+                    Naming::ArchiveFolder => {
+                        tr!("Export only the folder (from the top): {name}", name = name)
+                    }
                     Naming::BundleName => {
                         tr!("Fetch its branches as remote: {name}", name = name)
                     }
