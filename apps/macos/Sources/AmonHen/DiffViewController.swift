@@ -1803,7 +1803,11 @@ final class CommitDetailViewController: NSSplitViewController, NSTextViewDelegat
 
     func overlays() -> [(CGImage, NSView)] {
         guard view.window != nil else { return [] }
-        var out = diffView.replacement != nil ? [] : diffView.overlay().map { [$0] } ?? []
+        // すべてのファイルの中身も、差分と同じく Metal で描いている。
+        if let filesBrowser, diffView.replacement === filesBrowser {
+            return filesBrowser.overlay().map { [$0] } ?? []
+        }
+        var out = diffView.overlay().map { [$0] } ?? []
         // 差分の上に重ねた欄（画像の比較）も、差分の絵の後に重ねる。
         let clip = diffView.panelClip
         if diffView.replacement == nil, !clip.subviews.isEmpty, let rep = clip.bitmapImageRepForCachingDisplay(in: clip.bounds) {
@@ -2368,6 +2372,9 @@ extension CommitDetailViewController {
         viewSwitch.action = #selector(viewSwitchChanged)
         barTotals.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         barTotals.lineBreakMode = .byTruncatingTail
+        barTotals.usesSingleLineMode = true
+        barTotals.maximumNumberOfLines = 1
+        barTotals.setContentHuggingPriority(.required, for: .horizontal)
         for button in [foldersButton, expandAllButton] {
             button.bezelStyle = .accessoryBarAction
             button.controlSize = .small
@@ -2396,6 +2403,7 @@ extension CommitDetailViewController {
         display.menu?.delegate = self
         let first = NSMenuItem()
         first.image = NSImage(systemSymbolName: "slider.horizontal.3", accessibilityDescription: L("View Options"))
+        first.title = ""
         display.menu?.addItem(first)
         viewOptions = display.menu
         treeSwitch.target = self
