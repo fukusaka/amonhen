@@ -238,6 +238,16 @@ pub fn menus() -> Vec<(String, Vec<MenuItem>)> {
         }
         // File の終わりに Close Tab（GTK4 版の Close。最後のタブなら窓を閉じる）。
         if menu == Menu::File {
+            // その前に Settings…（macOS 版・GTK4 版はアプリのメニューに置くが、Windows にはアプリのメニューが
+            // ないので、Windows のアプリの習いどおり File の終わりの方に置く）。
+            if let Some(c) = amonhen_commands::find("settings") {
+                items.push(MenuItem::separator("-settings"));
+                let item = MenuItem::item(c.id, title(c));
+                items.push(match c.shortcut.and_then(shortcut) {
+                    Some(s) => item.with_shortcut(s),
+                    None => item,
+                });
+            }
             items.push(MenuItem::separator("-close"));
             let item = MenuItem::item("close-tab", amonhen_model::tr!("Close Tab"));
             items.push(match shortcut("Primary+W") {
