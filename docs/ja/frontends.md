@@ -231,7 +231,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Conventional の種類・Co-authored-by・Signed-off-by を入れる | ✓ | ✓ | ✓ | ✓ | n/a | — |  |
 | `#issue` の補完 | ✓ | ✓ | ✓ | — | n/a | — | Windows: 件名の下に並べる（WinUI の TextBox からはメニューを出すカーソルの位置が取れない）。選ぶと # を #番号 にする。 |
 | Commit and Push・Amend | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: `commit -m … --amend`。<br>TUI: `Ctrl-p` でコミットしてから push を尋ねる。`a` で amend。 |
-| Fixup / Squash Commit For | ✓ | ✓ | ✓ | ✓ | n/a | — |  |
+| Fixup / Squash Commit For | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: Working Copy の `F`。Tab で squash! に切り替える。 |
 | hooks の出力のシート | ✓ | ✓ | ✓ | ✓ | n/a | △ | TUI: hooks の出力の 1 行目を一番下の行に出す。 |
 | Commit が押せない理由を出す | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | ボタンのツールチップに。<br>TUI: 一番下の行に。 |
 | HEAD → 作業ツリーの 1 つの差分と、行・hunk のチェック | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: エンジンがあれば。なければ別々の未ステージ・ステージ済みの差分で行をステージ。<br>CLI: `diff --combined`・`stage --rows`。 |
