@@ -1262,7 +1262,7 @@ fn push_to_another_branch() {
     assert!(wrong.contains("Write the remote and the branch, like origin/main"));
 }
 
-/// `f` で fetch、`p` で pull: リモートに増えたコミットを取り込む
+/// `f` で fetch（どこから取るかを確かめる）、`p` で pull: リモートに増えたコミットを取り込む
 #[test]
 fn fetch_and_pull_bring_in_remote_commits() {
     let dir = tempfile::tempdir().unwrap();
@@ -1279,7 +1279,12 @@ fn fetch_and_pull_bring_in_remote_commits() {
     commit(&other, BASE + DAY * 2, "From elsewhere");
     git(&other, BASE, &["push", "-q"]);
 
-    let fetched = amonhen_tui::snapshot(open(&work), 100, 8, clock(), "f").unwrap();
+    let asked = amonhen_tui::snapshot(open(&work), 100, 8, clock(), "f").unwrap();
+    assert!(
+        asked.contains("Fetch from origin?   y fetch   n cancel"),
+        "{asked}"
+    );
+    let fetched = amonhen_tui::snapshot(open(&work), 100, 8, clock(), "fy").unwrap();
     println!("{fetched}");
     assert!(fetched.contains("Fetched"));
     assert!(fetched.lines().next().unwrap().contains("main ↓1"));
@@ -1291,6 +1296,22 @@ fn fetch_and_pull_bring_in_remote_commits() {
         git_out(&work, &["log", "-1", "--format=%s"]),
         "From elsewhere\n"
     );
+
+    // リモートがいくつもあれば、すべてか 1 つを選ぶ。片づける設定があれば、そう書く。
+    git(
+        &work,
+        BASE,
+        &["remote", "add", "mirror", remote.to_str().unwrap()],
+    );
+    git(&work, BASE, &["config", "remote.mirror.prune", "true"]);
+    let asked = amonhen_tui::snapshot(open(&work), 200, 8, clock(), "f").unwrap();
+    println!("{asked}");
+    assert!(
+        asked.contains("Fetch from where? Remote branches deleted on mirror are removed here too (remote.mirror.prune).   a all remotes (mirror, origin)   1 mirror   2 origin   n cancel"),
+        "{asked}"
+    );
+    amonhen_tui::snapshot(open(&work), 200, 8, clock(), "f1").unwrap();
+    assert!(git_out(&work, &["branch", "-r"]).contains("mirror/main"));
 }
 
 /// サイドバーの `c` でブランチをチェックアウトし、`b` で新しいブランチを作る。`u` で戻す

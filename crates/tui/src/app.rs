@@ -1810,8 +1810,16 @@ impl App {
                 };
                 self.dirty = true;
             }
+            // アプリの Fetch のシートと同じく、どこから取るかと、片づけるか（prune の設定）を見せて確かめる。
             KeyCode::Char('f') if !control => {
-                self.run("fetch", tr!("Fetching…"), json!({"op": "fetch"}))
+                if self.remotes.is_empty() {
+                    self.error = Some(tr!("There is no remote to fetch from"));
+                } else {
+                    self.send(Request::Run {
+                        name: "fetchConfig",
+                        command: json!({"op": "configList"}),
+                    });
+                }
             }
             KeyCode::Char('p') if !control => self.ask_pull(),
             KeyCode::Char('P') if !control => self.ask_push(),
@@ -2190,6 +2198,11 @@ impl App {
             }
             // 下書きが読めなくても、欄はそのまま使える（覚えるのをやめる）。
             Err(_) if name == "draftOrTemplate" => return,
+            // 設定が読めなくても、どこから取るかは聞く（片づけるかは書かない）。
+            Err(_) if name == "fetchConfig" => {
+                self.ask_fetch(&Value::Null);
+                return;
+            }
             // 見通しが読めなくても（History にないなど）、消すかは聞く（断られれば git の理由が出る）。
             Err(_) if name == "deletePreview" => {
                 self.ask_delete_with(None);
@@ -2490,6 +2503,11 @@ impl App {
             "resetPreview" => {
                 let info = reply["info"].clone();
                 self.ask_reset_with(&info);
+                return;
+            }
+            "fetchConfig" => {
+                let entries = reply["info"]["entries"].clone();
+                self.ask_fetch(&entries);
                 return;
             }
             "deletePreview" => {
@@ -3608,6 +3626,85 @@ impl App {
             Request::Run { name: op, command },
         ));
         true
+    }
+
+    /// どこから fetch するかを聞く。リモートが 1 つなら確かめるだけ、いくつもあれば、すべて（`git fetch --all` と
+    /// 同じ）か 1 つを選ぶ。git の設定 `entries`（`configList`）で片づける（prune）なら、そう書く。
+    fn ask_fetch(&mut self, entries: &Value) {
+        let value = |key: &str| -> Option<String> {
+            (entries.as_array().into_iter().flatten())
+                .rfind(|e| {
+                    e["key"]
+                        .as_str()
+                        .is_some_and(|k| k.eq_ignore_ascii_case(key))
+                })
+                .and_then(|e| e["value"].as_str())
+                .map(str::to_lowercase)
+        };
+        // git と同じく、リモートの remote.<name>.prune、なければ fetch.prune。効いている設定の名前（片づけないなら None）。
+        let prune_key = |remote: &str| -> Option<String> {
+            let own = format!("remote.{remote}.prune");
+            let key = if value(&own).is_some() {
+                own
+            } else {
+                "fetch.prune".to_owned()
+            };
+            (value(&key).as_deref() == Some("true")).then_some(key)
+        };
+        let remotes = self.remotes.clone();
+        let pruning: Vec<&String> = remotes.iter().filter(|r| prune_key(r).is_some()).collect();
+        let mut keys: Vec<String> = Vec::new();
+        for key in remotes.iter().filter_map(|r| prune_key(r)) {
+            if !keys.contains(&key) {
+                keys.push(key);
+            }
+        }
+        let prune = match pruning.len() {
+            0 => String::new(),
+            n if n == remotes.len() => tr!(
+                " Remote branches deleted there are removed here too ({settings}).",
+                settings = keys.join(", ")
+            ),
+            _ => tr!(
+                " Remote branches deleted on {remotes} are removed here too ({settings}).",
+                remotes = pruning
+                    .iter()
+                    .map(|r| r.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                settings = keys.join(", ")
+            ),
+        };
+        let fetch = |remote: Option<&str>| Request::Run {
+            name: "fetch",
+            command: match remote {
+                Some(remote) => json!({"op": "fetch", "remote": remote}),
+                None => json!({"op": "fetch"}),
+            },
+        };
+        if let [remote] = remotes.as_slice() {
+            self.confirm = Some((
+                tr!(
+                    "Fetch from {remote}?{prune}",
+                    remote = remote,
+                    prune = prune
+                ),
+                tr!("fetch"),
+                fetch(Some(remote)),
+            ));
+        } else {
+            let mut choices: Vec<Choice> = vec![(
+                'a',
+                tr!("all remotes ({remotes})", remotes = remotes.join(", ")),
+                fetch(None),
+            )];
+            for (i, remote) in remotes.iter().take(9).enumerate() {
+                let key = char::from_digit(i as u32 + 1, 10).expect("one digit");
+                choices.push((key, remote.clone(), fetch(Some(remote))));
+            }
+            self.choices = Some((tr!("Fetch from where?{prune}", prune = prune), choices));
+        }
+        self.dirty = true;
     }
 
     /// 消すブランチの見通し `preview` を受けて、上流とも比べるか、消すかを聞く。ほかのどこにもないコミットが
