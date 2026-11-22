@@ -2863,6 +2863,62 @@ fn fixup_and_drop_rewrite_history() {
     assert!(!dir.path().join("two.txt").exists());
 }
 
+/// History の `|` は選んでいるコミットで止め、変更を作業ツリーに戻す（Working Copy で分けてコミットし、Continue）
+#[test]
+fn split_stops_at_the_commit_with_its_changes_in_the_working_tree() {
+    let dir = tempfile::tempdir().unwrap();
+    git(dir.path(), BASE, &["init", "-q", "-b", "main"]);
+    std::fs::write(dir.path().join("one.txt"), "one").unwrap();
+    git(dir.path(), BASE, &["add", "."]);
+    git(dir.path(), BASE, &["commit", "-q", "-m", "one"]);
+    std::fs::write(dir.path().join("x.txt"), "x").unwrap();
+    std::fs::write(dir.path().join("y.txt"), "y").unwrap();
+    git(dir.path(), BASE, &["add", "."]);
+    git(dir.path(), BASE + DAY, &["commit", "-q", "-m", "x and y"]);
+    std::fs::write(dir.path().join("z.txt"), "z").unwrap();
+    git(dir.path(), BASE, &["add", "."]);
+    git(dir.path(), BASE + 2 * DAY, &["commit", "-q", "-m", "z"]);
+    let subjects = || git_out(dir.path(), &["log", "--format=%s"]);
+    let front = || {
+        amonhen_model::testing::isolate_from_user_settings();
+        open(dir.path())
+    };
+    let asked = amonhen_tui::snapshot(front(), 200, 10, clock(), "j|").unwrap();
+    println!("{asked}");
+    assert!(asked.contains("Split "), "{asked}");
+    assert!(asked.contains("y split   n cancel"), "{asked}");
+    // 取り消せば何も起きない。
+    amonhen_tui::snapshot(front(), 200, 10, clock(), "j|n").unwrap();
+    assert_eq!(subjects(), "z\nx and y\none\n");
+
+    let stopped = amonhen_tui::snapshot(front(), 200, 20, clock(), "j|y").unwrap();
+    println!("{stopped}");
+    assert!(
+        stopped.contains("commit its changes in parts, then continue"),
+        "{stopped}"
+    );
+    assert!(stopped.contains("x.txt") && stopped.contains("y.txt"));
+    assert_eq!(subjects(), "one\n");
+    assert_eq!(
+        git_out(dir.path(), &["status", "--porcelain"]),
+        "?? x.txt\n?? y.txt\n"
+    );
+    // 分けてコミットし、続ける。
+    git(dir.path(), BASE, &["add", "x.txt"]);
+    git(dir.path(), BASE, &["commit", "-q", "-m", "x"]);
+    git(dir.path(), BASE, &["add", "y.txt"]);
+    git(dir.path(), BASE, &["commit", "-q", "-m", "y"]);
+    amonhen_tui::snapshot(front(), 200, 10, clock(), "C").unwrap();
+    assert_eq!(subjects(), "z\ny\nx\none\n");
+    // 1 回の Undo で分ける前に戻る。
+    amonhen_tui::snapshot(front(), 200, 10, clock(), "uy").unwrap();
+    assert_eq!(subjects(), "z\nx and y\none\n");
+
+    // merge でないコミットだけ。一番古いコミットはコアが断る。
+    let first = amonhen_tui::snapshot(front(), 200, 10, clock(), "G|y").unwrap();
+    assert!(first.contains("Can’t split the first commit"), "{first}");
+}
+
 /// History をホイールで速く回し続けても（行が届く前に次の目盛り）、描けるところだけ描いて落ちない
 #[test]
 fn fast_wheel_scrolling_never_outruns_the_rows() {
