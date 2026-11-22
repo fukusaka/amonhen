@@ -586,7 +586,9 @@ there while deciding.
 
 - **Entry.** "Interactive Rebase from Here…" on a commit's context menu starts editing from that commit up to HEAD. The
   shortcuts Edit Message…, Squash into Previous…, Drop… and Combine N Commits… (several selected) start it with that
-  change already made, and dragging a commit in History starts it with the commit moved. These items are shown only
+  change already made, and dragging a commit in History starts it with the commit moved. The dragged commit is
+  carried as its own row (graph, labels, subject and author), its place is left empty, and rows it can't be dropped
+  among (off the editable line, or every row when the commit isn't on it) are dimmed. These items are shown only
   for commits the mode can edit (on HEAD's first-parent line, not merges; Squash into Previous… when the older commit
   is one, Split… before the first merge); other items that can't be used are grayed out with the reason in a tooltip.
   The menu runs copy, create, move, rewrite, pick, export, then fold, like the sidebar's.

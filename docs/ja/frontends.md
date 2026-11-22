@@ -221,17 +221,17 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 機能 | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
 | 1 つのチェックボックスの一覧（☑ ▣ ☐、見出し・フォルダーのチェック） | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: Staged と Changes が別のグループ。<br>TUI: ファイルごとに `[x]` `[-]` `[ ]`。`+` ですべて stage（フォルダはない）。 |
-| List / Tree / File Name | ✓ | ✓ | ✓ | ✓ | n/a | — |  |
-| パスで絞り込む | ✓ | ✓ | ✓ | ✓ | n/a | — |  |
+| List / Tree / File Name | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: 一覧の `v` で順に切り替える。フォルダの行で中をまとめて stage し、Enter で畳む。 |
+| パスで絞り込む | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: 一覧の `/`。 |
 | 行ごとの +/− の数と、ホバーで Discard | ✓ | ✓ | ✓ | ✓ | △ | △ | VSCode: 行数はエンジンがあるときだけ。<br>CLI: `diff --stat`。<br>Windows: ↶ はマウスを最後に載せた行に残る。<br>TUI: 数は選んだファイルの差分の見出しに出す。`d` で捨てる。 |
 | Space で切り替え、⌫ で捨てる | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: Space と `d`。 |
 | 上のコミットの欄、50/72 の数と本文の目安の線 | ✓ | ✓ | ✓ | ✓ | n/a | △ | VSCode: 列が 72 文字より狭いので、目安の線の代わりに、72 を超える本文の行の長さを出す。<br>TUI: 一覧の下。見出しに件名の行の文字数を出し、本文の目安の線はない。 |
-| リポジトリごとの下書き、テンプレートから始める | ✓ | ✓ | ✓ | ✓ | n/a | — | VSCode: `commit.template` だけで、共有のテンプレートは使わない。 |
-| 最近のメッセージ（⌥↑ / ⌥↓・一覧） | ✓ | ✓ | ✓ | ✓ | n/a | — |  |
-| Conventional の種類・Co-authored-by・Signed-off-by を入れる | ✓ | ✓ | ✓ | ✓ | n/a | — |  |
+| リポジトリごとの下書き、テンプレートから始める | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: `commit.template` だけで、共有のテンプレートは使わない。<br>TUI: 下書きは `<git dir>/amonhen/commit-draft` に置く。テンプレートは `commit.template`（リポジトリ専用のものは SSH 先でも）で、共有のテンプレートは使わない。 |
+| 最近のメッセージ（⌥↑ / ⌥↓・一覧） | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: メッセージの欄の Alt-↑ / Alt-↓。一覧は Working Copy の `R`。 |
+| Conventional の種類・Co-authored-by・Signed-off-by を入れる | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: Working Copy の `I`。 |
 | `#issue` の補完 | ✓ | ✓ | △ | — | n/a | — | Windows: 件名の下に並べる（WinUI の TextBox からはメニューを出すカーソルの位置が取れない）。選ぶと # を #番号 にする。 |
 | Commit and Push・Amend | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: `commit -m … --amend`。<br>TUI: `Ctrl-p` でコミットしてから push を尋ねる。`a` で amend。 |
-| Fixup / Squash Commit For | ✓ | ✓ | ✓ | ✓ | n/a | — |  |
+| Fixup / Squash Commit For | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: Working Copy の `F`。Tab で squash! に切り替える。 |
 | hooks の出力のシート | ✓ | ✓ | ✓ | ✓ | n/a | △ | TUI: hooks の出力の 1 行目を一番下の行に出す。 |
 | Commit が押せない理由を出す | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | ボタンのツールチップに。<br>TUI: 一番下の行に。 |
 | HEAD → 作業ツリーの 1 つの差分と、行・hunk のチェック | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: エンジンがあれば。なければ別々の未ステージ・ステージ済みの差分で行をステージ。<br>CLI: `diff --combined`・`stage --rows`。 |
@@ -239,7 +239,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 重ねられないファイルの Unstaged / Staged の切り替え | ✓ | ✓ | ✓ | n/a | ✓ | △ | VSCode: いつも別々に出す。<br>CLI: `diff --staged`。<br>TUI: 片方だけを出す（stage していない変更があればそちら）。切り替えはない。 |
 | 差分の表示の選択（unified/split・空白・前後の行・折り返し） | — | — | — | — | n/a | — |  |
 | 行・hunk・ファイルを捨てる（Undo できる） | ✓ | ✓ | △ | ✓ | ✓ | ✓ | CLI: `discard --rows`。<br>Windows: Working Copy の差分で行か hunk の見出しを右クリック（Discard Lines）。行を選ぶことはできない |
-| Add to .gitignore | ✓ | ✓ | ✓ | ✓ | n/a | — |  |
+| Add to .gitignore | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: untracked のファイルで `i`、続けて `p` でそのパス、`e` で拡張子。 |
 | コンフリクトのファイルからマージエディターを開く | ✓ | ✓ | △ | ✓ | n/a | n/a | macOS, GTK4: UTF-8 でないファイルは開かない。片側を選ぶ。<br>VSCode: VSCode のマージエディターを開く。<br>Windows: ファイルを選ぶと、マージエディタを画面に重ねて開く（埋め込まない）<br>TUI: ファイルの差分にマーカーを出し、`o` `t` `b` `a` で選んでいる行のコンフリクトを解く。 |
 | 一部のフォルダだけを取り出しているとき、一覧の上に知らせる | ✓ | ✓ | ✓ | ✓ | △ | — | CLI: `status` が sparse checkout を添える。 |
 

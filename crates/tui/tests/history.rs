@@ -532,6 +532,173 @@ fn amend_rewrites_the_last_commit() {
     assert_eq!(git_out(dir.path(), &["status", "--porcelain"]), "");
 }
 
+/// `F`: 今のブランチの最近のコミットの件名を選び、欄を fixup! にしてコミットする（fixup! の件名は候補に出さない）。
+/// Tab で squash! にすると、書いていた本文は残る
+#[test]
+fn fixup_and_squash_commit_for_a_recent_commit() {
+    let dir = tempfile::tempdir().unwrap();
+    two_lines(dir.path());
+    commit(dir.path(), BASE + DAY, "Add the graph");
+    commit(dir.path(), BASE + DAY * 2, "fixup! Start");
+    let front = || {
+        amonhen_model::testing::isolate_from_user_settings();
+        open(dir.path())
+    };
+    let listed = amonhen_tui::snapshot(front(), 100, 16, clock(), "1 F").unwrap();
+    println!("{listed}");
+    assert!(
+        listed.contains(" Fixup Commit For (Tab: squash!) "),
+        "{listed}"
+    );
+    assert!(listed.contains("Add the graph"), "{listed}");
+    assert!(!listed.contains("fixup! Start"), "{listed}");
+    let narrowed = amonhen_tui::snapshot(front(), 100, 16, clock(), "1 Fsta").unwrap();
+    assert!(!narrowed.contains("Add the graph"), "{narrowed}");
+
+    let done = amonhen_tui::snapshot(front(), 100, 16, clock(), "1 Fgraph\n\x13").unwrap();
+    println!("{done}");
+    assert_eq!(
+        git_out(dir.path(), &["log", "-1", "--format=%B"]).trim_end(),
+        "fixup! Add the graph"
+    );
+
+    std::fs::write(dir.path().join("a.txt"), "one\n").unwrap();
+    let keys = "1 cDraft\n\nKept body\x1bF\tgraph\n\x13";
+    let done = amonhen_tui::snapshot(front(), 100, 16, clock(), keys).unwrap();
+    println!("{done}");
+    assert_eq!(
+        git_out(dir.path(), &["log", "-1", "--format=%B"]).trim_end(),
+        "squash! Add the graph\n\nKept body"
+    );
+}
+
+/// untracked のファイルで `i`: そのパスか拡張子のパターンを .gitignore に足す（もうあれば足さない）
+#[test]
+fn i_adds_an_untracked_file_to_gitignore() {
+    let dir = tempfile::tempdir().unwrap();
+    git(dir.path(), BASE, &["init", "-q", "-b", "main"]);
+    commit(dir.path(), BASE, "Start");
+    std::fs::write(dir.path().join("notes.log"), "x\n").unwrap();
+    let front = || {
+        amonhen_model::testing::isolate_from_user_settings();
+        open(dir.path())
+    };
+    let asked = amonhen_tui::snapshot(front(), 100, 14, clock(), "1i").unwrap();
+    println!("{asked}");
+    assert!(asked.contains("Add to .gitignore:"), "{asked}");
+    assert!(asked.contains("*.log"), "{asked}");
+    let done = amonhen_tui::snapshot(front(), 100, 14, clock(), "1ie").unwrap();
+    println!("{done}");
+    assert!(done.contains("Added to .gitignore"), "{done}");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join(".gitignore")).unwrap(),
+        "*.log\n"
+    );
+    // .gitignore だけが残る（notes.log は無視される）。`p` でそのパス。
+    std::fs::write(dir.path().join("todo.txt"), "x\n").unwrap();
+    let keys = "1jip";
+    let listed = amonhen_tui::snapshot(front(), 100, 14, clock(), "1").unwrap();
+    println!("{listed}");
+    let done = amonhen_tui::snapshot(front(), 100, 14, clock(), keys).unwrap();
+    println!("{done}");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join(".gitignore")).unwrap(),
+        "*.log\ntodo.txt\n"
+    );
+}
+
+/// Working Copy の `v`: パス → 木（フォルダの行で中をまとめて stage、Enter で畳む）→ ファイル名。`/` でパスを絞る
+#[test]
+fn the_working_copy_lists_a_tree_or_names_and_filters() {
+    let dir = tempfile::tempdir().unwrap();
+    git(dir.path(), BASE, &["init", "-q", "-b", "main"]);
+    commit(dir.path(), BASE, "Start");
+    for path in ["src/a.rs", "src/b.rs", "docs/guide.md", "top.txt"] {
+        let file = dir.path().join(path);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, "x\n").unwrap();
+    }
+    let front = || {
+        amonhen_model::testing::isolate_from_user_settings();
+        open(dir.path())
+    };
+    let list = |keys: &str| -> Vec<String> {
+        let text = amonhen_tui::snapshot(front(), 100, 16, clock(), keys).unwrap();
+        println!("{text}");
+        (text.lines().skip(1).take(7))
+            .filter_map(|l| column(l, 1))
+            .map(|l| l.trim_end().to_owned())
+            .collect()
+    };
+    assert_eq!(
+        list("1v")[..6],
+        [
+            "[ ]   ▾ docs/",
+            "[ ] ?   guide.md",
+            "[ ]   ▾ src/",
+            "[ ] ?   a.rs",
+            "[ ] ?   b.rs",
+            "[ ] ? top.txt"
+        ]
+    );
+    // 選んでいたファイル（guide.md）は木でも選んだまま。1 つ下の src/ で Space: 中のすべてを stage。Enter で畳む。
+    let staged = list("1vj \n");
+    assert_eq!(staged[2..4], ["[x]   ▸ src/", "[ ] ? top.txt"]);
+    assert_eq!(
+        git_out(dir.path(), &["diff", "--cached", "--name-only"]),
+        "src/a.rs\nsrc/b.rs\n"
+    );
+    // ファイル名を先に、フォルダは後ろに。
+    let names = list("1vv");
+    assert!(
+        names
+            .iter()
+            .any(|l| l.starts_with("[x] A a.rs") && l.ends_with("src")),
+        "{names:?}"
+    );
+    // パスで絞る。
+    let filtered = list("1/src\n");
+    assert_eq!(filtered[..3], ["[x] A src/a.rs", "[x] A src/b.rs", ""]);
+}
+
+/// 書きかけのメッセージは `<git dir>/amonhen/commit-draft` に残り、次に開いたときに欄に戻る。コミットすると消える。
+/// 下書きがなければ `commit.template`（`#` の行を除く）を入れ、書き足すまでは下書きにしない
+#[test]
+fn the_message_draft_is_kept_and_the_template_fills_an_empty_field() {
+    let dir = tempfile::tempdir().unwrap();
+    two_lines(dir.path());
+    let draft = dir.path().join(".git/amonhen/commit-draft");
+    let front = || {
+        amonhen_model::testing::isolate_from_user_settings();
+        open(dir.path())
+    };
+    // テンプレートで始まる。触らなければ下書きにしない。
+    std::fs::write(dir.path().join("template.txt"), "Area: \n# what changed\n").unwrap();
+    let template = dir.path().join("template.txt");
+    git(
+        dir.path(),
+        BASE,
+        &["config", "commit.template", template.to_str().unwrap()],
+    );
+    let shown = amonhen_tui::snapshot(front(), 100, 14, clock(), "1").unwrap();
+    println!("{shown}");
+    assert!(shown.contains(" Area:"), "{shown}");
+    assert!(!shown.contains("what changed"), "{shown}");
+    assert!(!draft.exists());
+    // 欄を離れると、書きかけを覚える。
+    amonhen_tui::snapshot(front(), 100, 14, clock(), "1cparser\x1b").unwrap();
+    assert_eq!(std::fs::read_to_string(&draft).unwrap(), "Area: parser");
+    let shown = amonhen_tui::snapshot(front(), 100, 14, clock(), "1").unwrap();
+    assert!(shown.contains(" Area: parser"), "{shown}");
+    // コミットすると消える。
+    amonhen_tui::snapshot(front(), 100, 14, clock(), "1 \x13").unwrap();
+    assert_eq!(
+        git_out(dir.path(), &["log", "-1", "--format=%s"]),
+        "Area: parser\n"
+    );
+    assert!(!draft.exists());
+}
+
 /// サイドバー: Workspace の行と、Branches・Tags。ref を開くと、History でそのコミットを選ぶ
 #[test]
 fn sidebar_lists_refs_and_jumps_to_them() {
