@@ -21,6 +21,9 @@ becomes the GitHub Release notes.
 
 #### Changed
 
+- History's changed files color their kind, dim the folders, show renames as `src/{old.rs → new.rs}` and end with
+  the file count and line totals; hunk headers name the enclosing function as `git diff` does, and
+  `linguist-generated` files start collapsed.
 - Opening a repository from the repository page puts it in a new tab beside the page instead of replacing the page,
   in the macOS and GTK4 apps.
 - The macOS and GTK4 apps keep recently opened repositories in `recent.json` beside `bookmarks.json`, shared with
