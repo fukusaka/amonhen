@@ -1428,6 +1428,57 @@ fn push_replace_and_delete_a_tag_on_a_remote() {
     assert_eq!(git_out(&work, &["tag"]), "v1\n");
 }
 
+/// サイドバーでチェックアウトしていないブランチを選んで、`P` で publish・push、`p` で上流まで fast-forward する
+#[test]
+fn sync_a_branch_that_is_not_checked_out() {
+    let dir = tempfile::tempdir().unwrap();
+    let work = with_remote(dir.path());
+    let remote = dir.path().join("origin.git");
+    let there = || git_out(&remote, &["rev-parse", "side"]);
+    let here = || git_out(&work, &["rev-parse", "side"]);
+    // 上流のない side は publish する（サイドバーの 2 つ目のブランチ）。
+    git(&work, BASE, &["branch", "side", "main~1"]);
+    let asked = amonhen_tui::snapshot(open(&work), 200, 10, clock(), "0jjjP").unwrap();
+    println!("{asked}");
+    assert!(
+        asked.contains("Publish side to origin?   y publish   n cancel"),
+        "{asked}"
+    );
+    amonhen_tui::snapshot(open(&work), 200, 10, clock(), "0jjjPy").unwrap();
+    assert_eq!(there(), here());
+    assert_eq!(
+        git_out(&work, &["rev-parse", "--abbrev-ref", "side@{u}"]),
+        "origin/side\n"
+    );
+    // 進んでいれば push する（チェックアウトしているのは main のまま）。
+    git(&work, BASE, &["branch", "-f", "side", "main"]);
+    let asked = amonhen_tui::snapshot(open(&work), 200, 10, clock(), "0jjjP").unwrap();
+    assert!(
+        asked.contains("Push side to origin/side (1 commit)?"),
+        "{asked}"
+    );
+    amonhen_tui::snapshot(open(&work), 200, 10, clock(), "0jjjPy").unwrap();
+    assert_eq!(there(), git_out(&work, &["rev-parse", "main"]));
+    // 遅れていれば、上流まで fast-forward する（前と後の絵つき、Undo で戻る）。
+    git(&work, BASE, &["branch", "-f", "side", "main~1"]);
+    let asked = amonhen_tui::snapshot(open(&work), 200, 14, clock(), "0jjjp").unwrap();
+    println!("{asked}");
+    assert!(
+        asked.contains("Fast-forward side to origin/side (+1 commits)? Undo brings it back.   y fast-forward   n cancel"),
+        "{asked}"
+    );
+    assert!(asked.contains(" Fast-forward side "), "{asked}");
+    amonhen_tui::snapshot(open(&work), 200, 10, clock(), "0jjjpy").unwrap();
+    assert_eq!(here(), git_out(&work, &["rev-parse", "main"]));
+    assert_eq!(git_out(&work, &["branch", "--show-current"]), "main\n");
+    // 同じなら、そう知らせる。
+    let same = amonhen_tui::snapshot(open(&work), 200, 10, clock(), "0jjjp").unwrap();
+    assert!(
+        same.contains("side has everything in origin/side"),
+        "{same}"
+    );
+}
+
 /// サイドバーの `c` でブランチをチェックアウトし、`b` で新しいブランチを作る。`u` で戻す
 #[test]
 fn checkout_new_branch_and_undo() {

@@ -419,6 +419,10 @@ pub struct App {
     confirm: Option<(String, String, Request)>,
     /// push を確かめている: `t` で、送り先のブランチを打てる。
     push_to_offered: bool,
+    /// push の確かめで見せている送り先（`<remote>/<branch>`。置き換える push の絵の見出し）。
+    pushing_to: String,
+    /// チェックアウトしていないブランチの fast-forward の見通しを読んでいる間: ブランチ、上流、進む数。
+    fast_forward: Option<(String, String, u64)>,
     /// 読んでいる bundle のファイル（取り込む名前を聞く間、覚えておく）。
     bundle_file: Option<String>,
     /// 読んでいるパッチのファイル（当てるかを聞く間、覚えておく）。
@@ -633,6 +637,8 @@ impl App {
             path_choices: String::new(),
             pick_question: None,
             push_to_offered: false,
+            pushing_to: String::new(),
+            fast_forward: None,
             bundle_file: None,
             patch_file: None,
             range_title: None,
@@ -1871,8 +1877,20 @@ impl App {
                     });
                 }
             }
-            KeyCode::Char('p') if !control => self.ask_pull(),
-            KeyCode::Char('P') if !control => self.ask_push(),
+            // サイドバーでチェックアウトしていないブランチを選んでいれば、そのブランチを上流に合わせる（アプリの
+            // ブランチのメニューの Fast-Forward・Push・Publish）。
+            KeyCode::Char('p') if !control => match self.picked_other_branch() {
+                Some(branch) => self.ask_fast_forward(branch),
+                None => self.ask_pull(),
+            },
+            KeyCode::Char('P') if !control => match self.picked_other_branch() {
+                Some(branch) => {
+                    let upstream = self.sidebar.upstream_of(&branch);
+                    let (ahead, behind) = self.sidebar.picked_counts();
+                    self.ask_push_of(branch, upstream, ahead, behind, false);
+                }
+                None => self.ask_push(),
+            },
             // 次に戻す操作の名前を聞いてから、確かめる。
             KeyCode::Char('u') if !control => {
                 self.run("undoPeek", tr!("Undo…"), json!({"op": "undoPeek"}))
@@ -2248,6 +2266,26 @@ impl App {
             }
             // 下書きが読めなくても、欄はそのまま使える（覚えるのをやめる）。
             Err(_) if name == "draftOrTemplate" => return,
+            // 絵が読めなくても、fast-forward は確かめる（絵なしで）。
+            Err(_) if name == "fastForwardPreview" => {
+                if let Some((branch, upstream, behind)) = self.fast_forward.take() {
+                    self.confirm = Some((
+                        tr!(
+                            "Fast-forward {branch} to {upstream} (+{count} commits)? Undo brings it back.",
+                            branch = branch,
+                            upstream = upstream,
+                            count = behind
+                        ),
+                        tr!("fast-forward"),
+                        Request::Run {
+                            name: "fastForward",
+                            command: json!({"op": "fastForward", "branch": branch}),
+                        },
+                    ));
+                    self.dirty = true;
+                }
+                return;
+            }
             // 設定が読めなくても、どこから取るかは聞く（片づけるかは書かない）。
             Err(_) if name == "fetchConfig" => {
                 self.ask_fetch(&Value::Null);
@@ -2281,7 +2319,7 @@ impl App {
             }
             // 置き換える push の絵: まだ選んでいる間だけ重ねる。
             "pushPreview" => {
-                let target = self.upstream.clone().unwrap_or_default();
+                let target = self.pushing_to.clone();
                 if self.choices.is_some() {
                     self.question_drawing = Some(&reply["info"]["drawing"])
                         .filter(|d| d.is_object())
@@ -2380,6 +2418,7 @@ impl App {
             }
             "cleanUp" => self.notice = Some(tr!("Deleted the branches")),
             "addRemote" => self.notice = Some(tr!("Added the remote")),
+            "fastForward" => self.notice = Some(tr!("Fast-forwarded")),
             "editRemote" => self.notice = Some(tr!("Changed the remote")),
             "pushTag" => self.notice = Some(tr!("Pushed the tag")),
             "deleteRemoteTag" => self.notice = Some(tr!("Deleted the tag from the remote")),
@@ -2578,6 +2617,35 @@ impl App {
             "tagRemotes" => {
                 let info = reply["info"].clone();
                 self.ask_tag_remote(&info);
+                return;
+            }
+            // チェックアウトしていないブランチの fast-forward: 前と後の絵を重ねて確かめる。
+            "fastForwardPreview" => {
+                let Some((branch, upstream, behind)) = self.fast_forward.take() else {
+                    return;
+                };
+                self.question_drawing = Some(&reply["info"]["drawing"])
+                    .filter(|d| d.is_object())
+                    .map(|d| {
+                        (
+                            tr!(" Fast-forward {branch} ", branch = branch),
+                            crate::drawing::from_move(d, &branch),
+                        )
+                    });
+                self.confirm = Some((
+                    tr!(
+                        "Fast-forward {branch} to {upstream} (+{count} commits)? Undo brings it back.",
+                        branch = branch,
+                        upstream = upstream,
+                        count = behind
+                    ),
+                    tr!("fast-forward"),
+                    Request::Run {
+                        name: "fastForward",
+                        command: json!({"op": "fastForward", "branch": branch}),
+                    },
+                ));
+                self.dirty = true;
                 return;
             }
             "fetchConfig" => {
@@ -2844,11 +2912,70 @@ impl App {
 
     /// 今のブランチを上流へ push する前に確かめる。
     fn ask_push(&mut self) {
-        self.dirty = true;
         let Some(branch) = self.branch.clone() else {
             self.error = Some(tr!("No branch is checked out"));
+            self.dirty = true;
             return;
         };
+        let upstream = self.upstream.clone();
+        self.ask_push_of(branch, upstream, self.ahead, self.behind, true);
+    }
+
+    /// サイドバーで選んでいる、チェックアウトしていないローカルのブランチ。
+    fn picked_other_branch(&self) -> Option<String> {
+        if self.focus != Focus::Sidebar || self.sidebar.picked_is_current() {
+            return None;
+        }
+        match self.sidebar.picked_ref()? {
+            ("branch", name, _) => Some(name.to_owned()),
+            _ => None,
+        }
+    }
+
+    /// チェックアウトしていないブランチ `branch` を上流まで進める前に、前と後の絵を読んで確かめる（アプリの
+    /// Fast-Forward）。上流になく分かれていれば、理由を出す。
+    fn ask_fast_forward(&mut self, branch: String) {
+        self.dirty = true;
+        let Some(upstream) = self.sidebar.upstream_of(&branch) else {
+            self.error = Some(tr!("{branch} has no upstream", branch = branch));
+            return;
+        };
+        match self.sidebar.picked_counts() {
+            (_, 0) => {
+                self.notice = Some(tr!(
+                    "{branch} has everything in {upstream}",
+                    branch = branch,
+                    upstream = upstream
+                ))
+            }
+            (1.., _) => {
+                self.error = Some(tr!(
+                    "{branch} and {upstream} have diverged, so it can’t be fast-forwarded",
+                    branch = branch,
+                    upstream = upstream
+                ))
+            }
+            (0, behind) => {
+                self.fast_forward = Some((branch.clone(), upstream.clone(), behind));
+                self.send(Request::Run {
+                    name: "fastForwardPreview",
+                    command: json!({"op": "movePreview", "from": branch, "to": upstream,
+                        "branch": branch}),
+                });
+            }
+        }
+    }
+
+    /// 上流 `upstream` へ push する（チェックアウトしているブランチなら `current`）。上流がなければ publish する。
+    fn ask_push_of(
+        &mut self,
+        branch: String,
+        upstream: Option<String>,
+        ahead: u64,
+        behind: u64,
+        current: bool,
+    ) {
+        self.dirty = true;
         let push =
             |remote: &str, remote_branch: &str, force: bool, set_upstream: bool| Request::Run {
                 name: "push",
@@ -2861,8 +2988,7 @@ impl App {
                     "setUpstream": set_upstream,
                 }),
             };
-        let Some((remote, remote_branch)) =
-            self.upstream.as_deref().and_then(|u| u.split_once('/'))
+        let Some((remote, remote_branch)) = upstream.as_deref().and_then(|u| u.split_once('/'))
         else {
             // 上流がなければ、リモートを選んで publish する（同じ名前のブランチを作り、上流にする）。
             match self.remotes.as_slice() {
@@ -2899,7 +3025,16 @@ impl App {
             }
             return;
         };
-        let ask = match self.ahead {
+        if ahead == 0 && !current {
+            self.notice = Some(tr!(
+                "{remote}/{remote_branch} has everything in {branch}",
+                remote = remote,
+                remote_branch = remote_branch,
+                branch = branch
+            ));
+            return;
+        }
+        let ask = match ahead {
             1 => tr!(
                 "Push {branch} to {remote}/{remote_branch} (1 commit)?",
                 branch = branch,
@@ -2916,24 +3051,25 @@ impl App {
         };
         // 上流に手元にないコミットがあれば、ふつうの push は断られる。置き換える push（上流が最後に見たときの
         // ままのときだけ）も選べるようにする。
-        // `t` で、ほかのブランチへ送れる（`ask_push_to`。選ぶ前に横取りするので、中身は送らない）。
-        self.push_to_offered = true;
-        if self.behind > 0 {
-            self.choices = Some((
-                ask,
-                vec![
-                    ('y', tr!("push"), push(remote, remote_branch, false, false)),
-                    (
-                        'f',
-                        tr!(
-                            "force push (with lease), replacing {count} on the remote",
-                            count = self.behind
-                        ),
-                        push(remote, remote_branch, true, false),
+        // `t` で、ほかのブランチへ送れる（`ask_push_to`。選ぶ前に横取りするので、中身は送らない）。今のブランチだけ。
+        self.push_to_offered = current;
+        self.pushing_to = format!("{remote}/{remote_branch}");
+        if behind > 0 {
+            let mut options = vec![
+                ('y', tr!("push"), push(remote, remote_branch, false, false)),
+                (
+                    'f',
+                    tr!(
+                        "force push (with lease), replacing {count} on the remote",
+                        count = behind
                     ),
-                    ('t', tr!("another branch…"), Request::Status),
-                ],
-            ));
+                    push(remote, remote_branch, true, false),
+                ),
+            ];
+            if current {
+                options.push(('t', tr!("another branch…"), Request::Status));
+            }
+            self.choices = Some((ask, options));
             // 置き換える push の前と後の絵を、裏で読んで重ねる（アプリの Force Push のシートと同じ）。
             self.send(Request::Call {
                 name: "pushPreview",
@@ -4498,6 +4634,12 @@ impl App {
                 (
                     "t X",
                     tr!("On a tag: push it to a remote (or replace it there); delete it from one"),
+                ),
+                (
+                    "p P",
+                    tr!(
+                        "On a branch not checked out: fast-forward it to its upstream; push or publish it"
+                    ),
                 ),
                 ("w", tr!("New worktree for the branch")),
                 (
