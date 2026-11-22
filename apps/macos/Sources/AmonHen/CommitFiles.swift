@@ -595,13 +595,13 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         if ImageDiffPanel.isImage(path), !ImageDiffPanel.isSVG(path) {
             content.view.isHidden = true
             imageView.isHidden = false
-            let changes = self.changes, repository = self.repository
+            let source = self.changes, store = self.repository
             let oid = node(at: path)?.oid
             imageView.image = nil
             Task {
                 let data = await Task.detached(priority: .userInitiated) { () -> Data? in
-                    if let index { return changes?.blob(at: index, after: !deleted) }
-                    return oid.flatMap { repository.blob(oid: $0) }
+                    if let index { return source?.blob(at: index, after: !deleted) }
+                    return oid.flatMap { store.blob(oid: $0) }
                 }.value
                 guard request == self.request else { return }
                 imageView.image = data.flatMap(NSImage.init(data:))
