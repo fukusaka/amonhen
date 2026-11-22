@@ -566,7 +566,7 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
     func open(path: String, line: Int?) {
         openPath = path
         let index = changedFiles[path]
-        let deleted = index.map { changes?.items[$0].kind == .deleted } ?? false
+        let deleted = index.map { self.changes?.items[$0].kind == .deleted } ?? false
         let title = NSMutableAttributedString()
         let folder = (path as NSString).deletingLastPathComponent
         if !folder.isEmpty {
