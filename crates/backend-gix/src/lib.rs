@@ -990,6 +990,44 @@ impl GitBackend for GixBackend {
         })
     }
 
+    fn tree_entries(&self, commit: &Oid, path: &str) -> Result<Vec<amonhen_model::TreeEntry>> {
+        use amonhen_model::{TreeEntry, TreeEntryKind as K};
+        use gix::object::tree::EntryKind;
+        let repo = self.repo.to_thread_local();
+        let root = repo
+            .find_commit(gix::ObjectId::from_bytes_or_panic(&commit.0))?
+            .tree()?;
+        let tree = if path.is_empty() {
+            root
+        } else {
+            let Some(entry) = root.lookup_entry_by_path(path)? else {
+                return Err(tr!("{path} isn’t in this commit", path = path).into());
+            };
+            if !entry.mode().is_tree() {
+                return Err(tr!("{path} isn’t a folder", path = path).into());
+            }
+            entry.object()?.into_tree()
+        };
+        let mut entries = Vec::new();
+        for entry in tree.iter() {
+            let entry = entry?;
+            let kind = match entry.mode().kind() {
+                EntryKind::Tree => K::Folder,
+                EntryKind::Blob => K::File,
+                EntryKind::BlobExecutable => K::Executable,
+                EntryKind::Link => K::Link,
+                EntryKind::Commit => K::Submodule,
+            };
+            entries.push(TreeEntry {
+                name: entry.filename().to_string(),
+                kind,
+                oid: to_oid(entry.oid())?,
+            });
+        }
+        entries.sort_by_cached_key(|e| (e.kind != K::Folder, e.name.to_lowercase()));
+        Ok(entries)
+    }
+
     fn diff_attributes(&self, paths: &[&str]) -> Result<Vec<amonhen_model::DiffAttributes>> {
         if paths.is_empty() {
             return Ok(Vec::new());

@@ -159,6 +159,13 @@ pub trait GitBackend: Send + Sync {
         Ok(vec![crate::DiffAttributes::default(); paths.len()])
     }
 
+    /// `commit` の木の `path`（根からの相対パス。空なら根）にあるもの。フォルダを先に、それぞれ名前の順（大文字と
+    /// 小文字は区別しない）。History の「すべてのファイル」で、開いたフォルダだけ読む。
+    fn tree_entries(&self, commit: &Oid, path: &str) -> Result<Vec<crate::TreeEntry>> {
+        let _ = (commit, path);
+        Err(crate::tr!("Can’t read the tree here").into())
+    }
+
     /// `paths` の変更（追加・削除を含む）を index に入れる。
     fn stage(&self, paths: &[&str]) -> Result<()>;
 

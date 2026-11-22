@@ -536,6 +536,11 @@ impl GitBackend for RemoteBackend {
         self.conn.call(&Request::DiffAttributes(owned(paths)))
     }
 
+    fn tree_entries(&self, commit: &Oid, path: &str) -> Result<Vec<amonhen_model::TreeEntry>> {
+        self.conn
+            .call(&Request::TreeEntries(*commit, path.to_owned()))
+    }
+
     fn stage(&self, paths: &[&str]) -> Result<()> {
         self.conn.call(&Request::Stage(owned(paths)))
     }

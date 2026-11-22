@@ -27,6 +27,26 @@ pub struct FileChange {
     pub submodule: bool,
 }
 
+/// コミットの木の 1 段にあるもの（`GitBackend::tree_entries`）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct TreeEntry {
+    pub name: String,
+    pub kind: TreeEntryKind,
+    /// blob・木・submodule のコミットの ID。
+    pub oid: crate::Oid,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum TreeEntryKind {
+    Folder,
+    File,
+    Executable,
+    Link,
+    Submodule,
+}
+
 /// 差分の見せ方にかかる、ファイルごとの属性（`.gitattributes` と設定から）。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

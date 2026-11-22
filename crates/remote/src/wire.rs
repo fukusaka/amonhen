@@ -177,6 +177,8 @@ pub enum Request {
     RemoteEngine,
     /// → `Vec<DiffAttributes>`
     DiffAttributes(Vec<String>),
+    /// → `Vec<TreeEntry>`（コミット、パス）
+    TreeEntries(Oid, String),
 }
 
 /// 書き込み系の操作。応答の型はそれぞれの `Operations` のメソッドの戻り値。
