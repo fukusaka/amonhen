@@ -21,6 +21,8 @@ becomes the GitHub Release notes.
 
 #### Changed
 
+- Opening a repository from the repository page puts it in a new tab beside the page instead of replacing the page,
+  in the macOS and GTK4 apps.
 - The macOS and GTK4 apps keep recently opened repositories in `recent.json` beside `bookmarks.json`, shared with
   each other and the TUI; the old lists are copied there once.
 - Name prompts (new branch, tag, group, LFS pattern) name their button after the action instead of OK and keep it

@@ -287,7 +287,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// `replacing` を渡すと、そのタブ（リポジトリのページ、ツールバーの一覧から切り替える前のリポジトリ）の隣に
+    /// `replacing` を渡すと、そのタブ（ツールバーの一覧から切り替える前のリポジトリ）の隣に
     /// 開いてから、それを閉じる（そのタブがそのリポジトリに替わる）。`after` を渡すと、そのタブの隣に開く。
     /// 開いた（つなぎ始めた）タブを返す。
     /// 開いているタブと比べる鍵。手元のパス（`daemon:` 越しのものも）はリンクを解く。SSH 先はそのまま。
@@ -364,8 +364,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         let home = RepositoryHomeWindow(tabWith: newWindow ? nil : tabTarget)
+        // ページは残して、その隣のタブに開く（⌘ なら新しいウィンドウ）。
         home.browser.onOpen = { [weak self, weak home] path, mode in
-            self?.open(path: path, inNewWindow: mode == .newWindow, replacing: mode == .here ? home?.window : nil)
+            self?.open(path: path, inNewWindow: mode == .newWindow, after: mode == .newWindow ? nil : home?.window)
         }
         home.onClose = { [weak self, weak home] in
             self?.homes.removeAll { $0 === home }
