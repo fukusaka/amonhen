@@ -20,10 +20,10 @@ use crate::Clock;
 use crate::Result;
 use crate::changes::Changes;
 use crate::commands::{self, Place};
-use crate::details::Details;
+use crate::details::{Details, Pair, Want};
 use crate::diff::{PAN, Theme};
 use crate::fileview::FileView;
-use crate::history::{History, WHEEL_ROWS};
+use crate::history::{History, Marked, WHEEL_ROWS};
 use crate::loader::{Loaded, Loader, Request};
 use crate::reflog::Reflog;
 use crate::sidebar::{self, Picked, Sidebar};
@@ -397,6 +397,10 @@ pub struct App {
     sidebar: Sidebar,
     /// サイドバーで開いた stash（詳細の枠に、History の選択の代わりに出す）。
     pinned: Option<Oid>,
+    /// History を読み直す前に印をつけていたコミット（新しい History での行を聞いている間）。
+    remapping: Vec<Marked>,
+    /// 2 つに印をつけたときの、差分の取り方。
+    pair: Pair,
     reflog: Reflog,
     file: FileView,
     /// ファイルの画面を閉じたときに戻る画面。
@@ -562,6 +566,8 @@ impl App {
             changes: Changes::default(),
             sidebar: Sidebar::default(),
             pinned: None,
+            remapping: Vec::new(),
+            pair: Pair::default(),
             reflog: Reflog::default(),
             file: FileView::default(),
             file_back: View::Changes,
@@ -1105,6 +1111,15 @@ impl App {
                                 id: id.to_string(),
                             });
                         }
+                        // 印も、同じコミットにつけ直す。
+                        let marks = self.history.take_remap();
+                        if !marks.is_empty() {
+                            self.send(Request::MarksOf {
+                                history: self.history.id().clone(),
+                                ids: marks.iter().map(|m| m.id.to_string()).collect(),
+                            });
+                            self.remapping = marks;
+                        }
                         self.opening = false;
                         if std::mem::take(&mut self.reopen) {
                             self.open();
@@ -1141,6 +1156,10 @@ impl App {
                         }
                     }
                     Loaded::Lineage { row, bits } => self.history.set_lineage(row, bits),
+                    Loaded::MarksOf(rows) => {
+                        let marks = std::mem::take(&mut self.remapping);
+                        self.history.remapped(marks, rows);
+                    }
                     Loaded::RowOf(row) => {
                         if let Some(row) = row {
                             self.history.select(row);
@@ -1292,8 +1311,22 @@ impl App {
             self.send(request);
         }
         let side = self.layout().side.is_some();
-        // 詳細が見えているなら、選んでいるコミットのものにする。
-        if side
+        // History で 2 つ以上に印をつけていれば、その差分を出す（アプリの複数選択）。
+        let selection = (side
+            && self.view == View::History
+            && self.pinned.is_none()
+            && self.history.mark_count() >= 2)
+            .then(|| Want::Selection {
+                history: self.history.id().clone(),
+                rows: self.history.marks().map(|(row, _)| row).collect(),
+                pair: self.pair,
+                commits: self.history.marks().map(|(_, m)| m.clone()).collect(),
+            });
+        if let Some(want) = selection {
+            if self.details.want(want) {
+                self.damage |= Damage::SIDE;
+            }
+        } else if side
             && let Some(id) = match self.view {
                 View::History => self.pinned.or(self.history.selected_id()),
                 View::Reflog => self.reflog.selected_id(),
@@ -1303,7 +1336,7 @@ impl App {
         {
             let stash = self.view == View::History && self.pinned == Some(id);
             // 詳細の中だけが変わる。
-            if self.details.want(id, stash) {
+            if self.details.want(Want::Commit { id, stash }) {
                 self.damage |= Damage::SIDE;
             }
         }
@@ -1835,7 +1868,11 @@ impl App {
             KeyCode::Char('3') => self.show(View::Reflog),
             _ => {
                 self.dirty |= match (self.view, self.focus) {
-                    (View::History, Focus::Main) => self.history_key(key.code, control),
+                    (View::History, Focus::Main) => self.history_key(
+                        key.code,
+                        control,
+                        key.modifiers.contains(KeyModifiers::SHIFT),
+                    ),
                     (View::History | View::Reflog | View::File, Focus::Side) => {
                         self.details_key(key.code, control)
                     }
@@ -3843,6 +3880,14 @@ impl App {
                     tr!("Fold merged branches; open or close the selected merge"),
                 ),
                 ("] [", tr!("Go to the parent, the child")),
+                (
+                    "m Shift-↑↓",
+                    tr!("Select several commits: one at a time, or a run"),
+                ),
+                (
+                    "x .",
+                    tr!("With two selected: swap the direction; diff from where they diverged"),
+                ),
                 ("Enter Space", tr!("Go to the details")),
                 ("/", tr!("Search")),
                 ("n N", tr!("Next and previous match")),
@@ -3851,7 +3896,7 @@ impl App {
                 ("e", tr!("Edit the commit's message in git's editor")),
                 ("F X", tr!("Fix up into the parent; drop the commit")),
                 ("E", tr!("Edit the commits from here to HEAD at once")),
-                ("Esc", tr!("Clear the search")),
+                ("Esc", tr!("Clear the selection, then the search")),
             ],
             (View::Reflog, Focus::Main) => vec![
                 ("j k", tr!("Move")),
@@ -4463,10 +4508,48 @@ impl App {
         }
     }
 
-    fn history_key(&mut self, code: KeyCode, control: bool) -> bool {
+    fn history_key(&mut self, code: KeyCode, control: bool, shift: bool) -> bool {
         // History を操作したら、開いていた stash ではなく選んでいるコミットを出す。
         self.pinned = None;
         let page = self.history.page();
+        // 複数選択: `m` で印をつける・外す（アプリの ⌘-クリック）、Shift-↑↓ で続けてつける（⇧-クリック）。
+        let marked = match code {
+            KeyCode::Char('m') => Some(self.history.toggle_mark()),
+            KeyCode::Down if shift => Some(self.history.mark_and_move(1)),
+            KeyCode::Up if shift => Some(self.history.mark_and_move(-1)),
+            // 2 つのときの差分の取り方: 向きを入れ替える、分かれたところから。
+            KeyCode::Char('x') if self.history.mark_count() == 2 => {
+                self.pair = match self.pair {
+                    Pair::Forward => Pair::Reverse,
+                    _ => Pair::Forward,
+                };
+                Some(true)
+            }
+            KeyCode::Char('.') if self.history.mark_count() == 2 => {
+                self.pair = match self.pair {
+                    Pair::MergeBase => Pair::Forward,
+                    _ => Pair::MergeBase,
+                };
+                Some(true)
+            }
+            KeyCode::Esc if self.history.clear_marks() => Some(true),
+            _ => None,
+        };
+        if let Some(marked) = marked {
+            if self.history.mark_count() < 2 {
+                self.pair = Pair::Forward;
+            }
+            if marked {
+                self.notice = match self.history.mark_count() {
+                    0 => None,
+                    n => Some(tr!(
+                        "{count} selected: m adds or removes one, Esc clears",
+                        count = n
+                    )),
+                };
+            }
+            return marked;
+        }
         // 選択を動かすだけなら、History の中だけが変わる（詳細は、頼むときに印をつける）。
         let moved = match code {
             KeyCode::Char('d') if control => Some(self.history.move_selection(page / 2)),
@@ -4660,6 +4743,16 @@ impl App {
                     let focused = std::mem::replace(&mut self.focus, Focus::Main);
                     let line = mouse.row - area.y;
                     let selected = match view {
+                        // Ctrl・Alt を押しながらなら、印をつける・外す（アプリの ⌘-クリック。Shift-クリックは
+                        // 端末が文字の選択に使う）。
+                        View::History
+                            if mouse
+                                .modifiers
+                                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+                        {
+                            self.history.click(line);
+                            self.history.toggle_mark()
+                        }
                         View::History => self.history.click(line),
                         View::Reflog => self.reflog.click(line),
                         View::File => self.file.click(line),
