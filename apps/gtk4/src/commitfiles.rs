@@ -414,8 +414,8 @@ impl CommitDiff {
         view_switch.append(&all_files);
         let totals = gtk::Label::new(None);
         totals.set_xalign(0.0);
+        // 合計は省かない（狭いときは右の側の部品から切れる）。
         totals.set_single_line_mode(true);
-        totals.set_ellipsize(gtk::pango::EllipsizeMode::End);
         totals.add_css_class("caption");
         totals.add_css_class("numeric");
         let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
