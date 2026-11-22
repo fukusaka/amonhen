@@ -1552,6 +1552,28 @@ fn refresh_and_rebuild_history() {
     assert!(again.contains("Merge branch 'topic'"), "{again}");
 }
 
+/// 詳細の中を `/` で探し、`n` `N` で次と前の一致へ（アプリの詳細の中の検索）
+#[test]
+fn find_inside_the_details() {
+    let dir = tempfile::tempdir().unwrap();
+    four_lines(dir.path());
+    // 一番上（Four）の詳細で探す: 件名と、差分の足した行。
+    let found = amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), "\n/four\n").unwrap();
+    println!("{found}");
+    assert!(
+        found.contains("“four”: 1 of 2 (n N for the next and previous)"),
+        "{found}"
+    );
+    let next = amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), "\n/four\nn").unwrap();
+    assert!(next.contains("“four”: 2 of 2"), "{next}");
+    let around = amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), "\n/four\nnn").unwrap();
+    assert!(around.contains("“four”: 1 of 2"), "{around}");
+    let back = amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), "\n/four\nN").unwrap();
+    assert!(back.contains("“four”: 2 of 2"), "{back}");
+    let none = amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), "\n/nowhere\n").unwrap();
+    assert!(none.contains("“nowhere” isn’t in the details"), "{none}");
+}
+
 /// コミットの詳細で、今見ているファイルのパスを `Y` でコピーし、`e` で作業ツリーのそのファイルを開く
 #[test]
 fn copy_the_path_or_open_the_file_in_view() {

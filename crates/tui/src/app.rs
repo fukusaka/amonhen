@@ -541,6 +541,8 @@ pub struct App {
     notice: Option<String>,
     /// 検索の語を打っている（`/`）。
     typing_query: Option<String>,
+    /// 打っている検索の語は、詳細の中を探すもの（`/` を詳細で押した）。
+    typing_in_details: bool,
     /// サイドバーの絞り込みの語を打っている（サイドバーで `/`）。
     typing_filter: Option<String>,
     /// 絞り込みの語は Working Copy の一覧のもの（でなければサイドバーのもの）。
@@ -668,6 +670,7 @@ impl App {
             push_after_commit: false,
             notice: None,
             typing_query: None,
+            typing_in_details: false,
             typing_filter: None,
             filtering_changes: false,
             help: false,
@@ -822,6 +825,21 @@ impl App {
                 tr!(" (! shows all)")
             }
         }
+    }
+
+    /// 詳細の中で `query` を探して、合ったところへ動かす（アプリの詳細の中の検索）。何番目かを一番下の行に。
+    fn find_in_details(&mut self, query: &str, forward: bool) {
+        self.notice = Some(match self.details.find(query, forward) {
+            Some((at, total)) => tr!(
+                "“{query}”: {at} of {total} (n N for the next and previous)",
+                query = query,
+                at = at,
+                total = total
+            ),
+            None => tr!("“{query}” isn’t in the details", query = query),
+        });
+        self.damage |= Damage::SIDE;
+        self.dirty = true;
     }
 
     /// Working Copy・ref・History を読み直す。
@@ -2054,6 +2072,14 @@ impl App {
         if let Some(query) = &mut self.typing_query {
             self.dirty = true;
             match key.code {
+                KeyCode::Enter if std::mem::take(&mut self.typing_in_details) => {
+                    let query = self.typing_query.take().unwrap_or_default();
+                    if query.trim().is_empty() {
+                        self.details.clear_found();
+                    } else {
+                        self.find_in_details(&query, true);
+                    }
+                }
                 KeyCode::Enter => {
                     let query = self.typing_query.take().unwrap_or_default();
                     if query.trim().is_empty() {
@@ -2062,7 +2088,10 @@ impl App {
                         self.start_search(query);
                     }
                 }
-                KeyCode::Esc => self.typing_query = None,
+                KeyCode::Esc => {
+                    self.typing_query = None;
+                    self.typing_in_details = false;
+                }
                 KeyCode::Backspace => {
                     query.pop();
                 }
@@ -5307,6 +5336,7 @@ impl App {
                     "Y e",
                     tr!("Copy the path of the file in view; open it in git's editor"),
                 ),
+                ("/ n N", tr!("Find in the details; next and previous")),
                 ("h l", tr!("Pan long lines; h at the left edge goes back")),
                 ("Esc", tr!("Go back to History")),
             ],
@@ -6095,6 +6125,17 @@ impl App {
             }
             // 今見ているファイルのパスをコピーする・作業ツリーのそのファイルをエディタで開く（アプリのファイルの
             // 見出しのメニューの Copy Path・Open）。
+            // 詳細の中を探す。
+            KeyCode::Char('/') => {
+                self.typing_query = Some(self.details.finding().unwrap_or("").to_owned());
+                self.typing_in_details = true;
+                true
+            }
+            KeyCode::Char('n' | 'N') if self.details.finding().is_some() => {
+                let query = self.details.finding().unwrap_or("").to_owned();
+                self.find_in_details(&query, code == KeyCode::Char('n'));
+                true
+            }
             KeyCode::Char('Y') => match self.details.current_file() {
                 Some((path, _)) => {
                     let path = path.to_owned();
