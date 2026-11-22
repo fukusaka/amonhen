@@ -1184,11 +1184,14 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         didSet {
             // ファイルの一覧の行数（+/−）は詳細と一緒に読むので、届いたら一覧を描き直す。
             fileStats = Dictionary((extras?.stats ?? []).map { ($0.path, $0) }, uniquingKeysWith: { a, _ in a })
+            updateTotals()
             // 選択を保つため、行を入れ替えずに描き直す。
             files.reloadData(forRowIndexes: IndexSet(integersIn: 0..<files.numberOfRows), columnIndexes: [0])
         }
     }
     private var fileStats: [String: CommitExtras.FileStat] = [:]
+    /// 変更ファイルの一覧の下の、ファイルの数と行数の合計。
+    private let totalsField = NSTextField(labelWithString: "")
     /// 変更ファイルの一覧の行。上に並べるときはファイルだけ、左に木で出すときはフォルダの行も入る。
     private enum FileRow {
         case directory(String, depth: Int)
@@ -1344,8 +1347,26 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         headerItem.minimumThickness = 40
         headerItem.holdingPriority = .init(260)
         addSplitViewItem(headerItem)
+        // 一覧の下に、変更ファイルの数と行数の合計（「3 files +53 −3」）。
+        let filesContainer = NSView(frame: scroll.frame)
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        totalsField.translatesAutoresizingMaskIntoConstraints = false
+        totalsField.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        totalsField.textColor = .secondaryLabelColor
+        totalsField.lineBreakMode = .byTruncatingTail
+        filesContainer.addSubview(scroll)
+        filesContainer.addSubview(totalsField)
+        NSLayoutConstraint.activate([
+            scroll.topAnchor.constraint(equalTo: filesContainer.topAnchor),
+            scroll.leadingAnchor.constraint(equalTo: filesContainer.leadingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: filesContainer.trailingAnchor),
+            totalsField.topAnchor.constraint(equalTo: scroll.bottomAnchor, constant: 3),
+            totalsField.leadingAnchor.constraint(equalTo: filesContainer.leadingAnchor, constant: 8),
+            totalsField.trailingAnchor.constraint(lessThanOrEqualTo: filesContainer.trailingAnchor, constant: -8),
+            totalsField.bottomAnchor.constraint(equalTo: filesContainer.bottomAnchor, constant: -4),
+        ])
         let filesController = NSViewController()
-        filesController.view = scroll
+        filesController.view = filesContainer
         self.filesController = filesController
         diffView.onToggleFile = { [weak self] file in self?.toggleCollapsed(file) }
         diffView.fileMenu = { [weak self] file in self?.menuForFile(file) }
@@ -2214,6 +2235,33 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
             if case let .file(index, _) = item { rowOfFile[index] = row }
         }
         files.reloadData()
+        updateTotals()
+    }
+
+    /// 一覧の下の合計を出し直す。行数は、全ファイルの差分を読んでいればそこから、1 ファイルずつなら詳細の
+    /// 行数（届くまでは数だけ）。
+    private func updateTotals() {
+        let count = changes?.items.count ?? stacked?.count ?? 0
+        let text = NSMutableAttributedString(
+            string: count == 0 ? "" : L("%ld changed files", count), attributes: [.foregroundColor: NSColor.secondaryLabelColor])
+        var lines: (added: Int, removed: Int)?
+        if let stacked {
+            lines = stacked.totals
+        } else if let changes, !fileStats.isEmpty {
+            lines = changes.items.reduce((0, 0)) {
+                ($0.0 + (fileStats[$1.path]?.added ?? 0), $0.1 + (fileStats[$1.path]?.removed ?? 0))
+            }
+        }
+        if count > 0, let lines {
+            text.append(NSAttributedString(string: "  "))
+            text.append(NSAttributedString(string: "+\(lines.added)", attributes: [.foregroundColor: NSColor.systemGreen]))
+            text.append(NSAttributedString(string: " "))
+            text.append(NSAttributedString(string: "−\(lines.removed)", attributes: [.foregroundColor: NSColor.systemRed]))
+        }
+        text.addAttribute(.font, value: NSFont.monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular),
+                          range: NSRange(location: 0, length: text.length))
+        totalsField.attributedStringValue = text
+        totalsField.isHidden = count == 0
     }
 
     /// 変更ファイルの一覧を、メッセージと差分の間（上に一覧）か、差分の左（木）に置く。

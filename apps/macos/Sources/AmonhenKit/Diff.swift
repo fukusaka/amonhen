@@ -74,11 +74,15 @@ public final class StackedDiff: @unchecked Sendable {
     public func isGenerated(_ file: Int) -> Bool { amonhen_stacked_generated(raw, UInt32(file)) }
 
     /// 各ファイルの見出し（ふつうはパス。とびとびに選んだコミットでは「パス — 短い ID」）。
-    public private(set) lazy var names: [String] = {
-        // すべて畳むと見出しの行だけになる。
-        let headers = view(collapsed: [Bool](repeating: true, count: count))
-        return (0..<headers.rowCount).map { headers.text(row: $0) }
-    }()
+    public private(set) lazy var names: [String] = (0..<headers.rowCount).map { headers.text(row: $0) }
+
+    /// 全ファイルの追加と削除の行数の合計（バイナリのファイルは数えない）。
+    public private(set) lazy var totals: (added: Int, removed: Int) = headers.withRows { rows in
+        rows.reduce((0, 0)) { ($0.0 + Int($1.new_no), $0.1 + Int($1.old_no)) }
+    }
+
+    /// すべて畳んだ表示（見出しの行だけ。`old_no` は削除、`new_no` は追加の行数）。
+    private lazy var headers = view(collapsed: [Bool](repeating: true, count: count))
 
     /// 各ファイルの見出しの行（`AmonhenDiffRow_FILE`）に、畳まないファイルの差分の行を続けたもの。
     /// `collapsed[i]` が true のファイルは見出しだけ。

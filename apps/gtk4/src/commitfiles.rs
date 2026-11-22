@@ -384,8 +384,10 @@ struct Inner {
     diff: DiffWidget,
     /// 差分（の枠）。
     diff_column: gtk::Box,
-    /// 変更ファイルの一覧（スクロールの枠）。
-    files: gtk::ScrolledWindow,
+    /// 変更ファイルの一覧（スクロールの枠）と、その下の合計（分割の片側）。
+    files_column: gtk::Box,
+    /// 一覧の下の、変更ファイルの数と行数の合計（「3 files +53 −3」）。
+    totals: gtk::Label,
     list: gtk::ListView,
     store: gio::ListStore,
     selection: gtk::SingleSelection,
@@ -569,7 +571,21 @@ impl CommitDiff {
         let files = gtk::ScrolledWindow::builder()
             .child(&list)
             .hscrollbar_policy(gtk::PolicyType::Never)
+            .vexpand(true)
             .build();
+        let totals = gtk::Label::builder()
+            .xalign(0.0)
+            .margin_start(8)
+            .margin_end(8)
+            .margin_top(3)
+            .margin_bottom(4)
+            .ellipsize(gtk::pango::EllipsizeMode::End)
+            .build();
+        totals.add_css_class("caption");
+        totals.add_css_class("numeric");
+        let files_column = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        files_column.append(&files);
+        files_column.append(&totals);
         let holder = gtk::Box::new(gtk::Orientation::Vertical, 0);
         holder.set_vexpand(true);
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -578,7 +594,8 @@ impl CommitDiff {
             root: root.clone(),
             diff,
             diff_column,
-            files,
+            files_column,
+            totals,
             list,
             store,
             selection,
@@ -1037,16 +1054,16 @@ impl Inner {
             gtk::Orientation::Vertical
         });
         paned.set_vexpand(true);
-        paned.set_start_child(Some(&this.files));
+        paned.set_start_child(Some(&this.files_column));
         paned.set_end_child(Some(&this.diff_column));
         paned.set_resize_start_child(false);
         paned.set_shrink_start_child(false);
         paned.set_shrink_end_child(false);
         if tree {
-            this.files.set_size_request(140, -1);
+            this.files_column.set_size_request(140, -1);
             paned.set_position(200);
         } else {
-            this.files.set_size_request(-1, 60);
+            this.files_column.set_size_request(-1, 60);
             paned.set_position(110);
         }
         this.holder.append(&paned);
@@ -1116,8 +1133,10 @@ impl Inner {
         this.store.remove_all();
         let Some(source) = source else {
             this.syncing.set(false);
+            this.totals.set_visible(false);
             return;
         };
+        Inner::show_totals(this, &source);
         let changes = this.changes.borrow().clone();
         let rows = file_rows(
             &source,
@@ -1142,6 +1161,42 @@ impl Inner {
             this.selection.set_selected(row);
         }
         this.syncing.set(false);
+    }
+
+    /// 一覧の下の合計を出し直す。行数は、全ファイルの差分を読んでいればそこから、1 ファイルずつなら詳細の
+    /// 行数（届くまでは数だけ。macOS 版と同じ）。
+    fn show_totals(this: &Rc<Self>, source: &Source) {
+        let files = &source.0.files;
+        if files.is_empty() {
+            this.totals.set_visible(false);
+            return;
+        }
+        let stats = this.stats.borrow();
+        let lines = if source.1.is_none() {
+            Some(
+                files
+                    .iter()
+                    .fold((0, 0), |(a, r), (_, d)| (a + d.added, r + d.removed)),
+            )
+        } else if !stats.is_empty() {
+            Some(files.iter().fold((0, 0), |(a, r), (name, _)| {
+                let (added, removed) = stats.get(path_of(name)).copied().unwrap_or_default();
+                (a + added.unwrap_or(0), r + removed.unwrap_or(0))
+            }))
+        } else {
+            None
+        };
+        let mut markup = format!(
+            "<span alpha=\"55%\">{}</span>",
+            glib::markup_escape_text(&tr!("{count} changed files", count = files.len()))
+        );
+        if let Some((added, removed)) = lines {
+            markup += &format!(
+                "  <span foreground=\"#2ec27e\">+{added}</span> <span foreground=\"#e01b24\">−{removed}</span>"
+            );
+        }
+        this.totals.set_markup(&markup);
+        this.totals.set_visible(true);
     }
 
     /// 1 ファイルずつ見せているときの、差分に出しているファイルのパス。
