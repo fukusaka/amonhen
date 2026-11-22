@@ -1499,6 +1499,27 @@ fn refresh_and_rebuild_history() {
     assert!(again.contains("Merge branch 'topic'"), "{again}");
 }
 
+/// コミットの詳細で、今見ているファイルのパスを `Y` でコピーし、`e` で作業ツリーのそのファイルを開く
+#[test]
+fn copy_the_path_or_open_the_file_in_view() {
+    let dir = tempfile::tempdir().unwrap();
+    four_lines(dir.path());
+    // 一番上のコミット（a.txt を変える）の詳細へ。
+    let copied = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "\nY").unwrap();
+    println!("{copied}");
+    assert!(
+        copied.contains("Copied a.txt (to the terminal’s clipboard)"),
+        "{copied}"
+    );
+    // 作業ツリーにないファイルは開けない（理由を出す）。
+    std::fs::remove_file(dir.path().join("a.txt")).unwrap();
+    let missing = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "\ne").unwrap();
+    assert!(
+        missing.contains("a.txt isn’t a file in the working tree"),
+        "{missing}"
+    );
+}
+
 /// サイドバーの `c` でブランチをチェックアウトし、`b` で新しいブランチを作る。`u` で戻す
 #[test]
 fn checkout_new_branch_and_undo() {

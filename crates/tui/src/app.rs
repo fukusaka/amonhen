@@ -742,6 +742,25 @@ impl App {
         });
     }
 
+    /// 作業ツリーのファイル `path`（作業ツリーの上からの）を、git のエディタで開く（端末を渡す）。ファイルが別の
+    /// 機械にあれば（`ssh://`）、そう言う。
+    fn edit_working_file(&mut self, path: &str) {
+        if !self.files_here {
+            self.error = Some(tr!(
+                "The files are on another machine; open them in a terminal there"
+            ));
+            return;
+        }
+        let Some(workdir) = self.workdir.as_deref() else {
+            return;
+        };
+        let file = std::path::Path::new(workdir).join(path);
+        match file.is_file() {
+            true => self.open_file = Some(file.to_string_lossy().into_owned()),
+            false => self.error = Some(tr!("{path} isn’t a file in the working tree", path = path)),
+        }
+    }
+
     /// Working Copy・ref・History を読み直す。
     fn refresh(&mut self) {
         self.changes.refresh();
@@ -4771,6 +4790,10 @@ impl App {
                 ("j k", tr!("Scroll")),
                 ("[ ]", tr!("Previous and next file")),
                 ("B L", tr!("Blame, File History of the file in view")),
+                (
+                    "Y e",
+                    tr!("Copy the path of the file in view; open it in git's editor"),
+                ),
                 ("h l", tr!("Pan long lines; h at the left edge goes back")),
                 ("Esc", tr!("Go back to History")),
             ],
@@ -5093,25 +5116,8 @@ impl App {
             // 選んでいるファイルの Blame・File History を開く。
             // 作業ツリーのファイルを、git のエディタで開く（端末を渡す）。
             KeyCode::Char('e') => {
-                match (self.changes.selected_path(), self.workdir.as_deref()) {
-                    _ if !self.files_here => {
-                        self.error = Some(tr!(
-                            "The files are on another machine; open them in a terminal there"
-                        ));
-                    }
-                    (Some(path), Some(workdir)) => {
-                        let file = std::path::Path::new(workdir).join(path);
-                        match file.is_file() {
-                            true => self.open_file = Some(file.to_string_lossy().into_owned()),
-                            false => {
-                                self.error = Some(tr!(
-                                    "{path} isn’t a file in the working tree",
-                                    path = path
-                                ))
-                            }
-                        }
-                    }
-                    _ => {}
+                if let Some(path) = self.changes.selected_path().map(str::to_owned) {
+                    self.edit_working_file(&path);
                 }
                 true
             }
@@ -5554,6 +5560,28 @@ impl App {
                     None => false,
                 }
             }
+            // 今見ているファイルのパスをコピーする・作業ツリーのそのファイルをエディタで開く（アプリのファイルの
+            // 見出しのメニューの Copy Path・Open）。
+            KeyCode::Char('Y') => match self.details.current_file() {
+                Some((path, _)) => {
+                    let path = path.to_owned();
+                    self.notice = Some(tr!(
+                        "Copied {path} (to the terminal’s clipboard)",
+                        path = path
+                    ));
+                    self.copy = Some(path);
+                    true
+                }
+                None => false,
+            },
+            KeyCode::Char('e') => match self.details.current_file() {
+                Some((path, _)) => {
+                    let path = path.to_owned();
+                    self.edit_working_file(&path);
+                    true
+                }
+                None => false,
+            },
             KeyCode::Esc | KeyCode::Char('q' | 'h') | KeyCode::Backspace | KeyCode::Left => {
                 self.focus = Focus::Main;
                 true
