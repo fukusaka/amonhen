@@ -2667,8 +2667,17 @@ impl App {
                 self.notice = Some(tr!("Exported to {file}", file = file));
             }
             // git am も、当たらなければ merge と同じく止まる（Continue・Skip・Abort）。
+            // 分けるコミットで止まったら、Working Copy で分けてコミットしてから Continue。
+            "split" if reply["outcome"] == "stopped" => {
+                self.notice = Some(tr!(
+                    "Stopped at the commit to split: commit its changes in parts, then continue (C)"
+                ));
+                self.view = View::Changes;
+                self.focus = Focus::Main;
+                self.sidebar.show_view(Picked::Changes);
+            }
             "merge" | "rebase" | "continue" | "skip" | "cherryPick" | "revert" | "rewrite"
-            | "am" => {
+            | "split" | "am" => {
                 // 編集モードは、書き換えたら閉じる（書き換えられなければ、選んだものごと残る）。
                 if name == "rewrite" {
                     self.edit_mode = None;
@@ -3320,6 +3329,27 @@ impl App {
                 ),
                 tr!("drop"),
                 rewrite("Drop", "drop"),
+            ));
+            return true;
+        }
+        // 分ける: edit で止めて変更を作業ツリーに戻す。続きは Working Copy で分けてコミットし、Continue。
+        if code == KeyCode::Char('|') {
+            if is_merge {
+                self.error = Some(tr!("A merge can’t be split"));
+                return true;
+            }
+            self.confirm = Some((
+                tr!(
+                    "Split {commit} “{subject}”? Its changes go back to the working tree; commit them in parts, then continue. Undo brings it back.",
+                    commit = short,
+                    subject = subject
+                ),
+                tr!("split"),
+                Request::Run {
+                    name: "split",
+                    command: json!({"op": "rewrite", "label": format!("Split {short}"),
+                        "edit": {"kind": "split", "oid": id}}),
+                },
             ));
             return true;
         }
@@ -4048,6 +4078,10 @@ impl App {
                 ("c", tr!("Check out the selected commit (detached HEAD)")),
                 ("e", tr!("Edit the commit's message in git's editor")),
                 ("F X", tr!("Fix up into the parent; drop the commit")),
+                (
+                    "|",
+                    tr!("Split the commit: its changes go back to commit in parts"),
+                ),
                 ("E", tr!("Edit the commits from here to HEAD at once")),
                 ("Esc", tr!("Clear the selection, then the search")),
             ],
@@ -4773,14 +4807,16 @@ impl App {
                 self.ask_pick_marked(code == KeyCode::Char('v'))
             }
             KeyCode::Char('E') if self.history.mark_count() >= 2 => self.combine_marked(),
-            KeyCode::Char('c' | 'e' | 'F' | 'X') if self.history.mark_count() >= 2 => {
+            KeyCode::Char('c' | 'e' | 'F' | 'X' | '|') if self.history.mark_count() >= 2 => {
                 self.error = Some(tr!(
                     "This works on one commit: Esc clears the selection first"
                 ));
                 true
             }
             // 選んでいるコミットを今のブランチに持ってくる・打ち消す・そこをチェックアウトする（先に確かめる）。
-            KeyCode::Char('y' | 'v' | 'c' | 'e' | 'F' | 'X') => self.ask_commit_operation(code),
+            KeyCode::Char('y' | 'v' | 'c' | 'e' | 'F' | 'X' | '|') => {
+                self.ask_commit_operation(code)
+            }
             // 選んでいるコミットから HEAD までを、編集モードで。
             KeyCode::Char('E') => {
                 match self.history.selected_id() {
