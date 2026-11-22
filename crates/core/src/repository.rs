@@ -987,21 +987,43 @@ impl Repository {
         Ok(DiffView::new(&diff, profile).with_path(&change.path))
     }
 
+    /// `stacked_diff` が、すべてのファイルの差分を先に取るのはこの数まで（多ければ開いたときに取る）。
+    pub const STACK_EAGER: usize = 200;
+
     /// `stacked` の `file` 番目のファイルの差分を、前後 `context` 行で取り直す（`u32::MAX` ならファイル全体）。
-    /// 見出しの関数名と生成物の印は、そのファイルの属性のまま。
-    pub fn set_stacked_context(&self, stacked: &mut diff::StackedDiff, file: usize, context: u32) {
+    /// まだ取っていないファイル（ファイルの多いコミット）なら、ここで取る。見出しの関数名と生成物の印は、その
+    /// ファイルの属性のまま。
+    pub fn set_stacked_context(
+        &self,
+        stacked: &mut diff::StackedDiff,
+        file: usize,
+        context: u32,
+    ) -> Result<()> {
         let Some((path, d)) = stacked.files.get_mut(file) else {
-            return;
+            return Ok(());
         };
-        if d.binary {
-            return;
-        }
         let path = path.split(" — ").next().unwrap_or(path);
         let attrs = self.diff_attributes(&[path]);
+        if let Some(change) = d.pending.take() {
+            match self.change_diff(&change, &attrs[0]) {
+                Ok(loaded) => *d = loaded,
+                Err(e) => {
+                    d.pending = Some(change);
+                    return Err(e);
+                }
+            }
+            if context == 3 {
+                return Ok(());
+            }
+        }
+        if d.binary {
+            return Ok(());
+        }
         let funcname = crate::funcname::FuncName::new(attrs[0].funcname.as_ref());
         let generated = d.generated;
         *d = diff::file_diff_with(d.old.clone(), d.new.clone(), context, &funcname);
         d.generated = generated;
+        Ok(())
     }
 
     /// コミット `commit` の `path` の中身を、変わっていない行として並べた表示（History の「すべてのファイル」で、
@@ -1032,6 +1054,18 @@ impl Repository {
     /// `changes` のすべてのファイルの差分（History で全ファイルを縦に並べて見せる）。ファイルの数だけ blob を読んで
     /// 差分を取るので、裏のスレッドで呼ぶ。
     pub fn stacked_diff(&self, changes: &[FileChange]) -> Result<diff::StackedDiff> {
+        // ファイルの多いコミットは、見出しだけ並べて、開いたファイルの差分だけを取る（`set_stacked_context`）。
+        if changes.len() > Self::STACK_EAGER {
+            let files = changes
+                .iter()
+                .map(|c| {
+                    let mut d = diff::whole_file(Vec::new());
+                    d.pending = Some(Box::new(c.clone()));
+                    (c.path.clone(), d)
+                })
+                .collect();
+            return Ok(diff::StackedDiff { files });
+        }
         if let Some(diffs) = self.change_diffs(changes)? {
             let files = changes.iter().map(|c| c.path.clone()).zip(diffs).collect();
             return Ok(diff::StackedDiff { files });
@@ -2250,6 +2284,39 @@ mod tests {
     }
 
     #[test]
+    fn a_commit_with_many_files_loads_each_diff_when_opened() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("repo");
+        std::fs::create_dir(&dir).unwrap();
+        git(&dir, &["init", "-q"]);
+        let count = Repository::STACK_EAGER + 1;
+        for i in 0..count {
+            std::fs::write(dir.join(format!("f{i:03}.txt")), "a\n").unwrap();
+        }
+        git(&dir, &["add", "-A"]);
+        git(&dir, &["commit", "-q", "-m", "first"]);
+        for i in 0..count {
+            std::fs::write(dir.join(format!("f{i:03}.txt")), "b\n").unwrap();
+        }
+        git(&dir, &["commit", "-qam", "second"]);
+        let repo = Repository::with_cache(GixBackend::open(&dir).unwrap(), tmp.path().join("c"));
+        let head = repo.backend.head().unwrap().unwrap();
+        let changes = repo.commit_changes(&head).unwrap();
+        let mut stacked = repo.stacked_diff(&changes).unwrap();
+        assert!(stacked.files.iter().all(|(_, d)| d.pending.is_some()));
+        let view = stacked.view(&[], &FrontendProfile::MACOS);
+        assert_eq!(view.rows.len(), count);
+        assert!(view.rows[0].flags & DiffRow::PENDING != 0);
+        repo.set_stacked_context(&mut stacked, 0, 3).unwrap();
+        let (_, first) = &stacked.files[0];
+        assert!(first.pending.is_none());
+        assert_eq!((first.added, first.removed), (1, 1));
+        let view = stacked.view(&[], &FrontendProfile::MACOS);
+        assert_eq!(view.rows.len(), count + 3);
+        assert_eq!(view.rows[0].flags & DiffRow::PENDING, 0);
+    }
+
+    #[test]
     fn stacked_context_grows_per_file_and_tree_file_lists_the_whole_text() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().join("repo");
@@ -2273,9 +2340,9 @@ mod tests {
         let mut stacked = repo.stacked_diff(&changes).unwrap();
         // 前後 3 行: 見出しと 3 + 2 + 3 行。
         assert_eq!(stacked.files[0].1.lines.len(), 9);
-        repo.set_stacked_context(&mut stacked, 0, 10);
+        repo.set_stacked_context(&mut stacked, 0, 10).unwrap();
         assert_eq!(stacked.files[0].1.lines.len(), 1 + 10 + 2 + 10);
-        repo.set_stacked_context(&mut stacked, 0, u32::MAX);
+        repo.set_stacked_context(&mut stacked, 0, u32::MAX).unwrap();
         assert_eq!(stacked.files[0].1.lines.len(), 1 + 29 + 2);
         assert_eq!(stacked.files[0].1.headers, "@@ -1,30 +1,30 @@");
 

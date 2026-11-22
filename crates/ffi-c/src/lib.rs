@@ -1537,7 +1537,8 @@ pub unsafe extern "C" fn amonhen_stacked_view(
 }
 
 /// `stacked` の `file` 番目のファイルの差分を、前後 `context` 行で取り直す（`UINT32_MAX` ならファイル全体）。
-/// 表示は `amonhen_stacked_view` で作り直す。
+/// まだ差分を取っていないファイル（見出しの `PENDING`）なら、ここで取る。表示は `amonhen_stacked_view` で作り直す。
+/// 読めなければ false（`amonhen_last_error`）。
 ///
 /// # Safety
 /// `repo` と `stacked` は有効で、`stacked` をほかのスレッドで同時に使っていないこと。
@@ -1547,12 +1548,18 @@ pub unsafe extern "C" fn amonhen_stacked_set_context(
     stacked: *mut AmonhenStacked,
     file: u32,
     context: u32,
-) {
+) -> bool {
     let Some(s) = (unsafe { stacked.cast::<amonhen_core::diff::StackedDiff>().as_mut() }) else {
         set_error("NULL was passed as stacked");
-        return;
+        return false;
     };
-    repo!(repo_ptr).set_stacked_context(s, file as usize, context);
+    match repo!(repo_ptr).set_stacked_context(s, file as usize, context) {
+        Ok(()) => true,
+        Err(e) => {
+            set_error(e);
+            false
+        }
+    }
 }
 
 /// コミット `commit`（20 バイト）の `path` の中身を、変わっていない行として並べた表示（`amonhen_diff_free` で

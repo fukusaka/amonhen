@@ -41,6 +41,8 @@ pub struct FileDiff {
     pub removed: u32,
     /// `.gitattributes` の `linguist-generated`（生成物）。`None` は指定なし。
     pub generated: Option<bool>,
+    /// まだ差分を取っていない（ファイルの多いコミットでは、開いたときに取る）。そのファイルの変更。
+    pub pending: Option<Box<amonhen_model::FileChange>>,
 }
 
 /// ファイル全体を変更のない行として並べたもの（変わっていないファイルの、その時点の中身を見せる）。
@@ -71,6 +73,7 @@ pub fn whole_file(data: impl Into<Blob>) -> FileDiff {
         added: 0,
         removed: 0,
         generated: None,
+        pending: None,
     }
 }
 
@@ -123,6 +126,7 @@ pub fn file_diff_with(
         added: 0,
         removed: 0,
         generated: None,
+        pending: None,
     };
     if diff.binary {
         return diff;
@@ -725,6 +729,9 @@ impl StackedDiff {
             if diff.binary {
                 flags |= DiffRow::BINARY;
             }
+            if diff.pending.is_some() {
+                flags |= DiffRow::PENDING;
+            }
             let text = builder.strings.add(names_buf, &names[at..at + path.len()]);
             at += path.len();
             builder.rows.push(DiffRow {
@@ -737,7 +744,7 @@ impl StackedDiff {
             });
             added += diff.added;
             removed += diff.removed;
-            if !hidden && !diff.binary {
+            if !hidden && !diff.binary && diff.pending.is_none() {
                 builder.push_file(path, diff);
             }
         }
@@ -831,6 +838,7 @@ pub fn range_diff_file<S: AsRef<str>>(lines: &[S]) -> FileDiff {
         added,
         removed,
         generated: None,
+        pending: None,
     }
 }
 

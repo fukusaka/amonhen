@@ -110,6 +110,7 @@ impl DiffMeta {
             added: self.added,
             removed: self.removed,
             generated: self.generated,
+            pending: None,
         }
     }
 }

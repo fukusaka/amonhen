@@ -364,6 +364,10 @@ typedef struct {
  * `flags`: ファイルの見出しで、バイナリのファイル（行の差分はない）。
  */
 #define AmonhenDiffRow_BINARY (1 << 2)
+/**
+ * `flags`: ファイルの見出しで、まだ差分を取っていない（ファイルの多いコミット。開いたときに取る）。行数は 0。
+ */
+#define AmonhenDiffRow_PENDING (1 << 3)
 
 /**
  * 差分の行の中で強調する範囲（単語単位の変更）。位置は FE の文字列の符号単位。
@@ -990,12 +994,13 @@ AmonhenDiff *amonhen_stacked_view(const AmonhenStacked *stacked,
 
 /**
  * `stacked` の `file` 番目のファイルの差分を、前後 `context` 行で取り直す（`UINT32_MAX` ならファイル全体）。
- * 表示は `amonhen_stacked_view` で作り直す。
+ * まだ差分を取っていないファイル（見出しの `PENDING`）なら、ここで取る。表示は `amonhen_stacked_view` で作り直す。
+ * 読めなければ false（`amonhen_last_error`）。
  *
  * # Safety
  * `repo` と `stacked` は有効で、`stacked` をほかのスレッドで同時に使っていないこと。
  */
-void amonhen_stacked_set_context(const AmonhenRepo *repo_ptr,
+bool amonhen_stacked_set_context(const AmonhenRepo *repo_ptr,
                                  AmonhenStacked *stacked,
                                  uint32_t file,
                                  uint32_t context);
