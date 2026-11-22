@@ -22,7 +22,7 @@ const FILTER: &[&str] = &[
     "Microsoft.UI.Xaml.DependencyObject",
     "Microsoft.UI.Xaml.Media.VisualTreeHelper",
     "Microsoft.UI.Xaml.Media.IVisualTreeHelperStatics::{GetParent,GetChild,GetChildrenCount}",
-    "Microsoft.UI.Xaml.IFrameworkElement::{DataContext,Tag,put_HorizontalAlignment,put_VerticalAlignment,put_Margin,\
+    "Microsoft.UI.Xaml.IFrameworkElement::{DataContext,Tag,ActualWidth,put_HorizontalAlignment,put_VerticalAlignment,put_Margin,\
      Resources,RequestedTheme,put_RequestedTheme}",
     // Repositories の一覧で選んだ行（複数）。
     "Microsoft.UI.Xaml.Controls.ListViewBase",
@@ -37,7 +37,7 @@ const FILTER: &[&str] = &[
     // 左のお気に入り・グループで、引いてきた行を受ける（reactor の Border の受け口は、外側の一覧が受けないに
     // 戻すので、一覧で直に受けて処理済みにする）。
     "Microsoft.UI.Xaml.DragEventArgs",
-    "Microsoft.UI.Xaml.IDragEventArgs::{AcceptedOperation,put_AcceptedOperation,Handled,put_Handled}",
+    "Microsoft.UI.Xaml.IDragEventArgs::{AcceptedOperation,put_AcceptedOperation,Handled,put_Handled,GetPosition}",
     "Microsoft.UI.Xaml.DragEventHandler",
     "Microsoft.UI.Xaml.Controls.IListViewBaseFactory::{}",
     "Microsoft.UI.Xaml.Controls.IListViewBaseStatics::{}",

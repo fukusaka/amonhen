@@ -2,8 +2,8 @@
 //! その知らせがない）。
 
 use crate::bindings::{
-    DataPackageOperation, DependencyObject, FrameworkElement, TabView, TabViewItem, UIElement,
-    VisualTreeHelper,
+    DataPackageOperation, DependencyObject, DragEventArgs, FrameworkElement, TabView, TabViewItem,
+    UIElement, VisualTreeHelper,
 };
 use windows_core::{EventRevoker, HSTRING, IInspectable, Interface};
 
@@ -44,6 +44,40 @@ fn tab_under(source: &IInspectable) -> Option<String> {
     None
 }
 
+/// `node` の中のタブ（深さ 30 まで）。
+fn tab_items(node: &DependencyObject, depth: u32, out: &mut Vec<TabViewItem>) {
+    if let Ok(item) = node.cast::<TabViewItem>() {
+        out.push(item);
+        return;
+    }
+    if depth == 0 {
+        return;
+    }
+    let count = VisualTreeHelper::GetChildrenCount(node).unwrap_or(0);
+    for i in 0..count {
+        if let Ok(child) = VisualTreeHelper::GetChild(node, i) {
+            tab_items(&child, depth - 1, out);
+        }
+    }
+}
+
+/// タブを `tabs` に落とした所: その下のタブの Tag の文字と、そのタブの右半分か（右なら後ろ、左なら前に入れる）。
+/// タブの上でなければ None（最後に入れる）。落とした先の部品はタブとは限らないので、それぞれのタブから見た位置
+/// で決める。
+fn drop_place(tabs: &TabView, args: &DragEventArgs) -> Option<(String, bool)> {
+    let mut items = Vec::new();
+    tab_items(&tabs.cast().ok()?, 30, &mut items);
+    items.into_iter().find_map(|item| {
+        let element: UIElement = item.cast().ok()?;
+        let x = f64::from(args.GetPosition(&element).ok()?.X);
+        let width = item.cast::<FrameworkElement>().ok()?.ActualWidth().ok()?;
+        if !(0.0..width).contains(&x) {
+            return None;
+        }
+        Some((tag_of(&item.cast().ok()?)?, x > width / 2.0))
+    })
+}
+
 /// タブ（TabViewItem）の Tag の文字。
 fn tag_of(tab: &IInspectable) -> Option<String> {
     let tag = tab.cast::<FrameworkElement>().ok()?.Tag().ok()?;
@@ -56,12 +90,13 @@ fn tag_of(tab: &IInspectable) -> Option<String> {
 }
 
 /// `element` の中の TabView のタブを引けるようにする。窓の外へ落としたら `dropped(タブの Tag の文字)` を、
-/// ほかの窓から引いてきたタブをタブの並びへ落としたら `received(そのタブの Tag の文字)` を呼ぶ。タブを引き
+/// ほかの窓から引いてきたタブをタブの並びへ落としたら `received(そのタブの Tag の文字, 落とした所)` を呼ぶ
+/// （落とした所は、その下のタブの Tag の文字と、そのタブの後ろに入れるか。タブの上でなければ None）。タブを引き
 /// 始めたら `started` を、引き終えたら `ended` を呼ぶ（どれも UI のスレッドで）。TabView が見つからなければ空。
 pub fn on_tab_moves(
     element: &IInspectable,
     dropped: impl Fn(String) + Send + 'static,
-    received: impl Fn(String) + Send + Sync + 'static,
+    received: impl Fn(String, Option<(String, bool)>) + Send + Sync + 'static,
     started: impl Fn() + Send + 'static,
     ended: impl Fn() + Send + 'static,
 ) -> Vec<EventRevoker> {
@@ -118,12 +153,13 @@ pub fn on_tab_moves(
     );
     let received = std::sync::Arc::new(received);
     let on_strip = received.clone();
+    let (strip_tabs, row_tabs) = (tabs.clone(), tabs.clone());
     revokers.extend(
         tabs.TabStripDrop(move |_, args| {
             let Some(args) = args.as_ref() else { return };
             if let Some(tag) = dragged() {
                 let _ = args.SetHandled(true);
-                on_strip(tag);
+                on_strip(tag, drop_place(&strip_tabs, args));
             }
         })
         .ok(),
@@ -149,7 +185,7 @@ pub fn on_tab_moves(
                     let Some(args) = args.as_ref() else { return };
                     if let Some(tag) = dragged() {
                         let _ = args.SetHandled(true);
-                        received(tag);
+                        received(tag, drop_place(&row_tabs, args));
                     }
                 })
                 .ok(),

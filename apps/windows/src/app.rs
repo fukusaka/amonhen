@@ -124,16 +124,17 @@ fn args_for(tab: &crate::tabs::Tab) -> (Args, Instant) {
     (args, started)
 }
 
-/// タブ `id` を窓 `to` へ移す（ほかの窓のタブの並びへ落とした）。同じ窓なら何もしない（並べ替えは TabView が
+/// タブ `id` を窓 `to` へ移す（ほかの窓のタブの並びへ落とした）。`place` は落とした所のタブの番号と、その
+/// 後ろに入れるか（None なら最後）。同じ窓なら何もしない（並べ替えは TabView が
 /// する）。元の窓にタブが残らなければ、その窓を閉じる。
-fn move_tab(id: u64, to: u64) {
+fn move_tab(id: u64, to: u64, place: Option<(u64, bool)>) {
     if crate::tabs::window_of_tab(id).is_none_or(|from| from == to) {
         return;
     }
     let Some((tab, from, empty)) = crate::tabs::take_tab(id) else {
         return;
     };
-    crate::tabs::insert_tab(to, tab);
+    crate::tabs::insert_tab(to, tab, place);
     if empty && let Some(hwnd) = WINDOW_HANDLES.with(|h| h.borrow().get(&from).copied()) {
         use windows::Win32::Foundation::{LPARAM, WPARAM};
         use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_CLOSE};
@@ -8282,9 +8283,11 @@ impl Root {
                                 h.sender.send(Message::TabDroppedOut(id.clone()));
                             });
                         },
-                        move |id| {
+                        move |id, place| {
+                            let place =
+                                place.and_then(|(tag, after)| Some((tag.parse().ok()?, after)));
                             if let Ok(id) = id.parse() {
-                                move_tab(id, window);
+                                move_tab(id, window, place);
                             }
                         },
                         // 引いている間は、TabView が選ぶタブに従わない（並べ替えの途中で、前のタブの位置に来た

@@ -192,21 +192,32 @@ pub fn take_tab(id: u64) -> Option<(Tab, u64, bool)> {
     Some((taken.0, window, taken.1))
 }
 
-/// タブを窓 `window` の終わりに入れて、前のタブにする。
-pub fn insert_tab(window: u64, tab: Tab) {
+/// タブを窓 `window` の `place`（タブの番号と、その後ろか）に入れて、前のタブにする。`place` が None なら終わり。
+pub fn insert_tab(window: u64, tab: Tab, place: Option<(u64, bool)>) {
+    // 落とした所のタブの前か後ろ（なければ最後）。
+    let at = |tabs: &[Tab]| {
+        place
+            .and_then(|(id, after)| {
+                let i = tabs.iter().position(|t| t.id == id)?;
+                Some(if after { i + 1 } else { i })
+            })
+            .unwrap_or(tabs.len())
+    };
     if window == focused() {
         crate::app::leave_front();
         let index = TABS.with(|t| {
             let mut t = t.borrow_mut();
-            t.push(tab);
-            t.len() - 1
+            let index = at(&t);
+            t.insert(index, tab);
+            index
         });
         ACTIVE.with(|a| a.set(index));
     } else {
         WINDOWS.with(|w| {
             if let Some(w) = w.borrow_mut().get_mut(&window) {
-                w.tabs.push(tab);
-                w.active = w.tabs.len() - 1;
+                let index = at(&w.tabs);
+                w.tabs.insert(index, tab);
+                w.active = index;
             }
         });
     }
@@ -663,5 +674,28 @@ mod tests {
         );
         assert_eq!(current().unwrap().location, "a");
         assert_eq!(active(), 2);
+    }
+
+    #[test]
+    fn moved_tabs_go_where_they_were_dropped() {
+        init(&["a".into(), "b".into(), "c".into()], 0, "", false, false);
+        let ids: Vec<u64> = tabs().iter().map(|t| t.id).collect();
+        let window = focused();
+        let locations = || {
+            tabs()
+                .iter()
+                .map(|t| t.location.clone())
+                .collect::<Vec<_>>()
+        };
+        // b の左半分に落とせば b の前、c の右半分なら c の後ろ、タブの上でなければ最後。どれも前のタブになる。
+        insert_tab(window, make("x", false), Some((ids[1], false)));
+        assert_eq!(locations(), ["a", "x", "b", "c"]);
+        assert_eq!(active(), 1);
+        insert_tab(window, make("y", false), Some((ids[2], true)));
+        assert_eq!(locations(), ["a", "x", "b", "c", "y"]);
+        assert_eq!(active(), 4);
+        insert_tab(window, make("z", false), None);
+        assert_eq!(locations(), ["a", "x", "b", "c", "y", "z"]);
+        assert_eq!(active(), 5);
     }
 }
