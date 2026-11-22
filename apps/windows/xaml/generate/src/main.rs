@@ -22,7 +22,7 @@ const FILTER: &[&str] = &[
     "Microsoft.UI.Xaml.DependencyObject",
     "Microsoft.UI.Xaml.Media.VisualTreeHelper",
     "Microsoft.UI.Xaml.Media.IVisualTreeHelperStatics::{GetParent,GetChild,GetChildrenCount}",
-    "Microsoft.UI.Xaml.IFrameworkElement::{DataContext,Tag,put_HorizontalAlignment,put_VerticalAlignment,put_Margin,\
+    "Microsoft.UI.Xaml.IFrameworkElement::{DataContext,Tag,ActualWidth,put_HorizontalAlignment,put_VerticalAlignment,put_Margin,\
      Resources,RequestedTheme,put_RequestedTheme}",
     // Repositories の一覧で選んだ行（複数）。
     "Microsoft.UI.Xaml.Controls.ListViewBase",
@@ -37,7 +37,7 @@ const FILTER: &[&str] = &[
     // 左のお気に入り・グループで、引いてきた行を受ける（reactor の Border の受け口は、外側の一覧が受けないに
     // 戻すので、一覧で直に受けて処理済みにする）。
     "Microsoft.UI.Xaml.DragEventArgs",
-    "Microsoft.UI.Xaml.IDragEventArgs::{AcceptedOperation,put_AcceptedOperation,Handled,put_Handled}",
+    "Microsoft.UI.Xaml.IDragEventArgs::{AcceptedOperation,put_AcceptedOperation,Handled,put_Handled,GetPosition}",
     "Microsoft.UI.Xaml.DragEventHandler",
     "Microsoft.UI.Xaml.Controls.IListViewBaseFactory::{}",
     "Microsoft.UI.Xaml.Controls.IListViewBaseStatics::{}",
@@ -63,7 +63,13 @@ const FILTER: &[&str] = &[
     "Microsoft.UI.Xaml.Controls.ITreeViewNodeStatics::{}",
     // タブを窓の外へ引き出したら、そのリポジトリを新しい窓で開く（GTK4 版・macOS 版のタブの引き出し）。
     "Microsoft.UI.Xaml.Controls.TabView",
-    "Microsoft.UI.Xaml.Controls.ITabView::{TabDroppedOutside,remove_TabDroppedOutside,put_CanDragTabs}",
+    "Microsoft.UI.Xaml.Controls.ITabView::{TabDroppedOutside,remove_TabDroppedOutside,put_CanDragTabs,\
+     TabDragStarting,remove_TabDragStarting,TabStripDragOver,remove_TabStripDragOver,TabStripDrop,\
+     remove_TabStripDrop,put_AllowDropTabs,TabDragCompleted,remove_TabDragCompleted}",
+    "Microsoft.UI.Xaml.Controls.TabViewTabDragStartingEventArgs",
+    // タブを別の窓のタブの並びへ引いて移す（引き始めたタブを覚えておく。窓はどれも同じプロセス）。
+    "Microsoft.UI.Xaml.Controls.ITabViewTabDragStartingEventArgs::{Tab}",
+    "Microsoft.UI.Xaml.Controls.TabViewTabDragCompletedEventArgs",
     "Microsoft.UI.Xaml.Controls.ITabViewFactory::{}",
     "Microsoft.UI.Xaml.Controls.ITabViewStatics::{}",
     "Microsoft.UI.Xaml.Controls.TabViewTabDroppedOutsideEventArgs",

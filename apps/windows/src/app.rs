@@ -109,6 +109,9 @@ pub fn run(args: Args, started: Instant, more: Vec<u64>) -> Result<(), String> {
     App::run_windows(windows).map_err(|e| format!("WinUI を始められない: {e}"))
 }
 
+/// 窓の HWND を問い合わせたが分からなかった（問い合わせ直す）。
+const HWND_UNKNOWN: u64 = u64::MAX;
+
 /// タブ `tab` の根の部品に渡す引数（起動のときの引数の、リポジトリと画面をそのタブのものにしたもの）。
 fn args_for(tab: &crate::tabs::Tab) -> (Args, Instant) {
     let (mut args, started) = ARGS.with(|a| a.borrow().clone()).expect("args");
@@ -121,7 +124,35 @@ fn args_for(tab: &crate::tabs::Tab) -> (Args, Instant) {
     (args, started)
 }
 
+/// タブ `id` を窓 `to` へ移す（ほかの窓のタブの並びへ落とした）。`place` は落とした所のタブの番号と、その
+/// 後ろに入れるか（None なら最後）。同じ窓なら何もしない（並べ替えは TabView が
+/// する）。元の窓にタブが残らなければ、その窓を閉じる。
+fn move_tab(id: u64, to: u64, place: Option<(u64, bool)>) {
+    if crate::tabs::window_of_tab(id).is_none_or(|from| from == to) {
+        return;
+    }
+    let Some((tab, from, empty)) = crate::tabs::take_tab(id) else {
+        return;
+    };
+    crate::tabs::insert_tab(to, tab, place);
+    if empty && let Some(hwnd) = WINDOW_HANDLES.with(|h| h.borrow().get(&from).copied()) {
+        use windows::Win32::Foundation::{LPARAM, WPARAM};
+        use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_CLOSE};
+        let window = windows::Win32::Foundation::HWND(hwnd as *mut core::ffi::c_void);
+        let _ = unsafe { PostMessageW(Some(window), WM_CLOSE, WPARAM(0), LPARAM(0)) };
+    }
+}
+
 thread_local! {
+    /// タブの並びごとの（それを描くタブの番号で引く）、タブの引き出し・受け取りの知らせ（持っている間だけ届く）。
+    static TAB_MOVE_REVOKERS: RefCell<std::collections::HashMap<u64, Vec<windows_core_reactor::EventRevoker>>> =
+        RefCell::new(Default::default());
+    /// タブを引いている間の、引く前の前のタブ。
+    static TAB_DRAG_FRONT: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+    /// 最後にタブを引き終えたときの、前のタブと時刻。
+    static TAB_DRAG_ENDED: std::cell::Cell<Option<(u64, Instant)>> = const { std::cell::Cell::new(None) };
+    /// 窓の外へ引き出して、新しい窓へ移すタブ（`Message::OpenWindows` が元の窓から取り出す）。
+    static MOVING_TABS: RefCell<Vec<u64>> = const { RefCell::new(Vec::new()) };
     /// 窓ごとの HWND（Window メニューから窓を前に出す）。
     static WINDOW_HANDLES: RefCell<std::collections::HashMap<u64, u64>> = RefCell::new(Default::default());
     /// 開くのを頼まれた窓（それぞれの最初のタブ）。前のタブの根の部品が開く。
@@ -1121,6 +1152,8 @@ enum Message {
     RestoreDialog,
     /// タブを窓の外へ引き出した（タブの番号）。
     TabDroppedOut(String),
+    /// タブを引き終えた（引く前の前のタブを選び直す）。
+    TabDragEnded,
     /// SSH 接続を追加するダイアログで確かめた結果（SSH 先と、文と、入れたか）。
     SshChecked(String, String, bool),
     /// サイドバーの木でお気に入りを引いて落とした（新しい順の名前。お気に入りの間でなければ None）。
@@ -1784,6 +1817,17 @@ impl Root {
             }
             Message::OpenWindows => {
                 for tab in WINDOW_REQUESTS.with(|r| std::mem::take(&mut *r.borrow_mut())) {
+                    // 窓の外へ引き出したタブは、元の窓から取り出してから新しい窓に入れる。
+                    let moving = MOVING_TABS.with(|m| {
+                        let mut m = m.borrow_mut();
+                        let found = m.iter().position(|id| *id == tab.id);
+                        found.map(|i| m.remove(i)).is_some()
+                    });
+                    let tab = match moving.then(|| crate::tabs::take_tab(tab.id)).flatten() {
+                        Some((taken, _, _)) => taken,
+                        None if moving => continue,
+                        None => tab,
+                    };
                     let window = crate::tabs::new_window_with(vec![tab], 0);
                     if !context.open_window(View::component::<Shell>(window)) {
                         crate::tabs::forget_window(window);
@@ -3055,6 +3099,27 @@ impl Root {
                 crate::tabs::note_page(self.page == Page::WorkingCopy);
                 crate::tabs::step(if id == "next-tab" { 1 } else { -1 });
             }
+            Message::TabSelected(Some(_)) if TAB_DRAG_FRONT.with(|f| f.get().is_some()) => {}
+            // 引き終えた直後に TabView が選んだタブ（並べ替えで前のタブの位置に来た隣のタブ）にも従わず、前のタブ
+            // に戻す。この知らせは引き終わりの知らせより後に届くことがある。
+            Message::TabSelected(Some(index))
+                if TAB_DRAG_ENDED.with(|e| e.get()).is_some_and(|(id, at)| {
+                    at.elapsed() < std::time::Duration::from_millis(500)
+                        && crate::tabs::tabs_of(self.window)
+                            .get(index)
+                            .is_some_and(|t| t.id != id)
+                }) =>
+            {
+                if let Some((id, _)) = TAB_DRAG_ENDED.with(|e| e.get()) {
+                    crate::tabs::reselect(self.window, id);
+                }
+            }
+            Message::TabDragEnded => {
+                if let Some(id) = TAB_DRAG_FRONT.with(|f| f.take()) {
+                    TAB_DRAG_ENDED.with(|e| e.set(Some((id, Instant::now()))));
+                    crate::tabs::reselect(self.window, id);
+                }
+            }
             Message::TabSelected(Some(index)) => {
                 if index != crate::tabs::active_of(self.window) {
                     crate::tabs::note_page(self.page == Page::WorkingCopy);
@@ -3079,18 +3144,10 @@ impl Root {
                 }) else {
                     return;
                 };
-                match crate::repositories::open_window(&tab.location) {
-                    Ok(()) => {
-                        if crate::tabs::close(tab.id) {
-                            close_window();
-                        }
-                    }
-                    Err(message) => {
-                        self.dialog = Some(Dialog::Failed {
-                            title: tr!("Open in New Window"),
-                            message,
-                        })
-                    }
+                // 最後のタブは引き出しても窓のまま（macOS 版と同じ）。ほかは、そのタブを新しい窓へ移す。
+                if crate::tabs::tabs_of(self.window).len() > 1 {
+                    MOVING_TABS.with(|m| m.borrow_mut().push(tab.id));
+                    request_window(tab);
                 }
             }
             Message::OpenClone(dest, failed) => {
@@ -8297,28 +8354,60 @@ impl Root {
         // タブ（2 つ以上のとき）はタイトルバーの下の段（macOS 版のタブの段と同じ所）。
         let tab_strip = Grid::new()
             .grid_row(2)
+            // 地を付けて、タブの並びの右の空いた所でも、ほかの窓から引いてきたタブを受ける。
+            .background(Brush::Solid(Color::transparent()))
             .element_ref(&self.tab_host)
             .children((tab_strip(self.window, &title, context),));
-        // タブを窓の外へ引き出したら、そのリポジトリを新しい窓で開く（タブの並びが変わるたびに付け直す）。
+        // タブを窓の外へ引き出したら新しい窓へ、ほかの窓のタブの並びへ落としたらその窓へ移す（タブの並びが変わる
+        // たびに付け直す）。
         let tab_ids: String = crate::tabs::tabs_of(self.window)
             .iter()
             .map(|t| format!("{},", t.id))
             .collect();
         let host = self.tab_host.clone();
+        let window = self.window;
+        // このタブの根の部品が描くタブの並び（タブごとに 1 つ。前のタブのものだけが見える）。
+        let strip_key = self.tab.borrow().id;
         context.use_effect("tab-drop-out", tab_ids, move || {
-            let _ = host.request_native_element(|result| {
-                if let Ok(element) = result
-                    && let Some(revoker) = xaml::on_tab_dropped_outside(&element, |id| {
-                        // タブの並びは前のタブのもの。
-                        with_history(|h| {
-                            h.sender.send(Message::TabDroppedOut(id.clone()));
-                        });
-                    })
-                {
-                    REVOKERS.with(|r| r.borrow_mut().push(revoker));
+            let _ = host.request_native_element(move |result| {
+                if let Ok(element) = result {
+                    let revokers = xaml::on_tab_moves(
+                        &element,
+                        |id| {
+                            // 引き出したのは前に出ている窓のタブ。
+                            with_history(|h| {
+                                h.sender.send(Message::TabDroppedOut(id.clone()));
+                            });
+                        },
+                        move |id, place| {
+                            let place =
+                                place.and_then(|(tag, after)| Some((tag.parse().ok()?, after)));
+                            if let Ok(id) = id.parse() {
+                                move_tab(id, window, place);
+                            }
+                        },
+                        // 引いている間は、TabView が選ぶタブに従わない（並べ替えの途中で、前のタブの位置に来た
+                        // 隣のタブを選ぶ）。引き終えたら、引く前の前のタブを選び直す。
+                        move || {
+                            let front = crate::tabs::tabs_of(window)
+                                .get(crate::tabs::active_of(window))
+                                .map(|t| t.id);
+                            TAB_DRAG_FRONT.with(|f| f.set(front));
+                        },
+                        || {
+                            with_history(|h| {
+                                h.sender.send(Message::TabDragEnded);
+                            });
+                        },
+                    );
+                    // このタブの並びに前に付けたもの（タブの並びが変わる前のもの）は外す。重なると、引き終わり
+                    // や窓の外へ落としたときの処理が何度も走る。
+                    TAB_MOVE_REVOKERS.with(|r| r.borrow_mut().insert(strip_key, revokers));
                 }
             });
-            None
+            Some(Box::new(move || {
+                TAB_MOVE_REVOKERS.with(|r| r.borrow_mut().remove(&strip_key));
+            }))
         });
         let root = self.root.clone();
         let refs = (
@@ -18680,24 +18769,28 @@ impl HistoryView {
         if !self.front || self.owner {
             return;
         }
+        // 窓の HWND を問い合わせる（部品がまだ窓に入っていなくて分からなければ、次に描くときに問い合わせ直す）。
+        if self.hwnd.get() == HWND_UNKNOWN {
+            self.hwnd.set(0);
+            self.hwnd_requested = false;
+        }
         if !self.hwnd_requested {
             let hwnd = self.hwnd.clone();
             self.hwnd_requested = self.root.request_native_element(move |result| {
-                if let Ok(element) = result
-                    && let Some(handle) = xaml::window_handle(&element)
-                {
-                    hwnd.set(handle);
-                }
+                let handle = result
+                    .ok()
+                    .and_then(|element| xaml::window_handle(&element));
+                hwnd.set(handle.unwrap_or(HWND_UNKNOWN));
             });
         }
-        if self.hwnd.get() != 0 {
+        if self.hwnd.get() != 0 && self.hwnd.get() != HWND_UNKNOWN {
             let (window, hwnd) = (self.window, self.hwnd.get());
             WINDOW_HANDLES.with(|w| w.borrow_mut().insert(window, hwnd));
         }
         let only = crate::tabs::windows().len() == 1;
         let active =
             unsafe { windows::Win32::UI::Input::KeyboardAndMouse::GetActiveWindow() }.0 as u64;
-        if !only && (self.hwnd.get() == 0 || active != self.hwnd.get()) {
+        if !only && active != self.hwnd.get() {
             return;
         }
         // 前に持っていたタブ（自分ではない）に手放させる。

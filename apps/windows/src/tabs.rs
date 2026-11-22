@@ -149,6 +149,81 @@ pub fn windows() -> Vec<(u64, Option<Tab>)> {
     out
 }
 
+/// タブ `id` のある窓。
+pub fn window_of_tab(id: u64) -> Option<u64> {
+    if tabs().iter().any(|t| t.id == id) {
+        return Some(focused());
+    }
+    WINDOWS.with(|w| {
+        w.borrow()
+            .iter()
+            .find(|(_, w)| w.tabs.iter().any(|t| t.id == id))
+            .map(|(id, _)| *id)
+    })
+}
+
+/// タブ `id` を窓から取り出す（ほかの窓へ移すため）。取り出した窓を描き直す。タブと、取り出した窓と、その窓に
+/// タブが残っていないかを返す。
+pub fn take_tab(id: u64) -> Option<(Tab, u64, bool)> {
+    let window = window_of_tab(id)?;
+    let take = |tabs: &mut Vec<Tab>, active: &mut usize| {
+        let index = tabs.iter().position(|t| t.id == id)?;
+        let tab = tabs.remove(index);
+        if index < *active || *active >= tabs.len() {
+            *active = active.saturating_sub(1);
+        }
+        Some((tab, tabs.is_empty()))
+    };
+    let taken = if window == focused() {
+        // 前の窓なら、前のタブが変わる前に、窓の入力の部品を取っておく。
+        crate::app::leave_front();
+        let mut active = active();
+        let taken = TABS.with(|t| take(&mut t.borrow_mut(), &mut active));
+        ACTIVE.with(|a| a.set(active));
+        taken
+    } else {
+        WINDOWS.with(|w| {
+            let mut w = w.borrow_mut();
+            let w = w.get_mut(&window)?;
+            take(&mut w.tabs, &mut w.active)
+        })
+    }?;
+    refresh_window(window);
+    Some((taken.0, window, taken.1))
+}
+
+/// タブを窓 `window` の `place`（タブの番号と、その後ろか）に入れて、前のタブにする。`place` が None なら終わり。
+pub fn insert_tab(window: u64, tab: Tab, place: Option<(u64, bool)>) {
+    // 落とした所のタブの前か後ろ（なければ最後）。
+    let at = |tabs: &[Tab]| {
+        place
+            .and_then(|(id, after)| {
+                let i = tabs.iter().position(|t| t.id == id)?;
+                Some(if after { i + 1 } else { i })
+            })
+            .unwrap_or(tabs.len())
+    };
+    if window == focused() {
+        crate::app::leave_front();
+        let index = TABS.with(|t| {
+            let mut t = t.borrow_mut();
+            let index = at(&t);
+            t.insert(index, tab);
+            index
+        });
+        ACTIVE.with(|a| a.set(index));
+    } else {
+        WINDOWS.with(|w| {
+            if let Some(w) = w.borrow_mut().get_mut(&window) {
+                let index = at(&w.tabs);
+                w.tabs.insert(index, tab);
+                w.active = index;
+            }
+        });
+    }
+    refresh_window(window);
+}
+
 /// 窓 `window` を描き直す。
 fn refresh_window(window: u64) {
     if window == focused() {
@@ -350,6 +425,18 @@ pub fn current_is_repositories() -> bool {
 pub fn select(index: usize) {
     if index != active() && index < TABS.with(|t| t.borrow().len()) {
         activate(index);
+    }
+}
+
+/// 窓 `window` の前のタブを `id` のタブにして、タブの並びを描き直させる（TabView が別のタブを選んで見せて
+/// いても、こちらの前のタブに戻す）。
+pub fn reselect(window: u64, id: u64) {
+    if window != focused() {
+        return;
+    }
+    match TABS.with(|t| t.borrow().iter().position(|tab| tab.id == id)) {
+        Some(index) if index != active() => activate(index),
+        _ => refresh(),
     }
 }
 
@@ -636,5 +723,28 @@ mod tests {
         );
         assert_eq!(current().unwrap().location, "a");
         assert_eq!(active(), 2);
+    }
+
+    #[test]
+    fn moved_tabs_go_where_they_were_dropped() {
+        init(&["a".into(), "b".into(), "c".into()], 0, "", false, false);
+        let ids: Vec<u64> = tabs().iter().map(|t| t.id).collect();
+        let window = focused();
+        let locations = || {
+            tabs()
+                .iter()
+                .map(|t| t.location.clone())
+                .collect::<Vec<_>>()
+        };
+        // b の左半分に落とせば b の前、c の右半分なら c の後ろ、タブの上でなければ最後。どれも前のタブになる。
+        insert_tab(window, make("x", false), Some((ids[1], false)));
+        assert_eq!(locations(), ["a", "x", "b", "c"]);
+        assert_eq!(active(), 1);
+        insert_tab(window, make("y", false), Some((ids[2], true)));
+        assert_eq!(locations(), ["a", "x", "b", "c", "y"]);
+        assert_eq!(active(), 4);
+        insert_tab(window, make("z", false), None);
+        assert_eq!(locations(), ["a", "x", "b", "c", "y", "z"]);
+        assert_eq!(active(), 5);
     }
 }
