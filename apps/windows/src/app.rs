@@ -48,8 +48,11 @@ thread_local! {
     static HISTORY_FLYOUT: RefCell<Option<xaml::FlyoutBase>> = const { RefCell::new(None) };
     /// サイドバーの木の生の要素と、右クリックで開く位置（キーボードで開いたときは項目そのものに出す）。
     static SIDEBAR_ELEMENT: RefCell<Option<xaml::UIElement>> = const { RefCell::new(None) };
-    /// ツールチップを付けたサイドバーの項目（要素の identity と付けた文字。同じなら付け直さない）。
-    static SIDEBAR_TIP: RefCell<Option<(usize, Option<String>)>> = const { RefCell::new(None) };
+    /// 行のツールチップを付けた時（見えている行に、指が入る前から付けておく。0.5 秒ごとに付け直す）。
+    static SIDEBAR_TIPS_AT: std::cell::Cell<Option<Instant>> = const { std::cell::Cell::new(None) };
+    /// 行の要素ごとに付けたツールチップ（同じなら付け直さない。付け直すと、出るまでの待ちが始めからになる）。
+    static SIDEBAR_TIPS: RefCell<std::collections::HashMap<usize, Option<String>>> =
+        RefCell::new(std::collections::HashMap::new());
     /// 今のブランチの名前（終わった操作の一言に使う。ref を読むたびに書く）。
     static HEAD_NAME: RefCell<String> = const { RefCell::new(String::new()) };
     /// Push の画面を出しているか（出していれば、Enter で既定のボタンを押せるか。Force Push は押せない）。
@@ -18842,6 +18845,9 @@ impl HistoryView {
     /// 届いたものを取り込み、描くものがあれば描く。
     fn render(&mut self) -> Result<(), String> {
         retry_monospace();
+        if self.owner {
+            tip_sidebar_rows();
+        }
         retry_splitters();
         retry_place();
         self.take_ownership();
@@ -20473,33 +20479,75 @@ fn attach_sidebar(element: &IInspectable) -> windows_core_reactor::Result<()> {
         });
     })?;
     REVOKERS.with(|r| r.borrow_mut().push(revoker));
-    // 行のツールチップ（印の意味など。reactor の木の項目は文字だけなので、指の下の項目に付ける。項目の要素は
-    // 使い回されるので、指が別の項目に移るたびに付け直す）。
-    let revoker = ui.PointerMoved(move |_, args: Ref<xaml::PointerRoutedEventArgs>| {
-        let Some(args) = args.as_ref() else { return };
-        let Ok(original) = args.OriginalSource() else {
-            return;
-        };
-        let Some((item, key)) = tree_item_key(&original) else {
-            return;
-        };
-        let identity = item
-            .cast::<windows_core_reactor::IUnknown>()
-            .map_or(0, |u| u.as_raw() as usize);
-        let text = sidebar::tooltip(&key);
-        let changed = SIDEBAR_TIP.with(|t| {
-            let mut t = t.borrow_mut();
-            let next = (identity, text.clone());
-            let changed = t.as_ref() != Some(&next);
-            *t = Some(next);
-            changed
-        });
-        if changed && let Ok(item) = item.cast::<IInspectable>() {
-            let _ = windows_reactor::set_tooltip_text(&item, text.as_deref());
-        }
-    })?;
-    REVOKERS.with(|r| r.borrow_mut().push(revoker));
+    // 行のツールチップは、描いたあとに見えている行に付ける（`tip_sidebar_rows`）。
     Ok(())
+}
+
+/// サイドバーの見えている行に、行のツールチップを付ける（0.5 秒ごと）。指が行に入ってから付けると、WinUI は
+/// その行を出るまでツールチップを出さないので、先に付けておく。行の要素は使い回されるので、付け直す。
+fn tip_sidebar_rows() {
+    let due = SIDEBAR_TIPS_AT
+        .with(|t| t.get())
+        .is_none_or(|t| t.elapsed() >= std::time::Duration::from_millis(500));
+    if !due {
+        return;
+    }
+    SIDEBAR_TIPS_AT.with(|t| t.set(Some(Instant::now())));
+    let Some(root) = SIDEBAR_ELEMENT.with(|e| e.borrow().clone()) else {
+        return;
+    };
+    fn walk(node: &xaml::DependencyObject, depth: u32) {
+        if let Ok(element) = node.cast::<xaml::FrameworkElement>()
+            && let Ok(context) = element.DataContext()
+            && let Some(key) = node_key(&context)
+        {
+            // 中身の ContentPresenter ではなく、行そのもの（TreeViewItem）に付ける（中身に付けると出ない）。
+            let mut row = node.clone();
+            for _ in 0..4 {
+                let class = row
+                    .cast::<IInspectable>()
+                    .ok()
+                    .and_then(|r| r.GetRuntimeClassName().ok())
+                    .map(|c| c.to_string_lossy())
+                    .unwrap_or_default();
+                if class.ends_with(".TreeViewItem") {
+                    break;
+                }
+                match xaml::VisualTreeHelper::GetParent(&row) {
+                    Ok(parent) => row = parent,
+                    Err(_) => break,
+                }
+            }
+            if let Ok(item) = row.cast::<IInspectable>() {
+                let identity = item
+                    .cast::<windows_core_reactor::IUnknown>()
+                    .map_or(0, |u| u.as_raw() as usize);
+                let tip = sidebar::tooltip(&key);
+                let changed = SIDEBAR_TIPS.with(|t| {
+                    let mut t = t.borrow_mut();
+                    let changed = t.get(&identity) != Some(&tip);
+                    t.insert(identity, tip.clone());
+                    changed
+                });
+                if changed {
+                    let _ = windows_reactor::set_tooltip_text(&item, tip.as_deref());
+                }
+            }
+            return;
+        }
+        if depth == 0 {
+            return;
+        }
+        let count = xaml::VisualTreeHelper::GetChildrenCount(node).unwrap_or(0);
+        for i in 0..count {
+            if let Ok(child) = xaml::VisualTreeHelper::GetChild(node, i) {
+                walk(&child, depth - 1);
+            }
+        }
+    }
+    if let Ok(node) = root.cast::<xaml::DependencyObject>() {
+        walk(&node, 40);
+    }
 }
 
 /// 等幅の字（Windows の既定の等幅。なければ Consolas）。
