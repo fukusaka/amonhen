@@ -1,10 +1,10 @@
 //! 開いていた窓の記録（macOS 版・GTK4 版の、終了したときに開いていた窓とタブを起動したときに戻す）。
 //!
-//! Windows 版は窓ごとに別のプロセスなので、終わるプロセスがそれぞれ自分のタブを `windows\<pid>.json` に書く。
+//! 窓はどれも 1 つのプロセスにあり、閉じる窓がそれぞれ自分のタブを `windows\<pid>-<窓>.json` に書く。
 //! File > Amon Hen を終了（Ctrl+Q）は、先に印（`quit`）を置いてからすべての窓を閉じる。印があれば、閉じる窓は
 //! みな書き足す。印がなく、ほかに窓がなければ（最後の 1 つを閉じた）、前の記録を消して自分だけを書く。ほかに窓が
 //! 残っていれば何も書かない（1 つずつ閉じた窓は戻さない）。引数なしで起動したら、記録をすべて読んで消し、
-//! 1 つ目をこの窓に、残りをそれぞれ新しい窓で開く。
+//! 1 つ目を最初の窓に、残りをそれぞれ同じプロセスの新しい窓で開く。
 
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
@@ -45,12 +45,12 @@ fn quitting(dir: &std::path::Path) -> bool {
         .is_some_and(|age| age < QUIT_FRESH)
 }
 
-/// 窓を閉じて終わるときに、この窓のタブ（`tabs::saved` の形）を覚える。
-pub fn remember(saved: &str) {
+/// 窓 `window` を閉じるときに、その窓のタブ（`tabs::saved` の形）を覚える。`last` はこのプロセスの最後の窓。
+pub fn remember(window: u64, saved: &str, last: bool) {
     let Some(dir) = dir() else { return };
     let quit = quitting(&dir);
     if !quit {
-        if others_open() {
+        if !last || others_open() {
             return;
         }
         // 最後の 1 つを閉じた: 前の記録は捨てて、この窓だけを戻す。
@@ -58,8 +58,12 @@ pub fn remember(saved: &str) {
             let _ = std::fs::remove_file(old);
         }
     }
-    let written = std::fs::create_dir_all(&dir)
-        .and_then(|()| std::fs::write(dir.join(format!("{}.json", std::process::id())), saved));
+    let written = std::fs::create_dir_all(&dir).and_then(|()| {
+        std::fs::write(
+            dir.join(format!("{}-{window}.json", std::process::id())),
+            saved,
+        )
+    });
     if let Err(e) = written {
         eprintln!("窓のタブを覚えられない: {e}");
     }

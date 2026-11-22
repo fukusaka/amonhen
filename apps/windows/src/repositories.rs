@@ -667,23 +667,32 @@ pub fn fetch(location: &str) -> Option<String> {
     reply["error"].as_str().map(str::to_owned)
 }
 
-/// リポジトリを新しい窓（別のプロセス）で開く。
+/// リポジトリを新しい窓（このプロセスの窓）で開く。
 pub fn open_window(location: &str) -> Result<(), String> {
     open_window_with(location, &[])
 }
 
-/// リポジトリを新しい窓で開く（`extra` は足す引数。`--repositories` なら Repositories の画面から）。
+/// リポジトリを新しい窓で開く（`extra` は足す引数。`--repositories` なら Repositories の画面から、`--merge` と
+/// `--merge-text` なら別の窓に出したマージエディタ）。
 pub fn open_window_with(location: &str, extra: &[&str]) -> Result<(), String> {
     if !is_repository(location) {
         return Err(tr!("Not found — {path}", path = location));
     }
-    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    amonhen_model::process::command(exe)
-        .arg(expand(location))
-        .args(extra)
-        .spawn()
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+    let mut tab = crate::tabs::make(
+        &expand(location).display().to_string(),
+        extra.contains(&"--repositories"),
+    );
+    let value = |name: &str| {
+        extra
+            .iter()
+            .position(|e| *e == name)
+            .and_then(|i| extra.get(i + 1))
+            .map(|v| (*v).to_owned())
+    };
+    tab.merge = value("--merge");
+    tab.merge_text = value("--merge-text");
+    crate::app::request_window(tab);
+    Ok(())
 }
 
 /// 左のグループを引いたときに、引いた名前の前に付ける印（右の一覧から引いたリポジトリと見分ける）。
