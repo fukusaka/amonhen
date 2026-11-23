@@ -3,6 +3,7 @@
 pub mod common;
 pub mod cynefin;
 pub mod flowchart;
+pub mod ishikawa;
 pub mod registry;
 pub mod swimlane;
 pub mod treemap;

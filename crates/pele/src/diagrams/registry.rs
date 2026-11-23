@@ -17,6 +17,7 @@ use crate::types::Diagram;
 static DIAGRAMS: &[&Diagram] = &[
     &super::cynefin::CYNEFIN,
     &super::flowchart::FLOWCHART,
+    &super::ishikawa::ISHIKAWA,
     &super::swimlane::SWIMLANE,
     &super::treemap::TREEMAP,
     &super::treeview::TREE_VIEW,
