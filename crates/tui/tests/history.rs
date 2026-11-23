@@ -2940,6 +2940,78 @@ fn update_submodules_from_the_command_list() {
     assert!(none.contains("There are no submodules"));
 }
 
+/// コマンドの一覧の Add Subtree（フォルダ、相手、squash するか）と、サイドバーの Subtrees の行の `p` Pull・
+/// `P` Push・`t` Split。git subtree がなければ試さない
+#[test]
+fn subtrees_add_pull_push_split() {
+    let has_subtree = amonhen_model::process::command("git")
+        .args(["subtree", "-h"])
+        .output()
+        .is_ok_and(|o| {
+            let out = [o.stdout, o.stderr].concat();
+            String::from_utf8_lossy(&out).contains("subtree add")
+        });
+    if !has_subtree {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let (lib, main) = (dir.path().join("lib"), dir.path().join("main"));
+    for d in [&lib, &main] {
+        std::fs::create_dir(d).unwrap();
+        git(d, BASE, &["init", "-q", "-b", "main"]);
+    }
+    std::fs::write(lib.join("lib.txt"), "one\n").unwrap();
+    git(&lib, BASE, &["add", "."]);
+    git(&lib, BASE, &["commit", "-q", "-m", "Lib"]);
+    commit(&main, BASE, "Start");
+    let url = lib.to_str().unwrap().to_owned();
+    let add = format!(":add subtree\nvendor/lib\n{url} main\n");
+    let asked = amonhen_tui::snapshot(open(&main), 200, 14, clock(), &add).unwrap();
+    println!("{asked}");
+    assert!(asked.contains("Add "), "{asked}");
+    assert!(asked.contains("as vendor/lib?"), "{asked}");
+    amonhen_tui::snapshot(open(&main), 200, 14, clock(), &format!("{add}y")).unwrap();
+    assert!(main.join("vendor/lib/lib.txt").exists());
+    // サイドバーに Subtrees の節（覚えた相手つき）。Branches の main の次の行。
+    let shown = amonhen_tui::snapshot(open(&main), 200, 14, clock(), "").unwrap();
+    println!("{shown}");
+    assert!(shown.contains("Subtrees"), "{shown}");
+    assert!(shown.contains("vendor/lib ← "), "{shown}");
+    let row = "0jjjj";
+    // Pull: 覚えた相手が入っている。squash して取り込む。
+    std::fs::write(lib.join("lib.txt"), "two\n").unwrap();
+    git(&lib, BASE, &["commit", "-q", "-a", "-m", "Lib two"]);
+    let typing = amonhen_tui::snapshot(open(&main), 200, 14, clock(), &format!("{row}p")).unwrap();
+    assert!(
+        typing
+            .lines()
+            .last()
+            .unwrap()
+            .contains(&format!("{url} main")),
+        "{typing}"
+    );
+    amonhen_tui::snapshot(open(&main), 200, 14, clock(), &format!("{row}p\ns")).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(main.join("vendor/lib/lib.txt")).unwrap(),
+        "two\n"
+    );
+    // Split: フォルダの履歴だけのブランチ。
+    amonhen_tui::snapshot(open(&main), 200, 14, clock(), &format!("{row}t\n")).unwrap();
+    assert!(
+        git_out(&main, &["branch", "--format=%(refname:short)"]).contains("vendor-lib-split"),
+        "{}",
+        git_out(&main, &["branch"])
+    );
+    // Push: 相手の別のブランチへ。
+    let push = format!("{row}P\x15{url} pushed\ny");
+    let pushed = amonhen_tui::snapshot(open(&main), 200, 14, clock(), &push).unwrap();
+    println!("{pushed}");
+    assert!(
+        git_out(&lib, &["branch", "--format=%(refname:short)"]).contains("pushed"),
+        "{pushed}"
+    );
+}
+
 /// コマンドの一覧の Delete Ignored Files: 数と名前を出して確かめ、ignore されたものを消す
 #[test]
 fn delete_ignored_files_from_the_command_list() {
