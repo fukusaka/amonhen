@@ -456,6 +456,49 @@ fn fixup_subjects(messages: &[String]) -> Vec<String> {
 }
 
 /// 操作ログ（アプリの Activity の Operation Log）: Undo の記録を新しい順に。選んだところまで戻せる。
+/// Activity の Operations: この TUI と daemon が動かした git と命令（新しい順）。
+struct Operations {
+    entries: Vec<Operation>,
+    selected: usize,
+}
+
+struct Operation {
+    seq: u64,
+    /// daemon（か SSH 先）のもの。取り消しはそちらに頼む。
+    remote: bool,
+    kind: String,
+    label: String,
+    /// 始めた時刻（UNIX 時刻の秒）。
+    started: i64,
+    /// かかった時間（ミリ秒）。
+    duration: Option<f64>,
+    /// 終わっていなければ None。
+    ok: Option<bool>,
+    error: Option<String>,
+    output: Option<String>,
+    progress: Option<String>,
+    cancellable: bool,
+}
+
+impl Operation {
+    fn from(e: &Value, remote: bool) -> Option<Self> {
+        let text = |k: &str| e[k].as_str().map(str::to_owned);
+        Some(Self {
+            seq: e["seq"].as_u64()?,
+            remote,
+            kind: text("kind").unwrap_or_default(),
+            label: text("label").unwrap_or_default(),
+            started: (e["started"].as_u64().unwrap_or(0) / 1000) as i64,
+            duration: e["duration"].as_f64(),
+            ok: e["ok"].as_bool(),
+            error: text("error"),
+            output: text("output"),
+            progress: text("progress"),
+            cancellable: e["cancellable"] == true,
+        })
+    }
+}
+
 struct OperationLog {
     /// 名前・時刻（UNIX 時刻の秒）。
     entries: Vec<(String, i64)>,
@@ -633,6 +676,8 @@ pub struct App {
     /// コマンドの一覧を出している（`:`）。
     palette: Option<Palette>,
     operation_log: Option<OperationLog>,
+    /// Activity の Operations（`Tab` で操作ログと切り替える）。
+    operations: Option<Operations>,
     /// History の編集モード（`E`）。
     edit_mode: Option<crate::editmode::EditMode>,
     /// 印をつけたコミット（新しい順）を、編集モードで 1 つにまとめる（`E`。行が届いたら決める）。
@@ -761,6 +806,7 @@ impl App {
             showing_hooks: None,
             palette: None,
             operation_log: None,
+            operations: None,
             edit_mode: None,
             combining: Vec::new(),
             copy: None,
@@ -1045,6 +1091,7 @@ impl App {
             || self.fixup_pick.is_some()
             || self.palette.is_some()
             || self.operation_log.is_some()
+            || self.operations.is_some()
             || self.edit_mode.is_some();
         if std::mem::take(&mut self.dirty) || (over && damage != Damage::default()) {
             return Some(Damage::ALL);
@@ -1836,9 +1883,55 @@ impl App {
             }
             return;
         }
+        // Operations: 選んでいるものの出力を下に出す。`x` で取り消す、`r` で読み直す、`Tab` で操作ログへ。
+        if let Some(mut ops) = self.operations.take() {
+            self.dirty = true;
+            let last = ops.entries.len().saturating_sub(1);
+            match key.code {
+                KeyCode::Char('j') | KeyCode::Down => ops.selected = (ops.selected + 1).min(last),
+                KeyCode::Char('k') | KeyCode::Up => ops.selected = ops.selected.saturating_sub(1),
+                KeyCode::Char('g') | KeyCode::Home => ops.selected = 0,
+                KeyCode::Char('G') | KeyCode::End => ops.selected = last,
+                KeyCode::Char('r') => {
+                    self.read_operations();
+                    return;
+                }
+                KeyCode::Tab => {
+                    self.run(
+                        "undoLog",
+                        tr!("Reading the operation log…"),
+                        json!({"op": "undoLog"}),
+                    );
+                    return;
+                }
+                KeyCode::Char('x') => match ops.entries.get(ops.selected) {
+                    Some(op) if op.ok.is_none() && op.cancellable => {
+                        self.send(Request::Run {
+                                name: "cancelActivity",
+                                command: json!({"op": "cancelActivity", "seq": op.seq, "remote": op.remote}),
+                            });
+                    }
+                    Some(_) => {
+                        self.notice =
+                            Some(tr!("Only a running operation that can stop is cancelled"))
+                    }
+                    None => {}
+                },
+                _ => return,
+            }
+            self.operations = Some(ops);
+            return;
+        }
         // 操作ログ: 選んでいる記録まで（新しいものから順に）戻す。確かめてから。ほかのキーで閉じる。
         if let Some(mut log) = self.operation_log.take() {
             self.dirty = true;
+            if key.code == KeyCode::Tab {
+                self.read_operations();
+                return;
+            }
+            if log.entries.is_empty() {
+                return;
+            }
             match key.code {
                 KeyCode::Char('j') | KeyCode::Down => {
                     log.selected = (log.selected + 1).min(log.entries.len().saturating_sub(1));
@@ -2921,6 +3014,14 @@ impl App {
         }
     }
 
+    /// Activity の Operations を読む: この TUI が動かしたもの（同じプロセスの記録）と、daemon のもの。
+    fn read_operations(&mut self) {
+        self.send(Request::Call {
+            name: "activity",
+            request: json!({"op": "activity"}),
+        });
+    }
+
     /// サイドバーで選んでいるローカルブランチの名前。
     fn picked_branch(&self) -> Option<String> {
         self.sidebar
@@ -3206,6 +3307,38 @@ impl App {
             self.dirty = true;
             return;
         }
+        // Operations: 手元の記録と daemon の記録を合わせて、新しい順に。選んでいたものは番号で引き継ぐ。
+        if name == "activity" {
+            let reply = result.unwrap_or_default();
+            let remote = reply["remote"] == true;
+            let mut entries: Vec<Operation> = (reply["records"].as_array().into_iter().flatten())
+                .filter_map(|e| Operation::from(e, remote))
+                .collect();
+            entries.sort_by_key(|o| std::cmp::Reverse((o.started, o.seq)));
+            let previous = self.operations.as_ref().and_then(|o| {
+                let op = o.entries.get(o.selected)?;
+                Some((op.seq, op.remote))
+            });
+            let selected = previous
+                .and_then(|(seq, remote)| {
+                    entries
+                        .iter()
+                        .position(|o| o.seq == seq && o.remote == remote)
+                })
+                .unwrap_or(0);
+            self.operation_log = None;
+            self.operations = Some(Operations { entries, selected });
+            self.dirty = true;
+            return;
+        }
+        if name == "cancelActivity" {
+            match result {
+                Ok(_) => self.notice = Some(tr!("Cancelled")),
+                Err(error) => self.error = Some(error),
+            }
+            self.read_operations();
+            return;
+        }
         // 裏で読むリポジトリの形も、動いている操作の表示を消さない。読めなければ印を出さない。
         if name == "repositoryForm" {
             let info = result.ok().map(|r| r["info"].clone()).unwrap_or_default();
@@ -3332,15 +3465,11 @@ impl App {
                         (label, e["time"].as_f64().unwrap_or(0.0) as i64 / 1000)
                     })
                     .collect();
-                match entries.is_empty() {
-                    true => self.notice = Some(tr!("Nothing to undo")),
-                    false => {
-                        self.operation_log = Some(OperationLog {
-                            entries,
-                            selected: 0,
-                        })
-                    }
-                }
+                // 戻すものがなくても枠は出す（`Tab` で Operations へ）。
+                self.operation_log = Some(OperationLog {
+                    entries,
+                    selected: 0,
+                });
                 return;
             }
             // 戻す操作があれば、名前を出して確かめる。
@@ -8028,6 +8157,9 @@ impl App {
                 crate::drawing::draw(drawing, inner, buf);
             }
         }
+        if let Some(ops) = &self.operations {
+            self.draw_operations(ops, area, buf);
+        }
         if let Some(log) = &self.operation_log {
             let times: Vec<String> = log
                 .entries
@@ -8040,7 +8172,10 @@ impl App {
                 .map(|(l, _)| l.width())
                 .max()
                 .unwrap_or(0) as u16;
-            let hint = tr!("Enter undoes back to the selected one");
+            let hint = match log.entries.is_empty() {
+                true => tr!("Nothing to undo   Tab operations"),
+                false => tr!("Enter undoes back to the selected one   Tab operations"),
+            };
             let width = (label_width + 10)
                 .max(hint.width() as u16 + 4)
                 .max(36)
@@ -8351,6 +8486,95 @@ fn choice_list(
         }
     }
     cursor
+}
+
+impl App {
+    /// Operations の枠: 上に記録の一覧（✓ ✗ ●、所要時間、いつ）、下に選んでいるものの出力か失敗の理由。
+    fn draw_operations(&self, ops: &Operations, area: Rect, buf: &mut Buffer) {
+        let width = area.width.saturating_sub(4).max(20).min(area.width);
+        let height = area.height.saturating_sub(2).max(6).min(area.height);
+        let at = Rect::new(
+            area.x + (area.width - width) / 2,
+            area.y + (area.height - height) / 2,
+            width,
+            height,
+        );
+        frame_box(buf, area, at, &tr!(" Operations "));
+        let inner = usize::from(width.saturating_sub(4));
+        let body = height.saturating_sub(3);
+        let list_rows = (body / 2).max(1);
+        let top = (ops.selected + 1).saturating_sub(usize::from(list_rows));
+        let dim = Style::new().fg(Color::Indexed(244));
+        if ops.entries.is_empty() {
+            buf.set_stringn(at.x + 2, at.y + 1, tr!("Nothing has run yet"), inner, dim);
+        }
+        for (y, i) in (at.y + 1..at.y + 1 + list_rows).zip(top..ops.entries.len()) {
+            let op = &ops.entries[i];
+            let (mark, color) = match op.ok {
+                Some(true) => ('✓', Color::Green),
+                Some(false) => ('✗', Color::Red),
+                None => ('●', Color::Yellow),
+            };
+            let selected = i == ops.selected;
+            if selected {
+                for x in at.x + 1..at.right() - 1 {
+                    buf[(x, y)].set_style(Style::new().add_modifier(Modifier::REVERSED));
+                }
+            }
+            buf[(at.x + 2, y)].set_char(mark).set_fg(color);
+            let when = crate::history::ago(self.clock.now, op.started);
+            let took = match (op.duration, &op.progress) {
+                (_, Some(progress)) if op.ok.is_none() => progress.clone(),
+                // 記録はミリ秒。
+                (Some(ms), _) if ms >= 1000.0 => format!("{:.1}s", ms / 1000.0),
+                (Some(ms), _) => format!("{ms:.0}ms"),
+                _ => String::new(),
+            };
+            let right = format!("{took} {when}");
+            let label = &op.label;
+            let room = inner.saturating_sub(right.width() + 3);
+            buf.set_stringn(
+                at.x + 4,
+                y,
+                crate::history::fit(label, room),
+                room,
+                Style::new(),
+            );
+            let x = at.right().saturating_sub(right.width() as u16 + 2);
+            buf.set_stringn(x, y, &right, right.width(), dim);
+        }
+        // 区切りと、選んでいるものの出力（失敗なら理由を先に）。
+        let sep = at.y + 1 + list_rows;
+        if sep < at.bottom().saturating_sub(2) {
+            for x in at.x + 1..at.right() - 1 {
+                buf[(x, sep)].set_char('─').set_fg(Color::Indexed(240));
+            }
+            if let Some(op) = ops.entries.get(ops.selected) {
+                let mut lines: Vec<(String, Style)> = Vec::new();
+                lines.push((format!("{} · {}", op.kind, op.label), dim));
+                if let Some(error) = &op.error {
+                    lines.extend(
+                        error
+                            .lines()
+                            .map(|l| (l.to_owned(), Style::new().fg(Color::Red))),
+                    );
+                }
+                if let Some(output) = &op.output {
+                    lines.extend(output.lines().map(|l| (l.to_owned(), Style::new())));
+                }
+                for (y, (line, style)) in (sep + 1..at.bottom().saturating_sub(2)).zip(lines) {
+                    buf.set_stringn(at.x + 2, y, line, inner, style);
+                }
+            }
+        }
+        buf.set_stringn(
+            at.x + 2,
+            at.bottom() - 2,
+            tr!("j/k move   x cancel a running one   r read again   Tab operation log   other keys close"),
+            inner,
+            dim,
+        );
+    }
 }
 
 fn frame_box(buf: &mut Buffer, area: Rect, at: Rect, title: &str) {

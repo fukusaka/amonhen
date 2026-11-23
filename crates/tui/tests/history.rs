@@ -2635,6 +2635,26 @@ fn reset_offers_the_modes() {
     assert_eq!(head(), "Merge branch 'topic'\n");
 }
 
+/// 操作ログの `Tab`: Operations（git を動かした記録。✓ ✗ ●、下に選んだものの出力）。もう一度で操作ログへ
+#[test]
+fn activity_operations_list_what_ran() {
+    let dir = tempfile::tempdir().unwrap();
+    merged(dir.path());
+    // reset で git を動かしてから見る（同じプロセスの記録）。
+    let ops =
+        amonhen_tui::snapshot(open(dir.path()), 160, 20, clock(), "jRs:activity\n\t").unwrap();
+    println!("{ops}");
+    assert!(ops.contains(" Operations "), "{ops}");
+    assert!(
+        ops.lines().any(|l| l.contains("✓") && l.contains("git")),
+        "{ops}"
+    );
+    assert!(ops.contains("x cancel a running one"), "{ops}");
+    let back =
+        amonhen_tui::snapshot(open(dir.path()), 160, 20, clock(), "jRs:activity\n\t\t").unwrap();
+    assert!(back.contains(" Operation Log "), "{back}");
+}
+
 /// コマンドの一覧の Activity: 操作ログを新しい順に出し、選んだところまで確かめてから戻す
 #[test]
 fn operation_log_undoes_back_to_the_selected_one() {
