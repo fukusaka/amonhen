@@ -2125,12 +2125,12 @@ impl App {
                             Naming::SubmoduleAddUrl => {
                                 let base = name
                                     .trim_end_matches('/')
-                                    .rsplit(['/', ':'])
+                                    .rsplit(['/', '\\', ':'])
                                     .next()
                                     .unwrap_or(name);
                                 let base = base.strip_suffix(".git").unwrap_or(base).to_owned();
                                 self.naming = Naming::SubmoduleAddPath;
-                                self.typing_branch = Some((name.to_owned(), String::new(), base));
+                                self.typing_branch = Some((name.to_owned(), name.to_owned(), base));
                                 self.dirty = true;
                                 return;
                             }
@@ -2932,11 +2932,11 @@ impl App {
         match code {
             KeyCode::Char('e') => {
                 self.naming = Naming::SubmoduleUrl;
-                self.typing_branch = Some((path.to_owned(), String::new(), String::new()));
+                self.typing_branch = Some((path.to_owned(), path.to_owned(), String::new()));
             }
             KeyCode::Char('B') => {
                 self.naming = Naming::SubmoduleBranch;
-                self.typing_branch = Some((path.to_owned(), String::new(), String::new()));
+                self.typing_branch = Some((path.to_owned(), path.to_owned(), String::new()));
             }
             KeyCode::Char('F') => {
                 self.naming = Naming::SubmoduleForeach;
