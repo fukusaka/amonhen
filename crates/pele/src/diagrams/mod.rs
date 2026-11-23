@@ -5,6 +5,7 @@ pub mod flowchart;
 pub mod info;
 pub mod journey;
 pub mod kanban;
+pub mod mindmap;
 pub mod packet;
 pub mod pie;
 pub mod registry;
