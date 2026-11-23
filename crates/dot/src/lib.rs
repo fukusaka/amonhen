@@ -7,6 +7,7 @@
 //! 線など）は近いもので描き、`Drawing::notes` に理由を残す。
 
 pub mod arrows;
+mod brewer;
 pub mod color;
 pub mod curve;
 pub mod graph;
@@ -56,7 +57,7 @@ pub enum Note {
     Ortho,
     /// 読めない色は既定の色にした。
     UnknownColors,
-    /// 持たない配色（ColorBrewer など）の色は既定の色にした。
+    /// 持たない配色の色は既定の色にした。
     ColorSchemes,
     /// dot のほかの配置（neato など）は dot の配置にした。
     OtherLayouts,
@@ -71,9 +72,7 @@ impl Note {
             Note::UnknownShapes => "unknown shapes are drawn as boxes",
             Note::Ortho => "orthogonal edges are drawn as polylines",
             Note::UnknownColors => "unknown colors are drawn in the default color",
-            Note::ColorSchemes => {
-                "color schemes other than X11 and SVG are drawn in the default color"
-            }
+            Note::ColorSchemes => "unknown color schemes are drawn in the default color",
             Note::OtherLayouts => "other layout engines are drawn with the dot layout",
         }
     }

@@ -73,8 +73,13 @@ fn notes_approximations() {
         [Note::UnknownColors]
     );
     assert_eq!(
-        notes("digraph { node [colorscheme=blues9, color=3]; a }"),
+        notes("digraph { node [colorscheme=nosuch9, color=3]; a }"),
         [Note::ColorSchemes]
+    );
+    // ColorBrewer の配色は描ける
+    assert!(
+        notes("digraph { node [colorscheme=blues9, style=filled, fillcolor=3]; a [color=\"/set312/12\"] }")
+            .is_empty()
     );
     assert_eq!(
         notes("graph { layout=neato; a -- b }"),

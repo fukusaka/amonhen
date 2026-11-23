@@ -66,13 +66,16 @@ impl Ctx<'_> {
             Some(c) => Some(c),
             None => {
                 if !text.trim().is_empty() {
-                    let s = scheme.unwrap_or("").to_ascii_lowercase();
-                    self.notes
-                        .insert(if s.is_empty() || s == "x11" || s == "svg" {
-                            Note::UnknownColors
-                        } else {
-                            Note::ColorSchemes
-                        });
+                    // `/scheme/name` の配色が先
+                    let s = match text.trim().strip_prefix('/') {
+                        Some(rest) => rest.split_once('/').map_or("", |(s, _)| s),
+                        None => scheme.unwrap_or(""),
+                    };
+                    self.notes.insert(if color::known_scheme(s) {
+                        Note::UnknownColors
+                    } else {
+                        Note::ColorSchemes
+                    });
                 }
                 None
             }

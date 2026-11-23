@@ -2494,5 +2494,5 @@
 "unknown shapes are drawn as boxes" = "知らない形は箱";
 "orthogonal edges are drawn as polylines" = "直角の線（ortho）は折れ線";
 "unknown colors are drawn in the default color" = "読めない色は既定の色";
-"color schemes other than X11 and SVG are drawn in the default color" = "X11・SVG 以外の配色の色は既定の色";
+"unknown color schemes are drawn in the default color" = "知らない配色の色は既定の色";
 "other layout engines are drawn with the dot layout" = "dot 以外の配置（neato など）は dot の配置";

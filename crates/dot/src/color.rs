@@ -1,7 +1,8 @@
 //! 色（Graphviz の色の書き方）: X11・SVG の名前、`#rrggbb`・`#rrggbbaa`・`#rgb`、HSV（`h,s,v`・`h s v`、0〜1）、
-//! `/scheme/name`、`transparent`・`none`。`a:b` の並びと `a;0.3` の割合。ColorBrewer の配色は持たない（知らない
-//! 色として扱い、呼ぶ側が既定の色にして注記する）。
+//! `/scheme/name`（ColorBrewer の配色は `blues9` などの名前と 1 からの番号）、`transparent`・`none`。`a:b` の並びと
+//! `a;0.3` の割合。持たない配色の色は読めない色として扱う（呼ぶ側が既定の色にして注記する）。
 
+use crate::brewer::BREWER;
 use crate::x11::X11;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,16 +59,30 @@ pub enum Color {
 enum Scheme {
     X11,
     Svg,
-    /// ColorBrewer など、持たない配色。
+    /// ColorBrewer の配色（1 番からの色）。
+    Brewer(&'static [u32]),
+    /// 持たない配色。
     Other,
+}
+
+fn brewer(name: &str) -> Option<&'static [u32]> {
+    BREWER
+        .binary_search_by(|(n, _)| (*n).cmp(name))
+        .ok()
+        .map(|i| BREWER[i].1)
 }
 
 fn scheme_of(name: &str) -> Scheme {
     match name.trim().to_ascii_lowercase().as_str() {
         "" | "x11" => Scheme::X11,
         "svg" => Scheme::Svg,
-        _ => Scheme::Other,
+        other => brewer(other).map_or(Scheme::Other, Scheme::Brewer),
     }
+}
+
+/// 知っている配色の名前か（X11・SVG・ColorBrewer）。
+pub fn known_scheme(name: &str) -> bool {
+    !matches!(scheme_of(name), Scheme::Other)
 }
 
 /// SVG（CSS）の色の名前。値は X11 と同じで、ここにある 4 つの名前だけが違う。
@@ -334,7 +349,10 @@ pub fn parse(text: &str, scheme: Option<&str>) -> Option<Color> {
     }
     let rgba = if let Some(h) = t.strip_prefix('#') {
         parse_hex(h)?
-    } else if t.starts_with(|c: char| c.is_ascii_digit() || c == '.') {
+    } else if t.starts_with(|c: char| c.is_ascii_digit() || c == '.')
+        && !(t.bytes().all(|c| c.is_ascii_digit())
+            && scheme.is_some_and(|s| !matches!(scheme_of(s), Scheme::X11 | Scheme::Svg)))
+    {
         parse_hsv(t)?
     } else {
         let (scheme, name) = match lower.strip_prefix('/') {
@@ -348,6 +366,11 @@ pub fn parse(text: &str, scheme: Option<&str>) -> Option<Color> {
         let found = match scheme {
             Scheme::X11 => x11(&name),
             Scheme::Svg => svg(&name).or_else(|| x11(&name)),
+            // 番号は配色の色、ほかは Graphviz と同じく X11 の名前
+            Scheme::Brewer(colors) => match name.parse::<usize>() {
+                Ok(i) => i.checked_sub(1).and_then(|i| colors.get(i)).copied(),
+                Err(_) => x11(&name),
+            },
             // 持たない配色の名前でも、X11 の名前なら Graphviz と同じくそれを使う
             Scheme::Other => {
                 if name.chars().all(|c| c.is_ascii_digit()) {
@@ -439,9 +462,34 @@ mod tests {
         assert_eq!(parse("#12", None), None);
         assert_eq!(parse("1 2", None), None);
         // 持たない配色の番号の色は読めない
-        assert_eq!(parse("3", Some("blues9")), None);
-        assert_eq!(parse("/blues9/3", None), None);
+        assert_eq!(parse("3", Some("nosuch9")), None);
+        assert_eq!(parse("/nosuch9/3", None), None);
+        assert_eq!(parse("red", Some("nosuch9")), Some(Color::Rgba(rgb("red"))));
         assert_eq!(parse("red", Some("accent8")), Some(Color::Rgba(rgb("red"))));
+    }
+
+    #[test]
+    fn reads_colorbrewer_schemes() {
+        assert_eq!(
+            parse("1", Some("blues9")),
+            Some(Color::Rgba(rgb("#f7fbff")))
+        );
+        assert_eq!(rgb("/blues9/9").hex(), "#08306b");
+        assert_eq!(rgb("/Set312/12").hex(), "#ffed6f");
+        assert_eq!(rgb("/rdylgn11/6").hex(), "#ffffbf");
+        assert_eq!(
+            parse("8", Some("ACCENT8")),
+            Some(Color::Rgba(rgb("#666666")))
+        );
+        // 範囲の外の番号は読めない
+        assert_eq!(parse("0", Some("blues9")), None);
+        assert_eq!(parse("10", Some("blues9")), None);
+        assert!(known_scheme("paired12") && known_scheme("SVG") && !known_scheme("blues"));
+        // 表は名前の順（二分探索のため）で、名前の数と色の数がそろう
+        assert!(BREWER.windows(2).all(|w| w[0].0 < w[1].0));
+        for (name, colors) in BREWER {
+            assert!(name.ends_with(&colors.len().to_string()), "{name}");
+        }
     }
 
     #[test]
