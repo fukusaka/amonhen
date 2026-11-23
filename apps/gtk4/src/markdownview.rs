@@ -61,6 +61,58 @@ pub fn resolve(link: &str, from: &str) -> Option<String> {
     (!path.is_empty()).then_some(path)
 }
 
+/// 図の絵（幅は 640 px まで）。色は図の中の指定 `own`、なければ設定の「図の配色」と今の外観・テーマで当て、
+/// 外観・テーマ・図の配色が変わったら色だけを当て直す（形と位置はそのまま）。色を当てられなければ `None`。
+pub fn diagram_picture(
+    svg: String,
+    own: Option<amonhen_core::diagram::MermaidConfig>,
+    alt: &str,
+) -> Option<gtk::Picture> {
+    let colored = move |svg: &str, dark: bool| {
+        let (vars, backdrop) = crate::theme::diagram_palette(dark, own.as_ref());
+        amonhen_core::diagram::colorize(svg, &vars, backdrop)
+            .and_then(|s| crate::imagediff::texture(Some(s.as_bytes())))
+    };
+    let style = adw::StyleManager::default();
+    let first = colored(&svg, style.is_dark())?;
+    let (w, h) = (first.width(), first.height());
+    let (w, h) = if w > MAX_IMAGE_WIDTH {
+        (MAX_IMAGE_WIDTH, h * MAX_IMAGE_WIDTH / w.max(1))
+    } else {
+        (w, h)
+    };
+    let picture = gtk::Picture::for_paintable(&first);
+    picture.set_can_shrink(true);
+    picture.set_content_fit(gtk::ContentFit::Contain);
+    picture.set_size_request(w, h);
+    picture.set_alternative_text(Some(alt));
+    let recolor = {
+        let weak = picture.downgrade();
+        Rc::new(move || {
+            if let Some(picture) = weak.upgrade()
+                && let Some(texture) = colored(&svg, adw::StyleManager::default().is_dark())
+            {
+                picture.set_paintable(Some(&texture));
+            }
+        })
+    };
+    let again = recolor.clone();
+    style.connect_dark_notify(move |_| again());
+    crate::settings::connect_changed_while(&picture, move |key| {
+        if matches!(
+            key,
+            crate::theme::SYNTAX_THEME_LIGHT
+                | crate::theme::SYNTAX_THEME_DARK
+                | crate::theme::IMPORTED_SYNTAX_THEMES
+                | crate::theme::DIAGRAM_COLORS
+                | crate::theme::IMPORTED_MERMAID_THEMES
+        ) {
+            recolor();
+        }
+    });
+    Some(picture)
+}
+
 /// `blocks` の中の画像の場所（重ならずに、出てくる順）。
 pub fn image_sources(blocks: &[Block]) -> Vec<String> {
     fn runs(runs: &[Run], out: &mut Vec<String>) {
@@ -526,16 +578,9 @@ impl<'a> Builder<'a> {
                 config,
                 error,
             } => {
-                let style = adw::StyleManager::default();
-                let own = config.clone();
-                let colored = move |svg: &str, dark: bool| {
-                    let (vars, backdrop) = crate::theme::diagram_palette(dark, own.as_ref());
-                    amonhen_core::diagram::colorize(svg, &vars, backdrop)
-                        .and_then(|s| crate::imagediff::texture(Some(s.as_bytes())))
-                };
-                let Some((svg, first)) = svg
+                let Some(picture) = svg
                     .as_ref()
-                    .and_then(|svg| Some((svg.clone(), colored(svg, style.is_dark())?)))
+                    .and_then(|svg| diagram_picture(svg.clone(), config.clone(), text))
                 else {
                     // 描けない図はコードとして見せ、理由を添える
                     self.block(
@@ -561,43 +606,6 @@ impl<'a> Builder<'a> {
                 };
                 self.lone_marker(ctx);
                 let start = self.offset();
-                let (w, h) = (first.width(), first.height());
-                let (w, h) = if w > MAX_IMAGE_WIDTH {
-                    (MAX_IMAGE_WIDTH, h * MAX_IMAGE_WIDTH / w.max(1))
-                } else {
-                    (w, h)
-                };
-                let picture = gtk::Picture::for_paintable(&first);
-                picture.set_can_shrink(true);
-                picture.set_content_fit(gtk::ContentFit::Contain);
-                picture.set_size_request(w, h);
-                picture.set_alternative_text(Some(text));
-                // 外観・テーマ・図の配色が変わったら、色だけを当て直す（形と位置はそのまま）
-                let recolor = {
-                    let weak = picture.downgrade();
-                    Rc::new(move || {
-                        if let Some(picture) = weak.upgrade()
-                            && let Some(texture) =
-                                colored(&svg, adw::StyleManager::default().is_dark())
-                        {
-                            picture.set_paintable(Some(&texture));
-                        }
-                    })
-                };
-                let again = recolor.clone();
-                style.connect_dark_notify(move |_| again());
-                crate::settings::connect_changed_while(&picture, move |key| {
-                    if matches!(
-                        key,
-                        crate::theme::SYNTAX_THEME_LIGHT
-                            | crate::theme::SYNTAX_THEME_DARK
-                            | crate::theme::IMPORTED_SYNTAX_THEMES
-                            | crate::theme::DIAGRAM_COLORS
-                            | crate::theme::IMPORTED_MERMAID_THEMES
-                    ) {
-                        recolor();
-                    }
-                });
                 let mut end = self.buffer.end_iter();
                 let anchor = self.buffer.create_child_anchor(&mut end);
                 self.view.add_child_at_anchor(&picture, &anchor);

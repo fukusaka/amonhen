@@ -462,6 +462,15 @@ fn syntax_section() -> gtk::Box {
             });
         });
     }
+    // 図の見本（「図の配色」と今の外観・テーマで色を当てる。変わったら当て直す）
+    let diagram_sample = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    diagram_sample.set_margin_start(6);
+    diagram_sample.set_margin_bottom(6);
+    if let Some(picture) = amonhen_core::diagram::sample()
+        .and_then(|svg| crate::markdownview::diagram_picture(svg, None, "flowchart"))
+    {
+        diagram_sample.append(&picture);
+    }
     let section = crate::reposettings::section(
         Some(&tr!("Color Theme")),
         &[
@@ -470,6 +479,7 @@ fn syntax_section() -> gtk::Box {
             row(&tr!("Use standard colors for diffs"), &standard).upcast(),
             row(&tr!("Diagram colors"), &diagram).upcast(),
             preview.clone().upcast(),
+            diagram_sample.clone().upcast(),
             import.clone().upcast(),
             mermaid_import.clone().upcast(),
             failure.clone().upcast(),
