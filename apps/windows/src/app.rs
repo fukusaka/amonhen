@@ -20255,8 +20255,62 @@ impl HistoryView {
         drag.is_some()
     }
 
+    /// すべてのファイルで開いた画像を `(x, y)` で押した（拡大縮小・絵を動かし始める）。引き始めたら true。
+    fn picture_press(&mut self, x: f32, y: f32) -> bool {
+        use crate::imagediff::{self as image, Hit, Mode};
+        let width = self
+            .diff
+            .surface
+            .as_ref()
+            .map_or(0.0, |s| s.width as f32 / self.diff.scale.max(0.01));
+        let layout = image::single_layout(width, self.diff.height());
+        let Some(file) = self.session.data.file_view.as_mut() else {
+            return false;
+        };
+        if file.picture.is_none() {
+            return false;
+        }
+        let common = self
+            .session
+            .renderer
+            .image_common(file.content().key, usize::MAX);
+        let view = &mut file.picture_view;
+        let mut drag = None;
+        match image::hit(&layout, Mode::TwoUp, view, common, x, y, false) {
+            Some(Hit::ZoomActual) => {
+                view.zoom = if view.zoom == Some(1.0) {
+                    None
+                } else {
+                    Some(1.0)
+                };
+                view.pan = (0.0, 0.0);
+            }
+            Some(Hit::ZoomOut) => image::zoom_by(view, 1.0 / 1.5, common, layout.canvas),
+            Some(Hit::ZoomIn) => image::zoom_by(view, 1.5, common, layout.canvas),
+            Some(Hit::ZoomFit) => {
+                view.zoom = None;
+                view.pan = (0.0, 0.0);
+            }
+            Some(Hit::Pan) => drag = Some(ImageDrag::Pan(x, y, view.pan.0, view.pan.1)),
+            _ => return false,
+        }
+        self.diff.dirty = true;
+        IMAGE_DRAG.with(|d| d.set(drag.map(|drag| (usize::MAX, 0, drag))));
+        drag.is_some()
+    }
+
     /// 画像の比べる欄で引いている所を `(x, y)` へ。
     fn image_drag(&mut self, file: usize, first: usize, drag: ImageDrag, x: f32, y: f32) {
+        // すべてのファイルで開いた画像を動かしている。
+        if file == usize::MAX {
+            if let (Some(f), ImageDrag::Pan(x0, y0, px, py)) =
+                (self.session.data.file_view.as_mut(), drag)
+            {
+                f.picture_view.pan = (px + x - x0, py + y - y0);
+                self.diff.dirty = true;
+            }
+            return;
+        }
         use crate::imagediff as image;
         let width = self
             .diff
@@ -21882,7 +21936,15 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
                     }
                 }
                 // ファイルの見出しを押すと、そのファイルを畳む・開く（すべてのファイルで開いたファイルには何もしない）。
-                Target::Diff if h.session.data.show_file && !h.working_page => {}
+                Target::Diff if h.session.data.show_file && !h.working_page => {
+                    // 開いた画像の拡大縮小・拡大した絵を動かす。
+                    if left
+                        && h.picture_press(position.X, position.Y)
+                        && let Ok(pointer) = args.Pointer()
+                    {
+                        let _ = source.CapturePointer(&pointer);
+                    }
+                }
                 Target::Diff => {
                     // 上に張り付いた見出しを押したら、そのファイルの見出しの行（畳んだら見出しを一番上に）。
                     // 位置は表示の行（木なら、フォルダの行を差し込んだ並び）。
