@@ -251,7 +251,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Graph with branch and tag labels | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `log`.<br>TUI: One line per commit. |
 | Huge histories in chunks with the persistent cache | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |
 | Search with match count, next / previous, matching only | ✓ | ✓ | ✓ | ✓ | △ | △ | VSCode: With the engine.<br>CLI: `log <query>` lists the matches.<br>TUI: `/`, `n` `N`; no matching-only view. |
-| Display: order, one line, row items, fold merged, highlight ancestors | ✓ | ✓ | ✓ | ✓ | △ | △ | macOS, GTK4: Any merge folds on its own (a +N badge, its context menu, ←/→), kept per repository.<br>VSCode: Order, folding and highlighting with the engine.<br>CLI: `--topo-order`, `--fold`.<br>Windows: In View.<br>TUI: `o` order and `z` fold, for the run only; always one line, no choice of row items. |
+| Display: order, one line, row items, fold merged, highlight ancestors | ✓ | ✓ | ✓ | ✓ | △ | △ | macOS, GTK4: Any merge folds on its own (a +N badge, its context menu, ←/→), kept per repository.<br>VSCode: Order, folding and highlighting with the engine.<br>CLI: `--topo-order`, `--fold`.<br>Windows: In View.<br>TUI: `o` order, for the run only; `z` folds every merge and `Z` one, kept per repository and shared with the apps; always one line, no choice of row items. |
 | Avatars | ✓ | ✓ | ✓ | — | n/a | — |  |
 | Signature marks on commits | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: With the engine.<br>CLI: In `show`.<br>TUI: The mark before the subject; no popover. |
 | CI status per commit with a checks popover | ✓ | ✓ | ✓ | — | — | — |  |

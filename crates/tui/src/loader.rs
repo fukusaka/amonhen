@@ -334,8 +334,12 @@ fn load(front: &dyn Front, request: Request, events: &Sender<Event>) -> Result<L
                 if rebuild {
                     front.call(json!({"op": "history", "rebuild": true}))?;
                 }
+                // `expanded` は既定と逆にした merge（たたむなら開くもの、たたまないならたたむもの）。
                 let mut request = match fold {
                     true => json!({"op": "history", "fold": true, "expanded": expanded}),
+                    false if !expanded.is_empty() => {
+                        json!({"op": "history", "collapsed": expanded})
+                    }
                     false => json!({"op": "history"}),
                 };
                 if !tips.is_empty() {

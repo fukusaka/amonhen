@@ -519,6 +519,11 @@ impl History {
         i64::from(self.height.saturating_sub(1).max(1))
     }
 
+    /// 選んでいる行が merge コミット。
+    pub fn selected_is_merge(&self) -> bool {
+        self.marked_at(self.selected).is_some_and(|m| m.merge)
+    }
+
     /// 選んでいる行で、折りたたんで隠したコミットの数（折りたたんでいない、読んでいなければ 0）。
     pub fn selected_folded(&self) -> u32 {
         let Some(window) = &self.window else {
