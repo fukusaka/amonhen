@@ -3027,32 +3027,40 @@ extension CommitDetailViewController {
     /// 表示の設定のメニュー（開くたびに作る）: 詳細の見せ方、詳細を広げる、AI。
     fileprivate func fillViewOptions(_ menu: NSMenu) {
         while menu.items.count > 1 { menu.removeItem(at: 1) }
-        let section = NSMenuItem(title: L("Details"), action: nil, keyEquivalent: "")
-        section.isEnabled = false
-        menu.addItem(section)
+        // コミット情報（右の列の上の欄）に効くもの。
+        menu.addItem(.sectionHeader(title: L("Commit Details")))
+        let shown = NSMenuItem(title: L("Details Shown"), action: nil, keyEquivalent: "")
+        shown.isEnabled = false
+        shown.indentationLevel = 1
+        menu.addItem(shown)
         for style in CommitHeaderStyle.allCases {
             let item = ClosureMenuItem(title: style.title) { [weak self] in
                 self?.styleControl.selectedSegment = style.rawValue
                 self?.styleChanged()
             }
             item.state = styleControl.selectedSegment == style.rawValue ? .on : .off
-            item.indentationLevel = 1
+            item.indentationLevel = 2
             menu.addItem(item)
         }
-        let fit = ClosureMenuItem(title: L("Fit Details to the Message")) { [weak self] in
+        let fit = ClosureMenuItem(title: L("Fit Height Automatically")) { [weak self] in
             guard let self else { return }
             keptHeaderHeight = nil
             fitHeaderToContent()
         }
         fit.state = keptHeaderHeight == nil ? .on : .off
+        fit.indentationLevel = 1
         fit.toolTip = L("Size the commit details to each message. Dragging the divider keeps its position instead.")
         menu.addItem(fit)
-        let expand = ClosureMenuItem(title: L("Expand Details")) { [weak self] in self?.toggleExpanded() }
+        let expand = ClosureMenuItem(title: L("Show Only Commit Details")) { [weak self] in self?.toggleExpanded() }
         expand.state = isExpanded ? .on : .off
+        expand.indentationLevel = 1
         expand.toolTip = L("Expand the commit details to fill the right column (click again to restore).")
         menu.addItem(expand)
-        menu.addItem(.separator())
-        menu.addItem(DiffViewController.wrapLinesMenuItem())
+        // 差分に効くもの。
+        menu.addItem(.sectionHeader(title: L("Diff")))
+        let wrap = DiffViewController.wrapLinesMenuItem()
+        wrap.indentationLevel = 1
+        menu.addItem(wrap)
         guard Assistant.isConfigured, !isPreview else { return }
         menu.addItem(.separator())
         menu.addItem(ClosureMenuItem(title: L("AI: Explain This Commit")) { [weak self] in self?.explainCommit() })

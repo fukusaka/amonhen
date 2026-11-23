@@ -561,7 +561,7 @@
 "Show each commit on one line" = "1 コミットを 1 行で表示する";
 "Highlight the selected commit’s ancestors" = "選んだコミットの祖先を強調する";
 "Draws only the selected commit’s ancestors and the lines between them at full strength, and dims the rest." = "選んだコミットの祖先と、それをつなぐ線だけを濃く描き、ほかを薄くする。";
-"Commit Details" = "コミットの詳細";
+"Commit Details" = "コミット情報";
 "Show the message in a monospaced font" = "本文を等幅の字体で表示する";
 "Show avatars" = "アバターを表示する";
 "Fetched from Gravatar (sends a hash of the email address to gravatar.com)." = "Gravatar から取る（メールアドレスのハッシュを gravatar.com に送る）。";
@@ -596,7 +596,6 @@
 "Verifies with this Mac’s gpg, allowed_signers and trust levels. When off, verifies with the git and keys on the SSH host. Repositories on this Mac are always verified on this Mac." = "この Mac の gpg・allowed_signers・信用度で検証する。外すと SSH 先の git と鍵で検証する。この Mac にあるリポジトリは、いつもこの Mac で検証する。";
 "Appearance" = "表示";
 "Performance" = "パフォーマンス";
-"Advanced" = "詳細";
 "Settings" = "設定";
 
 /* DiffViewController.swift */
@@ -605,9 +604,7 @@
 "Next" = "次へ";
 "Explain This Hunk with AI" = "AI でこの hunk を解説";
 "Binary" = "バイナリ";
-"Expand Details" = "詳細を広げる";
-"Restore Details" = "詳細を戻す";
-"Expand the commit details to fill the right column (click again to restore)." = "コミットの詳細だけを右の列いっぱいに広げる（もう一度押すと戻す）";
+"Expand the commit details to fill the right column (click again to restore)." = "コミット情報だけを右の列いっぱいに広げる（もう一度押すと戻す）";
 "AI: Explain this commit (or the combined diff of the selected commits)." = "AI: このコミット（複数選んでいればまとめた差分）を解説する";
 "AI: Translate the message." = "AI: メッセージを翻訳する";
 "Copy Short ID" = "短い ID をコピー";
@@ -996,7 +993,7 @@
 "Monospaced Commit Message" = "コミットメッセージを等幅で表示";
 "Show commit messages in a monospaced font (keeps bodies wrapped at 72 columns aligned)" = "コミットの本文を等幅の字体で出す（72 桁で改行した本文が崩れない）";
 "Show Avatars" = "アバターを表示";
-"Show Gravatar avatars in commit details (sends a hash of the email address to gravatar.com)" = "コミットの詳細に Gravatar のアバターを出す（メールアドレスのハッシュを gravatar.com に送る）";
+"Show Gravatar avatars in commit details (sends a hash of the email address to gravatar.com)" = "コミット情報に Gravatar のアバターを出す（メールアドレスのハッシュを gravatar.com に送る）";
 "All Files in One Diff" = "全ファイルを 1 つの差分に並べる";
 "Stack every file in a commit’s diff (when off, only the selected file)" = "コミットの差分で、全ファイルを縦に並べる（オフなら選んだファイルだけ）";
 "Fold All Merged Commits" = "取り込んだコミットをすべてたたむ";
@@ -1048,7 +1045,7 @@
 /* CommitHeader.swift */
 "Brief" = "簡潔";
 "Standard" = "標準";
-"Full" = "詳しく";
+"Full" = "詳細";
 "Cherry-picked from" = "cherry-pick 元";
 "Reverts" = "revert 元";
 "Fixes" = "修正対象";
@@ -2025,7 +2022,6 @@
 "3 Lines" = "3 行";
 "10 Lines" = "10 行";
 "Whole File" = "ファイル全体";
-"Show Details" = "詳細を見る";
 "Go to a changed file" = "変更ファイルへ移る";
 "Files" = "ファイル";
 "Expand All" = "すべて開く";
@@ -2093,8 +2089,11 @@
 "GitHub alert: Warning" = "警告";
 "GitHub alert: Caution" = "注意";
 "This is a merge: the changes below are against its first parent (%@)." = "merge のコミット: 下の変更は最初の親（%@）との差分。";
-"Fit Details to the Message" = "詳細をメッセージに合わせる";
-"Size the commit details to each message. Dragging the divider keeps its position instead." = "コミットの詳細の高さを、メッセージごとに合わせる。仕切りを動かすと、代わりにその位置を保つ。";
+"Size the commit details to each message. Dragging the divider keeps its position instead." = "コミット情報の高さを、メッセージごとに自動で決める。仕切りを動かすと、代わりにその高さを保つ。";
 "GitHub’s own emoji, shown by name (its image isn’t included)" = "GitHub 独自の絵文字（画像は入っていないので名前で出す）";
 "Wrapping long lines (⌥Z)" = "長い行を折り返している（⌥Z）";
 "Wrap Long Lines (⌥Z)" = "長い行を折り返す（⌥Z）";
+"Details Shown" = "表示項目";
+"Fit Height Automatically" = "高さを自動で決める";
+"Show Only Commit Details" = "コミット情報だけを表示";
+"Diff" = "差分";
