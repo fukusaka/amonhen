@@ -1529,10 +1529,8 @@ impl Renderer {
 
     /// 画像の比べる欄の、前と後を重ねる大きさ（読んでいなければ 0）。
     pub fn image_common(&self, key: u64, file: usize) -> (f32, f32) {
-        let size = |p: &Option<crate::imagediff::Pixels>| {
-            p.as_ref()
-                .map_or((0.0, 0.0), |p| (p.width as f32, p.height as f32))
-        };
+        let size =
+            |p: &Option<crate::imagediff::Pixels>| p.as_ref().map_or((0.0, 0.0), |p| p.size());
         self.images.get(&(key, file)).map_or((0.0, 0.0), |e| {
             let (a, b) = (size(&e.before), size(&e.after));
             (a.0.max(b.0), a.1.max(b.1))
@@ -1549,10 +1547,18 @@ impl Renderer {
         if !self.images.contains_key(&key) {
             // 別の差分の絵は捨てる。
             self.images.retain(|k, _| k.0 == commit.key);
-            let (_, diff) = commit.stacked?.files.get(file)?;
+            let (path, diff) = commit.stacked?.files.get(file)?;
             let side = |blob: &[u8]| (!blob.is_empty()).then(|| blob.to_vec());
             let (old, new) = (side(&diff.old), side(&diff.new));
-            let decode = |b: &Option<Vec<u8>>| b.as_deref().and_then(crate::imagediff::decode);
+            let svg = crate::imagediff::is_svg(path);
+            let decode = |b: &Option<Vec<u8>>| {
+                let bytes = b.as_deref()?;
+                if svg {
+                    self.rasterize_svg(bytes).ok()
+                } else {
+                    crate::imagediff::decode(bytes)
+                }
+            };
             let (before, after) = (decode(&old), decode(&new));
             let caption = crate::imagediff::caption(
                 crate::imagediff::describe(old.as_deref(), before.as_ref()),
@@ -1573,6 +1579,80 @@ impl Renderer {
             );
         }
         self.images.get_mut(&key)
+    }
+
+    /// SVG を Direct2D で絵にする（その絵の大きさで。別の描き先で描いて、ピクセルを読み出す）。
+    fn rasterize_svg(&self, bytes: &[u8]) -> Result<crate::imagediff::Pixels> {
+        use windows::Win32::UI::Shell::SHCreateMemStream;
+        // 拡げても粗くならないよう、絵の大きさの 4 倍（2048 まで）の細かさで描く。
+        let (w, h) = crate::imagediff::svg_size(bytes);
+        let scale = (2048 / w.max(h)).clamp(1, 4);
+        let (width, height) = (w * scale, h * scale);
+        let size = D2D_SIZE_U { width, height };
+        let props = |options| D2D1_BITMAP_PROPERTIES1 {
+            pixelFormat: D2D1_PIXEL_FORMAT {
+                format: DXGI_FORMAT_B8G8R8A8_UNORM,
+                alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED,
+            },
+            dpiX: 96.0,
+            dpiY: 96.0,
+            bitmapOptions: options,
+            ..Default::default()
+        };
+        unsafe {
+            let device = self.d2d.GetDevice()?;
+            let dc: ID2D1DeviceContext5 = device
+                .CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE)?
+                .cast()?;
+            let stream = SHCreateMemStream(Some(bytes)).ok_or_else(|| {
+                windows::core::Error::from(windows::Win32::Foundation::E_OUTOFMEMORY)
+            })?;
+            // 文書は絵の大きさで作り（`width`・`height` があればそれで描かれる）、拡大の変換で細かく描く。
+            let document = dc.CreateSvgDocument(
+                &stream,
+                D2D_SIZE_F {
+                    width: w as f32,
+                    height: h as f32,
+                },
+            )?;
+            let target = dc.CreateBitmap(size, None, 0, &props(D2D1_BITMAP_OPTIONS_TARGET))?;
+            dc.SetTarget(&target);
+            dc.BeginDraw();
+            dc.Clear(Some(&rgba(0.0, 0.0, 0.0, 0.0)));
+            let s = scale as f32;
+            dc.SetTransform(&windows_numerics::Matrix3x2 {
+                M11: s,
+                M12: 0.0,
+                M21: 0.0,
+                M22: s,
+                M31: 0.0,
+                M32: 0.0,
+            });
+            dc.DrawSvgDocument(&document);
+            dc.EndDraw(None, None)?;
+            let cpu = dc.CreateBitmap(
+                size,
+                None,
+                0,
+                &props(D2D1_BITMAP_OPTIONS_CPU_READ | D2D1_BITMAP_OPTIONS_CANNOT_DRAW),
+            )?;
+            cpu.CopyFromBitmap(None, &target, None)?;
+            let mapped = cpu.Map(D2D1_MAP_OPTIONS_READ)?;
+            let row = width as usize * 4;
+            let mut data = vec![0u8; row * height as usize];
+            for y in 0..height as usize {
+                let from =
+                    std::slice::from_raw_parts(mapped.bits.add(y * mapped.pitch as usize), row);
+                data[y * row..(y + 1) * row].copy_from_slice(from);
+            }
+            cpu.Unmap()?;
+            Ok(crate::imagediff::Pixels {
+                width,
+                height,
+                data,
+                scale,
+            })
+        }
     }
 
     /// 読んだ絵から、描ける絵を作る。
@@ -1614,7 +1694,11 @@ impl Renderer {
             .image_views
             .and_then(|v| v.get(&file).copied())
             .unwrap_or_default();
-        let layout = image::layout(top, width, mode);
+        let svg = commit
+            .stacked
+            .and_then(|s| s.files.get(file))
+            .is_some_and(|(path, _)| image::is_svg(path));
+        let layout = image::layout(top, width, mode, svg);
         let accent = rgba(0.21, 0.52, 0.89, 1.0);
         let fill = |r: &Self, rect: image::Rect, color: D2D1_COLOR_F| unsafe {
             r.brush.SetColor(&color);
@@ -1653,6 +1737,12 @@ impl Renderer {
                 foreground()
             };
             self.draw_centered(&m.title(), &format, r, &color)?;
+        }
+        // SVG の「テキストで見る」（Segoe Fluent Icons の Document）。
+        if let Some(r) = layout.text {
+            fill(self, r, diff_file());
+            let icons = self.icon_format.clone();
+            self.draw_centered("\u{E8A5}", &icons, r, &foreground())?;
         }
         // スワイプ・オニオンスキンの位置のスライダー。
         if let Some(slider) = layout.slider {
@@ -1698,10 +1788,7 @@ impl Renderer {
         let Some(entry) = self.image_entry(commit, file) else {
             return Ok(());
         };
-        let size = |p: &Option<image::Pixels>| {
-            p.as_ref()
-                .map_or((0.0, 0.0), |p| (p.width as f32, p.height as f32))
-        };
+        let size = |p: &Option<image::Pixels>| p.as_ref().map_or((0.0, 0.0), |p| p.size());
         let (before_size, after_size) = (size(&entry.before), size(&entry.after));
         let common = (
             before_size.0.max(after_size.0),
@@ -1764,7 +1851,7 @@ impl Renderer {
                                 }
                                 let rect = image::fit(size, area, &view);
                                 self.checker(rect);
-                                self.draw_bitmap(bitmap, rect, size, 1.0);
+                                self.draw_bitmap(bitmap, rect, 1.0);
                                 unsafe {
                                     self.brush.SetColor(&color);
                                     self.d2d.DrawRectangle(
@@ -1806,14 +1893,14 @@ impl Renderer {
                     let after_rect = image::fitted(common, after_size, rect);
                     if mode == Mode::Onion {
                         if let Some(b) = &before {
-                            self.draw_bitmap(b, before_rect, before_size, 1.0);
+                            self.draw_bitmap(b, before_rect, 1.0);
                         }
                         if let Some(a) = &after {
-                            self.draw_bitmap(a, after_rect, after_size, view.position);
+                            self.draw_bitmap(a, after_rect, view.position);
                         }
                     } else {
                         if let Some(a) = &after {
-                            self.draw_bitmap(a, after_rect, after_size, 1.0);
+                            self.draw_bitmap(a, after_rect, 1.0);
                         }
                         let split = rect.x + rect.w * view.position;
                         let left = image::Rect {
@@ -1828,7 +1915,7 @@ impl Renderer {
                         }
                         self.checker(rect);
                         if let Some(b) = &before {
-                            self.draw_bitmap(b, before_rect, before_size, 1.0);
+                            self.draw_bitmap(b, before_rect, 1.0);
                         }
                         unsafe { self.d2d.PopAxisAlignedClip() };
                         fill(
@@ -1871,7 +1958,7 @@ impl Renderer {
                         .and_then(|e| e.difference.as_ref())
                         .and_then(|d| d.0.clone());
                     if let Some(bitmap) = bitmap {
-                        self.draw_bitmap(&bitmap, rect, common, 1.0);
+                        self.draw_bitmap(&bitmap, rect, 1.0);
                     }
                 }
             }
@@ -1891,14 +1978,10 @@ impl Renderer {
     }
 
     /// 絵を `rect` に描く（2 倍以上に拡げるならぼかさない）。
-    fn draw_bitmap(
-        &self,
-        bitmap: &ID2D1Bitmap1,
-        rect: crate::imagediff::Rect,
-        size: (f32, f32),
-        opacity: f32,
-    ) {
-        let mode = if rect.w >= size.0 * 2.0 {
+    fn draw_bitmap(&self, bitmap: &ID2D1Bitmap1, rect: crate::imagediff::Rect, opacity: f32) {
+        // 絵のピクセルの 2 倍以上に拡げるならぼかさない（SVG は細かく描いてあるので、そのピクセルで比べる）。
+        let pixels = unsafe { bitmap.GetPixelSize() }.width as f32;
+        let mode = if rect.w >= pixels * 2.0 {
             D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR
         } else {
             D2D1_INTERPOLATION_MODE_LINEAR

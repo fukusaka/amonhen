@@ -19959,10 +19959,15 @@ impl HistoryView {
             .map_or(0.0, |s| s.width as f32 / self.diff.scale.max(0.01));
         let top = first as f32 * DIFF_ROW_HEIGHT - self.diff.scroll_y;
         let mode = image::mode();
-        let layout = image::layout(top, width, mode);
         let Some(commit) = self.session.data.commit.as_mut() else {
             return false;
         };
+        let svg = commit
+            .stacked
+            .files
+            .get(file)
+            .is_some_and(|(path, _)| image::is_svg(path));
+        let layout = image::layout(top, width, mode, svg);
         let common = self
             .session
             .renderer
@@ -19976,6 +19981,13 @@ impl HistoryView {
         let mut drag = None;
         match image::hit(&layout, mode, view, common, x, y, alt) {
             Some(Hit::Mode(m)) => image::set_mode(m),
+            Some(Hit::ShowText) => {
+                if self.session.data.show_svg_as_text(file) {
+                    self.session.renderer.forget_diff();
+                    self.diff.dirty = true;
+                }
+                return false;
+            }
             Some(Hit::Position(p)) => {
                 view.position = p;
                 let slider = layout.slider.is_some_and(|r| r.contains(x, y));
@@ -20012,10 +20024,15 @@ impl HistoryView {
             .as_ref()
             .map_or(0.0, |s| s.width as f32 / self.diff.scale.max(0.01));
         let top = first as f32 * DIFF_ROW_HEIGHT - self.diff.scroll_y;
-        let layout = image::layout(top, width, image::mode());
         let Some(commit) = self.session.data.commit.as_mut() else {
             return;
         };
+        let svg = commit
+            .stacked
+            .files
+            .get(file)
+            .is_some_and(|(path, _)| image::is_svg(path));
+        let layout = image::layout(top, width, image::mode(), svg);
         let common = self
             .session
             .renderer

@@ -29,7 +29,58 @@ fn extension(path: &str) -> String {
         .unwrap_or_default()
 }
 
-/// 画像として比べるファイル（WIC が読める形式）。SVG は差分のまま。
+/// 比べる欄で見せるファイル（WIC が読める画像と SVG）。
+pub fn is_picture(path: &str) -> bool {
+    is_image(path) || is_svg(path)
+}
+
+pub fn is_svg(path: &str) -> bool {
+    extension(path) == "svg"
+}
+
+/// SVG の絵の大きさ（ルートの `width`・`height`、なければ `viewBox`。どちらもなければ 300 × 150。大きすぎれば
+/// 2048 に収める）。
+pub fn svg_size(bytes: &[u8]) -> (u32, u32) {
+    let text = String::from_utf8_lossy(&bytes[..bytes.len().min(8192)]);
+    let Some(start) = text.find("<svg") else {
+        return (300, 150);
+    };
+    let tag = &text[start..text[start..].find('>').map_or(text.len(), |e| start + e)];
+    let attr = |name: &str| -> Option<String> {
+        let at = tag.find(&format!(" {name}="))? + name.len() + 2;
+        let quote = tag[at..].chars().next()?;
+        let rest = &tag[at + 1..];
+        Some(rest[..rest.find(quote)?].to_owned())
+    };
+    let number = |v: &str| -> Option<f32> {
+        let v = v.trim().trim_end_matches("px");
+        v.parse::<f32>().ok().filter(|n| *n > 0.0)
+    };
+    let view_box = attr("viewBox").and_then(|v| {
+        let n: Vec<f32> = v
+            .split([' ', ','])
+            .filter_map(|p| p.trim().parse().ok())
+            .collect();
+        (n.len() == 4 && n[2] > 0.0 && n[3] > 0.0).then(|| (n[2], n[3]))
+    });
+    let (mut w, mut h) = match (
+        attr("width").as_deref().and_then(number),
+        attr("height").as_deref().and_then(number),
+    ) {
+        (Some(w), Some(h)) => (w, h),
+        (Some(w), None) => (w, view_box.map_or(150.0, |(vw, vh)| w * vh / vw)),
+        (None, Some(h)) => (view_box.map_or(300.0, |(vw, vh)| h * vw / vh), h),
+        (None, None) => view_box.unwrap_or((300.0, 150.0)),
+    };
+    let largest = w.max(h);
+    if largest > 2048.0 {
+        w = w * 2048.0 / largest;
+        h = h * 2048.0 / largest;
+    }
+    (w.round().max(1.0) as u32, h.round().max(1.0) as u32)
+}
+
+/// WIC が読める画像。
 pub fn is_image(path: &str) -> bool {
     matches!(
         extension(path).as_str(),
@@ -92,11 +143,20 @@ impl Default for View {
     }
 }
 
-/// 読んだ画像（乗算済みの BGRA）。
+/// 読んだ画像（乗算済みの BGRA）。`scale` は絵の 1 ピクセルあたりのピクセルの数（SVG は細かく描くので 1 より大きい）。
 pub struct Pixels {
     pub width: u32,
     pub height: u32,
     pub data: Vec<u8>,
+    pub scale: u32,
+}
+
+impl Pixels {
+    /// 絵としての大きさ（SVG なら描いた細かさで割ったもの）。
+    pub fn size(&self) -> (f32, f32) {
+        let s = self.scale.max(1) as f32;
+        (self.width as f32 / s, self.height as f32 / s)
+    }
 }
 
 /// 画像のバイト列を WIC で読む（最初のフレーム）。読めなければ None。
@@ -133,6 +193,7 @@ pub fn decode(bytes: &[u8]) -> Option<Pixels> {
                 width,
                 height,
                 data,
+                scale: 1,
             })
         }
     };
@@ -158,7 +219,10 @@ pub fn describe(bytes: Option<&[u8]>, pixels: Option<&Pixels>) -> String {
     };
     let size = format_size(bytes.len());
     match pixels {
-        Some(p) => format!("{} × {} px · {size}", p.width, p.height),
+        Some(p) => {
+            let (w, h) = p.size();
+            format!("{} × {} px · {size}", w.round(), h.round())
+        }
         None => size,
     }
 }
@@ -207,7 +271,7 @@ pub fn difference(
         }
     };
     let mut data = vec![0u8; w * h * 4];
-    let mut changed = 0;
+    let mut changed: usize = 0;
     for y in 0..h {
         for x in 0..w {
             let (old, new) = (at(before, x, y), at(after, x, y));
@@ -222,12 +286,16 @@ pub fn difference(
             }
         }
     }
+    let scale = before.or(after).map_or(1, |p| p.scale);
     let pixels = Pixels {
+        scale,
         width: w as u32,
         height: h as u32,
         data,
     };
-    (Some(pixels), changed, w * h)
+    // 数は絵のピクセルで（SVG は細かく描いた分を割り戻す）。
+    let per = (scale * scale).max(1) as usize;
+    (Some(pixels), changed.div_ceil(per), (w * h) / per)
 }
 
 /// 欄の中の四角（DIP）。
@@ -257,6 +325,8 @@ impl Rect {
 /// 欄の置き方: 帯の比べ方のボタン・スライダー・拡大縮小のボタン、絵の枠、下の説明。
 pub struct Layout {
     pub modes: [Rect; 4],
+    /// SVG の「テキストで見る」（SVG のときだけ）。
+    pub text: Option<Rect>,
     /// スワイプ・オニオンスキンの位置のスライダー（そのときだけ）。
     pub slider: Option<Rect>,
     /// 倍率（押すと 100% と合わせるを切り替える）・縮める・広げる・合わせる。
@@ -269,7 +339,7 @@ pub struct Layout {
 }
 
 /// 幅 `width`・上端 `top` の欄の置き方。
-pub fn layout(top: f32, width: f32, mode: Mode) -> Layout {
+pub fn layout(top: f32, width: f32, mode: Mode, svg: bool) -> Layout {
     let height = PANEL_LINES as f32 * crate::render::DIFF_ROW_HEIGHT;
     let bar_y = top + 8.0;
     let mut x = MARGIN;
@@ -289,6 +359,12 @@ pub fn layout(top: f32, width: f32, mode: Mode) -> Layout {
         };
         x += w;
     }
+    let text = svg.then_some(Rect {
+        x: x + 10.0,
+        y: bar_y,
+        w: 28.0,
+        h: BAR_HEIGHT - 4.0,
+    });
     let right = width - MARGIN;
     let button = |x: f32, w: f32| Rect {
         x,
@@ -310,6 +386,7 @@ pub fn layout(top: f32, width: f32, mode: Mode) -> Layout {
     let caption_top = top + height - CAPTION_HEIGHT - 6.0;
     Layout {
         modes,
+        text,
         slider,
         zoom_label,
         zoom_out,
@@ -416,6 +493,8 @@ pub fn zoom_text(view: &View) -> String {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Hit {
     Mode(Mode),
+    /// SVG をテキストの差分で見る。
+    ShowText,
     /// スライダーか、重ねた絵（スワイプ・オニオンスキンの位置。0〜1）。
     Position(f32),
     ZoomActual,
@@ -440,6 +519,9 @@ pub fn hit(
         if r.contains(x, y) {
             return Some(Hit::Mode(Mode::ALL[i]));
         }
+    }
+    if layout.text.is_some_and(|r| r.contains(x, y)) {
+        return Some(Hit::ShowText);
     }
     for (r, hit) in [
         (layout.zoom_label, Hit::ZoomActual),
@@ -478,6 +560,7 @@ mod tests {
         assert!(is_image("a/b/icon.PNG"));
         assert!(is_image("photo.jpeg"));
         assert!(!is_image("drawing.svg"));
+        assert!(is_picture("drawing.svg"));
         assert!(!is_image("README.md"));
     }
 
@@ -487,12 +570,26 @@ mod tests {
             width: w,
             height: h,
             data: vec![v; (w * h * 4) as usize],
+            scale: 1,
         };
         let (image, changed, total) = difference(Some(&one(2, 2, 10)), Some(&one(2, 1, 10)));
         // 2×2 のうち、後にない下の 2 ピクセルが違う。
         assert_eq!((changed, total), (2, 4));
         assert_eq!(image.map(|p| (p.width, p.height)), Some((2, 2)));
         assert_eq!(difference(None, None).2, 0);
+    }
+
+    #[test]
+    fn reads_the_size_of_an_svg() {
+        let svg = |s: &str| svg_size(s.as_bytes());
+        assert_eq!(svg(r#"<svg width="64" height="48px">"#), (64, 48));
+        assert_eq!(
+            svg(r#"<?xml?><svg xmlns="x" viewBox="0 0 24 12">"#),
+            (24, 12)
+        );
+        assert_eq!(svg(r#"<svg width="100" viewBox="0 0 50 25">"#), (100, 50));
+        assert_eq!(svg("<svg>"), (300, 150));
+        assert_eq!(svg(r#"<svg width="4096" height="1024">"#), (2048, 512));
     }
 
     #[test]

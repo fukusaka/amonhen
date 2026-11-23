@@ -345,6 +345,8 @@ pub struct CommitShown {
     whole: HashSet<usize>,
     /// 画像の比べる欄ごとの見せ方（位置・倍率）。
     pub image_views: HashMap<usize, crate::imagediff::View>,
+    /// 「テキストで見る」にした SVG（絵の代わりに差分）。
+    svg_text: HashSet<usize>,
     /// この差分を見分ける番号（読み直すたびに新しい。画像を読んだものを取っておく鍵）。
     id: u64,
     /// 表示を作り直した回数（古い表示の構文の色を捨てるため）。
@@ -374,6 +376,7 @@ impl CommitShown {
             contexts: HashMap::new(),
             whole: HashSet::new(),
             image_views: HashMap::new(),
+            svg_text: HashSet::new(),
             id: {
                 static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
                 NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
@@ -529,7 +532,9 @@ impl CommitShown {
             .files
             .iter()
             .enumerate()
-            .filter(|&(i, (path, _))| !collapsed[i] && crate::imagediff::is_image(path))
+            .filter(|&(i, (path, _))| {
+                !collapsed[i] && crate::imagediff::is_picture(path) && !self.svg_text.contains(&i)
+            })
             .map(|(i, _)| i)
             .collect();
         for &file in &panels {
@@ -2267,6 +2272,11 @@ impl Data {
             commit.tree_on = on;
             changed
         })
+    }
+
+    /// 画像の比べる欄の「テキストで見る」: その SVG を絵の代わりに差分で見せる（macOS 版と同じ）。
+    pub fn show_svg_as_text(&mut self, file: usize) -> bool {
+        self.relayout(|commit| commit.svg_text.insert(file))
     }
 
     /// 木のフォルダ `path` を畳む・開く。

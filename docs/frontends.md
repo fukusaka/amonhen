@@ -278,7 +278,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Changed files as a list or a tree whose folders fold | ✓ | ✓ | ✓ | △ | n/a | △ | VSCode: A tree beside the diff (Tree / List above the files).<br>TUI: A flat list above the diff. |
 | Widen a hunk's context, show a whole file | ✓ | ✓ | ✓ | — | n/a | — | |
 | Ignore whitespace (at line ends, changes in amount, all) | ✓ | ✓ | ✓ | — | ✓ | — | CLI: `show -w`, `-b`, `--ignore-space-at-eol`. |
-| Compare images (side by side, swipe, onion skin, differing pixels) | ✓ | ✓ | △ | — | n/a | — | Windows: SVG files still show as a text diff (no picture, no Show as Text). |
+| Compare images (side by side, swipe, onion skin, differing pixels) | ✓ | ✓ | ✓ | — | n/a | — | |
 | All Files: the tree at the commit and a file's contents with the commit's lines marked | ✓ | ✓ | — | — | n/a | — | |
 | File header menu (Blame, File History, copy path, open) | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: Blame, File History and Copy Path on the right-click; Open in VSCode's diff editor.<br>TUI: `B`, `L`, `Y` (copy path) and `e` (open in git's editor) for the file in view. |
 | Diff of a selection (range squashed, A..B / A...B, scattered) | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: With the engine.<br>CLI: `diff <rev> <rev>`.<br>TUI: `m` and Shift-↑↓ (or Ctrl- or Alt-click) select; `x` swaps the direction and `.` diffs from the merge base. |
