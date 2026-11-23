@@ -3,3 +3,4 @@
 pub mod common;
 pub mod flowchart;
 pub mod registry;
+pub mod swimlane;
