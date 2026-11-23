@@ -1264,6 +1264,12 @@ First release.
   ignore whitespace (at line ends, changes in amount or all), with the engine.
 - History's details compare images and SVGs side by side with their sizes, or by swipe, onion skin or differing
   pixels.
+- All Files in History's details, with the engine: the tree at the commit and a file's contents with the commit's
+  lines marked, zoomable images, SVGs as a picture or checked for mobile renderers, and formatted Markdown.
+- Long lines can wrap instead of scrolling sideways in every diff and file of the main view: Wrap Long Lines (Alt+Z)
+  or the ↩︎ above the diff (`amonhen.wrapLongLines`).
+- The commit details keep the height their divider was dragged to for every commit; double-click the divider to fit
+  them again. GitHub's image-only emoji (`:octocat:` and the like) show as dim chips in Markdown.
 
 #### Fixed
 

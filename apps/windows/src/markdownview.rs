@@ -133,7 +133,8 @@ fn block(b: &Block) -> View {
             }
         }
         Block::Paragraph { runs } => text(runs, BODY, false),
-        Block::Code { text: code, .. } => Border::new()
+        // 図（mermaid など）は、まだ描かずにコードとして見せる。
+        Block::Code { text: code, .. } | Block::Diagram { text: code, .. } => Border::new()
             .background(shade())
             .corner_radius(4.0)
             .padding(Thickness::new(10.0, 8.0, 10.0, 8.0))

@@ -2416,6 +2416,16 @@ async function historySelectionFlow(): Promise<void> {
     const whole = await waitPosted('commitDiff', widened, (m) => m.oid === s4oid && m.path === 's4.txt');
     assert.ok(whole.diff.hunks.some((h) => h.lines.some((l) => l.kind === '+' && l.text === 's4')), JSON.stringify(whole.diff));
 
+    // すべてのファイル: コミットの木を 1 段ずつ読み、このコミットで足したファイルの行には印が付く
+    const listed = posted.length;
+    await panel.history.handle({ type: 'treeEntries', oid: s4oid, path: '' });
+    const top = await waitPosted('treeEntries', listed, (m) => m.oid === s4oid && m.path === '');
+    assert.ok(top.entries.some((e) => e.name === 's4.txt' && e.kind === 'file'), JSON.stringify(top.entries));
+    const opened = posted.length;
+    await panel.history.handle({ type: 'treeFile', oid: s4oid, path: 's4.txt' });
+    const file = await waitPosted('treeFile', opened, (m) => m.oid === s4oid && m.path === 's4.txt');
+    assert.deepEqual(file.view.kind === 'text' && file.view.lines.map((l) => [l.text, l.mark]), [['s4', 'added']], JSON.stringify(file.view));
+
     // 離れた 2 つは取り方を選べる。逆にすると足した行が消した行になる
     const pair = await select(2, [s4, s1]);
     assert.equal(pair.kind, 'pair');

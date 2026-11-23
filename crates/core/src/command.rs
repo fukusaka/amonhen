@@ -714,6 +714,22 @@ pub enum Command {
         #[serde(default)]
         path: String,
     },
+    /// コミット `oid` の Markdown のファイル `path` を、FE が組み立てて見せるブロックの並びにしたもの（`info.blocks`:
+    /// `markdown::Block` の配列）。`github`（`https://github.com/owner/repo`）があれば `#123`・`@user`・コミットの ID も
+    /// リンクにする。History の「すべてのファイル」の整形した表示。
+    MarkdownBlocks {
+        oid: String,
+        path: String,
+        #[serde(default)]
+        github: Option<String>,
+    },
+    /// コミット `oid` の SVG のファイル `path` の、モバイル向けの描画部品で崩れる機能（`info.issues`: targets・
+    /// feature・message・count）と、部品ごとの崩れ方の近似（`info.approximations`: android・ios・flutter・
+    /// reactNative の SVG の文字列）。History の「すべてのファイル」の SVG のモバイルの確認。
+    SvgCheck {
+        oid: String,
+        path: String,
+    },
     /// `on` なら、このリポジトリを git maintenance に登録して裏で手入れさせる（`git maintenance start`: ユーザー全体の
     /// `maintenance.repo` に足し、OS の予定がなければ作る）。でなければ登録を外す（`git maintenance unregister`。
     /// 予定はほかのリポジトリも使うので残し、自動の手入れを止める `maintenance.auto=false` は外す）。git を動かす機械
@@ -5151,6 +5167,60 @@ impl Repository {
                     ..Default::default()
                 })
             }
+            Command::MarkdownBlocks {
+                oid: o,
+                path,
+                github,
+            } => {
+                let data = self.file_at(&oid(&o)?, &path)?;
+                let text = String::from_utf8_lossy(&data);
+                let blocks =
+                    crate::markdown::parse_json(&text, github.as_deref().filter(|g| !g.is_empty()));
+                Ok(Response {
+                    ok: true,
+                    info: Some(serde_json::json!({
+                        "blocks": serde_json::from_str::<serde_json::Value>(&blocks).unwrap_or_default(),
+                    })),
+                    ..Default::default()
+                })
+            }
+            Command::SvgCheck { oid: o, path } => {
+                use crate::svglint::Target;
+                let data = self.file_at(&oid(&o)?, &path)?;
+                let issues: Vec<_> = crate::svglint::lint(&data)
+                    .into_iter()
+                    .map(|i| {
+                        serde_json::json!({
+                            "targets": i.targets.iter().map(|t| t.key()).collect::<Vec<_>>(),
+                            "feature": i.feature,
+                            "message": i.message,
+                            "count": i.count,
+                        })
+                    })
+                    .collect();
+                let approximations: serde_json::Map<_, _> = [
+                    Target::Android,
+                    Target::Ios,
+                    Target::Flutter,
+                    Target::ReactNative,
+                ]
+                .into_iter()
+                .map(|t| {
+                    let svg = crate::svgsim::approximate(&data, t);
+                    (
+                        t.key().to_owned(),
+                        String::from_utf8_lossy(&svg).into_owned().into(),
+                    )
+                })
+                .collect();
+                Ok(Response {
+                    ok: true,
+                    info: Some(
+                        serde_json::json!({ "issues": issues, "approximations": approximations }),
+                    ),
+                    ..Default::default()
+                })
+            }
             Command::TreeFolders { path, rev } => Ok(Response {
                 ok: true,
                 info: Some(self.tree_folders(ops, rev.as_deref().unwrap_or("HEAD"), &path)?),
@@ -5824,6 +5894,56 @@ mod tests {
 
     fn run(repo: &Repository, json: &str) -> serde_json::Value {
         serde_json::from_str(&repo.run_json(json)).unwrap()
+    }
+
+    #[test]
+    fn markdown_blocks_and_svg_check_read_a_file_at_a_commit() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        std::fs::create_dir_all(dir.join("docs")).unwrap();
+        std::fs::write(dir.join("docs/a.md"), "# Title\n\nFixes #12\n").unwrap();
+        std::fs::write(
+            dir.join("dot.svg"),
+            r#"<svg xmlns="http://www.w3.org/2000/svg"><style>circle{fill:red}</style><circle r="5"/></svg>"#,
+        )
+        .unwrap();
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-q", "-m", "files"]);
+        let head = git(dir, &["rev-parse", "HEAD"]);
+        let md = run(
+            &repo,
+            &format!(
+                r#"{{"op":"markdownBlocks","oid":"{head}","path":"docs/a.md","github":"https://github.com/o/r"}}"#
+            ),
+        );
+        let blocks = md["info"]["blocks"].as_array().unwrap();
+        assert_eq!(blocks[0]["kind"], "heading", "{md}");
+        assert!(
+            md.to_string().contains("https://github.com/o/r/issues/12"),
+            "{md}"
+        );
+        let svg = run(
+            &repo,
+            &format!(r#"{{"op":"svgCheck","oid":"{head}","path":"dot.svg"}}"#),
+        );
+        assert!(
+            !svg["info"]["issues"].as_array().unwrap().is_empty(),
+            "{svg}"
+        );
+        for target in ["android", "ios", "flutter", "reactNative"] {
+            assert!(
+                svg["info"]["approximations"][target]
+                    .as_str()
+                    .unwrap()
+                    .contains("<svg"),
+                "{svg}"
+            );
+        }
+        let missing = run(
+            &repo,
+            &format!(r#"{{"op":"svgCheck","oid":"{head}","path":"none.svg"}}"#),
+        );
+        assert_eq!(missing["ok"], false);
     }
 
     #[test]
