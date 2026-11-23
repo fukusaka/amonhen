@@ -11,6 +11,8 @@ becomes the GitHub Release notes.
 
 #### Added
 
+- Markdown previews draw Graphviz DOT diagrams (` ```dot `, ` ```graphviz `, ` ```gv `) with the app's own layout,
+  noting under the picture what is drawn approximately.
 - `amonhen tui` is a front end in the terminal: History with commit details and diffs, the Working Copy with staging
   by file, hunk and line, discard, commit and amend, a sidebar of branches and tags, History search and
   ancestor emphasis, and fetch, pull, push, checkout, new branch, merge, rebase, stash and undo,
