@@ -321,6 +321,20 @@ impl Sidebar {
     }
 
     /// 選んでいる ref の種類（`branch`・`remote`・`tag`）・名前・指すコミット。
+    /// ローカルとリモートのブランチ（名前と、リモートのものか）。
+    pub fn branches(&self) -> Vec<(String, bool)> {
+        (self.refs["entries"].as_array().into_iter().flatten())
+            .filter_map(|e| {
+                let remote = match e["kind"].as_str()? {
+                    "branch" => false,
+                    "remote" => true,
+                    _ => return None,
+                };
+                Some((e["name"].as_str()?.to_owned(), remote))
+            })
+            .collect()
+    }
+
     /// `kind` の ref `name` の添え書き（stash ならメッセージ）。
     pub fn detail_of(&self, kind: &str, name: &str) -> Option<String> {
         self.refs["entries"]

@@ -214,6 +214,59 @@ impl Candidate {
 
 /// Quick Open: アプリと同じ候補（ブックマーク、最近開いたもの、探すフォルダの下で見つけたもの）を打った語で絞り、
 /// 選んだリポジトリで TUI を開き直す。
+/// ブランチの切り替え（アプリの Switch Branch…）: 打った語で絞り、最近切り替えたものを先に。合うものがなければ、
+/// その名前で新しいブランチを作る。
+struct BranchPick {
+    query: String,
+    selected: usize,
+    /// ブランチ（名前と、リモートのものか）。今のブランチは入れない。
+    items: Vec<(String, bool)>,
+    /// 最近切り替えたブランチ（新しい順。HEAD の reflog の「checkout: moving from A to B」から）。
+    recent: Vec<String>,
+}
+
+/// 切り替えの候補の 1 つ。
+enum BranchChoice<'a> {
+    Branch(&'a str, bool),
+    New(&'a str),
+}
+
+impl BranchPick {
+    fn shown(&self) -> Vec<BranchChoice<'_>> {
+        let words: Vec<String> = self
+            .query
+            .split_whitespace()
+            .map(str::to_lowercase)
+            .collect();
+        let mut shown: Vec<(&String, bool)> = self
+            .items
+            .iter()
+            .filter(|(name, _)| {
+                let name = name.to_lowercase();
+                words.iter().all(|w| name.contains(w.as_str()))
+            })
+            .map(|(name, remote)| (name, *remote))
+            .collect();
+        // 最近のもの（新しい順）、ほかのローカルのブランチ、リモートのブランチ。
+        let rank = |name: &str, remote: bool| -> (usize, usize) {
+            match self.recent.iter().position(|r| r == name) {
+                Some(i) if !remote => (0, i),
+                _ => (if remote { 2 } else { 1 }, 0),
+            }
+        };
+        shown.sort_by(|a, b| rank(a.0, a.1).cmp(&rank(b.0, b.1)).then(a.0.cmp(b.0)));
+        let mut choices: Vec<BranchChoice<'_>> = shown
+            .into_iter()
+            .map(|(n, r)| BranchChoice::Branch(n, r))
+            .collect();
+        let name = self.query.trim();
+        if !name.is_empty() && !self.items.iter().any(|(n, r)| !r && n == name) {
+            choices.push(BranchChoice::New(name));
+        }
+        choices
+    }
+}
+
 struct QuickOpen {
     query: String,
     selected: usize,
@@ -470,6 +523,8 @@ pub struct App {
     /// Quick Open で選んだリポジトリの場所（TUI を閉じて、そこで開き直す）。
     open_location: Option<String>,
     quick_open: Option<QuickOpen>,
+    /// ブランチの切り替え（`Ctrl-b`）。
+    branch_pick: Option<BranchPick>,
     fixup_pick: Option<MessagePick>,
     /// 書きかけのメッセージとして最後に読んだか書いたもの（読み終えるまでは None で、書かない）。
     draft_saved: Option<String>,
@@ -705,6 +760,7 @@ impl App {
             open_worktree: None,
             open_location: None,
             quick_open: None,
+            branch_pick: None,
             fixup_pick: None,
             draft_saved: None,
             recent_messages: None,
@@ -842,6 +898,27 @@ impl App {
         self.dirty = true;
     }
 
+    /// ブランチの切り替えを開く。最近切り替えたものは、HEAD の reflog を読んでから並べ直す。
+    fn open_branch_pick(&mut self) {
+        let items = self
+            .sidebar
+            .branches()
+            .into_iter()
+            .filter(|(name, remote)| *remote || Some(name.as_str()) != self.branch.as_deref())
+            .collect();
+        self.branch_pick = Some(BranchPick {
+            query: String::new(),
+            selected: 0,
+            items,
+            recent: Vec::new(),
+        });
+        self.send(Request::Run {
+            name: "recentBranches",
+            command: json!({"op": "reflog", "name": null, "limit": 200}),
+        });
+        self.dirty = true;
+    }
+
     /// Working Copy・ref・History を読み直す。
     fn refresh(&mut self) {
         self.changes.refresh();
@@ -919,6 +996,8 @@ impl App {
         let damage = std::mem::take(&mut self.damage);
         let over = self.help
             || self.quick_open.is_some()
+            || self.branch_pick.is_some()
+            || self.showing_hooks.is_some()
             || self.fixup_pick.is_some()
             || self.palette.is_some()
             || self.operation_log.is_some()
@@ -1530,6 +1609,11 @@ impl App {
             self.dirty = true;
             return;
         }
+        // アプリの Switch Branch…: 打った語で絞って切り替える（最近のものを先に）。
+        if control && key.code == KeyCode::Char('b') {
+            self.open_branch_pick();
+            return;
+        }
         // アプリの Refresh: Working Copy・ref・History を読み直す（ふだんは変わったら読み直している）。
         if control && key.code == KeyCode::Char('r') {
             self.refresh();
@@ -1736,6 +1820,59 @@ impl App {
             }
             pick.selected = pick.selected.min(pick.shown().len().saturating_sub(1));
             self.fixup_pick = Some(pick);
+            return;
+        }
+        if let Some(mut pick) = self.branch_pick.take() {
+            self.dirty = true;
+            match key.code {
+                KeyCode::Esc => return,
+                KeyCode::Enter => {
+                    match pick.shown().get(pick.selected) {
+                        Some(BranchChoice::Branch(name, false)) => {
+                            let name = name.to_string();
+                            self.run(
+                                "checkout",
+                                tr!("Checking out {name}…", name = name),
+                                json!({"op": "checkout", "branch": name}),
+                            );
+                        }
+                        Some(BranchChoice::Branch(name, true)) => {
+                            let name = name.to_string();
+                            self.run(
+                                "checkout",
+                                tr!("Checking out {name}…", name = name),
+                                json!({"op": "track", "remoteBranch": name}),
+                            );
+                        }
+                        Some(BranchChoice::New(name)) => {
+                            let name = name.to_string();
+                            self.run(
+                                "createBranch",
+                                tr!("Creating {name}…", name = name),
+                                json!({"op": "createBranch", "name": name, "start": "HEAD",
+                                    "checkout": true}),
+                            );
+                        }
+                        None => {}
+                    }
+                    return;
+                }
+                KeyCode::Down => pick.selected += 1,
+                KeyCode::Char('n') if control => pick.selected += 1,
+                KeyCode::Up => pick.selected = pick.selected.saturating_sub(1),
+                KeyCode::Char('p') if control => pick.selected = pick.selected.saturating_sub(1),
+                KeyCode::Backspace => {
+                    pick.query.pop();
+                    pick.selected = 0;
+                }
+                KeyCode::Char(ch) if !control => {
+                    pick.query.push(ch);
+                    pick.selected = 0;
+                }
+                _ => {}
+            }
+            pick.selected = pick.selected.min(pick.shown().len().saturating_sub(1));
+            self.branch_pick = Some(pick);
             return;
         }
         if let Some(mut quick) = self.quick_open.take() {
@@ -3049,6 +3186,29 @@ impl App {
                     add(ask);
                 }
                 self.dirty = true;
+                return;
+            }
+            // HEAD の reflog の「checkout: moving from A to B」から、最近切り替えたブランチ（新しい順）。
+            "recentBranches" => {
+                if let Some(pick) = &mut self.branch_pick {
+                    let mut recent: Vec<String> = Vec::new();
+                    for entry in reply["info"]["entries"].as_array().into_iter().flatten() {
+                        let Some(message) = entry["message"].as_str() else {
+                            continue;
+                        };
+                        let Some(moving) = message.strip_prefix("checkout: moving from ") else {
+                            continue;
+                        };
+                        if let Some((_, to)) = moving.split_once(" to ")
+                            && !recent.iter().any(|r| r == to)
+                        {
+                            recent.push(to.to_owned());
+                        }
+                    }
+                    pick.recent = recent;
+                    pick.selected = 0;
+                    self.dirty = true;
+                }
                 return;
             }
             "fetchConfig" => {
@@ -5482,8 +5642,8 @@ impl App {
             ("", String::new()),
             ("f p P", tr!("Fetch, pull, push")),
             (
-                "b T",
-                tr!("New branch, new tag at the selected commit or ref"),
+                "b T Ctrl-b",
+                tr!("New branch, new tag at the selected commit or ref; switch branch"),
             ),
             (
                 "s S",
@@ -6961,6 +7121,32 @@ impl App {
                     Style::new().fg(Color::Indexed(244)),
                 );
             }
+        }
+        if let Some(pick) = &self.branch_pick {
+            let shown = pick.shown();
+            let recent = tr!("recent");
+            let remote = tr!("remote");
+            let new = tr!("new branch");
+            let rows: Vec<(&str, &str, &str)> = shown
+                .iter()
+                .map(|c| match c {
+                    BranchChoice::Branch(name, true) => ("", *name, remote.as_str()),
+                    BranchChoice::Branch(name, false) if pick.recent.iter().any(|r| r == name) => {
+                        ("", *name, recent.as_str())
+                    }
+                    BranchChoice::Branch(name, false) => ("", *name, ""),
+                    BranchChoice::New(name) => ("+ ", *name, new.as_str()),
+                })
+                .collect();
+            cursor = choice_list(
+                buf,
+                area,
+                &tr!(" Switch Branch "),
+                &pick.query,
+                &rows,
+                pick.selected,
+                &tr!("No branch matches"),
+            );
         }
         if let Some(quick) = &self.quick_open {
             let shown = quick.shown();

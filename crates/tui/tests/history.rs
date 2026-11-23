@@ -1720,6 +1720,41 @@ fn merge_stops_at_conflicts_and_can_be_aborted() {
     assert!(!side.iter().any(|l| l.contains("Conflicts")), "{side:?}");
 }
 
+/// `Ctrl-b` でブランチを切り替える（アプリの Switch Branch…）: 打った語で絞り、最近のものを先に。合うものがなければ
+/// その名前で作る
+#[test]
+fn switch_branch_with_ctrl_b() {
+    let dir = tempfile::tempdir().unwrap();
+    merged(dir.path());
+    git(dir.path(), BASE, &["branch", "aaa"]);
+    // topic に切り替えて戻った（最近のもの）。aaa は一度も切り替えていない。
+    git(dir.path(), BASE, &["switch", "-q", "topic"]);
+    git(dir.path(), BASE, &["switch", "-q", "main"]);
+    let current = || git_out(dir.path(), &["branch", "--show-current"]);
+    let list = amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), "\x02").unwrap();
+    println!("{list}");
+    assert!(list.contains(" Switch Branch "), "{list}");
+    // 枠の中の行で比べる。
+    let row = |name: &str| {
+        list.lines()
+            .position(|l| l.contains(&format!("│ {name} ")))
+            .unwrap()
+    };
+    assert!(
+        row("topic") < row("aaa"),
+        "the recent branch comes first: {list}"
+    );
+    assert!(list.contains("topic  recent"), "{list}");
+    // 絞って切り替える。
+    amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), "\x02aa\n").unwrap();
+    assert_eq!(current(), "aaa\n");
+    // 合うものがなければ、その名前で作って切り替える。
+    let new = amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), "\x02fresh").unwrap();
+    assert!(new.contains("fresh") && new.contains("new branch"), "{new}");
+    amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), "\x02fresh\n").unwrap();
+    assert_eq!(current(), "fresh\n");
+}
+
 /// サイドバーの `r` で、今のブランチを選んだ ref の上に rebase する
 #[test]
 fn rebase_onto_the_picked_ref() {
