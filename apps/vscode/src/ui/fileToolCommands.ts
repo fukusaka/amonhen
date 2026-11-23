@@ -8,7 +8,7 @@ import * as vscode from 'vscode';
 import type { RepositoryManager } from '../state/manager.ts';
 import type { Repository } from '../state/repository.ts';
 import type { ViewName } from '../view/protocol.ts';
-import { MainPanel } from './mainPanel.ts';
+import { MainPanel, toggleWrapLongLines } from './mainPanel.ts';
 
 /** メインビューのファイルの右クリック（data-vscode-context）。path はリポジトリの中のパス、oid はそのコミット */
 interface FileContext {
@@ -90,6 +90,7 @@ export function registerFileToolCommands(
       manager.select(target.repo);
       await show('blame').blame.show(target.path, rev);
     }),
+    vscode.commands.registerCommand('amonhen.toggleWrapLongLines', () => toggleWrapLongLines()),
     // History の詳細のファイルの右クリック: その詳細を出している欄がファイル全体を頼む（エンジンだけ）
     vscode.commands.registerCommand('amonhen.commitFile.showWholeFile', (ctx?: FileContext) => {
       if (ctx?.oid && ctx.path) MainPanel.active?.post({ type: 'wholeFile', oid: ctx.oid, path: ctx.path });

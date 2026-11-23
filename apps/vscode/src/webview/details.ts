@@ -20,7 +20,7 @@ import type {
 import { el, formatDate, getState, post, updateState } from './api.ts';
 import { type FileDir, makeFileTree } from '../workingCopy/fileList.ts';
 import { COLLAPSE_ABOVE, isGenerated, type LineCounts, lineCounts, renamedPath } from '../history/stackedFiles.ts';
-import { renderDiffBody } from './diffView.ts';
+import { renderDiffBody, wrapButton } from './diffView.ts';
 import { isImagePath, renderImageDiff } from './imageDiff.ts';
 import { type AllFiles, createAllFiles } from './allFiles.ts';
 import { signatureMark } from './signature.ts';
@@ -299,7 +299,8 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
       );
     }
     if (canAll && page === 'all') {
-      bar.replaceChildren(pages);
+      const spacer = el('span', 'spacer');
+      bar.replaceChildren(pages, spacer, wrapButton());
       return;
     }
     const total = el('span', 'files-total', `${files.length} file${files.length === 1 ? '' : 's'}`);
@@ -328,6 +329,7 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
       select.addEventListener('change', () => post({ type: 'whitespace', whitespace: select.value as DiffWhitespace }));
       items.push(select);
     }
+    items.push(wrapButton());
     if (layout.tree && diffs?.querySelector('.dir-head')) {
       const anyFolded = foldedDirs.size > 0;
       items.push(
