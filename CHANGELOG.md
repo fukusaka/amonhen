@@ -1251,6 +1251,11 @@ First release.
   their menu. One bar shows a list or a tree whose folders fold, and expands or collapses everything. Viewed and one
   file at a time are gone.
 
+#### Added
+
+- History's details can widen a file's context (⇕ on a hunk header), show the whole file (on the file's ⋯) and
+  ignore whitespace (at line ends, changes in amount or all), with the engine.
+
 #### Fixed
 
 - Working Copy no longer reports "File has no changes" when the selected file is changed again while its diff is
