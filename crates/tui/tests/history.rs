@@ -2661,27 +2661,26 @@ fn activity_operations_list_what_ran() {
         cache.contains("Cache file:") || cache.contains("isn't cached on disk"),
         "{cache}"
     );
-    // 次の `Tab` で Events（変化の知らせ）。
-    let events =
-        amonhen_tui::snapshot(open(dir.path()), 160, 20, clock(), "jRs:activity\n\t\t\t").unwrap();
+    // Activity の `Tab` の順: 操作ログ → Operations → History Cache → Performance → Events → Daemon → 操作ログ。
+    let tabs = |n: usize| {
+        let keys = format!("jRs:activity\n{}", "\t".repeat(n));
+        amonhen_tui::snapshot(open(dir.path()), 160, 20, clock(), &keys).unwrap()
+    };
+    // Performance: 読み直し・差分にかかった時間。
+    let performance = tabs(3);
+    assert!(performance.contains(" Performance "), "{performance}");
+    assert!(performance.contains("History reload"), "{performance}");
+    // Events: 変化の知らせ。
+    let events = tabs(4);
     assert!(events.contains(" Events "), "{events}");
-    // 次の `Tab` で Daemon（共有の daemon の様子。読むだけで、起動・停止は試さない）、さらに `Tab` で操作ログへ。
-    let daemon =
-        amonhen_tui::snapshot(open(dir.path()), 160, 20, clock(), "jRs:activity\n\t\t\t\t")
-            .unwrap();
+    // Daemon: 共有の daemon の様子（読むだけで、起動・停止は試さない）。
+    let daemon = tabs(5);
     assert!(daemon.contains(" Daemon "), "{daemon}");
     assert!(
         daemon.contains("Running: pid") || daemon.contains("isn’t running"),
         "{daemon}"
     );
-    let back = amonhen_tui::snapshot(
-        open(dir.path()),
-        160,
-        20,
-        clock(),
-        "jRs:activity\n\t\t\t\t\t",
-    )
-    .unwrap();
+    let back = tabs(6);
     assert!(back.contains(" Operation Log "), "{back}");
     // Operations の `s`: 記録を JSON のファイルに書き出す（アプリの Export JSON…）。
     let out = tempfile::tempdir().unwrap();

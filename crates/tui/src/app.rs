@@ -118,6 +118,12 @@ struct Layout {
 }
 
 /// 変化の知らせのビット（`amonhen_watch::Changes`）。
+/// Activity の Performance で測るもの。
+const PERF_HISTORY: &str = "history";
+const PERF_STATUS: &str = "status";
+const PERF_DIFF: &str = "diff";
+const PERF_WORKING_DIFF: &str = "workingDiff";
+
 const CHANGED_REFS: u32 = 1;
 const CHANGED_INDEX: u32 = 2;
 const CHANGED_WORKTREE: u32 = 4;
@@ -714,6 +720,11 @@ pub struct App {
     event_log: std::collections::VecDeque<(i64, String)>,
     /// Activity の Events を出している（一番上からの位置）。
     showing_events: Option<usize>,
+    /// 画面の速さ: 測るものごとに、頼んだ時刻と、かかった時間（ミリ秒、新しいものが後ろ、200 まで）。
+    perf_started: std::collections::HashMap<&'static str, std::time::Instant>,
+    perf: Vec<(&'static str, std::collections::VecDeque<f64>)>,
+    /// Activity の Performance を出している。
+    showing_performance: bool,
     /// History の編集モード（`E`）。
     edit_mode: Option<crate::editmode::EditMode>,
     /// 印をつけたコミット（新しい順）を、編集モードで 1 つにまとめる（`E`。行が届いたら決める）。
@@ -848,6 +859,9 @@ impl App {
             daemon: None,
             event_log: Default::default(),
             showing_events: None,
+            perf_started: Default::default(),
+            perf: Vec::new(),
+            showing_performance: false,
             export_records: None,
             edit_mode: None,
             combining: Vec::new(),
@@ -1060,6 +1074,17 @@ impl App {
     }
 
     fn send(&mut self, request: Request) {
+        // 画面の速さ（Activity の Performance）: 読み直し・差分の読み込みを頼んだ時刻。
+        let metric = match &request {
+            Request::Open { .. } => Some(PERF_HISTORY),
+            Request::Status => Some(PERF_STATUS),
+            Request::Commit { .. } | Request::Selection { .. } => Some(PERF_DIFF),
+            Request::WorkingDiff { .. } => Some(PERF_WORKING_DIFF),
+            _ => None,
+        };
+        if let Some(metric) = metric {
+            self.perf_started.insert(metric, std::time::Instant::now());
+        }
         self.pending += 1;
         self.loader.send(request);
     }
@@ -1138,6 +1163,7 @@ impl App {
             || self.history_cache.is_some()
             || self.daemon.is_some()
             || self.showing_events.is_some()
+            || self.showing_performance
             || self.edit_mode.is_some();
         if std::mem::take(&mut self.dirty) || (over && damage != Damage::default()) {
             return Some(Damage::ALL);
@@ -1445,6 +1471,16 @@ impl App {
             }
             Event::Loaded(loaded) => {
                 self.pending = self.pending.saturating_sub(1);
+                let metric = match &loaded {
+                    Loaded::Opened { .. } => Some(PERF_HISTORY),
+                    Loaded::Status(_) => Some(PERF_STATUS),
+                    Loaded::Commit { .. } => Some(PERF_DIFF),
+                    Loaded::WorkingDiff { .. } => Some(PERF_WORKING_DIFF),
+                    _ => None,
+                };
+                if let Some(metric) = metric {
+                    self.record_perf(metric);
+                }
                 // 行と祖先は History の中だけ、コミットと構文の色は詳細・差分の中だけが変わる。
                 match &loaded {
                     Loaded::Rows { .. } | Loaded::Lineage { .. } => self.damage |= Damage::MAIN,
@@ -1990,6 +2026,15 @@ impl App {
             }
             return;
         }
+        // Performance: `Tab` で Events へ。ほかのキーで閉じる。
+        if self.showing_performance {
+            self.dirty = true;
+            self.showing_performance = false;
+            if key.code == KeyCode::Tab {
+                self.showing_events = Some(0);
+            }
+            return;
+        }
         // Events: j/k で動かす、`Tab` で Daemon へ。ほかのキーで閉じる。
         if let Some(top) = self.showing_events {
             self.dirty = true;
@@ -2021,7 +2066,7 @@ impl App {
                 }
                 KeyCode::Tab => {
                     self.history_cache = None;
-                    self.showing_events = Some(0);
+                    self.showing_performance = true;
                 }
                 _ => self.history_cache = None,
             }
@@ -3386,6 +3431,25 @@ impl App {
             name: "activity",
             request: json!({"op": "activity"}),
         });
+    }
+
+    /// 頼んでから答えが届くまでの時間を、Performance に 1 つ記録する（200 まで）。
+    fn record_perf(&mut self, metric: &'static str) {
+        let Some(started) = self.perf_started.remove(metric) else {
+            return;
+        };
+        let ms = started.elapsed().as_secs_f64() * 1000.0;
+        let values = match self.perf.iter().position(|(m, _)| *m == metric) {
+            Some(i) => &mut self.perf[i].1,
+            None => {
+                self.perf.push((metric, Default::default()));
+                &mut self.perf.last_mut().expect("just pushed").1
+            }
+        };
+        values.push_back(ms);
+        if values.len() > 200 {
+            values.pop_front();
+        }
     }
 
     /// Activity の Events に 1 つ記録する（500 まで）。
@@ -8761,6 +8825,9 @@ impl App {
         if let Some(top) = self.showing_events {
             self.draw_events(top, area, buf);
         }
+        if self.showing_performance {
+            self.draw_performance(area, buf);
+        }
         if let Some(log) = &self.operation_log {
             let times: Vec<String> = log
                 .entries
@@ -9131,7 +9198,7 @@ impl App {
                 None => tr!("Nothing written yet this run"),
             });
         }
-        let hint = tr!("r read again   Tab events   other keys close");
+        let hint = tr!("r read again   Tab performance   other keys close");
         let text = lines
             .iter()
             .map(|l| l.width())
@@ -9148,6 +9215,73 @@ impl App {
         );
         frame_box(buf, area, at, &tr!(" History Cache "));
         let inner = usize::from(width.saturating_sub(4));
+        for (y, line) in (at.y + 1..at.bottom().saturating_sub(2)).zip(&lines) {
+            buf.set_stringn(at.x + 2, y, line, inner, Style::new());
+        }
+        buf.set_stringn(
+            at.x + 2,
+            at.bottom() - 2,
+            &hint,
+            inner,
+            Style::new().fg(Color::Indexed(244)),
+        );
+    }
+
+    /// Performance の枠: 測るものごとに、回数・p50・p95・最大・最後（ミリ秒）。
+    fn draw_performance(&self, area: Rect, buf: &mut Buffer) {
+        let mut lines: Vec<String> = Vec::new();
+        let names = [
+            (PERF_HISTORY, tr!("History reload")),
+            (PERF_STATUS, tr!("Status reload")),
+            (PERF_DIFF, tr!("Commit diff load")),
+            (PERF_WORKING_DIFF, tr!("Working Copy diff load")),
+        ];
+        let width = names.iter().map(|(_, n)| n.width()).max().unwrap_or(0);
+        lines.push(format!(
+            "{:<width$}  {:>5}  {:>8}  {:>8}  {:>8}  {:>8}",
+            "",
+            tr!("count"),
+            "p50",
+            "p95",
+            tr!("max"),
+            tr!("last")
+        ));
+        for (metric, name) in &names {
+            let Some((_, values)) = self.perf.iter().find(|(m, _)| m == metric) else {
+                lines.push(format!("{name:<width$}  {:>5}", 0));
+                continue;
+            };
+            let mut sorted: Vec<f64> = values.iter().copied().collect();
+            sorted.sort_by(f64::total_cmp);
+            let at = |q: f64| sorted[((sorted.len() - 1) as f64 * q).round() as usize];
+            let ms = |v: f64| format!("{v:.1}ms");
+            lines.push(format!(
+                "{name:<width$}  {:>5}  {:>8}  {:>8}  {:>8}  {:>8}",
+                sorted.len(),
+                ms(at(0.5)),
+                ms(at(0.95)),
+                ms(at(1.0)),
+                ms(*values.back().unwrap_or(&0.0))
+            ));
+        }
+        let hint =
+            tr!("From asking to the answer, the last 200 of each   Tab events   other keys close");
+        let text = lines
+            .iter()
+            .map(|l| l.width())
+            .max()
+            .unwrap_or(0)
+            .max(hint.width()) as u16;
+        let w = (text + 4).min(area.width);
+        let height = (lines.len() as u16 + 4).min(area.height);
+        let at = Rect::new(
+            area.x + (area.width - w) / 2,
+            area.y + (area.height - height) / 2,
+            w,
+            height,
+        );
+        frame_box(buf, area, at, &tr!(" Performance "));
+        let inner = usize::from(w.saturating_sub(4));
         for (y, line) in (at.y + 1..at.bottom().saturating_sub(2)).zip(&lines) {
             buf.set_stringn(at.x + 2, y, line, inner, Style::new());
         }
@@ -9697,6 +9831,30 @@ mod tests {
     }
 
     /// サイドバーの Submodules: submodule が並び、中に変更があれば ✎。Enter で TUI をそこで開き直す。
+    /// History と status の読み直しにかかった時間は、Activity の Performance に残る
+    #[test]
+    fn reloads_are_timed_for_performance() {
+        let (_dir, mut app, _rx) = app_with_history();
+        let count = |app: &App, metric: &str| {
+            app.perf
+                .iter()
+                .find(|(m, _)| *m == metric)
+                .map_or(0, |(_, v)| v.len())
+        };
+        assert!(count(&app, PERF_HISTORY) >= 1);
+        assert!(count(&app, PERF_STATUS) >= 1);
+        app.showing_performance = true;
+        let mut buf = Buffer::empty(Rect::new(0, 0, 100, 12));
+        app.draw(&mut buf, Damage::ALL);
+        let screen: String = (0..12)
+            .flat_map(|y| (0..100).map(move |x| (x, y)))
+            .map(|(x, y)| buf[(x, y)].symbol().to_owned())
+            .collect();
+        assert!(screen.contains(" Performance "), "{screen}");
+        assert!(screen.contains("History reload"), "{screen}");
+        assert!(screen.contains("p95"), "{screen}");
+    }
+
     /// 変化の知らせは Activity の Events に残る（何が変わり、何を読み直すか）
     #[test]
     fn change_notices_are_kept_as_events() {
