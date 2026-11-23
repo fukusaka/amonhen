@@ -3088,6 +3088,8 @@ fn connect_selection(
     pending: &Rc<Cell<u32>>,
     changed: Hook,
 ) {
+    // History の差分は、merge なら最初の親との差分（詳細にそう書き添える）。
+    details.set_first_parent_note(true);
     let loader = Rc::new(Loader {
         details: details.clone(),
         files: files.clone(),

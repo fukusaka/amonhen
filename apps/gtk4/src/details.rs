@@ -118,6 +118,10 @@ pub struct Details {
     body: gtk::Label,
     /// 本文の最後の段落のトレーラー（`Signed-off-by:` など。本文から除いて薄く並べる。macOS 版と同じ）。
     trailers: gtk::Label,
+    /// merge のコミットで、差分が最初の親との差分だと書き添える 1 行（薄く）。
+    merge_note: gtk::Label,
+    /// merge の書き添えを出すか（History などでコミットの差分を出すとき。stash では出さない）。
+    first_parent_note: std::cell::Cell<bool>,
     notes: gtk::Label,
     info: RefCell<Option<Value>>,
     /// 詳細より先に届いた、時間のかかる分。
@@ -514,6 +518,7 @@ impl Details {
             }
         });
         let trailers = label(&["dim-label"]);
+        let merge_note = label(&["dim-label", "caption"]);
         let notes = label(&[]);
         let selection_title = label(&["title-4"]);
         let selection_note = label(&["dim-label", "caption"]);
@@ -580,6 +585,7 @@ impl Details {
         column.append(&subject);
         column.append(&body);
         column.append(&trailers);
+        column.append(&merge_note);
         column.append(&notes);
         let scrolled = gtk::ScrolledWindow::builder()
             .child(&column)
@@ -638,6 +644,8 @@ impl Details {
             subject,
             body,
             trailers,
+            merge_note,
+            first_parent_note: std::cell::Cell::new(false),
             notes,
             info: RefCell::default(),
             extras: Rc::default(),
@@ -1055,7 +1063,7 @@ impl Details {
         self.brief.set_visible(false);
         self.clear_table();
         self.subject.set_text("");
-        for l in [&self.body, &self.trailers, &self.notes] {
+        for l in [&self.body, &self.trailers, &self.merge_note, &self.notes] {
             l.set_text("");
             l.set_visible(false);
         }
@@ -1321,12 +1329,26 @@ impl Details {
                 format!(
                     "<span weight=\"medium\">{}: </span>{}",
                     esc(key),
-                    linked(value, None, false)
+                    // 本文と同じく、`#123` とコミット ID もリンクに（macOS 版と同じ）。
+                    linked(value, web.as_deref(), revs)
                 )
             })
             .collect();
         self.trailers.set_markup(&lines.join("\n"));
         self.trailers.set_visible(!lines.is_empty() && !brief);
+        // merge のコミットでは、下の変更が最初の親との差分だと書き添える（macOS 版と同じ）。
+        let parents = strings(&info["parents"]);
+        let first = parents.first().filter(|_| parents.len() > 1);
+        match first.filter(|_| self.first_parent_note.get()) {
+            Some(first) => {
+                self.merge_note.set_text(&tr!(
+                    "This is a merge: the changes below are against its first parent ({id}).",
+                    id = crate::titles::short(first)
+                ));
+                self.merge_note.set_visible(!brief);
+            }
+            None => self.merge_note.set_visible(false),
+        }
         let notes = extras.map_or("", |e| str_of(e, "notes")).trim();
         self.notes.set_markup(&format!(
             "<span size=\"small\" weight=\"bold\" alpha=\"60%\">Notes:</span>\n{}",
@@ -1728,6 +1750,11 @@ impl Details {
     }
 
     /// 幅 `width` で、中身をすべて見せるのに要る高さ。
+    /// merge のコミットで、差分が最初の親との差分だと書き添えるか（コミットの差分を出すとき。stash では出さない）。
+    pub fn set_first_parent_note(&self, on: bool) {
+        self.first_parent_note.set(on);
+    }
+
     pub fn natural_height(&self, width: i32) -> i32 {
         let (_, head, _, _) = self.head.measure(gtk::Orientation::Vertical, width);
         let (_, natural, _, _) = self.column.measure(gtk::Orientation::Vertical, width);

@@ -316,6 +316,8 @@ impl CommitPane {
             .replace(Some(Shown::Commit(repo.clone(), id, stash)));
         self.repo.replace(Some(repo.clone()));
         self.commit.replace((!stash).then(|| hex.clone()));
+        // コミットの差分は、merge なら最初の親との差分（stash では書き添えない）。
+        self.details.set_first_parent_note(!stash);
         self.details.clear();
         self.files.clear();
         self.files.reset_stats();
