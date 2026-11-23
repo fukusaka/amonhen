@@ -169,6 +169,8 @@ enum Naming {
     DeepenSince,
     /// sparse checkout で取り出すフォルダ（空白で区切る。空ならすべて取り出す）。
     SparseFolders,
+    /// Activity の記録を書き出すファイル（この機械の）。
+    ActivityExport,
     /// Range Diff の範囲（git range-diff と同じ: `A...B`、`A..B C..D`、`base A B`）。
     RangeDiffRanges,
     /// submodule（始まりはそのパス）の新しい URL。
@@ -478,6 +480,8 @@ fn fixup_subjects(messages: &[String]) -> Vec<String> {
 struct Operations {
     entries: Vec<Operation>,
     selected: usize,
+    /// 読んだ記録そのもの（Export JSON で書く）。
+    records: Value,
 }
 
 struct Operation {
@@ -700,6 +704,8 @@ pub struct App {
     operation_log: Option<OperationLog>,
     /// Activity の Operations（`Tab` で操作ログと切り替える）。
     operations: Option<Operations>,
+    /// Export JSON で書き出す Operations の記録（場所を打っている間）。
+    export_records: Option<Value>,
     /// Activity の History Cache（`historyCache` の info。キャッシュがなければ null）。
     history_cache: Option<Value>,
     /// History の編集モード（`E`）。
@@ -833,6 +839,7 @@ impl App {
             operation_log: None,
             operations: None,
             history_cache: None,
+            export_records: None,
             edit_mode: None,
             combining: Vec::new(),
             copy: None,
@@ -1951,6 +1958,17 @@ impl App {
                     self.read_operations();
                     return;
                 }
+                // 記録を JSON のファイルに書き出す（この機械に。アプリの Export JSON…）。
+                KeyCode::Char('s') => {
+                    self.export_records = Some(ops.records.clone());
+                    self.naming = Naming::ActivityExport;
+                    self.typing_branch = Some((
+                        String::new(),
+                        String::new(),
+                        "amonhen-activity.json".to_owned(),
+                    ));
+                    return;
+                }
                 KeyCode::Tab => {
                     self.send(Request::Run {
                         name: "historyCache",
@@ -2243,6 +2261,37 @@ impl App {
                         let name = name.trim();
                         let (op, label, command) = match self.naming {
                             Naming::Stash | Naming::SparseFolders | Naming::SubmoduleBranch => {
+                                return;
+                            }
+                            // アプリと同じ項目だけを、読みやすい JSON で。
+                            Naming::ActivityExport => {
+                                let records = self.export_records.take().unwrap_or_default();
+                                let keep = [
+                                    "seq", "kind", "repo", "label", "started", "duration", "ok",
+                                    "error",
+                                ];
+                                let records: Vec<Value> =
+                                    (records.as_array().into_iter().flatten())
+                                        .map(|r| {
+                                            keep.iter()
+                                                .map(|k| ((*k).to_owned(), r[*k].clone()))
+                                                .collect::<serde_json::Map<_, _>>()
+                                                .into()
+                                        })
+                                        .collect();
+                                let path = local_path(name);
+                                let text =
+                                    serde_json::to_string_pretty(&records).unwrap_or_default();
+                                match std::fs::write(&path, text) {
+                                    Ok(()) => {
+                                        self.notice = Some(tr!(
+                                            "Wrote {count} records to {path}",
+                                            count = records.len(),
+                                            path = path
+                                        ))
+                                    }
+                                    Err(e) => self.error = Some(e.to_string()),
+                                }
                                 return;
                             }
                             Naming::SubmoduleUrl => (
@@ -3562,7 +3611,11 @@ impl App {
                 })
                 .unwrap_or(0);
             self.operation_log = None;
-            self.operations = Some(Operations { entries, selected });
+            self.operations = Some(Operations {
+                entries,
+                selected,
+                records: reply["records"].clone(),
+            });
             self.dirty = true;
             return;
         }
@@ -8283,6 +8336,10 @@ impl App {
                         at = self.typing_branch.as_ref().map_or("", |t| t.0.as_str()),
                         name = name
                     ),
+                    Naming::ActivityExport => tr!(
+                        "Write the operations as JSON to (on this machine): {name}",
+                        name = name
+                    ),
                     Naming::SparseFolders => {
                         let text = tr!(
                             "Check out only the folders (spaces between, Tab completes, empty for all): {name}",
@@ -9069,7 +9126,9 @@ impl App {
         buf.set_stringn(
             at.x + 2,
             at.bottom() - 2,
-            tr!("j/k move   x cancel a running one   r read again   Tab history cache   other keys close"),
+            tr!(
+                "j/k move   x cancel a running one   r read again   s export JSON   Tab history cache   other keys close"
+            ),
             inner,
             dim,
         );

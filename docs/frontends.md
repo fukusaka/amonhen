@@ -348,7 +348,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Performance | ✓ | ✓ | ✓ | n/a | n/a | — | VSCode: VSCode's Output channel (the Amon Hen log).<br>Windows: Diff loads and History and status reloads. |
 | History cache writes (size, count, bytes, last write per repository) | ✓ | ✓ | ✓ | — | △ | ✓ | CLI: Via `amonhen run` (`historyCache`).<br>TUI: The open repository's, after Operations in Activity (`Tab`). |
 | Events | ✓ | ✓ | ✓ | n/a | n/a | — | VSCode: VSCode's Output channel (the Amon Hen log). |
-| Export as JSON | ✓ | ✓ | ✓ | n/a | n/a | — | VSCode: VSCode's Output channel (the Amon Hen log). |
+| Export as JSON | ✓ | ✓ | ✓ | n/a | n/a | ✓ | VSCode: VSCode's Output channel (the Amon Hen log).<br>TUI: `s` in Activity's Operations, to a file on this machine. |
 | Daemon tab (start, stop, connections) | ✓ | ✓ | ✓ | ✓ | △ | — | VSCode: A page of the main view (Show Daemon in the sidebar's ⋯ and the command palette); the window's connections are to the local daemon only.<br>CLI: `daemon status / start / stop`. |
 
 ## 11. Menus

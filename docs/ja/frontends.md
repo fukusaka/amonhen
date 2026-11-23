@@ -348,7 +348,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Performance | ✓ | ✓ | ✓ | n/a | n/a | — | VSCode: VSCode の出力（Amon Hen のログ）が代わり。<br>Windows: 差分の読み込みと、History・status の読み直し。 |
 | History のキャッシュの書き込み（リポジトリごとの大きさ・回数・量・最後の書き込み） | ✓ | ✓ | ✓ | — | △ | ✓ | CLI: `amonhen run`（`historyCache`）。<br>TUI: 開いているリポジトリのもの。Activity の Operations の次（`Tab`）。 |
 | Events | ✓ | ✓ | ✓ | n/a | n/a | — | VSCode: VSCode の出力（Amon Hen のログ）が代わり。 |
-| JSON で書き出す | ✓ | ✓ | ✓ | n/a | n/a | — | VSCode: VSCode の出力（Amon Hen のログ）が代わり。 |
+| JSON で書き出す | ✓ | ✓ | ✓ | n/a | n/a | ✓ | VSCode: VSCode の出力（Amon Hen のログ）が代わり。<br>TUI: Activity の Operations で `s`。この機械のファイルに。 |
 | Daemon のタブ（起動・停止・つながり） | ✓ | ✓ | ✓ | ✓ | △ | — | VSCode: メインビューのページ（サイドバーの ⋯ とコマンドパレットの Show Daemon）。窓のつながりは手元の daemon だけ。<br>CLI: `daemon status / start / stop`。 |
 
 ## 11. メニュー

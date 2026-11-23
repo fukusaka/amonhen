@@ -2664,6 +2664,20 @@ fn activity_operations_list_what_ran() {
     let back =
         amonhen_tui::snapshot(open(dir.path()), 160, 20, clock(), "jRs:activity\n\t\t\t").unwrap();
     assert!(back.contains(" Operation Log "), "{back}");
+    // Operations の `s`: 記録を JSON のファイルに書き出す（アプリの Export JSON…）。
+    let out = tempfile::tempdir().unwrap();
+    let file = out.path().join("activity.json");
+    let keys = format!("jRs:activity\n\ts\x15{}\n", file.display());
+    let wrote = amonhen_tui::snapshot(open(dir.path()), 160, 20, clock(), &keys).unwrap();
+    assert!(wrote.contains("Wrote "), "{wrote}");
+    let records: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    let list = records.as_array().unwrap();
+    assert!(!list.is_empty());
+    assert!(
+        list[0]["label"].is_string() && list[0]["seq"].is_u64(),
+        "{records}"
+    );
 }
 
 /// コマンドの一覧の Activity: 操作ログを新しい順に出し、選んだところまで確かめてから戻す
