@@ -32,6 +32,9 @@ becomes the GitHub Release notes.
 
 #### Changed
 
+- History keeps the commit details' height where its divider was dragged (View Options > Fit Details to the Message
+  fits it to each message again), links `#123` and commit IDs in trailers, and notes that a merge's changes are
+  against its first parent.
 - History's right column is rebuilt in the macOS and GTK4 apps: the details stay on top and the changed files are
   the diff's own file headers, folded at first, as a list or a tree, with one bar for Changes / All Files, totals and
   expanding. Hunk headers name the enclosing function as `git diff` does and renames read `src/{old.rs → new.rs}`.
