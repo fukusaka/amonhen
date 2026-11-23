@@ -3068,6 +3068,32 @@ fn compare_with_the_previous_version() {
     assert!(below.contains("Take the lane from the trunk"));
 }
 
+/// 詳細の `w`: 差分で無視する空白を、行末 → 量 → すべて → なしの順に替える
+#[test]
+fn details_ignore_whitespace() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    git(dir, BASE, &["init", "-q", "-b", "main"]);
+    std::fs::write(dir.join("a.txt"), "one\n  two\nthree\n").unwrap();
+    git(dir, BASE, &["add", "."]);
+    git(dir, BASE, &["commit", "-q", "-m", "Start"]);
+    std::fs::write(dir.join("a.txt"), "one\n    two\nthree\nfour\n").unwrap();
+    git(dir, BASE, &["commit", "-q", "-a", "-m", "Indent"]);
+    let exact = amonhen_tui::snapshot(open(dir), 120, 30, clock(), "2\n").unwrap();
+    assert!(exact.contains("+    two"), "{exact}");
+    let eol = amonhen_tui::snapshot(open(dir), 120, 30, clock(), "2\nw").unwrap();
+    println!("{eol}");
+    assert!(eol.contains("Ignoring whitespace at line ends"), "{eol}");
+    assert!(eol.contains("+    two"), "{eol}");
+    let amount = amonhen_tui::snapshot(open(dir), 120, 30, clock(), "2\nww").unwrap();
+    println!("{amount}");
+    assert!(!amount.contains("+    two"), "{amount}");
+    assert!(amount.contains("+four"), "{amount}");
+    let back = amonhen_tui::snapshot(open(dir), 120, 30, clock(), "2\nwwww").unwrap();
+    assert!(back.contains("Whitespace is compared"), "{back}");
+    assert!(back.contains("+    two"), "{back}");
+}
+
 /// 詳細の `t`: 変わったファイルを木で出す（フォルダの下に名前だけ）。`z` でフォルダをたたみ、もう一度で開く
 #[test]
 fn changed_files_as_a_tree() {

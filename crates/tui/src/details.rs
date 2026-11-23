@@ -26,6 +26,36 @@ struct File {
     binary: bool,
 }
 
+/// 差分で無視する空白（アプリの Ignore Whitespace。`commitDiff` の whitespace）。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Whitespace {
+    #[default]
+    Exact,
+    AtEol,
+    Change,
+    All,
+}
+
+impl Whitespace {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Whitespace::Exact => "exact",
+            Whitespace::AtEol => "at-eol",
+            Whitespace::Change => "change",
+            Whitespace::All => "all",
+        }
+    }
+
+    fn next(self) -> Self {
+        match self {
+            Whitespace::Exact => Whitespace::AtEol,
+            Whitespace::AtEol => Whitespace::Change,
+            Whitespace::Change => Whitespace::All,
+            Whitespace::All => Whitespace::Exact,
+        }
+    }
+}
+
 /// ファイルの一覧の 1 行（一覧なら、ファイルだけ。木なら、フォルダとその下のファイル）。
 #[derive(Debug, PartialEq)]
 enum Listed {
@@ -453,6 +483,8 @@ pub struct Details {
     tree: bool,
     /// 木でたたんだフォルダ（コミットを替えたら開く）。
     folded: HashSet<String>,
+    /// 差分で無視する空白（コミットを替えても覚えている）。
+    whitespace: Whitespace,
 }
 
 impl Details {
@@ -524,9 +556,24 @@ impl Details {
     }
 
     /// 頼むことがあれば、その中身（答えを待っている間は、次を頼まない）。
+    /// 頼むものの鍵: 出したいものと、無視する空白。
+    fn key_of(&self, wanted: &Want) -> String {
+        match self.whitespace {
+            Whitespace::Exact => wanted.key(),
+            ws => format!("{} ws:{}", wanted.key(), ws.as_str()),
+        }
+    }
+
+    /// 無視する空白を次のもの（なし → 行末 → 量 → すべて → なし）にして、差分を読み直す。
+    pub fn next_whitespace(&mut self) -> Whitespace {
+        self.whitespace = self.whitespace.next();
+        self.whitespace
+    }
+
     pub fn request(&mut self) -> Option<Request> {
         let wanted = self.wanted.as_ref()?;
-        let key = wanted.key();
+        let key = self.key_of(wanted);
+        let whitespace = self.whitespace.as_str();
         if self.loading.is_some()
             || self.commit.as_ref().is_some_and(|c| c.key == key)
             || self.failed.as_ref().is_some_and(|f| f.0 == key)
@@ -538,6 +585,8 @@ impl Details {
             Want::Commit { id, stash } => Request::Commit {
                 id: id.to_string(),
                 stash: *stash,
+                key,
+                whitespace,
             },
             Want::Selection {
                 history,
@@ -549,6 +598,7 @@ impl Details {
                 history: history.clone(),
                 rows: rows.clone(),
                 pair: pair.as_str(),
+                whitespace,
             },
         })
     }
@@ -562,7 +612,7 @@ impl Details {
     ) -> Option<Request> {
         self.loading = None;
         // 待つ間に選択が動いていたら捨てる（`request` が次を頼む）。
-        let wanted = self.wanted.as_ref().filter(|w| w.key() == id)?;
+        let wanted = self.wanted.as_ref().filter(|w| self.key_of(w) == id)?;
         match result {
             Ok((info, diff)) => {
                 let view = diff.json["view"].clone();
@@ -816,6 +866,7 @@ impl Details {
             return;
         }
         self.scroll.height = area.height;
+        let wanted = self.wanted.as_ref().map(|w| self.key_of(w));
         let Some(commit) = &mut self.commit else {
             let (text, style) = match &self.failed {
                 Some((_, error)) => (error.clone(), Style::new().fg(Color::Red)),
@@ -833,7 +884,7 @@ impl Details {
         let failed = self
             .failed
             .as_ref()
-            .filter(|f| self.wanted.as_ref().is_some_and(|w| w.key() == f.0))
+            .filter(|f| wanted.as_ref() == Some(&f.0))
             .map(|f| f.1.as_str());
         let head = commit.head.len() as u32;
         let before = commit.before_diff();

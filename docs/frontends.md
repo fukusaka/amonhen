@@ -277,7 +277,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Changed files as the diff's own file headers (folded at first, sticky, one bar of controls) | ✓ | ✓ | ✓ | △ | ✓ | △ | CLI: `show`.<br>VSCode: Still a separate changed-files list beside the stacked diff, with Viewed.<br>TUI: `[` `]` move between files; no sticky headers or folding. |
 | Changed files as a list or a tree whose folders fold | ✓ | ✓ | △ | △ | n/a | ✓ | Windows, VSCode: A tree beside the diff (Tree / List above the files in VSCode).<br>TUI: Above the diff; `t` switches to the tree, a click folds a folder (`z` all) or goes to a file's diff. |
 | Widen a hunk's context, show a whole file | ✓ | ✓ | — | — | n/a | — | |
-| Ignore whitespace (at line ends, changes in amount, all) | ✓ | ✓ | — | — | ✓ | — | CLI: `show -w`, `-b`, `--ignore-space-at-eol`. |
+| Ignore whitespace (at line ends, changes in amount, all) | ✓ | ✓ | — | — | ✓ | ✓ | CLI: `show -w`, `-b`, `--ignore-space-at-eol`.<br>TUI: `w` in the details goes through them in turn. |
 | Compare images (side by side, swipe, onion skin, differing pixels) | ✓ | ✓ | — | — | n/a | — | |
 | All Files: the tree at the commit and a file's contents with the commit's lines marked | ✓ | ✓ | — | — | n/a | — | |
 | All Files previews: zoomable images, SVG picture and mobile check, formatted Markdown, Quick Look for binaries | ✓ | ✓ | — | — | n/a | — | GTK4: GNOME's previewer (or the default app) instead of Quick Look; the SVG pictures are drawn by librsvg. |
