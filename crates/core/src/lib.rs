@@ -19,6 +19,7 @@ pub mod query;
 pub mod remote_tags;
 mod repository;
 pub mod rewrite;
+pub mod svg2vector;
 pub mod svgandroid;
 pub mod svgflutter;
 pub mod svglint;

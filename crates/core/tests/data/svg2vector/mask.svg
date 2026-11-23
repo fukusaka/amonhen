@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 50 50">
+<mask id="m1"><rect width="50" height="50" fill="white"/></mask>
+<mask id="m2" fill="#fff"><circle cx="25" cy="25" r="20"/></mask>
+<mask id="m3" fill="red"><circle cx="25" cy="25" r="20"/></mask>
+<g mask="url(#m1)"><rect width="20" height="20" fill="#333"/></g>
+<rect mask="url(#m2)" x="10" y="10" width="20" height="20"/>
+<rect mask="url(#m3)" x="20" y="20" width="20" height="20" transform="scale(1.5)" stroke="#000" stroke-width="2"/>
+<g clip-path="url(#m2)" transform="translate(3,3)" stroke-width="2" stroke="blue"><path d="M0 0L10 10"/></g>
+</svg>
