@@ -1264,6 +1264,8 @@ First release.
   ignore whitespace (at line ends, changes in amount or all), with the engine.
 - History's details compare images and SVGs side by side with their sizes, or by swipe, onion skin or differing
   pixels.
+- All Files in History's details, with the engine: the tree at the commit and a file's contents with the commit's
+  lines marked, zoomable images, SVGs as a picture or checked for mobile renderers, and formatted Markdown.
 
 #### Fixed
 

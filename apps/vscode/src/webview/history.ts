@@ -842,6 +842,12 @@ export function createHistoryView(): View {
       case 'commitDiff':
         details.showDiff(message.oid, message.path, message.diff);
         return;
+      case 'treeEntries':
+        details.showTreeEntries(message.oid, message.path, message.entries, message.error);
+        return;
+      case 'treeFile':
+        details.showTreeFile(message.oid, message.path, message.view);
+        return;
       case 'commitImage':
         details.showImage(message.oid, message.path, message.before, message.after, message.error);
         return;
