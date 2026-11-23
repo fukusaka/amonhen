@@ -487,6 +487,9 @@ struct Root {
     search_only: bool,
     /// 詳細だけを右の列いっぱいに広げている（⤢）。
     details_expanded: bool,
+    /// 右の列を「すべてのファイル」（その時点の木と中身）にしているか（帯の変更／すべてのファイル）と、その木。
+    files_mode: bool,
+    browser: Option<crate::allfiles::Browser>,
     /// Working Copy で最後にマウスを載せたファイルの行。
     working_hovered: Option<String>,
     last_search: Option<String>,
@@ -1479,6 +1482,15 @@ enum Message {
     ToggleAllFolders,
     /// 帯の表示の設定のメニュー。
     DiffViewOption(String),
+    /// 帯の変更／すべてのファイル。
+    AllFiles(bool),
+    /// すべてのファイルの一覧で選んだ行（フォルダなら開く・畳む、ファイルならその時点の中身を開く）。
+    AllFilesRow(Option<usize>),
+    /// 開いたファイルから一覧に戻る・そのファイルの変更を見る。
+    AllFilesBack,
+    AllFilesShowChange,
+    /// 見出しの ⋯ の Open File at This Commit。
+    OpenFileAtCommit(String),
     /// 差分の帯で、行を比べるときに無視する空白を選んだ（`whitespace:<0〜3>`）。
     DiffWhitespace(String),
     /// 一致したコミットだけを出すか。
@@ -1682,6 +1694,8 @@ impl Component for Root {
             search_status: String::new(),
             search_only: false,
             details_expanded: false,
+            files_mode: false,
+            browser: None,
             working_hovered: None,
             last_search: None,
             search_box: ElementRef::new(),
@@ -2699,7 +2713,62 @@ impl Root {
                     load_groups(repo, self.merged_pull_requests(), context);
                 }
             }
-            Message::Commit(info, extras) => self.info = Some((info, extras)),
+            Message::Commit(info, extras) => {
+                // 別のコミットになったら、すべてのファイルから変更に戻す（macOS 版と同じ）。
+                let other = self
+                    .browser
+                    .as_ref()
+                    .is_some_and(|b| info["oid"].as_str() != Some(b.commit.to_string().as_str()));
+                if other || (self.files_mode && self.browser.is_none()) {
+                    self.set_files_mode(false);
+                    self.browser = None;
+                }
+                self.info = Some((info, extras));
+            }
+            Message::AllFiles(on) => self.set_files_mode(on),
+            Message::AllFilesRow(Some(index)) => {
+                let flat = !crate::prefs::bool(crate::prefs::HISTORY_FILE_TREE);
+                let Some(browser) = self.browser.as_mut() else {
+                    return;
+                };
+                let Some(row) = browser.rows.get(index).cloned() else {
+                    return;
+                };
+                if row.node.is_dir {
+                    browser.toggle(&row.node.path);
+                    browser.refresh(flat);
+                } else {
+                    self.open_at_commit(row.node.path);
+                }
+            }
+            Message::AllFilesRow(None) => {}
+            Message::AllFilesBack => {
+                if let Some(browser) = self.browser.as_mut() {
+                    browser.open = None;
+                    let commit = browser.commit;
+                    self.with_history(|h| {
+                        h.session.data.want_file_at(commit, None, None);
+                        h.session.data.show_file = false;
+                        h.diff_replaced();
+                    });
+                }
+            }
+            Message::AllFilesShowChange => {
+                let index = self
+                    .browser
+                    .as_ref()
+                    .and_then(|b| b.open.as_deref().and_then(|p| b.change_index(p)));
+                self.set_files_mode(false);
+                if let Some(index) = index {
+                    self.with_history(|h| h.show_change(index));
+                }
+            }
+            Message::OpenFileAtCommit(path) => {
+                self.set_files_mode(true);
+                if self.files_mode {
+                    self.open_at_commit(path);
+                }
+            }
             Message::Failed(e) => self.error = Some(e),
             Message::Command(id) if id == "undo" => self.undo(context),
             Message::Command(id) if id == "pull" => {
@@ -3032,6 +3101,9 @@ impl Root {
                 if let Err(e) = crate::prefs::set_bool(crate::prefs::HISTORY_FILE_TREE, tree) {
                     eprintln!("変更ファイルを木で出すかを覚えられない: {e}");
                 }
+                if let Some(browser) = self.browser.as_mut() {
+                    browser.refresh(!tree);
+                }
                 self.with_history(|h| {
                     if h.session.data.set_file_tree(tree) {
                         h.session.renderer.forget_diff();
@@ -3040,6 +3112,13 @@ impl Root {
                         h.diff.scroll_by(0.0, rows);
                     }
                 });
+            }
+            Message::ToggleAllFolders if self.files_mode => {
+                if let Some(browser) = self.browser.as_mut() {
+                    let expanded = browser.any_expanded();
+                    browser.set_all(!expanded);
+                    browser.refresh(!crate::prefs::bool(crate::prefs::HISTORY_FILE_TREE));
+                }
             }
             Message::ToggleAllFolders => self.with_history(|h| {
                 if h.session.data.toggle_all_folders() {
@@ -9129,19 +9208,25 @@ impl Root {
             .grid_column(2)
             .children((
                 self.top_of_diff(context),
-                StackPanel::new()
-                    .grid_row(1)
-                    .children((self.diff_bar(context), self.diff_find_bar(context))),
-                // 差分（変更ファイルは差分のファイルの見出し）。
-                Grid::new().grid_row(2).children((Grid::new()
-                    .background(Brush::Solid(Color::transparent()))
-                    .element_ref(&self.diff_area)
-                    .grid_column(1)
-                    .children((SwapChainPanel::new().element_ref(&self.diff_panel),))
-                    .menu(Menu::new(
-                        self.diff_file_menu(),
-                        context.callback(Message::DiffFileMenu),
-                    )),)),
+                StackPanel::new().grid_row(1).children((
+                    self.diff_bar(context),
+                    self.files_path_bar(context),
+                    self.diff_find_bar(context),
+                )),
+                // 差分（変更ファイルは差分のファイルの見出し）。すべてのファイルでは、ファイルを開くまで木の一覧を
+                // 上に重ねる。
+                Grid::new().grid_row(2).children((
+                    Grid::new()
+                        .background(Brush::Solid(Color::transparent()))
+                        .element_ref(&self.diff_area)
+                        .grid_column(1)
+                        .children((SwapChainPanel::new().element_ref(&self.diff_panel),))
+                        .menu(Menu::new(
+                            self.diff_file_menu(),
+                            context.callback(Message::DiffFileMenu),
+                        )),
+                    self.files_list(context),
+                )),
             ));
         // タイトルバー: 左にリポジトリの切り替え、続けてツールバー（macOS 版と同じく、アイコンの下に名前）、右に
         // ≡（メニューバーの中身すべて）。メニューバーとツールバーの段はなくし、タブは下の段に置く。ツールバーの右の
@@ -12969,6 +13054,15 @@ impl Root {
             "whole-file",
             format!("{mark}{}", tr!("Show Whole File")),
         ));
+        // その時点のファイルを、すべてのファイルで開く（1 つのコミットで、消していないファイル。macOS 版と同じ）。
+        let mut single = false;
+        self.with_history(|h| single = h.session.data.single_commit().is_some());
+        if single && !file.deleted {
+            items.push(MenuItem::item(
+                "open-at-commit",
+                tr!("Open File at This Commit"),
+            ));
+        }
         items.push(MenuItem::separator("-file"));
         // 消したファイルは、そのコミットにはない（Blame を出さない）。
         if !file.deleted {
@@ -13042,6 +13136,7 @@ impl Root {
                     h.diff.scroll_by(0.0, rows);
                 }
             }),
+            "open-at-commit" => self.update(Message::OpenFileAtCommit(file.path), context),
             "whole-file" => self.with_history(|h| {
                 if h.session.data.toggle_whole_file(file.index) {
                     h.session.renderer.forget_diff();
@@ -17056,6 +17151,77 @@ impl Root {
             ))
     }
 
+    /// すべてのファイルの、開いたファイルのパスの帯。
+    fn files_path_bar(&self, context: &ViewContext<Self>) -> View {
+        match &self.browser {
+            Some(browser) if self.files_mode && self.page != Page::WorkingCopy => {
+                crate::allfiles::path_bar(
+                    browser,
+                    context.callback(|()| Message::AllFilesBack),
+                    context.callback(|()| Message::AllFilesShowChange),
+                )
+            }
+            _ => View::empty(),
+        }
+    }
+
+    /// すべてのファイルの木の一覧（ファイルを開いていないとき、差分の欄に重ねる）。
+    fn files_list(&self, context: &ViewContext<Self>) -> View {
+        let Some(browser) = &self.browser else {
+            return View::empty();
+        };
+        if !self.files_mode || browser.open.is_some() || self.page == Page::WorkingCopy {
+            return View::empty();
+        }
+        let flat = !crate::prefs::bool(crate::prefs::HISTORY_FILE_TREE);
+        Border::new()
+            .background(Brush::Solid(crate::palette::background()))
+            .content(crate::allfiles::list(
+                &browser.rows,
+                flat,
+                &browser.expanded,
+                context.callback(Message::AllFilesRow),
+            ))
+    }
+
+    /// 右の列を「すべてのファイル」にする・変更に戻す。すべてのファイルは 1 つのコミットにだけある（stash・複数の
+    /// コミット・範囲ではできない）。
+    fn set_files_mode(&mut self, on: bool) {
+        let mut target = None;
+        self.with_history(|h| {
+            target = h.session.data.single_commit().zip(h.session.data.repo());
+        });
+        let on = on && target.is_some();
+        if on && self.browser.as_ref().map(|b| b.commit) != target.as_ref().map(|t| t.0) {
+            let (commit, repo) = target.clone().expect("決めた");
+            let changes = repo.commit_changes(&commit).unwrap_or_default();
+            self.browser = Some(crate::allfiles::Browser::new(repo, commit, changes));
+        }
+        if on && let Some(browser) = self.browser.as_mut() {
+            browser.refresh(!crate::prefs::bool(crate::prefs::HISTORY_FILE_TREE));
+        }
+        self.files_mode = on;
+        let open = self.browser.as_ref().and_then(|b| b.open.clone());
+        self.with_history(|h| {
+            h.session.data.show_file = on && open.is_some();
+            h.diff_replaced();
+        });
+    }
+
+    /// すべてのファイルで `path` を開く（その時点の中身を差分の欄に）。
+    fn open_at_commit(&mut self, path: String) {
+        let Some(browser) = self.browser.as_mut() else {
+            return;
+        };
+        browser.open = Some(path.clone());
+        let (commit, change) = (browser.commit, browser.change_of(&path).cloned());
+        self.with_history(|h| {
+            h.session.data.want_file_at(commit, change, Some(path));
+            h.session.data.show_file = true;
+            h.diff_replaced();
+        });
+    }
+
     /// 行を比べるときに無視する空白を選ぶボタン（macOS 版の `WhitespacePopUp`）: アイコンだけで、押すと 4 つの
     /// 選び方（今のものに ✓、それぞれに説明のツールチップ）。無視している間はアイコンをアクセントの色にする。
     fn whitespace_picker(&self, context: &ViewContext<Self>) -> View {
@@ -17131,17 +17297,34 @@ impl Root {
         let small = |text: String| TextBlock::new().text(text).font_size(12.0);
         let icon = |glyph: &'static str| FontIcon::new().glyph(glyph);
         let tree = crate::prefs::bool(crate::prefs::HISTORY_FILE_TREE);
-        // その時点の木（すべてのファイル）は後で（今は押せない）。
+        // 変更／すべてのファイル（その時点の木は 1 つのコミットにだけある。押して外したときはそのまま）。
+        let mut single = false;
+        self.with_history(|h| single = h.session.data.single_commit().is_some());
+        let files_mode = self.files_mode;
         let view_switch = StackPanel::new()
             .grid_column(0)
             .orientation(Orientation::Horizontal)
             .children((
                 ToggleButton::new()
-                    .is_checked(true)
+                    .is_checked(!files_mode)
+                    .on_is_checked_changed(context.callback(|on: bool| {
+                        if on {
+                            Message::AllFiles(false)
+                        } else {
+                            Message::DiffFilesToggled
+                        }
+                    }))
                     .content(small(tr!("Changes"))),
                 ToggleButton::new()
-                    .is_checked(false)
-                    .is_enabled(false)
+                    .is_checked(files_mode)
+                    .is_enabled(single)
+                    .on_is_checked_changed(context.callback(|on: bool| {
+                        if on {
+                            Message::AllFiles(true)
+                        } else {
+                            Message::DiffFilesToggled
+                        }
+                    }))
                     .content(small(tr!("All Files"))),
             ));
         let totals = StackPanel::new()
@@ -17181,7 +17364,12 @@ impl Root {
                     .content(icon("\u{ED41}"))
                     .tooltip(tr!("Show the changed files as a tree")),
             ));
-        // フォルダをすべて開く・畳む（木のときだけ。macOS 版と同じ）。
+        // フォルダをすべて開く・畳む（木のときだけ。macOS 版と同じ）。すべてのファイルでは、その木のフォルダ。
+        let folders_open = if files_mode {
+            self.browser.as_ref().is_some_and(|b| b.any_expanded())
+        } else {
+            folders_open
+        };
         let folders: View = if tree {
             Button::new()
                 .style(ButtonStyle::Subtle)
@@ -17241,7 +17429,19 @@ impl Root {
                             .grid_column(3)
                             .orientation(Orientation::Horizontal)
                             .spacing(6.0)
-                            .children((tree_switch, folders, expand, whitespace, find, options)),
+                            .children(if files_mode {
+                                // すべてのファイルでは、差分にしか効かないものを隠す（macOS 版と同じ）。
+                                (
+                                    tree_switch,
+                                    folders,
+                                    View::empty(),
+                                    View::empty(),
+                                    find,
+                                    options,
+                                )
+                            } else {
+                                (tree_switch, folders, expand, whitespace, find, options)
+                            }),
                     )),
             )
     }
@@ -19655,6 +19855,12 @@ impl HistoryView {
             self.sender
                 .send(Message::Commit(commit.info.clone(), commit.extras.clone()));
         }
+        // すべてのファイルで開いたファイルが届いた: 上から描き直す。
+        if std::mem::take(&mut s.data.file_view_changed) && !self.working_page {
+            s.renderer.forget_diff();
+            self.diff.scroll_y = 0.0;
+            self.diff.dirty = true;
+        }
         if std::mem::take(&mut s.data.syntax_changed) && !self.working_page {
             s.renderer.forget_diff();
             self.diff.dirty = true;
@@ -19676,7 +19882,7 @@ impl HistoryView {
             let view = if self.working_page {
                 s.data.working.as_ref().map(|w| &w.diff.view)
             } else {
-                s.data.commit.as_ref().map(|c| &c.diff)
+                s.data.shown_content().map(|c| c.view)
             };
             let found = view.map_or_else(Vec::new, |v| {
                 crate::render::find_in_diff(v, &self.diff_query)
@@ -19699,7 +19905,7 @@ impl HistoryView {
                     if self.working_page {
                         s.data.working.as_deref().map(|w| w.content())
                     } else {
-                        s.data.commit.as_deref().map(|c| c.content())
+                        s.data.shown_content()
                     },
                     self.diff.scroll_y,
                     self.diff.scale,
@@ -19731,7 +19937,7 @@ impl HistoryView {
         let view = if self.working_page {
             data.working.as_ref().map(|w| &w.diff.view)
         } else {
-            data.commit.as_ref().map(|c| &c.diff)
+            data.shown_content().map(|c| c.view)
         };
         let Some(view) = view else { return false };
         let kind = if files { DiffRow::FILE } else { DiffRow::HUNK };
@@ -19771,7 +19977,7 @@ impl HistoryView {
         let view = if self.working_page {
             data.working.as_ref().map(|w| &w.diff.view)
         } else {
-            data.commit.as_ref().map(|c| &c.diff)
+            data.shown_content().map(|c| c.view)
         };
         let mut found = view.map_or_else(Vec::new, |v| {
             crate::render::find_in_diff(v, &self.diff_query)
@@ -19935,7 +20141,7 @@ impl HistoryView {
         if self.working_page {
             data.working.as_ref().map_or(0, |w| w.diff.view.rows.len())
         } else {
-            data.commit.as_ref().map_or(0, |c| c.content().line_count())
+            data.shown_content().map_or(0, |c| c.line_count())
         }
     }
 
@@ -19944,7 +20150,41 @@ impl HistoryView {
         if self.working_page {
             return Some(row);
         }
-        self.session.data.commit.as_ref()?.content().line_of(row)
+        self.session.data.shown_content()?.line_of(row)
+    }
+
+    /// 差分の中身を替えた（取っておいた行の文字を捨て、上から描き直す）。
+    fn diff_replaced(&mut self) {
+        self.session.renderer.forget_diff();
+        self.diff.scroll_y = 0.0;
+        self.diff.dirty = true;
+    }
+
+    /// 変更ファイルの `index` 番目を開いて、その見出しまでスクロールする（すべてのファイルの「この変更を見る」）。
+    fn show_change(&mut self, index: usize) {
+        let collapsed = self
+            .session
+            .data
+            .commit
+            .as_ref()
+            .is_some_and(|c| c.collapsed.get(index).copied().unwrap_or(false));
+        if collapsed {
+            self.session.data.toggle_file_index(index);
+        }
+        self.session.renderer.forget_diff();
+        let row = self
+            .session
+            .data
+            .commit
+            .as_ref()
+            .and_then(|c| c.file_rows.get(index).copied())
+            .and_then(|row| self.line_of_row(row));
+        if let Some(line) = row {
+            self.diff.scroll_y = line as f32 * DIFF_ROW_HEIGHT;
+        }
+        let rows = self.diff_rows();
+        self.diff.scroll_by(0.0, rows);
+        self.diff.dirty = true;
     }
 
     /// 差分の欄の表示の `line` 行目。
@@ -20060,7 +20300,7 @@ impl HistoryView {
             let rows = self.session.data.working.as_ref()?.diff.view.rows.len();
             return (line < rows).then_some(crate::data::DiffLine::Row(line as u32));
         }
-        self.session.data.commit.as_ref()?.content().line(line)
+        self.session.data.shown_content()?.line(line)
     }
 
     /// 選んでいるコミットの詳細と差分を読み直す（Stashes の画面から戻ったとき）。
@@ -21641,7 +21881,8 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
                         }
                     }
                 }
-                // ファイルの見出しを押すと、そのファイルを畳む・開く。
+                // ファイルの見出しを押すと、そのファイルを畳む・開く（すべてのファイルで開いたファイルには何もしない）。
+                Target::Diff if h.session.data.show_file && !h.working_page => {}
                 Target::Diff => {
                     // 上に張り付いた見出しを押したら、そのファイルの見出しの行（畳んだら見出しを一番上に）。
                     // 位置は表示の行（木なら、フォルダの行を差し込んだ並び）。
@@ -21699,7 +21940,7 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
                             }
                             return;
                         }
-                        None => return,
+                        None | Some(crate::data::DiffLine::Deleted(_)) => return,
                     };
                     // 見出しの右端の ⋯: 右クリックと同じファイルのメニュー（macOS 版と同じく、右の 30pt）。
                     let width = h
@@ -21903,8 +22144,11 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
                         h.sender.send(Message::DiffRowsAt(rows));
                         return;
                     }
-                    // 木のフォルダの行にはメニューがない。
-                    let file = match h.diff_line(row as usize) {
+                    // 木のフォルダの行・すべてのファイルで開いたファイルにはメニューがない。
+                    let file = match h
+                        .diff_line(row as usize)
+                        .filter(|_| !h.session.data.show_file)
+                    {
                         Some(crate::data::DiffLine::Row(row)) => {
                             h.session.data.file_at(row as usize)
                         }

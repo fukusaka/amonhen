@@ -290,3 +290,4 @@ left out for now: VSCode has its own extensions and settings for them.
 - [x] 66. Write the commit-graph automatically (`amonhen.writeCommitGraph`)
 - [x] 67. Choose how to merge (fast-forward only, always a merge commit, squash)
 - [x] 68. The Daemon page (status, Start and Stop, connections), as the app's Activity > Daemon
+- [x] 69. History's details as the app's: the file headers are the changed files (folded at first, a ⋯ for their menu), a list or a tree whose folders fold, one bar to switch and to expand or collapse all; Viewed and one file at a time are gone

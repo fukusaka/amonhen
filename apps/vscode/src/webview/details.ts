@@ -1,13 +1,13 @@
 /**
- * コミットの詳細の欄（History と Reflog の右側）。メッセージ・作者・親と、変更したファイルの一覧、ファイルごとの
- * 差分を出す。差分は画面に入ったものから順に拡張ホストに求める。アプリと同じく、メッセージの欄と、ファイルと差分の
- * 欄を上下に分け、間の仕切りをドラッグできる。メッセージの欄は中身に合わせ（列の半分まで）、⤢ で列いっぱいに広げる
+ * コミットの詳細の欄（History と Reflog の右側）。上にメッセージ・作者・親、下にファイルごとの差分を出す（アプリと
+ * 同じく、差分の見出しが変わったファイルの一覧を兼ね、最初はすべて畳む）。差分は開いて画面に入ったものから順に
+ * 拡張ホストに求める。間の仕切りはドラッグでき、メッセージの欄は中身に合わせ（列の半分まで）、⤢ で列いっぱいに広げる
  */
 import type { FileDiff } from '../diff/fileDiff.ts';
 import type { CommitDetails, DetailsExtras, DetailsLayout, PairMode, Person, SelectionView } from '../history/protocol.ts';
 import { el, formatDate, getState, post, updateState } from './api.ts';
 import { type FileDir, makeFileTree } from '../workingCopy/fileList.ts';
-import { COLLAPSE_ABOVE, isGenerated, type LineCounts, lineCounts } from '../history/stackedFiles.ts';
+import { COLLAPSE_ABOVE, isGenerated, type LineCounts, lineCounts, renamedPath } from '../history/stackedFiles.ts';
 import { renderDiffBody } from './diffView.ts';
 import { signatureMark } from './signature.ts';
 
@@ -32,8 +32,8 @@ export interface DetailsPane {
   readonly root: HTMLElement;
   /** 出しているコミット */
   readonly shownOid: string | undefined;
-  /** `focus` があれば、そのファイルを選んでその差分の位置に移る（File History）。`viewed` は Viewed にしたファイル */
-  show(details: CommitDetails, focus?: string, viewed?: readonly string[]): void;
+  /** `focus` があれば、そのファイルの差分を開いてその位置に移る（File History） */
+  show(details: CommitDetails, focus?: string): void;
   showDiff(oid: string, path: string, diff: FileDiff): void;
   /** いくつも選んだコミット。読んでいる間は `view` なし */
   showSelection(state: SelectionState): void;
@@ -61,8 +61,8 @@ const PAIR_NOTES: Record<PairMode, string> = {
 };
 const PAIR_NAMES: Record<PairMode, string> = { forward: 'A..B', reverse: 'Reverse', mergeBase: 'From the merge-base (A...B)' };
 
-/** 変わったファイルの見せ方。拡張ホストが覚え、すべての詳細の欄で同じにする */
-let layout: DetailsLayout = { tree: false, single: false };
+/** 変わったファイルの見せ方（リストか木か）。拡張ホストが覚え、すべての詳細の欄で同じにする */
+let layout: DetailsLayout = { tree: false };
 const panes = new Set<(layout: DetailsLayout) => void>();
 
 export function setDetailsLayout(next: DetailsLayout): void {
@@ -70,29 +70,19 @@ export function setDetailsLayout(next: DetailsLayout): void {
   for (const apply of panes) apply(layout);
 }
 
-/** 一覧の上に置く、見せ方の切り替え */
-function layoutButtons(): HTMLElement {
-  const span = el('span', 'layout-buttons');
-  const tree = el('button', 'secondary', layout.tree ? 'List' : 'Tree');
-  tree.title = layout.tree ? 'Show the changed files as a list above the diffs' : 'Show the changed files as a tree beside the diffs';
-  tree.addEventListener('click', () => post({ type: 'detailsLayout', layout: { ...layout, tree: !layout.tree } }));
-  const single = el('button', 'secondary', layout.single ? 'All Files' : 'One File');
-  single.title = layout.single ? 'Show the diffs of all files one after another' : 'Show only the diff of the selected file';
-  single.addEventListener('click', () => post({ type: 'detailsLayout', layout: { ...layout, single: !layout.single } }));
-  span.append(tree, single);
-  return span;
-}
-
-/** 詳細に並べた 1 ファイル（一覧の行と差分の場所） */
+/** 詳細に並べた 1 ファイル（差分の見出しが、変わったファイルの一覧を兼ねる） */
 interface FileSection {
-  row: HTMLElement;
   section: HTMLElement;
   head: HTMLElement;
+  path: string;
+  origPath?: string;
   /** 差分を求めたか */
   requested: boolean;
   /** 開く・畳むを自分で選んだか（選んでいれば、大きな差分でも畳まない） */
   chosen: boolean;
-  viewed: boolean;
+  /** 生成物か、変わった行が多い（すべて開くでも畳んだまま） */
+  heavy: boolean;
+  counts?: LineCounts;
 }
 
 /** 足した行と消した行（どちらも 0 なら空） */
@@ -105,23 +95,27 @@ function countsLabel(counts: LineCounts): HTMLElement {
 
 export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane {
   const root = el('aside', 'details');
-  /** メッセージ（件名・作者など・本文）の欄。コミットを 1 つ出すときだけ */
+  /** メッセージ（件名・作者など・本文）の欄。いくつも選んだときは、その説明 */
   const head = el('div', 'details-head');
   const divider = el('div', 'details-divider');
-  /** ファイルと差分の欄（コミットを 1 つ出すとき以外は、これだけ） */
+  /** 差分の上の帯（数・リストと木・すべて開く・畳む） */
+  const bar = el('div', 'files-bar');
+  /** ファイルと差分の欄 */
   const scroller = el('div', 'details-body');
-  root.append(head, divider, scroller);
+  root.append(head, divider, bar, scroller);
   attachRowSplitter(root, divider, head);
   let shownOid: string | undefined;
-  /** 詳細に並べたファイル */
+  /** 詳細に並べたファイル（並べた順） */
   let sections = new Map<string, FileSection>();
   let diffObserver: IntersectionObserver | undefined;
   /** 出している詳細の作者などの並び（後から署名・子のコミットを足す） */
   let meta: HTMLElement | undefined;
-  /** 出しているファイルの一覧（見せ方を変えたら並べ直す） */
-  let listed: { files: HTMLElement; diffs: HTMLElement; items: readonly { path: string }[] } | undefined;
-  /** 選んでいるファイル（`single` のときに差分を出すもの） */
-  let current: string | undefined;
+  /** 差分を並べる枠と、その中身（見せ方を変えたら並べ直す） */
+  let diffs: HTMLElement | undefined;
+  /** 木で畳んだフォルダ（パス。見せ方を変えても、同じコミットのうちは保つ） */
+  let foldedDirs = new Set<string>();
+  /** 1 つのコミットなら、その ID（帯の Open All） */
+  let openAll: string | undefined;
 
   /** コミットの ID の並び（onParent があれば押すとその行に移る） */
   function commitLinks(oids: readonly string[]): HTMLElement {
@@ -145,7 +139,7 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
     return span;
   }
 
-  function show(d: CommitDetails, focus?: string, viewed: readonly string[] = []): void {
+  function show(d: CommitDetails, focus?: string): void {
     shownOid = d.oid;
     const [subject = '', ...rest] = d.message.replace(/\n+$/, '').split('\n');
     const body = rest.join('\n').replace(/^\n+/, '');
@@ -173,39 +167,28 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
       add(d.parents.length > 1 ? 'Parents' : 'Parent', commitLinks(d.parents));
     }
 
-    const files = el('div', 'files');
-    const filesHead = el('div', 'files-head');
-    const count = d.files.length;
-    filesHead.append(
-      el(
-        'span',
-        '',
-        `${count} file${count === 1 ? '' : 's'} changed${d.parents.length > 1 ? ' (against the first parent)' : ''}`,
-      ),
-    );
-    if (count > 0) {
-      const all = el('button', 'secondary', 'Open All');
-      all.addEventListener('click', () => post({ type: 'open', oid: d.oid }));
-      filesHead.append(layoutButtons(), all);
-    }
-    const diffs = fileSections(d.oid, d.oid, d.files, files, true, viewed);
-
     const parts: Node[] = [expandButton(), title, list];
     if (body) parts.push(el('pre', 'body', body));
-    place(parts, [stack(filesHead, files, diffs)]);
-    if (focus && sections.has(focus)) select(focus, true);
+    if (d.parents.length > 1) parts.push(el('div', 'selection-note', 'The changes are shown against the first parent.'));
+    place(parts);
+    fileSections(d.oid, d.files, true, d.oid);
+    if (focus) {
+      const file = sections.get(focus);
+      if (file) {
+        file.chosen = true;
+        setCollapsed(file, false);
+        request(file);
+        file.section.scrollIntoView({ block: 'start' });
+      }
+    }
   }
 
-  /**
-   * 欄に並べる。`message` があれば上のメッセージの欄に（高さは中身に合わせ直し、広げていれば戻す）、なければ
-   * 1 つの欄だけにする
-   */
-  function place(message: Node[] | undefined, rest: Node[]): void {
+  /** 上の欄に並べる（高さは中身に合わせ直し、広げていれば戻す） */
+  function place(message: Node[]): void {
     root.classList.remove('expanded');
-    root.classList.toggle('split', message !== undefined);
+    root.classList.toggle('split', message.length > 0);
     head.style.height = '';
-    head.replaceChildren(...(message ?? []));
-    scroller.replaceChildren(...rest);
+    head.replaceChildren(...message);
     head.scrollTop = 0;
     scroller.scrollTop = 0;
   }
@@ -226,121 +209,162 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
     return button;
   }
 
-  /** 一覧の見出し・一覧・差分を並べる枠（木のときは一覧と差分を横に並べる） */
-  function stack(head: HTMLElement, files: HTMLElement, diffs: HTMLElement): HTMLElement {
-    const box = el('div', 'stack');
-    box.append(head, files, diffs);
-    return box;
+  /** 帯のボタン（`on` なら押した見た目） */
+  function barButton(text: string, tip: string, on: boolean, click: () => void): HTMLElement {
+    const button = el('button', `bar-button${on ? ' on' : ''}`, text);
+    button.title = tip;
+    button.addEventListener('click', click);
+    return button;
   }
 
-  /** ファイルを選ぶ。`single` ならその差分だけを出し、そうでなければ `scroll` でその差分に移る */
-  function select(path: string, scroll: boolean): void {
-    const file = sections.get(path);
-    if (!file) return;
-    current = path;
-    for (const [p, f] of sections) {
-      f.row.classList.toggle('active', p === path);
-      f.section.classList.toggle('current', p === path);
+  /** 差分の上の帯を作り直す（数と行数の合計、リストと木、フォルダ・差分をすべて開く・畳む、Open All） */
+  function renderBar(): void {
+    const files = [...sections.values()];
+    if (files.length === 0) {
+      bar.replaceChildren();
+      bar.hidden = true;
+      return;
     }
-    if (layout.single) {
-      request(file);
-      if (scroll) file.section.scrollIntoView({ block: 'nearest' });
-    } else if (scroll) {
-      file.section.scrollIntoView({ block: 'start' });
+    bar.hidden = false;
+    const total = el('span', 'files-total', `${files.length} file${files.length === 1 ? '' : 's'}`);
+    if (files.every((f) => f.counts)) {
+      total.append(' ', countsLabel(files.reduce((sum, f) => ({ added: sum.added + f.counts!.added, removed: sum.removed + f.counts!.removed }), { added: 0, removed: 0 })));
     }
+    const spacer = el('span', 'spacer');
+    const switcher = el('span', 'segmented');
+    switcher.append(
+      barButton('List', 'Show the changed files as a list of paths', !layout.tree, () => post({ type: 'detailsLayout', layout: { tree: false } })),
+      barButton('Tree', 'Show the changed files in their folders', layout.tree, () => post({ type: 'detailsLayout', layout: { tree: true } })),
+    );
+    const items: Node[] = [total, spacer, switcher];
+    if (layout.tree && diffs?.querySelector('.dir-head')) {
+      const anyFolded = foldedDirs.size > 0;
+      items.push(
+        barButton(anyFolded ? 'Expand Folders' : 'Collapse Folders', anyFolded ? 'Expand all folders' : 'Collapse all folders', false, () => {
+          if (anyFolded) foldedDirs.clear();
+          else for (const d of diffs?.querySelectorAll<HTMLElement>('.dir-head') ?? []) foldedDirs.add(d.dataset.dir!);
+          applyFolds();
+          renderBar();
+        }),
+      );
+    }
+    const closed = files.filter((f) => !f.heavy && f.section.classList.contains('collapsed'));
+    const expand = closed.length > 0;
+    items.push(
+      barButton(
+        expand ? 'Expand All' : 'Collapse All',
+        expand ? 'Expand every diff (generated files and very large changes stay folded)' : 'Collapse every diff',
+        false,
+        () => {
+          for (const f of files) {
+            if (expand && f.heavy) continue;
+            f.chosen = true;
+            setCollapsed(f, !expand);
+          }
+          if (expand) foldedDirs.clear();
+          applyFolds();
+          for (const f of files) request(f);
+          renderBar();
+        },
+      ),
+    );
+    if (openAll) {
+      const oid = openAll;
+      const all = barButton('Open All', 'Open every changed file in the multi-file diff editor', false, () => post({ type: 'open', oid }));
+      items.push(all);
+    }
+    bar.replaceChildren(...items);
   }
 
-  /** 一覧の行を、今の見せ方（木・パスの並び）で並べ直す */
+  /** 差分を、今の見せ方（パスの並びか木）で並べ直す */
   function arrange(): void {
-    if (!listed) return;
-    const { files, diffs, items } = listed;
-    const rows: Node[] = [];
-    /** 差分も一覧と同じ順に並べる */
-    const order: HTMLElement[] = [];
+    if (!diffs) return;
+    const nodes: Node[] = [];
     if (layout.tree) {
-      const walk = (dir: FileDir<{ path: string }>, depth: number, into: Node[]) => {
+      const walk = (dir: FileDir<FileSection>, depth: number, into: Node[]) => {
         for (const sub of dir.dirs) {
-          const row = el('div', 'file dir-row');
-          row.style.paddingLeft = `${4 + depth * 12}px`;
-          row.append(el('span', 'chevron', '▾'), el('span', 'name', sub.name));
-          const children = el('div', 'dir-children');
+          const row = el('div', 'dir-head');
+          row.dataset.dir = sub.path;
+          row.style.paddingLeft = `${12 + depth * 14}px`;
+          row.title = sub.path;
+          row.append(el('span', 'chevron'), el('span', 'name', sub.name));
           row.addEventListener('click', () => {
-            children.hidden = !children.hidden;
-            row.querySelector('.chevron')!.textContent = children.hidden ? '▸' : '▾';
+            if (foldedDirs.has(sub.path)) foldedDirs.delete(sub.path);
+            else foldedDirs.add(sub.path);
+            applyFolds();
+            renderBar();
           });
+          const children = el('div', 'dir-children');
+          children.dataset.dir = sub.path;
           const inner: Node[] = [];
           walk(sub, depth + 1, inner);
           children.append(...inner);
           into.push(row, children);
         }
-        for (const f of dir.files) {
-          const file = sections.get(f.path)!;
-          file.row.style.paddingLeft = `${4 + depth * 12}px`;
-          file.row.querySelector('.dir')!.textContent = '';
-          into.push(file.row);
-          order.push(file.section);
+        for (const file of dir.files) {
+          file.head.style.paddingLeft = `${12 + depth * 14}px`;
+          setPath(file, dir.path);
+          into.push(file.section);
         }
       };
-      walk(makeFileTree(items), 0, rows);
+      walk(makeFileTree([...sections.values()]), 0, nodes);
     } else {
-      for (const f of items) {
-        const file = sections.get(f.path)!;
-        const slash = f.path.lastIndexOf('/');
-        file.row.style.paddingLeft = '';
-        file.row.querySelector('.dir')!.textContent = slash >= 0 ? f.path.slice(0, slash) : '';
-        rows.push(file.row);
-        order.push(file.section);
+      for (const file of sections.values()) {
+        file.head.style.paddingLeft = '';
+        setPath(file, undefined);
+        nodes.push(file.section);
       }
     }
-    files.replaceChildren(...rows);
-    diffs.replaceChildren(...order);
+    diffs.replaceChildren(...nodes);
+    applyFolds();
+  }
+
+  /** 見出しのパス。木なら、そのフォルダの中の名前だけ（`dir` はフォルダのパス） */
+  function setPath(file: FileSection, dir: string | undefined): void {
+    const label = file.head.querySelector('.path')!;
+    const inside = dir === undefined ? undefined : dir ? `${dir}/` : '';
+    const relative = (p: string) => (inside !== undefined && p.startsWith(inside) ? p.slice(inside.length) : p);
+    label.replaceChildren();
+    if (file.origPath) {
+      const moved = inside !== undefined && !file.origPath.startsWith(inside);
+      label.append(moved ? `${file.origPath} → ${relative(file.path)}` : renamedPath(relative(file.origPath), relative(file.path)));
+    } else if (inside !== undefined) {
+      label.append(relative(file.path));
+    } else {
+      const slash = file.path.lastIndexOf('/');
+      if (slash >= 0) label.append(el('span', 'dir', file.path.slice(0, slash + 1)));
+      label.append(file.path.slice(slash + 1));
+    }
+  }
+
+  /** 畳んだフォルダの中身を隠す */
+  function applyFolds(): void {
+    if (!diffs) return;
+    for (const row of diffs.querySelectorAll<HTMLElement>('.dir-head')) {
+      const folded = foldedDirs.has(row.dataset.dir!);
+      row.classList.toggle('folded', folded);
+      row.querySelector('.chevron')!.textContent = folded ? '▸' : '▾';
+      (row.nextElementSibling as HTMLElement).hidden = folded;
+    }
   }
 
   /** 見せ方を変えた */
   function applyLayout(): void {
-    root.classList.toggle('tree', layout.tree);
-    root.classList.toggle('single', layout.single);
-    for (const old of root.querySelectorAll('.layout-buttons')) old.replaceWith(layoutButtons());
     arrange();
-    if (layout.single && sections.size > 0) {
-      select(current && sections.has(current) ? current : sections.keys().next().value!, false);
-    }
+    renderBar();
   }
   panes.add(applyLayout);
-  applyLayout();
-
-  /** 差分の欄をスクロールしたら、いちばん上に見えているファイルを一覧で選ぶ */
-  let following = false;
-  scroller.addEventListener('scroll', () => {
-    if (layout.single || following || sections.size === 0) return;
-    following = true;
-    requestAnimationFrame(() => {
-      following = false;
-      const top = scroller.getBoundingClientRect().top;
-      let shown: string | undefined;
-      for (const [path, f] of sections) {
-        if (f.section.getBoundingClientRect().top > top + 1) break;
-        shown = path;
-      }
-      if (shown && shown !== current) {
-        current = shown;
-        for (const [p, f] of sections) f.row.classList.toggle('active', p === shown);
-      }
-    });
-  });
 
   /**
-   * ファイルの一覧と差分の枠。差分は画面に入ったものから順に求める（畳んだものは開くまで求めない）。`single` は
-   * 1 つのコミット（メニューと Open がある）。`viewedKey` があれば、Viewed をそこに覚える
+   * 差分を並べる。差分は画面に入ったものから順に求める（畳んだものは開くまで求めない）。`single` は 1 つのコミット
+   * （右クリックのメニューと Open がある）
    */
   function fileSections(
     oid: string,
-    viewedKey: string | undefined,
     items: readonly { path: string; origPath?: string; status?: string; added?: number; removed?: number }[],
-    files: HTMLElement,
     single: boolean,
-    viewed: readonly string[],
-  ): HTMLElement {
+    allOid?: string,
+  ): void {
     diffObserver?.disconnect();
     diffObserver = new IntersectionObserver(
       (entries) => {
@@ -352,89 +376,65 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
       { root: scroller, rootMargin: '200px' },
     );
     sections = new Map();
-    current = undefined;
+    foldedDirs = new Set();
+    openAll = items.length > 0 ? allOid : undefined;
     requestDiff = (path) => post({ type: 'commitDiff', oid, path });
-    const viewedSet = new Set(viewed);
-    const diffs = el('div', 'commit-diffs');
+    diffs = el('div', 'commit-diffs');
     for (const f of items) {
-      const row = el('div', 'file');
-      // 右クリックのメニュー（package.json の webview/context）に渡す情報
-      if (single) row.dataset.vscodeContext = fileContext(oid, f.path);
-      row.title = f.origPath ? `${f.origPath} → ${f.path}` : f.path;
-      if (f.status) row.append(el('span', `status s-${f.status}`, f.status));
-      const slash = f.path.lastIndexOf('/');
-      row.append(el('span', 'name', f.path.slice(slash + 1)));
-      row.append(el('span', 'dir', slash >= 0 ? f.path.slice(0, slash) : ''));
-      row.append(el('span', 'viewed-mark', '✓'));
-
       const section = el('section', 'file-diff');
       section.dataset.path = f.path;
       const head = el('div', 'diff-head');
-      head.title = 'Click to collapse or expand';
+      head.title = f.origPath ? `${f.origPath} → ${f.path}` : f.path;
       head.append(el('span', 'chevron'));
       if (f.status) head.append(el('span', `status s-${f.status}`, f.status));
-      head.append(el('span', 'path', f.origPath ? `${f.origPath} → ${f.path}` : f.path));
-      const box = el('input');
-      box.type = 'checkbox';
-      const check = el('label', 'viewed');
-      check.title = 'Mark as viewed and collapse';
-      check.append(box, ' Viewed');
-      head.append(check);
+      head.append(el('span', 'path'));
       if (single) {
         head.dataset.vscodeContext = fileContext(oid, f.path);
-        const open = el('button', 'secondary', 'Open');
+        const open = el('button', 'head-button', 'Open');
         open.title = 'Open the diff in the editor';
         open.addEventListener('click', () => post({ type: 'openFile', oid, path: f.path }));
-        head.append(open);
+        // 右クリックと同じメニュー（Blame・File History・戻す・パスのコピー）
+        const more = el('button', 'head-button more', '⋯');
+        more.title = 'More actions for this file';
+        more.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const r = more.getBoundingClientRect();
+          head.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: r.left, clientY: r.bottom, button: 2 }));
+        });
+        head.append(open, more);
       }
       section.append(head, el('div', 'empty', 'Loading…'));
-      diffs.append(section);
 
-      const file: FileSection = { row, section, head, requested: false, chosen: false, viewed: viewedSet.has(f.path) };
+      const large = (f.added ?? 0) + (f.removed ?? 0) > COLLAPSE_ABOVE;
+      const file: FileSection = { section, head, path: f.path, origPath: f.origPath, requested: false, chosen: false, heavy: isGenerated(f.path) || large };
       sections.set(f.path, file);
       if (f.added !== undefined && f.removed !== undefined) setCounts(file, { added: f.added, removed: f.removed });
-      box.checked = file.viewed;
-      setViewed(file, file.viewed);
-      // 最初から畳む: Viewed にしたもの、生成物、変わった行が多いもの
-      const large = (f.added ?? 0) + (f.removed ?? 0) > COLLAPSE_ABOVE;
-      setCollapsed(file, file.viewed || isGenerated(f.path) || large);
+      // 最初はすべて畳む（見出しが変わったファイルの一覧を兼ねる。アプリと同じ）
+      setCollapsed(file, true);
 
-      // その差分の位置へ移る（single ならその差分だけを出す）
-      row.addEventListener('click', () => select(f.path, !layout.single));
       head.addEventListener('click', (e) => {
-        if ((e.target as Element).closest('button, label')) return;
+        if ((e.target as Element).closest('button')) return;
         file.chosen = true;
         setCollapsed(file, !section.classList.contains('collapsed'));
-        if (!section.classList.contains('collapsed')) request(file);
+        request(file);
         // 畳んで見出しが上に隠れたら、見出しが見えるところまで戻す
         if (head.getBoundingClientRect().top < scroller.getBoundingClientRect().top) section.scrollIntoView({ block: 'start' });
-      });
-      box.addEventListener('change', () => {
-        // Viewed にしたら畳み、戻したら開く（GitHub と同じ）
-        file.chosen = true;
-        setViewed(file, box.checked);
-        setCollapsed(file, box.checked);
-        if (!box.checked) request(file);
-        if (viewedKey) post({ type: 'viewed', key: viewedKey, path: f.path, viewed: box.checked });
-        if (box.checked && head.getBoundingClientRect().top < scroller.getBoundingClientRect().top) section.scrollIntoView({ block: 'start' });
+        renderBar();
       });
       diffObserver.observe(section);
     }
-    listed = { files, diffs, items };
+    scroller.replaceChildren(diffs);
     applyLayout();
-    return diffs;
   }
 
   /** 出しているコミットの、ファイルの差分を求める */
   let requestDiff: (path: string) => void = () => undefined;
 
-  /** 見えたファイルの差分を求める（畳んでいれば開くまで待つ。single なら選んだものだけ） */
+  /** 開いているファイルの差分を求める */
   function request(file: FileSection): void {
     if (file.requested || file.section.classList.contains('collapsed')) return;
-    const path = file.section.dataset.path!;
-    if (layout.single && path !== current) return;
     file.requested = true;
-    requestDiff(path);
+    requestDiff(file.path);
   }
 
   function setCollapsed(file: FileSection, collapsed: boolean): void {
@@ -442,29 +442,23 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
     file.head.querySelector('.chevron')!.textContent = collapsed ? '▸' : '▾';
   }
 
-  function setViewed(file: FileSection, viewed: boolean): void {
-    file.viewed = viewed;
-    file.row.classList.toggle('viewed', viewed);
-  }
-
-  /** 行数を一覧の行と見出しに出す */
+  /** 行数を見出しに出す */
   function setCounts(file: FileSection, counts: LineCounts): void {
-    file.row.querySelector('.stat')?.remove();
+    file.counts = counts;
     file.head.querySelector('.stat')?.remove();
-    file.row.querySelector('.viewed-mark')!.before(countsLabel(counts));
-    file.head.querySelector('.viewed')!.before(countsLabel(counts));
+    const before = file.head.querySelector('.head-button');
+    if (before) before.before(countsLabel(counts));
+    else file.head.append(countsLabel(counts));
   }
 
   function showSelection({ count, view, error, onPair, onCommit }: SelectionState): void {
     shownOid = view?.key;
     meta = undefined;
-    listed = undefined;
-    diffObserver?.disconnect();
-    sections = new Map();
     const parts: Node[] = [el('div', 'subject', `${count} commits selected`)];
     if (!view) {
       parts.push(el('div', error ? 'selection-note error' : 'selection-note', error ?? 'Loading the diff…'));
-      place(undefined, parts);
+      place(parts);
+      fileSections('', [], false);
       return;
     }
     const note =
@@ -496,17 +490,9 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
     if (view.count > view.commits.length) {
       parts.push(el('div', 'selection-note', `…and ${view.count - view.commits.length} more`));
     }
-    if (view.files.length === 0) {
-      parts.push(el('div', 'empty', 'No changes'));
-    } else {
-      const files = el('div', 'files');
-      const n = view.files.length;
-      const filesHead = el('div', 'files-head');
-      filesHead.append(el('span', '', `${n} file${n === 1 ? '' : 's'} changed`), layoutButtons());
-      const diffs = fileSections(view.key, view.viewedKey, view.files, files, false, view.viewed);
-      parts.push(stack(filesHead, files, diffs));
-    }
-    place(undefined, parts);
+    place(parts);
+    fileSections(view.key, view.files, false);
+    if (view.files.length === 0) scroller.replaceChildren(el('div', 'empty', 'No changes'));
   }
 
   function showDiff(oid: string, path: string, diff: FileDiff): void {
@@ -516,9 +502,14 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
     }
     file.section.replaceChildren(file.head, ...renderDiffBody(diff));
     const counts = lineCounts(diff);
+    const had = file.counts;
     setCounts(file, counts);
     // 行数は差分を読んで初めて分かることがある。大きければ畳む（自分で開いたものは畳まない）
-    if (!file.chosen && counts.added + counts.removed > COLLAPSE_ABOVE) setCollapsed(file, true);
+    if (counts.added + counts.removed > COLLAPSE_ABOVE) {
+      file.heavy = true;
+      if (!file.chosen) setCollapsed(file, true);
+    }
+    if (!had) renderBar();
   }
 
   function showExtras(extras: DetailsExtras): void {
@@ -543,9 +534,9 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
   function clear(): void {
     shownOid = undefined;
     meta = undefined;
-    listed = undefined;
-    sections = new Map();
-    place(undefined, [el('div', 'empty', 'Select a commit to see its details here')]);
+    place([]);
+    fileSections('', [], false);
+    scroller.replaceChildren(el('div', 'empty', 'Select a commit to see its details here'));
   }
 
   clear();

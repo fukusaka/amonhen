@@ -36,8 +36,6 @@ import {
   historyOrder,
   setDetailsLayout,
   setHistoryFold,
-  setViewedFile,
-  viewedFiles,
   detailsLayout,
   setHistoryHidden,
   setHistoryHighlight,
@@ -300,9 +298,6 @@ export class HistoryController implements vscode.Disposable {
       case 'toggleFold':
         await this.toggleFold(message.oid);
         break;
-      case 'viewed':
-        await setViewedFile(message.key, message.path, message.viewed);
-        break;
       case 'detailsLayout':
         await setDetailsLayout(message.layout);
         this.post({ type: 'detailsLayout', layout: detailsLayout() });
@@ -393,8 +388,6 @@ export class HistoryController implements vscode.Disposable {
       void this.loadSyntax(daemon.client, diff.json['view'], index, current.key, current.diffs);
       const selection = diff.json['selection'] as { kind: SelectionView['kind'] };
       const commits = readRows(listed).map((r) => ({ row: r.row, oid: r.oid, subject: r.subject, author: r.author }));
-      // Viewed は選んだコミットの組で覚える（全部の ID が分かるときだけ）
-      const viewedKey = commits.length === sorted.length ? `${pair}:${commits.map((c) => c.oid).join(',')}` : undefined;
       this.post({
         type: 'selection',
         token,
@@ -405,8 +398,6 @@ export class HistoryController implements vscode.Disposable {
           pair,
           files: (diff.json['files'] as SelectionView['files'] | undefined) ?? [],
           commits,
-          viewedKey,
-          viewed: viewedKey ? viewedFiles(viewedKey) : [],
         },
       });
     } catch (err) {
@@ -614,7 +605,7 @@ export class HistoryController implements vscode.Disposable {
         this.details.delete(this.details.keys().next().value!);
       }
     }
-    this.post({ type: 'details', details: { ...details, refs: this.labels.get(oid) ?? [] }, viewed: viewedFiles(oid) });
+    this.post({ type: 'details', details: { ...details, refs: this.labels.get(oid) ?? [] } });
     // 署名の検証と子のコミットは時間がかかるので、後から送る（エンジンだけ）
     void this.readExtras(oid)
       .then((extras) => extras && this.post({ type: 'detailsExtras', extras }))
