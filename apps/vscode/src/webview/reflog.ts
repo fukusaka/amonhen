@@ -152,7 +152,7 @@ export function createReflogView(): View {
         break;
       case 'details':
         if (root.classList.contains('active') && message.details.oid === entries[selected]?.oid) {
-          details.show(message.details, undefined, message.viewed);
+          details.show(message.details);
         }
         break;
       case 'commitDiff':

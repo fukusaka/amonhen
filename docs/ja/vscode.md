@@ -280,3 +280,4 @@ macOS アプリに追いつく（1 つの機能を 1 つの pull request で、�
 - [x] 66. commit-graph を自動で書く（`amonhen.writeCommitGraph`）
 - [x] 67. Merge の取り込み方を選ぶ（fast-forward だけ・いつも merge コミット・squash）
 - [x] 68. Daemon のページ（様子・Start と Stop・つながり）。アプリの Activity の Daemon と同じ
+- [x] 69. History の詳細をアプリと同じ形に: ファイルの見出しが変更ファイルを兼ねる（最初は畳む、⋯ でメニュー）、リストか、フォルダを畳める木、切り替えとすべて開く・畳むは帯 1 本。Viewed と 1 ファイルずつはなくした
