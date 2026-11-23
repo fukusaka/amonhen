@@ -1245,6 +1245,12 @@ First release.
 
 ### Unreleased
 
+#### Changed
+
+- History's details work like the app's: the file headers are the changed files, folded at first, with a ⋯ for
+  their menu. One bar shows a list or a tree whose folders fold, and expands or collapses everything. Viewed and one
+  file at a time are gone.
+
 #### Fixed
 
 - Working Copy no longer reports "File has no changes" when the selected file is changed again while its diff is
