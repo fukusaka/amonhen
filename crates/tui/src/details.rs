@@ -555,7 +555,6 @@ impl Details {
         true
     }
 
-    /// 頼むことがあれば、その中身（答えを待っている間は、次を頼まない）。
     /// 頼むものの鍵: 出したいものと、無視する空白。
     fn key_of(&self, wanted: &Want) -> String {
         match self.whitespace {
@@ -570,6 +569,7 @@ impl Details {
         self.whitespace
     }
 
+    /// 頼むことがあれば、その中身（答えを待っている間は、次を頼まない）。
     pub fn request(&mut self) -> Option<Request> {
         let wanted = self.wanted.as_ref()?;
         let key = self.key_of(wanted);
