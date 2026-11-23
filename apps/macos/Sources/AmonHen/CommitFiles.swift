@@ -658,6 +658,7 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
             guard let diff else { return content.show(nil, message: L("Couldn’t load the diff")) }
             if diff.isBinary {
                 content.show(nil)
+                content.view.isHidden = true
                 binaryBox.isHidden = false
                 needsLayout = true
                 return
