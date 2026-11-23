@@ -5,3 +5,4 @@ pub mod flowchart;
 pub mod quadrant;
 pub mod radar;
 pub mod registry;
+pub mod sankey;
