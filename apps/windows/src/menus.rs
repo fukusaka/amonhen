@@ -8,6 +8,7 @@ use windows_reactor::*;
 /// この FE で動く操作。
 pub const IMPLEMENTED: &[&str] = &[
     "show-sidebar",
+    "wrap-long-lines",
     "open-on-github",
     "create-pull-request",
     "show-working-copy",
@@ -76,6 +77,15 @@ fn file_item_title(id: &str) -> String {
 fn title(c: &Command) -> String {
     match c.id {
         "reveal-in-files" => amonhen_model::tr!("Show in Files"),
+        // 折り返しているときは ✓（ほかの切り替えと同じ）。
+        "wrap-long-lines" => {
+            let mark = if crate::data::wrap_lines() {
+                "✓ "
+            } else {
+                ""
+            };
+            format!("{mark}{}", amonhen_model::i18n::translate(c.title))
+        }
         _ if c.localized => amonhen_model::i18n::translate(c.title).into_owned(),
         _ => c.title.to_owned(),
     }

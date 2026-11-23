@@ -3180,6 +3180,9 @@ impl Root {
             Message::DiffViewOption(key) => {
                 match key.as_str() {
                     "expand-details" => self.details_expanded = !self.details_expanded,
+                    "wrap-long-lines" => {
+                        self.update(Message::Command(key.clone()), context);
+                    }
                     // 高さを中身に合わせる（手で動かした高さを忘れる）。
                     "fit-height" => {
                         self.details_kept = false;
@@ -4003,6 +4006,14 @@ impl Root {
                 let clock = ACTIVITY_CLOCK.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                 self.activity_clock = clock;
                 activity_clock_later(clock, context);
+            }
+            // View > Wrap Long Lines（Alt+Z。帯の ↩︎ と表示の設定の「コード」も同じ。アプリ全体の設定）。
+            Message::Command(id) if id == "wrap-long-lines" => {
+                let on = !crate::data::wrap_lines();
+                if let Err(e) = crate::prefs::set_bool(crate::data::WRAP_LINES, on) {
+                    eprintln!("長い行を折り返すかを覚えられない: {e}");
+                }
+                self.with_history(|h| h.diff.dirty = true);
             }
             Message::Command(id) if id == "show-sidebar" => {
                 self.sidebar_hidden = !self.sidebar_hidden;
@@ -17210,6 +17221,7 @@ impl Root {
                     .margin(Thickness::new(0.0, 2.0, 8.0, 2.0))
                     .children((
                         self.whitespace_picker(context),
+                        self.wrap_button(context),
                         self.diff_find_button(context),
                     )),
             ))
@@ -17360,6 +17372,21 @@ impl Root {
                 "Expand the commit details to fill the right column (click again to restore)."
             )),
         );
+        // コード（差分と、すべてのファイルで開いたファイルの中身）に効くもの。
+        items.push(MenuItem::disabled("h-code", tr!("Code")));
+        items.push(
+            MenuItem::item(
+                "wrap-long-lines",
+                format!(
+                    "    {}{}",
+                    mark(crate::data::wrap_lines()),
+                    tr!("Wrap Long Lines")
+                ),
+            )
+            .with_tooltip(tr!(
+                "Wrap lines wider than the diff instead of scrolling sideways (in every diff)"
+            )),
+        );
         items
     }
 
@@ -17403,6 +17430,24 @@ impl Root {
 
     /// 行を比べるときに無視する空白を選ぶボタン（macOS 版の `WhitespacePopUp`）: アイコンだけで、押すと 4 つの
     /// 選び方（今のものに ✓、それぞれに説明のツールチップ）。無視している間はアイコンをアクセントの色にする。
+    /// 長い行を折り返すボタン（↩︎。空白のボタンの隣。macOS 版・GTK4 版と同じ。折り返している間はアクセントの色）。
+    fn wrap_button(&self, context: &ViewContext<Self>) -> View {
+        let on = crate::data::wrap_lines();
+        let icon = TextBlock::new().text("↩").font_size(15.0);
+        let icon = if on {
+            icon.foreground(Brush::Solid(Color::rgb(0x00, 0x78, 0xd4)))
+        } else {
+            icon
+        };
+        ToggleButton::new()
+            .is_checked(on)
+            .on_is_checked_changed(
+                context.callback(|_: bool| Message::Command("wrap-long-lines".to_owned())),
+            )
+            .content(icon)
+            .tooltip(tr!("Wrap Long Lines (Alt+Z)"))
+    }
+
     fn whitespace_picker(&self, context: &ViewContext<Self>) -> View {
         use amonhen_core::diff::Whitespace;
         let mut current = Whitespace::Exact;
@@ -17606,16 +17651,24 @@ impl Root {
                             .spacing(6.0)
                             .children(if files_mode {
                                 // すべてのファイルでは、差分にしか効かないものを隠す（macOS 版と同じ）。
+                                // 折り返しは、開いたファイルの中身にも効く。
                                 (
                                     tree_switch,
                                     folders,
                                     View::empty(),
-                                    View::empty(),
+                                    self.wrap_button(context),
                                     find,
                                     options,
                                 )
                             } else {
-                                (tree_switch, folders, expand, whitespace, find, options)
+                                (
+                                    tree_switch,
+                                    folders,
+                                    expand,
+                                    View::fragment((whitespace, self.wrap_button(context))),
+                                    find,
+                                    options,
+                                )
                             }),
                     )),
             )
@@ -20157,6 +20210,21 @@ impl HistoryView {
             s.renderer.diff_find.clear();
             s.renderer.diff_current = None;
         }
+        // 長い行を折り返すなら、差分の欄の幅から桁の数を決める（幅か設定が変わったら、表示の行を作り直す）。
+        let wrap = crate::data::wrap_lines()
+            .then(|| {
+                let width = self
+                    .diff
+                    .surface
+                    .as_ref()
+                    .map(|s| s.width as f32 / self.diff.scale.max(0.01))?;
+                Some((width, code_char_width()))
+            })
+            .flatten();
+        if s.data.set_wrap(wrap) {
+            s.renderer.forget_diff();
+            self.diff.dirty = true;
+        }
         if self.diff.dirty
             && self.front
             && let Some(surface) = self.diff.surface.as_mut()
@@ -20401,7 +20469,9 @@ impl HistoryView {
     fn diff_rows(&self) -> usize {
         let data = &self.session.data;
         if self.working_page {
-            data.working.as_ref().map_or(0, |w| w.diff.view.rows.len())
+            data.working
+                .as_ref()
+                .map_or(0, |w| w.content().line_count())
         } else {
             data.shown_content().map_or(0, |c| c.line_count())
         }
@@ -20410,7 +20480,7 @@ impl HistoryView {
     /// 差分の `row` 行目の、表示の行（隠したファイルの見出しなら None）。
     fn line_of_row(&self, row: u32) -> Option<u32> {
         if self.working_page {
-            return Some(row);
+            return self.session.data.working.as_ref()?.content().line_of(row);
         }
         self.session.data.shown_content()?.line_of(row)
     }
@@ -20613,10 +20683,23 @@ impl HistoryView {
 
     fn diff_line(&self, line: usize) -> Option<crate::data::DiffLine> {
         if self.working_page {
-            let rows = self.session.data.working.as_ref()?.diff.view.rows.len();
-            return (line < rows).then_some(crate::data::DiffLine::Row(line as u32));
+            return self.session.data.working.as_ref()?.content().line(line);
         }
         self.session.data.shown_content()?.line(line)
+    }
+
+    /// 差分の欄の `y`（DIP）にある差分の行（折り返した続きの行なら、その行）。
+    fn row_at_y(&self, y: f32) -> Option<usize> {
+        let line = ((self.diff.scroll_y + y) / DIFF_ROW_HEIGHT).floor();
+        if line < 0.0 {
+            return None;
+        }
+        match self.diff_line(line as usize)? {
+            crate::data::DiffLine::Row(i) | crate::data::DiffLine::Cont(i, _, _) => {
+                Some(i as usize)
+            }
+            _ => None,
+        }
     }
 
     /// 選んでいるコミットの詳細と差分を読み直す（Stashes の画面から戻ったとき）。
@@ -21383,6 +21466,14 @@ fn split_released() -> bool {
 enum ImageDrag {
     Position(bool),
     Pan(f32, f32, f32, f32),
+}
+
+/// 差分の等幅の字（Cascadia Mono 12pt）の幅（DIP。測れなければ 7.2）。
+fn code_char_width() -> f32 {
+    thread_local! {
+        static WIDTH: f32 = crate::render::monospace_zero_width(12.0).unwrap_or(7.2);
+    }
+    WIDTH.with(|w| *w)
 }
 
 /// Push の画面の行。
@@ -22156,9 +22247,8 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
                 Target::Diff if !left => {}
                 // Working Copy の差分: 左の印を押すと、その行を含める・外す。
                 Target::Diff if h.working_page => {
-                    let row = ((h.diff.scroll_y + position.Y) / DIFF_ROW_HEIGHT).floor();
-                    if row >= 0.0 && position.X < crate::render::DIFF_MARK_WIDTH {
-                        let row = row as usize;
+                    let row = h.row_at_y(position.Y);
+                    if let Some(row) = row.filter(|_| position.X < crate::render::DIFF_MARK_WIDTH) {
                         let kind = h
                             .session
                             .data
@@ -22231,7 +22321,10 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
                         return;
                     }
                     let row = match h.diff_line(line as usize) {
-                        Some(crate::data::DiffLine::Row(row)) => row as f32,
+                        Some(
+                            crate::data::DiffLine::Row(row)
+                            | crate::data::DiffLine::Cont(row, _, _),
+                        ) => row as f32,
                         // 画像の比べる欄: 比べ方・位置・拡大縮小・絵を動かす。
                         Some(crate::data::DiffLine::Panel(file, k)) => {
                             if left {
@@ -22417,9 +22510,8 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
                     return;
                 };
                 with_history(|h| {
-                    let row = ((h.diff.scroll_y + position.Y) / DIFF_ROW_HEIGHT).floor();
-                    if row >= 0.0 {
-                        MARK_DRAG.with(|d| d.set(Some((anchor, row as usize, stage))));
+                    if let Some(row) = h.row_at_y(position.Y) {
+                        MARK_DRAG.with(|d| d.set(Some((anchor, row, stage))));
                     }
                 });
                 let _ = args.SetHandled(true);
@@ -22464,7 +22556,8 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
                     }
                     // Working Copy の差分なら行（hunk）の、History の差分ならファイルのメニュー。
                     if h.working_page {
-                        let rows = h.session.data.working_rows_at(row as usize);
+                        let Some(row) = h.row_at_y(at.Y) else { return };
+                        let rows = h.session.data.working_rows_at(row);
                         if rows.is_some() {
                             DIFF_AT.with(|a| *a.borrow_mut() = Some((source.clone(), at)));
                         }
@@ -22476,9 +22569,10 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
                         .diff_line(row as usize)
                         .filter(|_| !h.session.data.show_file)
                     {
-                        Some(crate::data::DiffLine::Row(row)) => {
-                            h.session.data.file_at(row as usize)
-                        }
+                        Some(
+                            crate::data::DiffLine::Row(row)
+                            | crate::data::DiffLine::Cont(row, _, _),
+                        ) => h.session.data.file_at(row as usize),
                         _ => None,
                     };
                     if file.is_some() {

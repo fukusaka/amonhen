@@ -170,6 +170,8 @@ pub enum DiffLine {
     Panel(u32, u32),
     /// その時点のファイルで、消した行の所の印（`DiffTree::deletions` の番号）。
     Deleted(u32),
+    /// 折り返した行の続き（差分の行と、その行の文字の範囲。UTF-16 の位置）。
+    Cont(u32, u32, u32),
 }
 
 /// 木で見せるときのフォルダの行（macOS 版の `DiffViewController.Folder`）。
@@ -184,7 +186,7 @@ pub struct FolderLine {
 
 /// 変更ファイルを木で見せるときの、表示の行の並び（macOS 版の `treeLayout` と `setFolders`）。ファイルの
 /// 見出しの前にフォルダの行を差し込み、畳んだフォルダの中のファイルは見出しごと隠す。
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct DiffTree {
     pub lines: Vec<DiffLine>,
     pub folders: Vec<FolderLine>,
@@ -200,6 +202,110 @@ pub struct DiffTree {
     /// その時点のファイルで見せるときの、変えた行（消した行に続けて足した行）と、消した行の数。
     pub modified: HashSet<u32>,
     pub deletions: Vec<u32>,
+    /// 折り返した行の、最初の表示の行に出す文字の終わり（UTF-16 の位置。続きは `DiffLine::Cont`）。
+    pub first_end: HashMap<u32, u32>,
+}
+
+/// 長い行を折り返す設定（アプリ全体。macOS 版・GTK4 版と同じ鍵 `wrapDiffLines`）。
+pub const WRAP_LINES: &str = "wrapDiffLines";
+
+pub fn wrap_lines() -> bool {
+    crate::prefs::bool(WRAP_LINES)
+}
+
+/// 行の文字を、`cols` 桁（等幅の字の数。全角は 2、タブは 4）ごとに区切る（UTF-16 の位置の範囲）。区切りは、
+/// 範囲の後ろ半分にある空白の後ろを選び、なければ桁で切る（GTK4 版の `rewrap`）。収まれば 1 つ。
+pub fn wrap_breaks(text: &str, cols: usize) -> Vec<(u32, u32)> {
+    let cols = cols.max(8);
+    let mut out = Vec::new();
+    let (mut start, mut at, mut width) = (0u32, 0u32, 0usize);
+    // 範囲の中の、最後の空白の後ろ（位置と、そこまでの桁）。
+    let mut space: Option<(u32, usize)> = None;
+    for c in text.chars() {
+        let w = match c {
+            '\t' => 4,
+            c if (c as u32) >= 0x1100 && unicode_wide(c) => 2,
+            _ => 1,
+        };
+        if width + w > cols && at > start {
+            let (end, used) = match space.filter(|&(_, used)| used * 2 >= cols) {
+                Some(found) => found,
+                None => (at, width),
+            };
+            out.push((start, end));
+            start = end;
+            width -= used;
+            space = None;
+        }
+        at += c.len_utf16() as u32;
+        width += w;
+        if c == ' ' {
+            space = Some((at, width));
+        }
+    }
+    out.push((start, at));
+    out
+}
+
+/// 全角（東アジアの広い字）か（おおまかに。CJK・かな・ハングル・全角の記号）。
+fn unicode_wide(c: char) -> bool {
+    matches!(c as u32,
+        0x1100..=0x115F | 0x2E80..=0x303E | 0x3041..=0x33FF | 0x3400..=0x4DBF | 0x4E00..=0x9FFF
+        | 0xA000..=0xA4CF | 0xAC00..=0xD7A3 | 0xF900..=0xFAFF | 0xFE30..=0xFE4F | 0xFF00..=0xFF60
+        | 0xFFE0..=0xFFE6 | 0x1F300..=0x1F64F | 0x1F900..=0x1F9FF | 0x20000..=0x3FFFD)
+}
+
+/// 表示の行の並び `base`（なければ差分の行のまま）で、`cols` 桁より長い差分の行を折り返した並び（ファイルの
+/// 見出しと hunk の見出しは折り返さない）。折り返す行がなく `base` もなければ None。
+pub fn wrapped(view: &DiffView, base: Option<DiffTree>, cols: usize) -> Option<DiffTree> {
+    use amonhen_layout::DiffRow;
+    if cols == 0 {
+        return base;
+    }
+    let mut breaks: HashMap<u32, Vec<(u32, u32)>> = HashMap::new();
+    for (i, r) in view.rows.iter().enumerate() {
+        if matches!(r.kind, DiffRow::FILE | DiffRow::HUNK) {
+            continue;
+        }
+        let bytes = view.strings.bytes(r.text);
+        // 桁の数を超えないほど短い行は見るまでもない。
+        if bytes.len() <= cols {
+            continue;
+        }
+        let parts = wrap_breaks(&String::from_utf8_lossy(bytes), cols);
+        if parts.len() > 1 {
+            breaks.insert(i as u32, parts);
+        }
+    }
+    if breaks.is_empty() {
+        return base;
+    }
+    let mut tree = base.unwrap_or_else(|| DiffTree {
+        lines: (0..view.rows.len() as u32).map(DiffLine::Row).collect(),
+        ..Default::default()
+    });
+    let mut lines = Vec::with_capacity(tree.lines.len() + breaks.len());
+    for line in std::mem::take(&mut tree.lines) {
+        lines.push(line);
+        if let DiffLine::Row(i) = line
+            && let Some(parts) = breaks.get(&i)
+        {
+            tree.first_end.insert(i, parts[0].1);
+            lines.extend(parts[1..].iter().map(|&(s, e)| DiffLine::Cont(i, s, e)));
+        }
+    }
+    tree.line_of_row = vec![u32::MAX; view.rows.len()];
+    tree.file_lines.clear();
+    for (n, line) in lines.iter().enumerate() {
+        if let DiffLine::Row(i) = *line {
+            tree.line_of_row[i as usize] = n as u32;
+            if view.rows[i as usize].kind == DiffRow::FILE {
+                tree.file_lines.push(n as u32);
+            }
+        }
+    }
+    tree.lines = lines;
+    Some(tree)
 }
 
 /// 木の形（ファイルごとの前に差し込むフォルダの行、深さ、名前、畳んだフォルダの中で隠すファイル）。並びは
@@ -278,6 +384,9 @@ pub struct WorkingShown {
     pub diff: Arc<amonhen_core::WorkingDiff>,
     pub highlights: HashMap<u32, Vec<(u32, u32)>>,
     pub syntax: HashMap<u32, Vec<(u32, u32, u8)>>,
+    /// 長い行を折り返した表示の行の並びと、その桁の数。
+    pub tree: Option<DiffTree>,
+    pub wrap_cols: usize,
 }
 
 impl WorkingShown {
@@ -289,7 +398,7 @@ impl WorkingShown {
             file_rows: &[],
             marks: self.diff.combined.is_some(),
             file_marks: &[],
-            tree: None,
+            tree: self.tree.as_ref(),
             counts: None,
             widen: false,
             stacked: None,
@@ -307,7 +416,10 @@ pub struct FileShown {
     pub view: DiffView,
     syntax: HashMap<u32, Vec<(u32, u32, u8)>>,
     highlights: HashMap<u32, Vec<(u32, u32)>>,
+    /// その時点のファイルとして見せる行の並びと、それを折り返したもの。
+    base: DiffTree,
     tree: DiffTree,
+    wrap_cols: usize,
     /// 画像なら、その時点の中身（差分の代わりに 1 枚の絵で見せる）と、見せ方（倍率）。
     pub picture: Option<Arc<Vec<u8>>>,
     pub picture_view: crate::imagediff::View,
@@ -471,6 +583,8 @@ pub struct CommitShown {
     whole: HashSet<usize>,
     /// 画像の比べる欄ごとの見せ方（位置・倍率）。
     pub image_views: HashMap<usize, crate::imagediff::View>,
+    /// 長い行を折り返す桁の数（0 なら折り返さない）。
+    wrap_cols: usize,
     /// 「テキストで見る」にした SVG（絵の代わりに差分）。
     svg_text: HashSet<usize>,
     /// この差分を見分ける番号（読み直すたびに新しい。画像を読んだものを取っておく鍵）。
@@ -502,6 +616,7 @@ impl CommitShown {
             contexts: HashMap::new(),
             whole: HashSet::new(),
             image_views: HashMap::new(),
+            wrap_cols: 0,
             svg_text: HashSet::new(),
             id: {
                 static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -706,6 +821,8 @@ impl CommitShown {
             }
             tree
         });
+        // 長い行を折り返す（桁の数が決まっていれば）。
+        self.tree = wrapped(&self.diff, self.tree.take(), self.wrap_cols);
         self.syntax.clear();
         self.version += 1;
         (stacked, collapsed)
@@ -940,6 +1057,8 @@ pub struct Data {
     pub file_view_changed: bool,
     /// 差分の欄に、すべてのファイルで開いたファイルを出しているか。
     pub show_file: bool,
+    /// 長い行を折り返すときの、差分の欄の幅と等幅の字の幅（DIP。折り返さないなら None）。
+    wrap: Option<(f32, f32)>,
     /// 今の History の行の、ref のラベル。
     pub labels: Labels,
     /// 一致したコミットだけを出している間の、元の History とその一致・ref の印（検索の欄の Show Only Matching
@@ -1311,6 +1430,7 @@ impl Data {
             file_wanted: None,
             file_view_changed: false,
             show_file: false,
+            wrap: None,
             labels: HashMap::new(),
             signatures: HashMap::new(),
             ci: HashMap::new(),
@@ -1481,6 +1601,8 @@ impl Data {
                         diff: Arc::new(diff),
                         highlights,
                         syntax,
+                        tree: None,
+                        wrap_cols: 0,
                     }))
                 }
                 Err(e) => {
@@ -1775,6 +1897,7 @@ impl Data {
                             shown.set_extras(extras);
                         }
                         self.commit = Some(shown);
+                        self.apply_wrap();
                         changed = true;
                         // 空白の扱いを変えて読み直した: 開いていたファイル・広げた前後・ファイル全体・畳んだ
                         // フォルダを戻す。
@@ -1855,6 +1978,7 @@ impl Data {
                 Event::File(shown) => {
                     if self.file_wanted.as_deref() == Some(shown.path.as_str()) {
                         self.file_view = Some(shown);
+                        self.apply_wrap();
                         self.file_view_changed = true;
                         changed = true;
                     }
@@ -1862,6 +1986,7 @@ impl Data {
                 Event::Working(shown) => {
                     if self.working_wanted.as_deref() == Some(shown.path.as_str()) {
                         self.working = Some(shown);
+                        self.apply_wrap();
                         self.working_changed = true;
                         changed = true;
                     }
@@ -1880,6 +2005,58 @@ impl Data {
             }
         }
         Ok(changed)
+    }
+
+    /// 長い行を折り返す（`wrap` は差分の欄の幅と等幅の字の幅、None なら折り返さない）。出している差分・
+    /// Working Copy の差分・すべてのファイルの中身の表示の行を作り直す。変わったら true。
+    pub fn set_wrap(&mut self, wrap: Option<(f32, f32)>) -> bool {
+        if self.wrap == wrap {
+            return false;
+        }
+        self.wrap = wrap;
+        self.apply_wrap()
+    }
+
+    /// 今の折り返しの設定を、出しているものに当てる。変わったら true。
+    fn apply_wrap(&mut self) -> bool {
+        let wrap = self.wrap;
+        let cols = move |marks: bool, file_mode: bool| match wrap {
+            Some((width, char_width)) if char_width > 0.0 => {
+                let left = crate::render::text_left(marks, file_mode);
+                ((width - left - 12.0) / char_width).floor().max(0.0) as usize
+            }
+            _ => 0,
+        };
+        let mut changed = false;
+        let commit_cols = cols(false, false);
+        if self
+            .commit
+            .as_ref()
+            .is_some_and(|c| c.wrap_cols != commit_cols)
+        {
+            changed |= self.relayout(|commit| {
+                commit.wrap_cols = commit_cols;
+                true
+            });
+        }
+        let file_cols = cols(false, true);
+        if let Some(file) = self.file_view.as_mut()
+            && file.wrap_cols != file_cols
+        {
+            file.wrap_cols = file_cols;
+            file.tree = wrapped(&file.view, Some(file.base.clone()), file_cols)
+                .unwrap_or_else(|| file.base.clone());
+            changed = true;
+        }
+        if let Some(working) = self.working.as_mut() {
+            let working_cols = cols(working.diff.combined.is_some(), false);
+            if working.wrap_cols != working_cols {
+                working.wrap_cols = working_cols;
+                working.tree = wrapped(&working.diff.view, None, working_cols);
+                changed = true;
+            }
+        }
+        changed
     }
 
     /// 出している差分が 1 つのコミットなら、その ID（すべてのファイルを見られる。stash・複数・範囲では None）。
@@ -1942,13 +2119,15 @@ impl Data {
                 }
             };
             let syntax = syntax_of(&view);
-            let tree = file_lines(&view);
+            let base = file_lines(&view);
             static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1 << 40);
             let _ = tx.send(Event::File(Box::new(FileShown {
                 path,
                 view,
                 syntax,
-                tree,
+                tree: base.clone(),
+                base,
+                wrap_cols: 0,
                 highlights: HashMap::new(),
                 picture,
                 picture_view: crate::imagediff::View::default(),
@@ -2651,6 +2830,18 @@ fn labels(history: &HistorySnapshot, refs: &Refs) -> Labels {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wrap_breaks_at_spaces_and_counts_wide_characters() {
+        // 収まれば 1 つ。
+        assert_eq!(wrap_breaks("short line", 20), [(0, 10)]);
+        // 後ろ半分の空白の後ろで切る。
+        assert_eq!(wrap_breaks("aaaa bbbb cccc dddd", 12), [(0, 10), (10, 19)]);
+        // 空白がなければ桁で切る。
+        assert_eq!(wrap_breaks(&"x".repeat(20), 8), [(0, 8), (8, 16), (16, 20)]);
+        // 全角は 2 桁（UTF-16 の位置は 1 つずつ）。
+        assert_eq!(wrap_breaks(&"あ".repeat(10), 8), [(0, 4), (4, 8), (8, 10)]);
+    }
 
     #[test]
     fn tree_layout_puts_folders_before_their_first_file() {
