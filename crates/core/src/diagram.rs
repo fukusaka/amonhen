@@ -46,7 +46,10 @@ pub fn draw_in_zone(language: &str, text: &str, zone: Option<Arc<dyn TimeZone>>)
 
 #[cfg(feature = "diagrams")]
 fn draw_mermaid(text: &str, zone: Option<Arc<dyn TimeZone>>) -> Option<Drawn> {
-    if !amonhen_pele::supports(text) {
+    // pele は 5 万文字（UTF-16）を超える文を読まずに断る。`supports` は前処理を長さの上限なしに通すので、
+    // 何 MB ものコードブロックで止まらないよう、先に長さを見て pele の断りをそのまま見せる。
+    let too_long = text.len() > MAX_SOURCE && text.encode_utf16().count() > MAX_SOURCE;
+    if !too_long && !amonhen_pele::supports(text) {
         return None;
     }
     // 深い入れ子でスタックがあふれるとアプリごと落ちる（pele は JS の RangeError を「入れ子が深すぎる」と返すが、
@@ -73,6 +76,10 @@ fn draw_mermaid(text: &str, zone: Option<Arc<dyn TimeZone>>) -> Option<Drawn> {
         Err(_) => Drawn::Error(amonhen_model::tr!("This diagram couldn’t be drawn")),
     })
 }
+
+/// pele が読む文の長さの上限（Mermaid の既定の maxTextSize。UTF-16 の数）。
+#[cfg(feature = "diagrams")]
+const MAX_SOURCE: usize = 50_000;
 
 /// pele を動かすスレッドのスタック（5 万文字の入れ子にも足りる大きさ）。
 #[cfg(feature = "diagrams")]
@@ -515,6 +522,25 @@ mod tests {
         fn offset_ms(&self, _utc_ms: f64) -> f64 {
             9.0 * 3_600_000.0
         }
+    }
+
+    #[cfg(feature = "diagrams")]
+    #[test]
+    fn refuses_long_sources_without_reading_them() {
+        // 5 MB の flowchart も、知らない種類も、読む前に長さで断る（時間は前処理を通さないので数ミリ秒）。
+        for head in ["flowchart LR\n", "zenuml\n"] {
+            let text = format!("{head}{}", "  A --> B\n".repeat(500_000));
+            let started = std::time::Instant::now();
+            match draw("mermaid", &text) {
+                Some(Drawn::Error(message)) => assert!(message.contains("limit"), "{message}"),
+                other => panic!("{other:?}"),
+            }
+            assert!(started.elapsed() < std::time::Duration::from_millis(500));
+        }
+        // ちょうど上限までは描く
+        let text = format!("flowchart LR\n  A --> B\n%%{}\n", "x".repeat(50_000 - 26));
+        assert_eq!(text.encode_utf16().count(), 50_000);
+        assert!(matches!(draw("mermaid", &text), Some(Drawn::Svg(..))));
     }
 
     #[cfg(feature = "diagrams")]
