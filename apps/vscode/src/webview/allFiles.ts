@@ -320,6 +320,8 @@ interface MdRun {
   link?: string;
   image?: string;
   footnote?: string;
+  /** GitHub 独自の絵文字（`:octocat:` などの画像だけのもの）。`text` を薄い札で見せる */
+  custom_emoji?: string;
   line_break?: boolean;
 }
 type MdBlock =
@@ -356,6 +358,12 @@ function renderRuns(runs: readonly MdRun[]): Node[] {
       return alt;
     }
     if (run.footnote) return el('sup', 'md-footnote', `[${run.footnote}]`);
+    if (run.custom_emoji) {
+      // GitHub 独自の絵文字は画像を持たないので、名前を薄い札で見せる（アプリと同じ）
+      const chip = el('span', 'md-emoji-chip', run.text);
+      chip.title = 'GitHub’s own emoji, shown by name (its image isn’t included)';
+      return chip;
+    }
     let node: HTMLElement = el(run.code ? 'code' : 'span', run.html ? 'md-html' : '', run.text);
     if (run.bold) node = wrapIn('strong', node);
     if (run.italic) node = wrapIn('em', node);
