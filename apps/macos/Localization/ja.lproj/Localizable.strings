@@ -2091,3 +2091,4 @@
 "GitHub alert: Important" = "重要";
 "GitHub alert: Warning" = "警告";
 "GitHub alert: Caution" = "注意";
+"This is a merge: the changes below are against its first parent (%@)." = "merge のコミット: 下の変更は最初の親（%@）との差分。";

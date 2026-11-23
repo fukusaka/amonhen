@@ -2166,6 +2166,7 @@ final class CommitDetailViewController: NSSplitViewController, NSTextViewDelegat
         renderer.highlight = CommitHeaderRenderer.highlightTerms(of: searchQuery)
         renderer.linksRefs = onSelectRef != nil
         renderer.linksAuthor = onSearch != nil
+        renderer.notesFirstParentDiff = shownCommit.map { !$0.stash } ?? false
         peopleStrip.selectable = onSearch != nil
         let text = NSMutableAttributedString(attributedString: renderer.render())
         let showPeople = style != .compact

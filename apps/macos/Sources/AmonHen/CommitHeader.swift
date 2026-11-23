@@ -75,6 +75,8 @@ struct CommitHeaderRenderer {
     var linksRefs = true
     /// 作者の名前をリンクにする（押すとその人のコミットで絞り込む。History の詳細だけ）。
     var linksAuthor = true
+    /// merge のコミットで、差分が最初の親との差分だと書き添える（History でコミットの差分を出すとき。stash では付けない）。
+    var notesFirstParentDiff = false
 
 
     init(info: CommitInfo, extras: CommitExtras?, style: CommitHeaderStyle) {
@@ -107,8 +109,15 @@ struct CommitHeaderRenderer {
                 add("\n\(trailer.key): ", [.font: NSFont.systemFont(ofSize: 11, weight: .medium), .foregroundColor: NSColor.secondaryLabelColor])
                 let start = text.length
                 add(trailer.value, dim)
-                linkURLs(in: NSRange(location: start, length: text.length - start))
+                linkReferences(in: NSRange(location: start, length: text.length - start))
             }
+        }
+        if notesFirstParentDiff, info.parents.count > 1, let first = info.parents.first {
+            add("\n\n", body)
+            add(String(format: L("This is a merge: the changes below are against its first parent (%@)."),
+                       String(first.prefix(Titles.shortIDLength))), [
+                .font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.secondaryLabelColor,
+            ])
         }
         if notes, let notes = extras?.notes, !notes.isEmpty {
             add("\n\nNotes:\n", [.font: NSFont.boldSystemFont(ofSize: 11), .foregroundColor: NSColor.secondaryLabelColor])
@@ -308,7 +317,11 @@ struct CommitHeaderRenderer {
     private func linkedBody(_ string: String) {
         let start = text.length
         add(string, body)
-        let range = NSRange(location: start, length: (string as NSString).length)
+        linkReferences(in: NSRange(location: start, length: (string as NSString).length))
+    }
+
+    /// `range` の URL・コミット ID・`#番号`（remote が GitHub・GitLab などのとき）をリンクにする（本文とトレーラー）。
+    private func linkReferences(in range: NSRange) {
         let ns = text.string as NSString
         linkURLs(in: range)
         // 7〜40 桁の 16 進（前後が英数字でないもの）は、コミット ID とみなす。
