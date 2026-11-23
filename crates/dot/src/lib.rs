@@ -9,6 +9,8 @@
 pub mod color;
 pub mod graph;
 pub mod parse;
+pub mod record;
+pub mod text;
 mod x11;
 
 /// 描けない理由。
