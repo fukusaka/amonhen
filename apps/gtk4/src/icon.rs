@@ -177,6 +177,12 @@ pub enum Kind {
     Space,
     /// eye（その時点のファイルをプレビューで開く）
     Eye,
+    /// minus.magnifyingglass（画像を縮める）
+    ZoomOut,
+    /// plus.magnifyingglass（画像を広げる）
+    ZoomIn,
+    /// arrow.up.left.and.down.right.magnifyingglass（画像を枠に合わせる）
+    ZoomFit,
 }
 
 mod imp {
@@ -872,6 +878,32 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
             p.add_circle(&point(6.8, 6.8), 4.3);
             p.move_to(10.0, 10.0);
             p.line_to(13.8, 13.8);
+        }
+        Kind::ZoomOut | Kind::ZoomIn | Kind::ZoomFit => {
+            // 虫めがねと、中の印（−・＋・斜めの両矢印）。
+            p.add_circle(&point(6.8, 6.8), 5.0);
+            p.move_to(10.4, 10.4);
+            p.line_to(14.0, 14.0);
+            match kind {
+                Kind::ZoomFit => {
+                    p.move_to(4.9, 8.7);
+                    p.line_to(8.7, 4.9);
+                    p.move_to(6.9, 4.9);
+                    p.line_to(8.7, 4.9);
+                    p.line_to(8.7, 6.7);
+                    p.move_to(4.9, 6.9);
+                    p.line_to(4.9, 8.7);
+                    p.line_to(6.7, 8.7);
+                }
+                _ => {
+                    p.move_to(4.4, 6.8);
+                    p.line_to(9.2, 6.8);
+                    if kind == Kind::ZoomIn {
+                        p.move_to(6.8, 4.4);
+                        p.line_to(6.8, 9.2);
+                    }
+                }
+            }
         }
         Kind::House => {
             // 屋根と壁、戸口。

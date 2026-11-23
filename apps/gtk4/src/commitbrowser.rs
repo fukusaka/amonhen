@@ -204,7 +204,8 @@ pub struct Browser {
     path_label: gtk::Label,
     change_button: gtk::Button,
     content: DiffWidget,
-    picture: gtk::Picture,
+    /// 開いた画像（拡大縮小できる 1 枚の表示。`imagediff::single`）を置く所。
+    image_holder: gtk::Box,
     open_path: RefCell<Option<String>>,
     request: Cell<u64>,
     pending: Rc<Cell<u32>>,
@@ -353,13 +354,8 @@ impl Browser {
             .child(&content)
             .vexpand(true)
             .build();
-        let picture = gtk::Picture::new();
-        picture.set_can_shrink(true);
-        picture.set_content_fit(gtk::ContentFit::ScaleDown);
-        picture.set_margin_top(16);
-        picture.set_margin_bottom(16);
-        picture.set_margin_start(16);
-        picture.set_margin_end(16);
+        let image_holder = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        image_holder.set_vexpand(true);
         // バイナリのファイルの案内と、プレビューで開くボタン（アプリで描けないもの）。
         let binary_label = gtk::Label::new(Some(&tr!("Binary file")));
         binary_label.add_css_class("dim-label");
@@ -372,7 +368,7 @@ impl Browser {
         binary_box.append(&binary_button);
         let contents = gtk::Stack::new();
         contents.add_named(&content_scroll, Some("text"));
-        contents.add_named(&picture, Some("image"));
+        contents.add_named(&image_holder, Some("image"));
         contents.add_named(&binary_box, Some("binary"));
         let pages = gtk::Stack::new();
         pages.set_vexpand(true);
@@ -397,7 +393,7 @@ impl Browser {
             path_label,
             change_button,
             content,
-            picture,
+            image_holder,
             open_path: RefCell::default(),
             request: Cell::new(0),
             pending,
@@ -558,8 +554,16 @@ impl Browser {
         }
     }
 
+    /// 前に開いた画像の欄を捨てる。
+    fn clear_image(&self) {
+        while let Some(child) = self.image_holder.first_child() {
+            self.image_holder.remove(&child);
+        }
+    }
+
     fn back_to_tree(&self) {
         self.open_path.replace(None);
+        self.clear_image();
         self.request.set(self.request.get() + 1);
         self.path_bar.set_visible(false);
         self.pages.set_visible_child_name("tree");
@@ -619,6 +623,7 @@ impl Browser {
     /// ファイルはその時点の中身。画像（SVG のほか）は絵で出す。
     pub fn open(self: &Rc<Self>, path: &str, line: Option<u32>) {
         self.open_path.replace(Some(path.to_owned()));
+        self.clear_image();
         let change = self.tree.change(path).map(|(_, c)| c.clone());
         let deleted = change
             .as_ref()
@@ -655,7 +660,6 @@ impl Browser {
         let weak = Rc::downgrade(self);
         if crate::imagediff::is_image(path) && !crate::imagediff::is_svg(path) {
             self.contents.set_visible_child_name("image");
-            self.picture.set_paintable(gtk::gdk::Paintable::NONE);
             let oid = self.blob_id(path);
             glib::spawn_future_local(async move {
                 let data =
@@ -665,11 +669,15 @@ impl Browser {
                 if this.request.get() != request {
                     return;
                 }
-                let texture = data
+                match data
                     .ok()
                     .flatten()
-                    .and_then(|d| crate::imagediff::texture(Some(&d)));
-                this.picture.set_paintable(texture.as_ref());
+                    .and_then(|d| crate::imagediff::single(&d))
+                {
+                    Some(panel) => this.image_holder.append(&panel),
+                    // 読めない形式（拡張子は画像でも）は、バイナリと同じくプレビューに。
+                    None => this.contents.set_visible_child_name("binary"),
+                }
             });
             return;
         }

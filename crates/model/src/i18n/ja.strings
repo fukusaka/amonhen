@@ -2384,6 +2384,11 @@
 "Show This Change" = "この変更を見る";
 "Open this file at the commit in a preview" = "この時点のファイルをプレビューで開く";
 "Preview" = "プレビュー";
+"Zoom Out" = "縮小";
+"Zoom In" = "拡大";
+"Zoom to Fit" = "合わせる";
+"Actual Size (100%) or Zoom to Fit" = "実際の大きさ（100%）と合わせるを切り替える";
+"Fit" = "合わせる";
 "(deleted in this commit)" = "（このコミットで削除）";
 "{count} lines deleted here" = "ここで {count} 行を削除";
 "2-Up" = "並べる";
