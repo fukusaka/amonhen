@@ -2,7 +2,12 @@
 
 use ratatui_core::buffer::Buffer;
 use ratatui_core::layout::Rect;
-use ratatui_core::style::Style;
+use ratatui_core::style::{Color, Style};
+
+/// 件名の目安の文字数（アプリの 50/72 と同じ）。
+pub const SUMMARY_GUIDE: usize = 50;
+/// 本文の行の目安の文字数。
+const BODY_GUIDE: usize = 72;
 use ratatui_crossterm::crossterm::event::KeyCode;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
@@ -162,15 +167,34 @@ impl Editor {
             };
             let mut skip = (before + 1).saturating_sub(width);
             let mut shown = String::new();
-            for ch in line.chars() {
+            // アプリと同じ目安: 件名は 50 文字、本文の行は 72 文字。超えた分を色で知らせる。
+            let limit = match index {
+                0 => Some(SUMMARY_GUIDE),
+                1 => None,
+                _ => Some(BODY_GUIDE),
+            };
+            let mut over_from: Option<usize> = None;
+            for (i, ch) in line.chars().enumerate() {
                 let w = ch.width().unwrap_or(0);
                 if skip > 0 {
                     skip = skip.saturating_sub(w);
                     continue;
                 }
+                if over_from.is_none() && limit.is_some_and(|l| i >= l) {
+                    over_from = Some(shown.width());
+                }
                 shown.push(ch);
             }
             buf.set_stringn(area.x, y, &shown, width, Style::new());
+            if let Some(from) = over_from.filter(|&f| f < width) {
+                let at = Rect::new(
+                    area.x + from as u16,
+                    y,
+                    (shown.width().min(width) - from) as u16,
+                    1,
+                );
+                buf.set_style(at, Style::new().fg(Color::Yellow));
+            }
             if index == self.row {
                 let hidden = line.width().saturating_sub(shown.width());
                 let x = (before - hidden.min(before)).min(width - 1);
@@ -194,6 +218,23 @@ mod tests {
             });
         }
         editor
+    }
+
+    /// 件名は 50 文字、本文の行は 72 文字を超えた分を黄色にする（アプリの 50/72 の目安）
+    #[test]
+    fn guides_mark_what_goes_past_fifty_and_seventy_two() {
+        let summary = "s".repeat(55);
+        let body = "b".repeat(75);
+        let mut editor = typed(&format!("{summary}\n\n{body}"));
+        let mut buf = Buffer::empty(Rect::new(0, 0, 100, 3));
+        editor.draw(buf.area, &mut buf);
+        let yellow = |x: u16, y: u16| buf[(x, y)].fg == Color::Yellow;
+        assert!(!yellow(49, 0) && yellow(50, 0) && yellow(54, 0));
+        assert!(!yellow(71, 2) && yellow(72, 2) && yellow(74, 2));
+        // 目安を超えなければ、色は付けない。
+        let mut buf = Buffer::empty(Rect::new(0, 0, 100, 3));
+        typed("Short\n\nBody").draw(buf.area, &mut buf);
+        assert!((0..100).all(|x| buf[(x, 0)].fg != Color::Yellow));
     }
 
     /// 打った文字が入り、Enter で行が分かれ、Backspace で行がつながる
