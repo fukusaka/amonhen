@@ -211,17 +211,7 @@ pub fn menus() -> Vec<(String, Vec<MenuItem>)> {
                 "highlight-ancestors",
                 format!("{mark}{}", amonhen_model::tr!("Highlight Ancestors")),
             ));
-            // コミットの差分で全ファイルを並べるか（切ると、変更ファイルの一覧で選んだファイルだけ）。
-            let mark = if crate::prefs::bool(crate::prefs::STACKED_COMMIT_DIFF) {
-                "✓ "
-            } else {
-                ""
-            };
-            items.push(MenuItem::item(
-                "all-files-in-one-diff",
-                format!("{mark}{}", amonhen_model::tr!("All Files in One Diff")),
-            ));
-            // 変更ファイルを差分の左に木で出すか（切ると、差分の上に一覧）。
+            // 変更ファイルを差分の左に木で出すか（切ると、差分の見出しだけ）。
             let mark = if crate::prefs::bool(crate::prefs::HISTORY_FILE_TREE) {
                 "✓ "
             } else {

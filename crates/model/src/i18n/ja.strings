@@ -23,6 +23,9 @@
 "The daemon’s diff has the wrong number of files" = "daemon の差分の中身の数が合わない";
 "Not a diff between HEAD and the working tree" = "HEAD と作業ツリーの差分ではない";
 "Can’t discard staged changes (unstage them first)" = "stage 済みの変更は破棄できない（先に unstage する）";
+"Can’t stage or discard lines while whitespace is ignored" = "空白を無視している間は、行ごとに stage・破棄できない";
+"Can’t mark staged lines while whitespace is ignored" = "空白を無視している間は、行ごとの stage の印をつけられない";
+"Unknown whitespace: {name}" = "知らない空白の扱い: {name}";
 "Can’t discard lines in {path}: its working tree form doesn’t match what git stores line by line" = "{path} は、作業ツリーの形と git に入れる形が行ごとに対応しないため、行単位では破棄できません";
 "Search failed unexpectedly" = "検索が異常終了しました";
 "Can’t read the commit ID" = "コミット ID を読めない";
@@ -1828,9 +1831,7 @@
 /* GTK4 の FE: Working Copy と History の詳細の不足分 */
 "Length of the summary (yellow over 50, orange over 72)" = "件名の文字数（50 を超えると黄、72 を超えると橙）";
 "Committed (hooks output)" = "コミットしました（hooks の出力）";
-"All Files in One Diff" = "全ファイルを 1 つの差分に並べる";
 "Changed Files as Tree" = "変更ファイルをツリーで表示";
-"Toggle Viewed" = "Viewed にする・戻す";
 "Search Diff" = "差分を検索";
 "Previous" = "前へ";
 "Next" = "次へ";
@@ -2359,6 +2360,16 @@
 "Expand All Diffs" = "差分をすべて開く";
 "Collapse All Diffs" = "差分をすべて畳む";
 "Ignore Whitespace" = "空白を無視";
+"Whitespace" = "空白";
+"Compare Whitespace" = "空白を区別";
+"Ignore Whitespace at Line Ends" = "行末の空白を無視";
+"Ignore Changes in Whitespace" = "空白の量の違いを無視";
+"Ignore All Whitespace" = "空白をすべて無視";
+"Whitespace to ignore when comparing lines (as git diff does)" = "行を比べるときに無視する空白（git diff と同じ）";
+"Lines that differ only in whitespace are changes" = "空白だけ違う行も変更として出す";
+"Ignore whitespace at the end of lines (git diff --ignore-space-at-eol)" = "行末の空白を無視する（git diff --ignore-space-at-eol）";
+"Ignore changes in the amount of whitespace (git diff -b)" = "空白の量の違いを無視する（git diff -b）";
+"Ignore all whitespace when comparing lines (git diff -w)" = "行を比べるときにすべての空白を無視する（git diff -w）";
 "Not available yet" = "まだ使えません";
 "View Options" = "表示の設定";
 "{count} files" = "{count} ファイル";

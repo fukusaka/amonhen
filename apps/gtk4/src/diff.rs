@@ -1461,6 +1461,19 @@ impl DiffWidget {
         self.scroll_to_file(shown[target as usize]);
     }
 
+    /// 見えている一番上の行が属するファイル（macOS 版の `visibleTopFile`）。
+    pub fn visible_top_file(&self) -> Option<usize> {
+        let scroll = self.vadjustment().map_or(0.0, |a| a.value()) as f32;
+        let mut st = self.state();
+        self.ensure_font(&mut st);
+        let first = st.row_at(scroll).max(0) as u32;
+        st.view
+            .as_ref()?
+            .file_rows
+            .iter()
+            .rposition(|&f| f <= first)
+    }
+
     /// `index` 番目のファイルの見出しが一番上に来るようにスクロールする。
     pub fn scroll_to_file(&self, index: usize) {
         let y = {

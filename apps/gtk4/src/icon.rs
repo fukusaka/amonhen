@@ -173,6 +173,8 @@ pub enum Kind {
     HalfCircle,
     /// plus.forwardslash.minus（画像の違うピクセル）
     PlusMinus,
+    /// space（差分で無視する空白）
+    Space,
 }
 
 mod imp {
@@ -634,6 +636,12 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
                 p.move_to(6.0 + x, *y);
                 p.line_to(13.5, *y);
             }
+        }
+        Kind::Space => {
+            p.move_to(2.5, 8.5);
+            p.line_to(2.5, 11.5);
+            p.line_to(13.5, 11.5);
+            p.line_to(13.5, 8.5);
         }
         Kind::Doc => {
             p.move_to(4.0, 2.5);
