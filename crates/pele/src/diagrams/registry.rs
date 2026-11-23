@@ -18,6 +18,7 @@ static DIAGRAMS: &[&Diagram] = &[
     &super::architecture::ARCHITECTURE,
     &super::eventmodeling::EVENTMODELING,
     &super::flowchart::FLOWCHART,
+    &super::railroad::RAILROAD,
     &super::venn::VENN,
     &super::wardley::WARDLEY,
 ];

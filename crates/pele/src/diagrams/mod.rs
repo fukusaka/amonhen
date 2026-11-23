@@ -4,6 +4,7 @@ pub mod architecture;
 pub mod common;
 pub mod eventmodeling;
 pub mod flowchart;
+pub mod railroad;
 pub mod registry;
 pub mod venn;
 pub mod wardley;
