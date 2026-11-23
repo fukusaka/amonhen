@@ -385,7 +385,7 @@ fn appearance(callbacks: &Callbacks) -> View {
             display(
                 "changed-files-as-tree",
                 crate::prefs::bool(crate::prefs::HISTORY_FILE_TREE),
-                tr!("Show changed files as a tree left of the diff"),
+                tr!("Show the changed files as a tree"),
             ),
             display(
                 "diff-standard-colors",
