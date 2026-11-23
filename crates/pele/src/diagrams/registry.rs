@@ -15,6 +15,7 @@ use crate::types::Diagram;
 // 1 行に 1 つの種類（rustfmt にまとめさせない）。
 #[rustfmt::skip]
 static DIAGRAMS: &[&Diagram] = &[
+    &super::architecture::ARCHITECTURE,
     &super::eventmodeling::EVENTMODELING,
     &super::flowchart::FLOWCHART,
     &super::venn::VENN,
