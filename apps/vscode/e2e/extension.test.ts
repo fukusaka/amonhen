@@ -4208,11 +4208,21 @@ suite('Amon Hen in VSCode', () => {
         items.find((i) => i.label.endsWith('Highlight Ancestors'));
       await panel.history.handle({ type: 'displayMenu' });
     };
+    // 2 つのコミットの時刻を 1 秒ずらす。同じ秒だと、日付順の History で同じ時刻のものの並びが読み方（キャッシュ
+    // からか、作り直しか）で入れ替わり、試験が覚えた行の番号と祖先の印の行が合わなくなる
+    const now = Math.floor(Date.now() / 1000);
+    const commitAt = (seconds: number, message: string) => {
+      const date = `@${seconds} +0000`;
+      childProcess.execFileSync('git', ['commit', '-q', '--allow-empty', '-m', message], {
+        cwd: root,
+        env: { ...process.env, GIT_AUTHOR_DATE: date, GIT_COMMITTER_DATE: date },
+      });
+    };
     git('switch', '-q', '-c', 'lineage-side');
-    git('commit', '-q', '--allow-empty', '-m', 'lineage side');
+    commitAt(now, 'lineage side');
     const side = git('rev-parse', 'HEAD').trim();
     git('switch', '-q', branch);
-    git('commit', '-q', '--allow-empty', '-m', 'lineage main');
+    commitAt(now + 1, 'lineage main');
     const tip = git('rev-parse', 'HEAD').trim();
     try {
       await vscode.commands.executeCommand('amonhen.refresh');
