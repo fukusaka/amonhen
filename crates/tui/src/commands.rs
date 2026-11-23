@@ -104,6 +104,7 @@ pub static ENTRIES: &[Entry] = &[
     entry("go-to-parent", ']', Place::History),
     entry("go-to-child", '[', Place::History),
     control("refresh", 'r', Place::Anywhere),
+    control("switch-branch", 'b', Place::Anywhere),
     keyless("rebuild-history", Place::Anywhere),
 ];
 

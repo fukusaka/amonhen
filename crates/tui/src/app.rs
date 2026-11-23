@@ -214,6 +214,59 @@ impl Candidate {
 
 /// Quick Open: アプリと同じ候補（ブックマーク、最近開いたもの、探すフォルダの下で見つけたもの）を打った語で絞り、
 /// 選んだリポジトリで TUI を開き直す。
+/// ブランチの切り替え（アプリの Switch Branch…）: 打った語で絞り、最近切り替えたものを先に。合うものがなければ、
+/// その名前で新しいブランチを作る。
+struct BranchPick {
+    query: String,
+    selected: usize,
+    /// ブランチ（名前と、リモートのものか）。今のブランチは入れない。
+    items: Vec<(String, bool)>,
+    /// 最近切り替えたブランチ（新しい順。HEAD の reflog の「checkout: moving from A to B」から）。
+    recent: Vec<String>,
+}
+
+/// 切り替えの候補の 1 つ。
+enum BranchChoice<'a> {
+    Branch(&'a str, bool),
+    New(&'a str),
+}
+
+impl BranchPick {
+    fn shown(&self) -> Vec<BranchChoice<'_>> {
+        let words: Vec<String> = self
+            .query
+            .split_whitespace()
+            .map(str::to_lowercase)
+            .collect();
+        let mut shown: Vec<(&String, bool)> = self
+            .items
+            .iter()
+            .filter(|(name, _)| {
+                let name = name.to_lowercase();
+                words.iter().all(|w| name.contains(w.as_str()))
+            })
+            .map(|(name, remote)| (name, *remote))
+            .collect();
+        // 最近のもの（新しい順）、ほかのローカルのブランチ、リモートのブランチ。
+        let rank = |name: &str, remote: bool| -> (usize, usize) {
+            match self.recent.iter().position(|r| r == name) {
+                Some(i) if !remote => (0, i),
+                _ => (if remote { 2 } else { 1 }, 0),
+            }
+        };
+        shown.sort_by(|a, b| rank(a.0, a.1).cmp(&rank(b.0, b.1)).then(a.0.cmp(b.0)));
+        let mut choices: Vec<BranchChoice<'_>> = shown
+            .into_iter()
+            .map(|(n, r)| BranchChoice::Branch(n, r))
+            .collect();
+        let name = self.query.trim();
+        if !name.is_empty() && !self.items.iter().any(|(n, r)| !r && n == name) {
+            choices.push(BranchChoice::New(name));
+        }
+        choices
+    }
+}
+
 struct QuickOpen {
     query: String,
     selected: usize,
@@ -470,6 +523,8 @@ pub struct App {
     /// Quick Open で選んだリポジトリの場所（TUI を閉じて、そこで開き直す）。
     open_location: Option<String>,
     quick_open: Option<QuickOpen>,
+    /// ブランチの切り替え（`Ctrl-b`）。
+    branch_pick: Option<BranchPick>,
     fixup_pick: Option<MessagePick>,
     /// 書きかけのメッセージとして最後に読んだか書いたもの（読み終えるまでは None で、書かない）。
     draft_saved: Option<String>,
@@ -506,6 +561,8 @@ pub struct App {
     archive_folder: Option<(String, String)>,
     /// bundle に何を入れるかを選んでいる間の、書くファイル（`a` で基点を聞く）。
     bundle_save: Option<String>,
+    /// 署名を読んだタグの名前（変わったら読み直す）。
+    tag_signature_names: Vec<String>,
     /// ロックするかを聞いている worktree（`r` で理由を聞く）。
     worktree_lock: Option<String>,
     /// 詳細に出した stash（土台を読んだら、一番下の行に様子を書く）。
@@ -654,6 +711,7 @@ impl App {
             patch_version: None,
             archive_folder: None,
             bundle_save: None,
+            tag_signature_names: Vec::new(),
             worktree_lock: None,
             stash_about: None,
             naming: Naming::Branch,
@@ -711,6 +769,7 @@ impl App {
             open_worktree: None,
             open_location: None,
             quick_open: None,
+            branch_pick: None,
             fixup_pick: None,
             draft_saved: None,
             recent_messages: None,
@@ -850,6 +909,27 @@ impl App {
         self.dirty = true;
     }
 
+    /// ブランチの切り替えを開く。最近切り替えたものは、HEAD の reflog を読んでから並べ直す。
+    fn open_branch_pick(&mut self) {
+        let items = self
+            .sidebar
+            .branches()
+            .into_iter()
+            .filter(|(name, remote)| *remote || Some(name.as_str()) != self.branch.as_deref())
+            .collect();
+        self.branch_pick = Some(BranchPick {
+            query: String::new(),
+            selected: 0,
+            items,
+            recent: Vec::new(),
+        });
+        self.send(Request::Run {
+            name: "recentBranches",
+            command: json!({"op": "reflog", "name": null, "limit": 200}),
+        });
+        self.dirty = true;
+    }
+
     /// Working Copy・ref・History を読み直す。
     fn refresh(&mut self) {
         self.changes.refresh();
@@ -927,6 +1007,8 @@ impl App {
         let damage = std::mem::take(&mut self.damage);
         let over = self.help
             || self.quick_open.is_some()
+            || self.branch_pick.is_some()
+            || self.showing_hooks.is_some()
             || self.fixup_pick.is_some()
             || self.palette.is_some()
             || self.operation_log.is_some()
@@ -1240,6 +1322,22 @@ impl App {
                         let selected = self.history.selected_id();
                         self.history.opened(&refs, &history);
                         self.sidebar.set_refs(&refs);
+                        // タグの署名の印（アプリのタグの行の印）。タグが変わったときだけ読む（検証の結果はコアが覚える）。
+                        // submodule の様子の印（取り出していない・別のコミット・中に変更・コンフリクト）。
+                        if !self.sidebar.submodule_paths().is_empty() {
+                            self.send(Request::Run {
+                                name: "submoduleMarks",
+                                command: json!({"op": "submodules"}),
+                            });
+                        }
+                        let tags = self.sidebar.tag_names();
+                        if !tags.is_empty() && tags != self.tag_signature_names {
+                            self.tag_signature_names = tags.clone();
+                            self.send(Request::Run {
+                                name: "tagSignatures",
+                                command: json!({"op": "tagSignatures", "names": tags}),
+                            });
+                        }
                         self.remotes = refs["remotes"]
                             .as_array()
                             .into_iter()
@@ -1538,6 +1636,11 @@ impl App {
             self.dirty = true;
             return;
         }
+        // アプリの Switch Branch…: 打った語で絞って切り替える（最近のものを先に）。
+        if control && key.code == KeyCode::Char('b') {
+            self.open_branch_pick();
+            return;
+        }
         // アプリの Refresh: Working Copy・ref・History を読み直す（ふだんは変わったら読み直している）。
         if control && key.code == KeyCode::Char('r') {
             self.refresh();
@@ -1744,6 +1847,59 @@ impl App {
             }
             pick.selected = pick.selected.min(pick.shown().len().saturating_sub(1));
             self.fixup_pick = Some(pick);
+            return;
+        }
+        if let Some(mut pick) = self.branch_pick.take() {
+            self.dirty = true;
+            match key.code {
+                KeyCode::Esc => return,
+                KeyCode::Enter => {
+                    match pick.shown().get(pick.selected) {
+                        Some(BranchChoice::Branch(name, false)) => {
+                            let name = name.to_string();
+                            self.run(
+                                "checkout",
+                                tr!("Checking out {name}…", name = name),
+                                json!({"op": "checkout", "branch": name}),
+                            );
+                        }
+                        Some(BranchChoice::Branch(name, true)) => {
+                            let name = name.to_string();
+                            self.run(
+                                "checkout",
+                                tr!("Checking out {name}…", name = name),
+                                json!({"op": "track", "remoteBranch": name}),
+                            );
+                        }
+                        Some(BranchChoice::New(name)) => {
+                            let name = name.to_string();
+                            self.run(
+                                "createBranch",
+                                tr!("Creating {name}…", name = name),
+                                json!({"op": "createBranch", "name": name, "start": "HEAD",
+                                    "checkout": true}),
+                            );
+                        }
+                        None => {}
+                    }
+                    return;
+                }
+                KeyCode::Down => pick.selected += 1,
+                KeyCode::Char('n') if control => pick.selected += 1,
+                KeyCode::Up => pick.selected = pick.selected.saturating_sub(1),
+                KeyCode::Char('p') if control => pick.selected = pick.selected.saturating_sub(1),
+                KeyCode::Backspace => {
+                    pick.query.pop();
+                    pick.selected = 0;
+                }
+                KeyCode::Char(ch) if !control => {
+                    pick.query.push(ch);
+                    pick.selected = 0;
+                }
+                _ => {}
+            }
+            pick.selected = pick.selected.min(pick.shown().len().saturating_sub(1));
+            self.branch_pick = Some(pick);
             return;
         }
         if let Some(mut quick) = self.quick_open.take() {
@@ -3038,6 +3194,99 @@ impl App {
                 }
                 return;
             }
+            // push・pull で送る・取り込むコミット: まだ聞いていれば、件名を確かめる文に足す。
+            "syncCommits" => {
+                let info = &reply["info"];
+                let subjects: Vec<String> = (info["commits"].as_array().into_iter().flatten())
+                    .filter_map(|c| c["subject"].as_str())
+                    .map(|s| format!("“{s}”"))
+                    .collect();
+                let count = info["count"].as_u64().unwrap_or(0) as usize;
+                let more = count.saturating_sub(subjects.len());
+                if subjects.is_empty() {
+                    return;
+                }
+                let mut list = subjects.join(", ");
+                if more > 0 {
+                    list.push_str(&tr!(", {count} more", count = more));
+                }
+                // まだ push・pull を聞いているときだけ（答えた後に届いたら捨てる）。
+                let add = |ask: &mut String| {
+                    let syncing = [tr!("Push "), tr!("Pull ")]
+                        .iter()
+                        .any(|p| ask.starts_with(p.as_str()));
+                    if syncing && !ask.contains(&list) {
+                        *ask = format!("{ask} ({list})");
+                    }
+                };
+                if let Some((ask, _, _)) = &mut self.confirm {
+                    add(ask);
+                } else if let Some((ask, _)) = &mut self.choices {
+                    add(ask);
+                }
+                self.dirty = true;
+                return;
+            }
+            // HEAD の reflog の「checkout: moving from A to B」から、最近切り替えたブランチ（新しい順）。
+            "recentBranches" => {
+                if let Some(pick) = &mut self.branch_pick {
+                    let mut recent: Vec<String> = Vec::new();
+                    for entry in reply["info"]["entries"].as_array().into_iter().flatten() {
+                        let Some(message) = entry["message"].as_str() else {
+                            continue;
+                        };
+                        let Some(moving) = message.strip_prefix("checkout: moving from ") else {
+                            continue;
+                        };
+                        if let Some((_, to)) = moving.split_once(" to ")
+                            && !recent.iter().any(|r| r == to)
+                        {
+                            recent.push(to.to_owned());
+                        }
+                    }
+                    pick.recent = recent;
+                    pick.selected = 0;
+                    self.dirty = true;
+                }
+                return;
+            }
+            // アプリの submodule の印の代わりに、1 文字: コンフリクト !、取り出していない ○、記録と違うコミット ≠、
+            // 中に変更 ✎。
+            "submoduleMarks" => {
+                let marks = (reply["info"]["submodules"].as_array().into_iter().flatten())
+                    .filter_map(|s| {
+                        let path = s["path"].as_str()?.to_owned();
+                        let mark = if s["conflict"] == true {
+                            ('!', Color::Red)
+                        } else if s["initialized"] == false {
+                            ('○', Color::Indexed(244))
+                        } else if s["moved"] == true {
+                            ('≠', Color::Yellow)
+                        } else if s["changed"] == true {
+                            ('✎', Color::Yellow)
+                        } else {
+                            return None;
+                        };
+                        Some((path, mark))
+                    })
+                    .collect();
+                self.sidebar.set_submodule_marks(marks);
+                self.dirty = true;
+                return;
+            }
+            "tagSignatures" => {
+                let marks = (reply["info"]["tags"].as_array().into_iter().flatten())
+                    .filter_map(|t| {
+                        t["signed"].as_str()?;
+                        let name = t["name"].as_str()?.to_owned();
+                        let status = t["signature"]["status"].as_str().unwrap_or("");
+                        Some((name, crate::details::signature_mark(status)))
+                    })
+                    .collect();
+                self.sidebar.set_tag_marks(marks);
+                self.dirty = true;
+                return;
+            }
             "fetchConfig" => {
                 let entries = reply["info"]["entries"].clone();
                 self.ask_fetch(&entries);
@@ -3276,7 +3525,34 @@ impl App {
             }
             return;
         }
-        self.run("pull", tr!("Pulling…"), json!({"op": "pull"}));
+        // 上流に取り込むものがあれば、その数と件名を見せて確かめる（アプリの Pull のシート）。なければ、そのまま
+        // （fetch して、新しく来たものを取り込む）。
+        match (self.behind, self.upstream.clone()) {
+            (1.., Some(upstream)) => {
+                self.confirm = Some((
+                    match self.behind {
+                        1 => tr!("Pull 1 commit from {upstream}?", upstream = upstream),
+                        n => tr!(
+                            "Pull {count} commits from {upstream}?",
+                            count = n,
+                            upstream = upstream
+                        ),
+                    },
+                    tr!("pull"),
+                    Request::Run {
+                        name: "pull",
+                        command: json!({"op": "pull"}),
+                    },
+                ));
+                self.send(Request::Run {
+                    name: "syncCommits",
+                    command: json!({"op": "between", "base": "HEAD", "tip": upstream,
+                        "limit": 3}),
+                });
+                self.dirty = true;
+            }
+            _ => self.run("pull", tr!("Pulling…"), json!({"op": "pull"})),
+        }
     }
 
     /// 分かれているときの pull の選択。`conflicts` は上流を merge したときにコンフリクトしそうなファイル（分から
@@ -3444,6 +3720,12 @@ impl App {
         // `t` で、ほかのブランチへ送れる（`ask_push_to`。選ぶ前に横取りするので、中身は送らない）。今のブランチだけ。
         self.push_to_offered = current;
         self.pushing_to = format!("{remote}/{remote_branch}");
+        // 送るコミットの件名を、裏で読んで確かめる文に足す（アプリの Push のシートのコミットの一覧の代わり）。
+        self.send(Request::Run {
+            name: "syncCommits",
+            command: json!({"op": "between", "base": format!("{remote}/{remote_branch}"),
+                "tip": branch, "limit": 3}),
+        });
         if behind > 0 {
             let mut options = vec![
                 ('y', tr!("push"), push(remote, remote_branch, false, false)),
@@ -5436,8 +5718,8 @@ impl App {
             ("", String::new()),
             ("f p P", tr!("Fetch, pull, push")),
             (
-                "b T",
-                tr!("New branch, new tag at the selected commit or ref"),
+                "b T Ctrl-b",
+                tr!("New branch, new tag at the selected commit or ref; switch branch"),
             ),
             (
                 "s S",
@@ -5496,6 +5778,35 @@ impl App {
                     name: "stashBases",
                     command: json!({"op": "stashBases"}),
                 });
+            }
+            // submodule は、TUI をそこで開き直す（アプリの Open in New Window の代わり）。取り出していなければ、
+            // そう言う。
+            Some(Picked::Commit(_))
+                if self
+                    .sidebar
+                    .picked_ref()
+                    .is_some_and(|r| r.0 == "submodule") =>
+            {
+                let path = self.sidebar.picked_ref().map_or("", |r| r.1).to_owned();
+                let full = self
+                    .workdir
+                    .as_deref()
+                    .map(|w| format!("{}/{path}", w.trim_end_matches(['/', '\\'])));
+                match full {
+                    Some(full)
+                        if std::path::Path::new(&full).join(".git").exists()
+                            || !self.files_here =>
+                    {
+                        self.open_worktree = Some(full);
+                        self.quit = true;
+                    }
+                    _ => {
+                        self.notice = Some(tr!(
+                            "{path} isn’t checked out: Update Submodules in the command list first",
+                            path = path
+                        ))
+                    }
+                }
             }
             // ほかの worktree は、TUI をそこで開き直す（アプリが新しい窓で開くのの代わり）。開いているものは、
             // その場所を知らせるだけ。
@@ -6924,6 +7235,32 @@ impl App {
                 );
             }
         }
+        if let Some(pick) = &self.branch_pick {
+            let shown = pick.shown();
+            let recent = tr!("recent");
+            let remote = tr!("remote");
+            let new = tr!("new branch");
+            let rows: Vec<(&str, &str, &str)> = shown
+                .iter()
+                .map(|c| match c {
+                    BranchChoice::Branch(name, true) => ("", *name, remote.as_str()),
+                    BranchChoice::Branch(name, false) if pick.recent.iter().any(|r| r == name) => {
+                        ("", *name, recent.as_str())
+                    }
+                    BranchChoice::Branch(name, false) => ("", *name, ""),
+                    BranchChoice::New(name) => ("+ ", *name, new.as_str()),
+                })
+                .collect();
+            cursor = choice_list(
+                buf,
+                area,
+                &tr!(" Switch Branch "),
+                &pick.query,
+                &rows,
+                pick.selected,
+                &tr!("No branch matches"),
+            );
+        }
         if let Some(quick) = &self.quick_open {
             let shown = quick.shown();
             let rows: Vec<(&str, &str, &str)> = shown
@@ -7503,6 +7840,75 @@ mod tests {
             Some(crate::Next::Location("/w/alpha".to_owned()))
         );
         assert!(app.quit());
+    }
+
+    /// サイドバーの Submodules: submodule が並び、中に変更があれば ✎。Enter で TUI をそこで開き直す。
+    #[test]
+    fn submodules_are_listed_and_open_there() {
+        let (dir, mut app, rx) = app_with_history();
+        let source = tempfile::tempdir().unwrap();
+        let git = |at: &std::path::Path, args: &[&str]| {
+            let out = amonhen_model::process::command("git")
+                .args(["-c", "user.name=Ann", "-c", "user.email=ann@example.com"])
+                .args([
+                    "-c",
+                    "commit.gpgsign=false",
+                    "-c",
+                    "protocol.file.allow=always",
+                ])
+                .args(args)
+                .current_dir(at)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "git {args:?}: {out:?}");
+        };
+        git(source.path(), &["init", "-q"]);
+        std::fs::write(source.path().join("lib.txt"), "lib\n").unwrap();
+        git(source.path(), &["add", "."]);
+        git(source.path(), &["commit", "-q", "-m", "Lib"]);
+        git(
+            dir.path(),
+            &[
+                "submodule",
+                "add",
+                "-q",
+                source.path().to_str().unwrap(),
+                "lib",
+            ],
+        );
+        git(dir.path(), &["commit", "-q", "-m", "Add lib"]);
+        std::fs::write(dir.path().join("lib/lib.txt"), "changed\n").unwrap();
+        app.open();
+        crate::settle(&mut app, &rx).unwrap();
+        let key = |app: &mut App, code: KeyCode| {
+            app.handle(Event::Input(Input::Key(KeyEvent::new(
+                code,
+                KeyModifiers::NONE,
+            ))));
+        };
+        // 一番下の行が lib。中に変更があるので ✎。
+        for code in [KeyCode::Char('0'), KeyCode::Char('G')] {
+            key(&mut app, code);
+        }
+        crate::settle(&mut app, &rx).unwrap();
+        let mut buf = Buffer::empty(Rect::new(0, 0, 100, 12));
+        app.draw(&mut buf, Damage::ALL);
+        let text: String = (0..12)
+            .map(|y| (0..100).map(|x| buf[(x, y)].symbol()).collect::<String>() + "\n")
+            .collect();
+        assert!(text.contains("Submodules"), "{text}");
+        assert!(
+            text.lines().any(|l| l.contains("lib") && l.contains('✎')),
+            "{text}"
+        );
+        key(&mut app, KeyCode::Enter);
+        let Some(crate::Next::Worktree(opened)) = app.take_next() else {
+            panic!("the submodule to open");
+        };
+        assert_eq!(
+            std::fs::canonicalize(opened).unwrap(),
+            std::fs::canonicalize(dir.path().join("lib")).unwrap()
+        );
     }
 
     /// サイドバーの worktree で Enter: ほかの worktree なら TUI を閉じてそのパスを返し、開いているものなら場所を

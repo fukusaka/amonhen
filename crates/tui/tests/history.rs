@@ -1030,6 +1030,18 @@ fn details_show_the_signature_check() {
         verified.contains("Signature  Verified, ann@example.com"),
         "{verified}"
     );
+    // 署名したタグには、サイドバーで印（正しい署名は ✓）。署名のないタグには付けない。
+    git(dir.path(), BASE, &["tag", "-s", "-m", "Release", "v1"]);
+    git(dir.path(), BASE, &["tag", "plain"]);
+    let tags = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "").unwrap();
+    println!("{tags}");
+    let side: Vec<String> = tags.lines().skip(1).filter_map(|l| column(l, 0)).collect();
+    assert!(
+        side.iter()
+            .any(|l| l.trim_start().starts_with("v1") && l.ends_with('✓')),
+        "{side:?}"
+    );
+    assert!(side.iter().any(|l| l.trim() == "plain"), "{side:?}");
 }
 
 /// History の `@` `]` `[`: HEAD・親（1 つ目の親）・すぐ上の子へ移る。
@@ -1242,14 +1254,16 @@ fn push_asks_then_pushes_to_the_upstream() {
             &["log", "-1", "--format=%s", "main"],
         )
     };
-    let asked = amonhen_tui::snapshot(open(&work), 100, 8, clock(), "P").unwrap();
+    let asked = amonhen_tui::snapshot(open(&work), 160, 8, clock(), "P").unwrap();
     println!("{asked}");
     // 一番上の行に、上流より進んでいる数。
     assert!(asked.lines().next().unwrap().contains("main ↑1"));
+    // 送るコミットの件名も（アプリの Push のシートの一覧の代わり）。
     assert!(
         asked.contains(
-            "Push main to origin/main (1 commit)?   y push   t another branch…   n cancel"
-        )
+            "Push main to origin/main (1 commit)? (“Ahead of the remote”)   y push   t another branch…   n cancel"
+        ),
+        "{asked}"
     );
     assert_eq!(remote_head(), "Start\n");
     // やめる。
@@ -1342,7 +1356,14 @@ fn fetch_and_pull_bring_in_remote_commits() {
     assert!(fetched.contains("Fetched"));
     assert!(fetched.lines().next().unwrap().contains("main ↓1"));
     assert!(fetched.contains("[origin/main] From elsewhere"));
-    let pulled = amonhen_tui::snapshot(open(&work), 100, 8, clock(), "p").unwrap();
+    // 取り込むコミットの数と件名を見せて確かめる（アプリの Pull のシート）。
+    let asked = amonhen_tui::snapshot(open(&work), 160, 8, clock(), "p").unwrap();
+    println!("{asked}");
+    assert!(
+        asked.contains("Pull 1 commit from origin/main? (“From elsewhere”)   y pull   n cancel"),
+        "{asked}"
+    );
+    let pulled = amonhen_tui::snapshot(open(&work), 100, 8, clock(), "py").unwrap();
     println!("{pulled}");
     assert!(pulled.contains("Pulled"));
     assert_eq!(
@@ -1709,6 +1730,41 @@ fn merge_stops_at_conflicts_and_can_be_aborted() {
         .filter_map(|l| column(l, 0))
         .collect();
     assert!(!side.iter().any(|l| l.contains("Conflicts")), "{side:?}");
+}
+
+/// `Ctrl-b` でブランチを切り替える（アプリの Switch Branch…）: 打った語で絞り、最近のものを先に。合うものがなければ
+/// その名前で作る
+#[test]
+fn switch_branch_with_ctrl_b() {
+    let dir = tempfile::tempdir().unwrap();
+    merged(dir.path());
+    git(dir.path(), BASE, &["branch", "aaa"]);
+    // topic に切り替えて戻った（最近のもの）。aaa は一度も切り替えていない。
+    git(dir.path(), BASE, &["switch", "-q", "topic"]);
+    git(dir.path(), BASE, &["switch", "-q", "main"]);
+    let current = || git_out(dir.path(), &["branch", "--show-current"]);
+    let list = amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), "\x02").unwrap();
+    println!("{list}");
+    assert!(list.contains(" Switch Branch "), "{list}");
+    // 枠の中の行で比べる。
+    let row = |name: &str| {
+        list.lines()
+            .position(|l| l.contains(&format!("│ {name} ")))
+            .unwrap()
+    };
+    assert!(
+        row("topic") < row("aaa"),
+        "the recent branch comes first: {list}"
+    );
+    assert!(list.contains("topic  recent"), "{list}");
+    // 絞って切り替える。
+    amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), "\x02aa\n").unwrap();
+    assert_eq!(current(), "aaa\n");
+    // 合うものがなければ、その名前で作って切り替える。
+    let new = amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), "\x02fresh").unwrap();
+    assert!(new.contains("fresh") && new.contains("new branch"), "{new}");
+    amonhen_tui::snapshot(open(dir.path()), 160, 16, clock(), "\x02fresh\n").unwrap();
+    assert_eq!(current(), "fresh\n");
 }
 
 /// 失敗したときの答えが何行もあれば、一番下の行には 1 行目と「`!` で全部」、`!` で全部を枠に出す（アプリの Details）
@@ -3219,10 +3275,11 @@ fn diverged_branches_offer_force_push_and_pull_modes() {
     } else {
         assert!(pull.contains("have diverged. How?"), "{pull}");
     }
-    let asked = amonhen_tui::snapshot(open(&work), 140, 8, clock(), "P").unwrap();
+    let asked = amonhen_tui::snapshot(open(&work), 200, 8, clock(), "P").unwrap();
     println!("{asked}");
     assert!(
-        asked.contains("y push   f force push (with lease), replacing 1 on the remote   t another branch…   n cancel")
+        asked.contains("y push   f force push (with lease), replacing 1 on the remote   t another branch…   n cancel"),
+        "{asked}"
     );
     // 置き換える push の前と後の絵: 上流の 1 つが外れ、手元のものが origin/main に。
     assert!(
@@ -3464,7 +3521,7 @@ fn commit_and_push() {
         open(&work)
     };
     // 新しいファイルを stage し、メッセージを書いて Ctrl-p。
-    let asked = amonhen_tui::snapshot(front(), 120, 14, clock(), "1 cAdd a file\x10").unwrap();
+    let asked = amonhen_tui::snapshot(front(), 160, 14, clock(), "1 cAdd a file\x10").unwrap();
     println!("{asked}");
     assert_eq!(
         git_out(&work, &["log", "-1", "--format=%s"]),
@@ -3472,8 +3529,9 @@ fn commit_and_push() {
     );
     assert!(
         asked.contains(
-            "Push main to origin/main (1 commit)?   y push   t another branch…   n cancel"
-        )
+            "Push main to origin/main (1 commit)? (“Add a file”)   y push   t another branch…   n cancel"
+        ),
+        "{asked}"
     );
     let remote = dir.path().join("origin.git");
     assert_eq!(
