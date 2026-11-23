@@ -572,6 +572,8 @@ struct Root {
     summary_box: ElementRef<TextBox>,
     /// コミットの説明の欄（等幅の字にする）。
     description_box: ElementRef<TextBox>,
+    /// Shared Templates のシートの本文の欄（等幅にする。macOS 版のシートと同じ）。
+    template_body: ElementRef<TextBox>,
     /// Blame の行番号と中身の列（等幅の字にする）。
     blame_code: ElementRef<Grid>,
     /// サイドバーの幅、右の列の幅（None なら History と半分ずつ）、右の列の詳細の高さ（DIP。境目を動かして
@@ -661,6 +663,9 @@ enum Dialog {
     },
     /// View > Customize Toolbar…（GTK4 版はパレットへのドラッグ。ここではチェックと ↑↓ で並べる）。
     Toolbar(Vec<crate::menus::ToolbarEntry>),
+    /// Settings > Git の Shared Templates の 1 つ（番号）の名前と本文を書くシート（macOS 版の `TemplateSheet`）。
+    /// 書くたびに保存する。
+    Template(usize),
     /// Quick Open（リポジトリをあいまい検索して新しい窓で開く）。
     QuickOpen {
         query: String,
@@ -1245,6 +1250,9 @@ enum Message {
     SettingsTemplate(usize, usize, String),
     SettingsTemplateAdd,
     SettingsTemplateRemove(usize),
+    /// Shared Templates の一覧で選んだ、選んだものをシートで編集する。
+    SettingsTemplateSelect(Option<usize>),
+    SettingsTemplateEdit,
     /// History のキャッシュの大きさを読んだ。
     CacheSize(u64),
     /// History のキャッシュを消す。
@@ -1673,6 +1681,7 @@ impl Component for Root {
             working_list: ElementRef::new(),
             summary_box: ElementRef::new(),
             description_box: ElementRef::new(),
+            template_body: ElementRef::new(),
             blame_code: ElementRef::new(),
             sidebar_width: crate::prefs::number(SIDEBAR_WIDTH_KEY).unwrap_or(260.0),
             sidebar_hidden: crate::prefs::bool(SIDEBAR_HIDDEN_KEY),
@@ -3708,6 +3717,7 @@ impl Root {
                     env_selected: None,
                     env_revealed: false,
                     templates: crate::templates::all(),
+                    template_selected: None,
                     ssh: None,
                     git_target: None,
                     git_epoch: 0,
@@ -7737,13 +7747,27 @@ impl Root {
                 }
             }
             Message::SettingsTemplateAdd => {
+                // 名前なしで足し、すぐシートで書く（macOS 版と同じ）。
                 if let Some(state) = self.settings.as_mut() {
                     state.templates.push(crate::templates::Template {
                         id: crate::templates::new_id(),
-                        name: String::new(),
+                        name: tr!("Untitled"),
                         text: String::new(),
                     });
                     crate::templates::save(&state.templates);
+                    let index = state.templates.len() - 1;
+                    state.template_selected = Some(index);
+                    self.dialog = Some(Dialog::Template(index));
+                }
+            }
+            Message::SettingsTemplateSelect(index) => {
+                if let (Some(state), Some(index)) = (self.settings.as_mut(), index) {
+                    state.template_selected = Some(index);
+                }
+            }
+            Message::SettingsTemplateEdit => {
+                if let Some(index) = self.settings.as_ref().and_then(|s| s.template_selected) {
+                    self.dialog = Some(Dialog::Template(index));
                 }
             }
             Message::SettingsTemplateRemove(i) => {
@@ -7751,6 +7775,7 @@ impl Root {
                     && i < state.templates.len()
                 {
                     state.templates.remove(i);
+                    state.template_selected = None;
                     crate::templates::save(&state.templates);
                 }
             }
@@ -9388,6 +9413,22 @@ impl Root {
                 None
             },
         );
+        // Shared Templates のシートの本文を等幅に（シートを開くたびに欄が作り直される）。
+        let template_body = self.template_body.clone();
+        context.use_effect(
+            "template-monospace",
+            matches!(self.dialog, Some(Dialog::Template(_))),
+            move || {
+                let _ = template_body.request_native_element(|result| {
+                    if let Ok(element) = result
+                        && let Err(e) = monospace(&element)
+                    {
+                        eprintln!("テンプレートの本文を等幅にできない: {e}");
+                    }
+                });
+                None
+            },
+        );
         // 件名の欄の Alt+↑・Alt+↓（Working Copy を出すたびに欄が作り直される）。
         let summary_box = self.summary_box.clone();
         context.use_effect("summary-keys", self.page == Page::WorkingCopy, move || {
@@ -10581,6 +10622,41 @@ impl Root {
                                         .vertical_alignment(VerticalAlignment::Center),
                                 )),
                             body,
+                        )),
+                    )
+            }
+            Some(Dialog::Template(index)) => {
+                let index = *index;
+                let (name, text) = self
+                    .settings
+                    .as_ref()
+                    .and_then(|s| s.templates.get(index))
+                    .map(|t| (t.name.clone(), t.text.clone()))
+                    .unwrap_or_default();
+                dialog
+                    .is_open(true)
+                    .title(tr!("Shared Templates"))
+                    .primary_button_text(tr!("Done"))
+                    .content(
+                        StackPanel::new().spacing(8.0).width(480.0).children((
+                            TextBox::new()
+                                .text(name)
+                                .placeholder_text(tr!("Name"))
+                                .on_text_changed(context.callback(move |text| {
+                                    Message::SettingsTemplate(index, 0, text)
+                                })),
+                            // WinUI の欄は改行を `\r` で持つ。`\n` のまま渡すと、打つたびに欄が書き直されて字の
+                            // 位置がずれる。
+                            TextBox::new()
+                                .text(text.replace('\n', "\r"))
+                                .placeholder_text(tr!("Message"))
+                                .accepts_return(true)
+                                .text_wrapping(TextWrapping::Wrap)
+                                .height(240.0)
+                                .element_ref(&self.template_body)
+                                .on_text_changed(context.callback(move |text| {
+                                    Message::SettingsTemplate(index, 1, text)
+                                })),
                         )),
                     )
             }
@@ -16388,10 +16464,9 @@ impl Root {
                 env_shown: context.callback(Message::SettingsEnvShown),
                 env_select: context.callback(Message::SettingsEnvSelect),
                 env_reveal: context.callback(|()| Message::SettingsEnvReveal),
-                template: Box::new(|i, field| {
-                    context.callback(move |text| Message::SettingsTemplate(i, field, text))
-                }),
                 template_add: context.callback(|()| Message::SettingsTemplateAdd),
+                template_select: context.callback(Message::SettingsTemplateSelect),
+                template_edit: context.callback(|()| Message::SettingsTemplateEdit),
                 display: Box::new(|id| context.callback(move |v| Message::SettingsDisplay(id, v))),
                 order: context.callback(Message::SettingsOrder),
                 syntax_theme: context.callback(|i| Message::SettingsSyntaxTheme(false, i)),

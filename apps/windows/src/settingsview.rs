@@ -41,6 +41,8 @@ pub struct State {
     pub env_revealed: bool,
     /// 共有のコミットのメッセージのテンプレート（Git > Commits の Shared Templates）。
     pub templates: Vec<crate::templates::Template>,
+    /// 一覧で選んだテンプレート（−・Edit… が使う）。
+    pub template_selected: Option<usize>,
     /// SSH Hosts（ページを初めて出したときに作る。選んだ SSH 先につなぎに行くので、出すまではつながない）。
     pub ssh: Option<crate::sshhosts::State>,
     /// Git の部品（`git`・`global`・`programs`）が読み書きする先: この機械なら None、SSH Hosts の Git のページなら
@@ -183,10 +185,12 @@ pub struct Callbacks<'a> {
     pub env_shown: Callback<Option<usize>>,
     pub env_select: Callback<Option<usize>>,
     pub env_reveal: Callback<()>,
-    /// 共有のテンプレート: 名前（0）・本文（1）の書き換え、足す、外す。
-    pub template: Box<dyn Fn(usize, usize) -> Callback<String> + 'a>,
+    /// 共有のテンプレート: 足す、外す（名前と本文はシートで書く）。
     pub template_add: Callback<()>,
     pub template_remove: Box<dyn Fn(usize) -> Callback<()> + 'a>,
+    /// 一覧で選んだ、選んだものを編集する（シート）。
+    pub template_select: Callback<Option<usize>>,
+    pub template_edit: Callback<()>,
     /// Appearance: History の見せ方を切り替えた（View の項目の id と、チェックの値）。
     pub display: Box<dyn Fn(&'static str) -> Callback<bool> + 'a>,
     /// Accounts: CI を読むブランチ（0 は今のブランチと既定のブランチ、1 は今のブランチだけ）と、ブランチごとに読む
@@ -730,47 +734,72 @@ fn env_value(state: &State, callbacks: &Callbacks) -> View {
 }
 
 /// Git > Commits の Shared Templates（GTK4 版の `templates::section`）: 名前と本文を並べ、＋で足し、−で外す。
-/// リポジトリは Repository Settings の Commits で 1 つを選ぶ。
+/// Git > Commits の Shared Templates（macOS 版の `TemplateLibrarySection`）: 名前の一覧と ＋・−・Edit…。名前と本文は
+/// シートで書く。リポジトリは Repository Settings の Commits で 1 つを選ぶ。
 fn templates(state: &State, callbacks: &Callbacks) -> View {
-    let rows = state.templates.iter().enumerate().map(|(i, t)| {
+    let rows = state.templates.iter().map(|t| {
+        let name = if t.name.trim().is_empty() {
+            tr!("Untitled")
+        } else {
+            t.name.clone()
+        };
         (
             t.id.clone(),
-            StackPanel::new()
-                .spacing(4.0)
-                .margin(Thickness::new(0.0, 0.0, 0.0, 8.0))
-                .children((
-                    Grid::new()
-                        .columns([GridLength::Star(1.0), GridLength::Auto])
-                        .column_spacing(6.0)
-                        .children((
-                            TextBox::new()
-                                .text(t.name.clone())
-                                .placeholder_text(tr!("Name"))
-                                .on_text_changed((callbacks.template)(i, 0))
-                                .grid_column(0),
-                            Button::new()
-                                .on_click((callbacks.template_remove)(i))
-                                .grid_column(1)
-                                .content(TextBlock::new().text("−")),
-                        )),
-                    TextBox::new()
-                        .text(t.text.clone())
-                        .placeholder_text(tr!("Message"))
-                        .accepts_return(true)
-                        .min_height(70.0)
-                        .on_text_changed((callbacks.template)(i, 1)),
-                )),
+            ListViewItem::new()
+                .tag(t.id.clone())
+                .content(TextBlock::new().text(name).font_size(13.0)),
         )
     });
+    // 並びが変わるたびに一覧ごと作り直す（reactor の ListView は消した項目の場所が残る）。
+    let key: String = state
+        .templates
+        .iter()
+        .map(|t| format!("{}:{}\n", t.id, t.name))
+        .collect();
+    let selected = state
+        .template_selected
+        .filter(|&i| i < state.templates.len());
     StackPanel::new()
         .spacing(4.0)
         .margin(Thickness::new(0.0, 12.0, 0.0, 0.0))
         .children((
             TextBlock::new().text(tr!("Shared Templates")),
-            View::keyed_fragment(rows),
-            Button::new()
-                .on_click(callbacks.template_add.clone())
-                .content(TextBlock::new().text("+")),
+            View::keyed_fragment([(
+                key,
+                ListView::new()
+                    .height(140.0)
+                    .selected_index(selected)
+                    .on_selection_changed(callbacks.template_select.clone())
+                    .collection_slot(ListViewSlot::Items, rows),
+            )]),
+            Grid::new()
+                .columns([
+                    GridLength::Auto,
+                    GridLength::Auto,
+                    GridLength::Star(1.0),
+                    GridLength::Auto,
+                ])
+                .column_spacing(6.0)
+                .children((
+                    Button::new()
+                        .on_click(callbacks.template_add.clone())
+                        .content(TextBlock::new().text("+")),
+                    match selected {
+                        Some(i) => Button::new()
+                            .grid_column(1)
+                            .on_click((callbacks.template_remove)(i))
+                            .content(TextBlock::new().text("−")),
+                        None => Button::new()
+                            .grid_column(1)
+                            .is_enabled(false)
+                            .content(TextBlock::new().text("−")),
+                    },
+                    Button::new()
+                        .grid_column(3)
+                        .is_enabled(selected.is_some())
+                        .on_click(callbacks.template_edit.clone())
+                        .content(TextBlock::new().text(tr!("Edit…"))),
+                )),
         ))
 }
 
