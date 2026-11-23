@@ -23,39 +23,24 @@ fn workdir(repo: &Option<Arc<Repository>>) -> Option<PathBuf> {
     repo.as_ref().and_then(|r| r.paths().workdir)
 }
 
-/// 詳細の右上の小さなアイコンのボタン（macOS 版の sparkles・character.bubble）。
-fn icon_button(kind: crate::icon::Kind) -> gtk::Button {
-    let icon = crate::icon::Icon::default();
-    icon.set(kind, false);
-    let button = gtk::Button::new();
-    button.set_child(Some(&icon));
-    button.add_css_class("flat");
-    button.set_valign(gtk::Align::Start);
-    button
-}
-
-/// History の詳細の右上に、翻訳と解説のボタンを置く（返事は macOS 版と同じく別の窓に出す）。
-pub fn details(details: &Rc<Details>, diff: &DiffWidget, current: CurrentRepo) {
-    let translate = icon_button(crate::icon::Kind::Bubble);
-    let explain = icon_button(crate::icon::Kind::Sparkles);
-    // 並びは macOS 版と同じ（翻訳・解説、その右に差分の検索と広げるボタン）。
-    for b in [&translate, &explain] {
-        details.tools.append(b);
-    }
-    assist::track(&translate, tr!("AI: Translate the message."));
-    assist::track(
-        &explain,
-        tr!("AI: Explain this commit (or the combined diff of the selected commits)."),
-    );
-
-    let (d, c) = (Rc::downgrade(details), current.clone());
-    translate.connect_clicked(move |b| {
+/// History の詳細の翻訳と解説（返事は macOS 版と同じく別の窓に出す）。帯の表示の設定に出す項目を作る閉包を返す
+/// （AI を使えないときは空。macOS 版と同じく「解説」「翻訳」の順）。
+pub fn details(
+    details: &Rc<Details>,
+    diff: &DiffWidget,
+    current: CurrentRepo,
+) -> Rc<dyn Fn() -> Vec<crate::menu::Item>> {
+    let (d, c, w) = (Rc::downgrade(details), current.clone(), diff.downgrade());
+    let translate: Rc<dyn Fn()> = Rc::new(move || {
         let Some(details) = d.upgrade() else { return };
         let message = details.message().trim().to_owned();
         if message.is_empty() {
             return;
         }
-        let parent = b.root().and_downcast::<gtk::Window>();
+        let parent = w
+            .upgrade()
+            .and_then(|w| w.root())
+            .and_downcast::<gtk::Window>();
         let workdir = workdir(&c());
         glib::spawn_future_local(async move {
             let key = assist::repository_key(workdir.as_deref());
@@ -81,20 +66,17 @@ pub fn details(details: &Rc<Details>, diff: &DiffWidget, current: CurrentRepo) {
     });
 
     let (d, w, c) = (Rc::downgrade(details), diff.downgrade(), current.clone());
-    explain.connect_clicked(move |b| {
+    let explain: Rc<dyn Fn()> = Rc::new(move || {
         let (Some(details), Some(diff)) = (d.upgrade(), w.upgrade()) else {
             return;
         };
         let message = details.message();
         let source = diff.source();
-        let files: Vec<String> = source
-            .as_ref()
-            .map(|s| s.0.files.iter().map(|(p, _)| p.clone()).collect())
-            .unwrap_or_default();
+        let files: Vec<String> = source.as_ref().map(|s| s.names()).unwrap_or_default();
         if files.is_empty() && message.trim().is_empty() {
             return;
         }
-        let parent = b.root().and_downcast::<gtk::Window>();
+        let parent = diff.root().and_downcast::<gtk::Window>();
         let workdir = workdir(&c());
         glib::spawn_future_local(async move {
             let key = assist::repository_key(workdir.as_deref());
@@ -124,7 +106,7 @@ pub fn details(details: &Rc<Details>, diff: &DiffWidget, current: CurrentRepo) {
                         let diff = gio::spawn_blocking(move || {
                             let mut out = amonhen_assist::DiffText::new();
                             if let Some(source) = source {
-                                // 選んだファイルだけ読んであるなら、ここで全ファイルを読む。
+                                // まだ取っていない差分（ファイルの多いコミット）は、ここで取る。
                                 let view = source.with_all(|all| {
                                     all.view(&[], &amonhen_projection::FrontendProfile::GTK)
                                 });
@@ -146,28 +128,39 @@ pub fn details(details: &Rc<Details>, diff: &DiffWidget, current: CurrentRepo) {
         });
     });
     // 確認用（`--ai translate,explain`）: コミットの詳細と差分が出てから押す。
-    for (button, name) in [(translate, "translate"), (explain, "explain")] {
-        let (b, c, d, w) = (
-            button.downgrade(),
-            button.downgrade(),
-            Rc::downgrade(details),
-            diff.downgrade(),
-        );
+    for (name, f) in [
+        ("translate", translate.clone()),
+        ("explain", explain.clone()),
+    ] {
+        let (d, w) = (Rc::downgrade(details), diff.downgrade());
         assist::auto(
             name,
             move || {
-                b.upgrade()
-                    .is_some_and(|b| b.is_mapped() && b.is_sensitive())
-                    && d.upgrade().is_some_and(|d| !d.message().is_empty())
-                    && w.upgrade().is_some_and(|w| w.source().is_some())
+                d.upgrade().is_some_and(|d| !d.message().is_empty())
+                    && w.upgrade()
+                        .is_some_and(|w| w.is_mapped() && w.source().is_some())
             },
-            move || {
-                if let Some(b) = c.upgrade() {
-                    b.emit_clicked();
-                }
-            },
+            move || f(),
         );
     }
+    Rc::new(move || {
+        if !assist::is_ready() {
+            return Vec::new();
+        }
+        let (e, t) = (explain.clone(), translate.clone());
+        vec![
+            crate::menu::hint(
+                tr!("AI: Explain This Commit"),
+                tr!("AI: Explain this commit (or the combined diff of the selected commits)."),
+                move || e(),
+            ),
+            crate::menu::hint(
+                tr!("AI: Translate the Message"),
+                tr!("AI: Translate the message."),
+                move || t(),
+            ),
+        ]
+    })
 }
 
 /// History の差分の右クリックのメニューに足す「AI でこの hunk を解説」（`y` の行が hunk の中で、AI を使える

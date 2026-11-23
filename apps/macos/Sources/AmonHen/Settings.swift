@@ -207,16 +207,6 @@ enum Settings {
         set { UserDefaults.standard.set(try? JSONEncoder().encode(newValue), forKey: "commitTemplates") }
     }
 
-    /// History のコミットの差分で、全ファイルを縦に並べるか（既定は並べる。オフなら選んだファイルだけ）。
-    /// 変えたら `stackedCommitDiffChanged` を知らせる。
-    static var stackedCommitDiff: Bool {
-        get { UserDefaults.standard.object(forKey: "stackedCommitDiff") as? Bool ?? true }
-        set {
-            UserDefaults.standard.set(newValue, forKey: "stackedCommitDiff")
-            NotificationCenter.default.post(name: .stackedCommitDiffChanged, object: nil)
-        }
-    }
-
     /// History の変更ファイルを、差分の左に木で出すか（既定はメッセージと差分の間に一覧）。
     /// 変えたら `historyFileTreeChanged` を知らせる。
     static var historyFileTree: Bool {
@@ -403,7 +393,6 @@ extension Notification.Name {
     static let highlightAncestorsChanged = Notification.Name("highlightAncestorsChanged")
     static let signatureCheckChanged = Notification.Name("signatureCheckChanged")
     static let commitMessageStyleChanged = Notification.Name("commitMessageStyleChanged")
-    static let stackedCommitDiffChanged = Notification.Name("stackedCommitDiffChanged")
     static let historyFileTreeChanged = Notification.Name("historyFileTreeChanged")
     static let fileHistoryMergesChanged = Notification.Name("fileHistoryMergesChanged")
     static let gitHubSettingsChanged = Notification.Name("gitHubSettingsChanged")
@@ -502,7 +491,6 @@ final class SettingsModel {
     var autoBookmark = Settings.autoBookmark { didSet { Settings.autoBookmark = autoBookmark } }
     var externalEditor = Settings.externalEditor ?? "" { didSet { Settings.externalEditor = externalEditor } }
     var openThroughDaemon = Settings.openThroughDaemon { didSet { Settings.openThroughDaemon = openThroughDaemon } }
-    var stackedCommitDiff = Settings.stackedCommitDiff { didSet { Settings.stackedCommitDiff = stackedCommitDiff } }
     var historyFileTree = Settings.historyFileTree { didSet { Settings.historyFileTree = historyFileTree } }
     var fileHistoryMerges = Settings.fileHistoryMerges { didSet { Settings.fileHistoryMerges = fileHistoryMerges } }
     var autoMagicMerge = Settings.autoMagicMerge { didSet { Settings.autoMagicMerge = autoMagicMerge } }
@@ -542,7 +530,6 @@ final class SettingsModel {
         if gitHubCIDefaultBranch != Settings.gitHubCIDefaultBranch { gitHubCIDefaultBranch = Settings.gitHubCIDefaultBranch }
         if gitHubCICommits != Settings.gitHubCICommits { gitHubCICommits = Settings.gitHubCICommits }
         if gitHubAvatarsOnce != Settings.gitHubAvatarsOnce { gitHubAvatarsOnce = Settings.gitHubAvatarsOnce }
-        if stackedCommitDiff != Settings.stackedCommitDiff { stackedCommitDiff = Settings.stackedCommitDiff }
         if historyFileTree != Settings.historyFileTree { historyFileTree = Settings.historyFileTree }
         if fileHistoryMerges != Settings.fileHistoryMerges { fileHistoryMerges = Settings.fileHistoryMerges }
         if autoMagicMerge != Settings.autoMagicMerge { autoMagicMerge = Settings.autoMagicMerge }
@@ -741,8 +728,7 @@ private struct AppearanceSettings: View {
                 Toggle(L("Show the message in a monospaced font"), isOn: $model.monospacedCommitMessage)
                 Toggle(L("Show avatars"), isOn: $model.showAvatars)
                 Note(L("Fetched from Gravatar (sends a hash of the email address to gravatar.com)."))
-                Toggle(L("Stack the diffs of all files"), isOn: $model.stackedCommitDiff)
-                Toggle(L("Show changed files as a tree left of the diff"), isOn: $model.historyFileTree)
+                Toggle(L("Show changed files as a tree"), isOn: $model.historyFileTree)
             }
             Section("File History") {
                 Toggle(L("Show merge commits"), isOn: $model.fileHistoryMerges)
@@ -990,7 +976,7 @@ final class SettingsWindowController: NSWindowController {
         super.init(window: window)
         // 開いている間に View・File History のメニューで変えた分も拾う（古い値のまま書き戻さない）。
         for name in [Notification.Name.historyRowsChanged, .historyOrderChanged, .fileHistoryMergesChanged,
-                     .highlightAncestorsChanged, .commitMessageStyleChanged, .stackedCommitDiffChanged,
+                     .highlightAncestorsChanged, .commitMessageStyleChanged,
                      .historyFileTreeChanged] {
             NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.model.reload() }

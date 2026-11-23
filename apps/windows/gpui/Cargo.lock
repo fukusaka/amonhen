@@ -98,6 +98,7 @@ dependencies = [
  "imara-diff",
  "memmap2",
  "postcard",
+ "regex",
  "serde",
  "serde_bytes",
  "serde_json",

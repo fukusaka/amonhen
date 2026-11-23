@@ -143,6 +143,19 @@ const FILTER: &[&str] = &[
     "Microsoft.UI.Content.IContentIslandEnvironment::{AppWindowId}",
     "Microsoft.UI.WindowId",
     "Microsoft.UI.Xaml.Controls.Primitives.IFlyoutBase::{ShowAt,ShowAtWithOptions,Hide}",
+    // サイドバーの行の印を押したら吹き出しを出す（木の項目は文字だけなので、行の TextBlock の中で印の字の位置を
+    // 求め、指がその上にあるかを見る）。
+    "Microsoft.UI.Xaml.Controls.TextBlock",
+    "Microsoft.UI.Xaml.Controls.ITextBlock::{Text,ContentStart}",
+    "Microsoft.UI.Xaml.Controls.ITextBlockStatics::{}",
+    "Microsoft.UI.Xaml.Documents.TextPointer",
+    "Microsoft.UI.Xaml.Documents.ITextPointer::{GetPositionAtOffset,GetCharacterRect,Offset}",
+    "Microsoft.UI.Xaml.Documents.LogicalDirection",
+    // `#` を打った所（カーソルの下）に Issue・PR の候補のメニューを出す（TextBox の字の矩形）。
+    "Microsoft.UI.Xaml.Controls.TextBox",
+    "Microsoft.UI.Xaml.Controls.ITextBox::{GetRectFromCharacterIndex}",
+    "Microsoft.UI.Xaml.Controls.ITextBoxFactory::{}",
+    "Microsoft.UI.Xaml.Controls.ITextBoxStatics::{}",
     // History の CI の印の吹き出し（印の位置に置いた見えないボタンの Flyout を開く）。
     "Microsoft.UI.Xaml.Controls.Button",
     "Microsoft.UI.Xaml.Controls.IButton::{Flyout}",

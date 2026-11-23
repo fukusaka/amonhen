@@ -44,6 +44,7 @@ pub const IMPLEMENTED: &[&str] = &[
     "switch-branch",
     "compare-with-previous",
     "apply-patch",
+    "export-archive",
     "save-bundle",
     "fetch-bundle",
     "new-worktree",

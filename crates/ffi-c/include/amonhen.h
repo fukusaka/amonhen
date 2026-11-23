@@ -364,6 +364,10 @@ typedef struct {
  * `flags`: ファイルの見出しで、バイナリのファイル（行の差分はない）。
  */
 #define AmonhenDiffRow_BINARY (1 << 2)
+/**
+ * `flags`: ファイルの見出しで、まだ差分を取っていない（ファイルの多いコミット。開いたときに取る）。行数は 0。
+ */
+#define AmonhenDiffRow_PENDING (1 << 3)
 
 /**
  * 差分の行の中で強調する範囲（単語単位の変更）。位置は FE の文字列の符号単位。
@@ -512,6 +516,16 @@ const char *amonhen_last_error(void);
  * リポジトリごとに daemon が常駐し、`.git` にソケットを作る。
  */
 void amonhen_set_fsmonitor(bool enabled);
+
+/**
+ * 名前を変えたファイルの見せ方（git の `--stat` と同じく、共通の前と後ろをくくり出す: `src/{old.rs → new.rs}`）。
+ * `amonhen_string_free` で解放する。引数が読めなければ NULL。
+ *
+ * # Safety
+ * `old`・`new` は NUL 終端の UTF-8 であること。
+ */
+char *amonhen_rename_label(const char *old,
+                           const char *new_);
 
 /**
  * この機械の git の版（`2.39.5`）。読めなければ NULL。`amonhen_string_free` で解放する。git を起動する
@@ -945,6 +959,51 @@ AmonhenDiff *amonhen_file_diff(const AmonhenRepo *repo_ptr,
                                AmonhenEncoding encoding);
 
 /**
+ * blob `oid`（20 バイト）の中身。長さを `len` に書く（`amonhen_blob_free` で解放する）。読めなければ NULL
+ * （`amonhen_last_error`）。画像の比較や、その時点の画像を見せるのに使う。
+ *
+ * # Safety
+ * `repo` は有効、`oid` は 20 バイトを読める領域、`len` は書ける領域であること。
+ */
+uint8_t *amonhen_blob_read(const AmonhenRepo *repo_ptr,
+                           const uint8_t *oid,
+                           uintptr_t *len);
+
+/**
+ * `changes` の `index` 番目のファイルの、変更前（`after` が false）か変更後の中身（`amonhen_blob_free` で解放
+ * する）。その側にない（追加の前・削除の後）なら NULL で、`len` は 0。
+ *
+ * # Safety
+ * `repo` と `changes` は有効、`len` は書ける領域であること。
+ */
+uint8_t *amonhen_change_blob(const AmonhenRepo *repo_ptr,
+                             const AmonhenChanges *changes,
+                             uint32_t index,
+                             bool after,
+                             uintptr_t *len);
+
+/**
+ * `amonhen_blob_read`・`amonhen_change_blob` が返したものを解放する。
+ *
+ * # Safety
+ * `data` と `len` は、それらが返した組であること（NULL ならなにもしない）。
+ */
+void amonhen_blob_free(uint8_t *data,
+                       uintptr_t len);
+
+/**
+ * `amonhen_file_diff` の、前後 `context` 行のもの（`UINT32_MAX` ならファイル全体）。
+ *
+ * # Safety
+ * `repo` と `changes` は有効であること。
+ */
+AmonhenDiff *amonhen_file_diff_context(const AmonhenRepo *repo_ptr,
+                                       const AmonhenChanges *changes,
+                                       uint32_t index,
+                                       uint32_t context,
+                                       AmonhenEncoding encoding);
+
+/**
  * `changes` のすべてのファイルの差分（`amonhen_stacked_free` で解放する）。ファイルの数だけ blob を読むので、
  * 裏のスレッドで呼ぶ。
  *
@@ -965,6 +1024,31 @@ AmonhenDiff *amonhen_stacked_view(const AmonhenStacked *stacked,
                                   const bool *collapsed,
                                   uint32_t count,
                                   AmonhenEncoding encoding);
+
+/**
+ * `stacked` の `file` 番目のファイルの差分を、前後 `context` 行で取り直す（`UINT32_MAX` ならファイル全体）。
+ * まだ差分を取っていないファイル（見出しの `PENDING`）なら、ここで取る。表示は `amonhen_stacked_view` で作り直す。
+ * 読めなければ false（`amonhen_last_error`）。
+ *
+ * # Safety
+ * `repo` と `stacked` は有効で、`stacked` をほかのスレッドで同時に使っていないこと。
+ */
+bool amonhen_stacked_set_context(const AmonhenRepo *repo_ptr,
+                                 AmonhenStacked *stacked,
+                                 uint32_t file,
+                                 uint32_t context);
+
+/**
+ * コミット `commit`（20 バイト）の `path` の中身を、変わっていない行として並べた表示（`amonhen_diff_free` で
+ * 解放する）。History の「すべてのファイル」で、このコミットで変えていないファイルを開く。
+ *
+ * # Safety
+ * `repo` は有効、`commit` は 20 バイトを読める領域、`path` は NUL で終わる UTF-8 であること。
+ */
+AmonhenDiff *amonhen_tree_file(const AmonhenRepo *repo_ptr,
+                               const uint8_t *commit,
+                               const char *path,
+                               AmonhenEncoding encoding);
 
 /**
  * History で選んだコミット（`rows` は行、順不同）の全ファイルの差分（`amonhen_stacked_free` で解放する）。
@@ -990,6 +1074,15 @@ AmonhenStacked *amonhen_selection_diff(const AmonhenRepo *repo_ptr,
  * `stacked` は有効であること。
  */
 uint32_t amonhen_stacked_count(const AmonhenStacked *stacked);
+
+/**
+ * `file` 番目のファイルが生成物か（最初は畳む）。`.gitattributes` の `linguist-generated`、なければ lock ファイルなど。
+ *
+ * # Safety
+ * `stacked` は有効であること。
+ */
+bool amonhen_stacked_generated(const AmonhenStacked *stacked,
+                               uint32_t file);
 
 /**
  * # Safety

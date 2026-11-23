@@ -153,6 +153,19 @@ pub trait GitBackend: Send + Sync {
         Ok(String::new())
     }
 
+    /// `paths` の差分の見せ方にかかる属性（hunk の見出しの関数名の規則・生成物か）。`git diff` と同じく、
+    /// 作業ツリー（なければ index）の `.gitattributes` と `info/attributes` で引く。対応しない実装は既定のもの。
+    fn diff_attributes(&self, paths: &[&str]) -> Result<Vec<crate::DiffAttributes>> {
+        Ok(vec![crate::DiffAttributes::default(); paths.len()])
+    }
+
+    /// `commit` の木の `path`（根からの相対パス。空なら根）にあるもの。フォルダを先に、それぞれ名前の順（大文字と
+    /// 小文字は区別しない）。History の「すべてのファイル」で、開いたフォルダだけ読む。
+    fn tree_entries(&self, commit: &Oid, path: &str) -> Result<Vec<crate::TreeEntry>> {
+        let _ = (commit, path);
+        Err(crate::tr!("Can’t read the tree here").into())
+    }
+
     /// `paths` の変更（追加・削除を含む）を index に入れる。
     fn stage(&self, paths: &[&str]) -> Result<()>;
 

@@ -159,6 +159,20 @@ pub enum Kind {
     Expand,
     /// arrow.down.right.and.arrow.up.left（広げた詳細を戻す）
     Restore,
+    /// rectangle.expand.vertical（差分をすべて開く）
+    ExpandVertical,
+    /// rectangle.compress.vertical（差分をすべて畳む）
+    CompressVertical,
+    /// chevron.left（すべてのファイルの、木に戻る）
+    ChevronLeft,
+    /// rectangle.split.2x1（画像を並べる）
+    TwoUp,
+    /// rectangle.righthalf.inset.filled（画像のスワイプ）
+    SwipeHalf,
+    /// circle.lefthalf.filled（画像のオニオンスキン）
+    HalfCircle,
+    /// plus.forwardslash.minus（画像の違うピクセル）
+    PlusMinus,
 }
 
 mod imp {
@@ -1118,6 +1132,68 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
             p.move_to(4.3, 8.4);
             p.line_to(6.0, 10.2);
             p.line_to(7.7, 8.4);
+        }
+        Kind::ExpandVertical | Kind::CompressVertical => {
+            // 真ん中の四角と、上下の矢印（開くなら外向き、畳むなら内向き）。
+            p.add_rounded_rect(&gsk::RoundedRect::from_rect(
+                graphene::Rect::new(3.0, 6.0, 10.0, 4.0),
+                1.0,
+            ));
+            let (tip, base) = if kind == Kind::ExpandVertical {
+                (1.0, 4.0)
+            } else {
+                (4.5, 1.5)
+            };
+            p.move_to(8.0, 1.0);
+            p.line_to(8.0, 4.5);
+            p.move_to(6.0, base);
+            p.line_to(8.0, tip);
+            p.line_to(10.0, base);
+            p.move_to(8.0, 15.0);
+            p.line_to(8.0, 11.5);
+            p.move_to(6.0, 16.0 - base);
+            p.line_to(8.0, 16.0 - tip);
+            p.line_to(10.0, 16.0 - base);
+        }
+        Kind::ChevronLeft => {
+            p.move_to(10.0, 3.0);
+            p.line_to(5.0, 8.0);
+            p.line_to(10.0, 13.0);
+        }
+        Kind::TwoUp => {
+            p.add_rounded_rect(&gsk::RoundedRect::from_rect(
+                graphene::Rect::new(2.0, 3.5, 12.0, 9.0),
+                1.5,
+            ));
+            p.move_to(8.0, 3.5);
+            p.line_to(8.0, 12.5);
+        }
+        Kind::SwipeHalf => {
+            p.add_rounded_rect(&gsk::RoundedRect::from_rect(
+                graphene::Rect::new(2.0, 3.5, 12.0, 9.0),
+                1.5,
+            ));
+            let half = gsk::PathBuilder::new();
+            half.add_rect(&graphene::Rect::new(8.5, 5.0, 4.0, 6.0));
+            fill = Some(half);
+        }
+        Kind::HalfCircle => {
+            p.add_circle(&point(8.0, 8.0), 6.0);
+            let half = gsk::PathBuilder::new();
+            half.move_to(8.0, 2.0);
+            half.svg_arc_to(6.0, 6.0, 0.0, false, false, 8.0, 14.0);
+            half.close();
+            fill = Some(half);
+        }
+        Kind::PlusMinus => {
+            p.move_to(2.5, 4.5);
+            p.line_to(6.5, 4.5);
+            p.move_to(4.5, 2.5);
+            p.line_to(4.5, 6.5);
+            p.move_to(12.0, 2.5);
+            p.line_to(4.0, 13.5);
+            p.move_to(9.5, 11.5);
+            p.line_to(13.5, 11.5);
         }
     }
     let stroke = gsk::Stroke::new(1.3);
