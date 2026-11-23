@@ -2762,6 +2762,13 @@ fn worktrees_are_listed_in_the_sidebar() {
     let at = side.iter().position(|l| l == "Worktrees").unwrap();
     assert_eq!(side[at + 1], "● main (main)");
     assert_eq!(side[at + 2], "  other (topic)");
+    // History には、それぞれの HEAD に worktree の札（✎ 開いている作業ツリー、⑂ 追加した worktree）。
+    assert!(text.contains("[✎ main] [main]"), "{text}");
+    assert!(text.contains("[⑂ other] [topic]"), "{text}");
+    // ほかの worktree から開けば、メインの作業ツリーは ⌂。
+    let from_other = amonhen_tui::snapshot(open(&other), 160, 16, clock(), "").unwrap();
+    assert!(from_other.contains("[⌂ main]"), "{from_other}");
+    assert!(from_other.contains("[✎ other]"), "{from_other}");
 }
 
 /// コマンドの一覧の New Orphan Branch: 名前を聞き、空からか、今のファイルを stage したままかを選ぶ
@@ -3468,6 +3475,48 @@ fn details_ignore_whitespace() {
     let back = amonhen_tui::snapshot(open(dir), 120, 30, clock(), "2\nwwww").unwrap();
     assert!(back.contains("Whitespace is compared"), "{back}");
     assert!(back.contains("+    two"), "{back}");
+}
+
+/// 詳細の差分: 中ほどまで動かすと、そのファイルの見出しが一番上に貼り付く。`o` か見出しのクリックで畳む・開く
+#[test]
+fn file_headers_stick_and_fold() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    git(dir, BASE, &["init", "-q", "-b", "main"]);
+    let lines = |tag: &str| (1..=12).map(|n| format!("{tag} {n}\n")).collect::<String>();
+    std::fs::write(dir.join("a.txt"), lines("alpha")).unwrap();
+    std::fs::write(dir.join("b.txt"), lines("beta")).unwrap();
+    git(dir, BASE, &["add", "."]);
+    git(dir, BASE, &["commit", "-q", "-m", "Start"]);
+    let details = |keys: &str| -> Vec<String> {
+        let text = amonhen_tui::snapshot(open(dir), 140, 14, clock(), keys).unwrap();
+        println!("{text}");
+        text.lines()
+            .skip(1)
+            .filter_map(|l| column(l, 1))
+            .map(|l| l.trim_end().to_owned())
+            .collect()
+    };
+    // 差分へ動かし（a.txt の中ほど）、見出しが一番上に残る。
+    let scrolled = details("2\njjjjjjjjjjjj");
+    assert!(scrolled[0].contains("a.txt"), "{scrolled:?}");
+    assert!(
+        scrolled.iter().any(|l| l.contains("+alpha 8")),
+        "{scrolled:?}"
+    );
+    // `o` で a.txt を畳む: 中身は出ず、見出しに ▸、次は b.txt。
+    let folded = details("2\njjjjjjjjjjjjo");
+    assert!(!folded.iter().any(|l| l.contains("+alpha")), "{folded:?}");
+    assert!(
+        folded
+            .iter()
+            .any(|l| l.starts_with('▸') && l.contains("a.txt")),
+        "{folded:?}"
+    );
+    assert!(folded.iter().any(|l| l.contains("+beta 1")), "{folded:?}");
+    // もう一度で開く。
+    let opened = details("2\njjjjjjjjjjjjoo");
+    assert!(opened.iter().any(|l| l.contains("+alpha")), "{opened:?}");
 }
 
 /// 詳細の `t`: 変わったファイルを木で出す（フォルダの下に名前だけ）。`z` でフォルダをたたみ、もう一度で開く

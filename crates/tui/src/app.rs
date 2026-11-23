@@ -6327,8 +6327,8 @@ impl App {
                 ("j k", tr!("Scroll")),
                 ("[ ]", tr!("Previous and next file")),
                 (
-                    "t z",
-                    tr!("Changed files as a tree or a list; fold the tree's folders"),
+                    "t z o",
+                    tr!("Files as a tree or a list; fold its folders; fold the file in view"),
                 ),
                 ("B L", tr!("Blame, File History of the file in view")),
                 (
@@ -7226,6 +7226,8 @@ impl App {
             // 変わったファイルを木で出す・一覧に戻す（アプリの List / Tree）、木のフォルダをたたむ・開く。
             KeyCode::Char('t') => Some(self.details.toggle_tree()),
             KeyCode::Char('z') => Some(self.details.fold_all()),
+            // 今見ているファイルの差分を畳む・開く（アプリのファイルの見出し）。
+            KeyCode::Char('o') => Some(self.details.toggle_fold_in_view()),
             _ => None,
         };
         // 今見ているファイルの前後を広げる・ファイル全体を出す（アプリの hunk の見出しの印・Show Whole File）。

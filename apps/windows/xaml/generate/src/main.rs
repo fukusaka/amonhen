@@ -22,7 +22,7 @@ const FILTER: &[&str] = &[
     "Microsoft.UI.Xaml.DependencyObject",
     "Microsoft.UI.Xaml.Media.VisualTreeHelper",
     "Microsoft.UI.Xaml.Media.IVisualTreeHelperStatics::{GetParent,GetChild,GetChildrenCount}",
-    "Microsoft.UI.Xaml.IFrameworkElement::{DataContext,Tag,ActualWidth,put_HorizontalAlignment,put_VerticalAlignment,put_Margin,\
+    "Microsoft.UI.Xaml.IFrameworkElement::{DataContext,Tag,ActualWidth,ActualHeight,put_HorizontalAlignment,put_VerticalAlignment,put_Margin,\
      Resources,RequestedTheme,put_RequestedTheme}",
     // Repositories の一覧で選んだ行（複数）。
     "Microsoft.UI.Xaml.Controls.ListViewBase",
