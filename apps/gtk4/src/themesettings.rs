@@ -471,6 +471,44 @@ fn syntax_section() -> gtk::Box {
     {
         diagram_sample.append(&picture);
     }
+    // gantt の時間帯（OS の時間帯・UTC・IANA の名前。名前で絞り込める）
+    let zone_keys: Vec<String> = ["".to_owned(), "UTC".to_owned()]
+        .into_iter()
+        .chain(theme::zone_names())
+        .collect();
+    let zone_labels: Vec<String> = zone_keys
+        .iter()
+        .map(|k| {
+            if k.is_empty() {
+                tr!("System time zone")
+            } else {
+                k.clone()
+            }
+        })
+        .collect();
+    let zone =
+        gtk::DropDown::from_strings(&zone_labels.iter().map(String::as_str).collect::<Vec<_>>());
+    zone.set_enable_search(true);
+    zone.set_expression(Some(gtk::PropertyExpression::new(
+        gtk::StringObject::static_type(),
+        gtk::Expression::NONE,
+        "string",
+    )));
+    zone.set_valign(gtk::Align::Center);
+    let current_zone = settings::string(theme::GANTT_TIME_ZONE).unwrap_or_default();
+    zone.set_selected(
+        zone_keys
+            .iter()
+            .position(|k| *k == current_zone)
+            .unwrap_or(0) as u32,
+    );
+    zone.connect_selected_notify(move |d| {
+        if let Some(key) = zone_keys.get(d.selected() as usize)
+            && settings::string(theme::GANTT_TIME_ZONE).unwrap_or_default() != *key
+        {
+            settings::set_string(theme::GANTT_TIME_ZONE, key);
+        }
+    });
     let section = crate::reposettings::section(
         Some(&tr!("Color Theme")),
         &[
@@ -478,6 +516,7 @@ fn syntax_section() -> gtk::Box {
             row(&tr!("Dark appearance"), &dark).upcast(),
             row(&tr!("Use standard colors for diffs"), &standard).upcast(),
             row(&tr!("Diagram colors"), &diagram).upcast(),
+            row(&tr!("Gantt time zone"), &zone).upcast(),
             preview.clone().upcast(),
             diagram_sample.clone().upcast(),
             import.clone().upcast(),

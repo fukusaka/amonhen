@@ -668,6 +668,22 @@ impl Browser {
                 this.back_to_tree();
             }
         });
+        // gantt の時間帯の設定を変えたら、整形した Markdown を読み直す（日付の位置が変わる）
+        {
+            let weak = Rc::downgrade(&this);
+            crate::settings::connect_changed_while(&this.root, move |key| {
+                let Some(this) = weak.upgrade() else { return };
+                if key != crate::theme::GANTT_TIME_ZONE || this.markdown_text.get() {
+                    return;
+                }
+                let path = this.open_path.borrow().clone();
+                if let Some(path) = path
+                    && amonhen_core::markdown::is_markdown(&path)
+                {
+                    this.open(&path, None);
+                }
+            });
+        }
         for (i, button) in this.markdown_buttons.iter().enumerate() {
             let weak = Rc::downgrade(&this);
             button.connect_toggled(move |b| {
@@ -873,6 +889,7 @@ impl Browser {
         self.contents.set_visible_child_name("markdown");
         let oid = self.blob_id(path);
         let github = self.github.borrow().clone();
+        let zone = crate::theme::gantt_zone();
         // 変えたファイルは変更後の blob（消したファイルは None）。ほかはその時点の木から。
         let changed: HashMap<String, Option<Oid>> = self
             .tree
@@ -888,7 +905,8 @@ impl Browser {
             let result = gio::spawn_blocking(move || {
                 let data = oid.and_then(|oid| repo.blob(&oid).ok())?;
                 let text = String::from_utf8_lossy(&data);
-                let blocks = amonhen_core::markdown::parse_with(&text, github.as_deref());
+                let blocks =
+                    amonhen_core::markdown::parse_in_zone(&text, github.as_deref(), Some(zone));
                 let images: Vec<(String, Arc<Vec<u8>>)> =
                     crate::markdownview::image_sources(&blocks)
                         .into_iter()

@@ -22,6 +22,60 @@ pub const DIFF_STANDARD_COLORS: &str = "diffStandardColors";
 pub const DIAGRAM_COLORS: &str = "diagramColors";
 /// 読み込んだ Mermaid のテーマ（名前 → mermaid-cli の設定の中身、JSON のオブジェクト。macOS 版と同じ鍵）。
 pub const IMPORTED_MERMAID_THEMES: &str = "importedMermaidThemes";
+/// gantt の日付を数える時間帯（IANA の名前。空なら OS の時間帯。macOS 版と同じ鍵）。
+pub const GANTT_TIME_ZONE: &str = "ganttTimeZone";
+
+/// GLib の時間帯（gantt の日付を数える。pele の描画のスレッドから呼ばれる）。
+struct GlibZone(gtk::glib::TimeZone);
+
+impl amonhen_core::diagram::TimeZone for GlibZone {
+    fn offset_ms(&self, utc_ms: f64) -> f64 {
+        if !utc_ms.is_finite() {
+            return 0.0;
+        }
+        let seconds = (utc_ms / 1000.0).floor() as i64;
+        let interval = self
+            .0
+            .find_interval(gtk::glib::TimeType::Universal, seconds);
+        if interval < 0 {
+            return 0.0;
+        }
+        f64::from(self.0.offset(interval)) * 1000.0
+    }
+}
+
+/// 今の gantt の時間帯（設定の名前、なければ OS の時間帯）。
+pub fn gantt_zone() -> std::sync::Arc<dyn amonhen_core::diagram::TimeZone> {
+    let name = settings::string(GANTT_TIME_ZONE).unwrap_or_default();
+    let zone = if name.is_empty() {
+        gtk::glib::TimeZone::local()
+    } else {
+        #[allow(deprecated)]
+        {
+            // 知らない名前は GLib が UTC にする
+            gtk::glib::TimeZone::new(Some(&name))
+        }
+    };
+    std::sync::Arc::new(GlibZone(zone))
+}
+
+/// OS の時間帯のデータにある IANA の名前（`zone1970.tab` から。読めなければ空）。
+pub fn zone_names() -> Vec<String> {
+    let mut names: Vec<String> = [
+        "/usr/share/zoneinfo/zone1970.tab",
+        "/usr/share/zoneinfo/zone.tab",
+    ]
+    .iter()
+    .find_map(|p| std::fs::read_to_string(p).ok())
+    .unwrap_or_default()
+    .lines()
+    .filter(|l| !l.starts_with('#'))
+    .filter_map(|l| l.split('\t').nth(2).map(str::to_owned))
+    .collect();
+    names.sort();
+    names.dedup();
+    names
+}
 
 /// 差分の色の種類（macOS 版の `DiffColor`）。テーマの `colors` の鍵（`#rrggbbaa`）と、テーマが持たないときの
 /// 標準の色。
