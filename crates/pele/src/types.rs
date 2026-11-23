@@ -2,6 +2,7 @@
 
 use std::any::Any;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::errors::Result;
 use crate::preprocess::Config;
@@ -42,6 +43,12 @@ impl MathMarkup {
 /// TeX（`$$` の囲みは除く）と文字の大きさ（画素）から数式を組む。
 pub type MathResolver = Rc<dyn Fn(&str, f64) -> Option<MathMarkup>>;
 
+/// 時間帯。gantt の地方時を決める（JS の `Date` がホストの時間帯で数えるのと同じ）。
+pub trait TimeZone: Send + Sync {
+    /// その時刻（1970 年からの UTC のミリ秒）での、地方時と UTC の差（ミリ秒、地方時 − UTC）。
+    fn offset_ms(&self, utc_ms: f64) -> f64;
+}
+
 /// `RenderOptions`。どれも pele と同じく省ける（None で pele の既定）。
 #[derive(Clone, Default)]
 pub struct RenderOptions {
@@ -72,6 +79,8 @@ pub struct RenderOptions {
     pub link_rel: Option<String>,
     /// gantt が今とみなす時刻（1970 年からのミリ秒）。既定は今の時刻。
     pub now: Option<f64>,
+    /// gantt が日付を数える地方時の時間帯。None は UTC（どの機械でも同じ図）。
+    pub time_zone: Option<Arc<dyn TimeZone>>,
     pub icons: Option<IconResolver>,
     pub math: Option<MathResolver>,
     pub config: Option<Config>,

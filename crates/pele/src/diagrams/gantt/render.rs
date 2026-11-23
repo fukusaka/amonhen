@@ -158,7 +158,12 @@ struct Bar {
     inside: bool,
 }
 
+/// 地方時は `options.time_zone` で数える（None は UTC）。
 pub fn render_gantt(model: &GanttDb, config: &Config, options: &RenderOptions) -> Result<Rendered> {
+    super::js_date::with_time_zone(options.time_zone.clone(), || draw(model, config, options))
+}
+
+fn draw(model: &GanttDb, config: &Config, options: &RenderOptions) -> Result<Rendered> {
     let mut model = model.clone();
     let size = options.font_size.unwrap_or(16.0);
     let measurer: &dyn TextMeasurer = match &options.measurer {

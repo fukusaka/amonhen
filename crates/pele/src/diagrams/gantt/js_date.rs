@@ -1,21 +1,104 @@
 //! gantt が頼る JS の `Date`（V8 のふるまい）。日付は時刻の値（1970 年からのミリ秒、`f64`、不正なら NaN）で表し、
 //! 取り出しと書き換えは関数にする。
 //!
-//! pele は「地方時」で数えるので、出力はホストの時間帯で変わる。ここでは地方時を UTC とし、ホストに関わらず同じ
-//! 図を描く（node を `TZ=UTC` で動かした pele と同じ）。そのため `getTimezoneOffset` はいつも 0 で、地方時と UTC の
-//! 取り出しは同じになる。
+//! pele は「地方時」で数えるので、出力はホストの時間帯で変わる。ここでは地方時の時間帯を描くときに選べる
+//! （`with_time_zone`、`RenderOptions.time_zone`）。選ばなければ UTC で、どの機械でも同じ図を描く（node を
+//! `TZ=UTC` で動かした pele と同じ）。地方時と UTC の行き来は ECMAScript のとおり: LocalTime(t) = t + offset(t)、
+//! 地方時から UTC へは、繰り返す時刻も飛ばす時刻も、変わる前のずれを使う（V8 が ICU に `FORMER` で問うのと同じ）。
 //!
 //! `parse` は V8 の `Date.parse`（ES5 の ISO の形と、それ以外の古い形の読み）。
 
+use std::cell::RefCell;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const MS_PER_DAY: f64 = 86_400_000.0;
 /// ±1e8 日。
 const MAX_TIME: f64 = 8.64e15;
+/// 地方時の値が UTC に直せる範囲（V8 の `kMaxTimeBeforeUTCInMs`）。
+const MAX_TIME_BEFORE_UTC: f64 = MAX_TIME + 864e6;
 const MIN_YEAR: f64 = -1_000_000.0;
 const MAX_YEAR: f64 = 1_000_000.0;
 const MIN_MONTH: f64 = -10_000_000.0;
 const MAX_MONTH: f64 = 10_000_000.0;
+
+use crate::types::TimeZone;
+
+thread_local! {
+    static ZONE: RefCell<Option<Arc<dyn TimeZone>>> = const { RefCell::new(None) };
+}
+
+/// `run` の間、地方時をこの時間帯で数える（None は UTC）。
+pub fn with_time_zone<T>(zone: Option<Arc<dyn TimeZone>>, run: impl FnOnce() -> T) -> T {
+    let outer = ZONE.with(|z| z.replace(zone));
+    let out = run();
+    ZONE.with(|z| *z.borrow_mut() = outer);
+    out
+}
+
+/// UTC の時刻 `t` での、地方時 − UTC（ミリ秒）。
+fn offset(t: f64) -> f64 {
+    ZONE.with(|z| match &*z.borrow() {
+        Some(zone) if t.is_finite() => {
+            let o = zone.offset_ms(t);
+            if o.is_finite() { o } else { 0.0 }
+        }
+        _ => 0.0,
+    })
+}
+
+fn zoned() -> bool {
+    ZONE.with(|z| z.borrow().is_some())
+}
+
+/// `LocalTime(t)`。
+fn to_local(t: f64) -> f64 {
+    t + offset(t)
+}
+
+/// 地方時から UTC へ（V8 の `ToUTC`）。地方時が 2 度ある時刻（戻すとき）は早い方、ない時刻（進めるとき）は
+/// 変わる前のずれで読む。
+fn to_utc(local: f64) -> f64 {
+    if !zoned() || !local.is_finite() {
+        return local;
+    }
+    // 近くのずれの候補。ずれの差は 1 日より小さい。
+    let mut candidates: Vec<f64> = Vec::with_capacity(6);
+    for probe in [local - MS_PER_DAY, local, local + MS_PER_DAY] {
+        let o = offset(probe);
+        if !candidates.contains(&o) {
+            candidates.push(o);
+        }
+    }
+    for k in 0..candidates.len() {
+        let o = offset(local - candidates[k]);
+        if !candidates.contains(&o) {
+            candidates.push(o);
+        }
+    }
+    let mut best: Option<f64> = None;
+    for &o in &candidates {
+        let t = local - o;
+        if offset(t) == o && best.is_none_or(|b| t < b) {
+            best = Some(t);
+        }
+    }
+    if let Some(t) = best {
+        return t;
+    }
+    // 飛ばした時刻: 変わる前（いちばん早い候補の時刻）のずれで読む。
+    let largest = candidates.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    local - offset(local - largest)
+}
+
+/// 地方時の値を UTC に直して `TimeClip`（V8 の `SetLocalDateValue` と `new Date(y, …)`）。
+fn from_local(local: f64) -> f64 {
+    if (-MAX_TIME_BEFORE_UTC..=MAX_TIME_BEFORE_UTC).contains(&local) {
+        time_clip(to_utc(local))
+    } else {
+        f64::NAN
+    }
+}
 
 /// `Date.now()`。
 pub fn now() -> f64 {
@@ -113,7 +196,7 @@ fn full_year(year: f64) -> f64 {
 
 /// `new Date(y, m, d, h, mi, s, ms)`（地方時）。
 pub fn local(y: f64, m: f64, d: f64, h: f64, mi: f64, s: f64, ms: f64) -> f64 {
-    time_clip(make_date(
+    from_local(make_date(
         make_day(full_year(y), m, d),
         make_time(h, mi, s, ms),
     ))
@@ -121,7 +204,10 @@ pub fn local(y: f64, m: f64, d: f64, h: f64, mi: f64, s: f64, ms: f64) -> f64 {
 
 /// `Date.UTC(y, m, d, h, mi, s, ms)`。
 pub fn utc(y: f64, m: f64, d: f64, h: f64, mi: f64, s: f64, ms: f64) -> f64 {
-    local(y, m, d, h, mi, s, ms)
+    time_clip(make_date(
+        make_day(full_year(y), m, d),
+        make_time(h, mi, s, ms),
+    ))
 }
 
 struct Fields {
@@ -143,15 +229,27 @@ fn fields(t: f64) -> Fields {
 }
 
 pub fn get_full_year(t: f64) -> f64 {
-    if t.is_nan() { t } else { fields(t).year }
+    if t.is_nan() {
+        t
+    } else {
+        fields(to_local(t)).year
+    }
 }
 
 pub fn get_month(t: f64) -> f64 {
-    if t.is_nan() { t } else { fields(t).month }
+    if t.is_nan() {
+        t
+    } else {
+        fields(to_local(t)).month
+    }
 }
 
 pub fn get_date(t: f64) -> f64 {
-    if t.is_nan() { t } else { fields(t).date }
+    if t.is_nan() {
+        t
+    } else {
+        fields(to_local(t)).date
+    }
 }
 
 /// `getDay()`（0 が日曜）。
@@ -159,7 +257,7 @@ pub fn get_day(t: f64) -> f64 {
     if t.is_nan() {
         t
     } else {
-        ((t / MS_PER_DAY).floor() + 4.0).rem_euclid(7.0)
+        ((to_local(t) / MS_PER_DAY).floor() + 4.0).rem_euclid(7.0)
     }
 }
 
@@ -171,7 +269,7 @@ pub fn get_hours(t: f64) -> f64 {
     if t.is_nan() {
         t
     } else {
-        (in_day(t) / 3_600_000.0).floor()
+        (in_day(to_local(t)) / 3_600_000.0).floor()
     }
 }
 
@@ -179,11 +277,16 @@ pub fn get_minutes(t: f64) -> f64 {
     if t.is_nan() {
         t
     } else {
-        (in_day(t) / 60_000.0).floor() % 60.0
+        (in_day(to_local(t)) / 60_000.0).floor() % 60.0
     }
 }
 
 pub fn get_seconds(t: f64) -> f64 {
+    get_utc_seconds(to_local(t))
+}
+
+/// `getUTCSeconds()`。
+pub fn get_utc_seconds(t: f64) -> f64 {
     if t.is_nan() {
         t
     } else {
@@ -192,12 +295,20 @@ pub fn get_seconds(t: f64) -> f64 {
 }
 
 pub fn get_milliseconds(t: f64) -> f64 {
-    if t.is_nan() { t } else { in_day(t) % 1000.0 }
+    if t.is_nan() {
+        t
+    } else {
+        in_day(to_local(t)) % 1000.0
+    }
 }
 
-/// `getTimezoneOffset()`（地方時は UTC）。
+/// `getTimezoneOffset()`（分、UTC − 地方時）。V8 は分に満たない端（地方平均時の秒）を 0 の方へ切り捨てる。
 pub fn get_timezone_offset(t: f64) -> f64 {
-    if t.is_nan() { t } else { 0.0 }
+    if t.is_nan() {
+        t
+    } else {
+        ((t - to_local(t)) / 60_000.0).trunc() + 0.0
+    }
 }
 
 /// `setDate(dt)`。
@@ -205,8 +316,8 @@ pub fn set_date(t: f64, dt: f64) -> f64 {
     if t.is_nan() {
         return t;
     }
-    let f = fields(t);
-    time_clip(make_date(make_day(f.year, f.month, dt), f.time_in_day))
+    let f = fields(to_local(t));
+    from_local(make_date(make_day(f.year, f.month, dt), f.time_in_day))
 }
 
 /// `setMonth(m)`・`setMonth(m, dt)`。
@@ -214,22 +325,22 @@ pub fn set_month(t: f64, m: f64, dt: Option<f64>) -> f64 {
     if t.is_nan() {
         return t;
     }
-    let f = fields(t);
-    time_clip(make_date(
+    let f = fields(to_local(t));
+    from_local(make_date(
         make_day(f.year, m, dt.unwrap_or(f.date)),
         f.time_in_day,
     ))
 }
 
-/// `setFullYear(y)`。不正な日付は 1970 年 1 月 1 日 0 時として書き換える。
+/// `setFullYear(y)`。不正な日付は地方時の 1970 年 1 月 1 日 0 時として書き換える。
 pub fn set_full_year(t: f64, y: f64) -> f64 {
     let (m, dt, time) = if t.is_nan() {
         (0.0, 1.0, 0.0)
     } else {
-        let f = fields(t);
+        let f = fields(to_local(t));
         (f.month, f.date, f.time_in_day)
     };
-    time_clip(make_date(make_day(y, m, dt), time))
+    from_local(make_date(make_day(y, m, dt), time))
 }
 
 /// `setHours(h, m, s, ms)`。
@@ -237,8 +348,8 @@ pub fn set_hours(t: f64, h: f64, m: f64, s: f64, ms: f64) -> f64 {
     if t.is_nan() {
         return t;
     }
-    let days = (t / MS_PER_DAY).floor();
-    time_clip(make_date(days, make_time(h, m, s, ms)))
+    let days = (to_local(t) / MS_PER_DAY).floor();
+    from_local(make_date(days, make_time(h, m, s, ms)))
 }
 
 // --- Date.parse（V8 の dateparser） ---
@@ -945,9 +1056,10 @@ pub fn parse(s: &str) -> f64 {
     let mut date = make_date(day, time);
     match zone {
         None => {
-            if !(-MAX_TIME - 864e6..=MAX_TIME + 864e6).contains(&date) {
+            if !(-MAX_TIME_BEFORE_UTC..=MAX_TIME_BEFORE_UTC).contains(&date) {
                 return f64::NAN;
             }
+            date = to_utc(date);
         }
         Some(offset) => {
             date -= offset as f64 * 1000.0;

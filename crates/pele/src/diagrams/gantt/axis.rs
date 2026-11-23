@@ -73,7 +73,7 @@ fn base_offset(unit: TickUnit, t: f64, step: f64) -> f64 {
 /// d3 が間隔と比べる値: 目盛りは、これが間隔の倍数になる所に来る。
 fn field(unit: TickUnit, t: f64) -> f64 {
     match unit {
-        TickUnit::Second => d::get_seconds(t),
+        TickUnit::Second => d::get_utc_seconds(t),
         TickUnit::Minute => d::get_minutes(t),
         TickUnit::Hour => d::get_hours(t),
         TickUnit::Day => d::get_date(t) - 1.0,

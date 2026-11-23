@@ -50,7 +50,7 @@ pub mod util;
 pub use crate::core::{RenderResult, detect_type, render, render_with, supports};
 pub use crate::errors::{ErrorCode, PeleError, PeleError as Error};
 pub use crate::text::measurer::TextMeasurer;
-pub use crate::types::{IconResolver, LinkInfo, MathMarkup, MathResolver, RenderOptions};
+pub use crate::types::{IconResolver, LinkInfo, MathMarkup, MathResolver, RenderOptions, TimeZone};
 
 /// `render` の答え。
 pub type Rendered = RenderResult;

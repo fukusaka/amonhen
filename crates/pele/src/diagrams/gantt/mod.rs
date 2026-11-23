@@ -1,7 +1,7 @@
 //! gantt（pele の `src/diagrams/gantt/`）。
 //!
-//! pele は日付を地方時で数えるので、出力はホストの時間帯によって変わる。ここでは地方時を UTC とし（`js_date`）、
-//! どの機械でも同じ図を描く。
+//! pele は日付を地方時で数えるので、出力はホストの時間帯によって変わる。ここでは地方時の時間帯を
+//! `RenderOptions.time_zone` で選び（`js_date`）、選ばなければ UTC として、どの機械でも同じ図を描く。
 
 pub mod axis;
 pub mod dates;
