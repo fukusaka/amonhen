@@ -490,6 +490,8 @@ struct Root {
     /// 右の列を「すべてのファイル」（その時点の木と中身）にしているか（帯の変更／すべてのファイル）と、その木。
     files_mode: bool,
     browser: Option<crate::allfiles::Browser>,
+    /// すべてのファイルで開いた Markdown を、整形せずにソースで見る（覚えない）。
+    markdown_text: bool,
     /// Working Copy で最後にマウスを載せたファイルの行。
     working_hovered: Option<String>,
     last_search: Option<String>,
@@ -1489,6 +1491,8 @@ enum Message {
     /// 開いたファイルから一覧に戻る・そのファイルの変更を見る。
     AllFilesBack,
     AllFilesShowChange,
+    /// すべてのファイルで開いた Markdown を、ソースで見る（true）・整形して見る（false）。
+    MarkdownText(bool),
     /// 見出しの ⋯ の Open File at This Commit。
     OpenFileAtCommit(String),
     /// 差分の帯で、行を比べるときに無視する空白を選んだ（`whitespace:<0〜3>`）。
@@ -1696,6 +1700,7 @@ impl Component for Root {
             details_expanded: false,
             files_mode: false,
             browser: None,
+            markdown_text: false,
             working_hovered: None,
             last_search: None,
             search_box: ElementRef::new(),
@@ -2726,6 +2731,7 @@ impl Root {
                 self.info = Some((info, extras));
             }
             Message::AllFiles(on) => self.set_files_mode(on),
+            Message::MarkdownText(text) => self.markdown_text = text,
             Message::AllFilesRow(Some(index)) => {
                 let flat = !crate::prefs::bool(crate::prefs::HISTORY_FILE_TREE);
                 let Some(browser) = self.browser.as_mut() else {
@@ -17155,10 +17161,27 @@ impl Root {
     fn files_path_bar(&self, context: &ViewContext<Self>) -> View {
         match &self.browser {
             Some(browser) if self.files_mode && self.page != Page::WorkingCopy => {
+                let markdown = browser
+                    .open
+                    .as_deref()
+                    .filter(|p| amonhen_core::markdown::is_markdown(p))
+                    .map(|_| {
+                        let pick = |text: bool| {
+                            context.callback(move |on: bool| {
+                                if on {
+                                    Message::MarkdownText(text)
+                                } else {
+                                    Message::DiffFilesToggled
+                                }
+                            })
+                        };
+                        (self.markdown_text, pick(false), pick(true))
+                    });
                 crate::allfiles::path_bar(
                     browser,
                     context.callback(|()| Message::AllFilesBack),
                     context.callback(|()| Message::AllFilesShowChange),
+                    markdown,
                 )
             }
             _ => View::empty(),
@@ -17170,8 +17193,26 @@ impl Root {
         let Some(browser) = &self.browser else {
             return View::empty();
         };
-        if !self.files_mode || browser.open.is_some() || self.page == Page::WorkingCopy {
+        if !self.files_mode || self.page == Page::WorkingCopy {
             return View::empty();
+        }
+        // 開いた Markdown は、整形して重ねる（テキストにすれば差分の欄の中身）。
+        if let Some(path) = &browser.open {
+            if !amonhen_core::markdown::is_markdown(path) || self.markdown_text {
+                return View::empty();
+            }
+            let mut parsed = None;
+            self.with_history(|h| {
+                parsed = h
+                    .session
+                    .data
+                    .file_view
+                    .as_ref()
+                    .map(|f| f.markdown.clone().unwrap_or_default());
+            });
+            return Border::new()
+                .background(Brush::Solid(crate::palette::background()))
+                .content(crate::markdownview::view(parsed.as_deref()));
         }
         let flat = !crate::prefs::bool(crate::prefs::HISTORY_FILE_TREE);
         Border::new()
@@ -18649,6 +18690,7 @@ fn highlighted_at(text: &str, query: &str, bold: bool, current: Option<usize>) -
                 Color::rgb(0xb2, 0x5f, 0x00)
             }),
             is_italic: is_current,
+            ..RichTextRun::default()
         }));
         at = end;
     }
@@ -19860,6 +19902,8 @@ impl HistoryView {
             s.renderer.forget_diff();
             self.diff.scroll_y = 0.0;
             self.diff.dirty = true;
+            // Markdown の整形は画面の部品で見せるので、組み直してもらう。
+            self.sender.send(Message::DiffFilesToggled);
         }
         if std::mem::take(&mut s.data.syntax_changed) && !self.working_page {
             s.renderer.forget_diff();
@@ -20255,8 +20299,62 @@ impl HistoryView {
         drag.is_some()
     }
 
+    /// すべてのファイルで開いた画像を `(x, y)` で押した（拡大縮小・絵を動かし始める）。引き始めたら true。
+    fn picture_press(&mut self, x: f32, y: f32) -> bool {
+        use crate::imagediff::{self as image, Hit, Mode};
+        let width = self
+            .diff
+            .surface
+            .as_ref()
+            .map_or(0.0, |s| s.width as f32 / self.diff.scale.max(0.01));
+        let layout = image::single_layout(width, self.diff.height());
+        let Some(file) = self.session.data.file_view.as_mut() else {
+            return false;
+        };
+        if file.picture.is_none() {
+            return false;
+        }
+        let common = self
+            .session
+            .renderer
+            .image_common(file.content().key, usize::MAX);
+        let view = &mut file.picture_view;
+        let mut drag = None;
+        match image::hit(&layout, Mode::TwoUp, view, common, x, y, false) {
+            Some(Hit::ZoomActual) => {
+                view.zoom = if view.zoom == Some(1.0) {
+                    None
+                } else {
+                    Some(1.0)
+                };
+                view.pan = (0.0, 0.0);
+            }
+            Some(Hit::ZoomOut) => image::zoom_by(view, 1.0 / 1.5, common, layout.canvas),
+            Some(Hit::ZoomIn) => image::zoom_by(view, 1.5, common, layout.canvas),
+            Some(Hit::ZoomFit) => {
+                view.zoom = None;
+                view.pan = (0.0, 0.0);
+            }
+            Some(Hit::Pan) => drag = Some(ImageDrag::Pan(x, y, view.pan.0, view.pan.1)),
+            _ => return false,
+        }
+        self.diff.dirty = true;
+        IMAGE_DRAG.with(|d| d.set(drag.map(|drag| (usize::MAX, 0, drag))));
+        drag.is_some()
+    }
+
     /// 画像の比べる欄で引いている所を `(x, y)` へ。
     fn image_drag(&mut self, file: usize, first: usize, drag: ImageDrag, x: f32, y: f32) {
+        // すべてのファイルで開いた画像を動かしている。
+        if file == usize::MAX {
+            if let (Some(f), ImageDrag::Pan(x0, y0, px, py)) =
+                (self.session.data.file_view.as_mut(), drag)
+            {
+                f.picture_view.pan = (px + x - x0, py + y - y0);
+                self.diff.dirty = true;
+            }
+            return;
+        }
         use crate::imagediff as image;
         let width = self
             .diff
@@ -21882,7 +21980,15 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
                     }
                 }
                 // ファイルの見出しを押すと、そのファイルを畳む・開く（すべてのファイルで開いたファイルには何もしない）。
-                Target::Diff if h.session.data.show_file && !h.working_page => {}
+                Target::Diff if h.session.data.show_file && !h.working_page => {
+                    // 開いた画像の拡大縮小・拡大した絵を動かす。
+                    if left
+                        && h.picture_press(position.X, position.Y)
+                        && let Ok(pointer) = args.Pointer()
+                    {
+                        let _ = source.CapturePointer(&pointer);
+                    }
+                }
                 Target::Diff => {
                     // 上に張り付いた見出しを押したら、そのファイルの見出しの行（畳んだら見出しを一番上に）。
                     // 位置は表示の行（木なら、フォルダの行を差し込んだ並び）。

@@ -24,6 +24,7 @@ mod github;
 mod historyedit;
 mod imagediff;
 mod listen;
+mod markdownview;
 mod measure;
 mod menus;
 mod merge;

@@ -1090,6 +1090,24 @@ impl Renderer {
             self.d2d.Clear(Some(&background()));
         }
         let result = match content {
+            // すべてのファイルで開いた画像は 1 枚の絵、読めない・バイナリのファイルは「バイナリファイル」。
+            Some(content) if content.picture.is_some() => {
+                self.draw_single_picture(&content, width, height)
+            }
+            Some(content) if content.file_mode && content.view.binary => {
+                let format = self.file_format.clone();
+                self.draw_centered(
+                    &amonhen_model::tr!("Binary file"),
+                    &format,
+                    crate::imagediff::Rect {
+                        x: 0.0,
+                        y: 0.0,
+                        w: width,
+                        h: height,
+                    },
+                    &secondary(),
+                )
+            }
             Some(content) => self.draw_diff_rows(content, scroll_y, width, height),
             None => Ok(()),
         };
@@ -1586,6 +1604,95 @@ impl Renderer {
             let (a, b) = (size(&e.before), size(&e.after));
             (a.0.max(b.0), a.1.max(b.1))
         })
+    }
+
+    /// すべてのファイルで開いた画像を、欄いっぱいに 1 枚で描く（GTK4 版の `imagediff::single`）: 右上に拡大縮小、
+    /// 下に大きさとバイト数。読めなければ「バイナリファイル」。
+    fn draw_single_picture(
+        &mut self,
+        content: &crate::data::DiffContent,
+        width: f32,
+        height: f32,
+    ) -> Result<()> {
+        use crate::imagediff as image;
+        let Some((bytes, view)) = content.picture else {
+            return Ok(());
+        };
+        let key = (content.key, usize::MAX);
+        if !self.images.contains_key(&key) {
+            self.images.retain(|k, _| k.0 == content.key);
+            // WIC で読めなければ、SVG として描く（中に <svg があるときだけ）。
+            let svg = || bytes.windows(4).any(|w| w == b"<svg");
+            let pixels = image::decode(bytes)
+                .or_else(|| svg().then(|| self.rasterize_svg(bytes).ok()).flatten());
+            let caption = image::describe(Some(bytes), pixels.as_ref());
+            let bitmap = pixels.as_ref().and_then(|p| self.bitmap(p).ok());
+            self.images.insert(
+                key,
+                ImageEntry {
+                    before: None,
+                    after: pixels,
+                    before_bitmap: None,
+                    after_bitmap: bitmap,
+                    caption,
+                    difference: None,
+                },
+            );
+        }
+        let entry = &self.images[&key];
+        let format = self.file_format.clone();
+        let full = image::Rect {
+            x: 0.0,
+            y: 0.0,
+            w: width,
+            h: height,
+        };
+        let Some(bitmap) = entry.after_bitmap.clone() else {
+            return self.draw_centered(
+                &amonhen_model::tr!("Binary file"),
+                &format,
+                full,
+                &secondary(),
+            );
+        };
+        let size = entry.after.as_ref().map_or((0.0, 0.0), |p| p.size());
+        let caption = entry.caption.clone();
+        let layout = image::single_layout(width, height);
+        let rect = image::fit(size, layout.canvas, &view);
+        unsafe {
+            self.d2d
+                .PushAxisAlignedClip(&d2d_rect(layout.canvas), D2D1_ANTIALIAS_MODE_ALIASED);
+        }
+        self.checker(rect);
+        self.draw_bitmap(&bitmap, rect, 1.0);
+        unsafe { self.d2d.PopAxisAlignedClip() };
+        self.draw_centered(
+            &image::zoom_text(&view),
+            &format,
+            layout.zoom_label,
+            &secondary(),
+        )?;
+        let icons = self.icon_format.clone();
+        for (r, glyph) in [
+            (layout.zoom_out, "\u{E71F}"),
+            (layout.zoom_in, "\u{E8A3}"),
+            (layout.zoom_fit, "\u{E9A6}"),
+        ] {
+            unsafe {
+                self.brush.SetColor(&diff_file());
+                self.d2d.FillRectangle(&d2d_rect(r), &self.brush);
+            }
+            self.draw_centered(glyph, &icons, r, &foreground())?;
+        }
+        self.draw_small(
+            &caption,
+            &self.meta_format.clone(),
+            layout.caption.x,
+            layout.caption.y,
+            layout.caption.w,
+            &secondary(),
+            false,
+        )
     }
 
     /// 画像の前と後を読んだもの（なければ読む）。
