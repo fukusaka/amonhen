@@ -24,6 +24,7 @@ pub mod svgflutter;
 pub mod svglint;
 pub mod svgsim;
 pub mod undo;
+pub mod vgc;
 pub mod words;
 pub mod worktree;
 
