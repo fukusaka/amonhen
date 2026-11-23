@@ -610,6 +610,10 @@ pub struct App {
     help_top: usize,
     /// 最後のコミットで hooks が書いたもの（成功でも失敗でも。`!` で全部を出す）。
     hook_output: Option<String>,
+    /// 最後に失敗したときの、git などの答えの全部（2 行以上あったとき。`!` で出す。アプリの Details）。
+    failure_details: Option<String>,
+    /// `!` の枠に出しているのが、失敗の全部か（でなければ hooks の出力）。
+    showing_failure: bool,
     /// hooks の出力を枠に出している（そのときの一番上の行）。
     showing_hooks: Option<usize>,
     /// コマンドの一覧を出している（`:`）。
@@ -734,6 +738,8 @@ impl App {
             help: false,
             help_top: 0,
             hook_output: None,
+            failure_details: None,
+            showing_failure: false,
             showing_hooks: None,
             palette: None,
             operation_log: None,
@@ -869,6 +875,8 @@ impl App {
 
     /// コミットのときに hooks（と git）が書いたものを覚える。2 行以上あれば、一番下の行に足す「`!` で全部」を返す。
     fn remember_hook_output(&mut self, output: &str) -> String {
+        // hooks の出力のほうが新しい。
+        self.failure_details = None;
         let lines = output.lines().filter(|l| !l.trim().is_empty()).count();
         match lines {
             0 => {
@@ -2367,9 +2375,16 @@ impl App {
             }
             // 最後のコミットで hooks が書いたものを、全部出す。
             KeyCode::Char('!') => {
-                match self.hook_output {
-                    Some(_) => self.showing_hooks = Some(0),
-                    None => self.notice = Some(tr!("No output from the hooks yet")),
+                // 最後の失敗の全部があれば、それ（新しいほう）。なければ hooks の出力。
+                if self.failure_details.is_some() {
+                    self.showing_failure = true;
+                    self.showing_hooks = Some(0);
+                } else {
+                    self.showing_failure = false;
+                    match self.hook_output {
+                        Some(_) => self.showing_hooks = Some(0),
+                        None => self.notice = Some(tr!("No output from the hooks yet")),
+                    }
                 }
                 self.dirty = true;
             }
@@ -2750,9 +2765,14 @@ impl App {
                 if name == "editRows" {
                     self.combining.clear();
                 }
-                // 長い出力は、最初の行だけ。
+                // 長い出力は、最初の行だけ。2 行以上なら、全部を `!` で出せる（アプリの Details）。
                 let line = error.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
-                self.error = Some(line.trim().to_owned());
+                let lines = error.lines().filter(|l| !l.trim().is_empty()).count();
+                self.failure_details = (lines > 1).then(|| error.trim_end().to_owned());
+                self.error = Some(match lines > 1 {
+                    true => line.trim().to_owned() + &tr!(" (! shows all)"),
+                    false => line.trim().to_owned(),
+                });
                 self.changes.refresh();
                 self.open();
                 return;
@@ -7006,7 +7026,11 @@ impl App {
                 }
             }
         }
-        if let (Some(top), Some(output)) = (self.showing_hooks, &self.hook_output) {
+        let shown = match self.showing_failure {
+            true => self.failure_details.as_ref(),
+            false => self.hook_output.as_ref(),
+        };
+        if let (Some(top), Some(output)) = (self.showing_hooks, shown) {
             cursor = None;
             let lines: Vec<&str> = output.lines().collect();
             let text = lines.iter().map(|l| l.width()).max().unwrap_or(0) as u16;
@@ -7018,7 +7042,11 @@ impl App {
                 width,
                 height,
             );
-            frame_box(buf, area, at, &tr!(" Output of the hooks "));
+            let title = match self.showing_failure {
+                true => tr!(" Details of the failure "),
+                false => tr!(" Output of the hooks "),
+            };
+            frame_box(buf, area, at, &title);
             let inside = usize::from(height.saturating_sub(2));
             let top = top.min(lines.len().saturating_sub(inside));
             self.showing_hooks = Some(top);
