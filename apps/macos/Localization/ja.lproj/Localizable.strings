@@ -1048,7 +1048,7 @@
 /* CommitHeader.swift */
 "Brief" = "簡潔";
 "Standard" = "標準";
-"Full" = "詳細";
+"Full" = "詳しく";
 "Cherry-picked from" = "cherry-pick 元";
 "Reverts" = "revert 元";
 "Fixes" = "修正対象";
