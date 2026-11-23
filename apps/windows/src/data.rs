@@ -4,6 +4,8 @@
 //! 「メインスレッドを起こす」に当たる）。
 
 use std::collections::{HashMap, HashSet};
+
+use amonhen_core::diff::Whitespace;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -274,6 +276,30 @@ impl WorkingShown {
             widen: false,
         }
     }
+}
+
+/// 読んだ差分（空白の扱いを変えたら、同じ引数でもう一度読む）。
+#[derive(Clone)]
+enum Want {
+    Commit(u32),
+    Oid(amonhen_model::Oid, bool),
+    FileChange(amonhen_model::Oid, String),
+    Range(
+        Option<amonhen_model::Oid>,
+        amonhen_model::Oid,
+        String,
+        String,
+        Vec<[String; 3]>,
+    ),
+    Selection(Vec<u32>),
+}
+
+/// 空白の扱いを変えて読み直す前の、開き方（macOS 版の `restoreAfterReload`）。
+struct Restore {
+    collapsed: Vec<bool>,
+    contexts: HashMap<usize, u32>,
+    whole: HashSet<usize>,
+    folders: HashSet<String>,
 }
 
 /// 選んだコミットの詳細（`commit_info` の答え）と、全ファイルを並べた差分。
@@ -761,6 +787,16 @@ pub struct Data {
     pub commit: Option<Box<CommitShown>>,
     /// 読んでいるコミットの行（届いたものがこれと違えば捨てる）。
     commit_wanted: Option<u32>,
+    /// 最後に読んだ差分（空白の扱いを変えたとき、同じものを読み直す）。
+    last_want: Option<Want>,
+    /// Working Copy で読んだファイルと、両側に変更があるとき stage 済みの側を読んだか（空白の扱いを変えたら読み直す）。
+    working_entry: Option<(amonhen_model::StatusEntry, bool)>,
+    /// 行を比べるときに無視する空白（差分の帯で選ぶ。覚えない。macOS 版・GTK4 版と同じ）。
+    pub whitespace: Whitespace,
+    /// 空白の扱いを変えて読み直すとき、届いた差分に戻す開き方。
+    restore: Option<Restore>,
+    /// 空白の扱いを変えて読み直した差分が届いた（同じ行でも出し直す。見たら `false` に戻す）。
+    pub commit_reloaded: bool,
     /// 出している差分に構文の色が届いた（描き直す。見たら `false` に戻す）。
     pub syntax_changed: bool,
     /// 時間のかかる詳細が届いた（見たら `false` に戻す）。
@@ -1102,6 +1138,11 @@ impl Data {
             search: None,
             commit: None,
             commit_wanted: None,
+            last_want: None,
+            working_entry: None,
+            whitespace: Whitespace::Exact,
+            restore: None,
+            commit_reloaded: false,
             syntax_changed: false,
             extras_changed: false,
             history_changed: false,
@@ -1212,6 +1253,7 @@ impl Data {
         let Some(entry) = entry else {
             self.working_wanted = None;
             self.working = None;
+            self.working_entry = None;
             self.working_changed = true;
             return;
         };
@@ -1219,9 +1261,17 @@ impl Data {
             return;
         };
         self.working_wanted = Some(entry.path.clone());
+        self.working_entry = Some((entry.clone(), prefer_staged));
+        let whitespace = self.whitespace;
         let (tx, wake) = (self.tx.clone(), self.wake.clone());
         std::thread::spawn(move || {
-            let diff = match repo.working_diff_combined(&entry, &PROFILE).ok().flatten() {
+            // 空白を無視する間は 1 本の差分（行ごとのチェック）にせず、選んだ側の差分（macOS 版と同じ）。
+            let combined = if whitespace == Whitespace::Exact {
+                repo.working_diff_combined(&entry, &PROFILE).ok().flatten()
+            } else {
+                None
+            };
+            let diff = match combined {
                 Some(diff) => Ok(diff),
                 // 1 本の差分で表せなければ、選んだ側（片側にしか変更がなければその側。GTK4 版と同じ）。
                 None => {
@@ -1230,7 +1280,7 @@ impl Data {
                     } else {
                         !entry.is_unstaged()
                     };
-                    repo.working_diff(&entry, staged, &PROFILE)
+                    repo.working_diff_ws(&entry, staged, whitespace, &PROFILE)
                 }
             };
             let event = match diff {
@@ -1360,6 +1410,10 @@ impl Data {
     /// Working Copy の差分で右クリックした `row` の行（変わった行ならその行、hunk の見出しならその hunk の行）と、
     /// そのうちに含めている行があるか（含めている行は捨てられない）。stage 済みの側の差分では None。
     pub fn working_rows_at(&self, row: usize) -> Option<(Vec<usize>, bool)> {
+        // 空白を無視した差分の行は中身をそのまま表していないので、行ごとには捨てない（macOS 版と同じ）。
+        if self.whitespace != Whitespace::Exact {
+            return None;
+        }
         use amonhen_layout::DiffRow;
         let working = self.working.as_ref()?;
         if working.diff.staged {
@@ -1532,6 +1586,12 @@ impl Data {
                         }
                         self.commit = Some(shown);
                         changed = true;
+                        // 空白の扱いを変えて読み直した: 開いていたファイル・広げた前後・ファイル全体・畳んだ
+                        // フォルダを戻す。
+                        if let Some(restore) = self.restore.take() {
+                            self.restore_layout(restore);
+                            self.commit_reloaded = true;
+                        }
                     }
                 }
                 Event::Syntax(generation, row, version, syntax) => {
@@ -1649,11 +1709,15 @@ impl Data {
             }
         });
         let (tx, wake) = (self.tx.clone(), self.wake.clone());
+        let whitespace = self.whitespace;
+        self.last_want = Some(Want::Commit(row));
         std::thread::spawn(move || {
             let load = || -> Result<CommitShown, String> {
                 let info = repo.commit_info(&id).map_err(|e| e.to_string())?;
                 let changes = repo.commit_changes(&id).map_err(|e| e.to_string())?;
-                let stacked = repo.stacked_diff(&changes).map_err(|e| e.to_string())?;
+                let stacked = repo
+                    .stacked_diff_ws(&changes, whitespace)
+                    .map_err(|e| e.to_string())?;
                 Ok(CommitShown::new(row, info, Arc::new(stacked)))
             };
             let shown = match timed("Load diff", load) {
@@ -1693,6 +1757,8 @@ impl Data {
         self.early_extras = None;
         let generation = history.generation;
         let (tx, wake) = (self.tx.clone(), self.wake.clone());
+        let whitespace = self.whitespace;
+        self.last_want = Some(Want::Oid(id, stash));
         std::thread::spawn(move || {
             let load = || -> Result<CommitShown, String> {
                 let info = repo.commit_info(&id).map_err(|e| e.to_string())?;
@@ -1702,7 +1768,9 @@ impl Data {
                     repo.commit_changes(&id)
                 }
                 .map_err(|e| e.to_string())?;
-                let stacked = repo.stacked_diff(&changes).map_err(|e| e.to_string())?;
+                let stacked = repo
+                    .stacked_diff_ws(&changes, whitespace)
+                    .map_err(|e| e.to_string())?;
                 Ok(CommitShown::new(key, info, Arc::new(stacked)))
             };
             let shown = match load() {
@@ -1731,6 +1799,8 @@ impl Data {
         self.early_extras = None;
         let generation = history.generation;
         let (tx, wake) = (self.tx.clone(), self.wake.clone());
+        let whitespace = self.whitespace;
+        self.last_want = Some(Want::FileChange(id, path.clone()));
         std::thread::spawn(move || {
             let load = || -> Result<CommitShown, String> {
                 let info = repo.commit_info(&id).map_err(|e| e.to_string())?;
@@ -1740,7 +1810,9 @@ impl Data {
                     .into_iter()
                     .filter(|c| c.path == path || c.old_path.as_deref() == Some(path.as_str()))
                     .collect();
-                let stacked = repo.stacked_diff(&changes).map_err(|e| e.to_string())?;
+                let stacked = repo
+                    .stacked_diff_ws(&changes, whitespace)
+                    .map_err(|e| e.to_string())?;
                 Ok(CommitShown::new(key, info, Arc::new(stacked)))
             };
             let shown = match load() {
@@ -1776,12 +1848,22 @@ impl Data {
         self.early_extras = None;
         let generation = history.generation;
         let (tx, wake) = (self.tx.clone(), self.wake.clone());
+        let whitespace = self.whitespace;
+        self.last_want = Some(Want::Range(
+            base,
+            tip,
+            title.clone(),
+            note.clone(),
+            lines.clone(),
+        ));
         std::thread::spawn(move || {
             let load = || -> Result<CommitShown, String> {
                 let changes = repo
                     .changes_between(base.as_ref(), &tip)
                     .map_err(|e| e.to_string())?;
-                let stacked = repo.stacked_diff(&changes).map_err(|e| e.to_string())?;
+                let stacked = repo
+                    .stacked_diff_ws(&changes, whitespace)
+                    .map_err(|e| e.to_string())?;
                 let info = serde_json::json!({ "selection": {
                     "kind": "range", "count": lines.len(), "lines": lines,
                     "title": title, "note": note,
@@ -1814,10 +1896,12 @@ impl Data {
         self.early_extras = None;
         let generation = history.generation;
         let (tx, wake) = (self.tx.clone(), self.wake.clone());
+        let whitespace = self.whitespace;
+        self.last_want = Some(Want::Selection(rows.clone()));
         std::thread::spawn(move || {
             let load = || -> Result<CommitShown, String> {
                 let (selection, stacked) = repo
-                    .selection_diff(&history, &rows, amonhen_core::PairMode::Forward)
+                    .selection_diff_ws(&history, &rows, amonhen_core::PairMode::Forward, whitespace)
                     .map_err(|e| e.to_string())?;
                 let kind = match selection {
                     amonhen_core::Selection::Range { .. } => "range",
@@ -2071,6 +2155,64 @@ impl Data {
             }
             true
         })
+    }
+
+    /// 行を比べるときに無視する空白を変え、出している差分を開き方を保って読み直す（Working Copy の差分も）。
+    pub fn set_whitespace(&mut self, whitespace: Whitespace) {
+        if whitespace == self.whitespace {
+            return;
+        }
+        self.whitespace = whitespace;
+        self.restore = self.commit.as_ref().map(|c| Restore {
+            collapsed: c.collapsed.clone(),
+            contexts: c.contexts.clone(),
+            whole: c.whole.clone(),
+            folders: c.collapsed_folders.clone(),
+        });
+        self.commit_wanted = None;
+        match self.last_want.clone() {
+            Some(Want::Commit(row)) => self.want_commit(row),
+            Some(Want::Oid(id, stash)) => self.want_oid(id, stash),
+            Some(Want::FileChange(id, path)) => self.want_file_change(id, path),
+            Some(Want::Range(base, tip, title, note, lines)) => {
+                self.want_range(base, tip, title, note, lines)
+            }
+            Some(Want::Selection(rows)) => self.want_selection(rows),
+            None => self.restore = None,
+        }
+        if let Some((entry, prefer_staged)) = self.working_entry.clone() {
+            self.want_working(Some(entry), prefer_staged);
+        }
+    }
+
+    /// 読み直した差分に、前の開き方を戻す（ファイルの数が同じときだけ）。
+    fn restore_layout(&mut self, restore: Restore) {
+        let repo = self.repo.clone();
+        self.relayout(|commit| {
+            if commit.collapsed.len() != restore.collapsed.len() {
+                return false;
+            }
+            for (file, &collapsed) in restore.collapsed.iter().enumerate() {
+                if !collapsed && let Some(repo) = &repo {
+                    commit.load_pending(repo, file);
+                }
+            }
+            if let Some(repo) = &repo {
+                for (&file, &context) in &restore.contexts {
+                    if !restore.whole.contains(&file) && commit.load(repo, file, context) {
+                        commit.contexts.insert(file, context);
+                    }
+                }
+                for &file in &restore.whole {
+                    if commit.load(repo, file, u32::MAX) {
+                        commit.whole.insert(file);
+                    }
+                }
+            }
+            commit.collapsed = restore.collapsed;
+            commit.collapsed_folders = restore.folders;
+            true
+        });
     }
 
     /// 変更ファイルを木で見せる・リストに戻す（帯のリスト／ツリー）。

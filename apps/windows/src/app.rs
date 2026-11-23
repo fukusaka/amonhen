@@ -1477,6 +1477,8 @@ enum Message {
     ToggleAllFolders,
     /// 帯の表示の設定のメニュー。
     DiffViewOption(String),
+    /// 差分の帯で、行を比べるときに無視する空白を選んだ（`whitespace:<0〜3>`）。
+    DiffWhitespace(String),
     /// 一致したコミットだけを出すか。
     SearchOnly(bool),
     CloseSearch,
@@ -3045,6 +3047,15 @@ impl Root {
                     h.diff.scroll_by(0.0, rows);
                 }
             }),
+            Message::DiffWhitespace(key) => {
+                let mode = key
+                    .strip_prefix("whitespace:")
+                    .and_then(|n| n.parse::<u8>().ok())
+                    .map(amonhen_core::diff::Whitespace::from_u8);
+                if let Some(mode) = mode {
+                    self.with_history(|h| h.session.data.set_whitespace(mode));
+                }
+            }
             Message::DiffViewOption(key) => {
                 if key == "expand-details" {
                     self.details_expanded = !self.details_expanded;
@@ -17031,11 +17042,69 @@ impl Root {
             .columns([GridLength::Star(1.0), GridLength::Auto])
             .children((
                 sides,
-                Border::new()
+                StackPanel::new()
                     .grid_column(1)
+                    .orientation(Orientation::Horizontal)
+                    .spacing(4.0)
                     .margin(Thickness::new(0.0, 2.0, 8.0, 2.0))
-                    .content(self.diff_find_button(context)),
+                    .children((
+                        self.whitespace_picker(context),
+                        self.diff_find_button(context),
+                    )),
             ))
+    }
+
+    /// 行を比べるときに無視する空白を選ぶボタン（macOS 版の `WhitespacePopUp`）: アイコンだけで、押すと 4 つの
+    /// 選び方（今のものに ✓、それぞれに説明のツールチップ）。無視している間はアイコンをアクセントの色にする。
+    fn whitespace_picker(&self, context: &ViewContext<Self>) -> View {
+        use amonhen_core::diff::Whitespace;
+        let mut current = Whitespace::Exact;
+        self.with_history(|h| current = h.session.data.whitespace);
+        let title = |mode: Whitespace| match mode {
+            Whitespace::Exact => tr!("Compare Whitespace"),
+            Whitespace::AtEol => tr!("Ignore Whitespace at Line Ends"),
+            Whitespace::Change => tr!("Ignore Changes in Whitespace"),
+            Whitespace::All => tr!("Ignore All Whitespace"),
+        };
+        let tooltip = |mode: Whitespace| match mode {
+            Whitespace::Exact => tr!("Lines that differ only in whitespace are changes"),
+            Whitespace::AtEol => {
+                tr!("Ignore whitespace at the end of lines (git diff --ignore-space-at-eol)")
+            }
+            Whitespace::Change => tr!("Ignore changes in the amount of whitespace (git diff -b)"),
+            Whitespace::All => tr!("Ignore all whitespace when comparing lines (git diff -w)"),
+        };
+        let items: Vec<MenuItem> = [
+            Whitespace::Exact,
+            Whitespace::AtEol,
+            Whitespace::Change,
+            Whitespace::All,
+        ]
+        .into_iter()
+        .map(|mode| {
+            let mark = if mode == current { "✓ " } else { "" };
+            MenuItem::item(
+                format!("whitespace:{}", mode as u8),
+                format!("{mark}{}", title(mode)),
+            )
+            .with_tooltip(tooltip(mode))
+        })
+        .collect();
+        // アイコンは空白の印 ␣（macOS 版の SF Symbols の space）。
+        let icon = TextBlock::new().text("␣").font_size(16.0);
+        let icon = if current == Whitespace::Exact {
+            icon
+        } else {
+            icon.foreground(Brush::Solid(Color::rgb(0x00, 0x78, 0xd4)))
+        };
+        DropDownButton::new()
+            .content(icon)
+            .tooltip(format!(
+                "{}\n{}",
+                title(current),
+                tr!("Whitespace to ignore when comparing lines (as git diff does)")
+            ))
+            .menu(Menu::new(items, context.callback(Message::DiffWhitespace)))
     }
 
     /// 右の列の差分の上の帯（macOS 版の `makeBar`）: 変更／すべてのファイル、ファイルの数と足した・消した行の
@@ -17133,12 +17202,7 @@ impl Root {
             } else {
                 tr!("Expand All Diffs")
             });
-        // 空白を無視は、まだ使えない（macOS 版・GTK4 版と同じ。WinUI は押せない部品にツールチップを出さない）。
-        let whitespace = CheckBox::new()
-            .is_enabled(false)
-            .min_width(0.0)
-            .content(small(tr!("Ignore Whitespace")))
-            .tooltip(tr!("Not available yet"));
+        let whitespace = self.whitespace_picker(context);
         let find = Button::new()
             .style(ButtonStyle::Subtle)
             .on_click(context.callback(|()| Message::DiffFindOpen(true)))
@@ -19567,8 +19631,10 @@ impl HistoryView {
             self.sender.send(Message::OpenHistoryMenu);
         }
         let mut diff_replaced = false;
+        // 空白の扱いを変えて読み直した差分は、同じ行のものでも新しい差分として出し直す。
+        let reloaded = std::mem::take(&mut s.data.commit_reloaded);
         if let Some(commit) = &s.data.commit
-            && self.shown != Some(commit.row)
+            && (self.shown != Some(commit.row) || reloaded)
         {
             self.shown = Some(commit.row);
             s.data.extras_changed = false;
