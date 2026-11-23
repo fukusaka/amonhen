@@ -78,7 +78,7 @@ final class ImageDiffPanel: NSView {
     /// 描いた画像で作る（`titles` は前と後の見出し）。
     init(
         before old: NSImage?, after new: NSImage?, titles: (String, String), caption text: String, svg: Bool, mode: Mode,
-        position: CGFloat, single: Bool
+        position: CGFloat, single: Bool, notes: NSAttributedString? = nil
     ) {
         canvas = ImageCompareCanvas(before: old, after: new)
         canvas.single = single
@@ -127,9 +127,32 @@ final class ImageDiffPanel: NSView {
         slider.widthAnchor.constraint(equalToConstant: 160).isActive = true
         let line = NSBox()
         line.boxType = .separator
-        for v in [bar, canvas, caption, line] as [NSView] {
+        // 絵の下の説明（SVG のモバイル向けの確認で、崩れる機能の一覧）。
+        let notesView = NSScrollView()
+        if let notes {
+            let textView = NSTextView()
+            textView.isEditable = false
+            textView.drawsBackground = false
+            textView.textContainerInset = NSSize(width: 0, height: 4)
+            textView.textStorage?.setAttributedString(notes)
+            textView.isVerticallyResizable = true
+            textView.autoresizingMask = .width
+            notesView.documentView = textView
+            notesView.hasVerticalScroller = true
+            notesView.drawsBackground = false
+        }
+        for v in [bar, canvas, caption, line] + (notes == nil ? [] : [notesView]) as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             addSubview(v)
+        }
+        let below: NSView = notes == nil ? line : notesView
+        if notes != nil {
+            NSLayoutConstraint.activate([
+                notesView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+                notesView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+                notesView.heightAnchor.constraint(equalTo: heightAnchor, multiplier: 0.35),
+                notesView.bottomAnchor.constraint(equalTo: line.topAnchor, constant: -6),
+            ])
         }
         NSLayoutConstraint.activate([
             bar.topAnchor.constraint(equalTo: topAnchor, constant: 8),
@@ -140,7 +163,7 @@ final class ImageDiffPanel: NSView {
             canvas.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             caption.topAnchor.constraint(equalTo: canvas.bottomAnchor, constant: 6),
             caption.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            caption.bottomAnchor.constraint(equalTo: line.topAnchor, constant: -6),
+            caption.bottomAnchor.constraint(equalTo: below.topAnchor, constant: -6),
             line.leadingAnchor.constraint(equalTo: leadingAnchor),
             line.trailingAnchor.constraint(equalTo: trailingAnchor),
             line.bottomAnchor.constraint(equalTo: bottomAnchor),
@@ -527,7 +550,7 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
     default: .picture
     }
     private let svgSwitch = NSSegmentedControl(
-        labels: [L("Picture"), L("Compare with iOS"), L("Text")], trackingMode: .selectOne, target: nil, action: nil)
+        labels: [L("Picture"), L("Mobile"), L("Text")], trackingMode: .selectOne, target: nil, action: nil)
     private let pathBar = NSStackView()
     private let pathLabel = NSTextField(labelWithString: "")
     private let changeButton = NSButton()
@@ -622,7 +645,7 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         svgSwitch.selectedSegment = 0
         svgSwitch.setToolTip(L("Draw the SVG as a browser does"), forSegment: 0)
         svgSwitch.setToolTip(
-            L("Draw it as a browser does and as iOS asset catalogs do (CoreSVG), side by side, to find what breaks"), forSegment: 1)
+            L("Check for mobile: draw it as a browser does and as iOS asset catalogs do (CoreSVG), and list what breaks on Android, Flutter and React Native"), forSegment: 1)
         svgSwitch.setToolTip(L("Show the SVG source"), forSegment: 2)
         svgSwitch.target = self
         svgSwitch.action = #selector(svgViewChanged)
@@ -746,6 +769,39 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         needsLayout = true
     }
 
+    /// モバイル向けの描画部品ごとの、崩れる機能の一覧。
+    private static func mobileNotes(_ issues: [SVGIssue]) -> NSAttributedString {
+        let out = NSMutableAttributedString()
+        let body: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.labelColor]
+        let head: [NSAttributedString.Key: Any] = [.font: NSFont.boldSystemFont(ofSize: 12), .foregroundColor: NSColor.labelColor]
+        let mono: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular), .foregroundColor: NSColor.secondaryLabelColor,
+        ]
+        guard !issues.isEmpty else {
+            out.append(NSAttributedString(
+                string: L("Nothing known to break on Android VectorDrawable, iOS (CoreSVG), flutter_svg or react-native-svg."),
+                attributes: body))
+            return out
+        }
+        let targets: [(String, String)] = [
+            ("android", "Android VectorDrawable"), ("ios", "iOS (CoreSVG)"), ("flutter", "flutter_svg"),
+            ("reactNative", "react-native-svg"),
+        ]
+        for (key, name) in targets {
+            let own = issues.filter { $0.targets.contains(key) }
+            out.append(NSAttributedString(string: "\(name)\n", attributes: head))
+            if own.isEmpty {
+                out.append(NSAttributedString(string: "    " + L("Nothing known to break") + "\n", attributes: body))
+            }
+            for issue in own {
+                out.append(NSAttributedString(string: "    " + issue.feature, attributes: mono))
+                if issue.count > 1 { out.append(NSAttributedString(string: " ×\(issue.count)", attributes: mono)) }
+                out.append(NSAttributedString(string: "  " + issue.message + "\n", attributes: body))
+            }
+        }
+        return out
+    }
+
     /// CoreSVG の絵を、ブラウザで描いた絵と同じピクセル数のビットマップにする（並べる・違うピクセルで比べるため）。
     private static func rasterize(_ image: NSImage?, like reference: NSImage?) -> NSImage? {
         guard let image, let rep = reference?.representations.first, rep.pixelsWide > 0, rep.pixelsHigh > 0,
@@ -858,7 +914,8 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
                     : ImageDiffPanel(
                         before: web, after: Self.rasterize(NSImage(data: data), like: web),
                         titles: (L("Browser (WebKit)"), L("iOS (CoreSVG)")),
-                        caption: size, svg: false, mode: .twoUp, position: 0.5, single: false)
+                        caption: size, svg: false, mode: .twoUp, position: 0.5, single: false,
+                        notes: Self.mobileNotes(SVGIssue.lint(data)))
                 imagePanel = panel
                 addSubview(panel, positioned: .below, relativeTo: pathBar)
                 needsLayout = true
