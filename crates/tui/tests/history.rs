@@ -3094,9 +3094,18 @@ fn compare_with_the_previous_version() {
     assert!(below.contains("Take the lane from the trunk"));
 }
 
-/// partial clone は一番上の行に印。sparse checkout は Working Copy の一覧の上に知らせ
+/// partial clone は一番上の行に印。sparse checkout は Working Copy の一覧の上に知らせ（git 2.25 から）
 #[test]
 fn partial_clone_and_sparse_checkout_marks() {
+    // `git sparse-checkout` は 2.25 から。2.23 は file:// の partial clone の取り出しにも失敗する。
+    let version = git_out(Path::new("."), &["--version"]);
+    let numbers: Vec<u32> = version
+        .split(|c: char| !c.is_ascii_digit())
+        .filter_map(|n| n.parse().ok())
+        .collect();
+    if numbers.len() < 2 || (numbers[0], numbers[1]) < (2, 25) {
+        return;
+    }
     let source = tempfile::tempdir().unwrap();
     let source = source.path();
     git(source, BASE, &["init", "-q", "-b", "main"]);
@@ -3120,15 +3129,6 @@ fn partial_clone_and_sparse_checkout_marks() {
     println!("{top}");
     assert!(top.lines().next().unwrap().contains("[partial]"), "{top}");
     assert!(!top.contains("Sparse checkout"), "{top}");
-    // `git sparse-checkout` は 2.25 から。
-    let version = git_out(Path::new("."), &["--version"]);
-    let numbers: Vec<u32> = version
-        .split(|c: char| !c.is_ascii_digit())
-        .filter_map(|n| n.parse().ok())
-        .collect();
-    if numbers.len() < 2 || (numbers[0], numbers[1]) < (2, 25) {
-        return;
-    }
     git(&dir, BASE, &["sparse-checkout", "set", "app"]);
     let sparse = amonhen_tui::snapshot(open(&dir), 140, 12, clock(), "1").unwrap();
     println!("{sparse}");
