@@ -154,17 +154,36 @@ pub fn get_date(t: f64) -> f64 {
     if t.is_nan() { t } else { fields(t).date }
 }
 
+/// 年・月（0 から）・日。
+pub fn ymd(t: f64) -> (f64, f64, f64) {
+    if t.is_nan() {
+        (t, t, t)
+    } else {
+        let f = fields(t);
+        (f.year, f.month, f.date)
+    }
+}
+
+/// `x.rem_euclid(m)`。時刻の値は整数なので、多くは整数で割る（f64 の剰余は遅い。どちらも割り切れる値で正確）。
+fn rem_euclid(x: f64, m: i64) -> f64 {
+    if x.fract() == 0.0 && x.abs() < 9e15 {
+        (x as i64).rem_euclid(m) as f64
+    } else {
+        x.rem_euclid(m as f64)
+    }
+}
+
 /// `getDay()`（0 が日曜）。
 pub fn get_day(t: f64) -> f64 {
     if t.is_nan() {
         t
     } else {
-        ((t / MS_PER_DAY).floor() + 4.0).rem_euclid(7.0)
+        rem_euclid((t / MS_PER_DAY).floor() + 4.0, 7)
     }
 }
 
 fn in_day(t: f64) -> f64 {
-    t.rem_euclid(MS_PER_DAY)
+    rem_euclid(t, MS_PER_DAY as i64)
 }
 
 pub fn get_hours(t: f64) -> f64 {

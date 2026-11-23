@@ -78,3 +78,19 @@ fn venn_union_of_many_sets() {
     );
     assert!(render(&venn_union(100, true)).is_ok());
 }
+
+#[test]
+#[ignore = "pele の仕事の上限まで日付を書き出すので、debug では 1.5 秒ほど"]
+fn gantt_dated_excludes_with_long_formats() {
+    // 書式で書いた日付で除く日を探すと、日ごとに書式を書き出す。閉じない `[` の続く書式は、位置ごとに `]` を
+    // 終わりまで探して止まらなかった（pele も 1 分で終わらない）。どれも pele の仕事の上限の知らせで終わる。
+    let work = "The gantt chart takes too much work to schedule.";
+    let chart = |format: &str, start: &str| {
+        format!("gantt\ndateFormat {format}\nexcludes 2000-01-01\nsection s\nt :{start}, 100000d\n")
+    };
+    let unclosed = format!("YYYY-MM-DD {}", "[".repeat(20000));
+    assert_eq!(limit_error(&chart(&unclosed, "2000-01-01")), work);
+    let literal = format!("YYYY-MM-DD{}", " [x]".repeat(2000));
+    let start = format!("2000-01-01{}", " x".repeat(2000));
+    assert_eq!(limit_error(&chart(&literal, &start)), work);
+}
