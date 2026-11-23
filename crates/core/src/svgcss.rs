@@ -34,6 +34,7 @@ pub fn inline(svg: &str) -> Option<String> {
     let mut writer = Writer {
         rules: &rules,
         markers: HashMap::new(),
+        vars: Default::default(),
     };
     for node in doc.descendants() {
         if node.is_element()
@@ -223,7 +224,7 @@ fn parse_decls(body: &str) -> Vec<Decl> {
             important = true;
             value = value[..pos].trim_end();
         }
-        if name.is_empty() || value.is_empty() || name.starts_with("--") {
+        if name.is_empty() || value.is_empty() {
             continue;
         }
         decls.push(Decl {
@@ -523,10 +524,13 @@ fn cascade<'a>(rules: &'a [Rule], node: roxmltree::Node) -> HashMap<String, Stri
 struct Writer<'a, 'input> {
     rules: &'a [Rule],
     markers: HashMap<&'a str, roxmltree::Node<'a, 'input>>,
+    /// 要素ごとの CSS の変数（`--x`。祖先から継いだものを含め、値の中の var() は解いてある）。
+    vars: std::cell::RefCell<HashMap<roxmltree::NodeId, std::rc::Rc<HashMap<String, String>>>>,
 }
 
 impl<'a, 'input> Writer<'a, 'input> {
-    /// 要素の属性と、当たる CSS を合わせたもの（`style` 属性は除く）。
+    /// 要素の属性と、当たる CSS を合わせたもの（`style` 属性は除く）。CSS の変数は解いて、`var()` を値に置き換え、
+    /// `font` の一括指定は `font-size`・`font-family` に分ける（CoreSVG はどちらも読まない）。
     fn attrs(&self, node: roxmltree::Node) -> Vec<(String, String)> {
         let mut attrs: Vec<(String, String)> = Vec::new();
         for a in node.attributes() {
@@ -543,7 +547,64 @@ impl<'a, 'input> Writer<'a, 'input> {
                 None => attrs.push((prop, value)),
             }
         }
+        attrs.retain(|(n, _)| !n.starts_with("--"));
+        if attrs.iter().any(|(_, v)| v.contains("var(")) {
+            let vars = self.vars(node);
+            for (_, v) in attrs.iter_mut() {
+                if v.contains("var(") {
+                    *v = resolve_vars(v, &vars, 0);
+                }
+            }
+        }
+        if let Some(i) = attrs.iter().position(|(n, _)| n == "font") {
+            let (_, font) = attrs.remove(i);
+            let (size, family) = split_font(&font);
+            if let Some(size) = size
+                && !attrs.iter().any(|(n, _)| n == "font-size")
+            {
+                attrs.push(("font-size".into(), size));
+            }
+            if let Some(family) = family
+                && !attrs.iter().any(|(n, _)| n == "font-family")
+            {
+                attrs.push(("font-family".into(), family));
+            }
+        }
         attrs
+    }
+
+    /// `node` で見える CSS の変数。
+    fn vars(&self, node: roxmltree::Node) -> std::rc::Rc<HashMap<String, String>> {
+        if let Some(v) = self.vars.borrow().get(&node.id()) {
+            return v.clone();
+        }
+        let parent = node
+            .parent_element()
+            .map(|p| self.vars(p))
+            .unwrap_or_default();
+        let own: Vec<(String, String)> = cascade(self.rules, node)
+            .into_iter()
+            .filter(|(k, _)| k.starts_with("--"))
+            .collect();
+        let vars = if own.is_empty() {
+            parent
+        } else {
+            let mut map = (*parent).clone();
+            for (k, v) in &own {
+                map.insert(k.clone(), v.clone());
+            }
+            // 同じ要素で定めた変数どうしの参照も解く（参照の深さは resolve_vars が抑える）
+            let resolved: Vec<(String, String)> = own
+                .iter()
+                .map(|(k, _)| (k.clone(), resolve_vars(&map[k], &map, 0)))
+                .collect();
+            for (k, v) in resolved {
+                map.insert(k, v);
+            }
+            std::rc::Rc::new(map)
+        };
+        self.vars.borrow_mut().insert(node.id(), vars.clone());
+        vars
     }
 
     /// 継がれる性質 `name` の値（その要素か、いちばん近い祖先のもの）。
@@ -872,6 +933,61 @@ enum MarkerAt {
     All,
 }
 
+/// `value` の中の `var(--x, 代わり)` を `vars` の値（なければ代わり）に置き換える。
+fn resolve_vars(value: &str, vars: &HashMap<String, String>, depth: usize) -> String {
+    if depth > 16 || !value.contains("var(") {
+        return value.to_owned();
+    }
+    let mut out = String::with_capacity(value.len());
+    let mut rest = value;
+    while let Some(at) = rest.find("var(") {
+        out.push_str(&rest[..at]);
+        let inner_start = at + 4;
+        let bytes = rest.as_bytes();
+        let mut level = 1;
+        let mut j = inner_start;
+        while j < bytes.len() && level > 0 {
+            match bytes[j] {
+                b'(' => level += 1,
+                b')' => level -= 1,
+                _ => {}
+            }
+            j += 1;
+        }
+        let inner = &rest[inner_start..j.saturating_sub(1).max(inner_start)];
+        let (name, fallback) = match split_top(inner, b',').as_slice() {
+            [name] => (name.trim(), None),
+            [name, ..] => (
+                name.trim(),
+                Some(inner[inner.find(',').unwrap_or(0) + 1..].trim()),
+            ),
+            [] => ("", None),
+        };
+        let replacement = match vars.get(name) {
+            Some(v) => v.clone(),
+            None => fallback.unwrap_or("").to_owned(),
+        };
+        out.push_str(&resolve_vars(&replacement, vars, depth + 1));
+        rest = &rest[j.min(rest.len())..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// `font` の一括指定から大きさと書体（`[style] [weight] size[/line-height] family`）。
+fn split_font(font: &str) -> (Option<String>, Option<String>) {
+    let words = split_top(font.trim(), b' ');
+    let Some(i) = words.iter().position(|w| {
+        let w = w.split('/').next().unwrap_or("");
+        w.starts_with(|c: char| c.is_ascii_digit() || c == '.')
+    }) else {
+        return (None, None);
+    };
+    let size = words[i].split('/').next().unwrap_or("").to_owned();
+    let family = words[i + 1..].join(" ").trim().to_owned();
+    (Some(size), (!family.is_empty()).then_some(family))
+}
+
 fn set(attrs: &mut Vec<(String, String)>, key: &str, value: &str) {
     match attrs.iter_mut().find(|(k, _)| k == key) {
         Some(slot) => slot.1 = value.to_owned(),
@@ -1169,6 +1285,27 @@ mod tests {
         assert!(!out.contains("pink"));
         assert!(
             out.contains(r#"<circle class="y" r="1" opacity=".5"/><circle class="y z" r="1"/>"#),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn css_variables_and_the_font_shorthand_are_resolved() {
+        let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10" width="10" height="10" style="max-width:100%;height:auto;--_fg:var(--pele-fg,#1f1f1f);--_s:var(--pele-surface,#f3f3f3);color:var(--_fg);--_r:var(--pele-radius,4px);font:16px sans-serif;font-family:var(--pele-font,sans-serif)" fill="var(--_fg)"><g style="--_s:#abc"><rect fill="var(--_s)" style="rx:var(--_r)"/></g><rect fill="var(--_s)" stroke="var(--nope)"/></svg>"##;
+        let out = inline(svg).unwrap();
+        assert!(!out.contains("var("), "{out}");
+        assert!(
+            out.contains(r##"fill="#1f1f1f""##) && out.contains(r##"color="#1f1f1f""##),
+            "{out}"
+        );
+        assert!(
+            out.contains(r#"height="10""#) && out.contains(r#"font-size="16px""#),
+            "{out}"
+        );
+        assert!(out.contains(r#"font-family="sans-serif""#), "{out}");
+        assert!(out.contains(r##"<rect fill="#abc" rx="4px"/>"##), "{out}");
+        assert!(
+            out.contains(r##"<rect fill="#f3f3f3" stroke=""/>"##),
             "{out}"
         );
     }
