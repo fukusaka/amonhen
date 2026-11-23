@@ -849,6 +849,15 @@ fn last_commit_record<'a>(
     })
 }
 
+/// 差分の命令の whitespace（行を比べるときに無視する空白: exact・at-eol・change・all。省けば exact）。
+fn whitespace_arg(request: &Value) -> Result<Whitespace> {
+    match request["whitespace"].as_str() {
+        None => Ok(Whitespace::Exact),
+        Some(name) => Whitespace::from_name(name)
+            .ok_or_else(|| tr!("Unknown whitespace: {name}", name = name).into()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1011,14 +1020,5 @@ mod tests {
             call(json!({"op": "textSyntax", "path": "b.unknown", "text": "let x"})).json["spans"],
             0
         );
-    }
-}
-
-/// 差分の命令の whitespace（行を比べるときに無視する空白: exact・at-eol・change・all。省けば exact）。
-fn whitespace_arg(request: &Value) -> Result<Whitespace> {
-    match request["whitespace"].as_str() {
-        None => Ok(Whitespace::Exact),
-        Some(name) => Whitespace::from_name(name)
-            .ok_or_else(|| tr!("Unknown whitespace: {name}", name = name).into()),
     }
 }
