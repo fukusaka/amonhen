@@ -650,7 +650,7 @@
 "The daemon exits after {duration} with no connections. From a terminal, run amonhen daemon status to see it." = "daemon はだれもつながらなくなって {duration}たつと終わる。端末からは amonhen daemon status で見られる。";
 "Yes" = "あり";
 "Resolve unambiguous conflicts when the merge editor opens" = "マージエディタを開いたときに、間違えようのないコンフリクトを解く";
-"Commit Details" = "コミットの詳細";
+"Commit Details" = "コミット情報";
 "Show the message in a monospaced font" = "本文を等幅の字体で表示する";
 "Appearance" = "表示";
 "Write commit-graph automatically" = "commit-graph を自動で書き出す";
@@ -837,7 +837,7 @@
 "Cherry-pick {count} Commits…" = "{count} コミットを Cherry-pick…";
 "Revert {count} Commits…" = "{count} コミットを Revert…";
 
-/* GTK4 の FE: 詳細のタグと mailmap */
+/* GTK4 の FE: コミット情報のタグと mailmap */
 " (lightweight tag)" = "（軽量タグ）";
 "Recorded: {identity}" = "記録: {identity}";
 "Filter to this person’s commits" = "この人のコミットで絞り込む";
@@ -1261,7 +1261,7 @@
 "Every commit this merge brought in is shown on another branch." = "この merge が取り込んだコミットは、どれもほかのブランチに出ています。";
 "Draw only the selected commit’s ancestors and the lines between them in full color, and dim the rest" = "選んだコミットの祖先と、それをつなぐ線だけを濃く描き、ほかを薄くする";
 "Show commit messages in a monospaced font (keeps bodies wrapped at 72 columns aligned)" = "コミットの本文を等幅の字体で出す（72 桁で改行した本文が崩れない）";
-"Show Gravatar avatars in commit details (sends a hash of the email address to gravatar.com)" = "コミットの詳細に Gravatar のアバターを出す（メールアドレスのハッシュを gravatar.com に送る）";
+"Show Gravatar avatars in commit details (sends a hash of the email address to gravatar.com)" = "コミット情報に Gravatar のアバターを出す（メールアドレスのハッシュを gravatar.com に送る）";
 "Stack every file in a commit’s diff (when off, only the selected file)" = "コミットの差分で、全ファイルを縦に並べる（オフなら選んだファイルだけ）";
 "Show a commit’s changed files as a tree to the left of the diff (when off, as a list between the message and the diff)" = "コミットの変更ファイルを、差分の左に木で出す（オフならメッセージと差分の間に一覧）";
 "Go to HEAD (Ctrl+Shift+H)" = "HEAD へ移動（Ctrl+Shift+H）";
@@ -1658,7 +1658,7 @@
 "Accounts" = "アカウント";
 "CI Status" = "CI の状態";
 
-/* GTK4 の FE: GitHub: コミットの詳細のアバター */
+/* GTK4 の FE: GitHub: コミット情報のアバター */
 "Show avatars" = "アバターを表示する";
 "Show Avatars" = "アバターを表示";
 "Stack the diffs of all files" = "全ファイルの差分を縦に並べる";
@@ -1827,7 +1827,7 @@
 "Signer" = "署名者";
 "Fingerprint" = "指紋";
 "Trust" = "信用";
-/* GTK4 の FE: Working Copy と History の詳細の不足分 */
+/* GTK4 の FE: Working Copy と History のコミット情報の不足分 */
 "Length of the summary (yellow over 50, orange over 72)" = "件名の文字数（50 を超えると黄、72 を超えると橙）";
 "Committed (hooks output)" = "コミットしました（hooks の出力）";
 "Changed Files as Tree" = "変更ファイルをツリーで表示";
@@ -1875,9 +1875,11 @@
 "marginal (partly trusted)" = "marginal（部分的に信用）";
 "never (not trusted)" = "never（信用しない）";
 "{trust} (trust not set)" = "{trust}（信用度が決まっていない）";
-"Expand the commit details to fill the right column (click again to restore)." = "コミットの詳細だけを右の列いっぱいに広げる（もう一度押すと戻す）";
-"Expand Details" = "詳細を広げる";
-"Restore Details" = "詳細を戻す";
+"Expand the commit details to fill the right column (click again to restore)." = "コミット情報だけを右の列いっぱいに広げる（もう一度押すと戻す）";
+"Expand Details" = "コミット情報を広げる";
+"Restore Commit Details" = "コミット情報を戻す";
+"Show Only Commit Details" = "コミット情報だけを表示";
+"Details Shown" = "表示項目";
 
 /* GTK4: History の範囲 */
 "All Branches" = "すべてのブランチ";
@@ -1886,12 +1888,12 @@
 "Show only the history of {name}" = "{name} の履歴に絞り込む";
 "Show only commits by {name}" = "{name} のコミットで絞り込む";
 
-/* GTK4: コミットの詳細の見せ方 */
+/* GTK4: コミット情報の見せ方 */
 "Brief" = "簡潔";
 "Standard" = "標準";
-"Full" = "詳しく";
+"Full" = "詳細";
 
-/* GTK4: 詳細の中を探す */
+/* GTK4: コミット情報の中を探す */
 "Search" = "検索";
 /* GTK4: Working Copy に埋め込むマージエディタ */
 "Open in a Separate Window" = "別ウィンドウで開く";
@@ -2371,6 +2373,7 @@
 "Ignore all whitespace when comparing lines (git diff -w)" = "行を比べるときにすべての空白を無視する（git diff -w）";
 "Not available yet" = "まだ使えません";
 "View Options" = "表示の設定";
+"Code" = "コード";
 "Wrap Long Lines" = "長い行を折り返す";
 "Wrap Long Lines (Alt+Z)" = "長い行を折り返す（Alt+Z）";
 "Wrapping long lines (Alt+Z)" = "長い行を折り返している（Alt+Z）";
@@ -2409,8 +2412,8 @@
 "GitHub alert: Warning" = "警告";
 "GitHub alert: Caution" = "注意";
 "This is a merge: the changes below are against its first parent ({id})." = "merge のコミット: 下の変更は最初の親（{id}）との差分。";
-"Fit Details to the Message" = "詳細をメッセージに合わせる";
-"Size the commit details to each message. Dragging the divider keeps its position instead." = "コミットの詳細の高さを、メッセージごとに合わせる。仕切りを動かすと、代わりにその位置を保つ。";
+"Fit Height Automatically" = "高さを自動で決める";
+"Size the commit details to each message. Dragging the divider keeps its position instead." = "コミット情報の高さを、メッセージごとに自動で決める。仕切りを動かすと、代わりにその高さを保つ。";
 "Approximation: the SVG rewritten the way the renderer degrades it, drawn by this app" = "近似: その部品が崩すように SVG を書き換え、このアプリで描いたもの";
 "Nothing known to break on Android VectorDrawable, iOS (CoreSVG), flutter_svg or react-native-svg." = "Android VectorDrawable・iOS（CoreSVG）・flutter_svg・react-native-svg で崩れると知られている機能はない。";
 "(deleted in this commit)" = "（このコミットで削除）";

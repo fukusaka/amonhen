@@ -749,7 +749,7 @@ impl Details {
     }
 
     /// 表示の設定のメニューに出す、見せ方の項目（今の見せ方に印。`show_style_switch` の後で使う）。
-    /// 続けて、詳細をメッセージに合わせる（仕切りを手で動かしていたら外れている。選ぶと覚えた位置を忘れて合わせ
+    /// 続けて、高さを自動で決める（仕切りを手で動かしていたら外れている。選ぶと覚えた位置を忘れて合わせ
     /// 直す。macOS 版と同じ）。
     pub fn style_items(self: &Rc<Self>) -> Vec<crate::menu::Item> {
         let mut items: Vec<crate::menu::Item> = Style::ALL
@@ -769,7 +769,7 @@ impl Details {
             .is_none_or(|h| h <= 0);
         let weak = Rc::downgrade(self);
         items.push(crate::menu::choice_with_tip(
-            tr!("Fit Details to the Message"),
+            tr!("Fit Height Automatically"),
             fitting,
             tr!("Size the commit details to each message. Dragging the divider keeps its position instead."),
             move || {
