@@ -363,7 +363,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Feature | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
 | Operation in progress with Continue / Skip / Abort | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: A sidebar row.<br>TUI: On the bottom line, with `C` `K` `A`. |
-| Failure with its cause and Details | ✓ | ✓ | ✓ | ✓ | n/a | △ | VSCode: The notification gives the cause (git's fatal: and error: lines); Details shows the whole output and the git command in an output panel.<br>TUI: The cause on the bottom line; no Details. |
+| Failure with its cause and Details | ✓ | ✓ | ✓ | ✓ | n/a | △ | VSCode: The notification gives the cause (git's fatal: and error: lines); Details shows the whole output and the git command in an output panel.<br>TUI: The cause on the bottom line, and `!` shows all of git's answer when it has more lines (no git command). |
 | Lost connection with Reconnect | ✓ | ✓ | ✓ | n/a | n/a | — |  |
 | What a finished operation did, for a few seconds | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: A status bar message or a notification with Undo.<br>TUI: On the bottom line. |
 

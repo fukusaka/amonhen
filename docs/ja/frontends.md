@@ -363,7 +363,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 機能 | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
 | 進行中の操作と Continue / Skip / Abort | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: サイドバーの行。<br>TUI: 一番下の行に出し、`C` `K` `A`。 |
-| 失敗とその原因・Details | ✓ | ✓ | ✓ | ✓ | n/a | △ | VSCode: 知らせに原因（git の fatal:・error: の行）を出し、Details で全文と git の命令を出力パネルに出す。<br>TUI: 原因は一番下の行に。Details はない。 |
+| 失敗とその原因・Details | ✓ | ✓ | ✓ | ✓ | n/a | △ | VSCode: 知らせに原因（git の fatal:・error: の行）を出し、Details で全文と git の命令を出力パネルに出す。<br>TUI: 原因は一番下の行に。git の答えが 2 行以上なら `!` で全部を出す（git のコマンドは出さない）。 |
 | 切れたつながりと Reconnect | ✓ | ✓ | ✓ | n/a | n/a | — |  |
 | 終わった操作が何をしたか、数秒 | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: ステータスバーの文か、Undo 付きの知らせ。<br>TUI: 一番下の行に。 |
 
