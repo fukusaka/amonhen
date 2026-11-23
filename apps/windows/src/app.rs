@@ -1196,6 +1196,10 @@ enum Message {
     /// Settings > Git > Environment Variables: 渡すかの切り替えと、探す文字。
     SettingsEnv(String, bool),
     SettingsEnvQuery(String),
+    /// Passed / All（0 は渡すものだけ）、表で選んだ行（今の並びの位置）、伏せた値を見せる。
+    SettingsEnvShown(Option<usize>),
+    SettingsEnvSelect(Option<usize>),
+    SettingsEnvReveal,
     /// Settings > Git の共有のテンプレート: 書き換え（番号、0 は名前・1 は本文、文字）、足す、外す。
     SettingsTemplate(usize, usize, String),
     SettingsTemplateAdd,
@@ -3526,6 +3530,9 @@ impl Root {
                     },
                     env_added: crate::settingsview::env_added_names(),
                     env_query: String::new(),
+                    env_passed_only: false,
+                    env_selected: None,
+                    env_revealed: false,
                     templates: crate::templates::all(),
                     ssh: None,
                     git_target: None,
@@ -7549,6 +7556,31 @@ impl Root {
             Message::SettingsEnvQuery(text) => {
                 if let Some(state) = self.settings.as_mut() {
                     state.env_query = text;
+                }
+            }
+            Message::SettingsEnvShown(Some(index)) => {
+                if let Some(state) = self.settings.as_mut() {
+                    state.env_passed_only = index == 0;
+                }
+            }
+            Message::SettingsEnvShown(None) => {}
+            Message::SettingsEnvSelect(index) => {
+                if let Some(state) = self.settings.as_mut() {
+                    // 選び直したら、伏せた値はまた伏せる（macOS 版と同じ）。並びが変わっても名前で覚える。
+                    let name = index.and_then(|i| {
+                        crate::settingsview::env_rows(state)
+                            .get(i)
+                            .map(|(n, ..)| (*n).clone())
+                    });
+                    if name.is_some() && name != state.env_selected {
+                        state.env_selected = name;
+                        state.env_revealed = false;
+                    }
+                }
+            }
+            Message::SettingsEnvReveal => {
+                if let Some(state) = self.settings.as_mut() {
+                    state.env_revealed = true;
                 }
             }
             Message::SettingsToggle(key, value) => {
@@ -16069,6 +16101,9 @@ impl Root {
                     context.callback(move |on| Message::SettingsEnv(name.clone(), on))
                 }),
                 env_query: context.callback(Message::SettingsEnvQuery),
+                env_shown: context.callback(Message::SettingsEnvShown),
+                env_select: context.callback(Message::SettingsEnvSelect),
+                env_reveal: context.callback(|()| Message::SettingsEnvReveal),
                 template: Box::new(|i, field| {
                     context.callback(move |text| Message::SettingsTemplate(i, field, text))
                 }),
