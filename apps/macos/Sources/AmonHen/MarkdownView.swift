@@ -35,10 +35,14 @@ final class MarkdownView: NSView, NSTextViewDelegate {
         var builder = MarkdownBuilder(image: image)
         builder.add(blocks, depth: 0)
         text.textStorage?.setAttributedString(builder.out)
+        // 図の配色・構文の色のテーマを変えたら描き直す（図は描くときに色を当てる）。
+        NotificationCenter.default.addObserver(self, selector: #selector(themeChanged), name: .syntaxThemeChanged, object: nil)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
+
+    @objc private func themeChanged() { text.needsDisplay = true }
 
     override func layout() {
         super.layout()
@@ -86,6 +90,55 @@ final class MarkdownView: NSView, NSTextViewDelegate {
         }
         let path = parts.joined(separator: "/").removingPercentEncoding ?? parts.joined(separator: "/")
         return path.isEmpty ? nil : path
+    }
+}
+
+/// Markdown の図の絵。形は pele の SVG のまま持ち、色は描くたびに、そのときの外観・構文の色のテーマ・設定の
+/// 「図の配色」で当てる（当てた絵は配色ごとに覚える）。テーマを変えても組み直さず、描き直すだけでよい。
+final class DiagramPicture {
+    private let svg: String
+    private var colored: [String: NSImage] = [:]
+
+    private init(svg: String) { self.svg = svg }
+
+    static func image(_ svg: String) -> NSImage? {
+        let picture = DiagramPicture(svg: svg)
+        // 大きさは配色によらないので、pele の既定の色で一度当てて測る。
+        guard let first = MarkdownBlock.colorizeDiagram(svg, scheme: "pele", dark: false, theme: [:]).flatMap(NSImage.init(data:))
+        else { return nil }
+        let image = NSImage(size: first.size, flipped: false) { rect in
+            // 文字の描画（メインスレッド）から呼ばれる。
+            MainActor.assumeIsolated { picture.current()?.draw(in: rect) }
+            return true
+        }
+        image.cacheMode = .never
+        return image
+    }
+
+    /// 今の外観（描いている最中のもの）での絵。
+    private func current() -> NSImage? {
+        let dark = NSAppearance.currentDrawing().bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        let scheme = Settings.diagramColors
+        let themeName = dark ? Settings.syntaxThemeDark : Settings.syntaxThemeLight
+        let key = "\(scheme)\n\(themeName)\n\(dark)"
+        if let image = colored[key] { return image }
+        var theme: [String: Any] = [:]
+        if scheme == "syntax" {
+            let syntax = SyntaxTheme.named(themeName) ?? .system
+            var kinds: [String: String] = [:]
+            for (name, kind) in SyntaxTheme.kinds { kinds[name] = Self.hex(syntax.color(kind)) }
+            theme = ["text": Self.hex(.labelColor), "background": Self.hex(.textBackgroundColor), "kinds": kinds]
+        }
+        let image = MarkdownBlock.colorizeDiagram(svg, scheme: scheme, dark: dark, theme: theme).flatMap(NSImage.init(data:))
+        colored[key] = image
+        return image
+    }
+
+    /// 今の外観での色の `#rrggbb`。
+    private static func hex(_ color: NSColor) -> String {
+        guard let c = color.usingColorSpace(.sRGB) else { return "#000000" }
+        let v = { (x: CGFloat) in Int((max(0, min(1, x)) * 255).rounded()) }
+        return String(format: "#%02x%02x%02x", v(c.redComponent), v(c.greenComponent), v(c.blueComponent))
     }
 }
 
@@ -173,17 +226,6 @@ private struct MarkdownBuilder {
         return result
     }
 
-    /// 図の絵。明るい表示・暗い表示の SVG を、描くときの見た目で選ぶ（表示を切り替えても組み直さない）。
-    static func diagram(light: String?, dark: String?) -> NSImage? {
-        guard let light = light.flatMap({ NSImage(data: Data($0.utf8)) }) else { return nil }
-        let darkImage = dark.flatMap { NSImage(data: Data($0.utf8)) } ?? light
-        return NSImage(size: light.size, flipped: false) { rect in
-            let isDark = NSAppearance.currentDrawing().bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-            (isDark ? darkImage : light).draw(in: rect)
-            return true
-        }
-    }
-
     private func newline(_ style: NSParagraphStyle) -> NSAttributedString {
         NSAttributedString(string: "\n", attributes: [.paragraphStyle: style, .font: NSFont.systemFont(ofSize: bodySize)])
     }
@@ -238,8 +280,8 @@ private struct MarkdownBuilder {
                     }
                 }
                 out.append(newline(style))
-            case .diagram(let language, let code, let svg, let svgDark, let error):
-                guard let picture = Self.diagram(light: svg, dark: svgDark) else {
+            case .diagram(let language, let code, let svg, let error):
+                guard let picture = svg.flatMap(DiagramPicture.image) else {
                     // 描けない図はコードとして見せ、理由を添える。
                     add([.code(language: language, text: code)], depth: depth, outer: outer, indent: indent)
                     if let error {

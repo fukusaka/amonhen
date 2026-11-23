@@ -100,6 +100,11 @@ struct SyntaxThemeSection: View {
             Picker(L("Light appearance"), selection: $model.syntaxThemeLight) { options(dark: false) }
             Picker(L("Dark appearance"), selection: $model.syntaxThemeDark) { options(dark: true) }
             Toggle(L("Use standard colors for diffs"), isOn: $model.diffStandardColors)
+            Picker(L("Diagram colors"), selection: $model.diagramColors) {
+                Text(L("Syntax colors")).tag("syntax")
+                Text("pele").tag("pele")
+                Text("Mermaid").tag("mermaid")
+            }
             ThemePreview(light: model.syntaxThemeLight, dark: model.syntaxThemeDark, standardDiff: model.diffStandardColors)
             HStack {
                 Button(L("Import VSCode Theme…")) { importTheme() }

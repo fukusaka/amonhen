@@ -321,6 +321,15 @@ enum Settings {
         }
     }
 
+    /// Markdown の図の配色（`syntax`: 構文の色のテーマから、`pele`、`mermaid`）。変えたら `syntaxThemeChanged` を知らせる。
+    static var diagramColors: String {
+        get { UserDefaults.standard.string(forKey: "diagramColors") ?? "syntax" }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "diagramColors")
+            NotificationCenter.default.post(name: .syntaxThemeChanged, object: nil)
+        }
+    }
+
     /// 差分の色は、テーマに関係なく標準の色を使う（構文の色はテーマのまま）。
     static var diffStandardColors: Bool {
         get { UserDefaults.standard.bool(forKey: "diffStandardColors") }
@@ -513,6 +522,7 @@ final class SettingsModel {
     var syntaxThemeDark = Settings.syntaxThemeDark { didSet { Settings.syntaxThemeDark = syntaxThemeDark } }
     var importedThemes = SyntaxTheme.imported { didSet { SyntaxTheme.imported = importedThemes } }
     var diffStandardColors = Settings.diffStandardColors { didSet { Settings.diffStandardColors = diffStandardColors } }
+    var diagramColors = Settings.diagramColors { didSet { Settings.diagramColors = diagramColors } }
     var checkRemoteSignaturesLocally = Settings.checkRemoteSignaturesLocally {
         didSet { Settings.checkRemoteSignaturesLocally = checkRemoteSignaturesLocally }
     }

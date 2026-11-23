@@ -1964,6 +1964,8 @@
 "Toolbar tint" = "ツールバーの色の濃さ";
 "Color Theme" = "配色テーマ";
 "Use standard colors for diffs" = "差分は標準の色を使う";
+"Diagram colors" = "図の配色";
+"Syntax colors" = "構文の色";
 "Light appearance" = "明るい外観";
 "Dark appearance" = "暗い外観";
 "Import VSCode Theme…" = "VSCode のテーマを読み込む…";
