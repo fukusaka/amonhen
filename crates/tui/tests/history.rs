@@ -3458,6 +3458,48 @@ fn details_ignore_whitespace() {
     assert!(back.contains("+    two"), "{back}");
 }
 
+/// 詳細の差分: 中ほどまで動かすと、そのファイルの見出しが一番上に貼り付く。`o` か見出しのクリックで畳む・開く
+#[test]
+fn file_headers_stick_and_fold() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    git(dir, BASE, &["init", "-q", "-b", "main"]);
+    let lines = |tag: &str| (1..=12).map(|n| format!("{tag} {n}\n")).collect::<String>();
+    std::fs::write(dir.join("a.txt"), lines("alpha")).unwrap();
+    std::fs::write(dir.join("b.txt"), lines("beta")).unwrap();
+    git(dir, BASE, &["add", "."]);
+    git(dir, BASE, &["commit", "-q", "-m", "Start"]);
+    let details = |keys: &str| -> Vec<String> {
+        let text = amonhen_tui::snapshot(open(dir), 140, 14, clock(), keys).unwrap();
+        println!("{text}");
+        text.lines()
+            .skip(1)
+            .filter_map(|l| column(l, 1))
+            .map(|l| l.trim_end().to_owned())
+            .collect()
+    };
+    // 差分へ動かし（a.txt の中ほど）、見出しが一番上に残る。
+    let scrolled = details("2\njjjjjjjjjjjj");
+    assert!(scrolled[0].contains("a.txt"), "{scrolled:?}");
+    assert!(
+        scrolled.iter().any(|l| l.contains("+alpha 8")),
+        "{scrolled:?}"
+    );
+    // `o` で a.txt を畳む: 中身は出ず、見出しに ▸、次は b.txt。
+    let folded = details("2\njjjjjjjjjjjjo");
+    assert!(!folded.iter().any(|l| l.contains("+alpha")), "{folded:?}");
+    assert!(
+        folded
+            .iter()
+            .any(|l| l.starts_with('▸') && l.contains("a.txt")),
+        "{folded:?}"
+    );
+    assert!(folded.iter().any(|l| l.contains("+beta 1")), "{folded:?}");
+    // もう一度で開く。
+    let opened = details("2\njjjjjjjjjjjjoo");
+    assert!(opened.iter().any(|l| l.contains("+alpha")), "{opened:?}");
+}
+
 /// 詳細の `t`: 変わったファイルを木で出す（フォルダの下に名前だけ）。`z` でフォルダをたたみ、もう一度で開く
 #[test]
 fn changed_files_as_a_tree() {
