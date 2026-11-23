@@ -313,6 +313,8 @@ pub struct FileShown {
     pub picture_view: crate::imagediff::View,
     /// 絵を読んだものを取っておく鍵（開くたびに新しい）。
     key: u64,
+    /// Markdown なら、整形して見せるブロック。
+    pub markdown: Option<Vec<amonhen_core::markdown::Block>>,
 }
 
 impl FileShown {
@@ -1921,6 +1923,13 @@ impl Data {
             let picture = crate::imagediff::is_picture(&path)
                 .then(|| blob_at(&repo, &commit, change.as_ref(), &path))
                 .flatten();
+            // Markdown は、整形して見せるブロックも読む（macOS 版の `MarkdownView`）。
+            let markdown = amonhen_core::markdown::is_markdown(&path)
+                .then(|| blob_at(&repo, &commit, change.as_ref(), &path))
+                .flatten()
+                .map(|bytes| {
+                    amonhen_core::markdown::parse(&String::from_utf8_lossy(bytes.as_slice()))
+                });
             let view = match &change {
                 Some(c) => repo.file_diff_with_context(c, u32::MAX, &PROFILE),
                 None => repo.tree_file(&commit, &path, &PROFILE),
@@ -1944,6 +1953,7 @@ impl Data {
                 picture,
                 picture_view: crate::imagediff::View::default(),
                 key: NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+                markdown,
             })));
             wake();
         });

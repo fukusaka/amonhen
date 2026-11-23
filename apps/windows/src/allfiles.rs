@@ -340,7 +340,12 @@ pub fn list(
 }
 
 /// 開いたファイルのパスの帯: 戻る、フォルダ / 名前 @ 短い ID（消したなら赤の注記）、この変更を見る。
-pub fn path_bar(browser: &Browser, back: Callback<()>, show_change: Callback<()>) -> View {
+pub fn path_bar(
+    browser: &Browser,
+    back: Callback<()>,
+    show_change: Callback<()>,
+    markdown: Option<(bool, Callback<bool>, Callback<bool>)>,
+) -> View {
     let Some(path) = &browser.open else {
         return View::empty();
     };
@@ -350,8 +355,31 @@ pub fn path_bar(browser: &Browser, back: Callback<()>, show_change: Callback<()>
         .change_of(path)
         .is_some_and(|c| c.kind == ChangeKind::Deleted);
     let changed = browser.change_of(path).is_some();
+    // Markdown は、整形（プレビュー）とソース（テキスト）を切り替える。押して外したときはそのまま。
+    let switch: View = match markdown {
+        Some((text, preview, source)) => StackPanel::new()
+            .orientation(Orientation::Horizontal)
+            .children((
+                ToggleButton::new()
+                    .is_checked(!text)
+                    .on_is_checked_changed(preview)
+                    .content(TextBlock::new().text(tr!("Preview")).font_size(12.0))
+                    .tooltip(tr!("Show the Markdown formatted")),
+                ToggleButton::new()
+                    .is_checked(text)
+                    .on_is_checked_changed(source)
+                    .content(TextBlock::new().text(tr!("Text")).font_size(12.0))
+                    .tooltip(tr!("Show the Markdown source")),
+            )),
+        None => View::empty(),
+    };
     Grid::new()
-        .columns([GridLength::Auto, GridLength::Star(1.0), GridLength::Auto])
+        .columns([
+            GridLength::Auto,
+            GridLength::Star(1.0),
+            GridLength::Auto,
+            GridLength::Auto,
+        ])
         .column_spacing(8.0)
         .margin(Thickness::new(8.0, 3.0, 8.0, 3.0))
         .children((
@@ -394,9 +422,10 @@ pub fn path_bar(browser: &Browser, back: Callback<()>, show_change: Callback<()>
                         View::empty()
                     },
                 )),
+            Border::new().grid_column(2).content(switch),
             if changed {
                 Button::new()
-                    .grid_column(2)
+                    .grid_column(3)
                     .on_click(show_change)
                     .content(TextBlock::new().text(tr!("Show This Change")))
             } else {

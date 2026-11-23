@@ -490,6 +490,8 @@ struct Root {
     /// 右の列を「すべてのファイル」（その時点の木と中身）にしているか（帯の変更／すべてのファイル）と、その木。
     files_mode: bool,
     browser: Option<crate::allfiles::Browser>,
+    /// すべてのファイルで開いた Markdown を、整形せずにソースで見る（覚えない）。
+    markdown_text: bool,
     /// Working Copy で最後にマウスを載せたファイルの行。
     working_hovered: Option<String>,
     last_search: Option<String>,
@@ -1489,6 +1491,8 @@ enum Message {
     /// 開いたファイルから一覧に戻る・そのファイルの変更を見る。
     AllFilesBack,
     AllFilesShowChange,
+    /// すべてのファイルで開いた Markdown を、ソースで見る（true）・整形して見る（false）。
+    MarkdownText(bool),
     /// 見出しの ⋯ の Open File at This Commit。
     OpenFileAtCommit(String),
     /// 差分の帯で、行を比べるときに無視する空白を選んだ（`whitespace:<0〜3>`）。
@@ -1696,6 +1700,7 @@ impl Component for Root {
             details_expanded: false,
             files_mode: false,
             browser: None,
+            markdown_text: false,
             working_hovered: None,
             last_search: None,
             search_box: ElementRef::new(),
@@ -2726,6 +2731,7 @@ impl Root {
                 self.info = Some((info, extras));
             }
             Message::AllFiles(on) => self.set_files_mode(on),
+            Message::MarkdownText(text) => self.markdown_text = text,
             Message::AllFilesRow(Some(index)) => {
                 let flat = !crate::prefs::bool(crate::prefs::HISTORY_FILE_TREE);
                 let Some(browser) = self.browser.as_mut() else {
@@ -17155,10 +17161,27 @@ impl Root {
     fn files_path_bar(&self, context: &ViewContext<Self>) -> View {
         match &self.browser {
             Some(browser) if self.files_mode && self.page != Page::WorkingCopy => {
+                let markdown = browser
+                    .open
+                    .as_deref()
+                    .filter(|p| amonhen_core::markdown::is_markdown(p))
+                    .map(|_| {
+                        let pick = |text: bool| {
+                            context.callback(move |on: bool| {
+                                if on {
+                                    Message::MarkdownText(text)
+                                } else {
+                                    Message::DiffFilesToggled
+                                }
+                            })
+                        };
+                        (self.markdown_text, pick(false), pick(true))
+                    });
                 crate::allfiles::path_bar(
                     browser,
                     context.callback(|()| Message::AllFilesBack),
                     context.callback(|()| Message::AllFilesShowChange),
+                    markdown,
                 )
             }
             _ => View::empty(),
@@ -17170,8 +17193,26 @@ impl Root {
         let Some(browser) = &self.browser else {
             return View::empty();
         };
-        if !self.files_mode || browser.open.is_some() || self.page == Page::WorkingCopy {
+        if !self.files_mode || self.page == Page::WorkingCopy {
             return View::empty();
+        }
+        // 開いた Markdown は、整形して重ねる（テキストにすれば差分の欄の中身）。
+        if let Some(path) = &browser.open {
+            if !amonhen_core::markdown::is_markdown(path) || self.markdown_text {
+                return View::empty();
+            }
+            let mut parsed = None;
+            self.with_history(|h| {
+                parsed = h
+                    .session
+                    .data
+                    .file_view
+                    .as_ref()
+                    .map(|f| f.markdown.clone().unwrap_or_default());
+            });
+            return Border::new()
+                .background(Brush::Solid(crate::palette::background()))
+                .content(crate::markdownview::view(parsed.as_deref()));
         }
         let flat = !crate::prefs::bool(crate::prefs::HISTORY_FILE_TREE);
         Border::new()
@@ -18649,6 +18690,7 @@ fn highlighted_at(text: &str, query: &str, bold: bool, current: Option<usize>) -
                 Color::rgb(0xb2, 0x5f, 0x00)
             }),
             is_italic: is_current,
+            ..RichTextRun::default()
         }));
         at = end;
     }
@@ -19860,6 +19902,8 @@ impl HistoryView {
             s.renderer.forget_diff();
             self.diff.scroll_y = 0.0;
             self.diff.dirty = true;
+            // Markdown の整形は画面の部品で見せるので、組み直してもらう。
+            self.sender.send(Message::DiffFilesToggled);
         }
         if std::mem::take(&mut s.data.syntax_changed) && !self.working_page {
             s.renderer.forget_diff();
