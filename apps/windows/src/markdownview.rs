@@ -53,7 +53,10 @@ fn inlines(runs: &[Run], bold: bool) -> Vec<RichTextInline> {
                     uri: url.clone(),
                 });
             }
-            let (text, foreground) = if r.image.is_some() {
+            // GitHub 独自の画像だけの絵文字（:octocat: など）は、名前を薄く（macOS 版・GTK4 版の薄い札）。
+            let (text, foreground) = if r.custom_emoji.is_some() {
+                (r.text.clone(), Some(Color::rgb(0x80, 0x80, 0x80)))
+            } else if r.image.is_some() {
                 // 外へ読みに行かない。代わりの文を薄く。
                 (format!("[{}]", r.text), Some(Color::rgb(0x80, 0x80, 0x80)))
             } else if r.footnote.is_some() {

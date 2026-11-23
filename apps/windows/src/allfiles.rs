@@ -281,14 +281,28 @@ pub fn list(
         } else {
             View::empty()
         };
-        let mut name = TextBlock::new()
-            .text(n.name.clone())
-            .text_trimming(TextTrimming::CharacterEllipsis);
-        if n.kind == Some(ChangeKind::Deleted) {
-            name = name.foreground(Brush::Solid(Color::rgb(0xdc, 0x38, 0x33)));
-        } else if !n.contains_changes {
-            name = name.opacity(0.6);
-        }
+        // このコミットで消したファイルは、赤の取り消し線（macOS 版・GTK4 版と同じ）。
+        let name: View = if n.kind == Some(ChangeKind::Deleted) {
+            RichTextBlock::new()
+                .paragraphs(RichText::single_paragraph([RichTextInline::Run(
+                    RichTextRun {
+                        text: n.name.clone(),
+                        foreground: Some(Color::rgb(0xdc, 0x38, 0x33)),
+                        is_strikethrough: true,
+                        ..RichTextRun::default()
+                    },
+                )]))
+                .into()
+        } else {
+            let name = TextBlock::new()
+                .text(n.name.clone())
+                .text_trimming(TextTrimming::CharacterEllipsis);
+            if n.contains_changes {
+                name.into()
+            } else {
+                name.opacity(0.6).into()
+            }
+        };
         let mark: View = match n.kind {
             Some(kind) => {
                 let (mark, color) = kind_mark(kind);
