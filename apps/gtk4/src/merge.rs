@@ -251,13 +251,25 @@ fn view_options() -> gtk::Button {
     let (button, _) =
         crate::commitfiles::icon_button(crate::icon::Kind::Sliders, &tr!("View Options"));
     button.set_valign(gtk::Align::Center);
-    button.connect_clicked(|b| {
-        let items = vec![
+    let items = || {
+        vec![
             crate::menu::Item::Heading(tr!("Code")),
             crate::diff::wrap_item(),
-        ];
-        crate::menu::popup(b, b.width() as f64 / 2.0, b.height() as f64, items);
+        ]
+    };
+    button.connect_clicked(move |b| {
+        crate::menu::popup(b, b.width() as f64 / 2.0, b.height() as f64, items());
     });
+    // 確かめる用（`--snapshot`）: 開いたらメニューを出す（History の右の列と同じ `AMH_VIEW_OPTIONS_MENU=1`）。
+    if std::env::var("AMH_VIEW_OPTIONS_MENU").is_ok_and(|v| v == "1") {
+        button.connect_map(move |b| {
+            for title in crate::menu::titles(&items()) {
+                println!("view options | {title}");
+            }
+            let b = b.clone();
+            glib::idle_add_local_once(move || b.emit_clicked());
+        });
+    }
     button
 }
 
