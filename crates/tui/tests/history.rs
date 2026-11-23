@@ -3139,6 +3139,46 @@ fn subtrees_add_pull_push_split() {
     );
 }
 
+/// Quick Open に URL を打って Enter: 場所、取り方、一緒にすることを聞いて clone する
+#[test]
+fn clone_from_quick_open() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("source");
+    std::fs::create_dir(&source).unwrap();
+    merged(&source);
+    let place = tempfile::tempdir().unwrap();
+    let dest = place.path().join("copy");
+    let url = format!("file://{}", source.display());
+    // Quick Open で打つと、clone できると知らせる。
+    let quick =
+        amonhen_tui::snapshot(open(&source), 160, 14, clock(), &format!(":quick\n{url}")).unwrap();
+    assert!(quick.contains("Enter clones it"), "{quick}");
+    let asked = amonhen_tui::snapshot(
+        open(&source),
+        400,
+        14,
+        clock(),
+        &format!(":quick\n{url}\n\x15{}\n", dest.display()),
+    )
+    .unwrap();
+    assert!(asked.contains("download what?"), "{asked}");
+    assert!(asked.contains("r recent history only"), "{asked}");
+    // 最近の履歴だけ（shallow clone）で。
+    amonhen_tui::snapshot(
+        open(&source),
+        400,
+        14,
+        clock(),
+        &format!(":quick\n{url}\n\x15{}\nry", dest.display()),
+    )
+    .unwrap();
+    assert!(dest.join(".git").exists());
+    assert_eq!(
+        git_out(&dest, &["rev-parse", "--is-shallow-repository"]),
+        "true\n"
+    );
+}
+
 /// コマンドの一覧の Delete Ignored Files: 数と名前を出して確かめ、ignore されたものを消す
 #[test]
 fn delete_ignored_files_from_the_command_list() {
