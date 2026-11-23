@@ -2652,8 +2652,17 @@ fn activity_operations_list_what_ran() {
         "{ops}"
     );
     assert!(ops.contains("x cancel a running one"), "{ops}");
-    let back =
+    // もう一度の `Tab` で History Cache（永続キャッシュの大きさと書き込み）、さらに `Tab` で操作ログへ。
+    let cache =
         amonhen_tui::snapshot(open(dir.path()), 160, 20, clock(), "jRs:activity\n\t\t").unwrap();
+    println!("{cache}");
+    assert!(cache.contains(" History Cache "), "{cache}");
+    assert!(
+        cache.contains("Cache file:") || cache.contains("isn't cached on disk"),
+        "{cache}"
+    );
+    let back =
+        amonhen_tui::snapshot(open(dir.path()), 160, 20, clock(), "jRs:activity\n\t\t\t").unwrap();
     assert!(back.contains(" Operation Log "), "{back}");
 }
 

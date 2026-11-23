@@ -700,6 +700,8 @@ pub struct App {
     operation_log: Option<OperationLog>,
     /// Activity の Operations（`Tab` で操作ログと切り替える）。
     operations: Option<Operations>,
+    /// Activity の History Cache（`historyCache` の info。キャッシュがなければ null）。
+    history_cache: Option<Value>,
     /// History の編集モード（`E`）。
     edit_mode: Option<crate::editmode::EditMode>,
     /// 印をつけたコミット（新しい順）を、編集モードで 1 つにまとめる（`E`。行が届いたら決める）。
@@ -830,6 +832,7 @@ impl App {
             palette: None,
             operation_log: None,
             operations: None,
+            history_cache: None,
             edit_mode: None,
             combining: Vec::new(),
             copy: None,
@@ -1116,6 +1119,7 @@ impl App {
             || self.palette.is_some()
             || self.operation_log.is_some()
             || self.operations.is_some()
+            || self.history_cache.is_some()
             || self.edit_mode.is_some();
         if std::mem::take(&mut self.dirty) || (over && damage != Damage::default()) {
             return Some(Damage::ALL);
@@ -1912,6 +1916,28 @@ impl App {
             }
             return;
         }
+        // History Cache: `r` で読み直す、`Tab` で操作ログへ。ほかのキーで閉じる。
+        if self.history_cache.is_some() {
+            self.dirty = true;
+            match key.code {
+                KeyCode::Char('r') => {
+                    self.send(Request::Run {
+                        name: "historyCache",
+                        command: json!({"op": "historyCache"}),
+                    });
+                }
+                KeyCode::Tab => {
+                    self.history_cache = None;
+                    self.run(
+                        "undoLog",
+                        tr!("Reading the operation log…"),
+                        json!({"op": "undoLog"}),
+                    );
+                }
+                _ => self.history_cache = None,
+            }
+            return;
+        }
         // Operations: 選んでいるものの出力を下に出す。`x` で取り消す、`r` で読み直す、`Tab` で操作ログへ。
         if let Some(mut ops) = self.operations.take() {
             self.dirty = true;
@@ -1926,11 +1952,10 @@ impl App {
                     return;
                 }
                 KeyCode::Tab => {
-                    self.run(
-                        "undoLog",
-                        tr!("Reading the operation log…"),
-                        json!({"op": "undoLog"}),
-                    );
+                    self.send(Request::Run {
+                        name: "historyCache",
+                        command: json!({"op": "historyCache"}),
+                    });
                     return;
                 }
                 KeyCode::Char('x') => match ops.entries.get(ops.selected) {
@@ -3538,6 +3563,13 @@ impl App {
                 .unwrap_or(0);
             self.operation_log = None;
             self.operations = Some(Operations { entries, selected });
+            self.dirty = true;
+            return;
+        }
+        // History Cache の画面（Operations から `Tab`）。
+        if name == "historyCache" {
+            self.operations = None;
+            self.history_cache = Some(result.map(|r| r["info"].clone()).unwrap_or_default());
             self.dirty = true;
             return;
         }
@@ -8554,6 +8586,9 @@ impl App {
         if let Some(ops) = &self.operations {
             self.draw_operations(ops, area, buf);
         }
+        if let Some(cache) = &self.history_cache {
+            self.draw_history_cache(cache, area, buf);
+        }
         if let Some(log) = &self.operation_log {
             let times: Vec<String> = log
                 .entries
@@ -8882,7 +8917,77 @@ fn choice_list(
     cursor
 }
 
+/// バイト数を読みやすく（1.2 MB など）。
+fn human_bytes(bytes: u64) -> String {
+    match bytes {
+        b if b >= 1 << 30 => format!("{:.1} GB", b as f64 / (1u64 << 30) as f64),
+        b if b >= 1 << 20 => format!("{:.1} MB", b as f64 / (1u64 << 20) as f64),
+        b if b >= 1 << 10 => format!("{:.1} KB", b as f64 / (1u64 << 10) as f64),
+        b => format!("{b} B"),
+    }
+}
+
 impl App {
+    /// History Cache の枠: 永続キャッシュの大きさと、この回の書き込み（回数、合計、足した行・切った行、最後のもの）。
+    fn draw_history_cache(&self, cache: &Value, area: Rect, buf: &mut Buffer) {
+        let mut lines: Vec<String> = Vec::new();
+        if cache.is_null() {
+            lines.push(tr!("History isn't cached on disk for this repository"));
+        } else {
+            let n = |v: &Value| v.as_u64().unwrap_or(0);
+            let writes = &cache["writes"];
+            lines.push(tr!(
+                "Cache file: {size}",
+                size = human_bytes(n(&cache["size"]))
+            ));
+            lines.push(tr!(
+                "Writes this run: {count} ({bytes} in all)",
+                count = n(&writes["count"]),
+                bytes = human_bytes(n(&writes["bytes"]))
+            ));
+            lines.push(tr!(
+                "Rows added: {rows}, cut: {cut}",
+                rows = n(&writes["rows"]),
+                cut = n(&writes["cut"])
+            ));
+            lines.push(match writes["lastAt"].as_u64() {
+                Some(ms) => tr!(
+                    "Last write: {bytes}, {ago}",
+                    bytes = human_bytes(n(&writes["lastBytes"])),
+                    ago = crate::history::ago(self.clock.now, (ms / 1000) as i64)
+                ),
+                None => tr!("Nothing written yet this run"),
+            });
+        }
+        let hint = tr!("r read again   Tab operation log   other keys close");
+        let text = lines
+            .iter()
+            .map(|l| l.width())
+            .max()
+            .unwrap_or(0)
+            .max(hint.width()) as u16;
+        let width = (text + 4).min(area.width);
+        let height = (lines.len() as u16 + 4).min(area.height);
+        let at = Rect::new(
+            area.x + (area.width - width) / 2,
+            area.y + (area.height - height) / 2,
+            width,
+            height,
+        );
+        frame_box(buf, area, at, &tr!(" History Cache "));
+        let inner = usize::from(width.saturating_sub(4));
+        for (y, line) in (at.y + 1..at.bottom().saturating_sub(2)).zip(&lines) {
+            buf.set_stringn(at.x + 2, y, line, inner, Style::new());
+        }
+        buf.set_stringn(
+            at.x + 2,
+            at.bottom() - 2,
+            &hint,
+            inner,
+            Style::new().fg(Color::Indexed(244)),
+        );
+    }
+
     /// Operations の枠: 上に記録の一覧（✓ ✗ ●、所要時間、いつ）、下に選んでいるものの出力か失敗の理由。
     fn draw_operations(&self, ops: &Operations, area: Rect, buf: &mut Buffer) {
         let width = area.width.saturating_sub(4).max(20).min(area.width);
@@ -8964,7 +9069,7 @@ impl App {
         buf.set_stringn(
             at.x + 2,
             at.bottom() - 2,
-            tr!("j/k move   x cancel a running one   r read again   Tab operation log   other keys close"),
+            tr!("j/k move   x cancel a running one   r read again   Tab history cache   other keys close"),
             inner,
             dim,
         );
@@ -9318,6 +9423,15 @@ mod tests {
     }
 
     /// サイドバーの Submodules: submodule が並び、中に変更があれば ✎。Enter で TUI をそこで開き直す。
+    /// History Cache のバイト数は、読みやすい単位で。
+    #[test]
+    fn bytes_are_shown_in_units() {
+        assert_eq!(human_bytes(512), "512 B");
+        assert_eq!(human_bytes(2048), "2.0 KB");
+        assert_eq!(human_bytes(3 * 1024 * 1024 + 512 * 1024), "3.5 MB");
+        assert_eq!(human_bytes(5 << 30), "5.0 GB");
+    }
+
     #[test]
     fn submodules_are_listed_and_open_there() {
         let (dir, mut app, rx) = app_with_history();
