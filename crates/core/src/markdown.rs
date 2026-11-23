@@ -494,7 +494,7 @@ fn linkify(runs: Vec<Run>, github: Option<&str>) -> Vec<Run> {
             out.push(run);
             continue;
         }
-        let text = run.text.clone();
+        let text = emojify(&run.text);
         let mut last = 0;
         for (start, end, url) in find_links(&text, github) {
             if start > last {
@@ -517,6 +517,34 @@ fn linkify(runs: Vec<Run>, github: Option<&str>) -> Vec<Run> {
             });
         }
     }
+    out
+}
+
+/// GitHub の絵文字の名前（`:smile:`）を絵文字にする。知らない名前はそのまま。
+fn emojify(text: &str) -> String {
+    if !text.contains(':') {
+        return text.to_owned();
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find(':') {
+        out.push_str(&rest[..start]);
+        let after = &rest[start + 1..];
+        let name_end = after
+            .find(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '_' | '+' | '-')))
+            .unwrap_or(after.len());
+        if name_end > 0
+            && after[name_end..].starts_with(':')
+            && let Some(emoji) = crate::emoji::lookup(&after[..name_end])
+        {
+            out.push_str(emoji);
+            rest = &after[name_end + 1..];
+        } else {
+            out.push(':');
+            rest = after;
+        }
+    }
+    out.push_str(rest);
     out
 }
 
@@ -728,6 +756,10 @@ mod tests {
                 ("@dev", "https://github.com/dev"),
                 ("1a2b3c4d", "https://github.com/o/r/commit/1a2b3c4d"),
             ]
+        );
+        assert_eq!(
+            emojify("ship it :rocket: :+1: at 10:30 :nope:"),
+            "ship it 🚀 👍 at 10:30 :nope:"
         );
         // GitHub の remote がなければ、URL だけ。
         let plain = parse("fixes #12 at https://a.b\n");

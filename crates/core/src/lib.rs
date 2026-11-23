@@ -7,6 +7,7 @@ pub mod command;
 pub mod conflict;
 mod delegate;
 pub mod diff;
+pub mod emoji;
 pub mod failure;
 pub mod fold;
 mod form;
