@@ -169,6 +169,16 @@ enum Naming {
     DeepenSince,
     /// sparse checkout で取り出すフォルダ（空白で区切る。空ならすべて取り出す）。
     SparseFolders,
+    /// submodule（始まりはそのパス）の新しい URL。
+    SubmoduleUrl,
+    /// submodule（始まりはそのパス）が追うブランチ（空なら既定に戻す）。
+    SubmoduleBranch,
+    /// それぞれの submodule の中で動かす命令（シェルで）。
+    SubmoduleForeach,
+    /// 足す submodule の URL（次に場所を聞く）。
+    SubmoduleAddUrl,
+    /// 足す submodule の場所（始まりは URL）。
+    SubmoduleAddPath,
     /// Add Subtree で取り込むフォルダ（次に相手を聞く）。
     SubtreeDir,
     /// subtree の相手（`URL ref`。始まりはフォルダ、`what` は add・pull・push）。
@@ -634,6 +644,8 @@ pub struct App {
     failure_details: Option<String>,
     /// `!` の枠に出しているのが、失敗の全部か（でなければ hooks の出力）。
     showing_failure: bool,
+    /// `failure_details` は失敗ではなく、命令の出力（Run in Each Submodule）。
+    details_are_output: bool,
     /// hooks の出力を枠に出している（そのときの一番上の行）。
     showing_hooks: Option<usize>,
     /// コマンドの一覧を出している（`:`）。
@@ -764,6 +776,7 @@ impl App {
             hook_output: None,
             failure_details: None,
             showing_failure: false,
+            details_are_output: false,
             showing_hooks: None,
             palette: None,
             operation_log: None,
@@ -2077,6 +2090,18 @@ impl App {
             // 候補は、次に補うまで。
             self.path_choices.clear();
             match key.code {
+                // 追うブランチ: 空なら既定に戻す。
+                KeyCode::Enter if matches!(self.naming, Naming::SubmoduleBranch) => {
+                    if let Some((path, _, branch)) = self.typing_branch.take() {
+                        let branch = branch.trim();
+                        self.run(
+                            "submoduleChanged",
+                            tr!("Changing the branch to follow…"),
+                            json!({"op": "changeSubmodule", "change": {"kind": "setBranch", "path": path,
+                                "branch": (!branch.is_empty()).then_some(branch)}}),
+                        );
+                    }
+                }
                 // 取り出すフォルダ: 空ならすべて（sparse checkout をやめる）。
                 KeyCode::Enter if matches!(self.naming, Naming::SparseFolders) => {
                     if let Some((_, _, typed)) = self.typing_branch.take() {
@@ -2094,7 +2119,37 @@ impl App {
                     {
                         let name = name.trim();
                         let (op, label, command) = match self.naming {
-                            Naming::Stash | Naming::SparseFolders => return,
+                            Naming::Stash | Naming::SparseFolders | Naming::SubmoduleBranch => {
+                                return;
+                            }
+                            Naming::SubmoduleUrl => (
+                                "submoduleChanged",
+                                tr!("Changing the URL…"),
+                                json!({"op": "changeSubmodule", "change": {"kind": "setUrl", "path": start, "url": name}}),
+                            ),
+                            Naming::SubmoduleForeach => (
+                                "submoduleForeach",
+                                tr!("Running in each submodule…"),
+                                json!({"op": "changeSubmodule", "change": {"kind": "foreach", "command": name, "recursive": false}}),
+                            ),
+                            // URL の次に、場所を聞く（初めは URL の最後の名前）。
+                            Naming::SubmoduleAddUrl => {
+                                let base = name
+                                    .trim_end_matches('/')
+                                    .rsplit(['/', '\\', ':'])
+                                    .next()
+                                    .unwrap_or(name);
+                                let base = base.strip_suffix(".git").unwrap_or(base).to_owned();
+                                self.naming = Naming::SubmoduleAddPath;
+                                self.typing_branch = Some((name.to_owned(), name.to_owned(), base));
+                                self.dirty = true;
+                                return;
+                            }
+                            Naming::SubmoduleAddPath => (
+                                "submoduleChanged",
+                                tr!("Adding the submodule…"),
+                                json!({"op": "changeSubmodule", "change": {"kind": "add", "url": start, "path": name, "branch": null}}),
+                            ),
                             Naming::SubtreeDir => {
                                 let dir = name.trim_matches('/').to_owned();
                                 self.subtree_source(&dir, "add");
@@ -2769,6 +2824,12 @@ impl App {
                 json!({"op": "ignoredFiles"}),
             );
         }
+        if id == "add-submodule" {
+            self.naming = Naming::SubmoduleAddUrl;
+            self.typing_branch = Some((String::new(), String::new(), String::new()));
+            self.dirty = true;
+            return;
+        }
         if id == "add-subtree" {
             if self.sidebar.subtrees_available() == Some(false) {
                 self.error = Some(tr!("This machine's git has no git subtree"));
@@ -2911,6 +2972,78 @@ impl App {
             true => tr!("{name}: no remotes", name = name),
             false => format!("{name} — {}", remotes.join("; ")),
         }
+    }
+
+    /// サイドバーで選んでいる submodule のパス。
+    fn picked_submodule(&self) -> Option<String> {
+        self.sidebar
+            .picked_ref()
+            .filter(|r| r.0 == "submodule")
+            .map(|r| r.1.to_owned())
+    }
+
+    /// submodule の行のキー（`picked_submodule` のもの）。
+    fn submodule_key(&mut self, path: &str, code: KeyCode) {
+        let change = |change: Value| json!({"op": "changeSubmodule", "change": change});
+        match code {
+            KeyCode::Char('e') => {
+                self.naming = Naming::SubmoduleUrl;
+                self.typing_branch = Some((path.to_owned(), path.to_owned(), String::new()));
+            }
+            KeyCode::Char('B') => {
+                self.naming = Naming::SubmoduleBranch;
+                self.typing_branch = Some((path.to_owned(), path.to_owned(), String::new()));
+            }
+            KeyCode::Char('F') => {
+                self.naming = Naming::SubmoduleForeach;
+                self.typing_branch = Some((String::new(), String::new(), String::new()));
+            }
+            KeyCode::Char('x') => {
+                let remove = |delete: bool| Request::Run {
+                    name: "submoduleChanged",
+                    command: change(
+                        json!({"kind": "remove", "path": path, "deleteGitDir": delete}),
+                    ),
+                };
+                self.choices = Some((
+                    tr!(
+                        "Remove the submodule {path}? Its folder goes; .git/modules keeps its repository unless deleted too.",
+                        path = path
+                    ),
+                    vec![
+                        ('y', tr!("remove"), remove(false)),
+                        ('d', tr!("remove and delete its .git/modules"), remove(true)),
+                    ],
+                ));
+            }
+            KeyCode::Char('a') => {
+                self.confirm = Some((
+                    tr!(
+                        "Move the repository data of {path} into .git/modules (git submodule absorbgitdirs)?",
+                        path = path
+                    ),
+                    tr!("move"),
+                    Request::Run {
+                        name: "submoduleChanged",
+                        command: change(json!({"kind": "absorb", "paths": [path]})),
+                    },
+                ));
+            }
+            KeyCode::Char('y') => {
+                self.confirm = Some((
+                    tr!(
+                        "Copy the submodules' URLs from .gitmodules into .git/config (git submodule sync)?"
+                    ),
+                    tr!("sync"),
+                    Request::Run {
+                        name: "submoduleChanged",
+                        command: change(json!({"kind": "sync", "recursive": false})),
+                    },
+                ));
+            }
+            _ => {}
+        }
+        self.dirty = true;
     }
 
     /// サイドバーで印をつけたローカルブランチ（印をつけた順）。
@@ -3343,6 +3476,7 @@ impl App {
                 let line = error.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
                 let lines = error.lines().filter(|l| !l.trim().is_empty()).count();
                 self.failure_details = (lines > 1).then(|| error.trim_end().to_owned());
+                self.details_are_output = false;
                 self.error = Some(match lines > 1 {
                     true => line.trim().to_owned() + &tr!(" (! shows all)"),
                     false => line.trim().to_owned(),
@@ -3477,6 +3611,23 @@ impl App {
                 return;
             }
             "updateSubmodules" => self.notice = Some(tr!("Updated the submodules")),
+            "submoduleChanged" => self.notice = Some(tr!("Changed the submodule")),
+            // それぞれで動かした命令の出力は、`!` で全部を出す。
+            "submoduleForeach" => {
+                let output = reply["info"]["output"]
+                    .as_str()
+                    .unwrap_or("")
+                    .trim_end()
+                    .to_owned();
+                match output.is_empty() {
+                    true => self.notice = Some(tr!("Ran in each submodule (no output)")),
+                    false => {
+                        self.notice = Some(tr!("Ran in each submodule (! shows the output)"));
+                        self.failure_details = Some(output);
+                        self.details_are_output = true;
+                    }
+                }
+            }
             "subtreeChanged" => self.notice = Some(tr!("Done")),
             // ignore されたものが分かった: 数と最初のいくつかを出して、確かめてから消す（Undo では戻らない）。
             "ignoredFiles" => {
@@ -6208,6 +6359,15 @@ impl App {
                 self.pick();
                 true
             }
+            // submodule の行で: URL を変える、追うブランチ、消す、中のデータを .git/modules へ、URL を写す、
+            // それぞれで命令を動かす（アプリの submodule のメニュー）。
+            KeyCode::Char('e' | 'B' | 'x' | 'a' | 'y' | 'F')
+                if self.picked_submodule().is_some() =>
+            {
+                let path = self.picked_submodule().unwrap_or_default();
+                self.submodule_key(&path, code);
+                true
+            }
             // subtree の行で: そのフォルダの履歴だけのブランチを作る（Split）。
             KeyCode::Char('t') if self.picked_subtree().is_some() => {
                 let dir = self.picked_subtree().unwrap_or_default();
@@ -6395,6 +6555,10 @@ impl App {
                     ),
                 ),
                 ("w", tr!("New worktree for the branch")),
+                (
+                    "e B x a y F",
+                    tr!("On a submodule: URL, branch to follow, remove, absorb, sync, run in each"),
+                ),
                 (
                     "p P t",
                     tr!("On a subtree: pull, push; split its history into a branch"),
@@ -7888,6 +8052,26 @@ impl App {
                         )
                     }
                     Naming::PatchVersion => tr!("Version of the patches (-v): {name}", name = name),
+                    Naming::SubmoduleUrl => {
+                        tr!("URL of the submodule {at}: {name}", at = at, name = name)
+                    }
+                    Naming::SubmoduleBranch => tr!(
+                        "Branch for {at} to follow (empty for the default): {name}",
+                        at = at,
+                        name = name
+                    ),
+                    Naming::SubmoduleForeach => tr!(
+                        "Run in each submodule (a shell command, as git submodule foreach): {name}",
+                        name = name
+                    ),
+                    Naming::SubmoduleAddUrl => {
+                        tr!("URL of the submodule to add: {name}", name = name)
+                    }
+                    Naming::SubmoduleAddPath => tr!(
+                        "Add {at} as a submodule at (a folder in this repository): {name}",
+                        at = at,
+                        name = name
+                    ),
                     Naming::SubtreeDir => tr!(
                         "Add a subtree in the folder (from the top of the repository): {name}",
                         name = name
@@ -8133,9 +8317,10 @@ impl App {
                 width,
                 height,
             );
-            let title = match self.showing_failure {
-                true => tr!(" Details of the failure "),
-                false => tr!(" Output of the hooks "),
+            let title = match (self.showing_failure, self.details_are_output) {
+                (true, true) => tr!(" Output of the command "),
+                (true, false) => tr!(" Details of the failure "),
+                (false, _) => tr!(" Output of the hooks "),
             };
             frame_box(buf, area, at, &title);
             let inside = usize::from(height.saturating_sub(2));
