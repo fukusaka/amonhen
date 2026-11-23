@@ -229,7 +229,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | リポジトリごとの下書き、テンプレートから始める | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: `commit.template` だけで、共有のテンプレートは使わない。<br>TUI: 下書きは `<git dir>/amonhen/commit-draft` に置く。テンプレートは `commit.template`（リポジトリ専用のものは SSH 先でも）で、共有のテンプレートは使わない。 |
 | 最近のメッセージ（⌥↑ / ⌥↓・一覧） | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: メッセージの欄の Alt-↑ / Alt-↓。一覧は Working Copy の `R`。 |
 | Conventional の種類・Co-authored-by・Signed-off-by を入れる | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: Working Copy の `I`。 |
-| `#issue` の補完 | ✓ | ✓ | △ | — | n/a | — | Windows: 件名の下に並べる（WinUI の TextBox からはメニューを出すカーソルの位置が取れない）。選ぶと # を #番号 にする。 |
+| `#issue` の補完 | ✓ | ✓ | ✓ | — | n/a | — |  |
 | Commit and Push・Amend | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: `commit -m … --amend`。<br>TUI: `Ctrl-p` でコミットしてから push を尋ねる。`a` で amend。 |
 | Fixup / Squash Commit For | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: Working Copy の `F`。Tab で squash! に切り替える。 |
 | hooks の出力のシート | ✓ | ✓ | ✓ | ✓ | n/a | △ | TUI: hooks の出力の 1 行目を一番下の行に出す。 |

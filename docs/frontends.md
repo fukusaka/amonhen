@@ -229,7 +229,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Draft per repository, starting from the template | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: `commit.template` only, not the shared template library.<br>TUI: The draft is kept in `<git dir>/amonhen/commit-draft`; the template is `commit.template` (the repository's own one on SSH hosts too), not the shared library. |
 | Recent messages (⌥↑ / ⌥↓, list) | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: Alt-↑ / Alt-↓ in the message field, `R` in the list for the list. |
 | Insert Conventional types, Co-authored-by, Signed-off-by | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: `I` in the Working Copy. |
-| `#issue` completion | ✓ | ✓ | △ | — | n/a | — | Windows: Listed under the summary (a WinUI text box gives no caret position to open a menu at); choosing one puts #number in place of the #. |
+| `#issue` completion | ✓ | ✓ | ✓ | — | n/a | — |  |
 | Commit and Push, Amend | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: `commit -m … --amend`.<br>TUI: `Ctrl-p` commits and then asks to push; `a` turns amend on. |
 | Fixup / Squash Commit For | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: `F` in the Working Copy; Tab switches to squash!. |
 | Hooks output sheet | ✓ | ✓ | ✓ | ✓ | n/a | △ | TUI: The first line of the hooks' output on the bottom line. |
