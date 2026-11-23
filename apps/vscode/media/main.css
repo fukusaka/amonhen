@@ -2927,3 +2927,42 @@ aside.details.all-files-page .details-body {
 .markdown pre.md-code .code {
   display: inline;
 }
+
+/* 長い行を折り返す（設定 amonhen.wrapLongLines。すべての差分とファイルの中身） */
+body.wrap-lines .line,
+body.wrap-lines .line .code {
+  white-space: pre-wrap;
+}
+
+body.wrap-lines .line .code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.diff-head .wrap-button,
+.files-bar .wrap-button {
+  flex: none;
+  padding: 0 6px;
+  color: var(--vscode-descriptionForeground);
+  background: transparent;
+}
+
+.diff-head .wrap-button:hover {
+  background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
+}
+
+.diff-head .wrap-button.on,
+.files-bar .wrap-button.on {
+  color: var(--vscode-textLink-foreground);
+  background: transparent;
+}
+
+/* GitHub 独自の絵文字（:octocat: など）は名前の薄い札 */
+.markdown .md-emoji-chip {
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 0.9em;
+  color: var(--vscode-descriptionForeground);
+  background: var(--vscode-badge-background, rgba(128, 128, 128, 0.25));
+  background: color-mix(in srgb, var(--vscode-descriptionForeground) 18%, transparent);
+}
