@@ -94,3 +94,16 @@ fn gantt_dated_excludes_with_long_formats() {
     let start = format!("2000-01-01{}", " x".repeat(2000));
     assert_eq!(limit_error(&chart(&literal, &start)), work);
 }
+
+#[test]
+fn many_entity_codes_in_a_syntax_error() {
+    // 知らせの位置を元の文字列に写すとき、`#1;` の符号ごとに頭から UTF-16 の位置を数えていた（2 乗）。
+    let source = format!("info\n{}\n", "#1;".repeat(16000));
+    let e = render(&source).unwrap_err();
+    assert!(
+        e.message.starts_with("Lexical error on line 2."),
+        "{}",
+        e.message
+    );
+    assert_eq!(e.line, 2);
+}

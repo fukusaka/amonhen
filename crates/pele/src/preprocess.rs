@@ -19,17 +19,41 @@ pub struct Preprocessed {
     pub line_offset: usize,
 }
 
-/// バイトの位置を UTF-16 の位置に。
-fn u16_at(s: &str, byte: usize) -> usize {
-    js::len16(&s[..byte])
+/// バイトの位置を UTF-16 の位置に。前に求めた位置から数え進めるので、前から順に聞けば全体で文字列の長さで済む
+/// （位置ごとに頭から数えると、書き換えの多い文字列で 2 乗になる）。
+struct Pos16<'a> {
+    s: &'a str,
+    byte: usize,
+    unit: usize,
+}
+
+impl<'a> Pos16<'a> {
+    fn new(s: &'a str) -> Self {
+        Pos16 {
+            s,
+            byte: 0,
+            unit: 0,
+        }
+    }
+
+    fn at(&mut self, byte: usize) -> usize {
+        if byte < self.byte {
+            self.byte = 0;
+            self.unit = 0;
+        }
+        self.unit += js::len16(&self.s[self.byte..byte]);
+        self.byte = byte;
+        self.unit
+    }
 }
 
 /// 範囲（バイト）を UTF-16 の位置の `Edit` に。
 fn edits16(s: &str, ranges: &[(usize, usize)], length: impl Fn(usize) -> usize) -> Vec<Edit> {
+    let mut pos = Pos16::new(s);
     ranges
         .iter()
         .enumerate()
-        .map(|(i, &(a, b))| (u16_at(s, a), u16_at(s, b), length(i)))
+        .map(|(i, &(a, b))| (pos.at(a), pos.at(b), length(i)))
         .collect()
 }
 
@@ -574,6 +598,7 @@ pub fn encode_entities(text: &str, mut steps: Option<&mut Vec<Vec<Edit>>>) -> St
     let b = text.as_bytes();
     let mut out = String::with_capacity(text.len());
     let mut edits: Vec<Edit> = Vec::new();
+    let mut pos = Pos16::new(&text);
     let mut last = 0;
     let mut i = 0;
     while i < b.len() {
@@ -587,7 +612,7 @@ pub fn encode_entities(text: &str, mut steps: Option<&mut Vec<Vec<Edit>>>) -> St
                 let numeric = inner.bytes().all(|c| c.is_ascii_digit());
                 let code = format!("{}{}¶ß", if numeric { "ﬂ°°" } else { "ﬂ°" }, inner);
                 if steps.is_some() {
-                    edits.push((u16_at(&text, i), u16_at(&text, j + 1), js::len16(&code)));
+                    edits.push((pos.at(i), pos.at(j + 1), js::len16(&code)));
                 }
                 out.push_str(&text[last..i]);
                 out.push_str(&code);
