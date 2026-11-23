@@ -2179,6 +2179,32 @@ final class CommitDetailViewController: NSSplitViewController, NSTextViewDelegat
 
     private var headerFitPending = false
 
+    /// 利用者が動かした仕切りの位置（詳細の欄の高さ）。nil ならメッセージに合わせる。アプリを開き直しても保つ。
+    private var keptHeaderHeight: CGFloat? = {
+        let value = UserDefaults.standard.double(forKey: "historyDetailsHeight")
+        return value > 0 ? CGFloat(value) : nil
+    }() {
+        didSet {
+            if let keptHeaderHeight {
+                UserDefaults.standard.set(Double(keptHeaderHeight), forKey: "historyDetailsHeight")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "historyDetailsHeight")
+            }
+        }
+    }
+    /// 高さをアプリが合わせている間（利用者が動かしたのと見分ける）。
+    private var settingHeaderHeight = false
+
+    override func splitViewDidResizeSubviews(_ notification: Notification) {
+        super.splitViewDidResizeSubviews(notification)
+        // 仕切りをドラッグしたときだけ、通知に仕切りの番号が入る。
+        guard !settingHeaderHeight, !isExpanded, rewordEditor == nil,
+              (notification.userInfo?["NSSplitViewDividerIndex"] as? Int) == 0,
+              NSApp.currentEvent?.type == .leftMouseDragged || NSApp.currentEvent?.type == .leftMouseUp
+        else { return }
+        keptHeaderHeight = splitViewItems[0].viewController.view.frame.height
+    }
+
     /// 欄の高さ合わせは右の列全体を並べ直すので（linux で 5 ms ほど）、選んでから表示するまでの間ではなく、
     /// 表示を終えた後にまとめて 1 回だけ行う（キーを押し続けて次々に選ぶ間は、最後のものだけ）。
     private func scheduleHeaderFit() {
@@ -2314,6 +2340,13 @@ final class CommitDetailViewController: NSSplitViewController, NSTextViewDelegat
     /// 詳細の欄の高さをメッセージに合わせる（短ければ縮め、長ければ右の列の半分まで伸ばす。続きは欄の中で
     /// スクロールするか、⤢ で広げる）。コミットを選ぶたび・見せ方を変えるたびに合わせる。
     private func fitHeaderToContent() {
+        // 仕切りを手で動かしたら、その位置を保つ（表示の設定の「詳細をメッセージに合わせる」で戻す）。
+        if let kept = keptHeaderHeight {
+            if !isExpanded, rewordEditor == nil, abs(splitViewItems[0].viewController.view.frame.height - kept) > 1 {
+                setHeaderHeight(kept)
+            }
+            return
+        }
         guard splitViewItems.count > 1, !isExpanded, rewordEditor == nil,
               let layout = header.layoutManager, let container = header.textContainer else { return }
         layout.ensureLayout(for: container)
@@ -2329,6 +2362,8 @@ final class CommitDetailViewController: NSSplitViewController, NSTextViewDelegat
     /// 並ぶときは、その高さは保たれ、差分の欄が縮む）ので、1 回では伸ばせるのがファイルの欄の高さまでになる。
     /// 届くか動かなくなるまで繰り返す。
     private func setHeaderHeight(_ height: CGFloat) {
+        settingHeaderHeight = true
+        defer { settingHeaderHeight = false }
         var last = splitViewItems[0].viewController.view.frame.height
         for _ in 0..<8 {
             splitView.setPosition(height, ofDividerAt: 0)
@@ -2501,6 +2536,14 @@ extension CommitDetailViewController {
             item.indentationLevel = 1
             menu.addItem(item)
         }
+        let fit = ClosureMenuItem(title: L("Fit Details to the Message")) { [weak self] in
+            guard let self else { return }
+            keptHeaderHeight = nil
+            fitHeaderToContent()
+        }
+        fit.state = keptHeaderHeight == nil ? .on : .off
+        fit.toolTip = L("Size the commit details to each message. Dragging the divider keeps its position instead.")
+        menu.addItem(fit)
         let expand = ClosureMenuItem(title: L("Expand Details")) { [weak self] in self?.toggleExpanded() }
         expand.state = isExpanded ? .on : .off
         expand.toolTip = L("Expand the commit details to fill the right column (click again to restore).")
