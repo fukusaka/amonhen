@@ -28,8 +28,8 @@ becomes the GitHub Release notes.
   what breaks on Android, iOS, Flutter and React Native with an approximation of each, Markdown shows formatted by
   the app (GitHub tables, task lists, alerts, links; nothing fetched), and other binaries open in Quick Look.
 - Diffs, file contents and the merge editor in the macOS and GTK4 apps can wrap long lines instead of scrolling
-  sideways: the wrap button beside the whitespace button in History and Working Copy, or View > Wrap Long Lines
-  (Option-Z / Alt+Z).
+  sideways: the wrap button beside the whitespace button in History and Working Copy, the view options (also new
+  at the right of the merge editor's bar), or View > Wrap Long Lines (Option-Z / Alt+Z).
 
 #### Changed
 
