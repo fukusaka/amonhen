@@ -3129,6 +3129,23 @@ fn partial_clone_and_sparse_checkout_marks() {
     println!("{top}");
     assert!(top.lines().next().unwrap().contains("[partial]"), "{top}");
     assert!(!top.contains("Sparse checkout"), "{top}");
+    // `+`: partial clone の中身をすべて取る（git 2.36 から）。取ったら印は消える。
+    if (numbers[0], numbers[1]) >= (2, 36) {
+        let asked = amonhen_tui::snapshot(open(&dir), 140, 12, clock(), "2+").unwrap();
+        let last = asked.lines().last().unwrap();
+        assert!(
+            last.contains("Fetch all contents of the partial clone?"),
+            "{last}"
+        );
+        let fetched = amonhen_tui::snapshot(open(&dir), 140, 12, clock(), "2+c").unwrap();
+        println!("{fetched}");
+        assert!(fetched.contains("Fetched all contents"), "{fetched}");
+        let after = amonhen_tui::snapshot(open(&dir), 140, 12, clock(), "").unwrap();
+        assert!(
+            !after.lines().next().unwrap().contains("[partial]"),
+            "{after}"
+        );
+    }
     git(&dir, BASE, &["sparse-checkout", "set", "app"]);
     let sparse = amonhen_tui::snapshot(open(&dir), 140, 12, clock(), "1").unwrap();
     println!("{sparse}");

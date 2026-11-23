@@ -586,6 +586,8 @@ pub struct App {
     behind: u64,
     /// shallow clone・partial clone の印（一番上の行のブランチの後ろ。アプリの History の上の印）。
     form_marks: Vec<String>,
+    /// リポジトリの形（`repositoryForm` の info。読めていなければ null）。
+    form: Value,
     /// 途中の操作（merge・rebase・cherry-pick・revert）: 種類と、何番目・全部でいくつ（rebase）。
     sequence: Option<(String, Option<(u64, u64)>)>,
     /// 止まっている `git am` のパッチを、3-way merge で当て直せる（まだ 3-way で当てていない）。
@@ -730,6 +732,7 @@ impl App {
             ahead: 0,
             behind: 0,
             form_marks: Vec::new(),
+            form: Value::Null,
             sequence: None,
             stash: None,
             retry_three_way: false,
@@ -2787,7 +2790,63 @@ impl App {
             }
         });
         self.changes.set_sparse_note(note);
+        self.form = info.clone();
         self.dirty = true;
+    }
+
+    /// 何を取り足すかを選ばせる: shallow clone なら履歴（数・日付まで・すべて）、partial clone なら中身のすべて
+    /// （git 2.36 から）。
+    fn ask_fetch_more(&mut self) {
+        let mut options = Vec::new();
+        let shallow = self.history.is_shallow();
+        if shallow {
+            let deepen = |commits: u32| Request::Run {
+                name: "deepen",
+                command: json!({"op": "deepen", "commits": commits}),
+            };
+            options.push(('1', tr!("100 commits"), deepen(100)));
+            options.push(('2', tr!("1,000 commits"), deepen(1_000)));
+            options.push(('3', tr!("10,000 commits"), deepen(10_000)));
+            // 選ぶ前に横取りして、日付を聞く（中身は送らない）。
+            options.push(('d', tr!("up to a date…"), Request::Status));
+            options.push((
+                'a',
+                tr!("all of it"),
+                Request::Run {
+                    name: "deepen",
+                    command: json!({"op": "unshallow"}),
+                },
+            ));
+            self.deepen_date_offered = true;
+        }
+        let partial = self.form["partial"].is_object();
+        if partial {
+            if self.form["canFetchAllContents"] == false {
+                if !shallow {
+                    self.error = Some(tr!(
+                        "Fetching all contents of a partial clone needs git 2.36 or later"
+                    ));
+                    return;
+                }
+            } else {
+                options.push((
+                    'c',
+                    tr!("all contents (partial clone)"),
+                    Request::Run {
+                        name: "fetchAllContents",
+                        command: json!({"op": "fetchAllContents"}),
+                    },
+                ));
+            }
+        }
+        let ask = match (shallow, partial) {
+            (true, false) => tr!("Fetch older history from the remote?"),
+            (false, _) => tr!(
+                "Fetch all contents of the partial clone? Every file’s contents are downloaded."
+            ),
+            (true, true) => tr!("Fetch more from the remote?"),
+        };
+        self.choices = Some((ask, options));
     }
 
     /// History の読んである行の、署名を検証する（答えが来たら、残りを続けて頼む）。
@@ -2957,6 +3016,7 @@ impl App {
             }
             "fetch" => self.notice = Some(tr!("Fetched")),
             "deepen" => self.notice = Some(tr!("Fetched older history")),
+            "fetchAllContents" => self.notice = Some(tr!("Fetched all contents")),
             "pull" => self.notice = Some(tr!("Pulled")),
             "push" => self.notice = Some(tr!("Pushed")),
             "undo" => self.notice = Some(tr!("Undone")),
@@ -5810,7 +5870,7 @@ impl App {
                 ("@", tr!("Go to HEAD")),
                 (
                     "o +",
-                    tr!("Date or topological order; fetch more of a shallow clone"),
+                    tr!("Date or topological order; fetch more of a shallow or partial clone"),
                 ),
                 (
                     "z Z",
@@ -6558,30 +6618,10 @@ impl App {
                 return true;
             }
             // shallow clone の履歴を取り足す（アプリの最後の行の下の帯の Fetch More・Fetch All）。
-            KeyCode::Char('+') if self.history.is_shallow() => {
-                let deepen = |commits: u32| Request::Run {
-                    name: "deepen",
-                    command: json!({"op": "deepen", "commits": commits}),
-                };
-                self.choices = Some((
-                    tr!("Fetch older history from the remote?"),
-                    vec![
-                        ('1', tr!("100 commits"), deepen(100)),
-                        ('2', tr!("1,000 commits"), deepen(1_000)),
-                        ('3', tr!("10,000 commits"), deepen(10_000)),
-                        // 選ぶ前に横取りして、日付を聞く（中身は送らない）。
-                        ('d', tr!("up to a date…"), Request::Status),
-                        (
-                            'a',
-                            tr!("all of it"),
-                            Request::Run {
-                                name: "deepen",
-                                command: json!({"op": "unshallow"}),
-                            },
-                        ),
-                    ],
-                ));
-                self.deepen_date_offered = true;
+            // shallow clone の履歴・partial clone の中身を取り足す（アプリの最後の行の下の帯、リポジトリの設定の
+            // 取得とフォルダ）。
+            KeyCode::Char('+') if self.history.is_shallow() || self.form["partial"].is_object() => {
+                self.ask_fetch_more();
                 return true;
             }
             KeyCode::Char('.') if self.history.mark_count() == 2 => {

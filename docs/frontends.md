@@ -156,8 +156,8 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Keys and Values (git config table, Basic / Customized / All, Combined / Levels) | ✓ | ✓ | ✓ | ✓ | △ | n/a | VSCode: Basic / Customized / All, Combined / Levels and search; values are edited in an input box.<br>CLI: Via `amonhen run` (`configList`, `configSet`). |
 | Rows disabled with the git version needed | ✓ | ✓ | ✓ | ✓ | n/a | n/a | Windows: Fetching and Folders' rows (partial clone, sparse checkout, maintenance) |
 | Repository's form on the git line (shallow, partial, sparse, maintenance) | ✓ | ✓ | ✓ | ✓ | △ | n/a | CLI: `status` notes shallow, partial and sparse repositories. |
-| Fetching and Folders: fetch more of a shallow clone (a count, up to a date, all) | ✓ | ✓ | ✓ | ✓ | △ | — | CLI: Via `amonhen run` (`deepen`, `unshallow`). |
-| Fetching and Folders: fetch all contents of a partial clone (git 2.36) | ✓ | ✓ | ✓ | ✓ | △ | — | CLI: Via `amonhen run` (`fetchAllContents`). |
+| Fetching and Folders: fetch more of a shallow clone (a count, up to a date, all) | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: Via `amonhen run` (`deepen`, `unshallow`).<br>TUI: `+` in History. |
+| Fetching and Folders: fetch all contents of a partial clone (git 2.36) | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: Via `amonhen run` (`fetchAllContents`).<br>TUI: `+` in History, then `c`. |
 | Fetching and Folders: folders of a sparse checkout picked from HEAD's tree (git 2.25) | ✓ | ✓ | ✓ | ✓ | △ | — | VSCode: The folder is picked by walking HEAD's tree in a list.<br>CLI: Via `amonhen run` (`sparseCheckout`, `treeFolders`). |
 | Fetching and Folders: git maintenance switch (git 2.31) | ✓ | ✓ | ✓ | ✓ | △ | n/a | CLI: Via `amonhen run` (`maintenance`). |
 
