@@ -1,0 +1,1586 @@
+//! 層状の配置（Gansner ほか 1993 の 4 つの段）。座標はいつも上から下（ランクが y、並びが x）で、ほかの向きは
+//! 呼ぶ側が回す。
+//!
+//! 1. ランク: `rank=same` などの組を 1 つにまとめ、閉路を作る辺を逆にし、ネットワーク単体法で
+//!    `Σ weight * 長さ` を小さくする（`minlen`・`constraint=false`）。
+//! 2. 並び: 2 つ以上のランクをまたぐ辺に仮のノードを置き、中央値で上下に何度も並べ替え、隣どうしの入れ替えで交差を
+//!    減らす。クラスタは各ランクでひとまとまりに保ち、兄弟のクラスタの左右はどのランクでもそろえる（箱が重ならない
+//!    ように）。
+//! 3. 横の位置: 補助グラフ（辺ごとのノード、クラスタの左右の境）のネットワーク単体法で、辺をまっすぐに保ちながら
+//!    ノードの間を空ける。
+//! 4. 縦の位置: ランクの高さとクラスタの枠・題の分を空ける。
+
+use crate::graph::RankKind;
+use crate::simplex::{self, Edge as NsEdge};
+
+#[derive(Clone, Debug)]
+pub struct Node {
+    /// 配置の向きの幅（並びの向き）と高さ（ランクの向き）。
+    pub w: f64,
+    pub h: f64,
+    pub cluster: Option<usize>,
+    /// 右に空ける分（自分への辺の輪）。
+    pub extra_right: f64,
+}
+
+#[derive(Clone, Debug)]
+pub struct Edge {
+    pub tail: usize,
+    pub head: usize,
+    pub minlen: f64,
+    pub weight: f64,
+    pub constraint: bool,
+    /// ラベルの大きさ（配置の向き）。
+    pub label: Option<(f64, f64)>,
+    /// ポートの並びの向きのずれ。
+    pub tail_off: f64,
+    pub head_off: f64,
+}
+
+#[derive(Clone, Debug)]
+pub struct Cluster {
+    pub parent: Option<usize>,
+    pub margin: f64,
+    /// 題の大きさ（配置の向き）。
+    pub label: (f64, f64),
+}
+
+/// クラスタの題を置く側（配置の座標で）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LabelSide {
+    Top,
+    Bottom,
+    Left,
+    Right,
+}
+
+#[derive(Clone, Debug)]
+pub struct Options {
+    pub nodesep: f64,
+    pub ranksep: f64,
+    pub label_side: LabelSide,
+    pub ordering_out: bool,
+    /// 辺のラベルを線の左に置く（ふつうは右）。
+    pub label_left: bool,
+    /// 単体法の入れ替えの上限（ランク・横の位置）。
+    pub rank_iter: usize,
+    pub x_iter: usize,
+    /// 並べ替えの回数。
+    pub sweeps: usize,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Route {
+    /// 尾から頭への点（両端はノードの中心とポートのずれ）。ラベルの中心。
+    Path {
+        points: Vec<(f64, f64)>,
+        label: Option<(f64, f64)>,
+    },
+    /// 同じランクの辺。`lane` は同じ組の何本目か。
+    Flat { lane: usize, adjacent: bool },
+    /// 自分への辺。`index` はそのノードの何本目か。
+    Loop { index: usize },
+}
+
+#[derive(Clone, Debug)]
+pub struct Layout {
+    pub nodes: Vec<(f64, f64)>,
+    pub ranks: Vec<i32>,
+    pub routes: Vec<Route>,
+    /// クラスタの箱（x0, y0, x1, y1）。中にノードがなければ None。
+    pub clusters: Vec<Option<[f64; 4]>>,
+    pub width: f64,
+    pub height: f64,
+    /// 並びを決めたあとの交差の数。
+    pub crossings: usize,
+}
+
+/// 辺の仮のノードの列（上から下、両端を含む）、逆向きか、ラベルの仮のノード。
+type Chain = (Vec<usize>, bool, Option<usize>);
+
+/// 仮のノードの上限。
+const MAX_DUMMIES: usize = 12_000;
+
+// ---- 1. ランク ----
+
+struct Dsu(Vec<usize>);
+
+impl Dsu {
+    fn find(&mut self, mut v: usize) -> usize {
+        while self.0[v] != v {
+            self.0[v] = self.0[self.0[v]];
+            v = self.0[v];
+        }
+        v
+    }
+
+    fn union(&mut self, a: usize, b: usize) {
+        let (a, b) = (self.find(a), self.find(b));
+        if a != b {
+            self.0[a.max(b)] = a.min(b);
+        }
+    }
+}
+
+fn rank(
+    n: usize,
+    edges: &[Edge],
+    sets: &[(RankKind, Vec<usize>)],
+    cluster_of: &[Option<usize>],
+    clusters: usize,
+    opt: &Options,
+) -> Vec<i32> {
+    if n == 0 {
+        return Vec::new();
+    }
+    let mut dsu = Dsu((0..n).collect());
+    let mut min_any: Option<usize> = None;
+    let mut max_any: Option<usize> = None;
+    let mut source = false;
+    let mut sink = false;
+    for (kind, nodes) in sets {
+        let Some(&first) = nodes.first() else {
+            continue;
+        };
+        for &v in nodes {
+            dsu.union(first, v);
+        }
+        match kind {
+            RankKind::Same => {}
+            RankKind::Min | RankKind::Source => {
+                if let Some(m) = min_any {
+                    dsu.union(m, first);
+                }
+                min_any = Some(first);
+                source |= *kind == RankKind::Source;
+            }
+            RankKind::Max | RankKind::Sink => {
+                if let Some(m) = max_any {
+                    dsu.union(m, first);
+                }
+                max_any = Some(first);
+                sink |= *kind == RankKind::Sink;
+            }
+        }
+    }
+    let comp: Vec<usize> = (0..n).map(|v| dsu.find(v)).collect();
+    let min_c = min_any.map(|v| comp[v]);
+    let max_c = max_any.map(|v| comp[v]);
+    let min_c = if min_c.is_some() && min_c == max_c {
+        None
+    } else {
+        min_c
+    };
+
+    // まとめたグラフの辺
+    let mut cedges: Vec<NsEdge> = Vec::new();
+    for e in edges {
+        if !e.constraint || e.tail >= n || e.head >= n {
+            continue;
+        }
+        let (mut t, mut h) = (comp[e.tail], comp[e.head]);
+        if t == h {
+            continue;
+        }
+        if Some(h) == min_c || Some(t) == max_c {
+            std::mem::swap(&mut t, &mut h);
+        }
+        cedges.push(NsEdge {
+            tail: t,
+            head: h,
+            minlen: e.minlen.round().clamp(0.0, 1000.0) as i64,
+            weight: e.weight.clamp(0.0, 1000.0),
+        });
+    }
+    // 閉路を作る辺を逆に（宣言の順の深さ優先）
+    let mut out: Vec<Vec<usize>> = vec![Vec::new(); n];
+    for (i, e) in cedges.iter().enumerate() {
+        out[e.tail].push(i);
+    }
+    let mut state = vec![0u8; n];
+    let mut reverse = vec![false; cedges.len()];
+    let mut roots: Vec<usize> = Vec::new();
+    if let Some(m) = min_c {
+        roots.push(m);
+    }
+    roots.extend(0..n);
+    for root in roots {
+        if comp[root] != root || state[root] != 0 {
+            continue;
+        }
+        let mut stack: Vec<(usize, usize)> = vec![(root, 0)];
+        state[root] = 1;
+        while let Some(&mut (v, ref mut k)) = stack.last_mut() {
+            if *k < out[v].len() {
+                let ei = out[v][*k];
+                *k += 1;
+                let w = cedges[ei].head;
+                if state[w] == 1 {
+                    reverse[ei] = true;
+                } else if state[w] == 0 {
+                    state[w] = 1;
+                    stack.push((w, 0));
+                }
+            } else {
+                state[v] = 2;
+                stack.pop();
+            }
+        }
+    }
+    for (i, e) in cedges.iter_mut().enumerate() {
+        if reverse[i] {
+            std::mem::swap(&mut e.tail, &mut e.head);
+        }
+    }
+    // 最小・最大の組と、根（すべてをつなぐ）
+    let reps: Vec<usize> = (0..n).filter(|&v| comp[v] == v).collect();
+    let root = n;
+    for &c in &reps {
+        if let Some(m) = min_c
+            && c != m
+        {
+            cedges.push(NsEdge {
+                tail: m,
+                head: c,
+                minlen: i64::from(source),
+                weight: 0.0,
+            });
+        }
+        if let Some(m) = max_c
+            && c != m
+        {
+            cedges.push(NsEdge {
+                tail: c,
+                head: m,
+                minlen: i64::from(sink),
+                weight: 0.0,
+            });
+        }
+        cedges.push(NsEdge {
+            tail: root,
+            head: c,
+            minlen: 0,
+            weight: 0.0,
+        });
+    }
+    // クラスタのノードを上にそろえる弱い引き（Graphviz がクラスタを詰めてランクづけるのに近づける）
+    let mut seen_pair = std::collections::HashSet::new();
+    for v in 0..n {
+        if let Some(c) = cluster_of[v].filter(|&c| c < clusters)
+            && seen_pair.insert((c, comp[v]))
+        {
+            cedges.push(NsEdge {
+                tail: n + 1 + c,
+                head: comp[v],
+                minlen: 0,
+                weight: 0.25,
+            });
+        }
+    }
+    for c in 0..clusters {
+        cedges.push(NsEdge {
+            tail: root,
+            head: n + 1 + c,
+            minlen: 0,
+            weight: 0.0,
+        });
+    }
+    let total = n + 1 + clusters;
+    // 初めの値: 最長路（トポロジカル順）
+    let mut x = vec![0i64; total];
+    let mut indeg = vec![0usize; total];
+    let mut outs: Vec<Vec<usize>> = vec![Vec::new(); total];
+    for (i, e) in cedges.iter().enumerate() {
+        indeg[e.head] += 1;
+        outs[e.tail].push(i);
+    }
+    let mut queue: Vec<usize> = (0..total)
+        .filter(|&v| indeg[v] == 0 && (v >= n || comp[v] == v))
+        .collect();
+    let mut q = 0;
+    while q < queue.len() {
+        let v = queue[q];
+        q += 1;
+        for &ei in &outs[v] {
+            let e = &cedges[ei];
+            x[e.head] = x[e.head].max(x[v] + e.minlen);
+            indeg[e.head] -= 1;
+            if indeg[e.head] == 0 {
+                queue.push(e.head);
+            }
+        }
+    }
+    simplex::solve(total, &cedges, &mut x, opt.rank_iter);
+    let low = reps.iter().map(|&c| x[c]).min().unwrap_or(0);
+    (0..n)
+        .map(|v| (x[comp[v]] - low).clamp(0, 100_000) as i32)
+        .collect()
+}
+
+// ---- 2. 並び ----
+
+/// 並べるノード（本物・仮・クラスタの詰め物）。
+#[derive(Clone, Debug)]
+struct LNode {
+    rank: usize,
+    cluster: Option<usize>,
+    /// 左右の半分の幅。
+    left: f64,
+    right: f64,
+    h: f64,
+    real: bool,
+    /// 上下の切れ端。
+    up: Vec<usize>,
+    down: Vec<usize>,
+    /// 元の順（並びのくずれのない比べ）。
+    seq: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Segment {
+    upper: usize,
+    lower: usize,
+    weight: f64,
+    upper_off: f64,
+    lower_off: f64,
+}
+
+struct Ordering<'a> {
+    nodes: &'a [LNode],
+    segs: &'a [Segment],
+    layers: Vec<Vec<usize>>,
+    pos: Vec<usize>,
+    parent: &'a [Option<usize>],
+    /// 兄弟のクラスタの左右の順の手がかり。
+    global: Vec<f64>,
+}
+
+impl Ordering<'_> {
+    fn refresh(&mut self) {
+        for layer in &self.layers {
+            for (i, &v) in layer.iter().enumerate() {
+                self.pos[v] = i;
+            }
+        }
+    }
+
+    /// クラスタの左右の手がかり: 中のノードの相対の位置の平均。
+    fn global_keys(&mut self) {
+        let k = self.global.len();
+        let mut sum = vec![0f64; k];
+        let mut count = vec![0usize; k];
+        for layer in &self.layers {
+            let len = layer.len().max(1) as f64;
+            for (i, &v) in layer.iter().enumerate() {
+                let mut c = self.nodes[v].cluster;
+                let mut hops = 0;
+                while let Some(ci) = c {
+                    sum[ci] += i as f64 / len;
+                    count[ci] += 1;
+                    c = self.parent[ci];
+                    hops += 1;
+                    if hops > 1000 {
+                        break;
+                    }
+                }
+            }
+        }
+        for ci in 0..k {
+            self.global[ci] = if count[ci] > 0 {
+                sum[ci] / count[ci] as f64
+            } else {
+                0.0
+            };
+        }
+    }
+
+    /// 1 つのランクを値 `val` の順に並べる。クラスタはまとまり、兄弟のクラスタは `global` の順。
+    fn sort_layer(&mut self, r: usize, val: &[f64]) {
+        let layer = std::mem::take(&mut self.layers[r]);
+        // クラスタ → その中の直接の要素（ノードか子のクラスタ）
+        #[derive(Clone, Copy)]
+        enum Item {
+            Node(usize),
+            Cluster(usize),
+        }
+        let k = self.global.len();
+        let mut groups: Vec<Vec<Item>> = vec![Vec::new(); k + 1];
+        let mut seen = vec![false; k];
+        let mut gsum = vec![0f64; k];
+        let mut gcount = vec![0usize; k];
+        let mut gfirst = vec![usize::MAX; k];
+        for &v in &layer {
+            let slot = |c: Option<usize>| c.unwrap_or(k);
+            groups[slot(self.nodes[v].cluster)].push(Item::Node(v));
+            let mut c = self.nodes[v].cluster;
+            let mut hops = 0;
+            while let Some(ci) = c {
+                gsum[ci] += val[v];
+                gcount[ci] += 1;
+                gfirst[ci] = gfirst[ci].min(self.pos[v]);
+                if !seen[ci] {
+                    seen[ci] = true;
+                    groups[slot(self.parent[ci])].push(Item::Cluster(ci));
+                }
+                c = self.parent[ci];
+                hops += 1;
+                if hops > 1000 {
+                    break;
+                }
+            }
+        }
+        let value = |it: &Item| -> (f64, usize) {
+            match *it {
+                Item::Node(v) => (val[v], self.pos[v]),
+                Item::Cluster(c) => (gsum[c] / gcount[c].max(1) as f64, gfirst[c]),
+            }
+        };
+        let mut out: Vec<usize> = Vec::with_capacity(layer.len());
+        // 深さ優先で書き出す（明示のスタック）
+        let mut stack: Vec<(usize, usize)> = Vec::new();
+        let mut sorted: Vec<Vec<Item>> = vec![Vec::new(); k + 1];
+        let prepare = |g: usize, groups: &mut Vec<Vec<Item>>, sorted: &mut Vec<Vec<Item>>| {
+            let mut items = std::mem::take(&mut groups[g]);
+            items.sort_by(|a, b| {
+                let (va, pa) = value(a);
+                let (vb, pb) = value(b);
+                va.partial_cmp(&vb)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then(pa.cmp(&pb))
+            });
+            // クラスタの場所は、兄弟のクラスタのいつもの順で埋め直す
+            let mut slots: Vec<usize> = Vec::new();
+            let mut clusters: Vec<usize> = Vec::new();
+            for (i, it) in items.iter().enumerate() {
+                if let Item::Cluster(c) = it {
+                    slots.push(i);
+                    clusters.push(*c);
+                }
+            }
+            if clusters.len() > 1 {
+                clusters.sort_by(|a, b| {
+                    self.global[*a]
+                        .partial_cmp(&self.global[*b])
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                        .then(a.cmp(b))
+                });
+                for (s, c) in slots.into_iter().zip(clusters) {
+                    items[s] = Item::Cluster(c);
+                }
+            }
+            sorted[g] = items;
+        };
+        prepare(k, &mut groups, &mut sorted);
+        stack.push((k, 0));
+        while let Some(&mut (g, ref mut i)) = stack.last_mut() {
+            if *i >= sorted[g].len() {
+                stack.pop();
+                continue;
+            }
+            let it = sorted[g][*i];
+            *i += 1;
+            match it {
+                Item::Node(v) => out.push(v),
+                Item::Cluster(c) => {
+                    prepare(c, &mut groups, &mut sorted);
+                    stack.push((c, 0));
+                }
+            }
+        }
+        self.layers[r] = out;
+        for (i, &v) in self.layers[r].iter().enumerate() {
+            self.pos[v] = i;
+        }
+    }
+
+    fn median(&self, list: &[usize], upper: bool) -> Option<f64> {
+        let mut p: Vec<f64> = list
+            .iter()
+            .map(|&s| {
+                let seg = &self.segs[s];
+                if upper {
+                    self.pos[seg.upper] as f64
+                } else {
+                    self.pos[seg.lower] as f64
+                }
+            })
+            .collect();
+        if p.is_empty() {
+            return None;
+        }
+        p.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let m = p.len() / 2;
+        Some(if p.len() % 2 == 1 {
+            p[m]
+        } else if p.len() == 2 {
+            (p[0] + p[1]) / 2.0
+        } else {
+            // 重みつきの中央値（Gansner ほか）
+            let left = p[m - 1] - p[0];
+            let right = p[p.len() - 1] - p[m];
+            if left + right == 0.0 {
+                (p[m - 1] + p[m]) / 2.0
+            } else {
+                (p[m - 1] * right + p[m] * left) / (left + right)
+            }
+        })
+    }
+
+    fn sweep(&mut self, down: bool, val: &mut [f64]) {
+        let ranks = self.layers.len();
+        let order: Vec<usize> = if down {
+            (1..ranks).collect()
+        } else {
+            (0..ranks.saturating_sub(1)).rev().collect()
+        };
+        for r in order {
+            for &v in &self.layers[r] {
+                let list = if down {
+                    &self.nodes[v].up
+                } else {
+                    &self.nodes[v].down
+                };
+                val[v] = self.median(list, down).unwrap_or(self.pos[v] as f64);
+            }
+            self.sort_layer(r, val);
+        }
+    }
+
+    fn crossings(&self) -> usize {
+        let mut total = 0usize;
+        for r in 0..self.layers.len().saturating_sub(1) {
+            let mut pairs: Vec<(usize, usize)> = Vec::new();
+            for &u in &self.layers[r] {
+                for &s in &self.nodes[u].down {
+                    pairs.push((self.pos[u], self.pos[self.segs[s].lower]));
+                }
+            }
+            pairs.sort_unstable();
+            // 下の位置の逆順の数（BIT）
+            let size = self.layers[r + 1].len() + 1;
+            let mut tree = vec![0usize; size + 1];
+            for (seen, &(_, b)) in pairs.iter().enumerate() {
+                // b より大きいものの数
+                let mut i = b + 1;
+                let mut le = 0usize;
+                while i > 0 {
+                    le += tree[i];
+                    i &= i - 1;
+                }
+                total += seen - le;
+                let mut i = b + 1;
+                while i <= size {
+                    tree[i] += 1;
+                    i += i & i.wrapping_neg();
+                }
+            }
+        }
+        total
+    }
+
+    /// 隣り合う同じクラスタのノードを、交差が減るなら入れ替える。
+    fn transpose(&mut self) {
+        for _ in 0..4 {
+            let mut improved = false;
+            for r in 0..self.layers.len() {
+                let len = self.layers[r].len();
+                for i in 0..len.saturating_sub(1) {
+                    let (u, v) = (self.layers[r][i], self.layers[r][i + 1]);
+                    if self.nodes[u].cluster != self.nodes[v].cluster {
+                        continue;
+                    }
+                    let before = self.pair_crossings(u, v);
+                    let after = self.pair_crossings(v, u);
+                    if after < before {
+                        self.layers[r].swap(i, i + 1);
+                        self.pos[u] = i + 1;
+                        self.pos[v] = i;
+                        improved = true;
+                    }
+                }
+            }
+            if !improved {
+                break;
+            }
+        }
+    }
+
+    /// u が v の左にあるときの、u と v の辺どうしの交差。
+    fn pair_crossings(&self, u: usize, v: usize) -> usize {
+        let mut c = 0;
+        for (lu, lv, upper) in [
+            (&self.nodes[u].up, &self.nodes[v].up, true),
+            (&self.nodes[u].down, &self.nodes[v].down, false),
+        ] {
+            for &a in lu {
+                let pa = if upper {
+                    self.pos[self.segs[a].upper]
+                } else {
+                    self.pos[self.segs[a].lower]
+                };
+                for &b in lv {
+                    let pb = if upper {
+                        self.pos[self.segs[b].upper]
+                    } else {
+                        self.pos[self.segs[b].lower]
+                    };
+                    if pa > pb {
+                        c += 1;
+                    }
+                }
+            }
+        }
+        c
+    }
+}
+
+// ---- 全体 ----
+
+/// 配置する。`sets` はランクの組。
+pub fn layout(
+    input_nodes: &[Node],
+    input_edges: &[Edge],
+    clusters: &[Cluster],
+    sets: &[(RankKind, Vec<usize>)],
+    opt: &Options,
+) -> Layout {
+    let n = input_nodes.len();
+    let k = clusters.len();
+    // ラベルがあれば、ラベルのランクを間に置けるよう minlen を倍にする
+    let labeled = input_edges
+        .iter()
+        .any(|e| e.label.is_some() && e.tail != e.head);
+    let mut redges: Vec<Edge> = input_edges.to_vec();
+    if labeled {
+        for e in &mut redges {
+            e.minlen *= 2.0;
+        }
+    }
+    let cluster_of: Vec<Option<usize>> = input_nodes.iter().map(|v| v.cluster).collect();
+    let ranks = rank(n, &redges, sets, &cluster_of, clusters.len(), opt);
+
+    // クラスタの木
+    let mut parent: Vec<Option<usize>> = clusters
+        .iter()
+        .map(|c| c.parent.filter(|&p| p < k))
+        .collect();
+    // 輪になった親は切る
+    for c in 0..k {
+        let mut p = parent[c];
+        let mut hops = 0;
+        while let Some(pi) = p {
+            hops += 1;
+            if pi == c || hops > k {
+                parent[c] = None;
+                break;
+            }
+            p = parent[pi];
+        }
+    }
+    let mut depth = vec![0usize; k];
+    for c in 0..k {
+        let mut p = parent[c];
+        while let Some(pi) = p {
+            depth[c] += 1;
+            p = parent[pi];
+        }
+    }
+    let lca = |a: Option<usize>, b: Option<usize>| -> Option<usize> {
+        let (mut a, mut b) = (a, b);
+        let d = |c: Option<usize>| c.map_or(0, |c| depth[c] + 1);
+        while d(a) > d(b) {
+            a = a.and_then(|c| parent[c]);
+        }
+        while d(b) > d(a) {
+            b = b.and_then(|c| parent[c]);
+        }
+        while a != b {
+            a = a.and_then(|c| parent[c]);
+            b = b.and_then(|c| parent[c]);
+        }
+        a
+    };
+
+    let half_sep = opt.nodesep / 2.0;
+    let mut nodes: Vec<LNode> = input_nodes
+        .iter()
+        .enumerate()
+        .map(|(i, nd)| LNode {
+            rank: ranks[i] as usize,
+            cluster: nd.cluster.filter(|&c| c < k),
+            left: nd.w / 2.0,
+            right: nd.w / 2.0 + nd.extra_right,
+            h: nd.h,
+            real: true,
+            up: vec![],
+            down: vec![],
+            seq: i,
+        })
+        .collect();
+    let mut segs: Vec<Segment> = Vec::new();
+    let mut routes: Vec<Route> = vec![Route::Loop { index: 0 }; input_edges.len()];
+    // 辺ごとの、上から下への仮のノードの列（両端を含む）と逆かどうか
+    let mut chains: Vec<Option<Chain>> = vec![None; input_edges.len()];
+    // 仮のノードが多すぎれば、長い辺から仮のノードなしの直線にする（時間とメモリのため）
+    let mut direct = vec![false; input_edges.len()];
+    {
+        let mut spans: Vec<(usize, usize)> = input_edges
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| e.tail < n && e.head < n)
+            .map(|(i, e)| (nodes[e.tail].rank.abs_diff(nodes[e.head].rank), i))
+            .filter(|(s, _)| *s > 1)
+            .collect();
+        let mut dummies: usize = spans.iter().map(|(s, _)| s - 1).sum();
+        if dummies > MAX_DUMMIES {
+            spans.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+            for (s, i) in spans {
+                if dummies <= MAX_DUMMIES {
+                    break;
+                }
+                direct[i] = true;
+                dummies -= s - 1;
+            }
+        }
+    }
+    let mut loops = vec![0usize; n];
+    let mut flat_pairs: std::collections::HashMap<(usize, usize), usize> = Default::default();
+    let mut flat_edges: Vec<(usize, usize)> = Vec::new();
+    for (ei, e) in input_edges.iter().enumerate() {
+        if e.tail >= n || e.head >= n {
+            continue;
+        }
+        if e.tail == e.head {
+            routes[ei] = Route::Loop {
+                index: loops[e.tail],
+            };
+            loops[e.tail] += 1;
+            continue;
+        }
+        let (rt, rh) = (nodes[e.tail].rank, nodes[e.head].rank);
+        if rt == rh {
+            let key = (e.tail.min(e.head), e.tail.max(e.head));
+            let lane = flat_pairs.entry(key).or_insert(0);
+            routes[ei] = Route::Flat {
+                lane: *lane,
+                adjacent: false,
+            };
+            *lane += 1;
+            flat_edges.push((e.tail, e.head));
+            continue;
+        }
+        if direct[ei] {
+            let ends = vec![e.tail, e.head];
+            chains[ei] = Some((ends, false, None));
+            continue;
+        }
+        let rev = rt > rh;
+        let (a, b) = if rev {
+            (e.head, e.tail)
+        } else {
+            (e.tail, e.head)
+        };
+        let (a_off, b_off) = if rev {
+            (e.head_off, e.tail_off)
+        } else {
+            (e.tail_off, e.head_off)
+        };
+        let (ra, rb) = (nodes[a].rank, nodes[b].rank);
+        let home = lca(nodes[a].cluster, nodes[b].cluster);
+        let label_rank = match e.label {
+            Some(_) if rb - ra >= 2 => Some(ra + (rb - ra) / 2),
+            _ => None,
+        };
+        let mut chain = vec![a];
+        let mut label_node = None;
+        for r in ra + 1..rb {
+            let v = nodes.len();
+            let (left, right, h) = match (label_rank == Some(r), e.label) {
+                (true, Some((lw, lh))) => {
+                    label_node = Some(v);
+                    if opt.label_left {
+                        (lw + 6.0, 2.0, lh)
+                    } else {
+                        (2.0, lw + 6.0, lh)
+                    }
+                }
+                _ => (half_sep / 2.0, half_sep / 2.0, 0.0),
+            };
+            nodes.push(LNode {
+                rank: r,
+                cluster: home,
+                left,
+                right,
+                h,
+                real: false,
+                up: vec![],
+                down: vec![],
+                seq: n + ei,
+            });
+            chain.push(v);
+        }
+        chain.push(b);
+        for w in chain.windows(2) {
+            let (u, v) = (w[0], w[1]);
+            let omega = match (nodes[u].real, nodes[v].real) {
+                (true, true) => 1.0,
+                (false, false) => 8.0,
+                _ => 2.0,
+            };
+            let s = segs.len();
+            segs.push(Segment {
+                upper: u,
+                lower: v,
+                weight: e.weight.clamp(0.0, 1000.0) * omega,
+                upper_off: if u == a { a_off } else { 0.0 },
+                lower_off: if v == b { b_off } else { 0.0 },
+            });
+            nodes[u].down.push(s);
+            nodes[v].up.push(s);
+        }
+        chains[ei] = Some((chain, rev, label_node));
+    }
+
+    // クラスタのランクの幅と、間の空いたランクの詰め物
+    let mut crange: Vec<(usize, usize)> = vec![(usize::MAX, 0); k];
+    for v in nodes.iter().take(n) {
+        let mut c = v.cluster;
+        while let Some(ci) = c {
+            let r = v.rank;
+            crange[ci].0 = crange[ci].0.min(r);
+            crange[ci].1 = crange[ci].1.max(r);
+            c = parent[ci];
+        }
+    }
+    let max_rank = nodes.iter().map(|v| v.rank).max().unwrap_or(0);
+    {
+        let mut present = vec![std::collections::HashSet::<usize>::new(); k];
+        for v in &nodes {
+            let mut c = v.cluster;
+            while let Some(ci) = c {
+                present[ci].insert(v.rank);
+                c = parent[ci];
+            }
+        }
+        for c in 0..k {
+            let (lo, hi) = crange[c];
+            if lo == usize::MAX {
+                continue;
+            }
+            for r in lo..=hi {
+                if !present[c].contains(&r) {
+                    nodes.push(LNode {
+                        rank: r,
+                        cluster: Some(c),
+                        left: 0.0,
+                        right: 0.0,
+                        h: 0.0,
+                        real: false,
+                        up: vec![],
+                        down: vec![],
+                        seq: usize::MAX / 2 + c,
+                    });
+                }
+            }
+        }
+    }
+
+    // 初めの並び: ランク 0 は宣言の順、下のランクは上の隣の位置の順
+    let total = nodes.len();
+    let mut layers: Vec<Vec<usize>> = vec![Vec::new(); max_rank + 1];
+    let mut by_rank: Vec<usize> = (0..total).collect();
+    by_rank.sort_by_key(|&v| (nodes[v].rank, nodes[v].seq, v));
+    for v in by_rank {
+        layers[nodes[v].rank].push(v);
+    }
+    let mut ord = Ordering {
+        nodes: &nodes,
+        segs: &segs,
+        layers,
+        pos: vec![0; total],
+        parent: &parent,
+        global: vec![0.0; k],
+    };
+    ord.refresh();
+    ord.global_keys();
+    let mut val = vec![0f64; total];
+    for r in 0..ord.layers.len() {
+        let layer = ord.layers[r].clone();
+        for &v in &layer {
+            val[v] = if r == 0 {
+                ord.pos[v] as f64
+            } else {
+                ord.median(&nodes[v].up, true)
+                    .unwrap_or(1e9 + ord.pos[v] as f64)
+            };
+        }
+        ord.sort_layer(r, &val);
+    }
+    let mut best = ord.layers.clone();
+    let mut best_count = ord.crossings();
+    let mut stale = 0;
+    let transpose = segs.len() <= 1500;
+    for i in 0..opt.sweeps {
+        if best_count == 0 {
+            break;
+        }
+        ord.global_keys();
+        ord.sweep(i % 2 == 0, &mut val);
+        if transpose {
+            ord.transpose();
+        }
+        let c = ord.crossings();
+        if c < best_count {
+            best_count = c;
+            best = ord.layers.clone();
+            stale = 0;
+        } else {
+            stale += 1;
+            if stale >= 6 {
+                break;
+            }
+        }
+    }
+    ord.layers = best;
+    ord.refresh();
+    // 同じランクの辺は尾を左に（同じクラスタのとき）
+    for _ in 0..3 {
+        let mut moved = false;
+        for &(t, h) in &flat_edges {
+            if nodes[t].cluster != nodes[h].cluster {
+                continue;
+            }
+            let (pt, ph) = (ord.pos[t], ord.pos[h]);
+            if pt > ph {
+                let r = nodes[t].rank;
+                let layer = &mut ord.layers[r];
+                layer.remove(pt);
+                layer.insert(ph, t);
+                for (i, &v) in layer.iter().enumerate() {
+                    ord.pos[v] = i;
+                }
+                moved = true;
+            }
+        }
+        if !moved {
+            break;
+        }
+    }
+    // ordering=out: 同じ尾の頭を辺の順に
+    if opt.ordering_out {
+        for v in 0..n {
+            let downs: Vec<usize> = nodes[v].down.clone();
+            if downs.len() < 2 {
+                continue;
+            }
+            let heads: Vec<usize> = downs.iter().map(|&s| segs[s].lower).collect();
+            let c = nodes[heads[0]].cluster;
+            if heads.iter().any(|&h| nodes[h].cluster != c) {
+                continue;
+            }
+            let r = nodes[heads[0]].rank;
+            let mut slots: Vec<usize> = heads.iter().map(|&h| ord.pos[h]).collect();
+            slots.sort_unstable();
+            slots.dedup();
+            if slots.len() != heads.len() {
+                continue;
+            }
+            for (slot, &h) in slots.iter().zip(&heads) {
+                ord.layers[r][*slot] = h;
+            }
+            for (i, &u) in ord.layers[r].iter().enumerate() {
+                ord.pos[u] = i;
+            }
+        }
+    }
+    let crossings = ord.crossings();
+    let layers = ord.layers.clone();
+    let pos = ord.pos.clone();
+
+    // 隣どうしの同じランクの辺には、その間を空ける
+    let mut flat_room: std::collections::HashMap<(usize, usize), f64> = Default::default();
+    for (ei, e) in input_edges.iter().enumerate() {
+        if let Route::Flat { .. } = routes[ei] {
+            let (a, b) = (e.tail, e.head);
+            if nodes[a].rank == nodes[b].rank && pos[a].abs_diff(pos[b]) == 1 {
+                let (l, r) = if pos[a] < pos[b] { (a, b) } else { (b, a) };
+                let room = e.label.map_or(0.0, |(w, _)| w + 8.0);
+                let entry = flat_room.entry((l, r)).or_insert(0.0);
+                *entry = entry.max(room);
+            }
+        }
+    }
+    for (ei, e) in input_edges.iter().enumerate() {
+        if let Route::Flat { adjacent, .. } = &mut routes[ei] {
+            *adjacent =
+                nodes[e.tail].rank == nodes[e.head].rank && pos[e.tail].abs_diff(pos[e.head]) == 1;
+        }
+    }
+
+    // ---- 3. 横の位置 ----
+    let xs = place_x(&nodes, &segs, &layers, &parent, clusters, &flat_room, opt);
+    let (xs, cl, cr) = xs;
+
+    // ---- 4. 縦の位置 ----
+    let rank_count = layers.len();
+    let mut rank_h = vec![0f64; rank_count];
+    for v in &nodes {
+        rank_h[v.rank] = rank_h[v.rank].max(v.h);
+    }
+    let base_gap = if labeled {
+        opt.ranksep / 2.0
+    } else {
+        opt.ranksep
+    };
+    // クラスタの境の分: ランクの上（開くクラスタ）と下（閉じるクラスタ）
+    let top_label = |c: usize| {
+        if opt.label_side == LabelSide::Top {
+            clusters[c].label.1
+        } else {
+            0.0
+        }
+    };
+    let bottom_label = |c: usize| {
+        if opt.label_side == LabelSide::Bottom {
+            clusters[c].label.1
+        } else {
+            0.0
+        }
+    };
+    let mut open_room = vec![0f64; rank_count];
+    let mut close_room = vec![0f64; rank_count];
+    for c in 0..k {
+        let (lo, hi) = crange[c];
+        if lo == usize::MAX {
+            continue;
+        }
+        // c から上のクラスタのうち、同じランクで開く（閉じる）ものの分を足す
+        let mut room_open = 0.0;
+        let mut room_close = 0.0;
+        let mut p = Some(c);
+        while let Some(pi) = p {
+            if crange[pi].0 == lo {
+                room_open += clusters[pi].margin + top_label(pi);
+            }
+            if crange[pi].1 == hi {
+                room_close += clusters[pi].margin + bottom_label(pi);
+            }
+            p = parent[pi];
+        }
+        open_room[lo] = open_room[lo].max(room_open);
+        close_room[hi] = close_room[hi].max(room_close);
+    }
+    let mut rank_y = vec![0f64; rank_count];
+    let mut y =
+        open_room.first().copied().unwrap_or(0.0) + rank_h.first().copied().unwrap_or(0.0) / 2.0;
+    for r in 0..rank_count {
+        if r > 0 {
+            y +=
+                rank_h[r - 1] / 2.0 + base_gap + close_room[r - 1] + open_room[r] + rank_h[r] / 2.0;
+        }
+        rank_y[r] = y;
+    }
+    let mut height =
+        y + rank_h.last().copied().unwrap_or(0.0) / 2.0 + close_room.last().copied().unwrap_or(0.0);
+
+    // クラスタの箱（内から）
+    let mut boxes: Vec<Option<[f64; 4]>> = vec![None; k];
+    let mut order: Vec<usize> = (0..k).collect();
+    order.sort_by_key(|&c| std::cmp::Reverse(depth[c]));
+    let mut ys: Vec<(f64, f64)> = vec![(f64::MAX, f64::MIN); k];
+    for v in &nodes {
+        if let Some(c) = v.cluster {
+            let cy = rank_y[v.rank];
+            ys[c].0 = ys[c].0.min(cy - v.h / 2.0);
+            ys[c].1 = ys[c].1.max(cy + v.h / 2.0);
+        }
+    }
+    for &c in &order {
+        if crange[c].0 == usize::MAX {
+            continue;
+        }
+        let (t, b) = ys[c];
+        let top = t - clusters[c].margin - top_label(c);
+        let bottom = b + clusters[c].margin + bottom_label(c);
+        boxes[c] = Some([cl[c], top, cr[c], bottom]);
+        if let Some(p) = parent[c] {
+            ys[p].0 = ys[p].0.min(top);
+            ys[p].1 = ys[p].1.max(bottom);
+        }
+    }
+
+    // 道筋
+    for (ei, chain) in chains.iter().enumerate() {
+        let Some((chain, rev, label_node)) = chain else {
+            continue;
+        };
+        let e = &input_edges[ei];
+        let mut pts: Vec<(f64, f64)> = chain
+            .iter()
+            .map(|&v| (xs[v], rank_y[nodes[v].rank]))
+            .collect();
+        let last = pts.len() - 1;
+        let (a_off, b_off) = if *rev {
+            (e.head_off, e.tail_off)
+        } else {
+            (e.tail_off, e.head_off)
+        };
+        pts[0].0 += a_off;
+        pts[last].0 += b_off;
+        let label = match (label_node, e.label) {
+            (Some(v), Some((lw, _))) => {
+                let side = if opt.label_left { -1.0 } else { 1.0 };
+                Some((xs[*v] + side * (6.0 + lw / 2.0), rank_y[nodes[*v].rank]))
+            }
+            (None, Some(_)) => {
+                let (p, q) = (pts[0], pts[last]);
+                Some(((p.0 + q.0) / 2.0, (p.1 + q.1) / 2.0))
+            }
+            _ => None,
+        };
+        if *rev {
+            pts.reverse();
+        }
+        routes[ei] = Route::Path { points: pts, label };
+    }
+
+    let mut width = 0f64;
+    for (i, v) in nodes.iter().enumerate() {
+        width = width.max(xs[i] + v.right);
+    }
+    for b in boxes.iter().flatten() {
+        width = width.max(b[2]);
+        height = height.max(b[3]);
+    }
+    for r in &routes {
+        if let Route::Path {
+            label: Some((x, _)),
+            ..
+        } = r
+        {
+            width = width.max(*x);
+        }
+    }
+    Layout {
+        nodes: (0..n).map(|v| (xs[v], rank_y[nodes[v].rank])).collect(),
+        ranks: (0..n).map(|v| nodes[v].rank as i32).collect(),
+        routes,
+        clusters: boxes,
+        width,
+        height,
+        crossings,
+    }
+}
+
+/// 横の位置（補助グラフのネットワーク単体法）。ノードの x と、クラスタの左右の境を返す。
+fn place_x(
+    nodes: &[LNode],
+    segs: &[Segment],
+    layers: &[Vec<usize>],
+    parent: &[Option<usize>],
+    clusters: &[Cluster],
+    flat_room: &std::collections::HashMap<(usize, usize), f64>,
+    opt: &Options,
+) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
+    let total = nodes.len();
+    let k = clusters.len();
+    // 補助のノード: ノード、クラスタの左右、辺、根
+    let ln = |c: usize| total + c;
+    let rn = |c: usize| total + k + c;
+    let seg_node = |s: usize| total + 2 * k + s;
+    let root = total + 2 * k + segs.len();
+    let count = root + 1;
+    let side = |c: usize| -> f64 {
+        match opt.label_side {
+            LabelSide::Left => clusters[c].label.0,
+            _ => 0.0,
+        }
+    };
+    let right_side = |c: usize| -> f64 {
+        match opt.label_side {
+            LabelSide::Right => clusters[c].label.0,
+            _ => 0.0,
+        }
+    };
+    let ceil = |v: f64| -> i64 {
+        if v.is_finite() {
+            v.ceil().clamp(-1e9, 1e9) as i64
+        } else {
+            0
+        }
+    };
+    let used: Vec<bool> = {
+        let mut u = vec![false; k];
+        for v in nodes {
+            let mut c = v.cluster;
+            while let Some(ci) = c {
+                u[ci] = true;
+                c = parent[ci];
+            }
+        }
+        u
+    };
+    let sep_of = |u: usize, v: usize| -> f64 {
+        if nodes[u].real && nodes[v].real {
+            opt.nodesep
+        } else {
+            opt.nodesep / 2.0
+        }
+    };
+    let build = |with_clusters: bool| -> Vec<NsEdge> {
+        let mut e: Vec<NsEdge> = Vec::new();
+        let chain = |c: Option<usize>| -> Vec<usize> {
+            let mut out = Vec::new();
+            let mut p = c;
+            while let Some(pi) = p {
+                out.push(pi);
+                p = parent[pi];
+                if out.len() > 1000 {
+                    break;
+                }
+            }
+            out.reverse();
+            out
+        };
+        for layer in layers {
+            for w in layer.windows(2) {
+                let (u, v) = (w[0], w[1]);
+                let room = flat_room.get(&(u, v)).copied().unwrap_or(0.0);
+                e.push(NsEdge {
+                    tail: u,
+                    head: v,
+                    minlen: ceil(nodes[u].right + nodes[v].left + sep_of(u, v) + room),
+                    weight: 0.0,
+                });
+                if with_clusters {
+                    let cu = chain(nodes[u].cluster);
+                    let cv = chain(nodes[v].cluster);
+                    let common = cu.iter().zip(&cv).take_while(|(a, b)| a == b).count();
+                    let a = cu.get(common).copied();
+                    let b = cv.get(common).copied();
+                    match (a, b) {
+                        (Some(a), Some(b)) => e.push(NsEdge {
+                            tail: rn(a),
+                            head: ln(b),
+                            minlen: ceil(opt.nodesep),
+                            weight: 0.0,
+                        }),
+                        (Some(a), None) => e.push(NsEdge {
+                            tail: rn(a),
+                            head: v,
+                            minlen: ceil(nodes[v].left + opt.nodesep / 2.0),
+                            weight: 0.0,
+                        }),
+                        (None, Some(b)) => e.push(NsEdge {
+                            tail: u,
+                            head: ln(b),
+                            minlen: ceil(nodes[u].right + opt.nodesep / 2.0),
+                            weight: 0.0,
+                        }),
+                        (None, None) => {}
+                    }
+                }
+            }
+            if let Some(&first) = layer.first() {
+                e.push(NsEdge {
+                    tail: root,
+                    head: first,
+                    minlen: 0,
+                    weight: 0.0,
+                });
+            }
+        }
+        if with_clusters {
+            for (v, nd) in nodes.iter().enumerate() {
+                if let Some(c) = nd.cluster {
+                    e.push(NsEdge {
+                        tail: ln(c),
+                        head: v,
+                        minlen: ceil(nd.left + clusters[c].margin + side(c)),
+                        weight: 0.0,
+                    });
+                    e.push(NsEdge {
+                        tail: v,
+                        head: rn(c),
+                        minlen: ceil(nd.right + clusters[c].margin + right_side(c)),
+                        weight: 0.0,
+                    });
+                }
+            }
+            for c in 0..k {
+                if !used[c] {
+                    continue;
+                }
+                let inner = match opt.label_side {
+                    LabelSide::Top | LabelSide::Bottom => {
+                        clusters[c].label.0 + 2.0 * clusters[c].margin
+                    }
+                    _ => 0.0,
+                };
+                e.push(NsEdge {
+                    tail: ln(c),
+                    head: rn(c),
+                    minlen: ceil(inner),
+                    weight: 1.0,
+                });
+                e.push(NsEdge {
+                    tail: root,
+                    head: ln(c),
+                    minlen: 0,
+                    weight: 0.0,
+                });
+                if let Some(p) = parent[c] {
+                    e.push(NsEdge {
+                        tail: ln(p),
+                        head: ln(c),
+                        minlen: ceil(clusters[p].margin + side(p)),
+                        weight: 0.0,
+                    });
+                    e.push(NsEdge {
+                        tail: rn(c),
+                        head: rn(p),
+                        minlen: ceil(clusters[p].margin + right_side(p)),
+                        weight: 0.0,
+                    });
+                }
+            }
+        }
+        for (s, seg) in segs.iter().enumerate() {
+            // |(x_u + a) - (x_v + b)| を小さく: c = max(a, b)
+            let a = seg.upper_off.round() as i64;
+            let b = seg.lower_off.round() as i64;
+            let c = a.max(b);
+            e.push(NsEdge {
+                tail: seg_node(s),
+                head: seg.upper,
+                minlen: c - a,
+                weight: seg.weight,
+            });
+            e.push(NsEdge {
+                tail: seg_node(s),
+                head: seg.lower,
+                minlen: c - b,
+                weight: seg.weight,
+            });
+        }
+        e
+    };
+    let longest = |edges: &[NsEdge]| -> Option<Vec<i64>> {
+        let mut x = vec![0i64; count];
+        let mut indeg = vec![0usize; count];
+        let mut outs: Vec<Vec<usize>> = vec![Vec::new(); count];
+        for (i, e) in edges.iter().enumerate() {
+            indeg[e.head] += 1;
+            outs[e.tail].push(i);
+        }
+        let mut queue: Vec<usize> = (0..count).filter(|&v| indeg[v] == 0).collect();
+        let mut q = 0;
+        while q < queue.len() {
+            let v = queue[q];
+            q += 1;
+            for &ei in &outs[v] {
+                let e = &edges[ei];
+                x[e.head] = x[e.head].max(x[v] + e.minlen);
+                indeg[e.head] -= 1;
+                if indeg[e.head] == 0 {
+                    queue.push(e.head);
+                }
+            }
+        }
+        (queue.len() == count).then_some(x)
+    };
+    let mut edges = build(true);
+    let mut x = match longest(&edges) {
+        Some(x) => x,
+        None => {
+            // クラスタの左右がランクで食い違うなら、クラスタの境をあきらめる
+            edges = build(false);
+            longest(&edges).unwrap_or_else(|| vec![0; count])
+        }
+    };
+    // 辺のノードは、両端の左のほうに（初めの値をきつく）
+    for (s, seg) in segs.iter().enumerate() {
+        let a = seg.upper_off.round() as i64;
+        let b = seg.lower_off.round() as i64;
+        let c = a.max(b);
+        x[seg_node(s)] = (x[seg.upper] - (c - a)).min(x[seg.lower] - (c - b));
+    }
+    simplex::solve(count, &edges, &mut x, opt.x_iter);
+    let mut min_x = f64::MAX;
+    for (v, nd) in nodes.iter().enumerate() {
+        min_x = min_x.min(x[v] as f64 - nd.left);
+    }
+    let mut cl = vec![0f64; k];
+    let mut cr = vec![0f64; k];
+    for c in 0..k {
+        if used[c] && edges.iter().any(|e| e.head == ln(c)) {
+            min_x = min_x.min(x[ln(c)] as f64);
+        }
+    }
+    if min_x == f64::MAX {
+        min_x = 0.0;
+    }
+    let xs: Vec<f64> = (0..total).map(|v| x[v] as f64 - min_x).collect();
+    let clustered = edges
+        .iter()
+        .any(|e| (total..total + 2 * k).contains(&e.head));
+    for c in 0..k {
+        if clustered {
+            cl[c] = x[ln(c)] as f64 - min_x;
+            cr[c] = x[rn(c)] as f64 - min_x;
+        } else {
+            // クラスタの境をあきらめたときは、中のノードの外側
+            let (mut lo, mut hi) = (f64::MAX, f64::MIN);
+            for (v, nd) in nodes.iter().enumerate() {
+                let mut p = nd.cluster;
+                while let Some(pi) = p {
+                    if pi == c {
+                        lo = lo.min(xs[v] - nd.left - clusters[c].margin);
+                        hi = hi.max(xs[v] + nd.right + clusters[c].margin);
+                        break;
+                    }
+                    p = parent[pi];
+                }
+            }
+            cl[c] = if lo == f64::MAX { 0.0 } else { lo };
+            cr[c] = if hi == f64::MIN { 0.0 } else { hi };
+        }
+    }
+    (xs, cl, cr)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn opts() -> Options {
+        Options {
+            nodesep: 18.0,
+            ranksep: 36.0,
+            label_side: LabelSide::Top,
+            ordering_out: false,
+            label_left: false,
+            rank_iter: 1000,
+            x_iter: 1000,
+            sweeps: 24,
+        }
+    }
+
+    fn node(c: Option<usize>) -> Node {
+        Node {
+            w: 54.0,
+            h: 36.0,
+            cluster: c,
+            extra_right: 0.0,
+        }
+    }
+
+    fn edge(t: usize, h: usize) -> Edge {
+        Edge {
+            tail: t,
+            head: h,
+            minlen: 1.0,
+            weight: 1.0,
+            constraint: true,
+            label: None,
+            tail_off: 0.0,
+            head_off: 0.0,
+        }
+    }
+
+    #[test]
+    fn ranks_chains_and_same_sets() {
+        let nodes = vec![node(None); 4];
+        let edges = vec![edge(0, 1), edge(1, 2), edge(0, 3)];
+        let l = layout(
+            &nodes,
+            &edges,
+            &[],
+            &[(RankKind::Same, vec![2, 3])],
+            &opts(),
+        );
+        assert_eq!(l.ranks, vec![0, 1, 2, 2]);
+        assert!(matches!(l.routes[2], Route::Path { ref points, .. } if points.len() == 3));
+        // rank=min・max
+        let l = layout(
+            &nodes,
+            &[edge(0, 1)],
+            &[],
+            &[(RankKind::Max, vec![2]), (RankKind::Source, vec![3])],
+            &opts(),
+        );
+        assert_eq!(l.ranks[3], 0);
+        assert!(l.ranks[0] >= 1);
+        assert!(l.ranks[2] >= l.ranks[1]);
+    }
+
+    #[test]
+    fn breaks_cycles_and_keeps_flat_edges() {
+        let nodes = vec![node(None); 3];
+        let mut back = edge(2, 0);
+        back.constraint = true;
+        let mut flat = edge(1, 0);
+        flat.constraint = false;
+        let l = layout(
+            &nodes,
+            &[edge(0, 1), edge(1, 2), back, flat],
+            &[],
+            &[(RankKind::Same, vec![0, 2])],
+            &opts(),
+        );
+        assert_eq!(l.ranks[0], l.ranks[2]);
+        assert!(matches!(l.routes[2], Route::Flat { .. }));
+        assert!(matches!(l.routes[3], Route::Path { .. }));
+    }
+
+    #[test]
+    fn keeps_nodes_apart_and_inside_clusters() {
+        let nodes = vec![node(Some(0)), node(Some(0)), node(None), node(Some(1))];
+        let clusters = vec![
+            Cluster {
+                parent: None,
+                margin: 8.0,
+                label: (30.0, 14.0),
+            },
+            Cluster {
+                parent: None,
+                margin: 8.0,
+                label: (0.0, 0.0),
+            },
+        ];
+        let edges = vec![edge(0, 1), edge(2, 1), edge(3, 1), edge(2, 3)];
+        let l = layout(&nodes, &edges, &clusters, &[], &opts());
+        for r in 0..=2 {
+            let mut row: Vec<(f64, usize)> = (0..4)
+                .filter(|&v| l.ranks[v] == r)
+                .map(|v| (l.nodes[v].0, v))
+                .collect();
+            row.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+            for w in row.windows(2) {
+                assert!(w[1].0 - w[0].0 >= 54.0 + 18.0 - 0.5, "{row:?}");
+            }
+        }
+        let b = l.clusters[0].unwrap();
+        for v in [0, 1] {
+            let (x, y) = l.nodes[v];
+            assert!(
+                x - 27.0 >= b[0] && x + 27.0 <= b[2] && y - 18.0 >= b[1] && y + 18.0 <= b[3],
+                "{b:?} {:?}",
+                l.nodes[v]
+            );
+        }
+        // クラスタの外のノードは箱の外
+        let (x, y) = l.nodes[2];
+        assert!(!(x > b[0] && x < b[2] && y > b[1] && y < b[3]));
+        assert_eq!(l.crossings, 0);
+    }
+
+    #[test]
+    fn straightens_simple_chains() {
+        let nodes = vec![node(None); 3];
+        let l = layout(&nodes, &[edge(0, 1), edge(1, 2)], &[], &[], &opts());
+        assert_eq!(l.nodes[0].0, l.nodes[1].0);
+        assert_eq!(l.nodes[1].0, l.nodes[2].0);
+        assert!(l.nodes[1].1 - l.nodes[0].1 >= 36.0 + 36.0);
+    }
+}

@@ -9,9 +9,11 @@
 pub mod arrows;
 pub mod color;
 pub mod graph;
+pub mod layout;
 pub mod parse;
 pub mod record;
 pub mod shapes;
+pub mod simplex;
 pub mod text;
 mod x11;
 
