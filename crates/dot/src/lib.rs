@@ -6,8 +6,10 @@
 //! テーマに従い（core の `diagram::colorize`）、文が決めた色はそのまま使う。描けないもの（画像・HTML の表・ortho の
 //! 線など）は近いもので描き、`Drawing::notes` に理由を残す。
 
+pub mod color;
 pub mod graph;
 pub mod parse;
+mod x11;
 
 /// 描けない理由。
 #[derive(Clone, Debug, PartialEq, Eq)]

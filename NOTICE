@@ -40,3 +40,5 @@ in the headers of the ported source files.
 - crates/pele: pele 1.13.0, Copyright (c) 2026 kepano, MIT License.
 - crates/core/src/mermaidtheme.rs: the colours of Mermaid's named themes, Copyright (c) 2014 - 2022 Knut
   Sveidqvist, MIT License; khroma 2.1.0, Copyright (c) 2019-present Fabio Spampinato, Andrew Maney, MIT License.
+- crates/dot/src/x11.rs: the X11 color names and values from X.Org's rgb.txt, Copyright The Open Group,
+  MIT (X11) License.
