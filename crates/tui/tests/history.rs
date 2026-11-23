@@ -3417,6 +3417,47 @@ fn compare_two_commits_as_two_versions() {
     );
 }
 
+/// Range Diff を開いている間は、サイドバーの Workspace に行がある。ほかの画面へ移っても、そこから戻れる
+#[test]
+fn range_diff_row_while_open() {
+    let dir = tempfile::tempdir().unwrap();
+    changed(dir.path());
+    std::fs::write(dir.path().join("notes.txt"), "two\n").unwrap();
+    git(
+        dir.path(),
+        BASE + DAY * 4,
+        &["commit", "-q", "-a", "--amend", "--no-edit"],
+    );
+    let side = |text: &str| -> Vec<String> {
+        text.lines()
+            .skip(1)
+            .filter_map(|l| column(l, 0))
+            .map(|l| l.trim().to_owned())
+            .collect()
+    };
+    let before = amonhen_tui::snapshot(open(dir.path()), 160, 14, clock(), "").unwrap();
+    assert!(
+        !side(&before).contains(&"Range Diff".to_owned()),
+        "{before}"
+    );
+    let shown = amonhen_tui::snapshot(open(dir.path()), 160, 14, clock(), ":compare\n").unwrap();
+    println!("{shown}");
+    assert!(side(&shown).contains(&"Range Diff".to_owned()), "{shown}");
+    // History へ戻り、サイドバーの行から開き直す。
+    let back = amonhen_tui::snapshot(open(dir.path()), 160, 14, clock(), ":compare\n2").unwrap();
+    assert!(side(&back).contains(&"Range Diff".to_owned()), "{back}");
+    let again =
+        amonhen_tui::snapshot(open(dir.path()), 160, 14, clock(), ":compare\n20jj\n").unwrap();
+    println!("{again}");
+    let last = again.lines().last().unwrap();
+    assert!(last.contains("main compared with main@{1}"), "{last}");
+    // ほかのファイルの Blame を開けば、行は消える。
+    let blame =
+        amonhen_tui::snapshot(open(dir.path()), 160, 14, clock(), ":compare\n2\nB").unwrap();
+    println!("{blame}");
+    assert!(!side(&blame).contains(&"Range Diff".to_owned()), "{blame}");
+}
+
 /// range-diff で `c`: 変わらなかった組（`=`）を出さない（アプリの Changes Only）。もう一度で戻る
 #[test]
 fn range_diff_shows_changes_only() {
