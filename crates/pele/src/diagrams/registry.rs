@@ -19,6 +19,7 @@ static DIAGRAMS: &[&Diagram] = &[
     &super::quadrant::QUADRANT_CHART,
     &super::radar::RADAR,
     &super::sankey::SANKEY,
+    &super::xychart::XYCHART,
 ];
 
 /// 種類の名前（pele の `DiagramType`）の図。

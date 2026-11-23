@@ -6,3 +6,4 @@ pub mod quadrant;
 pub mod radar;
 pub mod registry;
 pub mod sankey;
+pub mod xychart;
