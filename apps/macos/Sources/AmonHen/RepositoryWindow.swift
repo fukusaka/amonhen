@@ -1520,6 +1520,16 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
                 }
             }
         }
+        // --measure-diff-scroll で、選んだコミット（--select-row N）の差分をスクロールし、窓の幅を変えて測る。
+        if CommandLine.arguments.contains("--measure-diff-scroll") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [self] in
+                let rows = AppDelegate.option("--scroll-rows").flatMap(Double.init) ?? 1.5
+                detail.measureDiffScroll(frames: 600, rowsPerFrame: rows) { summary in
+                    print(summary)
+                    NSApp.terminate(nil)
+                }
+            }
+        }
         if CommandLine.arguments.contains("--log-scroll") { history.logScrollGestures() }
         // --stashes で、Stashes の画面を開く（stash は ref を読んだ後に出るので、少し待つ）。
         if CommandLine.arguments.contains("--stashes") {

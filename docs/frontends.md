@@ -237,7 +237,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Combined HEAD → working tree diff with line and hunk checks | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: With the engine; without it, line staging on separate unstaged and staged diffs.<br>CLI: `diff --combined`, `stage --rows`. |
 | Range selection in the gutter, J/K and ⌥J/⌥K | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: `v` starts a range; `[` `]` go to the hunk headers. |
 | Unstaged / Staged switch for files that can't be overlaid | ✓ | ✓ | ✓ | n/a | ✓ | ✓ | VSCode: Always shown separately.<br>CLI: `diff --staged`.<br>TUI: The unstaged side first; `s` in the diff switches sides. |
-| Diff options (unified/split, context, wrap) | — | — | — | — | n/a | — |  |
+| Diff options (unified/split, context, wrap) | △ | — | — | — | n/a | — | macOS: Wrapping long lines only (Wrap Long Lines, for every diff); no side-by-side view. |
 | Ignore whitespace (lines aren't staged or discarded meanwhile) | ✓ | ✓ | ✓ | — | ✓ | — | CLI: `diff -w`, `-b`, `--ignore-space-at-eol` (not with `--combined`). |
 | Discard lines, hunks and files (undoable) | ✓ | ✓ | △ | ✓ | ✓ | ✓ | CLI: `discard --rows`.<br>Windows: Right-click a line or a hunk header in the Working Copy diff (Discard Lines); lines can't be selected |
 | Add to .gitignore | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: `i` on an untracked file, then `p` for its path or `e` for its extension. |

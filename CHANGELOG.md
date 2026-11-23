@@ -27,6 +27,8 @@ becomes the GitHub Release notes.
 - All Files previews more than source: images zoom and any format the system reads counts as one, SVGs show
   what breaks on Android, iOS, Flutter and React Native with an approximation of each, Markdown shows formatted by
   the app (GitHub tables, task lists, alerts, links; nothing fetched), and other binaries open in Quick Look.
+- The macOS app's diffs can wrap long lines instead of scrolling sideways: Wrap Long Lines in History's View Options
+  and the Working Copy diff bar, for every diff in the app.
 
 #### Changed
 

@@ -78,6 +78,39 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
     /// いちばん長い行の幅（横にスクロールできる範囲）。読んだときに文字数から見積もり、描いた行がそれより長ければ広げる。
     private var textWidth: CGFloat = 0
     private var gutterWidth: CGFloat { numbersWidth + (showsStageChecks ? checkWidth : 0) }
+
+    // 長い行の折り返し（`Settings.wrapDiffLines`）。折り返すときは横にスクロールしない。
+    private var wrapsLines = Settings.wrapDiffLines
+    /// 折り返す行の、見た目の行の始まり（UTF-16 の位置、先頭は 0）。2 行以上になる行だけ持つ。
+    private var wrapStarts: [Int: [Int]] = [:]
+    /// 折り返しを求めるために並べた行の、文字の境目ごとの横位置（幅によらないので、幅を変えて折り返し直すときに
+    /// 使い回す。差分を替えたら捨てる）。
+    private var wrapMeasureOffsets: [Int: [CGFloat]] = [:]
+    /// 折り返す行と、その見た目の行の数（行の順）。
+    private var wrapRows: [(row: Int, lines: Int)] = []
+    /// `wrapStarts` を求めたときの、文字を置ける幅。
+    private var wrapWidth: CGFloat = 0
+    /// 折り返す行の、見た目の行ごとに分けたグリフ（描くときに作り、並べたグリフと一緒に捨てる）。
+    private var wrappedLines: [Int: WrappedLine] = [:]
+
+    /// 幅が変わるたびに折り返し直してよい時間（これより長くかかった差分は、幅が落ち着いてから折り返し直す）。
+    private static let syncRewrapBudget: Double = 4
+    private var pendingRewrap: DispatchWorkItem?
+    /// 最後に折り返したときの、行の数・折り返した行の数・並べて測った行の数・かかった時間（`--measure-diff-scroll`）。
+    private(set) var lastWrapStats: (rows: Int, wrapped: Int, shaped: Int, ms: Double)?
+    private var firstWrapStats: (rows: Int, wrapped: Int, shaped: Int, ms: Double)?
+
+    fileprivate struct WrappedLine {
+        /// 見た目の行ごとのグリフ（ペン位置はその行の左端から）。
+        var parts: [TextRenderer.ShapedLine]
+        /// 見た目の行の左端の、元の 1 行の中での横位置（ポイント）。
+        var xs: [CGFloat]
+    }
+
+    /// 行の高さ（折り返した行は見た目の行の数だけ）。
+    private func rowHeight(_ row: Int) -> CGFloat {
+        lineHeight * CGFloat(wrapStarts[row]?.count ?? 1)
+    }
     /// Working Copy の HEAD と作業ツリーの差分か。変更の行と hunk の見出しの左に、次のコミットに含めるかの
     /// チェックボックスを出す。
     private var showsStageChecks: Bool { (diff as? WorkingFileDiff)?.isCombined == true }
@@ -116,6 +149,10 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
     /// 見出しの下に置く欄（画像の比較など。ファイルの番号 → ビュー）と、その分だけ空ける高さ。
     private(set) var filePanels: [Int: NSView] = [:]
     private var extraSorted: [(row: Int, height: CGFloat)] = []
+    /// `extraSorted` の高さの累計（i 番目は 0..<i の和）。折り返した行が多くても `rowY` を二分探索で引く。
+    private var extraPrefix: [CGFloat] = [0]
+    /// 足す高さがすべて 0 以上か（畳んだ見出しがない。`rowAt` も二分探索できる）。
+    private var extraIsPositive = true
     let panelClip = PanelClipView()
     /// 差分の代わりに出すビュー（その時点のファイル）。
     var replacement: NSView? {
@@ -158,6 +195,13 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
     }
 
     private func rebuildExtra() {
+        rebuildExtraEntries()
+        updateDocumentSize()
+        redraw()
+    }
+
+    /// 行の下に足す高さ（折り返した行の続き、欄、フォルダの行、畳んだ見出し、消したところの印）を並べ直す。
+    private func rebuildExtraEntries() {
         var entries: [(row: Int, order: Int, height: CGFloat)] = []
         for (file, v) in filePanels where file < fileRows.count { entries.append((fileRows[file], 0, v.frame.height)) }
         for (file, folders) in folderGroups where file < fileRows.count {
@@ -175,9 +219,28 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
         }
         flush()
         for mark in deletionMarks { entries.append((mark.after, 3, lineHeight)) }
-        extraSorted = entries.sorted { ($0.row, $0.order) < ($1.row, $1.order) }.map { ($0.row, $0.height) }
-        updateDocumentSize()
-        redraw()
+        let others = entries.sorted { ($0.row, $0.order) < ($1.row, $1.order) }
+        // 折り返した行の続き（行の順に並んでいて数が多い）は、並べ替えずに混ぜる。その行のすぐ下（同じ行の後ろに
+        // 置くフォルダの行・印より前）。
+        var merged: [(row: Int, height: CGFloat)] = []
+        merged.reserveCapacity(others.count + wrapRows.count)
+        var i = 0
+        for w in wrapRows where hiddenRows.isEmpty || !hiddenRows.contains(w.row) {
+            while i < others.count, others[i].row < w.row {
+                merged.append((others[i].row, others[i].height))
+                i += 1
+            }
+            merged.append((w.row, CGFloat(w.lines - 1) * lineHeight))
+        }
+        while i < others.count {
+            merged.append((others[i].row, others[i].height))
+            i += 1
+        }
+        extraSorted = merged
+        extraPrefix = [0]
+        extraPrefix.reserveCapacity(extraSorted.count + 1)
+        for e in extraSorted { extraPrefix.append(extraPrefix[extraPrefix.count - 1] + e.height) }
+        extraIsPositive = extraSorted.allSatisfy { $0.height >= 0 }
     }
 
     /// その時点のファイルとして見せる（History の「すべてのファイル」）。hunk の見出しと消した行は出さず、消した
@@ -300,13 +363,30 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
 
     /// 行の上端（文書の座標）。見出しの下に置いた欄の分だけ下がる。
     func rowY(_ row: Int) -> CGFloat {
-        var y = CGFloat(row) * lineHeight
-        for e in extraSorted where e.row < row { y += e.height }
-        return y
+        // row より前の行に足した高さ（extraSorted は行の順）。
+        var lo = 0, hi = extraSorted.count
+        while lo < hi {
+            let mid = (lo + hi) / 2
+            if extraSorted[mid].row < row { lo = mid + 1 } else { hi = mid }
+        }
+        return CGFloat(row) * lineHeight + extraPrefix[lo]
     }
 
-    /// 文書の座標 `y` にある行（欄の中なら、その見出しの行）。
+    /// 文書の座標 `y` にある行（欄の中・折り返した続きなら、その行）。
     func rowAt(_ y: CGFloat) -> Int {
+        if extraIsPositive {
+            // 足す高さがすべて 0 以上なら、i 番目の始まり（行の下端 + それまでの和）は増えていく。y より後に
+            // 始まる最初のものを探し、その 1 つ前の中にあればその行。
+            var lo = 0, hi = extraSorted.count
+            while lo < hi {
+                let mid = (lo + hi) / 2
+                if y < CGFloat(extraSorted[mid].row + 1) * lineHeight + extraPrefix[mid] { hi = mid } else { lo = mid + 1 }
+            }
+            if lo > 0, y < CGFloat(extraSorted[lo - 1].row + 1) * lineHeight + extraPrefix[lo] {
+                return extraSorted[lo - 1].row
+            }
+            return Int((y - extraPrefix[lo]) / lineHeight)
+        }
         var offset: CGFloat = 0
         for e in extraSorted {
             let start = CGFloat(e.row + 1) * lineHeight + offset
@@ -347,6 +427,7 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
         numberCache.removeAll()
         headerGlyphs.removeAll()
         checkGlyphs.removeAll()
+        wrappedLines.removeAll()
     }
 
     init(renderer: TextRenderer) {
@@ -362,8 +443,9 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
         container.onLayout = { [weak self] in self?.layoutSubviews() }
         scrollView.documentView = document
         scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = true
+        scrollView.hasHorizontalScroller = !wrapsLines
         scrollView.drawsBackground = false
+        NotificationCenter.default.addObserver(self, selector: #selector(wrapSettingChanged), name: .diffWrapLinesChanged, object: nil)
         scrollView.contentView.postsBoundsChangedNotifications = true
         NotificationCenter.default.addObserver(
             self, selector: #selector(redraw), name: NSView.boundsDidChangeNotification, object: scrollView.contentView)
@@ -430,6 +512,21 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
         scrollView.frame = NSRect(x: 0, y: 0, width: width, height: max(0, top))
         replacement?.frame = scrollView.frame
         textView.frame = view.convert(scrollView.contentView.frame, from: scrollView)
+        // 幅が変わったら折り返し直す。時間のかかる大きな差分では、幅が落ち着いてから（窓・分割の幅をドラッグして
+        // いる間は前の折り返しのまま描く）。
+        if wrapsLines, diff != nil, abs(wrapAvailableWidth - wrapWidth) >= 0.5 {
+            if (lastWrapStats?.ms ?? 0) < Self.syncRewrapBudget || measurement != nil {
+                FrameProfile.measure("diff: rewrap total") { rewrap() }
+                return
+            }
+            pendingRewrap?.cancel()
+            let work = DispatchWorkItem { [weak self] in
+                guard let self, wrapsLines, abs(wrapAvailableWidth - wrapWidth) >= 0.5 else { return }
+                rewrap()
+            }
+            pendingRewrap = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
+        }
         updateDocumentSize()
         redraw()
     }
@@ -446,6 +543,9 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
         if let diff { loadSyntax(of: diff) }
         shaped.removeAll()
         headerGlyphs.removeAll()
+        // 前の差分の折り返しを残すと、下の欄・畳みの並べ直しで前の行の高さが混じる。
+        wrapMeasureOffsets = [:]
+        computeWraps()
         fileRows = diff?.withRows { all in all.indices.filter { all[$0].kind == UInt8(AmonhenDiffRow_FILE) } } ?? []
         if !filePanels.isEmpty || !folderGroups.isEmpty || !hiddenRows.isEmpty {
             folderGroups = [:]
@@ -454,6 +554,7 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
             setPanels([:])
         }
         if fileMode { computeFileMode() }
+        rebuildExtraEntries()
         textWidth = diff.map(estimatedTextWidth) ?? 0
         topFile = nil
         selectedRows.removeAll()
@@ -501,7 +602,7 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
 
     private func updateDocumentSize() {
         let clip = scrollView.contentView.bounds.size
-        let width = textWidth > 0 ? gutterWidth + 8 + textWidth + 40 : 0
+        let width = textWidth > 0 && !wrapsLines ? gutterWidth + 8 + textWidth + 40 : 0
         document.frame.size = NSSize(width: max(clip.width, width), height: max(clip.height, rowY(diff?.rowCount ?? 0)))
     }
 
@@ -842,7 +943,16 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
         if point.y < 0 { return TextPosition(row: 0, index: 0) }
         let row = rowAt(point.y)
         if row >= diff.rowCount { return TextPosition(row: diff.rowCount - 1, index: text(row: diff.rowCount - 1).utf16.count) }
-        return TextPosition(row: row, index: shapedLine(row)?.index(at: point.x - gutterWidth - 8) ?? 0)
+        let x = point.x - gutterWidth - 8
+        if let starts = wrapStarts[row], let line = shapedLine(row) {
+            // 折り返した行: 見た目の行を決め、その中で探す。
+            let k = max(0, min(starts.count - 1, Int(floor((point.y - rowY(row)) / lineHeight))))
+            let from = starts[k]
+            let to = k + 1 < starts.count ? starts[k + 1] : text(row: row).utf16.count
+            guard x > 0 else { return TextPosition(row: row, index: from) }
+            return TextPosition(row: row, index: max(from, min(to, line.index(at: line.offset(of: from) + x))))
+        }
+        return TextPosition(row: row, index: shapedLine(row)?.index(at: x) ?? 0)
     }
 
     /// クリックの回数で、文字・単語・行の単位で選ぶ。
@@ -1032,11 +1142,12 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
         let x1 = gutterWidth + 8 + line.offset(of: m.range.upperBound)
         let clip = scrollView.contentView
         var origin = clip.bounds.origin
-        let top = rowY(m.row)
+        // 折り返した行なら、一致のある見た目の行。
+        let top = rowY(m.row) + CGFloat(visualLine(of: m.range.lowerBound, row: m.row)) * lineHeight
         if top < origin.y || top + lineHeight > origin.y + clip.bounds.height {
             origin.y = max(0, min(top - clip.bounds.height / 3, document.frame.height - clip.bounds.height))
         }
-        if x0 < origin.x + gutterWidth || x1 > origin.x + clip.bounds.width {
+        if !wrapsLines, x0 < origin.x + gutterWidth || x1 > origin.x + clip.bounds.width {
             origin.x = max(0, x0 - gutterWidth - 40)
         }
         if origin != clip.bounds.origin {
@@ -1061,9 +1172,99 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
     }
 
     @objc private func redraw() {
-        buildInstances()
+        FrameProfile.measure("diff: build") { buildInstances() }
         positionPanels()
-        renderer.draw(layer: textView.metalLayer, background: backdrop.diffBackground)
+        FrameProfile.measure("diff: encode") { renderer.draw(layer: textView.metalLayer, background: backdrop.diffBackground) }
+    }
+
+    private final class ScrollMeasurement {
+        let frames: Int
+        let step: CGFloat
+        let completion: (String) -> Void
+        var frame = 0
+        var direction: CGFloat = 1
+        var scrollWork: [CFTimeInterval] = []
+        var resizeWork: [CFTimeInterval] = []
+        var scrollProfile = ""
+        var link: CADisplayLink?
+
+        init(frames: Int, step: CGFloat, completion: @escaping (String) -> Void) {
+            self.frames = frames
+            self.step = step
+            self.completion = completion
+        }
+
+        static func percentiles(_ values: [CFTimeInterval]) -> String {
+            let sorted = values.sorted()
+            guard !sorted.isEmpty else { return "-" }
+            let at = { (p: Double) in sorted[min(sorted.count - 1, Int(Double(sorted.count) * p))] * 1000 }
+            return String(format: "p50 %.3f  p95 %.3f  max %.3f ms (%d frames)", at(0.5), at(0.95), sorted.last! * 1000, sorted.count)
+        }
+    }
+    private var measurement: ScrollMeasurement?
+
+    /// `--measure-diff-scroll`: 表示のリフレッシュごとに `rowsPerFrame` 行ずつ `frames` フレーム分スクロールし
+    /// （端で折り返す）、続けて窓の幅を 120 フレーム変えて（折り返し直し）、1 フレームの処理の時間を測る。
+    func measureScroll(frames: Int, rowsPerFrame: Double, completion: @escaping (String) -> Void) {
+        let m = ScrollMeasurement(frames: frames, step: CGFloat(rowsPerFrame) * lineHeight, completion: completion)
+        measurement = m
+        FrameProfile.reset()
+        FrameProfile.enabled = true
+        m.link = view.displayLink(target: self, selector: #selector(measureFrame(_:)))
+        m.link?.add(to: .main, forMode: .common)
+    }
+
+    @objc private func measureFrame(_ link: CADisplayLink) {
+        guard let m = measurement else { return link.invalidate() }
+        let resizeFrames = 120
+        if m.frame >= m.frames + resizeFrames {
+            link.invalidate()
+            FrameProfile.enabled = false
+            let stats = firstWrapStats.map {
+                String(format: "wrap: %d rows, %d wrapped, %d shaped to measure, last %.3f ms", $0.rows, $0.wrapped, $0.shaped, $0.ms)
+            } ?? "wrap: off"
+            let wrapTimes = (PerformanceLog.samples["Diff: wrap long lines"] ?? []).suffix(resizeFrames).map { $0 / 1000 }
+            m.completion("""
+                diff scroll (wrap \(wrapsLines ? "on" : "off"), \(diff?.rowCount ?? 0) rows, document \(Int(document.frame.height)) pt, \
+                text width \(Int(wrapAvailableWidth)) pt)
+                \(stats)
+                scroll: \(ScrollMeasurement.percentiles(m.scrollWork))
+                \(m.scrollProfile)
+                resize: \(ScrollMeasurement.percentiles(m.resizeWork))
+                wrap per resize: \(ScrollMeasurement.percentiles(Array(wrapTimes)))
+                breakdown during resize:
+                \(FrameProfile.summary())
+                """)
+            measurement = nil
+            return
+        }
+        let start = CACurrentMediaTime()
+        if m.frame < m.frames {
+            let clip = scrollView.contentView
+            var origin = clip.bounds.origin
+            let bottom = max(0, document.frame.height - clip.bounds.height)
+            if origin.y + m.step * m.direction > bottom { m.direction = -1 }
+            if origin.y + m.step * m.direction < 0 { m.direction = 1 }
+            origin.y = max(0, min(bottom, origin.y + m.step * m.direction))
+            clip.scroll(to: origin)
+            scrollView.reflectScrolledClipView(clip)
+            m.scrollWork.append(CACurrentMediaTime() - start)
+            FrameProfile.endFrame()
+            if m.frame == m.frames - 1 {
+                m.scrollProfile = "breakdown during scroll:\n" + FrameProfile.summary()
+                FrameProfile.reset()
+            }
+        } else if let window = view.window {
+            // 幅を 1 フレームごとに 8 pt ずつ変える（ライブリサイズのように）。
+            let k = m.frame - m.frames
+            var frame = window.frame
+            frame.size.width += (k / 15) % 2 == 0 ? -8 : 8
+            window.setFrame(frame, display: false)
+            window.layoutIfNeeded()
+            m.resizeWork.append(CACurrentMediaTime() - start)
+            FrameProfile.endFrame()
+        }
+        m.frame += 1
     }
 
     /// この窓の背景の設定（差分の地・帯の色）。
@@ -1130,19 +1331,21 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
                 if hiddenRows.contains(row) { continue }
                 let r = all[row]
                 let top = rowY(row) - origin.y
+                // 折り返した行は、見た目の行の数だけ高い。
+                let height = rowHeight(row)
                 if selectedRows.contains(row) {
-                    renderer.addRect(CGRect(x: 0, y: top, width: gutterWidth, height: lineHeight), color: selection)
+                    renderer.addRect(CGRect(x: 0, y: top, width: gutterWidth, height: height), color: selection)
                 }
                 switch r.kind {
                 case UInt8(AmonhenDiffRow_ADDED):
-                    renderer.addRect(CGRect(x: 0, y: top, width: width, height: lineHeight),
+                    renderer.addRect(CGRect(x: 0, y: top, width: width, height: height),
                                      color: modifiedRows.contains(row) ? NSColor.systemBlue.withAlphaComponent(0.2).rgba : added)
-                case UInt8(AmonhenDiffRow_REMOVED): renderer.addRect(CGRect(x: 0, y: top, width: width, height: lineHeight), color: removed)
-                case UInt8(AmonhenDiffRow_HUNK): renderer.addRect(CGRect(x: 0, y: top, width: width, height: lineHeight), color: hunk)
-                case UInt8(AmonhenDiffRow_OURS): renderer.addRect(CGRect(x: 0, y: top, width: width, height: lineHeight), color: ours)
-                case UInt8(AmonhenDiffRow_THEIRS): renderer.addRect(CGRect(x: 0, y: top, width: width, height: lineHeight), color: theirs)
-                case UInt8(AmonhenDiffRow_BASE): renderer.addRect(CGRect(x: 0, y: top, width: width, height: lineHeight), color: base)
-                case UInt8(AmonhenDiffRow_MARKER): renderer.addRect(CGRect(x: 0, y: top, width: width, height: lineHeight), color: marker)
+                case UInt8(AmonhenDiffRow_REMOVED): renderer.addRect(CGRect(x: 0, y: top, width: width, height: height), color: removed)
+                case UInt8(AmonhenDiffRow_HUNK): renderer.addRect(CGRect(x: 0, y: top, width: width, height: height), color: hunk)
+                case UInt8(AmonhenDiffRow_OURS): renderer.addRect(CGRect(x: 0, y: top, width: width, height: height), color: ours)
+                case UInt8(AmonhenDiffRow_THEIRS): renderer.addRect(CGRect(x: 0, y: top, width: width, height: height), color: theirs)
+                case UInt8(AmonhenDiffRow_BASE): renderer.addRect(CGRect(x: 0, y: top, width: width, height: height), color: base)
+                case UInt8(AmonhenDiffRow_MARKER): renderer.addRect(CGRect(x: 0, y: top, width: width, height: height), color: marker)
                 default: break
                 }
                 let baseline = top + 2 + ascent
@@ -1167,37 +1370,71 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
                 }
                 guard let line = shapedLine(row, scale: scale) else { continue }
                 if line.width > textWidth {
-                    // 見積もりより長い行（タブ、全角の文字）。描き終えてから広げる。
+                    // 見積もりより長い行（タブ、全角の文字）。描き終えてから広げる（折り返すときは広げない）。
                     textWidth = line.width
-                    DispatchQueue.main.async { [weak self] in self?.updateDocumentSize() }
+                    if !wrapsLines { DispatchQueue.main.async { [weak self] in self?.updateDocumentSize() } }
                 }
+                let wrapped = wrappedLine(row, line: line, scale: scale)
+                let textX = gutterWidth + 8 - origin.x
                 // 変わった単語を、行の色より濃くする。
                 let strong = r.kind == UInt8(AmonhenDiffRow_ADDED) ? strongAdded : strongRemoved
-                for (x0, x1) in line.spans {
-                    renderer.addRect(
-                        CGRect(x: gutterWidth + 8 - origin.x + x0, y: top + 1, width: max(1, x1 - x0), height: lineHeight - 2),
-                        color: strong)
+                if wrapped == nil {
+                    for (x0, x1) in line.spans {
+                        renderer.addRect(
+                            CGRect(x: textX + x0, y: top + 1, width: max(1, x1 - x0), height: lineHeight - 2), color: strong)
+                    }
+                } else {
+                    for range in highlights[row] ?? [] {
+                        for s in segments(of: range, row: row, line: line, wrapped: wrapped) {
+                            renderer.addRect(
+                                CGRect(x: textX + s.x0, y: top + CGFloat(s.line) * lineHeight + 1, width: max(1, s.x1 - s.x0),
+                                       height: lineHeight - 2),
+                                color: strong)
+                        }
+                    }
                 }
-                let textX = gutterWidth + 8 - origin.x
                 // 文字の選択。次の行に続くときは、改行の分として少し右まで塗る。
                 if let (start, end) = textRange, start.row <= row, row <= end.row {
-                    let x0 = row == start.row ? line.offset(of: start.index) : 0
-                    let x1 = row == end.row ? line.offset(of: end.index) : line.width + 6
-                    if x1 > x0 {
-                        renderer.addRect(CGRect(x: textX + x0, y: top, width: x1 - x0, height: lineHeight), color: selectedText)
+                    let length = line.line.map { CTLineGetStringRange($0).length } ?? 0
+                    let from = row == start.row ? start.index : 0
+                    let to = row == end.row ? end.index : max(from, length)
+                    let pieces = segments(of: from..<max(from, to), row: row, line: line, wrapped: wrapped)
+                    for s in pieces {
+                        let continues = row != end.row && s.line == pieces.last?.line
+                        let x1 = continues ? s.x1 + 6 : s.x1
+                        if x1 > s.x0 {
+                            renderer.addRect(
+                                CGRect(x: textX + s.x0, y: top + CGFloat(s.line) * lineHeight, width: x1 - s.x0, height: lineHeight),
+                                color: selectedText)
+                        }
                     }
                 }
                 for (i, m) in matchesByRow[row] ?? [] {
-                    let x0 = line.offset(of: m.lowerBound), x1 = line.offset(of: m.upperBound)
-                    renderer.addRect(
-                        CGRect(x: textX + x0, y: top + 1, width: max(2, x1 - x0), height: lineHeight - 2),
-                        color: i == currentMatch ? currentMatchColor : matchColor)
+                    for s in segments(of: m, row: row, line: line, wrapped: wrapped) {
+                        renderer.addRect(
+                            CGRect(x: textX + s.x0, y: top + CGFloat(s.line) * lineHeight + 1, width: max(2, s.x1 - s.x0),
+                                   height: lineHeight - 2),
+                            color: i == currentMatch ? currentMatchColor : matchColor)
+                    }
                 }
                 let isHunk = r.kind == UInt8(AmonhenDiffRow_HUNK) || r.kind == UInt8(AmonhenDiffRow_MARKER)
                 let spans = (syntax[row] ?? []).map { (range: $0.range, color: palette[Int($0.kind) & 15]) }
-                renderer.addLine(
-                    line, origin: CGPoint(x: gutterWidth + 8 - origin.x, y: baseline), color: isHunk ? secondary : text,
-                    scale: scale, spans: spans)
+                if let wrapped {
+                    // 見えている見た目の行だけ置く（とても長い 1 行でも、置くグリフは見えている分だけ）。
+                    let visible = textView.bounds.height
+                    for (k, part) in wrapped.parts.enumerated() {
+                        let y = top + CGFloat(k) * lineHeight
+                        if y + lineHeight < 0 { continue }
+                        if y > visible { break }
+                        renderer.addLine(
+                            part, origin: CGPoint(x: textX, y: baseline + CGFloat(k) * lineHeight),
+                            color: isHunk ? secondary : text, scale: scale, spans: spans)
+                    }
+                } else {
+                    renderer.addLine(
+                        line, origin: CGPoint(x: textX, y: baseline), color: isHunk ? secondary : text,
+                        scale: scale, spans: spans)
+                }
             }
             if !folderGroups.isEmpty { drawFolders(origin: origin, scale: scale) }
             if !deletionMarks.isEmpty { drawDeletionMarks(origin: origin, scale: scale) }
@@ -1335,6 +1572,277 @@ extension DiffViewController {
         let baseline = box.midY + (CTFontGetAscent(font) - CTFontGetDescent(font)) / 2
         renderer.addLine(
             glyph, origin: CGPoint(x: box.midX - glyph.width / 2, y: baseline), color: NSColor.white.rgba, scale: scale)
+    }
+}
+
+/// 差分の表示の設定（今は「長い行を折り返す」だけ）のボタン。Working Copy の差分の帯に置く（History は
+/// 右の列の上の帯の表示の設定に同じ項目がある）。
+final class DiffViewOptionsPopUp: NSPopUpButton, NSMenuDelegate {
+    init() {
+        super.init(frame: .zero, pullsDown: true)
+        bezelStyle = .accessoryBarAction
+        controlSize = .small
+        isBordered = false
+        toolTip = L("View Options")
+        let first = NSMenuItem()
+        first.title = ""
+        first.image = NSImage(systemSymbolName: "slider.horizontal.3", accessibilityDescription: L("View Options"))
+        menu?.addItem(first)
+        menu?.delegate = self
+        fill()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    func menuNeedsUpdate(_ menu: NSMenu) { fill() }
+
+    private func fill() {
+        guard let menu else { return }
+        while menu.items.count > 1 { menu.removeItem(at: 1) }
+        menu.addItem(DiffViewController.wrapLinesMenuItem())
+    }
+}
+
+// MARK: - 長い行の折り返し
+
+extension DiffViewController {
+    /// 「長い行を折り返す」の項目（History の表示の設定、Working Copy の差分の帯）。
+    static func wrapLinesMenuItem() -> NSMenuItem {
+        let item = ClosureMenuItem(title: L("Wrap Long Lines")) { Settings.wrapDiffLines.toggle() }
+        item.state = Settings.wrapDiffLines ? .on : .off
+        item.toolTip = L("Wrap lines wider than the diff instead of scrolling sideways (in every diff)")
+        return item
+    }
+
+    /// 折り返すときに文字を置ける幅（右に少し余白を残す）。
+    fileprivate var wrapAvailableWidth: CGFloat {
+        max(0, textView.bounds.width - gutterWidth - 8 - 12)
+    }
+
+    /// 等幅の 1 文字の幅（ASCII の行の幅を、並べずに求める）。
+    fileprivate var digitWidth: CGFloat {
+        CTFontGetAdvancesForGlyphs(font, .horizontal, [Self.digitGlyph(font)], nil, 1)
+    }
+
+    private static func digitGlyph(_ font: CTFont) -> CGGlyph {
+        var chars: [UniChar] = [0x30]
+        var glyph: CGGlyph = 0
+        CTFontGetGlyphsForCharacters(font, &chars, &glyph, 1)
+        return glyph
+    }
+
+    /// 設定が変わった（History の View Options などで切り替えた）。
+    @objc fileprivate func wrapSettingChanged() {
+        let on = Settings.wrapDiffLines
+        guard on != wrapsLines, isViewLoaded else { return }
+        wrapsLines = on
+        scrollView.hasHorizontalScroller = !on
+        rewrap()
+    }
+
+    /// 折り返し直す。見えている一番上の行を、同じ位置に残す。
+    fileprivate func rewrap() {
+        let clip = scrollView.contentView
+        let oldY = clip.bounds.origin.y
+        let anchor: Int? = diff != nil && message == nil && oldY > 0 ? rowAt(oldY) : nil
+        let within = anchor.map { oldY - rowY($0) } ?? 0
+        let wasWrapped = anchor.map { wrapStarts[$0] != nil } ?? false
+        computeWraps()
+        FrameProfile.measure("diff: rewrap entries") { rebuildExtraEntries() }
+        FrameProfile.measure("diff: rewrap document") { updateDocumentSize() }
+        var origin = clip.bounds.origin
+        if wrapsLines { origin.x = 0 }
+        if let anchor {
+            // 折り返した行の中にいたなら、その行の高さに収める（行の数が変わる）。
+            let keep = wasWrapped || wrapStarts[anchor] != nil ? min(within, rowHeight(anchor) - 1) : within
+            origin.y = rowY(anchor) + max(0, keep)
+        }
+        origin.y = max(0, min(origin.y, document.frame.height - clip.bounds.height))
+        if origin != clip.bounds.origin {
+            clip.scroll(to: origin)
+            scrollView.reflectScrolledClipView(clip)
+        }
+        redraw()
+    }
+
+    /// 文字を置ける幅に収まらない行の、見た目の行の始まりを求める。ASCII でタブのない行は等幅なので、並べずに
+    /// 文字数で求める（大きな差分でも並べ直すのは長い行のうちの、タブや全角の文字のある行だけ）。
+    fileprivate func computeWraps() {
+        let start = CACurrentMediaTime()
+        let measuredBefore = wrapMeasureOffsets.count
+        wrapStarts = [:]
+        wrapRows = []
+        wrappedLines = [:]
+        wrapWidth = isViewLoaded ? wrapAvailableWidth : 0
+        guard wrapsLines, let diff, message == nil else { return }
+        let width = wrapWidth
+        let digit = digitWidth
+        // 細すぎる幅では折り返さない（1 行が何十にも分かれて読めない）。
+        guard width >= digit * 16 else { return }
+        let columns = max(1, Int((width + 0.01) / digit))
+        // 1 つの符号単位がとりうるいちばん広い幅（タブは既定のタブ位置の間隔 28 pt まで、全角の文字・絵文字は
+        // それより狭い）。これで収まる行は、文字を見なくても折り返さない。
+        let widest: CGFloat = 28
+        var shapedCount = 0
+        diff.withRows { all in
+            for row in 0..<all.count {
+                let r = all[row]
+                if r.kind == UInt8(AmonhenDiffRow_FILE) { continue }
+                let length = Int(r.text.len_and_kind & 0x7fff_ffff)
+                if length <= columns || CGFloat(length) * widest <= width { continue }
+                let isASCII = r.text.len_and_kind & 0x8000_0000 == 0
+                let starts: [Int] = diff.withText(row: row) { cf in
+                    let s = cf as NSString
+                    if isASCII, CFStringFind(cf, "\t" as CFString, []).location == kCFNotFound {
+                        return Self.breaks(s) { min(s.length, $0 + columns) }
+                    }
+                    let offsets: [CGFloat]
+                    if let cached = wrapMeasureOffsets[row] {
+                        offsets = cached
+                    } else {
+                        shapedCount += 1
+                        offsets = Self.offsets(of: cf, font: font)
+                        wrapMeasureOffsets[row] = offsets
+                    }
+                    guard let total = offsets.last, total > width else { return [0] }
+                    return Self.breaks(s) { from in
+                        // 横位置は左から増えていくので、収まるいちばん後ろを二分探索する。
+                        let limit = offsets[from] + width
+                        var lo = from + 1, hi = s.length
+                        while lo < hi {
+                            let mid = (lo + hi + 1) / 2
+                            if offsets[mid] <= limit { lo = mid } else { hi = mid - 1 }
+                        }
+                        return lo
+                    }
+                }
+                if starts.count > 1 {
+                    wrapStarts[row] = starts
+                    wrapRows.append((row, starts.count))
+                }
+            }
+        }
+        let elapsed = CACurrentMediaTime() - start
+        PerformanceLog.record("Diff: wrap long lines", ms: elapsed * 1000)
+        FrameProfile.add("diff: wrap", elapsed)
+        lastWrapStats = (diff.rowCount, wrapStarts.count, shapedCount, elapsed * 1000)
+        if measuredBefore == 0 { firstWrapStats = lastWrapStats }
+    }
+
+    /// 文字の境目（UTF-16 の位置 0...長さ）ごとの、行の左端からの横位置。Core Text で 1 回並べて求める。合成した
+    /// 文字の途中は、その文字の始まりと同じ位置にする。
+    fileprivate static func offsets(of string: CFString, font: CTFont) -> [CGFloat] {
+        let length = CFStringGetLength(string)
+        let attributed = CFAttributedStringCreate(nil, string, [kCTFontAttributeName: font] as CFDictionary)!
+        let line = CTLineCreateWithAttributedString(attributed)
+        var offsets = [CGFloat](repeating: -1, count: length + 1)
+        for run in CTLineGetGlyphRuns(line) as! [CTRun] {
+            let count = CTRunGetGlyphCount(run)
+            guard count > 0 else { continue }
+            var positions = [CGPoint](repeating: .zero, count: count)
+            var indices = [CFIndex](repeating: 0, count: count)
+            CTRunGetPositions(run, CFRange(location: 0, length: count), &positions)
+            CTRunGetStringIndices(run, CFRange(location: 0, length: count), &indices)
+            for j in 0..<count where indices[j] < length {
+                let i = indices[j]
+                if offsets[i] < 0 || positions[j].x < offsets[i] { offsets[i] = positions[j].x }
+            }
+        }
+        offsets[length] = CTLineGetTypographicBounds(line, nil, nil, nil)
+        for i in 0..<length where offsets[i] < 0 { offsets[i] = i > 0 ? offsets[i - 1] : 0 }
+        // 右から左の文字が混じると減ることがある。二分探索できるよう、増えていく形に均す。
+        if length > 0 {
+            for i in 1...length where offsets[i] < offsets[i - 1] { offsets[i] = offsets[i - 1] }
+        }
+        return offsets
+    }
+
+    /// `s` を見た目の行に分ける。`maxEnd(start)` は、`start` から収まるいちばん後ろの位置。空白・区切りの後ろで
+    /// 分けられればそこで（行の後ろ半分にあるときだけ）、なければ収まるところで分ける。
+    fileprivate static func breaks(_ s: NSString, maxEnd: (Int) -> Int) -> [Int] {
+        var starts = [0]
+        var start = 0
+        let length = s.length
+        while start < length {
+            var end = maxEnd(start)
+            if end >= length { break }
+            // 合成した文字（サロゲートペア・結合文字）の途中では分けない。
+            end = s.rangeOfComposedCharacterSequence(at: end).location
+            if end <= start { end = NSMaxRange(s.rangeOfComposedCharacterSequence(at: start)) }
+            if end >= length { break }
+            var p = end
+            let half = start + (end - start) / 2
+            while p > half, !isBreakAfter(s.character(at: p - 1)) { p -= 1 }
+            if p > half { end = p }
+            // 分けたところの空白は前の行の末尾に残す（続きの行を空白で始めない。空白は見えないので、はみ出しても
+            // 目に付かない）。
+            while end < length, s.character(at: end) == 0x20 { end += 1 }
+            if end >= length { break }
+            starts.append(end)
+            start = end
+        }
+        return starts
+    }
+
+    /// その文字の後ろで行を分けてよいか（空白・区切り、全角の文字）。
+    private static func isBreakAfter(_ c: unichar) -> Bool {
+        switch c {
+        case 0x20, 0x09, 0x2C, 0x3B, 0x29, 0x5D, 0x7D, 0x7C, 0x26, 0x2F, 0x2D: true  // 空白 , ; ) ] } | & / -
+        case 0x3000...0x9FFF, 0xAC00...0xD7AF, 0xF900...0xFAFF, 0xFF00...0xFFEF: true
+        default: false
+        }
+    }
+
+    /// `row` の見た目の行ごとのグリフ（折り返す行だけ）。
+    fileprivate func wrappedLine(_ row: Int, line: TextRenderer.ShapedLine, scale: CGFloat) -> WrappedLine? {
+        guard let starts = wrapStarts[row] else { return nil }
+        if let cached = wrappedLines[row] { return cached }
+        let xs = starts.map { line.offset(of: $0) }
+        var parts = starts.indices.map { k in
+            TextRenderer.ShapedLine(glyphs: [], width: (k + 1 < starts.count ? xs[k + 1] : line.width) - xs[k])
+        }
+        let shifts = xs.map { Float(($0 * scale).rounded(.down)) }
+        var k = 0
+        for g in line.glyphs {
+            let index = Int(g.index)
+            // グリフはほぼ文字列の順。戻ったときだけ探し直す。
+            if index < starts[k] { k = 0 }
+            while k + 1 < starts.count, starts[k + 1] <= index { k += 1 }
+            var moved = g
+            moved.penX -= shifts[k]
+            parts[k].glyphs.append(moved)
+        }
+        let wrapped = WrappedLine(parts: parts, xs: xs)
+        wrappedLines[row] = wrapped
+        return wrapped
+    }
+
+    /// 行の中の範囲 `range`（UTF-16）が、見た目の行ごとにどこからどこまでか（その見た目の行の左端からの横位置）。
+    /// 折り返さない行は 1 つだけ。
+    fileprivate func segments(
+        of range: Range<Int>, row: Int, line: TextRenderer.ShapedLine, wrapped: WrappedLine?
+    ) -> [(line: Int, x0: CGFloat, x1: CGFloat)] {
+        guard let wrapped, let starts = wrapStarts[row] else {
+            return [(0, line.offset(of: range.lowerBound), line.offset(of: range.upperBound))]
+        }
+        var out: [(line: Int, x0: CGFloat, x1: CGFloat)] = []
+        for k in starts.indices {
+            let from = starts[k], to = k + 1 < starts.count ? starts[k + 1] : Int.max
+            let overlaps = range.isEmpty ? (from <= range.lowerBound && range.lowerBound < to)
+                : (range.lowerBound < to && range.upperBound > from)
+            guard overlaps else { continue }
+            let x0 = range.lowerBound > from ? line.offset(of: range.lowerBound) - wrapped.xs[k] : 0
+            let x1 = range.upperBound < to ? line.offset(of: range.upperBound) - wrapped.xs[k] : wrapped.parts[k].width
+            out.append((k, x0, x1))
+        }
+        return out
+    }
+
+    /// 行の中の位置 `index` の、見た目の行（折り返さない行は 0）。
+    fileprivate func visualLine(of index: Int, row: Int) -> Int {
+        guard let starts = wrapStarts[row] else { return 0 }
+        return max(0, (starts.lastIndex { $0 <= index }) ?? 0)
     }
 }
 
@@ -1832,6 +2340,11 @@ final class CommitDetailViewController: NSSplitViewController, NSTextViewDelegat
     /// `commit` の変更を裏で読んで表示する。`stash` なら stash の中身（untracked のファイルを含む）。
     /// 差分を検索する（`--find` の確認用）。
     func find(_ query: String) { diffView.find(query) }
+
+    /// `--measure-diff-scroll`: 差分をスクロールし、窓の幅を変えて測る。
+    func measureDiffScroll(frames: Int, rowsPerFrame: Double, completion: @escaping (String) -> Void) {
+        diffView.measureScroll(frames: frames, rowsPerFrame: rowsPerFrame, completion: completion)
+    }
 
     func show(commit: Data?, stash: Bool = false) {
         // ほかのコミットを選んだら、書き直しはやめる。
@@ -2548,6 +3061,8 @@ extension CommitDetailViewController {
         expand.state = isExpanded ? .on : .off
         expand.toolTip = L("Expand the commit details to fill the right column (click again to restore).")
         menu.addItem(expand)
+        menu.addItem(.separator())
+        menu.addItem(DiffViewController.wrapLinesMenuItem())
         guard Assistant.isConfigured, !isPreview else { return }
         menu.addItem(.separator())
         menu.addItem(ClosureMenuItem(title: L("AI: Explain This Commit")) { [weak self] in self?.explainCommit() })
