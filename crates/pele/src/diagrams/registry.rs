@@ -17,6 +17,7 @@ use crate::types::Diagram;
 static DIAGRAMS: &[&Diagram] = &[
     &super::class::CLASS,
     &super::flowchart::FLOWCHART,
+    &super::state::STATE,
 ];
 
 /// 種類の名前（pele の `DiagramType`）の図。
