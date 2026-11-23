@@ -1,5 +1,7 @@
-//! Markdown の図（` ```mermaid ` のブロック）を SVG に描く（History の「すべてのファイル」の整形表示）。描くのは
-//! pele（Obsidian の Mermaid の描き手）を移した `amonhen-pele` で、`diagrams` フィーチャーのときだけ入る。
+//! Markdown の図（` ```mermaid `・` ```dot ` のブロック）を SVG に描く（History の「すべてのファイル」の整形表示）。
+//! Mermaid を描くのは pele（Obsidian の Mermaid の描き手）を移した `amonhen-pele`、Graphviz の DOT（` ```dot `・
+//! ` ```graphviz `・` ```gv `）は `amonhen-dot` で、どちらも `diagrams` フィーチャーのときだけ入る。DOT の図も pele と
+//! 同じ CSS の変数で色を書くので、`colorize` で同じように色を当てる。
 //!
 //! 形と位置（pele の SVG）は Markdown を読むときに一度だけ作る。色は pele が CSS の変数（`--pele-*`）で決めるので、
 //! 描くときに `colorize` で配色（構文の色・pele・Mermaid）の変数を当て、`svgcss` で属性に書き写して CoreSVG・
@@ -26,6 +28,8 @@ pub enum Drawn {
     /// pele の SVG（色は CSS の変数のまま。`colorize` で色を当てる）と、図の中で指定した Mermaid のテーマ
     /// （`%%{init: …}%%`・front matter の `config` の `theme`・`themeVariables`。なければ `None`）。
     Svg(String, Option<MermaidConfig>),
+    /// 近いもので描いた図（DOT の HTML の表など）と、そのことを伝える一文（訳した文）。色は `Svg` と同じ。
+    Noted(String, String),
     /// 描けない（書き方の誤りなど）。理由は pele の言葉のまま（英語）。
     Error(String),
 }
@@ -38,10 +42,67 @@ pub fn draw(language: &str, text: &str) -> Option<Drawn> {
 
 /// `draw` の、gantt の日付をこの時間帯の地方時で数えるもの（None は UTC）。
 pub fn draw_in_zone(language: &str, text: &str, zone: Option<Arc<dyn TimeZone>>) -> Option<Drawn> {
-    if !language.eq_ignore_ascii_case("mermaid") {
-        return None;
+    if language.eq_ignore_ascii_case("mermaid") {
+        return draw_mermaid(text, zone);
     }
-    draw_mermaid(text, zone)
+    if ["dot", "graphviz", "gv"]
+        .iter()
+        .any(|l| language.eq_ignore_ascii_case(l))
+    {
+        return draw_dot(text);
+    }
+    None
+}
+
+/// Graphviz の DOT の図。Mermaid と同じく大きなスタックの別スレッドで描き、panic は図の誤りにする。
+#[cfg(feature = "diagrams")]
+fn draw_dot(text: &str) -> Option<Drawn> {
+    let source = text.to_owned();
+    let drawn = std::thread::Builder::new()
+        .name("dot".into())
+        .stack_size(PELE_STACK)
+        .spawn(move || amonhen_dot::render(&source))
+        .ok()?
+        .join();
+    Some(match drawn {
+        Ok(Ok(d)) if d.notes.is_empty() => Drawn::Svg(d.svg, None),
+        Ok(Ok(d)) => Drawn::Noted(d.svg, approximation_note(&d.notes)),
+        Ok(Err(e)) => Drawn::Error(e.message),
+        Err(_) => Drawn::Error(amonhen_model::tr!("This diagram couldn’t be drawn")),
+    })
+}
+
+#[cfg(not(feature = "diagrams"))]
+fn draw_dot(_text: &str) -> Option<Drawn> {
+    None
+}
+
+/// 近いもので描いたことを伝える一文。
+#[cfg(feature = "diagrams")]
+fn approximation_note(notes: &[amonhen_dot::Note]) -> String {
+    use amonhen_dot::Note;
+    let reasons: Vec<String> = notes
+        .iter()
+        .map(|n| match n {
+            Note::HtmlTables => amonhen_model::tr!("HTML tables are drawn as plain text"),
+            Note::Images => amonhen_model::tr!("images are drawn as empty frames"),
+            Note::UnknownShapes => amonhen_model::tr!("unknown shapes are drawn as boxes"),
+            Note::Ortho => amonhen_model::tr!("orthogonal edges are drawn as polylines"),
+            Note::UnknownColors => {
+                amonhen_model::tr!("unknown colors are drawn in the default color")
+            }
+            Note::ColorSchemes => amonhen_model::tr!(
+                "color schemes other than X11 and SVG are drawn in the default color"
+            ),
+            Note::OtherLayouts => {
+                amonhen_model::tr!("other layout engines are drawn with the dot layout")
+            }
+        })
+        .collect();
+    amonhen_model::tr!(
+        "This picture is an approximation: {reasons}.",
+        reasons = amonhen_model::i18n::list(&reasons)
+    )
 }
 
 #[cfg(feature = "diagrams")]
@@ -116,7 +177,7 @@ pub fn sample() -> Option<String> {
         "mermaid",
         "flowchart LR\n  subgraph Repository\n    A[Commit] --> B{Review}\n  end\n  B -->|merge| C[(main)]\n",
     )? {
-        Drawn::Svg(svg, _) => Some(svg),
+        Drawn::Svg(svg, _) | Drawn::Noted(svg, _) => Some(svg),
         Drawn::Error(_) => None,
     }
 }
@@ -683,6 +744,82 @@ mod tests {
             svg.contains(">Repository</text>") && svg.contains(">merge</text>"),
             "{svg}"
         );
+    }
+
+    #[cfg(feature = "diagrams")]
+    #[test]
+    fn dot_blocks_are_drawn_and_colored() {
+        let md = "```dot\ndigraph { a [label=\"A  b\"]; a -> b [color=red]; b -> c }\n```\n\n```GV\ngraph { x -- y }\n```\n";
+        let blocks = crate::markdown::parse_in_zone(md, None, None);
+        let crate::markdown::Block::Diagram {
+            language,
+            svg: Some(svg),
+            note: None,
+            error: None,
+            ..
+        } = &blocks[0]
+        else {
+            panic!("{blocks:?}");
+        };
+        assert_eq!(language, "dot");
+        assert!(matches!(
+            &blocks[1],
+            crate::markdown::Block::Diagram { svg: Some(_), .. }
+        ));
+        // テーマの色は配色で、文が決めた色はそのまま
+        let syntax = colorize(svg, &palette(Scheme::Syntax, false, &theme()), false).unwrap();
+        assert!(!syntax.contains("var("), "{syntax}");
+        assert!(syntax.contains("#aa0000") && syntax.contains("#ff0000"));
+        let dark = colorize(svg, &palette(Scheme::Pele, true, &theme()), false).unwrap();
+        assert!(dark.contains("#d0d0d0") && dark.contains("#ff0000"));
+        // 続く空白を保つ
+        assert!(syntax.contains("xml:space=\"preserve\""), "{syntax}");
+        for language in ["graphviz", "Dot"] {
+            assert!(matches!(
+                draw(language, "digraph { a }"),
+                Some(Drawn::Svg(_, None))
+            ));
+        }
+        assert!(matches!(draw("dot", "digraph {"), Some(Drawn::Error(_))));
+        // グラデーションの塗りも残る
+        let Some(Drawn::Svg(svg, _)) = draw(
+            "dot",
+            "digraph { a [style=filled, fillcolor=\"red:blue\"] }",
+        ) else {
+            panic!("not drawn");
+        };
+        let colored = colorize(&svg, &palette(Scheme::Pele, false, &theme()), false).unwrap();
+        assert!(
+            colored.contains("<linearGradient") && colored.contains("url(#"),
+            "{colored}"
+        );
+    }
+
+    #[cfg(feature = "diagrams")]
+    #[test]
+    fn dot_approximations_carry_a_note() {
+        let md = "```dot\ndigraph { a [shape=none, label=<<table><tr><td>x</td></tr></table>>, color=nosuch] }\n```\n";
+        let blocks = crate::markdown::parse_in_zone(md, None, None);
+        let crate::markdown::Block::Diagram {
+            svg: Some(_),
+            note: Some(note),
+            ..
+        } = &blocks[0]
+        else {
+            panic!("{blocks:?}");
+        };
+        assert!(
+            note.contains("HTML tables") && note.contains("unknown colors"),
+            "{note}"
+        );
+        let json = serde_json::to_string(&blocks[0]).unwrap();
+        assert!(json.contains("\"note\":"), "{json}");
+        amonhen_model::i18n::with(amonhen_model::i18n::Lang::Ja, || {
+            let Some(Drawn::Noted(_, note)) = draw("dot", "digraph { a [shape=blob] }") else {
+                panic!("no note");
+            };
+            assert!(note.contains("箱"), "{note}");
+        });
     }
 
     #[cfg(feature = "diagrams")]

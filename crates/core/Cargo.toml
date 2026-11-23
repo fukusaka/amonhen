@@ -13,6 +13,7 @@ sha1_smol = "1.0.1"
 amonhen-layout.workspace = true
 amonhen-model = { workspace = true, features = ["serde"] }
 amonhen-pele = { workspace = true, optional = true }
+amonhen-dot = { workspace = true, optional = true }
 amonhen-projection.workspace = true
 amonhen-syntax = { workspace = true, optional = true }
 arc-swap = "1.9.2"
@@ -31,8 +32,8 @@ pulldown-cmark = { version = "0.13.6", default-features = false }
 [features]
 # 構文の色付け（tree-sitter）。文法は C で書かれていて、ターゲットごとの C コンパイラが要る。
 syntax = ["dep:amonhen-syntax"]
-# Markdown の Mermaid の図（pele の移植）。アプリ（FFI・GTK4）だけが入れ、エンジン（CLI・daemon）には入れない。
-diagrams = ["dep:amonhen-pele"]
+# Markdown の Mermaid の図（pele の移植）と Graphviz の DOT の図。アプリ（FFI・GTK4）だけが入れ、エンジン（CLI・daemon）には入れない。
+diagrams = ["dep:amonhen-pele", "dep:amonhen-dot"]
 
 [dev-dependencies]
 amonhen-backend-cli = { path = "../backend-cli" }
