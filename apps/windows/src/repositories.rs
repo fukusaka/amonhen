@@ -766,6 +766,8 @@ pub enum Event {
     Fetched(String, Option<String>),
     /// 列の見出しを押した。
     Sort(&'static str),
+    /// 列の見出し（`COLUMN_IDS` の名前）を引いて、左から何番目（Name の後ろから）の所へ落とした。
+    ColumnDropped(String, usize),
 }
 
 /// ページの外でする続き。
@@ -1179,6 +1181,7 @@ impl State {
             }
             Event::Filter(text) => self.filter = text,
             Event::Sort(column) => self.sort_by(column),
+            Event::ColumnDropped(id, slot) => place_column(&id, slot),
             Event::Open => {
                 if let Some(location) = self.selected.clone() {
                     self.open(&location);
@@ -1466,6 +1469,8 @@ pub struct Callbacks<'a> {
     pub list_host: &'a ElementRef<Grid>,
     /// 見出しの列の境目のつまみ（Branch・Status・Last Commit・Opened の左端。動かすと幅が変わる）。
     pub column_handles: &'a [ElementRef<Grid>; 4],
+    /// 見出しの列（押して並べ替え、引いて列を動かす）。
+    pub header_host: &'a ElementRef<Grid>,
 }
 
 /// リポジトリの行の右クリックのメニュー（GTK4 版の `repobrowser::row_menu` の手元の分）。
@@ -1745,6 +1750,36 @@ fn move_column(id: &str, left: bool) {
     let _ = crate::prefs::set_string(COLUMN_ORDER_KEY, &ids.join(","));
 }
 
+/// 列 `id` を、左から `slot` 番目（Name の後ろから）に置いて覚える（macOS 版・GTK4 版の見出しのドラッグ）。
+fn place_column(id: &str, slot: usize) {
+    let Some(column) = COLUMN_IDS.iter().position(|c| *c == id) else {
+        return;
+    };
+    let order = placed(column_order(), column, slot);
+    COLUMN_ORDER.with(|c| c.set(order));
+    let ids: Vec<&str> = order.iter().map(|&i| COLUMN_IDS[i]).collect();
+    let _ = crate::prefs::set_string(COLUMN_ORDER_KEY, &ids.join(","));
+}
+
+/// `order` の中の列 `column` を、`slot` 番目に移した並び。
+fn placed(order: [usize; 4], column: usize, slot: usize) -> [usize; 4] {
+    let mut rest: Vec<usize> = order.into_iter().filter(|&c| c != column).collect();
+    rest.insert(slot.min(3), column);
+    [rest[0], rest[1], rest[2], rest[3]]
+}
+
+/// 見出しのマスの並び（見出しの Grid の子の順。Name が 0、`COLUMN_IDS` の順に 1〜4）。
+pub const HEADER_IDS: [&str; 5] = ["name", "branch", "status", "commit", "opened"];
+
+/// 列 `id` が左から何番目（Name の後ろから）に並んでいるか（Name なら 0）。
+pub fn slot_of(id: &str) -> usize {
+    COLUMN_IDS
+        .iter()
+        .position(|c| *c == id)
+        .and_then(|i| column_order().iter().position(|&c| c == i))
+        .unwrap_or(0)
+}
+
 fn load_column_widths() -> [f64; 4] {
     let mut widths = COLUMNS;
     if let Some(text) = crate::prefs::string(COLUMN_WIDTHS_KEY) {
@@ -1903,19 +1938,14 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
             _ => text,
         };
         let title = text.trim_end_matches([' ', '▲', '▼']).to_owned();
-        let button = Button::new()
-            .style(ButtonStyle::Subtle)
-            .horizontal_alignment(HorizontalAlignment::Stretch)
-            .horizontal_content_alignment(HorizontalAlignment::Left)
-            .on_click((callbacks.button)(match id {
-                "name" => "sort:name",
-                "branch" => "sort:branch",
-                "status" => "sort:status",
-                "commit" => "sort:commit",
-                _ => "sort:opened",
-            }))
-            .content(TextBlock::new().text(text).font_size(11.0).opacity(0.6));
-        // 右クリックで、その列を左右に動かす（Name は動かさない。GTK4 版・macOS 版は見出しを引いて動かす）。
+        // 押す（並べ替え）・引く（列を動かす。macOS 版・GTK4 版と同じ）は、見出し全体に付けた指の処理が受ける
+        // （app.rs の `attach_column_header`）。
+        let button = TextBlock::new()
+            .text(text)
+            .font_size(11.0)
+            .opacity(0.6)
+            .margin(Thickness::new(10.0, 6.0, 10.0, 6.0));
+        // 右クリックでも、その列を左右に動かせる（Name は動かさない）。
         let mut items = Vec::new();
         if column > 1 {
             items.push(MenuItem::item(
@@ -1940,6 +1970,8 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
         }
     };
     let header = Grid::new()
+        .element_ref(callbacks.header_host)
+        .background(Brush::Solid(Color::transparent()))
         .columns(columns())
         .margin(Thickness::new(16.0, 0.0, 16.0, 4.0))
         .grid_row(0)
@@ -2186,6 +2218,13 @@ mod tests {
             ]
         );
         assert_eq!(rows[2].0, r"D:\src\prj\work");
+    }
+
+    #[test]
+    fn a_dropped_column_goes_to_its_slot() {
+        assert_eq!(placed([0, 1, 2, 3], 3, 0), [3, 0, 1, 2]);
+        assert_eq!(placed([0, 1, 2, 3], 0, 2), [1, 2, 0, 3]);
+        assert_eq!(placed([0, 1, 2, 3], 1, 9), [0, 2, 3, 1]);
     }
 
     #[test]
