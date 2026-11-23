@@ -43,7 +43,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | stash があるときだけ Stashes の行と数 | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: Stashes の節。<br>TUI: stash があるあいだサイドバーに Stashes の節。見出しに数。 |
 | Range Diff を開いているあいだの Range Diff の行 | ✓ | ✓ | ✓ | ✓ | n/a | — |  |
 | Branches・Remotes・Tags を絞り込む欄 | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: サイドバーの上の絞り込みのボタンで言葉を入れ、合うものを平らに並べる。<br>TUI: サイドバーで `/`。 |
-| ブランチ・タグをいくつも選ぶ | ✓ | ✓ | ✓ | ✓ | n/a | — | VSCode: Merge into Current Branch・Delete Branch・お気に入り・Archive が選んだものすべてに効く。 |
+| ブランチ・タグをいくつも選ぶ | ✓ | ✓ | ✓ | ✓ | n/a | △ | VSCode: Merge into Current Branch・Delete Branch・お気に入り・Archive が選んだものすべてに効く。<br>TUI: サイドバーの `v` で ref に印をつけ、`m` で 1 つのコミットで取り込み、`D` で印をつけたブランチを消す。お気に入り・Archive はない。 |
 | Pull Requests・Worktrees は中身があるときだけ出す | ✓ | ✓ | ✓ | △ | n/a | △ | VSCode: Worktrees だけ（GitHub は入れない）。<br>Windows: Worktrees は Working Copy の下に出す。<br>TUI: Worktrees だけ（2 つ以上あるとき）。 |
 
 ## サイドバー
@@ -172,7 +172,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Push のシート（注意・コミットと差分・lease 付きの Force Push） | ✓ | ✓ | △ | ✓ | △ | △ | VSCode: QuickPick。注意、送るコミット、上流から消えるコミット、Pull… か lease 付きの Force Push。送る変更すべてとそれぞれのコミットは、選ぶと差分を複数ファイルの diff エディタで開く（シートは閉じない）。<br>CLI: `amonhen run` から。<br>Windows: ダイアログではなく窓の中に出す。左に送るコミット、右の列に選んだものの差分（Stashes と同じ）。<br>TUI: `P` はコミットの数と 3 つまでの件名を添えて尋ね、上流が進んでいれば lease 付きの Force Push とその絵も出す。差分はない。 |
 | Publish（リモートと名前を選ぶ） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: `amonhen run` から。<br>TUI: 上流のないブランチで `P`。 |
 | Merge（fast-forward だけ・no-ff・squash の選択） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: 取り込み方を選ぶ一覧が確認を兼ねる。<br>CLI: `amonhen run` から（`mode`）。<br>TUI: サイドバーで `m`。 |
-| いくつもを 1 つにマージ（順番・コンフリクトの見込み） | ✓ | ✓ | ✓ | ✓ | △ | — | CLI: `merge-check` で確かめ、マージは `amonhen run` から。<br>Windows: History の選択から。順（ドラッグ）、ぶつかる見込みと最後に回す、取り込み方、1 つずつ、メッセージ、前と後の絵、git が断ったら 1 つずつ Merge。 |
+| いくつもを 1 つにマージ（順番・コンフリクトの見込み） | ✓ | ✓ | ✓ | ✓ | △ | △ | CLI: `merge-check` で確かめ、マージは `amonhen run` から。<br>Windows: History の選択から。順（ドラッグ）、ぶつかる見込みと最後に回す、取り込み方、1 つずつ、メッセージ、前と後の絵、git が断ったら 1 つずつ Merge。<br>TUI: サイドバーの `v` で印をつけた ref で `m`。それぞれが持ち込むコミットの数を添え、印をつけた順に。コンフリクトの見込みはない。 |
 | 前と後を描く Rebase のシート | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: ダイアログに、今と rebase の後のコミットをブランチの札と一緒に文で並べる。<br>CLI: `rewrite-preview` が出し、rebase は `amonhen run` から。<br>TUI: サイドバーで `r`。絵は画面に重ねる。 |
 | Stash（メッセージ・未追跡を含める） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: `amonhen run` から。<br>TUI: `s`。 |
 | Stash: stage した変更だけ・index を残す・選んだファイルだけ | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: エンジンがあるとき、Stash の一覧に前の 2 つ、Working Copy のファイルの右クリックにそのファイルの Stash…。<br>CLI: `amonhen run`（`stashPush` の `staged`・`keepIndex`・`paths`）から。<br>TUI: `s` で `k` index を残す、`s` stage したものだけ、Working Copy では `f` 選んでいるファイルだけ。 |
@@ -211,9 +211,9 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 
 | 機能 | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
-| Range Diff の表示（= ! < >・Changes Only・差分の差分） | ✓ | ✓ | ✓ | ✓ | ✓ | △ | CLI: `range-diff`。<br>TUI: Compare with Previous Version からだけで、Blame・File History と同じ画面に出す。Changes Only は `c`。 |
+| Range Diff の表示（= ! < >・Changes Only・差分の差分） | ✓ | ✓ | ✓ | ✓ | ✓ | △ | CLI: `range-diff`。<br>TUI: 独立したページではなく、Blame・File History と同じ画面に出す。Changes Only は `c`。 |
 | Compare with Previous Version | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `range-diff --previous`。<br>TUI: 命令の一覧から。 |
-| History の 2 つのコミット・Reflog の行を 2 つの版として比べる | ✓ | ✓ | ✓ | ✓ | ✓ | — | CLI: どの範囲でも。 |
+| History の 2 つのコミット・Reflog の行を 2 つの版として比べる | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: どの範囲でも。<br>TUI: History で 2 つ選んで `=`、Reflog の行で `=`（今の HEAD と）。 |
 | 範囲を直して比べ直す | ✓ | ✓ | ✓ | ✓ | ✓ | — |  |
 
 ## 6. Working Copy
@@ -236,7 +236,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Commit が押せない理由を出す | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | ボタンのツールチップに。<br>TUI: 一番下の行に。 |
 | HEAD → 作業ツリーの 1 つの差分と、行・hunk のチェック | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: エンジンがあれば。なければ別々の未ステージ・ステージ済みの差分で行をステージ。<br>CLI: `diff --combined`・`stage --rows`。 |
 | 行の範囲の選択、J/K・⌥J/⌥K | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: `v` で範囲を始め、`[` `]` で hunk の見出しへ。 |
-| 重ねられないファイルの Unstaged / Staged の切り替え | ✓ | ✓ | ✓ | n/a | ✓ | △ | VSCode: いつも別々に出す。<br>CLI: `diff --staged`。<br>TUI: 片方だけを出す（stage していない変更があればそちら）。切り替えはない。 |
+| 重ねられないファイルの Unstaged / Staged の切り替え | ✓ | ✓ | ✓ | n/a | ✓ | ✓ | VSCode: いつも別々に出す。<br>CLI: `diff --staged`。<br>TUI: 初めは stage していない側。差分の `s` で替える。 |
 | 差分の表示の選択（unified/split・前後の行・折り返し） | — | — | — | — | n/a | — |  |
 | 空白を無視する（その間は行ごとの stage・破棄はしない） | ✓ | ✓ | — | — | ✓ | — | CLI: `diff -w`・`-b`・`--ignore-space-at-eol`（`--combined` とは使えない）。 |
 | 行・hunk・ファイルを捨てる（Undo できる） | ✓ | ✓ | △ | ✓ | ✓ | ✓ | CLI: `discard --rows`。<br>Windows: Working Copy の差分で行か hunk の見出しを右クリック（Discard Lines）。行を選ぶことはできない |
@@ -259,7 +259,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Go to HEAD・Parent・Child | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: History の上の HEAD のボタン、コミットのメニューの Go to Parent・Go to Child、詳細の親と子へのリンク（エンジンがあるとき）。<br>TUI: `@`・`]`・`[`。 |
 | Go to Ref | — | — | — | — | n/a | — |  |
 | いくつものコミットを選ぶ（範囲・2 つ・飛び飛び） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: エンジンがあるとき。<br>CLI: 2 つは `diff <rev> <rev>`。<br>TUI: `m`・Shift-↑↓・Ctrl か Alt のクリック。 |
-| 選んだいくつもの ref の History | ✓ | ✓ | ✓ | ✓ | ✓ | — | CLI: `log --branch` を重ねる。<br>Windows: サイドバーで ref を選ぶとその History、Ctrl+クリックで ref を足す・外す。View に All Branches と Current Branch。<br>TUI: ref を開くと History でそのコミットを選ぶ。 |
+| 選んだいくつもの ref の History | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `log --branch` を重ねる。<br>Windows: サイドバーで ref を選ぶとその History、Ctrl+クリックで ref を足す・外す。View に All Branches と Current Branch。<br>TUI: サイドバーの `v` で ref に印をつけると、History はそれらから辿れるものだけ。Esc で印を外す。ref を開くとそのコミットを選ぶ。 |
 | コミットのメニュー: checkout・新しいブランチやタグ・cherry-pick・revert・ID のコピー | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: `amonhen run` から。<br>TUI: `c`・`b`・`T`・`y`・`v`・`Y`（OSC 52 で端末のクリップボードへ）。 |
 | 編集モード（pick・reword・squash・fixup・drop・edit、ドラッグで並べ替え） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: エンジンがあるとき。ないときは 1 つずつ。<br>CLI: `amonhen run` から。<br>TUI: `E` で画面に重ねる。`J` `K` で行を動かす。 |
 | 書き換えの見込み（積み重ね・push 済みのブランチ、コンフリクトの見込み） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: daemon 越し。ほかのブランチの rebase では、アプリと同じく代わりにコンフリクトの見込みを出す。<br>CLI: `rewrite-preview`。 |
@@ -275,7 +275,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | メッセージ全体・ドラッグできる境・⤢ で広げる | ✓ | ✓ | ✓ | ✓ | n/a | △ | TUI: 境はドラッグできない。狭い端末では、詳細は History の代わりに開く。 |
 | 詳細の中を探す | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: ⌘F でメインビュー全体を探す。まだ読んでいない差分は探さない。<br>TUI: 詳細で `/`、`n` `N` で次と前。 |
 | 変更ファイルを差分のファイルの見出しで兼ねる（最初は畳む・貼り付く・操作は帯 1 本） | ✓ | ✓ | ✓ | △ | ✓ | △ | CLI: `show`。<br>VSCode: まだ積んだ差分の横に変更ファイルの一覧があり、Viewed もある。<br>TUI: `[` `]` でファイルを移る。貼り付く見出し・畳むはない。 |
-| 変更ファイルをリストか、フォルダを畳めるツリーで | ✓ | ✓ | △ | △ | n/a | △ | Windows・VSCode: 差分の横の木（VSCode は一覧の上の Tree / List）。<br>TUI: 差分の上の平らな一覧。 |
+| 変更ファイルをリストか、フォルダを畳めるツリーで | ✓ | ✓ | △ | △ | n/a | ✓ | Windows・VSCode: 差分の横の木（VSCode は一覧の上の Tree / List）。<br>TUI: 差分の上に。`t` で木に替え、クリックでフォルダを畳む（`z` ですべて）かファイルの差分へ。 |
 | hunk の前後を広げる・ファイル全体を出す | ✓ | ✓ | — | — | n/a | — | |
 | 空白を無視する（行末・量の違い・すべて） | ✓ | ✓ | — | — | ✓ | — | CLI: `show -w`・`-b`・`--ignore-space-at-eol`。 |
 | 画像を比べる（並べる・スワイプ・オニオンスキン・違うピクセル） | ✓ | ✓ | — | — | n/a | — | |

@@ -119,6 +119,8 @@ pub struct Changes {
     pub amend: bool,
     /// 一覧とメッセージの欄を合わせた高さ。
     total_height: u16,
+    /// stage の印つきで重ねて出せないファイルで、stage 済みの側を出すファイル（ほかは作業ツリーの側）。
+    staged_side: Option<String>,
 }
 
 /// メッセージの欄の高さ（見出しの 1 行を含む）: 全体の 3 分の 1 で、3 行から 8 行。狭すぎれば出さない。
@@ -306,7 +308,8 @@ impl Changes {
         {
             return None;
         }
-        let (path, unstaged, conflict) = (entry.path.clone(), entry.unstaged, entry.letter == 'U');
+        let (path, conflict) = (entry.path.clone(), entry.letter == 'U');
+        let unstaged = entry.unstaged && self.staged_side.as_deref() != Some(path.as_str());
         self.loading = Some((path.clone(), self.serial));
         Some(Request::WorkingDiff {
             path,
@@ -870,6 +873,26 @@ impl Changes {
             rows: target.rows.clone(),
         };
         Ok(Some((target, request)))
+    }
+
+    /// 重ねて出せないファイル（片方の側だけを出している）で、stage 済みの変更も作業ツリーの変更もあれば、出す
+    /// 側を替える（アプリの Unstaged / Staged の切り替え）。替えたら、stage 済みの側を出すか。替えられなければ、
+    /// 重ねて出しているから（`Err(true)`）か、片方の変更しかないから（`Err(false)`）。
+    pub fn switch_side(&mut self) -> Result<bool, bool> {
+        let shown = self.shown.as_ref().ok_or(false)?;
+        if shown.combined || shown.conflict {
+            return Err(true);
+        }
+        let entry = self.selected_entry().ok_or(false)?;
+        if !(entry.staged && entry.unstaged) {
+            return Err(false);
+        }
+        let path = entry.path.clone();
+        let staged = self.staged_side.as_deref() != Some(path.as_str());
+        self.staged_side = staged.then_some(path);
+        // 読み直す。
+        self.shown = None;
+        Ok(staged)
     }
 
     /// 選んでいるファイルのパス。

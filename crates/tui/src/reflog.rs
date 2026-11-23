@@ -112,6 +112,12 @@ impl Reflog {
         self.entries.get(self.selected)?.new
     }
 
+    /// 一番上の行のコミット（今の HEAD か、ブランチの今の先端）と、選んでいる行の名前（`HEAD@{2}`）。
+    pub fn newest_and_selector(&self) -> Option<(Oid, &str)> {
+        let newest = self.entries.first()?.new?;
+        Some((newest, &self.entries.get(self.selected)?.selector))
+    }
+
     /// 選んでいる行のコミットが History にあるか。
     pub fn selected_reachable(&self) -> bool {
         self.entries.get(self.selected).is_some_and(|e| e.reachable)

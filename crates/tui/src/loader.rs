@@ -22,6 +22,8 @@ pub enum Request {
         fold: bool,
         expanded: Vec<String>,
         rebuild: bool,
+        /// History を、これらのコミット（選んだ ref の指す先、16 進）から辿れるものだけにする。空ならすべて。
+        tips: Vec<String>,
     },
     /// History の行（`start` から `count` 行）。
     Rows {
@@ -301,6 +303,7 @@ fn load(front: &dyn Front, request: Request, events: &Sender<Event>) -> Result<L
             fold,
             expanded,
             rebuild,
+            tips,
         } => Loaded::Opened {
             workdir: front.call(json!({"op": "hello"}))?.json["workdir"]
                 .as_str()
@@ -320,12 +323,14 @@ fn load(front: &dyn Front, request: Request, events: &Sender<Event>) -> Result<L
                 if rebuild {
                     front.call(json!({"op": "history", "rebuild": true}))?;
                 }
-                front
-                    .call(match fold {
-                        true => json!({"op": "history", "fold": true, "expanded": expanded}),
-                        false => json!({"op": "history"}),
-                    })?
-                    .json
+                let mut request = match fold {
+                    true => json!({"op": "history", "fold": true, "expanded": expanded}),
+                    false => json!({"op": "history"}),
+                };
+                if !tips.is_empty() {
+                    request["tips"] = json!(tips);
+                }
+                front.call(request)?.json
             },
         },
         Request::Rows {
