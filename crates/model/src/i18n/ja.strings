@@ -2453,3 +2453,11 @@
 "Hairline strokes (strokeWidth 0) are drawn 1 dp wide" = "幅 0 の線（hairline）は 1dp の幅で描く";
 "Sweep gradients are approximated with wedges" = "スイープグラデーションは扇形を並べて近似する";
 "Approximation: the SVG rewritten the way {renderer} degrades it, drawn by this app" = "近似: {renderer} が崩すように SVG を書き換え、このアプリで描いたもの";
+"vector_graphics_compiler failed: {message}" = "vector_graphics_compiler が失敗した: {message}";
+"dart pub get failed: {message}" = "dart pub get が失敗した: {message}";
+"vector_graphics_compiler didn’t finish in {seconds} seconds" = "vector_graphics_compiler が {seconds} 秒で終わらなかった";
+"The vector_graphics data ends early" = "vector_graphics のデータが途中で切れている";
+"The vector_graphics data is broken" = "vector_graphics のデータが壊れている";
+"This isn’t vector_graphics data" = "vector_graphics のデータではない";
+"vector_graphics data version {version} isn’t supported" = "vector_graphics のデータの版 {version} には対応していない";
+"Unknown vector_graphics command {tag}" = "vector_graphics の知らない命令 {tag}";
