@@ -1593,35 +1593,6 @@ extension DiffViewController {
     }
 }
 
-/// 差分の表示の設定（今は「長い行を折り返す」だけ）のボタン。Working Copy の差分の帯に置く（History は
-/// 右の列の上の帯の表示の設定に同じ項目がある）。
-final class DiffViewOptionsPopUp: NSPopUpButton, NSMenuDelegate {
-    init() {
-        super.init(frame: .zero, pullsDown: true)
-        bezelStyle = .accessoryBarAction
-        controlSize = .small
-        isBordered = false
-        toolTip = L("View Options")
-        let first = NSMenuItem()
-        first.title = ""
-        first.image = NSImage(systemSymbolName: "slider.horizontal.3", accessibilityDescription: L("View Options"))
-        menu?.addItem(first)
-        menu?.delegate = self
-        fill()
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError() }
-
-    func menuNeedsUpdate(_ menu: NSMenu) { fill() }
-
-    private func fill() {
-        guard let menu else { return }
-        while menu.items.count > 1 { menu.removeItem(at: 1) }
-        menu.addItem(DiffViewController.wrapLinesMenuItem())
-    }
-}
-
 // MARK: - 長い行の折り返し
 
 extension DiffViewController {
@@ -3006,6 +2977,7 @@ extension CommitDetailViewController {
         foldersButton.action = #selector(toggleAllFolders)
         expandAllButton.action = #selector(toggleAllDiffs)
         let whitespace = whitespacePopUp
+        let wrapButton = WrapLinesButton()
         whitespace.onChange = { [weak self] mode in self?.setWhitespace(mode) }
         let find = NSButton(
             image: NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: L("Find"))!,
@@ -3028,7 +3000,7 @@ extension CommitDetailViewController {
         treeSwitch.action = #selector(treeSwitchChanged)
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        let stack = NSStackView(views: [viewSwitch, barTotals, spacer, treeSwitch, foldersButton, expandAllButton, whitespace, find, display])
+        let stack = NSStackView(views: [viewSwitch, barTotals, spacer, treeSwitch, foldersButton, expandAllButton, whitespace, wrapButton, find, display])
         // 狭いときは右の側から切れる（差分の列の幅を押し広げない）。
         for v in stack.arrangedSubviews { v.setContentCompressionResistancePriority(.defaultLow, for: .horizontal) }
         stack.setClippingResistancePriority(.defaultLow, for: .horizontal)

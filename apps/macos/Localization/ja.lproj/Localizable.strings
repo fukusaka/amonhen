@@ -2096,3 +2096,5 @@
 "Fit Details to the Message" = "詳細をメッセージに合わせる";
 "Size the commit details to each message. Dragging the divider keeps its position instead." = "コミットの詳細の高さを、メッセージごとに合わせる。仕切りを動かすと、代わりにその位置を保つ。";
 "GitHub’s own emoji, shown by name (its image isn’t included)" = "GitHub 独自の絵文字（画像は入っていないので名前で出す）";
+"Wrapping long lines (⌥Z)" = "長い行を折り返している（⌥Z）";
+"Wrap Long Lines (⌥Z)" = "長い行を折り返す（⌥Z）";

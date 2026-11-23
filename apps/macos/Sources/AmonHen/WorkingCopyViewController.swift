@@ -49,7 +49,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     /// 破棄もできない。覚えない。
     private let whitespacePopUp = WhitespacePopUp()
     /// 差分の表示の設定（長い行を折り返す）。
-    private let viewOptionsPopUp = DiffViewOptionsPopUp()
+    private let wrapButton = WrapLinesButton()
     private let amend = NSButton(checkboxWithTitle: "Amend", target: nil, action: nil)
     private let commitButton = YieldingButton(title: "Commit", target: nil, action: nil)
     private let suggestButton = NSButton(title: "", target: nil, action: nil)
@@ -359,7 +359,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         lineEndingsLabel.isHidden = true
         whitespacePopUp.onChange = { [weak self] _ in self?.whitespaceChanged() }
         let actionButtons = NSStackView(views: [
-            lineEndingsLabel, whitespacePopUp, viewOptionsPopUp, sideControl, conflictButtons, discardButton, linesButton,
+            lineEndingsLabel, whitespacePopUp, wrapButton, sideControl, conflictButtons, discardButton, linesButton,
         ])
         let bar = TitleAndButtonsBar(title: titleLabel, buttons: actionButtons)
         diffBar = bar
@@ -974,7 +974,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         // 空白を無視した差分の行は中身をそのまま表していないので、行ごとには stage・破棄しない。
         let exact = whitespacePopUp.whitespace == .exact
         whitespacePopUp.isHidden = isConflict || selectedKey == nil
-        viewOptionsPopUp.isHidden = whitespacePopUp.isHidden
+        wrapButton.isHidden = whitespacePopUp.isHidden
         linesButton.isEnabled = current != nil && !selected.isEmpty && exact
         linesButton.toolTip = !exact ? L("Can’t stage or discard lines while whitespace is ignored")
             : current?.isCombined == true ? L("Include or exclude the selected lines in the next commit (Space)") : nil

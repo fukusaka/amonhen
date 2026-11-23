@@ -73,3 +73,33 @@ final class WhitespacePopUp: NSPopUpButton {
         }
     }
 }
+
+/// 差分の帯の「長い行を折り返す」ボタン（History の右の列と Working Copy）。アイコンだけで、押すたびに切り替える。
+/// 設定はアプリ全体で 1 つ（表示 > 長い行を折り返す、⌥Z と同じ）。オンの間はアイコンをアクセントの色にする。
+final class WrapLinesButton: NSButton {
+    init() {
+        super.init(frame: .zero)
+        bezelStyle = .accessoryBarAction
+        controlSize = .small
+        isBordered = false
+        image = NSImage(systemSymbolName: "arrow.turn.down.left", accessibilityDescription: L("Wrap Long Lines"))
+        imagePosition = .imageOnly
+        target = self
+        action = #selector(toggle)
+        update()
+        NotificationCenter.default.addObserver(self, selector: #selector(update), name: .diffWrapLinesChanged, object: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    @objc private func toggle() { Settings.wrapDiffLines.toggle() }
+
+    @objc private func update() {
+        let on = Settings.wrapDiffLines
+        contentTintColor = on ? .controlAccentColor : nil
+        toolTip = (on ? L("Wrapping long lines (⌥Z)") : L("Wrap Long Lines (⌥Z)")) + "\n"
+            + L("Wrap lines wider than the diff instead of scrolling sideways (in every diff)")
+    }
+}
+
