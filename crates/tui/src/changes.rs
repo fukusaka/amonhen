@@ -565,10 +565,16 @@ impl Changes {
             usize::from(area.width.saturating_sub(2)),
             line,
         );
-        let count = format!(" {} ", self.message.summary_length());
+        let length = self.message.summary_length();
+        let count = format!(" {length} ");
         let count_x = area.right().saturating_sub(count.len() as u16 + 1);
         if count_x > area.x + 20 {
-            buf.set_string(count_x, y, count, line);
+            // 件名が目安（50 文字）を超えたら、数を黄色に（アプリのカウンターと同じ）。
+            let style = match length > crate::editor::SUMMARY_GUIDE {
+                true => Style::new().fg(Color::Yellow),
+                false => line,
+            };
+            buf.set_string(count_x, y, count, style);
         }
         let body = Rect::new(area.x + 1, y + 1, area.width - 1, field - 1);
         if self.message.is_empty() && !typing {
