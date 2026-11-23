@@ -606,6 +606,8 @@ struct Root {
     split_handles: [ElementRef<Grid>; 3],
     /// Repositories の見出しの列の境目のつまみ。
     column_handles: [ElementRef<Grid>; 4],
+    /// Repositories の見出しの列（押して並べ替え、引いて列を動かす）。
+    repositories_header: ElementRef<Grid>,
     /// `#` を打った直後の Issue・PR の候補: 本文の欄か、`#` の直後の位置（文字の数）、そのときの欄の文、候補。
     issue_offer: Option<IssueOffer>,
     /// File > Clone… で選べる自分の GitHub のリポジトリ（名前と URL。読んでいる間は None）と、選んだ回数（選んだ
@@ -1728,6 +1730,7 @@ impl Component for Root {
             details_height: crate::prefs::number(DETAILS_HEIGHT_KEY).unwrap_or(240.0),
             split_handles: [ElementRef::new(), ElementRef::new(), ElementRef::new()],
             column_handles: std::array::from_fn(|_| ElementRef::new()),
+            repositories_header: ElementRef::new(),
             issue_offer: None,
             github_repos: None,
             github_repo_picks: 0,
@@ -9475,6 +9478,19 @@ impl Root {
         }
         // 見出しの境目のつまみに押す・動かすを付ける（画面を出すたび。`retry_splitters` が付け終える）。
         let shown = self.page == Page::Repositories && self.repositories.is_some();
+        let header = self.repositories_header.clone();
+        context.use_effect("column-header", shown, move || {
+            if shown {
+                let _ = header.request_native_element(|result| {
+                    if let Ok(element) = result
+                        && let Err(e) = attach_column_header(&element)
+                    {
+                        eprintln!("見出しに操作を付けられない: {e}");
+                    }
+                });
+            }
+            None
+        });
         for (i, handle) in self.column_handles.iter().enumerate() {
             let handle = handle.clone();
             context.use_effect(format!("column-{i}"), shown, move || {
@@ -16658,6 +16674,7 @@ impl Root {
                 side_host: &self.repositories_side,
                 list_host: &self.repositories_list,
                 column_handles: &self.column_handles,
+                header_host: &self.repositories_header,
             },
         );
 
@@ -20711,6 +20728,109 @@ fn attach_splitter(element: &IInspectable, split: Split) -> windows_core_reactor
         if split_released() {
             let _ = args.SetHandled(true);
         }
+    })?;
+    REVOKERS.with(|r| r.borrow_mut().extend([pressed, moved, released]));
+    Ok(())
+}
+
+/// 指の下の Repositories の見出しのマス（`repositories::HEADER_IDS` の名前）。マスの位置は、見出しの Grid の子
+/// （その順に並ぶ）に指の位置を聞いて決める。
+fn header_cell_under(
+    args: &xaml::PointerRoutedEventArgs,
+    header: &xaml::UIElement,
+) -> Option<&'static str> {
+    let node: xaml::DependencyObject = header.cast().ok()?;
+    crate::repositories::HEADER_IDS
+        .iter()
+        .enumerate()
+        .find_map(|(i, id)| {
+            let child = xaml::VisualTreeHelper::GetChild(&node, i as i32).ok()?;
+            let x = f64::from(
+                args.GetCurrentPoint(&child.cast::<xaml::UIElement>().ok()?)
+                    .ok()?
+                    .Position()
+                    .ok()?
+                    .X,
+            );
+            let width = child
+                .cast::<xaml::FrameworkElement>()
+                .ok()?
+                .ActualWidth()
+                .ok()?;
+            (0.0..width).contains(&x).then_some(*id)
+        })
+}
+
+/// Repositories の見出しに、押す・動かす・離すを付ける。動かさずに離せば押した列で並べ替え、6 DIP より
+/// 動かしてから離せば、押した列（Name 以外）を離した所の列の位置へ動かす（macOS 版・GTK4 版の見出しのドラッグ）。
+/// 境目のつまみが押しを受けたら（処理済み）、ここには来ない。
+fn attach_column_header(element: &IInspectable) -> windows_core_reactor::Result<()> {
+    thread_local! {
+        /// 押した位置と、押したマス、動かし始めたか。
+        static PRESS: std::cell::Cell<Option<(f64, Option<&'static str>, bool)>> =
+            const { std::cell::Cell::new(None) };
+    }
+    let ui: xaml::UIElement = element.cast()?;
+    let source = ui.clone();
+    let pressed = ui.PointerPressed(move |_, args: Ref<xaml::PointerRoutedEventArgs>| {
+        let Some(args) = args.as_ref() else { return };
+        let Ok(point) = args.GetCurrentPoint(&source) else {
+            return;
+        };
+        let left = point
+            .Properties()
+            .and_then(|p| p.IsLeftButtonPressed())
+            .unwrap_or(false);
+        let Ok(at) = point.Position() else { return };
+        if !left {
+            return;
+        }
+        let cell = header_cell_under(args, &source);
+        PRESS.with(|p| p.set(Some((f64::from(at.X), cell, false))));
+        if let Ok(pointer) = args.Pointer() {
+            let _ = source.CapturePointer(&pointer);
+        }
+        let _ = args.SetHandled(true);
+    })?;
+    let source = ui.clone();
+    let moved = ui.PointerMoved(move |_, args: Ref<xaml::PointerRoutedEventArgs>| {
+        let Some(args) = args.as_ref() else { return };
+        let Some((start, cell, _)) = PRESS.with(std::cell::Cell::get) else {
+            return;
+        };
+        let Some(x) = args
+            .GetCurrentPoint(&source)
+            .and_then(|p| p.Position())
+            .ok()
+            .map(|p| f64::from(p.X))
+        else {
+            return;
+        };
+        if cell.is_some_and(|c| c != "name") && (x - start).abs() > 6.0 {
+            PRESS.with(|p| p.set(Some((start, cell, true))));
+        }
+    })?;
+    let source = ui.clone();
+    let released = ui.PointerReleased(move |_, args: Ref<xaml::PointerRoutedEventArgs>| {
+        let Some(args) = args.as_ref() else { return };
+        if let Ok(pointer) = args.Pointer() {
+            let _ = source.ReleasePointerCapture(&pointer);
+        }
+        let Some((_, cell, dragged)) = PRESS.with(|p| p.take()) else {
+            return;
+        };
+        let Some(cell) = cell else { return };
+        let event = if dragged {
+            // 離した所のマスの位置へ（Name の上なら一番左へ）。
+            let slot = header_cell_under(args, &source).map_or(0, crate::repositories::slot_of);
+            crate::repositories::Event::ColumnDropped(cell.to_owned(), slot)
+        } else {
+            crate::repositories::Event::Sort(cell)
+        };
+        with_history(|h| {
+            h.sender.send(Message::Repos(event));
+        });
+        let _ = args.SetHandled(true);
     })?;
     REVOKERS.with(|r| r.borrow_mut().extend([pressed, moved, released]));
     Ok(())
