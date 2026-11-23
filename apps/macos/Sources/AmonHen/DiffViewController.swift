@@ -3060,8 +3060,8 @@ extension CommitDetailViewController {
         expand.indentationLevel = 1
         expand.toolTip = L("Expand the commit details to fill the right column (click again to restore).")
         menu.addItem(expand)
-        // 差分に効くもの。
-        menu.addItem(.sectionHeader(title: L("Diff")))
+        // コード（差分と、すべてのファイルで開いたファイルの中身）に効くもの。
+        menu.addItem(.sectionHeader(title: L("Code")))
         let wrap = DiffViewController.wrapLinesMenuItem()
         wrap.indentationLevel = 1
         menu.addItem(wrap)
