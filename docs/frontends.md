@@ -43,7 +43,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Stashes row with a count only when there are stashes | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: The Stashes section.<br>TUI: A Stashes section in the sidebar while there are stashes, its heading with the count. |
 | Range Diff row while a range diff is open | ✓ | ✓ | ✓ | ✓ | n/a | — |  |
 | Filter field over Branches, Remotes and Tags | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: The filter button on the sidebar's title asks for the words; the matches are listed flat.<br>TUI: `/` in the sidebar. |
-| Several branches or tags selected at once | ✓ | ✓ | ✓ | ✓ | n/a | — | VSCode: Merge into Current Branch, Delete Branch, favorites and Archive act on all of them. |
+| Several branches or tags selected at once | ✓ | ✓ | ✓ | ✓ | n/a | △ | VSCode: Merge into Current Branch, Delete Branch, favorites and Archive act on all of them.<br>TUI: `v` marks refs in the sidebar; `m` merges them in one commit and `D` deletes the marked branches; no favorites or archive. |
 | Pull Requests and Worktrees shown only when not empty | ✓ | ✓ | ✓ | △ | n/a | △ | VSCode: Worktrees only (GitHub is left out).<br>Windows: Worktrees are listed under Working Copy.<br>TUI: Worktrees only, when there are two or more. |
 
 ## Sidebar
@@ -172,7 +172,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Push sheet (warnings, commits and diff, Force Push with lease) | ✓ | ✓ | △ | ✓ | △ | △ | VSCode: A QuickPick with the warnings, the commits to send and the ones the upstream would lose, Pull… or Force Push with lease. All changes to send and each commit open their diff in the multi-file diff editor, and the sheet stays open.<br>CLI: Via `amonhen run`.<br>Windows: Shown in the window, not a dialog: the commits on the left and the selected one's diff in the right column, as Stashes are.<br>TUI: `P` asks with the number of commits and up to three subjects, and offers Force Push with lease and its drawing when the upstream is ahead; no diff. |
 | Publish (choose the remote and name) | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: Via `amonhen run`.<br>TUI: `P` on a branch without an upstream. |
 | Merge (fast-forward only / no-ff / squash options) | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: A list to choose how to merge, which is the confirmation.<br>CLI: Via `amonhen run` (`mode`).<br>TUI: `m` in the sidebar. |
-| Octopus merge of several (order, expected conflicts) | ✓ | ✓ | ✓ | ✓ | △ | — | CLI: `merge-check` checks; the merge via `amonhen run`.<br>Windows: From History's selection: the order (dragged), expected conflicts per branch with Put Last, how to merge, one by one, the message, the before-and-after drawing, and Merge One by One when git refuses. |
+| Octopus merge of several (order, expected conflicts) | ✓ | ✓ | ✓ | ✓ | △ | △ | CLI: `merge-check` checks; the merge via `amonhen run`.<br>Windows: From History's selection: the order (dragged), expected conflicts per branch with Put Last, how to merge, one by one, the message, the before-and-after drawing, and Merge One by One when git refuses.<br>TUI: `m` on refs marked with `v` in the sidebar, naming how many commits each brings, in the order marked; no expected conflicts. |
 | Rebase sheet drawing before and after | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: The dialog lists the commits now and after the rebase, with the branches, as text.<br>CLI: `rewrite-preview` prints it; the rebase via `amonhen run`.<br>TUI: `r` in the sidebar; the drawing lies over the screen. |
 | Stash (message, include untracked) | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: Via `amonhen run`.<br>TUI: `s`. |
 | Stash: only the staged changes, keep the index, selected files | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: With the engine, the Stash list has the first two, and a Working Copy file's right-click has Stash… for that file.<br>CLI: Via `amonhen run` (`stashPush` with `staged`, `keepIndex`, `paths`).<br>TUI: `s` offers `k` keep the index, `s` only what is staged and, in the Working Copy, `f` only the selected file. |
@@ -211,9 +211,9 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 
 | Feature | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
-| Range Diff view (= ! < >, Changes Only, diff of diffs) | ✓ | ✓ | ✓ | ✓ | ✓ | △ | CLI: `range-diff`.<br>TUI: Only through Compare with Previous Version, in the Blame and File History view; `c` for Changes Only. |
+| Range Diff view (= ! < >, Changes Only, diff of diffs) | ✓ | ✓ | ✓ | ✓ | ✓ | △ | CLI: `range-diff`.<br>TUI: In the Blame and File History view, not as a page of its own; `c` for Changes Only. |
 | Compare with Previous Version | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `range-diff --previous`.<br>TUI: In the command list. |
-| Two History commits or a Reflog entry compared as two versions | ✓ | ✓ | ✓ | ✓ | ✓ | — | CLI: Any ranges. |
+| Two History commits or a Reflog entry compared as two versions | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: Any ranges.<br>TUI: `=` with two commits selected in History, or on a Reflog entry (with the current HEAD). |
 | Editable ranges | ✓ | ✓ | ✓ | ✓ | ✓ | — |  |
 
 ## 6. Working Copy
@@ -225,7 +225,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Filter on paths | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: `/` in the list. |
 | Per-row +/− counts and Discard on hover | ✓ | ✓ | ✓ | ✓ | △ | △ | VSCode: Counts need the engine.<br>CLI: `diff --stat`.<br>Windows: The ↶ stays on the last row the pointer was on.<br>TUI: The selected file's counts head its diff; `d` discards. |
 | Space toggles, ⌫ discards | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: Space and `d`. |
-| Commit box on top with 50/72 counter and body guide | ✓ | ✓ | ✓ | ✓ | n/a | △ | VSCode: A description line over 72 is counted instead of a guide (the column is narrower than 72 characters).<br>TUI: Under the list; its heading counts the summary line, with no body guide. |
+| Commit box on top with 50/72 counter and body guide | ✓ | ✓ | ✓ | ✓ | n/a | △ | VSCode: A description line over 72 is counted instead of a guide (the column is narrower than 72 characters).<br>TUI: Under the list; its heading counts the summary line (yellow past 50), and what goes past 50 in the summary or 72 in a body line is yellow. |
 | Draft per repository, starting from the template | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: `commit.template` only, not the shared template library.<br>TUI: The draft is kept in `<git dir>/amonhen/commit-draft`; the template is `commit.template` (the repository's own one on SSH hosts too), not the shared library. |
 | Recent messages (⌥↑ / ⌥↓, list) | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: Alt-↑ / Alt-↓ in the message field, `R` in the list for the list. |
 | Insert Conventional types, Co-authored-by, Signed-off-by | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: `I` in the Working Copy. |
@@ -236,7 +236,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Reason shown when Commit is disabled | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | In the button's tooltip.<br>TUI: On the bottom line. |
 | Combined HEAD → working tree diff with line and hunk checks | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: With the engine; without it, line staging on separate unstaged and staged diffs.<br>CLI: `diff --combined`, `stage --rows`. |
 | Range selection in the gutter, J/K and ⌥J/⌥K | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: `v` starts a range; `[` `]` go to the hunk headers. |
-| Unstaged / Staged switch for files that can't be overlaid | ✓ | ✓ | ✓ | n/a | ✓ | △ | VSCode: Always shown separately.<br>CLI: `diff --staged`.<br>TUI: One side is shown (the unstaged changes when there are some), with no switch. |
+| Unstaged / Staged switch for files that can't be overlaid | ✓ | ✓ | ✓ | n/a | ✓ | ✓ | VSCode: Always shown separately.<br>CLI: `diff --staged`.<br>TUI: The unstaged side first; `s` in the diff switches sides. |
 | Diff options (unified/split, context, wrap) | — | — | — | — | n/a | — |  |
 | Ignore whitespace (lines aren't staged or discarded meanwhile) | ✓ | ✓ | — | — | ✓ | — | CLI: `diff -w`, `-b`, `--ignore-space-at-eol` (not with `--combined`). |
 | Discard lines, hunks and files (undoable) | ✓ | ✓ | △ | ✓ | ✓ | ✓ | CLI: `discard --rows`.<br>Windows: Right-click a line or a hunk header in the Working Copy diff (Discard Lines); lines can't be selected |
@@ -259,7 +259,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Go to HEAD, Parent, Child | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: The HEAD button above History, Go to Parent and Go to Child on a commit's menu, and parent and child links in the details (with the engine).<br>TUI: `@`, `]` and `[`. |
 | Go to Ref | — | — | — | — | n/a | — |  |
 | Several commits selected (range, two, scattered) | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: With the engine.<br>CLI: `diff <rev> <rev>` for two.<br>TUI: `m`, Shift-↑↓, or Ctrl- or Alt-click. |
-| History of several selected refs | ✓ | ✓ | ✓ | ✓ | ✓ | — | CLI: `log --branch` repeated.<br>Windows: Selecting a ref in the sidebar shows its History, and Ctrl+click adds or removes refs; View has All Branches and Current Branch.<br>TUI: Opening a ref selects its commit in History. |
+| History of several selected refs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `log --branch` repeated.<br>Windows: Selecting a ref in the sidebar shows its History, and Ctrl+click adds or removes refs; View has All Branches and Current Branch.<br>TUI: `v` marks refs in the sidebar and History shows what they reach; Esc clears the marks. Opening a ref selects its commit. |
 | Commit menu: checkout, new branch or tag, cherry-pick, revert, copy ID | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: Via `amonhen run`.<br>TUI: `c`, `b`, `T`, `y`, `v` and `Y` (copied to the terminal's clipboard with OSC 52). |
 | Edit mode (pick, reword, squash, fixup, drop, edit; drag to reorder) | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: With the engine; without it, one commit at a time.<br>CLI: Via `amonhen run`.<br>TUI: `E`, over the screen; `J` `K` move a row. |
 | Rewrite preview (stacked and pushed branches, expected conflicts) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: Through the daemon. Rebasing another branch gives the conflict estimate instead, as in the app.<br>CLI: `rewrite-preview`. |
@@ -275,11 +275,12 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Full message, draggable panes, ⤢ to expand | ✓ | ✓ | ✓ | ✓ | n/a | △ | TUI: The dividers can't be dragged; on a narrow terminal the details open in place of History. |
 | Find inside the details | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: ⌘F searches the whole main view; diffs not loaded yet aren't searched.<br>TUI: `/` in the details, `n` `N` for the next and previous. |
 | Changed files as the diff's own file headers (folded at first, sticky, one bar of controls) | ✓ | ✓ | ✓ | △ | ✓ | △ | CLI: `show`.<br>VSCode: Still a separate changed-files list beside the stacked diff, with Viewed.<br>TUI: `[` `]` move between files; no sticky headers or folding. |
-| Changed files as a list or a tree whose folders fold | ✓ | ✓ | ✓ | △ | n/a | △ | VSCode: A tree beside the diff (Tree / List above the files).<br>TUI: A flat list above the diff. |
-| Widen a hunk's context, show a whole file | ✓ | ✓ | ✓ | — | n/a | — | |
-| Ignore whitespace (at line ends, changes in amount, all) | ✓ | ✓ | — | — | ✓ | — | CLI: `show -w`, `-b`, `--ignore-space-at-eol`. |
+| Changed files as a list or a tree whose folders fold | ✓ | ✓ | ✓ | △ | n/a | ✓ | VSCode: A tree beside the diff (Tree / List above the files).<br>TUI: Above the diff; `t` switches to the tree, a click folds a folder (`z` all) or goes to a file's diff. |
+| Widen a hunk's context, show a whole file | ✓ | ✓ | ✓ | — | n/a | ✓ | TUI: `+` widens the file in view by 20 lines, `F` shows all of it. |
+| Ignore whitespace (at line ends, changes in amount, all) | ✓ | ✓ | — | — | ✓ | ✓ | CLI: `show -w`, `-b`, `--ignore-space-at-eol`.<br>TUI: `w` in the details goes through them in turn. |
 | Compare images (side by side, swipe, onion skin, differing pixels) | ✓ | ✓ | — | — | n/a | — | |
 | All Files: the tree at the commit and a file's contents with the commit's lines marked | ✓ | ✓ | — | — | n/a | — | |
+| All Files previews: zoomable images, SVG picture and mobile check, formatted Markdown, Quick Look for binaries | ✓ | ✓ | — | — | n/a | — | GTK4: GNOME's previewer (or the default app) instead of Quick Look; the SVG pictures are drawn by librsvg. |
 | File header menu (Blame, File History, copy path, open) | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: Blame, File History and Copy Path on the right-click; Open in VSCode's diff editor.<br>TUI: `B`, `L`, `Y` (copy path) and `e` (open in git's editor) for the file in view. |
 | Diff of a selection (range squashed, A..B / A...B, scattered) | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: With the engine.<br>CLI: `diff <rev> <rev>`.<br>TUI: `m` and Shift-↑↓ (or Ctrl- or Alt-click) select; `x` swaps the direction and `.` diffs from the merge base. |
 | Actions on a selection (cherry-pick, revert, squash, copy IDs) | ✓ | ✓ | △ | ✓ | △ | ✓ | VSCode: With the engine.<br>CLI: Via `amonhen run`.<br>Windows: Combining consecutive commits edits the message in a dialog, then rewrites at once (no edit mode).<br>TUI: `y` `v` on the marked commits, `E` opens edit mode with them combined, `Y` copies the IDs, and Save as Patch saves them. |
