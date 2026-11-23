@@ -1,5 +1,7 @@
 //! 図の種類（pele の `src/diagrams/`）。種類の足し方は `registry` に書いた。`pub mod` はアルファベット順に保つ。
 
+pub mod agentflow;
+pub mod block;
 pub mod common;
 pub mod cynefin;
 pub mod flowchart;
