@@ -20,7 +20,7 @@ use crate::Clock;
 use crate::Result;
 use crate::changes::Changes;
 use crate::commands::{self, Place};
-use crate::details::{Details, Pair, Want};
+use crate::details::{Details, Pair, Want, Whitespace};
 use crate::diff::{PAN, Theme};
 use crate::fileview::FileView;
 use crate::history::{History, Marked, WHEEL_ROWS};
@@ -5790,6 +5790,14 @@ impl App {
                     tr!("Copy the path of the file in view; open it in git's editor"),
                 ),
                 ("/ n N", tr!("Find in the details; next and previous")),
+                (
+                    "w",
+                    tr!("Ignore whitespace: at line ends, its amount, all, none"),
+                ),
+                (
+                    "+ F",
+                    tr!("Widen the context of the file in view; show the whole file"),
+                ),
                 ("h l", tr!("Pan long lines; h at the left edge goes back")),
                 ("Esc", tr!("Go back to History")),
             ],
@@ -6621,6 +6629,33 @@ impl App {
             KeyCode::Char('z') => Some(self.details.fold_all()),
             _ => None,
         };
+        // 今見ているファイルの前後を広げる・ファイル全体を出す（アプリの hunk の見出しの印・Show Whole File）。
+        // 読み直しは `request` が頼む。
+        if code == KeyCode::Char('+') {
+            return self.details.widen();
+        }
+        if code == KeyCode::Char('F') {
+            return match self.details.toggle_whole_file() {
+                Some(whole) => {
+                    self.notice = Some(match whole {
+                        true => tr!("Showing the whole file"),
+                        false => tr!("Showing the changes only"),
+                    });
+                    true
+                }
+                None => false,
+            };
+        }
+        // 差分で無視する空白を替える（アプリの Ignore Whitespace）。読み直しは `request` が頼む。
+        if code == KeyCode::Char('w') {
+            self.notice = Some(match self.details.next_whitespace() {
+                Whitespace::Exact => tr!("Whitespace is compared"),
+                Whitespace::AtEol => tr!("Ignoring whitespace at line ends"),
+                Whitespace::Change => tr!("Ignoring changes in the amount of whitespace"),
+                Whitespace::All => tr!("Ignoring all whitespace"),
+            });
+            return true;
+        }
         if let Some(scrolled) = scrolled {
             if scrolled {
                 self.damage |= Damage::SIDE;

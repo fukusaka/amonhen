@@ -26,6 +26,36 @@ struct File {
     binary: bool,
 }
 
+/// 差分で無視する空白（アプリの Ignore Whitespace。`commitDiff` の whitespace）。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Whitespace {
+    #[default]
+    Exact,
+    AtEol,
+    Change,
+    All,
+}
+
+impl Whitespace {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Whitespace::Exact => "exact",
+            Whitespace::AtEol => "at-eol",
+            Whitespace::Change => "change",
+            Whitespace::All => "all",
+        }
+    }
+
+    fn next(self) -> Self {
+        match self {
+            Whitespace::Exact => Whitespace::AtEol,
+            Whitespace::AtEol => Whitespace::Change,
+            Whitespace::Change => Whitespace::All,
+            Whitespace::All => Whitespace::Exact,
+        }
+    }
+}
+
 /// ファイルの一覧の 1 行（一覧なら、ファイルだけ。木なら、フォルダとその下のファイル）。
 #[derive(Debug, PartialEq)]
 enum Listed {
@@ -453,7 +483,16 @@ pub struct Details {
     tree: bool,
     /// 木でたたんだフォルダ（コミットを替えたら開く）。
     folded: HashSet<String>,
+    /// 差分で無視する空白（コミットを替えても覚えている）。
+    whitespace: Whitespace,
+    /// ファイルごとの前後の行数（`u32::MAX` はファイル全体）。出すものを替えたら忘れる。
+    contexts: std::collections::BTreeMap<usize, u32>,
+    /// 前後の行数を替えて読み直したら、このファイルの見出しへ動かす。
+    keep: Option<usize>,
 }
+
+/// `+` で広げる行数（アプリと同じ）。
+const WIDEN_BY: u32 = 20;
 
 impl Details {
     /// 頭・ファイルの一覧・差分の `line` 行目の字。
@@ -520,13 +559,76 @@ impl Details {
         }
         self.wanted = Some(want);
         self.found = None;
+        self.contexts.clear();
+        self.keep = None;
         true
+    }
+
+    /// 頼むものの鍵: 出したいものと、無視する空白。
+    fn key_of(&self, wanted: &Want) -> String {
+        let mut key = wanted.key();
+        if self.whitespace != Whitespace::Exact {
+            key += &format!(" ws:{}", self.whitespace.as_str());
+        }
+        if !self.contexts.is_empty() {
+            key += &format!(" ctx:{:?}", self.contexts);
+        }
+        key
+    }
+
+    /// `commitDiff` の contexts。
+    fn contexts_json(&self) -> Value {
+        self.contexts
+            .iter()
+            .map(|(file, &lines)| {
+                let lines = match lines {
+                    u32::MAX => Value::from("all"),
+                    n => Value::from(n),
+                };
+                (file.to_string(), lines)
+            })
+            .collect::<serde_json::Map<_, _>>()
+            .into()
+    }
+
+    /// 今見ているファイルの前後を広げる（アプリの hunk の見出しの印）。ファイル全体を出していれば何もしない。
+    pub fn widen(&mut self) -> bool {
+        let Some(index) = self.current_index() else {
+            return false;
+        };
+        let lines = self.contexts.get(&index).copied().unwrap_or(3);
+        if lines == u32::MAX {
+            return false;
+        }
+        self.contexts.insert(index, lines + WIDEN_BY);
+        self.keep = Some(index);
+        true
+    }
+
+    /// 今見ているファイルの全体を出す・戻す（アプリの Show Whole File）。出すなら true。
+    pub fn toggle_whole_file(&mut self) -> Option<bool> {
+        let index = self.current_index()?;
+        let whole = self.contexts.get(&index) != Some(&u32::MAX);
+        if whole {
+            self.contexts.insert(index, u32::MAX);
+        } else {
+            self.contexts.remove(&index);
+        }
+        self.keep = Some(index);
+        Some(whole)
+    }
+
+    /// 無視する空白を次のもの（なし → 行末 → 量 → すべて → なし）にして、差分を読み直す。
+    pub fn next_whitespace(&mut self) -> Whitespace {
+        self.whitespace = self.whitespace.next();
+        self.whitespace
     }
 
     /// 頼むことがあれば、その中身（答えを待っている間は、次を頼まない）。
     pub fn request(&mut self) -> Option<Request> {
         let wanted = self.wanted.as_ref()?;
-        let key = wanted.key();
+        let key = self.key_of(wanted);
+        let whitespace = self.whitespace.as_str();
         if self.loading.is_some()
             || self.commit.as_ref().is_some_and(|c| c.key == key)
             || self.failed.as_ref().is_some_and(|f| f.0 == key)
@@ -538,6 +640,9 @@ impl Details {
             Want::Commit { id, stash } => Request::Commit {
                 id: id.to_string(),
                 stash: *stash,
+                key,
+                whitespace,
+                contexts: self.contexts_json(),
             },
             Want::Selection {
                 history,
@@ -549,6 +654,8 @@ impl Details {
                 history: history.clone(),
                 rows: rows.clone(),
                 pair: pair.as_str(),
+                whitespace,
+                contexts: self.contexts_json(),
             },
         })
     }
@@ -562,7 +669,7 @@ impl Details {
     ) -> Option<Request> {
         self.loading = None;
         // 待つ間に選択が動いていたら捨てる（`request` が次を頼む）。
-        let wanted = self.wanted.as_ref().filter(|w| w.key() == id)?;
+        let wanted = self.wanted.as_ref().filter(|w| self.key_of(w) == id)?;
         match result {
             Ok((info, diff)) => {
                 let view = diff.json["view"].clone();
@@ -590,6 +697,16 @@ impl Details {
                 self.scroll.top = 0;
                 self.scroll.left = 0;
                 self.jumped = None;
+                // 前後の行数を替えたファイルの見出しへ。
+                if let Some(index) = self.keep.take() {
+                    let commit = self.commit.as_ref().expect("just set");
+                    if let Some(row) = commit.diff.file_rows.get(index) {
+                        let line = commit.before_diff() + row;
+                        self.scroll.clamp(commit.lines());
+                        self.scroll_to(line);
+                        self.jumped = Some(index);
+                    }
+                }
                 (!view.is_null()).then(|| Request::Syntax {
                     id: id.to_owned(),
                     of: serde_json::json!({"view": view}),
@@ -673,9 +790,8 @@ impl Details {
         self.scroll.left > 0
     }
 
-    /// 今見ているファイルのパスと、出しているコミット。ファイルは、見えている最初の見出しのもの。見出しが
-    /// 見えていなければ、上にある最後の見出しのもの（それもなければ最初のファイル）。
-    pub fn current_file(&self) -> Option<(&str, Oid)> {
+    /// 今見ているファイルの番号（`current_file` のもの）。
+    fn current_index(&self) -> Option<usize> {
         let commit = self.commit.as_ref()?;
         let before = commit.before_diff();
         let (top, bottom) = (
@@ -689,6 +805,14 @@ impl Details {
                 .position(|line| top <= line && line < bottom)
                 .unwrap_or_else(|| lines.filter(|&line| line < top).count().saturating_sub(1))
         });
+        (index < commit.files.len()).then_some(index)
+    }
+
+    /// 今見ているファイルのパスと、出しているコミット。ファイルは、見えている最初の見出しのもの。見出しが
+    /// 見えていなければ、上にある最後の見出しのもの（それもなければ最初のファイル）。
+    pub fn current_file(&self) -> Option<(&str, Oid)> {
+        let commit = self.commit.as_ref()?;
+        let index = self.current_index()?;
         let path = commit.files.get(index)?.path.as_str();
         // 飛び飛びの選択では、見出しが「パス — 短い ID」なので、そのコミットのファイルとして開く。
         if let Some(selected) = &commit.selected
@@ -816,6 +940,7 @@ impl Details {
             return;
         }
         self.scroll.height = area.height;
+        let wanted = self.wanted.as_ref().map(|w| self.key_of(w));
         let Some(commit) = &mut self.commit else {
             let (text, style) = match &self.failed {
                 Some((_, error)) => (error.clone(), Style::new().fg(Color::Red)),
@@ -833,7 +958,7 @@ impl Details {
         let failed = self
             .failed
             .as_ref()
-            .filter(|f| self.wanted.as_ref().is_some_and(|w| w.key() == f.0))
+            .filter(|f| wanted.as_ref() == Some(&f.0))
             .map(|f| f.1.as_str());
         let head = commit.head.len() as u32;
         let before = commit.before_diff();
