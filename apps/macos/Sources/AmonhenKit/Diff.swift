@@ -534,6 +534,8 @@ public indirect enum MarkdownBlock: Decodable, Sendable {
     case heading(level: Int, runs: [Run])
     case paragraph(runs: [Run])
     case code(language: String, text: String)
+    /// 図（` ```mermaid ` など）。`svg`・`svgDark` は明るい表示・暗い表示の絵。描けなければ `error` に理由。
+    case diagram(language: String, text: String, svg: String?, svgDark: String?, error: String?)
     case quote(alert: String?, blocks: [MarkdownBlock])
     case list(start: Int?, items: [Item])
     case table(aligns: [String], head: [[Run]], rows: [[[Run]]])
@@ -541,7 +543,9 @@ public indirect enum MarkdownBlock: Decodable, Sendable {
     case html(text: String)
     case footnote(label: String, blocks: [MarkdownBlock])
 
-    enum Key: String, CodingKey { case kind, level, runs, language, text, alert, blocks, start, items, aligns, head, rows, label }
+    enum Key: String, CodingKey {
+        case kind, level, runs, language, text, alert, blocks, start, items, aligns, head, rows, label, svg, svgDark, error
+    }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: Key.self)
@@ -549,6 +553,11 @@ public indirect enum MarkdownBlock: Decodable, Sendable {
         case "heading": self = .heading(level: try c.decode(Int.self, forKey: .level), runs: try c.decode([Run].self, forKey: .runs))
         case "paragraph": self = .paragraph(runs: try c.decode([Run].self, forKey: .runs))
         case "code": self = .code(language: try c.decode(String.self, forKey: .language), text: try c.decode(String.self, forKey: .text))
+        case "diagram":
+            self = .diagram(
+                language: try c.decode(String.self, forKey: .language), text: try c.decode(String.self, forKey: .text),
+                svg: try c.decodeIfPresent(String.self, forKey: .svg), svgDark: try c.decodeIfPresent(String.self, forKey: .svgDark),
+                error: try c.decodeIfPresent(String.self, forKey: .error))
         case "quote":
             self = .quote(alert: try c.decodeIfPresent(String.self, forKey: .alert), blocks: try c.decode([MarkdownBlock].self, forKey: .blocks))
         case "list": self = .list(start: try c.decodeIfPresent(Int.self, forKey: .start), items: try c.decode([Item].self, forKey: .items))

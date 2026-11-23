@@ -136,6 +136,17 @@ private struct MarkdownBuilder {
         return result
     }
 
+    /// 図の絵。明るい表示・暗い表示の SVG を、描くときの見た目で選ぶ（表示を切り替えても組み直さない）。
+    static func diagram(light: String?, dark: String?) -> NSImage? {
+        guard let light = light.flatMap({ NSImage(data: Data($0.utf8)) }) else { return nil }
+        let darkImage = dark.flatMap { NSImage(data: Data($0.utf8)) } ?? light
+        return NSImage(size: light.size, flipped: false) { rect in
+            let isDark = NSAppearance.currentDrawing().bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            (isDark ? darkImage : light).draw(in: rect)
+            return true
+        }
+    }
+
     private func newline(_ style: NSParagraphStyle) -> NSAttributedString {
         NSAttributedString(string: "\n", attributes: [.paragraphStyle: style, .font: NSFont.systemFont(ofSize: bodySize)])
     }
@@ -189,6 +200,31 @@ private struct MarkdownBuilder {
                         }
                     }
                 }
+                out.append(newline(style))
+            case .diagram(let language, let code, let svg, let svgDark, let error):
+                guard let picture = Self.diagram(light: svg, dark: svgDark) else {
+                    // 描けない図はコードとして見せ、理由を添える。
+                    add([.code(language: language, text: code)], depth: depth, outer: outer, indent: indent)
+                    if let error {
+                        let style = paragraph(indent: indent, spacing: 10, blocks: outer)
+                        out.append(NSAttributedString(string: error, attributes: [
+                            .font: NSFont.systemFont(ofSize: bodySize - 2), .foregroundColor: NSColor.systemRed, .paragraphStyle: style,
+                        ]))
+                        out.append(newline(style))
+                    }
+                    continue
+                }
+                let style = paragraph(indent: indent, spacing: 12, blocks: outer)
+                let attachment = NSTextAttachment()
+                attachment.image = picture
+                // 列より広い図は縮める（高さは比を保つ）。
+                let maxWidth: CGFloat = 640
+                let size = picture.size.width > maxWidth
+                    ? NSSize(width: maxWidth, height: picture.size.height * maxWidth / picture.size.width) : picture.size
+                attachment.bounds = NSRect(origin: .zero, size: size)
+                let text = NSMutableAttributedString(attachment: attachment)
+                text.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: text.length))
+                out.append(text)
                 out.append(newline(style))
             case .quote(let alert, let inner):
                 let (color, title) = Self.alert(alert)
