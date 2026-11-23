@@ -14,7 +14,7 @@ use std::sync::OnceLock;
 use amonhen_model::tr;
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
-use gtk::{gdk, glib, graphene, gsk, pango};
+use gtk::{gdk, gio, glib, graphene, gsk, pango};
 
 /// 画像として見せる拡張子: gdk-pixbuf が読める形式と、GTK が自分で読む PNG・JPEG・TIFF と SVG。PDF などの文書は
 /// プレビューに任せる（macOS 版と同じ）。
@@ -87,6 +87,62 @@ pub fn texture(data: Option<&[u8]>) -> Option<gdk::Texture> {
     gdk::Texture::from_bytes(&glib::Bytes::from(data?)).ok()
 }
 
+/// SVG の根の `width`・`height`（論理の画素）。書いてなければ None。
+pub fn svg_size(svg: &str) -> Option<(i32, i32)> {
+    let start = svg.find("<svg")?;
+    let open = &svg[start..start + svg[start..].find('>')?];
+    let attr = |name: &str| -> Option<i32> {
+        let at = open.find(&format!(" {name}=\""))? + name.len() + 3;
+        let value = &open[at..at + open[at..].find('"')?];
+        value
+            .trim_end_matches("px")
+            .parse::<f64>()
+            .ok()
+            .map(|v| v.ceil() as i32)
+    };
+    Some((attr("width")?, attr("height")?))
+}
+
+/// 画素の並び（スレッドをまたいで渡せる。メインスレッドで `texture` にする）。
+pub struct Pixels {
+    bytes: glib::Bytes,
+    width: i32,
+    height: i32,
+    stride: usize,
+    alpha: bool,
+}
+
+impl Pixels {
+    pub fn texture(&self) -> gdk::Texture {
+        let format = if self.alpha {
+            gdk::MemoryFormat::R8g8b8a8
+        } else {
+            gdk::MemoryFormat::R8g8b8
+        };
+        gdk::MemoryTexture::new(self.width, self.height, format, &self.bytes, self.stride).upcast()
+    }
+}
+
+/// SVG を `width`×`height` の画素で読む（裏のスレッドで呼んでよい）。
+pub fn svg_pixels(svg: &[u8], width: i32, height: i32) -> Option<Pixels> {
+    let stream = gio::MemoryInputStream::from_bytes(&glib::Bytes::from(svg));
+    let pixbuf = gtk::gdk_pixbuf::Pixbuf::from_stream_at_scale(
+        &stream,
+        width,
+        height,
+        true,
+        gio::Cancellable::NONE,
+    )
+    .ok()?;
+    Some(Pixels {
+        bytes: pixbuf.read_pixel_bytes(),
+        width: pixbuf.width(),
+        height: pixbuf.height(),
+        stride: pixbuf.rowstride() as usize,
+        alpha: pixbuf.has_alpha(),
+    })
+}
+
 /// 画像の大きさとバイト数（「64 × 48 px · 1.2 kB」）。
 fn describe(data: Option<&[u8]>, image: Option<&gdk::Texture>) -> String {
     let Some(data) = data else {
@@ -125,17 +181,20 @@ pub fn panel(
         svg.then_some(on_show_text),
         None,
         false,
+        None,
     )
 }
 
 /// すべてのファイルで、2 つの絵を比べる欄（SVG のモバイル向けの確認: 元の絵と、部品が崩した近似）。`titles` は
-/// 前と後の見出し。欄の高さいっぱいに広げ、`notes` があれば絵の下に置く。
+/// 前と後の見出し。欄の高さいっぱいに広げ、`notes` があれば絵の下に置く。`leading` は帯の左端（比べ方の前）に
+/// 置く部品（モバイルの部品の切り替え）。
 pub fn compare(
     before: &[u8],
     after: &[u8],
     titles: (String, String),
     caption: String,
     notes: Option<gtk::Widget>,
+    leading: Option<gtk::Widget>,
 ) -> gtk::Widget {
     let panel = build(
         texture(Some(before)),
@@ -145,6 +204,7 @@ pub fn compare(
         None,
         Some(titles),
         true,
+        leading,
     );
     with_notes(panel, notes)
 }
@@ -159,7 +219,7 @@ pub fn size_caption(data: &[u8]) -> String {
 pub fn single(data: &[u8], notes: Option<gtk::Widget>) -> Option<gtk::Widget> {
     let image = texture(Some(data))?;
     let caption = describe(Some(data), Some(&image));
-    let panel = build(None, Some(image), caption, None, None, None, true);
+    let panel = build(None, Some(image), caption, None, None, None, true, None);
     Some(with_notes(panel, notes))
 }
 
@@ -193,7 +253,8 @@ fn with_notes(panel: gtk::Widget, notes: Option<gtk::Widget>) -> gtk::Widget {
 }
 
 /// 欄を作る。`modes` がなければ 1 枚だけ（`after` を出す）。`titles` は前と後の見出し（なければ「前」「後」）。
-/// `fill` なら高さいっぱいに広げる（すべてのファイル。下の仕切りの線は引かない）。
+/// `fill` なら高さいっぱいに広げる（すべてのファイル。下の仕切りの線は引かない）。`leading` は帯の左端に置く。
+#[allow(clippy::too_many_arguments)]
 fn build(
     old: Option<gdk::Texture>,
     new: Option<gdk::Texture>,
@@ -202,6 +263,7 @@ fn build(
     on_show_text: Option<Rc<dyn Fn()>>,
     titles: Option<(String, String)>,
     fill: bool,
+    leading: Option<gtk::Widget>,
 ) -> gtk::Widget {
     let single = modes.is_none();
     let canvas = Canvas::new(old, new);
@@ -220,6 +282,9 @@ fn build(
         canvas.set_zoom(Some(zoom));
     }
     let bar = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    if let Some(leading) = &leading {
+        bar.append(leading);
+    }
     let mut buttons: Vec<(Mode, gtk::ToggleButton)> = Vec::new();
     if modes.is_some() {
         let group = gtk::Box::new(gtk::Orientation::Horizontal, 0);

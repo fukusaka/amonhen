@@ -78,7 +78,7 @@ final class ImageDiffPanel: NSView {
     /// 描いた画像で作る（`titles` は前と後の見出し）。
     init(
         before old: NSImage?, after new: NSImage?, titles: (String, String), caption text: String, svg: Bool, mode: Mode,
-        position: CGFloat, single: Bool, notes: NSAttributedString? = nil
+        position: CGFloat, single: Bool, notes: NSAttributedString? = nil, accessory: NSView? = nil
     ) {
         canvas = ImageCompareCanvas(before: old, after: new)
         canvas.single = single
@@ -110,7 +110,8 @@ final class ImageDiffPanel: NSView {
         // 確かめる用（`--snapshot`）: 最初の倍率（`-AMHImageZoom 4` で 400%）。
         let zoom = UserDefaults.standard.double(forKey: "AMHImageZoom")
         if zoom > 0 { canvas.setZoom(CGFloat(zoom)) }
-        var top: [NSView] = single ? [] : [modeControl]
+        // 段の左に置く部品（SVG のモバイルの、部品の切り替え）。
+        var top: [NSView] = (accessory.map { [$0] } ?? []) + (single ? [] : [modeControl])
         if svg {
             let text = NSButton(
                 image: NSImage(systemSymbolName: "doc.plaintext", accessibilityDescription: L("Show as Text"))!,
@@ -341,6 +342,12 @@ final class ImageCompareCanvas: NSView {
 
     private func draw(_ image: NSImage?, in rect: NSRect, alpha: CGFloat = 1) {
         guard let image else { return }
+        // ベクター（SVG）は描く大きさで描き直す（ビットマップに焼いたものを伸ばすとぼやける）。
+        if let rep = image.representations.first, !(rep is NSBitmapImageRep) {
+            NSGraphicsContext.current?.imageInterpolation = .high
+            rep.draw(in: rect, from: .zero, operation: .sourceOver, fraction: alpha, respectFlipped: true, hints: nil)
+            return
+        }
         NSGraphicsContext.current?.imageInterpolation = rect.width >= pixelSize(image).width * 2 ? .none : .high
         image.draw(in: rect, from: .zero, operation: .sourceOver, fraction: alpha, respectFlipped: true, hints: nil)
     }
@@ -599,6 +606,10 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         root = Node(name: "", path: "", isDirectory: true, oid: "")
         content = DiffViewController(renderer: renderer)
         super.init(frame: NSRect(x: 0, y: 0, width: 600, height: 400))
+        // gantt の時間帯（設定・OS）を変えたら、整形した Markdown を読み直す（日付の位置が変わる）。
+        for name in [Notification.Name.ganttTimeZoneChanged, .NSSystemTimeZoneDidChange] {
+            NotificationCenter.default.addObserver(self, selector: #selector(timeZoneChanged), name: name, object: nil)
+        }
         for (i, item) in (changes?.items ?? []).enumerated() {
             changedFiles[item.path] = i
             var folder = (item.path as NSString).deletingLastPathComponent
@@ -669,14 +680,13 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         }
         rendererSwitch.target = self
         rendererSwitch.action = #selector(rendererChanged)
-        rendererSwitch.isHidden = true
         markdownSwitch.controlSize = .small
         markdownSwitch.setToolTip(L("Show the Markdown formatted"), forSegment: 0)
         markdownSwitch.setToolTip(L("Show the Markdown source"), forSegment: 1)
         markdownSwitch.target = self
         markdownSwitch.action = #selector(markdownViewChanged)
         markdownSwitch.isHidden = true
-        for v in [back, pathLabel, spacer, rendererSwitch, svgSwitch, markdownSwitch, quickLookButton, changeButton] {
+        for v in [back, pathLabel, spacer, svgSwitch, markdownSwitch, quickLookButton, changeButton] {
             pathBar.addArrangedSubview(v)
         }
         pathBar.edgeInsets = NSEdgeInsets(top: 0, left: 6, bottom: 0, right: 10)
@@ -799,13 +809,25 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
     }
 
     /// モバイル向けの描画部品ごとの、崩れる機能の一覧。
-    private static func mobileNotes(_ issues: [SVGIssue]) -> NSAttributedString {
+    /// 上に、見ている部品の取り込みが読めなかった理由・警告（`preview`）を置く。
+    private static func mobileNotes(_ issues: [SVGIssue], preview: MobilePreview) -> NSAttributedString {
         let out = NSMutableAttributedString()
         let body: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.labelColor]
         let head: [NSAttributedString.Key: Any] = [.font: NSFont.boldSystemFont(ofSize: 12), .foregroundColor: NSColor.labelColor]
         let mono: [NSAttributedString.Key: Any] = [
             .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular), .foregroundColor: NSColor.secondaryLabelColor,
         ]
+        if let error = preview.error {
+            out.append(NSAttributedString(
+                string: error + "\n", attributes: [.font: NSFont.boldSystemFont(ofSize: 12), .foregroundColor: NSColor.systemRed]))
+        }
+        if !preview.messages.isEmpty {
+            out.append(NSAttributedString(string: String(format: L("What %@ reports"), preview.title) + "\n", attributes: head))
+            for message in preview.messages {
+                out.append(NSAttributedString(string: "    " + message + "\n", attributes: mono))
+            }
+        }
+        if out.length > 0 { out.append(NSAttributedString(string: "\n", attributes: body)) }
         guard !issues.isEmpty else {
             out.append(NSAttributedString(
                 string: L("Nothing known to break on Android VectorDrawable, iOS (CoreSVG), flutter_svg or react-native-svg."),
@@ -829,6 +851,10 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
             }
         }
         return out
+    }
+
+    @objc private func timeZoneChanged() {
+        if markdownView != nil, let openPath { open(path: openPath, line: nil) }
     }
 
     @objc private func markdownViewChanged() {
@@ -942,7 +968,8 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
                 guard let data = await contents(of: path), request == self.request else { return }
                 let text = String(decoding: data, as: UTF8.self)
                 let gitHub = self.gitHub
-                let blocks = await Task.detached { MarkdownBlock.parse(text, gitHub: gitHub) }.value
+                let zone = Settings.ganttZone
+                let blocks = await Task.detached { MarkdownBlock.parse(text, gitHub: gitHub, timeZone: zone) }.value
                 guard request == self.request else { return }
                 let view = MarkdownView(blocks: blocks, path: path) { [weak self] link in self?.image(link, from: path) }
                 view.onOpenPath = { [weak self] target in self?.open(path: target, line: nil) }
@@ -954,7 +981,8 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         }
         svgSwitch.isHidden = !svg
         svgSwitch.selectedSegment = svgView.rawValue
-        rendererSwitch.isHidden = !svg || svgView != .compare
+        // 部品の切り替えは、モバイルの比べる欄の段に置く（ファイルの帯を詰まらせない）。
+        rendererSwitch.removeFromSuperview()
         rendererSwitch.selectedSegment = Int(mobileRenderer.rawValue)
         if svg, svgView != .text {
             content.view.isHidden = true
@@ -967,16 +995,18 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
                 let size = image.map { "\(Int($0.size.width)) × \(Int($0.size.height)) pt · \(bytes)" } ?? bytes
                 let panel: ImageDiffPanel
                 if view == .compare {
-                    // 元の SVG と、その部品が崩すように書き換えた SVG（近似）を並べる。
-                    let (issues, broken) = await Task.detached {
-                        (SVGIssue.lint(data), renderer.approximate(data))
+                    // 元の SVG と、その部品での見え方を並べる。Android と flutter_svg は本物の取り込みを移したもの
+                    // （1 ms 前後なので待たせない）、iOS と react-native-svg は近似。
+                    let (issues, preview) = await Task.detached {
+                        (SVGIssue.lint(data), renderer.preview(data))
                     }.value
                     guard request == self.request else { return }
                     panel = ImageDiffPanel(
-                        before: image, after: NSImage(data: broken),
-                        titles: (L("Original"), String(format: L("%@ (approximation)"), renderer.name)),
-                        caption: size + "    " + L("Approximation: the SVG rewritten the way the renderer degrades it, drawn by this app"),
-                        svg: false, mode: .twoUp, position: 0.5, single: false, notes: Self.mobileNotes(issues))
+                        before: image, after: preview.svg.flatMap(NSImage.init(data:)),
+                        titles: (L("Original"), preview.title),
+                        caption: size + "    " + preview.caption,
+                        svg: false, mode: .twoUp, position: 0.5, single: false,
+                        notes: Self.mobileNotes(issues, preview: preview), accessory: rendererSwitch)
                 } else {
                     panel = ImageDiffPanel(
                         before: nil, after: image, titles: ("", ""), caption: size, svg: false, mode: .twoUp,

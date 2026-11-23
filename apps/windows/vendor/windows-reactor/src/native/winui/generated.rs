@@ -2881,6 +2881,22 @@ pub fn set_property(
                         .and_then(|run| run.SetFontStyle(bindings::FontStyle::Italic))
                         .map_err(native_error)?;
                 }
+                if value.is_monospace {
+                    let family = bindings::FontFamily::CreateInstanceWithName(
+                        &windows_core::HSTRING::from("Cascadia Mono, Consolas"),
+                    )
+                    .map_err(native_error)?;
+                    run.cast::<ITextElement>()
+                        .and_then(|run| run.SetFontFamily(&family))
+                        .map_err(native_error)?;
+                }
+                if value.is_strikethrough {
+                    run.cast::<ITextElement>()
+                        .and_then(|run| {
+                            run.SetTextDecorations(bindings::TextDecorations::Strikethrough)
+                        })
+                        .map_err(native_error)?;
+                }
                 if let Some(color) = value.foreground {
                     let brush = SolidColorBrush::new().map_err(native_error)?;
                     brush

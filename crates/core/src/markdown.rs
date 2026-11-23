@@ -32,6 +32,9 @@ pub struct Run {
     /// 脚注への参照（ラベル）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub footnote: Option<String>,
+    /// GitHub 独自の絵文字（`:octocat:` などの画像だけのもの。名前）。FE は `text`（`:octocat:`）を薄い札で見せる。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub custom_emoji: Option<String>,
     /// 段落の中の改行（`text` は空）。
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub line_break: bool,
@@ -71,6 +74,20 @@ pub enum Block {
     Code {
         language: String,
         text: String,
+    },
+    /// 図（` ```mermaid ` など、`diagram::draw` で描けたもの）。`svg` は色を CSS の変数のままにした SVG で、FE は
+    /// 描くときに `diagram::colorize` で配色を当てる。描けなければ `svg` はなく、`error` に理由（FE は `text` を
+    /// コードとして見せ、理由を添える）。
+    Diagram {
+        language: String,
+        text: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        svg: Option<String>,
+        /// 図の中で指定した Mermaid のテーマ（設定の配色より先に使う）。
+        #[serde(skip_serializing_if = "Option::is_none")]
+        config: Option<crate::diagram::MermaidConfig>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
     },
     /// 引用。`alert` は GitHub の囲み（`> [!NOTE]` の note・tip・important・warning・caution）。
     Quote {
@@ -215,14 +232,26 @@ pub fn parse(text: &str) -> Vec<Block> {
 /// （`https://github.com/owner/repo`）があれば `#123`・`@user`・コミットの ID もリンクにする。描くのに外へは何も
 /// 読みに行かない（リンクを押したときにブラウザで開くだけ）。
 pub fn parse_with(text: &str, github: Option<&str>) -> Vec<Block> {
-    let mut blocks = parse_blocks(text);
+    parse_in_zone(text, github, None)
+}
+
+/// `parse_with` の、図（gantt）の日付をこの時間帯の地方時で数えるもの（None は UTC）。
+pub fn parse_in_zone(
+    text: &str,
+    github: Option<&str>,
+    zone: Option<std::sync::Arc<dyn crate::diagram::TimeZone>>,
+) -> Vec<Block> {
+    let mut blocks = parse_blocks(text, zone);
     for block in &mut blocks {
         linkify_block(block, github);
     }
     blocks
 }
 
-fn parse_blocks(text: &str) -> Vec<Block> {
+fn parse_blocks(
+    text: &str,
+    zone: Option<std::sync::Arc<dyn crate::diagram::TimeZone>>,
+) -> Vec<Block> {
     let options = Options::ENABLE_GFM
         | Options::ENABLE_TABLES
         | Options::ENABLE_STRIKETHROUGH
@@ -352,7 +381,25 @@ fn parse_blocks(text: &str) -> Vec<Block> {
                         if text.ends_with('\n') {
                             text.pop();
                         }
-                        b.add(Block::Code { language, text });
+                        let block =
+                            match crate::diagram::draw_in_zone(&language, &text, zone.clone()) {
+                                None => Block::Code { language, text },
+                                Some(crate::diagram::Drawn::Svg(svg, config)) => Block::Diagram {
+                                    language,
+                                    text,
+                                    svg: Some(svg),
+                                    config,
+                                    error: None,
+                                },
+                                Some(crate::diagram::Drawn::Error(error)) => Block::Diagram {
+                                    language,
+                                    text,
+                                    svg: None,
+                                    config: None,
+                                    error: Some(error),
+                                },
+                            };
+                        b.add(block);
                     }
                 }
                 TagEnd::HtmlBlock => {
@@ -453,7 +500,16 @@ fn parse_blocks(text: &str) -> Vec<Block> {
 
 /// `parse_with` の結果の JSON（FE 向け）。
 pub fn parse_json(text: &str, github: Option<&str>) -> String {
-    serde_json::to_string(&parse_with(text, github)).unwrap_or_else(|_| "[]".to_owned())
+    parse_json_in_zone(text, github, None)
+}
+
+/// `parse_in_zone` の結果の JSON（FE 向け）。
+pub fn parse_json_in_zone(
+    text: &str,
+    github: Option<&str>,
+    zone: Option<std::sync::Arc<dyn crate::diagram::TimeZone>>,
+) -> String {
+    serde_json::to_string(&parse_in_zone(text, github, zone)).unwrap_or_else(|_| "[]".to_owned())
 }
 
 fn linkify_block(block: &mut Block, github: Option<&str>) {
@@ -482,6 +538,87 @@ fn linkify_block(block: &mut Block, github: Option<&str>) {
 
 /// リンクでない地の文の中の URL（と GitHub の参照）をリンクの文字に分ける。
 fn linkify(runs: Vec<Run>, github: Option<&str>) -> Vec<Run> {
+    chip_custom_emoji(linkify_text(runs, github))
+}
+
+/// GitHub 独自の絵文字の名前（画像だけで Unicode にないもの。GitHub の絵文字の一覧のうち、gemoji にないもの）。
+const CUSTOM_EMOJI: [&str; 20] = [
+    "atom",
+    "basecamp",
+    "basecampy",
+    "bowtie",
+    "electron",
+    "feelsgood",
+    "finnadie",
+    "fishsticks",
+    "goberserk",
+    "godmode",
+    "hurtrealbad",
+    "neckbeard",
+    "octocat",
+    "rage1",
+    "rage2",
+    "rage3",
+    "rage4",
+    "shipit",
+    "suspect",
+    "trollface",
+];
+
+/// 地の文の `:octocat:` などを、札で見せる文字に分ける（画像は持たないので名前のまま）。
+fn chip_custom_emoji(runs: Vec<Run>) -> Vec<Run> {
+    let mut out = Vec::new();
+    for run in runs {
+        if run.link.is_some()
+            || run.code
+            || run.html
+            || run.image.is_some()
+            || run.footnote.is_some()
+            || !run.text.contains(':')
+        {
+            out.push(run);
+            continue;
+        }
+        let text = run.text.clone();
+        let mut last = 0;
+        let mut i = 0;
+        while let Some(p) = text[i..].find(':') {
+            let start = i + p;
+            let after = &text[start + 1..];
+            let name_end = after
+                .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                .unwrap_or(after.len());
+            let name = &after[..name_end];
+            if name_end > 0 && after[name_end..].starts_with(':') && CUSTOM_EMOJI.contains(&name) {
+                if start > last {
+                    out.push(Run {
+                        text: text[last..start].to_owned(),
+                        ..run.clone()
+                    });
+                }
+                let end = start + name_end + 2;
+                out.push(Run {
+                    text: text[start..end].to_owned(),
+                    custom_emoji: Some(name.to_owned()),
+                    ..run.clone()
+                });
+                last = end;
+                i = end;
+            } else {
+                i = start + 1;
+            }
+        }
+        if last < text.len() {
+            out.push(Run {
+                text: text[last..].to_owned(),
+                ..run
+            });
+        }
+    }
+    out
+}
+
+fn linkify_text(runs: Vec<Run>, github: Option<&str>) -> Vec<Run> {
     let mut out = Vec::new();
     for run in runs {
         if run.link.is_some()
@@ -767,5 +904,26 @@ mod tests {
             panic!()
         };
         assert_eq!(runs.iter().filter(|r| r.link.is_some()).count(), 1);
+    }
+
+    #[test]
+    fn github_custom_emoji_become_chips() {
+        let blocks = parse("Ship it :shipit: with :octocat: and :nope: :smile:\n");
+        let Block::Paragraph { runs } = &blocks[0] else {
+            panic!("{blocks:?}")
+        };
+        let chips: Vec<&str> = runs
+            .iter()
+            .filter_map(|r| r.custom_emoji.as_deref())
+            .collect();
+        assert_eq!(chips, vec!["shipit", "octocat"]);
+        assert!(
+            runs.iter()
+                .any(|r| r.custom_emoji.is_some() && r.text == ":octocat:")
+        );
+        assert!(
+            runs.iter()
+                .any(|r| r.text.contains(":nope:") && r.text.contains("😄"))
+        );
     }
 }

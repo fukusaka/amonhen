@@ -43,7 +43,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | stash があるときだけ Stashes の行と数 | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: Stashes の節。<br>TUI: stash があるあいだサイドバーに Stashes の節。見出しに数。 |
 | Range Diff を開いているあいだの Range Diff の行 | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: ほかのファイルの Blame・File History に替わるまで。 |
 | Branches・Remotes・Tags を絞り込む欄 | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: サイドバーの上の絞り込みのボタンで言葉を入れ、合うものを平らに並べる。<br>TUI: サイドバーで `/`。 |
-| ブランチ・タグをいくつも選ぶ | ✓ | ✓ | ✓ | ✓ | n/a | △ | VSCode: Merge into Current Branch・Delete Branch・お気に入り・Archive が選んだものすべてに効く。<br>TUI: サイドバーの `v` で ref に印をつけ、`m` で 1 つのコミットで取り込み、`D` で印をつけたブランチを消す。お気に入り・Archive はない。 |
+| ブランチ・タグをいくつも選ぶ | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: Merge into Current Branch・Delete Branch・お気に入り・Archive が選んだものすべてに効く。<br>TUI: サイドバーの `v` で ref に印をつけ、`m` で 1 つのコミットで取り込み、`D` で印をつけたブランチを消し、`*` `z` でお気に入りにする・アーカイブする。 |
 | Pull Requests・Worktrees は中身があるときだけ出す | ✓ | ✓ | ✓ | △ | n/a | △ | VSCode: Worktrees だけ（GitHub は入れない）。<br>Windows: Worktrees は Working Copy の下に出す。<br>TUI: Worktrees だけ（2 つ以上あるとき）。 |
 
 ## サイドバー
@@ -59,7 +59,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | ブランチのメニュー: checkout・名前の変更・削除（未マージは Delete Anyway） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | macOS: Set Upstream は Repository メニューだけ。<br>GTK4: Set Upstream は Repository メニューだけ。<br>CLI: `amonhen run` から。<br>TUI: `c` で checkout、`n` で名前の変更、`D` で削除。ほかのどこにもないコミットがあれば、その数と絵を出して Delete Anyway。 |
 | checkout していないブランチの同期（Fast-Forward・Push・Publish） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: `amonhen run` から。<br>TUI: サイドバーのそのブランチで `p`・`P`。 |
 | タグの一覧 | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |
-| タグのリモートの印（ない・違う）とポップオーバー | ✓ | ✓ | ✓ | ✓ | △ | — | VSCode: 行の説明に出し、リモートごとの様子はツールチップに（ポップオーバーはない）。<br>CLI: `amonhen run`（`tagRemotes`）から。<br>Windows: 名前の後ろに ⚠（リモートに別のタグ）か ∅（どのリモートにもない）。押すとポップオーバー。 |
+| タグのリモートの印（ない・違う）とポップオーバー | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: 行の説明に出し、リモートごとの様子はツールチップに（ポップオーバーはない）。<br>CLI: `amonhen run`（`tagRemotes`）から。<br>Windows: 名前の後ろに ⚠（リモートに別のタグ）か ∅（どのリモートにもない）。押すとポップオーバー。<br>TUI: 行の右端に ⚠ か ∅。ポップオーバーの代わりに `i` で一番下の行にリモートごとの様子を出し、`t` で push・置き換え。 |
 | タグの署名の印 | ✓ | ✓ | △ | ✓ | ✓ | △ | VSCode: 行のアイコンで、説明はツールチップに。<br>CLI: `refs --verify`。<br>Windows: 色の印でなく、名前の後ろに 🔏（検証できた）か 🔓（署名はあるが検証できない）。押すと署名のポップオーバー。<br>TUI: 行の右端に ✓（正しい署名。鍵を信用していなければ黄色）・!（期限切れ・失効）・✗（正しくない）・?（確かめられない）。ポップオーバーはない。 |
 | タグのメニュー: Push to・Replace on・削除・リモートから削除 | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: リモートがいくつもあれば一覧で選ぶ。<br>CLI: `amonhen run` から。<br>TUI: `D` で手元のタグを消し、`t` でリモートへ push か置き換え、`X` でリモートから消す。リモートは数字で選ぶ。 |
 | リモートとそのブランチ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |
@@ -237,7 +237,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | HEAD → 作業ツリーの 1 つの差分と、行・hunk のチェック | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: エンジンがあれば。なければ別々の未ステージ・ステージ済みの差分で行をステージ。<br>CLI: `diff --combined`・`stage --rows`。 |
 | 行の範囲の選択、J/K・⌥J/⌥K | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: `v` で範囲を始め、`[` `]` で hunk の見出しへ。 |
 | 重ねられないファイルの Unstaged / Staged の切り替え | ✓ | ✓ | ✓ | n/a | ✓ | ✓ | VSCode: いつも別々に出す。<br>CLI: `diff --staged`。<br>TUI: 初めは stage していない側。差分の `s` で替える。 |
-| 差分の表示の選択（unified/split・前後の行・折り返し） | — | — | — | — | n/a | — |  |
+| 差分の表示の選択（unified/split・前後の行・折り返し） | △ | △ | — | — | n/a | — | macOS・GTK4: 長い行の折り返しだけ（「長い行を折り返す」、すべての差分・ファイルの中身・マージエディタで）。左右に並べる表示はない。 |
 | 空白を無視する（その間は行ごとの stage・破棄はしない） | ✓ | ✓ | ✓ | — | ✓ | ✓ | CLI: `diff -w`・`-b`・`--ignore-space-at-eol`（`--combined` とは使えない）。<br>TUI: 差分の `w` で順に替える。その間は片方の側だけ（`s` で替える）。 |
 | 行・hunk・ファイルを捨てる（Undo できる） | ✓ | ✓ | △ | ✓ | ✓ | ✓ | CLI: `discard --rows`。<br>Windows: Working Copy の差分で行か hunk の見出しを右クリック（Discard Lines）。行を選ぶことはできない |
 | Add to .gitignore | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: untracked のファイルで `i`、続けて `p` でそのパス、`e` で拡張子。 |
@@ -251,7 +251,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | ブランチ・タグのラベル付きのグラフ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `log`。<br>TUI: 1 コミット 1 行。 |
 | 大きな履歴をかたまりで読み、永続キャッシュを使う | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |
 | 一致の数・次 / 前・一致だけの検索 | ✓ | ✓ | ✓ | ✓ | △ | △ | VSCode: エンジンがあるとき。<br>CLI: `log <query>` が一致を並べる。<br>TUI: `/`・`n` `N`。一致だけの表示はない。 |
-| 表示: 順・1 行・行の項目・マージ済みを畳む・祖先を目立たせる | ✓ | ✓ | ✓ | ✓ | △ | △ | macOS・GTK4: merge を 1 つずつたたむ（+N の札・右クリック・←/→）。リポジトリごとに覚える。<br>VSCode: 順・畳む・目立たせるはエンジンで。<br>CLI: `--topo-order`・`--fold`。<br>Windows: View に。<br>TUI: `o` で順、`z` で畳む（その回だけ）。いつも 1 行で、行の項目は選べない。 |
+| 表示: 順・1 行・行の項目・マージ済みを畳む・祖先を目立たせる | ✓ | ✓ | ✓ | ✓ | △ | △ | macOS・GTK4: merge を 1 つずつたたむ（+N の札・右クリック・←/→）。リポジトリごとに覚える。<br>VSCode: 順・畳む・目立たせるはエンジンで。<br>CLI: `--topo-order`・`--fold`。<br>Windows: View に。<br>TUI: `o` で順（その回だけ）、`z` ですべて畳み `Z` で 1 つずつ（リポジトリごとに覚え、アプリと共有）。いつも 1 行で、行の項目は選べない。 |
 | アバター | ✓ | ✓ | ✓ | — | n/a | — |  |
 | コミットの署名の印 | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: エンジンがあるとき。<br>CLI: `show` に出る。<br>TUI: 件名の前の印。吹き出しはない。 |
 | コミットごとの CI の状態とポップオーバー | ✓ | ✓ | ✓ | — | — | — |  |
@@ -279,8 +279,8 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | hunk の前後を広げる・ファイル全体を出す | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: エンジンがあれば。hunk の見出しの ⇕ でそのファイルを 20 行広げ、ファイル全体は ⋯ の Show Whole File。<br>TUI: `+` で今見ているファイルの前後を 20 行広げ、`F` で全体を出す。 |
 | 空白を無視する（行末・量の違い・すべて） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: エンジンがあれば。<br>CLI: `show -w`・`-b`・`--ignore-space-at-eol`。<br>TUI: 詳細の `w` で順に替える。 |
 | 画像を比べる（並べる・スワイプ・オニオンスキン・違うピクセル） | ✓ | ✓ | ✓ | ✓ | n/a | — | VSCode: 20 MB を超える画像は比べない。 |
-| すべてのファイル: その時点の木と、コミットの行に印を付けたファイルの中身 | ✓ | ✓ | — | ✓ | n/a | — | VSCode: エンジンがあれば。 |
-| すべてのファイルのプレビュー: 拡大縮小できる画像・SVG の絵とモバイル向けの確認・整形した Markdown・バイナリの Quick Look | ✓ | ✓ | — | ✓ | n/a | — | VSCode: そのほかのバイナリは Quick Look の代わりに VSCode のエディタで開く。<br>GTK4: Quick Look の代わりに GNOME のプレビュー（か既定のアプリ）。SVG の絵は librsvg で描く。 |
+| すべてのファイル: その時点の木と、コミットの行に印を付けたファイルの中身 | ✓ | ✓ | ✓ | ✓ | n/a | — | VSCode: エンジンがあれば。 |
+| すべてのファイルのプレビュー: 拡大縮小できる画像・SVG の絵とモバイル向けの確認・整形した Markdown・バイナリの Quick Look | ✓ | ✓ | △ | ✓ | n/a | — | VSCode: そのほかのバイナリは Quick Look の代わりに VSCode のエディタで開く。<br>GTK4: Quick Look の代わりに GNOME のプレビュー（か既定のアプリ）。SVG の絵は librsvg で描く。<br>Windows: 拡大縮小できる画像・SVG の絵・整形した Markdown。SVG のモバイル向けの確認とバイナリのプレビューはまだない。 |
 | ファイルの見出しのメニュー（Blame・File History・パスのコピー・開く） | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: 右クリックの Blame・File History・Copy Path と、VSCode の差分のエディターで開く。<br>TUI: 見ているファイルの `B`・`L`・`Y`（パスのコピー）・`e`（git のエディタで開く）。 |
 | 選んだものの差分（範囲をまとめる・A..B / A...B・飛び飛び） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: エンジンがあるとき。<br>CLI: `diff <rev> <rev>`。<br>TUI: `m` と Shift-↑↓（か Ctrl・Alt を押しながらクリック）で選ぶ。`x` で向きを入れ替え、`.` で merge-base から。 |
 | 選んだものの操作（cherry-pick・revert・squash・ID のコピー） | ✓ | ✓ | △ | ✓ | △ | ✓ | VSCode: エンジンがあるとき。<br>CLI: `amonhen run` から。<br>Windows: 続いたコミットをまとめるときは、ダイアログでメッセージを直してすぐ書き換える（編集モードはない）。<br>TUI: 印をつけたコミットに `y` `v`、`E` でまとめた形の編集モード、`Y` で ID のコピー、Save as Patch で保存。 |

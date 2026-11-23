@@ -6,7 +6,7 @@
 
 use amonhen_model::tr;
 use std::cell::RefCell;
-use std::ffi::{CStr, CString, c_char};
+use std::ffi::{CStr, CString, c_char, c_void};
 use std::mem::MaybeUninit;
 use std::sync::Arc;
 
@@ -429,6 +429,138 @@ pub unsafe extern "C" fn amonhen_markdown_parse(
     let github = str_arg(github).ok().filter(|g| !g.is_empty());
     CString::new(amonhen_core::markdown::parse_json(&text, github))
         .map_or(std::ptr::null_mut(), CString::into_raw)
+}
+
+/// Markdown の図の SVG（`MarkdownBlock` の `diagram` の `svg`）に配色を当て、CoreSVG で描ける SVG にする。`scheme` は
+/// 設定の「図の配色」の鍵（`syntax`・`pele`・`mermaid`・`mermaid-forest`・`mermaid-import:名前` など）、`dark` は
+/// 暗い表示か、`theme` は構文の色のテーマの JSON `{"text": "#rrggbb", "background": "#rrggbb", "kinds": {…}}`
+/// （`syntax` のときだけ使う）、`own` は図の中で指定したテーマ（`diagram` の `config` の JSON。設定より先）、
+/// `imported` は `scheme` が読み込んだテーマのときの中身（mermaid-cli の設定の JSON）。`theme`・`own`・
+/// `imported` は NULL でもよい。読めなければ NULL。`amonhen_string_free` で解放する。
+///
+/// # Safety
+/// `svg`・`scheme` は NUL 終わりの文字列であること、ほかは NULL か NUL 終わりの文字列であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_diagram_colorize(
+    svg: *const c_char,
+    scheme: *const c_char,
+    dark: bool,
+    theme: *const c_char,
+    own: *const c_char,
+    imported: *const c_char,
+) -> *mut c_char {
+    use amonhen_core::diagram::{MermaidConfig, Scheme, ThemeColors, colorize, colors_for};
+    let (Ok(svg), Ok(scheme)) = (str_arg(svg), str_arg(scheme)) else {
+        return std::ptr::null_mut();
+    };
+    let theme: serde_json::Value = str_arg(theme)
+        .ok()
+        .and_then(|t| serde_json::from_str(t).ok())
+        .unwrap_or_default();
+    let text = |key: &str| theme[key].as_str().unwrap_or_default().to_owned();
+    let colors = ThemeColors {
+        text: text("text"),
+        background: text("background"),
+        kinds: theme["kinds"]
+            .as_object()
+            .map(|m| {
+                m.iter()
+                    .filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_owned())))
+                    .collect()
+            })
+            .unwrap_or_default(),
+    };
+    let config = |p: *const c_char| -> Option<MermaidConfig> {
+        str_arg(p).ok().and_then(|t| serde_json::from_str(t).ok())
+    };
+    let (own, imported) = (config(own), config(imported));
+    let (vars, backdrop) = colors_for(
+        own.as_ref(),
+        Scheme::from_key(scheme),
+        imported.as_ref(),
+        dark,
+        &colors,
+    );
+    colorize(svg, &vars, backdrop)
+        .and_then(|out| CString::new(out).ok())
+        .map_or(std::ptr::null_mut(), CString::into_raw)
+}
+
+/// 設定の見本の図の SVG（色は `amonhen_diagram_colorize` で当てる）。描けなければ NULL。`amonhen_string_free` で
+/// 解放する。
+#[unsafe(no_mangle)]
+pub extern "C" fn amonhen_diagram_sample() -> *mut c_char {
+    amonhen_core::diagram::sample()
+        .and_then(|svg| CString::new(svg).ok())
+        .map_or(std::ptr::null_mut(), CString::into_raw)
+}
+
+/// mermaid-cli の設定ファイル（`{"theme": …, "themeVariables": {…}}`）を読み、アプリが覚える形の JSON にする
+/// （`amonhen_diagram_colorize` の `imported` に渡す）。読めなければエラーを置いて NULL。`amonhen_string_free` で
+/// 解放する。
+///
+/// # Safety
+/// `text` は NUL 終わりの文字列であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_mermaid_theme_parse(text: *const c_char) -> *mut c_char {
+    let Ok(text) = str_arg(text) else {
+        return std::ptr::null_mut();
+    };
+    match amonhen_core::diagram::MermaidConfig::parse(text) {
+        Ok(config) => serde_json::to_string(&config)
+            .ok()
+            .and_then(|s| CString::new(s).ok())
+            .map_or(std::ptr::null_mut(), CString::into_raw),
+        Err(e) => {
+            set_error(e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// FE が渡す時間帯（gantt の日付を数える）。`offset` は、UTC の時刻 `utc_ms`（1970 年からのミリ秒）での地方時と
+/// UTC の差（ミリ秒、地方時 − UTC）を返す。pele の描画のスレッド（メインではない）から何度も呼ばれる。
+struct ForeignZone {
+    context: usize,
+    offset: extern "C" fn(context: *const c_void, utc_ms: f64) -> f64,
+}
+
+impl amonhen_core::diagram::TimeZone for ForeignZone {
+    fn offset_ms(&self, utc_ms: f64) -> f64 {
+        (self.offset)(self.context as *const c_void, utc_ms)
+    }
+}
+
+/// `amonhen_markdown_parse` と同じで、図（gantt）の日付を FE の時間帯で数える。`offset` が NULL なら UTC。
+/// `context` は `offset` に渡す（この関数から戻るまで使う。どのスレッドから呼んでもよいものにする）。
+///
+/// # Safety
+/// `amonhen_markdown_parse` と同じ。`offset` は、`context` を渡してどのスレッドから呼んでもよいこと。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_markdown_parse_in_zone(
+    text: *const u8,
+    len: usize,
+    github: *const c_char,
+    context: *const c_void,
+    offset: Option<extern "C" fn(context: *const c_void, utc_ms: f64) -> f64>,
+) -> *mut c_char {
+    let bytes = if len == 0 || text.is_null() {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(text, len) }
+    };
+    let text = String::from_utf8_lossy(bytes);
+    let github = str_arg(github).ok().filter(|g| !g.is_empty());
+    let zone = offset.map(|offset| {
+        std::sync::Arc::new(ForeignZone {
+            context: context as usize,
+            offset,
+        }) as std::sync::Arc<dyn amonhen_core::diagram::TimeZone>
+    });
+    CString::new(amonhen_core::markdown::parse_json_in_zone(
+        &text, github, zone,
+    ))
+    .map_or(std::ptr::null_mut(), CString::into_raw)
 }
 
 /// この機械の git の版（`2.39.5`）。読めなければ NULL。`amonhen_string_free` で解放する。git を起動する
@@ -1585,27 +1717,48 @@ fn blob_out(data: &[u8], len: *mut usize) -> *mut u8 {
     Box::into_raw(data.to_vec().into_boxed_slice()).cast()
 }
 
-/// SVG（`data` の `len` バイト）を、モバイル向けの描画部品 `target`（0 Android・1 iOS・2 flutter_svg・
-/// 3 react-native-svg）が崩すように書き換えた SVG（近似）。長さを `out_len` に書く（`amonhen_blob_free` で解放する）。
+/// SVG（`data` の `len` バイト）が、モバイル向けの描画部品 `target`（0 Android・1 iOS・2 flutter_svg・
+/// 3 react-native-svg）でどう見えるか（コアの `svgmobile::preview`）。描ける SVG を返し、長さを `out_len` に書く
+/// （`amonhen_blob_free` で解放する）。部品が読めない SVG なら NULL。`info` に JSON
+/// `{"title", "caption", "messages": [...], "error": 文字列か null, "exact": bool}` を書く（`amonhen_string_free`
+/// で解放する）。
 ///
 /// # Safety
-/// `data` は `len` バイト読めること（`len` が 0 なら NULL でもよい）。
+/// `data` は `len` バイト読めること（`len` が 0 なら NULL でもよい）。`out_len` と `info` は書けること（NULL でもよい）。
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn amonhen_svg_approximate(
+pub unsafe extern "C" fn amonhen_svg_preview(
     data: *const u8,
     len: usize,
     target: u8,
     out_len: *mut usize,
+    info: *mut *mut c_char,
 ) -> *mut u8 {
     let bytes = if len == 0 || data.is_null() {
         &[][..]
     } else {
         unsafe { std::slice::from_raw_parts(data, len) }
     };
-    blob_out(
-        &amonhen_core::svgsim::approximate(bytes, svg_target(target)),
-        out_len,
-    )
+    let preview = amonhen_core::svgmobile::preview(bytes, svg_target(target));
+    if !info.is_null() {
+        let json = serde_json::json!({
+            "title": preview.title,
+            "caption": preview.caption,
+            "messages": preview.messages,
+            "error": preview.error,
+            "exact": preview.exact,
+        })
+        .to_string();
+        unsafe { *info = CString::new(json).map_or(std::ptr::null_mut(), CString::into_raw) };
+    }
+    match preview.svg {
+        Some(svg) => blob_out(&svg, out_len),
+        None => {
+            if !out_len.is_null() {
+                unsafe { *out_len = 0 };
+            }
+            std::ptr::null_mut()
+        }
+    }
 }
 
 /// 0 Android・1 iOS・2 flutter_svg・3 react-native-svg。

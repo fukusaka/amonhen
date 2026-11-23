@@ -1,0 +1,12 @@
+ERROR @ line 8: <text> is not supported
+ERROR @ line 9: Invalid attribute value: y="z"
+ERROR @ line 13: Invalid value of "points" attribute
+ERROR @ line 15: Unsupported URL value: url(#c)
+ERROR @ line 15: Unsupported URL value: url(#c)
+ERROR @ line 16: Invalid attribute value: offset="abc"
+ERROR @ line 16: Referenced id not found
+ERROR @ line 16: Unsupported spreadMethod weird
+ERROR @ line 18: <switch> is not supported
+ERROR @ line 18: Unsupported color format "rgba(1,2,3)"
+WARNING @ line 16: Unsupported color value hsl(1,2%,3%)
+WARNING @ line 16: Unsupported opacity value

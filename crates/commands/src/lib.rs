@@ -206,6 +206,12 @@ pub static COMMANDS: &[Command] = &[
         .localized()
         .key("Primary+Control+S")
         .gtk(Gtk::Key("F9")),
+    // 差分の長い行を折り返す（すべての差分で。切り替えると、メニューに印）。VSCode と同じ ⌥Z。
+    command("wrap-long-lines", "Wrap Long Lines")
+        .localized()
+        .key("Alt+Z")
+        .tip("Wrap lines wider than the diff instead of scrolling sideways (in every diff)")
+        .app(),
     // GTK では Fetch（Ctrl+Alt+F）とぶつかる。
     command("filter-branches", "Filter Branches…")
         .localized()
@@ -286,7 +292,7 @@ pub static SECTIONS: &[Section] = &[
         ],
     ),
     section(Menu::View, &["refresh", "rebuild-history"]),
-    section(Menu::View, &["show-sidebar"]),
+    section(Menu::View, &["show-sidebar", "wrap-long-lines"]),
     section(
         Menu::Navigate,
         &[

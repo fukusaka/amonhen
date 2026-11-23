@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd" [
+<!ENTITY ns "http://www.w3.org/2000/svg">
+]>
+<svg xmlns="&ns;"
+  viewBox="0 0 24 24">
+  <!-- comment -->
+  <text>hi</text>
+  <rect
+     x="1" y="z"
+     width="5" height="5"/>
+  <polygon
+    points="1,2
+    3,4 5"/>
+  <path fill="url(#x)" clip="url(#c)" d="M1 1h1"/>
+  <linearGradient id="lg" xlink:href="#nothere" spreadMethod="weird"><stop offset="abc"/><stop offset="1" stop-color="hsl(1,2%,3%)" stop-opacity="x"/></linearGradient>
+  <path d="M0 0h10v10z" fill="url(#lg)"/>
+  <switch><foreignObject/><rect width="2" height="2" fill="rgba(1,2,3)"/></switch>
+</svg>

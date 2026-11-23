@@ -457,16 +457,53 @@ public enum MobileRenderer: UInt8, Sendable, CaseIterable {
         }
     }
 
-    /// `svg` を、この部品が崩すように書き換えた SVG（近似）。
-    public func approximate(_ svg: Data) -> Data {
+    /// `svg` がこの部品でどう見えるか。Android と flutter_svg は本物の取り込みを移したもの、ほかは近似。
+    public func preview(_ svg: Data) -> MobilePreview {
         var length: UInt = 0
+        var info: UnsafeMutablePointer<CChar>?
         let raw = svg.withUnsafeBytes { buffer in
-            amonhen_svg_approximate(buffer.bindMemory(to: UInt8.self).baseAddress, UInt(buffer.count), rawValue, &length)
+            amonhen_svg_preview(buffer.bindMemory(to: UInt8.self).baseAddress, UInt(buffer.count), rawValue, &length, &info)
         }
-        guard let raw else { return svg }
-        defer { amonhen_blob_free(raw, length) }
-        return Data(bytes: raw, count: Int(length))
+        var picture: Data?
+        if let raw {
+            picture = Data(bytes: raw, count: Int(length))
+            amonhen_blob_free(raw, length)
+        }
+        var meta = MobilePreview.Info(title: name, caption: "", messages: [], error: nil, exact: false)
+        if let info {
+            if let decoded = try? JSONDecoder().decode(MobilePreview.Info.self, from: Data(String(cString: info).utf8)) {
+                meta = decoded
+            }
+            amonhen_string_free(info)
+        }
+        return MobilePreview(svg: picture, info: meta)
     }
+}
+
+/// ある部品での SVG の見え方（コアの `svgmobile::Preview`）。
+public struct MobilePreview: Sendable {
+    struct Info: Decodable, Sendable {
+        let title: String
+        let caption: String
+        let messages: [String]
+        let error: String?
+        let exact: Bool
+    }
+
+    /// 描ける SVG。部品が読めない SVG なら `nil`（理由は `error`）。
+    public let svg: Data?
+    let info: Info
+
+    /// 絵の見出し。
+    public var title: String { info.title }
+    /// 絵の作り方の説明。
+    public var caption: String { info.caption }
+    /// 取り込みの警告と、同じに描けなかったこと。
+    public var messages: [String] { info.messages }
+    /// 部品が読めなかった理由。
+    public var error: String? { info.error }
+    /// 本物の取り込みを移したものか（`false` なら近似）。
+    public var exact: Bool { info.exact }
 }
 
 /// Markdown のブロック（コアの `markdown::Block`）。
@@ -483,9 +520,12 @@ public indirect enum MarkdownBlock: Decodable, Sendable {
         public let image: String?
         public let footnote: String?
         public let lineBreak: Bool?
+        /// GitHub 独自の絵文字（画像だけのもの）の名前。`text`（`:octocat:`）を札で見せる。
+        public let customEmoji: String?
         enum CodingKeys: String, CodingKey {
             case text, bold, italic, strike, code, html, link, image, footnote
             case lineBreak = "line_break"
+            case customEmoji = "custom_emoji"
         }
     }
 
@@ -497,6 +537,9 @@ public indirect enum MarkdownBlock: Decodable, Sendable {
     case heading(level: Int, runs: [Run])
     case paragraph(runs: [Run])
     case code(language: String, text: String)
+    /// 図（` ```mermaid ` など）。`svg` は色を CSS の変数のままにした絵（描くときに `colorizeDiagram` で配色を当てる）。
+    /// 描けなければ `error` に理由。
+    case diagram(language: String, text: String, svg: String?, config: MermaidThemeConfig?, error: String?)
     case quote(alert: String?, blocks: [MarkdownBlock])
     case list(start: Int?, items: [Item])
     case table(aligns: [String], head: [[Run]], rows: [[[Run]]])
@@ -504,7 +547,9 @@ public indirect enum MarkdownBlock: Decodable, Sendable {
     case html(text: String)
     case footnote(label: String, blocks: [MarkdownBlock])
 
-    enum Key: String, CodingKey { case kind, level, runs, language, text, alert, blocks, start, items, aligns, head, rows, label }
+    enum Key: String, CodingKey {
+        case kind, level, runs, language, text, alert, blocks, start, items, aligns, head, rows, label, svg, config, error
+    }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: Key.self)
@@ -512,6 +557,12 @@ public indirect enum MarkdownBlock: Decodable, Sendable {
         case "heading": self = .heading(level: try c.decode(Int.self, forKey: .level), runs: try c.decode([Run].self, forKey: .runs))
         case "paragraph": self = .paragraph(runs: try c.decode([Run].self, forKey: .runs))
         case "code": self = .code(language: try c.decode(String.self, forKey: .language), text: try c.decode(String.self, forKey: .text))
+        case "diagram":
+            self = .diagram(
+                language: try c.decode(String.self, forKey: .language), text: try c.decode(String.self, forKey: .text),
+                svg: try c.decodeIfPresent(String.self, forKey: .svg),
+                config: try c.decodeIfPresent(MermaidThemeConfig.self, forKey: .config),
+                error: try c.decodeIfPresent(String.self, forKey: .error))
         case "quote":
             self = .quote(alert: try c.decodeIfPresent(String.self, forKey: .alert), blocks: try c.decode([MarkdownBlock].self, forKey: .blocks))
         case "list": self = .list(start: try c.decodeIfPresent(Int.self, forKey: .start), items: try c.decode([Item].self, forKey: .items))
@@ -531,11 +582,71 @@ public indirect enum MarkdownBlock: Decodable, Sendable {
     }
 
     /// `text` を読む。`gitHub`（`https://github.com/owner/repo`）があれば `#123`・`@user`・コミットの ID もリンクにする。
-    public static func parse(_ text: String, gitHub: String? = nil) -> [MarkdownBlock] {
+    /// 図（gantt）の日付は `timeZone` で数える（nil なら UTC）。
+    public static func parse(_ text: String, gitHub: String? = nil, timeZone: TimeZone? = nil) -> [MarkdownBlock] {
         var text = text
-        let raw = text.withUTF8 { buffer in amonhen_markdown_parse(buffer.baseAddress, UInt(buffer.count), gitHub) }
+        let box = timeZone.map(ZoneBox.init)
+        let raw = withExtendedLifetime(box) {
+            text.withUTF8 { buffer in
+                amonhen_markdown_parse_in_zone(
+                    buffer.baseAddress, UInt(buffer.count), gitHub,
+                    box.map { UnsafeRawPointer(Unmanaged.passUnretained($0).toOpaque()) },
+                    box == nil ? nil : { context, utc in
+                        // pele の描画のスレッドから呼ばれる（TimeZone はどのスレッドから使ってもよい）。
+                        guard let context, utc.isFinite else { return 0 }
+                        let zone = Unmanaged<ZoneBox>.fromOpaque(context).takeUnretainedValue().zone
+                        return Double(zone.secondsFromGMT(for: Date(timeIntervalSince1970: utc / 1000))) * 1000
+                    })
+            }
+        }
         guard let raw else { return [] }
         defer { amonhen_string_free(raw) }
         return (try? JSONDecoder().decode([MarkdownBlock].self, from: Data(String(cString: raw).utf8))) ?? []
+    }
+}
+
+/// FFI の時間帯の呼び出しに渡す箱。
+private final class ZoneBox: @unchecked Sendable {
+    let zone: TimeZone
+    init(_ zone: TimeZone) { self.zone = zone }
+}
+
+/// Mermaid のテーマの指定（mermaid-cli の設定ファイルと同じ中身。図の中の指定と、読み込んだテーマ）。
+public struct MermaidThemeConfig: Codable, Hashable, Sendable {
+    public var theme: String?
+    public var themeVariables: [String: String]?
+
+    /// JSON の文字（`amonhen_diagram_colorize` に渡す形）。
+    public var json: String {
+        (try? JSONEncoder().encode(self)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+    }
+
+    /// mermaid-cli の設定ファイル（`{"theme": …, "themeVariables": {…}}`、または変数だけのオブジェクト）を読む。
+    public static func parse(_ text: String) throws -> MermaidThemeConfig {
+        guard let raw = amonhen_mermaid_theme_parse(text) else { throw AmonhenError.last() }
+        defer { amonhen_string_free(raw) }
+        return try JSONDecoder().decode(MermaidThemeConfig.self, from: Data(String(cString: raw).utf8))
+    }
+}
+
+extension MarkdownBlock {
+    /// 設定の見本の図の SVG（色は `colorizeDiagram` で当てる）。
+    public static let sampleDiagram: String? = {
+        guard let raw = amonhen_diagram_sample() else { return nil }
+        defer { amonhen_string_free(raw) }
+        return String(cString: raw)
+    }()
+
+    /// 図の SVG（`diagram` の `svg`）に配色を当て、CoreSVG で描ける SVG にする。`scheme` は設定の「図の配色」の鍵、
+    /// `theme` は構文の色のテーマ（`text`・`background` と種類の名前 → `#rrggbb`）、`own` は図の中で指定した
+    /// テーマ（設定より先）、`imported` は `scheme` が読み込んだテーマのときの中身。
+    public static func colorizeDiagram(
+        _ svg: String, scheme: String, dark: Bool, theme: [String: Any], own: MermaidThemeConfig? = nil,
+        imported: MermaidThemeConfig? = nil
+    ) -> Data? {
+        let json = (try? JSONSerialization.data(withJSONObject: theme)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+        guard let raw = amonhen_diagram_colorize(svg, scheme, dark, json, own?.json, imported?.json) else { return nil }
+        defer { amonhen_string_free(raw) }
+        return Data(String(cString: raw).utf8)
     }
 }

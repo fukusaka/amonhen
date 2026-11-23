@@ -1,0 +1,2 @@
+ERROR @ line 2: Semitransparent mask cannot be represented by a vector drawable
+ERROR @ line 4: Semitransparent mask cannot be represented by a vector drawable

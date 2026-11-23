@@ -561,7 +561,7 @@
 "Show each commit on one line" = "1 コミットを 1 行で表示する";
 "Highlight the selected commit’s ancestors" = "選んだコミットの祖先を強調する";
 "Draws only the selected commit’s ancestors and the lines between them at full strength, and dims the rest." = "選んだコミットの祖先と、それをつなぐ線だけを濃く描き、ほかを薄くする。";
-"Commit Details" = "コミットの詳細";
+"Commit Details" = "コミット情報";
 "Show the message in a monospaced font" = "本文を等幅の字体で表示する";
 "Show avatars" = "アバターを表示する";
 "Fetched from Gravatar (sends a hash of the email address to gravatar.com)." = "Gravatar から取る（メールアドレスのハッシュを gravatar.com に送る）。";
@@ -596,7 +596,6 @@
 "Verifies with this Mac’s gpg, allowed_signers and trust levels. When off, verifies with the git and keys on the SSH host. Repositories on this Mac are always verified on this Mac." = "この Mac の gpg・allowed_signers・信用度で検証する。外すと SSH 先の git と鍵で検証する。この Mac にあるリポジトリは、いつもこの Mac で検証する。";
 "Appearance" = "表示";
 "Performance" = "パフォーマンス";
-"Advanced" = "詳細";
 "Settings" = "設定";
 
 /* DiffViewController.swift */
@@ -605,9 +604,7 @@
 "Next" = "次へ";
 "Explain This Hunk with AI" = "AI でこの hunk を解説";
 "Binary" = "バイナリ";
-"Expand Details" = "詳細を広げる";
-"Restore Details" = "詳細を戻す";
-"Expand the commit details to fill the right column (click again to restore)." = "コミットの詳細だけを右の列いっぱいに広げる（もう一度押すと戻す）";
+"Expand the commit details to fill the right column (click again to restore)." = "コミット情報だけを右の列いっぱいに広げる（もう一度押すと戻す）";
 "AI: Explain this commit (or the combined diff of the selected commits)." = "AI: このコミット（複数選んでいればまとめた差分）を解説する";
 "AI: Translate the message." = "AI: メッセージを翻訳する";
 "Copy Short ID" = "短い ID をコピー";
@@ -706,7 +703,7 @@
 "Export JSON…" = "JSON に書き出す…";
 "Time" = "時刻";
 "Repository" = "リポジトリ";
-"Details" = "詳細";
+"Details" = "詳しく見る";
 "Cancel Operation" = "取り消す";
 "git runs and core commands, newest first, up to 1,000 (for repositories through the daemon, also the git it starts). ● means running; fetch, pull, push and clone show their progress and can be canceled." = "git の起動とコアの命令を、新しい順に最大 1000 件（daemon 越しのリポジトリは daemon で起動した git も）。● は実行中で、fetch・pull・push・clone は進み具合を出し、取り消せる。";
 "Undo to Here" = "ここまで戻す";
@@ -996,7 +993,7 @@
 "Monospaced Commit Message" = "コミットメッセージを等幅で表示";
 "Show commit messages in a monospaced font (keeps bodies wrapped at 72 columns aligned)" = "コミットの本文を等幅の字体で出す（72 桁で改行した本文が崩れない）";
 "Show Avatars" = "アバターを表示";
-"Show Gravatar avatars in commit details (sends a hash of the email address to gravatar.com)" = "コミットの詳細に Gravatar のアバターを出す（メールアドレスのハッシュを gravatar.com に送る）";
+"Show Gravatar avatars in commit details (sends a hash of the email address to gravatar.com)" = "コミット情報に Gravatar のアバターを出す（メールアドレスのハッシュを gravatar.com に送る）";
 "All Files in One Diff" = "全ファイルを 1 つの差分に並べる";
 "Stack every file in a commit’s diff (when off, only the selected file)" = "コミットの差分で、全ファイルを縦に並べる（オフなら選んだファイルだけ）";
 "Fold All Merged Commits" = "取り込んだコミットをすべてたたむ";
@@ -1077,7 +1074,7 @@
 "There’s no public key to verify the signature (it isn’t in the GPG keyring or the SSH allowed signers)." = "署名を検証する公開鍵がありません（GPG の鍵束、SSH の allowed signers に入っていない）。";
 "This git can’t verify SSH signatures. It needs git 2.34 or later." = "この git では SSH の署名を検証できません。git 2.34 以降が要ります。";
 "Verifying the signature." = "署名を検証しています。";
-"%@ — %@ (Click for details.)" = "%@ — %@（押すと詳細）";
+"%@ — %@ (Click for details.)" = "%@ — %@（押して詳しく見る）";
 
 /* SignaturePopover.swift */
 "Checked on %@" = "%@で検証";
@@ -1964,6 +1961,12 @@
 "Toolbar tint" = "ツールバーの色の濃さ";
 "Color Theme" = "配色テーマ";
 "Use standard colors for diffs" = "差分は標準の色を使う";
+"Colors" = "配色";
+"Time zone" = "時間帯";
+"System time zone" = "OS の時間帯";
+"Syntax colors" = "構文の色";
+"Mermaid (follows the appearance)" = "Mermaid（外観に合わせる）";
+"Import Mermaid Theme…" = "Mermaid のテーマを読み込む…";
 "Light appearance" = "明るい外観";
 "Dark appearance" = "暗い外観";
 "Import VSCode Theme…" = "VSCode のテーマを読み込む…";
@@ -2019,12 +2022,12 @@
 "Ignore changes in the amount of whitespace (git diff -b)" = "空白の量の違いを無視する（git diff -b）";
 "Ignore all whitespace when comparing lines (git diff -w)" = "行を比べるときにすべての空白を無視する（git diff -w）";
 "Can’t stage or discard lines while whitespace is ignored" = "空白を無視している間は、行ごとに stage・破棄できない";
-"Wrap Lines" = "折り返す";
+"Wrap Long Lines" = "長い行を折り返す";
+"Wrap lines wider than the diff instead of scrolling sideways (in every diff)" = "差分の幅に収まらない行を、横にスクロールせずに折り返す（すべての差分で）";
 "Context:" = "前後:";
 "3 Lines" = "3 行";
 "10 Lines" = "10 行";
 "Whole File" = "ファイル全体";
-"Show Details" = "詳細を見る";
 "Go to a changed file" = "変更ファイルへ移る";
 "Files" = "ファイル";
 "Expand All" = "すべて開く";
@@ -2080,8 +2083,7 @@
 "Check for mobile: list what breaks on Android, iOS, Flutter and React Native" = "モバイル向けの確認: Android・iOS・Flutter・React Native で崩れる機能を挙げる";
 "How the SVG looks on %@" = "%@ での SVG の見え方";
 "Original" = "元の SVG";
-"%@ (approximation)" = "%@（近似）";
-"Approximation: the SVG rewritten the way the renderer degrades it, drawn by this app" = "近似: その部品が崩すように SVG を書き換え、このアプリで描いたもの";
+"What %@ reports" = "%@ の報告";
 "Preview" = "プレビュー";
 "Show the Markdown formatted" = "Markdown を整形して見せる";
 "Show the Markdown source" = "Markdown のソースを見る";
@@ -2091,3 +2093,12 @@
 "GitHub alert: Important" = "重要";
 "GitHub alert: Warning" = "警告";
 "GitHub alert: Caution" = "注意";
+"This is a merge: the changes below are against its first parent (%@)." = "merge のコミット: 下の変更は最初の親（%@）との差分。";
+"Size the commit details to each message. Dragging the divider keeps its position instead." = "コミット情報の高さを、メッセージごとに自動で決める。仕切りを動かすと、代わりにその高さを保つ。";
+"GitHub’s own emoji, shown by name (its image isn’t included)" = "GitHub 独自の絵文字（画像は入っていないので名前で出す）";
+"Wrapping long lines (⌥Z)" = "長い行を折り返している（⌥Z）";
+"Wrap Long Lines (⌥Z)" = "長い行を折り返す（⌥Z）";
+"Details Shown" = "表示項目";
+"Fit Height Automatically" = "高さを自動で決める";
+"Show Only Commit Details" = "コミット情報だけを表示";
+"Code" = "コード";

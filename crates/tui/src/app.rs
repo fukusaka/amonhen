@@ -590,6 +590,8 @@ pub struct App {
     form_marks: Vec<String>,
     /// リポジトリの形（`repositoryForm` の info。読めていなければ null）。
     form: Value,
+    /// タグのリモートでの様子（`tagRemotes` の info。読めていなければ null）。
+    tag_remotes: Value,
     /// 送った、お気に入り・アーカイブの設定の書き込みのうち、まだ答えのないもの（すべて済んだら読み直す）。
     branch_config_pending: usize,
     /// 途中の操作（merge・rebase・cherry-pick・revert）: 種類と、何番目・全部でいくつ（rebase）。
@@ -738,6 +740,7 @@ impl App {
             form_marks: Vec::new(),
             form: Value::Null,
             branch_config_pending: 0,
+            tag_remotes: Value::Null,
             sequence: None,
             stash: None,
             retry_three_way: false,
@@ -812,6 +815,11 @@ impl App {
 
     /// リポジトリを読み始める。
     pub fn start(&mut self) {
+        // 覚えている History の折りたたみ（アプリと共有）。違えば、届いたときに読み直す。
+        self.send(Request::Run {
+            name: "foldState",
+            command: json!({"op": "foldState"}),
+        });
         self.open();
         self.changes.refresh();
         // 書きかけのメッセージ（なければテンプレート）を欄に入れる。
@@ -854,6 +862,14 @@ impl App {
     }
 
     /// リポジトリ・ref・History を読む。読んでいる間に頼まれた分は、終わってからもう一度。
+    /// History の折りたたみを、リポジトリに覚える（`<common dir>/amonhen/fold.json`。アプリと共有）。
+    fn save_fold(&mut self) {
+        self.send(Request::Run {
+            name: "saveFold",
+            command: json!({"op": "setFoldState", "folded": self.fold, "except": self.expanded}),
+        });
+    }
+
     fn open(&mut self) {
         if self.opening {
             self.reopen = true;
@@ -1358,6 +1374,13 @@ impl App {
                             });
                         }
                         let tags = self.sidebar.tag_names();
+                        // タグのリモートでの様子（fetch のときに読んで覚えたもの）。
+                        if !tags.is_empty() {
+                            self.send(Request::Run {
+                                name: "tagRemoteMarks",
+                                command: json!({"op": "tagRemotes"}),
+                            });
+                        }
                         if !tags.is_empty() && tags != self.tag_signature_names {
                             self.tag_signature_names = tags.clone();
                             self.send(Request::Run {
@@ -1406,8 +1429,12 @@ impl App {
                             self.open();
                         }
                     }
-                    Loaded::Rows { start, reply } => {
-                        self.history.loaded(start, &reply);
+                    Loaded::Rows {
+                        history,
+                        start,
+                        reply,
+                    } => {
+                        self.history.loaded(&history, start, &reply);
                         self.verify_signatures();
                     }
                     Loaded::Search { query, result } => {
@@ -2797,6 +2824,103 @@ impl App {
     }
 
     /// 命令が済んだ。だめなら理由を出し、どちらでも状態・ref・History を読み直す。
+    /// タグ `name` のリモートごとの様子（いつ読んだかも）。push・置き換えは `t` で。
+    fn tag_remote_text(&self, name: &str) -> String {
+        let info = &self.tag_remotes;
+        let remotes: Vec<String> = (info["remotes"].as_array().into_iter().flatten())
+            .filter_map(|r| {
+                let remote = r["name"].as_str()?;
+                let state = match info["tags"][name][remote].as_str() {
+                    Some("same") => tr!("has it"),
+                    Some("different") => tr!("has a different tag with this name (t replaces it)"),
+                    Some(_) => tr!("doesn’t have it (t pushes it)"),
+                    None => tr!("not checked yet (Fetch reads it)"),
+                };
+                let when = r["checked"]
+                    .as_i64()
+                    .map(|ms| {
+                        format!(
+                            " · {}",
+                            tr!(
+                                "read {time}",
+                                time = crate::history::ago(self.clock.now, ms / 1000)
+                            )
+                        )
+                    })
+                    .unwrap_or_default();
+                Some(format!("{remote}: {state}{when}"))
+            })
+            .collect();
+        match remotes.is_empty() {
+            true => tr!("{name}: no remotes", name = name),
+            false => format!("{name} — {}", remotes.join("; ")),
+        }
+    }
+
+    /// サイドバーで印をつけたローカルブランチ（印をつけた順）。
+    fn marked_branches(&self) -> Vec<String> {
+        let locals: Vec<String> = (self.sidebar.branches().into_iter())
+            .filter(|(_, remote)| !remote)
+            .map(|(name, _)| name)
+            .collect();
+        (self.sidebar.marked_names().into_iter())
+            .filter(|n| locals.contains(n))
+            .collect()
+    }
+
+    /// 印をつけたブランチをまとめて: `*` はすべてお気に入りならすべて外し、そうでなければ足りないものを足す。
+    /// `z` はすべてアーカイブ済みならすべて戻し、そうでなければすべてアーカイブする。
+    fn change_branches_place(&mut self, names: &[String], code: KeyCode) {
+        let favorites = self.sidebar.favorites();
+        let key = |what: &str, name: &str| format!("branch.{name}.amonhen{what}");
+        let set = |k: String, value: Value| json!({"op": "configSet", "key": k, "value": value});
+        let list = names.join(", ");
+        let (commands, notice) = if code == KeyCode::Char('*') {
+            if names.iter().all(|n| favorites.contains(n)) {
+                let rest: Vec<&String> = favorites.iter().filter(|n| !names.contains(n)).collect();
+                let mut commands: Vec<Value> = (rest.iter().enumerate())
+                    .map(|(i, n)| set(key("Pinned", n), json!((i + 1).to_string())))
+                    .collect();
+                commands.extend(names.iter().map(|n| set(key("Pinned", n), Value::Null)));
+                (
+                    commands,
+                    tr!("Removed {names} from Favorites", names = list),
+                )
+            } else {
+                let mut all = favorites.clone();
+                all.extend(names.iter().filter(|n| !favorites.contains(n)).cloned());
+                let commands = (all.iter().enumerate())
+                    .map(|(i, n)| set(key("Pinned", n), json!((i + 1).to_string())))
+                    .collect();
+                (commands, tr!("Added {names} to Favorites", names = list))
+            }
+        } else {
+            let back = names.iter().all(|n| self.sidebar.is_archived(n));
+            let value = if back { Value::Null } else { json!("true") };
+            let commands = (names.iter())
+                .map(|n| set(key("Archived", n), value.clone()))
+                .collect();
+            let notice = match back {
+                true => tr!("Brought {names} back from Archived", names = list),
+                false => tr!("Archived {names}", names = list),
+            };
+            (commands, notice)
+        };
+        self.send_branch_config(commands);
+        self.notice = Some(notice);
+    }
+
+    /// お気に入り・アーカイブの設定を書く（すべて済んだら読み直す）。
+    fn send_branch_config(&mut self, commands: Vec<Value>) {
+        self.branch_config_pending += commands.len();
+        for command in commands {
+            self.send(Request::Run {
+                name: "branchConfig",
+                command,
+            });
+        }
+    }
+
     /// サイドバーで選んでいるローカルブランチの名前。
     fn picked_branch(&self) -> Option<String> {
         self.sidebar
@@ -2861,13 +2985,7 @@ impl App {
             }
             _ => return,
         };
-        self.branch_config_pending += commands.len();
-        for command in commands {
-            self.send(Request::Run {
-                name: "branchConfig",
-                command,
-            });
-        }
+        self.send_branch_config(commands);
         if !notice.is_empty() {
             self.notice = Some(notice);
         }
@@ -3025,6 +3143,51 @@ impl App {
     }
 
     fn ran(&mut self, name: &'static str, result: std::result::Result<Value, String>) {
+        // タグのリモートでの様子（裏で読む）。印: 同じ名前の別のタグがあるリモートがあれば ⚠、読んだリモートの
+        // どれにもなければ ∅（アプリの印）。
+        if name == "tagRemoteMarks" {
+            self.tag_remotes = result.ok().map(|r| r["info"].clone()).unwrap_or_default();
+            let info = &self.tag_remotes;
+            let checked: Vec<&str> = (info["remotes"].as_array().into_iter().flatten())
+                .filter(|r| !r["checked"].is_null())
+                .filter_map(|r| r["name"].as_str())
+                .collect();
+            let marks = (info["tags"].as_object().into_iter().flatten())
+                .filter(|_| !checked.is_empty())
+                .filter_map(|(tag, states)| {
+                    let state = |r: &&str| states[*r].as_str();
+                    if checked.iter().any(|r| state(r) == Some("different")) {
+                        Some((tag.clone(), ('⚠', Color::Yellow)))
+                    } else if checked.iter().all(|r| state(r) == Some("missing")) {
+                        Some((tag.clone(), ('∅', Color::Indexed(244))))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            self.sidebar.set_tag_remote_marks(marks);
+            self.dirty = true;
+            return;
+        }
+        // 折りたたみを覚えた・読んだ（裏で）。読めたら、そのとおりに History を読み直す。
+        if name == "saveFold" {
+            return;
+        }
+        if name == "foldState" {
+            if let Ok(reply) = result {
+                let info = &reply["info"];
+                let fold = info["folded"] == true;
+                let except: Vec<String> = (info["except"].as_array().into_iter().flatten())
+                    .filter_map(|e| e.as_str().map(str::to_owned))
+                    .collect();
+                if fold != self.fold || except != self.expanded {
+                    self.fold = fold;
+                    self.expanded = except;
+                    self.open();
+                }
+            }
+            return;
+        }
         // ブランチの分け方（裏で読む）と、お気に入り・アーカイブを書いたもの。動いている操作の表示を消さない。
         if name == "branchGroups" {
             let info = result.ok().map(|r| r["info"].clone()).unwrap_or_default();
@@ -5898,7 +6061,25 @@ impl App {
                 self.pick();
                 true
             }
+            // タグの行で: リモートごとの様子を一番下の行に（アプリの印の吹き出し）。
+            KeyCode::Char('i') if self.sidebar.picked_ref().is_some_and(|r| r.0 == "tag") => {
+                let name = self
+                    .sidebar
+                    .picked_ref()
+                    .map(|r| r.1.to_owned())
+                    .unwrap_or_default();
+                self.notice = Some(self.tag_remote_text(&name));
+                true
+            }
             // ブランチの行で: お気に入りにする・外す（★）、アーカイブする・戻す、お気に入りの順を上・下へ。
+            // 印をつけたブランチがあれば、そのすべてをお気に入りにする・外す、アーカイブする・戻す。
+            KeyCode::Char('*' | 'z') if !self.marked_branches().is_empty() => {
+                let names = self.marked_branches();
+                self.change_branches_place(&names, code);
+                // 印は外す（書き終えて読み直すと、History もすべてのブランチに戻る）。
+                self.sidebar.clear_marks();
+                true
+            }
             KeyCode::Char('*' | 'z' | '<' | '>') if self.picked_branch().is_some() => {
                 let name = self.picked_branch().unwrap_or_default();
                 self.change_branch_place(&name, code);
@@ -6047,8 +6228,10 @@ impl App {
                     tr!("On a remote branch: edit its remote (name, URL), remove it, prune it"),
                 ),
                 (
-                    "t X",
-                    tr!("On a tag: push it to a remote (or replace it there); delete it from one"),
+                    "t X i",
+                    tr!(
+                        "On a tag: push it (or replace it) to a remote; delete it there; where it is"
+                    ),
                 ),
                 (
                     "p P",
@@ -6915,6 +7098,7 @@ impl App {
             KeyCode::Char('z') => {
                 self.fold = !self.fold;
                 self.expanded.clear();
+                self.save_fold();
                 self.notice = Some(match self.fold {
                     true => tr!(
                         "Merged branches folded: a merge shows how many commits it brought in; Z opens one"
@@ -6926,16 +7110,26 @@ impl App {
                 None
             }
             // 折りたたんだマージの、取り込んだ側を開く・閉じる。
-            KeyCode::Char('Z') if self.fold => {
+            // たたんでいれば選んだ merge を開き、たたんでいなければ選んだ merge だけをたたむ（もう一度で戻す）。
+            KeyCode::Char('Z') => {
                 if let Some(id) = self.history.selected_id() {
                     let id = id.to_string();
                     match self.expanded.iter().position(|e| *e == id) {
                         Some(i) => {
                             self.expanded.remove(i);
                         }
-                        None if self.history.selected_folded() > 0 => self.expanded.push(id),
-                        None => self.notice = Some(tr!("This commit has nothing folded")),
+                        None if self.fold && self.history.selected_folded() > 0 => {
+                            self.expanded.push(id)
+                        }
+                        None if !self.fold && self.history.selected_is_merge() => {
+                            self.expanded.push(id)
+                        }
+                        None if self.fold => {
+                            self.notice = Some(tr!("This commit has nothing folded"))
+                        }
+                        None => self.notice = Some(tr!("Only a merge folds (z folds them all)")),
                     }
+                    self.save_fold();
                     self.dirty = true;
                     self.open();
                 }
