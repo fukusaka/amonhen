@@ -992,7 +992,8 @@ void amonhen_blob_free(uint8_t *data,
                        uintptr_t len);
 
 /**
- * `amonhen_file_diff` の、前後 `context` 行のもの（`UINT32_MAX` ならファイル全体）。
+ * `amonhen_file_diff` の、前後 `context` 行のもの（`UINT32_MAX` ならファイル全体）。`whitespace` は行を比べるときに
+ * 無視する空白（0 無視しない・1 行末・2 量の違い（`-b`）・3 すべて（`-w`））。
  *
  * # Safety
  * `repo` と `changes` は有効であること。
@@ -1001,17 +1002,19 @@ AmonhenDiff *amonhen_file_diff_context(const AmonhenRepo *repo_ptr,
                                        const AmonhenChanges *changes,
                                        uint32_t index,
                                        uint32_t context,
+                                       uint8_t whitespace,
                                        AmonhenEncoding encoding);
 
 /**
  * `changes` のすべてのファイルの差分（`amonhen_stacked_free` で解放する）。ファイルの数だけ blob を読むので、
- * 裏のスレッドで呼ぶ。
+ * 裏のスレッドで呼ぶ。`whitespace` は `amonhen_file_diff_context` と同じ。
  *
  * # Safety
  * `repo` と `changes` は有効であること。
  */
 AmonhenStacked *amonhen_stacked_diff(const AmonhenRepo *repo_ptr,
-                                     const AmonhenChanges *changes);
+                                     const AmonhenChanges *changes,
+                                     uint8_t whitespace);
 
 /**
  * 全ファイルを見出しの行（`DiffRow::FILE`）でつないだ差分の表示（`amonhen_diff_free` で解放する。
@@ -1055,7 +1058,7 @@ AmonhenDiff *amonhen_tree_file(const AmonhenRepo *repo_ptr,
  * `kind` に見せ方を書く: 0 は first-parent でつながる範囲（一番古いものの親から一番新しいものまで）、1 はつながって
  * いない 2 つ（古いほうから新しいほうまで）、2 はとびとびの 3 つ以上（コミットごとの差分を、見出し
  * 「パス — 短い ID」でパス順に）。`pair` は 2 つのときの取り方: 0 は古いほうから新しいほう、1 は逆、2 は共通の
- * 祖先から新しいほう（A...B）。裏のスレッドで呼ぶ。
+ * 祖先から新しいほう（A...B）。`whitespace` は `amonhen_file_diff_context` と同じ。裏のスレッドで呼ぶ。
  *
  * # Safety
  * `repo` と `history` は有効、`rows` は `count` 個の `u32`、`kind` は書き込める `u8` であること。
@@ -1065,6 +1068,7 @@ AmonhenStacked *amonhen_selection_diff(const AmonhenRepo *repo_ptr,
                                        const uint32_t *rows,
                                        uint32_t count,
                                        uint8_t pair,
+                                       uint8_t whitespace,
                                        uint8_t *kind);
 
 /**
@@ -1173,7 +1177,8 @@ AmonhenStatusView amonhen_status_view(const AmonhenStatus *status);
 
 /**
  * `status` の `index` 番目のファイルの差分。`staged` なら HEAD と index、そうでなければ index と作業ツリー
- * （`amonhen_working_diff_free` で解放する）。
+ * （`amonhen_working_diff_free` で解放する）。`whitespace` は `amonhen_file_diff_context` と同じで、無視した差分は
+ * 行ごとの stage・破棄に使えない。
  *
  * # Safety
  * `repo` と `status` は有効であること。
@@ -1182,6 +1187,7 @@ AmonhenWorkingDiff *amonhen_working_diff(const AmonhenRepo *repo_ptr,
                                          const AmonhenStatus *status,
                                          uint32_t index,
                                          bool staged,
+                                         uint8_t whitespace,
                                          AmonhenEncoding encoding);
 
 /**

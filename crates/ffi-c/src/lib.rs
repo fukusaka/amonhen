@@ -1545,7 +1545,8 @@ pub unsafe extern "C" fn amonhen_blob_free(data: *mut u8, len: usize) {
     }
 }
 
-/// `amonhen_file_diff` の、前後 `context` 行のもの（`UINT32_MAX` ならファイル全体）。
+/// `amonhen_file_diff` の、前後 `context` 行のもの（`UINT32_MAX` ならファイル全体）。`whitespace` は行を比べるときに
+/// 無視する空白（0 無視しない・1 行末・2 量の違い（`-b`）・3 すべて（`-w`））。
 ///
 /// # Safety
 /// `repo` と `changes` は有効であること。
@@ -1555,6 +1556,7 @@ pub unsafe extern "C" fn amonhen_file_diff_context(
     changes: *const AmonhenChanges,
     index: u32,
     context: u32,
+    whitespace: u8,
     encoding: AmonhenEncoding,
 ) -> *mut AmonhenDiff {
     let c = handle!(changes, ChangesHandle);
@@ -1562,7 +1564,8 @@ pub unsafe extern "C" fn amonhen_file_diff_context(
         set_error(tr!("File index out of range"));
         return std::ptr::null_mut();
     };
-    match repo!(repo_ptr).file_diff_with_context(change, context, &profile(encoding)) {
+    let whitespace = amonhen_core::diff::Whitespace::from_u8(whitespace);
+    match repo!(repo_ptr).file_diff_ws(change, context, whitespace, &profile(encoding)) {
         Ok(view) => Box::into_raw(Box::new(view)).cast(),
         Err(e) => {
             set_error(e);
@@ -1572,7 +1575,7 @@ pub unsafe extern "C" fn amonhen_file_diff_context(
 }
 
 /// `changes` のすべてのファイルの差分（`amonhen_stacked_free` で解放する）。ファイルの数だけ blob を読むので、
-/// 裏のスレッドで呼ぶ。
+/// 裏のスレッドで呼ぶ。`whitespace` は `amonhen_file_diff_context` と同じ。
 ///
 /// # Safety
 /// `repo` と `changes` は有効であること。
@@ -1580,9 +1583,11 @@ pub unsafe extern "C" fn amonhen_file_diff_context(
 pub unsafe extern "C" fn amonhen_stacked_diff(
     repo_ptr: *const AmonhenRepo,
     changes: *const AmonhenChanges,
+    whitespace: u8,
 ) -> *mut AmonhenStacked {
     let c = handle!(changes, ChangesHandle);
-    match repo!(repo_ptr).stacked_diff(&c.changes) {
+    let whitespace = amonhen_core::diff::Whitespace::from_u8(whitespace);
+    match repo!(repo_ptr).stacked_diff_ws(&c.changes, whitespace) {
         Ok(s) => Box::into_raw(Box::new(s)).cast(),
         Err(e) => {
             set_error(e);
@@ -1667,7 +1672,7 @@ pub unsafe extern "C" fn amonhen_tree_file(
 /// `kind` に見せ方を書く: 0 は first-parent でつながる範囲（一番古いものの親から一番新しいものまで）、1 はつながって
 /// いない 2 つ（古いほうから新しいほうまで）、2 はとびとびの 3 つ以上（コミットごとの差分を、見出し
 /// 「パス — 短い ID」でパス順に）。`pair` は 2 つのときの取り方: 0 は古いほうから新しいほう、1 は逆、2 は共通の
-/// 祖先から新しいほう（A...B）。裏のスレッドで呼ぶ。
+/// 祖先から新しいほう（A...B）。`whitespace` は `amonhen_file_diff_context` と同じ。裏のスレッドで呼ぶ。
 ///
 /// # Safety
 /// `repo` と `history` は有効、`rows` は `count` 個の `u32`、`kind` は書き込める `u8` であること。
@@ -1678,6 +1683,7 @@ pub unsafe extern "C" fn amonhen_selection_diff(
     rows: *const u32,
     count: u32,
     pair: u8,
+    whitespace: u8,
     kind: *mut u8,
 ) -> *mut AmonhenStacked {
     let rows = array!(rows, count);
@@ -1686,7 +1692,8 @@ pub unsafe extern "C" fn amonhen_selection_diff(
         2 => amonhen_core::PairMode::MergeBase,
         _ => amonhen_core::PairMode::Forward,
     };
-    match repo!(repo_ptr).selection_diff(history!(history_ptr), rows, pair) {
+    let whitespace = amonhen_core::diff::Whitespace::from_u8(whitespace);
+    match repo!(repo_ptr).selection_diff_ws(history!(history_ptr), rows, pair, whitespace) {
         Ok((selection, stacked)) => {
             let k = match selection {
                 amonhen_core::Selection::Range { .. } => 0,
@@ -1975,7 +1982,8 @@ pub unsafe extern "C" fn amonhen_status_view(status: *const AmonhenStatus) -> Am
 }
 
 /// `status` の `index` 番目のファイルの差分。`staged` なら HEAD と index、そうでなければ index と作業ツリー
-/// （`amonhen_working_diff_free` で解放する）。
+/// （`amonhen_working_diff_free` で解放する）。`whitespace` は `amonhen_file_diff_context` と同じで、無視した差分は
+/// 行ごとの stage・破棄に使えない。
 ///
 /// # Safety
 /// `repo` と `status` は有効であること。
@@ -1985,6 +1993,7 @@ pub unsafe extern "C" fn amonhen_working_diff(
     status: *const AmonhenStatus,
     index: u32,
     staged: bool,
+    whitespace: u8,
     encoding: AmonhenEncoding,
 ) -> *mut AmonhenWorkingDiff {
     let s = handle!(status, StatusHandle);
@@ -1992,7 +2001,8 @@ pub unsafe extern "C" fn amonhen_working_diff(
         set_error(tr!("File index out of range"));
         return std::ptr::null_mut();
     };
-    match repo!(repo_ptr).working_diff(entry, staged, &profile(encoding)) {
+    let whitespace = amonhen_core::diff::Whitespace::from_u8(whitespace);
+    match repo!(repo_ptr).working_diff_ws(entry, staged, whitespace, &profile(encoding)) {
         Ok(d) => Box::into_raw(Box::new(d)).cast(),
         Err(e) => {
             set_error(e);
