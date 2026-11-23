@@ -267,7 +267,11 @@ fn initial_renderer() -> amonhen_core::svglint::Target {
 }
 
 /// モバイル向けの描画部品ごとの、崩れる機能の一覧（macOS 版の `mobileNotes`）。
-fn mobile_notes(issues: &[amonhen_core::svglint::Issue]) -> gtk::Widget {
+/// 上に、見ている部品の取り込みが読めなかった理由・警告（`preview`）を置く。
+fn mobile_notes(
+    issues: &[amonhen_core::svglint::Issue],
+    preview: &amonhen_core::svgmobile::Preview,
+) -> gtk::Widget {
     use amonhen_core::svglint::Target;
     let label = gtk::Label::new(None);
     label.set_xalign(0.0);
@@ -276,6 +280,25 @@ fn mobile_notes(issues: &[amonhen_core::svglint::Issue]) -> gtk::Widget {
     label.set_selectable(true);
     label.set_margin_top(4);
     let esc = |s: &str| glib::markup_escape_text(s).to_string();
+    let mut head = String::new();
+    if let Some(error) = &preview.error {
+        head += &format!("<b><span foreground=\"#d33\">{}</span></b>\n", esc(error));
+    }
+    if !preview.messages.is_empty() {
+        head += &format!(
+            "<b>{}</b>\n",
+            esc(&tr!("What {name} reports", name = preview.title))
+        );
+        for message in &preview.messages {
+            head += &format!(
+                "    <span font_family=\"monospace\" size=\"small\" alpha=\"60%\">{}</span>\n",
+                esc(message)
+            );
+        }
+    }
+    if !head.is_empty() {
+        head.push('\n');
+    }
     let mut out = String::new();
     if issues.is_empty() {
         out += &esc(&tr!(
@@ -313,7 +336,7 @@ fn mobile_notes(issues: &[amonhen_core::svglint::Issue]) -> gtk::Widget {
             }
         }
     }
-    label.set_markup(&out);
+    label.set_markup(&(head + &out));
     label.upcast()
 }
 
@@ -1014,11 +1037,12 @@ impl Browser {
             glib::spawn_future_local(async move {
                 let data = gio::spawn_blocking(move || {
                     let data = oid.and_then(|oid| repo.blob(&oid).ok());
-                    // モバイル向けの確認: 崩れる機能と、その部品が崩すように書き換えた SVG（近似）。
+                    // モバイル向けの確認: 崩れる機能と、その部品での見え方（Android と flutter_svg は本物の
+                    // 取り込みを移したもの、ほかは近似）。
                     let mobile = data.as_ref().filter(|_| mobile).map(|d| {
                         (
                             amonhen_core::svglint::lint(d),
-                            amonhen_core::svgsim::approximate(d, renderer),
+                            amonhen_core::svgmobile::preview(d, renderer),
                         )
                     });
                     (data, mobile)
@@ -1031,26 +1055,21 @@ impl Browser {
                 }
                 let (data, mobile) = data.unwrap_or_default();
                 let panel = match (data, mobile) {
-                    // 元の絵と、近似の絵を並べ、崩れる機能の一覧を下に（macOS 版と同じ）。
-                    (Some(data), Some((issues, broken)))
+                    // 元の絵と、その部品での絵を並べ、崩れる機能の一覧を下に（macOS 版と同じ）。
+                    (Some(data), Some((issues, preview)))
                         if crate::imagediff::texture(Some(&data)).is_some() =>
                     {
                         let caption = format!(
                             "{}    {}",
                             crate::imagediff::size_caption(&data),
-                            tr!(
-                                "Approximation: the SVG rewritten the way the renderer degrades it, drawn by this app"
-                            )
+                            preview.caption
                         );
                         Some(crate::imagediff::compare(
                             &data,
-                            &broken,
-                            (
-                                tr!("Original"),
-                                tr!("{name} (approximation)", name = renderer.name()),
-                            ),
+                            preview.svg.as_deref().unwrap_or_default(),
+                            (tr!("Original"), preview.title.clone()),
                             caption,
-                            Some(mobile_notes(&issues)),
+                            Some(mobile_notes(&issues, &preview)),
                         ))
                     }
                     (data, _) => data.and_then(|d| crate::imagediff::single(&d, None)),
