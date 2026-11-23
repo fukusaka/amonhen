@@ -46,7 +46,7 @@ fn android(svg: &[u8]) -> Preview {
         svg: None,
         title: Target::Android.name().to_owned(),
         caption: tr!(
-            "Android Studio’s import (Svg2Vector, sdk-common {version}) turned back into SVG and drawn by this app",
+            "Android Studio’s import (Svg2Vector {version}), drawn here",
             version = crate::svg2vector::VERSION
         ),
         messages: Vec::new(),
@@ -84,7 +84,7 @@ fn flutter(svg: &[u8]) -> Preview {
         svg: None,
         title: Target::Flutter.name().to_owned(),
         caption: tr!(
-            "flutter_svg’s compiler (vector_graphics_compiler {version}) turned back into SVG and drawn by this app",
+            "flutter_svg’s compiler (vector_graphics_compiler {version}), drawn here",
             version = crate::vgc::VERSION
         ),
         messages: Vec::new(),

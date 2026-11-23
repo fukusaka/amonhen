@@ -2466,9 +2466,9 @@
 "This isn’t vector_graphics data" = "vector_graphics のデータではない";
 "vector_graphics data version {version} isn’t supported" = "vector_graphics のデータの版 {version} には対応していない";
 "Unknown vector_graphics command {tag}" = "vector_graphics の知らない命令 {tag}";
-"Android Studio’s import (Svg2Vector, sdk-common {version}) turned back into SVG and drawn by this app" = "Android Studio の取り込み（Svg2Vector、sdk-common {version}）の結果を SVG に戻し、このアプリで描いたもの";
+"Android Studio’s import (Svg2Vector {version}), drawn here" = "Android Studio の取り込み（Svg2Vector {version}）の結果を描いたもの";
 "Android Studio can’t import this SVG: {error}" = "Android Studio はこの SVG を取り込めない: {error}";
 "Android Studio makes nothing to draw from this SVG" = "Android Studio の取り込みでは描くものが残らない";
-"flutter_svg’s compiler (vector_graphics_compiler {version}) turned back into SVG and drawn by this app" = "flutter_svg の変換（vector_graphics_compiler {version}）の結果を SVG に戻し、このアプリで描いたもの";
+"flutter_svg’s compiler (vector_graphics_compiler {version}), drawn here" = "flutter_svg の変換（vector_graphics_compiler {version}）の結果を描いたもの";
 "flutter_svg can’t load this SVG: {error}" = "flutter_svg はこの SVG を読めない: {error}";
 "What {name} reports" = "{name} の報告";

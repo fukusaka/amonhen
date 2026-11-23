@@ -970,7 +970,13 @@ impl Writer {
             // 線の属性のうち、塗りの "none" は塗りの側に任せる
             paint.push_str(&s.replacen(r#" fill="none""#, "", 1));
         }
-        if self.text.open.is_some_and(|t| t != self.text.transform) {
+        // CoreSVG は <tspan> の x・y を読まない（0 に描く）ので、位置を与える run は <text> を開き直してそこに書く
+        let positioned = self.text.x.is_some() || self.text.y_dirty;
+        if self
+            .text
+            .open
+            .is_some_and(|t| t != self.text.transform || positioned)
+        {
             self.close_text();
         }
         let t = &mut self.text;
@@ -979,24 +985,24 @@ impl Writer {
             let transform = t
                 .transform
                 .map_or(String::new(), |m| format!(r#" transform="{}""#, matrix(&m)));
-            let _ = write!(out, r#"<text xml:space="preserve"{transform}>"#);
-            t.open = Some(t.transform);
             if t.x.is_none() {
                 // 前の run の幅は測れないので、その始まりから
                 t.x = Some(t.last_x + t.pending_dx);
                 t.pending_dx = 0.0;
             }
-            t.y_dirty = true;
+            let x = t.x.unwrap_or_default();
+            t.last_x = x;
+            let _ = write!(
+                out,
+                r#"<text xml:space="preserve"{transform} x="{}" y="{}">"#,
+                num(x),
+                num(t.y)
+            );
+            t.open = Some(t.transform);
         }
         let mut position = String::new();
-        if let Some(x) = t.x {
-            let _ = write!(position, r#" x="{}""#, num(x));
-            t.last_x = x;
-        } else if t.pending_dx != 0.0 {
+        if t.pending_dx != 0.0 {
             let _ = write!(position, r#" dx="{}""#, num(t.pending_dx));
-        }
-        if t.y_dirty {
-            let _ = write!(position, r#" y="{}""#, num(t.y));
         }
         t.x = None;
         t.pending_dx = 0.0;
@@ -1234,8 +1240,8 @@ mod tests {
     #[test]
     fn text_runs_continue_in_one_text_element() {
         let s = svg(TEXT);
-        assert!(s.contains(r##"<text xml:space="preserve"><tspan x="10" y="20" font-family="Helvetica" font-size="12" fill="#222222">Hello</tspan><tspan font-family="Helvetica" font-size="12" font-weight="700" fill="#cc0000"> bold</tspan><tspan font-family="Helvetica" font-size="12" fill="#222222"> &amp; more</tspan>"##), "{s}");
-        assert!(s.contains(r##"<tspan x="60" y="45" font-size="16" text-anchor="middle" text-decoration="underline""##), "{s}");
+        assert!(s.contains(r##"<text xml:space="preserve" x="10" y="20"><tspan font-family="Helvetica" font-size="12" fill="#222222">Hello</tspan><tspan font-family="Helvetica" font-size="12" font-weight="700" fill="#cc0000"> bold</tspan><tspan font-family="Helvetica" font-size="12" fill="#222222"> &amp; more</tspan>"##), "{s}");
+        assert!(s.contains(r##"<text xml:space="preserve" x="60" y="45"><tspan font-size="16" text-anchor="middle" text-decoration="underline""##), "{s}");
         assert!(
             s.contains(r##"fill="none" stroke="#0066cc" stroke-width="0.5">Mid</tspan></text>"##),
             "{s}"
@@ -1383,7 +1389,7 @@ mod tests {
             s.contains(r#"patternTransform="matrix(2 0 0 2 5 6)""#),
             "{s}"
         );
-        assert!(s.contains(r##"<tspan x="3" y="0" font-size="10" text-anchor="end" fill="url(#p0)">&lt;a</tspan>"##), "{s}");
+        assert!(s.contains(r##"<text xml:space="preserve" x="3" y="0"><tspan font-size="10" text-anchor="end" fill="url(#p0)">&lt;a</tspan>"##), "{s}");
     }
 
     #[test]
