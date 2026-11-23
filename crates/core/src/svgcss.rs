@@ -18,6 +18,11 @@ const XML_NS: &str = "http://www.w3.org/XML/1998/namespace";
 /// `svg` の `<style>` を各要素の属性に書き写し、`<style>` を除いた SVG を返す。根の `width`・`height` が百分率
 /// なら `viewBox` の大きさにする。読めない SVG なら `None`。
 pub fn inline(svg: &str) -> Option<String> {
+    inline_with(svg, &[])
+}
+
+/// `inline` と同じで、根より外で定めた CSS の変数 `vars`（`("--pele-bg", "#1e1e1e")` など）を当てる。
+pub fn inline_with(svg: &str, vars: &[(&str, &str)]) -> Option<String> {
     let doc = roxmltree::Document::parse(svg).ok()?;
     let mut css = String::new();
     for node in doc.descendants() {
@@ -35,6 +40,11 @@ pub fn inline(svg: &str) -> Option<String> {
         rules: &rules,
         markers: HashMap::new(),
         vars: Default::default(),
+        seed: std::rc::Rc::new(
+            vars.iter()
+                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                .collect(),
+        ),
     };
     for node in doc.descendants() {
         if node.is_element()
@@ -526,6 +536,8 @@ struct Writer<'a, 'input> {
     markers: HashMap<&'a str, roxmltree::Node<'a, 'input>>,
     /// 要素ごとの CSS の変数（`--x`。祖先から継いだものを含め、値の中の var() は解いてある）。
     vars: std::cell::RefCell<HashMap<roxmltree::NodeId, std::rc::Rc<HashMap<String, String>>>>,
+    /// 根より外の変数。
+    seed: std::rc::Rc<HashMap<String, String>>,
 }
 
 impl<'a, 'input> Writer<'a, 'input> {
@@ -581,7 +593,7 @@ impl<'a, 'input> Writer<'a, 'input> {
         let parent = node
             .parent_element()
             .map(|p| self.vars(p))
-            .unwrap_or_default();
+            .unwrap_or_else(|| self.seed.clone());
         let own: Vec<(String, String)> = cascade(self.rules, node)
             .into_iter()
             .filter(|(k, _)| k.starts_with("--"))
