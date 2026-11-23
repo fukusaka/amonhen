@@ -49,6 +49,10 @@ fn line_start(b: &[u8], text: &str, i: usize) -> bool {
     if i == 0 {
         return true;
     }
+    // 文字の途中は行の頭ではない。
+    if !text.is_char_boundary(i) {
+        return false;
+    }
     let c = b[i - 1];
     if c == b'\n' || c == b'\r' {
         return true;
