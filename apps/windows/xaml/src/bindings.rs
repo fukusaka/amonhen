@@ -129,6 +129,17 @@ impl Button {
             .ok()
         }
     }
+    pub fn ActualWidth(&self) -> windows_core::Result<f64> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).ActualWidth)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
     pub fn SetHorizontalAlignment(&self, value: HorizontalAlignment) -> windows_core::Result<()> {
         let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
         unsafe {
@@ -746,6 +757,17 @@ impl ButtonBase {
                 value.param().abi(),
             )
             .ok()
+        }
+    }
+    pub fn ActualWidth(&self) -> windows_core::Result<f64> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).ActualWidth)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
         }
     }
     pub fn SetHorizontalAlignment(&self, value: HorizontalAlignment) -> windows_core::Result<()> {
@@ -6589,6 +6611,109 @@ pub struct ITabViewTabDroppedOutsideEventArgs_Vtbl {
     ) -> windows_core::HRESULT,
 }
 windows_core::imp::define_interface!(
+    ITextBlock,
+    ITextBlock_Vtbl,
+    0x1ac8d84f_392c_5c7e_83f5_a53e3bf0abb0
+);
+impl windows_core::RuntimeType for ITextBlock {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+    const NAME: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::from_slice(b"Microsoft.UI.Xaml.Controls.ITextBlock");
+}
+#[repr(C)]
+pub struct ITextBlock_Vtbl {
+    pub base__: windows_core::IInspectable_Vtbl,
+    FontSize: usize,
+    SetFontSize: usize,
+    FontFamily: usize,
+    SetFontFamily: usize,
+    FontWeight: usize,
+    SetFontWeight: usize,
+    FontStyle: usize,
+    SetFontStyle: usize,
+    FontStretch: usize,
+    SetFontStretch: usize,
+    CharacterSpacing: usize,
+    SetCharacterSpacing: usize,
+    Foreground: usize,
+    SetForeground: usize,
+    TextWrapping: usize,
+    SetTextWrapping: usize,
+    TextTrimming: usize,
+    SetTextTrimming: usize,
+    TextAlignment: usize,
+    SetTextAlignment: usize,
+    pub Text: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *mut *mut core::ffi::c_void,
+    ) -> windows_core::HRESULT,
+    pub SetText: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *mut core::ffi::c_void,
+    ) -> windows_core::HRESULT,
+    Inlines: usize,
+    Padding: usize,
+    SetPadding: usize,
+    LineHeight: usize,
+    SetLineHeight: usize,
+    LineStackingStrategy: usize,
+    SetLineStackingStrategy: usize,
+    IsTextSelectionEnabled: usize,
+    SetIsTextSelectionEnabled: usize,
+    SelectedText: usize,
+    pub ContentStart: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        *mut *mut core::ffi::c_void,
+    ) -> windows_core::HRESULT,
+}
+windows_core::imp::define_interface!(
+    ITextBlockStatics,
+    ITextBlockStatics_Vtbl,
+    0x3187104b_65c2_5e53_b889_c8272b1314cd
+);
+impl windows_core::RuntimeType for ITextBlockStatics {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+    const NAME: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::from_slice(b"Microsoft.UI.Xaml.Controls.ITextBlockStatics");
+}
+#[repr(C)]
+pub struct ITextBlockStatics_Vtbl {
+    pub base__: windows_core::IInspectable_Vtbl,
+}
+windows_core::imp::define_interface!(
+    ITextPointer,
+    ITextPointer_Vtbl,
+    0x842eb385_ee41_5930_979b_438fa7525a51
+);
+impl windows_core::RuntimeType for ITextPointer {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_interface::<Self>();
+    const NAME: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::from_slice(b"Microsoft.UI.Xaml.Documents.ITextPointer");
+}
+#[repr(C)]
+pub struct ITextPointer_Vtbl {
+    pub base__: windows_core::IInspectable_Vtbl,
+    Parent: usize,
+    VisualParent: usize,
+    LogicalDirection: usize,
+    pub Offset:
+        unsafe extern "system" fn(*mut core::ffi::c_void, *mut i32) -> windows_core::HRESULT,
+    pub GetCharacterRect: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        LogicalDirection,
+        *mut Rect,
+    ) -> windows_core::HRESULT,
+    pub GetPositionAtOffset: unsafe extern "system" fn(
+        *mut core::ffi::c_void,
+        i32,
+        LogicalDirection,
+        *mut *mut core::ffi::c_void,
+    ) -> windows_core::HRESULT,
+}
+windows_core::imp::define_interface!(
     ITreeView,
     ITreeView_Vtbl,
     0x1bef9af4_712c_50ef_9bb4_881b975232ab
@@ -9549,6 +9674,23 @@ impl windows_core::RuntimeName for ListViewItem {
 }
 unsafe impl Send for ListViewItem {}
 unsafe impl Sync for ListViewItem {}
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct LogicalDirection(pub i32);
+impl LogicalDirection {
+    pub const Backward: Self = Self(0);
+    pub const Forward: Self = Self(1);
+}
+impl windows_core::imp::TypeKind for LogicalDirection {
+    type TypeKind = windows_core::imp::CopyType;
+}
+impl windows_core::RuntimeType for LogicalDirection {
+    const SIGNATURE: windows_core::imp::ConstBuffer = windows_core::imp::ConstBuffer::from_slice(
+        b"enum(Microsoft.UI.Xaml.Documents.LogicalDirection;i4)",
+    );
+    const NAME: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::from_slice(b"Microsoft.UI.Xaml.Documents.LogicalDirection");
+}
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Point {
@@ -9898,6 +10040,23 @@ impl windows_core::RuntimeName for PointerRoutedEventArgs {
 }
 unsafe impl Send for PointerRoutedEventArgs {}
 unsafe impl Sync for PointerRoutedEventArgs {}
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Rect {
+    pub X: f32,
+    pub Y: f32,
+    pub Width: f32,
+    pub Height: f32,
+}
+impl windows_core::imp::TypeKind for Rect {
+    type TypeKind = windows_core::imp::CopyType;
+}
+impl windows_core::RuntimeType for Rect {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::from_slice(b"struct(Windows.Foundation.Rect;f4;f4;f4;f4)");
+    const NAME: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::from_slice(b"Windows.Foundation.Rect");
+}
 #[repr(transparent)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResourceDictionary(windows_core::IUnknown);
@@ -13575,6 +13734,713 @@ impl windows_core::RuntimeName for TabViewTabDroppedOutsideEventArgs {
 }
 unsafe impl Send for TabViewTabDroppedOutsideEventArgs {}
 unsafe impl Sync for TabViewTabDroppedOutsideEventArgs {}
+#[repr(transparent)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TextBlock(windows_core::IUnknown);
+windows_core::imp::interface_hierarchy!(
+    TextBlock,
+    windows_core::IUnknown,
+    windows_core::IInspectable
+);
+windows_core::imp::required_hierarchy!(TextBlock, FrameworkElement, UIElement, DependencyObject);
+impl TextBlock {
+    pub fn new() -> windows_core::Result<Self> {
+        Self::IActivationFactory(|f| f.ActivateInstance::<Self>())
+    }
+    fn IActivationFactory<
+        R,
+        F: FnOnce(&windows_core::imp::IGenericFactory) -> windows_core::Result<R>,
+    >(
+        callback: F,
+    ) -> windows_core::Result<R> {
+        static SHARED: windows_core::imp::FactoryCache<
+            TextBlock,
+            windows_core::imp::IGenericFactory,
+        > = windows_core::imp::FactoryCache::new();
+        SHARED.call(callback)
+    }
+    pub fn Resources(&self) -> windows_core::Result<ResourceDictionary> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).Resources)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub fn SetResources<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<ResourceDictionary>,
+    {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetResources)(
+                windows_core::Interface::as_raw(this),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
+    pub fn Tag(&self) -> windows_core::Result<windows_core::IInspectable> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).Tag)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub fn SetTag<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<windows_core::IInspectable>,
+    {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetTag)(
+                windows_core::Interface::as_raw(this),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
+    pub fn ActualWidth(&self) -> windows_core::Result<f64> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).ActualWidth)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
+    pub fn SetHorizontalAlignment(&self, value: HorizontalAlignment) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetHorizontalAlignment)(
+                windows_core::Interface::as_raw(this),
+                value,
+            )
+            .ok()
+        }
+    }
+    pub fn SetVerticalAlignment(&self, value: VerticalAlignment) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetVerticalAlignment)(
+                windows_core::Interface::as_raw(this),
+                value,
+            )
+            .ok()
+        }
+    }
+    pub fn SetMargin(&self, value: Thickness) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetMargin)(
+                windows_core::Interface::as_raw(this),
+                value,
+            )
+            .ok()
+        }
+    }
+    pub fn DataContext(&self) -> windows_core::Result<windows_core::IInspectable> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).DataContext)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub fn SetDataContext<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<windows_core::IInspectable>,
+    {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetDataContext)(
+                windows_core::Interface::as_raw(this),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
+    pub fn RequestedTheme(&self) -> windows_core::Result<ElementTheme> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).RequestedTheme)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
+    pub fn SetRequestedTheme(&self, value: ElementTheme) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IFrameworkElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetRequestedTheme)(
+                windows_core::Interface::as_raw(this),
+                value,
+            )
+            .ok()
+        }
+    }
+    pub fn Text(&self) -> windows_core::Result<windows_core::HSTRING> {
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(self).Text)(
+                windows_core::Interface::as_raw(self),
+                &mut result__,
+            )
+            .map(|| core::mem::transmute(result__))
+        }
+    }
+    pub fn SetText(&self, value: &windows_core::HSTRING) -> windows_core::Result<()> {
+        unsafe {
+            (windows_core::Interface::vtable(self).SetText)(
+                windows_core::Interface::as_raw(self),
+                core::mem::transmute_copy(value),
+            )
+            .ok()
+        }
+    }
+    pub fn ContentStart(&self) -> windows_core::Result<TextPointer> {
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(self).ContentStart)(
+                windows_core::Interface::as_raw(self),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub fn SetAllowDrop(&self, value: bool) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetAllowDrop)(
+                windows_core::Interface::as_raw(this),
+                value,
+            )
+            .ok()
+        }
+    }
+    pub fn SetIsHitTestVisible(&self, value: bool) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetIsHitTestVisible)(
+                windows_core::Interface::as_raw(this),
+                value,
+            )
+            .ok()
+        }
+    }
+    pub fn SetVisibility(&self, value: Visibility) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetVisibility)(
+                windows_core::Interface::as_raw(this),
+                value,
+            )
+            .ok()
+        }
+    }
+    pub fn ContextFlyout(&self) -> windows_core::Result<FlyoutBase> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).ContextFlyout)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub fn SetContextFlyout<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<FlyoutBase>,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetContextFlyout)(
+                windows_core::Interface::as_raw(this),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
+    pub fn XamlRoot(&self) -> windows_core::Result<XamlRoot> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).XamlRoot)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+    pub fn SetXamlRoot<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<XamlRoot>,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetXamlRoot)(
+                windows_core::Interface::as_raw(this),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
+    pub fn IsTabStop(&self) -> windows_core::Result<bool> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).IsTabStop)(
+                windows_core::Interface::as_raw(this),
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
+    pub fn SetIsTabStop(&self, value: bool) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetIsTabStop)(
+                windows_core::Interface::as_raw(this),
+                value,
+            )
+            .ok()
+        }
+    }
+    pub fn KeyDown<F>(&self, handler: F) -> windows_core::Result<windows_core::EventRevoker>
+    where
+        F: Fn(windows_core::Ref<windows_core::IInspectable>, windows_core::Ref<KeyRoutedEventArgs>)
+            + Send
+            + 'static,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        let handler = <KeyEventHandler>::new(move |a0, a1| {
+            handler(a0, a1);
+            Ok(())
+        });
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            let token__ = (windows_core::Interface::vtable(this).KeyDown)(
+                windows_core::Interface::as_raw(this),
+                windows_core::Interface::as_raw(&handler),
+                &mut result__,
+            )
+            .map(|| result__)?;
+            Ok(windows_core::EventRevoker::new(
+                this.clone(),
+                token__,
+                windows_core::Interface::vtable(this).RemoveKeyDown,
+            ))
+        }
+    }
+    pub fn DragOver<F>(&self, handler: F) -> windows_core::Result<windows_core::EventRevoker>
+    where
+        F: Fn(windows_core::Ref<windows_core::IInspectable>, windows_core::Ref<DragEventArgs>)
+            + Send
+            + 'static,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        let handler = <DragEventHandler>::new(move |a0, a1| {
+            handler(a0, a1);
+            Ok(())
+        });
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            let token__ = (windows_core::Interface::vtable(this).DragOver)(
+                windows_core::Interface::as_raw(this),
+                windows_core::Interface::as_raw(&handler),
+                &mut result__,
+            )
+            .map(|| result__)?;
+            Ok(windows_core::EventRevoker::new(
+                this.clone(),
+                token__,
+                windows_core::Interface::vtable(this).RemoveDragOver,
+            ))
+        }
+    }
+    pub fn Drop<F>(&self, handler: F) -> windows_core::Result<windows_core::EventRevoker>
+    where
+        F: Fn(windows_core::Ref<windows_core::IInspectable>, windows_core::Ref<DragEventArgs>)
+            + Send
+            + 'static,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        let handler = <DragEventHandler>::new(move |a0, a1| {
+            handler(a0, a1);
+            Ok(())
+        });
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            let token__ = (windows_core::Interface::vtable(this).Drop)(
+                windows_core::Interface::as_raw(this),
+                windows_core::Interface::as_raw(&handler),
+                &mut result__,
+            )
+            .map(|| result__)?;
+            Ok(windows_core::EventRevoker::new(
+                this.clone(),
+                token__,
+                windows_core::Interface::vtable(this).RemoveDrop,
+            ))
+        }
+    }
+    pub fn PointerPressed<F>(&self, handler: F) -> windows_core::Result<windows_core::EventRevoker>
+    where
+        F: Fn(
+                windows_core::Ref<windows_core::IInspectable>,
+                windows_core::Ref<PointerRoutedEventArgs>,
+            ) + Send
+            + 'static,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        let handler = <PointerEventHandler>::new(move |a0, a1| {
+            handler(a0, a1);
+            Ok(())
+        });
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            let token__ = (windows_core::Interface::vtable(this).PointerPressed)(
+                windows_core::Interface::as_raw(this),
+                windows_core::Interface::as_raw(&handler),
+                &mut result__,
+            )
+            .map(|| result__)?;
+            Ok(windows_core::EventRevoker::new(
+                this.clone(),
+                token__,
+                windows_core::Interface::vtable(this).RemovePointerPressed,
+            ))
+        }
+    }
+    pub fn PointerMoved<F>(&self, handler: F) -> windows_core::Result<windows_core::EventRevoker>
+    where
+        F: Fn(
+                windows_core::Ref<windows_core::IInspectable>,
+                windows_core::Ref<PointerRoutedEventArgs>,
+            ) + Send
+            + 'static,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        let handler = <PointerEventHandler>::new(move |a0, a1| {
+            handler(a0, a1);
+            Ok(())
+        });
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            let token__ = (windows_core::Interface::vtable(this).PointerMoved)(
+                windows_core::Interface::as_raw(this),
+                windows_core::Interface::as_raw(&handler),
+                &mut result__,
+            )
+            .map(|| result__)?;
+            Ok(windows_core::EventRevoker::new(
+                this.clone(),
+                token__,
+                windows_core::Interface::vtable(this).RemovePointerMoved,
+            ))
+        }
+    }
+    pub fn PointerReleased<F>(&self, handler: F) -> windows_core::Result<windows_core::EventRevoker>
+    where
+        F: Fn(
+                windows_core::Ref<windows_core::IInspectable>,
+                windows_core::Ref<PointerRoutedEventArgs>,
+            ) + Send
+            + 'static,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        let handler = <PointerEventHandler>::new(move |a0, a1| {
+            handler(a0, a1);
+            Ok(())
+        });
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            let token__ = (windows_core::Interface::vtable(this).PointerReleased)(
+                windows_core::Interface::as_raw(this),
+                windows_core::Interface::as_raw(&handler),
+                &mut result__,
+            )
+            .map(|| result__)?;
+            Ok(windows_core::EventRevoker::new(
+                this.clone(),
+                token__,
+                windows_core::Interface::vtable(this).RemovePointerReleased,
+            ))
+        }
+    }
+    pub fn PointerWheelChanged<F>(
+        &self,
+        handler: F,
+    ) -> windows_core::Result<windows_core::EventRevoker>
+    where
+        F: Fn(
+                windows_core::Ref<windows_core::IInspectable>,
+                windows_core::Ref<PointerRoutedEventArgs>,
+            ) + Send
+            + 'static,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        let handler = <PointerEventHandler>::new(move |a0, a1| {
+            handler(a0, a1);
+            Ok(())
+        });
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            let token__ = (windows_core::Interface::vtable(this).PointerWheelChanged)(
+                windows_core::Interface::as_raw(this),
+                windows_core::Interface::as_raw(&handler),
+                &mut result__,
+            )
+            .map(|| result__)?;
+            Ok(windows_core::EventRevoker::new(
+                this.clone(),
+                token__,
+                windows_core::Interface::vtable(this).RemovePointerWheelChanged,
+            ))
+        }
+    }
+    pub fn DoubleTapped<F>(&self, handler: F) -> windows_core::Result<windows_core::EventRevoker>
+    where
+        F: Fn(
+                windows_core::Ref<windows_core::IInspectable>,
+                windows_core::Ref<DoubleTappedRoutedEventArgs>,
+            ) + Send
+            + 'static,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        let handler = <DoubleTappedEventHandler>::new(move |a0, a1| {
+            handler(a0, a1);
+            Ok(())
+        });
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            let token__ = (windows_core::Interface::vtable(this).DoubleTapped)(
+                windows_core::Interface::as_raw(this),
+                windows_core::Interface::as_raw(&handler),
+                &mut result__,
+            )
+            .map(|| result__)?;
+            Ok(windows_core::EventRevoker::new(
+                this.clone(),
+                token__,
+                windows_core::Interface::vtable(this).RemoveDoubleTapped,
+            ))
+        }
+    }
+    pub fn ContextRequested<F>(
+        &self,
+        handler: F,
+    ) -> windows_core::Result<windows_core::EventRevoker>
+    where
+        F: Fn(windows_core::Ref<UIElement>, windows_core::Ref<ContextRequestedEventArgs>)
+            + Send
+            + 'static,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        let handler =
+            <TypedEventHandler<UIElement, ContextRequestedEventArgs>>::new(move |a0, a1| {
+                handler(a0, a1);
+                Ok(())
+            });
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            let token__ = (windows_core::Interface::vtable(this).ContextRequested)(
+                windows_core::Interface::as_raw(this),
+                windows_core::Interface::as_raw(&handler),
+                &mut result__,
+            )
+            .map(|| result__)?;
+            Ok(windows_core::EventRevoker::new(
+                this.clone(),
+                token__,
+                windows_core::Interface::vtable(this).RemoveContextRequested,
+            ))
+        }
+    }
+    pub fn PreviewKeyDown<F>(&self, handler: F) -> windows_core::Result<windows_core::EventRevoker>
+    where
+        F: Fn(windows_core::Ref<windows_core::IInspectable>, windows_core::Ref<KeyRoutedEventArgs>)
+            + Send
+            + 'static,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        let handler = <KeyEventHandler>::new(move |a0, a1| {
+            handler(a0, a1);
+            Ok(())
+        });
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            let token__ = (windows_core::Interface::vtable(this).PreviewKeyDown)(
+                windows_core::Interface::as_raw(this),
+                windows_core::Interface::as_raw(&handler),
+                &mut result__,
+            )
+            .map(|| result__)?;
+            Ok(windows_core::EventRevoker::new(
+                this.clone(),
+                token__,
+                windows_core::Interface::vtable(this).RemovePreviewKeyDown,
+            ))
+        }
+    }
+    pub fn CapturePointer<P0>(&self, value: P0) -> windows_core::Result<bool>
+    where
+        P0: windows_core::Param<Pointer>,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).CapturePointer)(
+                windows_core::Interface::as_raw(this),
+                value.param().abi(),
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
+    pub fn ReleasePointerCapture<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<Pointer>,
+    {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).ReleasePointerCapture)(
+                windows_core::Interface::as_raw(this),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
+    pub fn StartBringIntoView(&self) -> windows_core::Result<()> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).StartBringIntoView)(
+                windows_core::Interface::as_raw(this),
+            )
+            .ok()
+        }
+    }
+    pub fn Focus(&self, value: FocusState) -> windows_core::Result<bool> {
+        let this = &windows_core::Interface::cast::<IUIElement>(self)?;
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(this).Focus)(
+                windows_core::Interface::as_raw(this),
+                value,
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
+    pub fn SetProtectedCursor<P0>(&self, value: P0) -> windows_core::Result<()>
+    where
+        P0: windows_core::Param<InputCursor>,
+    {
+        let this = &windows_core::Interface::cast::<IUIElementProtected>(self)?;
+        unsafe {
+            (windows_core::Interface::vtable(this).SetProtectedCursor)(
+                windows_core::Interface::as_raw(this),
+                value.param().abi(),
+            )
+            .ok()
+        }
+    }
+    fn ITextBlockStatics<R, F: FnOnce(&ITextBlockStatics) -> windows_core::Result<R>>(
+        callback: F,
+    ) -> windows_core::Result<R> {
+        static SHARED: windows_core::imp::FactoryCache<TextBlock, ITextBlockStatics> =
+            windows_core::imp::FactoryCache::new();
+        SHARED.call(callback)
+    }
+}
+impl windows_core::RuntimeType for TextBlock {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_class::<Self, ITextBlock>();
+}
+unsafe impl windows_core::Interface for TextBlock {
+    type Vtable = <ITextBlock as windows_core::Interface>::Vtable;
+    const IID: windows_core::GUID = <ITextBlock as windows_core::Interface>::IID;
+}
+impl windows_core::RuntimeName for TextBlock {
+    const NAME: &'static str = "Microsoft.UI.Xaml.Controls.TextBlock";
+}
+unsafe impl Send for TextBlock {}
+unsafe impl Sync for TextBlock {}
+#[repr(transparent)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TextPointer(windows_core::IUnknown);
+windows_core::imp::interface_hierarchy!(
+    TextPointer,
+    windows_core::IUnknown,
+    windows_core::IInspectable
+);
+impl TextPointer {
+    pub fn Offset(&self) -> windows_core::Result<i32> {
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(self).Offset)(
+                windows_core::Interface::as_raw(self),
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
+    pub fn GetCharacterRect(&self, direction: LogicalDirection) -> windows_core::Result<Rect> {
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(self).GetCharacterRect)(
+                windows_core::Interface::as_raw(self),
+                direction,
+                &mut result__,
+            )
+            .map(|| result__)
+        }
+    }
+    pub fn GetPositionAtOffset(
+        &self,
+        offset: i32,
+        direction: LogicalDirection,
+    ) -> windows_core::Result<Self> {
+        unsafe {
+            let mut result__ = core::mem::zeroed();
+            (windows_core::Interface::vtable(self).GetPositionAtOffset)(
+                windows_core::Interface::as_raw(self),
+                offset,
+                direction,
+                &mut result__,
+            )
+            .and_then(|| windows_core::imp::Type::from_abi(result__))
+        }
+    }
+}
+impl windows_core::RuntimeType for TextPointer {
+    const SIGNATURE: windows_core::imp::ConstBuffer =
+        windows_core::imp::ConstBuffer::for_class::<Self, ITextPointer>();
+}
+unsafe impl windows_core::Interface for TextPointer {
+    type Vtable = <ITextPointer as windows_core::Interface>::Vtable;
+    const IID: windows_core::GUID = <ITextPointer as windows_core::Interface>::IID;
+}
+impl windows_core::RuntimeName for TextPointer {
+    const NAME: &'static str = "Microsoft.UI.Xaml.Documents.TextPointer";
+}
+unsafe impl Send for TextPointer {}
+unsafe impl Sync for TextPointer {}
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Thickness {

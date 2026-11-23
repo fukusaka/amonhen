@@ -54,13 +54,13 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Favorite branches | ✓ | ✓ | ✓ | ✓ | — | — |  |
 | Archived branches | ✓ | ✓ | ✓ | ✓ | — | — |  |
 | Clean Up Branches (merged, merged by a pull request, upstream gone; one Undo) | ✓ | ✓ | ✓ | ✓ | △ | △ | VSCode: With the engine, a multi-select list with a heading per reason (Command Palette, the Branches heading's right-click). CLI: Via `amonhen run` (`branchCleanup`, `deleteBranches`); merged pull requests are read by the apps and VSCode with gh.<br>TUI: Clean Up Branches in the command list; `a` takes in branches whose upstream is gone. Branches merged by a pull request aren't looked for (no GitHub). |
-| Merged-by-pull-request mark on a branch (squash or rebase on GitHub) | ✓ | ✓ | △ | ✓ | △ | — | VSCode: With the engine; the number is in the row's tooltip. CLI: Via `amonhen run` (`branchGroups` with `pullRequests`); the apps and VSCode read merged pull requests with gh.<br>Windows: The word merged after the name, with the number in the row's tooltip. |
+| Merged-by-pull-request mark on a branch (squash or rebase on GitHub) | ✓ | ✓ | △ | ✓ | △ | — | VSCode: With the engine; the number is in the row's tooltip. CLI: Via `amonhen run` (`branchGroups` with `pullRequests`); the apps and VSCode read merged pull requests with gh.<br>Windows: The word merged after the name, with the number in the row's tooltip; clicking it opens the branch status popover. |
 | Favorites reordered by dragging | ✓ | ✓ | ✓ | ✓ | n/a | — | VSCode: Move Up and Move Down in Favorites on the menu (a drop on a branch offers Merge and Rebase). |
 | Branch menu: checkout, rename, delete (Delete Anyway when unmerged) | ✓ | ✓ | ✓ | ✓ | △ | ✓ | macOS: Set Upstream is only in the Repository menu.<br>GTK4: Set Upstream is only in the Repository menu.<br>CLI: Via `amonhen run`.<br>TUI: `c` checks out, `n` renames and `D` deletes; with commits on no other branch, it names how many and draws them, then deletes anyway. |
 | Sync a branch that is not checked out (Fast-Forward, Push, Publish) | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: Via `amonhen run`.<br>TUI: `p` and `P` on the branch in the sidebar. |
 | Tags listed | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |
-| Tag marks for remotes (missing, different) with a popover | ✓ | ✓ | △ | ✓ | △ | — | VSCode: In the row's description, each remote's state in the tooltip (no popover).<br>CLI: Via `amonhen run` (`tagRemotes`).<br>Windows: ⚠ (a different tag on a remote) or ∅ (on no remote) after the name, and each remote's state in the row's tooltip and at the top of the tag's menu; choosing one of those opens the popover's content as a dialog. |
-| Tag signature marks | ✓ | ✓ | △ | ✓ | ✓ | — | VSCode: The row's icon, explained in the tooltip.<br>CLI: `refs --verify`.<br>Windows: 🔏 (verified) or 🔓 (signed, not verified) after the name, and the status and signer at the top of the tag's menu; no popover |
+| Tag marks for remotes (missing, different) with a popover | ✓ | ✓ | ✓ | ✓ | △ | — | VSCode: In the row's description, each remote's state in the tooltip (no popover).<br>CLI: Via `amonhen run` (`tagRemotes`).<br>Windows: ⚠ (a different tag on a remote) or ∅ (on no remote) after the name; clicking it opens the popover. |
+| Tag signature marks | ✓ | ✓ | △ | ✓ | ✓ | — | VSCode: The row's icon, explained in the tooltip.<br>CLI: `refs --verify`.<br>Windows: 🔏 (verified) or 🔓 (signed, not verified) after the name instead of a colored mark; clicking it opens the signature popover. |
 | Tag menu: Push to, Replace on, Delete, Delete from a remote | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: The remote is chosen in a list when there are several.<br>CLI: Via `amonhen run`.<br>TUI: `D` deletes a tag here, `t` pushes or replaces it on a remote and `X` deletes it from one, the remote chosen by digit. |
 | Remotes with their branches | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |
 | Remote menu: Add, Rename, Edit URL, Remove, Prune | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: Via `amonhen run`.<br>TUI: Add Remote in the command list; on a remote branch in the sidebar `e` edits the name and URL, `X` prunes and `x` removes. |
@@ -378,9 +378,9 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Feature | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
 | GitHub through `gh` | ✓ | ✓ | ✓ | — | — | — |  |
-| Pull Requests (CI, draft, review; check out, open, copy URL) | ✓ | ✓ | △ | — | — | — | Windows: A pull request's checks are an item of its right-click (a tree row has no separate mark to click). |
+| Pull Requests (CI, draft, review; check out, open, copy URL) | ✓ | ✓ | △ | — | — | — | Windows: Clicking the CI mark after the title opens the checks popover, but the mark is cut off with the title when the sidebar is narrower than the row. |
 | Create Pull Request (base, draft) | ✓ | ✓ | ✓ | — | — | — | macOS: The base is typed (the default branch at first). From a fork, to its parent.<br>GTK4: The base is typed (the default branch at first). From a fork, to its parent.<br>Windows: The base is typed (the default branch at first). From a fork, to its parent. |
-| Branch status popover (CI, pull request) | ✓ | ✓ | △ | — | — | — | Windows: A dialog from the state at the top of a branch's right-click (a tree row has no separate mark to click). |
+| Branch status popover (CI, pull request) | ✓ | ✓ | △ | — | — | — | Windows: Opens from merged or gone after a branch's name; a branch without either has no mark, and its status is a dialog from the top of its right-click. |
 | Open on GitHub | ✓ | ✓ | ✓ | — | — | — |  |
 | `#123` links in messages | ✓ | ✓ | ✓ | — | — | — |  |
 | GitHub avatars | ✓ | ✓ | ✓ | — | — | — |  |
