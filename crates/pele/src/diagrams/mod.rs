@@ -3,6 +3,7 @@
 pub mod common;
 pub mod flowchart;
 pub mod gantt;
+pub mod git;
 pub mod quadrant;
 pub mod radar;
 pub mod registry;

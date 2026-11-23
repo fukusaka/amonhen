@@ -17,6 +17,7 @@ use crate::types::Diagram;
 static DIAGRAMS: &[&Diagram] = &[
     &super::flowchart::FLOWCHART,
     &super::gantt::GANTT,
+    &super::git::GIT_GRAPH,
     &super::quadrant::QUADRANT_CHART,
     &super::radar::RADAR,
     &super::sankey::SANKEY,
