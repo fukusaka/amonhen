@@ -22,6 +22,8 @@ pub enum Picked {
     Changes,
     History,
     Reflog,
+    /// Range Diff（開いている間だけの行）。
+    RangeDiff,
     /// ref が指すコミット（16 進の ID）。
     Commit(String),
 }
@@ -34,6 +36,8 @@ enum Row {
     Conflicts,
     History,
     Reflog,
+    /// Range Diff を開いている間だけ（アプリと同じ）。
+    RangeDiff,
     Ref {
         /// `branch`・`remote`・`tag`・`stash`・`worktree`（名前はその場所）。
         kind: &'static str,
@@ -57,6 +61,7 @@ impl Row {
             Row::Conflicts => Some("view:conflicts".to_owned()),
             Row::History => Some("view:history".to_owned()),
             Row::Reflog => Some("view:reflog".to_owned()),
+            Row::RangeDiff => Some("view:range-diff".to_owned()),
             Row::Ref { name, .. } => Some(format!("ref:{name}")),
         }
     }
@@ -79,6 +84,8 @@ pub struct Sidebar {
     submodule_marks: std::collections::HashMap<String, (char, Color)>,
     /// 印をつけた ref（ブランチ・リモートのブランチ・タグの名前。History をそれらだけにする）。
     marked: Vec<String>,
+    /// Range Diff を開いている（Workspace に行を出す）。
+    range_diff: bool,
 }
 
 impl Default for Sidebar {
@@ -100,6 +107,7 @@ impl Default for Sidebar {
             tag_marks: Default::default(),
             submodule_marks: Default::default(),
             marked: Vec::new(),
+            range_diff: false,
         }
     }
 }
@@ -116,6 +124,14 @@ impl Sidebar {
         let changed = (self.conflicts > 0) != (conflicts > 0);
         self.conflicts = conflicts;
         if changed {
+            self.rebuild();
+        }
+    }
+
+    /// Range Diff を開いているか。変わったら、行を作り直す。
+    pub fn set_range_diff(&mut self, open: bool) {
+        if self.range_diff != open {
+            self.range_diff = open;
             self.rebuild();
         }
     }
@@ -139,6 +155,9 @@ impl Sidebar {
             rows.push(Row::Conflicts);
         }
         rows.extend([Row::History, Row::Reflog]);
+        if self.range_diff {
+            rows.push(Row::RangeDiff);
+        }
         for (kind, title) in [
             ("branch", tr!("Branches")),
             ("remote", tr!("Remotes")),
@@ -240,11 +259,18 @@ impl Sidebar {
         {
             return;
         }
-        self.selected = match picked {
-            Picked::Changes => 1,
-            Picked::Reflog => 3,
-            _ => 2,
+        // 行の位置は、コンフリクトの行があるかで変わるので、名前で引く。
+        let key = match picked {
+            Picked::Changes => "view:changes",
+            Picked::Reflog => "view:reflog",
+            Picked::RangeDiff => "view:range-diff",
+            _ => "view:history",
         };
+        self.selected = self
+            .rows
+            .iter()
+            .position(|r| r.key().as_deref() == Some(key))
+            .unwrap_or(2);
         self.clamp_top();
     }
 
@@ -326,6 +352,7 @@ impl Sidebar {
             Row::Changes | Row::Conflicts => Some(Picked::Changes),
             Row::History => Some(Picked::History),
             Row::Reflog => Some(Picked::Reflog),
+            Row::RangeDiff => Some(Picked::RangeDiff),
             Row::Ref { target, .. } => Some(Picked::Commit(target.clone())),
         }
     }
@@ -527,6 +554,9 @@ impl Sidebar {
                 }
                 Row::Reflog => {
                     buf.set_stringn(area.x + 2, y, tr!("Reflog"), width - 2, Style::new());
+                }
+                Row::RangeDiff => {
+                    buf.set_stringn(area.x + 2, y, tr!("Range Diff"), width - 2, Style::new());
                 }
                 Row::Ref {
                     kind: kind @ ("tag" | "submodule"),

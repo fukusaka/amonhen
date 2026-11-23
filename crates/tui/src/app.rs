@@ -2738,10 +2738,17 @@ impl App {
         self.pinned = None;
         self.view = view;
         self.focus = Focus::Main;
-        self.sidebar.show_view(view.picked());
+        self.sidebar.show_view(self.picked_view());
     }
 
-    /// コアの命令を動かす。1 つずつ（動いている間は、次を受けない）。
+    /// サイドバーで選ぶ、今の画面の行（Range Diff を出しているなら、その行）。
+    fn picked_view(&self) -> Picked {
+        match self.view {
+            View::File if self.file.is_range_diff() => Picked::RangeDiff,
+            view => view.picked(),
+        }
+    }
+
     /// `ranges`（git range-diff の範囲）を Range Diff で比べる。答えは Compare with Previous Version と同じ画面に。
     fn compare_ranges(&mut self, title: String, ranges: Vec<String>) {
         self.range_title = Some(title);
@@ -2752,6 +2759,7 @@ impl App {
         );
     }
 
+    /// コアの命令を動かす。1 つずつ（動いている間は、次を受けない）。
     fn run(&mut self, name: &'static str, label: String, command: Value) {
         self.dirty = true;
         if self.running.is_some() {
@@ -3297,11 +3305,14 @@ impl App {
             "rangeDiff" => {
                 let title = self.range_title.take().unwrap_or_default();
                 self.file.show_range_diff(title, &reply["info"]["pairs"]);
+                // 開いている間は、サイドバーの Workspace に Range Diff の行（アプリと同じ）。
+                self.sidebar.set_range_diff(true);
                 if self.view != View::File {
                     self.file_back = self.view;
                 }
                 self.view = View::File;
                 self.focus = Focus::Main;
+                self.sidebar.show_view(Picked::RangeDiff);
                 self.dirty = true;
                 return;
             }
@@ -4310,6 +4321,7 @@ impl App {
     /// ファイルの Blame か File History を開く（戻るところは今の画面）。
     fn open_file_view(&mut self, path: &str, blame: bool) {
         self.file.open(path, blame, None);
+        self.sidebar.set_range_diff(false);
         if self.view != View::File {
             self.file_back = self.view;
         }
@@ -6106,6 +6118,10 @@ impl App {
                     "s",
                     tr!("For a file shown one side at a time: the staged or the unstaged side"),
                 ),
+                (
+                    "w",
+                    tr!("Ignore whitespace: at line ends, its amount, all, none"),
+                ),
                 ("h l", tr!("Pan long lines; h at the left edge goes back")),
                 ("Esc", tr!("Go back to the list")),
             ],
@@ -6160,6 +6176,13 @@ impl App {
             Some(Picked::Changes) => self.show(View::Changes),
             Some(Picked::History) => self.show(View::History),
             Some(Picked::Reflog) => self.show(View::Reflog),
+            // 開いている Range Diff に戻る。
+            Some(Picked::RangeDiff) => {
+                if self.view != View::File {
+                    self.file_back = self.view;
+                }
+                self.show(View::File);
+            }
             // stash は History の行ではないので、その差分を詳細の枠に出す。
             Some(Picked::Commit(id))
                 if self.sidebar.picked_ref().is_some_and(|r| r.0 == "stash") =>
@@ -6410,6 +6433,7 @@ impl App {
             KeyCode::Char('B' | 'L') => match self.changes.selected_path() {
                 Some(path) => {
                     self.file.open(path, code == KeyCode::Char('B'), None);
+                    self.sidebar.set_range_diff(false);
                     self.file_back = View::Changes;
                     self.view = View::File;
                     true
@@ -6581,6 +6605,23 @@ impl App {
                     self.focus = Focus::Main;
                     true
                 }
+            }
+            // 差分で無視する空白を替える（アプリの Ignore Whitespace）。その間は、片方の側だけを出し、行ごとの
+            // stage・破棄はしない。
+            KeyCode::Char('w') => {
+                self.notice = Some(match self.changes.next_whitespace() {
+                    Whitespace::Exact => tr!("Whitespace is compared"),
+                    Whitespace::AtEol => {
+                        tr!("Ignoring whitespace at line ends (lines aren’t staged meanwhile)")
+                    }
+                    Whitespace::Change => tr!(
+                        "Ignoring changes in the amount of whitespace (lines aren’t staged meanwhile)"
+                    ),
+                    Whitespace::All => {
+                        tr!("Ignoring all whitespace (lines aren’t staged meanwhile)")
+                    }
+                });
+                true
             }
             // 重ねて出せないファイルで、作業ツリーの側と stage 済みの側を替える。
             KeyCode::Char('s') => {
@@ -6916,6 +6957,7 @@ impl App {
                         let blame = code == KeyCode::Char('B');
                         let path = path.to_owned();
                         self.file.open(&path, blame, blame.then(|| id.to_string()));
+                        self.sidebar.set_range_diff(false);
                         self.file_back = self.view;
                         self.view = View::File;
                         self.focus = Focus::Main;

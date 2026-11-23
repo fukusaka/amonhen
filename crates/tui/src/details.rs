@@ -46,7 +46,7 @@ impl Whitespace {
         }
     }
 
-    fn next(self) -> Self {
+    pub fn next(self) -> Self {
         match self {
             Whitespace::Exact => Whitespace::AtEol,
             Whitespace::AtEol => Whitespace::Change,
