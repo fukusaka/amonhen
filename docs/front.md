@@ -47,6 +47,7 @@ History and diffs are held by number (`history`, `diff`). Even if History is ref
 | Command | Arguments | Reply (JSON) | Records |
 |---|---|---|---|
 | `hello` | language | version, workdir, gitDir | |
+| `activity` | | records (Activity's operations where git runs: seq, kind, repo, label, started (ms), duration, ok, error, progress, cancellable, output), remote (true when they come from the SSH host; cancel with `cancelActivity`'s remote) | |
 | `environment` | env (the front-end's environment, `NAME=value` pairs separated by `"\u0000"`, as at opening) | | |
 | `history` | rebuild?, fold? (fold every merge), expanded? (array of IDs; merges left open under fold), collapsed? (array of IDs; without fold, fold only these merges), tips? (array of IDs; only what is reachable from them) | history, generation, rows, head, headRow, folded, shallow (a shallow clone's History), boundaryRows (rows of the commits at the shallow boundary, whose parents aren't fetched) | |
 | `historyMatching` | history, rows | same as `history` (a History of only the matching rows) | |
