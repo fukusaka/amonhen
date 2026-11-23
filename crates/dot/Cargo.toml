@@ -9,3 +9,5 @@ license.workspace = true
 [dependencies]
 amonhen-pele.workspace = true
 
+[[example]]
+name = "corpus"
