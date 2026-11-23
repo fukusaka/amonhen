@@ -43,7 +43,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Stashes row with a count only when there are stashes | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: The Stashes section.<br>TUI: A Stashes section in the sidebar while there are stashes, its heading with the count. |
 | Range Diff row while a range diff is open | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: Until another file's Blame or File History takes its place. |
 | Filter field over Branches, Remotes and Tags | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: The filter button on the sidebar's title asks for the words; the matches are listed flat.<br>TUI: `/` in the sidebar. |
-| Several branches or tags selected at once | ✓ | ✓ | ✓ | ✓ | n/a | △ | VSCode: Merge into Current Branch, Delete Branch, favorites and Archive act on all of them.<br>TUI: `v` marks refs in the sidebar; `m` merges them in one commit and `D` deletes the marked branches; no favorites or archive. |
+| Several branches or tags selected at once | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: Merge into Current Branch, Delete Branch, favorites and Archive act on all of them.<br>TUI: `v` marks refs in the sidebar; `m` merges them in one commit, `D` deletes the marked branches, and `*` `z` add them to Favorites or archive them. |
 | Pull Requests and Worktrees shown only when not empty | ✓ | ✓ | ✓ | △ | n/a | △ | VSCode: Worktrees only (GitHub is left out).<br>Windows: Worktrees are listed under Working Copy.<br>TUI: Worktrees only, when there are two or more. |
 
 ## Sidebar

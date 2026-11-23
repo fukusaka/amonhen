@@ -2840,6 +2840,70 @@ impl App {
         }
     }
 
+    /// サイドバーで印をつけたローカルブランチ（印をつけた順）。
+    fn marked_branches(&self) -> Vec<String> {
+        let locals: Vec<String> = (self.sidebar.branches().into_iter())
+            .filter(|(_, remote)| !remote)
+            .map(|(name, _)| name)
+            .collect();
+        (self.sidebar.marked_names().into_iter())
+            .filter(|n| locals.contains(n))
+            .collect()
+    }
+
+    /// 印をつけたブランチをまとめて: `*` はすべてお気に入りならすべて外し、そうでなければ足りないものを足す。
+    /// `z` はすべてアーカイブ済みならすべて戻し、そうでなければすべてアーカイブする。
+    fn change_branches_place(&mut self, names: &[String], code: KeyCode) {
+        let favorites = self.sidebar.favorites();
+        let key = |what: &str, name: &str| format!("branch.{name}.amonhen{what}");
+        let set = |k: String, value: Value| json!({"op": "configSet", "key": k, "value": value});
+        let list = names.join(", ");
+        let (commands, notice) = if code == KeyCode::Char('*') {
+            if names.iter().all(|n| favorites.contains(n)) {
+                let rest: Vec<&String> = favorites.iter().filter(|n| !names.contains(n)).collect();
+                let mut commands: Vec<Value> = (rest.iter().enumerate())
+                    .map(|(i, n)| set(key("Pinned", n), json!((i + 1).to_string())))
+                    .collect();
+                commands.extend(names.iter().map(|n| set(key("Pinned", n), Value::Null)));
+                (
+                    commands,
+                    tr!("Removed {names} from Favorites", names = list),
+                )
+            } else {
+                let mut all = favorites.clone();
+                all.extend(names.iter().filter(|n| !favorites.contains(n)).cloned());
+                let commands = (all.iter().enumerate())
+                    .map(|(i, n)| set(key("Pinned", n), json!((i + 1).to_string())))
+                    .collect();
+                (commands, tr!("Added {names} to Favorites", names = list))
+            }
+        } else {
+            let back = names.iter().all(|n| self.sidebar.is_archived(n));
+            let value = if back { Value::Null } else { json!("true") };
+            let commands = (names.iter())
+                .map(|n| set(key("Archived", n), value.clone()))
+                .collect();
+            let notice = match back {
+                true => tr!("Brought {names} back from Archived", names = list),
+                false => tr!("Archived {names}", names = list),
+            };
+            (commands, notice)
+        };
+        self.send_branch_config(commands);
+        self.notice = Some(notice);
+    }
+
+    /// お気に入り・アーカイブの設定を書く（すべて済んだら読み直す）。
+    fn send_branch_config(&mut self, commands: Vec<Value>) {
+        self.branch_config_pending += commands.len();
+        for command in commands {
+            self.send(Request::Run {
+                name: "branchConfig",
+                command,
+            });
+        }
+    }
+
     /// サイドバーで選んでいるローカルブランチの名前。
     fn picked_branch(&self) -> Option<String> {
         self.sidebar
@@ -2904,13 +2968,7 @@ impl App {
             }
             _ => return,
         };
-        self.branch_config_pending += commands.len();
-        for command in commands {
-            self.send(Request::Run {
-                name: "branchConfig",
-                command,
-            });
-        }
+        self.send_branch_config(commands);
         if !notice.is_empty() {
             self.notice = Some(notice);
         }
@@ -5978,6 +6036,14 @@ impl App {
                 true
             }
             // ブランチの行で: お気に入りにする・外す（★）、アーカイブする・戻す、お気に入りの順を上・下へ。
+            // 印をつけたブランチがあれば、そのすべてをお気に入りにする・外す、アーカイブする・戻す。
+            KeyCode::Char('*' | 'z') if !self.marked_branches().is_empty() => {
+                let names = self.marked_branches();
+                self.change_branches_place(&names, code);
+                // 印は外す（書き終えて読み直すと、History もすべてのブランチに戻る）。
+                self.sidebar.clear_marks();
+                true
+            }
             KeyCode::Char('*' | 'z' | '<' | '>') if self.picked_branch().is_some() => {
                 let name = self.picked_branch().unwrap_or_default();
                 self.change_branch_place(&name, code);
