@@ -2,11 +2,14 @@
 
 pub mod agentflow;
 pub mod block;
+pub mod class;
 pub mod common;
 pub mod cynefin;
+pub mod er;
 pub mod flowchart;
 pub mod ishikawa;
 pub mod registry;
+pub mod state;
 pub mod swimlane;
 pub mod treemap;
 pub mod treeview;

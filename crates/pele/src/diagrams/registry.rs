@@ -17,9 +17,12 @@ use crate::types::Diagram;
 static DIAGRAMS: &[&Diagram] = &[
     &super::agentflow::AGENTFLOW,
     &super::block::BLOCK,
+    &super::class::CLASS,
     &super::cynefin::CYNEFIN,
+    &super::er::ER,
     &super::flowchart::FLOWCHART,
     &super::ishikawa::ISHIKAWA,
+    &super::state::STATE,
     &super::swimlane::SWIMLANE,
     &super::treemap::TREEMAP,
     &super::treeview::TREE_VIEW,
