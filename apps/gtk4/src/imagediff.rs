@@ -123,7 +123,35 @@ pub fn panel(
         caption,
         Some((mode, on_mode)),
         svg.then_some(on_show_text),
+        None,
+        false,
     )
+}
+
+/// すべてのファイルで、2 つの絵を比べる欄（SVG のモバイル向けの確認: 元の絵と、部品が崩した近似）。`titles` は
+/// 前と後の見出し。欄の高さいっぱいに広げ、`notes` があれば絵の下に置く。
+pub fn compare(
+    before: &[u8],
+    after: &[u8],
+    titles: (String, String),
+    caption: String,
+    notes: Option<gtk::Widget>,
+) -> gtk::Widget {
+    let panel = build(
+        texture(Some(before)),
+        texture(Some(after)),
+        caption,
+        Some((Mode::TwoUp, Rc::new(|_| {}))),
+        None,
+        Some(titles),
+        true,
+    );
+    with_notes(panel, notes)
+}
+
+/// 画像の大きさとバイト数（すべてのファイルの説明。読めなければバイト数だけ）。
+pub fn size_caption(data: &[u8]) -> String {
+    describe(Some(data), texture(Some(data)).as_ref())
 }
 
 /// すべてのファイルで開いた画像（比べずに 1 枚だけ。比べ方の切り替えもスライダーも出さない）。`notes` があれば
@@ -131,9 +159,14 @@ pub fn panel(
 pub fn single(data: &[u8], notes: Option<gtk::Widget>) -> Option<gtk::Widget> {
     let image = texture(Some(data))?;
     let caption = describe(Some(data), Some(&image));
-    let panel = build(None, Some(image), caption, None, None);
+    let panel = build(None, Some(image), caption, None, None, None, true);
+    Some(with_notes(panel, notes))
+}
+
+/// `notes` があれば、`panel` の下に一覧の欄を置く（欄の高さの 35% ほど、仕切りで変えられる）。
+fn with_notes(panel: gtk::Widget, notes: Option<gtk::Widget>) -> gtk::Widget {
     let Some(notes) = notes else {
-        return Some(panel);
+        return panel;
     };
     let scroll = gtk::ScrolledWindow::builder()
         .child(&notes)
@@ -156,19 +189,25 @@ pub fn single(data: &[u8], notes: Option<gtk::Widget>) -> Option<gtk::Widget> {
             p.set_position((max as f32 * 0.65) as i32);
         }
     });
-    Some(paned.upcast())
+    paned.upcast()
 }
 
-/// 欄を作る。`modes` がなければ 1 枚だけ（`after` を出す）。
+/// 欄を作る。`modes` がなければ 1 枚だけ（`after` を出す）。`titles` は前と後の見出し（なければ「前」「後」）。
+/// `fill` なら高さいっぱいに広げる（すべてのファイル。下の仕切りの線は引かない）。
 fn build(
     old: Option<gdk::Texture>,
     new: Option<gdk::Texture>,
     base_caption: String,
     modes: Option<(Mode, OnMode)>,
     on_show_text: Option<Rc<dyn Fn()>>,
+    titles: Option<(String, String)>,
+    fill: bool,
 ) -> gtk::Widget {
     let single = modes.is_none();
     let canvas = Canvas::new(old, new);
+    if let Some(titles) = titles {
+        canvas.imp().titles.replace(titles);
+    }
     canvas.imp().single.set(single);
     canvas.set_vexpand(true);
     canvas.set_hexpand(true);
@@ -290,12 +329,17 @@ fn build(
     root.append(&caption);
     let outer = gtk::Box::new(gtk::Orientation::Vertical, 6);
     outer.append(&root);
-    if single {
+    if fill {
         root.set_margin_bottom(8);
         root.set_vexpand(true);
+        outer.set_vexpand(true);
+    }
+    if single {
         return outer.upcast();
     }
-    outer.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+    if !fill {
+        outer.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+    }
     let apply = {
         let (canvas, slider, caption) = (canvas.clone(), slider.clone(), caption.clone());
         Rc::new(move |mode: Mode| {
@@ -362,6 +406,8 @@ mod imp {
         pub drag: Cell<Option<(f32, f32)>>,
         /// ピンチを始めたときの倍率。
         pub pinch: Cell<f32>,
+        /// 前と後の見出し。
+        pub titles: RefCell<(String, String)>,
     }
 
     #[glib::object_subclass]
@@ -482,6 +528,7 @@ impl Canvas {
         let canvas: Self = glib::Object::new();
         canvas.imp().before.replace(before);
         canvas.imp().after.replace(after);
+        canvas.imp().titles.replace((tr!("Before"), tr!("After")));
         canvas
     }
 
@@ -660,6 +707,7 @@ impl Canvas {
         );
         let (w, h) = (self.width() as f32, self.height() as f32);
         let position = self.imp().position.get();
+        let titles = self.imp().titles.borrow().clone();
         if self.imp().single.get() {
             let rect = self.fit(Self::size_of(&after), &self.inset());
             checker(snapshot, &rect);
@@ -671,10 +719,12 @@ impl Canvas {
                 let half = ((w - 16.0) / 2.0).max(0.0);
                 let red = gdk::RGBA::new(0.88, 0.11, 0.14, 0.8);
                 let green = gdk::RGBA::new(0.18, 0.76, 0.49, 0.8);
-                for (i, (image, title, color)) in
-                    [(&before, tr!("Before"), red), (&after, tr!("After"), green)]
-                        .into_iter()
-                        .enumerate()
+                for (i, (image, title, color)) in [
+                    (&before, titles.0.clone(), red),
+                    (&after, titles.1.clone(), green),
+                ]
+                .into_iter()
+                .enumerate()
                 {
                     let area = graphene::Rect::new(
                         i as f32 * (half + 16.0),
@@ -736,8 +786,8 @@ impl Canvas {
                     );
                     snapshot.append_fill(&knob.to_path(), gsk::FillRule::Winding, &accent);
                 }
-                label(&tr!("Before"), rect.x() - 56.0, rect.y());
-                label(&tr!("After"), rect.x() + rect.width() + 8.0, rect.y());
+                label(&titles.0, rect.x() - 56.0, rect.y());
+                label(&titles.1, rect.x() + rect.width() + 8.0, rect.y());
             }
             Mode::Difference => {
                 let rect = self.fit(self.common(), &self.inset());

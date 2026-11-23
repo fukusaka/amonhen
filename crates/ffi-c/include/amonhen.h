@@ -539,6 +539,18 @@ char *amonhen_svg_lint(const uint8_t *data,
                        uintptr_t len);
 
 /**
+ * Markdown（`text`、UTF-8）を、FE が組み立てて見せるブロックの並びにした JSON（`amonhen_core::markdown::Block` の
+ * 配列）。`github`（`https://github.com/owner/repo`、NULL か空なら使わない）があれば `#123`・`@user`・コミットの ID も
+ * リンクにする。`amonhen_string_free` で解放する。
+ *
+ * # Safety
+ * `text` は `len` バイト読めること、`github` は NULL か NUL 終わりの文字列であること。
+ */
+char *amonhen_markdown_parse(const uint8_t *text,
+                             uintptr_t len,
+                             const char *github);
+
+/**
  * この機械の git の版（`2.39.5`）。読めなければ NULL。`amonhen_string_free` で解放する。git を起動する
  * ことがあるので（初めの 1 回だけ）、裏のスレッドで呼ぶ。
  */
@@ -1004,22 +1016,6 @@ uint8_t *amonhen_svg_approximate(const uint8_t *data,
                                  uintptr_t len,
                                  uint8_t target,
                                  uintptr_t *out_len);
-
-/**
- * SVG を、モバイル向けの描画部品 `target`（`amonhen_svg_approximate` と同じ）の本物の取り込みで変換し、描ける SVG に
- * 戻したもの（`amonhen_blob_free` で解放する）。Android は Android Studio の Svg2Vector（Java と sdk-common が要る）。
- * `info` に JSON `{"tool": "使った取り込みと版", "messages": "取り込みの警告と、同じに描けなかったこと"}` を書く
- * （`amonhen_string_free` で解放する）。取り込みが手元にない部品なら、`amonhen_last_error` を空にして NULL。失敗したら
- * エラーを置いて NULL。Java を起こすので裏のスレッドで呼ぶ。
- *
- * # Safety
- * `data` は `len` バイト読めること、`out_len` と `info` は書けること（NULL でもよい）。
- */
-uint8_t *amonhen_svg_convert(const uint8_t *data,
-                             uintptr_t len,
-                             uint8_t target,
-                             uintptr_t *out_len,
-                             char **info);
 
 /**
  * `amonhen_blob_read`・`amonhen_change_blob` が返したものを解放する。

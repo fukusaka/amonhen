@@ -555,6 +555,13 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
     private var mobileRenderer: MobileRenderer = MobileRenderer.allCases.first {
         $0.key == UserDefaults.standard.string(forKey: "AMHMobileRenderer")
     } ?? .android
+    /// Markdown の見せ方（整形・テキスト）。
+    private var markdownText = UserDefaults.standard.string(forKey: "AMHMarkdownView") == "text"
+    private let markdownSwitch = NSSegmentedControl(
+        labels: [L("Preview"), L("Text")], trackingMode: .selectOne, target: nil, action: nil)
+    private var markdownView: MarkdownView?
+    /// Markdown の #123・@user・コミットの ID をリンクにする先（`https://github.com/owner/repo`）。
+    var gitHub: String?
     private let rendererSwitch = NSSegmentedControl(
         labels: ["Android", "iOS", "Flutter", "React Native"], trackingMode: .selectOne, target: nil, action: nil)
     private let pathBar = NSStackView()
@@ -663,7 +670,13 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         rendererSwitch.target = self
         rendererSwitch.action = #selector(rendererChanged)
         rendererSwitch.isHidden = true
-        for v in [back, pathLabel, spacer, rendererSwitch, svgSwitch, quickLookButton, changeButton] {
+        markdownSwitch.controlSize = .small
+        markdownSwitch.setToolTip(L("Show the Markdown formatted"), forSegment: 0)
+        markdownSwitch.setToolTip(L("Show the Markdown source"), forSegment: 1)
+        markdownSwitch.target = self
+        markdownSwitch.action = #selector(markdownViewChanged)
+        markdownSwitch.isHidden = true
+        for v in [back, pathLabel, spacer, rendererSwitch, svgSwitch, markdownSwitch, quickLookButton, changeButton] {
             pathBar.addArrangedSubview(v)
         }
         pathBar.edgeInsets = NSEdgeInsets(top: 0, left: 6, bottom: 0, right: 10)
@@ -769,6 +782,7 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         treeScroll.frame = rest
         content.view.frame = rest
         imagePanel?.frame = rest
+        markdownView?.frame = rest
         let box = binaryBox.fittingSize
         binaryBox.frame = NSRect(x: rest.midX - box.width / 2, y: rest.midY - box.height / 2, width: box.width, height: box.height)
         outline.sizeLastColumnToFit()
@@ -817,6 +831,24 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         return out
     }
 
+    @objc private func markdownViewChanged() {
+        markdownText = markdownSwitch.selectedSegment == 1
+        if let openPath { open(path: openPath, line: nil) }
+    }
+
+    /// Markdown の中の画像（Markdown のファイル `from` からの相対パス）を、このコミットの中から読む。外の URL は読まない。
+    private func image(_ link: String, from: String) -> NSImage? {
+        guard !link.contains("://"), let path = MarkdownView.resolve(link, from: from) else { return nil }
+        if let index = changedFiles[path] {
+            return changes?.blob(at: index, after: true).flatMap(NSImage.init(data:))
+        }
+        let folder = (path as NSString).deletingLastPathComponent, name = (path as NSString).lastPathComponent
+        guard let entry = (try? repository.treeEntries(commit: commit, path: folder))?.first(where: { $0.name == name }) else {
+            return nil
+        }
+        return repository.blob(oid: entry.oid).flatMap(NSImage.init(data:))
+    }
+
     @objc private func rendererChanged() {
         mobileRenderer = MobileRenderer(rawValue: UInt8(clamping: rendererSwitch.selectedSegment)) ?? .android
         if let openPath { open(path: openPath, line: nil) }
@@ -830,6 +862,8 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
     private func removeImage() {
         imagePanel?.removeFromSuperview()
         imagePanel = nil
+        markdownView?.removeFromSuperview()
+        markdownView = nil
     }
 
     /// 開いているファイルのその時点の中身（変えたファイルは変更後、消したファイルは変更前）。裏で読む。
@@ -899,6 +933,25 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         binaryBox.isHidden = true
         removeImage()
         let svg = ImageDiffPanel.isSVG(path)
+        let markdown = MarkdownBlock.isMarkdown(path)
+        markdownSwitch.isHidden = !markdown
+        markdownSwitch.selectedSegment = markdownText ? 1 : 0
+        if markdown, !markdownText {
+            content.view.isHidden = true
+            Task {
+                guard let data = await contents(of: path), request == self.request else { return }
+                let text = String(decoding: data, as: UTF8.self)
+                let gitHub = self.gitHub
+                let blocks = await Task.detached { MarkdownBlock.parse(text, gitHub: gitHub) }.value
+                guard request == self.request else { return }
+                let view = MarkdownView(blocks: blocks, path: path) { [weak self] link in self?.image(link, from: path) }
+                view.onOpenPath = { [weak self] target in self?.open(path: target, line: nil) }
+                markdownView = view
+                addSubview(view, positioned: .below, relativeTo: pathBar)
+                needsLayout = true
+            }
+            return
+        }
         svgSwitch.isHidden = !svg
         svgSwitch.selectedSegment = svgView.rawValue
         rendererSwitch.isHidden = !svg || svgView != .compare
@@ -913,14 +966,12 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
                 let bytes = ByteCountFormatter.string(fromByteCount: Int64(data.count), countStyle: .file)
                 let size = image.map { "\(Int($0.size.width)) × \(Int($0.size.height)) pt · \(bytes)" } ?? bytes
                 let panel: ImageDiffPanel
-                var approximation: Data?
                 if view == .compare {
                     // 元の SVG と、その部品が崩すように書き換えた SVG（近似）を並べる。
                     let (issues, broken) = await Task.detached {
                         (SVGIssue.lint(data), renderer.approximate(data))
                     }.value
                     guard request == self.request else { return }
-                    approximation = broken
                     panel = ImageDiffPanel(
                         before: image, after: NSImage(data: broken),
                         titles: (L("Original"), String(format: L("%@ (approximation)"), renderer.name)),
@@ -934,54 +985,6 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
                 imagePanel = panel
                 addSubview(panel, positioned: .below, relativeTo: pathBar)
                 needsLayout = true
-                // 本物の取り込みが手元にあれば、変換が済んだら近似と差し替える（それまでは近似を見せておく）。
-                guard view == .compare else { return }
-                let real = await Task.detached { () -> Result<MobileRenderer.Converted?, Error> in
-                    Result { try renderer.convert(data) }
-                }.value
-                guard request == self.request else { return }
-                let issues = SVGIssue.lint(data)
-                switch real {
-                case .success(nil):
-                    return
-                case .success(let converted?):
-                    var notes = Self.mobileNotes(issues)
-                    if !converted.messages.isEmpty {
-                        let text = NSMutableAttributedString(attributedString: notes)
-                        text.append(NSAttributedString(
-                            string: "\n" + String(format: L("What %@ said"), converted.tool) + "\n",
-                            attributes: [.font: NSFont.boldSystemFont(ofSize: 12), .foregroundColor: NSColor.labelColor]))
-                        text.append(NSAttributedString(
-                            string: converted.messages + "\n",
-                            attributes: [.font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular),
-                                         .foregroundColor: NSColor.secondaryLabelColor]))
-                        notes = text
-                    }
-                    let realPanel = ImageDiffPanel(
-                        before: image, after: NSImage(data: converted.svg),
-                        titles: (L("Original"), renderer.name),
-                        caption: size + "    " + String(format: L("Converted by %@, drawn by this app"), converted.tool),
-                        svg: false, mode: .twoUp, position: 0.5, single: false, notes: notes)
-                    imagePanel?.removeFromSuperview()
-                    imagePanel = realPanel
-                    addSubview(realPanel, positioned: .below, relativeTo: pathBar)
-                    needsLayout = true
-                case .failure(let error):
-                    // 近似の絵のまま、取り込めなかったわけを一覧の下に出す。
-                    let notes = NSMutableAttributedString(attributedString: Self.mobileNotes(issues))
-                    notes.append(NSAttributedString(
-                        string: "\n" + String(format: L("Couldn’t convert with %@’s own importer: %@"), renderer.name, "\(error)") + "\n",
-                        attributes: [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.systemRed]))
-                    let failed = ImageDiffPanel(
-                        before: image, after: approximation.flatMap(NSImage.init(data:)),
-                        titles: (L("Original"), String(format: L("%@ (approximation)"), renderer.name)),
-                        caption: size + "    " + L("Approximation: the SVG rewritten the way the renderer degrades it, drawn by this app"),
-                        svg: false, mode: .twoUp, position: 0.5, single: false, notes: notes)
-                    imagePanel?.removeFromSuperview()
-                    imagePanel = failed
-                    addSubview(failed, positioned: .below, relativeTo: pathBar)
-                    needsLayout = true
-                }
             }
             return
         }
