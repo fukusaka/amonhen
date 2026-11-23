@@ -116,7 +116,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Git: machine-wide pages (Author and Signing, Commits, Operations, Working Copy, Keys and Values) | ✓ | ✓ | ✓ | — | △ | n/a | CLI: Via `amonhen run`. |
 | Git > Commits: shared message template library | ✓ | ✓ | △ | — | — | n/a | Windows: Edited inline in the one Settings page (no sheet) |
 | Git > Programs: git, gpg, ssh-keygen, gpgsm | ✓ | ✓ | ✓ | n/a | △ | n/a | VSCode: The extension runs the git chosen here for the machine, and VSCode's `git.path` only when none is chosen; gpg and ssh-keygen come from git's settings.<br>CLI: Via `amonhen run` (`programs`, `setMachineGit`).<br>Windows: In Settings > Git. |
-| Git > Environment Variables of this machine (pass, masked secrets) | ✓ | ✓ | △ | n/a | n/a | n/a | VSCode: VSCode's own environment, which the extension passes to the daemon.<br>Windows: In the one Settings page under Git; no Passed / All switch or value detail |
+| Git > Environment Variables of this machine (pass, masked secrets) | ✓ | ✓ | ✓ | n/a | n/a | n/a | VSCode: VSCode's own environment, which the extension passes to the daemon. |
 | Environment Variables: use the login shell's (Read Again, SSH agent) | ✓ | — | — | n/a | n/a | n/a | GTK4: Left out: Linux sessions already carry it.<br>VSCode: VSCode's own environment, which the extension passes to the daemon. |
 | SSH Hosts: hosts with + / −, unreachable dimmed | ✓ | ✓ | ✓ | n/a | n/a | n/a | VSCode: Remote-SSH takes this role. |
 | SSH Hosts > Connection: state, Check Connection, engine | ✓ | ✓ | ✓ | n/a | n/a | n/a |  |
