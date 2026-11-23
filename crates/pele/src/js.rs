@@ -343,6 +343,17 @@ pub fn parse_int(s: &str, radix: u32) -> f64 {
     } else {
         body
     };
+    if radix == 10 {
+        // V8 は 10 進を正しく丸めて読む（桁を 1 つずつ掛け足すと、15 桁を超えて最後の桁がずれる）。
+        let end = body
+            .find(|c: char| !c.is_ascii_digit())
+            .unwrap_or(body.len());
+        if end == 0 {
+            return f64::NAN;
+        }
+        let v: f64 = body[..end].parse().unwrap_or(f64::NAN);
+        return if neg { -v } else { v };
+    }
     let mut v = 0.0f64;
     let mut any = false;
     for c in body.chars() {
@@ -397,5 +408,9 @@ mod tests {
         assert!(number("1px").is_nan());
         assert_eq!(number(""), 0.0);
         assert_eq!(hypot(3.0, 4.0), 5.0);
+        assert_eq!(parse_int("99999999999999999999999*", 10), 1e23);
+        assert_eq!(parse_int(" -12px", 10), -12.0);
+        assert!(parse_int("x", 10).is_nan());
+        assert_eq!(parse_int(&"9".repeat(400), 10), f64::INFINITY);
     }
 }
