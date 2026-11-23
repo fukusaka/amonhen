@@ -343,12 +343,12 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 
 | 機能 | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
-| Operations（git の命令・出力・進み具合・取り消し） | ✓ | ✓ | ✓ | △ | △ | — | VSCode: Output のチャンネルの記録だけ。<br>CLI: `amonhen run`（`remoteActivity`・`cancelActivity`）から。<br>TUI: 一番上の行に動いている操作の名前。git の命令・出力・取り消しはない。 |
+| Operations（git の命令・出力・進み具合・取り消し） | ✓ | ✓ | ✓ | △ | △ | ✓ | VSCode: Output のチャンネルの記録だけ。<br>CLI: `amonhen run`（`remoteActivity`・`cancelActivity`）から。<br>TUI: Activity の操作ログで `Tab`。git を動かす側（daemon 越しならその側）の git の命令とコアの命令、下に選んだものの出力か失敗の理由。`x` で動いているものを取り消し、`r` で読み直す。 |
 | History（操作ログ・ここまで戻す） | ✓ | ✓ | ✓ | △ | △ | ✓ | VSCode: Undo History… が Undo の記録を並べ、選んだところまで戻す。ほかの Activity はない。<br>CLI: `undo --list` が記録を出す。<br>TUI: 命令の一覧の Activity。Enter で、選んだところまで戻す。 |
 | Performance | ✓ | ✓ | ✓ | n/a | n/a | — | VSCode: VSCode の出力（Amon Hen のログ）が代わり。<br>Windows: 差分の読み込みと、History・status の読み直し。 |
-| History のキャッシュの書き込み（リポジトリごとの大きさ・回数・量・最後の書き込み） | ✓ | ✓ | ✓ | — | △ | — | CLI: `amonhen run`（`historyCache`）。 |
+| History のキャッシュの書き込み（リポジトリごとの大きさ・回数・量・最後の書き込み） | ✓ | ✓ | ✓ | — | △ | ✓ | CLI: `amonhen run`（`historyCache`）。<br>TUI: 開いているリポジトリのもの。Activity の Operations の次（`Tab`）。 |
 | Events | ✓ | ✓ | ✓ | n/a | n/a | — | VSCode: VSCode の出力（Amon Hen のログ）が代わり。 |
-| JSON で書き出す | ✓ | ✓ | ✓ | n/a | n/a | — | VSCode: VSCode の出力（Amon Hen のログ）が代わり。 |
+| JSON で書き出す | ✓ | ✓ | ✓ | n/a | n/a | ✓ | VSCode: VSCode の出力（Amon Hen のログ）が代わり。<br>TUI: Activity の Operations で `s`。この機械のファイルに。 |
 | Daemon のタブ（起動・停止・つながり） | ✓ | ✓ | ✓ | ✓ | △ | — | VSCode: メインビューのページ（サイドバーの ⋯ とコマンドパレットの Show Daemon）。窓のつながりは手元の daemon だけ。<br>CLI: `daemon status / start / stop`。 |
 
 ## 11. メニュー

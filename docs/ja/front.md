@@ -47,6 +47,7 @@ History と差分は番号（`history`・`diff`）で持つ。FE がスクロー
 | 命令 | 引数 | 答え（JSON） | レコード |
 |---|---|---|---|
 | `hello` | language | version・workdir・gitDir | |
+| `activity` | | records（git を動かしている側の Activity の操作: seq・kind・repo・label・started（ミリ秒）・duration・ok・error・progress・cancellable・output）・remote（SSH 先のものなら true。取り消しは `cancelActivity` の remote で） | |
 | `environment` | env（FE の環境。開くときと同じく `NAME=value` を `"\u0000"` で区切ったもの） | | |
 | `history` | rebuild?・fold?（merge をすべてたたむ）・expanded?（ID の配列。fold のときに開いておく merge）・collapsed?（ID の配列。fold でなければ、これらの merge だけたたむ）・tips?（ID の配列。そこから辿れるものだけ） | history・generation・rows・head・headRow・folded・shallow（shallow clone の History か）・boundaryRows（shallow clone の境界の、親を取得していないコミットの行） | |
 | `historyMatching` | history・rows | `history` と同じ（一致した行だけの History） | |

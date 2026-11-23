@@ -378,6 +378,21 @@ impl Session {
             "commitDiff" => self.commit_diff(request)?,
             "workingDiff" => self.working_diff(request)?,
             // 構文の色付け。時間がかかることがあるので、FE は差分を色なしで先に出し、これを後から頼む。
+            // Activity の Operations: git を動かしている側の記録（SSH 先なら daemon が読んだもの、ほかはこの
+            // プロセスのもの）。`remote` なら、取り消しは cancelActivity の remote で頼む。
+            "activity" => {
+                let remote: Value =
+                    serde_json::from_str(&repo.run_json(r#"{"op":"remoteActivity"}"#))
+                        .unwrap_or_default();
+                let (records, remote) = match remote["info"]["records"].as_array() {
+                    Some(records) if !records.is_empty() => (Value::Array(records.clone()), true),
+                    _ => (
+                        serde_json::from_str(&amonhen_core::activity_json()).unwrap_or_default(),
+                        false,
+                    ),
+                };
+                Reply::json(json!({"records": records, "remote": remote}))
+            }
             "diffSyntax" => {
                 let spans = if request["diff"].is_null() {
                     let id = u64_arg(request, "view")?;

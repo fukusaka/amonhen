@@ -2635,6 +2635,51 @@ fn reset_offers_the_modes() {
     assert_eq!(head(), "Merge branch 'topic'\n");
 }
 
+/// 操作ログの `Tab`: Operations（git を動かした記録。✓ ✗ ●、下に選んだものの出力）。もう一度で操作ログへ
+#[test]
+fn activity_operations_list_what_ran() {
+    let dir = tempfile::tempdir().unwrap();
+    merged(dir.path());
+    // reset で git を動かしてから見る（同じプロセスの記録）。
+    let ops =
+        amonhen_tui::snapshot(open(dir.path()), 160, 20, clock(), "jRs:activity\n\t").unwrap();
+    println!("{ops}");
+    assert!(ops.contains(" Operations "), "{ops}");
+    // テストは 1 つのプロセスで並べて動くので、ほかのテストの git（まだ動いているもの）も並ぶ。印は問わない。
+    assert!(
+        ops.lines()
+            .any(|l| l.contains(" git ") && (l.contains('✓') || l.contains('●') || l.contains('✗'))),
+        "{ops}"
+    );
+    assert!(ops.contains("x cancel a running one"), "{ops}");
+    // もう一度の `Tab` で History Cache（永続キャッシュの大きさと書き込み）、さらに `Tab` で操作ログへ。
+    let cache =
+        amonhen_tui::snapshot(open(dir.path()), 160, 20, clock(), "jRs:activity\n\t\t").unwrap();
+    println!("{cache}");
+    assert!(cache.contains(" History Cache "), "{cache}");
+    assert!(
+        cache.contains("Cache file:") || cache.contains("isn't cached on disk"),
+        "{cache}"
+    );
+    let back =
+        amonhen_tui::snapshot(open(dir.path()), 160, 20, clock(), "jRs:activity\n\t\t\t").unwrap();
+    assert!(back.contains(" Operation Log "), "{back}");
+    // Operations の `s`: 記録を JSON のファイルに書き出す（アプリの Export JSON…）。
+    let out = tempfile::tempdir().unwrap();
+    let file = out.path().join("activity.json");
+    let keys = format!("jRs:activity\n\ts\x15{}\n", file.display());
+    let wrote = amonhen_tui::snapshot(open(dir.path()), 160, 20, clock(), &keys).unwrap();
+    assert!(wrote.contains("Wrote "), "{wrote}");
+    let records: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    let list = records.as_array().unwrap();
+    assert!(!list.is_empty());
+    assert!(
+        list[0]["label"].is_string() && list[0]["seq"].is_u64(),
+        "{records}"
+    );
+}
+
 /// コマンドの一覧の Activity: 操作ログを新しい順に出し、選んだところまで確かめてから戻す
 #[test]
 fn operation_log_undoes_back_to_the_selected_one() {
