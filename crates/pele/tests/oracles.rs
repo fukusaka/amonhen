@@ -58,7 +58,9 @@ fn docs_match_pele() {
         if !file.starts_with(&only) {
             continue;
         }
-        if amonhen_pele::detect_type(&input).is_some_and(|t| !registered(t)) {
+        // pele の 34 種類はすべて移したので、知らない種類の例はない（あれば失敗）
+        if let Some(t) = amonhen_pele::detect_type(&input).filter(|t| !registered(t)) {
+            failed.push(format!("{file}: type {t} isn't ported"));
             continue;
         }
         checked += 1;

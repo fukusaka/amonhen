@@ -17,7 +17,7 @@ pub enum Drawn {
     Error(String),
 }
 
-/// フェンスの言葉が `language` のブロックの中身 `text` を図にする。図の言葉でない・まだ描けない種類なら `None`
+/// フェンスの言葉が `language` のブロックの中身 `text` を図にする。図の言葉でない・pele が読まない種類なら `None`
 /// （FE はコードとして見せる）。
 pub fn draw(language: &str, text: &str) -> Option<Drawn> {
     if !language.eq_ignore_ascii_case("mermaid") {
@@ -579,9 +579,14 @@ mod tests {
 
     #[cfg(feature = "diagrams")]
     #[test]
-    fn other_languages_and_unported_kinds_stay_code() {
+    fn other_languages_and_unknown_kinds_stay_code() {
         assert_eq!(draw("rust", "fn main() {}"), None);
-        assert_eq!(draw("mermaid", "sequenceDiagram\n  A->>B: hi\n"), None);
+        // pele が読まない種類（zenuml など）はコードのまま
+        assert_eq!(draw("mermaid", "zenuml\n  A.method()\n"), None);
+        assert!(matches!(
+            draw("mermaid", "sequenceDiagram\n  A->>B: hi\n"),
+            Some(Drawn::Svg(_, None))
+        ));
         assert!(matches!(
             draw("Mermaid", "flowchart LR\n  A -->"),
             Some(Drawn::Error(_))
