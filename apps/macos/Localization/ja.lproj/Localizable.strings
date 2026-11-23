@@ -2008,6 +2008,7 @@
 "Apply or cancel the commit edit first." = "先にコミットの編集を実行するかキャンセルしてください。";
 "One at a Time" = "1 つずつ";
 "Ignore Whitespace" = "空白を無視";
+"Whitespace" = "空白";
 "Compare Whitespace" = "空白を区別";
 "Ignore Whitespace at Line Ends" = "行末の空白を無視";
 "Ignore Changes in Whitespace" = "空白の量の違いを無視";

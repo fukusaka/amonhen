@@ -1,37 +1,54 @@
 import AmonhenKit
 import AppKit
 
-/// 差分の帯の、行を比べるときに無視する空白を選ぶポップアップ（History の右の列と Working Copy）。
+/// 差分の帯の、行を比べるときに無視する空白を選ぶボタン（History の右の列と Working Copy）。帯を狭くしないように
+/// アイコンだけで、押すと 4 つの選び方を出す（今のものに印）。無視している間はアイコンをアクセントの色にする。
 /// 選んだものは覚えない（開くたびに「空白を区別」から）。
 final class WhitespacePopUp: NSPopUpButton {
     /// 選び直したとき。
     var onChange: ((DiffWhitespace) -> Void)?
 
-    var whitespace: DiffWhitespace {
-        get { DiffWhitespace(rawValue: UInt8(max(0, indexOfSelectedItem))) ?? .exact }
-        set { selectItem(at: Int(newValue.rawValue)) }
+    var whitespace: DiffWhitespace = WhitespacePopUp.initial {
+        didSet { update() }
     }
 
     init() {
-        super.init(frame: .zero, pullsDown: false)
+        super.init(frame: .zero, pullsDown: true)
         bezelStyle = .accessoryBarAction
         controlSize = .small
-        font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        isBordered = false
+        let first = NSMenuItem()
+        first.title = ""
+        first.image = NSImage(systemSymbolName: "space", accessibilityDescription: L("Whitespace"))
+            ?? NSImage(systemSymbolName: "textformat", accessibilityDescription: L("Whitespace"))
+        menu?.addItem(first)
         for mode in DiffWhitespace.allCases {
-            let item = NSMenuItem(title: Self.title(mode), action: nil, keyEquivalent: "")
+            let item = NSMenuItem(title: Self.title(mode), action: #selector(choose(_:)), keyEquivalent: "")
+            item.target = self
+            item.tag = Int(mode.rawValue)
             item.toolTip = Self.toolTip(mode)
             menu?.addItem(item)
         }
-        whitespace = Self.initial
-        toolTip = L("Whitespace to ignore when comparing lines (as git diff does)")
-        target = self
-        action = #selector(changed)
+        update()
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
-    @objc private func changed() { onChange?(whitespace) }
+    @objc private func choose(_ item: NSMenuItem) {
+        guard let mode = DiffWhitespace(rawValue: UInt8(clamping: item.tag)), mode != whitespace else { return }
+        whitespace = mode
+        onChange?(mode)
+    }
+
+    /// 印・アイコンの色・ツールチップ（今の選び方を言う）。
+    private func update() {
+        for item in menu?.items.dropFirst() ?? [] {
+            item.state = item.tag == Int(whitespace.rawValue) ? .on : .off
+        }
+        contentTintColor = whitespace == .exact ? nil : .controlAccentColor
+        toolTip = "\(Self.title(whitespace))\n\(L("Whitespace to ignore when comparing lines (as git diff does)"))"
+    }
 
     /// 最初に選んでおくもの。ふだんは「空白を区別」で、確かめる用（`--snapshot`）に `-AMHWhitespace 0〜3` で変えられる。
     static var initial: DiffWhitespace {
