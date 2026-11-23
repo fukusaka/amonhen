@@ -339,7 +339,8 @@ pub enum Command {
         branch: String,
     },
     /// stash ごとの土台（作ったときの HEAD）と、今の HEAD の離れ具合（`info.stashes`: name・base・`ahead`（HEAD に
-    /// だけあるコミットの数）・`behind`（土台にだけあるコミットの数））。HEAD がまだなければ空。
+    /// だけあるコミットの数）・`behind`（土台にだけあるコミットの数）・`untracked`（追跡していないファイルも入って
+    /// いるか））。HEAD がまだなければ空。
     StashBases,
     /// 覚えている History の折りたたみ（`info`: `folded`（merge を既定でたたむか）・`except`（既定と逆にした merge
     /// の ID））。なければ何もたたまない。
@@ -704,6 +705,14 @@ pub enum Command {
     TreeFolders {
         path: String,
         rev: Option<String>,
+    },
+    /// コミット `oid`（40 桁）の木の `path`（根からの相対パス。空なら根）にあるもの（`info.entries`: name・
+    /// kind（`folder`・`file`・`executable`・`link`・`submodule`）・oid）。フォルダを先に、名前の順。History の
+    /// 「すべてのファイル」が、開いたフォルダだけ読む。
+    TreeEntries {
+        oid: String,
+        #[serde(default)]
+        path: String,
     },
     /// `on` なら、このリポジトリを git maintenance に登録して裏で手入れさせる（`git maintenance start`: ユーザー全体の
     /// `maintenance.repo` に足し、OS の予定がなければ作る）。でなければ登録を外す（`git maintenance unregister`。
@@ -4260,6 +4269,8 @@ impl Repository {
                             "base": base.to_string(),
                             "ahead": ahead,
                             "behind": behind,
+                            // 3 つ目の親が、追跡していないファイル（`git stash -u`）。
+                            "untracked": ops.resolve(&format!("{target}^3")).is_ok(),
                         }));
                     }
                 }
@@ -5115,6 +5126,31 @@ impl Repository {
                 self.disable_sparse_checkout(ops)?;
                 ok()
             }
+            Command::TreeEntries { oid: o, path } => {
+                let path = path.trim_matches('/');
+                let entries = self.backend().tree_entries(&oid(&o)?, path)?;
+                let entries: Vec<_> = entries
+                    .into_iter()
+                    .map(|e| {
+                        serde_json::json!({
+                            "name": e.name,
+                            "kind": match e.kind {
+                                amonhen_model::TreeEntryKind::Folder => "folder",
+                                amonhen_model::TreeEntryKind::File => "file",
+                                amonhen_model::TreeEntryKind::Executable => "executable",
+                                amonhen_model::TreeEntryKind::Link => "link",
+                                amonhen_model::TreeEntryKind::Submodule => "submodule",
+                            },
+                            "oid": e.oid.to_string(),
+                        })
+                    })
+                    .collect();
+                Ok(Response {
+                    ok: true,
+                    info: Some(serde_json::json!({ "entries": entries })),
+                    ..Default::default()
+                })
+            }
             Command::TreeFolders { path, rev } => Ok(Response {
                 ok: true,
                 info: Some(self.tree_folders(ops, rev.as_deref().unwrap_or("HEAD"), &path)?),
@@ -5304,7 +5340,9 @@ impl Repository {
             }),
             Command::Worktrees => {
                 let paths = self.backend().paths();
-                let list = crate::worktree::parse(&ops.worktree_list()?, paths.workdir.as_deref());
+                let mut list =
+                    crate::worktree::parse(&ops.worktree_list()?, paths.workdir.as_deref());
+                crate::worktree::fill_from_records(&mut list, &paths.common_dir);
                 Ok(Response {
                     ok: true,
                     info: Some(serde_json::json!({ "worktrees": list })),
@@ -5786,6 +5824,62 @@ mod tests {
 
     fn run(repo: &Repository, json: &str) -> serde_json::Value {
         serde_json::from_str(&repo.run_json(json)).unwrap()
+    }
+
+    #[test]
+    fn tree_entries_list_one_folder_of_a_commit_folders_first() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        std::fs::create_dir_all(dir.join("src/old")).unwrap();
+        std::fs::write(dir.join("src/b.rs"), "b").unwrap();
+        std::fs::write(dir.join("src/A.rs"), "a").unwrap();
+        std::fs::write(dir.join("src/old/x.rs"), "x").unwrap();
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-q", "-m", "second"]);
+        let head = git(dir, &["rev-parse", "HEAD"]);
+        let names = |info: &serde_json::Value| -> Vec<(String, String)> {
+            info["info"]["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|e| {
+                    (
+                        e["name"].as_str().unwrap().to_owned(),
+                        e["kind"].as_str().unwrap().to_owned(),
+                    )
+                })
+                .collect()
+        };
+        let root = run(&repo, &format!(r#"{{"op":"treeEntries","oid":"{head}"}}"#));
+        assert_eq!(
+            names(&root),
+            [
+                ("src".into(), "folder".into()),
+                ("a.txt".into(), "file".into())
+            ]
+        );
+        let src = run(
+            &repo,
+            &format!(r#"{{"op":"treeEntries","oid":"{head}","path":"/src"}}"#),
+        );
+        assert_eq!(
+            names(&src),
+            [
+                ("old".into(), "folder".into()),
+                ("A.rs".into(), "file".into()),
+                ("b.rs".into(), "file".into())
+            ]
+        );
+        let blob = src["info"]["entries"][1]["oid"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert_eq!(blob, git(dir, &["rev-parse", &format!("{head}:src/A.rs")]));
+        let missing = run(
+            &repo,
+            &format!(r#"{{"op":"treeEntries","oid":"{head}","path":"nothing"}}"#),
+        );
+        assert_eq!(missing["ok"], false);
     }
 
     /// 何を渡されても G を返し、呼ばれた回数を数える検証。
@@ -7242,6 +7336,7 @@ mod tests {
             (stashes[0]["ahead"].as_u64(), stashes[0]["behind"].as_u64()),
             (Some(2), Some(0))
         );
+        assert_eq!(stashes[0]["untracked"], false);
 
         // 土台から枝を作って戻すので、HEAD が進んでいても重ならない。戻せた stash は消える。
         let r = run(
@@ -7258,6 +7353,11 @@ mod tests {
         assert!(git(dir, &["stash", "list"]).is_empty());
         let none = run(&repo, r#"{"op":"stashBases"}"#);
         assert_eq!(none["info"]["stashes"].as_array().unwrap().len(), 0);
+        // 追跡していないファイルも入れた stash。
+        std::fs::write(dir.join("new.txt"), "new\n").unwrap();
+        git(dir, &["stash", "-q", "-u"]);
+        let with = run(&repo, r#"{"op":"stashBases"}"#);
+        assert_eq!(with["info"]["stashes"][0]["untracked"], true, "{with}");
     }
 
     /// 消したタグは Undo で戻り、注釈付きのタグはタグのオブジェクトごと戻る。タグはまとめてリモートに push でき、

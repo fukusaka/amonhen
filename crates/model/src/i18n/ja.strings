@@ -2350,3 +2350,35 @@
 "Select exactly two commits." = "コミットをちょうど 2 つ選んでください。";
 "Squash into Previous…" = "前のコミットに Squash…";
 "Interactive Rebase from Here…" = "ここから Interactive Rebase…";
+
+/* History の右の列（変更ファイルを見出しにした差分・すべてのファイル・画像の比較） */
+"Show the changed files as a list" = "変更ファイルをリストで見る";
+"Show the changed files as a tree" = "変更ファイルをツリーで見る";
+"Expand All Folders" = "フォルダをすべて開く";
+"Collapse All Folders" = "フォルダをすべて畳む";
+"Expand All Diffs" = "差分をすべて開く";
+"Collapse All Diffs" = "差分をすべて畳む";
+"Ignore Whitespace" = "空白を無視";
+"Not available yet" = "まだ使えません";
+"View Options" = "表示の設定";
+"{count} files" = "{count} ファイル";
+"Show Whole File" = "ファイル全体を表示";
+"Open File at This Commit" = "この時点のファイルを開く";
+"AI: Explain This Commit" = "AI: このコミットを解説";
+"AI: Translate the Message" = "AI: メッセージを翻訳";
+"Back" = "戻る";
+"Back to the files" = "ファイルの一覧に戻る";
+"Show This Change" = "この変更を見る";
+"(deleted in this commit)" = "（このコミットで削除）";
+"{count} lines deleted here" = "ここで {count} 行を削除";
+"2-Up" = "並べる";
+"Swipe" = "スワイプ";
+"Onion Skin" = "オニオンスキン";
+"Difference" = "違うピクセル";
+"Show as Text" = "テキストで見る";
+"Before" = "前";
+"After" = "後";
+"Nothing to compare" = "比べるものがありません";
+"{changed} of {total} pixels differ ({percent}%)" = "{total} ピクセルのうち {changed} が違う（{percent}%）";
+"Show changed files as a tree" = "変更ファイルをツリーで表示する";
+"Show a commit’s changed files as a tree of folders (when off, as a list of paths)" = "コミットの変更ファイルをフォルダのツリーで表示する（オフならパスのリスト）";

@@ -153,6 +153,14 @@ enum Naming {
     PatchVersion,
     /// アーカイブに入れる 1 つのフォルダ（作業ツリーの上からの）。
     ArchiveFolder,
+    /// bundle に入れない基点（受け取る側が持っているコミット）。
+    BundleBase,
+    /// worktree をロックする理由（始まりは worktree の場所）。
+    WorktreeLockReason,
+    /// worktree のフォルダの移し先（始まりは今の場所）。
+    WorktreeMove,
+    /// 手で移した worktree のフォルダの今の場所（始まりは記録にある場所）。
+    WorktreeLocate,
     /// 直すリモートの URL（始まりは前の名前、出し方は新しい名前）。
     RemoteEditUrl,
     /// 選んでいるコミットを書き出すアーカイブのファイル（この機械の）。
@@ -496,6 +504,12 @@ pub struct App {
     patch_version: Option<(String, String)>,
     /// アーカイブの書き方を選んでいる間の、コミットと書くファイル（`o` で 1 つのフォルダを聞く）。
     archive_folder: Option<(String, String)>,
+    /// bundle に何を入れるかを選んでいる間の、書くファイル（`a` で基点を聞く）。
+    bundle_save: Option<String>,
+    /// ロックするかを聞いている worktree（`r` で理由を聞く）。
+    worktree_lock: Option<String>,
+    /// 詳細に出した stash（土台を読んだら、一番下の行に様子を書く）。
+    stash_about: Option<String>,
     /// 打っている名前が何のものか。
     naming: Naming,
     /// git や ssh から尋ねられていること（先頭を画面で聞いている）と、打った答え。
@@ -527,6 +541,8 @@ pub struct App {
     notice: Option<String>,
     /// 検索の語を打っている（`/`）。
     typing_query: Option<String>,
+    /// 打っている検索の語は、詳細の中を探すもの（`/` を詳細で押した）。
+    typing_in_details: bool,
     /// サイドバーの絞り込みの語を打っている（サイドバーで `/`）。
     typing_filter: Option<String>,
     /// 絞り込みの語は Working Copy の一覧のもの（でなければサイドバーのもの）。
@@ -535,6 +551,10 @@ pub struct App {
     help: bool,
     /// キーの一覧の、一番上に見えている行（収まらないときに動かす）。
     help_top: usize,
+    /// 最後のコミットで hooks が書いたもの（成功でも失敗でも。`!` で全部を出す）。
+    hook_output: Option<String>,
+    /// hooks の出力を枠に出している（そのときの一番上の行）。
+    showing_hooks: Option<usize>,
     /// コマンドの一覧を出している（`:`）。
     palette: Option<Palette>,
     operation_log: Option<OperationLog>,
@@ -629,6 +649,9 @@ impl App {
             worktree_branch: None,
             patch_version: None,
             archive_folder: None,
+            bundle_save: None,
+            worktree_lock: None,
+            stash_about: None,
             naming: Naming::Branch,
             #[cfg(unix)]
             questions: std::collections::VecDeque::new(),
@@ -647,10 +670,13 @@ impl App {
             push_after_commit: false,
             notice: None,
             typing_query: None,
+            typing_in_details: false,
             typing_filter: None,
             filtering_changes: false,
             help: false,
             help_top: 0,
+            hook_output: None,
+            showing_hooks: None,
             palette: None,
             operation_log: None,
             edit_mode: None,
@@ -780,6 +806,40 @@ impl App {
             true => self.open_file = Some(file.to_string_lossy().into_owned()),
             false => self.error = Some(tr!("{path} isn’t a file in the working tree", path = path)),
         }
+    }
+
+    /// コミットのときに hooks（と git）が書いたものを覚える。2 行以上あれば、一番下の行に足す「`!` で全部」を返す。
+    fn remember_hook_output(&mut self, output: &str) -> String {
+        let lines = output.lines().filter(|l| !l.trim().is_empty()).count();
+        match lines {
+            0 => {
+                self.hook_output = None;
+                String::new()
+            }
+            1 => {
+                self.hook_output = Some(output.trim_end().to_owned());
+                String::new()
+            }
+            _ => {
+                self.hook_output = Some(output.trim_end().to_owned());
+                tr!(" (! shows all)")
+            }
+        }
+    }
+
+    /// 詳細の中で `query` を探して、合ったところへ動かす（アプリの詳細の中の検索）。何番目かを一番下の行に。
+    fn find_in_details(&mut self, query: &str, forward: bool) {
+        self.notice = Some(match self.details.find(query, forward) {
+            Some((at, total)) => tr!(
+                "“{query}”: {at} of {total} (n N for the next and previous)",
+                query = query,
+                at = at,
+                total = total
+            ),
+            None => tr!("“{query}” isn’t in the details", query = query),
+        });
+        self.damage |= Damage::SIDE;
+        self.dirty = true;
     }
 
     /// Working Copy・ref・History を読み直す。
@@ -1279,6 +1339,7 @@ impl App {
                             && sequence["empty"] != true
                             && sequence["retried"] != true;
                         self.changes.status(&status);
+                        self.sidebar.set_conflicts(self.changes.conflicts());
                         // Commit and Push: コミットの後の状態（上流より進んだ数）が届いたら、push を確かめる。
                         if !self.committing && std::mem::take(&mut self.push_after_commit) {
                             self.ask_push();
@@ -1316,11 +1377,13 @@ impl App {
                                     });
                                 }
                                 self.focus = Focus::Main;
-                                // hooks が何か書いていれば、その 1 行目を出す。
+                                // hooks が何か書いていれば、その 1 行目を出す。2 行以上なら、`!` で全部を
+                                // 出せる（アプリの hooks の出力のシートの代わり）。
+                                let more = self.remember_hook_output(&output);
                                 self.notice =
                                     Some(match output.lines().find(|l| !l.trim().is_empty()) {
                                         Some(line) => {
-                                            tr!("Committed: {output}", output = line.trim())
+                                            tr!("Committed: {output}", output = line.trim()) + &more
                                         }
                                         None => tr!("Committed"),
                                     });
@@ -1329,7 +1392,15 @@ impl App {
                             }
                             Err(error) => {
                                 self.push_after_commit = false;
-                                self.error = Some(error);
+                                // hooks に断られたなら、その出力を全部見られるように。
+                                let more = self.remember_hook_output(&error);
+                                let first = error
+                                    .lines()
+                                    .find(|l| !l.trim().is_empty())
+                                    .unwrap_or("")
+                                    .trim()
+                                    .to_owned();
+                                self.error = Some(first + &more);
                             }
                         }
                     }
@@ -1488,6 +1559,30 @@ impl App {
             self.dirty = true;
             return;
         }
+        // worktree をロックする前の `r`: 理由を打つ。
+        if self.choices.is_some()
+            && let Some(path) = self.worktree_lock.take()
+            && key.code == KeyCode::Char('r')
+        {
+            self.choices = None;
+            self.naming = Naming::WorktreeLockReason;
+            self.typing_branch = Some((path, String::new(), String::new()));
+            self.dirty = true;
+            return;
+        }
+        // bundle を書く前の `a`: 入れない基点を打つ（初めは今のブランチの上流）。
+        if self.choices.is_some()
+            && let Some(file) = self.bundle_save.take()
+            && key.code == KeyCode::Char('a')
+        {
+            self.choices = None;
+            self.bundle_save = Some(file);
+            self.naming = Naming::BundleBase;
+            let start = self.upstream.clone().unwrap_or_default();
+            self.typing_branch = Some((String::new(), String::new(), start));
+            self.dirty = true;
+            return;
+        }
         // アーカイブを書く前の `o`: 入れるフォルダを打つ。
         if self.choices.is_some()
             && let Some(pending) = self.archive_folder.take()
@@ -1540,6 +1635,16 @@ impl App {
                 KeyCode::Char(ch) if !control => self.answer.push(ch),
                 _ => {}
             }
+            return;
+        }
+        // hooks の出力の枠も、`j` `k` で動かし、ほかのキーで閉じる。
+        if let Some(top) = self.showing_hooks {
+            self.dirty = true;
+            self.showing_hooks = match key.code {
+                KeyCode::Char('j') | KeyCode::Down => Some(top + 1),
+                KeyCode::Char('k') | KeyCode::Up => Some(top.saturating_sub(1)),
+                _ => None,
+            };
             return;
         }
         // キーの一覧は、`j` `k`（と矢印）で動かせる。ほかのキーで閉じる。
@@ -1858,11 +1963,40 @@ impl App {
                                 tr!("Fetching from the bundle…"),
                                 json!({"op": "fetchBundle", "file": start, "name": name}),
                             ),
-                            Naming::Bundle => (
-                                "bundle",
-                                tr!("Saving the bundle…"),
-                                json!({"op": "bundle", "refs": [], "bases": [], "file": local_path(name)}),
+                            // 場所の次に、アプリのシートと同じく何を入れるかを選ぶ。
+                            Naming::Bundle => {
+                                self.ask_bundle(&local_path(name));
+                                return;
+                            }
+                            Naming::WorktreeLockReason => (
+                                "lockWorktree",
+                                tr!("Locking the worktree…"),
+                                json!({"op": "worktreeLock", "path": start, "reason": name}),
                             ),
+                            Naming::WorktreeMove => (
+                                "moveWorktree",
+                                tr!("Moving the worktree…"),
+                                json!({"op": "worktreeMove", "path": start, "to": local_path(name)}),
+                            ),
+                            Naming::WorktreeLocate => (
+                                "repairWorktree",
+                                tr!("Reconnecting the worktree…"),
+                                json!({"op": "worktreeRepair", "paths": [local_path(name)]}),
+                            ),
+                            Naming::BundleBase => {
+                                let Some(file) = self.bundle_save.take() else {
+                                    return;
+                                };
+                                let Some(branch) = self.branch.clone() else {
+                                    return;
+                                };
+                                (
+                                    "bundle",
+                                    tr!("Saving the bundle…"),
+                                    json!({"op": "bundle", "refs": [format!("refs/heads/{branch}")],
+                                        "bases": [name], "file": file}),
+                                )
+                            }
                             Naming::RemoteUrl => (
                                 "addRemote",
                                 tr!("Adding {name}…", name = start),
@@ -1939,6 +2073,14 @@ impl App {
         if let Some(query) = &mut self.typing_query {
             self.dirty = true;
             match key.code {
+                KeyCode::Enter if std::mem::take(&mut self.typing_in_details) => {
+                    let query = self.typing_query.take().unwrap_or_default();
+                    if query.trim().is_empty() {
+                        self.details.clear_found();
+                    } else {
+                        self.find_in_details(&query, true);
+                    }
+                }
                 KeyCode::Enter => {
                     let query = self.typing_query.take().unwrap_or_default();
                     if query.trim().is_empty() {
@@ -1947,7 +2089,10 @@ impl App {
                         self.start_search(query);
                     }
                 }
-                KeyCode::Esc => self.typing_query = None,
+                KeyCode::Esc => {
+                    self.typing_query = None;
+                    self.typing_in_details = false;
+                }
                 KeyCode::Backspace => {
                     query.pop();
                 }
@@ -2069,6 +2214,14 @@ impl App {
                         command: json!({"op": "abort"}),
                     },
                 ));
+                self.dirty = true;
+            }
+            // 最後のコミットで hooks が書いたものを、全部出す。
+            KeyCode::Char('!') => {
+                match self.hook_output {
+                    Some(_) => self.showing_hooks = Some(0),
+                    None => self.notice = Some(tr!("No output from the hooks yet")),
+                }
                 self.dirty = true;
             }
             KeyCode::Char('?') => {
@@ -2563,6 +2716,10 @@ impl App {
             }
             "cleanUp" => self.notice = Some(tr!("Deleted the branches")),
             "addRemote" => self.notice = Some(tr!("Added the remote")),
+            "lockWorktree" => self.notice = Some(tr!("Locked the worktree")),
+            "unlockWorktree" => self.notice = Some(tr!("Unlocked the worktree")),
+            "moveWorktree" => self.notice = Some(tr!("Moved the worktree")),
+            "repairWorktree" => self.notice = Some(tr!("Reconnected the worktree")),
             "fastForward" => self.notice = Some(tr!("Fast-forwarded")),
             "editRemote" => self.notice = Some(tr!("Changed the remote")),
             "pushTag" => self.notice = Some(tr!("Pushed the tag")),
@@ -2822,6 +2979,43 @@ impl App {
             "worktreeChangesForRemove" => {
                 let count = reply["info"]["worktrees"][0]["count"].as_u64().unwrap_or(0);
                 self.ask_remove_worktree(count);
+                return;
+            }
+            "stashBases" => {
+                let Some(name) = self.stash_about.take() else {
+                    return;
+                };
+                let found = (reply["info"]["stashes"].as_array().into_iter().flatten())
+                    .find(|s| s["name"] == name.as_str());
+                let message = self.sidebar.detail_of("stash", &name).unwrap_or_default();
+                let mut parts: Vec<String> = Vec::new();
+                // メッセージの「On main: …」「WIP on main: …」から、作ったブランチ。
+                if let Some(branch) = message
+                    .strip_prefix("WIP on ")
+                    .or_else(|| message.strip_prefix("On "))
+                    .and_then(|m| m.split_once(':'))
+                    .map(|(b, _)| b)
+                {
+                    parts.push(tr!("made on {branch}", branch = branch));
+                }
+                if let Some(s) = found {
+                    let ahead = s["ahead"].as_u64().unwrap_or(0);
+                    parts.push(match (s["behind"].as_u64().unwrap_or(0), ahead) {
+                        (1.., _) => tr!("its base is not in HEAD’s history"),
+                        (0, 0) => tr!("at HEAD"),
+                        (0, n) => tr!("{count} behind HEAD", count = n),
+                    });
+                    if s["untracked"] == true {
+                        parts.push(tr!("with untracked files"));
+                    }
+                    if let Some(base) = s["base"].as_str() {
+                        parts.push(tr!("base {commit}", commit = &base[..base.len().min(8)]));
+                    }
+                }
+                if !parts.is_empty() {
+                    self.notice = Some(format!("{name}: {}", parts.join(" · ")));
+                    self.dirty = true;
+                }
                 return;
             }
             "fetchConfig" => {
@@ -4084,6 +4278,39 @@ impl App {
         true
     }
 
+    /// bundle を `file`（この機械の）に書く前に、何を入れるかを選ばせる: すべて（HEAD とブランチ・タグ）、今の
+    /// ブランチだけ、今のブランチのうち基点より後だけ（アプリのシートの「一部の ref」「基点より後」）。
+    fn ask_bundle(&mut self, file: &str) {
+        let bundle = |refs: Vec<String>| Request::Run {
+            name: "bundle",
+            command: json!({"op": "bundle", "refs": refs, "bases": [], "file": file}),
+        };
+        let mut options: Vec<Choice> = vec![(
+            'y',
+            tr!("HEAD and every branch and tag"),
+            bundle(Vec::new()),
+        )];
+        if let Some(branch) = self.branch.clone() {
+            options.push((
+                'b',
+                tr!("only {branch}", branch = branch),
+                bundle(vec![format!("refs/heads/{branch}")]),
+            ));
+            // 選ぶ前に横取りして、基点を聞く（中身は送らない）。
+            options.push((
+                'a',
+                tr!("only {branch} after a base…", branch = branch),
+                Request::Status,
+            ));
+            self.bundle_save = Some(file.to_owned());
+        }
+        self.choices = Some((
+            tr!("Save a bundle at {file} with what?", file = file),
+            options,
+        ));
+        self.dirty = true;
+    }
+
     /// コミット `oids`（空白区切り、古い順）を `place`（フォルダ、`.mbox` なら 1 つのファイル）にパッチとして書く前に、
     /// 送り状（`--cover-letter`、2 つ以上のとき）と版の番号（`-v`）を選ばせる。`version` は聞いた後の版。
     fn ask_save_patch(&mut self, oids: &str, place: &str, version: Option<u32>) {
@@ -4612,6 +4839,66 @@ impl App {
         self.dirty = true;
     }
 
+    /// worktree の行の `L`（ロックする・外す）と `n`（フォルダを移す。見つからなければ今の場所を聞いてつなぎ直す）。
+    /// アプリの worktree のメニューの Lock・Unlock・Move…・Locate…。
+    fn worktree_key(&mut self, code: KeyCode) -> bool {
+        let Some(("worktree", path, _)) = self.sidebar.picked_ref() else {
+            return false;
+        };
+        let path = path.to_owned();
+        let (locked, missing, main) = self.sidebar.worktree_state(&path);
+        match code {
+            KeyCode::Char('L') if locked => {
+                self.confirm = Some((
+                    tr!("Unlock the worktree at {path}?", path = path),
+                    tr!("unlock"),
+                    Request::Run {
+                        name: "unlockWorktree",
+                        command: json!({"op": "worktreeUnlock", "path": path}),
+                    },
+                ));
+            }
+            KeyCode::Char('L') => {
+                let lock = Request::Run {
+                    name: "lockWorktree",
+                    command: json!({"op": "worktreeLock", "path": path, "reason": null}),
+                };
+                // 選ぶ前に横取りして、理由を聞く（中身は送らない）。
+                self.worktree_lock = Some(path.clone());
+                self.choices = Some((
+                    tr!(
+                        "Lock the worktree at {path}? git then won’t prune, remove or move it.",
+                        path = path
+                    ),
+                    vec![
+                        ('y', tr!("lock"), lock),
+                        ('r', tr!("with a reason…"), Request::Status),
+                    ],
+                ));
+            }
+            KeyCode::Char('n') if missing => {
+                self.naming = Naming::WorktreeLocate;
+                self.typing_branch = Some((path.clone(), path.clone(), path));
+            }
+            KeyCode::Char('n') if main => {
+                self.error = Some(tr!("The main worktree can’t be moved"));
+            }
+            KeyCode::Char('n') if self.sidebar.picked_is_current() => {
+                self.error = Some(tr!("This worktree is the one that is open"));
+            }
+            KeyCode::Char('n') if locked => {
+                self.error = Some(tr!("The worktree is locked: unlock it (L) first"));
+            }
+            KeyCode::Char('n') => {
+                self.naming = Naming::WorktreeMove;
+                self.typing_branch = Some((path.clone(), path.clone(), path));
+            }
+            _ => return false,
+        }
+        self.dirty = true;
+        true
+    }
+
     fn stash_key(&mut self, code: KeyCode) -> bool {
         // worktree の行の `x` は、その worktree を消す。先に変更の数を読み、あればそれごと消える（`--force`）と書いて
         // 確かめる（アプリと同じ）。
@@ -4698,6 +4985,8 @@ impl App {
                 self.focus = Focus::Side;
                 true
             }
+            // range-diff で、変わらなかった組を出すか（アプリの Changes Only）。
+            KeyCode::Char('c') => self.file.toggle_changes_only(),
             // File History で、作業ツリーのファイルをその版に戻す（確かめてから。Undo で元に戻る）。
             // 同じファイルの Blame（今の HEAD の）と File History を切り替える。
             KeyCode::Char('B' | 'L') if self.file.file_path().is_some() => {
@@ -4870,6 +5159,11 @@ impl App {
                 });
                 true
             }
+            KeyCode::Char('L' | 'n')
+                if matches!(self.sidebar.picked_ref(), Some(("worktree", _, _))) =>
+            {
+                self.worktree_key(code)
+            }
             KeyCode::Char('a' | 'o' | 'x') => self.stash_key(code),
             KeyCode::Char('D') => self.ask_delete(),
             KeyCode::Char('n') => self.ask_rename(),
@@ -4945,7 +5239,10 @@ impl App {
                     "b",
                     tr!("On a stash: a branch where it was made, with it applied"),
                 ),
-                ("x", tr!("On a worktree: remove it")),
+                (
+                    "x L n",
+                    tr!("On a worktree: remove, lock or unlock, move (or locate) it"),
+                ),
                 (
                     "e x X",
                     tr!("On a remote branch: edit its remote (name, URL), remove it, prune it"),
@@ -5029,6 +5326,7 @@ impl App {
                     "V",
                     tr!("In File History: restore the file to that version"),
                 ),
+                ("c", tr!("In a range diff: changes only, or every pair")),
                 ("Esc", tr!("Go back")),
             ],
             (View::History | View::Reflog | View::File, Focus::Side) => vec![
@@ -5039,6 +5337,7 @@ impl App {
                     "Y e",
                     tr!("Copy the path of the file in view; open it in git's editor"),
                 ),
+                ("/ n N", tr!("Find in the details; next and previous")),
                 ("h l", tr!("Pan long lines; h at the left edge goes back")),
                 ("Esc", tr!("Go back to History")),
             ],
@@ -5128,7 +5427,10 @@ impl App {
                 "C K A R",
                 tr!("Continue, skip, abort a merge or rebase; retry a stopped git am 3-way"),
             ),
-            ("u", tr!("Undo the last operation")),
+            (
+                "u !",
+                tr!("Undo the last operation; the hooks' output of the last commit"),
+            ),
             (
                 "R",
                 tr!("In History or Reflog: reset the branch to the selected commit"),
@@ -5167,6 +5469,13 @@ impl App {
                 self.view = View::History;
                 self.focus = Focus::Side;
                 self.pinned = Oid::from_hex(&id);
+                // アプリの Stashes の行の 2 行目と同じこと（作ったブランチ・土台と HEAD・untracked）を、一番下の行に。
+                let name = self.sidebar.picked_ref().map_or("", |r| r.1).to_owned();
+                self.stash_about = Some(name);
+                self.send(Request::Run {
+                    name: "stashBases",
+                    command: json!({"op": "stashBases"}),
+                });
             }
             // ほかの worktree は、TUI をそこで開き直す（アプリが新しい窓で開くのの代わり）。開いているものは、
             // その場所を知らせるだけ。
@@ -5817,6 +6126,17 @@ impl App {
             }
             // 今見ているファイルのパスをコピーする・作業ツリーのそのファイルをエディタで開く（アプリのファイルの
             // 見出しのメニューの Copy Path・Open）。
+            // 詳細の中を探す。
+            KeyCode::Char('/') => {
+                self.typing_query = Some(self.details.finding().unwrap_or("").to_owned());
+                self.typing_in_details = true;
+                true
+            }
+            KeyCode::Char('n' | 'N') if self.details.finding().is_some() => {
+                let query = self.details.finding().unwrap_or("").to_owned();
+                self.find_in_details(&query, code == KeyCode::Char('n'));
+                true
+            }
             KeyCode::Char('Y') => match self.details.current_file() {
                 Some((path, _)) => {
                     let path = path.to_owned();
@@ -6238,6 +6558,15 @@ impl App {
                     Naming::ArchiveFolder => {
                         tr!("Export only the folder (from the top): {name}", name = name)
                     }
+                    Naming::WorktreeLockReason => tr!("Reason for the lock: {name}", name = name),
+                    Naming::WorktreeMove => tr!("Move the worktree to: {name}", name = name),
+                    Naming::WorktreeLocate => {
+                        tr!("Where its folder is now: {name}", name = name)
+                    }
+                    Naming::BundleBase => tr!(
+                        "Leave out what the receiver has, up to (a branch or commit): {name}",
+                        name = name
+                    ),
                     Naming::BundleName => {
                         tr!("Fetch its branches as remote: {name}", name = name)
                     }
@@ -6424,6 +6753,44 @@ impl App {
                         Style::new(),
                     );
                 }
+            }
+        }
+        if let (Some(top), Some(output)) = (self.showing_hooks, &self.hook_output) {
+            cursor = None;
+            let lines: Vec<&str> = output.lines().collect();
+            let text = lines.iter().map(|l| l.width()).max().unwrap_or(0) as u16;
+            let width = (text + 4).max(30).min(area.width);
+            let height = (lines.len() as u16 + 2).min(area.height.saturating_sub(1));
+            let at = Rect::new(
+                area.x + (area.width - width) / 2,
+                area.y + (area.height.saturating_sub(1) - height) / 2,
+                width,
+                height,
+            );
+            frame_box(buf, area, at, &tr!(" Output of the hooks "));
+            let inside = usize::from(height.saturating_sub(2));
+            let top = top.min(lines.len().saturating_sub(inside));
+            self.showing_hooks = Some(top);
+            if lines.len() > inside {
+                let more = tr!(" j/k more ");
+                let x = at.right().saturating_sub(more.width() as u16 + 2);
+                if x > at.x + 8 {
+                    buf.set_string(
+                        x,
+                        at.bottom() - 1,
+                        more,
+                        Style::new().fg(Color::Indexed(244)),
+                    );
+                }
+            }
+            for (y, line) in (at.y + 1..at.bottom().saturating_sub(1)).zip(lines.iter().skip(top)) {
+                buf.set_stringn(
+                    at.x + 2,
+                    y,
+                    line,
+                    usize::from(width.saturating_sub(4)),
+                    Style::new(),
+                );
             }
         }
         if let Some(mode) = &self.edit_mode {

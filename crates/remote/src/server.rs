@@ -332,6 +332,8 @@ fn handle(
         Request::Status => encode(&backend.status()?),
         Request::WorktreeFile(path) => encode(&Bytes(backend.worktree_file(&path)?.to_vec())),
         Request::LineEndingRule(path) => encode(&backend.line_ending_rule(&path)?),
+        Request::DiffAttributes(paths) => encode(&backend.diff_attributes(&strs(&paths))?),
+        Request::TreeEntries(commit, path) => encode(&backend.tree_entries(&commit, &path)?),
         Request::ToWorktreeForm { path, content } => {
             encode(&Bytes(backend.to_worktree_form(&path, &content.0)?))
         }

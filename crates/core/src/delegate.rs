@@ -52,6 +52,7 @@ pub(crate) struct DiffMeta {
     binary: bool,
     added: u32,
     removed: u32,
+    generated: Option<bool>,
 }
 
 impl From<&FileDiff> for DiffMeta {
@@ -75,6 +76,7 @@ impl From<&FileDiff> for DiffMeta {
             binary: d.binary,
             added: d.added,
             removed: d.removed,
+            generated: d.generated,
         }
     }
 }
@@ -107,6 +109,8 @@ impl DiffMeta {
             binary: self.binary,
             added: self.added,
             removed: self.removed,
+            generated: self.generated,
+            pending: None,
         }
     }
 }

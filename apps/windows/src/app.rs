@@ -40,6 +40,9 @@ thread_local! {
     static TREE_DRAG_AT: std::cell::Cell<Option<Instant>> = const { std::cell::Cell::new(None) };
     /// 根の部品に渡す引数（`Component::Input` は比べられる値でなければならないので、ここに置く）。
     static ARGS: RefCell<Option<(Args, Instant)>> = const { RefCell::new(None) };
+    /// タブごとに開いているリポジトリ（タブの id と、そのタブの場所。Activity の History のキャッシュの表が、
+    /// すべての窓のタブのリポジトリを並べる）。
+    static OPEN_REPOS: RefCell<Vec<(u64, String, Arc<Repository>)>> = const { RefCell::new(Vec::new()) };
     /// 前のタブの History と差分の描き手（窓の入力の処理が使う。タブごとの描き手は根の部品が持つ）。
     static HISTORY: RefCell<Option<Rc<RefCell<HistoryView>>>> = const { RefCell::new(None) };
     /// History を包む生の要素（右クリックのメニューを自分で開く）。
@@ -48,8 +51,14 @@ thread_local! {
     static HISTORY_FLYOUT: RefCell<Option<xaml::FlyoutBase>> = const { RefCell::new(None) };
     /// サイドバーの木の生の要素と、右クリックで開く位置（キーボードで開いたときは項目そのものに出す）。
     static SIDEBAR_ELEMENT: RefCell<Option<xaml::UIElement>> = const { RefCell::new(None) };
-    /// ツールチップを付けたサイドバーの項目（要素の identity と付けた文字。同じなら付け直さない）。
-    static SIDEBAR_TIP: RefCell<Option<(usize, Option<String>)>> = const { RefCell::new(None) };
+    /// 行のツールチップを付けた時（見えている行に、指が入る前から付けておく。0.5 秒ごとに付け直す）。
+    static SIDEBAR_TIPS_AT: std::cell::Cell<Option<Instant>> = const { std::cell::Cell::new(None) };
+    /// 行の要素ごとに付けたツールチップ（同じなら付け直さない。付け直すと、出るまでの待ちが始めからになる）。
+    static SIDEBAR_TIPS: RefCell<std::collections::HashMap<usize, Option<String>>> =
+        RefCell::new(std::collections::HashMap::new());
+    /// 指が上にある、サイドバーの行の印（項目のキー、印、サイドバーの中の指の位置）。押したらその吹き出しを出す。
+    static SIDEBAR_MARK: RefCell<Option<(String, crate::sidebar::Mark, xaml::Point)>> =
+        const { RefCell::new(None) };
     /// 今のブランチの名前（終わった操作の一言に使う。ref を読むたびに書く）。
     static HEAD_NAME: RefCell<String> = const { RefCell::new(String::new()) };
     /// Push の画面を出しているか（出していれば、Enter で既定のボタンを押せるか。Force Push は押せない）。
@@ -277,6 +286,25 @@ fn with_cell(cell: &HistoryCell, f: impl FnOnce(&mut HistoryView)) {
 }
 
 /// History の CI の印の吹き出し（macOS 版・GTK4 版のチェックのポップオーバー）。
+/// サイドバーの行の印の吹き出しの中身の幅。
+const MARK_POPOVER_WIDTH: f64 = 380.0;
+
+/// サイドバーの行の印の吹き出しの中身（macOS 版・GTK4 版の行の印のポップオーバー）。
+enum MarkPopover {
+    /// ブランチの様子（ダイアログの `BranchStatus` と同じ中身。次にできることはボタンに）。
+    Branch {
+        name: String,
+        actions: Vec<(String, String)>,
+        forecast: Option<Option<Value>>,
+    },
+    /// タグの署名。
+    Signature(String),
+    /// タグのリモートの様子。
+    TagRemotes(String),
+    /// プルリクエストの CI（`checks_popover` の中身を、サイドバーの印の下に出す）。
+    Checks,
+}
+
 struct ChecksPopover {
     sha: String,
     status: crate::github::Ci,
@@ -307,6 +335,8 @@ struct Root {
     checks_opened: u64,
     /// Export Archive のフォルダを列で選んでいる間の、Export Archive のダイアログ（選んだら戻す）。
     archive_waiting: Option<Box<Dialog>>,
+    /// Activity の時計の数え（開くたびに替わり、前の時計を止める）。
+    activity_clock: u64,
     diff_panel: ElementRef<SwapChainPanel>,
     diff_area: ElementRef<Grid>,
     /// 差分で右クリックしたファイル（見出しのメニューの中身）。
@@ -315,6 +345,15 @@ struct Root {
     diff_rows: Option<(Vec<usize>, bool)>,
     /// 署名のあるタグの状態と署名者（サイドバーの印とタグのメニュー）。
     tag_signatures: std::collections::HashMap<String, (crate::signature::Status, String)>,
+    /// 署名のあるタグの `tagSignatures` の 1 件（署名の吹き出しの中身）。
+    tag_signature_details: std::collections::HashMap<String, Value>,
+    /// サイドバーの行の印の吹き出しと、それを持つ見えないボタン、開く位置（サイドバーの中の DIP）、開いた回数。
+    mark_popover: Option<MarkPopover>,
+    mark_anchor: ElementRef<Button>,
+    mark_at: xaml::Point,
+    mark_opened: u64,
+    /// 吹き出しのボタンを押して閉じる回数（閉じてから、その操作をする）。
+    mark_closed: u64,
     /// 始めた clone が sparse か（終わったら、取り出すフォルダを尋ねる）。
     clone_sparse: bool,
     refs: Option<Arc<RefsSnapshot>>,
@@ -533,8 +572,16 @@ struct Root {
     /// Working Copy の件名の欄と、Alt+↑・Alt+↓ で呼び出している最近のメッセージ（-1 は呼び出していない）・
     /// 呼び出す前の件名と本文（GTK4 版の `recall`）。
     summary_box: ElementRef<TextBox>,
+    /// `#` の候補のメニューを持つ見えない部品（候補が届いたら、`#` の下に開く）。
+    issue_host: ElementRef<Grid>,
+    /// `#` の候補のメニューを開いた回数（増えたら開く）。
+    issue_menu_opens: u64,
+    /// 候補を入れた欄（本文か）と、入れた `#番号` の後ろの位置（UTF-16）と、入れた回数（カーソルをそこへ置く）。
+    issue_caret: (bool, usize, u64),
     /// コミットの説明の欄（等幅の字にする）。
     description_box: ElementRef<TextBox>,
+    /// Shared Templates のシートの本文の欄（等幅にする。macOS 版のシートと同じ）。
+    template_body: ElementRef<TextBox>,
     /// Blame の行番号と中身の列（等幅の字にする）。
     blame_code: ElementRef<Grid>,
     /// サイドバーの幅、右の列の幅（None なら History と半分ずつ）、右の列の詳細の高さ（DIP。境目を動かして
@@ -624,6 +671,9 @@ enum Dialog {
     },
     /// View > Customize Toolbar…（GTK4 版はパレットへのドラッグ。ここではチェックと ↑↓ で並べる）。
     Toolbar(Vec<crate::menus::ToolbarEntry>),
+    /// Settings > Git の Shared Templates の 1 つ（番号）の名前と本文を書くシート（macOS 版の `TemplateSheet`）。
+    /// 書くたびに保存する。
+    Template(usize),
     /// Quick Open（リポジトリをあいまい検索して新しい窓で開く）。
     QuickOpen {
         query: String,
@@ -977,6 +1027,10 @@ enum Message {
     GitHubRepos(Vec<(String, String)>),
     PickGitHubRepo(Option<usize>),
     PickIssue(u64),
+    /// `#` の候補のメニューで選んだ（`issue:番号`）。
+    IssueMenu(String),
+    /// `#` の候補のメニューを開く（項目を入れた描画の後）。
+    OpenIssueMenu,
     /// ブランチの様子の、取り込んだときのコンフリクトの見込みを読んだ（ブランチ、`predictMerge` の答え）。
     BranchForecast(String, Value),
     /// CI の印を押した（コミット、状態）と、そのチェックを読んだ。
@@ -1175,6 +1229,8 @@ enum Message {
     ActivityUndoLog(Vec<Value>),
     ActivityUndo(usize),
     ActivityTick,
+    /// Activity の時計（開いたときの数え。その時計が今のものなら読み直して、次を待つ）。
+    ActivityClock(u64),
     /// 走っている操作の数が変わった。
     Running(usize),
     /// History の下の帯から shallow clone の履歴を取り足す（`deepen:N`・`deepen-other`・`deepen-since`・`unshallow`）。
@@ -1186,10 +1242,17 @@ enum Message {
     /// Settings > Git > Environment Variables: 渡すかの切り替えと、探す文字。
     SettingsEnv(String, bool),
     SettingsEnvQuery(String),
+    /// Passed / All（0 は渡すものだけ）、表で選んだ行（今の並びの位置）、伏せた値を見せる。
+    SettingsEnvShown(Option<usize>),
+    SettingsEnvSelect(Option<usize>),
+    SettingsEnvReveal,
     /// Settings > Git の共有のテンプレート: 書き換え（番号、0 は名前・1 は本文、文字）、足す、外す。
     SettingsTemplate(usize, usize, String),
     SettingsTemplateAdd,
     SettingsTemplateRemove(usize),
+    /// Shared Templates の一覧で選んだ、選んだものをシートで編集する。
+    SettingsTemplateSelect(Option<usize>),
+    SettingsTemplateEdit,
     /// History のキャッシュの大きさを読んだ。
     CacheSize(u64),
     /// History のキャッシュを消す。
@@ -1200,8 +1263,12 @@ enum Message {
     AutoFetched(Option<String>),
     /// Activity の Operations の記録を JSON に書き出す。
     ActivityExport,
-    /// Activity の History のキャッシュを読んだ（リポジトリの名前と `historyCache` の info）。
-    ActivityCache(String, Value),
+    /// サイドバーの行の印の吹き出しのボタン（メニューの項目のキー）。吹き出しを閉じてからする。
+    MarkAction(String),
+    /// Activity の History のキャッシュを読んだ（開いているリポジトリごとの名前と `historyCache` の info）。
+    ActivityCache(u64, Vec<(String, Value)>),
+    /// Activity の History のキャッシュを読み直す時（読んだときの数え）。
+    ActivityCacheDue(u64),
     /// 共有の daemon の様子（動いていなければ None）。
     DaemonStatus(Option<Value>),
     DaemonToggle,
@@ -1277,7 +1344,10 @@ enum Message {
     /// タグのリモートでの様子を読んだ（`tagRemotes` の info）。
     TagRemotes(Value),
     /// タグの署名（名前 → 状態と署名者）。
-    TagSignatures(std::collections::HashMap<String, (crate::signature::Status, String)>),
+    TagSignatures(
+        std::collections::HashMap<String, (crate::signature::Status, String)>,
+        std::collections::HashMap<String, Value>,
+    ),
     /// submodule の様子を読んだ。
     Submodules(Value),
     /// subtree を読んだ（`subtrees` の info）。
@@ -1470,11 +1540,18 @@ impl Component for Root {
             checks_anchor: ElementRef::new(),
             checks_opened: 0,
             archive_waiting: None,
+            activity_clock: 0,
             diff_panel: ElementRef::new(),
             diff_area: ElementRef::new(),
             diff_file: None,
             diff_rows: None,
             tag_signatures: std::collections::HashMap::new(),
+            tag_signature_details: std::collections::HashMap::new(),
+            mark_popover: None,
+            mark_anchor: ElementRef::new(),
+            mark_at: xaml::Point::default(),
+            mark_opened: 0,
+            mark_closed: 0,
             clone_sparse: false,
             refs: None,
             groups: None,
@@ -1601,7 +1678,11 @@ impl Component for Root {
             dialog_inputs: 0,
             working_list: ElementRef::new(),
             summary_box: ElementRef::new(),
+            issue_host: ElementRef::new(),
+            issue_menu_opens: 0,
+            issue_caret: (false, 0, 0),
             description_box: ElementRef::new(),
+            template_body: ElementRef::new(),
             blame_code: ElementRef::new(),
             sidebar_width: crate::prefs::number(SIDEBAR_WIDTH_KEY).unwrap_or(260.0),
             sidebar_hidden: crate::prefs::bool(SIDEBAR_HIDDEN_KEY),
@@ -1753,12 +1834,9 @@ impl Root {
         with_cell(&self.history, f);
     }
 
-    /// History の CI の印の吹き出しを開く、印の位置に置いた見えないボタン（吹き出しの中身はチェックの一覧）。
-    fn checks_anchor_view(&self, context: &ViewContext<Self>) -> View {
-        let Some(popover) = &self.checks_popover else {
-            return View::empty();
-        };
-        let content = StackPanel::new().spacing(8.0).width(420.0).children((
+    /// CI の吹き出しの中身（状態、チェックの一覧、Open on GitHub）。
+    fn checks_content(popover: &ChecksPopover, context: &ViewContext<Self>) -> View {
+        StackPanel::new().spacing(8.0).width(420.0).children((
             TextBlock::new()
                 .text(popover.status.label())
                 .font_weight(FontWeight::SEMI_BOLD),
@@ -1767,7 +1845,105 @@ impl Root {
                 .horizontal_alignment(HorizontalAlignment::Right)
                 .on_click(context.callback(|()| Message::OpenChecksOnGitHub))
                 .content(tr!("Open on GitHub")),
-        ));
+        ))
+    }
+
+    /// サイドバーの行の印の吹き出しを持つ見えないボタン（開くときは、押した位置を渡して自分で開く）。
+    fn mark_anchor_view(&self, context: &ViewContext<Self>) -> View {
+        let Some(popover) = &self.mark_popover else {
+            return View::empty();
+        };
+        let heading = |text: String| {
+            TextBlock::new()
+                .text(text)
+                .font_weight(FontWeight::SEMI_BOLD)
+                .text_wrapping(TextWrapping::Wrap)
+        };
+        let content: View = match popover {
+            MarkPopover::Branch {
+                name,
+                actions,
+                forecast,
+            } => {
+                let (title, view) = self.branch_status_view(name, forecast.as_ref(), context);
+                // 次にできること（ダイアログでは下のボタン。macOS 版の吹き出しと同じく中に並べる）。
+                let buttons = actions.iter().enumerate().map(|(i, (key, label))| {
+                    let key = key.clone();
+                    let button = Button::new()
+                        .on_click(context.callback(move |()| Message::MarkAction(key.clone())));
+                    let button = if i == 0 {
+                        button.style(ButtonStyle::Accent)
+                    } else {
+                        button
+                    };
+                    (format!("{i}"), button.content(label.clone()))
+                });
+                StackPanel::new()
+                    .spacing(8.0)
+                    .width(MARK_POPOVER_WIDTH)
+                    .children((
+                        heading(title),
+                        view,
+                        StackPanel::new()
+                            .orientation(Orientation::Horizontal)
+                            .spacing(8.0)
+                            .horizontal_alignment(HorizontalAlignment::Right)
+                            .children((View::keyed_fragment(buttons),)),
+                    ))
+            }
+            MarkPopover::Signature(name) => {
+                let Some(((status, _), tag)) = self
+                    .tag_signatures
+                    .get(name)
+                    .zip(self.tag_signature_details.get(name))
+                else {
+                    return View::empty();
+                };
+                let check = Some(&tag["signature"]).filter(|s| !s.is_null());
+                crate::signature::popover(
+                    *status,
+                    check,
+                    tag["signed"].as_str().unwrap_or("gpg"),
+                    tag["taggerEmail"].as_str().unwrap_or_default(),
+                )
+            }
+            MarkPopover::TagRemotes(name) => StackPanel::new()
+                .spacing(8.0)
+                .width(MARK_POPOVER_WIDTH)
+                .children((
+                    heading(self.tag_status_title(name)),
+                    self.tag_status_view(name),
+                )),
+            MarkPopover::Checks => match &self.checks_popover {
+                Some(popover) => Self::checks_content(popover, context),
+                None => return View::empty(),
+            },
+        };
+        // 右に余白を置く（吹き出しの枠は、中身の右の端を少し削る）。
+        let content = Grid::new()
+            .margin(Thickness::new(0.0, 0.0, 24.0, 0.0))
+            .children((content,));
+        Button::new()
+            .element_ref(&self.mark_anchor)
+            .grid_row(1)
+            .horizontal_alignment(HorizontalAlignment::Left)
+            .vertical_alignment(VerticalAlignment::Top)
+            .width(1.0)
+            .height(1.0)
+            .opacity(0.0)
+            .flyout_with(Flyout::rich(content).placement(FlyoutPlacement::Bottom))
+    }
+
+    /// History の CI の印の吹き出しを開く、印の位置に置いた見えないボタン（吹き出しの中身はチェックの一覧）。
+    fn checks_anchor_view(&self, context: &ViewContext<Self>) -> View {
+        let Some(popover) = &self.checks_popover else {
+            return View::empty();
+        };
+        // サイドバーのプルリクエストの CI のときは、サイドバーの側に出す。
+        if matches!(self.mark_popover, Some(MarkPopover::Checks)) {
+            return View::empty();
+        }
+        let content = Self::checks_content(popover, context);
         Button::new()
             .element_ref(&self.checks_anchor)
             .horizontal_alignment(HorizontalAlignment::Left)
@@ -1883,6 +2059,12 @@ impl Root {
                 }
                 self.refs = Some(refs);
                 self.repo = Some(repo.clone());
+                let tab = self.tab.borrow().clone();
+                OPEN_REPOS.with(|r| {
+                    let mut r = r.borrow_mut();
+                    r.retain(|(id, ..)| *id != tab.id);
+                    r.push((tab.id, tab.location, repo.clone()));
+                });
                 if let Some(path) = self.pending_file_history.take() {
                     self.update(Message::OpenFileHistory(path), context);
                 }
@@ -1990,21 +2172,33 @@ impl Root {
                             let reply: Value =
                                 serde_json::from_str(&repo.run_json(&command.to_string()))
                                     .unwrap_or_default();
-                            let found = reply["info"]["tags"]
+                            let tags: Vec<&Value> = reply["info"]["tags"]
                                 .as_array()
                                 .into_iter()
                                 .flatten()
+                                .collect();
+                            let found = tags
+                                .iter()
                                 .filter_map(|t| {
                                     let name = t["name"].as_str()?.to_owned();
                                     Some((name, crate::signature::of_tag(t)?))
                                 })
                                 .collect();
-                            Message::TagSignatures(found)
+                            let details = tags
+                                .iter()
+                                .filter_map(|t| {
+                                    Some((t["name"].as_str()?.to_owned(), (*t).clone()))
+                                })
+                                .collect();
+                            Message::TagSignatures(found, details)
                         });
                     }
                 }
             }
-            Message::TagSignatures(found) => self.tag_signatures = found,
+            Message::TagSignatures(found, details) => {
+                self.tag_signatures = found;
+                self.tag_signature_details = details;
+            }
             Message::StashDetails(details) => self.stash_details = details,
             Message::EditOpen(start, preset) => {
                 let Some(repo) = self.repo.clone() else {
@@ -3538,8 +3732,14 @@ impl Root {
                 }
                 self.activity = Some(crate::activity::State::new());
                 self.page = Page::Activity;
-                self.with_history(|h| h.activity_tick = Some(Instant::now()));
                 self.load_undo_log(context);
+                // 開いている間は 0.5 秒ごとに読み直す（GTK4 版と同じ間隔）。History の描画の時計は、Activity が
+                // 覆っている間は進まないので、裏で待って知らせる。開き直したら、前の時計は止まる。
+                static ACTIVITY_CLOCK: std::sync::atomic::AtomicU64 =
+                    std::sync::atomic::AtomicU64::new(0);
+                let clock = ACTIVITY_CLOCK.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                self.activity_clock = clock;
+                activity_clock_later(clock, context);
             }
             Message::Command(id) if id == "show-sidebar" => {
                 self.sidebar_hidden = !self.sidebar_hidden;
@@ -3578,7 +3778,11 @@ impl Root {
                     },
                     env_added: crate::settingsview::env_added_names(),
                     env_query: String::new(),
+                    env_passed_only: false,
+                    env_selected: None,
+                    env_revealed: false,
                     templates: crate::templates::all(),
+                    template_selected: None,
                     ssh: None,
                     git_target: None,
                     git_epoch: 0,
@@ -4916,6 +5120,21 @@ impl Root {
                 };
                 if *now == text && !items.is_empty() {
                     self.issue_offer = Some((body, at, text, items));
+                    // メニューに項目を入れた描画の後に開く（同じ描画で開くと、まだ空のメニューが開いて何も出ない）。
+                    context.spawn_background(|_| {
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                        Message::OpenIssueMenu
+                    });
+                }
+            }
+            Message::OpenIssueMenu => {
+                if self.issue_offer.is_some() {
+                    self.issue_menu_opens += 1;
+                }
+            }
+            Message::IssueMenu(key) => {
+                if let Some(number) = key.strip_prefix("issue:").and_then(|n| n.parse().ok()) {
+                    self.update(Message::PickIssue(number), context);
                 }
             }
             Message::PickIssue(number) => {
@@ -4930,6 +5149,10 @@ impl Root {
                     {
                         *field = put;
                         self.store_draft();
+                        // カーソルは入れた番号の後ろに（欄を書き直すと先頭に戻るので、描いた後に置く）。
+                        let before: String = text.chars().take(at.saturating_sub(1)).collect();
+                        let caret = before.encode_utf16().count() + format!("#{number}").len();
+                        self.issue_caret = (body, caret, self.issue_caret.2 + 1);
                     }
                 }
             }
@@ -5159,7 +5382,12 @@ impl Root {
                 } else if let Some(text) = key.strip_prefix("copy:") {
                     copy_text(text);
                 } else if let Some(name) = key.strip_prefix("branch-status:") {
-                    self.open_branch_status(name, context);
+                    let (actions, forecast) = self.branch_status(name, context);
+                    self.dialog = Some(Dialog::BranchStatus {
+                        name: name.to_owned(),
+                        actions,
+                        forecast,
+                    });
                 } else if let Some(id) = key.strip_prefix("command:") {
                     self.update(Message::Command(id.to_owned()), context);
                 } else if let Some(name) = key.strip_prefix("create-pr:") {
@@ -5835,6 +6063,11 @@ impl Root {
             Message::ConfirmWithDrawing(dialog) => self.dialog = Some(*dialog),
             Message::OpenDialog(dialog) => self.dialog = Some(*dialog),
             Message::BranchForecast(branch, reply) => {
+                if let Some(MarkPopover::Branch { name, forecast, .. }) = &mut self.mark_popover
+                    && *name == branch
+                {
+                    *forecast = Some(Some(reply.clone()));
+                }
                 if let Some(Dialog::BranchStatus { name, forecast, .. }) = &mut self.dialog
                     && *name == branch
                 {
@@ -6236,20 +6469,16 @@ impl Root {
                 if tab == 5 {
                     load_daemon_status(context);
                 }
-                if tab == 2
-                    && let Some(repo) = self.repo.clone()
-                {
-                    let name = repo
-                        .paths()
-                        .workdir
-                        .and_then(|w| w.file_name().map(|n| n.to_string_lossy().into_owned()))
-                        .unwrap_or_default();
-                    context.spawn_background(move |_| {
-                        let reply: Value =
-                            serde_json::from_str(&repo.run_json(r#"{"op":"historyCache"}"#))
-                                .unwrap_or_default();
-                        Message::ActivityCache(name, reply["info"].clone())
-                    });
+                if tab == 2 {
+                    // 数えはアプリ全体で 1 つ（Activity を開き直しても、前の読み直しと重ならない）。
+                    static CACHE_GENERATION: std::sync::atomic::AtomicU64 =
+                        std::sync::atomic::AtomicU64::new(0);
+                    let generation =
+                        CACHE_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                    if let Some(state) = self.activity.as_mut() {
+                        state.cache_generation = generation;
+                    }
+                    load_history_caches(generation, context);
                 }
             }
             Message::DaemonStatus(status) => {
@@ -6284,9 +6513,25 @@ impl Root {
                     });
                 }
             }
-            Message::ActivityCache(name, info) => {
-                if let Some(state) = self.activity.as_mut() {
-                    state.cache = Some((name, info));
+            Message::ActivityCache(generation, rows) => {
+                // 出している間は、読み終えてから 2 秒ごとに読み直す（macOS 版・GTK4 版と同じ間隔。閉じたタブの
+                // 行が消え、書き込みの数が進む）。タブを選び直したら、前の読み直しは止まる。
+                if let Some(state) = self.activity.as_mut()
+                    && state.tab == 2
+                    && state.cache_generation == generation
+                {
+                    state.cache = Some(rows);
+                    context.spawn_background(move |_| {
+                        std::thread::sleep(std::time::Duration::from_secs(2));
+                        Message::ActivityCacheDue(generation)
+                    });
+                }
+            }
+            Message::ActivityCacheDue(generation) => {
+                if self.activity.as_ref().is_some_and(|s| {
+                    s.tab == 2 && s.cache_generation == generation && self.page == Page::Activity
+                }) {
+                    load_history_caches(generation, context);
                 }
             }
             Message::ActivityExport => {
@@ -7039,6 +7284,12 @@ impl Root {
                 self.busy = Some(tr!("Fetch More"));
                 perform(context, repo, command, tr!("Fetch More"));
             }
+            Message::ActivityClock(clock) => {
+                if self.activity.is_some() && self.activity_clock == clock {
+                    self.update(Message::ActivityTick, context);
+                    activity_clock_later(clock, context);
+                }
+            }
             Message::ActivityTick => {
                 let mut undo = false;
                 // この窓のリポジトリの daemon・SSH 越しのつながり（Daemon のタブの表）。
@@ -7133,7 +7384,6 @@ impl Root {
             Message::Repos(event) => self.repositories_event(event, context),
             Message::CloseActivity => {
                 self.activity = None;
-                self.with_history(|h| h.activity_tick = None);
                 self.page = self.activity_from;
             }
             Message::SettingsGit(epoch, name, email, entries) => {
@@ -7513,13 +7763,27 @@ impl Root {
                 }
             }
             Message::SettingsTemplateAdd => {
+                // 名前なしで足し、すぐシートで書く（macOS 版と同じ）。
                 if let Some(state) = self.settings.as_mut() {
                     state.templates.push(crate::templates::Template {
                         id: crate::templates::new_id(),
-                        name: String::new(),
+                        name: tr!("Untitled"),
                         text: String::new(),
                     });
                     crate::templates::save(&state.templates);
+                    let index = state.templates.len() - 1;
+                    state.template_selected = Some(index);
+                    self.dialog = Some(Dialog::Template(index));
+                }
+            }
+            Message::SettingsTemplateSelect(index) => {
+                if let (Some(state), Some(index)) = (self.settings.as_mut(), index) {
+                    state.template_selected = Some(index);
+                }
+            }
+            Message::SettingsTemplateEdit => {
+                if let Some(index) = self.settings.as_ref().and_then(|s| s.template_selected) {
+                    self.dialog = Some(Dialog::Template(index));
                 }
             }
             Message::SettingsTemplateRemove(i) => {
@@ -7527,12 +7791,38 @@ impl Root {
                     && i < state.templates.len()
                 {
                     state.templates.remove(i);
+                    state.template_selected = None;
                     crate::templates::save(&state.templates);
                 }
             }
             Message::SettingsEnvQuery(text) => {
                 if let Some(state) = self.settings.as_mut() {
                     state.env_query = text;
+                }
+            }
+            Message::SettingsEnvShown(Some(index)) => {
+                if let Some(state) = self.settings.as_mut() {
+                    state.env_passed_only = index == 0;
+                }
+            }
+            Message::SettingsEnvShown(None) => {}
+            Message::SettingsEnvSelect(index) => {
+                if let Some(state) = self.settings.as_mut() {
+                    // 選び直したら、伏せた値はまた伏せる（macOS 版と同じ）。並びが変わっても名前で覚える。
+                    let name = index.and_then(|i| {
+                        crate::settingsview::env_rows(state)
+                            .get(i)
+                            .map(|(n, ..)| (*n).clone())
+                    });
+                    if name.is_some() && name != state.env_selected {
+                        state.env_selected = name;
+                        state.env_revealed = false;
+                    }
+                }
+            }
+            Message::SettingsEnvReveal => {
+                if let Some(state) = self.settings.as_mut() {
+                    state.env_revealed = true;
                 }
             }
             Message::SettingsToggle(key, value) => {
@@ -8188,6 +8478,17 @@ impl Root {
                     self.with_history(|h| h.session.data.want_stash(target));
                 }
             }
+            // 行の印を押した: 印の吹き出し（macOS 版・GTK4 版と同じ。行を選んだことにはしない）。
+            Message::Invoked(key) if pressed_mark(&key).is_some() => {
+                if let Some((mark, at)) = pressed_mark(&key) {
+                    self.open_mark(&key, mark, at, context);
+                }
+            }
+            Message::MarkAction(key) => {
+                // 吹き出しを閉じてから、その操作（確かめるダイアログなどを開く）。
+                self.mark_closed += 1;
+                context.spawn_background(move |_| Message::HistoryMenu(key));
+            }
             // プルリクエストの行: ブランチが手元にあれば（リモートブランチ、なければローカルブランチ）、その ref を
             // 選んだのと同じ（GTK4 版と同じ）。
             Message::Invoked(key) if key.starts_with("pr:") => {
@@ -8407,6 +8708,7 @@ impl Root {
         let args = args.clone();
         let front = input.front;
         let window = input.window;
+        let tab_id = input.tab.id;
         context.use_effect("history", (), move || {
             let (panel, area, diff_panel, diff_area, sidebar, sidebar_menu_host) = refs;
             // File > New Window で開いた窓は、Repositories の画面から（GTK4 版の `show_home`）。
@@ -8488,7 +8790,6 @@ impl Root {
                 worktree_tick: (Instant::now(), Instant::now()),
                 running: (0, None),
                 flash_until: None,
-                activity_tick: None,
                 watched: None,
             }));
             view.borrow_mut().me = Rc::downgrade(&view);
@@ -8518,6 +8819,7 @@ impl Root {
             Some(Box::new(move || {
                 drop(history);
                 drop(diff);
+                OPEN_REPOS.with(|r| r.borrow_mut().retain(|(id, ..)| *id != tab_id));
                 // 閉じたタブの History を、前のタブの History として残さない。
                 HISTORY.with(|h| {
                     let mut h = h.borrow_mut();
@@ -8630,6 +8932,7 @@ impl Root {
                             &self.sidebar_filter,
                         )),
                 )]),
+                self.mark_anchor_view(context),
                 Grid::new()
                     .element_ref(&self.sidebar_menu_host)
                     .grid_row(1)
@@ -8765,6 +9068,48 @@ impl Root {
                     ),
                 ])
         };
+        // サイドバーの行の印を押したら、その位置に吹き出しを開く（見えないボタンを置いてから）。
+        if self.mark_opened > 0 {
+            let anchor = self.mark_anchor.clone();
+            let at = self.mark_at;
+            context.use_effect("mark-popover", self.mark_opened, move || {
+                let _ = anchor.request_native_element(move |result| {
+                    let open = || -> windows_core_reactor::Result<()> {
+                        let flyout = result
+                            .map_err(|_| windows_core_reactor::Error::empty())?
+                            .cast::<xaml::Button>()?
+                            .Flyout()?;
+                        let Some(target) = SIDEBAR_ELEMENT.with(|e| e.borrow().clone()) else {
+                            return Ok(());
+                        };
+                        let options = xaml::FlyoutShowOptions::new()?;
+                        options.SetPosition(Some(xaml::Point {
+                            X: at.X,
+                            Y: at.Y + 8.0,
+                        }))?;
+                        flyout.ShowAtWithOptions(&target, &options)
+                    };
+                    if let Err(e) = open() {
+                        eprintln!("印の吹き出しを開けない: {e}");
+                    }
+                });
+                None
+            });
+        }
+        if self.mark_closed > 0 {
+            let anchor = self.mark_anchor.clone();
+            context.use_effect("mark-popover-close", self.mark_closed, move || {
+                let _ = anchor.request_native_element(|result| {
+                    if let Ok(element) = result
+                        && let Ok(button) = element.cast::<xaml::Button>()
+                        && let Ok(flyout) = button.Flyout()
+                    {
+                        let _ = flyout.Hide();
+                    }
+                });
+                None
+            });
+        }
         // History の CI の印を押したら、その位置の見えないボタンの吹き出しを開く（置いてから）。
         if self.checks_opened > 0 {
             let anchor = self.checks_anchor.clone();
@@ -9068,6 +9413,64 @@ impl Root {
             }
             None
         });
+        // `#` の候補が届いたら、`#` を打った所の下にメニューを開く（macOS 版・GTK4 版と同じ。欄の字の矩形で位置を
+        // 求める）。
+        if let Some((body, at, _, _)) = &self.issue_offer
+            && self.issue_menu_opens > 0
+        {
+            let host = self.issue_host.clone();
+            let field = if *body {
+                self.description_box.clone()
+            } else {
+                self.summary_box.clone()
+            };
+            let at = *at;
+            context.use_effect("issue-menu", self.issue_menu_opens, move || {
+                let _ = host.request_native_element(move |result| {
+                    let Ok(host) = result else { return };
+                    let _ = field.request_native_element(move |result| {
+                        let open = || -> windows_core_reactor::Result<()> {
+                            let field = result.map_err(|_| windows_core_reactor::Error::empty())?;
+                            let flyout = host.cast::<xaml::UIElement>()?.ContextFlyout()?;
+                            let text_box: xaml::TextBox = field.cast()?;
+                            // `at` は `#` の後ろの位置（文字の数）。`#` の字の矩形の下に出す。
+                            let rect = text_box
+                                .GetRectFromCharacterIndex(at.saturating_sub(1) as i32, false)?;
+                            let options = xaml::FlyoutShowOptions::new()?;
+                            options.SetPosition(Some(xaml::Point {
+                                X: rect.X,
+                                Y: rect.Y + rect.Height,
+                            }))?;
+                            flyout.ShowAtWithOptions(
+                                &field.cast::<xaml::DependencyObject>()?,
+                                &options,
+                            )
+                        };
+                        if let Err(e) = open() {
+                            eprintln!("# の候補を開けない: {e}");
+                        }
+                    });
+                });
+                None
+            });
+        }
+        // 候補を入れたら、カーソルを入れた番号の後ろへ。
+        if self.issue_caret.2 > 0 {
+            let (body, caret, count) = self.issue_caret;
+            let field = if body {
+                self.description_box.clone()
+            } else {
+                self.summary_box.clone()
+            };
+            context.use_effect("issue-caret", count, move || {
+                let _ = field.request_native_element(move |result| {
+                    if let Ok(element) = result {
+                        let _ = xaml::set_caret(&element, caret);
+                    }
+                });
+                None
+            });
+        }
         // 説明の欄を等幅に（Working Copy を出すたびに欄が作り直される。TextBox は Control なので、そのものに付ける）。
         let description_box = self.description_box.clone();
         context.use_effect(
@@ -9079,6 +9482,22 @@ impl Root {
                         && let Err(e) = monospace(&element)
                     {
                         eprintln!("説明の欄を等幅にできない: {e}");
+                    }
+                });
+                None
+            },
+        );
+        // Shared Templates のシートの本文を等幅に（シートを開くたびに欄が作り直される）。
+        let template_body = self.template_body.clone();
+        context.use_effect(
+            "template-monospace",
+            matches!(self.dialog, Some(Dialog::Template(_))),
+            move || {
+                let _ = template_body.request_native_element(|result| {
+                    if let Ok(element) = result
+                        && let Err(e) = monospace(&element)
+                    {
+                        eprintln!("テンプレートの本文を等幅にできない: {e}");
                     }
                 });
                 None
@@ -10218,6 +10637,41 @@ impl Root {
                             .spacing(6.0)
                             .width(440.0)
                             .children((View::keyed_fragment(rows),)),
+                    )
+            }
+            Some(Dialog::Template(index)) => {
+                let index = *index;
+                let (name, text) = self
+                    .settings
+                    .as_ref()
+                    .and_then(|s| s.templates.get(index))
+                    .map(|t| (t.name.clone(), t.text.clone()))
+                    .unwrap_or_default();
+                dialog
+                    .is_open(true)
+                    .title(tr!("Shared Templates"))
+                    .primary_button_text(tr!("Done"))
+                    .content(
+                        StackPanel::new().spacing(8.0).width(480.0).children((
+                            TextBox::new()
+                                .text(name)
+                                .placeholder_text(tr!("Name"))
+                                .on_text_changed(context.callback(move |text| {
+                                    Message::SettingsTemplate(index, 0, text)
+                                })),
+                            // WinUI の欄は改行を `\r` で持つ。`\n` のまま渡すと、打つたびに欄が書き直されて字の
+                            // 位置がずれる。
+                            TextBox::new()
+                                .text(text.replace('\n', "\r"))
+                                .placeholder_text(tr!("Message"))
+                                .accepts_return(true)
+                                .text_wrapping(TextWrapping::Wrap)
+                                .height(240.0)
+                                .element_ref(&self.template_body)
+                                .on_text_changed(context.callback(move |text| {
+                                    Message::SettingsTemplate(index, 1, text)
+                                })),
+                        )),
                     )
             }
             Some(Dialog::Toolbar(entries)) => {
@@ -13387,6 +13841,7 @@ impl Root {
             // 外れている）送れないので、Publish にもしない。
             published: entry.is_none_or(|e| e.detail.is_some() && !e.gone),
             no_remote,
+            running: self.running,
         }
     }
 
@@ -13874,36 +14329,10 @@ impl Root {
         if let (None, Some(flash)) = (&self.busy, &self.flash) {
             text.push_str(&format!("  ·  ✓ {flash}"));
         }
-        // 走っている操作があれば右に ⟳ n（押すと Activity。GTK4 版の Activity のボタンの回る印）。
-        let running: View = if self.running > 0 {
-            Button::new()
-                .style(ButtonStyle::Subtle)
-                .on_click(context.callback(|()| Message::Command("activity".to_owned())))
-                .content(
-                    TextBlock::new()
-                        .text(format!("⟳ {}", self.running))
-                        .font_size(12.0),
-                )
-                .tooltip(tr!(
-                    "{count} operations running (click for Activity)",
-                    count = self.running
-                ))
-        } else {
-            View::empty()
-        };
-        let bar = Grid::new()
-            .columns([GridLength::Star(1.0), GridLength::Auto])
-            .children((
-                TextBlock::new()
-                    .text(text)
-                    .font_size(12.0)
-                    .margin(Thickness::new(12.0, 3.0, 12.0, 4.0))
-                    .grid_column(0),
-                Border::new()
-                    .margin(Thickness::new(0.0, 0.0, 8.0, 0.0))
-                    .grid_column(1)
-                    .content(running),
-            ));
+        let bar = TextBlock::new()
+            .text(text)
+            .font_size(12.0)
+            .margin(Thickness::new(12.0, 3.0, 12.0, 4.0));
         StackPanel::new().grid_row(4).children((
             self.connection_band(context),
             self.failure_band(context),
@@ -14176,9 +14605,13 @@ impl Root {
         )
     }
 
-    /// ブランチの様子のダイアログを開く（次にできることを決め、既定のブランチに取り込んだときのコンフリクトを
-    /// 裏で調べる）。
-    fn open_branch_status(&mut self, name: &str, context: &ComponentContext<Self>) {
+    /// ブランチの様子の次にできること（メニューの項目のキーと見出し）と、既定のブランチに取り込んだときの
+    /// コンフリクトの見込み（裏で調べ始める。調べないなら None）。ダイアログと印の吹き出しが使う。
+    fn branch_status(
+        &mut self,
+        name: &str,
+        context: &ComponentContext<Self>,
+    ) -> (Vec<(String, String)>, Option<Option<Value>>) {
         use amonhen_model::RefKind;
         let Some(item) = self.refs.as_ref().and_then(|r| {
             r.refs
@@ -14187,7 +14620,7 @@ impl Root {
                 .find(|e| e.kind == RefKind::Local && e.name == name)
                 .cloned()
         }) else {
-            return;
+            return (Vec::new(), None);
         };
         let fact = self
             .groups
@@ -14270,11 +14703,60 @@ impl Root {
         } else {
             None
         };
-        self.dialog = Some(Dialog::BranchStatus {
-            name: name.to_owned(),
-            actions,
-            forecast,
-        });
+        (actions, forecast)
+    }
+
+    /// サイドバーの行の印の吹き出しを、押した位置（`at`、サイドバーの中）に開く。
+    fn open_mark(
+        &mut self,
+        key: &str,
+        mark: crate::sidebar::Mark,
+        at: xaml::Point,
+        context: &ComponentContext<Self>,
+    ) {
+        use crate::sidebar::Mark;
+        let name = crate::sidebar::parse_ref_key(key).map(|(_, n)| n.to_owned());
+        let popover = match (mark, name) {
+            (Mark::Branch, Some(name)) => {
+                let (actions, forecast) = self.branch_status(&name, context);
+                MarkPopover::Branch {
+                    name,
+                    actions,
+                    forecast,
+                }
+            }
+            (Mark::Signature, Some(name)) => MarkPopover::Signature(name),
+            (Mark::TagRemotes, Some(name)) => MarkPopover::TagRemotes(name),
+            (Mark::Checks, _) => {
+                let pr = key
+                    .strip_prefix("pr:")
+                    .and_then(|n| n.parse::<u64>().ok())
+                    .and_then(|n| self.github.pull_requests.iter().find(|p| p.number == n));
+                let (Some(pr), Some((_, github))) = (pr, self.github.github.clone()) else {
+                    return;
+                };
+                let Some(sha) = pr.head_ref_oid.clone() else {
+                    return;
+                };
+                self.checks_popover = Some(ChecksPopover {
+                    sha: sha.clone(),
+                    status: pr.ci(),
+                    web_url: github.web_url(),
+                    checks: None,
+                    x: 0.0,
+                    y: 0.0,
+                });
+                context.spawn_background(move |_| {
+                    let result = crate::github::commit_checks(&github, &sha);
+                    Message::ChecksLoaded(sha, result)
+                });
+                MarkPopover::Checks
+            }
+            _ => return,
+        };
+        self.mark_popover = Some(popover);
+        self.mark_at = at;
+        self.mark_opened += 1;
     }
 
     /// ブランチの様子のダイアログの見出しと中身: 色の付いた印と説明、ブランチ・先端・最後のコミット・上流・土台・
@@ -16007,10 +16489,12 @@ impl Root {
                     context.callback(move |on| Message::SettingsEnv(name.clone(), on))
                 }),
                 env_query: context.callback(Message::SettingsEnvQuery),
-                template: Box::new(|i, field| {
-                    context.callback(move |text| Message::SettingsTemplate(i, field, text))
-                }),
+                env_shown: context.callback(Message::SettingsEnvShown),
+                env_select: context.callback(Message::SettingsEnvSelect),
+                env_reveal: context.callback(|()| Message::SettingsEnvReveal),
                 template_add: context.callback(|()| Message::SettingsTemplateAdd),
+                template_select: context.callback(Message::SettingsTemplateSelect),
+                template_edit: context.callback(|()| Message::SettingsTemplateEdit),
                 display: Box::new(|id| context.callback(move |v| Message::SettingsDisplay(id, v))),
                 order: context.callback(Message::SettingsOrder),
                 syntax_theme: context.callback(|i| Message::SettingsSyntaxTheme(false, i)),
@@ -16731,7 +17215,8 @@ impl Root {
             file_menu: Box::new(|path: String| {
                 context.callback(move |key| Message::WorkingFileMenu(path.clone(), key))
             }),
-            issue: Box::new(|number: u64| context.callback(move |()| Message::PickIssue(number))),
+            issue_menu: context.callback(Message::IssueMenu),
+            issue_host: &self.issue_host,
         };
         let view = crate::workcopy::view(
             crate::workcopy::Input {
@@ -18446,6 +18931,40 @@ fn connecting_view(location: &str, error: Option<&String>, context: &ViewContext
             .children((View::keyed_fragment(rows),)),))
 }
 
+/// 0.5 秒後に Activity の時計を進める。
+fn activity_clock_later(clock: u64, context: &ComponentContext<Root>) {
+    context.spawn_background(move |_| {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        Message::ActivityClock(clock)
+    });
+}
+
+/// すべての窓のタブで開いているリポジトリの History のキャッシュを裏で読む（macOS 版・GTK4 版と同じく、同じ場所を
+/// 開いたタブは 1 つにまとめる）。
+fn load_history_caches(generation: u64, context: &ComponentContext<Root>) {
+    let mut seen = std::collections::HashSet::new();
+    let repos: Vec<(String, Arc<Repository>)> = OPEN_REPOS.with(|r| {
+        r.borrow()
+            .iter()
+            .filter(|(_, location, _)| seen.insert(location.to_lowercase()))
+            .map(|(_, location, repo)| (crate::repositories::display_name(location), repo.clone()))
+            .collect()
+    });
+    context.spawn_background(move |_| {
+        let rows = repos
+            .into_iter()
+            .filter_map(|(name, repo)| {
+                let reply: Value =
+                    serde_json::from_str(&repo.run_json(r#"{"op":"historyCache"}"#)).ok()?;
+                reply["info"]
+                    .is_object()
+                    .then(|| (name, reply["info"].clone()))
+            })
+            .collect();
+        Message::ActivityCache(generation, rows)
+    });
+}
+
 /// 開いていないリポジトリを、その場で開く（clone した直後に取り出すフォルダを選ぶ）。
 fn open_repository(location: &str) -> Option<Arc<Repository>> {
     let backend = amonhen_backend_gix::GixBackend::open(location).ok()?;
@@ -18608,8 +19127,6 @@ struct HistoryView {
     running: (usize, Option<Instant>),
     /// 終わった操作の一言を消す時刻。
     flash_until: Option<Instant>,
-    /// Activity を開いている間、読み直しを頼んだ最後の時刻（0.5 秒ごとに頼む）。
-    activity_tick: Option<Instant>,
     /// 見張っている、daemon・SSH 越しのリポジトリと、最後に見た時刻（切れたら知らせる。GTK4 版・macOS 版と同じく
     /// 0.25 秒ごとに見て、切れたら見るのをやめる）。
     watched: Option<(Arc<Repository>, Instant)>,
@@ -18761,6 +19278,9 @@ impl HistoryView {
     /// 届いたものを取り込み、描くものがあれば描く。
     fn render(&mut self) -> Result<(), String> {
         retry_monospace();
+        if self.owner {
+            tip_sidebar_rows();
+        }
         retry_splitters();
         retry_place();
         self.take_ownership();
@@ -18882,13 +19402,6 @@ impl HistoryView {
                 self.diff.dirty = true;
                 self.sender.send(Message::AppearanceChanged);
             }
-        }
-        // Activity を開いている間は 0.5 秒ごとに読み直してもらう（GTK4 版と同じ間隔）。
-        if let Some(last) = self.activity_tick
-            && last.elapsed() >= std::time::Duration::from_millis(500)
-        {
-            self.activity_tick = Some(Instant::now());
-            self.sender.send(Message::ActivityTick);
         }
         let s = &mut self.session;
         if STATUS_RELOAD.swap(false, std::sync::atomic::Ordering::AcqRel) {
@@ -20392,33 +20905,135 @@ fn attach_sidebar(element: &IInspectable) -> windows_core_reactor::Result<()> {
         });
     })?;
     REVOKERS.with(|r| r.borrow_mut().push(revoker));
-    // 行のツールチップ（印の意味など。reactor の木の項目は文字だけなので、指の下の項目に付ける。項目の要素は
-    // 使い回されるので、指が別の項目に移るたびに付け直す）。
+    // 行のツールチップは、描いたあとに見えている行に付ける（`tip_sidebar_rows`）。
+    // 指の下の行の印を覚える（押したらその印の吹き出し。行のツールチップは `tip_sidebar_rows` が付ける）。
+    let moved = ui.clone();
     let revoker = ui.PointerMoved(move |_, args: Ref<xaml::PointerRoutedEventArgs>| {
         let Some(args) = args.as_ref() else { return };
         let Ok(original) = args.OriginalSource() else {
             return;
         };
-        let Some((item, key)) = tree_item_key(&original) else {
+        let Some((_, key)) = tree_item_key(&original) else {
+            SIDEBAR_MARK.with(|m| *m.borrow_mut() = None);
             return;
         };
-        let identity = item
-            .cast::<windows_core_reactor::IUnknown>()
-            .map_or(0, |u| u.as_raw() as usize);
-        let text = sidebar::tooltip(&key);
-        let changed = SIDEBAR_TIP.with(|t| {
-            let mut t = t.borrow_mut();
-            let next = (identity, text.clone());
-            let changed = t.as_ref() != Some(&next);
-            *t = Some(next);
-            changed
+        let mark = mark_under(&original, &key, args).and_then(|mark| {
+            Some((
+                key.clone(),
+                mark,
+                args.GetCurrentPoint(&moved).ok()?.Position().ok()?,
+            ))
         });
-        if changed && let Ok(item) = item.cast::<IInspectable>() {
-            let _ = windows_reactor::set_tooltip_text(&item, text.as_deref());
-        }
+        SIDEBAR_MARK.with(|m| *m.borrow_mut() = mark);
     })?;
     REVOKERS.with(|r| r.borrow_mut().push(revoker));
     Ok(())
+}
+
+/// サイドバーの見えている行に、行のツールチップを付ける（0.5 秒ごと）。指が行に入ってから付けると、WinUI は
+/// その行を出るまでツールチップを出さないので、先に付けておく。行の要素は使い回されるので、付け直す。
+fn tip_sidebar_rows() {
+    let due = SIDEBAR_TIPS_AT
+        .with(|t| t.get())
+        .is_none_or(|t| t.elapsed() >= std::time::Duration::from_millis(500));
+    if !due {
+        return;
+    }
+    SIDEBAR_TIPS_AT.with(|t| t.set(Some(Instant::now())));
+    let Some(root) = SIDEBAR_ELEMENT.with(|e| e.borrow().clone()) else {
+        return;
+    };
+    fn walk(node: &xaml::DependencyObject, depth: u32) {
+        if let Ok(element) = node.cast::<xaml::FrameworkElement>()
+            && let Ok(context) = element.DataContext()
+            && let Some(key) = node_key(&context)
+        {
+            // 中身の ContentPresenter ではなく、行そのもの（TreeViewItem）に付ける（中身に付けると出ない）。
+            let mut row = node.clone();
+            for _ in 0..4 {
+                let class = row
+                    .cast::<IInspectable>()
+                    .ok()
+                    .and_then(|r| r.GetRuntimeClassName().ok())
+                    .map(|c| c.to_string_lossy())
+                    .unwrap_or_default();
+                if class.ends_with(".TreeViewItem") {
+                    break;
+                }
+                match xaml::VisualTreeHelper::GetParent(&row) {
+                    Ok(parent) => row = parent,
+                    Err(_) => break,
+                }
+            }
+            if let Ok(item) = row.cast::<IInspectable>() {
+                let identity = item
+                    .cast::<windows_core_reactor::IUnknown>()
+                    .map_or(0, |u| u.as_raw() as usize);
+                let tip = sidebar::tooltip(&key);
+                let changed = SIDEBAR_TIPS.with(|t| {
+                    let mut t = t.borrow_mut();
+                    let changed = t.get(&identity) != Some(&tip);
+                    t.insert(identity, tip.clone());
+                    changed
+                });
+                if changed {
+                    let _ = windows_reactor::set_tooltip_text(&item, tip.as_deref());
+                }
+            }
+            return;
+        }
+        if depth == 0 {
+            return;
+        }
+        let count = xaml::VisualTreeHelper::GetChildrenCount(node).unwrap_or(0);
+        for i in 0..count {
+            if let Ok(child) = xaml::VisualTreeHelper::GetChild(node, i) {
+                walk(&child, depth - 1);
+            }
+        }
+    }
+    if let Ok(node) = root.cast::<xaml::DependencyObject>() {
+        walk(&node, 40);
+    }
+}
+
+/// 押した行 `key` の印（指がその印の上にあれば）と、サイドバーの中の位置。
+fn pressed_mark(key: &str) -> Option<(crate::sidebar::Mark, xaml::Point)> {
+    SIDEBAR_MARK.with(|m| {
+        m.borrow()
+            .as_ref()
+            .filter(|(k, ..)| k == key)
+            .map(|(_, mark, at)| (*mark, *at))
+    })
+}
+
+/// 指が、木の行の文字（`original` が行の TextBlock のとき）の印の上にあれば、その印。印の字の位置は TextBlock の
+/// 中の字の矩形で求める（木の項目は文字だけで、印だけの部品がない）。
+fn mark_under(
+    original: &IInspectable,
+    key: &str,
+    args: &xaml::PointerRoutedEventArgs,
+) -> Option<crate::sidebar::Mark> {
+    let block: xaml::TextBlock = original.cast().ok()?;
+    let text = block.Text().ok()?.to_string_lossy();
+    let marks = crate::sidebar::marks_in(key, &text);
+    if marks.is_empty() {
+        return None;
+    }
+    let x = args.GetCurrentPoint(&block).ok()?.Position().ok()?.X;
+    let start = block.ContentStart().ok()?;
+    // TextBlock の中身は 1 つの Run で、字の位置は中身の始まりと Run の始まりの 2 つの記号の後から数える。
+    let rect = |offset: usize| {
+        start
+            .GetPositionAtOffset(offset as i32 + 2, xaml::LogicalDirection::Forward)
+            .and_then(|p| p.GetCharacterRect(xaml::LogicalDirection::Forward))
+            .ok()
+    };
+    marks.into_iter().find_map(|(mark, at, len)| {
+        let left = rect(at)?.X;
+        let right = rect(at + len).map_or(f32::MAX, |r| r.X);
+        (left - 2.0..right + 2.0).contains(&x).then_some(mark)
+    })
 }
 
 /// 等幅の字（Windows の既定の等幅。なければ Consolas）。

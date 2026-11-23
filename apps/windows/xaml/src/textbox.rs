@@ -41,6 +41,16 @@ pub fn select_all(text_box: &windows_core::IInspectable) -> windows_core::Result
     }
 }
 
+/// TextBox（の生のオブジェクト）のカーソルを `index`（UTF-16 の位置）に置く（選んでいる文字はなくす）。
+pub fn set_caret(text_box: &windows_core::IInspectable, index: usize) -> windows_core::Result<()> {
+    let text_box: ITextBoxSelection = text_box.cast()?;
+    // SAFETY: 上の IID の vtable の並びどおりの位置を、そのオブジェクトの生のポインタで呼ぶ。
+    unsafe {
+        (text_box.vtable().SetSelectionStart)(text_box.as_raw(), index as i32).ok()?;
+        (text_box.vtable().SetSelectionLength)(text_box.as_raw(), 0).ok()
+    }
+}
+
 /// `element`（TextBox）を包む ScrollViewer を、中身の `fraction`（0〜1）の所が上から 3 分の 1 あたりに来るように
 /// スクロールする（マージエディタの Result を、選んだコンフリクトへ。欄は中身の高さに伸び、外の ScrollViewer が
 /// 動く）。包む ScrollViewer がなければ何もしない。

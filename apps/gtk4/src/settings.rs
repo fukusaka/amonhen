@@ -174,7 +174,6 @@ pub fn bool(key: &str) -> bool {
             | GITHUB_AVATARS_ONCE
             | USE_FSMONITOR
             | CHECK_REMOTE_SIGNATURES_LOCALLY
-            | crate::commitfiles::STACKED
     ))
 }
 
@@ -640,13 +639,8 @@ pub fn show(near: &impl IsA<gtk::Widget>) {
                     ))
                     .upcast(),
                     check(
-                        crate::commitfiles::STACKED,
-                        &tr!("Stack the diffs of all files"),
-                    )
-                    .upcast(),
-                    check(
                         crate::commitfiles::FILE_TREE,
-                        &tr!("Show changed files as a tree left of the diff"),
+                        &tr!("Show changed files as a tree"),
                     )
                     .upcast(),
                 ],

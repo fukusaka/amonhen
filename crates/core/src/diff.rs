@@ -7,6 +7,8 @@ use amonhen_layout::{Blob, DiffRow, Highlight, SyntaxSpan};
 use amonhen_projection::{FrontendProfile, StringEncoding, StringTable, StringTableBuilder};
 use imara_diff::{Algorithm, Diff, InternedInput};
 
+use crate::funcname::FuncName;
+
 /// 差分の 1 行が指す文字列の場所。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Source {
@@ -37,6 +39,42 @@ pub struct FileDiff {
     pub binary: bool,
     pub added: u32,
     pub removed: u32,
+    /// `.gitattributes` の `linguist-generated`（生成物）。`None` は指定なし。
+    pub generated: Option<bool>,
+    /// まだ差分を取っていない（ファイルの多いコミットでは、開いたときに取る）。そのファイルの変更。
+    pub pending: Option<Box<amonhen_model::FileChange>>,
+}
+
+/// ファイル全体を変更のない行として並べたもの（変わっていないファイルの、その時点の中身を見せる）。
+pub fn whole_file(data: impl Into<Blob>) -> FileDiff {
+    let data = data.into();
+    let binary = is_binary(&data);
+    let lines = if binary {
+        Vec::new()
+    } else {
+        line_ranges(&data)
+            .into_iter()
+            .enumerate()
+            .map(|(i, range)| Line {
+                kind: DiffRow::CONTEXT,
+                old_no: i as u32 + 1,
+                new_no: i as u32 + 1,
+                source: Source::New,
+                range,
+            })
+            .collect()
+    };
+    FileDiff {
+        old: data.clone(),
+        new: data,
+        headers: String::new(),
+        lines,
+        binary,
+        added: 0,
+        removed: 0,
+        generated: None,
+        pending: None,
+    }
 }
 
 /// 先頭 8000 バイトに NUL があればバイナリとみなす（git と同じ）。
@@ -66,8 +104,18 @@ fn line_ranges(data: &[u8]) -> Vec<Range<u32>> {
     lines
 }
 
-/// 前後に `context` 行の文脈をつけた差分。
+/// 前後に `context` 行の文脈をつけた差分。hunk の見出しには git の既定の規則で関数名を添える。
 pub fn file_diff(old: impl Into<Blob>, new: impl Into<Blob>, context: u32) -> FileDiff {
+    file_diff_with(old, new, context, &FuncName::Default)
+}
+
+/// `file_diff` の、hunk の見出しの関数名を `funcname` の規則で探すもの。
+pub fn file_diff_with(
+    old: impl Into<Blob>,
+    new: impl Into<Blob>,
+    context: u32,
+    funcname: &FuncName,
+) -> FileDiff {
     let (old, new) = (old.into(), new.into());
     let mut diff = FileDiff {
         old: old.clone(),
@@ -77,6 +125,8 @@ pub fn file_diff(old: impl Into<Blob>, new: impl Into<Blob>, context: u32) -> Fi
         binary: is_binary(&old) || is_binary(&new),
         added: 0,
         removed: 0,
+        generated: None,
+        pending: None,
     };
     if diff.binary {
         return diff;
@@ -96,17 +146,23 @@ pub fn file_diff(old: impl Into<Blob>, new: impl Into<Blob>, context: u32) -> Fi
     let mut groups: Vec<Vec<imara_diff::Hunk>> = Vec::new();
     for h in hunks {
         match groups.last_mut() {
-            Some(g) if h.before.start - g.last().unwrap().before.end <= 2 * context => g.push(h),
+            Some(g)
+                if h.before.start - g.last().unwrap().before.end <= context.saturating_mul(2) =>
+            {
+                g.push(h)
+            }
             _ => groups.push(vec![h]),
         }
     }
 
     let n_old = old_lines.len() as u32;
+    let mut searched_down_to = 0u32;
+    let mut last_func: Option<String> = None;
     for group in groups {
         let first = &group[0];
         let last = group.last().unwrap();
         let start_old = first.before.start.saturating_sub(context);
-        let end_old = (last.before.end + context).min(n_old);
+        let end_old = last.before.end.saturating_add(context).min(n_old);
         // 変更前と変更後の行は、変更のない所では同じ差だけずれている。
         let start_new = first.after.start - (first.before.start - start_old);
         let end_new = last.after.end + (end_old - last.before.end);
@@ -122,6 +178,26 @@ pub fn file_diff(old: impl Into<Blob>, new: impl Into<Blob>, context: u32) -> Fi
             count(start_old, end_old),
             count(start_new, end_new)
         );
+        // 関数名: hunk の手前の行を上へたどる（git と同じく変更前の側）。前の hunk でたどった所より上は、前の
+        // 答えをそのまま使う。
+        let mut at = start_old;
+        let found = loop {
+            if at <= searched_down_to {
+                break last_func.clone();
+            }
+            at -= 1;
+            if let Some(f) = funcname.matches(
+                &old[old_lines[at as usize].start as usize..old_lines[at as usize].end as usize],
+            ) {
+                break Some(f);
+            }
+        };
+        searched_down_to = start_old;
+        last_func = found.clone();
+        if let Some(f) = found {
+            diff.headers.push(' ');
+            diff.headers += &f;
+        }
         diff.lines.push(Line {
             kind: DiffRow::HUNK,
             old_no: 0,
@@ -607,6 +683,34 @@ pub struct StackedDiff {
 }
 
 impl StackedDiff {
+    /// `file` 番目のファイルが生成物か（最初は畳む）。`.gitattributes` の `linguist-generated` があればそれに従い、
+    /// なければ lock ファイルと縮めたファイル（`.min.js`・`.min.css`）。
+    pub fn generated(&self, file: usize) -> bool {
+        let Some((path, diff)) = self.files.get(file) else {
+            return false;
+        };
+        diff.generated.unwrap_or_else(|| {
+            const LOCKFILES: [&str; 12] = [
+                "Cargo.lock",
+                "package-lock.json",
+                "yarn.lock",
+                "pnpm-lock.yaml",
+                "Gemfile.lock",
+                "poetry.lock",
+                "composer.lock",
+                "go.sum",
+                "Package.resolved",
+                "Podfile.lock",
+                "bun.lockb",
+                "uv.lock",
+            ];
+            // とびとびに選んだコミットでは、見出しが「パス — 短い ID」。
+            let path = path.split(" — ").next().unwrap_or(path);
+            let name = path.rsplit('/').next().unwrap_or(path);
+            LOCKFILES.contains(&name) || name.ends_with(".min.js") || name.ends_with(".min.css")
+        })
+    }
+
     /// 各ファイルの見出しの行（`DiffRow::FILE`。文字列はパス、`old_no` は削除の行数、`new_no` は追加の行数）に、
     /// 畳まないファイルの差分の行を続けた表示。`collapsed[i]` が true のファイルは見出しだけ。
     pub fn view(&self, collapsed: &[bool], profile: &FrontendProfile) -> DiffView {
@@ -625,6 +729,9 @@ impl StackedDiff {
             if diff.binary {
                 flags |= DiffRow::BINARY;
             }
+            if diff.pending.is_some() {
+                flags |= DiffRow::PENDING;
+            }
             let text = builder.strings.add(names_buf, &names[at..at + path.len()]);
             at += path.len();
             builder.rows.push(DiffRow {
@@ -637,7 +744,7 @@ impl StackedDiff {
             });
             added += diff.added;
             removed += diff.removed;
-            if !hidden && !diff.binary {
+            if !hidden && !diff.binary && diff.pending.is_none() {
                 builder.push_file(path, diff);
             }
         }
@@ -730,6 +837,8 @@ pub fn range_diff_file<S: AsRef<str>>(lines: &[S]) -> FileDiff {
         binary: false,
         added,
         removed,
+        generated: None,
+        pending: None,
     }
 }
 
