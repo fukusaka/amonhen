@@ -2762,6 +2762,13 @@ fn worktrees_are_listed_in_the_sidebar() {
     let at = side.iter().position(|l| l == "Worktrees").unwrap();
     assert_eq!(side[at + 1], "● main (main)");
     assert_eq!(side[at + 2], "  other (topic)");
+    // History には、それぞれの HEAD に worktree の札（✎ 開いている作業ツリー、⑂ 追加した worktree）。
+    assert!(text.contains("[✎ main] [main]"), "{text}");
+    assert!(text.contains("[⑂ other] [topic]"), "{text}");
+    // ほかの worktree から開けば、メインの作業ツリーは ⌂。
+    let from_other = amonhen_tui::snapshot(open(&other), 160, 16, clock(), "").unwrap();
+    assert!(from_other.contains("[⌂ main]"), "{from_other}");
+    assert!(from_other.contains("[✎ other]"), "{from_other}");
 }
 
 /// コマンドの一覧の New Orphan Branch: 名前を聞き、空からか、今のファイルを stage したままかを選ぶ

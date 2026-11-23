@@ -255,7 +255,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | アバター | ✓ | ✓ | ✓ | — | n/a | — |  |
 | コミットの署名の印 | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: エンジンがあるとき。<br>CLI: `show` に出る。<br>TUI: 件名の前の印。吹き出しはない。 |
 | コミットごとの CI の状態とポップオーバー | ✓ | ✓ | ✓ | — | — | — |  |
-| worktree の HEAD のラベル（✎ ⌂ ⑂・変更の数） | ✓ | ✓ | ✓ | ✓ | — | — |  |
+| worktree の HEAD のラベル（✎ ⌂ ⑂・変更の数） | ✓ | ✓ | ✓ | ✓ | — | △ | TUI: worktree が 2 つ以上あるときのラベル。変更の数はない。 |
 | Go to HEAD・Parent・Child | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: History の上の HEAD のボタン、コミットのメニューの Go to Parent・Go to Child、詳細の親と子へのリンク（エンジンがあるとき）。<br>TUI: `@`・`]`・`[`。 |
 | Go to Ref | — | — | — | — | n/a | — |  |
 | いくつものコミットを選ぶ（範囲・2 つ・飛び飛び） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: エンジンがあるとき。<br>CLI: 2 つは `diff <rev> <rev>`。<br>TUI: `m`・Shift-↑↓・Ctrl か Alt のクリック。 |
