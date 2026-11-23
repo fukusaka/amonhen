@@ -710,6 +710,10 @@ pub struct App {
     history_cache: Option<Value>,
     /// Activity の Daemon（`daemon status` の答え。動いていなければ null）。
     daemon: Option<Value>,
+    /// 内部の出来事（変化の知らせと、それで読み直したもの。新しいものが後ろ、500 まで）。時刻は UNIX 時刻の秒。
+    event_log: std::collections::VecDeque<(i64, String)>,
+    /// Activity の Events を出している（一番上からの位置）。
+    showing_events: Option<usize>,
     /// History の編集モード（`E`）。
     edit_mode: Option<crate::editmode::EditMode>,
     /// 印をつけたコミット（新しい順）を、編集モードで 1 つにまとめる（`E`。行が届いたら決める）。
@@ -842,6 +846,8 @@ impl App {
             operations: None,
             history_cache: None,
             daemon: None,
+            event_log: Default::default(),
+            showing_events: None,
             export_records: None,
             edit_mode: None,
             combining: Vec::new(),
@@ -1131,6 +1137,7 @@ impl App {
             || self.operations.is_some()
             || self.history_cache.is_some()
             || self.daemon.is_some()
+            || self.showing_events.is_some()
             || self.edit_mode.is_some();
         if std::mem::take(&mut self.dirty) || (over && damage != Damage::default()) {
             return Some(Damage::ALL);
@@ -1408,6 +1415,27 @@ impl App {
                 self.dirty = true;
             }
             Event::Changed(bits) => {
+                // Activity の Events に、何が変わったと知らされたかと、それで読み直すもの。
+                let mut changed = Vec::new();
+                for (bit, name) in [
+                    (CHANGED_REFS, tr!("refs")),
+                    (CHANGED_INDEX, tr!("the index")),
+                    (CHANGED_WORKTREE, tr!("the working tree")),
+                ] {
+                    if bits & bit != 0 {
+                        changed.push(name);
+                    }
+                }
+                if !changed.is_empty() {
+                    let mut text = tr!("Changed: {what}", what = changed.join(", "));
+                    if bits & (CHANGED_INDEX | CHANGED_WORKTREE) != 0 {
+                        text.push_str(&tr!(" → read the status again"));
+                    }
+                    if bits & CHANGED_REFS != 0 {
+                        text.push_str(&tr!(" → read History and the refs again"));
+                    }
+                    self.event(text);
+                }
                 if bits & (CHANGED_INDEX | CHANGED_WORKTREE) != 0 {
                     self.changes.refresh();
                 }
@@ -1962,7 +1990,26 @@ impl App {
             }
             return;
         }
-        // History Cache: `r` で読み直す、`Tab` で Daemon へ。ほかのキーで閉じる。
+        // Events: j/k で動かす、`Tab` で Daemon へ。ほかのキーで閉じる。
+        if let Some(top) = self.showing_events {
+            self.dirty = true;
+            let last = self.event_log.len().saturating_sub(1);
+            match key.code {
+                KeyCode::Char('j') | KeyCode::Down => {
+                    self.showing_events = Some((top + 1).min(last))
+                }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    self.showing_events = Some(top.saturating_sub(1))
+                }
+                KeyCode::Tab => {
+                    self.showing_events = None;
+                    self.read_daemon();
+                }
+                _ => self.showing_events = None,
+            }
+            return;
+        }
+        // History Cache: `r` で読み直す、`Tab` で Events へ。ほかのキーで閉じる。
         if self.history_cache.is_some() {
             self.dirty = true;
             match key.code {
@@ -1974,7 +2021,7 @@ impl App {
                 }
                 KeyCode::Tab => {
                     self.history_cache = None;
-                    self.read_daemon();
+                    self.showing_events = Some(0);
                 }
                 _ => self.history_cache = None,
             }
@@ -3339,6 +3386,21 @@ impl App {
             name: "activity",
             request: json!({"op": "activity"}),
         });
+    }
+
+    /// Activity の Events に 1 つ記録する（500 まで）。
+    fn event(&mut self, text: String) {
+        self.event_log.push_back((self.clock_now(), text));
+        if self.event_log.len() > 500 {
+            self.event_log.pop_front();
+        }
+    }
+
+    /// 今の時刻（UNIX 時刻の秒）。
+    fn clock_now(&self) -> i64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(self.clock.now, |d| d.as_secs() as i64)
     }
 
     /// 共有の daemon の様子を読む（`amonhen daemon status` と同じ。手元のソケットに聞くので、すぐ返る）。
@@ -8696,6 +8758,9 @@ impl App {
         if let Some(daemon) = &self.daemon {
             self.draw_daemon(daemon, area, buf);
         }
+        if let Some(top) = self.showing_events {
+            self.draw_events(top, area, buf);
+        }
         if let Some(log) = &self.operation_log {
             let times: Vec<String> = log
                 .entries
@@ -9066,7 +9131,7 @@ impl App {
                 None => tr!("Nothing written yet this run"),
             });
         }
-        let hint = tr!("r read again   Tab daemon   other keys close");
+        let hint = tr!("r read again   Tab events   other keys close");
         let text = lines
             .iter()
             .map(|l| l.width())
@@ -9092,6 +9157,39 @@ impl App {
             &hint,
             inner,
             Style::new().fg(Color::Indexed(244)),
+        );
+    }
+
+    /// Events の枠: 変化の知らせと、それで読み直したもの（新しい順）。
+    fn draw_events(&self, top: usize, area: Rect, buf: &mut Buffer) {
+        let width = area.width.saturating_sub(4).max(20).min(area.width);
+        let height = area.height.saturating_sub(2).max(5).min(area.height);
+        let at = Rect::new(
+            area.x + (area.width - width) / 2,
+            area.y + (area.height - height) / 2,
+            width,
+            height,
+        );
+        frame_box(buf, area, at, &tr!(" Events "));
+        let inner = usize::from(width.saturating_sub(4));
+        let dim = Style::new().fg(Color::Indexed(244));
+        if self.event_log.is_empty() {
+            buf.set_stringn(at.x + 2, at.y + 1, tr!("No change notices yet"), inner, dim);
+        }
+        let now = self.clock_now();
+        for (y, (time, text)) in
+            (at.y + 1..at.bottom().saturating_sub(2)).zip(self.event_log.iter().rev().skip(top))
+        {
+            let when = crate::history::ago(now, *time);
+            buf.set_stringn(at.x + 2, y, &when, 4, dim);
+            buf.set_stringn(at.x + 7, y, text, inner.saturating_sub(5), Style::new());
+        }
+        buf.set_stringn(
+            at.x + 2,
+            at.bottom() - 2,
+            tr!("Change notices and the reloads they cause (newest first, up to 500)   j/k move   Tab daemon   other keys close"),
+            inner,
+            dim,
         );
     }
 
@@ -9599,6 +9697,28 @@ mod tests {
     }
 
     /// サイドバーの Submodules: submodule が並び、中に変更があれば ✎。Enter で TUI をそこで開き直す。
+    /// 変化の知らせは Activity の Events に残る（何が変わり、何を読み直すか）
+    #[test]
+    fn change_notices_are_kept_as_events() {
+        let (_dir, mut app, rx) = app_with_history();
+        app.handle(Event::Changed(CHANGED_REFS | CHANGED_WORKTREE));
+        crate::settle(&mut app, &rx).unwrap();
+        let (_, text) = app.event_log.back().unwrap();
+        assert_eq!(
+            text,
+            "Changed: refs, the working tree → read the status again → read History and the refs again"
+        );
+        app.showing_events = Some(0);
+        let mut buf = Buffer::empty(Rect::new(0, 0, 100, 12));
+        app.draw(&mut buf, Damage::ALL);
+        let screen: String = (0..12)
+            .flat_map(|y| (0..100).map(move |x| (x, y)))
+            .map(|(x, y)| buf[(x, y)].symbol().to_owned())
+            .collect();
+        assert!(screen.contains(" Events "), "{screen}");
+        assert!(screen.contains("Changed: refs"), "{screen}");
+    }
+
     /// History Cache のバイト数は、読みやすい単位で。
     #[test]
     fn bytes_are_shown_in_units() {
