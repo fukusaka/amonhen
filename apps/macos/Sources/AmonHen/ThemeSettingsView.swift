@@ -1,3 +1,4 @@
+import AmonhenKit
 import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
@@ -94,6 +95,7 @@ struct ThemeSettings: View {
 struct SyntaxThemeSection: View {
     @Bindable var model: SettingsModel
     @State private var failure: String?
+    @State private var mermaidFailure: String?
 
     var body: some View {
         Section(L("Color Theme")) {
@@ -115,6 +117,53 @@ struct SyntaxThemeSection: View {
                 }
             }
         }
+        // Markdown の Mermaid の図（配色・gantt の時間帯・読み込んだテーマ）。
+        Section("Mermaid") {
+            Picker(L("Colors"), selection: $model.diagramColors) {
+                Text(L("Syntax colors")).tag("syntax")
+                Text("pele").tag("pele")
+                Text(L("Mermaid (follows the appearance)")).tag("mermaid")
+                ForEach(["default", "neutral", "dark", "forest", "base"], id: \.self) { name in
+                    Text("Mermaid \(name)").tag("mermaid-\(name)")
+                }
+                ForEach(model.importedMermaidThemes.keys.sorted(), id: \.self) { name in
+                    Text(name).tag("mermaid-import:\(name)")
+                }
+            }
+            DiagramSample(
+                light: model.syntaxThemeLight, dark: model.syntaxThemeDark, diagramColors: model.diagramColors,
+                mermaidThemes: model.importedMermaidThemes)
+            HStack {
+                Button(L("Import Mermaid Theme…")) { importMermaidTheme() }
+                Spacer()
+            }
+            if let mermaidFailure { Note(mermaidFailure).foregroundStyle(.red) }
+            ForEach(model.importedMermaidThemes.keys.sorted(), id: \.self) { name in
+                HStack {
+                    Text(name)
+                    Spacer()
+                    Button(L("Remove")) {
+                        model.importedMermaidThemes[name] = nil
+                        if model.diagramColors == "mermaid-import:\(name)" { model.diagramColors = "syntax" }
+                    }
+                }
+            }
+            // gantt の日付を数える時間帯
+            LabeledContent(L("Time zone")) {
+                // 数百あるので、地域（Asia など）ごとの下の階層に分ける。
+                Menu(model.ganttTimeZone.isEmpty ? L("System time zone") : model.ganttTimeZone) {
+                    Button(L("System time zone")) { model.ganttTimeZone = "" }
+                    Button("UTC") { model.ganttTimeZone = "UTC" }
+                    Divider()
+                    ForEach(Self.zoneRegions, id: \.0) { region, names in
+                        Menu(region) {
+                            ForEach(names, id: \.self) { name in Button(name) { model.ganttTimeZone = name } }
+                        }
+                    }
+                }
+                .fixedSize()
+            }
+        }
     }
 
     @ViewBuilder private func options(dark: Bool) -> some View {
@@ -126,6 +175,33 @@ struct SyntaxThemeSection: View {
         Divider()
         ForEach(themes.filter { $0.dark != dark }, id: \.name) { Text($0.name).tag($0.name) }
     }
+
+    /// mermaid-cli の設定ファイル（JSON）を読み込み、「Mermaid」の「配色」で選ぶ。名前はファイル名から。
+    private func importMermaidTheme() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        panel.allowsMultipleSelection = true
+        guard panel.runModal() == .OK else { return }
+        mermaidFailure = nil
+        for url in panel.urls {
+            do {
+                let config = try MermaidThemeConfig.parse(String(contentsOf: url, encoding: .utf8))
+                let name = url.deletingPathExtension().lastPathComponent
+                model.importedMermaidThemes[name] = config
+                model.diagramColors = "mermaid-import:\(name)"
+            } catch {
+                mermaidFailure = L("Couldn’t read %@: %@", url.lastPathComponent, error.localizedDescription)
+            }
+        }
+    }
+
+    /// OS が知っている時間帯を、地域（`Asia/Tokyo` の `Asia`）ごとに。
+    private static let zoneRegions: [(String, [String])] = {
+        let names = TimeZone.knownTimeZoneIdentifiers.filter { $0.contains("/") }
+        return Dictionary(grouping: names) { String($0.prefix { $0 != "/" }) }
+            .map { ($0.key, $0.value.sorted()) }
+            .sorted { $0.0 < $1.0 }
+    }()
 
     private func importTheme() {
         let panel = NSOpenPanel()
@@ -185,6 +261,27 @@ private struct ThemePreview: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(nsColor: .textBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+}
+
+/// Mermaid の図の見本（「配色」と今の外観・テーマで色を当てる）。
+private struct DiagramSample: View {
+    let light: String
+    let dark: String
+    /// 図の配色（見本の図を作り直す目印）。
+    let diagramColors: String
+    let mermaidThemes: [String: MermaidThemeConfig]
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        if let svg = MarkdownBlock.sampleDiagram, let picture = DiagramPicture.image(svg, own: nil) {
+            Image(nsImage: picture)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(maxWidth: min(picture.size.width, 420), alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .id("\(diagramColors)|\(light)|\(dark)|\(scheme)|\(mermaidThemes.count)")
+        }
     }
 }
 

@@ -46,6 +46,8 @@ const MARKED_SELECTED: Color = Color::Indexed(31);
 
 #[derive(Clone, Copy)]
 enum LabelKind {
+    /// worktree の HEAD（✎ 開いている作業ツリー、⌂ メインの作業ツリー、⑂ 追加した worktree）。
+    Worktree,
     Head,
     Branch,
     Remote,
@@ -186,9 +188,37 @@ impl History {
                 });
             }
         }
-        // 今のブランチを先頭に。
+        // worktree が 2 つ以上あれば、それぞれの HEAD に札（アプリと同じ印。開いているものを先に）。
+        let worktrees: Vec<&Value> = refs["worktrees"].as_array().into_iter().flatten().collect();
+        if worktrees.len() > 1 {
+            let mut ordered = worktrees.clone();
+            ordered.sort_by_key(|w| (w["current"] != true, w["main"] != true));
+            for w in ordered {
+                let (Some(path), Some(head)) = (w["path"].as_str(), w["head"].as_str()) else {
+                    continue;
+                };
+                let Some(oid) = Oid::from_hex(head) else {
+                    continue;
+                };
+                let folder = path.rsplit(['/', '\\']).next().unwrap_or(path);
+                let mark = match (w["current"] == true, w["main"] == true) {
+                    (true, _) => '✎',
+                    (false, true) => '⌂',
+                    (false, false) => '⑂',
+                };
+                self.labels.entry(oid).or_default().push(Label {
+                    name: format!("{mark} {folder}"),
+                    kind: LabelKind::Worktree,
+                });
+            }
+        }
+        // worktree の札、今のブランチの順に先頭へ。
         for labels in self.labels.values_mut() {
-            labels.sort_by_key(|l| !matches!(l.kind, LabelKind::Head));
+            labels.sort_by_key(|l| match l.kind {
+                LabelKind::Worktree => 0,
+                LabelKind::Head => 1,
+                _ => 2,
+            });
         }
         self.selected = self.selected.min(self.last());
         self.clamp_top();
@@ -460,8 +490,12 @@ impl History {
         })
     }
 
-    pub fn loaded(&mut self, start: u32, reply: &Reply) {
+    pub fn loaded(&mut self, history: &Value, start: u32, reply: &Reply) {
         self.loading = false;
+        // 頼んだ後に History を読み直していたら、前の History の行なので捨てる（`request` が頼み直す）。
+        if *history != self.id {
+            return;
+        }
         self.window = Some(Window {
             start,
             nodes: reply.items("nodes"),
@@ -513,6 +547,11 @@ impl History {
 
     pub fn page(&self) -> i64 {
         i64::from(self.height.saturating_sub(1).max(1))
+    }
+
+    /// 選んでいる行が merge コミット。
+    pub fn selected_is_merge(&self) -> bool {
+        self.marked_at(self.selected).is_some_and(|m| m.merge)
     }
 
     /// 選んでいる行で、折りたたんで隠したコミットの数（折りたたんでいない、読んでいなければ 0）。
@@ -751,6 +790,7 @@ impl History {
                 break;
             }
             let style = match label.kind {
+                LabelKind::Worktree => Style::new().fg(Color::Indexed(78)),
                 LabelKind::Head => Style::new()
                     .fg(Color::Indexed(114))
                     .add_modifier(Modifier::BOLD),

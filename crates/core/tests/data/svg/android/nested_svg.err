@@ -1,0 +1,1 @@
+java.lang.IllegalStateException: Multiple <svg> tags are not supported.

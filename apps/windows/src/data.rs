@@ -113,6 +113,8 @@ pub struct DiffContent<'a> {
     pub key: u64,
     /// その時点のファイルとして見せる（行番号は 1 列、変えた行は青）。
     pub file_mode: bool,
+    /// すべてのファイルで開いた画像（差分の代わりに 1 枚の絵）と、その見せ方。
+    pub picture: Option<(&'a [u8], crate::imagediff::View)>,
 }
 
 impl DiffContent<'_> {
@@ -294,6 +296,7 @@ impl WorkingShown {
             image_views: None,
             key: 0,
             file_mode: false,
+            picture: None,
         }
     }
 }
@@ -305,6 +308,13 @@ pub struct FileShown {
     syntax: HashMap<u32, Vec<(u32, u32, u8)>>,
     highlights: HashMap<u32, Vec<(u32, u32)>>,
     tree: DiffTree,
+    /// 画像なら、その時点の中身（差分の代わりに 1 枚の絵で見せる）と、見せ方（倍率）。
+    pub picture: Option<Arc<Vec<u8>>>,
+    pub picture_view: crate::imagediff::View,
+    /// 絵を読んだものを取っておく鍵（開くたびに新しい）。
+    key: u64,
+    /// Markdown なら、整形して見せるブロック。
+    pub markdown: Option<Vec<amonhen_core::markdown::Block>>,
 }
 
 impl FileShown {
@@ -321,10 +331,45 @@ impl FileShown {
             widen: false,
             stacked: None,
             image_views: None,
-            key: 0,
+            key: self.key,
             file_mode: true,
+            picture: self
+                .picture
+                .as_deref()
+                .map(|p| (p.as_slice(), self.picture_view)),
         }
     }
+}
+
+/// コミット `commit` の時点の `path` の中身（このコミットで変えたなら `change` の blob、変えていなければ木から
+/// 引く。GTK4 版の `blob_id`・`tree_blob`）。
+fn blob_at(
+    repo: &Repository,
+    commit: &amonhen_model::Oid,
+    change: Option<&amonhen_model::FileChange>,
+    path: &str,
+) -> Option<Arc<Vec<u8>>> {
+    let oid = match change {
+        Some(c) if c.kind == amonhen_model::ChangeKind::Deleted => c.old_id,
+        Some(c) => c.new_id,
+        None => {
+            let (folder, name) = path.rsplit_once('/').unwrap_or(("", path));
+            let request = serde_json::json!({
+                "op": "treeEntries",
+                "oid": commit.to_string(),
+                "path": folder,
+            });
+            let response: serde_json::Value =
+                serde_json::from_str(&repo.run_json(&request.to_string())).ok()?;
+            response["info"]["entries"]
+                .as_array()?
+                .iter()
+                .find(|e| e["name"] == name && e["kind"] != "folder")
+                .and_then(|e| e["oid"].as_str())
+                .and_then(amonhen_model::Oid::from_hex)
+        }
+    }?;
+    repo.blob(&oid).ok()
 }
 
 /// ファイル全体の差分を、その時点のファイルとして見せる行の並び（GTK4 版の `rebuild_extra` の `file_mode`）:
@@ -486,6 +531,7 @@ impl CommitShown {
             image_views: Some(&self.image_views),
             key: self.id,
             file_mode: false,
+            picture: None,
         }
     }
 
@@ -1873,6 +1919,17 @@ impl Data {
         };
         let (tx, wake) = (self.tx.clone(), self.wake.clone());
         std::thread::spawn(move || {
+            // 画像は、その時点の中身を絵で見せる（読めなければ、ほかのファイルと同じく）。
+            let picture = crate::imagediff::is_picture(&path)
+                .then(|| blob_at(&repo, &commit, change.as_ref(), &path))
+                .flatten();
+            // Markdown は、整形して見せるブロックも読む（macOS 版の `MarkdownView`）。
+            let markdown = amonhen_core::markdown::is_markdown(&path)
+                .then(|| blob_at(&repo, &commit, change.as_ref(), &path))
+                .flatten()
+                .map(|bytes| {
+                    amonhen_core::markdown::parse(&String::from_utf8_lossy(bytes.as_slice()))
+                });
             let view = match &change {
                 Some(c) => repo.file_diff_with_context(c, u32::MAX, &PROFILE),
                 None => repo.tree_file(&commit, &path, &PROFILE),
@@ -1886,12 +1943,17 @@ impl Data {
             };
             let syntax = syntax_of(&view);
             let tree = file_lines(&view);
+            static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1 << 40);
             let _ = tx.send(Event::File(Box::new(FileShown {
                 path,
                 view,
                 syntax,
                 tree,
                 highlights: HashMap::new(),
+                picture,
+                picture_view: crate::imagediff::View::default(),
+                key: NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+                markdown,
             })));
             wake();
         });

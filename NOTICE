@@ -28,3 +28,15 @@ HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
 WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 OTHER DEALINGS IN THE SOFTWARE.
+
+Portions of this product are ported from other projects. Their license texts are
+in the headers of the ported source files.
+
+- crates/core/src/svg2vector: Svg2Vector from Android's sdk-common 32.1.0,
+  Copyright The Android Open Source Project, Apache License 2.0.
+- crates/core/src/vgc: vector_graphics_compiler 1.3.6 and vector_graphics_codec
+  1.2.0, Copyright 2013 The Flutter Authors, BSD 3-Clause License; path_parsing
+  1.1.0, Copyright (c) 2018 Dan Field, MIT License.
+- crates/pele: pele 1.13.0, Copyright (c) 2026 kepano, MIT License.
+- crates/core/src/mermaidtheme.rs: the colours of Mermaid's named themes, Copyright (c) 2014 - 2022 Knut
+  Sveidqvist, MIT License; khroma 2.1.0, Copyright (c) 2019-present Fabio Spampinato, Andrew Maney, MIT License.

@@ -1,0 +1,1 @@
+java.lang.NullPointerException: Cannot load from float array because "this.viewBox" is null
