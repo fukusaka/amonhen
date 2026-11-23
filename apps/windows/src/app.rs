@@ -609,6 +609,15 @@ struct Root {
     sidebar_hidden: bool,
     right_width: Option<f64>,
     details_height: f64,
+    /// コミット情報の欄の仕切りを手で動かした（その高さを保つ）。false なら中身に合わせる（macOS 版・GTK4 版の
+    /// `historyDetailsHeight`。表示の設定の「高さを自動で決める」で戻す）。
+    details_kept: bool,
+    /// コミット情報の表示項目（0 簡潔・1 標準・2 詳細。macOS 版の `commitHeaderStyle`）。
+    details_style: u8,
+    /// コミット情報の中身（高さを中身に合わせるとき、その高さを測る）。
+    details_content: ElementRef<Grid>,
+    /// 右の列（コミット情報の欄の高さの上限を、この高さの半分にする）。
+    right_column: ElementRef<Grid>,
     /// 境目のつまみ（サイドバー、右の列、詳細の下）。
     split_handles: [ElementRef<Grid>; 3],
     /// Repositories の見出しの列の境目のつまみ。
@@ -1484,6 +1493,9 @@ enum Message {
     ToggleAllFolders,
     /// 帯の表示の設定のメニュー。
     DiffViewOption(String),
+    /// コミット情報の中身の高さを測って、欄の高さを合わせる（中身に合わせるとき）。
+    MeasureDetails,
+    FitDetails(f64),
     /// 帯の変更／すべてのファイル。
     AllFiles(bool),
     /// すべてのファイルの一覧で選んだ行（フォルダなら開く・畳む、ファイルならその時点の中身を開く）。
@@ -1734,6 +1746,11 @@ impl Component for Root {
             sidebar_hidden: crate::prefs::bool(SIDEBAR_HIDDEN_KEY),
             right_width: crate::prefs::number(RIGHT_WIDTH_KEY),
             details_height: crate::prefs::number(DETAILS_HEIGHT_KEY).unwrap_or(240.0),
+            details_kept: crate::prefs::number(DETAILS_HEIGHT_KEY).is_some(),
+            details_style: crate::prefs::number(DETAILS_STYLE_KEY)
+                .map_or(1, |n| n.clamp(0.0, 2.0) as u8),
+            details_content: ElementRef::new(),
+            right_column: ElementRef::new(),
             split_handles: [ElementRef::new(), ElementRef::new(), ElementRef::new()],
             column_handles: std::array::from_fn(|_| ElementRef::new()),
             repositories_header: ElementRef::new(),
@@ -2637,7 +2654,10 @@ impl Root {
             Message::SplitTo(split, size) => match split {
                 Split::Sidebar => self.sidebar_width = size.clamp(160.0, 520.0),
                 Split::Right => self.right_width = Some(size.max(240.0)),
-                Split::Details => self.details_height = size.clamp(60.0, 800.0),
+                Split::Details => {
+                    self.details_height = size.clamp(60.0, 800.0);
+                    self.details_kept = true;
+                }
                 Split::Column(i) => crate::repositories::set_column_width(i, size),
             },
             Message::SplitDone if self.page == Page::Repositories => {
@@ -2646,8 +2666,12 @@ impl Root {
             Message::SplitDone => {
                 let _ =
                     crate::prefs::set_string(SIDEBAR_WIDTH_KEY, &self.sidebar_width.to_string());
-                let _ =
-                    crate::prefs::set_string(DETAILS_HEIGHT_KEY, &self.details_height.to_string());
+                if self.details_kept {
+                    let _ = crate::prefs::set_string(
+                        DETAILS_HEIGHT_KEY,
+                        &self.details_height.to_string(),
+                    );
+                }
                 if let Some(width) = self.right_width {
                     let _ = crate::prefs::set_string(RIGHT_WIDTH_KEY, &width.to_string());
                 }
@@ -2729,6 +2753,7 @@ impl Root {
                     self.browser = None;
                 }
                 self.info = Some((info, extras));
+                self.schedule_fit(context);
             }
             Message::AllFiles(on) => self.set_files_mode(on),
             Message::MarkdownText(text) => self.markdown_text = text,
@@ -3093,7 +3118,16 @@ impl Root {
                 self.last_search = (!query.is_empty()).then(|| query.clone());
                 self.with_history(|h| h.search(query, backwards));
             }
-            Message::ExpandDetails(on) => self.details_expanded = on,
+            Message::ExpandDetails(on) => {
+                self.details_expanded = on;
+                self.schedule_fit(context);
+            }
+            Message::MeasureDetails => self.measure_details(),
+            Message::FitDetails(height) => {
+                if !self.details_kept && (height - self.details_height).abs() > 1.0 {
+                    self.details_height = height;
+                }
+            }
             Message::DiffFilesToggled => {}
             Message::ToggleAllDiffs => self.with_history(|h| {
                 if h.session.data.toggle_all_files() {
@@ -3144,8 +3178,27 @@ impl Root {
                 }
             }
             Message::DiffViewOption(key) => {
-                if key == "expand-details" {
-                    self.details_expanded = !self.details_expanded;
+                match key.as_str() {
+                    "expand-details" => self.details_expanded = !self.details_expanded,
+                    // 高さを中身に合わせる（手で動かした高さを忘れる）。
+                    "fit-height" => {
+                        self.details_kept = false;
+                        let _ = crate::prefs::remove(DETAILS_HEIGHT_KEY);
+                        self.schedule_fit(context);
+                    }
+                    _ => {
+                        if let Some(style) = key
+                            .strip_prefix("style:")
+                            .and_then(|n| n.parse::<u8>().ok())
+                        {
+                            self.details_style = style.min(2);
+                            let _ = crate::prefs::set_string(
+                                DETAILS_STYLE_KEY,
+                                &self.details_style.to_string(),
+                            );
+                            self.schedule_fit(context);
+                        }
+                    }
                 }
             }
             Message::DiffFindOpen(open) => {
@@ -9194,6 +9247,7 @@ impl Root {
                     | Page::RepoSettings
             );
         let right = Grid::new()
+            .element_ref(&self.right_column)
             .opacity(if right_covered { 0.0 } else { 1.0 })
             .rows(if self.page == Page::WorkingCopy {
                 [GridLength::Auto, GridLength::Auto, GridLength::Star(1.0)]
@@ -17102,6 +17156,10 @@ impl Root {
                 .children((
                     ScrollViewer::new()
                         .content(details(
+                            &self.details_content,
+                            self.details_style,
+                            // merge の差分は最初の親との差分だと書き添える（stash の中身には付けない）。
+                            self.page != Page::Stashes,
                             self.info.as_ref().map(|(i, e)| (i, e.as_ref())),
                             // 差分の中を探しているときは、メッセージの中の一致にも色を付ける。
                             if self.diff_find_open {
@@ -17223,6 +17281,86 @@ impl Root {
                 &browser.expanded,
                 context.callback(Message::AllFilesRow),
             ))
+    }
+
+    /// 少し後に、コミット情報の中身の高さを測って欄の高さを合わせる（描き終えて大きさが決まってから）。
+    fn schedule_fit(&self, context: &ComponentContext<Self>) {
+        if self.details_kept || self.details_expanded {
+            return;
+        }
+        context.spawn_background(|_| {
+            std::thread::sleep(std::time::Duration::from_millis(60));
+            Message::MeasureDetails
+        });
+    }
+
+    /// コミット情報の中身の高さを測り、欄の高さを中身に合わせる（右の列の半分まで。macOS 版の
+    /// `fitHeaderToContent`）。
+    fn measure_details(&self) {
+        if self.details_kept || self.details_expanded {
+            return;
+        }
+        let column = self.right_column.clone();
+        let _ = self.details_content.request_native_element(move |result| {
+            let Ok(content) = result else { return };
+            let _ = column.request_native_element(move |result| {
+                let Ok(column) = result else { return };
+                let measure = || -> windows_core_reactor::Result<(f64, f64)> {
+                    let content: xaml::FrameworkElement = content.cast()?;
+                    let column: xaml::FrameworkElement = column.cast()?;
+                    Ok((content.ActualHeight()?, column.ActualHeight()?))
+                };
+                if let Ok((content, right)) = measure() {
+                    let cap = (right * 0.5).max(60.0);
+                    let target = (content + 4.0).clamp(60.0, cap);
+                    with_history(|h| {
+                        h.sender.send(Message::FitDetails(target));
+                    });
+                }
+            });
+        });
+    }
+
+    /// 帯の表示の設定のメニュー: 何に効くかで分ける（macOS 版の `fillViewOptions`）。「コミット情報」の下に
+    /// 「表示項目」（簡潔・標準・詳細）、「高さを自動で決める」、「コミット情報だけを表示」。見出しは押せない項目。
+    fn view_options_items(&self) -> Vec<MenuItem> {
+        let mark = |on: bool| if on { "✓ " } else { "" };
+        let mut items = vec![
+            MenuItem::disabled("h-details", tr!("Commit Details")),
+            MenuItem::disabled("h-shown", format!("    {}", tr!("Details Shown"))),
+        ];
+        for (i, title) in [tr!("Brief"), tr!("Standard"), tr!("Full")]
+            .into_iter()
+            .enumerate()
+        {
+            items.push(MenuItem::item(
+                format!("style:{i}"),
+                format!("        {}{title}", mark(self.details_style == i as u8)),
+            ));
+        }
+        items.push(
+            MenuItem::item(
+                "fit-height",
+                format!("    {}{}", mark(!self.details_kept), tr!("Fit Height Automatically")),
+            )
+            .with_tooltip(tr!(
+                "Size the commit details to each message. Dragging the divider keeps its position instead."
+            )),
+        );
+        items.push(
+            MenuItem::item(
+                "expand-details",
+                format!(
+                    "    {}{}",
+                    mark(self.details_expanded),
+                    tr!("Show Only Commit Details")
+                ),
+            )
+            .with_tooltip(tr!(
+                "Expand the commit details to fill the right column (click again to restore)."
+            )),
+        );
+        items
     }
 
     /// 右の列を「すべてのファイル」にする・変更に戻す。すべてのファイルは 1 つのコミットにだけある（stash・複数の
@@ -17439,15 +17577,11 @@ impl Root {
             .on_click(context.callback(|()| Message::DiffFindOpen(true)))
             .content(icon("\u{E721}"))
             .tooltip(tr!("Find in the diff (Ctrl+F)"));
-        let expanded = if self.details_expanded { "✓ " } else { "" };
         let options = DropDownButton::new()
             .content(icon("\u{E9E9}"))
             .tooltip(tr!("View Options"))
             .menu(Menu::new(
-                vec![MenuItem::item(
-                    "expand-details",
-                    format!("{expanded}{}", tr!("Expand Details")),
-                )],
+                self.view_options_items(),
                 context.callback(Message::DiffViewOption),
             ));
         Border::new()
@@ -18903,10 +19037,21 @@ fn message_text(text: &str, query: &str, size: f64, bold: bool, current: Option<
 }
 
 /// `current` は、メッセージの中の今の一致（件名から数えて何番目か。差分の中にあれば None）。
-fn details(info: Option<(&Value, Option<&Value>)>, query: &str, current: Option<usize>) -> View {
+/// コミット情報の欄（`style`: 0 簡潔・1 標準・2 詳細。macOS 版の `CommitHeaderRenderer`）。簡潔は作者・日時・ref・
+/// 親の 1 行と件名、標準は作者・コミット・親・署名・ref・タグとメッセージ、詳細は子・Rev・ブランチ・含むタグ・
+/// 前のタグ・送ったかも。`merge_note` なら、merge のコミットに「下の変更は最初の親との差分」と書き添える。
+fn details(
+    content: &ElementRef<Grid>,
+    style: u8,
+    merge_note: bool,
+    info: Option<(&Value, Option<&Value>)>,
+    query: &str,
+    current: Option<usize>,
+) -> View {
     let Some((info, extras)) = info else {
         return TextBlock::new().margin(12.0).into();
     };
+    let full = style >= 2;
     if !info["selection"].is_null() {
         return selection_details(&info["selection"]);
     }
@@ -18934,6 +19079,9 @@ fn details(info: Option<(&Value, Option<&Value>)>, query: &str, current: Option<
             None => text.into(),
         }
     };
+    if style == 0 {
+        return brief_details(content, info, query, current);
+    }
     let mut rows: Vec<View> = vec![with_avatar(
         "author",
         line("Author", person(info, "author")),
@@ -18983,7 +19131,7 @@ fn details(info: Option<(&Value, Option<&Value>)>, query: &str, current: Option<
             })
             .unwrap_or_default()
     };
-    if let Some(extras) = extras {
+    if let Some(extras) = extras.filter(|_| full) {
         let children = strings(&extras["children"]);
         if !children.is_empty() {
             let short: Vec<String> = children
@@ -19048,11 +19196,11 @@ fn details(info: Option<(&Value, Option<&Value>)>, query: &str, current: Option<
             rows.push(line("Tag", text).into());
         }
         let branches = strings(&extras["branches"]);
-        if !branches.is_empty() {
+        if !branches.is_empty() && full {
             rows.push(line("Branches", branches.join(", ")).into());
         }
         let count = extras["tagCount"].as_u64().unwrap_or(0) as usize;
-        if count > 0 {
+        if count > 0 && full {
             let tags = strings(&extras["tags"]);
             let mut text = tags.iter().take(12).cloned().collect::<Vec<_>>().join(", ");
             if count > 12 {
@@ -19060,10 +19208,10 @@ fn details(info: Option<(&Value, Option<&Value>)>, query: &str, current: Option<
             }
             rows.push(line("Tags", text).into());
         }
-        if let Some(previous) = extras["previousTag"].as_str() {
+        if let Some(previous) = extras["previousTag"].as_str().filter(|_| full) {
             rows.push(line("Previous Tag", previous.to_owned()).into());
         }
-        if !extras["originUrl"].is_null() {
+        if !extras["originUrl"].is_null() && full {
             let remote = strings(&extras["remoteBranches"]);
             let text = if remote.is_empty() {
                 "Not pushed (not on any remote branch)".to_owned()
@@ -19089,10 +19237,80 @@ fn details(info: Option<(&Value, Option<&Value>)>, query: &str, current: Option<
     if !body.is_empty() {
         rows.push(message_text(body, query, 13.0, false, body_current));
     }
-    StackPanel::new()
+    // merge のコミットでは、下の変更が最初の親との差分だと書き添える（macOS 版・GTK4 版と同じ）。
+    if merge_note && parents.len() > 1 {
+        rows.push(
+            TextBlock::new()
+                .text(tr!(
+                    "This is a merge: the changes below are against its first parent ({id}).",
+                    id = &parents[0][..parents[0].len().min(8)]
+                ))
+                .font_size(11.0)
+                .foreground(secondary)
+                .text_wrapping(TextWrapping::Wrap)
+                .margin(Thickness::new(0.0, 6.0, 0.0, 0.0))
+                .into(),
+        );
+    }
+    let panel = StackPanel::new()
         .spacing(4.0)
         .margin(Thickness::new(14.0, 10.0, 14.0, 10.0))
-        .children((View::keyed_fragment(rows.into_iter().enumerate()),))
+        .children((View::keyed_fragment(rows.into_iter().enumerate()),));
+    // 上に寄せる（欄の高さに伸びず、中身の高さを測れるように）。
+    Grid::new()
+        .element_ref(content)
+        .vertical_alignment(VerticalAlignment::Top)
+        .children((panel,))
+}
+
+/// 簡潔なコミット情報: 作者・日時・ref・親を 1 行に、その下に件名（macOS 版の `renderCompact`）。
+fn brief_details(
+    content: &ElementRef<Grid>,
+    info: &Value,
+    query: &str,
+    current: Option<usize>,
+) -> View {
+    let mut meta = vec![person(info, "author")];
+    let list = |key: &str| -> Vec<String> {
+        info[key]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|v| v.as_str().map(str::to_owned))
+            .collect()
+    };
+    let refs = list("refs");
+    if !refs.is_empty() {
+        meta.push(refs.join(", "));
+    }
+    let parents = list("parents");
+    if !parents.is_empty() {
+        let short: Vec<&str> = parents.iter().map(|p| &p[..p.len().min(12)]).collect();
+        let label = if parents.len() > 1 {
+            "Parents"
+        } else {
+            "Parent"
+        };
+        meta.push(format!("{label} {}", short.join(", ")));
+    }
+    let (subject, _) = message_parts(info);
+    let panel = StackPanel::new()
+        .spacing(4.0)
+        .margin(Thickness::new(14.0, 10.0, 14.0, 10.0))
+        .children((
+            TextBlock::new()
+                .text(meta.join("  ·  "))
+                .font_size(12.0)
+                .is_text_selection_enabled(true)
+                .text_wrapping(TextWrapping::Wrap)
+                .foreground(Brush::Solid(crate::palette::secondary())),
+            message_text(subject, query, 14.0, true, current),
+        ));
+    // 上に寄せる（欄の高さに伸びず、中身の高さを測れるように）。
+    Grid::new()
+        .element_ref(content)
+        .vertical_alignment(VerticalAlignment::Top)
+        .children((panel,))
 }
 
 /// 複数のコミットを選んだときの見出し（GTK4 版の `show_selection`）: 数、差分の取り方の説明、各コミットの 1 行。
@@ -20651,7 +20869,10 @@ const SIDEBAR_WIDTH_KEY: &str = "sidebarWidth";
 /// サイドバーを隠しているか（次に開いたときも同じにする）。
 const SIDEBAR_HIDDEN_KEY: &str = "sidebarHidden";
 const RIGHT_WIDTH_KEY: &str = "detailsColumnWidth";
-const DETAILS_HEIGHT_KEY: &str = "detailsHeight";
+/// 手で動かしたコミット情報の欄の高さ（なければ中身に合わせる。macOS 版・GTK4 版と同じ鍵）。
+const DETAILS_HEIGHT_KEY: &str = "historyDetailsHeight";
+/// コミット情報の表示項目（macOS 版・GTK4 版と同じ鍵）。
+const DETAILS_STYLE_KEY: &str = "commitHeaderStyle";
 /// Add SSH Connection で最後に使った接続先（GTK4 版と同じ鍵）。
 const LAST_SSH_HOST: &str = "lastRemoteHost";
 
