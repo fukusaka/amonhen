@@ -4,11 +4,22 @@
  * 拡張ホストに求める。間の仕切りはドラッグでき、メッセージの欄は中身に合わせ（列の半分まで）、⤢ で列いっぱいに広げる
  */
 import type { FileDiff } from '../diff/fileDiff.ts';
-import type { CommitDetails, DetailsExtras, DetailsLayout, DiffChoices, DiffWhitespace, PairMode, Person, SelectionView } from '../history/protocol.ts';
+import type {
+  CommitDetails,
+  DetailsExtras,
+  DetailsLayout,
+  DiffChoices,
+  DiffWhitespace,
+  ImageBlob,
+  PairMode,
+  Person,
+  SelectionView,
+} from '../history/protocol.ts';
 import { el, formatDate, getState, post, updateState } from './api.ts';
 import { type FileDir, makeFileTree } from '../workingCopy/fileList.ts';
 import { COLLAPSE_ABOVE, isGenerated, type LineCounts, lineCounts, renamedPath } from '../history/stackedFiles.ts';
 import { renderDiffBody } from './diffView.ts';
+import { isImagePath, renderImageDiff } from './imageDiff.ts';
 import { signatureMark } from './signature.ts';
 
 /** mailmap で置き換えた人。記録と違えば、記録されたものを下に小さく添える */
@@ -41,6 +52,8 @@ export interface DetailsPane {
    */
   show(details: CommitDetails, focus?: string, choices?: DiffChoices): void;
   showDiff(oid: string, path: string, diff: FileDiff): void;
+  /** 画像の前と後（画像の差分） */
+  showImage(oid: string, path: string, before?: ImageBlob, after?: ImageBlob, error?: string): void;
   /** いくつも選んだコミット。読んでいる間は `view` なし */
   showSelection(state: SelectionState): void;
   /** 詳細の残り（署名・子のコミット）。出しているコミットのものなら足す */
@@ -103,6 +116,8 @@ interface FileSection {
   chosen: boolean;
   /** 生成物か、変わった行が多い（すべて開くでも畳んだまま） */
   heavy: boolean;
+  /** 画像の比べる欄（求めたら置く） */
+  image?: HTMLElement;
   counts?: LineCounts;
 }
 
@@ -114,7 +129,8 @@ function countsLabel(counts: LineCounts): HTMLElement {
   return span;
 }
 
-export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane {
+/** `images` なら、画像の前と後を拡張ホストに求めて比べる（History だけ） */
+export function createDetailsPane(onParent?: (oid: string) => void, images = false): DetailsPane {
   const root = el('aside', 'details');
   /** メッセージ（件名・作者など・本文）の欄。いくつも選んだときは、その説明 */
   const head = el('div', 'details-head');
@@ -137,6 +153,8 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
   let foldedDirs = new Set<string>();
   /** 1 つのコミットなら、その ID（帯の Open All） */
   let openAll: string | undefined;
+  /** 画像を比べるか（1 つのコミットを出しているとき） */
+  let imagesFor = false;
   /** 無視する空白と前後の行を選べるか（エンジンだけ）。今の選び方 */
   let choices: DiffChoices | undefined;
   /** ファイルごとの前後の行（3 から広げたもの。all はファイル全体） */
@@ -428,6 +446,7 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
     foldedDirs = new Set();
     contexts = new Map();
     openAll = items.length > 0 ? allOid : undefined;
+    imagesFor = single && images;
     requestDiff = (path) => post({ type: 'commitDiff', oid, path });
     diffs = el('div', 'commit-diffs');
     for (const f of items) {
@@ -584,7 +603,18 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
       return;
     }
     const all = contexts.get(path) === 'all';
-    file.section.replaceChildren(file.head, ...renderDiffBody(diff, choices && !all ? { widen: () => widen(file) } : {}));
+    const body = renderDiffBody(diff, choices && !all ? { widen: () => widen(file) } : {});
+    // 画像は前と後を比べる（1 つのコミットだけ。SVG は文字の差分も下に出す）。画像は別に求める
+    if (imagesFor && isImagePath(path)) {
+      const slot = file.image ?? el('div', 'empty', 'Loading the image…');
+      if (!file.image) {
+        file.image = slot;
+        post({ type: 'commitImage', oid, path });
+      }
+      file.section.replaceChildren(file.head, slot, ...(diff.binary ? [] : body));
+    } else {
+      file.section.replaceChildren(file.head, ...body);
+    }
     const counts = lineCounts(diff);
     const had = file.counts;
     setCounts(file, counts);
@@ -594,6 +624,14 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
       if (!file.chosen) setCollapsed(file, true);
     }
     if (!had) renderBar();
+  }
+
+  function showImage(oid: string, path: string, before?: ImageBlob, after?: ImageBlob, error?: string): void {
+    const file = sections.get(path);
+    if (oid !== shownOid || !file?.image) return;
+    const panel = error ? el('div', 'empty', error) : renderImageDiff(before, after);
+    file.image.replaceWith(panel);
+    file.image = panel;
   }
 
   function showExtras(extras: DetailsExtras): void {
@@ -631,6 +669,7 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
     },
     show,
     showDiff,
+    showImage,
     showExtras,
     clear,
     showSelection,

@@ -2511,3 +2511,100 @@ body.vscode-high-contrast [class^='syn-'],
 body.vscode-high-contrast-light [class^='syn-'] {
   color: inherit;
 }
+
+/* 画像の差分（History の詳細）: 並べる・スワイプ・オニオンスキン・違うピクセル */
+.image-diff {
+  padding: 8px 12px;
+}
+
+.image-modes {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.image-modes .bar-button {
+  padding: 1px 8px;
+  color: var(--vscode-foreground);
+  background: transparent;
+}
+
+.image-modes .bar-button:hover {
+  background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
+}
+
+.image-modes .bar-button.on {
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+}
+
+.image-side {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.image-figure {
+  margin: 0;
+  min-width: 0;
+  flex: 1 1 0;
+}
+
+.image-figure img,
+.image-overlay img,
+.image-overlay canvas {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+/* 透けたところが分かる市松模様 */
+.checker {
+  background-color: #fff;
+  background-image:
+    linear-gradient(45deg, #ccc 25%, transparent 25%),
+    linear-gradient(-45deg, #ccc 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #ccc 75%),
+    linear-gradient(-45deg, transparent 75%, #ccc 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+  border: 1px solid var(--vscode-panel-border);
+  width: fit-content;
+  max-width: 100%;
+}
+
+.image-overlay {
+  position: relative;
+  width: 100%;
+}
+
+.image-overlay img,
+.image-overlay canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  object-fit: contain;
+  object-position: left top;
+}
+
+.image-slider {
+  display: block;
+  width: 100%;
+  max-width: 480px;
+  margin: 8px 0 4px;
+}
+
+.image-captions {
+  display: flex;
+  justify-content: space-between;
+  max-width: 480px;
+}
+
+.image-caption {
+  margin-top: 4px;
+  font-size: 0.9em;
+  color: var(--vscode-descriptionForeground);
+}

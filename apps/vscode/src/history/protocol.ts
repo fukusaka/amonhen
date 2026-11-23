@@ -91,6 +91,12 @@ export interface DiffChoices {
   whitespace: DiffWhitespace;
 }
 
+/** 画像の差分の片側（data URL と、元の大きさ） */
+export interface ImageBlob {
+  url: string;
+  bytes: number;
+}
+
 /** いくつも選んだコミットの見せ方（`commitDiff` の `history`・`rows`）。差分はファイルごとに求める */
 export interface SelectionView {
   /** 差分を求めるときの `oid` の代わり */
@@ -147,6 +153,8 @@ export type HistoryHostMessage =
   | { type: 'details'; details: CommitDetails; choices?: DiffChoices }
   /** いくつも選んだコミットの差分。`token` は頼んだときのもの。読めなければ `error` */
   | { type: 'selection'; token: number; view?: SelectionView; error?: string; choices?: DiffChoices }
+  /** コミットの中の画像の前と後（足した・消したものは片方。読めなければ `error`） */
+  | { type: 'commitImage'; oid: string; path: string; before?: ImageBlob; after?: ImageBlob; error?: string }
   /** ファイルの右クリックの Show Whole File（その詳細を出している欄が、ファイル全体を頼む） */
   | { type: 'wholeFile'; oid: string; path: string }
   /** コミットの中の 1 ファイルの差分（最初の親との差分） */
@@ -200,6 +208,8 @@ export type HistoryWebviewMessage =
   | { type: 'openFile'; oid: string; path: string }
   /** コミットの中の 1 ファイルの差分を求める（詳細に並べる） */
   | { type: 'commitDiff'; oid: string; path: string }
+  /** コミットの中の画像の前と後を求める（画像の差分） */
+  | { type: 'commitImage'; oid: string; path: string }
   /** そのファイルの差分を、前後 `context` 行（all ならファイル全体）で求め直す（エンジンだけ） */
   | { type: 'fileContext'; oid: string; path: string; context: number | 'all' }
   /** 無視する空白を選び直す（出している詳細を読み直す。覚えない） */

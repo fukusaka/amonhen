@@ -17,6 +17,7 @@ import type {
   DiffChoices,
   DiffWhitespace,
   HistoryHostMessage,
+  ImageBlob,
   HistoryWebviewMessage,
   PairMode,
   Person,
@@ -124,6 +125,16 @@ async function confirmContentsSearch(count: number, more: boolean): Promise<bool
  * メインビューの History の拡張ホスト側。
  * log は分割して読み込み、グラフのレーンはこちらで計算して、描画に必要な最小限の配列だけ送る。
  */
+/** 詳細で比べる画像の、片側の大きさの上限 */
+const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
+
+/** 画像の拡張子の MIME の型 */
+function imageType(path: string): string {
+  const ext = path.slice(path.lastIndexOf('.') + 1).toLowerCase();
+  const types: Record<string, string> = { jpg: 'image/jpeg', jpeg: 'image/jpeg', svg: 'image/svg+xml', ico: 'image/x-icon' };
+  return types[ext] ?? `image/${ext}`;
+}
+
 export class HistoryController implements vscode.Disposable {
   private static readonly edits = new vscode.EventEmitter<
     Extract<HistoryWebviewMessage, { type: 'saveMessage' | 'move' | 'editPreview' | 'editApply' }>
@@ -326,6 +337,9 @@ export class HistoryController implements vscode.Disposable {
         break;
       case 'commitDiff':
         await this.sendCommitDiff(message.oid, message.path).catch(showError);
+        break;
+      case 'commitImage':
+        await this.sendCommitImage(message.oid, message.path).catch(showError);
         break;
       case 'fileContext':
         await this.sendFileContext(message.oid, message.path, message.context).catch(showError);
@@ -682,6 +696,31 @@ export class HistoryController implements vscode.Disposable {
       }
     } catch {
       // 色なしのまま
+    }
+  }
+
+  /**
+   * コミットの中の画像の前（最初の親）と後を、data URL で送る。git から読むので、エンジンがなくても使える。大き
+   * すぎるものは送らない（Remote-SSH では postMessage が SSH を通る）
+   */
+  private async sendCommitImage(oid: string, path: string): Promise<void> {
+    const repo = this.repo;
+    const details = this.details.get(oid);
+    const file = details?.files.find((f) => f.path === path);
+    if (!repo || !details || !file) return;
+    const parent = details.parents[0];
+    const read = async (rev: string): Promise<ImageBlob | undefined> => {
+      const data = (await repo.backend.object(rev))?.data;
+      if (!data) return undefined;
+      if (data.length > MAX_IMAGE_BYTES) throw new Error(`The image is larger than ${MAX_IMAGE_BYTES / 1024 / 1024} MB`);
+      return { url: `data:${imageType(path)};base64,${data.toString('base64')}`, bytes: data.length };
+    };
+    try {
+      const before = file.status === 'A' || !parent ? undefined : await read(`${parent}:${file.origPath ?? file.path}`);
+      const after = file.status === 'D' ? undefined : await read(`${oid}:${file.path}`);
+      this.post({ type: 'commitImage', oid, path, ...(before ? { before } : {}), ...(after ? { after } : {}) });
+    } catch (err) {
+      this.post({ type: 'commitImage', oid, path, error: errorMessage(err) });
     }
   }
 
