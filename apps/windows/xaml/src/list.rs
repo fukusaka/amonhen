@@ -128,16 +128,20 @@ pub fn drag_some_tags(
     .ok()
 }
 
-/// 落とす先（左の一覧を包む部品・落とせる行の Tag・落としたときに呼ぶもの）。行は画面に出てから作られるので、
-/// 受け口は行を引き始めたときに付ける（`attach_drop`）。
-type DropTarget = (
-    IInspectable,
-    Vec<String>,
-    std::rc::Rc<dyn Fn(String, Vec<String>)>,
-);
+/// 落とす先（行を探す部品・落とせる行の Tag・受ける引いた行の Tag の前置き（None ならどれも）・落としたときに
+/// 呼ぶもの（落とした行の Tag、引いた行の Tag、行の右半分に落としたか））。行は画面に出てから作られるので、受け口は
+/// 行を引き始めたときに付ける（`attach_drop`）。
+struct DropTarget {
+    element: IInspectable,
+    targets: Vec<String>,
+    prefix: Option<&'static str>,
+    dropped: std::rc::Rc<dyn Fn(String, Vec<String>, bool)>,
+}
 
 thread_local! {
-    static DROP_TARGET: std::cell::RefCell<Option<DropTarget>> = const { std::cell::RefCell::new(None) };
+    /// 落とす先（名前ごと。左の一覧の `rows`、ツールバーの並びの `toolbar` など）。
+    static DROP_TARGETS: std::cell::RefCell<Vec<(&'static str, DropTarget)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
     /// 今付けている行の受け口（引き始めるたびに付け直す）。
     static DROP_REVOKERS: std::cell::RefCell<Vec<EventRevoker>> = const { std::cell::RefCell::new(Vec::new()) };
 }
@@ -149,8 +153,52 @@ pub fn drop_on_rows(
     targets: Vec<String>,
     dropped: impl Fn(String, Vec<String>) + 'static,
 ) {
-    DROP_TARGET
-        .with(|t| *t.borrow_mut() = Some((element.clone(), targets, std::rc::Rc::new(dropped))));
+    set_drop_target("rows", element, targets, None, move |tag, tags, _| {
+        dropped(tag, tags)
+    });
+}
+
+/// 落とす先 `name` を置き換える（`drop_on_rows` の一般の形）。`prefix` があれば、引いた行の Tag がどれもそれで
+/// 始まるときだけ受ける（受けないドラッグは行の一覧に任せる。一覧の中の並べ替えなど）。落としたら
+/// `dropped(行の Tag、前置きを外した引いた行の Tag、行の右半分か)`。
+pub fn set_drop_target(
+    name: &'static str,
+    element: &IInspectable,
+    targets: Vec<String>,
+    prefix: Option<&'static str>,
+    dropped: impl Fn(String, Vec<String>, bool) + 'static,
+) {
+    let target = DropTarget {
+        element: element.clone(),
+        targets,
+        prefix,
+        dropped: std::rc::Rc::new(dropped),
+    };
+    DROP_TARGETS.with(|t| {
+        let mut t = t.borrow_mut();
+        t.retain(|(n, _)| *n != name);
+        t.push((name, target));
+    });
+}
+
+/// 落とす先 `name` を外す。
+pub fn clear_drop_target(name: &'static str) {
+    DROP_TARGETS.with(|t| t.borrow_mut().retain(|(n, _)| *n != name));
+}
+
+/// 引いている行の Tag が `prefix` で受けられるものなら、前置きを外したもの。
+fn accepted(prefix: Option<&str>) -> Option<Vec<String>> {
+    let dragged = DRAGGED.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    if dragged.is_empty() {
+        return None;
+    }
+    match prefix {
+        None => Some(dragged),
+        Some(p) => dragged
+            .iter()
+            .map(|t| t.strip_prefix(p).map(str::to_owned))
+            .collect(),
+    }
 }
 
 /// 落とす先の行に受け口を付ける（行を引き始めたとき）。受け口は行そのものに付けて処理済みにする（一覧に付けると、
@@ -179,41 +227,61 @@ fn attach_drop() {
             }
         }
     }
-    let Some((element, targets, _)) = DROP_TARGET.with(|t| t.borrow().clone()) else {
-        return;
-    };
-    let mut found = Vec::new();
-    if let Ok(node) = element.cast::<DependencyObject>() {
-        rows(&node, 20, &targets, &mut found);
-    }
+    let targets: Vec<(
+        &'static str,
+        IInspectable,
+        Vec<String>,
+        Option<&'static str>,
+    )> = DROP_TARGETS.with(|t| {
+        t.borrow()
+            .iter()
+            .map(|(n, t)| (*n, t.element.clone(), t.targets.clone(), t.prefix))
+            .collect()
+    });
     let mut revokers = Vec::new();
-    for (ui, tag) in found {
-        let _ = ui.SetAllowDrop(true);
-        let over = ui.DragOver(move |_, args: Ref<DragEventArgs>| {
-            let Some(args) = args.as_ref() else { return };
-            let dragging = !DRAGGED.lock().unwrap_or_else(|e| e.into_inner()).is_empty();
-            let _ = args.SetAcceptedOperation(if dragging {
-                DataPackageOperation::Copy
-            } else {
-                DataPackageOperation::None
+    for (name, element, tags, prefix) in targets {
+        let mut found = Vec::new();
+        if let Ok(node) = element.cast::<DependencyObject>() {
+            rows(&node, 20, &tags, &mut found);
+        }
+        for (ui, tag) in found {
+            let _ = ui.SetAllowDrop(true);
+            let over = ui.DragOver(move |_, args: Ref<DragEventArgs>| {
+                let Some(args) = args.as_ref() else { return };
+                // 受けないドラッグは、行の一覧に任せる（処理済みにしない）。
+                if accepted(prefix).is_none() {
+                    return;
+                }
+                let _ = args.SetAcceptedOperation(DataPackageOperation::Copy);
+                let _ = args.SetHandled(true);
             });
-            let _ = args.SetHandled(true);
-        });
-        let drop = ui.Drop(move |_, args: Ref<DragEventArgs>| {
-            let Some(args) = args.as_ref() else { return };
-            let _ = args.SetHandled(true);
-            let tags = std::mem::take(&mut *DRAGGED.lock().unwrap_or_else(|e| e.into_inner()));
-            if !tags.is_empty() {
+            let row = ui.clone();
+            let drop = ui.Drop(move |_, args: Ref<DragEventArgs>| {
+                let Some(args) = args.as_ref() else { return };
+                let Some(tags) = accepted(prefix) else { return };
+                let _ = args.SetHandled(true);
+                DRAGGED.lock().unwrap_or_else(|e| e.into_inner()).clear();
+                // 行の右半分に落としたか（ツールバーの並びは、そのタイルの後ろに入れる）。
+                let after = (|| {
+                    let x = args.GetPosition(&row).ok()?.X;
+                    let width = row.cast::<FrameworkElement>().ok()?.ActualWidth().ok()?;
+                    Some(f64::from(x) > width / 2.0)
+                })()
+                .unwrap_or(false);
                 let tag = tag.clone();
                 // 呼ぶものは UI のスレッドのもの（受け口も UI のスレッドで呼ばれる）。
-                DROP_TARGET.with(|t| {
-                    if let Some((_, _, dropped)) = t.borrow().as_ref() {
-                        dropped(tag, tags);
-                    }
+                let dropped = DROP_TARGETS.with(|t| {
+                    t.borrow()
+                        .iter()
+                        .find(|(n, _)| *n == name)
+                        .map(|(_, t)| t.dropped.clone())
                 });
-            }
-        });
-        revokers.extend([over, drop].into_iter().filter_map(Result::ok));
+                if let Some(dropped) = dropped {
+                    dropped(tag, tags, after);
+                }
+            });
+            revokers.extend([over, drop].into_iter().filter_map(Result::ok));
+        }
     }
     DROP_REVOKERS.with(|r| *r.borrow_mut() = revokers);
 }
