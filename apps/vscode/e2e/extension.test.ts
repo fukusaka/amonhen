@@ -2402,6 +2402,20 @@ async function historySelectionFlow(): Promise<void> {
     assert.deepEqual(await layout(true), { tree: true });
     assert.deepEqual(await layout(false), { tree: false });
 
+    // エンジンなら無視する空白を選べる。選び直すと詳細を読み直し、前後の行はファイルごとに広げられる
+    assert.deepEqual(one.choices, { whitespace: 'exact' });
+    const reread = async (whitespace: 'exact' | 'all') => {
+      const at = posted.length;
+      await panel.history.handle({ type: 'whitespace', whitespace });
+      return waitPosted('details', at, (m) => m.details.oid === s4oid);
+    };
+    assert.deepEqual((await reread('all')).choices, { whitespace: 'all' });
+    assert.deepEqual((await reread('exact')).choices, { whitespace: 'exact' });
+    const widened = posted.length;
+    await panel.history.handle({ type: 'fileContext', oid: s4oid, path: 's4.txt', context: 'all' });
+    const whole = await waitPosted('commitDiff', widened, (m) => m.oid === s4oid && m.path === 's4.txt');
+    assert.ok(whole.diff.hunks.some((h) => h.lines.some((l) => l.kind === '+' && l.text === 's4')), JSON.stringify(whole.diff));
+
     // 離れた 2 つは取り方を選べる。逆にすると足した行が消した行になる
     const pair = await select(2, [s4, s1]);
     assert.equal(pair.kind, 'pair');

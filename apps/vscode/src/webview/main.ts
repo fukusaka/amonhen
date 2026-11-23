@@ -7,7 +7,7 @@ import type { HostMessage, ViewName } from '../view/protocol.ts';
 import { el, getState, post, updateState, type View } from './api.ts';
 import { createBlameView } from './blame.ts';
 import { createDaemonView } from './daemon.ts';
-import { setDetailsLayout } from './details.ts';
+import { setDetailsLayout, showWholeFile } from './details.ts';
 import { createFileHistoryView } from './fileHistory.ts';
 import { createHistoryView } from './history.ts';
 import { createRangeDiffView } from './rangeDiff.ts';
@@ -60,6 +60,10 @@ window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
   }
   if (message.type === 'detailsLayout') {
     setDetailsLayout(message.layout);
+    return;
+  }
+  if (message.type === 'wholeFile') {
+    showWholeFile(message.oid, message.path);
     return;
   }
   for (const v of Object.values(views)) {
