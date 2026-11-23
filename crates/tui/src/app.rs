@@ -1380,7 +1380,10 @@ impl App {
                             self.open();
                         }
                     }
-                    Loaded::Rows { start, reply } => self.history.loaded(start, &reply),
+                    Loaded::Rows { start, reply } => {
+                        self.history.loaded(start, &reply);
+                        self.verify_signatures();
+                    }
                     Loaded::Search { query, result } => {
                         // 取り消した検索（語を替えた・やめた）の答えは捨てる。
                         if let Some((current, running)) = &mut self.search
@@ -2727,7 +2730,26 @@ impl App {
     }
 
     /// 命令が済んだ。だめなら理由を出し、どちらでも状態・ref・History を読み直す。
+    /// History の読んである行の、署名を検証する（答えが来たら、残りを続けて頼む）。
+    fn verify_signatures(&mut self) {
+        if let Some(oids) = self.history.signatures_to_verify() {
+            self.send(Request::Run {
+                name: "commitSignatures",
+                command: json!({"op": "verifySignatures", "oids": oids}),
+            });
+        }
+    }
+
     fn ran(&mut self, name: &'static str, result: std::result::Result<Value, String>) {
+        // 裏で読む署名は、動いている操作の表示を消さない。
+        if name == "commitSignatures" {
+            let reply = result.ok();
+            self.history
+                .set_signatures(reply.as_ref().map(|r| &r["info"]["checks"]));
+            self.damage |= Damage::MAIN;
+            self.verify_signatures();
+            return;
+        }
         self.running = None;
         let reply = match result {
             Ok(reply) => reply,

@@ -1056,6 +1056,32 @@ fn details_show_the_signature_check() {
         verified.contains("Signature  Verified, ann@example.com"),
         "{verified}"
     );
+    // History の行にも、署名の印（アプリの行の印）。署名のないコミットには付けない。
+    git(
+        dir.path(),
+        BASE,
+        &[
+            "commit",
+            "-q",
+            "--no-gpg-sign",
+            "--allow-empty",
+            "-m",
+            "Plain",
+        ],
+    );
+    let rows = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "").unwrap();
+    println!("{rows}");
+    let history: Vec<String> = rows.lines().skip(1).filter_map(|l| column(l, 1)).collect();
+    assert!(
+        history.iter().any(|l| l.contains("✓ Signed")),
+        "{history:?}"
+    );
+    assert!(
+        history
+            .iter()
+            .any(|l| l.contains("Plain") && !l.contains('✓')),
+        "{history:?}"
+    );
     // 署名したタグには、サイドバーで印（正しい署名は ✓）。署名のないタグには付けない。
     git(dir.path(), BASE, &["tag", "-s", "-m", "Release", "v1"]);
     git(dir.path(), BASE, &["tag", "plain"]);
