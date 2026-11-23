@@ -183,7 +183,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Undo the last operation (asks, names what it puts back) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: The title's Undo and the Command Palette ask; a notification's Undo, pressed right after the operation, doesn't.<br>CLI: `undo` (`--peek` to see it first).<br>TUI: `u`. |
 | History search with scopes (subject, author, ID, path, contents) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: With the engine.<br>CLI: `log <query>`.<br>TUI: `/` in History. |
 | Ahead/behind badges | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: On the sidebar's branch rows.<br>CLI: In `status`.<br>TUI: On the sidebar's branches and the top line. |
-| Toolbar customization | ✓ | ✓ | △ | n/a | n/a | n/a | GTK4: The palette works like NSToolbar's and slides down under the header bar over the content like its sheet, without changing the window's size, with no Show (icon/text) choice since the header bar shows icons; the Repository menu and the main menu take the menu bar's place and stay put.<br>Windows: View > Customize Toolbar… with a check per button, ↑ ↓ and spaces (no dragging, no flexible space)<br>TUI: No toolbar; operations are keys. |
+| Toolbar customization | ✓ | ✓ | △ | n/a | n/a | n/a | GTK4: The palette works like NSToolbar's and slides down under the header bar over the content like its sheet, without changing the window's size, with no Show (icon/text) choice since the header bar shows icons; the Repository menu and the main menu take the menu bar's place and stay put.<br>Windows: The palette slides down over the content like NSToolbar's sheet: drag items, spaces, flexible spaces or the default set onto the toolbar, drag along the toolbar to reorder, and drag back onto the palette to remove; no Show (icon/text) choice, and a tile dropped elsewhere stays.<br>TUI: No toolbar; operations are keys. |
 | Network git stopped after 120 s of silence | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: The engine's, and the extension's own fetch and push without it.<br>Windows: The engine's.<br>TUI: The engine's. |
 
 ## 5a. Stashes
@@ -340,7 +340,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 
 | Feature | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
-| Operations (git commands, output, progress, cancel) | ✓ | ✓ | △ | △ | △ | — | VSCode: An Output channel log only.<br>CLI: Via `amonhen run` (`remoteActivity`, `cancelActivity`).<br>Windows: The output is shown under its row, not in a detail pane<br>TUI: The top line names the running operation; no git commands, output or cancel. |
+| Operations (git commands, output, progress, cancel) | ✓ | ✓ | ✓ | △ | △ | — | VSCode: An Output channel log only.<br>CLI: Via `amonhen run` (`remoteActivity`, `cancelActivity`).<br>TUI: The top line names the running operation; no git commands, output or cancel. |
 | History (operation log, Undo to Here) | ✓ | ✓ | ✓ | △ | △ | ✓ | VSCode: Undo History… lists the Undo log and undoes down to the chosen one; no other activity.<br>CLI: `undo --list` shows the log.<br>TUI: Activity in the command list; Enter undoes back to the selected one. |
 | Performance | ✓ | ✓ | ✓ | n/a | n/a | — | VSCode: VSCode's Output channel (the Amon Hen log).<br>Windows: Diff loads and History and status reloads. |
 | History cache writes (size, count, bytes, last write per repository) | ✓ | ✓ | ✓ | — | △ | — | CLI: Via `amonhen run` (`historyCache`). |
@@ -363,7 +363,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Feature | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
 | Operation in progress with Continue / Skip / Abort | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: A sidebar row.<br>TUI: On the bottom line, with `C` `K` `A`. |
-| Failure with its cause and Details | ✓ | ✓ | ✓ | ✓ | n/a | △ | VSCode: The notification gives the cause (git's fatal: and error: lines); Details shows the whole output and the git command in an output panel.<br>TUI: The cause on the bottom line; no Details. |
+| Failure with its cause and Details | ✓ | ✓ | ✓ | ✓ | n/a | △ | VSCode: The notification gives the cause (git's fatal: and error: lines); Details shows the whole output and the git command in an output panel.<br>TUI: The cause on the bottom line, and `!` shows all of git's answer when it has more lines (no git command). |
 | Lost connection with Reconnect | ✓ | ✓ | ✓ | n/a | n/a | — |  |
 | What a finished operation did, for a few seconds | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: A status bar message or a notification with Undo.<br>TUI: On the bottom line. |
 
