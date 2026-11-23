@@ -1,0 +1,104 @@
+//! pele 1.13.0 が描いた図（`crates/core/tests/data/pele`）と、バイト単位で同じに描けるか。描ける種類（登録した
+//! 種類）の図と、種類の分からない図だけを確かめる。まだ移していない種類の図は飛ばす。
+//!
+//! `PELE_ONLY=<名前の頭>`（例: `pie-`）で確かめる図を絞れる。
+
+use std::fs;
+use std::path::Path;
+
+use amonhen_pele::diagrams::registry::registered;
+
+/// 2000-01-01T00:00:00Z。
+const NOW: f64 = 946_684_800_000.0;
+
+fn data() -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/data/pele")
+}
+
+/// 最初に違う所の前後。
+fn first_difference(want: &str, got: &str) -> String {
+    let (w, g) = (want.as_bytes(), got.as_bytes());
+    let at = w
+        .iter()
+        .zip(g)
+        .position(|(a, b)| a != b)
+        .unwrap_or(w.len().min(g.len()));
+    let around = |s: &str| {
+        let mut a = at.saturating_sub(80);
+        while !s.is_char_boundary(a) {
+            a -= 1;
+        }
+        let mut b = (at + 80).min(s.len());
+        while !s.is_char_boundary(b) {
+            b += 1;
+        }
+        s[a..b].to_string()
+    };
+    format!(
+        "at byte {at}:\n  want: {}\n  got:  {}",
+        around(want),
+        around(got)
+    )
+}
+
+#[test]
+fn docs_match_pele() {
+    let dir = data();
+    let mut names: Vec<_> = fs::read_dir(&dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "mmd"))
+        .collect();
+    names.sort();
+    assert!(!names.is_empty());
+    let only = std::env::var("PELE_ONLY").unwrap_or_default();
+    let mut failed = Vec::new();
+    let mut checked = 0;
+    // gantt は「今」に今日の線を引き、時刻だけの日付を今日に置く。決まった時刻にしないと、図の範囲の時刻に
+    // 走ったときだけ違う（scripts/pele-oracles も同じ時刻で描く）。
+    let options = amonhen_pele::RenderOptions {
+        now: Some(NOW),
+        ..Default::default()
+    };
+    for mmd in &names {
+        let input = fs::read_to_string(mmd).unwrap();
+        let file = mmd.file_name().unwrap().to_string_lossy();
+        if !file.starts_with(&only) {
+            continue;
+        }
+        // pele の 34 種類はすべて移したので、知らない種類の例はない（あれば失敗）
+        if let Some(t) = amonhen_pele::detect_type(&input).filter(|t| !registered(t)) {
+            failed.push(format!("{file}: type {t} isn't ported"));
+            continue;
+        }
+        checked += 1;
+        let svg = mmd.with_extension("svg");
+        let err = mmd.with_extension("err");
+        let name = mmd.file_name().unwrap().to_string_lossy().to_string();
+        match amonhen_pele::render_with(&input, &options) {
+            Ok(r) if svg.exists() => {
+                let want = fs::read_to_string(&svg).unwrap();
+                if r.svg != want {
+                    failed.push(format!("{name}: {}", first_difference(&want, &r.svg)));
+                }
+            }
+            Ok(_) => failed.push(format!("{name}: rendered, but pele reports an error")),
+            Err(e) if err.exists() => {
+                let want = fs::read_to_string(&err).unwrap();
+                if e.message != want {
+                    failed.push(format!("{name}: error {:?}, want {:?}", e.message, want));
+                }
+            }
+            Err(e) => failed.push(format!("{name}: error {}", e.message)),
+        }
+    }
+    assert!(checked > 0, "no example of a registered type");
+    assert!(
+        failed.is_empty(),
+        "{}/{} differ:\n{}",
+        failed.len(),
+        checked,
+        failed.join("\n")
+    );
+}

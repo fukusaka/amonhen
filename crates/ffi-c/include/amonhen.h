@@ -551,6 +551,53 @@ char *amonhen_markdown_parse(const uint8_t *text,
                              const char *github);
 
 /**
+ * Markdown の図の SVG（`MarkdownBlock` の `diagram` の `svg`）に配色を当て、CoreSVG で描ける SVG にする。`scheme` は
+ * 設定の「図の配色」の鍵（`syntax`・`pele`・`mermaid`・`mermaid-forest`・`mermaid-import:名前` など）、`dark` は
+ * 暗い表示か、`theme` は構文の色のテーマの JSON `{"text": "#rrggbb", "background": "#rrggbb", "kinds": {…}}`
+ * （`syntax` のときだけ使う）、`own` は図の中で指定したテーマ（`diagram` の `config` の JSON。設定より先）、
+ * `imported` は `scheme` が読み込んだテーマのときの中身（mermaid-cli の設定の JSON）。`theme`・`own`・
+ * `imported` は NULL でもよい。読めなければ NULL。`amonhen_string_free` で解放する。
+ *
+ * # Safety
+ * `svg`・`scheme` は NUL 終わりの文字列であること、ほかは NULL か NUL 終わりの文字列であること。
+ */
+char *amonhen_diagram_colorize(const char *svg,
+                               const char *scheme,
+                               bool dark,
+                               const char *theme,
+                               const char *own,
+                               const char *imported);
+
+/**
+ * 設定の見本の図の SVG（色は `amonhen_diagram_colorize` で当てる）。描けなければ NULL。`amonhen_string_free` で
+ * 解放する。
+ */
+char *amonhen_diagram_sample(void);
+
+/**
+ * mermaid-cli の設定ファイル（`{"theme": …, "themeVariables": {…}}`）を読み、アプリが覚える形の JSON にする
+ * （`amonhen_diagram_colorize` の `imported` に渡す）。読めなければエラーを置いて NULL。`amonhen_string_free` で
+ * 解放する。
+ *
+ * # Safety
+ * `text` は NUL 終わりの文字列であること。
+ */
+char *amonhen_mermaid_theme_parse(const char *text);
+
+/**
+ * `amonhen_markdown_parse` と同じで、図（gantt）の日付を FE の時間帯で数える。`offset` が NULL なら UTC。
+ * `context` は `offset` に渡す（この関数から戻るまで使う。どのスレッドから呼んでもよいものにする）。
+ *
+ * # Safety
+ * `amonhen_markdown_parse` と同じ。`offset` は、`context` を渡してどのスレッドから呼んでもよいこと。
+ */
+char *amonhen_markdown_parse_in_zone(const uint8_t *text,
+                                     uintptr_t len,
+                                     const char *github,
+                                     const void *context,
+                                     double (*offset)(const void *context, double utc_ms));
+
+/**
  * この機械の git の版（`2.39.5`）。読めなければ NULL。`amonhen_string_free` で解放する。git を起動する
  * ことがあるので（初めの 1 回だけ）、裏のスレッドで呼ぶ。
  */
@@ -1006,16 +1053,20 @@ uint8_t *amonhen_change_blob(const AmonhenRepo *repo_ptr,
                              uintptr_t *len);
 
 /**
- * SVG（`data` の `len` バイト）を、モバイル向けの描画部品 `target`（0 Android・1 iOS・2 flutter_svg・
- * 3 react-native-svg）が崩すように書き換えた SVG（近似）。長さを `out_len` に書く（`amonhen_blob_free` で解放する）。
+ * SVG（`data` の `len` バイト）が、モバイル向けの描画部品 `target`（0 Android・1 iOS・2 flutter_svg・
+ * 3 react-native-svg）でどう見えるか（コアの `svgmobile::preview`）。描ける SVG を返し、長さを `out_len` に書く
+ * （`amonhen_blob_free` で解放する）。部品が読めない SVG なら NULL。`info` に JSON
+ * `{"title", "caption", "messages": [...], "error": 文字列か null, "exact": bool}` を書く（`amonhen_string_free`
+ * で解放する）。
  *
  * # Safety
- * `data` は `len` バイト読めること（`len` が 0 なら NULL でもよい）。
+ * `data` は `len` バイト読めること（`len` が 0 なら NULL でもよい）。`out_len` と `info` は書けること（NULL でもよい）。
  */
-uint8_t *amonhen_svg_approximate(const uint8_t *data,
-                                 uintptr_t len,
-                                 uint8_t target,
-                                 uintptr_t *out_len);
+uint8_t *amonhen_svg_preview(const uint8_t *data,
+                             uintptr_t len,
+                             uint8_t target,
+                             uintptr_t *out_len,
+                             char **info);
 
 /**
  * `amonhen_blob_read`・`amonhen_change_blob` が返したものを解放する。

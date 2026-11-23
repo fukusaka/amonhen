@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <style>.accent { fill: #c00; }</style>
+  <defs>
+    <filter id="blur"><feGaussianBlur stdDeviation="2"/></filter>
+    <clipPath id="clip"><circle cx="32" cy="32" r="20"/></clipPath>
+    <mask id="mask"><rect x="0" y="0" width="64" height="32" fill="white"/></mask>
+  </defs>
+  <rect class="accent" x="4" y="4" width="24" height="24"/>
+  <rect x="36" y="4" width="24" height="24" fill="#09c" filter="url(#blur)"/>
+  <rect x="0" y="0" width="64" height="64" fill="#3a3" clip-path="url(#clip)"/>
+  <circle cx="32" cy="48" r="12" fill="#939" mask="url(#mask)"/>
+</svg>

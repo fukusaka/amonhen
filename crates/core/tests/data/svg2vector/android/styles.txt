@@ -1,0 +1,2 @@
+ERROR @ line 17: Invalid value of "points" attribute
+ERROR @ line 18: Invalid value of "points" attribute

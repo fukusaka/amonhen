@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="200" height="120" viewBox="10 20 200 120">
+<defs>
+<radialGradient id="r" cx="30%" cy="40%" r="60%" fx="20%" gradientTransform="translate(0.1 0.2) scale(1.5 0.7) rotate(15)"><stop offset="0" stop-color="rgb(10%,20%,30%)"/><stop offset=".3" stop-color="#abcd"/><stop offset="120%" stop-color="purple" stop-opacity="0.25"/></radialGradient>
+<linearGradient id="l" gradientUnits="userSpaceOnUse" x1="10%" y1="20" x2="190" y2="80%" gradientTransform="skewX(20)"><stop offset="0.5" style="stop-color: #f0f; stop-opacity:0.4"/><stop offset="0.2" stop-color="lime"/></linearGradient>
+<linearGradient id="one"><stop offset="0" stop-color="#123456"/></linearGradient>
+<linearGradient id="none"/>
+</defs>
+<g transform="translate(5 5) scale(1.2)">
+<ellipse cx="60" cy="60" rx="50" ry="30" fill="url(#r)" stroke="url(#l)" stroke-width="4"/>
+<path d="M120 20 q30 40 60 0 t60 0 c10 10 20 30 -10 40 s-20 -10 -30 5 z" fill="url(#l)"/>
+<rect x="130" y="80" width="40" height="30" rx="5" fill="url(#one)" stroke="url(#none)"/>
+<polygon points="10,100 30,110 20,118" fill="url(#missing)"/>
+</g>
+</svg>

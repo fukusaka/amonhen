@@ -1,0 +1,1 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 40"><text x="5" y="15" font-family="Helvetica" font-size="12" fill="#222">Hello</text><text x="5" y="35" font-size="10" font-weight="bold">A<tspan dx="3" fill="red">B</tspan></text><rect x="60" y="5" width="30" height="30" fill="#ccc"/></svg>
