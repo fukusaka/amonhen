@@ -24,10 +24,11 @@ pub struct JourneyDb {
 
 /// 作業に名のある人すべて。1 度ずつ、UTF-16 の符号単位の順。
 pub fn journey_actors(tasks: &[JourneyTask]) -> Vec<String> {
+    let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
     let mut names: Vec<String> = Vec::new();
     for task in tasks {
         for name in &task.people {
-            if !names.contains(name) {
+            if seen.insert(name) {
                 names.push(name.clone());
             }
         }

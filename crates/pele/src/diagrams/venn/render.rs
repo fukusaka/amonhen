@@ -84,9 +84,13 @@ pub fn render_venn(model: &VennDb, _config: &Config, options: &RenderOptions) ->
     let mut neighbors: Vec<Vec<usize>> = vec![Vec::new(); circles.len()];
     for a in 0..circles.len() {
         for b in a + 1..circles.len() {
-            if js::hypot(circles[a].x - circles[b].x, circles[a].y - circles[b].y)
-                < circles[a].r + circles[b].r
-            {
+            let (dx, dy) = (circles[a].x - circles[b].x, circles[a].y - circles[b].y);
+            let reach = circles[a].r + circles[b].r;
+            // `hypot` は大きい方の差より小さくならないので、それで届かない組は数えずに済む（数千の円で 2 乗）。
+            if dx.abs() >= reach || dy.abs() >= reach {
+                continue;
+            }
+            if js::hypot(dx, dy) < reach {
                 neighbors[a].push(b);
                 neighbors[b].push(a);
             }
@@ -95,17 +99,22 @@ pub fn render_venn(model: &VennDb, _config: &Config, options: &RenderOptions) ->
 
     // 集合と述べた重なりごとに 1 つの領域。同じ集合についての後の文が前のものに代わる。
     let mut stated: Vec<(Vec<String>, &VennSubset)> = Vec::new();
+    let mut stated_at: HashMap<&[String], usize> = HashMap::new();
     for subset in &model.subsets {
-        match stated.iter_mut().find(|(k, _)| *k == subset.sets) {
-            Some(slot) => slot.1 = subset,
-            None => stated.push((subset.sets.clone(), subset)),
+        match stated_at.get(subset.sets.as_slice()) {
+            Some(&k) => stated[k].1 = subset,
+            None => {
+                stated_at.insert(&subset.sets, stated.len());
+                stated.push((subset.sets.clone(), subset));
+            }
         }
     }
     let mut regions: Vec<(Vec<String>, Region)> = Vec::new();
     for (key, subset) in &stated {
         let mut sets: Vec<String> = Vec::new();
+        let mut seen: HashSet<&str> = HashSet::new();
         for id in &subset.sets {
-            if !sets.contains(id) {
+            if seen.insert(id) {
                 sets.push(id.clone());
             }
         }
@@ -271,7 +280,11 @@ pub fn render_venn(model: &VennDb, _config: &Config, options: &RenderOptions) ->
         .collect();
 
     let no_style = ResolvedStyle::default();
-    let region_of = |key: &[String]| regions.iter().find(|(k, _)| k == key).map(|(_, r)| r);
+    let mut region_at: HashMap<&[String], usize> = HashMap::new();
+    for (k, (key, _)) in regions.iter().enumerate() {
+        region_at.entry(key.as_slice()).or_insert(k);
+    }
+    let region_of = |key: &[String]| region_at.get(key).map(|&k| &regions[k].1);
 
     let mut sets = String::new();
     for (i, c) in placed.iter().enumerate() {
