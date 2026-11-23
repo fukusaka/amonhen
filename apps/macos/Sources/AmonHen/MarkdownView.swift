@@ -143,6 +143,8 @@ private struct MarkdownBuilder {
     /// 引用・囲みの枠（左に縦の線）。
     private func quoteBlock(_ color: NSColor) -> NSTextBlock {
         let block = NSTextBlock()
+        // 幅を決めないと、枠の中の幅が 0 になる。
+        block.setValue(100, type: .percentageValueType, for: .width)
         block.setWidth(4, type: .absoluteValueType, for: .border, edge: .minX)
         block.setBorderColor(color, for: .minX)
         block.setWidth(12, type: .absoluteValueType, for: .padding, edge: .minX)
@@ -166,6 +168,7 @@ private struct MarkdownBuilder {
                 out.append(newline(style))
             case .code(let language, let code):
                 let box = NSTextBlock()
+                box.setValue(100, type: .percentageValueType, for: .width)
                 box.backgroundColor = NSColor.quaternaryLabelColor.withAlphaComponent(0.14)
                 box.setWidth(10, type: .absoluteValueType, for: .padding)
                 let style = paragraph(indent: indent, spacing: 10, blocks: outer + [box])
@@ -231,6 +234,7 @@ private struct MarkdownBuilder {
             case .table(let aligns, let head, let rows):
                 let table = NSTextTable()
                 table.numberOfColumns = max(head.count, rows.map(\.count).max() ?? 0)
+                table.setValue(100, type: .percentageValueType, for: .width)
                 table.collapsesBorders = true
                 table.hidesEmptyCells = false
                 for (r, row) in ([head] + rows).enumerated() {
@@ -254,6 +258,7 @@ private struct MarkdownBuilder {
                 out.append(NSAttributedString(string: "\n", attributes: [.paragraphStyle: after, .font: NSFont.systemFont(ofSize: 4)]))
             case .rule:
                 let line = NSTextBlock()
+                line.setValue(100, type: .percentageValueType, for: .width)
                 line.setWidth(1, type: .absoluteValueType, for: .border, edge: .maxY)
                 line.setBorderColor(NSColor.separatorColor, for: .maxY)
                 let style = paragraph(spacing: 12, blocks: outer + [line])
