@@ -70,6 +70,8 @@ pub struct RenderOptions {
     pub images: Option<bool>,
     /// リンクの `rel`。既定は `noopener`、空の文字列なら書かない。
     pub link_rel: Option<String>,
+    /// gantt が今とみなす時刻（1970 年からのミリ秒）。既定は今の時刻。
+    pub now: Option<f64>,
     pub icons: Option<IconResolver>,
     pub math: Option<MathResolver>,
     pub config: Option<Config>,
