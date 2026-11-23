@@ -18,6 +18,7 @@ static DIAGRAMS: &[&Diagram] = &[
     &super::flowchart::FLOWCHART,
     &super::info::INFO,
     &super::journey::JOURNEY,
+    &super::kanban::KANBAN,
     &super::packet::PACKET,
     &super::pie::PIE,
     &super::timeline::TIMELINE,
