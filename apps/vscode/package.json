@@ -340,6 +340,11 @@
         "category": "Amon Hen"
       },
       {
+        "command": "amonhen.commitFile.showWholeFile",
+        "title": "Show Whole File",
+        "category": "Amon Hen"
+      },
+      {
         "command": "amonhen.restoreFile.thisVersion",
         "title": "Restore This Version…",
         "category": "Amon Hen"
@@ -1707,6 +1712,10 @@
           "when": "false"
         },
         {
+          "command": "amonhen.commitFile.showWholeFile",
+          "when": "false"
+        },
+        {
           "command": "amonhen.blame",
           "when": "amonhen.hasRepository && amonhen.engine"
         },
@@ -2015,6 +2024,11 @@
           "command": "amonhen.reflog.showInHistory",
           "when": "webviewId == 'amonhen.main' && (webviewSection == 'fileHistory' || webviewSection == 'blame')",
           "group": "1_show@1"
+        },
+        {
+          "command": "amonhen.commitFile.showWholeFile",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commitFile' && commitFileWide",
+          "group": "0_view@1"
         },
         {
           "command": "amonhen.blame",

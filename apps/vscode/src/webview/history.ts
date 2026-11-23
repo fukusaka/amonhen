@@ -151,7 +151,7 @@ export function createHistoryView(): View {
   const details = createDetailsPane((oid) => {
     const index = rows.findIndex((r) => r?.oid === oid);
     if (index >= 0) select(index, true);
-  });
+  }, true);
   // 編集モード（開いている間は、一覧の代わりに出す）
   const editMode = createEditMode(
     () => {
@@ -808,7 +808,7 @@ export function createHistoryView(): View {
         break;
       case 'details':
         if (editMode.isOpen || (marked.size <= 1 && message.details.oid === rows[selected]?.oid)) {
-          details.show(message.details);
+          details.show(message.details, undefined, message.choices);
         }
         return;
       case 'detailsExtras':
@@ -835,11 +835,15 @@ export function createHistoryView(): View {
             error: message.error,
             onPair: requestSelection,
             onCommit: (row) => select(row, true),
+            choices: message.choices,
           });
         }
         return;
       case 'commitDiff':
         details.showDiff(message.oid, message.path, message.diff);
+        return;
+      case 'commitImage':
+        details.showImage(message.oid, message.path, message.before, message.after, message.error);
         return;
       case 'editMode':
         root.classList.add('editing');

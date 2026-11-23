@@ -1,0 +1,2 @@
+ERROR @ line 6: Gradient has no stop info
+WARNING @ line 5: Gradient has only one color stop

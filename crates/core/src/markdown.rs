@@ -75,6 +75,20 @@ pub enum Block {
         language: String,
         text: String,
     },
+    /// 図（` ```mermaid ` など、`diagram::draw` で描けたもの）。`svg` は色を CSS の変数のままにした SVG で、FE は
+    /// 描くときに `diagram::colorize` で配色を当てる。描けなければ `svg` はなく、`error` に理由（FE は `text` を
+    /// コードとして見せ、理由を添える）。
+    Diagram {
+        language: String,
+        text: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        svg: Option<String>,
+        /// 図の中で指定した Mermaid のテーマ（設定の配色より先に使う）。
+        #[serde(skip_serializing_if = "Option::is_none")]
+        config: Option<crate::diagram::MermaidConfig>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
     /// 引用。`alert` は GitHub の囲み（`> [!NOTE]` の note・tip・important・warning・caution）。
     Quote {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -218,14 +232,26 @@ pub fn parse(text: &str) -> Vec<Block> {
 /// （`https://github.com/owner/repo`）があれば `#123`・`@user`・コミットの ID もリンクにする。描くのに外へは何も
 /// 読みに行かない（リンクを押したときにブラウザで開くだけ）。
 pub fn parse_with(text: &str, github: Option<&str>) -> Vec<Block> {
-    let mut blocks = parse_blocks(text);
+    parse_in_zone(text, github, None)
+}
+
+/// `parse_with` の、図（gantt）の日付をこの時間帯の地方時で数えるもの（None は UTC）。
+pub fn parse_in_zone(
+    text: &str,
+    github: Option<&str>,
+    zone: Option<std::sync::Arc<dyn crate::diagram::TimeZone>>,
+) -> Vec<Block> {
+    let mut blocks = parse_blocks(text, zone);
     for block in &mut blocks {
         linkify_block(block, github);
     }
     blocks
 }
 
-fn parse_blocks(text: &str) -> Vec<Block> {
+fn parse_blocks(
+    text: &str,
+    zone: Option<std::sync::Arc<dyn crate::diagram::TimeZone>>,
+) -> Vec<Block> {
     let options = Options::ENABLE_GFM
         | Options::ENABLE_TABLES
         | Options::ENABLE_STRIKETHROUGH
@@ -355,7 +381,25 @@ fn parse_blocks(text: &str) -> Vec<Block> {
                         if text.ends_with('\n') {
                             text.pop();
                         }
-                        b.add(Block::Code { language, text });
+                        let block =
+                            match crate::diagram::draw_in_zone(&language, &text, zone.clone()) {
+                                None => Block::Code { language, text },
+                                Some(crate::diagram::Drawn::Svg(svg, config)) => Block::Diagram {
+                                    language,
+                                    text,
+                                    svg: Some(svg),
+                                    config,
+                                    error: None,
+                                },
+                                Some(crate::diagram::Drawn::Error(error)) => Block::Diagram {
+                                    language,
+                                    text,
+                                    svg: None,
+                                    config: None,
+                                    error: Some(error),
+                                },
+                            };
+                        b.add(block);
                     }
                 }
                 TagEnd::HtmlBlock => {
@@ -456,7 +500,16 @@ fn parse_blocks(text: &str) -> Vec<Block> {
 
 /// `parse_with` の結果の JSON（FE 向け）。
 pub fn parse_json(text: &str, github: Option<&str>) -> String {
-    serde_json::to_string(&parse_with(text, github)).unwrap_or_else(|_| "[]".to_owned())
+    parse_json_in_zone(text, github, None)
+}
+
+/// `parse_in_zone` の結果の JSON（FE 向け）。
+pub fn parse_json_in_zone(
+    text: &str,
+    github: Option<&str>,
+    zone: Option<std::sync::Arc<dyn crate::diagram::TimeZone>>,
+) -> String {
+    serde_json::to_string(&parse_in_zone(text, github, zone)).unwrap_or_else(|_| "[]".to_owned())
 }
 
 fn linkify_block(block: &mut Block, github: Option<&str>) {

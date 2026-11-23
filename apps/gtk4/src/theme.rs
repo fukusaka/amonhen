@@ -18,6 +18,64 @@ pub const SYNTAX_THEME_DARK: &str = "syntaxThemeDark";
 pub const IMPORTED_SYNTAX_THEMES: &str = "importedSyntaxThemes";
 /// 差分の色は、テーマに関係なく標準の色を使う（構文の色はテーマのまま）。
 pub const DIFF_STANDARD_COLORS: &str = "diffStandardColors";
+/// Markdown の図の配色（`syntax`・`pele`・`mermaid`。macOS 版と同じ鍵）。
+pub const DIAGRAM_COLORS: &str = "diagramColors";
+/// 読み込んだ Mermaid のテーマ（名前 → mermaid-cli の設定の中身、JSON のオブジェクト。macOS 版と同じ鍵）。
+pub const IMPORTED_MERMAID_THEMES: &str = "importedMermaidThemes";
+/// gantt の日付を数える時間帯（IANA の名前。空なら OS の時間帯。macOS 版と同じ鍵）。
+pub const GANTT_TIME_ZONE: &str = "ganttTimeZone";
+
+/// GLib の時間帯（gantt の日付を数える。pele の描画のスレッドから呼ばれる）。
+struct GlibZone(gtk::glib::TimeZone);
+
+impl amonhen_core::diagram::TimeZone for GlibZone {
+    fn offset_ms(&self, utc_ms: f64) -> f64 {
+        if !utc_ms.is_finite() {
+            return 0.0;
+        }
+        let seconds = (utc_ms / 1000.0).floor() as i64;
+        let interval = self
+            .0
+            .find_interval(gtk::glib::TimeType::Universal, seconds);
+        if interval < 0 {
+            return 0.0;
+        }
+        f64::from(self.0.offset(interval)) * 1000.0
+    }
+}
+
+/// 今の gantt の時間帯（設定の名前、なければ OS の時間帯）。
+pub fn gantt_zone() -> std::sync::Arc<dyn amonhen_core::diagram::TimeZone> {
+    let name = settings::string(GANTT_TIME_ZONE).unwrap_or_default();
+    let zone = if name.is_empty() {
+        gtk::glib::TimeZone::local()
+    } else {
+        #[allow(deprecated)]
+        {
+            // 知らない名前は GLib が UTC にする
+            gtk::glib::TimeZone::new(Some(&name))
+        }
+    };
+    std::sync::Arc::new(GlibZone(zone))
+}
+
+/// OS の時間帯のデータにある IANA の名前（`zone1970.tab` から。読めなければ空）。
+pub fn zone_names() -> Vec<String> {
+    let mut names: Vec<String> = [
+        "/usr/share/zoneinfo/zone1970.tab",
+        "/usr/share/zoneinfo/zone.tab",
+    ]
+    .iter()
+    .find_map(|p| std::fs::read_to_string(p).ok())
+    .unwrap_or_default()
+    .lines()
+    .filter(|l| !l.starts_with('#'))
+    .filter_map(|l| l.split('\t').nth(2).map(str::to_owned))
+    .collect();
+    names.sort();
+    names.dedup();
+    names
+}
 
 /// 差分の色の種類（macOS 版の `DiffColor`）。テーマの `colors` の鍵（`#rrggbbaa`）と、テーマが持たないときの
 /// 標準の色。
@@ -421,12 +479,79 @@ pub fn diff_color(kind: DiffColor, fg: &gdk::RGBA) -> gdk::RGBA {
     })
 }
 
+/// 読み込んだ Mermaid のテーマ（名前の順）。
+pub fn imported_mermaid() -> Vec<(String, amonhen_core::diagram::MermaidConfig)> {
+    let mut all: Vec<_> = settings::string(IMPORTED_MERMAID_THEMES)
+        .and_then(|s| {
+            serde_json::from_str::<HashMap<String, amonhen_core::diagram::MermaidConfig>>(&s).ok()
+        })
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
+    all.sort_by(|a, b| a.0.cmp(&b.0));
+    all
+}
+
+pub fn set_imported_mermaid(themes: &[(String, amonhen_core::diagram::MermaidConfig)]) {
+    let map: HashMap<&str, &amonhen_core::diagram::MermaidConfig> =
+        themes.iter().map(|(k, v)| (k.as_str(), v)).collect();
+    settings::set_string(
+        IMPORTED_MERMAID_THEMES,
+        &serde_json::to_string(&map).unwrap_or_default(),
+    );
+}
+
+/// Markdown の図の配色の変数（`--pele-*` → 色）と、地を塗るか。図の中で指定したテーマ `own` があればそれ、
+/// なければ設定の「図の配色」と、`dark` の外観で選んだテーマから。
+pub fn diagram_palette(
+    dark: bool,
+    own: Option<&amonhen_core::diagram::MermaidConfig>,
+) -> (Vec<(String, String)>, bool) {
+    use amonhen_core::diagram::{IMPORTED_PREFIX, Scheme, ThemeColors, colors_for};
+    let key = settings::string(DIAGRAM_COLORS).unwrap_or_default();
+    let scheme = Scheme::from_key(&key);
+    let imported = key.strip_prefix(IMPORTED_PREFIX).and_then(|name| {
+        imported_mermaid()
+            .into_iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, c)| c)
+    });
+    let fg = if dark {
+        gdk::RGBA::WHITE
+    } else {
+        gdk::RGBA::BLACK
+    };
+    // 文字と地は libadwaita の本文の色（view の地と文字）
+    let (text, background) = if dark {
+        ("#ffffff", "#1e1e1e")
+    } else {
+        ("#000000", "#ffffff")
+    };
+    let theme = with_current(&fg, |theme, dark, _| ThemeColors {
+        text: text.to_owned(),
+        background: background.to_owned(),
+        kinds: KINDS
+            .iter()
+            .filter_map(|(name, kind)| {
+                let (r, g, b) = theme.color(*kind, dark)?;
+                Some(((*name).to_owned(), to_hex(&gdk::RGBA::new(r, g, b, 1.0))))
+            })
+            .collect(),
+    });
+    colors_for(own, scheme, imported.as_ref(), dark, &theme)
+}
+
 /// 設定が変わったら、覚えたテーマを捨てて、すべての窓を描き直す（起動したときに一度呼ぶ）。
 pub fn watch_settings() {
     settings::connect_changed(|key| {
         if matches!(
             key,
-            SYNTAX_THEME_LIGHT | SYNTAX_THEME_DARK | IMPORTED_SYNTAX_THEMES | DIFF_STANDARD_COLORS
+            SYNTAX_THEME_LIGHT
+                | SYNTAX_THEME_DARK
+                | IMPORTED_SYNTAX_THEMES
+                | DIFF_STANDARD_COLORS
+                | DIAGRAM_COLORS
+                | IMPORTED_MERMAID_THEMES
         ) {
             CURRENT.with(|c| c.borrow_mut().take());
             GENERATION.with(|g| g.set(g.get() + 1));

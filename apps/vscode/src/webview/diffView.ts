@@ -15,6 +15,8 @@ export interface DiffOptions {
    * 押すと lines を stage（true）か外すか（false）で呼ぶ
    */
   check?: (lines: DiffLine[], stage: boolean) => void;
+  /** あれば hunk の見出しの左に印を置き、押すとファイルの前後の行を広げる */
+  widen?: () => void;
 }
 
 /** hunk の変更の行がどれだけ入っているか: all・some・none */
@@ -118,6 +120,16 @@ function renderHunk(hunk: DiffHunk, opts: DiffOptions, budget: number): HTMLElem
       else check(changed.filter((l) => !l.staged), true);
     });
     head.append(box);
+  }
+  if (opts.widen) {
+    const widen = opts.widen;
+    const more = el('button', 'widen', '⇕');
+    more.title = 'Show 20 more lines around each change in this file';
+    more.addEventListener('click', (e) => {
+      e.stopPropagation();
+      widen();
+    });
+    head.append(more);
   }
   head.append(el('span', 'range', hunk.header));
   if (opts.hunkActions?.length) {

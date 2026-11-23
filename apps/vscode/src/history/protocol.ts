@@ -80,6 +80,23 @@ export interface DetailsLayout {
   tree: boolean;
 }
 
+/** 差分を比べるときに無視する空白（`git diff --ignore-space-at-eol`・`-b`・`-w`）。exact は無視しない */
+export type DiffWhitespace = 'exact' | 'at-eol' | 'change' | 'all';
+
+/**
+ * 詳細の差分で選べること（エンジンだけ。なければ出さない）: 無視する空白（今の選び方）、ファイルごとに前後の行を
+ * 広げる・ファイル全体を出す
+ */
+export interface DiffChoices {
+  whitespace: DiffWhitespace;
+}
+
+/** 画像の差分の片側（data URL と、元の大きさ） */
+export interface ImageBlob {
+  url: string;
+  bytes: number;
+}
+
 /** いくつも選んだコミットの見せ方（`commitDiff` の `history`・`rows`）。差分はファイルごとに求める */
 export interface SelectionView {
   /** 差分を求めるときの `oid` の代わり */
@@ -133,9 +150,13 @@ export type HistoryHostMessage =
   | { type: 'lineage'; rows: string | null; edges?: string }
   | { type: 'search'; state: SearchState }
   | { type: 'busy'; busy: boolean }
-  | { type: 'details'; details: CommitDetails }
+  | { type: 'details'; details: CommitDetails; choices?: DiffChoices }
   /** いくつも選んだコミットの差分。`token` は頼んだときのもの。読めなければ `error` */
-  | { type: 'selection'; token: number; view?: SelectionView; error?: string }
+  | { type: 'selection'; token: number; view?: SelectionView; error?: string; choices?: DiffChoices }
+  /** コミットの中の画像の前と後（足した・消したものは片方。読めなければ `error`） */
+  | { type: 'commitImage'; oid: string; path: string; before?: ImageBlob; after?: ImageBlob; error?: string }
+  /** ファイルの右クリックの Show Whole File（その詳細を出している欄が、ファイル全体を頼む） */
+  | { type: 'wholeFile'; oid: string; path: string }
   /** コミットの中の 1 ファイルの差分（最初の親との差分） */
   | { type: 'commitDiff'; oid: string; path: string; diff: FileDiff }
   /** `last` はまとめる範囲のいちばん新しいコミット（combine のとき。`oid` がいちばん古い） */
@@ -187,6 +208,12 @@ export type HistoryWebviewMessage =
   | { type: 'openFile'; oid: string; path: string }
   /** コミットの中の 1 ファイルの差分を求める（詳細に並べる） */
   | { type: 'commitDiff'; oid: string; path: string }
+  /** コミットの中の画像の前と後を求める（画像の差分） */
+  | { type: 'commitImage'; oid: string; path: string }
+  /** そのファイルの差分を、前後 `context` 行（all ならファイル全体）で求め直す（エンジンだけ） */
+  | { type: 'fileContext'; oid: string; path: string; context: number | 'all' }
+  /** 無視する空白を選び直す（出している詳細を読み直す。覚えない） */
+  | { type: 'whitespace'; whitespace: DiffWhitespace }
   | { type: 'detailsLayout'; layout: DetailsLayout }
   /** 編集モードの見通しを求める。`updateRefs` は、積み重ねたブランチを今回だけどうするか（触っていなければなし） */
   | { type: 'editPreview'; key: number; steps: PlanStep[]; updateRefs?: boolean }

@@ -1,0 +1,2 @@
+ERROR @ line 2: Circular dependency of <use> nodes: a -> b (line 3) -> a
+ERROR @ line 4: Referenced id not found

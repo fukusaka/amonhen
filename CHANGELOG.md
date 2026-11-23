@@ -25,8 +25,9 @@ becomes the GitHub Release notes.
   of it, as `git diff --ignore-space-at-eol`, `-b` and `-w` do), and so can `amonhen diff` and `show` with the same
   flags. Lines aren't staged or discarded while whitespace is ignored.
 - All Files previews more than source: images zoom and any format the system reads counts as one, SVGs show
-  what breaks on Android, iOS, Flutter and React Native with an approximation of each, Markdown shows formatted by
-  the app (GitHub tables, task lists, alerts, links; nothing fetched), and other binaries open in Quick Look.
+  what breaks on Android, iOS, Flutter and React Native (Android Studio's and flutter_svg's own conversions built
+  in, approximations for the others), Markdown is laid out by the app with GitHub's extensions and Mermaid diagrams
+  (a port of pele, coloured to the theme; nothing fetched), and other binaries open in Quick Look.
 - Diffs, file contents and the merge editor in the macOS and GTK4 apps can wrap long lines instead of scrolling
   sideways: the wrap button beside the whitespace button in History and Working Copy, the view options (also new
   at the right of the merge editor's bar), or View > Wrap Long Lines (Option-Z / Alt+Z).
@@ -1256,6 +1257,13 @@ First release.
 - History's details work like the app's: the file headers are the changed files, folded at first, with a ⋯ for
   their menu. One bar shows a list or a tree whose folders fold, and expands or collapses everything. Viewed and one
   file at a time are gone.
+
+#### Added
+
+- History's details can widen a file's context (⇕ on a hunk header), show the whole file (on the file's ⋯) and
+  ignore whitespace (at line ends, changes in amount or all), with the engine.
+- History's details compare images and SVGs side by side with their sizes, or by swipe, onion skin or differing
+  pixels.
 
 #### Fixed
 

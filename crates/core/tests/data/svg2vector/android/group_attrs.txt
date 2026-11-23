@@ -1,0 +1,1 @@
+WARNING @ line 4: Scaling of the stroke width is approximate

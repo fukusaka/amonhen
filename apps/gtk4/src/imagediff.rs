@@ -14,7 +14,7 @@ use std::sync::OnceLock;
 use amonhen_model::tr;
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
-use gtk::{gdk, glib, graphene, gsk, pango};
+use gtk::{gdk, gio, glib, graphene, gsk, pango};
 
 /// 画像として見せる拡張子: gdk-pixbuf が読める形式と、GTK が自分で読む PNG・JPEG・TIFF と SVG。PDF などの文書は
 /// プレビューに任せる（macOS 版と同じ）。
@@ -85,6 +85,62 @@ impl Mode {
 /// 画像のバイト列を読む（読めなければ None。SVG は GdkPixbuf の読み手があれば読める）。
 pub fn texture(data: Option<&[u8]>) -> Option<gdk::Texture> {
     gdk::Texture::from_bytes(&glib::Bytes::from(data?)).ok()
+}
+
+/// SVG の根の `width`・`height`（論理の画素）。書いてなければ None。
+pub fn svg_size(svg: &str) -> Option<(i32, i32)> {
+    let start = svg.find("<svg")?;
+    let open = &svg[start..start + svg[start..].find('>')?];
+    let attr = |name: &str| -> Option<i32> {
+        let at = open.find(&format!(" {name}=\""))? + name.len() + 3;
+        let value = &open[at..at + open[at..].find('"')?];
+        value
+            .trim_end_matches("px")
+            .parse::<f64>()
+            .ok()
+            .map(|v| v.ceil() as i32)
+    };
+    Some((attr("width")?, attr("height")?))
+}
+
+/// 画素の並び（スレッドをまたいで渡せる。メインスレッドで `texture` にする）。
+pub struct Pixels {
+    bytes: glib::Bytes,
+    width: i32,
+    height: i32,
+    stride: usize,
+    alpha: bool,
+}
+
+impl Pixels {
+    pub fn texture(&self) -> gdk::Texture {
+        let format = if self.alpha {
+            gdk::MemoryFormat::R8g8b8a8
+        } else {
+            gdk::MemoryFormat::R8g8b8
+        };
+        gdk::MemoryTexture::new(self.width, self.height, format, &self.bytes, self.stride).upcast()
+    }
+}
+
+/// SVG を `width`×`height` の画素で読む（裏のスレッドで呼んでよい）。
+pub fn svg_pixels(svg: &[u8], width: i32, height: i32) -> Option<Pixels> {
+    let stream = gio::MemoryInputStream::from_bytes(&glib::Bytes::from(svg));
+    let pixbuf = gtk::gdk_pixbuf::Pixbuf::from_stream_at_scale(
+        &stream,
+        width,
+        height,
+        true,
+        gio::Cancellable::NONE,
+    )
+    .ok()?;
+    Some(Pixels {
+        bytes: pixbuf.read_pixel_bytes(),
+        width: pixbuf.width(),
+        height: pixbuf.height(),
+        stride: pixbuf.rowstride() as usize,
+        alpha: pixbuf.has_alpha(),
+    })
 }
 
 /// 画像の大きさとバイト数（「64 × 48 px · 1.2 kB」）。

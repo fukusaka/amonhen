@@ -35,14 +35,39 @@ final class MarkdownView: NSView, NSTextViewDelegate {
         var builder = MarkdownBuilder(image: image)
         builder.add(blocks, depth: 0)
         text.textStorage?.setAttributedString(builder.out)
+        // 図の配色・構文の色のテーマを変えたら描き直す（図は描くときに色を当てる）。
+        NotificationCenter.default.addObserver(self, selector: #selector(themeChanged), name: .syntaxThemeChanged, object: nil)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
+    @objc private func themeChanged() { text.needsDisplay = true }
+
     override func layout() {
         super.layout()
         scroll.frame = bounds
+        fitAttachments()
+    }
+
+    /// 絵（画像・図）を列の幅に収める（640 pt まで、高さは比を保つ）。幅が変わったときだけ直す。
+    private var fittedWidth: CGFloat = 0
+    private func fitAttachments() {
+        guard let storage = text.textStorage, let container = text.textContainer else { return }
+        let width = container.size.width - container.lineFragmentPadding * 2 - 8
+        guard width > 0, abs(width - fittedWidth) > 0.5 else { return }
+        fittedWidth = width
+        var changed = false
+        storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
+            guard let attachment = value as? FittingAttachment else { return }
+            let size = attachment.fitting(width)
+            if attachment.bounds.size != size {
+                attachment.bounds = NSRect(origin: .zero, size: size)
+                storage.edited(.editedAttributes, range: range, changeInLength: 0)
+                changed = true
+            }
+        }
+        if changed { text.layoutManager?.invalidateLayout(forCharacterRange: NSRange(location: 0, length: storage.length), actualCharacterRange: nil) }
     }
 
     func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
@@ -65,6 +90,114 @@ final class MarkdownView: NSView, NSTextViewDelegate {
         }
         let path = parts.joined(separator: "/").removingPercentEncoding ?? parts.joined(separator: "/")
         return path.isEmpty ? nil : path
+    }
+}
+
+/// Markdown の図の絵。形は pele の SVG のまま持ち、色は描くたびに、そのときの外観・構文の色のテーマ・設定の
+/// 「図の配色」で当てる（当てた絵は配色ごとに覚える）。テーマを変えても組み直さず、描き直すだけでよい。
+final class DiagramPicture {
+    private let svg: String
+    /// 図の中で指定したテーマ（設定より先）。
+    private let own: MermaidThemeConfig?
+    private var colored: [String: NSImage] = [:]
+    /// 配色・外観・画素の大きさごとに、画素にした絵（描き直しのたびに CoreSVG で SVG を描き直さない）。
+    private var bitmaps: [String: NSImage] = [:]
+
+    private init(svg: String, own: MermaidThemeConfig?) {
+        self.svg = svg
+        self.own = own
+    }
+
+    static func image(_ svg: String, own: MermaidThemeConfig?) -> NSImage? {
+        let picture = DiagramPicture(svg: svg, own: own)
+        // 大きさは配色によらないので、pele の既定の色で一度当てて測る。
+        guard let first = MarkdownBlock.colorizeDiagram(svg, scheme: "pele", dark: false, theme: [:]).flatMap(NSImage.init(data:))
+        else { return nil }
+        let image = NSImage(size: first.size, flipped: false) { rect in
+            // 文字の描画（メインスレッド）から呼ばれる。
+            MainActor.assumeIsolated { picture.draw(in: rect) }
+            return true
+        }
+        image.cacheMode = .never
+        return image
+    }
+
+    /// `rect` に描く。今の配色と、描く先の画素の大きさで画素にした絵を覚えておき、次からはそれを描く。
+    func draw(in rect: NSRect) {
+        guard let (key, vector) = current() else { return }
+        let scale = NSGraphicsContext.current.map { abs($0.cgContext.userSpaceToDeviceSpaceTransform.a) } ?? 2
+        let width = Int((rect.width * scale).rounded(.up)), height = Int((rect.height * scale).rounded(.up))
+        guard width > 0, height > 0 else { return }
+        let bitmapKey = "\(key)\n\(width)x\(height)"
+        if let bitmap = bitmaps[bitmapKey] {
+            bitmap.draw(in: rect)
+            return
+        }
+        guard let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height, bitsPerSample: 8, samplesPerPixel: 4,
+            hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)
+        else { return vector.draw(in: rect) }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        vector.draw(in: NSRect(x: 0, y: 0, width: width, height: height))
+        NSGraphicsContext.restoreGraphicsState()
+        let bitmap = NSImage(size: rect.size)
+        bitmap.addRepresentation(rep)
+        // 配色・外観を変えたら古い絵は要らない（大きさ違いは残す: 列の幅を変えている途中）
+        bitmaps = bitmaps.filter { $0.key.hasPrefix(key + "\n") }
+        bitmaps[bitmapKey] = bitmap
+        bitmap.draw(in: rect)
+    }
+
+    /// 今の外観（描いている最中のもの）での絵と、その配色の鍵。
+    private func current() -> (String, NSImage)? {
+        let dark = NSAppearance.currentDrawing().bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        let scheme = Settings.diagramColors
+        let themeName = dark ? Settings.syntaxThemeDark : Settings.syntaxThemeLight
+        let imported = scheme.hasPrefix("mermaid-import:")
+            ? Settings.importedMermaidThemes[String(scheme.dropFirst("mermaid-import:".count))] : nil
+        let key = "\(scheme)\n\(themeName)\n\(dark)\n\(imported?.json ?? "")"
+        if let image = colored[key] { return (key, image) }
+        var theme: [String: Any] = [:]
+        if scheme == "syntax" {
+            let syntax = SyntaxTheme.named(themeName) ?? .system
+            var kinds: [String: String] = [:]
+            for (name, kind) in SyntaxTheme.kinds { kinds[name] = Self.hex(syntax.color(kind)) }
+            theme = ["text": Self.hex(.labelColor), "background": Self.hex(.textBackgroundColor), "kinds": kinds]
+        }
+        let image = MarkdownBlock.colorizeDiagram(svg, scheme: scheme, dark: dark, theme: theme, own: own, imported: imported)
+            .flatMap(NSImage.init(data:))
+        colored[key] = image
+        return image.map { (key, $0) }
+    }
+
+    /// 今の外観での色の `#rrggbb`。
+    private static func hex(_ color: NSColor) -> String {
+        guard let c = color.usingColorSpace(.sRGB) else { return "#000000" }
+        let v = { (x: CGFloat) in Int((max(0, min(1, x)) * 255).rounded()) }
+        return String(format: "#%02x%02x%02x", v(c.redComponent), v(c.greenComponent), v(c.blueComponent))
+    }
+}
+
+/// 列の幅に縮む絵。
+nonisolated final class FittingAttachment: NSTextAttachment {
+    private let natural: NSSize
+
+    init(image: NSImage) {
+        natural = image.size
+        super.init(data: nil, ofType: nil)
+        self.image = image
+        bounds = NSRect(origin: .zero, size: fitting(640))
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// 幅 `width`（と 640 pt）に収めた大きさ。
+    func fitting(_ width: CGFloat) -> NSSize {
+        let limit = min(width, 640)
+        guard natural.width > limit, natural.width > 0 else { return natural }
+        return NSSize(width: limit, height: natural.height * limit / natural.width)
     }
 }
 
@@ -96,14 +229,8 @@ private struct MarkdownBuilder {
             }
             if let src = run.image {
                 if let picture = image(src) {
-                    let attachment = NSTextAttachment()
-                    attachment.image = picture
-                    // 列より広い絵は縮める（高さは比を保つ）。
-                    let maxWidth: CGFloat = 640
-                    let size = picture.size.width > maxWidth
-                        ? NSSize(width: maxWidth, height: picture.size.height * maxWidth / picture.size.width) : picture.size
-                    attachment.bounds = NSRect(origin: .zero, size: size)
-                    result.append(NSAttributedString(attachment: attachment))
+                    // 列より広い絵は縮める（MarkdownView.fitAttachments）。
+                    result.append(NSAttributedString(attachment: FittingAttachment(image: picture)))
                 } else {
                     // 読めない画像（外の URL など）は代わりの文。
                     result.append(NSAttributedString(string: "[\(run.text.isEmpty ? src : run.text)]", attributes: [
@@ -196,6 +323,27 @@ private struct MarkdownBuilder {
                         }
                     }
                 }
+                out.append(newline(style))
+            case .diagram(let language, let code, let svg, let config, let error):
+                guard let picture = svg.flatMap({ DiagramPicture.image($0, own: config) }) else {
+                    // 描けない図はコードとして見せ、理由を添える。
+                    add([.code(language: language, text: code)], depth: depth, outer: outer, indent: indent)
+                    if let error {
+                        let style = paragraph(indent: indent, spacing: 10, blocks: outer)
+                        // 誤りの位置を ^ で指すので等幅で。行は段落を分けずに改行する。
+                        out.append(NSAttributedString(string: error.replacingOccurrences(of: "\n", with: "\u{2028}"), attributes: [
+                            .font: NSFont.monospacedSystemFont(ofSize: 11.5, weight: .regular), .foregroundColor: NSColor.systemRed,
+                            .paragraphStyle: style,
+                        ]))
+                        out.append(newline(style))
+                    }
+                    continue
+                }
+                let style = paragraph(indent: indent, spacing: 12, blocks: outer)
+                // 列より広い図は縮める（MarkdownView.fitAttachments）。
+                let text = NSMutableAttributedString(attachment: FittingAttachment(image: picture))
+                text.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: text.length))
+                out.append(text)
                 out.append(newline(style))
             case .quote(let alert, let inner):
                 let (color, title) = Self.alert(alert)

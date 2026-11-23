@@ -331,6 +331,42 @@ enum Settings {
         }
     }
 
+    /// Markdown の図の配色（`syntax`: 構文の色のテーマから、`pele`、`mermaid`）。変えたら `syntaxThemeChanged` を知らせる。
+    static var diagramColors: String {
+        get { UserDefaults.standard.string(forKey: "diagramColors") ?? "syntax" }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "diagramColors")
+            NotificationCenter.default.post(name: .syntaxThemeChanged, object: nil)
+        }
+    }
+
+    /// gantt の日付を数える時間帯（IANA の名前。空なら OS の時間帯）。変えたら `ganttTimeZoneChanged` を知らせる。
+    static var ganttTimeZone: String {
+        get { UserDefaults.standard.string(forKey: "ganttTimeZone") ?? "" }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "ganttTimeZone")
+            NotificationCenter.default.post(name: .ganttTimeZoneChanged, object: nil)
+        }
+    }
+
+    /// 今の gantt の時間帯（名前が読めなければ OS の時間帯）。
+    static var ganttZone: TimeZone {
+        let name = ganttTimeZone
+        return name.isEmpty ? TimeZone.current : TimeZone(identifier: name) ?? TimeZone.current
+    }
+
+    /// 読み込んだ Mermaid のテーマ（名前 → 中身）。「図の配色」の `mermaid-import:名前` で選ぶ。
+    static var importedMermaidThemes: [String: MermaidThemeConfig] {
+        get {
+            UserDefaults.standard.data(forKey: "importedMermaidThemes")
+                .flatMap { try? JSONDecoder().decode([String: MermaidThemeConfig].self, from: $0) } ?? [:]
+        }
+        set {
+            UserDefaults.standard.set(try? JSONEncoder().encode(newValue), forKey: "importedMermaidThemes")
+            NotificationCenter.default.post(name: .syntaxThemeChanged, object: nil)
+        }
+    }
+
     /// 差分の色は、テーマに関係なく標準の色を使う（構文の色はテーマのまま）。
     static var diffStandardColors: Bool {
         get { UserDefaults.standard.bool(forKey: "diffStandardColors") }
@@ -524,6 +560,11 @@ final class SettingsModel {
     var syntaxThemeDark = Settings.syntaxThemeDark { didSet { Settings.syntaxThemeDark = syntaxThemeDark } }
     var importedThemes = SyntaxTheme.imported { didSet { SyntaxTheme.imported = importedThemes } }
     var diffStandardColors = Settings.diffStandardColors { didSet { Settings.diffStandardColors = diffStandardColors } }
+    var diagramColors = Settings.diagramColors { didSet { Settings.diagramColors = diagramColors } }
+    var ganttTimeZone = Settings.ganttTimeZone { didSet { Settings.ganttTimeZone = ganttTimeZone } }
+    var importedMermaidThemes = Settings.importedMermaidThemes {
+        didSet { Settings.importedMermaidThemes = importedMermaidThemes }
+    }
     var checkRemoteSignaturesLocally = Settings.checkRemoteSignaturesLocally {
         didSet { Settings.checkRemoteSignaturesLocally = checkRemoteSignaturesLocally }
     }
