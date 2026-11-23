@@ -19,13 +19,6 @@ const MODES: [Whitespace; 4] = [
     Whitespace::All,
 ];
 
-/// アイコンの候補（freedesktop の名前。Adwaita にあるものを先に）。どれもなければ「␣」の字。
-const ICONS: [&str; 3] = [
-    "format-justify-fill-symbolic",
-    "format-indent-more-symbolic",
-    "text-x-generic-symbolic",
-];
-
 pub fn title(mode: Whitespace) -> String {
     match mode {
         Whitespace::Exact => tr!("Compare Whitespace"),
@@ -63,8 +56,8 @@ pub struct Picker {
 
 struct Inner {
     button: gtk::Button,
-    /// アイコン（なければ「␣」の字）。アクセントの色はこれに付ける。
-    icon: gtk::Widget,
+    /// アイコン（macOS 版の space）。無視している間はアクセントの色。
+    icon: crate::icon::Icon,
     mode: Cell<Whitespace>,
     on_change: RefCell<Option<Rc<dyn Fn()>>>,
 }
@@ -74,11 +67,7 @@ impl Picker {
         let button = gtk::Button::new();
         button.add_css_class("flat");
         button.set_valign(gtk::Align::Center);
-        let theme = gtk::IconTheme::for_display(&button.display());
-        let icon: gtk::Widget = match ICONS.iter().find(|name| theme.has_icon(name)) {
-            Some(name) => gtk::Image::from_icon_name(name).upcast(),
-            None => gtk::Label::new(Some("␣")).upcast(),
-        };
+        let icon = crate::icon::Icon::default();
         button.set_child(Some(&icon));
         button.update_property(&[gtk::accessible::Property::Label(&tr!("Whitespace"))]);
         let inner = Rc::new(Inner {
@@ -150,11 +139,8 @@ impl Inner {
     /// アイコンの色・ツールチップ（今の選び方を言う）。
     fn update(&self) {
         let mode = self.mode.get();
-        if mode == Whitespace::Exact {
-            self.icon.remove_css_class("accent");
-        } else {
-            self.icon.add_css_class("accent");
-        }
+        self.icon
+            .set(crate::icon::Kind::Space, mode != Whitespace::Exact);
         self.button.set_tooltip_text(Some(&format!(
             "{}\n{}",
             title(mode),
