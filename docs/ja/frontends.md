@@ -183,7 +183,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 直前の操作の Undo（尋ね、何を戻すか示す） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: 上の Undo とコマンドパレットは尋ねる。操作の直後に押す知らせの Undo は尋ねない。<br>CLI: `undo`（先に見るなら `--peek`）。<br>TUI: `u`。 |
 | 範囲付きの History の検索（件名・作者・ID・パス・中身） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: エンジンがあるとき。<br>CLI: `log <query>`。<br>TUI: History で `/`。 |
 | ahead/behind のバッジ | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: サイドバーのブランチの行に出る。<br>CLI: `status` に出る。<br>TUI: サイドバーのブランチと一番上の行に出る。 |
-| ツールバーのカスタマイズ | ✓ | ✓ | △ | n/a | n/a | n/a | GTK4: パレットは NSToolbar と同じ使い方で、シートと同じく見出しの下に中身に重ねて出し、窓の大きさは変えない。見出しはアイコンだけなので、表示（アイコンと文字）は選ばない。Repository のメニューと主メニューはメニューバーの代わりなので動かない。<br>Windows: View > ツールバーをカスタマイズ… で、ボタンごとのチェック・↑ ↓・スペース（ドラッグとフレキシブルスペースはない）<br>TUI: ツールバーはない。操作はキー。 |
+| ツールバーのカスタマイズ | ✓ | ✓ | △ | n/a | n/a | n/a | GTK4: パレットは NSToolbar と同じ使い方で、シートと同じく見出しの下に中身に重ねて出し、窓の大きさは変えない。見出しはアイコンだけなので、表示（アイコンと文字）は選ばない。Repository のメニューと主メニューはメニューバーの代わりなので動かない。<br>Windows: パレットは NSToolbar のシートと同じく中身の上に出す。項目・スペース・フレキシブルスペース・既定のセットをツールバーに引いて足し、ツールバーの中で引いて並べ替え、パレットへ引いて外す。表示（アイコンと文字）は選べず、ほかの所に落としたタイルは残る。<br>TUI: ツールバーはない。操作はキー。 |
 | 120 秒黙った network の git を止める | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: エンジンのものと、エンジンを使わないときの拡張自身の fetch・push。<br>Windows: エンジンのもの。<br>TUI: エンジンのもの。 |
 
 ## 5a. Stashes
@@ -340,7 +340,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 
 | 機能 | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
-| Operations（git の命令・出力・進み具合・取り消し） | ✓ | ✓ | △ | △ | △ | — | VSCode: Output のチャンネルの記録だけ。<br>CLI: `amonhen run`（`remoteActivity`・`cancelActivity`）から。<br>Windows: 出力は行の下に出す（詳細の欄はない）<br>TUI: 一番上の行に動いている操作の名前。git の命令・出力・取り消しはない。 |
+| Operations（git の命令・出力・進み具合・取り消し） | ✓ | ✓ | ✓ | △ | △ | — | VSCode: Output のチャンネルの記録だけ。<br>CLI: `amonhen run`（`remoteActivity`・`cancelActivity`）から。<br>TUI: 一番上の行に動いている操作の名前。git の命令・出力・取り消しはない。 |
 | History（操作ログ・ここまで戻す） | ✓ | ✓ | ✓ | △ | △ | ✓ | VSCode: Undo History… が Undo の記録を並べ、選んだところまで戻す。ほかの Activity はない。<br>CLI: `undo --list` が記録を出す。<br>TUI: 命令の一覧の Activity。Enter で、選んだところまで戻す。 |
 | Performance | ✓ | ✓ | ✓ | n/a | n/a | — | VSCode: VSCode の出力（Amon Hen のログ）が代わり。<br>Windows: 差分の読み込みと、History・status の読み直し。 |
 | History のキャッシュの書き込み（リポジトリごとの大きさ・回数・量・最後の書き込み） | ✓ | ✓ | ✓ | — | △ | — | CLI: `amonhen run`（`historyCache`）。 |
@@ -363,7 +363,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 機能 | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
 | 進行中の操作と Continue / Skip / Abort | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: サイドバーの行。<br>TUI: 一番下の行に出し、`C` `K` `A`。 |
-| 失敗とその原因・Details | ✓ | ✓ | ✓ | ✓ | n/a | △ | VSCode: 知らせに原因（git の fatal:・error: の行）を出し、Details で全文と git の命令を出力パネルに出す。<br>TUI: 原因は一番下の行に。Details はない。 |
+| 失敗とその原因・Details | ✓ | ✓ | ✓ | ✓ | n/a | △ | VSCode: 知らせに原因（git の fatal:・error: の行）を出し、Details で全文と git の命令を出力パネルに出す。<br>TUI: 原因は一番下の行に。git の答えが 2 行以上なら `!` で全部を出す（git のコマンドは出さない）。 |
 | 切れたつながりと Reconnect | ✓ | ✓ | ✓ | n/a | n/a | — |  |
 | 終わった操作が何をしたか、数秒 | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: ステータスバーの文か、Undo 付きの知らせ。<br>TUI: 一番下の行に。 |
 
