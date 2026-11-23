@@ -341,6 +341,12 @@ final class ImageCompareCanvas: NSView {
 
     private func draw(_ image: NSImage?, in rect: NSRect, alpha: CGFloat = 1) {
         guard let image else { return }
+        // ベクター（SVG）は描く大きさで描き直す（ビットマップに焼いたものを伸ばすとぼやける）。
+        if let rep = image.representations.first, !(rep is NSBitmapImageRep) {
+            NSGraphicsContext.current?.imageInterpolation = .high
+            rep.draw(in: rect, from: .zero, operation: .sourceOver, fraction: alpha, respectFlipped: true, hints: nil)
+            return
+        }
         NSGraphicsContext.current?.imageInterpolation = rect.width >= pixelSize(image).width * 2 ? .none : .high
         image.draw(in: rect, from: .zero, operation: .sourceOver, fraction: alpha, respectFlipped: true, hints: nil)
     }
