@@ -161,10 +161,17 @@ impl Sidebar {
                 .filter_map(|w| {
                     let path = w["path"].as_str()?;
                     let folder = path.rsplit(['/', '\\']).next().unwrap_or(path);
-                    let label = match w["branch"].as_str() {
+                    let mut label = match w["branch"].as_str() {
                         Some(branch) => format!("{folder} ({branch})"),
                         None => folder.to_owned(),
                     };
+                    // ロックしているもの・フォルダが見つからないもの（アプリの印の代わり）。
+                    if !w["locked"].is_null() {
+                        label.push_str(&tr!(" · locked"));
+                    }
+                    if !w["prunable"].is_null() {
+                        label.push_str(&tr!(" · missing"));
+                    }
                     if !label.to_lowercase().contains(&self.filter) {
                         return None;
                     }
@@ -302,6 +309,20 @@ impl Sidebar {
             .find(|e| e["kind"] == kind && e["name"] == name)?["detail"]
             .as_str()
             .map(str::to_owned)
+    }
+
+    /// worktree `path` がロックされているか、フォルダが見つからないか、最初の worktree か。
+    pub fn worktree_state(&self, path: &str) -> (bool, bool, bool) {
+        let found =
+            (self.refs["worktrees"].as_array().into_iter().flatten()).find(|w| w["path"] == path);
+        match found {
+            Some(w) => (
+                !w["locked"].is_null(),
+                !w["prunable"].is_null(),
+                w["main"] == true,
+            ),
+            None => (false, false, false),
+        }
     }
 
     /// ローカルのブランチ `name` の上流（`origin/main` など）。なければ、なくなっていれば None。

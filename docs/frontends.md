@@ -191,7 +191,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Feature | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
 | Stashes view (list and contents) | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: Sidebar list; Show Stash opens VSCode's multi-file diff.<br>CLI: Listed by `refs`; `show stash@{n}`.<br>TUI: In the sidebar; Enter shows a stash's diff in the details. |
-| Stash row details (branch, base against HEAD, untracked) | ✓ | ✓ | ✓ | ✓ | △ | — | VSCode: Untracked in the description, the branch and base in the tooltip (with the engine).<br>CLI: Via `amonhen run` (`stashBases`). |
+| Stash row details (branch, base against HEAD, untracked) | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: Untracked in the description, the branch and base in the tooltip (with the engine).<br>CLI: Via `amonhen run` (`stashBases`).<br>TUI: On the bottom line when Enter shows the stash. |
 | Apply, Pop, Drop… (undoable), Branch… | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: Branch… with the engine; Apply and Pop restore the index (`--index`) when they can.<br>CLI: Via `amonhen run`.<br>TUI: `a`, `o`, `x` and `b` in the sidebar. |
 
 ## 5b. Reflog
@@ -211,7 +211,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 
 | Feature | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
-| Range Diff view (= ! < >, Changes Only, diff of diffs) | ✓ | ✓ | ✓ | ✓ | ✓ | △ | CLI: `range-diff`.<br>TUI: Only through Compare with Previous Version, in the Blame and File History view; no Changes Only. |
+| Range Diff view (= ! < >, Changes Only, diff of diffs) | ✓ | ✓ | ✓ | ✓ | ✓ | △ | CLI: `range-diff`.<br>TUI: Only through Compare with Previous Version, in the Blame and File History view; `c` for Changes Only. |
 | Compare with Previous Version | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `range-diff --previous`.<br>TUI: In the command list. |
 | Two History commits or a Reflog entry compared as two versions | ✓ | ✓ | ✓ | ✓ | ✓ | — | CLI: Any ranges. |
 | Editable ranges | ✓ | ✓ | ✓ | ✓ | ✓ | — |  |
@@ -232,7 +232,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | `#issue` completion | ✓ | ✓ | △ | — | n/a | — | Windows: Listed under the summary (a WinUI text box gives no caret position to open a menu at); choosing one puts #number in place of the #. |
 | Commit and Push, Amend | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: `commit -m … --amend`.<br>TUI: `Ctrl-p` commits and then asks to push; `a` turns amend on. |
 | Fixup / Squash Commit For | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: `F` in the Working Copy; Tab switches to squash!. |
-| Hooks output sheet | ✓ | ✓ | ✓ | ✓ | n/a | △ | TUI: The first line of the hooks' output on the bottom line. |
+| Hooks output sheet | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: The first line on the bottom line, and `!` shows all of it in a box. |
 | Reason shown when Commit is disabled | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | In the button's tooltip.<br>TUI: On the bottom line. |
 | Combined HEAD → working tree diff with line and hunk checks | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: With the engine; without it, line staging on separate unstaged and staged diffs.<br>CLI: `diff --combined`, `stage --rows`. |
 | Range selection in the gutter, J/K and ⌥J/⌥K | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: `v` starts a range; `[` `]` go to the hunk headers. |
@@ -272,7 +272,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Feature | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
 | Full message, draggable panes, ⤢ to expand | ✓ | ✓ | ✓ | ✓ | n/a | △ | TUI: The dividers can't be dragged; on a narrow terminal the details open in place of History. |
-| Find inside the details | ✓ | ✓ | ✓ | ✓ | n/a | — | VSCode: ⌘F searches the whole main view; diffs not loaded yet aren't searched. |
+| Find inside the details | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: ⌘F searches the whole main view; diffs not loaded yet aren't searched.<br>TUI: `/` in the details, `n` `N` for the next and previous. |
 | All files stacked (sticky headers, collapse, Viewed) | ✓ | ✓ | △ | ✓ | ✓ | △ | CLI: `show`.<br>Windows: Toggle Viewed is in a file header's menu.<br>TUI: `[` `]` move between files; no sticky headers, collapsing or Viewed. |
 | Changed files as a tree beside the diff | ✓ | ✓ | ✓ | ✓ | n/a | △ | VSCode: Tree / List above the files.<br>TUI: A flat list above the diff. |
 | File header menu (Blame, File History, copy path, open) | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: Blame, File History and Copy Path on the right-click; Open in VSCode's diff editor.<br>TUI: `B`, `L`, `Y` (copy path) and `e` (open in git's editor) for the file in view. |
@@ -300,7 +300,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Apply Patch (am / apply, preview, 3-way, --index) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `am`, `apply` (`--check`).<br>TUI: From the command list; the preview is the subjects or files in the question, 3-way is offered when it doesn't apply, and `i` applies to the index too. |
 | Drop patch files on the window | ✓ | ✓ | ✓ | ✓ | n/a | n/a | VSCode: From the Explorer's context menu.<br>TUI: Apply Patch asks for the file's path. |
 | Export Archive (zip / tar.gz / tar, top folder, one folder) | ✓ | ✓ | △ | ✓ | ✓ | ✓ | VSCode: With the engine; a branch's or tag's right-click, a commit's in History, or the command palette for HEAD.<br>CLI: `archive`.<br>Windows: Format, top folder and one folder (typed as a path) from a commit's menu.<br>TUI: The selected commit, from the command list; the extension picks the format, then `y` a top folder, `t` none and `o` one folder (typed). |
-| Save as Bundle (all, some refs, after a base) | ✓ | ✓ | ✓ | ✓ | ✓ | △ | VSCode: With the engine; the selected branches' and tags' right-click, or the sidebar's ⋯ for the whole repository.<br>CLI: `bundle create`.<br>TUI: HEAD and every branch and tag only, from the command list. |
+| Save as Bundle (all, some refs, after a base) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: With the engine; the selected branches' and tags' right-click, or the sidebar's ⋯ for the whole repository.<br>CLI: `bundle create`.<br>TUI: From the command list: everything, `b` the current branch only, or `a` the current branch after a base. |
 | Clone from a bundle file (branch when no HEAD) | ✓ | ✓ | ✓ | ✓ | ✓ | — | VSCode: The sidebar's ⋯ and the welcome view; then open the clone, in a new window or in the workspace.<br>CLI: `clone <file> [-b <branch>]`. |
 | Fetch from Bundle (under a name, prerequisites checked) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: With the engine; the sidebar's ⋯.<br>CLI: `bundle fetch`.<br>TUI: In the command list. |
 | Stopped `am` with Retry with 3-Way, Skip, Abort, Continue | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: In a sidebar row.<br>CLI: `am --continue / --skip / --abort / --retry-3way`.<br>Windows: Windows: In the band above Working Copy.<br>TUI: `C` `K` `A`, and `R` for Retry with 3-Way. |
@@ -399,7 +399,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | The edited worktree (✎) and switching it | ✓ | ✓ | △ | ✓ | n/a | ✓ | VSCode: Switches the repository the extension works on; one outside the workspace isn't added to the Source Control view.<br>CLI: Works on the worktree it runs in.<br>Windows: Choosing a worktree (or Edit This Worktree) reopens the window on it at the same place and page, since only the front tab's repository is open.<br>TUI: Enter on another worktree reopens the TUI there. |
 | New Worktree… (from a branch or commit) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | TUI: `w` on a local branch, or in History with a new branch at the selected commit. |
 | Remove Worktree (asks, `--force` with changes) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | TUI: `x` after asking, naming the changes it removes with `--force`. |
-| Lock and unlock, move, locate a moved folder (repair) | ✓ | ✓ | ✓ | ✓ | ✓ | — | VSCode: The worktree's right-click; the worktree being edited moves only after switching to another.<br>CLI: `worktree lock`, `unlock`, `move`, `repair`. |
+| Lock and unlock, move, locate a moved folder (repair) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: The worktree's right-click; the worktree being edited moves only after switching to another.<br>CLI: `worktree lock`, `unlock`, `move`, `repair`.<br>TUI: `L` and `n` on a worktree in the sidebar. |
 | Prune worktrees | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | TUI: In the command list. |
 | A worktree's folder opens its repository with it edited | ✓ | ✓ | △ | ✓ | n/a | ✓ | VSCode: Opening the folder works on that worktree, with the others listed.<br>Windows: The folder opens in its own window with that worktree ✎ and the others listed. |
 
