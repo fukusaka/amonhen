@@ -10,7 +10,7 @@ import type { Eol, LineEndings } from '../git/eol.ts';
 import { addTrailer, commitDisabledReason, lengthLevel, longestLine, messageLength, splitMessage, withType } from '../workingCopy/commitMessage.ts';
 import { filesUnder, filterByPath, makeFileTree, type FileDir, type FileLayout } from '../workingCopy/fileList.ts';
 import { el, post, type View } from './api.ts';
-import { lineKey, renderDiffBody } from './diffView.ts';
+import { lineKey, renderDiffBody, wrapButton } from './diffView.ts';
 
 const GROUPS: { group: ChangeGroup; title: string }[] = [
   { group: 'conflicts', title: 'Conflicts' },
@@ -343,6 +343,7 @@ export function createWorkingCopyView(): View {
     if (d.lineEndings?.notable) {
       head.append(lineEndingsBadge(d.lineEndings));
     }
+    head.append(wrapButton());
     const actions = el('span', 'actions');
     const group = diffGroup!;
     if (group === 'conflicts') {

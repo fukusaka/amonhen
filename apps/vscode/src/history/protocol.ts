@@ -97,6 +97,46 @@ export interface ImageBlob {
   bytes: number;
 }
 
+/** コミットの木の 1 つ（「すべてのファイル」） */
+export interface TreeEntry {
+  name: string;
+  kind: 'folder' | 'file' | 'executable' | 'link' | 'submodule';
+}
+
+/**
+ * 「すべてのファイル」のファイルの中身の 1 行。`mark` はこのコミットで足した行（added）か変えた行（changed、`old` は
+ * 前の行）。`removedBefore` はこの行の前で消した行の数
+ */
+export interface ViewLine {
+  text: string;
+  syntax?: [number, number, number][];
+  mark?: 'added' | 'changed';
+  old?: string;
+  removedBefore?: number;
+}
+
+/** SVG のモバイル向けの描画部品の確認（崩れる機能と、部品ごとの崩れ方の近似の SVG） */
+export interface SvgCheckView {
+  issues: { targets: string[]; feature: string; message: string; count: number }[];
+  approximations: Record<string, string>;
+}
+
+/** 「すべてのファイル」で開いたファイル */
+export type FileView =
+  | {
+      kind: 'text';
+      lines: ViewLine[];
+      /** 最後の行の後で消した行の数 */
+      removedAtEnd?: number;
+      /** Markdown なら、整形して見せるブロック（コアの `markdown::Block`） */
+      markdown?: unknown[];
+      /** SVG なら、絵とモバイルの確認 */
+      svg?: { image: ImageBlob; check?: SvgCheckView };
+    }
+  | { kind: 'image'; image: ImageBlob }
+  | { kind: 'binary'; bytes: number }
+  | { kind: 'error'; message: string };
+
 /** いくつも選んだコミットの見せ方（`commitDiff` の `history`・`rows`）。差分はファイルごとに求める */
 export interface SelectionView {
   /** 差分を求めるときの `oid` の代わり */
@@ -155,6 +195,10 @@ export type HistoryHostMessage =
   | { type: 'selection'; token: number; view?: SelectionView; error?: string; choices?: DiffChoices }
   /** コミットの中の画像の前と後（足した・消したものは片方。読めなければ `error`） */
   | { type: 'commitImage'; oid: string; path: string; before?: ImageBlob; after?: ImageBlob; error?: string }
+  /** コミットの木のフォルダ `path` の中身（「すべてのファイル」） */
+  | { type: 'treeEntries'; oid: string; path: string; entries: TreeEntry[]; error?: string }
+  /** コミットのファイル `path` の中身（「すべてのファイル」） */
+  | { type: 'treeFile'; oid: string; path: string; view: FileView }
   /** ファイルの右クリックの Show Whole File（その詳細を出している欄が、ファイル全体を頼む） */
   | { type: 'wholeFile'; oid: string; path: string }
   /** コミットの中の 1 ファイルの差分（最初の親との差分） */
@@ -208,6 +252,12 @@ export type HistoryWebviewMessage =
   | { type: 'openFile'; oid: string; path: string }
   /** コミットの中の 1 ファイルの差分を求める（詳細に並べる） */
   | { type: 'commitDiff'; oid: string; path: string }
+  /** コミットの木のフォルダ `path`（根は空）の中身を求める（「すべてのファイル」。エンジンだけ） */
+  | { type: 'treeEntries'; oid: string; path: string }
+  /** コミットのファイル `path` の中身を求める（「すべてのファイル」。エンジンだけ） */
+  | { type: 'treeFile'; oid: string; path: string }
+  /** そのコミットのファイルをエディタで開く（「すべてのファイル」のバイナリ） */
+  | { type: 'openTreeFile'; oid: string; path: string }
   /** コミットの中の画像の前と後を求める（画像の差分） */
   | { type: 'commitImage'; oid: string; path: string }
   /** そのファイルの差分を、前後 `context` 行（all ならファイル全体）で求め直す（エンジンだけ） */

@@ -10,16 +10,19 @@ import type {
   DetailsLayout,
   DiffChoices,
   DiffWhitespace,
+  FileView,
   ImageBlob,
   PairMode,
   Person,
   SelectionView,
+  TreeEntry,
 } from '../history/protocol.ts';
 import { el, formatDate, getState, post, updateState } from './api.ts';
 import { type FileDir, makeFileTree } from '../workingCopy/fileList.ts';
 import { COLLAPSE_ABOVE, isGenerated, type LineCounts, lineCounts, renamedPath } from '../history/stackedFiles.ts';
-import { renderDiffBody } from './diffView.ts';
+import { renderDiffBody, wrapButton } from './diffView.ts';
 import { isImagePath, renderImageDiff } from './imageDiff.ts';
+import { type AllFiles, createAllFiles } from './allFiles.ts';
 import { signatureMark } from './signature.ts';
 
 /** mailmap で置き換えた人。記録と違えば、記録されたものを下に小さく添える */
@@ -52,6 +55,9 @@ export interface DetailsPane {
    */
   show(details: CommitDetails, focus?: string, choices?: DiffChoices): void;
   showDiff(oid: string, path: string, diff: FileDiff): void;
+  /** 「すべてのファイル」のフォルダの中身とファイルの中身 */
+  showTreeEntries(oid: string, path: string, entries: TreeEntry[], error?: string): void;
+  showTreeFile(oid: string, path: string, view: FileView): void;
   /** 画像の前と後（画像の差分） */
   showImage(oid: string, path: string, before?: ImageBlob, after?: ImageBlob, error?: string): void;
   /** いくつも選んだコミット。読んでいる間は `view` なし */
@@ -155,6 +161,12 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
   let openAll: string | undefined;
   /** 画像を比べるか（1 つのコミットを出しているとき） */
   let imagesFor = false;
+  /** 変更（差分を並べる）か、すべてのファイル（その時点の木と中身）か。コミットを替えても保つ */
+  let page: 'changes' | 'all' = 'changes';
+  /** 出している「すべてのファイル」（1 つのコミットで、エンジンがあるときだけ作る） */
+  let allFiles: AllFiles | undefined;
+  /** 出しているコミットの変わったファイル（「すべてのファイル」の木の印） */
+  let changedFiles: { path: string; status?: string }[] = [];
   /** 無視する空白と前後の行を選べるか（エンジンだけ）。今の選び方 */
   let choices: DiffChoices | undefined;
   /** ファイルごとの前後の行（3 から広げたもの。all はファイル全体） */
@@ -239,7 +251,8 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
   function place(message: Node[]): void {
     root.classList.remove('expanded');
     root.classList.toggle('split', message.length > 0);
-    head.style.height = '';
+    const kept = getState().detailsHeadHeight;
+    head.style.height = kept ? `${kept}px` : '';
     head.replaceChildren(...message);
     head.scrollTop = 0;
     scroller.scrollTop = 0;
@@ -278,6 +291,19 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
       return;
     }
     bar.hidden = false;
+    const canAll = imagesFor && choices !== undefined;
+    const pages = el('span', 'segmented');
+    if (canAll) {
+      pages.append(
+        barButton('Changes', 'The changes in this commit', page === 'changes', () => setPage('changes')),
+        barButton('All Files', 'All files at this commit, with the changes marked', page === 'all', () => setPage('all')),
+      );
+    }
+    if (canAll && page === 'all') {
+      const spacer = el('span', 'spacer');
+      bar.replaceChildren(pages, spacer, wrapButton());
+      return;
+    }
     const total = el('span', 'files-total', `${files.length} file${files.length === 1 ? '' : 's'}`);
     if (files.every((f) => f.counts)) {
       total.append(' ', countsLabel(files.reduce((sum, f) => ({ added: sum.added + f.counts!.added, removed: sum.removed + f.counts!.removed }), { added: 0, removed: 0 })));
@@ -288,7 +314,7 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
       barButton('List', 'Show the changed files as a list of paths', !layout.tree, () => post({ type: 'detailsLayout', layout: { tree: false } })),
       barButton('Tree', 'Show the changed files in their folders', layout.tree, () => post({ type: 'detailsLayout', layout: { tree: true } })),
     );
-    const items: Node[] = [total, spacer, switcher];
+    const items: Node[] = canAll ? [pages, total, spacer, switcher] : [total, spacer, switcher];
     if (choices) {
       const current = choices.whitespace;
       const select = el('select');
@@ -304,6 +330,7 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
       select.addEventListener('change', () => post({ type: 'whitespace', whitespace: select.value as DiffWhitespace }));
       items.push(select);
     }
+    items.push(wrapButton());
     if (layout.tree && diffs?.querySelector('.dir-head')) {
       const anyFolded = foldedDirs.size > 0;
       items.push(
@@ -492,8 +519,30 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
       });
       diffObserver.observe(section);
     }
-    scroller.replaceChildren(diffs);
+    changedFiles = items.map((f) => ({ path: f.path, ...(f.status ? { status: f.status } : {}) }));
+    allFiles = undefined;
+    showPage();
     applyLayout();
+  }
+
+  /** 変更とすべてのファイルを切り替える */
+  function setPage(next: 'changes' | 'all'): void {
+    page = next;
+    showPage();
+    renderBar();
+  }
+
+  /** 今のページを欄に出す（すべてのファイルは、初めて開くときに作る） */
+  function showPage(): void {
+    const canAll = imagesFor && choices !== undefined && shownOid !== undefined;
+    if (page === 'all' && canAll) {
+      allFiles ??= createAllFiles(shownOid!, changedFiles);
+      scroller.replaceChildren(allFiles.root);
+      root.classList.add('all-files-page');
+    } else {
+      if (diffs) scroller.replaceChildren(diffs);
+      root.classList.remove('all-files-page');
+    }
   }
 
   /** 出しているコミットの、ファイルの差分を求める */
@@ -626,6 +675,14 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
     if (!had) renderBar();
   }
 
+  function showTreeEntries(oid: string, path: string, entries: TreeEntry[], error?: string): void {
+    if (oid === shownOid) allFiles?.showEntries(path, entries, error);
+  }
+
+  function showTreeFile(oid: string, path: string, view: FileView): void {
+    if (oid === shownOid) allFiles?.showFile(path, view);
+  }
+
   function showImage(oid: string, path: string, before?: ImageBlob, after?: ImageBlob, error?: string): void {
     const file = sections.get(path);
     if (oid !== shownOid || !file?.image) return;
@@ -670,6 +727,8 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
     show,
     showDiff,
     showImage,
+    showTreeEntries,
+    showTreeFile,
     showExtras,
     clear,
     showSelection,
@@ -680,10 +739,15 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
 }
 
 /**
- * メッセージの欄と、ファイルと差分の欄の仕切りをドラッグして、メッセージの欄の高さを変える（次のコミットを出すと
- * 中身に合わせ直す。アプリと同じ）
+ * メッセージの欄と、ファイルと差分の欄の仕切りをドラッグして、メッセージの欄の高さを変える。変えた高さはどの
+ * コミットでも保ち、仕切りをダブルクリックすると中身に合わせ直す（アプリの「高さを自動で決める」）
  */
 function attachRowSplitter(root: HTMLElement, divider: HTMLElement, head: HTMLElement): void {
+  divider.title = 'Drag to keep this height for every commit; double-click to fit the commit details again';
+  divider.addEventListener('dblclick', () => {
+    updateState({ detailsHeadHeight: undefined });
+    head.style.height = '';
+  });
   divider.addEventListener('mousedown', (e) => {
     e.preventDefault();
     const top = head.getBoundingClientRect().top;
@@ -695,6 +759,7 @@ function attachRowSplitter(root: HTMLElement, divider: HTMLElement, head: HTMLEl
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
       document.body.classList.remove('resizing-rows');
+      if (head.style.height) updateState({ detailsHeadHeight: parseFloat(head.style.height) });
     };
     document.body.classList.add('resizing-rows');
     window.addEventListener('mousemove', onMove);

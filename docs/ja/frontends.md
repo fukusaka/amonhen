@@ -237,7 +237,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | HEAD → 作業ツリーの 1 つの差分と、行・hunk のチェック | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: エンジンがあれば。なければ別々の未ステージ・ステージ済みの差分で行をステージ。<br>CLI: `diff --combined`・`stage --rows`。 |
 | 行の範囲の選択、J/K・⌥J/⌥K | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: `v` で範囲を始め、`[` `]` で hunk の見出しへ。 |
 | 重ねられないファイルの Unstaged / Staged の切り替え | ✓ | ✓ | ✓ | n/a | ✓ | ✓ | VSCode: いつも別々に出す。<br>CLI: `diff --staged`。<br>TUI: 初めは stage していない側。差分の `s` で替える。 |
-| 差分の表示の選択（unified/split・前後の行・折り返し） | △ | △ | — | — | n/a | — | macOS・GTK4: 長い行の折り返しだけ（「長い行を折り返す」、すべての差分・ファイルの中身・マージエディタで）。左右に並べる表示はない。 |
+| 差分の表示の選択（unified/split・前後の行・折り返し） | △ | △ | — | △ | n/a | — | macOS・GTK4: 長い行の折り返しだけ（「長い行を折り返す」、すべての差分・ファイルの中身・マージエディタで）。左右に並べる表示はない。<br>VSCode: 長い行の折り返しだけ（`amonhen.wrapLongLines`、Alt+Z か差分の上の ↩︎。マージエディタは VSCode のもの）。 |
 | 空白を無視する（その間は行ごとの stage・破棄はしない） | ✓ | ✓ | ✓ | — | ✓ | ✓ | CLI: `diff -w`・`-b`・`--ignore-space-at-eol`（`--combined` とは使えない）。<br>TUI: 差分の `w` で順に替える。その間は片方の側だけ（`s` で替える）。 |
 | 行・hunk・ファイルを捨てる（Undo できる） | ✓ | ✓ | △ | ✓ | ✓ | ✓ | CLI: `discard --rows`。<br>Windows: Working Copy の差分で行か hunk の見出しを右クリック（Discard Lines）。行を選ぶことはできない |
 | Add to .gitignore | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: untracked のファイルで `i`、続けて `p` でそのパス、`e` で拡張子。 |
@@ -279,8 +279,8 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | hunk の前後を広げる・ファイル全体を出す | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: エンジンがあれば。hunk の見出しの ⇕ でそのファイルを 20 行広げ、ファイル全体は ⋯ の Show Whole File。<br>TUI: `+` で今見ているファイルの前後を 20 行広げ、`F` で全体を出す。 |
 | 空白を無視する（行末・量の違い・すべて） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: エンジンがあれば。<br>CLI: `show -w`・`-b`・`--ignore-space-at-eol`。<br>TUI: 詳細の `w` で順に替える。 |
 | 画像を比べる（並べる・スワイプ・オニオンスキン・違うピクセル） | ✓ | ✓ | ✓ | ✓ | n/a | — | VSCode: 20 MB を超える画像は比べない。 |
-| すべてのファイル: その時点の木と、コミットの行に印を付けたファイルの中身 | ✓ | ✓ | ✓ | — | n/a | — | |
-| すべてのファイルのプレビュー: 拡大縮小できる画像・SVG の絵とモバイル向けの確認・整形した Markdown・バイナリの Quick Look | ✓ | ✓ | △ | — | n/a | — | GTK4: Quick Look の代わりに GNOME のプレビュー（か既定のアプリ）。SVG の絵は librsvg で描く。<br>Windows: 拡大縮小できる画像・SVG の絵・整形した Markdown。SVG のモバイル向けの確認とバイナリのプレビューはまだない。 |
+| すべてのファイル: その時点の木と、コミットの行に印を付けたファイルの中身 | ✓ | ✓ | ✓ | ✓ | n/a | — | VSCode: エンジンがあれば。 |
+| すべてのファイルのプレビュー: 拡大縮小できる画像・SVG の絵とモバイル向けの確認・整形した Markdown・バイナリの Quick Look | ✓ | ✓ | △ | ✓ | n/a | — | VSCode: そのほかのバイナリは Quick Look の代わりに VSCode のエディタで開く。<br>GTK4: Quick Look の代わりに GNOME のプレビュー（か既定のアプリ）。SVG の絵は librsvg で描く。<br>Windows: 拡大縮小できる画像・SVG の絵・整形した Markdown。SVG のモバイル向けの確認とバイナリのプレビューはまだない。 |
 | ファイルの見出しのメニュー（Blame・File History・パスのコピー・開く） | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: 右クリックの Blame・File History・Copy Path と、VSCode の差分のエディターで開く。<br>TUI: 見ているファイルの `B`・`L`・`Y`（パスのコピー）・`e`（git のエディタで開く）。 |
 | 選んだものの差分（範囲をまとめる・A..B / A...B・飛び飛び） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: エンジンがあるとき。<br>CLI: `diff <rev> <rev>`。<br>TUI: `m` と Shift-↑↓（か Ctrl・Alt を押しながらクリック）で選ぶ。`x` で向きを入れ替え、`.` で merge-base から。 |
 | 選んだものの操作（cherry-pick・revert・squash・ID のコピー） | ✓ | ✓ | △ | ✓ | △ | ✓ | VSCode: エンジンがあるとき。<br>CLI: `amonhen run` から。<br>Windows: 続いたコミットをまとめるときは、ダイアログでメッセージを直してすぐ書き換える（編集モードはない）。<br>TUI: 印をつけたコミットに `y` `v`、`E` でまとめた形の編集モード、`Y` で ID のコピー、Save as Patch で保存。 |

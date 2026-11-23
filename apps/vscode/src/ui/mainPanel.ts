@@ -19,6 +19,16 @@ import { WorkingCopyController } from './workingCopyController.ts';
  * メインビュー。エディタ領域の 1 つの Webview に、Working Copy・History・Reflog・Range Diff・Daemon などを出す。
  * どちらを出すかはサイドバーのナビで選ぶ。こちらは画面ごとのコントローラーにメッセージを振り分ける。
  */
+/** 長い行を折り返すか（設定 `amonhen.wrapLongLines`） */
+function wrapLongLines(): boolean {
+  return vscode.workspace.getConfiguration('amonhen').get<boolean>('wrapLongLines', false);
+}
+
+/** 長い行の折り返しを切り替える（コマンド Wrap Long Lines、Alt+Z、差分の帯の ↩︎） */
+export async function toggleWrapLongLines(): Promise<void> {
+  await vscode.workspace.getConfiguration('amonhen').update('wrapLongLines', !wrapLongLines(), vscode.ConfigurationTarget.Global);
+}
+
 export class MainPanel implements vscode.Disposable {
   private static current: MainPanel | undefined;
 
@@ -109,6 +119,9 @@ export class MainPanel implements vscode.Disposable {
       panel.onDidDispose(() => this.dispose()),
       panel.webview.onDidReceiveMessage((m: WebviewMessage) => void this.onMessage(m).catch(showError)),
       manager.onDidChangeCurrent((r) => this.watch(r)),
+      vscode.workspace.onDidChangeConfiguration((e) => {
+        if (e.affectsConfiguration('amonhen.wrapLongLines')) this.post({ type: 'wrapLines', wrap: wrapLongLines() });
+      }),
     );
     this.watch(manager.current);
   }
@@ -169,6 +182,7 @@ export class MainPanel implements vscode.Disposable {
       case 'ready':
         this.ready = true;
         this.post({ type: 'detailsLayout', layout: detailsLayout() });
+        this.post({ type: 'wrapLines', wrap: wrapLongLines() });
         if (this.pendingView) {
           this.post({ type: 'show', view: this.pendingView });
           this.pendingView = undefined;
@@ -179,6 +193,9 @@ export class MainPanel implements vscode.Disposable {
         this.fileHistory.setRepository(this.repo);
         this.blame.setRepository(this.repo);
         this.settings.setRepository(this.repo);
+        break;
+      case 'toggleWrapLines':
+        await toggleWrapLongLines();
         break;
       case 'view':
         // Daemon は出している間だけ読み直す
