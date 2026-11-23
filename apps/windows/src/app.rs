@@ -40,6 +40,9 @@ thread_local! {
     static TREE_DRAG_AT: std::cell::Cell<Option<Instant>> = const { std::cell::Cell::new(None) };
     /// 根の部品に渡す引数（`Component::Input` は比べられる値でなければならないので、ここに置く）。
     static ARGS: RefCell<Option<(Args, Instant)>> = const { RefCell::new(None) };
+    /// タブごとに開いているリポジトリ（タブの id と、そのタブの場所。Activity の History のキャッシュの表が、
+    /// すべての窓のタブのリポジトリを並べる）。
+    static OPEN_REPOS: RefCell<Vec<(u64, String, Arc<Repository>)>> = const { RefCell::new(Vec::new()) };
     /// 前のタブの History と差分の描き手（窓の入力の処理が使う。タブごとの描き手は根の部品が持つ）。
     static HISTORY: RefCell<Option<Rc<RefCell<HistoryView>>>> = const { RefCell::new(None) };
     /// History を包む生の要素（右クリックのメニューを自分で開く）。
@@ -48,8 +51,11 @@ thread_local! {
     static HISTORY_FLYOUT: RefCell<Option<xaml::FlyoutBase>> = const { RefCell::new(None) };
     /// サイドバーの木の生の要素と、右クリックで開く位置（キーボードで開いたときは項目そのものに出す）。
     static SIDEBAR_ELEMENT: RefCell<Option<xaml::UIElement>> = const { RefCell::new(None) };
-    /// ツールチップを付けたサイドバーの項目（要素の identity と付けた文字。同じなら付け直さない）。
-    static SIDEBAR_TIP: RefCell<Option<(usize, Option<String>)>> = const { RefCell::new(None) };
+    /// 行のツールチップを付けた時（見えている行に、指が入る前から付けておく。0.5 秒ごとに付け直す）。
+    static SIDEBAR_TIPS_AT: std::cell::Cell<Option<Instant>> = const { std::cell::Cell::new(None) };
+    /// 行の要素ごとに付けたツールチップ（同じなら付け直さない。付け直すと、出るまでの待ちが始めからになる）。
+    static SIDEBAR_TIPS: RefCell<std::collections::HashMap<usize, Option<String>>> =
+        RefCell::new(std::collections::HashMap::new());
     /// 今のブランチの名前（終わった操作の一言に使う。ref を読むたびに書く）。
     static HEAD_NAME: RefCell<String> = const { RefCell::new(String::new()) };
     /// Push の画面を出しているか（出していれば、Enter で既定のボタンを押せるか。Force Push は押せない）。
@@ -305,6 +311,8 @@ struct Root {
     checks_popover: Option<ChecksPopover>,
     checks_anchor: ElementRef<Button>,
     checks_opened: u64,
+    /// Activity の時計の数え（開くたびに替わり、前の時計を止める）。
+    activity_clock: u64,
     diff_panel: ElementRef<SwapChainPanel>,
     diff_area: ElementRef<Grid>,
     /// 差分で右クリックしたファイル（見出しのメニューの中身）。
@@ -1190,6 +1198,8 @@ enum Message {
     ActivityUndoLog(Vec<Value>),
     ActivityUndo(usize),
     ActivityTick,
+    /// Activity の時計（開いたときの数え。その時計が今のものなら読み直して、次を待つ）。
+    ActivityClock(u64),
     /// 走っている操作の数が変わった。
     Running(usize),
     /// History の下の帯から shallow clone の履歴を取り足す（`deepen:N`・`deepen-other`・`deepen-since`・`unshallow`）。
@@ -1201,6 +1211,10 @@ enum Message {
     /// Settings > Git > Environment Variables: 渡すかの切り替えと、探す文字。
     SettingsEnv(String, bool),
     SettingsEnvQuery(String),
+    /// Passed / All（0 は渡すものだけ）、表で選んだ行（今の並びの位置）、伏せた値を見せる。
+    SettingsEnvShown(Option<usize>),
+    SettingsEnvSelect(Option<usize>),
+    SettingsEnvReveal,
     /// Settings > Git の共有のテンプレート: 書き換え（番号、0 は名前・1 は本文、文字）、足す、外す。
     SettingsTemplate(usize, usize, String),
     SettingsTemplateAdd,
@@ -1218,8 +1232,10 @@ enum Message {
     AutoFetched(Option<String>),
     /// Activity の Operations の記録を JSON に書き出す。
     ActivityExport,
-    /// Activity の History のキャッシュを読んだ（リポジトリの名前と `historyCache` の info）。
-    ActivityCache(String, Value),
+    /// Activity の History のキャッシュを読んだ（開いているリポジトリごとの名前と `historyCache` の info）。
+    ActivityCache(u64, Vec<(String, Value)>),
+    /// Activity の History のキャッシュを読み直す時（読んだときの数え）。
+    ActivityCacheDue(u64),
     /// 共有の daemon の様子（動いていなければ None）。
     DaemonStatus(Option<Value>),
     DaemonToggle,
@@ -1490,6 +1506,7 @@ impl Component for Root {
             checks_popover: None,
             checks_anchor: ElementRef::new(),
             checks_opened: 0,
+            activity_clock: 0,
             diff_panel: ElementRef::new(),
             diff_area: ElementRef::new(),
             diff_file: None,
@@ -1858,6 +1875,12 @@ impl Root {
                 }
                 self.refs = Some(refs);
                 self.repo = Some(repo.clone());
+                let tab = self.tab.borrow().clone();
+                OPEN_REPOS.with(|r| {
+                    let mut r = r.borrow_mut();
+                    r.retain(|(id, ..)| *id != tab.id);
+                    r.push((tab.id, tab.location, repo.clone()));
+                });
                 if let Some(path) = self.pending_file_history.take() {
                     self.update(Message::OpenFileHistory(path), context);
                 }
@@ -3495,8 +3518,14 @@ impl Root {
                 }
                 self.activity = Some(crate::activity::State::new());
                 self.page = Page::Activity;
-                self.with_history(|h| h.activity_tick = Some(Instant::now()));
                 self.load_undo_log(context);
+                // 開いている間は 0.5 秒ごとに読み直す（GTK4 版と同じ間隔）。History の描画の時計は、Activity が
+                // 覆っている間は進まないので、裏で待って知らせる。開き直したら、前の時計は止まる。
+                static ACTIVITY_CLOCK: std::sync::atomic::AtomicU64 =
+                    std::sync::atomic::AtomicU64::new(0);
+                let clock = ACTIVITY_CLOCK.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                self.activity_clock = clock;
+                activity_clock_later(clock, context);
             }
             Message::Command(id) if id == "show-sidebar" => {
                 self.sidebar_hidden = !self.sidebar_hidden;
@@ -3535,6 +3564,9 @@ impl Root {
                     },
                     env_added: crate::settingsview::env_added_names(),
                     env_query: String::new(),
+                    env_passed_only: false,
+                    env_selected: None,
+                    env_revealed: false,
                     templates: crate::templates::all(),
                     template_selected: None,
                     ssh: None,
@@ -6263,20 +6295,16 @@ impl Root {
                 if tab == 5 {
                     load_daemon_status(context);
                 }
-                if tab == 2
-                    && let Some(repo) = self.repo.clone()
-                {
-                    let name = repo
-                        .paths()
-                        .workdir
-                        .and_then(|w| w.file_name().map(|n| n.to_string_lossy().into_owned()))
-                        .unwrap_or_default();
-                    context.spawn_background(move |_| {
-                        let reply: Value =
-                            serde_json::from_str(&repo.run_json(r#"{"op":"historyCache"}"#))
-                                .unwrap_or_default();
-                        Message::ActivityCache(name, reply["info"].clone())
-                    });
+                if tab == 2 {
+                    // 数えはアプリ全体で 1 つ（Activity を開き直しても、前の読み直しと重ならない）。
+                    static CACHE_GENERATION: std::sync::atomic::AtomicU64 =
+                        std::sync::atomic::AtomicU64::new(0);
+                    let generation =
+                        CACHE_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                    if let Some(state) = self.activity.as_mut() {
+                        state.cache_generation = generation;
+                    }
+                    load_history_caches(generation, context);
                 }
             }
             Message::DaemonStatus(status) => {
@@ -6311,9 +6339,25 @@ impl Root {
                     });
                 }
             }
-            Message::ActivityCache(name, info) => {
-                if let Some(state) = self.activity.as_mut() {
-                    state.cache = Some((name, info));
+            Message::ActivityCache(generation, rows) => {
+                // 出している間は、読み終えてから 2 秒ごとに読み直す（macOS 版・GTK4 版と同じ間隔。閉じたタブの
+                // 行が消え、書き込みの数が進む）。タブを選び直したら、前の読み直しは止まる。
+                if let Some(state) = self.activity.as_mut()
+                    && state.tab == 2
+                    && state.cache_generation == generation
+                {
+                    state.cache = Some(rows);
+                    context.spawn_background(move |_| {
+                        std::thread::sleep(std::time::Duration::from_secs(2));
+                        Message::ActivityCacheDue(generation)
+                    });
+                }
+            }
+            Message::ActivityCacheDue(generation) => {
+                if self.activity.as_ref().is_some_and(|s| {
+                    s.tab == 2 && s.cache_generation == generation && self.page == Page::Activity
+                }) {
+                    load_history_caches(generation, context);
                 }
             }
             Message::ActivityExport => {
@@ -7065,6 +7109,12 @@ impl Root {
                 self.busy = Some(tr!("Fetch More"));
                 perform(context, repo, command, tr!("Fetch More"));
             }
+            Message::ActivityClock(clock) => {
+                if self.activity.is_some() && self.activity_clock == clock {
+                    self.update(Message::ActivityTick, context);
+                    activity_clock_later(clock, context);
+                }
+            }
             Message::ActivityTick => {
                 let mut undo = false;
                 // この窓のリポジトリの daemon・SSH 越しのつながり（Daemon のタブの表）。
@@ -7159,7 +7209,6 @@ impl Root {
             Message::Repos(event) => self.repositories_event(event, context),
             Message::CloseActivity => {
                 self.activity = None;
-                self.with_history(|h| h.activity_tick = None);
                 self.page = self.activity_from;
             }
             Message::SettingsGit(epoch, name, email, entries) => {
@@ -7574,6 +7623,31 @@ impl Root {
             Message::SettingsEnvQuery(text) => {
                 if let Some(state) = self.settings.as_mut() {
                     state.env_query = text;
+                }
+            }
+            Message::SettingsEnvShown(Some(index)) => {
+                if let Some(state) = self.settings.as_mut() {
+                    state.env_passed_only = index == 0;
+                }
+            }
+            Message::SettingsEnvShown(None) => {}
+            Message::SettingsEnvSelect(index) => {
+                if let Some(state) = self.settings.as_mut() {
+                    // 選び直したら、伏せた値はまた伏せる（macOS 版と同じ）。並びが変わっても名前で覚える。
+                    let name = index.and_then(|i| {
+                        crate::settingsview::env_rows(state)
+                            .get(i)
+                            .map(|(n, ..)| (*n).clone())
+                    });
+                    if name.is_some() && name != state.env_selected {
+                        state.env_selected = name;
+                        state.env_revealed = false;
+                    }
+                }
+            }
+            Message::SettingsEnvReveal => {
+                if let Some(state) = self.settings.as_mut() {
+                    state.env_revealed = true;
                 }
             }
             Message::SettingsToggle(key, value) => {
@@ -8448,6 +8522,7 @@ impl Root {
         let args = args.clone();
         let front = input.front;
         let window = input.window;
+        let tab_id = input.tab.id;
         context.use_effect("history", (), move || {
             let (panel, area, diff_panel, diff_area, sidebar, sidebar_menu_host) = refs;
             // File > New Window で開いた窓は、Repositories の画面から（GTK4 版の `show_home`）。
@@ -8529,7 +8604,6 @@ impl Root {
                 worktree_tick: (Instant::now(), Instant::now()),
                 running: (0, None),
                 flash_until: None,
-                activity_tick: None,
                 watched: None,
             }));
             view.borrow_mut().me = Rc::downgrade(&view);
@@ -8559,6 +8633,7 @@ impl Root {
             Some(Box::new(move || {
                 drop(history);
                 drop(diff);
+                OPEN_REPOS.with(|r| r.borrow_mut().retain(|(id, ..)| *id != tab_id));
                 // 閉じたタブの History を、前のタブの History として残さない。
                 HISTORY.with(|h| {
                     let mut h = h.borrow_mut();
@@ -13525,6 +13600,7 @@ impl Root {
             // 外れている）送れないので、Publish にもしない。
             published: entry.is_none_or(|e| e.detail.is_some() && !e.gone),
             no_remote,
+            running: self.running,
         }
     }
 
@@ -14012,36 +14088,10 @@ impl Root {
         if let (None, Some(flash)) = (&self.busy, &self.flash) {
             text.push_str(&format!("  ·  ✓ {flash}"));
         }
-        // 走っている操作があれば右に ⟳ n（押すと Activity。GTK4 版の Activity のボタンの回る印）。
-        let running: View = if self.running > 0 {
-            Button::new()
-                .style(ButtonStyle::Subtle)
-                .on_click(context.callback(|()| Message::Command("activity".to_owned())))
-                .content(
-                    TextBlock::new()
-                        .text(format!("⟳ {}", self.running))
-                        .font_size(12.0),
-                )
-                .tooltip(tr!(
-                    "{count} operations running (click for Activity)",
-                    count = self.running
-                ))
-        } else {
-            View::empty()
-        };
-        let bar = Grid::new()
-            .columns([GridLength::Star(1.0), GridLength::Auto])
-            .children((
-                TextBlock::new()
-                    .text(text)
-                    .font_size(12.0)
-                    .margin(Thickness::new(12.0, 3.0, 12.0, 4.0))
-                    .grid_column(0),
-                Border::new()
-                    .margin(Thickness::new(0.0, 0.0, 8.0, 0.0))
-                    .grid_column(1)
-                    .content(running),
-            ));
+        let bar = TextBlock::new()
+            .text(text)
+            .font_size(12.0)
+            .margin(Thickness::new(12.0, 3.0, 12.0, 4.0));
         StackPanel::new().grid_row(4).children((
             self.connection_band(context),
             self.failure_band(context),
@@ -16145,6 +16195,9 @@ impl Root {
                     context.callback(move |on| Message::SettingsEnv(name.clone(), on))
                 }),
                 env_query: context.callback(Message::SettingsEnvQuery),
+                env_shown: context.callback(Message::SettingsEnvShown),
+                env_select: context.callback(Message::SettingsEnvSelect),
+                env_reveal: context.callback(|()| Message::SettingsEnvReveal),
                 template_add: context.callback(|()| Message::SettingsTemplateAdd),
                 template_select: context.callback(Message::SettingsTemplateSelect),
                 template_edit: context.callback(|()| Message::SettingsTemplateEdit),
@@ -18583,6 +18636,40 @@ fn connecting_view(location: &str, error: Option<&String>, context: &ViewContext
             .children((View::keyed_fragment(rows),)),))
 }
 
+/// 0.5 秒後に Activity の時計を進める。
+fn activity_clock_later(clock: u64, context: &ComponentContext<Root>) {
+    context.spawn_background(move |_| {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        Message::ActivityClock(clock)
+    });
+}
+
+/// すべての窓のタブで開いているリポジトリの History のキャッシュを裏で読む（macOS 版・GTK4 版と同じく、同じ場所を
+/// 開いたタブは 1 つにまとめる）。
+fn load_history_caches(generation: u64, context: &ComponentContext<Root>) {
+    let mut seen = std::collections::HashSet::new();
+    let repos: Vec<(String, Arc<Repository>)> = OPEN_REPOS.with(|r| {
+        r.borrow()
+            .iter()
+            .filter(|(_, location, _)| seen.insert(location.to_lowercase()))
+            .map(|(_, location, repo)| (crate::repositories::display_name(location), repo.clone()))
+            .collect()
+    });
+    context.spawn_background(move |_| {
+        let rows = repos
+            .into_iter()
+            .filter_map(|(name, repo)| {
+                let reply: Value =
+                    serde_json::from_str(&repo.run_json(r#"{"op":"historyCache"}"#)).ok()?;
+                reply["info"]
+                    .is_object()
+                    .then(|| (name, reply["info"].clone()))
+            })
+            .collect();
+        Message::ActivityCache(generation, rows)
+    });
+}
+
 /// 開いていないリポジトリを、その場で開く（clone した直後に取り出すフォルダを選ぶ）。
 fn open_repository(location: &str) -> Option<Arc<Repository>> {
     let backend = amonhen_backend_gix::GixBackend::open(location).ok()?;
@@ -18764,8 +18851,6 @@ struct HistoryView {
     running: (usize, Option<Instant>),
     /// 終わった操作の一言を消す時刻。
     flash_until: Option<Instant>,
-    /// Activity を開いている間、読み直しを頼んだ最後の時刻（0.5 秒ごとに頼む）。
-    activity_tick: Option<Instant>,
     /// 見張っている、daemon・SSH 越しのリポジトリと、最後に見た時刻（切れたら知らせる。GTK4 版・macOS 版と同じく
     /// 0.25 秒ごとに見て、切れたら見るのをやめる）。
     watched: Option<(Arc<Repository>, Instant)>,
@@ -18917,6 +19002,9 @@ impl HistoryView {
     /// 届いたものを取り込み、描くものがあれば描く。
     fn render(&mut self) -> Result<(), String> {
         retry_monospace();
+        if self.owner {
+            tip_sidebar_rows();
+        }
         retry_splitters();
         retry_place();
         self.take_ownership();
@@ -19038,13 +19126,6 @@ impl HistoryView {
                 self.diff.dirty = true;
                 self.sender.send(Message::AppearanceChanged);
             }
-        }
-        // Activity を開いている間は 0.5 秒ごとに読み直してもらう（GTK4 版と同じ間隔）。
-        if let Some(last) = self.activity_tick
-            && last.elapsed() >= std::time::Duration::from_millis(500)
-        {
-            self.activity_tick = Some(Instant::now());
-            self.sender.send(Message::ActivityTick);
         }
         let s = &mut self.session;
         if STATUS_RELOAD.swap(false, std::sync::atomic::Ordering::AcqRel) {
@@ -20548,33 +20629,75 @@ fn attach_sidebar(element: &IInspectable) -> windows_core_reactor::Result<()> {
         });
     })?;
     REVOKERS.with(|r| r.borrow_mut().push(revoker));
-    // 行のツールチップ（印の意味など。reactor の木の項目は文字だけなので、指の下の項目に付ける。項目の要素は
-    // 使い回されるので、指が別の項目に移るたびに付け直す）。
-    let revoker = ui.PointerMoved(move |_, args: Ref<xaml::PointerRoutedEventArgs>| {
-        let Some(args) = args.as_ref() else { return };
-        let Ok(original) = args.OriginalSource() else {
-            return;
-        };
-        let Some((item, key)) = tree_item_key(&original) else {
-            return;
-        };
-        let identity = item
-            .cast::<windows_core_reactor::IUnknown>()
-            .map_or(0, |u| u.as_raw() as usize);
-        let text = sidebar::tooltip(&key);
-        let changed = SIDEBAR_TIP.with(|t| {
-            let mut t = t.borrow_mut();
-            let next = (identity, text.clone());
-            let changed = t.as_ref() != Some(&next);
-            *t = Some(next);
-            changed
-        });
-        if changed && let Ok(item) = item.cast::<IInspectable>() {
-            let _ = windows_reactor::set_tooltip_text(&item, text.as_deref());
-        }
-    })?;
-    REVOKERS.with(|r| r.borrow_mut().push(revoker));
+    // 行のツールチップは、描いたあとに見えている行に付ける（`tip_sidebar_rows`）。
     Ok(())
+}
+
+/// サイドバーの見えている行に、行のツールチップを付ける（0.5 秒ごと）。指が行に入ってから付けると、WinUI は
+/// その行を出るまでツールチップを出さないので、先に付けておく。行の要素は使い回されるので、付け直す。
+fn tip_sidebar_rows() {
+    let due = SIDEBAR_TIPS_AT
+        .with(|t| t.get())
+        .is_none_or(|t| t.elapsed() >= std::time::Duration::from_millis(500));
+    if !due {
+        return;
+    }
+    SIDEBAR_TIPS_AT.with(|t| t.set(Some(Instant::now())));
+    let Some(root) = SIDEBAR_ELEMENT.with(|e| e.borrow().clone()) else {
+        return;
+    };
+    fn walk(node: &xaml::DependencyObject, depth: u32) {
+        if let Ok(element) = node.cast::<xaml::FrameworkElement>()
+            && let Ok(context) = element.DataContext()
+            && let Some(key) = node_key(&context)
+        {
+            // 中身の ContentPresenter ではなく、行そのもの（TreeViewItem）に付ける（中身に付けると出ない）。
+            let mut row = node.clone();
+            for _ in 0..4 {
+                let class = row
+                    .cast::<IInspectable>()
+                    .ok()
+                    .and_then(|r| r.GetRuntimeClassName().ok())
+                    .map(|c| c.to_string_lossy())
+                    .unwrap_or_default();
+                if class.ends_with(".TreeViewItem") {
+                    break;
+                }
+                match xaml::VisualTreeHelper::GetParent(&row) {
+                    Ok(parent) => row = parent,
+                    Err(_) => break,
+                }
+            }
+            if let Ok(item) = row.cast::<IInspectable>() {
+                let identity = item
+                    .cast::<windows_core_reactor::IUnknown>()
+                    .map_or(0, |u| u.as_raw() as usize);
+                let tip = sidebar::tooltip(&key);
+                let changed = SIDEBAR_TIPS.with(|t| {
+                    let mut t = t.borrow_mut();
+                    let changed = t.get(&identity) != Some(&tip);
+                    t.insert(identity, tip.clone());
+                    changed
+                });
+                if changed {
+                    let _ = windows_reactor::set_tooltip_text(&item, tip.as_deref());
+                }
+            }
+            return;
+        }
+        if depth == 0 {
+            return;
+        }
+        let count = xaml::VisualTreeHelper::GetChildrenCount(node).unwrap_or(0);
+        for i in 0..count {
+            if let Ok(child) = xaml::VisualTreeHelper::GetChild(node, i) {
+                walk(&child, depth - 1);
+            }
+        }
+    }
+    if let Ok(node) = root.cast::<xaml::DependencyObject>() {
+        walk(&node, 40);
+    }
 }
 
 /// 等幅の字（Windows の既定の等幅。なければ Consolas）。

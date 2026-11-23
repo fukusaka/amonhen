@@ -476,6 +476,8 @@ pub struct Tracking {
     pub behind: u32,
     pub published: bool,
     pub no_remote: bool,
+    /// 走っている操作の数（Activity のボタンが回る。macOS 版の Activity の項目の回る印）。
+    pub running: usize,
 }
 
 /// Push で送れるものがあるか（上流がなければ、送り先のリモートがあれば Publish できる）。なければツールバーの
@@ -566,6 +568,13 @@ pub fn toolbar(on_click: Callback<String>, tracking: Tracking) -> View {
                 let (tooltip, count) = match id.as_str() {
                     "pull" => (pull_tooltip(tracking), tracking.behind),
                     "push" => (push_tooltip(tracking), tracking.ahead),
+                    "activity" if tracking.running > 0 => (
+                        amonhen_model::tr!(
+                            "{count} operations running (click for Activity)",
+                            count = tracking.running
+                        ),
+                        0,
+                    ),
                     _ => (toolbar_name(&id), 0),
                 };
                 // 送れないときは押せないように見せるだけにする（WinUI は押せない部品のツールチップを出さないので、
@@ -582,9 +591,24 @@ pub fn toolbar(on_click: Callback<String>, tracking: Tracking) -> View {
                 } else {
                     View::empty()
                 };
-                let icon = Grid::new()
+                // Activity は、操作が走っている間はアイコンの左で回る（macOS 版と同じ）。
+                let spinner: View = if id == "activity" && tracking.running > 0 {
+                    ProgressRing::new()
+                        .is_active(true)
+                        .width(14.0)
+                        .height(14.0)
+                        .into()
+                } else {
+                    View::empty()
+                };
+                let icon = StackPanel::new()
+                    .orientation(Orientation::Horizontal)
+                    .spacing(4.0)
                     .horizontal_alignment(HorizontalAlignment::Center)
-                    .children((FontIcon::new().glyph(glyph_of(&id)), badge));
+                    .children((
+                        spinner,
+                        Grid::new().children((FontIcon::new().glyph(glyph_of(&id)), badge)),
+                    ));
                 let click = on_click.clone();
                 let key = command.clone();
                 let button = Button::new()

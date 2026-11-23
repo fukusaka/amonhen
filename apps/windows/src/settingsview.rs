@@ -34,6 +34,11 @@ pub struct State {
     pub env: Vec<(String, String)>,
     pub env_added: Vec<String>,
     pub env_query: String,
+    /// 渡すものだけを出すか（macOS 版の Passed / All。既定はすべて）、選んだ変数（下に値の全体を出す）、伏せた
+    /// 値を見せたか（選び直すと伏せる）。
+    pub env_passed_only: bool,
+    pub env_selected: Option<String>,
+    pub env_revealed: bool,
     /// 共有のコミットのメッセージのテンプレート（Git > Commits の Shared Templates）。
     pub templates: Vec<crate::templates::Template>,
     /// 一覧で選んだテンプレート（−・Edit… が使う）。
@@ -176,6 +181,10 @@ pub struct Callbacks<'a> {
     pub env: Box<dyn Fn(String) -> Callback<bool> + 'a>,
     /// 環境変数を探す文字。
     pub env_query: Callback<String>,
+    /// Passed / All（0 は渡すものだけ）、表で選んだ行（今出している並びの位置）、伏せた値を見せる。
+    pub env_shown: Callback<Option<usize>>,
+    pub env_select: Callback<Option<usize>>,
+    pub env_reveal: Callback<()>,
     /// 共有のテンプレート: 足す、外す（名前と本文はシートで書く）。
     pub template_add: Callback<()>,
     pub template_remove: Box<dyn Fn(usize) -> Callback<()> + 'a>,
@@ -419,79 +428,309 @@ fn note(text: String) -> TextBlock {
         .text_wrapping(TextWrapping::Wrap)
 }
 
-/// Git > Environment Variables（GTK4 版の `environment::page` の、この機械の表）: このプロセスの環境変数を値と一緒に
-/// 並べ、git と ssh に渡すものをチェックで選ぶ。いつも渡すもの（`ALWAYS_PASSED` と `GIT_*`）は外せず、渡せない
-/// もの（`env_refusal`）は選べない。トークンらしい値は伏せ、伏せた値では探さない。
-fn environment(state: &State, callbacks: &Callbacks) -> View {
-    use amonhen_model::process::{ALWAYS_PASSED, always_passed, env_refusal};
+/// 表に出す環境変数（渡すものを先に、それぞれ名前の順。Passed なら渡すものだけ、探す文字に合うもの）と、渡すか・
+/// いつも渡すか。macOS 版の `EnvironmentTable.rows`。
+pub fn env_rows(state: &State) -> Vec<(&String, &String, bool, bool)> {
+    use amonhen_model::process::{always_passed, env_refusal};
     let query = state.env_query.to_lowercase();
-    let rows = state
+    let mut rows: Vec<(&String, &String, bool, bool)> = state
         .env
         .iter()
-        .filter(|(name, value)| {
+        .map(|(name, value)| {
+            let always = always_passed(name) && env_refusal(name).is_none();
+            let added = state.env_added.iter().any(|n| n.eq_ignore_ascii_case(name));
+            (name, value, always || added, always)
+        })
+        .filter(|(_, _, passed, _)| !state.env_passed_only || *passed)
+        .filter(|(name, value, _, _)| {
             query.is_empty()
                 || name.to_lowercase().contains(&query)
                 || (!is_secret(name) && value.to_lowercase().contains(&query))
         })
-        .map(|(name, value)| {
-            let refusal = env_refusal(name);
-            let always = always_passed(name);
-            let added = state.env_added.iter().any(|n| n.eq_ignore_ascii_case(name));
-            let shown = if is_secret(name) {
-                "••••••••".to_owned()
-            } else {
-                value.clone()
-            };
-            let check = CheckBox::new()
-                .is_checked(always || added)
-                .is_enabled(!always && refusal.is_none())
-                .on_is_checked_changed((callbacks.env)(name.clone()))
-                .content(TextBlock::new().text(name.clone()).font_size(12.0));
-            let help = match (&refusal, always) {
-                (Some(reason), _) => Some(reason.clone()),
-                (None, true) => Some(tr!("git and ssh always get this")),
-                _ => None,
-            };
-            let check: View = match help {
-                Some(help) => check.tooltip(help),
-                None => check,
-            };
-            (
-                name.clone(),
+        .collect();
+    // 名前の順のまま、渡すものを先に（並べ替えは安定）。
+    rows.sort_by_key(|(_, _, passed, _)| !passed);
+    rows
+}
+
+/// 場所を並べた変数か（名前が PATH・PATHS・_DIRS で終わる）。1 行に 1 か所に分けて見せる。
+fn is_list(name: &str) -> bool {
+    let upper = name.to_uppercase();
+    upper.ends_with("PATH") || upper.ends_with("PATHS") || upper.ends_with("_DIRS")
+}
+
+/// Git > Environment Variables（macOS 版の `EnvironmentTable`）: このプロセスの環境変数を値と一緒に並べ、git と
+/// ssh に渡すものをチェックで選ぶ。いつも渡すもの（`ALWAYS_PASSED` と `GIT_*`）は外せず（Always の印）、渡せない
+/// もの（`env_refusal`）は選べない。トークンらしい値は伏せ、伏せた値では探さない。選んだ変数は下に値の全体を出す。
+fn environment(state: &State, callbacks: &Callbacks) -> View {
+    use amonhen_model::process::{ALWAYS_PASSED, env_refusal};
+    let shown_rows = env_rows(state);
+    let selected = state
+        .env_selected
+        .as_ref()
+        .and_then(|s| shown_rows.iter().position(|(n, ..)| *n == s));
+    let rows = shown_rows.iter().map(|(name, value, passed, always)| {
+        let name = (*name).clone();
+        let refusal = env_refusal(&name);
+        let shown = if is_secret(&name) {
+            "••••••••".to_owned()
+        } else {
+            (*value).clone()
+        };
+        let check = CheckBox::new()
+            .is_checked(*passed)
+            .is_enabled(!always && refusal.is_none())
+            .on_is_checked_changed((callbacks.env)(name.clone()))
+            .min_width(0.0);
+        let help = match (&refusal, always) {
+            (Some(reason), _) => Some(reason.clone()),
+            (None, true) => Some(tr!("git and ssh always get this")),
+            _ => None,
+        };
+        let check: View = match &help {
+            Some(help) => check.tooltip(help.clone()),
+            None => check.into(),
+        };
+        let mut label = TextBlock::new()
+            .text(name.clone())
+            .font_size(12.0)
+            .vertical_alignment(VerticalAlignment::Center);
+        if refusal.is_some() {
+            label = label.opacity(0.6);
+        }
+        // いつも渡すもの（外せない）は、名前の横に印を付ける（macOS 版と同じ）。
+        let badge: View = if *always {
+            Border::new()
+                .border_thickness(Thickness::uniform(1.0))
+                .border_brush(Brush::Solid(Color::argb(0x80, 0x80, 0x80, 0x80)))
+                .corner_radius(4.0)
+                .padding(Thickness::new(5.0, 0.0, 5.0, 1.0))
+                .vertical_alignment(VerticalAlignment::Center)
+                .content(TextBlock::new().text("Always").font_size(10.0).opacity(0.7))
+        } else {
+            View::empty()
+        };
+        let name_cell = StackPanel::new()
+            .orientation(Orientation::Horizontal)
+            .spacing(6.0)
+            .grid_column(1)
+            .children((label, badge));
+        let name_cell: View = match help {
+            Some(help) => name_cell.tooltip(help),
+            None => name_cell,
+        };
+        (
+            name.clone(),
+            ListViewItem::new().tag(name.clone()).content(
                 Grid::new()
-                    .columns([GridLength::Pixel(220.0), GridLength::Star(1.0)])
+                    .columns([
+                        GridLength::Pixel(36.0),
+                        GridLength::Pixel(200.0),
+                        GridLength::Star(1.0),
+                    ])
                     .children((
                         Border::new().grid_column(0).content(check),
+                        name_cell,
                         TextBlock::new()
-                            .text(shown)
+                            .text(shown.clone())
                             .font_size(12.0)
                             .opacity(0.7)
-                            .is_text_selection_enabled(!is_secret(name))
                             .text_trimming(TextTrimming::CharacterEllipsis)
                             .vertical_alignment(VerticalAlignment::Center)
-                            .grid_column(1),
+                            .grid_column(2)
+                            .tooltip(shown),
                     )),
-            )
-        });
+            ),
+        )
+    });
     let mut always: Vec<&str> = ALWAYS_PASSED.to_vec();
     always.push("GIT_*");
+    // 一覧は、並びが変わるたびに作り直す（reactor の ListView は消した項目の場所が残る）。
+    let list_key: String = shown_rows.iter().map(|(n, ..)| format!("{n}\n")).collect();
     StackPanel::new()
         .spacing(4.0)
         .margin(Thickness::new(0.0, 12.0, 0.0, 0.0))
         .children((
             TextBlock::new().text(tr!("Environment Variables")),
-            TextBox::new()
-                .text(state.env_query.clone())
-                .placeholder_text(tr!("Search by name or value"))
-                .on_text_changed(callbacks.env_query.clone()),
-            ScrollViewer::new()
-                .max_height(260.0)
-                .content(StackPanel::new().children((View::keyed_fragment(rows),))),
+            Grid::new()
+                .columns([GridLength::Auto, GridLength::Star(1.0)])
+                .column_spacing(12.0)
+                .children((
+                    RadioButtons::new()
+                        .items_source(vec![tr!("Passed"), tr!("All")])
+                        .selected_index(usize::from(!state.env_passed_only))
+                        .max_columns(2)
+                        .on_selection_changed(callbacks.env_shown.clone())
+                        .grid_column(0),
+                    TextBox::new()
+                        .text(state.env_query.clone())
+                        .placeholder_text(tr!("Search by name or value"))
+                        .max_width(240.0)
+                        .horizontal_alignment(HorizontalAlignment::Right)
+                        .vertical_alignment(VerticalAlignment::Center)
+                        .on_text_changed(callbacks.env_query.clone())
+                        .grid_column(1),
+                )),
+            Grid::new()
+                .columns([
+                    GridLength::Pixel(36.0),
+                    GridLength::Pixel(200.0),
+                    GridLength::Star(1.0),
+                ])
+                .margin(Thickness::new(12.0, 0.0, 12.0, 0.0))
+                .children((
+                    TextBlock::new().text(tr!("Pass")).font_size(11.0).opacity(0.6),
+                    TextBlock::new()
+                        .text(tr!("Name"))
+                        .font_size(11.0)
+                        .opacity(0.6)
+                        .grid_column(1),
+                    TextBlock::new()
+                        .text(tr!("Value"))
+                        .font_size(11.0)
+                        .opacity(0.6)
+                        .grid_column(2),
+                )),
+            View::keyed_fragment([(
+                list_key,
+                ListView::new()
+                    .height(220.0)
+                    .selected_index(selected)
+                    .on_selection_changed(callbacks.env_select.clone())
+                    .collection_slot(ListViewSlot::Items, rows),
+            )]),
+            env_value(state, callbacks),
             note(tr!(
                 "Checked variables go to the git and ssh this app runs, through the shared daemon too, but not to SSH hosts. Always passed, when the shell sets them: {names}.",
                 names = always.join(", ")
             )),
         ))
+}
+
+/// 表で選んだ変数の値の全体（macOS 版の `EnvironmentValueView`）。場所を並べた変数は 1 行に 1 か所に分け、その場所が
+/// ないか、前に同じ場所があるか、PATH ならどこの git が使われるかを添える。伏せた値は Show で見せる。
+fn env_value(state: &State, callbacks: &Callbacks) -> View {
+    let Some((name, value)) = state
+        .env_selected
+        .as_ref()
+        .and_then(|s| state.env.iter().find(|(n, _)| n == s))
+    else {
+        return TextBlock::new()
+            .text(tr!("Select a variable to see its whole value."))
+            .font_size(12.0)
+            .opacity(0.6)
+            .into();
+    };
+    let masked = is_secret(name) && !state.env_revealed;
+    let places: Vec<&str> = value.split(';').filter(|p| !p.is_empty()).collect();
+    let title = if is_list(name) {
+        tr!("{name} ({count} places)", name = name, count = places.len())
+    } else {
+        name.clone()
+    };
+    let head = Grid::new()
+        .columns([GridLength::Star(1.0), GridLength::Auto])
+        .children((
+            TextBlock::new()
+                .text(title)
+                .font_size(12.0)
+                .font_weight(FontWeight::SEMI_BOLD)
+                .vertical_alignment(VerticalAlignment::Center),
+            if masked {
+                Button::new()
+                    .grid_column(1)
+                    .on_click(callbacks.env_reveal.clone())
+                    .content(TextBlock::new().text(tr!("Show")).font_size(11.0))
+            } else {
+                View::empty()
+            },
+        ));
+    let body: View = if masked {
+        TextBlock::new()
+            .text("••••••••")
+            .font_size(12.0)
+            .opacity(0.6)
+            .into()
+    } else if is_list(name) {
+        // PATH なら、設定 > Git で git を選んでいればそれを使い、選んでいなければ最初に git.exe がある場所。
+        let chosen = match amonhen_model::process::git_choice() {
+            amonhen_model::process::GitChoice::Settings(p)
+            | amonhen_model::process::GitChoice::Environment(p) => Some(p),
+            _ => None,
+        };
+        let is_path = name.eq_ignore_ascii_case("PATH");
+        let git = if is_path && chosen.is_none() {
+            places
+                .iter()
+                .position(|p| std::path::Path::new(p).join("git.exe").is_file())
+        } else {
+            None
+        };
+        let lines = places.iter().enumerate().map(|(i, place)| {
+            let missing = !std::path::Path::new(place).exists();
+            let repeated = places[..i].iter().any(|p| p.eq_ignore_ascii_case(place));
+            let note = if git == Some(i) {
+                tr!("git used from here")
+            } else if repeated {
+                tr!("already above")
+            } else if missing {
+                tr!("doesn’t exist")
+            } else {
+                String::new()
+            };
+            (
+                format!("{i}"),
+                Grid::new()
+                    .columns([
+                        GridLength::Pixel(28.0),
+                        GridLength::Auto,
+                        GridLength::Star(1.0),
+                    ])
+                    .column_spacing(8.0)
+                    .children((
+                        TextBlock::new()
+                            .text(format!("{}", i + 1))
+                            .font_size(11.0)
+                            .opacity(0.5)
+                            .horizontal_alignment(HorizontalAlignment::Right),
+                        TextBlock::new()
+                            .text((*place).to_owned())
+                            .font_size(12.0)
+                            .opacity(if missing || repeated { 0.55 } else { 1.0 })
+                            .is_text_selection_enabled(true)
+                            .grid_column(1),
+                        TextBlock::new()
+                            .text(note)
+                            .font_size(11.0)
+                            .opacity(0.7)
+                            .grid_column(2),
+                    )),
+            )
+        });
+        let chosen_line: View = match (is_path, chosen) {
+            (true, Some(path)) => TextBlock::new()
+                .text(tr!(
+                    "git is the one chosen in Settings > Git: {git}",
+                    git = path
+                ))
+                .font_size(11.0)
+                .into(),
+            _ => View::empty(),
+        };
+        StackPanel::new()
+            .spacing(2.0)
+            .children((chosen_line, View::keyed_fragment(lines)))
+    } else {
+        TextBlock::new()
+            .text(value.clone())
+            .font_size(12.0)
+            .text_wrapping(TextWrapping::Wrap)
+            .is_text_selection_enabled(true)
+            .into()
+    };
+    StackPanel::new()
+        .spacing(4.0)
+        .children((head, ScrollViewer::new().height(120.0).content(body)))
 }
 
 /// Git > Commits の Shared Templates（GTK4 版の `templates::section`）: 名前と本文を並べ、＋で足し、−で外す。
