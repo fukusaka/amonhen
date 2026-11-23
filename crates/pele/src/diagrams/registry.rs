@@ -18,6 +18,7 @@ static DIAGRAMS: &[&Diagram] = &[
     &super::cynefin::CYNEFIN,
     &super::flowchart::FLOWCHART,
     &super::swimlane::SWIMLANE,
+    &super::treemap::TREEMAP,
     &super::treeview::TREE_VIEW,
 ];
 

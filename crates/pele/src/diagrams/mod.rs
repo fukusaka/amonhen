@@ -5,4 +5,5 @@ pub mod cynefin;
 pub mod flowchart;
 pub mod registry;
 pub mod swimlane;
+pub mod treemap;
 pub mod treeview;
