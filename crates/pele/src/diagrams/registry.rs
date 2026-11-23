@@ -16,11 +16,13 @@ use crate::types::Diagram;
 #[rustfmt::skip]
 static DIAGRAMS: &[&Diagram] = &[
     &super::agentflow::AGENTFLOW,
+    &super::architecture::ARCHITECTURE,
     &super::block::BLOCK,
     &super::c4::C4,
     &super::class::CLASS,
     &super::cynefin::CYNEFIN,
     &super::er::ER,
+    &super::eventmodeling::EVENTMODELING,
     &super::flowchart::FLOWCHART,
     &super::info::INFO,
     &super::ishikawa::ISHIKAWA,
@@ -29,6 +31,7 @@ static DIAGRAMS: &[&Diagram] = &[
     &super::mindmap::MINDMAP,
     &super::packet::PACKET,
     &super::pie::PIE,
+    &super::railroad::RAILROAD,
     &super::requirement::REQUIREMENT,
     &super::sequence::SEQUENCE,
     &super::state::STATE,
@@ -37,6 +40,8 @@ static DIAGRAMS: &[&Diagram] = &[
     &super::treemap::TREEMAP,
     &super::treeview::TREE_VIEW,
     &super::usecase::USECASE,
+    &super::venn::VENN,
+    &super::wardley::WARDLEY,
 ];
 
 /// 種類の名前（pele の `DiagramType`）の図。

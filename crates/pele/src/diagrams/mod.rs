@@ -1,12 +1,14 @@
 //! 図の種類（pele の `src/diagrams/`）。種類の足し方は `registry` に書いた。`pub mod` はアルファベット順に保つ。
 
 pub mod agentflow;
+pub mod architecture;
 pub mod block;
 pub mod c4;
 pub mod class;
 pub mod common;
 pub mod cynefin;
 pub mod er;
+pub mod eventmodeling;
 pub mod flowchart;
 pub mod info;
 pub mod ishikawa;
@@ -15,6 +17,7 @@ pub mod kanban;
 pub mod mindmap;
 pub mod packet;
 pub mod pie;
+pub mod railroad;
 pub mod registry;
 pub mod requirement;
 pub mod sequence;
@@ -24,3 +27,5 @@ pub mod timeline;
 pub mod treemap;
 pub mod treeview;
 pub mod usecase;
+pub mod venn;
+pub mod wardley;
