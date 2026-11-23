@@ -1,6 +1,6 @@
 //! Amon Hen の GTK4 の FE。Linux・BSD が本命で、GTK の動く Windows・macOS でも動く。
 //!
-//! `amonhen-gtk [<path>] [--snapshot <png>] [--edit-worktree <path>] [--measure-scroll [--scroll-rows <n>] | --measure-select <n>] [--print-menus] [--scroll-to <row> | --select-rows <row,...> | --select-ref <name>] [--menu-ref <name> | --menu-row <row> [--menu-item <title>]] [--search <query> [--only-matching]] [--blame <path> | --file-history <path> | --activity <tab> | --settings <tab> | --merge-editor <path> [--accept ours|theirs|both|base]] [--reflog] [--apply-patch <path,...>] [--open-menu repository|primary] [--action <id>] [--print-file-menu <path>] [--perform <json>] [--stashes [--stash-button apply|pop|drop|branch]] [--working-copy [--select-path <path>] [--toggle-row <row>] [--layout list|tree|flat]] [--range-diff[=<ranges>] [--select-pair <n>] [--menu-pair <n>]] [--repositories | --quick-open <query>] [--tab <location>]...`
+//! `amonhen-gtk [<path>] [--snapshot <png>] [--edit-worktree <path>] [--measure-scroll [--scroll-rows <n>] | --measure-diff-scroll [--scroll-rows <n>] | --measure-select <n>] [--print-menus] [--scroll-to <row> | --select-rows <row,...> | --select-ref <name>] [--menu-ref <name> | --menu-row <row> [--menu-item <title>]] [--search <query> [--only-matching]] [--blame <path> | --file-history <path> | --activity <tab> | --settings <tab> | --merge-editor <path> [--accept ours|theirs|both|base]] [--reflog] [--apply-patch <path,...>] [--open-menu repository|primary] [--action <id>] [--print-file-menu <path>] [--perform <json>] [--stashes [--stash-button apply|pop|drop|branch]] [--working-copy [--select-path <path>] [--toggle-row <row>] [--layout list|tree|flat]] [--range-diff[=<ranges>] [--select-pair <n>] [--menu-pair <n>]] [--repositories | --quick-open <query>] [--tab <location>]...`
 
 mod actions;
 mod activity;
@@ -114,6 +114,8 @@ struct Args {
     snapshot: Option<PathBuf>,
     /// 自動でスクロールして、1 フレームの時間を測って終わる。
     measure_scroll: bool,
+    /// 出している差分を自動でスクロールして、1 フレームの時間と折り返しの作り直しの時間を測って終わる。
+    measure_diff_scroll: bool,
     /// 見出しのメニューの中身を出して終わる（操作の表を作り直す前と後で比べる用）。
     print_menus: bool,
     /// History の行をこの数だけ順に選び、詳細と差分が出るまでの時間を測って終わる。
@@ -221,6 +223,7 @@ fn parse_args() -> Result<Args, String> {
         match a.as_str() {
             "--snapshot" => args.snapshot = Some(it.next().ok_or("--snapshot <png>")?.into()),
             "--measure-scroll" => args.measure_scroll = true,
+            "--measure-diff-scroll" => args.measure_diff_scroll = true,
             "--print-menus" => args.print_menus = true,
             "--measure-select" => {
                 let n = it.next().ok_or("--measure-select <n>")?;
@@ -692,7 +695,10 @@ fn launch(app: &gtk::Application, args: &Args) {
         appmenu::print_menus(app);
         return;
     }
-    let check = args.snapshot.is_some() || args.measure_scroll || args.measure_select.is_some();
+    let check = args.snapshot.is_some()
+        || args.measure_scroll
+        || args.measure_diff_scroll
+        || args.measure_select.is_some();
     if check {
         tabs::set_check_run();
     }
@@ -3844,6 +3850,20 @@ fn after_first_show(
     } else if args.measure_scroll {
         let rows = args.scroll_rows.unwrap_or(measure::ROWS_PER_FRAME);
         measure::scroll(window, view, rows);
+    } else if args.measure_diff_scroll {
+        // 差分を読み終えてから（`--snapshot` と同じく、読んでいるものがなくなるまで待つ）。
+        let rows = args.scroll_rows.unwrap_or(3.0);
+        let (w, v) = (window.downgrade(), view.downgrade());
+        glib::timeout_add_local(std::time::Duration::from_millis(50), move || {
+            let (Some(window), Some(view)) = (w.upgrade(), v.upgrade()) else {
+                return glib::ControlFlow::Break;
+            };
+            if (view.is_mapped() && !view.is_settled()) || pending.get() > 0 {
+                return glib::ControlFlow::Continue;
+            }
+            measure::diff_scroll(&window, rows);
+            glib::ControlFlow::Break
+        });
     } else if let Some(count) = args.measure_select {
         // 先頭の行を選び終えてから（macOS 版は 1 秒待つ）。
         let (w, v) = (window.downgrade(), view.downgrade());

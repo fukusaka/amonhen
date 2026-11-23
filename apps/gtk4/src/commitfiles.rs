@@ -1585,6 +1585,8 @@ impl Inner {
                 move || button.set_active(!on),
             ));
         }
+        items.push(Item::Separator);
+        items.push(crate::diff::wrap_item());
         if !ai.is_empty() {
             items.push(Item::Separator);
             items.extend(ai);

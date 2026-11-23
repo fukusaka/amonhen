@@ -2,8 +2,11 @@
 //!
 //! History と同じく、見えている行だけを 1 つのウィジェットの `snapshot` で描く。変わった単語の強調と構文の
 //! 色は、コアが FE の符号単位（UTF-8 のバイト位置）で渡すので、そのまま Pango の属性にする。
-//! ファイルの見出しをクリックすると、そのファイルを畳む・開く。本文は折り返さず、一番長い行まで横にスクロール
-//! する（行番号・印・ファイルの見出しは動かない。macOS 版と同じ）。
+//! ファイルの見出しをクリックすると、そのファイルを畳む・開く。本文はふだん折り返さず、一番長い行まで横にスクロール
+//! する（行番号・印・ファイルの見出しは動かない。macOS 版と同じ）。「長い行を折り返す」（`wrap_lines`。アプリ
+//! 全体の設定）なら、差分の幅に収まらない行を同じ行の続きの行に折り返す。折り返す位置は差分全体について先に決め
+//! （`State::rewrap`）、描くときは 1 行の Pango の配置を続きの行ごとにずらして切り取って描くので、構文の色・
+//! 変わった単語の強調はそのまま。行番号・印・チェックは最初の行にだけ出す。
 //!
 //! History の右の列では、見出しが変更ファイルの一覧を兼ねる（種類の印・木の深さと名前・行数・いつも出す ⋯）。
 //! 見出しの前にフォルダの行、見出しの下に画像の欄（子の部品）を置き、畳んだフォルダの中の見出しは出さない。
@@ -46,6 +49,106 @@ const MORE_WIDTH: f32 = 30.0;
 
 /// 文字の位置（表示の行と、その行の文字のバイト位置）。
 type TextPos = (u32, u32);
+
+/// 長い行を折り返す設定の鍵（アプリ全体。macOS 版の `wrapDiffLines`）。
+pub const WRAP_LINES: &str = "wrapDiffLines";
+
+/// 表示の設定のメニューの「長い行を折り返す」（History の右の列と Working Copy。アプリ全体の設定）。
+pub fn wrap_item() -> crate::menu::Item {
+    let on = wrap_lines();
+    crate::menu::choice_with_tip(
+        tr!("Wrap Long Lines"),
+        on,
+        tr!("Wrap lines wider than the diff instead of scrolling sideways (in every diff)"),
+        move || crate::settings::set_bool(WRAP_LINES, !on),
+    )
+}
+
+/// 長い行を折り返すか。確かめる用（`--snapshot`）に `AMH_WRAP_LINES=1` で入れられる。
+pub fn wrap_lines() -> bool {
+    std::env::var("AMH_WRAP_LINES").is_ok_and(|v| v == "1") || crate::settings::bool(WRAP_LINES)
+}
+
+thread_local! {
+    /// `--measure-diff-scroll` の間の、差分を描いた時間（ms）。
+    static DRAW_TIMES: RefCell<Option<Vec<f64>>> = const { RefCell::new(None) };
+}
+
+/// 差分を描いた時間を記録し始める（`on`）・やめて、それまでの時間を返す（`--measure-diff-scroll`）。
+pub fn draw_times(on: bool) -> Vec<f64> {
+    DRAW_TIMES.with(|t| {
+        let old = t.replace(on.then(Vec::new));
+        old.unwrap_or_default()
+    })
+}
+
+/// 折り返しを作り直すのにかかった時間がこれを超えたら、幅を変えている間は作り直さず、止まってから作り直す（ms）。
+const REWRAP_BUDGET_MS: f64 = 4.0;
+
+/// 折り返す位置を探す文字（空白と区切りの記号。その後ろで折り返す）。
+fn breaks_after(c: char) -> bool {
+    c.is_whitespace()
+        || c.is_ascii_punctuation()
+        || matches!(
+            c,
+            '、' | '。' | '，' | '．' | '・' | '）' | '」' | '』' | '】'
+        )
+}
+
+/// 行の折り返す位置（2 行目から先の始まり）。`count` は文字の数、`x(i)` は i 番目の文字の左端（`x(count)` は
+/// 行の幅）、`byte(i)` はそのバイト位置、`ch(i)` はその文字。後ろ半分に空白か区切りの記号があればその後ろで、
+/// なければ幅いっぱいで折り返す（macOS 版と同じ）。
+fn break_points(
+    count: usize,
+    avail: f32,
+    x: impl Fn(usize) -> f32,
+    byte: impl Fn(usize) -> u32,
+    ch: impl Fn(usize) -> char,
+) -> Vec<u32> {
+    let mut out = Vec::new();
+    let mut s = 0;
+    while s < count && x(count) - x(s) > avail {
+        let mut e = s + 1;
+        while e < count && x(e + 1) - x(s) <= avail {
+            e += 1;
+        }
+        let half = s + (e - s) / 2;
+        let cut = (half.max(s + 1)..e)
+            .rev()
+            .find(|&j| breaks_after(ch(j)))
+            .map_or(e, |j| j + 1);
+        out.push(byte(cut));
+        s = cut;
+    }
+    out
+}
+
+/// `text` を `font` で 1 行に並べたときの、文字ごとの（バイト位置、左端の x）と、終わり（長さ、幅）。
+fn measure_chars(
+    context: &pango::Context,
+    font: &pango::FontDescription,
+    text: &str,
+) -> Vec<(u32, f32)> {
+    let layout = pango::Layout::new(context);
+    layout.set_font_description(Some(font));
+    layout.set_single_paragraph_mode(true);
+    layout.set_text(text);
+    let scale = pango::SCALE as f32;
+    let mut out = Vec::with_capacity(text.len() + 1);
+    let mut iter = layout.iter();
+    loop {
+        let index = iter.index() as u32;
+        if index as usize >= text.len() {
+            break;
+        }
+        out.push((index, iter.char_extents().x() as f32 / scale));
+        if !iter.next_char() {
+            break;
+        }
+    }
+    out.push((text.len() as u32, layout.pixel_size().0 as f32));
+    out
+}
 
 /// 裏のスレッドで作った表示。文字列置き場は自分のバッファを持っているので、どのスレッドに渡してもよい。
 pub struct View {
@@ -327,6 +430,30 @@ pub struct State {
     hovered_file: Option<usize>,
     /// 行の位置のずれ（行、高さ。行の順）。その行の後ろに高さの分だけ空ける（負なら詰める）。
     extra: Vec<(i64, f32)>,
+    /// `extra` の高さの累積（`extra_sum[i]` は先頭から i 個の和。`row_y` を二分探索で引く）。
+    extra_sum: Vec<f32>,
+    /// `extra` に詰める（負の）ものがあるか（なければ `row_at` も二分探索で引ける）。
+    extra_shrinks: bool,
+    /// 長い行を折り返すか（`wrap_lines`）。
+    wrap: bool,
+    /// 部品の幅（今のもの）と、折り返しに使う幅（幅を変えている間は、高くつくなら前のまま）。
+    width: f32,
+    wrap_width: f32,
+    /// 折り返した行の、2 行目から先の始まり（バイト位置）。1 行に収まる行は入れない。
+    breaks: HashMap<u32, Vec<u32>>,
+    /// `breaks` を作ったときの表示と、本文の幅（同じなら作り直さない）。
+    breaks_for: Option<(usize, u32)>,
+    /// タブか ASCII でない文字のある長い行の、文字ごとの位置（測ったら、幅を変えても使い回す）と、その表示。
+    measured: HashMap<u32, Rc<Vec<(u32, f32)>>>,
+    measured_for: usize,
+    /// 文字を測る Pango の文脈。
+    pango: Option<pango::Context>,
+    /// ASCII の文字ごとの幅（字体ごとに一度だけ測る）。
+    ascii_widths: Option<Rc<Vec<f32>>>,
+    /// 最後に折り返しを作り直すのにかかった時間（ms）。
+    wrap_cost: f64,
+    /// 幅が止まってから折り返しを作り直す待ち。
+    rewrap_pending: Option<glib::SourceId>,
     /// 描かない行（畳んだフォルダの中の見出し、その時点のファイルの hunk の見出しと消した行）。
     hidden_rows: HashSet<u32>,
     /// その時点のファイルとして見せる（History の「すべてのファイル」）。hunk の見出しと消した行は出さず、消した
@@ -354,19 +481,33 @@ impl State {
     /// 行の上端（文書の座標）。見出しの下の欄・フォルダの行・消したところの印の分だけ下がり、描かない行の分だけ
     /// 上がる（macOS 版の `rowY`）。
     fn row_y(&self, row: u32) -> f32 {
-        let mut y = row as f32 * self.row_height;
-        for &(r, h) in &self.extra {
-            if r >= row as i64 {
-                break;
-            }
-            y += h;
-        }
-        y
+        let i = self.extra.partition_point(|&(r, _)| r < row as i64);
+        row as f32 * self.row_height + self.extra_sum.get(i).copied().unwrap_or(0.0)
     }
 
     /// 文書の座標 `y` にある行（欄の中なら、その見出しの行。macOS 版の `rowAt`）。
     fn row_at(&self, y: f32) -> i64 {
         let rh = self.row_height;
+        if !self.extra_shrinks && self.extra_sum.len() == self.extra.len() + 1 {
+            // 空けるものだけなら、空けたところの始まりは行の順に並ぶので二分探索で引ける。
+            let start = |i: usize| (self.extra[i].0 + 1) as f32 * rh + self.extra_sum[i];
+            let k = {
+                let (mut lo, mut hi) = (0, self.extra.len());
+                while lo < hi {
+                    let mid = (lo + hi) / 2;
+                    if start(mid) <= y {
+                        lo = mid + 1;
+                    } else {
+                        hi = mid;
+                    }
+                }
+                lo
+            };
+            if k > 0 && y < start(k - 1) + self.extra[k - 1].1 {
+                return self.extra[k - 1].0;
+            }
+            return ((y - self.extra_sum[k]) / rh).floor() as i64;
+        }
         let mut offset = 0.0;
         for &(r, h) in &self.extra {
             let start = (r + 1) as f32 * rh + offset;
@@ -401,15 +542,140 @@ impl State {
         self.view.as_ref()?.file_rows.get(file).copied()
     }
 
-    /// 見出しの下の欄・フォルダの行・畳んだフォルダ・その時点のファイルから、行の位置のずれを作り直す
-    /// （macOS 版の `rebuildExtra`・`computeFileMode`）。
+    /// 行の折り返す位置を作り直す（表示か本文の幅が変わったときだけ）。ASCII だけでタブのない行は桁数で、ほかは
+    /// 文字ごとの位置を測って（測ったものは幅を変えても使い回す）決める。ファイル・hunk の見出しは折り返さない。
+    fn rewrap(&mut self) {
+        let Some(view) = self
+            .view
+            .clone()
+            .filter(|_| self.wrap && self.wrap_width > 0.0)
+        else {
+            self.breaks.clear();
+            self.breaks_for = None;
+            return;
+        };
+        let avail =
+            (self.wrap_width - DiffWidget::text_left(self, &view) - 8.0).max(self.char_width * 8.0);
+        let key = (Arc::as_ptr(&view) as usize, avail.to_bits());
+        if self.breaks_for == Some(key) {
+            return;
+        }
+        let started = std::time::Instant::now();
+        if self.measured_for != key.0 {
+            self.measured.clear();
+            self.measured_for = key.0;
+        }
+        self.breaks.clear();
+        let font = self.font.clone().unwrap_or_default();
+        // 文字の幅は、描くときと同じ文脈で測り直す（部品が窓に入る前に測った `char_width` は、画面の解像度の
+        // 設定を受ける前の値のことがある）。
+        // ASCII の文字ごとの幅（描くときと同じ文脈で、字体ごとに一度だけ測る）。ASCII だけでタブのない行は、
+        // これを足して位置を決める（等幅の名前でも数字だけ別の字体になることがあるので、字ごとに）。
+        if self.ascii_widths.is_none()
+            && let Some(context) = &self.pango
+        {
+            let layout = pango::Layout::new(context);
+            layout.set_font_description(Some(&font));
+            let widths: Vec<f32> = (0u8..128)
+                .map(|b| {
+                    let c = b as char;
+                    if !(' '..='~').contains(&c) {
+                        return 0.0;
+                    }
+                    // 端の空白を幅に数えないことがあるので、字で挟んで測る。
+                    let width = |text: &str| {
+                        layout.set_text(text);
+                        layout.size().0 as f32 / pango::SCALE as f32
+                    };
+                    (width(&format!("x{}x", c.to_string().repeat(16))) - width("xx")) / 16.0
+                })
+                .collect();
+            self.ascii_widths = Some(Rc::new(widths));
+        }
+        let ascii = self.ascii_widths.clone();
+        // 一番広い ASCII の文字でも収まる長さの行は、足さずに収まるとみなす（ほとんどの行）。
+        let widest = ascii
+            .as_ref()
+            .map_or(f32::MAX, |w| w.iter().copied().fold(0.0, f32::max));
+        let cw = self.char_width;
+        let mut xs: Vec<f32> = Vec::new();
+        for (i, row) in view.view.rows.iter().enumerate() {
+            if matches!(row.kind, DiffRow::FILE | DiffRow::HUNK) {
+                continue;
+            }
+            let text = view.text(row);
+            if let Some(widths) = &ascii
+                && text.is_ascii()
+                && !text.contains('\t')
+            {
+                if text.len() as f32 * widest <= avail {
+                    continue;
+                }
+                let bytes = text.as_bytes();
+                xs.clear();
+                let mut x = 0.0;
+                xs.push(0.0);
+                for &b in bytes {
+                    x += widths[b as usize];
+                    xs.push(x);
+                }
+                if x <= avail {
+                    continue;
+                }
+                let b = break_points(
+                    bytes.len(),
+                    avail,
+                    |i| xs[i],
+                    |i| i as u32,
+                    |i| bytes[i] as char,
+                );
+                self.breaks.insert(i as u32, b);
+                continue;
+            }
+            // 幅の見積もり（タブは 8 桁ごと、広い文字は 2 桁）に余裕を見ても収まるなら、測らない。
+            if columns(text) as f32 * cw * 1.25 <= avail {
+                continue;
+            }
+            let chars = match self.measured.get(&(i as u32)) {
+                Some(chars) => chars.clone(),
+                None => {
+                    let Some(context) = &self.pango else { continue };
+                    let chars = Rc::new(measure_chars(context, &font, text));
+                    self.measured.insert(i as u32, chars.clone());
+                    chars
+                }
+            };
+            let count = chars.len() - 1;
+            let b = break_points(
+                count,
+                avail,
+                |i| chars[i].1,
+                |i| chars[i].0,
+                |i| text[chars[i].0 as usize..].chars().next().unwrap_or(' '),
+            );
+            if !b.is_empty() {
+                self.breaks.insert(i as u32, b);
+            }
+        }
+        self.breaks_for = Some(key);
+        self.wrap_cost = started.elapsed().as_secs_f64() * 1000.0;
+    }
+
+    /// 行 `index` の見た目の行の数（折り返していなければ 1）。
+    fn lines_of(&self, index: u32) -> usize {
+        self.breaks.get(&index).map_or(1, |b| b.len() + 1)
+    }
+
+    /// 見出しの下の欄・フォルダの行・畳んだフォルダ・その時点のファイル・折り返した行から、行の位置のずれを作り
+    /// 直す（macOS 版の `rebuildExtra`・`computeFileMode`）。
     fn rebuild_extra(&mut self) {
+        self.rewrap();
         let rh = self.row_height;
         self.deletion_marks.clear();
         self.modified_rows.clear();
         self.hidden_rows.clear();
         let Some(view) = self.view.clone() else {
-            self.extra.clear();
+            self.set_extra(Vec::new());
             return;
         };
         let rows = &view.view.rows;
@@ -488,8 +754,27 @@ impl State {
         for &(after, _, _) in &self.deletion_marks {
             entries.push((after as i64, 3, rh));
         }
+        // 折り返した行の続きの行（その行のすぐ後ろ。消したところの印より前）。
+        for (&r, b) in &self.breaks {
+            if !self.hidden_rows.contains(&r) {
+                entries.push((r as i64, 0, b.len() as f32 * rh));
+            }
+        }
         entries.sort_by_key(|e| (e.0, e.1));
-        self.extra = entries.into_iter().map(|(r, _, h)| (r, h)).collect();
+        self.set_extra(entries.into_iter().map(|(r, _, h)| (r, h)).collect());
+    }
+
+    /// 行の位置のずれを替え、高さの累積を作り直す。
+    fn set_extra(&mut self, extra: Vec<(i64, f32)>) {
+        self.extra = extra;
+        self.extra_shrinks = self.extra.iter().any(|&(_, h)| h < 0.0);
+        let mut sum = 0.0;
+        self.extra_sum = std::iter::once(0.0)
+            .chain(self.extra.iter().map(|&(_, h)| {
+                sum += h;
+                sum
+            }))
+            .collect();
     }
 }
 
@@ -538,6 +823,22 @@ mod imp {
             view.set_focusable(true);
             view.set_overflow(gtk::Overflow::Hidden);
             view.add_css_class("view");
+            // 長い行を折り返す（アプリ全体の設定。変えたら、出している差分も折り返し直す）。
+            view.state().wrap = wrap_lines();
+            let weak = view.downgrade();
+            crate::settings::connect_changed_while(&*view, move |key| {
+                if key == WRAP_LINES
+                    && let Some(view) = weak.upgrade()
+                {
+                    let on = wrap_lines();
+                    {
+                        let mut st = view.state();
+                        st.wrap = on;
+                        st.wrap_width = st.width;
+                    }
+                    view.rewrap_keeping_top();
+                }
+            });
             // Edit の Copy・Select All（キーは `key_pressed`）。
             for (prefix, name) in [("clipboard", "copy"), ("selection", "select-all")] {
                 let group = gio::SimpleActionGroup::new();
@@ -662,6 +963,7 @@ mod imp {
     impl WidgetImpl for DiffWidget {
         fn size_allocate(&self, width: i32, height: i32, baseline: i32) {
             self.parent_size_allocate(width, height, baseline);
+            self.obj().width_changed(width as f32);
             self.obj().configure_adjustments();
             self.obj().place_panels();
             // 右クリックのメニューは子なので、自分で置く（置かないと、最初に測った高さのまま項目が切れる）。
@@ -675,7 +977,13 @@ mod imp {
         }
 
         fn snapshot(&self, snapshot: &gtk::Snapshot) {
+            let started = std::time::Instant::now();
             self.obj().draw(snapshot);
+            DRAW_TIMES.with(|t| {
+                if let Some(t) = t.borrow_mut().as_mut() {
+                    t.push(started.elapsed().as_secs_f64() * 1000.0);
+                }
+            });
         }
     }
 
@@ -1531,6 +1839,96 @@ impl DiffWidget {
         probe.set_font_description(Some(&font));
         st.char_width = probe.pixel_size().0 as f32 / 20.0;
         st.font = Some(font);
+        st.pango = Some(self.pango_context());
+    }
+
+    /// 部品の幅が変わった: 折り返していれば折り返し直す（一番上の行を保つ）。作り直しが高くつく差分では、幅が
+    /// 止まってから（macOS 版と同じ）。
+    fn width_changed(&self, width: f32) {
+        let (wrap, cheap) = {
+            let mut st = self.state();
+            if st.width == width {
+                return;
+            }
+            st.width = width;
+            (
+                st.wrap,
+                st.wrap_cost <= REWRAP_BUDGET_MS || st.breaks_for.is_none(),
+            )
+        };
+        if !wrap {
+            self.state().wrap_width = width;
+            return;
+        }
+        if let Some(id) = self.state().rewrap_pending.take() {
+            id.remove();
+        }
+        if cheap {
+            self.state().wrap_width = width;
+            self.rewrap_keeping_top();
+            return;
+        }
+        let weak = self.downgrade();
+        let id = glib::timeout_add_local_once(std::time::Duration::from_millis(150), move || {
+            if let Some(view) = weak.upgrade() {
+                {
+                    let mut st = view.state();
+                    st.rewrap_pending = None;
+                    st.wrap_width = st.width;
+                }
+                view.rewrap_keeping_top();
+            }
+        });
+        self.state().rewrap_pending = Some(id);
+    }
+
+    /// `--measure-diff-scroll`: 本文の幅 `widths` ごとに折り返しを作り直した時間（ms）と、折り返した行の数。
+    /// 測ったら今の幅で作り直す。
+    pub fn measure_rewrap(&self, widths: &[f32]) -> Vec<(f32, f64, usize)> {
+        let mut out = Vec::new();
+        for &w in widths {
+            let started = std::time::Instant::now();
+            let mut st = self.state();
+            st.wrap_width = w;
+            st.rebuild_extra();
+            out.push((w, started.elapsed().as_secs_f64() * 1000.0, st.breaks.len()));
+        }
+        {
+            let mut st = self.state();
+            st.wrap_width = st.width;
+        }
+        self.rewrap_keeping_top();
+        out
+    }
+
+    /// 行の数（`--measure-diff-scroll`）。
+    pub fn row_total(&self) -> u32 {
+        self.state().row_count()
+    }
+
+    /// 折り返しを作り直し、一番上に見えていた行を一番上に保つ。
+    fn rewrap_keeping_top(&self) {
+        let scroll = self.vadjustment().map_or(0.0, |a| a.value()) as f32;
+        let (top, delta) = {
+            let mut st = self.state();
+            self.ensure_font(&mut st);
+            let top = st.row_at(scroll).max(0) as u32;
+            let delta = scroll - st.row_y(top);
+            st.rebuild_extra();
+            (top, delta)
+        };
+        self.configure_adjustments();
+        let y = {
+            let st = self.state();
+            // 同じ行の続きの行の中ほどにいたら、その行の中で近いところに（行より下にはみ出さない）。
+            let height = st.row_y(top + 1) - st.row_y(top);
+            st.row_y(top) + delta.clamp(0.0, (height - st.row_height).max(0.0))
+        };
+        if let Some(adj) = self.vadjustment() {
+            adj.set_value((y as f64).min((adj.upper() - adj.page_size()).max(0.0)));
+        }
+        self.queue_allocate();
+        self.queue_draw();
     }
 
     /// 本文の左端（印・行番号の列の右。行番号の列の幅は、等幅なので桁数から）。行番号と印は横にスクロールしない。
@@ -1567,11 +1965,11 @@ impl DiffWidget {
             let step = self.row_height() as f64 * 3.0;
             adj.configure(value, 0.0, upper, step, height * 0.9, height);
         }
-        // 横は一番長い行まで（折り返さない。macOS 版と同じ）。
+        // 横は一番長い行まで（折り返さない。macOS 版と同じ）。折り返すなら横にはスクロールしない。
         let (content, step) = {
             let mut st = self.state();
             self.ensure_font(&mut st);
-            let content = st.view.clone().map_or(0.0, |view| {
+            let content = st.view.clone().filter(|_| !st.wrap).map_or(0.0, |view| {
                 Self::text_left(&st, &view) + view.columns as f32 * st.char_width + 40.0
             });
             (content as f64, st.char_width as f64 * 4.0)
@@ -1690,18 +2088,36 @@ impl DiffWidget {
             return Some((row as u32, 0));
         }
         let layout = self.layout_of(row as u32)?;
-        let offset = x - left + self.scroll_x();
-        if offset <= 0.0 {
-            return Some((row as u32, 0));
+        let text = view.text(&rows[row]);
+        // 折り返した行なら、押した見た目の行の始まりと終わり。
+        let (start, end) = {
+            let st = self.state();
+            let breaks = st.breaks.get(&(row as u32)).map_or(&[][..], Vec::as_slice);
+            let k = (((y + scroll - st.row_y(row as u32)) / st.row_height)
+                .floor()
+                .max(0.0) as usize)
+                .min(breaks.len());
+            (
+                if k == 0 { 0 } else { breaks[k - 1] as usize },
+                breaks.get(k).map_or(text.len(), |&b| b as usize),
+            )
+        };
+        let xa = if start == 0 {
+            0.0
+        } else {
+            layout.index_to_pos(start as i32).x() as f32 / pango::SCALE as f32
+        };
+        let offset = x - left + self.scroll_x() + xa;
+        if offset <= xa {
+            return Some((row as u32, start as u32));
         }
         let (_, index, trailing) = layout.xy_to_index((offset * pango::SCALE as f32) as i32, 0);
-        let text = view.text(&rows[row]);
         let mut index = floor_char_boundary(text, index.max(0) as usize);
         // 文字の後ろ半分なら、その文字の後ろ。
         for _ in 0..trailing {
             index += text[index..].chars().next().map_or(0, char::len_utf8);
         }
-        Some((row as u32, index as u32))
+        Some((row as u32, index.clamp(start, end) as u32))
     }
 
     /// `p` を含む、クリックの回数の単位の範囲（2 なら単語、3 以上なら行、ほかは `p` そのもの）。
@@ -2258,11 +2674,13 @@ impl DiffWidget {
                 self.draw_header(snapshot, st, &view, index, top, width, false);
                 continue;
             }
+            // 折り返した行は、続きの行の分だけ高い（行番号・印は最初の行に）。
+            let row_h = rh * st.lines_of(index) as f32;
             // 選んだ行は行番号の欄だけを選んだ色で塗り、行の追加・削除の色はそのまま見せる（macOS 版と同じ）。
             if st.selection.contains(&index) {
                 snapshot.append_color(
                     &gdk::RGBA::new(0.21, 0.52, 0.89, 0.35),
-                    &graphene::Rect::new(0.0, top, (text_x - 6.0).max(0.0), rh),
+                    &graphene::Rect::new(0.0, top, (text_x - 6.0).max(0.0), row_h),
                 );
             }
             // 行の地は配色テーマの差分の色（`theme.rs`。標準はコンフリクトの Current が青・Incoming が緑・共通の
@@ -2281,12 +2699,12 @@ impl DiffWidget {
                 // その時点のファイルの、変えた行（消した行に続けて足した行）は青（macOS 版と同じ）。
                 snapshot.append_color(
                     &gdk::RGBA::new(0.21, 0.52, 0.89, 0.2),
-                    &graphene::Rect::new(0.0, top, width, rh),
+                    &graphene::Rect::new(0.0, top, width, row_h),
                 );
             } else if let Some(kind) = background {
                 snapshot.append_color(
                     &crate::theme::diff_color(kind, &fg),
-                    &graphene::Rect::new(0.0, top, width, rh),
+                    &graphene::Rect::new(0.0, top, width, row_h),
                 );
             }
             if row.kind == DiffRow::HUNK && st.on_expand_hunk.is_some() {
@@ -2333,61 +2751,97 @@ impl DiffWidget {
                 snapshot.append_layout(gutter, &secondary);
                 snapshot.restore();
             }
-            snapshot.push_clip(&graphene::Rect::new(
-                text_x,
-                top,
-                (width - text_x).max(0.0),
-                rh,
-            ));
-            if let Some((start, end)) = text_range
-                && start.0 <= index
-                && index <= end.0
-            {
-                let x = |i: u32| line.text.index_to_pos(i as i32).x() as f32 / pango::SCALE as f32;
-                let x0 = if index == start.0 { x(start.1) } else { 0.0 };
-                // 次の行に続くときは、改行の分として少し右まで塗る。
-                let x1 = if index == end.0 {
-                    x(end.1)
-                } else {
-                    line.text.pixel_size().0 as f32 + 6.0
-                };
-                if x1 > x0 {
-                    snapshot.append_color(
-                        &selected_color,
-                        &graphene::Rect::new(origin + x0, top, x1 - x0, rh),
-                    );
-                }
-            }
-            // 探している語の一致（今の一致は濃く）。
-            for (i, m) in st.matches[match_from..]
-                .iter()
-                .enumerate()
-                .skip_while(|(_, m)| m.0 < index)
-                .take_while(|(_, m)| m.0 == index)
-            {
-                let x0 = line.text.index_to_pos(m.1 as i32).x() as f32 / pango::SCALE as f32;
-                let x1 = line.text.index_to_pos(m.2 as i32).x() as f32 / pango::SCALE as f32;
-                let color = if st.current_match == Some(match_from + i) {
-                    gdk::RGBA::new(1.0, 0.6, 0.0, 0.75)
-                } else {
-                    gdk::RGBA::new(1.0, 0.85, 0.0, 0.45)
-                };
-                snapshot.append_color(
-                    &color,
-                    &graphene::Rect::new(origin + x0, top + 1.0, (x1 - x0).max(2.0), rh - 2.0),
-                );
-            }
+            // 本文を、見た目の行ごとに描く（折り返していなければ 1 行）。続きの行は、同じ配置を左にずらして切り取る。
+            let len = view.text(row).len() as u32;
+            let breaks = st.breaks.get(&index).map_or(&[][..], Vec::as_slice);
+            let last_line = breaks.len();
+            let x = |i: u32| line.text.index_to_pos(i as i32).x() as f32 / pango::SCALE as f32;
             // hunk の見出しとコンフリクトのマーカーの文字は薄く（macOS 版と同じ）。
             let color = if row.kind == DiffRow::HUNK || row.kind == DiffRow::MARKER {
                 &secondary
             } else {
                 &fg
             };
-            snapshot.save();
-            snapshot.translate(&graphene::Point::new(origin, y));
-            snapshot.append_layout(&line.text, color);
-            snapshot.restore();
-            snapshot.pop();
+            for k in 0..=last_line {
+                let s = if k == 0 { 0 } else { breaks[k - 1] };
+                let e = breaks.get(k).copied().unwrap_or(len);
+                let xa = if k == 0 { 0.0 } else { x(s) };
+                let line_top = top + k as f32 * rh;
+                let base = origin - xa;
+                // 続きのある行は、その行の終わりで切る（後ろの文字は次の行に描く）。
+                let clip_width = if k < last_line {
+                    x(e) - xa
+                } else {
+                    width - text_x
+                };
+                snapshot.push_clip(&graphene::Rect::new(
+                    text_x,
+                    line_top,
+                    clip_width.min(width - text_x).max(0.0),
+                    rh,
+                ));
+                // 範囲 [a, b) のこの見た目の行の分（左端と右端。`on` なら行の終わりより先へ続く）。
+                let piece = |a: u32, b: u32, on: bool| -> Option<(f32, f32)> {
+                    if b < s || (b == s && k > 0) || a > e || (a == e && k < last_line) {
+                        return None;
+                    }
+                    let (lo, hi) = (a.max(s), b.min(e));
+                    let x0 = x(lo);
+                    let x1 = if on && k == last_line {
+                        x(e) + 6.0
+                    } else if b > e {
+                        x(e)
+                    } else {
+                        x(hi)
+                    };
+                    Some((base + x0, x1 - x0))
+                };
+                if let Some((start, end)) = text_range
+                    && start.0 <= index
+                    && index <= end.0
+                {
+                    let a = if index == start.0 { start.1 } else { 0 };
+                    // 次の行に続くときは、改行の分として少し右まで塗る。
+                    let (b, on) = if index == end.0 {
+                        (end.1, false)
+                    } else {
+                        (len, true)
+                    };
+                    if let Some((x0, w)) = piece(a, b, on)
+                        && w > 0.0
+                    {
+                        snapshot.append_color(
+                            &selected_color,
+                            &graphene::Rect::new(x0, line_top, w, rh),
+                        );
+                    }
+                }
+                // 探している語の一致（今の一致は濃く）。
+                for (i, m) in st.matches[match_from..]
+                    .iter()
+                    .enumerate()
+                    .skip_while(|(_, m)| m.0 < index)
+                    .take_while(|(_, m)| m.0 == index)
+                {
+                    let Some((x0, w)) = piece(m.1, m.2, false) else {
+                        continue;
+                    };
+                    let color = if st.current_match == Some(match_from + i) {
+                        gdk::RGBA::new(1.0, 0.6, 0.0, 0.75)
+                    } else {
+                        gdk::RGBA::new(1.0, 0.85, 0.0, 0.45)
+                    };
+                    snapshot.append_color(
+                        &color,
+                        &graphene::Rect::new(x0, line_top + 1.0, w.max(2.0), rh - 2.0),
+                    );
+                }
+                snapshot.save();
+                snapshot.translate(&graphene::Point::new(base, y + k as f32 * rh));
+                snapshot.append_layout(&line.text, color);
+                snapshot.restore();
+                snapshot.pop();
+            }
         }
         if !st.decor.folders.is_empty() {
             self.draw_folders(snapshot, st, &view, scroll_y, width, height);
@@ -2913,10 +3367,10 @@ mod tests {
     fn rows_move_down_past_panels_and_folders_and_up_past_hidden_rows() {
         let mut st = State {
             row_height: 10.0,
-            // 行 0 の後ろに欄（100）、行 2 の前にフォルダの行 2 つ（行 1 の後ろ）、行 4・5 を隠す。
-            extra: vec![(0, 100.0), (1, 20.0), (5, -20.0)],
             ..State::default()
         };
+        // 行 0 の後ろに欄（100）、行 2 の前にフォルダの行 2 つ（行 1 の後ろ）、行 4・5 を隠す。
+        st.set_extra(vec![(0, 100.0), (1, 20.0), (5, -20.0)]);
         assert_eq!(st.row_y(0), 0.0);
         assert_eq!(st.row_y(1), 110.0);
         assert_eq!(st.row_y(2), 140.0);
@@ -2928,8 +3382,52 @@ mod tests {
         assert_eq!(st.row_at(125.0), 1);
         assert_eq!(st.row_at(145.0), 2);
         assert_eq!(st.row_at(165.0), 6);
-        st.extra.clear();
+        st.set_extra(Vec::new());
         assert_eq!(st.row_at(25.0), 2);
+    }
+
+    #[test]
+    fn wrapped_rows_are_found_by_binary_search() {
+        let mut st = State {
+            row_height: 10.0,
+            ..State::default()
+        };
+        // 行 1 が 3 行に、行 4 が 2 行に折り返し、行 6 の後ろに欄（詰めるものがないので二分探索）。
+        st.set_extra(vec![(1, 20.0), (4, 10.0), (6, 50.0)]);
+        assert!(!st.extra_shrinks);
+        assert_eq!(st.row_y(1), 10.0);
+        assert_eq!(st.row_y(2), 40.0);
+        assert_eq!(st.row_y(5), 80.0);
+        assert_eq!(st.row_y(7), 150.0);
+        assert_eq!(st.row_at(15.0), 1);
+        assert_eq!(st.row_at(35.0), 1);
+        assert_eq!(st.row_at(45.0), 2);
+        assert_eq!(st.row_at(75.0), 4);
+        assert_eq!(st.row_at(85.0), 5);
+        assert_eq!(st.row_at(120.0), 6);
+        assert_eq!(st.row_at(155.0), 7);
+    }
+
+    #[test]
+    fn long_lines_break_after_spaces_in_the_latter_half() {
+        let at = |text: &str, width: usize| {
+            let b = text.as_bytes();
+            break_points(
+                text.len(),
+                width as f32,
+                |i| i as f32,
+                |i| i as u32,
+                |i| b[i] as char,
+            )
+        };
+        // 収まれば折り返さない。
+        assert!(at("short", 10).is_empty());
+        // 後ろ半分の空白の後ろで。
+        assert_eq!(at("aaaaa bbbbbbb", 8), [6]);
+        // 前半にしか空白がなければ、幅いっぱいで。
+        assert_eq!(at("a bbbbbbbbbbbb", 8), [8]);
+        // 続けて何度も。
+        assert_eq!(at(&"x".repeat(25), 10), [10, 20]);
     }
 
     #[test]
