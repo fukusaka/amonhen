@@ -2505,6 +2505,16 @@ extension CommitDetailViewController {
         return (groups, depths, titles, hidden)
     }
 
+    /// リストの見出し: 名前を変えたファイルは git の --stat と同じ `src/{old → new}`。ほかはコアのパスのまま。
+    fileprivate func renameTitles(count: Int) -> [Int: String] {
+        guard let items = changes?.items else { return [:] }
+        var titles: [Int: String] = [:]
+        for file in 0..<min(count, items.count) where items[file].label != items[file].path {
+            titles[file] = items[file].label
+        }
+        return titles
+    }
+
     /// コミットを選んだ: すべて畳んで、変更ファイルの一覧として見せる。
     fileprivate func showInline(_ stacked: StackedDiff) {
         openFiles = []
@@ -2573,7 +2583,7 @@ extension CommitDetailViewController {
         diffView.openOverride = panelFiles
         diffView.show(stacked.view(collapsed: collapsed), keepScroll: keepScroll)
         diffView.fileDepths = tree?.depths ?? [:]
-        diffView.fileTitles = tree?.titles ?? [:]
+        diffView.fileTitles = tree?.titles ?? renameTitles(count: stacked.count)
         diffView.setFolders(tree?.groups ?? [:], hidden: hidden)
         var panels: [Int: NSView] = [:]
         for file in panelFiles { if let panel = makeImagePanel(file) { panels[file] = panel } }
