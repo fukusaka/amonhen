@@ -2,6 +2,7 @@
 
 pub mod class;
 pub mod common;
+pub mod er;
 pub mod flowchart;
 pub mod registry;
 pub mod state;

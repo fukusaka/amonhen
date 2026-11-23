@@ -16,6 +16,7 @@ use crate::types::Diagram;
 #[rustfmt::skip]
 static DIAGRAMS: &[&Diagram] = &[
     &super::class::CLASS,
+    &super::er::ER,
     &super::flowchart::FLOWCHART,
     &super::state::STATE,
 ];
