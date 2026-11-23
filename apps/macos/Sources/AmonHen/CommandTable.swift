@@ -148,6 +148,9 @@ enum CommandTable {
     static let showSidebar = Entry(
         id: "show-sidebar", title: "Show Sidebar", localized: true, key: "s", modifiers: [.command, .control],
         toolTip: nil, app: false)
+    static let wrapLongLines = Entry(
+        id: "wrap-long-lines", title: "Wrap Long Lines", localized: true, key: "z", modifiers: [.option],
+        toolTip: "Wrap lines wider than the diff instead of scrolling sideways (in every diff)", app: true)
     static let filterBranches = Entry(
         id: "filter-branches", title: "Filter Branches…", localized: true, key: "f", modifiers: [.command, .option],
         toolTip: nil, app: false)
@@ -192,7 +195,7 @@ enum CommandTable {
     static let viewMenu: [[Entry]] = [
         [showWorkingCopy, showHistory, showStashes, showReflog],
         [refresh, rebuildHistory],
-        [showSidebar],
+        [showSidebar, wrapLongLines],
     ]
     static let navigateMenu: [[Entry]] = [
         [switchBranch, filterBranches, goToHead, goToParent, goToChild],

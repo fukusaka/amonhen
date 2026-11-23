@@ -125,17 +125,20 @@ pub fn panel(
         svg.then_some(on_show_text),
         None,
         false,
+        None,
     )
 }
 
 /// すべてのファイルで、2 つの絵を比べる欄（SVG のモバイル向けの確認: 元の絵と、部品が崩した近似）。`titles` は
-/// 前と後の見出し。欄の高さいっぱいに広げ、`notes` があれば絵の下に置く。
+/// 前と後の見出し。欄の高さいっぱいに広げ、`notes` があれば絵の下に置く。`leading` は帯の左端（比べ方の前）に
+/// 置く部品（モバイルの部品の切り替え）。
 pub fn compare(
     before: &[u8],
     after: &[u8],
     titles: (String, String),
     caption: String,
     notes: Option<gtk::Widget>,
+    leading: Option<gtk::Widget>,
 ) -> gtk::Widget {
     let panel = build(
         texture(Some(before)),
@@ -145,6 +148,7 @@ pub fn compare(
         None,
         Some(titles),
         true,
+        leading,
     );
     with_notes(panel, notes)
 }
@@ -159,7 +163,7 @@ pub fn size_caption(data: &[u8]) -> String {
 pub fn single(data: &[u8], notes: Option<gtk::Widget>) -> Option<gtk::Widget> {
     let image = texture(Some(data))?;
     let caption = describe(Some(data), Some(&image));
-    let panel = build(None, Some(image), caption, None, None, None, true);
+    let panel = build(None, Some(image), caption, None, None, None, true, None);
     Some(with_notes(panel, notes))
 }
 
@@ -193,7 +197,8 @@ fn with_notes(panel: gtk::Widget, notes: Option<gtk::Widget>) -> gtk::Widget {
 }
 
 /// 欄を作る。`modes` がなければ 1 枚だけ（`after` を出す）。`titles` は前と後の見出し（なければ「前」「後」）。
-/// `fill` なら高さいっぱいに広げる（すべてのファイル。下の仕切りの線は引かない）。
+/// `fill` なら高さいっぱいに広げる（すべてのファイル。下の仕切りの線は引かない）。`leading` は帯の左端に置く。
+#[allow(clippy::too_many_arguments)]
 fn build(
     old: Option<gdk::Texture>,
     new: Option<gdk::Texture>,
@@ -202,6 +207,7 @@ fn build(
     on_show_text: Option<Rc<dyn Fn()>>,
     titles: Option<(String, String)>,
     fill: bool,
+    leading: Option<gtk::Widget>,
 ) -> gtk::Widget {
     let single = modes.is_none();
     let canvas = Canvas::new(old, new);
@@ -220,6 +226,9 @@ fn build(
         canvas.set_zoom(Some(zoom));
     }
     let bar = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    if let Some(leading) = &leading {
+        bar.append(leading);
+    }
     let mut buttons: Vec<(Mode, gtk::ToggleButton)> = Vec::new();
     if modes.is_some() {
         let group = gtk::Box::new(gtk::Orientation::Horizontal, 0);

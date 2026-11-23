@@ -27,9 +27,15 @@ becomes the GitHub Release notes.
 - All Files previews more than source: images zoom and any format the system reads counts as one, SVGs show
   what breaks on Android, iOS, Flutter and React Native with an approximation of each, Markdown shows formatted by
   the app (GitHub tables, task lists, alerts, links; nothing fetched), and other binaries open in Quick Look.
+- Diffs, file contents and the merge editor in the macOS and GTK4 apps can wrap long lines instead of scrolling
+  sideways: the wrap button beside the whitespace button in History and Working Copy, the view options (also new
+  at the right of the merge editor's bar), or View > Wrap Long Lines (Option-Z / Alt+Z).
 
 #### Changed
 
+- History keeps the commit details' height where its divider was dragged (View Options > Fit Details to the Message
+  fits it to each message again), links `#123` and commit IDs in trailers, and notes that a merge's changes are
+  against its first parent.
 - History's right column is rebuilt in the macOS and GTK4 apps: the details stay on top and the changed files are
   the diff's own file headers, folded at first, as a list or a tree, with one bar for Changes / All Files, totals and
   expanding. Hunk headers name the enclosing function as `git diff` does and renames read `src/{old.rs → new.rs}`.

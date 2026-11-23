@@ -48,6 +48,13 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
     /// AI: 選んだコンフリクトの解消の提案と解説。
     private let aiResolveButton = NSButton(title: L("Resolve with AI"), target: nil, action: nil)
     private let aiExplainButton = NSButton(title: L("Explain with AI"), target: nil, action: nil)
+    /// 帯の右端の表示の設定（History の右の列と同じ形。今はコードの折り返しだけ）。
+    private let viewOptions = ViewOptionsPopUp { menu in
+        menu.addItem(.sectionHeader(title: L("Code")))
+        let wrap = DiffViewController.wrapLinesMenuItem()
+        wrap.indentationLevel = 1
+        menu.addItem(wrap)
+    }
 
     /// 最初の Result に入っていたコンフリクト（両側の中身）。添字が左右の欄の `regions` の添字に当たる。
     private var originals: [(current: String, incoming: String)] = []
@@ -70,6 +77,14 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
     private var settling = false
     /// 読み直し終えたら続ける操作（その間に押したボタン）。
     private var afterSettling: [() -> Void] = []
+    /// 長い行を欄の幅で折り返すか（`Settings.wrapDiffLines`。差分と同じ設定）。
+    private var wrapsLines = Settings.wrapDiffLines
+    /// 欄ごとの、各行の先頭の位置（`lineStarts`。中身が変わったら捨てる）。
+    private var lineStartsCache: [ObjectIdentifier: [Int]] = [:]
+    /// 開き始めた時刻と、組み立て・最初に帯を描くまでの時間（`--measure-merge-scroll`）。
+    private var openedAt: CFTimeInterval = 0
+    private var buildTime: CFTimeInterval = 0
+    fileprivate var firstDrawTime: CFTimeInterval?
 
     init(path: String, sides: MergeSides, regions: [ConflictRegions.Conflict], repository: Repository, actions: Actions) {
         self.path = path
@@ -107,8 +122,8 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
 
     // MARK: - 組み立て
 
-    private static func textView(editable: Bool) -> NSTextView {
-        let text = NSTextView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
+    private static func textView(editable: Bool) -> MergeTextView {
+        let text = MergeTextView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
         text.isEditable = editable
         text.isRichText = false
         text.allowsUndo = editable
@@ -118,7 +133,7 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
                      \.isAutomaticTextReplacementEnabled, \.isAutomaticSpellingCorrectionEnabled, \.isContinuousSpellCheckingEnabled] {
             text[keyPath: flag] = false
         }
-        // コードなので折り返さず、横にスクロールする（行の高さが揃い、3 列を行で揃えられる）。
+        // 既定はコードなので折り返さず、横にスクロールする。折り返すかは `setWraps` で（Wrap Long Lines）。
         text.isHorizontallyResizable = true
         text.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         text.textContainer?.widthTracksTextView = false
@@ -126,10 +141,46 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
         return text
     }
 
+    /// 欄の長い行を、欄の幅で折り返す（`wrap`）か、折り返さずに横にスクロールする。スクロールの欄に入れた後で呼ぶ。
+    private static func setWraps(_ text: MergeTextView, _ wrap: Bool) {
+        guard let scroll = text.enclosingScrollView, let container = text.textContainer else { return }
+        let huge = CGFloat.greatestFiniteMagnitude
+        scroll.hasHorizontalScroller = !wrap
+        text.keepsScrollOnResize = wrap
+        // 入れ物の幅は自分で合わせる（`applyWrapWidth`。並べ直しが重ければ、幅が落ち着くまで待つ）。
+        container.widthTracksTextView = false
+        if wrap {
+            text.isHorizontallyResizable = false
+            // 文字の欄は見えている幅に合わせ、入れ物はその幅から余白を除いた幅。
+            text.setFrameSize(NSSize(width: scroll.contentSize.width, height: text.frame.height))
+            applyWrapWidth(text)
+            let clip = scroll.contentView
+            if clip.bounds.origin.x != 0 {
+                clip.scroll(to: NSPoint(x: 0, y: clip.bounds.origin.y))
+                scroll.reflectScrolledClipView(clip)
+            }
+        } else {
+            container.containerSize = NSSize(width: huge, height: huge)
+            text.isHorizontallyResizable = true
+            text.sizeToFit()
+        }
+    }
+
+    /// 折り返す欄の入れ物の幅を、文字の欄の幅に合わせる（変われば並べ直しになる）。配置で半ポイントほど揺れる
+    /// ことがあるので、1 ポイント未満の違いは合わせない。合わせたら true。
+    @discardableResult
+    private static func applyWrapWidth(_ text: NSTextView) -> Bool {
+        guard let container = text.textContainer else { return false }
+        let width = max(1, text.bounds.width - 2 * text.textContainerInset.width)
+        guard abs(container.containerSize.width - width) >= 1 else { return false }
+        container.containerSize = NSSize(width: width, height: CGFloat.greatestFiniteMagnitude)
+        return true
+    }
+
     private static let labelHeight: CGFloat = 20
 
     /// 見出しと、スクロールする文字の欄。
-    private func pane(_ title: String, _ text: NSTextView) -> NSView {
+    private func pane(_ title: String, _ text: MergeTextView) -> NSView {
         let container = NSView(frame: NSRect(x: 0, y: 0, width: 400, height: 400))
         let label = NSTextField(labelWithString: title)
         label.font = .boldSystemFont(ofSize: NSFont.smallSystemFontSize)
@@ -149,12 +200,19 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
         scroll.contentView.postsBoundsChangedNotifications = true
         NotificationCenter.default.addObserver(
             self, selector: #selector(scrolled(_:)), name: NSView.boundsDidChangeNotification, object: scroll.contentView)
+        // 中身が変わったら、行の始まりを求め直す。
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(textStorageEdited(_:)), name: NSTextStorage.didProcessEditingNotification, object: text.textStorage)
+        text.onWidthChange = { [weak self, unowned text] in self?.textWidthChanged(text) }
+        if wrapsLines { Self.setWraps(text, true) }
         container.addSubview(label)
         container.addSubview(scroll)
         return container
     }
 
     override func loadView() {
+        openedAt = CACurrentMediaTime()
+        defer { buildTime = CACurrentMediaTime() - openedAt }
         let hasBase = sides.base != nil
         let currentPane = pane(L("Current (your branch)"), current)
         let resultPane = pane(L("Result (editable)"), result)
@@ -207,7 +265,7 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
         position.setContentCompressionResistancePriority(.defaultHigh + 1, for: .horizontal)
         let bar = NSStackView(
             views: [position, previousButton, nextButton, magicButton, aiResolveButton, aiExplainButton, note] + acceptButtons
-                + [baseToggle, NSView(), popOut, save, resolve])
+                + [baseToggle, NSView(), popOut, save, resolve, viewOptions])
         aiResolveButton.target = self
         aiResolveButton.action = #selector(aiResolve)
         aiResolveButton.toolTip = L("AI: Suggest a resolution for the selected conflict (Result doesn’t change until you accept it).")
@@ -224,6 +282,8 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
             self, selector: #selector(updateAssistantButtons), name: .assistantChanged, object: nil)
         // 配色テーマを変えたら、コンフリクトの色を塗り直す。
         NotificationCenter.default.addObserver(self, selector: #selector(themeChanged), name: .syntaxThemeChanged, object: nil)
+        // Wrap Long Lines（⌥Z・差分の帯のボタン）を切り替えたら、欄を折り返す・やめる。
+        NotificationCenter.default.addObserver(self, selector: #selector(wrapSettingChanged), name: .diffWrapLinesChanged, object: nil)
         note.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         note.textColor = .secondaryLabelColor
         // 文が長くてもボタンを押し出さないよう、メモの方を切り詰める。
@@ -280,6 +340,9 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
         // 組み立てている途中（`view` を入れる前）に呼ばれたら何もしない（`view` を読むと組み立て直しになる）。
         guard let root = viewIfLoaded as? MergeLayoutView else { return }
         let area = root.contentArea
+        // 折り返すときは、幅が変わると行の位置も変わる。Result の一番上の行を覚えておき、欄の幅が変わったら
+        // （`textWidthChanged`。幅は後の配置で決まる）その行を残し、ほかの欄はそれに揃え直す。
+        if wrapsLines { holdTop(topLine(of: result)) }
         let bandWidth: CGFloat = 40
         let showBase = basePane.map { !$0.isHidden } ?? false
         let columns: [NSView] = (showBase ? [basePane!] : []) + panes
@@ -306,21 +369,179 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
     @objc private func toggleBase() {
         basePane?.isHidden = baseToggle.state != .on
         layoutColumns()
+        // 隠している間は揃えていないので、出したら Result に揃える。
+        if baseToggle.state == .on { syncScroll(from: result) }
+    }
+
+    /// Wrap Long Lines を切り替えた: 欄を折り返し直し、Result の一番上の行を同じ位置に残す。
+    @objc private func wrapSettingChanged() {
+        let on = Settings.wrapDiffLines
+        guard on != wrapsLines, isViewLoaded else { return }
+        let anchor = topLine(of: result)
+        holdTop(anchor)
+        wrapsLines = on
+        for text in [current, incoming, base, result] { Self.setWraps(text, on) }
+        keepTop(anchor)
+    }
+
+    /// 幅を変えている間に残す、Result の一番上の行（この回の配置が済んだら捨てる）。
+    private var heldTop: CGFloat?
+
+    private func holdTop(_ line: CGFloat) {
+        guard heldTop == nil else { return }
+        heldTop = line
+        DispatchQueue.main.async { [weak self] in self?.heldTop = nil }
+    }
+
+    /// 幅が変わるたびに並べ直してよい時間（前に並べ直したときにこれより長くかかった欄は、幅が落ち着いてから
+    /// 並べ直す。差分の折り返しと同じ）。
+    private static let syncRewrapBudget: CFTimeInterval = 0.004
+    /// 欄ごとの、最後に並べ直したときにかかった時間。
+    private var rewrapCost: [ObjectIdentifier: CFTimeInterval] = [:]
+    private var pendingRewrap: DispatchWorkItem?
+    /// 並べ直しを待っている間に残す、Result の一番上の行。
+    private var pendingRewrapTop: CGFloat?
+    /// 並べ直しにかかった時間（`--measure-merge-scroll`）。
+    private var rewrapTimes: [CFTimeInterval] = []
+
+    /// 欄の幅が変わった（折り返すときは並べ直しになる）。軽ければすぐ並べ直して一番上の行を残し、重ければ幅が
+    /// 落ち着くまで待つ（その間は前の幅で並べたまま）。
+    private func textWidthChanged(_ text: MergeTextView) {
+        guard wrapsLines, let layout = text.layoutManager, let container = text.textContainer,
+              abs(container.containerSize.width - (text.bounds.width - 2 * text.textContainerInset.width)) >= 1
+        else { return }
+        // まだ並べていなければ、幅を変えるだけ（並べるのは表示するときで、どのみちかかる）。
+        if layout.firstUnlaidCharacterIndex() == 0 {
+            Self.applyWrapWidth(text)
+            return
+        }
+        // 並べ直したことがなければ、文字数から見積もる（1 文字 0.5 µs ほど）。
+        let length = (text.string as NSString).length
+        let cost = rewrapCost[ObjectIdentifier(text)] ?? Double(length) * 0.5e-6
+        if pendingRewrap == nil, cost <= Self.syncRewrapBudget {
+            rewrap([text])
+            if let heldTop { keepTop(heldTop) }
+            return
+        }
+        if pendingRewrapTop == nil { pendingRewrapTop = heldTop ?? topLine(of: result) }
+        pendingRewrap?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            pendingRewrap = nil
+            let top = pendingRewrapTop
+            pendingRewrapTop = nil
+            guard wrapsLines else { return }
+            rewrap([current, incoming, base, result])
+            if let top { keepTop(top) }
+        }
+        pendingRewrap = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
+    }
+
+    /// `texts` を今の幅で並べ直し、かかった時間を覚える。
+    private func rewrap(_ texts: [MergeTextView]) {
+        for text in texts {
+            guard let layout = text.layoutManager, let container = text.textContainer else { continue }
+            let start = CACurrentMediaTime()
+            // 幅が変わらなければ並べ直さない（かかった時間も覚えない）。
+            guard Self.applyWrapWidth(text) else { continue }
+            layout.ensureLayout(for: container)
+            let cost = CACurrentMediaTime() - start
+            rewrapCost[ObjectIdentifier(text)] = cost
+            if measurement != nil { rewrapTimes.append(cost) }
+        }
+    }
+
+    /// Result の一番上を `line` 行目（端数はその行の中の割合）にし、ほかの欄を揃える。
+    private func keepTop(_ line: CGFloat) {
+        syncing = true
+        scroll(result, toY: top(ofFractionalLine: line, in: result))
+        syncing = false
+        syncScroll(from: result)
+        leftBand.needsDisplay = true
+        rightBand.needsDisplay = true
     }
 
     @objc private func popOutClicked() { onPopOut?() }
 
     // MARK: - 行の位置
 
-    /// 1 行の高さ（等幅で折り返さないので、どの欄も同じ）。
+    /// 1 行の高さ（文章の外の、ない行の位置を見積もるときだけ使う）。
     private lazy var lineHeight: CGFloat = {
         result.layoutManager?.defaultLineHeight(for: result.font ?? .monospacedSystemFont(ofSize: 12, weight: .regular)) ?? 15
     }()
 
+    @objc private func textStorageEdited(_ notification: Notification) {
+        guard let storage = notification.object as? NSTextStorage,
+              let text = [result, current, incoming, base].first(where: { $0.textStorage === storage }) else { return }
+        lineStartsCache[ObjectIdentifier(text)] = nil
+    }
+
+    /// `text` の各行の先頭の位置（`lineStarts`）。
+    private func lineStarts(of text: NSTextView) -> [Int] {
+        let key = ObjectIdentifier(text)
+        if let starts = lineStartsCache[key] { return starts }
+        let starts = Self.lineStarts(text.string)
+        lineStartsCache[key] = starts
+        return starts
+    }
+
+    /// `text` の `line` 行目の上端の、文字の欄の中の y（上の余白を含む）。折り返すと行の高さが揃わないので、並べた
+    /// 行の位置から求める。`line` が文章の外なら、1 行の高さで見積もる。
+    private func top(ofLine line: Int, in text: NSTextView) -> CGFloat {
+        let inset = text.textContainerInset.height
+        guard let layout = text.layoutManager else { return CGFloat(line) * lineHeight + inset }
+        let starts = lineStarts(of: text)
+        let last = starts.count - 1
+        if line < 0 { return inset + CGFloat(line) * lineHeight }
+        if line > last { return top(ofLine: last, in: text) + CGFloat(line - last) * lineHeight }
+        let length = starts[last]
+        let location = starts[line]
+        if location < length {
+            let glyph = layout.glyphIndexForCharacter(at: location)
+            return layout.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil, withoutAdditionalLayout: false).minY + inset
+        }
+        // 文章の終わり（改行で終われば、その後の空の行の上端）: 最後の文字の行の下端（全体を並べずに済む）。
+        guard length > 0 else { return inset }
+        let glyph = layout.glyphIndexForCharacter(at: length - 1)
+        return layout.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil, withoutAdditionalLayout: false).maxY + inset
+    }
+
+    /// 端数のある行（`line` 行目の上端から、その行の高さの割合だけ下）の、文字の欄の中の y。
+    private func top(ofFractionalLine line: CGFloat, in text: NSTextView) -> CGFloat {
+        let whole = Int(line.rounded(.down))
+        let y0 = top(ofLine: whole, in: text)
+        let fraction = line - CGFloat(whole)
+        guard fraction > 0 else { return y0 }
+        return y0 + fraction * (top(ofLine: whole + 1, in: text) - y0)
+    }
+
+    /// 文字の欄の中の `y` にある行（端数はその行の中の割合。`top(ofLine:)` の逆）。
+    private func line(atY y: CGFloat, in text: NSTextView) -> CGFloat {
+        let last = lineStarts(of: text).count - 1
+        let first = top(ofLine: 0, in: text)
+        if y < first { return (y - first) / lineHeight }
+        // 上端が y 以下の最後の行を探す。
+        var lo = 0, hi = last
+        while lo < hi {
+            let mid = (lo + hi + 1) / 2
+            if top(ofLine: mid, in: text) <= y { lo = mid } else { hi = mid - 1 }
+        }
+        let y0 = top(ofLine: lo, in: text)
+        if lo == last { return CGFloat(lo) + (y - y0) / lineHeight }
+        let height = top(ofLine: lo + 1, in: text) - y0
+        return CGFloat(lo) + (height > 0 ? min(1, (y - y0) / height) : 0)
+    }
+
+    /// `text` の見えている一番上の行。
+    private func topLine(of text: NSTextView) -> CGFloat {
+        line(atY: text.enclosingScrollView?.contentView.bounds.origin.y ?? 0, in: text)
+    }
+
     /// `text` の `line` 行目の上端の、帯の座標（欄の文字の領域の上端からの距離。見えている範囲の外なら外の値）。
     fileprivate func y(ofLine line: Int, in text: NSTextView) -> CGFloat {
-        let top = text.enclosingScrollView?.contentView.bounds.origin.y ?? 0
-        return CGFloat(line) * lineHeight + text.textContainerInset.height - top
+        let scrolled = text.enclosingScrollView?.contentView.bounds.origin.y ?? 0
+        return top(ofLine: line, in: text) - scrolled
     }
 
     /// 帯に描くもの: 左右の欄のコンフリクトの行範囲と、Result のコンフリクトの行範囲（選んでいるか）。
@@ -370,10 +591,15 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
         guard !syncing, let clip = notification.object as? NSClipView,
               let source = [result, current, incoming, base].first(where: { $0.enclosingScrollView?.contentView === clip })
         else { return }
+        syncScroll(from: source)
+    }
+
+    /// `source` の一番上の行に、ほかの欄の一番上の行を揃える。
+    private func syncScroll(from source: NSTextView) {
+        guard !syncing else { return }
         syncing = true
         defer { syncing = false }
-        let inset = result.textContainerInset.height
-        let topLine = (clip.bounds.origin.y - inset) / lineHeight
+        let topLine = topLine(of: source)
         // 一度 Result の行に直してから、ほかの欄の行にする。
         let pairs: [(NSTextView, MergeSides.Side?)] = [(current, sides.current), (incoming, sides.incoming), (base, sides.base)]
         let resultLine: CGFloat
@@ -386,10 +612,12 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
             return
         }
         for (text, side) in pairs where text !== source {
+            // 隠している Base は揃えない（出したときに、次のスクロールで揃う）。
+            if text === base, basePane?.isHidden ?? true { continue }
             let a = anchors(side)
-            scroll(text, toY: map(resultLine, from: a.result, to: a.side) * lineHeight + inset)
+            scroll(text, toY: top(ofFractionalLine: map(resultLine, from: a.result, to: a.side), in: text))
         }
-        if source !== result { scroll(result, toY: resultLine * lineHeight + inset) }
+        if source !== result { scroll(result, toY: top(ofFractionalLine: resultLine, in: result)) }
     }
 
     private func scroll(_ text: NSTextView, toY y: CGFloat) {
@@ -475,7 +703,7 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
         guard let layout = text.layoutManager else { return }
         let whole = NSRange(location: 0, length: (text.string as NSString).length)
         layout.removeTemporaryAttribute(.backgroundColor, forCharacterRange: whole)
-        let starts = Self.lineStarts(text.string)
+        let starts = lineStarts(of: text)
         for (i, r) in regions.enumerated() where r.count == 2 {
             let alpha: CGFloat = i == selected ? 0.35 : live.map { $0.contains(i) ? 0.16 : 0.05 } ?? 0.16
             layout.addTemporaryAttribute(
@@ -533,7 +761,7 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
     private func reveal() {
         guard !conflicts.isEmpty, let clip = result.enclosingScrollView?.contentView else { return }
         let line = conflicts[selected].lines[0]
-        scroll(result, toY: CGFloat(line) * lineHeight + result.textContainerInset.height - clip.bounds.height / 3)
+        scroll(result, toY: top(ofLine: line, in: result) - clip.bounds.height / 3)
     }
 
     @objc private func updateAssistantButtons() {
@@ -812,7 +1040,7 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
     func textViewDidChangeSelection(_ notification: Notification) {
         guard let text = notification.object as? NSTextView, !conflicts.isEmpty else { return }
         let location = text.selectedRange().location
-        let starts = Self.lineStarts(text.string)
+        let starts = lineStarts(of: text)
         let line = (starts.lastIndex { $0 <= location } ?? 0)
         var index: Int?
         if text === result {
@@ -890,6 +1118,133 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
             if stage { onResolved?() }
         }
     }
+
+    // MARK: - 計測
+
+    fileprivate func noteDrawn() {
+        if firstDrawTime == nil { firstDrawTime = CACurrentMediaTime() - openedAt }
+    }
+
+    private final class ScrollMeasurement {
+        let frames: Int
+        let step: CGFloat
+        let completion: (String) -> Void
+        var frame = 0
+        var direction: CGFloat = 1
+        /// スクロールして揃えるまで・それに描くまでを足した時間。
+        var scrollWork: [CFTimeInterval] = []
+        var scrollFrame: [CFTimeInterval] = []
+        var resizeFrame: [CFTimeInterval] = []
+        var link: CADisplayLink?
+
+        init(frames: Int, step: CGFloat, completion: @escaping (String) -> Void) {
+            self.frames = frames
+            self.step = step
+            self.completion = completion
+        }
+
+        static func percentiles(_ values: [CFTimeInterval]) -> String {
+            let sorted = values.sorted()
+            guard !sorted.isEmpty else { return "-" }
+            let at = { (p: Double) in sorted[min(sorted.count - 1, Int(Double(sorted.count) * p))] * 1000 }
+            return String(format: "p50 %.3f  p95 %.3f  max %.3f ms (%d frames)", at(0.5), at(0.95), sorted.last! * 1000, sorted.count)
+        }
+    }
+
+    private var measurement: ScrollMeasurement?
+
+    /// `--measure-merge-scroll`: 開くまでの時間と、すべての欄を並べ直す時間を測り、表示のリフレッシュごとに Result を
+    /// `rowsPerFrame` 行ずつ `frames` フレーム分スクロールし（端で折り返す。ほかの欄は揃う）、続けて窓の幅を
+    /// 120 フレーム変えて、1 フレームの処理（描くまで）の時間を測る。
+    func measureScroll(frames: Int, rowsPerFrame: Double, completion: @escaping (String) -> Void) {
+        // すべての欄を一から並べ直す時間（開いたときに並べるのと同じ量）。
+        let texts = [current, incoming, result] + (basePane?.isHidden == false ? [base] : [])
+        let start = CACurrentMediaTime()
+        for text in texts {
+            guard let layout = text.layoutManager, let container = text.textContainer else { continue }
+            let length = (text.string as NSString).length
+            layout.invalidateLayout(forCharacterRange: NSRange(location: 0, length: length), actualCharacterRange: nil)
+            layout.ensureLayout(for: container)
+        }
+        let relayout = CACurrentMediaTime() - start
+        let lines = texts.map { lineStarts(of: $0).count - 1 }
+        let header = String(
+            format: "merge editor (wrap %@, lines %@, result column %d pt, document %d pt, scrolled to %.1f pt)\nopen: build %.3f ms, first band drawn %.3f ms after opening, full relayout of all columns %.3f ms",
+            wrapsLines ? "on" : "off", lines.map(String.init).joined(separator: "/"), Int(result.bounds.width),
+            Int(result.frame.height), result.enclosingScrollView?.contentView.bounds.origin.y ?? 0, buildTime * 1000, (firstDrawTime ?? 0) * 1000, relayout * 1000)
+        let m = ScrollMeasurement(frames: frames, step: CGFloat(rowsPerFrame) * lineHeight) { summary in
+            completion(header + "\n" + summary)
+        }
+        measurement = m
+        m.link = view.displayLink(target: self, selector: #selector(measureFrame(_:)))
+        m.link?.add(to: .main, forMode: .common)
+    }
+
+    @objc private func measureFrame(_ link: CADisplayLink) {
+        guard let m = measurement else { return link.invalidate() }
+        let resizeFrames = 120
+        if m.frame >= m.frames + resizeFrames {
+            link.invalidate()
+            // 幅が落ち着いてからの並べ直しを待つ。
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [self] in
+                let rewraps = rewrapTimes.map { String(format: "%.1f", $0 * 1000) }.joined(separator: ", ")
+                m.completion("""
+                    scroll (scroll + sync): \(ScrollMeasurement.percentiles(m.scrollWork))
+                    scroll (+ layout and draw): \(ScrollMeasurement.percentiles(m.scrollFrame))
+                    resize (+ layout and draw): \(ScrollMeasurement.percentiles(m.resizeFrame))
+                    rewraps during resize (per column, ms): \(rewraps.isEmpty ? "-" : rewraps)
+                    """)
+                measurement = nil
+            }
+            m.frame += 1
+            return
+        }
+        guard m.frame < m.frames + resizeFrames else { return }
+        guard let window = view.window, let clip = result.enclosingScrollView?.contentView else { return }
+        let start = CACurrentMediaTime()
+        if m.frame < m.frames {
+            var y = clip.bounds.origin.y
+            let bottom = max(0, result.frame.height - clip.bounds.height)
+            if y + m.step * m.direction > bottom { m.direction = -1 }
+            if y + m.step * m.direction < 0 { m.direction = 1 }
+            y = max(0, min(bottom, y + m.step * m.direction))
+            scroll(result, toY: y)
+            m.scrollWork.append(CACurrentMediaTime() - start)
+            window.displayIfNeeded()
+            m.scrollFrame.append(CACurrentMediaTime() - start)
+        } else {
+            // 幅を 1 フレームごとに 8 pt ずつ変える（ライブリサイズのように）。
+            let k = m.frame - m.frames
+            var frame = window.frame
+            frame.size.width += (k / 15) % 2 == 0 ? -8 : 8
+            window.setFrame(frame, display: false)
+            window.layoutIfNeeded()
+            window.displayIfNeeded()
+            m.resizeFrame.append(CACurrentMediaTime() - start)
+        }
+        m.frame += 1
+    }
+}
+
+/// マージエディタの欄。折り返すときは、幅が変わったことを知らせ、そのときに選択を見せようとスクロールしない
+/// （一番上の行を残すのはエディタがする）。
+private final class MergeTextView: NSTextView {
+    var onWidthChange: (() -> Void)?
+    var keepsScrollOnResize = false
+    private var resizing = false
+
+    override func setFrameSize(_ newSize: NSSize) {
+        let oldWidth = frame.width
+        resizing = true
+        super.setFrameSize(newSize)
+        resizing = false
+        if newSize.width != oldWidth { onWidthChange?() }
+    }
+
+    override func scrollToVisible(_ rect: NSRect) -> Bool {
+        if resizing, keepsScrollOnResize { return false }
+        return super.scrollToVisible(rect)
+    }
 }
 
 /// 上に操作の帯（と、あれば案内の帯）、残りに欄を並べる。
@@ -950,6 +1305,8 @@ private final class ConflictBand: NSView {
     init(side: Side) {
         self.side = side
         super.init(frame: .zero)
+        // 上下にはみ出したコンフリクトの曲線を、見出しや操作の帯の上に描かない。
+        clipsToBounds = true
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -962,6 +1319,7 @@ private final class ConflictBand: NSView {
         bounds.fill(using: .copy)
         arrows.removeAll()
         guard let owner else { return }
+        owner.noteDrawn()
         let sideText = owner.sideText(side), result = owner.resultText
         let color = SyntaxColors.diff[side == .ours ? .current : .incoming] ?? (side == .ours ? DiffColor.current : .incoming).standard
         for region in owner.bandRegions(side) {

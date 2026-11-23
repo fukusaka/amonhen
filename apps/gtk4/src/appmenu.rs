@@ -386,7 +386,7 @@ pub const PENDING: &[&str] = &[];
 
 /// 状態を持つので [`handlers`] とは別に登録する操作。
 #[cfg(test)]
-const STATEFUL: &[&str] = &["show-sidebar"];
+const STATEFUL: &[&str] = &["show-sidebar", "wrap-long-lines"];
 
 /// アクションのショートカット（`win.<id>` と、それに付けるキー）。
 fn accels() -> Vec<(String, String)> {
@@ -755,6 +755,25 @@ pub fn install(parts: Parts) -> Buttons {
         }
     });
     window.add_action(&toggle);
+    // View > Wrap Long Lines（Alt+Z）: 差分の長い行を折り返す（アプリ全体の設定。印を付ける）。ほかの窓・帯の
+    // ボタンで切り替えても、印を合わせる。
+    let wrap = gio::SimpleAction::new_stateful(
+        "wrap-long-lines",
+        None,
+        &crate::diff::wrap_lines().to_variant(),
+    );
+    wrap.connect_activate(|_, _| {
+        crate::settings::set_bool(crate::diff::WRAP_LINES, !crate::diff::wrap_lines());
+    });
+    let w = wrap.downgrade();
+    crate::settings::connect_changed_while(&parts.window(), move |key| {
+        if key == crate::diff::WRAP_LINES
+            && let Some(wrap) = w.upgrade()
+        {
+            wrap.set_state(&crate::diff::wrap_lines().to_variant());
+        }
+    });
+    window.add_action(&wrap);
 
     install_app(&parts.app);
 

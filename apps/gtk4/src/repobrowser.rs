@@ -3176,6 +3176,10 @@ pub fn snapshot_when_ready(window: &gtk::Window, png: PathBuf) {
             .filter_map(|t| t.downcast::<gtk::Window>().ok())
             .find(|t| t.transient_for().as_ref() == Some(&window) && t.is_visible())
             .unwrap_or_else(|| window.clone());
+        // 並べ直しを待っている部品があれば、並べ終えるまで待つ（そのまま撮ると窓の地だけになる）。
+        if !crate::laid_out(&target) && calm.get() < 50 {
+            return glib::ControlFlow::Continue;
+        }
         match crate::snapshot(&target, &png) {
             Ok(()) => eprintln!("{}", png.display()),
             Err(e) => eprintln!("撮れない: {e}"),

@@ -111,6 +111,8 @@ pub struct DiffContent<'a> {
     pub image_views: Option<&'a HashMap<usize, crate::imagediff::View>>,
     /// 差分の持ち主を見分ける番号（画像を読んだものを取っておく鍵）。
     pub key: u64,
+    /// その時点のファイルとして見せる（行番号は 1 列、変えた行は青）。
+    pub file_mode: bool,
 }
 
 impl DiffContent<'_> {
@@ -164,6 +166,8 @@ pub enum DiffLine {
     Folder(u32),
     /// 開いた画像の比べる欄（ファイルの番号と、欄の中の何行目か）。
     Panel(u32, u32),
+    /// その時点のファイルで、消した行の所の印（`DiffTree::deletions` の番号）。
+    Deleted(u32),
 }
 
 /// 木で見せるときのフォルダの行（macOS 版の `DiffViewController.Folder`）。
@@ -191,6 +195,9 @@ pub struct DiffTree {
     titles: Vec<String>,
     /// 比べる欄を出している画像のファイル（見出しは開いた ▾ で描く）。
     pub panels: HashSet<usize>,
+    /// その時点のファイルで見せるときの、変えた行（消した行に続けて足した行）と、消した行の数。
+    pub modified: HashSet<u32>,
+    pub deletions: Vec<u32>,
 }
 
 /// 木の形（ファイルごとの前に差し込むフォルダの行、深さ、名前、畳んだフォルダの中で隠すファイル）。並びは
@@ -286,8 +293,82 @@ impl WorkingShown {
             stacked: None,
             image_views: None,
             key: 0,
+            file_mode: false,
         }
     }
+}
+
+/// 「すべてのファイル」で開いたファイルの、その時点の中身（ファイル全体の差分を、ファイルとして見せる）。
+pub struct FileShown {
+    pub path: String,
+    pub view: DiffView,
+    syntax: HashMap<u32, Vec<(u32, u32, u8)>>,
+    highlights: HashMap<u32, Vec<(u32, u32)>>,
+    tree: DiffTree,
+}
+
+impl FileShown {
+    pub fn content(&self) -> DiffContent<'_> {
+        DiffContent {
+            view: &self.view,
+            highlights: &self.highlights,
+            syntax: &self.syntax,
+            file_rows: &[],
+            marks: false,
+            file_marks: &[],
+            tree: Some(&self.tree),
+            counts: None,
+            widen: false,
+            stacked: None,
+            image_views: None,
+            key: 0,
+            file_mode: true,
+        }
+    }
+}
+
+/// ファイル全体の差分を、その時点のファイルとして見せる行の並び（GTK4 版の `rebuild_extra` の `file_mode`）:
+/// hunk の見出しと消した行は出さず、消した行に続けて足した行は「変えた行」、消しただけの所には「N 行消した」の
+/// 行を差し込む。ファイルごと消したなら、消した行をそのまま出す。
+fn file_lines(view: &DiffView) -> DiffTree {
+    use amonhen_layout::DiffRow;
+    let rows = &view.rows;
+    let deleted_file = !rows
+        .iter()
+        .any(|r| matches!(r.kind, DiffRow::ADDED | DiffRow::CONTEXT));
+    let mut tree = DiffTree {
+        line_of_row: vec![u32::MAX; rows.len()],
+        ..Default::default()
+    };
+    let mut row = 0;
+    while row < rows.len() {
+        let kind = rows[row].kind;
+        if kind == DiffRow::HUNK {
+            row += 1;
+        } else if kind == DiffRow::REMOVED && !deleted_file {
+            let start = row;
+            while row < rows.len() && rows[row].kind == DiffRow::REMOVED {
+                row += 1;
+            }
+            if row < rows.len() && rows[row].kind == DiffRow::ADDED {
+                while row < rows.len() && rows[row].kind == DiffRow::ADDED {
+                    tree.modified.insert(row as u32);
+                    tree.line_of_row[row] = tree.lines.len() as u32;
+                    tree.lines.push(DiffLine::Row(row as u32));
+                    row += 1;
+                }
+            } else {
+                tree.lines
+                    .push(DiffLine::Deleted(tree.deletions.len() as u32));
+                tree.deletions.push((row - start) as u32);
+            }
+        } else {
+            tree.line_of_row[row] = tree.lines.len() as u32;
+            tree.lines.push(DiffLine::Row(row as u32));
+            row += 1;
+        }
+    }
+    tree
 }
 
 /// 読んだ差分（空白の扱いを変えたら、同じ引数でもう一度読む）。
@@ -404,6 +485,7 @@ impl CommitShown {
             stacked: Some(&self.stacked),
             image_views: Some(&self.image_views),
             key: self.id,
+            file_mode: false,
         }
     }
 
@@ -781,6 +863,8 @@ enum Event {
     Refs(u64, Arc<RefsSnapshot>, Labels),
     Commit(u64, Box<CommitShown>),
     Syntax(u64, u32, u32, HashMap<u32, Vec<(u32, u32, u8)>>),
+    /// 「すべてのファイル」で開いたファイルの、その時点の中身。
+    File(Box<FileShown>),
     Extras(u64, u32, serde_json::Value),
     Status(Arc<StatusSnapshot>),
     Working(Box<WorkingShown>),
@@ -804,6 +888,12 @@ pub struct Data {
     working_wanted: Option<String>,
     /// 差分が届いた（見たら `false` に戻す）。
     pub working_changed: bool,
+    /// 「すべてのファイル」で開いたファイルの中身（届いたもの）と、読んでいるファイル、届いたか（見たら false）。
+    pub file_view: Option<Box<FileShown>>,
+    file_wanted: Option<String>,
+    pub file_view_changed: bool,
+    /// 差分の欄に、すべてのファイルで開いたファイルを出しているか。
+    pub show_file: bool,
     /// 今の History の行の、ref のラベル。
     pub labels: Labels,
     /// 一致したコミットだけを出している間の、元の History とその一致・ref の印（検索の欄の Show Only Matching
@@ -1171,6 +1261,10 @@ impl Data {
             working: None,
             working_wanted: None,
             working_changed: false,
+            file_view: None,
+            file_wanted: None,
+            file_view_changed: false,
+            show_file: false,
             labels: HashMap::new(),
             signatures: HashMap::new(),
             ci: HashMap::new(),
@@ -1712,6 +1806,13 @@ impl Data {
                         changed = true;
                     }
                 }
+                Event::File(shown) => {
+                    if self.file_wanted.as_deref() == Some(shown.path.as_str()) {
+                        self.file_view = Some(shown);
+                        self.file_view_changed = true;
+                        changed = true;
+                    }
+                }
                 Event::Working(shown) => {
                     if self.working_wanted.as_deref() == Some(shown.path.as_str()) {
                         self.working = Some(shown);
@@ -1733,6 +1834,67 @@ impl Data {
             }
         }
         Ok(changed)
+    }
+
+    /// 出している差分が 1 つのコミットなら、その ID（すべてのファイルを見られる。stash・複数・範囲では None）。
+    pub fn single_commit(&self) -> Option<amonhen_model::Oid> {
+        match self.last_want {
+            Some(Want::Commit(_)) | Some(Want::Oid(_, false)) | Some(Want::FileChange(..)) => {
+                let oid = self.commit.as_ref()?.info["oid"].as_str()?;
+                amonhen_model::Oid::from_hex(oid)
+            }
+            _ => None,
+        }
+    }
+
+    /// 差分の欄に描くもの（History なら、すべてのファイルで開いたファイルか、コミットの差分）。
+    pub fn shown_content(&self) -> Option<DiffContent<'_>> {
+        if self.show_file {
+            self.file_view.as_deref().map(|f| f.content())
+        } else {
+            self.commit.as_deref().map(|c| c.content())
+        }
+    }
+
+    /// 「すべてのファイル」で、コミット `commit` の時点の `path` の中身を裏で読む。このコミットで変えたファイル
+    /// （`change`）ならファイル全体を前後に持つ差分（変えた行に印を付ける）、変えていなければそのままの中身。
+    /// `path` が None なら閉じる。
+    pub fn want_file_at(
+        &mut self,
+        commit: amonhen_model::Oid,
+        change: Option<amonhen_model::FileChange>,
+        path: Option<String>,
+    ) {
+        self.file_view = None;
+        self.file_view_changed = true;
+        self.file_wanted = path.clone();
+        let (Some(path), Some(repo)) = (path, self.repo.clone()) else {
+            return;
+        };
+        let (tx, wake) = (self.tx.clone(), self.wake.clone());
+        std::thread::spawn(move || {
+            let view = match &change {
+                Some(c) => repo.file_diff_with_context(c, u32::MAX, &PROFILE),
+                None => repo.tree_file(&commit, &path, &PROFILE),
+            };
+            let view = match view {
+                Ok(view) => view,
+                Err(e) => {
+                    eprintln!("その時点のファイルを読めない（{path}）: {e}");
+                    return;
+                }
+            };
+            let syntax = syntax_of(&view);
+            let tree = file_lines(&view);
+            let _ = tx.send(Event::File(Box::new(FileShown {
+                path,
+                view,
+                syntax,
+                tree,
+                highlights: HashMap::new(),
+            })));
+            wake();
+        });
     }
 
     /// 行 `row` のコミットの詳細と差分を裏で読む（同じ行を読んでいれば何もしない）。

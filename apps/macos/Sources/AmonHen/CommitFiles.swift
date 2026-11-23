@@ -78,7 +78,7 @@ final class ImageDiffPanel: NSView {
     /// 描いた画像で作る（`titles` は前と後の見出し）。
     init(
         before old: NSImage?, after new: NSImage?, titles: (String, String), caption text: String, svg: Bool, mode: Mode,
-        position: CGFloat, single: Bool, notes: NSAttributedString? = nil
+        position: CGFloat, single: Bool, notes: NSAttributedString? = nil, accessory: NSView? = nil
     ) {
         canvas = ImageCompareCanvas(before: old, after: new)
         canvas.single = single
@@ -110,7 +110,8 @@ final class ImageDiffPanel: NSView {
         // 確かめる用（`--snapshot`）: 最初の倍率（`-AMHImageZoom 4` で 400%）。
         let zoom = UserDefaults.standard.double(forKey: "AMHImageZoom")
         if zoom > 0 { canvas.setZoom(CGFloat(zoom)) }
-        var top: [NSView] = single ? [] : [modeControl]
+        // 段の左に置く部品（SVG のモバイルの、部品の切り替え）。
+        var top: [NSView] = (accessory.map { [$0] } ?? []) + (single ? [] : [modeControl])
         if svg {
             let text = NSButton(
                 image: NSImage(systemSymbolName: "doc.plaintext", accessibilityDescription: L("Show as Text"))!,
@@ -341,6 +342,12 @@ final class ImageCompareCanvas: NSView {
 
     private func draw(_ image: NSImage?, in rect: NSRect, alpha: CGFloat = 1) {
         guard let image else { return }
+        // ベクター（SVG）は描く大きさで描き直す（ビットマップに焼いたものを伸ばすとぼやける）。
+        if let rep = image.representations.first, !(rep is NSBitmapImageRep) {
+            NSGraphicsContext.current?.imageInterpolation = .high
+            rep.draw(in: rect, from: .zero, operation: .sourceOver, fraction: alpha, respectFlipped: true, hints: nil)
+            return
+        }
         NSGraphicsContext.current?.imageInterpolation = rect.width >= pixelSize(image).width * 2 ? .none : .high
         image.draw(in: rect, from: .zero, operation: .sourceOver, fraction: alpha, respectFlipped: true, hints: nil)
     }
@@ -669,14 +676,13 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         }
         rendererSwitch.target = self
         rendererSwitch.action = #selector(rendererChanged)
-        rendererSwitch.isHidden = true
         markdownSwitch.controlSize = .small
         markdownSwitch.setToolTip(L("Show the Markdown formatted"), forSegment: 0)
         markdownSwitch.setToolTip(L("Show the Markdown source"), forSegment: 1)
         markdownSwitch.target = self
         markdownSwitch.action = #selector(markdownViewChanged)
         markdownSwitch.isHidden = true
-        for v in [back, pathLabel, spacer, rendererSwitch, svgSwitch, markdownSwitch, quickLookButton, changeButton] {
+        for v in [back, pathLabel, spacer, svgSwitch, markdownSwitch, quickLookButton, changeButton] {
             pathBar.addArrangedSubview(v)
         }
         pathBar.edgeInsets = NSEdgeInsets(top: 0, left: 6, bottom: 0, right: 10)
@@ -954,7 +960,8 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         }
         svgSwitch.isHidden = !svg
         svgSwitch.selectedSegment = svgView.rawValue
-        rendererSwitch.isHidden = !svg || svgView != .compare
+        // 部品の切り替えは、モバイルの比べる欄の段に置く（ファイルの帯を詰まらせない）。
+        rendererSwitch.removeFromSuperview()
         rendererSwitch.selectedSegment = Int(mobileRenderer.rawValue)
         if svg, svgView != .text {
             content.view.isHidden = true
@@ -976,7 +983,7 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
                         before: image, after: NSImage(data: broken),
                         titles: (L("Original"), String(format: L("%@ (approximation)"), renderer.name)),
                         caption: size + "    " + L("Approximation: the SVG rewritten the way the renderer degrades it, drawn by this app"),
-                        svg: false, mode: .twoUp, position: 0.5, single: false, notes: Self.mobileNotes(issues))
+                        svg: false, mode: .twoUp, position: 0.5, single: false, notes: Self.mobileNotes(issues), accessory: rendererSwitch)
                 } else {
                     panel = ImageDiffPanel(
                         before: nil, after: image, titles: ("", ""), caption: size, svg: false, mode: .twoUp,
