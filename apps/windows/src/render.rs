@@ -151,6 +151,13 @@ const LABEL_HEIGHT: f32 = 17.0;
 pub const DIFF_ROW_HEIGHT: f32 = 18.0;
 const DIFF_NUMBER_WIDTH: f32 = 44.0;
 const DIFF_TEXT_INSET: f32 = 10.0;
+/// ファイルの見出しの、パスの左端（左に ▸・▾ と、足した・消した・変えたの印。macOS 版と同じ並び）。
+const HEADER_PATH_X: f32 = 42.0;
+/// ファイルの見出しの右端の、いつも出す ⋯ の幅（ここを押すとファイルのメニュー。macOS 版と同じ 30pt）。
+pub const HEADER_MENU_WIDTH: f32 = 30.0;
+const ADDED_TEXT: D2D1_COLOR_F = rgba(0.16, 0.62, 0.26, 1.0);
+const REMOVED_TEXT: D2D1_COLOR_F = rgba(0.86, 0.22, 0.20, 1.0);
+const MODIFIED_TEXT: D2D1_COLOR_F = rgba(0.93, 0.55, 0.10, 1.0);
 // 差分の色（GTK4 版・macOS 版の標準の色と同じ）。
 /// 差分の地の色（Settings > Theme のテーマの色。標準の色にしていればこれまでの色）。
 fn diff_color(kind: crate::theme::DiffColor) -> D2D1_COLOR_F {
@@ -401,6 +408,7 @@ pub struct Renderer {
     /// 差分の文字（等幅）と、見出しの文字。
     code_format: IDWriteTextFormat,
     file_format: IDWriteTextFormat,
+    icon_format: IDWriteTextFormat,
     /// 差分の行の文字の形（今の差分の行ごと。差分が替わったら捨てる）。
     diff_rows: HashMap<u32, IDWriteTextLayout>,
     /// 構文の種類ごとの文字の色。
@@ -498,6 +506,16 @@ impl Renderer {
                 w!("ja-jp"),
             )?;
             file_format.SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP)?;
+            // ファイルの見出しの山形（Segoe Fluent Icons の ChevronRight・ChevronDown）。
+            let icon_format = dwrite.CreateTextFormat(
+                w!("Segoe Fluent Icons"),
+                None,
+                DWRITE_FONT_WEIGHT_NORMAL,
+                DWRITE_FONT_STYLE_NORMAL,
+                DWRITE_FONT_STRETCH_NORMAL,
+                10.0,
+                w!("ja-jp"),
+            )?;
             let brush = d2d.CreateSolidColorBrush(&foreground(), None)?;
             let base: &ID2D1Factory = &d2d_factory;
             let round = base.CreateStrokeStyle(
@@ -537,6 +555,7 @@ impl Renderer {
                 label_format,
                 code_format,
                 file_format,
+                icon_format,
                 diff_rows: HashMap::new(),
                 syntax_brushes: HashMap::new(),
                 theme_generation: crate::theme::generation(),
@@ -1132,7 +1151,7 @@ impl Renderer {
                 .take_while(|(_, m)| m.0 == i)
             {
                 let (left, right) = (x_of(layout, start)?, x_of(layout, end)?);
-                let base = if file { DIFF_TEXT_INSET } else { text_x };
+                let base = if file { HEADER_PATH_X } else { text_x };
                 let fill = if self.diff_current == Some(from + k) {
                     rgba(1.0, 0.6, 0.1, 0.65)
                 } else {
@@ -1164,15 +1183,18 @@ impl Renderer {
                     }
                 }
             }
-            unsafe {
-                self.brush.SetColor(&foreground());
-                let x = if file { DIFF_TEXT_INSET } else { text_x };
-                self.d2d.DrawTextLayout(
-                    point(x, top + 1.0),
-                    layout,
-                    &self.brush,
-                    D2D1_DRAW_TEXT_OPTIONS_CLIP,
-                );
+            if file {
+                self.draw_file_header(&commit, i, top, width)?;
+            } else {
+                unsafe {
+                    self.brush.SetColor(&foreground());
+                    self.d2d.DrawTextLayout(
+                        point(text_x, top + 1.0),
+                        layout,
+                        &self.brush,
+                        D2D1_DRAW_TEXT_OPTIONS_CLIP,
+                    );
+                }
             }
             if !file && row.kind != DiffRow::HUNK {
                 self.draw_number(row.old_no, left, top)?;
@@ -1207,7 +1229,6 @@ impl Renderer {
         // macOS 版・GTK4 版と同じ）。
         if let Some((i, top)) = sticky_header(commit.file_rows, scroll_y) {
             self.diff_layout(view, commit.syntax, i as u32)?;
-            let layout = &self.diff_rows[&(i as u32)];
             unsafe {
                 self.brush.SetColor(&background());
                 self.d2d.FillRectangle(
@@ -1229,16 +1250,164 @@ impl Renderer {
                     },
                     &self.brush,
                 );
+            }
+            self.draw_file_header(&commit, i as u32, top, width)?;
+        }
+        Ok(())
+    }
+
+    /// ファイルの見出しの行の中身（地は塗ってあるもの）: 左に ▸・▾、足した（A）・消した（D）・変えた（M）の印、
+    /// パス。右に足した・消した行の数（バイナリなら Binary）と、いつも出す ⋯（右クリックと同じメニュー）。
+    /// macOS 版の `drawCompactHeader` と同じ並び。
+    fn draw_file_header(
+        &mut self,
+        commit: &crate::data::DiffContent,
+        i: u32,
+        top: f32,
+        width: f32,
+    ) -> Result<()> {
+        use amonhen_layout::DiffRow;
+        let row = &commit.view.rows[i as usize];
+        let file = commit.file_rows.binary_search(&i).ok();
+        let open = row.flags & DiffRow::COLLAPSED == 0;
+        // 右から置く: ⋯、行の数。
+        let mut right = width - HEADER_MENU_WIDTH;
+        // ⋯ は、ほかより一回り大きく（macOS 版と同じ）。
+        let large = self.subject_format.clone();
+        self.draw_small(
+            "⋯",
+            &large,
+            width - HEADER_MENU_WIDTH,
+            top,
+            HEADER_MENU_WIDTH - 6.0,
+            &secondary(),
+            true,
+        )?;
+        let counts: Vec<(String, D2D1_COLOR_F)> = if row.flags & DiffRow::BINARY != 0 {
+            vec![(amonhen_model::tr!("Binary"), secondary())]
+        } else if row.new_no == 0 && row.old_no == 0 {
+            Vec::new()
+        } else {
+            vec![
+                (format!("+{}", row.new_no), ADDED_TEXT),
+                (format!("−{}", row.old_no), REMOVED_TEXT),
+            ]
+        };
+        let format = self.file_format.clone();
+        let mut placed = Vec::new();
+        for (text, color) in counts.iter().rev() {
+            let (layout, w) = self.measured(text, &format)?;
+            right -= w;
+            placed.push((layout, right, *color));
+            right -= 6.0;
+        }
+        let right = right - 8.0;
+        unsafe {
+            self.d2d.PushAxisAlignedClip(
+                &D2D_RECT_F {
+                    left: 0.0,
+                    top,
+                    right: right.max(HEADER_PATH_X),
+                    bottom: top + DIFF_ROW_HEIGHT,
+                },
+                D2D1_ANTIALIAS_MODE_ALIASED,
+            );
+        }
+        let drawn = (|| -> Result<()> {
+            self.draw_small(
+                if open { "\u{E70D}" } else { "\u{E76C}" },
+                &self.icon_format.clone(),
+                DIFF_TEXT_INSET,
+                top + 3.0,
+                14.0,
+                &secondary(),
+                false,
+            )?;
+            if let Some(mark) = file.and_then(|f| commit.file_marks.get(f)) {
+                let color = match mark {
+                    'A' => ADDED_TEXT,
+                    'D' => REMOVED_TEXT,
+                    _ => MODIFIED_TEXT,
+                };
+                self.draw_small(
+                    &mark.to_string(),
+                    &self.code_format.clone(),
+                    DIFF_TEXT_INSET + 16.0,
+                    top,
+                    14.0,
+                    &color,
+                    false,
+                )?;
+            }
+            let layout = &self.diff_rows[&i];
+            unsafe {
                 self.brush.SetColor(&foreground());
                 self.d2d.DrawTextLayout(
-                    point(DIFF_TEXT_INSET, top + 1.0),
+                    point(HEADER_PATH_X, top + 1.0),
                     layout,
                     &self.brush,
                     D2D1_DRAW_TEXT_OPTIONS_CLIP,
                 );
             }
+            Ok(())
+        })();
+        unsafe { self.d2d.PopAxisAlignedClip() };
+        drawn?;
+        for (layout, x, color) in placed {
+            unsafe {
+                self.brush.SetColor(&color);
+                self.d2d.DrawTextLayout(
+                    point(x, top + 1.0),
+                    &layout,
+                    &self.brush,
+                    D2D1_DRAW_TEXT_OPTIONS_NONE,
+                );
+            }
         }
         Ok(())
+    }
+
+    /// 短い文字を `x` から幅 `width` に描く（`trailing` なら右に寄せる）。
+    #[allow(clippy::too_many_arguments)]
+    fn draw_small(
+        &self,
+        text: &str,
+        format: &IDWriteTextFormat,
+        x: f32,
+        top: f32,
+        width: f32,
+        color: &D2D1_COLOR_F,
+        trailing: bool,
+    ) -> Result<()> {
+        let text: Vec<u16> = text.encode_utf16().collect();
+        unsafe {
+            let layout = self
+                .dwrite
+                .CreateTextLayout(&text, format, width, DIFF_ROW_HEIGHT)?;
+            if trailing {
+                layout.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING)?;
+            }
+            self.brush.SetColor(color);
+            self.d2d.DrawTextLayout(
+                point(x, top + 1.0),
+                &layout,
+                &self.brush,
+                D2D1_DRAW_TEXT_OPTIONS_NONE,
+            );
+        }
+        Ok(())
+    }
+
+    /// 文字の形と、その幅。
+    fn measured(&self, text: &str, format: &IDWriteTextFormat) -> Result<(IDWriteTextLayout, f32)> {
+        let text: Vec<u16> = text.encode_utf16().collect();
+        let layout = unsafe {
+            self.dwrite
+                .CreateTextLayout(&text, format, 10_000.0, DIFF_ROW_HEIGHT)?
+        };
+        let mut metrics = DWRITE_TEXT_METRICS::default();
+        unsafe { layout.GetMetrics(&mut metrics)? };
+        Ok((layout, metrics.widthIncludingTrailingWhitespace.ceil()))
     }
 
     /// 差分の `i` 行目の文字の配置を作って取っておく（あれば何もしない）。
@@ -1252,20 +1421,9 @@ impl Renderer {
         let row = &view.rows[i as usize];
         let file = row.kind == DiffRow::FILE;
         if !self.diff_rows.contains_key(&i) {
+            // ファイルの見出しはパスだけ（▸・印・行の数は `draw_file_header` が別に描く）。
             let mut text = Vec::with_capacity(128);
-            if file {
-                // 畳んだファイルは ▸、開いているファイルは ▾（見出しを押すと切り替わる）。
-                let mark = if row.flags & DiffRow::COLLAPSED != 0 {
-                    "▸ "
-                } else {
-                    "▾ "
-                };
-                text.extend(mark.encode_utf16());
-            }
             crate::data::push_utf16(view.strings.bytes(row.text), row.text.is_ascii(), &mut text);
-            if file {
-                text.extend(format!("    +{}  −{}", row.new_no, row.old_no).encode_utf16());
-            }
             let format = if file {
                 &self.file_format
             } else {
@@ -1568,15 +1726,9 @@ pub fn find_in_diff(view: &amonhen_core::diff::DiffView, query: &str) -> Vec<(u3
     let mut out = Vec::new();
     for (i, row) in view.rows.iter().enumerate() {
         let text = String::from_utf8_lossy(view.strings.bytes(row.text));
-        // ファイルの見出しは前に「▾ 」が付く。
-        let prefix: u32 = if row.kind == amonhen_layout::DiffRow::FILE {
-            2
-        } else {
-            0
-        };
         // 文字ごとの（小文字、UTF-16 の位置）。
         let mut chars: Vec<(char, u32)> = Vec::new();
-        let mut at = prefix;
+        let mut at = 0;
         for c in text.chars() {
             let lower: Vec<char> = c.to_lowercase().collect();
             let lower = if lower.len() == 1 { lower[0] } else { c };

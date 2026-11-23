@@ -1475,6 +1475,14 @@ enum Message {
     ApplyPatches(Vec<String>),
     /// 詳細だけを右の列いっぱいに広げる（⤢）。
     ExpandDetails(bool),
+    /// 差分の見出しを押してファイルを畳んだ・開いた（帯の「すべて開く・畳む」の向きを出し直す）。
+    DiffFilesToggled,
+    /// 帯の「差分をすべて開く・畳む」。
+    ToggleAllDiffs,
+    /// 帯のリスト・ツリー（変更ファイルを差分の左に木で出すか）。
+    DiffFilesAsTree(bool),
+    /// 帯の表示の設定のメニュー。
+    DiffViewOption(String),
     /// 一致したコミットだけを出すか。
     SearchOnly(bool),
     CloseSearch,
@@ -2607,9 +2615,7 @@ impl Root {
             }
             Message::PushRow(index) => self.select_push_row(index),
             Message::ChangedFiles(files) => {
-                // 1 ファイルずつなら、最初のファイルを出している。
-                let single = !crate::prefs::bool(crate::prefs::STACKED_COMMIT_DIFF);
-                self.changed_file = (single && files.len() > 1).then_some(0);
+                self.changed_file = None;
                 self.changed_files = files;
             }
             Message::ChangedFileSelected(index) => {
@@ -2631,24 +2637,6 @@ impl Root {
                 if let Err(e) = crate::prefs::set_bool(crate::prefs::HISTORY_FILE_TREE, tree) {
                     eprintln!("変更ファイルを木で出すかを覚えられない: {e}");
                 }
-            }
-            // View の All Files in One Diff（切ると、コミットの差分は一覧で選んだファイルだけ。macOS 版・GTK4 版と
-            // 同じ）。
-            Message::Command(id) if id == "all-files-in-one-diff" => {
-                let stacked = !crate::prefs::bool(crate::prefs::STACKED_COMMIT_DIFF);
-                if let Err(e) = crate::prefs::set_bool(crate::prefs::STACKED_COMMIT_DIFF, stacked) {
-                    eprintln!("全ファイルを並べるかを覚えられない: {e}");
-                }
-                let selected = self.changed_file.unwrap_or(0);
-                self.changed_file = (!stacked && self.changed_files.len() > 1).then_some(selected);
-                self.with_history(|h| {
-                    if h.session.data.set_single_file(!stacked) {
-                        h.diff_replaced();
-                    }
-                    if !stacked {
-                        h.show_file(selected);
-                    }
-                });
             }
             Message::SplitTo(split, size) => match split {
                 Split::Sidebar => self.sidebar_width = size.clamp(160.0, 520.0),
@@ -3054,6 +3042,25 @@ impl Root {
                 self.with_history(|h| h.search(query, backwards));
             }
             Message::ExpandDetails(on) => self.details_expanded = on,
+            Message::DiffFilesToggled => {}
+            Message::ToggleAllDiffs => self.with_history(|h| {
+                if h.session.data.toggle_all_files() {
+                    h.session.renderer.forget_diff();
+                    h.diff.dirty = true;
+                    let rows = h.diff_rows();
+                    h.diff.scroll_by(0.0, rows);
+                }
+            }),
+            Message::DiffFilesAsTree(tree) => {
+                if let Err(e) = crate::prefs::set_bool(crate::prefs::HISTORY_FILE_TREE, tree) {
+                    eprintln!("変更ファイルを木で出すかを覚えられない: {e}");
+                }
+            }
+            Message::DiffViewOption(key) => {
+                if key == "expand-details" {
+                    self.details_expanded = !self.details_expanded;
+                }
+            }
             Message::DiffFindOpen(open) => {
                 self.diff_find_open = open;
                 if open {
@@ -8061,9 +8068,6 @@ impl Root {
                 let now = match id {
                     "one-line-history" => crate::render::one_line(),
                     "highlight-ancestors" => crate::render::highlight_ancestors(),
-                    "all-files-in-one-diff" => {
-                        crate::prefs::bool(crate::prefs::STACKED_COMMIT_DIFF)
-                    }
                     "changed-files-as-tree" => crate::prefs::bool(crate::prefs::HISTORY_FILE_TREE),
                     "history-item-refs" => bit(crate::render::items::REFS),
                     "history-item-author" => bit(crate::render::items::AUTHOR),
@@ -8866,11 +8870,7 @@ impl Root {
                 PENDING_PLACE.with(|p| p.set(Some((place, 0))));
             }
             let session = match Session::new(&args, "app", started, Arc::new(|| {})) {
-                Ok(mut s) => {
-                    // View の All Files in One Diff を切っていれば、コミットの差分は 1 ファイルずつ。
-                    s.data.single_file = !crate::prefs::bool(crate::prefs::STACKED_COMMIT_DIFF);
-                    s
-                }
+                Ok(s) => s,
                 Err(e) => {
                     sender.send(Message::Failed(e));
                     return None;
@@ -9136,10 +9136,9 @@ impl Root {
             .grid_column(2)
             .children((
                 self.top_of_diff(context),
-                StackPanel::new().grid_row(1).children((
-                    self.changed_files_view(context),
-                    self.diff_find_bar(context),
-                )),
+                StackPanel::new()
+                    .grid_row(1)
+                    .children((self.diff_bar(context), self.diff_find_bar(context))),
                 // 差分（木を出すときは、その左に変更ファイルの木）。
                 Grid::new()
                     .grid_row(2)
@@ -12989,7 +12988,7 @@ impl Root {
         )
     }
 
-    /// ファイルの右クリックの項目（差分の見出しと、変更ファイルの一覧。GTK4 版の `list_menu_items`）。
+    /// ファイルの右クリックの項目（差分の見出しの右クリックと ⋯、変更ファイルの木。macOS 版の見出しのメニュー）。
     fn file_menu(&self, file: &crate::data::DiffFile) -> Vec<MenuItem> {
         let mut items = vec![MenuItem::item(
             "collapse",
@@ -12999,14 +12998,6 @@ impl Root {
                 tr!("Collapse")
             },
         )];
-        // 見たことにする（畳んでコミットごとに覚える。GTK4 版の見出しの Viewed）。
-        if file.commit.is_some() {
-            let mark = if file.viewed { "✓ " } else { "" };
-            items.push(MenuItem::item(
-                "viewed",
-                format!("{mark}{}", tr!("Toggle Viewed")),
-            ));
-        }
         items.push(MenuItem::separator("-file"));
         // 消したファイルは、そのコミットにはない（Blame を出さない）。
         if !file.deleted {
@@ -13080,22 +13071,6 @@ impl Root {
                     h.diff.scroll_by(0.0, rows);
                 }
             }),
-            "viewed" => {
-                let Some(oid) = file.commit.as_deref() else {
-                    return;
-                };
-                // 見たことにしたら畳み、戻したら開く（GTK4 版と同じ）。
-                let viewed = crate::viewed::toggle(oid, &file.path);
-                if viewed != file.collapsed {
-                    self.with_history(|h| {
-                        if h.session.data.toggle_file_index(file.index) {
-                            h.session.renderer.forget_diff();
-                            let rows = h.diff_rows();
-                            h.diff.scroll_by(0.0, rows);
-                        }
-                    });
-                }
-            }
             "blame" => self.update(Message::OpenBlame(file.path, file.commit), context),
             "history" => self.open_file_history_tab(file.path, context),
             "restore" | "restore-before" => {
@@ -15959,9 +15934,7 @@ impl Root {
         }
     }
 
-    /// 詳細と差分の間の、変更ファイルの一覧（macOS 版・GTK4 版の、木にしないときの一覧）。選ぶとそのファイルの
-    /// 見出しまで差分をスクロールする。History で 2 つ以上のファイルを変えたコミットのときだけ。
-    /// 変更ファイルを出すか（History などで 2 つ以上のとき）。
+    /// 変更ファイルの木を出すか（History などで 2 つ以上のとき）。
     fn shows_changed_files(&self) -> bool {
         self.page != Page::WorkingCopy && !self.details_expanded && self.changed_files.len() >= 2
     }
@@ -16017,65 +15990,6 @@ impl Root {
         Border::new()
             .grid_column(0)
             .border_thickness(Thickness::new(0.0, 0.0, 1.0, 0.0))
-            .border_brush(Brush::Solid(crate::palette::border()))
-            .content(View::keyed_fragment([(key, list)]))
-    }
-
-    fn changed_files_view(&self, context: &ViewContext<Self>) -> View {
-        if !self.shows_changed_files() || crate::prefs::bool(crate::prefs::HISTORY_FILE_TREE) {
-            return View::empty();
-        }
-        let mut files = Vec::new();
-        self.with_history(|h| files = h.session.data.files());
-        let rows = self.changed_files.iter().enumerate().map(|(i, f)| {
-            let menu = self.changed_file_menu(files.get(i), context);
-            let counts = if f.binary {
-                tr!("binary")
-            } else {
-                format!("+{}  −{}", f.added, f.removed)
-            };
-            let row = Grid::new()
-                .columns([
-                    GridLength::Pixel(18.0),
-                    GridLength::Star(1.0),
-                    GridLength::Auto,
-                ])
-                .children((
-                    TextBlock::new()
-                        .text(f.mark.to_string())
-                        .font_size(12.0)
-                        .opacity(0.7)
-                        .grid_column(0),
-                    TextBlock::new()
-                        .text(f.path.clone())
-                        .font_size(12.0)
-                        .text_trimming(TextTrimming::CharacterEllipsis)
-                        .grid_column(1),
-                    TextBlock::new()
-                        .text(counts)
-                        .font_size(11.0)
-                        .opacity(0.6)
-                        .margin(Thickness::new(8.0, 0.0, 0.0, 0.0))
-                        .grid_column(2),
-                ))
-                .menu(menu);
-            (
-                format!("{i}"),
-                ListViewItem::new()
-                    .tag(f.path.clone())
-                    .min_height(24.0)
-                    .content(row),
-            )
-        });
-        // ファイルが替わったら一覧ごと作り直す（reactor の ListView は消した項目の場所が空いたまま残る）。
-        let key: String = self.changed_files.iter().map(|f| f.path.as_str()).collect();
-        let list = ListView::new()
-            .selected_index(self.changed_file)
-            .on_selection_changed(context.callback(Message::ChangedFileSelected))
-            .collection_slot(ListViewSlot::Items, rows);
-        Border::new()
-            .max_height(5.0 * 24.0 + 8.0)
-            .border_thickness(Thickness::new(0.0, 1.0, 0.0, 0.0))
             .border_brush(Brush::Solid(crate::palette::border()))
             .content(View::keyed_fragment([(key, list)]))
     }
@@ -17185,9 +17099,7 @@ impl Root {
                         .horizontal_alignment(HorizontalAlignment::Right)
                         .vertical_alignment(VerticalAlignment::Top)
                         .margin(Thickness::new(0.0, 4.0, 8.0, 0.0))
-                        .children((
-                            self.diff_find_button(context),
-                            ToggleButton::new()
+                        .children((ToggleButton::new()
                                 .is_checked(self.details_expanded)
                                 .on_is_checked_changed(context.callback(Message::ExpandDetails))
                                 .content(TextBlock::new().text("⤢"))
@@ -17218,6 +17130,134 @@ impl Root {
                     .margin(Thickness::new(0.0, 2.0, 8.0, 2.0))
                     .content(self.diff_find_button(context)),
             ))
+    }
+
+    /// 右の列の差分の上の帯（macOS 版の `makeBar`）: 変更／すべてのファイル、ファイルの数と足した・消した行の
+    /// 合計、リスト／ツリー、差分をすべて開く・畳む、空白を無視、検索、表示の設定。History で 1 つのコミットを
+    /// 出しているときだけ。
+    fn diff_bar(&self, context: &ViewContext<Self>) -> View {
+        if self.page == Page::WorkingCopy {
+            return View::empty();
+        }
+        let mut shown = None;
+        self.with_history(|h| {
+            shown = h
+                .session
+                .data
+                .commit
+                .as_ref()
+                .map(|c| (c.totals(), c.all_open()));
+        });
+        let Some(((files, added, removed), all_open)) = shown else {
+            return View::empty();
+        };
+        let small = |text: String| TextBlock::new().text(text).font_size(12.0);
+        let icon = |glyph: &'static str| FontIcon::new().glyph(glyph);
+        let tree = crate::prefs::bool(crate::prefs::HISTORY_FILE_TREE);
+        // その時点の木（すべてのファイル）は後で（今は押せない）。
+        let view_switch = StackPanel::new()
+            .grid_column(0)
+            .orientation(Orientation::Horizontal)
+            .children((
+                ToggleButton::new()
+                    .is_checked(true)
+                    .content(small(tr!("Changes"))),
+                ToggleButton::new()
+                    .is_checked(false)
+                    .is_enabled(false)
+                    .content(small(tr!("All Files"))),
+            ));
+        let totals = StackPanel::new()
+            .grid_column(1)
+            .orientation(Orientation::Horizontal)
+            .spacing(6.0)
+            .vertical_alignment(VerticalAlignment::Center)
+            .children((
+                small(tr!("{count} files", count = files)).opacity(0.55),
+                small(format!("+{added}")).foreground(Brush::Solid(Color::rgb(0x2e, 0xa0, 0x43))),
+                small(format!("−{removed}")).foreground(Brush::Solid(Color::rgb(0xdc, 0x38, 0x33))),
+            ));
+        let tree_switch = StackPanel::new()
+            .orientation(Orientation::Horizontal)
+            .children((
+                ToggleButton::new()
+                    .is_checked(!tree)
+                    // 押して外したときは、そのまま（もう一方を押して切り替える）。
+                    .on_is_checked_changed(context.callback(|on: bool| {
+                        if on {
+                            Message::DiffFilesAsTree(false)
+                        } else {
+                            Message::DiffFilesToggled
+                        }
+                    }))
+                    .content(icon("\u{E8FD}"))
+                    .tooltip(tr!("Show the changed files as a list")),
+                ToggleButton::new()
+                    .is_checked(tree)
+                    .on_is_checked_changed(context.callback(|on: bool| {
+                        if on {
+                            Message::DiffFilesAsTree(true)
+                        } else {
+                            Message::DiffFilesToggled
+                        }
+                    }))
+                    .content(icon("\u{ED41}"))
+                    .tooltip(tr!("Show the changed files as a tree")),
+            ));
+        let expand = Button::new()
+            .style(ButtonStyle::Subtle)
+            .on_click(context.callback(|()| Message::ToggleAllDiffs))
+            .content(icon(if all_open { "\u{E70E}" } else { "\u{E70D}" }))
+            .tooltip(if all_open {
+                tr!("Collapse All Diffs")
+            } else {
+                tr!("Expand All Diffs")
+            });
+        // 空白を無視は、まだ使えない（macOS 版・GTK4 版と同じ。WinUI は押せない部品にツールチップを出さない）。
+        let whitespace = CheckBox::new()
+            .is_enabled(false)
+            .min_width(0.0)
+            .content(small(tr!("Ignore Whitespace")))
+            .tooltip(tr!("Not available yet"));
+        let find = Button::new()
+            .style(ButtonStyle::Subtle)
+            .on_click(context.callback(|()| Message::DiffFindOpen(true)))
+            .content(icon("\u{E721}"))
+            .tooltip(tr!("Find in the diff (Ctrl+F)"));
+        let expanded = if self.details_expanded { "✓ " } else { "" };
+        let options = DropDownButton::new()
+            .content(icon("\u{E9E9}"))
+            .tooltip(tr!("View Options"))
+            .menu(Menu::new(
+                vec![MenuItem::item(
+                    "expand-details",
+                    format!("{expanded}{}", tr!("Expand Details")),
+                )],
+                context.callback(Message::DiffViewOption),
+            ));
+        Border::new()
+            .border_thickness(Thickness::new(0.0, 1.0, 0.0, 1.0))
+            .border_brush(Brush::Solid(crate::palette::border()))
+            .content(
+                Grid::new()
+                    .columns([
+                        GridLength::Auto,
+                        GridLength::Auto,
+                        GridLength::Star(1.0),
+                        GridLength::Auto,
+                    ])
+                    .column_spacing(10.0)
+                    .margin(Thickness::new(8.0, 3.0, 8.0, 3.0))
+                    .children((
+                        view_switch,
+                        totals,
+                        StackPanel::new()
+                            .grid_column(3)
+                            .orientation(Orientation::Horizontal)
+                            .spacing(6.0)
+                            .children((tree_switch, expand, whitespace, find, options)),
+                    )),
+            )
     }
 
     /// 差分の中を探す帯を開くボタン（GTK4 版の `find_button`。詳細の右上に置く）。
@@ -19893,21 +19933,17 @@ impl HistoryView {
         }
     }
 
-    /// 差分の中身を替えた（取っておいた行の文字を捨て、上から描き直す）。
-    fn diff_replaced(&mut self) {
-        self.session.renderer.forget_diff();
-        self.diff.scroll_y = 0.0;
-        self.diff.dirty = true;
-    }
-
-    /// 変更ファイルの一覧で `index` 番目を選んだ: 1 ファイルずつならそのファイルを出し、並べているなら見出しまで
-    /// スクロールする。
+    /// 変更ファイルの木で `index` 番目を選んだ: 畳んでいれば開いて、見出しまでスクロールする（macOS 版と同じ）。
     fn show_file(&mut self, index: usize) {
-        if self.session.data.single_file {
-            if self.session.data.show_only(Some(index)) {
-                self.diff_replaced();
-            }
-            return;
+        let collapsed = self
+            .session
+            .data
+            .commit
+            .as_ref()
+            .is_some_and(|c| c.collapsed.get(index).copied().unwrap_or(false));
+        if collapsed && self.session.data.toggle_file_index(index) {
+            self.session.renderer.forget_diff();
+            self.diff.dirty = true;
         }
         let row = self
             .session
@@ -20692,9 +20728,6 @@ struct ChangedFile {
     path: String,
     /// 足した（A）・消した（D）・変えた（M）。
     mark: char,
-    added: u32,
-    removed: u32,
-    binary: bool,
 }
 
 /// 変更ファイルの木の 1 行: 深さ、出す名前、ファイルなら `changed_files` の番号（ディレクトリなら None）。
@@ -20759,16 +20792,7 @@ fn changed_files(stacked: &amonhen_core::diff::StackedDiff) -> Vec<ChangedFile> 
         .iter()
         .map(|(path, diff)| ChangedFile {
             path: path.clone(),
-            mark: if diff.old.is_empty() && !diff.new.is_empty() {
-                'A'
-            } else if diff.new.is_empty() && !diff.old.is_empty() {
-                'D'
-            } else {
-                'M'
-            },
-            added: diff.added,
-            removed: diff.removed,
-            binary: diff.binary,
+            mark: crate::data::change_mark(diff),
         })
         .collect()
 }
@@ -21606,7 +21630,25 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
                             false,
                         ),
                     };
+                    // 見出しの右端の ⋯: 右クリックと同じファイルのメニュー（macOS 版と同じく、右の 30pt）。
+                    let width = h
+                        .diff
+                        .surface
+                        .as_ref()
+                        .map_or(0.0, |s| s.width as f32 / h.diff.scale.max(0.01));
+                    let header = h.session.data.commit.as_ref().is_some_and(|c| {
+                        row >= 0.0 && c.file_rows.binary_search(&(row as u32)).is_ok()
+                    });
+                    if left && header && position.X >= width - crate::render::HEADER_MENU_WIDTH {
+                        let file = h.session.data.file_at(row as usize);
+                        if file.is_some() {
+                            DIFF_AT.with(|a| *a.borrow_mut() = Some((source.clone(), position)));
+                        }
+                        h.sender.send(Message::DiffFileAt(file));
+                        return;
+                    }
                     if row >= 0.0 && h.session.data.toggle_file(row as usize) {
+                        h.sender.send(Message::DiffFilesToggled);
                         h.session.renderer.forget_diff();
                         if stuck {
                             h.diff.scroll_y = row * DIFF_ROW_HEIGHT;
@@ -21900,9 +21942,6 @@ mod tests {
         let file = |path: &str| ChangedFile {
             path: path.into(),
             mark: 'M',
-            added: 0,
-            removed: 0,
-            binary: false,
         };
         let files = [file("src/a/b.rs"), file("README.md"), file("src/c.rs")];
         assert_eq!(
