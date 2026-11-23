@@ -256,6 +256,7 @@ dependencies = [
  "amonhen-layout",
  "amonhen-model",
  "amonhen-projection",
+ "amonhen-remote",
  "criterion",
  "libc",
  "ratatui-core",

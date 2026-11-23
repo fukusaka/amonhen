@@ -708,6 +708,8 @@ pub struct App {
     export_records: Option<Value>,
     /// Activity の History Cache（`historyCache` の info。キャッシュがなければ null）。
     history_cache: Option<Value>,
+    /// Activity の Daemon（`daemon status` の答え。動いていなければ null）。
+    daemon: Option<Value>,
     /// History の編集モード（`E`）。
     edit_mode: Option<crate::editmode::EditMode>,
     /// 印をつけたコミット（新しい順）を、編集モードで 1 つにまとめる（`E`。行が届いたら決める）。
@@ -839,6 +841,7 @@ impl App {
             operation_log: None,
             operations: None,
             history_cache: None,
+            daemon: None,
             export_records: None,
             edit_mode: None,
             combining: Vec::new(),
@@ -1127,6 +1130,7 @@ impl App {
             || self.operation_log.is_some()
             || self.operations.is_some()
             || self.history_cache.is_some()
+            || self.daemon.is_some()
             || self.edit_mode.is_some();
         if std::mem::take(&mut self.dirty) || (over && damage != Damage::default()) {
             return Some(Damage::ALL);
@@ -1923,7 +1927,42 @@ impl App {
             }
             return;
         }
-        // History Cache: `r` で読み直す、`Tab` で操作ログへ。ほかのキーで閉じる。
+        // Daemon: `S` で起動、`X` で止める、`r` で読み直す、`Tab` で操作ログへ。ほかのキーで閉じる。
+        if self.daemon.is_some() {
+            self.dirty = true;
+            match key.code {
+                KeyCode::Char('r') => self.read_daemon(),
+                KeyCode::Char('S') => {
+                    match crate::daemon_program() {
+                        Some(program) => match amonhen_remote::local::start(program) {
+                            Ok(()) => self.notice = Some(tr!("Started the shared daemon")),
+                            Err(e) => self.error = Some(e.to_string()),
+                        },
+                        None => self.error = Some(tr!("Start it with amonhen daemon start")),
+                    }
+                    self.read_daemon();
+                }
+                KeyCode::Char('X') => {
+                    match amonhen_remote::local::control("stop") {
+                        Ok(Some(_)) => self.notice = Some(tr!("Stopped the shared daemon")),
+                        Ok(None) => self.notice = Some(tr!("The shared daemon isn’t running")),
+                        Err(e) => self.error = Some(e.to_string()),
+                    }
+                    self.read_daemon();
+                }
+                KeyCode::Tab => {
+                    self.daemon = None;
+                    self.run(
+                        "undoLog",
+                        tr!("Reading the operation log…"),
+                        json!({"op": "undoLog"}),
+                    );
+                }
+                _ => self.daemon = None,
+            }
+            return;
+        }
+        // History Cache: `r` で読み直す、`Tab` で Daemon へ。ほかのキーで閉じる。
         if self.history_cache.is_some() {
             self.dirty = true;
             match key.code {
@@ -1935,11 +1974,7 @@ impl App {
                 }
                 KeyCode::Tab => {
                     self.history_cache = None;
-                    self.run(
-                        "undoLog",
-                        tr!("Reading the operation log…"),
-                        json!({"op": "undoLog"}),
-                    );
+                    self.read_daemon();
                 }
                 _ => self.history_cache = None,
             }
@@ -3304,6 +3339,18 @@ impl App {
             name: "activity",
             request: json!({"op": "activity"}),
         });
+    }
+
+    /// 共有の daemon の様子を読む（`amonhen daemon status` と同じ。手元のソケットに聞くので、すぐ返る）。
+    fn read_daemon(&mut self) {
+        self.daemon = Some(
+            amonhen_remote::local::control("status")
+                .ok()
+                .flatten()
+                .and_then(|json| serde_json::from_str(&json).ok())
+                .unwrap_or(Value::Null),
+        );
+        self.dirty = true;
     }
 
     /// サイドバーで選んでいるローカルブランチの名前。
@@ -8646,6 +8693,9 @@ impl App {
         if let Some(cache) = &self.history_cache {
             self.draw_history_cache(cache, area, buf);
         }
+        if let Some(daemon) = &self.daemon {
+            self.draw_daemon(daemon, area, buf);
+        }
         if let Some(log) = &self.operation_log {
             let times: Vec<String> = log
                 .entries
@@ -9016,7 +9066,7 @@ impl App {
                 None => tr!("Nothing written yet this run"),
             });
         }
-        let hint = tr!("r read again   Tab operation log   other keys close");
+        let hint = tr!("r read again   Tab daemon   other keys close");
         let text = lines
             .iter()
             .map(|l| l.width())
@@ -9032,6 +9082,73 @@ impl App {
             height,
         );
         frame_box(buf, area, at, &tr!(" History Cache "));
+        let inner = usize::from(width.saturating_sub(4));
+        for (y, line) in (at.y + 1..at.bottom().saturating_sub(2)).zip(&lines) {
+            buf.set_stringn(at.x + 2, y, line, inner, Style::new());
+        }
+        buf.set_stringn(
+            at.x + 2,
+            at.bottom() - 2,
+            &hint,
+            inner,
+            Style::new().fg(Color::Indexed(244)),
+        );
+    }
+
+    /// Daemon の枠: 共有の daemon の pid・版・動いている時間・つながりの数と、開いているリポジトリ。
+    fn draw_daemon(&self, s: &Value, area: Rect, buf: &mut Buffer) {
+        let mut lines: Vec<String> = Vec::new();
+        let duration = |ms: &Value| {
+            let secs = ms.as_u64().unwrap_or(0) / 1000;
+            match secs {
+                s if s >= 3600 => format!("{}h {}m", s / 3600, s % 3600 / 60),
+                s if s >= 60 => format!("{}m {}s", s / 60, s % 60),
+                s => format!("{s}s"),
+            }
+        };
+        if s.is_null() {
+            lines.push(tr!("The shared daemon isn’t running"));
+        } else {
+            lines.push(tr!(
+                "Running: pid {pid}, {version}, up {uptime}",
+                pid = s["pid"],
+                version = s["version"].as_str().unwrap_or(""),
+                uptime = duration(&s["uptimeMs"])
+            ));
+            lines.push(tr!("Connections: {count}", count = s["connections"]));
+            for r in s["repos"].as_array().into_iter().flatten() {
+                let clients = r["clients"].as_u64().unwrap_or(0);
+                let state = match clients {
+                    0 => tr!(
+                        "no connections (idle for {duration})",
+                        duration = duration(&r["idleMs"])
+                    ),
+                    1 => tr!("1 connection"),
+                    n => tr!("{count} connections", count = n),
+                };
+                lines.push(format!("  {}  {state}", r["path"].as_str().unwrap_or("")));
+            }
+            lines.push(tr!(
+                "Exits after {duration} with no connections",
+                duration = duration(&s["idleExitMs"])
+            ));
+        }
+        let hint = tr!("S start   X stop   r read again   Tab operation log   other keys close");
+        let text = lines
+            .iter()
+            .map(|l| l.width())
+            .max()
+            .unwrap_or(0)
+            .max(hint.width()) as u16;
+        let width = (text + 4).min(area.width);
+        let height = (lines.len() as u16 + 4).min(area.height);
+        let at = Rect::new(
+            area.x + (area.width - width) / 2,
+            area.y + (area.height - height) / 2,
+            width,
+            height,
+        );
+        frame_box(buf, area, at, &tr!(" Daemon "));
         let inner = usize::from(width.saturating_sub(4));
         for (y, line) in (at.y + 1..at.bottom().saturating_sub(2)).zip(&lines) {
             buf.set_stringn(at.x + 2, y, line, inner, Style::new());

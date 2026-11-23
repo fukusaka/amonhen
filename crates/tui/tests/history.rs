@@ -2661,8 +2661,16 @@ fn activity_operations_list_what_ran() {
         cache.contains("Cache file:") || cache.contains("isn't cached on disk"),
         "{cache}"
     );
-    let back =
+    // 次の `Tab` で Daemon（共有の daemon の様子。読むだけで、起動・停止は試さない）、さらに `Tab` で操作ログへ。
+    let daemon =
         amonhen_tui::snapshot(open(dir.path()), 160, 20, clock(), "jRs:activity\n\t\t\t").unwrap();
+    assert!(daemon.contains(" Daemon "), "{daemon}");
+    assert!(
+        daemon.contains("Running: pid") || daemon.contains("isn’t running"),
+        "{daemon}"
+    );
+    let back = amonhen_tui::snapshot(open(dir.path()), 160, 20, clock(), "jRs:activity\n\t\t\t\t")
+        .unwrap();
     assert!(back.contains(" Operation Log "), "{back}");
     // Operations の `s`: 記録を JSON のファイルに書き出す（アプリの Export JSON…）。
     let out = tempfile::tempdir().unwrap();
