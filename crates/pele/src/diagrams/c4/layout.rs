@@ -266,8 +266,7 @@ pub fn layout_c4(
     while i < order.len() {
         let g = order[i];
         let d = depths[&g];
-        for k in 0..groups[g].kids.len() {
-            let kid = groups[g].kids[k];
+        for &kid in &groups[g].kids {
             depths.insert(kid, d + 1.0);
             order.push(kid);
         }

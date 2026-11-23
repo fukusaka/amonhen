@@ -597,8 +597,8 @@ pub fn render_xy_chart(
                 (bar as f64 - (bars as f64 - 1.0) / 2.0) * thickness - (thickness - gap) / 2.0;
             bar += 1;
             let mut rects = String::new();
-            for i in 0..n {
-                let Some(value) = finite(plot.data[i].1) else {
+            for (i, datum) in plot.data.iter().enumerate().take(n) {
+                let Some(value) = finite(datum.1) else {
                     continue;
                 };
                 let c = place(i, n);

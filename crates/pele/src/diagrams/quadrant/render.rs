@@ -185,14 +185,14 @@ pub fn render_quadrant(model: &QuadrantDb, config: &Config, options: &RenderOpti
 
     let text_top = length(config, "quadrantTextTopPadding", 5.0, 200.0);
     let mut quadrants = String::new();
-    for k in 0..4 {
+    for (k, quadrant) in model.quadrants.iter().enumerate().take(4) {
         let x = if k == 0 || k == 3 {
             left + w - tile_w
         } else {
             left
         };
         let y = if k < 2 { top } else { top + h - tile_h };
-        let text = label(model.quadrants[k].as_ref(), quadrant_size, tile_w - 16.0);
+        let text = label(quadrant.as_ref(), quadrant_size, tile_w - 16.0);
         let cx = x + tile_w / 2.0;
         let cy = if has_points {
             y + text_top + text.height / 2.0
