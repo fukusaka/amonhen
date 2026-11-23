@@ -436,11 +436,16 @@ impl Session {
                 Reply::json(json!({}))
             }
             "commit" => {
-                let before = last_commit_record(&commit_records(repo)).map(|r| r["seq"].clone());
+                // 記録はプロセスに 1 つなので、同じ時にほかのリポジトリ（共有の daemon の別のリポジトリ）でコミット
+                // したものと取り違えないよう、このリポジトリの記録だけを見る。
+                let workdir = repo.paths().workdir;
+                let workdir = workdir.as_deref();
+                let before =
+                    last_commit_record(&commit_records(repo), workdir).map(|r| r["seq"].clone());
                 repo.commit(str_arg(request, "message")?, request["amend"] == true)?;
                 // hooks が書いたもの（アプリは Activity の記録から読む。FE はそれを持たないので返事に載せる）
                 let records = commit_records(repo);
-                let output = last_commit_record(&records)
+                let output = last_commit_record(&records, workdir)
                     .filter(|r| before.as_ref() != Some(&r["seq"]) && r["ok"] == true)
                     .and_then(|r| r["output"].as_str())
                     .unwrap_or_default();
@@ -813,13 +818,29 @@ fn commit_records(repo: &Repository) -> Vec<Value> {
     }
 }
 
-/// いちばん新しい `git commit` の記録。
-fn last_commit_record(records: &[Value]) -> Option<&Value> {
+/// `workdir` のリポジトリの、いちばん新しい `git commit` の記録（`workdir` がなければ、どのリポジトリのものでも）。
+fn last_commit_record<'a>(
+    records: &'a [Value],
+    workdir: Option<&std::path::Path>,
+) -> Option<&'a Value> {
+    // 記録のパスは git を動かした場所。開いたときの書き方と違うことがある（/var と /private/var など）。
+    let same = |repo: &str| match workdir {
+        None => true,
+        Some(dir) => {
+            let repo = std::path::Path::new(repo);
+            repo == dir
+                || std::fs::canonicalize(repo)
+                    .ok()
+                    .zip(std::fs::canonicalize(dir).ok())
+                    .is_some_and(|(a, b)| a == b)
+        }
+    };
     records.iter().rev().find(|r| {
         r["kind"] == "git"
             && r["label"]
                 .as_str()
                 .is_some_and(|l| l.starts_with("git commit"))
+            && r["repo"].as_str().is_none_or(same)
     })
 }
 
@@ -865,6 +886,21 @@ mod tests {
         session.handle(&request, &|| false).unwrap().json["rows"]
             .as_u64()
             .unwrap()
+    }
+
+    /// 記録はプロセスに 1 つなので、ほかのリポジトリで同じ時にしたコミットの記録は取らない
+    #[test]
+    fn the_commit_record_is_this_repositorys() {
+        let records = vec![
+            json!({"kind": "git", "label": "git commit -F -", "repo": "/w/mine", "seq": 1}),
+            json!({"kind": "git", "label": "git status", "repo": "/w/mine", "seq": 2}),
+            json!({"kind": "git", "label": "git commit -F -", "repo": "/w/other", "seq": 3}),
+        ];
+        let mine = last_commit_record(&records, Some(Path::new("/w/mine")));
+        assert_eq!(mine.map(|r| r["seq"].clone()), Some(json!(1)));
+        let any = last_commit_record(&records, None);
+        assert_eq!(any.map(|r| r["seq"].clone()), Some(json!(3)));
+        assert!(last_commit_record(&records, Some(Path::new("/w/none"))).is_none());
     }
 
     /// コミットの返事に hooks の出力が載る
