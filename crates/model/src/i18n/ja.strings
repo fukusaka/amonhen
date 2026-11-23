@@ -2319,6 +2319,7 @@
 "Use standard colors for diffs" = "差分は標準の色を使う";
 "Diagram colors" = "図の配色";
 "Syntax colors" = "構文の色";
+"Mermaid (follows the appearance)" = "Mermaid（外観に合わせる）";
 "Light appearance" = "明るい外観";
 "Dark appearance" = "暗い外観";
 "Import VSCode Theme…" = "VSCode のテーマを読み込む…";

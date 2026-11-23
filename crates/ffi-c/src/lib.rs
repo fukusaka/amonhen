@@ -432,7 +432,7 @@ pub unsafe extern "C" fn amonhen_markdown_parse(
 }
 
 /// Markdown の図の SVG（`MarkdownBlock` の `diagram` の `svg`）に配色を当て、CoreSVG で描ける SVG にする。`scheme` は
-/// 設定の「図の配色」の名前（`syntax`・`pele`・`mermaid`）、`dark` は暗い表示か、`theme` は構文の色のテーマの JSON
+/// 設定の「図の配色」の名前（`syntax`・`pele`・`mermaid`・`mermaid-forest` など）、`dark` は暗い表示か、`theme` は構文の色のテーマの JSON
 /// `{"text": "#rrggbb", "background": "#rrggbb", "kinds": {"keyword": "#rrggbb", …}}`（`syntax` のときだけ使う。
 /// NULL でもよい）。読めなければ NULL。`amonhen_string_free` で解放する。
 ///
@@ -465,12 +465,9 @@ pub unsafe extern "C" fn amonhen_diagram_colorize(
             })
             .unwrap_or_default(),
     };
-    let vars = amonhen_core::diagram::palette(
-        amonhen_core::diagram::Scheme::from_key(scheme),
-        dark,
-        &colors,
-    );
-    amonhen_core::diagram::colorize(svg, &vars)
+    let scheme = amonhen_core::diagram::Scheme::from_key(scheme);
+    let vars = amonhen_core::diagram::palette(scheme, dark, &colors);
+    amonhen_core::diagram::colorize(svg, &vars, scheme.backdrop())
         .and_then(|out| CString::new(out).ok())
         .map_or(std::ptr::null_mut(), CString::into_raw)
 }

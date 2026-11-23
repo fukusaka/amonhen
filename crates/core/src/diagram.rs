@@ -49,17 +49,50 @@ pub enum Scheme {
     Syntax,
     /// pele の既定の色（灰色を主にした色）。
     Pele,
-    /// Mermaid 本家の default（明るい表示）・dark（暗い表示）の色。
-    Mermaid,
+    /// Mermaid 本家のテーマ。`None` は外観に合わせる（明るい表示は default、暗い表示は dark）。名前つきは外観に
+    /// 関係なくそのテーマ（地も塗る）。
+    Mermaid(Option<MermaidTheme>),
+}
+
+/// Mermaid の名前つきテーマ。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MermaidTheme {
+    Default,
+    Neutral,
+    Dark,
+    Forest,
+    Base,
+}
+
+impl MermaidTheme {
+    pub const ALL: [Self; 5] = [
+        Self::Default,
+        Self::Neutral,
+        Self::Dark,
+        Self::Forest,
+        Self::Base,
+    ];
+
+    /// Mermaid での名前。
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::Neutral => "neutral",
+            Self::Dark => "dark",
+            Self::Forest => "forest",
+            Self::Base => "base",
+        }
+    }
 }
 
 impl Scheme {
     /// 設定に書く名前。
-    pub fn key(self) -> &'static str {
+    pub fn key(self) -> String {
         match self {
-            Self::Syntax => "syntax",
-            Self::Pele => "pele",
-            Self::Mermaid => "mermaid",
+            Self::Syntax => "syntax".into(),
+            Self::Pele => "pele".into(),
+            Self::Mermaid(None) => "mermaid".into(),
+            Self::Mermaid(Some(theme)) => format!("mermaid-{}", theme.name()),
         }
     }
 
@@ -67,9 +100,24 @@ impl Scheme {
     pub fn from_key(key: &str) -> Self {
         match key {
             "pele" => Self::Pele,
-            "mermaid" => Self::Mermaid,
-            _ => Self::Syntax,
+            "mermaid" => Self::Mermaid(None),
+            _ => key
+                .strip_prefix("mermaid-")
+                .and_then(|name| MermaidTheme::ALL.into_iter().find(|t| t.name() == name))
+                .map_or(Self::Syntax, |t| Self::Mermaid(Some(t))),
         }
+    }
+
+    /// 設定に出す順の、すべての配色。
+    pub fn all() -> Vec<Self> {
+        let mut all = vec![Self::Syntax, Self::Pele, Self::Mermaid(None)];
+        all.extend(MermaidTheme::ALL.map(|t| Self::Mermaid(Some(t))));
+        all
+    }
+
+    /// 図の地を塗るか（Mermaid のテーマは、外観と合わなくても読めるよう、テーマの地を敷く）。
+    pub fn backdrop(self) -> bool {
+        matches!(self, Self::Mermaid(_))
     }
 }
 
@@ -95,31 +143,6 @@ const PELE_DARK: [(&str, &str); 9] = [
     ("--pele-fg-on-dark", "#ffffff"),
 ];
 
-/// Mermaid の default のテーマの色（mermaid の `theme-default`）。
-const MERMAID_LIGHT: [(&str, &str); 8] = [
-    ("--pele-bg", "#ffffff"),
-    ("--pele-fg", "#333333"),
-    ("--pele-muted", "#666666"),
-    ("--pele-line", "#333333"),
-    ("--pele-surface", "#ececff"),
-    ("--pele-surface-alt", "#ffffde"),
-    ("--pele-border", "#9370db"),
-    ("--pele-accent", "#9370db"),
-];
-
-/// Mermaid の dark のテーマの色（mermaid の `theme-dark`）。
-const MERMAID_DARK: [(&str, &str); 9] = [
-    ("--pele-bg", "#1e1e1e"),
-    ("--pele-fg", "#cccccc"),
-    ("--pele-muted", "#999999"),
-    ("--pele-line", "#d3d3d3"),
-    ("--pele-surface", "#1f2020"),
-    ("--pele-surface-alt", "#303030"),
-    ("--pele-border", "#cccccc"),
-    ("--pele-accent", "#81b1db"),
-    ("--pele-fg-on-dark", "#ffffff"),
-];
-
 /// 系列（円グラフ・gitGraph などの 8 色）に使う構文の種類。
 const SERIES: [&str; 8] = [
     "keyword",
@@ -142,8 +165,14 @@ pub fn palette(scheme: Scheme, dark: bool, theme: &ThemeColors) -> Vec<(String, 
     match scheme {
         Scheme::Pele if dark => own(&PELE_DARK),
         Scheme::Pele => Vec::new(),
-        Scheme::Mermaid if dark => own(&MERMAID_DARK),
-        Scheme::Mermaid => own(&MERMAID_LIGHT),
+        Scheme::Mermaid(theme) => {
+            let theme = theme.unwrap_or(if dark {
+                MermaidTheme::Dark
+            } else {
+                MermaidTheme::Default
+            });
+            from_mermaid(&crate::mermaidtheme::variables(theme.name()).unwrap_or_default())
+        }
         Scheme::Syntax => {
             let kind = |name: &str| {
                 theme
@@ -178,10 +207,74 @@ pub fn palette(scheme: Scheme, dark: bool, theme: &ThemeColors) -> Vec<(String, 
     }
 }
 
-/// pele の SVG `svg` に配色 `vars` を当て、CoreSVG・librsvg で描ける SVG にする。読めなければ `None`。
-pub fn colorize(svg: &str, vars: &[(String, String)]) -> Option<String> {
+/// Mermaid のテーマの変数（`mermaidtheme::variables`）を pele の変数に。図形の面は mainBkg、枠は nodeBorder、
+/// 入れ子の枠の面は clusterBkg、線は lineColor、文字は textColor、系列は pie1〜pie8。
+fn from_mermaid(vars: &[(&'static str, String)]) -> Vec<(String, String)> {
+    let get = |key: &str| vars.iter().find(|(k, _)| *k == key).map(|(_, v)| v.clone());
+    let background = get("background").unwrap_or_else(|| "#ffffff".into());
+    // 半透明の色は地に重ねて不透明に（CoreSVG は #rrggbbaa を読まないことがある）
+    let solid = |key: &str| get(key).map(|v| flatten(&v, &background));
+    let text = solid("textColor").unwrap_or_else(|| "#333333".into());
+    let mut out = vec![
+        ("--pele-bg".to_owned(), flatten(&background, "#ffffff")),
+        ("--pele-fg".to_owned(), text.clone()),
+        ("--pele-muted".to_owned(), mix(&text, &background, 0.65)),
+    ];
+    for (pele, mermaid) in [
+        ("--pele-line", "lineColor"),
+        ("--pele-surface", "mainBkg"),
+        ("--pele-surface-alt", "clusterBkg"),
+        ("--pele-border", "nodeBorder"),
+        ("--pele-accent", "primaryBorderColor"),
+    ] {
+        if let Some(v) = solid(mermaid) {
+            out.push((pele.to_owned(), v));
+        }
+    }
+    for i in 1..=8 {
+        if let Some(v) = solid(&format!("pie{i}")) {
+            out.push((format!("--pele-series-{i}"), v));
+        }
+    }
+    out.push(("--pele-fg-on-dark".to_owned(), "#ffffff".to_owned()));
+    out
+}
+
+/// `#rrggbbaa` を `base` に重ねた `#rrggbb`（不透明ならそのまま）。
+fn flatten(color: &str, base: &str) -> String {
+    let h = color.trim().trim_start_matches('#');
+    if h.len() == 8
+        && let Ok(alpha) = u8::from_str_radix(&h[6..8], 16)
+    {
+        return mix(&format!("#{}", &h[..6]), base, f64::from(alpha) / 255.0);
+    }
+    color.to_owned()
+}
+
+/// pele の SVG `svg` に配色 `vars` を当て、CoreSVG・librsvg で描ける SVG にする。`backdrop` なら図の地を
+/// `--pele-bg` で塗る。読めなければ `None`。
+pub fn colorize(svg: &str, vars: &[(String, String)], backdrop: bool) -> Option<String> {
     let vars: Vec<(&str, &str)> = vars.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    if backdrop {
+        let with = add_backdrop(svg)?;
+        return crate::svgcss::inline_with(&with, &vars);
+    }
     crate::svgcss::inline_with(svg, &vars)
+}
+
+/// 根の `<svg>` の中の先頭に、`viewBox` いっぱいの地の四角を足す。
+fn add_backdrop(svg: &str) -> Option<String> {
+    let start = svg.find("<svg")?;
+    let end = start + svg[start..].find('>')?;
+    let open = &svg[start..=end];
+    let view_box = open.split("viewBox=\"").nth(1)?.split('"').next()?;
+    let nums: Vec<&str> = view_box.split_ascii_whitespace().collect();
+    let [x, y, w, h] = nums[..] else { return None };
+    Some(format!(
+        "{}<rect x=\"{x}\" y=\"{y}\" width=\"{w}\" height=\"{h}\" fill=\"var(--pele-bg)\"/>{}",
+        &svg[..=end],
+        &svg[end + 1..]
+    ))
 }
 
 /// `top` を `amount`（0〜1）だけ `base` に重ねた色。読めない色なら `top`。
@@ -235,7 +328,14 @@ mod tests {
         // テーマが持たない種類は文字の色
         assert_eq!(vars["--pele-series-2"], "#202020");
         assert!(palette(Scheme::Pele, false, &theme()).is_empty());
-        assert_eq!(Scheme::from_key("mermaid"), Scheme::Mermaid);
+        assert_eq!(Scheme::from_key("mermaid"), Scheme::Mermaid(None));
+        assert_eq!(
+            Scheme::from_key("mermaid-forest"),
+            Scheme::Mermaid(Some(MermaidTheme::Forest))
+        );
+        for scheme in Scheme::all() {
+            assert_eq!(Scheme::from_key(&scheme.key()), scheme);
+        }
         assert_eq!(Scheme::from_key("?"), Scheme::Syntax);
     }
 
@@ -246,11 +346,13 @@ mod tests {
             panic!("not drawn");
         };
         assert!(svg.contains("var(--"));
-        let light = colorize(&svg, &palette(Scheme::Pele, false, &theme())).unwrap();
-        let mermaid = colorize(&svg, &palette(Scheme::Mermaid, false, &theme())).unwrap();
-        let syntax = colorize(&svg, &palette(Scheme::Syntax, false, &theme())).unwrap();
+        let light = colorize(&svg, &palette(Scheme::Pele, false, &theme()), false).unwrap();
+        let mermaid =
+            colorize(&svg, &palette(Scheme::Mermaid(None), false, &theme()), true).unwrap();
+        let syntax = colorize(&svg, &palette(Scheme::Syntax, false, &theme()), false).unwrap();
         assert!(!light.contains("var(") && light.contains("#f3f3f3"));
-        assert!(mermaid.contains("#ececff") && mermaid.contains("#9370db"));
+        assert!(mermaid.to_lowercase().contains("#ececff"), "{mermaid}");
+        assert!(mermaid.contains("<rect x=\"0\" y=\"0\""), "{mermaid}");
         assert!(syntax.contains("#f5e0e0") && syntax.contains("#aa0000"));
         assert!(light.contains(">Start</text>"));
     }

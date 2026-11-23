@@ -552,7 +552,7 @@ char *amonhen_markdown_parse(const uint8_t *text,
 
 /**
  * Markdown の図の SVG（`MarkdownBlock` の `diagram` の `svg`）に配色を当て、CoreSVG で描ける SVG にする。`scheme` は
- * 設定の「図の配色」の名前（`syntax`・`pele`・`mermaid`）、`dark` は暗い表示か、`theme` は構文の色のテーマの JSON
+ * 設定の「図の配色」の名前（`syntax`・`pele`・`mermaid`・`mermaid-forest` など）、`dark` は暗い表示か、`theme` は構文の色のテーマの JSON
  * `{"text": "#rrggbb", "background": "#rrggbb", "kinds": {"keyword": "#rrggbb", …}}`（`syntax` のときだけ使う。
  * NULL でもよい）。読めなければ NULL。`amonhen_string_free` で解放する。
  *

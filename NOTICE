@@ -38,3 +38,5 @@ in the headers of the ported source files.
   1.2.0, Copyright 2013 The Flutter Authors, BSD 3-Clause License; path_parsing
   1.1.0, Copyright (c) 2018 Dan Field, MIT License.
 - crates/pele: pele 1.13.0, Copyright (c) 2026 kepano, MIT License.
+- crates/core/src/mermaidtheme.rs: the colours of Mermaid's named themes, Copyright (c) 2014 - 2022 Knut
+  Sveidqvist, MIT License; khroma 2.1.0, Copyright (c) 2019-present Fabio Spampinato, Andrew Maney, MIT License.
