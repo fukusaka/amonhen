@@ -178,6 +178,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "amonhen-pele"
+version = "0.2.12"
+
+[[package]]
 name = "amonhen-platform"
 version = "0.2.12"
 
