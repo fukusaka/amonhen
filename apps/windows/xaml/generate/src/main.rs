@@ -151,6 +151,11 @@ const FILTER: &[&str] = &[
     "Microsoft.UI.Xaml.Documents.TextPointer",
     "Microsoft.UI.Xaml.Documents.ITextPointer::{GetPositionAtOffset,GetCharacterRect,Offset}",
     "Microsoft.UI.Xaml.Documents.LogicalDirection",
+    // `#` を打った所（カーソルの下）に Issue・PR の候補のメニューを出す（TextBox の字の矩形）。
+    "Microsoft.UI.Xaml.Controls.TextBox",
+    "Microsoft.UI.Xaml.Controls.ITextBox::{GetRectFromCharacterIndex}",
+    "Microsoft.UI.Xaml.Controls.ITextBoxFactory::{}",
+    "Microsoft.UI.Xaml.Controls.ITextBoxStatics::{}",
     // History の CI の印の吹き出し（印の位置に置いた見えないボタンの Flyout を開く）。
     "Microsoft.UI.Xaml.Controls.Button",
     "Microsoft.UI.Xaml.Controls.IButton::{Flyout}",
