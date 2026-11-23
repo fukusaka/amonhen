@@ -1,6 +1,6 @@
 //! Amon Hen の GTK4 の FE。Linux・BSD が本命で、GTK の動く Windows・macOS でも動く。
 //!
-//! `amonhen-gtk [<path>] [--snapshot <png>] [--edit-worktree <path>] [--measure-scroll [--scroll-rows <n>] | --measure-select <n>] [--print-menus] [--scroll-to <row> | --select-rows <row,...> | --select-ref <name>] [--menu-ref <name> | --menu-row <row> [--menu-item <title>]] [--search <query> [--only-matching]] [--blame <path> | --file-history <path> | --activity <tab> | --settings <tab> | --merge-editor <path> [--accept ours|theirs|both|base]] [--reflog] [--apply-patch <path,...>] [--open-menu repository|primary] [--action <id>] [--print-file-menu <path>] [--perform <json>] [--stashes [--stash-button apply|pop|drop|branch]] [--working-copy [--select-path <path>] [--toggle-row <row>] [--layout list|tree|flat]] [--range-diff[=<ranges>] [--select-pair <n>] [--menu-pair <n>]] [--repositories | --quick-open <query>] [--tab <location>]...`
+//! `amonhen-gtk [<path>] [--snapshot <png>] [--edit-worktree <path>] [--measure-scroll [--scroll-rows <n>] | --measure-diff-scroll [--scroll-rows <n>] | --merge-editor <path> --measure-merge-scroll | --measure-select <n>] [--print-menus] [--scroll-to <row> | --select-rows <row,...> | --select-ref <name>] [--menu-ref <name> | --menu-row <row> [--menu-item <title>]] [--search <query> [--only-matching]] [--blame <path> | --file-history <path> | --activity <tab> | --settings <tab> | --merge-editor <path> [--accept ours|theirs|both|base]] [--reflog] [--apply-patch <path,...>] [--open-menu repository|primary] [--action <id>] [--print-file-menu <path>] [--perform <json>] [--stashes [--stash-button apply|pop|drop|branch]] [--working-copy [--select-path <path>] [--toggle-row <row>] [--layout list|tree|flat]] [--range-diff[=<ranges>] [--select-pair <n>] [--menu-pair <n>]] [--repositories | --quick-open <query>] [--tab <location>]...`
 
 mod actions;
 mod activity;
@@ -114,6 +114,10 @@ struct Args {
     snapshot: Option<PathBuf>,
     /// 自動でスクロールして、1 フレームの時間を測って終わる。
     measure_scroll: bool,
+    /// 出している差分を自動でスクロールして、1 フレームの時間と折り返しの作り直しの時間を測って終わる。
+    measure_diff_scroll: bool,
+    /// 開いたマージエディタ（`--merge-editor`）を自動でスクロールして、1 フレームの時間を測って終わる。
+    measure_merge_scroll: bool,
     /// 見出しのメニューの中身を出して終わる（操作の表を作り直す前と後で比べる用）。
     print_menus: bool,
     /// History の行をこの数だけ順に選び、詳細と差分が出るまでの時間を測って終わる。
@@ -221,6 +225,8 @@ fn parse_args() -> Result<Args, String> {
         match a.as_str() {
             "--snapshot" => args.snapshot = Some(it.next().ok_or("--snapshot <png>")?.into()),
             "--measure-scroll" => args.measure_scroll = true,
+            "--measure-diff-scroll" => args.measure_diff_scroll = true,
+            "--measure-merge-scroll" => args.measure_merge_scroll = true,
             "--print-menus" => args.print_menus = true,
             "--measure-select" => {
                 let n = it.next().ok_or("--measure-select <n>")?;
@@ -692,7 +698,11 @@ fn launch(app: &gtk::Application, args: &Args) {
         appmenu::print_menus(app);
         return;
     }
-    let check = args.snapshot.is_some() || args.measure_scroll || args.measure_select.is_some();
+    let check = args.snapshot.is_some()
+        || args.measure_scroll
+        || args.measure_diff_scroll
+        || args.measure_merge_scroll
+        || args.measure_select.is_some();
     if check {
         tabs::set_check_run();
     }
@@ -936,6 +946,7 @@ fn build_tab(
     right.set_end_child(Some(&commit_diff.root));
     right.set_resize_start_child(false);
     right.set_position(170);
+    keep_details_divider(&right);
     let columns = gtk::Paned::new(gtk::Orientation::Horizontal);
     columns.set_start_child(Some(&history_column));
     columns.set_end_child(Some(&right));
@@ -2949,16 +2960,105 @@ const STOP: u32 = u32::MAX;
 /// `refreshRepository` と同じ）。
 const REFRESH: u32 = 1 << 31;
 
+/// 利用者が動かした、詳細とファイルの間の仕切りの位置（詳細の欄の高さ）を覚える設定の鍵。0 かなければ、
+/// メッセージに合わせる（macOS 版の `historyDetailsHeight`）。
+pub const DETAILS_HEIGHT: &str = "historyDetailsHeight";
+
+thread_local! {
+    /// 詳細の仕切りをアプリが動かしている間（利用者が動かしたのと見分ける）。
+    static PLACING_DETAILS: Cell<bool> = const { Cell::new(false) };
+}
+
+/// 利用者が動かした詳細の欄の高さ（なければ None）。
+fn kept_details_height() -> Option<i32> {
+    settings::string(DETAILS_HEIGHT)
+        .and_then(|s| s.parse::<i32>().ok())
+        .filter(|h| *h > 0)
+}
+
 /// 詳細の欄をメッセージの高さに合わせる（40 から右の列の半分まで。残りは欄の中でスクロール。macOS 版と同じ）。
+/// 仕切りを手で動かしていたら、代わりにその位置を保つ（表示の設定の「詳細をメッセージに合わせる」で戻す）。
 /// 窓が開いた直後は大きさがまだ決まっていないので、決まったフレームで合わせる。
 fn fit_details(right: &gtk::Paned, details: Rc<Details>) {
     right.add_tick_callback(move |right, _| {
         if right.width() <= 0 {
             return glib::ControlFlow::Continue;
         }
-        let height = details.natural_height(right.width());
-        right.set_position(height.min(right.height() / 2).max(40));
+        let height = match kept_details_height() {
+            Some(kept) => kept,
+            None => {
+                let height = details.natural_height(right.width());
+                height.min(right.height() / 2).max(40)
+            }
+        };
+        if right.position() != height {
+            PLACING_DETAILS.with(|p| p.set(true));
+            right.set_position(height);
+            PLACING_DETAILS.with(|p| p.set(false));
+        }
         glib::ControlFlow::Break
+    });
+}
+
+/// 詳細とファイルの間の仕切りを利用者がドラッグしたら、その位置を覚える（どのコミットでも、開き直しても保つ。
+/// macOS 版と同じ）。アプリが合わせたとき・窓の大きさで動いたときは覚えない: 仕切りの上でボタンを押してから
+/// 離すまでに動いたときだけ。
+fn keep_details_divider(right: &gtk::Paned) {
+    let dragging = Rc::new(Cell::new(false));
+    // 押した・離したを、仕切り自身のドラッグより先に見る（捕まえない。捕まえた後の離すも届く）。
+    let events = gtk::EventControllerLegacy::new();
+    events.set_propagation_phase(gtk::PropagationPhase::Capture);
+    {
+        let (dragging, weak) = (dragging.clone(), right.downgrade());
+        events.connect_event(move |_, event| {
+            let Some(right) = weak.upgrade() else {
+                return glib::Propagation::Proceed;
+            };
+            match event.event_type() {
+                gtk::gdk::EventType::ButtonPress => {
+                    // 窓の面の位置を、仕切りの部品の中の位置に。
+                    let y = right
+                        .native()
+                        .zip(event.position())
+                        .and_then(|(native, (x, y))| {
+                            let (sx, sy) = native.surface_transform();
+                            native
+                                .compute_point(
+                                    &right,
+                                    &gtk::graphene::Point::new((x - sx) as f32, (y - sy) as f32),
+                                )
+                                .map(|p| p.y() as f64)
+                        });
+                    let position = right.position() as f64;
+                    dragging
+                        .set(y.is_some_and(|y| (position - 4.0..=position + 12.0).contains(&y)));
+                }
+                gtk::gdk::EventType::ButtonRelease => dragging.set(false),
+                _ => {}
+            }
+            glib::Propagation::Proceed
+        });
+    }
+    right.add_controller(events);
+    let pending: Rc<RefCell<Option<glib::SourceId>>> = Rc::default();
+    right.connect_position_notify(move |right| {
+        if PLACING_DETAILS.with(Cell::get) || !right.is_mapped() || !dragging.get() {
+            return;
+        }
+        // ドラッグの間は書かず、止まってから。
+        if let Some(id) = pending.borrow_mut().take() {
+            id.remove();
+        }
+        let (weak, slot) = (right.downgrade(), pending.clone());
+        let id = glib::timeout_add_local_once(std::time::Duration::from_millis(400), move || {
+            slot.borrow_mut().take();
+            if let Some(right) = weak.upgrade()
+                && right.position() > 0
+            {
+                settings::set_string(DETAILS_HEIGHT, &right.position().to_string());
+            }
+        });
+        pending.borrow_mut().replace(id);
     });
 }
 
@@ -3088,6 +3188,8 @@ fn connect_selection(
     pending: &Rc<Cell<u32>>,
     changed: Hook,
 ) {
+    // History の差分は、merge なら最初の親との差分（詳細にそう書き添える）。
+    details.set_first_parent_note(true);
     let loader = Rc::new(Loader {
         details: details.clone(),
         files: files.clone(),
@@ -3689,6 +3791,9 @@ fn after_first_show(
     let pending = pending.clone();
     let settings_shown = args.settings.is_some();
     let activity_shown = args.activity.is_some();
+    let merge_shown = args.merge_editor.is_some();
+    // 並べ直しを待って撮るのを延ばした回数（50 ms ごと。5 秒で諦めて撮る）。
+    let waits = Rc::new(Cell::new(0u32));
     if let Some(png) = args.snapshot.clone() {
         // 見えている行が読めて、レーンが落ち着くまで待ってから撮る。
         glib::timeout_add_local(
@@ -3718,24 +3823,40 @@ fn after_first_show(
                             .find(|w| w.is_visible() && w.transient_for().as_ref() == Some(parent))
                     };
                     // `--settings`・`--activity` なら、その窓（どの窓のものでもない）から。
+                    // `--merge-editor` なら、別の窓に開いたマージエディタ（開くまで待つ）。
+                    if merge_shown && merge::any_window().is_none() && waits.get() < 100 {
+                        waits.set(waits.get() + 1);
+                        return glib::ControlFlow::Continue;
+                    }
                     let mut target: gtk::Window = settings::window()
                         .filter(|_| settings_shown)
                         .or_else(|| activity::Activity::window().filter(|_| activity_shown))
+                        .or_else(|| merge::any_window().filter(|_| merge_shown))
                         .unwrap_or_else(|| window.clone().upcast());
                     while let Some(front) = on(&target) {
                         target = front;
+                    }
+                    // 読み終えた直後は、まだ並べ直しを待っている部品がある（Markdown の表・画像を埋め込んだ
+                    // 文字の欄など）。そのまま撮ると、その部品から上が描けずに窓の地だけになるので、並べ終えるまで待つ。
+                    if !laid_out(&target) && waits.get() < 100 {
+                        waits.set(waits.get() + 1);
+                        return glib::ControlFlow::Continue;
                     }
                     match snapshot(&target, &png) {
                         Ok(()) => eprintln!("{}", png.display()),
                         Err(e) => eprintln!("撮れない: {e}"),
                     }
                     window.close();
-                    // Settings・Activity の窓はどの窓のものでもないので、残すとアプリが終わらない。
+                    // Settings・Activity・マージエディタの窓はどの窓のものでもないので、残すとアプリが終わらない。
+                    // マージエディタは、開いたときの自動の解決で Result が変わっていても確かめずに閉じる。
                     for other in [settings::window(), activity::Activity::window()]
                         .into_iter()
                         .flatten()
                     {
                         other.close();
+                    }
+                    if let Some(merge) = merge::any_window() {
+                        merge.destroy();
                     }
                     glib::ControlFlow::Break
                 }
@@ -3744,6 +3865,37 @@ fn after_first_show(
     } else if args.measure_scroll {
         let rows = args.scroll_rows.unwrap_or(measure::ROWS_PER_FRAME);
         measure::scroll(window, view, rows);
+    } else if args.measure_merge_scroll {
+        // マージエディタを開いて読み終えてから（`--merge-editor` は開いた後しばらく待つ）。
+        let rows = args.scroll_rows.unwrap_or(3.0);
+        let (w, v) = (window.downgrade(), view.downgrade());
+        glib::timeout_add_local(std::time::Duration::from_millis(50), move || {
+            let (Some(window), Some(view)) = (w.upgrade(), v.upgrade()) else {
+                return glib::ControlFlow::Break;
+            };
+            if (view.is_mapped() && !view.is_settled())
+                || pending.get() > 0
+                || merge::any_window().is_none()
+            {
+                return glib::ControlFlow::Continue;
+            }
+            measure::merge_scroll(&window, rows);
+            glib::ControlFlow::Break
+        });
+    } else if args.measure_diff_scroll {
+        // 差分を読み終えてから（`--snapshot` と同じく、読んでいるものがなくなるまで待つ）。
+        let rows = args.scroll_rows.unwrap_or(3.0);
+        let (w, v) = (window.downgrade(), view.downgrade());
+        glib::timeout_add_local(std::time::Duration::from_millis(50), move || {
+            let (Some(window), Some(view)) = (w.upgrade(), v.upgrade()) else {
+                return glib::ControlFlow::Break;
+            };
+            if (view.is_mapped() && !view.is_settled()) || pending.get() > 0 {
+                return glib::ControlFlow::Continue;
+            }
+            measure::diff_scroll(&window, rows);
+            glib::ControlFlow::Break
+        });
     } else if let Some(count) = args.measure_select {
         // 先頭の行を選び終えてから（macOS 版は 1 秒待つ）。
         let (w, v) = (window.downgrade(), view.downgrade());
@@ -3828,6 +3980,27 @@ fn collect_popovers(widget: &gtk::Widget, out: &mut Vec<gtk::Popover>) {
         }
         child = c.next_sibling();
     }
+}
+
+/// 窓の部品を描けるか（大きさが決まっているか）。並べ直しを待っている部品を描いても何も出ない（GTK はその部品から
+/// 下を飛ばす）ので、撮る前に確かめる。見えていて大きさのある部品が、何も描かなければ false。
+pub fn laid_out(window: &gtk::Window) -> bool {
+    let mut child = window.first_child();
+    while let Some(widget) = child {
+        if widget.is_mapped() && widget.width() > 0 && widget.height() > 0 {
+            let probe = gtk::Snapshot::new();
+            gtk::WidgetPaintable::new(Some(&widget)).snapshot(
+                &probe,
+                widget.width() as f64,
+                widget.height() as f64,
+            );
+            if probe.to_node().is_none() {
+                return false;
+            }
+        }
+        child = widget.next_sibling();
+    }
+    true
 }
 
 /// 窓の中身を PNG にする。

@@ -243,6 +243,10 @@ struct Bar {
     expand_icon: crate::icon::Icon,
     /// 行を比べるときに無視する空白。覚えない。
     whitespace: crate::whitespace::Picker,
+    /// 長い行を折り返す（アプリ全体の設定）。
+    wrap: gtk::Button,
+    /// 表示の設定のメニュー。
+    options: gtk::Button,
 }
 
 struct Inner {
@@ -293,6 +297,9 @@ thread_local! {
     /// 確認用: 最初に差分を出したら探す語（`--find-diff`）、メニューを出すファイル（`--diff-file-menu`）。
     static FIND_ONCE: RefCell<Option<String>> = const { RefCell::new(None) };
     static MENU_ONCE: Cell<Option<usize>> = const { Cell::new(None) };
+    /// 確認用（`AMH_VIEW_OPTIONS_MENU=1`）: 見えている差分の列で最初に差分を出したら、帯の表示の設定のメニューを
+    /// 出し、項目の名前を標準出力に書く（出したら true）。
+    static OPTIONS_SHOWN: Cell<bool> = const { Cell::new(false) };
     /// 開いている差分の列（Ctrl+F を、フォーカスのある差分の検索の帯に回すため）。
     static OPEN: RefCell<Vec<std::rc::Weak<Inner>>> = RefCell::default();
 }
@@ -368,7 +375,7 @@ fn focused(window: &gtk::Window) -> Option<Rc<Inner>> {
 }
 
 /// 帯の小さなアイコンのボタン。
-fn icon_button(kind: crate::icon::Kind, tip: &str) -> (gtk::Button, crate::icon::Icon) {
+pub(crate) fn icon_button(kind: crate::icon::Kind, tip: &str) -> (gtk::Button, crate::icon::Icon) {
     let icon = crate::icon::Icon::default();
     icon.set(kind, false);
     let button = gtk::Button::new();
@@ -471,6 +478,7 @@ impl CommitDiff {
         let (expand_all, expand_icon) =
             icon_button(crate::icon::Kind::ExpandVertical, &tr!("Expand All Diffs"));
         let whitespace = crate::whitespace::Picker::new();
+        let wrap = crate::diff::wrap_button();
         let (find, _) = icon_button(crate::icon::Kind::Search, &tr!("Find in the diff (Ctrl+F)"));
         let (options, _) = icon_button(crate::icon::Kind::Sliders, &tr!("View Options"));
         let bar_box = gtk::Box::new(gtk::Orientation::Horizontal, 8);
@@ -486,6 +494,7 @@ impl CommitDiff {
             folders.upcast_ref(),
             expand_all.upcast_ref(),
             whitespace.widget().upcast_ref(),
+            wrap.upcast_ref(),
             find.upcast_ref(),
             options.upcast_ref(),
         ] {
@@ -524,6 +533,8 @@ impl CommitDiff {
                 expand_all,
                 expand_icon,
                 whitespace,
+                wrap,
+                options: options.clone(),
             },
             st: RefCell::default(),
             browser: RefCell::default(),
@@ -667,7 +678,9 @@ impl CommitDiff {
         // 詳細の見せ方を変えたときに戻せるように（`Details::show_style_switch`）。
         button.set_widget_name(crate::details::EXPAND_BUTTON);
         button.set_child(Some(&icon));
-        button.update_property(&[gtk::accessible::Property::Label(&tr!("Restore Details"))]);
+        button.update_property(&[gtk::accessible::Property::Label(&tr!(
+            "Restore Commit Details"
+        ))]);
         button.add_css_class("flat");
         button.add_css_class("image-button");
         button.set_valign(gtk::Align::Start);
@@ -885,6 +898,17 @@ impl Inner {
         } else if this.find.bar.is_visible() {
             let (current, count) = this.diff.recount(&this.find.entry.text());
             this.show_count(current, count);
+        }
+        if this.root.is_mapped()
+            && std::env::var("AMH_VIEW_OPTIONS_MENU").is_ok_and(|v| v == "1")
+            && !OPTIONS_SHOWN.with(|s| s.replace(true))
+        {
+            // 項目の名前も書き出す（メニューは別の面に出るので、撮った絵には写らないことがある）。
+            for title in menu::titles(&Inner::view_option_items(this)) {
+                println!("view options | {title}");
+            }
+            let button = this.bar.options.clone();
+            glib::idle_add_local_once(move || button.emit_clicked());
         }
         if let Some(file) = MENU_ONCE.with(|v| v.take()) {
             let items = Inner::menu_items(this, file);
@@ -1381,6 +1405,7 @@ impl Inner {
         let bar = &this.bar;
         bar.expand_all.set_visible(!files);
         bar.whitespace.widget().set_visible(!files);
+        bar.wrap.set_visible(!files);
         bar.folders.set_visible(tree);
         let (kind, tip) = if Inner::all_diffs_open(this) {
             (
@@ -1562,7 +1587,8 @@ impl Inner {
         );
     }
 
-    /// 表示の設定のメニュー（開くたびに作る）: 詳細の見せ方、詳細を広げる、AI。
+    /// 表示の設定のメニュー（開くたびに作る）: コミット情報（表示項目・高さ・コミット情報だけを表示）、コード（長い行を
+    /// 折り返す）、AI。
     fn view_option_items(this: &Rc<Self>) -> Vec<Item> {
         let (styles, ai) = this
             .view_options
@@ -1570,21 +1596,28 @@ impl Inner {
             .clone()
             .map(|f| f())
             .unwrap_or_default();
-        let mut items = Vec::new();
+        // コミット情報（右の列の上の欄）に効くもの: 表示項目（簡潔・標準・詳細）、高さを自動で決める、コミット
+        // 情報だけを表示。コード（差分と「すべてのファイル」の中身）に効くもの: 長い行を折り返す（macOS 版と同じ）。
+        let mut items = vec![Item::Heading(tr!("Commit Details"))];
         if !styles.is_empty() {
-            items.push(Item::Disabled(tr!("Details")));
+            items.push(Item::Disabled(tr!("Details Shown")));
             items.extend(styles);
         }
         let expand = this.expand.borrow().clone();
         if let Some(button) = expand {
             let on = button.is_active();
             items.push(menu::choice_with_tip(
-                tr!("Expand Details"),
+                tr!("Show Only Commit Details"),
                 on,
                 tr!("Expand the commit details to fill the right column (click again to restore)."),
                 move || button.set_active(!on),
             ));
         }
+        if items.len() == 1 {
+            items.clear();
+        }
+        items.push(Item::Heading(tr!("Code")));
+        items.push(crate::diff::wrap_item());
         if !ai.is_empty() {
             items.push(Item::Separator);
             items.extend(ai);

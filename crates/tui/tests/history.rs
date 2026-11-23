@@ -445,6 +445,36 @@ fn switch_between_the_staged_and_unstaged_sides() {
     );
 }
 
+/// Working Copy の差分の `w`: 無視する空白を替える。その間は片方の側だけを出し、行ごとの stage はしない
+#[test]
+fn working_diff_ignores_whitespace() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    git(dir, BASE, &["init", "-q", "-b", "main"]);
+    std::fs::write(dir.join("a.txt"), "one\n  two\n").unwrap();
+    git(dir, BASE, &["add", "."]);
+    git(dir, BASE, &["commit", "-q", "-m", "Start"]);
+    std::fs::write(dir.join("a.txt"), "one\n    two\nthree\n").unwrap();
+    let exact = amonhen_tui::snapshot(open(dir), 120, 14, clock(), "1\n").unwrap();
+    println!("{exact}");
+    assert!(exact.contains("    two"), "{exact}");
+    let amount = amonhen_tui::snapshot(open(dir), 120, 14, clock(), "1\nww").unwrap();
+    println!("{amount}");
+    assert!(
+        amount.contains("Ignoring changes in the amount of whitespace"),
+        "{amount}"
+    );
+    assert!(amount.contains("three"), "{amount}");
+    assert!(!amount.contains("+    two"), "{amount}");
+    // 行を stage しようとしても、しない（理由を出す）。
+    let refused = amonhen_tui::snapshot(open(dir), 120, 14, clock(), "1\nwwG ").unwrap();
+    assert!(
+        refused.contains("Lines aren’t staged while whitespace is ignored"),
+        "{refused}"
+    );
+    assert_eq!(git_out(dir, &["diff", "--cached", "--name-only"]), "");
+}
+
 /// 差分の行で Space: その行だけを stage する。hunk の見出しなら、その hunk すべて
 #[test]
 fn space_in_the_diff_stages_a_line_or_a_hunk() {
@@ -784,7 +814,8 @@ fn sidebar_lists_refs_and_jumps_to_them() {
             "  Reflog",
             "Branches",
             "● main",
-            "  topic",
+            // main に取り込み済み（アプリの印）。
+            "  topic · merged",
             "Tags",
             "  v1"
         ]
@@ -936,12 +967,12 @@ fn sidebar_filter_narrows_refs() {
             "  History",
             "  Reflog",
             "Branches",
-            "  topic"
+            "  topic · merged"
         ]
     );
     assert!(filtered[6].starts_with(" Filter: TOP"), "{filtered:?}");
     // Enter で確定しても絞り込んだまま。Esc で戻る。
-    assert_eq!(side("0/TOP\n")[5], "  topic");
+    assert_eq!(side("0/TOP\n")[5], "  topic · merged");
     assert_eq!(side("0/TOP\n\x1b")[5], "● main");
 }
 
@@ -1381,6 +1412,45 @@ fn push_to_another_branch() {
     assert!(wrong.contains("Write the remote and the branch, like origin/main"));
 }
 
+/// タグのリモートでの様子（fetch で読む）: 別のタグがあれば ⚠、どこにもなければ ∅。タグの行の `i` で詳しく
+#[test]
+fn tag_marks_for_remotes() {
+    let dir = tempfile::tempdir().unwrap();
+    let work = with_remote(dir.path());
+    git(&work, BASE, &["push", "-q"]);
+    git(&work, BASE, &["tag", "shared"]);
+    git(&work, BASE, &["push", "-q", "origin", "shared"]);
+    git(&work, BASE, &["tag", "local"]);
+    // リモートには、同じ名前の別のタグ（注釈つき）。
+    let remote = dir.path().join("origin.git");
+    git(&remote, BASE, &["tag", "-m", "theirs", "clash", "main"]);
+    git(&work, BASE, &["tag", "clash"]);
+    let fetched = amonhen_tui::snapshot(open(&work), 120, 16, clock(), "fy").unwrap();
+    assert!(fetched.contains("Fetched"), "{fetched}");
+    let shown = amonhen_tui::snapshot(open(&work), 120, 16, clock(), "").unwrap();
+    println!("{shown}");
+    let side: Vec<String> = shown.lines().skip(1).filter_map(|l| column(l, 0)).collect();
+    let row = |name: &str| {
+        side.iter()
+            .find(|l| l.trim_start().starts_with(name))
+            .cloned()
+            .unwrap_or_default()
+    };
+    assert!(row("clash").trim_end().ends_with('⚠'), "{side:?}");
+    assert!(row("local").trim_end().ends_with('∅'), "{side:?}");
+    assert!(
+        !row("shared").contains('⚠') && !row("shared").contains('∅'),
+        "{side:?}"
+    );
+    // `i`: リモートごとの様子。サイドバーは main、origin/main、clash の順（見出しは飛ばす）。
+    let info = amonhen_tui::snapshot(open(&work), 160, 16, clock(), "0jjjji").unwrap();
+    let last = info.lines().last().unwrap();
+    assert!(
+        last.contains("origin: has a different tag with this name"),
+        "{info}"
+    );
+}
+
 /// `f` で fetch（どこから取るかを確かめる）、`p` で pull: リモートに増えたコミットを取り込む
 #[test]
 fn fetch_and_pull_bring_in_remote_commits() {
@@ -1679,10 +1749,10 @@ fn checkout_new_branch_and_undo() {
     println!("{out}");
     assert_eq!(branch(), "topic\n");
     assert!(out.contains("● topic"));
-    // main の行（1 つ上）で `b`: 名前を聞き、main から作って切り替える。
-    let typing = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjbne").unwrap();
+    // main の行（今のブランチ topic の下）で `b`: 名前を聞き、main から作って切り替える。
+    let typing = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjjbne").unwrap();
     assert!(typing.contains("New branch at main: ne"));
-    amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjbnext\n").unwrap();
+    amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjjbnext\n").unwrap();
     assert_eq!(branch(), "next\n");
     assert_eq!(
         git_out(dir.path(), &["rev-parse", "next"]),
@@ -1884,23 +1954,101 @@ fn merge_and_delete_the_marked_refs() {
     git(dir.path(), BASE, &["switch", "-q", "main"]);
     // main も進めておく（そうでなければ、git は最初の 1 つへ fast-forward してから取り込む）。
     commit(dir.path(), BASE + DAY * 2, "On main");
-    // サイドバーのブランチは a1・a2・main の順（2 つ下が a1）。
-    let asked = amonhen_tui::snapshot(open(dir.path()), 220, 12, clock(), "0jjvjvm").unwrap();
+    // サイドバーのブランチは今の main、a1・a2 の順（3 つ下が a1）。
+    let asked = amonhen_tui::snapshot(open(dir.path()), 220, 12, clock(), "0jjjvjvm").unwrap();
     println!("{asked}");
     assert!(
         asked.contains("Merge a1 (1), a2 (1) into main as one merge commit (octopus)? Undo brings it back.   y merge   n cancel"),
         "{asked}"
     );
-    amonhen_tui::snapshot(open(dir.path()), 220, 12, clock(), "0jjvjvmy").unwrap();
+    amonhen_tui::snapshot(open(dir.path()), 220, 12, clock(), "0jjjvjvmy").unwrap();
     let parents = git_out(dir.path(), &["log", "-1", "--format=%P"]);
     assert_eq!(parents.split_whitespace().count(), 3, "{parents}");
     // 取り込んだので、まとめて消せる。
-    let asked = amonhen_tui::snapshot(open(dir.path()), 220, 12, clock(), "0jjvjvD").unwrap();
+    let asked = amonhen_tui::snapshot(open(dir.path()), 220, 12, clock(), "0jjjvjvD").unwrap();
     assert!(asked.contains("Delete 2 branches (a1, a2)?"), "{asked}");
-    amonhen_tui::snapshot(open(dir.path()), 220, 12, clock(), "0jjvjvDy").unwrap();
+    amonhen_tui::snapshot(open(dir.path()), 220, 12, clock(), "0jjjvjvDy").unwrap();
     assert_eq!(
         git_out(dir.path(), &["branch", "--format=%(refname:short)"]),
         "main\n"
+    );
+}
+
+/// Branches はアプリと同じく並ぶ: 今のブランチ、動いているもの（新しい順）、積んだものは土台の下に ↳、
+/// Inactive（90 日以上）・Archived は畳んで。`*` でお気に入り（★、一番上）、`z` でアーカイブ、`<` `>` で順
+#[test]
+fn branches_arranged_with_favorites_and_archive() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    git(dir, BASE - DAY * 200, &["init", "-q", "-b", "main"]);
+    commit(dir, BASE - DAY * 200, "Start");
+    git(dir, BASE, &["switch", "-q", "-c", "old"]);
+    commit(dir, BASE - DAY * 150, "Old work");
+    git(dir, BASE, &["switch", "-q", "-c", "feature", "main"]);
+    commit(dir, BASE + DAY, "Feature");
+    git(dir, BASE, &["switch", "-q", "-c", "feature-2"]);
+    commit(dir, BASE + DAY * 2, "On the feature");
+    git(dir, BASE, &["switch", "-q", "-c", "fresh", "main"]);
+    commit(dir, BASE + DAY * 3, "Fresh");
+    git(dir, BASE, &["switch", "-q", "main"]);
+    let side = |keys: &str| -> Vec<String> {
+        let text = amonhen_tui::snapshot(open(dir), 160, 20, clock(), keys).unwrap();
+        println!("{text}");
+        let lines: Vec<String> = text
+            .lines()
+            .skip(1)
+            .filter_map(|l| column(l, 0))
+            .map(|l| l.trim_end().to_owned())
+            .collect();
+        let start = lines.iter().position(|l| l == "Branches").unwrap();
+        lines[start + 1..]
+            .iter()
+            .take_while(|l| !l.is_empty())
+            .cloned()
+            .collect()
+    };
+    let arranged = side("");
+    let names: Vec<String> = arranged
+        .iter()
+        .map(|l| l.split_whitespace().collect::<Vec<_>>().join(" "))
+        .collect();
+    assert_eq!(
+        names,
+        ["● main", "fresh", "feature", "↳ feature-2", "▸ Inactive 1"],
+        "{arranged:?}"
+    );
+    // Inactive を開く（Enter）。main の行から 5 つ下。
+    let opened = side("0jjjjjj\n");
+    assert!(opened.iter().any(|l| l.trim() == "old"), "{opened:?}");
+    // fresh（main の 1 つ下）をお気に入りに。一番上に ★ で出る。
+    side("0jjj*");
+    let starred = side("");
+    assert!(starred[0].contains("★ fresh"), "{starred:?}");
+    assert_eq!(
+        git_out(dir, &["config", "branch.fresh.amonhenPinned"]),
+        "1\n"
+    );
+    // feature もお気に入りにして、`<` で fresh の上へ。
+    side("0jjjj*");
+    side("0jjj<");
+    let order = side("");
+    // お気に入りの上に積んだブランチは、お気に入りの下に入れ子で出る。
+    assert!(
+        order[0].contains("★ feature") && order[1].contains("↳ feature-2"),
+        "{order:?}"
+    );
+    assert!(order[2].contains("★ fresh"), "{order:?}");
+    // fresh をお気に入りから外し、アーカイブする。
+    side("0jjjj*");
+    side("0jjjjjz");
+    let archived = side("");
+    assert!(
+        archived.iter().any(|l| l.contains("▸ Archived")),
+        "{archived:?}"
+    );
+    assert_eq!(
+        git_out(dir, &["config", "branch.fresh.amonhenArchived"]),
+        "true\n"
     );
 }
 
@@ -1909,23 +2057,23 @@ fn merge_and_delete_the_marked_refs() {
 fn rebase_onto_the_picked_ref() {
     let dir = tempfile::tempdir().unwrap();
     merged(dir.path());
-    // topic に切り替えて（`c`）、main（1 つ上）の上に rebase する。
+    // topic に切り替えて（`c`）、main（今のブランチ topic の下）の上に rebase する。
     amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjjc").unwrap();
-    let asked = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjr").unwrap();
+    let asked = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjjr").unwrap();
     println!("{asked}");
     // 見通しでコンフリクトを調べられなかったときは、何も足さない。
     assert!(asked.contains("Rebase topic onto main?   y rebase   n cancel"));
     // topic は main にもう入っていて、載せ直すコミットがない（前と後の絵は出ない）。
     assert!(!asked.contains(" Rebase topic onto main "), "{asked}");
     // main を topic に merge するのは fast-forward。取り込む数を言う。
-    let ff = amonhen_tui::snapshot(open(dir.path()), 200, 12, clock(), "0jjm").unwrap();
+    let ff = amonhen_tui::snapshot(open(dir.path()), 200, 12, clock(), "0jjjm").unwrap();
     println!("{ff}");
     assert!(
         ff.contains("Fast-forward topic to main (+2)?   y merge   f fast-forward only   c always a merge commit   s squash into one commit   n cancel"),
         "{ff}"
     );
     assert!(ff.contains(" Fast-forward topic "), "{ff}");
-    amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjry").unwrap();
+    amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjjry").unwrap();
     assert_eq!(
         git_out(dir.path(), &["merge-base", "topic", "main"]),
         git_out(dir.path(), &["rev-parse", "main"])
@@ -1959,18 +2107,18 @@ fn merge_modes() {
             .count()
     };
     let head = git_out(dir, &["rev-parse", "HEAD"]);
-    // サイドバーで 2 つ下が main。
-    let asked = amonhen_tui::snapshot(open(dir), 200, 12, clock(), "0jjm").unwrap();
+    // サイドバーで 3 つ下が main（今のブランチ topic が一番上）。
+    let asked = amonhen_tui::snapshot(open(dir), 200, 12, clock(), "0jjjm").unwrap();
     println!("{asked}");
     assert!(
         asked.contains("Fast-forward topic to main (+2)?"),
         "{asked}"
     );
-    amonhen_tui::snapshot(open(dir), 200, 12, clock(), "0jjmc").unwrap();
+    amonhen_tui::snapshot(open(dir), 200, 12, clock(), "0jjjmc").unwrap();
     assert_eq!(parents(), 2, "a merge commit");
     // 戻して、まとめて 1 つのコミットに（merge コミットではなく、main の変更がすべて入る）。
     git(dir, BASE, &["reset", "-q", "--hard", head.trim()]);
-    amonhen_tui::snapshot(open(dir), 200, 12, clock(), "0jjms").unwrap();
+    amonhen_tui::snapshot(open(dir), 200, 12, clock(), "0jjjms").unwrap();
     assert_eq!(parents(), 1, "an ordinary commit");
     assert_ne!(git_out(dir, &["rev-parse", "HEAD"]), head);
     assert!(dir.join("c.txt").exists());
@@ -3094,6 +3242,147 @@ fn compare_with_the_previous_version() {
     assert!(below.contains("Take the lane from the trunk"));
 }
 
+/// partial clone は一番上の行に印。sparse checkout は Working Copy の一覧の上に知らせ（git 2.25 から）
+#[test]
+fn partial_clone_and_sparse_checkout_marks() {
+    // `git sparse-checkout` は 2.25 から。2.23 は file:// の partial clone の取り出しにも失敗する。
+    let version = git_out(Path::new("."), &["--version"]);
+    let numbers: Vec<u32> = version
+        .split(|c: char| !c.is_ascii_digit())
+        .filter_map(|n| n.parse().ok())
+        .collect();
+    if numbers.len() < 2 || (numbers[0], numbers[1]) < (2, 25) {
+        return;
+    }
+    let source = tempfile::tempdir().unwrap();
+    let source = source.path();
+    git(source, BASE, &["init", "-q", "-b", "main"]);
+    for path in ["app/a.txt", "docs/b.txt", "top.txt"] {
+        let path = source.join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, "one\n").unwrap();
+    }
+    git(source, BASE, &["add", "."]);
+    git(source, BASE, &["commit", "-q", "-m", "Start"]);
+    git(source, BASE, &["config", "uploadpack.allowFilter", "true"]);
+    let place = tempfile::tempdir().unwrap();
+    let url = format!("file://{}", source.display());
+    git(
+        place.path(),
+        BASE,
+        &["clone", "-q", "--filter=blob:none", &url, "partial"],
+    );
+    let dir = place.path().join("partial");
+    let top = amonhen_tui::snapshot(open(&dir), 140, 12, clock(), "").unwrap();
+    println!("{top}");
+    assert!(top.lines().next().unwrap().contains("[partial]"), "{top}");
+    assert!(!top.contains("Sparse checkout"), "{top}");
+    // `+`: partial clone の中身をすべて取る（git 2.36 から）。取ったら印は消える。
+    if (numbers[0], numbers[1]) >= (2, 36) {
+        let asked = amonhen_tui::snapshot(open(&dir), 140, 12, clock(), "2+").unwrap();
+        let last = asked.lines().last().unwrap();
+        assert!(
+            last.contains("Fetch all contents of the partial clone?"),
+            "{last}"
+        );
+        let fetched = amonhen_tui::snapshot(open(&dir), 140, 12, clock(), "2+c").unwrap();
+        println!("{fetched}");
+        assert!(fetched.contains("Fetched all contents"), "{fetched}");
+        let after = amonhen_tui::snapshot(open(&dir), 140, 12, clock(), "").unwrap();
+        assert!(
+            !after.lines().next().unwrap().contains("[partial]"),
+            "{after}"
+        );
+    }
+    git(&dir, BASE, &["sparse-checkout", "init", "--cone"]);
+    git(&dir, BASE, &["sparse-checkout", "set", "app"]);
+    let sparse = amonhen_tui::snapshot(open(&dir), 140, 12, clock(), "1").unwrap();
+    println!("{sparse}");
+    assert!(
+        sparse.contains("Sparse checkout: only 1 folder is checked out."),
+        "{sparse}"
+    );
+    // Working Copy の `W`: 取り出すフォルダを打つ（今のものが入っている。Tab で HEAD の木のフォルダから補う）。
+    let typing = amonhen_tui::snapshot(open(&dir), 140, 12, clock(), "1W").unwrap();
+    let last = typing.lines().last().unwrap();
+    assert!(
+        last.contains("Check out only the folders") && last.contains(": app "),
+        "{last}"
+    );
+    let completed = amonhen_tui::snapshot(open(&dir), 140, 12, clock(), "1W\x15d\t").unwrap();
+    let last = completed.lines().last().unwrap();
+    assert!(last.contains(": docs/ "), "{last}");
+    let asked = amonhen_tui::snapshot(open(&dir), 140, 12, clock(), "1W\x15docs\n").unwrap();
+    let last = asked.lines().last().unwrap();
+    assert!(last.contains("Check out only docs"), "{last}");
+    amonhen_tui::snapshot(open(&dir), 140, 12, clock(), "1W\x15docs\ny").unwrap();
+    assert!(dir.join("docs/b.txt").exists());
+    assert!(!dir.join("app/a.txt").exists());
+    // 空なら、すべて取り出す。
+    amonhen_tui::snapshot(open(&dir), 140, 12, clock(), "1W\x15\ny").unwrap();
+    assert!(dir.join("app/a.txt").exists());
+    let all = amonhen_tui::snapshot(open(&dir), 140, 12, clock(), "1").unwrap();
+    assert!(!all.contains("Sparse checkout"), "{all}");
+}
+
+/// shallow clone: 最後の行の下に帯、境界のコミットに点線の印。`+` で取り足す（数を選ぶ、`a` ですべて）
+#[test]
+fn shallow_clone_band_and_fetch_more() {
+    let source = tempfile::tempdir().unwrap();
+    let source = source.path();
+    git(source, BASE, &["init", "-q", "-b", "main"]);
+    for n in 1..=5 {
+        git(
+            source,
+            BASE + DAY * n,
+            &[
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                &format!("Commit {n}"),
+            ],
+        );
+    }
+    let place = tempfile::tempdir().unwrap();
+    let url = format!("file://{}", source.display());
+    git(
+        place.path(),
+        BASE,
+        &["clone", "-q", "--depth", "2", &url, "shallow"],
+    );
+    let dir = place.path().join("shallow");
+    let shown = amonhen_tui::snapshot(open(&dir), 140, 12, clock(), "2").unwrap();
+    println!("{shown}");
+    assert!(
+        shown.contains("Older history isn’t fetched (shallow clone)"),
+        "{shown}"
+    );
+    assert!(shown.lines().any(|l| l.contains("┄ Commit 4")), "{shown}");
+    // 一番上の行にも、shallow clone の印。
+    assert!(
+        shown.lines().next().unwrap().contains("[shallow]"),
+        "{shown}"
+    );
+    let asked = amonhen_tui::snapshot(open(&dir), 140, 12, clock(), "2+").unwrap();
+    let last = asked.lines().last().unwrap();
+    assert!(
+        last.contains("Fetch older history from the remote?"),
+        "{last}"
+    );
+    // 日付まで: `d` で日付を打つ（それより新しいコミットをすべて）。
+    let typing = amonhen_tui::snapshot(open(&dir), 140, 12, clock(), "2+d").unwrap();
+    assert!(typing.contains("Fetch the commits newer than"), "{typing}");
+    let since = amonhen_tui::snapshot(open(&dir), 140, 12, clock(), "2+d2000-01-01\n").unwrap();
+    println!("{since}");
+    assert!(since.contains("Commit 1"), "{since}");
+    git(&dir, BASE, &["fetch", "-q", "--depth", "2"]);
+    let all = amonhen_tui::snapshot(open(&dir), 140, 12, clock(), "2+a").unwrap();
+    println!("{all}");
+    assert!(all.contains("Commit 1"), "{all}");
+    assert!(!all.contains("shallow clone"), "{all}");
+}
+
 /// 詳細の `+`: 今見ているファイルの前後を 20 行広げる。`F` でファイル全体を出し、もう一度で戻す
 #[test]
 fn widen_the_context_and_show_the_whole_file() {
@@ -3244,6 +3533,47 @@ fn compare_two_commits_as_two_versions() {
             .lines()
             .any(|l| l.contains("Take the lane from the trunk") && l.contains(" ! "))
     );
+}
+
+/// Range Diff を開いている間は、サイドバーの Workspace に行がある。ほかの画面へ移っても、そこから戻れる
+#[test]
+fn range_diff_row_while_open() {
+    let dir = tempfile::tempdir().unwrap();
+    changed(dir.path());
+    std::fs::write(dir.path().join("notes.txt"), "two\n").unwrap();
+    git(
+        dir.path(),
+        BASE + DAY * 4,
+        &["commit", "-q", "-a", "--amend", "--no-edit"],
+    );
+    let side = |text: &str| -> Vec<String> {
+        text.lines()
+            .skip(1)
+            .filter_map(|l| column(l, 0))
+            .map(|l| l.trim().to_owned())
+            .collect()
+    };
+    let before = amonhen_tui::snapshot(open(dir.path()), 160, 14, clock(), "").unwrap();
+    assert!(
+        !side(&before).contains(&"Range Diff".to_owned()),
+        "{before}"
+    );
+    let shown = amonhen_tui::snapshot(open(dir.path()), 160, 14, clock(), ":compare\n").unwrap();
+    println!("{shown}");
+    assert!(side(&shown).contains(&"Range Diff".to_owned()), "{shown}");
+    // History へ戻り、サイドバーの行から開き直す。
+    let back = amonhen_tui::snapshot(open(dir.path()), 160, 14, clock(), ":compare\n2").unwrap();
+    assert!(side(&back).contains(&"Range Diff".to_owned()), "{back}");
+    let again =
+        amonhen_tui::snapshot(open(dir.path()), 160, 14, clock(), ":compare\n20jj\n").unwrap();
+    println!("{again}");
+    let last = again.lines().last().unwrap();
+    assert!(last.contains("main compared with main@{1}"), "{last}");
+    // ほかのファイルの Blame を開けば、行は消える。
+    let blame =
+        amonhen_tui::snapshot(open(dir.path()), 160, 14, clock(), ":compare\n2\nB").unwrap();
+    println!("{blame}");
+    assert!(!side(&blame).contains(&"Range Diff".to_owned()), "{blame}");
 }
 
 /// range-diff で `c`: 変わらなかった組（`=`）を出さない（アプリの Changes Only）。もう一度で戻る
@@ -3586,13 +3916,13 @@ fn rename_and_delete_branches_and_tags() {
     amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), &keys).unwrap();
     assert_eq!(branches(), "feature\nmain\n");
     // 今のブランチ（main）は消せない。
-    let refused = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjjD").unwrap();
+    let refused = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjD").unwrap();
     println!("{refused}");
     assert!(refused.contains("The current branch can’t be deleted"));
-    // feature（main の 1 つ上）を消す。
-    let asked = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjD").unwrap();
+    // feature（今のブランチ main の下）を消す。
+    let asked = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjjD").unwrap();
     assert!(asked.contains("Delete feature? Undo brings it back.   y delete   n cancel"));
-    amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjDy").unwrap();
+    amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjjDy").unwrap();
     assert_eq!(branches(), "main\n");
     // History で選んでいるコミットにタグ。
     let typing = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "jTv").unwrap();

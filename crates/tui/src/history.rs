@@ -4,11 +4,11 @@
 //! 描き、端が近づいたら次の範囲を頼む。1 コミットは必ず 1 行なので、行と画面の位置は引き算で求まる。
 
 use std::borrow::Cow;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use amonhen_front::Reply;
 use amonhen_layout::{Edge, Node};
-use amonhen_model::Oid;
+use amonhen_model::{Oid, tr};
 use amonhen_projection::terminal::{Graph, palette};
 use ratatui_core::buffer::Buffer;
 use ratatui_core::layout::Rect;
@@ -113,6 +113,10 @@ pub struct History {
     /// HEAD のコミットの行。
     head_row: Option<u32>,
     labels: HashMap<Oid, Vec<Label>>,
+    /// shallow clone の History（最後の行の下に、取り足す帯を出す）。
+    shallow: bool,
+    /// shallow clone の境界のコミット（親を取っていない）の行。
+    boundary: HashSet<u32>,
     /// 署名を検証したコミットの印（アプリの行の署名の印）。読み直しても覚えている。
     signatures: HashMap<Oid, (char, Color)>,
     /// 検証を頼んで、答えを待っているコミット。
@@ -153,6 +157,10 @@ impl History {
         self.id = history["history"].clone();
         self.total = history["rows"].as_u64().unwrap_or(0) as u32;
         self.head_row = history["headRow"].as_u64().map(|r| r as u32);
+        self.shallow = history["shallow"] == true;
+        self.boundary = (history["boundaryRows"].as_array().into_iter().flatten())
+            .filter_map(|r| r.as_u64().map(|r| r as u32))
+            .collect();
         self.window = None;
         // 行の番号が変わるので、検索の結果は捨てる（検索し直すのは呼ぶ側）。
         self.matches.clear();
@@ -408,8 +416,13 @@ impl History {
         self.total.saturating_sub(1)
     }
 
+    /// shallow clone では、最後の行の下に帯の 1 行を足す。
     fn max_top(&self) -> u32 {
-        self.total.saturating_sub(self.height)
+        (self.total + u32::from(self.shallow)).saturating_sub(self.height)
+    }
+
+    pub fn is_shallow(&self) -> bool {
+        self.shallow
     }
 
     fn clamp_top(&mut self) {
@@ -559,6 +572,10 @@ impl History {
         } else if row >= self.top + self.height {
             self.top = row + 1 - self.height;
         }
+        // 最後の行なら、下の帯も見せる。
+        if row == self.last() {
+            self.top = self.max_top();
+        }
         self.clamp_top();
         before != (self.selected, self.top)
     }
@@ -590,6 +607,17 @@ impl History {
             return;
         };
         let rows = self.top..(self.top + u32::from(area.height)).min(self.total);
+        // shallow clone なら、最後の行の下に、ここより古い履歴を取っていないことと、取り足すキー。
+        if self.shallow && rows.end == self.total && rows.end - self.top < u32::from(area.height) {
+            let y = area.y + (rows.end - self.top) as u16;
+            buf.set_stringn(
+                area.x,
+                y,
+                tr!("┄ Older history isn’t fetched (shallow clone)   + fetch more"),
+                usize::from(area.width),
+                Style::new().fg(DIM),
+            );
+        }
         if rows.is_empty() {
             return;
         }
@@ -735,6 +763,11 @@ impl History {
                 .set_stringn(x, y, format!("[{name}]"), usize::from(text_end - x), style)
                 .0
                 + 1;
+        }
+        // shallow clone の境界のコミット（親を取っていない）は、件名の前に点線の印。
+        if self.boundary.contains(&row) && x + 2 < text_end {
+            buf.set_stringn(x, y, "┄", 1, Style::new().fg(DIM));
+            x += 2;
         }
         // 署名の印（検証した結果。アプリの行の印と同じ）。
         if let Some(&(mark, color)) = self.signatures.get(&window.ids[i])

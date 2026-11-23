@@ -73,3 +73,64 @@ final class WhitespacePopUp: NSPopUpButton {
         }
     }
 }
+
+/// 差分の帯の「長い行を折り返す」ボタン（History の右の列と Working Copy）。アイコンだけで、押すたびに切り替える。
+/// 設定はアプリ全体で 1 つ（表示 > 長い行を折り返す、⌥Z と同じ）。オンの間はアイコンをアクセントの色にする。
+final class WrapLinesButton: NSButton {
+    init() {
+        super.init(frame: .zero)
+        bezelStyle = .accessoryBarAction
+        controlSize = .small
+        isBordered = false
+        image = NSImage(systemSymbolName: "arrow.turn.down.left", accessibilityDescription: L("Wrap Long Lines"))
+        imagePosition = .imageOnly
+        target = self
+        action = #selector(toggle)
+        update()
+        NotificationCenter.default.addObserver(self, selector: #selector(update), name: .diffWrapLinesChanged, object: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    @objc private func toggle() { Settings.wrapDiffLines.toggle() }
+
+    @objc private func update() {
+        let on = Settings.wrapDiffLines
+        contentTintColor = on ? .controlAccentColor : nil
+        toolTip = (on ? L("Wrapping long lines (⌥Z)") : L("Wrap Long Lines (⌥Z)")) + "\n"
+            + L("Wrap lines wider than the diff instead of scrolling sideways (in every diff)")
+    }
+}
+
+/// 帯の右端の「表示の設定」（スライダーのアイコンだけのボタン）。押すたびに `fill` で項目を作り直す（今の設定の印を付ける）。
+final class ViewOptionsPopUp: NSPopUpButton, NSMenuDelegate {
+    private let fill: (NSMenu) -> Void
+
+    init(fill: @escaping (NSMenu) -> Void) {
+        self.fill = fill
+        super.init(frame: .zero, pullsDown: true)
+        bezelStyle = .accessoryBarAction
+        controlSize = .small
+        isBordered = false
+        toolTip = L("View Options")
+        menu?.delegate = self
+        menu?.addItem(Self.iconItem())
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+        menu.addItem(Self.iconItem())
+        fill(menu)
+    }
+
+    private static func iconItem() -> NSMenuItem {
+        let first = NSMenuItem()
+        first.image = NSImage(systemSymbolName: "slider.horizontal.3", accessibilityDescription: L("View Options"))
+        first.title = ""
+        return first
+    }
+}
