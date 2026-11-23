@@ -252,6 +252,13 @@ private struct MarkdownBuilder {
             if run.html == true { attributes[.foregroundColor] = NSColor.secondaryLabelColor }
             if run.strike == true { attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
             if let link = run.link { attributes[.link] = link }
+            if run.customEmoji != nil {
+                // GitHub 独自の絵文字は画像を持たないので、名前を薄い札で見せる。
+                attributes[.font] = NSFont.systemFont(ofSize: size - 2)
+                attributes[.foregroundColor] = NSColor.secondaryLabelColor
+                attributes[.backgroundColor] = NSColor.quaternaryLabelColor.withAlphaComponent(0.25)
+                attributes[.toolTip] = L("GitHub’s own emoji, shown by name (its image isn’t included)")
+            }
             var text = run.text
             if let note = run.footnote {
                 text = "[\(note)]"

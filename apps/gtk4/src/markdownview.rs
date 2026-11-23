@@ -517,6 +517,14 @@ impl<'a> Builder<'a> {
             if run.html {
                 tags.push(self.dim());
             }
+            if run.custom_emoji.is_some() {
+                // GitHub 独自の絵文字は画像を持たないので、名前を薄い札で見せる。
+                tags.push(self.tag("custom-emoji", |t| {
+                    t.set_scale(0.85);
+                    t.set_background_rgba(Some(&SHADE));
+                    t.set_foreground_rgba(Some(&gdk::RGBA::new(0.6, 0.6, 0.6, 1.0)));
+                }));
+            }
             let mut text = run.text.clone();
             if let Some(note) = &run.footnote {
                 text = format!("[{note}]");

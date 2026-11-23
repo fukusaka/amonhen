@@ -22,6 +22,8 @@ pub enum Picked {
     Changes,
     History,
     Reflog,
+    /// Range Diff（開いている間だけの行）。
+    RangeDiff,
     /// ref が指すコミット（16 進の ID）。
     Commit(String),
 }
@@ -34,6 +36,15 @@ enum Row {
     Conflicts,
     History,
     Reflog,
+    /// Range Diff を開いている間だけ（アプリと同じ）。
+    RangeDiff,
+    /// Branches の中のまとまり（Inactive・Archived）。Enter で開く・畳む。
+    Group {
+        key: &'static str,
+        title: String,
+        count: usize,
+        open: bool,
+    },
     Ref {
         /// `branch`・`remote`・`tag`・`stash`・`worktree`（名前はその場所）。
         kind: &'static str,
@@ -57,6 +68,8 @@ impl Row {
             Row::Conflicts => Some("view:conflicts".to_owned()),
             Row::History => Some("view:history".to_owned()),
             Row::Reflog => Some("view:reflog".to_owned()),
+            Row::RangeDiff => Some("view:range-diff".to_owned()),
+            Row::Group { key, .. } => Some(format!("group:{key}")),
             Row::Ref { name, .. } => Some(format!("ref:{name}")),
         }
     }
@@ -73,7 +86,26 @@ pub struct Sidebar {
     height: u16,
     /// コンフリクトのあるファイルの数（あれば Workspace に行を出す）。
     conflicts: usize,
+    /// 署名のあるタグの印（名前 → 印と色）。
+    tag_marks: std::collections::HashMap<String, (char, Color)>,
+    /// リモートでのタグの様子の印（名前 → 印と色。⚠ 別のタグがある、∅ どのリモートにもない）。
+    tag_remote_marks: std::collections::HashMap<String, (char, Color)>,
+    /// submodule の印（パス → 印と色）。
+    submodule_marks: std::collections::HashMap<String, (char, Color)>,
+    /// 印をつけた ref（ブランチ・リモートのブランチ・タグの名前。History をそれらだけにする）。
+    marked: Vec<String>,
+    /// Range Diff を開いている（Workspace に行を出す）。
+    range_diff: bool,
+    /// ブランチの分け方（コアの `branchGroups` の info。読めていなければ null）と、そのときの時刻（Inactive を
+    /// 決める）。
+    groups: Value,
+    now: i64,
+    /// 開いている Branches のまとまり（`inactive`・`archived`。初めは畳んでいる）。
+    open_groups: Vec<&'static str>,
 }
+
+/// Inactive とみなす日数（最後のコミットからこれだけ経ったブランチ。アプリと同じ）。
+const STALE_DAYS: i64 = 90;
 
 impl Default for Sidebar {
     fn default() -> Self {
@@ -91,6 +123,14 @@ impl Default for Sidebar {
             top: 0,
             height: 0,
             conflicts: 0,
+            tag_marks: Default::default(),
+            tag_remote_marks: Default::default(),
+            submodule_marks: Default::default(),
+            marked: Vec::new(),
+            range_diff: false,
+            groups: Value::Null,
+            now: 0,
+            open_groups: Vec::new(),
         }
     }
 }
@@ -107,6 +147,247 @@ impl Sidebar {
         let changed = (self.conflicts > 0) != (conflicts > 0);
         self.conflicts = conflicts;
         if changed {
+            self.rebuild();
+        }
+    }
+
+    /// ブランチの分け方（`branchGroups` の info）。`now` は Inactive を決める時刻。
+    pub fn set_branch_groups(&mut self, groups: Value, now: i64) {
+        self.groups = groups;
+        self.now = now;
+        self.rebuild();
+    }
+
+    /// お気に入りのブランチ（上から順）。
+    pub fn favorites(&self) -> Vec<String> {
+        let mut pinned: Vec<(i64, String)> =
+            (self.groups["branches"].as_array().into_iter().flatten())
+                .filter_map(|b| Some((b["pinned"].as_i64()?, b["name"].as_str()?.to_owned())))
+                .collect();
+        pinned.sort();
+        pinned.into_iter().map(|(_, name)| name).collect()
+    }
+
+    /// ブランチ `name` をアーカイブしてある。
+    pub fn is_archived(&self, name: &str) -> bool {
+        (self.groups["branches"].as_array().into_iter().flatten())
+            .any(|b| b["name"] == name && b["archived"] == true)
+    }
+
+    /// 選んでいる行が Branches のまとまりなら、開く・畳む。
+    pub fn toggle_group(&mut self) -> bool {
+        let Some(Row::Group { key, .. }) = self.rows.get(self.selected) else {
+            return false;
+        };
+        let key = *key;
+        match self.open_groups.iter().position(|k| *k == key) {
+            Some(i) => {
+                self.open_groups.remove(i);
+            }
+            None => self.open_groups.push(key),
+        }
+        self.rebuild();
+        true
+    }
+
+    /// ブランチの行を、アプリと同じく並べる（分け方が分かっていれば）: お気に入り（★、決めた順）、今のブランチ
+    /// （その積み重ねの根元ごと）と既定のブランチ、動いているブランチ（新しい順）、Inactive（最後のコミットから
+    /// 90 日以上。ほかの worktree が checkout しているものは入れない）、Archived。ほかのブランチの上に積んだ
+    /// ブランチは、土台の行の下に ↳ で出す。
+    fn arrange_branches(&self, rows: Vec<Row>, head: Option<&str>) -> Vec<Row> {
+        let Some(list) = self.groups["branches"].as_array() else {
+            return rows;
+        };
+        let facts: std::collections::HashMap<&str, &Value> = list
+            .iter()
+            .filter_map(|b| Some((b["name"].as_str()?, b)))
+            .collect();
+        let mut by_name: std::collections::HashMap<String, Row> = rows
+            .into_iter()
+            .filter_map(|r| match &r {
+                Row::Ref { name, .. } => Some((name.clone(), r)),
+                _ => None,
+            })
+            .collect();
+        let archived = |n: &str| facts.get(n).is_some_and(|f| f["archived"] == true);
+        let pinned = |n: &str| facts.get(n).and_then(|f| f["pinned"].as_i64());
+        let time = |n: &str| facts.get(n).and_then(|f| f["time"].as_i64()).unwrap_or(0);
+        let parent = |n: &str| facts.get(n).and_then(|f| f["parent"].as_str());
+        let base = self.groups["base"].as_str().map(|b| {
+            if by_name.contains_key(b) {
+                b.to_owned()
+            } else {
+                b.split_once('/').map_or(b, |(_, n)| n).to_owned()
+            }
+        });
+        // ほかの worktree が checkout しているブランチ（Inactive に畳まない）。
+        let elsewhere: Vec<&str> = (self.refs["worktrees"].as_array().into_iter().flatten())
+            .filter(|w| w["current"] != true)
+            .filter_map(|w| w["branch"].as_str())
+            .collect();
+        // 今のブランチが積んであれば、その根元ごと一番上に。
+        let mut root = head.map(str::to_owned);
+        let mut seen = Vec::new();
+        while let Some(name) = root.clone() {
+            match parent(&name) {
+                Some(p) if !seen.contains(&p) && by_name.contains_key(p) && !archived(p) => {
+                    seen.push(p);
+                    root = Some(p.to_owned());
+                }
+                _ => break,
+            }
+        }
+        let is_top = |n: &str| {
+            (Some(n) == root.as_deref() && pinned(n).is_none()) || Some(n) == base.as_deref()
+        };
+        let names: Vec<String> = by_name.keys().cloned().collect();
+        let mut children: std::collections::HashMap<String, Vec<String>> = Default::default();
+        let mut nested = Vec::new();
+        for n in &names {
+            if is_top(n) || archived(n) || pinned(n).is_some() {
+                continue;
+            }
+            if let Some(p) = parent(n).filter(|p| by_name.contains_key(*p) && !archived(p)) {
+                children.entry(p.to_owned()).or_default().push(n.clone());
+                nested.push(n.clone());
+            }
+        }
+        for list in children.values_mut() {
+            list.sort_by_key(|n| (std::cmp::Reverse(time(n)), n.clone()));
+        }
+        let (mut stars, mut top, mut active, mut inactive, mut archive) =
+            (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        for n in names {
+            if nested.contains(&n) {
+                continue;
+            }
+            if pinned(&n).is_some() {
+                stars.push(n);
+            } else if is_top(&n) {
+                top.push(n);
+            } else if archived(&n) {
+                archive.push(n);
+            } else if !elsewhere.contains(&n.as_str()) && self.now - time(&n) > STALE_DAYS * 86_400
+            {
+                inactive.push(n);
+            } else {
+                active.push(n);
+            }
+        }
+        stars.sort_by_key(|n| (pinned(n).unwrap_or(0), n.clone()));
+        top.sort_by_key(|n| (Some(n.as_str()) != root.as_deref(), n.clone()));
+        // 同じ時刻なら名前の順。
+        active.sort_by_key(|n| (std::cmp::Reverse(time(n)), n.clone()));
+        inactive.sort_by_key(|n| (std::cmp::Reverse(time(n)), n.clone()));
+        archive.sort();
+        // 行に印（★ ↳）と字下げを付けて、積んだブランチを下に続ける。
+        // 既定のブランチに取り込み済みのもの（今のブランチと既定のブランチのほか。アプリの印）。
+        let merged: Vec<&str> = facts
+            .iter()
+            .filter(|(n, f)| {
+                f["merged"] == true && Some(**n) != head && Some(**n) != base.as_deref()
+            })
+            .map(|(n, _)| *n)
+            .collect();
+        fn emit(
+            out: &mut Vec<Row>,
+            by_name: &mut std::collections::HashMap<String, Row>,
+            children: &std::collections::HashMap<String, Vec<String>>,
+            merged: &[&str],
+            name: &str,
+            prefix: String,
+            depth: usize,
+        ) {
+            let Some(mut row) = by_name.remove(name) else {
+                return;
+            };
+            if let Row::Ref { label, .. } = &mut row {
+                *label = format!("{prefix}{label}");
+                if merged.contains(&name) {
+                    label.push_str(&tr!(" · merged"));
+                }
+            }
+            out.push(row);
+            if depth > 32 {
+                return;
+            }
+            for child in children.get(name).into_iter().flatten() {
+                let indent = "  ".repeat(depth);
+                emit(
+                    out,
+                    by_name,
+                    children,
+                    merged,
+                    child,
+                    format!("{indent}↳ "),
+                    depth + 1,
+                );
+            }
+        }
+        let mut out = Vec::new();
+        for n in &stars {
+            emit(
+                &mut out,
+                &mut by_name,
+                &children,
+                &merged,
+                n,
+                "★ ".to_owned(),
+                1,
+            );
+        }
+        for n in top.iter().chain(&active) {
+            emit(
+                &mut out,
+                &mut by_name,
+                &children,
+                &merged,
+                n,
+                String::new(),
+                0,
+            );
+        }
+        for (key, title, list) in [
+            ("inactive", tr!("Inactive"), &inactive),
+            ("archived", tr!("Archived"), &archive),
+        ] {
+            if list.is_empty() {
+                continue;
+            }
+            let open = self.open_groups.contains(&key);
+            out.push(Row::Group {
+                key,
+                title,
+                count: list.len(),
+                open,
+            });
+            for n in list {
+                if open {
+                    emit(
+                        &mut out,
+                        &mut by_name,
+                        &children,
+                        &merged,
+                        n,
+                        "  ".to_owned(),
+                        1,
+                    );
+                } else {
+                    by_name.remove(n.as_str());
+                }
+            }
+        }
+        // 分け方に載っていないもの（読んだ後に作ったもの）は、最後に。
+        let mut rest: Vec<Row> = by_name.into_values().collect();
+        rest.sort_by_key(|a| a.key());
+        out.extend(rest);
+        out
+    }
+
+    /// Range Diff を開いているか。変わったら、行を作り直す。
+    pub fn set_range_diff(&mut self, open: bool) {
+        if self.range_diff != open {
+            self.range_diff = open;
             self.rebuild();
         }
     }
@@ -130,11 +411,15 @@ impl Sidebar {
             rows.push(Row::Conflicts);
         }
         rows.extend([Row::History, Row::Reflog]);
+        if self.range_diff {
+            rows.push(Row::RangeDiff);
+        }
         for (kind, title) in [
             ("branch", tr!("Branches")),
             ("remote", tr!("Remotes")),
             ("tag", tr!("Tags")),
             ("stash", tr!("Stashes")),
+            ("submodule", tr!("Submodules")),
         ] {
             let mut of_kind = refs["entries"]
                 .as_array()
@@ -163,7 +448,10 @@ impl Sidebar {
                 })
                 .peekable();
             if of_kind.peek().is_some() {
-                let rows_of_kind: Vec<Row> = of_kind.collect();
+                let mut rows_of_kind: Vec<Row> = of_kind.collect();
+                if kind == "branch" {
+                    rows_of_kind = self.arrange_branches(rows_of_kind, head);
+                }
                 // stash は数も（アプリの Stashes の行と同じ）。
                 let count = match kind {
                     "stash" => rows_of_kind.len(),
@@ -230,11 +518,18 @@ impl Sidebar {
         {
             return;
         }
-        self.selected = match picked {
-            Picked::Changes => 1,
-            Picked::Reflog => 3,
-            _ => 2,
+        // 行の位置は、コンフリクトの行があるかで変わるので、名前で引く。
+        let key = match picked {
+            Picked::Changes => "view:changes",
+            Picked::Reflog => "view:reflog",
+            Picked::RangeDiff => "view:range-diff",
+            _ => "view:history",
         };
+        self.selected = self
+            .rows
+            .iter()
+            .position(|r| r.key().as_deref() == Some(key))
+            .unwrap_or(2);
         self.clamp_top();
     }
 
@@ -312,15 +607,107 @@ impl Sidebar {
     /// 選んでいる行が指すもの。
     pub fn picked(&self) -> Option<Picked> {
         match self.rows.get(self.selected)? {
-            Row::Header(..) => None,
+            Row::Header(..) | Row::Group { .. } => None,
             Row::Changes | Row::Conflicts => Some(Picked::Changes),
             Row::History => Some(Picked::History),
             Row::Reflog => Some(Picked::Reflog),
+            Row::RangeDiff => Some(Picked::RangeDiff),
             Row::Ref { target, .. } => Some(Picked::Commit(target.clone())),
         }
     }
 
     /// 選んでいる ref の種類（`branch`・`remote`・`tag`）・名前・指すコミット。
+    /// タグの名前（並びの順）。
+    pub fn tag_names(&self) -> Vec<String> {
+        (self.refs["entries"].as_array().into_iter().flatten())
+            .filter(|e| e["kind"] == "tag")
+            .filter_map(|e| e["name"].as_str().map(str::to_owned))
+            .collect()
+    }
+
+    /// 選んでいる ref（ブランチ・リモートのブランチ・タグ）の印をつけ・外す。ref でなければ false。
+    pub fn toggle_mark(&mut self) -> bool {
+        let Some(("branch" | "remote" | "tag", name, _)) = self.picked_ref() else {
+            return false;
+        };
+        let name = name.to_owned();
+        match self.marked.iter().position(|m| *m == name) {
+            Some(i) => {
+                self.marked.remove(i);
+            }
+            None => self.marked.push(name),
+        }
+        true
+    }
+
+    pub fn has_marks(&self) -> bool {
+        !self.marked.is_empty()
+    }
+
+    pub fn clear_marks(&mut self) {
+        self.marked.clear();
+    }
+
+    /// 印をつけた ref の名前（つけた順）。
+    pub fn marked_names(&self) -> Vec<String> {
+        self.marked.clone()
+    }
+
+    /// 印をつけた ref が今指すコミット（なくなった ref は除く）。
+    pub fn marked_targets(&self) -> Vec<String> {
+        let entries = self.refs["entries"].as_array();
+        self.marked
+            .iter()
+            .filter_map(|name| {
+                entries?.iter().find(|e| {
+                    e["name"] == name.as_str()
+                        && matches!(e["kind"].as_str(), Some("branch" | "remote" | "tag"))
+                })?["target"]
+                    .as_str()
+                    .map(str::to_owned)
+            })
+            .collect()
+    }
+
+    /// submodule の様子の印（パス → 印と色）。
+    pub fn set_submodule_marks(&mut self, marks: std::collections::HashMap<String, (char, Color)>) {
+        self.submodule_marks = marks;
+    }
+
+    /// submodule のパス。
+    pub fn submodule_paths(&self) -> Vec<String> {
+        (self.refs["entries"].as_array().into_iter().flatten())
+            .filter(|e| e["kind"] == "submodule")
+            .filter_map(|e| e["name"].as_str().map(str::to_owned))
+            .collect()
+    }
+
+    /// 署名のあるタグの印。
+    pub fn set_tag_marks(&mut self, marks: std::collections::HashMap<String, (char, Color)>) {
+        self.tag_marks = marks;
+    }
+
+    pub fn set_tag_remote_marks(
+        &mut self,
+        marks: std::collections::HashMap<String, (char, Color)>,
+    ) {
+        self.tag_remote_marks = marks;
+    }
+
+    /// ローカルとリモートのブランチ（名前と、リモートのものか）。
+    pub fn branches(&self) -> Vec<(String, bool)> {
+        (self.refs["entries"].as_array().into_iter().flatten())
+            .filter_map(|e| {
+                let remote = match e["kind"].as_str()? {
+                    "branch" => false,
+                    "remote" => true,
+                    _ => return None,
+                };
+                Some((e["name"].as_str()?.to_owned(), remote))
+            })
+            .collect()
+    }
+
     /// `kind` の ref `name` の添え書き（stash ならメッセージ）。
     pub fn detail_of(&self, kind: &str, name: &str) -> Option<String> {
         self.refs["entries"]
@@ -434,6 +821,50 @@ impl Sidebar {
                 Row::Reflog => {
                     buf.set_stringn(area.x + 2, y, tr!("Reflog"), width - 2, Style::new());
                 }
+                Row::RangeDiff => {
+                    buf.set_stringn(area.x + 2, y, tr!("Range Diff"), width - 2, Style::new());
+                }
+                Row::Group {
+                    title, count, open, ..
+                } => {
+                    let mark = if *open { '▾' } else { '▸' };
+                    buf.set_stringn(
+                        area.x + 2,
+                        y,
+                        format!("{mark} {title}"),
+                        width - 2,
+                        Style::new().fg(DIM),
+                    );
+                    right(area, y, buf, &count.to_string(), Style::new().fg(DIM));
+                }
+                Row::Ref {
+                    kind: kind @ ("tag" | "submodule"),
+                    label: name,
+                    ..
+                } if (self.tag_marks.contains_key(name)
+                    || self.tag_remote_marks.contains_key(name))
+                    && *kind == "tag"
+                    || self.submodule_marks.contains_key(name) && *kind == "submodule" =>
+                {
+                    // 右端から: 署名の印、その左にリモートでの様子の印（タグ）。
+                    let marks: Vec<(char, Color)> = match *kind {
+                        "tag" => [self.tag_remote_marks.get(name), self.tag_marks.get(name)]
+                            .into_iter()
+                            .flatten()
+                            .copied()
+                            .collect(),
+                        _ => vec![self.submodule_marks[name]],
+                    };
+                    let room = width.saturating_sub(2 + marks.len() * 2);
+                    buf.set_stringn(area.x + 2, y, fit(name, room), room, Style::new());
+                    let mut x = area.right().saturating_sub(marks.len() as u16 * 2);
+                    for (mark, color) in marks {
+                        if x >= area.x + 2 {
+                            buf[(x, y)].set_char(mark).set_fg(color);
+                        }
+                        x += 2;
+                    }
+                }
                 Row::Ref {
                     label: name,
                     current,
@@ -461,6 +892,16 @@ impl Sidebar {
                         right(area, y, buf, &counts, Style::new().fg(DIM));
                     }
                 }
+            }
+            // 印をつけた ref（History の印をつけた行と同じ地の色）。
+            if let Row::Ref { name, kind, .. } = row
+                && matches!(*kind, "branch" | "remote" | "tag")
+                && self.marked.iter().any(|m| m == name)
+            {
+                buf.set_style(
+                    Rect::new(area.x, y, area.width, 1),
+                    Style::new().bg(Color::Indexed(24)),
+                );
             }
             if index == self.selected {
                 buf.set_style(

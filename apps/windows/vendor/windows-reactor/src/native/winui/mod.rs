@@ -350,9 +350,16 @@ fn update_menu_items(
     for (i, item) in items.iter().enumerate() {
         let native = output.GetAt(i as u32).map_err(native_error)?;
         match item {
-            MenuItem::Item { label, enabled, .. } => {
+            MenuItem::Item {
+                label,
+                enabled,
+                tooltip,
+                ..
+            } => {
                 let native = native.cast::<MenuFlyoutItem>().map_err(native_error)?;
                 native.SetText(label).map_err(native_error)?;
+                set_tooltip_text(&native.cast().map_err(native_error)?, tooltip.as_deref())
+                    .map_err(native_error)?;
                 native
                     .cast::<IControl>()
                     .and_then(|control| control.SetIsEnabled(*enabled))
@@ -488,8 +495,13 @@ fn build_menu_items(
                 label,
                 enabled,
                 shortcut,
+                tooltip,
             } => {
                 let item = MenuFlyoutItem::new().map_err(native_error)?;
+                if let Some(tooltip) = tooltip {
+                    set_tooltip_text(&item.cast().map_err(native_error)?, Some(tooltip))
+                        .map_err(native_error)?;
+                }
                 if let Some(shortcut) = shortcut {
                     let accelerator = KeyboardAccelerator::new().map_err(native_error)?;
                     accelerator

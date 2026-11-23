@@ -63,7 +63,7 @@ History と差分は番号（`history`・`diff`）で持つ。FE がスクロー
 | `historyOrder` | order（`date` か、枝のコミットを merge の下にまとめる `topo`。これから読む History すべてに効き、今の History は git を読み直さずに並べ直す） | order | |
 | `refs` | | headBranch・head・entries（kind・name・target・detail・ahead・behind・gone） | |
 | `status` | | generation・branch・upstream・ahead・behind・entries（kind・path・origPath・index・worktree・staged・unstaged・submodule。内容のコンフリクト（UU・AA）には、作業ツリーのファイルに残っているマーカーの数 markers と、git の rerere が前の解決を当てたか rerere も） | |
-| `commitDiff` | id か stash（ID）、または history・rows・pair?（forward・reverse・mergeBase）。whitespace?（exact・at-eol・change・all。行を比べるときに無視する空白で、`git diff --ignore-space-at-eol`・`-b`・`-w` と同じ） | files（path・oldPath・kind・added・removed・binary）・changes・selection・rows・view（`diffSyntax` 用） | 差分の行（下） |
+| `commitDiff` | id か stash（ID）、または history・rows・pair?（forward・reverse・mergeBase）。whitespace?（exact・at-eol・change・all。行を比べるときに無視する空白で、`git diff --ignore-space-at-eol`・`-b`・`-w` と同じ）。contexts?（ファイルの番号の文字列 → 前後の行数か、ファイル全体なら "all"。ほかのファイルは 3 行） | files（path・oldPath・kind・added・removed・binary）・changes・selection・rows・view（`diffSyntax` 用） | 差分の行（下） |
 | `workingDiff` | path・mode（unstaged・staged・combined）・whitespace?（`commitDiff` と同じ。combined とは使えず、空白を無視した差分は `stageRows`・`discardRows` に使えない） | diff・path・mode・binary・added・removed・rows・lineEndings（下） | 差分の行 |
 | `conflict` | path | path・rows | 差分の行 |
 | `diffSyntax` | diff（`workingDiff` の）か view（`commitDiff` の） | spans | spans（row・start・end・kind の u32 × 4。差分の行、その行の文字列での位置（highlights と同じ）、キーワード 1・文字列 2・コメント 3・数 4 ほか `SyntaxSpan` の種類）。時間がかかることがあるので、差分を出してから頼む |

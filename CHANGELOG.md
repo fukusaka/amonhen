@@ -25,13 +25,18 @@ becomes the GitHub Release notes.
   of it, as `git diff --ignore-space-at-eol`, `-b` and `-w` do), and so can `amonhen diff` and `show` with the same
   flags. Lines aren't staged or discarded while whitespace is ignored.
 - All Files previews more than source: images zoom and any format the system reads counts as one, SVGs show
-  what breaks on Android, iOS, Flutter and React Native (Android Studio's and flutter_svg's own conversion, built in;
-  an approximation for the others), Markdown shows formatted by the app (GitHub tables, task lists, alerts, links,
-  Mermaid diagrams (every kind pele draws) coloured from the syntax theme, pele, a Mermaid theme, an imported one or the diagram's own, gantt in the system or a chosen time zone; nothing fetched), and other binaries open in
-  Quick Look.
+  what breaks on Android, iOS, Flutter and React Native (Android Studio's and flutter_svg's own conversions built
+  in, approximations for the others), Markdown is laid out by the app with GitHub's extensions and Mermaid diagrams
+  (a port of pele, coloured to the theme; nothing fetched), and other binaries open in Quick Look.
+- Diffs, file contents and the merge editor in the macOS and GTK4 apps can wrap long lines instead of scrolling
+  sideways: the wrap button beside the whitespace button in History and Working Copy, the view options (also new
+  at the right of the merge editor's bar), or View > Wrap Long Lines (Option-Z / Alt+Z).
 
 #### Changed
 
+- History keeps the commit details' height where its divider was dragged (View Options > Fit Details to the Message
+  fits it to each message again), links `#123` and commit IDs in trailers, and notes that a merge's changes are
+  against its first parent.
 - History's right column is rebuilt in the macOS and GTK4 apps: the details stay on top and the changed files are
   the diff's own file headers, folded at first, as a list or a tree, with one bar for Changes / All Files, totals and
   expanding. Hunk headers name the enclosing function as `git diff` does and renames read `src/{old.rs → new.rs}`.

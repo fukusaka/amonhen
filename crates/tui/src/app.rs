@@ -20,7 +20,7 @@ use crate::Clock;
 use crate::Result;
 use crate::changes::Changes;
 use crate::commands::{self, Place};
-use crate::details::{Details, Pair, Want};
+use crate::details::{Details, Pair, Want, Whitespace};
 use crate::diff::{PAN, Theme};
 use crate::fileview::FileView;
 use crate::history::{History, Marked, WHEEL_ROWS};
@@ -165,6 +165,10 @@ enum Naming {
     RemoteEditUrl,
     /// 選んでいるコミットを書き出すアーカイブのファイル（この機械の）。
     Archive,
+    /// shallow clone を、この日付より新しいコミットまで取り足す（`git fetch --shallow-since`）。
+    DeepenSince,
+    /// sparse checkout で取り出すフォルダ（空白で区切る。空ならすべて取り出す）。
+    SparseFolders,
     /// リポジトリをまとめる bundle のファイル（この機械の）。
     Bundle,
     /// 取り込む bundle のファイル（この機械の）。
@@ -214,6 +218,59 @@ impl Candidate {
 
 /// Quick Open: アプリと同じ候補（ブックマーク、最近開いたもの、探すフォルダの下で見つけたもの）を打った語で絞り、
 /// 選んだリポジトリで TUI を開き直す。
+/// ブランチの切り替え（アプリの Switch Branch…）: 打った語で絞り、最近切り替えたものを先に。合うものがなければ、
+/// その名前で新しいブランチを作る。
+struct BranchPick {
+    query: String,
+    selected: usize,
+    /// ブランチ（名前と、リモートのものか）。今のブランチは入れない。
+    items: Vec<(String, bool)>,
+    /// 最近切り替えたブランチ（新しい順。HEAD の reflog の「checkout: moving from A to B」から）。
+    recent: Vec<String>,
+}
+
+/// 切り替えの候補の 1 つ。
+enum BranchChoice<'a> {
+    Branch(&'a str, bool),
+    New(&'a str),
+}
+
+impl BranchPick {
+    fn shown(&self) -> Vec<BranchChoice<'_>> {
+        let words: Vec<String> = self
+            .query
+            .split_whitespace()
+            .map(str::to_lowercase)
+            .collect();
+        let mut shown: Vec<(&String, bool)> = self
+            .items
+            .iter()
+            .filter(|(name, _)| {
+                let name = name.to_lowercase();
+                words.iter().all(|w| name.contains(w.as_str()))
+            })
+            .map(|(name, remote)| (name, *remote))
+            .collect();
+        // 最近のもの（新しい順）、ほかのローカルのブランチ、リモートのブランチ。
+        let rank = |name: &str, remote: bool| -> (usize, usize) {
+            match self.recent.iter().position(|r| r == name) {
+                Some(i) if !remote => (0, i),
+                _ => (if remote { 2 } else { 1 }, 0),
+            }
+        };
+        shown.sort_by(|a, b| rank(a.0, a.1).cmp(&rank(b.0, b.1)).then(a.0.cmp(b.0)));
+        let mut choices: Vec<BranchChoice<'_>> = shown
+            .into_iter()
+            .map(|(n, r)| BranchChoice::Branch(n, r))
+            .collect();
+        let name = self.query.trim();
+        if !name.is_empty() && !self.items.iter().any(|(n, r)| !r && n == name) {
+            choices.push(BranchChoice::New(name));
+        }
+        choices
+    }
+}
+
 struct QuickOpen {
     query: String,
     selected: usize,
@@ -436,6 +493,8 @@ pub struct App {
     confirm: Option<(String, String, Request)>,
     /// push を確かめている: `t` で、送り先のブランチを打てる。
     push_to_offered: bool,
+    /// shallow clone を取り足す前の `d`: 日付を打つ（選ぶ前に横取りする）。
+    deepen_date_offered: bool,
     /// push の確かめで見せている送り先（`<remote>/<branch>`。置き換える push の絵の見出し）。
     pushing_to: String,
     /// チェックアウトしていないブランチの fast-forward の見通しを読んでいる間: ブランチ、上流、進む数。
@@ -470,6 +529,8 @@ pub struct App {
     /// Quick Open で選んだリポジトリの場所（TUI を閉じて、そこで開き直す）。
     open_location: Option<String>,
     quick_open: Option<QuickOpen>,
+    /// ブランチの切り替え（`Ctrl-b`）。
+    branch_pick: Option<BranchPick>,
     fixup_pick: Option<MessagePick>,
     /// 書きかけのメッセージとして最後に読んだか書いたもの（読み終えるまでは None で、書かない）。
     draft_saved: Option<String>,
@@ -506,6 +567,8 @@ pub struct App {
     archive_folder: Option<(String, String)>,
     /// bundle に何を入れるかを選んでいる間の、書くファイル（`a` で基点を聞く）。
     bundle_save: Option<String>,
+    /// 署名を読んだタグの名前（変わったら読み直す）。
+    tag_signature_names: Vec<String>,
     /// ロックするかを聞いている worktree（`r` で理由を聞く）。
     worktree_lock: Option<String>,
     /// 詳細に出した stash（土台を読んだら、一番下の行に様子を書く）。
@@ -523,6 +586,14 @@ pub struct App {
     upstream: Option<String>,
     ahead: u64,
     behind: u64,
+    /// shallow clone・partial clone の印（一番上の行のブランチの後ろ。アプリの History の上の印）。
+    form_marks: Vec<String>,
+    /// リポジトリの形（`repositoryForm` の info。読めていなければ null）。
+    form: Value,
+    /// タグのリモートでの様子（`tagRemotes` の info。読めていなければ null）。
+    tag_remotes: Value,
+    /// 送った、お気に入り・アーカイブの設定の書き込みのうち、まだ答えのないもの（すべて済んだら読み直す）。
+    branch_config_pending: usize,
     /// 途中の操作（merge・rebase・cherry-pick・revert）: 種類と、何番目・全部でいくつ（rebase）。
     sequence: Option<(String, Option<(u64, u64)>)>,
     /// 止まっている `git am` のパッチを、3-way merge で当て直せる（まだ 3-way で当てていない）。
@@ -654,6 +725,7 @@ impl App {
             patch_version: None,
             archive_folder: None,
             bundle_save: None,
+            tag_signature_names: Vec::new(),
             worktree_lock: None,
             stash_about: None,
             naming: Naming::Branch,
@@ -665,6 +737,10 @@ impl App {
             upstream: None,
             ahead: 0,
             behind: 0,
+            form_marks: Vec::new(),
+            form: Value::Null,
+            branch_config_pending: 0,
+            tag_remotes: Value::Null,
             sequence: None,
             stash: None,
             retry_three_way: false,
@@ -695,6 +771,7 @@ impl App {
             path_choices: String::new(),
             pick_question: None,
             push_to_offered: false,
+            deepen_date_offered: false,
             pushing_to: String::new(),
             fast_forward: None,
             bundle_file: None,
@@ -711,6 +788,7 @@ impl App {
             open_worktree: None,
             open_location: None,
             quick_open: None,
+            branch_pick: None,
             fixup_pick: None,
             draft_saved: None,
             recent_messages: None,
@@ -792,6 +870,7 @@ impl App {
             fold: self.fold,
             expanded: self.expanded.clone(),
             rebuild: self.rebuilding,
+            tips: self.sidebar.marked_targets(),
         });
     }
 
@@ -847,6 +926,27 @@ impl App {
             None => tr!("“{query}” isn’t in the details", query = query),
         });
         self.damage |= Damage::SIDE;
+        self.dirty = true;
+    }
+
+    /// ブランチの切り替えを開く。最近切り替えたものは、HEAD の reflog を読んでから並べ直す。
+    fn open_branch_pick(&mut self) {
+        let items = self
+            .sidebar
+            .branches()
+            .into_iter()
+            .filter(|(name, remote)| *remote || Some(name.as_str()) != self.branch.as_deref())
+            .collect();
+        self.branch_pick = Some(BranchPick {
+            query: String::new(),
+            selected: 0,
+            items,
+            recent: Vec::new(),
+        });
+        self.send(Request::Run {
+            name: "recentBranches",
+            command: json!({"op": "reflog", "name": null, "limit": 200}),
+        });
         self.dirty = true;
     }
 
@@ -927,6 +1027,8 @@ impl App {
         let damage = std::mem::take(&mut self.damage);
         let over = self.help
             || self.quick_open.is_some()
+            || self.branch_pick.is_some()
+            || self.showing_hooks.is_some()
             || self.fixup_pick.is_some()
             || self.palette.is_some()
             || self.operation_log.is_some()
@@ -1240,6 +1342,39 @@ impl App {
                         let selected = self.history.selected_id();
                         self.history.opened(&refs, &history);
                         self.sidebar.set_refs(&refs);
+                        // タグの署名の印（アプリのタグの行の印）。タグが変わったときだけ読む（検証の結果はコアが覚える）。
+                        // ブランチの分け方（お気に入り・積んだもの・Inactive・Archived）。
+                        self.send(Request::Run {
+                            name: "branchGroups",
+                            command: json!({"op": "branchGroups"}),
+                        });
+                        // リポジトリの形（shallow・partial clone、sparse checkout）の印。
+                        self.send(Request::Run {
+                            name: "repositoryForm",
+                            command: json!({"op": "repositoryForm"}),
+                        });
+                        // submodule の様子の印（取り出していない・別のコミット・中に変更・コンフリクト）。
+                        if !self.sidebar.submodule_paths().is_empty() {
+                            self.send(Request::Run {
+                                name: "submoduleMarks",
+                                command: json!({"op": "submodules"}),
+                            });
+                        }
+                        let tags = self.sidebar.tag_names();
+                        // タグのリモートでの様子（fetch のときに読んで覚えたもの）。
+                        if !tags.is_empty() {
+                            self.send(Request::Run {
+                                name: "tagRemoteMarks",
+                                command: json!({"op": "tagRemotes"}),
+                            });
+                        }
+                        if !tags.is_empty() && tags != self.tag_signature_names {
+                            self.tag_signature_names = tags.clone();
+                            self.send(Request::Run {
+                                name: "tagSignatures",
+                                command: json!({"op": "tagSignatures", "names": tags}),
+                            });
+                        }
                         self.remotes = refs["remotes"]
                             .as_array()
                             .into_iter()
@@ -1281,7 +1416,10 @@ impl App {
                             self.open();
                         }
                     }
-                    Loaded::Rows { start, reply } => self.history.loaded(start, &reply),
+                    Loaded::Rows { start, reply } => {
+                        self.history.loaded(start, &reply);
+                        self.verify_signatures();
+                    }
                     Loaded::Search { query, result } => {
                         // 取り消した検索（語を替えた・やめた）の答えは捨てる。
                         if let Some((current, running)) = &mut self.search
@@ -1538,6 +1676,11 @@ impl App {
             self.dirty = true;
             return;
         }
+        // アプリの Switch Branch…: 打った語で絞って切り替える（最近のものを先に）。
+        if control && key.code == KeyCode::Char('b') {
+            self.open_branch_pick();
+            return;
+        }
         // アプリの Refresh: Working Copy・ref・History を読み直す（ふだんは変わったら読み直している）。
         if control && key.code == KeyCode::Char('r') {
             self.refresh();
@@ -1564,6 +1707,17 @@ impl App {
             self.patch_version = Some(pending);
             self.naming = Naming::PatchVersion;
             self.typing_branch = Some((String::new(), String::new(), "2".to_owned()));
+            self.dirty = true;
+            return;
+        }
+        // shallow clone を取り足す前の `d`: 日付を打つ。
+        if self.choices.is_some()
+            && std::mem::take(&mut self.deepen_date_offered)
+            && key.code == KeyCode::Char('d')
+        {
+            self.choices = None;
+            self.naming = Naming::DeepenSince;
+            self.typing_branch = Some((String::new(), String::new(), String::new()));
             self.dirty = true;
             return;
         }
@@ -1746,6 +1900,59 @@ impl App {
             self.fixup_pick = Some(pick);
             return;
         }
+        if let Some(mut pick) = self.branch_pick.take() {
+            self.dirty = true;
+            match key.code {
+                KeyCode::Esc => return,
+                KeyCode::Enter => {
+                    match pick.shown().get(pick.selected) {
+                        Some(BranchChoice::Branch(name, false)) => {
+                            let name = name.to_string();
+                            self.run(
+                                "checkout",
+                                tr!("Checking out {name}…", name = name),
+                                json!({"op": "checkout", "branch": name}),
+                            );
+                        }
+                        Some(BranchChoice::Branch(name, true)) => {
+                            let name = name.to_string();
+                            self.run(
+                                "checkout",
+                                tr!("Checking out {name}…", name = name),
+                                json!({"op": "track", "remoteBranch": name}),
+                            );
+                        }
+                        Some(BranchChoice::New(name)) => {
+                            let name = name.to_string();
+                            self.run(
+                                "createBranch",
+                                tr!("Creating {name}…", name = name),
+                                json!({"op": "createBranch", "name": name, "start": "HEAD",
+                                    "checkout": true}),
+                            );
+                        }
+                        None => {}
+                    }
+                    return;
+                }
+                KeyCode::Down => pick.selected += 1,
+                KeyCode::Char('n') if control => pick.selected += 1,
+                KeyCode::Up => pick.selected = pick.selected.saturating_sub(1),
+                KeyCode::Char('p') if control => pick.selected = pick.selected.saturating_sub(1),
+                KeyCode::Backspace => {
+                    pick.query.pop();
+                    pick.selected = 0;
+                }
+                KeyCode::Char(ch) if !control => {
+                    pick.query.push(ch);
+                    pick.selected = 0;
+                }
+                _ => {}
+            }
+            pick.selected = pick.selected.min(pick.shown().len().saturating_sub(1));
+            self.branch_pick = Some(pick);
+            return;
+        }
         if let Some(mut quick) = self.quick_open.take() {
             self.dirty = true;
             match key.code {
@@ -1842,6 +2049,12 @@ impl App {
             // 候補は、次に補うまで。
             self.path_choices.clear();
             match key.code {
+                // 取り出すフォルダ: 空ならすべて（sparse checkout をやめる）。
+                KeyCode::Enter if matches!(self.naming, Naming::SparseFolders) => {
+                    if let Some((_, _, typed)) = self.typing_branch.take() {
+                        self.ask_sparse_folders(&typed);
+                    }
+                }
                 KeyCode::Enter if matches!(self.naming, Naming::Stash) => {
                     if let Some((_, _, message)) = self.typing_branch.take() {
                         self.ask_stash(message.trim());
@@ -1853,7 +2066,7 @@ impl App {
                     {
                         let name = name.trim();
                         let (op, label, command) = match self.naming {
-                            Naming::Stash => return,
+                            Naming::Stash | Naming::SparseFolders => return,
                             Naming::PushTo => {
                                 self.push_to(&start, name);
                                 return;
@@ -1940,6 +2153,13 @@ impl App {
                                 if let Some((rev, file)) = self.archive_folder.take() {
                                     self.export_archive(&rev, &file, Some(name));
                                 }
+                                return;
+                            }
+                            Naming::DeepenSince => {
+                                self.send(Request::Run {
+                                    name: "deepen",
+                                    command: json!({"op": "deepen", "since": name.trim()}),
+                                });
                                 return;
                             }
                             Naming::PatchVersion => {
@@ -2066,6 +2286,15 @@ impl App {
                 KeyCode::Tab if matches!(self.naming, Naming::OpenFile) => {
                     let typed = name.clone();
                     self.complete_path(&typed);
+                }
+                // 取り出すフォルダは、最後の語を HEAD の木のフォルダから補う。
+                KeyCode::Tab if matches!(self.naming, Naming::SparseFolders) => {
+                    let last = name.rsplit(' ').next().unwrap_or("");
+                    let folder = last.rsplit_once('/').map_or("", |(dir, _)| dir).to_owned();
+                    self.send(Request::Call {
+                        name: "completePath",
+                        request: json!({"op": "run", "command": {"op": "treeFolders", "path": folder, "rev": "HEAD"}}),
+                    });
                 }
                 KeyCode::Backspace => {
                     name.pop();
@@ -2527,7 +2756,25 @@ impl App {
         self.pinned = None;
         self.view = view;
         self.focus = Focus::Main;
-        self.sidebar.show_view(view.picked());
+        self.sidebar.show_view(self.picked_view());
+    }
+
+    /// サイドバーで選ぶ、今の画面の行（Range Diff を出しているなら、その行）。
+    fn picked_view(&self) -> Picked {
+        match self.view {
+            View::File if self.file.is_range_diff() => Picked::RangeDiff,
+            view => view.picked(),
+        }
+    }
+
+    /// `ranges`（git range-diff の範囲）を Range Diff で比べる。答えは Compare with Previous Version と同じ画面に。
+    fn compare_ranges(&mut self, title: String, ranges: Vec<String>) {
+        self.range_title = Some(title);
+        self.run(
+            "rangeDiff",
+            tr!("Comparing…"),
+            json!({"op": "rangeDiff", "ranges": ranges, "creationFactor": null}),
+        );
     }
 
     /// コアの命令を動かす。1 つずつ（動いている間は、次を受けない）。
@@ -2560,7 +2807,326 @@ impl App {
     }
 
     /// 命令が済んだ。だめなら理由を出し、どちらでも状態・ref・History を読み直す。
+    /// タグ `name` のリモートごとの様子（いつ読んだかも）。push・置き換えは `t` で。
+    fn tag_remote_text(&self, name: &str) -> String {
+        let info = &self.tag_remotes;
+        let remotes: Vec<String> = (info["remotes"].as_array().into_iter().flatten())
+            .filter_map(|r| {
+                let remote = r["name"].as_str()?;
+                let state = match info["tags"][name][remote].as_str() {
+                    Some("same") => tr!("has it"),
+                    Some("different") => tr!("has a different tag with this name (t replaces it)"),
+                    Some(_) => tr!("doesn’t have it (t pushes it)"),
+                    None => tr!("not checked yet (Fetch reads it)"),
+                };
+                let when = r["checked"]
+                    .as_i64()
+                    .map(|ms| {
+                        format!(
+                            " · {}",
+                            tr!(
+                                "read {time}",
+                                time = crate::history::ago(self.clock.now, ms / 1000)
+                            )
+                        )
+                    })
+                    .unwrap_or_default();
+                Some(format!("{remote}: {state}{when}"))
+            })
+            .collect();
+        match remotes.is_empty() {
+            true => tr!("{name}: no remotes", name = name),
+            false => format!("{name} — {}", remotes.join("; ")),
+        }
+    }
+
+    /// サイドバーで選んでいるローカルブランチの名前。
+    fn picked_branch(&self) -> Option<String> {
+        self.sidebar
+            .picked_ref()
+            .filter(|r| r.0 == "branch")
+            .map(|r| r.1.to_owned())
+    }
+
+    /// ブランチのお気に入り・アーカイブ・お気に入りの順を変える（git の設定 `branch.<name>.amonhenPinned`・
+    /// `amonhenArchived` に書く。アプリと同じなので、両方で同じに見える）。
+    fn change_branch_place(&mut self, name: &str, code: KeyCode) {
+        let favorites = self.sidebar.favorites();
+        let key = |what: &str, name: &str| format!("branch.{name}.amonhen{what}");
+        let order = |names: &[String]| -> Vec<Value> {
+            names
+                .iter()
+                .enumerate()
+                .map(|(i, n)| json!({"op": "configSet", "key": key("Pinned", n), "value": (i + 1).to_string()}))
+                .collect()
+        };
+        let pinned = favorites.iter().position(|n| n == name);
+        let (commands, notice) = match (code, pinned) {
+            (KeyCode::Char('*'), Some(i)) => {
+                let mut rest = favorites.clone();
+                rest.remove(i);
+                let mut commands = order(&rest);
+                commands
+                    .push(json!({"op": "configSet", "key": key("Pinned", name), "value": null}));
+                (commands, tr!("Removed {name} from Favorites", name = name))
+            }
+            (KeyCode::Char('*'), None) => {
+                let mut all = favorites.clone();
+                all.push(name.to_owned());
+                (order(&all), tr!("Added {name} to Favorites", name = name))
+            }
+            (KeyCode::Char('z'), _) => {
+                let archived = self.sidebar.is_archived(name);
+                let value = if archived { Value::Null } else { json!("true") };
+                (
+                    vec![json!({"op": "configSet", "key": key("Archived", name), "value": value})],
+                    match archived {
+                        true => tr!("Brought {name} back from Archived", name = name),
+                        false => tr!("Archived {name}", name = name),
+                    },
+                )
+            }
+            (KeyCode::Char('<' | '>'), Some(i)) => {
+                let to = match code {
+                    KeyCode::Char('<') => i.checked_sub(1),
+                    _ => Some(i + 1).filter(|&j| j < favorites.len()),
+                };
+                let Some(to) = to else {
+                    return;
+                };
+                let mut moved = favorites.clone();
+                moved.swap(i, to);
+                (order(&moved), String::new())
+            }
+            (KeyCode::Char('<' | '>'), None) => {
+                self.error = Some(tr!("Only a favorite branch moves up or down (* adds it)"));
+                return;
+            }
+            _ => return,
+        };
+        self.branch_config_pending += commands.len();
+        for command in commands {
+            self.send(Request::Run {
+                name: "branchConfig",
+                command,
+            });
+        }
+        if !notice.is_empty() {
+            self.notice = Some(notice);
+        }
+    }
+
+    /// リポジトリの形（`repositoryForm` の info）から、一番上の行の印と Working Copy の知らせを決める。
+    fn set_form(&mut self, info: &Value) {
+        let mut marks = Vec::new();
+        if info["shallow"] == true {
+            marks.push(tr!("shallow"));
+        }
+        if info["partial"].is_object() {
+            marks.push(tr!("partial"));
+        }
+        self.form_marks = marks;
+        let sparse = &info["sparse"];
+        let note = sparse.is_object().then(|| {
+            let folders = sparse["folders"].as_array().map_or(0, Vec::len);
+            match (sparse["cone"] == true, folders) {
+                (false, _) => {
+                    tr!("Sparse checkout: only the files matching its patterns are checked out.")
+                }
+                (true, 0) => tr!("Sparse checkout: only the files at the top are checked out."),
+                (true, 1) => tr!("Sparse checkout: only 1 folder is checked out."),
+                (true, n) => tr!(
+                    "Sparse checkout: only {count} folders are checked out.",
+                    count = n
+                ),
+            }
+        });
+        self.changes.set_sparse_note(note);
+        self.form = info.clone();
+        self.dirty = true;
+    }
+
+    /// sparse checkout で取り出すフォルダを打たせる（今のフォルダを初めに入れておく）。git 2.25 から。
+    fn type_sparse_folders(&mut self) {
+        if self.form["canSparseCheckout"] == false {
+            self.error = Some(tr!(
+                "Checking out only some folders needs git 2.25 or later"
+            ));
+            return;
+        }
+        let sparse = &self.form["sparse"];
+        if sparse.is_object() && sparse["cone"] != true {
+            self.error = Some(tr!(
+                "This sparse checkout uses patterns; change it with git sparse-checkout"
+            ));
+            return;
+        }
+        let folders: Vec<&str> = (sparse["folders"].as_array().into_iter().flatten())
+            .filter_map(Value::as_str)
+            .collect();
+        self.naming = Naming::SparseFolders;
+        self.typing_branch = Some((String::new(), String::new(), folders.join(" ")));
+    }
+
+    /// 打ったフォルダだけを取り出す（空なら、すべて取り出す）。先に確かめる。
+    fn ask_sparse_folders(&mut self, typed: &str) {
+        let folders: Vec<String> = typed
+            .split_whitespace()
+            .map(|f| f.trim_matches('/').to_owned())
+            .filter(|f| !f.is_empty())
+            .collect();
+        if folders.is_empty() {
+            if !self.form["sparse"].is_object() {
+                return;
+            }
+            self.confirm = Some((
+                tr!("Check out all folders (stop the sparse checkout)?"),
+                tr!("check out all"),
+                Request::Run {
+                    name: "sparseCheckout",
+                    command: json!({"op": "disableSparseCheckout"}),
+                },
+            ));
+            return;
+        }
+        self.confirm = Some((
+            tr!(
+                "Check out only {folders} (and the files at the top)?",
+                folders = folders.join(", ")
+            ),
+            tr!("check out"),
+            Request::Run {
+                name: "sparseCheckout",
+                command: json!({"op": "sparseCheckout", "folders": folders}),
+            },
+        ));
+    }
+
+    /// 何を取り足すかを選ばせる: shallow clone なら履歴（数・日付まで・すべて）、partial clone なら中身のすべて
+    /// （git 2.36 から）。
+    fn ask_fetch_more(&mut self) {
+        let mut options = Vec::new();
+        let shallow = self.history.is_shallow();
+        if shallow {
+            let deepen = |commits: u32| Request::Run {
+                name: "deepen",
+                command: json!({"op": "deepen", "commits": commits}),
+            };
+            options.push(('1', tr!("100 commits"), deepen(100)));
+            options.push(('2', tr!("1,000 commits"), deepen(1_000)));
+            options.push(('3', tr!("10,000 commits"), deepen(10_000)));
+            // 選ぶ前に横取りして、日付を聞く（中身は送らない）。
+            options.push(('d', tr!("up to a date…"), Request::Status));
+            options.push((
+                'a',
+                tr!("all of it"),
+                Request::Run {
+                    name: "deepen",
+                    command: json!({"op": "unshallow"}),
+                },
+            ));
+            self.deepen_date_offered = true;
+        }
+        let partial = self.form["partial"].is_object();
+        if partial {
+            if self.form["canFetchAllContents"] == false {
+                if !shallow {
+                    self.error = Some(tr!(
+                        "Fetching all contents of a partial clone needs git 2.36 or later"
+                    ));
+                    return;
+                }
+            } else {
+                options.push((
+                    'c',
+                    tr!("all contents (partial clone)"),
+                    Request::Run {
+                        name: "fetchAllContents",
+                        command: json!({"op": "fetchAllContents"}),
+                    },
+                ));
+            }
+        }
+        let ask = match (shallow, partial) {
+            (true, false) => tr!("Fetch older history from the remote?"),
+            (false, _) => tr!(
+                "Fetch all contents of the partial clone? Every file’s contents are downloaded."
+            ),
+            (true, true) => tr!("Fetch more from the remote?"),
+        };
+        self.choices = Some((ask, options));
+    }
+
+    /// History の読んである行の、署名を検証する（答えが来たら、残りを続けて頼む）。
+    fn verify_signatures(&mut self) {
+        if let Some(oids) = self.history.signatures_to_verify() {
+            self.send(Request::Run {
+                name: "commitSignatures",
+                command: json!({"op": "verifySignatures", "oids": oids}),
+            });
+        }
+    }
+
     fn ran(&mut self, name: &'static str, result: std::result::Result<Value, String>) {
+        // タグのリモートでの様子（裏で読む）。印: 同じ名前の別のタグがあるリモートがあれば ⚠、読んだリモートの
+        // どれにもなければ ∅（アプリの印）。
+        if name == "tagRemoteMarks" {
+            self.tag_remotes = result.ok().map(|r| r["info"].clone()).unwrap_or_default();
+            let info = &self.tag_remotes;
+            let checked: Vec<&str> = (info["remotes"].as_array().into_iter().flatten())
+                .filter(|r| !r["checked"].is_null())
+                .filter_map(|r| r["name"].as_str())
+                .collect();
+            let marks = (info["tags"].as_object().into_iter().flatten())
+                .filter(|_| !checked.is_empty())
+                .filter_map(|(tag, states)| {
+                    let state = |r: &&str| states[*r].as_str();
+                    if checked.iter().any(|r| state(r) == Some("different")) {
+                        Some((tag.clone(), ('⚠', Color::Yellow)))
+                    } else if checked.iter().all(|r| state(r) == Some("missing")) {
+                        Some((tag.clone(), ('∅', Color::Indexed(244))))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            self.sidebar.set_tag_remote_marks(marks);
+            self.dirty = true;
+            return;
+        }
+        // ブランチの分け方（裏で読む）と、お気に入り・アーカイブを書いたもの。動いている操作の表示を消さない。
+        if name == "branchGroups" {
+            let info = result.ok().map(|r| r["info"].clone()).unwrap_or_default();
+            self.sidebar.set_branch_groups(info, self.clock.now);
+            self.dirty = true;
+            return;
+        }
+        if name == "branchConfig" {
+            self.branch_config_pending = self.branch_config_pending.saturating_sub(1);
+            if let Err(error) = result {
+                self.error = Some(error);
+            }
+            if self.branch_config_pending == 0 {
+                self.open();
+            }
+            self.dirty = true;
+            return;
+        }
+        // 裏で読むリポジトリの形も、動いている操作の表示を消さない。読めなければ印を出さない。
+        if name == "repositoryForm" {
+            let info = result.ok().map(|r| r["info"].clone()).unwrap_or_default();
+            self.set_form(&info);
+            return;
+        }
+        // 裏で読む署名は、動いている操作の表示を消さない。
+        if name == "commitSignatures" {
+            let reply = result.ok();
+            self.history
+                .set_signatures(reply.as_ref().map(|r| &r["info"]["checks"]));
+            self.damage |= Damage::MAIN;
+            self.verify_signatures();
+            return;
+        }
         self.running = None;
         let reply = match result {
             Ok(reply) => reply,
@@ -2701,6 +3267,9 @@ impl App {
                 return;
             }
             "fetch" => self.notice = Some(tr!("Fetched")),
+            "deepen" => self.notice = Some(tr!("Fetched older history")),
+            "fetchAllContents" => self.notice = Some(tr!("Fetched all contents")),
+            "sparseCheckout" => self.notice = Some(tr!("Changed the folders checked out")),
             "pull" => self.notice = Some(tr!("Pulled")),
             "push" => self.notice = Some(tr!("Pushed")),
             "undo" => self.notice = Some(tr!("Undone")),
@@ -2889,27 +3458,32 @@ impl App {
                     self.dirty = true;
                     return;
                 }
-                self.range_title = Some(tr!(
+                let title = tr!(
                     "{branch} compared with {selector}",
                     branch = previous["branch"].as_str().unwrap_or(""),
                     selector = previous["selector"].as_str().unwrap_or("")
-                ));
-                self.run(
-                    "rangeDiff",
-                    tr!("Comparing…"),
-                    json!({"op": "rangeDiff", "ranges": previous["ranges"], "creationFactor": null}),
                 );
+                let ranges = previous["ranges"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|r| r.as_str().map(str::to_owned))
+                    .collect();
+                self.compare_ranges(title, ranges);
                 return;
             }
             // 比べた結果は、Blame・File History と同じ画面に（選んだ組のコミットの詳細も同じ）。
             "rangeDiff" => {
                 let title = self.range_title.take().unwrap_or_default();
                 self.file.show_range_diff(title, &reply["info"]["pairs"]);
+                // 開いている間は、サイドバーの Workspace に Range Diff の行（アプリと同じ）。
+                self.sidebar.set_range_diff(true);
                 if self.view != View::File {
                     self.file_back = self.view;
                 }
                 self.view = View::File;
                 self.focus = Focus::Main;
+                self.sidebar.show_view(Picked::RangeDiff);
                 self.dirty = true;
                 return;
             }
@@ -3036,6 +3610,104 @@ impl App {
                     self.notice = Some(format!("{name}: {}", parts.join(" · ")));
                     self.dirty = true;
                 }
+                return;
+            }
+            // push・pull で送る・取り込むコミット: まだ聞いていれば、件名を確かめる文に足す。
+            "syncCommits" => {
+                let info = &reply["info"];
+                let subjects: Vec<String> = (info["commits"].as_array().into_iter().flatten())
+                    .filter_map(|c| c["subject"].as_str())
+                    .map(|s| format!("“{s}”"))
+                    .collect();
+                let count = info["count"].as_u64().unwrap_or(0) as usize;
+                let more = count.saturating_sub(subjects.len());
+                if subjects.is_empty() {
+                    return;
+                }
+                let mut list = subjects.join(", ");
+                if more > 0 {
+                    list.push_str(&tr!(", {count} more", count = more));
+                }
+                // まだ push・pull を聞いているときだけ（答えた後に届いたら捨てる）。
+                let add = |ask: &mut String| {
+                    let syncing = [tr!("Push "), tr!("Pull ")]
+                        .iter()
+                        .any(|p| ask.starts_with(p.as_str()));
+                    if syncing && !ask.contains(&list) {
+                        *ask = format!("{ask} ({list})");
+                    }
+                };
+                if let Some((ask, _, _)) = &mut self.confirm {
+                    add(ask);
+                } else if let Some((ask, _)) = &mut self.choices {
+                    add(ask);
+                }
+                self.dirty = true;
+                return;
+            }
+            // HEAD の reflog の「checkout: moving from A to B」から、最近切り替えたブランチ（新しい順）。
+            "recentBranches" => {
+                if let Some(pick) = &mut self.branch_pick {
+                    let mut recent: Vec<String> = Vec::new();
+                    for entry in reply["info"]["entries"].as_array().into_iter().flatten() {
+                        let Some(message) = entry["message"].as_str() else {
+                            continue;
+                        };
+                        let Some(moving) = message.strip_prefix("checkout: moving from ") else {
+                            continue;
+                        };
+                        if let Some((_, to)) = moving.split_once(" to ")
+                            && !recent.iter().any(|r| r == to)
+                        {
+                            recent.push(to.to_owned());
+                        }
+                    }
+                    pick.recent = recent;
+                    pick.selected = 0;
+                    self.dirty = true;
+                }
+                return;
+            }
+            // アプリの submodule の印の代わりに、1 文字: コンフリクト !、取り出していない ○、記録と違うコミット ≠、
+            // 中に変更 ✎。
+            "submoduleMarks" => {
+                let marks = (reply["info"]["submodules"].as_array().into_iter().flatten())
+                    .filter_map(|s| {
+                        let path = s["path"].as_str()?.to_owned();
+                        let mark = if s["conflict"] == true {
+                            ('!', Color::Red)
+                        } else if s["initialized"] == false {
+                            ('○', Color::Indexed(244))
+                        } else if s["moved"] == true {
+                            ('≠', Color::Yellow)
+                        } else if s["changed"] == true {
+                            ('✎', Color::Yellow)
+                        } else {
+                            return None;
+                        };
+                        Some((path, mark))
+                    })
+                    .collect();
+                self.sidebar.set_submodule_marks(marks);
+                self.dirty = true;
+                return;
+            }
+            "tagSignatures" => {
+                let marks = (reply["info"]["tags"].as_array().into_iter().flatten())
+                    .filter_map(|t| {
+                        t["signed"].as_str()?;
+                        let name = t["name"].as_str()?.to_owned();
+                        let status = t["signature"]["status"].as_str().unwrap_or("");
+                        Some((name, crate::details::signature_mark(status)))
+                    })
+                    .collect();
+                self.sidebar.set_tag_marks(marks);
+                self.dirty = true;
+                return;
+            }
+            "octopusPreview" => {
+                let info = reply["info"].clone();
+                self.ask_octopus_with(&info);
                 return;
             }
             "fetchConfig" => {
@@ -3276,7 +3948,34 @@ impl App {
             }
             return;
         }
-        self.run("pull", tr!("Pulling…"), json!({"op": "pull"}));
+        // 上流に取り込むものがあれば、その数と件名を見せて確かめる（アプリの Pull のシート）。なければ、そのまま
+        // （fetch して、新しく来たものを取り込む）。
+        match (self.behind, self.upstream.clone()) {
+            (1.., Some(upstream)) => {
+                self.confirm = Some((
+                    match self.behind {
+                        1 => tr!("Pull 1 commit from {upstream}?", upstream = upstream),
+                        n => tr!(
+                            "Pull {count} commits from {upstream}?",
+                            count = n,
+                            upstream = upstream
+                        ),
+                    },
+                    tr!("pull"),
+                    Request::Run {
+                        name: "pull",
+                        command: json!({"op": "pull"}),
+                    },
+                ));
+                self.send(Request::Run {
+                    name: "syncCommits",
+                    command: json!({"op": "between", "base": "HEAD", "tip": upstream,
+                        "limit": 3}),
+                });
+                self.dirty = true;
+            }
+            _ => self.run("pull", tr!("Pulling…"), json!({"op": "pull"})),
+        }
     }
 
     /// 分かれているときの pull の選択。`conflicts` は上流を merge したときにコンフリクトしそうなファイル（分から
@@ -3444,6 +4143,12 @@ impl App {
         // `t` で、ほかのブランチへ送れる（`ask_push_to`。選ぶ前に横取りするので、中身は送らない）。今のブランチだけ。
         self.push_to_offered = current;
         self.pushing_to = format!("{remote}/{remote_branch}");
+        // 送るコミットの件名を、裏で読んで確かめる文に足す（アプリの Push のシートのコミットの一覧の代わり）。
+        self.send(Request::Run {
+            name: "syncCommits",
+            command: json!({"op": "between", "base": format!("{remote}/{remote_branch}"),
+                "tip": branch, "limit": 3}),
+        });
         if behind > 0 {
             let mut options = vec![
                 ('y', tr!("push"), push(remote, remote_branch, false, false)),
@@ -3787,6 +4492,7 @@ impl App {
     /// ファイルの Blame か File History を開く（戻るところは今の画面）。
     fn open_file_view(&mut self, path: &str, blame: bool) {
         self.file.open(path, blame, None);
+        self.sidebar.set_range_diff(false);
         if self.view != View::File {
             self.file_back = self.view;
         }
@@ -3817,15 +4523,22 @@ impl App {
         let Some((_, _, name)) = self.typing_branch.as_mut() else {
             return;
         };
-        let (folder, part) = match name.rsplit_once('/') {
-            Some((dir, part)) => (format!("{dir}/"), part.to_owned()),
+        // 取り出すフォルダは空白で区切って並べるので、最後の語を補う（フォルダだけ）。
+        let folders_only = matches!(self.naming, Naming::SparseFolders);
+        let (before, word) = match name.rsplit_once(' ').filter(|_| folders_only) {
+            Some((before, word)) => (format!("{before} "), word.to_owned()),
             None => (String::new(), name.clone()),
+        };
+        let (folder, part) = match word.rsplit_once('/') {
+            Some((dir, part)) => (format!("{before}{dir}/"), part.to_owned()),
+            None => (before, word.clone()),
         };
         let mut matches: Vec<(String, bool)> = (entries.as_array().into_iter().flatten())
             .filter_map(|e| {
                 let entry = e["name"].as_str()?;
-                (entry.starts_with(&part) && entry != ".git")
-                    .then(|| (entry.to_owned(), e["kind"] == "folder"))
+                let is_folder = e["kind"] == "folder";
+                (entry.starts_with(&part) && entry != ".git" && (is_folder || !folders_only))
+                    .then(|| (entry.to_owned(), is_folder))
             })
             .collect();
         matches.sort();
@@ -4678,6 +5391,87 @@ impl App {
         true
     }
 
+    /// 印をつけた ref を、今のブランチに 1 つの merge コミットで取り込む前に、見通し（`octopusPreview`）を読む。
+    fn ask_octopus(&mut self) -> bool {
+        if self.branch.is_none() {
+            self.error = Some(tr!("No branch is checked out"));
+            return true;
+        }
+        let theirs = self.sidebar.marked_names();
+        self.run(
+            "octopusPreview",
+            tr!("Looking ahead…"),
+            json!({"op": "octopusPreview", "theirs": theirs}),
+        );
+        true
+    }
+
+    /// octopus merge の見通しから、それぞれが持ち込むコミットの数を書いて確かめる（アプリの octopus merge の
+    /// シートの代わり）。
+    fn ask_octopus_with(&mut self, info: &Value) {
+        let theirs = self.sidebar.marked_names();
+        let branch = self.branch.clone().unwrap_or_default();
+        if info["upToDate"] == true {
+            self.notice = Some(tr!("{branch} already has all of them", branch = branch));
+            return;
+        }
+        let sides: Vec<String> = (info["drawing"]["sides"].as_array().into_iter().flatten())
+            .filter_map(|s| {
+                let rev = s["rev"].as_str()?;
+                let count = u64::from(!s["tip"].is_null()) + s["more"].as_u64().unwrap_or(0);
+                Some(format!("{rev} ({count})"))
+            })
+            .collect();
+        self.confirm = Some((
+            tr!(
+                "Merge {sides} into {branch} as one merge commit (octopus)? Undo brings it back.",
+                sides = sides.join(", "),
+                branch = branch
+            ),
+            tr!("merge"),
+            Request::Run {
+                name: "merge",
+                command: json!({"op": "merge", "rev": theirs}),
+            },
+        ));
+        self.dirty = true;
+    }
+
+    /// 印をつけたブランチをまとめて消す前に確かめる。ほかのどこにもないコミットのあるブランチは、git が断る（そこ
+    /// で止まる）。
+    fn ask_delete_marked(&mut self) -> bool {
+        let names = self.sidebar.marked_names();
+        let branches = self.sidebar.branches();
+        if names
+            .iter()
+            .any(|n| !branches.iter().any(|(b, remote)| b == n && !remote))
+        {
+            self.error = Some(tr!("Only local branches can be deleted together"));
+            return true;
+        }
+        if self.branch.as_ref().is_some_and(|b| names.contains(b)) {
+            self.error = Some(tr!("The current branch can’t be deleted"));
+            return true;
+        }
+        let commands: Vec<Value> = names
+            .iter()
+            .map(|n| json!({"op": "deleteBranch", "name": n, "force": false}))
+            .collect();
+        self.confirm = Some((
+            tr!(
+                "Delete {count} branches ({names})? A branch with commits on no other branch is refused. Undo brings them back.",
+                count = names.len(),
+                names = names.join(", ")
+            ),
+            tr!("delete"),
+            Request::Run {
+                name: "deleteBranch",
+                command: Value::Array(commands),
+            },
+        ));
+        true
+    }
+
     /// merge・rebase の見通しから、確かめる文を作る。`conflicts` はコンフリクトしそうなファイル（分からなければ
     /// `None`）。
     fn ask_with_preview(&mut self, conflicts: Option<Vec<String>>) {
@@ -5113,6 +5907,20 @@ impl App {
                 ));
                 true
             }
+            // その行のコミットを、一番上の行（今の HEAD）と 2 つの版として比べる（アプリの Compare with Current HEAD）。
+            KeyCode::Char('=') => {
+                let (Some(id), Some((head, selector))) =
+                    (self.reflog.selected_id(), self.reflog.newest_and_selector())
+                else {
+                    return false;
+                };
+                let title = tr!(
+                    "{selector} compared with the current HEAD",
+                    selector = selector
+                );
+                self.compare_ranges(title, vec![format!("{id}...{head}")]);
+                true
+            }
             KeyCode::Char('H') => {
                 let Some(id) = self.reflog.selected_id() else {
                     return false;
@@ -5149,8 +5957,30 @@ impl App {
             KeyCode::PageUp => self.sidebar.move_selection(-page),
             KeyCode::Char('g') | KeyCode::Home => self.sidebar.move_selection(i64::MIN / 2),
             KeyCode::Char('G') | KeyCode::End => self.sidebar.move_selection(i64::MAX / 2),
+            // Branches の Inactive・Archived のまとまりは、開く・畳む。
+            KeyCode::Enter | KeyCode::Char(' ' | 'l') | KeyCode::Right
+                if self.sidebar.toggle_group() =>
+            {
+                true
+            }
             KeyCode::Enter | KeyCode::Char(' ' | 'l') | KeyCode::Right => {
                 self.pick();
+                true
+            }
+            // タグの行で: リモートごとの様子を一番下の行に（アプリの印の吹き出し）。
+            KeyCode::Char('i') if self.sidebar.picked_ref().is_some_and(|r| r.0 == "tag") => {
+                let name = self
+                    .sidebar
+                    .picked_ref()
+                    .map(|r| r.1.to_owned())
+                    .unwrap_or_default();
+                self.notice = Some(self.tag_remote_text(&name));
+                true
+            }
+            // ブランチの行で: お気に入りにする・外す（★）、アーカイブする・戻す、お気に入りの順を上・下へ。
+            KeyCode::Char('*' | 'z' | '<' | '>') if self.picked_branch().is_some() => {
+                let name = self.picked_branch().unwrap_or_default();
+                self.change_branch_place(&name, code);
                 true
             }
             KeyCode::Char('/') => {
@@ -5185,6 +6015,11 @@ impl App {
                 self.worktree_key(code)
             }
             KeyCode::Char('a' | 'o' | 'x') => self.stash_key(code),
+            // 印をつけた ref がいくつもあれば、まとめて: 1 つの merge コミットで取り込む（octopus）、ブランチを消す。
+            KeyCode::Char('m') if self.sidebar.marked_names().len() >= 2 => self.ask_octopus(),
+            KeyCode::Char('D') if self.sidebar.marked_names().len() >= 2 => {
+                self.ask_delete_marked()
+            }
             KeyCode::Char('D') => self.ask_delete(),
             KeyCode::Char('n') => self.ask_rename(),
             KeyCode::Char('m') => self.ask_merge_or_rebase(true),
@@ -5230,6 +6065,29 @@ impl App {
                 true
             }
             // 絞り込んでいれば、まずそれをやめる。
+            // ref に印をつけ・外す。印をつけた ref があれば、History はそれらから辿れるものだけ（アプリの、いくつも
+            // 選んだ ref の History）。
+            KeyCode::Char('v') => {
+                if !self.sidebar.toggle_mark() {
+                    self.error = Some(tr!("Select a branch, remote branch or tag to mark"));
+                    return true;
+                }
+                self.notice = Some(match self.sidebar.marked_names().as_slice() {
+                    [] => tr!("History of all branches"),
+                    names => tr!(
+                        "History of {refs} (Esc clears the marks)",
+                        refs = names.join(", ")
+                    ),
+                });
+                self.open();
+                true
+            }
+            KeyCode::Esc if self.sidebar.has_marks() => {
+                self.sidebar.clear_marks();
+                self.notice = Some(tr!("History of all branches"));
+                self.open();
+                true
+            }
             KeyCode::Esc if !self.sidebar.filter().is_empty() => {
                 self.sidebar.set_filter("");
                 true
@@ -5268,8 +6126,10 @@ impl App {
                     tr!("On a remote branch: edit its remote (name, URL), remove it, prune it"),
                 ),
                 (
-                    "t X",
-                    tr!("On a tag: push it to a remote (or replace it there); delete it from one"),
+                    "t X i",
+                    tr!(
+                        "On a tag: push it (or replace it) to a remote; delete it there; where it is"
+                    ),
                 ),
                 (
                     "p P",
@@ -5283,7 +6143,15 @@ impl App {
                     tr!("On a remote branch: make it the upstream of the current branch"),
                 ),
                 ("n D", tr!("Rename a branch; delete a branch or a tag")),
+                (
+                    "* z < >",
+                    tr!("On a branch: favorite or not; archive or not; move a favorite up, down"),
+                ),
                 ("L", tr!("The branch's reflog")),
+                (
+                    "v",
+                    tr!("Mark refs: History of the marked ones; m and D act on all of them"),
+                ),
                 ("/", tr!("Filter branches and tags")),
                 ("Esc", tr!("Clear the filter, or go back")),
             ],
@@ -5292,7 +6160,10 @@ impl App {
                 ("g G", tr!("Top and bottom")),
                 ("PgUp PgDn", tr!("Move by a page")),
                 ("@", tr!("Go to HEAD")),
-                ("o", tr!("Date or topological order")),
+                (
+                    "o +",
+                    tr!("Date or topological order; fetch more of a shallow or partial clone"),
+                ),
                 (
                     "z Z",
                     tr!("Fold merged branches; open or close the selected merge"),
@@ -5303,8 +6174,8 @@ impl App {
                     tr!("Select several commits: one at a time, or a run"),
                 ),
                 (
-                    "x .",
-                    tr!("With two selected: swap the direction; diff from where they diverged"),
+                    "x . =",
+                    tr!("With two: swap the direction; diff from the fork; Range Diff them"),
                 ),
                 (
                     "y v E",
@@ -5334,6 +6205,7 @@ impl App {
                 ("Enter", tr!("Go to the details")),
                 ("c", tr!("Check out the entry's commit (detached HEAD)")),
                 ("H", tr!("Select the entry's commit in History")),
+                ("=", tr!("Compare with the current HEAD (Range Diff)")),
                 ("Y", tr!("Copy the commit ID (the terminal’s clipboard)")),
             ],
             (View::File, Focus::Main) => vec![
@@ -5352,12 +6224,24 @@ impl App {
             (View::History | View::Reflog | View::File, Focus::Side) => vec![
                 ("j k", tr!("Scroll")),
                 ("[ ]", tr!("Previous and next file")),
+                (
+                    "t z",
+                    tr!("Changed files as a tree or a list; fold the tree's folders"),
+                ),
                 ("B L", tr!("Blame, File History of the file in view")),
                 (
                     "Y e",
                     tr!("Copy the path of the file in view; open it in git's editor"),
                 ),
                 ("/ n N", tr!("Find in the details; next and previous")),
+                (
+                    "w",
+                    tr!("Ignore whitespace: at line ends, its amount, all, none"),
+                ),
+                (
+                    "+ F",
+                    tr!("Widen the context of the file in view; show the whole file"),
+                ),
                 ("h l", tr!("Pan long lines; h at the left edge goes back")),
                 ("Esc", tr!("Go back to History")),
             ],
@@ -5394,6 +6278,7 @@ impl App {
                 ),
                 ("/", tr!("Filter the list by path")),
                 ("R", tr!("Use a recent commit's message")),
+                ("W", tr!("Check out only some folders (sparse checkout)")),
                 (
                     "i",
                     tr!("Add an untracked file, or its extension, to .gitignore"),
@@ -5428,6 +6313,14 @@ impl App {
                     tr!("In a conflict: take current, incoming, both, or the base"),
                 ),
                 ("m", tr!("Magic Merge on the whole file")),
+                (
+                    "s",
+                    tr!("For a file shown one side at a time: the staged or the unstaged side"),
+                ),
+                (
+                    "w",
+                    tr!("Ignore whitespace: at line ends, its amount, all, none"),
+                ),
                 ("h l", tr!("Pan long lines; h at the left edge goes back")),
                 ("Esc", tr!("Go back to the list")),
             ],
@@ -5436,8 +6329,8 @@ impl App {
             ("", String::new()),
             ("f p P", tr!("Fetch, pull, push")),
             (
-                "b T",
-                tr!("New branch, new tag at the selected commit or ref"),
+                "b T Ctrl-b",
+                tr!("New branch, new tag at the selected commit or ref; switch branch"),
             ),
             (
                 "s S",
@@ -5482,6 +6375,13 @@ impl App {
             Some(Picked::Changes) => self.show(View::Changes),
             Some(Picked::History) => self.show(View::History),
             Some(Picked::Reflog) => self.show(View::Reflog),
+            // 開いている Range Diff に戻る。
+            Some(Picked::RangeDiff) => {
+                if self.view != View::File {
+                    self.file_back = self.view;
+                }
+                self.show(View::File);
+            }
             // stash は History の行ではないので、その差分を詳細の枠に出す。
             Some(Picked::Commit(id))
                 if self.sidebar.picked_ref().is_some_and(|r| r.0 == "stash") =>
@@ -5496,6 +6396,35 @@ impl App {
                     name: "stashBases",
                     command: json!({"op": "stashBases"}),
                 });
+            }
+            // submodule は、TUI をそこで開き直す（アプリの Open in New Window の代わり）。取り出していなければ、
+            // そう言う。
+            Some(Picked::Commit(_))
+                if self
+                    .sidebar
+                    .picked_ref()
+                    .is_some_and(|r| r.0 == "submodule") =>
+            {
+                let path = self.sidebar.picked_ref().map_or("", |r| r.1).to_owned();
+                let full = self
+                    .workdir
+                    .as_deref()
+                    .map(|w| format!("{}/{path}", w.trim_end_matches(['/', '\\'])));
+                match full {
+                    Some(full)
+                        if std::path::Path::new(&full).join(".git").exists()
+                            || !self.files_here =>
+                    {
+                        self.open_worktree = Some(full);
+                        self.quit = true;
+                    }
+                    _ => {
+                        self.notice = Some(tr!(
+                            "{path} isn’t checked out: Update Submodules in the command list first",
+                            path = path
+                        ))
+                    }
+                }
             }
             // ほかの worktree は、TUI をそこで開き直す（アプリが新しい窓で開くのの代わり）。開いているものは、
             // その場所を知らせるだけ。
@@ -5661,6 +6590,11 @@ impl App {
     fn changes_key(&mut self, code: KeyCode, control: bool) -> bool {
         let page = self.changes.page();
         match code {
+            // 取り出すフォルダを選ぶ（アプリの Check Out Only Some Folders…）。
+            KeyCode::Char('W') => {
+                self.type_sparse_folders();
+                true
+            }
             KeyCode::Char('d') if control => self.changes.move_selection(page / 2),
             KeyCode::Char('u') if control => self.changes.move_selection(-page / 2),
             KeyCode::Char('j') | KeyCode::Down => self.changes.move_selection(1),
@@ -5698,6 +6632,7 @@ impl App {
             KeyCode::Char('B' | 'L') => match self.changes.selected_path() {
                 Some(path) => {
                     self.file.open(path, code == KeyCode::Char('B'), None);
+                    self.sidebar.set_range_diff(false);
                     self.file_back = View::Changes;
                     self.view = View::File;
                     true
@@ -5870,6 +6805,35 @@ impl App {
                     true
                 }
             }
+            // 差分で無視する空白を替える（アプリの Ignore Whitespace）。その間は、片方の側だけを出し、行ごとの
+            // stage・破棄はしない。
+            KeyCode::Char('w') => {
+                self.notice = Some(match self.changes.next_whitespace() {
+                    Whitespace::Exact => tr!("Whitespace is compared"),
+                    Whitespace::AtEol => {
+                        tr!("Ignoring whitespace at line ends (lines aren’t staged meanwhile)")
+                    }
+                    Whitespace::Change => tr!(
+                        "Ignoring changes in the amount of whitespace (lines aren’t staged meanwhile)"
+                    ),
+                    Whitespace::All => {
+                        tr!("Ignoring all whitespace (lines aren’t staged meanwhile)")
+                    }
+                });
+                true
+            }
+            // 重ねて出せないファイルで、作業ツリーの側と stage 済みの側を替える。
+            KeyCode::Char('s') => {
+                self.notice = Some(match self.changes.switch_side() {
+                    Ok(true) => tr!("Showing the staged changes (s for the unstaged)"),
+                    Ok(false) => tr!("Showing the unstaged changes (s for the staged)"),
+                    Err(true) => {
+                        tr!("This diff already shows both the staged and the unstaged changes")
+                    }
+                    Err(false) => tr!("This file has changes on one side only"),
+                });
+                true
+            }
             // 行の範囲: `v` で始まりを決め、動かした所までを選ぶ。もう一度で、やめる。
             KeyCode::Char('v') => self.changes.toggle_mark(),
             KeyCode::Esc if self.changes.has_mark() => self.changes.toggle_mark(),
@@ -5960,6 +6924,32 @@ impl App {
                     _ => Pair::Forward,
                 };
                 Some(true)
+            }
+            // 2 つを、それぞれを先端とする 2 つの版として比べる（rebase の前と後など。アプリの Compare as Two
+            // Versions）。
+            KeyCode::Char('=') if self.history.mark_count() == 2 => {
+                let marks: Vec<String> = self
+                    .history
+                    .marks()
+                    .map(|(_, m)| m.id.to_string())
+                    .collect();
+                let [newer, older] = &marks[..] else {
+                    return false;
+                };
+                let title = tr!(
+                    "{older} and {newer} compared as two versions",
+                    older = &older[..8],
+                    newer = &newer[..8]
+                );
+                self.compare_ranges(title, vec![format!("{older}...{newer}")]);
+                return true;
+            }
+            // shallow clone の履歴を取り足す（アプリの最後の行の下の帯の Fetch More・Fetch All）。
+            // shallow clone の履歴・partial clone の中身を取り足す（アプリの最後の行の下の帯、リポジトリの設定の
+            // 取得とフォルダ）。
+            KeyCode::Char('+') if self.history.is_shallow() || self.form["partial"].is_object() => {
+                self.ask_fetch_more();
+                return true;
             }
             KeyCode::Char('.') if self.history.mark_count() == 2 => {
                 self.pair = match self.pair {
@@ -6120,8 +7110,38 @@ impl App {
             }
             KeyCode::Char(']') => Some(self.details.jump_file(true)),
             KeyCode::Char('[') => Some(self.details.jump_file(false)),
+            // 変わったファイルを木で出す・一覧に戻す（アプリの List / Tree）、木のフォルダをたたむ・開く。
+            KeyCode::Char('t') => Some(self.details.toggle_tree()),
+            KeyCode::Char('z') => Some(self.details.fold_all()),
             _ => None,
         };
+        // 今見ているファイルの前後を広げる・ファイル全体を出す（アプリの hunk の見出しの印・Show Whole File）。
+        // 読み直しは `request` が頼む。
+        if code == KeyCode::Char('+') {
+            return self.details.widen();
+        }
+        if code == KeyCode::Char('F') {
+            return match self.details.toggle_whole_file() {
+                Some(whole) => {
+                    self.notice = Some(match whole {
+                        true => tr!("Showing the whole file"),
+                        false => tr!("Showing the changes only"),
+                    });
+                    true
+                }
+                None => false,
+            };
+        }
+        // 差分で無視する空白を替える（アプリの Ignore Whitespace）。読み直しは `request` が頼む。
+        if code == KeyCode::Char('w') {
+            self.notice = Some(match self.details.next_whitespace() {
+                Whitespace::Exact => tr!("Whitespace is compared"),
+                Whitespace::AtEol => tr!("Ignoring whitespace at line ends"),
+                Whitespace::Change => tr!("Ignoring changes in the amount of whitespace"),
+                Whitespace::All => tr!("Ignoring all whitespace"),
+            });
+            return true;
+        }
         if let Some(scrolled) = scrolled {
             if scrolled {
                 self.damage |= Damage::SIDE;
@@ -6136,6 +7156,7 @@ impl App {
                         let blame = code == KeyCode::Char('B');
                         let path = path.to_owned();
                         self.file.open(&path, blame, blame.then(|| id.to_string()));
+                        self.sidebar.set_range_diff(false);
                         self.file_back = self.view;
                         self.view = View::File;
                         self.focus = Focus::Main;
@@ -6267,8 +7288,11 @@ impl App {
                 Some(rows) => self.details.scroll(rows),
                 None if click => {
                     let focused = std::mem::replace(&mut self.focus, Focus::Side);
-                    let selected =
-                        view == View::Changes && self.changes.click_diff(mouse.row - area.y);
+                    let selected = if view == View::Changes {
+                        self.changes.click_diff(mouse.row - area.y)
+                    } else {
+                        self.details.click(mouse.row - area.y)
+                    };
                     selected || focused != Focus::Side
                 }
                 None => false,
@@ -6329,6 +7353,21 @@ impl App {
                     .set_stringn(x, area.y, counts, usize::from(area.right() - x - 1), bar)
                     .0;
             }
+        }
+        // shallow clone・partial clone の印。
+        for mark in &self.form_marks {
+            if x + 3 >= area.right() {
+                break;
+            }
+            x = buf
+                .set_stringn(
+                    x + 2,
+                    area.y,
+                    format!("[{mark}]"),
+                    usize::from(area.right() - x - 3),
+                    bar.fg(Color::Yellow),
+                )
+                .0;
         }
         // サイドバーが出ていなければ、メインの画面の切り替え（数字のキー）を並べる。今の画面は太字。
         let tabs = self.layout().sidebar.is_none();
@@ -6575,6 +7614,20 @@ impl App {
                         )
                     }
                     Naming::PatchVersion => tr!("Version of the patches (-v): {name}", name = name),
+                    Naming::SparseFolders => {
+                        let text = tr!(
+                            "Check out only the folders (spaces between, Tab completes, empty for all): {name}",
+                            name = name
+                        );
+                        match self.path_choices.is_empty() {
+                            true => text,
+                            false => format!("{text}    {}", self.path_choices),
+                        }
+                    }
+                    Naming::DeepenSince => tr!(
+                        "Fetch the commits newer than (a date git reads, like 2024-01-31): {name}",
+                        name = name
+                    ),
                     Naming::ArchiveFolder => {
                         tr!("Export only the folder (from the top): {name}", name = name)
                     }
@@ -6688,7 +7741,7 @@ impl App {
                         )
                     }
                     (View::History | View::Reflog | View::File, Focus::Side) => {
-                        tr!("j/k scroll   [/] file   h/l pan   Esc back")
+                        tr!("j/k scroll   [/] file   t tree   h/l pan   Esc back")
                     }
                     (View::Reflog, Focus::Main) => match self.reflog.name() {
                         Some(name) => tr!(
@@ -6923,6 +7976,32 @@ impl App {
                     Style::new().fg(Color::Indexed(244)),
                 );
             }
+        }
+        if let Some(pick) = &self.branch_pick {
+            let shown = pick.shown();
+            let recent = tr!("recent");
+            let remote = tr!("remote");
+            let new = tr!("new branch");
+            let rows: Vec<(&str, &str, &str)> = shown
+                .iter()
+                .map(|c| match c {
+                    BranchChoice::Branch(name, true) => ("", *name, remote.as_str()),
+                    BranchChoice::Branch(name, false) if pick.recent.iter().any(|r| r == name) => {
+                        ("", *name, recent.as_str())
+                    }
+                    BranchChoice::Branch(name, false) => ("", *name, ""),
+                    BranchChoice::New(name) => ("+ ", *name, new.as_str()),
+                })
+                .collect();
+            cursor = choice_list(
+                buf,
+                area,
+                &tr!(" Switch Branch "),
+                &pick.query,
+                &rows,
+                pick.selected,
+                &tr!("No branch matches"),
+            );
         }
         if let Some(quick) = &self.quick_open {
             let shown = quick.shown();
@@ -7503,6 +8582,75 @@ mod tests {
             Some(crate::Next::Location("/w/alpha".to_owned()))
         );
         assert!(app.quit());
+    }
+
+    /// サイドバーの Submodules: submodule が並び、中に変更があれば ✎。Enter で TUI をそこで開き直す。
+    #[test]
+    fn submodules_are_listed_and_open_there() {
+        let (dir, mut app, rx) = app_with_history();
+        let source = tempfile::tempdir().unwrap();
+        let git = |at: &std::path::Path, args: &[&str]| {
+            let out = amonhen_model::process::command("git")
+                .args(["-c", "user.name=Ann", "-c", "user.email=ann@example.com"])
+                .args([
+                    "-c",
+                    "commit.gpgsign=false",
+                    "-c",
+                    "protocol.file.allow=always",
+                ])
+                .args(args)
+                .current_dir(at)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "git {args:?}: {out:?}");
+        };
+        git(source.path(), &["init", "-q"]);
+        std::fs::write(source.path().join("lib.txt"), "lib\n").unwrap();
+        git(source.path(), &["add", "."]);
+        git(source.path(), &["commit", "-q", "-m", "Lib"]);
+        git(
+            dir.path(),
+            &[
+                "submodule",
+                "add",
+                "-q",
+                source.path().to_str().unwrap(),
+                "lib",
+            ],
+        );
+        git(dir.path(), &["commit", "-q", "-m", "Add lib"]);
+        std::fs::write(dir.path().join("lib/lib.txt"), "changed\n").unwrap();
+        app.open();
+        crate::settle(&mut app, &rx).unwrap();
+        let key = |app: &mut App, code: KeyCode| {
+            app.handle(Event::Input(Input::Key(KeyEvent::new(
+                code,
+                KeyModifiers::NONE,
+            ))));
+        };
+        // 一番下の行が lib。中に変更があるので ✎。
+        for code in [KeyCode::Char('0'), KeyCode::Char('G')] {
+            key(&mut app, code);
+        }
+        crate::settle(&mut app, &rx).unwrap();
+        let mut buf = Buffer::empty(Rect::new(0, 0, 100, 12));
+        app.draw(&mut buf, Damage::ALL);
+        let text: String = (0..12)
+            .map(|y| (0..100).map(|x| buf[(x, y)].symbol()).collect::<String>() + "\n")
+            .collect();
+        assert!(text.contains("Submodules"), "{text}");
+        assert!(
+            text.lines().any(|l| l.contains("lib") && l.contains('✎')),
+            "{text}"
+        );
+        key(&mut app, KeyCode::Enter);
+        let Some(crate::Next::Worktree(opened)) = app.take_next() else {
+            panic!("the submodule to open");
+        };
+        assert_eq!(
+            std::fs::canonicalize(opened).unwrap(),
+            std::fs::canonicalize(dir.path().join("lib")).unwrap()
+        );
     }
 
     /// サイドバーの worktree で Enter: ほかの worktree なら TUI を閉じてそのパスを返し、開いているものなら場所を

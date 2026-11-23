@@ -11,7 +11,7 @@ use serde_json::Value;
 use windows_reactor::*;
 
 /// 出す記録の数（新しいものから）。
-const SHOWN: usize = 300;
+const SHOWN: usize = 1000;
 
 /// 速さ・出来事を覚えておく数（GTK4 版と同じ）。
 const KEEP: usize = 500;
@@ -88,6 +88,12 @@ pub struct State {
     /// 0 は Operations、1 は History。
     pub tab: usize,
     pub records: Vec<amonhen_model::activity::Record>,
+    /// Operations の絞り込み（macOS 版と同じ: 種類（0 はすべて、1 は git、2 はコマンド）、失敗だけ、文字）と、
+    /// 選んだ記録の通し番号（下の欄にその中身を出す）。
+    pub kind: usize,
+    pub failures_only: bool,
+    pub filter: String,
+    pub selected: Option<u64>,
     /// `undoLog` の答えの entries（新しい順）。
     pub undo: Vec<Value>,
     /// 開いているリポジトリごとの名前と `historyCache` の答えの info（History のキャッシュの書き込み）。
@@ -121,6 +127,10 @@ impl State {
         let mut state = Self {
             tab: 0,
             records: Vec::new(),
+            kind: 0,
+            failures_only: false,
+            filter: String::new(),
+            selected: None,
             undo: Vec::new(),
             cache: None,
             cache_generation: 0,
@@ -159,6 +169,41 @@ pub struct Callbacks<'a> {
     pub cancel: Box<dyn Fn(u64) -> Callback<()> + 'a>,
     /// 共有の daemon を起動する・止める。
     pub daemon_toggle: Callback<()>,
+    /// Operations の絞り込み（種類・失敗だけ・文字）と、選んだ行（今出している並びの位置）。
+    pub kind: Callback<Option<usize>>,
+    pub failures_only: Callback<bool>,
+    pub filter: Callback<String>,
+    pub select: Callback<Option<usize>>,
+}
+
+impl State {
+    /// Operations に出す記録（新しい順。絞り込みに合うもの）。
+    pub fn shown(&self) -> Vec<&amonhen_model::activity::Record> {
+        let filter = self.filter.to_lowercase();
+        self.records
+            .iter()
+            .filter(|r| match self.kind {
+                1 => r.kind == "git",
+                2 => r.kind == "command",
+                _ => true,
+            })
+            .filter(|r| !self.failures_only || r.ok == Some(false))
+            .filter(|r| {
+                filter.is_empty()
+                    || r.label.to_lowercase().contains(&filter)
+                    || r.repo.to_lowercase().contains(&filter)
+            })
+            .collect()
+    }
+}
+
+/// 記録のリポジトリの名前（パスの最後）。
+fn repo_name(repo: &str) -> String {
+    repo.trim_end_matches(['/', '\\'])
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(repo)
+        .to_owned()
 }
 
 /// バイト数を読みやすく（GTK4 版の `glib::format_size` に近い形）。
@@ -218,7 +263,7 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                 ])
                 .selected_index(state.tab)
                 .max_columns(6)
-                .on_selection_changed(callbacks.tab)
+                .on_selection_changed(callbacks.tab.clone())
                 .grid_column(1),
             StackPanel::new()
                 .orientation(Orientation::Horizontal)
@@ -227,13 +272,13 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                 .children((
                     if state.tab == 0 {
                         Button::new()
-                            .on_click(callbacks.export)
+                            .on_click(callbacks.export.clone())
                             .content(TextBlock::new().text(tr!("Export JSON…")))
                     } else {
                         View::empty()
                     },
                     Button::new()
-                        .on_click(callbacks.close)
+                        .on_click(callbacks.close.clone())
                         .content(TextBlock::new().text(tr!("Close"))),
                 )),
         ));
@@ -244,102 +289,7 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
             callbacks.daemon_toggle,
         )
     } else if state.tab == 0 {
-        let rows = state.records.iter().map(|r| {
-            let status = match r.ok {
-                None => "…",
-                Some(true) => "✓",
-                Some(false) => "✗",
-            };
-            let line = Grid::new()
-                .columns([
-                    GridLength::Pixel(100.0),
-                    GridLength::Pixel(24.0),
-                    GridLength::Pixel(70.0),
-                    GridLength::Star(1.0),
-                    GridLength::Pixel(80.0),
-                ])
-                .children((
-                    TextBlock::new()
-                        .text(time(r.started))
-                        .font_size(12.0)
-                        .opacity(0.6)
-                        .grid_column(0),
-                    TextBlock::new().text(status).font_size(12.0).grid_column(1),
-                    TextBlock::new()
-                        .text(r.kind)
-                        .font_size(12.0)
-                        .opacity(0.6)
-                        .grid_column(2),
-                    // 内容（走っていれば進み具合）と、走っていて取り消せる操作には「取り消す」（GTK4 版と同じ）。
-                    Grid::new()
-                        .columns([GridLength::Star(1.0), GridLength::Auto])
-                        .grid_column(3)
-                        .children((
-                            TextBlock::new()
-                                .text(r.progress.clone().map_or_else(
-                                    || r.label.clone(),
-                                    |p| format!("{} — {p}", r.label),
-                                ))
-                                .font_size(12.0)
-                                .text_trimming(TextTrimming::CharacterEllipsis)
-                                .vertical_alignment(VerticalAlignment::Center)
-                                .grid_column(0),
-                            if r.ok.is_none() && r.cancellable {
-                                Button::new()
-                                    .on_click((callbacks.cancel)(r.seq))
-                                    .margin(Thickness::new(6.0, 0.0, 0.0, 0.0))
-                                    .grid_column(1)
-                                    .content(
-                                        TextBlock::new()
-                                            .text(tr!("Cancel Operation"))
-                                            .font_size(11.0),
-                                    )
-                            } else {
-                                View::empty()
-                            },
-                        )),
-                    TextBlock::new()
-                        .text(r.duration.map(duration).unwrap_or_default())
-                        .font_size(12.0)
-                        .opacity(0.6)
-                        .horizontal_alignment(HorizontalAlignment::Right)
-                        .grid_column(4),
-                ));
-            // 失敗したものはその理由を、成功して出力（hooks など）があればそれを下に（選んでコピーできる）。
-            let below = match (&r.error, &r.output) {
-                (Some(e), _) => Some((e.clone(), Some(Color::rgb(0xc4, 0x2b, 0x1c)))),
-                (None, Some(output)) if !output.trim().is_empty() => {
-                    Some((output.trim_end().to_owned(), None))
-                }
-                _ => None,
-            };
-            let row: View = match below {
-                Some((text, color)) => {
-                    let mut text = TextBlock::new()
-                        .text(text)
-                        .font_size(11.0)
-                        .text_wrapping(TextWrapping::Wrap)
-                        .is_text_selection_enabled(true)
-                        .margin(Thickness::new(124.0, 0.0, 0.0, 2.0));
-                    text = match color {
-                        Some(color) => text.foreground(Brush::Solid(color)),
-                        None => text.opacity(0.65),
-                    };
-                    StackPanel::new().children((line, text))
-                }
-                None => line,
-            };
-            (
-                r.seq,
-                Border::new()
-                    .padding(Thickness::new(0.0, 2.0, 0.0, 2.0))
-                    .content(row),
-            )
-        });
-        ScrollViewer::new()
-            .grid_row(1)
-            .margin(Thickness::new(12.0, 0.0, 12.0, 8.0))
-            .content(StackPanel::new().children((View::keyed_fragment(rows),)))
+        operations_view(state, &callbacks)
     } else if state.tab == 3 {
         performance_view(&state.speeds)
     } else if state.tab == 4 {
@@ -853,5 +803,173 @@ fn events_view(events: &[(u64, String, String)]) -> View {
             Border::new().grid_row(2).content(note(tr!(
                 "File change notices and the reloads they cause (newest first, up to 500)."
             ))),
+        ))
+}
+
+/// Operations（macOS 版の OperationsTab）: 上に種類・失敗だけ・絞り込み、記録の表（時刻・状態・リポジトリ・内容・ms）、
+/// 選んだ記録の中身（リポジトリ、内容、失敗の理由か出力）を下の欄に。
+fn operations_view(state: &State, callbacks: &Callbacks) -> View {
+    let shown = state.shown();
+    let columns = || {
+        [
+            GridLength::Pixel(90.0),
+            GridLength::Pixel(20.0),
+            GridLength::Pixel(120.0),
+            GridLength::Star(1.0),
+            GridLength::Pixel(70.0),
+        ]
+    };
+    let heading = |text: String, column: i32| {
+        TextBlock::new()
+            .text(text)
+            .font_size(12.0)
+            .opacity(0.6)
+            .grid_column(column)
+    };
+    let bar = StackPanel::new()
+        .orientation(Orientation::Horizontal)
+        .spacing(12.0)
+        .children((
+            RadioButtons::new()
+                .items_source(vec![tr!("All"), "git".to_owned(), tr!("Commands")])
+                .selected_index(state.kind)
+                .max_columns(3)
+                .on_selection_changed(callbacks.kind.clone()),
+            CheckBox::new()
+                .is_checked(state.failures_only)
+                .on_is_checked_changed(callbacks.failures_only.clone())
+                .content(TextBlock::new().text(tr!("Failures Only"))),
+            TextBox::new()
+                .placeholder_text(tr!("Filter"))
+                .text(state.filter.clone())
+                .width(220.0)
+                .vertical_alignment(VerticalAlignment::Center)
+                .on_text_changed(callbacks.filter.clone()),
+        ));
+    let header = Grid::new()
+        .columns(columns())
+        .margin(Thickness::new(12.0, 0.0, 12.0, 0.0))
+        .children((
+            heading(tr!("Time"), 0),
+            heading(tr!("Repository"), 2),
+            heading(tr!("Content"), 3),
+            heading("ms".to_owned(), 4),
+        ));
+    let rows = shown.iter().map(|r| {
+        let (status, color) = match r.ok {
+            None => ("●", Color::rgb(0xd9, 0x7a, 0x10)),
+            Some(true) => ("✓", Color::rgb(0x2b, 0x9a, 0x45)),
+            Some(false) => ("✗", Color::rgb(0xc4, 0x2b, 0x1c)),
+        };
+        let content = Grid::new()
+            .columns([GridLength::Star(1.0), GridLength::Auto])
+            .grid_column(3)
+            .children((
+                TextBlock::new()
+                    .text(match (r.ok, &r.progress) {
+                        (None, Some(p)) => format!("{} — {p}", r.label),
+                        _ => r.label.clone(),
+                    })
+                    .font_size(12.0)
+                    .text_trimming(TextTrimming::CharacterEllipsis)
+                    .vertical_alignment(VerticalAlignment::Center)
+                    .grid_column(0),
+                if r.ok.is_none() && r.cancellable {
+                    Button::new()
+                        .on_click((callbacks.cancel)(r.seq))
+                        .margin(Thickness::new(6.0, 0.0, 0.0, 0.0))
+                        .grid_column(1)
+                        .content(
+                            TextBlock::new()
+                                .text(tr!("Cancel Operation"))
+                                .font_size(11.0),
+                        )
+                } else {
+                    View::empty()
+                },
+            ));
+        let line = Grid::new().columns(columns()).children((
+            TextBlock::new()
+                .text(time(r.started))
+                .font_size(12.0)
+                .grid_column(0),
+            TextBlock::new()
+                .text(status)
+                .font_size(12.0)
+                .foreground(Brush::Solid(color))
+                .grid_column(1),
+            TextBlock::new()
+                .text(repo_name(&r.repo))
+                .font_size(12.0)
+                .text_trimming(TextTrimming::CharacterEllipsis)
+                .grid_column(2),
+            content,
+            TextBlock::new()
+                .text(r.duration.map(duration).unwrap_or_else(|| "…".to_owned()))
+                .font_size(12.0)
+                .opacity(0.6)
+                .horizontal_alignment(HorizontalAlignment::Right)
+                .grid_column(4),
+        ));
+        (
+            r.seq.to_string(),
+            ListViewItem::new().tag(r.seq.to_string()).content(line),
+        )
+    });
+    let selected = state
+        .selected
+        .and_then(|seq| shown.iter().position(|r| r.seq == seq));
+    let list = ListView::new()
+        .selected_index(selected)
+        .on_selection_changed(callbacks.select.clone())
+        .collection_slot(ListViewSlot::Items, rows);
+    // 選んだ記録の中身（macOS 版と同じく、リポジトリ・内容に、失敗の理由か出力を続ける。選んでコピーできる）。
+    let detail: View = match selected.and_then(|i| shown.get(i)) {
+        Some(r) => {
+            let mut text = format!("{}\n{}", r.repo, r.label);
+            if let Some(error) = &r.error {
+                text.push_str(&format!("\n\n{error}"));
+            } else if let Some(output) = r.output.as_ref().filter(|o| !o.trim().is_empty()) {
+                text.push_str(&format!("\n\n{}", output.trim_end()));
+            }
+            ScrollViewer::new()
+                .height(120.0)
+                .margin(Thickness::new(12.0, 4.0, 12.0, 0.0))
+                .content(
+                    TextBlock::new()
+                        .text(text)
+                        .font_size(12.0)
+                        .text_wrapping(TextWrapping::Wrap)
+                        .is_text_selection_enabled(true),
+                )
+        }
+        None => View::empty(),
+    };
+    Grid::new()
+        .grid_row(1)
+        .margin(Thickness::new(0.0, 0.0, 0.0, 8.0))
+        .rows([
+            GridLength::Auto,
+            GridLength::Auto,
+            GridLength::Star(1.0),
+            GridLength::Auto,
+            GridLength::Auto,
+        ])
+        .children((
+            Border::new()
+                .margin(Thickness::new(12.0, 0.0, 12.0, 6.0))
+                .content(bar),
+            Border::new().grid_row(1).content(header),
+            Border::new().grid_row(2).content(list),
+            Border::new().grid_row(3).content(detail),
+            TextBlock::new()
+                .grid_row(4)
+                .text(tr!(
+                    "git runs and core commands, newest first, up to 1,000 (for repositories through the daemon, also the git it starts). ● means running; fetch, pull, push and clone show their progress and can be canceled."
+                ))
+                .font_size(11.0)
+                .opacity(0.6)
+                .text_wrapping(TextWrapping::Wrap)
+                .margin(Thickness::new(12.0, 6.0, 12.0, 0.0)),
         ))
 }

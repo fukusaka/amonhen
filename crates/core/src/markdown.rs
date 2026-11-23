@@ -32,6 +32,9 @@ pub struct Run {
     /// 脚注への参照（ラベル）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub footnote: Option<String>,
+    /// GitHub 独自の絵文字（`:octocat:` などの画像だけのもの。名前）。FE は `text`（`:octocat:`）を薄い札で見せる。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub custom_emoji: Option<String>,
     /// 段落の中の改行（`text` は空）。
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub line_break: bool,
@@ -535,6 +538,87 @@ fn linkify_block(block: &mut Block, github: Option<&str>) {
 
 /// リンクでない地の文の中の URL（と GitHub の参照）をリンクの文字に分ける。
 fn linkify(runs: Vec<Run>, github: Option<&str>) -> Vec<Run> {
+    chip_custom_emoji(linkify_text(runs, github))
+}
+
+/// GitHub 独自の絵文字の名前（画像だけで Unicode にないもの。GitHub の絵文字の一覧のうち、gemoji にないもの）。
+const CUSTOM_EMOJI: [&str; 20] = [
+    "atom",
+    "basecamp",
+    "basecampy",
+    "bowtie",
+    "electron",
+    "feelsgood",
+    "finnadie",
+    "fishsticks",
+    "goberserk",
+    "godmode",
+    "hurtrealbad",
+    "neckbeard",
+    "octocat",
+    "rage1",
+    "rage2",
+    "rage3",
+    "rage4",
+    "shipit",
+    "suspect",
+    "trollface",
+];
+
+/// 地の文の `:octocat:` などを、札で見せる文字に分ける（画像は持たないので名前のまま）。
+fn chip_custom_emoji(runs: Vec<Run>) -> Vec<Run> {
+    let mut out = Vec::new();
+    for run in runs {
+        if run.link.is_some()
+            || run.code
+            || run.html
+            || run.image.is_some()
+            || run.footnote.is_some()
+            || !run.text.contains(':')
+        {
+            out.push(run);
+            continue;
+        }
+        let text = run.text.clone();
+        let mut last = 0;
+        let mut i = 0;
+        while let Some(p) = text[i..].find(':') {
+            let start = i + p;
+            let after = &text[start + 1..];
+            let name_end = after
+                .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                .unwrap_or(after.len());
+            let name = &after[..name_end];
+            if name_end > 0 && after[name_end..].starts_with(':') && CUSTOM_EMOJI.contains(&name) {
+                if start > last {
+                    out.push(Run {
+                        text: text[last..start].to_owned(),
+                        ..run.clone()
+                    });
+                }
+                let end = start + name_end + 2;
+                out.push(Run {
+                    text: text[start..end].to_owned(),
+                    custom_emoji: Some(name.to_owned()),
+                    ..run.clone()
+                });
+                last = end;
+                i = end;
+            } else {
+                i = start + 1;
+            }
+        }
+        if last < text.len() {
+            out.push(Run {
+                text: text[last..].to_owned(),
+                ..run
+            });
+        }
+    }
+    out
+}
+
+fn linkify_text(runs: Vec<Run>, github: Option<&str>) -> Vec<Run> {
     let mut out = Vec::new();
     for run in runs {
         if run.link.is_some()
@@ -820,5 +904,26 @@ mod tests {
             panic!()
         };
         assert_eq!(runs.iter().filter(|r| r.link.is_some()).count(), 1);
+    }
+
+    #[test]
+    fn github_custom_emoji_become_chips() {
+        let blocks = parse("Ship it :shipit: with :octocat: and :nope: :smile:\n");
+        let Block::Paragraph { runs } = &blocks[0] else {
+            panic!("{blocks:?}")
+        };
+        let chips: Vec<&str> = runs
+            .iter()
+            .filter_map(|r| r.custom_emoji.as_deref())
+            .collect();
+        assert_eq!(chips, vec!["shipit", "octocat"]);
+        assert!(
+            runs.iter()
+                .any(|r| r.custom_emoji.is_some() && r.text == ":octocat:")
+        );
+        assert!(
+            runs.iter()
+                .any(|r| r.text.contains(":nope:") && r.text.contains("😄"))
+        );
     }
 }

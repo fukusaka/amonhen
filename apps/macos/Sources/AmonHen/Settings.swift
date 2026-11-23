@@ -217,6 +217,16 @@ enum Settings {
         }
     }
 
+    /// 差分の長い行を、横にスクロールさせずに折り返すか（アプリ全体。History・Working Copy などすべての差分）。
+    /// 変えたら `diffWrapLinesChanged` を知らせる。起動の引数 `-wrapDiffLines YES` でも入れられる。
+    static var wrapDiffLines: Bool {
+        get { UserDefaults.standard.bool(forKey: "wrapDiffLines") }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "wrapDiffLines")
+            NotificationCenter.default.post(name: .diffWrapLinesChanged, object: nil)
+        }
+    }
+
 
     /// File History にマージのコミットも出すか（既定は出さない）。変えたら `fileHistoryMergesChanged` を知らせる。
     static var fileHistoryMerges: Bool {
@@ -430,6 +440,7 @@ extension Notification.Name {
     static let signatureCheckChanged = Notification.Name("signatureCheckChanged")
     static let commitMessageStyleChanged = Notification.Name("commitMessageStyleChanged")
     static let historyFileTreeChanged = Notification.Name("historyFileTreeChanged")
+    static let diffWrapLinesChanged = Notification.Name("diffWrapLinesChanged")
     static let fileHistoryMergesChanged = Notification.Name("fileHistoryMergesChanged")
     static let gitHubSettingsChanged = Notification.Name("gitHubSettingsChanged")
     static let autoFetchChanged = Notification.Name("autoFetchChanged")

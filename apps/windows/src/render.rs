@@ -150,7 +150,18 @@ const LABEL_HEIGHT: f32 = 17.0;
 /// 差分の行の高さ（DIP）と、行番号の列の幅。
 pub const DIFF_ROW_HEIGHT: f32 = 18.0;
 const DIFF_NUMBER_WIDTH: f32 = 44.0;
+/// History の差分の行番号の欄の幅（hunk の見出しのここを押すと、前後の行を広げる）。
+pub const DIFF_GUTTER_WIDTH: f32 = DIFF_NUMBER_WIDTH * 2.0;
 const DIFF_TEXT_INSET: f32 = 10.0;
+/// ファイルの見出しの、パスの左端（左に ▸・▾ と、足した・消した・変えたの印。macOS 版と同じ並び）。
+const HEADER_PATH_X: f32 = 42.0;
+/// ファイルの見出しの右端の、いつも出す ⋯ の幅（ここを押すとファイルのメニュー。macOS 版と同じ 30pt）。
+pub const HEADER_MENU_WIDTH: f32 = 30.0;
+/// 木で見せるときの、深さ 1 つ分の字下げ（macOS 版と同じ 14pt）。
+const TREE_INDENT: f32 = 14.0;
+const ADDED_TEXT: D2D1_COLOR_F = rgba(0.16, 0.62, 0.26, 1.0);
+const REMOVED_TEXT: D2D1_COLOR_F = rgba(0.86, 0.22, 0.20, 1.0);
+const MODIFIED_TEXT: D2D1_COLOR_F = rgba(0.93, 0.55, 0.10, 1.0);
 // 差分の色（GTK4 版・macOS 版の標準の色と同じ）。
 /// 差分の地の色（Settings > Theme のテーマの色。標準の色にしていればこれまでの色）。
 fn diff_color(kind: crate::theme::DiffColor) -> D2D1_COLOR_F {
@@ -401,6 +412,9 @@ pub struct Renderer {
     /// 差分の文字（等幅）と、見出しの文字。
     code_format: IDWriteTextFormat,
     file_format: IDWriteTextFormat,
+    icon_format: IDWriteTextFormat,
+    /// 画像の比べる欄の、読んだ前と後の絵（差分の番号とファイルごと。差分が替わったら捨てる）。
+    images: HashMap<(u64, usize), ImageEntry>,
     /// 差分の行の文字の形（今の差分の行ごと。差分が替わったら捨てる）。
     diff_rows: HashMap<u32, IDWriteTextLayout>,
     /// 構文の種類ごとの文字の色。
@@ -498,6 +512,16 @@ impl Renderer {
                 w!("ja-jp"),
             )?;
             file_format.SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP)?;
+            // ファイルの見出しの山形（Segoe Fluent Icons の ChevronRight・ChevronDown）。
+            let icon_format = dwrite.CreateTextFormat(
+                w!("Segoe Fluent Icons"),
+                None,
+                DWRITE_FONT_WEIGHT_NORMAL,
+                DWRITE_FONT_STYLE_NORMAL,
+                DWRITE_FONT_STRETCH_NORMAL,
+                10.0,
+                w!("ja-jp"),
+            )?;
             let brush = d2d.CreateSolidColorBrush(&foreground(), None)?;
             let base: &ID2D1Factory = &d2d_factory;
             let round = base.CreateStrokeStyle(
@@ -537,6 +561,8 @@ impl Renderer {
                 label_format,
                 code_format,
                 file_format,
+                icon_format,
+                images: HashMap::new(),
                 diff_rows: HashMap::new(),
                 syntax_brushes: HashMap::new(),
                 theme_generation: crate::theme::generation(),
@@ -1080,7 +1106,8 @@ impl Renderer {
     ) -> Result<()> {
         use amonhen_layout::DiffRow;
         let view = commit.view;
-        let count = view.rows.len() as u32;
+        // 表示の行（木で見せるときは、フォルダの行を差し込み、隠したファイルを除いた並び）。
+        let count = commit.line_count() as u32;
         let first = ((scroll_y / DIFF_ROW_HEIGHT).floor().max(0.0) as u32).min(count);
         let last = (((scroll_y + height) / DIFF_ROW_HEIGHT).ceil() as u32 + 1).min(count);
         if self.diff_rows.len() > 2048 {
@@ -1094,9 +1121,29 @@ impl Renderer {
         // 行ごとの含める印（Working Copy の 1 本の差分）があれば、その列の右から行番号。
         let left = if commit.marks { DIFF_MARK_WIDTH } else { 0.0 };
         let text_x = left + DIFF_NUMBER_WIDTH * 2.0 + DIFF_TEXT_INSET;
-        for i in first..last {
+        // 画像の比べる欄は、見えている最初の行で欄ごと描く（欄の行は 1 度だけ）。
+        let mut drawn_panel = None;
+        for n in first..last {
+            let top = n as f32 * DIFF_ROW_HEIGHT - scroll_y;
+            let i = match commit.line(n as usize) {
+                Some(crate::data::DiffLine::Row(i)) => i,
+                Some(crate::data::DiffLine::Panel(file, k)) => {
+                    if drawn_panel != Some(file) {
+                        drawn_panel = Some(file);
+                        let panel_top = top - k as f32 * DIFF_ROW_HEIGHT;
+                        self.draw_image_panel(&commit, file as usize, panel_top, width)?;
+                    }
+                    continue;
+                }
+                Some(crate::data::DiffLine::Folder(f)) => {
+                    if let Some(folder) = commit.tree.and_then(|t| t.folders.get(f as usize)) {
+                        self.draw_folder(folder, top, width)?;
+                    }
+                    continue;
+                }
+                None => continue,
+            };
             let row = &view.rows[i as usize];
-            let top = i as f32 * DIFF_ROW_HEIGHT - scroll_y;
             let rect = |left: f32, right: f32| D2D_RECT_F {
                 left,
                 top,
@@ -1122,8 +1169,21 @@ impl Renderer {
                     self.d2d.FillRectangle(&rect(0.0, width), &self.brush);
                 }
             }
-            self.diff_layout(view, commit.syntax, i)?;
+            let title = self.header_title(&commit, i);
+            self.diff_layout(view, commit.syntax, i, title.as_deref())?;
             let layout = &self.diff_rows[&i];
+            // 木の見出しはパスの最後だけを出すので、検索の位置はその前の分をずらす（前の分の一致は出さない）。
+            let shift = title.as_ref().map_or(0, |t| {
+                let path = String::from_utf8_lossy(view.strings.bytes(row.text));
+                path.encode_utf16()
+                    .count()
+                    .saturating_sub(t.encode_utf16().count()) as u32
+            });
+            let base = if file {
+                HEADER_PATH_X + self.header_indent(&commit, i)
+            } else {
+                text_x
+            };
             // 差分の中の検索の一致（黄色、今の一致は橙。GTK4 版の差分の検索の帯）。
             let from = self.diff_find.partition_point(|m| m.0 < i);
             for (k, &(_, start, end)) in self.diff_find[from..]
@@ -1131,8 +1191,10 @@ impl Renderer {
                 .enumerate()
                 .take_while(|(_, m)| m.0 == i)
             {
-                let (left, right) = (x_of(layout, start)?, x_of(layout, end)?);
-                let base = if file { DIFF_TEXT_INSET } else { text_x };
+                if start < shift {
+                    continue;
+                }
+                let (left, right) = (x_of(layout, start - shift)?, x_of(layout, end - shift)?);
                 let fill = if self.diff_current == Some(from + k) {
                     rgba(1.0, 0.6, 0.1, 0.65)
                 } else {
@@ -1164,19 +1226,48 @@ impl Renderer {
                     }
                 }
             }
-            unsafe {
-                self.brush.SetColor(&foreground());
-                let x = if file { DIFF_TEXT_INSET } else { text_x };
-                self.d2d.DrawTextLayout(
-                    point(x, top + 1.0),
-                    layout,
-                    &self.brush,
-                    D2D1_DRAW_TEXT_OPTIONS_CLIP,
-                );
+            if file {
+                self.draw_file_header(&commit, i, top, width)?;
+            } else {
+                unsafe {
+                    self.brush.SetColor(&foreground());
+                    self.d2d.DrawTextLayout(
+                        point(text_x, top + 1.0),
+                        layout,
+                        &self.brush,
+                        D2D1_DRAW_TEXT_OPTIONS_CLIP,
+                    );
+                }
             }
             if !file && row.kind != DiffRow::HUNK {
                 self.draw_number(row.old_no, left, top)?;
                 self.draw_number(row.new_no, left + DIFF_NUMBER_WIDTH, top)?;
+            }
+            // hunk の見出しの行番号の欄に、前後の行を広げる印（macOS 版の `drawExpandMark`）。
+            if commit.widen && row.kind == DiffRow::HUNK {
+                unsafe {
+                    self.brush.SetColor(&rgba(0.0, 0.47, 0.84, 0.18));
+                    self.d2d
+                        .FillRectangle(&rect(0.0, DIFF_GUTTER_WIDTH), &self.brush);
+                }
+                let format = self.file_format.clone();
+                let text: Vec<u16> = "⤒  ⤓".encode_utf16().collect();
+                unsafe {
+                    let layout = self.dwrite.CreateTextLayout(
+                        &text,
+                        &format,
+                        DIFF_GUTTER_WIDTH,
+                        DIFF_ROW_HEIGHT,
+                    )?;
+                    layout.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER)?;
+                    self.brush.SetColor(&DIFF_MARK);
+                    self.d2d.DrawTextLayout(
+                        point(0.0, top + 1.0),
+                        &layout,
+                        &self.brush,
+                        D2D1_DRAW_TEXT_OPTIONS_NONE,
+                    );
+                }
             }
             if commit.marks && matches!(row.kind, DiffRow::ADDED | DiffRow::REMOVED) {
                 let mark = if row.flags & DiffRow::STAGED != 0 {
@@ -1205,9 +1296,12 @@ impl Renderer {
         }
         // 見出しの行が上に隠れたファイルは、見出しを上に張り付かせる（次のファイルの見出しが来たら押し上げる。
         // macOS 版・GTK4 版と同じ）。
-        if let Some((i, top)) = sticky_header(commit.file_rows, scroll_y) {
-            self.diff_layout(view, commit.syntax, i as u32)?;
-            let layout = &self.diff_rows[&(i as u32)];
+        if let Some((n, top)) = sticky_header(commit.file_lines(), scroll_y)
+            && let Some(crate::data::DiffLine::Row(i)) = commit.line(n)
+        {
+            let i = i as usize;
+            let title = self.header_title(&commit, i as u32);
+            self.diff_layout(view, commit.syntax, i as u32, title.as_deref())?;
             unsafe {
                 self.brush.SetColor(&background());
                 self.d2d.FillRectangle(
@@ -1229,16 +1323,811 @@ impl Renderer {
                     },
                     &self.brush,
                 );
+            }
+            self.draw_file_header(&commit, i as u32, top, width)?;
+        }
+        Ok(())
+    }
+
+    /// ファイルの見出しの行の中身（地は塗ってあるもの）: 左に ▸・▾、足した（A）・消した（D）・変えた（M）の印、
+    /// パス。右に足した・消した行の数（バイナリなら Binary）と、いつも出す ⋯（右クリックと同じメニュー）。
+    /// macOS 版の `drawCompactHeader` と同じ並び。
+    fn draw_file_header(
+        &mut self,
+        commit: &crate::data::DiffContent,
+        i: u32,
+        top: f32,
+        width: f32,
+    ) -> Result<()> {
+        use amonhen_layout::DiffRow;
+        let row = &commit.view.rows[i as usize];
+        let file = commit.file_rows.binary_search(&i).ok();
+        let indent = self.header_indent(commit, i);
+        // 比べる欄を出している画像は、差分を畳んでいても開いた ▾。
+        let open = row.flags & DiffRow::COLLAPSED == 0
+            || file.is_some_and(|f| commit.tree.is_some_and(|t| t.panels.contains(&f)));
+        // 右から置く: ⋯、行の数。
+        let mut right = width - HEADER_MENU_WIDTH;
+        // ⋯ は、ほかより一回り大きく（macOS 版と同じ）。
+        let large = self.subject_format.clone();
+        self.draw_small(
+            "⋯",
+            &large,
+            width - HEADER_MENU_WIDTH,
+            top,
+            HEADER_MENU_WIDTH - 6.0,
+            &secondary(),
+            true,
+        )?;
+        // まだ差分を取っていないファイルは、詳細の `stats` の行の数（macOS 版の `fileCounts`）。
+        let (added, removed) = if row.flags & DiffRow::PENDING != 0 {
+            let path = String::from_utf8_lossy(commit.view.strings.bytes(row.text));
+            commit
+                .counts
+                .and_then(|c| c.get(path.as_ref()).copied())
+                .unwrap_or((0, 0))
+        } else {
+            (row.new_no, row.old_no)
+        };
+        let path = String::from_utf8_lossy(commit.view.strings.bytes(row.text));
+        // 画像は行の数の代わりに「画像」（macOS 版の `fileNotes`）。
+        let counts: Vec<(String, D2D1_COLOR_F)> =
+            if commit.stacked.is_some() && crate::imagediff::is_image(&path) {
+                vec![(amonhen_model::tr!("Image"), secondary())]
+            } else if row.flags & DiffRow::BINARY != 0 {
+                vec![(amonhen_model::tr!("Binary"), secondary())]
+            } else if added == 0 && removed == 0 {
+                Vec::new()
+            } else {
+                vec![
+                    (format!("+{added}"), ADDED_TEXT),
+                    (format!("−{removed}"), REMOVED_TEXT),
+                ]
+            };
+        let format = self.file_format.clone();
+        let mut placed = Vec::new();
+        for (text, color) in counts.iter().rev() {
+            let (layout, w) = self.measured(text, &format)?;
+            right -= w;
+            placed.push((layout, right, *color));
+            right -= 6.0;
+        }
+        let right = right - 8.0;
+        unsafe {
+            self.d2d.PushAxisAlignedClip(
+                &D2D_RECT_F {
+                    left: 0.0,
+                    top,
+                    right: right.max(HEADER_PATH_X + indent),
+                    bottom: top + DIFF_ROW_HEIGHT,
+                },
+                D2D1_ANTIALIAS_MODE_ALIASED,
+            );
+        }
+        let drawn = (|| -> Result<()> {
+            self.draw_small(
+                if open { "\u{E70D}" } else { "\u{E76C}" },
+                &self.icon_format.clone(),
+                DIFF_TEXT_INSET + indent,
+                top + 3.0,
+                14.0,
+                &secondary(),
+                false,
+            )?;
+            if let Some(mark) = file.and_then(|f| commit.file_marks.get(f)) {
+                let color = match mark {
+                    'A' => ADDED_TEXT,
+                    'D' => REMOVED_TEXT,
+                    _ => MODIFIED_TEXT,
+                };
+                self.draw_small(
+                    &mark.to_string(),
+                    &self.code_format.clone(),
+                    DIFF_TEXT_INSET + indent + 16.0,
+                    top,
+                    14.0,
+                    &color,
+                    false,
+                )?;
+            }
+            let layout = &self.diff_rows[&i];
+            unsafe {
                 self.brush.SetColor(&foreground());
                 self.d2d.DrawTextLayout(
-                    point(DIFF_TEXT_INSET, top + 1.0),
+                    point(HEADER_PATH_X + indent, top + 1.0),
                     layout,
                     &self.brush,
                     D2D1_DRAW_TEXT_OPTIONS_CLIP,
                 );
             }
+            Ok(())
+        })();
+        unsafe { self.d2d.PopAxisAlignedClip() };
+        drawn?;
+        for (layout, x, color) in placed {
+            unsafe {
+                self.brush.SetColor(&color);
+                self.d2d.DrawTextLayout(
+                    point(x, top + 1.0),
+                    &layout,
+                    &self.brush,
+                    D2D1_DRAW_TEXT_OPTIONS_NONE,
+                );
+            }
         }
         Ok(())
+    }
+
+    /// 差分の `row` 行目（ファイルの見出し）の木の字下げ（リストなら 0）。
+    fn header_indent(&self, commit: &crate::data::DiffContent, row: u32) -> f32 {
+        commit
+            .file_rows
+            .binary_search(&row)
+            .map_or(0.0, |f| commit.file_title(f).0 as f32 * TREE_INDENT)
+    }
+
+    /// 差分の `row` 行目（ファイルの見出し）に、パスの代わりに出す名前（木のとき。リストなら None）。
+    fn header_title(&self, commit: &crate::data::DiffContent, row: u32) -> Option<String> {
+        let file = commit.file_rows.binary_search(&row).ok()?;
+        commit.file_title(file).1.map(str::to_owned)
+    }
+
+    /// 木のフォルダの行: 字下げして、山形・フォルダの印・名前（押すと中のファイルごと畳む・開く。macOS 版と同じ）。
+    fn draw_folder(
+        &mut self,
+        folder: &crate::data::FolderLine,
+        top: f32,
+        width: f32,
+    ) -> Result<()> {
+        let indent = folder.depth as f32 * TREE_INDENT;
+        unsafe {
+            self.brush.SetColor(&diff_file());
+            self.d2d.FillRectangle(
+                &D2D_RECT_F {
+                    left: 0.0,
+                    top,
+                    right: width,
+                    bottom: top + DIFF_ROW_HEIGHT,
+                },
+                &self.brush,
+            );
+        }
+        let icons = self.icon_format.clone();
+        self.draw_small(
+            if folder.collapsed {
+                "\u{E76C}"
+            } else {
+                "\u{E70D}"
+            },
+            &icons,
+            DIFF_TEXT_INSET + indent,
+            top + 3.0,
+            14.0,
+            &secondary(),
+            false,
+        )?;
+        self.draw_small(
+            "\u{E8B7}",
+            &icons,
+            DIFF_TEXT_INSET + indent + 16.0,
+            top + 3.0,
+            14.0,
+            &secondary(),
+            false,
+        )?;
+        let format = self.file_format.clone();
+        self.draw_small(
+            &folder.name,
+            &format,
+            HEADER_PATH_X + indent,
+            top,
+            (width - HEADER_PATH_X - indent).max(0.0),
+            &secondary(),
+            false,
+        )
+    }
+
+    /// 画像の比べる欄の、前と後を重ねる大きさ（読んでいなければ 0）。
+    pub fn image_common(&self, key: u64, file: usize) -> (f32, f32) {
+        let size =
+            |p: &Option<crate::imagediff::Pixels>| p.as_ref().map_or((0.0, 0.0), |p| p.size());
+        self.images.get(&(key, file)).map_or((0.0, 0.0), |e| {
+            let (a, b) = (size(&e.before), size(&e.after));
+            (a.0.max(b.0), a.1.max(b.1))
+        })
+    }
+
+    /// 画像の前と後を読んだもの（なければ読む）。
+    fn image_entry(
+        &mut self,
+        commit: &crate::data::DiffContent,
+        file: usize,
+    ) -> Option<&mut ImageEntry> {
+        let key = (commit.key, file);
+        if !self.images.contains_key(&key) {
+            // 別の差分の絵は捨てる。
+            self.images.retain(|k, _| k.0 == commit.key);
+            let (path, diff) = commit.stacked?.files.get(file)?;
+            let side = |blob: &[u8]| (!blob.is_empty()).then(|| blob.to_vec());
+            let (old, new) = (side(&diff.old), side(&diff.new));
+            let svg = crate::imagediff::is_svg(path);
+            let decode = |b: &Option<Vec<u8>>| {
+                let bytes = b.as_deref()?;
+                if svg {
+                    self.rasterize_svg(bytes).ok()
+                } else {
+                    crate::imagediff::decode(bytes)
+                }
+            };
+            let (before, after) = (decode(&old), decode(&new));
+            let caption = crate::imagediff::caption(
+                crate::imagediff::describe(old.as_deref(), before.as_ref()),
+                crate::imagediff::describe(new.as_deref(), after.as_ref()),
+            );
+            let before_bitmap = before.as_ref().and_then(|p| self.bitmap(p).ok());
+            let after_bitmap = after.as_ref().and_then(|p| self.bitmap(p).ok());
+            self.images.insert(
+                key,
+                ImageEntry {
+                    before,
+                    after,
+                    before_bitmap,
+                    after_bitmap,
+                    caption,
+                    difference: None,
+                },
+            );
+        }
+        self.images.get_mut(&key)
+    }
+
+    /// SVG を Direct2D で絵にする（その絵の大きさで。別の描き先で描いて、ピクセルを読み出す）。
+    fn rasterize_svg(&self, bytes: &[u8]) -> Result<crate::imagediff::Pixels> {
+        use windows::Win32::UI::Shell::SHCreateMemStream;
+        // 拡げても粗くならないよう、絵の大きさの 4 倍（2048 まで）の細かさで描く。
+        let (w, h) = crate::imagediff::svg_size(bytes);
+        let scale = (2048 / w.max(h)).clamp(1, 4);
+        let (width, height) = (w * scale, h * scale);
+        let size = D2D_SIZE_U { width, height };
+        let props = |options| D2D1_BITMAP_PROPERTIES1 {
+            pixelFormat: D2D1_PIXEL_FORMAT {
+                format: DXGI_FORMAT_B8G8R8A8_UNORM,
+                alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED,
+            },
+            dpiX: 96.0,
+            dpiY: 96.0,
+            bitmapOptions: options,
+            ..Default::default()
+        };
+        unsafe {
+            let device = self.d2d.GetDevice()?;
+            let dc: ID2D1DeviceContext5 = device
+                .CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE)?
+                .cast()?;
+            let stream = SHCreateMemStream(Some(bytes)).ok_or_else(|| {
+                windows::core::Error::from(windows::Win32::Foundation::E_OUTOFMEMORY)
+            })?;
+            // 文書は絵の大きさで作り（`width`・`height` があればそれで描かれる）、拡大の変換で細かく描く。
+            let document = dc.CreateSvgDocument(
+                &stream,
+                D2D_SIZE_F {
+                    width: w as f32,
+                    height: h as f32,
+                },
+            )?;
+            let target = dc.CreateBitmap(size, None, 0, &props(D2D1_BITMAP_OPTIONS_TARGET))?;
+            dc.SetTarget(&target);
+            dc.BeginDraw();
+            dc.Clear(Some(&rgba(0.0, 0.0, 0.0, 0.0)));
+            let s = scale as f32;
+            dc.SetTransform(&windows_numerics::Matrix3x2 {
+                M11: s,
+                M12: 0.0,
+                M21: 0.0,
+                M22: s,
+                M31: 0.0,
+                M32: 0.0,
+            });
+            dc.DrawSvgDocument(&document);
+            dc.EndDraw(None, None)?;
+            let cpu = dc.CreateBitmap(
+                size,
+                None,
+                0,
+                &props(D2D1_BITMAP_OPTIONS_CPU_READ | D2D1_BITMAP_OPTIONS_CANNOT_DRAW),
+            )?;
+            cpu.CopyFromBitmap(None, &target, None)?;
+            let mapped = cpu.Map(D2D1_MAP_OPTIONS_READ)?;
+            let row = width as usize * 4;
+            let mut data = vec![0u8; row * height as usize];
+            for y in 0..height as usize {
+                let from =
+                    std::slice::from_raw_parts(mapped.bits.add(y * mapped.pitch as usize), row);
+                data[y * row..(y + 1) * row].copy_from_slice(from);
+            }
+            cpu.Unmap()?;
+            Ok(crate::imagediff::Pixels {
+                width,
+                height,
+                data,
+                scale,
+            })
+        }
+    }
+
+    /// 読んだ絵から、描ける絵を作る。
+    fn bitmap(&self, pixels: &crate::imagediff::Pixels) -> Result<ID2D1Bitmap1> {
+        unsafe {
+            self.d2d.CreateBitmap(
+                D2D_SIZE_U {
+                    width: pixels.width,
+                    height: pixels.height,
+                },
+                Some(pixels.data.as_ptr().cast()),
+                pixels.width * 4,
+                &D2D1_BITMAP_PROPERTIES1 {
+                    pixelFormat: D2D1_PIXEL_FORMAT {
+                        format: DXGI_FORMAT_B8G8R8A8_UNORM,
+                        alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED,
+                    },
+                    dpiX: 96.0,
+                    dpiY: 96.0,
+                    ..Default::default()
+                },
+            )
+        }
+    }
+
+    /// 画像の比べる欄（macOS 版の `ImageDiffPanel`、GTK4 版の `imagediff::panel`）: 上の帯に比べ方・スワイプと
+    /// オニオンスキンの位置・拡大縮小、その下に絵、下に大きさの説明（違うピクセルなら、違う数）。
+    fn draw_image_panel(
+        &mut self,
+        commit: &crate::data::DiffContent,
+        file: usize,
+        top: f32,
+        width: f32,
+    ) -> Result<()> {
+        use crate::imagediff::{self as image, Mode};
+        let height = image::PANEL_LINES as f32 * DIFF_ROW_HEIGHT;
+        let mode = image::mode();
+        let view = commit
+            .image_views
+            .and_then(|v| v.get(&file).copied())
+            .unwrap_or_default();
+        let svg = commit
+            .stacked
+            .and_then(|s| s.files.get(file))
+            .is_some_and(|(path, _)| image::is_svg(path));
+        let layout = image::layout(top, width, mode, svg);
+        let accent = rgba(0.21, 0.52, 0.89, 1.0);
+        let fill = |r: &Self, rect: image::Rect, color: D2D1_COLOR_F| unsafe {
+            r.brush.SetColor(&color);
+            r.d2d.FillRectangle(&d2d_rect(rect), &r.brush);
+        };
+        // 地と、下の仕切りの線。
+        fill(
+            self,
+            image::Rect {
+                x: 0.0,
+                y: top,
+                w: width,
+                h: height,
+            },
+            background(),
+        );
+        fill(
+            self,
+            image::Rect {
+                x: 0.0,
+                y: top + height - 1.0,
+                w: width,
+                h: 1.0,
+            },
+            diff_file(),
+        );
+        // 比べ方（つないだボタン。選んでいるものはアクセントの色）。
+        let format = self.file_format.clone();
+        for (i, m) in Mode::ALL.into_iter().enumerate() {
+            let r = layout.modes[i];
+            let on = m == mode;
+            fill(self, r, if on { accent } else { diff_file() });
+            let color = if on {
+                rgba(1.0, 1.0, 1.0, 1.0)
+            } else {
+                foreground()
+            };
+            self.draw_centered(&m.title(), &format, r, &color)?;
+        }
+        // SVG の「テキストで見る」（Segoe Fluent Icons の Document）。
+        if let Some(r) = layout.text {
+            fill(self, r, diff_file());
+            let icons = self.icon_format.clone();
+            self.draw_centered("\u{E8A5}", &icons, r, &foreground())?;
+        }
+        // スワイプ・オニオンスキンの位置のスライダー。
+        if let Some(slider) = layout.slider {
+            let mid = slider.y + slider.h / 2.0;
+            fill(
+                self,
+                image::Rect {
+                    x: slider.x,
+                    y: mid - 1.5,
+                    w: slider.w,
+                    h: 3.0,
+                },
+                diff_file(),
+            );
+            fill(
+                self,
+                image::Rect {
+                    x: slider.x,
+                    y: mid - 1.5,
+                    w: slider.w * view.position,
+                    h: 3.0,
+                },
+                accent,
+            );
+            self.fill_circle(slider.x + slider.w * view.position, mid, 7.0, &accent);
+        }
+        // 拡大縮小: 倍率（押すと 100% と合わせるを切り替える）・縮める・広げる・合わせる（Segoe Fluent Icons）。
+        self.draw_centered(
+            &image::zoom_text(&view),
+            &format,
+            layout.zoom_label,
+            &secondary(),
+        )?;
+        let icons = self.icon_format.clone();
+        for (r, glyph) in [
+            (layout.zoom_out, "\u{E71F}"),
+            (layout.zoom_in, "\u{E8A3}"),
+            (layout.zoom_fit, "\u{E9A6}"),
+        ] {
+            fill(self, r, diff_file());
+            self.draw_centered(glyph, &icons, r, &foreground())?;
+        }
+        let Some(entry) = self.image_entry(commit, file) else {
+            return Ok(());
+        };
+        let size = |p: &Option<image::Pixels>| p.as_ref().map_or((0.0, 0.0), |p| p.size());
+        let (before_size, after_size) = (size(&entry.before), size(&entry.after));
+        let common = (
+            before_size.0.max(after_size.0),
+            before_size.1.max(after_size.1),
+        );
+        let (before, after) = (entry.before_bitmap.clone(), entry.after_bitmap.clone());
+        let mut caption = entry.caption.clone();
+        if mode == Mode::Difference {
+            if entry.difference.is_none() {
+                let (pixels, changed, total) =
+                    image::difference(entry.before.as_ref(), entry.after.as_ref());
+                let bitmap = pixels.as_ref().and_then(|p| self.bitmap(p).ok());
+                if let Some(entry) = self.images.get_mut(&(commit.key, file)) {
+                    entry.difference = Some((bitmap, changed, total));
+                }
+            }
+            if let Some(Some((_, changed, total))) = self
+                .images
+                .get(&(commit.key, file))
+                .map(|e| e.difference.as_ref())
+            {
+                caption = image::difference_summary(*changed, *total);
+            }
+        }
+        let canvas = layout.canvas;
+        unsafe {
+            self.d2d
+                .PushAxisAlignedClip(&d2d_rect(canvas), D2D1_ANTIALIAS_MODE_ALIASED);
+        }
+        let titles = (amonhen_model::tr!("Before"), amonhen_model::tr!("After"));
+        let drawn = (|| -> Result<()> {
+            match mode {
+                Mode::TwoUp => {
+                    let red = rgba(0.88, 0.11, 0.14, 0.8);
+                    let green = rgba(0.18, 0.76, 0.49, 0.8);
+                    for (side, (bitmap, size, title, color)) in [
+                        (&before, before_size, &titles.0, red),
+                        (&after, after_size, &titles.1, green),
+                    ]
+                    .into_iter()
+                    .enumerate()
+                    {
+                        let area = image::two_up_area(canvas, side);
+                        self.draw_small(
+                            title,
+                            &format,
+                            area.x,
+                            area.y - 20.0,
+                            area.w,
+                            &secondary(),
+                            false,
+                        )?;
+                        match bitmap {
+                            Some(bitmap) => {
+                                unsafe {
+                                    self.d2d.PushAxisAlignedClip(
+                                        &d2d_rect(area),
+                                        D2D1_ANTIALIAS_MODE_ALIASED,
+                                    );
+                                }
+                                let rect = image::fit(size, area, &view);
+                                self.checker(rect);
+                                self.draw_bitmap(bitmap, rect, 1.0);
+                                unsafe {
+                                    self.brush.SetColor(&color);
+                                    self.d2d.DrawRectangle(
+                                        &d2d_rect(image::Rect {
+                                            x: rect.x - 1.5,
+                                            y: rect.y - 1.5,
+                                            w: rect.w + 3.0,
+                                            h: rect.h + 3.0,
+                                        }),
+                                        &self.brush,
+                                        2.0,
+                                        None::<&ID2D1StrokeStyle>,
+                                    );
+                                    self.d2d.PopAxisAlignedClip();
+                                }
+                            }
+                            None => {
+                                let dash = image::Rect {
+                                    x: area.x + 30.0,
+                                    y: area.y + 20.0,
+                                    w: (area.w - 60.0).max(0.0),
+                                    h: (area.h - 40.0).max(0.0),
+                                };
+                                self.dashed(dash, &secondary())?;
+                                self.draw_centered(
+                                    &amonhen_model::tr!("None"),
+                                    &format,
+                                    dash,
+                                    &secondary(),
+                                )?;
+                            }
+                        }
+                    }
+                }
+                Mode::Swipe | Mode::Onion => {
+                    let rect = image::fit(common, image::overlay_area(canvas), &view);
+                    self.checker(rect);
+                    let before_rect = image::fitted(common, before_size, rect);
+                    let after_rect = image::fitted(common, after_size, rect);
+                    if mode == Mode::Onion {
+                        if let Some(b) = &before {
+                            self.draw_bitmap(b, before_rect, 1.0);
+                        }
+                        if let Some(a) = &after {
+                            self.draw_bitmap(a, after_rect, view.position);
+                        }
+                    } else {
+                        if let Some(a) = &after {
+                            self.draw_bitmap(a, after_rect, 1.0);
+                        }
+                        let split = rect.x + rect.w * view.position;
+                        let left = image::Rect {
+                            x: rect.x,
+                            y: rect.y,
+                            w: (split - rect.x).max(0.0),
+                            h: rect.h,
+                        };
+                        unsafe {
+                            self.d2d
+                                .PushAxisAlignedClip(&d2d_rect(left), D2D1_ANTIALIAS_MODE_ALIASED);
+                        }
+                        self.checker(rect);
+                        if let Some(b) = &before {
+                            self.draw_bitmap(b, before_rect, 1.0);
+                        }
+                        unsafe { self.d2d.PopAxisAlignedClip() };
+                        fill(
+                            self,
+                            image::Rect {
+                                x: split - 1.0,
+                                y: rect.y - 4.0,
+                                w: 2.0,
+                                h: rect.h + 8.0,
+                            },
+                            accent,
+                        );
+                        self.fill_circle(split, rect.y + rect.h / 2.0, 7.0, &accent);
+                    }
+                    self.draw_small(
+                        &titles.0,
+                        &format,
+                        rect.x - 56.0,
+                        rect.y - 1.0,
+                        52.0,
+                        &secondary(),
+                        true,
+                    )?;
+                    self.draw_small(
+                        &titles.1,
+                        &format,
+                        rect.x + rect.w + 8.0,
+                        rect.y - 1.0,
+                        52.0,
+                        &secondary(),
+                        false,
+                    )?;
+                }
+                Mode::Difference => {
+                    let rect = image::fit(common, image::overlay_area(canvas), &view);
+                    fill(self, rect, rgba(0.0, 0.0, 0.0, 1.0));
+                    let bitmap = self
+                        .images
+                        .get(&(commit.key, file))
+                        .and_then(|e| e.difference.as_ref())
+                        .and_then(|d| d.0.clone());
+                    if let Some(bitmap) = bitmap {
+                        self.draw_bitmap(&bitmap, rect, 1.0);
+                    }
+                }
+            }
+            Ok(())
+        })();
+        unsafe { self.d2d.PopAxisAlignedClip() };
+        drawn?;
+        self.draw_small(
+            &caption,
+            &self.meta_format.clone(),
+            layout.caption.x,
+            layout.caption.y,
+            layout.caption.w,
+            &secondary(),
+            false,
+        )
+    }
+
+    /// 絵を `rect` に描く（2 倍以上に拡げるならぼかさない）。
+    fn draw_bitmap(&self, bitmap: &ID2D1Bitmap1, rect: crate::imagediff::Rect, opacity: f32) {
+        // 絵のピクセルの 2 倍以上に拡げるならぼかさない（SVG は細かく描いてあるので、そのピクセルで比べる）。
+        let pixels = unsafe { bitmap.GetPixelSize() }.width as f32;
+        let mode = if rect.w >= pixels * 2.0 {
+            D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR
+        } else {
+            D2D1_INTERPOLATION_MODE_LINEAR
+        };
+        let dest = d2d_rect(rect);
+        unsafe {
+            self.d2d
+                .DrawBitmap(bitmap, Some(&dest as *const _), opacity, mode, None, None);
+        }
+    }
+
+    /// 透けたところを見せる市松模様。
+    fn checker(&self, rect: crate::imagediff::Rect) {
+        if rect.w <= 0.0 || rect.h <= 0.0 {
+            return;
+        }
+        let gray = rgba(0.86, 0.86, 0.86, 1.0);
+        unsafe {
+            self.brush.SetColor(&rgba(1.0, 1.0, 1.0, 1.0));
+            self.d2d.FillRectangle(&d2d_rect(rect), &self.brush);
+            self.brush.SetColor(&gray);
+        }
+        let s = 8.0;
+        let (right, bottom) = (rect.x + rect.w, rect.y + rect.h);
+        let mut y = rect.y;
+        let mut row = 0;
+        while y < bottom {
+            let mut x = rect.x + if row % 2 == 0 { 0.0 } else { s };
+            while x < right {
+                unsafe {
+                    self.d2d.FillRectangle(
+                        &D2D_RECT_F {
+                            left: x,
+                            top: y,
+                            right: (x + s).min(right),
+                            bottom: (y + s).min(bottom),
+                        },
+                        &self.brush,
+                    );
+                }
+                x += 2.0 * s;
+            }
+            y += s;
+            row += 1;
+        }
+    }
+
+    /// 点線の枠。
+    fn dashed(&self, rect: crate::imagediff::Rect, color: &D2D1_COLOR_F) -> Result<()> {
+        unsafe {
+            let base: &ID2D1Factory = &self.d2d_factory;
+            let style = base.CreateStrokeStyle(
+                &D2D1_STROKE_STYLE_PROPERTIES {
+                    dashStyle: D2D1_DASH_STYLE_DASH,
+                    ..Default::default()
+                },
+                None,
+            )?;
+            self.brush.SetColor(color);
+            self.d2d
+                .DrawRectangle(&d2d_rect(rect), &self.brush, 1.0, &style);
+        }
+        Ok(())
+    }
+
+    fn fill_circle(&self, x: f32, y: f32, r: f32, color: &D2D1_COLOR_F) {
+        unsafe {
+            self.brush.SetColor(color);
+            self.d2d.FillEllipse(
+                &D2D1_ELLIPSE {
+                    point: point(x, y),
+                    radiusX: r,
+                    radiusY: r,
+                },
+                &self.brush,
+            );
+        }
+    }
+
+    /// 短い文字を `rect` の真ん中に描く。
+    fn draw_centered(
+        &self,
+        text: &str,
+        format: &IDWriteTextFormat,
+        rect: crate::imagediff::Rect,
+        color: &D2D1_COLOR_F,
+    ) -> Result<()> {
+        let text: Vec<u16> = text.encode_utf16().collect();
+        unsafe {
+            let layout = self
+                .dwrite
+                .CreateTextLayout(&text, format, rect.w, rect.h)?;
+            layout.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER)?;
+            layout.SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER)?;
+            self.brush.SetColor(color);
+            self.d2d.DrawTextLayout(
+                point(rect.x, rect.y),
+                &layout,
+                &self.brush,
+                D2D1_DRAW_TEXT_OPTIONS_CLIP,
+            );
+        }
+        Ok(())
+    }
+
+    /// 短い文字を `x` から幅 `width` に描く（`trailing` なら右に寄せる）。
+    #[allow(clippy::too_many_arguments)]
+    fn draw_small(
+        &self,
+        text: &str,
+        format: &IDWriteTextFormat,
+        x: f32,
+        top: f32,
+        width: f32,
+        color: &D2D1_COLOR_F,
+        trailing: bool,
+    ) -> Result<()> {
+        let text: Vec<u16> = text.encode_utf16().collect();
+        unsafe {
+            let layout = self
+                .dwrite
+                .CreateTextLayout(&text, format, width, DIFF_ROW_HEIGHT)?;
+            if trailing {
+                layout.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING)?;
+            }
+            self.brush.SetColor(color);
+            self.d2d.DrawTextLayout(
+                point(x, top + 1.0),
+                &layout,
+                &self.brush,
+                D2D1_DRAW_TEXT_OPTIONS_NONE,
+            );
+        }
+        Ok(())
+    }
+
+    /// 文字の形と、その幅。
+    fn measured(&self, text: &str, format: &IDWriteTextFormat) -> Result<(IDWriteTextLayout, f32)> {
+        let text: Vec<u16> = text.encode_utf16().collect();
+        let layout = unsafe {
+            self.dwrite
+                .CreateTextLayout(&text, format, 10_000.0, DIFF_ROW_HEIGHT)?
+        };
+        let mut metrics = DWRITE_TEXT_METRICS::default();
+        unsafe { layout.GetMetrics(&mut metrics)? };
+        Ok((layout, metrics.widthIncludingTrailingWhitespace.ceil()))
     }
 
     /// 差分の `i` 行目の文字の配置を作って取っておく（あれば何もしない）。
@@ -1247,24 +2136,21 @@ impl Renderer {
         view: &amonhen_core::diff::DiffView,
         syntax: &std::collections::HashMap<u32, Vec<(u32, u32, u8)>>,
         i: u32,
+        title: Option<&str>,
     ) -> Result<()> {
         use amonhen_layout::DiffRow;
         let row = &view.rows[i as usize];
         let file = row.kind == DiffRow::FILE;
         if !self.diff_rows.contains_key(&i) {
+            // ファイルの見出しはパスだけ（木なら名前だけ。▸・印・行の数は `draw_file_header` が別に描く）。
             let mut text = Vec::with_capacity(128);
-            if file {
-                // 畳んだファイルは ▸、開いているファイルは ▾（見出しを押すと切り替わる）。
-                let mark = if row.flags & DiffRow::COLLAPSED != 0 {
-                    "▸ "
-                } else {
-                    "▾ "
-                };
-                text.extend(mark.encode_utf16());
-            }
-            crate::data::push_utf16(view.strings.bytes(row.text), row.text.is_ascii(), &mut text);
-            if file {
-                text.extend(format!("    +{}  −{}", row.new_no, row.old_no).encode_utf16());
+            match title {
+                Some(title) => text.extend(title.encode_utf16()),
+                None => crate::data::push_utf16(
+                    view.strings.bytes(row.text),
+                    row.text.is_ascii(),
+                    &mut text,
+                ),
             }
             let format = if file {
                 &self.file_format
@@ -1568,15 +2454,9 @@ pub fn find_in_diff(view: &amonhen_core::diff::DiffView, query: &str) -> Vec<(u3
     let mut out = Vec::new();
     for (i, row) in view.rows.iter().enumerate() {
         let text = String::from_utf8_lossy(view.strings.bytes(row.text));
-        // ファイルの見出しは前に「▾ 」が付く。
-        let prefix: u32 = if row.kind == amonhen_layout::DiffRow::FILE {
-            2
-        } else {
-            0
-        };
         // 文字ごとの（小文字、UTF-16 の位置）。
         let mut chars: Vec<(char, u32)> = Vec::new();
-        let mut at = prefix;
+        let mut at = 0;
         for c in text.chars() {
             let lower: Vec<char> = c.to_lowercase().collect();
             let lower = if lower.len() == 1 { lower[0] } else { c };
@@ -1689,6 +2569,25 @@ fn system_syntax_rgb(kind: u8) -> Option<(f32, f32, f32)> {
         SyntaxSpan::ATTRIBUTE | SyntaxSpan::ESCAPE => pick((0.80, 0.45, 0.05), (1.0, 0.65, 0.30)),
         SyntaxSpan::MODULE => pick((0.55, 0.40, 0.25), (0.80, 0.65, 0.45)),
         _ => None,
+    }
+}
+
+/// 画像の比べる欄の、読んだ前と後の絵（読めなければ None）と説明、違うピクセルの絵と数（はじめて要るときに作る）。
+struct ImageEntry {
+    before: Option<crate::imagediff::Pixels>,
+    after: Option<crate::imagediff::Pixels>,
+    before_bitmap: Option<ID2D1Bitmap1>,
+    after_bitmap: Option<ID2D1Bitmap1>,
+    caption: String,
+    difference: Option<(Option<ID2D1Bitmap1>, usize, usize)>,
+}
+
+fn d2d_rect(r: crate::imagediff::Rect) -> D2D_RECT_F {
+    D2D_RECT_F {
+        left: r.x,
+        top: r.y,
+        right: r.x + r.w,
+        bottom: r.y + r.h,
     }
 }
 

@@ -183,6 +183,8 @@ pub enum Kind {
     ZoomIn,
     /// arrow.up.left.and.down.right.magnifyingglass（画像を枠に合わせる）
     ZoomFit,
+    /// arrow.turn.down.left（差分の長い行を折り返す）
+    WrapLines,
 }
 
 mod imp {
@@ -878,6 +880,15 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
             p.add_circle(&point(6.8, 6.8), 4.3);
             p.move_to(10.0, 10.0);
             p.line_to(13.8, 13.8);
+        }
+        Kind::WrapLines => {
+            // 右上から下りて左へ曲がる矢印（改行の印）。
+            p.move_to(12.5, 3.0);
+            p.line_to(12.5, 9.5);
+            p.line_to(4.0, 9.5);
+            p.move_to(7.0, 6.5);
+            p.line_to(4.0, 9.5);
+            p.line_to(7.0, 12.5);
         }
         Kind::ZoomOut | Kind::ZoomIn | Kind::ZoomFit => {
             // 虫めがねと、中の印（−・＋・斜めの両矢印）。

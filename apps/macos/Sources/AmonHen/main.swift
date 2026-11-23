@@ -154,7 +154,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var isTerminating = false
     /// 確認用の起動（画面を撮る・計測する）。開いていたリポジトリの記録を書き換えない。
-    static let isCheckRun = ["--snapshot", "--measure-scroll", "--log-scroll", "--measure-select"].contains { CommandLine.arguments.contains($0) }
+    static let isCheckRun = ["--snapshot", "--measure-scroll", "--measure-diff-scroll", "--measure-merge-scroll", "--log-scroll", "--measure-select"].contains { CommandLine.arguments.contains($0) }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         // マージエディタの Result を保存していなければ、捨てて終えてよいかを確かめる（別ウィンドウのマージエディタを
@@ -548,7 +548,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for option in ["--snapshot", "--scroll-rows", "--find", "--select-row", "--merge-editor", "--search", "--blame", "--file-history", "--measure-select", "--app-settings-tab", "--filter-sidebar", "--merge-sheet", "--sync-sheet", "--clone-sheet", "--edit-commits"] {
             if let i = args.firstIndex(of: option) { args.removeSubrange(i...min(i + 1, args.count - 1)) }
         }
-        args.removeAll { ["--measure-scroll", "--select-first", "--working-copy", "--stashes", "--reflog", "--log-scroll", "--show-latency", "--ssh-sheet"].contains($0) }
+        args.removeAll { ["--measure-scroll", "--measure-diff-scroll", "--measure-merge-scroll", "--select-first", "--working-copy", "--stashes", "--reflog", "--log-scroll", "--show-latency", "--ssh-sheet"].contains($0) }
         return args.first
     }
 }

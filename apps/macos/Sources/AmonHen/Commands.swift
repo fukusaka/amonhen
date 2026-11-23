@@ -88,6 +88,7 @@ enum Commands {
     static let refresh = Command(CommandTable.refresh, action: #selector(RepositoryWindow.refreshRepository(_:)))
     static let rebuildHistory = Command(CommandTable.rebuildHistory, action: #selector(RepositoryWindow.rebuildHistory(_:)))
     static let showSidebar = Command(CommandTable.showSidebar, action: #selector(NSSplitViewController.toggleSidebar(_:)))
+    static let wrapLongLines = Command(CommandTable.wrapLongLines, action: #selector(AppDelegate.toggleWrapLongLines(_:)))
     static let filterBranches = Command(CommandTable.filterBranches, action: #selector(RepositoryWindow.filterBranches(_:)))
     static let goToHead = Command(CommandTable.goToHead, action: #selector(RepositoryWindow.goToHead(_:)))
     static let goToParent = Command(CommandTable.goToParent, action: #selector(RepositoryWindow.goToParent(_:)))
@@ -147,6 +148,7 @@ enum Commands {
         refresh,
         rebuildHistory,
         showSidebar,
+        wrapLongLines,
         filterBranches,
         goToHead,
         goToParent,

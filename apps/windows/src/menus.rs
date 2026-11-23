@@ -211,17 +211,7 @@ pub fn menus() -> Vec<(String, Vec<MenuItem>)> {
                 "highlight-ancestors",
                 format!("{mark}{}", amonhen_model::tr!("Highlight Ancestors")),
             ));
-            // コミットの差分で全ファイルを並べるか（切ると、変更ファイルの一覧で選んだファイルだけ）。
-            let mark = if crate::prefs::bool(crate::prefs::STACKED_COMMIT_DIFF) {
-                "✓ "
-            } else {
-                ""
-            };
-            items.push(MenuItem::item(
-                "all-files-in-one-diff",
-                format!("{mark}{}", amonhen_model::tr!("All Files in One Diff")),
-            ));
-            // 変更ファイルを差分の左に木で出すか（切ると、差分の上に一覧）。
+            // 変更ファイルを差分の左に木で出すか（切ると、差分の見出しだけ）。
             let mark = if crate::prefs::bool(crate::prefs::HISTORY_FILE_TREE) {
                 "✓ "
             } else {
@@ -368,6 +358,8 @@ pub const TOOLBAR_KEY: &str = "toolbarItemsV3";
 pub enum ToolbarEntry {
     Item(String, bool),
     Space,
+    /// 伸縮するスペース（macOS 版の flexibleSpace。余った幅を等分する）。
+    Flex,
 }
 
 fn icon_of(id: &str) -> Option<Symbol> {
@@ -379,12 +371,16 @@ fn icon_of(id: &str) -> Option<Symbol> {
         .map(|(_, s)| *s)
 }
 
-/// 既定の並び（足せるボタンは出さずに後ろへ）。
+/// 既定の並び（足せるボタンは出さずに後ろへ）。最後の区切りは、macOS 版と同じく伸縮するスペース（Activity から右を
+/// 右の端に寄せる）。
 pub fn default_toolbar() -> Vec<ToolbarEntry> {
+    let last = TOOLBAR.iter().rposition(Option::is_none);
     TOOLBAR
         .iter()
-        .map(|e| match e {
+        .enumerate()
+        .map(|(i, e)| match e {
             Some((id, _)) => ToolbarEntry::Item((*id).to_owned(), true),
+            None if Some(i) == last => ToolbarEntry::Flex,
             None => ToolbarEntry::Space,
         })
         .chain(
@@ -407,8 +403,8 @@ pub fn toolbar_entries() -> Vec<ToolbarEntry> {
             None => (part, true),
         };
         match id {
-            // 伸縮するスペースも、ここではスペース。境目は置かない。
-            "space" | "~" => entries.push(ToolbarEntry::Space),
+            "space" => entries.push(ToolbarEntry::Space),
+            "~" => entries.push(ToolbarEntry::Flex),
             _ if icon_of(id).is_some() => entries.push(ToolbarEntry::Item(id.to_owned(), shown)),
             _ => {}
         }
@@ -432,6 +428,7 @@ pub fn save_toolbar(entries: &[ToolbarEntry]) {
             ToolbarEntry::Item(id, true) => id.clone(),
             ToolbarEntry::Item(id, false) => format!("-{id}"),
             ToolbarEntry::Space => "space".to_owned(),
+            ToolbarEntry::Flex => "~".to_owned(),
         })
         .collect();
     let _ = crate::prefs::set_string(TOOLBAR_KEY, &text.join(","));
@@ -556,11 +553,14 @@ fn glyph_of(id: &str) -> &'static str {
 /// 送れないわけをツールチップに出す。
 pub fn toolbar(on_click: Callback<String>, tracking: Tracking) -> View {
     // 並びは View > Customize Toolbar… で変えられる（GTK4 版の `toolbar.rs`）。
-    let buttons: Vec<(String, View)> = toolbar_entries()
+    let buttons: Vec<(String, View, bool)> = toolbar_entries()
         .into_iter()
         .enumerate()
         .filter_map(|(i, entry)| match entry {
-            ToolbarEntry::Space => Some((format!("-{i}"), View::from(Grid::new().width(12.0)))),
+            ToolbarEntry::Space => {
+                Some((format!("-{i}"), View::from(Grid::new().width(12.0)), false))
+            }
+            ToolbarEntry::Flex => Some((format!("~{i}"), View::from(Grid::new()), true)),
             ToolbarEntry::Item(_, false) => None,
             ToolbarEntry::Item(id, true) => {
                 icon_of(&id)?;
@@ -633,14 +633,243 @@ pub fn toolbar(on_click: Callback<String>, tracking: Tracking) -> View {
                             )),
                     )
                     .tooltip(tooltip);
-                Some((command, button))
+                Some((command, button, false))
             }
         })
         .collect();
-    StackPanel::new()
-        .orientation(Orientation::Horizontal)
+    // 伸縮するスペースは余った幅を等分する（macOS 版と同じ）。ないときは左に寄せる。
+    let columns: Vec<GridLength> = buttons
+        .iter()
+        .map(|(_, _, flex)| {
+            if *flex {
+                GridLength::Star(1.0)
+            } else {
+                GridLength::Auto
+            }
+        })
+        .collect();
+    let cells = buttons
+        .into_iter()
+        .enumerate()
+        .map(|(i, (key, view, _))| (key, Grid::new().grid_column(i as i32).children((view,))));
+    Grid::new()
+        .columns(columns)
         .vertical_alignment(VerticalAlignment::Center)
-        .children((View::keyed_fragment(buttons),))
+        .children((View::keyed_fragment(cells),))
+}
+
+/// カスタマイズの帯とパレットのタイル（アイコンと名前。スペースは枠だけ）。
+fn tile(entry: &ToolbarEntry) -> View {
+    let (glyph, name, width) = match entry {
+        ToolbarEntry::Item(id, _) => (glyph_of(id), toolbar_name(id), None),
+        ToolbarEntry::Space => ("", amonhen_model::tr!("Space"), Some(64.0)),
+        ToolbarEntry::Flex => ("", amonhen_model::tr!("Flexible Space"), Some(120.0)),
+    };
+    let icon: View = if glyph.is_empty() {
+        Border::new()
+            .height(16.0)
+            .border_thickness(Thickness::uniform(1.0))
+            .border_brush(Brush::Solid(Color::argb(0x80, 0x80, 0x80, 0x80)))
+            .corner_radius(3.0)
+            .into()
+    } else {
+        FontIcon::new().glyph(glyph).into()
+    };
+    let tile = StackPanel::new()
+        .spacing(2.0)
+        .min_width(48.0)
+        .margin(Thickness::new(2.0, 0.0, 2.0, 0.0))
+        .children((
+            icon,
+            TextBlock::new()
+                .text(name)
+                .font_size(11.0)
+                .horizontal_alignment(HorizontalAlignment::Center),
+        ));
+    match width {
+        Some(w) => StackPanel::new().width(w).children((tile,)),
+        None => tile,
+    }
+}
+
+/// 帯の項目の Tag（並びの中の位置）。最後の `end` は、帯の終わりに落とす所。
+pub fn strip_tag(index: usize) -> String {
+    format!("t{index}")
+}
+
+/// カスタマイズしている間のツールバー（macOS 版の NSToolbar のカスタマイズ中）: ボタンは押せず、引いて並べ替え、
+/// パレットへ引いて外す。パレットから引いてきた項目は、落としたタイルの前か後ろ（右半分なら後ろ）に入る。
+pub fn toolbar_strip(entries: &[ToolbarEntry], on_reordered: Callback<Vec<String>>) -> View {
+    let items = entries
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| !matches!(e, ToolbarEntry::Item(_, false)))
+        .map(|(i, entry)| {
+            let tag = strip_tag(i);
+            (
+                tag.clone(),
+                GridViewItem::new().tag(tag).content(tile(entry)),
+            )
+        })
+        .chain(std::iter::once((
+            "end".to_owned(),
+            GridViewItem::new()
+                .tag("end")
+                .content(Grid::new().width(56.0).height(40.0)),
+        )));
+    // 並びが変わるたびに一覧ごと作り直す（一覧が自分で並べ替えた後に項目を差し替えると、Tag と並びがずれる）。
+    let key: String = entries.iter().map(|e| format!("{e:?};")).collect();
+    // 1 列に並べ、入りきらなければ横にスクロールする（GridView は幅が足りないと折り返す）。
+    let strip = ScrollViewer::new()
+        .horizontal_scroll_bar_visibility(ScrollBarVisibility::Auto)
+        .vertical_scroll_bar_visibility(ScrollBarVisibility::Disabled)
+        .content(
+            GridView::new()
+                .can_drag_items(true)
+                .can_reorder_items(true)
+                .allow_drop(true)
+                .on_reordered(on_reordered)
+                .collection_slot(GridViewSlot::Items, items),
+        );
+    View::keyed_fragment([(key, strip)])
+}
+
+/// パレットから引いてきた項目（`ids`）を、帯のタイル `target`（`strip_tag` か `end`）の前か後ろ（`after`）に入れた
+/// 並び。ボタンは 1 つずつなので、もうあれば動かす。スペースと伸縮するスペースは足す。`default` は既定の並びにする。
+pub fn dropped_on_toolbar(
+    entries: Vec<ToolbarEntry>,
+    target: &str,
+    ids: &[String],
+    after: bool,
+) -> Vec<ToolbarEntry> {
+    if ids.iter().any(|id| id == "default") {
+        return default_toolbar();
+    }
+    // 入れる所を、タイルの印（入れる前の並びの位置）で覚えておき、動かすボタンを抜いてから数え直す。
+    let mut marked: Vec<(Option<usize>, ToolbarEntry)> = entries
+        .into_iter()
+        .enumerate()
+        .map(|(i, e)| (Some(i), e))
+        .collect();
+    let added: Vec<ToolbarEntry> = ids
+        .iter()
+        .map(|id| match id.as_str() {
+            "space" => ToolbarEntry::Space,
+            "~" => ToolbarEntry::Flex,
+            id => ToolbarEntry::Item(id.to_owned(), true),
+        })
+        .collect();
+    marked.retain(|(_, e)| {
+        !matches!(e, ToolbarEntry::Item(id, _) if added.iter().any(|a| matches!(a, ToolbarEntry::Item(b, _) if b == id)))
+    });
+    let shown = |e: &ToolbarEntry| !matches!(e, ToolbarEntry::Item(_, false));
+    let at = match target
+        .strip_prefix('t')
+        .and_then(|t| t.parse::<usize>().ok())
+    {
+        Some(index) => marked
+            .iter()
+            .position(|(i, _)| *i == Some(index))
+            .map(|p| p + usize::from(after)),
+        None => None,
+    }
+    // 帯の終わり（出しているものの後ろ）。
+    .unwrap_or_else(|| {
+        marked
+            .iter()
+            .rposition(|(_, e)| shown(e))
+            .map_or(0, |p| p + 1)
+    });
+    for (k, entry) in added.into_iter().enumerate() {
+        marked.insert(at + k, (None, entry));
+    }
+    marked.into_iter().map(|(_, e)| e).collect()
+}
+
+/// 帯のタイル（`strip_tag` の Tag）をパレットへ引いて外した並び。ボタンは出さないで後ろへ、スペースは消す。
+pub fn removed_from_toolbar(entries: Vec<ToolbarEntry>, tags: &[String]) -> Vec<ToolbarEntry> {
+    let gone: Vec<usize> = tags
+        .iter()
+        .filter_map(|t| t.strip_prefix('t')?.parse().ok())
+        .collect();
+    let mut kept = Vec::new();
+    let mut hidden = Vec::new();
+    for (i, entry) in entries.into_iter().enumerate() {
+        match entry {
+            ToolbarEntry::Item(id, true) if gone.contains(&i) => {
+                hidden.push(ToolbarEntry::Item(id, false))
+            }
+            ToolbarEntry::Space | ToolbarEntry::Flex if gone.contains(&i) => {}
+            entry => kept.push(entry),
+        }
+    }
+    kept.extend(hidden);
+    kept
+}
+
+/// パレットの項目の Tag（ボタンの id、`space`、`~`、既定のセットは `default`）。
+pub fn palette_tags() -> Vec<String> {
+    TOOLBAR
+        .iter()
+        .flatten()
+        .chain(OPTIONAL)
+        .map(|(id, _)| (*id).to_owned())
+        .chain(["space".to_owned(), "~".to_owned()])
+        .collect()
+}
+
+/// カスタマイズのパレット（macOS 版の NSToolbar のシート）: ツールバーに引いて足す項目と、既定のセット。
+/// `palette` と `defaults` は、引き始め・落とし先を付ける生の要素の置き場。
+pub fn toolbar_palette(
+    palette: &ElementRef<Grid>,
+    defaults: &ElementRef<Grid>,
+    on_done: Callback<()>,
+) -> View {
+    let tags = palette_tags();
+    let items = tags.into_iter().map(|tag| {
+        let entry = match tag.as_str() {
+            "space" => ToolbarEntry::Space,
+            "~" => ToolbarEntry::Flex,
+            id => ToolbarEntry::Item(id.to_owned(), true),
+        };
+        (
+            tag.clone(),
+            GridViewItem::new().tag(tag).content(tile(&entry)),
+        )
+    });
+    let default_set: Vec<(String, View)> = default_toolbar()
+        .iter()
+        .filter(|e| !matches!(e, ToolbarEntry::Item(_, false)))
+        .enumerate()
+        .map(|(i, e)| (format!("{i}"), tile(e)))
+        .collect();
+    let default_item = GridViewItem::new().tag("default").content(
+        StackPanel::new()
+            .orientation(Orientation::Horizontal)
+            .children((View::keyed_fragment(default_set),)),
+    );
+    Grid::new().children((StackPanel::new()
+        .spacing(8.0)
+        .margin(Thickness::new(16.0, 12.0, 16.0, 12.0))
+        .children((
+            TextBlock::new().text(amonhen_model::tr!(
+                "Drag your favorite items into the toolbar…"
+            )),
+            Grid::new().element_ref(palette).children((GridView::new()
+                .can_drag_items(true)
+                .collection_slot(GridViewSlot::Items, items),)),
+            TextBlock::new().text(amonhen_model::tr!(
+                "…or drag the default set into the toolbar."
+            )),
+            Grid::new().element_ref(defaults).children((GridView::new()
+                .can_drag_items(true)
+                .collection_slot(GridViewSlot::Items, [("default".to_owned(), default_item)]),)),
+            Button::new()
+                .style(ButtonStyle::Accent)
+                .horizontal_alignment(HorizontalAlignment::Right)
+                .on_click(on_done)
+                .content(amonhen_model::tr!("Done")),
+        )),))
 }
 
 /// 押したキーに当たる、この FE で動く操作（メニューの項目のショートカット）。
@@ -721,5 +950,75 @@ mod tests {
         assert_eq!(shortcut("F9").unwrap().key, 0x78);
         assert_eq!(shortcut("Primary+Shift+Tab").unwrap().key, 0x09);
         assert!(shortcut("Primary+Escape").is_none());
+    }
+}
+
+#[cfg(test)]
+mod toolbar_tests {
+    use super::*;
+
+    fn item(id: &str) -> ToolbarEntry {
+        ToolbarEntry::Item(id.to_owned(), true)
+    }
+
+    #[test]
+    fn dropping_inserts_moves_and_restores() {
+        let entries = vec![
+            item("fetch"),
+            ToolbarEntry::Space,
+            item("push"),
+            ToolbarEntry::Item("files".into(), false),
+        ];
+        // push の右半分に伸縮するスペース。
+        assert_eq!(
+            dropped_on_toolbar(entries.clone(), "t2", &["~".into()], true),
+            [
+                item("fetch"),
+                ToolbarEntry::Space,
+                item("push"),
+                ToolbarEntry::Flex,
+                ToolbarEntry::Item("files".into(), false)
+            ]
+        );
+        // もうある push を fetch の前へ動かす。
+        assert_eq!(
+            dropped_on_toolbar(entries.clone(), "t0", &["push".into()], false),
+            [
+                item("push"),
+                item("fetch"),
+                ToolbarEntry::Space,
+                ToolbarEntry::Item("files".into(), false)
+            ]
+        );
+        // 出していない files を帯の終わりへ。
+        assert_eq!(
+            dropped_on_toolbar(entries.clone(), "end", &["files".into()], false),
+            [
+                item("fetch"),
+                ToolbarEntry::Space,
+                item("push"),
+                item("files")
+            ]
+        );
+        assert_eq!(
+            dropped_on_toolbar(entries, "t0", &["default".into()], false),
+            default_toolbar()
+        );
+    }
+
+    #[test]
+    fn removing_hides_buttons_and_drops_spaces() {
+        let entries = vec![item("fetch"), ToolbarEntry::Space, item("push")];
+        assert_eq!(
+            removed_from_toolbar(entries, &["t0".into(), "t1".into()]),
+            [item("push"), ToolbarEntry::Item("fetch".into(), false)]
+        );
+    }
+
+    #[test]
+    fn the_default_set_ends_with_a_flexible_space_before_activity() {
+        let entries = default_toolbar();
+        let activity = entries.iter().position(|e| *e == item("activity")).unwrap();
+        assert_eq!(entries[activity - 1], ToolbarEntry::Flex);
     }
 }

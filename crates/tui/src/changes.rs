@@ -73,6 +73,8 @@ struct Shown {
     staged_only: bool,
     /// コンフリクトのあるファイルの、マーカーつきの中身。
     conflict: bool,
+    /// 空白を無視した差分（行ごとの stage・破棄はしない）。
+    ignoring: bool,
 }
 
 /// 行ごとの操作の相手。
@@ -94,6 +96,8 @@ pub struct Changes {
     collapsed: std::collections::HashSet<String>,
     /// 一度でも `status` が届いた。
     loaded: bool,
+    /// 一部のフォルダだけを取り出している（sparse checkout）ときの、一覧の上の知らせ。
+    sparse_note: Option<String>,
     selected: usize,
     top: usize,
     height: u16,
@@ -119,6 +123,10 @@ pub struct Changes {
     pub amend: bool,
     /// 一覧とメッセージの欄を合わせた高さ。
     total_height: u16,
+    /// stage の印つきで重ねて出せないファイルで、stage 済みの側を出すファイル（ほかは作業ツリーの側）。
+    staged_side: Option<String>,
+    /// 差分で無視する空白（`workingDiff` の whitespace。History の詳細と同じ）。
+    whitespace: crate::details::Whitespace,
 }
 
 /// メッセージの欄の高さ（見出しの 1 行を含む）: 全体の 3 分の 1 で、3 行から 8 行。狭すぎれば出さない。
@@ -306,14 +314,23 @@ impl Changes {
         {
             return None;
         }
-        let (path, unstaged, conflict) = (entry.path.clone(), entry.unstaged, entry.letter == 'U');
+        let (path, conflict) = (entry.path.clone(), entry.letter == 'U');
+        let unstaged = entry.unstaged && self.staged_side.as_deref() != Some(path.as_str());
         self.loading = Some((path.clone(), self.serial));
         Some(Request::WorkingDiff {
             path,
             serial: self.serial,
             unstaged,
             conflict,
+            whitespace: self.whitespace.as_str(),
         })
+    }
+
+    /// 差分で無視する空白を次のもの（なし → 行末 → 量 → すべて → なし）にして、差分を読み直す。
+    pub fn next_whitespace(&mut self) -> crate::details::Whitespace {
+        self.whitespace = self.whitespace.next();
+        self.shown = None;
+        self.whitespace
     }
 
     /// `status` の答え。選んでいたファイルは、パスで引き継ぐ。
@@ -390,6 +407,7 @@ impl Changes {
                     staged_only: mode == "staged",
                     // `conflict` の答えには、差分の種類も番号もない。
                     conflict: reply.json["mode"].is_null(),
+                    ignoring: self.whitespace != crate::details::Whitespace::Exact,
                     id: id.clone(),
                     added: reply.json["added"].as_u64().unwrap_or(0),
                     removed: reply.json["removed"].as_u64().unwrap_or(0),
@@ -474,9 +492,18 @@ impl Changes {
         message_height(self.total_height) > 0
     }
 
+    /// sparse checkout の知らせ（なければ None）。一覧の上の 1 行に出す。
+    pub fn set_sparse_note(&mut self, note: Option<String>) {
+        if self.sparse_note != note {
+            self.sparse_note = note;
+            self.set_height(self.total_height);
+        }
+    }
+
     pub fn set_height(&mut self, height: u16) {
         self.total_height = height;
-        self.height = height - message_height(height);
+        let note = u16::from(self.sparse_note.is_some());
+        self.height = (height - message_height(height)).saturating_sub(note);
         self.scroll.height = height;
         self.clamp_top();
         self.scroll.clamp(self.lines());
@@ -523,6 +550,9 @@ impl Changes {
 
     /// 一覧の `line` 行目（見えている中で）を選ぶ。
     pub fn click(&mut self, line: u16) -> bool {
+        let Some(line) = line.checked_sub(u16::from(self.sparse_note.is_some())) else {
+            return false;
+        };
         let index = self.top + usize::from(line);
         index < self.rows.len() && self.select(index)
     }
@@ -542,7 +572,20 @@ impl Changes {
         typing: bool,
     ) -> Option<(u16, u16)> {
         let field = message_height(area.height);
-        let list = Rect::new(area.x, area.y, area.width, area.height - field);
+        let mut list = Rect::new(area.x, area.y, area.width, area.height - field);
+        // sparse checkout なら、一覧の上に知らせ（アプリと同じ）。
+        if let Some(note) = &self.sparse_note
+            && list.height > 1
+        {
+            buf.set_stringn(
+                list.x + 1,
+                list.y,
+                note,
+                usize::from(list.width.saturating_sub(1)),
+                Style::new().fg(Color::Yellow),
+            );
+            list = Rect::new(list.x, list.y + 1, list.width, list.height - 1);
+        }
         self.draw_list(list, buf, focused);
         if field == 0 || area.width == 0 {
             return None;
@@ -565,10 +608,16 @@ impl Changes {
             usize::from(area.width.saturating_sub(2)),
             line,
         );
-        let count = format!(" {} ", self.message.summary_length());
+        let length = self.message.summary_length();
+        let count = format!(" {length} ");
         let count_x = area.right().saturating_sub(count.len() as u16 + 1);
         if count_x > area.x + 20 {
-            buf.set_string(count_x, y, count, line);
+            // 件名が目安（50 文字）を超えたら、数を黄色に（アプリのカウンターと同じ）。
+            let style = match length > crate::editor::SUMMARY_GUIDE {
+                true => Style::new().fg(Color::Yellow),
+                false => line,
+            };
+            buf.set_string(count_x, y, count, style);
         }
         let body = Rect::new(area.x + 1, y + 1, area.width - 1, field - 1);
         if self.message.is_empty() && !typing {
@@ -835,6 +884,9 @@ impl Changes {
         let Some((shown, target)) = self.target() else {
             return Ok(None);
         };
+        if shown.ignoring {
+            return Err(tr!("Lines aren’t staged while whitespace is ignored"));
+        }
         if shown.staged_only {
             return Err(tr!("Lines of this diff can’t be staged one by one"));
         }
@@ -853,6 +905,9 @@ impl Changes {
         let Some((shown, mut target)) = self.target() else {
             return Ok(None);
         };
+        if shown.ignoring {
+            return Err(tr!("Lines aren’t discarded while whitespace is ignored"));
+        }
         target
             .rows
             .retain(|r| shown.diff.kind(*r as usize).1 & DiffRow::STAGED == 0);
@@ -864,6 +919,26 @@ impl Changes {
             rows: target.rows.clone(),
         };
         Ok(Some((target, request)))
+    }
+
+    /// 重ねて出せないファイル（片方の側だけを出している）で、stage 済みの変更も作業ツリーの変更もあれば、出す
+    /// 側を替える（アプリの Unstaged / Staged の切り替え）。替えたら、stage 済みの側を出すか。替えられなければ、
+    /// 重ねて出しているから（`Err(true)`）か、片方の変更しかないから（`Err(false)`）。
+    pub fn switch_side(&mut self) -> Result<bool, bool> {
+        let shown = self.shown.as_ref().ok_or(false)?;
+        if shown.combined || shown.conflict {
+            return Err(true);
+        }
+        let entry = self.selected_entry().ok_or(false)?;
+        if !(entry.staged && entry.unstaged) {
+            return Err(false);
+        }
+        let path = entry.path.clone();
+        let staged = self.staged_side.as_deref() != Some(path.as_str());
+        self.staged_side = staged.then_some(path);
+        // 読み直す。
+        self.shown = None;
+        Ok(staged)
     }
 
     /// 選んでいるファイルのパス。

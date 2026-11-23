@@ -520,9 +520,12 @@ public indirect enum MarkdownBlock: Decodable, Sendable {
         public let image: String?
         public let footnote: String?
         public let lineBreak: Bool?
+        /// GitHub 独自の絵文字（画像だけのもの）の名前。`text`（`:octocat:`）を札で見せる。
+        public let customEmoji: String?
         enum CodingKeys: String, CodingKey {
             case text, bold, italic, strike, code, html, link, image, footnote
             case lineBreak = "line_break"
+            case customEmoji = "custom_emoji"
         }
     }
 

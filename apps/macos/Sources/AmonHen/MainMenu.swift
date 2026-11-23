@@ -246,7 +246,13 @@ extension AppDelegate: NSMenuItemValidation, NSMenuDelegate {
 
     // MARK: - 設定
 
-    func validateMenuItem(_ item: NSMenuItem) -> Bool { true }
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        if item.action == #selector(toggleWrapLongLines(_:)) { item.state = Settings.wrapDiffLines ? .on : .off }
+        return true
+    }
+
+    /// 表示 > 長い行を折り返す（⌥Z）。すべての差分で切り替える。
+    @objc func toggleWrapLongLines(_ sender: Any?) { Settings.wrapDiffLines.toggle() }
 
     @objc func showSettings(_ sender: Any?) { SettingsWindowController.shared.show() }
     @objc func showActivity(_ sender: Any?) { ActivityWindowController.shared.show() }

@@ -45,6 +45,9 @@ thread_local! {
     static OPEN_REPOS: RefCell<Vec<(u64, String, Arc<Repository>)>> = const { RefCell::new(Vec::new()) };
     /// 前のタブの History と差分の描き手（窓の入力の処理が使う。タブごとの描き手は根の部品が持つ）。
     static HISTORY: RefCell<Option<Rc<RefCell<HistoryView>>>> = const { RefCell::new(None) };
+    /// ツールバーのカスタマイズの帯・パレットに付けた引き始め（付け直すたびに外す）。
+    static TOOLBAR_DRAG_REVOKERS: RefCell<Vec<windows_core_reactor::EventRevoker>> =
+        const { RefCell::new(Vec::new()) };
     /// History を包む生の要素（右クリックのメニューを自分で開く）。
     static HISTORY_ELEMENT: RefCell<Option<xaml::UIElement>> = const { RefCell::new(None) };
     /// History から外した右クリックのメニュー（外している間、WinUI は自分では開かない）。
@@ -76,6 +79,8 @@ thread_local! {
     static SPLIT_PARENT: RefCell<Option<xaml::UIElement>> = const { RefCell::new(None) };
     /// 等幅にするのを待っている要素と、試した回数（`retry_monospace`）。
     static PENDING_MONOSPACE: RefCell<Vec<(IInspectable, u32)>> = const { RefCell::new(Vec::new()) };
+    /// 幅いっぱいに広げるのを待っているツールバー（画面の木に入ってから、描くたびに試す）と、試した回数。
+    static PENDING_STRETCH: RefCell<Vec<(IInspectable, u32)>> = const { RefCell::new(Vec::new()) };
     /// 自動の fetch の間隔（分。0 はしない）と、最後に数え始めた時。
     static AUTO_FETCH: std::cell::Cell<(u32, Instant)> =
         std::cell::Cell::new((crate::prefs::auto_fetch_minutes(), Instant::now()));
@@ -89,6 +94,8 @@ thread_local! {
     static MARK_ANCHOR: std::cell::Cell<Option<(usize, bool)>> = const { std::cell::Cell::new(None) };
     /// 印の上を引いている間（起点の行、今の行、起点にした状態）。離したら間の行をまとめて同じ状態にする。
     static MARK_DRAG: std::cell::Cell<Option<(usize, usize, bool)>> = const { std::cell::Cell::new(None) };
+    /// 画像の比べる欄で引いているもの（ファイル、欄の最初の表示の行、引き方）。
+    static IMAGE_DRAG: std::cell::Cell<Option<(usize, usize, ImageDrag)>> = const { std::cell::Cell::new(None) };
     /// History でコミットを運んでいる間（押した行、押した高さ、動かし始めたか）。
     static HISTORY_DRAG: std::cell::Cell<Option<(u32, f64, bool)>> = const { std::cell::Cell::new(None) };
     /// マージエディタで、Ctrl+Z で戻せる・Ctrl+Y でやり直せる書き換えがあるか（描くたびに書き直す）。
@@ -333,6 +340,16 @@ struct Root {
     checks_popover: Option<ChecksPopover>,
     checks_anchor: ElementRef<Button>,
     checks_opened: u64,
+    /// Export Archive のフォルダを列で選んでいる間の、Export Archive のダイアログ（選んだら戻す）。
+    archive_waiting: Option<Box<Dialog>>,
+    /// ツールバーをカスタマイズしている間（ツールバーは引いて並べる帯、本文の上にパレット）と、帯・パレット・既定の
+    /// セットの生の要素の置き場。
+    toolbar_customizing: bool,
+    /// ツールバーを入れる Grid（TitleBar の中身の置き場を幅いっぱいに広げる）。
+    toolbar_host: ElementRef<Grid>,
+    toolbar_strip: ElementRef<Grid>,
+    toolbar_palette: ElementRef<Grid>,
+    toolbar_defaults: ElementRef<Grid>,
     /// Activity の時計の数え（開くたびに替わり、前の時計を止める）。
     activity_clock: u64,
     diff_panel: ElementRef<SwapChainPanel>,
@@ -415,8 +432,6 @@ struct Root {
     /// Push の画面で選んでいる行（0 は送る変更すべて。`push_rows` の位置）。
     push_row: Option<usize>,
     /// 出しているコミットの変更ファイル（詳細と差分の間の一覧）と、選んでいるもの。
-    changed_files: Vec<ChangedFile>,
-    changed_file: Option<usize>,
     /// Pull で両方に新しいコミットがあるときの、取り込み方ごとの前と後の絵。
     pull_drawings: Option<PullDrawings>,
     /// Merge・Rebase の確認の前と後の絵（相手の rev と `mergePreview`・`rewritePreview` の答え）。
@@ -593,6 +608,8 @@ struct Root {
     split_handles: [ElementRef<Grid>; 3],
     /// Repositories の見出しの列の境目のつまみ。
     column_handles: [ElementRef<Grid>; 4],
+    /// Repositories の見出しの列（押して並べ替え、引いて列を動かす）。
+    repositories_header: ElementRef<Grid>,
     /// `#` を打った直後の Issue・PR の候補: 本文の欄か、`#` の直後の位置（文字の数）、そのときの欄の文、候補。
     issue_offer: Option<IssueOffer>,
     /// File > Clone… で選べる自分の GitHub のリポジトリ（名前と URL。読んでいる間は None）と、選んだ回数（選んだ
@@ -667,8 +684,6 @@ enum Dialog {
         /// 最近の履歴の「その他…」で打った数。
         depth_other: String,
     },
-    /// View > Customize Toolbar…（GTK4 版はパレットへのドラッグ。ここではチェックと ↑↓ で並べる）。
-    Toolbar(Vec<crate::menus::ToolbarEntry>),
     /// Settings > Git の Shared Templates の 1 つ（番号）の名前と本文を書くシート（macOS 版の `TemplateSheet`）。
     /// 書くたびに保存する。
     Template(usize),
@@ -880,21 +895,6 @@ enum Dialog {
         fields: Vec<(String, String, String)>,
         checks: Vec<(String, bool)>,
         kind: FormKind,
-    },
-    /// HEAD の木からフォルダを選んで、sparse checkout で取り出すフォルダに足す（GTK4 版の `add_folder`）。
-    TreeFolder {
-        repo: Arc<Repository>,
-        /// 見ているフォルダ（`/` から）と、その中のフォルダ（読むまでは None）。
-        path: String,
-        entries: Option<Result<Vec<String>, String>>,
-        selected: Option<usize>,
-        /// 今取り出しているフォルダ（空なら sparse checkout を始める）。
-        existing: Vec<String>,
-        /// clone した直後なら、そのリポジトリ（選んでも取り消しても、その後で新しい窓で開く）。
-        cloned: Option<String>,
-        /// Export Archive の書き出すフォルダを選んでいるなら、そのダイアログ（そのコミットの木を見せ、選んでも
-        /// 取り消しても、そこへ戻る。macOS 版の `FilePicker.presentTree`）。
-        archive: Option<Box<Dialog>>,
     },
     /// Repositories の行の表示名を変える。
     RenameRepository { location: String, name: String },
@@ -1162,7 +1162,6 @@ enum Message {
     /// 差分のファイルの見出しのメニュー（GTK4 版の `commitfiles` の見出しのメニュー）。
     DiffFileMenu(String),
     /// 変更ファイルの一覧（木も）の右クリック（ファイルの番号、差分の見出しと同じ項目の鍵）。
-    ChangedFileMenu(usize, String),
     FileHistoryLoaded(String, Result<Vec<crate::filehistory::Entry>, String>),
     FileHistorySelected(Option<usize>),
     CloseFileHistory,
@@ -1276,6 +1275,11 @@ enum Message {
     AutoFetched(Option<String>),
     /// Activity の Operations の記録を JSON に書き出す。
     ActivityExport,
+    /// Activity の Operations の絞り込み（種類・失敗だけ・文字）と、選んだ行（今の並びの位置）。
+    ActivityKind(Option<usize>),
+    ActivityFailuresOnly(bool),
+    ActivityFilter(String),
+    ActivitySelect(Option<usize>),
     /// サイドバーの行の印の吹き出しのボタン（メニューの項目のキー）。吹き出しを閉じてからする。
     MarkAction(String),
     /// Activity の History のキャッシュを読んだ（開いているリポジトリごとの名前と `historyCache` の info）。
@@ -1335,11 +1339,6 @@ enum Message {
     SyncLists(Vec<SyncList>, Vec<String>, Option<Value>),
     /// Push の画面で行を選んだ。
     PushRow(Option<usize>),
-    /// 出すコミットの変更ファイルが替わった・一覧で選んだ。
-    ChangedFiles(Vec<ChangedFile>),
-    ChangedFileSelected(Option<usize>),
-    /// 変更ファイルの木で選んだ行（`file_tree` の番号。ディレクトリの行は選ばない）。
-    ChangedTreeSelected(Option<usize>),
     /// 選んだリポジトリを fetch する。
     FetchRepositories(Vec<String>),
     /// 境目を動かした（新しい幅・高さ）・離した。
@@ -1428,17 +1427,12 @@ enum Message {
     RemoteLoaded(Arc<Repository>, Option<(String, String, String)>),
     /// リモートのシートの欄（0 は名前、1 は fetch、2 は push の URL）。
     RemoteField(usize, String),
-    /// ツールバーのカスタマイズ: 出すか、上下に動かす（`true` で上）、スペースを外す・足す、既定に戻す。
-    ToolbarShown(usize, bool),
-    ToolbarMove(usize, bool),
-    ToolbarRemove(usize),
-    ToolbarAddSpace,
-    ToolbarDefaults,
-    /// フォルダを選ぶダイアログ: 読んだ中身、選んだ行、選んだフォルダに入る、上に戻る。
-    TreeFolderLoaded(String, Result<Vec<String>, String>),
-    TreeFolderSelect(Option<usize>),
-    TreeFolderOpen,
-    TreeFolderUp,
+    /// ツールバーのカスタマイズ: 帯の並べ替え（帯の項目の Tag の並び）、パレットの項目を帯のタイル（Tag）の前か
+    /// 後ろ（`true`）へ落とした、帯のタイルをパレットへ落として外した、終わった。
+    ToolbarReordered(Vec<String>),
+    ToolbarDropped(String, Vec<String>, bool),
+    ToolbarRemoved(Vec<String>),
+    ToolbarDone,
     /// リモートの fetch の URL につないで確かめる。
     RemoteCheck,
     /// 接続の確認の結果（確かめた URL、つながったか、言葉）。
@@ -1475,6 +1469,18 @@ enum Message {
     ApplyPatches(Vec<String>),
     /// 詳細だけを右の列いっぱいに広げる（⤢）。
     ExpandDetails(bool),
+    /// 差分の見出しを押してファイルを畳んだ・開いた（帯の「すべて開く・畳む」の向きを出し直す）。
+    DiffFilesToggled,
+    /// 帯の「差分をすべて開く・畳む」。
+    ToggleAllDiffs,
+    /// 帯のリスト・ツリー（変更ファイルを差分の見出しで木に並べるか）。
+    DiffFilesAsTree(bool),
+    /// 帯の「フォルダをすべて開く・畳む」（木のとき）。
+    ToggleAllFolders,
+    /// 帯の表示の設定のメニュー。
+    DiffViewOption(String),
+    /// 差分の帯で、行を比べるときに無視する空白を選んだ（`whitespace:<0〜3>`）。
+    DiffWhitespace(String),
     /// 一致したコミットだけを出すか。
     SearchOnly(bool),
     CloseSearch,
@@ -1557,6 +1563,12 @@ impl Component for Root {
             checks_popover: None,
             checks_anchor: ElementRef::new(),
             checks_opened: 0,
+            archive_waiting: None,
+            toolbar_customizing: false,
+            toolbar_host: ElementRef::new(),
+            toolbar_strip: ElementRef::new(),
+            toolbar_palette: ElementRef::new(),
+            toolbar_defaults: ElementRef::new(),
             activity_clock: 0,
             diff_panel: ElementRef::new(),
             diff_area: ElementRef::new(),
@@ -1643,8 +1655,6 @@ impl Component for Root {
             sync_warnings: Vec::new(),
             sync_drawing: None,
             push_row: None,
-            changed_files: Vec::new(),
-            changed_file: None,
             pull_drawings: None,
             integrate_drawing: None,
             merge_several_steps: None,
@@ -1707,6 +1717,7 @@ impl Component for Root {
             details_height: crate::prefs::number(DETAILS_HEIGHT_KEY).unwrap_or(240.0),
             split_handles: [ElementRef::new(), ElementRef::new(), ElementRef::new()],
             column_handles: std::array::from_fn(|_| ElementRef::new()),
+            repositories_header: ElementRef::new(),
             issue_offer: None,
             github_repos: None,
             github_repo_picks: 0,
@@ -1851,6 +1862,98 @@ impl Root {
         with_cell(&self.history, f);
     }
 
+    /// ツールバーをカスタマイズしている間の、本文の上のパレット（macOS 版の NSToolbar のシート）。帯とパレットの
+    /// 引き始め・落とし先は、並びが変わるたびに付け直す（一覧の項目が作り直される）。
+    fn toolbar_palette_view(&self, context: &mut ViewContext<Self>) -> View {
+        // TitleBar は中身を中身の幅に縮めて置くので、伸縮するスペースが余った幅を取れない。中身の置き場（TitleBar
+        // まで）を幅いっぱいに広げる。
+        let host = self.toolbar_host.clone();
+        context.use_effect("toolbar-stretch", (), move || {
+            let _ = host.request_native_element(|result| {
+                if let Ok(element) = result {
+                    PENDING_STRETCH.with(|p| p.borrow_mut().push((element, 0)));
+                }
+            });
+            None
+        });
+        if !self.toolbar_customizing {
+            return View::empty();
+        }
+        let strip = self.toolbar_strip.clone();
+        let palette = self.toolbar_palette.clone();
+        let defaults = self.toolbar_defaults.clone();
+        let entries = crate::menus::toolbar_entries();
+        let key = format!("{entries:?}");
+        context.use_effect("toolbar-drag", key, move || {
+            TOOLBAR_DRAG_REVOKERS.with(|r| r.borrow_mut().clear());
+            let strip_tags: Vec<String> = entries
+                .iter()
+                .enumerate()
+                .filter(|(_, e)| !matches!(e, crate::menus::ToolbarEntry::Item(_, false)))
+                .map(|(i, _)| crate::menus::strip_tag(i))
+                .collect();
+            let _ = strip.request_native_element(move |result| {
+                let Ok(element) = result else { return };
+                // 帯のタイルは引いて並べ替え（一覧がする）、パレットへ引いて外す。
+                if let Some(revoker) = xaml::drag_some_tags(&element, strip_tags.clone(), "bar:") {
+                    TOOLBAR_DRAG_REVOKERS.with(|r| r.borrow_mut().push(revoker));
+                }
+                let mut targets = strip_tags.clone();
+                targets.push("end".to_owned());
+                xaml::set_drop_target(
+                    "toolbar",
+                    &element,
+                    targets,
+                    Some("palette:"),
+                    |tag, ids, after| {
+                        with_history(|h| {
+                            h.sender
+                                .send(Message::ToolbarDropped(tag.clone(), ids.clone(), after));
+                        });
+                    },
+                );
+            });
+            let _ = palette.request_native_element(|result| {
+                let Ok(element) = result else { return };
+                let tags = crate::menus::palette_tags();
+                if let Some(revoker) = xaml::drag_some_tags(&element, tags.clone(), "palette:") {
+                    TOOLBAR_DRAG_REVOKERS.with(|r| r.borrow_mut().push(revoker));
+                }
+                xaml::set_drop_target(
+                    "toolbar-palette",
+                    &element,
+                    tags,
+                    Some("bar:"),
+                    |_, tags, _| {
+                        with_history(|h| {
+                            h.sender.send(Message::ToolbarRemoved(tags.clone()));
+                        });
+                    },
+                );
+            });
+            let _ = defaults.request_native_element(|result| {
+                let Ok(element) = result else { return };
+                if let Some(revoker) =
+                    xaml::drag_some_tags(&element, vec!["default".to_owned()], "palette:")
+                {
+                    TOOLBAR_DRAG_REVOKERS.with(|r| r.borrow_mut().push(revoker));
+                }
+            });
+            None
+        });
+        Border::new()
+            .grid_row(3)
+            .vertical_alignment(VerticalAlignment::Top)
+            .background(Brush::Solid(crate::palette::window()))
+            .border_thickness(Thickness::new(0.0, 0.0, 0.0, 1.0))
+            .border_brush(Brush::Solid(Color::argb(0x40, 0x80, 0x80, 0x80)))
+            .content(crate::menus::toolbar_palette(
+                &self.toolbar_palette,
+                &self.toolbar_defaults,
+                context.callback(|()| Message::ToolbarDone),
+            ))
+    }
+
     /// CI の吹き出しの中身（状態、チェックの一覧、Open on GitHub）。
     fn checks_content(popover: &ChecksPopover, context: &ViewContext<Self>) -> View {
         StackPanel::new().spacing(8.0).width(420.0).children((
@@ -1970,6 +2073,52 @@ impl Root {
             .height(1.0)
             .opacity(0.0)
             .flyout_with(Flyout::rich(content).placement(FlyoutPlacement::Bottom))
+    }
+
+    /// sparse checkout で取り出すフォルダを選んだ・取り消した（`chosen`）。足して取り出す。clone した直後なら、
+    /// 取り出してから（取り消したならそのまま）開く。
+    fn sparse_folder_chosen(
+        &mut self,
+        repo: Arc<Repository>,
+        existing: Vec<String>,
+        cloned: Option<String>,
+        chosen: Option<String>,
+        context: &ComponentContext<Self>,
+    ) {
+        let Some(chosen) = chosen.filter(|c| !c.is_empty()) else {
+            if let Some(dest) = cloned
+                && let Err(message) = crate::tabs::open(&dest)
+            {
+                self.dialog = Some(Dialog::Failed {
+                    title: tr!("Couldn’t clone"),
+                    message,
+                });
+            }
+            return;
+        };
+        if existing.contains(&chosen) {
+            return;
+        }
+        let mut folders = existing;
+        folders.push(chosen.clone());
+        let command = json!({ "op": "sparseCheckout", "folders": folders });
+        // clone した直後: 取り出してから新しい窓で開く。
+        if let Some(dest) = cloned {
+            self.busy = Some(tr!("Checking out {folder}…", folder = &chosen));
+            context.spawn_background(move |_| {
+                let reply: Value = serde_json::from_str(&repo.run_json(&command.to_string()))
+                    .unwrap_or_else(|e| json!({ "error": e.to_string() }));
+                let failed = reply["error"].as_str().map(|e| {
+                    (
+                        tr!("Couldn’t check out {folder}", folder = &chosen),
+                        e.to_owned(),
+                    )
+                });
+                Message::OpenClone(dest, failed)
+            });
+            return;
+        }
+        perform(context, repo, command, tr!("Check Out One More Folder"));
     }
 
     fn handle(&mut self, message: Message, context: &ComponentContext<Self>) {
@@ -2436,17 +2585,14 @@ impl Root {
                 let Dialog::Archive { repo, rev, .. } = &archive else {
                     return;
                 };
-                let repo = repo.clone();
-                load_tree_folders(repo.clone(), &rev.clone(), "/".to_owned(), context);
-                self.dialog = Some(Dialog::TreeFolder {
-                    repo,
-                    path: "/".to_owned(),
-                    entries: None,
-                    selected: None,
-                    existing: Vec::new(),
-                    cloned: None,
-                    archive: Some(Box::new(archive)),
-                });
+                let (picker, job) = crate::pathpicker::Picker::new_tree(
+                    crate::pathpicker::Purpose::ArchiveFolder,
+                    repo.clone(),
+                    rev,
+                );
+                self.archive_waiting = Some(Box::new(archive));
+                self.dialog = Some(Dialog::PathPicker(Box::new(picker)));
+                context.spawn_background(move |_| Message::Picker(job.run()));
             }
             Message::MultiSelected(ids, consecutive) => {
                 self.multi_consecutive = consecutive;
@@ -2464,49 +2610,10 @@ impl Root {
                 }
             }
             Message::PushRow(index) => self.select_push_row(index),
-            Message::ChangedFiles(files) => {
-                // 1 ファイルずつなら、最初のファイルを出している。
-                let single = !crate::prefs::bool(crate::prefs::STACKED_COMMIT_DIFF);
-                self.changed_file = (single && files.len() > 1).then_some(0);
-                self.changed_files = files;
-            }
-            Message::ChangedFileSelected(index) => {
-                self.changed_file = index;
-                if let Some(index) = index {
-                    self.with_history(|h| h.show_file(index));
-                }
-            }
-            Message::ChangedTreeSelected(index) => {
-                let file =
-                    index.and_then(|i| file_tree(&self.changed_files).get(i).and_then(|r| r.file));
-                if let Some(file) = file {
-                    self.update(Message::ChangedFileSelected(Some(file)), context);
-                }
-            }
-            // View の Changed Files as Tree（変更ファイルを差分の左に木で。macOS 版・GTK4 版と同じ設定）。
+            // View の Changed Files as Tree（変更ファイルを差分の見出しで木に。帯のリスト／ツリーと同じ設定）。
             Message::Command(id) if id == "changed-files-as-tree" => {
                 let tree = !crate::prefs::bool(crate::prefs::HISTORY_FILE_TREE);
-                if let Err(e) = crate::prefs::set_bool(crate::prefs::HISTORY_FILE_TREE, tree) {
-                    eprintln!("変更ファイルを木で出すかを覚えられない: {e}");
-                }
-            }
-            // View の All Files in One Diff（切ると、コミットの差分は一覧で選んだファイルだけ。macOS 版・GTK4 版と
-            // 同じ）。
-            Message::Command(id) if id == "all-files-in-one-diff" => {
-                let stacked = !crate::prefs::bool(crate::prefs::STACKED_COMMIT_DIFF);
-                if let Err(e) = crate::prefs::set_bool(crate::prefs::STACKED_COMMIT_DIFF, stacked) {
-                    eprintln!("全ファイルを並べるかを覚えられない: {e}");
-                }
-                let selected = self.changed_file.unwrap_or(0);
-                self.changed_file = (!stacked && self.changed_files.len() > 1).then_some(selected);
-                self.with_history(|h| {
-                    if h.session.data.set_single_file(!stacked) {
-                        h.diff_replaced();
-                    }
-                    if !stacked {
-                        h.show_file(selected);
-                    }
-                });
+                self.update(Message::DiffFilesAsTree(tree), context);
             }
             Message::SplitTo(split, size) => match split {
                 Split::Sidebar => self.sidebar_width = size.clamp(160.0, 520.0),
@@ -2912,6 +3019,50 @@ impl Root {
                 self.with_history(|h| h.search(query, backwards));
             }
             Message::ExpandDetails(on) => self.details_expanded = on,
+            Message::DiffFilesToggled => {}
+            Message::ToggleAllDiffs => self.with_history(|h| {
+                if h.session.data.toggle_all_files() {
+                    h.session.renderer.forget_diff();
+                    h.diff.dirty = true;
+                    let rows = h.diff_rows();
+                    h.diff.scroll_by(0.0, rows);
+                }
+            }),
+            Message::DiffFilesAsTree(tree) => {
+                if let Err(e) = crate::prefs::set_bool(crate::prefs::HISTORY_FILE_TREE, tree) {
+                    eprintln!("変更ファイルを木で出すかを覚えられない: {e}");
+                }
+                self.with_history(|h| {
+                    if h.session.data.set_file_tree(tree) {
+                        h.session.renderer.forget_diff();
+                        h.diff.dirty = true;
+                        let rows = h.diff_rows();
+                        h.diff.scroll_by(0.0, rows);
+                    }
+                });
+            }
+            Message::ToggleAllFolders => self.with_history(|h| {
+                if h.session.data.toggle_all_folders() {
+                    h.session.renderer.forget_diff();
+                    h.diff.dirty = true;
+                    let rows = h.diff_rows();
+                    h.diff.scroll_by(0.0, rows);
+                }
+            }),
+            Message::DiffWhitespace(key) => {
+                let mode = key
+                    .strip_prefix("whitespace:")
+                    .and_then(|n| n.parse::<u8>().ok())
+                    .map(amonhen_core::diff::Whitespace::from_u8);
+                if let Some(mode) = mode {
+                    self.with_history(|h| h.session.data.set_whitespace(mode));
+                }
+            }
+            Message::DiffViewOption(key) => {
+                if key == "expand-details" {
+                    self.details_expanded = !self.details_expanded;
+                }
+            }
             Message::DiffFindOpen(open) => {
                 self.diff_find_open = open;
                 if open {
@@ -3216,39 +3367,39 @@ impl Root {
                 self.with_history(|h| h.session.data.reorder(order));
             }
             Message::Command(id) if id == "customize-toolbar" => {
-                self.dialog = Some(Dialog::Toolbar(crate::menus::toolbar_entries()));
+                // macOS 版の NSToolbar と同じく、ツールバーの下にパレットを出し、ドラッグで並べる。
+                self.toolbar_customizing = true;
             }
-            Message::ToolbarShown(i, on) => {
-                if let Some(Dialog::Toolbar(entries)) = &mut self.dialog
-                    && let Some(crate::menus::ToolbarEntry::Item(_, shown)) = entries.get_mut(i)
-                {
-                    *shown = on;
-                }
+            Message::ToolbarReordered(tags) => {
+                use crate::menus::ToolbarEntry;
+                let entries = crate::menus::toolbar_entries();
+                let mut moved: Vec<ToolbarEntry> = tags
+                    .iter()
+                    .filter_map(|t| t.strip_prefix('t')?.parse::<usize>().ok())
+                    .filter_map(|i| entries.get(i).cloned())
+                    .collect();
+                // 帯にない（出していない）ボタンは後ろに残す。
+                moved.extend(
+                    entries
+                        .into_iter()
+                        .filter(|e| matches!(e, ToolbarEntry::Item(_, false))),
+                );
+                crate::menus::save_toolbar(&moved);
             }
-            Message::ToolbarMove(i, up) => {
-                if let Some(Dialog::Toolbar(entries)) = &mut self.dialog {
-                    let j = if up { i.checked_sub(1) } else { Some(i + 1) };
-                    if let Some(j) = j.filter(|&j| j < entries.len()) {
-                        entries.swap(i, j);
-                    }
-                }
+            Message::ToolbarDropped(target, ids, after) => {
+                let entries = crate::menus::toolbar_entries();
+                crate::menus::save_toolbar(&crate::menus::dropped_on_toolbar(
+                    entries, &target, &ids, after,
+                ));
             }
-            Message::ToolbarRemove(i) => {
-                if let Some(Dialog::Toolbar(entries)) = &mut self.dialog
-                    && i < entries.len()
-                {
-                    entries.remove(i);
-                }
+            Message::ToolbarRemoved(tags) => {
+                let entries = crate::menus::toolbar_entries();
+                crate::menus::save_toolbar(&crate::menus::removed_from_toolbar(entries, &tags));
             }
-            Message::ToolbarAddSpace => {
-                if let Some(Dialog::Toolbar(entries)) = &mut self.dialog {
-                    entries.push(crate::menus::ToolbarEntry::Space);
-                }
-            }
-            Message::ToolbarDefaults => {
-                if let Some(Dialog::Toolbar(entries)) = &mut self.dialog {
-                    *entries = crate::menus::default_toolbar();
-                }
+            Message::ToolbarDone => {
+                self.toolbar_customizing = false;
+                xaml::clear_drop_target("toolbar");
+                xaml::clear_drop_target("toolbar-palette");
             }
             Message::Command(id) if id == "new-tab" => {
                 crate::tabs::note_page(self.page == Page::WorkingCopy);
@@ -3527,16 +3678,16 @@ impl Root {
                         if std::mem::take(&mut self.clone_sparse)
                             && let Some(repo) = open_repository(&dest)
                         {
-                            load_tree_folders(repo.clone(), "HEAD", "/".to_owned(), context);
-                            self.dialog = Some(Dialog::TreeFolder {
+                            let (picker, job) = crate::pathpicker::Picker::new_tree(
+                                crate::pathpicker::Purpose::SparseFolder {
+                                    existing: Vec::new(),
+                                    cloned: Some(dest),
+                                },
                                 repo,
-                                path: "/".to_owned(),
-                                entries: None,
-                                selected: None,
-                                existing: Vec::new(),
-                                cloned: Some(dest),
-                                archive: None,
-                            });
+                                "HEAD",
+                            );
+                            self.dialog = Some(Dialog::PathPicker(Box::new(picker)));
+                            context.spawn_background(move |_| Message::Picker(job.run()));
                             return;
                         }
                         if let Err(message) = crate::tabs::open(&dest) {
@@ -3931,6 +4082,24 @@ impl Root {
                                     context,
                                 );
                             }
+                        }
+                        // Export Archive のフォルダを選んだ・取り消した: そのダイアログに戻る（閉じた同じ
+                        // 更新では次のダイアログを開けないので、知らせで開く）。
+                        crate::pathpicker::Purpose::ArchiveFolder => {
+                            if let Some(mut archive) = self.archive_waiting.take() {
+                                if let (Some(path), Dialog::Archive { folder, .. }) =
+                                    (chosen, archive.as_mut())
+                                {
+                                    *folder = path;
+                                }
+                                context.spawn_background(move |_| Message::OpenDialog(archive));
+                            }
+                        }
+                        crate::pathpicker::Purpose::SparseFolder { existing, cloned } => {
+                            let Some(repo) = picker.repo.clone() else {
+                                return;
+                            };
+                            self.sparse_folder_chosen(repo, existing, cloned, chosen, context);
                         }
                     }
                 }
@@ -4666,96 +4835,6 @@ impl Root {
                     Some(command) => perform(context, repo, command, title),
                     None => beep(),
                 },
-                // Export Archive のフォルダを選んだ・取り消した: そのダイアログに戻る（閉じた同じ更新では次の
-                // ダイアログを開けないので、知らせで開く）。
-                (
-                    Some(Dialog::TreeFolder {
-                        path,
-                        entries,
-                        selected,
-                        archive: Some(mut archive),
-                        ..
-                    }),
-                    result,
-                ) => {
-                    if result == ContentDialogResult::Primary
-                        && let Dialog::Archive { folder, .. } = archive.as_mut()
-                    {
-                        let chosen = match selected
-                            .and_then(|i| entries.as_ref()?.as_ref().ok()?.get(i).cloned())
-                        {
-                            Some(name) => format!("{}/{name}", path.trim_end_matches('/')),
-                            None => path,
-                        };
-                        *folder = chosen.trim_start_matches('/').to_owned();
-                    }
-                    context.spawn_background(move |_| Message::OpenDialog(archive));
-                }
-                (
-                    Some(Dialog::TreeFolder {
-                        repo,
-                        path,
-                        entries,
-                        selected,
-                        existing,
-                        cloned,
-                        ..
-                    }),
-                    ContentDialogResult::Primary,
-                ) => {
-                    // 選んだ行のフォルダ（選んでいなければ、見ているフォルダ。根は選べない）。
-                    let chosen = match selected
-                        .and_then(|i| entries.as_ref()?.as_ref().ok()?.get(i).cloned())
-                    {
-                        Some(name) => format!("{}/{name}", path.trim_end_matches('/')),
-                        None => path,
-                    };
-                    let chosen = chosen.trim_start_matches('/').to_owned();
-                    if chosen.is_empty() {
-                        return beep();
-                    }
-                    if existing.contains(&chosen) {
-                        return;
-                    }
-                    let mut folders = existing;
-                    folders.push(chosen.clone());
-                    let command = json!({ "op": "sparseCheckout", "folders": folders });
-                    // clone した直後: 取り出してから新しい窓で開く。
-                    if let Some(dest) = cloned {
-                        self.busy = Some(tr!("Checking out {folder}…", folder = &chosen));
-                        context.spawn_background(move |_| {
-                            let reply: Value =
-                                serde_json::from_str(&repo.run_json(&command.to_string()))
-                                    .unwrap_or_else(|e| json!({ "error": e.to_string() }));
-                            let failed = reply["error"].as_str().map(|e| {
-                                (
-                                    tr!("Couldn’t check out {folder}", folder = &chosen),
-                                    e.to_owned(),
-                                )
-                            });
-                            Message::OpenClone(dest, failed)
-                        });
-                        return;
-                    }
-                    perform(context, repo, command, tr!("Check Out One More Folder"));
-                }
-                // clone した直後に取り消した: そのまま開く。
-                (
-                    Some(Dialog::TreeFolder {
-                        cloned: Some(dest), ..
-                    }),
-                    _,
-                ) => {
-                    if let Err(message) = crate::tabs::open(&dest) {
-                        self.dialog = Some(Dialog::Failed {
-                            title: tr!("Couldn’t clone"),
-                            message,
-                        });
-                    }
-                }
-                (Some(Dialog::Toolbar(entries)), ContentDialogResult::Primary) => {
-                    crate::menus::save_toolbar(&entries);
-                }
                 (
                     Some(Dialog::RenameRepository { location, name }),
                     ContentDialogResult::Primary,
@@ -4975,59 +5054,6 @@ impl Root {
                     }
                     *[name, fetch, push].into_iter().nth(index).expect("field") = text;
                 }
-            }
-            Message::TreeFolderLoaded(at, entries) => {
-                if let Some(Dialog::TreeFolder {
-                    path,
-                    entries: shown,
-                    selected,
-                    ..
-                }) = &mut self.dialog
-                    && *path == at
-                {
-                    *shown = Some(entries);
-                    *selected = None;
-                }
-            }
-            Message::TreeFolderSelect(index) => {
-                if let Some(Dialog::TreeFolder { selected, .. }) = &mut self.dialog {
-                    *selected = index;
-                }
-            }
-            Message::TreeFolderOpen | Message::TreeFolderUp => {
-                let up = matches!(message, Message::TreeFolderUp);
-                let Some(Dialog::TreeFolder {
-                    repo,
-                    path,
-                    entries,
-                    selected,
-                    archive,
-                    ..
-                }) = &mut self.dialog
-                else {
-                    return;
-                };
-                let rev = match archive.as_deref() {
-                    Some(Dialog::Archive { rev, .. }) => rev.clone(),
-                    _ => "HEAD".to_owned(),
-                };
-                let next = if up {
-                    match path.trim_end_matches('/').rsplit_once('/') {
-                        Some((parent, _)) if !parent.is_empty() => parent.to_owned(),
-                        _ => "/".to_owned(),
-                    }
-                } else {
-                    let Some(name) =
-                        selected.and_then(|i| entries.as_ref()?.as_ref().ok()?.get(i).cloned())
-                    else {
-                        return;
-                    };
-                    format!("{}/{name}", path.trim_end_matches('/'))
-                };
-                *path = next.clone();
-                *entries = None;
-                *selected = None;
-                load_tree_folders(repo.clone(), &rev, next, context);
             }
             Message::RemoteCheck => {
                 // 保存する前に、fetch の URL につないで確かめる（GTK4 版の Check Connection。コアの `checkRemote`）。
@@ -6655,6 +6681,27 @@ impl Root {
                 }
             }
             Message::ActivityTab(None) => {}
+            Message::ActivityKind(kind) => {
+                if let (Some(state), Some(kind)) = (self.activity.as_mut(), kind) {
+                    state.kind = kind;
+                }
+            }
+            Message::ActivityFailuresOnly(on) => {
+                if let Some(state) = self.activity.as_mut() {
+                    state.failures_only = on;
+                }
+            }
+            Message::ActivityFilter(text) => {
+                if let Some(state) = self.activity.as_mut() {
+                    state.filter = text;
+                }
+            }
+            Message::ActivitySelect(index) => {
+                if let Some(state) = self.activity.as_mut() {
+                    // 読み直しで並びが変わっても、選んだ記録は通し番号で覚える。
+                    state.selected = index.and_then(|i| state.shown().get(i).map(|r| r.seq));
+                }
+            }
             Message::CombineText(answer) => match (self.repo.clone(), answer) {
                 (Some(repo), Ok((oldest, newest, count, message))) => {
                     self.dialog = Some(Dialog::Reword {
@@ -7188,16 +7235,16 @@ impl Root {
                     } else {
                         Vec::new()
                     };
-                    load_tree_folders(repo.clone(), "HEAD", "/".to_owned(), context);
-                    self.dialog = Some(Dialog::TreeFolder {
+                    let (picker, job) = crate::pathpicker::Picker::new_tree(
+                        crate::pathpicker::Purpose::SparseFolder {
+                            existing,
+                            cloned: None,
+                        },
                         repo,
-                        path: "/".to_owned(),
-                        entries: None,
-                        selected: None,
-                        existing,
-                        cloned: None,
-                        archive: None,
-                    });
+                        "HEAD",
+                    );
+                    self.dialog = Some(Dialog::PathPicker(Box::new(picker)));
+                    context.spawn_background(move |_| Message::Picker(job.run()));
                     return;
                 }
                 // 覚えた解決をすべて忘れる（戻せないので確かめる。GTK4 版の `forget_resolutions_row`）。
@@ -8023,9 +8070,6 @@ impl Root {
                 let now = match id {
                     "one-line-history" => crate::render::one_line(),
                     "highlight-ancestors" => crate::render::highlight_ancestors(),
-                    "all-files-in-one-diff" => {
-                        crate::prefs::bool(crate::prefs::STACKED_COMMIT_DIFF)
-                    }
                     "changed-files-as-tree" => crate::prefs::bool(crate::prefs::HISTORY_FILE_TREE),
                     "history-item-refs" => bit(crate::render::items::REFS),
                     "history-item-author" => bit(crate::render::items::AUTHOR),
@@ -8384,15 +8428,6 @@ impl Root {
                 self.diff_file = None;
             }
             Message::DiffFileMenu(key) => self.diff_file_action(&key, context),
-            Message::ChangedFileMenu(index, key) => {
-                let mut file = None;
-                self.with_history(|h| file = h.session.data.file_of(index));
-                if file.is_none() {
-                    return beep();
-                }
-                self.diff_file = file;
-                self.diff_file_action(&key, context);
-            }
             Message::WorkingFileMenu(path, key) => match key.as_str() {
                 "history" => self.open_file_history_tab(path, context),
                 "blame" => self.update(Message::OpenBlame(path, None), context),
@@ -8828,11 +8863,7 @@ impl Root {
                 PENDING_PLACE.with(|p| p.set(Some((place, 0))));
             }
             let session = match Session::new(&args, "app", started, Arc::new(|| {})) {
-                Ok(mut s) => {
-                    // View の All Files in One Diff を切っていれば、コミットの差分は 1 ファイルずつ。
-                    s.data.single_file = !crate::prefs::bool(crate::prefs::STACKED_COMMIT_DIFF);
-                    s
-                }
+                Ok(s) => s,
                 Err(e) => {
                     sender.send(Message::Failed(e));
                     return None;
@@ -9098,35 +9129,19 @@ impl Root {
             .grid_column(2)
             .children((
                 self.top_of_diff(context),
-                StackPanel::new().grid_row(1).children((
-                    self.changed_files_view(context),
-                    self.diff_find_bar(context),
-                )),
-                // 差分（木を出すときは、その左に変更ファイルの木）。
-                Grid::new()
-                    .grid_row(2)
-                    .columns([
-                        if self.shows_changed_files()
-                            && crate::prefs::bool(crate::prefs::HISTORY_FILE_TREE)
-                        {
-                            GridLength::Pixel(220.0)
-                        } else {
-                            GridLength::Pixel(0.0)
-                        },
-                        GridLength::Star(1.0),
-                    ])
-                    .children((
-                        self.changed_tree_view(context),
-                        Grid::new()
-                            .background(Brush::Solid(Color::transparent()))
-                            .element_ref(&self.diff_area)
-                            .grid_column(1)
-                            .children((SwapChainPanel::new().element_ref(&self.diff_panel),))
-                            .menu(Menu::new(
-                                self.diff_file_menu(),
-                                context.callback(Message::DiffFileMenu),
-                            )),
-                    )),
+                StackPanel::new()
+                    .grid_row(1)
+                    .children((self.diff_bar(context), self.diff_find_bar(context))),
+                // 差分（変更ファイルは差分のファイルの見出し）。
+                Grid::new().grid_row(2).children((Grid::new()
+                    .background(Brush::Solid(Color::transparent()))
+                    .element_ref(&self.diff_area)
+                    .grid_column(1)
+                    .children((SwapChainPanel::new().element_ref(&self.diff_panel),))
+                    .menu(Menu::new(
+                        self.diff_file_menu(),
+                        context.callback(Message::DiffFileMenu),
+                    )),)),
             ));
         // タイトルバー: 左にリポジトリの切り替え、続けてツールバー（macOS 版と同じく、アイコンの下に名前）、右に
         // ≡（メニューバーの中身すべて）。メニューバーとツールバーの段はなくし、タブは下の段に置く。ツールバーの右の
@@ -9144,14 +9159,21 @@ impl Root {
                     SlotView::new(TitleBarSlot::LeftHeader, self.repository_switcher(context)),
                     SlotView::new(
                         TitleBarSlot::Content,
+                        // 伸縮するスペースが余った幅を分けるので、幅いっぱいに置く（空いた所は窓を動かせる）。
                         Grid::new()
-                            .horizontal_alignment(HorizontalAlignment::Left)
+                            .element_ref(&self.toolbar_host)
                             .vertical_alignment(VerticalAlignment::Center)
                             .margin(Thickness::new(8.0, 0.0, 64.0, 0.0))
-                            .children((crate::menus::toolbar(
-                                context.callback(Message::Command),
-                                tracking,
-                            ),)),
+                            .children((if self.toolbar_customizing {
+                                Grid::new().element_ref(&self.toolbar_strip).children((
+                                    crate::menus::toolbar_strip(
+                                        &crate::menus::toolbar_entries(),
+                                        context.callback(Message::ToolbarReordered),
+                                    ),
+                                ))
+                            } else {
+                                crate::menus::toolbar(context.callback(Message::Command), tracking)
+                            },)),
                     ),
                     SlotView::new(
                         TitleBarSlot::RightHeader,
@@ -9337,6 +9359,19 @@ impl Root {
         }
         // 見出しの境目のつまみに押す・動かすを付ける（画面を出すたび。`retry_splitters` が付け終える）。
         let shown = self.page == Page::Repositories && self.repositories.is_some();
+        let header = self.repositories_header.clone();
+        context.use_effect("column-header", shown, move || {
+            if shown {
+                let _ = header.request_native_element(|result| {
+                    if let Ok(element) = result
+                        && let Err(e) = attach_column_header(&element)
+                    {
+                        eprintln!("見出しに操作を付けられない: {e}");
+                    }
+                });
+            }
+            None
+        });
         for (i, handle) in self.column_handles.iter().enumerate() {
             let handle = handle.clone();
             context.use_effect(format!("column-{i}"), shown, move || {
@@ -9731,6 +9766,7 @@ impl Root {
                     )
                     .on_drop(context.callback(Message::Dropped))
                     .content(body),
+                self.toolbar_palette_view(context),
                 self.status_bar(context),
                 image,
                 dialog,
@@ -10735,93 +10771,6 @@ impl Root {
                             .children((View::keyed_fragment(rows),)),
                     )
             }
-            Some(Dialog::TreeFolder {
-                path,
-                entries,
-                selected,
-                existing,
-                cloned,
-                archive,
-                ..
-            }) => {
-                let first = existing.is_empty();
-                let for_archive = archive.is_some();
-                let body: View = match entries {
-                    None => TextBlock::new().text(tr!("Loading…")).opacity(0.6).into(),
-                    Some(Err(e)) => TextBlock::new()
-                        .text(e.clone())
-                        .text_wrapping(TextWrapping::Wrap)
-                        .into(),
-                    Some(Ok(names)) => {
-                        let rows = names.iter().map(|n| {
-                            (
-                                n.clone(),
-                                ListViewItem::new()
-                                    .tag(n.clone())
-                                    .content(TextBlock::new().text(format!("📁 {n}"))),
-                            )
-                        });
-                        // 読み直すたびに一覧ごと作り直す（reactor の ListView は消した項目の場所が残る）。
-                        View::keyed_fragment([(
-                            path.clone(),
-                            ListView::new()
-                                .height(240.0)
-                                .selected_index(*selected)
-                                .on_selection_changed(context.callback(Message::TreeFolderSelect))
-                                .collection_slot(ListViewSlot::Items, rows),
-                        )])
-                    }
-                };
-                let can_open = selected.is_some();
-                dialog
-                    .is_open(true)
-                    .title(if for_archive {
-                        tr!("Export One Folder")
-                    } else if first {
-                        tr!("Check Out Only Some Folders")
-                    } else {
-                        tr!("Check Out One More Folder")
-                    })
-                    .primary_button_text(tr!("Choose"))
-                    .close_button_text(tr!("Cancel"))
-                    .is_primary_button_enabled(selected.is_some() || path != "/")
-                    .content(
-                        StackPanel::new().spacing(6.0).width(440.0).children((
-                            TextBlock::new()
-                                .text(if for_archive {
-                                    tr!("Folders in this commit.")
-                                } else if cloned.is_some() {
-                                    tr!(
-                                        "Only the files at the top are checked out. Choose a folder to check out too; add more later in Settings > Fetching and Folders."
-                                    )
-                                } else if first {
-                                    tr!(
-                                        "Only this folder is checked out, with the files at the top. Others are removed from disk until you check them out again; add more folders here later."
-                                    )
-                                } else {
-                                    tr!("Folders in the latest commit, including ones not checked out.")
-                                })
-                                .text_wrapping(TextWrapping::Wrap),
-                            StackPanel::new()
-                                .orientation(Orientation::Horizontal)
-                                .spacing(6.0)
-                                .children((
-                                    Button::new()
-                                        .is_enabled(path != "/")
-                                        .on_click(context.callback(|()| Message::TreeFolderUp))
-                                        .content(TextBlock::new().text("↑")),
-                                    Button::new()
-                                        .is_enabled(can_open)
-                                        .on_click(context.callback(|()| Message::TreeFolderOpen))
-                                        .content(TextBlock::new().text("→")),
-                                    TextBlock::new()
-                                        .text(path.clone())
-                                        .vertical_alignment(VerticalAlignment::Center),
-                                )),
-                            body,
-                        )),
-                    )
-            }
             Some(Dialog::Template(index)) => {
                 let index = *index;
                 let (name, text) = self
@@ -10857,79 +10806,6 @@ impl Root {
                         )),
                     )
             }
-            Some(Dialog::Toolbar(entries)) => {
-                use crate::menus::ToolbarEntry;
-                let last = entries.len().saturating_sub(1);
-                let rows = entries.iter().enumerate().map(|(i, entry)| {
-                    let arrows = StackPanel::new()
-                        .orientation(Orientation::Horizontal)
-                        .spacing(4.0)
-                        .grid_column(1)
-                        .children((
-                            Button::new()
-                                .is_enabled(i > 0)
-                                .on_click(context.callback(move |()| Message::ToolbarMove(i, true)))
-                                .content(TextBlock::new().text("↑")),
-                            Button::new()
-                                .is_enabled(i < last)
-                                .on_click(context.callback(move |()| Message::ToolbarMove(i, false)))
-                                .content(TextBlock::new().text("↓")),
-                        ));
-                    let head: View = match entry {
-                        ToolbarEntry::Item(id, shown) => CheckBox::new()
-                            .is_checked(*shown)
-                            .on_is_checked_changed(
-                                context.callback(move |on| Message::ToolbarShown(i, on)),
-                            )
-                            .content(TextBlock::new().text(crate::menus::toolbar_name(id)))
-                            ,
-                        ToolbarEntry::Space => StackPanel::new()
-                            .orientation(Orientation::Horizontal)
-                            .spacing(8.0)
-                            .children((
-                                TextBlock::new()
-                                    .text(format!("— {} —", tr!("Space")))
-                                    .opacity(0.6)
-                                    .vertical_alignment(VerticalAlignment::Center),
-                                Button::new()
-                                    .on_click(context.callback(move |()| Message::ToolbarRemove(i)))
-                                    .content(TextBlock::new().text("−")),
-                            ))
-                            ,
-                    };
-                    (
-                        format!("{i}:{entry:?}"),
-                        Grid::new()
-                            .columns([GridLength::Star(1.0), GridLength::Auto])
-                            .children((Border::new().grid_column(0).content(head), arrows)),
-                    )
-                });
-                dialog
-                    .is_open(true)
-                    .title(tr!("Customize Toolbar"))
-                    .primary_button_text(tr!("Save"))
-                    .close_button_text(tr!("Cancel"))
-                    .content(
-                        StackPanel::new().spacing(6.0).width(380.0).children((
-                            ScrollViewer::new().max_height(380.0).content(
-                                StackPanel::new()
-                                    .spacing(2.0)
-                                    .children((View::keyed_fragment(rows),)),
-                            ),
-                            StackPanel::new()
-                                .orientation(Orientation::Horizontal)
-                                .spacing(8.0)
-                                .children((
-                                    Button::new()
-                                        .on_click(context.callback(|()| Message::ToolbarAddSpace))
-                                        .content(TextBlock::new().text(format!("+ {}", tr!("Space")))),
-                                    Button::new()
-                                        .on_click(context.callback(|()| Message::ToolbarDefaults))
-                                        .content(TextBlock::new().text(tr!("Restore Default"))),
-                                )),
-                        )),
-                    )
-            }
             Some(Dialog::RenameRepository { name, .. }) => dialog
                 .is_open(true)
                 .title(tr!("Rename"))
@@ -10948,12 +10824,21 @@ impl Root {
                 ),
             Some(Dialog::PathPicker(picker)) => dialog
                 .is_open(true)
-                .title(match picker.purpose {
+                .title(match &picker.purpose {
                     crate::pathpicker::Purpose::AddSsh => tr!("Choose a Repository"),
                     crate::pathpicker::Purpose::ScanRoot | crate::pathpicker::Purpose::ScanLocal => {
                         tr!("Add a Folder to Scan")
                     }
                     crate::pathpicker::Purpose::AddLocal => tr!("Add Repositories"),
+                    crate::pathpicker::Purpose::ArchiveFolder => tr!("Export One Folder"),
+                    crate::pathpicker::Purpose::SparseFolder { existing, .. }
+                        if existing.is_empty() =>
+                    {
+                        tr!("Check Out Only Some Folders")
+                    }
+                    crate::pathpicker::Purpose::SparseFolder { .. } => {
+                        tr!("Check Out One More Folder")
+                    }
                 })
                 .primary_button_text(tr!("Choose"))
                 .close_button_text(tr!("Cancel"))
@@ -13068,20 +12953,7 @@ impl Root {
         self.file_menu(file)
     }
 
-    /// 変更ファイルの一覧の行の右クリック（差分の見出しと同じ項目。GTK4 版の `commitfiles`）。
-    fn changed_file_menu(
-        &self,
-        file: Option<&crate::data::DiffFile>,
-        context: &ViewContext<Self>,
-    ) -> Menu {
-        let index = file.map_or(usize::MAX, |f| f.index);
-        Menu::new(
-            file.map(|f| self.file_menu(f)).unwrap_or_default(),
-            context.callback(move |key| Message::ChangedFileMenu(index, key)),
-        )
-    }
-
-    /// ファイルの右クリックの項目（差分の見出しと、変更ファイルの一覧。GTK4 版の `list_menu_items`）。
+    /// ファイルの右クリックの項目（差分の見出しの右クリックと ⋯、変更ファイルの木。macOS 版の見出しのメニュー）。
     fn file_menu(&self, file: &crate::data::DiffFile) -> Vec<MenuItem> {
         let mut items = vec![MenuItem::item(
             "collapse",
@@ -13091,14 +12963,12 @@ impl Root {
                 tr!("Collapse")
             },
         )];
-        // 見たことにする（畳んでコミットごとに覚える。GTK4 版の見出しの Viewed）。
-        if file.commit.is_some() {
-            let mark = if file.viewed { "✓ " } else { "" };
-            items.push(MenuItem::item(
-                "viewed",
-                format!("{mark}{}", tr!("Toggle Viewed")),
-            ));
-        }
+        // 前後の行をファイル全体にする・戻す（macOS 版の見出しの ⋯ と同じ）。
+        let mark = if file.whole { "✓ " } else { "" };
+        items.push(MenuItem::item(
+            "whole-file",
+            format!("{mark}{}", tr!("Show Whole File")),
+        ));
         items.push(MenuItem::separator("-file"));
         // 消したファイルは、そのコミットにはない（Blame を出さない）。
         if !file.deleted {
@@ -13172,22 +13042,14 @@ impl Root {
                     h.diff.scroll_by(0.0, rows);
                 }
             }),
-            "viewed" => {
-                let Some(oid) = file.commit.as_deref() else {
-                    return;
-                };
-                // 見たことにしたら畳み、戻したら開く（GTK4 版と同じ）。
-                let viewed = crate::viewed::toggle(oid, &file.path);
-                if viewed != file.collapsed {
-                    self.with_history(|h| {
-                        if h.session.data.toggle_file_index(file.index) {
-                            h.session.renderer.forget_diff();
-                            let rows = h.diff_rows();
-                            h.diff.scroll_by(0.0, rows);
-                        }
-                    });
+            "whole-file" => self.with_history(|h| {
+                if h.session.data.toggle_whole_file(file.index) {
+                    h.session.renderer.forget_diff();
+                    h.diff.dirty = true;
+                    let rows = h.diff_rows();
+                    h.diff.scroll_by(0.0, rows);
                 }
-            }
+            }),
             "blame" => self.update(Message::OpenBlame(file.path, file.commit), context),
             "history" => self.open_file_history_tab(file.path, context),
             "restore" | "restore-before" => {
@@ -16051,127 +15913,6 @@ impl Root {
         }
     }
 
-    /// 詳細と差分の間の、変更ファイルの一覧（macOS 版・GTK4 版の、木にしないときの一覧）。選ぶとそのファイルの
-    /// 見出しまで差分をスクロールする。History で 2 つ以上のファイルを変えたコミットのときだけ。
-    /// 変更ファイルを出すか（History などで 2 つ以上のとき）。
-    fn shows_changed_files(&self) -> bool {
-        self.page != Page::WorkingCopy && !self.details_expanded && self.changed_files.len() >= 2
-    }
-
-    /// 変更ファイルの木（差分の左。View の Changed Files as Tree を入れたとき）。ディレクトリの行と、その中の
-    /// ファイル（名前だけ、深さで字下げ）。ファイルを選ぶと、そのファイルへ。
-    fn changed_tree_view(&self, context: &ViewContext<Self>) -> View {
-        if !self.shows_changed_files() || !crate::prefs::bool(crate::prefs::HISTORY_FILE_TREE) {
-            return View::empty();
-        }
-        let tree = file_tree(&self.changed_files);
-        let selected = self
-            .changed_file
-            .and_then(|f| tree.iter().position(|r| r.file == Some(f)));
-        let mut files = Vec::new();
-        self.with_history(|h| files = h.session.data.files());
-        let rows = tree.iter().enumerate().map(|(i, r)| {
-            let indent = Thickness::new(r.depth as f64 * 14.0, 0.0, 0.0, 0.0);
-            let content: View = match r.file.and_then(|f| self.changed_files.get(f)) {
-                Some(f) => Grid::new()
-                    .columns([GridLength::Pixel(16.0), GridLength::Star(1.0)])
-                    .margin(indent)
-                    .children((
-                        TextBlock::new()
-                            .text(f.mark.to_string())
-                            .font_size(12.0)
-                            .opacity(0.7)
-                            .grid_column(0),
-                        TextBlock::new()
-                            .text(r.name.clone())
-                            .font_size(12.0)
-                            .text_trimming(TextTrimming::CharacterEllipsis)
-                            .grid_column(1),
-                    ))
-                    .menu(self.changed_file_menu(r.file.and_then(|f| files.get(f)), context)),
-                None => TextBlock::new()
-                    .text(format!("🗀 {}", r.name))
-                    .font_size(12.0)
-                    .opacity(0.8)
-                    .margin(indent)
-                    .into(),
-            };
-            (
-                format!("{i}"),
-                ListViewItem::new().min_height(22.0).content(content),
-            )
-        });
-        let key: String = self.changed_files.iter().map(|f| f.path.as_str()).collect();
-        let list = ListView::new()
-            .selected_index(selected)
-            .on_selection_changed(context.callback(Message::ChangedTreeSelected))
-            .collection_slot(ListViewSlot::Items, rows);
-        Border::new()
-            .grid_column(0)
-            .border_thickness(Thickness::new(0.0, 0.0, 1.0, 0.0))
-            .border_brush(Brush::Solid(crate::palette::border()))
-            .content(View::keyed_fragment([(key, list)]))
-    }
-
-    fn changed_files_view(&self, context: &ViewContext<Self>) -> View {
-        if !self.shows_changed_files() || crate::prefs::bool(crate::prefs::HISTORY_FILE_TREE) {
-            return View::empty();
-        }
-        let mut files = Vec::new();
-        self.with_history(|h| files = h.session.data.files());
-        let rows = self.changed_files.iter().enumerate().map(|(i, f)| {
-            let menu = self.changed_file_menu(files.get(i), context);
-            let counts = if f.binary {
-                tr!("binary")
-            } else {
-                format!("+{}  −{}", f.added, f.removed)
-            };
-            let row = Grid::new()
-                .columns([
-                    GridLength::Pixel(18.0),
-                    GridLength::Star(1.0),
-                    GridLength::Auto,
-                ])
-                .children((
-                    TextBlock::new()
-                        .text(f.mark.to_string())
-                        .font_size(12.0)
-                        .opacity(0.7)
-                        .grid_column(0),
-                    TextBlock::new()
-                        .text(f.path.clone())
-                        .font_size(12.0)
-                        .text_trimming(TextTrimming::CharacterEllipsis)
-                        .grid_column(1),
-                    TextBlock::new()
-                        .text(counts)
-                        .font_size(11.0)
-                        .opacity(0.6)
-                        .margin(Thickness::new(8.0, 0.0, 0.0, 0.0))
-                        .grid_column(2),
-                ))
-                .menu(menu);
-            (
-                format!("{i}"),
-                ListViewItem::new()
-                    .tag(f.path.clone())
-                    .min_height(24.0)
-                    .content(row),
-            )
-        });
-        // ファイルが替わったら一覧ごと作り直す（reactor の ListView は消した項目の場所が空いたまま残る）。
-        let key: String = self.changed_files.iter().map(|f| f.path.as_str()).collect();
-        let list = ListView::new()
-            .selected_index(self.changed_file)
-            .on_selection_changed(context.callback(Message::ChangedFileSelected))
-            .collection_slot(ListViewSlot::Items, rows);
-        Border::new()
-            .max_height(5.0 * 24.0 + 8.0)
-            .border_thickness(Thickness::new(0.0, 1.0, 0.0, 0.0))
-            .border_brush(Brush::Solid(crate::palette::border()))
-            .content(View::keyed_fragment([(key, list)]))
-    }
-
     fn show_page(&mut self, page: Page) {
         let from = self.page;
         self.page = page;
@@ -16592,6 +16333,7 @@ impl Root {
                 side_host: &self.repositories_side,
                 list_host: &self.repositories_list,
                 column_handles: &self.column_handles,
+                header_host: &self.repositories_header,
             },
         );
 
@@ -16620,6 +16362,10 @@ impl Root {
                     })
                 }),
                 daemon_toggle: context.callback(|()| Message::DaemonToggle),
+                kind: context.callback(Message::ActivityKind),
+                failures_only: context.callback(Message::ActivityFailuresOnly),
+                filter: context.callback(Message::ActivityFilter),
+                select: context.callback(Message::ActivitySelect),
             },
         );
         Border::new()
@@ -17272,9 +17018,7 @@ impl Root {
                         .horizontal_alignment(HorizontalAlignment::Right)
                         .vertical_alignment(VerticalAlignment::Top)
                         .margin(Thickness::new(0.0, 4.0, 8.0, 0.0))
-                        .children((
-                            self.diff_find_button(context),
-                            ToggleButton::new()
+                        .children((ToggleButton::new()
                                 .is_checked(self.details_expanded)
                                 .on_is_checked_changed(context.callback(Message::ExpandDetails))
                                 .content(TextBlock::new().text("⤢"))
@@ -17300,11 +17044,206 @@ impl Root {
             .columns([GridLength::Star(1.0), GridLength::Auto])
             .children((
                 sides,
-                Border::new()
+                StackPanel::new()
                     .grid_column(1)
+                    .orientation(Orientation::Horizontal)
+                    .spacing(4.0)
                     .margin(Thickness::new(0.0, 2.0, 8.0, 2.0))
-                    .content(self.diff_find_button(context)),
+                    .children((
+                        self.whitespace_picker(context),
+                        self.diff_find_button(context),
+                    )),
             ))
+    }
+
+    /// 行を比べるときに無視する空白を選ぶボタン（macOS 版の `WhitespacePopUp`）: アイコンだけで、押すと 4 つの
+    /// 選び方（今のものに ✓、それぞれに説明のツールチップ）。無視している間はアイコンをアクセントの色にする。
+    fn whitespace_picker(&self, context: &ViewContext<Self>) -> View {
+        use amonhen_core::diff::Whitespace;
+        let mut current = Whitespace::Exact;
+        self.with_history(|h| current = h.session.data.whitespace);
+        let title = |mode: Whitespace| match mode {
+            Whitespace::Exact => tr!("Compare Whitespace"),
+            Whitespace::AtEol => tr!("Ignore Whitespace at Line Ends"),
+            Whitespace::Change => tr!("Ignore Changes in Whitespace"),
+            Whitespace::All => tr!("Ignore All Whitespace"),
+        };
+        let tooltip = |mode: Whitespace| match mode {
+            Whitespace::Exact => tr!("Lines that differ only in whitespace are changes"),
+            Whitespace::AtEol => {
+                tr!("Ignore whitespace at the end of lines (git diff --ignore-space-at-eol)")
+            }
+            Whitespace::Change => tr!("Ignore changes in the amount of whitespace (git diff -b)"),
+            Whitespace::All => tr!("Ignore all whitespace when comparing lines (git diff -w)"),
+        };
+        let items: Vec<MenuItem> = [
+            Whitespace::Exact,
+            Whitespace::AtEol,
+            Whitespace::Change,
+            Whitespace::All,
+        ]
+        .into_iter()
+        .map(|mode| {
+            let mark = if mode == current { "✓ " } else { "" };
+            MenuItem::item(
+                format!("whitespace:{}", mode as u8),
+                format!("{mark}{}", title(mode)),
+            )
+            .with_tooltip(tooltip(mode))
+        })
+        .collect();
+        // アイコンは空白の印 ␣（macOS 版の SF Symbols の space）。
+        let icon = TextBlock::new().text("␣").font_size(16.0);
+        let icon = if current == Whitespace::Exact {
+            icon
+        } else {
+            icon.foreground(Brush::Solid(Color::rgb(0x00, 0x78, 0xd4)))
+        };
+        DropDownButton::new()
+            .content(icon)
+            .tooltip(format!(
+                "{}\n{}",
+                title(current),
+                tr!("Whitespace to ignore when comparing lines (as git diff does)")
+            ))
+            .menu(Menu::new(items, context.callback(Message::DiffWhitespace)))
+    }
+
+    /// 右の列の差分の上の帯（macOS 版の `makeBar`）: 変更／すべてのファイル、ファイルの数と足した・消した行の
+    /// 合計、リスト／ツリー、差分をすべて開く・畳む、空白を無視、検索、表示の設定。History で 1 つのコミットを
+    /// 出しているときだけ。
+    fn diff_bar(&self, context: &ViewContext<Self>) -> View {
+        if self.page == Page::WorkingCopy {
+            return View::empty();
+        }
+        let mut shown = None;
+        self.with_history(|h| {
+            shown = h
+                .session
+                .data
+                .commit
+                .as_ref()
+                .map(|c| (c.totals(), c.all_open(), c.collapsed_folders.is_empty()));
+        });
+        let Some(((files, added, removed), all_open, folders_open)) = shown else {
+            return View::empty();
+        };
+        let small = |text: String| TextBlock::new().text(text).font_size(12.0);
+        let icon = |glyph: &'static str| FontIcon::new().glyph(glyph);
+        let tree = crate::prefs::bool(crate::prefs::HISTORY_FILE_TREE);
+        // その時点の木（すべてのファイル）は後で（今は押せない）。
+        let view_switch = StackPanel::new()
+            .grid_column(0)
+            .orientation(Orientation::Horizontal)
+            .children((
+                ToggleButton::new()
+                    .is_checked(true)
+                    .content(small(tr!("Changes"))),
+                ToggleButton::new()
+                    .is_checked(false)
+                    .is_enabled(false)
+                    .content(small(tr!("All Files"))),
+            ));
+        let totals = StackPanel::new()
+            .grid_column(1)
+            .orientation(Orientation::Horizontal)
+            .spacing(6.0)
+            .vertical_alignment(VerticalAlignment::Center)
+            .children((
+                small(tr!("{count} files", count = files)).opacity(0.55),
+                small(format!("+{added}")).foreground(Brush::Solid(Color::rgb(0x2e, 0xa0, 0x43))),
+                small(format!("−{removed}")).foreground(Brush::Solid(Color::rgb(0xdc, 0x38, 0x33))),
+            ));
+        let tree_switch = StackPanel::new()
+            .orientation(Orientation::Horizontal)
+            .children((
+                ToggleButton::new()
+                    .is_checked(!tree)
+                    // 押して外したときは、そのまま（もう一方を押して切り替える）。
+                    .on_is_checked_changed(context.callback(|on: bool| {
+                        if on {
+                            Message::DiffFilesAsTree(false)
+                        } else {
+                            Message::DiffFilesToggled
+                        }
+                    }))
+                    .content(icon("\u{E8FD}"))
+                    .tooltip(tr!("Show the changed files as a list")),
+                ToggleButton::new()
+                    .is_checked(tree)
+                    .on_is_checked_changed(context.callback(|on: bool| {
+                        if on {
+                            Message::DiffFilesAsTree(true)
+                        } else {
+                            Message::DiffFilesToggled
+                        }
+                    }))
+                    .content(icon("\u{ED41}"))
+                    .tooltip(tr!("Show the changed files as a tree")),
+            ));
+        // フォルダをすべて開く・畳む（木のときだけ。macOS 版と同じ）。
+        let folders: View = if tree {
+            Button::new()
+                .style(ButtonStyle::Subtle)
+                .on_click(context.callback(|()| Message::ToggleAllFolders))
+                .content(icon(if folders_open { "\u{E838}" } else { "\u{E8B7}" }))
+                .tooltip(if folders_open {
+                    tr!("Collapse All Folders")
+                } else {
+                    tr!("Expand All Folders")
+                })
+        } else {
+            View::empty()
+        };
+        let expand = Button::new()
+            .style(ButtonStyle::Subtle)
+            .on_click(context.callback(|()| Message::ToggleAllDiffs))
+            .content(icon(if all_open { "\u{E70E}" } else { "\u{E70D}" }))
+            .tooltip(if all_open {
+                tr!("Collapse All Diffs")
+            } else {
+                tr!("Expand All Diffs")
+            });
+        let whitespace = self.whitespace_picker(context);
+        let find = Button::new()
+            .style(ButtonStyle::Subtle)
+            .on_click(context.callback(|()| Message::DiffFindOpen(true)))
+            .content(icon("\u{E721}"))
+            .tooltip(tr!("Find in the diff (Ctrl+F)"));
+        let expanded = if self.details_expanded { "✓ " } else { "" };
+        let options = DropDownButton::new()
+            .content(icon("\u{E9E9}"))
+            .tooltip(tr!("View Options"))
+            .menu(Menu::new(
+                vec![MenuItem::item(
+                    "expand-details",
+                    format!("{expanded}{}", tr!("Expand Details")),
+                )],
+                context.callback(Message::DiffViewOption),
+            ));
+        Border::new()
+            .border_thickness(Thickness::new(0.0, 1.0, 0.0, 1.0))
+            .border_brush(Brush::Solid(crate::palette::border()))
+            .content(
+                Grid::new()
+                    .columns([
+                        GridLength::Auto,
+                        GridLength::Auto,
+                        GridLength::Star(1.0),
+                        GridLength::Auto,
+                    ])
+                    .column_spacing(10.0)
+                    .margin(Thickness::new(8.0, 3.0, 8.0, 3.0))
+                    .children((
+                        view_switch,
+                        totals,
+                        StackPanel::new()
+                            .grid_column(3)
+                            .orientation(Orientation::Horizontal)
+                            .spacing(6.0)
+                            .children((tree_switch, folders, expand, whitespace, find, options)),
+                    )),
+            )
     }
 
     /// 差分の中を探す帯を開くボタン（GTK4 版の `find_button`。詳細の右上に置く）。
@@ -19145,31 +19084,6 @@ fn open_repository(location: &str) -> Option<Arc<Repository>> {
     Some(Arc::new(Repository::new(backend)))
 }
 
-/// HEAD の木の `path` にあるフォルダを裏で読む（コアの `treeFolders`）。
-fn load_tree_folders(
-    repo: Arc<Repository>,
-    rev: &str,
-    path: String,
-    context: &ComponentContext<Root>,
-) {
-    let rev = rev.to_owned();
-    context.spawn_background(move |_| {
-        let command = json!({ "op": "treeFolders", "path": &path, "rev": rev });
-        let reply: Value = serde_json::from_str(&repo.run_json(&command.to_string()))
-            .unwrap_or_else(|e| json!({ "error": e.to_string() }));
-        let entries = match reply["error"].as_str() {
-            Some(e) => Err(e.to_owned()),
-            None => Ok(reply["info"]["entries"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|e| e["name"].as_str().map(str::to_owned))
-                .collect()),
-        };
-        Message::TreeFolderLoaded(path, entries)
-    });
-}
-
 /// フックの置き場所（GTK4 版の `hooks_directory`）: `core.hooksPath` がなければ $GIT_COMMON_DIR/hooks、相対なら
 /// 作業ツリーから、`~` はホームから。
 fn hooks_directory(
@@ -19477,6 +19391,7 @@ impl HistoryView {
     /// 届いたものを取り込み、描くものがあれば描く。
     fn render(&mut self) -> Result<(), String> {
         retry_monospace();
+        retry_stretch();
         if self.owner {
             tip_sidebar_rows();
         }
@@ -19718,15 +19633,17 @@ impl HistoryView {
             self.sender.send(Message::OpenHistoryMenu);
         }
         let mut diff_replaced = false;
+        // 空白の扱いを変えて読み直した差分は、同じ行のものでも新しい差分として出し直す。
+        let reloaded = std::mem::take(&mut s.data.commit_reloaded);
         if let Some(commit) = &s.data.commit
-            && self.shown != Some(commit.row)
+            && (self.shown != Some(commit.row) || reloaded)
         {
             self.shown = Some(commit.row);
             s.data.extras_changed = false;
             self.sender
                 .send(Message::Commit(commit.info.clone(), commit.extras.clone()));
-            self.sender
-                .send(Message::ChangedFiles(changed_files(&commit.stacked)));
+            // 帯（ファイルの数と合計）を出し直す。
+            self.sender.send(Message::DiffFilesToggled);
             s.renderer.forget_diff();
             self.diff.scroll_y = 0.0;
             self.diff.dirty = true;
@@ -19823,9 +19740,10 @@ impl HistoryView {
             .iter()
             .enumerate()
             .filter(|(_, r)| r.kind == kind)
-            .map(|(i, _)| i)
+            .filter_map(|(i, _)| self.line_of_row(i as u32))
+            .map(|l| l as usize)
             .collect();
-        let rows = view.rows.len();
+        let rows = self.diff_rows();
         // 一番上に見えている行（の見出し）から数える。
         let top = (self.diff.scroll_y / DIFF_ROW_HEIGHT + 0.5) as usize;
         let target = if step > 0 {
@@ -19855,9 +19773,11 @@ impl HistoryView {
         } else {
             data.commit.as_ref().map(|c| &c.diff)
         };
-        let found = view.map_or_else(Vec::new, |v| {
+        let mut found = view.map_or_else(Vec::new, |v| {
             crate::render::find_in_diff(v, &self.diff_query)
         });
+        // 木で隠したファイルの見出しの中の一致は数えない。
+        found.retain(|m| self.line_of_row(m.0).is_some());
         self.diff.dirty = true;
         let n = found.len();
         let r = &mut self.session.renderer;
@@ -19869,7 +19789,11 @@ impl HistoryView {
         match start {
             Some(_) => {
                 let top = (self.diff.scroll_y / DIFF_ROW_HEIGHT) as u32;
-                let index = r.diff_find.iter().position(|m| m.0 >= top).unwrap_or(0);
+                let lines: Vec<u32> = r.diff_find.iter().map(|m| m.0).collect();
+                let index = lines
+                    .iter()
+                    .position(|&row| self.line_of_row(row).is_some_and(|l| l >= top))
+                    .unwrap_or(0);
                 self.select_diff_match(Some(index));
                 (n, Some(index))
             }
@@ -19889,6 +19813,7 @@ impl HistoryView {
         };
         r.diff_current = Some(index);
         let row = r.diff_find[index].0;
+        let row = self.line_of_row(row).unwrap_or(row);
         let (row_top, height) = (row as f32 * DIFF_ROW_HEIGHT, self.diff.height());
         if row_top < self.diff.scroll_y || row_top + DIFF_ROW_HEIGHT > self.diff.scroll_y + height {
             self.diff.scroll_y = row_top - height / 3.0;
@@ -20004,42 +19929,138 @@ impl HistoryView {
         }
     }
 
-    /// 差分の中身を替えた（取っておいた行の文字を捨て、上から描き直す）。
-    fn diff_replaced(&mut self) {
-        self.session.renderer.forget_diff();
-        self.diff.scroll_y = 0.0;
-        self.diff.dirty = true;
-    }
-
-    /// 変更ファイルの一覧で `index` 番目を選んだ: 1 ファイルずつならそのファイルを出し、並べているなら見出しまで
-    /// スクロールする。
-    fn show_file(&mut self, index: usize) {
-        if self.session.data.single_file {
-            if self.session.data.show_only(Some(index)) {
-                self.diff_replaced();
-            }
-            return;
-        }
-        let row = self
-            .session
-            .data
-            .commit
-            .as_ref()
-            .and_then(|c| c.file_rows.get(index).copied());
-        if let Some(row) = row {
-            self.diff.scroll_y = row as f32 * DIFF_ROW_HEIGHT;
-            let rows = self.diff_rows();
-            self.diff.scroll_by(0.0, rows);
-        }
-    }
-
+    /// 差分の欄の表示の行の数（History で木なら、フォルダの行を差し込み、隠したファイルを除いた数）。
     fn diff_rows(&self) -> usize {
         let data = &self.session.data;
         if self.working_page {
             data.working.as_ref().map_or(0, |w| w.diff.view.rows.len())
         } else {
-            data.commit.as_ref().map_or(0, |c| c.diff.rows.len())
+            data.commit.as_ref().map_or(0, |c| c.content().line_count())
         }
+    }
+
+    /// 差分の `row` 行目の、表示の行（隠したファイルの見出しなら None）。
+    fn line_of_row(&self, row: u32) -> Option<u32> {
+        if self.working_page {
+            return Some(row);
+        }
+        self.session.data.commit.as_ref()?.content().line_of(row)
+    }
+
+    /// 差分の欄の表示の `line` 行目。
+    /// 画像の比べる欄（`file`、最初の表示の行 `first`）を `(x, y)` で押した（macOS 版の `ImageDiffPanel`）。引き
+    /// 始めたら true（離すまで `IMAGE_DRAG`）。
+    fn image_press(&mut self, file: usize, first: usize, x: f32, y: f32, alt: bool) -> bool {
+        use crate::imagediff::{self as image, Hit, Mode};
+        let width = self
+            .diff
+            .surface
+            .as_ref()
+            .map_or(0.0, |s| s.width as f32 / self.diff.scale.max(0.01));
+        let top = first as f32 * DIFF_ROW_HEIGHT - self.diff.scroll_y;
+        let mode = image::mode();
+        let Some(commit) = self.session.data.commit.as_mut() else {
+            return false;
+        };
+        let svg = commit
+            .stacked
+            .files
+            .get(file)
+            .is_some_and(|(path, _)| image::is_svg(path));
+        let layout = image::layout(top, width, mode, svg);
+        let common = self
+            .session
+            .renderer
+            .image_common(commit.content().key, file);
+        let view = commit.image_views.entry(file).or_default();
+        let area = if mode == Mode::TwoUp {
+            image::two_up_area(layout.canvas, 1)
+        } else {
+            image::overlay_area(layout.canvas)
+        };
+        let mut drag = None;
+        match image::hit(&layout, mode, view, common, x, y, alt) {
+            Some(Hit::Mode(m)) => image::set_mode(m),
+            Some(Hit::ShowText) => {
+                if self.session.data.show_svg_as_text(file) {
+                    self.session.renderer.forget_diff();
+                    self.diff.dirty = true;
+                }
+                return false;
+            }
+            Some(Hit::Position(p)) => {
+                view.position = p;
+                let slider = layout.slider.is_some_and(|r| r.contains(x, y));
+                drag = Some(ImageDrag::Position(slider));
+            }
+            Some(Hit::ZoomActual) => {
+                view.zoom = if view.zoom == Some(1.0) {
+                    None
+                } else {
+                    Some(1.0)
+                };
+                view.pan = (0.0, 0.0);
+            }
+            Some(Hit::ZoomOut) => image::zoom_by(view, 1.0 / 1.5, common, area),
+            Some(Hit::ZoomIn) => image::zoom_by(view, 1.5, common, area),
+            Some(Hit::ZoomFit) => {
+                view.zoom = None;
+                view.pan = (0.0, 0.0);
+            }
+            Some(Hit::Pan) => drag = Some(ImageDrag::Pan(x, y, view.pan.0, view.pan.1)),
+            None => return false,
+        }
+        self.diff.dirty = true;
+        IMAGE_DRAG.with(|d| d.set(drag.map(|drag| (file, first, drag))));
+        drag.is_some()
+    }
+
+    /// 画像の比べる欄で引いている所を `(x, y)` へ。
+    fn image_drag(&mut self, file: usize, first: usize, drag: ImageDrag, x: f32, y: f32) {
+        use crate::imagediff as image;
+        let width = self
+            .diff
+            .surface
+            .as_ref()
+            .map_or(0.0, |s| s.width as f32 / self.diff.scale.max(0.01));
+        let top = first as f32 * DIFF_ROW_HEIGHT - self.diff.scroll_y;
+        let Some(commit) = self.session.data.commit.as_mut() else {
+            return;
+        };
+        let svg = commit
+            .stacked
+            .files
+            .get(file)
+            .is_some_and(|(path, _)| image::is_svg(path));
+        let layout = image::layout(top, width, image::mode(), svg);
+        let common = self
+            .session
+            .renderer
+            .image_common(commit.content().key, file);
+        let view = commit.image_views.entry(file).or_default();
+        match drag {
+            ImageDrag::Position(true) => {
+                if let Some(slider) = layout.slider {
+                    view.position = ((x - slider.x) / slider.w).clamp(0.0, 1.0);
+                }
+            }
+            ImageDrag::Position(false) => {
+                let rect = image::fit(common, image::overlay_area(layout.canvas), view);
+                if rect.w > 0.0 {
+                    view.position = ((x - rect.x) / rect.w).clamp(0.0, 1.0);
+                }
+            }
+            ImageDrag::Pan(x0, y0, px, py) => view.pan = (px + x - x0, py + y - y0),
+        }
+        self.diff.dirty = true;
+    }
+
+    fn diff_line(&self, line: usize) -> Option<crate::data::DiffLine> {
+        if self.working_page {
+            let rows = self.session.data.working.as_ref()?.diff.view.rows.len();
+            return (line < rows).then_some(crate::data::DiffLine::Row(line as u32));
+        }
+        self.session.data.commit.as_ref()?.content().line(line)
     }
 
     /// 選んでいるコミットの詳細と差分を読み直す（Stashes の画面から戻ったとき）。
@@ -20645,6 +20666,109 @@ fn attach_splitter(element: &IInspectable, split: Split) -> windows_core_reactor
     Ok(())
 }
 
+/// 指の下の Repositories の見出しのマス（`repositories::HEADER_IDS` の名前）。マスの位置は、見出しの Grid の子
+/// （その順に並ぶ）に指の位置を聞いて決める。
+fn header_cell_under(
+    args: &xaml::PointerRoutedEventArgs,
+    header: &xaml::UIElement,
+) -> Option<&'static str> {
+    let node: xaml::DependencyObject = header.cast().ok()?;
+    crate::repositories::HEADER_IDS
+        .iter()
+        .enumerate()
+        .find_map(|(i, id)| {
+            let child = xaml::VisualTreeHelper::GetChild(&node, i as i32).ok()?;
+            let x = f64::from(
+                args.GetCurrentPoint(&child.cast::<xaml::UIElement>().ok()?)
+                    .ok()?
+                    .Position()
+                    .ok()?
+                    .X,
+            );
+            let width = child
+                .cast::<xaml::FrameworkElement>()
+                .ok()?
+                .ActualWidth()
+                .ok()?;
+            (0.0..width).contains(&x).then_some(*id)
+        })
+}
+
+/// Repositories の見出しに、押す・動かす・離すを付ける。動かさずに離せば押した列で並べ替え、6 DIP より
+/// 動かしてから離せば、押した列（Name 以外）を離した所の列の位置へ動かす（macOS 版・GTK4 版の見出しのドラッグ）。
+/// 境目のつまみが押しを受けたら（処理済み）、ここには来ない。
+fn attach_column_header(element: &IInspectable) -> windows_core_reactor::Result<()> {
+    thread_local! {
+        /// 押した位置と、押したマス、動かし始めたか。
+        static PRESS: std::cell::Cell<Option<(f64, Option<&'static str>, bool)>> =
+            const { std::cell::Cell::new(None) };
+    }
+    let ui: xaml::UIElement = element.cast()?;
+    let source = ui.clone();
+    let pressed = ui.PointerPressed(move |_, args: Ref<xaml::PointerRoutedEventArgs>| {
+        let Some(args) = args.as_ref() else { return };
+        let Ok(point) = args.GetCurrentPoint(&source) else {
+            return;
+        };
+        let left = point
+            .Properties()
+            .and_then(|p| p.IsLeftButtonPressed())
+            .unwrap_or(false);
+        let Ok(at) = point.Position() else { return };
+        if !left {
+            return;
+        }
+        let cell = header_cell_under(args, &source);
+        PRESS.with(|p| p.set(Some((f64::from(at.X), cell, false))));
+        if let Ok(pointer) = args.Pointer() {
+            let _ = source.CapturePointer(&pointer);
+        }
+        let _ = args.SetHandled(true);
+    })?;
+    let source = ui.clone();
+    let moved = ui.PointerMoved(move |_, args: Ref<xaml::PointerRoutedEventArgs>| {
+        let Some(args) = args.as_ref() else { return };
+        let Some((start, cell, _)) = PRESS.with(std::cell::Cell::get) else {
+            return;
+        };
+        let Some(x) = args
+            .GetCurrentPoint(&source)
+            .and_then(|p| p.Position())
+            .ok()
+            .map(|p| f64::from(p.X))
+        else {
+            return;
+        };
+        if cell.is_some_and(|c| c != "name") && (x - start).abs() > 6.0 {
+            PRESS.with(|p| p.set(Some((start, cell, true))));
+        }
+    })?;
+    let source = ui.clone();
+    let released = ui.PointerReleased(move |_, args: Ref<xaml::PointerRoutedEventArgs>| {
+        let Some(args) = args.as_ref() else { return };
+        if let Ok(pointer) = args.Pointer() {
+            let _ = source.ReleasePointerCapture(&pointer);
+        }
+        let Some((_, cell, dragged)) = PRESS.with(|p| p.take()) else {
+            return;
+        };
+        let Some(cell) = cell else { return };
+        let event = if dragged {
+            // 離した所のマスの位置へ（Name の上なら一番左へ）。
+            let slot = header_cell_under(args, &source).map_or(0, crate::repositories::slot_of);
+            crate::repositories::Event::ColumnDropped(cell.to_owned(), slot)
+        } else {
+            crate::repositories::Event::Sort(cell)
+        };
+        with_history(|h| {
+            h.sender.send(Message::Repos(event));
+        });
+        let _ = args.SetHandled(true);
+    })?;
+    REVOKERS.with(|r| r.borrow_mut().extend([pressed, moved, released]));
+    Ok(())
+}
+
 /// `parent` の中の指の位置（DIP）の、境目の向きの成分。
 fn split_position(
     args: &xaml::PointerRoutedEventArgs,
@@ -20694,91 +20818,12 @@ fn split_released() -> bool {
     true
 }
 
-/// コミットの変更ファイルの一覧の 1 行。
-#[derive(Clone)]
-struct ChangedFile {
-    path: String,
-    /// 足した（A）・消した（D）・変えた（M）。
-    mark: char,
-    added: u32,
-    removed: u32,
-    binary: bool,
-}
-
-/// 変更ファイルの木の 1 行: 深さ、出す名前、ファイルなら `changed_files` の番号（ディレクトリなら None）。
-#[derive(Debug, PartialEq)]
-struct TreeRow {
-    depth: usize,
-    name: String,
-    file: Option<usize>,
-}
-
-/// 変更ファイルを木に並べる（ディレクトリが先、名前の順。子が 1 つのディレクトリだけなら名前をつなぐ。
-/// GTK4 版の変更ファイルの木と同じ）。
-fn file_tree(files: &[ChangedFile]) -> Vec<TreeRow> {
-    #[derive(Default)]
-    struct Dir {
-        dirs: std::collections::BTreeMap<String, Dir>,
-        files: Vec<(String, usize)>,
-    }
-    let mut root = Dir::default();
-    for (i, f) in files.iter().enumerate() {
-        let parts: Vec<&str> = f.path.split('/').collect();
-        let mut dir = &mut root;
-        for part in &parts[..parts.len() - 1] {
-            dir = dir.dirs.entry((*part).to_owned()).or_default();
-        }
-        dir.files.push((parts[parts.len() - 1].to_owned(), i));
-    }
-    fn walk(dir: &Dir, depth: usize, out: &mut Vec<TreeRow>) {
-        for (name, child) in &dir.dirs {
-            let (mut name, mut child) = (name.clone(), child);
-            while child.files.is_empty() && child.dirs.len() == 1 {
-                let (n, c) = child.dirs.iter().next().expect("one");
-                name = format!("{name}/{n}");
-                child = c;
-            }
-            out.push(TreeRow {
-                depth,
-                name,
-                file: None,
-            });
-            walk(child, depth + 1, out);
-        }
-        let mut files = dir.files.clone();
-        files.sort();
-        for (name, i) in files {
-            out.push(TreeRow {
-                depth,
-                name,
-                file: Some(i),
-            });
-        }
-    }
-    let mut out = Vec::new();
-    walk(&root, 0, &mut out);
-    out
-}
-
-/// 全ファイルの差分から、変更ファイルの一覧を作る（足した・消したは、前後の中身が空か。`file_at` と同じ決め方）。
-fn changed_files(stacked: &amonhen_core::diff::StackedDiff) -> Vec<ChangedFile> {
-    stacked
-        .files
-        .iter()
-        .map(|(path, diff)| ChangedFile {
-            path: path.clone(),
-            mark: if diff.old.is_empty() && !diff.new.is_empty() {
-                'A'
-            } else if diff.new.is_empty() && !diff.old.is_empty() {
-                'D'
-            } else {
-                'M'
-            },
-            added: diff.added,
-            removed: diff.removed,
-            binary: diff.binary,
-        })
-        .collect()
+/// 画像の比べる欄で引いているもの: スワイプ・オニオンスキンの位置（スライダーか、絵の上か）か、拡大した絵
+/// （押した所と、そのときのずらし）。
+#[derive(Clone, Copy, Debug)]
+enum ImageDrag {
+    Position(bool),
+    Pan(f32, f32, f32, f32),
 }
 
 /// Push の画面の行。
@@ -21262,6 +21307,49 @@ fn monospace(element: &IInspectable) -> windows_core_reactor::Result<()> {
     element.cast::<xaml::Control>()?.SetFontFamily(&font)
 }
 
+/// ツールバーを入れる要素から TitleBar までの親を、幅いっぱいに広げる（TitleBar は中身を中身の幅に縮めて置くので、
+/// 伸縮するスペースが余った幅を取れない）。まだ画面の木に入っていなければ（TitleBar まで届かない）false。
+fn stretch_to_title_bar(element: &IInspectable) -> bool {
+    let Ok(mut node) = element.cast::<xaml::DependencyObject>() else {
+        return true;
+    };
+    let mut parents = Vec::new();
+    for _ in 0..12 {
+        let Ok(parent) = xaml::VisualTreeHelper::GetParent(&node) else {
+            return false;
+        };
+        node = parent;
+        let class = node
+            .cast::<IInspectable>()
+            .ok()
+            .and_then(|n| n.GetRuntimeClassName().ok())
+            .map(|c| c.to_string_lossy())
+            .unwrap_or_default();
+        if class.ends_with(".TitleBar") {
+            for parent in parents {
+                let _ = xaml::FrameworkElement::SetHorizontalAlignment(
+                    &parent,
+                    xaml::HorizontalAlignment::Stretch,
+                );
+            }
+            return true;
+        }
+        if let Ok(element) = node.cast::<xaml::FrameworkElement>() {
+            parents.push(element);
+        }
+    }
+    true
+}
+
+fn retry_stretch() {
+    PENDING_STRETCH.with(|p| {
+        p.borrow_mut().retain_mut(|(element, tries)| {
+            *tries += 1;
+            !stretch_to_title_bar(element) && *tries < 120
+        });
+    });
+}
+
 /// 等幅にするのを待っている要素（部品ができた直後はまだ画面の木に入っていないので、描くたびに試す）と、試した回数。
 fn retry_monospace() {
     PENDING_MONOSPACE.with(|p| {
@@ -21556,25 +21644,103 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
                 // ファイルの見出しを押すと、そのファイルを畳む・開く。
                 Target::Diff => {
                     // 上に張り付いた見出しを押したら、そのファイルの見出しの行（畳んだら見出しを一番上に）。
-                    let stuck =
-                        h.session.data.commit.as_ref().and_then(|c| {
-                            crate::render::sticky_header(&c.file_rows, h.diff.scroll_y)
-                        });
-                    let (row, stuck) = match stuck {
-                        Some((file, top))
+                    // 位置は表示の行（木なら、フォルダの行を差し込んだ並び）。
+                    let stuck = h.session.data.commit.as_ref().and_then(|c| {
+                        crate::render::sticky_header(c.content().file_lines(), h.diff.scroll_y)
+                    });
+                    let (line, stuck) = match stuck {
+                        Some((line, top))
                             if position.Y >= top && position.Y < top + DIFF_ROW_HEIGHT =>
                         {
-                            (file as f32, true)
+                            (line as f32, true)
                         }
                         _ => (
                             ((h.diff.scroll_y + position.Y) / DIFF_ROW_HEIGHT).floor(),
                             false,
                         ),
                     };
+                    if line < 0.0 {
+                        return;
+                    }
+                    let row = match h.diff_line(line as usize) {
+                        Some(crate::data::DiffLine::Row(row)) => row as f32,
+                        // 画像の比べる欄: 比べ方・位置・拡大縮小・絵を動かす。
+                        Some(crate::data::DiffLine::Panel(file, k)) => {
+                            if left {
+                                let first = line as usize - k as usize;
+                                let alt = xaml::InputKeyboardSource::GetKeyStateForCurrentThread(
+                                    xaml::VirtualKey::Menu,
+                                )
+                                .is_ok_and(|s| s.contains(xaml::CoreVirtualKeyStates::Down));
+                                if h.image_press(file as usize, first, position.X, position.Y, alt)
+                                    && let Ok(pointer) = args.Pointer()
+                                {
+                                    let _ = source.CapturePointer(&pointer);
+                                }
+                            }
+                            return;
+                        }
+                        // 木のフォルダの行: 中のファイルごと畳む・開く。
+                        Some(crate::data::DiffLine::Folder(folder)) => {
+                            let path = h.session.data.commit.as_ref().and_then(|c| {
+                                c.content()
+                                    .tree
+                                    .and_then(|t| t.folders.get(folder as usize))
+                                    .map(|f| f.path.clone())
+                            });
+                            if left
+                                && let Some(path) = path
+                                && h.session.data.toggle_folder(&path)
+                            {
+                                h.sender.send(Message::DiffFilesToggled);
+                                h.session.renderer.forget_diff();
+                                let rows = h.diff_rows();
+                                h.diff.scroll_by(0.0, rows);
+                            }
+                            return;
+                        }
+                        None => return,
+                    };
+                    // 見出しの右端の ⋯: 右クリックと同じファイルのメニュー（macOS 版と同じく、右の 30pt）。
+                    let width = h
+                        .diff
+                        .surface
+                        .as_ref()
+                        .map_or(0.0, |s| s.width as f32 / h.diff.scale.max(0.01));
+                    let header = h.session.data.commit.as_ref().is_some_and(|c| {
+                        row >= 0.0 && c.file_rows.binary_search(&(row as u32)).is_ok()
+                    });
+                    if left && header && position.X >= width - crate::render::HEADER_MENU_WIDTH {
+                        let file = h.session.data.file_at(row as usize);
+                        if file.is_some() {
+                            DIFF_AT.with(|a| *a.borrow_mut() = Some((source.clone(), position)));
+                        }
+                        h.sender.send(Message::DiffFileAt(file));
+                        return;
+                    }
+                    // hunk の見出しの行番号の欄の印: そのファイルの前後の行を広げる（macOS 版と同じ）。
+                    let hunk = h.session.data.commit.as_ref().is_some_and(|c| {
+                        c.diff
+                            .rows
+                            .get(row as usize)
+                            .is_some_and(|r| r.kind == amonhen_layout::DiffRow::HUNK)
+                    });
+                    if left && hunk && position.X < crate::render::DIFF_GUTTER_WIDTH {
+                        if let Some(file) = h.session.data.file_index_at(row as usize)
+                            && h.session.data.widen_context(file)
+                        {
+                            h.session.renderer.forget_diff();
+                            h.diff.dirty = true;
+                            let rows = h.diff_rows();
+                            h.diff.scroll_by(0.0, rows);
+                        }
+                        return;
+                    }
                     if row >= 0.0 && h.session.data.toggle_file(row as usize) {
+                        h.sender.send(Message::DiffFilesToggled);
                         h.session.renderer.forget_diff();
-                        if stuck {
-                            h.diff.scroll_y = row * DIFF_ROW_HEIGHT;
+                        if stuck && let Some(line) = h.line_of_row(row as u32) {
+                            h.diff.scroll_y = line as f32 * DIFF_ROW_HEIGHT;
                         }
                         let rows = h.diff_rows();
                         h.diff.scroll_by(0.0, rows);
@@ -21668,6 +21834,14 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
         revokers.push(
             ui.PointerMoved(move |_, args: Ref<xaml::PointerRoutedEventArgs>| {
                 let Some(args) = args.as_ref() else { return };
+                // 画像の比べる欄の位置・絵を引いている。
+                if let Some((file, first, drag)) = IMAGE_DRAG.with(std::cell::Cell::get) {
+                    if let Ok(p) = args.GetCurrentPoint(&source).and_then(|p| p.Position()) {
+                        with_history(|h| h.image_drag(file, first, drag, p.X, p.Y));
+                    }
+                    let _ = args.SetHandled(true);
+                    return;
+                }
                 let Some((anchor, _, stage)) = MARK_DRAG.with(std::cell::Cell::get) else {
                     return;
                 };
@@ -21687,6 +21861,13 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
         revokers.push(
             ui.PointerReleased(move |_, args: Ref<xaml::PointerRoutedEventArgs>| {
                 let Some(args) = args.as_ref() else { return };
+                if IMAGE_DRAG.with(std::cell::Cell::take).is_some() {
+                    if let Ok(pointer) = args.Pointer() {
+                        let _ = source.ReleasePointerCapture(&pointer);
+                    }
+                    let _ = args.SetHandled(true);
+                    return;
+                }
                 let Some((anchor, current, stage)) = MARK_DRAG.with(std::cell::Cell::take) else {
                     return;
                 };
@@ -21722,7 +21903,13 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
                         h.sender.send(Message::DiffRowsAt(rows));
                         return;
                     }
-                    let file = h.session.data.file_at(row as usize);
+                    // 木のフォルダの行にはメニューがない。
+                    let file = match h.diff_line(row as usize) {
+                        Some(crate::data::DiffLine::Row(row)) => {
+                            h.session.data.file_at(row as usize)
+                        }
+                        _ => None,
+                    };
                     if file.is_some() {
                         DIFF_AT.with(|a| *a.borrow_mut() = Some((source.clone(), at)));
                     }
@@ -21859,51 +22046,6 @@ mod tests {
     }
 
     use super::*;
-
-    #[test]
-    fn file_tree_joins_single_directories() {
-        let file = |path: &str| ChangedFile {
-            path: path.into(),
-            mark: 'M',
-            added: 0,
-            removed: 0,
-            binary: false,
-        };
-        let files = [file("src/a/b.rs"), file("README.md"), file("src/c.rs")];
-        assert_eq!(
-            file_tree(&files),
-            [
-                TreeRow {
-                    depth: 0,
-                    name: "src".into(),
-                    file: None
-                },
-                TreeRow {
-                    depth: 1,
-                    name: "a".into(),
-                    file: None
-                },
-                TreeRow {
-                    depth: 2,
-                    name: "b.rs".into(),
-                    file: Some(0)
-                },
-                TreeRow {
-                    depth: 1,
-                    name: "c.rs".into(),
-                    file: Some(2)
-                },
-                TreeRow {
-                    depth: 0,
-                    name: "README.md".into(),
-                    file: Some(1)
-                },
-            ]
-        );
-        // 子が 1 つのディレクトリだけなら、つないだ名前で 1 行。
-        let tree = file_tree(&[file("x/y/z.rs"), file("w.rs")]);
-        assert_eq!(tree[0].name, "x/y");
-    }
 
     #[test]
     fn highlights_matches_ignoring_case() {
