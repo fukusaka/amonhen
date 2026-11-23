@@ -26,17 +26,23 @@ fn main() {
                         std::fs::write(out.join(format!("{stem}.xml")), c.xml).unwrap();
                         std::fs::write(out.join(format!("{stem}.txt")), c.messages).unwrap();
                     }
-                    Err(e) => std::fs::write(out.join(format!("{stem}.err")), e.to_string()).unwrap(),
+                    Err(e) => {
+                        std::fs::write(out.join(format!("{stem}.err")), e.to_string()).unwrap()
+                    }
                 }
             }
             _ => {
-                let conv = amonhen_core::svgflutter::converter().expect("no vector_graphics_compiler here");
+                let conv = amonhen_core::svgflutter::converter()
+                    .expect("no vector_graphics_compiler here");
                 match conv.convert(&svg) {
                     Ok(c) => {
                         std::fs::write(out.join(format!("{stem}.vec")), c.vec).unwrap();
-                        std::fs::write(out.join(format!("{stem}.txt")), c.warnings.join("\n")).unwrap();
+                        std::fs::write(out.join(format!("{stem}.txt")), c.warnings.join("\n"))
+                            .unwrap();
                     }
-                    Err(e) => std::fs::write(out.join(format!("{stem}.err")), e.to_string()).unwrap(),
+                    Err(e) => {
+                        std::fs::write(out.join(format!("{stem}.err")), e.to_string()).unwrap()
+                    }
                 }
             }
         }
