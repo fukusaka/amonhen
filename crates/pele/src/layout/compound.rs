@@ -604,28 +604,33 @@ pub fn route_crossings(nodes: &[CNode], edges: &[CEdge], style: Style) -> f64 {
 
 /// Mermaid に合わせる: 辺が越えるグループは親の向きを受け継ぐ。
 pub fn inherit_crossed_directions(nodes: &mut [CNode], ends: impl IntoIterator<Item = (i64, i64)>) {
-    let ancestors = |nodes: &[CNode], i: usize| -> Vec<i64> {
+    // 祖先の集まりは辺ごとの印で持つ（深い入れ子で、辺ごとに深さの 2 乗をかけない）。
+    let mut in_a = vec![0usize; nodes.len()];
+    let mut in_b = vec![0usize; nodes.len()];
+    let ancestors = |nodes: &[CNode], i: usize, mark: &mut [usize], stamp: usize| -> Vec<i64> {
         let mut set: Vec<i64> = Vec::new();
         let mut p = nodes[i].parent;
-        while p >= 0 && !set.contains(&p) {
+        while p >= 0 && mark[p as usize] != stamp {
+            mark[p as usize] = stamp;
             set.push(p);
             p = nodes[p as usize].parent;
         }
         set
     };
-    for (src, dst) in ends {
+    for (stamp, (src, dst)) in ends.into_iter().enumerate() {
         if src < 0 || dst < 0 || src == dst {
             continue;
         }
-        let a = ancestors(nodes, src as usize);
-        let b = ancestors(nodes, dst as usize);
+        let stamp = stamp + 1;
+        let a = ancestors(nodes, src as usize, &mut in_a, stamp);
+        let b = ancestors(nodes, dst as usize, &mut in_b, stamp);
         for &g in &a {
-            if !b.contains(&g) {
+            if in_b[g as usize] != stamp {
                 nodes[g as usize].dir = None;
             }
         }
         for &g in &b {
-            if !a.contains(&g) {
+            if in_a[g as usize] != stamp {
                 nodes[g as usize].dir = None;
             }
         }
