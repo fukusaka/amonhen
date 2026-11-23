@@ -1,5 +1,6 @@
 // Renders pele's test corpus with pele itself, for the Rust port's tests (crates/core/tests/data/pele).
-// node --no-warnings --import ./register.mjs corpus.mjs <pele checkout> <out dir> [corpus name prefix]
+// TZ=UTC node --no-warnings --import ./register.mjs corpus.mjs <pele checkout> <out dir> [corpus name prefix]
+// (TZ=UTC: gantt counts in local time, which the Rust port takes to be UTC.)
 // register.mjs/hooks.mjs let node run pele's TypeScript source without installing anything: they resolve
 // `.js` imports to `.ts`, turn `const enum`s and constructor parameter properties into plain JS, and strip
 // the types with node's own stripTypeScriptTypes.

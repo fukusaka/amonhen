@@ -24,6 +24,8 @@ static DIAGRAMS: &[&Diagram] = &[
     &super::er::ER,
     &super::eventmodeling::EVENTMODELING,
     &super::flowchart::FLOWCHART,
+    &super::gantt::GANTT,
+    &super::git::GIT_GRAPH,
     &super::info::INFO,
     &super::ishikawa::ISHIKAWA,
     &super::journey::JOURNEY,
@@ -31,8 +33,11 @@ static DIAGRAMS: &[&Diagram] = &[
     &super::mindmap::MINDMAP,
     &super::packet::PACKET,
     &super::pie::PIE,
+    &super::quadrant::QUADRANT_CHART,
+    &super::radar::RADAR,
     &super::railroad::RAILROAD,
     &super::requirement::REQUIREMENT,
+    &super::sankey::SANKEY,
     &super::sequence::SEQUENCE,
     &super::state::STATE,
     &super::swimlane::SWIMLANE,
@@ -42,6 +47,7 @@ static DIAGRAMS: &[&Diagram] = &[
     &super::usecase::USECASE,
     &super::venn::VENN,
     &super::wardley::WARDLEY,
+    &super::xychart::XYCHART,
 ];
 
 /// 種類の名前（pele の `DiagramType`）の図。
