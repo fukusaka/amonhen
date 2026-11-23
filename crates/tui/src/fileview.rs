@@ -41,6 +41,10 @@ struct Line {
 pub struct FileView {
     /// range-diff を出しているなら、その題（「main against main@{1}」）。
     range: Option<String>,
+    /// range-diff の組（`rangeDiff` の `info.pairs`。Changes Only を切り替えたら、ここから作り直す）。
+    pairs: Value,
+    /// range-diff で、変わらなかった組（`=`）を出さない（アプリの Changes Only）。
+    changes_only: bool,
     path: String,
     blame: bool,
     /// Blame するコミット（16 進の ID。なければ作業ツリーの内容）。
@@ -148,6 +152,32 @@ impl FileView {
     /// （前の版の番号と ID、`=` 同じ・`!` 変わった・`<` 消えた・`>` 足した、今の版の番号と ID、件名）。変わった組の
     /// 下には、git と同じく差分の差分を字下げして並べる（その行を選ぶと、組のコミットの詳細）。
     pub fn show_range_diff(&mut self, title: String, pairs: &Value) {
+        let changes_only = self.range.is_some() && self.changes_only;
+        *self = Self {
+            range: Some(title),
+            pairs: pairs.clone(),
+            changes_only,
+            loaded: true,
+            height: self.height,
+            ..Self::default()
+        };
+        self.lines = self.range_lines();
+    }
+
+    /// range-diff を出しているなら、変わらなかった組を出すかを切り替える。出していなければ `false`。
+    pub fn toggle_changes_only(&mut self) -> bool {
+        if self.range.is_none() {
+            return false;
+        }
+        self.changes_only = !self.changes_only;
+        self.lines = self.range_lines();
+        self.selected = 0;
+        self.top = 0;
+        true
+    }
+
+    fn range_lines(&self) -> Vec<Line> {
+        let pairs = &self.pairs;
         let side = |p: &Value| -> (String, Option<Oid>) {
             match p["index"].as_u64() {
                 Some(i) => {
@@ -158,7 +188,8 @@ impl FileView {
                 None => ("-:  ".to_owned() + &"-".repeat(ID_WIDTH), None),
             }
         };
-        let lines = (pairs.as_array().into_iter().flatten())
+        (pairs.as_array().into_iter().flatten())
+            .filter(|p| !self.changes_only || p["status"] != "same")
             .flat_map(|p| {
                 let (old, old_oid) = side(&p["old"]);
                 let (new, new_oid) = side(&p["new"]);
@@ -194,20 +225,16 @@ impl FileView {
                     });
                 std::iter::once(pair).chain(diff)
             })
-            .collect();
-        *self = Self {
-            range: Some(title),
-            lines,
-            loaded: true,
-            height: self.height,
-            ..Self::default()
-        };
+            .collect()
     }
 
     /// 一番上の行に出す名前（「Blame: a.rs」）。
     pub fn title(&self) -> String {
         if let Some(range) = &self.range {
-            return range.clone();
+            return match self.changes_only {
+                true => tr!("{title} (changes only)", title = range),
+                false => range.clone(),
+            };
         }
         match (self.blame, &self.rev) {
             (true, Some(rev)) => tr!(

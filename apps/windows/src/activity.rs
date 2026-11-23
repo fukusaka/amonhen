@@ -96,8 +96,10 @@ pub struct State {
     pub selected: Option<u64>,
     /// `undoLog` の答えの entries（新しい順）。
     pub undo: Vec<Value>,
-    /// 開いているリポジトリの名前と `historyCache` の答えの info（History のキャッシュの書き込み）。
-    pub cache: Option<(String, Value)>,
+    /// 開いているリポジトリごとの名前と `historyCache` の答えの info（History のキャッシュの書き込み）。
+    pub cache: Option<Vec<(String, Value)>>,
+    /// History のキャッシュを読んだ数え（タブを選び直すと増え、前の読み直しを止める）。
+    pub cache_generation: u64,
     /// Performance の行と、Events（新しい順）。
     pub speeds: Vec<Speed>,
     pub events: Vec<(u64, String, String)>,
@@ -131,6 +133,7 @@ impl State {
             selected: None,
             undo: Vec::new(),
             cache: None,
+            cache_generation: 0,
             speeds: Vec::new(),
             events: Vec::new(),
             daemon: None,
@@ -295,16 +298,7 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
         // History のキャッシュ（GTK4 版の Activity の History Cache）: 大きさと、この起動での書き込み。
         let body: View = match &state.cache {
             None => TextBlock::new().text(tr!("Loading…")).opacity(0.6).into(),
-            Some((name, info)) => {
-                let writes = &info["writes"];
-                let last = match writes["lastAt"].as_i64() {
-                    Some(at) => format!(
-                        "{} · {}",
-                        size(writes["lastBytes"].as_u64().unwrap_or(0)),
-                        time(at as u64)
-                    ),
-                    None => "—".to_owned(),
-                };
+            Some(rows) => {
                 let cell = |text: String, column: i32| {
                     TextBlock::new()
                         .text(text)
@@ -327,6 +321,28 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                         GridLength::Pixel(200.0),
                     ]
                 };
+                // 開いているリポジトリごとに 1 行（macOS 版・GTK4 版と同じ）。
+                let lines = rows.iter().map(|(name, info)| -> (String, View) {
+                    let writes = &info["writes"];
+                    let last = match writes["lastAt"].as_i64() {
+                        Some(at) => format!(
+                            "{} · {}",
+                            size(writes["lastBytes"].as_u64().unwrap_or(0)),
+                            time(at as u64)
+                        ),
+                        None => "—".to_owned(),
+                    };
+                    (
+                        name.clone(),
+                        Grid::new().columns(columns()).children((
+                            cell(name.clone(), 0),
+                            cell(size(info["size"].as_u64().unwrap_or(0)), 1),
+                            cell(writes["count"].as_u64().unwrap_or(0).to_string(), 2),
+                            cell(size(writes["bytes"].as_u64().unwrap_or(0)), 3),
+                            cell(last, 4),
+                        )),
+                    )
+                });
                 StackPanel::new().spacing(4.0).children((
                     Grid::new().columns(columns()).children((
                         heading(tr!("Repository"), 0),
@@ -335,13 +351,7 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                         heading(tr!("Written"), 3),
                         heading(tr!("Last Write"), 4),
                     )),
-                    Grid::new().columns(columns()).children((
-                        cell(name.clone(), 0),
-                        cell(size(info["size"].as_u64().unwrap_or(0)), 1),
-                        cell(writes["count"].as_u64().unwrap_or(0).to_string(), 2),
-                        cell(size(writes["bytes"].as_u64().unwrap_or(0)), 3),
-                        cell(last, 4),
-                    )),
+                    View::keyed_fragment(lines),
                 ))
             }
         };
