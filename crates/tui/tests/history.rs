@@ -1755,6 +1755,23 @@ fn switch_branch_with_ctrl_b() {
     assert_eq!(current(), "fresh\n");
 }
 
+/// 失敗したときの答えが何行もあれば、一番下の行には 1 行目と「`!` で全部」、`!` で全部を枠に出す（アプリの Details）
+#[test]
+fn a_failure_shows_in_full_with_bang() {
+    let dir = tempfile::tempdir().unwrap();
+    diverged(dir.path());
+    // 作業ツリーで a.txt を変えておくと、topic へのチェックアウトを git が何行かの理由で断る。
+    std::fs::write(dir.path().join("a.txt"), "local\n").unwrap();
+    let failed = amonhen_tui::snapshot(open(dir.path()), 200, 14, clock(), "0jjjc").unwrap();
+    println!("{failed}");
+    assert!(failed.contains("(! shows all)"), "{failed}");
+    let all = amonhen_tui::snapshot(open(dir.path()), 200, 14, clock(), "0jjjc!").unwrap();
+    println!("{all}");
+    assert!(all.contains(" Details of the failure "), "{all}");
+    assert!(all.contains("a.txt"), "{all}");
+    assert_eq!(git_out(dir.path(), &["branch", "--show-current"]), "main\n");
+}
+
 /// サイドバーの `r` で、今のブランチを選んだ ref の上に rebase する
 #[test]
 fn rebase_onto_the_picked_ref() {
