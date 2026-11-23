@@ -2920,6 +2920,90 @@ fn update_submodules_from_the_command_list() {
     assert!(none.contains("There are no submodules"));
 }
 
+/// サイドバーの submodule の行で: `e` URL、`B` 追うブランチ、`F` それぞれで命令、`a` データを .git/modules へ、
+/// `y` URL を写す、`x` 消す。コマンドの一覧の Add Submodule で足す
+#[test]
+fn submodule_menus_in_the_sidebar() {
+    let dir = tempfile::tempdir().unwrap();
+    let (sub, main) = (dir.path().join("sub"), dir.path().join("main"));
+    for d in [&sub, &main] {
+        std::fs::create_dir(d).unwrap();
+        git(d, BASE, &["init", "-q", "-b", "main"]);
+        commit(d, BASE, "Start");
+    }
+    git(&main, BASE, &["config", "protocol.file.allow", "always"]);
+    let gitmodules = || std::fs::read_to_string(main.join(".gitmodules")).unwrap_or_default();
+    // Add Submodule: URL、次に場所（初めは URL の最後の名前）。
+    let typing = amonhen_tui::snapshot(
+        open(&main),
+        160,
+        14,
+        clock(),
+        &format!(":add sub\n{}\n", sub.display()),
+    )
+    .unwrap();
+    assert!(typing.contains(": sub"), "{typing}");
+    amonhen_tui::snapshot(
+        open(&main),
+        160,
+        14,
+        clock(),
+        &format!(":add sub\n{}\n\x15lib\n", sub.display()),
+    )
+    .unwrap();
+    assert!(gitmodules().contains("path = lib"), "{}", gitmodules());
+    git(&main, BASE, &["commit", "-q", "-m", "Add lib"]);
+    // サイドバーで Branches の main の次が lib。
+    let row = "0jjjj";
+    let shown = amonhen_tui::snapshot(open(&main), 160, 14, clock(), row).unwrap();
+    println!("{shown}");
+    amonhen_tui::snapshot(
+        open(&main),
+        160,
+        14,
+        clock(),
+        &format!("{row}e\x15https://example.com/lib.git\n"),
+    )
+    .unwrap();
+    assert!(
+        gitmodules().contains("url = https://example.com/lib.git"),
+        "{}",
+        gitmodules()
+    );
+    amonhen_tui::snapshot(open(&main), 160, 14, clock(), &format!("{row}Bdev\n")).unwrap();
+    assert!(gitmodules().contains("branch = dev"), "{}", gitmodules());
+    amonhen_tui::snapshot(open(&main), 160, 14, clock(), &format!("{row}B\n")).unwrap();
+    assert!(!gitmodules().contains("branch ="), "{}", gitmodules());
+    let ran = amonhen_tui::snapshot(
+        open(&main),
+        160,
+        14,
+        clock(),
+        &format!("{row}Fecho hello-from-$sm_path\n!"),
+    )
+    .unwrap();
+    println!("{ran}");
+    assert!(ran.contains("Output of the command"), "{ran}");
+    assert!(ran.contains("hello-from-lib"), "{ran}");
+    let absorbed =
+        amonhen_tui::snapshot(open(&main), 160, 14, clock(), &format!("{row}ay")).unwrap();
+    assert!(absorbed.contains("Changed the submodule"), "{absorbed}");
+    let synced = amonhen_tui::snapshot(open(&main), 160, 14, clock(), &format!("{row}yy")).unwrap();
+    assert!(synced.contains("Changed the submodule"), "{synced}");
+    // .gitmodules の変更を残したままでは消さない（エンジンが断る）ので、先にコミットする。
+    git(&main, BASE, &["commit", "-q", "-a", "-m", "Change lib"]);
+    let asked = amonhen_tui::snapshot(open(&main), 160, 14, clock(), &format!("{row}x")).unwrap();
+    assert!(asked.contains("Remove the submodule lib?"), "{asked}");
+    let removed =
+        amonhen_tui::snapshot(open(&main), 160, 14, clock(), &format!("{row}xd")).unwrap();
+    assert!(
+        !gitmodules().contains("path = lib"),
+        "{removed}\n{}",
+        gitmodules()
+    );
+    assert!(!main.join(".git/modules/lib").exists());
+}
+
 /// コマンドの一覧の Delete Ignored Files: 数と名前を出して確かめ、ignore されたものを消す
 #[test]
 fn delete_ignored_files_from_the_command_list() {

@@ -106,6 +106,7 @@ pub static ENTRIES: &[Entry] = &[
     control("refresh", 'r', Place::Anywhere),
     control("switch-branch", 'b', Place::Anywhere),
     keyless("rebuild-history", Place::Anywhere),
+    keyless("add-submodule", Place::Anywhere),
 ];
 
 impl Entry {
