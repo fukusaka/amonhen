@@ -55,6 +55,7 @@ version = "0.2.12"
 dependencies = [
  "amonhen-layout",
  "amonhen-model",
+ "amonhen-pele",
  "amonhen-projection",
  "amonhen-syntax",
  "arc-swap",
@@ -109,6 +110,10 @@ dependencies = [
  "serde",
  "serde_json",
 ]
+
+[[package]]
+name = "amonhen-pele"
+version = "0.2.12"
 
 [[package]]
 name = "amonhen-projection"

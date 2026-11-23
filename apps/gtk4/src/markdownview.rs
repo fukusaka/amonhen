@@ -87,7 +87,7 @@ pub fn image_sources(blocks: &[Block]) -> Vec<String> {
                         runs(cell, out);
                     }
                 }
-                Block::Code { .. } | Block::Rule | Block::Html { .. } => {}
+                Block::Code { .. } | Block::Diagram { .. } | Block::Rule | Block::Html { .. } => {}
             }
         }
     }
@@ -516,6 +516,69 @@ impl<'a> Builder<'a> {
                 });
                 self.insert(&code.replace('\n', "\u{2028}"), &[mono]);
                 self.syntax(start, code, &format!("code.{}", file_extension(language)));
+                self.insert("\n", &[]);
+                self.paragraph(start, ctx, false, 12);
+            }
+            Block::Diagram {
+                language,
+                text,
+                svg,
+                svg_dark,
+                error,
+            } => {
+                let light = svg
+                    .as_deref()
+                    .and_then(|s| crate::imagediff::texture(Some(s.as_bytes())));
+                let Some(light) = light else {
+                    // 描けない図はコードとして見せ、理由を添える
+                    self.block(
+                        &Block::Code {
+                            language: language.clone(),
+                            text: text.clone(),
+                        },
+                        ctx,
+                    );
+                    if let Some(error) = error {
+                        let start = self.offset();
+                        let red = self.tag("diagram-error", |t| {
+                            t.set_foreground_rgba(Some(&gdk::RGBA::new(0.85, 0.2, 0.2, 1.0)));
+                            t.set_scale(0.9);
+                        });
+                        self.insert(error, &[red]);
+                        self.insert("\n", &[]);
+                        self.paragraph(start, ctx, false, 10);
+                    }
+                    return;
+                };
+                let dark = svg_dark
+                    .as_deref()
+                    .and_then(|s| crate::imagediff::texture(Some(s.as_bytes())))
+                    .unwrap_or_else(|| light.clone());
+                self.lone_marker(ctx);
+                let start = self.offset();
+                let (w, h) = (light.width(), light.height());
+                let (w, h) = if w > MAX_IMAGE_WIDTH {
+                    (MAX_IMAGE_WIDTH, h * MAX_IMAGE_WIDTH / w.max(1))
+                } else {
+                    (w, h)
+                };
+                // 明るい表示・暗い表示の絵を、今の見た目で選ぶ（切り替えたら差し替える）
+                let style = adw::StyleManager::default();
+                let picture =
+                    gtk::Picture::for_paintable(if style.is_dark() { &dark } else { &light });
+                picture.set_can_shrink(true);
+                picture.set_content_fit(gtk::ContentFit::Contain);
+                picture.set_size_request(w, h);
+                picture.set_alternative_text(Some(text));
+                let weak = picture.downgrade();
+                style.connect_dark_notify(move |style| {
+                    if let Some(picture) = weak.upgrade() {
+                        picture.set_paintable(Some(if style.is_dark() { &dark } else { &light }));
+                    }
+                });
+                let mut end = self.buffer.end_iter();
+                let anchor = self.buffer.create_child_anchor(&mut end);
+                self.view.add_child_at_anchor(&picture, &anchor);
                 self.insert("\n", &[]);
                 self.paragraph(start, ctx, false, 12);
             }
