@@ -19,6 +19,8 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use crate::loader::Request;
 use crate::rowcache::RowCache;
 
+/// 署名の検証を、1 度に頼むコミットの数まで。
+const SIGNATURE_BATCH: usize = 64;
 /// 手元に持つ行は、見えている範囲の前後にこの倍数の画面分（少なくとも `MIN_WINDOW` 行）。
 const WINDOW_SCREENS: u32 = 4;
 const MIN_WINDOW: u32 = 256;
@@ -70,6 +72,8 @@ struct Window {
     edge_ids: Vec<u32>,
     /// 折りたたんだ History で、行ごとの、取り込んだ側の隠したコミットの数（折りたたんでいなければ空）。
     folded: Vec<u32>,
+    /// 行ごとに、署名があれば 0 でない（古いエンジンなら空）。
+    signed: Vec<u8>,
 }
 
 impl Window {
@@ -109,6 +113,10 @@ pub struct History {
     /// HEAD のコミットの行。
     head_row: Option<u32>,
     labels: HashMap<Oid, Vec<Label>>,
+    /// 署名を検証したコミットの印（アプリの行の署名の印）。読み直しても覚えている。
+    signatures: HashMap<Oid, (char, Color)>,
+    /// 検証を頼んで、答えを待っているコミット。
+    verifying: Vec<Oid>,
     window: Option<Window>,
     loading: bool,
     /// 一番上に見えている行。
@@ -451,7 +459,33 @@ impl History {
             edges: reply.items("edges"),
             edge_ids: reply.u32s("edgeIds"),
             folded: reply.u32s("folded"),
+            signed: reply.section("signatures").to_vec(),
         });
+    }
+
+    /// 読んである行のうち、署名があってまだ検証していないコミット（答えを待っている間は None）。頼んだもの
+    /// として覚える。
+    pub fn signatures_to_verify(&mut self) -> Option<Vec<String>> {
+        let window = self.window.as_ref()?;
+        if !self.verifying.is_empty() || window.signed.len() != window.ids.len() {
+            return None;
+        }
+        self.verifying = (window.ids.iter().zip(&window.signed))
+            .filter(|(id, signed)| **signed != 0 && !self.signatures.contains_key(id))
+            .map(|(id, _)| *id)
+            .take(SIGNATURE_BATCH)
+            .collect();
+        (!self.verifying.is_empty()).then(|| self.verifying.iter().map(Oid::to_string).collect())
+    }
+
+    /// 検証の答え（`verifySignatures` の checks、頼んだ順）。読めなければ None で、「?」の印にする。
+    pub fn set_signatures(&mut self, checks: Option<&Value>) {
+        for (i, id) in std::mem::take(&mut self.verifying).into_iter().enumerate() {
+            let status = checks.and_then(|c| c[i]["status"].as_str()).unwrap_or("");
+            self.signatures
+                .insert(id, crate::details::signature_mark(status));
+        }
+        self.generation += 1;
     }
 
     pub fn failed(&mut self) {
@@ -701,6 +735,19 @@ impl History {
                 .set_stringn(x, y, format!("[{name}]"), usize::from(text_end - x), style)
                 .0
                 + 1;
+        }
+        // 署名の印（検証した結果。アプリの行の印と同じ）。
+        if let Some(&(mark, color)) = self.signatures.get(&window.ids[i])
+            && x + 2 < text_end
+        {
+            buf.set_stringn(
+                x,
+                y,
+                mark.to_string(),
+                usize::from(text_end - x),
+                Style::new().fg(color),
+            );
+            x += 2;
         }
         // 折りたたんだマージは、取り込んだ側の隠したコミットの数を、件名の前に（アプリと同じ）。
         if let Some(&count) = window.folded.get(i).filter(|&&c| c > 0)

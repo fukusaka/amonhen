@@ -77,6 +77,8 @@ pub struct Sidebar {
     tag_marks: std::collections::HashMap<String, (char, Color)>,
     /// submodule の印（パス → 印と色）。
     submodule_marks: std::collections::HashMap<String, (char, Color)>,
+    /// 印をつけた ref（ブランチ・リモートのブランチ・タグの名前。History をそれらだけにする）。
+    marked: Vec<String>,
 }
 
 impl Default for Sidebar {
@@ -97,6 +99,7 @@ impl Default for Sidebar {
             conflicts: 0,
             tag_marks: Default::default(),
             submodule_marks: Default::default(),
+            marked: Vec::new(),
         }
     }
 }
@@ -336,6 +339,50 @@ impl Sidebar {
             .collect()
     }
 
+    /// 選んでいる ref（ブランチ・リモートのブランチ・タグ）の印をつけ・外す。ref でなければ false。
+    pub fn toggle_mark(&mut self) -> bool {
+        let Some(("branch" | "remote" | "tag", name, _)) = self.picked_ref() else {
+            return false;
+        };
+        let name = name.to_owned();
+        match self.marked.iter().position(|m| *m == name) {
+            Some(i) => {
+                self.marked.remove(i);
+            }
+            None => self.marked.push(name),
+        }
+        true
+    }
+
+    pub fn has_marks(&self) -> bool {
+        !self.marked.is_empty()
+    }
+
+    pub fn clear_marks(&mut self) {
+        self.marked.clear();
+    }
+
+    /// 印をつけた ref の名前（つけた順）。
+    pub fn marked_names(&self) -> Vec<String> {
+        self.marked.clone()
+    }
+
+    /// 印をつけた ref が今指すコミット（なくなった ref は除く）。
+    pub fn marked_targets(&self) -> Vec<String> {
+        let entries = self.refs["entries"].as_array();
+        self.marked
+            .iter()
+            .filter_map(|name| {
+                entries?.iter().find(|e| {
+                    e["name"] == name.as_str()
+                        && matches!(e["kind"].as_str(), Some("branch" | "remote" | "tag"))
+                })?["target"]
+                    .as_str()
+                    .map(str::to_owned)
+            })
+            .collect()
+    }
+
     /// submodule の様子の印（パス → 印と色）。
     pub fn set_submodule_marks(&mut self, marks: std::collections::HashMap<String, (char, Color)>) {
         self.submodule_marks = marks;
@@ -523,6 +570,16 @@ impl Sidebar {
                         right(area, y, buf, &counts, Style::new().fg(DIM));
                     }
                 }
+            }
+            // 印をつけた ref（History の印をつけた行と同じ地の色）。
+            if let Row::Ref { name, kind, .. } = row
+                && matches!(*kind, "branch" | "remote" | "tag")
+                && self.marked.iter().any(|m| m == name)
+            {
+                buf.set_style(
+                    Rect::new(area.x, y, area.width, 1),
+                    Style::new().bg(Color::Indexed(24)),
+                );
             }
             if index == self.selected {
                 buf.set_style(

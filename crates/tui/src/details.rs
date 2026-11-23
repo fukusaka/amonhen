@@ -7,6 +7,7 @@ use ratatui_core::buffer::Buffer;
 use ratatui_core::layout::Rect;
 use ratatui_core::style::{Color, Modifier, Style};
 use serde_json::Value;
+use std::collections::{HashMap, HashSet};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::diff::{DIM, Diff, KeptRows, Scroll, Theme, counts, draw_row_kept, fit_path};
@@ -23,6 +24,94 @@ struct File {
     added: u64,
     removed: u64,
     binary: bool,
+}
+
+/// 差分で無視する空白（アプリの Ignore Whitespace。`commitDiff` の whitespace）。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Whitespace {
+    #[default]
+    Exact,
+    AtEol,
+    Change,
+    All,
+}
+
+impl Whitespace {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Whitespace::Exact => "exact",
+            Whitespace::AtEol => "at-eol",
+            Whitespace::Change => "change",
+            Whitespace::All => "all",
+        }
+    }
+
+    fn next(self) -> Self {
+        match self {
+            Whitespace::Exact => Whitespace::AtEol,
+            Whitespace::AtEol => Whitespace::Change,
+            Whitespace::Change => Whitespace::All,
+            Whitespace::All => Whitespace::Exact,
+        }
+    }
+}
+
+/// ファイルの一覧の 1 行（一覧なら、ファイルだけ。木なら、フォルダとその下のファイル）。
+#[derive(Debug, PartialEq)]
+enum Listed {
+    /// `files` の何番目か、木での深さ。
+    File(usize, u16),
+    Folder {
+        path: String,
+        depth: u16,
+        folded: bool,
+        /// 下にあるファイルの数（たたんだときに出す）。
+        files: usize,
+    },
+}
+
+/// ファイルの一覧の行を組む。木では、パスの順にフォルダを挟み、たたんだフォルダの下は出さない。
+fn list_rows(files: &[File], tree: bool, folded: &HashSet<String>) -> Vec<Listed> {
+    if !tree {
+        return (0..files.len()).map(|i| Listed::File(i, 0)).collect();
+    }
+    let mut order: Vec<usize> = (0..files.len()).collect();
+    order.sort_by(|&a, &b| files[a].path.cmp(&files[b].path));
+    // フォルダごとの、下にあるファイルの数。
+    let mut counts: HashMap<&str, usize> = HashMap::new();
+    for file in files {
+        let mut end = 0;
+        while let Some(at) = file.path[end..].find('/') {
+            end += at;
+            *counts.entry(&file.path[..end]).or_default() += 1;
+            end += 1;
+        }
+    }
+    let mut rows = Vec::new();
+    let mut open: Vec<&str> = Vec::new();
+    for index in order {
+        let path = files[index].path.as_str();
+        let dirs: Vec<&str> = path.match_indices('/').map(|(at, _)| &path[..at]).collect();
+        let same = open.iter().zip(&dirs).take_while(|(a, b)| a == b).count();
+        open.truncate(same);
+        let mut hidden = open.iter().any(|d| folded.contains(*d));
+        for dir in &dirs[same..] {
+            if !hidden {
+                rows.push(Listed::Folder {
+                    path: (*dir).to_owned(),
+                    depth: open.len() as u16,
+                    folded: folded.contains(*dir),
+                    files: counts.get(dir).copied().unwrap_or(0),
+                });
+            }
+            hidden |= folded.contains(*dir);
+            open.push(dir);
+        }
+        if !hidden {
+            rows.push(Listed::File(index, dirs.len() as u16));
+        }
+    }
+    rows
 }
 
 /// 2 つのコミットを選んだときの、差分の取り方（アプリの ⇄ と「merge-base から」）。
@@ -94,6 +183,8 @@ struct Commit {
     info: Value,
     selected: Option<Selected>,
     files: Vec<File>,
+    /// ファイルの一覧の行（`list_rows`）。
+    listed: Vec<Listed>,
     diff: Diff,
     /// 頭の部分（件名から「Parents」まで）を、幅 `head_width` で組んだもの。
     head: Vec<(String, Style)>,
@@ -120,6 +211,7 @@ impl Commit {
             id,
             info,
             selected: None,
+            listed: Vec::new(),
             files,
             diff: Diff::new(diff, false),
             head: Vec::new(),
@@ -133,7 +225,7 @@ impl Commit {
 
     /// 差分の前に置く行の数: 頭、ファイルの一覧、空行。
     fn before_diff(&self) -> u32 {
-        let files = self.files.len() as u32;
+        let files = self.listed.len() as u32;
         self.head.len() as u32 + files + u32::from(files > 0)
     }
 
@@ -387,7 +479,20 @@ pub struct Details {
     jumped: Option<usize>,
     /// 詳細の中で探した語と、合った行（画面に出すときに目立たせる）。
     found: Option<(String, u32)>,
+    /// ファイルの一覧を木で出す（アプリの List / Tree。コミットを替えても覚えている）。
+    tree: bool,
+    /// 木でたたんだフォルダ（コミットを替えたら開く）。
+    folded: HashSet<String>,
+    /// 差分で無視する空白（コミットを替えても覚えている）。
+    whitespace: Whitespace,
+    /// ファイルごとの前後の行数（`u32::MAX` はファイル全体）。出すものを替えたら忘れる。
+    contexts: std::collections::BTreeMap<usize, u32>,
+    /// 前後の行数を替えて読み直したら、このファイルの見出しへ動かす。
+    keep: Option<usize>,
 }
+
+/// `+` で広げる行数（アプリと同じ）。
+const WIDEN_BY: u32 = 20;
 
 impl Details {
     /// 頭・ファイルの一覧・差分の `line` 行目の字。
@@ -397,10 +502,11 @@ impl Details {
         if line < head {
             commit.head[line as usize].0.clone()
         } else if line < before {
-            commit
-                .files
-                .get((line - head) as usize)
-                .map_or(String::new(), |f| f.path.clone())
+            match commit.listed.get((line - head) as usize) {
+                Some(Listed::File(index, _)) => commit.files[*index].path.clone(),
+                Some(Listed::Folder { path, .. }) => path.clone(),
+                None => String::new(),
+            }
         } else {
             commit.diff.row_text((line - before) as usize).to_owned()
         }
@@ -453,13 +559,76 @@ impl Details {
         }
         self.wanted = Some(want);
         self.found = None;
+        self.contexts.clear();
+        self.keep = None;
         true
+    }
+
+    /// 頼むものの鍵: 出したいものと、無視する空白。
+    fn key_of(&self, wanted: &Want) -> String {
+        let mut key = wanted.key();
+        if self.whitespace != Whitespace::Exact {
+            key += &format!(" ws:{}", self.whitespace.as_str());
+        }
+        if !self.contexts.is_empty() {
+            key += &format!(" ctx:{:?}", self.contexts);
+        }
+        key
+    }
+
+    /// `commitDiff` の contexts。
+    fn contexts_json(&self) -> Value {
+        self.contexts
+            .iter()
+            .map(|(file, &lines)| {
+                let lines = match lines {
+                    u32::MAX => Value::from("all"),
+                    n => Value::from(n),
+                };
+                (file.to_string(), lines)
+            })
+            .collect::<serde_json::Map<_, _>>()
+            .into()
+    }
+
+    /// 今見ているファイルの前後を広げる（アプリの hunk の見出しの印）。ファイル全体を出していれば何もしない。
+    pub fn widen(&mut self) -> bool {
+        let Some(index) = self.current_index() else {
+            return false;
+        };
+        let lines = self.contexts.get(&index).copied().unwrap_or(3);
+        if lines == u32::MAX {
+            return false;
+        }
+        self.contexts.insert(index, lines + WIDEN_BY);
+        self.keep = Some(index);
+        true
+    }
+
+    /// 今見ているファイルの全体を出す・戻す（アプリの Show Whole File）。出すなら true。
+    pub fn toggle_whole_file(&mut self) -> Option<bool> {
+        let index = self.current_index()?;
+        let whole = self.contexts.get(&index) != Some(&u32::MAX);
+        if whole {
+            self.contexts.insert(index, u32::MAX);
+        } else {
+            self.contexts.remove(&index);
+        }
+        self.keep = Some(index);
+        Some(whole)
+    }
+
+    /// 無視する空白を次のもの（なし → 行末 → 量 → すべて → なし）にして、差分を読み直す。
+    pub fn next_whitespace(&mut self) -> Whitespace {
+        self.whitespace = self.whitespace.next();
+        self.whitespace
     }
 
     /// 頼むことがあれば、その中身（答えを待っている間は、次を頼まない）。
     pub fn request(&mut self) -> Option<Request> {
         let wanted = self.wanted.as_ref()?;
-        let key = wanted.key();
+        let key = self.key_of(wanted);
+        let whitespace = self.whitespace.as_str();
         if self.loading.is_some()
             || self.commit.as_ref().is_some_and(|c| c.key == key)
             || self.failed.as_ref().is_some_and(|f| f.0 == key)
@@ -471,6 +640,9 @@ impl Details {
             Want::Commit { id, stash } => Request::Commit {
                 id: id.to_string(),
                 stash: *stash,
+                key,
+                whitespace,
+                contexts: self.contexts_json(),
             },
             Want::Selection {
                 history,
@@ -482,6 +654,8 @@ impl Details {
                 history: history.clone(),
                 rows: rows.clone(),
                 pair: pair.as_str(),
+                whitespace,
+                contexts: self.contexts_json(),
             },
         })
     }
@@ -495,7 +669,7 @@ impl Details {
     ) -> Option<Request> {
         self.loading = None;
         // 待つ間に選択が動いていたら捨てる（`request` が次を頼む）。
-        let wanted = self.wanted.as_ref().filter(|w| w.key() == id)?;
+        let wanted = self.wanted.as_ref().filter(|w| self.key_of(w) == id)?;
         match result {
             Ok((info, diff)) => {
                 let view = diff.json["view"].clone();
@@ -515,12 +689,24 @@ impl Details {
                 // 行数が決まるよう、頭の部分は届いたときに組む。
                 let mut commit = Commit::new(id.to_owned(), oid, info, &diff);
                 commit.selected = selected;
+                self.folded.clear();
+                commit.listed = list_rows(&commit.files, self.tree, &self.folded);
                 commit.build_head(self.width, clock);
                 self.commit = Some(commit);
                 self.failed = None;
                 self.scroll.top = 0;
                 self.scroll.left = 0;
                 self.jumped = None;
+                // 前後の行数を替えたファイルの見出しへ。
+                if let Some(index) = self.keep.take() {
+                    let commit = self.commit.as_ref().expect("just set");
+                    if let Some(row) = commit.diff.file_rows.get(index) {
+                        let line = commit.before_diff() + row;
+                        self.scroll.clamp(commit.lines());
+                        self.scroll_to(line);
+                        self.jumped = Some(index);
+                    }
+                }
                 (!view.is_null()).then(|| Request::Syntax {
                     id: id.to_owned(),
                     of: serde_json::json!({"view": view}),
@@ -604,9 +790,8 @@ impl Details {
         self.scroll.left > 0
     }
 
-    /// 今見ているファイルのパスと、出しているコミット。ファイルは、見えている最初の見出しのもの。見出しが
-    /// 見えていなければ、上にある最後の見出しのもの（それもなければ最初のファイル）。
-    pub fn current_file(&self) -> Option<(&str, Oid)> {
+    /// 今見ているファイルの番号（`current_file` のもの）。
+    fn current_index(&self) -> Option<usize> {
         let commit = self.commit.as_ref()?;
         let before = commit.before_diff();
         let (top, bottom) = (
@@ -620,6 +805,14 @@ impl Details {
                 .position(|line| top <= line && line < bottom)
                 .unwrap_or_else(|| lines.filter(|&line| line < top).count().saturating_sub(1))
         });
+        (index < commit.files.len()).then_some(index)
+    }
+
+    /// 今見ているファイルのパスと、出しているコミット。ファイルは、見えている最初の見出しのもの。見出しが
+    /// 見えていなければ、上にある最後の見出しのもの（それもなければ最初のファイル）。
+    pub fn current_file(&self) -> Option<(&str, Oid)> {
+        let commit = self.commit.as_ref()?;
+        let index = self.current_index()?;
         let path = commit.files.get(index)?.path.as_str();
         // 飛び飛びの選択では、見出しが「パス — 短い ID」なので、そのコミットのファイルとして開く。
         if let Some(selected) = &commit.selected
@@ -632,6 +825,90 @@ impl Details {
             return Some((path, of.id));
         }
         Some((path, commit.id))
+    }
+
+    /// ファイルの一覧を、木と一覧で切り替える。
+    pub fn toggle_tree(&mut self) -> bool {
+        self.tree = !self.tree;
+        self.folded.clear();
+        self.relist();
+        true
+    }
+
+    /// 木のフォルダを、すべてたたむ（たたんだものがあれば、すべて開く）。
+    pub fn fold_all(&mut self) -> bool {
+        let Some(commit) = &self.commit else {
+            return false;
+        };
+        if !self.tree {
+            return false;
+        }
+        if self.folded.is_empty() {
+            // 一番上のフォルダだけをたたむ（下のものは開いたまま、開けば元の形）。
+            self.folded = commit
+                .listed
+                .iter()
+                .filter_map(|row| match row {
+                    Listed::Folder { path, depth: 0, .. } => Some(path.clone()),
+                    _ => None,
+                })
+                .collect();
+            if self.folded.is_empty() {
+                return false;
+            }
+        } else {
+            self.folded.clear();
+        }
+        self.relist();
+        true
+    }
+
+    fn relist(&mut self) {
+        if let Some(commit) = &mut self.commit {
+            commit.listed = list_rows(&commit.files, self.tree, &self.folded);
+        }
+        self.found = None;
+        self.jumped = None;
+        self.scroll.clamp(self.lines());
+    }
+
+    /// 詳細の `row` 行目（見えている所の）を押した: 一覧のフォルダならたたむか開き、ファイルならその差分へ。
+    pub fn click(&mut self, row: u16) -> bool {
+        let Some(commit) = &self.commit else {
+            return false;
+        };
+        let line = self.scroll.top + u32::from(row);
+        let head = commit.head.len() as u32;
+        let Some(listed) = line
+            .checked_sub(head)
+            .and_then(|i| commit.listed.get(i as usize))
+        else {
+            return false;
+        };
+        match listed {
+            Listed::Folder { path, .. } => {
+                let path = path.clone();
+                if !self.folded.remove(&path) {
+                    self.folded.insert(path);
+                }
+                self.relist();
+                true
+            }
+            Listed::File(index, _) => {
+                let index = *index;
+                let Some(start) = commit
+                    .diff
+                    .file_rows
+                    .get(index)
+                    .map(|r| commit.before_diff() + r)
+                else {
+                    return false;
+                };
+                self.scroll_to(start);
+                self.jumped = Some(index);
+                true
+            }
+        }
     }
 
     /// 次（`forward`）か前のファイルの見出しを一番上に。
@@ -663,6 +940,7 @@ impl Details {
             return;
         }
         self.scroll.height = area.height;
+        let wanted = self.wanted.as_ref().map(|w| self.key_of(w));
         let Some(commit) = &mut self.commit else {
             let (text, style) = match &self.failed {
                 Some((_, error)) => (error.clone(), Style::new().fg(Color::Red)),
@@ -680,7 +958,7 @@ impl Details {
         let failed = self
             .failed
             .as_ref()
-            .filter(|f| self.wanted.as_ref().is_some_and(|w| w.key() == f.0))
+            .filter(|f| wanted.as_ref() == Some(&f.0))
             .map(|f| f.1.as_str());
         let head = commit.head.len() as u32;
         let before = commit.before_diff();
@@ -694,8 +972,18 @@ impl Details {
                 let (text, style) = &commit.head[line as usize];
                 buf.set_stringn(at.x, at.y, text, usize::from(at.width), *style);
             } else if line < before {
-                if let Some(file) = commit.files.get((line - head) as usize) {
-                    draw_file(at, buf, file);
+                match commit.listed.get((line - head) as usize) {
+                    Some(Listed::File(index, depth)) => {
+                        let file = &commit.files[*index];
+                        draw_file(at, buf, file, self.tree.then_some(*depth));
+                    }
+                    Some(Listed::Folder {
+                        path,
+                        depth,
+                        folded,
+                        files,
+                    }) => draw_folder(at, buf, path, *depth, *folded, *files),
+                    None => {}
                 }
             } else {
                 draw_row_kept(
@@ -737,8 +1025,29 @@ impl Details {
     }
 }
 
-/// ファイルの一覧の 1 行: 種類の 1 文字、パス、増えた行と減った行。
-fn draw_file(at: Rect, buf: &mut Buffer, file: &File) {
+/// 木のフォルダの 1 行: 開いているか（▾ ▸）、名前、たたんでいれば下のファイルの数。
+fn draw_folder(at: Rect, buf: &mut Buffer, path: &str, depth: u16, folded: bool, files: usize) {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    let text = if folded {
+        format!("{} {name}/ ({files})", '▸')
+    } else {
+        format!("{} {name}/", '▾')
+    };
+    let x = at.x + (depth * 2).min(at.width);
+    buf.set_stringn(
+        x,
+        at.y,
+        text,
+        usize::from(at.right() - x),
+        Style::new().fg(Color::Blue),
+    );
+}
+
+/// ファイルの一覧の 1 行: 種類の 1 文字、パス、増えた行と減った行。木（`depth` が Some）では、深さだけ下げて
+/// 名前だけを出す。
+fn draw_file(at: Rect, buf: &mut Buffer, file: &File, depth: Option<u16>) {
+    let indent = depth.map_or(0, |d| (d * 2).min(at.width));
+    let at = Rect::new(at.x + indent, at.y, at.width - indent, 1);
     let (letter, color) = match file.kind.as_str() {
         "added" => ('A', Color::Green),
         "deleted" => ('D', Color::Red),
@@ -755,8 +1064,14 @@ fn draw_file(at: Rect, buf: &mut Buffer, file: &File) {
     );
     let counts = counts(file.added, file.removed, file.binary);
     let counts_width = counts.iter().map(|(t, _)| t.width() + 1).sum::<usize>() as u16;
-    let path = match &file.old_path {
-        Some(old) if old != &file.path => format!("{old} → {}", file.path),
+    let path = match (&file.old_path, depth) {
+        (Some(old), _) if old != &file.path => format!("{old} → {}", file.path),
+        (_, Some(_)) => file
+            .path
+            .rsplit('/')
+            .next()
+            .unwrap_or(&file.path)
+            .to_owned(),
         _ => file.path.clone(),
     };
     let room = at.width.saturating_sub(2 + counts_width);

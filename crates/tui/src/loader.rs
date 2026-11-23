@@ -22,6 +22,8 @@ pub enum Request {
         fold: bool,
         expanded: Vec<String>,
         rebuild: bool,
+        /// History を、これらのコミット（選んだ ref の指す先、16 進）から辿れるものだけにする。空ならすべて。
+        tips: Vec<String>,
     },
     /// History の行（`start` から `count` 行）。
     Rows {
@@ -43,7 +45,15 @@ pub enum Request {
     MarksOf { history: Value, ids: Vec<String> },
     /// コミットの詳細（作者・メッセージなど）と差分。`id` は 16 進の ID。`stash` なら、stash としての差分
     /// （作ったときの HEAD から、作業中の変更まで）。
-    Commit { id: String, stash: bool },
+    /// `key` は答えを見分ける鍵、`whitespace` は無視する空白（`commitDiff` の whitespace）。
+    Commit {
+        id: String,
+        stash: bool,
+        key: String,
+        whitespace: &'static str,
+        /// ファイルごとの前後の行数（`commitDiff` の contexts）。
+        contexts: Value,
+    },
     /// History で印をつけたコミット（行）の差分（`commitDiff` の rows・pair）。答えは `Loaded::Commit` で、`id` は
     /// `key`（詳細のものは null）。
     Selection {
@@ -51,6 +61,8 @@ pub enum Request {
         history: Value,
         rows: Vec<u32>,
         pair: &'static str,
+        whitespace: &'static str,
+        contexts: Value,
     },
     /// 差分の構文の色。`of` は `{"view": …}`（`commitDiff` の答えのもの）か `{"diff": …}`（`workingDiff` の
     /// もの）。`id` は、答えを見分ける名前。
@@ -301,6 +313,7 @@ fn load(front: &dyn Front, request: Request, events: &Sender<Event>) -> Result<L
             fold,
             expanded,
             rebuild,
+            tips,
         } => Loaded::Opened {
             workdir: front.call(json!({"op": "hello"}))?.json["workdir"]
                 .as_str()
@@ -320,12 +333,14 @@ fn load(front: &dyn Front, request: Request, events: &Sender<Event>) -> Result<L
                 if rebuild {
                     front.call(json!({"op": "history", "rebuild": true}))?;
                 }
-                front
-                    .call(match fold {
-                        true => json!({"op": "history", "fold": true, "expanded": expanded}),
-                        false => json!({"op": "history"}),
-                    })?
-                    .json
+                let mut request = match fold {
+                    true => json!({"op": "history", "fold": true, "expanded": expanded}),
+                    false => json!({"op": "history"}),
+                };
+                if !tips.is_empty() {
+                    request["tips"] = json!(tips);
+                }
+                front.call(request)?.json
             },
         },
         Request::Rows {
@@ -378,16 +393,25 @@ fn load(front: &dyn Front, request: Request, events: &Sender<Event>) -> Result<L
             history,
             rows,
             pair,
+            whitespace,
+            contexts,
         } => Loaded::Commit {
             id: key,
             result: front
-                .call(json!({"op": "commitDiff", "history": history, "rows": rows, "pair": pair}))
+                .call(json!({"op": "commitDiff", "history": history, "rows": rows, "pair": pair, "whitespace": whitespace, "contexts": contexts}))
                 .map(|diff| (Value::Null, diff))
                 .map_err(|e| e.to_string()),
         },
-        Request::Commit { id, stash } => {
-            let result = commit(front, &id, stash).map_err(|e| e.to_string());
-            Loaded::Commit { id, result }
+        Request::Commit {
+            id,
+            stash,
+            key,
+            whitespace,
+            contexts,
+        } => {
+            let result =
+                commit(front, &id, stash, whitespace, contexts).map_err(|e| e.to_string());
+            Loaded::Commit { id: key, result }
         }
         Request::Syntax { id, mut of } => {
             of["op"] = json!("diffSyntax");
@@ -656,7 +680,13 @@ fn edit_rows(front: &dyn Front, from: &str) -> Result<Value> {
     Ok(json!({"rows": rows}))
 }
 
-fn commit(front: &dyn Front, id: &str, stash: bool) -> Result<(Value, Reply)> {
+fn commit(
+    front: &dyn Front,
+    id: &str,
+    stash: bool,
+    whitespace: &str,
+    contexts: Value,
+) -> Result<(Value, Reply)> {
     let mut info = run(front, json!({"op": "commitInfo", "oid": id}))?;
     // 署名があれば、検証もする（gpg・ssh を動かす。だめなら検証の結果なしで出す）。
     if info["info"]["signed"].is_string()
@@ -665,7 +695,9 @@ fn commit(front: &dyn Front, id: &str, stash: bool) -> Result<(Value, Reply)> {
         info["info"]["signatureCheck"] = checked["info"]["checks"][0].take();
     }
     let of = if stash { "stash" } else { "id" };
-    let diff = front.call(json!({"op": "commitDiff", of: id}))?;
+    let diff = front.call(
+        json!({"op": "commitDiff", of: id, "whitespace": whitespace, "contexts": contexts}),
+    )?;
     Ok((info["info"].take(), diff))
 }
 
