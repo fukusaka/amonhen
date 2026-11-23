@@ -19,6 +19,8 @@ use amonhen_projection::{ColumnSet, FrontendProfile, HistoryChunk, StringEncodin
 pub const CHUNK_ROWS: u32 = 256;
 /// 持っておくチャンクの数（見えている所に近いものから）。
 const KEPT_CHUNKS: usize = 24;
+/// 「差分をすべて開く」で開くファイルの、足した・消した行の数の上限（macOS 版・GTK4 版と同じ）。
+pub const EXPAND_ALL_LIMIT: u32 = 1000;
 
 /// Windows の FE の形。文字列は ASCII ならそのまま、それ以外は UTF-16（DirectWrite に `PCWSTR` で渡す）。
 pub(crate) const PROFILE: FrontendProfile = FrontendProfile {
@@ -94,6 +96,8 @@ pub struct DiffContent<'a> {
     pub file_rows: &'a [u32],
     /// 行ごとに次のコミットに含めるかの印を出す（Working Copy の 1 本の差分）。
     pub marks: bool,
+    /// ファイルごとの、足した（A）・消した（D）・変えた（M）の印（見出しに出す。`file_rows` の順）。
+    pub file_marks: &'a [char],
 }
 
 /// 行ごとの、変わった単語の範囲。
@@ -130,6 +134,7 @@ impl WorkingShown {
             syntax: &self.syntax,
             file_rows: &[],
             marks: self.diff.combined.is_some(),
+            file_marks: &[],
         }
     }
 }
@@ -151,24 +156,17 @@ pub struct CommitShown {
     pub collapsed: Vec<bool>,
     /// ファイルの見出しの行の番号（表示を作り直すたびに求める）。
     pub file_rows: Vec<u32>,
-    /// 1 ファイルずつ出すときの、出しているファイル（変更ファイルの順）。None なら全ファイルを並べる。
-    pub only: Option<usize>,
+    /// ファイルごとの、足した（A）・消した（D）・変えた（M）の印。
+    file_marks: Vec<char>,
     /// 表示を作り直した回数（古い表示の構文の色を捨てるため）。
     version: u32,
 }
 
 impl CommitShown {
     fn new(row: u32, info: serde_json::Value, stacked: Arc<StackedDiff>) -> Self {
-        // 見たことにしたファイル（Viewed）は畳んで出す（GTK4 版と同じ）。
-        let viewed = info["oid"]
-            .as_str()
-            .map(crate::viewed::paths)
-            .unwrap_or_default();
-        let collapsed: Vec<bool> = stacked
-            .files
-            .iter()
-            .map(|(path, _)| viewed.contains(path))
-            .collect();
+        // 最初はすべて畳んで、見出しだけを並べる（macOS 版・GTK4 版と同じ）。
+        let collapsed = vec![true; stacked.files.len()];
+        let file_marks = stacked.files.iter().map(|(_, d)| change_mark(d)).collect();
         let mut shown = Self {
             row,
             info,
@@ -179,7 +177,7 @@ impl CommitShown {
             stacked,
             collapsed,
             file_rows: Vec::new(),
-            only: None,
+            file_marks,
             version: 0,
         };
         shown.index_highlights();
@@ -193,30 +191,38 @@ impl CommitShown {
             syntax: &self.syntax,
             file_rows: &self.file_rows,
             marks: false,
+            file_marks: &self.file_marks,
         }
     }
 
-    /// 表示に出すファイルと、畳んでいるか（1 ファイルずつなら、そのファイルだけ）。
-    fn shown_files(&self) -> (Arc<StackedDiff>, Vec<bool>) {
-        match self.only.filter(|&i| i < self.stacked.files.len()) {
-            Some(i) => (
-                Arc::new(StackedDiff {
-                    files: vec![self.stacked.files[i].clone()],
-                }),
-                vec![self.collapsed.get(i).copied().unwrap_or(false)],
-            ),
-            None => (self.stacked.clone(), self.collapsed.clone()),
-        }
+    /// 「差分をすべて開く」で開くファイル（生成物と、変更が多すぎるファイルは除く。macOS 版の
+    /// `expandableFiles`）。
+    pub fn expandable(&self) -> Vec<usize> {
+        (0..self.stacked.files.len())
+            .filter(|&i| {
+                let diff = &self.stacked.files[i].1;
+                !self.stacked.generated(i) && diff.added + diff.removed <= EXPAND_ALL_LIMIT
+            })
+            .collect()
     }
 
-    /// 表示の `n` 番目のファイルの、変更ファイルの中での番号（1 ファイルずつなら、出しているファイル）。
-    pub fn file_index(&self, n: usize) -> usize {
-        self.only.unwrap_or(n)
+    /// 生成物などのほかは、すべて開いているか（帯の「すべて開く・畳む」の向き）。
+    pub fn all_open(&self) -> bool {
+        let targets = self.expandable();
+        !targets.is_empty() && targets.iter().all(|&i| !self.collapsed[i])
     }
 
-    /// 表示を作り直す（構文の色は捨てる）。色を付け直すための、出したファイルと畳んでいるかを返す。
+    /// 変更ファイルの数と、足した・消した行の数の合計（帯に出す）。
+    pub fn totals(&self) -> (usize, u32, u32) {
+        let files = &self.stacked.files;
+        let added = files.iter().map(|(_, d)| d.added).sum();
+        let removed = files.iter().map(|(_, d)| d.removed).sum();
+        (files.len(), added, removed)
+    }
+
+    /// 表示を作り直す（構文の色は捨てる）。色を付け直すための、全ファイルと畳んでいるかを返す。
     fn rebuild_view(&mut self) -> (Arc<StackedDiff>, Vec<bool>) {
-        let (stacked, collapsed) = self.shown_files();
+        let (stacked, collapsed) = (self.stacked.clone(), self.collapsed.clone());
         self.diff = stacked.view(&collapsed, &PROFILE);
         self.index_highlights();
         self.syntax.clear();
@@ -242,6 +248,17 @@ impl CommitShown {
             .filter(|(_, r)| r.kind == amonhen_layout::DiffRow::FILE)
             .map(|(i, _)| i as u32)
             .collect();
+    }
+}
+
+/// ファイルの変更の種類の印（前の中身がなければ足した A、後の中身がなければ消した D、ほかは変えた M）。
+pub fn change_mark(diff: &amonhen_core::diff::FileDiff) -> char {
+    if diff.old.is_empty() && !diff.new.is_empty() {
+        'A'
+    } else if diff.new.is_empty() && !diff.old.is_empty() {
+        'D'
+    } else {
+        'M'
     }
 }
 
@@ -388,8 +405,6 @@ pub struct DiffFile {
     pub deleted: bool,
     /// そのコミットで足したファイル（その前の版はない）。
     pub added: bool,
-    /// 見たことにしたファイル（Viewed）。
-    pub viewed: bool,
 }
 
 /// History の行に付ける ref の名前（ブランチ・リモートブランチ・タグ）。
@@ -465,8 +480,6 @@ pub struct Data {
     pub search: Option<SearchDone>,
     /// 選んだコミットの詳細と差分（届いたもの）。
     pub commit: Option<Box<CommitShown>>,
-    /// コミットの差分を 1 ファイルずつ出す（View の All Files in One Diff を切った）。
-    pub single_file: bool,
     /// 読んでいるコミットの行（届いたものがこれと違えば捨てる）。
     commit_wanted: Option<u32>,
     /// 出している差分に構文の色が届いた（描き直す。見たら `false` に戻す）。
@@ -809,7 +822,6 @@ impl Data {
             searching: None,
             search: None,
             commit: None,
-            single_file: false,
             commit_wanted: None,
             syntax_changed: false,
             extras_changed: false,
@@ -1241,9 +1253,6 @@ impl Data {
                         }
                         self.commit = Some(shown);
                         changed = true;
-                        if self.single_file {
-                            self.show_only(Some(0));
-                        }
                     }
                 }
                 Event::Syntax(generation, row, version, syntax) => {
@@ -1615,41 +1624,22 @@ impl Data {
     pub fn file_at(&self, diff_row: usize) -> Option<DiffFile> {
         let commit = self.commit.as_ref()?;
         let rows = commit.diff.rows.get(..=diff_row)?;
-        let index = commit.file_index(
-            rows.iter()
-                .filter(|r| r.kind == amonhen_layout::DiffRow::FILE)
-                .count()
-                .checked_sub(1)?,
-        );
+        let index = rows
+            .iter()
+            .filter(|r| r.kind == amonhen_layout::DiffRow::FILE)
+            .count()
+            .checked_sub(1)?;
         self.file_of(index)
     }
 
-    /// コミットの `index` 番目の変更ファイル（変更ファイルの一覧の右クリック）。
-    pub fn file_of(&self, index: usize) -> Option<DiffFile> {
-        let commit = self.commit.as_ref()?;
-        let oid = commit.info["oid"].as_str()?;
-        self.file_with(index, &crate::viewed::paths(oid))
-    }
-
-    /// コミットの変更ファイルすべて（変更ファイルの一覧の行ごとの右クリック。見たことにしたパスは 1 度だけ読む）。
+    /// コミットの変更ファイルすべて（変更ファイルの木の行ごとの右クリック）。
     pub fn files(&self) -> Vec<DiffFile> {
-        let Some(commit) = self.commit.as_ref() else {
-            return Vec::new();
-        };
-        let viewed = commit.info["oid"]
-            .as_str()
-            .map(crate::viewed::paths)
-            .unwrap_or_default();
-        (0..commit.stacked.files.len())
-            .filter_map(|i| self.file_with(i, &viewed))
-            .collect()
+        let count = self.commit.as_ref().map_or(0, |c| c.stacked.files.len());
+        (0..count).filter_map(|i| self.file_of(i)).collect()
     }
 
-    fn file_with(
-        &self,
-        index: usize,
-        viewed: &std::collections::HashSet<String>,
-    ) -> Option<DiffFile> {
+    /// コミットの `index` 番目の変更ファイル（見出しの ⋯・右クリック）。
+    pub fn file_of(&self, index: usize) -> Option<DiffFile> {
         let commit = self.commit.as_ref()?;
         let path = commit.stacked.files.get(index)?.0.clone();
         // 足した・消したファイルか（GTK4 版の `deleted` の手元の決め方と同じく、前後の中身が空か）。
@@ -1657,12 +1647,10 @@ impl Data {
         let deleted = diff.new.is_empty() && !diff.old.is_empty();
         let added = diff.old.is_empty() && !diff.new.is_empty();
         let oid = commit.info["oid"].as_str().map(str::to_owned);
-        let viewed = viewed.contains(&path);
         Some(DiffFile {
             index,
             collapsed: commit.collapsed.get(index).copied().unwrap_or(false),
             commit: oid,
-            viewed,
             deleted,
             added,
             path,
@@ -1685,7 +1673,6 @@ impl Data {
             .iter()
             .filter(|r| r.kind == amonhen_layout::DiffRow::FILE)
             .count();
-        let file = commit.file_index(file);
         self.toggle_file_index(file)
     }
 
@@ -1714,31 +1701,22 @@ impl Data {
         true
     }
 
-    /// 1 ファイルずつ出すか（View の All Files in One Diff を切ったとき）。今のコミットも出し直す。
-    pub fn set_single_file(&mut self, single: bool) -> bool {
-        self.single_file = single;
-        let index = self
-            .commit
-            .as_ref()
-            .map(|c| c.only.unwrap_or(0))
-            .filter(|_| single);
-        self.show_only(index)
-    }
-
-    /// 出しているコミットの `index` 番目のファイルだけを出す（None なら全ファイル）。変わったら true。
-    pub fn show_only(&mut self, index: Option<usize>) -> bool {
+    /// 生成物と変更の多いファイルのほかをすべて開く（すべて開いていれば、すべて畳む）。帯の「差分をすべて開く・
+    /// 畳む」。変わったら true。
+    pub fn toggle_all_files(&mut self) -> bool {
         let Some(generation) = self.history.as_ref().map(|h| h.generation) else {
             return false;
         };
         let Some(commit) = self.commit.as_mut() else {
             return false;
         };
-        // ファイルが 1 つなら、並べても同じ。
-        let index = index.filter(|_| commit.stacked.files.len() > 1);
-        if commit.only == index {
-            return false;
+        if commit.all_open() {
+            commit.collapsed.fill(true);
+        } else {
+            for i in commit.expandable() {
+                commit.collapsed[i] = false;
+            }
         }
-        commit.only = index;
         let (stacked, collapsed) = commit.rebuild_view();
         send_syntax(
             self.tx.clone(),

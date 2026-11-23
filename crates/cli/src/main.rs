@@ -47,8 +47,8 @@ usage: amonhen [<path>]
        amonhen open [<path> | ssh://host/path] [--daemon] [--snapshot]
        amonhen log [-n <count> | --all] [--fold] [--topo-order] [--branch <name>]… [--no-graph] [--rebuild] [--json] [<query>…]
        amonhen status [--json]
-       amonhen diff [--staged | --combined] [--rows] [--stat] [--json] [<rev> [<rev>]] [[--] <path>…]
-       amonhen show [<rev>] [--stat] [--no-patch] [--rows] [--json]
+       amonhen diff [--staged | --combined] [-w | -b | --ignore-space-at-eol] [--rows] [--stat] [--json] [<rev> [<rev>]] [[--] <path>…]
+       amonhen show [<rev>] [-w | -b | --ignore-space-at-eol] [--stat] [--no-patch] [--rows] [--json]
        amonhen stage [--rows <rows>] <path>… | --all
        amonhen unstage [--rows <rows>] <path>… | --all
        amonhen discard [--rows <rows>] <path>…

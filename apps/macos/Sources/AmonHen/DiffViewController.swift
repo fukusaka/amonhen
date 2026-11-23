@@ -560,6 +560,12 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
         return (file, top)
     }
 
+    /// 見えている一番上の行が属するファイル。
+    var visibleTopFile: Int? {
+        let first = rowAt(scrollView.contentView.bounds.origin.y)
+        return fileRows.lastIndex { $0 <= first }
+    }
+
     /// ファイル `index` の見出しが一番上に来るようにスクロールする。
     func scrollToFile(_ index: Int) {
         guard index < fileRows.count else { return }
@@ -1616,7 +1622,13 @@ final class CommitDetailViewController: NSSplitViewController, NSTextViewDelegat
     fileprivate let expandAllButton = NSButton()
     fileprivate var collapsedFolders: Set<String> = []
     fileprivate let foldersButton = NSButton()
-    fileprivate var whitespaceBox: NSButton?
+    fileprivate let whitespacePopUp = WhitespacePopUp()
+    /// 行を比べるときに無視する空白（帯のポップアップ）。覚えない。
+    fileprivate var whitespace = WhitespacePopUp.initial
+    /// 空白の扱いを変えて読み直すとき、開いていたファイルなどを戻す。
+    fileprivate var restoreAfterReload: (open: Set<Int>, whole: Set<Int>, contexts: [Int: Int], svg: Set<Int>, folders: Set<String>, top: Int?)?
+    /// 表示中の Push の「送る変更すべて」（空白の扱いを変えて読み直すため）。
+    private var shownRange: (base: Data, tip: Data, title: String, lines: [String])?
     fileprivate let treeSwitch: NSSegmentedControl = {
         let control = NSSegmentedControl(
             images: [NSImage(systemSymbolName: "list.bullet", accessibilityDescription: L("List"))!,
@@ -1837,6 +1849,8 @@ final class CommitDetailViewController: NSSplitViewController, NSTextViewDelegat
             return
         }
         shownCommit = (commit, stash)
+        shownSelection = nil
+        shownRange = nil
         let repository = self.repository
         let hex = commit.map { String(format: "%02x", $0) }.joined()
         commitHex = stash ? nil : hex
@@ -1847,13 +1861,14 @@ final class CommitDetailViewController: NSSplitViewController, NSTextViewDelegat
         let selectedAt = self.selectedAt
         // 裏の読み込みはここですぐ始める（メインスレッドが表のスクロールや描画をしている間に進める）。
         let infoTask = Task.detached(priority: .userInitiated) { try repository.commitInfo(oid: hex) }
+        let whitespace = self.whitespace
         // 変わったファイルと全ファイルの差分を続けて読む（メインスレッドとの往復を 1 回で済ませる）。ファイルの
         // 多いコミットでは、コアは見出しだけ並べ、開いたファイルの差分をそのときに取る。
         let changesTask = Task.detached(priority: .userInitiated) {
             () -> (CommitChanges?, StackedDiff?, CFTimeInterval, CFTimeInterval) in
             let t = CACurrentMediaTime()
             let changes = try? stash ? repository.stashChanges(of: commit) : repository.changes(of: commit)
-            let stacked = changes.flatMap { $0.items.isEmpty ? nil : try? $0.stacked() }
+            let stacked = changes.flatMap { $0.items.isEmpty ? nil : try? $0.stacked(whitespace: whitespace) }
             return (changes, stacked, t, CACurrentMediaTime())
         }
         // 署名の検証や含むタグなど時間のかかる分は、ヘッダーを出した後に足す（stash では読まない）。
@@ -1923,8 +1938,12 @@ final class CommitDetailViewController: NSSplitViewController, NSTextViewDelegat
         renderSelectionHeader(rows: rows, history: history, kind: nil)
         diffView.show(nil, message: L("Loading the diff…"))
         let started = CACurrentMediaTime()
+        let whitespace = self.whitespace
+        shownRange = nil
         Task {
-            let result = await Task.detached(priority: .userInitiated) { try? history.selectionDiff(rows: rows, pair: pair) }.value
+            let result = await Task.detached(priority: .userInitiated) {
+                try? history.selectionDiff(rows: rows, pair: pair, whitespace: whitespace)
+            }.value
             guard request == self.request else { return }
             guard let (kind, stacked) = result else {
                 renderSelectionHeader(rows: rows, history: history, kind: nil, failed: true)
@@ -1960,9 +1979,11 @@ final class CommitDetailViewController: NSSplitViewController, NSTextViewDelegat
         renderRangeHeader(title: title, lines: lines, note: L("Loading the diff…"))
         diffView.show(nil, message: L("Loading the diff…"))
         let repository = self.repository
+        let whitespace = self.whitespace
+        shownRange = (base, tip, title, lines)
         Task {
             let result = await Task.detached(priority: .userInitiated) {
-                try? repository.changes(from: base, to: tip).stacked()
+                try? repository.changes(from: base, to: tip).stacked(whitespace: whitespace)
             }.value
             guard request == self.request else { return }
             guard let stacked = result else {
@@ -2050,7 +2071,41 @@ final class CommitDetailViewController: NSSplitViewController, NSTextViewDelegat
     private static let collapseAbove = 1000
 
     private func showStacked(_ stacked: StackedDiff, key: String) {
+        let restore = restoreAfterReload
+        restoreAfterReload = nil
         showInline(stacked)
+        guard let restore else { return }
+        // 空白の扱いを変えて読み直した: 開いていたファイル・広げた前後・ファイル全体・畳んだフォルダを戻す。
+        let count = stacked.count
+        let open = restore.open.filter { $0 < count }
+        load(Array(open.union(restore.whole).union(restore.contexts.keys).filter { $0 < count }))
+        for (file, context) in restore.contexts where file < count && !restore.whole.contains(file) {
+            if (try? stacked.setContext(file, UInt32(context), in: repository)) != nil { contexts[file] = context }
+        }
+        for file in restore.whole where file < count {
+            if (try? stacked.setContext(file, .max, in: repository)) != nil { wholeFiles.insert(file) }
+        }
+        svgAsText = restore.svg.filter { $0 < count }
+        collapsedFolders = restore.folders
+        openFiles = open
+        reshowStacked(keepScroll: false)
+        if let top = restore.top, top < count { diffView.scrollToFile(top) }
+    }
+
+    /// 帯のポップアップで、行を比べるときに無視する空白を選んだ: 今のものを、開き方を保ったまま読み直す。
+    fileprivate func setWhitespace(_ mode: DiffWhitespace) {
+        guard mode != whitespace else { return }
+        whitespace = mode
+        restoreAfterReload = (openFiles, wholeFiles, contexts, svgAsText, collapsedFolders, diffView.visibleTopFile)
+        if let (rows, history, pair) = shownSelection {
+            show(selection: rows, in: history, pair: pair)
+        } else if let range = shownRange {
+            show(range: range.base, to: range.tip, title: range.title, lines: range.lines)
+        } else if let (commit, stash) = shownCommit {
+            show(commit: commit, stash: stash)
+        } else {
+            restoreAfterReload = nil
+        }
     }
 
     /// ファイルの見出しの右クリック。とびとびに選んだコミットの見出し（「パス — 短い ID」）からはパスを取り出す。
@@ -2383,12 +2438,8 @@ extension CommitDetailViewController {
         }
         foldersButton.action = #selector(toggleAllFolders)
         expandAllButton.action = #selector(toggleAllDiffs)
-        let whitespace = NSButton(checkboxWithTitle: L("Ignore Whitespace"), target: nil, action: nil)
-        whitespace.controlSize = .small
-        whitespace.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        whitespace.isEnabled = false
-        whitespace.toolTip = L("Not available yet")
-        whitespaceBox = whitespace
+        let whitespace = whitespacePopUp
+        whitespace.onChange = { [weak self] mode in self?.setWhitespace(mode) }
         let find = NSButton(
             image: NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: L("Find"))!,
             target: self, action: #selector(findInDiff))
@@ -2665,7 +2716,7 @@ extension CommitDetailViewController {
         let files = viewSwitch.selectedSegment == 1
         let tree = treeSwitch.selectedSegment == 1
         expandAllButton.isHidden = files
-        whitespaceBox?.isHidden = files
+        whitespacePopUp.isHidden = files
         foldersButton.isHidden = !tree
         expandAllButton.toolTip = allDiffsOpen ? L("Collapse All Diffs") : L("Expand All Diffs")
         expandAllButton.image = NSImage(

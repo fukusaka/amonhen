@@ -4,7 +4,8 @@
 //!
 //! チェックは index の状態そのもので、FE だけの選択状態は持たない（ターミナルで `git add` しても揃う）。
 //! 差分は、できれば HEAD と作業ツリーの 1 本の差分に行ごとの印を付けて見せ（`working_diff_combined`）、
-//! それで表せないファイルは、作業ツリーの側（Unstaged）か stage 済みの側（Staged）の差分を見せる。
+//! それで表せないファイルは、作業ツリーの側（Unstaged）か stage 済みの側（Staged）の差分を見せる。空白を無視する
+//! 間（差分の帯で選ぶ）も、1 本の差分にせず選んだ側の差分を見せ、行ごとには含めない・捨てない（macOS 版と同じ）。
 //! コンフリクトのファイルは、差分の代わりにマージエディタ（`merge.rs`）を埋め込み、上にファイルごとの解決のボタンを出す。
 
 use std::cell::{Cell, RefCell};
@@ -12,7 +13,7 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use amonhen_core::diff::{self, DiffView};
+use amonhen_core::diff::{self, DiffView, Whitespace};
 use amonhen_core::{Repository, StatusSnapshot, WorkingDiff};
 use amonhen_layout::DiffRow;
 use amonhen_model::{StatusEntry, StatusKind, tr};
@@ -201,6 +202,9 @@ struct Inner {
     embedded: RefCell<Option<Rc<crate::merge::Editor>>>,
     /// 改行を変換している・改行が混ざっているファイルの印（普段のファイルでは出さない）。
     line_endings: gtk::Label,
+    /// 行を比べるときに無視する空白。無視している間は、1 本の差分（行ごとのチェック）にせず、行ごとの stage・
+    /// 破棄もできない。覚えない。
+    whitespace: crate::whitespace::Picker,
     /// 選んでいるファイル。
     selected: RefCell<Option<String>>,
     /// 出している差分。
@@ -498,6 +502,9 @@ impl WorkingCopy {
         line_endings.add_css_class("caption");
         line_endings.set_visible(false);
         bar.append(&line_endings);
+        let whitespace = crate::whitespace::Picker::new();
+        whitespace.widget().set_visible(false);
+        bar.append(whitespace.widget());
         bar.append(&sides);
         bar.append(&conflict_buttons);
         // macOS 版と同じく、捨てる・行を含める の順。
@@ -578,6 +585,7 @@ impl WorkingCopy {
             auto_magic_done: RefCell::default(),
             embedded: RefCell::default(),
             line_endings,
+            whitespace,
             selected: RefCell::default(),
             current: RefCell::default(),
             generation: Cell::new(0),
@@ -589,6 +597,12 @@ impl WorkingCopy {
         });
         Inner::connect(&inner);
         Inner::install_factory(&inner, &factory);
+        let weak = Rc::downgrade(&inner);
+        inner.whitespace.connect_changed(move || {
+            if let Some(this) = weak.upgrade() {
+                Inner::whitespace_changed(&this);
+            }
+        });
         let weak = Rc::downgrade(&inner);
         suggest.connect_clicked(move |_| {
             if let Some(this) = weak.upgrade() {
@@ -2386,8 +2400,24 @@ impl Inner {
         Inner::read_diff(this, entry, true, true);
     }
 
+    /// 無視する空白を選び直した: 出している差分を読み直す（位置は保つ）。
+    fn whitespace_changed(this: &Rc<Self>) {
+        match this.selected_entry() {
+            Some(entry) if entry.kind != StatusKind::Unmerged => {
+                Inner::load_diff(this, entry, true)
+            }
+            _ => this.update_buttons(),
+        }
+    }
+
+    /// 行ごとに含める・捨てるか（空白を無視した差分の行は中身をそのまま表していないので、しない）。
+    fn exact(&self) -> bool {
+        self.whitespace.whitespace() == Whitespace::Exact
+    }
+
     fn read_diff(this: &Rc<Self>, entry: StatusEntry, same: bool, only_changed: bool) {
         let Some(repo) = this.repo() else { return };
+        let whitespace = this.whitespace.whitespace();
         // 両側に変更のあるファイルは作業ツリーの側から。同じファイルを読み直すときだけ、今の側のまま
         // （macOS 版の `side(for:)`）。
         let reselect = this
@@ -2411,9 +2441,13 @@ impl Inner {
             let result = gio::spawn_blocking(move || {
                 let profile = FrontendProfile::GTK;
                 // 1 本の差分で表せなければ、選んだ側（片側にしか変更がなければその側）。
-                // 1 本の差分で表せない・読めないときは、選んだ側の差分（macOS 版と同じ）。
-                let mut working = match repo.working_diff_combined(&entry, &profile).ok().flatten()
-                {
+                // 1 本の差分で表せない・読めないとき・空白を無視するときは、選んだ側の差分（macOS 版と同じ）。
+                let combined = if whitespace == Whitespace::Exact {
+                    repo.working_diff_combined(&entry, &profile).ok().flatten()
+                } else {
+                    None
+                };
+                let mut working = match combined {
                     Some(d) => d,
                     None => {
                         let staged = if entry.is_staged() && entry.is_unstaged() {
@@ -2421,7 +2455,7 @@ impl Inner {
                         } else {
                             !entry.is_unstaged()
                         };
-                        repo.working_diff(&entry, staged, &profile)?
+                        repo.working_diff_ws(&entry, staged, whitespace, &profile)?
                     }
                 };
                 let empty =
@@ -2457,6 +2491,7 @@ impl Inner {
                                 a.entry.path == b.entry.path
                                     && a.staged == b.staged
                                     && a.combined == b.combined
+                                    && a.file.whitespace == b.file.whitespace
                                     && a.file.old == b.file.old
                                     && a.file.new == b.file.new
                             }) => {}
@@ -2506,6 +2541,10 @@ impl Inner {
         if rows.is_empty() || current.0.is_none() {
             return;
         }
+        if !this.exact() {
+            this.diff.error_bell();
+            return;
+        }
         Inner::run(this, move |repo| {
             let w = current.0.as_ref().expect("working diff");
             match &w.combined {
@@ -2531,6 +2570,10 @@ impl Inner {
         }
         let rows = this.diff.selected_rows();
         if !rows.is_empty() {
+            if !this.exact() {
+                this.diff.error_bell();
+                return;
+            }
             Inner::perform(this, move |repo| {
                 repo.discard_rows(current.0.as_ref().expect("working diff"), &rows)
             });
@@ -3427,13 +3470,19 @@ impl Inner {
         } else {
             "Stage Lines"
         });
-        self.lines.set_sensitive(selected > 0);
-        self.lines.set_tooltip_text(
+        // 空白を無視した差分の行は中身をそのまま表していないので、行ごとには stage・破棄しない（macOS 版と同じ）。
+        let exact = self.exact();
+        let ignored = tr!("Can’t stage or discard lines while whitespace is ignored");
+        self.whitespace.widget().set_visible(!conflict && chosen);
+        self.lines.set_sensitive(selected > 0 && exact);
+        let lines_tip = if !exact {
+            Some(ignored.clone())
+        } else {
             working
                 .is_some_and(|w| w.combined.is_some())
                 .then(|| tr!("Include or exclude the selected lines in the next commit (Space)"))
-                .as_deref(),
-        );
+        };
+        self.lines.set_tooltip_text(lines_tip.as_deref());
         // stage 済みの側では捨てない。選んだ行がなければファイルを捨てる。
         self.discard
             .set_visible(!conflict && chosen && !staged_side);
@@ -3442,7 +3491,9 @@ impl Inner {
         } else {
             "Discard File"
         });
-        self.discard.set_tooltip_text(Some(&if selected > 0 {
+        self.discard.set_tooltip_text(Some(&if selected > 0 && !exact {
+            ignored
+        } else if selected > 0 {
             tr!(
                 "Discard the selected lines’ changes from the working tree (included lines are excluded first)"
             )
@@ -3452,7 +3503,9 @@ impl Inner {
             )
         }));
         self.discard.set_sensitive(
-            working.is_some_and(|w| !w.staged && w.entry.is_unstaged()) && selected_staged == 0,
+            working.is_some_and(|w| !w.staged && w.entry.is_unstaged())
+                && selected_staged == 0
+                && (selected == 0 || exact),
         );
     }
 }

@@ -43,6 +43,104 @@ pub struct FileDiff {
     pub generated: Option<bool>,
     /// まだ差分を取っていない（ファイルの多いコミットでは、開いたときに取る）。そのファイルの変更。
     pub pending: Option<Box<amonhen_model::FileChange>>,
+    /// 行を比べるときに無視した空白。無視していれば、行の差分は中身をそのまま表していないので、行ごとの stage・
+    /// 取り消しには使えない。
+    pub whitespace: Whitespace,
+}
+
+/// 行を比べるときに無視する空白（git diff の `--ignore-space-at-eol`・`-b`・`-w`）。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum Whitespace {
+    /// 無視しない。
+    #[default]
+    Exact = 0,
+    /// 行末の空白（`--ignore-space-at-eol`）。
+    AtEol = 1,
+    /// 空白の量の違いと行末の空白（`-b`、`--ignore-space-change`）。
+    Change = 2,
+    /// すべての空白（`-w`、`--ignore-all-space`）。
+    All = 3,
+}
+
+impl Whitespace {
+    pub fn from_u8(n: u8) -> Self {
+        match n {
+            1 => Self::AtEol,
+            2 => Self::Change,
+            3 => Self::All,
+            _ => Self::Exact,
+        }
+    }
+
+    /// FE 向けの窓口・CLI の名前（`exact`・`at-eol`・`change`・`all`）。
+    pub fn from_name(name: &str) -> Option<Self> {
+        Some(match name {
+            "exact" => Self::Exact,
+            "at-eol" => Self::AtEol,
+            "change" => Self::Change,
+            "all" => Self::All,
+            _ => return None,
+        })
+    }
+
+    /// 比べるための行の形（改行を除いた行）。git と同じく、空白は ASCII の空白（スペース・タブ・CR・LF・
+    /// VT・FF）。
+    fn key(self, line: &[u8]) -> Vec<u8> {
+        let space = |b: &u8| matches!(b, b' ' | b'\t' | b'\r' | b'\n' | 0x0b | 0x0c);
+        match self {
+            Self::Exact => line.to_vec(),
+            Self::AtEol => {
+                let end = line.iter().rposition(|b| !space(b)).map_or(0, |i| i + 1);
+                line[..end].to_vec()
+            }
+            Self::Change => {
+                let end = line.iter().rposition(|b| !space(b)).map_or(0, |i| i + 1);
+                let mut out = Vec::with_capacity(end);
+                let mut gap = false;
+                for b in &line[..end] {
+                    if space(b) {
+                        gap = true;
+                    } else {
+                        if gap {
+                            out.push(b' ');
+                            gap = false;
+                        }
+                        out.push(*b);
+                    }
+                }
+                out
+            }
+            Self::All => line.iter().filter(|b| !space(b)).copied().collect(),
+        }
+    }
+}
+
+/// 空白を無視して比べる行（`Whitespace::key` の形で比べる）。
+struct KeyedLines<'a> {
+    data: &'a [u8],
+    lines: &'a [Range<u32>],
+    whitespace: Whitespace,
+}
+
+impl imara_diff::TokenSource for KeyedLines<'_> {
+    type Token = Vec<u8>;
+    type Tokenizer = std::vec::IntoIter<Vec<u8>>;
+
+    fn tokenize(&self) -> Self::Tokenizer {
+        self.lines
+            .iter()
+            .map(|r| {
+                self.whitespace
+                    .key(&self.data[r.start as usize..r.end as usize])
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+    }
+
+    fn estimate_tokens(&self) -> u32 {
+        self.lines.len() as u32
+    }
 }
 
 /// ファイル全体を変更のない行として並べたもの（変わっていないファイルの、その時点の中身を見せる）。
@@ -74,6 +172,7 @@ pub fn whole_file(data: impl Into<Blob>) -> FileDiff {
         removed: 0,
         generated: None,
         pending: None,
+        whitespace: Whitespace::Exact,
     }
 }
 
@@ -116,6 +215,18 @@ pub fn file_diff_with(
     context: u32,
     funcname: &FuncName,
 ) -> FileDiff {
+    file_diff_ws(old, new, context, funcname, Whitespace::Exact)
+}
+
+/// `file_diff_with` の、`whitespace` の空白を無視して行を比べるもの（git diff の `-w` など）。空白だけが違う行は
+/// 変わっていない行として、変更後の形で見せる。
+pub fn file_diff_ws(
+    old: impl Into<Blob>,
+    new: impl Into<Blob>,
+    context: u32,
+    funcname: &FuncName,
+    whitespace: Whitespace,
+) -> FileDiff {
     let (old, new) = (old.into(), new.into());
     let mut diff = FileDiff {
         old: old.clone(),
@@ -127,17 +238,37 @@ pub fn file_diff_with(
         removed: 0,
         generated: None,
         pending: None,
+        whitespace,
     };
     if diff.binary {
         return diff;
     }
     let old_lines = line_ranges(&old);
     let new_lines = line_ranges(&new);
-    let input = InternedInput::new(&old[..], &new[..]);
-    debug_assert_eq!(input.before.len(), old_lines.len());
-    debug_assert_eq!(input.after.len(), new_lines.len());
-    let mut d = Diff::compute(Algorithm::Histogram, &input);
-    d.postprocess_lines(&input);
+    let d = if whitespace == Whitespace::Exact {
+        let input = InternedInput::new(&old[..], &new[..]);
+        debug_assert_eq!(input.before.len(), old_lines.len());
+        debug_assert_eq!(input.after.len(), new_lines.len());
+        let mut d = Diff::compute(Algorithm::Histogram, &input);
+        d.postprocess_lines(&input);
+        d
+    } else {
+        let input = InternedInput::new(
+            KeyedLines {
+                data: &old,
+                lines: &old_lines,
+                whitespace,
+            },
+            KeyedLines {
+                data: &new,
+                lines: &new_lines,
+                whitespace,
+            },
+        );
+        let mut d = Diff::compute(Algorithm::Histogram, &input);
+        d.postprocess_lines(&input);
+        d
+    };
     diff.added = d.count_additions();
     diff.removed = d.count_removals();
 
@@ -839,6 +970,7 @@ pub fn range_diff_file<S: AsRef<str>>(lines: &[S]) -> FileDiff {
         removed,
         generated: None,
         pending: None,
+        whitespace: Whitespace::Exact,
     }
 }
 
@@ -1022,6 +1154,37 @@ mod tests {
         // 変更のない行は変更後の blob を直接指す。
         let ctx = &d.lines[1];
         assert_eq!((ctx.old_no, ctx.new_no, ctx.source), (1, 1, Source::New));
+    }
+
+    #[test]
+    fn ignoring_whitespace_matches_git() {
+        let old = "fn a() {\n  x = 1;\n  y = 2; \n  z=3;\n}\nend\n";
+        let new = "fn a() {\n    x = 1;\n  y = 2;\n  z = 3;\n}\nfin\n";
+        let ws = |w| {
+            let d = file_diff_ws(
+                Arc::new(old.as_bytes().to_vec()),
+                Arc::new(new.as_bytes().to_vec()),
+                1,
+                &FuncName::Default,
+                w,
+            );
+            assert_eq!(d.whitespace, w);
+            render(&d)
+        };
+        // 期待は `git diff --no-index -U1`（`--ignore-space-at-eol`・`-b`・`-w`）の出力。
+        assert_eq!(
+            ws(Whitespace::AtEol),
+            "@@ -1,6 +1,6 @@\n fn a() {\n-  x = 1;\n+    x = 1;\n   y = 2;\n-  z=3;\n+  z = 3;\n }\n-end\n+fin\n"
+        );
+        assert_eq!(
+            ws(Whitespace::Change),
+            "@@ -3,4 +3,4 @@ fn a() {\n   y = 2;\n-  z=3;\n+  z = 3;\n }\n-end\n+fin\n"
+        );
+        assert_eq!(
+            ws(Whitespace::All),
+            "@@ -5,2 +5,2 @@ fn a() {\n }\n-end\n+fin\n"
+        );
+        assert_eq!(ws(Whitespace::Exact), render(&diff(old, new, 1)));
     }
 
     #[test]
