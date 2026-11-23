@@ -2065,3 +2065,8 @@
 "Quick Look" = "Quick Look";
 "Open this file at the commit in Quick Look" = "この時点のファイルを Quick Look で開く";
 "Open in Quick Look" = "Quick Look で開く";
+"Zoom Out" = "縮小";
+"Zoom In" = "拡大";
+"Zoom to Fit" = "合わせる";
+"Actual Size (100%) or Zoom to Fit" = "実際の大きさ（100%）と合わせるを切り替える";
+"Fit" = "合わせる";

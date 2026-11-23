@@ -1,5 +1,7 @@
 import AmonhenKit
 import AppKit
+import ImageIO
+import UniformTypeIdentifiers
 
 // History の右の列: 画像の比較（変更の見出しの下に置く欄）と、その時点のファイルの木と中身（すべてのファイル）。
 
@@ -17,7 +19,17 @@ private func describe(_ data: Data?, _ image: NSImage?) -> String {
 final class ImageDiffPanel: NSView {
     enum Mode: Int { case twoUp, swipe, onion, difference }
 
-    static let imageExtensions: Set<String> = ["png", "jpg", "jpeg", "gif", "bmp", "tif", "tiff", "webp", "heic", "ico", "svg"]
+    /// 画像として見せる拡張子: ImageIO が読める形式（avif・jxl・psd・カメラの RAW なども）と SVG。PDF などの文書は
+    /// Quick Look に任せる。
+    static let imageExtensions: Set<String> = {
+        var set: Set<String> = ["svg"]
+        for id in (CGImageSourceCopyTypeIdentifiers() as? [String]) ?? [] {
+            guard let type = UTType(id), !type.conforms(to: .pdf) else { continue }
+            set.formUnion(type.tags[.filenameExtension] ?? [])
+        }
+        set.subtract(["pdf", "ai", "eps"])
+        return set
+    }()
     static func isImage(_ path: String) -> Bool { imageExtensions.contains((path as NSString).pathExtension.lowercased()) }
     static func isSVG(_ path: String) -> Bool { (path as NSString).pathExtension.lowercased() == "svg" }
     /// 比べ方を変えた（次に開く画像も同じ比べ方にする）。
@@ -35,14 +47,29 @@ final class ImageDiffPanel: NSView {
         return control
     }()
     private let slider = NSSlider(value: 0.5, minValue: 0, maxValue: 1, target: nil, action: nil)
+    /// 拡大縮小: 縮める・倍率（押すと 100% と合わせるを切り替える）・広げる・合わせる。
+    private let zoomControl: NSSegmentedControl = {
+        let items: [(String, String)] = [
+            ("minus.magnifyingglass", L("Zoom Out")), ("plus.magnifyingglass", L("Zoom In")),
+            ("arrow.up.left.and.down.right.magnifyingglass", L("Zoom to Fit")),
+        ]
+        let control = NSSegmentedControl(
+            images: items.map { NSImage(systemSymbolName: $0.0, accessibilityDescription: $0.1)! },
+            trackingMode: .momentary, target: nil, action: nil)
+        for (i, item) in items.enumerated() { control.setToolTip(item.1, forSegment: i) }
+        return control
+    }()
+    private let zoomLabel = NSButton(title: "", target: nil, action: nil)
     private let caption = NSTextField(labelWithString: "")
     private var baseCaption = ""
     /// SVG のとき「テキストで見る」を押した。
     var onShowText: (() -> Void)?
 
-    init(before: Data?, after: Data?, svg: Bool, mode: Mode, position: CGFloat) {
+    /// `single` なら比べずに 1 枚だけ（すべてのファイルで開いた画像。`after` を出す）。
+    init(before: Data?, after: Data?, svg: Bool, mode: Mode, position: CGFloat, single: Bool = false) {
         let old = before.flatMap(NSImage.init(data:)), new = after.flatMap(NSImage.init(data:))
         canvas = ImageCompareCanvas(before: old, after: new)
+        canvas.single = single
         super.init(frame: NSRect(x: 0, y: 0, width: 600, height: 300))
         wantsLayer = true
         layer?.backgroundColor = NSColor.textBackgroundColor.cgColor
@@ -56,8 +83,22 @@ final class ImageDiffPanel: NSView {
         slider.doubleValue = Double(position)
         caption.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         caption.textColor = .secondaryLabelColor
-        baseCaption = L("Before") + ": " + describe(before, old) + "    →    " + L("After") + ": " + describe(after, new)
-        var top: [NSView] = [modeControl]
+        baseCaption = single ? describe(after, new)
+            : L("Before") + ": " + describe(before, old) + "    →    " + L("After") + ": " + describe(after, new)
+        zoomControl.controlSize = .small
+        zoomControl.target = self
+        zoomControl.action = #selector(zoomChanged)
+        zoomLabel.bezelStyle = .accessoryBarAction
+        zoomLabel.controlSize = .small
+        zoomLabel.font = .monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
+        zoomLabel.toolTip = L("Actual Size (100%) or Zoom to Fit")
+        zoomLabel.target = self
+        zoomLabel.action = #selector(toggleActualSize)
+        canvas.onZoom = { [weak self] in self?.updateZoomLabel() }
+        // 確かめる用（`--snapshot`）: 最初の倍率（`-AMHImageZoom 4` で 400%）。
+        let zoom = UserDefaults.standard.double(forKey: "AMHImageZoom")
+        if zoom > 0 { canvas.setZoom(CGFloat(zoom)) }
+        var top: [NSView] = single ? [] : [modeControl]
         if svg {
             let text = NSButton(
                 image: NSImage(systemSymbolName: "doc.plaintext", accessibilityDescription: L("Show as Text"))!,
@@ -69,7 +110,7 @@ final class ImageDiffPanel: NSView {
         }
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        let bar = NSStackView(views: top + [spacer, slider])
+        let bar = NSStackView(views: top + [spacer, slider, zoomLabel, zoomControl])
         bar.spacing = 10
         slider.widthAnchor.constraint(equalToConstant: 160).isActive = true
         let line = NSBox()
@@ -108,11 +149,32 @@ final class ImageDiffPanel: NSView {
     }
     @objc private func showText() { onShowText?() }
 
+    @objc private func zoomChanged() {
+        switch zoomControl.selectedSegment {
+        case 0: canvas.zoom(by: 1 / 1.5)
+        case 1: canvas.zoom(by: 1.5)
+        default: canvas.zoomToFit()
+        }
+    }
+
+    @objc private func toggleActualSize() {
+        if canvas.zoom == 1 { canvas.zoomToFit() } else { canvas.setZoom(1) }
+    }
+
+    private func updateZoomLabel() {
+        zoomLabel.title = canvas.zoom == nil ? L("Fit") : "\(Int((canvas.scale * 100).rounded()))%"
+    }
+
+    override func layout() {
+        super.layout()
+        updateZoomLabel()
+    }
+
     private func apply() {
         let mode = Mode(rawValue: modeControl.selectedSegment) ?? .twoUp
         canvas.mode = mode
         canvas.position = CGFloat(slider.doubleValue)
-        slider.isHidden = mode == .twoUp || mode == .difference
+        slider.isHidden = canvas.single || mode == .twoUp || mode == .difference
         if mode == .difference {
             caption.stringValue = canvas.differenceSummary
         } else {
@@ -127,6 +189,15 @@ final class ImageCompareCanvas: NSView {
     var mode: ImageDiffPanel.Mode = .twoUp { didSet { needsDisplay = true } }
     var position: CGFloat = 0.5 { didSet { needsDisplay = true } }
     var onPosition: ((CGFloat) -> Void)?
+    /// 1 枚だけ見せる（比べない）。
+    var single = false
+    /// 倍率（画像の 1 ピクセルを何ポイントで描くか）。nil なら枠に合わせる。
+    private(set) var zoom: CGFloat?
+    /// 拡大したときの、枠の中心からのずらし（ポイント）。
+    private var pan = CGPoint.zero
+    /// 倍率が変わった（帯の倍率の表示）。
+    var onZoom: (() -> Void)?
+    private var dragStart: (point: NSPoint, pan: CGPoint)?
     private lazy var difference: (image: CGImage?, changed: Int, total: Int) = makeDifference()
 
     init(before: NSImage?, after: NSImage?) {
@@ -157,13 +228,60 @@ final class ImageCompareCanvas: NSView {
         return rep.pixelsWide > 0 ? NSSize(width: rep.pixelsWide, height: rep.pixelsHigh) : image.size
     }
 
-    /// `size` を `box` に収める（小さな絵は整数倍まで拡げ、ぼかさない）。
-    private func fit(_ size: NSSize, in box: NSRect) -> NSRect {
-        guard size.width > 0, size.height > 0 else { return .zero }
+    /// 枠に合わせるときの倍率（小さな絵は整数倍まで拡げ、ぼかさない）。
+    private func fitScale(_ size: NSSize, in box: NSRect) -> CGFloat {
+        guard size.width > 0, size.height > 0 else { return 1 }
         var scale = min(box.width / size.width, box.height / size.height)
         if scale > 1 { scale = max(1, floor(min(scale, 8))) }
+        return scale
+    }
+
+    /// `size` を `box` に置く: 倍率を決めていなければ収め、決めていればその倍率で中心からずらして。
+    private func fit(_ size: NSSize, in box: NSRect) -> NSRect {
+        guard size.width > 0, size.height > 0 else { return .zero }
+        let scale = zoom ?? fitScale(size, in: box)
         let w = size.width * scale, h = size.height * scale
-        return NSRect(x: box.midX - w / 2, y: box.midY - h / 2, width: w, height: h).integral
+        let (dx, dy) = zoom == nil ? (0, 0) : (pan.x, pan.y)
+        return NSRect(x: box.midX - w / 2 + dx, y: box.midY - h / 2 + dy, width: w, height: h).integral
+    }
+
+    private var commonSize: NSSize {
+        NSSize(
+            width: max(pixelSize(before).width, pixelSize(after).width),
+            height: max(pixelSize(before).height, pixelSize(after).height))
+    }
+
+    /// 今の倍率（合わせているならその倍率）。
+    var scale: CGFloat {
+        if let zoom { return zoom }
+        let box = single || mode != .twoUp ? bounds.insetBy(dx: 4, dy: 4)
+            : NSRect(x: 0, y: 16, width: (bounds.width - 16) / 2, height: bounds.height - 16).insetBy(dx: 4, dy: 4)
+        return fitScale(commonSize, in: box)
+    }
+
+    func setZoom(_ value: CGFloat?) {
+        zoom = value.map { min(max($0, 0.05), 64) }
+        if zoom == nil { pan = .zero }
+        needsDisplay = true
+        onZoom?()
+    }
+
+    func zoom(by factor: CGFloat) { setZoom(scale * factor) }
+    func zoomToFit() { setZoom(nil) }
+
+    override func magnify(with event: NSEvent) { zoom(by: 1 + event.magnification) }
+
+    override func scrollWheel(with event: NSEvent) {
+        if event.modifierFlags.contains(.command) {
+            zoom(by: event.scrollingDeltaY > 0 ? 1.1 : 1 / 1.1)
+        } else if zoom != nil {
+            // 拡大している間は、絵を動かす（合わせているときは差分をスクロールする）。
+            pan.x += event.scrollingDeltaX
+            pan.y += event.scrollingDeltaY
+            needsDisplay = true
+        } else {
+            super.scrollWheel(with: event)
+        }
     }
 
     private func checker(_ rect: NSRect) {
@@ -198,9 +316,14 @@ final class ImageCompareCanvas: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         let area = bounds
-        let common = NSSize(
-            width: max(pixelSize(before).width, pixelSize(after).width),
-            height: max(pixelSize(before).height, pixelSize(after).height))
+        let common = commonSize
+        NSBezierPath(rect: area).addClip()
+        if single {
+            let rect = fit(pixelSize(after), in: area.insetBy(dx: 4, dy: 4))
+            checker(rect)
+            draw(after, in: rect)
+            return
+        }
         switch mode {
         case .twoUp:
             let half = (area.width - 16) / 2
@@ -209,6 +332,9 @@ final class ImageCompareCanvas: NSView {
                 label(title, at: NSPoint(x: box.minX, y: area.minY))
                 if let image {
                     let rect = fit(pixelSize(image), in: box.insetBy(dx: 4, dy: 4))
+                    NSGraphicsContext.saveGraphicsState()
+                    NSBezierPath(rect: box).addClip()
+                    defer { NSGraphicsContext.restoreGraphicsState() }
                     checker(rect)
                     draw(image, in: rect)
                     color.withAlphaComponent(0.8).setStroke()
@@ -314,10 +440,28 @@ final class ImageCompareCanvas: NSView {
         return (image, changed, w * h)
     }
 
-    override func mouseDown(with event: NSEvent) { track(event) }
-    override func mouseDragged(with event: NSEvent) { track(event) }
+    override func mouseDown(with event: NSEvent) {
+        // 拡大している間は、並べる・違うピクセル・1 枚ではドラッグで動かす（スワイプ・オニオンスキンは境を動かすので
+        // ⌥ を押しながら）。
+        if zoom != nil, single || mode == .twoUp || mode == .difference || event.modifierFlags.contains(.option) {
+            dragStart = (convert(event.locationInWindow, from: nil), pan)
+            return
+        }
+        dragStart = nil
+        track(event)
+    }
+    override func mouseDragged(with event: NSEvent) {
+        if let start = dragStart {
+            let p = convert(event.locationInWindow, from: nil)
+            pan = CGPoint(x: start.pan.x + p.x - start.point.x, y: start.pan.y + p.y - start.point.y)
+            needsDisplay = true
+            return
+        }
+        track(event)
+    }
+    override func mouseUp(with event: NSEvent) { dragStart = nil }
     private func track(_ event: NSEvent) {
-        guard mode == .swipe || mode == .onion else { return }
+        guard !single, mode == .swipe || mode == .onion else { return }
         let common = NSSize(
             width: max(pixelSize(before).width, pixelSize(after).width),
             height: max(pixelSize(before).height, pixelSize(after).height))
@@ -358,7 +502,8 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
     private let outline = NSOutlineView()
     private let treeScroll = NSScrollView()
     private let content: DiffViewController
-    private let imageView = NSImageView()
+    /// 開いた画像（拡大縮小できる 1 枚の表示）。
+    private var imagePanel: ImageDiffPanel?
     private let pathBar = NSStackView()
     private let pathLabel = NSTextField(labelWithString: "")
     private let changeButton = NSButton()
@@ -419,7 +564,6 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         treeScroll.hasVerticalScroller = true
         treeScroll.drawsBackground = false
         content.fileMode = true
-        imageView.imageScaling = .scaleProportionallyUpOrDown
         let back = NSButton(
             image: NSImage(systemSymbolName: "chevron.left", accessibilityDescription: L("Back"))!, target: self,
             action: #selector(backToTree))
@@ -453,7 +597,7 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         for v in [back, pathLabel, spacer, quickLookButton, changeButton] { pathBar.addArrangedSubview(v) }
         pathBar.edgeInsets = NSEdgeInsets(top: 0, left: 6, bottom: 0, right: 10)
         pathBar.spacing = 6
-        for v in [treeScroll, content.view, imageView, binaryBox, pathBar] as [NSView] { addSubview(v) }
+        for v in [treeScroll, content.view, binaryBox, pathBar] as [NSView] { addSubview(v) }
         load(root)
         outline.reloadData()
         expandChanged(root)
@@ -553,7 +697,7 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         let rest = NSRect(x: 0, y: 0, width: bounds.width, height: bounds.height - barHeight)
         treeScroll.frame = rest
         content.view.frame = rest
-        imageView.frame = rest.insetBy(dx: 16, dy: 16)
+        imagePanel?.frame = rest
         let box = binaryBox.fittingSize
         binaryBox.frame = NSRect(x: rest.midX - box.width / 2, y: rest.midY - box.height / 2, width: box.width, height: box.height)
         outline.sizeLastColumnToFit()
@@ -563,10 +707,15 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         openPath = nil
         treeScroll.isHidden = false
         content.view.isHidden = true
-        imageView.isHidden = true
+        removeImage()
         binaryBox.isHidden = true
         pathBar.isHidden = true
         needsLayout = true
+    }
+
+    private func removeImage() {
+        imagePanel?.removeFromSuperview()
+        imagePanel = nil
     }
 
     /// 開いているファイルのその時点の中身（変えたファイルは変更後、消したファイルは変更前）。裏で読む。
@@ -634,18 +783,25 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         request += 1
         let request = self.request
         binaryBox.isHidden = true
+        removeImage()
         if ImageDiffPanel.isImage(path), !ImageDiffPanel.isSVG(path) {
             content.view.isHidden = true
-            imageView.isHidden = false
-            imageView.image = nil
             Task {
                 let data = await contents(of: path)
                 guard request == self.request else { return }
-                imageView.image = data.flatMap(NSImage.init(data:))
+                guard let data, NSImage(data: data) != nil else {
+                    // 読めない形式（拡張子は画像でも）はバイナリと同じく Quick Look に。
+                    binaryBox.isHidden = false
+                    needsLayout = true
+                    return
+                }
+                let panel = ImageDiffPanel(before: nil, after: data, svg: false, mode: .twoUp, position: 0.5, single: true)
+                imagePanel = panel
+                addSubview(panel, positioned: .below, relativeTo: pathBar)
+                needsLayout = true
             }
             return
         }
-        imageView.isHidden = true
         content.view.isHidden = false
         content.show(nil, message: L("Loading the diff…"))
         let changes = self.changes, repository = self.repository, commitID = self.commitID
