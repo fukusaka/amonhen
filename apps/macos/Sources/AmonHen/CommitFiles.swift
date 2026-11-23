@@ -66,10 +66,23 @@ final class ImageDiffPanel: NSView {
     var onShowText: (() -> Void)?
 
     /// `single` なら比べずに 1 枚だけ（すべてのファイルで開いた画像。`after` を出す）。
-    init(before: Data?, after: Data?, svg: Bool, mode: Mode, position: CGFloat, single: Bool = false) {
+    convenience init(before: Data?, after: Data?, svg: Bool, mode: Mode, position: CGFloat, single: Bool = false) {
         let old = before.flatMap(NSImage.init(data:)), new = after.flatMap(NSImage.init(data:))
+        let text = single ? describe(after, new)
+            : L("Before") + ": " + describe(before, old) + "    →    " + L("After") + ": " + describe(after, new)
+        self.init(
+            before: old, after: new, titles: (L("Before"), L("After")), caption: text, svg: svg, mode: mode,
+            position: position, single: single)
+    }
+
+    /// 描いた画像で作る（`titles` は前と後の見出し）。
+    init(
+        before old: NSImage?, after new: NSImage?, titles: (String, String), caption text: String, svg: Bool, mode: Mode,
+        position: CGFloat, single: Bool
+    ) {
         canvas = ImageCompareCanvas(before: old, after: new)
         canvas.single = single
+        canvas.titles = titles
         super.init(frame: NSRect(x: 0, y: 0, width: 600, height: 300))
         wantsLayer = true
         layer?.backgroundColor = NSColor.textBackgroundColor.cgColor
@@ -83,8 +96,7 @@ final class ImageDiffPanel: NSView {
         slider.doubleValue = Double(position)
         caption.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         caption.textColor = .secondaryLabelColor
-        baseCaption = single ? describe(after, new)
-            : L("Before") + ": " + describe(before, old) + "    →    " + L("After") + ": " + describe(after, new)
+        baseCaption = text
         zoomControl.controlSize = .small
         zoomControl.target = self
         zoomControl.action = #selector(zoomChanged)
@@ -191,6 +203,8 @@ final class ImageCompareCanvas: NSView {
     var onPosition: ((CGFloat) -> Void)?
     /// 1 枚だけ見せる（比べない）。
     var single = false
+    /// 前と後の見出し（SVG をブラウザと iOS で比べるときは、その名前）。
+    var titles = (L("Before"), L("After"))
     /// 倍率（画像の 1 ピクセルを何ポイントで描くか）。nil なら枠に合わせる。
     private(set) var zoom: CGFloat?
     /// 拡大したときの、枠の中心からのずらし（ポイント）。
@@ -327,7 +341,7 @@ final class ImageCompareCanvas: NSView {
         switch mode {
         case .twoUp:
             let half = (area.width - 16) / 2
-            for (i, (image, title, color)) in [(before, L("Before"), NSColor.systemRed), (after, L("After"), NSColor.systemGreen)].enumerated() {
+            for (i, (image, title, color)) in [(before, titles.0, NSColor.systemRed), (after, titles.1, NSColor.systemGreen)].enumerated() {
                 let box = NSRect(x: area.minX + CGFloat(i) * (half + 16), y: area.minY + 16, width: half, height: area.height - 16)
                 label(title, at: NSPoint(x: box.minX, y: area.minY))
                 if let image {
@@ -355,8 +369,8 @@ final class ImageCompareCanvas: NSView {
             if mode == .onion {
                 draw(before, in: fitted(before, rect))
                 draw(after, in: fitted(after, rect), alpha: position)
-                label(L("Before"), at: NSPoint(x: rect.minX - 56, y: rect.minY))
-                label(L("After"), at: NSPoint(x: rect.maxX + 8, y: rect.minY))
+                label(titles.0, at: NSPoint(x: rect.minX - 56, y: rect.minY))
+                label(titles.1, at: NSPoint(x: rect.maxX + 8, y: rect.minY))
             } else {
                 draw(after, in: fitted(after, rect))
                 let split = rect.minX + rect.width * position
@@ -368,8 +382,8 @@ final class ImageCompareCanvas: NSView {
                 NSColor.controlAccentColor.setFill()
                 NSRect(x: split - 1, y: rect.minY - 4, width: 2, height: rect.height + 8).fill()
                 NSBezierPath(ovalIn: NSRect(x: split - 7, y: rect.midY - 7, width: 14, height: 14)).fill()
-                label(L("Before"), at: NSPoint(x: rect.minX - 56, y: rect.minY))
-                label(L("After"), at: NSPoint(x: rect.maxX + 8, y: rect.minY))
+                label(titles.0, at: NSPoint(x: rect.minX - 56, y: rect.minY))
+                label(titles.1, at: NSPoint(x: rect.maxX + 8, y: rect.minY))
             }
         case .difference:
             let rect = fit(common, in: area.insetBy(dx: 4, dy: 4))
@@ -504,6 +518,16 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
     private let content: DiffViewController
     /// 開いた画像（拡大縮小できる 1 枚の表示）。
     private var imagePanel: ImageDiffPanel?
+    /// SVG の見せ方: 絵（ブラウザと同じに描く）・iOS と比べる（ブラウザと CoreSVG を並べる）・テキスト。
+    private enum SVGView: Int { case picture, compare, text }
+    /// 確かめる用（`--snapshot`）に `-AMHSVGView picture|compare|text` で最初の見せ方を変えられる。
+    private var svgView: SVGView = switch UserDefaults.standard.string(forKey: "AMHSVGView") {
+    case "compare": .compare
+    case "text": .text
+    default: .picture
+    }
+    private let svgSwitch = NSSegmentedControl(
+        labels: [L("Picture"), L("Compare with iOS"), L("Text")], trackingMode: .selectOne, target: nil, action: nil)
     private let pathBar = NSStackView()
     private let pathLabel = NSTextField(labelWithString: "")
     private let changeButton = NSButton()
@@ -594,7 +618,16 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         pathLabel.lineBreakMode = .byTruncatingHead
         pathLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        for v in [back, pathLabel, spacer, quickLookButton, changeButton] { pathBar.addArrangedSubview(v) }
+        svgSwitch.controlSize = .small
+        svgSwitch.selectedSegment = 0
+        svgSwitch.setToolTip(L("Draw the SVG as a browser does"), forSegment: 0)
+        svgSwitch.setToolTip(
+            L("Draw it as a browser does and as iOS asset catalogs do (CoreSVG), side by side, to find what breaks"), forSegment: 1)
+        svgSwitch.setToolTip(L("Show the SVG source"), forSegment: 2)
+        svgSwitch.target = self
+        svgSwitch.action = #selector(svgViewChanged)
+        svgSwitch.isHidden = true
+        for v in [back, pathLabel, spacer, svgSwitch, quickLookButton, changeButton] { pathBar.addArrangedSubview(v) }
         pathBar.edgeInsets = NSEdgeInsets(top: 0, left: 6, bottom: 0, right: 10)
         pathBar.spacing = 6
         for v in [treeScroll, content.view, binaryBox, pathBar] as [NSView] { addSubview(v) }
@@ -713,6 +746,11 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         needsLayout = true
     }
 
+    @objc private func svgViewChanged() {
+        svgView = SVGView(rawValue: svgSwitch.selectedSegment) ?? .picture
+        if let openPath { open(path: openPath, line: nil) }
+    }
+
     private func removeImage() {
         imagePanel?.removeFromSuperview()
         imagePanel = nil
@@ -784,7 +822,32 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         let request = self.request
         binaryBox.isHidden = true
         removeImage()
-        if ImageDiffPanel.isImage(path), !ImageDiffPanel.isSVG(path) {
+        let svg = ImageDiffPanel.isSVG(path)
+        svgSwitch.isHidden = !svg
+        svgSwitch.selectedSegment = svgView.rawValue
+        if svg, svgView != .text {
+            content.view.isHidden = true
+            let view = svgView
+            Task {
+                guard let data = await contents(of: path), request == self.request else { return }
+                let web = await WebRenderer.shared.render(svg: data)
+                guard request == self.request else { return }
+                let bytes = ByteCountFormatter.string(fromByteCount: Int64(data.count), countStyle: .file)
+                let size = web.map { "\(Int($0.size.width)) × \(Int($0.size.height)) pt · \(bytes)" } ?? bytes
+                let panel = view == .picture
+                    ? ImageDiffPanel(
+                        before: nil, after: web, titles: ("", ""), caption: size, svg: false, mode: .twoUp, position: 0.5,
+                        single: true)
+                    : ImageDiffPanel(
+                        before: web, after: NSImage(data: data), titles: (L("Browser (WebKit)"), L("iOS (CoreSVG)")),
+                        caption: size, svg: false, mode: .twoUp, position: 0.5, single: false)
+                imagePanel = panel
+                addSubview(panel, positioned: .below, relativeTo: pathBar)
+                needsLayout = true
+            }
+            return
+        }
+        if ImageDiffPanel.isImage(path), !svg {
             content.view.isHidden = true
             Task {
                 let data = await contents(of: path)

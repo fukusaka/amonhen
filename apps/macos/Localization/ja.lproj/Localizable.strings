@@ -2070,3 +2070,11 @@
 "Zoom to Fit" = "合わせる";
 "Actual Size (100%) or Zoom to Fit" = "実際の大きさ（100%）と合わせるを切り替える";
 "Fit" = "合わせる";
+"Picture" = "絵";
+"Compare with iOS" = "iOS と比べる";
+"Text" = "テキスト";
+"Draw the SVG as a browser does" = "SVG をブラウザと同じに描く";
+"Draw it as a browser does and as iOS asset catalogs do (CoreSVG), side by side, to find what breaks" = "ブラウザと iOS のアセット（CoreSVG）の描き方で並べ、崩れるところを探す";
+"Show the SVG source" = "SVG のソースを見る";
+"Browser (WebKit)" = "ブラウザ（WebKit）";
+"iOS (CoreSVG)" = "iOS（CoreSVG）";
