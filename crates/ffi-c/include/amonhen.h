@@ -551,6 +551,20 @@ char *amonhen_markdown_parse(const uint8_t *text,
                              const char *github);
 
 /**
+ * Markdown の図の SVG（`MarkdownBlock` の `diagram` の `svg`）に配色を当て、CoreSVG で描ける SVG にする。`scheme` は
+ * 設定の「図の配色」の名前（`syntax`・`pele`・`mermaid`）、`dark` は暗い表示か、`theme` は構文の色のテーマの JSON
+ * `{"text": "#rrggbb", "background": "#rrggbb", "kinds": {"keyword": "#rrggbb", …}}`（`syntax` のときだけ使う。
+ * NULL でもよい）。読めなければ NULL。`amonhen_string_free` で解放する。
+ *
+ * # Safety
+ * `svg`・`scheme` は NUL 終わりの文字列であること、`theme` は NULL か NUL 終わりの文字列であること。
+ */
+char *amonhen_diagram_colorize(const char *svg,
+                               const char *scheme,
+                               bool dark,
+                               const char *theme);
+
+/**
  * この機械の git の版（`2.39.5`）。読めなければ NULL。`amonhen_string_free` で解放する。git を起動する
  * ことがあるので（初めの 1 回だけ）、裏のスレッドで呼ぶ。
  */

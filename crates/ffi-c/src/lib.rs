@@ -431,6 +431,50 @@ pub unsafe extern "C" fn amonhen_markdown_parse(
         .map_or(std::ptr::null_mut(), CString::into_raw)
 }
 
+/// Markdown の図の SVG（`MarkdownBlock` の `diagram` の `svg`）に配色を当て、CoreSVG で描ける SVG にする。`scheme` は
+/// 設定の「図の配色」の名前（`syntax`・`pele`・`mermaid`）、`dark` は暗い表示か、`theme` は構文の色のテーマの JSON
+/// `{"text": "#rrggbb", "background": "#rrggbb", "kinds": {"keyword": "#rrggbb", …}}`（`syntax` のときだけ使う。
+/// NULL でもよい）。読めなければ NULL。`amonhen_string_free` で解放する。
+///
+/// # Safety
+/// `svg`・`scheme` は NUL 終わりの文字列であること、`theme` は NULL か NUL 終わりの文字列であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_diagram_colorize(
+    svg: *const c_char,
+    scheme: *const c_char,
+    dark: bool,
+    theme: *const c_char,
+) -> *mut c_char {
+    let (Ok(svg), Ok(scheme)) = (str_arg(svg), str_arg(scheme)) else {
+        return std::ptr::null_mut();
+    };
+    let theme: serde_json::Value = str_arg(theme)
+        .ok()
+        .and_then(|t| serde_json::from_str(t).ok())
+        .unwrap_or_default();
+    let text = |key: &str| theme[key].as_str().unwrap_or_default().to_owned();
+    let colors = amonhen_core::diagram::ThemeColors {
+        text: text("text"),
+        background: text("background"),
+        kinds: theme["kinds"]
+            .as_object()
+            .map(|m| {
+                m.iter()
+                    .filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_owned())))
+                    .collect()
+            })
+            .unwrap_or_default(),
+    };
+    let vars = amonhen_core::diagram::palette(
+        amonhen_core::diagram::Scheme::from_key(scheme),
+        dark,
+        &colors,
+    );
+    amonhen_core::diagram::colorize(svg, &vars)
+        .and_then(|out| CString::new(out).ok())
+        .map_or(std::ptr::null_mut(), CString::into_raw)
+}
+
 /// この機械の git の版（`2.39.5`）。読めなければ NULL。`amonhen_string_free` で解放する。git を起動する
 /// ことがあるので（初めの 1 回だけ）、裏のスレッドで呼ぶ。
 #[unsafe(no_mangle)]
