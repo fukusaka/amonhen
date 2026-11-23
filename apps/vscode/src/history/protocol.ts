@@ -75,10 +75,9 @@ export interface EditStacked {
   available: boolean;
 }
 
-/** 詳細の欄の、変わったファイルの見せ方。`tree` は木にして差分の左に、`single` は選んだファイルの差分だけ */
+/** 詳細の欄の、変わったファイルの見せ方。`tree` はフォルダごとにまとめた木、そうでなければパスの並び */
 export interface DetailsLayout {
   tree: boolean;
-  single: boolean;
 }
 
 /** いくつも選んだコミットの見せ方（`commitDiff` の `history`・`rows`）。差分はファイルごとに求める */
@@ -92,9 +91,6 @@ export interface SelectionView {
   files: { path: string; added: number; removed: number; binary: boolean }[];
   /** 選んだコミット（上から。多ければ先頭だけ） */
   commits: { row: number; oid: string; subject: string; author: string }[];
-  /** Viewed を覚える鍵（選んだコミットがすべて `commits` にあるときだけ） */
-  viewedKey?: string;
-  viewed: string[];
 }
 
 /** History の検索の様子 */
@@ -137,8 +133,7 @@ export type HistoryHostMessage =
   | { type: 'lineage'; rows: string | null; edges?: string }
   | { type: 'search'; state: SearchState }
   | { type: 'busy'; busy: boolean }
-  /** `viewed` は Viewed にしたファイル */
-  | { type: 'details'; details: CommitDetails; viewed: string[] }
+  | { type: 'details'; details: CommitDetails }
   /** いくつも選んだコミットの差分。`token` は頼んだときのもの。読めなければ `error` */
   | { type: 'selection'; token: number; view?: SelectionView; error?: string }
   /** コミットの中の 1 ファイルの差分（最初の親との差分） */
@@ -192,8 +187,6 @@ export type HistoryWebviewMessage =
   | { type: 'openFile'; oid: string; path: string }
   /** コミットの中の 1 ファイルの差分を求める（詳細に並べる） */
   | { type: 'commitDiff'; oid: string; path: string }
-  /** 詳細のファイルを Viewed にする・戻す。`key` はコミット ID か、いくつも選んだときの見せ方の `viewedKey` */
-  | { type: 'viewed'; key: string; path: string; viewed: boolean }
   | { type: 'detailsLayout'; layout: DetailsLayout }
   /** 編集モードの見通しを求める。`updateRefs` は、積み重ねたブランチを今回だけどうするか（触っていなければなし） */
   | { type: 'editPreview'; key: number; steps: PlanStep[]; updateRefs?: boolean }

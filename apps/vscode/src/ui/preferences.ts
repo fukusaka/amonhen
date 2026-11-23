@@ -2,7 +2,6 @@
 import type * as vscode from 'vscode';
 import type { ArchiveFormat } from '../bundle/archiveBundle.ts';
 import type { DetailsLayout, HistoryItem, HistoryOrder } from '../history/protocol.ts';
-import { type ViewedStore, withViewed } from '../history/stackedFiles.ts';
 import type { MessageParts } from '../workingCopy/commitMessage.ts';
 import type { FileLayout } from '../workingCopy/fileList.ts';
 
@@ -76,23 +75,13 @@ export async function setHistoryHighlight(highlight: boolean): Promise<void> {
   await store?.update('history.highlight', highlight);
 }
 
-/** History の詳細で Viewed にしたファイル（コミットごと。新しい 500 コミットの分） */
-export function viewedFiles(key: string): string[] {
-  return store?.get<ViewedStore>('history.viewed')?.files[key] ?? [];
-}
-
-export async function setViewedFile(key: string, path: string, viewed: boolean): Promise<void> {
-  const now = store?.get<ViewedStore>('history.viewed') ?? { order: [], files: {} };
-  await store?.update('history.viewed', withViewed(now, key, path, viewed));
-}
-
-/** History の詳細の、変わったファイルの見せ方（既定は一覧を上に、全ファイルを縦に並べる） */
+/** History の詳細の、変わったファイルの見せ方（既定はパスの並び） */
 export function detailsLayout(): DetailsLayout {
-  return store?.get<DetailsLayout>('history.detailsLayout') ?? { tree: false, single: false };
+  return { tree: store?.get<DetailsLayout>('history.detailsLayout')?.tree ?? false };
 }
 
 export async function setDetailsLayout(layout: DetailsLayout): Promise<void> {
-  await store?.update('history.detailsLayout', { tree: layout.tree, single: layout.single });
+  await store?.update('history.detailsLayout', { tree: layout.tree });
 }
 
 /** 前に選んだアーカイブの形 */
