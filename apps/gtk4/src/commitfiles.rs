@@ -243,6 +243,8 @@ struct Bar {
     expand_icon: crate::icon::Icon,
     /// 行を比べるときに無視する空白。覚えない。
     whitespace: crate::whitespace::Picker,
+    /// 長い行を折り返す（アプリ全体の設定）。
+    wrap: gtk::Button,
 }
 
 struct Inner {
@@ -471,6 +473,7 @@ impl CommitDiff {
         let (expand_all, expand_icon) =
             icon_button(crate::icon::Kind::ExpandVertical, &tr!("Expand All Diffs"));
         let whitespace = crate::whitespace::Picker::new();
+        let wrap = crate::diff::wrap_button();
         let (find, _) = icon_button(crate::icon::Kind::Search, &tr!("Find in the diff (Ctrl+F)"));
         let (options, _) = icon_button(crate::icon::Kind::Sliders, &tr!("View Options"));
         let bar_box = gtk::Box::new(gtk::Orientation::Horizontal, 8);
@@ -486,6 +489,7 @@ impl CommitDiff {
             folders.upcast_ref(),
             expand_all.upcast_ref(),
             whitespace.widget().upcast_ref(),
+            wrap.upcast_ref(),
             find.upcast_ref(),
             options.upcast_ref(),
         ] {
@@ -524,6 +528,7 @@ impl CommitDiff {
                 expand_all,
                 expand_icon,
                 whitespace,
+                wrap,
             },
             st: RefCell::default(),
             browser: RefCell::default(),
@@ -1381,6 +1386,7 @@ impl Inner {
         let bar = &this.bar;
         bar.expand_all.set_visible(!files);
         bar.whitespace.widget().set_visible(!files);
+        bar.wrap.set_visible(!files);
         bar.folders.set_visible(tree);
         let (kind, tip) = if Inner::all_diffs_open(this) {
             (

@@ -64,6 +64,44 @@ pub fn wrap_item() -> crate::menu::Item {
     )
 }
 
+/// 差分の帯の、長い行を折り返す切り替えのボタン（空白のボタンの隣。アイコンだけで、折り返している間は強調の
+/// 色。ほかの所で切り替えても合わせる。macOS 版と同じ）。
+pub fn wrap_button() -> gtk::Button {
+    let icon = crate::icon::Icon::default();
+    let button = gtk::Button::new();
+    button.set_child(Some(&icon));
+    button.add_css_class("flat");
+    button.set_valign(gtk::Align::Center);
+    let update = {
+        let (button, icon) = (button.downgrade(), icon.downgrade());
+        move || {
+            let (Some(button), Some(icon)) = (button.upgrade(), icon.upgrade()) else {
+                return;
+            };
+            let on = wrap_lines();
+            icon.set(crate::icon::Kind::WrapLines, on);
+            let title = if on {
+                tr!("Wrapping long lines (Alt+Z)")
+            } else {
+                tr!("Wrap Long Lines (Alt+Z)")
+            };
+            button.set_tooltip_text(Some(&format!(
+                "{title}\n{}",
+                tr!("Wrap lines wider than the diff instead of scrolling sideways (in every diff)")
+            )));
+            button.update_property(&[gtk::accessible::Property::Label(&tr!("Wrap Long Lines"))]);
+        }
+    };
+    update();
+    button.connect_clicked(|_| crate::settings::set_bool(WRAP_LINES, !wrap_lines()));
+    crate::settings::connect_changed_while(&button, move |key| {
+        if key == WRAP_LINES {
+            update();
+        }
+    });
+    button
+}
+
 /// 長い行を折り返すか。確かめる用（`--snapshot`）に `AMH_WRAP_LINES=1` で入れられる。
 pub fn wrap_lines() -> bool {
     std::env::var("AMH_WRAP_LINES").is_ok_and(|v| v == "1") || crate::settings::bool(WRAP_LINES)

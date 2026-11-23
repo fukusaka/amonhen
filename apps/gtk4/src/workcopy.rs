@@ -205,8 +205,8 @@ struct Inner {
     /// 行を比べるときに無視する空白。無視している間は、1 本の差分（行ごとのチェック）にせず、行ごとの stage・
     /// 破棄もできない。覚えない。
     whitespace: crate::whitespace::Picker,
-    /// 差分の表示の設定（長い行を折り返す。macOS 版の `DiffViewOptionsPopUp`）。
-    view_options: gtk::Button,
+    /// 長い行を折り返す切り替え（アプリ全体の設定。空白のボタンの隣）。
+    wrap: gtk::Button,
     /// 選んでいるファイル。
     selected: RefCell<Option<String>>,
     /// 出している差分。
@@ -507,27 +507,10 @@ impl WorkingCopy {
         let whitespace = crate::whitespace::Picker::new();
         whitespace.widget().set_visible(false);
         bar.append(whitespace.widget());
-        // 差分の表示の設定（長い行を折り返す）。
-        let view_options = gtk::Button::new();
-        {
-            let icon = crate::icon::Icon::default();
-            icon.set(crate::icon::Kind::Sliders, false);
-            view_options.set_child(Some(&icon));
-        }
-        view_options.add_css_class("flat");
-        view_options.set_valign(gtk::Align::Center);
-        view_options.set_tooltip_text(Some(&tr!("View Options")));
-        view_options.update_property(&[gtk::accessible::Property::Label(&tr!("View Options"))]);
-        view_options.set_visible(false);
-        view_options.connect_clicked(|b| {
-            crate::menu::popup(
-                b,
-                b.width() as f64 / 2.0,
-                b.height() as f64,
-                vec![crate::diff::wrap_item()],
-            );
-        });
-        bar.append(&view_options);
+        // 長い行を折り返す（空白のボタンの隣。macOS 版と同じ）。
+        let wrap = crate::diff::wrap_button();
+        wrap.set_visible(false);
+        bar.append(&wrap);
         bar.append(&sides);
         bar.append(&conflict_buttons);
         // macOS 版と同じく、捨てる・行を含める の順。
@@ -609,7 +592,7 @@ impl WorkingCopy {
             embedded: RefCell::default(),
             line_endings,
             whitespace,
-            view_options,
+            wrap,
             selected: RefCell::default(),
             current: RefCell::default(),
             generation: Cell::new(0),
@@ -3498,7 +3481,7 @@ impl Inner {
         let exact = self.exact();
         let ignored = tr!("Can’t stage or discard lines while whitespace is ignored");
         self.whitespace.widget().set_visible(!conflict && chosen);
-        self.view_options.set_visible(!conflict && chosen);
+        self.wrap.set_visible(!conflict && chosen);
         self.lines.set_sensitive(selected > 0 && exact);
         let lines_tip = if !exact {
             Some(ignored.clone())

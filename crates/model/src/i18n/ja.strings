@@ -2372,6 +2372,8 @@
 "Not available yet" = "まだ使えません";
 "View Options" = "表示の設定";
 "Wrap Long Lines" = "長い行を折り返す";
+"Wrap Long Lines (Alt+Z)" = "長い行を折り返す（Alt+Z）";
+"Wrapping long lines (Alt+Z)" = "長い行を折り返している（Alt+Z）";
 "Wrap lines wider than the diff instead of scrolling sideways (in every diff)" = "差分の幅に収まらない行を、横にスクロールせずに折り返す（すべての差分で）";
 "{count} files" = "{count} ファイル";
 "Show Whole File" = "ファイル全体を表示";
