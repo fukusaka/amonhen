@@ -100,6 +100,10 @@ pub struct DiffContent<'a> {
     pub file_marks: &'a [char],
     /// 変更ファイルを木で見せるときの、表示の行の並び（None なら差分の行がそのまま表示の行）。
     pub tree: Option<&'a DiffTree>,
+    /// まだ差分を取っていないファイルの、足した・消した行の数（パスごと。コミットの詳細の `stats`）。
+    pub counts: Option<&'a HashMap<String, (u32, u32)>>,
+    /// hunk の見出しに、前後の行を広げる印を出す（History のコミットの差分）。
+    pub widen: bool,
 }
 
 impl DiffContent<'_> {
@@ -266,6 +270,8 @@ impl WorkingShown {
             marks: self.diff.combined.is_some(),
             file_marks: &[],
             tree: None,
+            counts: None,
+            widen: false,
         }
     }
 }
@@ -294,6 +300,11 @@ pub struct CommitShown {
     pub collapsed_folders: HashSet<String>,
     /// 木で見せるときの表示の行の並び。
     tree: Option<DiffTree>,
+    /// まだ差分を取っていないファイルの行の数（パスごと。詳細の `stats`）。
+    counts: HashMap<String, (u32, u32)>,
+    /// ファイルごとの前後の行の数（広げたものだけ）と、ファイル全体で見せているファイル。
+    contexts: HashMap<usize, u32>,
+    whole: HashSet<usize>,
     /// 表示を作り直した回数（古い表示の構文の色を捨てるため）。
     version: u32,
 }
@@ -317,6 +328,9 @@ impl CommitShown {
             tree_on: crate::prefs::bool(crate::prefs::HISTORY_FILE_TREE),
             collapsed_folders: HashSet::new(),
             tree: None,
+            counts: HashMap::new(),
+            contexts: HashMap::new(),
+            whole: HashSet::new(),
             version: 0,
         };
         // 最初の表示（構文の色は、読み込んだ所がこの版 0 の表示のものを送る。最初は隠すファイルがないので、
@@ -335,7 +349,72 @@ impl CommitShown {
             marks: false,
             file_marks: &self.file_marks,
             tree: self.tree.as_ref(),
+            counts: Some(&self.counts),
+            widen: true,
         }
+    }
+
+    /// 時間のかかる詳細が届いた（まだ差分を取っていないファイルの行の数も、ここから引く）。
+    fn set_extras(&mut self, extras: serde_json::Value) {
+        self.counts = extras["stats"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|s| {
+                let added = s["added"].as_u64().unwrap_or(0) as u32;
+                let removed = s["removed"].as_u64().unwrap_or(0) as u32;
+                Some((s["path"].as_str()?.to_owned(), (added, removed)))
+            })
+            .collect();
+        self.extras = Some(extras);
+    }
+
+    /// `file` 番目のファイルの足した・消した行の数（まだ差分を取っていなければ、詳細の `stats` から）。
+    fn file_counts(&self, file: usize) -> (u32, u32) {
+        let (path, diff) = &self.stacked.files[file];
+        if diff.pending.is_some() {
+            self.counts.get(path).copied().unwrap_or((0, 0))
+        } else {
+            (diff.added, diff.removed)
+        }
+    }
+
+    /// `file` 番目のファイルを前後 `context` 行で取り直す（まだ差分を取っていなければ、ここで取る。`u32::MAX` なら
+    /// ファイル全体）。取れなければ false。
+    fn load(&mut self, repo: &Repository, file: usize, context: u32) -> bool {
+        if Arc::get_mut(&mut self.stacked).is_none() {
+            // 構文の色を求めている裏の仕事が持っているので、写してから変える。
+            self.stacked = Arc::new(StackedDiff {
+                files: self.stacked.files.clone(),
+            });
+        }
+        let Some(stacked) = Arc::get_mut(&mut self.stacked) else {
+            return false;
+        };
+        match repo.set_stacked_context(stacked, file, context) {
+            Ok(()) => true,
+            Err(e) => {
+                eprintln!("差分を読めない（{}）: {e}", stacked.files[file].0);
+                false
+            }
+        }
+    }
+
+    /// まだ差分を取っていないなら取る。
+    fn load_pending(&mut self, repo: &Repository, file: usize) {
+        if self
+            .stacked
+            .files
+            .get(file)
+            .is_some_and(|(_, d)| d.pending.is_some())
+        {
+            self.load(repo, file, 3);
+        }
+    }
+
+    /// `file` 番目のファイルをファイル全体で見せているか（見出しの ⋯ の Show Whole File）。
+    pub fn shows_whole(&self, file: usize) -> bool {
+        self.whole.contains(&file)
     }
 
     /// 変更ファイルを木で見せるか。
@@ -360,8 +439,8 @@ impl CommitShown {
     pub fn expandable(&self) -> Vec<usize> {
         (0..self.stacked.files.len())
             .filter(|&i| {
-                let diff = &self.stacked.files[i].1;
-                !self.stacked.generated(i) && diff.added + diff.removed <= EXPAND_ALL_LIMIT
+                let (added, removed) = self.file_counts(i);
+                !self.stacked.generated(i) && added + removed <= EXPAND_ALL_LIMIT
             })
             .collect()
     }
@@ -374,10 +453,11 @@ impl CommitShown {
 
     /// 変更ファイルの数と、足した・消した行の数の合計（帯に出す）。
     pub fn totals(&self) -> (usize, u32, u32) {
-        let files = &self.stacked.files;
-        let added = files.iter().map(|(_, d)| d.added).sum();
-        let removed = files.iter().map(|(_, d)| d.removed).sum();
-        (files.len(), added, removed)
+        let count = self.stacked.files.len();
+        let (added, removed) = (0..count)
+            .map(|i| self.file_counts(i))
+            .fold((0, 0), |(a, r), (x, y)| (a + x, r + y));
+        (count, added, removed)
     }
 
     /// 表示を作り直す（構文の色は捨てる）。色を付け直すための、全ファイルと畳んでいるかを返す。
@@ -602,6 +682,8 @@ pub struct DiffFile {
     pub deleted: bool,
     /// そのコミットで足したファイル（その前の版はない）。
     pub added: bool,
+    /// ファイル全体で見せている（見出しの ⋯ の Show Whole File）。
+    pub whole: bool,
 }
 
 /// History の行に付ける ref の名前（ブランチ・リモートブランチ・タグ）。
@@ -1446,7 +1528,7 @@ impl Data {
                         if let Some((row, extras)) = self.early_extras.take()
                             && row == shown.row
                         {
-                            shown.extras = Some(extras);
+                            shown.set_extras(extras);
                         }
                         self.commit = Some(shown);
                         changed = true;
@@ -1473,7 +1555,7 @@ impl Data {
                         .is_some_and(|h| h.generation == generation);
                     if current && self.commit_wanted == Some(row) {
                         match &mut self.commit {
-                            Some(commit) if commit.row == row => commit.extras = Some(extras),
+                            Some(commit) if commit.row == row => commit.set_extras(extras),
                             // 差分より先に届いた。差分が届いたときに足す。
                             _ => self.early_extras = Some((row, extras)),
                         }
@@ -1850,8 +1932,19 @@ impl Data {
             commit: oid,
             deleted,
             added,
+            whole: commit.shows_whole(index),
             path,
         })
+    }
+
+    /// 差分の `diff_row` 行目（hunk の見出し）が入っているファイルの番号。
+    pub fn file_index_at(&self, diff_row: usize) -> Option<usize> {
+        let commit = self.commit.as_ref()?;
+        let rows = commit.diff.rows.get(..=diff_row)?;
+        rows.iter()
+            .filter(|r| r.kind == amonhen_layout::DiffRow::FILE)
+            .count()
+            .checked_sub(1)
     }
 
     /// 差分の `diff_row` 行目（ファイルの見出し）のファイルを畳む・開く。見出しでなければ何もしない。
@@ -1900,23 +1993,79 @@ impl Data {
 
     /// 差分の `file` 番目のファイルを畳む・開く。
     pub fn toggle_file_index(&mut self, file: usize) -> bool {
-        self.relayout(|commit| match commit.collapsed.get_mut(file) {
-            Some(collapsed) => {
-                *collapsed = !*collapsed;
-                true
+        let repo = self.repo.clone();
+        self.relayout(|commit| {
+            let Some(&collapsed) = commit.collapsed.get(file) else {
+                return false;
+            };
+            // まだ差分を取っていないファイル（ファイルの多いコミット）は、開くときに取る。
+            if collapsed && let Some(repo) = &repo {
+                commit.load_pending(repo, file);
             }
-            None => false,
+            commit.collapsed[file] = !collapsed;
+            true
+        })
+    }
+
+    /// hunk の見出しの印: `file` 番目のファイルの前後の行を 20 行ずつ広げる（macOS 版の `widenContext`）。
+    pub fn widen_context(&mut self, file: usize) -> bool {
+        let Some(repo) = self.repo.clone() else {
+            return false;
+        };
+        self.relayout(|commit| {
+            if commit.whole.contains(&file) {
+                return false;
+            }
+            let context = commit.contexts.get(&file).copied().unwrap_or(3) + 20;
+            if !commit.load(&repo, file, context) {
+                return false;
+            }
+            commit.contexts.insert(file, context);
+            true
+        })
+    }
+
+    /// 見出しの ⋯ の Show Whole File: `file` 番目のファイルの前後の行をファイル全体にする・戻す（開く）。
+    pub fn toggle_whole_file(&mut self, file: usize) -> bool {
+        let Some(repo) = self.repo.clone() else {
+            return false;
+        };
+        self.relayout(|commit| {
+            if file >= commit.collapsed.len() {
+                return false;
+            }
+            commit.load_pending(&repo, file);
+            let whole = !commit.whole.contains(&file);
+            let context = if whole {
+                u32::MAX
+            } else {
+                commit.contexts.get(&file).copied().unwrap_or(3)
+            };
+            if !commit.load(&repo, file, context) {
+                return false;
+            }
+            if whole {
+                commit.whole.insert(file);
+            } else {
+                commit.whole.remove(&file);
+            }
+            commit.collapsed[file] = false;
+            true
         })
     }
 
     /// 生成物と変更の多いファイルのほかをすべて開く（すべて開いていれば、すべて畳む）。帯の「差分をすべて開く・
     /// 畳む」。変わったら true。
     pub fn toggle_all_files(&mut self) -> bool {
+        let repo = self.repo.clone();
         self.relayout(|commit| {
             if commit.all_open() {
                 commit.collapsed.fill(true);
             } else {
                 for i in commit.expandable() {
+                    if let Some(repo) = &repo {
+                        commit.load_pending(repo, i);
+                    }
                     commit.collapsed[i] = false;
                 }
             }

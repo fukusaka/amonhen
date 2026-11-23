@@ -12950,6 +12950,12 @@ impl Root {
                 tr!("Collapse")
             },
         )];
+        // 前後の行をファイル全体にする・戻す（macOS 版の見出しの ⋯ と同じ）。
+        let mark = if file.whole { "✓ " } else { "" };
+        items.push(MenuItem::item(
+            "whole-file",
+            format!("{mark}{}", tr!("Show Whole File")),
+        ));
         items.push(MenuItem::separator("-file"));
         // 消したファイルは、そのコミットにはない（Blame を出さない）。
         if !file.deleted {
@@ -13019,6 +13025,14 @@ impl Root {
             "collapse" => self.with_history(|h| {
                 if h.session.data.toggle_file_index(file.index) {
                     h.session.renderer.forget_diff();
+                    let rows = h.diff_rows();
+                    h.diff.scroll_by(0.0, rows);
+                }
+            }),
+            "whole-file" => self.with_history(|h| {
+                if h.session.data.toggle_whole_file(file.index) {
+                    h.session.renderer.forget_diff();
+                    h.diff.dirty = true;
                     let rows = h.diff_rows();
                     h.diff.scroll_by(0.0, rows);
                 }
@@ -21503,6 +21517,24 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
                             DIFF_AT.with(|a| *a.borrow_mut() = Some((source.clone(), position)));
                         }
                         h.sender.send(Message::DiffFileAt(file));
+                        return;
+                    }
+                    // hunk の見出しの行番号の欄の印: そのファイルの前後の行を広げる（macOS 版と同じ）。
+                    let hunk = h.session.data.commit.as_ref().is_some_and(|c| {
+                        c.diff
+                            .rows
+                            .get(row as usize)
+                            .is_some_and(|r| r.kind == amonhen_layout::DiffRow::HUNK)
+                    });
+                    if left && hunk && position.X < crate::render::DIFF_GUTTER_WIDTH {
+                        if let Some(file) = h.session.data.file_index_at(row as usize)
+                            && h.session.data.widen_context(file)
+                        {
+                            h.session.renderer.forget_diff();
+                            h.diff.dirty = true;
+                            let rows = h.diff_rows();
+                            h.diff.scroll_by(0.0, rows);
+                        }
                         return;
                     }
                     if row >= 0.0 && h.session.data.toggle_file(row as usize) {
