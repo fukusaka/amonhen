@@ -27,7 +27,8 @@ becomes the GitHub Release notes.
 - All Files previews more than source: images zoom and any format the system reads counts as one, SVGs show
   what breaks on Android, iOS, Flutter and React Native (Android Studio's and flutter_svg's own conversion, built in;
   an approximation for the others), Markdown shows formatted by the app (GitHub tables, task lists, alerts, links,
-  Mermaid flowcharts; nothing fetched), and other binaries open in Quick Look.
+  Mermaid flowcharts coloured from the syntax theme, pele or Mermaid; nothing fetched), and other binaries open in
+  Quick Look.
 
 #### Changed
 
