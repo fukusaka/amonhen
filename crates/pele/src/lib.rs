@@ -35,5 +35,13 @@
 //! pele の LICENSE にある Lucide Icons の告知は、ズームの操作のアイコン（ブラウザ向けの部分）のもので、ここには
 //! 移していない。
 
+pub mod detect;
+pub mod diagrams;
+pub mod errors;
 pub mod js;
 pub mod layout;
+pub mod preprocess;
+pub mod svg;
+pub mod text;
+pub mod types;
+pub mod util;
