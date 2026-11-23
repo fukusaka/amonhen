@@ -62,6 +62,28 @@ fn flag(seen: &[String], name: &str) -> bool {
     seen.iter().any(|s| s == name)
 }
 
+/// 行を比べるときに無視する空白の指定（git diff と同じ）。
+const WHITESPACE_FLAGS: [&str; 5] = [
+    "-w",
+    "--ignore-all-space",
+    "-b",
+    "--ignore-space-change",
+    "--ignore-space-at-eol",
+];
+
+/// 窓口の差分の命令の whitespace（git diff と同じく、-w・-b・--ignore-space-at-eol の順に強いものを使う）。
+fn whitespace(seen: &[String]) -> &'static str {
+    if flag(seen, "-w") || flag(seen, "--ignore-all-space") {
+        "all"
+    } else if flag(seen, "-b") || flag(seen, "--ignore-space-change") {
+        "change"
+    } else if flag(seen, "--ignore-space-at-eol") {
+        "at-eol"
+    } else {
+        "exact"
+    }
+}
+
 fn value<'a>(seen: &'a [String], name: &str) -> Option<&'a str> {
     seen.iter()
         .position(|s| s == name)
@@ -288,12 +310,15 @@ impl DiffRows {
 
 /// `amonhen diff`: 作業ツリーの差分。`--staged` なら stage 済みの差分、`--combined` なら HEAD と作業ツリーの差分に
 /// 行ごとの stage の印をつける。`<rev>` を 1 つ渡せばそのコミットの、2 つ渡せば History で 2 つ選んだときの差分。
+/// `-w`・`-b`・`--ignore-space-at-eol` は git diff と同じく、行を比べるときに空白を無視する。
 pub fn diff(args: &[String]) -> Result<ExitCode> {
-    let (c, seen) = common(
-        args,
-        &["--staged", "--cached", "--combined", "--rows", "--stat"],
-        &[],
-    )?;
+    let mut flags = vec!["--staged", "--cached", "--combined", "--rows", "--stat"];
+    flags.extend(WHITESPACE_FLAGS);
+    let (c, seen) = common(args, &flags, &[])?;
+    let ws = whitespace(&seen);
+    if ws != "exact" && flag(&seen, "--combined") {
+        return Err(tr!("Can’t mark staged lines while whitespace is ignored").into());
+    }
     let front = open_repository(&c.dir)?;
     let numbers = flag(&seen, "--rows");
     let stat = flag(&seen, "--stat");
@@ -304,7 +329,10 @@ pub fn diff(args: &[String]) -> Result<ExitCode> {
             .map(|r| resolve(&*front, r))
             .collect::<Result<Vec<_>>>()?;
         let reply = match ids.as_slice() {
-            [one] => call(&*front, json!({"op": "commitDiff", "id": one}))?,
+            [one] => call(
+                &*front,
+                json!({"op": "commitDiff", "id": one, "whitespace": ws}),
+            )?,
             [from, to] => {
                 let history = call(&*front, json!({"op": "history"}))?.json["history"].clone();
                 let row = |id: &str| -> Result<Value> {
@@ -322,7 +350,7 @@ pub fn diff(args: &[String]) -> Result<ExitCode> {
                 };
                 call(
                     &*front,
-                    json!({"op": "commitDiff", "history": history, "rows": [row(from)?, row(to)?]}),
+                    json!({"op": "commitDiff", "history": history, "rows": [row(from)?, row(to)?], "whitespace": ws}),
                 )?
             }
             _ => return Err(tr!("Give one or two commits").into()),
@@ -358,7 +386,7 @@ pub fn diff(args: &[String]) -> Result<ExitCode> {
         };
         let reply = match call(
             &*front,
-            json!({"op": "workingDiff", "path": path, "mode": mode}),
+            json!({"op": "workingDiff", "path": path, "mode": mode, "whitespace": ws}),
         ) {
             Ok(r) => r,
             // 行ごとの印をつけられない差分（バイナリなど）は、stage していない差分を出す。
@@ -423,7 +451,9 @@ pub fn diff(args: &[String]) -> Result<ExitCode> {
 
 /// `amonhen show [<rev>]`: コミットの詳細と差分。
 pub fn show(args: &[String]) -> Result<ExitCode> {
-    let (c, seen) = common(args, &["--stat", "--rows", "--no-patch"], &[])?;
+    let mut flags = vec!["--stat", "--rows", "--no-patch"];
+    flags.extend(WHITESPACE_FLAGS);
+    let (c, seen) = common(args, &flags, &[])?;
     let front = open_repository(&c.dir)?;
     let rev = c.rest.first().map_or("HEAD", String::as_str);
     let id = resolve(&*front, rev)?;
@@ -436,7 +466,10 @@ pub fn show(args: &[String]) -> Result<ExitCode> {
         Value::Null
     };
     let no_patch = flag(&seen, "--no-patch");
-    let diff = call(&*front, json!({"op": "commitDiff", "id": id}))?;
+    let diff = call(
+        &*front,
+        json!({"op": "commitDiff", "id": id, "whitespace": whitespace(&seen)}),
+    )?;
     if c.json {
         let mut out = json!({
             "info": info,

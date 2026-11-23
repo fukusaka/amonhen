@@ -58,10 +58,11 @@ public final class WorkingStatus: @unchecked Sendable {
         amonhen_status_release(raw)
     }
 
-    /// `item` の差分。`staged` なら HEAD と index、そうでなければ index と作業ツリー。裏のスレッドで呼ぶ。
-    public func diff(of item: StatusItem, staged: Bool) throws -> WorkingFileDiff {
+    /// `item` の差分。`staged` なら HEAD と index、そうでなければ index と作業ツリー。空白を無視した差分は、行ごとの
+    /// stage・破棄に使えない。裏のスレッドで呼ぶ。
+    public func diff(of item: StatusItem, staged: Bool, whitespace: DiffWhitespace = .exact) throws -> WorkingFileDiff {
         guard let raw = amonhen_working_diff(
-            repository.raw, raw, UInt32(item.index), staged, UInt8(AmonhenEncoding_Utf16.rawValue))
+            repository.raw, raw, UInt32(item.index), staged, whitespace.rawValue, UInt8(AmonhenEncoding_Utf16.rawValue))
         else { throw AmonhenError.last() }
         return WorkingFileDiff(raw: raw, status: self, item: item, staged: staged)
     }

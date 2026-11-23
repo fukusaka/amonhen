@@ -45,6 +45,9 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     /// 一覧が空のときの説明。最初の status を読むまでは空（「変更なし」と言わない）。
     private let emptyLabel = NSTextField(labelWithString: "")
     private var diffBar: TitleAndButtonsBar?
+    /// 行を比べるときに無視する空白。無視している間は、1 本の差分（行ごとのチェック）にせず、行ごとの stage・
+    /// 破棄もできない。覚えない。
+    private let whitespacePopUp = WhitespacePopUp()
     private let amend = NSButton(checkboxWithTitle: "Amend", target: nil, action: nil)
     private let commitButton = YieldingButton(title: "Commit", target: nil, action: nil)
     private let suggestButton = NSButton(title: "", target: nil, action: nil)
@@ -352,7 +355,8 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         conflictButtons.isHidden = true
         lineEndingsLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         lineEndingsLabel.isHidden = true
-        let actionButtons = NSStackView(views: [lineEndingsLabel, sideControl, conflictButtons, discardButton, linesButton])
+        whitespacePopUp.onChange = { [weak self] _ in self?.whitespaceChanged() }
+        let actionButtons = NSStackView(views: [lineEndingsLabel, whitespacePopUp, sideControl, conflictButtons, discardButton, linesButton])
         let bar = TitleAndButtonsBar(title: titleLabel, buttons: actionButtons)
         diffBar = bar
         diffView.isSelectable = true
@@ -828,12 +832,13 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             return
         }
         unembed()
+        let whitespace = whitespacePopUp.whitespace
         Task {
-            // HEAD と作業ツリーの 1 本の差分（行ごとのチェック）。表せないときは、選んだ側の差分。
+            // HEAD と作業ツリーの 1 本の差分（行ごとのチェック）。表せないとき・空白を無視するときは、選んだ側の差分。
             let (diff, combined, failure) = await Task.detached(priority: .userInitiated) { () -> (WorkingFileDiff?, Bool, String?) in
-                if let combined = try? status.combinedDiff(of: entry.item) { return (combined, true, nil) }
+                if whitespace == .exact, let combined = try? status.combinedDiff(of: entry.item) { return (combined, true, nil) }
                 do {
-                    return (try status.diff(of: entry.item, staged: staged), false, nil)
+                    return (try status.diff(of: entry.item, staged: staged, whitespace: whitespace), false, nil)
                 } catch {
                     return (nil, false, "\(error)")
                 }
@@ -885,6 +890,13 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         if le.warning { tip.append(L("The next commit or checkout may change the line endings of the whole file")) }
         lineEndingsLabel.toolTip = tip.joined(separator: "\n")
         lineEndingsLabel.isHidden = false
+    }
+
+    /// 無視する空白を選び直した: 出している差分を読み直す。
+    private func whitespaceChanged() {
+        guard let key = selectedKey, !isConflict,
+              let entry = entries.first(where: { $0.item.path == key.path }) else { return updateButtons() }
+        showDiff(of: entry, staged: key.staged, keepScroll: true)
     }
 
     @objc private func sideChanged() {
@@ -955,15 +967,21 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         // 選んだファイルがなければ、ファイルの操作は出さない。
         linesButton.isHidden = isConflict || selectedKey == nil
         linesButton.title = staged || selectedStaged ? "Unstage Lines" : "Stage Lines"
-        linesButton.isEnabled = current != nil && !selected.isEmpty
-        linesButton.toolTip = current?.isCombined == true ? L("Include or exclude the selected lines in the next commit (Space)") : nil
+        // 空白を無視した差分の行は中身をそのまま表していないので、行ごとには stage・破棄しない。
+        let exact = whitespacePopUp.whitespace == .exact
+        whitespacePopUp.isHidden = isConflict || selectedKey == nil
+        linesButton.isEnabled = current != nil && !selected.isEmpty && exact
+        linesButton.toolTip = !exact ? L("Can’t stage or discard lines while whitespace is ignored")
+            : current?.isCombined == true ? L("Include or exclude the selected lines in the next commit (Space)") : nil
         // 選んだ行があれば行を、なければファイルを破棄する。stage 済みの変更は破棄しない。
         discardButton.isHidden = staged || isConflict || selectedKey == nil
         discardButton.title = selected.isEmpty ? "Discard File" : "Discard Lines"
         // 作業ツリーに変更がない（すべて stage 済みの）ファイルには、捨てるものがない。
         discardButton.isEnabled = selectedKey != nil && current?.item.isUnstaged == true
             && !(current?.isCombined == true && selected.contains { current?.isStaged(row: $0) == true })
-        discardButton.toolTip = selected.isEmpty
+            && (selected.isEmpty || exact)
+        discardButton.toolTip = !selected.isEmpty && !exact ? L("Can’t stage or discard lines while whitespace is ignored")
+            : selected.isEmpty
             ? L("Discard the working tree changes and return to the content of the next commit (the index)")
             : L("Discard the selected lines’ changes from the working tree (included lines are excluded first)")
         let count = stagedCount
@@ -1053,6 +1071,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         guard let current else { return }
         let rows = diffView.selectedChangeRows
         guard !rows.isEmpty else { return }
+        guard whitespacePopUp.whitespace == .exact else { return NSSound.beep() }
         if current.isCombined {
             setStaged(rows: rows, staged: !rows.allSatisfy { current.isStaged(row: $0) })
         } else {
@@ -1085,6 +1104,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         guard current?.item.isUnstaged == true else { return NSSound.beep() }
         let rows = diffView.selectedChangeRows
         if let current, !rows.isEmpty {
+            guard whitespacePopUp.whitespace == .exact else { return NSSound.beep() }
             actions.perform { try current.discard(rows: rows) }
         } else if current?.item.kind == .untracked {
             confirmDeleteUntracked(key.path, actions: actions)

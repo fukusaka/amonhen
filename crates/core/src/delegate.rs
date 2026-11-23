@@ -111,6 +111,7 @@ impl DiffMeta {
             removed: self.removed,
             generated: self.generated,
             pending: None,
+            whitespace: crate::diff::Whitespace::Exact,
         }
     }
 }

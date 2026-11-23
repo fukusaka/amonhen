@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use amonhen_core::diff::DiffView;
+use amonhen_core::diff::{DiffView, Whitespace};
 use amonhen_core::{HistorySnapshot, PairMode, Repository, Selection, WorkingDiff};
 use amonhen_model::i18n::{self, Lang};
 use amonhen_model::{ChangeKind, FileChange, Oid, RefKind, StatusEntry, StatusKind};
@@ -578,13 +578,14 @@ impl Session {
 
     fn commit_diff(&self, request: &Value) -> Result<Reply> {
         let repo = &*self.repo;
+        let ws = whitespace_arg(request)?;
         let (changes, stacked, selection) = if let Ok(id) = str_arg(request, "id") {
             let changes = repo.commit_changes(&oid(id)?)?;
-            let stacked = repo.stacked_diff(&changes)?;
+            let stacked = repo.stacked_diff_ws(&changes, ws)?;
             (Some(changes), stacked, Value::Null)
         } else if let Ok(id) = str_arg(request, "stash") {
             let changes = repo.stash_changes(&oid(id)?)?;
-            let stacked = repo.stacked_diff(&changes)?;
+            let stacked = repo.stacked_diff_ws(&changes, ws)?;
             (Some(changes), stacked, Value::Null)
         } else {
             let h = self.history(request)?;
@@ -594,7 +595,7 @@ impl Session {
                 _ => PairMode::Forward,
             };
             let (selection, stacked) =
-                repo.selection_diff(&h, &rows_arg(request, "rows")?, pair)?;
+                repo.selection_diff_ws(&h, &rows_arg(request, "rows")?, pair, ws)?;
             (None, stacked, selection_json(&selection))
         };
         let collapsed = vec![false; stacked.files.len()];
@@ -639,9 +640,13 @@ impl Session {
             .find(|e| e.path == path)
             .ok_or_else(|| tr!("File has no changes: {path}", path = path))?;
         let mode = request["mode"].as_str().unwrap_or("unstaged");
+        let ws = whitespace_arg(request)?;
         let diff = match mode {
-            "staged" => repo.working_diff(entry, true, &PROFILE)?,
-            "unstaged" => repo.working_diff(entry, false, &PROFILE)?,
+            "staged" => repo.working_diff_ws(entry, true, ws, &PROFILE)?,
+            "unstaged" => repo.working_diff_ws(entry, false, ws, &PROFILE)?,
+            "combined" if ws != Whitespace::Exact => {
+                return Err(tr!("Can’t mark staged lines while whitespace is ignored").into());
+            }
             "combined" => repo
                 .working_diff_combined(entry, &PROFILE)?
                 .ok_or_else(|| tr!("This diff can’t be shown with staged marks (read the staged and unstaged diffs separately)"))?,
@@ -842,6 +847,15 @@ fn last_commit_record<'a>(
                 .is_some_and(|l| l.starts_with("git commit"))
             && r["repo"].as_str().is_none_or(same)
     })
+}
+
+/// 差分の命令の whitespace（行を比べるときに無視する空白: exact・at-eol・change・all。省けば exact）。
+fn whitespace_arg(request: &Value) -> Result<Whitespace> {
+    match request["whitespace"].as_str() {
+        None => Ok(Whitespace::Exact),
+        Some(name) => Whitespace::from_name(name)
+            .ok_or_else(|| tr!("Unknown whitespace: {name}", name = name).into()),
+    }
 }
 
 #[cfg(test)]
