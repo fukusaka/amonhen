@@ -50,12 +50,12 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 
 | Feature | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
-| Branches arranged (current, active, inactive, merged, archived, stacked) | ✓ | ✓ | ✓ | ✓ | △ | — | VSCode: With the engine; without it, a folder tree split on `/`.<br>CLI: Via `amonhen run` (`branchGroups`).<br>TUI: A flat list with the current branch marked. |
-| Favorite branches | ✓ | ✓ | ✓ | ✓ | — | — |  |
-| Archived branches | ✓ | ✓ | ✓ | ✓ | — | — |  |
+| Branches arranged (current, active, inactive, merged, archived, stacked) | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: With the engine; without it, a folder tree split on `/`.<br>CLI: Via `amonhen run` (`branchGroups`).<br>TUI: Favorites (★), the current and default branches, active ones newest first, stacked ones under their base (↳), merged ones marked, Inactive and Archived folded (Enter opens them); no `/` folders. |
+| Favorite branches | ✓ | ✓ | ✓ | ✓ | — | ✓ | TUI: `*` on a branch in the sidebar. |
+| Archived branches | ✓ | ✓ | ✓ | ✓ | — | ✓ | TUI: `z` on a branch in the sidebar. |
 | Clean Up Branches (merged, merged by a pull request, upstream gone; one Undo) | ✓ | ✓ | ✓ | ✓ | △ | △ | VSCode: With the engine, a multi-select list with a heading per reason (Command Palette, the Branches heading's right-click). CLI: Via `amonhen run` (`branchCleanup`, `deleteBranches`); merged pull requests are read by the apps and VSCode with gh.<br>TUI: Clean Up Branches in the command list; `a` takes in branches whose upstream is gone. Branches merged by a pull request aren't looked for (no GitHub). |
 | Merged-by-pull-request mark on a branch (squash or rebase on GitHub) | ✓ | ✓ | △ | ✓ | △ | — | VSCode: With the engine; the number is in the row's tooltip. CLI: Via `amonhen run` (`branchGroups` with `pullRequests`); the apps and VSCode read merged pull requests with gh.<br>Windows: The word merged after the name, with the number in the row's tooltip; clicking it opens the branch status popover. |
-| Favorites reordered by dragging | ✓ | ✓ | ✓ | ✓ | n/a | — | VSCode: Move Up and Move Down in Favorites on the menu (a drop on a branch offers Merge and Rebase). |
+| Favorites reordered by dragging | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: Move Up and Move Down in Favorites on the menu (a drop on a branch offers Merge and Rebase).<br>TUI: `<` `>` on a favorite. |
 | Branch menu: checkout, rename, delete (Delete Anyway when unmerged) | ✓ | ✓ | ✓ | ✓ | △ | ✓ | macOS: Set Upstream is only in the Repository menu.<br>GTK4: Set Upstream is only in the Repository menu.<br>CLI: Via `amonhen run`.<br>TUI: `c` checks out, `n` renames and `D` deletes; with commits on no other branch, it names how many and draws them, then deletes anyway. |
 | Sync a branch that is not checked out (Fast-Forward, Push, Publish) | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: Via `amonhen run`.<br>TUI: `p` and `P` on the branch in the sidebar. |
 | Tags listed | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |

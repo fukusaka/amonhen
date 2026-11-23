@@ -814,7 +814,8 @@ fn sidebar_lists_refs_and_jumps_to_them() {
             "  Reflog",
             "Branches",
             "● main",
-            "  topic",
+            // main に取り込み済み（アプリの印）。
+            "  topic · merged",
             "Tags",
             "  v1"
         ]
@@ -966,12 +967,12 @@ fn sidebar_filter_narrows_refs() {
             "  History",
             "  Reflog",
             "Branches",
-            "  topic"
+            "  topic · merged"
         ]
     );
     assert!(filtered[6].starts_with(" Filter: TOP"), "{filtered:?}");
     // Enter で確定しても絞り込んだまま。Esc で戻る。
-    assert_eq!(side("0/TOP\n")[5], "  topic");
+    assert_eq!(side("0/TOP\n")[5], "  topic · merged");
     assert_eq!(side("0/TOP\n\x1b")[5], "● main");
 }
 
@@ -1709,10 +1710,10 @@ fn checkout_new_branch_and_undo() {
     println!("{out}");
     assert_eq!(branch(), "topic\n");
     assert!(out.contains("● topic"));
-    // main の行（1 つ上）で `b`: 名前を聞き、main から作って切り替える。
-    let typing = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjbne").unwrap();
+    // main の行（今のブランチ topic の下）で `b`: 名前を聞き、main から作って切り替える。
+    let typing = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjjbne").unwrap();
     assert!(typing.contains("New branch at main: ne"));
-    amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjbnext\n").unwrap();
+    amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjjbnext\n").unwrap();
     assert_eq!(branch(), "next\n");
     assert_eq!(
         git_out(dir.path(), &["rev-parse", "next"]),
@@ -1914,23 +1915,101 @@ fn merge_and_delete_the_marked_refs() {
     git(dir.path(), BASE, &["switch", "-q", "main"]);
     // main も進めておく（そうでなければ、git は最初の 1 つへ fast-forward してから取り込む）。
     commit(dir.path(), BASE + DAY * 2, "On main");
-    // サイドバーのブランチは a1・a2・main の順（2 つ下が a1）。
-    let asked = amonhen_tui::snapshot(open(dir.path()), 220, 12, clock(), "0jjvjvm").unwrap();
+    // サイドバーのブランチは今の main、a1・a2 の順（3 つ下が a1）。
+    let asked = amonhen_tui::snapshot(open(dir.path()), 220, 12, clock(), "0jjjvjvm").unwrap();
     println!("{asked}");
     assert!(
         asked.contains("Merge a1 (1), a2 (1) into main as one merge commit (octopus)? Undo brings it back.   y merge   n cancel"),
         "{asked}"
     );
-    amonhen_tui::snapshot(open(dir.path()), 220, 12, clock(), "0jjvjvmy").unwrap();
+    amonhen_tui::snapshot(open(dir.path()), 220, 12, clock(), "0jjjvjvmy").unwrap();
     let parents = git_out(dir.path(), &["log", "-1", "--format=%P"]);
     assert_eq!(parents.split_whitespace().count(), 3, "{parents}");
     // 取り込んだので、まとめて消せる。
-    let asked = amonhen_tui::snapshot(open(dir.path()), 220, 12, clock(), "0jjvjvD").unwrap();
+    let asked = amonhen_tui::snapshot(open(dir.path()), 220, 12, clock(), "0jjjvjvD").unwrap();
     assert!(asked.contains("Delete 2 branches (a1, a2)?"), "{asked}");
-    amonhen_tui::snapshot(open(dir.path()), 220, 12, clock(), "0jjvjvDy").unwrap();
+    amonhen_tui::snapshot(open(dir.path()), 220, 12, clock(), "0jjjvjvDy").unwrap();
     assert_eq!(
         git_out(dir.path(), &["branch", "--format=%(refname:short)"]),
         "main\n"
+    );
+}
+
+/// Branches はアプリと同じく並ぶ: 今のブランチ、動いているもの（新しい順）、積んだものは土台の下に ↳、
+/// Inactive（90 日以上）・Archived は畳んで。`*` でお気に入り（★、一番上）、`z` でアーカイブ、`<` `>` で順
+#[test]
+fn branches_arranged_with_favorites_and_archive() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    git(dir, BASE - DAY * 200, &["init", "-q", "-b", "main"]);
+    commit(dir, BASE - DAY * 200, "Start");
+    git(dir, BASE, &["switch", "-q", "-c", "old"]);
+    commit(dir, BASE - DAY * 150, "Old work");
+    git(dir, BASE, &["switch", "-q", "-c", "feature", "main"]);
+    commit(dir, BASE + DAY, "Feature");
+    git(dir, BASE, &["switch", "-q", "-c", "feature-2"]);
+    commit(dir, BASE + DAY * 2, "On the feature");
+    git(dir, BASE, &["switch", "-q", "-c", "fresh", "main"]);
+    commit(dir, BASE + DAY * 3, "Fresh");
+    git(dir, BASE, &["switch", "-q", "main"]);
+    let side = |keys: &str| -> Vec<String> {
+        let text = amonhen_tui::snapshot(open(dir), 160, 20, clock(), keys).unwrap();
+        println!("{text}");
+        let lines: Vec<String> = text
+            .lines()
+            .skip(1)
+            .filter_map(|l| column(l, 0))
+            .map(|l| l.trim_end().to_owned())
+            .collect();
+        let start = lines.iter().position(|l| l == "Branches").unwrap();
+        lines[start + 1..]
+            .iter()
+            .take_while(|l| !l.is_empty())
+            .cloned()
+            .collect()
+    };
+    let arranged = side("");
+    let names: Vec<String> = arranged
+        .iter()
+        .map(|l| l.split_whitespace().collect::<Vec<_>>().join(" "))
+        .collect();
+    assert_eq!(
+        names,
+        ["● main", "fresh", "feature", "↳ feature-2", "▸ Inactive 1"],
+        "{arranged:?}"
+    );
+    // Inactive を開く（Enter）。main の行から 5 つ下。
+    let opened = side("0jjjjjj\n");
+    assert!(opened.iter().any(|l| l.trim() == "old"), "{opened:?}");
+    // fresh（main の 1 つ下）をお気に入りに。一番上に ★ で出る。
+    side("0jjj*");
+    let starred = side("");
+    assert!(starred[0].contains("★ fresh"), "{starred:?}");
+    assert_eq!(
+        git_out(dir, &["config", "branch.fresh.amonhenPinned"]),
+        "1\n"
+    );
+    // feature もお気に入りにして、`<` で fresh の上へ。
+    side("0jjjj*");
+    side("0jjj<");
+    let order = side("");
+    // お気に入りの上に積んだブランチは、お気に入りの下に入れ子で出る。
+    assert!(
+        order[0].contains("★ feature") && order[1].contains("↳ feature-2"),
+        "{order:?}"
+    );
+    assert!(order[2].contains("★ fresh"), "{order:?}");
+    // fresh をお気に入りから外し、アーカイブする。
+    side("0jjjj*");
+    side("0jjjjjz");
+    let archived = side("");
+    assert!(
+        archived.iter().any(|l| l.contains("▸ Archived")),
+        "{archived:?}"
+    );
+    assert_eq!(
+        git_out(dir, &["config", "branch.fresh.amonhenArchived"]),
+        "true\n"
     );
 }
 
@@ -1939,23 +2018,23 @@ fn merge_and_delete_the_marked_refs() {
 fn rebase_onto_the_picked_ref() {
     let dir = tempfile::tempdir().unwrap();
     merged(dir.path());
-    // topic に切り替えて（`c`）、main（1 つ上）の上に rebase する。
+    // topic に切り替えて（`c`）、main（今のブランチ topic の下）の上に rebase する。
     amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjjc").unwrap();
-    let asked = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjr").unwrap();
+    let asked = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjjr").unwrap();
     println!("{asked}");
     // 見通しでコンフリクトを調べられなかったときは、何も足さない。
     assert!(asked.contains("Rebase topic onto main?   y rebase   n cancel"));
     // topic は main にもう入っていて、載せ直すコミットがない（前と後の絵は出ない）。
     assert!(!asked.contains(" Rebase topic onto main "), "{asked}");
     // main を topic に merge するのは fast-forward。取り込む数を言う。
-    let ff = amonhen_tui::snapshot(open(dir.path()), 200, 12, clock(), "0jjm").unwrap();
+    let ff = amonhen_tui::snapshot(open(dir.path()), 200, 12, clock(), "0jjjm").unwrap();
     println!("{ff}");
     assert!(
         ff.contains("Fast-forward topic to main (+2)?   y merge   f fast-forward only   c always a merge commit   s squash into one commit   n cancel"),
         "{ff}"
     );
     assert!(ff.contains(" Fast-forward topic "), "{ff}");
-    amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjry").unwrap();
+    amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjjry").unwrap();
     assert_eq!(
         git_out(dir.path(), &["merge-base", "topic", "main"]),
         git_out(dir.path(), &["rev-parse", "main"])
@@ -1989,18 +2068,18 @@ fn merge_modes() {
             .count()
     };
     let head = git_out(dir, &["rev-parse", "HEAD"]);
-    // サイドバーで 2 つ下が main。
-    let asked = amonhen_tui::snapshot(open(dir), 200, 12, clock(), "0jjm").unwrap();
+    // サイドバーで 3 つ下が main（今のブランチ topic が一番上）。
+    let asked = amonhen_tui::snapshot(open(dir), 200, 12, clock(), "0jjjm").unwrap();
     println!("{asked}");
     assert!(
         asked.contains("Fast-forward topic to main (+2)?"),
         "{asked}"
     );
-    amonhen_tui::snapshot(open(dir), 200, 12, clock(), "0jjmc").unwrap();
+    amonhen_tui::snapshot(open(dir), 200, 12, clock(), "0jjjmc").unwrap();
     assert_eq!(parents(), 2, "a merge commit");
     // 戻して、まとめて 1 つのコミットに（merge コミットではなく、main の変更がすべて入る）。
     git(dir, BASE, &["reset", "-q", "--hard", head.trim()]);
-    amonhen_tui::snapshot(open(dir), 200, 12, clock(), "0jjms").unwrap();
+    amonhen_tui::snapshot(open(dir), 200, 12, clock(), "0jjjms").unwrap();
     assert_eq!(parents(), 1, "an ordinary commit");
     assert_ne!(git_out(dir, &["rev-parse", "HEAD"]), head);
     assert!(dir.join("c.txt").exists());
@@ -3798,13 +3877,13 @@ fn rename_and_delete_branches_and_tags() {
     amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), &keys).unwrap();
     assert_eq!(branches(), "feature\nmain\n");
     // 今のブランチ（main）は消せない。
-    let refused = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjjD").unwrap();
+    let refused = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjD").unwrap();
     println!("{refused}");
     assert!(refused.contains("The current branch can’t be deleted"));
-    // feature（main の 1 つ上）を消す。
-    let asked = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjD").unwrap();
+    // feature（今のブランチ main の下）を消す。
+    let asked = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjjD").unwrap();
     assert!(asked.contains("Delete feature? Undo brings it back.   y delete   n cancel"));
-    amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjDy").unwrap();
+    amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "0jjjDy").unwrap();
     assert_eq!(branches(), "main\n");
     // History で選んでいるコミットにタグ。
     let typing = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "jTv").unwrap();

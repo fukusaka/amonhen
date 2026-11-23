@@ -50,12 +50,12 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 
 | 機能 | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
-| Branches の並び（今のもの・活発・止まった・マージ済み・アーカイブ・積み重ね） | ✓ | ✓ | ✓ | ✓ | △ | — | VSCode: エンジンがあるとき。なければ `/` で分けたフォルダーの木。<br>CLI: `amonhen run`（`branchGroups`）から。<br>TUI: 平らな一覧で、今のブランチに印。 |
-| お気に入りのブランチ | ✓ | ✓ | ✓ | ✓ | — | — |  |
-| ブランチのアーカイブ | ✓ | ✓ | ✓ | ✓ | — | — |  |
+| Branches の並び（今のもの・活発・止まった・マージ済み・アーカイブ・積み重ね） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: エンジンがあるとき。なければ `/` で分けたフォルダーの木。<br>CLI: `amonhen run`（`branchGroups`）から。<br>TUI: お気に入り（★）、今のブランチと既定のブランチ、動いているもの（新しい順）、積んだものは土台の下（↳）、取り込み済みに印、Inactive・Archived は畳む（Enter で開く）。`/` のフォルダーはない。 |
+| お気に入りのブランチ | ✓ | ✓ | ✓ | ✓ | — | ✓ | TUI: サイドバーのブランチで `*`。 |
+| ブランチのアーカイブ | ✓ | ✓ | ✓ | ✓ | — | ✓ | TUI: サイドバーのブランチで `z`。 |
 | ブランチを片付ける（取り込み済み・PR でマージ済み・上流が消えた。Undo 1 回） | ✓ | ✓ | ✓ | ✓ | △ | △ | VSCode: エンジンがあるとき、理由ごとの見出しを付けた複数選択の一覧（コマンドパレット、Branches の見出しの右クリック）。CLI: `amonhen run`（`branchCleanup`・`deleteBranches`）から。マージ済みの PR はアプリと VSCode が gh で読む。<br>TUI: 命令の一覧の Clean Up Branches。`a` で上流の消えたブランチも含める。PR でマージされたブランチは探さない（GitHub はない）。 |
 | PR でマージ済みのブランチの印（GitHub で squash・rebase） | ✓ | ✓ | △ | ✓ | △ | — | VSCode: エンジンがあるとき。番号は行のツールチップに出る。CLI: `amonhen run`（`pullRequests` を渡した `branchGroups`）から。マージ済みの PR はアプリと VSCode が gh で読む。<br>Windows: 名前の後ろに merged と出し、番号は行のツールチップに。押すとブランチの様子のポップオーバー。 |
-| お気に入りをドラッグで並べ替える | ✓ | ✓ | ✓ | ✓ | n/a | — | VSCode: メニューの Move Up・Move Down in Favorites（ブランチに落とすと Merge・Rebase）。 |
+| お気に入りをドラッグで並べ替える | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: メニューの Move Up・Move Down in Favorites（ブランチに落とすと Merge・Rebase）。<br>TUI: お気に入りで `<` `>`。 |
 | ブランチのメニュー: checkout・名前の変更・削除（未マージは Delete Anyway） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | macOS: Set Upstream は Repository メニューだけ。<br>GTK4: Set Upstream は Repository メニューだけ。<br>CLI: `amonhen run` から。<br>TUI: `c` で checkout、`n` で名前の変更、`D` で削除。ほかのどこにもないコミットがあれば、その数と絵を出して Delete Anyway。 |
 | checkout していないブランチの同期（Fast-Forward・Push・Publish） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: `amonhen run` から。<br>TUI: サイドバーのそのブランチで `p`・`P`。 |
 | タグの一覧 | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |
