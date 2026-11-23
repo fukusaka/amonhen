@@ -380,6 +380,57 @@ pub unsafe extern "C" fn amonhen_rename_label(
         .map_or(std::ptr::null_mut(), CString::into_raw)
 }
 
+/// SVG（`data` の `len` バイト）の、モバイル向けの描画部品で崩れる機能（JSON の配列。要素は
+/// `{"targets": ["android"|"ios"|"flutter"|"reactNative", …], "feature", "message", "count"}`）。
+/// `amonhen_string_free` で解放する。
+///
+/// # Safety
+/// `data` は `len` バイト読めること（`len` が 0 なら NULL でもよい）。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_svg_lint(data: *const u8, len: usize) -> *mut c_char {
+    let bytes = if len == 0 || data.is_null() {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(data, len) }
+    };
+    let issues: Vec<serde_json::Value> = amonhen_core::svglint::lint(bytes)
+        .into_iter()
+        .map(|i| {
+            serde_json::json!({
+                "targets": i.targets.iter().map(|t| t.key()).collect::<Vec<_>>(),
+                "feature": i.feature,
+                "message": i.message,
+                "count": i.count,
+            })
+        })
+        .collect();
+    CString::new(serde_json::Value::Array(issues).to_string())
+        .map_or(std::ptr::null_mut(), CString::into_raw)
+}
+
+/// Markdown（`text`、UTF-8）を、FE が組み立てて見せるブロックの並びにした JSON（`amonhen_core::markdown::Block` の
+/// 配列）。`github`（`https://github.com/owner/repo`、NULL か空なら使わない）があれば `#123`・`@user`・コミットの ID も
+/// リンクにする。`amonhen_string_free` で解放する。
+///
+/// # Safety
+/// `text` は `len` バイト読めること、`github` は NULL か NUL 終わりの文字列であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_markdown_parse(
+    text: *const u8,
+    len: usize,
+    github: *const c_char,
+) -> *mut c_char {
+    let bytes = if len == 0 || text.is_null() {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(text, len) }
+    };
+    let text = String::from_utf8_lossy(bytes);
+    let github = str_arg(github).ok().filter(|g| !g.is_empty());
+    CString::new(amonhen_core::markdown::parse_json(&text, github))
+        .map_or(std::ptr::null_mut(), CString::into_raw)
+}
+
 /// この機械の git の版（`2.39.5`）。読めなければ NULL。`amonhen_string_free` で解放する。git を起動する
 /// ことがあるので（初めの 1 回だけ）、裏のスレッドで呼ぶ。
 #[unsafe(no_mangle)]
@@ -1532,6 +1583,40 @@ fn blob_out(data: &[u8], len: *mut usize) -> *mut u8 {
         *len = data.len();
     }
     Box::into_raw(data.to_vec().into_boxed_slice()).cast()
+}
+
+/// SVG（`data` の `len` バイト）を、モバイル向けの描画部品 `target`（0 Android・1 iOS・2 flutter_svg・
+/// 3 react-native-svg）が崩すように書き換えた SVG（近似）。長さを `out_len` に書く（`amonhen_blob_free` で解放する）。
+///
+/// # Safety
+/// `data` は `len` バイト読めること（`len` が 0 なら NULL でもよい）。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_svg_approximate(
+    data: *const u8,
+    len: usize,
+    target: u8,
+    out_len: *mut usize,
+) -> *mut u8 {
+    let bytes = if len == 0 || data.is_null() {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(data, len) }
+    };
+    blob_out(
+        &amonhen_core::svgsim::approximate(bytes, svg_target(target)),
+        out_len,
+    )
+}
+
+/// 0 Android・1 iOS・2 flutter_svg・3 react-native-svg。
+fn svg_target(n: u8) -> amonhen_core::svglint::Target {
+    use amonhen_core::svglint::Target;
+    match n {
+        1 => Target::Ios,
+        2 => Target::Flutter,
+        3 => Target::ReactNative,
+        _ => Target::Android,
+    }
 }
 
 /// `amonhen_blob_read`・`amonhen_change_blob` が返したものを解放する。

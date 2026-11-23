@@ -271,6 +271,8 @@ struct Inner {
     stats: RefCell<Stats>,
     /// 画像の比べ方（コミットを変えても保つ）。
     image_mode: Cell<imagediff::Mode>,
+    /// 出しているコミットの GitHub のページ（`commit_extras` の origin から。Markdown のリンク先）。
+    github: RefCell<Option<String>>,
     /// 無視する空白を選び直したら呼ぶ（持ち主が、出しているものを読み直す）。
     on_whitespace: RefCell<Option<Rc<dyn Fn()>>>,
     /// 空白の扱いを変えて読み直した差分に戻す、開き方。
@@ -541,6 +543,7 @@ impl CommitDiff {
             },
             stats: RefCell::default(),
             image_mode: Cell::new(imagediff::Mode::default()),
+            github: RefCell::default(),
             on_whitespace: RefCell::default(),
             restore: RefCell::default(),
         });
@@ -584,6 +587,7 @@ impl CommitDiff {
     /// 別のコミットを読み始める: 前のコミットの行数を捨てる（`clear` は読んでいる途中にも呼ぶので、そこでは捨てない）。
     pub fn reset_stats(&self) {
         self.inner.stats.borrow_mut().clear();
+        self.inner.github.replace(None);
     }
 
     /// 出しているコミットの `commit_extras` の答えから、ファイルごとの行数を受け取る（まだ差分を取っていない
@@ -603,6 +607,15 @@ impl CommitDiff {
             })
             .collect();
         inner.stats.replace(stats);
+        // Markdown の #123 などのリンク先（GitHub の remote のときだけ）。
+        let github = extras["originUrl"]
+            .as_str()
+            .and_then(crate::github::GitHubRepository::parse)
+            .map(|g| g.web_url());
+        if let Some(browser) = inner.browser.borrow().as_ref() {
+            browser.set_github(github.clone());
+        }
+        inner.github.replace(github);
         let counts = Inner::pending_counts(inner);
         inner.diff.set_counts(counts);
         Inner::update_bar(inner);
@@ -1445,6 +1458,7 @@ impl Inner {
             {
                 let browser =
                     Browser::new(repo, commit, changes, !file_tree(), this.pending.clone());
+                browser.set_github(this.github.borrow().clone());
                 let weak = Rc::downgrade(this);
                 browser.connect_show_change(move |file| {
                     let Some(this) = weak.upgrade() else { return };

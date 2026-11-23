@@ -1,19 +1,39 @@
 //! History の右の列の、画像の前と後の比較（macOS 版の `ImageDiffPanel`・`ImageCompareCanvas`）。変更の見出しの
 //! 下に置く欄で、並べる・スワイプ・オニオンスキン・違うピクセルを切り替える。比べ方は窓を閉じるまで覚える
-//! （次に開く画像も同じ比べ方）。SVG は「テキストで見る」で差分に戻せる。
+//! （次に開く画像も同じ比べ方）。SVG は「テキストで見る」で差分に戻せる。すべてのファイルで開いた画像も、同じ欄の
+//! 1 枚だけの形で見せる。
+//!
+//! 拡大縮小: 帯のボタン・ピンチ・Ctrl＋スクロール。拡大している間は、ドラッグ（スワイプ・オニオンスキンでは
+//! Alt を押しながら）かスクロールで絵を動かす。枠に合わせているときのスクロールは差分に回す。前と後は同じ倍率。
 
 use std::cell::{Cell, OnceCell, RefCell};
+use std::collections::HashSet;
 use std::rc::Rc;
+use std::sync::OnceLock;
 
 use amonhen_model::tr;
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
 use gtk::{gdk, glib, graphene, gsk, pango};
 
-/// 画像として比べるファイルの拡張子（macOS 版と同じ）。
-const EXTENSIONS: [&str; 11] = [
-    "png", "jpg", "jpeg", "gif", "bmp", "tif", "tiff", "webp", "heic", "ico", "svg",
-];
+/// 画像として見せる拡張子: gdk-pixbuf が読める形式と、GTK が自分で読む PNG・JPEG・TIFF と SVG。PDF などの文書は
+/// プレビューに任せる（macOS 版と同じ）。
+fn extensions() -> &'static HashSet<String> {
+    static SET: OnceLock<HashSet<String>> = OnceLock::new();
+    SET.get_or_init(|| {
+        let mut set: HashSet<String> = ["png", "jpg", "jpeg", "tif", "tiff", "svg"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        for format in gtk::gdk_pixbuf::Pixbuf::formats() {
+            set.extend(format.extensions().iter().map(|e| e.to_ascii_lowercase()));
+        }
+        for doc in ["pdf", "ai", "eps"] {
+            set.remove(doc);
+        }
+        set
+    })
+}
 
 fn extension(path: &str) -> String {
     let name = path.rsplit('/').next().unwrap_or(path);
@@ -23,7 +43,7 @@ fn extension(path: &str) -> String {
 }
 
 pub fn is_image(path: &str) -> bool {
-    EXTENSIONS.contains(&extension(path).as_str())
+    extensions().contains(&extension(path))
 }
 
 pub fn is_svg(path: &str) -> bool {
@@ -90,36 +110,136 @@ pub fn panel(
     on_show_text: Rc<dyn Fn()>,
 ) -> gtk::Widget {
     let (old, new) = (texture(before), texture(after));
-    let base_caption = format!(
+    let caption = format!(
         "{}: {}    →    {}: {}",
         tr!("Before"),
         describe(before, old.as_ref()),
         tr!("After"),
         describe(after, new.as_ref())
     );
+    build(
+        old,
+        new,
+        caption,
+        Some((mode, on_mode)),
+        svg.then_some(on_show_text),
+        None,
+        false,
+    )
+}
+
+/// すべてのファイルで、2 つの絵を比べる欄（SVG のモバイル向けの確認: 元の絵と、部品が崩した近似）。`titles` は
+/// 前と後の見出し。欄の高さいっぱいに広げ、`notes` があれば絵の下に置く。
+pub fn compare(
+    before: &[u8],
+    after: &[u8],
+    titles: (String, String),
+    caption: String,
+    notes: Option<gtk::Widget>,
+) -> gtk::Widget {
+    let panel = build(
+        texture(Some(before)),
+        texture(Some(after)),
+        caption,
+        Some((Mode::TwoUp, Rc::new(|_| {}))),
+        None,
+        Some(titles),
+        true,
+    );
+    with_notes(panel, notes)
+}
+
+/// 画像の大きさとバイト数（すべてのファイルの説明。読めなければバイト数だけ）。
+pub fn size_caption(data: &[u8]) -> String {
+    describe(Some(data), texture(Some(data)).as_ref())
+}
+
+/// すべてのファイルで開いた画像（比べずに 1 枚だけ。比べ方の切り替えもスライダーも出さない）。`notes` があれば
+/// 絵の下に置く（SVG のモバイル向けの確認の一覧。欄の高さの 35% ほど、仕切りで変えられる）。読めなければ None。
+pub fn single(data: &[u8], notes: Option<gtk::Widget>) -> Option<gtk::Widget> {
+    let image = texture(Some(data))?;
+    let caption = describe(Some(data), Some(&image));
+    let panel = build(None, Some(image), caption, None, None, None, true);
+    Some(with_notes(panel, notes))
+}
+
+/// `notes` があれば、`panel` の下に一覧の欄を置く（欄の高さの 35% ほど、仕切りで変えられる）。
+fn with_notes(panel: gtk::Widget, notes: Option<gtk::Widget>) -> gtk::Widget {
+    let Some(notes) = notes else {
+        return panel;
+    };
+    let scroll = gtk::ScrolledWindow::builder()
+        .child(&notes)
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        .build();
+    scroll.set_margin_start(12);
+    scroll.set_margin_end(12);
+    scroll.set_margin_bottom(6);
+    let paned = gtk::Paned::new(gtk::Orientation::Vertical);
+    paned.set_vexpand(true);
+    paned.set_start_child(Some(&panel));
+    paned.set_end_child(Some(&scroll));
+    paned.set_shrink_end_child(false);
+    // 最初に大きさが決まったら、一覧を下の 35% ほどに（macOS 版と同じ割合）。
+    let placed = Cell::new(false);
+    paned.connect_notify_local(Some("max-position"), move |p, _| {
+        let max = p.max_position();
+        if !placed.get() && max > 0 {
+            placed.set(true);
+            p.set_position((max as f32 * 0.65) as i32);
+        }
+    });
+    paned.upcast()
+}
+
+/// 欄を作る。`modes` がなければ 1 枚だけ（`after` を出す）。`titles` は前と後の見出し（なければ「前」「後」）。
+/// `fill` なら高さいっぱいに広げる（すべてのファイル。下の仕切りの線は引かない）。
+fn build(
+    old: Option<gdk::Texture>,
+    new: Option<gdk::Texture>,
+    base_caption: String,
+    modes: Option<(Mode, OnMode)>,
+    on_show_text: Option<Rc<dyn Fn()>>,
+    titles: Option<(String, String)>,
+    fill: bool,
+) -> gtk::Widget {
+    let single = modes.is_none();
     let canvas = Canvas::new(old, new);
+    if let Some(titles) = titles {
+        canvas.imp().titles.replace(titles);
+    }
+    canvas.imp().single.set(single);
     canvas.set_vexpand(true);
     canvas.set_hexpand(true);
-    let modes = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    modes.add_css_class("linked");
-    let mut buttons: Vec<gtk::ToggleButton> = Vec::new();
-    for m in Mode::ALL {
-        let icon = crate::icon::Icon::default();
-        icon.set(m.icon(), false);
-        let button = gtk::ToggleButton::new();
-        button.set_child(Some(&icon));
-        button.set_tooltip_text(Some(&m.title()));
-        button.update_property(&[gtk::accessible::Property::Label(&m.title())]);
-        if let Some(first) = buttons.first() {
-            button.set_group(Some(first));
-        }
-        button.set_active(m == mode);
-        modes.append(&button);
-        buttons.push(button);
+    // 確かめる用（`--snapshot`）: 最初の倍率（`AMH_IMAGE_ZOOM=4` で 400%。macOS 版の `AMHImageZoom`）。
+    if let Some(zoom) = std::env::var("AMH_IMAGE_ZOOM")
+        .ok()
+        .and_then(|v| v.trim().parse::<f32>().ok())
+        .filter(|z| *z > 0.0)
+    {
+        canvas.set_zoom(Some(zoom));
     }
     let bar = gtk::Box::new(gtk::Orientation::Horizontal, 10);
-    bar.append(&modes);
-    if svg {
+    let mut buttons: Vec<(Mode, gtk::ToggleButton)> = Vec::new();
+    if modes.is_some() {
+        let group = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        group.add_css_class("linked");
+        for m in Mode::ALL {
+            let icon = crate::icon::Icon::default();
+            icon.set(m.icon(), false);
+            let button = gtk::ToggleButton::new();
+            button.set_child(Some(&icon));
+            button.set_tooltip_text(Some(&m.title()));
+            button.update_property(&[gtk::accessible::Property::Label(&m.title())]);
+            if let Some((_, first)) = buttons.first() {
+                button.set_group(Some(first));
+            }
+            group.append(&button);
+            buttons.push((m, button));
+        }
+        bar.append(&group);
+    }
+    if let Some(on_show_text) = on_show_text {
         let icon = crate::icon::Icon::default();
         icon.set(crate::icon::Kind::Doc, false);
         let text = gtk::Button::new();
@@ -137,12 +257,69 @@ pub fn panel(
     slider.set_draw_value(false);
     slider.set_value(0.5);
     slider.set_size_request(160, -1);
+    slider.set_visible(false);
     bar.append(&slider);
+    // 拡大縮小: 倍率（押すと 100% と合わせるを切り替える）・縮める・広げる・合わせる。
+    let zoom_label = gtk::Button::with_label(&tr!("Fit"));
+    zoom_label.add_css_class("flat");
+    zoom_label.add_css_class("numeric");
+    zoom_label.set_tooltip_text(Some(&tr!("Actual Size (100%) or Zoom to Fit")));
+    bar.append(&zoom_label);
+    let zooms = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    zooms.add_css_class("linked");
+    for (kind, title) in [
+        (crate::icon::Kind::ZoomOut, tr!("Zoom Out")),
+        (crate::icon::Kind::ZoomIn, tr!("Zoom In")),
+        (crate::icon::Kind::ZoomFit, tr!("Zoom to Fit")),
+    ] {
+        let icon = crate::icon::Icon::default();
+        icon.set(kind, false);
+        let button = gtk::Button::new();
+        button.set_child(Some(&icon));
+        button.set_tooltip_text(Some(&title));
+        button.update_property(&[gtk::accessible::Property::Label(&title)]);
+        let c = canvas.downgrade();
+        button.connect_clicked(move |_| {
+            let Some(c) = c.upgrade() else { return };
+            match kind {
+                crate::icon::Kind::ZoomOut => c.zoom_by(1.0 / 1.5),
+                crate::icon::Kind::ZoomIn => c.zoom_by(1.5),
+                _ => c.set_zoom(None),
+            }
+        });
+        zooms.append(&button);
+    }
+    bar.append(&zooms);
+    let c = canvas.downgrade();
+    zoom_label.connect_clicked(move |_| {
+        if let Some(c) = c.upgrade() {
+            c.set_zoom(if c.imp().zoom.get() == Some(1.0) {
+                None
+            } else {
+                Some(1.0)
+            });
+        }
+    });
+    let update_label = {
+        let (label, c) = (zoom_label.downgrade(), canvas.downgrade());
+        move || {
+            let (Some(label), Some(c)) = (label.upgrade(), c.upgrade()) else {
+                return;
+            };
+            label.set_label(&match c.imp().zoom.get() {
+                Some(z) => format!("{}%", (z * 100.0).round() as i64),
+                None => tr!("Fit"),
+            });
+        }
+    };
+    update_label();
+    canvas.connect_zoom(update_label);
     let caption = gtk::Label::new(None);
     caption.set_xalign(0.0);
     caption.set_ellipsize(pango::EllipsizeMode::End);
     caption.add_css_class("caption");
     caption.add_css_class("dim-label");
+    caption.set_text(&base_caption);
     let root = gtk::Box::new(gtk::Orientation::Vertical, 6);
     root.set_margin_top(8);
     root.set_margin_start(12);
@@ -152,7 +329,17 @@ pub fn panel(
     root.append(&caption);
     let outer = gtk::Box::new(gtk::Orientation::Vertical, 6);
     outer.append(&root);
-    outer.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+    if fill {
+        root.set_margin_bottom(8);
+        root.set_vexpand(true);
+        outer.set_vexpand(true);
+    }
+    if single {
+        return outer.upcast();
+    }
+    if !fill {
+        outer.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+    }
     let apply = {
         let (canvas, slider, caption) = (canvas.clone(), slider.clone(), caption.clone());
         Rc::new(move |mode: Mode| {
@@ -165,15 +352,18 @@ pub fn panel(
             });
         })
     };
-    apply(mode);
-    for (m, button) in Mode::ALL.into_iter().zip(&buttons) {
-        let (apply, on_mode) = (apply.clone(), on_mode.clone());
-        button.connect_toggled(move |b| {
-            if b.is_active() {
-                apply(m);
-                on_mode(m);
-            }
-        });
+    if let Some((mode, on_mode)) = modes {
+        apply(mode);
+        for (m, button) in &buttons {
+            button.set_active(*m == mode);
+            let (apply, on_mode, m) = (apply.clone(), on_mode.clone(), *m);
+            button.connect_toggled(move |b| {
+                if b.is_active() {
+                    apply(m);
+                    on_mode(m);
+                }
+            });
+        }
     }
     let c = canvas.clone();
     slider.connect_value_changed(move |s| c.set_position(s.value() as f32));
@@ -185,6 +375,9 @@ pub fn panel(
     });
     outer.upcast()
 }
+
+/// 比べ方を変えたときの知らせ先。
+type OnMode = Rc<dyn Fn(Mode)>;
 
 /// スワイプ・オニオンスキンの位置を動かしたときの知らせ先。
 type OnPosition = Box<dyn Fn(f32)>;
@@ -201,6 +394,20 @@ mod imp {
         /// 違うピクセルの絵と、違う数・全体の数（はじめて要るときに作る）。
         pub difference: OnceCell<(Option<gdk::Texture>, usize, usize)>,
         pub on_position: RefCell<Option<OnPosition>>,
+        /// 1 枚だけ見せる（比べない。`after` を出す）。
+        pub single: Cell<bool>,
+        /// 倍率（画像の 1 ピクセルを何ピクセルで描くか）。None なら枠に合わせる。
+        pub zoom: Cell<Option<f32>>,
+        /// 拡大したときの、枠の中心からのずらし。
+        pub pan: Cell<(f32, f32)>,
+        /// 倍率が変わった（帯の倍率の表示）。
+        pub on_zoom: RefCell<Option<Box<dyn Fn()>>>,
+        /// 絵を動かしているドラッグの、始めのずらし（境を動かしているなら None）。
+        pub drag: Cell<Option<(f32, f32)>>,
+        /// ピンチを始めたときの倍率。
+        pub pinch: Cell<f32>,
+        /// 前と後の見出し。
+        pub titles: RefCell<(String, String)>,
     }
 
     #[glib::object_subclass]
@@ -214,22 +421,85 @@ mod imp {
         fn constructed(&self) {
             self.parent_constructed();
             self.position.set(0.5);
-            // スワイプ・オニオンスキンでは、押した・ドラッグした位置まで動かす。
+            self.obj().set_overflow(gtk::Overflow::Hidden);
+            // 拡大している間は、並べる・違うピクセル・1 枚ではドラッグで絵を動かす（スワイプ・オニオンスキンは
+            // 境を動かすので Alt を押しながら）。そのほかは、押した・ドラッグした位置まで境を動かす。
             let drag = gtk::GestureDrag::new();
             let weak = self.obj().downgrade();
             drag.connect_drag_begin(move |g, x, _| {
                 g.set_state(gtk::EventSequenceState::Claimed);
-                if let Some(c) = weak.upgrade() {
+                let Some(c) = weak.upgrade() else { return };
+                let imp = c.imp();
+                let alt = g
+                    .current_event_state()
+                    .contains(gdk::ModifierType::ALT_MASK);
+                let pans = imp.single.get()
+                    || matches!(imp.mode.get(), Mode::TwoUp | Mode::Difference)
+                    || alt;
+                if imp.zoom.get().is_some() && pans {
+                    imp.drag.set(Some(imp.pan.get()));
+                } else {
+                    imp.drag.set(None);
                     c.track(x as f32);
                 }
             });
             let weak = self.obj().downgrade();
-            drag.connect_drag_update(move |g, dx, _| {
-                if let (Some(c), Some((x, _))) = (weak.upgrade(), g.start_point()) {
+            drag.connect_drag_update(move |g, dx, dy| {
+                let Some(c) = weak.upgrade() else { return };
+                if let Some((x, y)) = c.imp().drag.get() {
+                    c.imp().pan.set((x + dx as f32, y + dy as f32));
+                    c.queue_draw();
+                } else if let Some((x, _)) = g.start_point() {
                     c.track((x + dx) as f32);
                 }
             });
             self.obj().add_controller(drag);
+            // ピンチで拡大縮小。
+            let pinch = gtk::GestureZoom::new();
+            let weak = self.obj().downgrade();
+            pinch.connect_begin(move |_, _| {
+                if let Some(c) = weak.upgrade() {
+                    c.imp().pinch.set(c.scale());
+                }
+            });
+            let weak = self.obj().downgrade();
+            pinch.connect_scale_changed(move |_, scale| {
+                if let Some(c) = weak.upgrade() {
+                    c.set_zoom(Some(c.imp().pinch.get() * scale as f32));
+                }
+            });
+            self.obj().add_controller(pinch);
+            // Ctrl＋スクロールで拡大縮小。拡大している間のスクロールは絵を動かし、合わせているときは差分に回す。
+            let scroll =
+                gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::BOTH_AXES);
+            let weak = self.obj().downgrade();
+            scroll.connect_scroll(move |ctl, dx, dy| {
+                let Some(c) = weak.upgrade() else {
+                    return glib::Propagation::Proceed;
+                };
+                let wheel = ctl.unit() == gdk::ScrollUnit::Wheel;
+                if ctl
+                    .current_event_state()
+                    .contains(gdk::ModifierType::CONTROL_MASK)
+                {
+                    let steps = if wheel { -dy } else { -dy / 10.0 };
+                    if steps != 0.0 {
+                        c.zoom_by(1.1f32.powf(steps as f32));
+                    }
+                    return glib::Propagation::Stop;
+                }
+                if c.imp().zoom.get().is_none() {
+                    return glib::Propagation::Proceed;
+                }
+                let step = if wheel { 40.0 } else { 1.0 };
+                let (x, y) = c.imp().pan.get();
+                c.imp()
+                    .pan
+                    .set((x - (dx * step) as f32, y - (dy * step) as f32));
+                c.queue_draw();
+                glib::Propagation::Stop
+            });
+            self.obj().add_controller(scroll);
         }
     }
 
@@ -258,6 +528,7 @@ impl Canvas {
         let canvas: Self = glib::Object::new();
         canvas.imp().before.replace(before);
         canvas.imp().after.replace(after);
+        canvas.imp().titles.replace((tr!("Before"), tr!("After")));
         canvas
     }
 
@@ -275,6 +546,42 @@ impl Canvas {
         self.imp().on_position.replace(Some(Box::new(f)));
     }
 
+    fn connect_zoom(&self, f: impl Fn() + 'static) {
+        self.imp().on_zoom.replace(Some(Box::new(f)));
+    }
+
+    /// 倍率を決める（None なら枠に合わせる）。
+    fn set_zoom(&self, zoom: Option<f32>) {
+        let zoom = zoom.map(|z| z.clamp(0.05, 64.0));
+        self.imp().zoom.set(zoom);
+        if zoom.is_none() {
+            self.imp().pan.set((0.0, 0.0));
+        }
+        self.queue_draw();
+        if let Some(f) = self.imp().on_zoom.borrow().as_ref() {
+            f();
+        }
+    }
+
+    fn zoom_by(&self, factor: f32) {
+        self.set_zoom(Some(self.scale() * factor));
+    }
+
+    /// 今の倍率（合わせているならその倍率）。
+    fn scale(&self) -> f32 {
+        if let Some(zoom) = self.imp().zoom.get() {
+            return zoom;
+        }
+        let (w, h) = (self.width() as f32, self.height() as f32);
+        let area = if self.imp().single.get() || self.imp().mode.get() != Mode::TwoUp {
+            self.inset()
+        } else {
+            graphene::Rect::new(0.0, 16.0, ((w - 16.0) / 2.0).max(0.0), (h - 16.0).max(0.0))
+                .inset_r(4.0, 4.0)
+        };
+        Self::fit_scale(self.common(), &area)
+    }
+
     fn size_of(t: &Option<gdk::Texture>) -> (f32, f32) {
         t.as_ref()
             .map_or((0.0, 0.0), |t| (t.width() as f32, t.height() as f32))
@@ -289,19 +596,34 @@ impl Canvas {
         (a.0.max(b.0), a.1.max(b.1))
     }
 
-    /// `size` を `area` に収める（小さな絵は整数倍まで拡げ、ぼかさない）。
-    fn fit(size: (f32, f32), area: &graphene::Rect) -> graphene::Rect {
+    /// 枠に合わせるときの倍率（小さな絵は整数倍まで拡げ、ぼかさない）。
+    fn fit_scale(size: (f32, f32), area: &graphene::Rect) -> f32 {
         if size.0 <= 0.0 || size.1 <= 0.0 {
-            return graphene::Rect::zero();
+            return 1.0;
         }
         let mut scale = (area.width() / size.0).min(area.height() / size.1);
         if scale > 1.0 {
             scale = scale.min(8.0).floor().max(1.0);
         }
+        scale
+    }
+
+    /// `size` を `area` に置く: 倍率を決めていなければ収め、決めていればその倍率で中心からずらして。
+    fn fit(&self, size: (f32, f32), area: &graphene::Rect) -> graphene::Rect {
+        if size.0 <= 0.0 || size.1 <= 0.0 {
+            return graphene::Rect::zero();
+        }
+        let zoom = self.imp().zoom.get();
+        let scale = zoom.unwrap_or_else(|| Self::fit_scale(size, area));
+        let (dx, dy) = if zoom.is_some() {
+            self.imp().pan.get()
+        } else {
+            (0.0, 0.0)
+        };
         let (w, h) = ((size.0 * scale).round(), (size.1 * scale).round());
         graphene::Rect::new(
-            (area.x() + (area.width() - w) / 2.0).round(),
-            (area.y() + (area.height() - h) / 2.0).round(),
+            (area.x() + (area.width() - w) / 2.0 + dx).round(),
+            (area.y() + (area.height() - h) / 2.0 + dy).round(),
             w,
             h,
         )
@@ -328,10 +650,10 @@ impl Canvas {
     }
 
     fn track(&self, x: f32) {
-        if !matches!(self.imp().mode.get(), Mode::Swipe | Mode::Onion) {
+        if self.imp().single.get() || !matches!(self.imp().mode.get(), Mode::Swipe | Mode::Onion) {
             return;
         }
-        let rect = Self::fit(self.common(), &self.inset());
+        let rect = self.fit(self.common(), &self.inset());
         if rect.width() <= 0.0 {
             return;
         }
@@ -385,15 +707,24 @@ impl Canvas {
         );
         let (w, h) = (self.width() as f32, self.height() as f32);
         let position = self.imp().position.get();
+        let titles = self.imp().titles.borrow().clone();
+        if self.imp().single.get() {
+            let rect = self.fit(Self::size_of(&after), &self.inset());
+            checker(snapshot, &rect);
+            draw_texture(snapshot, &after, &rect, 1.0);
+            return;
+        }
         match self.imp().mode.get() {
             Mode::TwoUp => {
                 let half = ((w - 16.0) / 2.0).max(0.0);
                 let red = gdk::RGBA::new(0.88, 0.11, 0.14, 0.8);
                 let green = gdk::RGBA::new(0.18, 0.76, 0.49, 0.8);
-                for (i, (image, title, color)) in
-                    [(&before, tr!("Before"), red), (&after, tr!("After"), green)]
-                        .into_iter()
-                        .enumerate()
+                for (i, (image, title, color)) in [
+                    (&before, titles.0.clone(), red),
+                    (&after, titles.1.clone(), green),
+                ]
+                .into_iter()
+                .enumerate()
                 {
                     let area = graphene::Rect::new(
                         i as f32 * (half + 16.0),
@@ -403,10 +734,13 @@ impl Canvas {
                     );
                     label(&title, area.x(), 0.0);
                     if image.is_some() {
-                        let rect = Self::fit(Self::size_of(image), &area.inset_r(4.0, 4.0));
+                        // 拡大しても、それぞれの側の枠からはみ出さない。
+                        snapshot.push_clip(&area);
+                        let rect = self.fit(Self::size_of(image), &area.inset_r(4.0, 4.0));
                         checker(snapshot, &rect);
                         draw_texture(snapshot, image, &rect, 1.0);
                         frame(snapshot, &rect.inset_r(-1.5, -1.5), 2.0, &color);
+                        snapshot.pop();
                     } else {
                         let dash = area.inset_r(30.0, 20.0);
                         let path = gsk::PathBuilder::new();
@@ -423,7 +757,7 @@ impl Canvas {
                 }
             }
             Mode::Swipe | Mode::Onion => {
-                let rect = Self::fit(self.common(), &self.inset());
+                let rect = self.fit(self.common(), &self.inset());
                 checker(snapshot, &rect);
                 if self.imp().mode.get() == Mode::Onion {
                     draw_texture(snapshot, &before, &self.fitted(&before, &rect), 1.0);
@@ -452,11 +786,11 @@ impl Canvas {
                     );
                     snapshot.append_fill(&knob.to_path(), gsk::FillRule::Winding, &accent);
                 }
-                label(&tr!("Before"), rect.x() - 56.0, rect.y());
-                label(&tr!("After"), rect.x() + rect.width() + 8.0, rect.y());
+                label(&titles.0, rect.x() - 56.0, rect.y());
+                label(&titles.1, rect.x() + rect.width() + 8.0, rect.y());
             }
             Mode::Difference => {
-                let rect = Self::fit(self.common(), &self.inset());
+                let rect = self.fit(self.common(), &self.inset());
                 snapshot.append_color(&gdk::RGBA::BLACK, &rect);
                 let image = self.difference().0.clone();
                 if let Some(image) = image {
@@ -581,5 +915,9 @@ mod tests {
         assert!(!is_svg("logo.png"));
         assert!(!is_image("src/main.rs"));
         assert!(!is_image("Makefile"));
+        // 文書はプレビューに任せる。
+        assert!(!is_image("manual.pdf"));
+        assert!(!is_image("figure.eps"));
+        assert!(is_image("photo.JPEG"));
     }
 }
