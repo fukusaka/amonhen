@@ -23,6 +23,7 @@ mod repository;
 pub mod rewrite;
 pub mod svg2vector;
 pub mod svgandroid;
+pub mod svgcss;
 pub mod svgflutter;
 pub mod svglint;
 pub mod svgmobile;
