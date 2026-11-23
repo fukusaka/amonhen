@@ -61,6 +61,16 @@ pub fn resolve(link: &str, from: &str) -> Option<String> {
     (!path.is_empty()).then_some(path)
 }
 
+thread_local! {
+    /// 裏で画像にしている図の数（`--snapshot` はなくなるまで待つ）。
+    static DIAGRAMS_PENDING: Cell<u32> = const { Cell::new(0) };
+}
+
+/// 裏で画像にしている図があるか。
+pub fn diagrams_pending() -> bool {
+    DIAGRAMS_PENDING.with(|p| p.get() > 0)
+}
+
 /// 図の絵（幅は 640 px まで）。色は図の中の指定 `own`、なければ設定の「図の配色」と今の外観・テーマで当て、
 /// 外観・テーマ・図の配色が変わったら色だけを当て直す（形と位置はそのまま）。色を当てられなければ `None`。
 pub fn diagram_picture(
@@ -68,32 +78,67 @@ pub fn diagram_picture(
     own: Option<amonhen_core::diagram::MermaidConfig>,
     alt: &str,
 ) -> Option<gtk::Picture> {
-    // 高い解像度の画面でぼやけないよう、2 倍の画素で画像にして論理の大きさで見せる（GTK4 の画面の倍率は 1 か 2）
+    // 高い解像度の画面でぼやけないよう、2 倍の画素で画像にして論理の大きさで見せる（GTK4 の画面の倍率は 1 か 2）。
+    // 画像にするのは裏のスレッドで（大きな図は数十 ms かかる）。大きさは SVG の属性から先に決めて場所を取っておく。
     const SCALE: i32 = 2;
     let colored = move |svg: &str, dark: bool| {
         let (vars, backdrop) = crate::theme::diagram_palette(dark, own.as_ref());
         amonhen_core::diagram::colorize(svg, &vars, backdrop)
-            .and_then(|s| crate::imagediff::svg_texture(s.as_bytes(), SCALE))
     };
     let style = adw::StyleManager::default();
-    let (first, w, h) = colored(&svg, style.is_dark())?;
-    let (w, h) = if w > MAX_IMAGE_WIDTH {
-        (MAX_IMAGE_WIDTH, h * MAX_IMAGE_WIDTH / w.max(1))
+    let first = colored(&svg, style.is_dark())?;
+    let (natural_w, natural_h) = crate::imagediff::svg_size(&first)?;
+    let (w, h) = if natural_w > MAX_IMAGE_WIDTH {
+        (
+            MAX_IMAGE_WIDTH,
+            natural_h * MAX_IMAGE_WIDTH / natural_w.max(1),
+        )
     } else {
-        (w, h)
+        (natural_w, natural_h)
     };
-    let picture = gtk::Picture::for_paintable(&first);
+    let picture = gtk::Picture::new();
     picture.set_can_shrink(true);
     picture.set_content_fit(gtk::ContentFit::Contain);
     picture.set_size_request(w, h);
     picture.set_alternative_text(Some(alt));
-    let recolor = {
+    // 色を当てた SVG を裏で画像にして見せる。続けて頼まれたら、最後のものだけを見せる。
+    let generation = Rc::new(Cell::new(0u32));
+    let show = {
         let weak = picture.downgrade();
+        let generation = generation.clone();
+        Rc::new(move |colored_svg: String| {
+            let mine = generation.get().wrapping_add(1);
+            generation.set(mine);
+            let weak = weak.clone();
+            let generation = generation.clone();
+            DIAGRAMS_PENDING.with(|p| p.set(p.get() + 1));
+            glib::spawn_future_local(async move {
+                let pixels = gio::spawn_blocking(move || {
+                    crate::imagediff::svg_pixels(
+                        colored_svg.as_bytes(),
+                        natural_w * SCALE,
+                        natural_h * SCALE,
+                    )
+                })
+                .await
+                .ok()
+                .flatten();
+                DIAGRAMS_PENDING.with(|p| p.set(p.get() - 1));
+                if generation.get() != mine {
+                    return;
+                }
+                if let (Some(picture), Some(pixels)) = (weak.upgrade(), pixels) {
+                    picture.set_paintable(Some(&pixels.texture()));
+                }
+            });
+        })
+    };
+    show(first);
+    let recolor = {
+        let show = show.clone();
         Rc::new(move || {
-            if let Some(picture) = weak.upgrade()
-                && let Some((texture, _, _)) = colored(&svg, adw::StyleManager::default().is_dark())
-            {
-                picture.set_paintable(Some(&texture));
+            if let Some(s) = colored(&svg, adw::StyleManager::default().is_dark()) {
+                show(s);
             }
         })
     };

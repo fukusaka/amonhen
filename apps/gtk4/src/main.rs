@@ -3705,6 +3705,7 @@ fn after_first_show(
                     if (view.is_mapped() && !view.is_settled())
                         || pending.get() > 0
                         || assist::is_busy()
+                        || markdownview::diagrams_pending()
                         || tabs::host_of(&window).is_some_and(|h| !h.idle())
                     {
                         return glib::ControlFlow::Continue;
