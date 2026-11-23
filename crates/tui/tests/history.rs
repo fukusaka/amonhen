@@ -2050,6 +2050,24 @@ fn branches_arranged_with_favorites_and_archive() {
         git_out(dir, &["config", "branch.fresh.amonhenArchived"]),
         "true\n"
     );
+    // `v` で印をつけたブランチは、まとめてお気に入りに（★feature の下の feature-2 と、main）。
+    side("0jjjvjv*");
+    assert_eq!(
+        git_out(dir, &["config", "branch.feature-2.amonhenPinned"]),
+        "2\n"
+    );
+    assert_eq!(
+        git_out(dir, &["config", "branch.main.amonhenPinned"]),
+        "3\n"
+    );
+    // まとめてアーカイブ（★ の 2 つ目と 3 つ目）。
+    side("0jjjvjvz");
+    for name in ["feature-2", "main"] {
+        assert_eq!(
+            git_out(dir, &["config", &format!("branch.{name}.amonhenArchived")]),
+            "true\n"
+        );
+    }
 }
 
 /// サイドバーの `r` で、今のブランチを選んだ ref の上に rebase する
