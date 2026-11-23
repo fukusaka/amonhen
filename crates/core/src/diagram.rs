@@ -10,8 +10,9 @@ use std::collections::HashMap;
 /// 描いた図。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Drawn {
-    /// pele の SVG（色は CSS の変数のまま。`colorize` で色を当てる）。
-    Svg(String),
+    /// pele の SVG（色は CSS の変数のまま。`colorize` で色を当てる）と、図の中で指定した Mermaid のテーマ
+    /// （`%%{init: …}%%`・front matter の `config` の `theme`・`themeVariables`。なければ `None`）。
+    Svg(String, Option<MermaidConfig>),
     /// 描けない（書き方の誤りなど）。理由は pele の言葉のまま（英語）。
     Error(String),
 }
@@ -31,14 +32,134 @@ fn draw_mermaid(text: &str) -> Option<Drawn> {
         return None;
     }
     Some(match amonhen_pele::render(text) {
-        Ok(rendered) => Drawn::Svg(rendered.svg),
+        Ok(rendered) => Drawn::Svg(rendered.svg, own_config(text)),
         Err(error) => Drawn::Error(error.message),
     })
+}
+
+/// 図の中で指定した Mermaid のテーマ（pele の前処理が読んだ config から）。
+#[cfg(feature = "diagrams")]
+fn own_config(text: &str) -> Option<MermaidConfig> {
+    use amonhen_pele::preprocess::preprocess;
+    use amonhen_pele::util::yaml::Value;
+    let config = preprocess(text, None).ok()?.config;
+    let theme = match config.get("theme") {
+        Some(Value::Str(name)) => Some(name.trim().to_owned()),
+        _ => None,
+    };
+    let mut variables = Vec::new();
+    if let Some(Value::Obj(vars)) = config.get("themeVariables") {
+        for (key, value) in vars.iter() {
+            let value = match value {
+                Value::Str(s) => s.clone(),
+                Value::Bool(b) => b.to_string(),
+                Value::Num(n) => n.to_string(),
+                _ => continue,
+            };
+            variables.push((key.clone(), value));
+        }
+    }
+    (theme.is_some() || !variables.is_empty()).then_some(MermaidConfig { theme, variables })
 }
 
 #[cfg(not(feature = "diagrams"))]
 fn draw_mermaid(_text: &str) -> Option<Drawn> {
     None
+}
+
+/// Mermaid のテーマの指定（mermaid-cli の設定ファイル `{"theme": …, "themeVariables": {…}}` と同じ中身）。
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MermaidConfig {
+    /// 名前つきのテーマ（`default`・`base` など）。なければ `default`。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub theme: Option<String>,
+    /// テーマ変数の上書き（名前 → 値）。
+    #[serde(
+        default,
+        rename = "themeVariables",
+        with = "pairs",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub variables: Vec<(String, String)>,
+}
+
+mod pairs {
+    //! `themeVariables` を JSON のオブジェクトで読み書きする（値の文字以外は文字にする）。
+    use serde::{Deserialize, Deserializer, Serializer, ser::SerializeMap};
+
+    pub fn serialize<S: Serializer>(v: &[(String, String)], s: S) -> Result<S::Ok, S::Error> {
+        let mut map = s.serialize_map(Some(v.len()))?;
+        for (k, val) in v {
+            map.serialize_entry(k, val)?;
+        }
+        map.end()
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<(String, String)>, D::Error> {
+        let map = serde_json::Map::<String, serde_json::Value>::deserialize(d)?;
+        Ok(map
+            .into_iter()
+            .filter_map(|(k, v)| {
+                let v = match v {
+                    serde_json::Value::String(s) => s,
+                    serde_json::Value::Bool(b) => b.to_string(),
+                    serde_json::Value::Number(n) => n.to_string(),
+                    _ => return None,
+                };
+                Some((k, v))
+            })
+            .collect())
+    }
+}
+
+impl MermaidConfig {
+    /// mermaid-cli の設定ファイル（JSON）を読む。`themeVariables` だけのオブジェクトも受ける（テーマは base）。
+    pub fn parse(text: &str) -> Result<Self, String> {
+        let value: serde_json::Value = serde_json::from_str(text).map_err(|e| e.to_string())?;
+        let obj = value
+            .as_object()
+            .ok_or_else(|| amonhen_model::tr!("A Mermaid theme file is a JSON object"))?;
+        // 包みの形（{"mermaid": {...}} など）は見ない。theme・themeVariables がなければ、全体を変数とみる
+        if obj.contains_key("theme") || obj.contains_key("themeVariables") {
+            let mut config: Self = serde_json::from_value(serde_json::json!({
+                "theme": obj.get("theme").cloned().unwrap_or(serde_json::Value::Null),
+                "themeVariables": obj.get("themeVariables").cloned().unwrap_or_else(|| serde_json::json!({})),
+            }))
+            .map_err(|e| e.to_string())?;
+            if config
+                .theme
+                .as_deref()
+                .is_some_and(|t| MermaidTheme::from_name(t).is_none())
+            {
+                return Err(amonhen_model::tr!(
+                    "Unknown Mermaid theme: {name}",
+                    name = config.theme.take().unwrap_or_default()
+                ));
+            }
+            Ok(config)
+        } else {
+            let config: Self =
+                serde_json::from_value(serde_json::json!({ "themeVariables": value }))
+                    .map_err(|e| e.to_string())?;
+            Ok(Self {
+                theme: Some("base".into()),
+                ..config
+            })
+        }
+    }
+
+    /// pele の変数に。
+    fn palette(&self) -> Vec<(String, String)> {
+        let name = self
+            .theme
+            .as_deref()
+            .and_then(MermaidTheme::from_name)
+            .unwrap_or(MermaidTheme::Default);
+        from_mermaid(
+            &crate::mermaidtheme::variables_with(name.name(), &self.variables).unwrap_or_default(),
+        )
+    }
 }
 
 /// 図の配色（設定の「図の配色」）。
@@ -52,7 +173,12 @@ pub enum Scheme {
     /// Mermaid 本家のテーマ。`None` は外観に合わせる（明るい表示は default、暗い表示は dark）。名前つきは外観に
     /// 関係なくそのテーマ（地も塗る）。
     Mermaid(Option<MermaidTheme>),
+    /// 読み込んだ Mermaid のテーマ（設定の鍵は `mermaid-import:名前`、中身は FE が覚えている）。
+    Imported,
 }
+
+/// 読み込んだ Mermaid のテーマを指す設定の鍵の接頭辞。
+pub const IMPORTED_PREFIX: &str = "mermaid-import:";
 
 /// Mermaid の名前つきテーマ。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -72,6 +198,11 @@ impl MermaidTheme {
         Self::Forest,
         Self::Base,
     ];
+
+    /// Mermaid での名前から。
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|t| t.name() == name.trim())
+    }
 
     /// Mermaid での名前。
     pub fn name(self) -> &'static str {
@@ -93,6 +224,7 @@ impl Scheme {
             Self::Pele => "pele".into(),
             Self::Mermaid(None) => "mermaid".into(),
             Self::Mermaid(Some(theme)) => format!("mermaid-{}", theme.name()),
+            Self::Imported => IMPORTED_PREFIX.into(),
         }
     }
 
@@ -101,6 +233,7 @@ impl Scheme {
         match key {
             "pele" => Self::Pele,
             "mermaid" => Self::Mermaid(None),
+            _ if key.starts_with(IMPORTED_PREFIX) => Self::Imported,
             _ => key
                 .strip_prefix("mermaid-")
                 .and_then(|name| MermaidTheme::ALL.into_iter().find(|t| t.name() == name))
@@ -117,7 +250,7 @@ impl Scheme {
 
     /// 図の地を塗るか（Mermaid のテーマは、外観と合わなくても読めるよう、テーマの地を敷く）。
     pub fn backdrop(self) -> bool {
-        matches!(self, Self::Mermaid(_))
+        matches!(self, Self::Mermaid(_) | Self::Imported)
     }
 }
 
@@ -163,6 +296,8 @@ pub fn palette(scheme: Scheme, dark: bool, theme: &ThemeColors) -> Vec<(String, 
             .collect()
     };
     match scheme {
+        // 中身がわからない読み込んだテーマは、構文の色にする
+        Scheme::Imported => palette(Scheme::Syntax, dark, theme),
         Scheme::Pele if dark => own(&PELE_DARK),
         Scheme::Pele => Vec::new(),
         Scheme::Mermaid(theme) => {
@@ -249,6 +384,24 @@ fn flatten(color: &str, base: &str) -> String {
         return mix(&format!("#{}", &h[..6]), base, f64::from(alpha) / 255.0);
     }
     color.to_owned()
+}
+
+/// 図を描くときの配色の変数と、地を塗るか。図の中で Mermaid のテーマを指定していればそれ（設定より先）、なければ
+/// 設定の配色 `scheme`。`imported` は `scheme` が読み込んだ Mermaid のテーマのとき、その中身。
+pub fn colors_for(
+    own: Option<&MermaidConfig>,
+    scheme: Scheme,
+    imported: Option<&MermaidConfig>,
+    dark: bool,
+    theme: &ThemeColors,
+) -> (Vec<(String, String)>, bool) {
+    if let Some(own) = own {
+        return (own.palette(), true);
+    }
+    if let (Scheme::Imported, Some(imported)) = (scheme, imported) {
+        return (imported.palette(), true);
+    }
+    (palette(scheme, dark, theme), scheme.backdrop())
 }
 
 /// pele の SVG `svg` に配色 `vars` を当て、CoreSVG・librsvg で描ける SVG にする。`backdrop` なら図の地を
@@ -342,7 +495,8 @@ mod tests {
     #[cfg(feature = "diagrams")]
     #[test]
     fn flowcharts_are_drawn_and_colored() {
-        let Some(Drawn::Svg(svg)) = draw("mermaid", "flowchart LR\n  A[Start] --> B[End]\n") else {
+        let Some(Drawn::Svg(svg, None)) = draw("mermaid", "flowchart LR\n  A[Start] --> B[End]\n")
+        else {
             panic!("not drawn");
         };
         assert!(svg.contains("var(--"));
@@ -355,6 +509,51 @@ mod tests {
         assert!(mermaid.contains("<rect x=\"0\" y=\"0\""), "{mermaid}");
         assert!(syntax.contains("#f5e0e0") && syntax.contains("#aa0000"));
         assert!(light.contains(">Start</text>"));
+    }
+
+    #[cfg(feature = "diagrams")]
+    #[test]
+    fn a_diagram_can_name_its_own_theme() {
+        let text = "%%{init: {\"theme\": \"forest\", \"themeVariables\": {\"lineColor\": \"#ff0000\"}}}%%\nflowchart LR\n  A --> B\n";
+        let Some(Drawn::Svg(svg, Some(own))) = draw("mermaid", text) else {
+            panic!("no theme read");
+        };
+        assert_eq!(own.theme.as_deref(), Some("forest"));
+        assert_eq!(
+            own.variables,
+            [("lineColor".to_owned(), "#ff0000".to_owned())]
+        );
+        let (vars, backdrop) = colors_for(Some(&own), Scheme::Syntax, None, true, &theme());
+        assert!(backdrop);
+        let vars: HashMap<_, _> = vars.into_iter().collect();
+        assert_eq!(vars["--pele-line"], "#ff0000");
+        assert_eq!(vars["--pele-surface"], "#cde498");
+        let front = "---\nconfig:\n  theme: neutral\n---\nflowchart LR\n  A --> B\n";
+        let Some(Drawn::Svg(_, Some(own))) = draw("mermaid", front) else {
+            panic!("no front matter theme");
+        };
+        assert_eq!(own.theme.as_deref(), Some("neutral"));
+        assert!(colorize(&svg, &vars.into_iter().collect::<Vec<_>>(), true).is_some());
+    }
+
+    #[test]
+    fn theme_files_are_mermaid_cli_configs() {
+        let c = MermaidConfig::parse(r##"{"theme": "base", "themeVariables": {"primaryColor": "#ff0000", "darkMode": true}}"##).unwrap();
+        assert_eq!(c.theme.as_deref(), Some("base"));
+        assert!(
+            c.variables
+                .contains(&("darkMode".to_owned(), "true".to_owned()))
+        );
+        let bare = MermaidConfig::parse(r##"{"primaryColor": "#00ff00"}"##).unwrap();
+        assert_eq!(bare.theme.as_deref(), Some("base"));
+        assert!(MermaidConfig::parse(r#"{"theme": "nope"}"#).is_err());
+        assert!(MermaidConfig::parse("[1]").is_err());
+        let round: MermaidConfig =
+            serde_json::from_str(&serde_json::to_string(&c).unwrap()).unwrap();
+        assert_eq!(round, c);
+        let (vars, _) = colors_for(None, Scheme::Imported, Some(&c), false, &theme());
+        let vars: HashMap<_, _> = vars.into_iter().collect();
+        assert_eq!(vars["--pele-surface"], "#ff0000");
     }
 
     #[cfg(feature = "diagrams")]

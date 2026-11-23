@@ -81,383 +81,497 @@ const KEYS: &[&str] = &[
 /// Mermaid の名前つきテーマ（default・neutral・dark・forest・base）の、計算したあとの色。知らない名前なら None。
 /// 色は `#rrggbb`（不透明でなければ `#rrggbbaa`）。
 pub fn variables(theme: &str) -> Option<Vec<(&'static str, String)>> {
-    let vars = match theme {
-        "default" => default_theme(),
-        "neutral" => neutral_theme(),
-        "dark" => dark_theme(),
-        "forest" => forest_theme(),
-        "base" => base_theme(),
+    variables_with(theme, &[])
+}
+
+/// `theme` に、Mermaid の themeVariables の上書き `overrides`（名前 → 値。色は Mermaid が読む書き方のまま）を当てたあとの色。
+///
+/// Mermaid の `getThemeVariables(overrides)` → `calculate(overrides)` と同じく、テーマを作ってから上書きを置き、
+/// `updateColors` を回し、もう一度上書きを置く（上書きした変数は必ずその値になる）。`darkMode` は `"true"` で真。
+/// khroma が読めない値（フォントの名前など）と、ここで扱わない名前は読み捨てる。
+pub fn variables_with(
+    theme: &str,
+    overrides: &[(String, String)],
+) -> Option<Vec<(&'static str, String)>> {
+    let (constructor, update): (Step, Step) = match theme {
+        "default" => (default_constructor, default_update),
+        "neutral" => (neutral_constructor, neutral_update),
+        "dark" => (dark_constructor, dark_update),
+        "forest" => (forest_constructor, forest_update),
+        "base" => (base_constructor, base_update),
         _ => return None,
     };
+    let overrides: Vec<(&str, &str)> = overrides
+        .iter()
+        .map(|(key, value)| (key.as_str(), value.trim()))
+        .filter(|(key, value)| *key == "darkMode" || khroma::is_valid(value))
+        .collect();
+    let mut t = Theme::default();
+    constructor(&mut t);
+    // calculate(overrides)
+    for (key, value) in &overrides {
+        t.set(key, *value);
+    }
+    update(&mut t);
+    for (key, value) in &overrides {
+        t.set(key, *value);
+    }
     Some(
         KEYS.iter()
             .map(|&key| {
-                let value = vars
-                    .get(key)
-                    .unwrap_or_else(|| panic!("mermaid theme {theme}: {key} is not set"));
-                (key, khroma::to_hex(value))
+                let value = t.vars.get(key).map_or_else(
+                    || panic!("mermaid theme {theme}: {key} is not set"),
+                    |value| khroma::to_hex(value),
+                );
+                (key, value)
             })
             .collect(),
     )
 }
 
-/// テーマの変数（khroma の文字のまま）。
-type Vars = HashMap<&'static str, String>;
-
 use khroma::Ch::{H, L, S};
 use khroma::{adjust, darken, invert, lighten};
 
-/// `theme-helpers.js` の `mkBorder`（`darkMode` は偽）。
-fn mk_border(color: &str) -> String {
-    adjust(color, &[(S, -40.0), (L, -10.0)])
+/// テーマのコンストラクタ・`updateColors`。
+type Step = fn(&mut Theme);
+
+/// テーマの `this`（変数の名前 → khroma の文字）。ない変数は JavaScript の undefined。
+#[derive(Default)]
+struct Theme {
+    vars: HashMap<String, String>,
 }
 
-/// git0〜git7 のもと（default・forest・base の `this.gitN || …`）。
-fn git_seed(primary: &str, secondary: &str, tertiary: &str) -> Vec<String> {
-    vec![
-        primary.to_string(),
-        secondary.to_string(),
-        tertiary.to_string(),
-        adjust(primary, &[(H, -30.0)]),
-        adjust(primary, &[(H, -60.0)]),
-        adjust(primary, &[(H, -90.0)]),
-        adjust(primary, &[(H, 60.0)]),
-        adjust(primary, &[(H, 120.0)]),
-    ]
-}
+impl Theme {
+    /// `this.key`（なければ空。空は JavaScript で偽）。
+    fn get(&self, key: &str) -> String {
+        self.vars.get(key).cloned().unwrap_or_default()
+    }
 
-fn set_all(vars: &mut Vars, names: &[&'static str], values: Vec<String>) {
-    for (name, value) in names.iter().zip(values) {
-        vars.insert(name, value);
+    fn set(&mut self, key: &str, value: impl Into<String>) {
+        self.vars.insert(key.to_string(), value.into());
+    }
+
+    /// `this.key = this.key || value(this)`。
+    fn or(&mut self, key: &str, value: impl FnOnce(&Self) -> String) {
+        if self.get(key).is_empty() {
+            let value = value(self);
+            self.set(key, value);
+        }
+    }
+
+    /// `this.darkMode`（上書きの `"true"` だけが真。どのテーマも既定では置かない）。
+    fn dark(&self) -> bool {
+        self.get("darkMode").eq_ignore_ascii_case("true")
     }
 }
 
-const PIES: [&str; 8] = [
-    "pie1", "pie2", "pie3", "pie4", "pie5", "pie6", "pie7", "pie8",
-];
+/// `theme-helpers.js` の `mkBorder`。
+fn mk_border(color: &str, dark: bool) -> String {
+    if dark {
+        adjust(color, &[(S, -40.0), (L, 10.0)])
+    } else {
+        adjust(color, &[(S, -40.0), (L, -10.0)])
+    }
+}
+
 const GITS: [&str; 8] = [
     "git0", "git1", "git2", "git3", "git4", "git5", "git6", "git7",
 ];
 
-/// `theme-default.js`。コンストラクタの終わりで `updateColors` を呼び、`calculate` でもう一度呼ぶ。2 回目は
-/// `x || y` の値はそのままだが、git0〜git7 は `darken(…, 25)` をもう一度受ける（Mermaid の既定の gitGraph の
-/// 色はこの 2 回分）。
-fn default_theme() -> Vars {
-    let mut v = Vars::new();
-    // コンストラクタ
-    let primary = "#ECECFF";
-    // secondaryColor は adjust(primary, {h: 120}) のすぐ後で '#ffffde' に置き換わる。
-    let secondary = "#ffffde";
-    let tertiary = adjust(primary, &[(H, -160.0)]);
-    v.insert("primaryColor", primary.into());
-    v.insert("secondaryColor", secondary.into());
-    v.insert("tertiaryColor", tertiary.clone());
-    v.insert("primaryBorderColor", mk_border(primary));
-    v.insert("secondaryBorderColor", mk_border(secondary));
-    v.insert("tertiaryBorderColor", mk_border(&tertiary));
-    v.insert("primaryTextColor", invert(primary));
-    v.insert("secondaryTextColor", invert(secondary));
-    v.insert("tertiaryTextColor", invert(&tertiary));
-    // background は '#f4f4f4' から 'white' に、lineColor・textColor は invert(background) から置き換わる。
-    v.insert("background", "white".into());
-    v.insert("mainBkg", "#ECECFF".into());
-    let second_bkg = "#ffffde";
-    v.insert("lineColor", "#333333".into());
-    let border1 = "#9370DB";
-    let border2 = "#aaaa33";
-    v.insert("arrowheadColor", "#333333".into());
-    let label_background = "rgba(232,232,232, 0.8)";
-    let text_color = "#333";
-    v.insert("textColor", text_color.into());
-    let actor_text_color = "black";
-    v.insert("noteBkgColor", "#fff5ad".into());
-    let task_text_dark_color = "black";
-
-    // updateColors（2 回とも同じ値になるもの）
-    v.insert("nodeBorder", border1.into());
-    v.insert("clusterBkg", second_bkg.into());
-    v.insert("clusterBorder", border2.into());
-    v.insert("titleColor", text_color.into());
-    v.insert("edgeLabelBackground", label_background.into());
-    v.insert("noteBorderColor", border2.into());
-    v.insert("noteTextColor", actor_text_color.into());
-    let pies = vec![
-        primary.to_string(),
-        secondary.to_string(),
-        adjust(&tertiary, &[(L, -40.0)]),
-        adjust(primary, &[(L, -10.0)]),
-        adjust(secondary, &[(L, -30.0)]),
-        adjust(&tertiary, &[(L, -20.0)]),
-        adjust(primary, &[(H, 60.0), (L, -20.0)]),
-        adjust(primary, &[(H, -60.0), (L, -40.0)]),
+/// default・forest・base の git: `this.gitN = this.gitN || …` のあと、`darkMode` なら lighten、でなければ darken。
+fn git_colors(t: &mut Theme) {
+    let seed: [fn(&Theme) -> String; 8] = [
+        |t| t.get("primaryColor"),
+        |t| t.get("secondaryColor"),
+        |t| t.get("tertiaryColor"),
+        |t| adjust(&t.get("primaryColor"), &[(H, -30.0)]),
+        |t| adjust(&t.get("primaryColor"), &[(H, -60.0)]),
+        |t| adjust(&t.get("primaryColor"), &[(H, -90.0)]),
+        |t| adjust(&t.get("primaryColor"), &[(H, 60.0)]),
+        |t| adjust(&t.get("primaryColor"), &[(H, 120.0)]),
     ];
-    set_all(&mut v, &PIES, pies);
-    v.insert("pieTitleTextColor", task_text_dark_color.into());
-    v.insert("pieSectionTextColor", text_color.into());
-    v.insert("pieStrokeColor", "black".into());
-    v.insert("pieOuterStrokeColor", "black".into());
-
-    // git: 1 回目に darken(…, 25)、2 回目は `this.gitN || …` で 1 回目の値を残してから、もう一度 darken(…, 25)。
-    let gits = git_seed(primary, secondary, &tertiary)
-        .iter()
-        .map(|c| darken(&darken(c, 25.0), 25.0))
-        .collect();
-    set_all(&mut v, &GITS, gits);
-    v
+    for (key, seed) in GITS.iter().zip(seed) {
+        t.or(key, seed);
+    }
+    let dark = t.dark();
+    for key in GITS {
+        let color = t.get(key);
+        t.set(
+            key,
+            if dark {
+                lighten(&color, 25.0)
+            } else {
+                darken(&color, 25.0)
+            },
+        );
+    }
 }
 
-/// `theme-neutral.js`。`updateColors` は `calculate` の 1 回だけ。
-fn neutral_theme() -> Vars {
-    let mut v = Vars::new();
-    // コンストラクタ
-    let primary = "#eee";
-    let contrast = "#707070";
-    let secondary = lighten(contrast, 55.0);
-    let background = "#ffffff";
-    let tertiary = adjust(primary, &[(H, -160.0)]);
-    v.insert("primaryColor", primary.into());
-    v.insert("secondaryColor", secondary.clone());
-    v.insert("background", background.into());
-    v.insert("tertiaryColor", tertiary.clone());
-    v.insert("primaryBorderColor", mk_border(primary));
-    v.insert("secondaryBorderColor", mk_border(&secondary));
-    v.insert("tertiaryBorderColor", mk_border(&tertiary));
-    v.insert("primaryTextColor", invert(primary));
-    v.insert("secondaryTextColor", invert(&secondary));
-    v.insert("tertiaryTextColor", invert(&tertiary));
-    let text_color = invert(background);
-    v.insert("textColor", text_color.clone());
-    v.insert("mainBkg", "#eee".into());
-    // lineColor は invert(background) から置き換わる。
-    v.insert("lineColor", "#666".into());
-    let border1 = "#999";
-    let text = "#333";
-    v.insert("arrowheadColor", "#333333".into());
-    v.insert("edgeLabelBackground", "white".into());
+/// pie の文字と線（`this.pieX = this.pieX || …`）。
+fn pie_text(t: &mut Theme, title: &str) {
+    t.or("pieTitleTextColor", |t| t.get(title));
+    t.or("pieSectionTextColor", |t| t.get("textColor"));
+    t.or("pieStrokeColor", |_| "black".into());
+    t.or("pieOuterStrokeColor", |_| "black".into());
+}
 
-    // updateColors
-    let second_bkg = lighten(contrast, 55.0);
-    let border2 = contrast;
-    v.insert("noteBorderColor", "#999".into());
-    v.insert("noteBkgColor", "#666".into());
-    v.insert("noteTextColor", "#fff".into());
-    // cScale1〜cScale8（pieN = cScaleN）
-    let c_scale = [
-        "#F4F4F4", "#555", "#BBB", "#777", "#999", "#DDD", "#FFF", "#DDD",
-    ];
-    v.insert("nodeBorder", border1.into());
-    v.insert("clusterBkg", second_bkg);
-    v.insert("clusterBorder", border2.into());
-    v.insert("titleColor", text.into());
-    let task_text_dark_color = text;
-    set_all(
-        &mut v,
-        &PIES,
-        c_scale.iter().map(|c| c.to_string()).collect(),
+// 下のテーマは、返す変数とそれが読む変数の行だけを、Mermaid と同じ順に写す。コンストラクタは上書きより前に
+// 走るので、そこで `darkMode` を読む `mkBorder` はいつも偽で計算する（Mermaid も同じ）。
+
+/// `theme-default.js` のコンストラクタ。終わりで `updateColors` を一度呼ぶ。`calculate` はこのあと上書きを
+/// 置いてもう一度呼ぶので、git0〜git7 は `darken(…, 25)` を 2 回受ける（Mermaid の既定の gitGraph の色）。
+///
+/// secondaryColor・tertiaryColor・枠と文字の色・mainBkg はここでしか計算しないので、primaryColor などを
+/// 上書きしても変わらない。pie・git は updateColors で `||` だが、上書きより前の 1 回目で埋まるので、これも
+/// 基の色の上書きには付いてこない（Mermaid も同じ。基の色から作り直すのは base だけ）。上書きした変数そのものは
+/// 最後に置き直すので、その値になる。darkMode の上書きは 2 回目の git の lighten・darken にだけ効く。
+fn default_constructor(t: &mut Theme) {
+    t.set("background", "#f4f4f4");
+    t.set("primaryColor", "#ECECFF");
+    t.set(
+        "secondaryColor",
+        adjust(&t.get("primaryColor"), &[(H, 120.0)]),
     );
-    v.insert("pieTitleTextColor", task_text_dark_color.into());
-    v.insert("pieSectionTextColor", text_color);
-    v.insert("pieStrokeColor", "black".into());
-    v.insert("pieOuterStrokeColor", "black".into());
-    // git0 = darken(pie1, 25)、git1〜git7 = pie2〜pie8（どれも真なので `||` の右は使わない）。
-    let mut gits = vec![darken(c_scale[0], 25.0)];
-    gits.extend(c_scale[1..].iter().map(|c| c.to_string()));
-    set_all(&mut v, &GITS, gits);
-    v
+    t.set("secondaryColor", "#ffffde");
+    t.set(
+        "tertiaryColor",
+        adjust(&t.get("primaryColor"), &[(H, -160.0)]),
+    );
+    t.set(
+        "primaryBorderColor",
+        mk_border(&t.get("primaryColor"), false),
+    );
+    t.set(
+        "secondaryBorderColor",
+        mk_border(&t.get("secondaryColor"), false),
+    );
+    t.set(
+        "tertiaryBorderColor",
+        mk_border(&t.get("tertiaryColor"), false),
+    );
+    t.set("primaryTextColor", invert(&t.get("primaryColor")));
+    t.set("secondaryTextColor", invert(&t.get("secondaryColor")));
+    t.set("tertiaryTextColor", invert(&t.get("tertiaryColor")));
+    t.set("lineColor", invert(&t.get("background")));
+    t.set("textColor", invert(&t.get("background")));
+    t.set("background", "white");
+    t.set("mainBkg", "#ECECFF");
+    t.set("secondBkg", "#ffffde");
+    t.set("lineColor", "#333333");
+    t.set("border1", "#9370DB");
+    t.set("border2", "#aaaa33");
+    t.set("arrowheadColor", "#333333");
+    t.set("labelBackground", "rgba(232,232,232, 0.8)");
+    t.set("textColor", "#333");
+    t.set("actorTextColor", "black");
+    t.set("noteBkgColor", "#fff5ad");
+    t.set("clusterBkg", "#FBFBFF");
+    t.set("taskTextDarkColor", "black");
+    default_update(t);
 }
 
-/// `theme-dark.js`。`updateColors` は `calculate` の 1 回だけ。
-fn dark_theme() -> Vars {
-    let mut v = Vars::new();
-    // コンストラクタ
-    let background = "#333";
-    let primary = "#1f2020";
-    let secondary = lighten(primary, 16.0);
-    let tertiary = adjust(primary, &[(H, -160.0)]);
-    v.insert("background", background.into());
-    v.insert("primaryColor", primary.into());
-    v.insert("secondaryColor", secondary.clone());
-    v.insert("tertiaryColor", tertiary.clone());
-    v.insert("primaryBorderColor", invert(background));
-    let secondary_border = mk_border(&secondary);
-    v.insert("secondaryBorderColor", secondary_border.clone());
-    v.insert("tertiaryBorderColor", mk_border(&tertiary));
-    v.insert("primaryTextColor", invert(primary));
-    let secondary_text = invert(&secondary);
-    v.insert("secondaryTextColor", secondary_text.clone());
-    v.insert("tertiaryTextColor", invert(&tertiary));
-    let main_bkg = "#1f2020";
-    v.insert("mainBkg", main_bkg.into());
-    let main_contrast_color = "lightgrey";
-    let border1 = "#ccc";
-    let border2 = khroma::rgba(255.0, 255.0, 255.0, 0.25);
-    let label_background = "#181818";
-    // textColor は invert(background) から置き換わる。
-    let text_color = "#ccc";
-    v.insert("textColor", text_color.into());
-    v.insert("titleColor", "#F9FFFE".into());
+/// `theme-default.js` の `updateColors`。nodeBorder・clusterBkg・titleColor などは直に代入するので、それらを
+/// 上書きしても値が勝つのは最後に置き直すから。
+fn default_update(t: &mut Theme) {
+    t.set("nodeBorder", t.get("border1"));
+    t.set("clusterBkg", t.get("secondBkg"));
+    t.set("clusterBorder", t.get("border2"));
+    t.set("titleColor", t.get("textColor"));
+    t.set("edgeLabelBackground", t.get("labelBackground"));
+    t.set("noteBorderColor", t.get("border2"));
+    t.set("noteTextColor", t.get("actorTextColor"));
+    t.or("pie1", |t| t.get("primaryColor"));
+    t.or("pie2", |t| t.get("secondaryColor"));
+    t.or("pie3", |t| adjust(&t.get("tertiaryColor"), &[(L, -40.0)]));
+    t.or("pie4", |t| adjust(&t.get("primaryColor"), &[(L, -10.0)]));
+    t.or("pie5", |t| adjust(&t.get("secondaryColor"), &[(L, -30.0)]));
+    t.or("pie6", |t| adjust(&t.get("tertiaryColor"), &[(L, -20.0)]));
+    t.or("pie7", |t| {
+        adjust(&t.get("primaryColor"), &[(H, 60.0), (L, -20.0)])
+    });
+    t.or("pie8", |t| {
+        adjust(&t.get("primaryColor"), &[(H, -60.0), (L, -40.0)])
+    });
+    pie_text(t, "taskTextDarkColor");
+    git_colors(t);
+}
 
-    // updateColors
-    let second_bkg = lighten(main_bkg, 16.0);
-    v.insert("lineColor", main_contrast_color.into());
-    v.insert("arrowheadColor", main_contrast_color.into());
-    // 終わりの `this.nodeBorder || '#999'` は border1 を残す。
-    v.insert("nodeBorder", border1.into());
-    v.insert("clusterBkg", second_bkg.clone());
-    v.insert("clusterBorder", border2);
-    v.insert("edgeLabelBackground", lighten(label_background, 25.0));
-    v.insert("noteBorderColor", secondary_border);
-    v.insert("noteBkgColor", second_bkg);
-    v.insert("noteTextColor", secondary_text);
-    // cScale1〜cScale8 の固定の色（pieN = cScaleN）。
+/// `theme-neutral.js` のコンストラクタ。
+fn neutral_constructor(t: &mut Theme) {
+    t.set("primaryColor", "#eee");
+    t.set("contrast", "#707070");
+    t.set("secondaryColor", lighten(&t.get("contrast"), 55.0));
+    t.set("background", "#ffffff");
+    t.set(
+        "tertiaryColor",
+        adjust(&t.get("primaryColor"), &[(H, -160.0)]),
+    );
+    t.set(
+        "primaryBorderColor",
+        mk_border(&t.get("primaryColor"), false),
+    );
+    t.set(
+        "secondaryBorderColor",
+        mk_border(&t.get("secondaryColor"), false),
+    );
+    t.set(
+        "tertiaryBorderColor",
+        mk_border(&t.get("tertiaryColor"), false),
+    );
+    t.set("primaryTextColor", invert(&t.get("primaryColor")));
+    t.set("secondaryTextColor", invert(&t.get("secondaryColor")));
+    t.set("tertiaryTextColor", invert(&t.get("tertiaryColor")));
+    t.set("lineColor", invert(&t.get("background")));
+    t.set("textColor", invert(&t.get("background")));
+    t.set("mainBkg", "#eee");
+    t.set("lineColor", "#666");
+    t.set("border1", "#999");
+    t.set("text", "#333");
+    t.set("arrowheadColor", "#333333");
+    t.set("edgeLabelBackground", "white");
+}
+
+/// `theme-neutral.js` の `updateColors`。note の 3 色・nodeBorder・clusterBkg・clusterBorder・titleColor は
+/// 直に代入する（上書きは最後に置き直して勝つ。clusterBkg・clusterBorder は contrast の上書きに付いてくる）。
+/// pieN は cScaleN（`||` なので cScaleN の上書きが pie と git に届く）。
+fn neutral_update(t: &mut Theme) {
+    t.set("secondBkg", lighten(&t.get("contrast"), 55.0));
+    t.set("border2", t.get("contrast"));
+    t.set("noteBorderColor", "#999");
+    t.set("noteBkgColor", "#666");
+    t.set("noteTextColor", "#fff");
+    let c_scale = [
+        "#555", "#F4F4F4", "#555", "#BBB", "#777", "#999", "#DDD", "#FFF", "#DDD", "#BBB", "#999",
+        "#777",
+    ];
+    for (i, color) in c_scale.iter().enumerate() {
+        t.or(&format!("cScale{i}"), |_| color.to_string());
+    }
+    t.set("nodeBorder", t.get("border1"));
+    t.set("clusterBkg", t.get("secondBkg"));
+    t.set("clusterBorder", t.get("border2"));
+    t.set("titleColor", t.get("text"));
+    t.set("taskTextDarkColor", t.get("text"));
+    for i in 0..12 {
+        t.set(&format!("pie{i}"), t.get(&format!("cScale{i}")));
+    }
+    pie_text(t, "taskTextDarkColor");
+    // git0 = darken(pie1, 25) || primaryColor、gitN = pie(N+1) || …（pie はいつも真）。
+    t.set("git0", darken(&t.get("pie1"), 25.0));
+    for i in 1..8 {
+        t.set(&format!("git{i}"), t.get(&format!("pie{}", i + 1)));
+    }
+}
+
+/// `theme-dark.js` のコンストラクタ。
+fn dark_constructor(t: &mut Theme) {
+    t.set("background", "#333");
+    t.set("primaryColor", "#1f2020");
+    t.set("secondaryColor", lighten(&t.get("primaryColor"), 16.0));
+    t.set(
+        "tertiaryColor",
+        adjust(&t.get("primaryColor"), &[(H, -160.0)]),
+    );
+    t.set("primaryBorderColor", invert(&t.get("background")));
+    t.set(
+        "secondaryBorderColor",
+        mk_border(&t.get("secondaryColor"), false),
+    );
+    t.set(
+        "tertiaryBorderColor",
+        mk_border(&t.get("tertiaryColor"), false),
+    );
+    t.set("primaryTextColor", invert(&t.get("primaryColor")));
+    t.set("secondaryTextColor", invert(&t.get("secondaryColor")));
+    t.set("tertiaryTextColor", invert(&t.get("tertiaryColor")));
+    t.set("lineColor", invert(&t.get("background")));
+    t.set("textColor", invert(&t.get("background")));
+    t.set("mainBkg", "#1f2020");
+    t.set("mainContrastColor", "lightgrey");
+    t.set("border1", "#ccc");
+    t.set("border2", khroma::rgba(255.0, 255.0, 255.0, 0.25));
+    t.set("labelBackground", "#181818");
+    t.set("textColor", "#ccc");
+    t.set("titleColor", "#F9FFFE");
+    t.set("noteBkgColor", "#fff5ad");
+}
+
+/// `theme-dark.js` の `updateColors`。lineColor・arrowheadColor は mainContrastColor、note の 3 色は secondBkg・
+/// secondaryBorderColor・secondaryTextColor を直に代入する（上書きは最後に置き直して勝つ）。pieN は cScaleN、
+/// git は secondaryColor と pie から。
+fn dark_update(t: &mut Theme) {
+    t.set("secondBkg", lighten(&t.get("mainBkg"), 16.0));
+    t.set("lineColor", t.get("mainContrastColor"));
+    t.set("arrowheadColor", t.get("mainContrastColor"));
+    t.set("nodeBorder", t.get("border1"));
+    t.set("clusterBkg", t.get("secondBkg"));
+    t.set("clusterBorder", t.get("border2"));
+    t.set(
+        "edgeLabelBackground",
+        lighten(&t.get("labelBackground"), 25.0),
+    );
+    t.set("noteBorderColor", t.get("secondaryBorderColor"));
+    t.set("noteBkgColor", t.get("secondBkg"));
+    t.set("noteTextColor", t.get("secondaryTextColor"));
     let c_scale = [
         "#0b0000", "#4d1037", "#3f5258", "#4f2f1b", "#6e0a0a", "#3b0048", "#995a01", "#154706",
+        "#161722", "#00296f", "#01629c", "#010029",
     ];
-    set_all(
-        &mut v,
-        &PIES,
-        c_scale.iter().map(|c| c.to_string()).collect(),
-    );
-    v.insert("pieTitleTextColor", main_contrast_color.into());
-    v.insert("pieSectionTextColor", text_color.into());
-    v.insert("pieStrokeColor", "black".into());
-    v.insert("pieOuterStrokeColor", "black".into());
-    // git0 = lighten(secondaryColor, 20)、gitN = lighten(pie(N+1), 20)（git5・git6 は 10）。
-    let mut gits = vec![lighten(&secondary, 20.0)];
-    for (i, pie) in c_scale[1..].iter().enumerate() {
-        let amount = if i == 4 || i == 5 { 10.0 } else { 20.0 };
-        gits.push(lighten(pie, amount));
+    for (i, color) in c_scale.iter().enumerate() {
+        t.or(&format!("cScale{}", i + 1), |_| color.to_string());
     }
-    set_all(&mut v, &GITS, gits);
-    v
+    t.or("cScale0", |t| t.get("primaryColor"));
+    for i in 0..12 {
+        t.set(&format!("pie{i}"), t.get(&format!("cScale{i}")));
+    }
+    t.or("pieTitleTextColor", |t| t.get("mainContrastColor"));
+    t.or("pieSectionTextColor", |t| t.get("textColor"));
+    t.or("pieStrokeColor", |_| "black".into());
+    t.or("pieOuterStrokeColor", |_| "black".into());
+    t.set("git0", lighten(&t.get("secondaryColor"), 20.0));
+    // gitN = lighten(pie(N+1) || …, 20)（git5・git6 は 10。pie はいつも真）。
+    for i in 1..8 {
+        let amount = if i == 5 || i == 6 { 10.0 } else { 20.0 };
+        t.set(
+            &format!("git{i}"),
+            lighten(&t.get(&format!("pie{}", i + 1)), amount),
+        );
+    }
+    t.or("nodeBorder", |_| "#999".into());
 }
 
-/// `theme-forest.js`。`updateColors` は `calculate` の 1 回だけ。
-fn forest_theme() -> Vars {
-    let mut v = Vars::new();
-    // コンストラクタ
-    let primary = "#cde498";
-    let secondary = "#cdffb2";
-    // background は '#f4f4f4' から 'white' に置き換わる。
-    let background = "white";
-    v.insert("background", background.into());
-    v.insert("primaryColor", primary.into());
-    v.insert("secondaryColor", secondary.into());
-    v.insert("mainBkg", "#cde498".into());
-    let second_bkg = "#cdffb2";
-    let border1 = "#13540c";
-    let border2 = "#6eaa49";
-    v.insert("arrowheadColor", "green".into());
-    let tertiary = lighten("#cde498", 10.0);
-    v.insert("tertiaryColor", tertiary.clone());
-    v.insert("primaryBorderColor", mk_border(primary));
-    v.insert("secondaryBorderColor", mk_border(secondary));
-    v.insert("tertiaryBorderColor", mk_border(&tertiary));
-    v.insert("primaryTextColor", invert(primary));
-    v.insert("secondaryTextColor", invert(secondary));
+/// `theme-forest.js` のコンストラクタ。
+fn forest_constructor(t: &mut Theme) {
+    t.set("background", "#f4f4f4");
+    t.set("primaryColor", "#cde498");
+    t.set("secondaryColor", "#cdffb2");
+    t.set("background", "white");
+    t.set("mainBkg", "#cde498");
+    t.set("secondBkg", "#cdffb2");
+    t.set("lineColor", "green");
+    t.set("border1", "#13540c");
+    t.set("border2", "#6eaa49");
+    t.set("arrowheadColor", "green");
+    t.set("tertiaryColor", lighten("#cde498", 10.0));
+    t.set(
+        "primaryBorderColor",
+        mk_border(&t.get("primaryColor"), false),
+    );
+    t.set(
+        "secondaryBorderColor",
+        mk_border(&t.get("secondaryColor"), false),
+    );
+    t.set(
+        "tertiaryBorderColor",
+        mk_border(&t.get("tertiaryColor"), false),
+    );
+    t.set("primaryTextColor", invert(&t.get("primaryColor")));
+    t.set("secondaryTextColor", invert(&t.get("secondaryColor")));
     // tertiaryTextColor は primaryColor から（もとのまま）。
-    v.insert("tertiaryTextColor", invert(primary));
-    // lineColor は 'green' から invert(background) に置き換わる。
-    v.insert("lineColor", invert(background));
-    let text_color = invert(background);
-    v.insert("textColor", text_color.clone());
-    v.insert("titleColor", "#333".into());
-    v.insert("edgeLabelBackground", "#e8e8e8".into());
-    let actor_text_color = "black";
-    v.insert("noteBkgColor", "#fff5ad".into());
-    let task_text_dark_color = "black";
-
-    // updateColors
-    v.insert("noteBorderColor", border2.into());
-    v.insert("noteTextColor", actor_text_color.into());
-    v.insert("nodeBorder", border1.into());
-    v.insert("clusterBkg", second_bkg.into());
-    v.insert("clusterBorder", border2.into());
-    let pies = vec![
-        primary.to_string(),
-        secondary.to_string(),
-        tertiary.clone(),
-        adjust(primary, &[(L, -30.0)]),
-        adjust(secondary, &[(L, -30.0)]),
-        adjust(&tertiary, &[(H, 40.0), (L, -40.0)]),
-        adjust(primary, &[(H, 60.0), (L, -10.0)]),
-        adjust(primary, &[(H, -60.0), (L, -10.0)]),
-    ];
-    set_all(&mut v, &PIES, pies);
-    v.insert("pieTitleTextColor", task_text_dark_color.into());
-    v.insert("pieSectionTextColor", text_color);
-    v.insert("pieStrokeColor", "black".into());
-    v.insert("pieOuterStrokeColor", "black".into());
-    let gits = git_seed(primary, secondary, &tertiary)
-        .iter()
-        .map(|c| darken(c, 25.0))
-        .collect();
-    set_all(&mut v, &GITS, gits);
-    v
+    t.set("tertiaryTextColor", invert(&t.get("primaryColor")));
+    t.set("lineColor", invert(&t.get("background")));
+    t.set("textColor", invert(&t.get("background")));
+    t.set("titleColor", "#333");
+    t.set("edgeLabelBackground", "#e8e8e8");
+    t.set("actorTextColor", "black");
+    t.set("noteBkgColor", "#fff5ad");
+    t.set("taskTextDarkColor", "black");
 }
 
-/// `theme-base.js`。コンストラクタは基の色だけを置き、`updateColors`（`calculate` の 1 回）がすべてを
-/// `x || y` で埋める。
-fn base_theme() -> Vars {
-    let mut v = Vars::new();
-    // コンストラクタ
-    let background = "#f4f4f4";
-    let primary = "#fff4dd";
-    let note_bkg = "#fff5ad";
-    v.insert("background", background.into());
-    v.insert("primaryColor", primary.into());
-    v.insert("noteBkgColor", note_bkg.into());
-    v.insert("noteTextColor", "#333".into());
+/// `theme-forest.js` の `updateColors`。noteBorderColor・noteTextColor・nodeBorder・clusterBkg・clusterBorder は
+/// 直に代入する（上書きは最後に置き直して勝つ）。
+fn forest_update(t: &mut Theme) {
+    t.set("noteBorderColor", t.get("border2"));
+    t.set("noteTextColor", t.get("actorTextColor"));
+    t.set("nodeBorder", t.get("border1"));
+    t.set("clusterBkg", t.get("secondBkg"));
+    t.set("clusterBorder", t.get("border2"));
+    t.or("pie1", |t| t.get("primaryColor"));
+    t.or("pie2", |t| t.get("secondaryColor"));
+    t.or("pie3", |t| t.get("tertiaryColor"));
+    t.or("pie4", |t| adjust(&t.get("primaryColor"), &[(L, -30.0)]));
+    t.or("pie5", |t| adjust(&t.get("secondaryColor"), &[(L, -30.0)]));
+    t.or("pie6", |t| {
+        adjust(&t.get("tertiaryColor"), &[(H, 40.0), (L, -40.0)])
+    });
+    t.or("pie7", |t| {
+        adjust(&t.get("primaryColor"), &[(H, 60.0), (L, -10.0)])
+    });
+    t.or("pie8", |t| {
+        adjust(&t.get("primaryColor"), &[(H, -60.0), (L, -10.0)])
+    });
+    pie_text(t, "taskTextDarkColor");
+    git_colors(t);
+}
 
-    // updateColors
-    let primary_text = "#333";
-    v.insert("primaryTextColor", primary_text.into());
-    let secondary = adjust(primary, &[(H, -120.0)]);
-    let tertiary = adjust(primary, &[(H, 180.0), (L, 5.0)]);
-    v.insert("secondaryColor", secondary.clone());
-    v.insert("tertiaryColor", tertiary.clone());
-    let primary_border = mk_border(primary);
-    let tertiary_border = mk_border(&tertiary);
-    v.insert("primaryBorderColor", primary_border.clone());
-    v.insert("secondaryBorderColor", mk_border(&secondary));
-    v.insert("tertiaryBorderColor", tertiary_border.clone());
-    v.insert("noteBorderColor", mk_border(note_bkg));
-    v.insert("secondaryTextColor", invert(&secondary));
-    let tertiary_text = invert(&tertiary);
-    v.insert("tertiaryTextColor", tertiary_text.clone());
-    v.insert("lineColor", invert(background));
-    v.insert("arrowheadColor", invert(background));
-    let text_color = primary_text;
-    v.insert("textColor", text_color.into());
-    v.insert("mainBkg", primary.into());
-    v.insert("nodeBorder", primary_border);
-    v.insert("clusterBkg", tertiary.clone());
-    v.insert("clusterBorder", tertiary_border);
-    v.insert("titleColor", tertiary_text);
-    v.insert("edgeLabelBackground", secondary.clone());
-    // taskTextDarkColor = textColor
-    let task_text_dark_color = text_color;
-    let pies = vec![
-        primary.to_string(),
-        secondary.clone(),
-        tertiary.clone(),
-        adjust(primary, &[(L, -10.0)]),
-        adjust(&secondary, &[(L, -10.0)]),
-        adjust(&tertiary, &[(L, -10.0)]),
-        adjust(primary, &[(H, 60.0), (L, -10.0)]),
-        adjust(primary, &[(H, -60.0), (L, -10.0)]),
-    ];
-    set_all(&mut v, &PIES, pies);
-    v.insert("pieTitleTextColor", task_text_dark_color.into());
-    v.insert("pieSectionTextColor", text_color.into());
-    v.insert("pieStrokeColor", "black".into());
-    v.insert("pieOuterStrokeColor", "black".into());
-    let gits = git_seed(primary, &secondary, &tertiary)
-        .iter()
-        .map(|c| darken(c, 25.0))
-        .collect();
-    set_all(&mut v, &GITS, gits);
-    v
+/// `theme-base.js` のコンストラクタ。基の色だけを置く。
+fn base_constructor(t: &mut Theme) {
+    t.set("background", "#f4f4f4");
+    t.set("primaryColor", "#fff4dd");
+    t.set("noteBkgColor", "#fff5ad");
+    t.set("noteTextColor", "#333");
+}
+
+/// `theme-base.js` の `updateColors`。すべて `x || y` なので、上書きした基の色は派生する色すべてに届き、上書きした
+/// 派生の色はそのまま残る。`darkMode` もここで読む。
+fn base_update(t: &mut Theme) {
+    let dark = t.dark();
+    t.or("primaryTextColor", |_| {
+        if dark { "#eee" } else { "#333" }.into()
+    });
+    t.or("secondaryColor", |t| {
+        adjust(&t.get("primaryColor"), &[(H, -120.0)])
+    });
+    t.or("tertiaryColor", |t| {
+        adjust(&t.get("primaryColor"), &[(H, 180.0), (L, 5.0)])
+    });
+    t.or("primaryBorderColor", |t| {
+        mk_border(&t.get("primaryColor"), dark)
+    });
+    t.or("secondaryBorderColor", |t| {
+        mk_border(&t.get("secondaryColor"), dark)
+    });
+    t.or("tertiaryBorderColor", |t| {
+        mk_border(&t.get("tertiaryColor"), dark)
+    });
+    t.or("noteBorderColor", |t| {
+        mk_border(&t.get("noteBkgColor"), dark)
+    });
+    t.or("noteBkgColor", |_| "#fff5ad".into());
+    t.or("noteTextColor", |_| "#333".into());
+    t.or("secondaryTextColor", |t| invert(&t.get("secondaryColor")));
+    t.or("tertiaryTextColor", |t| invert(&t.get("tertiaryColor")));
+    t.or("lineColor", |t| invert(&t.get("background")));
+    t.or("arrowheadColor", |t| invert(&t.get("background")));
+    t.or("textColor", |t| t.get("primaryTextColor"));
+    t.or("mainBkg", |t| t.get("primaryColor"));
+    t.or("nodeBorder", |t| t.get("primaryBorderColor"));
+    t.or("clusterBkg", |t| t.get("tertiaryColor"));
+    t.or("clusterBorder", |t| t.get("tertiaryBorderColor"));
+    t.or("titleColor", |t| t.get("tertiaryTextColor"));
+    t.or("edgeLabelBackground", |t| {
+        let secondary = t.get("secondaryColor");
+        if dark {
+            darken(&secondary, 30.0)
+        } else {
+            secondary
+        }
+    });
+    t.or("taskTextDarkColor", |t| t.get("textColor"));
+    t.or("pie1", |t| t.get("primaryColor"));
+    t.or("pie2", |t| t.get("secondaryColor"));
+    t.or("pie3", |t| t.get("tertiaryColor"));
+    t.or("pie4", |t| adjust(&t.get("primaryColor"), &[(L, -10.0)]));
+    t.or("pie5", |t| adjust(&t.get("secondaryColor"), &[(L, -10.0)]));
+    t.or("pie6", |t| adjust(&t.get("tertiaryColor"), &[(L, -10.0)]));
+    t.or("pie7", |t| {
+        adjust(&t.get("primaryColor"), &[(H, 60.0), (L, -10.0)])
+    });
+    t.or("pie8", |t| {
+        adjust(&t.get("primaryColor"), &[(H, -60.0), (L, -10.0)])
+    });
+    pie_text(t, "taskTextDarkColor");
+    git_colors(t);
 }
 
 /// khroma 2.1.0 の、テーマが使う分。色は文字で受け取り、文字で返す（khroma と同じ形）。
@@ -727,18 +841,155 @@ mod khroma {
         }
     }
 
-    /// テーマが使う CSS の色の名前（khroma は 16 進に直してから読む）。
+    /// CSS の色の名前（khroma の表のまま。khroma は 16 進に直してから読む）。
     const KEYWORDS: &[(&str, &str)] = &[
+        ("aliceblue", "#f0f8ff"),
+        ("antiquewhite", "#faebd7"),
+        ("aqua", "#00ffff"),
+        ("aquamarine", "#7fffd4"),
+        ("azure", "#f0ffff"),
+        ("beige", "#f5f5dc"),
+        ("bisque", "#ffe4c4"),
         ("black", "#000000"),
+        ("blanchedalmond", "#ffebcd"),
+        ("blue", "#0000ff"),
+        ("blueviolet", "#8a2be2"),
+        ("brown", "#a52a2a"),
+        ("burlywood", "#deb887"),
+        ("cadetblue", "#5f9ea0"),
+        ("chartreuse", "#7fff00"),
+        ("chocolate", "#d2691e"),
+        ("coral", "#ff7f50"),
+        ("cornflowerblue", "#6495ed"),
+        ("cornsilk", "#fff8dc"),
+        ("crimson", "#dc143c"),
+        ("cyanaqua", "#00ffff"),
+        ("darkblue", "#00008b"),
+        ("darkcyan", "#008b8b"),
+        ("darkgoldenrod", "#b8860b"),
+        ("darkgray", "#a9a9a9"),
+        ("darkgreen", "#006400"),
+        ("darkgrey", "#a9a9a9"),
+        ("darkkhaki", "#bdb76b"),
+        ("darkmagenta", "#8b008b"),
+        ("darkolivegreen", "#556b2f"),
+        ("darkorange", "#ff8c00"),
+        ("darkorchid", "#9932cc"),
+        ("darkred", "#8b0000"),
+        ("darksalmon", "#e9967a"),
+        ("darkseagreen", "#8fbc8f"),
+        ("darkslateblue", "#483d8b"),
+        ("darkslategray", "#2f4f4f"),
+        ("darkslategrey", "#2f4f4f"),
+        ("darkturquoise", "#00ced1"),
+        ("darkviolet", "#9400d3"),
+        ("deeppink", "#ff1493"),
+        ("deepskyblue", "#00bfff"),
+        ("dimgray", "#696969"),
+        ("dimgrey", "#696969"),
+        ("dodgerblue", "#1e90ff"),
+        ("firebrick", "#b22222"),
+        ("floralwhite", "#fffaf0"),
+        ("forestgreen", "#228b22"),
+        ("fuchsia", "#ff00ff"),
+        ("gainsboro", "#dcdcdc"),
+        ("ghostwhite", "#f8f8ff"),
+        ("gold", "#ffd700"),
+        ("goldenrod", "#daa520"),
         ("gray", "#808080"),
         ("green", "#008000"),
+        ("greenyellow", "#adff2f"),
         ("grey", "#808080"),
+        ("honeydew", "#f0fff0"),
+        ("hotpink", "#ff69b4"),
+        ("indianred", "#cd5c5c"),
+        ("indigo", "#4b0082"),
+        ("ivory", "#fffff0"),
+        ("khaki", "#f0e68c"),
+        ("lavender", "#e6e6fa"),
+        ("lavenderblush", "#fff0f5"),
+        ("lawngreen", "#7cfc00"),
+        ("lemonchiffon", "#fffacd"),
+        ("lightblue", "#add8e6"),
+        ("lightcoral", "#f08080"),
+        ("lightcyan", "#e0ffff"),
+        ("lightgoldenrodyellow", "#fafad2"),
         ("lightgray", "#d3d3d3"),
+        ("lightgreen", "#90ee90"),
         ("lightgrey", "#d3d3d3"),
+        ("lightpink", "#ffb6c1"),
+        ("lightsalmon", "#ffa07a"),
+        ("lightseagreen", "#20b2aa"),
+        ("lightskyblue", "#87cefa"),
+        ("lightslategray", "#778899"),
+        ("lightslategrey", "#778899"),
+        ("lightsteelblue", "#b0c4de"),
+        ("lightyellow", "#ffffe0"),
+        ("lime", "#00ff00"),
+        ("limegreen", "#32cd32"),
+        ("linen", "#faf0e6"),
+        ("magenta", "#ff00ff"),
+        ("maroon", "#800000"),
+        ("mediumaquamarine", "#66cdaa"),
+        ("mediumblue", "#0000cd"),
+        ("mediumorchid", "#ba55d3"),
+        ("mediumpurple", "#9370db"),
+        ("mediumseagreen", "#3cb371"),
+        ("mediumslateblue", "#7b68ee"),
+        ("mediumspringgreen", "#00fa9a"),
+        ("mediumturquoise", "#48d1cc"),
+        ("mediumvioletred", "#c71585"),
+        ("midnightblue", "#191970"),
+        ("mintcream", "#f5fffa"),
+        ("mistyrose", "#ffe4e1"),
+        ("moccasin", "#ffe4b5"),
+        ("navajowhite", "#ffdead"),
         ("navy", "#000080"),
+        ("oldlace", "#fdf5e6"),
+        ("olive", "#808000"),
+        ("olivedrab", "#6b8e23"),
+        ("orange", "#ffa500"),
+        ("orangered", "#ff4500"),
+        ("orchid", "#da70d6"),
+        ("palegoldenrod", "#eee8aa"),
+        ("palegreen", "#98fb98"),
+        ("paleturquoise", "#afeeee"),
+        ("palevioletred", "#db7093"),
+        ("papayawhip", "#ffefd5"),
+        ("peachpuff", "#ffdab9"),
+        ("peru", "#cd853f"),
+        ("pink", "#ffc0cb"),
+        ("plum", "#dda0dd"),
+        ("powderblue", "#b0e0e6"),
+        ("purple", "#800080"),
+        ("rebeccapurple", "#663399"),
         ("red", "#ff0000"),
+        ("rosybrown", "#bc8f8f"),
+        ("royalblue", "#4169e1"),
+        ("saddlebrown", "#8b4513"),
+        ("salmon", "#fa8072"),
+        ("sandybrown", "#f4a460"),
+        ("seagreen", "#2e8b57"),
+        ("seashell", "#fff5ee"),
+        ("sienna", "#a0522d"),
+        ("silver", "#c0c0c0"),
+        ("skyblue", "#87ceeb"),
+        ("slateblue", "#6a5acd"),
+        ("slategray", "#708090"),
+        ("slategrey", "#708090"),
+        ("snow", "#fffafa"),
+        ("springgreen", "#00ff7f"),
+        ("tan", "#d2b48c"),
+        ("teal", "#008080"),
+        ("thistle", "#d8bfd8"),
         ("transparent", "#00000000"),
+        ("turquoise", "#40e0d0"),
+        ("violet", "#ee82ee"),
+        ("wheat", "#f5deb3"),
         ("white", "#ffffff"),
+        ("whitesmoke", "#f5f5f5"),
+        ("yellow", "#ffff00"),
+        ("yellowgreen", "#9acd32"),
     ];
 
     fn parse_hex(color: &str) -> Option<Channels> {
@@ -842,7 +1093,7 @@ mod khroma {
         ))
     }
 
-    fn parse(color: &str) -> Channels {
+    fn try_parse(color: &str) -> Option<Channels> {
         parse_hex(color)
             .or_else(|| parse_rgb(color))
             .or_else(|| parse_hsl(color))
@@ -851,7 +1102,15 @@ mod khroma {
                 let (_, hex) = KEYWORDS.iter().find(|(name, _)| *name == lower)?;
                 parse_hex(hex)
             })
-            .unwrap_or_else(|| panic!("Unsupported color format: \"{color}\""))
+    }
+
+    fn parse(color: &str) -> Channels {
+        try_parse(color).unwrap_or_else(|| panic!("Unsupported color format: \"{color}\""))
+    }
+
+    /// khroma が色として読めるか。
+    pub(super) fn is_valid(color: &str) -> bool {
+        try_parse(color).is_some()
     }
 
     fn hex_byte(x: f64) -> String {
@@ -1049,6 +1308,91 @@ mod tests {
             .find(|(k, _)| *k == key)
             .unwrap()
             .1
+    }
+
+    fn with(theme: &str, overrides: &[(&str, &str)], key: &str) -> String {
+        let overrides: Vec<(String, String)> = overrides
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        variables_with(theme, &overrides)
+            .unwrap()
+            .into_iter()
+            .find(|(k, _)| *k == key)
+            .unwrap()
+            .1
+    }
+
+    #[test]
+    fn base_derives_from_an_overridden_primary_color() {
+        let red = [("primaryColor", "#ff0000")];
+        assert_eq!(with("base", &red, "mainBkg"), "#ff0000");
+        assert_eq!(with("base", &red, "pie1"), "#ff0000");
+        // adjust('#ff0000', {h: -120}) = hsl(-120, 100%, 50%)
+        assert_eq!(with("base", &red, "secondaryColor"), "#0000ff");
+        assert_eq!(with("base", &red, "pie2"), "#0000ff");
+        // adjust('#ff0000', {h: 180, l: 5}) = hsl(180, 100%, 55%)
+        assert_eq!(with("base", &red, "clusterBkg"), "#1affff");
+        // mkBorder('#ff0000') = hsl(0, 60%, 40%)
+        assert_eq!(with("base", &red, "nodeBorder"), "#a32929");
+        // adjust('#ff0000', {l: -10}) = hsl(0, 100%, 40%)
+        assert_eq!(with("base", &red, "pie4"), "#cc0000");
+        // background は変えていない
+        assert_eq!(with("base", &red, "lineColor"), "#0b0b0b");
+    }
+
+    #[test]
+    fn base_in_dark_mode() {
+        let dark = [("darkMode", "true")];
+        assert_eq!(with("base", &dark, "primaryTextColor"), "#eeeeee");
+        assert_eq!(with("base", &dark, "textColor"), "#eeeeee");
+        // mkBorder は lighten 側: adjust('#fff4dd', {s: -40, l: 10}) は l が 100 で白
+        assert_eq!(with("base", &dark, "primaryBorderColor"), "#ffffff");
+        // adjust('#fff5ad', {s: -40, l: 10}) = hsl(52.68…, 60%, 93.92…%)
+        assert_eq!(with("base", &dark, "noteBorderColor"), "#f9f7e6");
+        // git は lighten(…, 25)
+        assert_eq!(with("base", &dark, "git0"), "#ffffff");
+        assert_eq!(with("base", &[("darkMode", "false")], "git0"), "#ffcb5d");
+    }
+
+    #[test]
+    fn an_overridden_derived_color_wins() {
+        let line = [("lineColor", "#123456")];
+        assert_eq!(with("base", &line, "lineColor"), "#123456");
+        assert_eq!(with("base", &line, "arrowheadColor"), "#0b0b0b");
+        // default の updateColors は titleColor を直に代入するが、最後に置き直す
+        assert_eq!(
+            with("default", &[("titleColor", "red")], "titleColor"),
+            "#ff0000"
+        );
+        assert_eq!(
+            with(
+                "dark",
+                &[("noteBkgColor", "hsl(0, 0%, 50%)")],
+                "noteBkgColor"
+            ),
+            // khroma: 50 * 2.55 = 127.49999…
+            "#7f7f7f"
+        );
+        // 色でない値・知らない名前は読み捨てる
+        let junk = [("fontFamily", "trebuchet ms"), ("primaryColor", "nope")];
+        assert_eq!(with("base", &junk, "mainBkg"), "#fff4dd");
+    }
+
+    #[test]
+    fn default_with_an_overridden_primary_color() {
+        let red = [("primaryColor", "#ff0000")];
+        assert_eq!(with("default", &red, "primaryColor"), "#ff0000");
+        // pie・git は `||` で、1 回目（上書き前）の updateColors の値が残る
+        assert_eq!(with("default", &red, "pie1"), "#ececff");
+        assert_eq!(with("default", &red, "pie4"), "#b9b9ff");
+        // git0 は 1 回目（上書き前）に darken した '#ECECFF' のまま、2 回目にもう一度 darken
+        assert_eq!(with("default", &red, "git0"), "#0000ec");
+        // pie3 = adjust(tertiaryColor, {l: -40})、tertiaryColor はコンストラクタで計算済み
+        assert_eq!(with("default", &red, "pie3"), "#b5ff20");
+        // コンストラクタだけで計算する色は変わらない（Mermaid も同じ）
+        assert_eq!(with("default", &red, "primaryBorderColor"), "#c7c7f1");
+        assert_eq!(with("default", &red, "mainBkg"), "#ececff");
     }
 
     #[test]

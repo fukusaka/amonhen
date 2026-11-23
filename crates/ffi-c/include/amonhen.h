@@ -552,17 +552,31 @@ char *amonhen_markdown_parse(const uint8_t *text,
 
 /**
  * Markdown の図の SVG（`MarkdownBlock` の `diagram` の `svg`）に配色を当て、CoreSVG で描ける SVG にする。`scheme` は
- * 設定の「図の配色」の名前（`syntax`・`pele`・`mermaid`・`mermaid-forest` など）、`dark` は暗い表示か、`theme` は構文の色のテーマの JSON
- * `{"text": "#rrggbb", "background": "#rrggbb", "kinds": {"keyword": "#rrggbb", …}}`（`syntax` のときだけ使う。
- * NULL でもよい）。読めなければ NULL。`amonhen_string_free` で解放する。
+ * 設定の「図の配色」の鍵（`syntax`・`pele`・`mermaid`・`mermaid-forest`・`mermaid-import:名前` など）、`dark` は
+ * 暗い表示か、`theme` は構文の色のテーマの JSON `{"text": "#rrggbb", "background": "#rrggbb", "kinds": {…}}`
+ * （`syntax` のときだけ使う）、`own` は図の中で指定したテーマ（`diagram` の `config` の JSON。設定より先）、
+ * `imported` は `scheme` が読み込んだテーマのときの中身（mermaid-cli の設定の JSON）。`theme`・`own`・
+ * `imported` は NULL でもよい。読めなければ NULL。`amonhen_string_free` で解放する。
  *
  * # Safety
- * `svg`・`scheme` は NUL 終わりの文字列であること、`theme` は NULL か NUL 終わりの文字列であること。
+ * `svg`・`scheme` は NUL 終わりの文字列であること、ほかは NULL か NUL 終わりの文字列であること。
  */
 char *amonhen_diagram_colorize(const char *svg,
                                const char *scheme,
                                bool dark,
-                               const char *theme);
+                               const char *theme,
+                               const char *own,
+                               const char *imported);
+
+/**
+ * mermaid-cli の設定ファイル（`{"theme": …, "themeVariables": {…}}`）を読み、アプリが覚える形の JSON にする
+ * （`amonhen_diagram_colorize` の `imported` に渡す）。読めなければエラーを置いて NULL。`amonhen_string_free` で
+ * 解放する。
+ *
+ * # Safety
+ * `text` は NUL 終わりの文字列であること。
+ */
+char *amonhen_mermaid_theme_parse(const char *text);
 
 /**
  * この機械の git の版（`2.39.5`）。読めなければ NULL。`amonhen_string_free` で解放する。git を起動する

@@ -2320,6 +2320,9 @@
 "Diagram colors" = "図の配色";
 "Syntax colors" = "構文の色";
 "Mermaid (follows the appearance)" = "Mermaid（外観に合わせる）";
+"Import Mermaid Theme…" = "Mermaid のテーマを読み込む…";
+"A Mermaid theme file is a JSON object" = "Mermaid のテーマのファイルは JSON のオブジェクトです";
+"Unknown Mermaid theme: {name}" = "Mermaid のテーマ {name} は知りません";
 "Light appearance" = "明るい外観";
 "Dark appearance" = "暗い外観";
 "Import VSCode Theme…" = "VSCode のテーマを読み込む…";

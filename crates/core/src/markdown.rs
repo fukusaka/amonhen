@@ -80,6 +80,9 @@ pub enum Block {
         text: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         svg: Option<String>,
+        /// 図の中で指定した Mermaid のテーマ（設定の配色より先に使う）。
+        #[serde(skip_serializing_if = "Option::is_none")]
+        config: Option<crate::diagram::MermaidConfig>,
         #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<String>,
     },
@@ -365,16 +368,18 @@ fn parse_blocks(text: &str) -> Vec<Block> {
                         }
                         let block = match crate::diagram::draw(&language, &text) {
                             None => Block::Code { language, text },
-                            Some(crate::diagram::Drawn::Svg(svg)) => Block::Diagram {
+                            Some(crate::diagram::Drawn::Svg(svg, config)) => Block::Diagram {
                                 language,
                                 text,
                                 svg: Some(svg),
+                                config,
                                 error: None,
                             },
                             Some(crate::diagram::Drawn::Error(error)) => Block::Diagram {
                                 language,
                                 text,
                                 svg: None,
+                                config: None,
                                 error: Some(error),
                             },
                         };

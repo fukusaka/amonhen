@@ -432,19 +432,24 @@ pub unsafe extern "C" fn amonhen_markdown_parse(
 }
 
 /// Markdown の図の SVG（`MarkdownBlock` の `diagram` の `svg`）に配色を当て、CoreSVG で描ける SVG にする。`scheme` は
-/// 設定の「図の配色」の名前（`syntax`・`pele`・`mermaid`・`mermaid-forest` など）、`dark` は暗い表示か、`theme` は構文の色のテーマの JSON
-/// `{"text": "#rrggbb", "background": "#rrggbb", "kinds": {"keyword": "#rrggbb", …}}`（`syntax` のときだけ使う。
-/// NULL でもよい）。読めなければ NULL。`amonhen_string_free` で解放する。
+/// 設定の「図の配色」の鍵（`syntax`・`pele`・`mermaid`・`mermaid-forest`・`mermaid-import:名前` など）、`dark` は
+/// 暗い表示か、`theme` は構文の色のテーマの JSON `{"text": "#rrggbb", "background": "#rrggbb", "kinds": {…}}`
+/// （`syntax` のときだけ使う）、`own` は図の中で指定したテーマ（`diagram` の `config` の JSON。設定より先）、
+/// `imported` は `scheme` が読み込んだテーマのときの中身（mermaid-cli の設定の JSON）。`theme`・`own`・
+/// `imported` は NULL でもよい。読めなければ NULL。`amonhen_string_free` で解放する。
 ///
 /// # Safety
-/// `svg`・`scheme` は NUL 終わりの文字列であること、`theme` は NULL か NUL 終わりの文字列であること。
+/// `svg`・`scheme` は NUL 終わりの文字列であること、ほかは NULL か NUL 終わりの文字列であること。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn amonhen_diagram_colorize(
     svg: *const c_char,
     scheme: *const c_char,
     dark: bool,
     theme: *const c_char,
+    own: *const c_char,
+    imported: *const c_char,
 ) -> *mut c_char {
+    use amonhen_core::diagram::{MermaidConfig, Scheme, ThemeColors, colorize, colors_for};
     let (Ok(svg), Ok(scheme)) = (str_arg(svg), str_arg(scheme)) else {
         return std::ptr::null_mut();
     };
@@ -453,7 +458,7 @@ pub unsafe extern "C" fn amonhen_diagram_colorize(
         .and_then(|t| serde_json::from_str(t).ok())
         .unwrap_or_default();
     let text = |key: &str| theme[key].as_str().unwrap_or_default().to_owned();
-    let colors = amonhen_core::diagram::ThemeColors {
+    let colors = ThemeColors {
         text: text("text"),
         background: text("background"),
         kinds: theme["kinds"]
@@ -465,11 +470,43 @@ pub unsafe extern "C" fn amonhen_diagram_colorize(
             })
             .unwrap_or_default(),
     };
-    let scheme = amonhen_core::diagram::Scheme::from_key(scheme);
-    let vars = amonhen_core::diagram::palette(scheme, dark, &colors);
-    amonhen_core::diagram::colorize(svg, &vars, scheme.backdrop())
+    let config = |p: *const c_char| -> Option<MermaidConfig> {
+        str_arg(p).ok().and_then(|t| serde_json::from_str(t).ok())
+    };
+    let (own, imported) = (config(own), config(imported));
+    let (vars, backdrop) = colors_for(
+        own.as_ref(),
+        Scheme::from_key(scheme),
+        imported.as_ref(),
+        dark,
+        &colors,
+    );
+    colorize(svg, &vars, backdrop)
         .and_then(|out| CString::new(out).ok())
         .map_or(std::ptr::null_mut(), CString::into_raw)
+}
+
+/// mermaid-cli の設定ファイル（`{"theme": …, "themeVariables": {…}}`）を読み、アプリが覚える形の JSON にする
+/// （`amonhen_diagram_colorize` の `imported` に渡す）。読めなければエラーを置いて NULL。`amonhen_string_free` で
+/// 解放する。
+///
+/// # Safety
+/// `text` は NUL 終わりの文字列であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_mermaid_theme_parse(text: *const c_char) -> *mut c_char {
+    let Ok(text) = str_arg(text) else {
+        return std::ptr::null_mut();
+    };
+    match amonhen_core::diagram::MermaidConfig::parse(text) {
+        Ok(config) => serde_json::to_string(&config)
+            .ok()
+            .and_then(|s| CString::new(s).ok())
+            .map_or(std::ptr::null_mut(), CString::into_raw),
+        Err(e) => {
+            set_error(e);
+            std::ptr::null_mut()
+        }
+    }
 }
 
 /// この機械の git の版（`2.39.5`）。読めなければ NULL。`amonhen_string_free` で解放する。git を起動する
