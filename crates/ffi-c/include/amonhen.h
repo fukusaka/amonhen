@@ -539,6 +539,18 @@ char *amonhen_svg_lint(const uint8_t *data,
                        uintptr_t len);
 
 /**
+ * Markdown（`text`、UTF-8）を、FE が組み立てて見せるブロックの並びにした JSON（`amonhen_core::markdown::Block` の
+ * 配列）。`github`（`https://github.com/owner/repo`、NULL か空なら使わない）があれば `#123`・`@user`・コミットの ID も
+ * リンクにする。`amonhen_string_free` で解放する。
+ *
+ * # Safety
+ * `text` は `len` バイト読めること、`github` は NULL か NUL 終わりの文字列であること。
+ */
+char *amonhen_markdown_parse(const uint8_t *text,
+                             uintptr_t len,
+                             const char *github);
+
+/**
  * この機械の git の版（`2.39.5`）。読めなければ NULL。`amonhen_string_free` で解放する。git を起動する
  * ことがあるので（初めの 1 回だけ）、裏のスレッドで呼ぶ。
  */

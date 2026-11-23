@@ -408,6 +408,29 @@ pub unsafe extern "C" fn amonhen_svg_lint(data: *const u8, len: usize) -> *mut c
         .map_or(std::ptr::null_mut(), CString::into_raw)
 }
 
+/// Markdown（`text`、UTF-8）を、FE が組み立てて見せるブロックの並びにした JSON（`amonhen_core::markdown::Block` の
+/// 配列）。`github`（`https://github.com/owner/repo`、NULL か空なら使わない）があれば `#123`・`@user`・コミットの ID も
+/// リンクにする。`amonhen_string_free` で解放する。
+///
+/// # Safety
+/// `text` は `len` バイト読めること、`github` は NULL か NUL 終わりの文字列であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_markdown_parse(
+    text: *const u8,
+    len: usize,
+    github: *const c_char,
+) -> *mut c_char {
+    let bytes = if len == 0 || text.is_null() {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(text, len) }
+    };
+    let text = String::from_utf8_lossy(bytes);
+    let github = str_arg(github).ok().filter(|g| !g.is_empty());
+    CString::new(amonhen_core::markdown::parse_json(&text, github))
+        .map_or(std::ptr::null_mut(), CString::into_raw)
+}
+
 /// この機械の git の版（`2.39.5`）。読めなければ NULL。`amonhen_string_free` で解放する。git を起動する
 /// ことがあるので（初めの 1 回だけ）、裏のスレッドで呼ぶ。
 #[unsafe(no_mangle)]

@@ -468,3 +468,74 @@ public enum MobileRenderer: UInt8, Sendable, CaseIterable {
         return Data(bytes: raw, count: Int(length))
     }
 }
+
+/// Markdown のブロック（コアの `markdown::Block`）。
+public indirect enum MarkdownBlock: Decodable, Sendable {
+    /// ひと続きの飾りの文字。
+    public struct Run: Decodable, Sendable {
+        public let text: String
+        public let bold: Bool?
+        public let italic: Bool?
+        public let strike: Bool?
+        public let code: Bool?
+        public let html: Bool?
+        public let link: String?
+        public let image: String?
+        public let footnote: String?
+        public let lineBreak: Bool?
+        enum CodingKeys: String, CodingKey {
+            case text, bold, italic, strike, code, html, link, image, footnote
+            case lineBreak = "line_break"
+        }
+    }
+
+    public struct Item: Decodable, Sendable {
+        public let task: Bool?
+        public let blocks: [MarkdownBlock]
+    }
+
+    case heading(level: Int, runs: [Run])
+    case paragraph(runs: [Run])
+    case code(language: String, text: String)
+    case quote(alert: String?, blocks: [MarkdownBlock])
+    case list(start: Int?, items: [Item])
+    case table(aligns: [String], head: [[Run]], rows: [[[Run]]])
+    case rule
+    case html(text: String)
+    case footnote(label: String, blocks: [MarkdownBlock])
+
+    enum Key: String, CodingKey { case kind, level, runs, language, text, alert, blocks, start, items, aligns, head, rows, label }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: Key.self)
+        switch try c.decode(String.self, forKey: .kind) {
+        case "heading": self = .heading(level: try c.decode(Int.self, forKey: .level), runs: try c.decode([Run].self, forKey: .runs))
+        case "paragraph": self = .paragraph(runs: try c.decode([Run].self, forKey: .runs))
+        case "code": self = .code(language: try c.decode(String.self, forKey: .language), text: try c.decode(String.self, forKey: .text))
+        case "quote":
+            self = .quote(alert: try c.decodeIfPresent(String.self, forKey: .alert), blocks: try c.decode([MarkdownBlock].self, forKey: .blocks))
+        case "list": self = .list(start: try c.decodeIfPresent(Int.self, forKey: .start), items: try c.decode([Item].self, forKey: .items))
+        case "table":
+            self = .table(
+                aligns: try c.decode([String].self, forKey: .aligns), head: try c.decode([[Run]].self, forKey: .head),
+                rows: try c.decode([[[Run]]].self, forKey: .rows))
+        case "html": self = .html(text: try c.decode(String.self, forKey: .text))
+        case "footnote": self = .footnote(label: try c.decode(String.self, forKey: .label), blocks: try c.decode([MarkdownBlock].self, forKey: .blocks))
+        default: self = .rule
+        }
+    }
+
+    /// Markdown として整形して見せるファイルか（拡張子で）。
+    public static func isMarkdown(_ path: String) -> Bool {
+        ["md", "markdown", "mdown", "mkd", "mkdn"].contains((path as NSString).pathExtension.lowercased())
+    }
+
+    /// `text` を読む。`gitHub`（`https://github.com/owner/repo`）があれば `#123`・`@user`・コミットの ID もリンクにする。
+    public static func parse(_ text: String, gitHub: String? = nil) -> [MarkdownBlock] {
+        var text = text
+        let raw = text.withUTF8 { buffer in amonhen_markdown_parse(buffer.baseAddress, UInt(buffer.count), gitHub) }
+        guard let raw else { return [] }
+        defer { amonhen_string_free(raw) }
+        return (try? JSONDecoder().decode([MarkdownBlock].self, from: Data(String(cString: raw).utf8))) ?? []
+    }
+}
