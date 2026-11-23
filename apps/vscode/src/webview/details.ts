@@ -251,7 +251,8 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
   function place(message: Node[]): void {
     root.classList.remove('expanded');
     root.classList.toggle('split', message.length > 0);
-    head.style.height = '';
+    const kept = getState().detailsHeadHeight;
+    head.style.height = kept ? `${kept}px` : '';
     head.replaceChildren(...message);
     head.scrollTop = 0;
     scroller.scrollTop = 0;
@@ -738,10 +739,15 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
 }
 
 /**
- * メッセージの欄と、ファイルと差分の欄の仕切りをドラッグして、メッセージの欄の高さを変える（次のコミットを出すと
- * 中身に合わせ直す。アプリと同じ）
+ * メッセージの欄と、ファイルと差分の欄の仕切りをドラッグして、メッセージの欄の高さを変える。変えた高さはどの
+ * コミットでも保ち、仕切りをダブルクリックすると中身に合わせ直す（アプリの「高さを自動で決める」）
  */
 function attachRowSplitter(root: HTMLElement, divider: HTMLElement, head: HTMLElement): void {
+  divider.title = 'Drag to keep this height for every commit; double-click to fit the commit details again';
+  divider.addEventListener('dblclick', () => {
+    updateState({ detailsHeadHeight: undefined });
+    head.style.height = '';
+  });
   divider.addEventListener('mousedown', (e) => {
     e.preventDefault();
     const top = head.getBoundingClientRect().top;
@@ -753,6 +759,7 @@ function attachRowSplitter(root: HTMLElement, divider: HTMLElement, head: HTMLEl
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
       document.body.classList.remove('resizing-rows');
+      if (head.style.height) updateState({ detailsHeadHeight: parseFloat(head.style.height) });
     };
     document.body.classList.add('resizing-rows');
     window.addEventListener('mousemove', onMove);
