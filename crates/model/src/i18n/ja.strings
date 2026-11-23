@@ -2362,6 +2362,7 @@
 "Expand All Diffs" = "差分をすべて開く";
 "Collapse All Diffs" = "差分をすべて畳む";
 "Ignore Whitespace" = "空白を無視";
+"Whitespace" = "空白";
 "Compare Whitespace" = "空白を区別";
 "Ignore Whitespace at Line Ends" = "行末の空白を無視";
 "Ignore Changes in Whitespace" = "空白の量の違いを無視";

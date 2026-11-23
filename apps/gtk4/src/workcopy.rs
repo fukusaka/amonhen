@@ -204,7 +204,7 @@ struct Inner {
     line_endings: gtk::Label,
     /// 行を比べるときに無視する空白。無視している間は、1 本の差分（行ごとのチェック）にせず、行ごとの stage・
     /// 破棄もできない。覚えない。
-    whitespace: gtk::DropDown,
+    whitespace: crate::whitespace::Picker,
     /// 選んでいるファイル。
     selected: RefCell<Option<String>>,
     /// 出している差分。
@@ -502,9 +502,9 @@ impl WorkingCopy {
         line_endings.add_css_class("caption");
         line_endings.set_visible(false);
         bar.append(&line_endings);
-        let whitespace = crate::whitespace::dropdown();
-        whitespace.set_visible(false);
-        bar.append(&whitespace);
+        let whitespace = crate::whitespace::Picker::new();
+        whitespace.widget().set_visible(false);
+        bar.append(whitespace.widget());
         bar.append(&sides);
         bar.append(&conflict_buttons);
         // macOS 版と同じく、捨てる・行を含める の順。
@@ -598,7 +598,7 @@ impl WorkingCopy {
         Inner::connect(&inner);
         Inner::install_factory(&inner, &factory);
         let weak = Rc::downgrade(&inner);
-        inner.whitespace.connect_selected_notify(move |_| {
+        inner.whitespace.connect_changed(move || {
             if let Some(this) = weak.upgrade() {
                 Inner::whitespace_changed(&this);
             }
@@ -2412,12 +2412,12 @@ impl Inner {
 
     /// 行ごとに含める・捨てるか（空白を無視した差分の行は中身をそのまま表していないので、しない）。
     fn exact(&self) -> bool {
-        crate::whitespace::selected(&self.whitespace) == Whitespace::Exact
+        self.whitespace.whitespace() == Whitespace::Exact
     }
 
     fn read_diff(this: &Rc<Self>, entry: StatusEntry, same: bool, only_changed: bool) {
         let Some(repo) = this.repo() else { return };
-        let whitespace = crate::whitespace::selected(&this.whitespace);
+        let whitespace = this.whitespace.whitespace();
         // 両側に変更のあるファイルは作業ツリーの側から。同じファイルを読み直すときだけ、今の側のまま
         // （macOS 版の `side(for:)`）。
         let reselect = this
@@ -3473,7 +3473,7 @@ impl Inner {
         // 空白を無視した差分の行は中身をそのまま表していないので、行ごとには stage・破棄しない（macOS 版と同じ）。
         let exact = self.exact();
         let ignored = tr!("Can’t stage or discard lines while whitespace is ignored");
-        self.whitespace.set_visible(!conflict && chosen);
+        self.whitespace.widget().set_visible(!conflict && chosen);
         self.lines.set_sensitive(selected > 0 && exact);
         let lines_tip = if !exact {
             Some(ignored.clone())

@@ -242,7 +242,7 @@ struct Bar {
     expand_all: gtk::Button,
     expand_icon: crate::icon::Icon,
     /// 行を比べるときに無視する空白。覚えない。
-    whitespace: gtk::DropDown,
+    whitespace: crate::whitespace::Picker,
 }
 
 struct Inner {
@@ -468,7 +468,7 @@ impl CommitDiff {
             icon_button(crate::icon::Kind::Folder, &tr!("Expand All Folders"));
         let (expand_all, expand_icon) =
             icon_button(crate::icon::Kind::ExpandVertical, &tr!("Expand All Diffs"));
-        let whitespace = crate::whitespace::dropdown();
+        let whitespace = crate::whitespace::Picker::new();
         let (find, _) = icon_button(crate::icon::Kind::Search, &tr!("Find in the diff (Ctrl+F)"));
         let (options, _) = icon_button(crate::icon::Kind::Sliders, &tr!("View Options"));
         let bar_box = gtk::Box::new(gtk::Orientation::Horizontal, 8);
@@ -483,7 +483,7 @@ impl CommitDiff {
             tree_switch.upcast_ref(),
             folders.upcast_ref(),
             expand_all.upcast_ref(),
-            whitespace.upcast_ref(),
+            whitespace.widget().upcast_ref(),
             find.upcast_ref(),
             options.upcast_ref(),
         ] {
@@ -560,7 +560,7 @@ impl CommitDiff {
 
     /// 行を比べるときに無視する空白（帯で選んでいるもの）。差分はこれで取る。
     pub fn whitespace(&self) -> Whitespace {
-        crate::whitespace::selected(&self.inner.bar.whitespace)
+        self.inner.bar.whitespace.whitespace()
     }
 
     /// 帯で無視する空白を選び直したら `f()` を呼ぶ（出しているコミット・選び方・範囲を [`Self::whitespace`] で
@@ -754,7 +754,7 @@ impl Inner {
             }
         });
         let weak = Rc::downgrade(this);
-        this.bar.whitespace.connect_selected_notify(move |_| {
+        this.bar.whitespace.connect_changed(move || {
             if let Some(this) = weak.upgrade() {
                 Inner::whitespace_changed(&this);
             }
@@ -1367,7 +1367,7 @@ impl Inner {
         let tree = file_tree();
         let bar = &this.bar;
         bar.expand_all.set_visible(!files);
-        bar.whitespace.set_visible(!files);
+        bar.whitespace.widget().set_visible(!files);
         bar.folders.set_visible(tree);
         let (kind, tip) = if Inner::all_diffs_open(this) {
             (

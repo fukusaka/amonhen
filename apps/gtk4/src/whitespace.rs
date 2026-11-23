@@ -1,9 +1,15 @@
-//! 差分の帯の、行を比べるときに無視する空白を選ぶ欄（History の右の列と Working Copy。macOS 版の
-//! `WhitespacePopUp`）。選んだものは覚えない（開くたびに「空白を区別」から）。
+//! 差分の帯の、行を比べるときに無視する空白を選ぶボタン（History の右の列と Working Copy。macOS 版の
+//! `WhitespacePopUp`）。帯を狭くしないようにアイコンだけで、押すと 4 つの選び方を出す（今のものに印）。無視している
+//! 間はアイコンをアクセントの色にする。選んだものは覚えない（開くたびに「空白を区別」から）。
+
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 
 use amonhen_core::diff::Whitespace;
 use amonhen_model::tr;
 use gtk::prelude::*;
+
+use crate::menu;
 
 /// 並べる順（`Whitespace` の値と同じ）。
 const MODES: [Whitespace; 4] = [
@@ -11,6 +17,13 @@ const MODES: [Whitespace; 4] = [
     Whitespace::AtEol,
     Whitespace::Change,
     Whitespace::All,
+];
+
+/// アイコンの候補（freedesktop の名前。Adwaita にあるものを先に）。どれもなければ「␣」の字。
+const ICONS: [&str; 3] = [
+    "format-justify-fill-symbolic",
+    "format-indent-more-symbolic",
+    "text-x-generic-symbolic",
 ];
 
 pub fn title(mode: Whitespace) -> String {
@@ -42,51 +55,112 @@ pub fn initial() -> Whitespace {
         .map_or(Whitespace::Exact, Whitespace::from_u8)
 }
 
-/// 選ぶ欄（最初は [`initial`]）。選んだものは [`selected`] で読む。
-pub fn dropdown() -> gtk::DropDown {
-    let titles: Vec<String> = MODES.iter().map(|&m| title(m)).collect();
-    let refs: Vec<&str> = titles.iter().map(String::as_str).collect();
-    let dropdown = gtk::DropDown::from_strings(&refs);
-    // 一覧の行には、それぞれの説明をツールチップに。
-    let factory = gtk::SignalListItemFactory::new();
-    factory.connect_setup(|_, item| {
-        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
-            return;
-        };
-        let label = gtk::Label::new(None);
-        label.set_xalign(0.0);
-        item.set_child(Some(&label));
-    });
-    factory.connect_bind(|_, item| {
-        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
-            return;
-        };
-        let (Some(label), Some(text)) = (
-            item.child().and_downcast::<gtk::Label>(),
-            item.item().and_downcast::<gtk::StringObject>(),
-        ) else {
-            return;
-        };
-        label.set_text(&text.string());
-        if let Some(&mode) = MODES.get(item.position() as usize) {
-            label.set_tooltip_text(Some(&tooltip(mode)));
-        }
-    });
-    dropdown.set_list_factory(Some(&factory));
-    dropdown.set_selected(initial() as u32);
-    dropdown.set_valign(gtk::Align::Center);
-    let tip = tr!("Whitespace to ignore when comparing lines (as git diff does)");
-    dropdown.set_tooltip_text(Some(&tip));
-    dropdown.update_property(&[gtk::accessible::Property::Label(&tip)]);
-    dropdown
+/// 選ぶボタン（最初は [`initial`]）。
+#[derive(Clone)]
+pub struct Picker {
+    inner: Rc<Inner>,
 }
 
-/// `dropdown` で選んでいるもの。
-pub fn selected(dropdown: &gtk::DropDown) -> Whitespace {
-    MODES
-        .get(dropdown.selected() as usize)
-        .copied()
-        .unwrap_or_default()
+struct Inner {
+    button: gtk::Button,
+    /// アイコン（なければ「␣」の字）。アクセントの色はこれに付ける。
+    icon: gtk::Widget,
+    mode: Cell<Whitespace>,
+    on_change: RefCell<Option<Rc<dyn Fn()>>>,
+}
+
+impl Picker {
+    pub fn new() -> Self {
+        let button = gtk::Button::new();
+        button.add_css_class("flat");
+        button.set_valign(gtk::Align::Center);
+        let theme = gtk::IconTheme::for_display(&button.display());
+        let icon: gtk::Widget = match ICONS.iter().find(|name| theme.has_icon(name)) {
+            Some(name) => gtk::Image::from_icon_name(name).upcast(),
+            None => gtk::Label::new(Some("␣")).upcast(),
+        };
+        button.set_child(Some(&icon));
+        button.update_property(&[gtk::accessible::Property::Label(&tr!("Whitespace"))]);
+        let inner = Rc::new(Inner {
+            button,
+            icon,
+            mode: Cell::new(initial()),
+            on_change: RefCell::default(),
+        });
+        let weak = Rc::downgrade(&inner);
+        inner.button.connect_clicked(move |b| {
+            if let Some(inner) = weak.upgrade() {
+                Inner::popup(&inner, b);
+            }
+        });
+        inner.update();
+        Self { inner }
+    }
+
+    /// 帯に置く部品。
+    pub fn widget(&self) -> &gtk::Button {
+        &self.inner.button
+    }
+
+    /// 選んでいるもの。
+    pub fn whitespace(&self) -> Whitespace {
+        self.inner.mode.get()
+    }
+
+    /// 選び直したら `f()` を呼ぶ。
+    pub fn connect_changed(&self, f: impl Fn() + 'static) {
+        self.inner.on_change.replace(Some(Rc::new(f)));
+    }
+}
+
+impl Inner {
+    fn popup(this: &Rc<Self>, button: &gtk::Button) {
+        let current = this.mode.get();
+        let items = MODES
+            .iter()
+            .map(|&mode| {
+                let weak = Rc::downgrade(this);
+                menu::choice_with_tip(title(mode), mode == current, tooltip(mode), move || {
+                    if let Some(this) = weak.upgrade() {
+                        Inner::choose(&this, mode);
+                    }
+                })
+            })
+            .collect();
+        menu::popup(
+            button,
+            button.width() as f64 / 2.0,
+            button.height() as f64,
+            items,
+        );
+    }
+
+    fn choose(this: &Rc<Self>, mode: Whitespace) {
+        if mode == this.mode.get() {
+            return;
+        }
+        this.mode.set(mode);
+        this.update();
+        let f = this.on_change.borrow().clone();
+        if let Some(f) = f {
+            f();
+        }
+    }
+
+    /// アイコンの色・ツールチップ（今の選び方を言う）。
+    fn update(&self) {
+        let mode = self.mode.get();
+        if mode == Whitespace::Exact {
+            self.icon.remove_css_class("accent");
+        } else {
+            self.icon.add_css_class("accent");
+        }
+        self.button.set_tooltip_text(Some(&format!(
+            "{}\n{}",
+            title(mode),
+            tr!("Whitespace to ignore when comparing lines (as git diff does)")
+        )));
+    }
 }
 
 #[cfg(test)]
