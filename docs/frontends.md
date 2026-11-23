@@ -273,7 +273,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
 | Full message, draggable panes, ⤢ to expand | ✓ | ✓ | ✓ | ✓ | n/a | △ | TUI: The dividers can't be dragged; on a narrow terminal the details open in place of History. |
 | Find inside the details | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: ⌘F searches the whole main view; diffs not loaded yet aren't searched.<br>TUI: `/` in the details, `n` `N` for the next and previous. |
-| Changed files as the diff's own file headers (folded at first, sticky, one bar of controls) | ✓ | ✓ | △ | △ | ✓ | △ | CLI: `show`.<br>Windows, VSCode: Still a separate changed-files list beside the stacked diff, with Viewed.<br>TUI: `[` `]` move between files; no sticky headers or folding. |
+| Changed files as the diff's own file headers (folded at first, sticky, one bar of controls) | ✓ | ✓ | ✓ | △ | ✓ | △ | CLI: `show`.<br>VSCode: Still a separate changed-files list beside the stacked diff, with Viewed.<br>TUI: `[` `]` move between files; no sticky headers or folding. |
 | Changed files as a list or a tree whose folders fold | ✓ | ✓ | △ | △ | n/a | △ | Windows, VSCode: A tree beside the diff (Tree / List above the files in VSCode).<br>TUI: A flat list above the diff. |
 | Widen a hunk's context, show a whole file | ✓ | ✓ | — | — | n/a | — | |
 | Compare images (side by side, swipe, onion skin, differing pixels) | ✓ | ✓ | — | — | n/a | — | |

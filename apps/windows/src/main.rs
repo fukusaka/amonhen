@@ -48,7 +48,6 @@ mod tabs;
 mod templates;
 mod theme;
 mod tip;
-mod viewed;
 mod win32;
 mod winui;
 mod workcopy;
