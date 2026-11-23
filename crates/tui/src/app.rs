@@ -851,6 +851,7 @@ impl App {
             fold: self.fold,
             expanded: self.expanded.clone(),
             rebuild: self.rebuilding,
+            tips: self.sidebar.marked_targets(),
         });
     }
 
@@ -5512,6 +5513,29 @@ impl App {
                 true
             }
             // 絞り込んでいれば、まずそれをやめる。
+            // ref に印をつけ・外す。印をつけた ref があれば、History はそれらから辿れるものだけ（アプリの、いくつも
+            // 選んだ ref の History）。
+            KeyCode::Char('v') => {
+                if !self.sidebar.toggle_mark() {
+                    self.error = Some(tr!("Select a branch, remote branch or tag to mark"));
+                    return true;
+                }
+                self.notice = Some(match self.sidebar.marked_names().as_slice() {
+                    [] => tr!("History of all branches"),
+                    names => tr!(
+                        "History of {refs} (Esc clears the marks)",
+                        refs = names.join(", ")
+                    ),
+                });
+                self.open();
+                true
+            }
+            KeyCode::Esc if self.sidebar.has_marks() => {
+                self.sidebar.clear_marks();
+                self.notice = Some(tr!("History of all branches"));
+                self.open();
+                true
+            }
             KeyCode::Esc if !self.sidebar.filter().is_empty() => {
                 self.sidebar.set_filter("");
                 true
@@ -5566,6 +5590,7 @@ impl App {
                 ),
                 ("n D", tr!("Rename a branch; delete a branch or a tag")),
                 ("L", tr!("The branch's reflog")),
+                ("v", tr!("Mark refs: History of the marked ones only")),
                 ("/", tr!("Filter branches and tags")),
                 ("Esc", tr!("Clear the filter, or go back")),
             ],

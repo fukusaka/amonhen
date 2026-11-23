@@ -1810,6 +1810,35 @@ fn a_failure_shows_in_full_with_bang() {
     assert_eq!(git_out(dir.path(), &["branch", "--show-current"]), "main\n");
 }
 
+/// サイドバーの `v` で ref に印をつけると、History はそれらから辿れるものだけになる（アプリの、いくつも選んだ ref の
+/// History）。Esc で印を外す
+#[test]
+fn history_of_the_marked_refs() {
+    let dir = tempfile::tempdir().unwrap();
+    diverged(dir.path());
+    // サイドバーの 3 つ下が topic、2 つ下が main。
+    let topic = amonhen_tui::snapshot(open(dir.path()), 200, 12, clock(), "0jjjv").unwrap();
+    println!("{topic}");
+    assert!(
+        topic.contains("History of topic (Esc clears the marks)"),
+        "{topic}"
+    );
+    assert!(
+        topic.contains("On topic") && topic.contains("Start"),
+        "{topic}"
+    );
+    assert!(!topic.contains("On main"), "{topic}");
+    let both = amonhen_tui::snapshot(open(dir.path()), 200, 12, clock(), "0jjjvkv").unwrap();
+    assert!(both.contains("History of topic, main"), "{both}");
+    assert!(
+        both.contains("On topic") && both.contains("On main"),
+        "{both}"
+    );
+    let all = amonhen_tui::snapshot(open(dir.path()), 200, 12, clock(), "0jjjv\x1b").unwrap();
+    assert!(all.contains("History of all branches"), "{all}");
+    assert!(all.contains("On main"), "{all}");
+}
+
 /// サイドバーの `r` で、今のブランチを選んだ ref の上に rebase する
 #[test]
 fn rebase_onto_the_picked_ref() {
