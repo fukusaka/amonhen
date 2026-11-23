@@ -542,9 +542,11 @@ impl<'a> Builder<'a> {
                         let start = self.offset();
                         let red = self.tag("diagram-error", |t| {
                             t.set_foreground_rgba(Some(&gdk::RGBA::new(0.85, 0.2, 0.2, 1.0)));
+                            // 誤りの位置を ^ で指すので等幅で
+                            t.set_family(Some("monospace"));
                             t.set_scale(0.9);
                         });
-                        self.insert(error, &[red]);
+                        self.insert(&error.replace('\n', "\u{2028}"), &[red]);
                         self.insert("\n", &[]);
                         self.paragraph(start, ctx, false, 10);
                     }
