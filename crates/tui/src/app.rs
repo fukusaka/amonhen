@@ -584,6 +584,8 @@ pub struct App {
     upstream: Option<String>,
     ahead: u64,
     behind: u64,
+    /// shallow clone・partial clone の印（一番上の行のブランチの後ろ。アプリの History の上の印）。
+    form_marks: Vec<String>,
     /// 途中の操作（merge・rebase・cherry-pick・revert）: 種類と、何番目・全部でいくつ（rebase）。
     sequence: Option<(String, Option<(u64, u64)>)>,
     /// 止まっている `git am` のパッチを、3-way merge で当て直せる（まだ 3-way で当てていない）。
@@ -727,6 +729,7 @@ impl App {
             upstream: None,
             ahead: 0,
             behind: 0,
+            form_marks: Vec::new(),
             sequence: None,
             stash: None,
             retry_three_way: false,
@@ -1329,6 +1332,11 @@ impl App {
                         self.history.opened(&refs, &history);
                         self.sidebar.set_refs(&refs);
                         // タグの署名の印（アプリのタグの行の印）。タグが変わったときだけ読む（検証の結果はコアが覚える）。
+                        // リポジトリの形（shallow・partial clone、sparse checkout）の印。
+                        self.send(Request::Run {
+                            name: "repositoryForm",
+                            command: json!({"op": "repositoryForm"}),
+                        });
                         // submodule の様子の印（取り出していない・別のコミット・中に変更・コンフリクト）。
                         if !self.sidebar.submodule_paths().is_empty() {
                             self.send(Request::Run {
@@ -2753,6 +2761,35 @@ impl App {
     }
 
     /// 命令が済んだ。だめなら理由を出し、どちらでも状態・ref・History を読み直す。
+    /// リポジトリの形（`repositoryForm` の info）から、一番上の行の印と Working Copy の知らせを決める。
+    fn set_form(&mut self, info: &Value) {
+        let mut marks = Vec::new();
+        if info["shallow"] == true {
+            marks.push(tr!("shallow"));
+        }
+        if info["partial"].is_object() {
+            marks.push(tr!("partial"));
+        }
+        self.form_marks = marks;
+        let sparse = &info["sparse"];
+        let note = sparse.is_object().then(|| {
+            let folders = sparse["folders"].as_array().map_or(0, Vec::len);
+            match (sparse["cone"] == true, folders) {
+                (false, _) => {
+                    tr!("Sparse checkout: only the files matching its patterns are checked out.")
+                }
+                (true, 0) => tr!("Sparse checkout: only the files at the top are checked out."),
+                (true, 1) => tr!("Sparse checkout: only 1 folder is checked out."),
+                (true, n) => tr!(
+                    "Sparse checkout: only {count} folders are checked out.",
+                    count = n
+                ),
+            }
+        });
+        self.changes.set_sparse_note(note);
+        self.dirty = true;
+    }
+
     /// History の読んである行の、署名を検証する（答えが来たら、残りを続けて頼む）。
     fn verify_signatures(&mut self) {
         if let Some(oids) = self.history.signatures_to_verify() {
@@ -2764,6 +2801,12 @@ impl App {
     }
 
     fn ran(&mut self, name: &'static str, result: std::result::Result<Value, String>) {
+        // 裏で読むリポジトリの形も、動いている操作の表示を消さない。読めなければ印を出さない。
+        if name == "repositoryForm" {
+            let info = result.ok().map(|r| r["info"].clone()).unwrap_or_default();
+            self.set_form(&info);
+            return;
+        }
         // 裏で読む署名は、動いている操作の表示を消さない。
         if name == "commitSignatures" {
             let reply = result.ok();
@@ -6942,6 +6985,21 @@ impl App {
                     .set_stringn(x, area.y, counts, usize::from(area.right() - x - 1), bar)
                     .0;
             }
+        }
+        // shallow clone・partial clone の印。
+        for mark in &self.form_marks {
+            if x + 3 >= area.right() {
+                break;
+            }
+            x = buf
+                .set_stringn(
+                    x + 2,
+                    area.y,
+                    format!("[{mark}]"),
+                    usize::from(area.right() - x - 3),
+                    bar.fg(Color::Yellow),
+                )
+                .0;
         }
         // サイドバーが出ていなければ、メインの画面の切り替え（数字のキー）を並べる。今の画面は太字。
         let tabs = self.layout().sidebar.is_none();

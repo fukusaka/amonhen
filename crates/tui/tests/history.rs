@@ -3094,6 +3094,50 @@ fn compare_with_the_previous_version() {
     assert!(below.contains("Take the lane from the trunk"));
 }
 
+/// partial clone は一番上の行に印。sparse checkout は Working Copy の一覧の上に知らせ
+#[test]
+fn partial_clone_and_sparse_checkout_marks() {
+    let source = tempfile::tempdir().unwrap();
+    let source = source.path();
+    git(source, BASE, &["init", "-q", "-b", "main"]);
+    for path in ["app/a.txt", "docs/b.txt", "top.txt"] {
+        let path = source.join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, "one\n").unwrap();
+    }
+    git(source, BASE, &["add", "."]);
+    git(source, BASE, &["commit", "-q", "-m", "Start"]);
+    git(source, BASE, &["config", "uploadpack.allowFilter", "true"]);
+    let place = tempfile::tempdir().unwrap();
+    let url = format!("file://{}", source.display());
+    git(
+        place.path(),
+        BASE,
+        &["clone", "-q", "--filter=blob:none", &url, "partial"],
+    );
+    let dir = place.path().join("partial");
+    let top = amonhen_tui::snapshot(open(&dir), 140, 12, clock(), "").unwrap();
+    println!("{top}");
+    assert!(top.lines().next().unwrap().contains("[partial]"), "{top}");
+    assert!(!top.contains("Sparse checkout"), "{top}");
+    // `git sparse-checkout` は 2.25 から。
+    let version = git_out(Path::new("."), &["--version"]);
+    let numbers: Vec<u32> = version
+        .split(|c: char| !c.is_ascii_digit())
+        .filter_map(|n| n.parse().ok())
+        .collect();
+    if numbers.len() < 2 || (numbers[0], numbers[1]) < (2, 25) {
+        return;
+    }
+    git(&dir, BASE, &["sparse-checkout", "set", "app"]);
+    let sparse = amonhen_tui::snapshot(open(&dir), 140, 12, clock(), "1").unwrap();
+    println!("{sparse}");
+    assert!(
+        sparse.contains("Sparse checkout: only 1 folder is checked out."),
+        "{sparse}"
+    );
+}
+
 /// shallow clone: 最後の行の下に帯、境界のコミットに点線の印。`+` で取り足す（数を選ぶ、`a` ですべて）
 #[test]
 fn shallow_clone_band_and_fetch_more() {
@@ -3128,6 +3172,11 @@ fn shallow_clone_band_and_fetch_more() {
         "{shown}"
     );
     assert!(shown.lines().any(|l| l.contains("┄ Commit 4")), "{shown}");
+    // 一番上の行にも、shallow clone の印。
+    assert!(
+        shown.lines().next().unwrap().contains("[shallow]"),
+        "{shown}"
+    );
     let asked = amonhen_tui::snapshot(open(&dir), 140, 12, clock(), "2+").unwrap();
     let last = asked.lines().last().unwrap();
     assert!(
