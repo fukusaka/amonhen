@@ -2,4 +2,5 @@
 
 pub mod common;
 pub mod flowchart;
+pub mod radar;
 pub mod registry;
