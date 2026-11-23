@@ -460,8 +460,12 @@ impl History {
         })
     }
 
-    pub fn loaded(&mut self, start: u32, reply: &Reply) {
+    pub fn loaded(&mut self, history: &Value, start: u32, reply: &Reply) {
         self.loading = false;
+        // 頼んだ後に History を読み直していたら、前の History の行なので捨てる（`request` が頼み直す）。
+        if *history != self.id {
+            return;
+        }
         self.window = Some(Window {
             start,
             nodes: reply.items("nodes"),

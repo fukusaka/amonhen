@@ -1416,8 +1416,12 @@ impl App {
                             self.open();
                         }
                     }
-                    Loaded::Rows { start, reply } => {
-                        self.history.loaded(start, &reply);
+                    Loaded::Rows {
+                        history,
+                        start,
+                        reply,
+                    } => {
+                        self.history.loaded(&history, start, &reply);
                         self.verify_signatures();
                     }
                     Loaded::Search { query, result } => {
