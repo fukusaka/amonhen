@@ -111,7 +111,7 @@ pub fn locating_in<T>(next: Origin, run: impl FnOnce() -> T) -> T {
 }
 
 /// `src` がちょうど読んでいる文字列のときだけ写す。
-fn written(src: &[u16], offset: usize) -> (Vec<u16>, usize) {
+pub fn written(src: &[u16], offset: usize) -> (Vec<u16>, usize) {
     let origin = ORIGIN.with(|o| o.borrow().clone());
     match origin {
         Some(o) if o.parsed == src => (o.find)(offset),
