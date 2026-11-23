@@ -5,6 +5,8 @@ import CAmonhen
 extension Notification.Name {
     /// 構文の色のテーマ（明るい・暗い外観それぞれ）を変えた、テーマを読み込んだ・消した。
     static let syntaxThemeChanged = Notification.Name("syntaxThemeChanged")
+    /// gantt の時間帯の設定を変えた。
+    static let ganttTimeZoneChanged = Notification.Name("ganttTimeZoneChanged")
 }
 
 /// 構文の種類ごとの色（差分・マージエディタで共通）。明るい・暗い外観で、それぞれ選んだテーマの色になる。

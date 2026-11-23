@@ -579,13 +579,33 @@ public indirect enum MarkdownBlock: Decodable, Sendable {
     }
 
     /// `text` を読む。`gitHub`（`https://github.com/owner/repo`）があれば `#123`・`@user`・コミットの ID もリンクにする。
-    public static func parse(_ text: String, gitHub: String? = nil) -> [MarkdownBlock] {
+    /// 図（gantt）の日付は `timeZone` で数える（nil なら UTC）。
+    public static func parse(_ text: String, gitHub: String? = nil, timeZone: TimeZone? = nil) -> [MarkdownBlock] {
         var text = text
-        let raw = text.withUTF8 { buffer in amonhen_markdown_parse(buffer.baseAddress, UInt(buffer.count), gitHub) }
+        let box = timeZone.map(ZoneBox.init)
+        let raw = withExtendedLifetime(box) {
+            text.withUTF8 { buffer in
+                amonhen_markdown_parse_in_zone(
+                    buffer.baseAddress, UInt(buffer.count), gitHub,
+                    box.map { UnsafeRawPointer(Unmanaged.passUnretained($0).toOpaque()) },
+                    box == nil ? nil : { context, utc in
+                        // pele の描画のスレッドから呼ばれる（TimeZone はどのスレッドから使ってもよい）。
+                        guard let context, utc.isFinite else { return 0 }
+                        let zone = Unmanaged<ZoneBox>.fromOpaque(context).takeUnretainedValue().zone
+                        return Double(zone.secondsFromGMT(for: Date(timeIntervalSince1970: utc / 1000))) * 1000
+                    })
+            }
+        }
         guard let raw else { return [] }
         defer { amonhen_string_free(raw) }
         return (try? JSONDecoder().decode([MarkdownBlock].self, from: Data(String(cString: raw).utf8))) ?? []
     }
+}
+
+/// FFI の時間帯の呼び出しに渡す箱。
+private final class ZoneBox: @unchecked Sendable {
+    let zone: TimeZone
+    init(_ zone: TimeZone) { self.zone = zone }
 }
 
 /// Mermaid のテーマの指定（mermaid-cli の設定ファイルと同じ中身。図の中の指定と、読み込んだテーマ）。

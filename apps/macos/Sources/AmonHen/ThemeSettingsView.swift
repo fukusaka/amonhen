@@ -112,6 +112,20 @@ struct SyntaxThemeSection: View {
                     Text(name).tag("mermaid-import:\(name)")
                 }
             }
+            LabeledContent(L("Gantt time zone")) {
+                // 数百あるので、地域（Asia など）ごとの下の階層に分ける。
+                Menu(model.ganttTimeZone.isEmpty ? L("System time zone") : model.ganttTimeZone) {
+                    Button(L("System time zone")) { model.ganttTimeZone = "" }
+                    Button("UTC") { model.ganttTimeZone = "UTC" }
+                    Divider()
+                    ForEach(Self.zoneRegions, id: \.0) { region, names in
+                        Menu(region) {
+                            ForEach(names, id: \.self) { name in Button(name) { model.ganttTimeZone = name } }
+                        }
+                    }
+                }
+                .fixedSize()
+            }
             ThemePreview(
                 light: model.syntaxThemeLight, dark: model.syntaxThemeDark, standardDiff: model.diffStandardColors,
                 diagramColors: model.diagramColors, mermaidThemes: model.importedMermaidThemes)
@@ -171,6 +185,14 @@ struct SyntaxThemeSection: View {
             }
         }
     }
+
+    /// OS が知っている時間帯を、地域（`Asia/Tokyo` の `Asia`）ごとに。
+    private static let zoneRegions: [(String, [String])] = {
+        let names = TimeZone.knownTimeZoneIdentifiers.filter { $0.contains("/") }
+        return Dictionary(grouping: names) { String($0.prefix { $0 != "/" }) }
+            .map { ($0.key, $0.value.sorted()) }
+            .sorted { $0.0 < $1.0 }
+    }()
 
     private func importTheme() {
         let panel = NSOpenPanel()

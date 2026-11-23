@@ -330,6 +330,21 @@ enum Settings {
         }
     }
 
+    /// gantt の日付を数える時間帯（IANA の名前。空なら OS の時間帯）。変えたら `ganttTimeZoneChanged` を知らせる。
+    static var ganttTimeZone: String {
+        get { UserDefaults.standard.string(forKey: "ganttTimeZone") ?? "" }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "ganttTimeZone")
+            NotificationCenter.default.post(name: .ganttTimeZoneChanged, object: nil)
+        }
+    }
+
+    /// 今の gantt の時間帯（名前が読めなければ OS の時間帯）。
+    static var ganttZone: TimeZone {
+        let name = ganttTimeZone
+        return name.isEmpty ? TimeZone.current : TimeZone(identifier: name) ?? TimeZone.current
+    }
+
     /// 読み込んだ Mermaid のテーマ（名前 → 中身）。「図の配色」の `mermaid-import:名前` で選ぶ。
     static var importedMermaidThemes: [String: MermaidThemeConfig] {
         get {
@@ -535,6 +550,7 @@ final class SettingsModel {
     var importedThemes = SyntaxTheme.imported { didSet { SyntaxTheme.imported = importedThemes } }
     var diffStandardColors = Settings.diffStandardColors { didSet { Settings.diffStandardColors = diffStandardColors } }
     var diagramColors = Settings.diagramColors { didSet { Settings.diagramColors = diagramColors } }
+    var ganttTimeZone = Settings.ganttTimeZone { didSet { Settings.ganttTimeZone = ganttTimeZone } }
     var importedMermaidThemes = Settings.importedMermaidThemes {
         didSet { Settings.importedMermaidThemes = importedMermaidThemes }
     }

@@ -599,6 +599,10 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         root = Node(name: "", path: "", isDirectory: true, oid: "")
         content = DiffViewController(renderer: renderer)
         super.init(frame: NSRect(x: 0, y: 0, width: 600, height: 400))
+        // gantt の時間帯（設定・OS）を変えたら、整形した Markdown を読み直す（日付の位置が変わる）。
+        for name in [Notification.Name.ganttTimeZoneChanged, .NSSystemTimeZoneDidChange] {
+            NotificationCenter.default.addObserver(self, selector: #selector(timeZoneChanged), name: name, object: nil)
+        }
         for (i, item) in (changes?.items ?? []).enumerated() {
             changedFiles[item.path] = i
             var folder = (item.path as NSString).deletingLastPathComponent
@@ -843,6 +847,10 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         return out
     }
 
+    @objc private func timeZoneChanged() {
+        if markdownView != nil, let openPath { open(path: openPath, line: nil) }
+    }
+
     @objc private func markdownViewChanged() {
         markdownText = markdownSwitch.selectedSegment == 1
         if let openPath { open(path: openPath, line: nil) }
@@ -954,7 +962,8 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
                 guard let data = await contents(of: path), request == self.request else { return }
                 let text = String(decoding: data, as: UTF8.self)
                 let gitHub = self.gitHub
-                let blocks = await Task.detached { MarkdownBlock.parse(text, gitHub: gitHub) }.value
+                let zone = Settings.ganttZone
+                let blocks = await Task.detached { MarkdownBlock.parse(text, gitHub: gitHub, timeZone: zone) }.value
                 guard request == self.request else { return }
                 let view = MarkdownView(blocks: blocks, path: path) { [weak self] link in self?.image(link, from: path) }
                 view.onOpenPath = { [weak self] target in self?.open(path: target, line: nil) }
