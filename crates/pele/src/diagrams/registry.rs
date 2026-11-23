@@ -18,6 +18,7 @@ static DIAGRAMS: &[&Diagram] = &[
     &super::eventmodeling::EVENTMODELING,
     &super::flowchart::FLOWCHART,
     &super::venn::VENN,
+    &super::wardley::WARDLEY,
 ];
 
 /// 種類の名前（pele の `DiagramType`）の図。

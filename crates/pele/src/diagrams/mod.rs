@@ -5,3 +5,4 @@ pub mod eventmodeling;
 pub mod flowchart;
 pub mod registry;
 pub mod venn;
+pub mod wardley;
