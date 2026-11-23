@@ -68,14 +68,15 @@ pub fn diagram_picture(
     own: Option<amonhen_core::diagram::MermaidConfig>,
     alt: &str,
 ) -> Option<gtk::Picture> {
+    // 高い解像度の画面でぼやけないよう、2 倍の画素で画像にして論理の大きさで見せる（GTK4 の画面の倍率は 1 か 2）
+    const SCALE: i32 = 2;
     let colored = move |svg: &str, dark: bool| {
         let (vars, backdrop) = crate::theme::diagram_palette(dark, own.as_ref());
         amonhen_core::diagram::colorize(svg, &vars, backdrop)
-            .and_then(|s| crate::imagediff::texture(Some(s.as_bytes())))
+            .and_then(|s| crate::imagediff::svg_texture(s.as_bytes(), SCALE))
     };
     let style = adw::StyleManager::default();
-    let first = colored(&svg, style.is_dark())?;
-    let (w, h) = (first.width(), first.height());
+    let (first, w, h) = colored(&svg, style.is_dark())?;
     let (w, h) = if w > MAX_IMAGE_WIDTH {
         (MAX_IMAGE_WIDTH, h * MAX_IMAGE_WIDTH / w.max(1))
     } else {
@@ -90,7 +91,7 @@ pub fn diagram_picture(
         let weak = picture.downgrade();
         Rc::new(move || {
             if let Some(picture) = weak.upgrade()
-                && let Some(texture) = colored(&svg, adw::StyleManager::default().is_dark())
+                && let Some((texture, _, _)) = colored(&svg, adw::StyleManager::default().is_dark())
             {
                 picture.set_paintable(Some(&texture));
             }

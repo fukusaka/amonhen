@@ -14,7 +14,7 @@ use std::sync::OnceLock;
 use amonhen_model::tr;
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
-use gtk::{gdk, glib, graphene, gsk, pango};
+use gtk::{gdk, gio, glib, graphene, gsk, pango};
 
 /// 画像として見せる拡張子: gdk-pixbuf が読める形式と、GTK が自分で読む PNG・JPEG・TIFF と SVG。PDF などの文書は
 /// プレビューに任せる（macOS 版と同じ）。
@@ -85,6 +85,26 @@ impl Mode {
 /// 画像のバイト列を読む（読めなければ None。SVG は GdkPixbuf の読み手があれば読める）。
 pub fn texture(data: Option<&[u8]>) -> Option<gdk::Texture> {
     gdk::Texture::from_bytes(&glib::Bytes::from(data?)).ok()
+}
+
+/// SVG を、本来の大きさの `scale` 倍の画素で画像にする（高い解像度の画面でぼやけない）。本来の大きさ（論理の
+/// 画素）も返す。読めなければ None。
+pub fn svg_texture(svg: &[u8], scale: i32) -> Option<(gdk::Texture, i32, i32)> {
+    let natural = texture(Some(svg))?;
+    let (w, h) = (natural.width(), natural.height());
+    if scale <= 1 {
+        return Some((natural, w, h));
+    }
+    let stream = gio::MemoryInputStream::from_bytes(&glib::Bytes::from(svg));
+    let pixbuf = gtk::gdk_pixbuf::Pixbuf::from_stream_at_scale(
+        &stream,
+        w * scale,
+        h * scale,
+        true,
+        gio::Cancellable::NONE,
+    )
+    .ok()?;
+    Some((gdk::Texture::for_pixbuf(&pixbuf), w, h))
 }
 
 /// 画像の大きさとバイト数（「64 × 48 px · 1.2 kB」）。
