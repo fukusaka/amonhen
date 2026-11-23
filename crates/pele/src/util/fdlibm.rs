@@ -1,4 +1,4 @@
-//! V8 の `Math.sin`・`Math.cos`・`Math.atan`・`Math.atan2`・`Math.acos`（V8 の `base/ieee754.cc`、fdlibm から）。
+//! V8 の `Math.sin`・`Math.cos`・`Math.atan`・`Math.atan2`・`Math.asin`・`Math.acos`（V8 の `base/ieee754.cc`、fdlibm から）。
 //! V8 の答えは正しく丸めたものとは限らず、OS の libm と最後の桁で違うことがある。それが配置を何度も繰り返す図
 //! （venn の円の緩和など）では目に見える違いに育つので、同じ手順で計算する。
 //!
@@ -411,6 +411,53 @@ pub fn acos(x: f64) -> f64 {
     let r = p / q;
     let w = r.mul_add(s, c);
     2.0 * (df + w)
+}
+
+const PIO4_HI: f64 = 7.85398163397448278999e-01;
+
+/// `Math.asin`。
+pub fn asin(x: f64) -> f64 {
+    let hx = high(x);
+    let ix = hx & 0x7FFF_FFFF;
+    let pq = |t: f64| {
+        let p = t * t.mul_add(
+            t.mul_add(t.mul_add(t.mul_add(t.mul_add(PS5, PS4), PS3), PS2), PS1),
+            PS0,
+        );
+        let q = t.mul_add(t.mul_add(t.mul_add(t.mul_add(QS4, QS3), QS2), QS1), 1.0);
+        (p, q)
+    };
+    if ix >= 0x3FF0_0000 {
+        if ((ix - 0x3FF0_0000) as u32 | low(x)) == 0 {
+            return x.mul_add(PIO2_HI, x * PIO2_LO);
+        }
+        return f64::NAN;
+    }
+    if ix < 0x3FE0_0000 {
+        if ix < 0x3E40_0000 {
+            return x;
+        }
+        let t = x * x;
+        let (p, q) = pq(t);
+        let w = p / q;
+        return x.mul_add(w, x);
+    }
+    let w = 1.0 - x.abs();
+    let t = w * 0.5;
+    let (p, q) = pq(t);
+    let s = t.sqrt();
+    let t = if ix >= 0x3FEF_3333 {
+        let w = p / q;
+        PIO2_HI - 2.0f64.mul_add(s.mul_add(w, s), -PIO2_LO)
+    } else {
+        let w = with_low(s, 0);
+        let c = (-w).mul_add(w, t) / (s + w);
+        let r = p / q;
+        let p = (2.0 * s).mul_add(r, -(-2.0f64).mul_add(c, PIO2_LO));
+        let q = (-2.0f64).mul_add(w, PIO4_HI);
+        PIO4_HI - (p - q)
+    };
+    if hx > 0 { t } else { -t }
 }
 
 #[cfg(test)]

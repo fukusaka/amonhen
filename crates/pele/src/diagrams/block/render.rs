@@ -24,6 +24,7 @@ use crate::svg::title::title_label;
 use crate::text::label::{Label, layout_label};
 use crate::text::measurer::{TextMeasurer, default_measurer, style};
 use crate::types::{RenderOptions, Rendered};
+use crate::util::fdlibm;
 use crate::util::yaml::Value;
 
 const GAP: f64 = 12.0;
@@ -430,12 +431,17 @@ fn loop_arc(v: &G, k: usize) -> (f64, f64, f64, f64, f64) {
     if is_round(v) {
         let px = v.x + hw * FRAC_1_SQRT_2;
         let py = v.y - hw * FRAC_1_SQRT_2;
-        let half = 2.0 * js::min(1.0, r / (2.0 * hw)).asin();
-        let angle = |at: f64| (v.y - hw * at.sin() - py).atan2(v.x + hw * at.cos() - px);
+        let half = 2.0 * fdlibm::asin(js::min(1.0, r / (2.0 * hw)));
+        let angle = |at: f64| {
+            fdlibm::atan2(
+                v.y - hw * fdlibm::sin(at) - py,
+                v.x + hw * fdlibm::cos(at) - px,
+            )
+        };
         return (px, py, r, angle(PI / 4.0 + half), angle(PI / 4.0 - half));
     }
     if v.kind == Kind::Leaf && v.shape == "diam" {
-        let slope = hh.atan2(hw);
+        let slope = fdlibm::atan2(hh, hw);
         return (v.x + hw / 2.0, v.y - hh / 2.0, r, slope + PI, slope);
     }
     (v.x + hw, v.y - hh, r, PI, PI / 2.0)
@@ -449,14 +455,14 @@ fn loop_path(v: &G, k: usize, start_trim: f64, end_trim: f64) -> EdgePath {
     if sweep <= 0.0 {
         sweep += 2.0 * PI;
     }
-    let x1 = px + r * from.cos();
-    let y1 = py + r * from.sin();
-    let x2 = px + r * to.cos();
-    let y2 = py + r * to.sin();
-    let sx = px + r * a1.cos();
-    let sy = py + r * a1.sin();
-    let ex = px + r * a2.cos();
-    let ey = py + r * a2.sin();
+    let x1 = px + r * fdlibm::cos(from);
+    let y1 = py + r * fdlibm::sin(from);
+    let x2 = px + r * fdlibm::cos(to);
+    let y2 = py + r * fdlibm::sin(to);
+    let sx = px + r * fdlibm::cos(a1);
+    let sy = py + r * fdlibm::sin(a1);
+    let ex = px + r * fdlibm::cos(a2);
+    let ey = py + r * fdlibm::sin(a2);
     // 矢じりはそれが覆う弦に沿わせる。先の接線ではなく曲線に沿うように。
     let sl = js::hypot(sx - x1, sy - y1);
     let el = js::hypot(ex - x2, ey - y2);
@@ -474,12 +480,28 @@ fn loop_path(v: &G, k: usize, start_trim: f64, end_trim: f64) -> EdgePath {
         tokens: None,
         sx,
         sy,
-        sdx: if sl > 0.0 { (sx - x1) / sl } else { a1.sin() },
-        sdy: if sl > 0.0 { (sy - y1) / sl } else { -a1.cos() },
+        sdx: if sl > 0.0 {
+            (sx - x1) / sl
+        } else {
+            fdlibm::sin(a1)
+        },
+        sdy: if sl > 0.0 {
+            (sy - y1) / sl
+        } else {
+            -fdlibm::cos(a1)
+        },
         ex,
         ey,
-        edx: if el > 0.0 { (ex - x2) / el } else { -a2.sin() },
-        edy: if el > 0.0 { (ey - y2) / el } else { a2.cos() },
+        edx: if el > 0.0 {
+            (ex - x2) / el
+        } else {
+            -fdlibm::sin(a2)
+        },
+        edy: if el > 0.0 {
+            (ey - y2) / el
+        } else {
+            fdlibm::cos(a2)
+        },
     }
 }
 

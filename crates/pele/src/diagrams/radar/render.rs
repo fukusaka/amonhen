@@ -12,6 +12,7 @@ use crate::types::{RenderOptions, Rendered};
 use crate::util::yaml::Value;
 
 use super::model::RadarModel;
+use crate::util::fdlibm;
 
 const SWATCH: f64 = 12.0;
 const ROW: f64 = 26.0;
@@ -128,8 +129,8 @@ fn draw(
             let angle =
                 (2.0 * std::f64::consts::PI * i as f64) / count as f64 - std::f64::consts::PI / 2.0;
             Point {
-                x: angle.cos(),
-                y: angle.sin(),
+                x: fdlibm::cos(angle),
+                y: fdlibm::sin(angle),
             }
         })
         .collect();

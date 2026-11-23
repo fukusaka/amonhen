@@ -10,6 +10,7 @@ use crate::svg::builder::{esc_text, label_svg, num};
 use crate::svg::ink::ink;
 use crate::text::label::Label;
 use crate::types::IconResolver;
+use crate::util::fdlibm;
 
 pub const ARROW: f64 = 8.0;
 
@@ -650,8 +651,8 @@ fn arc(
         .sqrt();
     let cx = (k * rx * hy) / ry + (x1 + x2) / 2.0;
     let cy = (-k * ry * hx) / rx + (y1 + y2) / 2.0;
-    let from = ((y1 - cy) / ry).atan2((x1 - cx) / rx);
-    let mut turn = ((y2 - cy) / ry).atan2((x2 - cx) / rx) - from;
+    let from = fdlibm::atan2((y1 - cy) / ry, (x1 - cx) / rx);
+    let mut turn = fdlibm::atan2((y2 - cy) / ry, (x2 - cx) / rx) - from;
     if js::truthy(sweep) && turn < 0.0 {
         turn += 2.0 * std::f64::consts::PI;
     } else if !js::truthy(sweep) && turn > 0.0 {
@@ -659,8 +660,8 @@ fn arc(
     }
     for i in 1..=8 {
         let a = from + (turn * i as f64) / 8.0;
-        out.push(cx + rx * a.cos());
-        out.push(cy + ry * a.sin());
+        out.push(cx + rx * fdlibm::cos(a));
+        out.push(cy + ry * fdlibm::sin(a));
     }
 }
 

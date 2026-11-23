@@ -14,6 +14,7 @@ use crate::svg::theme::series_color;
 use crate::text::label::{Label, layout_label};
 use crate::text::measurer::{TextMeasurer, default_measurer, style};
 use crate::types::{RenderOptions, Rendered};
+use crate::util::fdlibm;
 use crate::util::yaml::Value;
 
 const RADIUS: f64 = 120.0;
@@ -35,8 +36,8 @@ pub fn to_fixed0(x: f64) -> String {
 fn point(angle: f64, radius: f64) -> String {
     format!(
         "{},{}",
-        num(angle.sin() * radius),
-        num(-angle.cos() * radius)
+        num(fdlibm::sin(angle) * radius),
+        num(-fdlibm::cos(angle) * radius)
     )
 }
 
@@ -180,7 +181,7 @@ fn draw(
             if share == 0.0 || share >= 0.5 {
                 return false;
             }
-            let chord = 2.0 * radius * text_position * (share * PI).sin();
+            let chord = 2.0 * radius * text_position * fdlibm::sin(share * PI);
             chord < measurer.width(&(to_fixed0(share * 100.0) + "%"), small, 0) + 6.0
         })
         .collect();
@@ -258,12 +259,18 @@ fn draw(
             };
             let mut at = mid;
             let mut step = 0;
-            while step < 360 && !clear(at.sin() * rim, -at.cos() * rim, &placed_outside) {
+            while step < 360
+                && !clear(
+                    fdlibm::sin(at) * rim,
+                    -fdlibm::cos(at) * rim,
+                    &placed_outside,
+                )
+            {
                 at += 2.0 / rim;
                 step += 1;
             }
-            let x = at.sin() * rim;
-            let y = -at.cos() * rim;
+            let x = fdlibm::sin(at) * rim;
+            let y = -fdlibm::cos(at) * rim;
             placed_outside.push((x, y, width));
             outside.push_str(&format!(
                 "<text x=\"{}\" y=\"{}\">{text}</text>",
@@ -274,8 +281,8 @@ fn draw(
             let r = radius * text_position;
             labels.push_str(&format!(
                 "<text x=\"{}\" y=\"{}\"{}>{text}</text>",
-                num(mid.sin() * r),
-                num(-mid.cos() * r + small * 0.35),
+                num(fdlibm::sin(mid) * r),
+                num(-fdlibm::cos(mid) * r + small * 0.35),
                 series_ink_fill(index as i64)
             ));
         }

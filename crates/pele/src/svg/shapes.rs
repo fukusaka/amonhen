@@ -5,6 +5,7 @@ use crate::js;
 use crate::layout::compound::CNode;
 use crate::svg::builder::num;
 use crate::svg::theme::rounded;
+use crate::util::fdlibm;
 
 #[derive(Clone, Copy, Debug)]
 pub struct ShapeSize {
@@ -774,8 +775,8 @@ pub fn draw_shape(shape: &str, w: f64, h: f64, a: &str, line: &str) -> String {
                 let angle =
                     (std::f64::consts::PI * i as f64) / spikes as f64 - std::f64::consts::PI / 2.0;
                 let k = if i % 2 == 0 { 1.0 } else { 0.82 };
-                pts.push(angle.cos() * (w / 2.0) * k);
-                pts.push(angle.sin() * (h / 2.0) * k);
+                pts.push(fdlibm::cos(angle) * (w / 2.0) * k);
+                pts.push(fdlibm::sin(angle) * (h / 2.0) * k);
             }
             poly(&pts, a)
         }
