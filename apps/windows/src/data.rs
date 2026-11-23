@@ -98,6 +98,136 @@ pub struct DiffContent<'a> {
     pub marks: bool,
     /// ファイルごとの、足した（A）・消した（D）・変えた（M）の印（見出しに出す。`file_rows` の順）。
     pub file_marks: &'a [char],
+    /// 変更ファイルを木で見せるときの、表示の行の並び（None なら差分の行がそのまま表示の行）。
+    pub tree: Option<&'a DiffTree>,
+}
+
+impl DiffContent<'_> {
+    /// 表示の行の数。
+    pub fn line_count(&self) -> usize {
+        self.tree.map_or(self.view.rows.len(), |t| t.lines.len())
+    }
+
+    /// 表示の `n` 行目。
+    pub fn line(&self, n: usize) -> Option<DiffLine> {
+        match self.tree {
+            Some(t) => t.lines.get(n).copied(),
+            None => (n < self.view.rows.len()).then_some(DiffLine::Row(n as u32)),
+        }
+    }
+
+    /// 表示の行の、ファイルの見出しの位置（昇順。上に張り付かせる見出しを探す）。
+    pub fn file_lines(&self) -> &[u32] {
+        self.tree
+            .map_or(self.file_rows, |t| t.file_lines.as_slice())
+    }
+
+    /// 差分の `row` 行目の、表示の行（隠したファイルの見出しなら None）。
+    pub fn line_of(&self, row: u32) -> Option<u32> {
+        match self.tree {
+            Some(t) => t
+                .line_of_row
+                .get(row as usize)
+                .copied()
+                .filter(|&l| l != u32::MAX),
+            None => Some(row),
+        }
+    }
+
+    /// `file` 番目のファイルの見出しの字下げの深さと、見出しに出す名前（リストなら 0 とパスのまま）。
+    pub fn file_title(&self, file: usize) -> (u32, Option<&str>) {
+        match self.tree {
+            Some(t) => (
+                t.depths.get(file).copied().unwrap_or(0),
+                t.titles.get(file).map(String::as_str),
+            ),
+            None => (0, None),
+        }
+    }
+}
+
+/// 差分の欄の表示の 1 行: 差分の行か、変更ファイルを木で見せるときのフォルダの行（`DiffTree::folders` の番号）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DiffLine {
+    Row(u32),
+    Folder(u32),
+}
+
+/// 木で見せるときのフォルダの行（macOS 版の `DiffViewController.Folder`）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FolderLine {
+    pub name: String,
+    pub depth: u32,
+    /// リポジトリの根からのパス（畳んだフォルダを覚える鍵）。
+    pub path: String,
+    pub collapsed: bool,
+}
+
+/// 変更ファイルを木で見せるときの、表示の行の並び（macOS 版の `treeLayout` と `setFolders`）。ファイルの
+/// 見出しの前にフォルダの行を差し込み、畳んだフォルダの中のファイルは見出しごと隠す。
+#[derive(Debug, Default, PartialEq)]
+pub struct DiffTree {
+    pub lines: Vec<DiffLine>,
+    pub folders: Vec<FolderLine>,
+    /// 差分の行ごとの表示の行（隠した行は `u32::MAX`）。
+    line_of_row: Vec<u32>,
+    /// 表示の行の、ファイルの見出しの位置（隠したファイルのものはない）。
+    file_lines: Vec<u32>,
+    /// ファイルごとの字下げの深さ（入っているフォルダの数）と、見出しに出す名前（パスの最後）。
+    depths: Vec<u32>,
+    titles: Vec<String>,
+}
+
+/// 木の形（ファイルごとの前に差し込むフォルダの行、深さ、名前、畳んだフォルダの中で隠すファイル）。並びは
+/// パスの順のまま（macOS 版の `treeLayout`）。
+#[allow(clippy::type_complexity)]
+fn tree_layout(
+    paths: &[&str],
+    collapsed_folders: &HashSet<String>,
+) -> (
+    HashMap<usize, Vec<FolderLine>>,
+    Vec<u32>,
+    Vec<String>,
+    HashSet<usize>,
+) {
+    let mut groups = HashMap::new();
+    let mut depths = Vec::with_capacity(paths.len());
+    let mut titles = Vec::with_capacity(paths.len());
+    let mut hidden = HashSet::new();
+    let mut previous: Vec<&str> = Vec::new();
+    for (file, path) in paths.iter().enumerate() {
+        let mut parts: Vec<&str> = path.split('/').collect();
+        let name = parts.pop().unwrap_or(path);
+        let common = previous
+            .iter()
+            .zip(&parts)
+            .take_while(|(a, b)| a == b)
+            .count();
+        // 畳んだフォルダ（いちばん外側）。その中は見出しを出さない。
+        let outer = (0..parts.len()).find(|&l| collapsed_folders.contains(&parts[..=l].join("/")));
+        let folders: Vec<FolderLine> = (common..parts.len())
+            .filter(|&level| outer.is_none_or(|o| level <= o))
+            .map(|level| {
+                let folder = parts[..=level].join("/");
+                FolderLine {
+                    name: parts[level].to_owned(),
+                    depth: level as u32,
+                    collapsed: collapsed_folders.contains(&folder),
+                    path: folder,
+                }
+            })
+            .collect();
+        if outer.is_some() {
+            hidden.insert(file);
+        }
+        if !folders.is_empty() {
+            groups.insert(file, folders);
+        }
+        depths.push(parts.len() as u32);
+        titles.push(name.to_owned());
+        previous = parts;
+    }
+    (groups, depths, titles, hidden)
 }
 
 /// 行ごとの、変わった単語の範囲。
@@ -135,6 +265,7 @@ impl WorkingShown {
             file_rows: &[],
             marks: self.diff.combined.is_some(),
             file_marks: &[],
+            tree: None,
         }
     }
 }
@@ -158,6 +289,11 @@ pub struct CommitShown {
     pub file_rows: Vec<u32>,
     /// ファイルごとの、足した（A）・消した（D）・変えた（M）の印。
     file_marks: Vec<char>,
+    /// 変更ファイルを木で見せるか（帯のリスト／ツリー）と、畳んだフォルダ（パス）。
+    tree_on: bool,
+    pub collapsed_folders: HashSet<String>,
+    /// 木で見せるときの表示の行の並び。
+    tree: Option<DiffTree>,
     /// 表示を作り直した回数（古い表示の構文の色を捨てるため）。
     version: u32,
 }
@@ -178,9 +314,15 @@ impl CommitShown {
             collapsed,
             file_rows: Vec::new(),
             file_marks,
+            tree_on: crate::prefs::bool(crate::prefs::HISTORY_FILE_TREE),
+            collapsed_folders: HashSet::new(),
+            tree: None,
             version: 0,
         };
-        shown.index_highlights();
+        // 最初の表示（構文の色は、読み込んだ所がこの版 0 の表示のものを送る。最初は隠すファイルがないので、
+        // 畳み方は `collapsed` のまま）。
+        shown.rebuild_view();
+        shown.version = 0;
         shown
     }
 
@@ -192,7 +334,25 @@ impl CommitShown {
             file_rows: &self.file_rows,
             marks: false,
             file_marks: &self.file_marks,
+            tree: self.tree.as_ref(),
         }
+    }
+
+    /// 変更ファイルを木で見せるか。
+    pub fn tree_on(&self) -> bool {
+        self.tree_on
+    }
+
+    /// 木で見せるときの、すべてのフォルダ（パス）。
+    fn all_folders(&self) -> HashSet<String> {
+        let mut all = HashSet::new();
+        for (path, _) in &self.stacked.files {
+            let parts: Vec<&str> = path.split('/').collect();
+            for level in 0..parts.len().saturating_sub(1) {
+                all.insert(parts[..=level].join("/"));
+            }
+        }
+        all
     }
 
     /// 「差分をすべて開く」で開くファイル（生成物と、変更が多すぎるファイルは除く。macOS 版の
@@ -222,9 +382,46 @@ impl CommitShown {
 
     /// 表示を作り直す（構文の色は捨てる）。色を付け直すための、全ファイルと畳んでいるかを返す。
     fn rebuild_view(&mut self) -> (Arc<StackedDiff>, Vec<bool>) {
-        let (stacked, collapsed) = (self.stacked.clone(), self.collapsed.clone());
+        let stacked = self.stacked.clone();
+        // 木なら、畳んだフォルダの中のファイルも畳む（見出しごと隠す）。
+        let layout = self.tree_on.then(|| {
+            let paths: Vec<&str> = stacked.files.iter().map(|(p, _)| p.as_str()).collect();
+            tree_layout(&paths, &self.collapsed_folders)
+        });
+        let mut collapsed = self.collapsed.clone();
+        if let Some((_, _, _, hidden)) = &layout {
+            for &file in hidden {
+                collapsed[file] = true;
+            }
+        }
         self.diff = stacked.view(&collapsed, &PROFILE);
         self.index_highlights();
+        self.tree = layout.map(|(groups, depths, titles, hidden)| {
+            let mut tree = DiffTree {
+                depths,
+                titles,
+                line_of_row: vec![u32::MAX; self.diff.rows.len()],
+                ..Default::default()
+            };
+            let mut file = 0;
+            for (row, r) in self.diff.rows.iter().enumerate() {
+                if r.kind == amonhen_layout::DiffRow::FILE {
+                    for folder in groups.get(&file).into_iter().flatten() {
+                        tree.lines.push(DiffLine::Folder(tree.folders.len() as u32));
+                        tree.folders.push(folder.clone());
+                    }
+                    let shown = !hidden.contains(&file);
+                    file += 1;
+                    if !shown {
+                        continue;
+                    }
+                    tree.file_lines.push(tree.lines.len() as u32);
+                }
+                tree.line_of_row[row] = tree.lines.len() as u32;
+                tree.lines.push(DiffLine::Row(row as u32));
+            }
+            tree
+        });
         self.syntax.clear();
         self.version += 1;
         (stacked, collapsed)
@@ -1676,18 +1873,18 @@ impl Data {
         self.toggle_file_index(file)
     }
 
-    /// 差分の `file` 番目のファイルを畳む・開く。
-    pub fn toggle_file_index(&mut self, file: usize) -> bool {
+    /// 出しているコミットの差分の畳み方を `change` で変え、表示を作り直す（構文の色も付け直す）。`change` が
+    /// false を返したら何もしない。変えたら true。
+    fn relayout(&mut self, change: impl FnOnce(&mut CommitShown) -> bool) -> bool {
         let Some(generation) = self.history.as_ref().map(|h| h.generation) else {
             return false;
         };
         let Some(commit) = self.commit.as_mut() else {
             return false;
         };
-        let Some(collapsed) = commit.collapsed.get_mut(file) else {
+        if !change(commit) {
             return false;
-        };
-        *collapsed = !*collapsed;
+        }
         let (stacked, collapsed) = commit.rebuild_view();
         send_syntax(
             self.tx.clone(),
@@ -1701,33 +1898,61 @@ impl Data {
         true
     }
 
+    /// 差分の `file` 番目のファイルを畳む・開く。
+    pub fn toggle_file_index(&mut self, file: usize) -> bool {
+        self.relayout(|commit| match commit.collapsed.get_mut(file) {
+            Some(collapsed) => {
+                *collapsed = !*collapsed;
+                true
+            }
+            None => false,
+        })
+    }
+
     /// 生成物と変更の多いファイルのほかをすべて開く（すべて開いていれば、すべて畳む）。帯の「差分をすべて開く・
     /// 畳む」。変わったら true。
     pub fn toggle_all_files(&mut self) -> bool {
-        let Some(generation) = self.history.as_ref().map(|h| h.generation) else {
-            return false;
-        };
-        let Some(commit) = self.commit.as_mut() else {
-            return false;
-        };
-        if commit.all_open() {
-            commit.collapsed.fill(true);
-        } else {
-            for i in commit.expandable() {
-                commit.collapsed[i] = false;
+        self.relayout(|commit| {
+            if commit.all_open() {
+                commit.collapsed.fill(true);
+            } else {
+                for i in commit.expandable() {
+                    commit.collapsed[i] = false;
+                }
             }
-        }
-        let (stacked, collapsed) = commit.rebuild_view();
-        send_syntax(
-            self.tx.clone(),
-            self.wake.clone(),
-            generation,
-            commit.row,
-            commit.version,
-            stacked,
-            collapsed,
-        );
-        true
+            true
+        })
+    }
+
+    /// 変更ファイルを木で見せる・リストに戻す（帯のリスト／ツリー）。
+    pub fn set_file_tree(&mut self, on: bool) -> bool {
+        self.relayout(|commit| {
+            let changed = commit.tree_on != on;
+            commit.tree_on = on;
+            changed
+        })
+    }
+
+    /// 木のフォルダ `path` を畳む・開く。
+    pub fn toggle_folder(&mut self, path: &str) -> bool {
+        self.relayout(|commit| {
+            if !commit.collapsed_folders.remove(path) {
+                commit.collapsed_folders.insert(path.to_owned());
+            }
+            true
+        })
+    }
+
+    /// 木のフォルダをすべて開く（どれか畳んでいれば）・すべて畳む（帯のフォルダのボタン）。
+    pub fn toggle_all_folders(&mut self) -> bool {
+        self.relayout(|commit| {
+            if commit.collapsed_folders.is_empty() {
+                commit.collapsed_folders = commit.all_folders();
+            } else {
+                commit.collapsed_folders.clear();
+            }
+            true
+        })
     }
 
     pub fn repo(&self) -> Option<Arc<Repository>> {
@@ -1851,4 +2076,41 @@ fn labels(history: &HistorySnapshot, refs: &Refs) -> Labels {
         row.sort_by_key(|l| (!l.head, l.kind as u8));
     }
     labels
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tree_layout_puts_folders_before_their_first_file() {
+        let paths = ["README.md", "src/a/b.rs", "src/a/c.rs", "src/d.rs"];
+        let (groups, depths, titles, hidden) = tree_layout(&paths, &HashSet::new());
+        let names = |f: usize| -> Vec<(String, u32)> {
+            groups
+                .get(&f)
+                .map(|g| g.iter().map(|x| (x.name.clone(), x.depth)).collect())
+                .unwrap_or_default()
+        };
+        assert!(names(0).is_empty());
+        assert_eq!(names(1), [("src".into(), 0), ("a".into(), 1)]);
+        assert!(names(2).is_empty());
+        assert!(names(3).is_empty());
+        assert_eq!(depths, [0, 2, 2, 1]);
+        assert_eq!(titles, ["README.md", "b.rs", "c.rs", "d.rs"]);
+        assert!(hidden.is_empty());
+    }
+
+    #[test]
+    fn tree_layout_hides_files_in_a_folded_folder() {
+        let paths = ["src/a/b.rs", "src/a/c.rs", "src/d.rs"];
+        let folded = HashSet::from(["src/a".to_owned()]);
+        let (groups, _, _, hidden) = tree_layout(&paths, &folded);
+        // 畳んだフォルダの行は出し、その中のフォルダの行とファイルは出さない。
+        let first = &groups[&0];
+        assert_eq!(first.len(), 2);
+        assert!(first[1].collapsed && first[1].path == "src/a");
+        assert_eq!(hidden, HashSet::from([0, 1]));
+        assert!(!groups.contains_key(&1));
+    }
 }

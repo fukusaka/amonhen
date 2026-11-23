@@ -1662,7 +1662,6 @@
 "Show avatars" = "アバターを表示する";
 "Show Avatars" = "アバターを表示";
 "Stack the diffs of all files" = "全ファイルの差分を縦に並べる";
-"Show changed files as a tree left of the diff" = "変更ファイルを差分の左に木で表示する";
 "Show merge commits" = "マージのコミットも出す";
 "SSH agent found" = "SSH の agent があります";
 "No SSH agent here, so keys that need a passphrase can’t be used" = "ここに SSH の agent はないので、パスフレーズのある鍵を使えません";

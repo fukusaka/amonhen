@@ -155,6 +155,8 @@ const DIFF_TEXT_INSET: f32 = 10.0;
 const HEADER_PATH_X: f32 = 42.0;
 /// ファイルの見出しの右端の、いつも出す ⋯ の幅（ここを押すとファイルのメニュー。macOS 版と同じ 30pt）。
 pub const HEADER_MENU_WIDTH: f32 = 30.0;
+/// 木で見せるときの、深さ 1 つ分の字下げ（macOS 版と同じ 14pt）。
+const TREE_INDENT: f32 = 14.0;
 const ADDED_TEXT: D2D1_COLOR_F = rgba(0.16, 0.62, 0.26, 1.0);
 const REMOVED_TEXT: D2D1_COLOR_F = rgba(0.86, 0.22, 0.20, 1.0);
 const MODIFIED_TEXT: D2D1_COLOR_F = rgba(0.93, 0.55, 0.10, 1.0);
@@ -1099,7 +1101,8 @@ impl Renderer {
     ) -> Result<()> {
         use amonhen_layout::DiffRow;
         let view = commit.view;
-        let count = view.rows.len() as u32;
+        // 表示の行（木で見せるときは、フォルダの行を差し込み、隠したファイルを除いた並び）。
+        let count = commit.line_count() as u32;
         let first = ((scroll_y / DIFF_ROW_HEIGHT).floor().max(0.0) as u32).min(count);
         let last = (((scroll_y + height) / DIFF_ROW_HEIGHT).ceil() as u32 + 1).min(count);
         if self.diff_rows.len() > 2048 {
@@ -1113,9 +1116,19 @@ impl Renderer {
         // 行ごとの含める印（Working Copy の 1 本の差分）があれば、その列の右から行番号。
         let left = if commit.marks { DIFF_MARK_WIDTH } else { 0.0 };
         let text_x = left + DIFF_NUMBER_WIDTH * 2.0 + DIFF_TEXT_INSET;
-        for i in first..last {
+        for n in first..last {
+            let top = n as f32 * DIFF_ROW_HEIGHT - scroll_y;
+            let i = match commit.line(n as usize) {
+                Some(crate::data::DiffLine::Row(i)) => i,
+                Some(crate::data::DiffLine::Folder(f)) => {
+                    if let Some(folder) = commit.tree.and_then(|t| t.folders.get(f as usize)) {
+                        self.draw_folder(folder, top, width)?;
+                    }
+                    continue;
+                }
+                None => continue,
+            };
             let row = &view.rows[i as usize];
-            let top = i as f32 * DIFF_ROW_HEIGHT - scroll_y;
             let rect = |left: f32, right: f32| D2D_RECT_F {
                 left,
                 top,
@@ -1141,8 +1154,21 @@ impl Renderer {
                     self.d2d.FillRectangle(&rect(0.0, width), &self.brush);
                 }
             }
-            self.diff_layout(view, commit.syntax, i)?;
+            let title = self.header_title(&commit, i);
+            self.diff_layout(view, commit.syntax, i, title.as_deref())?;
             let layout = &self.diff_rows[&i];
+            // 木の見出しはパスの最後だけを出すので、検索の位置はその前の分をずらす（前の分の一致は出さない）。
+            let shift = title.as_ref().map_or(0, |t| {
+                let path = String::from_utf8_lossy(view.strings.bytes(row.text));
+                path.encode_utf16()
+                    .count()
+                    .saturating_sub(t.encode_utf16().count()) as u32
+            });
+            let base = if file {
+                HEADER_PATH_X + self.header_indent(&commit, i)
+            } else {
+                text_x
+            };
             // 差分の中の検索の一致（黄色、今の一致は橙。GTK4 版の差分の検索の帯）。
             let from = self.diff_find.partition_point(|m| m.0 < i);
             for (k, &(_, start, end)) in self.diff_find[from..]
@@ -1150,8 +1176,10 @@ impl Renderer {
                 .enumerate()
                 .take_while(|(_, m)| m.0 == i)
             {
-                let (left, right) = (x_of(layout, start)?, x_of(layout, end)?);
-                let base = if file { HEADER_PATH_X } else { text_x };
+                if start < shift {
+                    continue;
+                }
+                let (left, right) = (x_of(layout, start - shift)?, x_of(layout, end - shift)?);
                 let fill = if self.diff_current == Some(from + k) {
                     rgba(1.0, 0.6, 0.1, 0.65)
                 } else {
@@ -1227,8 +1255,12 @@ impl Renderer {
         }
         // 見出しの行が上に隠れたファイルは、見出しを上に張り付かせる（次のファイルの見出しが来たら押し上げる。
         // macOS 版・GTK4 版と同じ）。
-        if let Some((i, top)) = sticky_header(commit.file_rows, scroll_y) {
-            self.diff_layout(view, commit.syntax, i as u32)?;
+        if let Some((n, top)) = sticky_header(commit.file_lines(), scroll_y)
+            && let Some(crate::data::DiffLine::Row(i)) = commit.line(n)
+        {
+            let i = i as usize;
+            let title = self.header_title(&commit, i as u32);
+            self.diff_layout(view, commit.syntax, i as u32, title.as_deref())?;
             unsafe {
                 self.brush.SetColor(&background());
                 self.d2d.FillRectangle(
@@ -1269,6 +1301,7 @@ impl Renderer {
         use amonhen_layout::DiffRow;
         let row = &commit.view.rows[i as usize];
         let file = commit.file_rows.binary_search(&i).ok();
+        let indent = self.header_indent(commit, i);
         let open = row.flags & DiffRow::COLLAPSED == 0;
         // 右から置く: ⋯、行の数。
         let mut right = width - HEADER_MENU_WIDTH;
@@ -1307,7 +1340,7 @@ impl Renderer {
                 &D2D_RECT_F {
                     left: 0.0,
                     top,
-                    right: right.max(HEADER_PATH_X),
+                    right: right.max(HEADER_PATH_X + indent),
                     bottom: top + DIFF_ROW_HEIGHT,
                 },
                 D2D1_ANTIALIAS_MODE_ALIASED,
@@ -1317,7 +1350,7 @@ impl Renderer {
             self.draw_small(
                 if open { "\u{E70D}" } else { "\u{E76C}" },
                 &self.icon_format.clone(),
-                DIFF_TEXT_INSET,
+                DIFF_TEXT_INSET + indent,
                 top + 3.0,
                 14.0,
                 &secondary(),
@@ -1332,7 +1365,7 @@ impl Renderer {
                 self.draw_small(
                     &mark.to_string(),
                     &self.code_format.clone(),
-                    DIFF_TEXT_INSET + 16.0,
+                    DIFF_TEXT_INSET + indent + 16.0,
                     top,
                     14.0,
                     &color,
@@ -1343,7 +1376,7 @@ impl Renderer {
             unsafe {
                 self.brush.SetColor(&foreground());
                 self.d2d.DrawTextLayout(
-                    point(HEADER_PATH_X, top + 1.0),
+                    point(HEADER_PATH_X + indent, top + 1.0),
                     layout,
                     &self.brush,
                     D2D1_DRAW_TEXT_OPTIONS_CLIP,
@@ -1365,6 +1398,75 @@ impl Renderer {
             }
         }
         Ok(())
+    }
+
+    /// 差分の `row` 行目（ファイルの見出し）の木の字下げ（リストなら 0）。
+    fn header_indent(&self, commit: &crate::data::DiffContent, row: u32) -> f32 {
+        commit
+            .file_rows
+            .binary_search(&row)
+            .map_or(0.0, |f| commit.file_title(f).0 as f32 * TREE_INDENT)
+    }
+
+    /// 差分の `row` 行目（ファイルの見出し）に、パスの代わりに出す名前（木のとき。リストなら None）。
+    fn header_title(&self, commit: &crate::data::DiffContent, row: u32) -> Option<String> {
+        let file = commit.file_rows.binary_search(&row).ok()?;
+        commit.file_title(file).1.map(str::to_owned)
+    }
+
+    /// 木のフォルダの行: 字下げして、山形・フォルダの印・名前（押すと中のファイルごと畳む・開く。macOS 版と同じ）。
+    fn draw_folder(
+        &mut self,
+        folder: &crate::data::FolderLine,
+        top: f32,
+        width: f32,
+    ) -> Result<()> {
+        let indent = folder.depth as f32 * TREE_INDENT;
+        unsafe {
+            self.brush.SetColor(&diff_file());
+            self.d2d.FillRectangle(
+                &D2D_RECT_F {
+                    left: 0.0,
+                    top,
+                    right: width,
+                    bottom: top + DIFF_ROW_HEIGHT,
+                },
+                &self.brush,
+            );
+        }
+        let icons = self.icon_format.clone();
+        self.draw_small(
+            if folder.collapsed {
+                "\u{E76C}"
+            } else {
+                "\u{E70D}"
+            },
+            &icons,
+            DIFF_TEXT_INSET + indent,
+            top + 3.0,
+            14.0,
+            &secondary(),
+            false,
+        )?;
+        self.draw_small(
+            "\u{E8B7}",
+            &icons,
+            DIFF_TEXT_INSET + indent + 16.0,
+            top + 3.0,
+            14.0,
+            &secondary(),
+            false,
+        )?;
+        let format = self.file_format.clone();
+        self.draw_small(
+            &folder.name,
+            &format,
+            HEADER_PATH_X + indent,
+            top,
+            (width - HEADER_PATH_X - indent).max(0.0),
+            &secondary(),
+            false,
+        )
     }
 
     /// 短い文字を `x` から幅 `width` に描く（`trailing` なら右に寄せる）。
@@ -1416,14 +1518,22 @@ impl Renderer {
         view: &amonhen_core::diff::DiffView,
         syntax: &std::collections::HashMap<u32, Vec<(u32, u32, u8)>>,
         i: u32,
+        title: Option<&str>,
     ) -> Result<()> {
         use amonhen_layout::DiffRow;
         let row = &view.rows[i as usize];
         let file = row.kind == DiffRow::FILE;
         if !self.diff_rows.contains_key(&i) {
-            // ファイルの見出しはパスだけ（▸・印・行の数は `draw_file_header` が別に描く）。
+            // ファイルの見出しはパスだけ（木なら名前だけ。▸・印・行の数は `draw_file_header` が別に描く）。
             let mut text = Vec::with_capacity(128);
-            crate::data::push_utf16(view.strings.bytes(row.text), row.text.is_ascii(), &mut text);
+            match title {
+                Some(title) => text.extend(title.encode_utf16()),
+                None => crate::data::push_utf16(
+                    view.strings.bytes(row.text),
+                    row.text.is_ascii(),
+                    &mut text,
+                ),
+            }
             let format = if file {
                 &self.file_format
             } else {
