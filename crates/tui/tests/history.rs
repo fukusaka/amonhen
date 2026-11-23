@@ -419,6 +419,32 @@ fn two_lines(dir: &Path) {
     std::fs::write(dir.join("a.txt"), "ONE\ntwo\nTHREE\nfour\n").unwrap();
 }
 
+/// 重ねて出せないファイル（バイナリ）で、stage 済みの変更と作業ツリーの変更があれば、差分で `s` で出す側を替える
+/// （アプリの Unstaged / Staged の切り替え）。重ねて出せるファイルでは、そう言う
+#[test]
+fn switch_between_the_staged_and_unstaged_sides() {
+    let dir = tempfile::tempdir().unwrap();
+    two_lines(dir.path());
+    std::fs::write(dir.path().join("b.bin"), b"\0one").unwrap();
+    git(dir.path(), BASE, &["add", "b.bin"]);
+    git(dir.path(), BASE, &["commit", "-q", "-m", "Binary"]);
+    std::fs::write(dir.path().join("b.bin"), b"\0two").unwrap();
+    git(dir.path(), BASE, &["add", "b.bin"]);
+    std::fs::write(dir.path().join("b.bin"), b"\0three").unwrap();
+    // a.txt は作業ツリーの変更だけ、b.bin は両方。一覧の 2 つ目が b.bin。
+    let staged = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "1j\ns").unwrap();
+    println!("{staged}");
+    assert!(staged.contains("Showing the staged changes"), "{staged}");
+    let back = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "1j\nss").unwrap();
+    assert!(back.contains("Showing the unstaged changes"), "{back}");
+    // 重ねて出せるファイル（テキスト）では、替えるものがない。
+    let both = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "1\ns").unwrap();
+    assert!(
+        both.contains("This diff already shows both the staged and the unstaged changes"),
+        "{both}"
+    );
+}
+
 /// 差分の行で Space: その行だけを stage する。hunk の見出しなら、その hunk すべて
 #[test]
 fn space_in_the_diff_stages_a_line_or_a_hunk() {
@@ -1029,6 +1055,32 @@ fn details_show_the_signature_check() {
     assert!(
         verified.contains("Signature  Verified, ann@example.com"),
         "{verified}"
+    );
+    // History の行にも、署名の印（アプリの行の印）。署名のないコミットには付けない。
+    git(
+        dir.path(),
+        BASE,
+        &[
+            "commit",
+            "-q",
+            "--no-gpg-sign",
+            "--allow-empty",
+            "-m",
+            "Plain",
+        ],
+    );
+    let rows = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "").unwrap();
+    println!("{rows}");
+    let history: Vec<String> = rows.lines().skip(1).filter_map(|l| column(l, 1)).collect();
+    assert!(
+        history.iter().any(|l| l.contains("✓ Signed")),
+        "{history:?}"
+    );
+    assert!(
+        history
+            .iter()
+            .any(|l| l.contains("Plain") && !l.contains('✓')),
+        "{history:?}"
     );
     // 署名したタグには、サイドバーで印（正しい署名は ✓）。署名のないタグには付けない。
     git(dir.path(), BASE, &["tag", "-s", "-m", "Release", "v1"]);
@@ -1782,6 +1834,74 @@ fn a_failure_shows_in_full_with_bang() {
     assert!(all.contains(" Details of the failure "), "{all}");
     assert!(all.contains("a.txt"), "{all}");
     assert_eq!(git_out(dir.path(), &["branch", "--show-current"]), "main\n");
+}
+
+/// サイドバーの `v` で ref に印をつけると、History はそれらから辿れるものだけになる（アプリの、いくつも選んだ ref の
+/// History）。Esc で印を外す
+#[test]
+fn history_of_the_marked_refs() {
+    let dir = tempfile::tempdir().unwrap();
+    diverged(dir.path());
+    // サイドバーの 3 つ下が topic、2 つ下が main。
+    let topic = amonhen_tui::snapshot(open(dir.path()), 200, 12, clock(), "0jjjv").unwrap();
+    println!("{topic}");
+    assert!(
+        topic.contains("History of topic (Esc clears the marks)"),
+        "{topic}"
+    );
+    assert!(
+        topic.contains("On topic") && topic.contains("Start"),
+        "{topic}"
+    );
+    assert!(!topic.contains("On main"), "{topic}");
+    let both = amonhen_tui::snapshot(open(dir.path()), 200, 12, clock(), "0jjjvkv").unwrap();
+    assert!(both.contains("History of topic, main"), "{both}");
+    assert!(
+        both.contains("On topic") && both.contains("On main"),
+        "{both}"
+    );
+    let all = amonhen_tui::snapshot(open(dir.path()), 200, 12, clock(), "0jjjv\x1b").unwrap();
+    assert!(all.contains("History of all branches"), "{all}");
+    assert!(all.contains("On main"), "{all}");
+}
+
+/// 印をつけた ref がいくつもあれば、サイドバーの `m` で 1 つの merge コミットで取り込み（octopus）、`D` でまとめて消す
+#[test]
+fn merge_and_delete_the_marked_refs() {
+    let dir = tempfile::tempdir().unwrap();
+    git(dir.path(), BASE, &["init", "-q", "-b", "main"]);
+    commit(dir.path(), BASE, "Start");
+    for name in ["a1", "a2"] {
+        git(dir.path(), BASE, &["switch", "-q", "-c", name, "main"]);
+        std::fs::write(dir.path().join(format!("{name}.txt")), name).unwrap();
+        git(dir.path(), BASE, &["add", "."]);
+        git(
+            dir.path(),
+            BASE + DAY,
+            &["commit", "-q", "-m", &format!("On {name}")],
+        );
+    }
+    git(dir.path(), BASE, &["switch", "-q", "main"]);
+    // main も進めておく（そうでなければ、git は最初の 1 つへ fast-forward してから取り込む）。
+    commit(dir.path(), BASE + DAY * 2, "On main");
+    // サイドバーのブランチは a1・a2・main の順（2 つ下が a1）。
+    let asked = amonhen_tui::snapshot(open(dir.path()), 220, 12, clock(), "0jjvjvm").unwrap();
+    println!("{asked}");
+    assert!(
+        asked.contains("Merge a1 (1), a2 (1) into main as one merge commit (octopus)? Undo brings it back.   y merge   n cancel"),
+        "{asked}"
+    );
+    amonhen_tui::snapshot(open(dir.path()), 220, 12, clock(), "0jjvjvmy").unwrap();
+    let parents = git_out(dir.path(), &["log", "-1", "--format=%P"]);
+    assert_eq!(parents.split_whitespace().count(), 3, "{parents}");
+    // 取り込んだので、まとめて消せる。
+    let asked = amonhen_tui::snapshot(open(dir.path()), 220, 12, clock(), "0jjvjvD").unwrap();
+    assert!(asked.contains("Delete 2 branches (a1, a2)?"), "{asked}");
+    amonhen_tui::snapshot(open(dir.path()), 220, 12, clock(), "0jjvjvDy").unwrap();
+    assert_eq!(
+        git_out(dir.path(), &["branch", "--format=%(refname:short)"]),
+        "main\n"
+    );
 }
 
 /// サイドバーの `r` で、今のブランチを選んだ ref の上に rebase する
@@ -2972,6 +3092,158 @@ fn compare_with_the_previous_version() {
     // 差分の差分の行でも、組のコミットの詳細が出る。
     let below = amonhen_tui::snapshot(open(dir.path()), 160, 30, clock(), ":compare\nG").unwrap();
     assert!(below.contains("Take the lane from the trunk"));
+}
+
+/// 詳細の `+`: 今見ているファイルの前後を 20 行広げる。`F` でファイル全体を出し、もう一度で戻す
+#[test]
+fn widen_the_context_and_show_the_whole_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    git(dir, BASE, &["init", "-q", "-b", "main"]);
+    let mut lines: Vec<String> = (1..=60).map(|n| format!("line {n}")).collect();
+    std::fs::write(dir.join("a.txt"), lines.join("\n") + "\n").unwrap();
+    git(dir, BASE, &["add", "."]);
+    git(dir, BASE, &["commit", "-q", "-m", "Start"]);
+    lines[29] = "changed".into();
+    std::fs::write(dir.join("a.txt"), lines.join("\n") + "\n").unwrap();
+    git(dir, BASE, &["commit", "-q", "-a", "-m", "Change"]);
+    let shown = |keys: &str| {
+        let text = amonhen_tui::snapshot(open(dir), 120, 90, clock(), keys).unwrap();
+        let has = |n: u32| {
+            text.contains(&format!(" line {n}\n")) || text.contains(&format!(" line {n} "))
+        };
+        (text.clone(), has(5), has(10), has(27))
+    };
+    let (text, five, ten, near) = shown("2\n");
+    assert!(near && !ten && !five, "{text}");
+    let (text, five, ten, _) = shown("2\n+");
+    println!("{text}");
+    assert!(ten && !five, "{text}");
+    let (text, five, _, _) = shown("2\nF");
+    assert!(five && text.contains("Showing the whole file"), "{text}");
+    let (text, five, ten, _) = shown("2\nFF");
+    assert!(!five && !ten, "{text}");
+}
+
+/// 詳細の `w`: 差分で無視する空白を、行末 → 量 → すべて → なしの順に替える
+#[test]
+fn details_ignore_whitespace() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    git(dir, BASE, &["init", "-q", "-b", "main"]);
+    std::fs::write(dir.join("a.txt"), "one\n  two\nthree\n").unwrap();
+    git(dir, BASE, &["add", "."]);
+    git(dir, BASE, &["commit", "-q", "-m", "Start"]);
+    std::fs::write(dir.join("a.txt"), "one\n    two\nthree\nfour\n").unwrap();
+    git(dir, BASE, &["commit", "-q", "-a", "-m", "Indent"]);
+    let exact = amonhen_tui::snapshot(open(dir), 120, 30, clock(), "2\n").unwrap();
+    assert!(exact.contains("+    two"), "{exact}");
+    let eol = amonhen_tui::snapshot(open(dir), 120, 30, clock(), "2\nw").unwrap();
+    println!("{eol}");
+    assert!(eol.contains("Ignoring whitespace at line ends"), "{eol}");
+    assert!(eol.contains("+    two"), "{eol}");
+    let amount = amonhen_tui::snapshot(open(dir), 120, 30, clock(), "2\nww").unwrap();
+    println!("{amount}");
+    assert!(!amount.contains("+    two"), "{amount}");
+    assert!(amount.contains("+four"), "{amount}");
+    let back = amonhen_tui::snapshot(open(dir), 120, 30, clock(), "2\nwwww").unwrap();
+    assert!(back.contains("Whitespace is compared"), "{back}");
+    assert!(back.contains("+    two"), "{back}");
+}
+
+/// 詳細の `t`: 変わったファイルを木で出す（フォルダの下に名前だけ）。`z` でフォルダをたたみ、もう一度で開く
+#[test]
+fn changed_files_as_a_tree() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    git(dir, BASE, &["init", "-q", "-b", "main"]);
+    for path in ["src/ui/view.rs", "src/main.rs", "README.md"] {
+        let path = dir.join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, "one\n").unwrap();
+    }
+    git(dir, BASE, &["add", "."]);
+    git(dir, BASE, &["commit", "-q", "-m", "Start"]);
+    let list = amonhen_tui::snapshot(open(dir), 120, 30, clock(), "2\n").unwrap();
+    assert!(list.contains("A src/ui/view.rs"), "{list}");
+    let tree = amonhen_tui::snapshot(open(dir), 120, 30, clock(), "2\nt").unwrap();
+    println!("{tree}");
+    let rows: Vec<String> = tree
+        .lines()
+        .filter_map(|l| column(l, 1))
+        .map(|l| l.trim_end().to_owned())
+        .collect();
+    let at = rows
+        .iter()
+        .position(|l| l.starts_with("A README.md"))
+        .unwrap();
+    let names: Vec<&str> = rows[at..at + 6]
+        .iter()
+        .map(|l| l.split(" +").next().unwrap().trim_end())
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "A README.md",
+            "▾ src/",
+            "  A main.rs",
+            "  ▾ ui/",
+            "    A view.rs",
+            ""
+        ],
+        "{rows:?}"
+    );
+    let folded = amonhen_tui::snapshot(open(dir), 120, 30, clock(), "2\ntz").unwrap();
+    assert!(folded.contains("▸ src/ (2)"), "{folded}");
+    assert!(!folded.contains("A view.rs"), "{folded}");
+    let opened = amonhen_tui::snapshot(open(dir), 120, 30, clock(), "2\ntzz").unwrap();
+    assert!(opened.contains("A view.rs"), "{opened}");
+}
+
+/// History で 2 つ選んで `=`: それぞれを先端とする 2 つの版として比べる。Reflog の `=` は、その行と今の HEAD を
+#[test]
+fn compare_two_commits_as_two_versions() {
+    let dir = tempfile::tempdir().unwrap();
+    changed(dir.path());
+    // 書き換える前の版をブランチに残してから、いちばん新しいコミットの中身を変えて amend する。
+    git(dir.path(), BASE, &["branch", "before"]);
+    std::fs::write(dir.path().join("notes.txt"), "two\n").unwrap();
+    git(
+        dir.path(),
+        BASE + DAY * 4,
+        &["commit", "-q", "-a", "--amend", "--no-edit"],
+    );
+    let new = git_out(dir.path(), &["rev-parse", "--short=8", "HEAD"]);
+    let old = git_out(dir.path(), &["rev-parse", "--short=8", "before"]);
+    let shown = amonhen_tui::snapshot(open(dir.path()), 160, 30, clock(), "2mjm=").unwrap();
+    println!("{shown}");
+    let last = shown.lines().last().unwrap();
+    assert!(
+        last.contains(&format!(
+            "{} and {} compared as two versions",
+            old.trim(),
+            new.trim()
+        )),
+        "{last}"
+    );
+    let row = shown
+        .lines()
+        .find(|l| l.contains("Take the lane from the trunk"))
+        .unwrap();
+    assert!(row.contains(" ! "), "{row}");
+    // Reflog: 1 つ前（amend の前）の行と、今の HEAD を比べる。
+    let reflog = amonhen_tui::snapshot(open(dir.path()), 160, 30, clock(), "3j=").unwrap();
+    println!("{reflog}");
+    let last = reflog.lines().last().unwrap();
+    assert!(
+        last.contains("HEAD@{1} compared with the current HEAD"),
+        "{last}"
+    );
+    assert!(
+        reflog
+            .lines()
+            .any(|l| l.contains("Take the lane from the trunk") && l.contains(" ! "))
+    );
 }
 
 /// range-diff で `c`: 変わらなかった組（`=`）を出さない（アプリの Changes Only）。もう一度で戻る

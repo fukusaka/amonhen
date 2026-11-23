@@ -20,7 +20,7 @@ use crate::Clock;
 use crate::Result;
 use crate::changes::Changes;
 use crate::commands::{self, Place};
-use crate::details::{Details, Pair, Want};
+use crate::details::{Details, Pair, Want, Whitespace};
 use crate::diff::{PAN, Theme};
 use crate::fileview::FileView;
 use crate::history::{History, Marked, WHEEL_ROWS};
@@ -851,6 +851,7 @@ impl App {
             fold: self.fold,
             expanded: self.expanded.clone(),
             rebuild: self.rebuilding,
+            tips: self.sidebar.marked_targets(),
         });
     }
 
@@ -1379,7 +1380,10 @@ impl App {
                             self.open();
                         }
                     }
-                    Loaded::Rows { start, reply } => self.history.loaded(start, &reply),
+                    Loaded::Rows { start, reply } => {
+                        self.history.loaded(start, &reply);
+                        self.verify_signatures();
+                    }
                     Loaded::Search { query, result } => {
                         // 取り消した検索（語を替えた・やめた）の答えは捨てる。
                         if let Some((current, running)) = &mut self.search
@@ -2687,6 +2691,16 @@ impl App {
     }
 
     /// コアの命令を動かす。1 つずつ（動いている間は、次を受けない）。
+    /// `ranges`（git range-diff の範囲）を Range Diff で比べる。答えは Compare with Previous Version と同じ画面に。
+    fn compare_ranges(&mut self, title: String, ranges: Vec<String>) {
+        self.range_title = Some(title);
+        self.run(
+            "rangeDiff",
+            tr!("Comparing…"),
+            json!({"op": "rangeDiff", "ranges": ranges, "creationFactor": null}),
+        );
+    }
+
     fn run(&mut self, name: &'static str, label: String, command: Value) {
         self.dirty = true;
         if self.running.is_some() {
@@ -2716,7 +2730,26 @@ impl App {
     }
 
     /// 命令が済んだ。だめなら理由を出し、どちらでも状態・ref・History を読み直す。
+    /// History の読んである行の、署名を検証する（答えが来たら、残りを続けて頼む）。
+    fn verify_signatures(&mut self) {
+        if let Some(oids) = self.history.signatures_to_verify() {
+            self.send(Request::Run {
+                name: "commitSignatures",
+                command: json!({"op": "verifySignatures", "oids": oids}),
+            });
+        }
+    }
+
     fn ran(&mut self, name: &'static str, result: std::result::Result<Value, String>) {
+        // 裏で読む署名は、動いている操作の表示を消さない。
+        if name == "commitSignatures" {
+            let reply = result.ok();
+            self.history
+                .set_signatures(reply.as_ref().map(|r| &r["info"]["checks"]));
+            self.damage |= Damage::MAIN;
+            self.verify_signatures();
+            return;
+        }
         self.running = None;
         let reply = match result {
             Ok(reply) => reply,
@@ -3045,16 +3078,18 @@ impl App {
                     self.dirty = true;
                     return;
                 }
-                self.range_title = Some(tr!(
+                let title = tr!(
                     "{branch} compared with {selector}",
                     branch = previous["branch"].as_str().unwrap_or(""),
                     selector = previous["selector"].as_str().unwrap_or("")
-                ));
-                self.run(
-                    "rangeDiff",
-                    tr!("Comparing…"),
-                    json!({"op": "rangeDiff", "ranges": previous["ranges"], "creationFactor": null}),
                 );
+                let ranges = previous["ranges"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|r| r.as_str().map(str::to_owned))
+                    .collect();
+                self.compare_ranges(title, ranges);
                 return;
             }
             // 比べた結果は、Blame・File History と同じ画面に（選んだ組のコミットの詳細も同じ）。
@@ -3285,6 +3320,11 @@ impl App {
                     .collect();
                 self.sidebar.set_tag_marks(marks);
                 self.dirty = true;
+                return;
+            }
+            "octopusPreview" => {
+                let info = reply["info"].clone();
+                self.ask_octopus_with(&info);
                 return;
             }
             "fetchConfig" => {
@@ -4960,6 +5000,87 @@ impl App {
         true
     }
 
+    /// 印をつけた ref を、今のブランチに 1 つの merge コミットで取り込む前に、見通し（`octopusPreview`）を読む。
+    fn ask_octopus(&mut self) -> bool {
+        if self.branch.is_none() {
+            self.error = Some(tr!("No branch is checked out"));
+            return true;
+        }
+        let theirs = self.sidebar.marked_names();
+        self.run(
+            "octopusPreview",
+            tr!("Looking ahead…"),
+            json!({"op": "octopusPreview", "theirs": theirs}),
+        );
+        true
+    }
+
+    /// octopus merge の見通しから、それぞれが持ち込むコミットの数を書いて確かめる（アプリの octopus merge の
+    /// シートの代わり）。
+    fn ask_octopus_with(&mut self, info: &Value) {
+        let theirs = self.sidebar.marked_names();
+        let branch = self.branch.clone().unwrap_or_default();
+        if info["upToDate"] == true {
+            self.notice = Some(tr!("{branch} already has all of them", branch = branch));
+            return;
+        }
+        let sides: Vec<String> = (info["drawing"]["sides"].as_array().into_iter().flatten())
+            .filter_map(|s| {
+                let rev = s["rev"].as_str()?;
+                let count = u64::from(!s["tip"].is_null()) + s["more"].as_u64().unwrap_or(0);
+                Some(format!("{rev} ({count})"))
+            })
+            .collect();
+        self.confirm = Some((
+            tr!(
+                "Merge {sides} into {branch} as one merge commit (octopus)? Undo brings it back.",
+                sides = sides.join(", "),
+                branch = branch
+            ),
+            tr!("merge"),
+            Request::Run {
+                name: "merge",
+                command: json!({"op": "merge", "rev": theirs}),
+            },
+        ));
+        self.dirty = true;
+    }
+
+    /// 印をつけたブランチをまとめて消す前に確かめる。ほかのどこにもないコミットのあるブランチは、git が断る（そこ
+    /// で止まる）。
+    fn ask_delete_marked(&mut self) -> bool {
+        let names = self.sidebar.marked_names();
+        let branches = self.sidebar.branches();
+        if names
+            .iter()
+            .any(|n| !branches.iter().any(|(b, remote)| b == n && !remote))
+        {
+            self.error = Some(tr!("Only local branches can be deleted together"));
+            return true;
+        }
+        if self.branch.as_ref().is_some_and(|b| names.contains(b)) {
+            self.error = Some(tr!("The current branch can’t be deleted"));
+            return true;
+        }
+        let commands: Vec<Value> = names
+            .iter()
+            .map(|n| json!({"op": "deleteBranch", "name": n, "force": false}))
+            .collect();
+        self.confirm = Some((
+            tr!(
+                "Delete {count} branches ({names})? A branch with commits on no other branch is refused. Undo brings them back.",
+                count = names.len(),
+                names = names.join(", ")
+            ),
+            tr!("delete"),
+            Request::Run {
+                name: "deleteBranch",
+                command: Value::Array(commands),
+            },
+        ));
+        true
+    }
+
     /// merge・rebase の見通しから、確かめる文を作る。`conflicts` はコンフリクトしそうなファイル（分からなければ
     /// `None`）。
     fn ask_with_preview(&mut self, conflicts: Option<Vec<String>>) {
@@ -5395,6 +5516,20 @@ impl App {
                 ));
                 true
             }
+            // その行のコミットを、一番上の行（今の HEAD）と 2 つの版として比べる（アプリの Compare with Current HEAD）。
+            KeyCode::Char('=') => {
+                let (Some(id), Some((head, selector))) =
+                    (self.reflog.selected_id(), self.reflog.newest_and_selector())
+                else {
+                    return false;
+                };
+                let title = tr!(
+                    "{selector} compared with the current HEAD",
+                    selector = selector
+                );
+                self.compare_ranges(title, vec![format!("{id}...{head}")]);
+                true
+            }
             KeyCode::Char('H') => {
                 let Some(id) = self.reflog.selected_id() else {
                     return false;
@@ -5467,6 +5602,11 @@ impl App {
                 self.worktree_key(code)
             }
             KeyCode::Char('a' | 'o' | 'x') => self.stash_key(code),
+            // 印をつけた ref がいくつもあれば、まとめて: 1 つの merge コミットで取り込む（octopus）、ブランチを消す。
+            KeyCode::Char('m') if self.sidebar.marked_names().len() >= 2 => self.ask_octopus(),
+            KeyCode::Char('D') if self.sidebar.marked_names().len() >= 2 => {
+                self.ask_delete_marked()
+            }
             KeyCode::Char('D') => self.ask_delete(),
             KeyCode::Char('n') => self.ask_rename(),
             KeyCode::Char('m') => self.ask_merge_or_rebase(true),
@@ -5512,6 +5652,29 @@ impl App {
                 true
             }
             // 絞り込んでいれば、まずそれをやめる。
+            // ref に印をつけ・外す。印をつけた ref があれば、History はそれらから辿れるものだけ（アプリの、いくつも
+            // 選んだ ref の History）。
+            KeyCode::Char('v') => {
+                if !self.sidebar.toggle_mark() {
+                    self.error = Some(tr!("Select a branch, remote branch or tag to mark"));
+                    return true;
+                }
+                self.notice = Some(match self.sidebar.marked_names().as_slice() {
+                    [] => tr!("History of all branches"),
+                    names => tr!(
+                        "History of {refs} (Esc clears the marks)",
+                        refs = names.join(", ")
+                    ),
+                });
+                self.open();
+                true
+            }
+            KeyCode::Esc if self.sidebar.has_marks() => {
+                self.sidebar.clear_marks();
+                self.notice = Some(tr!("History of all branches"));
+                self.open();
+                true
+            }
             KeyCode::Esc if !self.sidebar.filter().is_empty() => {
                 self.sidebar.set_filter("");
                 true
@@ -5566,6 +5729,10 @@ impl App {
                 ),
                 ("n D", tr!("Rename a branch; delete a branch or a tag")),
                 ("L", tr!("The branch's reflog")),
+                (
+                    "v",
+                    tr!("Mark refs: History of the marked ones; m and D act on all of them"),
+                ),
                 ("/", tr!("Filter branches and tags")),
                 ("Esc", tr!("Clear the filter, or go back")),
             ],
@@ -5585,8 +5752,8 @@ impl App {
                     tr!("Select several commits: one at a time, or a run"),
                 ),
                 (
-                    "x .",
-                    tr!("With two selected: swap the direction; diff from where they diverged"),
+                    "x . =",
+                    tr!("With two: swap the direction; diff from the fork; Range Diff them"),
                 ),
                 (
                     "y v E",
@@ -5616,6 +5783,7 @@ impl App {
                 ("Enter", tr!("Go to the details")),
                 ("c", tr!("Check out the entry's commit (detached HEAD)")),
                 ("H", tr!("Select the entry's commit in History")),
+                ("=", tr!("Compare with the current HEAD (Range Diff)")),
                 ("Y", tr!("Copy the commit ID (the terminal’s clipboard)")),
             ],
             (View::File, Focus::Main) => vec![
@@ -5634,12 +5802,24 @@ impl App {
             (View::History | View::Reflog | View::File, Focus::Side) => vec![
                 ("j k", tr!("Scroll")),
                 ("[ ]", tr!("Previous and next file")),
+                (
+                    "t z",
+                    tr!("Changed files as a tree or a list; fold the tree's folders"),
+                ),
                 ("B L", tr!("Blame, File History of the file in view")),
                 (
                     "Y e",
                     tr!("Copy the path of the file in view; open it in git's editor"),
                 ),
                 ("/ n N", tr!("Find in the details; next and previous")),
+                (
+                    "w",
+                    tr!("Ignore whitespace: at line ends, its amount, all, none"),
+                ),
+                (
+                    "+ F",
+                    tr!("Widen the context of the file in view; show the whole file"),
+                ),
                 ("h l", tr!("Pan long lines; h at the left edge goes back")),
                 ("Esc", tr!("Go back to History")),
             ],
@@ -5710,6 +5890,10 @@ impl App {
                     tr!("In a conflict: take current, incoming, both, or the base"),
                 ),
                 ("m", tr!("Magic Merge on the whole file")),
+                (
+                    "s",
+                    tr!("For a file shown one side at a time: the staged or the unstaged side"),
+                ),
                 ("h l", tr!("Pan long lines; h at the left edge goes back")),
                 ("Esc", tr!("Go back to the list")),
             ],
@@ -6181,6 +6365,18 @@ impl App {
                     true
                 }
             }
+            // 重ねて出せないファイルで、作業ツリーの側と stage 済みの側を替える。
+            KeyCode::Char('s') => {
+                self.notice = Some(match self.changes.switch_side() {
+                    Ok(true) => tr!("Showing the staged changes (s for the unstaged)"),
+                    Ok(false) => tr!("Showing the unstaged changes (s for the staged)"),
+                    Err(true) => {
+                        tr!("This diff already shows both the staged and the unstaged changes")
+                    }
+                    Err(false) => tr!("This file has changes on one side only"),
+                });
+                true
+            }
             // 行の範囲: `v` で始まりを決め、動かした所までを選ぶ。もう一度で、やめる。
             KeyCode::Char('v') => self.changes.toggle_mark(),
             KeyCode::Esc if self.changes.has_mark() => self.changes.toggle_mark(),
@@ -6271,6 +6467,25 @@ impl App {
                     _ => Pair::Forward,
                 };
                 Some(true)
+            }
+            // 2 つを、それぞれを先端とする 2 つの版として比べる（rebase の前と後など。アプリの Compare as Two
+            // Versions）。
+            KeyCode::Char('=') if self.history.mark_count() == 2 => {
+                let marks: Vec<String> = self
+                    .history
+                    .marks()
+                    .map(|(_, m)| m.id.to_string())
+                    .collect();
+                let [newer, older] = &marks[..] else {
+                    return false;
+                };
+                let title = tr!(
+                    "{older} and {newer} compared as two versions",
+                    older = &older[..8],
+                    newer = &newer[..8]
+                );
+                self.compare_ranges(title, vec![format!("{older}...{newer}")]);
+                return true;
             }
             KeyCode::Char('.') if self.history.mark_count() == 2 => {
                 self.pair = match self.pair {
@@ -6431,8 +6646,38 @@ impl App {
             }
             KeyCode::Char(']') => Some(self.details.jump_file(true)),
             KeyCode::Char('[') => Some(self.details.jump_file(false)),
+            // 変わったファイルを木で出す・一覧に戻す（アプリの List / Tree）、木のフォルダをたたむ・開く。
+            KeyCode::Char('t') => Some(self.details.toggle_tree()),
+            KeyCode::Char('z') => Some(self.details.fold_all()),
             _ => None,
         };
+        // 今見ているファイルの前後を広げる・ファイル全体を出す（アプリの hunk の見出しの印・Show Whole File）。
+        // 読み直しは `request` が頼む。
+        if code == KeyCode::Char('+') {
+            return self.details.widen();
+        }
+        if code == KeyCode::Char('F') {
+            return match self.details.toggle_whole_file() {
+                Some(whole) => {
+                    self.notice = Some(match whole {
+                        true => tr!("Showing the whole file"),
+                        false => tr!("Showing the changes only"),
+                    });
+                    true
+                }
+                None => false,
+            };
+        }
+        // 差分で無視する空白を替える（アプリの Ignore Whitespace）。読み直しは `request` が頼む。
+        if code == KeyCode::Char('w') {
+            self.notice = Some(match self.details.next_whitespace() {
+                Whitespace::Exact => tr!("Whitespace is compared"),
+                Whitespace::AtEol => tr!("Ignoring whitespace at line ends"),
+                Whitespace::Change => tr!("Ignoring changes in the amount of whitespace"),
+                Whitespace::All => tr!("Ignoring all whitespace"),
+            });
+            return true;
+        }
         if let Some(scrolled) = scrolled {
             if scrolled {
                 self.damage |= Damage::SIDE;
@@ -6578,8 +6823,11 @@ impl App {
                 Some(rows) => self.details.scroll(rows),
                 None if click => {
                     let focused = std::mem::replace(&mut self.focus, Focus::Side);
-                    let selected =
-                        view == View::Changes && self.changes.click_diff(mouse.row - area.y);
+                    let selected = if view == View::Changes {
+                        self.changes.click_diff(mouse.row - area.y)
+                    } else {
+                        self.details.click(mouse.row - area.y)
+                    };
                     selected || focused != Focus::Side
                 }
                 None => false,
@@ -6999,7 +7247,7 @@ impl App {
                         )
                     }
                     (View::History | View::Reflog | View::File, Focus::Side) => {
-                        tr!("j/k scroll   [/] file   h/l pan   Esc back")
+                        tr!("j/k scroll   [/] file   t tree   h/l pan   Esc back")
                     }
                     (View::Reflog, Focus::Main) => match self.reflog.name() {
                         Some(name) => tr!(

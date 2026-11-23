@@ -528,6 +528,29 @@ char *amonhen_rename_label(const char *old,
                            const char *new_);
 
 /**
+ * SVG（`data` の `len` バイト）の、モバイル向けの描画部品で崩れる機能（JSON の配列。要素は
+ * `{"targets": ["android"|"ios"|"flutter"|"reactNative", …], "feature", "message", "count"}`）。
+ * `amonhen_string_free` で解放する。
+ *
+ * # Safety
+ * `data` は `len` バイト読めること（`len` が 0 なら NULL でもよい）。
+ */
+char *amonhen_svg_lint(const uint8_t *data,
+                       uintptr_t len);
+
+/**
+ * Markdown（`text`、UTF-8）を、FE が組み立てて見せるブロックの並びにした JSON（`amonhen_core::markdown::Block` の
+ * 配列）。`github`（`https://github.com/owner/repo`、NULL か空なら使わない）があれば `#123`・`@user`・コミットの ID も
+ * リンクにする。`amonhen_string_free` で解放する。
+ *
+ * # Safety
+ * `text` は `len` バイト読めること、`github` は NULL か NUL 終わりの文字列であること。
+ */
+char *amonhen_markdown_parse(const uint8_t *text,
+                             uintptr_t len,
+                             const char *github);
+
+/**
  * この機械の git の版（`2.39.5`）。読めなければ NULL。`amonhen_string_free` で解放する。git を起動する
  * ことがあるので（初めの 1 回だけ）、裏のスレッドで呼ぶ。
  */
@@ -981,6 +1004,18 @@ uint8_t *amonhen_change_blob(const AmonhenRepo *repo_ptr,
                              uint32_t index,
                              bool after,
                              uintptr_t *len);
+
+/**
+ * SVG（`data` の `len` バイト）を、モバイル向けの描画部品 `target`（0 Android・1 iOS・2 flutter_svg・
+ * 3 react-native-svg）が崩すように書き換えた SVG（近似）。長さを `out_len` に書く（`amonhen_blob_free` で解放する）。
+ *
+ * # Safety
+ * `data` は `len` バイト読めること（`len` が 0 なら NULL でもよい）。
+ */
+uint8_t *amonhen_svg_approximate(const uint8_t *data,
+                                 uintptr_t len,
+                                 uint8_t target,
+                                 uintptr_t *out_len);
 
 /**
  * `amonhen_blob_read`・`amonhen_change_blob` が返したものを解放する。

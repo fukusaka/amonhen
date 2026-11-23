@@ -11,8 +11,17 @@ if [ -z "${PR:-}" ]; then
   echo "macos=true" >> "$out"
   exit 0
 fi
-files=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --jq '.[].filename')
-# 一覧が取れなければ、流す側に倒す。
+# GitHub の API はときどき 502 などで失敗するので、間を空けて 3 回まで試す。
+files=
+for wait in 0 10 30; do
+  sleep "$wait"
+  if files=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --jq '.[].filename'); then
+    break
+  fi
+  files=
+  echo "Couldn't read the PR's files; trying again." >&2
+done
+# 一覧が取れなければ、流す側に倒す（CI を落とさない）。
 if [ -z "$files" ]; then
   echo "macos=true" >> "$out"
   exit 0

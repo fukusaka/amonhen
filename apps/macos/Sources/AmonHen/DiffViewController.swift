@@ -2789,6 +2789,8 @@ extension CommitDetailViewController {
             if filesBrowser == nil, let commit = commitHex, let id = shownCommit?.id {
                 let browser = CommitFilesBrowser(
                     repository: repository, commit: commit, commitID: id, changes: changes, renderer: diffView.renderer)
+                // Markdown の #123・@user・コミットの ID をリンクにする先（GitHub の remote のときだけ）。
+                browser.gitHub = extras?.originUrl.flatMap { GitHubRepository(remoteURL: $0) }?.webURL.absoluteString
                 browser.onShowChange = { [weak self] file in
                     guard let self else { return }
                     setFilesMode(false)
