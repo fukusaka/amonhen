@@ -189,6 +189,97 @@ fn node_of(item: &glib::Object) -> Option<Rc<Node>> {
 /// ファイルの番号を受け取る知らせ先。
 type OnFile = Rc<dyn Fn(usize)>;
 
+/// SVG の見せ方（macOS 版の `SVGView`）: 絵（librsvg で描く）・モバイル（絵と、モバイル向けの描画部品で崩れる
+/// 機能の一覧）・テキスト。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SvgView {
+    Picture,
+    Mobile,
+    Text,
+}
+
+impl SvgView {
+    const ALL: [SvgView; 3] = [SvgView::Picture, SvgView::Mobile, SvgView::Text];
+
+    /// 最初の見せ方。ふだんは絵で、確かめる用（`--snapshot`）に `AMH_SVG_VIEW=picture|mobile|text` で変えられる。
+    fn initial() -> Self {
+        match std::env::var("AMH_SVG_VIEW").as_deref() {
+            Ok("mobile") => SvgView::Mobile,
+            Ok("text") => SvgView::Text,
+            _ => SvgView::Picture,
+        }
+    }
+
+    fn title(self) -> String {
+        match self {
+            SvgView::Picture => tr!("Picture"),
+            SvgView::Mobile => tr!("Mobile"),
+            SvgView::Text => tr!("Text"),
+        }
+    }
+
+    fn tooltip(self) -> String {
+        match self {
+            SvgView::Picture => tr!("Draw the SVG"),
+            SvgView::Mobile => {
+                tr!("Check for mobile: list what breaks on Android, iOS, Flutter and React Native")
+            }
+            SvgView::Text => tr!("Show the SVG source"),
+        }
+    }
+}
+
+/// モバイル向けの描画部品ごとの、崩れる機能の一覧（macOS 版の `mobileNotes`）。
+fn mobile_notes(issues: &[amonhen_core::svglint::Issue]) -> gtk::Widget {
+    use amonhen_core::svglint::Target;
+    let label = gtk::Label::new(None);
+    label.set_xalign(0.0);
+    label.set_yalign(0.0);
+    label.set_wrap(true);
+    label.set_selectable(true);
+    label.set_margin_top(4);
+    let esc = |s: &str| glib::markup_escape_text(s).to_string();
+    let mut out = String::new();
+    if issues.is_empty() {
+        out += &esc(&tr!(
+            "Nothing known to break on Android VectorDrawable, iOS (CoreSVG), flutter_svg or react-native-svg."
+        ));
+    } else {
+        for target in [
+            Target::Android,
+            Target::Ios,
+            Target::Flutter,
+            Target::ReactNative,
+        ] {
+            if !out.is_empty() {
+                out.push('\n');
+            }
+            out += &format!("<b>{}</b>", esc(target.name()));
+            let own: Vec<_> = issues
+                .iter()
+                .filter(|i| i.targets.contains(&target))
+                .collect();
+            if own.is_empty() {
+                out += &format!("\n    {}", esc(&tr!("Nothing known to break")));
+            }
+            for issue in own {
+                let count = if issue.count > 1 {
+                    format!(" ×{}", issue.count)
+                } else {
+                    String::new()
+                };
+                out += &format!(
+                    "\n    <span font_family=\"monospace\" size=\"small\" alpha=\"60%\">{}{count}</span>  {}",
+                    esc(&issue.feature),
+                    esc(&issue.message)
+                );
+            }
+        }
+    }
+    label.set_markup(&out);
+    label.upcast()
+}
+
 pub struct Browser {
     pub root: gtk::Box,
     tree: Rc<Tree>,
@@ -206,6 +297,12 @@ pub struct Browser {
     content: DiffWidget,
     /// 開いた画像（拡大縮小できる 1 枚の表示。`imagediff::single`）を置く所。
     image_holder: gtk::Box,
+    /// SVG の見せ方の切り替え（SVG を開いたときだけ出す）と、今の見せ方（この木を出している間は覚える）。
+    svg_switch: gtk::Box,
+    svg_buttons: Vec<(SvgView, gtk::ToggleButton)>,
+    svg_view: Cell<SvgView>,
+    /// 切り替えを、こちらから合わせている間（押したことにしない）。
+    syncing: Cell<bool>,
     open_path: RefCell<Option<String>>,
     request: Cell<u64>,
     pending: Rc<Cell<u32>>,
@@ -345,6 +442,20 @@ impl Browser {
         path_bar.set_margin_bottom(2);
         path_bar.append(&back);
         path_bar.append(&path_label);
+        let svg_switch = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        svg_switch.add_css_class("linked");
+        svg_switch.set_visible(false);
+        let mut svg_buttons: Vec<(SvgView, gtk::ToggleButton)> = Vec::new();
+        for view in SvgView::ALL {
+            let button = gtk::ToggleButton::with_label(&view.title());
+            button.set_tooltip_text(Some(&view.tooltip()));
+            if let Some((_, first)) = svg_buttons.first() {
+                button.set_group(Some(first));
+            }
+            svg_switch.append(&button);
+            svg_buttons.push((view, button));
+        }
+        path_bar.append(&svg_switch);
         path_bar.append(&preview_button);
         path_bar.append(&change_button);
         path_bar.set_visible(false);
@@ -394,6 +505,10 @@ impl Browser {
             change_button,
             content,
             image_holder,
+            svg_switch,
+            svg_buttons,
+            svg_view: Cell::new(SvgView::initial()),
+            syncing: Cell::new(false),
             open_path: RefCell::default(),
             request: Cell::new(0),
             pending,
@@ -435,6 +550,20 @@ impl Browser {
                 this.back_to_tree();
             }
         });
+        for (view, button) in &this.svg_buttons {
+            let (weak, view) = (Rc::downgrade(&this), *view);
+            button.connect_toggled(move |b| {
+                let Some(this) = weak.upgrade() else { return };
+                if !b.is_active() || this.syncing.get() || this.svg_view.get() == view {
+                    return;
+                }
+                this.svg_view.set(view);
+                let path = this.open_path.borrow().clone();
+                if let Some(path) = path {
+                    this.open(&path, None);
+                }
+            });
+        }
         for button in [&preview_button, &binary_button] {
             let weak = Rc::downgrade(&this);
             button.connect_clicked(move |_| {
@@ -658,22 +787,42 @@ impl Browser {
         let commit = self.tree.commit;
         self.pending.set(self.pending.get() + 1);
         let weak = Rc::downgrade(self);
-        if crate::imagediff::is_image(path) && !crate::imagediff::is_svg(path) {
+        // SVG は、見せ方の切り替えを出す（絵・モバイルなら絵、テキストなら中身）。
+        let svg = crate::imagediff::is_svg(path);
+        self.svg_switch.set_visible(svg);
+        self.syncing.set(true);
+        for (view, button) in &self.svg_buttons {
+            button.set_active(*view == self.svg_view.get());
+        }
+        self.syncing.set(false);
+        let mobile = svg && self.svg_view.get() == SvgView::Mobile;
+        let picture = if svg {
+            self.svg_view.get() != SvgView::Text
+        } else {
+            crate::imagediff::is_image(path)
+        };
+        if picture {
             self.contents.set_visible_child_name("image");
             let oid = self.blob_id(path);
             glib::spawn_future_local(async move {
-                let data =
-                    gio::spawn_blocking(move || oid.and_then(|oid| repo.blob(&oid).ok())).await;
+                let data = gio::spawn_blocking(move || {
+                    let data = oid.and_then(|oid| repo.blob(&oid).ok());
+                    // モバイル向けの確認: 崩れる機能を探す。
+                    let issues = data
+                        .as_ref()
+                        .filter(|_| mobile)
+                        .map(|d| amonhen_core::svglint::lint(d));
+                    (data, issues)
+                })
+                .await;
                 let Some(this) = weak.upgrade() else { return };
                 this.pending.set(this.pending.get() - 1);
                 if this.request.get() != request {
                     return;
                 }
-                match data
-                    .ok()
-                    .flatten()
-                    .and_then(|d| crate::imagediff::single(&d))
-                {
+                let (data, issues) = data.unwrap_or_default();
+                let notes = issues.as_deref().map(mobile_notes);
+                match data.and_then(|d| crate::imagediff::single(&d, notes)) {
                     Some(panel) => this.image_holder.append(&panel),
                     // 読めない形式（拡張子は画像でも）は、バイナリと同じくプレビューに。
                     None => this.contents.set_visible_child_name("binary"),

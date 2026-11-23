@@ -126,11 +126,37 @@ pub fn panel(
     )
 }
 
-/// すべてのファイルで開いた画像（比べずに 1 枚だけ。比べ方の切り替えもスライダーも出さない）。読めなければ None。
-pub fn single(data: &[u8]) -> Option<gtk::Widget> {
+/// すべてのファイルで開いた画像（比べずに 1 枚だけ。比べ方の切り替えもスライダーも出さない）。`notes` があれば
+/// 絵の下に置く（SVG のモバイル向けの確認の一覧。欄の高さの 35% ほど、仕切りで変えられる）。読めなければ None。
+pub fn single(data: &[u8], notes: Option<gtk::Widget>) -> Option<gtk::Widget> {
     let image = texture(Some(data))?;
     let caption = describe(Some(data), Some(&image));
-    Some(build(None, Some(image), caption, None, None))
+    let panel = build(None, Some(image), caption, None, None);
+    let Some(notes) = notes else {
+        return Some(panel);
+    };
+    let scroll = gtk::ScrolledWindow::builder()
+        .child(&notes)
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        .build();
+    scroll.set_margin_start(12);
+    scroll.set_margin_end(12);
+    scroll.set_margin_bottom(6);
+    let paned = gtk::Paned::new(gtk::Orientation::Vertical);
+    paned.set_vexpand(true);
+    paned.set_start_child(Some(&panel));
+    paned.set_end_child(Some(&scroll));
+    paned.set_shrink_end_child(false);
+    // 最初に大きさが決まったら、一覧を下の 35% ほどに（macOS 版と同じ割合）。
+    let placed = Cell::new(false);
+    paned.connect_notify_local(Some("max-position"), move |p, _| {
+        let max = p.max_position();
+        if !placed.get() && max > 0 {
+            placed.set(true);
+            p.set_position((max as f32 * 0.65) as i32);
+        }
+    });
+    Some(paned.upcast())
 }
 
 /// 欄を作る。`modes` がなければ 1 枚だけ（`after` を出す）。
