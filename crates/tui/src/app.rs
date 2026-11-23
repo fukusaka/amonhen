@@ -6106,6 +6106,10 @@ impl App {
                     "s",
                     tr!("For a file shown one side at a time: the staged or the unstaged side"),
                 ),
+                (
+                    "w",
+                    tr!("Ignore whitespace: at line ends, its amount, all, none"),
+                ),
                 ("h l", tr!("Pan long lines; h at the left edge goes back")),
                 ("Esc", tr!("Go back to the list")),
             ],
@@ -6581,6 +6585,23 @@ impl App {
                     self.focus = Focus::Main;
                     true
                 }
+            }
+            // 差分で無視する空白を替える（アプリの Ignore Whitespace）。その間は、片方の側だけを出し、行ごとの
+            // stage・破棄はしない。
+            KeyCode::Char('w') => {
+                self.notice = Some(match self.changes.next_whitespace() {
+                    Whitespace::Exact => tr!("Whitespace is compared"),
+                    Whitespace::AtEol => {
+                        tr!("Ignoring whitespace at line ends (lines aren’t staged meanwhile)")
+                    }
+                    Whitespace::Change => tr!(
+                        "Ignoring changes in the amount of whitespace (lines aren’t staged meanwhile)"
+                    ),
+                    Whitespace::All => {
+                        tr!("Ignoring all whitespace (lines aren’t staged meanwhile)")
+                    }
+                });
+                true
             }
             // 重ねて出せないファイルで、作業ツリーの側と stage 済みの側を替える。
             KeyCode::Char('s') => {
