@@ -31,7 +31,7 @@ fn parse(
 
 fn render(model: &dyn Any, config: &Config, options: &RenderOptions) -> Result<Rendered> {
     let db = model.downcast_ref::<VennDb>().expect("venn model");
-    Ok(render::render_venn(db, config, options))
+    render::render_venn(db, config, options)
 }
 
 pub static VENN: Diagram = Diagram {

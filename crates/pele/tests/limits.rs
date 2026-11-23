@@ -53,3 +53,28 @@ fn class_namespaces_nested_deeply() {
         "Diagram output is longer than the limit of 4000000 characters."
     );
 }
+
+fn venn_union(n: usize, sized: bool) -> String {
+    let mut s = String::from("venn-beta\n");
+    for i in 0..n {
+        if sized {
+            s += &format!("set S{i}:{}\n", i + 1);
+        } else {
+            s += &format!("set S{i}\n");
+        }
+    }
+    let ids: Vec<String> = (0..n).map(|i| format!("S{i}")).collect();
+    s + "union " + &ids.join(",") + "\n"
+}
+
+#[test]
+fn venn_union_of_many_sets() {
+    // 2 つずつの組（160 万）を名前で作らず、緩める回のない数の円では離れ方を求めない。pele と同じ絵になる。
+    assert!(render(&venn_union(1800, false)).is_ok());
+    // 大きさの違う 400 の集合: 8 万の組の離れ方を二分法で求めると数秒かかる。pele は描く（わざとの違い）。
+    assert_eq!(
+        limit_error(&venn_union(400, true)),
+        "The venn diagram has too many overlapping sets of different sizes to lay out."
+    );
+    assert!(render(&venn_union(100, true)).is_ok());
+}

@@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet};
 use super::db::{VennDb, normalize_text};
 use super::layout::{Circle, Spot, find_spot, layout_circles, region_path};
 use super::types::VennSubset;
+use crate::errors::Result;
 use crate::js;
 use crate::preprocess::Config;
 use crate::svg::builder::{esc_text, label_svg, num};
@@ -44,7 +45,7 @@ fn sets_fill_opacity(shape: &str) -> bool {
         .any(|(k, _)| k > 0 && matches!(shape.as_bytes()[k - 1], b'"' | b';'))
 }
 
-pub fn render_venn(model: &VennDb, _config: &Config, options: &RenderOptions) -> Rendered {
+pub fn render_venn(model: &VennDb, _config: &Config, options: &RenderOptions) -> Result<Rendered> {
     let size = options.font_size.unwrap_or(16.0);
     let small = js::round(size * 0.875);
     let tiny = js::round(size * 0.8125);
@@ -54,7 +55,7 @@ pub fn render_venn(model: &VennDb, _config: &Config, options: &RenderOptions) ->
     };
     let pad = options.padding.unwrap_or(8.0);
 
-    let circles = layout_circles(&model.subsets);
+    let circles = layout_circles(&model.subsets)?;
     let mut index: HashMap<&str, usize> = HashMap::new();
     for (i, c) in circles.iter().enumerate() {
         index.insert(&c.id, i);
@@ -395,10 +396,10 @@ pub fn render_venn(model: &VennDb, _config: &Config, options: &RenderOptions) ->
         &Accessible::default(),
         &content,
     );
-    Rendered {
+    Ok(Rendered {
         svg,
         width,
         height,
         links: Vec::new(),
-    }
+    })
 }
