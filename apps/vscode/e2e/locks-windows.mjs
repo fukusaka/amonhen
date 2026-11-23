@@ -4,7 +4,9 @@
  * Windows では git の trace2 を取ると e2e が遅くなりすぎる（env.mjs）うえ、trace2 は git しか記録しないので、
  * カーネルのファイルの出来事（ETW の Microsoft-Windows-Kernel-File）とプロセスの起動（Kernel-Process）を取る。
  * 記録は e2e の全体で、鍵とぶつかった試験は時刻を `AMONHEN_E2E_LOCK_LOG` に書く。終わってから、その前後の出来事を出す。
- * ETW の記録には管理者の権限が要る（CI の runner にはある）。取れなければそう言って、記録なしで進む
+ * ETW の記録には管理者の権限が要る（CI の runner にはある）。取れなければそう言って、記録なしで進む。
+ * ETW のプロセスの起動にはコマンドラインがないので、Windows の監査（Security のログの 4688、コマンドラインつき）も
+ * 有効にし、鍵とぶつかったら、その前後の出来事に出てくるプロセスの命令を添える（どの git の命令が鍵を持っていたか）
  */
 import { spawnSync } from 'node:child_process';
 import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs';
@@ -35,12 +37,58 @@ export function recordLocks(dir) {
   if (added.status !== 0) {
     console.log(`プロセスの起動の記録を足せません: ${(added.stdout + added.stderr).trim()}`);
   }
+  auditProcesses();
+  const began = Date.now();
   // 記録より前から動いているプロセスの名前
   const before = spawnSync('tasklist', ['/fo', 'csv', '/nh'], { encoding: 'utf8' }).stdout ?? '';
-  return () => report(dir, etl, before);
+  return () => report(dir, etl, before, began);
 }
 
-async function report(dir, etl, before) {
+/**
+ * プロセスの作成の監査（4688）を、コマンドラインつきで有効にする。e2e は数千の git を起こすので、Security のログが
+ * 古いものから消えないよう大きくする。使い捨ての CI の runner でだけ呼ぶ（run.mjs）
+ */
+function auditProcesses() {
+  const steps = [
+    ['reg', ['add', 'HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\System\\Audit',
+      '/v', 'ProcessCreationIncludeCmdLine_Enabled', '/t', 'REG_DWORD', '/d', '1', '/f']],
+    // Process Creation の副カテゴリ（名前は言語で変わるので GUID で）
+    ['auditpol', ['/set', '/subcategory:{0CCE922B-69AE-11D9-BED3-505054503030}', '/success:enable']],
+    ['wevtutil', ['sl', 'Security', '/ms:1073741824']],
+  ];
+  for (const [command, args] of steps) {
+    const done = spawnSync(command, args, { encoding: 'utf8' });
+    if (done.status !== 0) {
+      console.log(`プロセスの命令の記録（監査）を始められません: ${command} ${(done.stdout + done.stderr).trim()}`);
+      return;
+    }
+  }
+}
+
+/**
+ * `from`〜`to`（ミリ秒）に作られたプロセスの、作られた時刻・番号・命令（監査の 4688）。読めなければ空
+ */
+function processCommands(from, to) {
+  const iso = (ms) => new Date(ms).toISOString();
+  const script =
+    `Get-WinEvent -FilterHashtable @{ LogName = 'Security'; Id = 4688; ` +
+    `StartTime = [datetime]::Parse('${iso(from)}').ToLocalTime(); EndTime = [datetime]::Parse('${iso(to)}').ToLocalTime() } ` +
+    `-ErrorAction SilentlyContinue | ForEach-Object { $x = [xml]$_.ToXml(); $d = @{}; ` +
+    `foreach ($e in $x.Event.EventData.Data) { $d[$e.Name] = $e.'#text' }; ` +
+    `'{0}\t{1}\t{2}' -f ([DateTimeOffset]$_.TimeCreated).ToUnixTimeMilliseconds(), [Convert]::ToInt64($d.NewProcessId, 16), ` +
+    `($d.CommandLine -replace '\\s+', ' ') }`;
+  const out = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', script], {
+    encoding: 'utf8',
+    maxBuffer: 64 * 2 ** 20,
+  });
+  return (out.stdout ?? '')
+    .split('\n')
+    .map((line) => line.trimEnd().split('\t'))
+    .filter((f) => f.length === 3)
+    .map(([at, pid, command]) => ({ at: Number(at), pid, command }));
+}
+
+async function report(dir, etl, before, began) {
   const query = logman('query', session, '-ets').stdout ?? '';
   const lost = /Buffers Lost:\s*(\d+)/i.exec(query)?.[1];
   logman('stop', session, '-ets');
@@ -53,6 +101,9 @@ async function report(dir, etl, before) {
   if (failures.length === 0) {
     // 読むのに数十秒かかるので、鍵とぶつからなかったら読まない
     console.log(`鍵のファイルの記録（ETW）: ${size}。鍵とぶつかった試験はありません`);
+    // 命令の記録が効いているかを、ぶつからなかったときも確かめる（終わりの 1 分の git の数と 1 つの例。全体を読むと遅い）
+    const gits = processCommands(Math.max(began, Date.now() - 60_000), Date.now()).filter((c) => /\bgit(\.exe)?"?\s/i.test(c.command));
+    console.log(`プロセスの命令の記録（監査の 4688）: git ${gits.length} 件${gits[0] ? `、例: ${gits[0].command.slice(0, 200)}` : ''}`);
     return;
   }
   const start = performance.now();
@@ -71,11 +122,12 @@ async function report(dir, etl, before) {
   const events = [];
   // 一時ディレクトリの中の鍵だけ（ほかの git の鍵は見ない）
   const mark = basename(dir).toLowerCase();
-  const label = (pid) => {
+  const chainOf = (pid) => {
     const chain = [];
-    for (let p = pid, i = 0; p && i < 3; p = parents.get(p), i++) chain.push(`${names.get(p) ?? '?'}(${p})`);
-    return chain.join(' ← ');
+    for (let p = pid, i = 0; p && i < 3; p = parents.get(p), i++) chain.push(p);
+    return chain;
   };
+  const label = (pid) => chainOf(pid).map((p) => `${names.get(p) ?? '?'}(${p})`).join(' ← ');
   for await (const event of eachEvent(xml)) {
     const id = tag(event, 'EventID');
     const pid = /ProcessID="(\d+)"/.exec(event)?.[1];
@@ -95,7 +147,7 @@ async function report(dir, etl, before) {
     const share = id === '12' ? data(event, 'ShareAccess') : undefined;
     // pid は使い回されるので、名前はその時点のものを引く
     const at = time ? Date.parse(time.replace(/(\.\d{3})\d*/, '$1')) : NaN;
-    events.push({ at, id, path, share, who: label(pid) });
+    events.push({ at, id, path, share, who: label(pid), pids: chainOf(pid) });
   }
   const kinds = { 12: '開く', 26: '消す', 27: '名前を変える', 30: '作る' };
   console.log(
@@ -118,6 +170,23 @@ async function report(dir, etl, before) {
     }
     for (const { line, count } of lines) console.log(`  ${line}${count > 1 ? ` ×${count}` : ''}`);
     if (near.length === 0) console.log('  前後 5 秒に鍵の出来事はありません');
+    // 出来事に出てきたプロセス（と親）の命令。番号は使い回されるので、出来事より前に作られた最後のものを引く
+    const created = processCommands(at - 60_000, at + 1000);
+    const shown = new Map();
+    for (const e of near) {
+      for (const pid of e.pids) {
+        if (shown.has(pid)) continue;
+        const made = created.filter((c) => c.pid === pid && c.at <= e.at + 50).at(-1);
+        shown.set(pid, made?.command);
+      }
+    }
+    const commands = [...shown].filter(([, command]) => command);
+    if (commands.length > 0) {
+      console.log('  プロセスの命令（監査の 4688）:');
+      for (const [pid, command] of commands) console.log(`    ${pid}: ${command.slice(0, 400)}`);
+    } else {
+      console.log(`  プロセスの命令は監査の記録にありません（作られた記録 ${created.length}）`);
+    }
   }
 }
 
