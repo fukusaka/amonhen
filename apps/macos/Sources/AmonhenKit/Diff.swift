@@ -432,3 +432,39 @@ public struct SVGIssue: Sendable, Decodable {
         return (try? JSONDecoder().decode([SVGIssue].self, from: Data(String(cString: raw).utf8))) ?? []
     }
 }
+
+/// モバイル向けの SVG の描画部品。
+public enum MobileRenderer: UInt8, Sendable, CaseIterable {
+    case android, ios, flutter, reactNative
+
+    /// 画面に出す名前。
+    public var name: String {
+        switch self {
+        case .android: "Android VectorDrawable"
+        case .ios: "iOS (CoreSVG)"
+        case .flutter: "flutter_svg"
+        case .reactNative: "react-native-svg"
+        }
+    }
+
+    /// `svgIssue.targets` の名前。
+    public var key: String {
+        switch self {
+        case .android: "android"
+        case .ios: "ios"
+        case .flutter: "flutter"
+        case .reactNative: "reactNative"
+        }
+    }
+
+    /// `svg` を、この部品が崩すように書き換えた SVG（近似）。
+    public func approximate(_ svg: Data) -> Data {
+        var length: UInt = 0
+        let raw = svg.withUnsafeBytes { buffer in
+            amonhen_svg_approximate(buffer.bindMemory(to: UInt8.self).baseAddress, UInt(buffer.count), rawValue, &length)
+        }
+        guard let raw else { return svg }
+        defer { amonhen_blob_free(raw, length) }
+        return Data(bytes: raw, count: Int(length))
+    }
+}

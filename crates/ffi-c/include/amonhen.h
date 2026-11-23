@@ -994,6 +994,18 @@ uint8_t *amonhen_change_blob(const AmonhenRepo *repo_ptr,
                              uintptr_t *len);
 
 /**
+ * SVG（`data` の `len` バイト）を、モバイル向けの描画部品 `target`（0 Android・1 iOS・2 flutter_svg・
+ * 3 react-native-svg）が崩すように書き換えた SVG（近似）。長さを `out_len` に書く（`amonhen_blob_free` で解放する）。
+ *
+ * # Safety
+ * `data` は `len` バイト読めること（`len` が 0 なら NULL でもよい）。
+ */
+uint8_t *amonhen_svg_approximate(const uint8_t *data,
+                                 uintptr_t len,
+                                 uint8_t target,
+                                 uintptr_t *out_len);
+
+/**
  * `amonhen_blob_read`・`amonhen_change_blob` が返したものを解放する。
  *
  * # Safety
