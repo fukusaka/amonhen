@@ -2062,3 +2062,6 @@
 "Collapse All Diffs" = "差分をすべて畳む";
 "Expand All Folders" = "フォルダをすべて開く";
 "Collapse All Folders" = "フォルダをすべて畳む";
+"Quick Look" = "Quick Look";
+"Open this file at the commit in Quick Look" = "この時点のファイルを Quick Look で開く";
+"Open in Quick Look" = "Quick Look で開く";

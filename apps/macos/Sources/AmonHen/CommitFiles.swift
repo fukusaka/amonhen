@@ -362,6 +362,9 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
     private let pathBar = NSStackView()
     private let pathLabel = NSTextField(labelWithString: "")
     private let changeButton = NSButton()
+    private let quickLookButton = NSButton()
+    /// バイナリのファイルの案内と、Quick Look で開くボタン（アプリで描けないもの）。
+    private let binaryBox = NSStackView()
     private var openPath: String?
     private var request = 0
     /// 変更ファイル（パス → 番号）と、変更を含むフォルダ。
@@ -428,14 +431,29 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         changeButton.controlSize = .small
         changeButton.target = self
         changeButton.action = #selector(showChange)
+        quickLookButton.image = NSImage(systemSymbolName: "eye", accessibilityDescription: L("Quick Look"))
+        quickLookButton.bezelStyle = .accessoryBarAction
+        quickLookButton.controlSize = .small
+        quickLookButton.toolTip = L("Open this file at the commit in Quick Look")
+        quickLookButton.target = self
+        quickLookButton.action = #selector(openInQuickLook)
+        let binaryLabel = NSTextField(labelWithString: L("Binary file"))
+        binaryLabel.textColor = .secondaryLabelColor
+        let binaryButton = NSButton(title: L("Open in Quick Look"), target: self, action: #selector(openInQuickLook))
+        binaryButton.bezelStyle = .push
+        binaryBox.orientation = .vertical
+        binaryBox.spacing = 10
+        binaryBox.alignment = .centerX
+        for v in [binaryLabel, binaryButton] { binaryBox.addArrangedSubview(v) }
+        binaryBox.isHidden = true
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         pathLabel.lineBreakMode = .byTruncatingHead
         pathLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        for v in [back, pathLabel, spacer, changeButton] { pathBar.addArrangedSubview(v) }
+        for v in [back, pathLabel, spacer, quickLookButton, changeButton] { pathBar.addArrangedSubview(v) }
         pathBar.edgeInsets = NSEdgeInsets(top: 0, left: 6, bottom: 0, right: 10)
         pathBar.spacing = 6
-        for v in [treeScroll, content.view, imageView, pathBar] as [NSView] { addSubview(v) }
+        for v in [treeScroll, content.view, imageView, binaryBox, pathBar] as [NSView] { addSubview(v) }
         load(root)
         outline.reloadData()
         expandChanged(root)
@@ -536,6 +554,8 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         treeScroll.frame = rest
         content.view.frame = rest
         imageView.frame = rest.insetBy(dx: 16, dy: 16)
+        let box = binaryBox.fittingSize
+        binaryBox.frame = NSRect(x: rest.midX - box.width / 2, y: rest.midY - box.height / 2, width: box.width, height: box.height)
         outline.sizeLastColumnToFit()
     }
 
@@ -544,8 +564,29 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         treeScroll.isHidden = false
         content.view.isHidden = true
         imageView.isHidden = true
+        binaryBox.isHidden = true
         pathBar.isHidden = true
         needsLayout = true
+    }
+
+    /// 開いているファイルのその時点の中身（変えたファイルは変更後、消したファイルは変更前）。裏で読む。
+    private func contents(of path: String) async -> Data? {
+        let index = changedFiles[path]
+        let deleted = index.map { self.changes?.items[$0].kind == .deleted } ?? false
+        let source = changes, store = repository, oid = node(at: path)?.oid
+        return await Task.detached(priority: .userInitiated) { () -> Data? in
+            if let index { return source?.blob(at: index, after: !deleted) }
+            return oid.flatMap { store.blob(oid: $0) }
+        }.value
+    }
+
+    /// 開いているファイルを Quick Look の窓で見る。
+    @objc private func openInQuickLook() {
+        guard let path = openPath else { return }
+        Task {
+            guard let data = await contents(of: path), path == openPath else { return NSSound.beep() }
+            QuickLook.shared.show(data, name: (path as NSString).lastPathComponent)
+        }
     }
 
     @objc private func openSelected() {
@@ -592,17 +633,13 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         needsLayout = true
         request += 1
         let request = self.request
+        binaryBox.isHidden = true
         if ImageDiffPanel.isImage(path), !ImageDiffPanel.isSVG(path) {
             content.view.isHidden = true
             imageView.isHidden = false
-            let source = self.changes, store = self.repository
-            let oid = node(at: path)?.oid
             imageView.image = nil
             Task {
-                let data = await Task.detached(priority: .userInitiated) { () -> Data? in
-                    if let index { return source?.blob(at: index, after: !deleted) }
-                    return oid.flatMap { store.blob(oid: $0) }
-                }.value
+                let data = await contents(of: path)
                 guard request == self.request else { return }
                 imageView.image = data.flatMap(NSImage.init(data:))
             }
@@ -619,7 +656,12 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
             }.value
             guard request == self.request else { return }
             guard let diff else { return content.show(nil, message: L("Couldn’t load the diff")) }
-            if diff.isBinary { return content.show(nil, message: L("Binary file")) }
+            if diff.isBinary {
+                content.show(nil)
+                binaryBox.isHidden = false
+                needsLayout = true
+                return
+            }
             content.show(diff)
             if let line { content.scrollToLine(line) }
         }
