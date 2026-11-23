@@ -21,6 +21,9 @@ becomes the GitHub Release notes.
 - History can widen a hunk's context, show a whole file, compare images (side by side, swipe, onion skin or
   differing pixels) and show All Files: the tree at the commit and its files' contents, with that commit's lines
   marked.
+- History and Working Copy can ignore whitespace when comparing lines (at line ends, changes in its amount, or all
+  of it, as `git diff --ignore-space-at-eol`, `-b` and `-w` do), and so can `amonhen diff` and `show` with the same
+  flags. Lines aren't staged or discarded while whitespace is ignored.
 
 #### Changed
 
