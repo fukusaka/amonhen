@@ -79,6 +79,7 @@ mod theme;
 mod themesettings;
 mod titles;
 mod toolbar;
+mod whitespace;
 mod workcopy;
 mod worktrees;
 
@@ -3088,6 +3089,14 @@ fn connect_selection(
         right: right.downgrade(),
         pending: pending.clone(),
         generation: Cell::new(0),
+        shown: RefCell::default(),
+    });
+    // 帯で無視する空白を選び直した: 出しているコミット・選び方を読み直す（macOS 版の `setWhitespace`）。
+    let weak = Rc::downgrade(&loader);
+    files.connect_whitespace_changed(move || {
+        if let Some(loader) = weak.upgrade() {
+            loader.reload();
+        }
     });
     let weak_view = view.downgrade();
     view.connect_selected(move |rows| {
@@ -3105,6 +3114,7 @@ fn connect_selection(
             // 選んだ行を外して何も選んでいない（Ctrl で外した）: 詳細を消して「コミットを選ぶと…」（macOS 版と同じ）。
             [] => {
                 loader.start();
+                loader.shown.replace(None);
                 loader
                     .files
                     .show_message(&tr!("Select a commit to see its changes."));
@@ -3125,9 +3135,29 @@ struct Loader {
     pending: Rc<Cell<u32>>,
     /// 選び直したら増やし、古い結果を捨てる。
     generation: Cell<u64>,
+    /// 出しているもの（選んだ行と選び方。空白の扱いを変えて読み直すため）。
+    shown: RefCell<Option<ShownRows>>,
 }
 
+/// 出しているもの（リポジトリ、History、選んだ行、選び方）。
+type ShownRows = (
+    Arc<Repository>,
+    Arc<amonhen_core::HistorySnapshot>,
+    Vec<u32>,
+    PairMode,
+);
+
 impl Loader {
+    /// 出しているものを、帯で選んだ空白の扱いで読み直す。
+    fn reload(self: &Rc<Self>) {
+        let shown = self.shown.borrow().clone();
+        match shown {
+            Some((repo, history, rows, _)) if rows.len() == 1 => self.one(repo, history, rows[0]),
+            Some((repo, history, rows, pair)) => self.many(repo, history, rows, pair),
+            None => {}
+        }
+    }
+
     fn start(&self) -> u64 {
         let g = self.next();
         self.details.clear();
@@ -3155,6 +3185,12 @@ impl Loader {
         let Some(&id) = history.graph.ids().get(row as usize) else {
             return;
         };
+        self.shown.replace(Some((
+            repo.clone(),
+            history.clone(),
+            vec![row],
+            PairMode::Forward,
+        )));
         let g = self.next();
         self.pending.set(self.pending.get() + 1);
         let (this, repo_i) = (self.clone(), repo.clone());
@@ -3211,6 +3247,8 @@ impl Loader {
         pair: PairMode,
     ) {
         let g = self.start();
+        self.shown
+            .replace(Some((repo.clone(), history.clone(), rows.clone(), pair)));
         self.files.show_message(&tr!("Loading the diff…"));
         let weak = Rc::downgrade(self);
         let (r, h, rs) = (repo.clone(), history.clone(), rows.clone());
@@ -3292,16 +3330,17 @@ impl Loader {
             [row] => history.graph.ids().get(row as usize).copied(),
             _ => None,
         };
+        let whitespace = self.files.whitespace();
         glib::spawn_future_local(async move {
             let started = std::time::Instant::now();
             let result = gio::spawn_blocking(move || {
                 // 1 つのコミット（ファイルの多いコミットは、開いたファイルの差分をそのときに取る）。
                 if let [row] = rows[..] {
-                    return commitfiles::Prepared::commit(&repo, &history, row)
+                    return commitfiles::Prepared::commit(&repo, &history, row, whitespace)
                         .map(|prepared| ("range", prepared));
                 }
                 let (selection, stacked) = repo
-                    .selection_diff(&history, &rows, pair)
+                    .selection_diff_ws(&history, &rows, pair, whitespace)
                     .map_err(|e| e.to_string())?;
                 let kind = match selection {
                     amonhen_core::Selection::Range { .. } => "range",

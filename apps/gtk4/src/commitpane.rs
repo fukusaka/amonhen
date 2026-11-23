@@ -36,6 +36,17 @@ pub struct CommitPane {
     pending: Rc<Cell<u32>>,
     /// 選び直したら増やし、古い結果を捨てる。
     generation: Cell<u64>,
+    /// 出しているもの（空白の扱いを変えて読み直すため）。
+    shown: RefCell<Option<Shown>>,
+}
+
+/// 出しているもの。
+#[derive(Clone)]
+enum Shown {
+    /// コミットか stash。
+    Commit(Arc<Repository>, Oid, bool),
+    /// Push のシートの「送る変更すべて」（base、tip、見出し、送るコミットの 1 行ずつ）。
+    Range(Arc<Repository>, Option<Oid>, Oid, String, String),
 }
 
 impl CommitPane {
@@ -60,6 +71,13 @@ impl CommitPane {
                 details.show_style_switch();
             }
             let files = Rc::new(CommitDiff::new(pending.clone(), current.clone()));
+            // 帯で無視する空白を選び直した: 出しているものを読み直す（macOS 版の `setWhitespace`）。
+            let w = weak.clone();
+            files.connect_whitespace_changed(move || {
+                if let Some(pane) = w.upgrade() {
+                    pane.reload();
+                }
+            });
             let root = gtk::Paned::new(gtk::Orientation::Vertical);
             root.set_start_child(Some(&details.root));
             root.set_end_child(Some(&files.root));
@@ -150,6 +168,7 @@ impl CommitPane {
                 restore: RefCell::default(),
                 pending,
                 generation: Cell::new(0),
+                shown: RefCell::default(),
             }
         })
     }
@@ -198,6 +217,7 @@ impl CommitPane {
     /// 何も選んでいない: 詳細を消し、差分の代わりに「コミットを選ぶと…」を出す（macOS 版と同じ）。
     pub fn clear(&self) {
         self.generation.set(self.generation.get() + 1);
+        self.shown.replace(None);
         self.commit.replace(None);
         self.details.clear();
         self.files
@@ -216,6 +236,13 @@ impl CommitPane {
     ) {
         let g = self.generation.get() + 1;
         self.generation.set(g);
+        self.shown.replace(Some(Shown::Range(
+            repo.clone(),
+            base,
+            tip,
+            title.to_owned(),
+            lines.to_owned(),
+        )));
         self.repo.replace(Some(repo.clone()));
         self.commit.replace(None);
         self.details
@@ -226,13 +253,14 @@ impl CommitPane {
         self.files.reset_stats();
         self.pending.set(self.pending.get() + 1);
         let this = self.clone();
+        let whitespace = self.files.whitespace();
         glib::spawn_future_local(async move {
             let result = gio::spawn_blocking(move || {
                 let changes = repo
                     .changes_between(base.as_ref(), &tip)
                     .map_err(|e| e.to_string())?;
                 let count = changes.len();
-                Prepared::from_changes(repo, changes).map(|p| (count, p))
+                Prepared::from_changes(repo, changes, whitespace).map(|p| (count, p))
             })
             .await;
             this.pending.set(this.pending.get() - 1);
@@ -265,6 +293,18 @@ impl CommitPane {
         });
     }
 
+    /// 出しているものを、帯で選んだ空白の扱いで読み直す。
+    fn reload(self: &Rc<Self>) {
+        let shown = self.shown.borrow().clone();
+        match shown {
+            Some(Shown::Commit(repo, id, stash)) => self.show(repo, id, stash),
+            Some(Shown::Range(repo, base, tip, title, lines)) => {
+                self.show_range(repo, base, tip, &title, &lines)
+            }
+            None => {}
+        }
+    }
+
     /// `repo` の `id` の詳細と変更を裏で読んで出す。`stash` なら stash の中身（untracked のファイルを含む）で、
     /// 時間のかかる分（署名の検証・含むブランチなど）は読まない（macOS 版と同じ）。「すべてのファイル」はコミットの
     /// ときだけ（stash では開けない。macOS 版と同じ）。
@@ -272,6 +312,8 @@ impl CommitPane {
         let g = self.generation.get() + 1;
         self.generation.set(g);
         let hex = id.to_string();
+        self.shown
+            .replace(Some(Shown::Commit(repo.clone(), id, stash)));
         self.repo.replace(Some(repo.clone()));
         self.commit.replace((!stash).then(|| hex.clone()));
         self.details.clear();
@@ -312,6 +354,7 @@ impl CommitPane {
         }
         self.pending.set(self.pending.get() + 1);
         let this = self.clone();
+        let whitespace = self.files.whitespace();
         glib::spawn_future_local(async move {
             // History にないコミット（どのブランチにもない）もあるので、History の行ではなくコミットから読む。
             let result = gio::spawn_blocking(move || {
@@ -321,7 +364,7 @@ impl CommitPane {
                     repo.commit_changes(&id)
                 }
                 .map_err(|e| e.to_string())?;
-                Prepared::from_changes(repo, changes)
+                Prepared::from_changes(repo, changes, whitespace)
             })
             .await;
             this.pending.set(this.pending.get() - 1);

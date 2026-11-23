@@ -2362,6 +2362,15 @@
 "Expand All Diffs" = "差分をすべて開く";
 "Collapse All Diffs" = "差分をすべて畳む";
 "Ignore Whitespace" = "空白を無視";
+"Compare Whitespace" = "空白を区別";
+"Ignore Whitespace at Line Ends" = "行末の空白を無視";
+"Ignore Changes in Whitespace" = "空白の量の違いを無視";
+"Ignore All Whitespace" = "空白をすべて無視";
+"Whitespace to ignore when comparing lines (as git diff does)" = "行を比べるときに無視する空白（git diff と同じ）";
+"Lines that differ only in whitespace are changes" = "空白だけ違う行も変更として出す";
+"Ignore whitespace at the end of lines (git diff --ignore-space-at-eol)" = "行末の空白を無視する（git diff --ignore-space-at-eol）";
+"Ignore changes in the amount of whitespace (git diff -b)" = "空白の量の違いを無視する（git diff -b）";
+"Ignore all whitespace when comparing lines (git diff -w)" = "行を比べるときにすべての空白を無視する（git diff -w）";
 "Not available yet" = "まだ使えません";
 "View Options" = "表示の設定";
 "{count} files" = "{count} ファイル";
