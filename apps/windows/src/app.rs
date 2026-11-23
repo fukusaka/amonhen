@@ -570,6 +570,12 @@ struct Root {
     /// Working Copy の件名の欄と、Alt+↑・Alt+↓ で呼び出している最近のメッセージ（-1 は呼び出していない）・
     /// 呼び出す前の件名と本文（GTK4 版の `recall`）。
     summary_box: ElementRef<TextBox>,
+    /// `#` の候補のメニューを持つ見えない部品（候補が届いたら、`#` の下に開く）。
+    issue_host: ElementRef<Grid>,
+    /// `#` の候補のメニューを開いた回数（増えたら開く）。
+    issue_menu_opens: u64,
+    /// 候補を入れた欄（本文か）と、入れた `#番号` の後ろの位置（UTF-16）と、入れた回数（カーソルをそこへ置く）。
+    issue_caret: (bool, usize, u64),
     /// コミットの説明の欄（等幅の字にする）。
     description_box: ElementRef<TextBox>,
     /// Shared Templates のシートの本文の欄（等幅にする。macOS 版のシートと同じ）。
@@ -1034,6 +1040,10 @@ enum Message {
     GitHubRepos(Vec<(String, String)>),
     PickGitHubRepo(Option<usize>),
     PickIssue(u64),
+    /// `#` の候補のメニューで選んだ（`issue:番号`）。
+    IssueMenu(String),
+    /// `#` の候補のメニューを開く（項目を入れた描画の後）。
+    OpenIssueMenu,
     /// ブランチの様子の、取り込んだときのコンフリクトの見込みを読んだ（ブランチ、`predictMerge` の答え）。
     BranchForecast(String, Value),
     /// CI の印を押した（コミット、状態）と、そのチェックを読んだ。
@@ -1685,6 +1695,9 @@ impl Component for Root {
             dialog_inputs: 0,
             working_list: ElementRef::new(),
             summary_box: ElementRef::new(),
+            issue_host: ElementRef::new(),
+            issue_menu_opens: 0,
+            issue_caret: (false, 0, 0),
             description_box: ElementRef::new(),
             template_body: ElementRef::new(),
             blame_code: ElementRef::new(),
@@ -5203,6 +5216,21 @@ impl Root {
                 };
                 if *now == text && !items.is_empty() {
                     self.issue_offer = Some((body, at, text, items));
+                    // メニューに項目を入れた描画の後に開く（同じ描画で開くと、まだ空のメニューが開いて何も出ない）。
+                    context.spawn_background(|_| {
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                        Message::OpenIssueMenu
+                    });
+                }
+            }
+            Message::OpenIssueMenu => {
+                if self.issue_offer.is_some() {
+                    self.issue_menu_opens += 1;
+                }
+            }
+            Message::IssueMenu(key) => {
+                if let Some(number) = key.strip_prefix("issue:").and_then(|n| n.parse().ok()) {
+                    self.update(Message::PickIssue(number), context);
                 }
             }
             Message::PickIssue(number) => {
@@ -5217,6 +5245,10 @@ impl Root {
                     {
                         *field = put;
                         self.store_draft();
+                        // カーソルは入れた番号の後ろに（欄を書き直すと先頭に戻るので、描いた後に置く）。
+                        let before: String = text.chars().take(at.saturating_sub(1)).collect();
+                        let caret = before.encode_utf16().count() + format!("#{number}").len();
+                        self.issue_caret = (body, caret, self.issue_caret.2 + 1);
                     }
                 }
             }
@@ -9477,6 +9509,64 @@ impl Root {
             }
             None
         });
+        // `#` の候補が届いたら、`#` を打った所の下にメニューを開く（macOS 版・GTK4 版と同じ。欄の字の矩形で位置を
+        // 求める）。
+        if let Some((body, at, _, _)) = &self.issue_offer
+            && self.issue_menu_opens > 0
+        {
+            let host = self.issue_host.clone();
+            let field = if *body {
+                self.description_box.clone()
+            } else {
+                self.summary_box.clone()
+            };
+            let at = *at;
+            context.use_effect("issue-menu", self.issue_menu_opens, move || {
+                let _ = host.request_native_element(move |result| {
+                    let Ok(host) = result else { return };
+                    let _ = field.request_native_element(move |result| {
+                        let open = || -> windows_core_reactor::Result<()> {
+                            let field = result.map_err(|_| windows_core_reactor::Error::empty())?;
+                            let flyout = host.cast::<xaml::UIElement>()?.ContextFlyout()?;
+                            let text_box: xaml::TextBox = field.cast()?;
+                            // `at` は `#` の後ろの位置（文字の数）。`#` の字の矩形の下に出す。
+                            let rect = text_box
+                                .GetRectFromCharacterIndex(at.saturating_sub(1) as i32, false)?;
+                            let options = xaml::FlyoutShowOptions::new()?;
+                            options.SetPosition(Some(xaml::Point {
+                                X: rect.X,
+                                Y: rect.Y + rect.Height,
+                            }))?;
+                            flyout.ShowAtWithOptions(
+                                &field.cast::<xaml::DependencyObject>()?,
+                                &options,
+                            )
+                        };
+                        if let Err(e) = open() {
+                            eprintln!("# の候補を開けない: {e}");
+                        }
+                    });
+                });
+                None
+            });
+        }
+        // 候補を入れたら、カーソルを入れた番号の後ろへ。
+        if self.issue_caret.2 > 0 {
+            let (body, caret, count) = self.issue_caret;
+            let field = if body {
+                self.description_box.clone()
+            } else {
+                self.summary_box.clone()
+            };
+            context.use_effect("issue-caret", count, move || {
+                let _ = field.request_native_element(move |result| {
+                    if let Ok(element) = result {
+                        let _ = xaml::set_caret(&element, caret);
+                    }
+                });
+                None
+            });
+        }
         // 説明の欄を等幅に（Working Copy を出すたびに欄が作り直される。TextBox は Control なので、そのものに付ける）。
         let description_box = self.description_box.clone();
         context.use_effect(
@@ -17299,7 +17389,8 @@ impl Root {
             file_menu: Box::new(|path: String| {
                 context.callback(move |key| Message::WorkingFileMenu(path.clone(), key))
             }),
-            issue: Box::new(|number: u64| context.callback(move |()| Message::PickIssue(number))),
+            issue_menu: context.callback(Message::IssueMenu),
+            issue_host: &self.issue_host,
         };
         let view = crate::workcopy::view(
             crate::workcopy::Input {
