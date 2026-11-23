@@ -970,18 +970,35 @@ impl Repository {
         context: u32,
         profile: &FrontendProfile,
     ) -> Result<DiffView> {
+        self.file_diff_ws(change, context, diff::Whitespace::Exact, profile)
+    }
+
+    /// `file_diff_with_context` の、`whitespace` の空白を無視して行を比べるもの。
+    pub fn file_diff_ws(
+        &self,
+        change: &FileChange,
+        context: u32,
+        whitespace: diff::Whitespace,
+        profile: &FrontendProfile,
+    ) -> Result<DiffView> {
         let mut diff = match self.change_diffs(std::slice::from_ref(change))? {
             Some(mut diffs) if diffs.len() == 1 => diffs.remove(0),
             _ => {
                 let attrs = self.diff_attributes(std::slice::from_ref(&change.path.as_str()));
-                self.change_diff(change, &attrs[0])?
+                self.change_diff(change, &attrs[0], diff::Whitespace::Exact)?
             }
         };
-        if context != 3 && !diff.binary {
+        if (context != 3 || whitespace != diff::Whitespace::Exact) && !diff.binary {
             let attrs = self.diff_attributes(std::slice::from_ref(&change.path.as_str()));
             let funcname = crate::funcname::FuncName::new(attrs[0].funcname.as_ref());
             let generated = diff.generated;
-            diff = diff::file_diff_with(diff.old.clone(), diff.new.clone(), context, &funcname);
+            diff = diff::file_diff_ws(
+                diff.old.clone(),
+                diff.new.clone(),
+                context,
+                &funcname,
+                whitespace,
+            );
             diff.generated = generated;
         }
         Ok(DiffView::new(&diff, profile).with_path(&change.path))
@@ -997,7 +1014,7 @@ impl Repository {
 
     /// `stacked` の `file` 番目のファイルの差分を、前後 `context` 行で取り直す（`u32::MAX` ならファイル全体）。
     /// まだ取っていないファイル（ファイルの多いコミット）なら、ここで取る。見出しの関数名と生成物の印は、その
-    /// ファイルの属性のまま。
+    /// ファイルの属性のまま。無視する空白も、そのファイルの差分を取ったときのまま。
     pub fn set_stacked_context(
         &self,
         stacked: &mut diff::StackedDiff,
@@ -1009,8 +1026,9 @@ impl Repository {
         };
         let path = path.split(" — ").next().unwrap_or(path);
         let attrs = self.diff_attributes(&[path]);
+        let whitespace = d.whitespace;
         if let Some(change) = d.pending.take() {
-            match self.change_diff(&change, &attrs[0]) {
+            match self.change_diff(&change, &attrs[0], whitespace) {
                 Ok(loaded) => *d = loaded,
                 Err(e) => {
                     d.pending = Some(change);
@@ -1026,7 +1044,7 @@ impl Repository {
         }
         let funcname = crate::funcname::FuncName::new(attrs[0].funcname.as_ref());
         let generated = d.generated;
-        *d = diff::file_diff_with(d.old.clone(), d.new.clone(), context, &funcname);
+        *d = diff::file_diff_ws(d.old.clone(), d.new.clone(), context, &funcname, whitespace);
         d.generated = generated;
         Ok(())
     }
@@ -1059,6 +1077,15 @@ impl Repository {
     /// `changes` のすべてのファイルの差分（History で全ファイルを縦に並べて見せる）。ファイルの数だけ blob を読んで
     /// 差分を取るので、裏のスレッドで呼ぶ。
     pub fn stacked_diff(&self, changes: &[FileChange]) -> Result<diff::StackedDiff> {
+        self.stacked_diff_ws(changes, diff::Whitespace::Exact)
+    }
+
+    /// `stacked_diff` の、`whitespace` の空白を無視して行を比べるもの。
+    pub fn stacked_diff_ws(
+        &self,
+        changes: &[FileChange],
+        whitespace: diff::Whitespace,
+    ) -> Result<diff::StackedDiff> {
         // ファイルの多いコミットは、見出しだけ並べて、開いたファイルの差分だけを取る（`set_stacked_context`）。
         if changes.len() > Self::STACK_EAGER {
             let files = changes
@@ -1066,12 +1093,25 @@ impl Repository {
                 .map(|c| {
                     let mut d = diff::whole_file(Vec::new());
                     d.pending = Some(Box::new(c.clone()));
+                    d.whitespace = whitespace;
                     (c.path.clone(), d)
                 })
                 .collect();
             return Ok(diff::StackedDiff { files });
         }
         if let Some(diffs) = self.change_diffs(changes)? {
+            // daemon は空白を無視せずに取る。無視するなら、もらった中身でここで取り直す。
+            let diffs = if whitespace == diff::Whitespace::Exact {
+                diffs
+            } else {
+                let paths: Vec<&str> = changes.iter().map(|c| c.path.as_str()).collect();
+                let attrs = self.diff_attributes(&paths);
+                diffs
+                    .into_iter()
+                    .zip(&attrs)
+                    .map(|(d, a)| Self::rediff(d, a, whitespace))
+                    .collect()
+            };
             let files = changes.iter().map(|c| c.path.clone()).zip(diffs).collect();
             return Ok(diff::StackedDiff { files });
         }
@@ -1087,7 +1127,7 @@ impl Repository {
         let attrs = self.diff_attributes(&paths);
         let items: Vec<_> = changes.iter().zip(&attrs).collect();
         let one = |&(c, a): &(&FileChange, &amonhen_model::DiffAttributes)| {
-            Ok((c.path.clone(), self.change_diff(c, a)?))
+            Ok((c.path.clone(), self.change_diff(c, a, whitespace)?))
         };
         // ファイルごとの差分は独立しているので、多ければ分けて並列に取る（コミットを選んでから表示までの時間）。
         let threads = std::thread::available_parallelism()
@@ -1137,27 +1177,39 @@ impl Repository {
         rows: &[u32],
         pair: PairMode,
     ) -> Result<(Selection, diff::StackedDiff)> {
+        self.selection_diff_ws(snapshot, rows, pair, diff::Whitespace::Exact)
+    }
+
+    /// `selection_diff` の、`whitespace` の空白を無視して行を比べるもの。
+    pub fn selection_diff_ws(
+        &self,
+        snapshot: &HistorySnapshot,
+        rows: &[u32],
+        pair: PairMode,
+        whitespace: diff::Whitespace,
+    ) -> Result<(Selection, diff::StackedDiff)> {
+        let ws = whitespace;
         let selection = Selection::of(snapshot, rows)?;
         let stacked = match &selection {
             Selection::Pair { from, to } if pair == PairMode::Reverse => {
-                self.stacked_diff(&self.backend.changes_between(Some(to), from)?)?
+                self.stacked_diff_ws(&self.backend.changes_between(Some(to), from)?, ws)?
             }
             Selection::Pair { to, .. } if pair == PairMode::MergeBase => {
                 let base = self.selection_merge_base(snapshot, rows);
-                self.stacked_diff(&self.backend.changes_between(base.as_ref(), to)?)?
+                self.stacked_diff_ws(&self.backend.changes_between(base.as_ref(), to)?, ws)?
             }
             Selection::Range { base, tip, .. } => {
-                self.stacked_diff(&self.backend.changes_between(base.as_ref(), tip)?)?
+                self.stacked_diff_ws(&self.backend.changes_between(base.as_ref(), tip)?, ws)?
             }
             Selection::Pair { from, to } => {
-                self.stacked_diff(&self.backend.changes_between(Some(from), to)?)?
+                self.stacked_diff_ws(&self.backend.changes_between(Some(from), to)?, ws)?
             }
             Selection::Each(commits) => {
                 let mut files = Vec::new();
                 for (order, id) in commits.iter().enumerate() {
                     let short = id.to_string()[..8].to_owned();
-                    for (path, diff) in self.stacked_diff(&self.backend.commit_changes(id)?)?.files
-                    {
+                    let changes = self.backend.commit_changes(id)?;
+                    for (path, diff) in self.stacked_diff_ws(&changes, ws)?.files {
                         files.push((path.clone(), order, format!("{path} — {short}"), diff));
                     }
                 }
@@ -1284,18 +1336,40 @@ impl Repository {
     }
 
     /// `path` の 2 つの版の、前後 3 行の差分（見出しの関数名は `path` の属性の規則で）。
-    fn path_diff(&self, path: &str, old: Arc<Vec<u8>>, new: Arc<Vec<u8>>) -> FileDiff {
+    fn path_diff(
+        &self,
+        path: &str,
+        old: Arc<Vec<u8>>,
+        new: Arc<Vec<u8>>,
+        whitespace: diff::Whitespace,
+    ) -> FileDiff {
         let attrs = self.diff_attributes(&[path]);
         let funcname = crate::funcname::FuncName::new(attrs[0].funcname.as_ref());
-        let mut diff = diff::file_diff_with(old, new, 3, &funcname);
+        let mut diff = diff::file_diff_ws(old, new, 3, &funcname, whitespace);
         diff.generated = attrs[0].generated;
         diff
+    }
+
+    /// 取った差分 `d` を、`whitespace` の空白を無視して取り直す（前後 3 行）。
+    fn rediff(
+        d: FileDiff,
+        attrs: &amonhen_model::DiffAttributes,
+        whitespace: diff::Whitespace,
+    ) -> FileDiff {
+        if d.binary {
+            return d;
+        }
+        let funcname = crate::funcname::FuncName::new(attrs.funcname.as_ref());
+        let mut out = diff::file_diff_ws(d.old, d.new, 3, &funcname, whitespace);
+        out.generated = d.generated;
+        out
     }
 
     fn change_diff(
         &self,
         change: &FileChange,
         attrs: &amonhen_model::DiffAttributes,
+        whitespace: diff::Whitespace,
     ) -> Result<FileDiff> {
         let side = |id: &Option<Oid>| -> Result<Arc<Vec<u8>>> {
             match id {
@@ -1308,8 +1382,13 @@ impl Repository {
             }
         };
         let funcname = crate::funcname::FuncName::new(attrs.funcname.as_ref());
-        let mut diff =
-            diff::file_diff_with(side(&change.old_id)?, side(&change.new_id)?, 3, &funcname);
+        let mut diff = diff::file_diff_ws(
+            side(&change.old_id)?,
+            side(&change.new_id)?,
+            3,
+            &funcname,
+            whitespace,
+        );
         diff.generated = attrs.generated;
         Ok(diff)
     }
@@ -1345,6 +1424,17 @@ impl Repository {
         staged: bool,
         profile: &FrontendProfile,
     ) -> Result<WorkingDiff> {
+        self.working_diff_ws(entry, staged, diff::Whitespace::Exact, profile)
+    }
+
+    /// `working_diff` の、`whitespace` の空白を無視して行を比べるもの。行ごとの stage・取り消しには使えない。
+    pub fn working_diff_ws(
+        &self,
+        entry: &StatusEntry,
+        staged: bool,
+        whitespace: diff::Whitespace,
+        profile: &FrontendProfile,
+    ) -> Result<WorkingDiff> {
         let blob = |id: &Option<Oid>| -> Result<Arc<Vec<u8>>> {
             match id {
                 Some(id) if entry.submodule => {
@@ -1366,7 +1456,7 @@ impl Repository {
             let line_endings = self.line_endings(entry, &index)?;
             (index, worktree, line_endings)
         };
-        let file = self.path_diff(&entry.path, old, new);
+        let file = self.path_diff(&entry.path, old, new, whitespace);
         let view = DiffView::new(&file, profile).with_path(&entry.path);
         Ok(WorkingDiff {
             entry: entry.clone(),
@@ -1435,7 +1525,7 @@ impl Repository {
             b'D' => Arc::default(),
             _ => self.backend.worktree_file(&entry.path)?,
         };
-        let file = self.path_diff(&entry.path, head, worktree);
+        let file = self.path_diff(&entry.path, head, worktree, diff::Whitespace::Exact);
         let Some(staged) = diff::staged_lines(&file, &index) else {
             return Ok(None);
         };
@@ -1460,6 +1550,7 @@ impl Repository {
     /// すべて入れるなら `git add`、すべて外すなら `git reset` と同じにする（新しいファイル・消したファイルも
     /// 正しく扱うため）。
     pub fn set_rows_staged(&self, diff: &WorkingDiff, rows: &[usize], stage: bool) -> Result<()> {
+        Self::exact_lines(diff)?;
         let Some(current) = &diff.combined else {
             return Err(tr!("Not a diff between HEAD and the working tree").into());
         };
@@ -1482,6 +1573,14 @@ impl Repository {
         self.backend.set_index_content(path, mode, &content)
     }
 
+    /// 空白を無視した差分の行は中身をそのまま表していないので、行ごとの stage・取り消しを断る。
+    fn exact_lines(diff: &WorkingDiff) -> Result<()> {
+        if diff.file.whitespace != diff::Whitespace::Exact {
+            return Err(tr!("Can’t stage or discard lines while whitespace is ignored").into());
+        }
+        Ok(())
+    }
+
     pub fn stage(&self, paths: &[&str]) -> Result<()> {
         self.backend.stage(paths)
     }
@@ -1492,6 +1591,7 @@ impl Repository {
 
     /// `diff` の `rows` 行目の変更だけを stage する（stage 済みの差分なら unstage する）。
     pub fn stage_rows(&self, diff: &WorkingDiff, rows: &[usize]) -> Result<()> {
+        Self::exact_lines(diff)?;
         let selected = |r: usize| rows.contains(&r);
         let content = if diff.staged {
             // index から選んだ変更を取り除く = HEAD に選ばなかった変更だけを反映する。
@@ -1535,6 +1635,7 @@ impl Repository {
 
     /// `diff` の `rows` 行目の変更を作業ツリーから取り除く（Undo できる）。stage していない差分にだけ使える。
     pub fn discard_rows(&self, diff: &WorkingDiff, rows: &[usize]) -> Result<()> {
+        Self::exact_lines(diff)?;
         let staged_row = diff
             .combined
             .as_ref()
@@ -2357,6 +2458,38 @@ mod tests {
         assert!(view.rows.iter().all(|r| r.kind == DiffRow::CONTEXT));
         assert_eq!((view.rows[1].old_no, view.rows[1].new_no), (2, 2));
         assert!(repo.tree_file(&head, "missing.txt", &profile).is_err());
+    }
+
+    #[test]
+    fn a_stacked_diff_keeps_ignoring_whitespace_when_its_context_grows() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("repo");
+        std::fs::create_dir(&dir).unwrap();
+        git(&dir, &["init", "-q"]);
+        std::fs::write(dir.join("a.txt"), "a\nb\nc\n").unwrap();
+        git(&dir, &["add", "-A"]);
+        git(&dir, &["commit", "-q", "-m", "first"]);
+        std::fs::write(dir.join("a.txt"), "  a\nb\nC\n").unwrap();
+        git(&dir, &["commit", "-qam", "second"]);
+
+        let repo = Repository::with_cache(GixBackend::open(&dir).unwrap(), tmp.path().join("c"));
+        let head = repo.backend.head().unwrap().unwrap();
+        let changes = repo.commit_changes(&head).unwrap();
+        let exact = repo.stacked_diff(&changes).unwrap();
+        assert_eq!((exact.files[0].1.added, exact.files[0].1.removed), (2, 2));
+        let mut stacked = repo
+            .stacked_diff_ws(&changes, diff::Whitespace::All)
+            .unwrap();
+        assert_eq!(
+            (stacked.files[0].1.added, stacked.files[0].1.removed),
+            (1, 1)
+        );
+        repo.set_stacked_context(&mut stacked, 0, u32::MAX).unwrap();
+        let d = &stacked.files[0].1;
+        assert_eq!(d.whitespace, diff::Whitespace::All);
+        assert_eq!((d.added, d.removed), (1, 1));
+        // 空白だけ違う行は、変更後の形の変わっていない行。
+        assert_eq!(d.text(&d.lines[1]), b"  a");
     }
 
     #[test]
