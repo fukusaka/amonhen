@@ -165,6 +165,8 @@ enum Naming {
     RemoteEditUrl,
     /// 選んでいるコミットを書き出すアーカイブのファイル（この機械の）。
     Archive,
+    /// shallow clone を、この日付より新しいコミットまで取り足す（`git fetch --shallow-since`）。
+    DeepenSince,
     /// リポジトリをまとめる bundle のファイル（この機械の）。
     Bundle,
     /// 取り込む bundle のファイル（この機械の）。
@@ -489,6 +491,8 @@ pub struct App {
     confirm: Option<(String, String, Request)>,
     /// push を確かめている: `t` で、送り先のブランチを打てる。
     push_to_offered: bool,
+    /// shallow clone を取り足す前の `d`: 日付を打つ（選ぶ前に横取りする）。
+    deepen_date_offered: bool,
     /// push の確かめで見せている送り先（`<remote>/<branch>`。置き換える push の絵の見出し）。
     pushing_to: String,
     /// チェックアウトしていないブランチの fast-forward の見通しを読んでいる間: ブランチ、上流、進む数。
@@ -753,6 +757,7 @@ impl App {
             path_choices: String::new(),
             pick_question: None,
             push_to_offered: false,
+            deepen_date_offered: false,
             pushing_to: String::new(),
             fast_forward: None,
             bundle_file: None,
@@ -1674,6 +1679,17 @@ impl App {
             self.dirty = true;
             return;
         }
+        // shallow clone を取り足す前の `d`: 日付を打つ。
+        if self.choices.is_some()
+            && std::mem::take(&mut self.deepen_date_offered)
+            && key.code == KeyCode::Char('d')
+        {
+            self.choices = None;
+            self.naming = Naming::DeepenSince;
+            self.typing_branch = Some((String::new(), String::new(), String::new()));
+            self.dirty = true;
+            return;
+        }
         // worktree をロックする前の `r`: 理由を打つ。
         if self.choices.is_some()
             && let Some(path) = self.worktree_lock.take()
@@ -2100,6 +2116,13 @@ impl App {
                                 if let Some((rev, file)) = self.archive_folder.take() {
                                     self.export_archive(&rev, &file, Some(name));
                                 }
+                                return;
+                            }
+                            Naming::DeepenSince => {
+                                self.send(Request::Run {
+                                    name: "deepen",
+                                    command: json!({"op": "deepen", "since": name.trim()}),
+                                });
                                 return;
                             }
                             Naming::PatchVersion => {
@@ -2890,6 +2913,7 @@ impl App {
                 return;
             }
             "fetch" => self.notice = Some(tr!("Fetched")),
+            "deepen" => self.notice = Some(tr!("Fetched older history")),
             "pull" => self.notice = Some(tr!("Pulled")),
             "push" => self.notice = Some(tr!("Pushed")),
             "undo" => self.notice = Some(tr!("Undone")),
@@ -5741,7 +5765,10 @@ impl App {
                 ("g G", tr!("Top and bottom")),
                 ("PgUp PgDn", tr!("Move by a page")),
                 ("@", tr!("Go to HEAD")),
-                ("o", tr!("Date or topological order")),
+                (
+                    "o +",
+                    tr!("Date or topological order; fetch more of a shallow clone"),
+                ),
                 (
                     "z Z",
                     tr!("Fold merged branches; open or close the selected merge"),
@@ -6487,6 +6514,33 @@ impl App {
                 self.compare_ranges(title, vec![format!("{older}...{newer}")]);
                 return true;
             }
+            // shallow clone の履歴を取り足す（アプリの最後の行の下の帯の Fetch More・Fetch All）。
+            KeyCode::Char('+') if self.history.is_shallow() => {
+                let deepen = |commits: u32| Request::Run {
+                    name: "deepen",
+                    command: json!({"op": "deepen", "commits": commits}),
+                };
+                self.choices = Some((
+                    tr!("Fetch older history from the remote?"),
+                    vec![
+                        ('1', tr!("100 commits"), deepen(100)),
+                        ('2', tr!("1,000 commits"), deepen(1_000)),
+                        ('3', tr!("10,000 commits"), deepen(10_000)),
+                        // 選ぶ前に横取りして、日付を聞く（中身は送らない）。
+                        ('d', tr!("up to a date…"), Request::Status),
+                        (
+                            'a',
+                            tr!("all of it"),
+                            Request::Run {
+                                name: "deepen",
+                                command: json!({"op": "unshallow"}),
+                            },
+                        ),
+                    ],
+                ));
+                self.deepen_date_offered = true;
+                return true;
+            }
             KeyCode::Char('.') if self.history.mark_count() == 2 => {
                 self.pair = match self.pair {
                     Pair::MergeBase => Pair::Forward,
@@ -7134,6 +7188,10 @@ impl App {
                         )
                     }
                     Naming::PatchVersion => tr!("Version of the patches (-v): {name}", name = name),
+                    Naming::DeepenSince => tr!(
+                        "Fetch the commits newer than (a date git reads, like 2024-01-31): {name}",
+                        name = name
+                    ),
                     Naming::ArchiveFolder => {
                         tr!("Export only the folder (from the top): {name}", name = name)
                     }

@@ -3094,6 +3094,59 @@ fn compare_with_the_previous_version() {
     assert!(below.contains("Take the lane from the trunk"));
 }
 
+/// shallow clone: 最後の行の下に帯、境界のコミットに点線の印。`+` で取り足す（数を選ぶ、`a` ですべて）
+#[test]
+fn shallow_clone_band_and_fetch_more() {
+    let source = tempfile::tempdir().unwrap();
+    let source = source.path();
+    git(source, BASE, &["init", "-q", "-b", "main"]);
+    for n in 1..=5 {
+        git(
+            source,
+            BASE + DAY * n,
+            &[
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                &format!("Commit {n}"),
+            ],
+        );
+    }
+    let place = tempfile::tempdir().unwrap();
+    let url = format!("file://{}", source.display());
+    git(
+        place.path(),
+        BASE,
+        &["clone", "-q", "--depth", "2", &url, "shallow"],
+    );
+    let dir = place.path().join("shallow");
+    let shown = amonhen_tui::snapshot(open(&dir), 140, 12, clock(), "2").unwrap();
+    println!("{shown}");
+    assert!(
+        shown.contains("Older history isn’t fetched (shallow clone)"),
+        "{shown}"
+    );
+    assert!(shown.lines().any(|l| l.contains("┄ Commit 4")), "{shown}");
+    let asked = amonhen_tui::snapshot(open(&dir), 140, 12, clock(), "2+").unwrap();
+    let last = asked.lines().last().unwrap();
+    assert!(
+        last.contains("Fetch older history from the remote?"),
+        "{last}"
+    );
+    // 日付まで: `d` で日付を打つ（それより新しいコミットをすべて）。
+    let typing = amonhen_tui::snapshot(open(&dir), 140, 12, clock(), "2+d").unwrap();
+    assert!(typing.contains("Fetch the commits newer than"), "{typing}");
+    let since = amonhen_tui::snapshot(open(&dir), 140, 12, clock(), "2+d2000-01-01\n").unwrap();
+    println!("{since}");
+    assert!(since.contains("Commit 1"), "{since}");
+    git(&dir, BASE, &["fetch", "-q", "--depth", "2"]);
+    let all = amonhen_tui::snapshot(open(&dir), 140, 12, clock(), "2+a").unwrap();
+    println!("{all}");
+    assert!(all.contains("Commit 1"), "{all}");
+    assert!(!all.contains("shallow clone"), "{all}");
+}
+
 /// 詳細の `+`: 今見ているファイルの前後を 20 行広げる。`F` でファイル全体を出し、もう一度で戻す
 #[test]
 fn widen_the_context_and_show_the_whole_file() {
