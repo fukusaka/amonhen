@@ -828,7 +828,7 @@
 "{subject} doesn’t apply. Retry it with a 3-way merge to resolve conflicts, apply it by hand and Continue, or Skip it." = "{subject} が当たりません。3-way merge で当て直してコンフリクトを解決するか、手で当てて Continue するか、Skip してください。";
 "Conflicts resolved. Continue to finish, or Abort to go back to where you started." = "コンフリクトは解決しました。Continue で仕上げるか、Abort で始める前に戻せます。";
 "Operation Cancelled" = "操作を取り消しました";
-"Details" = "詳細";
+"Details" = "詳しく見る";
 "Mark {count} Without Markers Resolved" = "マーカーのない {count} ファイルを解決済みにする";
 "Mark the conflicted files that have no conflict markers left as resolved (rerere or another editor resolved them)." = "マーカーの残っていないコンフリクトのファイルを解決済みにします（rerere やほかのエディタで解決したもの）。";
 "Retry with 3-Way Merge" = "3-way merge で当て直す";
@@ -1846,7 +1846,7 @@
 "There’s no public key to verify the signature (it isn’t in the GPG keyring or the SSH allowed signers)." = "署名を検証する公開鍵がありません（GPG の鍵束、SSH の allowed signers に入っていない）。";
 "This git can’t verify SSH signatures. It needs git 2.34 or later." = "この git では SSH の署名を検証できません。git 2.34 以降が要ります。";
 "Verifying the signature." = "署名を検証しています。";
-"{label} — {explanation} (Click for details.)" = "{label} — {explanation}（押すと詳細）";
+"{label} — {explanation} (Click for details.)" = "{label} — {explanation}（押して詳しく見る）";
 "the repository is on this computer" = "リポジトリがこのコンピューターにある";
 "chosen in Settings > SSH Hosts" = "設定 > SSH ホストで選択";
 "this computer" = "このコンピューター";

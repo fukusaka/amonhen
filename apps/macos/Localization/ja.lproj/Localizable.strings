@@ -703,7 +703,7 @@
 "Export JSON…" = "JSON に書き出す…";
 "Time" = "時刻";
 "Repository" = "リポジトリ";
-"Details" = "詳細";
+"Details" = "詳しく見る";
 "Cancel Operation" = "取り消す";
 "git runs and core commands, newest first, up to 1,000 (for repositories through the daemon, also the git it starts). ● means running; fetch, pull, push and clone show their progress and can be canceled." = "git の起動とコアの命令を、新しい順に最大 1000 件（daemon 越しのリポジトリは daemon で起動した git も）。● は実行中で、fetch・pull・push・clone は進み具合を出し、取り消せる。";
 "Undo to Here" = "ここまで戻す";
@@ -1074,7 +1074,7 @@
 "There’s no public key to verify the signature (it isn’t in the GPG keyring or the SSH allowed signers)." = "署名を検証する公開鍵がありません（GPG の鍵束、SSH の allowed signers に入っていない）。";
 "This git can’t verify SSH signatures. It needs git 2.34 or later." = "この git では SSH の署名を検証できません。git 2.34 以降が要ります。";
 "Verifying the signature." = "署名を検証しています。";
-"%@ — %@ (Click for details.)" = "%@ — %@（押すと詳細）";
+"%@ — %@ (Click for details.)" = "%@ — %@（押して詳しく見る）";
 
 /* SignaturePopover.swift */
 "Checked on %@" = "%@で検証";
