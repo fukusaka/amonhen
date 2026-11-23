@@ -35,6 +35,7 @@
 //! pele の LICENSE にある Lucide Icons の告知は、ズームの操作のアイコン（ブラウザ向けの部分）のもので、ここには
 //! 移していない。
 
+pub mod core;
 pub mod detect;
 pub mod diagrams;
 pub mod errors;
@@ -45,3 +46,11 @@ pub mod svg;
 pub mod text;
 pub mod types;
 pub mod util;
+
+pub use crate::core::{RenderResult, detect_type, render, render_with, supports};
+pub use crate::errors::{ErrorCode, PeleError, PeleError as Error};
+pub use crate::text::measurer::TextMeasurer;
+pub use crate::types::{IconResolver, LinkInfo, MathMarkup, MathResolver, RenderOptions};
+
+/// `render` の答え。
+pub type Rendered = RenderResult;
