@@ -1120,13 +1120,27 @@ impl Renderer {
         }
         // 行ごとの含める印（Working Copy の 1 本の差分）があれば、その列の右から行番号。
         let left = if commit.marks { DIFF_MARK_WIDTH } else { 0.0 };
-        let text_x = left + DIFF_NUMBER_WIDTH * 2.0 + DIFF_TEXT_INSET;
+        // その時点のファイルは、行番号が 1 列（後の側。ファイルごと消したなら前の側）。
+        let numbers = if commit.file_mode {
+            DIFF_NUMBER_WIDTH
+        } else {
+            DIFF_NUMBER_WIDTH * 2.0
+        };
+        let text_x = left + numbers + DIFF_TEXT_INSET;
         // 画像の比べる欄は、見えている最初の行で欄ごと描く（欄の行は 1 度だけ）。
         let mut drawn_panel = None;
         for n in first..last {
             let top = n as f32 * DIFF_ROW_HEIGHT - scroll_y;
             let i = match commit.line(n as usize) {
                 Some(crate::data::DiffLine::Row(i)) => i,
+                Some(crate::data::DiffLine::Deleted(d)) => {
+                    let count = commit
+                        .tree
+                        .and_then(|t| t.deletions.get(d as usize).copied())
+                        .unwrap_or(0);
+                    self.draw_deletion_mark(count, left + numbers, top)?;
+                    continue;
+                }
                 Some(crate::data::DiffLine::Panel(file, k)) => {
                     if drawn_panel != Some(file) {
                         drawn_panel = Some(file);
@@ -1151,7 +1165,10 @@ impl Renderer {
                 bottom: top + DIFF_ROW_HEIGHT,
             };
             let file = row.kind == DiffRow::FILE;
+            // その時点のファイルの、変えた行（消した行に続けて足した行）は青（macOS 版・GTK4 版と同じ）。
+            let modified = commit.file_mode && commit.tree.is_some_and(|t| t.modified.contains(&i));
             let fill = match row.kind {
+                _ if modified => Some(rgba(0.21, 0.52, 0.89, 0.2)),
                 DiffRow::ADDED => Some(diff_color(crate::theme::DiffColor::Added)),
                 DiffRow::REMOVED => Some(diff_color(crate::theme::DiffColor::Removed)),
                 DiffRow::HUNK => Some(diff_color(crate::theme::DiffColor::Hunk)),
@@ -1162,7 +1179,7 @@ impl Renderer {
                 if !file {
                     self.brush.SetColor(&diff_gutter());
                     self.d2d
-                        .FillRectangle(&rect(0.0, left + DIFF_NUMBER_WIDTH * 2.0), &self.brush);
+                        .FillRectangle(&rect(0.0, left + numbers), &self.brush);
                 }
                 if let Some(fill) = fill {
                     self.brush.SetColor(&fill);
@@ -1239,7 +1256,14 @@ impl Renderer {
                     );
                 }
             }
-            if !file && row.kind != DiffRow::HUNK {
+            if commit.file_mode {
+                let line = if row.new_no == 0 {
+                    row.old_no
+                } else {
+                    row.new_no
+                };
+                self.draw_number(line, left, top)?;
+            } else if !file && row.kind != DiffRow::HUNK {
                 self.draw_number(row.old_no, left, top)?;
                 self.draw_number(row.new_no, left + DIFF_NUMBER_WIDTH, top)?;
             }
@@ -1525,6 +1549,33 @@ impl Renderer {
             &secondary(),
             false,
         )
+    }
+
+    /// その時点のファイルの、消した行の所の印（赤い札に「N 行消した」。GTK4 版の `draw_deletion_marks`）。
+    fn draw_deletion_mark(&self, count: u32, gutter: f32, top: f32) -> Result<()> {
+        let red = rgba(0.88, 0.11, 0.14, 1.0);
+        let text = amonhen_model::tr!("{count} lines deleted here", count = count);
+        let (layout, w) = self.measured(&text, &self.meta_format)?;
+        unsafe {
+            self.brush.SetColor(&rgba(0.88, 0.11, 0.14, 0.16));
+            self.d2d.FillRectangle(
+                &D2D_RECT_F {
+                    left: gutter + 4.0,
+                    top: top + 2.0,
+                    right: gutter + 4.0 + w + 16.0,
+                    bottom: top + DIFF_ROW_HEIGHT - 2.0,
+                },
+                &self.brush,
+            );
+            self.brush.SetColor(&red);
+            self.d2d.DrawTextLayout(
+                point(gutter + 12.0, top + 2.0),
+                &layout,
+                &self.brush,
+                D2D1_DRAW_TEXT_OPTIONS_NONE,
+            );
+        }
+        Ok(())
     }
 
     /// 画像の比べる欄の、前と後を重ねる大きさ（読んでいなければ 0）。
