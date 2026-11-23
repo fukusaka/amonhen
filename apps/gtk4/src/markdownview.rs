@@ -527,7 +527,8 @@ impl<'a> Builder<'a> {
             } => {
                 let style = adw::StyleManager::default();
                 let colored = |svg: &str, dark: bool| {
-                    amonhen_core::diagram::colorize(svg, &crate::theme::diagram_palette(dark))
+                    let (vars, backdrop) = crate::theme::diagram_palette(dark);
+                    amonhen_core::diagram::colorize(svg, &vars, backdrop)
                         .and_then(|s| crate::imagediff::texture(Some(s.as_bytes())))
                 };
                 let Some((svg, first)) = svg

@@ -423,8 +423,9 @@ pub fn diff_color(kind: DiffColor, fg: &gdk::RGBA) -> gdk::RGBA {
     })
 }
 
-/// Markdown の図の配色の変数（`--pele-*` → 色）。設定の「図の配色」と、`dark` の外観で選んだテーマから。
-pub fn diagram_palette(dark: bool) -> Vec<(String, String)> {
+/// Markdown の図の配色の変数（`--pele-*` → 色）と、地を塗るか。設定の「図の配色」と、`dark` の外観で選んだ
+/// テーマから。
+pub fn diagram_palette(dark: bool) -> (Vec<(String, String)>, bool) {
     use amonhen_core::diagram::{Scheme, ThemeColors, palette};
     let scheme = Scheme::from_key(&settings::string(DIAGRAM_COLORS).unwrap_or_default());
     let fg = if dark {
@@ -449,7 +450,7 @@ pub fn diagram_palette(dark: bool) -> Vec<(String, String)> {
             })
             .collect(),
     });
-    palette(scheme, dark, &theme)
+    (palette(scheme, dark, &theme), scheme.backdrop())
 }
 
 /// 設定が変わったら、覚えたテーマを捨てて、すべての窓を描き直す（起動したときに一度呼ぶ）。

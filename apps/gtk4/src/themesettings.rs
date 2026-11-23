@@ -314,20 +314,24 @@ fn syntax_section() -> gtk::Box {
             settings::set_bool(theme::DIFF_STANDARD_COLORS, s.is_active());
         }
     });
-    // Markdown の図の配色（構文の色・pele・Mermaid）
-    let diagram_keys = ["syntax", "pele", "mermaid"];
-    let diagram = gtk::DropDown::from_strings(&[&tr!("Syntax colors"), "pele", "Mermaid"]);
+    // Markdown の図の配色（構文の色・pele・Mermaid のテーマ）
+    let schemes = amonhen_core::diagram::Scheme::all();
+    let labels: Vec<String> = schemes.iter().map(|s| diagram_scheme_label(*s)).collect();
+    let diagram =
+        gtk::DropDown::from_strings(&labels.iter().map(String::as_str).collect::<Vec<_>>());
     diagram.set_valign(gtk::Align::Center);
-    let current = settings::string(theme::DIAGRAM_COLORS).unwrap_or_default();
-    diagram.set_selected(diagram_keys.iter().position(|k| *k == current).unwrap_or(0) as u32);
+    let current = amonhen_core::diagram::Scheme::from_key(
+        &settings::string(theme::DIAGRAM_COLORS).unwrap_or_default(),
+    );
+    diagram.set_selected(schemes.iter().position(|s| *s == current).unwrap_or(0) as u32);
     diagram.connect_selected_notify(move |d| {
-        let key = diagram_keys[(d.selected() as usize).min(diagram_keys.len() - 1)];
+        let key = schemes[(d.selected() as usize).min(schemes.len() - 1)].key();
         if settings::string(theme::DIAGRAM_COLORS)
             .as_deref()
             .unwrap_or("syntax")
             != key
         {
-            settings::set_string(theme::DIAGRAM_COLORS, key);
+            settings::set_string(theme::DIAGRAM_COLORS, &key);
         }
     });
     let section = crate::reposettings::section(
@@ -641,4 +645,15 @@ pub fn show_repository(parent: &gtk::Window, location: &str) {
     glib::spawn_future_local(async move {
         sheet.run().await;
     });
+}
+
+/// 「図の配色」の項目の名前（macOS 版と同じ）。
+fn diagram_scheme_label(scheme: amonhen_core::diagram::Scheme) -> String {
+    use amonhen_core::diagram::Scheme;
+    match scheme {
+        Scheme::Syntax => tr!("Syntax colors"),
+        Scheme::Pele => "pele".into(),
+        Scheme::Mermaid(None) => tr!("Mermaid (follows the appearance)"),
+        Scheme::Mermaid(Some(theme)) => format!("Mermaid {}", theme.name()),
+    }
 }
