@@ -21,6 +21,7 @@ mod files;
 mod forecast;
 mod github;
 mod historyedit;
+mod imagediff;
 mod listen;
 mod measure;
 mod menus;

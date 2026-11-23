@@ -94,6 +94,8 @@ thread_local! {
     static MARK_ANCHOR: std::cell::Cell<Option<(usize, bool)>> = const { std::cell::Cell::new(None) };
     /// 印の上を引いている間（起点の行、今の行、起点にした状態）。離したら間の行をまとめて同じ状態にする。
     static MARK_DRAG: std::cell::Cell<Option<(usize, usize, bool)>> = const { std::cell::Cell::new(None) };
+    /// 画像の比べる欄で引いているもの（ファイル、欄の最初の表示の行、引き方）。
+    static IMAGE_DRAG: std::cell::Cell<Option<(usize, usize, ImageDrag)>> = const { std::cell::Cell::new(None) };
     /// History でコミットを運んでいる間（押した行、押した高さ、動かし始めたか）。
     static HISTORY_DRAG: std::cell::Cell<Option<(u32, f64, bool)>> = const { std::cell::Cell::new(None) };
     /// マージエディタで、Ctrl+Z で戻せる・Ctrl+Y でやり直せる書き換えがあるか（描くたびに書き直す）。
@@ -19946,6 +19948,96 @@ impl HistoryView {
     }
 
     /// 差分の欄の表示の `line` 行目。
+    /// 画像の比べる欄（`file`、最初の表示の行 `first`）を `(x, y)` で押した（macOS 版の `ImageDiffPanel`）。引き
+    /// 始めたら true（離すまで `IMAGE_DRAG`）。
+    fn image_press(&mut self, file: usize, first: usize, x: f32, y: f32, alt: bool) -> bool {
+        use crate::imagediff::{self as image, Hit, Mode};
+        let width = self
+            .diff
+            .surface
+            .as_ref()
+            .map_or(0.0, |s| s.width as f32 / self.diff.scale.max(0.01));
+        let top = first as f32 * DIFF_ROW_HEIGHT - self.diff.scroll_y;
+        let mode = image::mode();
+        let layout = image::layout(top, width, mode);
+        let Some(commit) = self.session.data.commit.as_mut() else {
+            return false;
+        };
+        let common = self
+            .session
+            .renderer
+            .image_common(commit.content().key, file);
+        let view = commit.image_views.entry(file).or_default();
+        let area = if mode == Mode::TwoUp {
+            image::two_up_area(layout.canvas, 1)
+        } else {
+            image::overlay_area(layout.canvas)
+        };
+        let mut drag = None;
+        match image::hit(&layout, mode, view, common, x, y, alt) {
+            Some(Hit::Mode(m)) => image::set_mode(m),
+            Some(Hit::Position(p)) => {
+                view.position = p;
+                let slider = layout.slider.is_some_and(|r| r.contains(x, y));
+                drag = Some(ImageDrag::Position(slider));
+            }
+            Some(Hit::ZoomActual) => {
+                view.zoom = if view.zoom == Some(1.0) {
+                    None
+                } else {
+                    Some(1.0)
+                };
+                view.pan = (0.0, 0.0);
+            }
+            Some(Hit::ZoomOut) => image::zoom_by(view, 1.0 / 1.5, common, area),
+            Some(Hit::ZoomIn) => image::zoom_by(view, 1.5, common, area),
+            Some(Hit::ZoomFit) => {
+                view.zoom = None;
+                view.pan = (0.0, 0.0);
+            }
+            Some(Hit::Pan) => drag = Some(ImageDrag::Pan(x, y, view.pan.0, view.pan.1)),
+            None => return false,
+        }
+        self.diff.dirty = true;
+        IMAGE_DRAG.with(|d| d.set(drag.map(|drag| (file, first, drag))));
+        drag.is_some()
+    }
+
+    /// 画像の比べる欄で引いている所を `(x, y)` へ。
+    fn image_drag(&mut self, file: usize, first: usize, drag: ImageDrag, x: f32, y: f32) {
+        use crate::imagediff as image;
+        let width = self
+            .diff
+            .surface
+            .as_ref()
+            .map_or(0.0, |s| s.width as f32 / self.diff.scale.max(0.01));
+        let top = first as f32 * DIFF_ROW_HEIGHT - self.diff.scroll_y;
+        let layout = image::layout(top, width, image::mode());
+        let Some(commit) = self.session.data.commit.as_mut() else {
+            return;
+        };
+        let common = self
+            .session
+            .renderer
+            .image_common(commit.content().key, file);
+        let view = commit.image_views.entry(file).or_default();
+        match drag {
+            ImageDrag::Position(true) => {
+                if let Some(slider) = layout.slider {
+                    view.position = ((x - slider.x) / slider.w).clamp(0.0, 1.0);
+                }
+            }
+            ImageDrag::Position(false) => {
+                let rect = image::fit(common, image::overlay_area(layout.canvas), view);
+                if rect.w > 0.0 {
+                    view.position = ((x - rect.x) / rect.w).clamp(0.0, 1.0);
+                }
+            }
+            ImageDrag::Pan(x0, y0, px, py) => view.pan = (px + x - x0, py + y - y0),
+        }
+        self.diff.dirty = true;
+    }
+
     fn diff_line(&self, line: usize) -> Option<crate::data::DiffLine> {
         if self.working_page {
             let rows = self.session.data.working.as_ref()?.diff.view.rows.len();
@@ -20707,6 +20799,14 @@ fn split_released() -> bool {
         h.sender.send(Message::SplitDone);
     });
     true
+}
+
+/// 画像の比べる欄で引いているもの: スワイプ・オニオンスキンの位置（スライダーか、絵の上か）か、拡大した絵
+/// （押した所と、そのときのずらし）。
+#[derive(Clone, Copy, Debug)]
+enum ImageDrag {
+    Position(bool),
+    Pan(f32, f32, f32, f32),
 }
 
 /// Push の画面の行。
@@ -21547,6 +21647,22 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
                     }
                     let row = match h.diff_line(line as usize) {
                         Some(crate::data::DiffLine::Row(row)) => row as f32,
+                        // 画像の比べる欄: 比べ方・位置・拡大縮小・絵を動かす。
+                        Some(crate::data::DiffLine::Panel(file, k)) => {
+                            if left {
+                                let first = line as usize - k as usize;
+                                let alt = xaml::InputKeyboardSource::GetKeyStateForCurrentThread(
+                                    xaml::VirtualKey::Menu,
+                                )
+                                .is_ok_and(|s| s.contains(xaml::CoreVirtualKeyStates::Down));
+                                if h.image_press(file as usize, first, position.X, position.Y, alt)
+                                    && let Ok(pointer) = args.Pointer()
+                                {
+                                    let _ = source.CapturePointer(&pointer);
+                                }
+                            }
+                            return;
+                        }
                         // 木のフォルダの行: 中のファイルごと畳む・開く。
                         Some(crate::data::DiffLine::Folder(folder)) => {
                             let path = h.session.data.commit.as_ref().and_then(|c| {
@@ -21701,6 +21817,14 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
         revokers.push(
             ui.PointerMoved(move |_, args: Ref<xaml::PointerRoutedEventArgs>| {
                 let Some(args) = args.as_ref() else { return };
+                // 画像の比べる欄の位置・絵を引いている。
+                if let Some((file, first, drag)) = IMAGE_DRAG.with(std::cell::Cell::get) {
+                    if let Ok(p) = args.GetCurrentPoint(&source).and_then(|p| p.Position()) {
+                        with_history(|h| h.image_drag(file, first, drag, p.X, p.Y));
+                    }
+                    let _ = args.SetHandled(true);
+                    return;
+                }
                 let Some((anchor, _, stage)) = MARK_DRAG.with(std::cell::Cell::get) else {
                     return;
                 };
@@ -21720,6 +21844,13 @@ fn attach_input(element: &IInspectable, target: Target) -> windows_core_reactor:
         revokers.push(
             ui.PointerReleased(move |_, args: Ref<xaml::PointerRoutedEventArgs>| {
                 let Some(args) = args.as_ref() else { return };
+                if IMAGE_DRAG.with(std::cell::Cell::take).is_some() {
+                    if let Ok(pointer) = args.Pointer() {
+                        let _ = source.ReleasePointerCapture(&pointer);
+                    }
+                    let _ = args.SetHandled(true);
+                    return;
+                }
                 let Some((anchor, current, stage)) = MARK_DRAG.with(std::cell::Cell::take) else {
                     return;
                 };
