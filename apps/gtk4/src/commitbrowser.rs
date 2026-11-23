@@ -189,6 +189,134 @@ fn node_of(item: &glib::Object) -> Option<Rc<Node>> {
 /// ファイルの番号を受け取る知らせ先。
 type OnFile = Rc<dyn Fn(usize)>;
 
+/// SVG の見せ方（macOS 版の `SVGView`）: 絵（librsvg で描く）・モバイル（絵と、モバイル向けの描画部品で崩れる
+/// 機能の一覧）・テキスト。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SvgView {
+    Picture,
+    Mobile,
+    Text,
+}
+
+impl SvgView {
+    const ALL: [SvgView; 3] = [SvgView::Picture, SvgView::Mobile, SvgView::Text];
+
+    /// 最初の見せ方。ふだんは絵で、確かめる用（`--snapshot`）に `AMH_SVG_VIEW=picture|mobile|text` で変えられる。
+    fn initial() -> Self {
+        match std::env::var("AMH_SVG_VIEW").as_deref() {
+            Ok("mobile") => SvgView::Mobile,
+            Ok("text") => SvgView::Text,
+            _ => SvgView::Picture,
+        }
+    }
+
+    fn title(self) -> String {
+        match self {
+            SvgView::Picture => tr!("Picture"),
+            SvgView::Mobile => tr!("Mobile"),
+            SvgView::Text => tr!("Text"),
+        }
+    }
+
+    fn tooltip(self) -> String {
+        match self {
+            SvgView::Picture => tr!("Draw the SVG"),
+            SvgView::Mobile => {
+                tr!("Check for mobile: list what breaks on Android, iOS, Flutter and React Native")
+            }
+            SvgView::Text => tr!("Show the SVG source"),
+        }
+    }
+}
+
+/// コミット `commit` の木の `path` のファイルの blob（なければ None）。裏のスレッドで呼ぶ。
+fn tree_blob(repo: &Repository, commit: &Oid, path: &str) -> Option<Oid> {
+    let (folder, name) = path.rsplit_once('/').unwrap_or(("", path));
+    let request = serde_json::json!({
+        "op": "treeEntries",
+        "oid": commit.to_string(),
+        "path": folder,
+    });
+    let response: serde_json::Value =
+        serde_json::from_str(&repo.run_json(&request.to_string())).ok()?;
+    response["info"]["entries"]
+        .as_array()?
+        .iter()
+        .find(|e| e["name"] == name && e["kind"] != "folder")
+        .and_then(|e| e["oid"].as_str())
+        .and_then(Oid::from_hex)
+}
+
+/// モバイルで見る部品の並び（切り替えのボタンの順）と、ボタンの名前。
+const RENDERERS: [(amonhen_core::svglint::Target, &str); 4] = [
+    (amonhen_core::svglint::Target::Android, "Android"),
+    (amonhen_core::svglint::Target::Ios, "iOS"),
+    (amonhen_core::svglint::Target::Flutter, "Flutter"),
+    (amonhen_core::svglint::Target::ReactNative, "React Native"),
+];
+
+/// 最初にモバイルで見る部品。ふだんは Android で、確かめる用（`--snapshot`）に
+/// `AMH_MOBILE_RENDERER=android|ios|flutter|reactNative` で変えられる（macOS 版の `AMHMobileRenderer`）。
+fn initial_renderer() -> amonhen_core::svglint::Target {
+    let key = std::env::var("AMH_MOBILE_RENDERER").unwrap_or_default();
+    RENDERERS
+        .iter()
+        .map(|(t, _)| *t)
+        .find(|t| t.key() == key)
+        .unwrap_or(amonhen_core::svglint::Target::Android)
+}
+
+/// モバイル向けの描画部品ごとの、崩れる機能の一覧（macOS 版の `mobileNotes`）。
+fn mobile_notes(issues: &[amonhen_core::svglint::Issue]) -> gtk::Widget {
+    use amonhen_core::svglint::Target;
+    let label = gtk::Label::new(None);
+    label.set_xalign(0.0);
+    label.set_yalign(0.0);
+    label.set_wrap(true);
+    label.set_selectable(true);
+    label.set_margin_top(4);
+    let esc = |s: &str| glib::markup_escape_text(s).to_string();
+    let mut out = String::new();
+    if issues.is_empty() {
+        out += &esc(&tr!(
+            "Nothing known to break on Android VectorDrawable, iOS (CoreSVG), flutter_svg or react-native-svg."
+        ));
+    } else {
+        for target in [
+            Target::Android,
+            Target::Ios,
+            Target::Flutter,
+            Target::ReactNative,
+        ] {
+            if !out.is_empty() {
+                out.push('\n');
+            }
+            out += &format!("<b>{}</b>", esc(target.name()));
+            let own: Vec<_> = issues
+                .iter()
+                .filter(|i| i.targets.contains(&target))
+                .collect();
+            if own.is_empty() {
+                out += &format!("\n    {}", esc(&tr!("Nothing known to break")));
+            }
+            for issue in own {
+                let count = if issue.count > 1 {
+                    format!(" ×{}", issue.count)
+                } else {
+                    String::new()
+                };
+                out += &format!(
+                    "\n    <span font_family=\"monospace\" size=\"small\" alpha=\"60%\">{}{count}</span>  {}",
+                    esc(&issue.feature),
+                    esc(&issue.message)
+                );
+            }
+        }
+    }
+    label.set_markup(&out);
+    label.upcast()
+}
+
 pub struct Browser {
     pub root: gtk::Box,
     tree: Rc<Tree>,
@@ -204,7 +332,27 @@ pub struct Browser {
     path_label: gtk::Label,
     change_button: gtk::Button,
     content: DiffWidget,
-    picture: gtk::Picture,
+    /// 開いた画像（拡大縮小できる 1 枚の表示。`imagediff::single`）を置く所。
+    image_holder: gtk::Box,
+    /// SVG の見せ方の切り替え（SVG を開いたときだけ出す）と、今の見せ方（この木を出している間は覚える）。
+    svg_switch: gtk::Box,
+    svg_buttons: Vec<(SvgView, gtk::ToggleButton)>,
+    /// モバイルで見る部品の切り替え（モバイルのときだけ出す）と、今の部品。
+    renderer_switch: gtk::Box,
+    renderer_buttons: Vec<(amonhen_core::svglint::Target, gtk::ToggleButton)>,
+    renderer: Cell<amonhen_core::svglint::Target>,
+    /// Markdown の見せ方の切り替え（整形・テキスト。Markdown を開いたときだけ出す）と、テキストで見るか。
+    markdown_switch: gtk::Box,
+    markdown_buttons: [gtk::ToggleButton; 2],
+    markdown_text: Cell<bool>,
+    /// Markdown の整形表示を置く所。
+    markdown_holder: gtk::Box,
+    /// Markdown の #123・@user・コミットの ID をリンクにする先（`https://github.com/owner/repo`。GitHub の
+    /// remote のときだけ）。
+    github: RefCell<Option<String>>,
+    svg_view: Cell<SvgView>,
+    /// 切り替えを、こちらから合わせている間（押したことにしない）。
+    syncing: Cell<bool>,
     open_path: RefCell<Option<String>>,
     request: Cell<u64>,
     pending: Rc<Cell<u32>>,
@@ -329,6 +477,14 @@ impl Browser {
         path_label.set_ellipsize(gtk::pango::EllipsizeMode::Start);
         let change_button = gtk::Button::with_label(&tr!("Show This Change"));
         change_button.add_css_class("flat");
+        // プレビューで開く（macOS 版の Quick Look のボタン）。
+        let preview_icon = crate::icon::Icon::default();
+        preview_icon.set(crate::icon::Kind::Eye, false);
+        let preview_button = gtk::Button::new();
+        preview_button.set_child(Some(&preview_icon));
+        preview_button.add_css_class("flat");
+        preview_button.set_tooltip_text(Some(&tr!("Open this file at the commit in a preview")));
+        preview_button.update_property(&[gtk::accessible::Property::Label(&tr!("Preview"))]);
         let path_bar = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         path_bar.set_margin_start(6);
         path_bar.set_margin_end(10);
@@ -336,6 +492,54 @@ impl Browser {
         path_bar.set_margin_bottom(2);
         path_bar.append(&back);
         path_bar.append(&path_label);
+        let svg_switch = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        svg_switch.add_css_class("linked");
+        svg_switch.set_visible(false);
+        let mut svg_buttons: Vec<(SvgView, gtk::ToggleButton)> = Vec::new();
+        for view in SvgView::ALL {
+            let button = gtk::ToggleButton::with_label(&view.title());
+            button.set_tooltip_text(Some(&view.tooltip()));
+            if let Some((_, first)) = svg_buttons.first() {
+                button.set_group(Some(first));
+            }
+            svg_switch.append(&button);
+            svg_buttons.push((view, button));
+        }
+        let renderer_switch = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        renderer_switch.add_css_class("linked");
+        renderer_switch.set_visible(false);
+        let mut renderer_buttons: Vec<(amonhen_core::svglint::Target, gtk::ToggleButton)> =
+            Vec::new();
+        for (target, title) in RENDERERS {
+            let button = gtk::ToggleButton::with_label(title);
+            button.set_tooltip_text(Some(&tr!(
+                "How the SVG looks on {name}",
+                name = target.name()
+            )));
+            if let Some((_, first)) = renderer_buttons.first() {
+                button.set_group(Some(first));
+            }
+            renderer_switch.append(&button);
+            renderer_buttons.push((target, button));
+        }
+        path_bar.append(&renderer_switch);
+        let markdown_switch = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        markdown_switch.add_css_class("linked");
+        markdown_switch.set_visible(false);
+        let markdown_buttons = [
+            (tr!("Preview"), tr!("Show the Markdown formatted")),
+            (tr!("Text"), tr!("Show the Markdown source")),
+        ]
+        .map(|(title, tip)| {
+            let button = gtk::ToggleButton::with_label(&title);
+            button.set_tooltip_text(Some(&tip));
+            markdown_switch.append(&button);
+            button
+        });
+        markdown_buttons[1].set_group(Some(&markdown_buttons[0]));
+        path_bar.append(&markdown_switch);
+        path_bar.append(&svg_switch);
+        path_bar.append(&preview_button);
         path_bar.append(&change_button);
         path_bar.set_visible(false);
         let content = DiffWidget::default();
@@ -344,16 +548,25 @@ impl Browser {
             .child(&content)
             .vexpand(true)
             .build();
-        let picture = gtk::Picture::new();
-        picture.set_can_shrink(true);
-        picture.set_content_fit(gtk::ContentFit::ScaleDown);
-        picture.set_margin_top(16);
-        picture.set_margin_bottom(16);
-        picture.set_margin_start(16);
-        picture.set_margin_end(16);
+        let image_holder = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        image_holder.set_vexpand(true);
+        // バイナリのファイルの案内と、プレビューで開くボタン（アプリで描けないもの）。
+        let binary_label = gtk::Label::new(Some(&tr!("Binary file")));
+        binary_label.add_css_class("dim-label");
+        let binary_button = gtk::Button::with_label(&tr!("Preview"));
+        binary_button.set_halign(gtk::Align::Center);
+        let binary_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
+        binary_box.set_halign(gtk::Align::Center);
+        binary_box.set_valign(gtk::Align::Center);
+        binary_box.append(&binary_label);
+        binary_box.append(&binary_button);
         let contents = gtk::Stack::new();
         contents.add_named(&content_scroll, Some("text"));
-        contents.add_named(&picture, Some("image"));
+        contents.add_named(&image_holder, Some("image"));
+        contents.add_named(&binary_box, Some("binary"));
+        let markdown_holder = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        markdown_holder.set_vexpand(true);
+        contents.add_named(&markdown_holder, Some("markdown"));
         let pages = gtk::Stack::new();
         pages.set_vexpand(true);
         pages.add_named(&tree_scroll, Some("tree"));
@@ -377,7 +590,20 @@ impl Browser {
             path_label,
             change_button,
             content,
-            picture,
+            image_holder,
+            svg_switch,
+            svg_buttons,
+            renderer_switch,
+            renderer_buttons,
+            renderer: Cell::new(initial_renderer()),
+            markdown_switch,
+            markdown_buttons,
+            // 確かめる用（`--snapshot`）に `AMH_MARKDOWN_VIEW=text` でテキストから（macOS 版の `AMHMarkdownView`）。
+            markdown_text: Cell::new(std::env::var("AMH_MARKDOWN_VIEW").is_ok_and(|v| v == "text")),
+            markdown_holder,
+            github: RefCell::default(),
+            svg_view: Cell::new(SvgView::initial()),
+            syncing: Cell::new(false),
             open_path: RefCell::default(),
             request: Cell::new(0),
             pending,
@@ -419,6 +645,57 @@ impl Browser {
                 this.back_to_tree();
             }
         });
+        for (i, button) in this.markdown_buttons.iter().enumerate() {
+            let weak = Rc::downgrade(&this);
+            button.connect_toggled(move |b| {
+                let Some(this) = weak.upgrade() else { return };
+                let text = i == 1;
+                if !b.is_active() || this.syncing.get() || this.markdown_text.get() == text {
+                    return;
+                }
+                this.markdown_text.set(text);
+                let path = this.open_path.borrow().clone();
+                if let Some(path) = path {
+                    this.open(&path, None);
+                }
+            });
+        }
+        for (target, button) in &this.renderer_buttons {
+            let (weak, target) = (Rc::downgrade(&this), *target);
+            button.connect_toggled(move |b| {
+                let Some(this) = weak.upgrade() else { return };
+                if !b.is_active() || this.syncing.get() || this.renderer.get() == target {
+                    return;
+                }
+                this.renderer.set(target);
+                let path = this.open_path.borrow().clone();
+                if let Some(path) = path {
+                    this.open(&path, None);
+                }
+            });
+        }
+        for (view, button) in &this.svg_buttons {
+            let (weak, view) = (Rc::downgrade(&this), *view);
+            button.connect_toggled(move |b| {
+                let Some(this) = weak.upgrade() else { return };
+                if !b.is_active() || this.syncing.get() || this.svg_view.get() == view {
+                    return;
+                }
+                this.svg_view.set(view);
+                let path = this.open_path.borrow().clone();
+                if let Some(path) = path {
+                    this.open(&path, None);
+                }
+            });
+        }
+        for button in [&preview_button, &binary_button] {
+            let weak = Rc::downgrade(&this);
+            button.connect_clicked(move |_| {
+                if let Some(this) = weak.upgrade() {
+                    this.preview();
+                }
+            });
+        }
         let weak = Rc::downgrade(&this);
         this.change_button.connect_clicked(move |_| {
             let Some(this) = weak.upgrade() else { return };
@@ -530,8 +807,23 @@ impl Browser {
         }
     }
 
+    /// 前に開いた画像の欄を捨てる。
+    fn clear_image(&self) {
+        for holder in [&self.image_holder, &self.markdown_holder] {
+            while let Some(child) = holder.first_child() {
+                holder.remove(&child);
+            }
+        }
+    }
+
+    /// Markdown の #123・@user・コミットの ID をリンクにする先（GitHub の remote のときだけ）。
+    pub fn set_github(&self, url: Option<String>) {
+        self.github.replace(url);
+    }
+
     fn back_to_tree(&self) {
         self.open_path.replace(None);
+        self.clear_image();
         self.request.set(self.request.get() + 1);
         self.path_bar.set_visible(false);
         self.pages.set_visible_child_name("tree");
@@ -553,10 +845,109 @@ impl Browser {
         Some(node)
     }
 
+    /// Markdown を整形して出す（中身・画像は裏で読む。画像はこのコミットの中のものだけ）。
+    fn show_markdown(self: &Rc<Self>, path: &str, request: u64) {
+        self.contents.set_visible_child_name("markdown");
+        let oid = self.blob_id(path);
+        let github = self.github.borrow().clone();
+        // 変えたファイルは変更後の blob（消したファイルは None）。ほかはその時点の木から。
+        let changed: HashMap<String, Option<Oid>> = self
+            .tree
+            .changes
+            .iter()
+            .flat_map(|c| c.iter())
+            .map(|c| (c.path.clone(), c.new_id))
+            .collect();
+        let (repo, commit, from) = (self.tree.repo.clone(), self.tree.commit, path.to_owned());
+        let weak = Rc::downgrade(self);
+        glib::spawn_future_local(async move {
+            let f = from.clone();
+            let result = gio::spawn_blocking(move || {
+                let data = oid.and_then(|oid| repo.blob(&oid).ok())?;
+                let text = String::from_utf8_lossy(&data);
+                let blocks = amonhen_core::markdown::parse_with(&text, github.as_deref());
+                let images: Vec<(String, Arc<Vec<u8>>)> =
+                    crate::markdownview::image_sources(&blocks)
+                        .into_iter()
+                        .filter_map(|src| {
+                            let path = crate::markdownview::resolve(&src, &f)?;
+                            let id = match changed.get(&path) {
+                                Some(id) => (*id)?,
+                                None => tree_blob(&repo, &commit, &path)?,
+                            };
+                            Some((src, repo.blob(&id).ok()?))
+                        })
+                        .collect();
+                Some((blocks, images))
+            })
+            .await;
+            let Some(this) = weak.upgrade() else { return };
+            this.pending.set(this.pending.get() - 1);
+            if this.request.get() != request {
+                return;
+            }
+            let Ok(Some((blocks, images))) = result else {
+                this.contents.set_visible_child_name("binary");
+                return;
+            };
+            let images: HashMap<String, gtk::gdk::Texture> = images
+                .into_iter()
+                .filter_map(|(src, data)| Some((src, crate::imagediff::texture(Some(&data))?)))
+                .collect();
+            let w = Rc::downgrade(&this);
+            let view = crate::markdownview::view(
+                &blocks,
+                &from,
+                &images,
+                Rc::new(move |target| {
+                    if let Some(this) = w.upgrade() {
+                        this.open(&target, None);
+                    }
+                }),
+            );
+            this.markdown_holder.append(&view);
+        });
+    }
+
+    /// `path` のその時点の中身の blob（変えたファイルは変更後、消したファイルは変更前、変えていないファイルは木の
+    /// もの）。
+    fn blob_id(&self, path: &str) -> Option<Oid> {
+        match self.tree.change(path).map(|(_, c)| c) {
+            Some(c) if c.kind == ChangeKind::Deleted => c.old_id,
+            Some(c) => c.new_id,
+            None => self.node_at(path).and_then(|n| n.oid),
+        }
+    }
+
+    /// 開いているファイルをプレビューで開く（macOS 版の Quick Look）。中身は裏で読む。
+    fn preview(self: &Rc<Self>) {
+        let Some(path) = self.open_path.borrow().clone() else {
+            return;
+        };
+        let oid = self.blob_id(&path);
+        let repo = self.tree.repo.clone();
+        let weak = Rc::downgrade(self);
+        glib::spawn_future_local(async move {
+            let data = gio::spawn_blocking(move || oid.and_then(|oid| repo.blob(&oid).ok()))
+                .await
+                .ok()
+                .flatten();
+            let Some(this) = weak.upgrade() else { return };
+            if this.open_path.borrow().as_deref() != Some(path.as_str()) {
+                return;
+            }
+            match data {
+                Some(data) => crate::preview::show(&this.root, &data, name_of(&path)),
+                None => this.root.error_bell(),
+            }
+        });
+    }
+
     /// `path` の中身を出す（`line` があればその行へ）。変えたファイルは前後をファイル全体にした差分、変えていない
     /// ファイルはその時点の中身。画像（SVG のほか）は絵で出す。
     pub fn open(self: &Rc<Self>, path: &str, line: Option<u32>) {
         self.open_path.replace(Some(path.to_owned()));
+        self.clear_image();
         let change = self.tree.change(path).map(|(_, c)| c.clone());
         let deleted = change
             .as_ref()
@@ -591,27 +982,84 @@ impl Browser {
         let commit = self.tree.commit;
         self.pending.set(self.pending.get() + 1);
         let weak = Rc::downgrade(self);
-        if crate::imagediff::is_image(path) && !crate::imagediff::is_svg(path) {
+        // SVG は、見せ方の切り替えを出す（絵・モバイルなら絵、テキストなら中身）。
+        let svg = crate::imagediff::is_svg(path);
+        self.svg_switch.set_visible(svg);
+        self.syncing.set(true);
+        for (view, button) in &self.svg_buttons {
+            button.set_active(*view == self.svg_view.get());
+        }
+        let mobile = svg && self.svg_view.get() == SvgView::Mobile;
+        let renderer = self.renderer.get();
+        self.renderer_switch.set_visible(mobile);
+        for (target, button) in &self.renderer_buttons {
+            button.set_active(*target == renderer);
+        }
+        let markdown = amonhen_core::markdown::is_markdown(path);
+        self.markdown_switch.set_visible(markdown);
+        self.markdown_buttons[usize::from(self.markdown_text.get())].set_active(true);
+        self.syncing.set(false);
+        if markdown && !self.markdown_text.get() {
+            self.show_markdown(path, request);
+            return;
+        }
+        let picture = if svg {
+            self.svg_view.get() != SvgView::Text
+        } else {
+            crate::imagediff::is_image(path)
+        };
+        if picture {
             self.contents.set_visible_child_name("image");
-            self.picture.set_paintable(gtk::gdk::Paintable::NONE);
-            let oid = match &change {
-                Some(c) if deleted => c.old_id,
-                Some(c) => c.new_id,
-                None => self.node_at(path).and_then(|n| n.oid),
-            };
+            let oid = self.blob_id(path);
             glib::spawn_future_local(async move {
-                let data =
-                    gio::spawn_blocking(move || oid.and_then(|oid| repo.blob(&oid).ok())).await;
+                let data = gio::spawn_blocking(move || {
+                    let data = oid.and_then(|oid| repo.blob(&oid).ok());
+                    // モバイル向けの確認: 崩れる機能と、その部品が崩すように書き換えた SVG（近似）。
+                    let mobile = data.as_ref().filter(|_| mobile).map(|d| {
+                        (
+                            amonhen_core::svglint::lint(d),
+                            amonhen_core::svgsim::approximate(d, renderer),
+                        )
+                    });
+                    (data, mobile)
+                })
+                .await;
                 let Some(this) = weak.upgrade() else { return };
                 this.pending.set(this.pending.get() - 1);
                 if this.request.get() != request {
                     return;
                 }
-                let texture = data
-                    .ok()
-                    .flatten()
-                    .and_then(|d| crate::imagediff::texture(Some(&d)));
-                this.picture.set_paintable(texture.as_ref());
+                let (data, mobile) = data.unwrap_or_default();
+                let panel = match (data, mobile) {
+                    // 元の絵と、近似の絵を並べ、崩れる機能の一覧を下に（macOS 版と同じ）。
+                    (Some(data), Some((issues, broken)))
+                        if crate::imagediff::texture(Some(&data)).is_some() =>
+                    {
+                        let caption = format!(
+                            "{}    {}",
+                            crate::imagediff::size_caption(&data),
+                            tr!(
+                                "Approximation: the SVG rewritten the way the renderer degrades it, drawn by this app"
+                            )
+                        );
+                        Some(crate::imagediff::compare(
+                            &data,
+                            &broken,
+                            (
+                                tr!("Original"),
+                                tr!("{name} (approximation)", name = renderer.name()),
+                            ),
+                            caption,
+                            Some(mobile_notes(&issues)),
+                        ))
+                    }
+                    (data, _) => data.and_then(|d| crate::imagediff::single(&d, None)),
+                };
+                match panel {
+                    Some(panel) => this.image_holder.append(&panel),
+                    // 読めない形式（拡張子は画像でも）は、バイナリと同じくプレビューに。
+                    None => this.contents.set_visible_child_name("binary"),
+                }
             });
             return;
         }
@@ -635,7 +1083,7 @@ impl Browser {
                 return;
             }
             match view {
-                Ok(Ok((true, _))) => this.content.show_message(&tr!("Binary file")),
+                Ok(Ok((true, _))) => this.contents.set_visible_child_name("binary"),
                 Ok(Ok((false, view))) => {
                     this.content.show_plain(view);
                     if let Some(line) = line {

@@ -524,6 +524,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// リポジトリをすべて閉じても終わらない（リポジトリのページから開き直せる）。終えるのは ⌘Q。
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
+    func applicationWillTerminate(_ notification: Notification) {
+        // Quick Look に渡すために書き出したファイル。
+        QuickLook.cleanUp()
+    }
+
     /// Dock のアイコンをクリックしたとき: 見えているウィンドウがなければ、しまってあるウィンドウを戻し（AppKit に
     /// 任せる）、それもなければリポジトリのページを出す。
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {

@@ -24,6 +24,9 @@ becomes the GitHub Release notes.
 - History and Working Copy can ignore whitespace when comparing lines (at line ends, changes in its amount, or all
   of it, as `git diff --ignore-space-at-eol`, `-b` and `-w` do), and so can `amonhen diff` and `show` with the same
   flags. Lines aren't staged or discarded while whitespace is ignored.
+- All Files previews more than source: images zoom and any format the system reads counts as one, SVGs show
+  what breaks on Android, iOS, Flutter and React Native with an approximation of each, Markdown shows formatted by
+  the app (GitHub tables, task lists, alerts, links; nothing fetched), and other binaries open in Quick Look.
 
 #### Changed
 
