@@ -17,6 +17,7 @@ use crate::types::Diagram;
 static DIAGRAMS: &[&Diagram] = &[
     &super::flowchart::FLOWCHART,
     &super::info::INFO,
+    &super::journey::JOURNEY,
     &super::packet::PACKET,
     &super::pie::PIE,
 ];
