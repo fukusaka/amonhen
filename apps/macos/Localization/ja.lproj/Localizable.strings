@@ -2082,3 +2082,6 @@
 "Original" = "元の SVG";
 "%@ (approximation)" = "%@（近似）";
 "Approximation: the SVG rewritten the way the renderer degrades it, drawn by this app" = "近似: その部品が崩すように SVG を書き換え、このアプリで描いたもの";
+"What %@ said" = "%@ が出した警告";
+"Converted by %@, drawn by this app" = "%@ で変換し、このアプリで描いたもの";
+"Couldn’t convert with %@’s own importer: %@" = "%@ の本物の取り込みで変換できなかった: %@";
