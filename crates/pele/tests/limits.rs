@@ -107,3 +107,54 @@ fn many_entity_codes_in_a_syntax_error() {
     );
     assert_eq!(e.line, 2);
 }
+
+/// 上限いっぱい（5 万字）の入れ子。pele はどれも JS のスタック（約 1 MB）で描けるので、ここも 1 MB のスタックで
+/// 溢れずに描けることを確かめる（入れ子の深さに比例する再帰を足すと、ここで溢れる）。
+#[test]
+fn deepest_nesting_within_the_source_limit() {
+    const N: usize = 50_000;
+    let fill = |head: &str, open: &str, inner: &str, close: &str| {
+        let n = (N - head.len() - inner.len()) / (open.len() + close.len());
+        format!("{head}{}{inner}{}", open.repeat(n), close.repeat(n))
+    };
+    let cases = [
+        fill("flowchart TD\n", "subgraph s\n", "A-->B\n", "end\n"),
+        fill("stateDiagram-v2\n", "state a {\n", "[*] --> A\n", "}\n"),
+        fill("block\n", "block\n", "a\n", "end\n"),
+        fill(
+            "C4Context\n",
+            "Boundary(b, \"b\") {\n",
+            "Person(p, \"P\")\n",
+            "}\n",
+        ),
+        fill("agentflow-beta TB\n", "flow f[\"F\"]\n", "a-->b\n", "end\n"),
+        fill("sequenceDiagram\n", "loop x\n", "A->>B: m\n", "end\n"),
+        fill("classDiagram\n", "namespace n {\n", "class X\n", "}\n"),
+        fill("railroad-ebnf-beta\na = ", "(", "\"x\"", ")") + " ;\n",
+        fill("railroad-ebnf-beta\na = ", "[", "\"x\"", "]") + " ;\n",
+        fill("railroad-peg-beta\na <- ", "(", "\"x\"", ")") + " ;\n",
+        fill("%%{init: {\"a\":", "[", "", "]") + "}}%%\ngraph TD\nA\n",
+        fill("%%{init: ", "{\"\":", "1", "}") + "}%%\ngraph TD\nA\n",
+        fill("eventmodeling\ntf 01 evt E { a: ", "{ a: ", "string", " }") + " }\n",
+        fill("flowchart TD\nA[\"`", "**_", "x", "_**") + "`\"]\n",
+        fill("flowchart TD\nA[\"", "<b>", "x", "</b>") + "\"]\n",
+        fill("---\nconfig: ", "{a: ", "1", "}") + "\n---\ngraph TD\nA\n",
+        format!(
+            "mindmap\n{}",
+            (0..300)
+                .map(|i| format!("{}a\n", " ".repeat(i)))
+                .collect::<String>()
+        ),
+    ];
+    std::thread::Builder::new()
+        .stack_size(1 << 20)
+        .spawn(move || {
+            for source in &cases {
+                // 描けても、上限の知らせでもよい。溢れないこと。
+                let _ = render(source);
+            }
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
