@@ -1,0 +1,3 @@
+ERROR @ line 1: <feGaussianBlur> is not supported
+ERROR @ line 1: <filter> is not supported
+ERROR @ line 1: <filter> is not supported
