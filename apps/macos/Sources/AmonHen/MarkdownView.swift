@@ -324,7 +324,7 @@ private struct MarkdownBuilder {
                     }
                 }
                 out.append(newline(style))
-            case .diagram(let language, let code, let svg, let config, let error):
+            case .diagram(let language, let code, let svg, let config, let note, let error):
                 guard let picture = svg.flatMap({ DiagramPicture.image($0, own: config) }) else {
                     // 描けない図はコードとして見せ、理由を添える。
                     add([.code(language: language, text: code)], depth: depth, outer: outer, indent: indent)
@@ -345,6 +345,15 @@ private struct MarkdownBuilder {
                 text.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: text.length))
                 out.append(text)
                 out.append(newline(style))
+                // 近いもので描いた図には、そのことを絵の下に添える。
+                if let note {
+                    let noteStyle = paragraph(indent: indent, spacing: 10, blocks: outer)
+                    out.append(NSAttributedString(string: note, attributes: [
+                        .font: NSFont.systemFont(ofSize: 11.5), .foregroundColor: NSColor.secondaryLabelColor,
+                        .paragraphStyle: noteStyle,
+                    ]))
+                    out.append(newline(noteStyle))
+                }
             case .quote(let alert, let inner):
                 let (color, title) = Self.alert(alert)
                 let quote = quoteBlock(color)
