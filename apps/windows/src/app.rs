@@ -886,6 +886,9 @@ enum Dialog {
         existing: Vec<String>,
         /// clone した直後なら、そのリポジトリ（選んでも取り消しても、その後で新しい窓で開く）。
         cloned: Option<String>,
+        /// Export Archive の書き出すフォルダを選んでいるなら、そのダイアログ（そのコミットの木を見せ、選んでも
+        /// 取り消しても、そこへ戻る。macOS 版の `FilePicker.presentTree`）。
+        archive: Option<Box<Dialog>>,
     },
     /// Repositories の行の表示名を変える。
     RenameRepository { location: String, name: String },
@@ -1281,6 +1284,8 @@ enum Message {
     SwitchPeeked(Vec<(String, amonhen_backend_cli::Peek)>),
     /// Export Archive の書き出すフォルダの欄。
     ArchiveFolder(String),
+    /// Export Archive の書き出すフォルダを、そのコミットの木から選ぶ。
+    ArchiveChooseFolder,
     /// 操作が終わった（失敗はなく、ステータスバーに一言を出す）。
     Done(String),
     /// History の編集モードを開く（このコミットから HEAD まで、最初の変更）。
@@ -2410,6 +2415,26 @@ impl Root {
                     *folder = text;
                 }
             }
+            Message::ArchiveChooseFolder => {
+                // そのコミットの木から選ぶ（macOS 版の Export One Folder）。選んだら Export Archive に戻る。
+                let Some(archive @ Dialog::Archive { .. }) = self.dialog.take() else {
+                    return;
+                };
+                let Dialog::Archive { repo, rev, .. } = &archive else {
+                    return;
+                };
+                let repo = repo.clone();
+                load_tree_folders(repo.clone(), &rev.clone(), "/".to_owned(), context);
+                self.dialog = Some(Dialog::TreeFolder {
+                    repo,
+                    path: "/".to_owned(),
+                    entries: None,
+                    selected: None,
+                    existing: Vec::new(),
+                    cloned: None,
+                    archive: Some(Box::new(archive)),
+                });
+            }
             Message::MultiSelected(ids, consecutive) => {
                 self.multi_consecutive = consecutive;
                 self.multi = if ids.len() > 1 { ids } else { Vec::new() }
@@ -3489,7 +3514,7 @@ impl Root {
                         if std::mem::take(&mut self.clone_sparse)
                             && let Some(repo) = open_repository(&dest)
                         {
-                            load_tree_folders(repo.clone(), "/".to_owned(), context);
+                            load_tree_folders(repo.clone(), "HEAD", "/".to_owned(), context);
                             self.dialog = Some(Dialog::TreeFolder {
                                 repo,
                                 path: "/".to_owned(),
@@ -3497,6 +3522,7 @@ impl Root {
                                 selected: None,
                                 existing: Vec::new(),
                                 cloned: Some(dest),
+                                archive: None,
                             });
                             return;
                         }
@@ -3730,6 +3756,28 @@ impl Root {
                 });
                 self.page = Page::Settings;
                 load_git_settings(repo, 0, context);
+            }
+            // Commit > Export Archive…: History で選んでいるコミット、なければ HEAD（macOS 版と同じ）。
+            Message::Command(id) if id == "export-archive" => {
+                let (rev, label) = match (&self.selected, self.page) {
+                    (Some((id, labels)), Page::History) => {
+                        let label = labels
+                            .iter()
+                            .find(|l| l.kind == amonhen_model::RefKind::Tag)
+                            .or_else(|| {
+                                labels
+                                    .iter()
+                                    .find(|l| l.kind == amonhen_model::RefKind::Local)
+                            })
+                            .map_or_else(|| id[..8].to_owned(), |l| l.name.replace('/', "-"));
+                        (id.clone(), label)
+                    }
+                    _ => ("HEAD".to_owned(), self.head_name().replace('/', "-")),
+                };
+                self.update(
+                    Message::HistoryMenu(format!("export-archive:{rev}:{label}")),
+                    context,
+                );
             }
             Message::Command(id) if id == "compare-with-previous" => {
                 let Some(repo) = self.repo.clone() else {
@@ -4605,6 +4653,31 @@ impl Root {
                     Some(command) => perform(context, repo, command, title),
                     None => beep(),
                 },
+                // Export Archive のフォルダを選んだ・取り消した: そのダイアログに戻る（閉じた同じ更新では次の
+                // ダイアログを開けないので、知らせで開く）。
+                (
+                    Some(Dialog::TreeFolder {
+                        path,
+                        entries,
+                        selected,
+                        archive: Some(mut archive),
+                        ..
+                    }),
+                    result,
+                ) => {
+                    if result == ContentDialogResult::Primary
+                        && let Dialog::Archive { folder, .. } = archive.as_mut()
+                    {
+                        let chosen = match selected
+                            .and_then(|i| entries.as_ref()?.as_ref().ok()?.get(i).cloned())
+                        {
+                            Some(name) => format!("{}/{name}", path.trim_end_matches('/')),
+                            None => path,
+                        };
+                        *folder = chosen.trim_start_matches('/').to_owned();
+                    }
+                    context.spawn_background(move |_| Message::OpenDialog(archive));
+                }
                 (
                     Some(Dialog::TreeFolder {
                         repo,
@@ -4613,6 +4686,7 @@ impl Root {
                         selected,
                         existing,
                         cloned,
+                        ..
                     }),
                     ContentDialogResult::Primary,
                 ) => {
@@ -4914,10 +4988,15 @@ impl Root {
                     path,
                     entries,
                     selected,
+                    archive,
                     ..
                 }) = &mut self.dialog
                 else {
                     return;
+                };
+                let rev = match archive.as_deref() {
+                    Some(Dialog::Archive { rev, .. }) => rev.clone(),
+                    _ => "HEAD".to_owned(),
                 };
                 let next = if up {
                     match path.trim_end_matches('/').rsplit_once('/') {
@@ -4935,7 +5014,7 @@ impl Root {
                 *path = next.clone();
                 *entries = None;
                 *selected = None;
-                load_tree_folders(repo.clone(), next, context);
+                load_tree_folders(repo.clone(), &rev, next, context);
             }
             Message::RemoteCheck => {
                 // 保存する前に、fetch の URL につないで確かめる（GTK4 版の Check Connection。コアの `checkRemote`）。
@@ -7077,7 +7156,7 @@ impl Root {
                     } else {
                         Vec::new()
                     };
-                    load_tree_folders(repo.clone(), "/".to_owned(), context);
+                    load_tree_folders(repo.clone(), "HEAD", "/".to_owned(), context);
                     self.dialog = Some(Dialog::TreeFolder {
                         repo,
                         path: "/".to_owned(),
@@ -7085,6 +7164,7 @@ impl Root {
                         selected: None,
                         existing,
                         cloned: None,
+                        archive: None,
                     });
                     return;
                 }
@@ -10236,10 +10316,31 @@ impl Root {
                             .placeholder_text(tr!("None"))
                             .on_text_changed(context.callback(Message::BranchName)),
                         TextBlock::new().text(tr!("Folder:")),
-                        TextBox::new()
-                            .text(folder.clone())
-                            .placeholder_text(tr!("All files"))
-                            .on_text_changed(context.callback(Message::ArchiveFolder)),
+                        // macOS 版と同じく、そのコミットの木から選ぶ（打たない）。All Files ですべてに戻す。
+                        StackPanel::new()
+                            .orientation(Orientation::Horizontal)
+                            .spacing(8.0)
+                            .children((
+                                TextBlock::new()
+                                    .text(if folder.is_empty() {
+                                        tr!("All files")
+                                    } else {
+                                        folder.clone()
+                                    })
+                                    .vertical_alignment(VerticalAlignment::Center),
+                                Button::new()
+                                    .on_click(context.callback(|()| Message::ArchiveChooseFolder))
+                                    .content(tr!("Choose…")),
+                                if folder.is_empty() {
+                                    View::empty()
+                                } else {
+                                    Button::new()
+                                        .on_click(context.callback(|()| {
+                                            Message::ArchiveFolder(String::new())
+                                        }))
+                                        .content(tr!("All Files"))
+                                },
+                            )),
                     )),
                 ),
             Some(Dialog::ApplyPatch {
@@ -10550,9 +10651,11 @@ impl Root {
                 selected,
                 existing,
                 cloned,
+                archive,
                 ..
             }) => {
                 let first = existing.is_empty();
+                let for_archive = archive.is_some();
                 let body: View = match entries {
                     None => TextBlock::new().text(tr!("Loading…")).opacity(0.6).into(),
                     Some(Err(e)) => TextBlock::new()
@@ -10582,7 +10685,9 @@ impl Root {
                 let can_open = selected.is_some();
                 dialog
                     .is_open(true)
-                    .title(if first {
+                    .title(if for_archive {
+                        tr!("Export One Folder")
+                    } else if first {
                         tr!("Check Out Only Some Folders")
                     } else {
                         tr!("Check Out One More Folder")
@@ -10593,7 +10698,9 @@ impl Root {
                     .content(
                         StackPanel::new().spacing(6.0).width(440.0).children((
                             TextBlock::new()
-                                .text(if cloned.is_some() {
+                                .text(if for_archive {
+                                    tr!("Folders in this commit.")
+                                } else if cloned.is_some() {
                                     tr!(
                                         "Only the files at the top are checked out. Choose a folder to check out too; add more later in Settings > Fetching and Folders."
                                     )
@@ -12318,6 +12425,11 @@ impl Root {
         items.push(MenuItem::item(
             format!("bundle:{full}:{name}"),
             tr!("Save as Bundle…"),
+        ));
+        // そのブランチ・タグの時点のファイルを書き出す（macOS 版と同じく、サイドバーからも）。
+        items.push(MenuItem::item(
+            format!("export-archive:{full}:{}", name.replace('/', "-")),
+            tr!("Export Archive…"),
         ));
         if entry.kind == RefKind::Local {
             items.push(MenuItem::item(
@@ -18943,9 +19055,15 @@ fn open_repository(location: &str) -> Option<Arc<Repository>> {
 }
 
 /// HEAD の木の `path` にあるフォルダを裏で読む（コアの `treeFolders`）。
-fn load_tree_folders(repo: Arc<Repository>, path: String, context: &ComponentContext<Root>) {
+fn load_tree_folders(
+    repo: Arc<Repository>,
+    rev: &str,
+    path: String,
+    context: &ComponentContext<Root>,
+) {
+    let rev = rev.to_owned();
     context.spawn_background(move |_| {
-        let command = json!({ "op": "treeFolders", "path": &path });
+        let command = json!({ "op": "treeFolders", "path": &path, "rev": rev });
         let reply: Value = serde_json::from_str(&repo.run_json(&command.to_string()))
             .unwrap_or_else(|e| json!({ "error": e.to_string() }));
         let entries = match reply["error"].as_str() {
