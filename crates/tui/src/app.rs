@@ -165,6 +165,10 @@ enum Naming {
     RemoteEditUrl,
     /// 選んでいるコミットを書き出すアーカイブのファイル（この機械の）。
     Archive,
+    /// shallow clone を、この日付より新しいコミットまで取り足す（`git fetch --shallow-since`）。
+    DeepenSince,
+    /// sparse checkout で取り出すフォルダ（空白で区切る。空ならすべて取り出す）。
+    SparseFolders,
     /// リポジトリをまとめる bundle のファイル（この機械の）。
     Bundle,
     /// 取り込む bundle のファイル（この機械の）。
@@ -489,6 +493,8 @@ pub struct App {
     confirm: Option<(String, String, Request)>,
     /// push を確かめている: `t` で、送り先のブランチを打てる。
     push_to_offered: bool,
+    /// shallow clone を取り足す前の `d`: 日付を打つ（選ぶ前に横取りする）。
+    deepen_date_offered: bool,
     /// push の確かめで見せている送り先（`<remote>/<branch>`。置き換える push の絵の見出し）。
     pushing_to: String,
     /// チェックアウトしていないブランチの fast-forward の見通しを読んでいる間: ブランチ、上流、進む数。
@@ -580,6 +586,10 @@ pub struct App {
     upstream: Option<String>,
     ahead: u64,
     behind: u64,
+    /// shallow clone・partial clone の印（一番上の行のブランチの後ろ。アプリの History の上の印）。
+    form_marks: Vec<String>,
+    /// リポジトリの形（`repositoryForm` の info。読めていなければ null）。
+    form: Value,
     /// 途中の操作（merge・rebase・cherry-pick・revert）: 種類と、何番目・全部でいくつ（rebase）。
     sequence: Option<(String, Option<(u64, u64)>)>,
     /// 止まっている `git am` のパッチを、3-way merge で当て直せる（まだ 3-way で当てていない）。
@@ -723,6 +733,8 @@ impl App {
             upstream: None,
             ahead: 0,
             behind: 0,
+            form_marks: Vec::new(),
+            form: Value::Null,
             sequence: None,
             stash: None,
             retry_three_way: false,
@@ -753,6 +765,7 @@ impl App {
             path_choices: String::new(),
             pick_question: None,
             push_to_offered: false,
+            deepen_date_offered: false,
             pushing_to: String::new(),
             fast_forward: None,
             bundle_file: None,
@@ -1324,6 +1337,11 @@ impl App {
                         self.history.opened(&refs, &history);
                         self.sidebar.set_refs(&refs);
                         // タグの署名の印（アプリのタグの行の印）。タグが変わったときだけ読む（検証の結果はコアが覚える）。
+                        // リポジトリの形（shallow・partial clone、sparse checkout）の印。
+                        self.send(Request::Run {
+                            name: "repositoryForm",
+                            command: json!({"op": "repositoryForm"}),
+                        });
                         // submodule の様子の印（取り出していない・別のコミット・中に変更・コンフリクト）。
                         if !self.sidebar.submodule_paths().is_empty() {
                             self.send(Request::Run {
@@ -1674,6 +1692,17 @@ impl App {
             self.dirty = true;
             return;
         }
+        // shallow clone を取り足す前の `d`: 日付を打つ。
+        if self.choices.is_some()
+            && std::mem::take(&mut self.deepen_date_offered)
+            && key.code == KeyCode::Char('d')
+        {
+            self.choices = None;
+            self.naming = Naming::DeepenSince;
+            self.typing_branch = Some((String::new(), String::new(), String::new()));
+            self.dirty = true;
+            return;
+        }
         // worktree をロックする前の `r`: 理由を打つ。
         if self.choices.is_some()
             && let Some(path) = self.worktree_lock.take()
@@ -2002,6 +2031,12 @@ impl App {
             // 候補は、次に補うまで。
             self.path_choices.clear();
             match key.code {
+                // 取り出すフォルダ: 空ならすべて（sparse checkout をやめる）。
+                KeyCode::Enter if matches!(self.naming, Naming::SparseFolders) => {
+                    if let Some((_, _, typed)) = self.typing_branch.take() {
+                        self.ask_sparse_folders(&typed);
+                    }
+                }
                 KeyCode::Enter if matches!(self.naming, Naming::Stash) => {
                     if let Some((_, _, message)) = self.typing_branch.take() {
                         self.ask_stash(message.trim());
@@ -2013,7 +2048,7 @@ impl App {
                     {
                         let name = name.trim();
                         let (op, label, command) = match self.naming {
-                            Naming::Stash => return,
+                            Naming::Stash | Naming::SparseFolders => return,
                             Naming::PushTo => {
                                 self.push_to(&start, name);
                                 return;
@@ -2100,6 +2135,13 @@ impl App {
                                 if let Some((rev, file)) = self.archive_folder.take() {
                                     self.export_archive(&rev, &file, Some(name));
                                 }
+                                return;
+                            }
+                            Naming::DeepenSince => {
+                                self.send(Request::Run {
+                                    name: "deepen",
+                                    command: json!({"op": "deepen", "since": name.trim()}),
+                                });
                                 return;
                             }
                             Naming::PatchVersion => {
@@ -2226,6 +2268,15 @@ impl App {
                 KeyCode::Tab if matches!(self.naming, Naming::OpenFile) => {
                     let typed = name.clone();
                     self.complete_path(&typed);
+                }
+                // 取り出すフォルダは、最後の語を HEAD の木のフォルダから補う。
+                KeyCode::Tab if matches!(self.naming, Naming::SparseFolders) => {
+                    let last = name.rsplit(' ').next().unwrap_or("");
+                    let folder = last.rsplit_once('/').map_or("", |(dir, _)| dir).to_owned();
+                    self.send(Request::Call {
+                        name: "completePath",
+                        request: json!({"op": "run", "command": {"op": "treeFolders", "path": folder, "rev": "HEAD"}}),
+                    });
                 }
                 KeyCode::Backspace => {
                     name.pop();
@@ -2730,6 +2781,147 @@ impl App {
     }
 
     /// 命令が済んだ。だめなら理由を出し、どちらでも状態・ref・History を読み直す。
+    /// リポジトリの形（`repositoryForm` の info）から、一番上の行の印と Working Copy の知らせを決める。
+    fn set_form(&mut self, info: &Value) {
+        let mut marks = Vec::new();
+        if info["shallow"] == true {
+            marks.push(tr!("shallow"));
+        }
+        if info["partial"].is_object() {
+            marks.push(tr!("partial"));
+        }
+        self.form_marks = marks;
+        let sparse = &info["sparse"];
+        let note = sparse.is_object().then(|| {
+            let folders = sparse["folders"].as_array().map_or(0, Vec::len);
+            match (sparse["cone"] == true, folders) {
+                (false, _) => {
+                    tr!("Sparse checkout: only the files matching its patterns are checked out.")
+                }
+                (true, 0) => tr!("Sparse checkout: only the files at the top are checked out."),
+                (true, 1) => tr!("Sparse checkout: only 1 folder is checked out."),
+                (true, n) => tr!(
+                    "Sparse checkout: only {count} folders are checked out.",
+                    count = n
+                ),
+            }
+        });
+        self.changes.set_sparse_note(note);
+        self.form = info.clone();
+        self.dirty = true;
+    }
+
+    /// sparse checkout で取り出すフォルダを打たせる（今のフォルダを初めに入れておく）。git 2.25 から。
+    fn type_sparse_folders(&mut self) {
+        if self.form["canSparseCheckout"] == false {
+            self.error = Some(tr!(
+                "Checking out only some folders needs git 2.25 or later"
+            ));
+            return;
+        }
+        let sparse = &self.form["sparse"];
+        if sparse.is_object() && sparse["cone"] != true {
+            self.error = Some(tr!(
+                "This sparse checkout uses patterns; change it with git sparse-checkout"
+            ));
+            return;
+        }
+        let folders: Vec<&str> = (sparse["folders"].as_array().into_iter().flatten())
+            .filter_map(Value::as_str)
+            .collect();
+        self.naming = Naming::SparseFolders;
+        self.typing_branch = Some((String::new(), String::new(), folders.join(" ")));
+    }
+
+    /// 打ったフォルダだけを取り出す（空なら、すべて取り出す）。先に確かめる。
+    fn ask_sparse_folders(&mut self, typed: &str) {
+        let folders: Vec<String> = typed
+            .split_whitespace()
+            .map(|f| f.trim_matches('/').to_owned())
+            .filter(|f| !f.is_empty())
+            .collect();
+        if folders.is_empty() {
+            if !self.form["sparse"].is_object() {
+                return;
+            }
+            self.confirm = Some((
+                tr!("Check out all folders (stop the sparse checkout)?"),
+                tr!("check out all"),
+                Request::Run {
+                    name: "sparseCheckout",
+                    command: json!({"op": "disableSparseCheckout"}),
+                },
+            ));
+            return;
+        }
+        self.confirm = Some((
+            tr!(
+                "Check out only {folders} (and the files at the top)?",
+                folders = folders.join(", ")
+            ),
+            tr!("check out"),
+            Request::Run {
+                name: "sparseCheckout",
+                command: json!({"op": "sparseCheckout", "folders": folders}),
+            },
+        ));
+    }
+
+    /// 何を取り足すかを選ばせる: shallow clone なら履歴（数・日付まで・すべて）、partial clone なら中身のすべて
+    /// （git 2.36 から）。
+    fn ask_fetch_more(&mut self) {
+        let mut options = Vec::new();
+        let shallow = self.history.is_shallow();
+        if shallow {
+            let deepen = |commits: u32| Request::Run {
+                name: "deepen",
+                command: json!({"op": "deepen", "commits": commits}),
+            };
+            options.push(('1', tr!("100 commits"), deepen(100)));
+            options.push(('2', tr!("1,000 commits"), deepen(1_000)));
+            options.push(('3', tr!("10,000 commits"), deepen(10_000)));
+            // 選ぶ前に横取りして、日付を聞く（中身は送らない）。
+            options.push(('d', tr!("up to a date…"), Request::Status));
+            options.push((
+                'a',
+                tr!("all of it"),
+                Request::Run {
+                    name: "deepen",
+                    command: json!({"op": "unshallow"}),
+                },
+            ));
+            self.deepen_date_offered = true;
+        }
+        let partial = self.form["partial"].is_object();
+        if partial {
+            if self.form["canFetchAllContents"] == false {
+                if !shallow {
+                    self.error = Some(tr!(
+                        "Fetching all contents of a partial clone needs git 2.36 or later"
+                    ));
+                    return;
+                }
+            } else {
+                options.push((
+                    'c',
+                    tr!("all contents (partial clone)"),
+                    Request::Run {
+                        name: "fetchAllContents",
+                        command: json!({"op": "fetchAllContents"}),
+                    },
+                ));
+            }
+        }
+        let ask = match (shallow, partial) {
+            (true, false) => tr!("Fetch older history from the remote?"),
+            (false, _) => tr!(
+                "Fetch all contents of the partial clone? Every file’s contents are downloaded."
+            ),
+            (true, true) => tr!("Fetch more from the remote?"),
+        };
+        self.choices = Some((ask, options));
+    }
+
     /// History の読んである行の、署名を検証する（答えが来たら、残りを続けて頼む）。
     fn verify_signatures(&mut self) {
         if let Some(oids) = self.history.signatures_to_verify() {
@@ -2741,6 +2933,12 @@ impl App {
     }
 
     fn ran(&mut self, name: &'static str, result: std::result::Result<Value, String>) {
+        // 裏で読むリポジトリの形も、動いている操作の表示を消さない。読めなければ印を出さない。
+        if name == "repositoryForm" {
+            let info = result.ok().map(|r| r["info"].clone()).unwrap_or_default();
+            self.set_form(&info);
+            return;
+        }
         // 裏で読む署名は、動いている操作の表示を消さない。
         if name == "commitSignatures" {
             let reply = result.ok();
@@ -2890,6 +3088,9 @@ impl App {
                 return;
             }
             "fetch" => self.notice = Some(tr!("Fetched")),
+            "deepen" => self.notice = Some(tr!("Fetched older history")),
+            "fetchAllContents" => self.notice = Some(tr!("Fetched all contents")),
+            "sparseCheckout" => self.notice = Some(tr!("Changed the folders checked out")),
             "pull" => self.notice = Some(tr!("Pulled")),
             "push" => self.notice = Some(tr!("Pushed")),
             "undo" => self.notice = Some(tr!("Undone")),
@@ -4139,15 +4340,22 @@ impl App {
         let Some((_, _, name)) = self.typing_branch.as_mut() else {
             return;
         };
-        let (folder, part) = match name.rsplit_once('/') {
-            Some((dir, part)) => (format!("{dir}/"), part.to_owned()),
+        // 取り出すフォルダは空白で区切って並べるので、最後の語を補う（フォルダだけ）。
+        let folders_only = matches!(self.naming, Naming::SparseFolders);
+        let (before, word) = match name.rsplit_once(' ').filter(|_| folders_only) {
+            Some((before, word)) => (format!("{before} "), word.to_owned()),
             None => (String::new(), name.clone()),
+        };
+        let (folder, part) = match word.rsplit_once('/') {
+            Some((dir, part)) => (format!("{before}{dir}/"), part.to_owned()),
+            None => (before, word.clone()),
         };
         let mut matches: Vec<(String, bool)> = (entries.as_array().into_iter().flatten())
             .filter_map(|e| {
                 let entry = e["name"].as_str()?;
-                (entry.starts_with(&part) && entry != ".git")
-                    .then(|| (entry.to_owned(), e["kind"] == "folder"))
+                let is_folder = e["kind"] == "folder";
+                (entry.starts_with(&part) && entry != ".git" && (is_folder || !folders_only))
+                    .then(|| (entry.to_owned(), is_folder))
             })
             .collect();
         matches.sort();
@@ -5741,7 +5949,10 @@ impl App {
                 ("g G", tr!("Top and bottom")),
                 ("PgUp PgDn", tr!("Move by a page")),
                 ("@", tr!("Go to HEAD")),
-                ("o", tr!("Date or topological order")),
+                (
+                    "o +",
+                    tr!("Date or topological order; fetch more of a shallow or partial clone"),
+                ),
                 (
                     "z Z",
                     tr!("Fold merged branches; open or close the selected merge"),
@@ -5856,6 +6067,7 @@ impl App {
                 ),
                 ("/", tr!("Filter the list by path")),
                 ("R", tr!("Use a recent commit's message")),
+                ("W", tr!("Check out only some folders (sparse checkout)")),
                 (
                     "i",
                     tr!("Add an untracked file, or its extension, to .gitignore"),
@@ -6156,6 +6368,11 @@ impl App {
     fn changes_key(&mut self, code: KeyCode, control: bool) -> bool {
         let page = self.changes.page();
         match code {
+            // 取り出すフォルダを選ぶ（アプリの Check Out Only Some Folders…）。
+            KeyCode::Char('W') => {
+                self.type_sparse_folders();
+                true
+            }
             KeyCode::Char('d') if control => self.changes.move_selection(page / 2),
             KeyCode::Char('u') if control => self.changes.move_selection(-page / 2),
             KeyCode::Char('j') | KeyCode::Down => self.changes.move_selection(1),
@@ -6485,6 +6702,13 @@ impl App {
                     newer = &newer[..8]
                 );
                 self.compare_ranges(title, vec![format!("{older}...{newer}")]);
+                return true;
+            }
+            // shallow clone の履歴を取り足す（アプリの最後の行の下の帯の Fetch More・Fetch All）。
+            // shallow clone の履歴・partial clone の中身を取り足す（アプリの最後の行の下の帯、リポジトリの設定の
+            // 取得とフォルダ）。
+            KeyCode::Char('+') if self.history.is_shallow() || self.form["partial"].is_object() => {
+                self.ask_fetch_more();
                 return true;
             }
             KeyCode::Char('.') if self.history.mark_count() == 2 => {
@@ -6889,6 +7113,21 @@ impl App {
                     .0;
             }
         }
+        // shallow clone・partial clone の印。
+        for mark in &self.form_marks {
+            if x + 3 >= area.right() {
+                break;
+            }
+            x = buf
+                .set_stringn(
+                    x + 2,
+                    area.y,
+                    format!("[{mark}]"),
+                    usize::from(area.right() - x - 3),
+                    bar.fg(Color::Yellow),
+                )
+                .0;
+        }
         // サイドバーが出ていなければ、メインの画面の切り替え（数字のキー）を並べる。今の画面は太字。
         let tabs = self.layout().sidebar.is_none();
         let changes = match self.changes.count() {
@@ -7134,6 +7373,20 @@ impl App {
                         )
                     }
                     Naming::PatchVersion => tr!("Version of the patches (-v): {name}", name = name),
+                    Naming::SparseFolders => {
+                        let text = tr!(
+                            "Check out only the folders (spaces between, Tab completes, empty for all): {name}",
+                            name = name
+                        );
+                        match self.path_choices.is_empty() {
+                            true => text,
+                            false => format!("{text}    {}", self.path_choices),
+                        }
+                    }
+                    Naming::DeepenSince => tr!(
+                        "Fetch the commits newer than (a date git reads, like 2024-01-31): {name}",
+                        name = name
+                    ),
                     Naming::ArchiveFolder => {
                         tr!("Export only the folder (from the top): {name}", name = name)
                     }

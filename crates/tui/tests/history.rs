@@ -3094,6 +3094,147 @@ fn compare_with_the_previous_version() {
     assert!(below.contains("Take the lane from the trunk"));
 }
 
+/// partial clone は一番上の行に印。sparse checkout は Working Copy の一覧の上に知らせ（git 2.25 から）
+#[test]
+fn partial_clone_and_sparse_checkout_marks() {
+    // `git sparse-checkout` は 2.25 から。2.23 は file:// の partial clone の取り出しにも失敗する。
+    let version = git_out(Path::new("."), &["--version"]);
+    let numbers: Vec<u32> = version
+        .split(|c: char| !c.is_ascii_digit())
+        .filter_map(|n| n.parse().ok())
+        .collect();
+    if numbers.len() < 2 || (numbers[0], numbers[1]) < (2, 25) {
+        return;
+    }
+    let source = tempfile::tempdir().unwrap();
+    let source = source.path();
+    git(source, BASE, &["init", "-q", "-b", "main"]);
+    for path in ["app/a.txt", "docs/b.txt", "top.txt"] {
+        let path = source.join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, "one\n").unwrap();
+    }
+    git(source, BASE, &["add", "."]);
+    git(source, BASE, &["commit", "-q", "-m", "Start"]);
+    git(source, BASE, &["config", "uploadpack.allowFilter", "true"]);
+    let place = tempfile::tempdir().unwrap();
+    let url = format!("file://{}", source.display());
+    git(
+        place.path(),
+        BASE,
+        &["clone", "-q", "--filter=blob:none", &url, "partial"],
+    );
+    let dir = place.path().join("partial");
+    let top = amonhen_tui::snapshot(open(&dir), 140, 12, clock(), "").unwrap();
+    println!("{top}");
+    assert!(top.lines().next().unwrap().contains("[partial]"), "{top}");
+    assert!(!top.contains("Sparse checkout"), "{top}");
+    // `+`: partial clone の中身をすべて取る（git 2.36 から）。取ったら印は消える。
+    if (numbers[0], numbers[1]) >= (2, 36) {
+        let asked = amonhen_tui::snapshot(open(&dir), 140, 12, clock(), "2+").unwrap();
+        let last = asked.lines().last().unwrap();
+        assert!(
+            last.contains("Fetch all contents of the partial clone?"),
+            "{last}"
+        );
+        let fetched = amonhen_tui::snapshot(open(&dir), 140, 12, clock(), "2+c").unwrap();
+        println!("{fetched}");
+        assert!(fetched.contains("Fetched all contents"), "{fetched}");
+        let after = amonhen_tui::snapshot(open(&dir), 140, 12, clock(), "").unwrap();
+        assert!(
+            !after.lines().next().unwrap().contains("[partial]"),
+            "{after}"
+        );
+    }
+    git(&dir, BASE, &["sparse-checkout", "init", "--cone"]);
+    git(&dir, BASE, &["sparse-checkout", "set", "app"]);
+    let sparse = amonhen_tui::snapshot(open(&dir), 140, 12, clock(), "1").unwrap();
+    println!("{sparse}");
+    assert!(
+        sparse.contains("Sparse checkout: only 1 folder is checked out."),
+        "{sparse}"
+    );
+    // Working Copy の `W`: 取り出すフォルダを打つ（今のものが入っている。Tab で HEAD の木のフォルダから補う）。
+    let typing = amonhen_tui::snapshot(open(&dir), 140, 12, clock(), "1W").unwrap();
+    let last = typing.lines().last().unwrap();
+    assert!(
+        last.contains("Check out only the folders") && last.contains(": app "),
+        "{last}"
+    );
+    let completed = amonhen_tui::snapshot(open(&dir), 140, 12, clock(), "1W\x15d\t").unwrap();
+    let last = completed.lines().last().unwrap();
+    assert!(last.contains(": docs/ "), "{last}");
+    let asked = amonhen_tui::snapshot(open(&dir), 140, 12, clock(), "1W\x15docs\n").unwrap();
+    let last = asked.lines().last().unwrap();
+    assert!(last.contains("Check out only docs"), "{last}");
+    amonhen_tui::snapshot(open(&dir), 140, 12, clock(), "1W\x15docs\ny").unwrap();
+    assert!(dir.join("docs/b.txt").exists());
+    assert!(!dir.join("app/a.txt").exists());
+    // 空なら、すべて取り出す。
+    amonhen_tui::snapshot(open(&dir), 140, 12, clock(), "1W\x15\ny").unwrap();
+    assert!(dir.join("app/a.txt").exists());
+    let all = amonhen_tui::snapshot(open(&dir), 140, 12, clock(), "1").unwrap();
+    assert!(!all.contains("Sparse checkout"), "{all}");
+}
+
+/// shallow clone: 最後の行の下に帯、境界のコミットに点線の印。`+` で取り足す（数を選ぶ、`a` ですべて）
+#[test]
+fn shallow_clone_band_and_fetch_more() {
+    let source = tempfile::tempdir().unwrap();
+    let source = source.path();
+    git(source, BASE, &["init", "-q", "-b", "main"]);
+    for n in 1..=5 {
+        git(
+            source,
+            BASE + DAY * n,
+            &[
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                &format!("Commit {n}"),
+            ],
+        );
+    }
+    let place = tempfile::tempdir().unwrap();
+    let url = format!("file://{}", source.display());
+    git(
+        place.path(),
+        BASE,
+        &["clone", "-q", "--depth", "2", &url, "shallow"],
+    );
+    let dir = place.path().join("shallow");
+    let shown = amonhen_tui::snapshot(open(&dir), 140, 12, clock(), "2").unwrap();
+    println!("{shown}");
+    assert!(
+        shown.contains("Older history isn’t fetched (shallow clone)"),
+        "{shown}"
+    );
+    assert!(shown.lines().any(|l| l.contains("┄ Commit 4")), "{shown}");
+    // 一番上の行にも、shallow clone の印。
+    assert!(
+        shown.lines().next().unwrap().contains("[shallow]"),
+        "{shown}"
+    );
+    let asked = amonhen_tui::snapshot(open(&dir), 140, 12, clock(), "2+").unwrap();
+    let last = asked.lines().last().unwrap();
+    assert!(
+        last.contains("Fetch older history from the remote?"),
+        "{last}"
+    );
+    // 日付まで: `d` で日付を打つ（それより新しいコミットをすべて）。
+    let typing = amonhen_tui::snapshot(open(&dir), 140, 12, clock(), "2+d").unwrap();
+    assert!(typing.contains("Fetch the commits newer than"), "{typing}");
+    let since = amonhen_tui::snapshot(open(&dir), 140, 12, clock(), "2+d2000-01-01\n").unwrap();
+    println!("{since}");
+    assert!(since.contains("Commit 1"), "{since}");
+    git(&dir, BASE, &["fetch", "-q", "--depth", "2"]);
+    let all = amonhen_tui::snapshot(open(&dir), 140, 12, clock(), "2+a").unwrap();
+    println!("{all}");
+    assert!(all.contains("Commit 1"), "{all}");
+    assert!(!all.contains("shallow clone"), "{all}");
+}
+
 /// 詳細の `+`: 今見ているファイルの前後を 20 行広げる。`F` でファイル全体を出し、もう一度で戻す
 #[test]
 fn widen_the_context_and_show_the_whole_file() {

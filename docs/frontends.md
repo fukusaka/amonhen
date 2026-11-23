@@ -69,7 +69,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Submodule marks (not checked out, another commit, changes inside, conflict) and menus: Update… (recursive, remote), Edit URL, Branch to Follow, Remove (optionally .git/modules), Add, Sync URLs | ✓ | ✓ | ✓ | ✓ | ✓ | △ | VSCode: Remove asks with two buttons: keep `.git/modules` or delete it too.<br>CLI: `submodule` (`add`, `remove`, `set-url`, `set-branch`, `sync`).<br>TUI: Update Submodules only (the recorded commit, recursively, or the branch's latest). |
 | Submodules: move repository data into .git/modules, run a command in each | ✓ | ✓ | ✓ | ✓ | ✓ | — | VSCode: Run in Each Submodule…'s output goes to an Output channel (the app's Activity).<br>CLI: `submodule absorb`, `submodule foreach`. |
 | Worktrees under Working Copy with change counts (✎ ⌂ ⑂) | ✓ | ✓ | ✓ | ✓ | △ | △ | VSCode: The marks are the rows' icons; a branch another worktree has checked out gets ⌂ or ⑂.<br>CLI: `worktree list --changes`.<br>TUI: In the sidebar (folder and branch) when there are two or more; no change counts. |
-| Marks for a shallow or partial clone (History) and a sparse checkout (Working Copy) | ✓ | ✓ | ✓ | ✓ | n/a | — | VSCode: Shallow and Partial above History (Partial fetches all contents when clicked); " · some folders" on the Working Copy row for a sparse checkout. |
+| Marks for a shallow or partial clone (History) and a sparse checkout (Working Copy) | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: Shallow and Partial above History (Partial fetches all contents when clicked); " · some folders" on the Working Copy row for a sparse checkout.<br>TUI: [shallow] and [partial] on the top line after the branch; a sparse checkout's note above the Working Copy list. |
 
 ## 1. Tabs and windows
 
@@ -156,9 +156,9 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Keys and Values (git config table, Basic / Customized / All, Combined / Levels) | ✓ | ✓ | ✓ | ✓ | △ | n/a | VSCode: Basic / Customized / All, Combined / Levels and search; values are edited in an input box.<br>CLI: Via `amonhen run` (`configList`, `configSet`). |
 | Rows disabled with the git version needed | ✓ | ✓ | ✓ | ✓ | n/a | n/a | Windows: Fetching and Folders' rows (partial clone, sparse checkout, maintenance) |
 | Repository's form on the git line (shallow, partial, sparse, maintenance) | ✓ | ✓ | ✓ | ✓ | △ | n/a | CLI: `status` notes shallow, partial and sparse repositories. |
-| Fetching and Folders: fetch more of a shallow clone (a count, up to a date, all) | ✓ | ✓ | ✓ | ✓ | △ | — | CLI: Via `amonhen run` (`deepen`, `unshallow`). |
-| Fetching and Folders: fetch all contents of a partial clone (git 2.36) | ✓ | ✓ | ✓ | ✓ | △ | — | CLI: Via `amonhen run` (`fetchAllContents`). |
-| Fetching and Folders: folders of a sparse checkout picked from HEAD's tree (git 2.25) | ✓ | ✓ | ✓ | ✓ | △ | — | VSCode: The folder is picked by walking HEAD's tree in a list.<br>CLI: Via `amonhen run` (`sparseCheckout`, `treeFolders`). |
+| Fetching and Folders: fetch more of a shallow clone (a count, up to a date, all) | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: Via `amonhen run` (`deepen`, `unshallow`).<br>TUI: `+` in History. |
+| Fetching and Folders: fetch all contents of a partial clone (git 2.36) | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: Via `amonhen run` (`fetchAllContents`).<br>TUI: `+` in History, then `c`. |
+| Fetching and Folders: folders of a sparse checkout picked from HEAD's tree (git 2.25) | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: The folder is picked by walking HEAD's tree in a list.<br>CLI: Via `amonhen run` (`sparseCheckout`, `treeFolders`).<br>TUI: `W` in the Working Copy: the folders are typed, Tab completes them from HEAD's tree, empty checks out all. |
 | Fetching and Folders: git maintenance switch (git 2.31) | ✓ | ✓ | ✓ | ✓ | △ | n/a | CLI: Via `amonhen run` (`maintenance`). |
 
 ## 5. Toolbar
@@ -242,7 +242,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Discard lines, hunks and files (undoable) | ✓ | ✓ | △ | ✓ | ✓ | ✓ | CLI: `discard --rows`.<br>Windows: Right-click a line or a hunk header in the Working Copy diff (Discard Lines); lines can't be selected |
 | Add to .gitignore | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: `i` on an untracked file, then `p` for its path or `e` for its extension. |
 | Conflicted files open the merge editor | ✓ | ✓ | △ | ✓ | n/a | n/a | macOS, GTK4: A file that isn't UTF-8 doesn't open in it; take one side.<br>VSCode: Opens VSCode's merge editor.<br>Windows: Selecting the file opens the merge editor over the page (not embedded)<br>TUI: The file's diff shows the markers, and `o` `t` `b` `a` resolve the conflict under the line. |
-| Note above the list when only some folders are checked out | ✓ | ✓ | ✓ | ✓ | △ | — | CLI: `status` notes a sparse checkout. |
+| Note above the list when only some folders are checked out | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: `status` notes a sparse checkout. |
 
 ## History
 
@@ -266,7 +266,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Shortcuts: Edit Message…, Squash into Previous…, Drop…, Combine N…, drag a commit | ✓ | ✓ | ✓ | ✓ | △ | △ | VSCode: With the engine they open the edit mode; without it they rewrite at once, and there's no Combine N Commits.<br>CLI: Via `amonhen run`.<br>TUI: `e` Edit Message, `F` fixup into the parent, `X` Drop and `E` on the selected commits Combine N; merge and rebase are `m` `r` in the sidebar. |
 | Split a commit | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: Via `amonhen run`.<br>TUI: `\|` in History, asked first; it stops in the Working Copy. |
 | Merges kept when editing (`--rebase-merges`) | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: With the engine; without it, editing stops at the first merge.<br>CLI: Via `amonhen run`. |
-| Shallow clone: band at the end to fetch more, boundary commits marked | ✓ | ✓ | ✓ | ✓ | △ | — | VSCode: With the engine.<br>CLI: `log` notes where the history stops; fetching more via `amonhen run`. |
+| Shallow clone: band at the end to fetch more, boundary commits marked | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: With the engine.<br>CLI: `log` notes where the history stops; fetching more via `amonhen run`.<br>TUI: A line below the last row, ┄ before a boundary commit's subject; `+` in History fetches more (a count, up to a date, all). |
 
 ## 7. History's right column
 
