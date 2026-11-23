@@ -39,6 +39,7 @@ mod historydisplay;
 mod historyedit;
 mod icon;
 mod imagediff;
+mod markdownview;
 mod measure;
 mod menu;
 mod merge;
