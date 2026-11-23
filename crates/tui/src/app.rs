@@ -169,6 +169,8 @@ enum Naming {
     DeepenSince,
     /// sparse checkout で取り出すフォルダ（空白で区切る。空ならすべて取り出す）。
     SparseFolders,
+    /// Range Diff の範囲（git range-diff と同じ: `A...B`、`A..B C..D`、`base A B`）。
+    RangeDiffRanges,
     /// submodule（始まりはそのパス）の新しい URL。
     SubmoduleUrl,
     /// submodule（始まりはそのパス）が追うブランチ（空なら既定に戻す）。
@@ -564,6 +566,8 @@ pub struct App {
     patch_file: Option<String>,
     /// 前の版と比べている間の題（比べた結果が届くまで覚えておく）。
     range_title: Option<String>,
+    /// 今の Range Diff の範囲（`rangeDiff` の ranges。`r` で打ち直す）。
+    range_ranges: Vec<String>,
     /// merge か rebase を確かめる前に、見通しを読んでいる: 何を（ref の名前）、どのブランチに、merge か。merge は
     /// 見通し（`mergePreview`）を読んだ後に、コンフリクトの見込みも読む。
     preview: Option<(String, String, bool, Value)>,
@@ -842,6 +846,7 @@ impl App {
             bundle_file: None,
             patch_file: None,
             range_title: None,
+            range_ranges: Vec::new(),
             topo_order: false,
             fold: false,
             preview: None,
@@ -2243,6 +2248,21 @@ impl App {
                                 tr!("Adding the submodule…"),
                                 json!({"op": "changeSubmodule", "change": {"kind": "add", "url": start, "path": name, "branch": null}}),
                             ),
+                            // 範囲は 1 つ（A...B）、2 つ（A..B C..D）か 3 つ（base A B）。
+                            Naming::RangeDiffRanges => {
+                                let ranges: Vec<String> =
+                                    name.split_whitespace().map(str::to_owned).collect();
+                                if !(1..=3).contains(&ranges.len()) {
+                                    self.error = Some(tr!(
+                                        "Write the ranges as git range-diff takes them: A...B, A..B C..D, or base A B"
+                                    ));
+                                    return;
+                                }
+                                let title =
+                                    tr!("Range Diff of {ranges}", ranges = ranges.join(" "));
+                                self.compare_ranges(title, ranges);
+                                return;
+                            }
                             Naming::SubtreeDir => {
                                 let dir = name.trim_matches('/').to_owned();
                                 self.subtree_source(&dir, "add");
@@ -2997,6 +3017,7 @@ impl App {
     /// `ranges`（git range-diff の範囲）を Range Diff で比べる。答えは Compare with Previous Version と同じ画面に。
     fn compare_ranges(&mut self, title: String, ranges: Vec<String>) {
         self.range_title = Some(title);
+        self.range_ranges = ranges.clone();
         self.run(
             "rangeDiff",
             tr!("Comparing…"),
@@ -6322,6 +6343,13 @@ impl App {
             }
             // range-diff で、変わらなかった組を出すか（アプリの Changes Only）。
             KeyCode::Char('c') => self.file.toggle_changes_only(),
+            // range-diff の範囲を打ち直す（アプリの範囲の欄）。
+            KeyCode::Char('r') if self.file.is_range_diff() => {
+                self.naming = Naming::RangeDiffRanges;
+                self.typing_branch =
+                    Some((String::new(), String::new(), self.range_ranges.join(" ")));
+                true
+            }
             // File History で、作業ツリーのファイルをその版に戻す（確かめてから。Undo で元に戻る）。
             // 同じファイルの Blame（今の HEAD の）と File History を切り替える。
             KeyCode::Char('B' | 'L') if self.file.file_path().is_some() => {
@@ -6772,7 +6800,10 @@ impl App {
                     "V",
                     tr!("In File History: restore the file to that version"),
                 ),
-                ("c", tr!("In a range diff: changes only, or every pair")),
+                (
+                    "c r",
+                    tr!("In a range diff: changes only, or every pair; edit the ranges"),
+                ),
                 ("Esc", tr!("Go back")),
             ],
             (View::History | View::Reflog | View::File, Focus::Side) => vec![
@@ -8181,6 +8212,10 @@ impl App {
                         )
                     }
                     Naming::PatchVersion => tr!("Version of the patches (-v): {name}", name = name),
+                    Naming::RangeDiffRanges => tr!(
+                        "Compare the ranges (A...B, A..B C..D or base A B): {name}",
+                        name = name
+                    ),
                     Naming::SubmoduleUrl => {
                         tr!("URL of the submodule {at}: {name}", at = at, name = name)
                     }

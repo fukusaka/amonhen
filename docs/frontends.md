@@ -214,7 +214,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Range Diff view (= ! < >, Changes Only, diff of diffs) | ✓ | ✓ | ✓ | ✓ | ✓ | △ | CLI: `range-diff`.<br>TUI: In the Blame and File History view, not as a page of its own; `c` for Changes Only. |
 | Compare with Previous Version | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `range-diff --previous`.<br>TUI: In the command list. |
 | Two History commits or a Reflog entry compared as two versions | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: Any ranges.<br>TUI: `=` with two commits selected in History, or on a Reflog entry (with the current HEAD). |
-| Editable ranges | ✓ | ✓ | ✓ | ✓ | ✓ | — |  |
+| Editable ranges | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | TUI: `r` in a range diff, typed as git range-diff takes them. |
 
 ## 6. Working Copy
 
