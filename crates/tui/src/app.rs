@@ -179,6 +179,12 @@ enum Naming {
     SubmoduleAddUrl,
     /// 足す submodule の場所（始まりは URL）。
     SubmoduleAddPath,
+    /// Add Subtree で取り込むフォルダ（次に相手を聞く）。
+    SubtreeDir,
+    /// subtree の相手（`URL ref`。始まりはフォルダ、`what` は add・pull・push）。
+    SubtreeSource,
+    /// subtree のフォルダの履歴だけで作るブランチ（始まりはフォルダ）。
+    SubtreeSplit,
     /// リポジトリをまとめる bundle のファイル（この機械の）。
     Bundle,
     /// 取り込む bundle のファイル（この機械の）。
@@ -1374,6 +1380,11 @@ impl App {
                             name: "branchGroups",
                             command: json!({"op": "branchGroups"}),
                         });
+                        // subtree の一覧（git subtree があれば、サイドバーに Subtrees の節）。
+                        self.send(Request::Run {
+                            name: "subtreeList",
+                            command: json!({"op": "subtrees"}),
+                        });
                         // リポジトリの形（shallow・partial clone、sparse checkout）の印。
                         self.send(Request::Run {
                             name: "repositoryForm",
@@ -2139,6 +2150,29 @@ impl App {
                                 tr!("Adding the submodule…"),
                                 json!({"op": "changeSubmodule", "change": {"kind": "add", "url": start, "path": name, "branch": null}}),
                             ),
+                            Naming::SubtreeDir => {
+                                let dir = name.trim_matches('/').to_owned();
+                                self.subtree_source(&dir, "add");
+                                return;
+                            }
+                            Naming::SubtreeSource => {
+                                let mut parts = name.split_whitespace();
+                                let (Some(url), Some(r), None) =
+                                    (parts.next(), parts.next(), parts.next())
+                                else {
+                                    self.error = Some(tr!(
+                                        "Write the URL and the branch or tag, like https://example.com/lib.git main"
+                                    ));
+                                    return;
+                                };
+                                self.ask_subtree(&start, &what, url, r);
+                                return;
+                            }
+                            Naming::SubtreeSplit => (
+                                "subtreeChanged",
+                                tr!("Splitting the subtree…"),
+                                json!({"op": "subtree", "action": {"kind": "split", "dir": start, "branch": name}}),
+                            ),
                             Naming::PushTo => {
                                 self.push_to(&start, name);
                                 return;
@@ -2459,6 +2493,18 @@ impl App {
             }
             // サイドバーでチェックアウトしていないブランチを選んでいれば、そのブランチを上流に合わせる（アプリの
             // ブランチのメニューの Fast-Forward・Push・Publish）。
+            // サイドバーで subtree を選んでいれば、その Pull・Push（アプリの subtree のメニュー）。
+            KeyCode::Char('p' | 'P') if !control && self.picked_subtree().is_some() => {
+                let dir = self.picked_subtree().unwrap_or_default();
+                self.subtree_source(
+                    &dir,
+                    if key.code == KeyCode::Char('p') {
+                        "pull"
+                    } else {
+                        "push"
+                    },
+                );
+            }
             KeyCode::Char('p') if !control => match self.picked_other_branch() {
                 Some(branch) => self.ask_fast_forward(branch),
                 None => self.ask_pull(),
@@ -2780,6 +2826,16 @@ impl App {
         }
         if id == "add-submodule" {
             self.naming = Naming::SubmoduleAddUrl;
+            self.typing_branch = Some((String::new(), String::new(), String::new()));
+            self.dirty = true;
+            return;
+        }
+        if id == "add-subtree" {
+            if self.sidebar.subtrees_available() == Some(false) {
+                self.error = Some(tr!("This machine's git has no git subtree"));
+                return;
+            }
+            self.naming = Naming::SubtreeDir;
             self.typing_branch = Some((String::new(), String::new(), String::new()));
             self.dirty = true;
             return;
@@ -3339,6 +3395,13 @@ impl App {
             self.dirty = true;
             return;
         }
+        // subtree の一覧（裏で読む）。
+        if name == "subtreeList" {
+            let info = result.ok().map(|r| r["info"].clone()).unwrap_or_default();
+            self.sidebar.set_subtrees(info);
+            self.dirty = true;
+            return;
+        }
         // 裏で読むリポジトリの形も、動いている操作の表示を消さない。読めなければ印を出さない。
         if name == "repositoryForm" {
             let info = result.ok().map(|r| r["info"].clone()).unwrap_or_default();
@@ -3565,6 +3628,7 @@ impl App {
                     }
                 }
             }
+            "subtreeChanged" => self.notice = Some(tr!("Done")),
             // ignore されたものが分かった: 数と最初のいくつかを出して、確かめてから消す（Undo では戻らない）。
             "ignoredFiles" => {
                 let paths: Vec<String> = (reply["info"]["paths"].as_array().into_iter().flatten())
@@ -4256,6 +4320,89 @@ impl App {
     }
 
     /// サイドバーで選んでいる、チェックアウトしていないローカルのブランチ。
+    /// サイドバーで選んでいる subtree のフォルダ。
+    fn picked_subtree(&self) -> Option<String> {
+        if self.focus != Focus::Sidebar {
+            return None;
+        }
+        match self.sidebar.picked_ref()? {
+            ("subtree", dir, _) => Some(dir.to_owned()),
+            _ => None,
+        }
+    }
+
+    /// subtree の相手（URL と ref）を打たせる。覚えている相手を初めに入れておく（Push は Push の先の ref）。
+    /// `what` は add・pull・push。
+    fn subtree_source(&mut self, dir: &str, what: &str) {
+        let remembered = self.sidebar.subtree(dir).cloned().unwrap_or_default();
+        let url = remembered["url"].as_str().unwrap_or("");
+        let r = match what {
+            "push" => remembered["pushRef"]
+                .as_str()
+                .or(remembered["ref"].as_str()),
+            _ => remembered["ref"].as_str(),
+        }
+        .unwrap_or("");
+        let filled = match (url.is_empty(), r.is_empty()) {
+            (true, _) => String::new(),
+            (false, true) => format!("{url} "),
+            (false, false) => format!("{url} {r}"),
+        };
+        self.naming = Naming::SubtreeSource;
+        self.typing_branch = Some((dir.to_owned(), what.to_owned(), filled));
+        self.dirty = true;
+    }
+
+    /// subtree の相手が決まった: Add・Pull は squash するかを選ばせ、Push は確かめる。
+    fn ask_subtree(&mut self, dir: &str, what: &str, url: &str, r: &str) {
+        let op = |kind: &str, squash: Option<bool>| {
+            let mut action = json!({"kind": kind, "dir": dir, "url": url, "ref": r});
+            if let Some(squash) = squash {
+                action["squash"] = json!(squash);
+            }
+            Request::Run {
+                name: "subtreeChanged",
+                command: json!({"op": "subtree", "action": action}),
+            }
+        };
+        if what == "push" {
+            self.confirm = Some((
+                tr!(
+                    "Push the history of {dir} to {url} {r} (git subtree push)?",
+                    dir = dir,
+                    url = url,
+                    r = r
+                ),
+                tr!("push"),
+                op("push", None),
+            ));
+            return;
+        }
+        // 前に選んだ squash を先に（なければ git の既定の、squash しない）。
+        let squashed = self
+            .sidebar
+            .subtree(dir)
+            .and_then(|s| s["squash"].as_bool())
+            == Some(true);
+        let ask = match what {
+            "add" => tr!("Add {url} {r} as {dir}?", url = url, r = r, dir = dir),
+            _ => tr!(
+                "Pull {url} {r} into {dir}? Undo brings it back.",
+                url = url,
+                r = r,
+                dir = dir
+            ),
+        };
+        let mut options = vec![
+            ('y', tr!("with its whole history"), op(what, Some(false))),
+            ('s', tr!("squashed into one commit"), op(what, Some(true))),
+        ];
+        if squashed {
+            options.swap(0, 1);
+        }
+        self.choices = Some((ask, options));
+    }
+
     fn picked_other_branch(&self) -> Option<String> {
         if self.focus != Focus::Sidebar || self.sidebar.picked_is_current() {
             return None;
@@ -6221,6 +6368,14 @@ impl App {
                 self.submodule_key(&path, code);
                 true
             }
+            // subtree の行で: そのフォルダの履歴だけのブランチを作る（Split）。
+            KeyCode::Char('t') if self.picked_subtree().is_some() => {
+                let dir = self.picked_subtree().unwrap_or_default();
+                let branch = format!("{}-split", dir.replace('/', "-"));
+                self.naming = Naming::SubtreeSplit;
+                self.typing_branch = Some((dir, String::new(), branch));
+                true
+            }
             // タグの行で: リモートごとの様子を一番下の行に（アプリの印の吹き出し）。
             KeyCode::Char('i') if self.sidebar.picked_ref().is_some_and(|r| r.0 == "tag") => {
                 let name = self
@@ -6403,6 +6558,10 @@ impl App {
                 (
                     "e B x a y F",
                     tr!("On a submodule: URL, branch to follow, remove, absorb, sync, run in each"),
+                ),
+                (
+                    "p P t",
+                    tr!("On a subtree: pull, push; split its history into a branch"),
                 ),
                 (
                     "U",
@@ -7911,6 +8070,21 @@ impl App {
                     Naming::SubmoduleAddPath => tr!(
                         "Add {at} as a submodule at (a folder in this repository): {name}",
                         at = at,
+                        name = name
+                    ),
+                    Naming::SubtreeDir => tr!(
+                        "Add a subtree in the folder (from the top of the repository): {name}",
+                        name = name
+                    ),
+                    Naming::SubtreeSource => tr!(
+                        "Subtree {what} for {dir}: the URL and the branch or tag: {name}",
+                        what = at,
+                        dir = self.typing_branch.as_ref().map_or("", |t| t.0.as_str()),
+                        name = name
+                    ),
+                    Naming::SubtreeSplit => tr!(
+                        "New branch with only the history of {at}: {name}",
+                        at = self.typing_branch.as_ref().map_or("", |t| t.0.as_str()),
                         name = name
                     ),
                     Naming::SparseFolders => {
