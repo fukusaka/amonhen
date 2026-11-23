@@ -246,6 +246,21 @@ impl Pane {
 }
 
 /// 欄の折り返し方（アプリ全体の設定「長い行を折り返す」）。
+/// 帯の右端の表示の設定（History の右の列と同じ形。今はコードの折り返しだけ。macOS 版と同じ）。
+fn view_options() -> gtk::Button {
+    let (button, _) =
+        crate::commitfiles::icon_button(crate::icon::Kind::Sliders, &tr!("View Options"));
+    button.set_valign(gtk::Align::Center);
+    button.connect_clicked(|b| {
+        let items = vec![
+            crate::menu::Item::Heading(tr!("Code")),
+            crate::diff::wrap_item(),
+        ];
+        crate::menu::popup(b, b.width() as f64 / 2.0, b.height() as f64, items);
+    });
+    button
+}
+
 fn wrap_mode() -> gtk::WrapMode {
     if crate::diff::wrap_lines() {
         gtk::WrapMode::WordChar
@@ -844,6 +859,7 @@ impl Editor {
             slot_of(widget(&popout)),
             widget(&save),
             widget(&resolve),
+            widget(&view_options()),
         ]) {
             bar.append(&w);
         }

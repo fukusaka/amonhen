@@ -375,7 +375,7 @@ fn focused(window: &gtk::Window) -> Option<Rc<Inner>> {
 }
 
 /// 帯の小さなアイコンのボタン。
-fn icon_button(kind: crate::icon::Kind, tip: &str) -> (gtk::Button, crate::icon::Icon) {
+pub(crate) fn icon_button(kind: crate::icon::Kind, tip: &str) -> (gtk::Button, crate::icon::Icon) {
     let icon = crate::icon::Icon::default();
     icon.set(kind, false);
     let button = gtk::Button::new();
