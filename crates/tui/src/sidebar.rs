@@ -27,9 +27,11 @@ pub enum Picked {
 }
 
 enum Row {
-    /// 節の見出し（選べない）。
-    Header(String),
+    /// 節の見出し（選べない）と、右に出す数（0 なら出さない）。
+    Header(String, usize),
     Changes,
+    /// コンフリクトがある間だけ（選ぶと Working Copy）。
+    Conflicts,
     History,
     Reflog,
     Ref {
@@ -50,8 +52,9 @@ impl Row {
     /// 読み直しても同じ行を選び続けるための名前。
     fn key(&self) -> Option<String> {
         match self {
-            Row::Header(_) => None,
+            Row::Header(..) => None,
             Row::Changes => Some("view:changes".to_owned()),
+            Row::Conflicts => Some("view:conflicts".to_owned()),
             Row::History => Some("view:history".to_owned()),
             Row::Reflog => Some("view:reflog".to_owned()),
             Row::Ref { name, .. } => Some(format!("ref:{name}")),
@@ -68,6 +71,8 @@ pub struct Sidebar {
     selected: usize,
     top: usize,
     height: u16,
+    /// コンフリクトのあるファイルの数（あれば Workspace に行を出す）。
+    conflicts: usize,
 }
 
 impl Default for Sidebar {
@@ -76,7 +81,7 @@ impl Default for Sidebar {
             refs: Value::Null,
             filter: String::new(),
             rows: vec![
-                Row::Header(tr!("Workspace")),
+                Row::Header(tr!("Workspace"), 0),
                 Row::Changes,
                 Row::History,
                 Row::Reflog,
@@ -85,6 +90,7 @@ impl Default for Sidebar {
             selected: 2,
             top: 0,
             height: 0,
+            conflicts: 0,
         }
     }
 }
@@ -94,6 +100,15 @@ impl Sidebar {
     pub fn set_refs(&mut self, refs: &Value) {
         self.refs = refs.clone();
         self.rebuild();
+    }
+
+    /// コンフリクトのあるファイルの数。あるかないかが変わったら、行を作り直す。
+    pub fn set_conflicts(&mut self, conflicts: usize) {
+        let changed = (self.conflicts > 0) != (conflicts > 0);
+        self.conflicts = conflicts;
+        if changed {
+            self.rebuild();
+        }
     }
 
     /// 絞り込みの語を替える。
@@ -110,12 +125,11 @@ impl Sidebar {
         let refs = &self.refs;
         let selected = self.rows.get(self.selected).and_then(Row::key);
         let head = refs["headBranch"].as_str();
-        let mut rows = vec![
-            Row::Header(tr!("Workspace")),
-            Row::Changes,
-            Row::History,
-            Row::Reflog,
-        ];
+        let mut rows = vec![Row::Header(tr!("Workspace"), 0), Row::Changes];
+        if self.conflicts > 0 {
+            rows.push(Row::Conflicts);
+        }
+        rows.extend([Row::History, Row::Reflog]);
         for (kind, title) in [
             ("branch", tr!("Branches")),
             ("remote", tr!("Remotes")),
@@ -149,8 +163,14 @@ impl Sidebar {
                 })
                 .peekable();
             if of_kind.peek().is_some() {
-                rows.push(Row::Header(title));
-                rows.extend(of_kind);
+                let rows_of_kind: Vec<Row> = of_kind.collect();
+                // stash は数も（アプリの Stashes の行と同じ）。
+                let count = match kind {
+                    "stash" => rows_of_kind.len(),
+                    _ => 0,
+                };
+                rows.push(Row::Header(title, count));
+                rows.extend(rows_of_kind);
             }
         }
         // worktree は、2 つ以上あるときだけ並べる（フォルダの名前と、そこのブランチ）。
@@ -187,7 +207,7 @@ impl Sidebar {
                 })
                 .peekable();
             if of_kind.peek().is_some() {
-                rows.push(Row::Header(tr!("Worktrees")));
+                rows.push(Row::Header(tr!("Worktrees"), 0));
                 rows.extend(of_kind);
             }
         }
@@ -228,7 +248,7 @@ impl Sidebar {
         if self.selected < self.top {
             // 節の最初の行なら、見出しも見せる。
             self.top = match self.selected.checked_sub(1) {
-                Some(above) if matches!(self.rows[above], Row::Header(_)) => above,
+                Some(above) if matches!(self.rows[above], Row::Header(..)) => above,
                 _ => self.selected,
             };
         } else if self.selected >= self.top + height {
@@ -250,7 +270,7 @@ impl Sidebar {
             let mut next = at + step;
             while next >= 0
                 && (next as usize) < self.rows.len()
-                && matches!(self.rows[next as usize], Row::Header(_))
+                && matches!(self.rows[next as usize], Row::Header(..))
             {
                 next += step;
             }
@@ -281,7 +301,7 @@ impl Sidebar {
     pub fn click(&mut self, line: u16) -> bool {
         let index = self.top + usize::from(line);
         match self.rows.get(index) {
-            Some(Row::Header(_)) | None => false,
+            Some(Row::Header(..)) | None => false,
             Some(_) => {
                 self.selected = index;
                 true
@@ -292,8 +312,8 @@ impl Sidebar {
     /// 選んでいる行が指すもの。
     pub fn picked(&self) -> Option<Picked> {
         match self.rows.get(self.selected)? {
-            Row::Header(_) => None,
-            Row::Changes => Some(Picked::Changes),
+            Row::Header(..) => None,
+            Row::Changes | Row::Conflicts => Some(Picked::Changes),
             Row::History => Some(Picked::History),
             Row::Reflog => Some(Picked::Reflog),
             Row::Ref { target, .. } => Some(Picked::Commit(target.clone())),
@@ -374,13 +394,32 @@ impl Sidebar {
                 .take(usize::from(area.height)),
         ) {
             match row {
-                Row::Header(title) => {
+                Row::Header(title, count) => {
                     buf.set_stringn(
                         area.x,
                         y,
                         title,
                         width,
                         Style::new().fg(DIM).add_modifier(Modifier::BOLD),
+                    );
+                    if *count > 0 {
+                        right(area, y, buf, &count.to_string(), Style::new().fg(DIM));
+                    }
+                }
+                Row::Conflicts => {
+                    buf.set_stringn(
+                        area.x + 2,
+                        y,
+                        tr!("Conflicts"),
+                        width - 2,
+                        Style::new().fg(Color::Red),
+                    );
+                    right(
+                        area,
+                        y,
+                        buf,
+                        &self.conflicts.to_string(),
+                        Style::new().fg(Color::Red),
                     );
                 }
                 Row::Changes => {
