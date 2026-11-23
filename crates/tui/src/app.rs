@@ -3288,6 +3288,11 @@ impl App {
                 self.dirty = true;
                 return;
             }
+            "octopusPreview" => {
+                let info = reply["info"].clone();
+                self.ask_octopus_with(&info);
+                return;
+            }
             "fetchConfig" => {
                 let entries = reply["info"]["entries"].clone();
                 self.ask_fetch(&entries);
@@ -4961,6 +4966,87 @@ impl App {
         true
     }
 
+    /// 印をつけた ref を、今のブランチに 1 つの merge コミットで取り込む前に、見通し（`octopusPreview`）を読む。
+    fn ask_octopus(&mut self) -> bool {
+        if self.branch.is_none() {
+            self.error = Some(tr!("No branch is checked out"));
+            return true;
+        }
+        let theirs = self.sidebar.marked_names();
+        self.run(
+            "octopusPreview",
+            tr!("Looking ahead…"),
+            json!({"op": "octopusPreview", "theirs": theirs}),
+        );
+        true
+    }
+
+    /// octopus merge の見通しから、それぞれが持ち込むコミットの数を書いて確かめる（アプリの octopus merge の
+    /// シートの代わり）。
+    fn ask_octopus_with(&mut self, info: &Value) {
+        let theirs = self.sidebar.marked_names();
+        let branch = self.branch.clone().unwrap_or_default();
+        if info["upToDate"] == true {
+            self.notice = Some(tr!("{branch} already has all of them", branch = branch));
+            return;
+        }
+        let sides: Vec<String> = (info["drawing"]["sides"].as_array().into_iter().flatten())
+            .filter_map(|s| {
+                let rev = s["rev"].as_str()?;
+                let count = u64::from(!s["tip"].is_null()) + s["more"].as_u64().unwrap_or(0);
+                Some(format!("{rev} ({count})"))
+            })
+            .collect();
+        self.confirm = Some((
+            tr!(
+                "Merge {sides} into {branch} as one merge commit (octopus)? Undo brings it back.",
+                sides = sides.join(", "),
+                branch = branch
+            ),
+            tr!("merge"),
+            Request::Run {
+                name: "merge",
+                command: json!({"op": "merge", "rev": theirs}),
+            },
+        ));
+        self.dirty = true;
+    }
+
+    /// 印をつけたブランチをまとめて消す前に確かめる。ほかのどこにもないコミットのあるブランチは、git が断る（そこ
+    /// で止まる）。
+    fn ask_delete_marked(&mut self) -> bool {
+        let names = self.sidebar.marked_names();
+        let branches = self.sidebar.branches();
+        if names
+            .iter()
+            .any(|n| !branches.iter().any(|(b, remote)| b == n && !remote))
+        {
+            self.error = Some(tr!("Only local branches can be deleted together"));
+            return true;
+        }
+        if self.branch.as_ref().is_some_and(|b| names.contains(b)) {
+            self.error = Some(tr!("The current branch can’t be deleted"));
+            return true;
+        }
+        let commands: Vec<Value> = names
+            .iter()
+            .map(|n| json!({"op": "deleteBranch", "name": n, "force": false}))
+            .collect();
+        self.confirm = Some((
+            tr!(
+                "Delete {count} branches ({names})? A branch with commits on no other branch is refused. Undo brings them back.",
+                count = names.len(),
+                names = names.join(", ")
+            ),
+            tr!("delete"),
+            Request::Run {
+                name: "deleteBranch",
+                command: Value::Array(commands),
+            },
+        ));
+        true
+    }
+
     /// merge・rebase の見通しから、確かめる文を作る。`conflicts` はコンフリクトしそうなファイル（分からなければ
     /// `None`）。
     fn ask_with_preview(&mut self, conflicts: Option<Vec<String>>) {
@@ -5468,6 +5554,11 @@ impl App {
                 self.worktree_key(code)
             }
             KeyCode::Char('a' | 'o' | 'x') => self.stash_key(code),
+            // 印をつけた ref がいくつもあれば、まとめて: 1 つの merge コミットで取り込む（octopus）、ブランチを消す。
+            KeyCode::Char('m') if self.sidebar.marked_names().len() >= 2 => self.ask_octopus(),
+            KeyCode::Char('D') if self.sidebar.marked_names().len() >= 2 => {
+                self.ask_delete_marked()
+            }
             KeyCode::Char('D') => self.ask_delete(),
             KeyCode::Char('n') => self.ask_rename(),
             KeyCode::Char('m') => self.ask_merge_or_rebase(true),
@@ -5590,7 +5681,10 @@ impl App {
                 ),
                 ("n D", tr!("Rename a branch; delete a branch or a tag")),
                 ("L", tr!("The branch's reflog")),
-                ("v", tr!("Mark refs: History of the marked ones only")),
+                (
+                    "v",
+                    tr!("Mark refs: History of the marked ones; m and D act on all of them"),
+                ),
                 ("/", tr!("Filter branches and tags")),
                 ("Esc", tr!("Clear the filter, or go back")),
             ],

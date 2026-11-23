@@ -43,7 +43,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | stash があるときだけ Stashes の行と数 | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: Stashes の節。<br>TUI: stash があるあいだサイドバーに Stashes の節。見出しに数。 |
 | Range Diff を開いているあいだの Range Diff の行 | ✓ | ✓ | ✓ | ✓ | n/a | — |  |
 | Branches・Remotes・Tags を絞り込む欄 | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: サイドバーの上の絞り込みのボタンで言葉を入れ、合うものを平らに並べる。<br>TUI: サイドバーで `/`。 |
-| ブランチ・タグをいくつも選ぶ | ✓ | ✓ | ✓ | ✓ | n/a | — | VSCode: Merge into Current Branch・Delete Branch・お気に入り・Archive が選んだものすべてに効く。 |
+| ブランチ・タグをいくつも選ぶ | ✓ | ✓ | ✓ | ✓ | n/a | △ | VSCode: Merge into Current Branch・Delete Branch・お気に入り・Archive が選んだものすべてに効く。<br>TUI: サイドバーの `v` で ref に印をつけ、`m` で 1 つのコミットで取り込み、`D` で印をつけたブランチを消す。お気に入り・Archive はない。 |
 | Pull Requests・Worktrees は中身があるときだけ出す | ✓ | ✓ | ✓ | △ | n/a | △ | VSCode: Worktrees だけ（GitHub は入れない）。<br>Windows: Worktrees は Working Copy の下に出す。<br>TUI: Worktrees だけ（2 つ以上あるとき）。 |
 
 ## サイドバー
@@ -172,7 +172,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Push のシート（注意・コミットと差分・lease 付きの Force Push） | ✓ | ✓ | △ | ✓ | △ | △ | VSCode: QuickPick。注意、送るコミット、上流から消えるコミット、Pull… か lease 付きの Force Push。送る変更すべてとそれぞれのコミットは、選ぶと差分を複数ファイルの diff エディタで開く（シートは閉じない）。<br>CLI: `amonhen run` から。<br>Windows: ダイアログではなく窓の中に出す。左に送るコミット、右の列に選んだものの差分（Stashes と同じ）。<br>TUI: `P` はコミットの数と 3 つまでの件名を添えて尋ね、上流が進んでいれば lease 付きの Force Push とその絵も出す。差分はない。 |
 | Publish（リモートと名前を選ぶ） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: `amonhen run` から。<br>TUI: 上流のないブランチで `P`。 |
 | Merge（fast-forward だけ・no-ff・squash の選択） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: 取り込み方を選ぶ一覧が確認を兼ねる。<br>CLI: `amonhen run` から（`mode`）。<br>TUI: サイドバーで `m`。 |
-| いくつもを 1 つにマージ（順番・コンフリクトの見込み） | ✓ | ✓ | ✓ | ✓ | △ | — | CLI: `merge-check` で確かめ、マージは `amonhen run` から。<br>Windows: History の選択から。順（ドラッグ）、ぶつかる見込みと最後に回す、取り込み方、1 つずつ、メッセージ、前と後の絵、git が断ったら 1 つずつ Merge。 |
+| いくつもを 1 つにマージ（順番・コンフリクトの見込み） | ✓ | ✓ | ✓ | ✓ | △ | △ | CLI: `merge-check` で確かめ、マージは `amonhen run` から。<br>Windows: History の選択から。順（ドラッグ）、ぶつかる見込みと最後に回す、取り込み方、1 つずつ、メッセージ、前と後の絵、git が断ったら 1 つずつ Merge。<br>TUI: サイドバーの `v` で印をつけた ref で `m`。それぞれが持ち込むコミットの数を添え、印をつけた順に。コンフリクトの見込みはない。 |
 | 前と後を描く Rebase のシート | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: ダイアログに、今と rebase の後のコミットをブランチの札と一緒に文で並べる。<br>CLI: `rewrite-preview` が出し、rebase は `amonhen run` から。<br>TUI: サイドバーで `r`。絵は画面に重ねる。 |
 | Stash（メッセージ・未追跡を含める） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: `amonhen run` から。<br>TUI: `s`。 |
 | Stash: stage した変更だけ・index を残す・選んだファイルだけ | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: エンジンがあるとき、Stash の一覧に前の 2 つ、Working Copy のファイルの右クリックにそのファイルの Stash…。<br>CLI: `amonhen run`（`stashPush` の `staged`・`keepIndex`・`paths`）から。<br>TUI: `s` で `k` index を残す、`s` stage したものだけ、Working Copy では `f` 選んでいるファイルだけ。 |

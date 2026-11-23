@@ -1839,6 +1839,45 @@ fn history_of_the_marked_refs() {
     assert!(all.contains("On main"), "{all}");
 }
 
+/// 印をつけた ref がいくつもあれば、サイドバーの `m` で 1 つの merge コミットで取り込み（octopus）、`D` でまとめて消す
+#[test]
+fn merge_and_delete_the_marked_refs() {
+    let dir = tempfile::tempdir().unwrap();
+    git(dir.path(), BASE, &["init", "-q", "-b", "main"]);
+    commit(dir.path(), BASE, "Start");
+    for name in ["a1", "a2"] {
+        git(dir.path(), BASE, &["switch", "-q", "-c", name, "main"]);
+        std::fs::write(dir.path().join(format!("{name}.txt")), name).unwrap();
+        git(dir.path(), BASE, &["add", "."]);
+        git(
+            dir.path(),
+            BASE + DAY,
+            &["commit", "-q", "-m", &format!("On {name}")],
+        );
+    }
+    git(dir.path(), BASE, &["switch", "-q", "main"]);
+    // main も進めておく（そうでなければ、git は最初の 1 つへ fast-forward してから取り込む）。
+    commit(dir.path(), BASE + DAY * 2, "On main");
+    // サイドバーのブランチは a1・a2・main の順（2 つ下が a1）。
+    let asked = amonhen_tui::snapshot(open(dir.path()), 220, 12, clock(), "0jjvjvm").unwrap();
+    println!("{asked}");
+    assert!(
+        asked.contains("Merge a1 (1), a2 (1) into main as one merge commit (octopus)? Undo brings it back.   y merge   n cancel"),
+        "{asked}"
+    );
+    amonhen_tui::snapshot(open(dir.path()), 220, 12, clock(), "0jjvjvmy").unwrap();
+    let parents = git_out(dir.path(), &["log", "-1", "--format=%P"]);
+    assert_eq!(parents.split_whitespace().count(), 3, "{parents}");
+    // 取り込んだので、まとめて消せる。
+    let asked = amonhen_tui::snapshot(open(dir.path()), 220, 12, clock(), "0jjvjvD").unwrap();
+    assert!(asked.contains("Delete 2 branches (a1, a2)?"), "{asked}");
+    amonhen_tui::snapshot(open(dir.path()), 220, 12, clock(), "0jjvjvDy").unwrap();
+    assert_eq!(
+        git_out(dir.path(), &["branch", "--format=%(refname:short)"]),
+        "main\n"
+    );
+}
+
 /// サイドバーの `r` で、今のブランチを選んだ ref の上に rebase する
 #[test]
 fn rebase_onto_the_picked_ref() {
