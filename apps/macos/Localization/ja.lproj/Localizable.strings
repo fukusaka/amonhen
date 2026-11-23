@@ -2082,3 +2082,10 @@
 "Original" = "元の SVG";
 "%@ (approximation)" = "%@（近似）";
 "Approximation: the SVG rewritten the way the renderer degrades it, drawn by this app" = "近似: その部品が崩すように SVG を書き換え、このアプリで描いたもの";
+"Preview" = "プレビュー";
+"Show the Markdown formatted" = "Markdown を整形して見せる";
+"Show the Markdown source" = "Markdown のソースを見る";
+"Note" = "注記";
+"Important" = "重要";
+"Warning" = "警告";
+"Caution" = "注意";
