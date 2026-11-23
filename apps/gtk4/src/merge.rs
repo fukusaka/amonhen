@@ -72,7 +72,9 @@ fn regions(text: &str) -> Vec<Region> {
         .collect()
 }
 
-/// 1 つの欄（見出しと、折り返さない等幅の文字の欄）。
+/// 1 つの欄（見出しと、等幅の文字の欄）。長い行は、差分と同じアプリ全体の設定（`diff::wrap_lines`）のときだけ
+/// 欄の幅で折り返す。行の位置はいつも GtkTextView が並べたものから読む（`line_yrange`）ので、帯・スクロールの
+/// 揃え・コンフリクトへの移動は、折り返しても合う。
 struct Pane {
     root: gtk::Box,
     view: gtk::TextView,
@@ -97,7 +99,7 @@ impl Pane {
             .monospace(true)
             .editable(editable)
             .cursor_visible(true)
-            .wrap_mode(gtk::WrapMode::None)
+            .wrap_mode(wrap_mode())
             .left_margin(4)
             .build();
         let buffer = view.buffer();
@@ -240,6 +242,15 @@ impl Pane {
     fn cursor_line(&self) -> usize {
         let b = self.view.buffer();
         b.iter_at_offset(b.cursor_position()).line() as usize
+    }
+}
+
+/// 欄の折り返し方（アプリ全体の設定「長い行を折り返す」）。
+fn wrap_mode() -> gtk::WrapMode {
+    if crate::diff::wrap_lines() {
+        gtk::WrapMode::WordChar
+    } else {
+        gtk::WrapMode::None
     }
 }
 
@@ -415,6 +426,17 @@ pub fn open(
             }
         }
     });
+}
+
+/// 別の窓で開いているマージエディタの窓のどれか（確認用の撮影・計測。リポジトリの窓の子ではないので、見つけて
+/// 撮る・閉じる）。
+pub fn any_window() -> Option<gtk::Window> {
+    OPEN.with(|o| {
+        o.borrow()
+            .iter()
+            .filter_map(|(_, w)| w.upgrade())
+            .find(|w| w.is_visible())
+    })
 }
 
 /// 別の窓で開いているマージエディタの鍵（worktree の作業ツリーとパス）。
@@ -1164,10 +1186,45 @@ impl Editor {
                         this.redraw_bands();
                     }
                 });
+            // 行を並べ直したら（折り返す・幅が変わった・裏で行の高さが決まった）、帯の位置も変わる。
+            let weak = Rc::downgrade(&this);
+            this.pane(side)
+                .scrolled
+                .vadjustment()
+                .connect_changed(move |_| {
+                    if let Some(this) = weak.upgrade() {
+                        this.redraw_bands();
+                    }
+                });
         }
         Self::connect_bands(&this);
         Self::follow_theme(&this);
+        Self::follow_wrap(&this);
         this
+    }
+
+    /// 「長い行を折り返す」を切り替えたら、どの欄も折り返し直す（Result の一番上の行を保ち、ほかの欄を揃える）。
+    fn follow_wrap(this: &Rc<Self>) {
+        let weak = Rc::downgrade(this);
+        crate::settings::connect_changed_while(&this.root, move |key| {
+            let Some(this) = weak.upgrade().filter(|_| key == crate::diff::WRAP_LINES) else {
+                return;
+            };
+            let top = this.result.top_line();
+            let mode = wrap_mode();
+            for side in 0..4 {
+                this.pane(side).view.set_wrap_mode(mode);
+            }
+            // 並べ直してから戻す。
+            let weak = Rc::downgrade(&this);
+            glib::idle_add_local_once(move || {
+                if let Some(this) = weak.upgrade() {
+                    this.result.scroll_to_line(top);
+                    this.scrolled(3);
+                    this.redraw_bands();
+                }
+            });
+        });
     }
 
     /// 欄の番号: 0 Current、1 Incoming、2 Base、3 Result。

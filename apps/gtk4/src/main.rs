@@ -1,6 +1,6 @@
 //! Amon Hen の GTK4 の FE。Linux・BSD が本命で、GTK の動く Windows・macOS でも動く。
 //!
-//! `amonhen-gtk [<path>] [--snapshot <png>] [--edit-worktree <path>] [--measure-scroll [--scroll-rows <n>] | --measure-diff-scroll [--scroll-rows <n>] | --measure-select <n>] [--print-menus] [--scroll-to <row> | --select-rows <row,...> | --select-ref <name>] [--menu-ref <name> | --menu-row <row> [--menu-item <title>]] [--search <query> [--only-matching]] [--blame <path> | --file-history <path> | --activity <tab> | --settings <tab> | --merge-editor <path> [--accept ours|theirs|both|base]] [--reflog] [--apply-patch <path,...>] [--open-menu repository|primary] [--action <id>] [--print-file-menu <path>] [--perform <json>] [--stashes [--stash-button apply|pop|drop|branch]] [--working-copy [--select-path <path>] [--toggle-row <row>] [--layout list|tree|flat]] [--range-diff[=<ranges>] [--select-pair <n>] [--menu-pair <n>]] [--repositories | --quick-open <query>] [--tab <location>]...`
+//! `amonhen-gtk [<path>] [--snapshot <png>] [--edit-worktree <path>] [--measure-scroll [--scroll-rows <n>] | --measure-diff-scroll [--scroll-rows <n>] | --merge-editor <path> --measure-merge-scroll | --measure-select <n>] [--print-menus] [--scroll-to <row> | --select-rows <row,...> | --select-ref <name>] [--menu-ref <name> | --menu-row <row> [--menu-item <title>]] [--search <query> [--only-matching]] [--blame <path> | --file-history <path> | --activity <tab> | --settings <tab> | --merge-editor <path> [--accept ours|theirs|both|base]] [--reflog] [--apply-patch <path,...>] [--open-menu repository|primary] [--action <id>] [--print-file-menu <path>] [--perform <json>] [--stashes [--stash-button apply|pop|drop|branch]] [--working-copy [--select-path <path>] [--toggle-row <row>] [--layout list|tree|flat]] [--range-diff[=<ranges>] [--select-pair <n>] [--menu-pair <n>]] [--repositories | --quick-open <query>] [--tab <location>]...`
 
 mod actions;
 mod activity;
@@ -116,6 +116,8 @@ struct Args {
     measure_scroll: bool,
     /// 出している差分を自動でスクロールして、1 フレームの時間と折り返しの作り直しの時間を測って終わる。
     measure_diff_scroll: bool,
+    /// 開いたマージエディタ（`--merge-editor`）を自動でスクロールして、1 フレームの時間を測って終わる。
+    measure_merge_scroll: bool,
     /// 見出しのメニューの中身を出して終わる（操作の表を作り直す前と後で比べる用）。
     print_menus: bool,
     /// History の行をこの数だけ順に選び、詳細と差分が出るまでの時間を測って終わる。
@@ -224,6 +226,7 @@ fn parse_args() -> Result<Args, String> {
             "--snapshot" => args.snapshot = Some(it.next().ok_or("--snapshot <png>")?.into()),
             "--measure-scroll" => args.measure_scroll = true,
             "--measure-diff-scroll" => args.measure_diff_scroll = true,
+            "--measure-merge-scroll" => args.measure_merge_scroll = true,
             "--print-menus" => args.print_menus = true,
             "--measure-select" => {
                 let n = it.next().ok_or("--measure-select <n>")?;
@@ -698,6 +701,7 @@ fn launch(app: &gtk::Application, args: &Args) {
     let check = args.snapshot.is_some()
         || args.measure_scroll
         || args.measure_diff_scroll
+        || args.measure_merge_scroll
         || args.measure_select.is_some();
     if check {
         tabs::set_check_run();
@@ -3787,6 +3791,7 @@ fn after_first_show(
     let pending = pending.clone();
     let settings_shown = args.settings.is_some();
     let activity_shown = args.activity.is_some();
+    let merge_shown = args.merge_editor.is_some();
     // 並べ直しを待って撮るのを延ばした回数（50 ms ごと。5 秒で諦めて撮る）。
     let waits = Rc::new(Cell::new(0u32));
     if let Some(png) = args.snapshot.clone() {
@@ -3818,9 +3823,15 @@ fn after_first_show(
                             .find(|w| w.is_visible() && w.transient_for().as_ref() == Some(parent))
                     };
                     // `--settings`・`--activity` なら、その窓（どの窓のものでもない）から。
+                    // `--merge-editor` なら、別の窓に開いたマージエディタ（開くまで待つ）。
+                    if merge_shown && merge::any_window().is_none() && waits.get() < 100 {
+                        waits.set(waits.get() + 1);
+                        return glib::ControlFlow::Continue;
+                    }
                     let mut target: gtk::Window = settings::window()
                         .filter(|_| settings_shown)
                         .or_else(|| activity::Activity::window().filter(|_| activity_shown))
+                        .or_else(|| merge::any_window().filter(|_| merge_shown))
                         .unwrap_or_else(|| window.clone().upcast());
                     while let Some(front) = on(&target) {
                         target = front;
@@ -3836,12 +3847,16 @@ fn after_first_show(
                         Err(e) => eprintln!("撮れない: {e}"),
                     }
                     window.close();
-                    // Settings・Activity の窓はどの窓のものでもないので、残すとアプリが終わらない。
+                    // Settings・Activity・マージエディタの窓はどの窓のものでもないので、残すとアプリが終わらない。
+                    // マージエディタは、開いたときの自動の解決で Result が変わっていても確かめずに閉じる。
                     for other in [settings::window(), activity::Activity::window()]
                         .into_iter()
                         .flatten()
                     {
                         other.close();
+                    }
+                    if let Some(merge) = merge::any_window() {
+                        merge.destroy();
                     }
                     glib::ControlFlow::Break
                 }
@@ -3850,6 +3865,23 @@ fn after_first_show(
     } else if args.measure_scroll {
         let rows = args.scroll_rows.unwrap_or(measure::ROWS_PER_FRAME);
         measure::scroll(window, view, rows);
+    } else if args.measure_merge_scroll {
+        // マージエディタを開いて読み終えてから（`--merge-editor` は開いた後しばらく待つ）。
+        let rows = args.scroll_rows.unwrap_or(3.0);
+        let (w, v) = (window.downgrade(), view.downgrade());
+        glib::timeout_add_local(std::time::Duration::from_millis(50), move || {
+            let (Some(window), Some(view)) = (w.upgrade(), v.upgrade()) else {
+                return glib::ControlFlow::Break;
+            };
+            if (view.is_mapped() && !view.is_settled())
+                || pending.get() > 0
+                || merge::any_window().is_none()
+            {
+                return glib::ControlFlow::Continue;
+            }
+            measure::merge_scroll(&window, rows);
+            glib::ControlFlow::Break
+        });
     } else if args.measure_diff_scroll {
         // 差分を読み終えてから（`--snapshot` と同じく、読んでいるものがなくなるまで待つ）。
         let rows = args.scroll_rows.unwrap_or(3.0);

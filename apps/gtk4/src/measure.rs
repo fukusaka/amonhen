@@ -232,6 +232,96 @@ pub fn diff_scroll(window: &gtk::ApplicationWindow, rows_per_frame: f64) {
     });
 }
 
+/// `--measure-merge-scroll`: 開いたマージエディタ（`--merge-editor`）の Result の欄を毎フレーム決まった行数だけ
+/// スクロールし（ほかの欄と帯もついてくる）、1 フレームのメインスレッドの時間を測る。
+pub fn merge_scroll(window: &gtk::ApplicationWindow, rows_per_frame: f64) {
+    // マージエディタの窓（なければ、この窓の中。Working Copy に埋め込んだもの）の、書ける文字の欄（Result）。
+    let host: gtk::Window = crate::merge::any_window().unwrap_or_else(|| window.clone().upcast());
+    let mut result: Option<gtk::TextView> = None;
+    let mut stack: Vec<gtk::Widget> = vec![host.clone().upcast()];
+    while let Some(w) = stack.pop() {
+        if let Some(t) = w.downcast_ref::<gtk::TextView>()
+            && t.is_editable()
+            && t.is_mapped()
+        {
+            result = Some(t.clone());
+            break;
+        }
+        let mut child = w.first_child();
+        while let Some(c) = child {
+            child = c.next_sibling();
+            stack.push(c);
+        }
+    }
+    let Some(result) = result else {
+        eprintln!("マージエディタがない");
+        window.close();
+        return;
+    };
+    let Some(clock) = result.frame_clock() else {
+        eprintln!("frame clock がない");
+        return;
+    };
+    let record = Rc::new(RefCell::new(Record::default()));
+    let r = record.clone();
+    let update = clock.connect_update(move |_| {
+        r.borrow_mut().started = Some(Instant::now());
+    });
+    let r = record.clone();
+    let after = clock.connect_after_paint(move |clock| {
+        let mut r = r.borrow_mut();
+        if let Some(t) = r.started.take() {
+            r.work.push(t.elapsed().as_secs_f64() * 1000.0);
+        }
+        let time = clock.frame_time();
+        if let Some(last) = r.last_frame {
+            r.intervals.push((time - last) as f64 / 1000.0);
+        }
+        r.last_frame = Some(time);
+    });
+    let lines = result.buffer().line_count();
+    let frame = std::cell::Cell::new(0);
+    let window = window.downgrade();
+    let handlers = RefCell::new(Some((update, after)));
+    result.add_tick_callback(move |view, clock| {
+        frame.set(frame.get() + 1);
+        let frame = frame.get();
+        let adj = view.vadjustment().expect("vadjustment");
+        let max = adj.upper() - adj.page_size();
+        let line = view.line_yrange(&view.buffer().start_iter()).1.max(1) as f64;
+        adj.set_value((adj.value() + rows_per_frame * line).min(max));
+        if frame < FRAMES && adj.value() < max {
+            return glib::ControlFlow::Continue;
+        }
+        if let Some((update, after)) = handlers.take() {
+            clock.disconnect(update);
+            clock.disconnect(after);
+        }
+        let r = record.borrow();
+        println!(
+            "merge lines {lines}, wrap {}\nframes {frame}\n\
+             main thread per frame: p50 {} / p95 {} / max {} ms\n\
+             frame interval: p50 {} / p95 {} ms",
+            crate::diff::wrap_lines(),
+            percentile(&r.work, 0.5),
+            percentile(&r.work, 0.95),
+            percentile(&r.work, 1.0),
+            percentile(&r.intervals, 0.5),
+            percentile(&r.intervals, 0.95),
+        );
+        if let Some(w) = view.root().and_downcast::<gtk::Window>()
+            && crate::merge::any_window().as_ref() == Some(&w)
+        {
+            // 開いたときの自動の解決で Result が変わっていても、確かめずに閉じる。
+            w.destroy();
+        }
+        if let Some(w) = window.upgrade() {
+            w.close();
+        }
+        glib::ControlFlow::Break
+    });
+}
+
 fn percentile(values: &[f64], p: f64) -> String {
     if values.is_empty() {
         return "-".into();
