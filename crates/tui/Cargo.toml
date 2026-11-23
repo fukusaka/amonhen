@@ -12,6 +12,7 @@ amonhen-front.workspace = true
 amonhen-layout.workspace = true
 amonhen-model.workspace = true
 amonhen-projection.workspace = true
+amonhen-remote.workspace = true
 # ratatui の本体（セルのバッファ・フレームの差分）とバックエンドだけを使う。部品（ratatui-widgets）は入れない:
 # 画面はどれも自前で描く
 ratatui-core = { version = "0.1.2", features = ["std"] }
