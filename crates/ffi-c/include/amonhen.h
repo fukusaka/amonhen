@@ -585,6 +585,19 @@ char *amonhen_diagram_sample(void);
 char *amonhen_mermaid_theme_parse(const char *text);
 
 /**
+ * `amonhen_markdown_parse` と同じで、図（gantt）の日付を FE の時間帯で数える。`offset` が NULL なら UTC。
+ * `context` は `offset` に渡す（この関数から戻るまで使う。どのスレッドから呼んでもよいものにする）。
+ *
+ * # Safety
+ * `amonhen_markdown_parse` と同じ。`offset` は、`context` を渡してどのスレッドから呼んでもよいこと。
+ */
+char *amonhen_markdown_parse_in_zone(const uint8_t *text,
+                                     uintptr_t len,
+                                     const char *github,
+                                     const void *context,
+                                     double (*offset)(const void *context, double utc_ms));
+
+/**
  * この機械の git の版（`2.39.5`）。読めなければ NULL。`amonhen_string_free` で解放する。git を起動する
  * ことがあるので（初めの 1 回だけ）、裏のスレッドで呼ぶ。
  */

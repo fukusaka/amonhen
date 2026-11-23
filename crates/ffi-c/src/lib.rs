@@ -6,7 +6,7 @@
 
 use amonhen_model::tr;
 use std::cell::RefCell;
-use std::ffi::{CStr, CString, c_char};
+use std::ffi::{CStr, CString, c_char, c_void};
 use std::mem::MaybeUninit;
 use std::sync::Arc;
 
@@ -516,6 +516,51 @@ pub unsafe extern "C" fn amonhen_mermaid_theme_parse(text: *const c_char) -> *mu
             std::ptr::null_mut()
         }
     }
+}
+
+/// FE が渡す時間帯（gantt の日付を数える）。`offset` は、UTC の時刻 `utc_ms`（1970 年からのミリ秒）での地方時と
+/// UTC の差（ミリ秒、地方時 − UTC）を返す。pele の描画のスレッド（メインではない）から何度も呼ばれる。
+struct ForeignZone {
+    context: usize,
+    offset: extern "C" fn(context: *const c_void, utc_ms: f64) -> f64,
+}
+
+impl amonhen_core::diagram::TimeZone for ForeignZone {
+    fn offset_ms(&self, utc_ms: f64) -> f64 {
+        (self.offset)(self.context as *const c_void, utc_ms)
+    }
+}
+
+/// `amonhen_markdown_parse` と同じで、図（gantt）の日付を FE の時間帯で数える。`offset` が NULL なら UTC。
+/// `context` は `offset` に渡す（この関数から戻るまで使う。どのスレッドから呼んでもよいものにする）。
+///
+/// # Safety
+/// `amonhen_markdown_parse` と同じ。`offset` は、`context` を渡してどのスレッドから呼んでもよいこと。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_markdown_parse_in_zone(
+    text: *const u8,
+    len: usize,
+    github: *const c_char,
+    context: *const c_void,
+    offset: Option<extern "C" fn(context: *const c_void, utc_ms: f64) -> f64>,
+) -> *mut c_char {
+    let bytes = if len == 0 || text.is_null() {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(text, len) }
+    };
+    let text = String::from_utf8_lossy(bytes);
+    let github = str_arg(github).ok().filter(|g| !g.is_empty());
+    let zone = offset.map(|offset| {
+        std::sync::Arc::new(ForeignZone {
+            context: context as usize,
+            offset,
+        }) as std::sync::Arc<dyn amonhen_core::diagram::TimeZone>
+    });
+    CString::new(amonhen_core::markdown::parse_json_in_zone(
+        &text, github, zone,
+    ))
+    .map_or(std::ptr::null_mut(), CString::into_raw)
 }
 
 /// この機械の git の版（`2.39.5`）。読めなければ NULL。`amonhen_string_free` で解放する。git を起動する
