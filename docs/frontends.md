@@ -276,8 +276,8 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Find inside the details | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: ⌘F searches the whole main view; diffs not loaded yet aren't searched.<br>TUI: `/` in the details, `n` `N` for the next and previous. |
 | Changed files as the diff's own file headers (folded at first, sticky, one bar of controls) | ✓ | ✓ | ✓ | ✓ | ✓ | △ | CLI: `show`.<br>VSCode: The header's ⋯ opens its right-click menu; Open opens VSCode's diff editor.<br>TUI: `[` `]` move between files; no sticky headers or folding. |
 | Changed files as a list or a tree whose folders fold | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: Above the diff; `t` switches to the tree, a click folds a folder (`z` all) or goes to a file's diff. |
-| Widen a hunk's context, show a whole file | ✓ | ✓ | ✓ | — | n/a | ✓ | TUI: `+` widens the file in view by 20 lines, `F` shows all of it. |
-| Ignore whitespace (at line ends, changes in amount, all) | ✓ | ✓ | ✓ | — | ✓ | ✓ | CLI: `show -w`, `-b`, `--ignore-space-at-eol`.<br>TUI: `w` in the details goes through them in turn. |
+| Widen a hunk's context, show a whole file | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: With the engine; the ⇕ on a hunk header widens the file by 20 lines, Show Whole File is on the file's ⋯.<br>TUI: `+` widens the file in view by 20 lines, `F` shows all of it. |
+| Ignore whitespace (at line ends, changes in amount, all) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: With the engine.<br>CLI: `show -w`, `-b`, `--ignore-space-at-eol`.<br>TUI: `w` in the details goes through them in turn. |
 | Compare images (side by side, swipe, onion skin, differing pixels) | ✓ | ✓ | ✓ | — | n/a | — | |
 | All Files: the tree at the commit and a file's contents with the commit's lines marked | ✓ | ✓ | ✓ | — | n/a | — | |
 | All Files previews: zoomable images, SVG picture and mobile check, formatted Markdown, Quick Look for binaries | ✓ | ✓ | △ | — | n/a | — | GTK4: GNOME's previewer (or the default app) instead of Quick Look; the SVG pictures are drawn by librsvg.<br>Windows: Zoomable images, SVG pictures and formatted Markdown; no mobile check for SVG and no preview of binaries yet. |

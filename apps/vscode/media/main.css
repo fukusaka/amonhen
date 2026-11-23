@@ -1364,6 +1364,34 @@ button.sheet-list-item:hover {
   font-size: 0.9em;
 }
 
+.hunk-head .widen {
+  flex: none;
+  margin-right: 6px;
+  padding: 0 4px;
+  color: var(--vscode-descriptionForeground);
+  background: transparent;
+}
+
+.hunk-head .widen:hover {
+  color: var(--vscode-foreground);
+  background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
+}
+
+.hunk-head .widen + .range {
+  flex: 1;
+}
+
+.files-bar select {
+  padding: 1px 4px;
+  color: var(--vscode-dropdown-foreground);
+  background: var(--vscode-dropdown-background);
+  border: 1px solid var(--vscode-dropdown-border, transparent);
+}
+
+.files-bar select.on {
+  border-color: var(--vscode-focusBorder);
+}
+
 .lines {
   font-family: var(--vscode-editor-font-family);
   font-size: var(--vscode-editor-font-size);

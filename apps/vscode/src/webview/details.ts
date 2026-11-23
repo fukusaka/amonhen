@@ -4,7 +4,7 @@
  * 拡張ホストに求める。間の仕切りはドラッグでき、メッセージの欄は中身に合わせ（列の半分まで）、⤢ で列いっぱいに広げる
  */
 import type { FileDiff } from '../diff/fileDiff.ts';
-import type { CommitDetails, DetailsExtras, DetailsLayout, PairMode, Person, SelectionView } from '../history/protocol.ts';
+import type { CommitDetails, DetailsExtras, DetailsLayout, DiffChoices, DiffWhitespace, PairMode, Person, SelectionView } from '../history/protocol.ts';
 import { el, formatDate, getState, post, updateState } from './api.ts';
 import { type FileDir, makeFileTree } from '../workingCopy/fileList.ts';
 import { COLLAPSE_ABOVE, isGenerated, type LineCounts, lineCounts, renamedPath } from '../history/stackedFiles.ts';
@@ -23,17 +23,23 @@ function withRecorded(text: string, recorded: Person | undefined): Node | string
   return span;
 }
 
-/** ファイルの行と差分の見出しの右クリックメニュー（package.json の webview/context）に渡す情報 */
-function fileContext(oid: string, path: string): string {
-  return JSON.stringify({ webviewSection: 'commitFile', oid, path, preventDefaultContextMenuItems: true });
+/**
+ * ファイルの差分の見出しの右クリックメニュー（package.json の webview/context）に渡す情報。`wide` なら Show Whole
+ * File も出す
+ */
+function fileContext(oid: string, path: string, wide: boolean): string {
+  return JSON.stringify({ webviewSection: 'commitFile', oid, path, commitFileWide: wide, preventDefaultContextMenuItems: true });
 }
 
 export interface DetailsPane {
   readonly root: HTMLElement;
   /** 出しているコミット */
   readonly shownOid: string | undefined;
-  /** `focus` があれば、そのファイルの差分を開いてその位置に移る（File History） */
-  show(details: CommitDetails, focus?: string): void;
+  /**
+   * `focus` があれば、そのファイルの差分を開いてその位置に移る（File History）。`choices` があれば、無視する空白と
+   * 前後の行を選べる（エンジンだけ）
+   */
+  show(details: CommitDetails, focus?: string, choices?: DiffChoices): void;
   showDiff(oid: string, path: string, diff: FileDiff): void;
   /** いくつも選んだコミット。読んでいる間は `view` なし */
   showSelection(state: SelectionState): void;
@@ -52,6 +58,7 @@ export interface SelectionState {
   error?: string;
   onPair?: (pair: PairMode) => void;
   onCommit?: (row: number) => void;
+  choices?: DiffChoices;
 }
 
 const PAIR_NOTES: Record<PairMode, string> = {
@@ -69,6 +76,20 @@ export function setDetailsLayout(next: DetailsLayout): void {
   layout = next;
   for (const apply of panes) apply(layout);
 }
+
+/** 右クリックの Show Whole File: そのコミットを出している欄が、ファイル全体を頼む */
+const wholeFiles = new Set<(oid: string, path: string) => void>();
+
+export function showWholeFile(oid: string, path: string): void {
+  for (const show of wholeFiles) show(oid, path);
+}
+
+const WHITESPACE: { value: DiffWhitespace; label: string; tip: string }[] = [
+  { value: 'exact', label: 'Compare Whitespace', tip: 'Lines that differ only in whitespace are changes' },
+  { value: 'at-eol', label: 'Ignore Whitespace at Line Ends', tip: 'Ignore whitespace at the end of lines (git diff --ignore-space-at-eol)' },
+  { value: 'change', label: 'Ignore Changes in Whitespace', tip: 'Ignore changes in the amount of whitespace (git diff -b)' },
+  { value: 'all', label: 'Ignore All Whitespace', tip: 'Ignore all whitespace when comparing lines (git diff -w)' },
+];
 
 /** 詳細に並べた 1 ファイル（差分の見出しが、変わったファイルの一覧を兼ねる） */
 interface FileSection {
@@ -116,6 +137,15 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
   let foldedDirs = new Set<string>();
   /** 1 つのコミットなら、その ID（帯の Open All） */
   let openAll: string | undefined;
+  /** 無視する空白と前後の行を選べるか（エンジンだけ）。今の選び方 */
+  let choices: DiffChoices | undefined;
+  /** ファイルごとの前後の行（3 から広げたもの。all はファイル全体） */
+  let contexts = new Map<string, number | 'all'>();
+  wholeFiles.add((oid, path) => {
+    const file = sections.get(path);
+    if (oid !== shownOid || !file || !choices) return;
+    widen(file, 'all');
+  });
 
   /** コミットの ID の並び（onParent があれば押すとその行に移る） */
   function commitLinks(oids: readonly string[]): HTMLElement {
@@ -139,8 +169,11 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
     return span;
   }
 
-  function show(d: CommitDetails, focus?: string): void {
+  function show(d: CommitDetails, focus?: string, next?: DiffChoices): void {
+    // 同じコミットを出し直す（空白を選び直した）なら、開いていたファイルは開いたまま
+    const reopen = d.oid === shownOid ? openPaths() : [];
     shownOid = d.oid;
+    choices = next;
     const [subject = '', ...rest] = d.message.replace(/\n+$/, '').split('\n');
     const body = rest.join('\n').replace(/^\n+/, '');
 
@@ -172,6 +205,7 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
     if (d.parents.length > 1) parts.push(el('div', 'selection-note', 'The changes are shown against the first parent.'));
     place(parts);
     fileSections(d.oid, d.files, true, d.oid);
+    reopenFiles(reopen);
     if (focus) {
       const file = sections.get(focus);
       if (file) {
@@ -237,6 +271,21 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
       barButton('Tree', 'Show the changed files in their folders', layout.tree, () => post({ type: 'detailsLayout', layout: { tree: true } })),
     );
     const items: Node[] = [total, spacer, switcher];
+    if (choices) {
+      const current = choices.whitespace;
+      const select = el('select');
+      select.classList.toggle('on', current !== 'exact');
+      for (const w of WHITESPACE) {
+        const option = el('option', '', w.label);
+        option.value = w.value;
+        option.title = w.tip;
+        option.selected = w.value === current;
+        select.append(option);
+      }
+      select.title = 'Whitespace to ignore when comparing lines (as git diff does)';
+      select.addEventListener('change', () => post({ type: 'whitespace', whitespace: select.value as DiffWhitespace }));
+      items.push(select);
+    }
     if (layout.tree && diffs?.querySelector('.dir-head')) {
       const anyFolded = foldedDirs.size > 0;
       items.push(
@@ -377,6 +426,7 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
     );
     sections = new Map();
     foldedDirs = new Set();
+    contexts = new Map();
     openAll = items.length > 0 ? allOid : undefined;
     requestDiff = (path) => post({ type: 'commitDiff', oid, path });
     diffs = el('div', 'commit-diffs');
@@ -389,7 +439,7 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
       if (f.status) head.append(el('span', `status s-${f.status}`, f.status));
       head.append(el('span', 'path'));
       if (single) {
-        head.dataset.vscodeContext = fileContext(oid, f.path);
+        head.dataset.vscodeContext = fileContext(oid, f.path, choices !== undefined);
         const open = el('button', 'head-button', 'Open');
         open.title = 'Open the diff in the editor';
         open.addEventListener('click', () => post({ type: 'openFile', oid, path: f.path }));
@@ -437,6 +487,36 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
     requestDiff(file.path);
   }
 
+  /** そのファイルの前後の行を広げる（`to` がなければ 20 行増やす）。差分は求め直す */
+  function widen(file: FileSection, to?: 'all'): void {
+    const now = contexts.get(file.path) ?? 3;
+    if (now === 'all') return;
+    const context = to ?? now + 20;
+    contexts.set(file.path, context);
+    file.chosen = true;
+    setCollapsed(file, false);
+    file.requested = true;
+    post({ type: 'fileContext', oid: shownOid!, path: file.path, context });
+    renderBar();
+  }
+
+  /** 開いているファイル */
+  function openPaths(): string[] {
+    return [...sections.values()].filter((f) => !f.section.classList.contains('collapsed')).map((f) => f.path);
+  }
+
+  /** 出し直した後で、前に開いていたファイルを開き直す */
+  function reopenFiles(paths: readonly string[]): void {
+    for (const path of paths) {
+      const file = sections.get(path);
+      if (!file) continue;
+      file.chosen = true;
+      setCollapsed(file, false);
+      request(file);
+    }
+    if (paths.length > 0) renderBar();
+  }
+
   function setCollapsed(file: FileSection, collapsed: boolean): void {
     file.section.classList.toggle('collapsed', collapsed);
     file.head.querySelector('.chevron')!.textContent = collapsed ? '▸' : '▾';
@@ -451,8 +531,10 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
     else file.head.append(countsLabel(counts));
   }
 
-  function showSelection({ count, view, error, onPair, onCommit }: SelectionState): void {
+  function showSelection({ count, view, error, onPair, onCommit, choices: next }: SelectionState): void {
+    const reopen = view && view.key === shownOid ? openPaths() : [];
     shownOid = view?.key;
+    choices = view ? next : undefined;
     meta = undefined;
     const parts: Node[] = [el('div', 'subject', `${count} commits selected`)];
     if (!view) {
@@ -492,6 +574,7 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
     }
     place(parts);
     fileSections(view.key, view.files, false);
+    reopenFiles(reopen);
     if (view.files.length === 0) scroller.replaceChildren(el('div', 'empty', 'No changes'));
   }
 
@@ -500,7 +583,8 @@ export function createDetailsPane(onParent?: (oid: string) => void): DetailsPane
     if (oid !== shownOid || !file) {
       return;
     }
-    file.section.replaceChildren(file.head, ...renderDiffBody(diff));
+    const all = contexts.get(path) === 'all';
+    file.section.replaceChildren(file.head, ...renderDiffBody(diff, choices && !all ? { widen: () => widen(file) } : {}));
     const counts = lineCounts(diff);
     const had = file.counts;
     setCounts(file, counts);

@@ -14,6 +14,8 @@ import { GraphBuilder } from '../history/graph.ts';
 import type {
   CommitDetails,
   DetailsExtras,
+  DiffChoices,
+  DiffWhitespace,
   HistoryHostMessage,
   HistoryWebviewMessage,
   PairMode,
@@ -173,8 +175,12 @@ export class HistoryController implements vscode.Disposable {
   private base: DaemonHistory | undefined;
   /** 今の検索。`rows` は `history`（もとの History）の行 */
   private search: { query: string; history: unknown; rows: number[] } | undefined;
-  /** いくつも選んでいる行（昇順）と、その差分 */
-  private selection: { key: string; rows: number[]; diffs: Map<string, FileDiff> } | undefined;
+  /** いくつも選んでいる行（昇順）と、その差分。`token`・`pair` は頼まれたときのもの（空白を選び直したら読み直す） */
+  private selection: { key: string; token: number; rows: number[]; pair: PairMode; diffs: Map<string, FileDiff> } | undefined;
+  /** 差分で無視する空白（エンジンだけ。覚えない。選び直したら、出している詳細を読み直す） */
+  private whitespace: DiffWhitespace = 'exact';
+  /** コミット（か選択の key）の差分のファイルの並び（`commitDiff` の contexts はファイルの番号で頼む） */
+  private readonly fileOrder = new Map<string, string[]>();
   private selectionRequest = 0;
   private searchAbort: AbortController | undefined;
   /** 畳む設定で、開いている merge */
@@ -321,6 +327,12 @@ export class HistoryController implements vscode.Disposable {
       case 'commitDiff':
         await this.sendCommitDiff(message.oid, message.path).catch(showError);
         break;
+      case 'fileContext':
+        await this.sendFileContext(message.oid, message.path, message.context).catch(showError);
+        break;
+      case 'whitespace':
+        await this.setWhitespace(message.whitespace).catch(showError);
+        break;
       case 'openFile': {
         const details = this.details.get(message.oid);
         const file = details?.files.find((f) => f.path === message.path);
@@ -375,16 +387,17 @@ export class HistoryController implements vscode.Disposable {
     if (!daemon) return;
     const request = ++this.selectionRequest;
     const sorted = [...rows].sort((a, b) => a - b);
-    this.selection = { key: `selection:${token}`, rows: sorted, diffs: new Map() };
+    this.selection = { key: `selection:${token}`, token, rows: sorted, pair, diffs: new Map() };
     const current = this.selection;
     try {
       const [diff, listed] = await Promise.all([
-        daemon.client.call({ op: 'commitDiff', history: daemon.history, rows: sorted, pair }),
+        daemon.client.call({ op: 'commitDiff', history: daemon.history, rows: sorted, pair, ...this.whitespaceArg() }),
         daemon.client.call({ op: 'historyRows', history: daemon.history, rows: sorted.slice(0, SELECTION_LIST) }),
       ]);
       if (request !== this.selectionRequest) return;
       const index = new Map<number, DiffLine>();
       current.diffs = splitCommitDiff(diff, index);
+      this.rememberOrder(current.key, diff.json['files']);
       void this.loadSyntax(daemon.client, diff.json['view'], index, current.key, current.diffs);
       const selection = diff.json['selection'] as { kind: SelectionView['kind'] };
       const commits = readRows(listed).map((r) => ({ row: r.row, oid: r.oid, subject: r.subject, author: r.author }));
@@ -399,6 +412,7 @@ export class HistoryController implements vscode.Disposable {
           files: (diff.json['files'] as SelectionView['files'] | undefined) ?? [],
           commits,
         },
+        choices: this.choices(),
       });
     } catch (err) {
       if (request === this.selectionRequest) {
@@ -605,7 +619,7 @@ export class HistoryController implements vscode.Disposable {
         this.details.delete(this.details.keys().next().value!);
       }
     }
-    this.post({ type: 'details', details: { ...details, refs: this.labels.get(oid) ?? [] } });
+    this.post({ type: 'details', details: { ...details, refs: this.labels.get(oid) ?? [] }, ...(this.daemon ? { choices: this.choices() } : {}) });
     // 署名の検証と子のコミットは時間がかかるので、後から送る（エンジンだけ）
     void this.readExtras(oid)
       .then((extras) => extras && this.post({ type: 'detailsExtras', extras }))
@@ -616,7 +630,7 @@ export class HistoryController implements vscode.Disposable {
   private async daemonDetails(client: DaemonClient, oid: string): Promise<Omit<CommitDetails, 'refs'>> {
     const [info, diff] = await Promise.all([
       client.call({ op: 'run', command: { op: 'commitInfo', oid } }),
-      client.call({ op: 'commitDiff', id: oid }),
+      client.call({ op: 'commitDiff', id: oid, ...this.whitespaceArg() }),
     ]);
     const i = info.json['info'] as Record<string, unknown>;
     if (info.json['ok'] !== true || !i) {
@@ -626,6 +640,7 @@ export class HistoryController implements vscode.Disposable {
     if (this.signedKinds.size > DETAILS_CACHE) this.signedKinds.delete(this.signedKinds.keys().next().value!);
     const index = new Map<number, DiffLine>();
     const split = splitCommitDiff(diff, index);
+    this.rememberOrder(oid, diff.json['files']);
     for (const [path, d] of split) {
       this.diffs.set(`${oid}:${path}`, d);
     }
@@ -668,6 +683,55 @@ export class HistoryController implements vscode.Disposable {
     } catch {
       // 色なしのまま
     }
+  }
+
+  /** 詳細の差分で選べること（エンジンで読んでいるときだけ） */
+  private choices(): DiffChoices {
+    return { whitespace: this.whitespace };
+  }
+
+  /** `commitDiff` に渡す、無視する空白（無視しなければなし） */
+  private whitespaceArg(): { whitespace?: DiffWhitespace } {
+    return this.whitespace === 'exact' ? {} : { whitespace: this.whitespace };
+  }
+
+  private rememberOrder(key: string, files: unknown): void {
+    this.fileOrder.set(key, ((files as { path: string }[] | undefined) ?? []).map((f) => f.path));
+    while (this.fileOrder.size > DETAILS_CACHE) this.fileOrder.delete(this.fileOrder.keys().next().value!);
+  }
+
+  /** 無視する空白を選び直した: 覚えた差分を捨て、出している詳細（か選んだ行の差分）を読み直す */
+  private async setWhitespace(whitespace: DiffWhitespace): Promise<void> {
+    if (whitespace === this.whitespace) return;
+    this.whitespace = whitespace;
+    this.details.clear();
+    this.diffs.clear();
+    this.sentDiffs.clear();
+    const selection = this.selection;
+    if (selection) {
+      await this.sendSelection(selection.token, selection.rows, selection.pair);
+    } else if (this.selectedOid) {
+      await this.sendDetails(this.selectedOid);
+    }
+  }
+
+  /** そのファイルの差分を、前後 `context` 行（all ならファイル全体）で読み直して送る（エンジンだけ） */
+  private async sendFileContext(oid: string, path: string, context: number | 'all'): Promise<void> {
+    const daemon = this.daemon;
+    const index = this.fileOrder.get(oid)?.indexOf(path) ?? -1;
+    if (!daemon || index < 0) return;
+    const selection = this.selection?.key === oid ? this.selection : undefined;
+    const target = selection ? { history: daemon.history, rows: selection.rows, pair: selection.pair } : { id: oid };
+    const reply = await daemon.client.call({ op: 'commitDiff', ...target, contexts: { [index]: context }, ...this.whitespaceArg() });
+    const lines = new Map<number, DiffLine>();
+    const split = splitCommitDiff(reply, lines);
+    const diff = split.get(path);
+    if (!diff) return;
+    if (selection) selection.diffs.set(path, diff);
+    else this.diffs.set(`${oid}:${path}`, diff);
+    this.sentDiffs.add(`${oid}:${path}`);
+    this.post({ type: 'commitDiff', oid, path, diff });
+    void this.loadSyntax(daemon.client, reply.json['view'], lines, oid, new Map([[path, diff]]));
   }
 
   private async sendCommitDiff(oid: string, path: string): Promise<void> {
