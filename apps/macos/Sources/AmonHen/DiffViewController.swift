@@ -2527,8 +2527,8 @@ extension CommitDetailViewController {
         diffView.fileMarks = marks
         diffView.fileNotes = notes
         updatePendingCounts()
-        if viewSwitch.selectedSegment != 0 { setFilesMode(false) }
         filesBrowser = nil
+        setFilesMode(false)
         reshowStacked(keepScroll: false)
         applySnapshotOptions()
     }
@@ -2650,6 +2650,8 @@ extension CommitDetailViewController {
     /// 帯の部品を、今の見せ方で効くものだけにする（すべてのファイルでは差分にしか効かないものを隠す、フォルダの
     /// 操作はツリーのとき）。
     fileprivate func updateBar() {
+        // その時点の木は 1 つのコミットにだけある（stash・複数のコミット・範囲では押せない）。
+        viewSwitch.setEnabled(commitHex != nil && shownCommit != nil, forSegment: 1)
         let files = viewSwitch.selectedSegment == 1
         let tree = treeSwitch.selectedSegment == 1
         expandAllButton.isHidden = files
