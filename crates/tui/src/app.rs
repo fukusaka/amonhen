@@ -3018,6 +3018,39 @@ impl App {
                 }
                 return;
             }
+            // push・pull で送る・取り込むコミット: まだ聞いていれば、件名を確かめる文に足す。
+            "syncCommits" => {
+                let info = &reply["info"];
+                let subjects: Vec<String> = (info["commits"].as_array().into_iter().flatten())
+                    .filter_map(|c| c["subject"].as_str())
+                    .map(|s| format!("“{s}”"))
+                    .collect();
+                let count = info["count"].as_u64().unwrap_or(0) as usize;
+                let more = count.saturating_sub(subjects.len());
+                if subjects.is_empty() {
+                    return;
+                }
+                let mut list = subjects.join(", ");
+                if more > 0 {
+                    list.push_str(&tr!(", {count} more", count = more));
+                }
+                // まだ push・pull を聞いているときだけ（答えた後に届いたら捨てる）。
+                let add = |ask: &mut String| {
+                    let syncing = [tr!("Push "), tr!("Pull ")]
+                        .iter()
+                        .any(|p| ask.starts_with(p.as_str()));
+                    if syncing && !ask.contains(&list) {
+                        *ask = format!("{ask} ({list})");
+                    }
+                };
+                if let Some((ask, _, _)) = &mut self.confirm {
+                    add(ask);
+                } else if let Some((ask, _)) = &mut self.choices {
+                    add(ask);
+                }
+                self.dirty = true;
+                return;
+            }
             "fetchConfig" => {
                 let entries = reply["info"]["entries"].clone();
                 self.ask_fetch(&entries);
@@ -3256,7 +3289,34 @@ impl App {
             }
             return;
         }
-        self.run("pull", tr!("Pulling…"), json!({"op": "pull"}));
+        // 上流に取り込むものがあれば、その数と件名を見せて確かめる（アプリの Pull のシート）。なければ、そのまま
+        // （fetch して、新しく来たものを取り込む）。
+        match (self.behind, self.upstream.clone()) {
+            (1.., Some(upstream)) => {
+                self.confirm = Some((
+                    match self.behind {
+                        1 => tr!("Pull 1 commit from {upstream}?", upstream = upstream),
+                        n => tr!(
+                            "Pull {count} commits from {upstream}?",
+                            count = n,
+                            upstream = upstream
+                        ),
+                    },
+                    tr!("pull"),
+                    Request::Run {
+                        name: "pull",
+                        command: json!({"op": "pull"}),
+                    },
+                ));
+                self.send(Request::Run {
+                    name: "syncCommits",
+                    command: json!({"op": "between", "base": "HEAD", "tip": upstream,
+                        "limit": 3}),
+                });
+                self.dirty = true;
+            }
+            _ => self.run("pull", tr!("Pulling…"), json!({"op": "pull"})),
+        }
     }
 
     /// 分かれているときの pull の選択。`conflicts` は上流を merge したときにコンフリクトしそうなファイル（分から
@@ -3424,6 +3484,12 @@ impl App {
         // `t` で、ほかのブランチへ送れる（`ask_push_to`。選ぶ前に横取りするので、中身は送らない）。今のブランチだけ。
         self.push_to_offered = current;
         self.pushing_to = format!("{remote}/{remote_branch}");
+        // 送るコミットの件名を、裏で読んで確かめる文に足す（アプリの Push のシートのコミットの一覧の代わり）。
+        self.send(Request::Run {
+            name: "syncCommits",
+            command: json!({"op": "between", "base": format!("{remote}/{remote_branch}"),
+                "tip": branch, "limit": 3}),
+        });
         if behind > 0 {
             let mut options = vec![
                 ('y', tr!("push"), push(remote, remote_branch, false, false)),
