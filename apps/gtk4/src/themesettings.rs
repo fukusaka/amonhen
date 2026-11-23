@@ -305,7 +305,6 @@ fn syntax_section() -> (gtk::Box, gtk::Box) {
     import.set_halign(gtk::Align::Start);
     let failure = settings::note("");
     failure.add_css_class("settings-error");
-    failure.set_visible(false);
     let imported = gtk::Box::new(gtk::Orientation::Vertical, 6);
     // 差分は、テーマに関係なく標準の色を使う（構文の色はテーマのまま）。
     let standard = gtk::Switch::new();
@@ -323,7 +322,6 @@ fn syntax_section() -> (gtk::Box, gtk::Box) {
     let diagram_syncing = Rc::new(std::cell::Cell::new(false));
     let mermaid_failure = settings::note("");
     mermaid_failure.add_css_class("settings-error");
-    mermaid_failure.set_visible(false);
     let mermaid_import = gtk::Button::with_label(&tr!("Import Mermaid Theme…"));
     mermaid_import.set_halign(gtk::Align::Start);
     let mermaid_imported = gtk::Box::new(gtk::Orientation::Vertical, 6);
@@ -428,7 +426,7 @@ fn syntax_section() -> (gtk::Box, gtk::Box) {
                 let Ok(files) = dialog.open_multiple_future(parent.as_ref()).await else {
                     return;
                 };
-                failure.set_visible(false);
+                show_row(&failure, false);
                 let mut themes = theme::imported_mermaid();
                 let mut chosen = None;
                 for file in files.iter::<gio::File>().flatten() {
@@ -453,7 +451,7 @@ fn syntax_section() -> (gtk::Box, gtk::Box) {
                                 file = path.file_name().unwrap_or_default().to_string_lossy(),
                                 error = e
                             ));
-                            failure.set_visible(true);
+                            show_row(&failure, true);
                         }
                     }
                 }
@@ -641,7 +639,7 @@ fn syntax_section() -> (gtk::Box, gtk::Box) {
             let Ok(files) = dialog.open_multiple_future(parent.as_ref()).await else {
                 return;
             };
-            failure.set_visible(false);
+            show_row(&failure, false);
             let mut themes = theme::imported();
             let mut chosen = Vec::new();
             for file in files.iter::<gio::File>().flatten() {
@@ -658,7 +656,7 @@ fn syntax_section() -> (gtk::Box, gtk::Box) {
                             file = path.file_name().unwrap_or_default().to_string_lossy(),
                             error = e
                         ));
-                        failure.set_visible(true);
+                        show_row(&failure, true);
                     }
                 }
             }
@@ -678,6 +676,9 @@ fn syntax_section() -> (gtk::Box, gtk::Box) {
     });
     refresh();
     diagram_refresh();
+    // 知らせは出すまで行ごと隠す（隠した部品の行が空いて見えないように）。
+    show_row(&failure, false);
+    show_row(&mermaid_failure, false);
     let d = diagram_refresh.clone();
     settings::connect_changed_while(&section, move |key| {
         if matches!(key, theme::DIAGRAM_COLORS | theme::IMPORTED_MERMAID_THEMES) {
