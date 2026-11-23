@@ -97,12 +97,17 @@ final class MarkdownView: NSView, NSTextViewDelegate {
 /// 「図の配色」で当てる（当てた絵は配色ごとに覚える）。テーマを変えても組み直さず、描き直すだけでよい。
 final class DiagramPicture {
     private let svg: String
+    /// 図の中で指定したテーマ（設定より先）。
+    private let own: MermaidThemeConfig?
     private var colored: [String: NSImage] = [:]
 
-    private init(svg: String) { self.svg = svg }
+    private init(svg: String, own: MermaidThemeConfig?) {
+        self.svg = svg
+        self.own = own
+    }
 
-    static func image(_ svg: String) -> NSImage? {
-        let picture = DiagramPicture(svg: svg)
+    static func image(_ svg: String, own: MermaidThemeConfig?) -> NSImage? {
+        let picture = DiagramPicture(svg: svg, own: own)
         // 大きさは配色によらないので、pele の既定の色で一度当てて測る。
         guard let first = MarkdownBlock.colorizeDiagram(svg, scheme: "pele", dark: false, theme: [:]).flatMap(NSImage.init(data:))
         else { return nil }
@@ -120,7 +125,9 @@ final class DiagramPicture {
         let dark = NSAppearance.currentDrawing().bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
         let scheme = Settings.diagramColors
         let themeName = dark ? Settings.syntaxThemeDark : Settings.syntaxThemeLight
-        let key = "\(scheme)\n\(themeName)\n\(dark)"
+        let imported = scheme.hasPrefix("mermaid-import:")
+            ? Settings.importedMermaidThemes[String(scheme.dropFirst("mermaid-import:".count))] : nil
+        let key = "\(scheme)\n\(themeName)\n\(dark)\n\(imported?.json ?? "")"
         if let image = colored[key] { return image }
         var theme: [String: Any] = [:]
         if scheme == "syntax" {
@@ -129,7 +136,8 @@ final class DiagramPicture {
             for (name, kind) in SyntaxTheme.kinds { kinds[name] = Self.hex(syntax.color(kind)) }
             theme = ["text": Self.hex(.labelColor), "background": Self.hex(.textBackgroundColor), "kinds": kinds]
         }
-        let image = MarkdownBlock.colorizeDiagram(svg, scheme: scheme, dark: dark, theme: theme).flatMap(NSImage.init(data:))
+        let image = MarkdownBlock.colorizeDiagram(svg, scheme: scheme, dark: dark, theme: theme, own: own, imported: imported)
+            .flatMap(NSImage.init(data:))
         colored[key] = image
         return image
     }
@@ -280,8 +288,8 @@ private struct MarkdownBuilder {
                     }
                 }
                 out.append(newline(style))
-            case .diagram(let language, let code, let svg, let error):
-                guard let picture = svg.flatMap(DiagramPicture.image) else {
+            case .diagram(let language, let code, let svg, let config, let error):
+                guard let picture = svg.flatMap({ DiagramPicture.image($0, own: config) }) else {
                     // 描けない図はコードとして見せ、理由を添える。
                     add([.code(language: language, text: code)], depth: depth, outer: outer, indent: indent)
                     if let error {

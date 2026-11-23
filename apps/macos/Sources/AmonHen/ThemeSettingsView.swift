@@ -1,3 +1,4 @@
+import AmonhenKit
 import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
@@ -107,13 +108,28 @@ struct SyntaxThemeSection: View {
                 ForEach(["default", "neutral", "dark", "forest", "base"], id: \.self) { name in
                     Text("Mermaid \(name)").tag("mermaid-\(name)")
                 }
+                ForEach(model.importedMermaidThemes.keys.sorted(), id: \.self) { name in
+                    Text(name).tag("mermaid-import:\(name)")
+                }
             }
             ThemePreview(light: model.syntaxThemeLight, dark: model.syntaxThemeDark, standardDiff: model.diffStandardColors)
             HStack {
                 Button(L("Import VSCode Theme…")) { importTheme() }
+                Button(L("Import Mermaid Theme…")) { importMermaidTheme() }
                 Spacer()
             }
             if let failure { Note(failure).foregroundStyle(.red) }
+            ForEach(model.importedMermaidThemes.keys.sorted(), id: \.self) { name in
+                HStack {
+                    Text(name)
+                    Text("Mermaid").foregroundStyle(.secondary)
+                    Spacer()
+                    Button(L("Remove")) {
+                        model.importedMermaidThemes[name] = nil
+                        if model.diagramColors == "mermaid-import:\(name)" { model.diagramColors = "syntax" }
+                    }
+                }
+            }
             ForEach(model.importedThemes, id: \.name) { theme in
                 HStack {
                     Text(theme.name)
@@ -133,6 +149,25 @@ struct SyntaxThemeSection: View {
         ForEach(themes.filter { $0.dark == dark }, id: \.name) { Text($0.name).tag($0.name) }
         Divider()
         ForEach(themes.filter { $0.dark != dark }, id: \.name) { Text($0.name).tag($0.name) }
+    }
+
+    /// mermaid-cli の設定ファイル（JSON）を読み込み、「図の配色」で選ぶ。名前はファイル名から。
+    private func importMermaidTheme() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        panel.allowsMultipleSelection = true
+        guard panel.runModal() == .OK else { return }
+        failure = nil
+        for url in panel.urls {
+            do {
+                let config = try MermaidThemeConfig.parse(String(contentsOf: url, encoding: .utf8))
+                let name = url.deletingPathExtension().lastPathComponent
+                model.importedMermaidThemes[name] = config
+                model.diagramColors = "mermaid-import:\(name)"
+            } catch {
+                failure = L("Couldn’t read %@: %@", url.lastPathComponent, error.localizedDescription)
+            }
+        }
     }
 
     private func importTheme() {

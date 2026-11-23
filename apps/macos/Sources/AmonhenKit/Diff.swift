@@ -536,7 +536,7 @@ public indirect enum MarkdownBlock: Decodable, Sendable {
     case code(language: String, text: String)
     /// 図（` ```mermaid ` など）。`svg` は色を CSS の変数のままにした絵（描くときに `colorizeDiagram` で配色を当てる）。
     /// 描けなければ `error` に理由。
-    case diagram(language: String, text: String, svg: String?, error: String?)
+    case diagram(language: String, text: String, svg: String?, config: MermaidThemeConfig?, error: String?)
     case quote(alert: String?, blocks: [MarkdownBlock])
     case list(start: Int?, items: [Item])
     case table(aligns: [String], head: [[Run]], rows: [[[Run]]])
@@ -545,7 +545,7 @@ public indirect enum MarkdownBlock: Decodable, Sendable {
     case footnote(label: String, blocks: [MarkdownBlock])
 
     enum Key: String, CodingKey {
-        case kind, level, runs, language, text, alert, blocks, start, items, aligns, head, rows, label, svg, error
+        case kind, level, runs, language, text, alert, blocks, start, items, aligns, head, rows, label, svg, config, error
     }
 
     public init(from decoder: any Decoder) throws {
@@ -557,7 +557,9 @@ public indirect enum MarkdownBlock: Decodable, Sendable {
         case "diagram":
             self = .diagram(
                 language: try c.decode(String.self, forKey: .language), text: try c.decode(String.self, forKey: .text),
-                svg: try c.decodeIfPresent(String.self, forKey: .svg), error: try c.decodeIfPresent(String.self, forKey: .error))
+                svg: try c.decodeIfPresent(String.self, forKey: .svg),
+                config: try c.decodeIfPresent(MermaidThemeConfig.self, forKey: .config),
+                error: try c.decodeIfPresent(String.self, forKey: .error))
         case "quote":
             self = .quote(alert: try c.decodeIfPresent(String.self, forKey: .alert), blocks: try c.decode([MarkdownBlock].self, forKey: .blocks))
         case "list": self = .list(start: try c.decodeIfPresent(Int.self, forKey: .start), items: try c.decode([Item].self, forKey: .items))
@@ -586,12 +588,34 @@ public indirect enum MarkdownBlock: Decodable, Sendable {
     }
 }
 
+/// Mermaid のテーマの指定（mermaid-cli の設定ファイルと同じ中身。図の中の指定と、読み込んだテーマ）。
+public struct MermaidThemeConfig: Codable, Hashable, Sendable {
+    public var theme: String?
+    public var themeVariables: [String: String]?
+
+    /// JSON の文字（`amonhen_diagram_colorize` に渡す形）。
+    public var json: String {
+        (try? JSONEncoder().encode(self)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+    }
+
+    /// mermaid-cli の設定ファイル（`{"theme": …, "themeVariables": {…}}`、または変数だけのオブジェクト）を読む。
+    public static func parse(_ text: String) throws -> MermaidThemeConfig {
+        guard let raw = amonhen_mermaid_theme_parse(text) else { throw AmonhenError.last() }
+        defer { amonhen_string_free(raw) }
+        return try JSONDecoder().decode(MermaidThemeConfig.self, from: Data(String(cString: raw).utf8))
+    }
+}
+
 extension MarkdownBlock {
-    /// 図の SVG（`diagram` の `svg`）に配色を当て、CoreSVG で描ける SVG にする。`scheme` は設定の「図の配色」
-    /// （`syntax`・`pele`・`mermaid`）、`theme` は構文の色のテーマ（`text`・`background` と種類の名前 → `#rrggbb`）。
-    public static func colorizeDiagram(_ svg: String, scheme: String, dark: Bool, theme: [String: Any]) -> Data? {
+    /// 図の SVG（`diagram` の `svg`）に配色を当て、CoreSVG で描ける SVG にする。`scheme` は設定の「図の配色」の鍵、
+    /// `theme` は構文の色のテーマ（`text`・`background` と種類の名前 → `#rrggbb`）、`own` は図の中で指定した
+    /// テーマ（設定より先）、`imported` は `scheme` が読み込んだテーマのときの中身。
+    public static func colorizeDiagram(
+        _ svg: String, scheme: String, dark: Bool, theme: [String: Any], own: MermaidThemeConfig? = nil,
+        imported: MermaidThemeConfig? = nil
+    ) -> Data? {
         let json = (try? JSONSerialization.data(withJSONObject: theme)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
-        guard let raw = amonhen_diagram_colorize(svg, scheme, dark, json) else { return nil }
+        guard let raw = amonhen_diagram_colorize(svg, scheme, dark, json, own?.json, imported?.json) else { return nil }
         defer { amonhen_string_free(raw) }
         return Data(String(cString: raw).utf8)
     }

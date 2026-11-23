@@ -330,6 +330,18 @@ enum Settings {
         }
     }
 
+    /// 読み込んだ Mermaid のテーマ（名前 → 中身）。「図の配色」の `mermaid-import:名前` で選ぶ。
+    static var importedMermaidThemes: [String: MermaidThemeConfig] {
+        get {
+            UserDefaults.standard.data(forKey: "importedMermaidThemes")
+                .flatMap { try? JSONDecoder().decode([String: MermaidThemeConfig].self, from: $0) } ?? [:]
+        }
+        set {
+            UserDefaults.standard.set(try? JSONEncoder().encode(newValue), forKey: "importedMermaidThemes")
+            NotificationCenter.default.post(name: .syntaxThemeChanged, object: nil)
+        }
+    }
+
     /// 差分の色は、テーマに関係なく標準の色を使う（構文の色はテーマのまま）。
     static var diffStandardColors: Bool {
         get { UserDefaults.standard.bool(forKey: "diffStandardColors") }
@@ -523,6 +535,9 @@ final class SettingsModel {
     var importedThemes = SyntaxTheme.imported { didSet { SyntaxTheme.imported = importedThemes } }
     var diffStandardColors = Settings.diffStandardColors { didSet { Settings.diffStandardColors = diffStandardColors } }
     var diagramColors = Settings.diagramColors { didSet { Settings.diagramColors = diagramColors } }
+    var importedMermaidThemes = Settings.importedMermaidThemes {
+        didSet { Settings.importedMermaidThemes = importedMermaidThemes }
+    }
     var checkRemoteSignaturesLocally = Settings.checkRemoteSignaturesLocally {
         didSet { Settings.checkRemoteSignaturesLocally = checkRemoteSignaturesLocally }
     }
