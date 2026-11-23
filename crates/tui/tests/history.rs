@@ -2645,8 +2645,10 @@ fn activity_operations_list_what_ran() {
         amonhen_tui::snapshot(open(dir.path()), 160, 20, clock(), "jRs:activity\n\t").unwrap();
     println!("{ops}");
     assert!(ops.contains(" Operations "), "{ops}");
+    // テストは 1 つのプロセスで並べて動くので、ほかのテストの git（まだ動いているもの）も並ぶ。印は問わない。
     assert!(
-        ops.lines().any(|l| l.contains("✓") && l.contains("git")),
+        ops.lines()
+            .any(|l| l.contains(" git ") && (l.contains('✓') || l.contains('●') || l.contains('✗'))),
         "{ops}"
     );
     assert!(ops.contains("x cancel a running one"), "{ops}");
