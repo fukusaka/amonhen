@@ -541,7 +541,7 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
     private let content: DiffViewController
     /// 開いた画像（拡大縮小できる 1 枚の表示）。
     private var imagePanel: ImageDiffPanel?
-    /// SVG の見せ方: 絵（ブラウザと同じに描く）・iOS と比べる（ブラウザと CoreSVG を並べる）・テキスト。
+    /// SVG の見せ方: 絵（CoreSVG で描く）・モバイル（部品ごとの崩れた絵と崩れる機能の一覧）・テキスト。
     private enum SVGView: Int { case picture, compare, text }
     /// 確かめる用（`--snapshot`）に `-AMHSVGView picture|compare|text` で最初の見せ方を変えられる。
     private var svgView: SVGView = switch UserDefaults.standard.string(forKey: "AMHSVGView") {
@@ -551,6 +551,12 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
     }
     private let svgSwitch = NSSegmentedControl(
         labels: [L("Picture"), L("Mobile"), L("Text")], trackingMode: .selectOne, target: nil, action: nil)
+    /// モバイルで見る部品（確かめる用に `-AMHMobileRenderer android|ios|flutter|reactNative`）。
+    private var mobileRenderer: MobileRenderer = MobileRenderer.allCases.first {
+        $0.key == UserDefaults.standard.string(forKey: "AMHMobileRenderer")
+    } ?? .android
+    private let rendererSwitch = NSSegmentedControl(
+        labels: ["Android", "iOS", "Flutter", "React Native"], trackingMode: .selectOne, target: nil, action: nil)
     private let pathBar = NSStackView()
     private let pathLabel = NSTextField(labelWithString: "")
     private let changeButton = NSButton()
@@ -650,7 +656,16 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         svgSwitch.target = self
         svgSwitch.action = #selector(svgViewChanged)
         svgSwitch.isHidden = true
-        for v in [back, pathLabel, spacer, svgSwitch, quickLookButton, changeButton] { pathBar.addArrangedSubview(v) }
+        rendererSwitch.controlSize = .small
+        for (i, renderer) in MobileRenderer.allCases.enumerated() {
+            rendererSwitch.setToolTip(String(format: L("How the SVG looks on %@"), renderer.name), forSegment: i)
+        }
+        rendererSwitch.target = self
+        rendererSwitch.action = #selector(rendererChanged)
+        rendererSwitch.isHidden = true
+        for v in [back, pathLabel, spacer, rendererSwitch, svgSwitch, quickLookButton, changeButton] {
+            pathBar.addArrangedSubview(v)
+        }
         pathBar.edgeInsets = NSEdgeInsets(top: 0, left: 6, bottom: 0, right: 10)
         pathBar.spacing = 6
         for v in [treeScroll, content.view, binaryBox, pathBar] as [NSView] { addSubview(v) }
@@ -802,6 +817,11 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         return out
     }
 
+    @objc private func rendererChanged() {
+        mobileRenderer = MobileRenderer(rawValue: UInt8(clamping: rendererSwitch.selectedSegment)) ?? .android
+        if let openPath { open(path: openPath, line: nil) }
+    }
+
     @objc private func svgViewChanged() {
         svgView = SVGView(rawValue: svgSwitch.selectedSegment) ?? .picture
         if let openPath { open(path: openPath, line: nil) }
@@ -881,20 +901,34 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         let svg = ImageDiffPanel.isSVG(path)
         svgSwitch.isHidden = !svg
         svgSwitch.selectedSegment = svgView.rawValue
+        rendererSwitch.isHidden = !svg || svgView != .compare
+        rendererSwitch.selectedSegment = Int(mobileRenderer.rawValue)
         if svg, svgView != .text {
             content.view.isHidden = true
-            let view = svgView
+            let view = svgView, renderer = mobileRenderer
             Task {
                 guard let data = await contents(of: path), request == self.request else { return }
                 // CoreSVG（iOS のアセットカタログ・SF Symbols と同じ描き方）で描く。
                 let image = NSImage(data: data)
                 let bytes = ByteCountFormatter.string(fromByteCount: Int64(data.count), countStyle: .file)
                 let size = image.map { "\(Int($0.size.width)) × \(Int($0.size.height)) pt · \(bytes)" } ?? bytes
-                let issues = view == .compare ? await Task.detached { SVGIssue.lint(data) }.value : nil
-                guard request == self.request else { return }
-                let panel = ImageDiffPanel(
-                    before: nil, after: image, titles: ("", ""), caption: size, svg: false, mode: .twoUp, position: 0.5,
-                    single: true, notes: issues.map(Self.mobileNotes))
+                let panel: ImageDiffPanel
+                if view == .compare {
+                    // 元の SVG と、その部品が崩すように書き換えた SVG（近似）を並べる。
+                    let (issues, broken) = await Task.detached {
+                        (SVGIssue.lint(data), renderer.approximate(data))
+                    }.value
+                    guard request == self.request else { return }
+                    panel = ImageDiffPanel(
+                        before: image, after: NSImage(data: broken),
+                        titles: (L("Original"), String(format: L("%@ (approximation)"), renderer.name)),
+                        caption: size + "    " + L("Approximation: the SVG rewritten the way the renderer degrades it, drawn by this app"),
+                        svg: false, mode: .twoUp, position: 0.5, single: false, notes: Self.mobileNotes(issues))
+                } else {
+                    panel = ImageDiffPanel(
+                        before: nil, after: image, titles: ("", ""), caption: size, svg: false, mode: .twoUp,
+                        position: 0.5, single: true)
+                }
                 imagePanel = panel
                 addSubview(panel, positioned: .below, relativeTo: pathBar)
                 needsLayout = true
