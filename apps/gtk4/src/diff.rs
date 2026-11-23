@@ -2689,16 +2689,31 @@ impl DiffWidget {
             rh,
         ));
         snapshot.translate(&graphene::Point::new(path_x, y));
-        // パスの中の、探している語の一致（今の一致は濃く。名前だけを出しているときは位置が合わないので出さない）。
-        if title.is_none() {
+        // パスの中の、探している語の一致（今の一致は濃く）。木などで名前だけを出しているときは、一致した文字を
+        // 見出しの中で探す（macOS 版と同じ）。
+        {
+            let row_text = view.text(row);
+            let title_text = st.decor.titles.get(&file);
             let from = st.matches.partition_point(|m| m.0 < index);
             for (i, m) in st.matches[from..]
                 .iter()
                 .enumerate()
                 .take_while(|(_, m)| m.0 == index)
             {
-                let x0 = path.index_to_pos(m.1 as i32).x() as f32 / pango::SCALE as f32;
-                let x1 = path.index_to_pos(m.2 as i32).x() as f32 / pango::SCALE as f32;
+                let (start, end) = match title_text {
+                    Some(t) => {
+                        let Some(found) = row_text
+                            .get(m.1 as usize..m.2 as usize)
+                            .and_then(|needle| find_all(t, needle).first().copied())
+                        else {
+                            continue;
+                        };
+                        (found.0 as i32, found.1 as i32)
+                    }
+                    None => (m.1 as i32, m.2 as i32),
+                };
+                let x0 = path.index_to_pos(start).x() as f32 / pango::SCALE as f32;
+                let x1 = path.index_to_pos(end).x() as f32 / pango::SCALE as f32;
                 let color = if st.current_match == Some(from + i) {
                     gdk::RGBA::new(1.0, 0.6, 0.0, 0.75)
                 } else {
