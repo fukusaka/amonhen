@@ -927,9 +927,8 @@ impl Writer {
         }
         let _ = write!(attrs, r#" font-size="{}""#, num(config.size));
         let weight = (u32::from(config.weight) + 1).min(9) * 100;
-        if weight != 400 {
-            let _ = write!(attrs, r#" font-weight="{weight}""#);
-        }
+        // 400 も書く（前の run の <text> から太さを継がないように）
+        let _ = write!(attrs, r#" font-weight="{weight}""#);
         if config.anchor >= 0.75 {
             attrs.push_str(r#" text-anchor="end""#);
         } else if config.anchor >= 0.25 {
@@ -992,13 +991,19 @@ impl Writer {
             }
             let x = t.x.unwrap_or_default();
             t.last_x = x;
+            // CoreSVG は <tspan> の書体・色も読まないので、最初の run は <text> にじかに書く
             let _ = write!(
                 out,
-                r#"<text xml:space="preserve"{transform} x="{}" y="{}">"#,
+                r#"<text xml:space="preserve"{transform} x="{}" y="{}"{attrs}{paint}>{content}"#,
                 num(x),
                 num(t.y)
             );
             t.open = Some(t.transform);
+            t.x = None;
+            t.pending_dx = 0.0;
+            t.y_dirty = false;
+            self.body().push_str(&out);
+            return;
         }
         let mut position = String::new();
         if t.pending_dx != 0.0 {
@@ -1240,10 +1245,10 @@ mod tests {
     #[test]
     fn text_runs_continue_in_one_text_element() {
         let s = svg(TEXT);
-        assert!(s.contains(r##"<text xml:space="preserve" x="10" y="20"><tspan font-family="Helvetica" font-size="12" fill="#222222">Hello</tspan><tspan font-family="Helvetica" font-size="12" font-weight="700" fill="#cc0000"> bold</tspan><tspan font-family="Helvetica" font-size="12" fill="#222222"> &amp; more</tspan>"##), "{s}");
-        assert!(s.contains(r##"<text xml:space="preserve" x="60" y="45"><tspan font-size="16" text-anchor="middle" text-decoration="underline""##), "{s}");
+        assert!(s.contains(r##"<text xml:space="preserve" x="10" y="20" font-family="Helvetica" font-size="12" font-weight="400" fill="#222222">Hello<tspan font-family="Helvetica" font-size="12" font-weight="700" fill="#cc0000"> bold</tspan><tspan font-family="Helvetica" font-size="12" font-weight="400" fill="#222222"> &amp; more</tspan></text>"##), "{s}");
+        assert!(s.contains(r##"<text xml:space="preserve" x="60" y="45" font-size="16" font-weight="400" text-anchor="middle" text-decoration="underline""##), "{s}");
         assert!(
-            s.contains(r##"fill="none" stroke="#0066cc" stroke-width="0.5">Mid</tspan></text>"##),
+            s.contains(r##"fill="none" stroke="#0066cc" stroke-width="0.5">Mid</text>"##),
             "{s}"
         );
     }
@@ -1389,7 +1394,7 @@ mod tests {
             s.contains(r#"patternTransform="matrix(2 0 0 2 5 6)""#),
             "{s}"
         );
-        assert!(s.contains(r##"<text xml:space="preserve" x="3" y="0"><tspan font-size="10" text-anchor="end" fill="url(#p0)">&lt;a</tspan>"##), "{s}");
+        assert!(s.contains(r##"<text xml:space="preserve" x="3" y="0" font-size="10" font-weight="400" text-anchor="end" fill="url(#p0)">&lt;a</text>"##), "{s}");
     }
 
     #[test]
