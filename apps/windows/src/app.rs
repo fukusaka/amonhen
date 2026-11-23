@@ -1287,6 +1287,11 @@ enum Message {
     AutoFetched(Option<String>),
     /// Activity の Operations の記録を JSON に書き出す。
     ActivityExport,
+    /// Activity の Operations の絞り込み（種類・失敗だけ・文字）と、選んだ行（今の並びの位置）。
+    ActivityKind(Option<usize>),
+    ActivityFailuresOnly(bool),
+    ActivityFilter(String),
+    ActivitySelect(Option<usize>),
     /// サイドバーの行の印の吹き出しのボタン（メニューの項目のキー）。吹き出しを閉じてからする。
     MarkAction(String),
     /// Activity の History のキャッシュを読んだ（開いているリポジトリごとの名前と `historyCache` の info）。
@@ -6760,6 +6765,27 @@ impl Root {
                 }
             }
             Message::ActivityTab(None) => {}
+            Message::ActivityKind(kind) => {
+                if let (Some(state), Some(kind)) = (self.activity.as_mut(), kind) {
+                    state.kind = kind;
+                }
+            }
+            Message::ActivityFailuresOnly(on) => {
+                if let Some(state) = self.activity.as_mut() {
+                    state.failures_only = on;
+                }
+            }
+            Message::ActivityFilter(text) => {
+                if let Some(state) = self.activity.as_mut() {
+                    state.filter = text;
+                }
+            }
+            Message::ActivitySelect(index) => {
+                if let Some(state) = self.activity.as_mut() {
+                    // 読み直しで並びが変わっても、選んだ記録は通し番号で覚える。
+                    state.selected = index.and_then(|i| state.shown().get(i).map(|r| r.seq));
+                }
+            }
             Message::CombineText(answer) => match (self.repo.clone(), answer) {
                 (Some(repo), Ok((oldest, newest, count, message))) => {
                     self.dialog = Some(Dialog::Reword {
@@ -16660,6 +16686,10 @@ impl Root {
                     })
                 }),
                 daemon_toggle: context.callback(|()| Message::DaemonToggle),
+                kind: context.callback(Message::ActivityKind),
+                failures_only: context.callback(Message::ActivityFailuresOnly),
+                filter: context.callback(Message::ActivityFilter),
+                select: context.callback(Message::ActivitySelect),
             },
         );
         Border::new()
