@@ -214,7 +214,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Range Diff の表示（= ! < >・Changes Only・差分の差分） | ✓ | ✓ | ✓ | ✓ | ✓ | △ | CLI: `range-diff`。<br>TUI: 独立したページではなく、Blame・File History と同じ画面に出す。Changes Only は `c`。 |
 | Compare with Previous Version | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `range-diff --previous`。<br>TUI: 命令の一覧から。 |
 | History の 2 つのコミット・Reflog の行を 2 つの版として比べる | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: どの範囲でも。<br>TUI: History で 2 つ選んで `=`、Reflog の行で `=`（今の HEAD と）。 |
-| 範囲を直して比べ直す | ✓ | ✓ | ✓ | ✓ | ✓ | — |  |
+| 範囲を直して比べ直す | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | TUI: range diff で `r`。git range-diff と同じ書き方で打つ。 |
 
 ## 6. Working Copy
 
