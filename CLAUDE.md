@@ -24,6 +24,7 @@ Amon Hen（リポジトリは fukusaka/amonhen。もとの名前は amonhen-stan
 - `crates/backend-gix`: gix による `GitBackend`
 - `crates/watch`: リポジトリの変化の検知（notify、デスクトップ向け）
 - `crates/syntax`: tree-sitter による構文の色付け。文法が C なので、コアの `syntax` フィーチャーで切り離せる
+- `crates/pele`: pele（Obsidian の Mermaid の描き手）の移植。Markdown の図を描く。コアの `diagrams` フィーチャーで、アプリ（FFI・GTK4）だけが入れる
 - `crates/remote`: daemon との通信（フレーム・要求の形）、手元の `RemoteBackend` と daemon の `Server`
 - `crates/front`: FE 向けの窓口（命令と答えは JSON、大きなデータはレコード。取り決めは `docs/front.md`）。共有の daemon が出し、VSCode 拡張と CLI が使う。同じ処理を同じプロセスでも使える（`InProcess`）
 - `crates/daemon`: daemon（ライブラリ）。エンジンは CLI と 1 つの実行ファイル `amonhen` で、`--stdio <repo>` は SSH 先でリポジトリの git の操作を行い、`--serve` は手元に常駐する共有の daemon（Unix ドメインソケット。アプリ・CLI の `daemon:/path`・`daemon:ssh://host/path` がつなぐ。SSH 先は daemon が `--stdio` でつないで共有する）。配るエンジンは `scripts/build-engine.sh` で作る（darwin-aarch64、musl の linux-x86_64・linux-aarch64、windows-x86_64・windows-aarch64。CI は `.github/workflows/build.yml` で OS と CPU ごとにそのマシンで作り、`scripts/check-engine.sh` で動かして確かめる）。置き場所は `~/.local/share/amonhen`（`amonhen install`・`amonhen engine`、`crates/cli/src/install.rs`）

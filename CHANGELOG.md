@@ -25,8 +25,9 @@ becomes the GitHub Release notes.
   of it, as `git diff --ignore-space-at-eol`, `-b` and `-w` do), and so can `amonhen diff` and `show` with the same
   flags. Lines aren't staged or discarded while whitespace is ignored.
 - All Files previews more than source: images zoom and any format the system reads counts as one, SVGs show
-  what breaks on Android, iOS, Flutter and React Native with an approximation of each, Markdown shows formatted by
-  the app (GitHub tables, task lists, alerts, links; nothing fetched), and other binaries open in Quick Look.
+  what breaks on Android, iOS, Flutter and React Native (Android Studio's and flutter_svg's own conversion, built in;
+  an approximation for the others), Markdown shows formatted by the app (GitHub tables, task lists, alerts, links,
+  Mermaid flowcharts; nothing fetched), and other binaries open in Quick Look.
 
 #### Changed
 
