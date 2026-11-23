@@ -23,6 +23,55 @@ thread_local! {
     static MERGED: std::cell::RefCell<HashMap<String, String>> = std::cell::RefCell::new(HashMap::new());
 }
 
+/// 行の後ろの、押すと吹き出しを出す印（macOS 版・GTK4 版の行の右端の印）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mark {
+    /// ブランチの merged・gone: ブランチの様子。
+    Branch,
+    /// タグの 🔏・🔓: 署名。
+    Signature,
+    /// タグの ⚠・∅: リモートの様子。
+    TagRemotes,
+    /// プルリクエストの CI の ✓・✗・●: チェックの一覧。
+    Checks,
+}
+
+/// `key` の行の文字 `text` にある印と、その位置（UTF-16 の単位で、始まりと長さ）。印は名前の後ろの 2 つの空白の
+/// 後にある（名前の中の同じ字は見ない）。
+pub fn marks_in(key: &str, text: &str) -> Vec<(Mark, usize, usize)> {
+    let candidates: &[(&str, Mark)] = match parse_ref_key(key) {
+        Some((kind, _)) if kind == RefKind::Local as u8 => {
+            &[("merged", Mark::Branch), ("gone", Mark::Branch)]
+        }
+        Some((kind, _)) if kind == RefKind::Tag as u8 => &[
+            ("🔏", Mark::Signature),
+            ("🔓", Mark::Signature),
+            ("⚠", Mark::TagRemotes),
+            ("∅", Mark::TagRemotes),
+        ],
+        _ if key.starts_with("pr:") => &[
+            ("✓", Mark::Checks),
+            ("✗", Mark::Checks),
+            ("●", Mark::Checks),
+        ],
+        _ => return Vec::new(),
+    };
+    let Some(tail) = text.find("  ") else {
+        return Vec::new();
+    };
+    let units = |s: &str| s.encode_utf16().count();
+    let mut found = Vec::new();
+    // 名前の後ろを空白で切った語のうち、印のもの（ref の名前に空白は入らない）。
+    let mut at = tail;
+    for word in text[tail..].split(' ') {
+        if let Some((_, mark)) = candidates.iter().find(|(w, _)| *w == word) {
+            found.push((*mark, units(&text[..at]), units(word)));
+        }
+        at += word.len() + 1;
+    }
+    found
+}
+
 /// 項目のツールチップ（GTK4 版の行のツールチップ: 印の意味と、submodule・subtree・タグの様子）。
 pub fn tooltip(key: &str) -> Option<String> {
     TIPS.with(|t| t.borrow().get(key).cloned())
@@ -384,12 +433,8 @@ pub fn nodes(
                 &format!("subtree:{dir}"),
                 about.into_iter().flatten().collect(),
             );
-            let title = if s["squashed"].as_bool() == Some(true) {
-                format!("{dir}  ⊟")
-            } else {
-                dir.to_owned()
-            };
-            Some(TreeNode::new(format!("subtree:{dir}"), title))
+            // squash して取り込んだことは、印にせずツールチップだけに出す（macOS 版・GTK4 版と同じ）。
+            Some(TreeNode::new(format!("subtree:{dir}"), dir))
         })
         .collect();
     if !subtrees.is_empty() {
@@ -801,6 +846,25 @@ fn branch_rows(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn marks_are_found_after_the_name() {
+        let branch = format!("ref:{}:topic", RefKind::Local as u8);
+        assert_eq!(
+            marks_in(&branch, "✓ topic  ↑1  merged"),
+            [(Mark::Branch, 13, 6)]
+        );
+        // 名前の中の同じ語は印ではない。
+        assert_eq!(marks_in(&branch, "merged"), []);
+        let tag = format!("ref:{}:v1", RefKind::Tag as u8);
+        // 🔏 は UTF-16 で 2 つ。
+        assert_eq!(
+            marks_in(&tag, "v1  🔏 ⚠"),
+            [(Mark::Signature, 4, 2), (Mark::TagRemotes, 7, 1)]
+        );
+        assert_eq!(marks_in("pr:3", "#3 Fix  draft ✗"), [(Mark::Checks, 14, 1)]);
+        assert_eq!(marks_in("page:history", "History  merged"), []);
+    }
+
     use super::*;
 
     fn local(name: &str) -> RefEntry {

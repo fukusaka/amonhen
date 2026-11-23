@@ -422,8 +422,9 @@ pub struct Callbacks<'a> {
     pub hover: Box<dyn Fn(String) -> Callback<PointerEventInfo> + 'a>,
     /// 行の変更を捨てるボタン（確かめてから。右クリックの Discard File と同じ）。
     pub discard: Box<dyn Fn(String) -> Callback<()> + 'a>,
-    /// `#` の候補を選んだ（番号）。
-    pub issue: Box<dyn Fn(u64) -> Callback<()> + 'a>,
+    /// `#` の候補のメニュー（項目のキーは `issue:番号`）と、それを持つ見えない部品（`#` を打った所に開く）。
+    pub issue_menu: Callback<String>,
+    pub issue_host: &'a ElementRef<Grid>,
 }
 
 /// 一覧の 1 行の印（M・A・D・R・?・U）。作業ツリー側に変更があればそちら、なければ index 側。
@@ -510,34 +511,23 @@ pub fn view(input: Input, callbacks: Callbacks) -> View {
                 3,
             ),
         ));
-    // `#` を打った直後の候補（GTK4 版はカーソルの下のメニュー。ここでは欄の下に並べ、選ぶと `#番号` を入れる）。
-    let issues: View = if input.issues.is_empty() {
-        View::empty()
-    } else {
-        let rows: Vec<(String, View)> = input
-            .issues
-            .iter()
-            .take(30)
-            .map(|(number, title)| {
-                (
-                    format!("i{number}"),
-                    Button::new()
-                        .horizontal_alignment(HorizontalAlignment::Stretch)
-                        .on_click((callbacks.issue)(*number))
-                        .content(
-                            TextBlock::new()
-                                .text(format!("#{number}  {title}"))
-                                .text_trimming(TextTrimming::CharacterEllipsis),
-                        ),
-                )
-            })
-            .collect();
-        ScrollViewer::new().max_height(180.0).content(
-            StackPanel::new()
-                .spacing(2.0)
-                .children((View::keyed_fragment(rows),)),
-        )
-    };
+    // `#` を打った直後の候補（macOS 版・GTK4 版と同じく、`#` の下に開くメニュー。開くのは app.rs が、欄の字の
+    // 矩形の所に）。選ぶと `#番号` を入れる。
+    let items: Vec<MenuItem> = input
+        .issues
+        .iter()
+        .take(30)
+        .map(|(number, title)| {
+            MenuItem::item(format!("issue:{number}"), format!("#{number}  {title}"))
+        })
+        .collect();
+    let issues = Grid::new()
+        .element_ref(callbacks.issue_host)
+        .width(0.0)
+        .height(0.0)
+        .horizontal_alignment(HorizontalAlignment::Left)
+        .vertical_alignment(VerticalAlignment::Top)
+        .menu(Menu::new(items, callbacks.issue_menu.clone()));
     let message = StackPanel::new().spacing(6.0).grid_row(1).children((
         summary,
         issues,

@@ -1690,11 +1690,25 @@ fn merge_stops_at_conflicts_and_can_be_aborted() {
     let state = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "").unwrap();
     println!("{state}");
     assert!(state.contains("merge · 1 conflict   C continue   K skip   A abort"));
+    // サイドバーの Workspace に、コンフリクトの数の行（アプリの Conflicts の行と同じ）。
+    let side: Vec<String> = state.lines().skip(1).filter_map(|l| column(l, 0)).collect();
+    assert!(
+        side.iter()
+            .any(|l| l.trim_start().starts_with("Conflicts") && l.ends_with(" 1")),
+        "{side:?}"
+    );
     let asked = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "A").unwrap();
     assert!(asked.contains("Abort the merge?   y abort   n cancel"));
     let aborted = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "Ay").unwrap();
     assert!(aborted.contains("Aborted"));
     assert!(!dir.path().join(".git/MERGE_HEAD").exists());
+    // コンフリクトがなくなれば、行もなくなる。
+    let side: Vec<String> = aborted
+        .lines()
+        .skip(1)
+        .filter_map(|l| column(l, 0))
+        .collect();
+    assert!(!side.iter().any(|l| l.contains("Conflicts")), "{side:?}");
 }
 
 /// サイドバーの `r` で、今のブランチを選んだ ref の上に rebase する
@@ -1924,7 +1938,11 @@ fn stashes_are_listed_and_applied_from_the_sidebar() {
     let text = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "").unwrap();
     println!("{text}");
     let side: Vec<String> = text.lines().skip(1).filter_map(|l| column(l, 0)).collect();
-    let at = side.iter().position(|l| l == "Stashes").unwrap();
+    // 見出しの右に stash の数。
+    let at = side
+        .iter()
+        .position(|l| l.starts_with("Stashes") && l.ends_with(" 1"))
+        .unwrap_or_else(|| panic!("{side:?}"));
     assert!(side[at + 1].contains("Capitals"), "{side:?}");
     // Enter で詳細に出し、一番下の行に様子（作ったブランチ・HEAD との関係・土台）を書く。
     let base = git_out(dir.path(), &["rev-parse", "--short=8", "HEAD"]);
