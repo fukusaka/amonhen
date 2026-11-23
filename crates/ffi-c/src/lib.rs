@@ -486,6 +486,15 @@ pub unsafe extern "C" fn amonhen_diagram_colorize(
         .map_or(std::ptr::null_mut(), CString::into_raw)
 }
 
+/// 設定の見本の図の SVG（色は `amonhen_diagram_colorize` で当てる）。描けなければ NULL。`amonhen_string_free` で
+/// 解放する。
+#[unsafe(no_mangle)]
+pub extern "C" fn amonhen_diagram_sample() -> *mut c_char {
+    amonhen_core::diagram::sample()
+        .and_then(|svg| CString::new(svg).ok())
+        .map_or(std::ptr::null_mut(), CString::into_raw)
+}
+
 /// mermaid-cli の設定ファイル（`{"theme": …, "themeVariables": {…}}`）を読み、アプリが覚える形の JSON にする
 /// （`amonhen_diagram_colorize` の `imported` に渡す）。読めなければエラーを置いて NULL。`amonhen_string_free` で
 /// 解放する。

@@ -62,6 +62,17 @@ fn own_config(text: &str) -> Option<MermaidConfig> {
     (theme.is_some() || !variables.is_empty()).then_some(MermaidConfig { theme, variables })
 }
 
+/// 設定の見本の図（入れ子の枠・図形・ラベルつきの矢印）。色は `colorize` で当てる。図を描けない作りなら `None`。
+pub fn sample() -> Option<String> {
+    match draw(
+        "mermaid",
+        "flowchart LR\n  subgraph Repository\n    A[Commit] --> B{Review}\n  end\n  B -->|merge| C[(main)]\n",
+    )? {
+        Drawn::Svg(svg, _) => Some(svg),
+        Drawn::Error(_) => None,
+    }
+}
+
 #[cfg(not(feature = "diagrams"))]
 fn draw_mermaid(_text: &str) -> Option<Drawn> {
     None
@@ -554,6 +565,16 @@ mod tests {
         let (vars, _) = colors_for(None, Scheme::Imported, Some(&c), false, &theme());
         let vars: HashMap<_, _> = vars.into_iter().collect();
         assert_eq!(vars["--pele-surface"], "#ff0000");
+    }
+
+    #[cfg(feature = "diagrams")]
+    #[test]
+    fn the_settings_sample_is_drawn() {
+        let svg = sample().unwrap();
+        assert!(
+            svg.contains(">Repository</text>") && svg.contains(">merge</text>"),
+            "{svg}"
+        );
     }
 
     #[cfg(feature = "diagrams")]

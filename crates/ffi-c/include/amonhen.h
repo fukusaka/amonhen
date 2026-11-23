@@ -569,6 +569,12 @@ char *amonhen_diagram_colorize(const char *svg,
                                const char *imported);
 
 /**
+ * 設定の見本の図の SVG（色は `amonhen_diagram_colorize` で当てる）。描けなければ NULL。`amonhen_string_free` で
+ * 解放する。
+ */
+char *amonhen_diagram_sample(void);
+
+/**
  * mermaid-cli の設定ファイル（`{"theme": …, "themeVariables": {…}}`）を読み、アプリが覚える形の JSON にする
  * （`amonhen_diagram_colorize` の `imported` に渡す）。読めなければエラーを置いて NULL。`amonhen_string_free` で
  * 解放する。
