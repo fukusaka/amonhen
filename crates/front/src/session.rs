@@ -579,7 +579,7 @@ impl Session {
     fn commit_diff(&self, request: &Value) -> Result<Reply> {
         let repo = &*self.repo;
         let ws = whitespace_arg(request)?;
-        let (changes, stacked, selection) = if let Ok(id) = str_arg(request, "id") {
+        let (changes, mut stacked, selection) = if let Ok(id) = str_arg(request, "id") {
             let changes = repo.commit_changes(&oid(id)?)?;
             let stacked = repo.stacked_diff_ws(&changes, ws)?;
             (Some(changes), stacked, Value::Null)
@@ -598,6 +598,10 @@ impl Session {
                 repo.selection_diff_ws(&h, &rows_arg(request, "rows")?, pair, ws)?;
             (None, stacked, selection_json(&selection))
         };
+        // ファイルごとの前後の行数（hunk を広げる・ファイル全体を出す）。
+        for (file, lines) in contexts_arg(request)? {
+            repo.set_stacked_context(&mut stacked, file, lines)?;
+        }
         let collapsed = vec![false; stacked.files.len()];
         let view = stacked.view(&collapsed, &PROFILE);
         let files: Vec<Value> = stacked
@@ -850,6 +854,29 @@ fn last_commit_record<'a>(
 }
 
 /// 差分の命令の whitespace（行を比べるときに無視する空白: exact・at-eol・change・all。省けば exact）。
+/// `contexts`: ファイルの番号（文字列）から、前後の行数か "all"（ファイル全体）へ。
+fn contexts_arg(request: &Value) -> Result<Vec<(usize, u32)>> {
+    let Some(contexts) = request["contexts"].as_object() else {
+        return Ok(Vec::new());
+    };
+    contexts
+        .iter()
+        .map(|(file, lines)| {
+            let file = file
+                .parse()
+                .map_err(|_| tr!("Not a file number: {file}", file = file))?;
+            let lines = match lines {
+                Value::String(all) if all == "all" => u32::MAX,
+                lines => lines
+                    .as_u64()
+                    .map(|n| n.min(u64::from(u32::MAX)) as u32)
+                    .ok_or_else(|| tr!("Not a number of lines: {lines}", lines = lines))?,
+            };
+            Ok((file, lines))
+        })
+        .collect()
+}
+
 fn whitespace_arg(request: &Value) -> Result<Whitespace> {
     match request["whitespace"].as_str() {
         None => Ok(Whitespace::Exact),
@@ -973,6 +1000,42 @@ mod tests {
             ),
             2
         );
+    }
+
+    /// commitDiff の contexts: ファイルごとに前後の行を広げる・ファイル全体を出す
+    #[test]
+    fn widens_a_files_context_in_a_commit_diff() {
+        let dir = tempfile::tempdir().unwrap();
+        git(dir.path(), &["init", "-q"]);
+        let lines: Vec<String> = (1..=30).map(|n| format!("line {n}")).collect();
+        std::fs::write(dir.path().join("a.txt"), lines.join("\n") + "\n").unwrap();
+        git(dir.path(), &["add", "a.txt"]);
+        commit(dir.path(), "first");
+        let mut changed = lines.clone();
+        changed[14] = "changed".into();
+        std::fs::write(dir.path().join("a.txt"), changed.join("\n") + "\n").unwrap();
+        git(dir.path(), &["add", "a.txt"]);
+        let id = commit(dir.path(), "change a line");
+        let backend = amonhen_backend_gix::GixBackend::open(dir.path()).unwrap();
+        let session = Session::new(Arc::new(Repository::new(backend)));
+        let call = |request: Value| session.handle(&request, &|| false).unwrap();
+        let rows = |request: Value| call(request).json["rows"].as_u64().unwrap();
+        // 見出し、hunk、前後 3 行ずつと消えた行と足した行。
+        assert_eq!(rows(json!({"op": "commitDiff", "id": id})), 10);
+        assert_eq!(
+            rows(json!({"op": "commitDiff", "id": id, "contexts": {"0": 5}})),
+            14
+        );
+        // ファイル全体: 見出し、hunk、30 行と足した行。
+        assert_eq!(
+            rows(json!({"op": "commitDiff", "id": id, "contexts": {"0": "all"}})),
+            33
+        );
+        let bad = session.handle(
+            &json!({"op": "commitDiff", "id": id, "contexts": {"x": 5}}),
+            &|| false,
+        );
+        assert!(bad.is_err());
     }
 
     /// コミットの差分と文の構文の色（diffSyntax・textSyntax）。差分なら行の番号と、その行の中の位置
