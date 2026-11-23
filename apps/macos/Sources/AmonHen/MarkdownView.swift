@@ -43,6 +43,27 @@ final class MarkdownView: NSView, NSTextViewDelegate {
     override func layout() {
         super.layout()
         scroll.frame = bounds
+        fitAttachments()
+    }
+
+    /// 絵（画像・図）を列の幅に収める（640 pt まで、高さは比を保つ）。幅が変わったときだけ直す。
+    private var fittedWidth: CGFloat = 0
+    private func fitAttachments() {
+        guard let storage = text.textStorage, let container = text.textContainer else { return }
+        let width = container.size.width - container.lineFragmentPadding * 2 - 8
+        guard width > 0, abs(width - fittedWidth) > 0.5 else { return }
+        fittedWidth = width
+        var changed = false
+        storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
+            guard let attachment = value as? FittingAttachment else { return }
+            let size = attachment.fitting(width)
+            if attachment.bounds.size != size {
+                attachment.bounds = NSRect(origin: .zero, size: size)
+                storage.edited(.editedAttributes, range: range, changeInLength: 0)
+                changed = true
+            }
+        }
+        if changed { text.layoutManager?.invalidateLayout(forCharacterRange: NSRange(location: 0, length: storage.length), actualCharacterRange: nil) }
     }
 
     func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
@@ -65,6 +86,28 @@ final class MarkdownView: NSView, NSTextViewDelegate {
         }
         let path = parts.joined(separator: "/").removingPercentEncoding ?? parts.joined(separator: "/")
         return path.isEmpty ? nil : path
+    }
+}
+
+/// 列の幅に縮む絵。
+nonisolated final class FittingAttachment: NSTextAttachment {
+    private let natural: NSSize
+
+    init(image: NSImage) {
+        natural = image.size
+        super.init(data: nil, ofType: nil)
+        self.image = image
+        bounds = NSRect(origin: .zero, size: fitting(640))
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// 幅 `width`（と 640 pt）に収めた大きさ。
+    func fitting(_ width: CGFloat) -> NSSize {
+        let limit = min(width, 640)
+        guard natural.width > limit, natural.width > 0 else { return natural }
+        return NSSize(width: limit, height: natural.height * limit / natural.width)
     }
 }
 
@@ -96,14 +139,8 @@ private struct MarkdownBuilder {
             }
             if let src = run.image {
                 if let picture = image(src) {
-                    let attachment = NSTextAttachment()
-                    attachment.image = picture
-                    // 列より広い絵は縮める（高さは比を保つ）。
-                    let maxWidth: CGFloat = 640
-                    let size = picture.size.width > maxWidth
-                        ? NSSize(width: maxWidth, height: picture.size.height * maxWidth / picture.size.width) : picture.size
-                    attachment.bounds = NSRect(origin: .zero, size: size)
-                    result.append(NSAttributedString(attachment: attachment))
+                    // 列より広い絵は縮める（MarkdownView.fitAttachments）。
+                    result.append(NSAttributedString(attachment: FittingAttachment(image: picture)))
                 } else {
                     // 読めない画像（外の URL など）は代わりの文。
                     result.append(NSAttributedString(string: "[\(run.text.isEmpty ? src : run.text)]", attributes: [
@@ -207,22 +244,18 @@ private struct MarkdownBuilder {
                     add([.code(language: language, text: code)], depth: depth, outer: outer, indent: indent)
                     if let error {
                         let style = paragraph(indent: indent, spacing: 10, blocks: outer)
-                        out.append(NSAttributedString(string: error, attributes: [
-                            .font: NSFont.systemFont(ofSize: bodySize - 2), .foregroundColor: NSColor.systemRed, .paragraphStyle: style,
+                        // 誤りの位置を ^ で指すので等幅で。行は段落を分けずに改行する。
+                        out.append(NSAttributedString(string: error.replacingOccurrences(of: "\n", with: "\u{2028}"), attributes: [
+                            .font: NSFont.monospacedSystemFont(ofSize: 11.5, weight: .regular), .foregroundColor: NSColor.systemRed,
+                            .paragraphStyle: style,
                         ]))
                         out.append(newline(style))
                     }
                     continue
                 }
                 let style = paragraph(indent: indent, spacing: 12, blocks: outer)
-                let attachment = NSTextAttachment()
-                attachment.image = picture
-                // 列より広い図は縮める（高さは比を保つ）。
-                let maxWidth: CGFloat = 640
-                let size = picture.size.width > maxWidth
-                    ? NSSize(width: maxWidth, height: picture.size.height * maxWidth / picture.size.width) : picture.size
-                attachment.bounds = NSRect(origin: .zero, size: size)
-                let text = NSMutableAttributedString(attachment: attachment)
+                // 列より広い図は縮める（MarkdownView.fitAttachments）。
+                let text = NSMutableAttributedString(attachment: FittingAttachment(image: picture))
                 text.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: text.length))
                 out.append(text)
                 out.append(newline(style))
