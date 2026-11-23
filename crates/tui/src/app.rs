@@ -1339,6 +1339,7 @@ impl App {
                             && sequence["empty"] != true
                             && sequence["retried"] != true;
                         self.changes.status(&status);
+                        self.sidebar.set_conflicts(self.changes.conflicts());
                         // Commit and Push: コミットの後の状態（上流より進んだ数）が届いたら、push を確かめる。
                         if !self.committing && std::mem::take(&mut self.push_after_commit) {
                             self.ask_push();
