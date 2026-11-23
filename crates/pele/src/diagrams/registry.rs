@@ -16,6 +16,7 @@ use crate::types::Diagram;
 #[rustfmt::skip]
 static DIAGRAMS: &[&Diagram] = &[
     &super::flowchart::FLOWCHART,
+    &super::venn::VENN,
 ];
 
 /// 種類の名前（pele の `DiagramType`）の図。
