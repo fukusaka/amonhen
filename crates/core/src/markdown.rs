@@ -72,6 +72,19 @@ pub enum Block {
         language: String,
         text: String,
     },
+    /// 図（` ```mermaid ` など、`diagram::draw` で描けたもの）。`svg`・`svg_dark` は明るい表示・暗い表示の SVG。描けな
+    /// ければ `svg` はなく、`error` に理由（FE は `text` をコードとして見せ、理由を添える）。
+    #[serde(rename_all = "camelCase")]
+    Diagram {
+        language: String,
+        text: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        svg: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        svg_dark: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
     /// 引用。`alert` は GitHub の囲み（`> [!NOTE]` の note・tip・important・warning・caution）。
     Quote {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -352,7 +365,24 @@ fn parse_blocks(text: &str) -> Vec<Block> {
                         if text.ends_with('\n') {
                             text.pop();
                         }
-                        b.add(Block::Code { language, text });
+                        let block = match crate::diagram::draw(&language, &text) {
+                            None => Block::Code { language, text },
+                            Some(crate::diagram::Drawn::Svg { light, dark }) => Block::Diagram {
+                                language,
+                                text,
+                                svg: Some(light),
+                                svg_dark: Some(dark),
+                                error: None,
+                            },
+                            Some(crate::diagram::Drawn::Error(error)) => Block::Diagram {
+                                language,
+                                text,
+                                svg: None,
+                                svg_dark: None,
+                                error: Some(error),
+                            },
+                        };
+                        b.add(block);
                     }
                 }
                 TagEnd::HtmlBlock => {

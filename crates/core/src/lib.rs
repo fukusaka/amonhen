@@ -6,6 +6,7 @@ pub mod cache;
 pub mod command;
 pub mod conflict;
 mod delegate;
+pub mod diagram;
 pub mod diff;
 pub mod emoji;
 pub mod failure;
