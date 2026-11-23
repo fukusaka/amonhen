@@ -1964,7 +1964,7 @@
 "Toolbar tint" = "ツールバーの色の濃さ";
 "Color Theme" = "配色テーマ";
 "Use standard colors for diffs" = "差分は標準の色を使う";
-"Diagram colors" = "図の配色";
+"Colors" = "配色";
 "Gantt time zone" = "gantt の時間帯";
 "System time zone" = "OS の時間帯";
 "Syntax colors" = "構文の色";

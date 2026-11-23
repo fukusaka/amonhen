@@ -285,11 +285,13 @@ pub fn sections() -> Vec<gtk::Box> {
             refresh();
         }
     });
-    vec![backdrop, syntax_section()]
+    let (colors, mermaid) = syntax_section();
+    vec![backdrop, colors, mermaid]
 }
 
-/// 構文の色の欄: 明るい外観・暗い外観のテーマ、見本、VSCode のテーマの読み込みと、読み込んだものの一覧。
-fn syntax_section() -> gtk::Box {
+/// 構文の色の欄（明るい外観・暗い外観のテーマ、見本、VSCode のテーマの読み込みと、読み込んだものの一覧）と、
+/// Mermaid の欄（図の配色・gantt の時間帯・見本・Mermaid のテーマの読み込み）。
+fn syntax_section() -> (gtk::Box, gtk::Box) {
     let light = gtk::DropDown::from_strings(&[]);
     let dark = gtk::DropDown::from_strings(&[]);
     let preview = gtk::Label::new(None);
@@ -319,6 +321,9 @@ fn syntax_section() -> gtk::Box {
     diagram.set_valign(gtk::Align::Center);
     let diagram_keys: Rc<RefCell<Vec<String>>> = Rc::default();
     let diagram_syncing = Rc::new(std::cell::Cell::new(false));
+    let mermaid_failure = settings::note("");
+    mermaid_failure.add_css_class("settings-error");
+    mermaid_failure.set_visible(false);
     let mermaid_import = gtk::Button::with_label(&tr!("Import Mermaid Theme…"));
     mermaid_import.set_halign(gtk::Align::Start);
     let mermaid_imported = gtk::Box::new(gtk::Orientation::Vertical, 6);
@@ -405,7 +410,7 @@ fn syntax_section() -> gtk::Box {
         });
     }
     {
-        let failure = failure.clone();
+        let failure = mermaid_failure.clone();
         mermaid_import.connect_clicked(move |button| {
             let parent = button.root().and_downcast::<gtk::Window>();
             let failure = failure.clone();
@@ -515,14 +520,21 @@ fn syntax_section() -> gtk::Box {
             row(&tr!("Light appearance"), &light).upcast(),
             row(&tr!("Dark appearance"), &dark).upcast(),
             row(&tr!("Use standard colors for diffs"), &standard).upcast(),
-            row(&tr!("Diagram colors"), &diagram).upcast(),
-            row(&tr!("Gantt time zone"), &zone).upcast(),
             preview.clone().upcast(),
-            diagram_sample.clone().upcast(),
             import.clone().upcast(),
-            mermaid_import.clone().upcast(),
             failure.clone().upcast(),
             imported.clone().upcast(),
+        ],
+    );
+    // Markdown の Mermaid の図
+    let mermaid_section = crate::reposettings::section(
+        Some("Mermaid"),
+        &[
+            row(&tr!("Colors"), &diagram).upcast(),
+            row(&tr!("Gantt time zone"), &zone).upcast(),
+            diagram_sample.clone().upcast(),
+            mermaid_import.clone().upcast(),
+            mermaid_failure.clone().upcast(),
             mermaid_imported.clone().upcast(),
         ],
     );
@@ -690,7 +702,7 @@ fn syntax_section() -> gtk::Box {
             p.set_markup(&preview_markup());
         }
     });
-    section
+    (section, mermaid_section)
 }
 
 /// 見本（短い Rust のコード）を、今の外観のテーマの色で。

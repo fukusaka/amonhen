@@ -95,13 +95,31 @@ struct ThemeSettings: View {
 struct SyntaxThemeSection: View {
     @Bindable var model: SettingsModel
     @State private var failure: String?
+    @State private var mermaidFailure: String?
 
     var body: some View {
         Section(L("Color Theme")) {
             Picker(L("Light appearance"), selection: $model.syntaxThemeLight) { options(dark: false) }
             Picker(L("Dark appearance"), selection: $model.syntaxThemeDark) { options(dark: true) }
             Toggle(L("Use standard colors for diffs"), isOn: $model.diffStandardColors)
-            Picker(L("Diagram colors"), selection: $model.diagramColors) {
+            ThemePreview(light: model.syntaxThemeLight, dark: model.syntaxThemeDark, standardDiff: model.diffStandardColors)
+            HStack {
+                Button(L("Import VSCode Theme…")) { importTheme() }
+                Spacer()
+            }
+            if let failure { Note(failure).foregroundStyle(.red) }
+            ForEach(model.importedThemes, id: \.name) { theme in
+                HStack {
+                    Text(theme.name)
+                    Text(theme.dark ? L("Dark") : L("Light")).foregroundStyle(.secondary)
+                    Spacer()
+                    Button(L("Remove")) { model.importedThemes.removeAll { $0.name == theme.name } }
+                }
+            }
+        }
+        // Markdown の Mermaid の図（配色・gantt の時間帯・読み込んだテーマ）。
+        Section("Mermaid") {
+            Picker(L("Colors"), selection: $model.diagramColors) {
                 Text(L("Syntax colors")).tag("syntax")
                 Text("pele").tag("pele")
                 Text(L("Mermaid (follows the appearance)")).tag("mermaid")
@@ -126,32 +144,22 @@ struct SyntaxThemeSection: View {
                 }
                 .fixedSize()
             }
-            ThemePreview(
-                light: model.syntaxThemeLight, dark: model.syntaxThemeDark, standardDiff: model.diffStandardColors,
-                diagramColors: model.diagramColors, mermaidThemes: model.importedMermaidThemes)
+            DiagramSample(
+                light: model.syntaxThemeLight, dark: model.syntaxThemeDark, diagramColors: model.diagramColors,
+                mermaidThemes: model.importedMermaidThemes)
             HStack {
-                Button(L("Import VSCode Theme…")) { importTheme() }
                 Button(L("Import Mermaid Theme…")) { importMermaidTheme() }
                 Spacer()
             }
-            if let failure { Note(failure).foregroundStyle(.red) }
+            if let mermaidFailure { Note(mermaidFailure).foregroundStyle(.red) }
             ForEach(model.importedMermaidThemes.keys.sorted(), id: \.self) { name in
                 HStack {
                     Text(name)
-                    Text("Mermaid").foregroundStyle(.secondary)
                     Spacer()
                     Button(L("Remove")) {
                         model.importedMermaidThemes[name] = nil
                         if model.diagramColors == "mermaid-import:\(name)" { model.diagramColors = "syntax" }
                     }
-                }
-            }
-            ForEach(model.importedThemes, id: \.name) { theme in
-                HStack {
-                    Text(theme.name)
-                    Text(theme.dark ? L("Dark") : L("Light")).foregroundStyle(.secondary)
-                    Spacer()
-                    Button(L("Remove")) { model.importedThemes.removeAll { $0.name == theme.name } }
                 }
             }
         }
@@ -173,7 +181,7 @@ struct SyntaxThemeSection: View {
         panel.allowedContentTypes = [.json]
         panel.allowsMultipleSelection = true
         guard panel.runModal() == .OK else { return }
-        failure = nil
+        mermaidFailure = nil
         for url in panel.urls {
             do {
                 let config = try MermaidThemeConfig.parse(String(contentsOf: url, encoding: .utf8))
@@ -181,7 +189,7 @@ struct SyntaxThemeSection: View {
                 model.importedMermaidThemes[name] = config
                 model.diagramColors = "mermaid-import:\(name)"
             } catch {
-                failure = L("Couldn’t read %@: %@", url.lastPathComponent, error.localizedDescription)
+                mermaidFailure = L("Couldn’t read %@: %@", url.lastPathComponent, error.localizedDescription)
             }
         }
     }
@@ -219,9 +227,6 @@ private struct ThemePreview: View {
     let dark: String
     /// 差分の色は標準の色（テーマの色にしない）。
     let standardDiff: Bool
-    /// 図の配色（見本の図を作り直す目印）。
-    let diagramColors: String
-    let mermaidThemes: [String: MermaidThemeConfig]
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
@@ -249,21 +254,33 @@ private struct ThemePreview: View {
             code.padding(.bottom, 6)
             line("-", "    let limit = ", "10", .removed, .removedWord)
             line("+", "    let limit = ", "25", .added, .addedWord)
-            // 図の見本（「図の配色」と今の外観・テーマで色を当てる）。
-            if let svg = MarkdownBlock.sampleDiagram, let picture = DiagramPicture.image(svg, own: nil) {
-                Image(nsImage: picture)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(maxWidth: min(picture.size.width, 420), alignment: .leading)
-                    .padding(.top, 8)
-                    .id("\(diagramColors)|\(light)|\(dark)|\(scheme)|\(mermaidThemes.count)")
-            }
         }
         .font(.system(size: 12, design: .monospaced))
         .padding(8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(nsColor: .textBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+}
+
+/// Mermaid の図の見本（「配色」と今の外観・テーマで色を当てる）。
+private struct DiagramSample: View {
+    let light: String
+    let dark: String
+    /// 図の配色（見本の図を作り直す目印）。
+    let diagramColors: String
+    let mermaidThemes: [String: MermaidThemeConfig]
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        if let svg = MarkdownBlock.sampleDiagram, let picture = DiagramPicture.image(svg, own: nil) {
+            Image(nsImage: picture)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(maxWidth: min(picture.size.width, 420), alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .id("\(diagramColors)|\(light)|\(dark)|\(scheme)|\(mermaidThemes.count)")
+        }
     }
 }
 
