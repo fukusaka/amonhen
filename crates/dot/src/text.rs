@@ -610,10 +610,16 @@ pub fn text_svg(text: &Text, cx: f64, cy: f64, box_w: f64, root: &Font, attrs: &
         if line.spans.is_empty() {
             continue;
         }
-        let (x, anchor) = match line.just {
-            Just::Center => (cx, "middle"),
-            Just::Left => (cx - half, "start"),
-            Just::Right => (cx + half, "end"),
+        let single = line.spans.len() == 1 && !line.spans[0].font.sub && !line.spans[0].font.sup;
+        // 飾りの違う span が並ぶ行は、span ごとに左の x を書く（CoreSVG は `<tspan>` の飾りを読まないので、
+        // アプリは span ごとの `<text>` に分ける。分けるには x が要る）
+        let (x, anchor) = match (line.just, single) {
+            (Just::Center, true) => (cx, "middle"),
+            (Just::Left, true) => (cx - half, "start"),
+            (Just::Right, true) => (cx + half, "end"),
+            (Just::Center, false) => (cx - line.width / 2.0, "start"),
+            (Just::Left, false) => (cx - half, "start"),
+            (Just::Right, false) => (cx + half - line.width, "start"),
         };
         out.push_str(&format!(
             "<text{attrs}{} x=\"{}\" y=\"{}\" text-anchor=\"{anchor}\"",
@@ -625,7 +631,7 @@ pub fn text_svg(text: &Text, cx: f64, cy: f64, box_w: f64, root: &Font, attrs: &
             num(x),
             num(base)
         ));
-        if line.spans.len() == 1 && !line.spans[0].font.sub && !line.spans[0].font.sup {
+        if single {
             span_attrs(&line.spans[0].font, root, &mut out);
             out.push('>');
             out.push_str(&esc(&line.spans[0].text));
@@ -634,8 +640,10 @@ pub fn text_svg(text: &Text, cx: f64, cy: f64, box_w: f64, root: &Font, attrs: &
         }
         out.push('>');
         let mut shifted = 0.0f64;
+        let mut at = x;
         for span in &line.spans {
-            out.push_str("<tspan");
+            out.push_str(&format!("<tspan x=\"{}\"", num(at)));
+            at += span.width;
             span_attrs(&span.font, root, &mut out);
             let want = if span.font.sub {
                 span.font.size * 0.3

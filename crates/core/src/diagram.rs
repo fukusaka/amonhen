@@ -91,9 +91,9 @@ fn approximation_note(notes: &[amonhen_dot::Note]) -> String {
             Note::UnknownColors => {
                 amonhen_model::tr!("unknown colors are drawn in the default color")
             }
-            Note::ColorSchemes => amonhen_model::tr!(
-                "unknown color schemes are drawn in the default color"
-            ),
+            Note::ColorSchemes => {
+                amonhen_model::tr!("unknown color schemes are drawn in the default color")
+            }
             Note::OtherLayouts => {
                 amonhen_model::tr!("other layout engines are drawn with the dot layout")
             }
@@ -689,6 +689,29 @@ mod tests {
         assert!(mermaid.contains("<rect x=\"0\" y=\"0\""), "{mermaid}");
         assert!(syntax.contains("#f5e0e0") && syntax.contains("#aa0000"));
         assert!(light.contains(">Start</text>"));
+    }
+
+    #[cfg(feature = "diagrams")]
+    #[test]
+    fn dot_labels_keep_mixed_styles_in_one_line() {
+        // CoreSVG は `<tspan>` の飾りを読まないので、太字・斜体の span は別々の `<text>` に分ける
+        let src = "digraph { a [label=<<b>bold</b> and <i>italic</i>>] }";
+        let Some(Drawn::Svg(svg, None)) = draw("dot", src) else {
+            panic!("not drawn");
+        };
+        let flat = colorize(&svg, &palette(Scheme::Pele, false, &theme()), false).unwrap();
+        assert!(!flat.contains("<tspan"), "{flat}");
+        let texts: Vec<&str> = flat.split("<text").skip(1).collect();
+        let with = |word: &str| {
+            texts
+                .iter()
+                .find(|t| t.contains(&format!(">{word}</text>")))
+                .unwrap_or_else(|| panic!("{word}: {flat}"))
+        };
+        assert!(with("bold").contains("font-weight=\"bold\""));
+        assert!(with("italic").contains("font-style=\"italic\""));
+        assert!(!with("italic").contains("font-weight"));
+        assert!(!with(" and ").contains("font-weight") && !with(" and ").contains("font-style"));
     }
 
     #[cfg(feature = "diagrams")]
