@@ -236,7 +236,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Reason shown when Commit is disabled | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | In the button's tooltip.<br>TUI: On the bottom line. |
 | Combined HEAD → working tree diff with line and hunk checks | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: With the engine; without it, line staging on separate unstaged and staged diffs.<br>CLI: `diff --combined`, `stage --rows`. |
 | Range selection in the gutter, J/K and ⌥J/⌥K | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: `v` starts a range; `[` `]` go to the hunk headers. |
-| Unstaged / Staged switch for files that can't be overlaid | ✓ | ✓ | ✓ | n/a | ✓ | △ | VSCode: Always shown separately.<br>CLI: `diff --staged`.<br>TUI: One side is shown (the unstaged changes when there are some), with no switch. |
+| Unstaged / Staged switch for files that can't be overlaid | ✓ | ✓ | ✓ | n/a | ✓ | ✓ | VSCode: Always shown separately.<br>CLI: `diff --staged`.<br>TUI: The unstaged side first; `s` in the diff switches sides. |
 | Diff options (unified/split, whitespace, context, wrap) | — | — | — | — | n/a | — |  |
 | Discard lines, hunks and files (undoable) | ✓ | ✓ | △ | ✓ | ✓ | ✓ | CLI: `discard --rows`.<br>Windows: Right-click a line or a hunk header in the Working Copy diff (Discard Lines); lines can't be selected |
 | Add to .gitignore | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: `i` on an untracked file, then `p` for its path or `e` for its extension. |

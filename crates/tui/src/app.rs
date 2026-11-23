@@ -5710,6 +5710,10 @@ impl App {
                     tr!("In a conflict: take current, incoming, both, or the base"),
                 ),
                 ("m", tr!("Magic Merge on the whole file")),
+                (
+                    "s",
+                    tr!("For a file shown one side at a time: the staged or the unstaged side"),
+                ),
                 ("h l", tr!("Pan long lines; h at the left edge goes back")),
                 ("Esc", tr!("Go back to the list")),
             ],
@@ -6180,6 +6184,18 @@ impl App {
                     self.focus = Focus::Main;
                     true
                 }
+            }
+            // 重ねて出せないファイルで、作業ツリーの側と stage 済みの側を替える。
+            KeyCode::Char('s') => {
+                self.notice = Some(match self.changes.switch_side() {
+                    Ok(true) => tr!("Showing the staged changes (s for the unstaged)"),
+                    Ok(false) => tr!("Showing the unstaged changes (s for the staged)"),
+                    Err(true) => {
+                        tr!("This diff already shows both the staged and the unstaged changes")
+                    }
+                    Err(false) => tr!("This file has changes on one side only"),
+                });
+                true
             }
             // 行の範囲: `v` で始まりを決め、動かした所までを選ぶ。もう一度で、やめる。
             KeyCode::Char('v') => self.changes.toggle_mark(),

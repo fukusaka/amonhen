@@ -419,6 +419,32 @@ fn two_lines(dir: &Path) {
     std::fs::write(dir.join("a.txt"), "ONE\ntwo\nTHREE\nfour\n").unwrap();
 }
 
+/// 重ねて出せないファイル（バイナリ）で、stage 済みの変更と作業ツリーの変更があれば、差分で `s` で出す側を替える
+/// （アプリの Unstaged / Staged の切り替え）。重ねて出せるファイルでは、そう言う
+#[test]
+fn switch_between_the_staged_and_unstaged_sides() {
+    let dir = tempfile::tempdir().unwrap();
+    two_lines(dir.path());
+    std::fs::write(dir.path().join("b.bin"), b"\0one").unwrap();
+    git(dir.path(), BASE, &["add", "b.bin"]);
+    git(dir.path(), BASE, &["commit", "-q", "-m", "Binary"]);
+    std::fs::write(dir.path().join("b.bin"), b"\0two").unwrap();
+    git(dir.path(), BASE, &["add", "b.bin"]);
+    std::fs::write(dir.path().join("b.bin"), b"\0three").unwrap();
+    // a.txt は作業ツリーの変更だけ、b.bin は両方。一覧の 2 つ目が b.bin。
+    let staged = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "1j\ns").unwrap();
+    println!("{staged}");
+    assert!(staged.contains("Showing the staged changes"), "{staged}");
+    let back = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "1j\nss").unwrap();
+    assert!(back.contains("Showing the unstaged changes"), "{back}");
+    // 重ねて出せるファイル（テキスト）では、替えるものがない。
+    let both = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "1\ns").unwrap();
+    assert!(
+        both.contains("This diff already shows both the staged and the unstaged changes"),
+        "{both}"
+    );
+}
+
 /// 差分の行で Space: その行だけを stage する。hunk の見出しなら、その hunk すべて
 #[test]
 fn space_in_the_diff_stages_a_line_or_a_hunk() {

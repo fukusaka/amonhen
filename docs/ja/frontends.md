@@ -236,7 +236,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Commit が押せない理由を出す | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | ボタンのツールチップに。<br>TUI: 一番下の行に。 |
 | HEAD → 作業ツリーの 1 つの差分と、行・hunk のチェック | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: エンジンがあれば。なければ別々の未ステージ・ステージ済みの差分で行をステージ。<br>CLI: `diff --combined`・`stage --rows`。 |
 | 行の範囲の選択、J/K・⌥J/⌥K | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: `v` で範囲を始め、`[` `]` で hunk の見出しへ。 |
-| 重ねられないファイルの Unstaged / Staged の切り替え | ✓ | ✓ | ✓ | n/a | ✓ | △ | VSCode: いつも別々に出す。<br>CLI: `diff --staged`。<br>TUI: 片方だけを出す（stage していない変更があればそちら）。切り替えはない。 |
+| 重ねられないファイルの Unstaged / Staged の切り替え | ✓ | ✓ | ✓ | n/a | ✓ | ✓ | VSCode: いつも別々に出す。<br>CLI: `diff --staged`。<br>TUI: 初めは stage していない側。差分の `s` で替える。 |
 | 差分の表示の選択（unified/split・空白・前後の行・折り返し） | — | — | — | — | n/a | — |  |
 | 行・hunk・ファイルを捨てる（Undo できる） | ✓ | ✓ | △ | ✓ | ✓ | ✓ | CLI: `discard --rows`。<br>Windows: Working Copy の差分で行か hunk の見出しを右クリック（Discard Lines）。行を選ぶことはできない |
 | Add to .gitignore | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: untracked のファイルで `i`、続けて `p` でそのパス、`e` で拡張子。 |
