@@ -54,9 +54,9 @@ public final class CommitChanges: @unchecked Sendable {
     }
 
     /// `index` 番目のファイルの、前後 `context` 行の差分（`UInt32.max` ならファイル全体）。裏のスレッドで呼ぶ。
-    public func diff(at index: Int, context: UInt32) throws -> FileDiff {
+    public func diff(at index: Int, context: UInt32, whitespace: DiffWhitespace = .exact) throws -> FileDiff {
         guard let raw = amonhen_file_diff_context(
-            repository.raw, raw, UInt32(index), context, UInt8(AmonhenEncoding_Utf16.rawValue)) else {
+            repository.raw, raw, UInt32(index), context, whitespace.rawValue, UInt8(AmonhenEncoding_Utf16.rawValue)) else {
             throw AmonhenError.last()
         }
         return FileDiff(raw: raw, changes: self)
@@ -72,8 +72,8 @@ public final class CommitChanges: @unchecked Sendable {
     }
 
     /// すべてのファイルの差分（全ファイルを縦に並べて見せる）。ファイルの数だけ blob を読むので、裏のスレッドで呼ぶ。
-    public func stacked() throws -> StackedDiff {
-        guard let raw = amonhen_stacked_diff(repository.raw, raw) else { throw AmonhenError.last() }
+    public func stacked(whitespace: DiffWhitespace = .exact) throws -> StackedDiff {
+        guard let raw = amonhen_stacked_diff(repository.raw, raw, whitespace.rawValue) else { throw AmonhenError.last() }
         return StackedDiff(raw: raw, owner: self)
     }
 }
@@ -137,6 +137,18 @@ public enum SelectionKind: UInt8, Sendable {
 }
 
 /// 2 つ選んだときの差分の取り方。
+/// 行を比べるときに無視する空白（git diff の `--ignore-space-at-eol`・`-b`・`-w`）。
+public enum DiffWhitespace: UInt8, Sendable, CaseIterable {
+    /// 無視しない。
+    case exact
+    /// 行末の空白。
+    case atEol
+    /// 空白の量の違いと行末の空白（`-b`）。
+    case change
+    /// すべての空白（`-w`）。
+    case all
+}
+
 public enum PairMode: UInt8, Sendable {
     /// 古いほうから新しいほうまで（A..B）。
     case forward
@@ -148,10 +160,13 @@ public enum PairMode: UInt8, Sendable {
 
 extension History {
     /// 選んだ行（順不同）のコミットの、全ファイルの差分。裏のスレッドで呼ぶ。
-    public func selectionDiff(rows: [Int], pair: PairMode = .forward) throws -> (SelectionKind, StackedDiff) {
+    public func selectionDiff(
+        rows: [Int], pair: PairMode = .forward, whitespace: DiffWhitespace = .exact
+    ) throws -> (SelectionKind, StackedDiff) {
         var kind: UInt8 = 0
         let raw = rows.map(UInt32.init).withUnsafeBufferPointer {
-            amonhen_selection_diff(repository.raw, self.raw, $0.baseAddress, UInt32($0.count), pair.rawValue, &kind)
+            amonhen_selection_diff(
+                repository.raw, self.raw, $0.baseAddress, UInt32($0.count), pair.rawValue, whitespace.rawValue, &kind)
         }
         guard let raw else { throw AmonhenError.last() }
         return (SelectionKind(rawValue: kind) ?? .range, StackedDiff(raw: raw, owner: self))

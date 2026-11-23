@@ -11015,6 +11015,30 @@ mod tests {
     }
 
     #[test]
+    fn a_diff_that_ignores_whitespace_cant_stage_or_discard_lines() {
+        let (tmp, repo) = setup_converting(&[], b"a\nb\n");
+        let dir = tmp.path();
+        std::fs::write(dir.join("a.txt"), "a  \nB\n").unwrap();
+        let status = repo.load_status().unwrap();
+        let entry = &status.status.entries[0];
+        let diff = repo
+            .working_diff_ws(
+                entry,
+                false,
+                crate::diff::Whitespace::AtEol,
+                &FrontendProfile::MACOS,
+            )
+            .unwrap();
+        // 行末の空白だけの a は変わっていない行になり、b → B だけが出る。
+        assert_eq!((diff.file.added, diff.file.removed), (1, 1));
+        assert!(repo.stage_rows(&diff, &[3]).is_err());
+        assert!(repo.set_rows_staged(&diff, &[3], true).is_err());
+        assert!(repo.discard_rows(&diff, &[3]).is_err());
+        assert_eq!(index_blob(dir), b"a\nb\n", "index は変えない");
+        assert_eq!(std::fs::read(dir.join("a.txt")).unwrap(), b"a  \nB\n");
+    }
+
+    #[test]
     fn diffs_and_stages_lines_through_autocrlf() {
         // Windows の既定（core.autocrlf=true）: 作業ツリーは CRLF、index は LF。
         let (tmp, repo) = setup_converting(&[("core.autocrlf", "true")], b"1\n2\n3\n");

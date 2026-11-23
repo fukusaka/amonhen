@@ -1312,3 +1312,43 @@ fn status_asks_watchman_through_the_engine_hook() {
     let requests = std::fs::read_to_string(tmp.path().join("requests")).unwrap();
     assert!(requests.contains(r#""since":"c:1:1""#), "{requests}");
 }
+
+#[test]
+fn diff_and_show_ignore_whitespace_like_git() {
+    let repo = repository();
+    let dir = repo.path();
+    let home = tempfile::tempdir().unwrap();
+    let path = dir.to_str().unwrap();
+    std::fs::write(dir.join("ws.txt"), "a\nb\nc\n").unwrap();
+    git(dir, &["add", "."]);
+    git(dir, &["commit", "-q", "-m", "ws"]);
+    std::fs::write(dir.join("ws.txt"), "  a\nb \nC\n").unwrap();
+    git(dir, &["commit", "-q", "-am", "reindent"]);
+    for (flag, git_flag) in [
+        ("-w", "-w"),
+        ("-b", "-b"),
+        ("--ignore-space-at-eol", "--ignore-space-at-eol"),
+    ] {
+        let (out, code) = amonhen(home.path(), &["show", "-C", path, flag, "--color=never"]);
+        assert_eq!(code, 0, "{out}");
+        let expected = Command::new("git")
+            .args(["show", git_flag, "--format=", "--no-color"])
+            .current_dir(dir)
+            .output()
+            .unwrap()
+            .stdout;
+        let expected = String::from_utf8(expected).unwrap();
+        // git の見出し（diff --git・index・---・+++）の後ろの hunk が同じ。
+        let hunks = &expected[expected.find("@@").unwrap()..];
+        assert!(out.ends_with(hunks), "{flag}:\n{out}\n---\n{hunks}");
+    }
+    std::fs::write(dir.join("ws.txt"), "  a  \nb \nC\nd\n").unwrap();
+    let (out, code) = amonhen(home.path(), &["diff", "-C", path, "-w", "--color=never"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.ends_with("@@ -1,3 +1,4 @@\n   a  \n b \n C\n+d\n"),
+        "{out}"
+    );
+    let (out, code) = amonhen(home.path(), &["diff", "-C", path, "-w", "--combined"]);
+    assert_ne!(code, 0, "{out}");
+}

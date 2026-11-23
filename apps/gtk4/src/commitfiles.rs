@@ -2,8 +2,8 @@
 //! 一覧は差分のファイルの見出しそのもの（最初はすべて畳み、押すとその場で開く・畳む）で、リストか木で見せる
 //! （木ならフォルダの行が見出しの間に入り、押すと中の見出しを畳む）。
 //!
-//! 上の帯: 変更／すべてのファイル、ファイルの数と行数の合計、リスト／木、フォルダ・差分をすべて開く、空白を無視
-//! （まだ使えない）、差分の中の検索、表示の設定（詳細の見せ方・詳細を広げる・AI）。見出しの ⋯（右クリックと同じ）に
+//! 上の帯: 変更／すべてのファイル、ファイルの数と行数の合計、リスト／木、フォルダ・差分をすべて開く、無視する空白
+//! （`whitespace.rs`）、差分の中の検索、表示の設定（詳細の見せ方・詳細を広げる・AI）。見出しの ⋯（右クリックと同じ）に
 //! ファイル全体を表示・この時点のファイルを開く・Blame などを置く。hunk の見出しの左の印で前後を 20 行広げる。
 //! 画像は見出しの下に比べる欄を出す（`imagediff.rs`）。「すべてのファイル」はその時点の木と中身
 //! （`commitbrowser.rs`）。
@@ -16,7 +16,7 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use amonhen_core::diff::StackedDiff;
+use amonhen_core::diff::{StackedDiff, Whitespace};
 use amonhen_core::{HistorySnapshot, Repository};
 use amonhen_model::{ChangeKind, FileChange, Oid, tr};
 use gtk::prelude::*;
@@ -72,23 +72,31 @@ impl Prepared {
         }
     }
 
-    /// History で選んだ 1 つのコミット（行 `row`）の差分。裏のスレッドで呼ぶ。
+    /// History で選んだ 1 つのコミット（行 `row`）の差分（`whitespace` の空白を無視して行を比べる）。裏のスレッドで
+    /// 呼ぶ。
     pub fn commit(
         repo: &Arc<Repository>,
         history: &HistorySnapshot,
         row: u32,
+        whitespace: Whitespace,
     ) -> Result<Self, String> {
         // 本当の親と比べる（「一致したコミットだけ」の History では、親が次に一致したコミットに替わっている）。
         let Some(id) = history.graph.ids().get(row as usize) else {
             return Err(tr!("No commit selected"));
         };
         let changes = repo.commit_changes(id).map_err(|e| e.to_string())?;
-        Self::from_changes(repo.clone(), changes)
+        Self::from_changes(repo.clone(), changes, whitespace)
     }
 
     /// コミットの変更ファイル `changes` から作る（Stashes・Reflog・Range Diff の詳細も）。裏のスレッドで呼ぶ。
-    pub fn from_changes(repo: Arc<Repository>, changes: Vec<FileChange>) -> Result<Self, String> {
-        let stacked = repo.stacked_diff(&changes).map_err(|e| e.to_string())?;
+    pub fn from_changes(
+        repo: Arc<Repository>,
+        changes: Vec<FileChange>,
+        whitespace: Whitespace,
+    ) -> Result<Self, String> {
+        let stacked = repo
+            .stacked_diff_ws(&changes, whitespace)
+            .map_err(|e| e.to_string())?;
         Ok(Self::new(stacked, Some(repo), Some(changes)))
     }
 }
@@ -179,6 +187,19 @@ type ViewOptions = Rc<dyn Fn() -> (Vec<Item>, Vec<Item>)>;
 /// 表示を作り直した後にすること。
 type Then = Box<dyn FnOnce(&Rc<Inner>)>;
 
+/// 空白の扱いを変えて読み直すとき、開いていたファイルなどを戻す（macOS 版の `restoreAfterReload`）。読み直した
+/// 差分のファイルの並びが同じときだけ戻す。
+struct Restore {
+    names: Vec<String>,
+    open: HashSet<usize>,
+    whole: HashSet<usize>,
+    contexts: HashMap<usize, u32>,
+    svg_text: HashSet<usize>,
+    collapsed_folders: HashSet<String>,
+    /// 見えていた一番上のファイル。
+    top: Option<usize>,
+}
+
 pub struct CommitDiff {
     pub root: gtk::Box,
     inner: Rc<Inner>,
@@ -220,7 +241,8 @@ struct Bar {
     folders_icon: crate::icon::Icon,
     expand_all: gtk::Button,
     expand_icon: crate::icon::Icon,
-    whitespace: gtk::CheckButton,
+    /// 行を比べるときに無視する空白。覚えない。
+    whitespace: crate::whitespace::Picker,
 }
 
 struct Inner {
@@ -249,6 +271,10 @@ struct Inner {
     stats: RefCell<Stats>,
     /// 画像の比べ方（コミットを変えても保つ）。
     image_mode: Cell<imagediff::Mode>,
+    /// 無視する空白を選び直したら呼ぶ（持ち主が、出しているものを読み直す）。
+    on_whitespace: RefCell<Option<Rc<dyn Fn()>>>,
+    /// 空白の扱いを変えて読み直した差分に戻す、開き方。
+    restore: RefCell<Option<Restore>>,
 }
 
 /// ファイルごとの行数（パス → 追加・削除。両方 None はバイナリ）。
@@ -442,9 +468,7 @@ impl CommitDiff {
             icon_button(crate::icon::Kind::Folder, &tr!("Expand All Folders"));
         let (expand_all, expand_icon) =
             icon_button(crate::icon::Kind::ExpandVertical, &tr!("Expand All Diffs"));
-        let whitespace = gtk::CheckButton::with_label(&tr!("Ignore Whitespace"));
-        whitespace.set_sensitive(false);
-        whitespace.set_tooltip_text(Some(&tr!("Not available yet")));
+        let whitespace = crate::whitespace::Picker::new();
         let (find, _) = icon_button(crate::icon::Kind::Search, &tr!("Find in the diff (Ctrl+F)"));
         let (options, _) = icon_button(crate::icon::Kind::Sliders, &tr!("View Options"));
         let bar_box = gtk::Box::new(gtk::Orientation::Horizontal, 8);
@@ -459,7 +483,7 @@ impl CommitDiff {
             tree_switch.upcast_ref(),
             folders.upcast_ref(),
             expand_all.upcast_ref(),
-            whitespace.upcast_ref(),
+            whitespace.widget().upcast_ref(),
             find.upcast_ref(),
             options.upcast_ref(),
         ] {
@@ -517,6 +541,8 @@ impl CommitDiff {
             },
             stats: RefCell::default(),
             image_mode: Cell::new(imagediff::Mode::default()),
+            on_whitespace: RefCell::default(),
+            restore: RefCell::default(),
         });
         OPEN.with(|open| open.borrow_mut().push(Rc::downgrade(&inner)));
         Inner::connect(&inner, &previous, &next, &done, &find, &options);
@@ -530,6 +556,18 @@ impl CommitDiff {
     /// 差分の部品（AI の解説などが読む）。
     pub fn diff(&self) -> &DiffWidget {
         &self.inner.diff
+    }
+
+    /// 行を比べるときに無視する空白（帯で選んでいるもの）。差分はこれで取る。
+    pub fn whitespace(&self) -> Whitespace {
+        self.inner.bar.whitespace.whitespace()
+    }
+
+    /// 帯で無視する空白を選び直したら `f()` を呼ぶ（出しているコミット・選び方・範囲を [`Self::whitespace`] で
+    /// 読み直す）。読み直した差分では、開いていたファイル・広げた前後・ファイル全体・畳んだフォルダ・一番上の
+    /// ファイルを戻す（macOS 版と同じ）。
+    pub fn connect_whitespace_changed(&self, f: impl Fn() + 'static) {
+        self.inner.on_whitespace.replace(Some(Rc::new(f)));
     }
 
     /// 次を読んでいる間: 差分を消す。
@@ -716,6 +754,12 @@ impl Inner {
             }
         });
         let weak = Rc::downgrade(this);
+        this.bar.whitespace.connect_changed(move || {
+            if let Some(this) = weak.upgrade() {
+                Inner::whitespace_changed(&this);
+            }
+        });
+        let weak = Rc::downgrade(this);
         find.connect_clicked(move |_| {
             if let Some(this) = weak.upgrade() {
                 Inner::show_find(&this);
@@ -802,6 +846,7 @@ impl Inner {
         this.generation.set(this.generation.get() + 1);
         Inner::drop_browser(this);
         let count = names.len();
+        let restore = this.restore.take().filter(|r| r.names == names);
         {
             let mut st = this.st.borrow_mut();
             *st = St {
@@ -834,7 +879,88 @@ impl Inner {
             // 差分が描かれてから出す。
             glib::idle_add_local_once(move || menu::popup(&diff, 60.0, 10.0, items));
         }
-        Inner::apply_snapshot_options(this);
+        match restore {
+            Some(restore) => Inner::apply_restore(this, restore),
+            None => Inner::apply_snapshot_options(this),
+        }
+    }
+
+    /// 帯で無視する空白を選び直した: 開き方を覚えて、持ち主に読み直してもらう（macOS 版の `setWhitespace`）。
+    fn whitespace_changed(this: &Rc<Self>) {
+        let restore = {
+            let st = this.st.borrow();
+            st.source.is_some().then(|| Restore {
+                names: st.names.clone(),
+                open: st.open.clone(),
+                whole: st.whole.clone(),
+                contexts: st.contexts.clone(),
+                svg_text: st.svg_text.clone(),
+                collapsed_folders: st.collapsed_folders.clone(),
+                top: this.diff.visible_top_file(),
+            })
+        };
+        this.restore.replace(restore);
+        let f = this.on_whitespace.borrow().clone();
+        match f {
+            Some(f) => f(),
+            None => {
+                this.restore.take();
+            }
+        }
+    }
+
+    /// 空白の扱いを変えて読み直した差分に、前の開き方を戻す。
+    fn apply_restore(this: &Rc<Self>, restore: Restore) {
+        let Restore {
+            open,
+            whole,
+            contexts,
+            svg_text,
+            collapsed_folders,
+            top,
+            ..
+        } = restore;
+        let ops: Vec<(usize, u32)> = {
+            let mut st = this.st.borrow_mut();
+            let count = st.names.len();
+            let mut files: Vec<usize> = open
+                .iter()
+                .chain(&whole)
+                .chain(contexts.keys())
+                .copied()
+                .filter(|&f| f < count)
+                .collect();
+            files.sort_unstable();
+            files.dedup();
+            let ops = files
+                .into_iter()
+                .filter_map(|f| {
+                    let context = if whole.contains(&f) {
+                        u32::MAX
+                    } else {
+                        contexts.get(&f).copied().unwrap_or(3)
+                    };
+                    let pending = st.infos.get(f).is_some_and(|i| i.pending);
+                    (context != 3 || pending).then_some((f, context))
+                })
+                .collect();
+            st.open = open.into_iter().filter(|&f| f < count).collect();
+            st.whole = whole.into_iter().filter(|&f| f < count).collect();
+            st.contexts = contexts.into_iter().filter(|(f, _)| *f < count).collect();
+            st.svg_text = svg_text.into_iter().filter(|&f| f < count).collect();
+            st.collapsed_folders = collapsed_folders;
+            ops
+        };
+        Inner::reshow(
+            this,
+            false,
+            ops,
+            Some(Box::new(move |this| {
+                if let Some(top) = top {
+                    this.diff.scroll_to_file(top);
+                }
+            })),
+        );
     }
 
     /// 前のコミットの「すべてのファイル」を捨てる。
@@ -1241,7 +1367,7 @@ impl Inner {
         let tree = file_tree();
         let bar = &this.bar;
         bar.expand_all.set_visible(!files);
-        bar.whitespace.set_visible(!files);
+        bar.whitespace.widget().set_visible(!files);
         bar.folders.set_visible(tree);
         let (kind, tip) = if Inner::all_diffs_open(this) {
             (
@@ -1728,7 +1854,7 @@ mod tests {
         let backend = amonhen_backend_gix::GixBackend::open(&dir).unwrap();
         let repo = Arc::new(Repository::new(backend));
         let history = repo.load_history().unwrap();
-        let prepared = Prepared::commit(&repo, &history, 0).unwrap();
+        let prepared = Prepared::commit(&repo, &history, 0, Whitespace::Exact).unwrap();
         assert_eq!(prepared.names, ["a.txt", "b.txt", "c.txt"]);
         // 見出しだけ（すべて畳んでいる）。行数は見出しの行にある。
         assert_eq!(prepared.view.diff_view().rows.len(), 3);
