@@ -1530,6 +1530,22 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
                 }
             }
         }
+        // --measure-merge-scroll --merge-editor PATH で、そのファイルのマージエディタを開き、スクロールと幅の変更を測る。
+        if CommandLine.arguments.contains("--measure-merge-scroll"), let path = AppDelegate.option("--merge-editor") {
+            let repository = self.repository
+            MergeEditorWindowController.show(path: path, repository: repository, actions: actions, from: window)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                guard let editor = MergeEditorWindowController.editor(path: path, repository: repository) else {
+                    print("merge editor didn't open")
+                    return NSApp.terminate(nil)
+                }
+                let rows = AppDelegate.option("--scroll-rows").flatMap(Double.init) ?? 1.5
+                editor.measureScroll(frames: 600, rowsPerFrame: rows) { summary in
+                    print(summary)
+                    NSApp.terminate(nil)
+                }
+            }
+        }
         if CommandLine.arguments.contains("--log-scroll") { history.logScrollGestures() }
         // --stashes で、Stashes の画面を開く（stash は ref を読んだ後に出るので、少し待つ）。
         if CommandLine.arguments.contains("--stashes") {
