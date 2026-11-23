@@ -749,8 +749,10 @@ impl Details {
     }
 
     /// 表示の設定のメニューに出す、見せ方の項目（今の見せ方に印。`show_style_switch` の後で使う）。
-    pub fn style_items(&self) -> Vec<crate::menu::Item> {
-        Style::ALL
+    /// 続けて、詳細をメッセージに合わせる（仕切りを手で動かしていたら外れている。選ぶと覚えた位置を忘れて合わせ
+    /// 直す。macOS 版と同じ）。
+    pub fn style_items(self: &Rc<Self>) -> Vec<crate::menu::Item> {
+        let mut items: Vec<crate::menu::Item> = Style::ALL
             .into_iter()
             .zip(&self.style_buttons)
             .map(|(style, button)| {
@@ -761,7 +763,25 @@ impl Details {
                     }
                 })
             })
-            .collect()
+            .collect();
+        let fitting = crate::settings::string(crate::DETAILS_HEIGHT)
+            .and_then(|s| s.parse::<i32>().ok())
+            .is_none_or(|h| h <= 0);
+        let weak = Rc::downgrade(self);
+        items.push(crate::menu::choice_with_tip(
+            tr!("Fit Details to the Message"),
+            fitting,
+            tr!("Size the commit details to each message. Dragging the divider keeps its position instead."),
+            move || {
+                crate::settings::set_string(crate::DETAILS_HEIGHT, "0");
+                if let Some(d) = weak.upgrade()
+                    && let Some(paned) = d.root.parent().and_downcast::<gtk::Paned>()
+                {
+                    crate::fit_details(&paned, d.clone());
+                }
+            },
+        ));
+        items
     }
 
     /// 見せ方を変えて出し直す。

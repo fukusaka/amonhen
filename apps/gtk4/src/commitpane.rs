@@ -82,6 +82,7 @@ impl CommitPane {
             root.set_start_child(Some(&details.root));
             root.set_end_child(Some(&files.root));
             root.set_resize_start_child(false);
+            crate::keep_details_divider(&root);
             root.set_position(170);
             // 帯の表示の設定: 詳細の見せ方・詳細を広げる・AI の翻訳・解説（History と同じ。Push のシートでは出さない）。
             if !preview {

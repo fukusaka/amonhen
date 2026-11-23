@@ -936,6 +936,7 @@ fn build_tab(
     right.set_end_child(Some(&commit_diff.root));
     right.set_resize_start_child(false);
     right.set_position(170);
+    keep_details_divider(&right);
     let columns = gtk::Paned::new(gtk::Orientation::Horizontal);
     columns.set_start_child(Some(&history_column));
     columns.set_end_child(Some(&right));
@@ -2949,16 +2950,105 @@ const STOP: u32 = u32::MAX;
 /// `refreshRepository` と同じ）。
 const REFRESH: u32 = 1 << 31;
 
+/// 利用者が動かした、詳細とファイルの間の仕切りの位置（詳細の欄の高さ）を覚える設定の鍵。0 かなければ、
+/// メッセージに合わせる（macOS 版の `historyDetailsHeight`）。
+pub const DETAILS_HEIGHT: &str = "historyDetailsHeight";
+
+thread_local! {
+    /// 詳細の仕切りをアプリが動かしている間（利用者が動かしたのと見分ける）。
+    static PLACING_DETAILS: Cell<bool> = const { Cell::new(false) };
+}
+
+/// 利用者が動かした詳細の欄の高さ（なければ None）。
+fn kept_details_height() -> Option<i32> {
+    settings::string(DETAILS_HEIGHT)
+        .and_then(|s| s.parse::<i32>().ok())
+        .filter(|h| *h > 0)
+}
+
 /// 詳細の欄をメッセージの高さに合わせる（40 から右の列の半分まで。残りは欄の中でスクロール。macOS 版と同じ）。
+/// 仕切りを手で動かしていたら、代わりにその位置を保つ（表示の設定の「詳細をメッセージに合わせる」で戻す）。
 /// 窓が開いた直後は大きさがまだ決まっていないので、決まったフレームで合わせる。
 fn fit_details(right: &gtk::Paned, details: Rc<Details>) {
     right.add_tick_callback(move |right, _| {
         if right.width() <= 0 {
             return glib::ControlFlow::Continue;
         }
-        let height = details.natural_height(right.width());
-        right.set_position(height.min(right.height() / 2).max(40));
+        let height = match kept_details_height() {
+            Some(kept) => kept,
+            None => {
+                let height = details.natural_height(right.width());
+                height.min(right.height() / 2).max(40)
+            }
+        };
+        if right.position() != height {
+            PLACING_DETAILS.with(|p| p.set(true));
+            right.set_position(height);
+            PLACING_DETAILS.with(|p| p.set(false));
+        }
         glib::ControlFlow::Break
+    });
+}
+
+/// 詳細とファイルの間の仕切りを利用者がドラッグしたら、その位置を覚える（どのコミットでも、開き直しても保つ。
+/// macOS 版と同じ）。アプリが合わせたとき・窓の大きさで動いたときは覚えない: 仕切りの上でボタンを押してから
+/// 離すまでに動いたときだけ。
+fn keep_details_divider(right: &gtk::Paned) {
+    let dragging = Rc::new(Cell::new(false));
+    // 押した・離したを、仕切り自身のドラッグより先に見る（捕まえない。捕まえた後の離すも届く）。
+    let events = gtk::EventControllerLegacy::new();
+    events.set_propagation_phase(gtk::PropagationPhase::Capture);
+    {
+        let (dragging, weak) = (dragging.clone(), right.downgrade());
+        events.connect_event(move |_, event| {
+            let Some(right) = weak.upgrade() else {
+                return glib::Propagation::Proceed;
+            };
+            match event.event_type() {
+                gtk::gdk::EventType::ButtonPress => {
+                    // 窓の面の位置を、仕切りの部品の中の位置に。
+                    let y = right
+                        .native()
+                        .zip(event.position())
+                        .and_then(|(native, (x, y))| {
+                            let (sx, sy) = native.surface_transform();
+                            native
+                                .compute_point(
+                                    &right,
+                                    &gtk::graphene::Point::new((x - sx) as f32, (y - sy) as f32),
+                                )
+                                .map(|p| p.y() as f64)
+                        });
+                    let position = right.position() as f64;
+                    dragging
+                        .set(y.is_some_and(|y| (position - 4.0..=position + 12.0).contains(&y)));
+                }
+                gtk::gdk::EventType::ButtonRelease => dragging.set(false),
+                _ => {}
+            }
+            glib::Propagation::Proceed
+        });
+    }
+    right.add_controller(events);
+    let pending: Rc<RefCell<Option<glib::SourceId>>> = Rc::default();
+    right.connect_position_notify(move |right| {
+        if PLACING_DETAILS.with(Cell::get) || !right.is_mapped() || !dragging.get() {
+            return;
+        }
+        // ドラッグの間は書かず、止まってから。
+        if let Some(id) = pending.borrow_mut().take() {
+            id.remove();
+        }
+        let (weak, slot) = (right.downgrade(), pending.clone());
+        let id = glib::timeout_add_local_once(std::time::Duration::from_millis(400), move || {
+            slot.borrow_mut().take();
+            if let Some(right) = weak.upgrade()
+                && right.position() > 0
+            {
+                settings::set_string(DETAILS_HEIGHT, &right.position().to_string());
+            }
+        });
+        pending.borrow_mut().replace(id);
     });
 }
 

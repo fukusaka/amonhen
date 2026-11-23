@@ -2405,6 +2405,8 @@
 "GitHub alert: Warning" = "警告";
 "GitHub alert: Caution" = "注意";
 "This is a merge: the changes below are against its first parent ({id})." = "merge のコミット: 下の変更は最初の親（{id}）との差分。";
+"Fit Details to the Message" = "詳細をメッセージに合わせる";
+"Size the commit details to each message. Dragging the divider keeps its position instead." = "コミットの詳細の高さを、メッセージごとに合わせる。仕切りを動かすと、代わりにその位置を保つ。";
 "Approximation: the SVG rewritten the way the renderer degrades it, drawn by this app" = "近似: その部品が崩すように SVG を書き換え、このアプリで描いたもの";
 "Nothing known to break on Android VectorDrawable, iOS (CoreSVG), flutter_svg or react-native-svg." = "Android VectorDrawable・iOS（CoreSVG）・flutter_svg・react-native-svg で崩れると知られている機能はない。";
 "(deleted in this commit)" = "（このコミットで削除）";
