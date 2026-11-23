@@ -59,8 +59,11 @@ function params(src) {
       return ' ' + m[2] + m[3];
     });
     const brace = src.indexOf('{', j);
-    out += src.slice(i, at) + 'constructor(' + cleaned.join(',') + src.slice(j - 1, brace + 1) + assigns.join(' ');
-    i = brace + 1;
+    // A derived class must call super() before it touches this.
+    const sup = /^\s*super\([^;]*\);/.exec(src.slice(brace + 1));
+    const cut = sup ? brace + 1 + sup[0].length : brace + 1;
+    out += src.slice(i, at) + 'constructor(' + cleaned.join(',') + src.slice(j - 1, cut) + assigns.join(' ');
+    i = cut;
   }
 }
 export async function load(url, context, next) {
