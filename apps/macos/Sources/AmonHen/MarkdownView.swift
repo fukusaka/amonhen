@@ -285,12 +285,17 @@ private struct MarkdownBuilder {
 
     /// GitHub の囲みの色と見出し。
     private static func alert(_ kind: String?) -> (NSColor, String?) {
-        switch kind {
-        case "note": (.systemBlue, L("Note"))
-        case "tip": (.systemGreen, L("Tip"))
-        case "important": (.systemPurple, L("Important"))
-        case "warning": (.systemOrange, L("Warning"))
-        case "caution": (.systemRed, L("Caution"))
+        // 鍵に前置きを付ける（「Tip」はブランチの先端の訳がすでにある）。訳がなければ前置きを落とす。
+        func title(_ key: String) -> String {
+            let text = L("GitHub alert: " + key)
+            return text.hasPrefix("GitHub alert: ") ? String(text.dropFirst("GitHub alert: ".count)) : text
+        }
+        return switch kind {
+        case "note": (.systemBlue, title("Note"))
+        case "tip": (.systemGreen, title("Tip"))
+        case "important": (.systemPurple, title("Important"))
+        case "warning": (.systemOrange, title("Warning"))
+        case "caution": (.systemRed, title("Caution"))
         default: (.separatorColor, nil)
         }
     }

@@ -2085,7 +2085,9 @@
 "Preview" = "プレビュー";
 "Show the Markdown formatted" = "Markdown を整形して見せる";
 "Show the Markdown source" = "Markdown のソースを見る";
-"Note" = "注記";
-"Important" = "重要";
-"Warning" = "警告";
-"Caution" = "注意";
+/* Markdown の GitHub の囲みの見出し（「Tip」はブランチの先端の訳と分けるため前置きを付ける）。 */
+"GitHub alert: Note" = "注記";
+"GitHub alert: Tip" = "ヒント";
+"GitHub alert: Important" = "重要";
+"GitHub alert: Warning" = "警告";
+"GitHub alert: Caution" = "注意";
