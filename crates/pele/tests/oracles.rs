@@ -8,6 +8,9 @@ use std::path::Path;
 
 use amonhen_pele::diagrams::registry::registered;
 
+/// 2000-01-01T00:00:00Z。
+const NOW: f64 = 946_684_800_000.0;
+
 fn data() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/data/pele")
 }
@@ -52,6 +55,12 @@ fn docs_match_pele() {
     let only = std::env::var("PELE_ONLY").unwrap_or_default();
     let mut failed = Vec::new();
     let mut checked = 0;
+    // gantt は「今」に今日の線を引き、時刻だけの日付を今日に置く。決まった時刻にしないと、図の範囲の時刻に
+    // 走ったときだけ違う（scripts/pele-oracles も同じ時刻で描く）。
+    let options = amonhen_pele::RenderOptions {
+        now: Some(NOW),
+        ..Default::default()
+    };
     for mmd in &names {
         let input = fs::read_to_string(mmd).unwrap();
         let file = mmd.file_name().unwrap().to_string_lossy();
@@ -67,7 +76,7 @@ fn docs_match_pele() {
         let svg = mmd.with_extension("svg");
         let err = mmd.with_extension("err");
         let name = mmd.file_name().unwrap().to_string_lossy().to_string();
-        match amonhen_pele::render(&input) {
+        match amonhen_pele::render_with(&input, &options) {
             Ok(r) if svg.exists() => {
                 let want = fs::read_to_string(&svg).unwrap();
                 if r.svg != want {
