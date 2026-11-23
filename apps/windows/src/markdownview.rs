@@ -138,6 +138,28 @@ fn block(b: &Block) -> View {
             .corner_radius(4.0)
             .padding(Thickness::new(10.0, 8.0, 10.0, 8.0))
             .content(plain(code, BODY - 1.0, true, None)),
+        // 図（Mermaid など）は、まだ描かずに元の文をコードとして見せる（描けなかったときと同じ。理由があれば添える）。
+        Block::Diagram {
+            text: code, error, ..
+        } => {
+            let note: View = match error {
+                Some(error) => plain(
+                    error,
+                    BODY - 1.0,
+                    false,
+                    Some(Color::argb(0xff, 0xc0, 0x60, 0x30)),
+                ),
+                None => View::empty(),
+            };
+            StackPanel::new().spacing(4.0).children((
+                note,
+                Border::new()
+                    .background(shade())
+                    .corner_radius(4.0)
+                    .padding(Thickness::new(10.0, 8.0, 10.0, 8.0))
+                    .content(plain(code, BODY - 1.0, true, None)),
+            ))
+        }
         Block::Quote {
             alert: kind,
             blocks: inner,
