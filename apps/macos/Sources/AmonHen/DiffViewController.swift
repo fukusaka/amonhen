@@ -3029,7 +3029,11 @@ extension CommitDetailViewController {
         while menu.items.count > 1 { menu.removeItem(at: 1) }
         // コミット情報（右の列の上の欄）に効くもの。
         menu.addItem(.sectionHeader(title: L("Commit Details")))
+        // 選べない小さな見出し（薄く出す。押せる項目と見分ける）。
         let shown = NSMenuItem(title: L("Details Shown"), action: nil, keyEquivalent: "")
+        shown.attributedTitle = NSAttributedString(string: L("Details Shown"), attributes: [
+            .font: NSFont.menuFont(ofSize: NSFont.smallSystemFontSize), .foregroundColor: NSColor.secondaryLabelColor,
+        ])
         shown.isEnabled = false
         shown.indentationLevel = 1
         menu.addItem(shown)
