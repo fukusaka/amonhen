@@ -85,6 +85,8 @@ pub enum Request {
         unstaged: bool,
         /// コンフリクトのあるファイル（マーカーつきの中身を出す）。
         conflict: bool,
+        /// 無視する空白（`workingDiff` の whitespace）。無視するなら、行ごとの印つきの差分は出せない。
+        whitespace: &'static str,
     },
     /// ファイルを stage する（`stage` が false なら unstage）。
     Stage { paths: Vec<String>, stage: bool },
@@ -454,16 +456,24 @@ fn load(front: &dyn Front, request: Request, events: &Sender<Event>) -> Result<L
             serial,
             unstaged,
             conflict,
+            whitespace,
         } => {
-            let diff =
-                |mode: &str| front.call(json!({"op": "workingDiff", "path": path, "mode": mode}));
+            let diff = |mode: &str| {
+                front.call(
+                    json!({"op": "workingDiff", "path": path, "mode": mode, "whitespace": whitespace}),
+                )
+            };
+            let exact = whitespace == "exact";
             // コンフリクトのあるファイルは、マーカーつきの中身（出せなければ、ふつうの差分）。
-            // 行ごとの stage の印つきが出せないファイル（バイナリなど）は、片方だけを出す。
-            let result = match conflict {
+            // 行ごとの stage の印つきが出せないファイル（バイナリなど）と、空白を無視するときは、片方だけを出す。
+            let result = match conflict && exact {
                 true => front.call(json!({"op": "conflict", "path": path})),
                 false => Err("".into()),
             }
-            .or_else(|_| diff("combined"))
+            .or_else(|e| match exact {
+                true => diff("combined"),
+                false => Err(e),
+            })
             .or_else(|_| diff(if unstaged { "unstaged" } else { "staged" }))
             .map_err(|e| e.to_string());
             Loaded::WorkingDiff {

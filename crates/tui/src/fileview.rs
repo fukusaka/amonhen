@@ -164,6 +164,11 @@ impl FileView {
         self.lines = self.range_lines();
     }
 
+    /// range-diff を出している。
+    pub fn is_range_diff(&self) -> bool {
+        self.range.is_some()
+    }
+
     /// range-diff を出しているなら、変わらなかった組を出すかを切り替える。出していなければ `false`。
     pub fn toggle_changes_only(&mut self) -> bool {
         if self.range.is_none() {

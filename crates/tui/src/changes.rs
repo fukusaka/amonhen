@@ -73,6 +73,8 @@ struct Shown {
     staged_only: bool,
     /// コンフリクトのあるファイルの、マーカーつきの中身。
     conflict: bool,
+    /// 空白を無視した差分（行ごとの stage・破棄はしない）。
+    ignoring: bool,
 }
 
 /// 行ごとの操作の相手。
@@ -123,6 +125,8 @@ pub struct Changes {
     total_height: u16,
     /// stage の印つきで重ねて出せないファイルで、stage 済みの側を出すファイル（ほかは作業ツリーの側）。
     staged_side: Option<String>,
+    /// 差分で無視する空白（`workingDiff` の whitespace。History の詳細と同じ）。
+    whitespace: crate::details::Whitespace,
 }
 
 /// メッセージの欄の高さ（見出しの 1 行を含む）: 全体の 3 分の 1 で、3 行から 8 行。狭すぎれば出さない。
@@ -318,7 +322,15 @@ impl Changes {
             serial: self.serial,
             unstaged,
             conflict,
+            whitespace: self.whitespace.as_str(),
         })
+    }
+
+    /// 差分で無視する空白を次のもの（なし → 行末 → 量 → すべて → なし）にして、差分を読み直す。
+    pub fn next_whitespace(&mut self) -> crate::details::Whitespace {
+        self.whitespace = self.whitespace.next();
+        self.shown = None;
+        self.whitespace
     }
 
     /// `status` の答え。選んでいたファイルは、パスで引き継ぐ。
@@ -395,6 +407,7 @@ impl Changes {
                     staged_only: mode == "staged",
                     // `conflict` の答えには、差分の種類も番号もない。
                     conflict: reply.json["mode"].is_null(),
+                    ignoring: self.whitespace != crate::details::Whitespace::Exact,
                     id: id.clone(),
                     added: reply.json["added"].as_u64().unwrap_or(0),
                     removed: reply.json["removed"].as_u64().unwrap_or(0),
@@ -871,6 +884,9 @@ impl Changes {
         let Some((shown, target)) = self.target() else {
             return Ok(None);
         };
+        if shown.ignoring {
+            return Err(tr!("Lines aren’t staged while whitespace is ignored"));
+        }
         if shown.staged_only {
             return Err(tr!("Lines of this diff can’t be staged one by one"));
         }
@@ -889,6 +905,9 @@ impl Changes {
         let Some((shown, mut target)) = self.target() else {
             return Ok(None);
         };
+        if shown.ignoring {
+            return Err(tr!("Lines aren’t discarded while whitespace is ignored"));
+        }
         target
             .rows
             .retain(|r| shown.diff.kind(*r as usize).1 & DiffRow::STAGED == 0);

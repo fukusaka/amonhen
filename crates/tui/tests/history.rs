@@ -445,6 +445,36 @@ fn switch_between_the_staged_and_unstaged_sides() {
     );
 }
 
+/// Working Copy の差分の `w`: 無視する空白を替える。その間は片方の側だけを出し、行ごとの stage はしない
+#[test]
+fn working_diff_ignores_whitespace() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    git(dir, BASE, &["init", "-q", "-b", "main"]);
+    std::fs::write(dir.join("a.txt"), "one\n  two\n").unwrap();
+    git(dir, BASE, &["add", "."]);
+    git(dir, BASE, &["commit", "-q", "-m", "Start"]);
+    std::fs::write(dir.join("a.txt"), "one\n    two\nthree\n").unwrap();
+    let exact = amonhen_tui::snapshot(open(dir), 120, 14, clock(), "1\n").unwrap();
+    println!("{exact}");
+    assert!(exact.contains("    two"), "{exact}");
+    let amount = amonhen_tui::snapshot(open(dir), 120, 14, clock(), "1\nww").unwrap();
+    println!("{amount}");
+    assert!(
+        amount.contains("Ignoring changes in the amount of whitespace"),
+        "{amount}"
+    );
+    assert!(amount.contains("three"), "{amount}");
+    assert!(!amount.contains("+    two"), "{amount}");
+    // 行を stage しようとしても、しない（理由を出す）。
+    let refused = amonhen_tui::snapshot(open(dir), 120, 14, clock(), "1\nwwG ").unwrap();
+    assert!(
+        refused.contains("Lines aren’t staged while whitespace is ignored"),
+        "{refused}"
+    );
+    assert_eq!(git_out(dir, &["diff", "--cached", "--name-only"]), "");
+}
+
 /// 差分の行で Space: その行だけを stage する。hunk の見出しなら、その hunk すべて
 #[test]
 fn space_in_the_diff_stages_a_line_or_a_hunk() {
@@ -3385,6 +3415,47 @@ fn compare_two_commits_as_two_versions() {
             .lines()
             .any(|l| l.contains("Take the lane from the trunk") && l.contains(" ! "))
     );
+}
+
+/// Range Diff を開いている間は、サイドバーの Workspace に行がある。ほかの画面へ移っても、そこから戻れる
+#[test]
+fn range_diff_row_while_open() {
+    let dir = tempfile::tempdir().unwrap();
+    changed(dir.path());
+    std::fs::write(dir.path().join("notes.txt"), "two\n").unwrap();
+    git(
+        dir.path(),
+        BASE + DAY * 4,
+        &["commit", "-q", "-a", "--amend", "--no-edit"],
+    );
+    let side = |text: &str| -> Vec<String> {
+        text.lines()
+            .skip(1)
+            .filter_map(|l| column(l, 0))
+            .map(|l| l.trim().to_owned())
+            .collect()
+    };
+    let before = amonhen_tui::snapshot(open(dir.path()), 160, 14, clock(), "").unwrap();
+    assert!(
+        !side(&before).contains(&"Range Diff".to_owned()),
+        "{before}"
+    );
+    let shown = amonhen_tui::snapshot(open(dir.path()), 160, 14, clock(), ":compare\n").unwrap();
+    println!("{shown}");
+    assert!(side(&shown).contains(&"Range Diff".to_owned()), "{shown}");
+    // History へ戻り、サイドバーの行から開き直す。
+    let back = amonhen_tui::snapshot(open(dir.path()), 160, 14, clock(), ":compare\n2").unwrap();
+    assert!(side(&back).contains(&"Range Diff".to_owned()), "{back}");
+    let again =
+        amonhen_tui::snapshot(open(dir.path()), 160, 14, clock(), ":compare\n20jj\n").unwrap();
+    println!("{again}");
+    let last = again.lines().last().unwrap();
+    assert!(last.contains("main compared with main@{1}"), "{last}");
+    // ほかのファイルの Blame を開けば、行は消える。
+    let blame =
+        amonhen_tui::snapshot(open(dir.path()), 160, 14, clock(), ":compare\n2\nB").unwrap();
+    println!("{blame}");
+    assert!(!side(&blame).contains(&"Range Diff".to_owned()), "{blame}");
 }
 
 /// range-diff で `c`: 変わらなかった組（`=`）を出さない（アプリの Changes Only）。もう一度で戻る

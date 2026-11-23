@@ -41,7 +41,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Workspace の行でメインの表示を切り替える（Working Copy・History・Stashes・Reflog…） | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: Working Copy・History・Stashes と（エンジンがあれば）Reflog。Conflicts はコンフリクトがあるときだけで、押すと最初のファイルをマージエディタで開く。<br>TUI: Changes・History・Reflog（`1` `2` `3` でも）。stash はサイドバーに並べる。 |
 | コンフリクトがあるあいだ Conflicts の行と数 | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: Working Copy の中の Conflicts のグループ。<br>TUI: サイドバーの Workspace の下。選ぶと Working Copy。 |
 | stash があるときだけ Stashes の行と数 | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: Stashes の節。<br>TUI: stash があるあいだサイドバーに Stashes の節。見出しに数。 |
-| Range Diff を開いているあいだの Range Diff の行 | ✓ | ✓ | ✓ | ✓ | n/a | — |  |
+| Range Diff を開いているあいだの Range Diff の行 | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: ほかのファイルの Blame・File History に替わるまで。 |
 | Branches・Remotes・Tags を絞り込む欄 | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: サイドバーの上の絞り込みのボタンで言葉を入れ、合うものを平らに並べる。<br>TUI: サイドバーで `/`。 |
 | ブランチ・タグをいくつも選ぶ | ✓ | ✓ | ✓ | ✓ | n/a | △ | VSCode: Merge into Current Branch・Delete Branch・お気に入り・Archive が選んだものすべてに効く。<br>TUI: サイドバーの `v` で ref に印をつけ、`m` で 1 つのコミットで取り込み、`D` で印をつけたブランチを消す。お気に入り・Archive はない。 |
 | Pull Requests・Worktrees は中身があるときだけ出す | ✓ | ✓ | ✓ | △ | n/a | △ | VSCode: Worktrees だけ（GitHub は入れない）。<br>Windows: Worktrees は Working Copy の下に出す。<br>TUI: Worktrees だけ（2 つ以上あるとき）。 |
@@ -238,7 +238,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 行の範囲の選択、J/K・⌥J/⌥K | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: `v` で範囲を始め、`[` `]` で hunk の見出しへ。 |
 | 重ねられないファイルの Unstaged / Staged の切り替え | ✓ | ✓ | ✓ | n/a | ✓ | ✓ | VSCode: いつも別々に出す。<br>CLI: `diff --staged`。<br>TUI: 初めは stage していない側。差分の `s` で替える。 |
 | 差分の表示の選択（unified/split・前後の行・折り返し） | — | — | — | — | n/a | — |  |
-| 空白を無視する（その間は行ごとの stage・破棄はしない） | ✓ | ✓ | ✓ | — | ✓ | — | CLI: `diff -w`・`-b`・`--ignore-space-at-eol`（`--combined` とは使えない）。 |
+| 空白を無視する（その間は行ごとの stage・破棄はしない） | ✓ | ✓ | ✓ | — | ✓ | ✓ | CLI: `diff -w`・`-b`・`--ignore-space-at-eol`（`--combined` とは使えない）。<br>TUI: 差分の `w` で順に替える。その間は片方の側だけ（`s` で替える）。 |
 | 行・hunk・ファイルを捨てる（Undo できる） | ✓ | ✓ | △ | ✓ | ✓ | ✓ | CLI: `discard --rows`。<br>Windows: Working Copy の差分で行か hunk の見出しを右クリック（Discard Lines）。行を選ぶことはできない |
 | Add to .gitignore | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: untracked のファイルで `i`、続けて `p` でそのパス、`e` で拡張子。 |
 | コンフリクトのファイルからマージエディターを開く | ✓ | ✓ | △ | ✓ | n/a | n/a | macOS, GTK4: UTF-8 でないファイルは開かない。片側を選ぶ。<br>VSCode: VSCode のマージエディターを開く。<br>Windows: ファイルを選ぶと、マージエディタを画面に重ねて開く（埋め込まない）<br>TUI: ファイルの差分にマーカーを出し、`o` `t` `b` `a` で選んでいる行のコンフリクトを解く。 |
