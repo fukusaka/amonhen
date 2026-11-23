@@ -6,6 +6,19 @@
 //! librsvg で描ける形にする（1 図 0.05〜0.3 ms）。テーマや明るい・暗いを切り替えても、色だけを当て直せばよい。
 
 use std::collections::HashMap;
+use std::sync::Arc;
+
+/// 図（gantt）の地方時の時間帯。時間帯は OS のものなので FE が実装して渡す（None は UTC）。`diagrams` の
+/// フィーチャーでは pele の `TimeZone` そのもので、ないときも同じ形の trait なので、FE はどちらでも同じに書ける。
+#[cfg(feature = "diagrams")]
+pub use amonhen_pele::TimeZone;
+
+/// 時間帯（`diagrams` のないとき。pele の `TimeZone` と同じ形）。
+#[cfg(not(feature = "diagrams"))]
+pub trait TimeZone: Send + Sync {
+    /// その時刻（1970 年からの UTC のミリ秒）での、地方時 − UTC（ミリ秒）。
+    fn offset_ms(&self, utc_ms: f64) -> f64;
+}
 
 /// 描いた図。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -20,14 +33,19 @@ pub enum Drawn {
 /// フェンスの言葉が `language` のブロックの中身 `text` を図にする。図の言葉でない・pele が読まない種類なら `None`
 /// （FE はコードとして見せる）。
 pub fn draw(language: &str, text: &str) -> Option<Drawn> {
+    draw_in_zone(language, text, None)
+}
+
+/// `draw` の、gantt の日付をこの時間帯の地方時で数えるもの（None は UTC）。
+pub fn draw_in_zone(language: &str, text: &str, zone: Option<Arc<dyn TimeZone>>) -> Option<Drawn> {
     if !language.eq_ignore_ascii_case("mermaid") {
         return None;
     }
-    draw_mermaid(text)
+    draw_mermaid(text, zone)
 }
 
 #[cfg(feature = "diagrams")]
-fn draw_mermaid(text: &str) -> Option<Drawn> {
+fn draw_mermaid(text: &str, zone: Option<Arc<dyn TimeZone>>) -> Option<Drawn> {
     if !amonhen_pele::supports(text) {
         return None;
     }
@@ -39,7 +57,11 @@ fn draw_mermaid(text: &str) -> Option<Drawn> {
         .name("pele".into())
         .stack_size(PELE_STACK)
         .spawn(move || {
-            amonhen_pele::render(&source)
+            let options = amonhen_pele::RenderOptions {
+                time_zone: zone,
+                ..Default::default()
+            };
+            amonhen_pele::render_with(&source, &options)
                 .map(|r| r.svg)
                 .map_err(|e| e.message)
         })
@@ -93,7 +115,7 @@ pub fn sample() -> Option<String> {
 }
 
 #[cfg(not(feature = "diagrams"))]
-fn draw_mermaid(_text: &str) -> Option<Drawn> {
+fn draw_mermaid(_text: &str, _zone: Option<Arc<dyn TimeZone>>) -> Option<Drawn> {
     None
 }
 
@@ -483,6 +505,47 @@ fn rgb(hex: &str) -> Option<[u8; 3]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// いつも UTC+9 の時間帯（FE が渡すもののかわり）。
+    #[cfg(feature = "diagrams")]
+    struct Tokyo;
+
+    #[cfg(feature = "diagrams")]
+    impl TimeZone for Tokyo {
+        fn offset_ms(&self, _utc_ms: f64) -> f64 {
+            9.0 * 3_600_000.0
+        }
+    }
+
+    #[cfg(feature = "diagrams")]
+    #[test]
+    fn counts_gantt_dates_in_the_given_zone() {
+        let text = "gantt\n  dateFormat YYYY-MM-DD HH:mm\n  axisFormat %H:%M %Z\n  section S\n  Task :2024-01-01 22:00, 3h\n";
+        let svg = |zone: Option<Arc<dyn TimeZone>>| match draw_in_zone("mermaid", text, zone) {
+            Some(Drawn::Svg(svg, _)) => svg,
+            other => panic!("{other:?}"),
+        };
+        let utc = svg(None);
+        assert_eq!(utc, svg_of(draw("mermaid", text)));
+        assert!(utc.contains("+0000"));
+        assert!(svg(Some(Arc::new(Tokyo))).contains("+0900"));
+        let blocks = crate::markdown::parse_in_zone(
+            &format!("```mermaid\n{text}```\n"),
+            None,
+            Some(Arc::new(Tokyo)),
+        );
+        assert!(
+            matches!(&blocks[0], crate::markdown::Block::Diagram { svg: Some(s), .. } if s.contains("+0900"))
+        );
+    }
+
+    #[cfg(feature = "diagrams")]
+    fn svg_of(drawn: Option<Drawn>) -> String {
+        match drawn {
+            Some(Drawn::Svg(svg, _)) => svg,
+            other => panic!("{other:?}"),
+        }
+    }
 
     fn theme() -> ThemeColors {
         ThemeColors {
