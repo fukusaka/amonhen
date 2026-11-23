@@ -45,7 +45,7 @@ fn remove_ranges(text: &str, ranges: &[(usize, usize)]) -> String {
 }
 
 /// 行の頭（`^` を m で）か。
-fn line_start(b: &[u8], text: &str, i: usize) -> bool {
+fn line_start(b: &[u8], i: usize) -> bool {
     if i == 0 {
         return true;
     }
@@ -54,7 +54,7 @@ fn line_start(b: &[u8], text: &str, i: usize) -> bool {
         return true;
     }
     // U+2028・U+2029 は E2 80 A8/A9。
-    i >= 3 && (text[..i].ends_with('\u{2028}') || text[..i].ends_with('\u{2029}'))
+    i >= 3 && b[i - 3] == 0xe2 && b[i - 2] == 0x80 && (b[i - 1] == 0xa8 || b[i - 1] == 0xa9)
 }
 
 /// `/^\s*%%(?!{)[^\n]+\n?/gm` の当たる範囲。
@@ -63,7 +63,7 @@ fn comment_ranges(text: &str) -> Vec<(usize, usize)> {
     let mut out = Vec::new();
     let mut i = 0;
     while i < b.len() {
-        if !line_start(b, text, i) {
+        if !line_start(b, i) {
             i += 1;
             continue;
         }
