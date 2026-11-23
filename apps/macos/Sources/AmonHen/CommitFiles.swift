@@ -746,6 +746,23 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         needsLayout = true
     }
 
+    /// CoreSVG の絵を、ブラウザで描いた絵と同じピクセル数のビットマップにする（並べる・違うピクセルで比べるため）。
+    private static func rasterize(_ image: NSImage?, like reference: NSImage?) -> NSImage? {
+        guard let image, let rep = reference?.representations.first, rep.pixelsWide > 0, rep.pixelsHigh > 0,
+              let bitmap = NSBitmapImageRep(
+                bitmapDataPlanes: nil, pixelsWide: rep.pixelsWide, pixelsHigh: rep.pixelsHigh, bitsPerSample: 8,
+                samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)
+        else { return image }
+        bitmap.size = reference?.size ?? image.size
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
+        image.draw(in: NSRect(origin: .zero, size: bitmap.size), from: .zero, operation: .copy, fraction: 1)
+        NSGraphicsContext.restoreGraphicsState()
+        let out = NSImage(size: bitmap.size)
+        out.addRepresentation(bitmap)
+        return out
+    }
+
     @objc private func svgViewChanged() {
         svgView = SVGView(rawValue: svgSwitch.selectedSegment) ?? .picture
         if let openPath { open(path: openPath, line: nil) }
@@ -839,7 +856,8 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
                         before: nil, after: web, titles: ("", ""), caption: size, svg: false, mode: .twoUp, position: 0.5,
                         single: true)
                     : ImageDiffPanel(
-                        before: web, after: NSImage(data: data), titles: (L("Browser (WebKit)"), L("iOS (CoreSVG)")),
+                        before: web, after: Self.rasterize(NSImage(data: data), like: web),
+                        titles: (L("Browser (WebKit)"), L("iOS (CoreSVG)")),
                         caption: size, svg: false, mode: .twoUp, position: 0.5, single: false)
                 imagePanel = panel
                 addSubview(panel, positioned: .below, relativeTo: pathBar)
