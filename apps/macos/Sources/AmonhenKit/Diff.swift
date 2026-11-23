@@ -457,6 +457,41 @@ public enum MobileRenderer: UInt8, Sendable, CaseIterable {
         }
     }
 
+    /// 本物の取り込みで変換した結果。
+    public struct Converted: Sendable {
+        /// 描ける SVG に戻したもの。
+        public let svg: Data
+        /// 使った取り込みと版。
+        public let tool: String
+        /// 取り込みの警告と、同じに描けなかったこと（なければ空）。
+        public let messages: String
+    }
+
+    /// `svg` をこの部品の本物の取り込み（Android は Android Studio の Svg2Vector）で変換する。取り込みが手元になければ
+    /// nil、失敗したら投げる。外のプログラムを起こすので裏のスレッドで呼ぶ。
+    public func convert(_ svg: Data) throws -> Converted? {
+        var length: UInt = 0
+        var info: UnsafeMutablePointer<CChar>?
+        let raw = svg.withUnsafeBytes { buffer in
+            amonhen_svg_convert(buffer.bindMemory(to: UInt8.self).baseAddress, UInt(buffer.count), rawValue, &length, &info)
+        }
+        guard let raw else {
+            let error = AmonhenError.last()
+            if error.description.isEmpty { return nil }
+            throw error
+        }
+        defer { amonhen_blob_free(raw, length) }
+        var tool = "", messages = ""
+        if let info {
+            defer { amonhen_string_free(info) }
+            if let json = try? JSONSerialization.jsonObject(with: Data(String(cString: info).utf8)) as? [String: Any] {
+                tool = json["tool"] as? String ?? ""
+                messages = json["messages"] as? String ?? ""
+            }
+        }
+        return Converted(svg: Data(bytes: raw, count: Int(length)), tool: tool, messages: messages)
+    }
+
     /// `svg` を、この部品が崩すように書き換えた SVG（近似）。
     public func approximate(_ svg: Data) -> Data {
         var length: UInt = 0

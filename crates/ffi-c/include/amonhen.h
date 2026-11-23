@@ -1006,6 +1006,22 @@ uint8_t *amonhen_svg_approximate(const uint8_t *data,
                                  uintptr_t *out_len);
 
 /**
+ * SVG を、モバイル向けの描画部品 `target`（`amonhen_svg_approximate` と同じ）の本物の取り込みで変換し、描ける SVG に
+ * 戻したもの（`amonhen_blob_free` で解放する）。Android は Android Studio の Svg2Vector（Java と sdk-common が要る）。
+ * `info` に JSON `{"tool": "使った取り込みと版", "messages": "取り込みの警告と、同じに描けなかったこと"}` を書く
+ * （`amonhen_string_free` で解放する）。取り込みが手元にない部品なら、`amonhen_last_error` を空にして NULL。失敗したら
+ * エラーを置いて NULL。Java を起こすので裏のスレッドで呼ぶ。
+ *
+ * # Safety
+ * `data` は `len` バイト読めること、`out_len` と `info` は書けること（NULL でもよい）。
+ */
+uint8_t *amonhen_svg_convert(const uint8_t *data,
+                             uintptr_t len,
+                             uint8_t target,
+                             uintptr_t *out_len,
+                             char **info);
+
+/**
  * `amonhen_blob_read`・`amonhen_change_blob` が返したものを解放する。
  *
  * # Safety

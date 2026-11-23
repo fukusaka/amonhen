@@ -1585,6 +1585,74 @@ pub unsafe extern "C" fn amonhen_svg_approximate(
     )
 }
 
+/// SVG を、モバイル向けの描画部品 `target`（`amonhen_svg_approximate` と同じ）の本物の取り込みで変換し、描ける SVG に
+/// 戻したもの（`amonhen_blob_free` で解放する）。Android は Android Studio の Svg2Vector（Java と sdk-common が要る）。
+/// `info` に JSON `{"tool": "使った取り込みと版", "messages": "取り込みの警告と、同じに描けなかったこと"}` を書く
+/// （`amonhen_string_free` で解放する）。取り込みが手元にない部品なら、`amonhen_last_error` を空にして NULL。失敗したら
+/// エラーを置いて NULL。Java を起こすので裏のスレッドで呼ぶ。
+///
+/// # Safety
+/// `data` は `len` バイト読めること、`out_len` と `info` は書けること（NULL でもよい）。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_svg_convert(
+    data: *const u8,
+    len: usize,
+    target: u8,
+    out_len: *mut usize,
+    info: *mut *mut c_char,
+) -> *mut u8 {
+    let bytes = if len == 0 || data.is_null() {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(data, len) }
+    };
+    let result: Option<amonhen_model::Result<(Vec<u8>, String, String)>> = match svg_target(target)
+    {
+        amonhen_core::svglint::Target::Android => {
+            amonhen_core::svgandroid::converter().map(|c| -> amonhen_model::Result<_> {
+                let converted = c.convert(bytes)?;
+                let (svg, notes) =
+                    amonhen_core::svgandroid::vector_drawable_to_svg_with_notes(&converted.xml)?;
+                let mut messages = converted.messages.trim().to_owned();
+                for note in notes {
+                    if !messages.is_empty() {
+                        messages.push('\n');
+                    }
+                    messages.push_str(&note);
+                }
+                Ok((
+                    svg.into_bytes(),
+                    format!(
+                        "Android Studio Svg2Vector (sdk-common {})",
+                        converted.version
+                    ),
+                    messages,
+                ))
+            })
+        }
+        _ => None,
+    };
+    match result {
+        None => {
+            set_error("");
+            std::ptr::null_mut()
+        }
+        Some(Err(e)) => {
+            set_error(e);
+            std::ptr::null_mut()
+        }
+        Some(Ok((svg, tool, messages))) => {
+            if !info.is_null() {
+                let json = serde_json::json!({ "tool": tool, "messages": messages }).to_string();
+                unsafe {
+                    *info = CString::new(json).map_or(std::ptr::null_mut(), CString::into_raw)
+                };
+            }
+            blob_out(&svg, out_len)
+        }
+    }
+}
+
 /// 0 Android・1 iOS・2 flutter_svg・3 react-native-svg。
 fn svg_target(n: u8) -> amonhen_core::svglint::Target {
     use amonhen_core::svglint::Target;
