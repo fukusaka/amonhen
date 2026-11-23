@@ -25,6 +25,7 @@ pub mod svg2vector;
 pub mod svgandroid;
 pub mod svgflutter;
 pub mod svglint;
+pub mod svgmobile;
 pub mod svgsim;
 pub mod undo;
 pub mod vgc;

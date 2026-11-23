@@ -4,6 +4,9 @@
 //! `cargo run -p amonhen-core --example svg_oracles -- <android|flutter> <dir with *.svg> <out dir>`
 use std::path::Path;
 
+mod android;
+mod flutter;
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let (which, dir, out) = (&args[1], Path::new(&args[2]), Path::new(&args[3]));
@@ -20,7 +23,7 @@ fn main() {
         let svg = std::fs::read(&path).expect("read");
         match which.as_str() {
             "android" => {
-                let conv = amonhen_core::svgandroid::converter().expect("no Svg2Vector here");
+                let conv = android::converter().expect("no Svg2Vector here");
                 match conv.convert(&svg) {
                     Ok(c) => {
                         std::fs::write(out.join(format!("{stem}.xml")), c.xml).unwrap();
@@ -32,8 +35,7 @@ fn main() {
                 }
             }
             _ => {
-                let conv = amonhen_core::svgflutter::converter()
-                    .expect("no vector_graphics_compiler here");
+                let conv = flutter::converter().expect("no vector_graphics_compiler here");
                 match conv.convert(&svg) {
                     Ok(c) => {
                         std::fs::write(out.join(format!("{stem}.vec")), c.vec).unwrap();

@@ -2453,9 +2453,6 @@
 "Blend modes aren’t supported" = "描画モード（ブレンド）は使えない";
 "color(display-p3 …) isn’t understood (iOS draws it black)" = "color(display-p3 …) は読めない（iOS では黒になる）";
 "Absolute units aren’t converted" = "絶対単位は換算されない";
-"Can’t start Java: {error}" = "Java を起動できません: {error}";
-"Android Studio’s converter didn’t finish in {seconds} seconds" = "Android Studio の取り込みが {seconds} 秒で終わりませんでした";
-"Android Studio’s converter failed: {error}" = "Android Studio の取り込みが失敗しました: {error}";
 "Not a VectorDrawable: the root isn’t <vector>" = "VectorDrawable ではありません（いちばん外が <vector> でない）";
 "The <vector> needs a positive width, height, viewportWidth and viewportHeight" = "<vector> には正の width・height・viewportWidth・viewportHeight が要ります";
 "Only tintMode src_in is applied" = "tintMode は src_in だけを反映する";
@@ -2465,11 +2462,13 @@
 "Hairline strokes (strokeWidth 0) are drawn 1 dp wide" = "幅 0 の線（hairline）は 1dp の幅で描く";
 "Sweep gradients are approximated with wedges" = "スイープグラデーションは扇形を並べて近似する";
 "Approximation: the SVG rewritten the way {renderer} degrades it, drawn by this app" = "近似: {renderer} が崩すように SVG を書き換え、このアプリで描いたもの";
-"vector_graphics_compiler failed: {message}" = "vector_graphics_compiler が失敗した: {message}";
-"dart pub get failed: {message}" = "dart pub get が失敗した: {message}";
-"vector_graphics_compiler didn’t finish in {seconds} seconds" = "vector_graphics_compiler が {seconds} 秒で終わらなかった";
 "The vector_graphics data ends early" = "vector_graphics のデータが途中で切れている";
 "The vector_graphics data is broken" = "vector_graphics のデータが壊れている";
 "This isn’t vector_graphics data" = "vector_graphics のデータではない";
 "vector_graphics data version {version} isn’t supported" = "vector_graphics のデータの版 {version} には対応していない";
 "Unknown vector_graphics command {tag}" = "vector_graphics の知らない命令 {tag}";
+"Android Studio’s import (Svg2Vector, sdk-common {version}) turned back into SVG and drawn by this app" = "Android Studio の取り込み（Svg2Vector、sdk-common {version}）の結果を SVG に戻し、このアプリで描いたもの";
+"Android Studio can’t import this SVG: {error}" = "Android Studio はこの SVG を取り込めない: {error}";
+"Android Studio makes nothing to draw from this SVG" = "Android Studio の取り込みでは描くものが残らない";
+"flutter_svg’s compiler (vector_graphics_compiler {version}) turned back into SVG and drawn by this app" = "flutter_svg の変換（vector_graphics_compiler {version}）の結果を SVG に戻し、このアプリで描いたもの";
+"flutter_svg can’t load this SVG: {error}" = "flutter_svg はこの SVG を読めない: {error}";
