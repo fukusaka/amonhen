@@ -103,3 +103,34 @@ final class WrapLinesButton: NSButton {
     }
 }
 
+/// 帯の右端の「表示の設定」（スライダーのアイコンだけのボタン）。押すたびに `fill` で項目を作り直す（今の設定の印を付ける）。
+final class ViewOptionsPopUp: NSPopUpButton, NSMenuDelegate {
+    private let fill: (NSMenu) -> Void
+
+    init(fill: @escaping (NSMenu) -> Void) {
+        self.fill = fill
+        super.init(frame: .zero, pullsDown: true)
+        bezelStyle = .accessoryBarAction
+        controlSize = .small
+        isBordered = false
+        toolTip = L("View Options")
+        menu?.delegate = self
+        menu?.addItem(Self.iconItem())
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+        menu.addItem(Self.iconItem())
+        fill(menu)
+    }
+
+    private static func iconItem() -> NSMenuItem {
+        let first = NSMenuItem()
+        first.image = NSImage(systemSymbolName: "slider.horizontal.3", accessibilityDescription: L("View Options"))
+        first.title = ""
+        return first
+    }
+}

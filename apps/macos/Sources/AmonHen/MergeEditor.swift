@@ -48,6 +48,13 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
     /// AI: 選んだコンフリクトの解消の提案と解説。
     private let aiResolveButton = NSButton(title: L("Resolve with AI"), target: nil, action: nil)
     private let aiExplainButton = NSButton(title: L("Explain with AI"), target: nil, action: nil)
+    /// 帯の右端の表示の設定（History の右の列と同じ形。今はコードの折り返しだけ）。
+    private let viewOptions = ViewOptionsPopUp { menu in
+        menu.addItem(.sectionHeader(title: L("Code")))
+        let wrap = DiffViewController.wrapLinesMenuItem()
+        wrap.indentationLevel = 1
+        menu.addItem(wrap)
+    }
 
     /// 最初の Result に入っていたコンフリクト（両側の中身）。添字が左右の欄の `regions` の添字に当たる。
     private var originals: [(current: String, incoming: String)] = []
@@ -258,7 +265,7 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
         position.setContentCompressionResistancePriority(.defaultHigh + 1, for: .horizontal)
         let bar = NSStackView(
             views: [position, previousButton, nextButton, magicButton, aiResolveButton, aiExplainButton, note] + acceptButtons
-                + [baseToggle, NSView(), popOut, save, resolve])
+                + [baseToggle, NSView(), popOut, save, resolve, viewOptions])
         aiResolveButton.target = self
         aiResolveButton.action = #selector(aiResolve)
         aiResolveButton.toolTip = L("AI: Suggest a resolution for the selected conflict (Result doesn’t change until you accept it).")
