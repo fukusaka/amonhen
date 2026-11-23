@@ -3811,6 +3811,52 @@ fn range_diff_row_while_open() {
     assert!(!side(&blame).contains(&"Range Diff".to_owned()), "{blame}");
 }
 
+/// range-diff で `r`: 範囲を打ち直す（今の範囲が入っている）。数がおかしければ、書き方を出す
+#[test]
+fn edit_the_ranges_of_a_range_diff() {
+    let dir = tempfile::tempdir().unwrap();
+    changed(dir.path());
+    std::fs::write(dir.path().join("notes.txt"), "two\n").unwrap();
+    git(
+        dir.path(),
+        BASE + DAY * 4,
+        &["commit", "-q", "-a", "--amend", "--no-edit"],
+    );
+    let typing = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), ":compare\nr").unwrap();
+    println!("{typing}");
+    let last = typing.lines().last().unwrap();
+    assert!(last.contains("Compare the ranges"), "{last}");
+    assert!(last.contains("..."), "{last}");
+    let keys = ":compare\nr\x15main@{1}...main\n";
+    let shown = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), keys).unwrap();
+    println!("{shown}");
+    assert!(
+        shown
+            .lines()
+            .last()
+            .unwrap()
+            .contains("Range Diff of main@{1}...main"),
+        "{shown}"
+    );
+    assert!(
+        shown
+            .lines()
+            .any(|l| l.contains("Take the lane from the trunk") && l.contains(" ! "))
+    );
+    let wrong = amonhen_tui::snapshot(
+        open(dir.path()),
+        160,
+        12,
+        clock(),
+        ":compare\nr\x15a b c d\n",
+    )
+    .unwrap();
+    assert!(
+        wrong.contains("Write the ranges as git range-diff takes them"),
+        "{wrong}"
+    );
+}
+
 /// range-diff で `c`: 変わらなかった組（`=`）を出さない（アプリの Changes Only）。もう一度で戻る
 #[test]
 fn range_diff_shows_changes_only() {
