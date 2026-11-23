@@ -799,13 +799,25 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
     }
 
     /// モバイル向けの描画部品ごとの、崩れる機能の一覧。
-    private static func mobileNotes(_ issues: [SVGIssue]) -> NSAttributedString {
+    /// 上に、見ている部品の取り込みが読めなかった理由・警告（`preview`）を置く。
+    private static func mobileNotes(_ issues: [SVGIssue], preview: MobilePreview) -> NSAttributedString {
         let out = NSMutableAttributedString()
         let body: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.labelColor]
         let head: [NSAttributedString.Key: Any] = [.font: NSFont.boldSystemFont(ofSize: 12), .foregroundColor: NSColor.labelColor]
         let mono: [NSAttributedString.Key: Any] = [
             .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular), .foregroundColor: NSColor.secondaryLabelColor,
         ]
+        if let error = preview.error {
+            out.append(NSAttributedString(
+                string: error + "\n", attributes: [.font: NSFont.boldSystemFont(ofSize: 12), .foregroundColor: NSColor.systemRed]))
+        }
+        if !preview.messages.isEmpty {
+            out.append(NSAttributedString(string: String(format: L("What %@ reports"), preview.title) + "\n", attributes: head))
+            for message in preview.messages {
+                out.append(NSAttributedString(string: "    " + message + "\n", attributes: mono))
+            }
+        }
+        if out.length > 0 { out.append(NSAttributedString(string: "\n", attributes: body)) }
         guard !issues.isEmpty else {
             out.append(NSAttributedString(
                 string: L("Nothing known to break on Android VectorDrawable, iOS (CoreSVG), flutter_svg or react-native-svg."),
@@ -967,16 +979,18 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
                 let size = image.map { "\(Int($0.size.width)) × \(Int($0.size.height)) pt · \(bytes)" } ?? bytes
                 let panel: ImageDiffPanel
                 if view == .compare {
-                    // 元の SVG と、その部品が崩すように書き換えた SVG（近似）を並べる。
-                    let (issues, broken) = await Task.detached {
-                        (SVGIssue.lint(data), renderer.approximate(data))
+                    // 元の SVG と、その部品での見え方を並べる。Android と flutter_svg は本物の取り込みを移したもの
+                    // （1 ms 前後なので待たせない）、iOS と react-native-svg は近似。
+                    let (issues, preview) = await Task.detached {
+                        (SVGIssue.lint(data), renderer.preview(data))
                     }.value
                     guard request == self.request else { return }
                     panel = ImageDiffPanel(
-                        before: image, after: NSImage(data: broken),
-                        titles: (L("Original"), String(format: L("%@ (approximation)"), renderer.name)),
-                        caption: size + "    " + L("Approximation: the SVG rewritten the way the renderer degrades it, drawn by this app"),
-                        svg: false, mode: .twoUp, position: 0.5, single: false, notes: Self.mobileNotes(issues))
+                        before: image, after: preview.svg.flatMap(NSImage.init(data:)),
+                        titles: (L("Original"), preview.title),
+                        caption: size + "    " + preview.caption,
+                        svg: false, mode: .twoUp, position: 0.5, single: false,
+                        notes: Self.mobileNotes(issues, preview: preview))
                 } else {
                     panel = ImageDiffPanel(
                         before: nil, after: image, titles: ("", ""), caption: size, svg: false, mode: .twoUp,

@@ -457,16 +457,53 @@ public enum MobileRenderer: UInt8, Sendable, CaseIterable {
         }
     }
 
-    /// `svg` を、この部品が崩すように書き換えた SVG（近似）。
-    public func approximate(_ svg: Data) -> Data {
+    /// `svg` がこの部品でどう見えるか。Android と flutter_svg は本物の取り込みを移したもの、ほかは近似。
+    public func preview(_ svg: Data) -> MobilePreview {
         var length: UInt = 0
+        var info: UnsafeMutablePointer<CChar>?
         let raw = svg.withUnsafeBytes { buffer in
-            amonhen_svg_approximate(buffer.bindMemory(to: UInt8.self).baseAddress, UInt(buffer.count), rawValue, &length)
+            amonhen_svg_preview(buffer.bindMemory(to: UInt8.self).baseAddress, UInt(buffer.count), rawValue, &length, &info)
         }
-        guard let raw else { return svg }
-        defer { amonhen_blob_free(raw, length) }
-        return Data(bytes: raw, count: Int(length))
+        var picture: Data?
+        if let raw {
+            picture = Data(bytes: raw, count: Int(length))
+            amonhen_blob_free(raw, length)
+        }
+        var meta = MobilePreview.Info(title: name, caption: "", messages: [], error: nil, exact: false)
+        if let info {
+            if let decoded = try? JSONDecoder().decode(MobilePreview.Info.self, from: Data(String(cString: info).utf8)) {
+                meta = decoded
+            }
+            amonhen_string_free(info)
+        }
+        return MobilePreview(svg: picture, info: meta)
     }
+}
+
+/// ある部品での SVG の見え方（コアの `svgmobile::Preview`）。
+public struct MobilePreview: Sendable {
+    struct Info: Decodable, Sendable {
+        let title: String
+        let caption: String
+        let messages: [String]
+        let error: String?
+        let exact: Bool
+    }
+
+    /// 描ける SVG。部品が読めない SVG なら `nil`（理由は `error`）。
+    public let svg: Data?
+    let info: Info
+
+    /// 絵の見出し。
+    public var title: String { info.title }
+    /// 絵の作り方の説明。
+    public var caption: String { info.caption }
+    /// 取り込みの警告と、同じに描けなかったこと。
+    public var messages: [String] { info.messages }
+    /// 部品が読めなかった理由。
+    public var error: String? { info.error }
+    /// 本物の取り込みを移したものか（`false` なら近似）。
+    public var exact: Bool { info.exact }
 }
 
 /// Markdown のブロック（コアの `markdown::Block`）。

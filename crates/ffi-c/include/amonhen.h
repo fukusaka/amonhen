@@ -1006,16 +1006,20 @@ uint8_t *amonhen_change_blob(const AmonhenRepo *repo_ptr,
                              uintptr_t *len);
 
 /**
- * SVG（`data` の `len` バイト）を、モバイル向けの描画部品 `target`（0 Android・1 iOS・2 flutter_svg・
- * 3 react-native-svg）が崩すように書き換えた SVG（近似）。長さを `out_len` に書く（`amonhen_blob_free` で解放する）。
+ * SVG（`data` の `len` バイト）が、モバイル向けの描画部品 `target`（0 Android・1 iOS・2 flutter_svg・
+ * 3 react-native-svg）でどう見えるか（コアの `svgmobile::preview`）。描ける SVG を返し、長さを `out_len` に書く
+ * （`amonhen_blob_free` で解放する）。部品が読めない SVG なら NULL。`info` に JSON
+ * `{"title", "caption", "messages": [...], "error": 文字列か null, "exact": bool}` を書く（`amonhen_string_free`
+ * で解放する）。
  *
  * # Safety
- * `data` は `len` バイト読めること（`len` が 0 なら NULL でもよい）。
+ * `data` は `len` バイト読めること（`len` が 0 なら NULL でもよい）。`out_len` と `info` は書けること（NULL でもよい）。
  */
-uint8_t *amonhen_svg_approximate(const uint8_t *data,
-                                 uintptr_t len,
-                                 uint8_t target,
-                                 uintptr_t *out_len);
+uint8_t *amonhen_svg_preview(const uint8_t *data,
+                             uintptr_t len,
+                             uint8_t target,
+                             uintptr_t *out_len,
+                             char **info);
 
 /**
  * `amonhen_blob_read`・`amonhen_change_blob` が返したものを解放する。

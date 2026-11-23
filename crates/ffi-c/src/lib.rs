@@ -1585,27 +1585,48 @@ fn blob_out(data: &[u8], len: *mut usize) -> *mut u8 {
     Box::into_raw(data.to_vec().into_boxed_slice()).cast()
 }
 
-/// SVG（`data` の `len` バイト）を、モバイル向けの描画部品 `target`（0 Android・1 iOS・2 flutter_svg・
-/// 3 react-native-svg）が崩すように書き換えた SVG（近似）。長さを `out_len` に書く（`amonhen_blob_free` で解放する）。
+/// SVG（`data` の `len` バイト）が、モバイル向けの描画部品 `target`（0 Android・1 iOS・2 flutter_svg・
+/// 3 react-native-svg）でどう見えるか（コアの `svgmobile::preview`）。描ける SVG を返し、長さを `out_len` に書く
+/// （`amonhen_blob_free` で解放する）。部品が読めない SVG なら NULL。`info` に JSON
+/// `{"title", "caption", "messages": [...], "error": 文字列か null, "exact": bool}` を書く（`amonhen_string_free`
+/// で解放する）。
 ///
 /// # Safety
-/// `data` は `len` バイト読めること（`len` が 0 なら NULL でもよい）。
+/// `data` は `len` バイト読めること（`len` が 0 なら NULL でもよい）。`out_len` と `info` は書けること（NULL でもよい）。
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn amonhen_svg_approximate(
+pub unsafe extern "C" fn amonhen_svg_preview(
     data: *const u8,
     len: usize,
     target: u8,
     out_len: *mut usize,
+    info: *mut *mut c_char,
 ) -> *mut u8 {
     let bytes = if len == 0 || data.is_null() {
         &[][..]
     } else {
         unsafe { std::slice::from_raw_parts(data, len) }
     };
-    blob_out(
-        &amonhen_core::svgsim::approximate(bytes, svg_target(target)),
-        out_len,
-    )
+    let preview = amonhen_core::svgmobile::preview(bytes, svg_target(target));
+    if !info.is_null() {
+        let json = serde_json::json!({
+            "title": preview.title,
+            "caption": preview.caption,
+            "messages": preview.messages,
+            "error": preview.error,
+            "exact": preview.exact,
+        })
+        .to_string();
+        unsafe { *info = CString::new(json).map_or(std::ptr::null_mut(), CString::into_raw) };
+    }
+    match preview.svg {
+        Some(svg) => blob_out(&svg, out_len),
+        None => {
+            if !out_len.is_null() {
+                unsafe { *out_len = 0 };
+            }
+            std::ptr::null_mut()
+        }
+    }
 }
 
 /// 0 Android・1 iOS・2 flutter_svg・3 react-native-svg。
