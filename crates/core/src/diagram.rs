@@ -31,11 +31,30 @@ fn draw_mermaid(text: &str) -> Option<Drawn> {
     if !amonhen_pele::supports(text) {
         return None;
     }
-    Some(match amonhen_pele::render(text) {
-        Ok(rendered) => Drawn::Svg(rendered.svg, own_config(text)),
-        Err(error) => Drawn::Error(error.message),
+    // 深い入れ子でスタックがあふれるとアプリごと落ちる（pele は JS の RangeError を「入れ子が深すぎる」と返すが、
+    // Rust では捕まえられない）。図の文は 5 万文字までなので、大きなスタックの別スレッドで描けばあふれない。
+    // スタックは使った分だけ取られる。pele の中で panic しても、アプリは落とさず図の誤りとして見せる。
+    let source = text.to_owned();
+    let rendered = std::thread::Builder::new()
+        .name("pele".into())
+        .stack_size(PELE_STACK)
+        .spawn(move || {
+            amonhen_pele::render(&source)
+                .map(|r| r.svg)
+                .map_err(|e| e.message)
+        })
+        .ok()?
+        .join();
+    Some(match rendered {
+        Ok(Ok(svg)) => Drawn::Svg(svg, own_config(text)),
+        Ok(Err(message)) => Drawn::Error(message),
+        Err(_) => Drawn::Error(amonhen_model::tr!("This diagram couldn’t be drawn")),
     })
 }
+
+/// pele を動かすスレッドのスタック（5 万文字の入れ子にも足りる大きさ）。
+#[cfg(feature = "diagrams")]
+const PELE_STACK: usize = 256 << 20;
 
 /// 図の中で指定した Mermaid のテーマ（pele の前処理が読んだ config から）。
 #[cfg(feature = "diagrams")]
