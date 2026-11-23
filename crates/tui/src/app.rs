@@ -167,6 +167,8 @@ enum Naming {
     Archive,
     /// shallow clone を、この日付より新しいコミットまで取り足す（`git fetch --shallow-since`）。
     DeepenSince,
+    /// sparse checkout で取り出すフォルダ（空白で区切る。空ならすべて取り出す）。
+    SparseFolders,
     /// リポジトリをまとめる bundle のファイル（この機械の）。
     Bundle,
     /// 取り込む bundle のファイル（この機械の）。
@@ -2029,6 +2031,12 @@ impl App {
             // 候補は、次に補うまで。
             self.path_choices.clear();
             match key.code {
+                // 取り出すフォルダ: 空ならすべて（sparse checkout をやめる）。
+                KeyCode::Enter if matches!(self.naming, Naming::SparseFolders) => {
+                    if let Some((_, _, typed)) = self.typing_branch.take() {
+                        self.ask_sparse_folders(&typed);
+                    }
+                }
                 KeyCode::Enter if matches!(self.naming, Naming::Stash) => {
                     if let Some((_, _, message)) = self.typing_branch.take() {
                         self.ask_stash(message.trim());
@@ -2040,7 +2048,7 @@ impl App {
                     {
                         let name = name.trim();
                         let (op, label, command) = match self.naming {
-                            Naming::Stash => return,
+                            Naming::Stash | Naming::SparseFolders => return,
                             Naming::PushTo => {
                                 self.push_to(&start, name);
                                 return;
@@ -2260,6 +2268,15 @@ impl App {
                 KeyCode::Tab if matches!(self.naming, Naming::OpenFile) => {
                     let typed = name.clone();
                     self.complete_path(&typed);
+                }
+                // 取り出すフォルダは、最後の語を HEAD の木のフォルダから補う。
+                KeyCode::Tab if matches!(self.naming, Naming::SparseFolders) => {
+                    let last = name.rsplit(' ').next().unwrap_or("");
+                    let folder = last.rsplit_once('/').map_or("", |(dir, _)| dir).to_owned();
+                    self.send(Request::Call {
+                        name: "completePath",
+                        request: json!({"op": "run", "command": {"op": "treeFolders", "path": folder, "rev": "HEAD"}}),
+                    });
                 }
                 KeyCode::Backspace => {
                     name.pop();
@@ -2794,6 +2811,62 @@ impl App {
         self.dirty = true;
     }
 
+    /// sparse checkout で取り出すフォルダを打たせる（今のフォルダを初めに入れておく）。git 2.25 から。
+    fn type_sparse_folders(&mut self) {
+        if self.form["canSparseCheckout"] == false {
+            self.error = Some(tr!(
+                "Checking out only some folders needs git 2.25 or later"
+            ));
+            return;
+        }
+        let sparse = &self.form["sparse"];
+        if sparse.is_object() && sparse["cone"] != true {
+            self.error = Some(tr!(
+                "This sparse checkout uses patterns; change it with git sparse-checkout"
+            ));
+            return;
+        }
+        let folders: Vec<&str> = (sparse["folders"].as_array().into_iter().flatten())
+            .filter_map(Value::as_str)
+            .collect();
+        self.naming = Naming::SparseFolders;
+        self.typing_branch = Some((String::new(), String::new(), folders.join(" ")));
+    }
+
+    /// 打ったフォルダだけを取り出す（空なら、すべて取り出す）。先に確かめる。
+    fn ask_sparse_folders(&mut self, typed: &str) {
+        let folders: Vec<String> = typed
+            .split_whitespace()
+            .map(|f| f.trim_matches('/').to_owned())
+            .filter(|f| !f.is_empty())
+            .collect();
+        if folders.is_empty() {
+            if !self.form["sparse"].is_object() {
+                return;
+            }
+            self.confirm = Some((
+                tr!("Check out all folders (stop the sparse checkout)?"),
+                tr!("check out all"),
+                Request::Run {
+                    name: "sparseCheckout",
+                    command: json!({"op": "disableSparseCheckout"}),
+                },
+            ));
+            return;
+        }
+        self.confirm = Some((
+            tr!(
+                "Check out only {folders} (and the files at the top)?",
+                folders = folders.join(", ")
+            ),
+            tr!("check out"),
+            Request::Run {
+                name: "sparseCheckout",
+                command: json!({"op": "sparseCheckout", "folders": folders}),
+            },
+        ));
+    }
+
     /// 何を取り足すかを選ばせる: shallow clone なら履歴（数・日付まで・すべて）、partial clone なら中身のすべて
     /// （git 2.36 から）。
     fn ask_fetch_more(&mut self) {
@@ -3017,6 +3090,7 @@ impl App {
             "fetch" => self.notice = Some(tr!("Fetched")),
             "deepen" => self.notice = Some(tr!("Fetched older history")),
             "fetchAllContents" => self.notice = Some(tr!("Fetched all contents")),
+            "sparseCheckout" => self.notice = Some(tr!("Changed the folders checked out")),
             "pull" => self.notice = Some(tr!("Pulled")),
             "push" => self.notice = Some(tr!("Pushed")),
             "undo" => self.notice = Some(tr!("Undone")),
@@ -4266,15 +4340,22 @@ impl App {
         let Some((_, _, name)) = self.typing_branch.as_mut() else {
             return;
         };
-        let (folder, part) = match name.rsplit_once('/') {
-            Some((dir, part)) => (format!("{dir}/"), part.to_owned()),
+        // 取り出すフォルダは空白で区切って並べるので、最後の語を補う（フォルダだけ）。
+        let folders_only = matches!(self.naming, Naming::SparseFolders);
+        let (before, word) = match name.rsplit_once(' ').filter(|_| folders_only) {
+            Some((before, word)) => (format!("{before} "), word.to_owned()),
             None => (String::new(), name.clone()),
+        };
+        let (folder, part) = match word.rsplit_once('/') {
+            Some((dir, part)) => (format!("{before}{dir}/"), part.to_owned()),
+            None => (before, word.clone()),
         };
         let mut matches: Vec<(String, bool)> = (entries.as_array().into_iter().flatten())
             .filter_map(|e| {
                 let entry = e["name"].as_str()?;
-                (entry.starts_with(&part) && entry != ".git")
-                    .then(|| (entry.to_owned(), e["kind"] == "folder"))
+                let is_folder = e["kind"] == "folder";
+                (entry.starts_with(&part) && entry != ".git" && (is_folder || !folders_only))
+                    .then(|| (entry.to_owned(), is_folder))
             })
             .collect();
         matches.sort();
@@ -5986,6 +6067,7 @@ impl App {
                 ),
                 ("/", tr!("Filter the list by path")),
                 ("R", tr!("Use a recent commit's message")),
+                ("W", tr!("Check out only some folders (sparse checkout)")),
                 (
                     "i",
                     tr!("Add an untracked file, or its extension, to .gitignore"),
@@ -6286,6 +6368,11 @@ impl App {
     fn changes_key(&mut self, code: KeyCode, control: bool) -> bool {
         let page = self.changes.page();
         match code {
+            // 取り出すフォルダを選ぶ（アプリの Check Out Only Some Folders…）。
+            KeyCode::Char('W') => {
+                self.type_sparse_folders();
+                true
+            }
             KeyCode::Char('d') if control => self.changes.move_selection(page / 2),
             KeyCode::Char('u') if control => self.changes.move_selection(-page / 2),
             KeyCode::Char('j') | KeyCode::Down => self.changes.move_selection(1),
@@ -7286,6 +7373,16 @@ impl App {
                         )
                     }
                     Naming::PatchVersion => tr!("Version of the patches (-v): {name}", name = name),
+                    Naming::SparseFolders => {
+                        let text = tr!(
+                            "Check out only the folders (spaces between, Tab completes, empty for all): {name}",
+                            name = name
+                        );
+                        match self.path_choices.is_empty() {
+                            true => text,
+                            false => format!("{text}    {}", self.path_choices),
+                        }
+                    }
                     Naming::DeepenSince => tr!(
                         "Fetch the commits newer than (a date git reads, like 2024-01-31): {name}",
                         name = name

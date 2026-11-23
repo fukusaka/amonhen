@@ -3146,6 +3146,7 @@ fn partial_clone_and_sparse_checkout_marks() {
             "{after}"
         );
     }
+    git(&dir, BASE, &["sparse-checkout", "init", "--cone"]);
     git(&dir, BASE, &["sparse-checkout", "set", "app"]);
     let sparse = amonhen_tui::snapshot(open(&dir), 140, 12, clock(), "1").unwrap();
     println!("{sparse}");
@@ -3153,6 +3154,27 @@ fn partial_clone_and_sparse_checkout_marks() {
         sparse.contains("Sparse checkout: only 1 folder is checked out."),
         "{sparse}"
     );
+    // Working Copy の `W`: 取り出すフォルダを打つ（今のものが入っている。Tab で HEAD の木のフォルダから補う）。
+    let typing = amonhen_tui::snapshot(open(&dir), 140, 12, clock(), "1W").unwrap();
+    let last = typing.lines().last().unwrap();
+    assert!(
+        last.contains("Check out only the folders") && last.contains(": app "),
+        "{last}"
+    );
+    let completed = amonhen_tui::snapshot(open(&dir), 140, 12, clock(), "1W\x15d\t").unwrap();
+    let last = completed.lines().last().unwrap();
+    assert!(last.contains(": docs/ "), "{last}");
+    let asked = amonhen_tui::snapshot(open(&dir), 140, 12, clock(), "1W\x15docs\n").unwrap();
+    let last = asked.lines().last().unwrap();
+    assert!(last.contains("Check out only docs"), "{last}");
+    amonhen_tui::snapshot(open(&dir), 140, 12, clock(), "1W\x15docs\ny").unwrap();
+    assert!(dir.join("docs/b.txt").exists());
+    assert!(!dir.join("app/a.txt").exists());
+    // 空なら、すべて取り出す。
+    amonhen_tui::snapshot(open(&dir), 140, 12, clock(), "1W\x15\ny").unwrap();
+    assert!(dir.join("app/a.txt").exists());
+    let all = amonhen_tui::snapshot(open(&dir), 140, 12, clock(), "1").unwrap();
+    assert!(!all.contains("Sparse checkout"), "{all}");
 }
 
 /// shallow clone: 最後の行の下に帯、境界のコミットに点線の印。`+` で取り足す（数を選ぶ、`a` ですべて）
