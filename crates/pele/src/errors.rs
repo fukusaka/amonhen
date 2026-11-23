@@ -55,6 +55,37 @@ impl PeleError {
     }
 }
 
+/// JS の文字列の長さの上限（V8 の 64 ビット版の `String::kMaxLength`）。pele はこれより長い文字列を作ろうとすると
+/// RangeError になり、スタックの溢れと同じく [`PeleError::too_deep`] にする。
+pub const JS_MAX_STRING_LENGTH: usize = (1 << 29) - 24;
+
+impl PeleError {
+    /// pele が JS の RangeError（スタックの溢れ、長すぎる文字列）を言い換えた知らせ。
+    pub fn too_deep() -> Self {
+        Self::new("Diagram is nested too deeply.", ErrorCode::Limit)
+    }
+
+    /// 出力が上限より長い。
+    pub fn output_too_long(limit: usize) -> Self {
+        Self::new(
+            format!("Diagram output is longer than the limit of {limit} characters."),
+            ErrorCode::Limit,
+        )
+    }
+
+    /// 出力が少なくとも `at_least` 文字になると分かったときの知らせ。pele は描いてから上限と比べ、JS の文字列の上限を
+    /// 超えるならその前に RangeError になる。
+    pub fn output_at_least(at_least: usize, limit: usize) -> Option<Self> {
+        if at_least > JS_MAX_STRING_LENGTH {
+            Some(Self::too_deep())
+        } else if at_least > limit {
+            Some(Self::output_too_long(limit))
+        } else {
+            None
+        }
+    }
+}
+
 impl fmt::Display for PeleError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.message)

@@ -3,14 +3,26 @@
 use std::collections::{HashMap, HashSet};
 
 use super::members::{ClassMember, MemberType};
+use super::render::NAMESPACE_INK;
 use super::types::{
     ClassInterface, ClassNode, ClassNote, ClassRelation, NamespaceNode, StyleClass,
 };
 use crate::js;
+use crate::svg::builder::esc_text;
 use crate::text::entities::decode_entities;
 use crate::util::url::sanitize_url;
 
 pub const LOLLIPOP: u8 = 4;
+
+/// 名前空間の id の長さ（UTF-16）の合計の上限。`a.b.c` は祖先の `a`・`a.b` も作るので、点で区切った長い名前は
+/// 長さの 2 乗の文字を求める（2 万 5 千の部分の名前で 6 億字）。pele は JS の文字列の切り出しで共有するが、ここでは
+/// それぞれを持つ。超えたら先の名前空間は作らずに描いたときの長さだけを数え、読み終えてから限りの知らせにする。
+const NAMESPACE_BUDGET: usize = 4_000_000;
+
+/// 名前空間の名前の、描いたときの長さ（`escText` を通した UTF-16）。
+fn ink(name: &str) -> usize {
+    js::len16(&esc_text(name))
+}
 
 /// Mermaid は数字で始まる id をこの接頭辞のもとで探すので、どのクラスにも当たらない。
 const DOM_ID_PREFIX: &str = "classId-";
@@ -59,6 +71,17 @@ pub struct ClassDb {
     pub acc_descr: Option<String>,
 
     namespace_stack: Vec<String>,
+    /// 開いている名前空間の id の長さと、描いたときの長さ（どちらも UTF-16）。
+    namespace_lens: Vec<(usize, usize)>,
+    /// 作った名前空間の id の長さ（UTF-16）の合計。
+    namespace_chars: usize,
+    /// 名前空間の id の描いたときの長さ（入れた順）。
+    namespace_ink: Vec<usize>,
+    /// 名前空間の枠が書く文字の下限の合計。すべての名前空間と、宣言したものだけ。
+    ink_all: usize,
+    ink_explicit: usize,
+    /// 名前空間の名前が長すぎて、それより先を作らなかった。
+    namespaces_cut: bool,
     /// CSS のクラスの名前から、それを持つクラス（入れた順）。
     with_css_class: HashMap<String, (Vec<usize>, HashSet<usize>)>,
 }
@@ -308,6 +331,11 @@ impl ClassDb {
     }
 
     pub fn add_namespace(&mut self, id: &str, label: Option<&str>) -> String {
+        let (prefix_len, prefix_ink) = self.namespace_lens.last().copied().unwrap_or((0, 0));
+        if self.namespaces_cut {
+            self.count_cut_namespaces(id, prefix_len, prefix_ink);
+            return String::new();
+        }
         let prefix = self
             .namespace_stack
             .last()
@@ -318,11 +346,15 @@ impl ClassDb {
             None => id.to_string(),
         };
         self.namespace_stack.push(qualified.clone());
+        self.namespace_lens.push((
+            js::len16(&qualified),
+            if prefix.is_some() { prefix_ink + 1 } else { 0 } + ink(id),
+        ));
         let label = label.filter(|l| !l.is_empty());
 
         if let Some(&k) = self.namespace_index.get(&qualified) {
+            self.mark_explicit(k);
             let existing = &mut self.namespaces[k];
-            existing.explicit = true;
             if let Some(l) = label {
                 existing.label = l.to_string();
             }
@@ -332,18 +364,44 @@ impl ClassDb {
         // 囲む名前空間とその祖先はもうあるので、`id` の部分だけをたどる。
         let mut parent_id = prefix.clone();
         let mut from = prefix.as_ref().map_or(0, |p| p.len() + 1);
+        let mut parent_ink = prefix.as_ref().map(|_| prefix_ink);
         loop {
             let dot = qualified[from..].find('.').map(|k| k + from);
             let leaf = dot.is_none();
+            let part = &qualified[from..dot.unwrap_or(qualified.len())];
+            let current_ink = parent_ink.map_or(0, |p| p + 1) + ink(part);
+            let current_len = js::len16(&qualified[..dot.unwrap_or(qualified.len())]);
+            if !self
+                .namespace_index
+                .contains_key(&qualified[..dot.unwrap_or(qualified.len())])
+                && self.namespace_chars + current_len > NAMESPACE_BUDGET
+            {
+                // ここから先は作らずに数える。
+                self.namespaces_cut = true;
+                let rest = &qualified[from..];
+                let (len, ink) = match parent_ink {
+                    Some(p) => (js::len16(&qualified[..from - 1]), p),
+                    None => (0, 0),
+                };
+                self.namespace_stack.pop();
+                self.namespace_lens.pop();
+                self.count_cut_namespaces(rest, len, ink);
+                return String::new();
+            }
             let current = match dot {
                 Some(d) => qualified[..d].to_string(),
                 None => qualified.clone(),
             };
             match self.namespace_index.get(&current) {
                 None => {
-                    let part = &qualified[from..dot.unwrap_or(qualified.len())];
+                    self.namespace_chars += current_len;
                     self.namespace_index
                         .insert(current.clone(), self.namespaces.len());
+                    self.namespace_ink.push(current_ink);
+                    self.ink_all += NAMESPACE_INK + current_ink;
+                    if leaf {
+                        self.ink_explicit += NAMESPACE_INK + current_ink;
+                    }
                     self.namespaces.push(NamespaceNode {
                         id: current.clone(),
                         label: match label {
@@ -356,7 +414,7 @@ impl ClassDb {
                 }
                 Some(&k) => {
                     if leaf {
-                        self.namespaces[k].explicit = true;
+                        self.mark_explicit(k);
                     }
                 }
             }
@@ -372,12 +430,54 @@ impl ClassDb {
                 return qualified;
             }
             parent_id = Some(current);
+            parent_ink = Some(current_ink);
             from = dot.unwrap() + 1;
         }
     }
 
+    fn mark_explicit(&mut self, k: usize) {
+        if !self.namespaces[k].explicit {
+            self.namespaces[k].explicit = true;
+            self.ink_explicit += NAMESPACE_INK + self.namespace_ink[k];
+        }
+    }
+
+    /// 上限を超えたあとの名前空間は作らず、描いたときの長さだけを足す（同じ名前の重なりは見ない）。`prefix_len` は
+    /// 囲む名前空間の id の長さ（なければ 0）。
+    fn count_cut_namespaces(&mut self, id: &str, prefix_len: usize, prefix_ink: usize) {
+        let mut parent = (prefix_len > 0).then_some(prefix_ink);
+        let mut ink_now = 0;
+        let parts: Vec<&str> = id.split('.').collect();
+        for (i, part) in parts.iter().enumerate() {
+            ink_now = parent.map_or(0, |p| p + 1) + ink(part);
+            self.ink_all += NAMESPACE_INK + ink_now;
+            if i + 1 == parts.len() {
+                self.ink_explicit += NAMESPACE_INK + ink_now;
+            }
+            parent = Some(ink_now);
+        }
+        let len = if prefix_len > 0 { prefix_len + 1 } else { 0 } + js::len16(id);
+        self.namespace_stack.push(String::new());
+        self.namespace_lens.push((len, ink_now));
+    }
+
     pub fn pop_namespace(&mut self) {
         self.namespace_stack.pop();
+        self.namespace_lens.pop();
+    }
+
+    /// 名前空間の枠がそれだけで書く文字の数の下限（UTF-16）。`hierarchical` が偽なら、宣言した名前空間だけを描く。
+    pub fn namespace_ink(&self, hierarchical: bool) -> usize {
+        if hierarchical {
+            self.ink_all
+        } else {
+            self.ink_explicit
+        }
+    }
+
+    /// 名前空間の名前が長すぎて、作らなかったものがあるか。
+    pub fn namespaces_cut(&self) -> bool {
+        self.namespaces_cut
     }
 
     pub fn add_classes_to_namespace(&mut self, id: &str, classes: &[String], notes: &[String]) {
