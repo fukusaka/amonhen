@@ -3068,6 +3068,55 @@ fn compare_with_the_previous_version() {
     assert!(below.contains("Take the lane from the trunk"));
 }
 
+/// 詳細の `t`: 変わったファイルを木で出す（フォルダの下に名前だけ）。`z` でフォルダをたたみ、もう一度で開く
+#[test]
+fn changed_files_as_a_tree() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    git(dir, BASE, &["init", "-q", "-b", "main"]);
+    for path in ["src/ui/view.rs", "src/main.rs", "README.md"] {
+        let path = dir.join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, "one\n").unwrap();
+    }
+    git(dir, BASE, &["add", "."]);
+    git(dir, BASE, &["commit", "-q", "-m", "Start"]);
+    let list = amonhen_tui::snapshot(open(dir), 120, 30, clock(), "2\n").unwrap();
+    assert!(list.contains("A src/ui/view.rs"), "{list}");
+    let tree = amonhen_tui::snapshot(open(dir), 120, 30, clock(), "2\nt").unwrap();
+    println!("{tree}");
+    let rows: Vec<String> = tree
+        .lines()
+        .filter_map(|l| column(l, 1))
+        .map(|l| l.trim_end().to_owned())
+        .collect();
+    let at = rows
+        .iter()
+        .position(|l| l.starts_with("A README.md"))
+        .unwrap();
+    let names: Vec<&str> = rows[at..at + 6]
+        .iter()
+        .map(|l| l.split(" +").next().unwrap().trim_end())
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "A README.md",
+            "▾ src/",
+            "  A main.rs",
+            "  ▾ ui/",
+            "    A view.rs",
+            ""
+        ],
+        "{rows:?}"
+    );
+    let folded = amonhen_tui::snapshot(open(dir), 120, 30, clock(), "2\ntz").unwrap();
+    assert!(folded.contains("▸ src/ (2)"), "{folded}");
+    assert!(!folded.contains("A view.rs"), "{folded}");
+    let opened = amonhen_tui::snapshot(open(dir), 120, 30, clock(), "2\ntzz").unwrap();
+    assert!(opened.contains("A view.rs"), "{opened}");
+}
+
 /// History で 2 つ選んで `=`: それぞれを先端とする 2 つの版として比べる。Reflog の `=` は、その行と今の HEAD を
 #[test]
 fn compare_two_commits_as_two_versions() {

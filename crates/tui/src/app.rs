@@ -5780,6 +5780,10 @@ impl App {
             (View::History | View::Reflog | View::File, Focus::Side) => vec![
                 ("j k", tr!("Scroll")),
                 ("[ ]", tr!("Previous and next file")),
+                (
+                    "t z",
+                    tr!("Changed files as a tree or a list; fold the tree's folders"),
+                ),
                 ("B L", tr!("Blame, File History of the file in view")),
                 (
                     "Y e",
@@ -6612,6 +6616,9 @@ impl App {
             }
             KeyCode::Char(']') => Some(self.details.jump_file(true)),
             KeyCode::Char('[') => Some(self.details.jump_file(false)),
+            // 変わったファイルを木で出す・一覧に戻す（アプリの List / Tree）、木のフォルダをたたむ・開く。
+            KeyCode::Char('t') => Some(self.details.toggle_tree()),
+            KeyCode::Char('z') => Some(self.details.fold_all()),
             _ => None,
         };
         if let Some(scrolled) = scrolled {
@@ -6759,8 +6766,11 @@ impl App {
                 Some(rows) => self.details.scroll(rows),
                 None if click => {
                     let focused = std::mem::replace(&mut self.focus, Focus::Side);
-                    let selected =
-                        view == View::Changes && self.changes.click_diff(mouse.row - area.y);
+                    let selected = if view == View::Changes {
+                        self.changes.click_diff(mouse.row - area.y)
+                    } else {
+                        self.details.click(mouse.row - area.y)
+                    };
                     selected || focused != Focus::Side
                 }
                 None => false,
@@ -7180,7 +7190,7 @@ impl App {
                         )
                     }
                     (View::History | View::Reflog | View::File, Focus::Side) => {
-                        tr!("j/k scroll   [/] file   h/l pan   Esc back")
+                        tr!("j/k scroll   [/] file   t tree   h/l pan   Esc back")
                     }
                     (View::Reflog, Focus::Main) => match self.reflog.name() {
                         Some(name) => tr!(
