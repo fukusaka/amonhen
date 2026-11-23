@@ -40,6 +40,8 @@ pub enum Item {
     Submenu(String, Vec<Item>),
     /// ここで区切る（GNOME のメニューでは、区切りは節の境目）。
     Separator,
+    /// ここで区切り、次の節に見出しを付ける（macOS 版の `sectionHeader`）。
+    Heading(String),
 }
 
 /// 押せない `title` の項目に、押せないわけ `tip` をツールチップで添える。
@@ -118,6 +120,7 @@ pub fn titles(items: &[Item]) -> Vec<String> {
                 out.extend(titles(children).into_iter().map(|t| format!("    {t}")));
             }
             Item::Separator => out.push("---".into()),
+            Item::Heading(title) => out.push(format!("--- {title}")),
         }
     }
     out
@@ -225,13 +228,22 @@ fn build(
         .any(|i| matches!(i, Item::Choice { color: Some(_), .. }));
     let model = gio::Menu::new();
     let mut section = gio::Menu::new();
+    // 今の節の見出し。
+    let mut heading: Option<String> = None;
     for item in items {
         match item {
             Item::Separator => {
                 if section.n_items() > 0 {
-                    model.append_section(None, &section);
+                    model.append_section(heading.take().as_deref(), &section);
                     section = gio::Menu::new();
                 }
+            }
+            Item::Heading(title) => {
+                if section.n_items() > 0 {
+                    model.append_section(heading.take().as_deref(), &section);
+                    section = gio::Menu::new();
+                }
+                heading = Some(title);
             }
             Item::Action(title, f) if choices => {
                 let dot = swatches.then_some(None);
@@ -319,7 +331,7 @@ fn build(
         }
     }
     if section.n_items() > 0 {
-        model.append_section(None, &section);
+        model.append_section(heading.as_deref(), &section);
     }
     model
 }

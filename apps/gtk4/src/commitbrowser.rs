@@ -337,9 +337,7 @@ pub struct Browser {
     /// SVG の見せ方の切り替え（SVG を開いたときだけ出す）と、今の見せ方（この木を出している間は覚える）。
     svg_switch: gtk::Box,
     svg_buttons: Vec<(SvgView, gtk::ToggleButton)>,
-    /// モバイルで見る部品の切り替え（モバイルのときだけ出す）と、今の部品。
-    renderer_switch: gtk::Box,
-    renderer_buttons: Vec<(amonhen_core::svglint::Target, gtk::ToggleButton)>,
+    /// モバイルで見る部品（切り替えは比べる欄の帯の左端。`renderer_switch`）。
     renderer: Cell<amonhen_core::svglint::Target>,
     /// Markdown の見せ方の切り替え（整形・テキスト。Markdown を開いたときだけ出す）と、テキストで見るか。
     markdown_switch: gtk::Box,
@@ -505,24 +503,6 @@ impl Browser {
             svg_switch.append(&button);
             svg_buttons.push((view, button));
         }
-        let renderer_switch = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        renderer_switch.add_css_class("linked");
-        renderer_switch.set_visible(false);
-        let mut renderer_buttons: Vec<(amonhen_core::svglint::Target, gtk::ToggleButton)> =
-            Vec::new();
-        for (target, title) in RENDERERS {
-            let button = gtk::ToggleButton::with_label(title);
-            button.set_tooltip_text(Some(&tr!(
-                "How the SVG looks on {name}",
-                name = target.name()
-            )));
-            if let Some((_, first)) = renderer_buttons.first() {
-                button.set_group(Some(first));
-            }
-            renderer_switch.append(&button);
-            renderer_buttons.push((target, button));
-        }
-        path_bar.append(&renderer_switch);
         let markdown_switch = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         markdown_switch.add_css_class("linked");
         markdown_switch.set_visible(false);
@@ -593,8 +573,6 @@ impl Browser {
             image_holder,
             svg_switch,
             svg_buttons,
-            renderer_switch,
-            renderer_buttons,
             renderer: Cell::new(initial_renderer()),
             markdown_switch,
             markdown_buttons,
@@ -654,20 +632,6 @@ impl Browser {
                     return;
                 }
                 this.markdown_text.set(text);
-                let path = this.open_path.borrow().clone();
-                if let Some(path) = path {
-                    this.open(&path, None);
-                }
-            });
-        }
-        for (target, button) in &this.renderer_buttons {
-            let (weak, target) = (Rc::downgrade(&this), *target);
-            button.connect_toggled(move |b| {
-                let Some(this) = weak.upgrade() else { return };
-                if !b.is_active() || this.syncing.get() || this.renderer.get() == target {
-                    return;
-                }
-                this.renderer.set(target);
                 let path = this.open_path.borrow().clone();
                 if let Some(path) = path {
                     this.open(&path, None);
@@ -845,6 +809,40 @@ impl Browser {
         Some(node)
     }
 
+    /// モバイルで見る部品の切り替え（比べる欄の帯の左端に置く。帯にまとめるとファイルの帯が狭くなり、ファイルの
+    /// 名前が読めなくなるため。macOS 版と同じ）。選び直すと開き直す。
+    fn renderer_switch(self: &Rc<Self>) -> gtk::Widget {
+        let switch = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        switch.add_css_class("linked");
+        let mut first: Option<gtk::ToggleButton> = None;
+        for (target, title) in RENDERERS {
+            let button = gtk::ToggleButton::with_label(title);
+            button.set_tooltip_text(Some(&tr!(
+                "How the SVG looks on {name}",
+                name = target.name()
+            )));
+            if let Some(first) = &first {
+                button.set_group(Some(first));
+            }
+            button.set_active(target == self.renderer.get());
+            let weak = Rc::downgrade(self);
+            button.connect_toggled(move |b| {
+                let Some(this) = weak.upgrade() else { return };
+                if !b.is_active() || this.renderer.get() == target {
+                    return;
+                }
+                this.renderer.set(target);
+                let path = this.open_path.borrow().clone();
+                if let Some(path) = path {
+                    this.open(&path, None);
+                }
+            });
+            switch.append(&button);
+            first.get_or_insert(button);
+        }
+        switch.upcast()
+    }
+
     /// Markdown を整形して出す（中身・画像は裏で読む。画像はこのコミットの中のものだけ）。
     fn show_markdown(self: &Rc<Self>, path: &str, request: u64) {
         self.contents.set_visible_child_name("markdown");
@@ -973,6 +971,10 @@ impl Browser {
             );
         }
         self.path_label.set_markup(&title);
+        // 帯が狭くても、ファイルの名前（と「@ 短い ID」）は読めるだけの幅を取る。足りなければフォルダの側から
+        // 省く（macOS 版の truncating head と同じ）。
+        self.path_label
+            .set_width_chars((name_of(path).chars().count() + 20).min(60) as i32);
         self.change_button.set_visible(change.is_some());
         self.path_bar.set_visible(true);
         self.pages.set_visible_child_name("file");
@@ -991,10 +993,6 @@ impl Browser {
         }
         let mobile = svg && self.svg_view.get() == SvgView::Mobile;
         let renderer = self.renderer.get();
-        self.renderer_switch.set_visible(mobile);
-        for (target, button) in &self.renderer_buttons {
-            button.set_active(*target == renderer);
-        }
         let markdown = amonhen_core::markdown::is_markdown(path);
         self.markdown_switch.set_visible(markdown);
         self.markdown_buttons[usize::from(self.markdown_text.get())].set_active(true);
@@ -1051,6 +1049,7 @@ impl Browser {
                             ),
                             caption,
                             Some(mobile_notes(&issues)),
+                            Some(this.renderer_switch()),
                         ))
                     }
                     (data, _) => data.and_then(|d| crate::imagediff::single(&d, None)),

@@ -407,6 +407,15 @@ pub fn layout(top: f32, width: f32, mode: Mode, svg: bool) -> Layout {
     }
 }
 
+/// すべてのファイルで開いた画像の置き方（欄いっぱい。比べ方のボタンとスライダーはない）。
+pub fn single_layout(width: f32, height: f32) -> Layout {
+    let mut layout = layout(0.0, width, Mode::TwoUp, false);
+    layout.modes = [Rect::default(); 4];
+    layout.caption.y = height - CAPTION_HEIGHT - 6.0;
+    layout.canvas.h = (layout.caption.y - layout.canvas.y - 4.0).max(0.0);
+    layout
+}
+
 /// 枠に合わせるときの倍率（小さな絵は整数倍まで拡げ、ぼかさない）。
 fn fit_scale(size: (f32, f32), area: Rect) -> f32 {
     if size.0 <= 0.0 || size.1 <= 0.0 {

@@ -1412,6 +1412,45 @@ fn push_to_another_branch() {
     assert!(wrong.contains("Write the remote and the branch, like origin/main"));
 }
 
+/// タグのリモートでの様子（fetch で読む）: 別のタグがあれば ⚠、どこにもなければ ∅。タグの行の `i` で詳しく
+#[test]
+fn tag_marks_for_remotes() {
+    let dir = tempfile::tempdir().unwrap();
+    let work = with_remote(dir.path());
+    git(&work, BASE, &["push", "-q"]);
+    git(&work, BASE, &["tag", "shared"]);
+    git(&work, BASE, &["push", "-q", "origin", "shared"]);
+    git(&work, BASE, &["tag", "local"]);
+    // リモートには、同じ名前の別のタグ（注釈つき）。
+    let remote = dir.path().join("origin.git");
+    git(&remote, BASE, &["tag", "-m", "theirs", "clash", "main"]);
+    git(&work, BASE, &["tag", "clash"]);
+    let fetched = amonhen_tui::snapshot(open(&work), 120, 16, clock(), "fy").unwrap();
+    assert!(fetched.contains("Fetched"), "{fetched}");
+    let shown = amonhen_tui::snapshot(open(&work), 120, 16, clock(), "").unwrap();
+    println!("{shown}");
+    let side: Vec<String> = shown.lines().skip(1).filter_map(|l| column(l, 0)).collect();
+    let row = |name: &str| {
+        side.iter()
+            .find(|l| l.trim_start().starts_with(name))
+            .cloned()
+            .unwrap_or_default()
+    };
+    assert!(row("clash").trim_end().ends_with('⚠'), "{side:?}");
+    assert!(row("local").trim_end().ends_with('∅'), "{side:?}");
+    assert!(
+        !row("shared").contains('⚠') && !row("shared").contains('∅'),
+        "{side:?}"
+    );
+    // `i`: リモートごとの様子。サイドバーは main、origin/main、clash の順（見出しは飛ばす）。
+    let info = amonhen_tui::snapshot(open(&work), 160, 16, clock(), "0jjjji").unwrap();
+    let last = info.lines().last().unwrap();
+    assert!(
+        last.contains("origin: has a different tag with this name"),
+        "{info}"
+    );
+}
+
 /// `f` で fetch（どこから取るかを確かめる）、`p` で pull: リモートに増えたコミットを取り込む
 #[test]
 fn fetch_and_pull_bring_in_remote_commits() {
@@ -2011,6 +2050,24 @@ fn branches_arranged_with_favorites_and_archive() {
         git_out(dir, &["config", "branch.fresh.amonhenArchived"]),
         "true\n"
     );
+    // `v` で印をつけたブランチは、まとめてお気に入りに（★feature の下の feature-2 と、main）。
+    side("0jjjvjv*");
+    assert_eq!(
+        git_out(dir, &["config", "branch.feature-2.amonhenPinned"]),
+        "2\n"
+    );
+    assert_eq!(
+        git_out(dir, &["config", "branch.main.amonhenPinned"]),
+        "3\n"
+    );
+    // まとめてアーカイブ（★ の 2 つ目と 3 つ目）。
+    side("0jjjvjvz");
+    for name in ["feature-2", "main"] {
+        assert_eq!(
+            git_out(dir, &["config", &format!("branch.{name}.amonhenArchived")]),
+            "true\n"
+        );
+    }
 }
 
 /// サイドバーの `r` で、今のブランチを選んだ ref の上に rebase する

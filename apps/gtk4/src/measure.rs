@@ -1,6 +1,10 @@
 //! `--measure-scroll`: History を毎フレーム決まった行数だけスクロールし、メインスレッドの時間と
 //! 落としたフレームを数える（macOS 版の `--measure-scroll` と同じ考え）。
 //!
+//! `--measure-diff-scroll`: 出している差分（History の右の列）を毎フレーム決まった行数だけスクロールし、1 フレーム
+//! のメインスレッドの時間と差分を描いた時間を測る。続けて、幅を変えたときの折り返しの作り直しの時間を測る
+//! （macOS 版の `--measure-diff-scroll`）。
+//!
 //! `--measure-select <n>`: History の行を n 個順に選び、選んでから詳細・差分が出るまでの段階ごとの時間を測る
 //! （macOS 版の `--measure-select` と `FrameProfile`）。
 //!
@@ -112,6 +116,205 @@ pub fn scroll(window: &gtk::ApplicationWindow, view: &HistoryView, rows_per_fram
         }
         let snapshots = view.imp_snapshot_times(false);
         println!("{}", summary(&record.borrow(), &snapshots, frame));
+        if let Some(w) = window.upgrade() {
+            w.close();
+        }
+        glib::ControlFlow::Break
+    });
+}
+
+/// 窓の中の、見えている一番高い差分の部品。
+fn largest_diff(window: &gtk::ApplicationWindow) -> Option<crate::diff::DiffWidget> {
+    let mut best: Option<crate::diff::DiffWidget> = None;
+    let mut stack: Vec<gtk::Widget> = vec![window.clone().upcast()];
+    while let Some(w) = stack.pop() {
+        if let Some(d) = w.downcast_ref::<crate::diff::DiffWidget>()
+            && d.is_mapped()
+            && best.as_ref().is_none_or(|b| d.height() > b.height())
+        {
+            best = Some(d.clone());
+        }
+        let mut child = w.first_child();
+        while let Some(c) = child {
+            child = c.next_sibling();
+            stack.push(c);
+        }
+    }
+    best
+}
+
+/// `--measure-diff-scroll`（モジュールの説明）。
+pub fn diff_scroll(window: &gtk::ApplicationWindow, rows_per_frame: f64) {
+    let Some(diff) = largest_diff(window) else {
+        eprintln!("差分がない");
+        window.close();
+        return;
+    };
+    let Some(clock) = diff.frame_clock() else {
+        eprintln!("frame clock がない");
+        return;
+    };
+    crate::diff::draw_times(true);
+    let record = Rc::new(RefCell::new(Record::default()));
+    let r = record.clone();
+    let update = clock.connect_update(move |_| {
+        r.borrow_mut().started = Some(Instant::now());
+    });
+    let r = record.clone();
+    let after = clock.connect_after_paint(move |clock| {
+        let mut r = r.borrow_mut();
+        if let Some(t) = r.started.take() {
+            r.work.push(t.elapsed().as_secs_f64() * 1000.0);
+        }
+        let time = clock.frame_time();
+        if let Some(last) = r.last_frame {
+            r.intervals.push((time - last) as f64 / 1000.0);
+        }
+        r.last_frame = Some(time);
+    });
+    let frame = std::cell::Cell::new(0);
+    let window = window.downgrade();
+    let handlers = RefCell::new(Some((update, after)));
+    let rows = diff.row_total();
+    diff.add_tick_callback(move |diff, clock| {
+        frame.set(frame.get() + 1);
+        let frame = frame.get();
+        let adj = diff.vadjustment().expect("vadjustment");
+        let max = adj.upper() - adj.page_size();
+        let rh = (adj.step_increment() / 3.0).max(1.0);
+        adj.set_value((adj.value() + rows_per_frame * rh).min(max));
+        if frame < FRAMES && adj.value() < max {
+            return glib::ControlFlow::Continue;
+        }
+        if let Some((update, after)) = handlers.take() {
+            clock.disconnect(update);
+            clock.disconnect(after);
+        }
+        let draws = crate::diff::draw_times(false);
+        let r = record.borrow();
+        println!(
+            "diff rows {rows}, wrap {}\nframes {frame}\n\
+             main thread per frame: p50 {} / p95 {} / max {} ms\n\
+             diff draw: p50 {} / p95 {} / max {} ms\n\
+             frame interval: p50 {} / p95 {} ms",
+            crate::diff::wrap_lines(),
+            percentile(&r.work, 0.5),
+            percentile(&r.work, 0.95),
+            percentile(&r.work, 1.0),
+            percentile(&draws, 0.5),
+            percentile(&draws, 0.95),
+            percentile(&draws, 1.0),
+            percentile(&r.intervals, 0.5),
+            percentile(&r.intervals, 0.95),
+        );
+        // 幅を変えたときの、折り返しの作り直し（窓の幅を 1 px ずつ変えるのと同じ仕事）。
+        if crate::diff::wrap_lines() {
+            let width = diff.width() as f32;
+            let widths: Vec<f32> = (0..40).map(|i| width - 200.0 + i as f32 * 10.0).collect();
+            let times: Vec<f64> = diff
+                .measure_rewrap(&widths)
+                .into_iter()
+                .map(|(_, ms, _)| ms)
+                .collect();
+            let wrapped = diff.measure_rewrap(&[width])[0].2;
+            println!(
+                "rewrap ({} widths, {wrapped} wrapped rows at {width} px): p50 {} / p95 {} / max {} ms",
+                widths.len(),
+                percentile(&times, 0.5),
+                percentile(&times, 0.95),
+                percentile(&times, 1.0),
+            );
+        }
+        if let Some(w) = window.upgrade() {
+            w.close();
+        }
+        glib::ControlFlow::Break
+    });
+}
+
+/// `--measure-merge-scroll`: 開いたマージエディタ（`--merge-editor`）の Result の欄を毎フレーム決まった行数だけ
+/// スクロールし（ほかの欄と帯もついてくる）、1 フレームのメインスレッドの時間を測る。
+pub fn merge_scroll(window: &gtk::ApplicationWindow, rows_per_frame: f64) {
+    // マージエディタの窓（なければ、この窓の中。Working Copy に埋め込んだもの）の、書ける文字の欄（Result）。
+    let host: gtk::Window = crate::merge::any_window().unwrap_or_else(|| window.clone().upcast());
+    let mut result: Option<gtk::TextView> = None;
+    let mut stack: Vec<gtk::Widget> = vec![host.clone().upcast()];
+    while let Some(w) = stack.pop() {
+        if let Some(t) = w.downcast_ref::<gtk::TextView>()
+            && t.is_editable()
+            && t.is_mapped()
+        {
+            result = Some(t.clone());
+            break;
+        }
+        let mut child = w.first_child();
+        while let Some(c) = child {
+            child = c.next_sibling();
+            stack.push(c);
+        }
+    }
+    let Some(result) = result else {
+        eprintln!("マージエディタがない");
+        window.close();
+        return;
+    };
+    let Some(clock) = result.frame_clock() else {
+        eprintln!("frame clock がない");
+        return;
+    };
+    let record = Rc::new(RefCell::new(Record::default()));
+    let r = record.clone();
+    let update = clock.connect_update(move |_| {
+        r.borrow_mut().started = Some(Instant::now());
+    });
+    let r = record.clone();
+    let after = clock.connect_after_paint(move |clock| {
+        let mut r = r.borrow_mut();
+        if let Some(t) = r.started.take() {
+            r.work.push(t.elapsed().as_secs_f64() * 1000.0);
+        }
+        let time = clock.frame_time();
+        if let Some(last) = r.last_frame {
+            r.intervals.push((time - last) as f64 / 1000.0);
+        }
+        r.last_frame = Some(time);
+    });
+    let lines = result.buffer().line_count();
+    let frame = std::cell::Cell::new(0);
+    let window = window.downgrade();
+    let handlers = RefCell::new(Some((update, after)));
+    result.add_tick_callback(move |view, clock| {
+        frame.set(frame.get() + 1);
+        let frame = frame.get();
+        let adj = view.vadjustment().expect("vadjustment");
+        let max = adj.upper() - adj.page_size();
+        let line = view.line_yrange(&view.buffer().start_iter()).1.max(1) as f64;
+        adj.set_value((adj.value() + rows_per_frame * line).min(max));
+        if frame < FRAMES && adj.value() < max {
+            return glib::ControlFlow::Continue;
+        }
+        if let Some((update, after)) = handlers.take() {
+            clock.disconnect(update);
+            clock.disconnect(after);
+        }
+        let r = record.borrow();
+        println!(
+            "merge lines {lines}, wrap {}\nframes {frame}\n\
+             main thread per frame: p50 {} / p95 {} / max {} ms\n\
+             frame interval: p50 {} / p95 {} ms",
+            crate::diff::wrap_lines(),
+            percentile(&r.work, 0.5),
+            percentile(&r.work, 0.95),
+            percentile(&r.work, 1.0),
+            percentile(&r.intervals, 0.5),
+            percentile(&r.intervals, 0.95),
+        );
+        if let Some(w) = view.root().and_downcast::<gtk::Window>()
+            && crate::merge::any_window().as_ref() == Some(&w)
+        {
+            // 開いたときの自動の解決で Result が変わっていても、確かめずに閉じる。
+            w.destroy();
+        }
         if let Some(w) = window.upgrade() {
             w.close();
         }

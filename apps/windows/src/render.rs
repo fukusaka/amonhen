@@ -1090,6 +1090,24 @@ impl Renderer {
             self.d2d.Clear(Some(&background()));
         }
         let result = match content {
+            // すべてのファイルで開いた画像は 1 枚の絵、読めない・バイナリのファイルは「バイナリファイル」。
+            Some(content) if content.picture.is_some() => {
+                self.draw_single_picture(&content, width, height)
+            }
+            Some(content) if content.file_mode && content.view.binary => {
+                let format = self.file_format.clone();
+                self.draw_centered(
+                    &amonhen_model::tr!("Binary file"),
+                    &format,
+                    crate::imagediff::Rect {
+                        x: 0.0,
+                        y: 0.0,
+                        w: width,
+                        h: height,
+                    },
+                    &secondary(),
+                )
+            }
             Some(content) => self.draw_diff_rows(content, scroll_y, width, height),
             None => Ok(()),
         };
@@ -1120,13 +1138,27 @@ impl Renderer {
         }
         // 行ごとの含める印（Working Copy の 1 本の差分）があれば、その列の右から行番号。
         let left = if commit.marks { DIFF_MARK_WIDTH } else { 0.0 };
-        let text_x = left + DIFF_NUMBER_WIDTH * 2.0 + DIFF_TEXT_INSET;
+        // その時点のファイルは、行番号が 1 列（後の側。ファイルごと消したなら前の側）。
+        let numbers = if commit.file_mode {
+            DIFF_NUMBER_WIDTH
+        } else {
+            DIFF_NUMBER_WIDTH * 2.0
+        };
+        let text_x = left + numbers + DIFF_TEXT_INSET;
         // 画像の比べる欄は、見えている最初の行で欄ごと描く（欄の行は 1 度だけ）。
         let mut drawn_panel = None;
         for n in first..last {
             let top = n as f32 * DIFF_ROW_HEIGHT - scroll_y;
             let i = match commit.line(n as usize) {
                 Some(crate::data::DiffLine::Row(i)) => i,
+                Some(crate::data::DiffLine::Deleted(d)) => {
+                    let count = commit
+                        .tree
+                        .and_then(|t| t.deletions.get(d as usize).copied())
+                        .unwrap_or(0);
+                    self.draw_deletion_mark(count, left + numbers, top)?;
+                    continue;
+                }
                 Some(crate::data::DiffLine::Panel(file, k)) => {
                     if drawn_panel != Some(file) {
                         drawn_panel = Some(file);
@@ -1151,7 +1183,10 @@ impl Renderer {
                 bottom: top + DIFF_ROW_HEIGHT,
             };
             let file = row.kind == DiffRow::FILE;
+            // その時点のファイルの、変えた行（消した行に続けて足した行）は青（macOS 版・GTK4 版と同じ）。
+            let modified = commit.file_mode && commit.tree.is_some_and(|t| t.modified.contains(&i));
             let fill = match row.kind {
+                _ if modified => Some(rgba(0.21, 0.52, 0.89, 0.2)),
                 DiffRow::ADDED => Some(diff_color(crate::theme::DiffColor::Added)),
                 DiffRow::REMOVED => Some(diff_color(crate::theme::DiffColor::Removed)),
                 DiffRow::HUNK => Some(diff_color(crate::theme::DiffColor::Hunk)),
@@ -1162,7 +1197,7 @@ impl Renderer {
                 if !file {
                     self.brush.SetColor(&diff_gutter());
                     self.d2d
-                        .FillRectangle(&rect(0.0, left + DIFF_NUMBER_WIDTH * 2.0), &self.brush);
+                        .FillRectangle(&rect(0.0, left + numbers), &self.brush);
                 }
                 if let Some(fill) = fill {
                     self.brush.SetColor(&fill);
@@ -1239,7 +1274,14 @@ impl Renderer {
                     );
                 }
             }
-            if !file && row.kind != DiffRow::HUNK {
+            if commit.file_mode {
+                let line = if row.new_no == 0 {
+                    row.old_no
+                } else {
+                    row.new_no
+                };
+                self.draw_number(line, left, top)?;
+            } else if !file && row.kind != DiffRow::HUNK {
                 self.draw_number(row.old_no, left, top)?;
                 self.draw_number(row.new_no, left + DIFF_NUMBER_WIDTH, top)?;
             }
@@ -1527,6 +1569,33 @@ impl Renderer {
         )
     }
 
+    /// その時点のファイルの、消した行の所の印（赤い札に「N 行消した」。GTK4 版の `draw_deletion_marks`）。
+    fn draw_deletion_mark(&self, count: u32, gutter: f32, top: f32) -> Result<()> {
+        let red = rgba(0.88, 0.11, 0.14, 1.0);
+        let text = amonhen_model::tr!("{count} lines deleted here", count = count);
+        let (layout, w) = self.measured(&text, &self.meta_format)?;
+        unsafe {
+            self.brush.SetColor(&rgba(0.88, 0.11, 0.14, 0.16));
+            self.d2d.FillRectangle(
+                &D2D_RECT_F {
+                    left: gutter + 4.0,
+                    top: top + 2.0,
+                    right: gutter + 4.0 + w + 16.0,
+                    bottom: top + DIFF_ROW_HEIGHT - 2.0,
+                },
+                &self.brush,
+            );
+            self.brush.SetColor(&red);
+            self.d2d.DrawTextLayout(
+                point(gutter + 12.0, top + 2.0),
+                &layout,
+                &self.brush,
+                D2D1_DRAW_TEXT_OPTIONS_NONE,
+            );
+        }
+        Ok(())
+    }
+
     /// 画像の比べる欄の、前と後を重ねる大きさ（読んでいなければ 0）。
     pub fn image_common(&self, key: u64, file: usize) -> (f32, f32) {
         let size =
@@ -1535,6 +1604,95 @@ impl Renderer {
             let (a, b) = (size(&e.before), size(&e.after));
             (a.0.max(b.0), a.1.max(b.1))
         })
+    }
+
+    /// すべてのファイルで開いた画像を、欄いっぱいに 1 枚で描く（GTK4 版の `imagediff::single`）: 右上に拡大縮小、
+    /// 下に大きさとバイト数。読めなければ「バイナリファイル」。
+    fn draw_single_picture(
+        &mut self,
+        content: &crate::data::DiffContent,
+        width: f32,
+        height: f32,
+    ) -> Result<()> {
+        use crate::imagediff as image;
+        let Some((bytes, view)) = content.picture else {
+            return Ok(());
+        };
+        let key = (content.key, usize::MAX);
+        if !self.images.contains_key(&key) {
+            self.images.retain(|k, _| k.0 == content.key);
+            // WIC で読めなければ、SVG として描く（中に <svg があるときだけ）。
+            let svg = || bytes.windows(4).any(|w| w == b"<svg");
+            let pixels = image::decode(bytes)
+                .or_else(|| svg().then(|| self.rasterize_svg(bytes).ok()).flatten());
+            let caption = image::describe(Some(bytes), pixels.as_ref());
+            let bitmap = pixels.as_ref().and_then(|p| self.bitmap(p).ok());
+            self.images.insert(
+                key,
+                ImageEntry {
+                    before: None,
+                    after: pixels,
+                    before_bitmap: None,
+                    after_bitmap: bitmap,
+                    caption,
+                    difference: None,
+                },
+            );
+        }
+        let entry = &self.images[&key];
+        let format = self.file_format.clone();
+        let full = image::Rect {
+            x: 0.0,
+            y: 0.0,
+            w: width,
+            h: height,
+        };
+        let Some(bitmap) = entry.after_bitmap.clone() else {
+            return self.draw_centered(
+                &amonhen_model::tr!("Binary file"),
+                &format,
+                full,
+                &secondary(),
+            );
+        };
+        let size = entry.after.as_ref().map_or((0.0, 0.0), |p| p.size());
+        let caption = entry.caption.clone();
+        let layout = image::single_layout(width, height);
+        let rect = image::fit(size, layout.canvas, &view);
+        unsafe {
+            self.d2d
+                .PushAxisAlignedClip(&d2d_rect(layout.canvas), D2D1_ANTIALIAS_MODE_ALIASED);
+        }
+        self.checker(rect);
+        self.draw_bitmap(&bitmap, rect, 1.0);
+        unsafe { self.d2d.PopAxisAlignedClip() };
+        self.draw_centered(
+            &image::zoom_text(&view),
+            &format,
+            layout.zoom_label,
+            &secondary(),
+        )?;
+        let icons = self.icon_format.clone();
+        for (r, glyph) in [
+            (layout.zoom_out, "\u{E71F}"),
+            (layout.zoom_in, "\u{E8A3}"),
+            (layout.zoom_fit, "\u{E9A6}"),
+        ] {
+            unsafe {
+                self.brush.SetColor(&diff_file());
+                self.d2d.FillRectangle(&d2d_rect(r), &self.brush);
+            }
+            self.draw_centered(glyph, &icons, r, &foreground())?;
+        }
+        self.draw_small(
+            &caption,
+            &self.meta_format.clone(),
+            layout.caption.x,
+            layout.caption.y,
+            layout.caption.w,
+            &secondary(),
+            false,
+        )
     }
 
     /// 画像の前と後を読んだもの（なければ読む）。

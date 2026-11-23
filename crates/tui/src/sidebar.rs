@@ -88,6 +88,8 @@ pub struct Sidebar {
     conflicts: usize,
     /// 署名のあるタグの印（名前 → 印と色）。
     tag_marks: std::collections::HashMap<String, (char, Color)>,
+    /// リモートでのタグの様子の印（名前 → 印と色。⚠ 別のタグがある、∅ どのリモートにもない）。
+    tag_remote_marks: std::collections::HashMap<String, (char, Color)>,
     /// submodule の印（パス → 印と色）。
     submodule_marks: std::collections::HashMap<String, (char, Color)>,
     /// 印をつけた ref（ブランチ・リモートのブランチ・タグの名前。History をそれらだけにする）。
@@ -122,6 +124,7 @@ impl Default for Sidebar {
             height: 0,
             conflicts: 0,
             tag_marks: Default::default(),
+            tag_remote_marks: Default::default(),
             submodule_marks: Default::default(),
             marked: Vec::new(),
             range_diff: false,
@@ -684,6 +687,13 @@ impl Sidebar {
         self.tag_marks = marks;
     }
 
+    pub fn set_tag_remote_marks(
+        &mut self,
+        marks: std::collections::HashMap<String, (char, Color)>,
+    ) {
+        self.tag_remote_marks = marks;
+    }
+
     /// ローカルとリモートのブランチ（名前と、リモートのものか）。
     pub fn branches(&self) -> Vec<(String, bool)> {
         (self.refs["entries"].as_array().into_iter().flatten())
@@ -831,16 +841,29 @@ impl Sidebar {
                     kind: kind @ ("tag" | "submodule"),
                     label: name,
                     ..
-                } if self.tag_marks.contains_key(name) && *kind == "tag"
+                } if (self.tag_marks.contains_key(name)
+                    || self.tag_remote_marks.contains_key(name))
+                    && *kind == "tag"
                     || self.submodule_marks.contains_key(name) && *kind == "submodule" =>
                 {
-                    let (mark, color) = match *kind {
-                        "tag" => self.tag_marks[name],
-                        _ => self.submodule_marks[name],
+                    // 右端から: 署名の印、その左にリモートでの様子の印（タグ）。
+                    let marks: Vec<(char, Color)> = match *kind {
+                        "tag" => [self.tag_remote_marks.get(name), self.tag_marks.get(name)]
+                            .into_iter()
+                            .flatten()
+                            .copied()
+                            .collect(),
+                        _ => vec![self.submodule_marks[name]],
                     };
-                    let room = width.saturating_sub(4);
+                    let room = width.saturating_sub(2 + marks.len() * 2);
                     buf.set_stringn(area.x + 2, y, fit(name, room), room, Style::new());
-                    right(area, y, buf, &mark.to_string(), Style::new().fg(color));
+                    let mut x = area.right().saturating_sub(marks.len() as u16 * 2);
+                    for (mark, color) in marks {
+                        if x >= area.x + 2 {
+                            buf[(x, y)].set_char(mark).set_fg(color);
+                        }
+                        x += 2;
+                    }
                 }
                 Row::Ref {
                     label: name,
