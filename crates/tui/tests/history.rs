@@ -1030,6 +1030,18 @@ fn details_show_the_signature_check() {
         verified.contains("Signature  Verified, ann@example.com"),
         "{verified}"
     );
+    // 署名したタグには、サイドバーで印（正しい署名は ✓）。署名のないタグには付けない。
+    git(dir.path(), BASE, &["tag", "-s", "-m", "Release", "v1"]);
+    git(dir.path(), BASE, &["tag", "plain"]);
+    let tags = amonhen_tui::snapshot(open(dir.path()), 160, 12, clock(), "").unwrap();
+    println!("{tags}");
+    let side: Vec<String> = tags.lines().skip(1).filter_map(|l| column(l, 0)).collect();
+    assert!(
+        side.iter()
+            .any(|l| l.trim_start().starts_with("v1") && l.ends_with('✓')),
+        "{side:?}"
+    );
+    assert!(side.iter().any(|l| l.trim() == "plain"), "{side:?}");
 }
 
 /// History の `@` `]` `[`: HEAD・親（1 つ目の親）・すぐ上の子へ移る。

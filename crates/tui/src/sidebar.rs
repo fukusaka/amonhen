@@ -73,6 +73,8 @@ pub struct Sidebar {
     height: u16,
     /// コンフリクトのあるファイルの数（あれば Workspace に行を出す）。
     conflicts: usize,
+    /// 署名のあるタグの印（名前 → 印と色）。
+    tag_marks: std::collections::HashMap<String, (char, Color)>,
 }
 
 impl Default for Sidebar {
@@ -91,6 +93,7 @@ impl Default for Sidebar {
             top: 0,
             height: 0,
             conflicts: 0,
+            tag_marks: Default::default(),
         }
     }
 }
@@ -321,6 +324,19 @@ impl Sidebar {
     }
 
     /// 選んでいる ref の種類（`branch`・`remote`・`tag`）・名前・指すコミット。
+    /// タグの名前（並びの順）。
+    pub fn tag_names(&self) -> Vec<String> {
+        (self.refs["entries"].as_array().into_iter().flatten())
+            .filter(|e| e["kind"] == "tag")
+            .filter_map(|e| e["name"].as_str().map(str::to_owned))
+            .collect()
+    }
+
+    /// 署名のあるタグの印。
+    pub fn set_tag_marks(&mut self, marks: std::collections::HashMap<String, (char, Color)>) {
+        self.tag_marks = marks;
+    }
+
     /// ローカルとリモートのブランチ（名前と、リモートのものか）。
     pub fn branches(&self) -> Vec<(String, bool)> {
         (self.refs["entries"].as_array().into_iter().flatten())
@@ -447,6 +463,16 @@ impl Sidebar {
                 }
                 Row::Reflog => {
                     buf.set_stringn(area.x + 2, y, tr!("Reflog"), width - 2, Style::new());
+                }
+                Row::Ref {
+                    kind: "tag",
+                    label: name,
+                    ..
+                } if self.tag_marks.contains_key(name) => {
+                    let (mark, color) = self.tag_marks[name];
+                    let room = width.saturating_sub(4);
+                    buf.set_stringn(area.x + 2, y, fit(name, room), room, Style::new());
+                    right(area, y, buf, &mark.to_string(), Style::new().fg(color));
                 }
                 Row::Ref {
                     label: name,

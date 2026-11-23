@@ -561,6 +561,8 @@ pub struct App {
     archive_folder: Option<(String, String)>,
     /// bundle に何を入れるかを選んでいる間の、書くファイル（`a` で基点を聞く）。
     bundle_save: Option<String>,
+    /// 署名を読んだタグの名前（変わったら読み直す）。
+    tag_signature_names: Vec<String>,
     /// ロックするかを聞いている worktree（`r` で理由を聞く）。
     worktree_lock: Option<String>,
     /// 詳細に出した stash（土台を読んだら、一番下の行に様子を書く）。
@@ -705,6 +707,7 @@ impl App {
             patch_version: None,
             archive_folder: None,
             bundle_save: None,
+            tag_signature_names: Vec::new(),
             worktree_lock: None,
             stash_about: None,
             naming: Naming::Branch,
@@ -1311,6 +1314,15 @@ impl App {
                         let selected = self.history.selected_id();
                         self.history.opened(&refs, &history);
                         self.sidebar.set_refs(&refs);
+                        // タグの署名の印（アプリのタグの行の印）。タグが変わったときだけ読む（検証の結果はコアが覚える）。
+                        let tags = self.sidebar.tag_names();
+                        if !tags.is_empty() && tags != self.tag_signature_names {
+                            self.tag_signature_names = tags.clone();
+                            self.send(Request::Run {
+                                name: "tagSignatures",
+                                command: json!({"op": "tagSignatures", "names": tags}),
+                            });
+                        }
                         self.remotes = refs["remotes"]
                             .as_array()
                             .into_iter()
@@ -3209,6 +3221,19 @@ impl App {
                     pick.selected = 0;
                     self.dirty = true;
                 }
+                return;
+            }
+            "tagSignatures" => {
+                let marks = (reply["info"]["tags"].as_array().into_iter().flatten())
+                    .filter_map(|t| {
+                        t["signed"].as_str()?;
+                        let name = t["name"].as_str()?.to_owned();
+                        let status = t["signature"]["status"].as_str().unwrap_or("");
+                        Some((name, crate::details::signature_mark(status)))
+                    })
+                    .collect();
+                self.sidebar.set_tag_marks(marks);
+                self.dirty = true;
                 return;
             }
             "fetchConfig" => {

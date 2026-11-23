@@ -326,6 +326,18 @@ impl Commit {
     }
 }
 
+/// 署名の検証の結果（git の `%G?`）の、行に付ける 1 文字の印と色（アプリの印の代わり）: 正しい署名は ✓、
+/// 期限切れ・失効は !、正しくない署名は ✗、確かめられないものは ?。
+pub fn signature_mark(status: &str) -> (char, Color) {
+    match status {
+        "G" => ('✓', Color::Green),
+        "U" => ('✓', Color::Yellow),
+        "X" | "Y" | "R" => ('!', Color::Yellow),
+        "B" => ('✗', Color::Red),
+        _ => ('?', DIM),
+    }
+}
+
 /// 署名の検証の結果（git の `%G?`）を、アプリと同じ短い言葉に。正しい署名でも、鍵の信用度が足りなければ
 /// Untrusted key、鍵のメールアドレスがどれもコミッターと違えば Unverified signer。
 fn signature_label(status: &str, check: &Value, kind: &str) -> String {
