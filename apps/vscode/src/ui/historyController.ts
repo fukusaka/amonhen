@@ -3,7 +3,7 @@ import { basename } from 'node:path';
 import * as vscode from 'vscode';
 import type { DaemonClient } from '../daemon/client.ts';
 import { daemonFor } from '../daemon/connection.ts';
-import { applySyntax, commitFiles, splitCommitDiff } from '../daemon/diff.ts';
+import { applySyntax, commitFiles, splitCommitDiff, textSyntaxByLine } from '../daemon/diff.ts';
 import { readRows, toRowData } from '../daemon/history.ts';
 import { contentsToFetch, searchesContents, searchHistory } from '../daemon/search.ts';
 import { computeDiff, type DiffLine, type FileDiff } from '../diff/fileDiff.ts';
@@ -16,8 +16,12 @@ import type {
   DetailsExtras,
   DiffChoices,
   DiffWhitespace,
+  FileView,
   HistoryHostMessage,
   ImageBlob,
+  SvgCheckView,
+  TreeEntry,
+  ViewLine,
   HistoryWebviewMessage,
   PairMode,
   Person,
@@ -49,6 +53,8 @@ import { editableChain, refLabels, worktreeLabels } from '../history/rows.ts';
 import { scopeRefs } from '../history/scope.ts';
 import type { Repository, Section } from '../state/repository.ts';
 import { openCommitChanges, openCommitFile } from './commitChanges.ts';
+import { gitUri } from './uri.ts';
+import { repositorySlug } from '../git/github.ts';
 import { onDidChangeSignatureConfig } from './signatureConfig.ts';
 import { showError } from './stageCommands.ts';
 
@@ -125,6 +131,25 @@ async function confirmContentsSearch(count: number, more: boolean): Promise<bool
  * メインビューの History の拡張ホスト側。
  * log は分割して読み込み、グラフのレーンはこちらで計算して、描画に必要な最小限の配列だけ送る。
  */
+/** `a/./b/../c` を `a/c` に。根より上に出れば undefined */
+function normalizePath(path: string): string | undefined {
+  const out: string[] = [];
+  for (const part of path.split('/')) {
+    if (part === '' || part === '.') continue;
+    if (part === '..') {
+      if (out.length === 0) return undefined;
+      out.pop();
+    } else {
+      try {
+        out.push(decodeURIComponent(part));
+      } catch {
+        out.push(part);
+      }
+    }
+  }
+  return out.join('/');
+}
+
 /** 詳細で比べる画像の、片側の大きさの上限 */
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 
@@ -337,6 +362,19 @@ export class HistoryController implements vscode.Disposable {
         break;
       case 'commitDiff':
         await this.sendCommitDiff(message.oid, message.path).catch(showError);
+        break;
+      case 'treeEntries':
+        await this.sendTreeEntries(message.oid, message.path).catch(showError);
+        break;
+      case 'treeFile':
+        await this.sendTreeFile(message.oid, message.path).catch((err: unknown) =>
+          this.post({ type: 'treeFile', oid: message.oid, path: message.path, view: { kind: 'error', message: errorMessage(err) } }),
+        );
+        break;
+      case 'openTreeFile':
+        if (this.repo) {
+          await vscode.commands.executeCommand('vscode.open', gitUri(this.repo.root, message.path, 'rev', message.oid)).then(undefined, showError);
+        }
         break;
       case 'commitImage':
         await this.sendCommitImage(message.oid, message.path).catch(showError);
@@ -722,6 +760,167 @@ export class HistoryController implements vscode.Disposable {
     } catch (err) {
       this.post({ type: 'commitImage', oid, path, error: errorMessage(err) });
     }
+  }
+
+  /** コミットの木のフォルダの中身を送る（「すべてのファイル」。エンジンだけ） */
+  private async sendTreeEntries(oid: string, path: string): Promise<void> {
+    const client = this.daemon?.client;
+    if (!client) return;
+    const reply = await client.call({ op: 'run', command: { op: 'treeEntries', oid, path } });
+    const info = reply.json['info'] as { entries?: TreeEntry[] } | undefined;
+    if (reply.json['ok'] !== true || !info?.entries) {
+      this.post({ type: 'treeEntries', oid, path, entries: [], error: String(reply.json['error'] ?? 'Can’t read the folder') });
+      return;
+    }
+    this.post({ type: 'treeEntries', oid, path, entries: info.entries.map((e) => ({ name: e.name, kind: e.kind })) });
+  }
+
+  /**
+   * コミットのファイルの中身を送る（「すべてのファイル」。エンジンだけ）。このコミットで変えたファイルは、ファイル
+   * 全体の差分から、足した行・変えた行・消したところに印を付ける。画像は絵、Markdown は整形のブロック、SVG は絵と
+   * モバイルの確認も
+   */
+  private async sendTreeFile(oid: string, path: string): Promise<void> {
+    const repo = this.repo;
+    const client = this.daemon?.client;
+    if (!repo || !client) return;
+    const send = (view: FileView) => this.post({ type: 'treeFile', oid, path, view });
+    const change = this.details.get(oid)?.files.find((f) => f.path === path);
+    if (change?.status === 'D') {
+      send({ kind: 'error', message: 'Deleted in this commit' });
+      return;
+    }
+    const data = (await repo.backend.object(`${oid}:${path}`))?.data;
+    if (!data) {
+      send({ kind: 'error', message: `${path} isn’t in this commit` });
+      return;
+    }
+    const svg = /\.svg$/i.test(path);
+    if (/\.(png|jpe?g|gif|webp|bmp|ico|avif)$/i.test(path)) {
+      if (data.length > MAX_IMAGE_BYTES) throw new Error(`The image is larger than ${MAX_IMAGE_BYTES / 1024 / 1024} MB`);
+      send({ kind: 'image', image: { url: `data:${imageType(path)};base64,${data.toString('base64')}`, bytes: data.length } });
+      return;
+    }
+    if (data.subarray(0, 8000).includes(0)) {
+      send({ kind: 'binary', bytes: data.length });
+      return;
+    }
+    const lines = change ? await this.markedLines(client, oid, path) : undefined;
+    const view: FileView = lines ?? { kind: 'text', lines: await this.plainLines(client, path, data.toString('utf8')) };
+    if (view.kind !== 'text') {
+      send(view);
+      return;
+    }
+    if (/\.(md|markdown)$/i.test(path)) {
+      const slug = repositorySlug(await repo.backend.remotes());
+      const reply = await client.call({
+        op: 'run',
+        command: { op: 'markdownBlocks', oid, path, ...(slug ? { github: `https://github.com/${slug}` } : {}) },
+      });
+      const blocks = (reply.json['info'] as { blocks?: unknown[] } | undefined)?.blocks;
+      if (blocks) view.markdown = await this.colorCode(client, await this.inlineImages(repo, oid, path, blocks));
+    }
+    if (svg && data.length <= MAX_IMAGE_BYTES) {
+      const reply = await client.call({ op: 'run', command: { op: 'svgCheck', oid, path } }).catch(() => undefined);
+      const check = reply?.json['info'] as SvgCheckView | undefined;
+      view.svg = { image: { url: `data:image/svg+xml;base64,${data.toString('base64')}`, bytes: data.length }, ...(check ? { check } : {}) };
+    }
+    send(view);
+  }
+
+  /**
+   * Markdown のブロックの、コミットの中の絵（相対パス）を data URL に置き換える（外からは読まない。大きすぎるもの・
+   * 読めないものはそのまま）
+   */
+  private async inlineImages(repo: Repository, oid: string, path: string, blocks: unknown[]): Promise<unknown[]> {
+    const dir = path.includes('/') ? path.slice(0, path.lastIndexOf('/') + 1) : '';
+    let budget = MAX_IMAGE_BYTES;
+    const visit = async (value: unknown): Promise<void> => {
+      if (Array.isArray(value)) {
+        for (const v of value) await visit(v);
+        return;
+      }
+      if (!value || typeof value !== 'object') return;
+      const run = value as Record<string, unknown>;
+      const image = run['image'];
+      if (typeof image === 'string' && !/^[a-z][a-z0-9+.-]*:|^\/\//i.test(image)) {
+        const target = normalizePath(image.startsWith('/') ? image.slice(1) : `${dir}${image}`.split(/[?#]/)[0]!);
+        const data = target ? (await repo.backend.object(`${oid}:${target}`).catch(() => undefined))?.data : undefined;
+        if (data && data.length <= budget && /\.(png|jpe?g|gif|webp|bmp|ico|avif|svg)$/i.test(target!)) {
+          budget -= data.length;
+          run['image'] = `data:${imageType(target!)};base64,${data.toString('base64')}`;
+        }
+      }
+      for (const v of Object.values(run)) if (typeof v === 'object') await visit(v);
+    };
+    await visit(blocks);
+    return blocks;
+  }
+
+  /** Markdown のコードブロックに、フェンスの言葉の構文の色を付ける（`syntax`: 行ごと。読めなければ色なし） */
+  private async colorCode(client: DaemonClient, blocks: unknown[]): Promise<unknown[]> {
+    const visit = async (value: unknown): Promise<void> => {
+      if (Array.isArray(value)) {
+        for (const v of value) await visit(v);
+        return;
+      }
+      if (!value || typeof value !== 'object') return;
+      const block = value as Record<string, unknown>;
+      if (block['kind'] === 'code' && typeof block['language'] === 'string' && block['language'] && typeof block['text'] === 'string') {
+        const texts = block['text'].replace(/\n$/, '').split('\n');
+        const colored = await client
+          .call({ op: 'textSyntax', path: `code.${block['language']}`, text: texts.join('\n') })
+          .catch(() => undefined);
+        if (colored) block['syntax'] = textSyntaxByLine(colored, texts);
+        return;
+      }
+      for (const v of Object.values(block)) if (typeof v === 'object') await visit(v);
+    };
+    await visit(blocks);
+    return blocks;
+  }
+
+  /** 変えたファイルの、ファイル全体の差分から印を付けた行（読めなければ undefined） */
+  private async markedLines(client: DaemonClient, oid: string, path: string): Promise<FileView | undefined> {
+    const index = this.fileOrder.get(oid)?.indexOf(path) ?? -1;
+    if (index < 0) return undefined;
+    const reply = await client.call({ op: 'commitDiff', id: oid, contexts: { [index]: 'all' }, ...this.whitespaceArg() });
+    const byRow = new Map<number, DiffLine>();
+    const diff = splitCommitDiff(reply, byRow).get(path);
+    if (!diff || diff.binary) return undefined;
+    const colored = await client.call({ op: 'diffSyntax', view: reply.json['view'] }).catch(() => undefined);
+    if (colored) applySyntax(colored, byRow);
+    const lines: ViewLine[] = [];
+    let removed: string[] = [];
+    for (const line of diff.hunks.flatMap((h) => h.lines)) {
+      if (line.kind === '-') {
+        removed.push(line.text);
+        continue;
+      }
+      const view: ViewLine = { text: line.text, ...(line.syntax ? { syntax: line.syntax } : {}) };
+      if (line.kind === '+') {
+        const old = removed.shift();
+        if (old !== undefined) {
+          view.mark = 'changed';
+          view.old = old;
+        } else {
+          view.mark = 'added';
+        }
+      } else if (removed.length > 0) {
+        view.removedBefore = removed.length;
+        removed = [];
+      }
+      lines.push(view);
+    }
+    return { kind: 'text', lines, ...(removed.length > 0 ? { removedAtEnd: removed.length } : {}) };
+  }
+
+  /** 変えていないファイルの行（構文の色つき。読めなければ色なし） */
+  private async plainLines(client: DaemonClient, path: string, text: string): Promise<ViewLine[]> {
+    const texts = text.replace(/\n$/, '').split('\n');
+    const colored = await client.call({ op: 'textSyntax', path, text: texts.join('\n') }).catch(() => undefined);
+    const syntax = colored ? textSyntaxByLine(colored, texts) : undefined;
+    return texts.map((t, i) => (syntax?.[i]?.length ? { text: t, syntax: syntax[i] } : { text: t }));
   }
 
   /** 詳細の差分で選べること（エンジンで読んでいるときだけ） */
