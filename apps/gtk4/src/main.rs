@@ -45,6 +45,7 @@ mod merge;
 mod mergeseveral;
 mod messagefind;
 mod patches;
+mod preview;
 mod programs;
 mod quickopen;
 mod rangediff;
@@ -437,7 +438,10 @@ fn main() -> glib::ExitCode {
         // ショートカットと Quit は、リポジトリのページしかない起動でも効くように最初に。
         appmenu::install_app(app);
         // 窓を閉じて終えるときも、待っている下書きを書く。
-        app.connect_shutdown(|_| commitmsg::flush_all());
+        app.connect_shutdown(|_| {
+            commitmsg::flush_all();
+            preview::clean_up();
+        });
         menu::install_css();
         // スキャンするフォルダを起動したときから見張る（macOS 版と同じ。確認用の起動では見張らない）。
         glib::idle_add_local_once(|| {

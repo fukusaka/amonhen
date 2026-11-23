@@ -2382,6 +2382,8 @@
 "Back" = "戻る";
 "Back to the files" = "ファイルの一覧に戻る";
 "Show This Change" = "この変更を見る";
+"Open this file at the commit in a preview" = "この時点のファイルをプレビューで開く";
+"Preview" = "プレビュー";
 "(deleted in this commit)" = "（このコミットで削除）";
 "{count} lines deleted here" = "ここで {count} 行を削除";
 "2-Up" = "並べる";

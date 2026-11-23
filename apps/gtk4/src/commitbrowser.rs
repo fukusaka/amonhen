@@ -329,6 +329,14 @@ impl Browser {
         path_label.set_ellipsize(gtk::pango::EllipsizeMode::Start);
         let change_button = gtk::Button::with_label(&tr!("Show This Change"));
         change_button.add_css_class("flat");
+        // プレビューで開く（macOS 版の Quick Look のボタン）。
+        let preview_icon = crate::icon::Icon::default();
+        preview_icon.set(crate::icon::Kind::Eye, false);
+        let preview_button = gtk::Button::new();
+        preview_button.set_child(Some(&preview_icon));
+        preview_button.add_css_class("flat");
+        preview_button.set_tooltip_text(Some(&tr!("Open this file at the commit in a preview")));
+        preview_button.update_property(&[gtk::accessible::Property::Label(&tr!("Preview"))]);
         let path_bar = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         path_bar.set_margin_start(6);
         path_bar.set_margin_end(10);
@@ -336,6 +344,7 @@ impl Browser {
         path_bar.set_margin_bottom(2);
         path_bar.append(&back);
         path_bar.append(&path_label);
+        path_bar.append(&preview_button);
         path_bar.append(&change_button);
         path_bar.set_visible(false);
         let content = DiffWidget::default();
@@ -351,9 +360,20 @@ impl Browser {
         picture.set_margin_bottom(16);
         picture.set_margin_start(16);
         picture.set_margin_end(16);
+        // バイナリのファイルの案内と、プレビューで開くボタン（アプリで描けないもの）。
+        let binary_label = gtk::Label::new(Some(&tr!("Binary file")));
+        binary_label.add_css_class("dim-label");
+        let binary_button = gtk::Button::with_label(&tr!("Preview"));
+        binary_button.set_halign(gtk::Align::Center);
+        let binary_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
+        binary_box.set_halign(gtk::Align::Center);
+        binary_box.set_valign(gtk::Align::Center);
+        binary_box.append(&binary_label);
+        binary_box.append(&binary_button);
         let contents = gtk::Stack::new();
         contents.add_named(&content_scroll, Some("text"));
         contents.add_named(&picture, Some("image"));
+        contents.add_named(&binary_box, Some("binary"));
         let pages = gtk::Stack::new();
         pages.set_vexpand(true);
         pages.add_named(&tree_scroll, Some("tree"));
@@ -419,6 +439,14 @@ impl Browser {
                 this.back_to_tree();
             }
         });
+        for button in [&preview_button, &binary_button] {
+            let weak = Rc::downgrade(&this);
+            button.connect_clicked(move |_| {
+                if let Some(this) = weak.upgrade() {
+                    this.preview();
+                }
+            });
+        }
         let weak = Rc::downgrade(&this);
         this.change_button.connect_clicked(move |_| {
             let Some(this) = weak.upgrade() else { return };
@@ -553,6 +581,40 @@ impl Browser {
         Some(node)
     }
 
+    /// `path` のその時点の中身の blob（変えたファイルは変更後、消したファイルは変更前、変えていないファイルは木の
+    /// もの）。
+    fn blob_id(&self, path: &str) -> Option<Oid> {
+        match self.tree.change(path).map(|(_, c)| c) {
+            Some(c) if c.kind == ChangeKind::Deleted => c.old_id,
+            Some(c) => c.new_id,
+            None => self.node_at(path).and_then(|n| n.oid),
+        }
+    }
+
+    /// 開いているファイルをプレビューで開く（macOS 版の Quick Look）。中身は裏で読む。
+    fn preview(self: &Rc<Self>) {
+        let Some(path) = self.open_path.borrow().clone() else {
+            return;
+        };
+        let oid = self.blob_id(&path);
+        let repo = self.tree.repo.clone();
+        let weak = Rc::downgrade(self);
+        glib::spawn_future_local(async move {
+            let data = gio::spawn_blocking(move || oid.and_then(|oid| repo.blob(&oid).ok()))
+                .await
+                .ok()
+                .flatten();
+            let Some(this) = weak.upgrade() else { return };
+            if this.open_path.borrow().as_deref() != Some(path.as_str()) {
+                return;
+            }
+            match data {
+                Some(data) => crate::preview::show(&this.root, &data, name_of(&path)),
+                None => this.root.error_bell(),
+            }
+        });
+    }
+
     /// `path` の中身を出す（`line` があればその行へ）。変えたファイルは前後をファイル全体にした差分、変えていない
     /// ファイルはその時点の中身。画像（SVG のほか）は絵で出す。
     pub fn open(self: &Rc<Self>, path: &str, line: Option<u32>) {
@@ -594,11 +656,7 @@ impl Browser {
         if crate::imagediff::is_image(path) && !crate::imagediff::is_svg(path) {
             self.contents.set_visible_child_name("image");
             self.picture.set_paintable(gtk::gdk::Paintable::NONE);
-            let oid = match &change {
-                Some(c) if deleted => c.old_id,
-                Some(c) => c.new_id,
-                None => self.node_at(path).and_then(|n| n.oid),
-            };
+            let oid = self.blob_id(path);
             glib::spawn_future_local(async move {
                 let data =
                     gio::spawn_blocking(move || oid.and_then(|oid| repo.blob(&oid).ok())).await;
@@ -635,7 +693,7 @@ impl Browser {
                 return;
             }
             match view {
-                Ok(Ok((true, _))) => this.content.show_message(&tr!("Binary file")),
+                Ok(Ok((true, _))) => this.contents.set_visible_child_name("binary"),
                 Ok(Ok((false, view))) => {
                     this.content.show_plain(view);
                     if let Some(line) = line {

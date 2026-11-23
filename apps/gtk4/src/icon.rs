@@ -175,6 +175,8 @@ pub enum Kind {
     PlusMinus,
     /// space（差分で無視する空白）
     Space,
+    /// eye（その時点のファイルをプレビューで開く）
+    Eye,
 }
 
 mod imp {
@@ -636,6 +638,14 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
                 p.move_to(6.0 + x, *y);
                 p.line_to(13.5, *y);
             }
+        }
+        Kind::Eye => {
+            // アーモンド形のまぶたと、真ん中の瞳。
+            p.move_to(1.5, 8.0);
+            p.quad_to(8.0, 0.5, 14.5, 8.0);
+            p.quad_to(8.0, 15.5, 1.5, 8.0);
+            p.close();
+            p.add_circle(&point(8.0, 8.0), 2.2);
         }
         Kind::Space => {
             p.move_to(2.5, 8.5);
