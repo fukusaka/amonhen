@@ -590,6 +590,8 @@ pub struct App {
     form_marks: Vec<String>,
     /// リポジトリの形（`repositoryForm` の info。読めていなければ null）。
     form: Value,
+    /// 送った、お気に入り・アーカイブの設定の書き込みのうち、まだ答えのないもの（すべて済んだら読み直す）。
+    branch_config_pending: usize,
     /// 途中の操作（merge・rebase・cherry-pick・revert）: 種類と、何番目・全部でいくつ（rebase）。
     sequence: Option<(String, Option<(u64, u64)>)>,
     /// 止まっている `git am` のパッチを、3-way merge で当て直せる（まだ 3-way で当てていない）。
@@ -735,6 +737,7 @@ impl App {
             behind: 0,
             form_marks: Vec::new(),
             form: Value::Null,
+            branch_config_pending: 0,
             sequence: None,
             stash: None,
             retry_three_way: false,
@@ -1337,6 +1340,11 @@ impl App {
                         self.history.opened(&refs, &history);
                         self.sidebar.set_refs(&refs);
                         // タグの署名の印（アプリのタグの行の印）。タグが変わったときだけ読む（検証の結果はコアが覚える）。
+                        // ブランチの分け方（お気に入り・積んだもの・Inactive・Archived）。
+                        self.send(Request::Run {
+                            name: "branchGroups",
+                            command: json!({"op": "branchGroups"}),
+                        });
                         // リポジトリの形（shallow・partial clone、sparse checkout）の印。
                         self.send(Request::Run {
                             name: "repositoryForm",
@@ -2789,6 +2797,82 @@ impl App {
     }
 
     /// 命令が済んだ。だめなら理由を出し、どちらでも状態・ref・History を読み直す。
+    /// サイドバーで選んでいるローカルブランチの名前。
+    fn picked_branch(&self) -> Option<String> {
+        self.sidebar
+            .picked_ref()
+            .filter(|r| r.0 == "branch")
+            .map(|r| r.1.to_owned())
+    }
+
+    /// ブランチのお気に入り・アーカイブ・お気に入りの順を変える（git の設定 `branch.<name>.amonhenPinned`・
+    /// `amonhenArchived` に書く。アプリと同じなので、両方で同じに見える）。
+    fn change_branch_place(&mut self, name: &str, code: KeyCode) {
+        let favorites = self.sidebar.favorites();
+        let key = |what: &str, name: &str| format!("branch.{name}.amonhen{what}");
+        let order = |names: &[String]| -> Vec<Value> {
+            names
+                .iter()
+                .enumerate()
+                .map(|(i, n)| json!({"op": "configSet", "key": key("Pinned", n), "value": (i + 1).to_string()}))
+                .collect()
+        };
+        let pinned = favorites.iter().position(|n| n == name);
+        let (commands, notice) = match (code, pinned) {
+            (KeyCode::Char('*'), Some(i)) => {
+                let mut rest = favorites.clone();
+                rest.remove(i);
+                let mut commands = order(&rest);
+                commands
+                    .push(json!({"op": "configSet", "key": key("Pinned", name), "value": null}));
+                (commands, tr!("Removed {name} from Favorites", name = name))
+            }
+            (KeyCode::Char('*'), None) => {
+                let mut all = favorites.clone();
+                all.push(name.to_owned());
+                (order(&all), tr!("Added {name} to Favorites", name = name))
+            }
+            (KeyCode::Char('z'), _) => {
+                let archived = self.sidebar.is_archived(name);
+                let value = if archived { Value::Null } else { json!("true") };
+                (
+                    vec![json!({"op": "configSet", "key": key("Archived", name), "value": value})],
+                    match archived {
+                        true => tr!("Brought {name} back from Archived", name = name),
+                        false => tr!("Archived {name}", name = name),
+                    },
+                )
+            }
+            (KeyCode::Char('<' | '>'), Some(i)) => {
+                let to = match code {
+                    KeyCode::Char('<') => i.checked_sub(1),
+                    _ => Some(i + 1).filter(|&j| j < favorites.len()),
+                };
+                let Some(to) = to else {
+                    return;
+                };
+                let mut moved = favorites.clone();
+                moved.swap(i, to);
+                (order(&moved), String::new())
+            }
+            (KeyCode::Char('<' | '>'), None) => {
+                self.error = Some(tr!("Only a favorite branch moves up or down (* adds it)"));
+                return;
+            }
+            _ => return,
+        };
+        self.branch_config_pending += commands.len();
+        for command in commands {
+            self.send(Request::Run {
+                name: "branchConfig",
+                command,
+            });
+        }
+        if !notice.is_empty() {
+            self.notice = Some(notice);
+        }
+    }
+
     /// リポジトリの形（`repositoryForm` の info）から、一番上の行の印と Working Copy の知らせを決める。
     fn set_form(&mut self, info: &Value) {
         let mut marks = Vec::new();
@@ -2941,6 +3025,24 @@ impl App {
     }
 
     fn ran(&mut self, name: &'static str, result: std::result::Result<Value, String>) {
+        // ブランチの分け方（裏で読む）と、お気に入り・アーカイブを書いたもの。動いている操作の表示を消さない。
+        if name == "branchGroups" {
+            let info = result.ok().map(|r| r["info"].clone()).unwrap_or_default();
+            self.sidebar.set_branch_groups(info, self.clock.now);
+            self.dirty = true;
+            return;
+        }
+        if name == "branchConfig" {
+            self.branch_config_pending = self.branch_config_pending.saturating_sub(1);
+            if let Err(error) = result {
+                self.error = Some(error);
+            }
+            if self.branch_config_pending == 0 {
+                self.open();
+            }
+            self.dirty = true;
+            return;
+        }
         // 裏で読むリポジトリの形も、動いている操作の表示を消さない。読めなければ印を出さない。
         if name == "repositoryForm" {
             let info = result.ok().map(|r| r["info"].clone()).unwrap_or_default();
@@ -5786,8 +5888,20 @@ impl App {
             KeyCode::PageUp => self.sidebar.move_selection(-page),
             KeyCode::Char('g') | KeyCode::Home => self.sidebar.move_selection(i64::MIN / 2),
             KeyCode::Char('G') | KeyCode::End => self.sidebar.move_selection(i64::MAX / 2),
+            // Branches の Inactive・Archived のまとまりは、開く・畳む。
+            KeyCode::Enter | KeyCode::Char(' ' | 'l') | KeyCode::Right
+                if self.sidebar.toggle_group() =>
+            {
+                true
+            }
             KeyCode::Enter | KeyCode::Char(' ' | 'l') | KeyCode::Right => {
                 self.pick();
+                true
+            }
+            // ブランチの行で: お気に入りにする・外す（★）、アーカイブする・戻す、お気に入りの順を上・下へ。
+            KeyCode::Char('*' | 'z' | '<' | '>') if self.picked_branch().is_some() => {
+                let name = self.picked_branch().unwrap_or_default();
+                self.change_branch_place(&name, code);
                 true
             }
             KeyCode::Char('/') => {
@@ -5948,6 +6062,10 @@ impl App {
                     tr!("On a remote branch: make it the upstream of the current branch"),
                 ),
                 ("n D", tr!("Rename a branch; delete a branch or a tag")),
+                (
+                    "* z < >",
+                    tr!("On a branch: favorite or not; archive or not; move a favorite up, down"),
+                ),
                 ("L", tr!("The branch's reflog")),
                 (
                     "v",
