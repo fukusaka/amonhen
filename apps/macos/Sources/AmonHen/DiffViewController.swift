@@ -1351,7 +1351,7 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
                 let baseline = top + 2 + ascent
                 // コンフリクトの表示では old_no はコンフリクトの番号なので、行番号は new_no だけ出す。
                 if r.kind == UInt8(AmonhenDiffRow_FILE) {
-                    drawCompactHeader(row: row, all: all, top: top, scale: scale)
+                    drawCompactHeader(row: row, all: all, top: top, scale: scale, matches: matchesByRow[row] ?? [])
                     continue
                 }
                 if expandsHunks, r.kind == UInt8(AmonhenDiffRow_HUNK) {
@@ -1442,7 +1442,7 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
             if let (file, top) = stickyHeader(origin: origin) {
                 let row = fileRows[file]
                 if matchesByRow[row] == nil { collectMatches(row..<row + 1) }
-                drawCompactHeader(row: row, all: all, top: top, scale: scale)
+                drawCompactHeader(row: row, all: all, top: top, scale: scale, matches: matchesByRow[row] ?? [])
             }
         }
         if !fileRows.isEmpty {
@@ -1458,7 +1458,10 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
 extension DiffViewController {
     /// ファイルの見出しの行（変更ファイルの一覧の行を兼ねる）: ▸、種類の印、パス（ツリーなら名前）、右に行数と、
     /// いつも出す ⋯（右クリックと同じメニュー）。横にはスクロールしない。
-    fileprivate func drawCompactHeader(row: Int, all: UnsafeBufferPointer<AmonhenDiffRow>, top: CGFloat, scale: CGFloat) {
+    /// `matches` は検索（⌘F）で見つけた、見出しのパスの中の一致（番号と、行の文字列での範囲）。
+    fileprivate func drawCompactHeader(
+        row: Int, all: UnsafeBufferPointer<AmonhenDiffRow>, top: CGFloat, scale: CGFloat, matches: [(Int, Range<Int>)] = []
+    ) {
         let r = all[row]
         let width = textView.bounds.width
         let file = fileRows.firstIndex(of: row) ?? 0
@@ -1511,6 +1514,21 @@ extension DiffViewController {
             pathX += 16
         }
         if let line = fileTitles[file].map({ glyph($0, font) }) ?? shapedLine(row, scale: scale) {
+            // 検索の一致に色を付ける。ツリーなどで見出しを名前だけにしているときは、一致した文字を見出しの中で探す。
+            let rowText = text(row: row) as NSString
+            for (i, m) in matches {
+                var range = NSRange(location: m.lowerBound, length: m.count)
+                if let title = fileTitles[file] {
+                    guard NSMaxRange(range) <= rowText.length else { continue }
+                    range = (title as NSString).range(of: rowText.substring(with: range), options: .caseInsensitive)
+                    guard range.location != NSNotFound else { continue }
+                }
+                let x0 = line.offset(of: range.location), x1 = line.offset(of: NSMaxRange(range))
+                renderer.addRect(
+                    CGRect(x: pathX + x0, y: top + 1, width: max(2, x1 - x0), height: lineHeight - 2),
+                    color: i == currentMatch
+                        ? NSColor.systemOrange.withAlphaComponent(0.7).rgba : NSColor.systemYellow.withAlphaComponent(0.35).rgba)
+            }
             renderer.addLine(line, origin: CGPoint(x: pathX, y: top + 2 + CTFontGetAscent(font)), color: NSColor.labelColor.rgba, scale: scale)
             if pathX + line.width > right - 8 {
                 renderer.addRect(CGRect(x: right - 8, y: top, width: width - right + 8, height: lineHeight - 1), color: backdrop.bandColor)
