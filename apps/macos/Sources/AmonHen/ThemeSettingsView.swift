@@ -112,7 +112,9 @@ struct SyntaxThemeSection: View {
                     Text(name).tag("mermaid-import:\(name)")
                 }
             }
-            ThemePreview(light: model.syntaxThemeLight, dark: model.syntaxThemeDark, standardDiff: model.diffStandardColors)
+            ThemePreview(
+                light: model.syntaxThemeLight, dark: model.syntaxThemeDark, standardDiff: model.diffStandardColors,
+                diagramColors: model.diagramColors, mermaidThemes: model.importedMermaidThemes)
             HStack {
                 Button(L("Import VSCode Theme…")) { importTheme() }
                 Button(L("Import Mermaid Theme…")) { importMermaidTheme() }
@@ -195,6 +197,9 @@ private struct ThemePreview: View {
     let dark: String
     /// 差分の色は標準の色（テーマの色にしない）。
     let standardDiff: Bool
+    /// 図の配色（見本の図を作り直す目印）。
+    let diagramColors: String
+    let mermaidThemes: [String: MermaidThemeConfig]
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
@@ -222,6 +227,15 @@ private struct ThemePreview: View {
             code.padding(.bottom, 6)
             line("-", "    let limit = ", "10", .removed, .removedWord)
             line("+", "    let limit = ", "25", .added, .addedWord)
+            // 図の見本（「図の配色」と今の外観・テーマで色を当てる）。
+            if let svg = MarkdownBlock.sampleDiagram, let picture = DiagramPicture.image(svg, own: nil) {
+                Image(nsImage: picture)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(maxWidth: min(picture.size.width, 420), alignment: .leading)
+                    .padding(.top, 8)
+                    .id("\(diagramColors)|\(light)|\(dark)|\(scheme)|\(mermaidThemes.count)")
+            }
         }
         .font(.system(size: 12, design: .monospaced))
         .padding(8)

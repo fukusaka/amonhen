@@ -607,6 +607,13 @@ public struct MermaidThemeConfig: Codable, Hashable, Sendable {
 }
 
 extension MarkdownBlock {
+    /// 設定の見本の図の SVG（色は `colorizeDiagram` で当てる）。
+    public static let sampleDiagram: String? = {
+        guard let raw = amonhen_diagram_sample() else { return nil }
+        defer { amonhen_string_free(raw) }
+        return String(cString: raw)
+    }()
+
     /// 図の SVG（`diagram` の `svg`）に配色を当て、CoreSVG で描ける SVG にする。`scheme` は設定の「図の配色」の鍵、
     /// `theme` は構文の色のテーマ（`text`・`background` と種類の名前 → `#rrggbb`）、`own` は図の中で指定した
     /// テーマ（設定より先）、`imported` は `scheme` が読み込んだテーマのときの中身。
