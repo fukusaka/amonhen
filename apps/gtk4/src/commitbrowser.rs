@@ -974,7 +974,7 @@ impl Browser {
         // 帯が狭くても、ファイルの名前（と「@ 短い ID」）は読めるだけの幅を取る。足りなければフォルダの側から
         // 省く（macOS 版の truncating head と同じ）。
         self.path_label
-            .set_width_chars((name_of(path).chars().count() + 12).min(48) as i32);
+            .set_width_chars((name_of(path).chars().count() + 20).min(60) as i32);
         self.change_button.set_visible(change.is_some());
         self.path_bar.set_visible(true);
         self.pages.set_visible_child_name("file");
