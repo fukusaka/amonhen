@@ -1,7 +1,12 @@
-//! pele 1.13.0 が描いた flowchart（`crates/core/tests/data/pele`）と、バイト単位で同じに描けるか。
+//! pele 1.13.0 が描いた図（`crates/core/tests/data/pele`）と、バイト単位で同じに描けるか。描ける種類（登録した
+//! 種類）の図と、種類の分からない図だけを確かめる。まだ移していない種類の図は飛ばす。
+//!
+//! `PELE_ONLY=<名前の頭>`（例: `pie-`）で確かめる図を絞れる。
 
 use std::fs;
 use std::path::Path;
+
+use amonhen_pele::diagrams::registry::registered;
 
 fn data() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../core/tests/data/pele")
@@ -34,7 +39,7 @@ fn first_difference(want: &str, got: &str) -> String {
 }
 
 #[test]
-fn flowchart_docs_match_pele() {
+fn docs_match_pele() {
     let dir = data();
     let mut names: Vec<_> = fs::read_dir(&dir)
         .unwrap()
@@ -44,9 +49,19 @@ fn flowchart_docs_match_pele() {
         .collect();
     names.sort();
     assert!(!names.is_empty());
+    let only = std::env::var("PELE_ONLY").unwrap_or_default();
     let mut failed = Vec::new();
+    let mut checked = 0;
     for mmd in &names {
         let input = fs::read_to_string(mmd).unwrap();
+        let file = mmd.file_name().unwrap().to_string_lossy();
+        if !file.starts_with(&only) {
+            continue;
+        }
+        if amonhen_pele::detect_type(&input).is_some_and(|t| !registered(t)) {
+            continue;
+        }
+        checked += 1;
         let svg = mmd.with_extension("svg");
         let err = mmd.with_extension("err");
         let name = mmd.file_name().unwrap().to_string_lossy().to_string();
@@ -67,11 +82,12 @@ fn flowchart_docs_match_pele() {
             Err(e) => failed.push(format!("{name}: error {}", e.message)),
         }
     }
+    assert!(checked > 0, "no example of a registered type");
     assert!(
         failed.is_empty(),
         "{}/{} differ:\n{}",
         failed.len(),
-        names.len(),
+        checked,
         failed.join("\n")
     );
 }

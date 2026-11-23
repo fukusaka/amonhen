@@ -1,4 +1,4 @@
-//! 図の種類（pele の `src/diagrams/`）。今は flowchart だけ。
+//! 図の種類（pele の `src/diagrams/`）。種類の足し方は `registry` に書いた。`pub mod` はアルファベット順に保つ。
 
 pub mod common;
 pub mod flowchart;
