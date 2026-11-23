@@ -66,10 +66,8 @@ final class HistoryDisplayMenu: NSObject, NSMenuItemValidation {
              L("Show commit messages in a monospaced font (keeps bodies wrapped at 72 columns aligned)")),
             (L("Show Avatars"), #selector(toggleAvatars(_:)),
              L("Show Gravatar avatars in commit details (sends a hash of the email address to gravatar.com)")),
-            (L("All Files in One Diff"), #selector(toggleStacked(_:)),
-             L("Stack every file in a commit’s diff (when off, only the selected file)")),
             (L("Changed Files as Tree"), #selector(toggleTree(_:)),
-             L("Show a commit’s changed files as a tree to the left of the diff (when off, as a list between the message and the diff)")),
+             L("Show a commit’s changed files as a tree of folders (when off, as a list of paths)")),
         ] as [(String, Selector, String)] {
             let entry = NSMenuItem(title: title, action: action, keyEquivalent: "")
             entry.target = self
@@ -111,7 +109,6 @@ final class HistoryDisplayMenu: NSObject, NSMenuItemValidation {
     @objc private func toggleAncestors(_ sender: NSMenuItem) { Settings.highlightAncestors.toggle() }
     @objc private func toggleMonospaced(_ sender: NSMenuItem) { Settings.monospacedCommitMessage.toggle() }
     @objc private func toggleAvatars(_ sender: NSMenuItem) { Settings.showAvatars.toggle() }
-    @objc private func toggleStacked(_ sender: NSMenuItem) { Settings.stackedCommitDiff.toggle() }
     @objc private func toggleTree(_ sender: NSMenuItem) { Settings.historyFileTree.toggle() }
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
@@ -122,7 +119,6 @@ final class HistoryDisplayMenu: NSObject, NSMenuItemValidation {
         case #selector(toggleAncestors(_:)): Settings.highlightAncestors
         case #selector(toggleMonospaced(_:)): Settings.monospacedCommitMessage
         case #selector(toggleAvatars(_:)): Settings.showAvatars
-        case #selector(toggleStacked(_:)): Settings.stackedCommitDiff
         case #selector(toggleTree(_:)): Settings.historyFileTree
         default: false
         }

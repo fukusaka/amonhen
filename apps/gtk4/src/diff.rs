@@ -5,6 +5,12 @@
 //! ファイルの見出しをクリックすると、そのファイルを畳む・開く。本文は折り返さず、一番長い行まで横にスクロール
 //! する（行番号・印・ファイルの見出しは動かない。macOS 版と同じ）。
 //!
+//! History の右の列では、見出しが変更ファイルの一覧を兼ねる（種類の印・木の深さと名前・行数・いつも出す ⋯）。
+//! 見出しの前にフォルダの行、見出しの下に画像の欄（子の部品）を置き、畳んだフォルダの中の見出しは出さない。
+//! 行の位置は、その分だけずらす（`State::row_y`・`State::row_at`。macOS 版の `rowY`・`rowAt`）。hunk の見出しの
+//! 左の印を押すと、そのファイルの前後を広げる。「すべてのファイル」の中身は、その時点のファイルとして見せる
+//! （`set_file_mode`）。
+//!
 //! Working Copy では、変更の行をクリック（Shift で範囲、Ctrl で追加）して選び、行の左の印で
 //! 次のコミットに含めるか（index に入っているか）を見せる。印のクリックでその行を含める・外す。
 //!
@@ -15,7 +21,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use amonhen_core::diff::{DiffView, StackedDiff};
 use amonhen_layout::DiffRow;
@@ -33,6 +39,10 @@ const GUTTER_GAP: f32 = 12.0;
 const TEXT_INSET: f32 = 8.0;
 /// 行ごとの stage の印の列の幅。
 const MARK_WIDTH: f32 = 20.0;
+/// 見出しの下に置く欄（画像の比較）の高さ。
+pub const PANEL_HEIGHT: f32 = 300.0;
+/// 見出しの右端の ⋯ を押せる幅。
+const MORE_WIDTH: f32 = 30.0;
 
 /// 文字の位置（表示の行と、その行の文字のバイト位置）。
 type TextPos = (u32, u32);
@@ -109,6 +119,22 @@ impl View {
         std::str::from_utf8(self.view.strings.bytes(row.text)).unwrap_or("")
     }
 
+    /// ファイルごとの行数・バイナリか・まだ差分を取っていないか（見出しの行から。ファイルの順）。
+    pub fn file_infos(&self) -> Vec<FileInfo> {
+        self.file_rows
+            .iter()
+            .map(|&r| {
+                let row = &self.view.rows[r as usize];
+                FileInfo {
+                    added: row.new_no,
+                    removed: row.old_no,
+                    binary: row.flags & DiffRow::BINARY != 0,
+                    pending: row.flags & DiffRow::PENDING != 0,
+                }
+            })
+            .collect()
+    }
+
     /// コアの表示（確認用）。
     #[cfg(test)]
     pub fn diff_view(&self) -> &DiffView {
@@ -116,34 +142,102 @@ impl View {
     }
 }
 
-/// 差分の元（ファイルを畳んだとき、ここから作り直す）。2 つめがあれば、選んだファイルの差分だけを読む元で、
-/// 1 つめの各ファイルの差分は空（名前だけが正しい）。
-pub struct Source(pub StackedDiff, pub Option<Lazy>);
+/// 全ファイルを並べた差分の、1 ファイルの様子。
+#[derive(Clone, Copy, Debug, Default)]
+pub struct FileInfo {
+    pub added: u32,
+    pub removed: u32,
+    pub binary: bool,
+    /// まだ差分を取っていない（ファイルの多いコミット。行数は 0）。
+    pub pending: bool,
+}
+
+/// 差分の元（コミットの全ファイルの差分）。ファイルを畳む・開く・前後を広げるたびに、ここから表示を作り直す。
+/// ファイルの多いコミットでは、まだ差分を取っていないファイル（`FileDiff::pending`）があり、開いたときに `repo`
+/// で取る。
+pub struct Source {
+    stacked: Mutex<StackedDiff>,
+    pub repo: Option<Arc<amonhen_core::Repository>>,
+}
 
 // SAFETY: `StackedDiff` の中身は共有の不変なバッファ（`Blob`）と、自分で持つ文字列と行の範囲だけ。
 unsafe impl Send for Source {}
 unsafe impl Sync for Source {}
 
-/// 選んだファイルの差分だけを読む元（全ファイルを並べないコミット。macOS 版と同じ）。
-pub struct Lazy {
-    pub repo: Arc<amonhen_core::Repository>,
-    pub changes: Vec<amonhen_model::FileChange>,
-}
-
 impl Source {
-    /// 全ファイルの差分で `f` を呼ぶ（選んだファイルだけを読む元なら、ここで全部読む）。裏のスレッドで呼ぶ。
-    pub fn with_all<R>(&self, f: impl FnOnce(&StackedDiff) -> R) -> R {
-        match &self.1 {
-            Some(lazy) => {
-                let all = lazy
-                    .repo
-                    .stacked_diff(&lazy.changes)
-                    .unwrap_or(StackedDiff { files: Vec::new() });
-                f(&all)
-            }
-            None => f(&self.0),
+    pub fn new(stacked: StackedDiff, repo: Option<Arc<amonhen_core::Repository>>) -> Self {
+        Self {
+            stacked: Mutex::new(stacked),
+            repo,
         }
     }
+
+    /// 差分（前後を広げる・まだ取っていない差分を取るときは、裏のスレッドで書き換える）。
+    pub fn lock(&self) -> MutexGuard<'_, StackedDiff> {
+        self.stacked.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// ファイルの見出しの名前（パス。とびとびに選んだコミットでは「パス — 短い ID」）。
+    pub fn names(&self) -> Vec<String> {
+        self.lock().files.iter().map(|(p, _)| p.clone()).collect()
+    }
+
+    /// 全ファイルの差分で `f` を呼ぶ（まだ取っていないファイルは、写しの中で取る）。裏のスレッドで呼ぶ。
+    pub fn with_all<R>(&self, f: impl FnOnce(&StackedDiff) -> R) -> R {
+        let stacked = self.lock();
+        if stacked.files.iter().all(|(_, d)| d.pending.is_none()) {
+            return f(&stacked);
+        }
+        let mut copy = StackedDiff {
+            files: stacked
+                .files
+                .iter()
+                .map(|(p, d)| (p.clone(), d.clone()))
+                .collect(),
+        };
+        drop(stacked);
+        if let Some(repo) = &self.repo {
+            for i in 0..copy.files.len() {
+                if copy.files[i].1.pending.is_some() {
+                    let _ = repo.set_stacked_context(&mut copy, i, 3);
+                }
+            }
+        }
+        f(&copy)
+    }
+}
+
+/// 木で見せるときに、ファイルの見出しの前に出すフォルダの行。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Folder {
+    pub name: String,
+    pub depth: usize,
+    /// 根からのパス（押したときに渡す）。
+    pub path: String,
+    pub collapsed: bool,
+}
+
+/// ファイルの見出しの飾り（History の右の列。macOS 版の `fileMarks`・`fileNotes`・`fileCounts`・`openOverride`・
+/// `fileDepths`・`fileTitles`・`folderGroups`・`hiddenFiles`・`filePanels`）。ファイルの番号ごと。
+#[derive(Clone, Default)]
+pub struct Decor {
+    /// 種類の印（A・D・M・R・C）。
+    pub marks: HashMap<usize, &'static str>,
+    /// 行数の代わりに出す文字（「Image」）。
+    pub notes: HashMap<usize, String>,
+    /// まだ差分を取っていないファイルの行数（見出しの行は 0 なので、詳細の行数で出す）。
+    pub counts: HashMap<usize, (u32, u32)>,
+    /// 開いた形（▾）で描くファイル（中身は差分の行ではなく、下に置いた欄）。
+    pub open: HashSet<usize>,
+    /// 木の深さと、見出しに出す名前（なければパス）。
+    pub depths: HashMap<usize, usize>,
+    pub titles: HashMap<usize, String>,
+    /// 見出しの前に出すフォルダの行。
+    pub folders: HashMap<usize, Vec<Folder>>,
+    /// 畳んだフォルダの中のファイル（見出しの行も出さない）。
+    pub hidden: HashSet<usize>,
+    /// 見出しの下に置く欄（高さは `PANEL_HEIGHT`）。
+    pub panels: HashMap<usize, gtk::Widget>,
 }
 
 /// 差分の行の種類を、AI に渡す文字の行の種類にする。
@@ -221,13 +315,27 @@ pub struct State {
     hunk_cursor: Option<usize>,
     /// 表示し直した後に選ぶ hunk の番号（含める・外すの後に次の hunk へ進むため）。
     hunk_after: Option<usize>,
-    /// Viewed にしたファイル（番号）。
-    viewed: HashSet<usize>,
-    /// 見出しの Viewed を押したときに呼ぶ（ファイルの番号）。None なら Viewed を出さない。
-    on_toggle_viewed: Option<Rc<dyn Fn(usize)>>,
-    /// 一番上に見えているファイルが変わったときに呼ぶ（ファイルの番号）。
-    on_top_file: Option<Rc<dyn Fn(usize)>>,
-    top_file: Option<usize>,
+    /// 見出しの飾り（History の右の列）。
+    decor: Decor,
+    /// 見出しを押したときに呼ぶ（ファイルの番号）。None なら、その場で畳む・開く。
+    on_toggle_file: Option<Rc<dyn Fn(usize)>>,
+    /// フォルダの行を押したときに呼ぶ（フォルダのパス）。
+    on_toggle_folder: Option<Rc<dyn Fn(String)>>,
+    /// hunk の見出しの左の、前後を広げる印を押したときに呼ぶ（ファイルの番号）。あれば印を出す。
+    on_expand_hunk: Option<Rc<dyn Fn(usize)>>,
+    /// マウスが乗っているファイルの見出し。
+    hovered_file: Option<usize>,
+    /// 行の位置のずれ（行、高さ。行の順）。その行の後ろに高さの分だけ空ける（負なら詰める）。
+    extra: Vec<(i64, f32)>,
+    /// 描かない行（畳んだフォルダの中の見出し、その時点のファイルの hunk の見出しと消した行）。
+    hidden_rows: HashSet<u32>,
+    /// その時点のファイルとして見せる（History の「すべてのファイル」）。hunk の見出しと消した行は出さず、消した
+    /// ところに「ここで N 行を削除」の行を置く。足した行は緑、変えた行（消した行に続けて足した行）は青。行番号は
+    /// 後の側だけ。ファイルごと消したなら、消した行をそのまま出す。
+    file_mode: bool,
+    /// 消したところの印（その前の最後の行と、消した行の数・中身）。
+    deletion_marks: Vec<(u32, u32, String)>,
+    modified_rows: HashSet<u32>,
     /// 差分の中を探している語と、一致（行、バイト位置の始めと終わり）、今の一致。
     find: String,
     matches: Vec<(u32, u32, u32)>,
@@ -241,6 +349,149 @@ type FileMenuCallback = Rc<dyn Fn(Option<usize>, &str, f64, f64)>;
 
 /// 見出しのない差分の行を右クリックしたときに呼ぶ（行、x、y）。
 type RowMenuCallback = Rc<dyn Fn(usize, f64, f64)>;
+
+impl State {
+    /// 行の上端（文書の座標）。見出しの下の欄・フォルダの行・消したところの印の分だけ下がり、描かない行の分だけ
+    /// 上がる（macOS 版の `rowY`）。
+    fn row_y(&self, row: u32) -> f32 {
+        let mut y = row as f32 * self.row_height;
+        for &(r, h) in &self.extra {
+            if r >= row as i64 {
+                break;
+            }
+            y += h;
+        }
+        y
+    }
+
+    /// 文書の座標 `y` にある行（欄の中なら、その見出しの行。macOS 版の `rowAt`）。
+    fn row_at(&self, y: f32) -> i64 {
+        let rh = self.row_height;
+        let mut offset = 0.0;
+        for &(r, h) in &self.extra {
+            let start = (r + 1) as f32 * rh + offset;
+            if h < 0.0 {
+                if y < start + h {
+                    break;
+                }
+            } else {
+                if y < start {
+                    break;
+                }
+                if y < start + h {
+                    return r;
+                }
+            }
+            offset += h;
+        }
+        ((y - offset) / rh).floor() as i64
+    }
+
+    fn row_count(&self) -> u32 {
+        self.view.as_ref().map_or(0, |v| v.view.rows.len() as u32)
+    }
+
+    /// 文書の高さ。
+    fn content_height(&self) -> f32 {
+        self.row_y(self.row_count())
+    }
+
+    /// ファイルの番号 → 見出しの行。
+    fn file_row(&self, file: usize) -> Option<u32> {
+        self.view.as_ref()?.file_rows.get(file).copied()
+    }
+
+    /// 見出しの下の欄・フォルダの行・畳んだフォルダ・その時点のファイルから、行の位置のずれを作り直す
+    /// （macOS 版の `rebuildExtra`・`computeFileMode`）。
+    fn rebuild_extra(&mut self) {
+        let rh = self.row_height;
+        self.deletion_marks.clear();
+        self.modified_rows.clear();
+        self.hidden_rows.clear();
+        let Some(view) = self.view.clone() else {
+            self.extra.clear();
+            return;
+        };
+        let rows = &view.view.rows;
+        if self.file_mode {
+            let deleted_file = !rows
+                .iter()
+                .any(|r| matches!(r.kind, DiffRow::ADDED | DiffRow::CONTEXT));
+            let mut row = 0;
+            while row < rows.len() {
+                let kind = rows[row].kind;
+                if kind == DiffRow::HUNK {
+                    self.hidden_rows.insert(row as u32);
+                    row += 1;
+                } else if kind == DiffRow::REMOVED && !deleted_file {
+                    let start = row;
+                    while row < rows.len() && rows[row].kind == DiffRow::REMOVED {
+                        row += 1;
+                    }
+                    self.hidden_rows.extend(start as u32..row as u32);
+                    if row < rows.len() && rows[row].kind == DiffRow::ADDED {
+                        while row < rows.len() && rows[row].kind == DiffRow::ADDED {
+                            self.modified_rows.insert(row as u32);
+                            row += 1;
+                        }
+                    } else {
+                        let text = rows[start..row]
+                            .iter()
+                            .map(|r| view.text(r))
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        self.deletion_marks
+                            .push(((row - 1) as u32, (row - start) as u32, text));
+                    }
+                } else {
+                    row += 1;
+                }
+            }
+        } else {
+            for &file in &self.decor.hidden {
+                if let Some(&r) = view.file_rows.get(file) {
+                    self.hidden_rows.insert(r);
+                }
+            }
+        }
+        // （行、同じ行の中の順、高さ）。
+        let mut entries: Vec<(i64, u8, f32)> = Vec::new();
+        for &file in self.decor.panels.keys() {
+            if let Some(&r) = view.file_rows.get(file)
+                && !self.decor.hidden.contains(&file)
+            {
+                entries.push((r as i64, 0, PANEL_HEIGHT));
+            }
+        }
+        for (&file, folders) in &self.decor.folders {
+            if let Some(&r) = view.file_rows.get(file) {
+                entries.push((r as i64 - 1, 1, folders.len() as f32 * rh));
+            }
+        }
+        // 描かない行（続いた行ごと）は、その後ろの行を上に詰める。
+        let mut hidden: Vec<u32> = self.hidden_rows.iter().copied().collect();
+        hidden.sort_unstable();
+        let mut run: Vec<u32> = Vec::new();
+        let flush = |run: &mut Vec<u32>, entries: &mut Vec<(i64, u8, f32)>| {
+            if let Some(&last) = run.last() {
+                entries.push((last as i64, 2, -(run.len() as f32) * rh));
+            }
+            run.clear();
+        };
+        for row in hidden {
+            if run.last().is_some_and(|&last| row != last + 1) {
+                flush(&mut run, &mut entries);
+            }
+            run.push(row);
+        }
+        flush(&mut run, &mut entries);
+        for &(after, _, _) in &self.deletion_marks {
+            entries.push((after as i64, 3, rh));
+        }
+        entries.sort_by_key(|e| (e.0, e.1));
+        self.extra = entries.into_iter().map(|(r, _, h)| (r, h)).collect();
+    }
+}
 
 mod imp {
     use super::*;
@@ -355,6 +606,31 @@ mod imp {
                 }
             });
             view.add_controller(menu);
+            // マウスが乗っているファイルの見出しを薄く塗る（macOS 版と同じ）。
+            let motion = gtk::EventControllerMotion::new();
+            let weak = view.downgrade();
+            motion.connect_motion(move |_, _, y| {
+                if let Some(view) = weak.upgrade() {
+                    view.hover(Some(y as f32));
+                }
+            });
+            let weak = view.downgrade();
+            motion.connect_leave(move |_| {
+                if let Some(view) = weak.upgrade() {
+                    view.hover(None);
+                }
+            });
+            view.add_controller(motion);
+            // その時点のファイルの、消したところの印のツールチップ（消した行の中身）。
+            view.connect_query_tooltip(|view, _, y, _, tooltip| {
+                match view.deleted_text(y as f32) {
+                    Some(text) => {
+                        tooltip.set_text(Some(&text));
+                        true
+                    }
+                    None => false,
+                }
+            });
             // Space（選んだ行を含める・外す）、J・K（次・前の hunk）、⌥J・⌥K（次・前のファイル）、Ctrl+C・
             // Ctrl+A・Esc（コピー・すべて選ぶ・選ぶのをやめる）。
             let keys = gtk::EventControllerKey::new();
@@ -367,12 +643,27 @@ mod imp {
             });
             view.add_controller(keys);
         }
+
+        fn dispose(&self) {
+            let panels: Vec<gtk::Widget> = self
+                .state
+                .borrow_mut()
+                .decor
+                .panels
+                .drain()
+                .map(|(_, w)| w)
+                .collect();
+            for panel in panels {
+                panel.unparent();
+            }
+        }
     }
 
     impl WidgetImpl for DiffWidget {
         fn size_allocate(&self, width: i32, height: i32, baseline: i32) {
             self.parent_size_allocate(width, height, baseline);
             self.obj().configure_adjustments();
+            self.obj().place_panels();
             // 右クリックのメニューは子なので、自分で置く（置かないと、最初に測った高さのまま項目が切れる）。
             let mut child = self.obj().first_child();
             while let Some(c) = child {
@@ -409,6 +700,10 @@ mod imp {
                 let weak = self.obj().downgrade();
                 adj.connect_value_changed(move |_| {
                     if let Some(view) = weak.upgrade() {
+                        // 見出しの下の欄も一緒に動かす。
+                        if !view.state().decor.panels.is_empty() {
+                            view.queue_allocate();
+                        }
                         view.queue_draw();
                     }
                 });
@@ -438,6 +733,7 @@ impl DiffWidget {
 
     /// 前の差分を消す（次を読んでいる間）。
     pub fn clear(&self) {
+        self.replace_decor(Decor::default());
         {
             let mut st = self.state();
             st.generation += 1;
@@ -449,6 +745,8 @@ impl DiffWidget {
             st.anchor = None;
             st.text_selection = None;
             st.hunk_cursor = None;
+            st.hovered_file = None;
+            st.rebuild_extra();
         }
         self.configure_adjustments();
         self.queue_draw();
@@ -461,27 +759,23 @@ impl DiffWidget {
         self.queue_draw();
     }
 
-    /// 新しい差分を出す（先頭から）。
-    pub fn show(&self, source: Arc<Source>, view: View) {
-        let collapsed = vec![false; source.0.files.len()];
-        self.show_files(source, view, collapsed, HashSet::new());
-    }
-
-    /// 新しい差分を、`collapsed` のファイルを畳み（`view` はそれで作ったもの）、`viewed` を Viewed にして出す。
-    pub fn show_files(
+    /// 全ファイルを並べた差分を、`collapsed` のファイルを畳み（`view` はそれで作ったもの）、見出しを `decor` で
+    /// 飾って出す。`keep_scroll` ならスクロールの位置を保つ（開く・畳む・前後を広げたとき）。
+    pub fn show_stacked(
         &self,
         source: Arc<Source>,
         view: View,
         collapsed: Vec<bool>,
-        viewed: HashSet<usize>,
+        decor: Decor,
+        keep_scroll: bool,
     ) {
+        self.replace_decor(decor);
         {
             let mut st = self.state();
+            self.ensure_font(&mut st);
             st.generation += 1;
             st.message = None;
             st.collapsed = collapsed;
-            st.viewed = viewed;
-            st.top_file = None;
             st.source = Some(source);
             st.view = Some(Arc::new(view));
             st.rows.clear();
@@ -491,20 +785,224 @@ impl DiffWidget {
             st.anchor = None;
             st.text_selection = None;
             st.hunk_cursor = None;
+            st.rebuild_extra();
         }
-        self.scroll_to_start();
+        if !keep_scroll {
+            self.scroll_to_start();
+        }
         self.configure_adjustments();
+        self.queue_allocate();
         self.refresh_matches();
         self.queue_draw();
         self.selection_changed();
+    }
+
+    /// 見出しの飾りを替える（前の欄の部品は外し、新しい欄の部品を子にする）。
+    fn replace_decor(&self, decor: Decor) {
+        let old = std::mem::replace(&mut self.state().decor, decor);
+        let new: Vec<gtk::Widget> = self.state().decor.panels.values().cloned().collect();
+        for widget in old.panels.values() {
+            if !new.contains(widget) && widget.parent().as_ref() == Some(self.upcast_ref()) {
+                widget.unparent();
+            }
+        }
+        for widget in new {
+            if widget.parent().as_ref() != Some(self.upcast_ref()) {
+                if widget.parent().is_some() {
+                    widget.unparent();
+                }
+                widget.set_parent(self);
+            }
+        }
+    }
+
+    /// まだ差分を取っていないファイルの行数を替える（詳細の行数が届いたとき）。
+    pub fn set_counts(&self, counts: HashMap<usize, (u32, u32)>) {
+        self.state().decor.counts = counts;
+        self.queue_draw();
+    }
+
+    /// 見出しを押したら `f(ファイルの番号)` を呼ぶ（その場で畳む・開く代わりに）。
+    pub fn connect_toggle_file(&self, f: impl Fn(usize) + 'static) {
+        self.state().on_toggle_file = Some(Rc::new(f));
+    }
+
+    /// フォルダの行を押したら `f(フォルダのパス)` を呼ぶ。
+    pub fn connect_toggle_folder(&self, f: impl Fn(String) + 'static) {
+        self.state().on_toggle_folder = Some(Rc::new(f));
+    }
+
+    /// hunk の見出しの左に前後を広げる印を出し、押したら `f(ファイルの番号)` を呼ぶ。
+    pub fn connect_expand_hunk(&self, f: impl Fn(usize) + 'static) {
+        self.state().on_expand_hunk = Some(Rc::new(f));
+        self.queue_draw();
+    }
+
+    /// その時点のファイルとして見せる（「すべてのファイル」の中身）。
+    pub fn set_file_mode(&self, on: bool) {
+        self.state().file_mode = on;
+        self.set_has_tooltip(on);
+    }
+
+    /// 見出しの下の欄を、スクロールに合わせて置く（`size_allocate` から）。
+    fn place_panels(&self) {
+        let scroll = self.vadjustment().map_or(0.0, |a| a.value()) as f32;
+        let width = self.width();
+        let placed: Vec<(gtk::Widget, Option<f32>)> = {
+            let mut st = self.state();
+            self.ensure_font(&mut st);
+            let rh = st.row_height;
+            st.decor
+                .panels
+                .iter()
+                .map(|(&file, widget)| {
+                    let y = st
+                        .file_row(file)
+                        .filter(|_| !st.decor.hidden.contains(&file))
+                        .map(|row| st.row_y(row) + rh - scroll);
+                    (widget.clone(), y)
+                })
+                .collect()
+        };
+        for (widget, y) in placed {
+            let shown = y.is_some_and(|y| y + PANEL_HEIGHT > 0.0 && y < self.height() as f32);
+            widget.set_child_visible(shown);
+            if let (true, Some(y)) = (shown, y) {
+                widget.measure(gtk::Orientation::Horizontal, -1);
+                widget.allocate(
+                    width,
+                    PANEL_HEIGHT as i32,
+                    -1,
+                    Some(gsk::Transform::new().translate(&graphene::Point::new(0.0, y))),
+                );
+            }
+        }
+    }
+
+    /// `y`（部品の中の位置）が消したところの印なら、消した行の中身。
+    fn deleted_text(&self, y: f32) -> Option<String> {
+        let scroll = self.vadjustment().map_or(0.0, |a| a.value()) as f32;
+        let st = self.state();
+        if !st.file_mode {
+            return None;
+        }
+        let rh = st.row_height;
+        st.deletion_marks.iter().find_map(|(after, _, text)| {
+            let top = st.row_y(after + 1) - rh - scroll;
+            (y >= top && y < top + rh).then(|| text.clone())
+        })
+    }
+
+    /// マウスが `y` に乗った（None なら外れた）: 見出しの上なら、そのファイルを薄く塗る。
+    fn hover(&self, y: Option<f32>) {
+        if self
+            .state()
+            .view
+            .as_ref()
+            .is_none_or(|v| v.file_rows.is_empty())
+        {
+            return;
+        }
+        let file = y.and_then(|y| self.header_at(y));
+        let changed = {
+            let mut st = self.state();
+            let changed = st.hovered_file != file;
+            st.hovered_file = file;
+            changed
+        };
+        if changed {
+            self.queue_draw();
+        }
+    }
+
+    /// `y`（部品の中の位置）のフォルダの行のパス。
+    fn folder_at(&self, y: f32) -> Option<String> {
+        let scroll = self.vadjustment().map_or(0.0, |a| a.value()) as f32;
+        let st = self.state();
+        let rh = st.row_height;
+        st.decor.folders.iter().find_map(|(&file, folders)| {
+            let bottom = st.row_y(st.file_row(file)?);
+            let top = bottom - folders.len() as f32 * rh;
+            let i = ((y + scroll - top) / rh).floor();
+            (i >= 0.0 && (i as usize) < folders.len()).then(|| folders[i as usize].path.clone())
+        })
+    }
+
+    /// `y`（部品の中の位置）が見出しの下の欄の中か。
+    fn in_panel(&self, y: f32) -> bool {
+        let scroll = self.vadjustment().map_or(0.0, |a| a.value()) as f32;
+        let st = self.state();
+        let rh = st.row_height;
+        st.decor.panels.keys().any(|&file| {
+            st.file_row(file)
+                .filter(|_| !st.decor.hidden.contains(&file))
+                .is_some_and(|row| {
+                    let top = st.row_y(row) + rh - scroll;
+                    y >= top && y < top + PANEL_HEIGHT
+                })
+        })
+    }
+
+    /// ファイル `index` の見出しが見えている範囲より上にあれば、見出しが一番上に来るまで戻す。
+    pub fn reveal_file_header(&self, index: usize) {
+        let top = {
+            let st = self.state();
+            st.file_row(index).map(|row| st.row_y(row))
+        };
+        if let (Some(top), Some(adj)) = (top, self.vadjustment())
+            && (top as f64) < adj.value()
+        {
+            self.scroll_to_file(index);
+        }
+    }
+
+    /// `line` 行目（後の側の行番号。ファイルごと消したなら前の側）を、見えている範囲の上の方に出して選ぶ。
+    pub fn scroll_to_line(&self, line: u32) {
+        let target = {
+            let mut st = self.state();
+            self.ensure_font(&mut st);
+            let Some(view) = st.view.clone() else { return };
+            let rows = &view.view.rows;
+            let row = rows
+                .iter()
+                .position(|r| r.new_no == line && r.kind != DiffRow::HUNK)
+                .or_else(|| {
+                    rows.iter()
+                        .position(|r| r.old_no == line && r.kind == DiffRow::REMOVED)
+                });
+            let Some(row) = row else { return };
+            st.selection = std::iter::once(row as u32).collect();
+            st.row_y(row as u32)
+        };
+        if let Some(adj) = self.vadjustment() {
+            let page = adj.page_size();
+            let y = (target as f64 - page / 3.0).clamp(0.0, (adj.upper() - page).max(0.0));
+            adj.set_value(y);
+        }
+        self.queue_draw();
+    }
+
+    /// `y`（部品の中の位置）の差分の行の、ファイルの番号と後の側の行番号（0 ならない）。
+    pub fn line_at(&self, y: f64) -> Option<(usize, u32)> {
+        let row = self.row_at(y)?;
+        let st = self.state();
+        let view = st.view.as_ref()?;
+        let r = view.view.rows.get(row)?;
+        if r.kind == DiffRow::FILE {
+            return None;
+        }
+        let file = view.file_rows.iter().rposition(|&f| f as usize <= row)?;
+        Some((file, r.new_no))
     }
 
     /// Working Copy の 1 ファイルの差分を、行ごとの stage の印つきで出す。`keep` なら同じファイルを
     /// 読み直したとして、スクロールの位置を保つ。選んだ行はいつも外す（macOS 版と同じ。読み直すと行の番号が
     /// 別の行を指すことがあり、そのまま Stage Lines・Discard Lines を押すと違う行に効いてしまう）。
     pub fn show_working(&self, view: View, keep: bool, checks: bool) {
+        self.replace_decor(Decor::default());
         {
             let mut st = self.state();
+            self.ensure_font(&mut st);
             st.generation += 1;
             st.message = None;
             st.source = None;
@@ -519,6 +1017,7 @@ impl DiffWidget {
                 st.hunk_after = None;
             }
             st.hunk_cursor = None;
+            st.rebuild_extra();
         }
         if !keep {
             self.scroll_to_start();
@@ -534,10 +1033,12 @@ impl DiffWidget {
         self.selection_changed();
     }
 
-    /// 印も選択もない表示（コンフリクトのマーカー付きの中身など）。
+    /// 印も選択もない表示（コンフリクトのマーカー付きの中身、その時点のファイルなど）。
     pub fn show_plain(&self, view: View) {
+        self.replace_decor(Decor::default());
         {
             let mut st = self.state();
+            self.ensure_font(&mut st);
             st.generation += 1;
             st.message = None;
             st.source = None;
@@ -549,6 +1050,7 @@ impl DiffWidget {
             st.anchor = None;
             st.text_selection = None;
             st.hunk_cursor = None;
+            st.rebuild_extra();
         }
         self.scroll_to_start();
         self.configure_adjustments();
@@ -611,8 +1113,11 @@ impl DiffWidget {
     /// `y`（部品の中の位置）の行の番号。
     pub fn row_at(&self, y: f64) -> Option<usize> {
         let scroll = self.vadjustment().map_or(0.0, |a| a.value()) as f32;
-        let index = ((y as f32 + scroll) / self.row_height()).floor();
-        (index >= 0.0 && (index as u32) < self.row_count()).then_some(index as usize)
+        let mut st = self.state();
+        self.ensure_font(&mut st);
+        let index = st.row_at(y as f32 + scroll);
+        (index >= 0 && (index as u32) < st.row_count() && !st.hidden_rows.contains(&(index as u32)))
+            .then_some(index as usize)
     }
 
     /// 出している差分の元（コミットの差分。Working Copy の差分では None）。
@@ -669,8 +1174,6 @@ impl DiffWidget {
     }
 
     fn file_menu(&self, x: f64, y: f64) {
-        let scroll = self.vadjustment().map_or(0.0, |a| a.value()) as f32;
-        let rh = self.row_height();
         let (view, f, rows_f) = {
             let st = self.state();
             (
@@ -679,52 +1182,32 @@ impl DiffWidget {
                 st.on_row_menu.clone(),
             )
         };
-        let index = ((y as f32 + scroll) / rh).floor();
-        if let (Some(view), Some(rows_f)) = (&view, rows_f)
-            && index >= 0.0
-            && (index as usize) < view.view.rows.len()
+        let index = self.row_at(y);
+        if let (Some(view), Some(rows_f), Some(index)) = (&view, rows_f, index)
             && view.file_rows.is_empty()
         {
-            rows_f(index as usize, x, y);
+            rows_f(index, x, y);
             return;
         }
         // 右クリックのメニューを持ち主が作らない差分では、何も出さない（コピーは Ctrl+C。macOS 版と同じ）。
         let (Some(view), Some(f)) = (view, f) else {
             return;
         };
-        if index < 0.0 {
+        // 見出し（上に張り付いたものを含む）の上ならそのファイル、下の行ならその行のファイル（フォルダの行・
+        // 欄の上では出さない）。
+        let header = self.header_at(y as f32);
+        if header.is_none() && (self.folder_at(y as f32).is_some() || self.in_panel(y as f32)) {
             return;
         }
-        // 見出し（上に張り付いたものを含む）の上ならそのファイル、下の行ならその行のファイル。
-        let header = self.header_at(y as f32);
         let file = header.or_else(|| {
-            view.file_rows
-                .iter()
-                .rposition(|&r| r as f32 <= index)
-                .filter(|_| (index as usize) < view.view.rows.len())
+            let index = index?;
+            view.file_rows.iter().rposition(|&r| r as usize <= index)
         });
         let Some(file) = file else { return };
         // とびとびに選んだときの見出しは「パス — 短い ID」。
         let text = view.text(&view.view.rows[view.file_rows[file] as usize]);
         let path = text.split(" — ").next().unwrap_or(text);
         f(header, path, x, y);
-    }
-
-    /// 見出しの Viewed を押したら `f(ファイルの番号)` を呼ぶ（呼ぶ先があるときだけ Viewed を出す）。
-    pub fn connect_toggle_viewed(&self, f: impl Fn(usize) + 'static) {
-        self.state().on_toggle_viewed = Some(Rc::new(f));
-        self.queue_draw();
-    }
-
-    /// 一番上に見えているファイルが変わったら `f(ファイルの番号)` を呼ぶ。
-    pub fn connect_top_file(&self, f: impl Fn(usize) + 'static) {
-        self.state().on_top_file = Some(Rc::new(f));
-    }
-
-    /// Viewed にしたファイルを替える。
-    pub fn set_viewed(&self, viewed: HashSet<usize>) {
-        self.state().viewed = viewed;
-        self.queue_draw();
     }
 
     /// ファイル `file` を畳んでいるか。
@@ -734,40 +1217,45 @@ impl DiffWidget {
 
     /// 上に張り付かせる見出し（ファイルの番号と、見えている範囲の上端からの位置）。見出しの行が見えている範囲より
     /// 上にあるファイルのものを出し、次のファイルの見出しが近づいたら押し上げる（macOS 版と同じ）。
-    fn sticky(view: &View, scroll: f32, rh: f32) -> Option<(usize, f32)> {
-        let first = (scroll / rh).floor().max(0.0) as u32;
-        let file = view.file_rows.iter().rposition(|&r| r <= first)?;
-        if view.file_rows[file] as f32 * rh >= scroll {
+    fn sticky(st: &State, view: &View, scroll: f32) -> Option<(usize, f32)> {
+        let rh = st.row_height;
+        let first = st.row_at(scroll).max(0) as u32;
+        let file = view
+            .file_rows
+            .iter()
+            .rposition(|&r| r <= first && !st.hidden_rows.contains(&r))?;
+        if st.row_y(view.file_rows[file]) >= scroll {
             return None;
         }
         let top = view
             .file_rows
             .get(file + 1)
-            .map_or(0.0, |&next| (next as f32 * rh - scroll - rh).min(0.0));
+            .map_or(0.0, |&next| (st.row_y(next) - scroll - rh).min(0.0));
         Some((file, top))
     }
 
     /// `y`（部品の中の位置）が、ファイルの見出し（上に張り付いたものを含む）なら、そのファイルの番号。
     fn header_at(&self, y: f32) -> Option<usize> {
         let scroll = self.vadjustment().map_or(0.0, |a| a.value()) as f32;
-        let rh = self.row_height();
-        let view = self.state().view.clone()?;
-        if let Some((file, top)) = Self::sticky(&view, scroll, rh)
+        let mut st = self.state();
+        self.ensure_font(&mut st);
+        let view = st.view.clone()?;
+        let rh = st.row_height;
+        if let Some((file, top)) = Self::sticky(&st, &view, scroll)
             && y >= top
             && y < top + rh
         {
             return Some(file);
         }
-        let row = ((y + scroll) / rh).floor();
-        if row < 0.0 {
+        let row = st.row_at(y + scroll);
+        if row < 0 || st.hidden_rows.contains(&(row as u32)) {
             return None;
         }
-        view.file_rows.iter().position(|&r| r == row as u32)
-    }
-
-    /// 見出しの Viewed のチェックボックスの左端。
-    fn viewed_x(&self) -> f32 {
-        self.width() as f32 - 76.0
+        // 見出しの下の欄の中は、見出しではない。
+        if y + scroll >= st.row_y(row as u32) + rh {
+            return None;
+        }
+        view.file_rows.iter().position(|&r| r as i64 == row)
     }
 
     /// Space で、選んだ変更の行を含める・外すときに `f(行)` を呼ぶ（Working Copy）。
@@ -868,7 +1356,9 @@ impl DiffWidget {
     /// 見えている一番上の行。
     fn top_row(&self) -> u32 {
         let scroll = self.vadjustment().map_or(0.0, |a| a.value()) as f32;
-        (scroll / self.row_height()).floor().max(0.0) as u32
+        let mut st = self.state();
+        self.ensure_font(&mut st);
+        st.row_at(scroll).max(0) as u32
     }
 
     /// J・K: 次・前の hunk を選んで（選べる差分なら）、上から 3 分の 1 あたりに出す。
@@ -934,8 +1424,11 @@ impl DiffWidget {
         let Some(adj) = self.vadjustment() else {
             return;
         };
-        let rh = self.row_height() as f64;
-        let (top, bottom) = (start as f64 * rh, end as f64 * rh);
+        let (top, bottom) = {
+            let mut st = self.state();
+            self.ensure_font(&mut st);
+            (st.row_y(start) as f64, st.row_y(end) as f64)
+        };
         let (value, page) = (adj.value(), adj.page_size());
         if top < value || bottom > value + page {
             let y = (top - page / 3.0).clamp(0.0, (adj.upper() - page).max(0.0));
@@ -954,22 +1447,30 @@ impl DiffWidget {
             }
             return;
         }
+        // 畳んだフォルダの中の見出しは飛ばす。
+        let hidden = self.state().hidden_rows.clone();
+        let shown: Vec<usize> = (0..files.len())
+            .filter(|&i| !hidden.contains(&files[i]))
+            .collect();
         let top = self.top_row();
-        let current = files.iter().rposition(|&r| r <= top).unwrap_or(0) as i64;
+        let current = shown.iter().rposition(|&i| files[i] <= top).unwrap_or(0) as i64;
         let target = current + step as i64;
-        if target < 0 || target as usize >= files.len() {
+        if target < 0 || target as usize >= shown.len() {
             return self.error_bell();
         }
-        self.scroll_to_file(target as usize);
+        self.scroll_to_file(shown[target as usize]);
     }
 
     /// `index` 番目のファイルの見出しが一番上に来るようにスクロールする。
     pub fn scroll_to_file(&self, index: usize) {
-        let files = self.file_rows();
-        let (Some(&row), Some(adj)) = (files.get(index), self.vadjustment()) else {
+        let y = {
+            let mut st = self.state();
+            self.ensure_font(&mut st);
+            st.file_row(index).map(|row| st.row_y(row) as f64)
+        };
+        let (Some(y), Some(adj)) = (y, self.vadjustment()) else {
             return;
         };
-        let y = row as f64 * self.row_height() as f64;
         adj.set_value(y.min((adj.upper() - adj.page_size()).max(0.0)));
     }
 
@@ -1000,10 +1501,7 @@ impl DiffWidget {
     }
 
     fn row_count(&self) -> u32 {
-        self.state()
-            .view
-            .as_ref()
-            .map_or(0, |v| v.view.rows.len() as u32)
+        self.state().row_count()
     }
 
     fn ensure_font(&self, st: &mut State) {
@@ -1029,7 +1527,13 @@ impl DiffWidget {
         } else {
             TEXT_INSET
         };
-        left + st.char_width * (view.digits * 2 + 1) as f32 + GUTTER_GAP
+        // その時点のファイルは、後の側の行番号だけ。
+        let columns = if st.file_mode {
+            view.digits
+        } else {
+            view.digits * 2 + 1
+        };
+        left + st.char_width * columns as f32 + GUTTER_GAP
     }
 
     /// 横にスクロールした位置。
@@ -1039,7 +1543,12 @@ impl DiffWidget {
 
     fn configure_adjustments(&self) {
         let (width, height) = (self.width() as f64, self.height() as f64);
-        let upper = (self.row_count() as f64 * self.row_height() as f64 + 8.0).max(height);
+        let content = {
+            let mut st = self.state();
+            self.ensure_font(&mut st);
+            st.content_height() as f64
+        };
+        let upper = (content + 8.0).max(height);
         if let Some(adj) = self.vadjustment() {
             let value = adj.value().clamp(0.0, (upper - height).max(0.0));
             let step = self.row_height() as f64 * 3.0;
@@ -1064,9 +1573,6 @@ impl DiffWidget {
     /// ファイルの見出しなら畳む・開く。Working Copy では印なら含める・外す、ほかは行を選ぶ。行を選ばない表示では、
     /// 文字を選び始める（`clicks` が 2 なら単語、3 以上なら行）。
     fn clicked(&self, x: f32, y: f32, shift: bool, ctrl: bool, clicks: i32) {
-        let scroll = self.vadjustment().map_or(0.0, |a| a.value()) as f32;
-        let rh = self.row_height();
-        let index = ((y + scroll) / rh).floor();
         let (marks, checks, view) = {
             let mut st = self.state();
             st.dragging = false;
@@ -1074,20 +1580,51 @@ impl DiffWidget {
         };
         let Some(view) = view else { return };
         if !marks {
-            let Some(file) = self.header_at(y) else {
-                self.begin_text_selection(x, y, shift, clicks);
+            // 見出しの下の欄の中は、欄の部品が受ける。
+            if self.in_panel(y) && self.header_at(y).is_none() {
                 return;
-            };
-            let on_viewed = self.state().on_toggle_viewed.clone();
-            match on_viewed {
-                Some(f) if x >= self.viewed_x() - 4.0 => f(file),
-                _ => self.set_file_collapsed(file, !self.file_collapsed(file)),
             }
+            if let Some(file) = self.header_at(y) {
+                // 右端の ⋯: 右クリックと同じメニュー。ほかは開く・畳む。
+                if x > self.width() as f32 - MORE_WIDTH {
+                    self.file_menu(x as f64, y as f64);
+                    return;
+                }
+                let f = self.state().on_toggle_file.clone();
+                match f {
+                    Some(f) => f(file),
+                    None => self.set_file_collapsed(file, !self.file_collapsed(file)),
+                }
+                return;
+            }
+            if let Some(folder) = self.folder_at(y) {
+                let f = self.state().on_toggle_folder.clone();
+                if let Some(f) = f {
+                    f(folder);
+                }
+                return;
+            }
+            // hunk の見出しの左の印: そのファイルの前後の行を広げる。
+            let expand = {
+                let st = self.state();
+                st.on_expand_hunk
+                    .clone()
+                    .filter(|_| x < Self::text_left(&st, &view) - GUTTER_GAP / 2.0)
+            };
+            if let Some(f) = expand
+                && let Some(row) = self.row_at(y as f64)
+                && view.view.rows[row].kind == DiffRow::HUNK
+                && let Some(file) = view.file_rows.iter().rposition(|&r| r as usize <= row)
+            {
+                f(file);
+                return;
+            }
+            self.begin_text_selection(x, y, shift, clicks);
             return;
         }
-        if index < 0.0 || index as usize >= view.view.rows.len() {
+        let Some(index) = self.row_at(y as f64) else {
             return;
-        }
+        };
         let index = index as u32;
         let rows = &view.view.rows;
         let row = rows[index as usize];
@@ -1118,23 +1655,25 @@ impl DiffWidget {
     /// `(x, y)`（部品の中の位置）の文字の位置。上にはみ出せば先頭、下にはみ出せば末尾。
     fn text_position(&self, x: f32, y: f32) -> Option<TextPos> {
         let scroll = self.vadjustment().map_or(0.0, |a| a.value()) as f32;
-        let rh = self.row_height();
-        let (view, left) = {
-            let st = self.state();
+        let (view, left, row, hidden) = {
+            let mut st = self.state();
+            self.ensure_font(&mut st);
             let view = st.view.clone()?;
             let left = Self::text_left(&st, &view);
-            (view, left)
+            let row = st.row_at(y + scroll);
+            let hidden = row >= 0 && st.hidden_rows.contains(&(row as u32));
+            (view, left, row, hidden)
         };
         let rows = &view.view.rows;
         let last = rows.len().checked_sub(1)?;
-        if y + scroll < 0.0 {
+        if y + scroll < 0.0 || row < 0 {
             return Some((0, 0));
         }
-        let row = ((y + scroll) / rh).floor() as usize;
+        let row = row as usize;
         if row > last {
             return Some((last as u32, view.text(&rows[last]).len() as u32));
         }
-        if rows[row].kind == DiffRow::FILE {
+        if rows[row].kind == DiffRow::FILE || hidden {
             return Some((row as u32, 0));
         }
         let layout = self.layout_of(row as u32)?;
@@ -1383,28 +1922,23 @@ impl DiffWidget {
         };
         let weak = self.downgrade();
         glib::spawn_future_local(async move {
-            let Ok(view) = gio::spawn_blocking(move || View::build(&source.0, &all)).await else {
+            let Ok(view) = gio::spawn_blocking(move || View::build(&source.lock(), &all)).await
+            else {
                 return;
             };
             let Some(widget) = weak.upgrade() else { return };
-            let row = {
+            {
                 let mut st = widget.state();
                 if st.generation != generation {
                     return;
                 }
-                let row = view.file_rows.get(file).copied();
                 st.view = Some(Arc::new(view));
                 st.rows.clear();
                 st.text_selection = None;
-                row
-            };
-            widget.configure_adjustments();
-            if let (Some(row), Some(adj)) = (row, widget.vadjustment()) {
-                let top = row as f64 * widget.row_height() as f64;
-                if top < adj.value() {
-                    adj.set_value(top);
-                }
+                st.rebuild_extra();
             }
+            widget.configure_adjustments();
+            widget.reveal_file_header(file);
             widget.refresh_matches();
             widget.queue_draw();
         });
@@ -1564,18 +2098,11 @@ impl DiffWidget {
         };
         let fg = self.color();
         if row.kind == DiffRow::FILE {
-            // 見出し: 開閉の印とパス（行数と Viewed は `draw_header` で右に描く）。
-            let mark = if row.flags & DiffRow::COLLAPSED != 0 {
-                "▸"
-            } else {
-                "▾"
-            };
-            let path = view.text(row);
-            let text = format!("{mark} {path}");
-            // パスはふつうの太さで（行数を太字にする。macOS 版と同じ）。
+            // 見出し: パス（開閉の印・種類の印・行数・⋯ は `draw_header` で描く）。パスはふつうの太さで（行数を
+            // 太字にする。macOS 版と同じ）。
             return RowText {
                 gutter: None,
-                text: layout(&text),
+                text: layout(view.text(row)),
             };
         }
         let gutter = (row.kind != DiffRow::HUNK).then(|| {
@@ -1583,6 +2110,15 @@ impl DiffWidget {
                 if v == 0 { String::new() } else { v.to_string() }
             };
             let w = view.digits;
+            // その時点のファイルは、後の側の行番号だけ（ファイルごと消したなら前の側）。
+            if st.file_mode {
+                let line = if row.new_no == 0 {
+                    row.old_no
+                } else {
+                    row.new_no
+                };
+                return layout(&format!("{:>w$}", n(line)));
+            }
             // コンフリクトの行は、作業ツリーのファイルの行番号だけ。
             let old = if row.kind >= DiffRow::OURS {
                 0
@@ -1639,7 +2175,6 @@ impl DiffWidget {
         let scroll_y = self.vadjustment().map_or(0.0, |a| a.value()) as f32;
         let scroll_x = self.scroll_x();
         let fg = self.color();
-        let viewed_x = self.viewed_x();
         let mut st = self.state();
         let st = &mut *st;
         self.ensure_font(st);
@@ -1648,9 +2183,7 @@ impl DiffWidget {
             let view = st.view.as_ref()?;
             if view.view.binary && view.file_rows.is_empty() {
                 Some(tr!("Binary file"))
-            } else if view.view.rows.is_empty()
-                && st.source.as_ref().is_some_and(|s| s.0.files.is_empty())
-            {
+            } else if view.view.rows.is_empty() && st.source.is_some() {
                 Some(tr!("No changes"))
             } else {
                 None
@@ -1670,8 +2203,8 @@ impl DiffWidget {
         };
         let rh = st.row_height;
         let count = view.view.rows.len() as u32;
-        let first = ((scroll_y / rh).floor().max(0.0) as u32).min(count);
-        let last = (((scroll_y + height) / rh).ceil() as u32 + 1).min(count);
+        let first = (st.row_at(scroll_y).max(0) as u32).min(count);
+        let last = ((st.row_at(scroll_y + height).max(0) as u32).saturating_add(2)).min(count);
         if st.rows.len() > 4096 || st.theme_generation != crate::theme::generation() {
             st.rows.clear();
             st.theme_generation = crate::theme::generation();
@@ -1699,14 +2232,17 @@ impl DiffWidget {
             gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), 0.18)
         };
         for index in first..last {
+            if st.hidden_rows.contains(&index) {
+                continue;
+            }
             if !st.rows.contains_key(&index) {
                 let text = self.row_text(st, &view, index);
                 st.rows.insert(index, text);
             }
             let row = &view.view.rows[index as usize];
-            let top = index as f32 * rh - scroll_y;
+            let top = st.row_y(index) - scroll_y;
             if row.kind == DiffRow::FILE {
-                self.draw_header(snapshot, st, &view, index, top, width, viewed_x, false);
+                self.draw_header(snapshot, st, &view, index, top, width, false);
                 continue;
             }
             // 選んだ行は行番号の欄だけを選んだ色で塗り、行の追加・削除の色はそのまま見せる（macOS 版と同じ）。
@@ -1728,11 +2264,20 @@ impl DiffWidget {
                 DiffRow::MARKER => Some(DiffColor::Marker),
                 _ => None,
             };
-            if let Some(kind) = background {
+            if st.modified_rows.contains(&index) {
+                // その時点のファイルの、変えた行（消した行に続けて足した行）は青（macOS 版と同じ）。
+                snapshot.append_color(
+                    &gdk::RGBA::new(0.21, 0.52, 0.89, 0.2),
+                    &graphene::Rect::new(0.0, top, width, rh),
+                );
+            } else if let Some(kind) = background {
                 snapshot.append_color(
                     &crate::theme::diff_color(kind, &fg),
                     &graphene::Rect::new(0.0, top, width, rh),
                 );
+            }
+            if row.kind == DiffRow::HUNK && st.on_expand_hunk.is_some() {
+                self.draw_expand_mark(snapshot, top, rh, text_x - GUTTER_GAP / 2.0);
             }
             let line = &st.rows[&index];
             let (_, h) = line.text.pixel_size();
@@ -1831,33 +2376,148 @@ impl DiffWidget {
             snapshot.restore();
             snapshot.pop();
         }
+        if !st.decor.folders.is_empty() {
+            self.draw_folders(snapshot, st, &view, scroll_y, width, height);
+        }
+        if !st.deletion_marks.is_empty() {
+            self.draw_deletion_marks(snapshot, st, scroll_y, text_x - GUTTER_GAP, height);
+        }
+        // 見出しの下の欄（子の部品）。
+        let panels: Vec<gtk::Widget> = st.decor.panels.values().cloned().collect();
+        for panel in &panels {
+            if panel.is_child_visible() {
+                self.snapshot_child(panel, snapshot);
+            }
+        }
         // 見出しの行が上に隠れたファイルは、見出しを上に張り付かせる。
-        if let Some((file, top)) = Self::sticky(&view, scroll_y, rh) {
+        if let Some((file, top)) = Self::sticky(st, &view, scroll_y) {
             let index = view.file_rows[file];
             if !st.rows.contains_key(&index) {
                 let text = self.row_text(st, &view, index);
                 st.rows.insert(index, text);
             }
-            self.draw_header(snapshot, st, &view, index, top, width, viewed_x, true);
+            self.draw_header(snapshot, st, &view, index, top, width, true);
         }
-        // 一番上に見えているファイル（一覧の選択を合わせる）。
-        if !view.file_rows.is_empty() {
-            let file = view
-                .file_rows
-                .iter()
-                .rposition(|&r| r as f32 * rh <= scroll_y + rh / 2.0)
-                .unwrap_or(0);
-            if st.top_file != Some(file) {
-                st.top_file = Some(file);
-                if let Some(f) = st.on_top_file.clone() {
-                    glib::idle_add_local_once(move || f(file));
-                }
+    }
+
+    /// hunk の見出しの左（行番号の欄）の、前後の行を広げる印。
+    fn draw_expand_mark(&self, snapshot: &gtk::Snapshot, top: f32, rh: f32, gutter: f32) {
+        let accent = gdk::RGBA::new(0.21, 0.52, 0.89, 1.0);
+        snapshot.append_color(
+            &gdk::RGBA::new(0.21, 0.52, 0.89, 0.18),
+            &graphene::Rect::new(0.0, top, gutter, rh),
+        );
+        let layout = self.create_pango_layout(Some("⤒  ⤓"));
+        let attrs = pango::AttrList::new();
+        attrs.insert(pango::AttrInt::new_weight(pango::Weight::Semibold));
+        layout.set_attributes(Some(&attrs));
+        let (w, h) = layout.pixel_size();
+        snapshot.save();
+        snapshot.translate(&graphene::Point::new(
+            ((gutter - w as f32) / 2.0).round(),
+            top + ((rh - h as f32) / 2.0).round(),
+        ));
+        snapshot.append_layout(&layout, &accent);
+        snapshot.restore();
+    }
+
+    /// 木で見せるときの、見出しの前のフォルダの行（「▾  name/」を深さだけ字下げ）。
+    fn draw_folders(
+        &self,
+        snapshot: &gtk::Snapshot,
+        st: &State,
+        view: &View,
+        scroll_y: f32,
+        width: f32,
+        height: f32,
+    ) {
+        let rh = st.row_height;
+        let fg = self.color();
+        let secondary = gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), fg.alpha() * 0.6);
+        let band = self.band_color(&fg);
+        for (&file, folders) in &st.decor.folders {
+            let Some(&row) = view.file_rows.get(file) else {
+                continue;
+            };
+            let bottom = st.row_y(row) - scroll_y;
+            let top = bottom - folders.len() as f32 * rh;
+            if bottom <= 0.0 || top >= height {
+                continue;
+            }
+            for (i, folder) in folders.iter().enumerate() {
+                let y = top + i as f32 * rh;
+                snapshot.append_color(&band, &graphene::Rect::new(0.0, y, width, rh));
+                snapshot.append_color(
+                    &gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), 0.15),
+                    &graphene::Rect::new(0.0, y + rh - 1.0, width, 1.0),
+                );
+                let mark = if folder.collapsed { "▸" } else { "▾" };
+                let layout = self.create_pango_layout(Some(&format!("{mark}  {}/", folder.name)));
+                let attrs = pango::AttrList::new();
+                attrs.insert(pango::AttrInt::new_weight(pango::Weight::Semibold));
+                layout.set_attributes(Some(&attrs));
+                let (_, h) = layout.pixel_size();
+                snapshot.save();
+                snapshot.translate(&graphene::Point::new(
+                    6.0 + folder.depth as f32 * 14.0,
+                    y + ((rh - h as f32) / 2.0).round(),
+                ));
+                snapshot.append_layout(&layout, &secondary);
+                snapshot.restore();
             }
         }
     }
 
-    /// ファイルの見出しの行: 開閉の印とパス、右に追加・削除の行数と Viewed のチェックボックス（Viewed を扱う
-    /// ときだけ）。`opaque` なら下の行を隠す（上に張り付かせるとき）。
+    /// その時点のファイルの、消したところの印の行（「ここで N 行を削除」）。
+    fn draw_deletion_marks(
+        &self,
+        snapshot: &gtk::Snapshot,
+        st: &State,
+        scroll_y: f32,
+        gutter: f32,
+        height: f32,
+    ) {
+        let rh = st.row_height;
+        let red = gdk::RGBA::new(0.88, 0.11, 0.14, 1.0);
+        for (after, count, _) in &st.deletion_marks {
+            let top = st.row_y(after + 1) - rh - scroll_y;
+            if top + rh <= 0.0 || top >= height {
+                continue;
+            }
+            let layout =
+                self.create_pango_layout(Some(&tr!("{count} lines deleted here", count = count)));
+            let attrs = pango::AttrList::new();
+            attrs.insert(pango::AttrInt::new_weight(pango::Weight::Medium));
+            attrs.insert(pango::AttrFloat::new_scale(0.85));
+            layout.set_attributes(Some(&attrs));
+            let (w, h) = layout.pixel_size();
+            snapshot.append_color(
+                &gdk::RGBA::new(red.red(), red.green(), red.blue(), 0.16),
+                &graphene::Rect::new(gutter + 4.0, top + 2.0, w as f32 + 16.0, rh - 4.0),
+            );
+            snapshot.save();
+            snapshot.translate(&graphene::Point::new(
+                gutter + 12.0,
+                top + ((rh - h as f32) / 2.0).round(),
+            ));
+            snapshot.append_layout(&layout, &red);
+            snapshot.restore();
+        }
+    }
+
+    /// 見出し・フォルダの行の地の色（窓に 1 枚の地を敷いていれば、地と同じ濃さ。`backdrop.rs`）。
+    fn band_color(&self, fg: &gdk::RGBA) -> gdk::RGBA {
+        let alpha = crate::backdrop::of(self).band_alpha().unwrap_or(1.0);
+        if fg.red() > 0.5 {
+            gdk::RGBA::new(0.17, 0.17, 0.18, alpha)
+        } else {
+            gdk::RGBA::new(0.96, 0.96, 0.96, alpha)
+        }
+    }
+
+    /// ファイルの見出しの行（変更ファイルの一覧の行を兼ねる。macOS 版の `drawCompactHeader`）: ▸・▾、種類の印、
+    /// パス（木なら名前）、右に行数と、いつも出す ⋯（右クリックと同じメニュー）。横にはスクロールしない。
+    /// `opaque` なら下の行を隠す（上に張り付かせるとき）。
     #[allow(clippy::too_many_arguments)]
     fn draw_header(
         &self,
@@ -1867,159 +2527,195 @@ impl DiffWidget {
         index: u32,
         top: f32,
         width: f32,
-        viewed_x: f32,
         opaque: bool,
     ) {
         let rh = st.row_height;
         let fg = self.color();
         let dark = fg.red() > 0.5;
+        let file = view.file_rows.iter().position(|&r| r == index).unwrap_or(0);
+        let hovered = st.hovered_file == Some(file);
         if opaque {
-            // 窓に 1 枚の地を敷いていれば、地と同じ濃さ（`backdrop.rs`）。
-            let alpha = crate::backdrop::of(self).band_alpha().unwrap_or(1.0);
-            let base = if dark {
-                gdk::RGBA::new(0.14, 0.14, 0.15, alpha)
-            } else {
-                gdk::RGBA::new(1.0, 1.0, 1.0, alpha)
-            };
-            snapshot.append_color(&base, &graphene::Rect::new(0.0, top, width, rh));
+            snapshot.append_color(
+                &self.band_color(&fg),
+                &graphene::Rect::new(0.0, top, width, rh),
+            );
         }
         snapshot.append_color(
             &gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), 0.08),
             &graphene::Rect::new(0.0, top, width, rh),
         );
+        if hovered {
+            snapshot.append_color(
+                &gdk::RGBA::new(0.21, 0.52, 0.89, 0.12),
+                &graphene::Rect::new(0.0, top, width, rh),
+            );
+        }
         snapshot.append_color(
             &gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), 0.15),
             &graphene::Rect::new(0.0, top + rh - 1.0, width, 1.0),
         );
         let row = &view.view.rows[index as usize];
-        let file = view.file_rows.iter().position(|&r| r == index).unwrap_or(0);
-        let layout = |text: &str| {
+        let secondary = gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), fg.alpha() * 0.6);
+        let small = |text: &str, weight: Option<pango::Weight>| {
             let l = self.create_pango_layout(Some(text));
-            l.set_font_description(st.font.as_ref());
-            l
-        };
-        // 行数は太字（macOS 版と同じ）。
-        let bold = |text: &str| {
-            let l = layout(text);
             let attrs = pango::AttrList::new();
-            attrs.insert(pango::AttrInt::new_weight(pango::Weight::Bold));
+            attrs.insert(pango::AttrFloat::new_scale(0.9));
+            if let Some(weight) = weight {
+                attrs.insert(pango::AttrInt::new_weight(weight));
+            }
             l.set_attributes(Some(&attrs));
             l
         };
-        // 右から: Viewed、行数。
-        let show_viewed = st.on_toggle_viewed.is_some();
-        let right = if show_viewed { viewed_x } else { width - 4.0 };
-        let counts: Vec<(pango::Layout, gdk::RGBA)> = if row.flags & DiffRow::BINARY != 0 {
-            // 「Binary」は薄い色で（macOS 版と同じ）。
-            vec![(
-                layout(&tr!("Binary")),
-                gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), fg.alpha() * 0.5),
-            )]
+        let large = |text: &str| {
+            let l = self.create_pango_layout(Some(text));
+            let attrs = pango::AttrList::new();
+            attrs.insert(pango::AttrFloat::new_scale(1.15));
+            l.set_attributes(Some(&attrs));
+            l
+        };
+        let middle = |l: &pango::Layout| top + ((rh - l.pixel_size().1 as f32) / 2.0).round();
+        // 右から順に置く場所を決め、パスを描いてから、右の側を描く。
+        let mut right = width - 12.0;
+        let mut later: Vec<(pango::Layout, f32, gdk::RGBA)> = Vec::new();
+        // よく使う操作は、いつも出す ⋯ のメニュー（右クリックと同じ）。
+        let more = large("⋯");
+        let more_width = more.pixel_size().0 as f32;
+        later.push((
+            more,
+            right - more_width,
+            if hovered { fg } else { secondary },
+        ));
+        right -= more_width + 14.0;
+        let pending = row.flags & DiffRow::PENDING != 0;
+        let (added, removed) = if pending {
+            st.decor.counts.get(&file).copied().unwrap_or((0, 0))
         } else {
-            let (green, red) = if dark {
+            (row.new_no, row.old_no)
+        };
+        let (green, red) = if dark {
+            (
+                gdk::RGBA::new(0.4, 0.8, 0.5, 1.0),
+                gdk::RGBA::new(1.0, 0.45, 0.45, 1.0),
+            )
+        } else {
+            (
+                gdk::RGBA::new(0.2, 0.6, 0.3, 1.0),
+                gdk::RGBA::new(0.85, 0.25, 0.25, 1.0),
+            )
+        };
+        // 行数（0 なら出さない）。バイナリは「Binary」、画像は「Image」（macOS 版と同じ）。
+        let note = st
+            .decor
+            .notes
+            .get(&file)
+            .cloned()
+            .or_else(|| (row.flags & DiffRow::BINARY != 0).then(|| tr!("Binary")));
+        let counts: Vec<(pango::Layout, gdk::RGBA)> = match note {
+            Some(note) => vec![(small(&note, None), secondary)],
+            None if added == 0 && removed == 0 => Vec::new(),
+            None => vec![
                 (
-                    gdk::RGBA::new(0.4, 0.8, 0.5, 1.0),
-                    gdk::RGBA::new(1.0, 0.45, 0.45, 1.0),
-                )
-            } else {
+                    small(&format!("+{added}"), Some(pango::Weight::Bold)),
+                    green,
+                ),
                 (
-                    gdk::RGBA::new(0.2, 0.6, 0.3, 1.0),
-                    gdk::RGBA::new(0.85, 0.25, 0.25, 1.0),
-                )
-            };
-            vec![
-                (bold(&format!("+{}", row.new_no)), green),
-                (bold(&format!("−{}", row.old_no)), red),
-            ]
+                    small(&format!("−{removed}"), Some(pango::Weight::Bold)),
+                    red,
+                ),
+            ],
         };
         let counts_width: f32 = counts
             .iter()
             .map(|(l, _)| l.pixel_size().0 as f32)
             .sum::<f32>()
-            + 8.0 * (counts.len() as f32 - 1.0);
-        let counts_x = right - 14.0 - counts_width;
-        let line = &st.rows[&index];
-        let (_, h) = line.text.pixel_size();
-        let y = top + ((rh - h as f32) / 2.0).round();
-        let left = if st.checks {
-            TEXT_INSET + MARK_WIDTH
-        } else {
-            TEXT_INSET
-        };
+            + 6.0 * (counts.len().max(1) - 1) as f32;
+        let mut x = right - counts_width;
+        for (l, color) in counts {
+            let w = l.pixel_size().0 as f32;
+            later.push((l, x, color));
+            x += w + 6.0;
+        }
+        right -= counts_width + 14.0;
+        let indent = st.decor.depths.get(&file).copied().unwrap_or(0) as f32 * 14.0;
+        let open = row.flags & DiffRow::COLLAPSED == 0 || st.decor.open.contains(&file);
+        let chevron = large(if open { "▾" } else { "▸" });
+        snapshot.save();
+        snapshot.translate(&graphene::Point::new(
+            (indent + 12.0 - chevron.pixel_size().0 as f32 / 2.0).round(),
+            middle(&chevron),
+        ));
+        snapshot.append_layout(&chevron, &secondary);
+        snapshot.restore();
+        let mut path_x = 26.0 + indent;
+        if let Some(mark) = st.decor.marks.get(&file) {
+            let l = self.create_pango_layout(Some(mark));
+            let mut font = st.font.clone().unwrap_or_default();
+            font.set_weight(pango::Weight::Bold);
+            l.set_font_description(Some(&font));
+            let color = gdk::RGBA::parse(mark_color(mark)).unwrap_or(fg);
+            snapshot.save();
+            snapshot.translate(&graphene::Point::new(path_x, middle(&l)));
+            snapshot.append_layout(&l, &color);
+            snapshot.restore();
+            path_x += 16.0;
+        }
         // パスは行数の手前までに収める。
+        let title = st.decor.titles.get(&file).map(|t| {
+            let l = self.create_pango_layout(Some(t));
+            l.set_font_description(st.font.as_ref());
+            l
+        });
+        let line = &st.rows[&index];
+        let path = title.as_ref().unwrap_or(&line.text);
+        let y = middle(path);
         snapshot.save();
         snapshot.push_clip(&graphene::Rect::new(
-            left,
+            path_x,
             top,
-            (counts_x - 8.0 - left).max(0.0),
+            (right - 8.0 - path_x).max(0.0),
             rh,
         ));
-        snapshot.translate(&graphene::Point::new(left, y));
-        // パスの中の、探している語の一致（今の一致は濃く）。一致はパスの中の位置なので、頭の開閉の印と空白の
-        // 分をずらす。
-        let shift = line.text.text().find(' ').map_or(0, |i| i + 1) as i32;
-        let from = st.matches.partition_point(|m| m.0 < index);
-        for (i, m) in st.matches[from..]
-            .iter()
-            .enumerate()
-            .take_while(|(_, m)| m.0 == index)
-        {
-            let x0 = line.text.index_to_pos(shift + m.1 as i32).x() as f32 / pango::SCALE as f32;
-            let x1 = line.text.index_to_pos(shift + m.2 as i32).x() as f32 / pango::SCALE as f32;
-            let color = if st.current_match == Some(from + i) {
-                gdk::RGBA::new(1.0, 0.6, 0.0, 0.75)
-            } else {
-                gdk::RGBA::new(1.0, 0.85, 0.0, 0.45)
-            };
-            snapshot.append_color(
-                &color,
-                &graphene::Rect::new(x0, top - y + 1.0, (x1 - x0).max(2.0), rh - 2.0),
-            );
+        snapshot.translate(&graphene::Point::new(path_x, y));
+        // パスの中の、探している語の一致（今の一致は濃く。名前だけを出しているときは位置が合わないので出さない）。
+        if title.is_none() {
+            let from = st.matches.partition_point(|m| m.0 < index);
+            for (i, m) in st.matches[from..]
+                .iter()
+                .enumerate()
+                .take_while(|(_, m)| m.0 == index)
+            {
+                let x0 = path.index_to_pos(m.1 as i32).x() as f32 / pango::SCALE as f32;
+                let x1 = path.index_to_pos(m.2 as i32).x() as f32 / pango::SCALE as f32;
+                let color = if st.current_match == Some(from + i) {
+                    gdk::RGBA::new(1.0, 0.6, 0.0, 0.75)
+                } else {
+                    gdk::RGBA::new(1.0, 0.85, 0.0, 0.45)
+                };
+                snapshot.append_color(
+                    &color,
+                    &graphene::Rect::new(x0, top - y + 1.0, (x1 - x0).max(2.0), rh - 2.0),
+                );
+            }
         }
-        snapshot.append_layout(&line.text, &fg);
+        snapshot.append_layout(path, &fg);
         snapshot.pop();
         snapshot.restore();
-        let mut x = counts_x;
-        for (l, color) in &counts {
+        for (l, x, color) in later {
             snapshot.save();
-            snapshot.translate(&graphene::Point::new(x, on_baseline(y, &line.text, l)));
-            snapshot.append_layout(l, color);
-            snapshot.restore();
-            x += l.pixel_size().0 as f32 + 8.0;
-        }
-        if show_viewed {
-            let size = 12.0;
-            let rect = graphene::Rect::new(viewed_x, top + (rh - size) / 2.0, size, size);
-            let path = gsk::PathBuilder::new();
-            path.add_rounded_rect(&gsk::RoundedRect::from_rect(rect, 3.0));
-            let path = path.to_path();
-            if st.viewed.contains(&file) {
-                snapshot.append_fill(
-                    &path,
-                    gsk::FillRule::Winding,
-                    &gdk::RGBA::new(0.21, 0.52, 0.89, 1.0),
-                );
-                let check = gsk::PathBuilder::new();
-                check.move_to(rect.x() + size * 0.22, rect.y() + size * 0.52);
-                check.line_to(rect.x() + size * 0.42, rect.y() + size * 0.72);
-                check.line_to(rect.x() + size * 0.78, rect.y() + size * 0.3);
-                let stroke = gsk::Stroke::new(1.6);
-                stroke.set_line_cap(gsk::LineCap::Round);
-                snapshot.append_stroke(&check.to_path(), &stroke, &gdk::RGBA::WHITE);
-            } else {
-                let color = gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), 0.5);
-                snapshot.append_stroke(&path, &gsk::Stroke::new(1.0), &color);
-            }
-            let label = layout("Viewed");
-            let secondary = gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), 0.6);
-            snapshot.save();
-            snapshot.translate(&graphene::Point::new(
-                viewed_x + size + 5.0,
-                on_baseline(y, &line.text, &label),
-            ));
-            snapshot.append_layout(&label, &secondary);
+            snapshot.translate(&graphene::Point::new(x, middle(&l)));
+            snapshot.append_layout(&l, &color);
             snapshot.restore();
         }
+    }
+}
+
+/// 変更の種類の印の色（追加は緑、削除は赤、変更は橙、名前の変更・コピーは青。macOS 版と同じ）。
+pub fn mark_color(mark: &str) -> &'static str {
+    match mark {
+        "A" => "#2ec27e",
+        "D" => "#e01b24",
+        "M" => "#e66100",
+        _ => "#3584e4",
     }
 }
 
@@ -2183,6 +2879,29 @@ mod tests {
         // 伸びる字と縮む字で長さの合計が変わらなくても、位置はずれない。
         assert_eq!(find_all("İİ\u{212A} todo", "todo"), vec![(8, 12)]);
         assert!(find_all("abc", "").is_empty());
+    }
+
+    #[test]
+    fn rows_move_down_past_panels_and_folders_and_up_past_hidden_rows() {
+        let mut st = State {
+            row_height: 10.0,
+            // 行 0 の後ろに欄（100）、行 2 の前にフォルダの行 2 つ（行 1 の後ろ）、行 4・5 を隠す。
+            extra: vec![(0, 100.0), (1, 20.0), (5, -20.0)],
+            ..State::default()
+        };
+        assert_eq!(st.row_y(0), 0.0);
+        assert_eq!(st.row_y(1), 110.0);
+        assert_eq!(st.row_y(2), 140.0);
+        assert_eq!(st.row_y(6), 160.0);
+        // 欄の中は見出しの行、フォルダの行の中は前の行。
+        assert_eq!(st.row_at(5.0), 0);
+        assert_eq!(st.row_at(50.0), 0);
+        assert_eq!(st.row_at(115.0), 1);
+        assert_eq!(st.row_at(125.0), 1);
+        assert_eq!(st.row_at(145.0), 2);
+        assert_eq!(st.row_at(165.0), 6);
+        st.extra.clear();
+        assert_eq!(st.row_at(25.0), 2);
     }
 
     #[test]

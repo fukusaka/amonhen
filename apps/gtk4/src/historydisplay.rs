@@ -31,7 +31,7 @@ fn item_entries() -> [(&'static str, u32, String); 6] {
 }
 
 /// 切り替えの項目（アクションの名前、設定の鍵）。
-const TOGGLES: [(&str, &str); 6] = [
+const TOGGLES: [(&str, &str); 5] = [
     ("one-line-history", settings::COMPACT_HISTORY_ROWS),
     ("highlight-ancestors", settings::HIGHLIGHT_ANCESTORS),
     (
@@ -39,17 +39,12 @@ const TOGGLES: [(&str, &str); 6] = [
         settings::MONOSPACED_COMMIT_MESSAGE,
     ),
     ("show-avatars", settings::SHOW_AVATARS),
-    ("all-files-in-one-diff", crate::commitfiles::STACKED),
     ("changed-files-as-tree", crate::commitfiles::FILE_TREE),
 ];
 
-/// 切り替えの今の値（全ファイルを 1 つの差分に並べるかは、既定が入）。
+/// 切り替えの今の値。
 fn toggle_value(key: &str) -> bool {
-    if key == crate::commitfiles::STACKED {
-        crate::commitfiles::stacked()
-    } else {
-        settings::bool(key)
-    }
+    settings::bool(key)
 }
 
 /// 設定から作る行の見せ方。
@@ -142,15 +137,10 @@ pub fn sections() -> Vec<(Option<String>, gio::Menu)> {
             ),
         ),
         (
-            tr!("All Files in One Diff"),
-            "win.all-files-in-one-diff",
-            tr!("Stack every file in a commit’s diff (when off, only the selected file)"),
-        ),
-        (
             tr!("Changed Files as Tree"),
             "win.changed-files-as-tree",
             tr!(
-                "Show a commit’s changed files as a tree to the left of the diff (when off, as a list between the message and the diff)"
+                "Show a commit’s changed files as a tree of folders (when off, as a list of paths)"
             ),
         ),
     ] {

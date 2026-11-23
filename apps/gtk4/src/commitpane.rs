@@ -1,7 +1,7 @@
-//! Stashes・Reflog・Range Diff の右の列: 1 つのコミット（か stash）の詳細と、変更ファイルの一覧と差分。History の
-//! 右の列と同じ部品（[`Details`]・[`CommitDiff`]）で、macOS 版がこの 3 つの画面に埋め込む
-//! `CommitDetailViewController` に当たる。変更ファイルの一覧・畳む・Viewed・見出しの右クリック（Blame・
-//! File History・パスのコピーなど）、AI の翻訳・解説、差分の中の検索は History と同じ。
+//! Stashes・Reflog・Range Diff の右の列: 1 つのコミット（か stash）の詳細と、上の帯と差分。History の右の列と
+//! 同じ部品（[`Details`]・[`CommitDiff`]）で、macOS 版がこの 3 つの画面に埋め込む `CommitDetailViewController` に
+//! 当たる。変更ファイルの見出し・畳む・見出しの ⋯（Blame・File History・パスのコピーなど）、表示の設定（詳細の
+//! 見せ方・AI の翻訳・解説）、差分の中の検索は History と同じ。
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -12,13 +12,13 @@ use amonhen_model::{Oid, tr};
 use gtk::prelude::*;
 use gtk::{gio, glib};
 
-use crate::commitfiles::{self, CommitDiff, Prepared};
+use crate::commitfiles::{CommitDiff, Prepared};
 use crate::details::Details;
 use crate::filetools::OnCommit;
 use crate::menu;
 
 pub struct CommitPane {
-    /// 詳細（上）と、変更ファイルと差分（下）。
+    /// 詳細（上）と、帯と差分（下）。
     pub root: gtk::Paned,
     pub details: Rc<Details>,
     files: Rc<CommitDiff>,
@@ -65,12 +65,14 @@ impl CommitPane {
             root.set_end_child(Some(&files.root));
             root.set_resize_start_child(false);
             root.set_position(170);
-            // AI の翻訳・解説と、差分の中の検索・詳細を広げるボタン（詳細の右上。History と同じ）。
+            // 帯の表示の設定: 詳細の見せ方・詳細を広げる・AI の翻訳・解説（History と同じ。Push のシートでは出さない）。
             if !preview {
-                crate::aiactions::details(&details, files.diff(), current);
-            }
-            details.tools.append(&files.find_button());
-            if !preview {
+                let ai = crate::aiactions::details(&details, files.diff(), current);
+                let d = Rc::downgrade(&details);
+                files.connect_view_options(move || {
+                    let styles = d.upgrade().map(|d| d.style_items()).unwrap_or_default();
+                    (styles, ai())
+                });
                 details.tools.append(&files.expand_button());
             }
             // 変更ファイルの右クリック: AI でこの hunk を解説、Blame（コミットのときだけ）・File History。
@@ -222,8 +224,6 @@ impl CommitPane {
         let (title, lines) = (title.to_owned(), lines.to_owned());
         self.files.clear();
         self.files.reset_stats();
-        let key = format!("{}..{tip}", base.map(|b| b.to_string()).unwrap_or_default());
-        let viewed = commitfiles::viewed_paths(&key);
         self.pending.set(self.pending.get() + 1);
         let this = self.clone();
         glib::spawn_future_local(async move {
@@ -232,7 +232,7 @@ impl CommitPane {
                     .changes_between(base.as_ref(), &tip)
                     .map_err(|e| e.to_string())?;
                 let count = changes.len();
-                Prepared::from_changes(repo, changes, &viewed, true).map(|p| (count, p))
+                Prepared::from_changes(repo, changes).map(|p| (count, p))
             })
             .await;
             this.pending.set(this.pending.get() - 1);
@@ -250,7 +250,7 @@ impl CommitPane {
                     if count == 0 {
                         this.files.show_message(&tr!("No changes"));
                     } else {
-                        this.files.show(prepared, key);
+                        this.files.show(prepared, None);
                     }
                 }
                 Ok(Err(e)) => {
@@ -266,8 +266,8 @@ impl CommitPane {
     }
 
     /// `repo` の `id` の詳細と変更を裏で読んで出す。`stash` なら stash の中身（untracked のファイルを含む）で、
-    /// 時間のかかる分（署名の検証・含むブランチなど）は読まない（macOS 版と同じ）。全ファイルを並べるか・畳む
-    /// ファイル・Viewed は History と同じ。
+    /// 時間のかかる分（署名の検証・含むブランチなど）は読まない（macOS 版と同じ）。「すべてのファイル」はコミットの
+    /// ときだけ（stash では開けない。macOS 版と同じ）。
     pub fn show(self: &Rc<Self>, repo: Arc<Repository>, id: Oid, stash: bool) {
         let g = self.generation.get() + 1;
         self.generation.set(g);
@@ -310,8 +310,6 @@ impl CommitPane {
                 crate::fit_details(&this.root, this.details.clone());
             });
         }
-        let viewed = commitfiles::viewed_paths(&hex);
-        let all = commitfiles::stacked();
         self.pending.set(self.pending.get() + 1);
         let this = self.clone();
         glib::spawn_future_local(async move {
@@ -323,7 +321,7 @@ impl CommitPane {
                     repo.commit_changes(&id)
                 }
                 .map_err(|e| e.to_string())?;
-                Prepared::from_changes(repo, changes, &viewed, all)
+                Prepared::from_changes(repo, changes)
             })
             .await;
             this.pending.set(this.pending.get() - 1);
@@ -331,7 +329,7 @@ impl CommitPane {
                 return;
             }
             match result {
-                Ok(Ok(prepared)) => this.files.show(prepared, hex),
+                Ok(Ok(prepared)) => this.files.show(prepared, (!stash).then_some(id)),
                 Ok(Err(e)) => {
                     eprintln!("差分を読めない: {e}");
                     this.files.show_message(&tr!("Couldn’t load the diff"));

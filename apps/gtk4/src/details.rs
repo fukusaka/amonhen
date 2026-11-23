@@ -706,10 +706,10 @@ impl Details {
         }));
     }
 
-    /// 右上に見せ方の切り替え（簡潔・標準・詳細）を出し、覚えている見せ方にする（macOS 版の詳細の欄。出さなければ
-    /// 標準のまま）。切り替えたら覚え、欄の高さを中身に合わせ直す。
+    /// 見せ方の切り替え（簡潔・標準・詳細）を使えるようにし、覚えている見せ方にする（macOS 版の詳細の欄。使わなければ
+    /// 標準のまま）。切り替えは差分の上の帯の表示の設定に出す（`style_items`。右上の切り替えは出さない。macOS
+    /// 版と同じ）。切り替えたら覚え、欄の高さを中身に合わせ直す。
     pub fn show_style_switch(self: &Rc<Self>) {
-        self.styles.set_visible(true);
         let saved = Style::saved();
         for (style, button) in Style::ALL.into_iter().zip(&self.style_buttons) {
             button.set_active(style == saved);
@@ -738,6 +738,22 @@ impl Details {
             });
         }
         self.set_style(saved);
+    }
+
+    /// 表示の設定のメニューに出す、見せ方の項目（今の見せ方に印。`show_style_switch` の後で使う）。
+    pub fn style_items(&self) -> Vec<crate::menu::Item> {
+        Style::ALL
+            .into_iter()
+            .zip(&self.style_buttons)
+            .map(|(style, button)| {
+                let button = button.downgrade();
+                crate::menu::choice(style.title(), self.style.get() == style, move || {
+                    if let Some(b) = button.upgrade() {
+                        b.set_active(true);
+                    }
+                })
+            })
+            .collect()
     }
 
     /// 見せ方を変えて出し直す。

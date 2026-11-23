@@ -959,16 +959,118 @@ impl Repository {
 
     /// 変わったファイル 1 つの、前後 3 行の文脈つきの差分。
     pub fn file_diff(&self, change: &FileChange, profile: &FrontendProfile) -> Result<DiffView> {
-        let diff = match self.change_diffs(std::slice::from_ref(change))? {
+        self.file_diff_with_context(change, 3, profile)
+    }
+
+    /// `file_diff` の、前後 `context` 行のもの（`u32::MAX` ならファイル全体。History の「すべてのファイル」で、
+    /// 変えたファイルをその時点の中身として見せる）。
+    pub fn file_diff_with_context(
+        &self,
+        change: &FileChange,
+        context: u32,
+        profile: &FrontendProfile,
+    ) -> Result<DiffView> {
+        let mut diff = match self.change_diffs(std::slice::from_ref(change))? {
             Some(mut diffs) if diffs.len() == 1 => diffs.remove(0),
-            _ => self.change_diff(change)?,
+            _ => {
+                let attrs = self.diff_attributes(std::slice::from_ref(&change.path.as_str()));
+                self.change_diff(change, &attrs[0])?
+            }
         };
+        if context != 3 && !diff.binary {
+            let attrs = self.diff_attributes(std::slice::from_ref(&change.path.as_str()));
+            let funcname = crate::funcname::FuncName::new(attrs[0].funcname.as_ref());
+            let generated = diff.generated;
+            diff = diff::file_diff_with(diff.old.clone(), diff.new.clone(), context, &funcname);
+            diff.generated = generated;
+        }
         Ok(DiffView::new(&diff, profile).with_path(&change.path))
+    }
+
+    /// blob の中身（画像の比較など）。
+    pub fn blob(&self, id: &Oid) -> Result<Arc<Vec<u8>>> {
+        self.backend.blob(id)
+    }
+
+    /// `stacked_diff` が、すべてのファイルの差分を先に取るのはこの数まで（多ければ開いたときに取る）。
+    pub const STACK_EAGER: usize = 200;
+
+    /// `stacked` の `file` 番目のファイルの差分を、前後 `context` 行で取り直す（`u32::MAX` ならファイル全体）。
+    /// まだ取っていないファイル（ファイルの多いコミット）なら、ここで取る。見出しの関数名と生成物の印は、その
+    /// ファイルの属性のまま。
+    pub fn set_stacked_context(
+        &self,
+        stacked: &mut diff::StackedDiff,
+        file: usize,
+        context: u32,
+    ) -> Result<()> {
+        let Some((path, d)) = stacked.files.get_mut(file) else {
+            return Ok(());
+        };
+        let path = path.split(" — ").next().unwrap_or(path);
+        let attrs = self.diff_attributes(&[path]);
+        if let Some(change) = d.pending.take() {
+            match self.change_diff(&change, &attrs[0]) {
+                Ok(loaded) => *d = loaded,
+                Err(e) => {
+                    d.pending = Some(change);
+                    return Err(e);
+                }
+            }
+            if context == 3 {
+                return Ok(());
+            }
+        }
+        if d.binary {
+            return Ok(());
+        }
+        let funcname = crate::funcname::FuncName::new(attrs[0].funcname.as_ref());
+        let generated = d.generated;
+        *d = diff::file_diff_with(d.old.clone(), d.new.clone(), context, &funcname);
+        d.generated = generated;
+        Ok(())
+    }
+
+    /// コミット `commit` の `path` の中身を、変わっていない行として並べた表示（History の「すべてのファイル」で、
+    /// このコミットで変えていないファイルを開く）。
+    pub fn tree_file(
+        &self,
+        commit: &Oid,
+        path: &str,
+        profile: &FrontendProfile,
+    ) -> Result<DiffView> {
+        let path = path.trim_matches('/');
+        let (folder, name) = path.rsplit_once('/').unwrap_or(("", path));
+        let entry = self
+            .backend
+            .tree_entries(commit, folder)?
+            .into_iter()
+            .find(|e| e.name == name)
+            .ok_or_else(|| tr!("{path} isn’t in this commit", path = path))?;
+        if entry.kind == amonhen_model::TreeEntryKind::Folder
+            || entry.kind == amonhen_model::TreeEntryKind::Submodule
+        {
+            return Err(tr!("{path} isn’t a file", path = path).into());
+        }
+        let data = self.backend.blob(&entry.oid)?;
+        Ok(DiffView::new(&diff::whole_file(data), profile).with_path(path))
     }
 
     /// `changes` のすべてのファイルの差分（History で全ファイルを縦に並べて見せる）。ファイルの数だけ blob を読んで
     /// 差分を取るので、裏のスレッドで呼ぶ。
     pub fn stacked_diff(&self, changes: &[FileChange]) -> Result<diff::StackedDiff> {
+        // ファイルの多いコミットは、見出しだけ並べて、開いたファイルの差分だけを取る（`set_stacked_context`）。
+        if changes.len() > Self::STACK_EAGER {
+            let files = changes
+                .iter()
+                .map(|c| {
+                    let mut d = diff::whole_file(Vec::new());
+                    d.pending = Some(Box::new(c.clone()));
+                    (c.path.clone(), d)
+                })
+                .collect();
+            return Ok(diff::StackedDiff { files });
+        }
         if let Some(diffs) = self.change_diffs(changes)? {
             let files = changes.iter().map(|c| c.path.clone()).zip(diffs).collect();
             return Ok(diff::StackedDiff { files });
@@ -981,20 +1083,25 @@ impl Repository {
             .flatten()
             .collect();
         self.backend.prefetch_blobs(&ids)?;
-        let one = |c: &FileChange| Ok((c.path.clone(), self.change_diff(c)?));
+        let paths: Vec<&str> = changes.iter().map(|c| c.path.as_str()).collect();
+        let attrs = self.diff_attributes(&paths);
+        let items: Vec<_> = changes.iter().zip(&attrs).collect();
+        let one = |&(c, a): &(&FileChange, &amonhen_model::DiffAttributes)| {
+            Ok((c.path.clone(), self.change_diff(c, a)?))
+        };
         // ファイルごとの差分は独立しているので、多ければ分けて並列に取る（コミットを選んでから表示までの時間）。
         let threads = std::thread::available_parallelism()
             .map_or(1, |n| n.get())
             .min(8);
         if changes.len() < 4 || threads < 2 {
-            let files = changes.iter().map(one).collect::<Result<_>>()?;
+            let files = items.iter().map(one).collect::<Result<_>>()?;
             return Ok(diff::StackedDiff { files });
         }
         let chunk = changes.len().div_ceil(threads);
         // 分けたスレッドでも、共有の daemon なら要求した FE の環境と言語で動かす。
         let carried = &amonhen_model::process::carry();
         let parts: Vec<Result<Vec<_>>> = std::thread::scope(|scope| {
-            let handles: Vec<_> = changes
+            let handles: Vec<_> = items
                 .chunks(chunk)
                 .map(|part| {
                     scope.spawn(move || {
@@ -1168,7 +1275,28 @@ impl Repository {
         })
     }
 
-    fn change_diff(&self, change: &FileChange) -> Result<FileDiff> {
+    /// 差分の見せ方にかかる属性。引けなければ既定のもの（見出しの関数名が既定の規則になるだけなので、差分は出す）。
+    fn diff_attributes(&self, paths: &[&str]) -> Vec<amonhen_model::DiffAttributes> {
+        match self.backend.diff_attributes(paths) {
+            Ok(attrs) if attrs.len() == paths.len() => attrs,
+            _ => vec![amonhen_model::DiffAttributes::default(); paths.len()],
+        }
+    }
+
+    /// `path` の 2 つの版の、前後 3 行の差分（見出しの関数名は `path` の属性の規則で）。
+    fn path_diff(&self, path: &str, old: Arc<Vec<u8>>, new: Arc<Vec<u8>>) -> FileDiff {
+        let attrs = self.diff_attributes(&[path]);
+        let funcname = crate::funcname::FuncName::new(attrs[0].funcname.as_ref());
+        let mut diff = diff::file_diff_with(old, new, 3, &funcname);
+        diff.generated = attrs[0].generated;
+        diff
+    }
+
+    fn change_diff(
+        &self,
+        change: &FileChange,
+        attrs: &amonhen_model::DiffAttributes,
+    ) -> Result<FileDiff> {
         let side = |id: &Option<Oid>| -> Result<Arc<Vec<u8>>> {
             match id {
                 None => Ok(Arc::default()),
@@ -1179,11 +1307,11 @@ impl Repository {
                 Some(id) => self.backend.blob(id),
             }
         };
-        Ok(diff::file_diff(
-            side(&change.old_id)?,
-            side(&change.new_id)?,
-            3,
-        ))
+        let funcname = crate::funcname::FuncName::new(attrs.funcname.as_ref());
+        let mut diff =
+            diff::file_diff_with(side(&change.old_id)?, side(&change.new_id)?, 3, &funcname);
+        diff.generated = attrs.generated;
+        Ok(diff)
     }
 
     /// 最後に読んだ作業ツリーと index の状態（まだ読んでいなければ読む）。
@@ -1238,7 +1366,7 @@ impl Repository {
             let line_endings = self.line_endings(entry, &index)?;
             (index, worktree, line_endings)
         };
-        let file = diff::file_diff(old, new, 3);
+        let file = self.path_diff(&entry.path, old, new);
         let view = DiffView::new(&file, profile).with_path(&entry.path);
         Ok(WorkingDiff {
             entry: entry.clone(),
@@ -1307,7 +1435,7 @@ impl Repository {
             b'D' => Arc::default(),
             _ => self.backend.worktree_file(&entry.path)?,
         };
-        let file = diff::file_diff(head, worktree, 3);
+        let file = self.path_diff(&entry.path, head, worktree);
         let Some(staged) = diff::staged_lines(&file, &index) else {
             return Ok(None);
         };
@@ -2078,6 +2206,157 @@ mod tests {
         repo.flush_cache().unwrap();
         let repo = Repository::with_cache(GixBackend::open(&dir).unwrap(), cache);
         assert_eq!(repo.load_cached_history().unwrap().graph.len(), 2);
+    }
+
+    #[test]
+    fn hunk_headers_name_the_function_as_git_does_and_generated_files_are_marked() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("repo");
+        std::fs::create_dir(&dir).unwrap();
+        git(&dir, &["init", "-q"]);
+        git(
+            &dir,
+            &["config", "diff.py.xfuncname", "^[ \t]*(def [a-z_]+)"],
+        );
+        git(
+            &dir,
+            &["config", "diff.basic.funcname", "^\\(sub [a-z]*\\)"],
+        );
+        std::fs::write(
+            dir.join(".gitattributes"),
+            "*.py diff=py\n*.pl diff=basic\ngen/** linguist-generated\nCargo.lock -linguist-generated\n",
+        )
+        .unwrap();
+        let body = |change: &str| {
+            let mut lines: Vec<String> = (1..=30).map(|i| format!("    x{i} = {i}")).collect();
+            lines[20] = format!("    x21 = {change}");
+            lines.join("\n") + "\n"
+        };
+        let files = |change: &str| {
+            [
+                (
+                    "a.py",
+                    format!("class A:\n  def run_it(self):\n{}", body(change)),
+                ),
+                ("b.pl", format!("sub hello {{\n{}", body(change))),
+                ("c.rs", format!("fn main() {{\n{}", body(change))),
+                ("gen/out.js", format!("var a;\n{}", body(change))),
+                ("Cargo.lock", format!("v\n{}", body(change))),
+            ]
+        };
+        std::fs::create_dir(dir.join("gen")).unwrap();
+        for (name, text) in files("1") {
+            std::fs::write(dir.join(name), text).unwrap();
+        }
+        git(&dir, &["add", "-A"]);
+        git(&dir, &["commit", "-q", "-m", "first"]);
+        for (name, text) in files("2") {
+            std::fs::write(dir.join(name), text).unwrap();
+        }
+        git(&dir, &["commit", "-qam", "second"]);
+
+        let out = Command::new("git")
+            .args(["diff", "HEAD~", "HEAD"])
+            .current_dir(&dir)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .output()
+            .unwrap();
+        let expected: Vec<String> = String::from_utf8(out.stdout)
+            .unwrap()
+            .lines()
+            .filter(|l| l.starts_with("@@"))
+            .map(str::to_owned)
+            .collect();
+
+        let repo = Repository::with_cache(GixBackend::open(&dir).unwrap(), tmp.path().join("c"));
+        let head = repo.backend.head().unwrap().unwrap();
+        let mut changes = repo.commit_changes(&head).unwrap();
+        changes.sort_by(|a, b| a.path.cmp(&b.path));
+        let stacked = repo.stacked_diff(&changes).unwrap();
+        let headers: Vec<String> = stacked
+            .files
+            .iter()
+            .map(|(_, d)| d.headers.clone())
+            .collect();
+        // git の出力もパスの順（Cargo.lock, a.py, b.pl, c.rs, gen/out.js）。
+        assert_eq!(headers, expected);
+        assert!(expected[1].ends_with("@@ def run_it"), "{expected:?}");
+        assert!(expected[2].ends_with("@@ sub hello"), "{expected:?}");
+        assert!(expected[3].ends_with("@@ fn main() {"), "{expected:?}");
+        let generated: Vec<Option<bool>> = stacked.files.iter().map(|(_, d)| d.generated).collect();
+        assert_eq!(generated, [Some(false), None, None, None, Some(true)]);
+    }
+
+    #[test]
+    fn a_commit_with_many_files_loads_each_diff_when_opened() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("repo");
+        std::fs::create_dir(&dir).unwrap();
+        git(&dir, &["init", "-q"]);
+        let count = Repository::STACK_EAGER + 1;
+        for i in 0..count {
+            std::fs::write(dir.join(format!("f{i:03}.txt")), "a\n").unwrap();
+        }
+        git(&dir, &["add", "-A"]);
+        git(&dir, &["commit", "-q", "-m", "first"]);
+        for i in 0..count {
+            std::fs::write(dir.join(format!("f{i:03}.txt")), "b\n").unwrap();
+        }
+        git(&dir, &["commit", "-qam", "second"]);
+        let repo = Repository::with_cache(GixBackend::open(&dir).unwrap(), tmp.path().join("c"));
+        let head = repo.backend.head().unwrap().unwrap();
+        let changes = repo.commit_changes(&head).unwrap();
+        let mut stacked = repo.stacked_diff(&changes).unwrap();
+        assert!(stacked.files.iter().all(|(_, d)| d.pending.is_some()));
+        let view = stacked.view(&[], &FrontendProfile::MACOS);
+        assert_eq!(view.rows.len(), count);
+        assert!(view.rows[0].flags & DiffRow::PENDING != 0);
+        repo.set_stacked_context(&mut stacked, 0, 3).unwrap();
+        let (_, first) = &stacked.files[0];
+        assert!(first.pending.is_none());
+        assert_eq!((first.added, first.removed), (1, 1));
+        let view = stacked.view(&[], &FrontendProfile::MACOS);
+        assert_eq!(view.rows.len(), count + 3);
+        assert_eq!(view.rows[0].flags & DiffRow::PENDING, 0);
+    }
+
+    #[test]
+    fn stacked_context_grows_per_file_and_tree_file_lists_the_whole_text() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("repo");
+        std::fs::create_dir(&dir).unwrap();
+        git(&dir, &["init", "-q"]);
+        let body = |change: &str| {
+            let mut lines: Vec<String> = (1..=30).map(|i| format!("x{i}")).collect();
+            lines[14] = change.to_owned();
+            lines.join("\n") + "\n"
+        };
+        std::fs::write(dir.join("a.txt"), body("old")).unwrap();
+        std::fs::write(dir.join("same.txt"), "one\ntwo\n").unwrap();
+        git(&dir, &["add", "-A"]);
+        git(&dir, &["commit", "-q", "-m", "first"]);
+        std::fs::write(dir.join("a.txt"), body("new")).unwrap();
+        git(&dir, &["commit", "-qam", "second"]);
+
+        let repo = Repository::with_cache(GixBackend::open(&dir).unwrap(), tmp.path().join("c"));
+        let head = repo.backend.head().unwrap().unwrap();
+        let changes = repo.commit_changes(&head).unwrap();
+        let mut stacked = repo.stacked_diff(&changes).unwrap();
+        // 前後 3 行: 見出しと 3 + 2 + 3 行。
+        assert_eq!(stacked.files[0].1.lines.len(), 9);
+        repo.set_stacked_context(&mut stacked, 0, 10).unwrap();
+        assert_eq!(stacked.files[0].1.lines.len(), 1 + 10 + 2 + 10);
+        repo.set_stacked_context(&mut stacked, 0, u32::MAX).unwrap();
+        assert_eq!(stacked.files[0].1.lines.len(), 1 + 29 + 2);
+        assert_eq!(stacked.files[0].1.headers, "@@ -1,30 +1,30 @@");
+
+        let profile = FrontendProfile::MACOS;
+        let view = repo.tree_file(&head, "same.txt", &profile).unwrap();
+        assert_eq!(view.rows.len(), 2);
+        assert!(view.rows.iter().all(|r| r.kind == DiffRow::CONTEXT));
+        assert_eq!((view.rows[1].old_no, view.rows[1].new_no), (2, 2));
+        assert!(repo.tree_file(&head, "missing.txt", &profile).is_err());
     }
 
     #[test]

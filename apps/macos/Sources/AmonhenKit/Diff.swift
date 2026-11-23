@@ -11,6 +11,13 @@ public struct FileChangeItem: Hashable, Sendable {
     public let path: String
     public let oldPath: String?
     public let isSubmodule: Bool
+
+    /// 一覧に出す名前。名前を変えた・コピーしたファイルは、git の `--stat` と同じく `src/{old.rs → new.rs}`。
+    public var label: String {
+        guard let oldPath, oldPath != path, let out = amonhen_rename_label(oldPath, path) else { return path }
+        defer { amonhen_string_free(out) }
+        return String(cString: out)
+    }
 }
 
 /// コミットで変わったファイルの一覧。差分はファイルごとに `diff(at:)` で取る。
@@ -46,6 +53,24 @@ public final class CommitChanges: @unchecked Sendable {
         return FileDiff(raw: raw, changes: self)
     }
 
+    /// `index` 番目のファイルの、前後 `context` 行の差分（`UInt32.max` ならファイル全体）。裏のスレッドで呼ぶ。
+    public func diff(at index: Int, context: UInt32) throws -> FileDiff {
+        guard let raw = amonhen_file_diff_context(
+            repository.raw, raw, UInt32(index), context, UInt8(AmonhenEncoding_Utf16.rawValue)) else {
+            throw AmonhenError.last()
+        }
+        return FileDiff(raw: raw, changes: self)
+    }
+
+    /// `index` 番目のファイルの、変更前（`after` が false）か変更後の中身。その側にない（追加の前・削除の後）か、
+    /// 読めなければ nil。裏のスレッドで呼ぶ。
+    public func blob(at index: Int, after: Bool) -> Data? {
+        var length: UInt = 0
+        guard let bytes = amonhen_change_blob(repository.raw, raw, UInt32(index), after, &length) else { return nil }
+        defer { amonhen_blob_free(bytes, length) }
+        return Data(bytes: bytes, count: Int(length))
+    }
+
     /// すべてのファイルの差分（全ファイルを縦に並べて見せる）。ファイルの数だけ blob を読むので、裏のスレッドで呼ぶ。
     public func stacked() throws -> StackedDiff {
         guard let raw = amonhen_stacked_diff(repository.raw, raw) else { throw AmonhenError.last() }
@@ -70,12 +95,26 @@ public final class StackedDiff: @unchecked Sendable {
 
     public var count: Int { Int(amonhen_stacked_count(raw)) }
 
+    /// `file` 番目のファイルの差分を、前後 `context` 行で取り直す（`UInt32.max` ならファイル全体）。まだ差分を
+    /// 取っていないファイル（ファイルの多いコミット）なら、ここで取る。表示は `view(collapsed:)` で作り直す。
+    /// 表示を作っている間に呼ばないこと（裏のスレッドで呼ぶなら、終わるまで `view` を呼ばない）。
+    public func setContext(_ file: Int, _ context: UInt32, in repository: Repository) throws {
+        guard amonhen_stacked_set_context(repository.raw, raw, UInt32(file), context) else { throw AmonhenError.last() }
+    }
+
+    /// `file` 番目のファイルが生成物か（最初は畳む）。`.gitattributes` の `linguist-generated`、なければ lock ファイルなど。
+    public func isGenerated(_ file: Int) -> Bool { amonhen_stacked_generated(raw, UInt32(file)) }
+
     /// 各ファイルの見出し（ふつうはパス。とびとびに選んだコミットでは「パス — 短い ID」）。
-    public private(set) lazy var names: [String] = {
-        // すべて畳むと見出しの行だけになる。
-        let headers = view(collapsed: [Bool](repeating: true, count: count))
-        return (0..<headers.rowCount).map { headers.text(row: $0) }
-    }()
+    public private(set) lazy var names: [String] = (0..<headers.rowCount).map { headers.text(row: $0) }
+
+    /// 全ファイルの追加と削除の行数の合計（バイナリのファイルは数えない）。
+    public private(set) lazy var totals: (added: Int, removed: Int) = headers.withRows { rows in
+        rows.reduce((0, 0)) { ($0.0 + Int($1.new_no), $0.1 + Int($1.old_no)) }
+    }
+
+    /// すべて畳んだ表示（見出しの行だけ。`old_no` は削除、`new_no` は追加の行数）。
+    private lazy var headers = view(collapsed: [Bool](repeating: true, count: count))
 
     /// 各ファイルの見出しの行（`AmonhenDiffRow_FILE`）に、畳まないファイルの差分の行を続けたもの。
     /// `collapsed[i]` が true のファイルは見出しだけ。
@@ -221,6 +260,66 @@ public final class SyntaxSpans: @unchecked Sendable {
 
     public func withSpans<R>(_ body: (UnsafeBufferPointer<AmonhenSyntaxSpan>) throws -> R) rethrows -> R {
         try withExtendedLifetime(self) { try body(UnsafeBufferPointer(start: view.spans, count: count)) }
+    }
+}
+
+/// コミットの木の 1 段にあるもの（`Repository.treeEntries`）。
+public struct TreeEntry: Decodable, Sendable {
+    public let name: String
+    /// `folder`・`file`・`executable`・`link`・`submodule`。
+    public let kind: String
+    /// blob・木の ID（40 桁）。
+    public let oid: String
+    public var isFolder: Bool { kind == "folder" }
+}
+
+extension Repository {
+    /// コミット `commit`（40 桁）の木の `path`（根からの相対パス。空なら根）にあるもの。フォルダを先に、名前の順。
+    public func treeEntries(commit: String, path: String) throws -> [TreeEntry] {
+        struct Info: Decodable { let entries: [TreeEntry] }
+        return try info(["op": "treeEntries", "oid": commit, "path": path], as: Info.self).entries
+    }
+
+    /// コミット `commit`（20 バイト）の `path` の中身を、変わっていない行として並べた表示。裏のスレッドで呼ぶ。
+    public func treeFile(commit: Data, path: String) throws -> FileDiff {
+        let raw = commit.withUnsafeBytes {
+            amonhen_tree_file(self.raw, $0.baseAddress!.assumingMemoryBound(to: UInt8.self), path, UInt8(AmonhenEncoding_Utf16.rawValue))
+        }
+        guard let raw else { throw AmonhenError.last() }
+        return FileDiff(raw: raw, owner: self, view: amonhen_diff_view(raw), free: { amonhen_diff_free($0) })
+    }
+
+    /// blob `oid`（40 桁）の中身。読めなければ nil。裏のスレッドで呼ぶ。
+    public func blob(oid: String) -> Data? {
+        guard let id = Data(hex: oid), id.count == 20 else { return nil }
+        var length: UInt = 0
+        let bytes = id.withUnsafeBytes {
+            amonhen_blob_read(raw, $0.baseAddress!.assumingMemoryBound(to: UInt8.self), &length)
+        }
+        guard let bytes else { return nil }
+        defer { amonhen_blob_free(bytes, length) }
+        return Data(bytes: bytes, count: Int(length))
+    }
+}
+
+extension Data {
+    /// 16 進の文字列から（偶数桁、16 進でない文字があれば nil）。
+    init?(hex: String) {
+        var bytes: [UInt8] = []
+        bytes.reserveCapacity(hex.utf8.count / 2)
+        var high: UInt8?
+        for c in hex.utf8 {
+            let v: UInt8
+            switch c {
+            case 48...57: v = c - 48
+            case 97...102: v = c - 87
+            case 65...70: v = c - 55
+            default: return nil
+            }
+            if let h = high { bytes.append(h << 4 | v); high = nil } else { high = v }
+        }
+        guard high == nil else { return nil }
+        self.init(bytes)
     }
 }
 

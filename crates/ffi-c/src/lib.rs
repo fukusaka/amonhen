@@ -363,6 +363,23 @@ pub extern "C" fn amonhen_set_fsmonitor(enabled: bool) {
     amonhen_backend_cli::set_fsmonitor(enabled);
 }
 
+/// 名前を変えたファイルの見せ方（git の `--stat` と同じく、共通の前と後ろをくくり出す: `src/{old.rs → new.rs}`）。
+/// `amonhen_string_free` で解放する。引数が読めなければ NULL。
+///
+/// # Safety
+/// `old`・`new` は NUL 終端の UTF-8 であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_rename_label(
+    old: *const c_char,
+    new: *const c_char,
+) -> *mut c_char {
+    let (Ok(old), Ok(new)) = (str_arg(old), str_arg(new)) else {
+        return std::ptr::null_mut();
+    };
+    CString::new(amonhen_model::rename_label(old, new))
+        .map_or(std::ptr::null_mut(), CString::into_raw)
+}
+
 /// この機械の git の版（`2.39.5`）。読めなければ NULL。`amonhen_string_free` で解放する。git を起動する
 /// ことがあるので（初めの 1 回だけ）、裏のスレッドで呼ぶ。
 #[unsafe(no_mangle)]
@@ -1456,6 +1473,104 @@ pub unsafe extern "C" fn amonhen_file_diff(
     }
 }
 
+/// blob `oid`（20 バイト）の中身。長さを `len` に書く（`amonhen_blob_free` で解放する）。読めなければ NULL
+/// （`amonhen_last_error`）。画像の比較や、その時点の画像を見せるのに使う。
+///
+/// # Safety
+/// `repo` は有効、`oid` は 20 バイトを読める領域、`len` は書ける領域であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_blob_read(
+    repo_ptr: *const AmonhenRepo,
+    oid: *const u8,
+    len: *mut usize,
+) -> *mut u8 {
+    let oid = oid!(oid);
+    match repo!(repo_ptr).blob(&oid) {
+        Ok(data) => blob_out(&data, len),
+        Err(e) => {
+            set_error(e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// `changes` の `index` 番目のファイルの、変更前（`after` が false）か変更後の中身（`amonhen_blob_free` で解放
+/// する）。その側にない（追加の前・削除の後）なら NULL で、`len` は 0。
+///
+/// # Safety
+/// `repo` と `changes` は有効、`len` は書ける領域であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_change_blob(
+    repo_ptr: *const AmonhenRepo,
+    changes: *const AmonhenChanges,
+    index: u32,
+    after: bool,
+    len: *mut usize,
+) -> *mut u8 {
+    let c = handle!(changes, ChangesHandle);
+    if let Some(len) = unsafe { len.as_mut() } {
+        *len = 0;
+    }
+    let Some(change) = c.changes.get(index as usize) else {
+        set_error(tr!("File index out of range"));
+        return std::ptr::null_mut();
+    };
+    let Some(id) = (if after { change.new_id } else { change.old_id }) else {
+        return std::ptr::null_mut();
+    };
+    match repo!(repo_ptr).blob(&id) {
+        Ok(data) => blob_out(&data, len),
+        Err(e) => {
+            set_error(e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+fn blob_out(data: &[u8], len: *mut usize) -> *mut u8 {
+    if let Some(len) = unsafe { len.as_mut() } {
+        *len = data.len();
+    }
+    Box::into_raw(data.to_vec().into_boxed_slice()).cast()
+}
+
+/// `amonhen_blob_read`・`amonhen_change_blob` が返したものを解放する。
+///
+/// # Safety
+/// `data` と `len` は、それらが返した組であること（NULL ならなにもしない）。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_blob_free(data: *mut u8, len: usize) {
+    if !data.is_null() {
+        drop(unsafe { Box::from_raw(std::ptr::slice_from_raw_parts_mut(data, len)) });
+    }
+}
+
+/// `amonhen_file_diff` の、前後 `context` 行のもの（`UINT32_MAX` ならファイル全体）。
+///
+/// # Safety
+/// `repo` と `changes` は有効であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_file_diff_context(
+    repo_ptr: *const AmonhenRepo,
+    changes: *const AmonhenChanges,
+    index: u32,
+    context: u32,
+    encoding: AmonhenEncoding,
+) -> *mut AmonhenDiff {
+    let c = handle!(changes, ChangesHandle);
+    let Some(change) = c.changes.get(index as usize) else {
+        set_error(tr!("File index out of range"));
+        return std::ptr::null_mut();
+    };
+    match repo!(repo_ptr).file_diff_with_context(change, context, &profile(encoding)) {
+        Ok(view) => Box::into_raw(Box::new(view)).cast(),
+        Err(e) => {
+            set_error(e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
 /// `changes` のすべてのファイルの差分（`amonhen_stacked_free` で解放する）。ファイルの数だけ blob を読むので、
 /// 裏のスレッドで呼ぶ。
 ///
@@ -1491,6 +1606,61 @@ pub unsafe extern "C" fn amonhen_stacked_view(
     let s = handle!(stacked, amonhen_core::diff::StackedDiff);
     let collapsed = array!(collapsed, count);
     Box::into_raw(Box::new(s.view(collapsed, &profile(encoding)))).cast()
+}
+
+/// `stacked` の `file` 番目のファイルの差分を、前後 `context` 行で取り直す（`UINT32_MAX` ならファイル全体）。
+/// まだ差分を取っていないファイル（見出しの `PENDING`）なら、ここで取る。表示は `amonhen_stacked_view` で作り直す。
+/// 読めなければ false（`amonhen_last_error`）。
+///
+/// # Safety
+/// `repo` と `stacked` は有効で、`stacked` をほかのスレッドで同時に使っていないこと。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_stacked_set_context(
+    repo_ptr: *const AmonhenRepo,
+    stacked: *mut AmonhenStacked,
+    file: u32,
+    context: u32,
+) -> bool {
+    let Some(s) = (unsafe { stacked.cast::<amonhen_core::diff::StackedDiff>().as_mut() }) else {
+        set_error("NULL was passed as stacked");
+        return false;
+    };
+    match repo!(repo_ptr).set_stacked_context(s, file as usize, context) {
+        Ok(()) => true,
+        Err(e) => {
+            set_error(e);
+            false
+        }
+    }
+}
+
+/// コミット `commit`（20 バイト）の `path` の中身を、変わっていない行として並べた表示（`amonhen_diff_free` で
+/// 解放する）。History の「すべてのファイル」で、このコミットで変えていないファイルを開く。
+///
+/// # Safety
+/// `repo` は有効、`commit` は 20 バイトを読める領域、`path` は NUL で終わる UTF-8 であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_tree_file(
+    repo_ptr: *const AmonhenRepo,
+    commit: *const u8,
+    path: *const c_char,
+    encoding: AmonhenEncoding,
+) -> *mut AmonhenDiff {
+    let commit = oid!(commit);
+    let path = match str_arg(path) {
+        Ok(path) => path,
+        Err(e) => {
+            set_error(e);
+            return std::ptr::null_mut();
+        }
+    };
+    match repo!(repo_ptr).tree_file(&commit, path, &profile(encoding)) {
+        Ok(view) => Box::into_raw(Box::new(view)).cast(),
+        Err(e) => {
+            set_error(e);
+            std::ptr::null_mut()
+        }
+    }
 }
 
 /// History で選んだコミット（`rows` は行、順不同）の全ファイルの差分（`amonhen_stacked_free` で解放する）。
@@ -1542,6 +1712,18 @@ pub unsafe extern "C" fn amonhen_stacked_count(stacked: *const AmonhenStacked) -
     handle!(stacked, amonhen_core::diff::StackedDiff)
         .files
         .len() as u32
+}
+
+/// `file` 番目のファイルが生成物か（最初は畳む）。`.gitattributes` の `linguist-generated`、なければ lock ファイルなど。
+///
+/// # Safety
+/// `stacked` は有効であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_stacked_generated(
+    stacked: *const AmonhenStacked,
+    file: u32,
+) -> bool {
+    handle!(stacked, amonhen_core::diff::StackedDiff).generated(file as usize)
 }
 
 /// # Safety

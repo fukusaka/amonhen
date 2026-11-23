@@ -18,9 +18,15 @@ becomes the GitHub Release notes.
   name. These are its first stages; see `docs/tui.md`.
 - Quick Open in `amonhen tui` also lists recently opened repositories and those found under the local folders to
   scan, like the apps'.
+- History can widen a hunk's context, show a whole file, compare images (side by side, swipe, onion skin or
+  differing pixels) and show All Files: the tree at the commit and its files' contents, with that commit's lines
+  marked.
 
 #### Changed
 
+- History's right column is rebuilt in the macOS and GTK4 apps: the details stay on top and the changed files are
+  the diff's own file headers, folded at first, as a list or a tree, with one bar for Changes / All Files, totals and
+  expanding. Hunk headers name the enclosing function as `git diff` does and renames read `src/{old.rs → new.rs}`.
 - Opening a repository from the repository page puts it in a new tab beside the page instead of replacing the page,
   in the macOS and GTK4 apps.
 - The macOS and GTK4 apps keep recently opened repositories in `recent.json` beside `bookmarks.json`, shared with
