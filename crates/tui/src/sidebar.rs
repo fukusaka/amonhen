@@ -75,6 +75,8 @@ pub struct Sidebar {
     conflicts: usize,
     /// 署名のあるタグの印（名前 → 印と色）。
     tag_marks: std::collections::HashMap<String, (char, Color)>,
+    /// submodule の印（パス → 印と色）。
+    submodule_marks: std::collections::HashMap<String, (char, Color)>,
 }
 
 impl Default for Sidebar {
@@ -94,6 +96,7 @@ impl Default for Sidebar {
             height: 0,
             conflicts: 0,
             tag_marks: Default::default(),
+            submodule_marks: Default::default(),
         }
     }
 }
@@ -138,6 +141,7 @@ impl Sidebar {
             ("remote", tr!("Remotes")),
             ("tag", tr!("Tags")),
             ("stash", tr!("Stashes")),
+            ("submodule", tr!("Submodules")),
         ] {
             let mut of_kind = refs["entries"]
                 .as_array()
@@ -332,6 +336,19 @@ impl Sidebar {
             .collect()
     }
 
+    /// submodule の様子の印（パス → 印と色）。
+    pub fn set_submodule_marks(&mut self, marks: std::collections::HashMap<String, (char, Color)>) {
+        self.submodule_marks = marks;
+    }
+
+    /// submodule のパス。
+    pub fn submodule_paths(&self) -> Vec<String> {
+        (self.refs["entries"].as_array().into_iter().flatten())
+            .filter(|e| e["kind"] == "submodule")
+            .filter_map(|e| e["name"].as_str().map(str::to_owned))
+            .collect()
+    }
+
     /// 署名のあるタグの印。
     pub fn set_tag_marks(&mut self, marks: std::collections::HashMap<String, (char, Color)>) {
         self.tag_marks = marks;
@@ -465,11 +482,16 @@ impl Sidebar {
                     buf.set_stringn(area.x + 2, y, tr!("Reflog"), width - 2, Style::new());
                 }
                 Row::Ref {
-                    kind: "tag",
+                    kind: kind @ ("tag" | "submodule"),
                     label: name,
                     ..
-                } if self.tag_marks.contains_key(name) => {
-                    let (mark, color) = self.tag_marks[name];
+                } if self.tag_marks.contains_key(name) && *kind == "tag"
+                    || self.submodule_marks.contains_key(name) && *kind == "submodule" =>
+                {
+                    let (mark, color) = match *kind {
+                        "tag" => self.tag_marks[name],
+                        _ => self.submodule_marks[name],
+                    };
                     let room = width.saturating_sub(4);
                     buf.set_stringn(area.x + 2, y, fit(name, room), room, Style::new());
                     right(area, y, buf, &mark.to_string(), Style::new().fg(color));

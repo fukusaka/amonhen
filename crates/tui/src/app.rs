@@ -1323,6 +1323,13 @@ impl App {
                         self.history.opened(&refs, &history);
                         self.sidebar.set_refs(&refs);
                         // タグの署名の印（アプリのタグの行の印）。タグが変わったときだけ読む（検証の結果はコアが覚える）。
+                        // submodule の様子の印（取り出していない・別のコミット・中に変更・コンフリクト）。
+                        if !self.sidebar.submodule_paths().is_empty() {
+                            self.send(Request::Run {
+                                name: "submoduleMarks",
+                                command: json!({"op": "submodules"}),
+                            });
+                        }
                         let tags = self.sidebar.tag_names();
                         if !tags.is_empty() && tags != self.tag_signature_names {
                             self.tag_signature_names = tags.clone();
@@ -3241,6 +3248,30 @@ impl App {
                     pick.selected = 0;
                     self.dirty = true;
                 }
+                return;
+            }
+            // アプリの submodule の印の代わりに、1 文字: コンフリクト !、取り出していない ○、記録と違うコミット ≠、
+            // 中に変更 ✎。
+            "submoduleMarks" => {
+                let marks = (reply["info"]["submodules"].as_array().into_iter().flatten())
+                    .filter_map(|s| {
+                        let path = s["path"].as_str()?.to_owned();
+                        let mark = if s["conflict"] == true {
+                            ('!', Color::Red)
+                        } else if s["initialized"] == false {
+                            ('○', Color::Indexed(244))
+                        } else if s["moved"] == true {
+                            ('≠', Color::Yellow)
+                        } else if s["changed"] == true {
+                            ('✎', Color::Yellow)
+                        } else {
+                            return None;
+                        };
+                        Some((path, mark))
+                    })
+                    .collect();
+                self.sidebar.set_submodule_marks(marks);
+                self.dirty = true;
                 return;
             }
             "tagSignatures" => {
@@ -5748,6 +5779,35 @@ impl App {
                     command: json!({"op": "stashBases"}),
                 });
             }
+            // submodule は、TUI をそこで開き直す（アプリの Open in New Window の代わり）。取り出していなければ、
+            // そう言う。
+            Some(Picked::Commit(_))
+                if self
+                    .sidebar
+                    .picked_ref()
+                    .is_some_and(|r| r.0 == "submodule") =>
+            {
+                let path = self.sidebar.picked_ref().map_or("", |r| r.1).to_owned();
+                let full = self
+                    .workdir
+                    .as_deref()
+                    .map(|w| format!("{}/{path}", w.trim_end_matches(['/', '\\'])));
+                match full {
+                    Some(full)
+                        if std::path::Path::new(&full).join(".git").exists()
+                            || !self.files_here =>
+                    {
+                        self.open_worktree = Some(full);
+                        self.quit = true;
+                    }
+                    _ => {
+                        self.notice = Some(tr!(
+                            "{path} isn’t checked out: Update Submodules in the command list first",
+                            path = path
+                        ))
+                    }
+                }
+            }
             // ほかの worktree は、TUI をそこで開き直す（アプリが新しい窓で開くのの代わり）。開いているものは、
             // その場所を知らせるだけ。
             Some(Picked::Commit(_))
@@ -7780,6 +7840,75 @@ mod tests {
             Some(crate::Next::Location("/w/alpha".to_owned()))
         );
         assert!(app.quit());
+    }
+
+    /// サイドバーの Submodules: submodule が並び、中に変更があれば ✎。Enter で TUI をそこで開き直す。
+    #[test]
+    fn submodules_are_listed_and_open_there() {
+        let (dir, mut app, rx) = app_with_history();
+        let source = tempfile::tempdir().unwrap();
+        let git = |at: &std::path::Path, args: &[&str]| {
+            let out = amonhen_model::process::command("git")
+                .args(["-c", "user.name=Ann", "-c", "user.email=ann@example.com"])
+                .args([
+                    "-c",
+                    "commit.gpgsign=false",
+                    "-c",
+                    "protocol.file.allow=always",
+                ])
+                .args(args)
+                .current_dir(at)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "git {args:?}: {out:?}");
+        };
+        git(source.path(), &["init", "-q"]);
+        std::fs::write(source.path().join("lib.txt"), "lib\n").unwrap();
+        git(source.path(), &["add", "."]);
+        git(source.path(), &["commit", "-q", "-m", "Lib"]);
+        git(
+            dir.path(),
+            &[
+                "submodule",
+                "add",
+                "-q",
+                source.path().to_str().unwrap(),
+                "lib",
+            ],
+        );
+        git(dir.path(), &["commit", "-q", "-m", "Add lib"]);
+        std::fs::write(dir.path().join("lib/lib.txt"), "changed\n").unwrap();
+        app.open();
+        crate::settle(&mut app, &rx).unwrap();
+        let key = |app: &mut App, code: KeyCode| {
+            app.handle(Event::Input(Input::Key(KeyEvent::new(
+                code,
+                KeyModifiers::NONE,
+            ))));
+        };
+        // 一番下の行が lib。中に変更があるので ✎。
+        for code in [KeyCode::Char('0'), KeyCode::Char('G')] {
+            key(&mut app, code);
+        }
+        crate::settle(&mut app, &rx).unwrap();
+        let mut buf = Buffer::empty(Rect::new(0, 0, 100, 12));
+        app.draw(&mut buf, Damage::ALL);
+        let text: String = (0..12)
+            .map(|y| (0..100).map(|x| buf[(x, y)].symbol()).collect::<String>() + "\n")
+            .collect();
+        assert!(text.contains("Submodules"), "{text}");
+        assert!(
+            text.lines().any(|l| l.contains("lib") && l.contains('✎')),
+            "{text}"
+        );
+        key(&mut app, KeyCode::Enter);
+        let Some(crate::Next::Worktree(opened)) = app.take_next() else {
+            panic!("the submodule to open");
+        };
+        assert_eq!(
+            std::fs::canonicalize(opened).unwrap(),
+            std::fs::canonicalize(dir.path().join("lib")).unwrap()
+        );
     }
 
     /// サイドバーの worktree で Enter: ほかの worktree なら TUI を閉じてそのパスを返し、開いているものなら場所を
