@@ -314,26 +314,154 @@ fn syntax_section() -> gtk::Box {
             settings::set_bool(theme::DIFF_STANDARD_COLORS, s.is_active());
         }
     });
-    // Markdown の図の配色（構文の色・pele・Mermaid のテーマ）
-    let schemes = amonhen_core::diagram::Scheme::all();
-    let labels: Vec<String> = schemes.iter().map(|s| diagram_scheme_label(*s)).collect();
-    let diagram =
-        gtk::DropDown::from_strings(&labels.iter().map(String::as_str).collect::<Vec<_>>());
+    // Markdown の図の配色（構文の色・pele・Mermaid のテーマ・読み込んだ Mermaid のテーマ）
+    let diagram = gtk::DropDown::from_strings(&[]);
     diagram.set_valign(gtk::Align::Center);
-    let current = amonhen_core::diagram::Scheme::from_key(
-        &settings::string(theme::DIAGRAM_COLORS).unwrap_or_default(),
-    );
-    diagram.set_selected(schemes.iter().position(|s| *s == current).unwrap_or(0) as u32);
-    diagram.connect_selected_notify(move |d| {
-        let key = schemes[(d.selected() as usize).min(schemes.len() - 1)].key();
-        if settings::string(theme::DIAGRAM_COLORS)
-            .as_deref()
-            .unwrap_or("syntax")
-            != key
-        {
-            settings::set_string(theme::DIAGRAM_COLORS, &key);
-        }
-    });
+    let diagram_keys: Rc<RefCell<Vec<String>>> = Rc::default();
+    let diagram_syncing = Rc::new(std::cell::Cell::new(false));
+    let mermaid_import = gtk::Button::with_label(&tr!("Import Mermaid Theme…"));
+    mermaid_import.set_halign(gtk::Align::Start);
+    let mermaid_imported = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    let diagram_refresh: Rc<dyn Fn()> = {
+        let (diagram, keys, syncing, list) = (
+            diagram.clone(),
+            diagram_keys.clone(),
+            diagram_syncing.clone(),
+            mermaid_imported.clone(),
+        );
+        Rc::new(move || {
+            use amonhen_core::diagram::{IMPORTED_PREFIX, Scheme};
+            syncing.set(true);
+            let imported = theme::imported_mermaid();
+            let mut entries: Vec<(String, String)> = Scheme::all()
+                .into_iter()
+                .map(|s| (s.key(), diagram_scheme_label(s)))
+                .collect();
+            entries.extend(
+                imported
+                    .iter()
+                    .map(|(name, _)| (format!("{IMPORTED_PREFIX}{name}"), name.clone())),
+            );
+            let new_keys: Vec<String> = entries.iter().map(|(k, _)| k.clone()).collect();
+            if *keys.borrow() != new_keys {
+                let labels: Vec<&str> = entries.iter().map(|(_, l)| l.as_str()).collect();
+                diagram.set_model(Some(&gtk::StringList::new(&labels)));
+                *keys.borrow_mut() = new_keys;
+            }
+            let current =
+                settings::string(theme::DIAGRAM_COLORS).unwrap_or_else(|| "syntax".into());
+            let index = keys
+                .borrow()
+                .iter()
+                .position(|k| *k == current)
+                .unwrap_or(0) as u32;
+            if diagram.selected() != index {
+                diagram.set_selected(index);
+            }
+            while let Some(child) = list.first_child() {
+                list.remove(&child);
+            }
+            for (name, _) in imported {
+                let line = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+                line.append(&gtk::Label::new(Some(&name)));
+                let kind = gtk::Label::new(Some("Mermaid"));
+                kind.add_css_class("dim-label");
+                kind.set_hexpand(true);
+                kind.set_xalign(0.0);
+                line.append(&kind);
+                let remove = gtk::Button::with_label(&tr!("Remove"));
+                remove.connect_clicked(move |_| {
+                    let mut themes = theme::imported_mermaid();
+                    themes.retain(|(n, _)| *n != name);
+                    if settings::string(theme::DIAGRAM_COLORS).as_deref()
+                        == Some(&format!("{IMPORTED_PREFIX}{name}"))
+                    {
+                        settings::set_string(theme::DIAGRAM_COLORS, "syntax");
+                    }
+                    theme::set_imported_mermaid(&themes);
+                });
+                line.append(&remove);
+                list.append(&line);
+            }
+            show_row(&list, list.first_child().is_some());
+            syncing.set(false);
+        })
+    };
+    {
+        let (keys, syncing) = (diagram_keys.clone(), diagram_syncing.clone());
+        diagram.connect_selected_notify(move |d| {
+            if syncing.get() {
+                return;
+            }
+            let key = keys.borrow().get(d.selected() as usize).cloned();
+            if let Some(key) = key
+                && settings::string(theme::DIAGRAM_COLORS)
+                    .as_deref()
+                    .unwrap_or("syntax")
+                    != key
+            {
+                settings::set_string(theme::DIAGRAM_COLORS, &key);
+            }
+        });
+    }
+    {
+        let failure = failure.clone();
+        mermaid_import.connect_clicked(move |button| {
+            let parent = button.root().and_downcast::<gtk::Window>();
+            let failure = failure.clone();
+            glib::spawn_future_local(async move {
+                let filter = gtk::FileFilter::new();
+                filter.set_name(Some("JSON"));
+                filter.add_suffix("json");
+                let filters = gio::ListStore::new::<gtk::FileFilter>();
+                filters.append(&filter);
+                let dialog = gtk::FileDialog::builder()
+                    .title(tr!("Import Mermaid Theme…"))
+                    .filters(&filters)
+                    .modal(true)
+                    .build();
+                let Ok(files) = dialog.open_multiple_future(parent.as_ref()).await else {
+                    return;
+                };
+                failure.set_visible(false);
+                let mut themes = theme::imported_mermaid();
+                let mut chosen = None;
+                for file in files.iter::<gio::File>().flatten() {
+                    let Some(path) = file.path() else { continue };
+                    let read = std::fs::read_to_string(&path)
+                        .map_err(|e| e.to_string())
+                        .and_then(|text| amonhen_core::diagram::MermaidConfig::parse(&text));
+                    match read {
+                        Ok(config) => {
+                            let name = path
+                                .file_stem()
+                                .unwrap_or_default()
+                                .to_string_lossy()
+                                .into_owned();
+                            themes.retain(|(n, _)| *n != name);
+                            themes.push((name.clone(), config));
+                            chosen = Some(name);
+                        }
+                        Err(e) => {
+                            failure.set_text(&tr!(
+                                "Couldn’t read {file}: {error}",
+                                file = path.file_name().unwrap_or_default().to_string_lossy(),
+                                error = e
+                            ));
+                            failure.set_visible(true);
+                        }
+                    }
+                }
+                theme::set_imported_mermaid(&themes);
+                if let Some(name) = chosen {
+                    settings::set_string(
+                        theme::DIAGRAM_COLORS,
+                        &format!("{}{name}", amonhen_core::diagram::IMPORTED_PREFIX),
+                    );
+                }
+            });
+        });
+    }
     let section = crate::reposettings::section(
         Some(&tr!("Color Theme")),
         &[
@@ -343,8 +471,10 @@ fn syntax_section() -> gtk::Box {
             row(&tr!("Diagram colors"), &diagram).upcast(),
             preview.clone().upcast(),
             import.clone().upcast(),
+            mermaid_import.clone().upcast(),
             failure.clone().upcast(),
             imported.clone().upcast(),
+            mermaid_imported.clone().upcast(),
         ],
     );
     // 一覧の並び（外観ごと）: System、合う外観のテーマ、ほかの外観のテーマ（macOS 版と同じ。間に線）。
@@ -485,6 +615,13 @@ fn syntax_section() -> gtk::Box {
         });
     });
     refresh();
+    diagram_refresh();
+    let d = diagram_refresh.clone();
+    settings::connect_changed_while(&section, move |key| {
+        if matches!(key, theme::DIAGRAM_COLORS | theme::IMPORTED_MERMAID_THEMES) {
+            d();
+        }
+    });
     let r = refresh.clone();
     settings::connect_changed_while(&section, move |key| {
         if matches!(
@@ -655,5 +792,7 @@ fn diagram_scheme_label(scheme: amonhen_core::diagram::Scheme) -> String {
         Scheme::Pele => "pele".into(),
         Scheme::Mermaid(None) => tr!("Mermaid (follows the appearance)"),
         Scheme::Mermaid(Some(theme)) => format!("Mermaid {}", theme.name()),
+        // 読み込んだテーマは名前で出す（ここには来ない）
+        Scheme::Imported => "Mermaid".into(),
     }
 }

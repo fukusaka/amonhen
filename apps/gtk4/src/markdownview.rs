@@ -523,11 +523,13 @@ impl<'a> Builder<'a> {
                 language,
                 text,
                 svg,
+                config,
                 error,
             } => {
                 let style = adw::StyleManager::default();
-                let colored = |svg: &str, dark: bool| {
-                    let (vars, backdrop) = crate::theme::diagram_palette(dark);
+                let own = config.clone();
+                let colored = move |svg: &str, dark: bool| {
+                    let (vars, backdrop) = crate::theme::diagram_palette(dark, own.as_ref());
                     amonhen_core::diagram::colorize(svg, &vars, backdrop)
                         .and_then(|s| crate::imagediff::texture(Some(s.as_bytes())))
                 };
@@ -591,6 +593,7 @@ impl<'a> Builder<'a> {
                             | crate::theme::SYNTAX_THEME_DARK
                             | crate::theme::IMPORTED_SYNTAX_THEMES
                             | crate::theme::DIAGRAM_COLORS
+                            | crate::theme::IMPORTED_MERMAID_THEMES
                     ) {
                         recolor();
                     }

@@ -20,6 +20,8 @@ pub const IMPORTED_SYNTAX_THEMES: &str = "importedSyntaxThemes";
 pub const DIFF_STANDARD_COLORS: &str = "diffStandardColors";
 /// Markdown の図の配色（`syntax`・`pele`・`mermaid`。macOS 版と同じ鍵）。
 pub const DIAGRAM_COLORS: &str = "diagramColors";
+/// 読み込んだ Mermaid のテーマ（名前 → mermaid-cli の設定の中身、JSON のオブジェクト。macOS 版と同じ鍵）。
+pub const IMPORTED_MERMAID_THEMES: &str = "importedMermaidThemes";
 
 /// 差分の色の種類（macOS 版の `DiffColor`）。テーマの `colors` の鍵（`#rrggbbaa`）と、テーマが持たないときの
 /// 標準の色。
@@ -423,11 +425,43 @@ pub fn diff_color(kind: DiffColor, fg: &gdk::RGBA) -> gdk::RGBA {
     })
 }
 
-/// Markdown の図の配色の変数（`--pele-*` → 色）と、地を塗るか。設定の「図の配色」と、`dark` の外観で選んだ
-/// テーマから。
-pub fn diagram_palette(dark: bool) -> (Vec<(String, String)>, bool) {
-    use amonhen_core::diagram::{Scheme, ThemeColors, palette};
-    let scheme = Scheme::from_key(&settings::string(DIAGRAM_COLORS).unwrap_or_default());
+/// 読み込んだ Mermaid のテーマ（名前の順）。
+pub fn imported_mermaid() -> Vec<(String, amonhen_core::diagram::MermaidConfig)> {
+    let mut all: Vec<_> = settings::string(IMPORTED_MERMAID_THEMES)
+        .and_then(|s| {
+            serde_json::from_str::<HashMap<String, amonhen_core::diagram::MermaidConfig>>(&s).ok()
+        })
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
+    all.sort_by(|a, b| a.0.cmp(&b.0));
+    all
+}
+
+pub fn set_imported_mermaid(themes: &[(String, amonhen_core::diagram::MermaidConfig)]) {
+    let map: HashMap<&str, &amonhen_core::diagram::MermaidConfig> =
+        themes.iter().map(|(k, v)| (k.as_str(), v)).collect();
+    settings::set_string(
+        IMPORTED_MERMAID_THEMES,
+        &serde_json::to_string(&map).unwrap_or_default(),
+    );
+}
+
+/// Markdown の図の配色の変数（`--pele-*` → 色）と、地を塗るか。図の中で指定したテーマ `own` があればそれ、
+/// なければ設定の「図の配色」と、`dark` の外観で選んだテーマから。
+pub fn diagram_palette(
+    dark: bool,
+    own: Option<&amonhen_core::diagram::MermaidConfig>,
+) -> (Vec<(String, String)>, bool) {
+    use amonhen_core::diagram::{IMPORTED_PREFIX, Scheme, ThemeColors, colors_for};
+    let key = settings::string(DIAGRAM_COLORS).unwrap_or_default();
+    let scheme = Scheme::from_key(&key);
+    let imported = key.strip_prefix(IMPORTED_PREFIX).and_then(|name| {
+        imported_mermaid()
+            .into_iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, c)| c)
+    });
     let fg = if dark {
         gdk::RGBA::WHITE
     } else {
@@ -450,7 +484,7 @@ pub fn diagram_palette(dark: bool) -> (Vec<(String, String)>, bool) {
             })
             .collect(),
     });
-    (palette(scheme, dark, &theme), scheme.backdrop())
+    colors_for(own, scheme, imported.as_ref(), dark, &theme)
 }
 
 /// 設定が変わったら、覚えたテーマを捨てて、すべての窓を描き直す（起動したときに一度呼ぶ）。
@@ -463,6 +497,7 @@ pub fn watch_settings() {
                 | IMPORTED_SYNTAX_THEMES
                 | DIFF_STANDARD_COLORS
                 | DIAGRAM_COLORS
+                | IMPORTED_MERMAID_THEMES
         ) {
             CURRENT.with(|c| c.borrow_mut().take());
             GENERATION.with(|g| g.set(g.get() + 1));
