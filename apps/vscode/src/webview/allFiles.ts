@@ -326,6 +326,7 @@ type MdBlock =
   | { kind: 'heading'; level: number; runs: MdRun[] }
   | { kind: 'paragraph'; runs: MdRun[] }
   | { kind: 'code'; language: string; text: string; syntax?: [number, number, number][][] }
+  | { kind: 'diagram'; language: string; text: string; error?: string }
   | { kind: 'quote'; alert?: string; blocks: MdBlock[] }
   | { kind: 'list'; start?: number; items: { task?: boolean; blocks: MdBlock[] }[] }
   | { kind: 'table'; aligns: string[]; head: MdRun[][]; rows: MdRun[][][] }
@@ -444,6 +445,13 @@ function renderBlock(block: MdBlock): HTMLElement {
         table.append(tr);
       }
       return table;
+    }
+    case 'diagram': {
+      // 図（mermaid など）は、まだ描かずにコードとして見せる
+      const pre = el('pre', 'md-code');
+      pre.title = block.error ? `Diagram (${block.language}): ${block.error}` : `Diagram (${block.language}), shown as its code`;
+      pre.append(el('code', '', block.text));
+      return pre;
     }
     case 'rule':
       return el('hr');
