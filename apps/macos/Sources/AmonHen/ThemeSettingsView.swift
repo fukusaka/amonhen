@@ -103,7 +103,10 @@ struct SyntaxThemeSection: View {
             Picker(L("Diagram colors"), selection: $model.diagramColors) {
                 Text(L("Syntax colors")).tag("syntax")
                 Text("pele").tag("pele")
-                Text("Mermaid").tag("mermaid")
+                Text(L("Mermaid (follows the appearance)")).tag("mermaid")
+                ForEach(["default", "neutral", "dark", "forest", "base"], id: \.self) { name in
+                    Text("Mermaid \(name)").tag("mermaid-\(name)")
+                }
             }
             ThemePreview(light: model.syntaxThemeLight, dark: model.syntaxThemeDark, standardDiff: model.diffStandardColors)
             HStack {
