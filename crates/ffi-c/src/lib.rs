@@ -1562,6 +1562,40 @@ fn blob_out(data: &[u8], len: *mut usize) -> *mut u8 {
     Box::into_raw(data.to_vec().into_boxed_slice()).cast()
 }
 
+/// SVG（`data` の `len` バイト）を、モバイル向けの描画部品 `target`（0 Android・1 iOS・2 flutter_svg・
+/// 3 react-native-svg）が崩すように書き換えた SVG（近似）。長さを `out_len` に書く（`amonhen_blob_free` で解放する）。
+///
+/// # Safety
+/// `data` は `len` バイト読めること（`len` が 0 なら NULL でもよい）。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_svg_approximate(
+    data: *const u8,
+    len: usize,
+    target: u8,
+    out_len: *mut usize,
+) -> *mut u8 {
+    let bytes = if len == 0 || data.is_null() {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(data, len) }
+    };
+    blob_out(
+        &amonhen_core::svgsim::approximate(bytes, svg_target(target)),
+        out_len,
+    )
+}
+
+/// 0 Android・1 iOS・2 flutter_svg・3 react-native-svg。
+fn svg_target(n: u8) -> amonhen_core::svglint::Target {
+    use amonhen_core::svglint::Target;
+    match n {
+        1 => Target::Ios,
+        2 => Target::Flutter,
+        3 => Target::ReactNative,
+        _ => Target::Android,
+    }
+}
+
 /// `amonhen_blob_read`・`amonhen_change_blob` が返したものを解放する。
 ///
 /// # Safety
