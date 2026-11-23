@@ -9,4 +9,5 @@ pub mod mindmap;
 pub mod packet;
 pub mod pie;
 pub mod registry;
+pub mod sequence;
 pub mod timeline;

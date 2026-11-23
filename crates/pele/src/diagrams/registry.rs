@@ -22,6 +22,7 @@ static DIAGRAMS: &[&Diagram] = &[
     &super::mindmap::MINDMAP,
     &super::packet::PACKET,
     &super::pie::PIE,
+    &super::sequence::SEQUENCE,
     &super::timeline::TIMELINE,
 ];
 
