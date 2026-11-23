@@ -278,7 +278,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Changed files as a list or a tree whose folders fold | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: Above the diff; `t` switches to the tree, a click folds a folder (`z` all) or goes to a file's diff. |
 | Widen a hunk's context, show a whole file | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: With the engine; the ⇕ on a hunk header widens the file by 20 lines, Show Whole File is on the file's ⋯.<br>TUI: `+` widens the file in view by 20 lines, `F` shows all of it. |
 | Ignore whitespace (at line ends, changes in amount, all) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: With the engine.<br>CLI: `show -w`, `-b`, `--ignore-space-at-eol`.<br>TUI: `w` in the details goes through them in turn. |
-| Compare images (side by side, swipe, onion skin, differing pixels) | ✓ | ✓ | ✓ | — | n/a | — | |
+| Compare images (side by side, swipe, onion skin, differing pixels) | ✓ | ✓ | ✓ | ✓ | n/a | — | VSCode: Images over 20 MB aren't compared. |
 | All Files: the tree at the commit and a file's contents with the commit's lines marked | ✓ | ✓ | ✓ | — | n/a | — | |
 | All Files previews: zoomable images, SVG picture and mobile check, formatted Markdown, Quick Look for binaries | ✓ | ✓ | △ | — | n/a | — | GTK4: GNOME's previewer (or the default app) instead of Quick Look; the SVG pictures are drawn by librsvg.<br>Windows: Zoomable images, SVG pictures and formatted Markdown; no mobile check for SVG and no preview of binaries yet. |
 | File header menu (Blame, File History, copy path, open) | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: Blame, File History and Copy Path on the right-click; Open in VSCode's diff editor.<br>TUI: `B`, `L`, `Y` (copy path) and `e` (open in git's editor) for the file in view. |

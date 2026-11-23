@@ -1262,6 +1262,8 @@ First release.
 
 - History's details can widen a file's context (⇕ on a hunk header), show the whole file (on the file's ⋯) and
   ignore whitespace (at line ends, changes in amount or all), with the engine.
+- History's details compare images and SVGs side by side with their sizes, or by swipe, onion skin or differing
+  pixels.
 
 #### Fixed
 
