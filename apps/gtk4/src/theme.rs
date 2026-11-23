@@ -18,6 +18,8 @@ pub const SYNTAX_THEME_DARK: &str = "syntaxThemeDark";
 pub const IMPORTED_SYNTAX_THEMES: &str = "importedSyntaxThemes";
 /// 差分の色は、テーマに関係なく標準の色を使う（構文の色はテーマのまま）。
 pub const DIFF_STANDARD_COLORS: &str = "diffStandardColors";
+/// Markdown の図の配色（`syntax`・`pele`・`mermaid`。macOS 版と同じ鍵）。
+pub const DIAGRAM_COLORS: &str = "diagramColors";
 
 /// 差分の色の種類（macOS 版の `DiffColor`）。テーマの `colors` の鍵（`#rrggbbaa`）と、テーマが持たないときの
 /// 標準の色。
@@ -421,12 +423,45 @@ pub fn diff_color(kind: DiffColor, fg: &gdk::RGBA) -> gdk::RGBA {
     })
 }
 
+/// Markdown の図の配色の変数（`--pele-*` → 色）。設定の「図の配色」と、`dark` の外観で選んだテーマから。
+pub fn diagram_palette(dark: bool) -> Vec<(String, String)> {
+    use amonhen_core::diagram::{Scheme, ThemeColors, palette};
+    let scheme = Scheme::from_key(&settings::string(DIAGRAM_COLORS).unwrap_or_default());
+    let fg = if dark {
+        gdk::RGBA::WHITE
+    } else {
+        gdk::RGBA::BLACK
+    };
+    // 文字と地は libadwaita の本文の色（view の地と文字）
+    let (text, background) = if dark {
+        ("#ffffff", "#1e1e1e")
+    } else {
+        ("#000000", "#ffffff")
+    };
+    let theme = with_current(&fg, |theme, dark, _| ThemeColors {
+        text: text.to_owned(),
+        background: background.to_owned(),
+        kinds: KINDS
+            .iter()
+            .filter_map(|(name, kind)| {
+                let (r, g, b) = theme.color(*kind, dark)?;
+                Some(((*name).to_owned(), to_hex(&gdk::RGBA::new(r, g, b, 1.0))))
+            })
+            .collect(),
+    });
+    palette(scheme, dark, &theme)
+}
+
 /// 設定が変わったら、覚えたテーマを捨てて、すべての窓を描き直す（起動したときに一度呼ぶ）。
 pub fn watch_settings() {
     settings::connect_changed(|key| {
         if matches!(
             key,
-            SYNTAX_THEME_LIGHT | SYNTAX_THEME_DARK | IMPORTED_SYNTAX_THEMES | DIFF_STANDARD_COLORS
+            SYNTAX_THEME_LIGHT
+                | SYNTAX_THEME_DARK
+                | IMPORTED_SYNTAX_THEMES
+                | DIFF_STANDARD_COLORS
+                | DIAGRAM_COLORS
         ) {
             CURRENT.with(|c| c.borrow_mut().take());
             GENERATION.with(|g| g.set(g.get() + 1));

@@ -314,12 +314,29 @@ fn syntax_section() -> gtk::Box {
             settings::set_bool(theme::DIFF_STANDARD_COLORS, s.is_active());
         }
     });
+    // Markdown の図の配色（構文の色・pele・Mermaid）
+    let diagram_keys = ["syntax", "pele", "mermaid"];
+    let diagram = gtk::DropDown::from_strings(&[&tr!("Syntax colors"), "pele", "Mermaid"]);
+    diagram.set_valign(gtk::Align::Center);
+    let current = settings::string(theme::DIAGRAM_COLORS).unwrap_or_default();
+    diagram.set_selected(diagram_keys.iter().position(|k| *k == current).unwrap_or(0) as u32);
+    diagram.connect_selected_notify(move |d| {
+        let key = diagram_keys[(d.selected() as usize).min(diagram_keys.len() - 1)];
+        if settings::string(theme::DIAGRAM_COLORS)
+            .as_deref()
+            .unwrap_or("syntax")
+            != key
+        {
+            settings::set_string(theme::DIAGRAM_COLORS, key);
+        }
+    });
     let section = crate::reposettings::section(
         Some(&tr!("Color Theme")),
         &[
             row(&tr!("Light appearance"), &light).upcast(),
             row(&tr!("Dark appearance"), &dark).upcast(),
             row(&tr!("Use standard colors for diffs"), &standard).upcast(),
+            row(&tr!("Diagram colors"), &diagram).upcast(),
             preview.clone().upcast(),
             import.clone().upcast(),
             failure.clone().upcast(),

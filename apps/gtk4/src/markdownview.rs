@@ -523,13 +523,17 @@ impl<'a> Builder<'a> {
                 language,
                 text,
                 svg,
-                svg_dark,
                 error,
             } => {
-                let light = svg
-                    .as_deref()
-                    .and_then(|s| crate::imagediff::texture(Some(s.as_bytes())));
-                let Some(light) = light else {
+                let style = adw::StyleManager::default();
+                let colored = |svg: &str, dark: bool| {
+                    amonhen_core::diagram::colorize(svg, &crate::theme::diagram_palette(dark))
+                        .and_then(|s| crate::imagediff::texture(Some(s.as_bytes())))
+                };
+                let Some((svg, first)) = svg
+                    .as_ref()
+                    .and_then(|svg| Some((svg.clone(), colored(svg, style.is_dark())?)))
+                else {
                     // 描けない図はコードとして見せ、理由を添える
                     self.block(
                         &Block::Code {
@@ -552,30 +556,42 @@ impl<'a> Builder<'a> {
                     }
                     return;
                 };
-                let dark = svg_dark
-                    .as_deref()
-                    .and_then(|s| crate::imagediff::texture(Some(s.as_bytes())))
-                    .unwrap_or_else(|| light.clone());
                 self.lone_marker(ctx);
                 let start = self.offset();
-                let (w, h) = (light.width(), light.height());
+                let (w, h) = (first.width(), first.height());
                 let (w, h) = if w > MAX_IMAGE_WIDTH {
                     (MAX_IMAGE_WIDTH, h * MAX_IMAGE_WIDTH / w.max(1))
                 } else {
                     (w, h)
                 };
-                // 明るい表示・暗い表示の絵を、今の見た目で選ぶ（切り替えたら差し替える）
-                let style = adw::StyleManager::default();
-                let picture =
-                    gtk::Picture::for_paintable(if style.is_dark() { &dark } else { &light });
+                let picture = gtk::Picture::for_paintable(&first);
                 picture.set_can_shrink(true);
                 picture.set_content_fit(gtk::ContentFit::Contain);
                 picture.set_size_request(w, h);
                 picture.set_alternative_text(Some(text));
-                let weak = picture.downgrade();
-                style.connect_dark_notify(move |style| {
-                    if let Some(picture) = weak.upgrade() {
-                        picture.set_paintable(Some(if style.is_dark() { &dark } else { &light }));
+                // 外観・テーマ・図の配色が変わったら、色だけを当て直す（形と位置はそのまま）
+                let recolor = {
+                    let weak = picture.downgrade();
+                    Rc::new(move || {
+                        if let Some(picture) = weak.upgrade()
+                            && let Some(texture) =
+                                colored(&svg, adw::StyleManager::default().is_dark())
+                        {
+                            picture.set_paintable(Some(&texture));
+                        }
+                    })
+                };
+                let again = recolor.clone();
+                style.connect_dark_notify(move |_| again());
+                crate::settings::connect_changed_while(&picture, move |key| {
+                    if matches!(
+                        key,
+                        crate::theme::SYNTAX_THEME_LIGHT
+                            | crate::theme::SYNTAX_THEME_DARK
+                            | crate::theme::IMPORTED_SYNTAX_THEMES
+                            | crate::theme::DIAGRAM_COLORS
+                    ) {
+                        recolor();
                     }
                 });
                 let mut end = self.buffer.end_iter();
