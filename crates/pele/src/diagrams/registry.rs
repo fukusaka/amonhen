@@ -18,6 +18,7 @@ static DIAGRAMS: &[&Diagram] = &[
     &super::c4::C4,
     &super::flowchart::FLOWCHART,
     &super::requirement::REQUIREMENT,
+    &super::usecase::USECASE,
 ];
 
 /// 種類の名前（pele の `DiagramType`）の図。
