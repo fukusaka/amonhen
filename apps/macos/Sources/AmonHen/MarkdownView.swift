@@ -174,7 +174,8 @@ private struct MarkdownBuilder {
                 let style = paragraph(indent: indent, spacing: 10, blocks: outer + [box])
                 style.lineSpacing = 1
                 let start = out.length
-                out.append(NSAttributedString(string: code, attributes: [
+                // 行は段落を分けずに改行する（段落の間隔を行ごとに付けない）。長さは変わらないので構文の色の位置はそのまま。
+                out.append(NSAttributedString(string: code.replacingOccurrences(of: "\n", with: "\u{2028}"), attributes: [
                     .font: NSFont.monospacedSystemFont(ofSize: 12.5, weight: .regular), .foregroundColor: NSColor.labelColor,
                     .paragraphStyle: style,
                 ]))
