@@ -3781,6 +3781,8 @@ fn after_first_show(
     let pending = pending.clone();
     let settings_shown = args.settings.is_some();
     let activity_shown = args.activity.is_some();
+    // 並べ直しを待って撮るのを延ばした回数（50 ms ごと。5 秒で諦めて撮る）。
+    let waits = Rc::new(Cell::new(0u32));
     if let Some(png) = args.snapshot.clone() {
         // 見えている行が読めて、レーンが落ち着くまで待ってから撮る。
         glib::timeout_add_local(
@@ -3816,6 +3818,12 @@ fn after_first_show(
                         .unwrap_or_else(|| window.clone().upcast());
                     while let Some(front) = on(&target) {
                         target = front;
+                    }
+                    // 読み終えた直後は、まだ並べ直しを待っている部品がある（Markdown の表・画像を埋め込んだ
+                    // 文字の欄など）。そのまま撮ると、その部品から上が描けずに窓の地だけになるので、並べ終えるまで待つ。
+                    if !laid_out(&target) && waits.get() < 100 {
+                        waits.set(waits.get() + 1);
+                        return glib::ControlFlow::Continue;
                     }
                     match snapshot(&target, &png) {
                         Ok(()) => eprintln!("{}", png.display()),
@@ -3920,6 +3928,27 @@ fn collect_popovers(widget: &gtk::Widget, out: &mut Vec<gtk::Popover>) {
         }
         child = c.next_sibling();
     }
+}
+
+/// 窓の部品を描けるか（大きさが決まっているか）。並べ直しを待っている部品を描いても何も出ない（GTK はその部品から
+/// 下を飛ばす）ので、撮る前に確かめる。見えていて大きさのある部品が、何も描かなければ false。
+pub fn laid_out(window: &gtk::Window) -> bool {
+    let mut child = window.first_child();
+    while let Some(widget) = child {
+        if widget.is_mapped() && widget.width() > 0 && widget.height() > 0 {
+            let probe = gtk::Snapshot::new();
+            gtk::WidgetPaintable::new(Some(&widget)).snapshot(
+                &probe,
+                widget.width() as f64,
+                widget.height() as f64,
+            );
+            if probe.to_node().is_none() {
+                return false;
+            }
+        }
+        child = widget.next_sibling();
+    }
+    true
 }
 
 /// 窓の中身を PNG にする。
