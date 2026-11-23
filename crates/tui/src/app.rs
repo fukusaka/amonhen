@@ -5794,6 +5794,10 @@ impl App {
                     "w",
                     tr!("Ignore whitespace: at line ends, its amount, all, none"),
                 ),
+                (
+                    "+ F",
+                    tr!("Widen the context of the file in view; show the whole file"),
+                ),
                 ("h l", tr!("Pan long lines; h at the left edge goes back")),
                 ("Esc", tr!("Go back to History")),
             ],
@@ -6625,6 +6629,23 @@ impl App {
             KeyCode::Char('z') => Some(self.details.fold_all()),
             _ => None,
         };
+        // 今見ているファイルの前後を広げる・ファイル全体を出す（アプリの hunk の見出しの印・Show Whole File）。
+        // 読み直しは `request` が頼む。
+        if code == KeyCode::Char('+') {
+            return self.details.widen();
+        }
+        if code == KeyCode::Char('F') {
+            return match self.details.toggle_whole_file() {
+                Some(whole) => {
+                    self.notice = Some(match whole {
+                        true => tr!("Showing the whole file"),
+                        false => tr!("Showing the changes only"),
+                    });
+                    true
+                }
+                None => false,
+            };
+        }
         // 差分で無視する空白を替える（アプリの Ignore Whitespace）。読み直しは `request` が頼む。
         if code == KeyCode::Char('w') {
             self.notice = Some(match self.details.next_whitespace() {

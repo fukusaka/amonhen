@@ -51,6 +51,8 @@ pub enum Request {
         stash: bool,
         key: String,
         whitespace: &'static str,
+        /// ファイルごとの前後の行数（`commitDiff` の contexts）。
+        contexts: Value,
     },
     /// History で印をつけたコミット（行）の差分（`commitDiff` の rows・pair）。答えは `Loaded::Commit` で、`id` は
     /// `key`（詳細のものは null）。
@@ -60,6 +62,7 @@ pub enum Request {
         rows: Vec<u32>,
         pair: &'static str,
         whitespace: &'static str,
+        contexts: Value,
     },
     /// 差分の構文の色。`of` は `{"view": …}`（`commitDiff` の答えのもの）か `{"diff": …}`（`workingDiff` の
     /// もの）。`id` は、答えを見分ける名前。
@@ -391,10 +394,11 @@ fn load(front: &dyn Front, request: Request, events: &Sender<Event>) -> Result<L
             rows,
             pair,
             whitespace,
+            contexts,
         } => Loaded::Commit {
             id: key,
             result: front
-                .call(json!({"op": "commitDiff", "history": history, "rows": rows, "pair": pair, "whitespace": whitespace}))
+                .call(json!({"op": "commitDiff", "history": history, "rows": rows, "pair": pair, "whitespace": whitespace, "contexts": contexts}))
                 .map(|diff| (Value::Null, diff))
                 .map_err(|e| e.to_string()),
         },
@@ -403,8 +407,10 @@ fn load(front: &dyn Front, request: Request, events: &Sender<Event>) -> Result<L
             stash,
             key,
             whitespace,
+            contexts,
         } => {
-            let result = commit(front, &id, stash, whitespace).map_err(|e| e.to_string());
+            let result =
+                commit(front, &id, stash, whitespace, contexts).map_err(|e| e.to_string());
             Loaded::Commit { id: key, result }
         }
         Request::Syntax { id, mut of } => {
@@ -674,7 +680,13 @@ fn edit_rows(front: &dyn Front, from: &str) -> Result<Value> {
     Ok(json!({"rows": rows}))
 }
 
-fn commit(front: &dyn Front, id: &str, stash: bool, whitespace: &str) -> Result<(Value, Reply)> {
+fn commit(
+    front: &dyn Front,
+    id: &str,
+    stash: bool,
+    whitespace: &str,
+    contexts: Value,
+) -> Result<(Value, Reply)> {
     let mut info = run(front, json!({"op": "commitInfo", "oid": id}))?;
     // 署名があれば、検証もする（gpg・ssh を動かす。だめなら検証の結果なしで出す）。
     if info["info"]["signed"].is_string()
@@ -683,7 +695,9 @@ fn commit(front: &dyn Front, id: &str, stash: bool, whitespace: &str) -> Result<
         info["info"]["signatureCheck"] = checked["info"]["checks"][0].take();
     }
     let of = if stash { "stash" } else { "id" };
-    let diff = front.call(json!({"op": "commitDiff", of: id, "whitespace": whitespace}))?;
+    let diff = front.call(
+        json!({"op": "commitDiff", of: id, "whitespace": whitespace, "contexts": contexts}),
+    )?;
     Ok((info["info"].take(), diff))
 }
 

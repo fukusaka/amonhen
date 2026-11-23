@@ -3068,6 +3068,37 @@ fn compare_with_the_previous_version() {
     assert!(below.contains("Take the lane from the trunk"));
 }
 
+/// 詳細の `+`: 今見ているファイルの前後を 20 行広げる。`F` でファイル全体を出し、もう一度で戻す
+#[test]
+fn widen_the_context_and_show_the_whole_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    git(dir, BASE, &["init", "-q", "-b", "main"]);
+    let mut lines: Vec<String> = (1..=60).map(|n| format!("line {n}")).collect();
+    std::fs::write(dir.join("a.txt"), lines.join("\n") + "\n").unwrap();
+    git(dir, BASE, &["add", "."]);
+    git(dir, BASE, &["commit", "-q", "-m", "Start"]);
+    lines[29] = "changed".into();
+    std::fs::write(dir.join("a.txt"), lines.join("\n") + "\n").unwrap();
+    git(dir, BASE, &["commit", "-q", "-a", "-m", "Change"]);
+    let shown = |keys: &str| {
+        let text = amonhen_tui::snapshot(open(dir), 120, 90, clock(), keys).unwrap();
+        let has = |n: u32| {
+            text.contains(&format!(" line {n}\n")) || text.contains(&format!(" line {n} "))
+        };
+        (text.clone(), has(5), has(10), has(27))
+    };
+    let (text, five, ten, near) = shown("2\n");
+    assert!(near && !ten && !five, "{text}");
+    let (text, five, ten, _) = shown("2\n+");
+    println!("{text}");
+    assert!(ten && !five, "{text}");
+    let (text, five, _, _) = shown("2\nF");
+    assert!(five && text.contains("Showing the whole file"), "{text}");
+    let (text, five, ten, _) = shown("2\nFF");
+    assert!(!five && !ten, "{text}");
+}
+
 /// 詳細の `w`: 差分で無視する空白を、行末 → 量 → すべて → なしの順に替える
 #[test]
 fn details_ignore_whitespace() {
