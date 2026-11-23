@@ -1,4 +1,5 @@
 import AppKit
+import QuartzCore
 import WebKit
 
 /// 画面に出さない WebKit で、SVG をブラウザと同じに描いて画像にする（iOS のアセットと同じ系統の CoreSVG
@@ -20,6 +21,12 @@ final class WebRenderer: NSObject, WKNavigationDelegate {
     /// `svg` をブラウザと同じに描いた画像（描けなければ nil）。大きさは SVG の幅と高さ（なければ viewBox、それもなければ
     /// 300 × 150）。
     func render(svg: Data) async -> NSImage? {
+        let started = CACurrentMediaTime()
+        let cold = webView == nil
+        defer {
+            let ms = (CACurrentMediaTime() - started) * 1000
+            PerformanceLog.record(cold ? "SVG: WebKit render (first)" : "SVG: WebKit render", ms: ms)
+        }
         let view = await makeWebView()
         let html = """
             <!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;padding:0;background:transparent}
@@ -47,6 +54,17 @@ final class WebRenderer: NSObject, WKNavigationDelegate {
         let config = WKSnapshotConfiguration()
         config.rect = rect
         return try? await view.takeSnapshot(configuration: config)
+    }
+
+    /// 前もって WebKit を起こしておく（最初の 1 回は WebKit の裏のプロセスを起こすので 250〜300 ms かかる。
+    /// 2 回目からは 7〜10 ms）。すべてのファイルを開いたときに呼ぶ。
+    func prewarm() async {
+        guard webView == nil else { return }
+        let view = await makeWebView()
+        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+            loaded = done
+            view.loadHTMLString("<!doctype html>", baseURL: nil)
+        }
     }
 
     private func makeWebView() async -> WKWebView {

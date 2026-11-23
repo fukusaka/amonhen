@@ -658,6 +658,8 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         outline.reloadData()
         expandChanged(root)
         backToTree()
+        // SVG・Markdown を開いたときに待たないように、WebKit を先に起こしておく。
+        Task { await WebRenderer.shared.prewarm() }
     }
 
     required init?(coder: NSCoder) { fatalError() }
