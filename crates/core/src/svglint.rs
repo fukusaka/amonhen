@@ -223,9 +223,10 @@ impl Found {
 
 /// フィルターの部品のうち、flutter_svg（vector_graphics_compiler 1.3.6）が描けるもの。ほかが 1 つでもあれば、
 /// フィルター全体を描かない。
-const FLUTTER_FILTERS: [&str; 4] = ["feGaussianBlur", "feOffset", "feMerge", "feMergeNode"];
+pub(crate) const FLUTTER_FILTERS: [&str; 4] =
+    ["feGaussianBlur", "feOffset", "feMerge", "feMergeNode"];
 /// react-native-svg がネイティブで描けるフィルターの部品。
-const RN_FILTERS: [&str; 9] = [
+pub(crate) const RN_FILTERS: [&str; 9] = [
     "feBlend",
     "feColorMatrix",
     "feComposite",

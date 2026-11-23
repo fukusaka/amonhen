@@ -20,6 +20,7 @@ pub mod remote_tags;
 mod repository;
 pub mod rewrite;
 pub mod svglint;
+pub mod svgsim;
 pub mod undo;
 pub mod words;
 pub mod worktree;

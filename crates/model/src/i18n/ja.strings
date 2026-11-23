@@ -2441,3 +2441,4 @@
 "Blend modes aren’t supported" = "描画モード（ブレンド）は使えない";
 "color(display-p3 …) isn’t understood (iOS draws it black)" = "color(display-p3 …) は読めない（iOS では黒になる）";
 "Absolute units aren’t converted" = "絶対単位は換算されない";
+"Approximation: the SVG rewritten the way {renderer} degrades it, drawn by this app" = "近似: {renderer} が崩すように SVG を書き換え、このアプリで描いたもの";
