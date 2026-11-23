@@ -531,11 +531,12 @@ fn syntax_section() -> (gtk::Box, gtk::Box) {
         Some("Mermaid"),
         &[
             row(&tr!("Colors"), &diagram).upcast(),
-            row(&tr!("Gantt time zone"), &zone).upcast(),
             diagram_sample.clone().upcast(),
             mermaid_import.clone().upcast(),
             mermaid_failure.clone().upcast(),
             mermaid_imported.clone().upcast(),
+            // gantt の日付を数える時間帯
+            row(&tr!("Time zone"), &zone).upcast(),
         ],
     );
     // 一覧の並び（外観ごと）: System、合う外観のテーマ、ほかの外観のテーマ（macOS 版と同じ。間に線）。

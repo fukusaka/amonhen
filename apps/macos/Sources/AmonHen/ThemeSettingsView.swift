@@ -130,20 +130,6 @@ struct SyntaxThemeSection: View {
                     Text(name).tag("mermaid-import:\(name)")
                 }
             }
-            LabeledContent(L("Gantt time zone")) {
-                // 数百あるので、地域（Asia など）ごとの下の階層に分ける。
-                Menu(model.ganttTimeZone.isEmpty ? L("System time zone") : model.ganttTimeZone) {
-                    Button(L("System time zone")) { model.ganttTimeZone = "" }
-                    Button("UTC") { model.ganttTimeZone = "UTC" }
-                    Divider()
-                    ForEach(Self.zoneRegions, id: \.0) { region, names in
-                        Menu(region) {
-                            ForEach(names, id: \.self) { name in Button(name) { model.ganttTimeZone = name } }
-                        }
-                    }
-                }
-                .fixedSize()
-            }
             DiagramSample(
                 light: model.syntaxThemeLight, dark: model.syntaxThemeDark, diagramColors: model.diagramColors,
                 mermaidThemes: model.importedMermaidThemes)
@@ -162,6 +148,21 @@ struct SyntaxThemeSection: View {
                     }
                 }
             }
+            // gantt の日付を数える時間帯
+            LabeledContent(L("Time zone")) {
+                // 数百あるので、地域（Asia など）ごとの下の階層に分ける。
+                Menu(model.ganttTimeZone.isEmpty ? L("System time zone") : model.ganttTimeZone) {
+                    Button(L("System time zone")) { model.ganttTimeZone = "" }
+                    Button("UTC") { model.ganttTimeZone = "UTC" }
+                    Divider()
+                    ForEach(Self.zoneRegions, id: \.0) { region, names in
+                        Menu(region) {
+                            ForEach(names, id: \.self) { name in Button(name) { model.ganttTimeZone = name } }
+                        }
+                    }
+                }
+                .fixedSize()
+            }
         }
     }
 
@@ -175,7 +176,7 @@ struct SyntaxThemeSection: View {
         ForEach(themes.filter { $0.dark != dark }, id: \.name) { Text($0.name).tag($0.name) }
     }
 
-    /// mermaid-cli の設定ファイル（JSON）を読み込み、「図の配色」で選ぶ。名前はファイル名から。
+    /// mermaid-cli の設定ファイル（JSON）を読み込み、「Mermaid」の「配色」で選ぶ。名前はファイル名から。
     private func importMermaidTheme() {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.json]
