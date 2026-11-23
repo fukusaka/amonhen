@@ -24,6 +24,8 @@
 "Not a diff between HEAD and the working tree" = "HEAD と作業ツリーの差分ではない";
 "Can’t discard staged changes (unstage them first)" = "stage 済みの変更は破棄できない（先に unstage する）";
 "Can’t stage or discard lines while whitespace is ignored" = "空白を無視している間は、行ごとに stage・破棄できない";
+"Can’t mark staged lines while whitespace is ignored" = "空白を無視している間は、行ごとの stage の印をつけられない";
+"Unknown whitespace: {name}" = "知らない空白の扱い: {name}";
 "Can’t discard lines in {path}: its working tree form doesn’t match what git stores line by line" = "{path} は、作業ツリーの形と git に入れる形が行ごとに対応しないため、行単位では破棄できません";
 "Search failed unexpectedly" = "検索が異常終了しました";
 "Can’t read the commit ID" = "コミット ID を読めない";
