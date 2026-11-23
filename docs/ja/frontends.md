@@ -258,7 +258,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Go to HEAD・Parent・Child | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: History の上の HEAD のボタン、コミットのメニューの Go to Parent・Go to Child、詳細の親と子へのリンク（エンジンがあるとき）。<br>TUI: `@`・`]`・`[`。 |
 | Go to Ref | — | — | — | — | n/a | — |  |
 | いくつものコミットを選ぶ（範囲・2 つ・飛び飛び） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: エンジンがあるとき。<br>CLI: 2 つは `diff <rev> <rev>`。<br>TUI: `m`・Shift-↑↓・Ctrl か Alt のクリック。 |
-| 選んだいくつもの ref の History | ✓ | ✓ | ✓ | ✓ | ✓ | — | CLI: `log --branch` を重ねる。<br>Windows: サイドバーで ref を選ぶとその History、Ctrl+クリックで ref を足す・外す。View に All Branches と Current Branch。<br>TUI: ref を開くと History でそのコミットを選ぶ。 |
+| 選んだいくつもの ref の History | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `log --branch` を重ねる。<br>Windows: サイドバーで ref を選ぶとその History、Ctrl+クリックで ref を足す・外す。View に All Branches と Current Branch。<br>TUI: サイドバーの `v` で ref に印をつけると、History はそれらから辿れるものだけ。Esc で印を外す。ref を開くとそのコミットを選ぶ。 |
 | コミットのメニュー: checkout・新しいブランチやタグ・cherry-pick・revert・ID のコピー | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: `amonhen run` から。<br>TUI: `c`・`b`・`T`・`y`・`v`・`Y`（OSC 52 で端末のクリップボードへ）。 |
 | 編集モード（pick・reword・squash・fixup・drop・edit、ドラッグで並べ替え） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: エンジンがあるとき。ないときは 1 つずつ。<br>CLI: `amonhen run` から。<br>TUI: `E` で画面に重ねる。`J` `K` で行を動かす。 |
 | 書き換えの見込み（積み重ね・push 済みのブランチ、コンフリクトの見込み） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: daemon 越し。ほかのブランチの rebase では、アプリと同じく代わりにコンフリクトの見込みを出す。<br>CLI: `rewrite-preview`。 |
