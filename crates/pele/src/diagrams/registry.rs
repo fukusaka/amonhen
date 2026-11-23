@@ -18,6 +18,7 @@ static DIAGRAMS: &[&Diagram] = &[
     &super::flowchart::FLOWCHART,
     &super::info::INFO,
     &super::packet::PACKET,
+    &super::pie::PIE,
 ];
 
 /// 種類の名前（pele の `DiagramType`）の図。
