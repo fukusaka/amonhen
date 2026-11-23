@@ -106,6 +106,11 @@ pub struct DiffContent<'a> {
     pub counts: Option<&'a HashMap<String, (u32, u32)>>,
     /// hunk の見出しに、前後の行を広げる印を出す（History のコミットの差分）。
     pub widen: bool,
+    /// 全ファイルの差分（画像の比べる欄の前と後の中身）と、欄ごとの見せ方。
+    pub stacked: Option<&'a StackedDiff>,
+    pub image_views: Option<&'a HashMap<usize, crate::imagediff::View>>,
+    /// 差分の持ち主を見分ける番号（画像を読んだものを取っておく鍵）。
+    pub key: u64,
 }
 
 impl DiffContent<'_> {
@@ -157,6 +162,8 @@ impl DiffContent<'_> {
 pub enum DiffLine {
     Row(u32),
     Folder(u32),
+    /// 開いた画像の比べる欄（ファイルの番号と、欄の中の何行目か）。
+    Panel(u32, u32),
 }
 
 /// 木で見せるときのフォルダの行（macOS 版の `DiffViewController.Folder`）。
@@ -182,6 +189,8 @@ pub struct DiffTree {
     /// ファイルごとの字下げの深さ（入っているフォルダの数）と、見出しに出す名前（パスの最後）。
     depths: Vec<u32>,
     titles: Vec<String>,
+    /// 比べる欄を出している画像のファイル（見出しは開いた ▾ で描く）。
+    pub panels: HashSet<usize>,
 }
 
 /// 木の形（ファイルごとの前に差し込むフォルダの行、深さ、名前、畳んだフォルダの中で隠すファイル）。並びは
@@ -274,6 +283,9 @@ impl WorkingShown {
             tree: None,
             counts: None,
             widen: false,
+            stacked: None,
+            image_views: None,
+            key: 0,
         }
     }
 }
@@ -331,6 +343,12 @@ pub struct CommitShown {
     /// ファイルごとの前後の行の数（広げたものだけ）と、ファイル全体で見せているファイル。
     contexts: HashMap<usize, u32>,
     whole: HashSet<usize>,
+    /// 画像の比べる欄ごとの見せ方（位置・倍率）。
+    pub image_views: HashMap<usize, crate::imagediff::View>,
+    /// 「テキストで見る」にした SVG（絵の代わりに差分）。
+    svg_text: HashSet<usize>,
+    /// この差分を見分ける番号（読み直すたびに新しい。画像を読んだものを取っておく鍵）。
+    id: u64,
     /// 表示を作り直した回数（古い表示の構文の色を捨てるため）。
     version: u32,
 }
@@ -357,6 +375,12 @@ impl CommitShown {
             counts: HashMap::new(),
             contexts: HashMap::new(),
             whole: HashSet::new(),
+            image_views: HashMap::new(),
+            svg_text: HashSet::new(),
+            id: {
+                static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+                NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            },
             version: 0,
         };
         // 最初の表示（構文の色は、読み込んだ所がこの版 0 の表示のものを送る。最初は隠すファイルがないので、
@@ -377,6 +401,9 @@ impl CommitShown {
             tree: self.tree.as_ref(),
             counts: Some(&self.counts),
             widen: true,
+            stacked: Some(&self.stacked),
+            image_views: Some(&self.image_views),
+            key: self.id,
         }
     }
 
@@ -500,13 +527,30 @@ impl CommitShown {
                 collapsed[file] = true;
             }
         }
+        // 開いた画像は、差分の行の代わりに見出しの下に比べる欄（差分は畳んでおく。macOS 版と同じ）。
+        let panels: HashSet<usize> = stacked
+            .files
+            .iter()
+            .enumerate()
+            .filter(|&(i, (path, _))| {
+                !collapsed[i] && crate::imagediff::is_picture(path) && !self.svg_text.contains(&i)
+            })
+            .map(|(i, _)| i)
+            .collect();
+        for &file in &panels {
+            collapsed[file] = true;
+        }
         self.diff = stacked.view(&collapsed, &PROFILE);
         self.index_highlights();
+        let layout = layout.or_else(|| {
+            (!panels.is_empty()).then(|| (HashMap::new(), Vec::new(), Vec::new(), HashSet::new()))
+        });
         self.tree = layout.map(|(groups, depths, titles, hidden)| {
             let mut tree = DiffTree {
                 depths,
                 titles,
                 line_of_row: vec![u32::MAX; self.diff.rows.len()],
+                panels: panels.clone(),
                 ..Default::default()
             };
             let mut file = 0;
@@ -525,6 +569,12 @@ impl CommitShown {
                 }
                 tree.line_of_row[row] = tree.lines.len() as u32;
                 tree.lines.push(DiffLine::Row(row as u32));
+                if r.kind == amonhen_layout::DiffRow::FILE && panels.contains(&(file - 1)) {
+                    for k in 0..crate::imagediff::PANEL_LINES {
+                        tree.lines
+                            .push(DiffLine::Panel((file - 1) as u32, k as u32));
+                    }
+                }
             }
             tree
         });
@@ -2222,6 +2272,11 @@ impl Data {
             commit.tree_on = on;
             changed
         })
+    }
+
+    /// 画像の比べる欄の「テキストで見る」: その SVG を絵の代わりに差分で見せる（macOS 版と同じ）。
+    pub fn show_svg_as_text(&mut self, file: usize) -> bool {
+        self.relayout(|commit| commit.svg_text.insert(file))
     }
 
     /// 木のフォルダ `path` を畳む・開く。
