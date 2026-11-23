@@ -3068,6 +3068,52 @@ fn compare_with_the_previous_version() {
     assert!(below.contains("Take the lane from the trunk"));
 }
 
+/// History で 2 つ選んで `=`: それぞれを先端とする 2 つの版として比べる。Reflog の `=` は、その行と今の HEAD を
+#[test]
+fn compare_two_commits_as_two_versions() {
+    let dir = tempfile::tempdir().unwrap();
+    changed(dir.path());
+    // 書き換える前の版をブランチに残してから、いちばん新しいコミットの中身を変えて amend する。
+    git(dir.path(), BASE, &["branch", "before"]);
+    std::fs::write(dir.path().join("notes.txt"), "two\n").unwrap();
+    git(
+        dir.path(),
+        BASE + DAY * 4,
+        &["commit", "-q", "-a", "--amend", "--no-edit"],
+    );
+    let new = git_out(dir.path(), &["rev-parse", "--short=8", "HEAD"]);
+    let old = git_out(dir.path(), &["rev-parse", "--short=8", "before"]);
+    let shown = amonhen_tui::snapshot(open(dir.path()), 160, 30, clock(), "2mjm=").unwrap();
+    println!("{shown}");
+    let last = shown.lines().last().unwrap();
+    assert!(
+        last.contains(&format!(
+            "{} and {} compared as two versions",
+            old.trim(),
+            new.trim()
+        )),
+        "{last}"
+    );
+    let row = shown
+        .lines()
+        .find(|l| l.contains("Take the lane from the trunk"))
+        .unwrap();
+    assert!(row.contains(" ! "), "{row}");
+    // Reflog: 1 つ前（amend の前）の行と、今の HEAD を比べる。
+    let reflog = amonhen_tui::snapshot(open(dir.path()), 160, 30, clock(), "3j=").unwrap();
+    println!("{reflog}");
+    let last = reflog.lines().last().unwrap();
+    assert!(
+        last.contains("HEAD@{1} compared with the current HEAD"),
+        "{last}"
+    );
+    assert!(
+        reflog
+            .lines()
+            .any(|l| l.contains("Take the lane from the trunk") && l.contains(" ! "))
+    );
+}
+
 /// range-diff で `c`: 変わらなかった組（`=`）を出さない（アプリの Changes Only）。もう一度で戻る
 #[test]
 fn range_diff_shows_changes_only() {

@@ -2688,6 +2688,16 @@ impl App {
     }
 
     /// コアの命令を動かす。1 つずつ（動いている間は、次を受けない）。
+    /// `ranges`（git range-diff の範囲）を Range Diff で比べる。答えは Compare with Previous Version と同じ画面に。
+    fn compare_ranges(&mut self, title: String, ranges: Vec<String>) {
+        self.range_title = Some(title);
+        self.run(
+            "rangeDiff",
+            tr!("Comparing…"),
+            json!({"op": "rangeDiff", "ranges": ranges, "creationFactor": null}),
+        );
+    }
+
     fn run(&mut self, name: &'static str, label: String, command: Value) {
         self.dirty = true;
         if self.running.is_some() {
@@ -3046,16 +3056,18 @@ impl App {
                     self.dirty = true;
                     return;
                 }
-                self.range_title = Some(tr!(
+                let title = tr!(
                     "{branch} compared with {selector}",
                     branch = previous["branch"].as_str().unwrap_or(""),
                     selector = previous["selector"].as_str().unwrap_or("")
-                ));
-                self.run(
-                    "rangeDiff",
-                    tr!("Comparing…"),
-                    json!({"op": "rangeDiff", "ranges": previous["ranges"], "creationFactor": null}),
                 );
+                let ranges = previous["ranges"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|r| r.as_str().map(str::to_owned))
+                    .collect();
+                self.compare_ranges(title, ranges);
                 return;
             }
             // 比べた結果は、Blame・File History と同じ画面に（選んだ組のコミットの詳細も同じ）。
@@ -5482,6 +5494,20 @@ impl App {
                 ));
                 true
             }
+            // その行のコミットを、一番上の行（今の HEAD）と 2 つの版として比べる（アプリの Compare with Current HEAD）。
+            KeyCode::Char('=') => {
+                let (Some(id), Some((head, selector))) =
+                    (self.reflog.selected_id(), self.reflog.newest_and_selector())
+                else {
+                    return false;
+                };
+                let title = tr!(
+                    "{selector} compared with the current HEAD",
+                    selector = selector
+                );
+                self.compare_ranges(title, vec![format!("{id}...{head}")]);
+                true
+            }
             KeyCode::Char('H') => {
                 let Some(id) = self.reflog.selected_id() else {
                     return false;
@@ -5704,8 +5730,8 @@ impl App {
                     tr!("Select several commits: one at a time, or a run"),
                 ),
                 (
-                    "x .",
-                    tr!("With two selected: swap the direction; diff from where they diverged"),
+                    "x . =",
+                    tr!("With two: swap the direction; diff from the fork; Range Diff them"),
                 ),
                 (
                     "y v E",
@@ -5735,6 +5761,7 @@ impl App {
                 ("Enter", tr!("Go to the details")),
                 ("c", tr!("Check out the entry's commit (detached HEAD)")),
                 ("H", tr!("Select the entry's commit in History")),
+                ("=", tr!("Compare with the current HEAD (Range Diff)")),
                 ("Y", tr!("Copy the commit ID (the terminal’s clipboard)")),
             ],
             (View::File, Focus::Main) => vec![
@@ -6406,6 +6433,25 @@ impl App {
                     _ => Pair::Forward,
                 };
                 Some(true)
+            }
+            // 2 つを、それぞれを先端とする 2 つの版として比べる（rebase の前と後など。アプリの Compare as Two
+            // Versions）。
+            KeyCode::Char('=') if self.history.mark_count() == 2 => {
+                let marks: Vec<String> = self
+                    .history
+                    .marks()
+                    .map(|(_, m)| m.id.to_string())
+                    .collect();
+                let [newer, older] = &marks[..] else {
+                    return false;
+                };
+                let title = tr!(
+                    "{older} and {newer} compared as two versions",
+                    older = &older[..8],
+                    newer = &newer[..8]
+                );
+                self.compare_ranges(title, vec![format!("{older}...{newer}")]);
+                return true;
             }
             KeyCode::Char('.') if self.history.mark_count() == 2 => {
                 self.pair = match self.pair {
