@@ -528,6 +528,17 @@ char *amonhen_rename_label(const char *old,
                            const char *new_);
 
 /**
+ * SVG（`data` の `len` バイト）の、モバイル向けの描画部品で崩れる機能（JSON の配列。要素は
+ * `{"targets": ["android"|"ios"|"flutter"|"reactNative", …], "feature", "message", "count"}`）。
+ * `amonhen_string_free` で解放する。
+ *
+ * # Safety
+ * `data` は `len` バイト読めること（`len` が 0 なら NULL でもよい）。
+ */
+char *amonhen_svg_lint(const uint8_t *data,
+                       uintptr_t len);
+
+/**
  * この機械の git の版（`2.39.5`）。読めなければ NULL。`amonhen_string_free` で解放する。git を起動する
  * ことがあるので（初めの 1 回だけ）、裏のスレッドで呼ぶ。
  */

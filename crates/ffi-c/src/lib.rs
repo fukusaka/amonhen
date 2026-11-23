@@ -380,6 +380,34 @@ pub unsafe extern "C" fn amonhen_rename_label(
         .map_or(std::ptr::null_mut(), CString::into_raw)
 }
 
+/// SVG（`data` の `len` バイト）の、モバイル向けの描画部品で崩れる機能（JSON の配列。要素は
+/// `{"targets": ["android"|"ios"|"flutter"|"reactNative", …], "feature", "message", "count"}`）。
+/// `amonhen_string_free` で解放する。
+///
+/// # Safety
+/// `data` は `len` バイト読めること（`len` が 0 なら NULL でもよい）。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_svg_lint(data: *const u8, len: usize) -> *mut c_char {
+    let bytes = if len == 0 || data.is_null() {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(data, len) }
+    };
+    let issues: Vec<serde_json::Value> = amonhen_core::svglint::lint(bytes)
+        .into_iter()
+        .map(|i| {
+            serde_json::json!({
+                "targets": i.targets.iter().map(|t| t.key()).collect::<Vec<_>>(),
+                "feature": i.feature,
+                "message": i.message,
+                "count": i.count,
+            })
+        })
+        .collect();
+    CString::new(serde_json::Value::Array(issues).to_string())
+        .map_or(std::ptr::null_mut(), CString::into_raw)
+}
+
 /// この機械の git の版（`2.39.5`）。読めなければ NULL。`amonhen_string_free` で解放する。git を起動する
 /// ことがあるので（初めの 1 回だけ）、裏のスレッドで呼ぶ。
 #[unsafe(no_mangle)]

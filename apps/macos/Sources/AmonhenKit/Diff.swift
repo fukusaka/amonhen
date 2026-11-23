@@ -410,3 +410,25 @@ extension Repository {
         return FileDiff(raw: raw, owner: self, view: amonhen_diff_view(raw), free: { amonhen_diff_free($0) })
     }
 }
+
+/// SVG の、モバイル向けの描画部品で崩れる機能 1 つ。
+public struct SVGIssue: Sendable, Decodable {
+    /// 崩れる部品（`android`・`ios`・`flutter`・`reactNative`）。
+    public let targets: [String]
+    /// 機能（`<filter>`・`stroke-dasharray` など）。
+    public let feature: String
+    /// どう崩れるか（訳した文）。
+    public let message: String
+    /// 使っている数。
+    public let count: Int
+
+    /// `svg` の中の、Android VectorDrawable・iOS（CoreSVG）・flutter_svg・react-native-svg で崩れる機能。
+    public static func lint(_ svg: Data) -> [SVGIssue] {
+        let raw = svg.withUnsafeBytes { buffer in
+            amonhen_svg_lint(buffer.bindMemory(to: UInt8.self).baseAddress, UInt(buffer.count))
+        }
+        guard let raw else { return [] }
+        defer { amonhen_string_free(raw) }
+        return (try? JSONDecoder().decode([SVGIssue].self, from: Data(String(cString: raw).utf8))) ?? []
+    }
+}
