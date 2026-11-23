@@ -63,11 +63,11 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Tag signature marks | ✓ | ✓ | △ | ✓ | ✓ | — | VSCode: The row's icon, explained in the tooltip.<br>CLI: `refs --verify`.<br>Windows: 🔏 (verified) or 🔓 (signed, not verified) after the name, and the status and signer at the top of the tag's menu; no popover |
 | Tag menu: Push to, Replace on, Delete, Delete from a remote | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: The remote is chosen in a list when there are several.<br>CLI: Via `amonhen run`.<br>TUI: `D` deletes a tag here, `t` pushes or replaces it on a remote and `X` deletes it from one, the remote chosen by digit. |
 | Remotes with their branches | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |
-| Remote menu: Add, Rename, Edit URL, Remove, Prune | ✓ | ✓ | △ | ✓ | △ | ✓ | CLI: Via `amonhen run`.<br>Windows: Edit… changes the name and the URLs.<br>TUI: Add Remote in the command list; on a remote branch in the sidebar `e` edits the name and URL, `X` prunes and `x` removes. |
+| Remote menu: Add, Rename, Edit URL, Remove, Prune | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: Via `amonhen run`.<br>TUI: Add Remote in the command list; on a remote branch in the sidebar `e` edits the name and URL, `X` prunes and `x` removes. |
 | Pull Requests group | ✓ | ✓ | ✓ | — | — | — |  |
 | Submodules group (Update, Open in New Window) | ✓ | ✓ | ✓ | ✓ | ✓ | △ | CLI: `submodule`, `submodule update`.<br>TUI: No group; Update Submodules in the command list. |
 | Submodule marks (not checked out, another commit, changes inside, conflict) and menus: Update… (recursive, remote), Edit URL, Branch to Follow, Remove (optionally .git/modules), Add, Sync URLs | ✓ | ✓ | ✓ | ✓ | ✓ | △ | VSCode: Remove asks with two buttons: keep `.git/modules` or delete it too.<br>CLI: `submodule` (`add`, `remove`, `set-url`, `set-branch`, `sync`).<br>TUI: Update Submodules only (the recorded commit, recursively, or the branch's latest). |
-| Submodules: move repository data into .git/modules, run a command in each | ✓ | ✓ | △ | ✓ | ✓ | — | VSCode: Run in Each Submodule…'s output goes to an Output channel (the app's Activity).<br>CLI: `submodule absorb`, `submodule foreach`.<br>Windows: Run in Each Submodule…'s output is under its row in Activity. |
+| Submodules: move repository data into .git/modules, run a command in each | ✓ | ✓ | ✓ | ✓ | ✓ | — | VSCode: Run in Each Submodule…'s output goes to an Output channel (the app's Activity).<br>CLI: `submodule absorb`, `submodule foreach`. |
 | Worktrees under Working Copy with change counts (✎ ⌂ ⑂) | ✓ | ✓ | ✓ | ✓ | △ | △ | VSCode: The marks are the rows' icons; a branch another worktree has checked out gets ⌂ or ⑂.<br>CLI: `worktree list --changes`.<br>TUI: In the sidebar (folder and branch) when there are two or more; no change counts. |
 | Marks for a shallow or partial clone (History) and a sparse checkout (Working Copy) | ✓ | ✓ | ✓ | ✓ | n/a | — | VSCode: Shallow and Partial above History (Partial fetches all contents when clicked); " · some folders" on the Working Copy row for a sparse checkout. |
 
@@ -75,11 +75,11 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 
 | Feature | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
-| Repository tabs in a window | ✓ | ✓ | △ | n/a | n/a | n/a | Windows: Only the front tab's repository is open; switching tabs rebuilds the window's contents for the other repository (History comes back from the persistent cache), and tabs in the back don't watch for changes.<br>TUI: No tabs or windows; Enter on another worktree and Quick Open reopen the TUI there. |
-| Separate windows (New Window) | ✓ | ✓ | △ | n/a | n/a | n/a | Windows: A window is a separate process, so tabs can't move between windows and the Window menu lists no other windows; New Window opens one on the current repository showing Repositories |
+| Repository tabs in a window | ✓ | ✓ | ✓ | n/a | n/a | n/a | Windows: Tabs in the back keep their repository open; coming back redraws the page they were on.<br>TUI: No tabs or windows; Enter on another worktree and Quick Open reopen the TUI there. |
+| Separate windows (New Window) | ✓ | ✓ | ✓ | n/a | n/a | n/a | Windows: New Window opens one on the current repository showing Repositories; tabs are dragged between windows or out into a new one, and the Window menu lists the windows. |
 | Open windows and tabs restored at launch | ✓ | ✓ | ✓ | n/a | n/a | n/a |  |
 | Connecting tab for SSH and daemon repositories (Cancel, Try Again) | ✓ | ✓ | ✓ | n/a | n/a | n/a |  |
-| Title shows uncommitted ● and ahead/behind | ✓ | ✓ | △ | n/a | n/a | n/a | GTK4: On the tab names.<br>Windows: On the window title and the front tab's name.<br>TUI: The top line shows the branch with ahead and behind. |
+| Title shows uncommitted ● and ahead/behind | ✓ | ✓ | ✓ | n/a | n/a | n/a | GTK4: On the tab names.<br>Windows: On the window title and each tab's name.<br>TUI: The top line shows the branch with ahead and behind. |
 | App keeps running after its last window closes | ✓ | — | — | n/a | n/a | n/a | GTK4: Quits, as GNOME apps do. |
 
 ## 2. Bookmarks (the repository list)
@@ -96,7 +96,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Favorites, display name, color label | ✓ | ✓ | ✓ | n/a | n/a | — |  |
 | Open in a tab or window; Finder / Files, Terminal, Editor | ✓ | ✓ | ✓ | n/a | n/a | — | GTK4: An app other than a known code editor or a program chosen with Other… opens a folder only if it declares inode/directory.<br>Windows: Explorer, Windows Terminal (or cmd) and the editor chosen in Settings. |
 | Fetch the selected repositories | ✓ | ✓ | ✓ | n/a | n/a | — | Windows: Rows are selected with Ctrl or Shift, and Fetch on a selected row's menu fetches them all. |
-| Quick Open (fuzzy search) | ✓ | ✓ | △ | n/a | n/a | ✓ | Windows: Opens in a new window.<br>TUI: Quick Open in the command list lists what the apps' does: the shared bookmarks (`bookmarks.json`, favorites first), recently opened repositories (`recent.json`) and those found under the local folders to scan (searched in the background; folders on SSH hosts aren't); Enter reopens the TUI there. |
+| Quick Open (fuzzy search) | ✓ | ✓ | ✓ | n/a | n/a | ✓ | TUI: Quick Open in the command list lists what the apps' does: the shared bookmarks (`bookmarks.json`, favorites first), recently opened repositories (`recent.json`) and those found under the local folders to scan (searched in the background; folders on SSH hosts aren't); Enter reopens the TUI there. |
 | Repository name in the toolbar switches the repository | ✓ | ✓ | ✓ | ✓ | n/a | n/a | VSCode: Select Repository picks among workspace repositories.<br>TUI: Quick Open instead. |
 | Clone (choosing from your own GitHub repositories) | ✓ | ✓ | ✓ | n/a | △ | — | VSCode: VSCode's own Git: Clone.<br>CLI: `clone <url>` only.<br>Windows: The clone opens in a new tab. |
 | Clone: what to download (everything, contents when needed, recent history) and only some folders | ✓ | ✓ | ✓ | n/a | ✓ | — | VSCode: VSCode's own Git: Clone.<br>CLI: `clone --filter`, `--depth`, `--sparse`. |
@@ -156,7 +156,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Keys and Values (git config table, Basic / Customized / All, Combined / Levels) | ✓ | ✓ | ✓ | ✓ | △ | n/a | VSCode: Basic / Customized / All, Combined / Levels and search; values are edited in an input box.<br>CLI: Via `amonhen run` (`configList`, `configSet`). |
 | Rows disabled with the git version needed | ✓ | ✓ | ✓ | ✓ | n/a | n/a | Windows: Fetching and Folders' rows (partial clone, sparse checkout, maintenance) |
 | Repository's form on the git line (shallow, partial, sparse, maintenance) | ✓ | ✓ | ✓ | ✓ | △ | n/a | CLI: `status` notes shallow, partial and sparse repositories. |
-| Fetching and Folders: fetch more of a shallow clone (a count, up to a date, all) | ✓ | ✓ | △ | ✓ | △ | — | CLI: Via `amonhen run` (`deepen`, `unshallow`).<br>Windows: The date is typed as YYYY-MM-DD (no calendar) |
+| Fetching and Folders: fetch more of a shallow clone (a count, up to a date, all) | ✓ | ✓ | ✓ | ✓ | △ | — | CLI: Via `amonhen run` (`deepen`, `unshallow`). |
 | Fetching and Folders: fetch all contents of a partial clone (git 2.36) | ✓ | ✓ | ✓ | ✓ | △ | — | CLI: Via `amonhen run` (`fetchAllContents`). |
 | Fetching and Folders: folders of a sparse checkout picked from HEAD's tree (git 2.25) | ✓ | ✓ | △ | ✓ | △ | — | VSCode: The folder is picked by walking HEAD's tree in a list.<br>CLI: Via `amonhen run` (`sparseCheckout`, `treeFolders`).<br>Windows: The folder is picked by walking HEAD's tree in a list (↑ and →) |
 | Fetching and Folders: git maintenance switch (git 2.31) | ✓ | ✓ | ✓ | ✓ | △ | n/a | CLI: Via `amonhen run` (`maintenance`). |
@@ -253,7 +253,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Display: order, one line, row items, fold merged, highlight ancestors | ✓ | ✓ | ✓ | ✓ | △ | △ | macOS, GTK4: Any merge folds on its own (a +N badge, its context menu, ←/→), kept per repository.<br>VSCode: Order, folding and highlighting with the engine.<br>CLI: `--topo-order`, `--fold`.<br>Windows: In View.<br>TUI: `o` order and `z` fold, for the run only; always one line, no choice of row items. |
 | Avatars | ✓ | ✓ | ✓ | — | n/a | — |  |
 | Signature marks on commits | ✓ | ✓ | ✓ | ✓ | △ | △ | VSCode: With the engine.<br>CLI: In `show`.<br>TUI: In the details only. |
-| CI status per commit with a checks popover | ✓ | ✓ | △ | — | — | — | Windows: The checks show in a dialog rather than a popover. |
+| CI status per commit with a checks popover | ✓ | ✓ | ✓ | — | — | — |  |
 | Worktree HEAD labels (✎ ⌂ ⑂, change counts) | ✓ | ✓ | ✓ | ✓ | — | — |  |
 | Go to HEAD, Parent, Child | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: The HEAD button above History, Go to Parent and Go to Child on a commit's menu, and parent and child links in the details (with the engine).<br>TUI: `@`, `]` and `[`. |
 | Go to Ref | — | — | — | — | n/a | — |  |
@@ -315,7 +315,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Editable Result with undo per conflict | ✓ | ✓ | ✓ | n/a | n/a | n/a | TUI: `e` opens the file in git's editor. |
 | Resolve a file with Current / Incoming | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: Via `amonhen run`.<br>TUI: `o` `t` in the list. |
 | Open in an external merge tool | — | — | — | n/a | n/a | — |  |
-| Pop out the editor into a window | ✓ | ✓ | △ | n/a | n/a | n/a | Windows: A separate window (its own process) opens the same file; unsaved edits go with it. |
+| Pop out the editor into a window | ✓ | ✓ | ✓ | n/a | n/a | n/a | Windows: A new window opens the same file; unsaved edits go with it. |
 | Continue / Skip / Abort | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: On the sidebar's in-progress row.<br>CLI: Via `amonhen run`.<br>TUI: `C` `K` `A`. |
 
 ## 9. AI
@@ -401,7 +401,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Remove Worktree (asks, `--force` with changes) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | TUI: `x` after asking, naming the changes it removes with `--force`. |
 | Lock and unlock, move, locate a moved folder (repair) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: The worktree's right-click; the worktree being edited moves only after switching to another.<br>CLI: `worktree lock`, `unlock`, `move`, `repair`.<br>TUI: `L` and `n` on a worktree in the sidebar. |
 | Prune worktrees | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | TUI: In the command list. |
-| A worktree's folder opens its repository with it edited | ✓ | ✓ | △ | ✓ | n/a | ✓ | VSCode: Opening the folder works on that worktree, with the others listed.<br>Windows: The folder opens in its own window with that worktree ✎ and the others listed. |
+| A worktree's folder opens its repository with it edited | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: Opening the folder works on that worktree, with the others listed.<br>Windows: The folder opens in a tab with that worktree ✎ and the others listed. |
 
 ## SSH hosts, shared daemon, askpass
 

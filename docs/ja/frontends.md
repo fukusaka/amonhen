@@ -63,11 +63,11 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | タグの署名の印 | ✓ | ✓ | △ | ✓ | ✓ | — | VSCode: 行のアイコンで、説明はツールチップに。<br>CLI: `refs --verify`。<br>Windows: 名前の後ろに 🔏（検証できた）か 🔓（署名はあるが検証できない）、状態と署名者はタグのメニューの先頭。吹き出しはない |
 | タグのメニュー: Push to・Replace on・削除・リモートから削除 | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: リモートがいくつもあれば一覧で選ぶ。<br>CLI: `amonhen run` から。<br>TUI: `D` で手元のタグを消し、`t` でリモートへ push か置き換え、`X` でリモートから消す。リモートは数字で選ぶ。 |
 | リモートとそのブランチ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |
-| リモートのメニュー: 追加・名前の変更・URL の変更・削除・Prune | ✓ | ✓ | △ | ✓ | △ | ✓ | CLI: `amonhen run` から。<br>Windows: Edit… で名前と URL を変える。<br>TUI: 命令の一覧の Add Remote。サイドバーのリモートのブランチの上で `e` で名前と URL を直し、`X` で Prune、`x` で消す。 |
+| リモートのメニュー: 追加・名前の変更・URL の変更・削除・Prune | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: `amonhen run` から。<br>TUI: 命令の一覧の Add Remote。サイドバーのリモートのブランチの上で `e` で名前と URL を直し、`X` で Prune、`x` で消す。 |
 | Pull Requests のグループ | ✓ | ✓ | ✓ | — | — | — |  |
 | Submodules のグループ（Update・新しい窓で開く） | ✓ | ✓ | ✓ | ✓ | ✓ | △ | CLI: `submodule`・`submodule update`。<br>TUI: グループはない。命令の一覧に Update Submodules。 |
 | submodule の印（取り出していない・違うコミット・中の変更・コンフリクト）とメニュー: Update…（中の submodule も・追うブランチの最新）・URL の編集・追うブランチ・外す（.git/modules も消せる）・追加・Sync URLs | ✓ | ✓ | ✓ | ✓ | ✓ | △ | VSCode: Remove は 2 つのボタンで、.git/modules を残すか一緒に消すかを聞く。<br>CLI: `submodule`（`add`・`remove`・`set-url`・`set-branch`・`sync`）。<br>TUI: Update Submodules だけ（記録したコミット・中の submodule も・追うブランチの最新）。 |
-| submodule: リポジトリのデータを .git/modules に移す・それぞれで命令を動かす | ✓ | ✓ | △ | ✓ | ✓ | — | VSCode: Run in Each Submodule… の出力は出力パネルに出る（アプリの Activity にあたる）。<br>CLI: `submodule absorb`・`submodule foreach`。<br>Windows: Run in Each Submodule… の出力は Activity のその行の下に。 |
+| submodule: リポジトリのデータを .git/modules に移す・それぞれで命令を動かす | ✓ | ✓ | ✓ | ✓ | ✓ | — | VSCode: Run in Each Submodule… の出力は出力パネルに出る（アプリの Activity にあたる）。<br>CLI: `submodule absorb`・`submodule foreach`。 |
 | Working Copy の下の worktree と変更の数（✎ ⌂ ⑂） | ✓ | ✓ | ✓ | ✓ | △ | △ | VSCode: 印は行のアイコン。ほかの worktree が checkout しているブランチには ⌂ か ⑂ が付く。<br>CLI: `worktree list --changes`。<br>TUI: 2 つ以上あればサイドバーに（フォルダとブランチ）。変更の数はない。 |
 | shallow clone・partial clone（History）と sparse checkout（Working Copy）の印 | ✓ | ✓ | ✓ | ✓ | n/a | — | VSCode: History の上の Shallow・Partial（Partial は押すと中身をすべて取る）。sparse checkout なら Working Copy の行に「· some folders」。 |
 
@@ -75,11 +75,11 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 
 | 機能 | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
-| 窓の中のリポジトリのタブ | ✓ | ✓ | △ | n/a | n/a | n/a | Windows: 開いているのは前のタブのリポジトリだけ。タブを替えると窓の中身をそのリポジトリで作り直し（History は永続のキャッシュから戻る）、後ろのタブは変化を見ない。<br>TUI: タブも窓もない。ほかの worktree で Enter、Quick Open で、TUI をそこで開き直す。 |
-| 別の窓（New Window） | ✓ | ✓ | △ | n/a | n/a | n/a | Windows: 窓は別のプロセスなので、タブを窓の間で動かせず、Window のメニューにほかの窓が並ばない。New Window は今のリポジトリの窓を開き、Repositories を出す |
+| 窓の中のリポジトリのタブ | ✓ | ✓ | ✓ | n/a | n/a | n/a | Windows: 後ろのタブもリポジトリを開いたまま。戻ると、離れたときの画面を描き直す。<br>TUI: タブも窓もない。ほかの worktree で Enter、Quick Open で、TUI をそこで開き直す。 |
+| 別の窓（New Window） | ✓ | ✓ | ✓ | n/a | n/a | n/a | Windows: New Window は今のリポジトリの窓を開き、Repositories を出す。タブは引いてほかの窓へ移すか、外へ引き出して新しい窓にする。Window のメニューに窓が並ぶ。 |
 | 起動時に窓とタブを戻す | ✓ | ✓ | ✓ | n/a | n/a | n/a |  |
 | SSH・daemon のリポジトリのつなぎ中のタブ（Cancel・Try Again） | ✓ | ✓ | ✓ | n/a | n/a | n/a |  |
-| 題に未コミットの ● と ahead/behind | ✓ | ✓ | △ | n/a | n/a | n/a | GTK4: タブの名前に出る。<br>Windows: 窓のタイトルと前のタブの名前に。<br>TUI: 一番上の行にブランチと ahead/behind。 |
+| 題に未コミットの ● と ahead/behind | ✓ | ✓ | ✓ | n/a | n/a | n/a | GTK4: タブの名前に出る。<br>Windows: 窓のタイトルとそれぞれのタブの名前に。<br>TUI: 一番上の行にブランチと ahead/behind。 |
 | 最後の窓を閉じてもアプリは終わらない | ✓ | — | — | n/a | n/a | n/a | GTK4: GNOME のアプリと同じく終わる。 |
 
 ## 2. ブックマーク（リポジトリの一覧）
@@ -96,7 +96,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | お気に入り・表示名・色のラベル | ✓ | ✓ | ✓ | n/a | n/a | — |  |
 | タブ・窓で開く、Finder（ファイル）・Terminal・エディタ | ✓ | ✓ | ✓ | n/a | n/a | — | GTK4: 知っているコードエディタと「その他…」で選んだプログラム以外は、inode/directory を宣言しているアプリだけがフォルダを開く。<br>Windows: エクスプローラー・Windows Terminal（なければ cmd）・Settings で選んだエディタ。 |
 | 選んだリポジトリを Fetch | ✓ | ✓ | ✓ | n/a | n/a | — | Windows: Ctrl・Shift で行を選び、選んだ行のメニューの Fetch で、選んだものすべてを fetch する。 |
-| Quick Open（あいまい検索） | ✓ | ✓ | △ | n/a | n/a | ✓ | Windows: 新しいウィンドウで開く。<br>TUI: 命令の一覧の Quick Open が、アプリと同じものを並べる: 共有のブックマーク（`bookmarks.json`。お気に入りを先に）、最近開いたもの（`recent.json`）、手元の探すフォルダの下で見つけたもの（裏で探す。SSH 先のフォルダは探さない）。Enter で TUI をそこで開き直す。 |
+| Quick Open（あいまい検索） | ✓ | ✓ | ✓ | n/a | n/a | ✓ | TUI: 命令の一覧の Quick Open が、アプリと同じものを並べる: 共有のブックマーク（`bookmarks.json`。お気に入りを先に）、最近開いたもの（`recent.json`）、手元の探すフォルダの下で見つけたもの（裏で探す。SSH 先のフォルダは探さない）。Enter で TUI をそこで開き直す。 |
 | ツールバーのリポジトリ名で切り替える | ✓ | ✓ | ✓ | ✓ | n/a | n/a | VSCode: Select Repository でワークスペースのリポジトリから選ぶ。<br>TUI: Quick Open が代わり。 |
 | Clone（自分の GitHub のリポジトリから選ぶ） | ✓ | ✓ | ✓ | n/a | △ | — | VSCode: VSCode 自身の Git: Clone。<br>CLI: `clone <url>` だけ。<br>Windows: clone したものは新しいタブで開く。 |
 | Clone: 取得する範囲（すべて・中身は必要なときに・最近の履歴）と、一部のフォルダだけ | ✓ | ✓ | ✓ | n/a | ✓ | — | VSCode: VSCode の Git: Clone が代わり。<br>CLI: `clone --filter`・`--depth`・`--sparse`。 |
@@ -156,7 +156,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Keys and Values（git config の表、Basic / Customized / All、Combined / Levels） | ✓ | ✓ | ✓ | ✓ | △ | n/a | VSCode: Basic / Customized / All、Combined / Levels と検索。値は入力欄で変える。<br>CLI: `amonhen run`（`configList`・`configSet`）から。 |
 | 要る git の版を添えて行を無効にする | ✓ | ✓ | ✓ | ✓ | n/a | n/a | Windows: 取得とフォルダの行（partial clone・sparse checkout・maintenance） |
 | git の行にリポジトリの形（shallow・partial・sparse・maintenance） | ✓ | ✓ | ✓ | ✓ | △ | n/a | CLI: `status` が shallow・partial・sparse を添える。 |
-| 取得とフォルダ: shallow clone の履歴を取り足す（数・日付まで・すべて） | ✓ | ✓ | △ | ✓ | △ | — | CLI: `amonhen run`（`deepen`・`unshallow`）から。<br>Windows: 日付は YYYY-MM-DD で打つ（暦はない） |
+| 取得とフォルダ: shallow clone の履歴を取り足す（数・日付まで・すべて） | ✓ | ✓ | ✓ | ✓ | △ | — | CLI: `amonhen run`（`deepen`・`unshallow`）から。 |
 | 取得とフォルダ: partial clone の中身をすべて取る（git 2.36） | ✓ | ✓ | ✓ | ✓ | △ | — | CLI: `amonhen run`（`fetchAllContents`）から。 |
 | 取得とフォルダ: sparse checkout のフォルダを HEAD の木から選ぶ（git 2.25） | ✓ | ✓ | △ | ✓ | △ | — | VSCode: フォルダは HEAD の木を一覧でたどって選ぶ。<br>CLI: `amonhen run`（`sparseCheckout`・`treeFolders`）から。<br>Windows: フォルダは HEAD の木を一覧でたどって選ぶ（↑ と →） |
 | 取得とフォルダ: git maintenance の切り替え（git 2.31） | ✓ | ✓ | ✓ | ✓ | △ | n/a | CLI: `amonhen run`（`maintenance`）から。 |
@@ -253,7 +253,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 表示: 順・1 行・行の項目・マージ済みを畳む・祖先を目立たせる | ✓ | ✓ | ✓ | ✓ | △ | △ | macOS・GTK4: merge を 1 つずつたたむ（+N の札・右クリック・←/→）。リポジトリごとに覚える。<br>VSCode: 順・畳む・目立たせるはエンジンで。<br>CLI: `--topo-order`・`--fold`。<br>Windows: View に。<br>TUI: `o` で順、`z` で畳む（その回だけ）。いつも 1 行で、行の項目は選べない。 |
 | アバター | ✓ | ✓ | ✓ | — | n/a | — |  |
 | コミットの署名の印 | ✓ | ✓ | ✓ | ✓ | △ | △ | VSCode: エンジンがあるとき。<br>CLI: `show` に出る。<br>TUI: 詳細にだけ出す。 |
-| コミットごとの CI の状態とポップオーバー | ✓ | ✓ | △ | — | — | — | Windows: チェックは吹き出しでなくダイアログに出す。 |
+| コミットごとの CI の状態とポップオーバー | ✓ | ✓ | ✓ | — | — | — |  |
 | worktree の HEAD のラベル（✎ ⌂ ⑂・変更の数） | ✓ | ✓ | ✓ | ✓ | — | — |  |
 | Go to HEAD・Parent・Child | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: History の上の HEAD のボタン、コミットのメニューの Go to Parent・Go to Child、詳細の親と子へのリンク（エンジンがあるとき）。<br>TUI: `@`・`]`・`[`。 |
 | Go to Ref | — | — | — | — | n/a | — |  |
@@ -315,7 +315,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 直せる Result とコンフリクトごとの Undo | ✓ | ✓ | ✓ | n/a | n/a | n/a | TUI: `e` でファイルを git のエディタで開く。 |
 | ファイルを Current / Incoming で解く | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: `amonhen run` から。<br>TUI: 一覧で `o` `t`。 |
 | 外のマージツールで開く | — | — | — | n/a | n/a | — |  |
-| エディターを別の窓に出す | ✓ | ✓ | △ | n/a | n/a | n/a | Windows: 別の窓（別のプロセス）で同じファイルを開く。保存していない編集も持って行く。 |
+| エディターを別の窓に出す | ✓ | ✓ | ✓ | n/a | n/a | n/a | Windows: 新しい窓で同じファイルを開く。保存していない編集も持って行く。 |
 | Continue / Skip / Abort | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: サイドバーの進行中の行に出る。<br>CLI: `amonhen run` から。<br>TUI: `C` `K` `A`。 |
 
 ## 9. AI
@@ -401,7 +401,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Remove Worktree（尋ね、変更があれば `--force`） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | TUI: `x` で尋ねてから消す。変更があればその数を書き、`--force` で消す。 |
 | ロックと解除・移動・移したフォルダを探す（repair） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: worktree の右クリックから。書き込む先の worktree は、ほかに切り替えてから移す。<br>CLI: `worktree lock`・`unlock`・`move`・`repair`。<br>TUI: サイドバーの worktree で `L`・`n`。 |
 | worktree の Prune | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | TUI: 命令の一覧から。 |
-| worktree のフォルダーを開くと、そのリポジトリでそれを書き込む先にする | ✓ | ✓ | △ | ✓ | n/a | ✓ | VSCode: フォルダーを開くとその worktree で働き、ほかの worktree も並ぶ。<br>Windows: フォルダはそれ自身の窓で開き、その worktree が ✎、ほかも並ぶ。 |
+| worktree のフォルダーを開くと、そのリポジトリでそれを書き込む先にする | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: フォルダーを開くとその worktree で働き、ほかの worktree も並ぶ。<br>Windows: フォルダはタブで開き、その worktree が ✎、ほかも並ぶ。 |
 
 ## SSH 先・共有の daemon・askpass
 
