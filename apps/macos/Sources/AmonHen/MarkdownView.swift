@@ -100,6 +100,8 @@ final class DiagramPicture {
     /// 図の中で指定したテーマ（設定より先）。
     private let own: MermaidThemeConfig?
     private var colored: [String: NSImage] = [:]
+    /// 配色・外観・画素の大きさごとに、画素にした絵（描き直しのたびに CoreSVG で SVG を描き直さない）。
+    private var bitmaps: [String: NSImage] = [:]
 
     private init(svg: String, own: MermaidThemeConfig?) {
         self.svg = svg
@@ -113,22 +115,49 @@ final class DiagramPicture {
         else { return nil }
         let image = NSImage(size: first.size, flipped: false) { rect in
             // 文字の描画（メインスレッド）から呼ばれる。
-            MainActor.assumeIsolated { picture.current()?.draw(in: rect) }
+            MainActor.assumeIsolated { picture.draw(in: rect) }
             return true
         }
         image.cacheMode = .never
         return image
     }
 
-    /// 今の外観（描いている最中のもの）での絵。
-    private func current() -> NSImage? {
+    /// `rect` に描く。今の配色と、描く先の画素の大きさで画素にした絵を覚えておき、次からはそれを描く。
+    func draw(in rect: NSRect) {
+        guard let (key, vector) = current() else { return }
+        let scale = NSGraphicsContext.current.map { abs($0.cgContext.userSpaceToDeviceSpaceTransform.a) } ?? 2
+        let width = Int((rect.width * scale).rounded(.up)), height = Int((rect.height * scale).rounded(.up))
+        guard width > 0, height > 0 else { return }
+        let bitmapKey = "\(key)\n\(width)x\(height)"
+        if let bitmap = bitmaps[bitmapKey] {
+            bitmap.draw(in: rect)
+            return
+        }
+        guard let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height, bitsPerSample: 8, samplesPerPixel: 4,
+            hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)
+        else { return vector.draw(in: rect) }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        vector.draw(in: NSRect(x: 0, y: 0, width: width, height: height))
+        NSGraphicsContext.restoreGraphicsState()
+        let bitmap = NSImage(size: rect.size)
+        bitmap.addRepresentation(rep)
+        // 配色・外観を変えたら古い絵は要らない（大きさ違いは残す: 列の幅を変えている途中）
+        bitmaps = bitmaps.filter { $0.key.hasPrefix(key + "\n") }
+        bitmaps[bitmapKey] = bitmap
+        bitmap.draw(in: rect)
+    }
+
+    /// 今の外観（描いている最中のもの）での絵と、その配色の鍵。
+    private func current() -> (String, NSImage)? {
         let dark = NSAppearance.currentDrawing().bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
         let scheme = Settings.diagramColors
         let themeName = dark ? Settings.syntaxThemeDark : Settings.syntaxThemeLight
         let imported = scheme.hasPrefix("mermaid-import:")
             ? Settings.importedMermaidThemes[String(scheme.dropFirst("mermaid-import:".count))] : nil
         let key = "\(scheme)\n\(themeName)\n\(dark)\n\(imported?.json ?? "")"
-        if let image = colored[key] { return image }
+        if let image = colored[key] { return (key, image) }
         var theme: [String: Any] = [:]
         if scheme == "syntax" {
             let syntax = SyntaxTheme.named(themeName) ?? .system
@@ -139,7 +168,7 @@ final class DiagramPicture {
         let image = MarkdownBlock.colorizeDiagram(svg, scheme: scheme, dark: dark, theme: theme, own: own, imported: imported)
             .flatMap(NSImage.init(data:))
         colored[key] = image
-        return image
+        return image.map { (key, $0) }
     }
 
     /// 今の外観での色の `#rrggbb`。
