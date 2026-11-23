@@ -150,6 +150,8 @@ const LABEL_HEIGHT: f32 = 17.0;
 /// 差分の行の高さ（DIP）と、行番号の列の幅。
 pub const DIFF_ROW_HEIGHT: f32 = 18.0;
 const DIFF_NUMBER_WIDTH: f32 = 44.0;
+/// History の差分の行番号の欄の幅（hunk の見出しのここを押すと、前後の行を広げる）。
+pub const DIFF_GUTTER_WIDTH: f32 = DIFF_NUMBER_WIDTH * 2.0;
 const DIFF_TEXT_INSET: f32 = 10.0;
 /// ファイルの見出しの、パスの左端（左に ▸・▾ と、足した・消した・変えたの印。macOS 版と同じ並び）。
 const HEADER_PATH_X: f32 = 42.0;
@@ -1228,6 +1230,32 @@ impl Renderer {
                 self.draw_number(row.old_no, left, top)?;
                 self.draw_number(row.new_no, left + DIFF_NUMBER_WIDTH, top)?;
             }
+            // hunk の見出しの行番号の欄に、前後の行を広げる印（macOS 版の `drawExpandMark`）。
+            if commit.widen && row.kind == DiffRow::HUNK {
+                unsafe {
+                    self.brush.SetColor(&rgba(0.0, 0.47, 0.84, 0.18));
+                    self.d2d
+                        .FillRectangle(&rect(0.0, DIFF_GUTTER_WIDTH), &self.brush);
+                }
+                let format = self.file_format.clone();
+                let text: Vec<u16> = "⤒  ⤓".encode_utf16().collect();
+                unsafe {
+                    let layout = self.dwrite.CreateTextLayout(
+                        &text,
+                        &format,
+                        DIFF_GUTTER_WIDTH,
+                        DIFF_ROW_HEIGHT,
+                    )?;
+                    layout.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER)?;
+                    self.brush.SetColor(&DIFF_MARK);
+                    self.d2d.DrawTextLayout(
+                        point(0.0, top + 1.0),
+                        &layout,
+                        &self.brush,
+                        D2D1_DRAW_TEXT_OPTIONS_NONE,
+                    );
+                }
+            }
             if commit.marks && matches!(row.kind, DiffRow::ADDED | DiffRow::REMOVED) {
                 let mark = if row.flags & DiffRow::STAGED != 0 {
                     Mark::All
@@ -1316,14 +1344,24 @@ impl Renderer {
             &secondary(),
             true,
         )?;
+        // まだ差分を取っていないファイルは、詳細の `stats` の行の数（macOS 版の `fileCounts`）。
+        let (added, removed) = if row.flags & DiffRow::PENDING != 0 {
+            let path = String::from_utf8_lossy(commit.view.strings.bytes(row.text));
+            commit
+                .counts
+                .and_then(|c| c.get(path.as_ref()).copied())
+                .unwrap_or((0, 0))
+        } else {
+            (row.new_no, row.old_no)
+        };
         let counts: Vec<(String, D2D1_COLOR_F)> = if row.flags & DiffRow::BINARY != 0 {
             vec![(amonhen_model::tr!("Binary"), secondary())]
-        } else if row.new_no == 0 && row.old_no == 0 {
+        } else if added == 0 && removed == 0 {
             Vec::new()
         } else {
             vec![
-                (format!("+{}", row.new_no), ADDED_TEXT),
-                (format!("−{}", row.old_no), REMOVED_TEXT),
+                (format!("+{added}"), ADDED_TEXT),
+                (format!("−{removed}"), REMOVED_TEXT),
             ]
         };
         let format = self.file_format.clone();
