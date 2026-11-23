@@ -305,6 +305,8 @@ struct Root {
     checks_popover: Option<ChecksPopover>,
     checks_anchor: ElementRef<Button>,
     checks_opened: u64,
+    /// Export Archive のフォルダを列で選んでいる間の、Export Archive のダイアログ（選んだら戻す）。
+    archive_waiting: Option<Box<Dialog>>,
     diff_panel: ElementRef<SwapChainPanel>,
     diff_area: ElementRef<Grid>,
     /// 差分で右クリックしたファイル（見出しのメニューの中身）。
@@ -831,21 +833,6 @@ enum Dialog {
         checks: Vec<(String, bool)>,
         kind: FormKind,
     },
-    /// HEAD の木からフォルダを選んで、sparse checkout で取り出すフォルダに足す（GTK4 版の `add_folder`）。
-    TreeFolder {
-        repo: Arc<Repository>,
-        /// 見ているフォルダ（`/` から）と、その中のフォルダ（読むまでは None）。
-        path: String,
-        entries: Option<Result<Vec<String>, String>>,
-        selected: Option<usize>,
-        /// 今取り出しているフォルダ（空なら sparse checkout を始める）。
-        existing: Vec<String>,
-        /// clone した直後なら、そのリポジトリ（選んでも取り消しても、その後で新しい窓で開く）。
-        cloned: Option<String>,
-        /// Export Archive の書き出すフォルダを選んでいるなら、そのダイアログ（そのコミットの木を見せ、選んでも
-        /// 取り消しても、そこへ戻る。macOS 版の `FilePicker.presentTree`）。
-        archive: Option<Box<Dialog>>,
-    },
     /// Repositories の行の表示名を変える。
     RenameRepository { location: String, name: String },
     /// そのリポジトリだけの窓の背景（GTK4 版の `themesettings::show_repository`）。
@@ -1364,11 +1351,6 @@ enum Message {
     ToolbarRemove(usize),
     ToolbarAddSpace,
     ToolbarDefaults,
-    /// フォルダを選ぶダイアログ: 読んだ中身、選んだ行、選んだフォルダに入る、上に戻る。
-    TreeFolderLoaded(String, Result<Vec<String>, String>),
-    TreeFolderSelect(Option<usize>),
-    TreeFolderOpen,
-    TreeFolderUp,
     /// リモートの fetch の URL につないで確かめる。
     RemoteCheck,
     /// 接続の確認の結果（確かめた URL、つながったか、言葉）。
@@ -1487,6 +1469,7 @@ impl Component for Root {
             checks_popover: None,
             checks_anchor: ElementRef::new(),
             checks_opened: 0,
+            archive_waiting: None,
             diff_panel: ElementRef::new(),
             diff_area: ElementRef::new(),
             diff_file: None,
@@ -1794,6 +1777,52 @@ impl Root {
             .height(1.0)
             .opacity(0.0)
             .flyout_with(Flyout::rich(content).placement(FlyoutPlacement::Bottom))
+    }
+
+    /// sparse checkout で取り出すフォルダを選んだ・取り消した（`chosen`）。足して取り出す。clone した直後なら、
+    /// 取り出してから（取り消したならそのまま）開く。
+    fn sparse_folder_chosen(
+        &mut self,
+        repo: Arc<Repository>,
+        existing: Vec<String>,
+        cloned: Option<String>,
+        chosen: Option<String>,
+        context: &ComponentContext<Self>,
+    ) {
+        let Some(chosen) = chosen.filter(|c| !c.is_empty()) else {
+            if let Some(dest) = cloned
+                && let Err(message) = crate::tabs::open(&dest)
+            {
+                self.dialog = Some(Dialog::Failed {
+                    title: tr!("Couldn’t clone"),
+                    message,
+                });
+            }
+            return;
+        };
+        if existing.contains(&chosen) {
+            return;
+        }
+        let mut folders = existing;
+        folders.push(chosen.clone());
+        let command = json!({ "op": "sparseCheckout", "folders": folders });
+        // clone した直後: 取り出してから新しい窓で開く。
+        if let Some(dest) = cloned {
+            self.busy = Some(tr!("Checking out {folder}…", folder = &chosen));
+            context.spawn_background(move |_| {
+                let reply: Value = serde_json::from_str(&repo.run_json(&command.to_string()))
+                    .unwrap_or_else(|e| json!({ "error": e.to_string() }));
+                let failed = reply["error"].as_str().map(|e| {
+                    (
+                        tr!("Couldn’t check out {folder}", folder = &chosen),
+                        e.to_owned(),
+                    )
+                });
+                Message::OpenClone(dest, failed)
+            });
+            return;
+        }
+        perform(context, repo, command, tr!("Check Out One More Folder"));
     }
 
     fn handle(&mut self, message: Message, context: &ComponentContext<Self>) {
@@ -2242,17 +2271,14 @@ impl Root {
                 let Dialog::Archive { repo, rev, .. } = &archive else {
                     return;
                 };
-                let repo = repo.clone();
-                load_tree_folders(repo.clone(), &rev.clone(), "/".to_owned(), context);
-                self.dialog = Some(Dialog::TreeFolder {
-                    repo,
-                    path: "/".to_owned(),
-                    entries: None,
-                    selected: None,
-                    existing: Vec::new(),
-                    cloned: None,
-                    archive: Some(Box::new(archive)),
-                });
+                let (picker, job) = crate::pathpicker::Picker::new_tree(
+                    crate::pathpicker::Purpose::ArchiveFolder,
+                    repo.clone(),
+                    rev,
+                );
+                self.archive_waiting = Some(Box::new(archive));
+                self.dialog = Some(Dialog::PathPicker(Box::new(picker)));
+                context.spawn_background(move |_| Message::Picker(job.run()));
             }
             Message::MultiSelected(ids, consecutive) => {
                 self.multi_consecutive = consecutive;
@@ -3333,16 +3359,16 @@ impl Root {
                         if std::mem::take(&mut self.clone_sparse)
                             && let Some(repo) = open_repository(&dest)
                         {
-                            load_tree_folders(repo.clone(), "HEAD", "/".to_owned(), context);
-                            self.dialog = Some(Dialog::TreeFolder {
+                            let (picker, job) = crate::pathpicker::Picker::new_tree(
+                                crate::pathpicker::Purpose::SparseFolder {
+                                    existing: Vec::new(),
+                                    cloned: Some(dest),
+                                },
                                 repo,
-                                path: "/".to_owned(),
-                                entries: None,
-                                selected: None,
-                                existing: Vec::new(),
-                                cloned: Some(dest),
-                                archive: None,
-                            });
+                                "HEAD",
+                            );
+                            self.dialog = Some(Dialog::PathPicker(Box::new(picker)));
+                            context.spawn_background(move |_| Message::Picker(job.run()));
                             return;
                         }
                         if let Err(message) = crate::tabs::open(&dest) {
@@ -3727,6 +3753,24 @@ impl Root {
                                     context,
                                 );
                             }
+                        }
+                        // Export Archive のフォルダを選んだ・取り消した: そのダイアログに戻る（閉じた同じ
+                        // 更新では次のダイアログを開けないので、知らせで開く）。
+                        crate::pathpicker::Purpose::ArchiveFolder => {
+                            if let Some(mut archive) = self.archive_waiting.take() {
+                                if let (Some(path), Dialog::Archive { folder, .. }) =
+                                    (chosen, archive.as_mut())
+                                {
+                                    *folder = path;
+                                }
+                                context.spawn_background(move |_| Message::OpenDialog(archive));
+                            }
+                        }
+                        crate::pathpicker::Purpose::SparseFolder { existing, cloned } => {
+                            let Some(repo) = picker.repo.clone() else {
+                                return;
+                            };
+                            self.sparse_folder_chosen(repo, existing, cloned, chosen, context);
                         }
                     }
                 }
@@ -4462,93 +4506,6 @@ impl Root {
                     Some(command) => perform(context, repo, command, title),
                     None => beep(),
                 },
-                // Export Archive のフォルダを選んだ・取り消した: そのダイアログに戻る（閉じた同じ更新では次の
-                // ダイアログを開けないので、知らせで開く）。
-                (
-                    Some(Dialog::TreeFolder {
-                        path,
-                        entries,
-                        selected,
-                        archive: Some(mut archive),
-                        ..
-                    }),
-                    result,
-                ) => {
-                    if result == ContentDialogResult::Primary
-                        && let Dialog::Archive { folder, .. } = archive.as_mut()
-                    {
-                        let chosen = match selected
-                            .and_then(|i| entries.as_ref()?.as_ref().ok()?.get(i).cloned())
-                        {
-                            Some(name) => format!("{}/{name}", path.trim_end_matches('/')),
-                            None => path,
-                        };
-                        *folder = chosen.trim_start_matches('/').to_owned();
-                    }
-                    context.spawn_background(move |_| Message::OpenDialog(archive));
-                }
-                (
-                    Some(Dialog::TreeFolder {
-                        repo,
-                        path,
-                        entries,
-                        selected,
-                        existing,
-                        cloned,
-                        ..
-                    }),
-                    ContentDialogResult::Primary,
-                ) => {
-                    // 選んだ行のフォルダ（選んでいなければ、見ているフォルダ。根は選べない）。
-                    let chosen = match selected
-                        .and_then(|i| entries.as_ref()?.as_ref().ok()?.get(i).cloned())
-                    {
-                        Some(name) => format!("{}/{name}", path.trim_end_matches('/')),
-                        None => path,
-                    };
-                    let chosen = chosen.trim_start_matches('/').to_owned();
-                    if chosen.is_empty() {
-                        return beep();
-                    }
-                    if existing.contains(&chosen) {
-                        return;
-                    }
-                    let mut folders = existing;
-                    folders.push(chosen.clone());
-                    let command = json!({ "op": "sparseCheckout", "folders": folders });
-                    // clone した直後: 取り出してから新しい窓で開く。
-                    if let Some(dest) = cloned {
-                        self.busy = Some(tr!("Checking out {folder}…", folder = &chosen));
-                        context.spawn_background(move |_| {
-                            let reply: Value =
-                                serde_json::from_str(&repo.run_json(&command.to_string()))
-                                    .unwrap_or_else(|e| json!({ "error": e.to_string() }));
-                            let failed = reply["error"].as_str().map(|e| {
-                                (
-                                    tr!("Couldn’t check out {folder}", folder = &chosen),
-                                    e.to_owned(),
-                                )
-                            });
-                            Message::OpenClone(dest, failed)
-                        });
-                        return;
-                    }
-                    perform(context, repo, command, tr!("Check Out One More Folder"));
-                }
-                // clone した直後に取り消した: そのまま開く。
-                (
-                    Some(Dialog::TreeFolder {
-                        cloned: Some(dest), ..
-                    }),
-                    _,
-                ) => {
-                    if let Err(message) = crate::tabs::open(&dest) {
-                        self.dialog = Some(Dialog::Failed {
-                            title: tr!("Couldn’t clone"),
-                            message,
-                        });
-                    }
-                }
                 (Some(Dialog::Toolbar(entries)), ContentDialogResult::Primary) => {
                     crate::menus::save_toolbar(&entries);
                 }
@@ -4771,59 +4728,6 @@ impl Root {
                     }
                     *[name, fetch, push].into_iter().nth(index).expect("field") = text;
                 }
-            }
-            Message::TreeFolderLoaded(at, entries) => {
-                if let Some(Dialog::TreeFolder {
-                    path,
-                    entries: shown,
-                    selected,
-                    ..
-                }) = &mut self.dialog
-                    && *path == at
-                {
-                    *shown = Some(entries);
-                    *selected = None;
-                }
-            }
-            Message::TreeFolderSelect(index) => {
-                if let Some(Dialog::TreeFolder { selected, .. }) = &mut self.dialog {
-                    *selected = index;
-                }
-            }
-            Message::TreeFolderOpen | Message::TreeFolderUp => {
-                let up = matches!(message, Message::TreeFolderUp);
-                let Some(Dialog::TreeFolder {
-                    repo,
-                    path,
-                    entries,
-                    selected,
-                    archive,
-                    ..
-                }) = &mut self.dialog
-                else {
-                    return;
-                };
-                let rev = match archive.as_deref() {
-                    Some(Dialog::Archive { rev, .. }) => rev.clone(),
-                    _ => "HEAD".to_owned(),
-                };
-                let next = if up {
-                    match path.trim_end_matches('/').rsplit_once('/') {
-                        Some((parent, _)) if !parent.is_empty() => parent.to_owned(),
-                        _ => "/".to_owned(),
-                    }
-                } else {
-                    let Some(name) =
-                        selected.and_then(|i| entries.as_ref()?.as_ref().ok()?.get(i).cloned())
-                    else {
-                        return;
-                    };
-                    format!("{}/{name}", path.trim_end_matches('/'))
-                };
-                *path = next.clone();
-                *entries = None;
-                *selected = None;
-                load_tree_folders(repo.clone(), &rev, next, context);
             }
             Message::RemoteCheck => {
                 // 保存する前に、fetch の URL につないで確かめる（GTK4 版の Check Connection。コアの `checkRemote`）。
@@ -6943,16 +6847,16 @@ impl Root {
                     } else {
                         Vec::new()
                     };
-                    load_tree_folders(repo.clone(), "HEAD", "/".to_owned(), context);
-                    self.dialog = Some(Dialog::TreeFolder {
+                    let (picker, job) = crate::pathpicker::Picker::new_tree(
+                        crate::pathpicker::Purpose::SparseFolder {
+                            existing,
+                            cloned: None,
+                        },
                         repo,
-                        path: "/".to_owned(),
-                        entries: None,
-                        selected: None,
-                        existing,
-                        cloned: None,
-                        archive: None,
-                    });
+                        "HEAD",
+                    );
+                    self.dialog = Some(Dialog::PathPicker(Box::new(picker)));
+                    context.spawn_background(move |_| Message::Picker(job.run()));
                     return;
                 }
                 // 覚えた解決をすべて忘れる（戻せないので確かめる。GTK4 版の `forget_resolutions_row`）。
@@ -10316,93 +10220,6 @@ impl Root {
                             .children((View::keyed_fragment(rows),)),
                     )
             }
-            Some(Dialog::TreeFolder {
-                path,
-                entries,
-                selected,
-                existing,
-                cloned,
-                archive,
-                ..
-            }) => {
-                let first = existing.is_empty();
-                let for_archive = archive.is_some();
-                let body: View = match entries {
-                    None => TextBlock::new().text(tr!("Loading…")).opacity(0.6).into(),
-                    Some(Err(e)) => TextBlock::new()
-                        .text(e.clone())
-                        .text_wrapping(TextWrapping::Wrap)
-                        .into(),
-                    Some(Ok(names)) => {
-                        let rows = names.iter().map(|n| {
-                            (
-                                n.clone(),
-                                ListViewItem::new()
-                                    .tag(n.clone())
-                                    .content(TextBlock::new().text(format!("📁 {n}"))),
-                            )
-                        });
-                        // 読み直すたびに一覧ごと作り直す（reactor の ListView は消した項目の場所が残る）。
-                        View::keyed_fragment([(
-                            path.clone(),
-                            ListView::new()
-                                .height(240.0)
-                                .selected_index(*selected)
-                                .on_selection_changed(context.callback(Message::TreeFolderSelect))
-                                .collection_slot(ListViewSlot::Items, rows),
-                        )])
-                    }
-                };
-                let can_open = selected.is_some();
-                dialog
-                    .is_open(true)
-                    .title(if for_archive {
-                        tr!("Export One Folder")
-                    } else if first {
-                        tr!("Check Out Only Some Folders")
-                    } else {
-                        tr!("Check Out One More Folder")
-                    })
-                    .primary_button_text(tr!("Choose"))
-                    .close_button_text(tr!("Cancel"))
-                    .is_primary_button_enabled(selected.is_some() || path != "/")
-                    .content(
-                        StackPanel::new().spacing(6.0).width(440.0).children((
-                            TextBlock::new()
-                                .text(if for_archive {
-                                    tr!("Folders in this commit.")
-                                } else if cloned.is_some() {
-                                    tr!(
-                                        "Only the files at the top are checked out. Choose a folder to check out too; add more later in Settings > Fetching and Folders."
-                                    )
-                                } else if first {
-                                    tr!(
-                                        "Only this folder is checked out, with the files at the top. Others are removed from disk until you check them out again; add more folders here later."
-                                    )
-                                } else {
-                                    tr!("Folders in the latest commit, including ones not checked out.")
-                                })
-                                .text_wrapping(TextWrapping::Wrap),
-                            StackPanel::new()
-                                .orientation(Orientation::Horizontal)
-                                .spacing(6.0)
-                                .children((
-                                    Button::new()
-                                        .is_enabled(path != "/")
-                                        .on_click(context.callback(|()| Message::TreeFolderUp))
-                                        .content(TextBlock::new().text("↑")),
-                                    Button::new()
-                                        .is_enabled(can_open)
-                                        .on_click(context.callback(|()| Message::TreeFolderOpen))
-                                        .content(TextBlock::new().text("→")),
-                                    TextBlock::new()
-                                        .text(path.clone())
-                                        .vertical_alignment(VerticalAlignment::Center),
-                                )),
-                            body,
-                        )),
-                    )
-            }
             Some(Dialog::Toolbar(entries)) => {
                 use crate::menus::ToolbarEntry;
                 let last = entries.len().saturating_sub(1);
@@ -10494,12 +10311,21 @@ impl Root {
                 ),
             Some(Dialog::PathPicker(picker)) => dialog
                 .is_open(true)
-                .title(match picker.purpose {
+                .title(match &picker.purpose {
                     crate::pathpicker::Purpose::AddSsh => tr!("Choose a Repository"),
                     crate::pathpicker::Purpose::ScanRoot | crate::pathpicker::Purpose::ScanLocal => {
                         tr!("Add a Folder to Scan")
                     }
                     crate::pathpicker::Purpose::AddLocal => tr!("Add Repositories"),
+                    crate::pathpicker::Purpose::ArchiveFolder => tr!("Export One Folder"),
+                    crate::pathpicker::Purpose::SparseFolder { existing, .. }
+                        if existing.is_empty() =>
+                    {
+                        tr!("Check Out Only Some Folders")
+                    }
+                    crate::pathpicker::Purpose::SparseFolder { .. } => {
+                        tr!("Check Out One More Folder")
+                    }
                 })
                 .primary_button_text(tr!("Choose"))
                 .close_button_text(tr!("Cancel"))
@@ -18624,31 +18450,6 @@ fn connecting_view(location: &str, error: Option<&String>, context: &ViewContext
 fn open_repository(location: &str) -> Option<Arc<Repository>> {
     let backend = amonhen_backend_gix::GixBackend::open(location).ok()?;
     Some(Arc::new(Repository::new(backend)))
-}
-
-/// HEAD の木の `path` にあるフォルダを裏で読む（コアの `treeFolders`）。
-fn load_tree_folders(
-    repo: Arc<Repository>,
-    rev: &str,
-    path: String,
-    context: &ComponentContext<Root>,
-) {
-    let rev = rev.to_owned();
-    context.spawn_background(move |_| {
-        let command = json!({ "op": "treeFolders", "path": &path, "rev": rev });
-        let reply: Value = serde_json::from_str(&repo.run_json(&command.to_string()))
-            .unwrap_or_else(|e| json!({ "error": e.to_string() }));
-        let entries = match reply["error"].as_str() {
-            Some(e) => Err(e.to_owned()),
-            None => Ok(reply["info"]["entries"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|e| e["name"].as_str().map(str::to_owned))
-                .collect()),
-        };
-        Message::TreeFolderLoaded(path, entries)
-    });
 }
 
 /// フックの置き場所（GTK4 版の `hooks_directory`）: `core.hooksPath` がなければ $GIT_COMMON_DIR/hooks、相対なら

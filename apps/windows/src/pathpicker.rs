@@ -1,7 +1,9 @@
 //! フォルダを列で選ぶ画面（GTK4 版の `filepicker.rs`、macOS 版の `FilePicker.swift` のうち、フォルダを選ぶ分）。
 //! この機械のものも、SSH 先のものも同じ形で選ぶ。上にパスの欄（打ち込める。`~` はその機械のホーム）、下に根
 //! （`/`・`C:\`）から選んだところまでの列。中身は、この機械ならコア（`amonhen_backend_cli::list_directory`）が、
-//! SSH 先ならリポジトリなしに動かしたエンジンの `listDirectory` が読む。リポジトリは緑で出す。
+//! SSH 先ならリポジトリなしに動かしたエンジンの `listDirectory` が読む。リポジトリは緑で出す。コミットの木のフォルダ
+//! （sparse checkout で取り出すフォルダ、Export Archive の 1 つのフォルダ）も同じ形で選ぶ（コアの `treeFolders`。
+//! macOS 版の `FilePicker.presentTree`）。
 
 use std::sync::Arc;
 
@@ -24,6 +26,14 @@ pub enum Purpose {
     AddLocal,
     /// この機械でスキャンするフォルダ（Add a Folder to Scan）。
     ScanLocal,
+    /// sparse checkout で取り出すフォルダを HEAD の木から足す。`existing` は今取り出しているフォルダ（空なら
+    /// sparse checkout を始める）、`cloned` は clone した直後のリポジトリ（選んでも取り消しても、その後で開く）。
+    SparseFolder {
+        existing: Vec<String>,
+        cloned: Option<String>,
+    },
+    /// Export Archive の書き出すフォルダを、そのコミットの木から（選んでも取り消しても Export Archive に戻る）。
+    ArchiveFolder,
 }
 
 /// 列の 1 行（フォルダだけ）。
@@ -57,6 +67,8 @@ pub struct Picker {
     pub epoch: u32,
     /// この機械のフォルダを選ぶ（つながずに、コアが読む）。
     pub local: bool,
+    /// コミットの木のフォルダを選ぶなら、そのコミット（`repo` の `treeFolders` が読む。パスは `/` から）。
+    pub tree: Option<String>,
 }
 
 pub enum Event {
@@ -79,6 +91,8 @@ pub enum Job {
     },
     /// フォルダを読む（エンジンがなければ、この機械のもの）。
     List(Option<Arc<Repository>>, String),
+    /// コミット（2 つ目）の木のフォルダを読む。
+    Tree(Arc<Repository>, String, String),
 }
 
 impl Job {
@@ -95,6 +109,16 @@ impl Job {
                 let result = amonhen_backend_cli::list_directory(&path)
                     .map(|d| directory_json(&d))
                     .map_err(|e| e.to_string());
+                Event::Listed(path, result)
+            }
+            Job::Tree(repo, rev, path) => {
+                let command = json!({ "op": "treeFolders", "path": &path, "rev": &rev });
+                let reply: Value =
+                    serde_json::from_str(&repo.run_json(&command.to_string())).unwrap_or_default();
+                let result = match reply["error"].as_str() {
+                    Some(e) => Err(e.to_owned()),
+                    None => Ok(reply["info"].clone()),
+                };
                 Event::Listed(path, result)
             }
             Job::List(Some(repo), path) => {
@@ -205,6 +229,7 @@ impl Picker {
                 columns: Vec::new(),
                 epoch: 0,
                 local: false,
+                tree: None,
             },
             job,
         )
@@ -224,19 +249,47 @@ impl Picker {
                 columns: Vec::new(),
                 epoch: 0,
                 local: true,
+                tree: None,
             },
             Job::List(None, "~".to_owned()),
         )
     }
 
-    /// 選んだフォルダ（最後の列。まだなければ None）。
+    /// `repo` のコミット `rev` の木のフォルダを、根から選ぶ。最初の仕事を返す。
+    pub fn new_tree(purpose: Purpose, repo: Arc<Repository>, rev: &str) -> (Self, Job) {
+        (
+            Self {
+                purpose,
+                host: String::new(),
+                typed: "/".to_owned(),
+                start: String::new(),
+                repo: Some(repo.clone()),
+                error: None,
+                home: None,
+                columns: Vec::new(),
+                epoch: 0,
+                local: false,
+                tree: Some(rev.to_owned()),
+            },
+            Job::Tree(repo, rev.to_owned(), "/".to_owned()),
+        )
+    }
+
+    /// 選んだフォルダ（最後の列。まだなければ None。木の根は選べない）。
     pub fn chosen(&self) -> Option<&str> {
-        self.columns.last().map(|c| c.path.as_str())
+        self.columns
+            .last()
+            .map(|c| c.path.as_str())
+            .filter(|p| self.tree.is_none() || *p != "/")
     }
 
     /// 選んだフォルダを、ホームの下なら `~/…` で（ssh の場所に書く形）。
     pub fn chosen_shown(&self) -> Option<String> {
         let path = self.chosen()?;
+        // 木のフォルダは、根からのパス（`/` を前に付けない）。
+        if self.tree.is_some() {
+            return Some(path.trim_start_matches('/').to_owned());
+        }
         // この機械のフォルダは、そのままのパス。
         if self.local {
             return Some(path.to_owned());
@@ -255,6 +308,9 @@ impl Picker {
     }
 
     fn list(&self, path: String) -> Option<Job> {
+        if let Some(rev) = &self.tree {
+            return Some(Job::Tree(self.repo.clone()?, rev.clone(), path));
+        }
         if self.local {
             return Some(Job::List(None, path));
         }
@@ -288,19 +344,21 @@ impl Picker {
                                 });
                                 self.columns.push(Column {
                                     path: dir.clone(),
-                                    items: (i + 1 == chain.len()).then(|| Ok(items_of(&info))),
+                                    items: (i + 1 == chain.len())
+                                        .then(|| Ok(items_of(&info, self.tree.is_some()))),
                                     selected,
                                 });
                             }
                             for dir in &chain[..chain.len() - 1] {
                                 jobs.extend(self.list(dir.clone()));
                             }
-                            self.set_typed(self.chosen_shown().unwrap_or_default());
+                            self.set_typed(self.shown_path());
                         }
                         Err(e) => self.error = Some(e),
                     }
                 } else if let Some(column) = self.columns.iter_mut().find(|c| c.path == path) {
-                    column.items = Some(result.map(|info| items_of(&info)));
+                    let tree = self.tree.is_some();
+                    column.items = Some(result.map(|info| items_of(&info, tree)));
                 }
             }
             Event::Pick(at, Some(i)) => {
@@ -325,7 +383,7 @@ impl Picker {
                     selected: None,
                 });
                 jobs.extend(self.list(child));
-                self.set_typed(self.chosen_shown().unwrap_or_default());
+                self.set_typed(self.shown_path());
             }
             Event::Pick(_, None) => {}
             Event::Typed(text) => self.typed = text,
@@ -337,14 +395,27 @@ impl Picker {
         jobs
     }
 
+    /// パスの欄に出す、選んだフォルダ（木なら `/` から）。
+    fn shown_path(&self) -> String {
+        if self.tree.is_some() {
+            return self
+                .columns
+                .last()
+                .map(|c| c.path.clone())
+                .unwrap_or_default();
+        }
+        self.chosen_shown().unwrap_or_default()
+    }
+
     fn set_typed(&mut self, text: String) {
         self.typed = text;
         self.epoch += 1;
     }
 }
 
-/// `listDirectory` の答えのうち、フォルダ（`.` で始まるものは除く。リポジトリの印つき）。
-fn items_of(info: &Value) -> Vec<Item> {
+/// `listDirectory` の答えのうち、フォルダ（リポジトリの印つき）。`.` で始まるものは、コミットの木（`tree`）でなければ
+/// 除く（木では `.github` なども取り出す・書き出すフォルダになる）。
+fn items_of(info: &Value, tree: bool) -> Vec<Item> {
     info["entries"]
         .as_array()
         .into_iter()
@@ -352,7 +423,7 @@ fn items_of(info: &Value) -> Vec<Item> {
         .filter(|e| e["kind"] == "folder")
         .filter_map(|e| {
             let name = e["name"].as_str()?;
-            (!name.starts_with('.')).then(|| Item {
+            (tree || !name.starts_with('.')).then(|| Item {
                 name: name.to_owned(),
                 repository: e["repository"].as_bool() == Some(true),
             })
@@ -464,10 +535,33 @@ pub fn view(picker: &Picker, callbacks: &Callbacks<'_>) -> View {
             .orientation(Orientation::Horizontal)
             .children([View::keyed_fragment(columns)])
     };
+    // コミットの木から選ぶときは、何のフォルダかを上に書く（macOS 版の `presentTree` の message）。
+    let message = match &picker.purpose {
+        Purpose::ArchiveFolder => Some(tr!("Folders in this commit.")),
+        Purpose::SparseFolder {
+            cloned: Some(_), ..
+        } => Some(tr!(
+            "Only the files at the top are checked out. Choose a folder to check out too; add more later in Settings > Fetching and Folders."
+        )),
+        Purpose::SparseFolder { existing, .. } if existing.is_empty() => Some(tr!(
+            "Only this folder is checked out, with the files at the top. Others are removed from disk until you check them out again; add more folders here later."
+        )),
+        Purpose::SparseFolder { .. } => Some(tr!(
+            "Folders in the latest commit, including ones not checked out."
+        )),
+        _ => None,
+    };
+    let message: View = match message {
+        Some(text) => TextBlock::new()
+            .text(text)
+            .text_wrapping(TextWrapping::Wrap)
+            .into(),
+        None => View::empty(),
+    };
     StackPanel::new()
         .spacing(8.0)
         .width(460.0)
-        .children((head, body))
+        .children((message, head, body))
 }
 
 #[cfg(test)]
