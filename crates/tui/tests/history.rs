@@ -1234,18 +1234,30 @@ fn z_folds_merged_branches() {
     let merge = folded.lines().find(|l| l.contains("Merge branch")).unwrap();
     assert!(merge.contains("+1 Merge branch"), "{merge}");
     assert_eq!(count(&folded), "4");
+    // 折りたたみはリポジトリに覚える（アプリと同じ fold.json）。開き直してもたたんだまま。
+    let again = amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "").unwrap();
+    assert!(!again.contains("日本語の件名"), "{again}");
     // マージの行で `Z`: 取り込んだ側を出す。もう一度で閉じる。
-    let opened = amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "zZ").unwrap();
+    let opened = amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "Z").unwrap();
     println!("{opened}");
     assert!(opened.contains("日本語の件名"));
-    let closed = amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "zZZ").unwrap();
+    let closed = amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "Z").unwrap();
     assert!(!closed.contains("日本語の件名"));
     // 折りたたむものがない行では、そう知らせる。
-    let none = amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "zjZ").unwrap();
+    let none = amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "jZ").unwrap();
     assert!(none.contains("This commit has nothing folded"));
     // `z` をもう一度で、すべて出す。
-    let back = amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "zz").unwrap();
+    let back = amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "z").unwrap();
     assert!(back.contains("日本語の件名"));
+    // すべて出しているときの `Z`: そのマージだけをたたむ。もう一度で戻す。
+    let one = amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "Z").unwrap();
+    assert!(!one.contains("日本語の件名"), "{one}");
+    assert!(one.contains("+1 Merge branch"), "{one}");
+    let shown = amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "Z").unwrap();
+    assert!(shown.contains("日本語の件名"), "{shown}");
+    // 合わせて、マージでない行ではたたまない。
+    let refused = amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "jZ").unwrap();
+    assert!(refused.contains("Only a merge folds"), "{refused}");
 }
 
 /// Space は、History とサイドバーで Enter と同じ（詳細へ入る・選んでいる行を開く）

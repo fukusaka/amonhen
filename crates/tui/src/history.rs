@@ -460,8 +460,12 @@ impl History {
         })
     }
 
-    pub fn loaded(&mut self, start: u32, reply: &Reply) {
+    pub fn loaded(&mut self, history: &Value, start: u32, reply: &Reply) {
         self.loading = false;
+        // 頼んだ後に History を読み直していたら、前の History の行なので捨てる（`request` が頼み直す）。
+        if *history != self.id {
+            return;
+        }
         self.window = Some(Window {
             start,
             nodes: reply.items("nodes"),
@@ -513,6 +517,11 @@ impl History {
 
     pub fn page(&self) -> i64 {
         i64::from(self.height.saturating_sub(1).max(1))
+    }
+
+    /// 選んでいる行が merge コミット。
+    pub fn selected_is_merge(&self) -> bool {
+        self.marked_at(self.selected).is_some_and(|m| m.merge)
     }
 
     /// 選んでいる行で、折りたたんで隠したコミットの数（折りたたんでいない、読んでいなければ 0）。

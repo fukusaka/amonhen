@@ -815,6 +815,11 @@ impl App {
 
     /// リポジトリを読み始める。
     pub fn start(&mut self) {
+        // 覚えている History の折りたたみ（アプリと共有）。違えば、届いたときに読み直す。
+        self.send(Request::Run {
+            name: "foldState",
+            command: json!({"op": "foldState"}),
+        });
         self.open();
         self.changes.refresh();
         // 書きかけのメッセージ（なければテンプレート）を欄に入れる。
@@ -857,6 +862,14 @@ impl App {
     }
 
     /// リポジトリ・ref・History を読む。読んでいる間に頼まれた分は、終わってからもう一度。
+    /// History の折りたたみを、リポジトリに覚える（`<common dir>/amonhen/fold.json`。アプリと共有）。
+    fn save_fold(&mut self) {
+        self.send(Request::Run {
+            name: "saveFold",
+            command: json!({"op": "setFoldState", "folded": self.fold, "except": self.expanded}),
+        });
+    }
+
     fn open(&mut self) {
         if self.opening {
             self.reopen = true;
@@ -1416,8 +1429,12 @@ impl App {
                             self.open();
                         }
                     }
-                    Loaded::Rows { start, reply } => {
-                        self.history.loaded(start, &reply);
+                    Loaded::Rows {
+                        history,
+                        start,
+                        reply,
+                    } => {
+                        self.history.loaded(&history, start, &reply);
                         self.verify_signatures();
                     }
                     Loaded::Search { query, result } => {
@@ -3150,6 +3167,25 @@ impl App {
                 .collect();
             self.sidebar.set_tag_remote_marks(marks);
             self.dirty = true;
+            return;
+        }
+        // 折りたたみを覚えた・読んだ（裏で）。読めたら、そのとおりに History を読み直す。
+        if name == "saveFold" {
+            return;
+        }
+        if name == "foldState" {
+            if let Ok(reply) = result {
+                let info = &reply["info"];
+                let fold = info["folded"] == true;
+                let except: Vec<String> = (info["except"].as_array().into_iter().flatten())
+                    .filter_map(|e| e.as_str().map(str::to_owned))
+                    .collect();
+                if fold != self.fold || except != self.expanded {
+                    self.fold = fold;
+                    self.expanded = except;
+                    self.open();
+                }
+            }
             return;
         }
         // ブランチの分け方（裏で読む）と、お気に入り・アーカイブを書いたもの。動いている操作の表示を消さない。
@@ -7062,6 +7098,7 @@ impl App {
             KeyCode::Char('z') => {
                 self.fold = !self.fold;
                 self.expanded.clear();
+                self.save_fold();
                 self.notice = Some(match self.fold {
                     true => tr!(
                         "Merged branches folded: a merge shows how many commits it brought in; Z opens one"
@@ -7073,16 +7110,26 @@ impl App {
                 None
             }
             // 折りたたんだマージの、取り込んだ側を開く・閉じる。
-            KeyCode::Char('Z') if self.fold => {
+            // たたんでいれば選んだ merge を開き、たたんでいなければ選んだ merge だけをたたむ（もう一度で戻す）。
+            KeyCode::Char('Z') => {
                 if let Some(id) = self.history.selected_id() {
                     let id = id.to_string();
                     match self.expanded.iter().position(|e| *e == id) {
                         Some(i) => {
                             self.expanded.remove(i);
                         }
-                        None if self.history.selected_folded() > 0 => self.expanded.push(id),
-                        None => self.notice = Some(tr!("This commit has nothing folded")),
+                        None if self.fold && self.history.selected_folded() > 0 => {
+                            self.expanded.push(id)
+                        }
+                        None if !self.fold && self.history.selected_is_merge() => {
+                            self.expanded.push(id)
+                        }
+                        None if self.fold => {
+                            self.notice = Some(tr!("This commit has nothing folded"))
+                        }
+                        None => self.notice = Some(tr!("Only a merge folds (z folds them all)")),
                     }
+                    self.save_fold();
                     self.dirty = true;
                     self.open();
                 }

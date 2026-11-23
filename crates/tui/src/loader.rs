@@ -128,6 +128,8 @@ pub enum Loaded {
         history: Value,
     },
     Rows {
+        /// どの History のものか（読み直した後に届いた、前の History の行は捨てる）。
+        history: Value,
         start: u32,
         reply: Reply,
     },
@@ -152,10 +154,7 @@ pub enum Loaded {
         result: std::result::Result<(Value, Reply), String>,
     },
     /// 構文の色。取れなければ `None`（色なしで出すだけ）。
-    Syntax {
-        id: String,
-        reply: Option<Reply>,
-    },
+    Syntax { id: String, reply: Option<Reply> },
     /// `blame` か `fileHistory` の答え。だめなら理由。
     File {
         path: String,
@@ -335,8 +334,12 @@ fn load(front: &dyn Front, request: Request, events: &Sender<Event>) -> Result<L
                 if rebuild {
                     front.call(json!({"op": "history", "rebuild": true}))?;
                 }
+                // `expanded` は既定と逆にした merge（たたむなら開くもの、たたまないならたたむもの）。
                 let mut request = match fold {
                     true => json!({"op": "history", "fold": true, "expanded": expanded}),
+                    false if !expanded.is_empty() => {
+                        json!({"op": "history", "collapsed": expanded})
+                    }
                     false => json!({"op": "history"}),
                 };
                 if !tips.is_empty() {
@@ -354,6 +357,7 @@ fn load(front: &dyn Front, request: Request, events: &Sender<Event>) -> Result<L
             reply: front.call(json!({
                 "op": "historyRows", "history": history, "start": start, "count": count,
             }))?,
+            history,
         },
         Request::Search {
             history,
