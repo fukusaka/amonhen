@@ -572,6 +572,8 @@ struct Root {
     summary_box: ElementRef<TextBox>,
     /// `#` の候補のメニューを持つ見えない部品（候補が届いたら、`#` の下に開く）。
     issue_host: ElementRef<Grid>,
+    /// `#` の候補のメニューを開いた回数（増えたら開く）。
+    issue_menu_opens: u64,
     /// 候補を入れた欄（本文か）と、入れた `#番号` の後ろの位置（UTF-16）と、入れた回数（カーソルをそこへ置く）。
     issue_caret: (bool, usize, u64),
     /// コミットの説明の欄（等幅の字にする）。
@@ -1032,6 +1034,8 @@ enum Message {
     PickIssue(u64),
     /// `#` の候補のメニューで選んだ（`issue:番号`）。
     IssueMenu(String),
+    /// `#` の候補のメニューを開く（項目を入れた描画の後）。
+    OpenIssueMenu,
     /// ブランチの様子の、取り込んだときのコンフリクトの見込みを読んだ（ブランチ、`predictMerge` の答え）。
     BranchForecast(String, Value),
     /// CI の印を押した（コミット、状態）と、そのチェックを読んだ。
@@ -1679,6 +1683,7 @@ impl Component for Root {
             working_list: ElementRef::new(),
             summary_box: ElementRef::new(),
             issue_host: ElementRef::new(),
+            issue_menu_opens: 0,
             issue_caret: (false, 0, 0),
             description_box: ElementRef::new(),
             blame_code: ElementRef::new(),
@@ -5122,6 +5127,16 @@ impl Root {
                 };
                 if *now == text && !items.is_empty() {
                     self.issue_offer = Some((body, at, text, items));
+                    // メニューに項目を入れた描画の後に開く（同じ描画で開くと、まだ空のメニューが開いて何も出ない）。
+                    context.spawn_background(|_| {
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                        Message::OpenIssueMenu
+                    });
+                }
+            }
+            Message::OpenIssueMenu => {
+                if self.issue_offer.is_some() {
+                    self.issue_menu_opens += 1;
                 }
             }
             Message::IssueMenu(key) => {
@@ -9391,7 +9406,9 @@ impl Root {
         });
         // `#` の候補が届いたら、`#` を打った所の下にメニューを開く（macOS 版・GTK4 版と同じ。欄の字の矩形で位置を
         // 求める）。
-        if let Some((body, at, text, _)) = &self.issue_offer {
+        if let Some((body, at, _, _)) = &self.issue_offer
+            && self.issue_menu_opens > 0
+        {
             let host = self.issue_host.clone();
             let field = if *body {
                 self.description_box.clone()
@@ -9399,7 +9416,7 @@ impl Root {
                 self.summary_box.clone()
             };
             let at = *at;
-            context.use_effect("issue-menu", (*body, at, text.clone()), move || {
+            context.use_effect("issue-menu", self.issue_menu_opens, move || {
                 let _ = host.request_native_element(move |result| {
                     let Ok(host) = result else { return };
                     let _ = field.request_native_element(move |result| {
