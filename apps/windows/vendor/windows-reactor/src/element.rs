@@ -653,6 +653,7 @@ pub enum MenuItem {
         label: String,
         enabled: bool,
         shortcut: Option<MenuShortcut>,
+        tooltip: Option<String>,
     },
     Separator {
         key: Key,
@@ -672,6 +673,7 @@ impl MenuItem {
             label: label.into(),
             enabled: true,
             shortcut: None,
+            tooltip: None,
         }
     }
 
@@ -683,6 +685,14 @@ impl MenuItem {
         self
     }
 
+    /// Adds a tooltip to a command item (other items are returned unchanged).
+    pub fn with_tooltip(mut self, value: impl Into<String>) -> Self {
+        if let Self::Item { tooltip, .. } = &mut self {
+            *tooltip = Some(value.into());
+        }
+        self
+    }
+
     /// Creates a disabled command item.
     pub fn disabled(key: impl Into<Key>, label: impl Into<String>) -> Self {
         Self::Item {
@@ -690,6 +700,7 @@ impl MenuItem {
             label: label.into(),
             enabled: false,
             shortcut: None,
+            tooltip: None,
         }
     }
 
