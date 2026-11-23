@@ -63,6 +63,20 @@ fn pad(value: f64, length: usize) -> String {
     }
 }
 
+/// `pad` を `out` に足す。小さな正の整数（日付の欄）は文字列を作らずに書く。
+fn write_pad(out: &mut String, value: f64, length: usize) {
+    if value.fract() == 0.0 && (0.0..1e15).contains(&value) {
+        let v = value as u64;
+        let digits = if v == 0 { 1 } else { v.ilog10() as usize + 1 };
+        for _ in digits..length {
+            out.push('0');
+        }
+        js::write_num(out, value);
+    } else {
+        out.push_str(&pad(value, length));
+    }
+}
+
 fn ordinal(n: f64) -> String {
     let s = ["th", "st", "nd", "rd"];
     let v = n % 100.0;
@@ -530,35 +544,47 @@ pub fn format(date: f64, template: &str) -> Option<String> {
             out.push_str(fixed);
             continue;
         }
+        let number = match tok {
+            Tok::Q => Some((((month + 1.0) / 3.0).ceil(), 0)),
+            Tok::GGGG => Some((d::get_full_year(week_thursday(date)), 0)),
+            Tok::W => Some((iso_week(date), 0)),
+            Tok::WW => Some((iso_week(date), 2)),
+            Tok::K => Some((hours_or_24(date), 0)),
+            Tok::KK => Some((hours_or_24(date), 2)),
+            Tok::X => Some(((date / 1000.0).floor(), 0)),
+            Tok::LowerX => Some((date, 0)),
+            Tok::YYYY => Some((year, 4)),
+            Tok::M => Some((month + 1.0, 0)),
+            Tok::MM => Some((month + 1.0, 2)),
+            Tok::D => Some((day, 0)),
+            Tok::DD => Some((day, 2)),
+            Tok::LowerD => Some((weekday(), 0)),
+            Tok::H => Some((hours, 0)),
+            Tok::HH => Some((hours, 2)),
+            Tok::LowerH => Some((hours12(hours), 0)),
+            Tok::LowerHH => Some((hours12(hours), 2)),
+            Tok::LowerM => Some((d::get_minutes(date), 0)),
+            Tok::LowerMM => Some((d::get_minutes(date), 2)),
+            Tok::S => Some((d::get_seconds(date), 0)),
+            Tok::SS => Some((d::get_seconds(date), 2)),
+            Tok::SSS => Some((d::get_milliseconds(date), 3)),
+            _ => None,
+        };
+        // 数は `String(n)`、桁のあるものは頭に 0 を足す。
+        if let Some((value, length)) = number {
+            if length == 0 {
+                js::write_num(&mut out, value);
+            } else {
+                write_pad(&mut out, value, length);
+            }
+            continue;
+        }
         let text = match tok {
-            Tok::Q => js::fmt(((month + 1.0) / 3.0).ceil()),
             Tok::Do => ordinal(day),
-            Tok::GGGG => js::fmt(d::get_full_year(week_thursday(date))),
-            Tok::W => js::fmt(iso_week(date)),
-            Tok::WW => pad(iso_week(date), 2),
-            Tok::K => js::fmt(hours_or_24(date)),
-            Tok::KK => pad(hours_or_24(date), 2),
-            Tok::X => js::fmt((date / 1000.0).floor()),
-            Tok::LowerX => js::fmt(date),
             Tok::YY => {
                 let y: Vec<u16> = js::fmt(year).encode_utf16().collect();
                 js::from16(&y[y.len().saturating_sub(2)..])
             }
-            Tok::YYYY => pad(year, 4),
-            Tok::M => js::fmt(month + 1.0),
-            Tok::MM => pad(month + 1.0, 2),
-            Tok::D => js::fmt(day),
-            Tok::DD => pad(day, 2),
-            Tok::LowerD => js::fmt(weekday()),
-            Tok::H => js::fmt(hours),
-            Tok::HH => pad(hours, 2),
-            Tok::LowerH => js::fmt(hours12(hours)),
-            Tok::LowerHH => pad(hours12(hours), 2),
-            Tok::LowerM => js::fmt(d::get_minutes(date)),
-            Tok::LowerMM => pad(d::get_minutes(date), 2),
-            Tok::S => js::fmt(d::get_seconds(date)),
-            Tok::SS => pad(d::get_seconds(date), 2),
-            Tok::SSS => pad(d::get_milliseconds(date), 3),
             Tok::Z => zone(date),
             _ => zone(date).replace(':', ""),
         };

@@ -163,6 +163,9 @@ pub struct GanttDb {
     dated_tokens: bool,
     /// 除く日かどうか（日付の値ごと）。`get_tasks` のたびに一から。
     invalid_days: HashMap<u64, bool>,
+    /// 書式（前後の空白を除いた範囲）と、それが `YYYY-MM-DD` か、日ごとに書き出す仕事。`get_tasks` が決める。
+    format_at: std::ops::Range<usize>,
+    format_cost: (bool, f64),
 }
 
 impl GanttDb {
@@ -316,6 +319,13 @@ impl GanttDb {
         self.now = now;
         self.work = 0.0;
         self.invalid_days.clear();
+        let template = js::trim(&self.date_format);
+        let start = template.as_ptr() as usize - self.date_format.as_ptr() as usize;
+        self.format_at = start..start + template.len();
+        self.format_cost = (
+            template == "YYYY-MM-DD",
+            FORMAT_STEP + js::len16(template) as f64 * 8.0,
+        );
         self.include_set = self.includes.iter().cloned().collect();
         self.exclude_set = self.excludes.iter().cloned().collect();
         let weekend_start = match self.weekend.as_str() {
@@ -364,9 +374,7 @@ impl GanttDb {
         if !self.dated_tokens {
             return Ok(weekday);
         }
-        let template = js::trim(&self.date_format);
-        let iso = template == "YYYY-MM-DD";
-        let format_step = FORMAT_STEP + js::len16(template) as f64 * 8.0;
+        let (iso, format_step) = self.format_cost;
         self.spend(DATED_STEP)?;
         if !iso {
             self.spend(format_step)?;
@@ -379,7 +387,7 @@ impl GanttDb {
         let formatted = if iso {
             None
         } else {
-            format(date, js::trim(&self.date_format))
+            format(date, &self.date_format[self.format_at.clone()])
         };
         let listed = |set: &HashSet<String>| {
             set.contains(&date_only) || formatted.as_ref().is_some_and(|f| set.contains(f))
