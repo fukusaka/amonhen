@@ -643,9 +643,9 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         pathLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         svgSwitch.controlSize = .small
         svgSwitch.selectedSegment = 0
-        svgSwitch.setToolTip(L("Draw the SVG as a browser does"), forSegment: 0)
+        svgSwitch.setToolTip(L("Draw the SVG"), forSegment: 0)
         svgSwitch.setToolTip(
-            L("Check for mobile: draw it as a browser does and as iOS asset catalogs do (CoreSVG), and list what breaks on Android, Flutter and React Native"), forSegment: 1)
+            L("Check for mobile: list what breaks on Android, iOS, Flutter and React Native"), forSegment: 1)
         svgSwitch.setToolTip(L("Show the SVG source"), forSegment: 2)
         svgSwitch.target = self
         svgSwitch.action = #selector(svgViewChanged)
@@ -658,8 +658,6 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         outline.reloadData()
         expandChanged(root)
         backToTree()
-        // SVG・Markdown を開いたときに待たないように、WebKit を先に起こしておく。
-        Task { await WebRenderer.shared.prewarm() }
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -804,23 +802,6 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         return out
     }
 
-    /// CoreSVG の絵を、ブラウザで描いた絵と同じピクセル数のビットマップにする（並べる・違うピクセルで比べるため）。
-    private static func rasterize(_ image: NSImage?, like reference: NSImage?) -> NSImage? {
-        guard let image, let rep = reference?.representations.first, rep.pixelsWide > 0, rep.pixelsHigh > 0,
-              let bitmap = NSBitmapImageRep(
-                bitmapDataPlanes: nil, pixelsWide: rep.pixelsWide, pixelsHigh: rep.pixelsHigh, bitsPerSample: 8,
-                samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)
-        else { return image }
-        bitmap.size = reference?.size ?? image.size
-        NSGraphicsContext.saveGraphicsState()
-        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
-        image.draw(in: NSRect(origin: .zero, size: bitmap.size), from: .zero, operation: .copy, fraction: 1)
-        NSGraphicsContext.restoreGraphicsState()
-        let out = NSImage(size: bitmap.size)
-        out.addRepresentation(bitmap)
-        return out
-    }
-
     @objc private func svgViewChanged() {
         svgView = SVGView(rawValue: svgSwitch.selectedSegment) ?? .picture
         if let openPath { open(path: openPath, line: nil) }
@@ -905,19 +886,15 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
             let view = svgView
             Task {
                 guard let data = await contents(of: path), request == self.request else { return }
-                let web = await WebRenderer.shared.render(svg: data)
-                guard request == self.request else { return }
+                // CoreSVG（iOS のアセットカタログ・SF Symbols と同じ描き方）で描く。
+                let image = NSImage(data: data)
                 let bytes = ByteCountFormatter.string(fromByteCount: Int64(data.count), countStyle: .file)
-                let size = web.map { "\(Int($0.size.width)) × \(Int($0.size.height)) pt · \(bytes)" } ?? bytes
-                let panel = view == .picture
-                    ? ImageDiffPanel(
-                        before: nil, after: web, titles: ("", ""), caption: size, svg: false, mode: .twoUp, position: 0.5,
-                        single: true)
-                    : ImageDiffPanel(
-                        before: web, after: Self.rasterize(NSImage(data: data), like: web),
-                        titles: (L("Browser (WebKit)"), L("iOS (CoreSVG)")),
-                        caption: size, svg: false, mode: .twoUp, position: 0.5, single: false,
-                        notes: Self.mobileNotes(SVGIssue.lint(data)))
+                let size = image.map { "\(Int($0.size.width)) × \(Int($0.size.height)) pt · \(bytes)" } ?? bytes
+                let issues = view == .compare ? await Task.detached { SVGIssue.lint(data) }.value : nil
+                guard request == self.request else { return }
+                let panel = ImageDiffPanel(
+                    before: nil, after: image, titles: ("", ""), caption: size, svg: false, mode: .twoUp, position: 0.5,
+                    single: true, notes: issues.map(Self.mobileNotes))
                 imagePanel = panel
                 addSubview(panel, positioned: .below, relativeTo: pathBar)
                 needsLayout = true
