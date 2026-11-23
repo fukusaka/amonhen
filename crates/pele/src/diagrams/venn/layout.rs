@@ -1,10 +1,11 @@
 //! venn の円の置き方（pele の `src/diagrams/venn/layout.ts`）。
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::f64::consts::PI;
 
 use super::db::sort16;
 use super::types::VennSubset;
+use crate::errors::{ErrorCode, PeleError, Result};
 use crate::js;
 use crate::util::fdlibm;
 
@@ -27,50 +28,90 @@ pub struct Spot {
 
 const TAU: f64 = PI * 2.0;
 
-/// 3 つ以上の集合の重なりごとに、それが含み図が述べていない 2 つずつの重なりを、小さい方の集合の 4 分の 1 ずつで
-/// 足す（円が重なって描かれるように）。足すものがなければ受けた並びを返す。
-pub fn ensure_pairwise_subsets(subsets: &[VennSubset]) -> Vec<VennSubset> {
-    let mut present: HashSet<Vec<String>> = HashSet::new();
-    let mut sizes: HashMap<&str, f64> = HashMap::new();
-    for subset in subsets {
-        let mut key = subset.sets.clone();
-        sort16(&mut key);
-        present.insert(key);
-        if subset.sets.len() == 1 {
-            sizes.insert(&subset.sets[0], subset.size);
+/// 2 つの円の離れ方を二分法で求める、違う大きさの組の数の上限（1 組で数 µs）。pele に上限はなく、大きさの違う
+/// 数百の集合をまとめて重ねると、数秒かけて描く。
+const MAX_DISTANCES: usize = 50_000;
+
+/// 2 つの円の組（番号の小さい方が先）ごとの値。緩める回があるのは 1732 までの円なので、表は 150 万の組まで。
+struct Pairs {
+    n: usize,
+    value: Vec<f64>,
+    set: Vec<bool>,
+}
+
+impl Pairs {
+    fn new(n: usize) -> Self {
+        let len = n * n.saturating_sub(1) / 2;
+        Pairs {
+            n,
+            value: vec![0.0; len],
+            set: vec![false; len],
         }
     }
-    let mut added: Vec<VennSubset> = Vec::new();
+
+    fn at(&self, a: usize, b: usize) -> usize {
+        let (a, b) = (a.min(b), a.max(b));
+        a * (2 * self.n - a - 1) / 2 + (b - a - 1)
+    }
+
+    fn get(&self, a: usize, b: usize) -> Option<f64> {
+        let k = self.at(a, b);
+        self.set[k].then(|| self.value[k])
+    }
+
+    fn insert(&mut self, a: usize, b: usize, value: f64) {
+        let k = self.at(a, b);
+        self.set[k] = true;
+        self.value[k] = value;
+    }
+}
+
+/// 3 つ以上の集合の重なりごとに、それが含み図が述べていない 2 つずつの重なりを、小さい方の集合の 4 分の 1 ずつで
+/// 足す（円が重なって描かれるように）。pele の `ensurePairwiseSubsets` の答えのうち円の置き方が使う 2 つの集合の
+/// 重なりだけを、円の番号の組から広さへの表で返す（同じ組を述べたら後が勝つ）。2 つずつの組は集合の数の 2 乗に
+/// なりうるので、名前の組は作らない。
+fn pairwise_overlaps(subsets: &[VennSubset], index: &HashMap<&str, usize>, n: usize) -> Pairs {
+    let mut overlaps = Pairs::new(n);
+    if n == 0 {
+        return overlaps;
+    }
+    let mut sizes: Vec<Option<f64>> = vec![None; n];
+    for subset in subsets {
+        match subset.sets.as_slice() {
+            [id] => sizes[index[id.as_str()]] = Some(subset.size),
+            [a, b] => {
+                let (a, b) = (index[a.as_str()], index[b.as_str()]);
+                if a != b {
+                    overlaps.insert(a, b, subset.size);
+                }
+            }
+            _ => {}
+        }
+    }
+    // 述べた組と足した組は、どれも表にある。
     for subset in subsets {
         if subset.sets.len() < 3 {
             continue;
         }
         let mut members = subset.sets.clone();
         sort16(&mut members);
-        for i in 0..members.len() - 1 {
-            for j in i + 1..members.len() {
-                let pair = vec![members[i].clone(), members[j].clone()];
-                if present.contains(&pair) {
+        let at: Vec<usize> = members.iter().map(|m| index[m.as_str()]).collect();
+        for i in 0..at.len() - 1 {
+            for j in i + 1..at.len() {
+                if at[i] == at[j] {
                     continue;
                 }
-                present.insert(pair.clone());
-                let a = sizes.get(pair[0].as_str());
-                let b = sizes.get(pair[1].as_str());
-                let size = match (a, b) {
-                    (Some(&a), Some(&b)) => js::min(a, b) / 4.0,
-                    _ => 2.5,
-                };
-                added.push(VennSubset {
-                    sets: pair,
-                    size,
-                    label: Some(String::new()),
-                });
+                if overlaps.get(at[i], at[j]).is_none() {
+                    let size = match (sizes[at[i]], sizes[at[j]]) {
+                        (Some(a), Some(b)) => js::min(a, b) / 4.0,
+                        _ => 2.5,
+                    };
+                    overlaps.insert(at[i], at[j], size);
+                }
             }
         }
     }
-    let mut out = subsets.to_vec();
-    out.extend(added);
-    out
+    overlaps
 }
 
 /// 中心が d 離れた 2 つの円が分け合う広さ。
@@ -226,7 +267,7 @@ pub fn find_spot(circles: &[Circle], inside: &[usize], outside: &[usize]) -> Spo
 
 /// 集合ごとに 1 つの円を、広さを集合の大きさに比べて、2 つずつを重なりが求めるだけ離して置く: 1〜3 つの集合は
 /// そのとおりに、それより多ければ円の輪をその離れ方へ緩めて。長さの単位は大きさの平方根。
-pub fn layout_circles(subsets: &[VennSubset]) -> Vec<Circle> {
+pub fn layout_circles(subsets: &[VennSubset]) -> Result<Vec<Circle>> {
     let mut sizes: Vec<(String, f64)> = Vec::new();
     let mut at: HashMap<String, usize> = HashMap::new();
     for subset in subsets {
@@ -272,40 +313,69 @@ pub fn layout_circles(subsets: &[VennSubset]) -> Vec<Circle> {
     }
     let n = circles.len();
     if n < 2 {
-        return circles;
+        return Ok(circles);
     }
 
-    // 2 つずつの重なり（円の番号で）。
-    let mut overlaps: HashMap<usize, f64> = HashMap::new();
-    for subset in ensure_pairwise_subsets(subsets) {
-        if subset.sets.len() != 2 {
+    // 重なる 2 つの離れ方。重ならない 2 つは隙間を保つだけ。4 つ以上の円を緩める回がなければ使わない。
+    let rounds = js::min(300.0, (3e6 / (n * n) as f64).floor()) as usize;
+    let skip = n > 3 && rounds == 0;
+    let mut wanted = pairwise_overlaps(subsets, &index, if skip { 0 } else { n });
+    // 二分法は 1 組に 96 回の acos を使う。同じ大きさの組は同じ答えなので 1 度だけ求め、違う組が多すぎれば求める
+    // 前に止める。
+    let mut found: HashMap<(u64, u64, u64), f64> = HashMap::new();
+    let mut last = None;
+    let pairs = |n: usize| (0..n).flat_map(move |a| (a + 1..n).map(move |b| (a, b)));
+    for (a, b) in pairs(wanted.n) {
+        let Some(area) = wanted.get(a, b) else {
             continue;
-        }
-        let a = index[subset.sets[0].as_str()];
-        let b = index[subset.sets[1].as_str()];
-        if a != b {
-            overlaps.insert(a.min(b) * n + a.max(b), subset.size);
+        };
+        let sizes = (
+            circles[a].r.to_bits(),
+            circles[b].r.to_bits(),
+            area.to_bits(),
+        );
+        if last != Some(sizes) {
+            last = Some(sizes);
+            found.insert(sizes, 0.0);
+            if found.len() > MAX_DISTANCES {
+                return Err(PeleError::new(
+                    "The venn diagram has too many overlapping sets of different sizes to lay out.",
+                    ErrorCode::Limit,
+                ));
+            }
         }
     }
-    // 重なる 2 つの離れ方。重ならない 2 つは隙間を保つだけ。
-    let mut wanted: HashMap<usize, f64> = HashMap::new();
-    for (&key, &area) in &overlaps {
-        wanted.insert(
-            key,
-            distance_for_overlap(circles[key / n].r, circles[key % n].r, area),
+    for (&(r1, r2, area), distance) in found.iter_mut() {
+        *distance =
+            distance_for_overlap(f64::from_bits(r1), f64::from_bits(r2), f64::from_bits(area));
+    }
+    let mut last = None;
+    for (a, b) in pairs(wanted.n) {
+        let Some(area) = wanted.get(a, b) else {
+            continue;
+        };
+        let sizes = (
+            circles[a].r.to_bits(),
+            circles[b].r.to_bits(),
+            area.to_bits(),
         );
+        let distance = match last {
+            Some((known, d)) if known == sizes => d,
+            _ => found[&sizes],
+        };
+        last = Some((sizes, distance));
+        wanted.insert(a, b, distance);
     }
     let gap = widest * 0.15;
     let distance = |circles: &[Circle], a: usize, b: usize| -> f64 {
         wanted
-            .get(&(a * n + b))
-            .copied()
+            .get(a, b)
             .unwrap_or(circles[a].r + circles[b].r + gap)
     };
 
     if n == 2 {
         circles[1].x = distance(&circles, 0, 1);
-        return circles;
+        return Ok(circles);
     }
 
     if n == 3 {
@@ -338,14 +408,13 @@ pub fn layout_circles(subsets: &[VennSubset]) -> Vec<Circle> {
             ac *= 0.94;
             bc *= 0.94;
         }
-        return circles;
+        return Ok(circles);
     }
 
     let mut total = 0.0;
     for c in &circles {
         total += 2.0 * c.r + gap;
     }
-    let rounds = js::min(300.0, (3e6 / (n * n) as f64).floor()) as usize;
     if n <= 64 {
         let ring = total / TAU;
         for (i, c) in circles.iter_mut().enumerate() {
@@ -370,7 +439,7 @@ pub fn layout_circles(subsets: &[VennSubset]) -> Vec<Circle> {
         pulls.fill(0);
         for a in 0..n {
             for b in a + 1..n {
-                let overlap = wanted.get(&(a * n + b)).copied();
+                let overlap = wanted.get(a, b);
                 let apart = circles[a].r + circles[b].r + gap;
                 let mut ux = circles[b].x - circles[a].x;
                 let mut uy = circles[b].y - circles[a].y;
@@ -400,7 +469,7 @@ pub fn layout_circles(subsets: &[VennSubset]) -> Vec<Circle> {
             circles[i].y += dy[i] / pulls[i] as f64;
         }
     }
-    circles
+    Ok(circles)
 }
 
 struct Corner {

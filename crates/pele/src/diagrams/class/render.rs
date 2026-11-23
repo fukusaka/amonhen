@@ -32,6 +32,13 @@ use crate::types::{LinkInfo, RenderOptions, Rendered};
 use crate::util::url::linked;
 use crate::util::yaml::Value;
 
+/// 名前空間の枠 1 つが、id のほかに必ず書く文字の数（数はそれぞれ 1 文字以上、名前は書かないこともある）。下の
+/// `clusters` の形と合わせる。
+pub const NAMESPACE_INK: usize = "<g class=\"pele-cluster pele-namespace\" data-id=\"\"><rect x=\"0\" y=\"0\" width=\"0\" height=\"0\" fill=\"var(--_a)\" fill-opacity=\"0.5\" stroke=\"var(--_b)\""
+    .len()
+    + ROUNDED.len()
+    + "/></g>".len();
+
 const NODE_SEP: f64 = 40.0;
 const EDGE_SEP: f64 = 16.0;
 const RANK_SEP: f64 = 56.0;

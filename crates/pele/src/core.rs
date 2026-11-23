@@ -62,6 +62,7 @@ fn parse_source(
     text: &str,
     limit: usize,
     max_edges: usize,
+    output_limit: usize,
     extra: Option<&Config>,
 ) -> Result<Parsed> {
     if js::len16(text) > limit {
@@ -104,7 +105,10 @@ fn parse_source(
         parsed: parsed.encode_utf16().collect(),
         find: Box::new(move |at| in_source(&source, keep, at)),
     };
-    let limits = ParseLimits { max_edges };
+    let limits = ParseLimits {
+        max_edges,
+        output_limit,
+    };
     let model = tag_errors(&found, || {
         locating_in(origin, || {
             (diagram.parse)(
@@ -169,6 +173,7 @@ pub fn render_with(text: &str, options: &RenderOptions) -> Result<RenderResult> 
         text,
         options.limit.unwrap_or(DEFAULT_LIMIT),
         options.max_edges.unwrap_or(DEFAULT_MAX_EDGES),
+        options.output_limit.unwrap_or(DEFAULT_OUTPUT_LIMIT),
         options.config.as_ref(),
     )?;
     let section = config.get(diagram.section.unwrap_or(found.type_));
@@ -198,10 +203,7 @@ pub fn render_with(text: &str, options: &RenderOptions) -> Result<RenderResult> 
     })?;
     let output_limit = options.output_limit.unwrap_or(DEFAULT_OUTPUT_LIMIT);
     if js::len16(&rendered.svg) > output_limit {
-        let mut e = PeleError::new(
-            format!("Diagram output is longer than the limit of {output_limit} characters."),
-            ErrorCode::Limit,
-        );
+        let mut e = PeleError::output_too_long(output_limit);
         e.type_ = Some(found.type_.to_string());
         e.mermaid_type = Some(found.mermaid_type.to_string());
         return Err(e);

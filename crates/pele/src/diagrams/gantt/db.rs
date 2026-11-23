@@ -161,6 +161,11 @@ pub struct GanttDb {
     exclude_set: HashSet<String>,
     excluded_days: [bool; 7],
     dated_tokens: bool,
+    /// 除く日かどうか（日付の値ごと）。`get_tasks` のたびに一から。
+    invalid_days: HashMap<u64, bool>,
+    /// 書式（前後の空白を除いた範囲）と、それが `YYYY-MM-DD` か、日ごとに書き出す仕事。`get_tasks` が決める。
+    format_at: std::ops::Range<usize>,
+    format_cost: (bool, f64),
 }
 
 impl GanttDb {
@@ -313,6 +318,14 @@ impl GanttDb {
     pub fn get_tasks(&mut self, now: f64) -> Result<()> {
         self.now = now;
         self.work = 0.0;
+        self.invalid_days.clear();
+        let template = js::trim(&self.date_format);
+        let start = template.as_ptr() as usize - self.date_format.as_ptr() as usize;
+        self.format_at = start..start + template.len();
+        self.format_cost = (
+            template == "YYYY-MM-DD",
+            FORMAT_STEP + js::len16(template) as f64 * 8.0,
+        );
         self.include_set = self.includes.iter().cloned().collect();
         self.exclude_set = self.excludes.iter().cloned().collect();
         let weekend_start = match self.weekend.as_str() {
@@ -361,21 +374,27 @@ impl GanttDb {
         if !self.dated_tokens {
             return Ok(weekday);
         }
-        let template = js::trim(&self.date_format).to_string();
-        let date_only = iso_date(date);
-        let mut formatted = Some(date_only.clone());
+        let (iso, format_step) = self.format_cost;
         self.spend(DATED_STEP)?;
-        if template != "YYYY-MM-DD" {
-            self.spend(FORMAT_STEP + js::len16(&template) as f64 * 8.0)?;
-            formatted = format(date, &template);
+        if !iso {
+            self.spend(format_step)?;
         }
+        // 答えは日付だけで決まる（予定を組み直すたびに、重なるタスクが同じ日を何度も見る）。
+        if let Some(&known) = self.invalid_days.get(&date.to_bits()) {
+            return Ok(known);
+        }
+        let date_only = iso_date(date);
+        let formatted = if iso {
+            None
+        } else {
+            format(date, &self.date_format[self.format_at.clone()])
+        };
         let listed = |set: &HashSet<String>| {
             set.contains(&date_only) || formatted.as_ref().is_some_and(|f| set.contains(f))
         };
-        if listed(&self.include_set) {
-            return Ok(false);
-        }
-        Ok(weekday || listed(&self.exclude_set))
+        let invalid = !listed(&self.include_set) && (weekday || listed(&self.exclude_set));
+        self.invalid_days.insert(date.to_bits(), invalid);
+        Ok(invalid)
     }
 
     fn spend(&mut self, units: f64) -> Result<()> {

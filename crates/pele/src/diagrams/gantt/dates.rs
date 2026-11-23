@@ -63,6 +63,20 @@ fn pad(value: f64, length: usize) -> String {
     }
 }
 
+/// `pad` を `out` に足す。小さな正の整数（日付の欄）は文字列を作らずに書く。
+fn write_pad(out: &mut String, value: f64, length: usize) {
+    if value.fract() == 0.0 && (0.0..1e15).contains(&value) {
+        let v = value as u64;
+        let digits = if v == 0 { 1 } else { v.ilog10() as usize + 1 };
+        for _ in digits..length {
+            out.push('0');
+        }
+        js::write_num(out, value);
+    } else {
+        out.push_str(&pad(value, length));
+    }
+}
+
 fn ordinal(n: f64) -> String {
     let s = ["th", "st", "nd", "rd"];
     let v = n % 100.0;
@@ -158,15 +172,12 @@ fn iso_week(date: f64) -> f64 {
     whole + 1.0
 }
 
-/// `\[([^\]]+)]` が `at` に合えば、終わりの位置。
-fn bracket_at(s: &[u16], at: usize) -> Option<usize> {
+/// `\[([^\]]+)]` が `at` に合えば、終わりの位置。`closes[k]` は `k` から先で最初の `]` の位置（なければ長さ）。
+fn bracket_at(s: &[u16], closes: &[usize], at: usize) -> Option<usize> {
     if s.get(at) != Some(&(b'[' as u16)) {
         return None;
     }
-    let mut k = at + 1;
-    while k < s.len() && s[k] != b']' as u16 {
-        k += 1;
-    }
+    let k = closes.get(at + 1).copied().unwrap_or(s.len());
     if k < s.len() && k > at + 1 {
         Some(k + 1)
     } else {
@@ -174,9 +185,26 @@ fn bracket_at(s: &[u16], at: usize) -> Option<usize> {
     }
 }
 
+/// 各位置から先で最初の `]` の位置（なければ長さ）。閉じない `[` の続く書式でも、位置ごとに終わりまで探さない。
+fn closing_brackets(s: &[u16]) -> Vec<usize> {
+    let mut closes = vec![s.len(); s.len()];
+    let mut next = s.len();
+    for k in (0..s.len()).rev() {
+        if s[k] == b']' as u16 {
+            next = k;
+        }
+        closes[k] = next;
+    }
+    closes
+}
+
 fn starts(s: &[u16], at: usize, word: &str) -> bool {
-    let w: Vec<u16> = word.encode_utf16().collect();
-    s.len() >= at + w.len() && s[at..at + w.len()] == w[..]
+    let w = word.as_bytes();
+    s.len() >= at + w.len()
+        && s[at..at + w.len()]
+            .iter()
+            .zip(w)
+            .all(|(&c, &b)| c == b as u16)
 }
 
 /// `at` から同じ文字が続く数（`max` まで）。
@@ -189,8 +217,8 @@ fn run(s: &[u16], at: usize, c: u8, max: usize) -> usize {
 }
 
 /// RE_ADVANCED の字句: `\[([^\]]+)]|Q|wo|ww|w|WW|W|zzz|z|gggg|GGGG|Do|X|x|k{1,2}|S`。
-fn advanced_at(s: &[u16], at: usize) -> Option<usize> {
-    if let Some(e) = bracket_at(s, at) {
+fn advanced_at(s: &[u16], closes: &[usize], at: usize) -> Option<usize> {
+    if let Some(e) = bracket_at(s, closes, at) {
         return Some(e);
     }
     for word in [
@@ -211,8 +239,8 @@ fn advanced_at(s: &[u16], at: usize) -> Option<usize> {
 }
 
 /// RE_FORMAT の字句: `\[([^\]]+)]|YYYY|YY|M{1,4}|D{1,2}|d{1,4}|H{1,2}|h{1,2}|a|A|m{1,2}|s{1,2}|Z{1,2}|SSS`。
-fn format_at(s: &[u16], at: usize) -> Option<usize> {
-    if let Some(e) = bracket_at(s, at) {
+fn format_at(s: &[u16], closes: &[usize], at: usize) -> Option<usize> {
+    if let Some(e) = bracket_at(s, closes, at) {
         return Some(e);
     }
     if starts(s, at, "YYYY") {
@@ -243,17 +271,19 @@ fn format_at(s: &[u16], at: usize) -> Option<usize> {
 }
 
 /// 全体に正規表現を当てて置き換える（`String.prototype.replace` の `g`）。
+/// `find` が合う所を `with` が書いたものに置き換える（`with` は合った文字列と書く先を受ける）。
 fn replace_all(
     s: &[u16],
-    find: impl Fn(&[u16], usize) -> Option<usize>,
-    mut with: impl FnMut(&[u16]) -> String,
+    find: impl Fn(&[u16], &[usize], usize) -> Option<usize>,
+    mut with: impl FnMut(&[u16], &mut Vec<u16>),
 ) -> Vec<u16> {
+    let closes = closing_brackets(s);
     let mut out = Vec::with_capacity(s.len());
     let mut i = 0;
     while i < s.len() {
-        match find(s, i) {
+        match find(s, &closes, i) {
             Some(e) => {
-                out.extend(with(&s[i..e]).encode_utf16());
+                with(&s[i..e], &mut out);
                 i = e;
             }
             None => {
@@ -266,6 +296,212 @@ fn replace_all(
 }
 
 const DEFAULT_FORMAT: &str = "YYYY-MM-DDTHH:mm:ssZ";
+
+/// 書式の字句（名前は字句そのまま。小文字は `Lower` を付ける）。
+#[allow(clippy::upper_case_acronyms)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Tok {
+    // 1 度目（advanced format）。`Do` は角括弧の中身だけ。
+    Q,
+    Do,
+    GGGG,
+    W,
+    WW,
+    K,
+    KK,
+    X,
+    LowerX,
+    // 2 度目（dayjs）。
+    YY,
+    YYYY,
+    M,
+    MM,
+    MMM,
+    MMMM,
+    D,
+    DD,
+    LowerD,
+    LowerDD,
+    LowerDDD,
+    LowerDDDD,
+    H,
+    HH,
+    LowerH,
+    LowerHH,
+    LowerA,
+    A,
+    LowerM,
+    LowerMM,
+    S,
+    SS,
+    SSS,
+    Z,
+    ZZ,
+}
+
+const ADVANCED: [(&str, Tok); 9] = [
+    ("Q", Tok::Q),
+    ("Do", Tok::Do),
+    ("GGGG", Tok::GGGG),
+    ("W", Tok::W),
+    ("WW", Tok::WW),
+    ("k", Tok::K),
+    ("kk", Tok::KK),
+    ("X", Tok::X),
+    ("x", Tok::LowerX),
+];
+
+const TOKENS: [(&str, Tok); 25] = [
+    ("YY", Tok::YY),
+    ("YYYY", Tok::YYYY),
+    ("M", Tok::M),
+    ("MM", Tok::MM),
+    ("MMM", Tok::MMM),
+    ("MMMM", Tok::MMMM),
+    ("D", Tok::D),
+    ("DD", Tok::DD),
+    ("d", Tok::LowerD),
+    ("dd", Tok::LowerDD),
+    ("ddd", Tok::LowerDDD),
+    ("dddd", Tok::LowerDDDD),
+    ("H", Tok::H),
+    ("HH", Tok::HH),
+    ("h", Tok::LowerH),
+    ("hh", Tok::LowerHH),
+    ("a", Tok::LowerA),
+    ("A", Tok::A),
+    ("m", Tok::LowerM),
+    ("mm", Tok::LowerMM),
+    ("s", Tok::S),
+    ("ss", Tok::SS),
+    ("SSS", Tok::SSS),
+    ("Z", Tok::Z),
+    ("ZZ", Tok::ZZ),
+];
+
+fn named(list: &[(&str, Tok)], m: &[u16]) -> Option<Tok> {
+    list.iter()
+        .find(|(w, _)| w.len() == m.len() && w.bytes().zip(m).all(|(b, &c)| c == b as u16))
+        .map(|&(_, t)| t)
+}
+
+/// 書式を 2 度の置き換え（advanced format の字句、dayjs の字句）で読んだ一片。
+#[derive(Clone, Debug)]
+enum Piece {
+    Text(String),
+    Tok(Tok),
+}
+
+/// 書式を一片ずつに分ける（週の番号と時間帯の名前の字句があれば None）。1 度目に日付から書くのは数か、角括弧で
+/// 囲んだ序数なので、2 度目の字句の切れ目は日付によらない: 数は字句にも角括弧にもならない 1 文字として、2 度目の
+/// 置き換えを書式だけで済ませておく（序数は必ず角括弧の中に入る）。日ごとに書くとき、書式を読み直さない。
+fn compile_format(template: &str) -> Option<Vec<Piece>> {
+    const HOLE: u16 = 1;
+    let src: Vec<u16> = template.encode_utf16().collect();
+    let closes = closing_brackets(&src);
+    // 1 度目: 文字と、日付から書く字句。
+    let mut flat: Vec<u16> = Vec::with_capacity(src.len());
+    let mut holes: Vec<Option<Tok>> = Vec::with_capacity(src.len());
+    let mut unsupported = false;
+    let mut i = 0;
+    while i < src.len() {
+        let Some(e) = advanced_at(&src, &closes, i) else {
+            flat.push(src[i]);
+            holes.push(None);
+            i += 1;
+            continue;
+        };
+        let m = &src[i..e];
+        i = e;
+        match named(&ADVANCED, m) {
+            Some(Tok::Do) => {
+                flat.extend([b'[' as u16, HOLE, b']' as u16]);
+                holes.extend([None, Some(Tok::Do), None]);
+            }
+            Some(t) => {
+                flat.push(HOLE);
+                holes.push(Some(t));
+            }
+            None => {
+                let words = ["gggg", "wo", "w", "ww", "z", "zzz"];
+                if m[0] != b'[' as u16
+                    && words
+                        .iter()
+                        .any(|w| w.bytes().map(u16::from).eq(m.iter().copied()))
+                {
+                    unsupported = true;
+                }
+                flat.extend_from_slice(m);
+                holes.extend(m.iter().map(|_| None));
+            }
+        }
+    }
+    if unsupported {
+        return None;
+    }
+    // 2 度目: dayjs の字句と、角括弧の中身。
+    let closes = closing_brackets(&flat);
+    let mut pieces: Vec<Piece> = Vec::new();
+    let mut text: Vec<u16> = Vec::new();
+    let flush = |pieces: &mut Vec<Piece>, text: &mut Vec<u16>| {
+        if !text.is_empty() {
+            pieces.push(Piece::Text(js::from16(text)));
+            text.clear();
+        }
+    };
+    let put = |pieces: &mut Vec<Piece>, text: &mut Vec<u16>, k: usize| match holes[k] {
+        Some(t) => {
+            flush(pieces, text);
+            pieces.push(Piece::Tok(t));
+        }
+        None => text.push(flat[k]),
+    };
+    let mut i = 0;
+    while i < flat.len() {
+        match format_at(&flat, &closes, i) {
+            Some(e) if e - i > 1 && flat[i] == b'[' as u16 => {
+                for k in i + 1..e - 1 {
+                    put(&mut pieces, &mut text, k);
+                }
+                i = e;
+            }
+            Some(e) => {
+                flush(&mut pieces, &mut text);
+                pieces.push(Piece::Tok(named(&TOKENS, &flat[i..e]).unwrap_or(Tok::ZZ)));
+                i = e;
+            }
+            None => {
+                put(&mut pieces, &mut text, i);
+                i += 1;
+            }
+        }
+    }
+    flush(&mut pieces, &mut text);
+    Some(pieces)
+}
+
+type Compiled = std::rc::Rc<Option<Vec<Piece>>>;
+
+thread_local! {
+    /// 読んだ書式（最近のいくつか）。
+    static FORMATS: std::cell::RefCell<Vec<(String, Compiled)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+fn compiled_format(template: &str) -> Compiled {
+    FORMATS.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if let Some(k) = cache.iter().position(|(t, _)| t == template) {
+            return cache[k].1.clone();
+        }
+        let pieces = std::rc::Rc::new(compile_format(template));
+        if cache.len() >= 4 {
+            cache.remove(0);
+        }
+        cache.push((template.to_string(), pieces.clone()));
+        pieces
+    })
+}
 
 /// 週の番号と時間帯の名前の字句は None（Mermaid の読み込まないプラグインが要り、そこでは失敗する）。
 pub fn format(date: f64, template: &str) -> Option<String> {
@@ -280,69 +516,81 @@ pub fn format(date: f64, template: &str) -> Option<String> {
     if str == "YYYY-MM-DD" {
         return Some(iso_date(date));
     }
-    let mut unsupported = false;
-    let src: Vec<u16> = str.encode_utf16().collect();
-    let advanced = replace_all(&src, advanced_at, |m| {
-        let m = js::from16(m);
-        match m.as_str() {
-            "Q" => js::fmt(((d::get_month(date) + 1.0) / 3.0).ceil()),
-            "Do" => format!("[{}]", ordinal(d::get_date(date))),
-            "GGGG" => js::fmt(d::get_full_year(week_thursday(date))),
-            "W" => js::fmt(iso_week(date)),
-            "WW" => pad(iso_week(date), 2),
-            "k" => js::fmt(hours_or_24(date)),
-            "kk" => pad(hours_or_24(date), 2),
-            "X" => js::fmt((date / 1000.0).floor()),
-            "x" => js::fmt(date),
-            "gggg" | "wo" | "w" | "ww" | "z" | "zzz" => {
-                unsupported = true;
-                m
-            }
-            _ => m,
-        }
-    });
-    if unsupported {
-        return None;
-    }
+    let pieces = compiled_format(str);
+    let pieces = pieces.as_ref().as_ref()?;
     let hours = d::get_hours(date);
-    let out = replace_all(&advanced, format_at, |m| {
-        if m.len() > 1 && m[0] == b'[' as u16 {
-            return js::from16(&m[1..m.len() - 1]);
+    let (year, month, day) = d::ymd(date);
+    let weekday = || d::get_day(date);
+    let mut out = String::with_capacity(str.len() + 16);
+    for piece in pieces {
+        let tok = match piece {
+            Piece::Text(t) => {
+                out.push_str(t);
+                continue;
+            }
+            Piece::Tok(tok) => *tok,
+        };
+        let fixed = match tok {
+            Tok::MMM => Some(&MONTHS[month as usize][..3]),
+            Tok::MMMM => Some(MONTHS[month as usize]),
+            Tok::LowerDD => Some(&WEEKDAYS[weekday() as usize][..2]),
+            Tok::LowerDDD => Some(&WEEKDAYS[weekday() as usize][..3]),
+            Tok::LowerDDDD => Some(WEEKDAYS[weekday() as usize]),
+            Tok::LowerA => Some(if hours < 12.0 { "am" } else { "pm" }),
+            Tok::A => Some(if hours < 12.0 { "AM" } else { "PM" }),
+            _ => None,
+        };
+        if let Some(fixed) = fixed {
+            out.push_str(fixed);
+            continue;
         }
-        let month = d::get_month(date) as usize;
-        let weekday = d::get_day(date) as usize;
-        match js::from16(m).as_str() {
-            "YY" => {
-                let y: Vec<u16> = js::fmt(d::get_full_year(date)).encode_utf16().collect();
+        let number = match tok {
+            Tok::Q => Some((((month + 1.0) / 3.0).ceil(), 0)),
+            Tok::GGGG => Some((d::get_full_year(week_thursday(date)), 0)),
+            Tok::W => Some((iso_week(date), 0)),
+            Tok::WW => Some((iso_week(date), 2)),
+            Tok::K => Some((hours_or_24(date), 0)),
+            Tok::KK => Some((hours_or_24(date), 2)),
+            Tok::X => Some(((date / 1000.0).floor(), 0)),
+            Tok::LowerX => Some((date, 0)),
+            Tok::YYYY => Some((year, 4)),
+            Tok::M => Some((month + 1.0, 0)),
+            Tok::MM => Some((month + 1.0, 2)),
+            Tok::D => Some((day, 0)),
+            Tok::DD => Some((day, 2)),
+            Tok::LowerD => Some((weekday(), 0)),
+            Tok::H => Some((hours, 0)),
+            Tok::HH => Some((hours, 2)),
+            Tok::LowerH => Some((hours12(hours), 0)),
+            Tok::LowerHH => Some((hours12(hours), 2)),
+            Tok::LowerM => Some((d::get_minutes(date), 0)),
+            Tok::LowerMM => Some((d::get_minutes(date), 2)),
+            Tok::S => Some((d::get_seconds(date), 0)),
+            Tok::SS => Some((d::get_seconds(date), 2)),
+            Tok::SSS => Some((d::get_milliseconds(date), 3)),
+            _ => None,
+        };
+        // 数は `String(n)`、桁のあるものは頭に 0 を足す。
+        if let Some((value, length)) = number {
+            if length == 0 {
+                js::write_num(&mut out, value);
+            } else {
+                write_pad(&mut out, value, length);
+            }
+            continue;
+        }
+        let text = match tok {
+            Tok::Do => ordinal(day),
+            Tok::YY => {
+                let y: Vec<u16> = js::fmt(year).encode_utf16().collect();
                 js::from16(&y[y.len().saturating_sub(2)..])
             }
-            "YYYY" => pad(d::get_full_year(date), 4),
-            "M" => js::fmt(d::get_month(date) + 1.0),
-            "MM" => pad(d::get_month(date) + 1.0, 2),
-            "MMM" => MONTHS[month][..3].to_string(),
-            "MMMM" => MONTHS[month].to_string(),
-            "D" => js::fmt(d::get_date(date)),
-            "DD" => pad(d::get_date(date), 2),
-            "d" => js::fmt(d::get_day(date)),
-            "dd" => WEEKDAYS[weekday][..2].to_string(),
-            "ddd" => WEEKDAYS[weekday][..3].to_string(),
-            "dddd" => WEEKDAYS[weekday].to_string(),
-            "H" => js::fmt(hours),
-            "HH" => pad(hours, 2),
-            "h" => js::fmt(hours12(hours)),
-            "hh" => pad(hours12(hours), 2),
-            "a" => (if hours < 12.0 { "am" } else { "pm" }).into(),
-            "A" => (if hours < 12.0 { "AM" } else { "PM" }).into(),
-            "m" => js::fmt(d::get_minutes(date)),
-            "mm" => pad(d::get_minutes(date), 2),
-            "s" => js::fmt(d::get_seconds(date)),
-            "ss" => pad(d::get_seconds(date), 2),
-            "SSS" => pad(d::get_milliseconds(date), 3),
-            "Z" => zone(date),
+            Tok::Z => zone(date),
             _ => zone(date).replace(':', ""),
-        }
-    });
-    Some(js::from16(&out))
+        };
+        out.push_str(&text);
+    }
+    Some(out)
 }
 
 fn hours_or_24(date: f64) -> f64 {
@@ -356,9 +604,27 @@ fn hours12(hours: f64) -> f64 {
 }
 
 pub fn iso_date(date: f64) -> String {
-    let year = d::get_full_year(date);
-    let month = d::get_month(date) + 1.0;
-    let day = d::get_date(date);
+    let (year, month, day) = d::ymd(date);
+    let month = month + 1.0;
+    if !date.is_nan() {
+        // 日付があれば年・月・日は整数（`String(n)` は整数の書き方）。
+        use std::fmt::Write;
+        let mut out = String::with_capacity(10);
+        if (1000.0..=9999.0).contains(&year) {
+            let _ = write!(out, "{}", year as i64);
+        } else {
+            out.push_str(&pad(year, 4));
+        }
+        let _ = write!(
+            out,
+            "{}{}{}{}",
+            if month < 10.0 { "-0" } else { "-" },
+            month as i64,
+            if day < 10.0 { "-0" } else { "-" },
+            day as i64
+        );
+        return out;
+    }
     let y = if (1000.0..=9999.0).contains(&year) {
         js::fmt(year)
     } else {
@@ -666,7 +932,7 @@ fn tokens(s: &[u16]) -> Vec<Vec<u16>> {
 fn compile(template: &str) -> Option<Vec<Step>> {
     let src: Vec<u16> = template.encode_utf16().collect();
     // dayjs は地域の字句を英語のロケールにない表で広げようとして、失敗する。
-    let bare = replace_all(&src, bracket_at, |_| String::new());
+    let bare = replace_all(&src, bracket_at, |_, _| {});
     if bare.iter().any(|&c| c == b'L' as u16 || c == b'l' as u16) {
         return None;
     }
@@ -806,5 +1072,34 @@ mod tests {
     fn adds_months_like_dayjs() {
         let t = parse_strict("2014-01-31", "YYYY-MM-DD", 0.0).unwrap();
         assert_eq!(iso_date(add(t, 1.0, Unit::Month)), "2014-02-28");
+    }
+}
+
+#[cfg(test)]
+mod format_tests {
+    use super::*;
+
+    #[test]
+    fn format_takes_linear_time() {
+        // 閉じない `[` は位置ごとに終わりまで `]` を探していた（10 万字で 50 億回）。
+        let unclosed = "[".repeat(100_000);
+        assert_eq!(format(0.0, &unclosed).as_deref(), Some(unclosed.as_str()));
+        let mixed = "[a".repeat(50_000);
+        assert_eq!(format(0.0, &mixed), Some("[am".repeat(50_000)));
+    }
+
+    #[test]
+    fn format_reads_both_passes() {
+        let date = 946_771_200_000.0; // 2000-01-02T00:00:00Z（日曜）
+        assert_eq!(
+            format(date, "[Q] Q Do [Do] [abc Do").as_deref(),
+            Some("Q 1 2nd Do abc [2nd")
+        );
+        assert_eq!(
+            format(date, "dddd, MMMM Do YYYY h:mm a").as_deref(),
+            Some("Sunday, January 2nd 2000 12:00 am")
+        );
+        assert_eq!(format(date, "YYQYY MQM"), Some("00100 111".into()));
+        assert_eq!(format(date, "w"), None);
     }
 }

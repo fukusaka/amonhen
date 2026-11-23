@@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet};
 use super::db::{VennDb, normalize_text};
 use super::layout::{Circle, Spot, find_spot, layout_circles, region_path};
 use super::types::VennSubset;
+use crate::errors::Result;
 use crate::js;
 use crate::preprocess::Config;
 use crate::svg::builder::{esc_text, label_svg, num};
@@ -44,7 +45,7 @@ fn sets_fill_opacity(shape: &str) -> bool {
         .any(|(k, _)| k > 0 && matches!(shape.as_bytes()[k - 1], b'"' | b';'))
 }
 
-pub fn render_venn(model: &VennDb, _config: &Config, options: &RenderOptions) -> Rendered {
+pub fn render_venn(model: &VennDb, _config: &Config, options: &RenderOptions) -> Result<Rendered> {
     let size = options.font_size.unwrap_or(16.0);
     let small = js::round(size * 0.875);
     let tiny = js::round(size * 0.8125);
@@ -54,7 +55,7 @@ pub fn render_venn(model: &VennDb, _config: &Config, options: &RenderOptions) ->
     };
     let pad = options.padding.unwrap_or(8.0);
 
-    let circles = layout_circles(&model.subsets);
+    let circles = layout_circles(&model.subsets)?;
     let mut index: HashMap<&str, usize> = HashMap::new();
     for (i, c) in circles.iter().enumerate() {
         index.insert(&c.id, i);
@@ -83,9 +84,13 @@ pub fn render_venn(model: &VennDb, _config: &Config, options: &RenderOptions) ->
     let mut neighbors: Vec<Vec<usize>> = vec![Vec::new(); circles.len()];
     for a in 0..circles.len() {
         for b in a + 1..circles.len() {
-            if js::hypot(circles[a].x - circles[b].x, circles[a].y - circles[b].y)
-                < circles[a].r + circles[b].r
-            {
+            let (dx, dy) = (circles[a].x - circles[b].x, circles[a].y - circles[b].y);
+            let reach = circles[a].r + circles[b].r;
+            // `hypot` は大きい方の差より小さくならないので、それで届かない組は数えずに済む（数千の円で 2 乗）。
+            if dx.abs() >= reach || dy.abs() >= reach {
+                continue;
+            }
+            if js::hypot(dx, dy) < reach {
                 neighbors[a].push(b);
                 neighbors[b].push(a);
             }
@@ -94,17 +99,22 @@ pub fn render_venn(model: &VennDb, _config: &Config, options: &RenderOptions) ->
 
     // 集合と述べた重なりごとに 1 つの領域。同じ集合についての後の文が前のものに代わる。
     let mut stated: Vec<(Vec<String>, &VennSubset)> = Vec::new();
+    let mut stated_at: HashMap<&[String], usize> = HashMap::new();
     for subset in &model.subsets {
-        match stated.iter_mut().find(|(k, _)| *k == subset.sets) {
-            Some(slot) => slot.1 = subset,
-            None => stated.push((subset.sets.clone(), subset)),
+        match stated_at.get(subset.sets.as_slice()) {
+            Some(&k) => stated[k].1 = subset,
+            None => {
+                stated_at.insert(&subset.sets, stated.len());
+                stated.push((subset.sets.clone(), subset));
+            }
         }
     }
     let mut regions: Vec<(Vec<String>, Region)> = Vec::new();
     for (key, subset) in &stated {
         let mut sets: Vec<String> = Vec::new();
+        let mut seen: HashSet<&str> = HashSet::new();
         for id in &subset.sets {
-            if !sets.contains(id) {
+            if seen.insert(id) {
                 sets.push(id.clone());
             }
         }
@@ -270,7 +280,11 @@ pub fn render_venn(model: &VennDb, _config: &Config, options: &RenderOptions) ->
         .collect();
 
     let no_style = ResolvedStyle::default();
-    let region_of = |key: &[String]| regions.iter().find(|(k, _)| k == key).map(|(_, r)| r);
+    let mut region_at: HashMap<&[String], usize> = HashMap::new();
+    for (k, (key, _)) in regions.iter().enumerate() {
+        region_at.entry(key.as_slice()).or_insert(k);
+    }
+    let region_of = |key: &[String]| region_at.get(key).map(|&k| &regions[k].1);
 
     let mut sets = String::new();
     for (i, c) in placed.iter().enumerate() {
@@ -395,10 +409,10 @@ pub fn render_venn(model: &VennDb, _config: &Config, options: &RenderOptions) ->
         &Accessible::default(),
         &content,
     );
-    Rendered {
+    Ok(Rendered {
         svg,
         width,
         height,
         links: Vec::new(),
-    }
+    })
 }

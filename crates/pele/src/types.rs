@@ -106,6 +106,8 @@ pub struct Rendered {
 #[derive(Clone, Copy, Debug)]
 pub struct ParseLimits {
     pub max_edges: usize,
+    /// 出力の長さの上限（UTF-16）。読む間に、描けば必ず超えると分かる図を止めるのに使う。
+    pub output_limit: usize,
 }
 
 /// 図の種類が備えるもの（pele の `Diagram`）。`source` は前処理と符号の隠しを通り、Mermaid の読み手が待つとおり
