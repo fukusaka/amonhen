@@ -373,15 +373,74 @@ pub struct Details {
     /// `[` `]` で移ったファイル（その後にスクロールしたら忘れる）。文書の終わり近くでは、見出しを一番上まで
     /// 動かせないので、どのファイルへ移ったかを覚えておく。
     jumped: Option<usize>,
+    /// 詳細の中で探した語と、合った行（画面に出すときに目立たせる）。
+    found: Option<(String, u32)>,
 }
 
 impl Details {
+    /// 頭・ファイルの一覧・差分の `line` 行目の字。
+    fn line_text(commit: &Commit, line: u32) -> String {
+        let head = commit.head.len() as u32;
+        let before = commit.before_diff();
+        if line < head {
+            commit.head[line as usize].0.clone()
+        } else if line < before {
+            commit
+                .files
+                .get((line - head) as usize)
+                .map_or(String::new(), |f| f.path.clone())
+        } else {
+            commit.diff.row_text((line - before) as usize).to_owned()
+        }
+    }
+
+    /// 詳細の中で `query` を探す（大文字と小文字は区別しない）。前に合った行の次（`forward` でなければ前）から
+    /// 巡って探し、合えばその行が見えるように動かす。合った数と、その何番目かを返す（なければ None）。
+    pub fn find(&mut self, query: &str, forward: bool) -> Option<(usize, usize)> {
+        let commit = self.commit.as_ref()?;
+        let query = query.to_lowercase();
+        let lines = commit.lines();
+        let hits: Vec<u32> = (0..lines)
+            .filter(|&l| Self::line_text(commit, l).to_lowercase().contains(&query))
+            .collect();
+        if hits.is_empty() {
+            self.found = None;
+            return None;
+        }
+        let at = match &self.found {
+            Some((q, line)) if *q == query => match forward {
+                true => hits.iter().position(|h| h > line).unwrap_or(0),
+                false => hits
+                    .iter()
+                    .rposition(|h| h < line)
+                    .unwrap_or(hits.len() - 1),
+            },
+            // 初めは、見えているところから下で。
+            _ => hits.iter().position(|&h| h >= self.scroll.top).unwrap_or(0),
+        };
+        let line = hits[at];
+        self.found = Some((query, line));
+        self.jumped = None;
+        self.scroll.reveal(line, lines);
+        Some((at + 1, hits.len()))
+    }
+
+    /// 探した語を忘れる。
+    pub fn clear_found(&mut self) {
+        self.found = None;
+    }
+
+    /// 詳細の中で探している語。
+    pub fn finding(&self) -> Option<&str> {
+        self.found.as_ref().map(|(q, _)| q.as_str())
+    }
     /// 出すものを替える。替わったら true。
     pub fn want(&mut self, want: Want) -> bool {
         if self.wanted.as_ref().is_some_and(|w| w.key() == want.key()) {
             return false;
         }
         self.wanted = Some(want);
+        self.found = None;
         true
     }
 
@@ -638,6 +697,19 @@ impl Details {
                     theme,
                 );
             }
+        }
+        // 探して合った行を目立たせる。
+        if let Some((_, line)) = &self.found
+            && *line >= self.scroll.top
+            && *line < self.scroll.top + u32::from(area.height)
+        {
+            let at = Rect::new(
+                area.x,
+                area.y + (line - self.scroll.top) as u16,
+                area.width,
+                1,
+            );
+            buf.set_style(at, Style::new().bg(Color::Indexed(58)));
         }
         if let Some(error) = failed {
             let at = Rect::new(area.x, area.y, area.width, 1);

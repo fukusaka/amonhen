@@ -433,12 +433,8 @@ pub fn nodes(
                 &format!("subtree:{dir}"),
                 about.into_iter().flatten().collect(),
             );
-            let title = if s["squashed"].as_bool() == Some(true) {
-                format!("{dir}  ⊟")
-            } else {
-                dir.to_owned()
-            };
-            Some(TreeNode::new(format!("subtree:{dir}"), title))
+            // squash して取り込んだことは、印にせずツールチップだけに出す（macOS 版・GTK4 版と同じ）。
+            Some(TreeNode::new(format!("subtree:{dir}"), dir))
         })
         .collect();
     if !subtrees.is_empty() {

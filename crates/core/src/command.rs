@@ -339,7 +339,8 @@ pub enum Command {
         branch: String,
     },
     /// stash ごとの土台（作ったときの HEAD）と、今の HEAD の離れ具合（`info.stashes`: name・base・`ahead`（HEAD に
-    /// だけあるコミットの数）・`behind`（土台にだけあるコミットの数））。HEAD がまだなければ空。
+    /// だけあるコミットの数）・`behind`（土台にだけあるコミットの数）・`untracked`（追跡していないファイルも入って
+    /// いるか））。HEAD がまだなければ空。
     StashBases,
     /// 覚えている History の折りたたみ（`info`: `folded`（merge を既定でたたむか）・`except`（既定と逆にした merge
     /// の ID））。なければ何もたたまない。
@@ -4260,6 +4261,8 @@ impl Repository {
                             "base": base.to_string(),
                             "ahead": ahead,
                             "behind": behind,
+                            // 3 つ目の親が、追跡していないファイル（`git stash -u`）。
+                            "untracked": ops.resolve(&format!("{target}^3")).is_ok(),
                         }));
                     }
                 }
@@ -5304,7 +5307,9 @@ impl Repository {
             }),
             Command::Worktrees => {
                 let paths = self.backend().paths();
-                let list = crate::worktree::parse(&ops.worktree_list()?, paths.workdir.as_deref());
+                let mut list =
+                    crate::worktree::parse(&ops.worktree_list()?, paths.workdir.as_deref());
+                crate::worktree::fill_from_records(&mut list, &paths.common_dir);
                 Ok(Response {
                     ok: true,
                     info: Some(serde_json::json!({ "worktrees": list })),
@@ -7242,6 +7247,7 @@ mod tests {
             (stashes[0]["ahead"].as_u64(), stashes[0]["behind"].as_u64()),
             (Some(2), Some(0))
         );
+        assert_eq!(stashes[0]["untracked"], false);
 
         // 土台から枝を作って戻すので、HEAD が進んでいても重ならない。戻せた stash は消える。
         let r = run(
@@ -7258,6 +7264,11 @@ mod tests {
         assert!(git(dir, &["stash", "list"]).is_empty());
         let none = run(&repo, r#"{"op":"stashBases"}"#);
         assert_eq!(none["info"]["stashes"].as_array().unwrap().len(), 0);
+        // 追跡していないファイルも入れた stash。
+        std::fs::write(dir.join("new.txt"), "new\n").unwrap();
+        git(dir, &["stash", "-q", "-u"]);
+        let with = run(&repo, r#"{"op":"stashBases"}"#);
+        assert_eq!(with["info"]["stashes"][0]["untracked"], true, "{with}");
     }
 
     /// 消したタグは Undo で戻り、注釈付きのタグはタグのオブジェクトごと戻る。タグはまとめてリモートに push でき、
