@@ -143,7 +143,7 @@ fn notes_approximations() {
     );
     // ColorBrewer の配色は描ける
     assert!(
-        notes("digraph { node [colorscheme=blues9, style=filled, fillcolor=3]; a [color=\"/set312/12\"] }")
+        notes("digraph { node [colorscheme=blues9, style=filled, fillcolor=3]; a [color=\"/set312/12\"]; b [colorscheme=ylorrd9, fillcolor=9] }")
             .is_empty()
     );
     assert_eq!(

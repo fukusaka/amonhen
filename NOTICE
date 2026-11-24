@@ -85,5 +85,6 @@ in the headers of the ported source files.
   Sveidqvist, MIT License; khroma 2.1.0, Copyright (c) 2019-present Fabio Spampinato, Andrew Maney, MIT License.
 - crates/dot/src/x11.rs: the X11 color names and values from X.Org's rgb.txt, Copyright The Open Group,
   MIT (X11) License.
-- crates/dot/src/brewer.rs: the ColorBrewer color schemes, Copyright (c) 2002 Cynthia Brewer, Mark Harrower,
-  and The Pennsylvania State University, Apache-Style Software License for ColorBrewer (above).
+- crates/dot/src/brewer.rs: the ColorBrewer color schemes from axismaps/colorbrewer's export/colorbrewer.json
+  and colorbrewer_schemes.js (for the classes the JSON lacks), Copyright (c) 2002 Cynthia Brewer, Mark
+  Harrower, and The Pennsylvania State University, Apache-Style Software License for ColorBrewer (above).

@@ -1,5 +1,6 @@
 //! ColorBrewer の配色（Graphviz の `colorscheme` の名前: 小文字の名前と色の数）。生成したもの: 手で直さない
-//! （`scripts/gen-colorbrewer.py`。元は axismaps/colorbrewer 8ca8dec5 の `export/colorbrewer.json`）。
+//! （`scripts/gen-colorbrewer.py`。元は axismaps/colorbrewer 8ca8dec5 の `export/colorbrewer.json` と、そこに
+//! ない配色・色の数を足す `colorbrewer_schemes.js`）。
 
 // ColorBrewer のライセンス:
 //
@@ -309,4 +310,5 @@ pub static BREWER: &[(&str, &[u32])] = &[
     ("ylorrd6", &[0xffffb2, 0xfed976, 0xfeb24c, 0xfd8d3c, 0xf03b20, 0xbd0026]),
     ("ylorrd7", &[0xffffb2, 0xfed976, 0xfeb24c, 0xfd8d3c, 0xfc4e2a, 0xe31a1c, 0xb10026]),
     ("ylorrd8", &[0xffffcc, 0xffeda0, 0xfed976, 0xfeb24c, 0xfd8d3c, 0xfc4e2a, 0xe31a1c, 0xb10026]),
+    ("ylorrd9", &[0xffffcc, 0xffeda0, 0xfed976, 0xfeb24c, 0xfd8d3c, 0xfc4e2a, 0xe31a1c, 0xbd0026, 0x800026]),
 ];

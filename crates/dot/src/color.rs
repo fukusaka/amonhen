@@ -492,6 +492,11 @@ mod tests {
             parse("8", Some("ACCENT8")),
             Some(Color::Rgba(rgb("#666666")))
         );
+        // colorbrewer.json にない YlOrRd の 9 色は colorbrewer_schemes.js から
+        assert_eq!(rgb("/ylorrd9/1").hex(), "#ffffcc");
+        assert_eq!(rgb("/ylorrd9/8").hex(), "#bd0026");
+        assert_eq!(rgb("/ylorrd9/9").hex(), "#800026");
+        assert_eq!(parse("10", Some("ylorrd9")), None);
         // 範囲の外の番号は読めない
         assert_eq!(parse("0", Some("blues9")), None);
         assert_eq!(parse("10", Some("blues9")), None);

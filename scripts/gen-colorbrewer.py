@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 # ColorBrewer の配色の表（crates/dot/src/brewer.rs）を作る。
-#   python3 -I scripts/gen-colorbrewer.py <colorbrewer.json> > crates/dot/src/brewer.rs
-# <colorbrewer.json> は axismaps/colorbrewer（8ca8dec5f66236bdaa233230c169c8ad5430e52c）の
-# export/colorbrewer.json（Apache-2.0 形式の ColorBrewer のライセンス）。
+#   python3 -I scripts/gen-colorbrewer.py <colorbrewer.json> <colorbrewer_schemes.js> > crates/dot/src/brewer.rs
+# どちらも axismaps/colorbrewer（8ca8dec5f66236bdaa233230c169c8ad5430e52c）のもの（Apache-2.0 形式の
+# ColorBrewer のライセンス）: export/colorbrewer.json と colorbrewer_schemes.js。JSON にない配色・色の数
+# （YlOrRd の 9 色）は JS から足す。両方にあれば JSON が先。
 # Graphviz と同じく、配色の名前は小文字の名前と色の数（blues9・set312 など）。
 import json
 import re
@@ -48,9 +49,32 @@ may "ColorBrewer" appear in their name, without prior written permission of
 Cynthia Brewer."""
 
 
+def read_js(path):
+    """colorbrewer_schemes.js の `Name: {3: ['rgb(…)', …], …, 'properties': {…}}` を読む。"""
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    data = {}
+    for m in re.finditer(r"(\w+):\s*\{(.*?)'properties'", text, re.S):
+        classes = {}
+        for c in re.finditer(r"(\d+)\s*:\s*\[([^\]]*)\]", m.group(2)):
+            classes[c.group(1)] = re.findall(r"'([^']*)'", c.group(2))
+        if classes:
+            data[m.group(1)] = classes
+    if not data:
+        raise SystemExit(f"no schemes in {path}")
+    return data
+
+
 def main():
     with open(sys.argv[1], encoding="utf-8") as f:
         data = json.load(f)
+    # JSON が先。JS は JSON にない配色・色の数だけを足す
+    lower = {name.lower(): name for name in data}
+    for name, classes in read_js(sys.argv[2]).items():
+        key = lower.setdefault(name.lower(), name)
+        have = data.setdefault(key, {})
+        for count, colors in classes.items():
+            have.setdefault(count, colors)
     schemes = []
     for name, classes in data.items():
         for count, colors in classes.items():
@@ -69,7 +93,8 @@ def main():
     schemes.sort()
     out = [
         "//! ColorBrewer の配色（Graphviz の `colorscheme` の名前: 小文字の名前と色の数）。生成したもの: 手で直さない",
-        "//! （`scripts/gen-colorbrewer.py`。元は axismaps/colorbrewer 8ca8dec5 の `export/colorbrewer.json`）。",
+        "//! （`scripts/gen-colorbrewer.py`。元は axismaps/colorbrewer 8ca8dec5 の `export/colorbrewer.json` と、そこに",
+        "//! ない配色・色の数を足す `colorbrewer_schemes.js`）。",
         "",
         "// ColorBrewer のライセンス:",
         "//",
