@@ -296,3 +296,4 @@ left out for now: VSCode has its own extensions and settings for them.
 - [x] 72. History's details: All Files (the tree at the commit and a file's contents with the commit's lines marked; zoomable images, SVG picture and mobile check, formatted Markdown, other binaries in the editor), with the engine
 - [x] 73. Wrap long lines (`amonhen.wrapLongLines`, Alt+Z, the ↩︎ above the diff), keep the dragged height of the commit details, and GitHub's image-only emoji as dim chips in Markdown
 - [x] 74. Ignore whitespace in the Working Copy diff (with the engine; lines and hunks aren't staged or discarded meanwhile)
+- [x] 79. Fold or show any merge on its own (context menu, ←/→), Fold All / Show All Merged Commits, kept per repository in the file the apps and the TUI use

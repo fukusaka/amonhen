@@ -1282,6 +1282,11 @@ First release.
 - The Working Copy diff can ignore whitespace (at line ends, changes in amount or all), with the engine. Lines and
   hunks aren't staged or discarded meanwhile.
 
+#### Changed
+
+- History folds or shows any merge on its own (its context menu, ←/→), and the display menu has Fold All and Show
+  All Merged Commits; the folds are kept per repository and shared with the apps and the TUI.
+
 #### Fixed
 
 - Restoring the version before a commit that renamed a file brings back the old name instead of only deleting the new

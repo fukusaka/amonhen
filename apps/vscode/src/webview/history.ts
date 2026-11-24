@@ -625,6 +625,13 @@ export function createHistoryView(): View {
       } else {
         select(to, true);
       }
+    } else if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && !e.altKey && !e.metaKey && !e.ctrlKey && !e.shiftKey && rows[selected]) {
+      // 選んだ merge を ← で畳み、→ で開く（ツリーの開閉と同じ。アプリと同じ）
+      const row = rows[selected]!;
+      if (e.key === 'ArrowLeft' ? row.expanded : row.hidden) {
+        e.preventDefault();
+        post({ type: 'toggleFold', oid: row.oid });
+      }
     } else if (e.key === 'Enter' && rows[selected]) {
       post({ type: 'open', oid: rows[selected]!.oid });
     } else if (e.key === 'F3' && searchState?.query) {

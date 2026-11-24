@@ -4157,7 +4157,7 @@ suite('Amon Hen in VSCode', () => {
     }
   });
 
-  test('folds what merges brought in, and opens one merge, through the daemon', async () => {
+  test('folds what merges brought in, and opens or folds one merge, through the daemon', async () => {
     const panel = await showView('amonhen.showHistory');
     const branch = git('symbolic-ref', '--short', 'HEAD').trim();
     const start = git('rev-parse', 'HEAD').trim();
@@ -4192,7 +4192,7 @@ suite('Amon Hen in VSCode', () => {
         (await waitPosted('rows', at, (m) => m.total !== undefined))).total!;
       assert.ok(posted.slice(at).some((m) => m.type === 'rows' && m.rows.some((r) => r.subject === 'fold merge')), 'merge が History にある');
       at = posted.length;
-      await pick('Fold Merged Branches');
+      await pick('Fold All Merged Commits');
       const folded = await waitPosted('rows', at, (m) => m.total === open - 2);
       const merge = folded.rows.find((r) => r.subject === 'fold merge')!;
       assert.equal(merge.hidden, 2);
@@ -4200,19 +4200,26 @@ suite('Amon Hen in VSCode', () => {
       // 1 つだけ開くと、その merge が取り込んだコミットが出て、選んだまま
       at = posted.length;
       await panel.history.handle({ type: 'toggleFold', oid: merge.oid });
-      const opened = await waitPosted('rows', at, (m) => m.total === open && m.rows.some((r) => r.expanded));
-      assert.equal(opened.rows.find((r) => r.expanded)?.oid, merge.oid);
+      const opened = await waitPosted('rows', at, (m) => m.total === open && m.rows.some((r) => r.oid === merge.oid && r.expanded));
       assert.ok(opened.rows.some((r) => r.subject === 'fold side one'));
       await waitPosted('reveal', at, (m) => opened.rows[m.row]?.oid === merge.oid);
       at = posted.length;
-      await pick('Fold Merged Branches');
+      await pick('Show All Merged Commits');
       await until(
         'merge を畳まない行',
-        () => posted.slice(at).find((m) => m.type === 'rows' && m.total === open && !m.rows.some((r) => r.hidden || r.expanded)),
+        () => posted.slice(at).find((m) => m.type === 'rows' && m.total === open && !m.rows.some((r) => r.hidden)),
         undefined,
         () => `open ${open}; menus ${menus.join(' / ')}; ${posted.slice(at).map((m) => (m.type === 'rows' ? `rows[${m.start}+${m.rows.length}/${m.total}${m.rows.some((r) => r.hidden) ? ' hidden' : ''}]` : m.type)).join(', ')}`,
       );
+      // すべて開いたままでも、1 つだけ畳める。畳み方はリポジトリに覚える（アプリ・TUI と同じファイル）
+      at = posted.length;
+      await panel.history.handle({ type: 'toggleFold', oid: merge.oid });
+      const one = await waitPosted('rows', at, (m) => m.total === open - 2);
+      assert.equal(one.rows.find((r) => r.oid === merge.oid)?.hidden, 2);
+      const saved = JSON.parse(readFileSync(join(git('rev-parse', '--git-common-dir').trim().replace(/^(?![\\/]|[A-Za-z]:)/, `${root}/`), 'amonhen', 'fold.json'), 'utf8'));
+      assert.deepEqual(saved.except, [merge.oid]);
     } finally {
+      await pick('Show All Merged Commits').catch(() => undefined);
       (vscode.window as { showQuickPick: unknown }).showQuickPick = quickPick;
       git('reset', '-q', '--hard', start);
       git('branch', '-q', '-D', 'fold-side');
