@@ -9,7 +9,7 @@ use amonhen_pele::svg::root::{Accessible, svg_document};
 
 use crate::Note;
 use crate::arrows;
-use crate::color::{self, Color};
+use crate::color::{self, Color, Rgba};
 use crate::curve::{self, Cubic, P};
 use crate::engines::{self, Engine};
 use crate::graph::{Attrs, Model};
@@ -245,6 +245,8 @@ struct NodeView {
     image: Option<(Arc<Picture>, Scale, (i8, i8))>,
     /// ラベルの縦のずれ（`labelloc` の t・b。ノードがラベルより高いとき）。
     label_dy: f64,
+    /// ノードの外の地（文が決めたクラスタの塗り・グラフの bgcolor）の上で読める文字の色。
+    ground_ink: Option<&'static str>,
     pos: P,
 }
 
@@ -394,6 +396,8 @@ pub fn render(
         .map_or(0.5 * INCH, |v| v.max(0.02) * INCH)
         .min(20.0 * INCH);
     let graph_font = font_of(g, "", &mut ctx, None);
+    // 文が決めた地（クラスタの塗り・グラフの bgcolor）。その上の既定の色の文字・線は読める色にする
+    let grounds = Grounds::new(model, ctx.scheme.as_deref());
 
     // ---- ノード ----
     let mut views: Vec<NodeView> = Vec::with_capacity(model.nodes.len());
@@ -563,13 +567,26 @@ pub fn render(
         if invis {
             fill = " fill=\"none\"".to_owned();
         }
+        // 自分の塗りのないノード（plaintext・plain・none）は、外の地の上で読める色で描く
+        let ground_ink = grounds.at(node.cluster).1.and_then(Color::ink);
+        let bare = !filled && !point && matches!(spec.kind, Kind::Plain);
         let stroke = format!(
             "{}{}",
-            paint("stroke", line_color, if point { LINE } else { BORDER }),
+            paint(
+                "stroke",
+                line_color,
+                match ground_ink {
+                    Some(c) if bare => c,
+                    _ if point => LINE,
+                    _ => BORDER,
+                }
+            ),
             line_attrs(&st, pen)
         );
         // 濃い塗りの上の既定の文字は白に
-        let ink = if font.color.is_none() && filled {
+        let ink = if font.color.is_none() && bare {
+            ground_ink
+        } else if font.color.is_none() && filled {
             fill_text
                 .as_deref()
                 .and_then(|t| {
@@ -627,6 +644,7 @@ pub fn render(
                 )
             }),
             label_dy,
+            ground_ink,
             pos: (0.0, 0.0),
         });
     }
@@ -926,17 +944,8 @@ pub fn render(
             .or(color.as_deref())
             .or(a.get("bgcolor"))
             .map(str::to_owned);
-        // 題の下の塗り（題の文字の色を決める。グラデーションは最初の色）
-        let ground = if filled {
-            fill_text.as_deref()
-        } else {
-            a.get("bgcolor")
-        }
-        .and_then(|t| {
-            color::parse_list(t, scheme.as_deref().or(ctx.scheme.as_deref()))
-                .into_iter()
-                .find_map(|s| s.color)
-        });
+        // 題の下の地（題の文字の色を決める。グラデーションは色の平均、なければ外の地）
+        let ground = grounds.at(Some(ci)).1;
         let fill = if filled {
             match fill_text.as_deref() {
                 Some(t) if t.contains(':') && !has(&st, "striped") => gradient(
@@ -1466,7 +1475,18 @@ pub fn render(
         let colors: Vec<(Option<Color>, Option<f64>)> =
             stops.iter().map(|s| (s.color, s.fraction)).collect();
         let main = colors.iter().find_map(|c| c.0);
-        let main_attr = |name: &str| paint(name, main, LINE);
+        // 両端が同じ地（文が決めたクラスタの塗り・グラフの bgcolor）の中なら、既定の色はその上で読める色
+        let edge_ink = {
+            let (ka, ca) = grounds.at(model.nodes[e.tail].cluster);
+            let (kb, _) = grounds.at(model.nodes[e.head].cluster);
+            if ka == kb {
+                ca.and_then(Color::ink)
+            } else {
+                None
+            }
+        };
+        let line_default = edge_ink.unwrap_or(LINE);
+        let main_attr = |name: &str| paint(name, main, line_default);
         if !invis {
             edges_out.push_str(&format!(
                 "<g class=\"dot-edge\" data-id=\"{}\">",
@@ -1538,7 +1558,7 @@ pub fn render(
             let arrow_color = match main {
                 Some(Color::Rgba(c)) => c.hex(),
                 Some(Color::None) => "none".into(),
-                None => LINE.into(),
+                None => line_default.into(),
             };
             if let Some((tip, dir)) = head_tip {
                 edges_out.push_str(&arrows::draw(
@@ -1579,7 +1599,7 @@ pub fn render(
                     0.0,
                     &ev.font,
                     &label_attrs(&ev.font),
-                    None,
+                    edge_ink,
                 ));
                 // decorate: ラベルに下線を引き、近い端から線の中ほどへつなぐ
                 if a.flag("decorate").unwrap_or(false)
@@ -1621,7 +1641,7 @@ pub fn render(
                     0.0,
                     &ev.font,
                     &label_attrs(&ev.font),
-                    None,
+                    edge_ink,
                 ));
             }
             bbox.add_rect(
@@ -1660,7 +1680,7 @@ pub fn render(
                             .and_then(|l| l.spans.first())
                             .map_or(ev.font.clone(), |s| s.font.clone()),
                     ),
-                    None,
+                    edge_ink,
                 ));
             }
             bbox.add_rect(
@@ -1687,7 +1707,7 @@ pub fn render(
                     0.0,
                     &v.font,
                     &format!(" class=\"dot-xlabel\"{}", font_attrs(&v.font)),
-                    None,
+                    v.ground_ink,
                 ));
             }
             bbox.add_rect(
@@ -1817,7 +1837,7 @@ pub fn render(
             0.0,
             &graph_font,
             &format!(" class=\"dot-title\"{}", font_attrs(&graph_font)),
-            None,
+            grounds.graph.and_then(Color::ink),
         );
         bbox.add_rect(
             cx - t.width / 2.0,
@@ -2153,6 +2173,87 @@ fn font_attrs(f: &Font) -> String {
         s.push_str(&color_attr("fill", c));
     }
     s
+}
+
+/// 色の並びの地の色（グラデーションは読める色の平均。透明・読めない色は除く）。
+fn ground_color(text: &str, scheme: Option<&str>) -> Option<Color> {
+    let list: Vec<Rgba> = color::parse_list(text, scheme)
+        .into_iter()
+        .filter_map(|s| match s.color {
+            Some(Color::Rgba(c)) => Some(c),
+            _ => None,
+        })
+        .collect();
+    if list.is_empty() {
+        return None;
+    }
+    let n = list.len() as u32;
+    let avg = |f: fn(&Rgba) -> u8| (list.iter().map(|c| u32::from(f(c))).sum::<u32>() / n) as u8;
+    Some(Color::Rgba(Rgba {
+        r: avg(|c| c.r),
+        g: avg(|c| c.g),
+        b: avg(|c| c.b),
+        a: 255,
+    }))
+}
+
+/// 文が決めた地（クラスタの塗り・グラフの bgcolor）。`clusters[c]` はそのクラスタの中の地（自分になければ
+/// 外のクラスタ、なければグラフの地）と、その地を決めたもの（クラスタの番号、グラフは None）。
+struct Grounds {
+    graph: Option<Color>,
+    clusters: Vec<(Option<usize>, Option<Color>)>,
+}
+
+impl Grounds {
+    fn new(model: &Model, scheme: Option<&str>) -> Grounds {
+        let g = &model.attrs;
+        let graph = g.get("bgcolor").and_then(|t| ground_color(t, scheme));
+        let own: Vec<Option<Color>> = model
+            .clusters
+            .iter()
+            .map(|c| {
+                let a = &c.attrs;
+                let sc = a.get("colorscheme").or(scheme);
+                let st = styles(a.get("style"));
+                if has(&st, "invis") {
+                    return None;
+                }
+                let filled = has(&st, "filled") || has(&st, "radial") || has(&st, "striped");
+                let text = if filled {
+                    a.get("fillcolor").or(a.get("color")).or(a.get("bgcolor"))
+                } else {
+                    a.get("bgcolor")
+                };
+                text.and_then(|t| ground_color(t, sc))
+            })
+            .collect();
+        let clusters = (0..model.clusters.len())
+            .map(|c| {
+                let mut at = Some(c);
+                let mut steps = 0;
+                while let Some(ci) = at {
+                    if let Some(col) = own[ci] {
+                        return (Some(ci), Some(col));
+                    }
+                    at = model.clusters[ci].parent;
+                    steps += 1;
+                    if steps > 10_000 {
+                        break;
+                    }
+                }
+                (None, graph)
+            })
+            .collect();
+        Grounds { graph, clusters }
+    }
+
+    /// クラスタ `c`（None は根）の中の地。
+    fn at(&self, c: Option<usize>) -> (Option<usize>, Option<Color>) {
+        match c {
+            Some(c) => self.clusters.get(c).copied().unwrap_or((None, self.graph)),
+            None => (None, self.graph),
+        }
+    }
 }
 
 /// 色の並びのグラデーション（`defs` に足し、塗りの属性を返す）。

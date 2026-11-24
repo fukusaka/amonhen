@@ -174,6 +174,65 @@ fn tapers_edges() {
     assert!(!svg.contains("fill=\"none\" stroke=\"#0000ff\""), "{svg}");
 }
 
+/// `data-id` の要素の中身（次の `data-id` まで）。
+fn part<'a>(svg: &'a str, id: &str) -> &'a str {
+    let rest = svg.split(&format!("data-id=\"{id}\"")).nth(1).unwrap();
+    rest.split("data-id=").next().unwrap()
+}
+
+#[test]
+fn defaults_stay_readable_on_given_grounds() {
+    let svg = render(
+        "digraph { subgraph cluster_a { bgcolor=\"#ffeeee:#eeeeff\"; node [shape=plain]; a -> b [label=\"e\"]; c [fontcolor=red]; d [shape=box]; b -> c [color=blue] } subgraph cluster_n { style=filled; fillcolor=navy; n [shape=none] } x [shape=plaintext]; x -> a; b -> n }",
+    )
+    .unwrap()
+    .svg;
+    // 明るい塗りの上の plain のノードの文字と、中の辺・矢じり・ラベルは黒に近い色
+    assert!(part(&svg, "a").contains("fill=\"#1f1f1f\""), "{svg}");
+    let edge = part(&svg, "a-&gt;b");
+    assert!(
+        edge.contains("stroke=\"#1f1f1f\"") && edge.contains("fill=\"#1f1f1f\""),
+        "{svg}"
+    );
+    assert!(!edge.contains("var(--_l)"), "{svg}");
+    let label = svg.split("class=\"dot-edge-label\"").nth(1).unwrap();
+    assert!(
+        label
+            .split('>')
+            .next()
+            .unwrap()
+            .contains("fill=\"#1f1f1f\""),
+        "{svg}"
+    );
+    // 文の色が勝ち、塗りのあるノードはそのまま
+    assert!(part(&svg, "c").contains("fill=\"#ff0000\""), "{svg}");
+    assert!(!part(&svg, "c").contains("#1f1f1f"), "{svg}");
+    assert!(!part(&svg, "d").contains("#1f1f1f"), "{svg}");
+    assert!(
+        part(&svg, "b-&gt;c").contains("stroke=\"#0000ff\""),
+        "{svg}"
+    );
+    // 濃い塗りの上は白、地をまたぐ辺・地のないノードはテーマの色
+    assert!(part(&svg, "n").contains("fill=\"#ffffff\""), "{svg}");
+    assert!(part(&svg, "b-&gt;n").contains("var(--_l)"), "{svg}");
+    assert!(part(&svg, "x-&gt;a").contains("var(--_l)"), "{svg}");
+    assert!(!part(&svg, "x").contains("#1f1f1f"), "{svg}");
+    // グラフの bgcolor の上も同じ（題も）
+    let dark = render("digraph { bgcolor=black; label=\"T\"; node [shape=plaintext]; p -> q }")
+        .unwrap()
+        .svg;
+    assert!(part(&dark, "p").contains("fill=\"#ffffff\""), "{dark}");
+    assert!(
+        part(&dark, "p-&gt;q").contains("stroke=\"#ffffff\""),
+        "{dark}"
+    );
+    let title = dark.split("class=\"dot-title\"").nth(1).unwrap();
+    assert!(
+        title.split('>').next().unwrap().contains("#ffffff"),
+        "{dark}"
+    );
+}
+
 #[test]
 fn stripes_clusters() {
     let svg = render(
