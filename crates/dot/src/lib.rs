@@ -10,6 +10,7 @@ pub mod arrows;
 mod brewer;
 pub mod color;
 pub mod curve;
+pub mod engines;
 pub mod graph;
 pub mod html;
 pub mod layout;
@@ -59,8 +60,10 @@ pub enum Note {
     UnknownColors,
     /// 持たない配色の色は既定の色にした。
     ColorSchemes,
-    /// dot のほかの配置（neato など）は dot の配置にした。
+    /// 知らない配置の名前は dot の配置にした。
     OtherLayouts,
+    /// 配置の属性のうち、近いもので済ませたもの（`overlap=compress`・`mode=hier`・`model=circuit` など）。
+    LayoutOptions,
 }
 
 impl Note {
@@ -72,7 +75,8 @@ impl Note {
             Note::Ortho => "orthogonal edges are drawn as polylines",
             Note::UnknownColors => "unknown colors are drawn in the default color",
             Note::ColorSchemes => "unknown color schemes are drawn in the default color",
-            Note::OtherLayouts => "other layout engines are drawn with the dot layout",
+            Note::OtherLayouts => "unknown layout engines are drawn with the dot layout",
+            Note::LayoutOptions => "some layout options are approximated",
         }
     }
 }
@@ -94,8 +98,13 @@ pub const MAX_EDGES: usize = 5_000;
 /// 出力の上限（UTF-16 の数。pele と同じ）。
 pub const MAX_OUTPUT: usize = 4_000_000;
 
-/// DOT の文を描く。
+/// DOT の文を描く（配置は `layout` の属性、なければ dot）。
 pub fn render(source: &str) -> Result<Drawing, Error> {
+    render_with(source, engines::Engine::Dot)
+}
+
+/// DOT の文を描く。`default_engine` は `layout` の属性がないときの配置（` ```neato ` のようなフェンスの言葉）。
+pub fn render_with(source: &str, default_engine: engines::Engine) -> Result<Drawing, Error> {
     if source.len() > MAX_SOURCE && source.encode_utf16().count() > MAX_SOURCE {
         return Err(Error::new(format!(
             "The graph is longer than the limit of {MAX_SOURCE} characters"
@@ -116,7 +125,7 @@ pub fn render(source: &str) -> Result<Drawing, Error> {
         sweeps: if size > 3000 { 8 } else { 24 },
     };
     let mut notes = BTreeSet::new();
-    let svg = render::render(&model, budget, &mut notes);
+    let svg = render::render(&model, budget, default_engine, &mut notes);
     if svg.len() > MAX_OUTPUT && svg.encode_utf16().count() > MAX_OUTPUT {
         return Err(Error::new("The drawing is larger than the output limit"));
     }

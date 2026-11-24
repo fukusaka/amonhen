@@ -146,9 +146,19 @@ fn notes_approximations() {
         notes("digraph { node [colorscheme=blues9, style=filled, fillcolor=3]; a [color=\"/set312/12\"]; b [colorscheme=ylorrd9, fillcolor=9] }")
             .is_empty()
     );
+    // neato は描ける。知らない名前と、近いもので済ませる属性は注記
+    assert!(notes("graph { layout=neato; a -- b -- c; a -- c }").is_empty());
     assert_eq!(
-        notes("graph { layout=neato; a -- b }"),
+        notes("graph { layout=spring; a -- b }"),
         [Note::OtherLayouts]
+    );
+    assert_eq!(
+        notes("graph { layout=neato; overlap=compress; a -- b }"),
+        [Note::LayoutOptions]
+    );
+    assert_eq!(
+        notes("graph { layout=neato; mode=hier; a -- b }"),
+        [Note::LayoutOptions]
     );
     // 大きさの属性は黙って無視する
     assert!(notes("digraph { size=\"4,4\"; ratio=fill; dpi=300; rotate=90; a }").is_empty());

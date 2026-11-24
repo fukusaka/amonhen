@@ -2494,4 +2494,5 @@
 "orthogonal edges are drawn as polylines" = "直角の線（ortho）は折れ線";
 "unknown colors are drawn in the default color" = "読めない色は既定の色";
 "unknown color schemes are drawn in the default color" = "知らない配色の色は既定の色";
-"other layout engines are drawn with the dot layout" = "dot 以外の配置（neato など）は dot の配置";
+"unknown layout engines are drawn with the dot layout" = "知らない配置は dot の配置";
+"some layout options are approximated" = "配置の属性の一部は近いもの";

@@ -94,8 +94,9 @@ fn approximation_note(notes: &[amonhen_dot::Note]) -> String {
                 amonhen_model::tr!("unknown color schemes are drawn in the default color")
             }
             Note::OtherLayouts => {
-                amonhen_model::tr!("other layout engines are drawn with the dot layout")
+                amonhen_model::tr!("unknown layout engines are drawn with the dot layout")
             }
+            Note::LayoutOptions => amonhen_model::tr!("some layout options are approximated"),
         })
         .collect();
     amonhen_model::tr!(

@@ -99,6 +99,27 @@ pub fn through(points: &[P], straight: bool, vertical: bool) -> Vec<Cubic> {
     out
 }
 
+/// 点を順に通るなめらかな曲線（Catmull–Rom の曲線を 3 次ベジェに直したもの）。2 点なら直線。
+pub fn smooth(points: &[P]) -> Vec<Cubic> {
+    if points.len() < 3 {
+        return through(points, true, false);
+    }
+    let n = points.len();
+    (0..n - 1)
+        .map(|i| {
+            let p0 = points[i.saturating_sub(1)];
+            let (p1, p2) = (points[i], points[i + 1]);
+            let p3 = points[(i + 2).min(n - 1)];
+            Cubic(
+                p1,
+                (p1.0 + (p2.0 - p0.0) / 6.0, p1.1 + (p2.1 - p0.1) / 6.0),
+                (p2.0 - (p3.0 - p1.0) / 6.0, p2.1 - (p3.1 - p1.1) / 6.0),
+                p2,
+            )
+        })
+        .collect()
+}
+
 /// 始めのほうを `inside` の外に出る所で切る。始点が外なら何もしない。
 pub fn clip_start(path: &mut Vec<Cubic>, inside: &dyn Fn(P) -> bool) {
     if path.is_empty() || !inside(path[0].0) {

@@ -10,6 +10,7 @@ use crate::Note;
 use crate::arrows;
 use crate::color::{self, Color, Rgba};
 use crate::curve::{self, Cubic, P};
+use crate::engines::{self, Engine};
 use crate::graph::{Attrs, Model};
 use crate::layout::{self, LabelSide, Route};
 use crate::record::{self, Field};
@@ -17,6 +18,8 @@ use crate::route;
 use crate::shapes::{self, Geom, Kind};
 use crate::text::{self, Font, Names, Text, color_attr, text_svg};
 
+/// patchwork の面積 1 の升の辺（Graphviz の絵に合わせた大きさ）。
+const PATCH: f64 = 40.0;
 /// 点（Graphviz の 1 インチ = 72）。
 const INCH: f64 = 72.0;
 const PAD: f64 = 8.0;
@@ -317,7 +320,12 @@ fn port_of(view: &NodeView, port: Option<&str>) -> Option<Port> {
 }
 
 /// 描く。`Budget` は配置の上限。
-pub fn render(model: &Model, budget: Budget, notes: &mut BTreeSet<Note>) -> String {
+pub fn render(
+    model: &Model,
+    budget: Budget,
+    default_engine: Engine,
+    notes: &mut BTreeSet<Note>,
+) -> String {
     let g = &model.attrs;
     let mut ctx = Ctx {
         model,
@@ -326,18 +334,23 @@ pub fn render(model: &Model, budget: Budget, notes: &mut BTreeSet<Note>) -> Stri
         defs: String::new(),
         next_id: 0,
     };
+    // 配置: `layout` が決め、なければフェンスの言葉の既定。知らない名前は dot で描いて注記
+    let engine = match g.get("layout").map(str::trim).filter(|l| !l.is_empty()) {
+        Some(l) => Engine::from_name(l).unwrap_or_else(|| {
+            ctx.notes.insert(Note::OtherLayouts);
+            Engine::Dot
+        }),
+        None => default_engine,
+    };
+    // dot 以外の配置（rankdir は使わない）
+    let free = engine != Engine::Dot;
     let dir = match g.get("rankdir").map(|s| s.trim().to_ascii_uppercase()) {
+        _ if free => Dir::TB,
         Some(ref s) if s == "LR" => Dir::LR,
         Some(ref s) if s == "RL" => Dir::RL,
         Some(ref s) if s == "BT" => Dir::BT,
         _ => Dir::TB,
     };
-    if let Some(l) = g.get("layout").map(|s| s.trim().to_ascii_lowercase())
-        && !l.is_empty()
-        && l != "dot"
-    {
-        ctx.notes.insert(Note::OtherLayouts);
-    }
     let splines = g
         .get("splines")
         .map(|s| s.trim().to_ascii_lowercase())
@@ -345,7 +358,9 @@ pub fn render(model: &Model, budget: Budget, notes: &mut BTreeSet<Note>) -> Stri
     let ortho = splines == "ortho";
     let draw_edges =
         !matches!(splines.as_str(), "none" | "\"\"") && !(g.get("splines") == Some(""));
-    let straight = matches!(splines.as_str(), "line" | "false" | "no");
+    // dot 以外の既定（splines なし）は直線（Graphviz と同じ）
+    let straight =
+        matches!(splines.as_str(), "line" | "false" | "no") || (free && g.get("splines").is_none());
     let polyline = matches!(splines.as_str(), "polyline" | "ortho");
     let curved = splines == "curved";
     let nodesep = g
@@ -748,7 +763,24 @@ pub fn render(model: &Model, budget: Budget, notes: &mut BTreeSet<Note>) -> Stri
                 matches!(s.trim().to_ascii_lowercase().as_str(), "global" | "none")
             }),
     };
-    let lay = layout::layout(&lnodes, &ledges, &lclusters, &sets, &lopt);
+    let lay = if free {
+        let placed = place_free(engine, model, &lnodes, &lclusters, &mut ctx);
+        free_layout(model, &placed)
+    } else {
+        layout::layout(&lnodes, &ledges, &lclusters, &sets, &lopt)
+    };
+    let lnodes: Vec<layout::Node> = if free {
+        lnodes
+            .iter()
+            .zip(&views)
+            .map(|(n, v)| {
+                let (w, h) = v.geom.outer();
+                layout::Node { w, h, ..n.clone() }
+            })
+            .collect()
+    } else {
+        lnodes
+    };
     let lh = lay.height;
     let to_final = |p: P| -> P {
         match dir {
@@ -1076,13 +1108,18 @@ pub fn render(model: &Model, budget: Budget, notes: &mut BTreeSet<Note>) -> Stri
                     ctx.notes.insert(Note::Ortho);
                 }
                 if !(straight || curved || right_angles.is_some()) {
-                    obstacles.avoid(&mut pts, &[e.tail, e.head], !polyline);
+                    // dot 以外は点の間を直線として避け、あとでなめらかにつなぐ
+                    obstacles.avoid(&mut pts, &[e.tail, e.head], !polyline && !free);
                 }
+                let angled = right_angles.is_some();
                 let mut lp: Vec<P> = right_angles.unwrap_or_else(|| pts.clone());
-                if straight || curved {
+                if (straight && !free) || curved {
                     lp = vec![pts[0], pts[pts.len() - 1]];
                 }
-                path = if curved {
+                path = if free && !curved && !polyline && !angled {
+                    // 多重の辺の中の点も通る
+                    curve::smooth(&lp)
+                } else if curved {
                     let (a0, b0) = (lp[0], lp[1]);
                     let (mx, my) = ((a0.0 + b0.0) / 2.0, (a0.1 + b0.1) / 2.0);
                     let (dx, dy) = (b0.0 - a0.0, b0.1 - a0.1);
@@ -1674,6 +1711,149 @@ pub fn render(model: &Model, budget: Budget, notes: &mut BTreeSet<Note>) -> Stri
     let acc = Accessible::default();
     let _ = ctx.model;
     svg_document("dot", width, height, FONT_SIZE, &options, &acc, &content)
+}
+
+/// `pos` の値（`x,y` と、動かさない印の `!`）。
+fn parse_pos(s: &str) -> Option<(f64, f64, bool)> {
+    let s = s.trim();
+    let (body, bang) = match s.strip_suffix('!') {
+        Some(b) => (b, true),
+        None => (s, false),
+    };
+    let mut it = body.split(',').map(|v| v.trim().parse::<f64>().ok());
+    let x = it.next()??;
+    let y = it.next()??;
+    (x.is_finite() && y.is_finite() && x.abs() < 1e6 && y.abs() < 1e6).then_some((x, y, bang))
+}
+
+/// dot 以外の配置で置く。`pos` は neato などではインチ、`nop`（`neato -n`）では点。Graphviz の y は上向きなので
+/// 逆にする。
+fn place_free(
+    engine: Engine,
+    model: &Model,
+    lnodes: &[layout::Node],
+    lclusters: &[layout::Cluster],
+    ctx: &mut Ctx,
+) -> engines::Placement {
+    let g = &model.attrs;
+    let unit = if engine == Engine::Nop { 1.0 } else { INCH };
+    let root_name = g.get("root").map(str::trim).filter(|s| !s.is_empty());
+    let items: Vec<engines::Item> = model
+        .nodes
+        .iter()
+        .zip(lnodes)
+        .map(|(node, ln)| {
+            let a = &node.attrs;
+            let (pos, bang) = match a.get("pos").and_then(parse_pos) {
+                Some((x, y, b)) => (Some((x * unit, -y * unit)), b),
+                None => (None, false),
+            };
+            engines::Item {
+                w: ln.w,
+                h: ln.h,
+                cluster: node.cluster,
+                pos,
+                pinned: bang || a.flag("pin").unwrap_or(false),
+                area: a
+                    .num("area")
+                    .filter(|v| *v > 0.0)
+                    .unwrap_or(1.0)
+                    .min(10_000.0)
+                    * PATCH
+                    * PATCH,
+                root: a.flag("root").unwrap_or(false) || root_name == Some(node.name.as_str()),
+                sortv: a.num("sortv"),
+            }
+        })
+        .collect();
+    let links: Vec<engines::Link> = model
+        .edges
+        .iter()
+        .map(|e| engines::Link {
+            tail: e.tail,
+            head: e.head,
+            len: e
+                .attrs
+                .num("len")
+                .filter(|v| *v > 0.0)
+                .map(|v| v.min(100.0) * INCH),
+            weight: e.attrs.num("weight").unwrap_or(1.0).clamp(0.0, 1000.0),
+        })
+        .collect();
+    let groups: Vec<engines::Group> = model
+        .clusters
+        .iter()
+        .zip(lclusters)
+        .map(|(c, lc)| engines::Group {
+            parent: c.parent,
+            margin: lc.margin,
+            label: lc.label,
+            sortv: c.attrs.num("sortv"),
+        })
+        .collect();
+    engines::place(engine, &items, &links, &groups, g, ctx.notes)
+}
+
+/// dot 以外の配置の結果を、描く側の形に（辺は中心どうしの直線、同じ組の多重の辺は左右にふくらませる）。
+fn free_layout(model: &Model, placed: &engines::Placement) -> layout::Layout {
+    let p = &placed.nodes;
+    let mut total: HashMap<(usize, usize), usize> = HashMap::new();
+    for e in &model.edges {
+        if e.tail != e.head {
+            *total
+                .entry((e.tail.min(e.head), e.tail.max(e.head)))
+                .or_default() += 1;
+        }
+    }
+    let mut seen: HashMap<(usize, usize), usize> = HashMap::new();
+    let mut loops = vec![0usize; model.nodes.len()];
+    let routes = model
+        .edges
+        .iter()
+        .map(|e| {
+            if e.tail == e.head {
+                let index = loops[e.tail];
+                loops[e.tail] += 1;
+                return Route::Loop { index };
+            }
+            let key = (e.tail.min(e.head), e.tail.max(e.head));
+            let m = total.get(&key).copied().unwrap_or(1);
+            let k = seen.entry(key).or_default();
+            let off = (*k as f64 - (m as f64 - 1.0) / 2.0) * 18.0;
+            *k += 1;
+            let (a, b) = (p[e.tail], p[e.head]);
+            if off == 0.0 {
+                return Route::Path {
+                    points: vec![a, b],
+                    label: None,
+                };
+            }
+            // 組の向き（小さい番号から）の左
+            let (lo, hi) = (p[key.0], p[key.1]);
+            let (dx, dy) = (hi.0 - lo.0, hi.1 - lo.1);
+            let l = dx.hypot(dy).max(1e-9);
+            let mid = (
+                (a.0 + b.0) / 2.0 - dy / l * off,
+                (a.1 + b.1) / 2.0 + dx / l * off,
+            );
+            Route::Path {
+                points: vec![a, mid, b],
+                label: None,
+            }
+        })
+        .collect();
+    let (w, h) = p
+        .iter()
+        .fold((0.0f64, 0.0f64), |(w, h), q| (w.max(q.0), h.max(q.1)));
+    layout::Layout {
+        nodes: p.clone(),
+        ranks: vec![0; p.len()],
+        routes,
+        clusters: placed.clusters.clone(),
+        width: w,
+        height: h,
+        crossings: 0,
+    }
 }
 
 /// 線を止める内外の判定（ポートの箱か、ノードの外形）。止めないポートなら None。
