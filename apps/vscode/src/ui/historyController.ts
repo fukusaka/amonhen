@@ -161,7 +161,7 @@ function imageType(path: string): string {
 
 export class HistoryController implements vscode.Disposable {
   private static readonly edits = new vscode.EventEmitter<
-    Extract<HistoryWebviewMessage, { type: 'saveMessage' | 'move' | 'squashOnto' | 'editPreview' | 'editApply' }>
+    Extract<HistoryWebviewMessage, { type: 'saveMessage' | 'move' | 'squashOnto' | 'editPreview' | 'editApply' | 'editExtend' }>
   >();
   /** Webview でメッセージの編集や並べ替えが行われた。処理は historyCommands が受け持つ */
   static readonly onDidReceiveEdit = HistoryController.edits.event;
@@ -430,6 +430,7 @@ export class HistoryController implements vscode.Disposable {
       case 'saveMessage':
       case 'move':
       case 'squashOnto':
+      case 'editExtend':
       case 'editPreview':
       case 'editApply':
         HistoryController.edits.fire(message);

@@ -200,6 +200,8 @@ struct Commit {
     /// 頭の部分（件名から「Parents」まで）を、幅 `head_width` で組んだもの。
     head: Vec<(String, Style)>,
     head_width: u16,
+    /// 署名を確かめた所（daemon 越しのリポジトリのとき。署名の行の後ろに添える）。
+    signature_place: Option<String>,
 }
 
 impl Commit {
@@ -231,6 +233,7 @@ impl Commit {
             starts: Vec::new(),
             head: Vec::new(),
             head_width: 0,
+            signature_place: None,
         }
         .unfolded()
     }
@@ -384,6 +387,11 @@ impl Commit {
                 }
                 None => tr!("{kind} (not verified)", kind = kind.to_uppercase()),
             };
+            // daemon 越しのリポジトリでは、どこの鍵で確かめたかも（アプリの吹き出しの Checked on）。
+            let value = match &self.signature_place {
+                Some(place) => format!("{value} · {place}"),
+                None => value,
+            };
             fields.push((tr!("Signature"), value));
         }
         let column = fields.iter().map(|(l, _)| l.width()).max().unwrap_or(0) + 2;
@@ -520,6 +528,8 @@ pub(crate) fn signature_label(status: &str, check: &Value, kind: &str) -> String
 
 #[derive(Default)]
 pub struct Details {
+    /// 署名を確かめた所（daemon 越しのリポジトリのとき）。
+    signature_place: Option<String>,
     /// 出したいもの。
     wanted: Option<Want>,
     /// 頼んで、答えを待っているものの鍵。
@@ -840,6 +850,18 @@ impl Details {
         self.scroll.scrolled()
     }
 
+    /// 出しているコミットを読み直す（次の `request` で頼む。署名を確かめる所を替えたときなど）。
+    pub fn reload(&mut self) {
+        if let Some(commit) = &mut self.commit {
+            commit.key.clear();
+        }
+    }
+
+    /// 署名を確かめた所（daemon 越しのリポジトリのときだけ。署名の行に添える）。
+    pub fn set_signature_place(&mut self, place: Option<String>) {
+        self.signature_place = place;
+    }
+
     /// 長い行を折り返す（アプリの Wrap Long Lines）。
     pub fn set_wrap(&mut self, wrap: bool) {
         self.scroll.wrap = wrap;
@@ -1077,6 +1099,10 @@ impl Details {
             buf.set_stringn(area.x, area.y, text, usize::from(area.width), style);
             return;
         };
+        if commit.signature_place != self.signature_place {
+            commit.signature_place = self.signature_place.clone();
+            commit.head.clear();
+        }
         commit.build_head(area.width, clock);
         let commit = &*commit;
         self.scroll.clamp(commit.lines());

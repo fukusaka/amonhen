@@ -2977,6 +2977,16 @@ body.wrap-lines .line .code {
   background: color-mix(in srgb, var(--vscode-descriptionForeground) 18%, transparent);
 }
 
+/* Working Copy でいくつも選んだファイル（差分を出しているものは .selected） */
+.wc-file.marked {
+  background: var(--vscode-list-inactiveSelectionBackground);
+}
+
+.wc-files:focus .wc-file.marked {
+  background: var(--vscode-list-activeSelectionBackground);
+  color: var(--vscode-list-activeSelectionForeground);
+}
+
 /* コミットを行に重ねて落とす（そのコミットにまとめる） */
 .row.drop-on,
 .edit-row.drop-on {
@@ -3019,4 +3029,22 @@ body.wrap-lines .line .code {
 .details .meta a.person:hover {
   color: var(--vscode-textLink-foreground);
   text-decoration: underline;
+}
+
+/* 編集モードの範囲の境目（下へ引くと古いコミットを取り込み、上へ引くと外す） */
+.edit-boundary {
+  height: 6px;
+  margin: 0 8px;
+  border-bottom: 2px solid var(--vscode-focusBorder);
+  cursor: ns-resize;
+  position: relative;
+}
+
+.edit-boundary[data-steps]:not([data-steps=''])::after {
+  content: attr(data-steps);
+  position: absolute;
+  right: 0;
+  top: -14px;
+  font-size: 0.85em;
+  color: var(--vscode-descriptionForeground);
 }

@@ -916,6 +916,31 @@ fn history_row_items_are_chosen() {
     assert!(!history.iter().any(|l| l.contains("[main]")), "{history:?}");
 }
 
+/// TUI はリポジトリの `amonhen/tui.json` に覚え、次に開いたときに戻す: 並び順（`o`）と行の項目（`I`）
+#[test]
+fn the_tui_keeps_its_choices_in_the_repository() {
+    let dir = tempfile::tempdir().unwrap();
+    merged(dir.path());
+    let head = git_out(dir.path(), &["rev-parse", "--short=8", "HEAD"]);
+    amonhen_tui::snapshot(open(dir.path()), 200, 9, clock(), "Ii").unwrap();
+    amonhen_tui::snapshot(open(dir.path()), 200, 9, clock(), "o").unwrap();
+    let state: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(dir.path().join(".git/amonhen/tui.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(state["historyOrder"], "topo", "{state}");
+    assert_eq!(state["signaturesHere"], true, "{state}");
+    // 次に開くと、コミット ID を出したまま。
+    let again = amonhen_tui::snapshot(open(dir.path()), 200, 9, clock(), "").unwrap();
+    assert!(again.contains(head.trim()), "{again}");
+    // 手元のリポジトリでは、署名はいつもこの機械で確かめる（`S` はそう言う）。
+    let local = amonhen_tui::snapshot(open(dir.path()), 200, 9, clock(), "\tS").unwrap();
+    assert!(
+        local.contains("Signatures here are checked on this machine"),
+        "{local}"
+    );
+}
+
 /// `/` で History を検索し、合った行を選ぶ。`n` `N` で次と前、Esc でやめる
 #[test]
 fn slash_searches_history() {
@@ -1282,7 +1307,10 @@ fn o_switches_history_between_date_and_topological_order() {
             "Start"
         ]
     );
-    let back = amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "oo").unwrap();
+    // リポジトリに覚えるので、次に開いてもトポロジー順。もう一度 `o` で日付順に戻る。
+    let kept = amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "").unwrap();
+    assert_eq!(subjects(&kept), subjects(&topo));
+    let back = amonhen_tui::snapshot(open(dir.path()), 100, 10, clock(), "o").unwrap();
     assert!(back.contains("History in date order"));
     assert_eq!(subjects(&back), subjects(&date));
 }

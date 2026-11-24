@@ -117,6 +117,8 @@ pub struct DiffContent<'a> {
     pub picture: Option<(&'a [u8], crate::imagediff::View)>,
     /// SVG をモバイルで見るとき、その部品での見え方（元の絵と並べる）。
     pub mobile: Option<&'a MobileCheck>,
+    /// 絵の下の説明を替えるもの（Android の VectorDrawable の「24 × 24 dp · 1 kB」）。
+    pub picture_caption: Option<&'a str>,
 }
 
 /// SVG の見せ方（macOS 版の `SVGView`、GTK4 版の `SvgView`）: 絵・モバイル（絵と、モバイル向けの描画部品で
@@ -428,6 +430,7 @@ impl WorkingShown {
             file_mode: false,
             picture: None,
             mobile: None,
+            picture_caption: None,
         }
     }
 }
@@ -446,12 +449,24 @@ pub struct FileShown {
     pub picture: Option<Arc<Vec<u8>>>,
     pub picture_view: crate::imagediff::View,
     /// 絵を読んだものを取っておく鍵（開くたびに新しい）。
-    key: u64,
+    pub key: u64,
     /// Markdown なら、整形して見せるブロックと、その中の図を絵にしたもの（出てくる順）。
     pub markdown: Option<Vec<amonhen_core::markdown::Block>>,
     pub diagrams: Arc<Vec<Option<crate::markdownview::DiagramPicture>>>,
+    /// Markdown の中の、このコミットから読めた画像。
+    pub images: Arc<crate::markdownview::MdImages>,
     /// SVG をモバイルで見ているなら、その確認。
     pub mobile: Option<Arc<MobileCheck>>,
+    /// Android の VectorDrawable なら、絵の下の説明と添え書き（テキストで見ていても、切り替えを出すために持つ）。
+    pub drawable: Option<Drawable>,
+}
+
+/// すべてのファイルで開いた Android の VectorDrawable（macOS 版・GTK4 版と同じく、SVG にして絵で見せる）。
+pub struct Drawable {
+    /// 「24 × 24 dp · 1 kB」。
+    pub caption: String,
+    /// 引けなかった色・SVG では同じに描けないもの（訳した文）。
+    pub notes: Vec<String>,
 }
 
 impl FileShown {
@@ -475,6 +490,7 @@ impl FileShown {
                 .as_deref()
                 .map(|p| (p.as_slice(), self.picture_view)),
             mobile: self.mobile.as_deref(),
+            picture_caption: self.drawable.as_ref().map(|d| d.caption.as_str()),
         }
     }
 }
@@ -674,6 +690,7 @@ impl CommitShown {
             file_mode: false,
             picture: None,
             mobile: None,
+            picture_caption: None,
         }
     }
 
@@ -2148,6 +2165,37 @@ impl Data {
                 && !(svg && svg_view == SvgView::Text))
                 .then(|| blob_at(&repo, &commit, change.as_ref(), &path))
                 .flatten();
+            // .xml は中身の頭を見て、Android の VectorDrawable なら SVG にして絵で見せる（色の参照は同じコミットの
+            // res から引く。テキストで見るなら絵にしない。描けなければテキスト。GTK4 版の `show_drawable`）。
+            let mut drawable = None;
+            let mut picture = picture;
+            if amonhen_core::vectordrawable::is_xml(&path)
+                && let Some(data) = blob_at(&repo, &commit, change.as_ref(), &path)
+                && amonhen_core::vectordrawable::is_vector_drawable(&path, &data)
+            {
+                let drawn = (svg_view != SvgView::Text)
+                    .then(|| repo.vector_drawable(&commit, &path, &data, None));
+                match drawn {
+                    Some(Ok(drawn)) => {
+                        let (w, h) = crate::imagediff::svg_size(drawn.svg.as_bytes());
+                        drawable = Some(Drawable {
+                            caption: format!(
+                                "{w} × {h} dp · {}",
+                                crate::imagediff::format_size(data.len())
+                            ),
+                            notes: drawn.notes,
+                        });
+                        picture = Some(Arc::new(drawn.svg.into_bytes()));
+                    }
+                    Some(Err(e)) => eprintln!("VectorDrawable を描けない（{path}）: {e}"),
+                    None => {
+                        drawable = Some(Drawable {
+                            caption: String::new(),
+                            notes: Vec::new(),
+                        })
+                    }
+                }
+            }
             // モバイルで見る SVG は、崩れる機能と、その部品での見え方も（Android と flutter_svg は本物の取り込みを
             // 移したもの、ほかは近似。GTK4 版と同じ）。
             let mobile = picture
@@ -2164,8 +2212,29 @@ impl Data {
                 .then(|| blob_at(&repo, &commit, change.as_ref(), &path))
                 .flatten()
                 .map(|bytes| {
-                    amonhen_core::markdown::parse(&String::from_utf8_lossy(bytes.as_slice()))
+                    // 図（DOT）の中の画像も、同じコミットから読む（GTK4 版と同じ）。
+                    let images = amonhen_core::diagram::ImageSource {
+                        from: path.clone(),
+                        read: {
+                            let repo = repo.clone();
+                            Arc::new(move |p: &str| {
+                                blob_at(&repo, &commit, None, p).map(|b| b.to_vec())
+                            })
+                        },
+                    };
+                    amonhen_core::markdown::parse_with_images(
+                        &String::from_utf8_lossy(bytes.as_slice()),
+                        None,
+                        None,
+                        Some(images),
+                    )
                 });
+            // Markdown の中の画像は、このコミットの中のものだけを読んでおく（外へは読みに行かない）。
+            let images = markdown.as_deref().map_or_else(Default::default, |blocks| {
+                crate::markdownview::load_images(blocks, &path, &|p| {
+                    blob_at(&repo, &commit, None, p)
+                })
+            });
             // 図は、ここ（裏）で色を当てて絵にしておく（大きな図は数十 ms かかる）。
             let diagrams = match (&markdown, &diagram_theme) {
                 (Some(blocks), Some(colors)) => {
@@ -2200,7 +2269,9 @@ impl Data {
                 key: NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
                 markdown,
                 diagrams: Arc::new(diagrams),
+                images: Arc::new(images),
                 mobile,
+                drawable,
             })));
             wake();
         });

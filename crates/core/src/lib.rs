@@ -3,6 +3,7 @@
 pub mod blame;
 pub mod branches;
 pub mod cache;
+pub mod checker;
 pub mod command;
 pub mod conflict;
 mod delegate;
@@ -17,6 +18,7 @@ pub mod graph;
 pub mod lanes;
 pub mod lineage;
 pub mod markdown;
+pub mod math;
 pub mod mermaidtheme;
 pub mod patch;
 pub mod query;

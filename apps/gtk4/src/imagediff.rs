@@ -310,8 +310,17 @@ fn build(
     vector: Option<glib::Bytes>,
 ) -> gtk::Widget {
     let single = modes.is_none();
+    // 市松模様の明暗: 既定は絵の色から（比べるときは両方を合わせて。確かめる用に `AMH_CHECKERBOARD=dark|light`）。
+    // 開いている間はボタンが勝つ
+    let tone = checker_default(&[old.as_ref(), new.as_ref()]);
+    let dark = match std::env::var("AMH_CHECKERBOARD").as_deref() {
+        Ok("dark") => true,
+        Ok("light") => false,
+        _ => tone.dark(),
+    };
     let canvas = Canvas::new(old, new);
     canvas.imp().vector.replace(vector);
+    canvas.imp().dark_checker.set(dark);
     if let Some(titles) = titles {
         canvas.imp().titles.replace(titles);
     }
@@ -369,6 +378,33 @@ fn build(
     slider.set_size_request(160, -1);
     slider.set_visible(false);
     bar.append(&slider);
+    // 市松模様の明暗の切り替え（透けた画素があるときだけ。押しているあいだ暗い）。
+    let checker_icon = crate::icon::Icon::default();
+    checker_icon.set(crate::icon::Kind::Checkerboard, false);
+    let checker_button = gtk::ToggleButton::new();
+    checker_button.set_child(Some(&checker_icon));
+    checker_button.add_css_class("flat");
+    checker_button.set_visible(tone.transparent());
+    let checker_tip = |b: &gtk::ToggleButton| {
+        let title = if b.is_active() {
+            tr!("Lighten the Checkerboard")
+        } else {
+            tr!("Darken the Checkerboard")
+        };
+        b.set_tooltip_text(Some(&title));
+        b.update_property(&[gtk::accessible::Property::Label(&title)]);
+    };
+    checker_button.set_active(dark);
+    checker_tip(&checker_button);
+    let c = canvas.downgrade();
+    checker_button.connect_toggled(move |b| {
+        checker_tip(b);
+        if let Some(c) = c.upgrade() {
+            c.imp().dark_checker.set(b.is_active());
+            c.queue_draw();
+        }
+    });
+    bar.append(&checker_button);
     // 拡大縮小: 倍率（押すと 100% と合わせるを切り替える）・縮める・広げる・合わせる。
     let zoom_label = gtk::Button::with_label(&tr!("Fit"));
     zoom_label.add_css_class("flat");
@@ -519,6 +555,8 @@ mod imp {
         pub on_position: RefCell<Option<OnPosition>>,
         /// 1 枚だけ見せる（比べない。`after` を出す）。
         pub single: Cell<bool>,
+        /// 市松模様を暗くする（既定は絵の色から。`checker_default`）。
+        pub dark_checker: Cell<bool>,
         /// 倍率（画像の 1 ピクセルを何ピクセルで描くか）。None なら枠に合わせる。
         pub zoom: Cell<Option<f32>>,
         /// 拡大したときの、枠の中心からのずらし。
@@ -843,6 +881,9 @@ impl Canvas {
     }
 
     fn draw(&self, snapshot: &gtk::Snapshot) {
+        let dark = self.imp().dark_checker.get();
+        let checker =
+            |snapshot: &gtk::Snapshot, rect: &graphene::Rect| checker(snapshot, rect, dark);
         let fg = self.color();
         let secondary = gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), fg.alpha() * 0.6);
         let label = |text: &str, x: f32, y: f32| {
@@ -962,13 +1003,14 @@ impl Canvas {
     }
 }
 
-/// 透けたところを見せる市松模様。
-fn checker(snapshot: &gtk::Snapshot, rect: &graphene::Rect) {
+/// 透けたところを見せる市松模様（`dark` なら暗い色で）。
+fn checker(snapshot: &gtk::Snapshot, rect: &graphene::Rect, dark: bool) {
     if rect.width() <= 0.0 || rect.height() <= 0.0 {
         return;
     }
-    snapshot.append_color(&gdk::RGBA::WHITE, rect);
-    let gray = gdk::RGBA::new(0.86, 0.86, 0.86, 1.0);
+    let (base, square) = if dark { (0.16, 0.24) } else { (1.0, 0.86) };
+    snapshot.append_color(&gdk::RGBA::new(base, base, base, 1.0), rect);
+    let gray = gdk::RGBA::new(square, square, square, 1.0);
     let s = 8.0;
     let (right, bottom) = (rect.x() + rect.width(), rect.y() + rect.height());
     let mut y = rect.y();
@@ -1014,6 +1056,19 @@ fn frame(snapshot: &gtk::Snapshot, rect: &graphene::Rect, width: f32, color: &gd
     let path = gsk::PathBuilder::new();
     path.add_rect(rect);
     snapshot.append_stroke(&path.to_path(), &gsk::Stroke::new(width), color);
+}
+
+/// 市松模様の既定（絵の色から。比べるときは両方を合わせて 1 つ）と、透けた画素があるか。
+fn checker_default(images: &[Option<&gdk::Texture>]) -> amonhen_core::checker::Tone {
+    let mut tone = amonhen_core::checker::Tone::default();
+    for image in images.iter().flatten() {
+        let (w, h) = (image.width() as usize, image.height() as usize);
+        let mut own = vec![0u8; w * h * 4];
+        // 既定の並びは、不透明度を掛けた B8G8R8A8（リトルエンディアン）
+        image.download(&mut own, w * 4);
+        tone.add(&own, w, h, w * 4, amonhen_core::checker::Order::Bgra);
+    }
+    tone
 }
 
 /// 画像のピクセル（左上にそろえて `w`×`h` に置く。外は透明）。

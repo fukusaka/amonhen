@@ -701,6 +701,26 @@ impl Browser {
                 }
             });
         }
+        // VectorDrawable の絵は引けない色を外観の文字の色で描くので、外観が変わったら描き直す
+        {
+            let weak = Rc::downgrade(&this);
+            let id = adw::StyleManager::default().connect_dark_notify(move |_| {
+                let Some(this) = weak.upgrade() else { return };
+                if !this.drawable_switch.is_visible() || this.drawable_text.get() {
+                    return;
+                }
+                let path = this.open_path.borrow().clone();
+                if let Some(path) = path {
+                    this.open(&path, None);
+                }
+            });
+            let id = RefCell::new(Some(id));
+            this.root.connect_destroy(move |_| {
+                if let Some(id) = id.take() {
+                    adw::StyleManager::default().disconnect(id);
+                }
+            });
+        }
         for (i, button) in this.drawable_buttons.iter().enumerate() {
             let weak = Rc::downgrade(&this);
             button.connect_toggled(move |b| {
@@ -1181,6 +1201,13 @@ impl Browser {
         let oid = self.blob_id(path);
         let (repo, commit, p) = (self.tree.repo.clone(), self.tree.commit, path.to_owned());
         let text = self.drawable_text.get();
+        // 引けない色（Android のテーマ属性など）は、今の外観の文字の色（図の配色と同じ libadwaita の本文の色）で
+        // 描く。外観が変わったら描き直す
+        let fallback = if adw::StyleManager::default().is_dark() {
+            "#ffffff"
+        } else {
+            "#000000"
+        };
         let weak = Rc::downgrade(self);
         let path = path.to_owned();
         glib::spawn_future_local(async move {
@@ -1189,7 +1216,8 @@ impl Browser {
                 if !amonhen_core::vectordrawable::is_vector_drawable(&p, &data) {
                     return None;
                 }
-                let picture = (!text).then(|| repo.vector_drawable(&commit, &p, &data));
+                let picture =
+                    (!text).then(|| repo.vector_drawable(&commit, &p, &data, Some(fallback)));
                 Some((data.len(), picture))
             })
             .await

@@ -183,6 +183,8 @@ pub enum Kind {
     ZoomIn,
     /// arrow.up.left.and.down.right.magnifyingglass（画像を枠に合わせる）
     ZoomFit,
+    /// checkerboard.rectangle（透けた絵の下の市松模様の明暗）
+    Checkerboard,
     /// arrow.turn.down.left（差分の長い行を折り返す）
     WrapLines,
 }
@@ -915,6 +917,27 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
                     }
                 }
             }
+        }
+        Kind::Checkerboard => {
+            // 角の丸い枠と、中の市松模様（4 × 3 の升の半分を塗る）。
+            p.add_rounded_rect(&gsk::RoundedRect::from_rect(
+                graphene::Rect::new(2.0, 3.0, 12.0, 10.0),
+                1.5,
+            ));
+            let squares = gsk::PathBuilder::new();
+            for row in 0..3 {
+                for col in 0..4 {
+                    if (row + col) % 2 == 0 {
+                        squares.add_rect(&graphene::Rect::new(
+                            2.0 + col as f32 * 3.0,
+                            3.0 + row as f32 * 10.0 / 3.0,
+                            3.0,
+                            10.0 / 3.0,
+                        ));
+                    }
+                }
+            }
+            fill = Some(squares);
         }
         Kind::House => {
             // 屋根と壁、戸口。

@@ -1399,6 +1399,15 @@ async function stashOptionsFlow(): Promise<void> {
     await withWindow({ showInputBox: inputs('only b') }, async () => vscode.commands.executeCommand('amonhen.stash.files', { path: 'so-b.txt' }));
     assert.equal(git('diff', '--name-only').trim(), 'so-a.txt', lastErrors());
     assert.equal(git('stash', 'show', '--name-only').trim(), 'so-b.txt');
+
+    // いくつも選んで: 選んだファイルすべてを 1 つの stash に
+    writeFileSync(b, 'b5\n');
+    await repo.refresh();
+    await withWindow({ showInputBox: inputs('both') }, async () =>
+      vscode.commands.executeCommand('amonhen.stash.files', { path: 'so-a.txt', paths: ['so-a.txt', 'so-b.txt'] }),
+    );
+    assert.equal(git('diff', '--name-only').trim(), '', lastErrors());
+    assert.deepEqual(git('stash', 'show', '--name-only').trim().split('\n').sort(), ['so-a.txt', 'so-b.txt']);
   } finally {
     git('reset', '-q', '--hard', start);
     while (git('stash', 'list').trim()) git('stash', 'drop', '-q');
@@ -3504,6 +3513,17 @@ async function editFlow(label: string): Promise<void> {
       }
       await until('move', () => subjects(3).join() === [name('c'), name('b'), name('d')].join());
       await undo('move');
+
+      if (label === 'daemon') {
+        // 編集モードの範囲の境目を下へ引く: いちばん古い行より古いコミットが届く
+        const opened = await openedEditMode(() => vscode.commands.executeCommand('amonhen.history.edit', { oid: c }));
+        const oldest = opened.at(-1)!.oid;
+        const at = posted.length;
+        await panel.history.handle({ type: 'editExtend', oldest, count: 1 });
+        const more = await waitPosted('editMore', at);
+        assert.equal(more.rows.length, 1, JSON.stringify(more.rows.map((r) => r.oid)));
+        assert.equal(more.rows[0]!.oid, rev(`${oldest}~1`));
+      }
 
       if (label === 'daemon') {
         // Webview で d を b に重ねて落とす: d を b の上へ動かして squash にした編集モードが開く（Apply まで何も変わらない）
