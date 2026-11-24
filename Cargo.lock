@@ -157,6 +157,7 @@ dependencies = [
 name = "amonhen-front"
 version = "0.2.14"
 dependencies = [
+ "amonhen-backend-cli",
  "amonhen-backend-gix",
  "amonhen-core",
  "amonhen-layout",

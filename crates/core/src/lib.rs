@@ -3,6 +3,7 @@
 pub mod blame;
 pub mod branches;
 pub mod cache;
+pub mod checker;
 pub mod command;
 pub mod conflict;
 mod delegate;

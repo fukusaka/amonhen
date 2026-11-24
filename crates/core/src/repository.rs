@@ -1081,12 +1081,14 @@ impl Repository {
     }
 
     /// コミット `commit` の `path` の Android の VectorDrawable（中身 `xml`）を絵にする（History の「すべての
-    /// ファイル」）。色の参照などは同じコミットの資源から引く（`vectordrawable::picture`）。裏のスレッドで呼ぶ。
+    /// ファイル」）。色の参照などは同じコミットの資源から引き、引けない色は `fallback`（画面の文字の色）で描く
+    /// （`vectordrawable::picture`）。裏のスレッドで呼ぶ。
     pub fn vector_drawable(
         &self,
         commit: &Oid,
         path: &str,
         xml: &[u8],
+        fallback: Option<&str>,
     ) -> Result<crate::vectordrawable::Picture> {
         /// コミットの木（読んだフォルダは覚える）。
         struct Tree<'a> {
@@ -1135,7 +1137,7 @@ impl Repository {
             commit,
             folders: Default::default(),
         };
-        crate::vectordrawable::picture(path.trim_matches('/'), xml, &tree)
+        crate::vectordrawable::picture(path.trim_matches('/'), xml, &tree, fallback)
     }
 
     /// `changes` のすべてのファイルの差分（History で全ファイルを縦に並べて見せる）。ファイルの数だけ blob を読んで
