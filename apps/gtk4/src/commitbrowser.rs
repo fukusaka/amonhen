@@ -903,18 +903,39 @@ impl Browser {
             let result = gio::spawn_blocking(move || {
                 let data = oid.and_then(|oid| repo.blob(&oid).ok())?;
                 let text = String::from_utf8_lossy(&data);
-                let blocks =
-                    amonhen_core::markdown::parse_in_zone(&text, github.as_deref(), Some(zone));
+                // このコミットのファイルの中身（リポジトリの根からのパス。変えたファイルは変更後）
+                let changed = Arc::new(changed);
+                let read = {
+                    let (repo, changed) = (repo.clone(), changed.clone());
+                    move |path: &str| -> Option<Arc<Vec<u8>>> {
+                        let id = match changed.get(path) {
+                            Some(id) => (*id)?,
+                            None => tree_blob(&repo, &commit, path)?,
+                        };
+                        repo.blob(&id).ok()
+                    }
+                };
+                let read = Arc::new(read);
+                // 図（DOT）の画像も同じコミットから
+                let images = amonhen_core::diagram::ImageSource {
+                    from: f.clone(),
+                    read: {
+                        let read = read.clone();
+                        Arc::new(move |path: &str| read(path).map(|b| b.to_vec()))
+                    },
+                };
+                let blocks = amonhen_core::markdown::parse_with_images(
+                    &text,
+                    github.as_deref(),
+                    Some(zone),
+                    Some(images),
+                );
                 let images: Vec<(String, Arc<Vec<u8>>)> =
                     crate::markdownview::image_sources(&blocks)
                         .into_iter()
                         .filter_map(|src| {
                             let path = crate::markdownview::resolve(&src, &f)?;
-                            let id = match changed.get(&path) {
-                                Some(id) => (*id)?,
-                                None => tree_blob(&repo, &commit, &path)?,
-                            };
-                            Some((src, repo.blob(&id).ok()?))
+                            Some((src, read(&path)?))
                         })
                         .collect();
                 Some((blocks, images))
