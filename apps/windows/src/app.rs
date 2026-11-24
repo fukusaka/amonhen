@@ -17372,11 +17372,21 @@ impl Root {
                         };
                         (self.markdown_text, pick(false), pick(true))
                     });
-                let svg = browser
-                    .open
-                    .as_deref()
-                    .filter(|p| crate::imagediff::is_svg(p))
-                    .map_or_else(View::empty, |_| self.svg_switch(context));
+                // SVG は絵・モバイル・テキスト、Android の VectorDrawable は絵・テキスト（GTK4 版と同じ）。
+                let mut drawable = false;
+                self.with_history(|h| {
+                    drawable = h
+                        .session
+                        .data
+                        .file_view
+                        .as_ref()
+                        .is_some_and(|f| f.drawable.is_some());
+                });
+                let svg = match browser.open.as_deref() {
+                    Some(p) if crate::imagediff::is_svg(p) => self.svg_switch(context, true),
+                    Some(_) if drawable => self.svg_switch(context, false),
+                    _ => View::empty(),
+                };
                 crate::allfiles::path_bar(
                     browser,
                     context.callback(|()| Message::AllFilesBack),
@@ -17392,7 +17402,7 @@ impl Root {
     /// SVG の見せ方の切り替え（絵・モバイル・テキスト。GTK4 版の `svg_switch`）と、モバイルで見ているときは
     /// 見る部品の切り替え（Android・iOS・Flutter・React Native。GTK4 版の `renderer_switch`）。押して外したときは
     /// そのまま。
-    fn svg_switch(&self, context: &ViewContext<Self>) -> View {
+    fn svg_switch(&self, context: &ViewContext<Self>, mobile: bool) -> View {
         use crate::data::SvgView;
         use amonhen_core::svglint::Target;
         #[derive(Clone, Copy)]
@@ -17420,16 +17430,23 @@ impl Root {
                 .content(TextBlock::new().text(title).font_size(12.0))
                 .tooltip(tooltip)
         };
+        // VectorDrawable（`mobile` なし）は、絵とテキストの説明を替える。
+        let (draw, source) = if mobile {
+            (tr!("Draw the SVG"), tr!("Show the SVG source"))
+        } else {
+            (tr!("Draw the VectorDrawable"), tr!("Show the XML source"))
+        };
         let views = [
-            (SvgView::Picture, tr!("Picture"), tr!("Draw the SVG")),
+            (SvgView::Picture, tr!("Picture"), draw),
             (
                 SvgView::Mobile,
                 tr!("Mobile"),
                 tr!("Check for mobile: list what breaks on Android, iOS, Flutter and React Native"),
             ),
-            (SvgView::Text, tr!("Text"), tr!("Show the SVG source")),
+            (SvgView::Text, tr!("Text"), source),
         ]
         .into_iter()
+        .filter(|(view, ..)| mobile || *view != SvgView::Mobile)
         .map(|(view, title, tooltip)| {
             toggle(
                 title,
@@ -17492,14 +17509,37 @@ impl Root {
             return View::empty();
         }
         let mut check = None;
+        let mut drawable_notes = Vec::new();
         self.with_history(|h| {
-            check = h
-                .session
-                .data
-                .file_view
-                .as_ref()
-                .and_then(|f| f.mobile.clone());
+            if let Some(f) = h.session.data.file_view.as_ref() {
+                check = f.mobile.clone();
+                drawable_notes = f
+                    .drawable
+                    .as_ref()
+                    .map(|d| d.notes.clone())
+                    .unwrap_or_default();
+            }
         });
+        // VectorDrawable の添え書き（引けなかった色など。GTK4 版の `imagediff::drawable` の下の説明）。
+        if check.is_none() && !drawable_notes.is_empty() {
+            return Border::new()
+                .grid_row(1)
+                .max_height(160.0)
+                .border_thickness(Thickness::new(0.0, 1.0, 0.0, 0.0))
+                .border_brush(Brush::Solid(crate::palette::border()))
+                .background(Brush::Solid(crate::palette::background()))
+                .content(
+                    ScrollViewer::new().content(
+                        TextBlock::new()
+                            .text(drawable_notes.join("\n"))
+                            .font_size(12.0)
+                            .opacity(0.7)
+                            .is_text_selection_enabled(true)
+                            .text_wrapping(TextWrapping::Wrap)
+                            .margin(Thickness::new(12.0, 8.0, 12.0, 10.0)),
+                    ),
+                );
+        }
         let Some(check) = check else {
             return View::empty();
         };
