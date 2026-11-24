@@ -49,6 +49,8 @@ pub enum Event {
     Cloned(std::result::Result<String, String>),
     /// ほかの worktree の変更の数を読み直す頃（worktree が 2 つ以上あるとき、10 秒ごと。アプリと同じ）。
     CountWorktrees,
+    /// リポジトリのページの行の状態（読めなければ None）。
+    Peeked(String, Option<amonhen_backend_cli::Peek>),
 }
 
 /// 描き直す所。一番上と一番下の行は、どれかを描き直すたびに描き直す。
@@ -779,6 +781,8 @@ pub struct App {
     wrap: bool,
     /// History の All Files（`a`）。画面に重ねる。
     all_files: Option<crate::allfiles::AllFiles>,
+    /// リポジトリのページ（アプリの Repositories。Ctrl-o）。画面に重ねる。
+    repos: Option<crate::repos::Repos>,
     /// 端末のクリップボードに入れる文字（OSC 52。描くループが書く）。
     copy: Option<String>,
     /// 編集モードで、変更があるのに Esc を 1 度押した（もう 1 度で捨てる）。
@@ -935,6 +939,7 @@ impl App {
             items_asked: false,
             wrap: false,
             all_files: None,
+            repos: None,
             copy: None,
             edit_discard: false,
             plan_message: None,
@@ -1244,7 +1249,8 @@ impl App {
             || self.showing_events.is_some()
             || self.showing_performance
             || self.edit_mode.is_some()
-            || self.all_files.is_some();
+            || self.all_files.is_some()
+            || self.repos.is_some();
         if std::mem::take(&mut self.dirty) || (over && damage != Damage::default()) {
             return Some(Damage::ALL);
         }
@@ -1889,7 +1895,18 @@ impl App {
                 }
                 self.dirty = true;
             }
+            Event::Peeked(path, peek) => {
+                if let Some(repos) = &mut self.repos {
+                    repos.set_peek(path, peek);
+                    self.dirty = true;
+                }
+            }
             Event::Scanned(paths) => {
+                if let Some(repos) = &mut self.repos {
+                    repos.add(paths.iter().map(|p| repo_entry(p, None, None)).collect());
+                    self.peek_repositories(paths.clone());
+                    self.dirty = true;
+                }
                 if let Some(quick) = &mut self.quick_open {
                     quick.add(paths);
                     self.dirty = true;
@@ -1966,6 +1983,12 @@ impl App {
             return;
         }
         let control = key.modifiers.contains(KeyModifiers::CONTROL);
+        // リポジトリのページ（アプリの ⌘O・⌘⇧R。Ctrl-r は Refresh）。
+        if control && key.code == KeyCode::Char('o') && self.repos.is_none() && self.lost.is_none()
+        {
+            self.open_repositories();
+            return;
+        }
         // 差分の長い行を折り返す・やめる（どこからでも。メッセージを書いている間も）。
         if key.modifiers.contains(KeyModifiers::ALT) && key.code == KeyCode::Char('z') {
             self.toggle_wrap();
@@ -2023,6 +2046,50 @@ impl App {
             self.naming = Naming::PatchVersion;
             self.typing_branch = Some((String::new(), String::new(), "2".to_owned()));
             self.dirty = true;
+            return;
+        }
+        // リポジトリのページ: 左の分類と右の一覧。Enter で開き、Esc で閉じる。
+        if let Some(repos) = &mut self.repos {
+            self.dirty = true;
+            if repos.typing_filter {
+                let mut filter = repos.filter.clone();
+                match key.code {
+                    KeyCode::Enter | KeyCode::Esc => repos.typing_filter = false,
+                    KeyCode::Backspace => {
+                        filter.pop();
+                    }
+                    KeyCode::Char('u') if control => filter.clear(),
+                    KeyCode::Char(ch) if !control => filter.push(ch),
+                    _ => {}
+                }
+                if filter != repos.filter {
+                    repos.set_filter(filter);
+                }
+                return;
+            }
+            match key.code {
+                KeyCode::Esc if !repos.filter.is_empty() => repos.set_filter(String::new()),
+                KeyCode::Esc | KeyCode::Char('q') => self.repos = None,
+                KeyCode::Char('o') if control => self.repos = None,
+                KeyCode::Tab | KeyCode::BackTab => repos.focus_categories = !repos.focus_categories,
+                KeyCode::Char('h') | KeyCode::Left => repos.focus_categories = true,
+                KeyCode::Char('l') | KeyCode::Right => repos.focus_categories = false,
+                KeyCode::Char('j') | KeyCode::Down => repos.move_selection(1),
+                KeyCode::Char('k') | KeyCode::Up => repos.move_selection(-1),
+                KeyCode::PageDown => repos.move_selection(10),
+                KeyCode::PageUp => repos.move_selection(-10),
+                KeyCode::Char('s') => repos.next_sort(),
+                KeyCode::Char('/') => repos.typing_filter = true,
+                KeyCode::Enter if repos.focus_categories => repos.focus_categories = false,
+                // TUI を閉じて、選んだリポジトリで開き直す（アプリのタブがそのリポジトリになるのと同じ）。
+                KeyCode::Enter => {
+                    if let Some(path) = repos.selected_path() {
+                        self.open_location = Some(path);
+                        self.quit = true;
+                    }
+                }
+                _ => {}
+            }
             return;
         }
         // All Files: 左の木と右の中身。Esc で閉じる。
@@ -3312,10 +3379,92 @@ impl App {
         }
     }
 
+    /// リポジトリのページを開く: ブックマーク・最近開いたもの・探すフォルダの下で見つけたもの（裏で探す）。手元の
+    /// リポジトリの状態は裏で 4 つずつ読む（アプリと同じ）。
+    fn open_repositories(&mut self) {
+        let (bookmarks, recents, roots) = match (
+            amonhen_model::bookmarks::read(),
+            amonhen_model::recent::read(),
+            amonhen_model::bookmarks::scan_roots(),
+        ) {
+            (Ok(b), Ok(r), Ok(s)) => (b, r, s),
+            (Err(reason), _, _) | (_, Err(reason), _) | (_, _, Err(reason)) => {
+                self.error = Some(reason);
+                return;
+            }
+        };
+        let opened: std::collections::HashMap<String, i64> = (recents.iter())
+            .filter_map(|r| Some((r.path.clone(), r.opened_at? as i64)))
+            .collect();
+        let mut entries: Vec<crate::repos::Entry> = (bookmarks.iter())
+            .map(|b| crate::repos::Entry {
+                path: b.path.clone(),
+                name: b.display_name(),
+                favorite: b.favorite,
+                group: b.group.clone(),
+                opened: opened.get(&b.path).copied(),
+            })
+            .collect();
+        entries.extend(
+            recents
+                .iter()
+                .map(|r| repo_entry(&r.path, None, r.opened_at.map(|t| t as i64))),
+        );
+        let repos = crate::repos::Repos::new(entries);
+        let local = repos.local_paths();
+        self.repos = Some(repos);
+        self.peek_repositories(local);
+        let roots: Vec<_> = roots.into_iter().filter(|r| r.is_local()).collect();
+        if !roots.is_empty() {
+            let events = self.events.clone();
+            std::thread::spawn(move || {
+                for root in roots {
+                    let found = root.find_local();
+                    if !found.is_empty() && events.send(Event::Scanned(found)).is_err() {
+                        return;
+                    }
+                }
+            });
+        }
+        self.dirty = true;
+    }
+
+    /// 手元のリポジトリ `paths` の状態を裏で読む（4 つずつ。アプリの peekQueue と同じ）。
+    fn peek_repositories(&mut self, paths: Vec<String>) {
+        let paths: Vec<String> = paths
+            .into_iter()
+            .filter(|p| !p.starts_with("ssh://") && !p.starts_with("daemon:"))
+            .collect();
+        if paths.is_empty() {
+            return;
+        }
+        let queue = Arc::new(std::sync::Mutex::new(std::collections::VecDeque::from(
+            paths,
+        )));
+        for _ in 0..4 {
+            let (queue, events) = (queue.clone(), self.events.clone());
+            std::thread::spawn(move || {
+                loop {
+                    let Some(path) = queue.lock().unwrap().pop_front() else {
+                        return;
+                    };
+                    let peek = amonhen_backend_cli::Git::new(&path).peek().ok();
+                    if events.send(Event::Peeked(path, peek)).is_err() {
+                        return;
+                    }
+                }
+            });
+        }
+    }
+
     /// コマンドの一覧からだけ動かす操作（キーを持たない）。
     fn run_keyless(&mut self, id: &str) {
         if id == "quick-open" {
             self.open_quick();
+            return;
+        }
+        if id == "repositories" {
+            self.open_repositories();
             return;
         }
         if id == "wrap-long-lines" {
@@ -9906,6 +10055,16 @@ impl App {
             );
             files.draw(at, buf, &self.theme);
         }
+        if let Some(repos) = &mut self.repos {
+            let at = Rect::new(
+                area.x,
+                area.y + 1,
+                area.width,
+                area.height.saturating_sub(1),
+            );
+            let now = self.clock.now;
+            repos.draw(at, buf, now);
+        }
         if let Some(cache) = &self.history_cache {
             self.draw_history_cache(cache, area, buf);
         }
@@ -10592,6 +10751,23 @@ struct ClonePlan {
     branch: Option<String>,
 }
 
+/// ブックマークでないリポジトリの行（名前は場所の最後の部分）。
+fn repo_entry(path: &str, group: Option<String>, opened: Option<i64>) -> crate::repos::Entry {
+    let bookmark = amonhen_model::bookmarks::Bookmark {
+        path: path.to_owned(),
+        name: None,
+        group: None,
+        favorite: false,
+    };
+    crate::repos::Entry {
+        name: bookmark.display_name(),
+        path: path.to_owned(),
+        favorite: false,
+        group,
+        opened,
+    }
+}
+
 /// Quick Open に打ったものが clone できる場所か（URL、`user@host:path`、`.git`・`.bundle` で終わるもの）。
 fn clonable(text: &str) -> bool {
     if text.is_empty() || text.contains(char::is_whitespace) {
@@ -10876,6 +11052,91 @@ mod tests {
 
     /// コマンドの一覧の Quick Open: アプリと同じ候補（お気に入り、ブックマーク、最近開いたもの、手元の探すフォルダの
     /// 下で見つけたもの。重ならない）を打った語で絞り、Enter で選んだ場所を開き直す。
+    /// リポジトリのページ（Ctrl-o）: 分類と数、行の状態（裏で読む）、並べ替え、Enter でそのリポジトリを開く
+    #[test]
+    fn the_repository_page_lists_repositories_with_their_status() {
+        let (dir, mut app, rx) = app_with_history();
+        std::fs::write(dir.path().join("new.txt"), "x\n").unwrap();
+        let config = tempfile::tempdir().unwrap();
+        let vars = amonhen_model::settings::config_vars(config.path().to_str().unwrap());
+        let env = amonhen_model::process::ClientEnv::from_vars(vars);
+        let local = dir.path().to_string_lossy().into_owned();
+        amonhen_model::process::with_client_env(&env, || {
+            let folder = config.path().join("amonhen");
+            std::fs::create_dir_all(&folder).unwrap();
+            let bookmarks = serde_json::json!({
+                "items": [
+                    {"path": local, "favorite": true, "group": "Work", "name": "mine"},
+                    {"path": "ssh://host/src/tool"},
+                ],
+            });
+            std::fs::write(folder.join("bookmarks.json"), bookmarks.to_string()).unwrap();
+            amonhen_model::recent::touch("/w/beta").unwrap();
+            app.handle(Event::Input(Input::Key(KeyEvent::new(
+                KeyCode::Char('o'),
+                KeyModifiers::CONTROL,
+            ))));
+        });
+        assert!(app.repos.is_some());
+        // 手元のリポジトリの状態が届くまで待つ。
+        loop {
+            match rx.recv_timeout(std::time::Duration::from_secs(10)) {
+                Ok(Event::Peeked(path, peek)) => {
+                    let done = path == local;
+                    app.handle(Event::Peeked(path, peek));
+                    if done {
+                        break;
+                    }
+                }
+                Ok(other) => app.handle(other),
+                Err(e) => panic!("no status: {e}"),
+            }
+        }
+        app.resize(160, 12);
+        let screen = |app: &mut App| -> String {
+            let mut buf = Buffer::empty(Rect::new(0, 0, 160, 12));
+            app.draw(&mut buf, Damage::ALL);
+            (0..12)
+                .map(|y| (0..160).map(|x| buf[(x, y)].symbol()).collect::<String>())
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let text = screen(&mut app);
+        println!("{text}");
+        for part in [
+            "Repositories",
+            "All",
+            "Favorites",
+            "This Machine",
+            "host",
+            "▪ Work",
+            "★ mine",
+            "changes 1",
+            "SSH",
+            "Opened ▾",
+        ] {
+            assert!(text.contains(part), "{part}: {text}");
+        }
+        // `s` で名前の順に。お気に入りの分類では、mine だけ。
+        app.handle(Event::Input(Input::Key(KeyEvent::new(
+            KeyCode::Char('s'),
+            KeyModifiers::NONE,
+        ))));
+        assert!(screen(&mut app).contains("Name ▾"));
+        let key = |app: &mut App, code: KeyCode| {
+            app.handle(Event::Input(Input::Key(KeyEvent::new(
+                code,
+                KeyModifiers::NONE,
+            ))));
+        };
+        key(&mut app, KeyCode::Tab);
+        key(&mut app, KeyCode::Char('j'));
+        key(&mut app, KeyCode::Enter);
+        key(&mut app, KeyCode::Enter);
+        assert!(app.quit);
+        assert_eq!(app.take_next(), Some(crate::Next::Location(local)));
+    }
+
     #[test]
     fn quick_open_reopens_a_bookmark() {
         let (_dir, mut app, rx) = app_with_history();
