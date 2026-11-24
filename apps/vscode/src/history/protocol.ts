@@ -167,6 +167,8 @@ export interface SearchState {
 }
 
 export type HistoryHostMessage =
+  /** 密度の帯: 区間ごとの頻度と動き（0〜1）を交互に並べた f32 の base64 */
+  | { type: 'density'; values: string }
   /** コマンド（Find in History…）から、検索の欄にフォーカスを移す */
   | { type: 'focusSearch' }
   /** `select` があれば、新しい History のその行を選ぶ（一致だけの History との切り替え） */
@@ -265,6 +267,8 @@ export interface DetailsExtras {
 
 export type HistoryWebviewMessage =
   | { type: 'more' }
+  /** 密度の帯（コミットの頻度とブランチの動き）を buckets 区間で頼む（daemon の History だけ） */
+  | { type: 'density'; buckets: number }
   /** merge を 1 つ開く・畳む（← →。右クリックの Show・Fold Merged Commits と同じ） */
   | { type: 'toggleFold'; oid: string }
   /** daemon の History の、start から count 行 */

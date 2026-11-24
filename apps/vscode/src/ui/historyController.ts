@@ -444,6 +444,20 @@ export class HistoryController implements vscode.Disposable {
       case 'goTo':
         await this.goTo(message.to, message.oid).catch(showError);
         break;
+      case 'density': {
+        // 密度の帯（アプリと同じ。daemon の History だけ）
+        const shown = this.daemon;
+        if (!shown) break;
+        try {
+          const reply = await shown.client.call({ op: 'historyDensity', history: shown.history, buckets: Math.max(1, Math.floor(message.buckets)) });
+          if (shown !== this.daemon) break;
+          const values = reply.f32('density');
+          this.post({ type: 'density', values: Buffer.from(values.buffer, values.byteOffset, values.byteLength).toString('base64') });
+        } catch {
+          // 古いエンジン。帯は出さない
+        }
+        break;
+      }
       case 'toggleFold':
         await this.toggleFold(message.oid).catch(showError);
         break;

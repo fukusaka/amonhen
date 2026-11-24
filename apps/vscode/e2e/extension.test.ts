@@ -4499,6 +4499,20 @@ suite('Amon Hen in VSCode', () => {
     }
   });
 
+  test('sends the density strip of History through the daemon', async () => {
+    const panel = await showView('amonhen.showHistory');
+    const at = posted.length;
+    await panel.history.reset();
+    await waitPosted('rows', at, (m) => m.total !== undefined);
+    const asked = posted.length;
+    await panel.history.handle({ type: 'density', buckets: 4 });
+    const { values } = await waitPosted('density', asked);
+    const bytes = Buffer.from(values, 'base64');
+    const density = new Float32Array(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+    assert.ok(density.length > 0 && density.length % 2 === 0, String(density.length));
+    assert.ok([...density].every((v) => v >= 0 && v <= 1), String([...density]));
+  });
+
   test('shows names from the mailmap through the daemon and reloads them when it changes', async () => {
     await mailmapFlow();
   });

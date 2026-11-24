@@ -5,7 +5,7 @@
  * ところのまだない行をまとめて要求する（離れた行へもすぐ移れる）。
  */
 import { type LaneMetrics, lanePositions } from '../history/lanes.ts';
-import type { HistoryItem, MessageEdit, PairMode, RowData, Scope, SearchState, SignatureView } from '../history/protocol.ts';
+import type { HistoryItem, MessageEdit, PairMode, RefLabel, RowData, Scope, SearchState, SignatureView } from '../history/protocol.ts';
 import { extendTo, isContiguous, singleRow, toggleRow, type RowSelection } from '../history/selection.ts';
 import type { HostMessage } from '../view/protocol.ts';
 import { scopeRefs, scopeTitle } from '../history/scope.ts';
@@ -58,6 +58,34 @@ const PALETTE = [
 interface GraphColumn {
   width: number;
   centers: readonly number[];
+}
+
+/** 行に出す札の数（残りは「+N」）と、札の名前の長さ（越えれば真ん中を切る） */
+const MAX_LABELS = 3;
+const LABEL_CHARS = 28;
+
+/** 長い名前の真ん中を「…」で切る（頭と終わりが残るので、似た名前も見分けられる） */
+function middleCut(name: string, max: number): string {
+  if (name.length <= max) return name;
+  const head = Math.ceil((max - 1) / 2);
+  return `${name.slice(0, head)}…${name.slice(name.length - (max - 1 - head))}`;
+}
+
+/** 札の下に、その行のすべての名前の一覧を出す（外を押すと閉じる） */
+function showRefNames(anchor: HTMLElement, refs: readonly RefLabel[]): void {
+  document.querySelector('.ref-names')?.remove();
+  const popup = el('div', 'ref-names');
+  for (const ref of refs) popup.append(el('div', `ref-name ${ref.kind}`, ref.name));
+  const rect = anchor.getBoundingClientRect();
+  popup.style.left = `${Math.max(4, rect.left)}px`;
+  popup.style.top = `${rect.bottom + 2}px`;
+  document.body.append(popup);
+  const close = (e: Event) => {
+    if (popup.contains(e.target as Node)) return;
+    popup.remove();
+    document.removeEventListener('mousedown', close, true);
+  };
+  setTimeout(() => document.addEventListener('mousedown', close, true));
 }
 
 export function createHistoryView(): View {
@@ -182,6 +210,16 @@ export function createHistoryView(): View {
   const spacer = el('div', 'spacer');
   list.append(spacer);
   const splitter = el('div', 'splitter');
+  // 密度の帯: 左半分がコミットの頻度、右半分がブランチの動き。押す・引くとそこへ（アプリと同じ）
+  const densityBox = el('div', 'density-box');
+  densityBox.title = 'Commit frequency (left) and branch activity (right). Click to jump there.';
+  const densityCanvas = el('canvas', 'density');
+  const densityViewport = el('div', 'density-viewport');
+  densityBox.append(densityCanvas, densityViewport);
+  densityBox.hidden = true;
+  /** 区間ごとの頻度と動き（交互）。まだ届いていなければ null */
+  let densityValues: Float32Array | null = null;
+  let densityAsked = false;
   splitter.setAttribute('role', 'separator');
   const details = createDetailsPane(
     (oid) => {
@@ -214,7 +252,7 @@ export function createHistoryView(): View {
     },
     (oid) => post({ type: 'select', oid }),
   );
-  body.append(list, editMode.root, splitter, details.root);
+  body.append(list, densityBox, editMode.root, splitter, details.root);
   root.append(toolbar, body);
 
   /** 行の署名の印（コミット → 見せ方。署名のないものは入らない） */
@@ -335,11 +373,33 @@ export function createHistoryView(): View {
     text.className = 'text';
     const meta = document.createElement('div');
     meta.className = 'meta';
-    for (const ref of hidden.has('refs') ? [] : row.refs) {
+    // 札は 3 つまで、残りは「+N」にまとめる。長い名前は真ん中を「…」で切る。切った札と「+N」を押すと名前の一覧（アプリと同じ）
+    const refs = hidden.has('refs') ? [] : row.refs;
+    for (const ref of refs.slice(0, MAX_LABELS)) {
       const badge = document.createElement('span');
       badge.className = `ref ${ref.kind}${ref.current ? ' current' : ''}`;
-      badge.textContent = ref.name;
+      const shown = middleCut(ref.name, LABEL_CHARS);
+      badge.textContent = shown;
+      if (shown !== ref.name) {
+        badge.title = ref.name;
+        badge.classList.add('cut');
+        badge.addEventListener('click', (e) => {
+          e.stopPropagation();
+          showRefNames(badge, refs);
+        });
+      }
       text.append(badge);
+    }
+    if (refs.length > MAX_LABELS) {
+      const more = document.createElement('button');
+      more.className = 'ref more';
+      more.textContent = `+${refs.length - MAX_LABELS}`;
+      more.title = refs.slice(MAX_LABELS).map((r) => r.name).join('\n');
+      more.addEventListener('click', (e) => {
+        e.stopPropagation();
+        showRefNames(more, refs);
+      });
+      text.append(more);
     }
     if (boundary.has(index)) {
       const cut = document.createElement('span');
@@ -524,6 +584,77 @@ export function createHistoryView(): View {
     scheduleRender();
   }
 
+  /** 帯の区間の数を決めて頼む（1 区間に 25 行以上、高さ 2px に 1 区間まで。アプリと同じ） */
+  function requestDensity(): void {
+    if (!sparse || rows.length === 0) return;
+    densityAsked = true;
+    const height = list.clientHeight || 400;
+    post({ type: 'density', buckets: Math.max(1, Math.min(Math.floor(height / 2), Math.floor(rows.length / 25))) });
+  }
+
+  function drawDensity(): void {
+    const values = densityValues;
+    densityBox.hidden = !values || values.length === 0;
+    if (!values || densityBox.hidden) return;
+    const ratio = window.devicePixelRatio || 1;
+    const width = densityBox.clientWidth;
+    const height = densityBox.clientHeight;
+    densityCanvas.width = Math.max(1, Math.round(width * ratio));
+    densityCanvas.height = Math.max(1, Math.round(height * ratio));
+    const ctx = densityCanvas.getContext('2d');
+    if (!ctx) return;
+    ctx.scale(ratio, ratio);
+    ctx.clearRect(0, 0, width, height);
+    const style = getComputedStyle(document.body);
+    const blue = style.getPropertyValue('--vscode-charts-blue').trim() || '#3794ff';
+    const green = style.getPropertyValue('--vscode-charts-green').trim() || '#89d185';
+    const n = values.length / 2;
+    const h = height / n;
+    for (let i = 0; i < n; i++) {
+      ctx.globalAlpha = values[i * 2]! * 0.75;
+      ctx.fillStyle = blue;
+      ctx.fillRect(0, i * h, width / 2, h + 0.5);
+      ctx.globalAlpha = values[i * 2 + 1]! * 0.75;
+      ctx.fillStyle = green;
+      ctx.fillRect(width / 2, i * h, width / 2, h + 0.5);
+    }
+    ctx.globalAlpha = 1;
+    moveDensityViewport();
+  }
+
+  /** 帯の上の、今見えている範囲の枠 */
+  function moveDensityViewport(): void {
+    if (densityBox.hidden || rows.length === 0) return;
+    const total = rows.length * rowHeight;
+    const height = densityBox.clientHeight;
+    const top = (list.scrollTop / total) * height;
+    const bottom = Math.max(top + 3, ((list.scrollTop + list.clientHeight) / total) * height);
+    densityViewport.style.top = `${top}px`;
+    densityViewport.style.height = `${bottom - top}px`;
+  }
+
+  /** 帯を押した・引いたところの行を、一覧の真ん中に */
+  function jumpTo(e: MouseEvent): void {
+    const rect = densityBox.getBoundingClientRect();
+    const fraction = Math.min(1, Math.max(0, (e.clientY - rect.top) / rect.height));
+    const row = Math.min(rows.length - 1, Math.max(0, Math.floor(fraction * rows.length)));
+    list.scrollTop = Math.max(0, row * rowHeight - list.clientHeight / 2);
+  }
+  densityBox.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    jumpTo(e);
+    const onMove = (m: MouseEvent) => jumpTo(m);
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  });
+  new ResizeObserver(() => {
+    if (densityValues) drawDensity();
+  }).observe(densityBox);
+
   function revealRow(index: number): void {
     const top = index * rowHeight;
     const far = top + rowHeight < list.scrollTop - list.clientHeight || top > list.scrollTop + 2 * list.clientHeight;
@@ -646,6 +777,7 @@ export function createHistoryView(): View {
   }
 
   list.addEventListener('scroll', scheduleRender);
+  list.addEventListener('scroll', moveDensityViewport);
   window.addEventListener('resize', scheduleRender);
   list.addEventListener('mousedown', (e) => {
     // 行を選ぶと描き直して、押している途中のボタンが消え、クリックが届かない
@@ -822,7 +954,14 @@ export function createHistoryView(): View {
         searchInput.focus();
         searchInput.select();
         break;
+      case 'density':
+        densityValues = new Float32Array(Uint8Array.from(atob(message.values), (c) => c.charCodeAt(0)).buffer);
+        drawDensity();
+        break;
       case 'reset':
+        densityValues = null;
+        densityAsked = false;
+        densityBox.hidden = true;
         lineage = null;
         lineageEdges = null;
         // 形はこの後の form で送り直す（一致だけの History なら送らない）
@@ -853,7 +992,9 @@ export function createHistoryView(): View {
           if (!sparse || rows.length !== message.total) {
             rows = new Array<RowData | undefined>(message.total);
             sparse = true;
+            densityAsked = false;
           }
+          if (!densityAsked) requestDensity();
           message.rows.forEach((row, i) => (rows[message.start + i] = row));
           pendingChunks.delete(message.start);
         } else {
