@@ -50,6 +50,12 @@ pub fn is_svg(path: &str) -> bool {
     extension(path) == "svg"
 }
 
+/// 中身が SVG か（頭の 1 KB に `<svg` があるか）。
+fn looks_like_svg(data: &[u8]) -> bool {
+    let head = &data[..data.len().min(1024)];
+    head.windows(4).any(|w| w == b"<svg")
+}
+
 /// 比べ方。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Mode {
@@ -183,6 +189,7 @@ pub fn panel(
         false,
         None,
         &[],
+        None,
     )
 }
 
@@ -207,6 +214,7 @@ pub fn compare(
         true,
         leading,
         &[],
+        None,
     );
     with_notes(panel, notes)
 }
@@ -221,6 +229,7 @@ pub fn size_caption(data: &[u8]) -> String {
 pub fn single(data: &[u8], notes: Option<gtk::Widget>) -> Option<gtk::Widget> {
     let image = texture(Some(data))?;
     let caption = describe(Some(data), Some(&image));
+    let vector = looks_like_svg(data).then(|| glib::Bytes::from(data));
     let panel = build(
         None,
         Some(image),
@@ -231,6 +240,7 @@ pub fn single(data: &[u8], notes: Option<gtk::Widget>) -> Option<gtk::Widget> {
         true,
         None,
         &[],
+        vector,
     );
     Some(with_notes(panel, notes))
 }
@@ -249,6 +259,7 @@ pub fn drawable(svg: &[u8], caption: String, footnote: &[String]) -> Option<gtk:
         true,
         None,
         footnote,
+        Some(glib::Bytes::from(svg)),
     ))
 }
 
@@ -283,7 +294,8 @@ fn with_notes(panel: gtk::Widget, notes: Option<gtk::Widget>) -> gtk::Widget {
 
 /// 欄を作る。`modes` がなければ 1 枚だけ（`after` を出す）。`titles` は前と後の見出し（なければ「前」「後」）。
 /// `fill` なら高さいっぱいに広げる（すべてのファイル。下の仕切りの線は引かない）。`leading` は帯の左端に置く。
-/// `footnote` は大きさの説明の下に添える文。
+/// `footnote` は大きさの説明の下に添える文。`vector` は 1 枚の絵が SVG のときの中身で、拡大したときにその大きさで
+/// 描き直す（テクスチャを伸ばすとぼやける）。
 #[allow(clippy::too_many_arguments)]
 fn build(
     old: Option<gdk::Texture>,
@@ -295,9 +307,11 @@ fn build(
     fill: bool,
     leading: Option<gtk::Widget>,
     footnote: &[String],
+    vector: Option<glib::Bytes>,
 ) -> gtk::Widget {
     let single = modes.is_none();
     let canvas = Canvas::new(old, new);
+    canvas.imp().vector.replace(vector);
     if let Some(titles) = titles {
         canvas.imp().titles.replace(titles);
     }
@@ -517,6 +531,10 @@ mod imp {
         pub pinch: Cell<f32>,
         /// 前と後の見出し。
         pub titles: RefCell<(String, String)>,
+        /// 1 枚の絵が SVG のときの中身（拡大した大きさで描き直す）。
+        pub vector: RefCell<Option<glib::Bytes>>,
+        /// 描き直した絵と、その画素の大きさ。
+        pub sharp: RefCell<Option<((i32, i32), gdk::Texture)>>,
     }
 
     #[glib::object_subclass]
@@ -796,6 +814,34 @@ impl Canvas {
         })
     }
 
+    /// SVG の絵を `rect` に描くとき、テクスチャより大きく描くなら、その画素の大きさで描き直した絵（ぼやけない）。
+    /// 描き直すまでもない、大きすぎる、SVG ではないときは None。
+    fn sharp(&self, image: &Option<gdk::Texture>, rect: &graphene::Rect) -> Option<gdk::Texture> {
+        // 描き直す絵の画素の上限（4096 × 4096）。超えるときはテクスチャを伸ばす。
+        const MAX_PIXELS: i64 = 4096 * 4096;
+        let image = image.as_ref()?;
+        let vector = self.imp().vector.borrow().clone()?;
+        let factor = self.scale_factor().max(1) as f32;
+        let size = (
+            (rect.width() * factor).round() as i32,
+            (rect.height() * factor).round() as i32,
+        );
+        if size.0 <= image.width() && size.1 <= image.height() {
+            return None;
+        }
+        if size.0 <= 0 || size.1 <= 0 || i64::from(size.0) * i64::from(size.1) > MAX_PIXELS {
+            return None;
+        }
+        if let Some((at, texture)) = self.imp().sharp.borrow().as_ref()
+            && *at == size
+        {
+            return Some(texture.clone());
+        }
+        let texture = svg_pixels(&vector, size.0, size.1)?.texture();
+        self.imp().sharp.replace(Some((size, texture.clone())));
+        Some(texture)
+    }
+
     fn draw(&self, snapshot: &gtk::Snapshot) {
         let fg = self.color();
         let secondary = gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), fg.alpha() * 0.6);
@@ -820,7 +866,13 @@ impl Canvas {
         if self.imp().single.get() {
             let rect = self.fit(Self::size_of(&after), &self.inset());
             checker(snapshot, &rect);
-            draw_texture(snapshot, &after, &rect, 1.0);
+            let sharp = self.sharp(&after, &rect);
+            draw_texture(
+                snapshot,
+                if sharp.is_some() { &sharp } else { &after },
+                &rect,
+                1.0,
+            );
             return;
         }
         match self.imp().mode.get() {
