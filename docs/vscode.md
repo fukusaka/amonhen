@@ -302,3 +302,4 @@ left out for now: VSCode has its own extensions and settings for them.
 - [x] 79. Fold or show any merge on its own (context menu, ←/→), Fold All / Show All Merged Commits, kept per repository in the file the apps and the TUI use
 - [x] 80. Drop a commit on another in History or the edit mode to squash it into that one (the edit mode opens with it moved above and marked squash)
 - [x] 82. The in-progress row says what is being done where and the step, and why it stopped with what to do next (with the engine), as the app's band; no Skip for a revert
+- [x] 83. Known failures said in plain words with the app's next steps (Pull…, Open Working Copy, Set Upstream…, Open Worktree, Open in Terminal, Try Again) and advice in Details

@@ -1320,6 +1320,12 @@ First release.
 - History folds or shows any merge on its own (its context menu, ←/→), and the display menu has Fold All and Show
   All Merged Commits; the folds are kept per repository and shared with the apps and the TUI.
 
+#### Changed
+
+- A failure the app knows (sign-in, host key, network, rejected push, diverged branches, local changes, a lock, no
+  upstream, a branch in another worktree) is said in plain words with the app's next steps, such as Pull…, Set
+  Upstream… or Try Again; Details adds the advice.
+
 #### Fixed
 
 - Restoring the version before a commit that renamed a file brings back the old name instead of only deleting the new
