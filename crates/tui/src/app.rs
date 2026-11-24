@@ -10515,15 +10515,24 @@ mod tests {
         assert_eq!(sidebar.width, sidebar::WIDTH);
         // サイドバーの右の区切りを 10 列右へ。
         app.handle(at(sidebar.right(), MouseEventKind::Down(MouseButton::Left)));
-        app.handle(at(sidebar.right() + 10, MouseEventKind::Drag(MouseButton::Left)));
-        app.handle(at(sidebar.right() + 10, MouseEventKind::Up(MouseButton::Left)));
+        app.handle(at(
+            sidebar.right() + 10,
+            MouseEventKind::Drag(MouseButton::Left),
+        ));
+        app.handle(at(
+            sidebar.right() + 10,
+            MouseEventKind::Up(MouseButton::Left),
+        ));
         let layout = app.layout();
         assert_eq!(layout.sidebar.unwrap().width, sidebar::WIDTH + 10);
         // メインの画面の右の区切り（並べているとき）を左へ。サイドの画面が広がる。
         let main = layout.main.unwrap();
         let side = layout.side.unwrap().width;
         app.handle(at(main.right(), MouseEventKind::Down(MouseButton::Left)));
-        app.handle(at(main.right() - 5, MouseEventKind::Drag(MouseButton::Left)));
+        app.handle(at(
+            main.right() - 5,
+            MouseEventKind::Drag(MouseButton::Left),
+        ));
         app.handle(at(main.right() - 5, MouseEventKind::Up(MouseButton::Left)));
         let layout = app.layout();
         assert_eq!(layout.main.unwrap().width, main.width - 5);
