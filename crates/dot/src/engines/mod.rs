@@ -13,6 +13,7 @@
 //! （繰り返しの計算は四則と平方根だけにし、OS の数学関数の差で結果が変わらないようにする）。
 
 mod common;
+mod force;
 mod stress;
 
 use std::collections::BTreeSet;
@@ -29,6 +30,8 @@ pub enum Engine {
     Neato,
     /// `neato -n` に当たるもの（`layout=nop`・`nop1`・`nop2`）: `pos` を点のまま使う。
     Nop,
+    Fdp,
+    Sfdp,
 }
 
 impl Engine {
@@ -38,8 +41,15 @@ impl Engine {
             "dot" | "graphviz" | "gv" => Engine::Dot,
             "neato" => Engine::Neato,
             "nop" | "nop1" | "nop2" => Engine::Nop,
+            "fdp" => Engine::Fdp,
+            "sfdp" => Engine::Sfdp,
             _ => return None,
         })
+    }
+
+    /// クラスタの箱を描くか（sfdp は Graphviz でも描かない）。
+    pub fn draws_clusters(self) -> bool {
+        !matches!(self, Engine::Sfdp)
     }
 }
 
@@ -101,8 +111,21 @@ pub fn place(
     g: &Attrs,
     notes: &mut BTreeSet<Note>,
 ) -> Placement {
-    let nodes = stress::layout(items, links, g, engine == Engine::Nop, notes);
-    let clusters = {
+    let (nodes, mut clusters) = match engine {
+        Engine::Dot | Engine::Neato | Engine::Nop => {
+            let nodes = stress::layout(items, links, g, engine == Engine::Nop, notes);
+            (nodes, None)
+        }
+        Engine::Sfdp => (force::sfdp(items, links, g, notes), None),
+        Engine::Fdp => {
+            let (nodes, boxes) = force::fdp(items, links, groups, g, notes);
+            (nodes, Some(boxes))
+        }
+    };
+    if !engine.draws_clusters() {
+        clusters = Some(vec![None; groups.len()]);
+    }
+    let clusters = clusters.unwrap_or_else(|| {
         // neato は外側のクラスタだけ、中のノードを囲む箱を描く（Graphviz と同じ）
         let mut b = common::cluster_bounds(items, groups, &nodes);
         for (c, g) in groups.iter().enumerate() {
@@ -111,7 +134,7 @@ pub fn place(
             }
         }
         b
-    };
+    });
     Placement {
         nodes,
         clusters,
