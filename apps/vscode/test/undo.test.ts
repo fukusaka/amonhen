@@ -178,6 +178,15 @@ test('undo a rename recorded by the engine by renaming back', async () => {
   assert.equal(git('config', 'branch.main.description'), 'keep me');
 });
 
+test('a rename on the git execution layer is recorded and undone', async () => {
+  git('config', 'branch.main.description', 'keep me');
+  await log.recordRename('main', 'trunk', () => backend.renameBranch('main', 'trunk'));
+  assert.equal(git('branch', '--show-current'), 'trunk');
+  assert.equal((await log.undo())?.label, 'Rename main to trunk');
+  assert.equal(git('branch', '--show-current'), 'main');
+  assert.equal(git('config', 'branch.main.description'), 'keep me');
+});
+
 /** 壊れた記録は、空として黙って上書きしない。Undo はそう言い、壊れた中身は退けて残す（コアと同じ） */
 test('a broken log is set aside instead of being overwritten', async () => {
   const store = join(dir, '.git', 'amonhen');

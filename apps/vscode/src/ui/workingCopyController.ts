@@ -222,8 +222,6 @@ export class WorkingCopyController implements vscode.Disposable {
   /** 選んでいるファイルの差分を送る。stage してグループが変わっても、同じファイルを見続ける */
   private async sendDiff(): Promise<void> {
     const selected = this.selected;
-    // 頼んだときの空白の扱い（読んでいる間に替わったら、その差分は送らない。替えたときに読み直している）
-    const whitespace = this.whitespace;
     if (!selected) {
       return;
     }
@@ -236,6 +234,9 @@ export class WorkingCopyController implements vscode.Disposable {
       return;
     }
     this.selected = { group: change.group, path: change.path };
+    // 読んでいる間に空白の扱いを選び直したら、この差分は送らない（選び直しで読み直した方を送る。古い差分に新しい
+    // 扱いの札を付けない）
+    const whitespace = this.whitespace;
     let daemon: DaemonDiff | undefined;
     for (let attempt = 0; ; attempt++) {
       try {
@@ -258,9 +259,7 @@ export class WorkingCopyController implements vscode.Disposable {
       }
     }
     const diff = daemon ? daemon.diff : (await this.loadDiff(change)).diff;
-    if (this.whitespace !== whitespace) {
-      return;
-    }
+    if (whitespace !== this.whitespace) return;
     this.post({ type: 'wcDiff', group: change.group, diff, ...(daemon ? { whitespace } : {}) });
     if (daemon) void this.sendSyntax(daemon, change.group, whitespace);
   }
@@ -271,8 +270,7 @@ export class WorkingCopyController implements vscode.Disposable {
       const client = this.repo && (await daemonFor(this.repo.root));
       if (!client) return;
       const touched = applySyntax(await client.call({ op: 'diffSyntax', diff: daemon.handle }), daemon.lines);
-      // 色を付けている間に空白の扱いを替えたら、古い差分を新しい扱いのものとして送らない
-      if (touched.size > 0 && this.selected?.path === daemon.diff.path && this.whitespace === whitespace) {
+      if (touched.size > 0 && this.selected?.path === daemon.diff.path && whitespace === this.whitespace) {
         this.post({ type: 'wcDiff', group, diff: daemon.diff, whitespace });
       }
     } catch {
@@ -295,7 +293,9 @@ export class WorkingCopyController implements vscode.Disposable {
     // 空白を無視するときは、選んだ側（Changes・Staged）の差分（HEAD → 作業ツリーの差分では無視できない）
     if (whitespace !== 'exact') {
       const mode = change.group === 'staged' ? 'staged' : 'unstaged';
-      return readWorkingDiff(await client.call({ op: 'workingDiff', path: change.path, mode, whitespace }));
+      return readWorkingDiff(
+        await client.call({ op: 'workingDiff', path: change.path, mode, whitespace }),
+      );
     }
     // HEAD → 作業ツリーの 1 つの差分（行ごとに staged の印）。index を「HEAD に変更の一部を当てたもの」で表せない
     // ファイルは、コアが断るので、今までどおり Changes・Staged の差分に

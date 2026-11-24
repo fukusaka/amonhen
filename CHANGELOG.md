@@ -7,6 +7,13 @@ becomes the GitHub Release notes.
 
 ## App and engine
 
+### Unreleased
+
+#### Added
+
+- History's All Files draws Android VectorDrawables (`.xml` with a `<vector>` or `<animated-vector>` root) as pictures,
+  resolving `@color/…` from the commit's `res` folder and noting what's drawn in gray (macOS, GTK4).
+
 ### [0.2.14] - 2026-11-24
 
 On macOS, Show Only Commit Details can be undone again, with a button at the top right of the commit details.
@@ -1274,6 +1281,12 @@ First release.
 
 - The Working Copy diff can ignore whitespace (at line ends, changes in amount or all), with the engine. Lines and
   hunks aren't staged or discarded meanwhile.
+
+#### Fixed
+
+- Restoring the version before a commit that renamed a file brings back the old name instead of only deleting the new
+  one, and Restore This Version isn't offered for a file the commit deleted.
+- Renaming a branch without the engine can be undone, as it already could with the engine.
 
 ### [0.2.9] - 2026-11-24
 
