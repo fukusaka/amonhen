@@ -73,6 +73,8 @@ pub enum Next {
     Worktree(String),
     /// ブックマークの場所（この機械のパス・`ssh://`・`daemon:`）。そのまま開く。
     Location(String),
+    /// daemon とのつながりが切れた: 同じ場所を開き直す（アプリの Reconnect）。
+    Reconnect,
 }
 
 pub fn run(

@@ -175,6 +175,7 @@ pub fn run(args: &[String]) -> Result<ExitCode> {
             None => return Ok(ExitCode::SUCCESS),
             Some(amonhen_tui::Next::Worktree(path)) => worktree_location(&given, &path),
             Some(amonhen_tui::Next::Location(location)) => location,
+            Some(amonhen_tui::Next::Reconnect) => given,
         };
         files_here = !given.starts_with("ssh://") && !given.starts_with("daemon:ssh://");
         front = Arc::from(open_repository(std::path::Path::new(&given))?);
