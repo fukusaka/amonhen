@@ -299,3 +299,4 @@ macOS アプリに追いつく（1 つの機能を 1 つの pull request で、�
 - [x] 86. History をアプリと同じに: 最初はすべてのブランチ、ブランチの History は上流も、「N branches」、検索の ▾、「3 / 10」の件数、祖先を最初から目立たせる、中身を取りすぎる検索から Fetching and Folders へ
 - [x] 87. History のメニューをアプリと同じに: Copy Branch or Tag Name…・Copy Short IDs、Squash into Previous… と Interactive Rebase from Here…、どのコミットにも Cherry-pick、Split と複数選択の Merge・Save Patches は使えるときだけ、Go to Parent / Child のキー、編集モードの「drop — Remove」、パッチの形とカバーレターの組み合わせ、Reflog の worktree
 - [x] 88. History の札をアプリと同じに（3 つまで・+N・真ん中を切る・押すと名前の一覧）、一覧の横のコミットの頻度とブランチの動きの帯
+- [x] 89. 画像の比べ方をアプリと同じに: 2-Up、拡大縮小（−・倍率・+・合わせる・⌘ スクロール）、違うピクセルの割合、SVG は絵で出して Show as Text

@@ -3031,6 +3031,30 @@ body.wrap-lines .line .code {
   text-decoration: underline;
 }
 
+/* 画像の比べ方の帯: 比べ方・文字で見る・拡大縮小（アプリと同じ） */
+.image-modes {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.image-modes .spacer {
+  flex: 1;
+}
+
+.image-modes .zoom-label {
+  min-width: 3.5em;
+  font-variant-numeric: tabular-nums;
+}
+
+.image-stage {
+  overflow: auto;
+}
+
+.svg-picture {
+  margin: 4px 8px;
+}
+
 /* History の密度の帯（左半分がコミットの頻度、右半分がブランチの動き。押すとそこへ） */
 .density-box {
   position: relative;
