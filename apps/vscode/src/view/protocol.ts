@@ -36,6 +36,8 @@ export type HostMessage =
   | DaemonHostMessage
   /** 指定した画面に切り替える */
   | { type: 'show'; view: ViewName }
+  /** 長い行を折り返すか（設定 `amonhen.wrapLongLines`。すべての差分とファイルの中身） */
+  | { type: 'wrapLines'; wrap: boolean }
   /** 確認のシートを重ねる（答えは sheetAnswer） */
   | ({ type: 'sheet' } & Sheet);
 
@@ -52,6 +54,8 @@ export type WebviewMessage =
   | { type: 'ready' }
   /** 画面を切り替えた */
   | { type: 'view'; view: ViewName }
+  /** 差分の帯の ↩︎: 長い行の折り返しを切り替える */
+  | { type: 'toggleWrapLines' }
   /** 確認のシートの答え。index は押したボタン（buttons の順）、やめたらなし。choice は選んでいた取り込み方など */
   | { type: 'sheetAnswer'; id: number; index?: number; choice?: number }
   /** 確認のシートの一覧の行を押した（item は lists の行を通して数えた番号。シートは閉じない） */

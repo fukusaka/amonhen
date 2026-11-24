@@ -98,6 +98,8 @@ pub struct Changes {
     loaded: bool,
     /// 一部のフォルダだけを取り出している（sparse checkout）ときの、一覧の上の知らせ。
     sparse_note: Option<String>,
+    /// ファイルごとの追加・削除の行数（`workingStats`。HEAD と作業ツリー、バイナリは None）。行の右に出す。
+    stats: std::collections::HashMap<String, Option<(u64, u64)>>,
     selected: usize,
     top: usize,
     height: u16,
@@ -492,6 +494,23 @@ impl Changes {
         message_height(self.total_height) > 0
     }
 
+    /// ファイルごとの行数（`workingStats` の `stats`）。変わったら true（描き直す）。
+    pub fn set_stats(&mut self, stats: &Value) -> bool {
+        let read: std::collections::HashMap<String, Option<(u64, u64)>> =
+            (stats.as_array().into_iter().flatten())
+                .filter_map(|s| {
+                    let path = s["path"].as_str()?.to_owned();
+                    let counts = s["added"].as_u64().zip(s["removed"].as_u64());
+                    Some((path, counts))
+                })
+                .collect();
+        if read == self.stats {
+            return false;
+        }
+        self.stats = read;
+        true
+    }
+
     /// sparse checkout の知らせ（なければ None）。一覧の上の 1 行に出す。
     pub fn set_sparse_note(&mut self, note: Option<String>) {
         if self.sparse_note != note {
@@ -705,8 +724,30 @@ impl Changes {
                         buf[(area.x + 4, y)].set_char(entry.letter).set_fg(color);
                     }
                     let indent = BEFORE_PATH + depth * 2;
-                    if area.width > indent {
-                        let room = usize::from(area.width - indent);
+                    // 右の端に行数（アプリの行の +/−。バイナリは binary）。名前に場所を残せるときだけ。
+                    let mut right = area.right();
+                    if let Some(stat) = self.stats.get(&entry.path) {
+                        let parts = match stat {
+                            Some((added, removed)) => counts(*added, *removed, false),
+                            None => counts(0, 0, true),
+                        };
+                        let width: u16 = parts
+                            .iter()
+                            .map(|(t, _)| {
+                                unicode_width::UnicodeWidthStr::width(t.as_str()) as u16 + 1
+                            })
+                            .sum();
+                        if width > 0 && area.width > indent + width + 8 {
+                            right = area.right() - width;
+                            let mut x = right;
+                            for (text, style) in parts {
+                                x = buf.set_stringn(x, y, &text, usize::MAX, style).0 + 1;
+                            }
+                        }
+                    }
+                    let width = right.saturating_sub(area.x);
+                    if width > indent {
+                        let room = usize::from(width - indent - u16::from(right < area.right()));
                         let x = area.x + indent;
                         let name = entry.path.rsplit('/').next().unwrap_or(&entry.path);
                         let folder = entry.path.len() - name.len();
@@ -726,7 +767,7 @@ impl Changes {
                             ListMode::Name => {
                                 let end = buf.set_stringn(x, y, name, room, Style::new()).0;
                                 let dir = entry.path[..folder].trim_end_matches('/');
-                                let left = usize::from(area.right().saturating_sub(end + 2));
+                                let left = usize::from(right.saturating_sub(end + 3));
                                 if !dir.is_empty() && left > 0 {
                                     let dim = Style::new().fg(DIM);
                                     buf.set_stringn(end + 2, y, fit_path(dir, left), left, dim);

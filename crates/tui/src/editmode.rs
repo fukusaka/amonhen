@@ -118,6 +118,32 @@ impl EditMode {
         true
     }
 
+    /// `dragged` の行を `target` の行のすぐ上（新しい側）へ動かす。`squash` なら、`target` とまとめる行にする
+    /// （アプリの History のドラッグ: 行の間なら動かし、行の上ならまとめる）。できなければ、その理由。
+    pub fn drop_onto(&mut self, dragged: &str, target: &str, squash: bool) -> Result<(), String> {
+        let (Some(from), Some(_)) = (
+            self.rows.iter().position(|r| r.oid == dragged),
+            self.rows.iter().position(|r| r.oid == target),
+        ) else {
+            return Err(tr!(
+                "Only commits on the current branch’s own line can be moved or combined"
+            ));
+        };
+        if self.rows.iter().any(|r| r.merge) {
+            return Err(tr!(
+                "Merges are recreated as they are, so rows can’t be reordered across them"
+            ));
+        }
+        let row = self.rows.remove(from);
+        let to = self.rows.iter().position(|r| r.oid == target).unwrap();
+        self.rows.insert(to, row);
+        self.selected = to;
+        if squash {
+            self.rows[to].action = Action::Squash;
+        }
+        Ok(())
+    }
+
     /// 選んでいる行ですることを決める。できなければ、その理由。
     pub fn set(&mut self, action: Action) -> Result<(), String> {
         let i = self.selected;

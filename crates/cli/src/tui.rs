@@ -153,6 +153,10 @@ pub fn run(args: &[String]) -> Result<ExitCode> {
     }
     // サイドバーでほかの worktree を選ぶと、TUI が終わってそのパスを返す。同じ開き方（手元・daemon・SSH 先）で
     // 開き直す。Quick Open でブックマークを選んだときは、その場所を開く。
+    // Activity の Daemon から共有の daemon を起動できるよう、`daemon start` と同じエンジンを渡す。
+    if let Ok(program) = super::daemon_program() {
+        amonhen_tui::set_daemon_program(program);
+    }
     let mut front = front;
     let mut given = given.into_owned();
     let mut files_here = files_here;

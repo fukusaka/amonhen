@@ -96,6 +96,10 @@ pub struct Sidebar {
     marked: Vec<String>,
     /// Range Diff を開いている（Workspace に行を出す）。
     range_diff: bool,
+    /// subtree の一覧（コアの `subtrees` の info。git subtree があって 1 つ以上あれば、Subtrees の節を出す）。
+    subtrees: Value,
+    /// worktree ごとの変更のあるファイルの数（パスごと）。
+    worktree_counts: std::collections::HashMap<String, u64>,
     /// ブランチの分け方（コアの `branchGroups` の info。読めていなければ null）と、そのときの時刻（Inactive を
     /// 決める）。
     groups: Value,
@@ -128,6 +132,8 @@ impl Default for Sidebar {
             submodule_marks: Default::default(),
             marked: Vec::new(),
             range_diff: false,
+            subtrees: Value::Null,
+            worktree_counts: Default::default(),
             groups: Value::Null,
             now: 0,
             open_groups: Vec::new(),
@@ -384,6 +390,32 @@ impl Sidebar {
         out
     }
 
+    /// subtree の一覧（`subtrees` の info）。
+    /// worktree の行に、変更のあるファイルの数を出す（アプリの行の数）。
+    pub fn set_worktree_counts(&mut self, counts: &std::collections::HashMap<String, u64>) {
+        if &self.worktree_counts != counts {
+            self.worktree_counts = counts.clone();
+            self.rebuild();
+        }
+    }
+
+    pub fn set_subtrees(&mut self, subtrees: Value) {
+        if self.subtrees != subtrees {
+            self.subtrees = subtrees;
+            self.rebuild();
+        }
+    }
+
+    /// この機械の git に git subtree があるか（まだ読んでいなければ None）。
+    pub fn subtrees_available(&self) -> Option<bool> {
+        self.subtrees["available"].as_bool()
+    }
+
+    /// subtree `dir` の覚えている相手（url・ref・pushRef・squash）。
+    pub fn subtree(&self, dir: &str) -> Option<&Value> {
+        (self.subtrees["subtrees"].as_array().into_iter().flatten()).find(|s| s["dir"] == dir)
+    }
+
     /// Range Diff を開いているか。変わったら、行を作り直す。
     pub fn set_range_diff(&mut self, open: bool) {
         if self.range_diff != open {
@@ -473,6 +505,12 @@ impl Sidebar {
                         Some(branch) => format!("{folder} ({branch})"),
                         None => folder.to_owned(),
                     };
+                    // 変更のあるファイルの数（アプリの行の数）。
+                    if let Some(&count) = self.worktree_counts.get(path)
+                        && count > 0
+                    {
+                        label.push_str(&format!(" · {count}"));
+                    }
                     // ロックしているもの・フォルダが見つからないもの（アプリの印の代わり）。
                     if !w["locked"].is_null() {
                         label.push_str(&tr!(" · locked"));
@@ -496,6 +534,34 @@ impl Sidebar {
                 .peekable();
             if of_kind.peek().is_some() {
                 rows.push(Row::Header(tr!("Worktrees"), 0));
+                rows.extend(of_kind);
+            }
+        }
+        // subtree（取り込んだフォルダと、覚えている相手）。
+        if self.subtrees["available"] == true {
+            let of_kind: Vec<Row> = (self.subtrees["subtrees"].as_array().into_iter().flatten())
+                .filter_map(|s| {
+                    let dir = s["dir"].as_str()?;
+                    let label = match (s["url"].as_str(), s["ref"].as_str()) {
+                        (Some(url), Some(r)) => format!("{dir} ← {url} {r}"),
+                        _ => dir.to_owned(),
+                    };
+                    label
+                        .to_lowercase()
+                        .contains(&self.filter)
+                        .then(|| Row::Ref {
+                            kind: "subtree",
+                            name: dir.to_owned(),
+                            label,
+                            target: String::new(),
+                            current: false,
+                            ahead: 0,
+                            behind: 0,
+                        })
+                })
+                .collect();
+            if !of_kind.is_empty() {
+                rows.push(Row::Header(tr!("Subtrees"), 0));
                 rows.extend(of_kind);
             }
         }
@@ -612,6 +678,10 @@ impl Sidebar {
             Row::History => Some(Picked::History),
             Row::Reflog => Some(Picked::Reflog),
             Row::RangeDiff => Some(Picked::RangeDiff),
+            // subtree の行は、指すコミットを持たない。
+            Row::Ref {
+                kind: "subtree", ..
+            } => None,
             Row::Ref { target, .. } => Some(Picked::Commit(target.clone())),
         }
     }

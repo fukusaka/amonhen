@@ -68,7 +68,7 @@ checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
 name = "amonhen-backend-cli"
-version = "0.2.12"
+version = "0.2.13"
 dependencies = [
  "amonhen-model",
  "amonhen-watch",
@@ -78,7 +78,7 @@ dependencies = [
 
 [[package]]
 name = "amonhen-backend-gix"
-version = "0.2.12"
+version = "0.2.13"
 dependencies = [
  "amonhen-backend-cli",
  "amonhen-model",
@@ -88,7 +88,7 @@ dependencies = [
 
 [[package]]
 name = "amonhen-core"
-version = "0.2.12"
+version = "0.2.13"
 dependencies = [
  "amonhen-layout",
  "amonhen-model",
@@ -98,7 +98,9 @@ dependencies = [
  "imara-diff",
  "memmap2",
  "postcard",
+ "pulldown-cmark",
  "regex",
+ "roxmltree",
  "serde",
  "serde_bytes",
  "serde_json",
@@ -107,14 +109,14 @@ dependencies = [
 
 [[package]]
 name = "amonhen-layout"
-version = "0.2.12"
+version = "0.2.13"
 dependencies = [
  "memmap2",
 ]
 
 [[package]]
 name = "amonhen-model"
-version = "0.2.12"
+version = "0.2.13"
 dependencies = [
  "amonhen-layout",
  "libc",
@@ -124,7 +126,7 @@ dependencies = [
 
 [[package]]
 name = "amonhen-projection"
-version = "0.2.12"
+version = "0.2.13"
 dependencies = [
  "amonhen-layout",
  "amonhen-model",
@@ -132,7 +134,7 @@ dependencies = [
 
 [[package]]
 name = "amonhen-remote"
-version = "0.2.12"
+version = "0.2.13"
 dependencies = [
  "amonhen-layout",
  "amonhen-model",
@@ -150,7 +152,7 @@ dependencies = [
 
 [[package]]
 name = "amonhen-watch"
-version = "0.2.12"
+version = "0.2.13"
 dependencies = [
  "amonhen-model",
  "notify",
@@ -5231,6 +5233,17 @@ checksum = "4dcd034599e63b970727f70d79e02d62390a4a84f7c6b827c27c46d5ac3fa622"
 dependencies = [
  "ar_archive_writer",
  "cc",
+]
+
+[[package]]
+name = "pulldown-cmark"
+version = "0.13.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3db2be46835f013dd3f4fa7f5f7402c537787b54ebb6fe2b94bbdd7e2669bb7b"
+dependencies = [
+ "bitflags 2.13.2",
+ "memchr",
+ "unicase",
 ]
 
 [[package]]

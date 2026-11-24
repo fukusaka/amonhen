@@ -48,7 +48,10 @@ pub fn draw_in_zone(language: &str, text: &str, zone: Option<Arc<dyn TimeZone>>)
 fn draw_mermaid(text: &str, zone: Option<Arc<dyn TimeZone>>) -> Option<Drawn> {
     // pele は 5 万文字（UTF-16）を超える文を読まずに断る。`supports` は前処理を長さの上限なしに通すので、
     // 何 MB ものコードブロックで止まらないよう、先に長さを見て pele の断りをそのまま見せる。
-    let too_long = text.len() > MAX_SOURCE && text.encode_utf16().count() > MAX_SOURCE;
+    // UTF-16 の数はバイト数の 3 分の 1 より少なくならない（3 バイトの文字が 1 つ）ので、上限の 3 倍を超えるバイト数
+    // なら数えずに断る（何 MB もの文を数えると、デバッグビルドでは数百ミリ秒かかる）。
+    let too_long = text.len() > MAX_SOURCE
+        && (text.len() > MAX_SOURCE * 3 || text.encode_utf16().count() > MAX_SOURCE);
     if !too_long && !amonhen_pele::supports(text) {
         return None;
     }

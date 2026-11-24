@@ -5,6 +5,8 @@ export interface State {
   view?: ViewName;
   /** History の詳細の幅 */
   detailsWidth?: number;
+  /** 詳細の上の欄（コミットの情報）の高さ。仕切りを動かしたら、どのコミットでも保つ（ダブルクリックで中身に合わせ直す） */
+  detailsHeadHeight?: number;
   /** File History でマージも出すか */
   fileHistoryMerges?: boolean;
   /** Repository Settings で出しているページ */

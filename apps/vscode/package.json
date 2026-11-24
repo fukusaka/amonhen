@@ -3,7 +3,7 @@
   "displayName": "Amon Hen",
   "description": "A personal extension for working with Git comfortably in VSCode, on the Amon Hen engine",
   "icon": "media/icon.png",
-  "version": "0.2.8",
+  "version": "0.2.9",
   "publisher": "fukusaka",
   "private": true,
   "license": "(MIT OR Apache-2.0)",
@@ -43,6 +43,11 @@
     "configuration": {
       "title": "Amon Hen",
       "properties": {
+        "amonhen.wrapLongLines": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Wrap lines wider than the diff instead of scrolling sideways, in every diff and file of the main view (History, Working Copy). **Wrap Long Lines** (Alt+Z in the main view) and the ↩︎ button above the diff switch it."
+        },
         "amonhen.daemon.enabled": {
           "type": "boolean",
           "default": true,
@@ -343,6 +348,12 @@
         "command": "amonhen.commitFile.showWholeFile",
         "title": "Show Whole File",
         "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.toggleWrapLongLines",
+        "title": "Wrap Long Lines",
+        "category": "Amon Hen",
+        "toggled": "config.amonhen.wrapLongLines"
       },
       {
         "command": "amonhen.restoreFile.thisVersion",
@@ -861,6 +872,13 @@
         "command": "amonhen.cloneBundle",
         "title": "Clone from Bundle…",
         "category": "Amon Hen"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "amonhen.toggleWrapLongLines",
+        "key": "alt+z",
+        "when": "activeWebviewPanelId == 'amonhen.main'"
       }
     ],
     "menus": {

@@ -45,6 +45,10 @@ pub enum Event {
     Failed(String),
     /// Quick Open を開いたときに探し始めた、手元の探すフォルダの下のリポジトリ（フォルダごとに届く）。
     Scanned(Vec<String>),
+    /// clone が終わった（clone した場所か、失敗の理由）。
+    Cloned(std::result::Result<String, String>),
+    /// ほかの worktree の変更の数を読み直す頃（worktree が 2 つ以上あるとき、10 秒ごと。アプリと同じ）。
+    CountWorktrees,
 }
 
 /// 描き直す所。一番上と一番下の行は、どれかを描き直すたびに描き直す。
@@ -118,6 +122,12 @@ struct Layout {
 }
 
 /// 変化の知らせのビット（`amonhen_watch::Changes`）。
+/// Activity の Performance で測るもの。
+const PERF_HISTORY: &str = "history";
+const PERF_STATUS: &str = "status";
+const PERF_DIFF: &str = "diff";
+const PERF_WORKING_DIFF: &str = "workingDiff";
+
 const CHANGED_REFS: u32 = 1;
 const CHANGED_INDEX: u32 = 2;
 const CHANGED_WORKTREE: u32 = 4;
@@ -169,6 +179,28 @@ enum Naming {
     DeepenSince,
     /// sparse checkout で取り出すフォルダ（空白で区切る。空ならすべて取り出す）。
     SparseFolders,
+    /// clone する場所（この機械の。始まりは URL）。
+    CloneDest,
+    /// Activity の記録を書き出すファイル（この機械の）。
+    ActivityExport,
+    /// Range Diff の範囲（git range-diff と同じ: `A...B`、`A..B C..D`、`base A B`）。
+    RangeDiffRanges,
+    /// submodule（始まりはそのパス）の新しい URL。
+    SubmoduleUrl,
+    /// submodule（始まりはそのパス）が追うブランチ（空なら既定に戻す）。
+    SubmoduleBranch,
+    /// それぞれの submodule の中で動かす命令（シェルで）。
+    SubmoduleForeach,
+    /// 足す submodule の URL（次に場所を聞く）。
+    SubmoduleAddUrl,
+    /// 足す submodule の場所（始まりは URL）。
+    SubmoduleAddPath,
+    /// Add Subtree で取り込むフォルダ（次に相手を聞く）。
+    SubtreeDir,
+    /// subtree の相手（`URL ref`。始まりはフォルダ、`what` は add・pull・push）。
+    SubtreeSource,
+    /// subtree のフォルダの履歴だけで作るブランチ（始まりはフォルダ）。
+    SubtreeSplit,
     /// リポジトリをまとめる bundle のファイル（この機械の）。
     Bundle,
     /// 取り込む bundle のファイル（この機械の）。
@@ -456,6 +488,51 @@ fn fixup_subjects(messages: &[String]) -> Vec<String> {
 }
 
 /// 操作ログ（アプリの Activity の Operation Log）: Undo の記録を新しい順に。選んだところまで戻せる。
+/// Activity の Operations: この TUI と daemon が動かした git と命令（新しい順）。
+struct Operations {
+    entries: Vec<Operation>,
+    selected: usize,
+    /// 読んだ記録そのもの（Export JSON で書く）。
+    records: Value,
+}
+
+struct Operation {
+    seq: u64,
+    /// daemon（か SSH 先）のもの。取り消しはそちらに頼む。
+    remote: bool,
+    kind: String,
+    label: String,
+    /// 始めた時刻（UNIX 時刻の秒）。
+    started: i64,
+    /// かかった時間（ミリ秒）。
+    duration: Option<f64>,
+    /// 終わっていなければ None。
+    ok: Option<bool>,
+    error: Option<String>,
+    output: Option<String>,
+    progress: Option<String>,
+    cancellable: bool,
+}
+
+impl Operation {
+    fn from(e: &Value, remote: bool) -> Option<Self> {
+        let text = |k: &str| e[k].as_str().map(str::to_owned);
+        Some(Self {
+            seq: e["seq"].as_u64()?,
+            remote,
+            kind: text("kind").unwrap_or_default(),
+            label: text("label").unwrap_or_default(),
+            started: (e["started"].as_u64().unwrap_or(0) / 1000) as i64,
+            duration: e["duration"].as_f64(),
+            ok: e["ok"].as_bool(),
+            error: text("error"),
+            output: text("output"),
+            progress: text("progress"),
+            cancellable: e["cancellable"] == true,
+        })
+    }
+}
+
 struct OperationLog {
     /// 名前・時刻（UNIX 時刻の秒）。
     entries: Vec<(String, i64)>,
@@ -505,6 +582,8 @@ pub struct App {
     patch_file: Option<String>,
     /// 前の版と比べている間の題（比べた結果が届くまで覚えておく）。
     range_title: Option<String>,
+    /// 今の Range Diff の範囲（`rangeDiff` の ranges。`r` で打ち直す）。
+    range_ranges: Vec<String>,
     /// merge か rebase を確かめる前に、見通しを読んでいる: 何を（ref の名前）、どのブランチに、merge か。merge は
     /// 見通し（`mergePreview`）を読んだ後に、コンフリクトの見込みも読む。
     preview: Option<(String, String, bool, Value)>,
@@ -559,6 +638,15 @@ pub struct App {
     tag_remote: Option<(String, bool)>,
     /// 消す worktree（変更の数を読んでいる間）。
     removing_worktree: Option<String>,
+    /// History を、この語に合うコミットだけにしている（`&`。アプリの Show Only Matching Commits）。
+    matching: Option<String>,
+    /// worktree ごとの変更のあるファイルの数（パスごと。開いているものは Working Copy の数）。
+    worktree_counts: std::collections::HashMap<String, u64>,
+    /// 開いている worktree のパスと、ほかの読める worktree のパス（2 つ以上あるときだけ）。
+    worktree_paths: Option<(String, Vec<String>)>,
+    /// 変更の数をすべて数え直した時刻（5 分ごとに `fresh` で読む）と、数えるのを頼む時計を動かしたか。
+    counts_fresh_at: Option<std::time::Instant>,
+    counts_clock: bool,
     /// History のコミットから作る worktree の、新しいブランチの名前（場所を聞いている間）。
     worktree_branch: Option<String>,
     /// パッチの版の番号を聞いている間の、コミット（空白区切り）と書く場所。
@@ -569,6 +657,10 @@ pub struct App {
     bundle_save: Option<String>,
     /// 署名を読んだタグの名前（変わったら読み直す）。
     tag_signature_names: Vec<String>,
+    /// 署名を確かめたタグ（`tagSignatures` の `tags`）。`i` で詳細を出す。
+    tag_signatures: Vec<Value>,
+    /// `!` の枠と同じ形で出すもの（題と中身）。タグの署名の詳細など。
+    info_box: Option<(String, String)>,
     /// ロックするかを聞いている worktree（`r` で理由を聞く）。
     worktree_lock: Option<String>,
     /// 詳細に出した stash（土台を読んだら、一番下の行に様子を書く）。
@@ -628,15 +720,55 @@ pub struct App {
     failure_details: Option<String>,
     /// `!` の枠に出しているのが、失敗の全部か（でなければ hooks の出力）。
     showing_failure: bool,
+    /// ペインの区切りをドラッグして決めた幅（この TUI を動かしている間だけ）: サイドバーと、並べたときのメインの画面。
+    sidebar_width: u16,
+    main_width: Option<u16>,
+    /// ドラッグしている区切り（true はサイドバーの右、false はメインの画面の右）。
+    dragging: Option<bool>,
+    /// 最後の失敗の全文（git のコマンドを探す間）。見つかったら、詳細の先頭に `$ git …` を足す。
+    failure_seen: Option<String>,
+    /// `failure_details` は失敗ではなく、命令の出力（Run in Each Submodule）。
+    details_are_output: bool,
     /// hooks の出力を枠に出している（そのときの一番上の行）。
     showing_hooks: Option<usize>,
     /// コマンドの一覧を出している（`:`）。
     palette: Option<Palette>,
     operation_log: Option<OperationLog>,
+    /// Activity の Operations（`Tab` で操作ログと切り替える）。
+    operations: Option<Operations>,
+    /// clone の途中で聞いていること（URL、場所、取り方）。選ぶ前に横取りして、次を聞く。
+    clone_plan: Option<ClonePlan>,
+    /// octopus merge で取り込む順と、その見通し（`octopusPreview` の `info`）。コンフリクトの見込みを読む間も持つ。
+    octopus: Option<(Vec<String>, Value)>,
+    /// octopus merge を確かめている間の `l`: この順（コンフリクトしそうなものを最後に回した）で見直す。
+    octopus_last: Option<Vec<String>>,
+    /// Export JSON で書き出す Operations の記録（場所を打っている間）。
+    export_records: Option<Value>,
+    /// Activity の History Cache（`historyCache` の info。キャッシュがなければ null）。
+    history_cache: Option<Value>,
+    /// Activity の Daemon（`daemon status` の答え。動いていなければ null）。
+    daemon: Option<Value>,
+    /// 内部の出来事（変化の知らせと、それで読み直したもの。新しいものが後ろ、500 まで）。時刻は UNIX 時刻の秒。
+    event_log: std::collections::VecDeque<(i64, String)>,
+    /// Activity の Events を出している（一番上からの位置）。
+    showing_events: Option<usize>,
+    /// 画面の速さ: 測るものごとに、頼んだ時刻と、かかった時間（ミリ秒、新しいものが後ろ、200 まで）。
+    perf_started: std::collections::HashMap<&'static str, std::time::Instant>,
+    perf: Vec<(&'static str, std::collections::VecDeque<f64>)>,
+    /// Activity の Performance を出している。
+    showing_performance: bool,
     /// History の編集モード（`E`）。
     edit_mode: Option<crate::editmode::EditMode>,
     /// 印をつけたコミット（新しい順）を、編集モードで 1 つにまとめる（`E`。行が届いたら決める）。
     combining: Vec<String>,
+    /// History でドラッグしているコミット（ID と件名）。
+    commit_drag: Option<(String, String, u32)>,
+    /// ドラッグして落とした: 動かすコミット、落とした先、まとめるか（編集モードの行が届いたら当てる）。
+    drag_plan: Option<(String, String, bool)>,
+    /// 落とした後に、動かすかまとめるかを聞いている間（動かすコミットと落とした先）。
+    drop_asked: Option<(String, String, bool)>,
+    /// History の行に出す項目を選んでいる間（`I`）。
+    items_asked: bool,
     /// 端末のクリップボードに入れる文字（OSC 52。描くループが書く）。
     copy: Option<String>,
     /// 編集モードで、変更があるのに Esc を 1 度押した（もう 1 度で捨てる）。
@@ -721,11 +853,18 @@ impl App {
             editing_remote: None,
             tag_remote: None,
             removing_worktree: None,
+            matching: None,
+            worktree_counts: Default::default(),
+            worktree_paths: None,
+            counts_fresh_at: None,
+            counts_clock: false,
             worktree_branch: None,
             patch_version: None,
             archive_folder: None,
             bundle_save: None,
             tag_signature_names: Vec::new(),
+            tag_signatures: Vec::new(),
+            info_box: None,
             worktree_lock: None,
             stash_about: None,
             naming: Naming::Branch,
@@ -758,11 +897,32 @@ impl App {
             hook_output: None,
             failure_details: None,
             showing_failure: false,
+            sidebar_width: sidebar::WIDTH,
+            main_width: None,
+            dragging: None,
+            failure_seen: None,
+            details_are_output: false,
             showing_hooks: None,
             palette: None,
             operation_log: None,
+            operations: None,
+            history_cache: None,
+            daemon: None,
+            event_log: Default::default(),
+            showing_events: None,
+            perf_started: Default::default(),
+            perf: Vec::new(),
+            showing_performance: false,
+            export_records: None,
+            clone_plan: None,
+            octopus: None,
+            octopus_last: None,
             edit_mode: None,
             combining: Vec::new(),
+            commit_drag: None,
+            drag_plan: None,
+            drop_asked: None,
+            items_asked: false,
             copy: None,
             edit_discard: false,
             plan_message: None,
@@ -777,6 +937,7 @@ impl App {
             bundle_file: None,
             patch_file: None,
             range_title: None,
+            range_ranges: Vec::new(),
             topo_order: false,
             fold: false,
             preview: None,
@@ -884,6 +1045,7 @@ impl App {
             expanded: self.expanded.clone(),
             rebuild: self.rebuilding,
             tips: self.sidebar.marked_targets(),
+            matching: self.matching.clone(),
         });
     }
 
@@ -971,6 +1133,17 @@ impl App {
     }
 
     fn send(&mut self, request: Request) {
+        // 画面の速さ（Activity の Performance）: 読み直し・差分の読み込みを頼んだ時刻。
+        let metric = match &request {
+            Request::Open { .. } => Some(PERF_HISTORY),
+            Request::Status => Some(PERF_STATUS),
+            Request::Commit { .. } | Request::Selection { .. } => Some(PERF_DIFF),
+            Request::WorkingDiff { .. } => Some(PERF_WORKING_DIFF),
+            _ => None,
+        };
+        if let Some(metric) = metric {
+            self.perf_started.insert(metric, std::time::Instant::now());
+        }
         self.pending += 1;
         self.loader.send(request);
     }
@@ -1003,15 +1176,20 @@ impl App {
         }
         let (sidebar, x) = match cols >= SIDEBAR_FROM {
             // サイドバーの右に、区切りの 1 列。
-            true => (
-                Some(Rect::new(0, 1, sidebar::WIDTH, height)),
-                sidebar::WIDTH + 1,
-            ),
+            true => {
+                // ドラッグした幅は、メインの画面に 40 列を残す所まで。
+                let width = self.sidebar_width.clamp(12, cols - 41);
+                (Some(Rect::new(0, 1, width, height)), width + 1)
+            }
             false => (None, 0),
         };
         let rest = cols - x;
         if rest >= SIDE_BY_SIDE {
-            let left = (rest / 5 * 2).max(HISTORY_MIN);
+            let left = match self.main_width {
+                // ドラッグした幅は、両側に 30 列を残す所まで。
+                Some(width) => width.clamp(30, rest - 31),
+                None => (rest / 5 * 2).max(HISTORY_MIN),
+            };
             // 間に区切りの 1 列。
             return Layout {
                 sidebar,
@@ -1045,6 +1223,11 @@ impl App {
             || self.fixup_pick.is_some()
             || self.palette.is_some()
             || self.operation_log.is_some()
+            || self.operations.is_some()
+            || self.history_cache.is_some()
+            || self.daemon.is_some()
+            || self.showing_events.is_some()
+            || self.showing_performance
             || self.edit_mode.is_some();
         if std::mem::take(&mut self.dirty) || (over && damage != Damage::default()) {
             return Some(Damage::ALL);
@@ -1322,6 +1505,27 @@ impl App {
                 self.dirty = true;
             }
             Event::Changed(bits) => {
+                // Activity の Events に、何が変わったと知らされたかと、それで読み直すもの。
+                let mut changed = Vec::new();
+                for (bit, name) in [
+                    (CHANGED_REFS, tr!("refs")),
+                    (CHANGED_INDEX, tr!("the index")),
+                    (CHANGED_WORKTREE, tr!("the working tree")),
+                ] {
+                    if bits & bit != 0 {
+                        changed.push(name);
+                    }
+                }
+                if !changed.is_empty() {
+                    let mut text = tr!("Changed: {what}", what = changed.join(", "));
+                    if bits & (CHANGED_INDEX | CHANGED_WORKTREE) != 0 {
+                        text.push_str(&tr!(" → read the status again"));
+                    }
+                    if bits & CHANGED_REFS != 0 {
+                        text.push_str(&tr!(" → read History and the refs again"));
+                    }
+                    self.event(text);
+                }
                 if bits & (CHANGED_INDEX | CHANGED_WORKTREE) != 0 {
                     self.changes.refresh();
                 }
@@ -1331,6 +1535,16 @@ impl App {
             }
             Event::Loaded(loaded) => {
                 self.pending = self.pending.saturating_sub(1);
+                let metric = match &loaded {
+                    Loaded::Opened { .. } => Some(PERF_HISTORY),
+                    Loaded::Status(_) => Some(PERF_STATUS),
+                    Loaded::Commit { .. } => Some(PERF_DIFF),
+                    Loaded::WorkingDiff { .. } => Some(PERF_WORKING_DIFF),
+                    _ => None,
+                };
+                if let Some(metric) = metric {
+                    self.record_perf(metric);
+                }
                 // 行と祖先は History の中だけ、コミットと構文の色は詳細・差分の中だけが変わる。
                 match &loaded {
                     Loaded::Rows { .. } | Loaded::Lineage { .. } => self.damage |= Damage::MAIN,
@@ -1355,11 +1569,17 @@ impl App {
                         let selected = self.history.selected_id();
                         self.history.opened(&refs, &history);
                         self.sidebar.set_refs(&refs);
+                        self.worktrees_opened(&refs);
                         // タグの署名の印（アプリのタグの行の印）。タグが変わったときだけ読む（検証の結果はコアが覚える）。
                         // ブランチの分け方（お気に入り・積んだもの・Inactive・Archived）。
                         self.send(Request::Run {
                             name: "branchGroups",
                             command: json!({"op": "branchGroups"}),
+                        });
+                        // subtree の一覧（git subtree があれば、サイドバーに Subtrees の節）。
+                        self.send(Request::Run {
+                            name: "subtreeList",
+                            command: json!({"op": "subtrees"}),
                         });
                         // リポジトリの形（shallow・partial clone、sparse checkout）の印。
                         self.send(Request::Run {
@@ -1402,8 +1622,14 @@ impl App {
                             .find(|e| e["kind"] == "stash")
                             .and_then(|e| e["name"].as_str())
                             .map(str::to_owned);
-                        // 検索していたら、新しい History で検索し直す。
-                        if let Some((query, _)) = self.search.clone() {
+                        // 合うものだけにしていれば、すべての行が合った行。でなければ、検索していたら新しい History で
+                        // 検索し直す。
+                        if let Some(query) = self.matching.clone() {
+                            self.cancel_search();
+                            self.search = Some((query, None));
+                            self.history
+                                .set_matches((0..self.history.total()).collect());
+                        } else if let Some((query, _)) = self.search.clone() {
                             self.start_search(query);
                         }
                         if let Some(id) = selected {
@@ -1502,6 +1728,12 @@ impl App {
                             && sequence["empty"] != true
                             && sequence["retried"] != true;
                         self.changes.status(&status);
+                        // 行ごとの行数は、一覧を出してから裏で（アプリと同じ）。
+                        self.send(Request::Background {
+                            name: "workingStats",
+                            command: json!({"op": "workingStats"}),
+                        });
+                        self.count_open_worktree();
                         self.sidebar.set_conflicts(self.changes.conflicts());
                         // Commit and Push: コミットの後の状態（上流より進んだ数）が届いたら、push を確かめる。
                         if !self.committing && std::mem::take(&mut self.push_after_commit) {
@@ -1609,6 +1841,20 @@ impl App {
                     self.history.set_partial_matches(rows);
                     self.dirty = true;
                 }
+            }
+            // clone できたら、そのリポジトリを開く（Quick Open で選んだときと同じ）。
+            Event::CountWorktrees => self.read_worktree_counts(),
+            Event::Cloned(result) => {
+                self.pending = self.pending.saturating_sub(1);
+                self.running = None;
+                match result {
+                    Ok(dest) => {
+                        self.open_location = Some(dest);
+                        self.quit = true;
+                    }
+                    Err(error) => self.error = Some(error),
+                }
+                self.dirty = true;
             }
             Event::Scanned(paths) => {
                 if let Some(quick) = &mut self.quick_open {
@@ -1727,6 +1973,75 @@ impl App {
             self.dirty = true;
             return;
         }
+        // History の行に出す項目: 押したものを出す・隠す。
+        if self.choices.is_some() && std::mem::take(&mut self.items_asked) {
+            self.choices = None;
+            self.dirty = true;
+            let item = match key.code {
+                KeyCode::Char('r') => crate::history::ITEM_REFS,
+                KeyCode::Char('a') => crate::history::ITEM_AUTHOR,
+                KeyCode::Char('d') => crate::history::ITEM_DATE,
+                KeyCode::Char('i') => crate::history::ITEM_ID,
+                KeyCode::Char('s') => crate::history::ITEM_SIGNATURE,
+                _ => return,
+            };
+            let items = self.history.items() ^ item;
+            self.history.set_items(items);
+            self.damage |= Damage::MAIN;
+            return;
+        }
+        // コミットを落とした後: `m` 動かす、`s` まとめる。編集モードの行を、古い方から読む。
+        if self.choices.is_some()
+            && let Some((dragged, target, dragged_older)) = self.drop_asked.take()
+        {
+            self.choices = None;
+            self.dirty = true;
+            if let KeyCode::Char(ch @ ('m' | 's')) = key.code {
+                // 古い方（History で下の行）から HEAD まで。
+                let from = if dragged_older { &dragged } else { &target }.clone();
+                self.drag_plan = Some((dragged, target, ch == 's'));
+                self.send(Request::EditRows { from });
+            }
+            return;
+        }
+        // octopus merge を確かめている間の `l`: コンフリクトしそうなものを最後に回して見直す（アプリの Put Last）。
+        if self.choices.is_some()
+            && let Some(order) = self.octopus_last.take()
+            && key.code == KeyCode::Char('l')
+        {
+            self.choices = None;
+            self.preview_octopus(order);
+            self.dirty = true;
+            return;
+        }
+        // clone の取り方・一緒にすることを選んでいる間（`ask_clone_download` と `ask_clone_extras`）。
+        if self.choices.is_some()
+            && let Some(mut plan) = self.clone_plan.take()
+        {
+            match (plan.stage, key.code) {
+                (0, KeyCode::Char(ch @ ('y' | 'c' | 'r'))) => {
+                    plan.download = ch;
+                    plan.stage = 1;
+                    self.choices = None;
+                    self.ask_clone_extras(plan);
+                }
+                (1, KeyCode::Char(ch @ ('y' | 's' | 'f' | 'a'))) => {
+                    self.choices = None;
+                    self.start_clone(plan, ch);
+                }
+                (2, KeyCode::Char(ch @ '1'..='9'))
+                    if plan.branches.len() > usize::from(ch as u8 - b'1') =>
+                {
+                    plan.branch = Some(plan.branches[usize::from(ch as u8 - b'1')].clone());
+                    plan.stage = 1;
+                    self.choices = None;
+                    self.ask_clone_extras(plan);
+                }
+                _ => self.choices = None,
+            }
+            self.dirty = true;
+            return;
+        }
         // shallow clone を取り足す前の `d`: 日付を打つ。
         if self.choices.is_some()
             && std::mem::take(&mut self.deepen_date_offered)
@@ -1824,6 +2139,9 @@ impl App {
                 KeyCode::Char('k') | KeyCode::Up => Some(top.saturating_sub(1)),
                 _ => None,
             };
+            if self.showing_hooks.is_none() {
+                self.info_box = None;
+            }
             return;
         }
         // キーの一覧は、`j` `k`（と矢印）で動かせる。ほかのキーで閉じる。
@@ -1836,9 +2154,146 @@ impl App {
             }
             return;
         }
+        // Daemon: `S` で起動、`X` で止める、`r` で読み直す、`Tab` で操作ログへ。ほかのキーで閉じる。
+        if self.daemon.is_some() {
+            self.dirty = true;
+            match key.code {
+                KeyCode::Char('r') => self.read_daemon(),
+                KeyCode::Char('S') => {
+                    match crate::daemon_program() {
+                        Some(program) => match amonhen_remote::local::start(program) {
+                            Ok(()) => self.notice = Some(tr!("Started the shared daemon")),
+                            Err(e) => self.error = Some(e.to_string()),
+                        },
+                        None => self.error = Some(tr!("Start it with amonhen daemon start")),
+                    }
+                    self.read_daemon();
+                }
+                KeyCode::Char('X') => {
+                    match amonhen_remote::local::control("stop") {
+                        Ok(Some(_)) => self.notice = Some(tr!("Stopped the shared daemon")),
+                        Ok(None) => self.notice = Some(tr!("The shared daemon isn’t running")),
+                        Err(e) => self.error = Some(e.to_string()),
+                    }
+                    self.read_daemon();
+                }
+                KeyCode::Tab => {
+                    self.daemon = None;
+                    self.run(
+                        "undoLog",
+                        tr!("Reading the operation log…"),
+                        json!({"op": "undoLog"}),
+                    );
+                }
+                _ => self.daemon = None,
+            }
+            return;
+        }
+        // Performance: `Tab` で Events へ。ほかのキーで閉じる。
+        if self.showing_performance {
+            self.dirty = true;
+            self.showing_performance = false;
+            if key.code == KeyCode::Tab {
+                self.showing_events = Some(0);
+            }
+            return;
+        }
+        // Events: j/k で動かす、`Tab` で Daemon へ。ほかのキーで閉じる。
+        if let Some(top) = self.showing_events {
+            self.dirty = true;
+            let last = self.event_log.len().saturating_sub(1);
+            match key.code {
+                KeyCode::Char('j') | KeyCode::Down => {
+                    self.showing_events = Some((top + 1).min(last))
+                }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    self.showing_events = Some(top.saturating_sub(1))
+                }
+                KeyCode::Tab => {
+                    self.showing_events = None;
+                    self.read_daemon();
+                }
+                _ => self.showing_events = None,
+            }
+            return;
+        }
+        // History Cache: `r` で読み直す、`Tab` で Events へ。ほかのキーで閉じる。
+        if self.history_cache.is_some() {
+            self.dirty = true;
+            match key.code {
+                KeyCode::Char('r') => {
+                    self.send(Request::Run {
+                        name: "historyCache",
+                        command: json!({"op": "historyCache"}),
+                    });
+                }
+                KeyCode::Tab => {
+                    self.history_cache = None;
+                    self.showing_performance = true;
+                }
+                _ => self.history_cache = None,
+            }
+            return;
+        }
+        // Operations: 選んでいるものの出力を下に出す。`x` で取り消す、`r` で読み直す、`Tab` で操作ログへ。
+        if let Some(mut ops) = self.operations.take() {
+            self.dirty = true;
+            let last = ops.entries.len().saturating_sub(1);
+            match key.code {
+                KeyCode::Char('j') | KeyCode::Down => ops.selected = (ops.selected + 1).min(last),
+                KeyCode::Char('k') | KeyCode::Up => ops.selected = ops.selected.saturating_sub(1),
+                KeyCode::Char('g') | KeyCode::Home => ops.selected = 0,
+                KeyCode::Char('G') | KeyCode::End => ops.selected = last,
+                KeyCode::Char('r') => {
+                    self.read_operations();
+                    return;
+                }
+                // 記録を JSON のファイルに書き出す（この機械に。アプリの Export JSON…）。
+                KeyCode::Char('s') => {
+                    self.export_records = Some(ops.records.clone());
+                    self.naming = Naming::ActivityExport;
+                    self.typing_branch = Some((
+                        String::new(),
+                        String::new(),
+                        "amonhen-activity.json".to_owned(),
+                    ));
+                    return;
+                }
+                KeyCode::Tab => {
+                    self.send(Request::Run {
+                        name: "historyCache",
+                        command: json!({"op": "historyCache"}),
+                    });
+                    return;
+                }
+                KeyCode::Char('x') => match ops.entries.get(ops.selected) {
+                    Some(op) if op.ok.is_none() && op.cancellable => {
+                        self.send(Request::Run {
+                                name: "cancelActivity",
+                                command: json!({"op": "cancelActivity", "seq": op.seq, "remote": op.remote}),
+                            });
+                    }
+                    Some(_) => {
+                        self.notice =
+                            Some(tr!("Only a running operation that can stop is cancelled"))
+                    }
+                    None => {}
+                },
+                _ => return,
+            }
+            self.operations = Some(ops);
+            return;
+        }
         // 操作ログ: 選んでいる記録まで（新しいものから順に）戻す。確かめてから。ほかのキーで閉じる。
         if let Some(mut log) = self.operation_log.take() {
             self.dirty = true;
+            if key.code == KeyCode::Tab {
+                self.read_operations();
+                return;
+            }
+            if log.entries.is_empty() {
+                return;
+            }
             match key.code {
                 KeyCode::Char('j') | KeyCode::Down => {
                     log.selected = (log.selected + 1).min(log.entries.len().saturating_sub(1));
@@ -1975,6 +2430,11 @@ impl App {
             match key.code {
                 KeyCode::Esc => return,
                 KeyCode::Enter => {
+                    // URL（か bundle のファイル）を打っていれば、それを clone する（アプリの Clone…）。
+                    if clonable(quick.query.trim()) {
+                        self.ask_clone_destination(quick.query.trim());
+                        return;
+                    }
                     if let Some(candidate) = quick.shown().get(quick.selected) {
                         self.open_location = Some(candidate.path.clone());
                         self.quit = true;
@@ -2066,6 +2526,18 @@ impl App {
             // 候補は、次に補うまで。
             self.path_choices.clear();
             match key.code {
+                // 追うブランチ: 空なら既定に戻す。
+                KeyCode::Enter if matches!(self.naming, Naming::SubmoduleBranch) => {
+                    if let Some((path, _, branch)) = self.typing_branch.take() {
+                        let branch = branch.trim();
+                        self.run(
+                            "submoduleChanged",
+                            tr!("Changing the branch to follow…"),
+                            json!({"op": "changeSubmodule", "change": {"kind": "setBranch", "path": path,
+                                "branch": (!branch.is_empty()).then_some(branch)}}),
+                        );
+                    }
+                }
                 // 取り出すフォルダ: 空ならすべて（sparse checkout をやめる）。
                 KeyCode::Enter if matches!(self.naming, Naming::SparseFolders) => {
                     if let Some((_, _, typed)) = self.typing_branch.take() {
@@ -2083,7 +2555,110 @@ impl App {
                     {
                         let name = name.trim();
                         let (op, label, command) = match self.naming {
-                            Naming::Stash | Naming::SparseFolders => return,
+                            Naming::Stash | Naming::SparseFolders | Naming::SubmoduleBranch => {
+                                return;
+                            }
+                            Naming::CloneDest => {
+                                self.ask_clone_download(&start, &local_path(name));
+                                return;
+                            }
+                            // アプリと同じ項目だけを、読みやすい JSON で。
+                            Naming::ActivityExport => {
+                                let records = self.export_records.take().unwrap_or_default();
+                                let keep = [
+                                    "seq", "kind", "repo", "label", "started", "duration", "ok",
+                                    "error",
+                                ];
+                                let records: Vec<Value> =
+                                    (records.as_array().into_iter().flatten())
+                                        .map(|r| {
+                                            keep.iter()
+                                                .map(|k| ((*k).to_owned(), r[*k].clone()))
+                                                .collect::<serde_json::Map<_, _>>()
+                                                .into()
+                                        })
+                                        .collect();
+                                let path = local_path(name);
+                                let text =
+                                    serde_json::to_string_pretty(&records).unwrap_or_default();
+                                match std::fs::write(&path, text) {
+                                    Ok(()) => {
+                                        self.notice = Some(tr!(
+                                            "Wrote {count} records to {path}",
+                                            count = records.len(),
+                                            path = path
+                                        ))
+                                    }
+                                    Err(e) => self.error = Some(e.to_string()),
+                                }
+                                return;
+                            }
+                            Naming::SubmoduleUrl => (
+                                "submoduleChanged",
+                                tr!("Changing the URL…"),
+                                json!({"op": "changeSubmodule", "change": {"kind": "setUrl", "path": start, "url": name}}),
+                            ),
+                            Naming::SubmoduleForeach => (
+                                "submoduleForeach",
+                                tr!("Running in each submodule…"),
+                                json!({"op": "changeSubmodule", "change": {"kind": "foreach", "command": name, "recursive": false}}),
+                            ),
+                            // URL の次に、場所を聞く（初めは URL の最後の名前）。
+                            Naming::SubmoduleAddUrl => {
+                                let base = name
+                                    .trim_end_matches('/')
+                                    .rsplit(['/', '\\', ':'])
+                                    .next()
+                                    .unwrap_or(name);
+                                let base = base.strip_suffix(".git").unwrap_or(base).to_owned();
+                                self.naming = Naming::SubmoduleAddPath;
+                                self.typing_branch = Some((name.to_owned(), name.to_owned(), base));
+                                self.dirty = true;
+                                return;
+                            }
+                            Naming::SubmoduleAddPath => (
+                                "submoduleChanged",
+                                tr!("Adding the submodule…"),
+                                json!({"op": "changeSubmodule", "change": {"kind": "add", "url": start, "path": name, "branch": null}}),
+                            ),
+                            // 範囲は 1 つ（A...B）、2 つ（A..B C..D）か 3 つ（base A B）。
+                            Naming::RangeDiffRanges => {
+                                let ranges: Vec<String> =
+                                    name.split_whitespace().map(str::to_owned).collect();
+                                if !(1..=3).contains(&ranges.len()) {
+                                    self.error = Some(tr!(
+                                        "Write the ranges as git range-diff takes them: A...B, A..B C..D, or base A B"
+                                    ));
+                                    return;
+                                }
+                                let title =
+                                    tr!("Range Diff of {ranges}", ranges = ranges.join(" "));
+                                self.compare_ranges(title, ranges);
+                                return;
+                            }
+                            Naming::SubtreeDir => {
+                                let dir = name.trim_matches('/').to_owned();
+                                self.subtree_source(&dir, "add");
+                                return;
+                            }
+                            Naming::SubtreeSource => {
+                                let mut parts = name.split_whitespace();
+                                let (Some(url), Some(r), None) =
+                                    (parts.next(), parts.next(), parts.next())
+                                else {
+                                    self.error = Some(tr!(
+                                        "Write the URL and the branch or tag, like https://example.com/lib.git main"
+                                    ));
+                                    return;
+                                };
+                                self.ask_subtree(&start, &what, url, r);
+                                return;
+                            }
+                            Naming::SubtreeSplit => (
+                                "subtreeChanged",
+                                tr!("Splitting the subtree…"),
+                                json!({"op": "subtree", "action": {"kind": "split", "dir": start, "branch": name}}),
+                            ),
                             Naming::PushTo => {
                                 self.push_to(&start, name);
                                 return;
@@ -2350,6 +2925,8 @@ impl App {
                 KeyCode::Backspace => {
                     query.pop();
                 }
+                // 打ったものを消す（シェルと同じ。ほかの欄と同じく）。
+                KeyCode::Char('u') if control => query.clear(),
                 KeyCode::Char(ch) if !control => query.push(ch),
                 _ => {}
             }
@@ -2404,6 +2981,18 @@ impl App {
             }
             // サイドバーでチェックアウトしていないブランチを選んでいれば、そのブランチを上流に合わせる（アプリの
             // ブランチのメニューの Fast-Forward・Push・Publish）。
+            // サイドバーで subtree を選んでいれば、その Pull・Push（アプリの subtree のメニュー）。
+            KeyCode::Char('p' | 'P') if !control && self.picked_subtree().is_some() => {
+                let dir = self.picked_subtree().unwrap_or_default();
+                self.subtree_source(
+                    &dir,
+                    if key.code == KeyCode::Char('p') {
+                        "pull"
+                    } else {
+                        "push"
+                    },
+                );
+            }
             KeyCode::Char('p') if !control => match self.picked_other_branch() {
                 Some(branch) => self.ask_fast_forward(branch),
                 None => self.ask_pull(),
@@ -2587,13 +3176,8 @@ impl App {
                 return;
             }
         };
+        // 何もなくても開く（URL を打てば clone できる）。
         let roots: Vec<_> = roots.into_iter().filter(|r| r.is_local()).collect();
-        if bookmarks.is_empty() && recents.is_empty() && roots.is_empty() {
-            self.notice = Some(tr!(
-                "No repositories yet: open one, or add bookmarks on the apps' Repositories page"
-            ));
-            return;
-        }
         let mut quick = QuickOpen {
             query: String::new(),
             selected: 0,
@@ -2723,6 +3307,22 @@ impl App {
                 json!({"op": "ignoredFiles"}),
             );
         }
+        if id == "add-submodule" {
+            self.naming = Naming::SubmoduleAddUrl;
+            self.typing_branch = Some((String::new(), String::new(), String::new()));
+            self.dirty = true;
+            return;
+        }
+        if id == "add-subtree" {
+            if self.sidebar.subtrees_available() == Some(false) {
+                self.error = Some(tr!("This machine's git has no git subtree"));
+                return;
+            }
+            self.naming = Naming::SubtreeDir;
+            self.typing_branch = Some((String::new(), String::new(), String::new()));
+            self.dirty = true;
+            return;
+        }
         if id == "update-submodules" {
             self.run(
                 "submodules",
@@ -2787,6 +3387,7 @@ impl App {
     /// `ranges`（git range-diff の範囲）を Range Diff で比べる。答えは Compare with Previous Version と同じ画面に。
     fn compare_ranges(&mut self, title: String, ranges: Vec<String>) {
         self.range_title = Some(title);
+        self.range_ranges = ranges.clone();
         self.run(
             "rangeDiff",
             tr!("Comparing…"),
@@ -2825,6 +3426,108 @@ impl App {
 
     /// 命令が済んだ。だめなら理由を出し、どちらでも状態・ref・History を読み直す。
     /// タグ `name` のリモートごとの様子（いつ読んだかも）。push・置き換えは `t` で。
+    /// 署名したタグ `name` の署名の詳細（アプリの署名の吹き出しと同じ項目）。署名がなければ None。
+    fn tag_signature_text(&self, name: &str) -> Option<String> {
+        let tag = self.tag_signatures.iter().find(|t| t["name"] == name)?;
+        let kind = tag["signed"].as_str()?;
+        let s = &tag["signature"];
+        let tagger = tag["taggerEmail"].as_str().unwrap_or("");
+        let mut check = s.clone();
+        check["committerEmail"] = json!(tagger);
+        let mut rows: Vec<(String, String)> = Vec::new();
+        let status = match s["status"].as_str() {
+            Some(status) => crate::details::signature_label(status, &check, kind),
+            None => tr!("{kind} (not verified)", kind = kind.to_uppercase()),
+        };
+        rows.push((tr!("Signature"), status));
+        if let Some(signer) = s["signer"].as_str().filter(|v| !v.is_empty()) {
+            rows.push((tr!("Signer"), signer.to_owned()));
+        }
+        let emails: Vec<(String, String)> = (s["emails"].as_array().into_iter().flatten())
+            .filter_map(|e| {
+                Some((
+                    e["email"].as_str()?.to_owned(),
+                    e["validity"].as_str().unwrap_or("").to_owned(),
+                ))
+            })
+            .collect();
+        // 鍵のメールアドレスとタガーを比べる（アプリの CommitterMatch と同じ: u・f・m なら一致、ほかの有効なもの
+        // だけなら言い切らない、失効・期限切れ・無効は数えない）。
+        if s.is_object() {
+            let same: Vec<&str> = (emails.iter())
+                .filter(|(e, _)| !tagger.is_empty() && e.eq_ignore_ascii_case(tagger))
+                .map(|(_, v)| v.as_str())
+                .collect();
+            let text = if emails.is_empty() || tagger.is_empty() {
+                (!tagger.is_empty())
+                    .then(|| tr!("Can’t check: the key’s email addresses can’t be read"))
+            } else if same.iter().any(|v| matches!(*v, "u" | "f" | "m")) {
+                Some(tr!("Listed on the key ({email})", email = tagger))
+            } else if same.iter().any(|v| !matches!(*v, "r" | "e" | "n")) {
+                Some(tr!(
+                    "Listed on the key ({email}), but that user ID isn’t confirmed",
+                    email = tagger
+                ))
+            } else {
+                Some(tr!("Not listed on the key ({email})", email = tagger))
+            };
+            if let Some(text) = text {
+                rows.push((tr!("Tagger email"), text));
+            }
+        }
+        let others: Vec<String> = emails
+            .iter()
+            .filter(|(e, _)| !e.eq_ignore_ascii_case(tagger))
+            .map(|(e, v)| match v.as_str() {
+                "r" => tr!("{email} (revoked)", email = e),
+                "e" => tr!("{email} (expired)", email = e),
+                _ => e.clone(),
+            })
+            .collect();
+        if kind != "ssh" && !others.is_empty() {
+            rows.push((tr!("Other IDs on the key"), others.join(", ")));
+        }
+        rows.push((
+            tr!("Format"),
+            match kind {
+                "ssh" => "SSH".to_owned(),
+                "x509" => tr!("X.509 (S/MIME)"),
+                _ => tr!("GPG (OpenPGP)"),
+            },
+        ));
+        let key = s["key"].as_str().unwrap_or("");
+        if !key.is_empty() {
+            let label = match kind {
+                "ssh" => tr!("Public Key"),
+                _ => tr!("Key ID"),
+            };
+            rows.push((label, key.to_owned()));
+        }
+        let fingerprint = s["fingerprint"].as_str().unwrap_or("");
+        if !fingerprint.is_empty() && fingerprint != key {
+            rows.push((tr!("Fingerprint"), fingerprint.to_owned()));
+        }
+        let trust = s["trust"].as_str().unwrap_or("");
+        if kind != "ssh" && !trust.is_empty() {
+            rows.push((tr!("Trust"), trust.to_lowercase()));
+        }
+        rows.push((tr!("Remotes"), self.tag_remote_text(name)));
+        let column = rows.iter().map(|(l, _)| l.width()).max().unwrap_or(0) + 2;
+        let mut lines: Vec<String> = rows
+            .into_iter()
+            .map(|(label, value)| {
+                let pad = " ".repeat(column - label.width());
+                format!("{label}{pad}{value}")
+            })
+            .collect();
+        let message = tag["message"].as_str().unwrap_or("").trim_end();
+        if !message.is_empty() {
+            lines.push(String::new());
+            lines.extend(message.lines().map(str::to_owned));
+        }
+        Some(lines.join("\n"))
+    }
+
     fn tag_remote_text(&self, name: &str) -> String {
         let info = &self.tag_remotes;
         let remotes: Vec<String> = (info["remotes"].as_array().into_iter().flatten())
@@ -2855,6 +3558,78 @@ impl App {
             true => tr!("{name}: no remotes", name = name),
             false => format!("{name} — {}", remotes.join("; ")),
         }
+    }
+
+    /// サイドバーで選んでいる submodule のパス。
+    fn picked_submodule(&self) -> Option<String> {
+        self.sidebar
+            .picked_ref()
+            .filter(|r| r.0 == "submodule")
+            .map(|r| r.1.to_owned())
+    }
+
+    /// submodule の行のキー（`picked_submodule` のもの）。
+    fn submodule_key(&mut self, path: &str, code: KeyCode) {
+        let change = |change: Value| json!({"op": "changeSubmodule", "change": change});
+        match code {
+            KeyCode::Char('e') => {
+                self.naming = Naming::SubmoduleUrl;
+                self.typing_branch = Some((path.to_owned(), path.to_owned(), String::new()));
+            }
+            KeyCode::Char('B') => {
+                self.naming = Naming::SubmoduleBranch;
+                self.typing_branch = Some((path.to_owned(), path.to_owned(), String::new()));
+            }
+            KeyCode::Char('F') => {
+                self.naming = Naming::SubmoduleForeach;
+                self.typing_branch = Some((String::new(), String::new(), String::new()));
+            }
+            KeyCode::Char('x') => {
+                let remove = |delete: bool| Request::Run {
+                    name: "submoduleChanged",
+                    command: change(
+                        json!({"kind": "remove", "path": path, "deleteGitDir": delete}),
+                    ),
+                };
+                self.choices = Some((
+                    tr!(
+                        "Remove the submodule {path}? Its folder goes; .git/modules keeps its repository unless deleted too.",
+                        path = path
+                    ),
+                    vec![
+                        ('y', tr!("remove"), remove(false)),
+                        ('d', tr!("remove and delete its .git/modules"), remove(true)),
+                    ],
+                ));
+            }
+            KeyCode::Char('a') => {
+                self.confirm = Some((
+                    tr!(
+                        "Move the repository data of {path} into .git/modules (git submodule absorbgitdirs)?",
+                        path = path
+                    ),
+                    tr!("move"),
+                    Request::Run {
+                        name: "submoduleChanged",
+                        command: change(json!({"kind": "absorb", "paths": [path]})),
+                    },
+                ));
+            }
+            KeyCode::Char('y') => {
+                self.confirm = Some((
+                    tr!(
+                        "Copy the submodules' URLs from .gitmodules into .git/config (git submodule sync)?"
+                    ),
+                    tr!("sync"),
+                    Request::Run {
+                        name: "submoduleChanged",
+                        command: change(json!({"kind": "sync", "recursive": false})),
+                    },
+                ));
+            }
+            _ => {}
+        }
+        self.dirty = true;
     }
 
     /// サイドバーで印をつけたローカルブランチ（印をつけた順）。
@@ -2919,6 +3694,190 @@ impl App {
                 command,
             });
         }
+    }
+
+    /// Activity の Operations を読む: この TUI が動かしたもの（同じプロセスの記録）と、daemon のもの。
+    fn read_operations(&mut self) {
+        self.send(Request::Call {
+            name: "activity",
+            request: json!({"op": "activity"}),
+        });
+    }
+
+    /// 頼んでから答えが届くまでの時間を、Performance に 1 つ記録する（200 まで）。
+    fn record_perf(&mut self, metric: &'static str) {
+        let Some(started) = self.perf_started.remove(metric) else {
+            return;
+        };
+        let ms = started.elapsed().as_secs_f64() * 1000.0;
+        let values = match self.perf.iter().position(|(m, _)| *m == metric) {
+            Some(i) => &mut self.perf[i].1,
+            None => {
+                self.perf.push((metric, Default::default()));
+                &mut self.perf.last_mut().expect("just pushed").1
+            }
+        };
+        values.push_back(ms);
+        if values.len() > 200 {
+            values.pop_front();
+        }
+    }
+
+    /// clone する場所を聞く（今のフォルダの、URL の最後の名前）。
+    fn ask_clone_destination(&mut self, url: &str) {
+        self.quick_open = None;
+        let name = url
+            .trim_end_matches('/')
+            .rsplit(['/', '\\', ':'])
+            .next()
+            .unwrap_or("repo");
+        let name = name.strip_suffix(".git").unwrap_or(name);
+        let name = name.strip_suffix(".bundle").unwrap_or(name);
+        self.naming = Naming::CloneDest;
+        self.typing_branch = Some((url.to_owned(), url.to_owned(), local_path(name)));
+        self.dirty = true;
+    }
+
+    /// 何を取ってくるか（アプリの Clone のシートと同じ: すべて、中身は必要なときに、最近の履歴だけ）。
+    fn ask_clone_download(&mut self, url: &str, dest: &str) {
+        self.clone_plan = Some(ClonePlan {
+            url: url.to_owned(),
+            dest: dest.to_owned(),
+            stage: 0,
+            download: 'y',
+            branches: Vec::new(),
+            branch: None,
+        });
+        // bundle のファイルから: 取り方は選べない（git は中身をすべて写す）。HEAD がなければ取り出すブランチを選ぶ
+        // （アプリと同じ）。
+        if let Some(info) = amonhen_backend_cli::bundle_info(std::path::Path::new(url)) {
+            let mut plan = self.clone_plan.take().unwrap();
+            if info.prerequisites > 0 {
+                self.error = Some(tr!(
+                    "This bundle has only the commits after ones it doesn’t include, so it can’t be cloned."
+                ));
+                return;
+            }
+            plan.stage = 1;
+            if !info.head && !info.refs.is_empty() {
+                let first = amonhen_backend_cli::bundle_default_branch(&info);
+                let mut names: Vec<String> = info
+                    .refs
+                    .iter()
+                    .map(|r| {
+                        r.strip_prefix("refs/heads/")
+                            .or_else(|| r.strip_prefix("refs/tags/"))
+                            .unwrap_or(r)
+                            .to_owned()
+                    })
+                    .collect();
+                names.dedup();
+                if let Some(first) = first {
+                    names.retain(|n| *n != first);
+                    names.insert(0, first);
+                }
+                names.truncate(9);
+                plan.stage = 2;
+                plan.branches = names.clone();
+                self.clone_plan = Some(plan);
+                self.choices = Some((
+                    tr!("The bundle has no HEAD: check out which branch?"),
+                    (names.iter().enumerate())
+                        .map(|(i, n)| (char::from(b'1' + i as u8), n.clone(), Request::Status))
+                        .collect(),
+                ));
+                return;
+            }
+            self.ask_clone_extras(plan);
+            return;
+        }
+        self.choices = Some((
+            tr!(
+                "Clone {url} into {dest}: download what?",
+                url = url,
+                dest = dest
+            ),
+            vec![
+                ('y', tr!("everything"), Request::Status),
+                (
+                    'c',
+                    tr!("contents when needed (partial clone)"),
+                    Request::Status,
+                ),
+                (
+                    'r',
+                    tr!("recent history only (shallow clone)"),
+                    Request::Status,
+                ),
+            ],
+        ));
+    }
+
+    /// 一緒にすること: submodule も取り出す、一番上のファイルだけを取り出す（sparse checkout で始める）。
+    fn ask_clone_extras(&mut self, plan: ClonePlan) {
+        self.clone_plan = Some(plan);
+        self.choices = Some((
+            tr!("Clone it now?"),
+            vec![
+                ('y', tr!("clone"), Request::Status),
+                ('s', tr!("with its submodules"), Request::Status),
+                (
+                    'f',
+                    tr!("only the files at the top (pick folders later)"),
+                    Request::Status,
+                ),
+                ('a', tr!("both"), Request::Status),
+            ],
+        ));
+    }
+
+    /// clone を裏で動かす（終わったら `Event::Cloned`）。git を動かすのはこの機械。
+    fn start_clone(&mut self, plan: ClonePlan, extras: char) {
+        let options = amonhen_backend_cli::CloneOptions {
+            filter: (plan.download == 'c').then(|| "blob:none".to_owned()),
+            depth: (plan.download == 'r').then_some(1),
+            sparse: matches!(extras, 'f' | 'a'),
+            branch: plan.branch.clone(),
+            recurse_submodules: matches!(extras, 's' | 'a'),
+        };
+        self.running = Some(tr!("Cloning {url}…", url = plan.url));
+        self.pending += 1;
+        let events = self.events.clone();
+        std::thread::spawn(move || {
+            let result =
+                amonhen_backend_cli::clone(&plan.url, std::path::Path::new(&plan.dest), &options)
+                    .map(|()| plan.dest.clone())
+                    .map_err(|e| e.to_string());
+            let _ = events.send(Event::Cloned(result));
+        });
+        self.dirty = true;
+    }
+
+    /// Activity の Events に 1 つ記録する（500 まで）。
+    fn event(&mut self, text: String) {
+        self.event_log.push_back((self.clock_now(), text));
+        if self.event_log.len() > 500 {
+            self.event_log.pop_front();
+        }
+    }
+
+    /// 今の時刻（UNIX 時刻の秒）。
+    fn clock_now(&self) -> i64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(self.clock.now, |d| d.as_secs() as i64)
+    }
+
+    /// 共有の daemon の様子を読む（`amonhen daemon status` と同じ。手元のソケットに聞くので、すぐ返る）。
+    fn read_daemon(&mut self) {
+        self.daemon = Some(
+            amonhen_remote::local::control("status")
+                .ok()
+                .flatten()
+                .and_then(|json| serde_json::from_str(&json).ok())
+                .unwrap_or(Value::Null),
+        );
+        self.dirty = true;
     }
 
     /// サイドバーで選んでいるローカルブランチの名前。
@@ -3142,6 +4101,84 @@ impl App {
         }
     }
 
+    /// refs を読んだら、worktree の一覧を覚えて、ほかの worktree の変更の数を読む（2 つ以上あるとき）。
+    fn worktrees_opened(&mut self, refs: &Value) {
+        let worktrees: Vec<&Value> = refs["worktrees"].as_array().into_iter().flatten().collect();
+        let open = worktrees
+            .iter()
+            .find(|w| w["current"] == true)
+            .and_then(|w| w["path"].as_str());
+        self.worktree_paths = match open {
+            Some(open) if worktrees.len() > 1 => Some((
+                open.to_owned(),
+                (worktrees.iter())
+                    .filter(|w| {
+                        w["current"] != true && w["prunable"].is_null() && w["bare"] != true
+                    })
+                    .filter_map(|w| w["path"].as_str().map(str::to_owned))
+                    .collect(),
+            )),
+            _ => None,
+        };
+        self.count_open_worktree();
+        self.read_worktree_counts();
+        // ほかの worktree の変化は知らされないので、10 秒ごとに読み直す（アプリと同じ）。
+        if self.worktree_paths.is_some() && !self.counts_clock {
+            self.counts_clock = true;
+            let events = self.events.clone();
+            std::thread::spawn(move || {
+                loop {
+                    std::thread::sleep(std::time::Duration::from_secs(10));
+                    if events.send(Event::CountWorktrees).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+    }
+
+    /// 開いている worktree の変更の数は、Working Copy の数。
+    fn count_open_worktree(&mut self) {
+        if let Some((open, _)) = &self.worktree_paths {
+            self.worktree_counts
+                .insert(open.clone(), self.changes.count() as u64);
+            self.show_worktree_counts();
+        }
+    }
+
+    /// ほかの worktree の変更の数を裏で読む（5 分ごとに、指紋が同じでも数え直す）。
+    fn read_worktree_counts(&mut self) {
+        let Some((_, others)) = &self.worktree_paths else {
+            return;
+        };
+        if others.is_empty() {
+            return;
+        }
+        let fresh = self
+            .counts_fresh_at
+            .is_none_or(|at| at.elapsed() > std::time::Duration::from_secs(300));
+        if fresh {
+            self.counts_fresh_at = Some(std::time::Instant::now());
+        }
+        let paths = others.clone();
+        self.send(Request::Background {
+            name: "worktreeCounts",
+            command: json!({"op": "worktreeChanges", "paths": paths, "fresh": fresh}),
+        });
+    }
+
+    fn show_worktree_counts(&mut self) {
+        let counts = if self.worktree_paths.is_some() {
+            self.worktree_counts.clone()
+        } else {
+            Default::default()
+        };
+        self.sidebar.set_worktree_counts(&counts);
+        self.history.set_worktree_counts(&counts);
+        self.damage |= Damage::SIDEBAR | Damage::MAIN;
+        self.dirty = true;
+    }
+
     fn ran(&mut self, name: &'static str, result: std::result::Result<Value, String>) {
         // タグのリモートでの様子（裏で読む）。印: 同じ名前の別のタグがあるリモートがあれば ⚠、読んだリモートの
         // どれにもなければ ∅（アプリの印）。
@@ -3206,6 +4243,106 @@ impl App {
             self.dirty = true;
             return;
         }
+        // 失敗した git のコマンド: 同じエラーで失敗した、いちばん新しい git の記録。
+        if name == "failureCommand" {
+            let Some(error) = self.failure_seen.take() else {
+                return;
+            };
+            let records = result.map(|r| r["records"].clone()).unwrap_or_default();
+            let found = (records.as_array().into_iter().flatten())
+                .filter(|r| r["kind"] == "git" && r["ok"] == false)
+                .filter(|r| {
+                    let theirs = r["error"].as_str().unwrap_or("").trim();
+                    !theirs.is_empty() && (error.contains(theirs) || theirs.contains(&error))
+                })
+                .max_by_key(|r| r["seq"].as_u64().unwrap_or(0))
+                .and_then(|r| r["label"].as_str().map(str::to_owned));
+            if let Some(command) = found {
+                let first = self.failure_details.is_none();
+                self.failure_details = Some(format!("$ {command}\n\n{error}"));
+                self.details_are_output = false;
+                // 1 行の失敗にも、`!` でコマンドを出せると書く。
+                if first && let Some(shown) = &mut self.error {
+                    shown.push_str(&tr!(" (! shows all)"));
+                }
+                self.dirty = true;
+            }
+            return;
+        }
+        // Operations: 手元の記録と daemon の記録を合わせて、新しい順に。選んでいたものは番号で引き継ぐ。
+        if name == "activity" {
+            let reply = result.unwrap_or_default();
+            let remote = reply["remote"] == true;
+            let mut entries: Vec<Operation> = (reply["records"].as_array().into_iter().flatten())
+                .filter_map(|e| Operation::from(e, remote))
+                .collect();
+            entries.sort_by_key(|o| std::cmp::Reverse((o.started, o.seq)));
+            let previous = self.operations.as_ref().and_then(|o| {
+                let op = o.entries.get(o.selected)?;
+                Some((op.seq, op.remote))
+            });
+            let selected = previous
+                .and_then(|(seq, remote)| {
+                    entries
+                        .iter()
+                        .position(|o| o.seq == seq && o.remote == remote)
+                })
+                .unwrap_or(0);
+            self.operation_log = None;
+            self.operations = Some(Operations {
+                entries,
+                selected,
+                records: reply["records"].clone(),
+            });
+            self.dirty = true;
+            return;
+        }
+        // History Cache の画面（Operations から `Tab`）。
+        if name == "historyCache" {
+            self.operations = None;
+            self.history_cache = Some(result.map(|r| r["info"].clone()).unwrap_or_default());
+            self.dirty = true;
+            return;
+        }
+        if name == "cancelActivity" {
+            match result {
+                Ok(_) => self.notice = Some(tr!("Cancelled")),
+                Err(error) => self.error = Some(error),
+            }
+            self.read_operations();
+            return;
+        }
+        // Working Copy の行ごとの行数（裏で読む。読めなければ前の数のまま）。
+        if name == "workingStats" {
+            if let Ok(reply) = result
+                && self.changes.set_stats(&reply["info"]["stats"])
+            {
+                self.damage |= Damage::MAIN;
+                self.dirty = true;
+            }
+            return;
+        }
+        // ほかの worktree の変更の数（裏で読む。読めなければ前の数のまま）。
+        if name == "worktreeCounts" {
+            for w in (result.ok().as_ref())
+                .and_then(|r| r["info"]["worktrees"].as_array().cloned())
+                .unwrap_or_default()
+            {
+                if let Some(path) = w["path"].as_str() {
+                    self.worktree_counts
+                        .insert(path.to_owned(), w["count"].as_u64().unwrap_or(0));
+                }
+            }
+            self.show_worktree_counts();
+            return;
+        }
+        // subtree の一覧（裏で読む）。
+        if name == "subtreeList" {
+            let info = result.ok().map(|r| r["info"].clone()).unwrap_or_default();
+            self.sidebar.set_subtrees(info);
+            self.dirty = true;
+            return;
+        }
         // 裏で読むリポジトリの形も、動いている操作の表示を消さない。読めなければ印を出さない。
         if name == "repositoryForm" {
             let info = result.ok().map(|r| r["info"].clone()).unwrap_or_default();
@@ -3235,6 +4372,13 @@ impl App {
             // 下書きが読めなくても、欄はそのまま使える（覚えるのをやめる）。
             Err(_) if name == "draftOrTemplate" => return,
             // 変更の数が読めなくても、消すかは聞く（変更があれば git が断る）。
+            // コンフリクトの見込みが読めなくても、octopus merge は確かめる（見込みなしで）。
+            Err(_) if name == "octopusConflicts" => {
+                if let Some((order, info)) = self.octopus.take() {
+                    self.ask_octopus_with(&order, &info, None);
+                }
+                return;
+            }
             Err(_) if name == "worktreeChangesForRemove" => {
                 self.ask_remove_worktree(0);
                 return;
@@ -3280,6 +4424,13 @@ impl App {
                 let line = error.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
                 let lines = error.lines().filter(|l| !l.trim().is_empty()).count();
                 self.failure_details = (lines > 1).then(|| error.trim_end().to_owned());
+                self.details_are_output = false;
+                // 失敗した git のコマンドを Activity の記録から探す（アプリの Details と同じく、詳細の先頭に）。
+                self.failure_seen = Some(error.trim_end().to_owned());
+                self.send(Request::Call {
+                    name: "failureCommand",
+                    request: json!({"op": "activity"}),
+                });
                 self.error = Some(match lines > 1 {
                     true => line.trim().to_owned() + &tr!(" (! shows all)"),
                     false => line.trim().to_owned(),
@@ -3332,15 +4483,11 @@ impl App {
                         (label, e["time"].as_f64().unwrap_or(0.0) as i64 / 1000)
                     })
                     .collect();
-                match entries.is_empty() {
-                    true => self.notice = Some(tr!("Nothing to undo")),
-                    false => {
-                        self.operation_log = Some(OperationLog {
-                            entries,
-                            selected: 0,
-                        })
-                    }
-                }
+                // 戻すものがなくても枠は出す（`Tab` で Operations へ）。
+                self.operation_log = Some(OperationLog {
+                    entries,
+                    selected: 0,
+                });
                 return;
             }
             // 戻す操作があれば、名前を出して確かめる。
@@ -3414,6 +4561,24 @@ impl App {
                 return;
             }
             "updateSubmodules" => self.notice = Some(tr!("Updated the submodules")),
+            "submoduleChanged" => self.notice = Some(tr!("Changed the submodule")),
+            // それぞれで動かした命令の出力は、`!` で全部を出す。
+            "submoduleForeach" => {
+                let output = reply["info"]["output"]
+                    .as_str()
+                    .unwrap_or("")
+                    .trim_end()
+                    .to_owned();
+                match output.is_empty() {
+                    true => self.notice = Some(tr!("Ran in each submodule (no output)")),
+                    false => {
+                        self.notice = Some(tr!("Ran in each submodule (! shows the output)"));
+                        self.failure_details = Some(output);
+                        self.details_are_output = true;
+                    }
+                }
+            }
+            "subtreeChanged" => self.notice = Some(tr!("Done")),
             // ignore されたものが分かった: 数と最初のいくつかを出して、確かめてから消す（Undo では戻らない）。
             "ignoredFiles" => {
                 let paths: Vec<String> = (reply["info"]["paths"].as_array().into_iter().flatten())
@@ -3787,6 +4952,10 @@ impl App {
                 return;
             }
             "tagSignatures" => {
+                self.tag_signatures = reply["info"]["tags"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default();
                 let marks = (reply["info"]["tags"].as_array().into_iter().flatten())
                     .filter_map(|t| {
                         t["signed"].as_str()?;
@@ -3799,9 +4968,30 @@ impl App {
                 self.dirty = true;
                 return;
             }
+            // octopus merge の見通しが分かった: 取り込むものがあれば、コンフリクトの見込みも（同じ順に重ねて）読む。
             "octopusPreview" => {
                 let info = reply["info"].clone();
-                self.ask_octopus_with(&info);
+                let Some((order, _)) = self.octopus.take() else {
+                    return;
+                };
+                if info["upToDate"] == true {
+                    let branch = self.branch.clone().unwrap_or_default();
+                    self.notice = Some(tr!("{branch} already has all of them", branch = branch));
+                    return;
+                }
+                self.octopus = Some((order.clone(), info));
+                self.run(
+                    "octopusConflicts",
+                    tr!("Looking ahead…"),
+                    json!({"op": "predictMerge", "ours": null, "theirs": order}),
+                );
+                return;
+            }
+            "octopusConflicts" => {
+                if let Some((order, info)) = self.octopus.take() {
+                    let steps = reply["info"]["steps"].as_array().cloned();
+                    self.ask_octopus_with(&order, &info, steps.as_deref());
+                }
                 return;
             }
             "fetchConfig" => {
@@ -3882,6 +5072,13 @@ impl App {
                     })
                     .collect();
                 let mut mode = crate::editmode::EditMode::new(rows);
+                if let Some((dragged, target, squash)) = self.drag_plan.take()
+                    && let Err(error) = mode.drop_onto(&dragged, &target, squash)
+                {
+                    self.error = Some(error);
+                    self.dirty = true;
+                    return;
+                }
                 let combining = std::mem::take(&mut self.combining);
                 if !combining.is_empty() && !mode.combine_last(&combining) {
                     self.error = Some(tr!(
@@ -4105,6 +5302,89 @@ impl App {
     }
 
     /// サイドバーで選んでいる、チェックアウトしていないローカルのブランチ。
+    /// サイドバーで選んでいる subtree のフォルダ。
+    fn picked_subtree(&self) -> Option<String> {
+        if self.focus != Focus::Sidebar {
+            return None;
+        }
+        match self.sidebar.picked_ref()? {
+            ("subtree", dir, _) => Some(dir.to_owned()),
+            _ => None,
+        }
+    }
+
+    /// subtree の相手（URL と ref）を打たせる。覚えている相手を初めに入れておく（Push は Push の先の ref）。
+    /// `what` は add・pull・push。
+    fn subtree_source(&mut self, dir: &str, what: &str) {
+        let remembered = self.sidebar.subtree(dir).cloned().unwrap_or_default();
+        let url = remembered["url"].as_str().unwrap_or("");
+        let r = match what {
+            "push" => remembered["pushRef"]
+                .as_str()
+                .or(remembered["ref"].as_str()),
+            _ => remembered["ref"].as_str(),
+        }
+        .unwrap_or("");
+        let filled = match (url.is_empty(), r.is_empty()) {
+            (true, _) => String::new(),
+            (false, true) => format!("{url} "),
+            (false, false) => format!("{url} {r}"),
+        };
+        self.naming = Naming::SubtreeSource;
+        self.typing_branch = Some((dir.to_owned(), what.to_owned(), filled));
+        self.dirty = true;
+    }
+
+    /// subtree の相手が決まった: Add・Pull は squash するかを選ばせ、Push は確かめる。
+    fn ask_subtree(&mut self, dir: &str, what: &str, url: &str, r: &str) {
+        let op = |kind: &str, squash: Option<bool>| {
+            let mut action = json!({"kind": kind, "dir": dir, "url": url, "ref": r});
+            if let Some(squash) = squash {
+                action["squash"] = json!(squash);
+            }
+            Request::Run {
+                name: "subtreeChanged",
+                command: json!({"op": "subtree", "action": action}),
+            }
+        };
+        if what == "push" {
+            self.confirm = Some((
+                tr!(
+                    "Push the history of {dir} to {url} {r} (git subtree push)?",
+                    dir = dir,
+                    url = url,
+                    r = r
+                ),
+                tr!("push"),
+                op("push", None),
+            ));
+            return;
+        }
+        // 前に選んだ squash を先に（なければ git の既定の、squash しない）。
+        let squashed = self
+            .sidebar
+            .subtree(dir)
+            .and_then(|s| s["squash"].as_bool())
+            == Some(true);
+        let ask = match what {
+            "add" => tr!("Add {url} {r} as {dir}?", url = url, r = r, dir = dir),
+            _ => tr!(
+                "Pull {url} {r} into {dir}? Undo brings it back.",
+                url = url,
+                r = r,
+                dir = dir
+            ),
+        };
+        let mut options = vec![
+            ('y', tr!("with its whole history"), op(what, Some(false))),
+            ('s', tr!("squashed into one commit"), op(what, Some(true))),
+        ];
+        if squashed {
+            options.swap(0, 1);
+        }
+        self.choices = Some((ask, options));
+    }
+
     fn picked_other_branch(&self) -> Option<String> {
         if self.focus != Focus::Sidebar || self.sidebar.picked_is_current() {
             return None;
@@ -4757,6 +6037,32 @@ impl App {
 
     /// 印をつけたコミット（first-parent の並びで続いたもの）を、編集モードで 1 つにまとめる（アプリの Combine）。
     /// 一番古いものから HEAD までを開き、新しい方をひとつ古いものとまとめる行にしておく。当てるのは編集モードで。
+    /// History の行に出す項目を聞く（出しているものに ✓）。
+    fn ask_history_items(&mut self) {
+        let items = self.history.items();
+        let mark = |item: u8, name: String| match items & item != 0 {
+            true => format!("✓ {name}"),
+            false => name,
+        };
+        use crate::history::{ITEM_AUTHOR, ITEM_DATE, ITEM_ID, ITEM_REFS, ITEM_SIGNATURE};
+        self.choices = Some((
+            tr!("Show or hide in History’s rows:"),
+            vec![
+                (
+                    'r',
+                    mark(ITEM_REFS, tr!("branches and tags")),
+                    Request::Status,
+                ),
+                ('a', mark(ITEM_AUTHOR, tr!("author")), Request::Status),
+                ('d', mark(ITEM_DATE, tr!("date")), Request::Status),
+                ('i', mark(ITEM_ID, tr!("commit ID")), Request::Status),
+                ('s', mark(ITEM_SIGNATURE, tr!("signature")), Request::Status),
+            ],
+        ));
+        self.items_asked = true;
+        self.dirty = true;
+    }
+
     fn combine_marked(&mut self) -> bool {
         let marks: Vec<&Marked> = self.history.marks().map(|(_, m)| m).collect();
         if marks.iter().any(|m| m.merge) {
@@ -5492,42 +6798,83 @@ impl App {
             return true;
         }
         let theirs = self.sidebar.marked_names();
-        self.run(
-            "octopusPreview",
-            tr!("Looking ahead…"),
-            json!({"op": "octopusPreview", "theirs": theirs}),
-        );
+        self.preview_octopus(theirs);
         true
     }
 
-    /// octopus merge の見通しから、それぞれが持ち込むコミットの数を書いて確かめる（アプリの octopus merge の
-    /// シートの代わり）。
-    fn ask_octopus_with(&mut self, info: &Value) {
-        let theirs = self.sidebar.marked_names();
+    /// `order` の順に取り込む octopus merge の見通しを読む（答えは `octopusPreview`）。
+    fn preview_octopus(&mut self, order: Vec<String>) {
+        self.octopus = Some((order.clone(), Value::Null));
+        self.run(
+            "octopusPreview",
+            tr!("Looking ahead…"),
+            json!({"op": "octopusPreview", "theirs": order}),
+        );
+    }
+
+    /// octopus merge の見通しから、それぞれが持ち込むコミットの数と、重ねたときにコンフリクトしそうなファイル
+    /// （`steps`。分からなければ None）を書いて確かめる（アプリの octopus merge のシートの代わり）。コンフリクト
+    /// しそうなものが最後でなければ、`l` で最後に回せる（アプリの Put Last）。
+    fn ask_octopus_with(&mut self, order: &[String], info: &Value, steps: Option<&[Value]>) {
         let branch = self.branch.clone().unwrap_or_default();
-        if info["upToDate"] == true {
-            self.notice = Some(tr!("{branch} already has all of them", branch = branch));
-            return;
-        }
+        let conflicts_of = |rev: &str| -> Vec<String> {
+            (steps.into_iter().flatten())
+                .find(|s| s["rev"] == rev)
+                .and_then(|s| conflict_files(&s["conflicts"]))
+                .unwrap_or_default()
+        };
         let sides: Vec<String> = (info["drawing"]["sides"].as_array().into_iter().flatten())
             .filter_map(|s| {
                 let rev = s["rev"].as_str()?;
                 let count = u64::from(!s["tip"].is_null()) + s["more"].as_u64().unwrap_or(0);
-                Some(format!("{rev} ({count})"))
+                let files = conflicts_of(rev);
+                Some(match files.len() {
+                    0 => format!("{rev} ({count})"),
+                    _ => tr!(
+                        "{rev} ({count}, conflicts in {files})",
+                        rev = rev,
+                        count = count,
+                        files = amonhen_model::i18n::list(
+                            &files.iter().map(String::as_str).collect::<Vec<_>>()
+                        )
+                    ),
+                })
             })
             .collect();
-        self.confirm = Some((
-            tr!(
-                "Merge {sides} into {branch} as one merge commit (octopus)? Undo brings it back.",
-                sides = sides.join(", "),
-                branch = branch
-            ),
-            tr!("merge"),
-            Request::Run {
-                name: "merge",
-                command: json!({"op": "merge", "rev": theirs}),
-            },
-        ));
+        let expected = match steps {
+            Some(_) if order.iter().all(|r| conflicts_of(r).is_empty()) => {
+                tr!(" No conflicts are expected.")
+            }
+            _ => String::new(),
+        };
+        let ask = tr!(
+            "Merge {sides} into {branch} as one merge commit (octopus)?{expected} Undo brings it back.",
+            sides = sides.join(", "),
+            branch = branch,
+            expected = expected
+        );
+        let merge = Request::Run {
+            name: "merge",
+            command: json!({"op": "merge", "rev": order}),
+        };
+        // コンフリクトしそうなもののうち最初のものが最後でなければ、最後に回す順を勧める。
+        let first = order.iter().position(|r| !conflicts_of(r).is_empty());
+        match first {
+            Some(at) if at + 1 < order.len() => {
+                let mut last = order.to_vec();
+                let moved = last.remove(at);
+                last.push(moved.clone());
+                self.octopus_last = Some(last);
+                self.choices = Some((
+                    ask,
+                    vec![
+                        ('y', tr!("merge"), merge),
+                        ('l', tr!("put {rev} last", rev = moved), Request::Status),
+                    ],
+                ));
+            }
+            _ => self.confirm = Some((ask, tr!("merge"), merge)),
+        }
         self.dirty = true;
     }
 
@@ -5855,6 +7202,13 @@ impl App {
     /// History を検索する。動いている検索は取り消す。
     fn start_search(&mut self, query: String) {
         self.cancel_search();
+        // 合うものだけにしていれば、新しい語で絞り直す。
+        if self.matching.is_some() {
+            self.matching = Some(query.clone());
+            self.search = Some((query, None));
+            self.open();
+            return;
+        }
         let cancelled = Arc::new(AtomicBool::new(false));
         self.send(Request::Search {
             history: self.history.id().clone(),
@@ -5875,6 +7229,10 @@ impl App {
     fn clear_search(&mut self) -> bool {
         self.cancel_search();
         let had = self.search.take().is_some();
+        // 合うものだけにしていたら、すべてに戻す。
+        if self.matching.take().is_some() {
+            self.open();
+        }
         self.history.clear_matches() || had
     }
 
@@ -5895,6 +7253,13 @@ impl App {
             }
             // range-diff で、変わらなかった組を出すか（アプリの Changes Only）。
             KeyCode::Char('c') => self.file.toggle_changes_only(),
+            // range-diff の範囲を打ち直す（アプリの範囲の欄）。
+            KeyCode::Char('r') if self.file.is_range_diff() => {
+                self.naming = Naming::RangeDiffRanges;
+                self.typing_branch =
+                    Some((String::new(), String::new(), self.range_ranges.join(" ")));
+                true
+            }
             // File History で、作業ツリーのファイルをその版に戻す（確かめてから。Undo で元に戻る）。
             // 同じファイルの Blame（今の HEAD の）と File History を切り替える。
             KeyCode::Char('B' | 'L') if self.file.file_path().is_some() => {
@@ -6061,6 +7426,23 @@ impl App {
                 self.pick();
                 true
             }
+            // submodule の行で: URL を変える、追うブランチ、消す、中のデータを .git/modules へ、URL を写す、
+            // それぞれで命令を動かす（アプリの submodule のメニュー）。
+            KeyCode::Char('e' | 'B' | 'x' | 'a' | 'y' | 'F')
+                if self.picked_submodule().is_some() =>
+            {
+                let path = self.picked_submodule().unwrap_or_default();
+                self.submodule_key(&path, code);
+                true
+            }
+            // subtree の行で: そのフォルダの履歴だけのブランチを作る（Split）。
+            KeyCode::Char('t') if self.picked_subtree().is_some() => {
+                let dir = self.picked_subtree().unwrap_or_default();
+                let branch = format!("{}-split", dir.replace('/', "-"));
+                self.naming = Naming::SubtreeSplit;
+                self.typing_branch = Some((dir, String::new(), branch));
+                true
+            }
             // タグの行で: リモートごとの様子を一番下の行に（アプリの印の吹き出し）。
             KeyCode::Char('i') if self.sidebar.picked_ref().is_some_and(|r| r.0 == "tag") => {
                 let name = self
@@ -6068,7 +7450,15 @@ impl App {
                     .picked_ref()
                     .map(|r| r.1.to_owned())
                     .unwrap_or_default();
-                self.notice = Some(self.tag_remote_text(&name));
+                // 署名したタグなら、署名の詳細もまとめて枠に（アプリの署名の吹き出し）。
+                match self.tag_signature_text(&name) {
+                    Some(text) => {
+                        self.info_box = Some((tr!(" Tag {name} ", name = name), text));
+                        self.showing_hooks = Some(0);
+                        self.dirty = true;
+                    }
+                    None => self.notice = Some(self.tag_remote_text(&name)),
+                }
                 true
             }
             // ブランチの行で: お気に入りにする・外す（★）、アーカイブする・戻す、お気に入りの順を上・下へ。
@@ -6241,6 +7631,14 @@ impl App {
                 ),
                 ("w", tr!("New worktree for the branch")),
                 (
+                    "e B x a y F",
+                    tr!("On a submodule: URL, branch to follow, remove, absorb, sync, run in each"),
+                ),
+                (
+                    "p P t",
+                    tr!("On a subtree: pull, push; split its history into a branch"),
+                ),
+                (
                     "U",
                     tr!("On a remote branch: make it the upstream of the current branch"),
                 ),
@@ -6320,7 +7718,10 @@ impl App {
                     "V",
                     tr!("In File History: restore the file to that version"),
                 ),
-                ("c", tr!("In a range diff: changes only, or every pair")),
+                (
+                    "c r",
+                    tr!("In a range diff: changes only, or every pair; edit the ranges"),
+                ),
                 ("Esc", tr!("Go back")),
             ],
             (View::History | View::Reflog | View::File, Focus::Side) => vec![
@@ -7094,6 +8495,11 @@ impl App {
                 self.toggle_history_order();
                 None
             }
+            // 行に出す項目を選ぶ（アプリの History の Items。この TUI を動かしている間だけ）。
+            KeyCode::Char('I') => {
+                self.ask_history_items();
+                None
+            }
             // マージ済みのブランチを折りたたむ・戻す。
             KeyCode::Char('z') => {
                 self.fold = !self.fold;
@@ -7150,6 +8556,19 @@ impl App {
                 // 前の語から直せるよう、入れておく。
                 self.typing_query =
                     Some(self.search.as_ref().map_or(String::new(), |s| s.0.clone()));
+                true
+            }
+            // 合うコミットだけにする・すべてに戻す（アプリの Show Only Matching Commits）。
+            KeyCode::Char('&') => {
+                match (self.matching.take(), &self.search) {
+                    (Some(_), _) => {}
+                    (None, Some((query, _))) => self.matching = Some(query.clone()),
+                    (None, None) => {
+                        self.error = Some(tr!("Search with / first"));
+                        return true;
+                    }
+                }
+                self.open();
                 true
             }
             // コミットの ID を端末のクリップボードに（印があれば、印をつけたものすべて）。
@@ -7327,6 +8746,114 @@ impl App {
             return;
         }
         let layout = self.layout();
+        // ペインの区切り（サイドバーの右の列、並べたときのメインの画面の右の列）をドラッグして、幅を変える
+        // （アプリの、ドラッグできる区切り）。
+        let divider = |area: Option<Rect>| {
+            area.is_some_and(|a| {
+                mouse.column == a.right() && a.y <= mouse.row && mouse.row < a.bottom()
+            })
+        };
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) if divider(layout.sidebar) => {
+                self.dragging = Some(true);
+                return;
+            }
+            MouseEventKind::Down(MouseButton::Left)
+                if layout.side.is_some() && divider(layout.main) =>
+            {
+                self.dragging = Some(false);
+                return;
+            }
+            MouseEventKind::Drag(MouseButton::Left) if self.dragging.is_some() => {
+                match self.dragging {
+                    Some(true) => self.sidebar_width = mouse.column.max(1),
+                    _ => {
+                        let start = layout.main.map_or(0, |m| m.x);
+                        self.main_width = Some(mouse.column.saturating_sub(start).max(1));
+                    }
+                }
+                let (cols, rows) = self.size;
+                self.resize(cols, rows);
+                self.damage = Damage::ALL;
+                return;
+            }
+            MouseEventKind::Up(MouseButton::Left) if self.dragging.take().is_some() => return,
+            _ => {}
+        }
+        // History のコミットをドラッグして別のコミットに落とす: 動かすかまとめるかを聞いて、編集モードを始める
+        // （アプリの History のドラッグ。端末では行の上と行の間を分けにくいので、落とした後に聞く）。
+        let in_main = layout.main.filter(|a| {
+            a.x <= mouse.column
+                && mouse.column < a.right()
+                && a.y <= mouse.row
+                && mouse.row < a.bottom()
+        });
+        match mouse.kind {
+            MouseEventKind::Drag(MouseButton::Left)
+                if self.view == View::History && self.commit_drag.is_none() =>
+            {
+                if let Some((id, merge, subject)) = self.history.selected_commit()
+                    && in_main.is_some()
+                    && !merge
+                {
+                    self.commit_drag =
+                        Some((id.to_string(), subject.to_owned(), self.history.selected()));
+                    self.notice = Some(tr!(
+                        "Drop it onto another commit to move it there or combine it with that one"
+                    ));
+                    self.dirty = true;
+                }
+                return;
+            }
+            MouseEventKind::Drag(MouseButton::Left) if self.commit_drag.is_some() => {
+                // 落とす先を選んで見せる。
+                if let Some(area) = in_main
+                    && self.history.click(mouse.row - area.y)
+                {
+                    self.damage |= Damage::MAIN;
+                }
+                return;
+            }
+            MouseEventKind::Up(MouseButton::Left) if self.commit_drag.is_some() => {
+                let (dragged, subject, from_row) = self.commit_drag.take().unwrap();
+                self.notice = None;
+                self.dirty = true;
+                let Some(area) = in_main else {
+                    return;
+                };
+                self.history.click(mouse.row - area.y);
+                let Some((target, merge, target_subject)) = self.history.selected_commit() else {
+                    return;
+                };
+                let target = target.to_string();
+                if target == dragged {
+                    return;
+                }
+                if merge {
+                    self.error = Some(tr!("A merge is recreated as it is"));
+                    return;
+                }
+                let (short, target_short) = (dragged[..8].to_owned(), target[..8].to_owned());
+                self.choices = Some((
+                    tr!(
+                        "{commit} “{subject}” onto {target} “{target_subject}”:",
+                        commit = short,
+                        subject = subject,
+                        target = target_short,
+                        target_subject = target_subject
+                    ),
+                    vec![
+                        ('m', tr!("move it above"), Request::Status),
+                        ('s', tr!("combine it with that one"), Request::Status),
+                    ],
+                ));
+                // History で下の行ほど古い。
+                let dragged_older = from_row > self.history.selected();
+                self.drop_asked = Some((dragged, target, dragged_older));
+                return;
+            }
+            _ => {}
+        }
         let inside = |area: Option<Rect>| {
             area.filter(|a| {
                 a.x <= mouse.column
@@ -7729,6 +9256,54 @@ impl App {
                         )
                     }
                     Naming::PatchVersion => tr!("Version of the patches (-v): {name}", name = name),
+                    Naming::RangeDiffRanges => tr!(
+                        "Compare the ranges (A...B, A..B C..D or base A B): {name}",
+                        name = name
+                    ),
+                    Naming::SubmoduleUrl => {
+                        tr!("URL of the submodule {at}: {name}", at = at, name = name)
+                    }
+                    Naming::SubmoduleBranch => tr!(
+                        "Branch for {at} to follow (empty for the default): {name}",
+                        at = at,
+                        name = name
+                    ),
+                    Naming::SubmoduleForeach => tr!(
+                        "Run in each submodule (a shell command, as git submodule foreach): {name}",
+                        name = name
+                    ),
+                    Naming::SubmoduleAddUrl => {
+                        tr!("URL of the submodule to add: {name}", name = name)
+                    }
+                    Naming::SubmoduleAddPath => tr!(
+                        "Add {at} as a submodule at (a folder in this repository): {name}",
+                        at = at,
+                        name = name
+                    ),
+                    Naming::SubtreeDir => tr!(
+                        "Add a subtree in the folder (from the top of the repository): {name}",
+                        name = name
+                    ),
+                    Naming::SubtreeSource => tr!(
+                        "Subtree {what} for {dir}: the URL and the branch or tag: {name}",
+                        what = at,
+                        dir = self.typing_branch.as_ref().map_or("", |t| t.0.as_str()),
+                        name = name
+                    ),
+                    Naming::SubtreeSplit => tr!(
+                        "New branch with only the history of {at}: {name}",
+                        at = self.typing_branch.as_ref().map_or("", |t| t.0.as_str()),
+                        name = name
+                    ),
+                    Naming::ActivityExport => tr!(
+                        "Write the operations as JSON to (on this machine): {name}",
+                        name = name
+                    ),
+                    Naming::CloneDest => tr!(
+                        "Clone {at} into (on this machine): {name}",
+                        at = at,
+                        name = name
+                    ),
                     Naming::SparseFolders => {
                         let text = tr!(
                             "Check out only the folders (spaces between, Tab completes, empty for all): {name}",
@@ -7841,11 +9416,18 @@ impl App {
                                 (None, Some(at)) => format!("{at}/{of}"),
                                 (None, None) => of.to_string(),
                             };
-                            tr!(
-                                "/{query}: {found}   n/N next/previous   Esc clear",
-                                query = query,
-                                found = found
-                            )
+                            match self.matching {
+                                Some(_) => tr!(
+                                    "/{query}: {found}, only matching   n/N next/previous   & all   Esc clear",
+                                    query = query,
+                                    found = found
+                                ),
+                                None => tr!(
+                                    "/{query}: {found}   n/N next/previous   & only matching   Esc clear",
+                                    query = query,
+                                    found = found
+                                ),
+                            }
                         }
                         None => tr!("j/k move   / search   Enter details   0 sidebar   q quit"),
                     },
@@ -7943,9 +9525,10 @@ impl App {
                 }
             }
         }
-        let shown = match self.showing_failure {
-            true => self.failure_details.as_ref(),
-            false => self.hook_output.as_ref(),
+        let shown = match (&self.info_box, self.showing_failure) {
+            (Some((_, text)), _) => Some(text),
+            (None, true) => self.failure_details.as_ref(),
+            (None, false) => self.hook_output.as_ref(),
         };
         if let (Some(top), Some(output)) = (self.showing_hooks, shown) {
             cursor = None;
@@ -7959,9 +9542,15 @@ impl App {
                 width,
                 height,
             );
-            let title = match self.showing_failure {
-                true => tr!(" Details of the failure "),
-                false => tr!(" Output of the hooks "),
+            let title = match (self.showing_failure, self.details_are_output) {
+                _ if self.info_box.is_some() => self
+                    .info_box
+                    .as_ref()
+                    .map(|b| b.0.clone())
+                    .unwrap_or_default(),
+                (true, true) => tr!(" Output of the command "),
+                (true, false) => tr!(" Details of the failure "),
+                (false, _) => tr!(" Output of the hooks "),
             };
             frame_box(buf, area, at, &title);
             let inside = usize::from(height.saturating_sub(2));
@@ -8028,6 +9617,21 @@ impl App {
                 crate::drawing::draw(drawing, inner, buf);
             }
         }
+        if let Some(ops) = &self.operations {
+            self.draw_operations(ops, area, buf);
+        }
+        if let Some(cache) = &self.history_cache {
+            self.draw_history_cache(cache, area, buf);
+        }
+        if let Some(daemon) = &self.daemon {
+            self.draw_daemon(daemon, area, buf);
+        }
+        if let Some(top) = self.showing_events {
+            self.draw_events(top, area, buf);
+        }
+        if self.showing_performance {
+            self.draw_performance(area, buf);
+        }
         if let Some(log) = &self.operation_log {
             let times: Vec<String> = log
                 .entries
@@ -8040,7 +9644,10 @@ impl App {
                 .map(|(l, _)| l.width())
                 .max()
                 .unwrap_or(0) as u16;
-            let hint = tr!("Enter undoes back to the selected one");
+            let hint = match log.entries.is_empty() {
+                true => tr!("Nothing to undo   Tab operations"),
+                false => tr!("Enter undoes back to the selected one   Tab operations"),
+            };
             let width = (label_width + 10)
                 .max(hint.width() as u16 + 4)
                 .max(36)
@@ -8127,6 +9734,11 @@ impl App {
                     (mark, c.name.as_str(), c.path.as_str())
                 })
                 .collect();
+            let none = match (clonable(quick.query.trim()), quick.items.is_empty()) {
+                (true, _) => tr!("Enter clones it"),
+                (false, true) => tr!("No repositories yet: type a URL to clone one"),
+                (false, false) => tr!("No repository matches"),
+            };
             cursor = choice_list(
                 buf,
                 area,
@@ -8134,7 +9746,7 @@ impl App {
                 &quick.query,
                 &rows,
                 quick.selected,
-                &tr!("No repository matches"),
+                &none,
             );
         }
         if let Some(pick) = &self.fixup_pick {
@@ -8351,6 +9963,360 @@ fn choice_list(
         }
     }
     cursor
+}
+
+/// バイト数を読みやすく（1.2 MB など）。
+fn human_bytes(bytes: u64) -> String {
+    match bytes {
+        b if b >= 1 << 30 => format!("{:.1} GB", b as f64 / (1u64 << 30) as f64),
+        b if b >= 1 << 20 => format!("{:.1} MB", b as f64 / (1u64 << 20) as f64),
+        b if b >= 1 << 10 => format!("{:.1} KB", b as f64 / (1u64 << 10) as f64),
+        b => format!("{b} B"),
+    }
+}
+
+impl App {
+    /// History Cache の枠: 永続キャッシュの大きさと、この回の書き込み（回数、合計、足した行・切った行、最後のもの）。
+    fn draw_history_cache(&self, cache: &Value, area: Rect, buf: &mut Buffer) {
+        let mut lines: Vec<String> = Vec::new();
+        if cache.is_null() {
+            lines.push(tr!("History isn't cached on disk for this repository"));
+        } else {
+            let n = |v: &Value| v.as_u64().unwrap_or(0);
+            let writes = &cache["writes"];
+            lines.push(tr!(
+                "Cache file: {size}",
+                size = human_bytes(n(&cache["size"]))
+            ));
+            lines.push(tr!(
+                "Writes this run: {count} ({bytes} in all)",
+                count = n(&writes["count"]),
+                bytes = human_bytes(n(&writes["bytes"]))
+            ));
+            lines.push(tr!(
+                "Rows added: {rows}, cut: {cut}",
+                rows = n(&writes["rows"]),
+                cut = n(&writes["cut"])
+            ));
+            lines.push(match writes["lastAt"].as_u64() {
+                Some(ms) => tr!(
+                    "Last write: {bytes}, {ago}",
+                    bytes = human_bytes(n(&writes["lastBytes"])),
+                    ago = crate::history::ago(self.clock.now, (ms / 1000) as i64)
+                ),
+                None => tr!("Nothing written yet this run"),
+            });
+        }
+        let hint = tr!("r read again   Tab performance   other keys close");
+        let text = lines
+            .iter()
+            .map(|l| l.width())
+            .max()
+            .unwrap_or(0)
+            .max(hint.width()) as u16;
+        let width = (text + 4).min(area.width);
+        let height = (lines.len() as u16 + 4).min(area.height);
+        let at = Rect::new(
+            area.x + (area.width - width) / 2,
+            area.y + (area.height - height) / 2,
+            width,
+            height,
+        );
+        frame_box(buf, area, at, &tr!(" History Cache "));
+        let inner = usize::from(width.saturating_sub(4));
+        for (y, line) in (at.y + 1..at.bottom().saturating_sub(2)).zip(&lines) {
+            buf.set_stringn(at.x + 2, y, line, inner, Style::new());
+        }
+        buf.set_stringn(
+            at.x + 2,
+            at.bottom() - 2,
+            &hint,
+            inner,
+            Style::new().fg(Color::Indexed(244)),
+        );
+    }
+
+    /// Performance の枠: 測るものごとに、回数・p50・p95・最大・最後（ミリ秒）。
+    fn draw_performance(&self, area: Rect, buf: &mut Buffer) {
+        let mut lines: Vec<String> = Vec::new();
+        let names = [
+            (PERF_HISTORY, tr!("History reload")),
+            (PERF_STATUS, tr!("Status reload")),
+            (PERF_DIFF, tr!("Commit diff load")),
+            (PERF_WORKING_DIFF, tr!("Working Copy diff load")),
+        ];
+        let width = names.iter().map(|(_, n)| n.width()).max().unwrap_or(0);
+        lines.push(format!(
+            "{:<width$}  {:>5}  {:>8}  {:>8}  {:>8}  {:>8}",
+            "",
+            tr!("count"),
+            "p50",
+            "p95",
+            tr!("max"),
+            tr!("last")
+        ));
+        for (metric, name) in &names {
+            let Some((_, values)) = self.perf.iter().find(|(m, _)| m == metric) else {
+                lines.push(format!("{name:<width$}  {:>5}", 0));
+                continue;
+            };
+            let mut sorted: Vec<f64> = values.iter().copied().collect();
+            sorted.sort_by(f64::total_cmp);
+            let at = |q: f64| sorted[((sorted.len() - 1) as f64 * q).round() as usize];
+            let ms = |v: f64| format!("{v:.1}ms");
+            lines.push(format!(
+                "{name:<width$}  {:>5}  {:>8}  {:>8}  {:>8}  {:>8}",
+                sorted.len(),
+                ms(at(0.5)),
+                ms(at(0.95)),
+                ms(at(1.0)),
+                ms(*values.back().unwrap_or(&0.0))
+            ));
+        }
+        let hint =
+            tr!("From asking to the answer, the last 200 of each   Tab events   other keys close");
+        let text = lines
+            .iter()
+            .map(|l| l.width())
+            .max()
+            .unwrap_or(0)
+            .max(hint.width()) as u16;
+        let w = (text + 4).min(area.width);
+        let height = (lines.len() as u16 + 4).min(area.height);
+        let at = Rect::new(
+            area.x + (area.width - w) / 2,
+            area.y + (area.height - height) / 2,
+            w,
+            height,
+        );
+        frame_box(buf, area, at, &tr!(" Performance "));
+        let inner = usize::from(w.saturating_sub(4));
+        for (y, line) in (at.y + 1..at.bottom().saturating_sub(2)).zip(&lines) {
+            buf.set_stringn(at.x + 2, y, line, inner, Style::new());
+        }
+        buf.set_stringn(
+            at.x + 2,
+            at.bottom() - 2,
+            &hint,
+            inner,
+            Style::new().fg(Color::Indexed(244)),
+        );
+    }
+
+    /// Events の枠: 変化の知らせと、それで読み直したもの（新しい順）。
+    fn draw_events(&self, top: usize, area: Rect, buf: &mut Buffer) {
+        let width = area.width.saturating_sub(4).max(20).min(area.width);
+        let height = area.height.saturating_sub(2).max(5).min(area.height);
+        let at = Rect::new(
+            area.x + (area.width - width) / 2,
+            area.y + (area.height - height) / 2,
+            width,
+            height,
+        );
+        frame_box(buf, area, at, &tr!(" Events "));
+        let inner = usize::from(width.saturating_sub(4));
+        let dim = Style::new().fg(Color::Indexed(244));
+        if self.event_log.is_empty() {
+            buf.set_stringn(at.x + 2, at.y + 1, tr!("No change notices yet"), inner, dim);
+        }
+        let now = self.clock_now();
+        for (y, (time, text)) in
+            (at.y + 1..at.bottom().saturating_sub(2)).zip(self.event_log.iter().rev().skip(top))
+        {
+            let when = crate::history::ago(now, *time);
+            buf.set_stringn(at.x + 2, y, &when, 4, dim);
+            buf.set_stringn(at.x + 7, y, text, inner.saturating_sub(5), Style::new());
+        }
+        buf.set_stringn(
+            at.x + 2,
+            at.bottom() - 2,
+            tr!("Change notices and the reloads they cause (newest first, up to 500)   j/k move   Tab daemon   other keys close"),
+            inner,
+            dim,
+        );
+    }
+
+    /// Daemon の枠: 共有の daemon の pid・版・動いている時間・つながりの数と、開いているリポジトリ。
+    fn draw_daemon(&self, s: &Value, area: Rect, buf: &mut Buffer) {
+        let mut lines: Vec<String> = Vec::new();
+        let duration = |ms: &Value| {
+            let secs = ms.as_u64().unwrap_or(0) / 1000;
+            match secs {
+                s if s >= 3600 => format!("{}h {}m", s / 3600, s % 3600 / 60),
+                s if s >= 60 => format!("{}m {}s", s / 60, s % 60),
+                s => format!("{s}s"),
+            }
+        };
+        if s.is_null() {
+            lines.push(tr!("The shared daemon isn’t running"));
+        } else {
+            lines.push(tr!(
+                "Running: pid {pid}, {version}, up {uptime}",
+                pid = s["pid"],
+                version = s["version"].as_str().unwrap_or(""),
+                uptime = duration(&s["uptimeMs"])
+            ));
+            lines.push(tr!("Connections: {count}", count = s["connections"]));
+            for r in s["repos"].as_array().into_iter().flatten() {
+                let clients = r["clients"].as_u64().unwrap_or(0);
+                let state = match clients {
+                    0 => tr!(
+                        "no connections (idle for {duration})",
+                        duration = duration(&r["idleMs"])
+                    ),
+                    1 => tr!("1 connection"),
+                    n => tr!("{count} connections", count = n),
+                };
+                lines.push(format!("  {}  {state}", r["path"].as_str().unwrap_or("")));
+            }
+            lines.push(tr!(
+                "Exits after {duration} with no connections",
+                duration = duration(&s["idleExitMs"])
+            ));
+        }
+        let hint = tr!("S start   X stop   r read again   Tab operation log   other keys close");
+        let text = lines
+            .iter()
+            .map(|l| l.width())
+            .max()
+            .unwrap_or(0)
+            .max(hint.width()) as u16;
+        let width = (text + 4).min(area.width);
+        let height = (lines.len() as u16 + 4).min(area.height);
+        let at = Rect::new(
+            area.x + (area.width - width) / 2,
+            area.y + (area.height - height) / 2,
+            width,
+            height,
+        );
+        frame_box(buf, area, at, &tr!(" Daemon "));
+        let inner = usize::from(width.saturating_sub(4));
+        for (y, line) in (at.y + 1..at.bottom().saturating_sub(2)).zip(&lines) {
+            buf.set_stringn(at.x + 2, y, line, inner, Style::new());
+        }
+        buf.set_stringn(
+            at.x + 2,
+            at.bottom() - 2,
+            &hint,
+            inner,
+            Style::new().fg(Color::Indexed(244)),
+        );
+    }
+
+    /// Operations の枠: 上に記録の一覧（✓ ✗ ●、所要時間、いつ）、下に選んでいるものの出力か失敗の理由。
+    fn draw_operations(&self, ops: &Operations, area: Rect, buf: &mut Buffer) {
+        let width = area.width.saturating_sub(4).max(20).min(area.width);
+        let height = area.height.saturating_sub(2).max(6).min(area.height);
+        let at = Rect::new(
+            area.x + (area.width - width) / 2,
+            area.y + (area.height - height) / 2,
+            width,
+            height,
+        );
+        frame_box(buf, area, at, &tr!(" Operations "));
+        let inner = usize::from(width.saturating_sub(4));
+        let body = height.saturating_sub(3);
+        let list_rows = (body / 2).max(1);
+        let top = (ops.selected + 1).saturating_sub(usize::from(list_rows));
+        let dim = Style::new().fg(Color::Indexed(244));
+        if ops.entries.is_empty() {
+            buf.set_stringn(at.x + 2, at.y + 1, tr!("Nothing has run yet"), inner, dim);
+        }
+        for (y, i) in (at.y + 1..at.y + 1 + list_rows).zip(top..ops.entries.len()) {
+            let op = &ops.entries[i];
+            let (mark, color) = match op.ok {
+                Some(true) => ('✓', Color::Green),
+                Some(false) => ('✗', Color::Red),
+                None => ('●', Color::Yellow),
+            };
+            let selected = i == ops.selected;
+            if selected {
+                for x in at.x + 1..at.right() - 1 {
+                    buf[(x, y)].set_style(Style::new().add_modifier(Modifier::REVERSED));
+                }
+            }
+            buf[(at.x + 2, y)].set_char(mark).set_fg(color);
+            let when = crate::history::ago(self.clock.now, op.started);
+            let took = match (op.duration, &op.progress) {
+                (_, Some(progress)) if op.ok.is_none() => progress.clone(),
+                // 記録はミリ秒。
+                (Some(ms), _) if ms >= 1000.0 => format!("{:.1}s", ms / 1000.0),
+                (Some(ms), _) => format!("{ms:.0}ms"),
+                _ => String::new(),
+            };
+            let right = format!("{took} {when}");
+            let label = &op.label;
+            let room = inner.saturating_sub(right.width() + 3);
+            buf.set_stringn(
+                at.x + 4,
+                y,
+                crate::history::fit(label, room),
+                room,
+                Style::new(),
+            );
+            let x = at.right().saturating_sub(right.width() as u16 + 2);
+            buf.set_stringn(x, y, &right, right.width(), dim);
+        }
+        // 区切りと、選んでいるものの出力（失敗なら理由を先に）。
+        let sep = at.y + 1 + list_rows;
+        if sep < at.bottom().saturating_sub(2) {
+            for x in at.x + 1..at.right() - 1 {
+                buf[(x, sep)].set_char('─').set_fg(Color::Indexed(240));
+            }
+            if let Some(op) = ops.entries.get(ops.selected) {
+                let mut lines: Vec<(String, Style)> = Vec::new();
+                lines.push((format!("{} · {}", op.kind, op.label), dim));
+                if let Some(error) = &op.error {
+                    lines.extend(
+                        error
+                            .lines()
+                            .map(|l| (l.to_owned(), Style::new().fg(Color::Red))),
+                    );
+                }
+                if let Some(output) = &op.output {
+                    lines.extend(output.lines().map(|l| (l.to_owned(), Style::new())));
+                }
+                for (y, (line, style)) in (sep + 1..at.bottom().saturating_sub(2)).zip(lines) {
+                    buf.set_stringn(at.x + 2, y, line, inner, style);
+                }
+            }
+        }
+        buf.set_stringn(
+            at.x + 2,
+            at.bottom() - 2,
+            tr!(
+                "j/k move   x cancel a running one   r read again   s export JSON   Tab history cache   other keys close"
+            ),
+            inner,
+            dim,
+        );
+    }
+}
+
+/// clone の途中で聞いていること。
+struct ClonePlan {
+    url: String,
+    dest: String,
+    /// 0: 取り方を聞いている、1: 一緒にすることを聞いている。
+    stage: u8,
+    /// 取り方（`y` すべて、`c` 中身は必要なときに、`r` 最近の履歴だけ）。
+    download: char,
+    /// HEAD のない bundle から: 選べるブランチ（短い名前。初めのものが既定）と、選んだもの。
+    branches: Vec<String>,
+    branch: Option<String>,
+}
+
+/// Quick Open に打ったものが clone できる場所か（URL、`user@host:path`、`.git`・`.bundle` で終わるもの）。
+fn clonable(text: &str) -> bool {
+    if text.is_empty() || text.contains(char::is_whitespace) {
+        return false;
+    }
+    text.contains("://")
+        || text.ends_with(".git")
+        || text.ends_with(".bundle")
+        || text
+            .split_once(':')
+            .is_some_and(|(host, _)| host.contains('@') && !host.contains('/'))
 }
 
 fn frame_box(buf: &mut Buffer, area: Rect, at: Rect, title: &str) {
@@ -8645,11 +10611,11 @@ mod tests {
         std::fs::create_dir_all(work.join("found/.git")).unwrap();
         let found = work.join("found").to_string_lossy().into_owned();
         amonhen_model::process::with_client_env(&env, || {
-            // 何もなければ、そう言う。
+            // 何もなくても開く（URL を打てば clone できる）。
             typed(&mut app, ":quick");
             key(&mut app, KeyCode::Enter);
-            assert!(app.quick_open.is_none());
-            assert!(bottom_line(&mut app).contains("No repositories yet"));
+            assert!(app.quick_open.as_ref().is_some_and(|q| q.items.is_empty()));
+            key(&mut app, KeyCode::Esc);
             let dir = config.path().join("amonhen");
             std::fs::create_dir_all(&dir).unwrap();
             let bookmarks = serde_json::json!({
@@ -8700,6 +10666,61 @@ mod tests {
     }
 
     /// サイドバーの Submodules: submodule が並び、中に変更があれば ✎。Enter で TUI をそこで開き直す。
+    /// History と status の読み直しにかかった時間は、Activity の Performance に残る
+    #[test]
+    fn reloads_are_timed_for_performance() {
+        let (_dir, mut app, _rx) = app_with_history();
+        let count = |app: &App, metric: &str| {
+            app.perf
+                .iter()
+                .find(|(m, _)| *m == metric)
+                .map_or(0, |(_, v)| v.len())
+        };
+        assert!(count(&app, PERF_HISTORY) >= 1);
+        assert!(count(&app, PERF_STATUS) >= 1);
+        app.showing_performance = true;
+        let mut buf = Buffer::empty(Rect::new(0, 0, 100, 12));
+        app.draw(&mut buf, Damage::ALL);
+        let screen: String = (0..12)
+            .flat_map(|y| (0..100).map(move |x| (x, y)))
+            .map(|(x, y)| buf[(x, y)].symbol().to_owned())
+            .collect();
+        assert!(screen.contains(" Performance "), "{screen}");
+        assert!(screen.contains("History reload"), "{screen}");
+        assert!(screen.contains("p95"), "{screen}");
+    }
+
+    /// 変化の知らせは Activity の Events に残る（何が変わり、何を読み直すか）
+    #[test]
+    fn change_notices_are_kept_as_events() {
+        let (_dir, mut app, rx) = app_with_history();
+        app.handle(Event::Changed(CHANGED_REFS | CHANGED_WORKTREE));
+        crate::settle(&mut app, &rx).unwrap();
+        let (_, text) = app.event_log.back().unwrap();
+        assert_eq!(
+            text,
+            "Changed: refs, the working tree → read the status again → read History and the refs again"
+        );
+        app.showing_events = Some(0);
+        let mut buf = Buffer::empty(Rect::new(0, 0, 100, 12));
+        app.draw(&mut buf, Damage::ALL);
+        let screen: String = (0..12)
+            .flat_map(|y| (0..100).map(move |x| (x, y)))
+            .map(|(x, y)| buf[(x, y)].symbol().to_owned())
+            .collect();
+        assert!(screen.contains(" Events "), "{screen}");
+        assert!(screen.contains("Changed: refs"), "{screen}");
+    }
+
+    /// History Cache のバイト数は、読みやすい単位で。
+    #[test]
+    fn bytes_are_shown_in_units() {
+        assert_eq!(human_bytes(512), "512 B");
+        assert_eq!(human_bytes(2048), "2.0 KB");
+        assert_eq!(human_bytes(3 * 1024 * 1024 + 512 * 1024), "3.5 MB");
+        assert_eq!(human_bytes(5 << 30), "5.0 GB");
+    }
+
     #[test]
     fn submodules_are_listed_and_open_there() {
         let (dir, mut app, rx) = app_with_history();
@@ -8816,6 +10837,114 @@ mod tests {
     }
 
     /// settings.json の `tui.mouse` が false なら、マウスを取り込まずに始める。読めなければ取り込んだまま理由を出す。
+    /// History でコミットをドラッグして別のコミットに落とすと、動かすかまとめるかを聞き、その変更を入れた
+    /// 編集モードを開く（アプリの History のドラッグ）
+    #[test]
+    fn a_commit_is_dragged_onto_another() {
+        let drop = |key: char| {
+            let (_dir, mut app, rx) = app_with_history();
+            let main = app.layout().main.unwrap();
+            let at = |row: u16, kind: MouseEventKind| {
+                Event::Input(Input::Mouse(MouseEvent {
+                    kind,
+                    column: main.x + 10,
+                    row: main.y + row,
+                    modifiers: KeyModifiers::NONE,
+                }))
+            };
+            // Commit 1（上から 5 行目）を Commit 3（3 行目）へ。
+            app.handle(at(4, MouseEventKind::Down(MouseButton::Left)));
+            app.handle(at(3, MouseEventKind::Drag(MouseButton::Left)));
+            app.handle(at(2, MouseEventKind::Drag(MouseButton::Left)));
+            app.handle(at(2, MouseEventKind::Up(MouseButton::Left)));
+            assert!(
+                bottom_line(&mut app).contains("move it above"),
+                "{}",
+                bottom_line(&mut app)
+            );
+            app.handle(Event::Input(Input::Key(KeyEvent::new(
+                KeyCode::Char(key),
+                KeyModifiers::NONE,
+            ))));
+            crate::settle(&mut app, &rx).unwrap();
+            let mode = app.edit_mode.as_ref().expect("the edit mode opens");
+            mode.rows
+                .iter()
+                .map(|r| {
+                    let subject = r.message.lines().next().unwrap_or("").to_owned();
+                    format!("{} {subject}", r.action.name())
+                })
+                .collect::<Vec<_>>()
+        };
+        // 動かす: Commit 1 が Commit 3 のすぐ上に（範囲は古い方の Commit 1 から HEAD まで）。
+        assert_eq!(
+            drop('m'),
+            [
+                "pick Commit 5",
+                "pick Commit 4",
+                "pick Commit 1",
+                "pick Commit 3",
+                "pick Commit 2"
+            ]
+        );
+        // まとめる: 同じ所で、Commit 3 とまとめる行に。
+        assert_eq!(
+            drop('s'),
+            [
+                "pick Commit 5",
+                "pick Commit 4",
+                "squash Commit 1",
+                "pick Commit 3",
+                "pick Commit 2"
+            ]
+        );
+    }
+
+    /// ペインの区切りをドラッグすると、サイドバーとメインの画面の幅が変わる（アプリのドラッグできる区切り）
+    #[test]
+    fn dividers_are_dragged() {
+        let (_dir, mut app, _rx) = app_with_history();
+        app.resize(160, 12);
+        let at = |column: u16, kind: MouseEventKind| {
+            Event::Input(Input::Mouse(MouseEvent {
+                kind,
+                column,
+                row: 3,
+                modifiers: KeyModifiers::NONE,
+            }))
+        };
+        let layout = app.layout();
+        let sidebar = layout.sidebar.unwrap();
+        assert_eq!(sidebar.width, sidebar::WIDTH);
+        // サイドバーの右の区切りを 10 列右へ。
+        app.handle(at(sidebar.right(), MouseEventKind::Down(MouseButton::Left)));
+        app.handle(at(
+            sidebar.right() + 10,
+            MouseEventKind::Drag(MouseButton::Left),
+        ));
+        app.handle(at(
+            sidebar.right() + 10,
+            MouseEventKind::Up(MouseButton::Left),
+        ));
+        let layout = app.layout();
+        assert_eq!(layout.sidebar.unwrap().width, sidebar::WIDTH + 10);
+        // メインの画面の右の区切り（並べているとき）を左へ。サイドの画面が広がる。
+        let main = layout.main.unwrap();
+        let side = layout.side.unwrap().width;
+        app.handle(at(main.right(), MouseEventKind::Down(MouseButton::Left)));
+        app.handle(at(
+            main.right() - 5,
+            MouseEventKind::Drag(MouseButton::Left),
+        ));
+        app.handle(at(main.right() - 5, MouseEventKind::Up(MouseButton::Left)));
+        let layout = app.layout();
+        assert_eq!(layout.main.unwrap().width, main.width - 5);
+        assert_eq!(layout.side.unwrap().width, side + 5);
+        // 区切りでない所のドラッグでは変わらない。
+        app.handle(at(5, MouseEventKind::Drag(MouseButton::Left)));
+        assert_eq!(app.layout().sidebar.unwrap().width, sidebar::WIDTH + 10);
+    }
+
     #[test]
     fn the_mouse_setting_applies_at_start() {
         let (_dir, mut app, _rx) = app_with_history();
