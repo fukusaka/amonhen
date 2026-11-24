@@ -1320,9 +1320,26 @@ async function restoreFlow(): Promise<void> {
       vscode.commands.executeCommand('amonhen.restoreFile.versionBefore', { oid: head, path: 'restore-e2e.txt' }),
     );
     assert.equal(git('diff', '--cached', '--name-only').trim(), 'restore-e2e.txt', lastErrors());
+
+    // 名前を変えたコミットの前の版に戻すと、新しい名前は消え、元の名前が戻る
+    git('reset', '-q', '--hard', head);
+    git('mv', 'restore-e2e.txt', 'restore-e2e-renamed.txt');
+    git('commit', '-q', '-m', 'restore rename');
+    const renamed = git('rev-parse', 'HEAD').trim();
+    await repo.refresh();
+    await withWindow({ showWarningMessage: async () => 'Restore' }, async () =>
+      vscode.commands.executeCommand('amonhen.restoreFile.versionBefore', {
+        oid: renamed,
+        path: 'restore-e2e-renamed.txt',
+        origPath: 'restore-e2e.txt',
+      }),
+    );
+    assert.equal(read(), 'two\n', lastErrors());
+    assert.ok(!existsSync(join(root, 'restore-e2e-renamed.txt')), '新しい名前のファイルは消える');
   } finally {
     git('reset', '-q', '--hard', start);
     rmSync(path, { force: true });
+    rmSync(join(root, 'restore-e2e-renamed.txt'), { force: true });
     await repo.refresh();
   }
 }
