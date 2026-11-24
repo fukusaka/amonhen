@@ -10,7 +10,7 @@ use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::diff::{DIM, Diff, KeptRows, Scroll, Theme, counts, draw_row_kept, fit_path};
+use crate::diff::{DIM, Diff, KeptRows, Scroll, Theme, counts, draw_row, draw_row_kept, fit_path};
 
 use crate::Clock;
 use crate::history::{Marked, ago};
@@ -24,7 +24,12 @@ struct File {
     added: u64,
     removed: u64,
     binary: bool,
+    /// 生成物（lock ファイルなど）。最初は畳む。
+    generated: bool,
 }
+
+/// 1 ファイルの変更がこの行数を超えたら、最初は畳む（アプリと同じ）。
+const COLLAPSE_ABOVE: u64 = 1000;
 
 /// 差分で無視する空白（アプリの Ignore Whitespace。`commitDiff` の whitespace）。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -186,6 +191,12 @@ struct Commit {
     /// ファイルの一覧の行（`list_rows`）。
     listed: Vec<Listed>,
     diff: Diff,
+    /// 畳んだファイル（`files` の番号。見出しだけ出す）。
+    folded: Vec<bool>,
+    /// 出している差分の行（畳んだファイルの中身を除いた、`diff` の行の番号）。
+    shown: Vec<u32>,
+    /// ファイルごとの見出しの、`shown` での位置。
+    starts: Vec<u32>,
     /// 頭の部分（件名から「Parents」まで）を、幅 `head_width` で組んだもの。
     head: Vec<(String, Style)>,
     head_width: u16,
@@ -204,6 +215,7 @@ impl Commit {
                 added: f["added"].as_u64().unwrap_or(0),
                 removed: f["removed"].as_u64().unwrap_or(0),
                 binary: f["binary"] == true,
+                generated: f["generated"] == true,
             })
             .collect();
         Self {
@@ -214,13 +226,58 @@ impl Commit {
             listed: Vec::new(),
             files,
             diff: Diff::new(diff, false),
+            folded: Vec::new(),
+            shown: Vec::new(),
+            starts: Vec::new(),
             head: Vec::new(),
             head_width: 0,
         }
+        .unfolded()
+    }
+
+    fn unfolded(mut self) -> Self {
+        // 生成物と、変更が 1000 行を超えるファイルは、最初は畳む（アプリと同じ）。
+        self.folded = (0..self.diff.file_rows.len())
+            .map(|i| {
+                self.files
+                    .get(i)
+                    .is_some_and(|f| f.generated || f.added + f.removed > COLLAPSE_ABOVE)
+            })
+            .collect();
+        self.refold();
+        self
+    }
+
+    /// 畳んだファイルの中身を除いて、出す行を決め直す。
+    fn refold(&mut self) {
+        let rows = &self.diff.file_rows;
+        self.shown.clear();
+        self.starts.clear();
+        // 最初の見出しより前の行（あれば）はそのまま。
+        let first = rows.first().copied().unwrap_or(self.diff.len());
+        self.shown.extend(0..first);
+        for (i, &start) in rows.iter().enumerate() {
+            let end = rows.get(i + 1).copied().unwrap_or(self.diff.len());
+            self.starts.push(self.shown.len() as u32);
+            self.shown.push(start);
+            if !self.folded.get(i).copied().unwrap_or(false) {
+                self.shown.extend(start + 1..end);
+            }
+        }
+    }
+
+    /// ファイル `index` を畳む・開く。
+    fn toggle_fold(&mut self, index: usize) -> bool {
+        let Some(folded) = self.folded.get_mut(index) else {
+            return false;
+        };
+        *folded = !*folded;
+        self.refold();
+        true
     }
 
     fn diff_rows(&self) -> u32 {
-        self.diff.len()
+        self.shown.len() as u32
     }
 
     /// 差分の前に置く行の数: 頭、ファイルの一覧、空行。
@@ -432,7 +489,7 @@ pub fn signature_mark(status: &str) -> (char, Color) {
 
 /// 署名の検証の結果（git の `%G?`）を、アプリと同じ短い言葉に。正しい署名でも、鍵の信用度が足りなければ
 /// Untrusted key、鍵のメールアドレスがどれもコミッターと違えば Unverified signer。
-fn signature_label(status: &str, check: &Value, kind: &str) -> String {
+pub(crate) fn signature_label(status: &str, check: &Value, kind: &str) -> String {
     match status {
         "G" | "U" => {
             let trust = check["trust"].as_str().unwrap_or("").to_lowercase();
@@ -508,7 +565,8 @@ impl Details {
                 None => String::new(),
             }
         } else {
-            commit.diff.row_text((line - before) as usize).to_owned()
+            let row = commit.shown[(line - before) as usize];
+            commit.diff.row_text(row as usize).to_owned()
         }
     }
 
@@ -700,7 +758,7 @@ impl Details {
                 // 前後の行数を替えたファイルの見出しへ。
                 if let Some(index) = self.keep.take() {
                     let commit = self.commit.as_ref().expect("just set");
-                    if let Some(row) = commit.diff.file_rows.get(index) {
+                    if let Some(row) = commit.starts.get(index) {
                         let line = commit.before_diff() + row;
                         self.scroll.clamp(commit.lines());
                         self.scroll_to(line);
@@ -798,7 +856,7 @@ impl Details {
             self.scroll.top,
             self.scroll.top + u32::from(self.scroll.height),
         );
-        let lines = commit.diff.file_rows.iter().map(|row| before + row);
+        let lines = commit.starts.iter().map(|row| before + row);
         let index = self.jumped.unwrap_or_else(|| {
             lines
                 .clone()
@@ -879,6 +937,21 @@ impl Details {
         };
         let line = self.scroll.top + u32::from(row);
         let head = commit.head.len() as u32;
+        // 差分の中: ファイルの見出し（上に貼り付けたものも）なら、そのファイルを畳む・開く。
+        let before = commit.before_diff();
+        if line >= before {
+            let index = match row {
+                0 => self.sticky_file(),
+                _ => commit
+                    .starts
+                    .iter()
+                    .position(|&start| before + start == line),
+            };
+            return match index {
+                Some(index) => self.toggle_fold(index),
+                None => false,
+            };
+        }
         let Some(listed) = line
             .checked_sub(head)
             .and_then(|i| commit.listed.get(i as usize))
@@ -896,18 +969,45 @@ impl Details {
             }
             Listed::File(index, _) => {
                 let index = *index;
-                let Some(start) = commit
-                    .diff
-                    .file_rows
-                    .get(index)
-                    .map(|r| commit.before_diff() + r)
-                else {
+                let Some(start) = commit.starts.get(index).map(|r| commit.before_diff() + r) else {
                     return false;
                 };
                 self.scroll_to(start);
                 self.jumped = Some(index);
                 true
             }
+        }
+    }
+
+    /// 一番上に貼り付ける見出しのファイル: 一番上の行が差分の中で、見出しの行でなければ、その行のファイル。
+    fn sticky_file(&self) -> Option<usize> {
+        let commit = self.commit.as_ref()?;
+        let top = self.scroll.top.checked_sub(commit.before_diff())?;
+        let index = commit.starts.iter().rposition(|&start| start <= top)?;
+        (commit.starts[index] != top).then_some(index)
+    }
+
+    /// ファイル `index` の中身を畳む・開く（アプリのファイルの見出し）。見出しを一番上に置く。
+    fn toggle_fold(&mut self, index: usize) -> bool {
+        let Some(commit) = &mut self.commit else {
+            return false;
+        };
+        if !commit.toggle_fold(index) {
+            return false;
+        }
+        let line = commit.before_diff() + commit.starts[index];
+        self.found = None;
+        self.scroll.clamp(self.lines());
+        self.scroll_to(line);
+        self.jumped = Some(index);
+        true
+    }
+
+    /// 今見ているファイルを畳む・開く。
+    pub fn toggle_fold_in_view(&mut self) -> bool {
+        match self.current_index() {
+            Some(index) => self.toggle_fold(index),
+            None => false,
         }
     }
 
@@ -918,7 +1018,7 @@ impl Details {
         };
         let before = commit.before_diff();
         // 今のファイル（覚えていればそれ、なければ一番上の行より上の最後の見出し）の、次か前。
-        let starts: Vec<u32> = commit.diff.file_rows.iter().map(|r| before + r).collect();
+        let starts: Vec<u32> = commit.starts.iter().map(|r| before + r).collect();
         let current = self.jumped.map(|index| index as i64).unwrap_or_else(|| {
             starts
                 .iter()
@@ -986,17 +1086,44 @@ impl Details {
                     None => {}
                 }
             } else {
+                let index = (line - before) as usize;
                 draw_row_kept(
                     &mut self.kept,
                     area.height,
                     at,
                     buf,
                     &commit.diff,
-                    (line - before) as usize,
+                    commit.shown[index] as usize,
                     self.scroll.left,
                     theme,
                 );
+                // 畳んだファイルの見出しには ▸。
+                if let Some(file) = commit.starts.iter().position(|&s| s as usize == index)
+                    && commit.folded[file]
+                {
+                    buf[(at.x, at.y)].set_char('▸');
+                }
             }
+        }
+        // 差分の中ほどにいれば、そのファイルの見出しを一番上に貼り付ける（アプリと同じ）。
+        let top = self.scroll.top.checked_sub(before);
+        if let Some(top) = top
+            && let Some(file) = commit.starts.iter().rposition(|&s| s <= top)
+            && commit.starts[file] != top
+        {
+            let at = Rect::new(area.x, area.y, area.width, 1);
+            buf.set_style(at, Style::new());
+            for x in at.x..at.right() {
+                buf[(x, at.y)].set_symbol(" ");
+            }
+            draw_row(
+                at,
+                buf,
+                &commit.diff,
+                commit.diff.file_rows[file] as usize,
+                0,
+                theme,
+            );
         }
         // 探して合った行を目立たせる。
         if let Some((_, line)) = &self.found

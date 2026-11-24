@@ -7,6 +7,7 @@
 //! [--tearing] [--profile] [--out <file>]`、`amonhen-win --listen <file>`（実のマウスの基準、`listen.rs`）
 
 mod activity;
+mod allfiles;
 mod app;
 mod askpass;
 mod backdrop;
@@ -23,6 +24,7 @@ mod github;
 mod historyedit;
 mod imagediff;
 mod listen;
+mod markdownview;
 mod measure;
 mod menus;
 mod merge;

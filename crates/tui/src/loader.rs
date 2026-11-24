@@ -24,6 +24,8 @@ pub enum Request {
         rebuild: bool,
         /// History を、これらのコミット（選んだ ref の指す先、16 進）から辿れるものだけにする。空ならすべて。
         tips: Vec<String>,
+        /// この語で探して、合うコミットだけの History にする（アプリの Show Only Matching Commits）。
+        matching: Option<String>,
     },
     /// History の行（`start` から `count` 行）。
     Rows {
@@ -103,6 +105,8 @@ pub enum Request {
     /// コアの命令（fetch・push・checkout など）を動かす。`name` は、答えを見分ける名前。`command` が配列なら、
     /// その命令を順に（失敗したら、そこでやめる）。
     Run { name: &'static str, command: Value },
+    /// `Run` と同じだが、操作の列を待たせない裏の列で（ほかの worktree の変更を数えるなど、ときどき読むもの）。
+    Background { name: &'static str, command: Value },
     /// 窓口の命令（`run` を通さないもの。History の並び順など）を、操作として動かす。答えは `Ran` で返す。
     Call { name: &'static str, request: Value },
     /// History の編集モードの行: `from`（16 進）から HEAD までの、編集できるコミットとそのメッセージ（新しい順。
@@ -128,6 +132,8 @@ pub enum Loaded {
         history: Value,
     },
     Rows {
+        /// どの History のものか（読み直した後に届いた、前の History の行は捨てる）。
+        history: Value,
         start: u32,
         reply: Reply,
     },
@@ -152,10 +158,7 @@ pub enum Loaded {
         result: std::result::Result<(Value, Reply), String>,
     },
     /// 構文の色。取れなければ `None`（色なしで出すだけ）。
-    Syntax {
-        id: String,
-        reply: Option<Reply>,
-    },
+    Syntax { id: String, reply: Option<Reply> },
     /// `blame` か `fileHistory` の答え。だめなら理由。
     File {
         path: String,
@@ -191,6 +194,7 @@ pub struct Loader {
     search: Sender<Request>,
     /// fetch・push など、時間のかかる操作。
     operations: Sender<Request>,
+    background: Sender<Request>,
 }
 
 impl Loader {
@@ -201,7 +205,8 @@ impl Loader {
             details: worker("amonhen-tui-details", front.clone(), events.clone()),
             work: worker("amonhen-tui-work", front.clone(), events.clone()),
             search: worker("amonhen-tui-search", front.clone(), events.clone()),
-            operations: worker("amonhen-tui-operations", front, events),
+            operations: worker("amonhen-tui-operations", front.clone(), events.clone()),
+            background: worker("amonhen-tui-background", front, events),
         }
     }
 
@@ -213,6 +218,7 @@ impl Loader {
             | Request::MarksOf { .. }
             | Request::Lineage { .. } => &self.rows,
             Request::Search { .. } => &self.search,
+            Request::Background { .. } => &self.background,
             Request::Run { .. }
             | Request::Call { .. }
             | Request::EditRows { .. }
@@ -316,6 +322,7 @@ fn load(front: &dyn Front, request: Request, events: &Sender<Event>) -> Result<L
             expanded,
             rebuild,
             tips,
+            matching,
         } => Loaded::Opened {
             workdir: front.call(json!({"op": "hello"}))?.json["workdir"]
                 .as_str()
@@ -335,14 +342,33 @@ fn load(front: &dyn Front, request: Request, events: &Sender<Event>) -> Result<L
                 if rebuild {
                     front.call(json!({"op": "history", "rebuild": true}))?;
                 }
+                // `expanded` は既定と逆にした merge（たたむなら開くもの、たたまないならたたむもの）。
                 let mut request = match fold {
                     true => json!({"op": "history", "fold": true, "expanded": expanded}),
+                    false if !expanded.is_empty() => {
+                        json!({"op": "history", "collapsed": expanded})
+                    }
                     false => json!({"op": "history"}),
                 };
                 if !tips.is_empty() {
                     request["tips"] = json!(tips);
                 }
-                front.call(request)?.json
+                let history = front.call(request)?.json;
+                match matching {
+                    // 探して、合った行だけの History を作る（元の History は手放す）。
+                    Some(query) => {
+                        let id = history["history"].clone();
+                        let rows = front
+                            .call(json!({"op": "historySearch", "history": id, "query": query}))?
+                            .u32s("rows");
+                        let matched = front
+                            .call(json!({"op": "historyMatching", "history": id, "rows": rows}))?
+                            .json;
+                        let _ = front.call(json!({"op": "historyRelease", "history": id}));
+                        matched
+                    }
+                    None => history,
+                }
             },
         },
         Request::Rows {
@@ -354,6 +380,7 @@ fn load(front: &dyn Front, request: Request, events: &Sender<Event>) -> Result<L
             reply: front.call(json!({
                 "op": "historyRows", "history": history, "start": start, "count": count,
             }))?,
+            history,
         },
         Request::Search {
             history,
@@ -499,7 +526,7 @@ fn load(front: &dyn Front, request: Request, events: &Sender<Event>) -> Result<L
                 .map(|r| r.json)
                 .map_err(|e| e.to_string()),
         },
-        Request::Run { name, command } => Loaded::Ran {
+        Request::Run { name, command } | Request::Background { name, command } => Loaded::Ran {
             name,
             result: match command {
                 // いくつかの命令を順に（どれかが失敗したら、そこでやめる）。答えは最後のもの。

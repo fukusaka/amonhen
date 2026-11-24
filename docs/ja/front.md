@@ -47,6 +47,7 @@ History と差分は番号（`history`・`diff`）で持つ。FE がスクロー
 | 命令 | 引数 | 答え（JSON） | レコード |
 |---|---|---|---|
 | `hello` | language | version・workdir・gitDir | |
+| `activity` | | records（git を動かしている側の Activity の操作: seq・kind・repo・label・started（ミリ秒）・duration・ok・error・progress・cancellable・output）・remote（SSH 先のものなら true。取り消しは `cancelActivity` の remote で） | |
 | `environment` | env（FE の環境。開くときと同じく `NAME=value` を `"\u0000"` で区切ったもの） | | |
 | `history` | rebuild?・fold?（merge をすべてたたむ）・expanded?（ID の配列。fold のときに開いておく merge）・collapsed?（ID の配列。fold でなければ、これらの merge だけたたむ）・tips?（ID の配列。そこから辿れるものだけ） | history・generation・rows・head・headRow・folded・shallow（shallow clone の History か）・boundaryRows（shallow clone の境界の、親を取得していないコミットの行） | |
 | `historyMatching` | history・rows | `history` と同じ（一致した行だけの History） | |
@@ -63,7 +64,7 @@ History と差分は番号（`history`・`diff`）で持つ。FE がスクロー
 | `historyOrder` | order（`date` か、枝のコミットを merge の下にまとめる `topo`。これから読む History すべてに効き、今の History は git を読み直さずに並べ直す） | order | |
 | `refs` | | headBranch・head・entries（kind・name・target・detail・ahead・behind・gone） | |
 | `status` | | generation・branch・upstream・ahead・behind・entries（kind・path・origPath・index・worktree・staged・unstaged・submodule。内容のコンフリクト（UU・AA）には、作業ツリーのファイルに残っているマーカーの数 markers と、git の rerere が前の解決を当てたか rerere も） | |
-| `commitDiff` | id か stash（ID）、または history・rows・pair?（forward・reverse・mergeBase）。whitespace?（exact・at-eol・change・all。行を比べるときに無視する空白で、`git diff --ignore-space-at-eol`・`-b`・`-w` と同じ）。contexts?（ファイルの番号の文字列 → 前後の行数か、ファイル全体なら "all"。ほかのファイルは 3 行） | files（path・oldPath・kind・added・removed・binary）・changes・selection・rows・view（`diffSyntax` 用） | 差分の行（下） |
+| `commitDiff` | id か stash（ID）、または history・rows・pair?（forward・reverse・mergeBase）。whitespace?（exact・at-eol・change・all。行を比べるときに無視する空白で、`git diff --ignore-space-at-eol`・`-b`・`-w` と同じ）。contexts?（ファイルの番号の文字列 → 前後の行数か、ファイル全体なら "all"。ほかのファイルは 3 行） | files（path・oldPath・kind・added・removed・binary・generated。generated は `linguist-generated`、なければ lock ファイルや縮めたファイルで、アプリは最初は畳む）・changes・selection・rows・view（`diffSyntax` 用） | 差分の行（下） |
 | `workingDiff` | path・mode（unstaged・staged・combined）・whitespace?（`commitDiff` と同じ。combined とは使えず、空白を無視した差分は `stageRows`・`discardRows` に使えない） | diff・path・mode・binary・added・removed・rows・lineEndings（下） | 差分の行 |
 | `conflict` | path | path・rows | 差分の行 |
 | `diffSyntax` | diff（`workingDiff` の）か view（`commitDiff` の） | spans | spans（row・start・end・kind の u32 × 4。差分の行、その行の文字列での位置（highlights と同じ）、キーワード 1・文字列 2・コメント 3・数 4 ほか `SyntaxSpan` の種類）。時間がかかることがあるので、差分を出してから頼む |

@@ -1058,6 +1058,13 @@ impl Repository {
         profile: &FrontendProfile,
     ) -> Result<DiffView> {
         let path = path.trim_matches('/');
+        let data = self.file_at(commit, path)?;
+        Ok(DiffView::new(&diff::whole_file(data), profile).with_path(path))
+    }
+
+    /// コミット `commit` の `path` のファイルの中身（フォルダ・submodule なら断る）。
+    pub fn file_at(&self, commit: &Oid, path: &str) -> Result<std::sync::Arc<Vec<u8>>> {
+        let path = path.trim_matches('/');
         let (folder, name) = path.rsplit_once('/').unwrap_or(("", path));
         let entry = self
             .backend
@@ -1070,8 +1077,7 @@ impl Repository {
         {
             return Err(tr!("{path} isn’t a file", path = path).into());
         }
-        let data = self.backend.blob(&entry.oid)?;
-        Ok(DiffView::new(&diff::whole_file(data), profile).with_path(path))
+        self.backend.blob(&entry.oid)
     }
 
     /// `changes` のすべてのファイルの差分（History で全ファイルを縦に並べて見せる）。ファイルの数だけ blob を読んで

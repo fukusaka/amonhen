@@ -38,6 +38,18 @@ use ratatui_crossterm::crossterm::event::{
 use unicode_width::UnicodeWidthStr;
 
 use app::{App, Damage, Event};
+
+/// 共有の daemon を起動するエンジン（Activity の Daemon の `S`）。CLI が渡す（なければ起動できない）。
+static DAEMON_PROGRAM: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// 共有の daemon を起動するエンジンの場所を渡す（`amonhen daemon start` と同じもの）。
+pub fn set_daemon_program(path: String) {
+    let _ = DAEMON_PROGRAM.set(path);
+}
+
+pub(crate) fn daemon_program() -> Option<&'static str> {
+    DAEMON_PROGRAM.get().map(String::as_str)
+}
 use canvas::Canvas;
 
 pub type Result<T> = amonhen_model::Result<T>;

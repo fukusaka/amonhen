@@ -2386,35 +2386,45 @@ async function historySelectionFlow(): Promise<void> {
     const { diff } = await waitPosted('commitDiff', mark, (m) => m.oid === range.key);
     assert.ok(diff.hunks.some((h) => h.lines.some((l) => l.kind === '+' && l.text === 's3')), JSON.stringify(diff));
 
-    // Viewed は選んだ組ごとに覚え、同じ組を選び直すと戻る
-    assert.ok(range.viewedKey);
-    assert.deepEqual(range.viewed, []);
-    await panel.history.handle({ type: 'viewed', key: range.viewedKey, path: 's3.txt', viewed: true });
-    assert.deepEqual((await select(11, [s4, s3])).viewed, ['s3.txt']);
-
-    // 1 つのコミットの詳細には行数が付き、Viewed もコミットごとに覚える
+    // 1 つのコミットの詳細には行数が付く
     const s4oid = git('rev-parse', 'sel-base').trim();
-    const showOne = async () => {
-      const at = posted.length;
-      await panel.history.handle({ type: 'select', oid: s4oid });
-      return waitPosted('details', at, (m) => m.details.oid === s4oid);
-    };
-    const one = await showOne();
+    const at = posted.length;
+    await panel.history.handle({ type: 'select', oid: s4oid });
+    const one = await waitPosted('details', at, (m) => m.details.oid === s4oid);
     assert.deepEqual(one.details.files, [{ status: 'A', path: 's4.txt', added: 1, removed: 0 }]);
-    assert.deepEqual(one.viewed, []);
-    await panel.history.handle({ type: 'viewed', key: s4oid, path: 's4.txt', viewed: true });
-    assert.deepEqual((await showOne()).viewed, ['s4.txt']);
-    await panel.history.handle({ type: 'viewed', key: s4oid, path: 's4.txt', viewed: false });
-    assert.deepEqual((await showOne()).viewed, []);
 
-    // 変わったファイルの見せ方は覚えて、Webview に返す
-    const layout = async (tree: boolean, single: boolean) => {
+    // 変わったファイルの見せ方（リストか木か）は覚えて、Webview に返す
+    const layout = async (tree: boolean) => {
       const at = posted.length;
-      await panel.history.handle({ type: 'detailsLayout', layout: { tree, single } });
+      await panel.history.handle({ type: 'detailsLayout', layout: { tree } });
       return (await waitPosted('detailsLayout', at)).layout;
     };
-    assert.deepEqual(await layout(true, true), { tree: true, single: true });
-    assert.deepEqual(await layout(false, false), { tree: false, single: false });
+    assert.deepEqual(await layout(true), { tree: true });
+    assert.deepEqual(await layout(false), { tree: false });
+
+    // エンジンなら無視する空白を選べる。選び直すと詳細を読み直し、前後の行はファイルごとに広げられる
+    assert.deepEqual(one.choices, { whitespace: 'exact' });
+    const reread = async (whitespace: 'exact' | 'all') => {
+      const at = posted.length;
+      await panel.history.handle({ type: 'whitespace', whitespace });
+      return waitPosted('details', at, (m) => m.details.oid === s4oid);
+    };
+    assert.deepEqual((await reread('all')).choices, { whitespace: 'all' });
+    assert.deepEqual((await reread('exact')).choices, { whitespace: 'exact' });
+    const widened = posted.length;
+    await panel.history.handle({ type: 'fileContext', oid: s4oid, path: 's4.txt', context: 'all' });
+    const whole = await waitPosted('commitDiff', widened, (m) => m.oid === s4oid && m.path === 's4.txt');
+    assert.ok(whole.diff.hunks.some((h) => h.lines.some((l) => l.kind === '+' && l.text === 's4')), JSON.stringify(whole.diff));
+
+    // すべてのファイル: コミットの木を 1 段ずつ読み、このコミットで足したファイルの行には印が付く
+    const listed = posted.length;
+    await panel.history.handle({ type: 'treeEntries', oid: s4oid, path: '' });
+    const top = await waitPosted('treeEntries', listed, (m) => m.oid === s4oid && m.path === '');
+    assert.ok(top.entries.some((e) => e.name === 's4.txt' && e.kind === 'file'), JSON.stringify(top.entries));
+    const opened = posted.length;
+    await panel.history.handle({ type: 'treeFile', oid: s4oid, path: 's4.txt' });
+    const file = await waitPosted('treeFile', opened, (m) => m.oid === s4oid && m.path === 's4.txt');
+    assert.deepEqual(file.view.kind === 'text' && file.view.lines.map((l) => [l.text, l.mark]), [['s4', 'added']], JSON.stringify(file.view));
 
     // 離れた 2 つは取り方を選べる。逆にすると足した行が消した行になる
     const pair = await select(2, [s4, s1]);

@@ -19,7 +19,7 @@ checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
 name = "amonhen-assist"
-version = "0.2.12"
+version = "0.2.13"
 dependencies = [
  "amonhen-model",
  "serde_json",
@@ -27,7 +27,7 @@ dependencies = [
 
 [[package]]
 name = "amonhen-backend-cli"
-version = "0.2.12"
+version = "0.2.13"
 dependencies = [
  "amonhen-model",
  "amonhen-watch",
@@ -37,7 +37,7 @@ dependencies = [
 
 [[package]]
 name = "amonhen-backend-gix"
-version = "0.2.12"
+version = "0.2.13"
 dependencies = [
  "amonhen-backend-cli",
  "amonhen-model",
@@ -47,11 +47,11 @@ dependencies = [
 
 [[package]]
 name = "amonhen-commands"
-version = "0.2.12"
+version = "0.2.13"
 
 [[package]]
 name = "amonhen-core"
-version = "0.2.12"
+version = "0.2.13"
 dependencies = [
  "amonhen-layout",
  "amonhen-model",
@@ -64,6 +64,7 @@ dependencies = [
  "postcard",
  "pulldown-cmark",
  "regex",
+ "roxmltree",
  "serde",
  "serde_bytes",
  "serde_json",
@@ -72,14 +73,14 @@ dependencies = [
 
 [[package]]
 name = "amonhen-layout"
-version = "0.2.12"
+version = "0.2.13"
 dependencies = [
  "memmap2",
 ]
 
 [[package]]
 name = "amonhen-model"
-version = "0.2.12"
+version = "0.2.13"
 dependencies = [
  "amonhen-layout",
  "libc",
@@ -89,7 +90,7 @@ dependencies = [
 
 [[package]]
 name = "amonhen-projection"
-version = "0.2.12"
+version = "0.2.13"
 dependencies = [
  "amonhen-layout",
  "amonhen-model",
@@ -97,7 +98,7 @@ dependencies = [
 
 [[package]]
 name = "amonhen-remote"
-version = "0.2.12"
+version = "0.2.13"
 dependencies = [
  "amonhen-layout",
  "amonhen-model",
@@ -115,7 +116,7 @@ dependencies = [
 
 [[package]]
 name = "amonhen-syntax"
-version = "0.2.12"
+version = "0.2.13"
 dependencies = [
  "amonhen-layout",
  "tree-sitter",
@@ -145,7 +146,7 @@ dependencies = [
 
 [[package]]
 name = "amonhen-watch"
-version = "0.2.12"
+version = "0.2.13"
 dependencies = [
  "amonhen-model",
  "notify",
@@ -1806,6 +1807,12 @@ name = "regex-syntax"
 version = "0.8.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
+
+[[package]]
+name = "roxmltree"
+version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c20b6793b5c2fa6553b250154b78d6d0db37e72700ae35fad9387a46f487c97"
 
 [[package]]
 name = "rustc-hash"

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { FileDiff } from '../src/diff/fileDiff.ts';
-import { isGenerated, lineCounts, VIEWED_COMMITS, withViewed, type ViewedStore } from '../src/history/stackedFiles.ts';
+import { isGenerated, lineCounts, renamedPath } from '../src/history/stackedFiles.ts';
 
 test('lockfiles and minified files are generated, by their name only', () => {
   assert.ok(isGenerated('Cargo.lock'));
@@ -24,22 +24,9 @@ test('line counts add up the added and removed lines of every hunk', () => {
   assert.deepEqual(lineCounts(diff), { added: 3, removed: 1 });
 });
 
-test('viewed files are kept per key, and an emptied key is forgotten', () => {
-  let store: ViewedStore = { order: [], files: {} };
-  store = withViewed(store, 'c1', 'a.txt', true);
-  store = withViewed(store, 'c2', 'b.txt', true);
-  store = withViewed(store, 'c1', 'c.txt', true);
-  assert.deepEqual(store.order, ['c2', 'c1']);
-  assert.deepEqual(store.files['c1'], ['a.txt', 'c.txt']);
-  store = withViewed(store, 'c2', 'b.txt', false);
-  assert.deepEqual(store.order, ['c1']);
-  assert.equal(store.files['c2'], undefined);
-});
-
-test('only the most recent commits keep their viewed files', () => {
-  let store: ViewedStore = { order: [], files: {} };
-  for (let i = 0; i <= VIEWED_COMMITS; i++) store = withViewed(store, `c${i}`, 'a', true);
-  assert.equal(store.order.length, VIEWED_COMMITS);
-  assert.equal(store.files['c0'], undefined);
-  assert.deepEqual(store.files[`c${VIEWED_COMMITS}`], ['a']);
+test('renamed paths factor out what stays the same, as git diff --stat does', () => {
+  assert.equal(renamedPath('src/old.rs', 'src/new.rs'), 'src/{old.rs → new.rs}');
+  assert.equal(renamedPath('a/x/f.txt', 'a/y/f.txt'), 'a/{x → y}/f.txt');
+  assert.equal(renamedPath('old.txt', 'new.txt'), '{old.txt → new.txt}');
+  assert.equal(renamedPath('lib/f.rs', 'src/lib/f.rs'), '{lib → src/lib}/f.rs');
 });

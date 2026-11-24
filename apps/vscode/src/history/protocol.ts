@@ -75,11 +75,67 @@ export interface EditStacked {
   available: boolean;
 }
 
-/** 詳細の欄の、変わったファイルの見せ方。`tree` は木にして差分の左に、`single` は選んだファイルの差分だけ */
+/** 詳細の欄の、変わったファイルの見せ方。`tree` はフォルダごとにまとめた木、そうでなければパスの並び */
 export interface DetailsLayout {
   tree: boolean;
-  single: boolean;
 }
+
+/** 差分を比べるときに無視する空白（`git diff --ignore-space-at-eol`・`-b`・`-w`）。exact は無視しない */
+export type DiffWhitespace = 'exact' | 'at-eol' | 'change' | 'all';
+
+/**
+ * 詳細の差分で選べること（エンジンだけ。なければ出さない）: 無視する空白（今の選び方）、ファイルごとに前後の行を
+ * 広げる・ファイル全体を出す
+ */
+export interface DiffChoices {
+  whitespace: DiffWhitespace;
+}
+
+/** 画像の差分の片側（data URL と、元の大きさ） */
+export interface ImageBlob {
+  url: string;
+  bytes: number;
+}
+
+/** コミットの木の 1 つ（「すべてのファイル」） */
+export interface TreeEntry {
+  name: string;
+  kind: 'folder' | 'file' | 'executable' | 'link' | 'submodule';
+}
+
+/**
+ * 「すべてのファイル」のファイルの中身の 1 行。`mark` はこのコミットで足した行（added）か変えた行（changed、`old` は
+ * 前の行）。`removedBefore` はこの行の前で消した行の数
+ */
+export interface ViewLine {
+  text: string;
+  syntax?: [number, number, number][];
+  mark?: 'added' | 'changed';
+  old?: string;
+  removedBefore?: number;
+}
+
+/** SVG のモバイル向けの描画部品の確認（崩れる機能と、部品ごとの崩れ方の近似の SVG） */
+export interface SvgCheckView {
+  issues: { targets: string[]; feature: string; message: string; count: number }[];
+  approximations: Record<string, string>;
+}
+
+/** 「すべてのファイル」で開いたファイル */
+export type FileView =
+  | {
+      kind: 'text';
+      lines: ViewLine[];
+      /** 最後の行の後で消した行の数 */
+      removedAtEnd?: number;
+      /** Markdown なら、整形して見せるブロック（コアの `markdown::Block`） */
+      markdown?: unknown[];
+      /** SVG なら、絵とモバイルの確認 */
+      svg?: { image: ImageBlob; check?: SvgCheckView };
+    }
+  | { kind: 'image'; image: ImageBlob }
+  | { kind: 'binary'; bytes: number }
+  | { kind: 'error'; message: string };
 
 /** いくつも選んだコミットの見せ方（`commitDiff` の `history`・`rows`）。差分はファイルごとに求める */
 export interface SelectionView {
@@ -92,9 +148,6 @@ export interface SelectionView {
   files: { path: string; added: number; removed: number; binary: boolean }[];
   /** 選んだコミット（上から。多ければ先頭だけ） */
   commits: { row: number; oid: string; subject: string; author: string }[];
-  /** Viewed を覚える鍵（選んだコミットがすべて `commits` にあるときだけ） */
-  viewedKey?: string;
-  viewed: string[];
 }
 
 /** History の検索の様子 */
@@ -137,10 +190,17 @@ export type HistoryHostMessage =
   | { type: 'lineage'; rows: string | null; edges?: string }
   | { type: 'search'; state: SearchState }
   | { type: 'busy'; busy: boolean }
-  /** `viewed` は Viewed にしたファイル */
-  | { type: 'details'; details: CommitDetails; viewed: string[] }
+  | { type: 'details'; details: CommitDetails; choices?: DiffChoices }
   /** いくつも選んだコミットの差分。`token` は頼んだときのもの。読めなければ `error` */
-  | { type: 'selection'; token: number; view?: SelectionView; error?: string }
+  | { type: 'selection'; token: number; view?: SelectionView; error?: string; choices?: DiffChoices }
+  /** コミットの中の画像の前と後（足した・消したものは片方。読めなければ `error`） */
+  | { type: 'commitImage'; oid: string; path: string; before?: ImageBlob; after?: ImageBlob; error?: string }
+  /** コミットの木のフォルダ `path` の中身（「すべてのファイル」） */
+  | { type: 'treeEntries'; oid: string; path: string; entries: TreeEntry[]; error?: string }
+  /** コミットのファイル `path` の中身（「すべてのファイル」） */
+  | { type: 'treeFile'; oid: string; path: string; view: FileView }
+  /** ファイルの右クリックの Show Whole File（その詳細を出している欄が、ファイル全体を頼む） */
+  | { type: 'wholeFile'; oid: string; path: string }
   /** コミットの中の 1 ファイルの差分（最初の親との差分） */
   | { type: 'commitDiff'; oid: string; path: string; diff: FileDiff }
   /** `last` はまとめる範囲のいちばん新しいコミット（combine のとき。`oid` がいちばん古い） */
@@ -192,8 +252,18 @@ export type HistoryWebviewMessage =
   | { type: 'openFile'; oid: string; path: string }
   /** コミットの中の 1 ファイルの差分を求める（詳細に並べる） */
   | { type: 'commitDiff'; oid: string; path: string }
-  /** 詳細のファイルを Viewed にする・戻す。`key` はコミット ID か、いくつも選んだときの見せ方の `viewedKey` */
-  | { type: 'viewed'; key: string; path: string; viewed: boolean }
+  /** コミットの木のフォルダ `path`（根は空）の中身を求める（「すべてのファイル」。エンジンだけ） */
+  | { type: 'treeEntries'; oid: string; path: string }
+  /** コミットのファイル `path` の中身を求める（「すべてのファイル」。エンジンだけ） */
+  | { type: 'treeFile'; oid: string; path: string }
+  /** そのコミットのファイルをエディタで開く（「すべてのファイル」のバイナリ） */
+  | { type: 'openTreeFile'; oid: string; path: string }
+  /** コミットの中の画像の前と後を求める（画像の差分） */
+  | { type: 'commitImage'; oid: string; path: string }
+  /** そのファイルの差分を、前後 `context` 行（all ならファイル全体）で求め直す（エンジンだけ） */
+  | { type: 'fileContext'; oid: string; path: string; context: number | 'all' }
+  /** 無視する空白を選び直す（出している詳細を読み直す。覚えない） */
+  | { type: 'whitespace'; whitespace: DiffWhitespace }
   | { type: 'detailsLayout'; layout: DetailsLayout }
   /** 編集モードの見通しを求める。`updateRefs` は、積み重ねたブランチを今回だけどうするか（触っていなければなし） */
   | { type: 'editPreview'; key: number; steps: PlanStep[]; updateRefs?: boolean }

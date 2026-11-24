@@ -1,4 +1,4 @@
-/** History の詳細に縦に並べるファイルの決まり（最初から畳むもの・行数・Viewed の記録）。vscode に依存しない */
+/** History の詳細に縦に並べるファイルの決まり（すべて開くでも畳んだままのもの・行数）。vscode に依存しない */
 import type { FileDiff } from '../diff/fileDiff.ts';
 
 /** lockfile などの生成物（見ても仕方がない大きな差分）。最初から畳む。アプリと同じ並び */
@@ -42,30 +42,18 @@ export function lineCounts(diff: FileDiff): LineCounts {
   return { added, removed };
 }
 
-/** Viewed にしたファイル。鍵はコミット ID（いくつも選んだときはその見せ方の鍵）。`order` は古い順 */
-export interface ViewedStore {
-  order: string[];
-  files: Record<string, string[]>;
-}
-
-/** これより多くのコミットの Viewed は、古いものから忘れる（アプリと同じ） */
-export const VIEWED_COMMITS = 500;
-
-/** path の Viewed を変えた記録を返す（元は変えない）。空になった鍵は消し、新しく使った鍵は最後に回す */
-export function withViewed(store: ViewedStore, key: string, path: string, viewed: boolean): ViewedStore {
-  const set = new Set(store.files[key] ?? []);
-  if (viewed) set.add(path);
-  else set.delete(path);
-  const files = { ...store.files };
-  const order = store.order.filter((k) => k !== key);
-  if (set.size > 0) {
-    files[key] = [...set];
-    order.push(key);
-  } else {
-    delete files[key];
-  }
-  for (const old of order.splice(0, Math.max(0, order.length - VIEWED_COMMITS))) {
-    delete files[old];
-  }
-  return { order, files };
+/**
+ * 名前を変えたファイルのパス。`git diff --stat` と同じく、前後で同じところをくくり出す（`src/{old.rs → new.rs}`）
+ */
+export function renamedPath(from: string, to: string): string {
+  const a = from.split('/');
+  const b = to.split('/');
+  let head = 0;
+  while (head < a.length - 1 && head < b.length - 1 && a[head] === b[head]) head++;
+  let tail = 0;
+  while (tail < a.length - head - 1 && tail < b.length - head - 1 && a[a.length - 1 - tail] === b[b.length - 1 - tail]) tail++;
+  const prefix = a.slice(0, head).map((p) => `${p}/`).join('');
+  const suffix = a.slice(a.length - tail).map((p) => `/${p}`).join('');
+  const mid = (parts: string[]) => parts.slice(head, parts.length - tail).join('/');
+  return `${prefix}{${mid(a)} → ${mid(b)}}${suffix}`;
 }

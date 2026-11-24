@@ -43,7 +43,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Stashes row with a count only when there are stashes | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: The Stashes section.<br>TUI: A Stashes section in the sidebar while there are stashes, its heading with the count. |
 | Range Diff row while a range diff is open | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: Until another file's Blame or File History takes its place. |
 | Filter field over Branches, Remotes and Tags | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: The filter button on the sidebar's title asks for the words; the matches are listed flat.<br>TUI: `/` in the sidebar. |
-| Several branches or tags selected at once | ✓ | ✓ | ✓ | ✓ | n/a | △ | VSCode: Merge into Current Branch, Delete Branch, favorites and Archive act on all of them.<br>TUI: `v` marks refs in the sidebar; `m` merges them in one commit and `D` deletes the marked branches; no favorites or archive. |
+| Several branches or tags selected at once | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: Merge into Current Branch, Delete Branch, favorites and Archive act on all of them.<br>TUI: `v` marks refs in the sidebar; `m` merges them in one commit, `D` deletes the marked branches, and `*` `z` add them to Favorites or archive them. |
 | Pull Requests and Worktrees shown only when not empty | ✓ | ✓ | ✓ | △ | n/a | △ | VSCode: Worktrees only (GitHub is left out).<br>Windows: Worktrees are listed under Working Copy.<br>TUI: Worktrees only, when there are two or more. |
 
 ## Sidebar
@@ -60,15 +60,15 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Sync a branch that is not checked out (Fast-Forward, Push, Publish) | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: Via `amonhen run`.<br>TUI: `p` and `P` on the branch in the sidebar. |
 | Tags listed | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |
 | Tag marks for remotes (missing, different) with a popover | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: In the row's description, each remote's state in the tooltip (no popover).<br>CLI: Via `amonhen run` (`tagRemotes`).<br>Windows: ⚠ (a different tag on a remote) or ∅ (on no remote) after the name; clicking it opens the popover.<br>TUI: ⚠ or ∅ at the end of the row; `i` puts each remote's state on the bottom line instead of a popover, and `t` pushes or replaces. |
-| Tag signature marks | ✓ | ✓ | △ | ✓ | ✓ | △ | VSCode: The row's icon, explained in the tooltip.<br>CLI: `refs --verify`.<br>Windows: 🔏 (verified) or 🔓 (signed, not verified) after the name instead of a colored mark; clicking it opens the signature popover.<br>TUI: ✓ (verified, or yellow when the key isn't trusted), ! (expired or revoked), ✗ (bad) or ? (can't check) at the end of the row; no popover. |
+| Tag signature marks | ✓ | ✓ | △ | ✓ | ✓ | ✓ | VSCode: The row's icon, explained in the tooltip.<br>CLI: `refs --verify`.<br>Windows: 🔏 (verified) or 🔓 (signed, not verified) after the name instead of a colored mark; clicking it opens the signature popover.<br>TUI: ✓ (verified, or yellow when the key isn't trusted), ! (expired or revoked), ✗ (bad) or ? (can't check) at the end of the row; `i` shows the signature in a box. |
 | Tag menu: Push to, Replace on, Delete, Delete from a remote | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: The remote is chosen in a list when there are several.<br>CLI: Via `amonhen run`.<br>TUI: `D` deletes a tag here, `t` pushes or replaces it on a remote and `X` deletes it from one, the remote chosen by digit. |
 | Remotes with their branches | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |
 | Remote menu: Add, Rename, Edit URL, Remove, Prune | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: Via `amonhen run`.<br>TUI: Add Remote in the command list; on a remote branch in the sidebar `e` edits the name and URL, `X` prunes and `x` removes. |
 | Pull Requests group | ✓ | ✓ | ✓ | — | — | — |  |
 | Submodules group (Update, Open in New Window) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `submodule`, `submodule update`.<br>TUI: A Submodules section in the sidebar, where Enter reopens the TUI in the submodule; Update Submodules in the command list. |
-| Submodule marks (not checked out, another commit, changes inside, conflict) and menus: Update… (recursive, remote), Edit URL, Branch to Follow, Remove (optionally .git/modules), Add, Sync URLs | ✓ | ✓ | ✓ | ✓ | ✓ | △ | VSCode: Remove asks with two buttons: keep `.git/modules` or delete it too.<br>CLI: `submodule` (`add`, `remove`, `set-url`, `set-branch`, `sync`).<br>TUI: Update Submodules only (the recorded commit, recursively, or the branch's latest). |
-| Submodules: move repository data into .git/modules, run a command in each | ✓ | ✓ | ✓ | ✓ | ✓ | — | VSCode: Run in Each Submodule…'s output goes to an Output channel (the app's Activity).<br>CLI: `submodule absorb`, `submodule foreach`. |
-| Worktrees under Working Copy with change counts (✎ ⌂ ⑂) | ✓ | ✓ | ✓ | ✓ | △ | △ | VSCode: The marks are the rows' icons; a branch another worktree has checked out gets ⌂ or ⑂.<br>CLI: `worktree list --changes`.<br>TUI: In the sidebar (folder and branch) when there are two or more; no change counts. |
+| Submodule marks (not checked out, another commit, changes inside, conflict) and menus: Update… (recursive, remote), Edit URL, Branch to Follow, Remove (optionally .git/modules), Add, Sync URLs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: Remove asks with two buttons: keep `.git/modules` or delete it too.<br>CLI: `submodule` (`add`, `remove`, `set-url`, `set-branch`, `sync`).<br>TUI: Marks at the end of the row; Update Submodules and Add Submodule in the command list, and on a submodule's row `e` URL, `B` branch to follow, `x` remove (`d` deletes .git/modules too), `y` sync URLs. |
+| Submodules: move repository data into .git/modules, run a command in each | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: Run in Each Submodule…'s output goes to an Output channel (the app's Activity).<br>CLI: `submodule absorb`, `submodule foreach`.<br>TUI: `a` and `F` on a submodule's row; `!` shows the command's output. |
+| Worktrees under Working Copy with change counts (✎ ⌂ ⑂) | ✓ | ✓ | ✓ | ✓ | △ | △ | VSCode: The marks are the rows' icons; a branch another worktree has checked out gets ⌂ or ⑂.<br>CLI: `worktree list --changes`.<br>TUI: In the sidebar (folder, branch and change count) when there are two or more, not under Working Copy. |
 | Marks for a shallow or partial clone (History) and a sparse checkout (Working Copy) | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: Shallow and Partial above History (Partial fetches all contents when clicked); " · some folders" on the Working Copy row for a sparse checkout.<br>TUI: [shallow] and [partial] on the top line after the branch; a sparse checkout's note above the Working Copy list. |
 
 ## 1. Tabs and windows
@@ -98,10 +98,10 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Fetch the selected repositories | ✓ | ✓ | ✓ | n/a | n/a | — | Windows: Rows are selected with Ctrl or Shift, and Fetch on a selected row's menu fetches them all. |
 | Quick Open (fuzzy search) | ✓ | ✓ | ✓ | n/a | n/a | ✓ | TUI: Quick Open in the command list lists what the apps' does: the shared bookmarks (`bookmarks.json`, favorites first), recently opened repositories (`recent.json`) and those found under the local folders to scan (searched in the background; folders on SSH hosts aren't); Enter reopens the TUI there. |
 | Repository name in the toolbar switches the repository | ✓ | ✓ | ✓ | ✓ | n/a | n/a | VSCode: Select Repository picks among workspace repositories.<br>TUI: Quick Open instead. |
-| Clone (choosing from your own GitHub repositories) | ✓ | ✓ | ✓ | n/a | △ | — | VSCode: VSCode's own Git: Clone.<br>CLI: `clone <url>` only.<br>Windows: The clone opens in a new tab. |
-| Clone: what to download (everything, contents when needed, recent history) and only some folders | ✓ | ✓ | ✓ | n/a | ✓ | — | VSCode: VSCode's own Git: Clone.<br>CLI: `clone --filter`, `--depth`, `--sparse`. |
-| Subtrees group (shown when git has git subtree): Add, Pull, Push, Split, remembering the source and squash | ✓ | ✓ | ✓ | ✓ | ✓ | — | VSCode: The values are asked in input boxes and the squash in a list, not a sheet.<br>CLI: `subtree`. |
-| Clone: check out submodules too | ✓ | ✓ | ✓ | n/a | ✓ | — | VSCode: VSCode's own Git: Clone.<br>CLI: `clone --recurse-submodules`. |
+| Clone (choosing from your own GitHub repositories) | ✓ | ✓ | ✓ | n/a | △ | △ | VSCode: VSCode's own Git: Clone.<br>CLI: `clone <url>` only.<br>Windows: The clone opens in a new tab.<br>TUI: A URL typed in Quick Open; no GitHub. |
+| Clone: what to download (everything, contents when needed, recent history) and only some folders | ✓ | ✓ | ✓ | n/a | ✓ | ✓ | VSCode: VSCode's own Git: Clone.<br>CLI: `clone --filter`, `--depth`, `--sparse`.<br>TUI: Asked after the folder. |
+| Subtrees group (shown when git has git subtree): Add, Pull, Push, Split, remembering the source and squash | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: The values are asked in input boxes and the squash in a list, not a sheet.<br>CLI: `subtree`.<br>TUI: Add Subtree in the command list; `p` `P` `t` on a subtree's row; the source is typed on the bottom line and the squash chosen there. |
+| Clone: check out submodules too | ✓ | ✓ | ✓ | n/a | ✓ | ✓ | VSCode: VSCode's own Git: Clone.<br>CLI: `clone --recurse-submodules`.<br>TUI: Asked before cloning. |
 | Init a new repository | — | — | — | n/a | — | — | macOS: Listed in docs/ux.md's File menu but not built. |
 
 ## 3. Settings
@@ -172,7 +172,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Push sheet (warnings, commits and diff, Force Push with lease) | ✓ | ✓ | △ | ✓ | △ | △ | VSCode: A QuickPick with the warnings, the commits to send and the ones the upstream would lose, Pull… or Force Push with lease. All changes to send and each commit open their diff in the multi-file diff editor, and the sheet stays open.<br>CLI: Via `amonhen run`.<br>Windows: Shown in the window, not a dialog: the commits on the left and the selected one's diff in the right column, as Stashes are.<br>TUI: `P` asks with the number of commits and up to three subjects, and offers Force Push with lease and its drawing when the upstream is ahead; no diff. |
 | Publish (choose the remote and name) | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: Via `amonhen run`.<br>TUI: `P` on a branch without an upstream. |
 | Merge (fast-forward only / no-ff / squash options) | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: A list to choose how to merge, which is the confirmation.<br>CLI: Via `amonhen run` (`mode`).<br>TUI: `m` in the sidebar. |
-| Octopus merge of several (order, expected conflicts) | ✓ | ✓ | ✓ | ✓ | △ | △ | CLI: `merge-check` checks; the merge via `amonhen run`.<br>Windows: From History's selection: the order (dragged), expected conflicts per branch with Put Last, how to merge, one by one, the message, the before-and-after drawing, and Merge One by One when git refuses.<br>TUI: `m` on refs marked with `v` in the sidebar, naming how many commits each brings, in the order marked; no expected conflicts. |
+| Octopus merge of several (order, expected conflicts) | ✓ | ✓ | ✓ | ✓ | △ | △ | CLI: `merge-check` checks; the merge via `amonhen run`.<br>Windows: From History's selection: the order (dragged), expected conflicts per branch with Put Last, how to merge, one by one, the message, the before-and-after drawing, and Merge One by One when git refuses.<br>TUI: `m` on refs marked with `v` in the sidebar, in the order marked, naming how many commits each brings and its expected conflicts; `l` puts the first conflicting one last; no other reordering. |
 | Rebase sheet drawing before and after | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: The dialog lists the commits now and after the rebase, with the branches, as text.<br>CLI: `rewrite-preview` prints it; the rebase via `amonhen run`.<br>TUI: `r` in the sidebar; the drawing lies over the screen. |
 | Stash (message, include untracked) | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: Via `amonhen run`.<br>TUI: `s`. |
 | Stash: only the staged changes, keep the index, selected files | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: With the engine, the Stash list has the first two, and a Working Copy file's right-click has Stash… for that file.<br>CLI: Via `amonhen run` (`stashPush` with `staged`, `keepIndex`, `paths`).<br>TUI: `s` offers `k` keep the index, `s` only what is staged and, in the Working Copy, `f` only the selected file. |
@@ -214,7 +214,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Range Diff view (= ! < >, Changes Only, diff of diffs) | ✓ | ✓ | ✓ | ✓ | ✓ | △ | CLI: `range-diff`.<br>TUI: In the Blame and File History view, not as a page of its own; `c` for Changes Only. |
 | Compare with Previous Version | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `range-diff --previous`.<br>TUI: In the command list. |
 | Two History commits or a Reflog entry compared as two versions | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: Any ranges.<br>TUI: `=` with two commits selected in History, or on a Reflog entry (with the current HEAD). |
-| Editable ranges | ✓ | ✓ | ✓ | ✓ | ✓ | — |  |
+| Editable ranges | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | TUI: `r` in a range diff, typed as git range-diff takes them. |
 
 ## 6. Working Copy
 
@@ -223,7 +223,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | One checkbox list (☑ ▣ ☐, header and folder checks) | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: Separate Staged and Changes groups.<br>TUI: `[x]` `[-]` `[ ]` per file; `+` stages every file (no folders). |
 | List / Tree / File Name | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: `v` in the list cycles them; a folder row stages what is under it, Enter folds it. |
 | Filter on paths | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: `/` in the list. |
-| Per-row +/− counts and Discard on hover | ✓ | ✓ | ✓ | ✓ | △ | △ | VSCode: Counts need the engine.<br>CLI: `diff --stat`.<br>Windows: The ↶ stays on the last row the pointer was on.<br>TUI: The selected file's counts head its diff; `d` discards. |
+| Per-row +/− counts and Discard on hover | ✓ | ✓ | ✓ | ✓ | △ | △ | VSCode: Counts need the engine.<br>CLI: `diff --stat`.<br>Windows: The ↶ stays on the last row the pointer was on.<br>TUI: The counts at the right of each row; `d` discards the selected file (no button on hover). |
 | Space toggles, ⌫ discards | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: Space and `d`. |
 | Commit box on top with 50/72 counter and body guide | ✓ | ✓ | ✓ | ✓ | n/a | △ | VSCode: A description line over 72 is counted instead of a guide (the column is narrower than 72 characters).<br>TUI: Under the list; its heading counts the summary line (yellow past 50), and what goes past 50 in the summary or 72 in a body line is yellow. |
 | Draft per repository, starting from the template | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: `commit.template` only, not the shared template library.<br>TUI: The draft is kept in `<git dir>/amonhen/commit-draft`; the template is `commit.template` (the repository's own one on SSH hosts too), not the shared library. |
@@ -237,7 +237,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Combined HEAD → working tree diff with line and hunk checks | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: With the engine; without it, line staging on separate unstaged and staged diffs.<br>CLI: `diff --combined`, `stage --rows`. |
 | Range selection in the gutter, J/K and ⌥J/⌥K | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: `v` starts a range; `[` `]` go to the hunk headers. |
 | Unstaged / Staged switch for files that can't be overlaid | ✓ | ✓ | ✓ | n/a | ✓ | ✓ | VSCode: Always shown separately.<br>CLI: `diff --staged`.<br>TUI: The unstaged side first; `s` in the diff switches sides. |
-| Diff options (unified/split, context, wrap) | △ | △ | — | — | n/a | — | macOS, GTK4: Wrapping long lines only (Wrap Long Lines, for every diff, file contents and the merge editor); no side-by-side view. |
+| Diff options (unified/split, context, wrap) | △ | △ | △ | △ | n/a | — | macOS, GTK4: Wrapping long lines only (Wrap Long Lines, for every diff, file contents and the merge editor); no side-by-side view.<br>Windows: The same, but not yet in the merge editor.<br>VSCode: Wrapping long lines only (`amonhen.wrapLongLines`, Alt+Z or the ↩︎ above the diff; the merge editor is VSCode's own). |
 | Ignore whitespace (lines aren't staged or discarded meanwhile) | ✓ | ✓ | ✓ | — | ✓ | ✓ | CLI: `diff -w`, `-b`, `--ignore-space-at-eol` (not with `--combined`).<br>TUI: `w` in the diff goes through them in turn; one side at a time meanwhile (`s` switches). |
 | Discard lines, hunks and files (undoable) | ✓ | ✓ | △ | ✓ | ✓ | ✓ | CLI: `discard --rows`.<br>Windows: Right-click a line or a hunk header in the Working Copy diff (Discard Lines); lines can't be selected |
 | Add to .gitignore | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: `i` on an untracked file, then `p` for its path or `e` for its extension. |
@@ -250,12 +250,12 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
 | Graph with branch and tag labels | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `log`.<br>TUI: One line per commit. |
 | Huge histories in chunks with the persistent cache | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |
-| Search with match count, next / previous, matching only | ✓ | ✓ | ✓ | ✓ | △ | △ | VSCode: With the engine.<br>CLI: `log <query>` lists the matches.<br>TUI: `/`, `n` `N`; no matching-only view. |
-| Display: order, one line, row items, fold merged, highlight ancestors | ✓ | ✓ | ✓ | ✓ | △ | △ | macOS, GTK4: Any merge folds on its own (a +N badge, its context menu, ←/→), kept per repository.<br>VSCode: Order, folding and highlighting with the engine.<br>CLI: `--topo-order`, `--fold`.<br>Windows: In View.<br>TUI: `o` order and `z` fold, for the run only; always one line, no choice of row items. |
+| Search with match count, next / previous, matching only | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: With the engine.<br>CLI: `log <query>` lists the matches.<br>TUI: `/`, `n` `N`, `&` for matching only. |
+| Display: order, one line, row items, fold merged, highlight ancestors | ✓ | ✓ | ✓ | ✓ | △ | △ | macOS, GTK4: Any merge folds on its own (a +N badge, its context menu, ←/→), kept per repository.<br>VSCode: Order, folding and highlighting with the engine.<br>CLI: `--topo-order`, `--fold`.<br>Windows: In View.<br>TUI: `o` order, for the run only; `z` folds every merge and `Z` one, kept per repository and shared with the apps; `I` the row items, for the run only; always one line. |
 | Avatars | ✓ | ✓ | ✓ | — | n/a | — |  |
 | Signature marks on commits | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: With the engine.<br>CLI: In `show`.<br>TUI: The mark before the subject; no popover. |
 | CI status per commit with a checks popover | ✓ | ✓ | ✓ | — | — | — |  |
-| Worktree HEAD labels (✎ ⌂ ⑂, change counts) | ✓ | ✓ | ✓ | ✓ | — | — |  |
+| Worktree HEAD labels (✎ ⌂ ⑂, change counts) | ✓ | ✓ | ✓ | ✓ | — | ✓ | TUI: When there are two or more worktrees. |
 | Go to HEAD, Parent, Child | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: The HEAD button above History, Go to Parent and Go to Child on a commit's menu, and parent and child links in the details (with the engine).<br>TUI: `@`, `]` and `[`. |
 | Go to Ref | — | — | — | — | n/a | — |  |
 | Several commits selected (range, two, scattered) | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: With the engine.<br>CLI: `diff <rev> <rev>` for two.<br>TUI: `m`, Shift-↑↓, or Ctrl- or Alt-click. |
@@ -263,7 +263,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Commit menu: checkout, new branch or tag, cherry-pick, revert, copy ID | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: Via `amonhen run`.<br>TUI: `c`, `b`, `T`, `y`, `v` and `Y` (copied to the terminal's clipboard with OSC 52). |
 | Edit mode (pick, reword, squash, fixup, drop, edit; drag to reorder) | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: With the engine; without it, one commit at a time.<br>CLI: Via `amonhen run`.<br>TUI: `E`, over the screen; `J` `K` move a row. |
 | Rewrite preview (stacked and pushed branches, expected conflicts) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: Through the daemon. Rebasing another branch gives the conflict estimate instead, as in the app.<br>CLI: `rewrite-preview`. |
-| Shortcuts: Edit Message…, Squash into Previous…, Drop…, Combine N…, drag a commit | ✓ | ✓ | ✓ | ✓ | △ | △ | VSCode: With the engine they open the edit mode; without it they rewrite at once, and there's no Combine N Commits.<br>CLI: Via `amonhen run`.<br>TUI: `e` Edit Message, `F` fixup into the parent, `X` Drop and `E` on the selected commits Combine N; merge and rebase are `m` `r` in the sidebar. |
+| Shortcuts: Edit Message…, Squash into Previous…, Drop…, Combine N…, drag a commit | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: With the engine they open the edit mode; without it they rewrite at once, and there's no Combine N Commits.<br>CLI: Via `amonhen run`.<br>TUI: `e` Edit Message, `F` fixup into the parent, `X` Drop and `E` on the selected commits Combine N; merge and rebase are `m` `r` in the sidebar; dragging a commit onto another asks to move or combine it. |
 | Split a commit | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: Via `amonhen run`.<br>TUI: `\|` in History, asked first; it stops in the Working Copy. |
 | Merges kept when editing (`--rebase-merges`) | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: With the engine; without it, editing stops at the first merge.<br>CLI: Via `amonhen run`. |
 | Shallow clone: band at the end to fetch more, boundary commits marked | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: With the engine.<br>CLI: `log` notes where the history stops; fetching more via `amonhen run`.<br>TUI: A line below the last row, ┄ before a boundary commit's subject; `+` in History fetches more (a count, up to a date, all). |
@@ -272,15 +272,15 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 
 | Feature | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
-| Full message, draggable panes, ⤢ to expand | ✓ | ✓ | ✓ | ✓ | n/a | △ | TUI: The dividers can't be dragged; on a narrow terminal the details open in place of History. |
+| Full message, draggable panes, ⤢ to expand | ✓ | ✓ | ✓ | ✓ | n/a | △ | TUI: The dividers are dragged with the mouse, for this run only; no ⤢, and on a narrow terminal the details open in place of History. |
 | Find inside the details | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: ⌘F searches the whole main view; diffs not loaded yet aren't searched.<br>TUI: `/` in the details, `n` `N` for the next and previous. |
-| Changed files as the diff's own file headers (folded at first, sticky, one bar of controls) | ✓ | ✓ | ✓ | △ | ✓ | △ | CLI: `show`.<br>VSCode: Still a separate changed-files list beside the stacked diff, with Viewed.<br>TUI: `[` `]` move between files; no sticky headers or folding. |
-| Changed files as a list or a tree whose folders fold | ✓ | ✓ | ✓ | △ | n/a | ✓ | VSCode: A tree beside the diff (Tree / List above the files).<br>TUI: Above the diff; `t` switches to the tree, a click folds a folder (`z` all) or goes to a file's diff. |
-| Widen a hunk's context, show a whole file | ✓ | ✓ | ✓ | — | n/a | ✓ | TUI: `+` widens the file in view by 20 lines, `F` shows all of it. |
-| Ignore whitespace (at line ends, changes in amount, all) | ✓ | ✓ | ✓ | — | ✓ | ✓ | CLI: `show -w`, `-b`, `--ignore-space-at-eol`.<br>TUI: `w` in the details goes through them in turn. |
-| Compare images (side by side, swipe, onion skin, differing pixels) | ✓ | ✓ | ✓ | — | n/a | — | |
-| All Files: the tree at the commit and a file's contents with the commit's lines marked | ✓ | ✓ | — | — | n/a | — | |
-| All Files previews: zoomable images, SVG picture and mobile check, formatted Markdown, Quick Look for binaries | ✓ | ✓ | — | — | n/a | — | GTK4: GNOME's previewer (or the default app) instead of Quick Look; the SVG pictures are drawn by librsvg. |
+| Changed files as the diff's own file headers (folded at first, sticky, one bar of controls) | ✓ | ✓ | ✓ | ✓ | ✓ | △ | CLI: `show`.<br>VSCode: The header's ⋯ opens its right-click menu; Open opens VSCode's diff editor.<br>TUI: The header of the file in view sticks at the top, and `o` or a click on a header folds the file; `[` `]` move between files. Generated and large files are folded at first; the changed files are also a list above the diff. |
+| Changed files as a list or a tree whose folders fold | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: Above the diff; `t` switches to the tree, a click folds a folder (`z` all) or goes to a file's diff. |
+| Widen a hunk's context, show a whole file | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: With the engine; the ⇕ on a hunk header widens the file by 20 lines, Show Whole File is on the file's ⋯.<br>TUI: `+` widens the file in view by 20 lines, `F` shows all of it. |
+| Ignore whitespace (at line ends, changes in amount, all) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: With the engine.<br>CLI: `show -w`, `-b`, `--ignore-space-at-eol`.<br>TUI: `w` in the details goes through them in turn. |
+| Compare images (side by side, swipe, onion skin, differing pixels) | ✓ | ✓ | ✓ | ✓ | n/a | — | VSCode: Images over 20 MB aren't compared. |
+| All Files: the tree at the commit and a file's contents with the commit's lines marked | ✓ | ✓ | ✓ | ✓ | n/a | — | VSCode: With the engine. |
+| All Files previews: zoomable images, SVG picture and mobile check, formatted Markdown, Quick Look for binaries | ✓ | ✓ | △ | ✓ | n/a | — | VSCode: Other binaries open in VSCode's editor instead of Quick Look.<br>GTK4: GNOME's previewer (or the default app) instead of Quick Look; the SVG pictures are drawn by librsvg.<br>Windows: Zoomable images, SVG pictures and formatted Markdown; no mobile check for SVG and no preview of binaries yet. |
 | File header menu (Blame, File History, copy path, open) | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: Blame, File History and Copy Path on the right-click; Open in VSCode's diff editor.<br>TUI: `B`, `L`, `Y` (copy path) and `e` (open in git's editor) for the file in view. |
 | Diff of a selection (range squashed, A..B / A...B, scattered) | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: With the engine.<br>CLI: `diff <rev> <rev>`.<br>TUI: `m` and Shift-↑↓ (or Ctrl- or Alt-click) select; `x` swaps the direction and `.` diffs from the merge base. |
 | Actions on a selection (cherry-pick, revert, squash, copy IDs) | ✓ | ✓ | △ | ✓ | △ | ✓ | VSCode: With the engine.<br>CLI: Via `amonhen run`.<br>Windows: Combining consecutive commits edits the message in a dialog, then rewrites at once (no edit mode).<br>TUI: `y` `v` on the marked commits, `E` opens edit mode with them combined, `Y` copies the IDs, and Save as Patch saves them. |
@@ -306,7 +306,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Drop patch files on the window | ✓ | ✓ | ✓ | ✓ | n/a | n/a | VSCode: From the Explorer's context menu.<br>TUI: Apply Patch asks for the file's path. |
 | Export Archive (zip / tar.gz / tar, top folder, one folder) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: With the engine; a branch's or tag's right-click, a commit's in History, or the command palette for HEAD.<br>CLI: `archive`.<br>TUI: The selected commit, from the command list; the extension picks the format, then `y` a top folder, `t` none and `o` one folder (typed). |
 | Save as Bundle (all, some refs, after a base) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: With the engine; the selected branches' and tags' right-click, or the sidebar's ⋯ for the whole repository.<br>CLI: `bundle create`.<br>TUI: From the command list: everything, `b` the current branch only, or `a` the current branch after a base. |
-| Clone from a bundle file (branch when no HEAD) | ✓ | ✓ | ✓ | ✓ | ✓ | — | VSCode: The sidebar's ⋯ and the welcome view; then open the clone, in a new window or in the workspace.<br>CLI: `clone <file> [-b <branch>]`. |
+| Clone from a bundle file (branch when no HEAD) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: The sidebar's ⋯ and the welcome view; then open the clone, in a new window or in the workspace.<br>CLI: `clone <file> [-b <branch>]`.<br>TUI: A `.bundle` path typed in Quick Open; the branch picked with `1`–`9`. |
 | Fetch from Bundle (under a name, prerequisites checked) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: With the engine; the sidebar's ⋯.<br>CLI: `bundle fetch`.<br>TUI: In the command list. |
 | Stopped `am` with Retry with 3-Way, Skip, Abort, Continue | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: In a sidebar row.<br>CLI: `am --continue / --skip / --abort / --retry-3way`.<br>Windows: Windows: In the band above Working Copy.<br>TUI: `C` `K` `A`, and `R` for Retry with 3-Way. |
 
@@ -343,13 +343,13 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 
 | Feature | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
-| Operations (git commands, output, progress, cancel) | ✓ | ✓ | ✓ | △ | △ | — | VSCode: An Output channel log only.<br>CLI: Via `amonhen run` (`remoteActivity`, `cancelActivity`).<br>TUI: The top line names the running operation; no git commands, output or cancel. |
+| Operations (git commands, output, progress, cancel) | ✓ | ✓ | ✓ | △ | △ | ✓ | VSCode: An Output channel log only.<br>CLI: Via `amonhen run` (`remoteActivity`, `cancelActivity`).<br>TUI: `Tab` in Activity's operation log: the git commands and core commands where git runs (the daemon's through it), the selected one's output or error below, `x` cancels a running one, `r` reads again. |
 | History (operation log, Undo to Here) | ✓ | ✓ | ✓ | △ | △ | ✓ | VSCode: Undo History… lists the Undo log and undoes down to the chosen one; no other activity.<br>CLI: `undo --list` shows the log.<br>TUI: Activity in the command list; Enter undoes back to the selected one. |
-| Performance | ✓ | ✓ | ✓ | n/a | n/a | — | VSCode: VSCode's Output channel (the Amon Hen log).<br>Windows: Diff loads and History and status reloads. |
-| History cache writes (size, count, bytes, last write per repository) | ✓ | ✓ | ✓ | — | △ | — | CLI: Via `amonhen run` (`historyCache`). |
-| Events | ✓ | ✓ | ✓ | n/a | n/a | — | VSCode: VSCode's Output channel (the Amon Hen log). |
-| Export as JSON | ✓ | ✓ | ✓ | n/a | n/a | — | VSCode: VSCode's Output channel (the Amon Hen log). |
-| Daemon tab (start, stop, connections) | ✓ | ✓ | ✓ | ✓ | △ | — | VSCode: A page of the main view (Show Daemon in the sidebar's ⋯ and the command palette); the window's connections are to the local daemon only.<br>CLI: `daemon status / start / stop`. |
+| Performance | ✓ | ✓ | ✓ | n/a | n/a | ✓ | VSCode: VSCode's Output channel (the Amon Hen log).<br>Windows: Diff loads and History and status reloads.<br>TUI: History and status reloads and diff loads (count, p50, p95, max, last), after History Cache in Activity. |
+| History cache writes (size, count, bytes, last write per repository) | ✓ | ✓ | ✓ | — | △ | ✓ | CLI: Via `amonhen run` (`historyCache`).<br>TUI: The open repository's, after Operations in Activity (`Tab`). |
+| Events | ✓ | ✓ | ✓ | n/a | n/a | ✓ | VSCode: VSCode's Output channel (the Amon Hen log).<br>TUI: After History Cache in Activity (`Tab`): the change notices and the reloads they cause. |
+| Export as JSON | ✓ | ✓ | ✓ | n/a | n/a | ✓ | VSCode: VSCode's Output channel (the Amon Hen log).<br>TUI: `s` in Activity's Operations, to a file on this machine. |
+| Daemon tab (start, stop, connections) | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: A page of the main view (Show Daemon in the sidebar's ⋯ and the command palette); the window's connections are to the local daemon only.<br>CLI: `daemon status / start / stop`.<br>TUI: After History Cache in Activity (`Tab`): `S` starts, `X` stops. |
 
 ## 11. Menus
 
@@ -366,7 +366,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Feature | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
 | Operation in progress with Continue / Skip / Abort | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: A sidebar row.<br>TUI: On the bottom line, with `C` `K` `A`. |
-| Failure with its cause and Details | ✓ | ✓ | ✓ | ✓ | n/a | △ | VSCode: The notification gives the cause (git's fatal: and error: lines); Details shows the whole output and the git command in an output panel.<br>TUI: The cause on the bottom line, and `!` shows all of git's answer when it has more lines (no git command). |
+| Failure with its cause and Details | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: The notification gives the cause (git's fatal: and error: lines); Details shows the whole output and the git command in an output panel.<br>TUI: The cause on the bottom line, and `!` shows the git command and all of git's answer. |
 | Lost connection with Reconnect | ✓ | ✓ | ✓ | n/a | n/a | — |  |
 | What a finished operation did, for a few seconds | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: A status bar message or a notification with Undo.<br>TUI: On the bottom line. |
 
@@ -400,7 +400,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 
 | Feature | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
-| Worktrees with change counts | ✓ | ✓ | ✓ | ✓ | ✓ | △ | CLI: `worktree list --changes`.<br>TUI: In the sidebar when there are two or more; no change counts. |
+| Worktrees with change counts | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `worktree list --changes`.<br>TUI: In the sidebar when there are two or more. |
 | The edited worktree (✎) and switching it | ✓ | ✓ | △ | ✓ | n/a | ✓ | VSCode: Switches the repository the extension works on; one outside the workspace isn't added to the Source Control view.<br>CLI: Works on the worktree it runs in.<br>Windows: Choosing a worktree (or Edit This Worktree) reopens the window on it at the same place and page, since only the front tab's repository is open.<br>TUI: Enter on another worktree reopens the TUI there. |
 | New Worktree… (from a branch or commit) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | TUI: `w` on a local branch, or in History with a new branch at the selected commit. |
 | Remove Worktree (asks, `--force` with changes) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | TUI: `x` after asking, naming the changes it removes with `--force`. |

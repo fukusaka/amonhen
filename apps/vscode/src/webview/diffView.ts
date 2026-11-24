@@ -1,6 +1,6 @@
 /** 差分の描画。Working Copy と History で共通に使う */
 import type { DiffHunk, DiffLine, FileDiff } from '../diff/fileDiff.ts';
-import { el } from './api.ts';
+import { el, post } from './api.ts';
 
 /** これより多い行は描かない（重くなるので） */
 const MAX_LINES = 5000;
@@ -15,6 +15,8 @@ export interface DiffOptions {
    * 押すと lines を stage（true）か外すか（false）で呼ぶ
    */
   check?: (lines: DiffLine[], stage: boolean) => void;
+  /** あれば hunk の見出しの左に印を置き、押すとファイルの前後の行を広げる */
+  widen?: () => void;
 }
 
 /** hunk の変更の行がどれだけ入っているか: all・some・none */
@@ -119,6 +121,16 @@ function renderHunk(hunk: DiffHunk, opts: DiffOptions, budget: number): HTMLElem
     });
     head.append(box);
   }
+  if (opts.widen) {
+    const widen = opts.widen;
+    const more = el('button', 'widen', '⇕');
+    more.title = 'Show 20 more lines around each change in this file';
+    more.addEventListener('click', (e) => {
+      e.stopPropagation();
+      widen();
+    });
+    head.append(more);
+  }
   head.append(el('span', 'range', hunk.header));
   if (opts.hunkActions?.length) {
     const actions = el('span', 'actions');
@@ -198,4 +210,27 @@ function wordRanges(lines: readonly DiffLine[]): Map<number, [number, number]> {
     i = a;
   }
   return result;
+}
+
+/** 長い行を折り返しているか（設定。ボタンの見た目に使う） */
+let wrapping = false;
+
+/** 長い行の折り返しを当てる（すべての差分とファイルの中身。帯の ↩︎ の見た目も合わせる） */
+export function setWrapLines(wrap: boolean): void {
+  wrapping = wrap;
+  document.body.classList.toggle('wrap-lines', wrap);
+  for (const button of document.querySelectorAll<HTMLElement>('.wrap-button')) updateWrapButton(button);
+}
+
+function updateWrapButton(button: HTMLElement): void {
+  button.classList.toggle('on', wrapping);
+  button.title = `${wrapping ? 'Wrapping long lines' : 'Wrap Long Lines'} (Alt+Z)\nWrap lines wider than the diff instead of scrolling sideways (in every diff)`;
+}
+
+/** 差分の帯の ↩︎（長い行の折り返しを切り替える。設定はすべての差分で 1 つ） */
+export function wrapButton(): HTMLElement {
+  const button = el('button', 'bar-button wrap-button', '↩︎');
+  button.addEventListener('click', () => post({ type: 'toggleWrapLines' }));
+  updateWrapButton(button);
+  return button;
 }

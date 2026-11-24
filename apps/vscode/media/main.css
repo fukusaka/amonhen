@@ -195,12 +195,101 @@ aside.details {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 12px 16px;
   box-sizing: border-box;
 }
 
+/* 差分の上の帯: ファイルの数と行数の合計、リストと木、すべて開く・畳む、Open All */
+.files-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-top: 1px solid var(--vscode-panel-border);
+  border-bottom: 1px solid var(--vscode-panel-border);
+  color: var(--vscode-descriptionForeground);
+  white-space: nowrap;
+  flex-wrap: wrap;
+}
+
+.files-bar[hidden] {
+  display: none;
+}
+
+.files-bar .files-total {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.files-bar .spacer {
+  flex: 1;
+}
+
+.files-bar .segmented {
+  display: flex;
+}
+
+.files-bar .bar-button {
+  padding: 1px 8px;
+  color: var(--vscode-foreground);
+  background: transparent;
+}
+
+.files-bar .bar-button:hover {
+  background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
+}
+
+.files-bar .bar-button.on {
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+}
+
+/* 木のフォルダの行（押すと中を畳む） */
+.dir-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+  color: var(--vscode-descriptionForeground);
+  cursor: pointer;
+  user-select: none;
+}
+
+.dir-head:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.dir-head .chevron {
+  width: 1em;
+  flex: none;
+}
+
+.dir-children[hidden] {
+  display: none;
+}
+
+/* 見出しのパスのフォルダの部分（リスト） */
+.diff-head .path .dir {
+  font-weight: normal;
+  color: var(--vscode-descriptionForeground);
+}
+
+.diff-head .head-button {
+  flex: none;
+  padding: 0 6px;
+  color: var(--vscode-foreground);
+  background: transparent;
+}
+
+.diff-head .head-button:hover {
+  background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
+}
+
 aside.details:not(.split) > .details-head,
-aside.details:not(.split) > .details-divider {
+aside.details:not(.split) > .details-divider,
+aside.details:not(.split) > .files-bar {
   display: none;
 }
 
@@ -233,6 +322,7 @@ aside.details.expanded > .details-head {
 }
 
 aside.details.expanded > .details-divider,
+aside.details.expanded > .files-bar,
 aside.details.expanded > .details-body {
   display: none;
 }
@@ -252,10 +342,8 @@ aside.details.expanded > .details-body {
   background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
 }
 
-/* 仕切りの線があるので、一覧の見出しの上の線は引かない */
-aside.details.split > .details-body > .stack:first-child > .files-head {
-  border-top: none;
-  padding-top: 0;
+aside.details .details-body > .empty {
+  padding: 12px 16px;
 }
 
 aside.details .empty {
@@ -311,15 +399,6 @@ aside.details .body {
   white-space: pre-wrap;
   font-family: var(--vscode-editor-font-family);
   font-size: var(--vscode-editor-font-size);
-}
-
-.files-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 6px 0;
-  border-top: 1px solid var(--vscode-panel-border);
-  color: var(--vscode-descriptionForeground);
 }
 
 .file {
@@ -1285,6 +1364,34 @@ button.sheet-list-item:hover {
   font-size: 0.9em;
 }
 
+.hunk-head .widen {
+  flex: none;
+  margin-right: 6px;
+  padding: 0 4px;
+  color: var(--vscode-descriptionForeground);
+  background: transparent;
+}
+
+.hunk-head .widen:hover {
+  color: var(--vscode-foreground);
+  background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
+}
+
+.hunk-head .widen + .range {
+  flex: 1;
+}
+
+.files-bar select {
+  padding: 1px 4px;
+  color: var(--vscode-dropdown-foreground);
+  background: var(--vscode-dropdown-background);
+  border: 1px solid var(--vscode-dropdown-border, transparent);
+}
+
+.files-bar select.on {
+  border-color: var(--vscode-focusBorder);
+}
+
 .lines {
   font-family: var(--vscode-editor-font-family);
   font-size: var(--vscode-editor-font-size);
@@ -1354,79 +1461,16 @@ button.sheet-list-item:hover {
 /* History の詳細に並べる差分 */
 
 .commit-diffs {
-  margin: 0 -16px;
+  margin: 0;
 }
 
-.file-diff {
+.file-diff:not(.collapsed) {
   padding-bottom: 4px;
-}
-
-.file-diff .diff-head {
-  border-top: 1px solid var(--vscode-panel-border);
+  border-bottom: 1px solid var(--vscode-panel-border);
 }
 
 .file-diff .diff-head .status {
   font-weight: bold;
-}
-
-/* 変わったファイルの見せ方の切り替え */
-.files-head {
-  gap: 6px;
-}
-
-.files-head .layout-buttons {
-  display: flex;
-  gap: 4px;
-  margin-left: auto;
-}
-
-/* 木: 一覧を差分の左に置き、スクロールしても見えたままにする */
-aside.details.tree .stack {
-  display: grid;
-  grid-template-columns: minmax(140px, 32%) 1fr;
-  align-items: start;
-}
-
-aside.details.tree .stack > .files-head {
-  grid-column: 1 / -1;
-}
-
-aside.details.tree .stack > .files {
-  position: sticky;
-  top: -12px;
-  max-height: calc(100vh - 8px);
-  overflow: auto;
-  border-right: 1px solid var(--vscode-panel-border);
-}
-
-aside.details.tree .stack > .commit-diffs {
-  min-width: 0;
-  margin-left: 0;
-}
-
-aside.details.tree .file .dir {
-  display: none;
-}
-
-aside.details.tree .file .name {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.file.dir-row {
-  color: var(--vscode-descriptionForeground);
-}
-
-.file.dir-row .chevron {
-  width: 1em;
-  flex: none;
-}
-
-/* 1 つのファイル: 選んだファイルの差分だけ */
-aside.details.single .file-diff:not(.current) {
-  display: none;
 }
 
 /* 見出しを押して畳む・開く */
@@ -1444,19 +1488,6 @@ aside.details.single .file-diff:not(.current) {
   display: none;
 }
 
-.diff-head .viewed {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  font-size: 0.9em;
-  white-space: nowrap;
-  color: var(--vscode-descriptionForeground);
-  cursor: pointer;
-}
-
-.diff-head .viewed input {
-  margin: 0;
-}
 
 .diff-head .stat,
 .file .stat {
@@ -1477,16 +1508,6 @@ aside.details.single .file-diff:not(.current) {
   color: var(--vscode-gitDecoration-deletedResourceForeground);
 }
 
-/* Viewed にしたファイルの印（一覧） */
-.file .viewed-mark {
-  visibility: hidden;
-  flex: none;
-  color: var(--vscode-descriptionForeground);
-}
-
-.file.viewed .viewed-mark {
-  visibility: visible;
-}
 
 .file-diff .empty {
   padding: 8px 16px;
@@ -2489,4 +2510,459 @@ body.vscode-light .syn-escape {
 body.vscode-high-contrast [class^='syn-'],
 body.vscode-high-contrast-light [class^='syn-'] {
   color: inherit;
+}
+
+/* 画像の差分（History の詳細）: 並べる・スワイプ・オニオンスキン・違うピクセル */
+.image-diff {
+  padding: 8px 12px;
+}
+
+.image-modes {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.image-modes .bar-button {
+  padding: 1px 8px;
+  color: var(--vscode-foreground);
+  background: transparent;
+}
+
+.image-modes .bar-button:hover {
+  background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
+}
+
+.image-modes .bar-button.on {
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+}
+
+.image-side {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.image-figure {
+  margin: 0;
+  min-width: 0;
+  flex: 1 1 0;
+}
+
+.image-figure img,
+.image-overlay img,
+.image-overlay canvas {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+/* 透けたところが分かる市松模様 */
+.checker {
+  background-color: #fff;
+  background-image:
+    linear-gradient(45deg, #ccc 25%, transparent 25%),
+    linear-gradient(-45deg, #ccc 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #ccc 75%),
+    linear-gradient(-45deg, transparent 75%, #ccc 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+  border: 1px solid var(--vscode-panel-border);
+  width: fit-content;
+  max-width: 100%;
+}
+
+.image-overlay {
+  position: relative;
+  width: 100%;
+}
+
+.image-overlay img,
+.image-overlay canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  object-fit: contain;
+  object-position: left top;
+}
+
+.image-slider {
+  display: block;
+  width: 100%;
+  max-width: 480px;
+  margin: 8px 0 4px;
+}
+
+.image-captions {
+  display: flex;
+  justify-content: space-between;
+  max-width: 480px;
+}
+
+.image-caption {
+  margin-top: 4px;
+  font-size: 0.9em;
+  color: var(--vscode-descriptionForeground);
+}
+
+/* すべてのファイル: 左にコミットの木、右に選んだファイルのその時点の中身 */
+aside.details.all-files-page .details-body {
+  overflow: hidden;
+}
+
+.all-files {
+  display: grid;
+  grid-template-columns: minmax(160px, 32%) 1fr;
+  height: 100%;
+}
+
+.tree-pane {
+  overflow: auto;
+  border-right: 1px solid var(--vscode-panel-border);
+  padding: 4px 0;
+}
+
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.tree-row:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.tree-row.active {
+  background: var(--vscode-list-inactiveSelectionBackground);
+}
+
+.tree-row .chevron {
+  width: 1em;
+  flex: none;
+  color: var(--vscode-descriptionForeground);
+}
+
+.tree-row .name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tree-row.touched > .name {
+  font-weight: bold;
+}
+
+.tree-row.deleted > .name {
+  text-decoration: line-through;
+  color: var(--vscode-descriptionForeground);
+}
+
+.tree-row.disabled {
+  cursor: default;
+  color: var(--vscode-disabledForeground);
+}
+
+.tree-row .status {
+  flex: none;
+  font-weight: bold;
+}
+
+.tree-row .s-A {
+  color: var(--vscode-gitDecoration-addedResourceForeground);
+}
+
+.tree-row .s-M,
+.tree-row .s-T {
+  color: var(--vscode-gitDecoration-modifiedResourceForeground);
+}
+
+.tree-row .s-D {
+  color: var(--vscode-gitDecoration-deletedResourceForeground);
+}
+
+.tree-row .s-R,
+.tree-row .s-C {
+  color: var(--vscode-gitDecoration-renamedResourceForeground);
+}
+
+.tree-note {
+  padding: 2px 24px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.file-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.file-pane > .empty {
+  padding: 12px 16px;
+}
+
+.file-pane-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.file-pane-head .path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: bold;
+}
+
+.file-pane-head .segmented {
+  display: flex;
+}
+
+.file-pane-head .bar-button,
+.zoom-bar .bar-button {
+  padding: 1px 8px;
+  color: var(--vscode-foreground);
+  background: transparent;
+}
+
+.file-pane-head .bar-button:hover,
+.zoom-bar .bar-button:hover {
+  background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
+}
+
+.file-pane-head .bar-button.on {
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+}
+
+.file-pane-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.file-pane-body > .empty {
+  padding: 12px 16px;
+}
+
+.file-pane-body > button {
+  margin: 0 16px;
+}
+
+/* その時点の中身: 足した行は緑、変えた行は青、消したところに赤い印 */
+.file-lines .line {
+  display: flex;
+}
+
+.file-lines .num {
+  flex: none;
+  width: 4.5em;
+  padding-right: 8px;
+  text-align: right;
+  color: var(--vscode-editorLineNumber-foreground);
+  user-select: none;
+}
+
+.file-lines .line.added {
+  background: var(--vscode-diffEditor-insertedLineBackground, rgba(155, 185, 85, 0.2));
+}
+
+.file-lines .line.changed {
+  background: var(--vscode-editorGutter-modifiedBackground, rgba(12, 125, 157, 0.3));
+  background: color-mix(in srgb, var(--vscode-editorGutter-modifiedBackground, #1b81a8) 25%, transparent);
+}
+
+.file-lines .line.removed-before {
+  box-shadow: inset 0 2px 0 var(--vscode-editorGutter-deletedBackground, #f14c4c);
+}
+
+.zoom-image {
+  padding: 8px 12px;
+}
+
+.zoom-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.zoom-label {
+  min-width: 3.5em;
+  text-align: center;
+  color: var(--vscode-descriptionForeground);
+}
+
+.zoom-frame {
+  overflow: auto;
+}
+
+.zoom-frame img {
+  display: block;
+  height: auto;
+}
+
+.svg-check {
+  padding: 8px 16px;
+}
+
+.svg-check h4 {
+  margin: 12px 0 4px;
+}
+
+.svg-check ul {
+  margin: 0 0 8px;
+  padding-left: 20px;
+}
+
+.svg-check img {
+  display: block;
+  max-width: 100%;
+  max-height: 240px;
+}
+
+/* 整形した Markdown */
+.markdown {
+  padding: 8px 20px 20px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.markdown h1,
+.markdown h2 {
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.markdown code {
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-family: var(--vscode-editor-font-family);
+  background: var(--vscode-textCodeBlock-background);
+}
+
+.markdown pre.md-code {
+  padding: 8px 12px;
+  overflow: auto;
+  background: var(--vscode-textCodeBlock-background);
+}
+
+.markdown pre.md-code code {
+  padding: 0;
+  background: none;
+}
+
+.markdown blockquote {
+  margin: 8px 0;
+  padding: 0 12px;
+  border-left: 3px solid var(--vscode-textBlockQuote-border, var(--vscode-panel-border));
+  color: var(--vscode-descriptionForeground);
+}
+
+.markdown .md-alert-title {
+  font-weight: bold;
+}
+
+.markdown .md-note,
+.markdown .md-tip {
+  border-left-color: var(--vscode-charts-blue, #3794ff);
+}
+
+.markdown .md-important {
+  border-left-color: var(--vscode-charts-purple, #b180d7);
+}
+
+.markdown .md-warning {
+  border-left-color: var(--vscode-charts-yellow, #cca700);
+}
+
+.markdown .md-caution {
+  border-left-color: var(--vscode-charts-red, #f14c4c);
+}
+
+.markdown .md-table {
+  border-collapse: collapse;
+}
+
+.markdown .md-table th,
+.markdown .md-table td {
+  padding: 4px 10px;
+  border: 1px solid var(--vscode-panel-border);
+}
+
+.markdown .md-html {
+  color: var(--vscode-descriptionForeground);
+}
+
+.markdown .md-img {
+  max-width: 100%;
+}
+
+.markdown li.md-task {
+  list-style: none;
+}
+
+.markdown li > p {
+  margin: 0;
+}
+
+.markdown li.md-task > input,
+.markdown li.md-task > p:first-of-type {
+  display: inline;
+}
+
+.markdown pre.md-code .code {
+  display: inline;
+}
+
+/* 長い行を折り返す（設定 amonhen.wrapLongLines。すべての差分とファイルの中身） */
+body.wrap-lines .line,
+body.wrap-lines .line .code {
+  white-space: pre-wrap;
+}
+
+body.wrap-lines .line .code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.diff-head .wrap-button,
+.files-bar .wrap-button {
+  flex: none;
+  padding: 0 6px;
+  color: var(--vscode-descriptionForeground);
+  background: transparent;
+}
+
+.diff-head .wrap-button:hover {
+  background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
+}
+
+.diff-head .wrap-button.on,
+.files-bar .wrap-button.on {
+  color: var(--vscode-textLink-foreground);
+  background: transparent;
+}
+
+/* GitHub 独自の絵文字（:octocat: など）は名前の薄い札 */
+.markdown .md-emoji-chip {
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 0.9em;
+  color: var(--vscode-descriptionForeground);
+  background: var(--vscode-badge-background, rgba(128, 128, 128, 0.25));
+  background: color-mix(in srgb, var(--vscode-descriptionForeground) 18%, transparent);
 }
