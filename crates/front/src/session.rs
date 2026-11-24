@@ -377,6 +377,32 @@ impl Session {
             // MARK: 差分
             "commitDiff" => self.commit_diff(request)?,
             "workingDiff" => self.working_diff(request)?,
+            // コミット `oid` の時点のファイル `path` の中身（History の All Files）。そのコミットで変わったファイルなら、
+            // 変わった行に印をつけたファイル全体（前後の行をすべて出した差分）。
+            "treeFile" => {
+                let id = oid(str_arg(request, "oid")?)?;
+                let path = str_arg(request, "path")?.trim_matches('/').to_owned();
+                let changes = repo.commit_changes(&id)?;
+                let mut stacked = repo.stacked_diff_ws(&changes, Whitespace::Exact)?;
+                match stacked.files.iter().position(|(p, _)| *p == path) {
+                    Some(i) => {
+                        repo.set_stacked_context(&mut stacked, i, u32::MAX)?;
+                        let file = stacked.files.swap_remove(i);
+                        let binary = file.1.binary;
+                        let single = amonhen_core::diff::StackedDiff { files: vec![file] };
+                        let view = single.view(&[false], &PROFILE);
+                        diff_records(&view).finish(json!({
+                            "path": path, "changed": true, "binary": binary,
+                        }))
+                    }
+                    None => {
+                        let view = repo.tree_file(&id, &path, &PROFILE)?;
+                        diff_records(&view).finish(json!({
+                            "path": path, "changed": false, "binary": view.binary,
+                        }))
+                    }
+                }
+            }
             // 構文の色付け。時間がかかることがあるので、FE は差分を色なしで先に出し、これを後から頼む。
             // Activity の Operations: git を動かしている側の記録（SSH 先なら daemon が読んだもの、ほかはこの
             // プロセスのもの）。`remote` なら、取り消しは cancelActivity の remote で頼む。

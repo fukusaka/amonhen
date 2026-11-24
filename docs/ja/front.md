@@ -66,6 +66,7 @@ History と差分は番号（`history`・`diff`）で持つ。FE がスクロー
 | `status` | | generation・branch・upstream・ahead・behind・entries（kind・path・origPath・index・worktree・staged・unstaged・submodule。内容のコンフリクト（UU・AA）には、作業ツリーのファイルに残っているマーカーの数 markers と、git の rerere が前の解決を当てたか rerere も） | |
 | `commitDiff` | id か stash（ID）、または history・rows・pair?（forward・reverse・mergeBase）。whitespace?（exact・at-eol・change・all。行を比べるときに無視する空白で、`git diff --ignore-space-at-eol`・`-b`・`-w` と同じ）。contexts?（ファイルの番号の文字列 → 前後の行数か、ファイル全体なら "all"。ほかのファイルは 3 行） | files（path・oldPath・kind・added・removed・binary・generated。generated は `linguist-generated`、なければ lock ファイルや縮めたファイルで、アプリは最初は畳む）・changes・selection・rows・view（`diffSyntax` 用） | 差分の行（下） |
 | `workingDiff` | path・mode（unstaged・staged・combined）・whitespace?（`commitDiff` と同じ。combined とは使えず、空白を無視した差分は `stageRows`・`discardRows` に使えない） | diff・path・mode・binary・added・removed・rows・lineEndings（下） | 差分の行 |
+| `treeFile` | oid（40 桁）・path | path・changed・binary | 差分の行: そのコミットの時点のファイル（History の All Files）。そのコミットで変わったファイルなら、前後の行をすべて出したそのコミットの差分（先頭に見出しの行）で、変わった行に印がつく |
 | `conflict` | path | path・rows | 差分の行 |
 | `diffSyntax` | diff（`workingDiff` の）か view（`commitDiff` の） | spans | spans（row・start・end・kind の u32 × 4。差分の行、その行の文字列での位置（highlights と同じ）、キーワード 1・文字列 2・コメント 3・数 4 ほか `SyntaxSpan` の種類）。時間がかかることがあるので、差分を出してから頼む |
 | `textSyntax` | path（言語を決める）・text | spans | spans（上と同じ。row は 0 で、文の先頭からの UTF-16 の位置） |
