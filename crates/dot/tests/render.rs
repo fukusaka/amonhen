@@ -62,6 +62,49 @@ fn data(name: &str) -> std::path::PathBuf {
         .join(format!("{name}.svg"))
 }
 
+/// 画像の見本の読み手: 96×48 画素の PNG（頭だけ）と 40×20 の SVG。
+fn sample_images(src: &str) -> Option<Vec<u8>> {
+    match src {
+        "img/a.png" => {
+            let mut png = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR".to_vec();
+            png.extend_from_slice(&96u32.to_be_bytes());
+            png.extend_from_slice(&48u32.to_be_bytes());
+            png.extend_from_slice(&[8, 2, 0, 0, 0]);
+            Some(png)
+        }
+        "b.svg" => Some(
+            b"<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 40 20\"><rect width=\"40\" height=\"20\" fill=\"teal\"/></svg>"
+                .to_vec(),
+        ),
+        _ => None,
+    }
+}
+
+const IMAGE_SAMPLE: &str = "digraph { a [image=\"img/a.png\", label=\"\"]; b [shape=box, image=\"b.svg\", imagescale=true, width=2, height=1, fixedsize=true, label=\"fit\"]; c [shape=box, image=\"img/a.png\", imagepos=tl, width=2.5, height=1, label=\"top left\"]; d [shape=plain, label=<<table><tr><td><img src=\"img/a.png\"/></td><td width=\"100\"><img src=\"b.svg\" scale=\"width\"/></td></tr></table>>]; a -> b -> c -> d }";
+
+#[test]
+fn matches_the_image_sample() {
+    let svg = amonhen_dot::render_with_images(
+        IMAGE_SAMPLE,
+        amonhen_dot::engines::Engine::Dot,
+        Some(&sample_images),
+    )
+    .unwrap();
+    assert!(svg.notes.is_empty(), "{:?}", svg.notes);
+    assert_eq!(svg.svg.matches("<image ").count(), 5);
+    let path = data("images");
+    if std::env::var_os("BLESS").is_some() {
+        std::fs::write(&path, &svg.svg).unwrap();
+        return;
+    }
+    let want = std::fs::read_to_string(&path).unwrap_or_default();
+    assert_eq!(svg.svg, want, "images changed (BLESS=1 to update)");
+    // 読み手がなければ注記して、画像は描かない
+    let plain = render(IMAGE_SAMPLE).unwrap();
+    assert_eq!(plain.notes, [Note::Images]);
+    assert!(!plain.svg.contains("<image "));
+}
+
 #[test]
 fn matches_the_samples() {
     let bless = std::env::var_os("BLESS").is_some();

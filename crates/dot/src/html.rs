@@ -5,9 +5,13 @@
 //! （rounded）・`columns`・`rows`（`*` で間の線）・`port`・`align`・`valign`。升の `colspan`・`rowspan`・`border`・
 //! `cellpadding`・`bgcolor`・`color`・`align`（`text` も）・`valign`・`balign`・`width`・`height`・`fixedsize`・
 //! `sides`・`port`。`<HR/>`・`<VR/>` は行・升の間の線。中の文字は `text` の HTML（`<font>`・`<b>`・`<br/>` など）、
-//! 升の中の表は入れ子にする。`<IMG>` は枠だけ（呼ぶ側が注記する）。
+//! 升の中の表は入れ子にする。`<IMG>` は `SRC` を呼ぶ側の読み手で読み、`SCALE` で升に合わせて描く（読めなければ
+//! 枠だけ。呼ぶ側が注記する）。
+
+use std::sync::Arc;
 
 use crate::color::{Color, parse as parse_color};
+use crate::image::{self, Picture, Scale};
 use crate::text::{self, Font, Just, Piece, Text, attr, color_attr, inline_label, styled};
 use amonhen_pele::svg::builder::num;
 
@@ -20,8 +24,10 @@ const MAX_CELLS: usize = 20_000;
 const MAX_SPAN: usize = 200;
 /// 大きさの上限（点）。
 const MAX_SIZE: f64 = 20_000.0;
-/// 画像の代わりの枠の大きさ。
+/// 読めない画像の代わりの枠の大きさ。
 const IMAGE: (f64, f64) = (36.0, 24.0);
+/// 表の画像の 1 画素の大きさ（点。Graphviz の表の画像は 96 dpi で数える）。
+const IMAGE_PX: f64 = 0.75;
 /// 升の文字の幅のゆとり。幅は Arial の送りで見積もるが、アプリの書体（macOS の sans-serif、Linux の DejaVu Sans・
 /// Noto Sans など）は 1 割ほど広いことがあり、升の余白（`cellpadding`）が小さいと枠からはみ出る。ノードの
 /// ラベルは周りの余白が吸うが、升は詰まっているので見積もりを広げておく。
@@ -69,7 +75,8 @@ pub enum Content {
     Empty,
     Text(Text),
     Table(Box<Table>),
-    Image,
+    /// 画像（読めなければ None で、枠を描く）と `SCALE`。
+    Image(Option<Arc<Picture>>, Scale),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -166,10 +173,21 @@ struct Parser<'a> {
     scheme: Option<&'a str>,
     found: Found,
     cells: usize,
+    images: &'a mut dyn FnMut(&str) -> Option<Arc<Picture>>,
 }
 
-/// HTML のラベルに表があれば、組んだ表のラベル。なければ None。
+/// HTML のラベルに表があれば、組んだ表のラベル。なければ None。画像は読まない（枠にする）。
 pub fn label(src: &str, base: &Font, scheme: Option<&str>) -> Option<Text> {
+    label_with_images(src, base, scheme, &mut |_| None)
+}
+
+/// `label` の、`<IMG>` を `images`（`SRC` の値から画像）で読むもの。
+pub fn label_with_images(
+    src: &str,
+    base: &Font,
+    scheme: Option<&str>,
+    images: &mut dyn FnMut(&str) -> Option<Arc<Picture>>,
+) -> Option<Text> {
     let pieces = text::pieces(src, MAX_PIECES);
     let at = pieces
         .iter()
@@ -203,6 +221,7 @@ pub fn label(src: &str, base: &Font, scheme: Option<&str>) -> Option<Text> {
         scheme,
         found: Found::default(),
         cells: 0,
+        images,
     };
     let mut table = p.table(&font, 0);
     table.place();
@@ -421,7 +440,7 @@ impl Parser<'_> {
         let mut fonts = vec![font.clone()];
         let mut open: Vec<bool> = Vec::new();
         let mut nested = None;
-        let mut image = false;
+        let mut image = None;
         for k in inner.clone() {
             match &self.pieces[k].0 {
                 Piece::Open(n, _) if n == "table" => {
@@ -443,7 +462,12 @@ impl Parser<'_> {
                         fonts.pop();
                     }
                 }
-                Piece::Empty(n, _) if n == "img" => image = true,
+                Piece::Empty(n, a) if n == "img" && image.is_none() => {
+                    image = Some((
+                        attr(a, "src").unwrap_or("").to_owned(),
+                        Scale::parse(attr(a, "scale")),
+                    ));
+                }
                 _ => {}
             }
         }
@@ -456,9 +480,16 @@ impl Parser<'_> {
                 let t = self.table(&f, depth + 1);
                 Content::Table(Box::new(t))
             }
-        } else if image {
-            self.found.image = true;
-            Content::Image
+        } else if let Some((src, scale)) = image {
+            let picture = if src.trim().is_empty() {
+                None
+            } else {
+                (self.images)(&src)
+            };
+            if picture.is_none() {
+                self.found.image = true;
+            }
+            Content::Image(picture, scale)
         } else {
             let t = inline_label(&self.src[start..stop.max(start)], font, self.scheme);
             if t.is_empty() {
@@ -479,7 +510,8 @@ impl Cell {
             Content::Empty => (0.0, 0.0),
             Content::Text(t) => (t.width * TEXT_SLACK, t.height),
             Content::Table(t) => (t.w, t.h),
-            Content::Image => IMAGE,
+            Content::Image(Some(p), _) => p.size(IMAGE_PX),
+            Content::Image(None, _) => IMAGE,
         }
     }
 
@@ -823,7 +855,21 @@ pub fn draw(
                 let (ox, oy) = c.inner_origin(inner);
                 draw(inner, left + ox, top + oy, root, attrs, ink, out);
             }
-            Content::Image => {
+            Content::Image(Some(p), scale) => {
+                let (w, h) = image::fit(p.size(IMAGE_PX), (iw, ih), *scale);
+                let ix = match c.align {
+                    Align::Left => x + inset,
+                    Align::Right => x + inset + iw - w,
+                    Align::Center | Align::Text => x + inset + (iw - w) / 2.0,
+                };
+                let iy = match c.valign {
+                    VAlign::Top => y + inset,
+                    VAlign::Bottom => y + inset + ih - h,
+                    VAlign::Middle => y + inset + (ih - h) / 2.0,
+                };
+                out.push_str(&image::element(p, ix, iy, w, h));
+            }
+            Content::Image(None, _) => {
                 out.push_str(&format!(
                     "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"none\" stroke=\"{BORDER}\" stroke-dasharray=\"3,2\"/>",
                     num(cx - IMAGE.0 / 2.0),
@@ -908,7 +954,7 @@ mod tests {
             panic!("no text");
         };
         assert!(x.lines[0].spans[0].font.bold && x.lines[0].spans[0].font.size == 20.0);
-        assert_eq!(t.cells[1].content, Content::Image);
+        assert_eq!(t.cells[1].content, Content::Image(None, Scale::Natural));
         assert_eq!(t.rules.len(), 2);
         assert!(t.port("in").is_some());
         let lbl = label(
@@ -924,6 +970,44 @@ mod tests {
             out.contains("font-weight=\"bold\"") || out.contains(">x</text>"),
             "{out}"
         );
+    }
+
+    #[test]
+    fn draws_images_in_cells() {
+        // 96×48 画素の PNG の頭
+        let mut png = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR".to_vec();
+        png.extend_from_slice(&96u32.to_be_bytes());
+        png.extend_from_slice(&48u32.to_be_bytes());
+        let picture = Arc::new(image::read(&png).unwrap());
+        let mut asked = Vec::new();
+        let mut images = |src: &str| {
+            asked.push(src.to_owned());
+            (src == "a.png").then(|| picture.clone())
+        };
+        let t = label_with_images(
+            "<table><tr><td><img src=\"a.png\"/></td><td width=\"150\" height=\"30\"><IMG SRC=\"a.png\" SCALE=\"BOTH\"/></td><td><img src=\"gone.png\"/></td></tr></table>",
+            &Font::new(14.0),
+            None,
+            &mut images,
+        )
+        .unwrap();
+        assert_eq!(asked, ["a.png", "a.png", "gone.png"]);
+        // 読めない画像があれば注記
+        assert!(t.image);
+        let table = t.html.unwrap();
+        // 表の画像は 96 dpi: 72×36 点と、枠 1・余白 2
+        let c = &table.cells[0];
+        assert_eq!((c.w, c.h), (78.0, 42.0));
+        let mut out = String::new();
+        draw(&table, 0.0, 0.0, &Font::new(14.0), "", None, &mut out);
+        assert!(
+            out.contains("<image x=\"6\" y=\"6\" width=\"72\" height=\"36\" preserveAspectRatio=\"none\" href=\"data:image/png;base64,"),
+            "{out}"
+        );
+        // SCALE=BOTH は升の中いっぱい（150 − 2 × 3）
+        assert!(out.contains("width=\"144\" height=\"36\""), "{out}");
+        // 読めない画像は点線の枠
+        assert!(out.contains("stroke-dasharray=\"3,2\""), "{out}");
     }
 
     #[test]

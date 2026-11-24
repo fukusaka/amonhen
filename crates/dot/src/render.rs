@@ -2,6 +2,7 @@
 //! グラフの題と地。色は文が決めたものを使い、決めないものはテーマの変数（`var(--_l)` など）にする。
 
 use std::collections::{BTreeSet, HashMap};
+use std::sync::Arc;
 
 use amonhen_pele::svg::builder::{esc, num};
 use amonhen_pele::svg::root::{Accessible, svg_document};
@@ -12,6 +13,7 @@ use crate::color::{self, Color, Rgba};
 use crate::curve::{self, Cubic, P};
 use crate::engines::{self, Engine};
 use crate::graph::{Attrs, Model};
+use crate::image::{self, Images, Picture, Scale};
 use crate::layout::{self, LabelSide, Route};
 use crate::record::{self, Field};
 use crate::route;
@@ -61,6 +63,7 @@ struct Ctx<'a> {
     scheme: Option<String>,
     defs: String,
     next_id: usize,
+    images: Images<'a>,
 }
 
 impl Ctx<'_> {
@@ -205,7 +208,13 @@ fn label_text(
     scheme: Option<&str>,
 ) -> Text {
     if raw.html {
-        let t = text::html_label(&raw.text, font, scheme.or(ctx.scheme.as_deref()));
+        let images = &mut ctx.images;
+        let t = text::html_label_with_images(
+            &raw.text,
+            font,
+            scheme.or(ctx.scheme.as_deref()),
+            &mut |src| images.get(src),
+        );
         if t.image {
             ctx.notes.insert(Note::Images);
         }
@@ -232,6 +241,8 @@ struct NodeView {
     ink: Option<&'static str>,
     /// ラベルを寄せる幅。
     inner_w: f64,
+    /// `image` の画像と、合わせ方・置き場所（`imagepos` の縦と横: -1・0・1）。
+    image: Option<(Arc<Picture>, Scale, (i8, i8))>,
     pos: P,
 }
 
@@ -325,6 +336,7 @@ pub fn render(
     budget: Budget,
     default_engine: Engine,
     notes: &mut BTreeSet<Note>,
+    images: Option<&image::Loader>,
 ) -> String {
     let g = &model.attrs;
     let mut ctx = Ctx {
@@ -333,6 +345,7 @@ pub fn render(
         scheme: g.get("colorscheme").map(str::to_owned),
         defs: String::new(),
         next_id: 0,
+        images: Images::new(images),
     };
     // 配置: `layout` が決め、なければフェンスの言葉の既定。知らない名前は dot で描いて注記
     let engine = match g.get("layout").map(str::trim).filter(|l| !l.is_empty()) {
@@ -399,8 +412,18 @@ pub fn render(
         if spec.unknown {
             ctx.notes.insert(Note::UnknownShapes);
         }
-        if a.get("image").is_some_and(|s| !s.is_empty()) || shape_name.eq_ignore_ascii_case("epsf")
-        {
+        // 画像（読めなければ注記して描かない）
+        let picture = match a.get("image").filter(|s| !s.trim().is_empty()) {
+            Some(src) => {
+                let p = ctx.images.get(src);
+                if p.is_none() {
+                    ctx.notes.insert(Note::Images);
+                }
+                p
+            }
+            None => None,
+        };
+        if shape_name.eq_ignore_ascii_case("epsf") {
             ctx.notes.insert(Note::Images);
         }
         if let Some(p) = a.num("peripheries") {
@@ -447,11 +470,17 @@ pub fn render(
                 None => (0.11 * INCH, 0.055 * INCH),
             }
         };
-        let (lw, lh) = match (&label, &rec) {
+        let (mut lw, mut lh) = match (&label, &rec) {
             (Some(t), _) if !t.is_empty() => (t.width + 2.0 * mx, t.height + 2.0 * my),
             (_, Some(f)) => (f.w, f.h),
             _ => (0.0, 0.0),
         };
+        // 画像の入る大きさ（1 画素を 1 点。ラベルは画像の上に重ねる）
+        if let Some(p) = &picture {
+            let (iw, ih) = p.size(1.0);
+            lw = lw.max(iw);
+            lh = lh.max(ih);
+        }
         let min_w = a
             .num("width")
             .map_or(0.75 * INCH, |v| v.clamp(0.0, 100.0) * INCH);
@@ -575,6 +604,13 @@ pub fn render(
             special,
             ink,
             inner_w,
+            image: picture.map(|p| {
+                (
+                    p,
+                    Scale::parse(a.get("imagescale")),
+                    image_pos(a.get("imagepos")),
+                )
+            }),
             pos: (0.0, 0.0),
         });
     }
@@ -1602,6 +1638,14 @@ pub fn render(
         if striped || wedged {
             body.push_str(&stripes(&mut ctx, &node.attrs, v, striped));
         }
+        if let Some((p, scale, (px, py))) = &v.image {
+            // 置き場所はノードの外接の箱の中
+            let (aw, ah) = (v.geom.w, v.geom.h);
+            let (w, h) = image::fit(p.size(1.0), (aw, ah), *scale);
+            let ix = x - w / 2.0 + f64::from(*px) * (aw - w) / 2.0;
+            let iy = y - h / 2.0 + f64::from(*py) * (ah - h) / 2.0;
+            body.push_str(&image::element(p, ix, iy, w, h));
+        }
         if let Some(rec) = &v.record {
             let mut seps = Vec::new();
             record::separators(rec, &mut seps);
@@ -1740,6 +1784,27 @@ pub fn render(
     let acc = Accessible::default();
     let _ = ctx.model;
     svg_document("dot", width, height, FONT_SIZE, &options, &acc, &content)
+}
+
+/// `imagepos` の置き場所（横と縦: -1 は左・上、0 は中、1 は右・下）。既定は中央。
+fn image_pos(s: Option<&str>) -> (i8, i8) {
+    let s = s.map(|s| s.trim().to_ascii_lowercase()).unwrap_or_default();
+    let mut c = s.chars();
+    let (v, h) = (c.next(), c.next());
+    if s.len() != 2 {
+        return (0, 0);
+    }
+    let y = match v {
+        Some('t') => -1,
+        Some('b') => 1,
+        _ => 0,
+    };
+    let x = match h {
+        Some('l') => -1,
+        Some('r') => 1,
+        _ => 0,
+    };
+    (x, y)
 }
 
 /// `pos` の値（`x,y` と、動かさない印の `!`）。

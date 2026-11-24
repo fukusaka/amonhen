@@ -13,6 +13,7 @@ pub mod curve;
 pub mod engines;
 pub mod graph;
 pub mod html;
+pub mod image;
 pub mod layout;
 pub mod parse;
 pub mod record;
@@ -50,7 +51,7 @@ use std::collections::BTreeSet;
 /// 近いもので描いたものの理由（図の下に添える）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Note {
-    /// 画像は空の枠にした。
+    /// 読めない画像は空の枠にした（読み手がない・見つからない・大きすぎる・知らない形式）。
     Images,
     /// 知らない形は箱にした。
     UnknownShapes,
@@ -105,6 +106,17 @@ pub fn render(source: &str) -> Result<Drawing, Error> {
 
 /// DOT の文を描く。`default_engine` は `layout` の属性がないときの配置（` ```neato ` のようなフェンスの言葉）。
 pub fn render_with(source: &str, default_engine: engines::Engine) -> Result<Drawing, Error> {
+    render_with_images(source, default_engine, None)
+}
+
+/// `render_with` の、画像（ノードの `image`・HTML の `<IMG>`）を `images` で読んで描くもの。読み手には文に
+/// 書いたままの値を渡す（どこから読むか・読んでよいかは読み手が決める）。読み手がない・読めない画像は枠にして
+/// `Note::Images` を残す。
+pub fn render_with_images(
+    source: &str,
+    default_engine: engines::Engine,
+    images: Option<&image::Loader>,
+) -> Result<Drawing, Error> {
     if source.len() > MAX_SOURCE && source.encode_utf16().count() > MAX_SOURCE {
         return Err(Error::new(format!(
             "The graph is longer than the limit of {MAX_SOURCE} characters"
@@ -125,7 +137,7 @@ pub fn render_with(source: &str, default_engine: engines::Engine) -> Result<Draw
         sweeps: if size > 3000 { 8 } else { 24 },
     };
     let mut notes = BTreeSet::new();
-    let svg = render::render(&model, budget, default_engine, &mut notes);
+    let svg = render::render(&model, budget, default_engine, &mut notes, images);
     if svg.len() > MAX_OUTPUT && svg.encode_utf16().count() > MAX_OUTPUT {
         return Err(Error::new("The drawing is larger than the output limit"));
     }
