@@ -1520,6 +1520,9 @@ enum Message {
     AllFilesShowChange,
     /// すべてのファイルで開いた Markdown を、ソースで見る（true）・整形して見る（false）。
     MarkdownText(bool),
+    /// すべてのファイルで開いた SVG の見せ方（絵・モバイル・テキスト）と、モバイルで見る部品。
+    SvgView(crate::data::SvgView),
+    MobileRenderer(amonhen_core::svglint::Target),
     /// 見出しの ⋯ の Open File at This Commit。
     OpenFileAtCommit(String),
     /// 差分の帯で、行を比べるときに無視する空白を選んだ（`whitespace:<0〜3>`）。
@@ -2773,6 +2776,14 @@ impl Root {
             }
             Message::AllFiles(on) => self.set_files_mode(on),
             Message::MarkdownText(text) => self.markdown_text = text,
+            Message::SvgView(view) => {
+                self.with_history(|h| h.session.data.svg_view = view);
+                self.reopen_file();
+            }
+            Message::MobileRenderer(target) => {
+                self.with_history(|h| h.session.data.mobile_renderer = target);
+                self.reopen_file();
+            }
             Message::AllFilesRow(Some(index)) => {
                 let flat = !crate::prefs::bool(crate::prefs::HISTORY_FILE_TREE);
                 let Some(browser) = self.browser.as_mut() else {
@@ -9322,18 +9333,23 @@ impl Root {
                 )),
                 // 差分（変更ファイルは差分のファイルの見出し）。すべてのファイルでは、ファイルを開くまで木の一覧を
                 // 上に重ねる。
-                Grid::new().grid_row(2).children((
-                    Grid::new()
-                        .background(Brush::Solid(Color::transparent()))
-                        .element_ref(&self.diff_area)
-                        .grid_column(1)
-                        .children((SwapChainPanel::new().element_ref(&self.diff_panel),))
-                        .menu(Menu::new(
-                            self.diff_file_menu(),
-                            context.callback(Message::DiffFileMenu),
-                        )),
-                    self.files_list(context),
-                )),
+                // モバイルで見ている SVG は、崩れる機能の一覧を下に。
+                Grid::new()
+                    .grid_row(2)
+                    .rows([GridLength::Star(1.0), GridLength::Auto])
+                    .children((
+                        Grid::new()
+                            .background(Brush::Solid(Color::transparent()))
+                            .element_ref(&self.diff_area)
+                            .grid_column(1)
+                            .children((SwapChainPanel::new().element_ref(&self.diff_panel),))
+                            .menu(Menu::new(
+                                self.diff_file_menu(),
+                                context.callback(Message::DiffFileMenu),
+                            )),
+                        self.files_list(context),
+                        self.svg_notes(),
+                    )),
             ));
         // タイトルバー: 左にリポジトリの切り替え、続けてツールバー（macOS 版と同じく、アイコンの下に名前）、右に
         // ≡（メニューバーの中身すべて）。メニューバーとツールバーの段はなくし、タブは下の段に置く。ツールバーの右の
@@ -17284,15 +17300,245 @@ impl Root {
                         };
                         (self.markdown_text, pick(false), pick(true))
                     });
+                let svg = browser
+                    .open
+                    .as_deref()
+                    .filter(|p| crate::imagediff::is_svg(p))
+                    .map_or_else(View::empty, |_| self.svg_switch(context));
                 crate::allfiles::path_bar(
                     browser,
                     context.callback(|()| Message::AllFilesBack),
                     context.callback(|()| Message::AllFilesShowChange),
                     markdown,
+                    svg,
                 )
             }
             _ => View::empty(),
         }
+    }
+
+    /// SVG の見せ方の切り替え（絵・モバイル・テキスト。GTK4 版の `svg_switch`）と、モバイルで見ているときは
+    /// 見る部品の切り替え（Android・iOS・Flutter・React Native。GTK4 版の `renderer_switch`）。押して外したときは
+    /// そのまま。
+    fn svg_switch(&self, context: &ViewContext<Self>) -> View {
+        use crate::data::SvgView;
+        use amonhen_core::svglint::Target;
+        #[derive(Clone, Copy)]
+        enum Pick {
+            View(SvgView),
+            Renderer(Target),
+        }
+        let mut current = (SvgView::Picture, Target::Android);
+        self.with_history(|h| current = (h.session.data.svg_view, h.session.data.mobile_renderer));
+        let toggle = |title: String,
+                      tooltip: String,
+                      on: bool,
+                      message: fn(Pick) -> Message,
+                      pick: Pick|
+         -> View {
+            ToggleButton::new()
+                .is_checked(on)
+                .on_is_checked_changed(context.callback(move |checked: bool| {
+                    if checked {
+                        message(pick)
+                    } else {
+                        Message::DiffFilesToggled
+                    }
+                }))
+                .content(TextBlock::new().text(title).font_size(12.0))
+                .tooltip(tooltip)
+        };
+        let views = [
+            (SvgView::Picture, tr!("Picture"), tr!("Draw the SVG")),
+            (
+                SvgView::Mobile,
+                tr!("Mobile"),
+                tr!("Check for mobile: list what breaks on Android, iOS, Flutter and React Native"),
+            ),
+            (SvgView::Text, tr!("Text"), tr!("Show the SVG source")),
+        ]
+        .into_iter()
+        .map(|(view, title, tooltip)| {
+            toggle(
+                title,
+                tooltip,
+                current.0 == view,
+                |p| match p {
+                    Pick::View(v) => Message::SvgView(v),
+                    Pick::Renderer(t) => Message::MobileRenderer(t),
+                },
+                Pick::View(view),
+            )
+        });
+        let renderers: View = if current.0 == SvgView::Mobile {
+            StackPanel::new()
+                .orientation(Orientation::Horizontal)
+                .children((View::keyed_fragment(
+                    [
+                        (Target::Android, "Android"),
+                        (Target::Ios, "iOS"),
+                        (Target::Flutter, "Flutter"),
+                        (Target::ReactNative, "React Native"),
+                    ]
+                    .into_iter()
+                    .map(|(target, title)| {
+                        (
+                            target.key().to_owned(),
+                            toggle(
+                                title.to_owned(),
+                                tr!("How the SVG looks on {name}", name = target.name()),
+                                current.1 == target,
+                                |p| match p {
+                                    Pick::View(v) => Message::SvgView(v),
+                                    Pick::Renderer(t) => Message::MobileRenderer(t),
+                                },
+                                Pick::Renderer(target),
+                            ),
+                        )
+                    }),
+                ),))
+        } else {
+            View::empty()
+        };
+        StackPanel::new()
+            .orientation(Orientation::Horizontal)
+            .spacing(8.0)
+            .children((
+                StackPanel::new()
+                    .orientation(Orientation::Horizontal)
+                    .children((View::keyed_fragment(
+                        views.enumerate().map(|(i, v)| (i.to_string(), v)),
+                    ),)),
+                renderers,
+            ))
+    }
+
+    /// モバイルで見ている SVG の、崩れる機能の一覧（GTK4 版・macOS 版の `mobileNotes`）。上に、見ている部品の
+    /// 取り込みが読めなかった理由・警告を置く。差分の欄の下に出す。
+    fn svg_notes(&self) -> View {
+        if !self.files_mode || self.page == Page::WorkingCopy {
+            return View::empty();
+        }
+        let mut check = None;
+        self.with_history(|h| {
+            check = h
+                .session
+                .data
+                .file_view
+                .as_ref()
+                .and_then(|f| f.mobile.clone());
+        });
+        let Some(check) = check else {
+            return View::empty();
+        };
+        use amonhen_core::svglint::Target;
+        let dim = Color::rgb(0x80, 0x80, 0x80);
+        let run = |text: String, bold: bool, foreground: Option<Color>, monospace: bool| {
+            RichTextInline::Run(RichTextRun {
+                text,
+                is_bold: bold,
+                foreground,
+                is_monospace: monospace,
+                ..RichTextRun::default()
+            })
+        };
+        let mut inlines = Vec::new();
+        let preview = &check.preview;
+        if let Some(error) = &preview.error {
+            inlines.push(run(
+                error.clone(),
+                true,
+                Some(Color::rgb(0xdd, 0x33, 0x33)),
+                false,
+            ));
+            inlines.push(RichTextInline::LineBreak);
+        }
+        if !preview.messages.is_empty() {
+            inlines.push(run(
+                tr!("What {name} reports", name = preview.title),
+                true,
+                None,
+                false,
+            ));
+            for message in &preview.messages {
+                inlines.push(RichTextInline::LineBreak);
+                inlines.push(run(format!("    {message}"), false, Some(dim), true));
+            }
+            inlines.push(RichTextInline::LineBreak);
+        }
+        if !inlines.is_empty() {
+            inlines.push(RichTextInline::LineBreak);
+        }
+        if check.issues.is_empty() {
+            inlines.push(run(
+                tr!(
+                    "Nothing known to break on Android VectorDrawable, iOS (CoreSVG), flutter_svg or react-native-svg."
+                ),
+                false,
+                None,
+                false,
+            ));
+        } else {
+            for (n, target) in [
+                Target::Android,
+                Target::Ios,
+                Target::Flutter,
+                Target::ReactNative,
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                if n > 0 {
+                    inlines.push(RichTextInline::LineBreak);
+                }
+                inlines.push(run(target.name().to_owned(), true, None, false));
+                let own: Vec<_> = check
+                    .issues
+                    .iter()
+                    .filter(|i| i.targets.contains(&target))
+                    .collect();
+                if own.is_empty() {
+                    inlines.push(RichTextInline::LineBreak);
+                    inlines.push(run(
+                        format!("    {}", tr!("Nothing known to break")),
+                        false,
+                        None,
+                        false,
+                    ));
+                }
+                for issue in own {
+                    let count = if issue.count > 1 {
+                        format!(" ×{}", issue.count)
+                    } else {
+                        String::new()
+                    };
+                    inlines.push(RichTextInline::LineBreak);
+                    inlines.push(run(
+                        format!("    {}{count}", issue.feature),
+                        false,
+                        Some(dim),
+                        true,
+                    ));
+                    inlines.push(run(format!("  {}", issue.message), false, None, false));
+                }
+            }
+        }
+        Border::new()
+            .grid_row(1)
+            .max_height(240.0)
+            .border_thickness(Thickness::new(0.0, 1.0, 0.0, 0.0))
+            .border_brush(Brush::Solid(crate::palette::border()))
+            .background(Brush::Solid(crate::palette::background()))
+            .content(
+                ScrollViewer::new().content(
+                    RichTextBlock::new()
+                        .paragraphs(RichText::single_paragraph(inlines))
+                        .font_size(12.0)
+                        .is_text_selection_enabled(true)
+                        .text_wrapping(TextWrapping::Wrap)
+                        .margin(Thickness::new(12.0, 8.0, 12.0, 10.0)),
+                ),
+            )
     }
 
     /// すべてのファイルの木の一覧（ファイルを開いていないとき、差分の欄に重ねる）。
@@ -17449,6 +17695,13 @@ impl Root {
             h.session.data.show_file = on && open.is_some();
             h.diff_replaced();
         });
+    }
+
+    /// すべてのファイルで開いているファイルを読み直す（SVG の見せ方を変えたとき）。
+    fn reopen_file(&mut self) {
+        if let Some(path) = self.browser.as_ref().and_then(|b| b.open.clone()) {
+            self.open_at_commit(path);
+        }
     }
 
     /// すべてのファイルで `path` を開く（その時点の中身を差分の欄に）。

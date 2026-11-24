@@ -359,6 +359,7 @@ pub fn path_bar(
     back: Callback<()>,
     show_change: Callback<()>,
     markdown: Option<(bool, Callback<bool>, Callback<bool>)>,
+    svg: View,
 ) -> View {
     let Some(path) = &browser.open else {
         return View::empty();
@@ -436,7 +437,11 @@ pub fn path_bar(
                         View::empty()
                     },
                 )),
-            Border::new().grid_column(2).content(switch),
+            StackPanel::new()
+                .grid_column(2)
+                .orientation(Orientation::Horizontal)
+                .spacing(8.0)
+                .children((switch, svg)),
             if changed {
                 Button::new()
                     .grid_column(3)
