@@ -103,6 +103,8 @@ pub enum Request {
     /// コアの命令（fetch・push・checkout など）を動かす。`name` は、答えを見分ける名前。`command` が配列なら、
     /// その命令を順に（失敗したら、そこでやめる）。
     Run { name: &'static str, command: Value },
+    /// `Run` と同じだが、操作の列を待たせない裏の列で（ほかの worktree の変更を数えるなど、ときどき読むもの）。
+    Background { name: &'static str, command: Value },
     /// 窓口の命令（`run` を通さないもの。History の並び順など）を、操作として動かす。答えは `Ran` で返す。
     Call { name: &'static str, request: Value },
     /// History の編集モードの行: `from`（16 進）から HEAD までの、編集できるコミットとそのメッセージ（新しい順。
@@ -190,6 +192,7 @@ pub struct Loader {
     search: Sender<Request>,
     /// fetch・push など、時間のかかる操作。
     operations: Sender<Request>,
+    background: Sender<Request>,
 }
 
 impl Loader {
@@ -200,7 +203,8 @@ impl Loader {
             details: worker("amonhen-tui-details", front.clone(), events.clone()),
             work: worker("amonhen-tui-work", front.clone(), events.clone()),
             search: worker("amonhen-tui-search", front.clone(), events.clone()),
-            operations: worker("amonhen-tui-operations", front, events),
+            operations: worker("amonhen-tui-operations", front.clone(), events.clone()),
+            background: worker("amonhen-tui-background", front, events),
         }
     }
 
@@ -212,6 +216,7 @@ impl Loader {
             | Request::MarksOf { .. }
             | Request::Lineage { .. } => &self.rows,
             Request::Search { .. } => &self.search,
+            Request::Background { .. } => &self.background,
             Request::Run { .. }
             | Request::Call { .. }
             | Request::EditRows { .. }
@@ -503,7 +508,7 @@ fn load(front: &dyn Front, request: Request, events: &Sender<Event>) -> Result<L
                 .map(|r| r.json)
                 .map_err(|e| e.to_string()),
         },
-        Request::Run { name, command } => Loaded::Ran {
+        Request::Run { name, command } | Request::Background { name, command } => Loaded::Ran {
             name,
             result: match command {
                 // いくつかの命令を順に（どれかが失敗したら、そこでやめる）。答えは最後のもの。

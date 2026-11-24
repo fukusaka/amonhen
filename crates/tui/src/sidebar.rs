@@ -98,6 +98,8 @@ pub struct Sidebar {
     range_diff: bool,
     /// subtree の一覧（コアの `subtrees` の info。git subtree があって 1 つ以上あれば、Subtrees の節を出す）。
     subtrees: Value,
+    /// worktree ごとの変更のあるファイルの数（パスごと）。
+    worktree_counts: std::collections::HashMap<String, u64>,
     /// ブランチの分け方（コアの `branchGroups` の info。読めていなければ null）と、そのときの時刻（Inactive を
     /// 決める）。
     groups: Value,
@@ -131,6 +133,7 @@ impl Default for Sidebar {
             marked: Vec::new(),
             range_diff: false,
             subtrees: Value::Null,
+            worktree_counts: Default::default(),
             groups: Value::Null,
             now: 0,
             open_groups: Vec::new(),
@@ -388,6 +391,14 @@ impl Sidebar {
     }
 
     /// subtree の一覧（`subtrees` の info）。
+    /// worktree の行に、変更のあるファイルの数を出す（アプリの行の数）。
+    pub fn set_worktree_counts(&mut self, counts: &std::collections::HashMap<String, u64>) {
+        if &self.worktree_counts != counts {
+            self.worktree_counts = counts.clone();
+            self.rebuild();
+        }
+    }
+
     pub fn set_subtrees(&mut self, subtrees: Value) {
         if self.subtrees != subtrees {
             self.subtrees = subtrees;
@@ -494,6 +505,12 @@ impl Sidebar {
                         Some(branch) => format!("{folder} ({branch})"),
                         None => folder.to_owned(),
                     };
+                    // 変更のあるファイルの数（アプリの行の数）。
+                    if let Some(&count) = self.worktree_counts.get(path)
+                        && count > 0
+                    {
+                        label.push_str(&format!(" · {count}"));
+                    }
                     // ロックしているもの・フォルダが見つからないもの（アプリの印の代わり）。
                     if !w["locked"].is_null() {
                         label.push_str(&tr!(" · locked"));
