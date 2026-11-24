@@ -692,7 +692,7 @@ pub fn render(model: &Model, budget: Budget, notes: &mut BTreeSet<Note>) -> Stri
             .map_or(CLUSTER_MARGIN, |m| m.clamp(0.0, 200.0));
         let loc_bottom = a
             .get("labelloc")
-            .is_some_and(|s| s.trim().eq_ignore_ascii_case("b"));
+            .is_some_and(|s| s.trim().to_ascii_lowercase().starts_with('b'));
         // 題の側（配置の座標で。LR・RL は配置の x が絵の y）。BT は Graphviz と同じく、`t` が絵の下になる
         let side = match (dir, loc_bottom) {
             (Dir::TB | Dir::BT, false) => LabelSide::Top,
@@ -1453,7 +1453,7 @@ pub fn render(model: &Model, budget: Budget, notes: &mut BTreeSet<Note>) -> Stri
     if let Some(t) = &graph_label {
         let top = g
             .get("labelloc")
-            .is_some_and(|s| s.trim().eq_ignore_ascii_case("t"));
+            .is_some_and(|s| s.trim().to_ascii_lowercase().starts_with('t'));
         let just = g
             .get("labeljust")
             .and_then(|s| s.trim().chars().next())
