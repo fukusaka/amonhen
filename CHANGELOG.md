@@ -1255,13 +1255,11 @@ First release.
 
 ## VSCode extension
 
-### Unreleased
+### [0.2.9] - 2026-11-24
 
-#### Changed
-
-- History's details work like the app's: the file headers are the changed files, folded at first, with a ⋯ for
-  their menu. One bar shows a list or a tree whose folders fold, and expands or collapses everything. Viewed and one
-  file at a time are gone.
+History's details work like the app's: the file headers are the changed files, and with the engine they widen a
+file's context, show whole files, ignore whitespace and show All Files. Images compare side by side or by swipe, long
+lines can wrap, and Undo no longer loses its log when it is read while being written.
 
 #### Added
 
@@ -1275,6 +1273,12 @@ First release.
   or the ↩︎ above the diff (`amonhen.wrapLongLines`).
 - The commit details keep the height their divider was dragged to for every commit; double-click the divider to fit
   them again. GitHub's image-only emoji (`:octocat:` and the like) show as dim chips in Markdown.
+
+#### Changed
+
+- History's details work like the app's: the file headers are the changed files, folded at first, with a ⋯ for
+  their menu. One bar shows a list or a tree whose folders fold, and expands or collapses everything. Viewed and one
+  file at a time are gone.
 
 #### Fixed
 
