@@ -184,6 +184,8 @@ export type HistoryHostMessage =
    * すぐメッセージの編集欄を開く
    */
   | { type: 'editMode'; rows: EditRow[]; original: string[]; editMessageAt?: number }
+  /** 編集モードの範囲を広げた: いちばん古い行より古いコミット（新しい順） */
+  | { type: 'editMore'; rows: EditRow[] }
   /** 編集モードの見通し（`key` は頼んだときのもの）。`conflicts` はコンフリクトしそうなコミット */
   | { type: 'editPreview'; key: number; lines: string[]; conflicts: string[]; stacked?: EditStacked }
   /** Apply を終えた。`ok` なら編集モードを閉じ、そうでなければ開いたまま（もう一度押せる） */
@@ -273,6 +275,8 @@ export type HistoryWebviewMessage =
   | { type: 'detailsLayout'; layout: DetailsLayout }
   /** 編集モードの見通しを求める。`updateRefs` は、積み重ねたブランチを今回だけどうするか（触っていなければなし） */
   | { type: 'editPreview'; key: number; steps: PlanStep[]; updateRefs?: boolean }
+  /** 編集モードの範囲の境目を下へ引いた: oldest より古い count 個のコミットを取り込む */
+  | { type: 'editExtend'; oldest: string; count: number }
   /** 編集モードの変更を当てる */
   | { type: 'editApply'; steps: PlanStep[]; updateRefs?: boolean }
   | { type: 'scope'; scope: Scope }

@@ -3486,6 +3486,17 @@ async function editFlow(label: string): Promise<void> {
       await undo('move');
 
       if (label === 'daemon') {
+        // 編集モードの範囲の境目を下へ引く: いちばん古い行より古いコミットが届く
+        const opened = await openedEditMode(() => vscode.commands.executeCommand('amonhen.history.edit', { oid: c }));
+        const oldest = opened.at(-1)!.oid;
+        const at = posted.length;
+        await panel.history.handle({ type: 'editExtend', oldest, count: 1 });
+        const more = await waitPosted('editMore', at);
+        assert.equal(more.rows.length, 1, JSON.stringify(more.rows.map((r) => r.oid)));
+        assert.equal(more.rows[0]!.oid, rev(`${oldest}~1`));
+      }
+
+      if (label === 'daemon') {
         // Webview で d を b に重ねて落とす: d を b の上へ動かして squash にした編集モードが開く（Apply まで何も変わらない）
         const rows = await openedEditMode(() => panel.history.handle({ type: 'squashOnto', oid: d, onto: b }));
         assert.deepEqual(
