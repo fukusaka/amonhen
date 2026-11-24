@@ -88,9 +88,9 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
 | Repository page with All, Favorites, Places and groups | ✓ | ✓ | ✓ | n/a | n/a | ✓ | TUI: Ctrl-o or Repositories in the command list, over the screen; Quick Open also lists them. |
 | Add a local or an SSH repository | ✓ | ✓ | ✓ | n/a | n/a | ✓ | TUI: `a` on the Repositories page, a path on this machine or `ssh://host/path` typed. |
-| Folders to scan on this machine (depth, watched) | △ | △ | △ | n/a | n/a | — | macOS: Excludes are a fixed list.<br>GTK4: Excludes are a fixed list.<br>Windows: Excludes are a fixed list; the folders are watched while Repositories is open. |
-| Folders to scan on SSH hosts | ✓ | ✓ | ✓ | n/a | △ | — | CLI: `find-repositories` does the scan for the apps. |
-| Folder tree of the repositories under a place | ✓ | ✓ | ✓ | n/a | n/a | — |  |
+| Folders to scan on this machine (depth, watched) | △ | △ | △ | n/a | n/a | △ | macOS: Excludes are a fixed list.<br>GTK4: Excludes are a fixed list.<br>Windows: Excludes are a fixed list; the folders are watched while Repositories is open.<br>TUI: Excludes are a fixed list; on the Repositories page, `a` adds a folder, and on a 🔍 folder `d` sets the depth, `r` rescans and `x` stops; watched while the page is open. |
+| Folders to scan on SSH hosts | ✓ | ✓ | ✓ | n/a | △ | △ | CLI: `find-repositories` does the scan for the apps.<br>TUI: Listed and added, not searched (the engine isn't asked to scan yet). |
+| Folder tree of the repositories under a place | ✓ | ✓ | ✓ | n/a | n/a | ✓ | TUI: Under each place on the Repositories page. |
 | Manual groups; rows dragged onto Favorites or a group | △ | △ | ✓ | n/a | n/a | △ | macOS: Groups themselves can't be reordered by dragging.<br>GTK4: Groups themselves can't be reordered by dragging.<br>TUI: `g` types the group; no dragging. |
 | Status columns (branch, changes, ahead/behind, last commit, opened), sortable and reorderable | ✓ | ✓ | ✓ | n/a | n/a | △ | TUI: `s` changes the sorted column; the columns can't be reordered. |
 | Favorites, display name, color label | ✓ | ✓ | ✓ | n/a | n/a | ✓ | TUI: `*`, `n` and `c` on the Repositories page. |
