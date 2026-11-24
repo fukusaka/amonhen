@@ -1010,33 +1010,36 @@ pub fn render(
             .enumerate()
             .map(|(ei, e)| {
                 let a = &e.attrs;
-                let free = |port: Option<&str>, view: &NodeView, same: &str| {
-                    port_of(view, port).is_none() && a.get(same).is_none_or(|v| v.is_empty())
+                let end = |port: Option<&str>, view: &NodeView, same: &str| route::OrthoEnd {
+                    port: ortho_port(view, port, dir),
+                    same: a.get(same).filter(|v| !v.is_empty()).map(str::to_owned),
+                };
+                let (points, label) = match &lay.routes[ei] {
+                    Route::Path { points, label } => (points.clone(), label.is_some()),
+                    _ => (vec![], false),
                 };
                 route::OrthoEdge {
-                    points: match &lay.routes[ei] {
-                        Route::Path { points, .. } => points.clone(),
-                        _ => vec![],
-                    },
+                    points,
                     tail: e.tail,
                     head: e.head,
-                    spread_tail: free(
+                    tail_end: end(
                         a.get("tailport").or(e.tail_port.as_deref()),
                         &views[e.tail],
                         "sametail",
                     ),
-                    spread_head: free(
+                    head_end: end(
                         a.get("headport").or(e.head_port.as_deref()),
                         &views[e.head],
                         "samehead",
                     ),
+                    keep: label,
                 }
             })
             .collect();
         let boxes: Vec<(P, f64, f64)> = (0..views.len())
             .map(|i| (lay.nodes[i], lnodes[i].w, lnodes[i].h))
             .collect();
-        route::ortho(&input, &boxes, &titles)
+        route::ortho(&input, &boxes, &titles, &mut obstacles)
     } else {
         vec![]
     };
@@ -1196,12 +1199,21 @@ pub fn render(
                         + 12.0 * *lane as f64;
                     let top = pa.1.min(pb.1) - lift;
                     path = if ortho {
+                        // ポートの側から出て、上を越える
                         let top = pa.1.min(pb.1) - lift * 0.75;
-                        vec![
-                            Cubic::line(pa, (pa.0, top)),
-                            Cubic::line((pa.0, top), (pb.0, top)),
-                            Cubic::line((pb.0, top), pb),
-                        ]
+                        let (ca, cb) = (lay.nodes[e.tail], lay.nodes[e.head]);
+                        let half = |v: usize| (lnodes[v].w / 2.0, lnodes[v].h / 2.0);
+                        let pts = route::ortho_flat(
+                            ca,
+                            half(e.tail),
+                            &ortho_port(tv, a.get("tailport").or(e.tail_port.as_deref()), dir),
+                            cb,
+                            half(e.head),
+                            &ortho_port(hv, a.get("headport").or(e.head_port.as_deref()), dir),
+                            top,
+                            route::STUB,
+                        );
+                        pts.windows(2).map(|w| Cubic::line(w[0], w[1])).collect()
                     } else {
                         vec![Cubic(pa, (pa.0, top), (pb.0, top), pb)]
                     };
@@ -1265,6 +1277,11 @@ pub fn render(
             let (a0, b0) = (path[0].0, path[path.len() - 1].3);
             ((b0.0 - a0.0).hypot(b0.1 - a0.1) / 3.0).clamp(20.0, 60.0)
         };
+        // 直角の道は端の側と位置を道筋で決めた（ノードの中から始まり、外形で切る）
+        if ortho {
+            tail_port = None;
+            head_port = None;
+        }
         if let Some(p) = &tail_port {
             let at = (tv.pos.0 + p.at.0, tv.pos.1 + p.at.1);
             path[0].0 = at;
@@ -1882,6 +1899,33 @@ fn free_layout(model: &Model, placed: &engines::Placement) -> layout::Layout {
         width: w,
         height: h,
         crossings: 0,
+    }
+}
+
+/// 直角の道の端のポート（配置の座標、ノードの中心から）。
+fn ortho_port(view: &NodeView, port: Option<&str>, dir: Dir) -> route::OrthoPort {
+    let to_layout = |v: P| -> P {
+        match dir {
+            Dir::TB => v,
+            Dir::BT => (v.0, -v.1),
+            Dir::LR => (v.1, v.0),
+            Dir::RL => (v.1, -v.0),
+        }
+    };
+    match port_of(view, port) {
+        Some(Port {
+            at, dir: Some(d), ..
+        }) => route::OrthoPort::Point {
+            at: to_layout(at),
+            dir: to_layout(d),
+        },
+        Some(Port { clip: Some(b), .. }) => {
+            let (p, q) = (to_layout((b[0], b[1])), to_layout((b[2], b[3])));
+            route::OrthoPort::Cell {
+                b: [p.0.min(q.0), p.1.min(q.1), p.0.max(q.0), p.1.max(q.1)],
+            }
+        }
+        _ => route::OrthoPort::Free,
     }
 }
 

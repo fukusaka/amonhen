@@ -407,32 +407,233 @@ mod tests {
 
 // ---- splines=ortho ----
 
+/// 直角の道の端が出入りするノードの側（配置の座標。N が上）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+pub enum Side {
+    N,
+    S,
+    E,
+    W,
+}
+
+/// 直角の道の端のポート（配置の座標。ノードの中心からの相対）。
+#[derive(Clone, Debug, PartialEq)]
+pub enum OrthoPort {
+    /// ポートなし: 行き先の側（上か下）から、同じ側のほかの端と散らして出る。
+    Free,
+    /// 向きのあるポート（`n`・`se` など）: 外形の点と、その向き。
+    Point { at: P, dir: P },
+    /// 向きのない升・欄のポート: 升の箱。ノードの外形に触れる辺から出る。
+    Cell { b: Rect },
+}
+
+/// 直角の道の端。
+#[derive(Clone, Debug)]
+pub struct OrthoEnd {
+    pub port: OrthoPort,
+    /// samehead・sametail の値。同じ値の端は 1 つの点で会う（散らすときも 1 つの席）。
+    pub same: Option<String>,
+}
+
+impl OrthoEnd {
+    pub fn free() -> Self {
+        OrthoEnd {
+            port: OrthoPort::Free,
+            same: None,
+        }
+    }
+}
+
 /// 直角の道筋の入力の 1 本（配置の座標、尾から頭への点）。
 pub struct OrthoEdge {
     pub points: Vec<P>,
     pub tail: usize,
     pub head: usize,
-    /// 端の点を広げてよいか（ポート・samehead などがなければ）。
-    pub spread_tail: bool,
-    pub spread_head: bool,
+    pub tail_end: OrthoEnd,
+    pub head_end: OrthoEnd,
+    /// 仮のノードの位置を動かさない（ラベルが仮のノードの脇にある線）。
+    pub keep: bool,
+}
+
+fn opposite(s: Side) -> Side {
+    match s {
+        Side::N => Side::S,
+        Side::S => Side::N,
+        Side::E => Side::W,
+        Side::W => Side::E,
+    }
+}
+
+/// 端の側と、側に沿ったずれ（N・S なら x、E・W なら y。ノードの中心から）。ポートなしは None。`natural` は
+/// 行き先の側（N か S）、`toward` は行き先の x（ノードの中心から）。`half` はノードの大きさの半分。
+fn resolve(port: &OrthoPort, half: P, natural: Side, toward: f64) -> Option<(Side, f64)> {
+    match port {
+        OrthoPort::Free => None,
+        OrthoPort::Point { at, dir } => {
+            let vertical = if dir.1 < 0.0 { Side::N } else { Side::S };
+            let horizontal = if dir.0 < 0.0 { Side::W } else { Side::E };
+            let (ax, ay) = (dir.0.abs(), dir.1.abs());
+            // 斜め（`ne` など）は、縦の向きが行き先と合えば縦の側、合わなければ横の側
+            let side = if ay > ax + 1e-6 || (ax <= ay + 1e-6 && vertical == natural) {
+                vertical
+            } else {
+                horizontal
+            };
+            let along = if matches!(side, Side::N | Side::S) {
+                at.0
+            } else {
+                at.1
+            };
+            Some((side, along))
+        }
+        OrthoPort::Cell { b } => {
+            let touches = |s: Side| match s {
+                Side::N => b[1] <= -half.1 + 1.0,
+                Side::S => b[3] >= half.1 - 1.0,
+                Side::W => b[0] <= -half.0 + 1.0,
+                Side::E => b[2] >= half.0 - 1.0,
+            };
+            let lateral = if toward >= 0.0 {
+                [Side::E, Side::W]
+            } else {
+                [Side::W, Side::E]
+            };
+            // 行き先の側、横の側（行き先に近いほうから）、反対の側の順に、外形に触れる辺。どれもなければ行き先の側
+            let side = [natural, lateral[0], lateral[1], opposite(natural)]
+                .into_iter()
+                .find(|&s| touches(s))
+                .unwrap_or(natural);
+            let along = if matches!(side, Side::N | Side::S) {
+                (b[0] + b[2]) / 2.0
+            } else {
+                (b[1] + b[3]) / 2.0
+            };
+            Some((side, along))
+        }
+    }
+}
+
+/// 端の短い道（ノードの中から外へ）。最後の点から、行き先の側（`natural`）へ縦に進めば、自分のノードを
+/// 横切らない。`c` はノードの中心、`along` は側に沿ったずれ、`toward` は行き先の x（絵の座標）、`m` はノードから
+/// 左・右へ離れる長さ（上下は `STUB`）。外形で切るのは描く側（中の点から始める）。
+fn stub(c: P, half: P, side: Side, along: f64, natural: Side, toward: f64, m: P) -> Vec<P> {
+    let ax = along.clamp(-half.0 * 0.95, half.0 * 0.95);
+    let ay = along.clamp(-half.1 * 0.95, half.1 * 0.95);
+    match side {
+        s if s == natural => vec![(c.0 + ax, c.1)],
+        Side::N | Side::S => {
+            // 行き先と反対の側: いったん出てから、行き先の x の側の脇へ
+            let y = if side == Side::N {
+                c.1 - half.1 - STUB
+            } else {
+                c.1 + half.1 + STUB
+            };
+            let sx = if toward >= c.0 {
+                c.0 + half.0 + m.1
+            } else {
+                c.0 - half.0 - m.0
+            };
+            vec![(c.0 + ax, c.1), (c.0 + ax, y), (sx, y)]
+        }
+        Side::E => vec![(c.0, c.1 + ay), (c.0 + half.0 + m.1, c.1 + ay)],
+        Side::W => vec![(c.0, c.1 + ay), (c.0 - half.0 - m.0, c.1 + ay)],
+    }
+}
+
+/// 端の短い道がノードから離れる長さの既定（矢じり 10 と少し）。
+pub const STUB: f64 = 14.0;
+
+/// 一直線に並ぶ中の点と、重なる点を除く。
+fn tidy(out: Vec<P>) -> Vec<P> {
+    let mut clean: Vec<P> = Vec::with_capacity(out.len());
+    for q in out {
+        if clean
+            .last()
+            .is_some_and(|l: &P| (l.0 - q.0).abs() < 1e-6 && (l.1 - q.1).abs() < 1e-6)
+        {
+            continue;
+        }
+        if clean.len() >= 2 {
+            let (s, t) = (clean[clean.len() - 2], clean[clean.len() - 1]);
+            let vertical = (s.0 - t.0).abs() < 1e-6 && (t.0 - q.0).abs() < 1e-6;
+            let horizontal = (s.1 - t.1).abs() < 1e-6 && (t.1 - q.1).abs() < 1e-6;
+            if vertical || horizontal {
+                clean.pop();
+            }
+        }
+        clean.push(q);
+    }
+    clean
+}
+
+/// 同じランクの辺の直角の道（上を越える）。`a`・`b` は両端の中心、`ha`・`hb` は大きさの半分、`top` は越える高さ、
+/// `m` はノードから離れる長さ。ポートの側が上でなければ、その側から出て脇を上る。
+#[allow(clippy::too_many_arguments)]
+pub fn ortho_flat(
+    a: P,
+    ha: P,
+    pa: &OrthoPort,
+    b: P,
+    hb: P,
+    pb: &OrthoPort,
+    top: f64,
+    m: f64,
+) -> Vec<P> {
+    let end = |c: P, half: P, port: &OrthoPort, other: f64| {
+        let (side, along) = resolve(port, half, Side::N, other - c.0).unwrap_or((Side::N, 0.0));
+        stub(c, half, side, along, Side::N, other, (m, m))
+    };
+    let sa = end(a, ha, pa, b.0);
+    let sb = end(b, hb, pb, a.0);
+    let (la, lb) = (sa[sa.len() - 1], sb[sb.len() - 1]);
+    let top = top.min(la.1 - m).min(lb.1 - m);
+    let mut out = sa;
+    out.push((la.0, top));
+    out.push((lb.0, top));
+    out.extend(sb.into_iter().rev());
+    tidy(out)
 }
 
 /// 直角の道筋（`splines=ortho`）。点の列はランクを 1 つずつ下る（上る）ので、ランクの間の空き（ノードのない帯）
 /// で横に動き、ランクの行は仮のノードの位置（ノードのない列）を縦に通る。同じ空きで横の線が重なるときは高さを
-/// 分け、クラスタの題を避ける高さを選ぶ。同じノードの同じ側に出入りする線は、ノードの幅の中で端の点を散らす。
-/// `nodes` はノードの中心と幅・高さ、`titles` は題の箱。2 つ以上のランクを一度にまたぐ線（仮のノードの上限を
-/// 超えたもの）は直角にしない（None）。
-pub fn ortho(edges: &[OrthoEdge], nodes: &[(P, f64, f64)], titles: &[Rect]) -> Vec<Option<Vec<P>>> {
+/// 分け、クラスタの題を避ける高さを選ぶ。
+///
+/// 端: ポートがあればその側（向きのあるポートはその向き、升・欄はノードの外形に触れる辺）の、その位置から出る。
+/// 行き先と別の側なら、ノードの脇を回ってから進む。ポートのない端は、行き先の側（上か下）に出入りする同じノードの
+/// ほかの端と、ノードの幅の中に等しい間で並べる（向こうの x の順。samehead・sametail の組は 1 つの席を分け合う）。
+///
+/// `nodes` はノードの中心と幅・高さ、`titles` は題の箱、`obstacles` はほかのノードと題の箱。2 つ以上のランクを
+/// 一度にまたぐ線（仮のノードの上限を超えたもの）は直角にしない（None）。
+pub fn ortho(
+    edges: &[OrthoEdge],
+    nodes: &[(P, f64, f64)],
+    titles: &[Rect],
+    _obstacles: &mut Obstacles,
+) -> Vec<Option<Vec<P>>> {
     use std::collections::HashMap;
     let key = |y: f64| (y * 64.0).round() as i64;
     // ランクの行の上下（ノードのある行）
     let mut rows: HashMap<i64, (f64, f64)> = HashMap::new();
-    for &((_, y), _, h) in nodes {
+    let mut by_row: HashMap<i64, Vec<usize>> = HashMap::new();
+    for (i, &((_, y), _, h)) in nodes.iter().enumerate() {
         let e = rows.entry(key(y)).or_insert((y, y));
         e.0 = e.0.min(y - h / 2.0);
         e.1 = e.1.max(y + h / 2.0);
+        by_row.entry(key(y)).or_default().push(i);
     }
     let row = |y: f64| rows.get(&key(y)).copied().unwrap_or((y, y));
+    // ノードの脇の空き（同じ行の隣のノードまで）から、端の短い道がノードから離れる長さ（矢じりの分を残す）
+    let mut margin = vec![(STUB, STUB); nodes.len()];
+    for list in by_row.values_mut() {
+        list.sort_by(|&a, &b| nodes[a].0.0.total_cmp(&nodes[b].0.0).then(a.cmp(&b)));
+        for w in list.windows(2) {
+            let (a, b) = (nodes[w[0]], nodes[w[1]]);
+            let gap = (b.0.0 - b.1 / 2.0) - (a.0.0 + a.1 / 2.0);
+            let m = (gap * 0.45).clamp(2.0, STUB);
+            margin[w[0]].1 = margin[w[0]].1.min(m);
+            margin[w[1]].0 = margin[w[1]].0.min(m);
+        }
+    }
     // ランクの行の y（ノードの中心）を順に。間に別の行があれば一度にまたぐ線
     let mut centers: Vec<f64> = nodes.iter().map(|n| n.0.1).collect();
     centers.sort_by(f64::total_cmp);
@@ -444,42 +645,91 @@ pub fn ortho(edges: &[OrthoEdge], nodes: &[(P, f64, f64)], titles: &[Rect]) -> V
     };
 
     let mut pts: Vec<Vec<P>> = edges.iter().map(|e| e.points.clone()).collect();
-    // 端の点を散らす: (ノード, 下へ出るか) ごとに、向こうの x の順に
-    // (ノード, 下側か) → (向こうの x, 辺, 尾か)
-    type Ends = Vec<(f64, usize, bool)>;
-    let mut groups: HashMap<(usize, bool), Ends> = HashMap::new();
+    let half = |v: usize| nodes.get(v).map_or((0.0, 0.0), |n| (n.1 / 2.0, n.2 / 2.0));
+    let center = |v: usize| nodes.get(v).map_or((0.0, 0.0), |n| n.0);
+    // 端ごとの (側, ずれ)。ポートのない端は散らしてから決める
+    // (側, ずれ, 行き先の側, 行き先の x)
+    type End = Option<(Side, f64, Side, f64)>;
+    let mut ends: Vec<[End; 2]> = vec![[None, None]; edges.len()];
+    // (ノード, 側) → (向こうの x, samehead などの値, 辺, 尾か)
+    type Free<'a> = Vec<(f64, Option<&'a str>, usize, bool)>;
+    let mut groups: HashMap<(usize, Side), Free> = HashMap::new();
     for (i, e) in edges.iter().enumerate() {
         let p = &pts[i];
-        if p.len() < 2 || e.tail == e.head {
+        let n = p.len();
+        if n < 2 || e.tail == e.head {
             continue;
         }
-        if e.spread_tail {
-            groups
-                .entry((e.tail, p[1].1 > p[0].1))
-                .or_default()
-                .push((p[1].0, i, true));
-        }
-        let n = p.len();
-        if e.spread_head {
-            groups
-                .entry((e.head, p[n - 2].1 > p[n - 1].1))
-                .or_default()
-                .push((p[n - 2].0, i, false));
+        for (tail, v, end, toward) in [
+            (true, e.tail, &e.tail_end, p[1]),
+            (false, e.head, &e.head_end, p[n - 2]),
+        ] {
+            let c = center(v);
+            let natural = if toward.1 > c.1 { Side::S } else { Side::N };
+            match resolve(&end.port, half(v), natural, toward.0 - c.0) {
+                Some((side, along)) => {
+                    ends[i][usize::from(!tail)] = Some((side, along, natural, toward.0));
+                }
+                None => {
+                    ends[i][usize::from(!tail)] = Some((natural, 0.0, natural, toward.0));
+                    groups.entry((v, natural)).or_default().push((
+                        toward.0,
+                        end.same.as_deref().filter(|s| !s.is_empty()),
+                        i,
+                        tail,
+                    ));
+                }
+            }
         }
     }
-    for ((node, _), mut list) in groups {
-        if list.len() < 2 {
+    // ポートのない端を、側の幅の 7 割に等しい間で並べる
+    for ((node, _), list) in groups {
+        // samehead などの組は 1 つの席
+        // (向こうの x の和, 数, 値, 端)
+        type Slot<'a> = (f64, usize, Option<&'a str>, Vec<(usize, bool)>);
+        let mut slots: Vec<Slot> = Vec::new();
+        for (x, same, i, tail) in list {
+            match same.and_then(|s| slots.iter().position(|t| t.2 == Some(s))) {
+                Some(t) => {
+                    slots[t].0 += x;
+                    slots[t].1 += 1;
+                    slots[t].3.push((i, tail));
+                }
+                None => slots.push((x, 1, same, vec![(i, tail)])),
+            }
+        }
+        if slots.len() < 2 {
             continue;
         }
-        list.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
-        let w = nodes.get(node).map_or(0.0, |n| n.1);
-        let k = list.len();
-        let spread = (w * 0.6).min(10.0 * (k - 1) as f64);
-        for (j, (_, i, tail)) in list.into_iter().enumerate() {
-            let off = -spread / 2.0 + spread * j as f64 / (k - 1) as f64;
-            let p = &mut pts[i];
-            let at = if tail { 0 } else { p.len() - 1 };
-            p[at].0 += off;
+        slots.sort_by(|a, b| {
+            (a.0 / a.1 as f64)
+                .total_cmp(&(b.0 / b.1 as f64))
+                .then(a.3[0].cmp(&b.3[0]))
+        });
+        let k = slots.len() as f64;
+        let avail = nodes.get(node).map_or(0.0, |n| n.1) * 0.7;
+        for (j, slot) in slots.into_iter().enumerate() {
+            let off = -avail / 2.0 + avail * (j as f64 + 0.5) / k;
+            for (i, tail) in slot.3 {
+                if let Some(end) = &mut ends[i][usize::from(!tail)] {
+                    end.1 = off;
+                }
+            }
+        }
+    }
+    // 端の短い道。道の端の点は、短い道の最後の x のランクの行に
+    let mut stubs: Vec<[Vec<P>; 2]> = vec![[vec![], vec![]]; edges.len()];
+    for (i, e) in edges.iter().enumerate() {
+        let n = pts[i].len();
+        for (k, v) in [(0usize, e.tail), (1, e.head)] {
+            let Some((side, along, natural, toward)) = ends[i][k] else {
+                continue;
+            };
+            let c = center(v);
+            let s = stub(c, half(v), side, along, natural, toward, margin[v]);
+            let at = if k == 0 { 0 } else { n - 1 };
+            pts[i][at] = (s[s.len() - 1].0, c.1);
+            stubs[i][k] = s;
         }
     }
 
@@ -605,26 +855,16 @@ pub fn ortho(edges: &[OrthoEdge], nodes: &[(P, f64, f64)], titles: &[Rect]) -> V
                 }
                 out.push(b);
             }
-            // 一直線に並ぶ中の点を除く
-            let mut clean: Vec<P> = Vec::with_capacity(out.len());
-            for q in out {
-                if clean
-                    .last()
-                    .is_some_and(|l: &P| (l.0 - q.0).abs() < 1e-6 && (l.1 - q.1).abs() < 1e-6)
-                {
-                    continue;
-                }
-                if clean.len() >= 2 {
-                    let (s, t) = (clean[clean.len() - 2], clean[clean.len() - 1]);
-                    let vertical = (s.0 - t.0).abs() < 1e-6 && (t.0 - q.0).abs() < 1e-6;
-                    let horizontal = (s.1 - t.1).abs() < 1e-6 && (t.1 - q.1).abs() < 1e-6;
-                    if vertical || horizontal {
-                        clean.pop();
-                    }
-                }
-                clean.push(q);
+            // 端の短い道をつなぐ（道の端の点はランクの行の上で、短い道の最後の点と縦に並ぶ）
+            let [tail_stub, head_stub] = &stubs[i];
+            if !tail_stub.is_empty() {
+                out.splice(0..1, tail_stub.iter().copied());
             }
-            Some(clean)
+            if !head_stub.is_empty() {
+                let last = out.len() - 1;
+                out.splice(last..last + 1, head_stub.iter().rev().copied());
+            }
+            Some(tidy(out))
         })
         .collect()
 }
@@ -638,6 +878,21 @@ mod ortho_tests {
             .all(|w| (w[0].0 - w[1].0).abs() < 1e-6 || (w[0].1 - w[1].1).abs() < 1e-6)
     }
 
+    fn free(points: Vec<P>, tail: usize, head: usize) -> OrthoEdge {
+        OrthoEdge {
+            points,
+            tail,
+            head,
+            tail_end: OrthoEnd::free(),
+            head_end: OrthoEnd::free(),
+            keep: false,
+        }
+    }
+
+    fn no_obstacles() -> Obstacles {
+        Obstacles::new(vec![])
+    }
+
     #[test]
     fn routes_with_right_angles_and_separate_tracks() {
         // 0 が上、1・2 が下。0→1、0→2、それに 3→2（3 は上の行の右）
@@ -647,15 +902,9 @@ mod ortho_tests {
             ((60.0, 100.0), 54.0, 36.0),
             ((120.0, 0.0), 54.0, 36.0),
         ];
-        let e = |t: usize, h: usize| OrthoEdge {
-            points: vec![nodes[t].0, nodes[h].0],
-            tail: t,
-            head: h,
-            spread_tail: true,
-            spread_head: true,
-        };
+        let e = |t: usize, h: usize| free(vec![nodes[t].0, nodes[h].0], t, h);
         let edges = vec![e(0, 1), e(0, 2), e(3, 2)];
-        let out = ortho(&edges, &nodes, &[]);
+        let out = ortho(&edges, &nodes, &[], &mut no_obstacles());
         let mut levels = Vec::new();
         for p in &out {
             let p = p.as_ref().unwrap();
@@ -681,17 +930,83 @@ mod ortho_tests {
         assert!(a.0 < b.0);
         // 題を避ける
         let title = [[-100.0, 40.0, -30.0, 60.0]];
-        let one = vec![OrthoEdge {
-            points: vec![(0.0, 0.0), (-60.0, 100.0)],
-            tail: 0,
-            head: 1,
-            spread_tail: false,
-            spread_head: false,
-        }];
-        let p = ortho(&one, &nodes, &title)[0].clone().unwrap();
+        let one = vec![free(vec![(0.0, 0.0), (-60.0, 100.0)], 0, 1)];
+        let p = ortho(&one, &nodes, &title, &mut no_obstacles())[0]
+            .clone()
+            .unwrap();
         assert!(
             !p.windows(2).any(|w| segment_hits(w[0], w[1], &title[0])),
             "{p:?}"
         );
+    }
+
+    #[test]
+    fn spreads_free_ends_evenly_but_joins_samehead() {
+        // 0 から下の 1・2・3 へ、4・5・6 から 7 へ（5 と 6 は samehead）
+        let mut nodes = vec![((0.0, 0.0), 80.0, 36.0)];
+        for x in [-100.0, 0.0, 100.0] {
+            nodes.push(((x, 100.0), 54.0, 36.0));
+        }
+        for x in [-100.0, 0.0, 100.0] {
+            nodes.push(((x, 200.0), 54.0, 36.0));
+        }
+        nodes.push(((0.0, 300.0), 80.0, 36.0));
+        let mut edges: Vec<OrthoEdge> = (1..=3)
+            .map(|h| free(vec![nodes[0].0, nodes[h].0], 0, h))
+            .collect();
+        for t in 4..=6 {
+            let mut e = free(vec![nodes[t].0, nodes[7].0], t, 7);
+            if t > 4 {
+                e.head_end.same = Some("x".into());
+            }
+            edges.push(e);
+        }
+        let out: Vec<Vec<P>> = ortho(&edges, &nodes, &[], &mut no_obstacles())
+            .into_iter()
+            .map(Option::unwrap)
+            .collect();
+        for p in &out {
+            assert!(axis_aligned(p), "{p:?}");
+        }
+        // 0 の下の 3 つの端は等しい間で、向こうの順
+        let xs: Vec<f64> = out[..3].iter().map(|p| p[0].0).collect();
+        assert!(xs[0] < xs[1] && xs[1] < xs[2], "{xs:?}");
+        assert!(((xs[1] - xs[0]) - (xs[2] - xs[1])).abs() < 1e-6, "{xs:?}");
+        // 7 の上: samehead の 2 本は同じ点、ほかの 1 本は別の点
+        let heads: Vec<P> = out[3..].iter().map(|p| p[p.len() - 1]).collect();
+        assert_eq!(heads[1], heads[2]);
+        assert!((heads[0].0 - heads[1].0).abs() > 5.0, "{heads:?}");
+    }
+
+    #[test]
+    fn leaves_from_the_port_side() {
+        // 0 の東のポートから下の 1 へ、0 の北のポートから下の 2 へ
+        let nodes = vec![
+            ((0.0, 0.0), 60.0, 36.0),
+            ((80.0, 100.0), 54.0, 36.0),
+            ((-80.0, 100.0), 54.0, 36.0),
+        ];
+        let mut east = free(vec![(30.0, 0.0), nodes[1].0], 0, 1);
+        east.tail_end.port = OrthoPort::Point {
+            at: (30.0, 0.0),
+            dir: (1.0, 0.0),
+        };
+        let mut north = free(vec![(0.0, 0.0), nodes[2].0], 0, 2);
+        north.tail_end.port = OrthoPort::Point {
+            at: (0.0, -18.0),
+            dir: (0.0, -1.0),
+        };
+        let out = ortho(&[east, north], &nodes, &[], &mut no_obstacles());
+        let e = out[0].as_ref().unwrap();
+        assert!(axis_aligned(e), "{e:?}");
+        // 中心の高さから右へ出て、ノードの外で下へ
+        assert_eq!(e[0], (0.0, 0.0));
+        assert!(e[1].1 == 0.0 && e[1].0 > 30.0, "{e:?}");
+        let n = out[1].as_ref().unwrap();
+        assert!(axis_aligned(n), "{n:?}");
+        // 上へ出て、左の脇を回って下へ
+        assert!(n[1].1 < -18.0 && n[1].0 == 0.0, "{n:?}");
+        assert!(n[2].0 < -30.0, "{n:?}");
+        assert_eq!(n[n.len() - 1], nodes[2].0);
     }
 }

@@ -51,6 +51,10 @@ const SAMPLES: &[(&str, &str)] = &[
         "graph { layout=patchwork; subgraph cluster_a { a1 [area=4]; a2 [area=2]; subgraph cluster_c { c1; c2 } } b1 [area=3]; b2 }",
     ),
     (
+        "ortho_dot",
+        "digraph { splines=ortho; node [shape=box]; a -> {b c d}; a:w -> e; b:s -> e:w; {c d} -> e [samehead=h]; c:se -> f:ne; x -> f }",
+    ),
+    (
         "ortho_free",
         "graph { layout=neato; splines=ortho; a -- b -- c -- a; c -- d }",
     ),
