@@ -31,6 +31,8 @@ becomes the GitHub Release notes.
 - DOT diagrams: `splines=ortho` edges leave from their ports' sides, spread across each side of a node and keep shared
   runs apart; sfdp keeps small cycles open, fdp reads `pos`/`pin` inside clusters, self-loops go on their port's side
   and same-rank edge labels get room.
+- DOT diagrams: table and cell borders without a `color` are drawn in a color readable on the fill under them, like
+  the text.
 
 ### [0.2.14] - 2026-11-24
 

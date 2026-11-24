@@ -795,7 +795,8 @@ fn paint(name: &str, c: Option<Color>, fallback: &str) -> String {
     }
 }
 
-/// 枠（線の太さ `b`、辺 `sides`）を描く。線は箱の内側に収める。
+/// 枠（線の太さ `b`、辺 `sides`）を描く。線は箱の内側に収める。線の色は `stroke`、なければ `ink`（下の塗りで
+/// 読める色）、それもなければテーマの枠の色。
 #[allow(clippy::too_many_arguments)]
 fn frame(
     out: &mut String,
@@ -806,6 +807,7 @@ fn frame(
     b: f64,
     sides: Sides,
     stroke: Option<Color>,
+    ink: Option<&str>,
     fill: Option<&Fill>,
     rounded: bool,
     dash: Dash,
@@ -836,7 +838,7 @@ fn frame(
     if b <= 0.0 || w <= 0.0 || h <= 0.0 {
         return;
     }
-    let stroke = paint("stroke", stroke, BORDER);
+    let stroke = paint("stroke", stroke, ink.unwrap_or(BORDER));
     let width = if (b - 1.0).abs() > 1e-9 {
         format!(" stroke-width=\"{}\"{}", num(b), dash.attr())
     } else {
@@ -885,7 +887,8 @@ fn fnv(s: &str) -> u64 {
 }
 
 /// 表を (left, top) から描く。`root`・`attrs` は文字の `<text>` の書体と属性、`ink` は表の外の塗りの上の文字の
-/// 色。表・升の `bgcolor` の上では、いちばん内側の塗りで読める色にする（文が色を決めていれば文の色）。
+/// 色。表・升の `bgcolor` の上では、いちばん内側の塗りで読める色にする（文が色を決めていれば文の色）。枠と HR・VR
+/// の線も同じ決まりで、`color` がなければ下の塗りで読める色（塗りがなければテーマの枠の色）。
 pub fn draw(
     t: &Table,
     left: f64,
@@ -895,6 +898,11 @@ pub fn draw(
     ink: Option<&str>,
     out: &mut String,
 ) {
+    let ink =
+        t.bg.as_ref()
+            .and_then(Fill::first)
+            .and_then(Color::ink)
+            .or(ink);
     frame(
         out,
         left,
@@ -904,15 +912,11 @@ pub fn draw(
         t.border,
         t.sides,
         t.color,
+        ink,
         t.bg.as_ref(),
         t.rounded,
         t.dash,
     );
-    let ink =
-        t.bg.as_ref()
-            .and_then(Fill::first)
-            .and_then(Color::ink)
-            .or(ink);
     for c in &t.cells {
         let ink =
             c.bg.as_ref()
@@ -929,6 +933,7 @@ pub fn draw(
             c.border,
             c.sides,
             c.color,
+            ink,
             c.bg.as_ref(),
             c.rounded,
             c.dash,
@@ -972,16 +977,17 @@ pub fn draw(
             }
             Content::Image(None, _) => {
                 out.push_str(&format!(
-                    "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"none\" stroke=\"{BORDER}\" stroke-dasharray=\"3,2\"/>",
+                    "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"none\" stroke=\"{}\" stroke-dasharray=\"3,2\"/>",
                     num(cx - IMAGE.0 / 2.0),
                     num(cy - IMAGE.1 / 2.0),
                     num(IMAGE.0),
-                    num(IMAGE.1)
+                    num(IMAGE.1),
+                    ink.unwrap_or(BORDER)
                 ));
             }
         }
     }
-    let stroke = paint("stroke", t.color, BORDER);
+    let stroke = paint("stroke", t.color, ink.unwrap_or(BORDER));
     for (a, b) in &t.rules {
         out.push_str(&format!(
             "<path d=\"M{},{}L{},{}\" fill=\"none\"{stroke}/>",
@@ -1141,6 +1147,45 @@ mod tests {
         draw(&t, 0.0, 0.0, &Font::new(14.0), "", None, &mut out);
         assert_eq!(out.matches("stroke-dasharray=\"5,2\"").count(), 1, "{out}");
         assert_eq!(out.matches("stroke-dasharray=\"1,5\"").count(), 1, "{out}");
+    }
+
+    #[test]
+    fn borders_stay_readable_on_fills() {
+        let strokes = |src: &str, ink: Option<&str>| {
+            let mut out = String::new();
+            draw(&table(src), 0.0, 0.0, &Font::new(14.0), "", ink, &mut out);
+            out.split("stroke=\"")
+                .skip(1)
+                .filter_map(|s| s.split('"').next())
+                .filter(|s| *s != "none")
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        };
+        // 塗りがなければテーマの枠の色
+        assert_eq!(
+            strokes("<table><tr><td>a</td></tr></table>", None),
+            [BORDER; 2]
+        );
+        // 濃い表の上は白、明るい升の上は黒に近い色（表の枠・升の枠・HR の線）
+        assert_eq!(
+            strokes(
+                "<table bgcolor=\"navy\"><tr><td>a</td></tr><hr/><tr><td bgcolor=\"yellow\">b</td></tr></table>",
+                None
+            ),
+            ["#ffffff", "#ffffff", "#1f1f1f", "#ffffff"]
+        );
+        // 外の塗り（ノードの塗り）も同じ。color があればその色
+        assert_eq!(
+            strokes("<table><tr><td>a</td></tr></table>", Some("#ffffff")),
+            ["#ffffff"; 2]
+        );
+        assert_eq!(
+            strokes(
+                "<table bgcolor=\"navy\" color=\"red\"><tr><td>a</td></tr></table>",
+                None
+            ),
+            ["#ff0000"; 2]
+        );
     }
 
     #[test]
