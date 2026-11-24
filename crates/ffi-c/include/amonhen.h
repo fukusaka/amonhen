@@ -1099,6 +1099,21 @@ uint8_t *amonhen_svg_preview(const uint8_t *data,
                              char **info);
 
 /**
+ * 透けた絵の下の市松模様を暗くするのが既定か（コアの `checker::Tone`）。`pixels` は `height` 行 × `stride` バイトの、
+ * 不透明度を掛けた RGBA（`bgra` なら BGRA）の画素。比べる 2 枚は 1 つの画素の並びに並べて渡す。`transparent` に
+ * 透けた画素があったか（なければ市松模様は見えない）を書く。
+ *
+ * # Safety
+ * `pixels` は `height * stride` バイト読めること（NULL なら何も数えない）。`transparent` は書けること（NULL でもよい）。
+ */
+bool amonhen_checker_dark(const uint8_t *pixels,
+                          uintptr_t width,
+                          uintptr_t height,
+                          uintptr_t stride,
+                          bool bgra,
+                          bool *transparent);
+
+/**
  * `path`（NUL で終わる UTF-8）の中身（`data` の `len` バイト）が、History の「すべてのファイル」で絵にする Android の
  * VectorDrawable か（`.xml` で、根が `<vector>` か `<animated-vector>`。頭だけを見る）。
  *

@@ -1881,6 +1881,37 @@ fn svg_target(n: u8) -> amonhen_core::svglint::Target {
     }
 }
 
+/// 透けた絵の下の市松模様を暗くするのが既定か（コアの `checker::Tone`）。`pixels` は `height` 行 × `stride` バイトの、
+/// 不透明度を掛けた RGBA（`bgra` なら BGRA）の画素。比べる 2 枚は 1 つの画素の並びに並べて渡す。`transparent` に
+/// 透けた画素があったか（なければ市松模様は見えない）を書く。
+///
+/// # Safety
+/// `pixels` は `height * stride` バイト読めること（NULL なら何も数えない）。`transparent` は書けること（NULL でもよい）。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_checker_dark(
+    pixels: *const u8,
+    width: usize,
+    height: usize,
+    stride: usize,
+    bgra: bool,
+    transparent: *mut bool,
+) -> bool {
+    let mut tone = amonhen_core::checker::Tone::default();
+    if !pixels.is_null() && height > 0 {
+        let bytes = unsafe { std::slice::from_raw_parts(pixels, height * stride) };
+        let order = if bgra {
+            amonhen_core::checker::Order::Bgra
+        } else {
+            amonhen_core::checker::Order::Rgba
+        };
+        tone.add(bytes, width, height, stride, order);
+    }
+    if let Some(transparent) = unsafe { transparent.as_mut() } {
+        *transparent = tone.transparent();
+    }
+    tone.dark()
+}
+
 /// `path`（NUL で終わる UTF-8）の中身（`data` の `len` バイト）が、History の「すべてのファイル」で絵にする Android の
 /// VectorDrawable か（`.xml` で、根が `<vector>` か `<animated-vector>`。頭だけを見る）。
 ///
