@@ -22,6 +22,38 @@ const SAMPLES: &[(&str, &str)] = &[
         "styles",
         "graph { node [style=filled, fillcolor=\"#ffcc00\"]; a -- b [color=\"red:blue\", penwidth=2]; b [shape=box, style=\"rounded,dashed,filled\", fillcolor=\"red:yellow\"]; c [label=<<b>bold</b> <i>it</i>>]; b -- c [style=dotted, label=\"e\"] }",
     ),
+    (
+        "neato",
+        "graph { layout=neato; a [pos=\"0,0!\"]; d [pos=\"3,0!\"]; a -- b -- c -- d; b -- e; c -- e [len=2]; a -- f; f -- f; e -- d; e -- d [label=\"x\"] }",
+    ),
+    (
+        "fdp",
+        "graph { layout=fdp; subgraph cluster_a { label=A; a1 -- a2 -- a3 } subgraph cluster_b { label=B; b1 -- b2 } a1 -- b1; c -- a3; c -- b2; c -- d }",
+    ),
+    (
+        "sfdp",
+        "graph { layout=sfdp; overlap=false; a -- {b c d e}; b -- {f g}; c -- {h i}; d -- j; e -- {k l m}; m -- a }",
+    ),
+    (
+        "twopi",
+        "digraph { layout=twopi; root=r; r -> {a b c}; a -> {a1 a2 a3}; b -> b1; c -> {c1 c2}; a1 -> x }",
+    ),
+    (
+        "circo",
+        "graph { layout=circo; a -- b -- c -- d -- e -- a; c -- f -- g -- c; e -- h; h -- i; h -- j }",
+    ),
+    (
+        "osage",
+        "graph { layout=osage; subgraph cluster_a { label=A; a1; a2; a3 } subgraph cluster_b { label=B; b1; b2 } c; d; a1 -- b1 }",
+    ),
+    (
+        "patchwork",
+        "graph { layout=patchwork; subgraph cluster_a { a1 [area=4]; a2 [area=2]; subgraph cluster_c { c1; c2 } } b1 [area=3]; b2 }",
+    ),
+    (
+        "ortho_free",
+        "graph { layout=neato; splines=ortho; a -- b -- c -- a; c -- d }",
+    ),
 ];
 
 fn data(name: &str) -> std::path::PathBuf {
@@ -146,8 +178,22 @@ fn notes_approximations() {
         notes("digraph { node [colorscheme=blues9, style=filled, fillcolor=3]; a [color=\"/set312/12\"]; b [colorscheme=ylorrd9, fillcolor=9] }")
             .is_empty()
     );
-    // neato は描ける。知らない名前と、近いもので済ませる属性は注記
-    assert!(notes("graph { layout=neato; a -- b -- c; a -- c }").is_empty());
+    // ほかの配置は描ける。知らない名前と、近いもので済ませる属性は注記
+    for engine in [
+        "neato",
+        "fdp",
+        "sfdp",
+        "twopi",
+        "circo",
+        "osage",
+        "patchwork",
+        "nop",
+    ] {
+        assert!(
+            notes(&format!("graph {{ layout={engine}; a -- b -- c; a -- c }}")).is_empty(),
+            "{engine}"
+        );
+    }
     assert_eq!(
         notes("graph { layout=spring; a -- b }"),
         [Note::OtherLayouts]
@@ -158,6 +204,10 @@ fn notes_approximations() {
     );
     assert_eq!(
         notes("graph { layout=neato; mode=hier; a -- b }"),
+        [Note::LayoutOptions]
+    );
+    assert_eq!(
+        notes("graph { layout=osage; packmode=clust; a -- b }"),
         [Note::LayoutOptions]
     );
     // 大きさの属性は黙って無視する
@@ -206,10 +256,24 @@ fn draws_big_graphs_in_time() {
     let body: String = (0..4000)
         .map(|_| format!("{}->{};", next(900), next(900)))
         .collect();
-    let started = std::time::Instant::now();
-    let d = render(&format!("digraph {{ {body} }}")).unwrap();
-    assert!(d.svg.len() < amonhen_dot::MAX_OUTPUT);
-    assert!(started.elapsed() < std::time::Duration::from_secs(10));
+    for engine in [
+        "dot",
+        "neato",
+        "fdp",
+        "sfdp",
+        "twopi",
+        "circo",
+        "osage",
+        "patchwork",
+    ] {
+        let started = std::time::Instant::now();
+        let d = render(&format!("digraph {{ layout={engine}; {body} }}")).unwrap();
+        assert!(d.svg.len() < amonhen_dot::MAX_OUTPUT);
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "{engine}"
+        );
+    }
 }
 
 /// 決まった種の乱数で作った壊れた文・ありえない属性で、panic せず終わる。
@@ -303,6 +367,36 @@ fn survives_random_sources() {
         "\"</td><vr/><td fixedsize=\\\"true\\\" width=\\\"-1\\\">\"",
         "\"a:p\"",
         "\"/set312/12\"",
+        "layout",
+        "neato",
+        "fdp",
+        "sfdp",
+        "twopi",
+        "circo",
+        "osage",
+        "patchwork",
+        "nop",
+        "pos",
+        "\"1,2!\"",
+        "\"-1e9,3\"",
+        "pin",
+        "overlap",
+        "scale",
+        "prism",
+        "sep",
+        "\"+-4,1e9\"",
+        "len",
+        "root",
+        "start",
+        "random7",
+        "regular",
+        "mindist",
+        "area",
+        "packmode",
+        "\"array_c3u\"",
+        "sortv",
+        "K",
+        "maxiter",
     ];
     let mut seed: u64 = 1;
     let mut next = |n: usize| {
