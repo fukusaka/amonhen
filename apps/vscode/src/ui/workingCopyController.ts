@@ -221,6 +221,8 @@ export class WorkingCopyController implements vscode.Disposable {
 
   /** 選んでいるファイルの差分を送る。stage してグループが変わっても、同じファイルを見続ける */
   private async sendDiff(): Promise<void> {
+    // 読み始めたときの空白の扱い。読む間に変わったら、この差分は古いので送らない（変えた側が読み直して送る）
+    const whitespace = this.whitespace;
     const selected = this.selected;
     if (!selected) {
       return;
@@ -256,18 +258,20 @@ export class WorkingCopyController implements vscode.Disposable {
       }
     }
     const diff = daemon ? daemon.diff : (await this.loadDiff(change)).diff;
-    this.post({ type: 'wcDiff', group: change.group, diff, ...(daemon ? { whitespace: this.whitespace } : {}) });
-    if (daemon) void this.sendSyntax(daemon, change.group);
+    if (this.whitespace !== whitespace) return;
+    this.post({ type: 'wcDiff', group: change.group, diff, ...(daemon ? { whitespace } : {}) });
+    if (daemon) void this.sendSyntax(daemon, change.group, whitespace);
   }
 
   /** 構文の色を後から頼み、付いたら同じ差分を送り直す（選んだ行はそのまま）。古いエンジンが断れば色なしのまま */
-  private async sendSyntax(daemon: DaemonDiff, group: ChangeGroup): Promise<void> {
+  private async sendSyntax(daemon: DaemonDiff, group: ChangeGroup, whitespace: DiffWhitespace): Promise<void> {
     try {
       const client = this.repo && (await daemonFor(this.repo.root));
       if (!client) return;
       const touched = applySyntax(await client.call({ op: 'diffSyntax', diff: daemon.handle }), daemon.lines);
-      if (touched.size > 0 && this.selected?.path === daemon.diff.path) {
-        this.post({ type: 'wcDiff', group, diff: daemon.diff, whitespace: this.whitespace });
+      // 色を待つ間に空白の扱いが変わっていれば、この差分は古い
+      if (touched.size > 0 && this.selected?.path === daemon.diff.path && this.whitespace === whitespace) {
+        this.post({ type: 'wcDiff', group, diff: daemon.diff, whitespace });
       }
     } catch {
       // 色なしのまま
