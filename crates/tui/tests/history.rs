@@ -1581,7 +1581,7 @@ fn fetch_and_pull_bring_in_remote_commits() {
     let asked = amonhen_tui::snapshot(open(&work), 160, 8, clock(), "p").unwrap();
     println!("{asked}");
     assert!(
-        asked.contains("Pull 1 commit from origin/main? (“From elsewhere”)   y pull   n cancel"),
+        asked.contains("Pull 1 commit from origin/main? (“From elsewhere”)   y pull as git is set   f fast-forward only   n cancel"),
         "{asked}"
     );
     let pulled = amonhen_tui::snapshot(open(&work), 100, 8, clock(), "py").unwrap();
@@ -4523,12 +4523,12 @@ fn pull_names_the_files_likely_to_conflict() {
     let line = pull.lines().last().unwrap();
     println!("{line}");
     assert!(
-        line.contains(" How?   y as git is set   m merge   r rebase   n cancel"),
+        line.contains("   y as git is set   m merge   r rebase   n cancel"),
         "{line}"
     );
     if predicts_conflicts(dir.path()) {
         assert!(
-            line.contains("have diverged. Conflicts are likely in a.txt. How?"),
+            line.contains("only here)? Conflicts are likely in a.txt."),
             "{line}"
         );
     }
@@ -4559,17 +4559,24 @@ fn diverged_branches_offer_force_push_and_pull_modes() {
             &["log", "-1", "--format=%s", "main"],
         )
     };
-    let pull = amonhen_tui::snapshot(open(&work), 160, 8, clock(), "p").unwrap();
+    let pull = amonhen_tui::snapshot(open(&work), 260, 8, clock(), "p").unwrap();
     println!("{pull}");
-    assert!(pull.contains(" How?   y as git is set   m merge   r rebase   n cancel"));
+    assert!(
+        pull.contains("into a branch that has diverged (1 new, 1 only here)?"),
+        "{pull}"
+    );
+    assert!(
+        pull.contains("   y as git is set   m merge   r rebase   n cancel"),
+        "{pull}"
+    );
     // 先にコンフリクトの見込みを読む（空のコミットどうしなので、ない）。
     if predicts_conflicts(&work) {
         assert!(
-            pull.contains("have diverged. No conflicts are expected. How?"),
+            pull.contains("only here)? No conflicts are expected."),
             "{pull}"
         );
     } else {
-        assert!(pull.contains("have diverged. How?"), "{pull}");
+        assert!(pull.contains("only here)?"), "{pull}");
     }
     let asked = amonhen_tui::snapshot(open(&work), 200, 8, clock(), "P").unwrap();
     println!("{asked}");
