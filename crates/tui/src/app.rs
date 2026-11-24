@@ -8179,6 +8179,18 @@ impl App {
         }
     }
 
+    /// 選んでいるファイルの変更を捨てる前に確かめる。
+    fn ask_discard_file(&mut self) -> bool {
+        self.confirm = self.changes.discard_file().map(|(path, request)| {
+            let ask = tr!(
+                "Discard the changes in {path}? Undo brings them back.",
+                path = path
+            );
+            (ask, tr!("discard"), request)
+        });
+        self.confirm.is_some()
+    }
+
     fn changes_key(&mut self, code: KeyCode, control: bool) -> bool {
         let page = self.changes.page();
         match code {
@@ -8314,16 +8326,7 @@ impl App {
                 self.push_after_commit &= self.committing;
                 true
             }
-            KeyCode::Char('d') => {
-                self.confirm = self.changes.discard_file().map(|(path, request)| {
-                    let ask = tr!(
-                        "Discard the changes in {path}? Undo brings them back.",
-                        path = path
-                    );
-                    (ask, tr!("discard"), request)
-                });
-                self.confirm.is_some()
-            }
+            KeyCode::Char('d') => self.ask_discard_file(),
             // 木のフォルダでは、Enter で畳む・開く。ファイルなら差分へ。
             KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right => {
                 if !self.changes.toggle_folder() {
@@ -8942,6 +8945,35 @@ impl App {
                 return;
             }
             _ => {}
+        }
+        // Working Copy の一覧: ポインタを重ねたファイルに ↶ を出し、それを押すと変更を捨てる（確かめてから）。
+        if self.view == View::Changes {
+            let list = layout.main.filter(|a| {
+                a.x <= mouse.column
+                    && mouse.column < a.right()
+                    && a.y <= mouse.row
+                    && mouse.row < a.y + self.changes.list_height()
+            });
+            match mouse.kind {
+                MouseEventKind::Moved => {
+                    if self.changes.hover(list.map(|area| mouse.row - area.y)) {
+                        self.damage |= Damage::MAIN;
+                    }
+                    return;
+                }
+                MouseEventKind::Down(MouseButton::Left)
+                    if list.is_some_and(|area| {
+                        self.changes
+                            .click_discard(mouse.row - area.y, mouse.column, area.right())
+                    }) =>
+                {
+                    self.focus = Focus::Main;
+                    self.ask_discard_file();
+                    self.dirty = true;
+                    return;
+                }
+                _ => {}
+            }
         }
         let inside = |area: Option<Rect>| {
             area.filter(|a| {
@@ -11145,6 +11177,48 @@ mod tests {
         key(&mut app, 'e');
         assert!(app.take_open_file().is_none());
         assert!(bottom_line(&mut app).contains("The files are on another machine"));
+    }
+
+    /// Working Copy の一覧: ポインタを重ねたファイルの右端に ↶。それを押すと、変更を捨てる前に確かめる（アプリの
+    /// 行のホバーのボタン）
+    #[test]
+    fn discard_on_hover() {
+        let (dir, mut app, rx) = app_with_history();
+        std::fs::write(dir.path().join("a.txt"), "a\n").unwrap();
+        app.changes.refresh();
+        app.handle(Event::Input(Input::Key(KeyEvent::new(
+            KeyCode::Char('1'),
+            KeyModifiers::NONE,
+        ))));
+        crate::settle(&mut app, &rx).unwrap();
+        let list = app.layout().main.unwrap();
+        let at = |column: u16, kind: MouseEventKind| {
+            Event::Input(Input::Mouse(MouseEvent {
+                kind,
+                column,
+                row: list.y,
+                modifiers: KeyModifiers::NONE,
+            }))
+        };
+        let row = |app: &mut App| -> String {
+            let mut buf = Buffer::empty(Rect::new(0, 0, 100, 12));
+            app.draw(&mut buf, Damage::ALL);
+            (list.x..list.right())
+                .map(|x| buf[(x, list.y)].symbol())
+                .collect()
+        };
+        assert!(!row(&mut app).contains('↶'));
+        app.handle(at(list.x + 5, MouseEventKind::Moved));
+        assert!(row(&mut app).contains('↶'), "{}", row(&mut app));
+        // ↶ でないところを押しても、捨てない。
+        app.handle(at(list.x + 5, MouseEventKind::Down(MouseButton::Left)));
+        assert!(app.confirm.is_none());
+        app.handle(at(
+            list.right() - 2,
+            MouseEventKind::Down(MouseButton::Left),
+        ));
+        let (ask, _, _) = app.confirm.as_ref().expect("asks first");
+        assert!(ask.contains("Discard the changes in a.txt?"), "{ask}");
     }
 
     /// 動いている検索の途中の結果: 最初に届いた分で合った行へ移り、後から届く分では動かさない。一番下の行に、
