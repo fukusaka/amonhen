@@ -1262,6 +1262,9 @@ enum Message {
     SettingsSyntaxTheme(bool, Option<usize>),
     /// Settings > Theme のボタン（`import`・`remove:<name>`）。
     SettingsThemeButton(String),
+    /// Settings > Appearance の Mermaid の「配色」と、テーマの読み込み・取り除き。
+    SettingsDiagramColors(Option<usize>),
+    SettingsMermaidButton(String),
     /// Settings > Appearance の窓の背景の欄。
     Backdrop(crate::backdrop::Event),
     CloseSettings,
@@ -8207,7 +8210,10 @@ impl Root {
                 if name != crate::theme::selected(dark) {
                     let _ = crate::prefs::set_string(crate::theme::key(dark), &name);
                     crate::theme::reload();
-                    self.with_history(|h| h.diff.dirty = true);
+                    self.with_history(|h| {
+                        h.diff.dirty = true;
+                        h.session.data.recolor_diagrams();
+                    });
                 }
             }
             Message::Backdrop(event) => {
@@ -8251,7 +8257,69 @@ impl Root {
                 }
                 crate::theme::set_imported(&themes);
                 crate::theme::reload();
-                self.with_history(|h| h.diff.dirty = true);
+                self.with_history(|h| {
+                    h.diff.dirty = true;
+                    h.session.data.recolor_diagrams();
+                });
+            }
+            Message::SettingsDiagramColors(index) => {
+                let schemes = crate::markdownview::diagram_schemes();
+                let Some((key, _)) = index.and_then(|i| schemes.get(i)) else {
+                    return;
+                };
+                if crate::prefs::string(crate::markdownview::DIAGRAM_COLORS).as_ref() != Some(key) {
+                    let _ = crate::prefs::set_string(crate::markdownview::DIAGRAM_COLORS, key);
+                    self.with_history(|h| h.session.data.recolor_diagrams());
+                }
+            }
+            Message::SettingsMermaidButton(key) => {
+                use amonhen_core::diagram::IMPORTED_PREFIX;
+                let mut themes = crate::markdownview::imported_mermaid();
+                let mut chosen = None;
+                if let Some(name) = key.strip_prefix("remove:") {
+                    themes.retain(|(n, _)| n != name);
+                    // 使っていたテーマを取り除いたら、既定の配色に戻す（GTK4 版と同じ）。
+                    if crate::prefs::string(crate::markdownview::DIAGRAM_COLORS)
+                        == Some(format!("{IMPORTED_PREFIX}{name}"))
+                    {
+                        chosen = Some("syntax".to_owned());
+                    }
+                } else {
+                    // 読み込んだテーマは、そのまま配色にする（GTK4 版と同じ）。
+                    for path in crate::files::open_files(&tr!("Import Mermaid Theme…")) {
+                        let read = std::fs::read_to_string(&path)
+                            .map_err(|e| e.to_string())
+                            .and_then(|text| amonhen_core::diagram::MermaidConfig::parse(&text));
+                        match read {
+                            Ok(config) => {
+                                let name = path
+                                    .file_stem()
+                                    .unwrap_or_default()
+                                    .to_string_lossy()
+                                    .into_owned();
+                                themes.retain(|(n, _)| *n != name);
+                                chosen = Some(format!("{IMPORTED_PREFIX}{name}"));
+                                themes.push((name, config));
+                            }
+                            Err(e) => {
+                                self.dialog = Some(Dialog::Failed {
+                                    title: tr!("Import Mermaid Theme…"),
+                                    message: tr!(
+                                        "Couldn’t read {file}: {error}",
+                                        file =
+                                            path.file_name().unwrap_or_default().to_string_lossy(),
+                                        error = e
+                                    ),
+                                });
+                            }
+                        }
+                    }
+                }
+                crate::markdownview::set_imported_mermaid(&themes);
+                if let Some(chosen) = chosen {
+                    let _ = crate::prefs::set_string(crate::markdownview::DIAGRAM_COLORS, &chosen);
+                }
+                self.with_history(|h| h.session.data.recolor_diagrams());
             }
             Message::SettingsDisplay("diff-standard-colors", value) => {
                 if value != crate::prefs::bool(crate::theme::DIFF_STANDARD_COLORS) {
@@ -16636,6 +16704,10 @@ impl Root {
                 display: Box::new(|id| context.callback(move |v| Message::SettingsDisplay(id, v))),
                 order: context.callback(Message::SettingsOrder),
                 syntax_theme: context.callback(|i| Message::SettingsSyntaxTheme(false, i)),
+                diagram_colors: context.callback(Message::SettingsDiagramColors),
+                mermaid_button: Box::new(|key: String| {
+                    context.callback(move |()| Message::SettingsMermaidButton(key.clone()))
+                }),
                 syntax_theme_dark: context.callback(|i| Message::SettingsSyntaxTheme(true, i)),
                 theme_button: Box::new(|key: String| {
                     context.callback(move |()| Message::SettingsThemeButton(key.clone()))
@@ -20437,6 +20509,8 @@ impl HistoryView {
             if self.owner && (crate::palette::refresh() | crate::palette::take_ground_changed()) {
                 self.session.invalidate();
                 self.diff.dirty = true;
+                // 開いている Markdown の図も、外観に合わせて色を当て直す。
+                self.session.data.recolor_diagrams();
                 self.sender.send(Message::AppearanceChanged);
             }
         }

@@ -204,6 +204,9 @@ pub struct Callbacks<'a> {
     pub syntax_theme_dark: Callback<Option<usize>>,
     /// Theme のボタン（`import`・`remove:<name>`）。
     pub theme_button: Box<dyn Fn(String) -> Callback<()> + 'a>,
+    /// Mermaid の「配色」と、テーマの読み込み・取り除き（`import`・`remove:名前`）。
+    pub diagram_colors: Callback<Option<usize>>,
+    pub mermaid_button: Box<dyn Fn(String) -> Callback<()> + 'a>,
     /// 窓の背景の欄（Choose…・Remove、位置、横棒、ツールバーの色を敷くか・色）。
     pub backdrop: BackdropCallbacks<'a>,
     pub ssh: crate::sshhosts::Callbacks<'a>,
@@ -392,6 +395,7 @@ fn appearance(callbacks: &Callbacks) -> View {
                 crate::prefs::bool(crate::theme::DIFF_STANDARD_COLORS),
                 tr!("Use standard colors for diffs"),
             ),
+            mermaid_section(callbacks),
         )),
     ))
 }
@@ -1289,6 +1293,60 @@ pub fn backdrop_section(b: &crate::backdrop::Backdrop, callbacks: &BackdropCallb
             .on_is_checked_changed(callbacks.tint.clone())
             .content(TextBlock::new().text(tr!("Tint the toolbar"))),
         tint_rows,
+    ))
+}
+
+/// Markdown の Mermaid・DOT の図の欄（GTK4 版の Theme の Mermaid）: 配色・見本・Mermaid のテーマの読み込みと、
+/// 読み込んだものの一覧。
+fn mermaid_section(callbacks: &Callbacks) -> View {
+    let schemes = crate::markdownview::diagram_schemes();
+    let current = crate::prefs::string(crate::markdownview::DIAGRAM_COLORS)
+        .unwrap_or_else(|| "syntax".into());
+    let selected = schemes.iter().position(|(k, _)| *k == current).unwrap_or(0);
+    StackPanel::new().spacing(8.0).children((
+        heading("Mermaid".to_owned()),
+        StackPanel::new()
+            .orientation(Orientation::Horizontal)
+            .spacing(12.0)
+            .children((
+                TextBlock::new()
+                    .text(tr!("Colors"))
+                    .width(120.0)
+                    .vertical_alignment(VerticalAlignment::Center),
+                ComboBox::new()
+                    .selected_index(selected)
+                    .items_source(schemes.into_iter().map(|(_, l)| l).collect::<Vec<_>>())
+                    .on_selection_changed(callbacks.diagram_colors.clone()),
+            )),
+        crate::markdownview::diagram_sample(),
+        StackPanel::new()
+            .spacing(4.0)
+            .children((View::keyed_fragment(
+                crate::markdownview::imported_mermaid()
+                    .into_iter()
+                    .map(|(name, _)| {
+                        (
+                            format!("mermaid:{name}"),
+                            StackPanel::new()
+                                .orientation(Orientation::Horizontal)
+                                .spacing(8.0)
+                                .children((
+                                    TextBlock::new()
+                                        .text(name.clone())
+                                        .vertical_alignment(VerticalAlignment::Center),
+                                    Button::new()
+                                        .on_click((callbacks.mermaid_button)(format!(
+                                            "remove:{name}"
+                                        )))
+                                        .content(TextBlock::new().text(tr!("Remove"))),
+                                )),
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+            ),)),
+        Button::new()
+            .on_click((callbacks.mermaid_button)("import".to_owned()))
+            .content(TextBlock::new().text(tr!("Import Mermaid Theme…"))),
     ))
 }
 
