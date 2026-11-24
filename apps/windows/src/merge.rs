@@ -301,9 +301,37 @@ pub struct Callbacks<'a> {
     pub chosen: &'a [ElementRef<Grid>; 3],
     /// Base の欄を出すか。
     pub base: Callback<bool>,
+    /// 表示の設定（View Options）の項目（今は `wrap-long-lines` だけ）。
+    pub option: Callback<String>,
+}
+
+/// 表示の設定（View Options）の項目。今は「コード」の「長い行を折り返す」だけ（macOS 版・GTK4 版と同じ）。
+fn view_options_items() -> Vec<MenuItem> {
+    let mark = if crate::data::wrap_lines() {
+        "✓ "
+    } else {
+        ""
+    };
+    vec![
+        MenuItem::disabled("h-code", tr!("Code")),
+        MenuItem::item(
+            "wrap-long-lines",
+            format!("    {mark}{}", tr!("Wrap Long Lines")),
+        )
+        .with_tooltip(tr!(
+            "Wrap lines wider than the diff instead of scrolling sideways (in every diff)"
+        )),
+    ]
 }
 
 pub fn view(state: &State, callbacks: Callbacks) -> View {
+    // 長い行を折り返すか（アプリ全体の設定。折り返さなければ欄は横にスクロールする）。
+    let wrap = crate::data::wrap_lines();
+    let wrapping = if wrap {
+        TextWrapping::Wrap
+    } else {
+        TextWrapping::NoWrap
+    };
     let count = state.conflicts();
     let ready = matches!(state.sides, Some(Ok(_)));
     let position = if count == 0 {
@@ -417,6 +445,7 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                     TextBlock::new()
                         .text(lines[from..to].concat().trim_end_matches('\n').to_owned())
                         .font_size(12.0)
+                        .text_wrapping(wrapping)
                         .is_text_selection_enabled(true)
                         .margin(Thickness::new(10.0, 0.0, 6.0, 0.0))
                         .into()
@@ -471,6 +500,7 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                                     TextBlock::new()
                                         .text(body.trim_end_matches('\n').to_owned())
                                         .font_size(12.0)
+                                        .text_wrapping(wrapping)
                                         .is_text_selection_enabled(true)
                                         // ≫ は右、≪ は左に置くので、その側を空ける。
                                         .margin(if which == 1 {
@@ -498,6 +528,7 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                         .element_ref(callbacks.result_box)
                         .text(text)
                         .accepts_return(true)
+                        .text_wrapping(wrapping)
                         .on_text_changed(callbacks.result.clone())
                         .into(),
                     Some(which) => side(text, which),
@@ -513,7 +544,14 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
                             .opacity(0.7)
                             .margin(Thickness::new(2.0, 0.0, 0.0, 4.0))
                             .grid_row(0),
-                        ScrollViewer::new().grid_row(1).content(content),
+                        ScrollViewer::new()
+                            .horizontal_scroll_bar_visibility(if wrap {
+                                ScrollBarVisibility::Disabled
+                            } else {
+                                ScrollBarVisibility::Auto
+                            })
+                            .grid_row(1)
+                            .content(content),
                     ))
             };
             // 列: Base（出すとき）・Current・Result・Incoming（同じ幅に分ける）。
@@ -580,12 +618,25 @@ pub fn view(state: &State, callbacks: Callbacks) -> View {
     Grid::new()
         .rows([GridLength::Auto, GridLength::Auto, GridLength::Star(1.0)])
         .children((
-            // 窓が狭くても右端のボタン（閉じる）に届くよう、帯は横にスクロールできる。
-            ScrollViewer::new()
-                .horizontal_scroll_bar_visibility(ScrollBarVisibility::Auto)
-                .vertical_scroll_bar_visibility(ScrollBarVisibility::Disabled)
+            // 窓が狭くても右端のボタン（閉じる）に届くよう、帯は横にスクロールできる。表示の設定は右端に置く
+            // （macOS 版・GTK4 版と同じ）。
+            Grid::new()
+                .columns([GridLength::Star(1.0), GridLength::Auto])
                 .grid_row(0)
-                .content(bar),
+                .children((
+                    ScrollViewer::new()
+                        .horizontal_scroll_bar_visibility(ScrollBarVisibility::Auto)
+                        .vertical_scroll_bar_visibility(ScrollBarVisibility::Disabled)
+                        .grid_column(0)
+                        .content(bar),
+                    DropDownButton::new()
+                        .grid_column(1)
+                        .vertical_alignment(VerticalAlignment::Center)
+                        .margin(Thickness::new(0.0, 6.0, 8.0, 6.0))
+                        .content(FontIcon::new().glyph("\u{E9E9}"))
+                        .tooltip(tr!("View Options"))
+                        .menu(Menu::new(view_options_items(), callbacks.option.clone())),
+                )),
             banner,
             body,
         ))
