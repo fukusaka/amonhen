@@ -449,7 +449,9 @@ pub unsafe extern "C" fn amonhen_diagram_colorize(
     own: *const c_char,
     imported: *const c_char,
 ) -> *mut c_char {
-    use amonhen_core::diagram::{MermaidConfig, Scheme, ThemeColors, colorize, colors_for};
+    use amonhen_core::diagram::{
+        MermaidConfig, Scheme, ThemeColors, colorize_for_coresvg, colors_for,
+    };
     let (Ok(svg), Ok(scheme)) = (str_arg(svg), str_arg(scheme)) else {
         return std::ptr::null_mut();
     };
@@ -481,7 +483,7 @@ pub unsafe extern "C" fn amonhen_diagram_colorize(
         dark,
         &colors,
     );
-    colorize(svg, &vars, backdrop)
+    colorize_for_coresvg(svg, &vars, backdrop)
         .and_then(|out| CString::new(out).ok())
         .map_or(std::ptr::null_mut(), CString::into_raw)
 }

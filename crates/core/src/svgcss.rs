@@ -23,6 +23,16 @@ pub fn inline(svg: &str) -> Option<String> {
 
 /// `inline` と同じで、根より外で定めた CSS の変数 `vars`（`("--pele-bg", "#1e1e1e")` など）を当てる。
 pub fn inline_with(svg: &str, vars: &[(&str, &str)]) -> Option<String> {
+    inline_impl(svg, vars, false)
+}
+
+/// `inline_with` と同じで、斜体（`font-style` の `italic`・`oblique`）の文字を `skewX` で傾ける。CoreSVG は
+/// `font-style` を読まず、斜体の書体も選ばないので、macOS に渡すときに使う。
+pub fn inline_slanted(svg: &str, vars: &[(&str, &str)]) -> Option<String> {
+    inline_impl(svg, vars, true)
+}
+
+fn inline_impl(svg: &str, vars: &[(&str, &str)], slant: bool) -> Option<String> {
     let doc = roxmltree::Document::parse(svg).ok()?;
     let mut css = String::new();
     for node in doc.descendants() {
@@ -38,6 +48,7 @@ pub fn inline_with(svg: &str, vars: &[(&str, &str)]) -> Option<String> {
     let rules = parse_css(&css);
     let mut writer = Writer {
         rules: &rules,
+        slant,
         markers: HashMap::new(),
         vars: Default::default(),
         seed: std::rc::Rc::new(
@@ -533,6 +544,8 @@ fn cascade<'a>(rules: &'a [Rule], node: roxmltree::Node) -> HashMap<String, Stri
 
 struct Writer<'a, 'input> {
     rules: &'a [Rule],
+    /// 斜体を `skewX` で傾けるか（`inline_slanted`）。
+    slant: bool,
     markers: HashMap<&'a str, roxmltree::Node<'a, 'input>>,
     /// 要素ごとの CSS の変数（`--x`。祖先から継いだものを含め、値の中の var() は解いてある）。
     vars: std::cell::RefCell<HashMap<roxmltree::NodeId, std::rc::Rc<HashMap<String, String>>>>,
@@ -570,7 +583,18 @@ impl<'a, 'input> Writer<'a, 'input> {
         }
         if let Some(i) = attrs.iter().position(|(n, _)| n == "font") {
             let (_, font) = attrs.remove(i);
-            let (size, family) = split_font(&font);
+            let (size, family, words) = split_font(&font);
+            for word in words {
+                let key = match word.as_str() {
+                    "italic" | "oblique" => "font-style",
+                    "bold" | "bolder" | "lighter" => "font-weight",
+                    w if is_weight(w) => "font-weight",
+                    _ => continue,
+                };
+                if !attrs.iter().any(|(n, _)| n == key) {
+                    attrs.push((key.into(), word));
+                }
+            }
             if let Some(size) = size
                 && !attrs.iter().any(|(n, _)| n == "font-size")
             {
@@ -582,7 +606,46 @@ impl<'a, 'input> Writer<'a, 'input> {
                 attrs.push(("font-family".into(), family));
             }
         }
+        // CoreSVG は `bold` などの言葉の太さを読まない（数なら読む）
+        if let Some((_, w)) = attrs.iter_mut().find(|(n, _)| n == "font-weight") {
+            match w.trim() {
+                "bold" | "bolder" => *w = "700".into(),
+                "normal" | "lighter" => *w = "400".into(),
+                _ => {}
+            }
+        }
         attrs
+    }
+
+    /// `attrs` を持つ `node`（`<text>`）が斜体なら、`y` の行を軸に傾ける `transform` を足す。
+    fn slant(&self, node: roxmltree::Node, attrs: &mut Vec<(String, String)>) {
+        if !self.slant {
+            return;
+        }
+        let style = match attrs.iter().find(|(k, _)| k == "font-style") {
+            Some((_, v)) => Some(v.clone()),
+            None => node
+                .parent_element()
+                .and_then(|p| self.inherited(p, "font-style")),
+        };
+        if !matches!(style.as_deref().map(str::trim), Some("italic" | "oblique")) {
+            return;
+        }
+        let y = attrs
+            .iter()
+            .find(|(k, _)| k == "y")
+            .and_then(|(_, v)| {
+                v.split(|c: char| c.is_ascii_whitespace() || c == ',')
+                    .find(|s| !s.is_empty())
+                    .and_then(number)
+            })
+            .unwrap_or(0.0);
+        // skewX(-12) は (x, y) を (x - y·tan12°, y) に移すので、先に同じだけ右へずらして基線を動かさない
+        let skew = format!("translate({} 0) skewX(-12)", fmt(y * SLANT));
+        match attrs.iter_mut().find(|(k, _)| k == "transform") {
+            Some((_, t)) => *t = format!("{t} {skew}"),
+            None => attrs.push(("transform".into(), skew)),
+        }
     }
 
     /// `node` で見える CSS の変数。
@@ -660,8 +723,11 @@ impl<'a, 'input> Writer<'a, 'input> {
             markers.push((kind, v.clone()));
             false
         });
-        if tag == "text" && self.write_split_text(node, &attrs, out) {
-            return;
+        if tag == "text" {
+            if self.write_split_text(node, &attrs, out) {
+                return;
+            }
+            self.slant(node, &mut attrs);
         }
         let _ = write!(out, "<{name}");
         for (n, v) in &attrs {
@@ -761,6 +827,9 @@ impl<'a, 'input> Writer<'a, 'input> {
             }
             let x = get(&own, "x").unwrap_or_else(|| text_x.clone());
             let _ = write!(parts, "<text x=\"{}\" y=\"{}\"", escape(&x, true), fmt(y));
+            set(&mut merged, "y", &fmt(y));
+            self.slant(node, &mut merged);
+            merged.retain(|(k, _)| k != "y");
             for (k, v) in &merged {
                 let _ = write!(parts, " {k}=\"{}\"", escape(v, true));
             }
@@ -987,18 +1056,27 @@ fn resolve_vars(value: &str, vars: &HashMap<String, String>, depth: usize) -> St
 }
 
 /// `font` の一括指定から大きさと書体（`[style] [weight] size[/line-height] family`）。
-fn split_font(font: &str) -> (Option<String>, Option<String>) {
+fn split_font(font: &str) -> (Option<String>, Option<String>, Vec<String>) {
     let words = split_top(font.trim(), b' ');
     let Some(i) = words.iter().position(|w| {
         let w = w.split('/').next().unwrap_or("");
-        w.starts_with(|c: char| c.is_ascii_digit() || c == '.')
+        w.starts_with(|c: char| c.is_ascii_digit() || c == '.') && !is_weight(w)
     }) else {
-        return (None, None);
+        return (None, None, Vec::new());
     };
     let size = words[i].split('/').next().unwrap_or("").to_owned();
     let family = words[i + 1..].join(" ").trim().to_owned();
-    (Some(size), (!family.is_empty()).then_some(family))
+    let before = words[..i].iter().map(|w| w.trim().to_owned()).collect();
+    (Some(size), (!family.is_empty()).then_some(family), before)
 }
+
+/// `font` の一括指定の中の数の太さ（`700` など。大きさと違って単位がない）。
+fn is_weight(w: &str) -> bool {
+    w.len() == 3 && w.ends_with("00") && w.starts_with(|c: char| c.is_ascii_digit())
+}
+
+/// 斜体の傾き（tan 12°）。
+const SLANT: f64 = 0.212_556_56;
 
 fn set(attrs: &mut Vec<(String, String)>, key: &str, value: &str) {
     match attrs.iter_mut().find(|(k, _)| k == key) {
@@ -1272,6 +1350,43 @@ fn escape(text: &str, attr: bool) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn bold_becomes_a_number_coresvg_reads() {
+        let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" style="--w:bold"><text font-weight="var(--w)">a</text><text style="font:bold 12px serif">b</text><text font-weight="normal">c</text></svg>"#;
+        let out = inline(svg).unwrap();
+        assert!(out.contains(r#"font-weight="700">a<"#), "{out}");
+        assert!(
+            out.contains(r#"font-weight="700" font-size="12px" font-family="serif">b<"#),
+            "{out}"
+        );
+        assert!(out.contains(r#"font-weight="400">c<"#), "{out}");
+    }
+
+    #[test]
+    fn italics_are_slanted_only_when_asked() {
+        let svg = r#"<svg xmlns="http://www.w3.org/2000/svg"><g font-style="italic"><text x="5" y="10">a</text></g><text x="5" y="20" transform="rotate(90)" style="font:italic 12px serif">b</text><text y="30">c</text></svg>"#;
+        let plain = inline(svg).unwrap();
+        assert!(!plain.contains("skewX"), "{plain}");
+        let out = inline_slanted(svg, &[]).unwrap();
+        assert!(
+            out.contains(r#"<text x="5" y="10" transform="translate(2.126 0) skewX(-12)">a<"#),
+            "{out}"
+        );
+        assert!(
+            out.contains(r#"transform="rotate(90) translate(4.251 0) skewX(-12)""#),
+            "{out}"
+        );
+        assert!(out.contains(r#"<text y="30">c<"#), "{out}");
+    }
+
+    #[test]
+    fn split_spans_are_slanted_on_their_own_line() {
+        let svg = r#"<svg xmlns="http://www.w3.org/2000/svg"><text x="0" y="10"><tspan>a</tspan><tspan x="0" y="40" font-style="italic">b</tspan></text></svg>"#;
+        let out = inline_slanted(svg, &[]).unwrap();
+        assert!(out.contains(r#"<text x="0" y="10">a</text>"#), "{out}");
+        assert!(out.contains(r#"<text x="0" y="40" font-style="italic" transform="translate(8.502 0) skewX(-12)">b</text>"#), "{out}");
+    }
     use super::*;
 
     #[test]

@@ -466,12 +466,35 @@ pub fn colors_for(
 /// pele の SVG `svg` に配色 `vars` を当て、CoreSVG・librsvg で描ける SVG にする。`backdrop` なら図の地を
 /// `--pele-bg` で塗る。読めなければ `None`。
 pub fn colorize(svg: &str, vars: &[(String, String)], backdrop: bool) -> Option<String> {
+    colorize_impl(svg, vars, backdrop, false)
+}
+
+/// `colorize` と同じで、CoreSVG（macOS）向けに斜体の文字を傾けて描く（CoreSVG は `font-style` を読まない）。
+pub fn colorize_for_coresvg(
+    svg: &str,
+    vars: &[(String, String)],
+    backdrop: bool,
+) -> Option<String> {
+    colorize_impl(svg, vars, backdrop, true)
+}
+
+fn colorize_impl(
+    svg: &str,
+    vars: &[(String, String)],
+    backdrop: bool,
+    slant: bool,
+) -> Option<String> {
     let vars: Vec<(&str, &str)> = vars.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let inline = if slant {
+        crate::svgcss::inline_slanted
+    } else {
+        crate::svgcss::inline_with
+    };
     if backdrop {
         let with = add_backdrop(svg)?;
-        return crate::svgcss::inline_with(&with, &vars);
+        return inline(&with, &vars);
     }
-    crate::svgcss::inline_with(svg, &vars)
+    inline(svg, &vars)
 }
 
 /// 根の `<svg>` の中の先頭に、`viewBox` いっぱいの地の四角を足す。
