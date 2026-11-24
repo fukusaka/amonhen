@@ -296,3 +296,4 @@ macOS アプリに追いつく（1 つの機能を 1 つの pull request で、�
 - [x] 82. 途中の操作の行で、何をどこへしている途中か（何手目か）と、なぜ止まり次に何をするかを言う（エンジンがあれば。アプリの帯と同じ）。revert には Skip を出さない
 - [x] 83. 見分けられる失敗を分かる言葉で知らせ、アプリと同じ次の一手（Pull…・Open Working Copy・Set Upstream…・Open Worktree・Open in Terminal・Try Again）と、Details に助言を
 - [x] 85. 編集モードで p・r・s・f・d・e で行のすることを決め、行の下の線を引いて古いコミットを取り込む・手を付けていない古いものを外す
+- [x] 86. History をアプリと同じに: 最初はすべてのブランチ、ブランチの History は上流も、「N branches」、検索の ▾、「3 / 10」の件数、祖先を最初から目立たせる、中身を取りすぎる検索から Fetching and Folders へ

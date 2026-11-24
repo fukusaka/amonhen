@@ -306,3 +306,4 @@ left out for now: VSCode has its own extensions and settings for them.
 - [x] 82. The in-progress row says what is being done where and the step, and why it stopped with what to do next (with the engine), as the app's band; no Skip for a revert
 - [x] 83. Known failures said in plain words with the app's next steps (Pull…, Open Working Copy, Set Upstream…, Open Worktree, Open in Terminal, Try Again) and advice in Details
 - [x] 85. In the edit mode, p, r, s, f, d and e choose a row's action, and the line under the rows is dragged to take in older commits or leave out the unchanged oldest ones
+- [x] 86. History as the app's: All Branches first, a branch's History with its upstream, "N branches", the search ▾, "3 / 10" counts, ancestors highlighted at first, and Open Fetching and Folders from a too-large contents search

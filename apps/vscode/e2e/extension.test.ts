@@ -4423,9 +4423,12 @@ suite('Amon Hen in VSCode', () => {
     const start = git('rev-parse', 'HEAD').trim();
     const branch = git('symbolic-ref', '--short', 'HEAD').trim();
     const quickPick = vscode.window.showQuickPick;
-    const toggle = async () => {
-      (vscode.window as { showQuickPick: unknown }).showQuickPick = async (items: vscode.QuickPickItem[]) =>
-        items.find((i) => i.label.endsWith('Highlight Ancestors'));
+    // 祖先を目立たせるを on か off にする（今の印を見て、違うときだけ押す。最初はアプリと同じく on）
+    const highlight = async (on: boolean) => {
+      (vscode.window as { showQuickPick: unknown }).showQuickPick = async (items: vscode.QuickPickItem[]) => {
+        const item = items.find((i) => i.label.endsWith('Highlight Ancestors'));
+        return item && item.label.startsWith('$(check)') !== on ? item : undefined;
+      };
       await panel.history.handle({ type: 'displayMenu' });
     };
     // 2 つのコミットの時刻を 1 秒ずらす。同じ秒だと、日付順の History で同じ時刻のものの並びが読み方（キャッシュ
@@ -4459,8 +4462,10 @@ suite('Amon Hen in VSCode', () => {
       const rows = shown.at(-1)?.rows ?? (await waitPosted('rows', at, (m) => m.total !== undefined)).rows;
       assert.ok(rows.some((r) => r.oid === tip) && rows.some((r) => r.oid === side), 'tip と side が History にある');
       const rowOf = (oid: string) => rows.findIndex((r) => r.oid === oid);
+      // 一度切ってから入れる（入れたときに祖先を送る）
+      await highlight(false);
       at = posted.length;
-      await toggle();
+      await highlight(true);
       await panel.history.handle({ type: 'select', oid: tip });
       // Webview が最初の行を選んだ分が先に届くことがあるので、tip を選んだ答えを待つ
       const isAncestor = (bits: string, oid: string) => {
@@ -4475,8 +4480,9 @@ suite('Amon Hen in VSCode', () => {
       assert.ok(!isAncestor(bits!, side));
       // 切る前に頼んだ分の答えが後から届くことがある。切った答え（null）を待つ
       at = posted.length;
-      await toggle();
+      await highlight(false);
       await waitPosted('lineage', at, (m) => m.rows === null);
+      await highlight(true);
     } finally {
       (vscode.window as { showQuickPick: unknown }).showQuickPick = quickPick;
       await panel.history.handle({ type: 'scope', scope: 'head' });

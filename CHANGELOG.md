@@ -1328,6 +1328,8 @@ First release.
 - The sidebar's in-progress row says what is being done where and the step, and why it stopped with what to do next
   (the commit, conflicts, a failed exec, a stop to edit), as the app's band does (with the engine); a revert has no
   Skip.
+- History starts on All Branches, a branch chosen in the sidebar shows its upstream too, the search field has the
+  app's ▾ of ways to search, the counts read "3 / 10", and ancestors are highlighted from the start, as in the app.
 
 #### Changed
 
