@@ -288,3 +288,4 @@ macOS アプリに追いつく（1 つの機能を 1 つの pull request で、�
 - [x] 74. Working Copy の差分で空白を無視する（エンジンがあれば。その間は行・hunk を stage・破棄しない）
 - [x] 83. 見分けられる失敗を分かる言葉で知らせ、アプリと同じ次の一手（Pull…・Open Working Copy・Set Upstream…・Open Worktree・Open in Terminal・Try Again）と、Details に助言を
 - [x] 75. アプリのメニューの Commit・Commit and Push・Stage All・Set Upstream…・Rebase…・Go to HEAD・Find in History… をコマンドに。Merge Branches… と Rebase… で History で選んでいるコミットも選べる
+- [x] 76. コミット情報の右クリック（ID・短い ID・件名・メッセージ・git show のコピー、Edit Message…）と、名前を押してその人で History を探す

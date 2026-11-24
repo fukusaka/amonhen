@@ -1087,26 +1087,67 @@ pub fn render(
         for r in &titles {
             rects.push((*r, None));
         }
+        // 配置が場所を空けた辺のラベル（仮のノードの脇と、隣どうしの同じランクの線の上）。ほかの辺はここを通らない
+        if !free {
+            for (ei, e) in model.edges.iter().enumerate() {
+                let Some(t) = eviews[ei].label.as_ref() else {
+                    continue;
+                };
+                let (lw, lh) = if dir.sideways() {
+                    (t.height, t.width)
+                } else {
+                    (t.width, t.height)
+                };
+                let at = match &lay.routes[ei] {
+                    Route::Path {
+                        points,
+                        label: Some(l),
+                    } if points.len() > 2 => Some(*l),
+                    Route::Flat {
+                        adjacent: true,
+                        lane: 0,
+                    } => {
+                        let (pa, pb) = (lay.nodes[e.tail], lay.nodes[e.head]);
+                        Some(((pa.0 + pb.0) / 2.0, pa.1 - lh / 2.0 - 2.0))
+                    }
+                    _ => None,
+                };
+                if let Some((x, y)) = at {
+                    let (w, h) = (lw / 2.0 + NODE_PAD, lh / 2.0 + NODE_PAD);
+                    rects.push(([x - w, y - h, x + w, y + h], None));
+                }
+            }
+        }
         route::Obstacles::new(rects)
     };
     // splines=ortho の道筋（配置の座標）
     let ortho_paths: Vec<Option<Vec<P>>> = if ortho && free {
-        model
-            .edges
-            .iter()
-            .enumerate()
-            .map(|(ei, e)| match &lay.routes[ei] {
-                Route::Path { points, .. } if points.len() >= 2 => Some(route::ortho_free(
-                    points[0],
-                    points[points.len() - 1],
-                    (lnodes[e.tail].w / 2.0, lnodes[e.tail].h / 2.0),
-                    (lnodes[e.head].w / 2.0, lnodes[e.head].h / 2.0),
-                    &mut obstacles,
-                    &[e.tail, e.head],
-                )),
-                _ => None,
-            })
-            .collect()
+        // 引ける辺だけまとめて引き、辺の番号に戻す
+        let mut which: Vec<usize> = Vec::new();
+        let mut input: Vec<route::FreeEdge> = Vec::new();
+        for (ei, e) in model.edges.iter().enumerate() {
+            if let Route::Path { points, .. } = &lay.routes[ei]
+                && points.len() >= 2
+            {
+                which.push(ei);
+                input.push(route::FreeEdge {
+                    a: points[0],
+                    b: points[points.len() - 1],
+                    ha: (lnodes[e.tail].w / 2.0, lnodes[e.tail].h / 2.0),
+                    hb: (lnodes[e.head].w / 2.0, lnodes[e.head].h / 2.0),
+                    tail: e.tail,
+                    head: e.head,
+                });
+            }
+        }
+        let mut out: Vec<Option<Vec<P>>> = vec![None; model.edges.len()];
+        for (ei, p) in which
+            .into_iter()
+            .zip(route::ortho_free_all(&input, &mut obstacles))
+        {
+            out[ei] = Some(p);
+        }
+        out
     } else if ortho {
         let input: Vec<route::OrthoEdge> = model
             .edges
@@ -1114,33 +1155,36 @@ pub fn render(
             .enumerate()
             .map(|(ei, e)| {
                 let a = &e.attrs;
-                let free = |port: Option<&str>, view: &NodeView, same: &str| {
-                    port_of(view, port).is_none() && a.get(same).is_none_or(|v| v.is_empty())
+                let end = |port: Option<&str>, view: &NodeView, same: &str| route::OrthoEnd {
+                    port: ortho_port(view, port, dir),
+                    same: a.get(same).filter(|v| !v.is_empty()).map(str::to_owned),
+                };
+                let (points, label) = match &lay.routes[ei] {
+                    Route::Path { points, label } => (points.clone(), label.is_some()),
+                    _ => (vec![], false),
                 };
                 route::OrthoEdge {
-                    points: match &lay.routes[ei] {
-                        Route::Path { points, .. } => points.clone(),
-                        _ => vec![],
-                    },
+                    points,
                     tail: e.tail,
                     head: e.head,
-                    spread_tail: free(
+                    tail_end: end(
                         a.get("tailport").or(e.tail_port.as_deref()),
                         &views[e.tail],
                         "sametail",
                     ),
-                    spread_head: free(
+                    head_end: end(
                         a.get("headport").or(e.head_port.as_deref()),
                         &views[e.head],
                         "samehead",
                     ),
+                    keep: label,
                 }
             })
             .collect();
         let boxes: Vec<(P, f64, f64)> = (0..views.len())
             .map(|i| (lay.nodes[i], lnodes[i].w, lnodes[i].h))
             .collect();
-        route::ortho(&input, &boxes, &titles)
+        route::ortho(&input, &boxes, &titles, &mut obstacles)
     } else {
         vec![]
     };
@@ -1300,12 +1344,21 @@ pub fn render(
                         + 12.0 * *lane as f64;
                     let top = pa.1.min(pb.1) - lift;
                     path = if ortho {
+                        // ポートの側から出て、上を越える
                         let top = pa.1.min(pb.1) - lift * 0.75;
-                        vec![
-                            Cubic::line(pa, (pa.0, top)),
-                            Cubic::line((pa.0, top), (pb.0, top)),
-                            Cubic::line((pb.0, top), pb),
-                        ]
+                        let (ca, cb) = (lay.nodes[e.tail], lay.nodes[e.head]);
+                        let half = |v: usize| (lnodes[v].w / 2.0, lnodes[v].h / 2.0);
+                        let pts = route::ortho_flat(
+                            ca,
+                            half(e.tail),
+                            &ortho_port(tv, a.get("tailport").or(e.tail_port.as_deref()), dir),
+                            cb,
+                            half(e.head),
+                            &ortho_port(hv, a.get("headport").or(e.head_port.as_deref()), dir),
+                            top,
+                            route::STUB,
+                        );
+                        pts.windows(2).map(|w| Cubic::line(w[0], w[1])).collect()
                     } else {
                         vec![Cubic(pa, (pa.0, top), (pb.0, top), pb)]
                     };
@@ -1320,37 +1373,98 @@ pub fn render(
             Route::Loop { index } => {
                 let c = lay.nodes[e.tail];
                 let ln = &lnodes[e.tail];
-                let half_w = ln.w / 2.0;
-                let half_h = ln.h / 2.0;
                 let size = 18.0 + 8.0 * *index as f64;
-                let start = (c.0 + half_w * 0.6, c.1 - half_h * 0.6);
-                let end = (c.0 + half_w * 0.6, c.1 + half_h * 0.6);
-                let reach = c.0 + half_w + size;
+                // 輪の側: 向きのあるポートがあればその側（尾が先）、なければ配置の右（Graphviz と同じ）
+                let port_side = [
+                    a.get("tailport").or(e.tail_port.as_deref()),
+                    a.get("headport").or(e.head_port.as_deref()),
+                ]
+                .into_iter()
+                .find_map(|p| match ortho_port(tv, p, dir) {
+                    route::OrthoPort::Point { dir: d, .. } => {
+                        Some(if d.0.abs() > d.1.abs() + 1e-6 {
+                            (d.0.signum(), 0.0)
+                        } else {
+                            (0.0, d.1.signum())
+                        })
+                    }
+                    _ => None,
+                });
+                let u = port_side.unwrap_or((1.0, 0.0));
+                let v = (-u.1, u.0);
+                // 外へ（u）の半分の大きさと、脇へ（v）の半分の大きさ
+                let ext = (u.0 * ln.w).abs().max((u.1 * ln.h).abs()) / 2.0;
+                let mut span = (v.0 * ln.w).abs().max((v.1 * ln.h).abs()) / 2.0;
+                if port_side.is_some() {
+                    span = span.min(ext * 1.5);
+                }
+                let at = |p: f64, q: f64| (c.0 + u.0 * p + v.0 * q, c.1 + u.1 * p + v.1 * q);
+                // 輪の両端（脇への位置 q0・q1）と、ノードの中の始まり（外への位置 inner）。上下の輪は、ランクの
+                // 間の線が出入りする真ん中を空けて、その側の右の肩（中心から 0.3〜0.85）に置く
+                let (q0, q1, inner) = if port_side.is_some() && u.0 == 0.0 {
+                    let sg = -u.1;
+                    (span * 0.3 * sg, span * 0.85 * sg, ext * 0.2)
+                } else {
+                    (-span * 0.6, span * 0.6, if ortho { ext } else { ext * 0.6 })
+                };
+                let bulge = if q1 >= q0 { 1.0 } else { -1.0 };
                 path = if ortho {
-                    let (s, t) = (
-                        (c.0 + half_w, c.1 - half_h * 0.6),
-                        (c.0 + half_w, c.1 + half_h * 0.6),
-                    );
-                    let r = c.0 + half_w + size;
+                    let r = ext + size;
                     vec![
-                        Cubic::line(s, (r, s.1)),
-                        Cubic::line((r, s.1), (r, t.1)),
-                        Cubic::line((r, t.1), t),
+                        Cubic::line(at(inner, q0), at(r, q0)),
+                        Cubic::line(at(r, q0), at(r, q1)),
+                        Cubic::line(at(r, q1), at(inner, q1)),
                     ]
                 } else {
+                    // 既定の右の輪は、両端の外へ少しふくらむ（上下の肩の輪は、真ん中の側へはふくらませない）
+                    let (b0, b1) = if port_side.is_some() && u.0 == 0.0 {
+                        (q0 - bulge * size * 0.1, q1 + bulge * size * 0.4)
+                    } else {
+                        (-span - size * 0.4, span + size * 0.4)
+                    };
                     vec![Cubic(
-                        start,
-                        (reach, c.1 - half_h - size * 0.4),
-                        (reach, c.1 + half_h + size * 0.4),
-                        end,
+                        at(inner, q0),
+                        at(ext + size, b0),
+                        at(ext + size, b1),
+                        at(inner, q1),
                     )]
                 };
                 label_at = ev.label.as_ref().map(|t| {
-                    let lw = if dir.sideways() { t.height } else { t.width };
-                    (reach + lw / 2.0 + 2.0, c.1)
+                    let (lw, lh) = if dir.sideways() {
+                        (t.height, t.width)
+                    } else {
+                        (t.width, t.height)
+                    };
+                    let l = (u.0 * lw).abs().max((u.1 * lh).abs());
+                    at(ext + size + l / 2.0 + 2.0, (q0 + q1) / 2.0)
                 });
                 path = path.iter().map(|c| c.map(to_final)).collect();
                 label_at = label_at.map(to_final);
+                if port_side.is_some() && u.0 == 0.0 && !ortho {
+                    // 肩の輪の両端は、その位置から外へ（u の向きに）進んで外形に出る点（輪は外形で切らない）
+                    let on = |q: f64| {
+                        let inside = |t: f64| {
+                            let f = to_final(at(t, q));
+                            tv.geom.inside(f.0 - tv.pos.0, f.1 - tv.pos.1)
+                        };
+                        if !inside(0.0) {
+                            return to_final(at(inner, q));
+                        }
+                        let (mut lo, mut hi) = (0.0, ext * 2.0 + 1.0);
+                        for _ in 0..30 {
+                            let mid = (lo + hi) / 2.0;
+                            if inside(mid) {
+                                lo = mid;
+                            } else {
+                                hi = mid;
+                            }
+                        }
+                        to_final(at(lo, q))
+                    };
+                    let last = path.len() - 1;
+                    path[0].0 = on(q0);
+                    path[last].3 = on(q1);
+                }
             }
         }
         let _ = vertical_flow;
@@ -1369,6 +1483,11 @@ pub fn render(
             let (a0, b0) = (path[0].0, path[path.len() - 1].3);
             ((b0.0 - a0.0).hypot(b0.1 - a0.1) / 3.0).clamp(20.0, 60.0)
         };
+        // 直角の道と自分への輪は、端の側と位置を道筋で決めた（ノードの中から始まり、外形で切る）
+        if ortho || e.tail == e.head {
+            tail_port = None;
+            head_port = None;
+        }
         if let Some(p) = &tail_port {
             let at = (tv.pos.0 + p.at.0, tv.pos.1 + p.at.1);
             path[0].0 = at;
@@ -2068,6 +2187,33 @@ fn free_layout(model: &Model, placed: &engines::Placement) -> layout::Layout {
         width: w,
         height: h,
         crossings: 0,
+    }
+}
+
+/// 直角の道の端のポート（配置の座標、ノードの中心から）。
+fn ortho_port(view: &NodeView, port: Option<&str>, dir: Dir) -> route::OrthoPort {
+    let to_layout = |v: P| -> P {
+        match dir {
+            Dir::TB => v,
+            Dir::BT => (v.0, -v.1),
+            Dir::LR => (v.1, v.0),
+            Dir::RL => (v.1, -v.0),
+        }
+    };
+    match port_of(view, port) {
+        Some(Port {
+            at, dir: Some(d), ..
+        }) => route::OrthoPort::Point {
+            at: to_layout(at),
+            dir: to_layout(d),
+        },
+        Some(Port { clip: Some(b), .. }) => {
+            let (p, q) = (to_layout((b[0], b[1])), to_layout((b[2], b[3])));
+            route::OrthoPort::Cell {
+                b: [p.0.min(q.0), p.1.min(q.1), p.0.max(q.0), p.1.max(q.1)],
+            }
+        }
+        _ => route::OrthoPort::Free,
     }
 }
 
