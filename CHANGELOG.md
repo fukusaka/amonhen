@@ -17,6 +17,9 @@ becomes the GitHub Release notes.
   relative to the Markdown file's folder.
 - DOT diagrams draw gradient fills in HTML-like tables, cells and cluster and graph backgrounds, striped clusters,
   tapered edges, `decorate`, node `labelloc`, and dashed or dotted table borders.
+- Markdown previews draw the HTML GitHub renders: `align` for centered logos and badge rows, sized and linked images,
+  `<details>` that open and close, `<picture>` by appearance, tables spanning cells, `<kbd>`, `<sub>` and `<sup>`.
+  Comments, styles, scripts and forms are left out, as on GitHub.
 
 #### Fixed
 
@@ -1299,6 +1302,8 @@ First release.
   commands, so they can be bound to keys; Merge Branches… and Rebase… also offer the commit selected in History.
 - The commit details' right-click copies the ID, the short ID, the subject, the message or a git show command, and
   has Edit Message… for an editable commit. The author's and committer's names search History for that person.
+- Markdown in All Files draws the HTML GitHub renders, with the engine: `<details>`, tables spanning cells, `align`,
+  image sizes, `<picture>` by theme, `<kbd>`, `<sub>` and `<sup>`.
 
 #### Fixed
 
