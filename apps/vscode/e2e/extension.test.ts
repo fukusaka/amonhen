@@ -3476,6 +3476,16 @@ async function editFlow(label: string): Promise<void> {
       await until('move', () => subjects(3).join() === [name('c'), name('b'), name('d')].join());
       await undo('move');
 
+      if (label === 'daemon') {
+        // Webview で d を b に重ねて落とす: d を b の上へ動かして squash にした編集モードが開く（Apply まで何も変わらない）
+        const rows = await openedEditMode(() => panel.history.handle({ type: 'squashOnto', oid: d, onto: b }));
+        assert.deepEqual(
+          rows.map((r) => `${r.oid}:${r.action}`),
+          [`${c}:pick`, `${d}:squash`, `${b}:pick`],
+        );
+        assert.equal(rev(work), top);
+      }
+
       // Edit: b で止まり、変えて amend されるように stage してから Continue
       answer = 'Edit';
       if (label === 'daemon') {

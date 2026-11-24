@@ -2977,6 +2977,12 @@ body.wrap-lines .line .code {
   background: color-mix(in srgb, var(--vscode-descriptionForeground) 18%, transparent);
 }
 
+/* コミットを行に重ねて落とす（そのコミットにまとめる） */
+.row.drop-on,
+.edit-row.drop-on {
+  box-shadow: inset 0 0 0 2px var(--vscode-focusBorder);
+}
+
 /* 詳細のメッセージ: URL とコミット ID のリンク、検索の語、トレーラー、notes */
 .details-head a.url,
 .details-head pre.body a.parent {
