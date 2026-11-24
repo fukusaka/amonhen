@@ -23,6 +23,8 @@ becomes the GitHub Release notes.
   Comments, styles, scripts and forms are left out, as on GitHub.
 - A button beside the zoom buttons switches the checkerboard behind transparent pictures between light and dark;
   light pictures such as white icons get the dark one by default (macOS, GTK4).
+- Markdown previews draw math as on GitHub (` ```math `, `$$…$$`, `$…$` and `` $`…`$ ``) with RaTeX and the KaTeX
+  fonts, in the text color (macOS, GTK4); prices such as `$5 and $6` stay text.
 
 #### Fixed
 
@@ -1315,6 +1317,7 @@ First release.
   has Edit Message… for an editable commit. The author's and committer's names search History for that person.
 - Markdown in All Files draws the HTML GitHub renders, with the engine: `<details>`, tables spanning cells, `align`,
   image sizes, `<picture>` by theme, `<kbd>`, `<sub>` and `<sup>`.
+- Markdown math (` ```math `, `$$…$$`, `$…$`) shows as its TeX code, with the engine.
 
 #### Changed
 

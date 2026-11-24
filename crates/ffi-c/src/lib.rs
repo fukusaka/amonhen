@@ -488,6 +488,25 @@ pub unsafe extern "C" fn amonhen_diagram_colorize(
         .map_or(std::ptr::null_mut(), CString::into_raw)
 }
 
+/// Markdown の数式の SVG（`MarkdownBlock` の `math` の `svg`、文中の式の `math` の `svg`）に文字の色 `fg`
+/// （`#rrggbb`）を当て、CoreSVG で描ける SVG にする。`\color` で決めた色はそのまま。読めなければ NULL。
+/// `amonhen_string_free` で解放する。
+///
+/// # Safety
+/// `svg`・`fg` は NUL 終わりの文字列であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_math_colorize(
+    svg: *const c_char,
+    fg: *const c_char,
+) -> *mut c_char {
+    let (Ok(svg), Ok(fg)) = (str_arg(svg), str_arg(fg)) else {
+        return std::ptr::null_mut();
+    };
+    amonhen_core::math::colorize_for_coresvg(svg, fg)
+        .and_then(|out| CString::new(out).ok())
+        .map_or(std::ptr::null_mut(), CString::into_raw)
+}
+
 /// 設定の見本の図の SVG（色は `amonhen_diagram_colorize` で当てる）。描けなければ NULL。`amonhen_string_free` で
 /// 解放する。
 #[unsafe(no_mangle)]

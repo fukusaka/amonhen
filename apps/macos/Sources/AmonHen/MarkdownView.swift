@@ -5,7 +5,8 @@ import CAmonhen
 /// Markdown の整形表示（History の「すべてのファイル」）。コアが読んだブロックを、NSTextView の文字に自前で組み立てる
 /// （WebKit も JavaScript も使わない）。画像はそのコミットの中のものだけを読み、外へは何も読みに行かない。リンクは
 /// 押すとブラウザで開く（リポジトリの中のファイルへのリンクは、そのファイルを開く）。HTML の `<details>` は、
-/// 見出しを押すと開く・閉じる（組み直す）。`<picture>` は外観に合う画像を出し、外観が変わったら組み直す。
+/// 見出しを押すと開く・閉じる（組み直す）。`<picture>` は外観に合う画像を出し、外観が変わったら組み直す。数式
+/// （```` ```math ````・`$$…$$`・`$…$`）はコアが描いた SVG を、文字の色を当てて絵にする（文中の式は基線にそろえる）。
 final class MarkdownView: NSView, NSTextViewDelegate {
     private let scroll = NSScrollView()
     private let text: NSTextView
@@ -224,6 +225,69 @@ final class DiagramPicture {
     }
 }
 
+/// Markdown の数式の絵。形はコアが描いた SVG のまま持ち、色は描くたびに、そのときの外観の文字の色で当てる（当てた
+/// 絵は色ごとに、画素にした絵は色と画素の大きさごとに覚える）。描く先の画素の大きさで画素にするので、拡大しても
+/// ぼやけない。テーマや外観を変えても組み直さず、描き直すだけでよい。
+final class FormulaPicture {
+    private let svg: String
+    private var colored: [String: NSImage] = [:]
+    private var bitmaps: [String: NSImage] = [:]
+
+    private init(svg: String) { self.svg = svg }
+
+    /// 大きさ `size`（pt）の絵。
+    static func image(_ svg: String, size: NSSize) -> NSImage {
+        let picture = FormulaPicture(svg: svg)
+        let image = NSImage(size: size, flipped: false) { rect in
+            // 文字の描画（メインスレッド）から呼ばれる。
+            MainActor.assumeIsolated { picture.draw(in: rect) }
+            return true
+        }
+        image.cacheMode = .never
+        return image
+    }
+
+    /// 本文の字の大きさ `fontSize` で描く数式の大きさ（pt）と、基線から下の深さ（pt）。
+    static func metrics(_ formula: MarkdownBlock.Formula, fontSize: CGFloat) -> (size: NSSize, depth: CGFloat) {
+        let em = fontSize * MarkdownBlock.Formula.fontScale
+        return (NSSize(width: formula.width * em, height: (formula.height + formula.depth) * em), formula.depth * em)
+    }
+
+    func draw(in rect: NSRect) {
+        let color = DiagramPicture.hex(.labelColor)
+        let vector: NSImage
+        if let hit = colored[color] {
+            vector = hit
+        } else {
+            guard let made = MarkdownBlock.colorizeMath(svg, foreground: color).flatMap(NSImage.init(data:)) else { return }
+            colored[color] = made
+            vector = made
+        }
+        let scale = NSGraphicsContext.current.map { abs($0.cgContext.userSpaceToDeviceSpaceTransform.a) } ?? 2
+        let width = Int((rect.width * scale).rounded(.up)), height = Int((rect.height * scale).rounded(.up))
+        guard width > 0, height > 0 else { return }
+        let key = "\(color)\n\(width)x\(height)"
+        if let bitmap = bitmaps[key] {
+            bitmap.draw(in: rect)
+            return
+        }
+        guard let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height, bitsPerSample: 8, samplesPerPixel: 4,
+            hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)
+        else { return vector.draw(in: rect) }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        vector.draw(in: NSRect(x: 0, y: 0, width: width, height: height))
+        NSGraphicsContext.restoreGraphicsState()
+        let bitmap = NSImage(size: rect.size)
+        bitmap.addRepresentation(rep)
+        // 色を変えたら古い絵は要らない（大きさ違いは残す: 拡大の途中）
+        bitmaps = bitmaps.filter { $0.key.hasPrefix(color + "\n") }
+        bitmaps[key] = bitmap
+        bitmap.draw(in: rect)
+    }
+}
+
 /// 列の幅に縮む絵。
 nonisolated final class FittingAttachment: NSTextAttachment {
     private let natural: NSSize
@@ -410,6 +474,19 @@ private struct MarkdownBuilder {
                 result.append(keyCap(run.text, size: size, style: style, link: run.link))
                 continue
             }
+            if let formula = run.math {
+                // 文中の数式: 基線を本文にそろえる（深さの分だけ下に出す）。原文は浮かぶ説明に。
+                let (box, depth) = FormulaPicture.metrics(formula, fontSize: size)
+                let attachment = NSTextAttachment()
+                attachment.image = FormulaPicture.image(formula.svg, size: box)
+                attachment.bounds = NSRect(x: 0, y: -depth, width: box.width, height: box.height)
+                let piece = NSMutableAttributedString(attachment: attachment)
+                var attributes: [NSAttributedString.Key: Any] = [.paragraphStyle: style, .toolTip: run.text]
+                if let link = run.link { attributes[.link] = link }
+                piece.addAttributes(attributes, range: NSRange(location: 0, length: piece.length))
+                result.append(piece)
+                continue
+            }
             // 下付き・上付きは小さく。
             let small = run.sub == true || run.sup == true
             let fontSize = small ? size * 0.75 : size
@@ -430,6 +507,11 @@ private struct MarkdownBuilder {
             if let link = run.link {
                 attributes[.link] = link
                 attributes[.foregroundColor] = NSColor.linkColor
+            }
+            if let error = run.mathError {
+                // 描けなかった文中の数式は原文をコードとして見せ、理由を浮かぶ説明に。
+                attributes[.foregroundColor] = NSColor.systemRed
+                attributes[.toolTip] = error
             }
             if run.customEmoji != nil {
                 // GitHub 独自の絵文字は画像を持たないので、名前を薄い札で見せる。
@@ -535,6 +617,30 @@ private struct MarkdownBuilder {
                     ]))
                     out.append(newline(noteStyle))
                 }
+            case .math(let code, let formula, let error):
+                guard let formula else {
+                    // 描けない数式（数式を描かない作りも）は TeX をコードとして見せ、理由を添える。
+                    add([.code(language: "math", text: code)], depth: depth, outer: outer, indent: indent)
+                    if let error {
+                        let style = paragraph(indent: indent, spacing: 10, blocks: outer)
+                        // 誤りの位置を ^ で指すので等幅で。行は段落を分けずに改行する。
+                        out.append(NSAttributedString(string: error.replacingOccurrences(of: "\n", with: "\u{2028}"), attributes: [
+                            .font: NSFont.monospacedSystemFont(ofSize: 11.5, weight: .regular), .foregroundColor: NSColor.systemRed,
+                            .paragraphStyle: style,
+                        ]))
+                        out.append(newline(style))
+                    }
+                    continue
+                }
+                // 数式のブロックは中央に。列より広いものは縮める（MarkdownView.fitAttachments）。
+                let style = paragraph(indent: indent, spacing: 12, blocks: outer)
+                style.alignment = .center
+                style.paragraphSpacingBefore = 4
+                let picture = FormulaPicture.image(formula.svg, size: FormulaPicture.metrics(formula, fontSize: bodySize).size)
+                let text = NSMutableAttributedString(attachment: FittingAttachment(image: picture))
+                text.addAttributes([.paragraphStyle: style, .toolTip: code], range: NSRange(location: 0, length: text.length))
+                out.append(text)
+                out.append(newline(style))
             case .quote(let alert, let inner):
                 let (color, title) = Self.alert(alert)
                 let quote = quoteBlock(color)

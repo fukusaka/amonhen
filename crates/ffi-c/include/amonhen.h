@@ -575,6 +575,17 @@ char *amonhen_diagram_colorize(const char *svg,
                                const char *imported);
 
 /**
+ * Markdown の数式の SVG（`MarkdownBlock` の `math` の `svg`、文中の式の `math` の `svg`）に文字の色 `fg`
+ * （`#rrggbb`）を当て、CoreSVG で描ける SVG にする。`\color` で決めた色はそのまま。読めなければ NULL。
+ * `amonhen_string_free` で解放する。
+ *
+ * # Safety
+ * `svg`・`fg` は NUL 終わりの文字列であること。
+ */
+char *amonhen_math_colorize(const char *svg,
+                            const char *fg);
+
+/**
  * 設定の見本の図の SVG（色は `amonhen_diagram_colorize` で当てる）。描けなければ NULL。`amonhen_string_free` で
  * 解放する。
  */

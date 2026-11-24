@@ -721,6 +721,21 @@ fn block(b: &Block, pictures: &Pictures) -> View {
                 },
             )),
         },
+        // 数式はまだ描かない（コアの math フィーチャーを入れていない）。TeX をコードとして見せ、理由があれば添える。
+        // 文中の式は原文がコードの文字で来る。
+        Block::Math {
+            text: code, error, ..
+        } => StackPanel::new().spacing(4.0).children((
+            Border::new()
+                .background(shade())
+                .corner_radius(4.0)
+                .padding(Thickness::new(10.0, 8.0, 10.0, 8.0))
+                .content(plain(code, BODY - 1.0, true, None)),
+            match error {
+                Some(error) => plain(error, BODY - 2.0, true, Some(Color::rgb(0xd9, 0x33, 0x33))),
+                None => View::empty(),
+            },
+        )),
         Block::Code { text: code, .. } => Border::new()
             .background(shade())
             .corner_radius(4.0)

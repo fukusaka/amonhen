@@ -558,6 +558,19 @@ public struct MobilePreview: Sendable {
 
 /// Markdown のブロック（コアの `markdown::Block`）。
 public indirect enum MarkdownBlock: Decodable, Sendable {
+    /// 描いた数式（コアの `math::MathPicture`）。`svg` は色を CSS の変数のままにした絵（描くときに `colorizeMath` で
+    /// 文字の色を当てる）。大きさは em（本文の字の大きさ × `Formula.fontScale` を 1 とする）。
+    public struct Formula: Decodable, Sendable {
+        public let svg: String
+        public let width: Double
+        /// 基線から上の高さと、下の深さ（文中の式は深さだけ基線より下に出す）。
+        public let height: Double
+        public let depth: Double
+
+        /// 本文の字の大きさに対する、数式の 1 em の大きさ（コアの `math::FONT_SCALE`）。
+        public static let fontScale: Double = 1.21
+    }
+
     /// ひと続きの飾りの文字。
     public struct Run: Decodable, Sendable {
         public let text: String
@@ -584,12 +597,16 @@ public indirect enum MarkdownBlock: Decodable, Sendable {
         public let lineBreak: Bool?
         /// GitHub 独自の絵文字（画像だけのもの）の名前。`text`（`:octocat:`）を札で見せる。
         public let customEmoji: String?
+        /// 文中の数式の絵（`text` は書いたままの原文、`code` が付いている）。描けなければ nil で、`mathError` に理由。
+        public let math: Formula?
+        public let mathError: String?
         enum CodingKeys: String, CodingKey {
-            case text, bold, italic, strike, code, kbd, sub, sup, underline, link, image, width, height, footnote
+            case text, bold, italic, strike, code, kbd, sub, sup, underline, link, image, width, height, footnote, math
             case imageDark = "image_dark"
             case imageLight = "image_light"
             case lineBreak = "line_break"
             case customEmoji = "custom_emoji"
+            case mathError = "math_error"
         }
 
         /// 外観 `dark` で見せる画像。
@@ -621,6 +638,9 @@ public indirect enum MarkdownBlock: Decodable, Sendable {
     /// 図（` ```mermaid ` など）。`svg` は色を CSS の変数のままにした絵（描くときに `colorizeDiagram` で配色を当てる）。
     /// 近いもので描いた図（DOT の HTML の表など）なら `note` にそのことを伝える一文。描けなければ `error` に理由。
     case diagram(language: String, text: String, svg: String?, config: MermaidThemeConfig?, note: String?, error: String?)
+    /// 数式のブロック（```` ```math ````・`$$…$$`）。`text` は TeX。描けなければ `formula` は nil で、`error` に理由
+    /// （どちらもなければ、数式を描かない作り）。
+    case math(text: String, formula: Formula?, error: String?)
     case quote(alert: String?, blocks: [MarkdownBlock])
     case list(start: Int?, items: [Item])
     case table(aligns: [String], head: [[Run]], rows: [[[Run]]])
@@ -652,6 +672,12 @@ public indirect enum MarkdownBlock: Decodable, Sendable {
                 svg: try c.decodeIfPresent(String.self, forKey: .svg),
                 config: try c.decodeIfPresent(MermaidThemeConfig.self, forKey: .config),
                 note: try c.decodeIfPresent(String.self, forKey: .note),
+                error: try c.decodeIfPresent(String.self, forKey: .error))
+        case "math":
+            // 絵は同じ階層の svg・width・height・depth
+            let formula = c.contains(.svg) ? try? Formula(from: decoder) : nil
+            self = .math(
+                text: try c.decode(String.self, forKey: .text), formula: formula,
                 error: try c.decodeIfPresent(String.self, forKey: .error))
         case "quote":
             self = .quote(alert: try c.decodeIfPresent(String.self, forKey: .alert), blocks: try c.decode([MarkdownBlock].self, forKey: .blocks))
@@ -756,6 +782,13 @@ extension MarkdownBlock {
         defer { amonhen_string_free(raw) }
         return String(cString: raw)
     }()
+
+    /// 数式の SVG（`math` の絵の `svg`）に文字の色 `foreground`（`#rrggbb`）を当て、CoreSVG で描ける SVG にする。
+    public static func colorizeMath(_ svg: String, foreground: String) -> Data? {
+        guard let raw = amonhen_math_colorize(svg, foreground) else { return nil }
+        defer { amonhen_string_free(raw) }
+        return Data(String(cString: raw).utf8)
+    }
 
     /// 図の SVG（`diagram` の `svg`）に配色を当て、CoreSVG で描ける SVG にする。`scheme` は設定の「図の配色」の鍵、
     /// `theme` は構文の色のテーマ（`text`・`background` と種類の名前 → `#rrggbb`）、`own` は図の中で指定した
