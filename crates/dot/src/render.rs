@@ -1260,32 +1260,38 @@ pub fn render(
                 // 外へ（u）の半分の大きさと、脇へ（v）の半分の大きさ
                 let ext = (u.0 * ln.w).abs().max((u.1 * ln.h).abs()) / 2.0;
                 let mut span = (v.0 * ln.w).abs().max((v.1 * ln.h).abs()) / 2.0;
-                // 上下の輪は、ランクの間の線が出入りする真ん中を空けて脇へ寄せる
-                let mut aside = 0.0;
                 if port_side.is_some() {
                     span = span.min(ext * 1.5);
-                    if u.0 == 0.0 {
-                        aside = span * 0.6 * -u.1;
-                        span *= 0.35;
-                    }
                 }
-                let at = |p: f64, q: f64| {
-                    let q = q + aside;
-                    (c.0 + u.0 * p + v.0 * q, c.1 + u.1 * p + v.1 * q)
+                let at = |p: f64, q: f64| (c.0 + u.0 * p + v.0 * q, c.1 + u.1 * p + v.1 * q);
+                // 輪の両端（脇への位置 q0・q1）と、ノードの中の始まり（外への位置 inner）。上下の輪は、ランクの
+                // 間の線が出入りする真ん中を空けて、その側の右の肩（中心から 0.3〜0.85）に置く
+                let (q0, q1, inner) = if port_side.is_some() && u.0 == 0.0 {
+                    let sg = -u.1;
+                    (span * 0.3 * sg, span * 0.85 * sg, ext * 0.2)
+                } else {
+                    (-span * 0.6, span * 0.6, if ortho { ext } else { ext * 0.6 })
                 };
+                let bulge = if q1 >= q0 { 1.0 } else { -1.0 };
                 path = if ortho {
                     let r = ext + size;
                     vec![
-                        Cubic::line(at(ext, -span * 0.6), at(r, -span * 0.6)),
-                        Cubic::line(at(r, -span * 0.6), at(r, span * 0.6)),
-                        Cubic::line(at(r, span * 0.6), at(ext, span * 0.6)),
+                        Cubic::line(at(inner, q0), at(r, q0)),
+                        Cubic::line(at(r, q0), at(r, q1)),
+                        Cubic::line(at(r, q1), at(inner, q1)),
                     ]
                 } else {
+                    // 既定の右の輪は、両端の外へ少しふくらむ（上下の肩の輪は、真ん中の側へはふくらませない）
+                    let (b0, b1) = if port_side.is_some() && u.0 == 0.0 {
+                        (q0 - bulge * size * 0.1, q1 + bulge * size * 0.4)
+                    } else {
+                        (-span - size * 0.4, span + size * 0.4)
+                    };
                     vec![Cubic(
-                        at(ext * 0.6, -span * 0.6),
-                        at(ext + size, -span - size * 0.4),
-                        at(ext + size, span + size * 0.4),
-                        at(ext * 0.6, span * 0.6),
+                        at(inner, q0),
+                        at(ext + size, b0),
+                        at(ext + size, b1),
+                        at(inner, q1),
                     )]
                 };
                 label_at = ev.label.as_ref().map(|t| {
@@ -1295,10 +1301,35 @@ pub fn render(
                         (t.width, t.height)
                     };
                     let l = (u.0 * lw).abs().max((u.1 * lh).abs());
-                    at(ext + size + l / 2.0 + 2.0, 0.0)
+                    at(ext + size + l / 2.0 + 2.0, (q0 + q1) / 2.0)
                 });
                 path = path.iter().map(|c| c.map(to_final)).collect();
                 label_at = label_at.map(to_final);
+                if port_side.is_some() && u.0 == 0.0 && !ortho {
+                    // 肩の輪の両端は、その位置から外へ（u の向きに）進んで外形に出る点（輪は外形で切らない）
+                    let on = |q: f64| {
+                        let inside = |t: f64| {
+                            let f = to_final(at(t, q));
+                            tv.geom.inside(f.0 - tv.pos.0, f.1 - tv.pos.1)
+                        };
+                        if !inside(0.0) {
+                            return to_final(at(inner, q));
+                        }
+                        let (mut lo, mut hi) = (0.0, ext * 2.0 + 1.0);
+                        for _ in 0..30 {
+                            let mid = (lo + hi) / 2.0;
+                            if inside(mid) {
+                                lo = mid;
+                            } else {
+                                hi = mid;
+                            }
+                        }
+                        to_final(at(lo, q))
+                    };
+                    let last = path.len() - 1;
+                    path[0].0 = on(q0);
+                    path[last].3 = on(q1);
+                }
             }
         }
         let _ = vertical_flow;
