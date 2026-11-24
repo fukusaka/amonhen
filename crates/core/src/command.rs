@@ -345,6 +345,14 @@ pub enum Command {
     /// 覚えている History の折りたたみ（`info`: `folded`（merge を既定でたたむか）・`except`（既定と逆にした merge
     /// の ID））。なければ何もたたまない。
     FoldState,
+    /// TUI がリポジトリごとに覚えるもの（`<common dir>/amonhen/tui.json` の中身。`info` にそのまま。なければ `{}`）。
+    /// アプリは自分の設定に覚えるものを、TUI はリポジトリの中に置く（History の並び順・行の項目・ペインの幅・署名を
+    /// 確かめる所）。
+    TuiState,
+    /// TUI がリポジトリごとに覚えるものを書く（`state` のオブジェクトで置き換える）。
+    SetTuiState {
+        state: serde_json::Value,
+    },
     /// History の折りたたみを覚える（`<common dir>/amonhen/fold.json`。どの FE でもそろう）。
     SetFoldState {
         #[serde(default)]
@@ -874,6 +882,9 @@ pub enum Command {
 
 /// 書きかけのコミットメッセージの置き場所（`<git dir>` から）。
 const COMMIT_DRAFT: &str = "amonhen/commit-draft";
+
+/// TUI がリポジトリごとに覚えるもの（`TuiState`）。
+const TUI_STATE_FILE: &str = "amonhen/tui.json";
 
 /// リポジトリ専用のコミットのテンプレートの置き場所（`<git dir>` から）。
 const COMMIT_TEMPLATE: &str = "amonhen/commit-template";
@@ -4264,6 +4275,31 @@ impl Repository {
                 info: Some(serde_json::to_value(self.fold_state()?).map_err(|e| e.to_string())?),
                 ..Default::default()
             }),
+            Command::TuiState => {
+                let data = self
+                    .backend()
+                    .files()
+                    .read(Root::CommonDir, TUI_STATE_FILE)?;
+                let state = data
+                    .and_then(|d| serde_json::from_slice::<serde_json::Value>(&d).ok())
+                    .filter(serde_json::Value::is_object)
+                    .unwrap_or_else(|| serde_json::json!({}));
+                Ok(Response {
+                    ok: true,
+                    info: Some(state),
+                    ..Default::default()
+                })
+            }
+            Command::SetTuiState { state } => {
+                if !state.is_object() {
+                    return Err(tr!("The TUI’s state is an object").into());
+                }
+                let data = serde_json::to_vec_pretty(&state).map_err(|e| e.to_string())?;
+                self.backend()
+                    .files()
+                    .write(Root::CommonDir, TUI_STATE_FILE, &data)?;
+                ok()
+            }
             Command::SetFoldState { folded, except } => {
                 self.set_fold_state(&crate::fold::FoldState { folded, except })?;
                 ok()
@@ -8067,6 +8103,23 @@ mod tests {
         );
     }
 
+    /// TUI がリポジトリごとに覚えるもの: なければ `{}`、書いたものをそのまま読む。オブジェクトでなければ断る。
+    #[test]
+    fn keeps_the_tui_state_per_repository() {
+        let (tmp, repo) = setup();
+        commit_file(tmp.path(), "a.txt", "a");
+        assert_eq!(
+            run(&repo, r#"{"op":"tuiState"}"#)["info"],
+            serde_json::json!({})
+        );
+        let set = r#"{"op":"setTuiState","state":{"historyOrder":"topo","sidebarWidth":30}}"#;
+        assert_eq!(run(&repo, set)["ok"], true);
+        let got = run(&repo, r#"{"op":"tuiState"}"#);
+        assert_eq!(got["info"]["historyOrder"], "topo");
+        assert_eq!(got["info"]["sidebarWidth"], 30);
+        assert!(tmp.path().join(".git/amonhen/tui.json").exists());
+        assert!(run(&repo, r#"{"op":"setTuiState","state":[1]}"#)["error"].is_string());
+    }
     #[test]
     fn rewrites_history_and_undoes_it() {
         let (tmp, repo) = setup();

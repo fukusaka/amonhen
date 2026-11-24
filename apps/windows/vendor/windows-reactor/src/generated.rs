@@ -3490,6 +3490,7 @@ pub mod public {
     #[derive(Clone, Debug, Default, PartialEq)]
     pub struct Expander {
         is_expanded: Property<bool>,
+        horizontal_content_alignment: Property<HorizontalAlignment>,
         on_is_expanded_changed: Option<Callback<bool>>,
         element_state: Option<std::rc::Rc<ElementState>>,
     }
@@ -3504,6 +3505,14 @@ pub mod public {
         }
         pub fn on_is_expanded_changed(mut self, callback: impl IntoPayloadCallback<bool>) -> Self {
             self.on_is_expanded_changed = Some(callback.into_payload_callback());
+            self
+        }
+        pub fn horizontal_content_alignment(
+            mut self,
+            value: impl Into<Option<HorizontalAlignment>>,
+        ) -> Self {
+            let value = value.into();
+            self.horizontal_content_alignment = Property::from(value);
             self
         }
     }
@@ -7462,6 +7471,7 @@ pub mod public {
                     let value = std::rc::Rc::unwrap_or_clone(value);
                     let Expander {
                         is_expanded,
+                        horizontal_content_alignment,
                         on_is_expanded_changed,
                         element_state,
                     } = value;
@@ -7469,6 +7479,7 @@ pub mod public {
                         kind: MountedKind::Expander,
                         props: MountedProps::Expander(std::rc::Rc::new(ExpanderMountedProps {
                             is_expanded,
+                            horizontal_content_alignment,
                             on_is_expanded_changed,
                         })),
                         reference: None,
@@ -10598,6 +10609,13 @@ impl MountedPropsExt for MountedProps {
                         Property::Set(value) => Some(PropertyValueRef::Bool(*value)),
                     },
                 );
+                visit(
+                    PropertyId::ExpanderHorizontalContentAlignment,
+                    match &values.horizontal_content_alignment {
+                        Property::Inherited => None,
+                        Property::Set(value) => Some(PropertyValueRef::HorizontalAlignment(*value)),
+                    },
+                );
             }
             Self::ComboBox(values) => {
                 visit(
@@ -13267,11 +13285,13 @@ impl PartialEq for RatingControlMountedProps {
 #[derive(Clone, Debug)]
 pub(crate) struct ExpanderMountedProps {
     is_expanded: Property<bool>,
+    horizontal_content_alignment: Property<HorizontalAlignment>,
     on_is_expanded_changed: Option<Callback<bool>>,
 }
 impl PartialEq for ExpanderMountedProps {
     fn eq(&self, other: &Self) -> bool {
         true && self.is_expanded == other.is_expanded
+            && self.horizontal_content_alignment == other.horizontal_content_alignment
             && self.on_is_expanded_changed == other.on_is_expanded_changed
     }
 }
@@ -13995,6 +14015,7 @@ pub enum PropertyId {
     RatingControlCaption,
     RatingControlIsReadOnly,
     ExpanderIsExpanded,
+    ExpanderHorizontalContentAlignment,
     ComboBoxItemsSource,
     ComboBoxSelectedIndex,
     ComboBoxPlaceholderText,
@@ -16969,17 +16990,30 @@ const RATING_CONTROL_EVENTS: &[EventDescriptor] = &[EventDescriptor {
     interface: "Microsoft.UI.Xaml.Controls.IRatingControl",
 }];
 const RATING_CONTROL_SLOTS: &[SlotDescriptor] = &[];
-const EXPANDER_PROPERTIES: &[PropertyDescriptor] = &[PropertyDescriptor {
-    id: PropertyId::ExpanderIsExpanded,
-    name: "IsExpanded",
-    field: "is_expanded",
-    value: "Bool",
-    interface: "Microsoft.UI.Xaml.Controls.IExpander",
-    clearable: true,
-    feedback: Some("IsExpandedChanged"),
-    feedback_contract: Some("synchronous_exact"),
-    observes_feedback: true,
-}];
+const EXPANDER_PROPERTIES: &[PropertyDescriptor] = &[
+    PropertyDescriptor {
+        id: PropertyId::ExpanderIsExpanded,
+        name: "IsExpanded",
+        field: "is_expanded",
+        value: "Bool",
+        interface: "Microsoft.UI.Xaml.Controls.IExpander",
+        clearable: true,
+        feedback: Some("IsExpandedChanged"),
+        feedback_contract: Some("synchronous_exact"),
+        observes_feedback: true,
+    },
+    PropertyDescriptor {
+        id: PropertyId::ExpanderHorizontalContentAlignment,
+        name: "HorizontalContentAlignment",
+        field: "horizontal_content_alignment",
+        value: "HorizontalAlignment",
+        interface: "Microsoft.UI.Xaml.Controls.IControl",
+        clearable: true,
+        feedback: None,
+        feedback_contract: None,
+        observes_feedback: false,
+    },
+];
 const EXPANDER_EVENTS: &[EventDescriptor] = &[EventDescriptor {
     id: EventId::ExpanderIsExpandedChanged,
     name: "IsExpandedChanged",
