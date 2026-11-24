@@ -148,10 +148,22 @@ export function createHistoryView(): View {
   list.append(spacer);
   const splitter = el('div', 'splitter');
   splitter.setAttribute('role', 'separator');
-  const details = createDetailsPane((oid) => {
-    const index = rows.findIndex((r) => r?.oid === oid);
-    if (index >= 0) select(index, true);
-  }, true);
+  const details = createDetailsPane(
+    (oid) => {
+      const index = rows.findIndex((r) => r?.oid === oid);
+      if (index >= 0) select(index, true);
+    },
+    true,
+    {
+      // 見出しの右クリックの Edit Message… は、行と同じく編集できるコミットだけ
+      context: (oid) => ({ commitEditable: rows.find((r) => r?.oid === oid)?.editable === true }),
+      // 名前を押すと、その人のコミットを探す（アプリと同じ author: の検索）
+      onPerson: (name) => {
+        searchInput.value = `author:"${name.replaceAll('"', '')}"`;
+        submitSearch(1);
+      },
+    },
+  );
   // 編集モード（開いている間は、一覧の代わりに出す）
   const editMode = createEditMode(
     () => {

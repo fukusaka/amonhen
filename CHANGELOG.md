@@ -25,6 +25,12 @@ becomes the GitHub Release notes.
 
 - DOT diagrams: in `rankdir=LR`/`RL`, a cluster is widened to fit a title longer than its box.
 
+#### Changed
+
+- DOT diagrams: `splines=ortho` edges leave from their ports' sides, spread across each side of a node and keep shared
+  runs apart; sfdp keeps small cycles open, fdp reads `pos`/`pin` inside clusters, self-loops go on their port's side
+  and same-rank edge labels get room.
+
 ### [0.2.14] - 2026-11-24
 
 On macOS, Show Only Commit Details can be undone again, with a button at the top right of the commit details.
@@ -1294,6 +1300,8 @@ First release.
   hunks aren't staged or discarded meanwhile.
 - The app menus' Commit, Commit and Push, Stage All, Set Upstream…, Rebase…, Go to HEAD and Find in History… are
   commands, so they can be bound to keys; Merge Branches… and Rebase… also offer the commit selected in History.
+- The commit details' right-click copies the ID, the short ID, the subject, the message or a git show command, and
+  has Edit Message… for an editable commit. The author's and committer's names search History for that person.
 - Markdown in All Files draws the HTML GitHub renders, with the engine: `<details>`, tables spanning cells, `align`,
   image sizes, `<picture>` by theme, `<kbd>`, `<sub>` and `<sup>`.
 
