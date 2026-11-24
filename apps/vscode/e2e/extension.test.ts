@@ -3876,10 +3876,13 @@ suite('Amon Hen in VSCode', () => {
       await merge('mm-topic', 'squash');
       await until('Squash の途中', async () => (await repo.backend.sequenceInProgress()) === 'squash', undefined, lastErrors);
       await repo.refresh();
-      assert.ok(
-        api.sidebar.getChildren().some((n) => n.kind === 'sequence' && api.sidebar.getTreeItem(n).label === 'Squash in progress'),
-        'サイドバーの Squash の行',
+      // エンジンがあれば、アプリの帯と同じく何をどこへしている途中かと、なぜ止まったか（コンフリクト）を言う
+      const row = await until('サイドバーの Squash の行', () =>
+        api.sidebar.getChildren().map((n) => (n.kind === 'sequence' ? api.sidebar.getTreeItem(n) : undefined)).find((i) => /^Squash/.test(String(i?.label))),
       );
+      if (process.env.AMONHEN_E2E_ENGINE && /^Squashing /.test(String(row.label))) {
+        assert.match(String(row.description), /conflicts/, String(row.description));
+      }
       writeFileSync(join(root, 'mm.txt'), 'both\n');
       git('add', 'mm.txt');
       await withWindow({ showInformationMessage: async () => undefined }, async () => vscode.commands.executeCommand('amonhen.continueSequence'));

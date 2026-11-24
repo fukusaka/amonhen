@@ -300,3 +300,4 @@ left out for now: VSCode has its own extensions and settings for them.
 - [x] 76. The commit details' right-click (copy the ID, short ID, subject, message or git show command; Edit Message…) and names that search History by that person
 - [x] 77. The commit message's URLs and commit IDs as links, trailers listed apart, git notes (with the engine) and History's search terms marked
 - [x] 80. Drop a commit on another in History or the edit mode to squash it into that one (the edit mode opens with it moved above and marked squash)
+- [x] 82. The in-progress row says what is being done where and the step, and why it stopped with what to do next (with the engine), as the app's band; no Skip for a revert

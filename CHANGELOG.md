@@ -1309,6 +1309,12 @@ First release.
 - Markdown in All Files draws the HTML GitHub renders, with the engine: `<details>`, tables spanning cells, `align`,
   image sizes, `<picture>` by theme, `<kbd>`, `<sub>` and `<sup>`.
 
+#### Changed
+
+- The sidebar's in-progress row says what is being done where and the step, and why it stopped with what to do next
+  (the commit, conflicts, a failed exec, a stop to edit), as the app's band does (with the engine); a revert has no
+  Skip.
+
 #### Fixed
 
 - Restoring the version before a commit that renamed a file brings back the old name instead of only deleting the new
