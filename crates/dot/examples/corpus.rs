@@ -1,10 +1,11 @@
 //! DOT の図の集まりを描いて確かめる: 描けないもの、注記のつくものとその理由、時間（中央値・最大）、メモリの山。
 //!
 //! ```text
-//! cargo run --release --offline -p amonhen-dot --example corpus -- <dir> [<svg-out-dir>]
+//! cargo run --release --offline -p amonhen-dot --example corpus -- [--layout <engine>] <dir> [<svg-out-dir>]
 //! ```
 //!
-//! `<dir>` の `*.dot`・`*.gv` を名前の順に描く。`<svg-out-dir>` があれば、描いた SVG をそこに書く。
+//! `<dir>` の `*.dot`・`*.gv` を名前の順に描く。`<svg-out-dir>` があれば、描いた SVG をそこに書く。`--layout` は
+//! `layout` の属性のない図の配置（` ```neato ` のフェンスと同じ）。
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -36,9 +37,18 @@ unsafe impl GlobalAlloc for Counting {
 static ALLOC: Counting = Counting;
 
 fn main() {
-    let mut args = std::env::args().skip(1);
+    let mut args = std::env::args().skip(1).peekable();
+    let mut engine = amonhen_dot::engines::Engine::Dot;
+    if args.peek().is_some_and(|a| a == "--layout") {
+        args.next();
+        let name = args.next().unwrap_or_default();
+        engine = amonhen_dot::engines::Engine::from_name(&name).unwrap_or_else(|| {
+            eprintln!("unknown layout {name}");
+            std::process::exit(2);
+        });
+    }
     let Some(dir) = args.next() else {
-        eprintln!("usage: corpus <dir> [<svg-out-dir>]");
+        eprintln!("usage: corpus [--layout <engine>] <dir> [<svg-out-dir>]");
         std::process::exit(2);
     };
     let out = args.next();
@@ -62,7 +72,7 @@ fn main() {
         let base = NOW.load(Ordering::Relaxed);
         PEAK.store(base, Ordering::Relaxed);
         let started = Instant::now();
-        let result = std::panic::catch_unwind(|| amonhen_dot::render(&text));
+        let result = std::panic::catch_unwind(|| amonhen_dot::render_with(&text, engine));
         let ms = started.elapsed().as_secs_f64() * 1000.0;
         let peak = PEAK.load(Ordering::Relaxed).saturating_sub(base);
         if peak > peak_max {
