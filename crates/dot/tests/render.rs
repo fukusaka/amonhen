@@ -19,6 +19,14 @@ const SAMPLES: &[(&str, &str)] = &[
         "digraph { rankdir=LR; a -> b [label=\"x\"]; b -> b [label=\"loop\"]; b -> c [dir=both, arrowtail=odiamond, arrowhead=crow]; {rank=same; c; d} c -> d }",
     ),
     (
+        "flat_labels",
+        "digraph { a -> {b c d}; {rank=same; b -> d [label=\"skips c\"]; b -> c [label=\"next\\nto\"]} }",
+    ),
+    (
+        "loops",
+        "digraph { x -> a; a -> a [tailport=n, headport=n, label=n]; a:w -> a:w; a -> a [tailport=s]; a -> a; a -> b; b -> b }",
+    ),
+    (
         "styles",
         "graph { node [style=filled, fillcolor=\"#ffcc00\"]; a -- b [color=\"red:blue\", penwidth=2]; b [shape=box, style=\"rounded,dashed,filled\", fillcolor=\"red:yellow\"]; c [label=<<b>bold</b> <i>it</i>>]; b -- c [style=dotted, label=\"e\"] }",
     ),
@@ -29,6 +37,10 @@ const SAMPLES: &[(&str, &str)] = &[
     (
         "fdp",
         "graph { layout=fdp; subgraph cluster_a { label=A; a1 -- a2 -- a3 } subgraph cluster_b { label=B; b1 -- b2 } a1 -- b1; c -- a3; c -- b2; c -- d }",
+    ),
+    (
+        "fdp_pin",
+        "graph { layout=fdp; subgraph cluster_a { label=A; a1 [pos=\"0,0!\"]; a2 [pos=\"2,-1!\"]; a1 -- a2 -- a3 } b -- a3; b -- c; c -- a1 }",
     ),
     (
         "sfdp",
@@ -51,6 +63,18 @@ const SAMPLES: &[(&str, &str)] = &[
         "graph { layout=patchwork; subgraph cluster_a { a1 [area=4]; a2 [area=2]; subgraph cluster_c { c1; c2 } } b1 [area=3]; b2 }",
     ),
     (
+        "ortho_dot",
+        "digraph { splines=ortho; node [shape=box]; a -> {b c d}; a:w -> e; b:s -> e:w; {c d} -> e [samehead=h]; c:se -> f:ne; x -> f }",
+    ),
+    (
+        "ortho_tracks",
+        "digraph { splines=ortho; a -> {b c d e f}; {b c d e f} -> g; b -> d; c -> f; a -> g; a -> h -> g }",
+    ),
+    (
+        "loops_labels",
+        "digraph { x -> a; a -> a [tailport=n, headport=n, label=n]; a:w -> a:w; a -> a; a -> {b c}; {rank=same; b -> c [label=\"next\\nto\"]} }",
+    ),
+    (
         "gradients",
         "digraph { bgcolor=\"white:lightgrey\"; gradientangle=90; node [shape=plain]; t [label=<<table bgcolor=\"yellow:blue\" gradientangle=\"90\" style=\"rounded\"><tr><td bgcolor=\"red:white\" style=\"radial\">radial</td><td bgcolor=\"green;0.3:white\">fraction</td></tr></table>>]; subgraph cluster_a { label=A; bgcolor=\"pink:white\"; style=radial; a } t -> a }",
     ),
@@ -61,6 +85,10 @@ const SAMPLES: &[(&str, &str)] = &[
     (
         "ortho_free",
         "graph { layout=neato; splines=ortho; a -- b -- c -- a; c -- d }",
+    ),
+    (
+        "ortho_neato",
+        "graph { layout=neato; overlap=false; splines=ortho; node [shape=box]; c -- {a b d e f g}; a -- b; d -- e; f -- g; a -- g; c -- d }",
     ),
 ];
 
@@ -641,6 +669,10 @@ fn survives_random_sources() {
         "Mrecord",
         "point",
         "samehead",
+        "tailport",
+        "headport",
+        "se",
+        "w",
         "sametail",
         "newrank",
         "labelloc",
@@ -735,4 +767,112 @@ fn samehead_edges_meet_at_one_point() {
         3,
         "{arrows:?}"
     );
+}
+
+/// `splines=ortho` の線はどの配置でも縦か横の線だけ（ポート・samehead・ラベル・クラスタ・向き入り）。
+#[test]
+fn ortho_edges_are_axis_aligned() {
+    let body = "node [shape=record]; a [label=\"<p> x|<q> y|{z|<r> w}\"]; b; c [shape=ellipse]; \
+        d [shape=box]; subgraph cluster_k { label=K; e; f } \
+        a:p -> b:n; a:r:s -> c; a -> d [samehead=h]; b -> d [samehead=h]; c:ne -> e:w; \
+        d:se -> f; b -> f [label=l]; e -> a:q; f -> a; c -> c; {rank=same; b -> c [label=m]}";
+    for engine in ["dot", "neato", "fdp", "sfdp", "twopi", "circo", "osage"] {
+        for rankdir in ["TB", "LR", "BT", "RL"] {
+            let src =
+                format!("digraph {{ layout={engine}; rankdir={rankdir}; splines=ortho; {body} }}");
+            let svg = render(&src).unwrap().svg;
+            let edges = svg
+                .split("class=\"dot-edge\"")
+                .skip(1)
+                .map(|g| g.split("</g>").next().unwrap());
+            let paths = edges.flat_map(|g| {
+                g.split("<path d=\"")
+                    .skip(1)
+                    .map(|s| s.split('"').next().unwrap())
+            });
+            let mut seen = 0;
+            for d in paths {
+                seen += 1;
+                let nums: Vec<f64> = d
+                    .split(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-'))
+                    .filter(|t| !t.is_empty())
+                    .filter_map(|t| t.parse().ok())
+                    .collect();
+                // M x y、それから C の 6 つ組（終わりの点は最後の 2 つ）
+                let mut prev = (nums[0], nums[1]);
+                for c in nums[2..].as_chunks::<6>().0 {
+                    let next = (c[4], c[5]);
+                    assert!(
+                        (prev.0 - next.0).abs() < 0.02 || (prev.1 - next.1).abs() < 0.02,
+                        "{engine} {rankdir}: {d}"
+                    );
+                    prev = next;
+                }
+            }
+            assert!(seen >= 8, "{engine} {rankdir}: {seen}");
+        }
+    }
+}
+
+/// 辺ごとの線の折れ線（M と C の終わりの点）。
+fn edge_polylines(svg: &str) -> Vec<Vec<(f64, f64)>> {
+    svg.split("class=\"dot-edge\"")
+        .skip(1)
+        .filter_map(|g| {
+            let g = g.split("</g>").next()?;
+            let d = g.split("<path d=\"").nth(1)?.split('"').next()?;
+            let nums: Vec<f64> = d
+                .split(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-'))
+                .filter(|t| !t.is_empty())
+                .filter_map(|t| t.parse().ok())
+                .collect();
+            let mut pts = vec![(nums[0], nums[1])];
+            for c in nums[2..].as_chunks::<6>().0 {
+                pts.push((c[4], c[5]));
+            }
+            Some(pts)
+        })
+        .collect()
+}
+
+/// dot の ortho では、違う辺の線が同じ所に重ならない（samehead・sametail で 1 点に会う組を除く）。
+#[test]
+fn dot_ortho_edges_do_not_share_segments() {
+    let graphs = [
+        "digraph { splines=ortho; node [shape=box]; a -> {b c d}; a:w -> e; b:s -> e:w; {c d} -> e [samehead=h]; c:se -> f:ne; x -> f }",
+        "digraph { splines=ortho; node [shape=box]; {a b c} -> d [samehead=h]; x -> d; d -> {e f g}; a -> g; b:s -> e:s; c:n -> f; {rank=same; e -> g [label=flat]} }",
+        "digraph { splines=ortho; rankdir=LR; node [shape=record]; s1 [label=\"<f0> left|<f1> mid|<f2> right\"]; s2 [label=\"{a|{b|<p> c}}\"]; s3 [label=\"<x> x|<y> y\"]; s1:f2 -> s2:p; s1:f0 -> s2; s1:f1 -> s3:y; s3:x -> s2:p:n }",
+        "digraph { splines=ortho; a -> {b c d e f}; {b c d e f} -> g; b -> d; c -> f; a -> g; a -> h -> g }",
+        "digraph { splines=ortho; rankdir=BT; a -> {b c}; b -> {d e}; c -> {d e}; a -> d; a -> e }",
+    ];
+    for src in graphs {
+        let svg = render(src).unwrap().svg;
+        let lines = edge_polylines(&svg);
+        // (辺, 縦か, 位置, 始め, 終わり)
+        let mut segs: Vec<(usize, bool, f64, f64, f64)> = Vec::new();
+        for (i, p) in lines.iter().enumerate() {
+            for w in p.windows(2) {
+                let (a, b) = (w[0], w[1]);
+                if (a.0 - b.0).abs() < 0.02 && (a.1 - b.1).abs() > 0.02 {
+                    segs.push((i, true, a.0, a.1.min(b.1), a.1.max(b.1)));
+                } else if (a.1 - b.1).abs() < 0.02 && (a.0 - b.0).abs() > 0.02 {
+                    segs.push((i, false, a.1, a.0.min(b.0), a.0.max(b.0)));
+                }
+            }
+        }
+        let meet = |a: usize, b: usize| {
+            let (p, q) = (&lines[a], &lines[b]);
+            let same = |x: (f64, f64), y: (f64, f64)| (x.0 - y.0).abs() + (x.1 - y.1).abs() < 0.5;
+            same(p[0], q[0]) || same(p[p.len() - 1], q[q.len() - 1])
+        };
+        for (k, a) in segs.iter().enumerate() {
+            for b in &segs[k + 1..] {
+                if a.0 == b.0 || a.1 != b.1 || (a.2 - b.2).abs() > 0.5 || meet(a.0, b.0) {
+                    continue;
+                }
+                let overlap = a.4.min(b.4) - a.3.max(b.3);
+                assert!(overlap <= 3.0, "{src}: {a:?} {b:?}");
+            }
+        }
+    }
 }

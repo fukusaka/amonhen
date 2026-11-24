@@ -26,11 +26,12 @@ import { signatureMark } from './signature.ts';
 import { linkPieces, splitTrailers } from '../history/messageParts.ts';
 
 /** mailmap で置き換えた人。記録と違えば、記録されたものを下に小さく添える */
-function withRecorded(text: string, recorded: Person | undefined): Node | string {
+function withRecorded(text: Node | string, recorded: Person | undefined): Node | string {
   if (!recorded) {
     return text;
   }
-  const span = el('span', '', text);
+  const span = el('span');
+  span.append(text);
   const note = el('span', 'recorded', `Recorded: ${recorded.name} <${recorded.email}>`);
   note.title = 'The name and email recorded in the commit. The mailmap shows them as above.';
   span.append(note);
@@ -143,6 +144,10 @@ function countsLabel(counts: LineCounts): HTMLElement {
 export interface DetailsOptions {
   /** 件名・本文・トレーラー・notes で強調する語（History の検索） */
   highlight?: () => readonly string[];
+  /** 右クリックのメニュー（package.json の webview/context）に足す情報（History なら編集できるか） */
+  context?: (oid: string) => Record<string, unknown>;
+  /** 作者・コミッターの名前を押したとき（History はその人で絞り込む） */
+  onPerson?: (name: string) => void;
 }
 
 export function createDetailsPane(onParent?: (oid: string) => void, images = false, options: DetailsOptions = {}): DetailsPane {
@@ -256,6 +261,24 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
     return span;
   }
 
+  /** 名前（押せばその人で絞り込む）と、その後ろに続ける文字 */
+  function person(name: string, rest: string): Node {
+    const span = el('span');
+    if (options.onPerson) {
+      const link = el('a', 'person', name);
+      link.href = '#';
+      link.title = `Show commits by ${name}`;
+      link.addEventListener('click', (e) => {
+        e.preventDefault();
+        options.onPerson?.(name);
+      });
+      span.append(link, rest);
+    } else {
+      span.append(name + rest);
+    }
+    return span;
+  }
+
   function show(d: CommitDetails, focus?: string, next?: DiffChoices): void {
     // 同じコミットを出し直す（空白を選び直した）なら、開いていたファイルは開いたまま
     const reopen = d.oid === shownOid ? openPaths() : [];
@@ -279,10 +302,10 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
       dd.append(value);
       list.append(el('dt', '', label), dd);
     };
-    add('Author', withRecorded(`${d.author.name} <${d.author.email}>`, d.recordedAuthor));
+    add('Author', withRecorded(person(d.author.name, ` <${d.author.email}>`), d.recordedAuthor));
     add('Date', formatDate(d.author.date));
     if (d.committer.name !== d.author.name || d.committer.date !== d.author.date) {
-      add('Committer', withRecorded(`${d.committer.name}  ${formatDate(d.committer.date)}`, d.recordedCommitter));
+      add('Committer', withRecorded(person(d.committer.name, `  ${formatDate(d.committer.date)}`), d.recordedCommitter));
     }
     add('Commit', el('code', '', d.oid));
     if (d.parents.length > 0) {
@@ -310,6 +333,9 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
       parts.push(el('div', 'selection-note', `This is a merge: the changes below are against its first parent (${d.parents[0]!.slice(0, 7)}).`));
     }
     place(parts);
+    // 見出しの右クリック: ID・件名・メッセージ・git show のコピー、編集できるコミットなら Edit Message…（アプリと同じ）。
+    // 選んだ文字のコピーも残す（既定の項目を消さない）
+    head.dataset.vscodeContext = JSON.stringify({ webviewSection: 'commitDetails', oid: d.oid, ...options.context?.(d.oid) });
     fileSections(d.oid, d.files, true, d.oid);
     reopenFiles(reopen);
     if (focus) {
@@ -325,6 +351,8 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
 
   /** 上の欄に並べる（高さは中身に合わせ直し、広げていれば戻す） */
   function place(message: Node[]): void {
+    // 1 つのコミットの詳細（show）でなければ、見出しの右クリックは出さない。show が付け直す
+    delete head.dataset.vscodeContext;
     root.classList.remove('expanded');
     root.classList.toggle('split', message.length > 0);
     const kept = getState().detailsHeadHeight;

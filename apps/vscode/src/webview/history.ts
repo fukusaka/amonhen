@@ -156,8 +156,17 @@ export function createHistoryView(): View {
       if (index >= 0) select(index, true);
     },
     true,
-    // 検索の語を件名・本文で強調する（アプリと同じ）
-    { highlight: () => (submitted ? highlightTerms(submitted) : []) },
+    {
+      // 検索の語を件名・本文で強調する（アプリと同じ）
+      highlight: () => (submitted ? highlightTerms(submitted) : []),
+      // 見出しの右クリックの Edit Message… は、行と同じく編集できるコミットだけ
+      context: (oid) => ({ commitEditable: rows.find((r) => r?.oid === oid)?.editable === true }),
+      // 名前を押すと、その人のコミットを探す（アプリと同じ author: の検索）
+      onPerson: (name) => {
+        searchInput.value = `author:"${name.replaceAll('"', '')}"`;
+        submitSearch(1);
+      },
+    },
   );
   // 編集モード（開いている間は、一覧の代わりに出す）
   const editMode = createEditMode(

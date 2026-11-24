@@ -1200,6 +1200,22 @@ pub fn layout(
             0.0
         }
     };
+    // 同じランクの辺のラベルの分をランクの上に空ける（隣どうしの線のラベルはノードの上半分からはみ出る分、
+    // 間を越える弧のラベルは弧の上がりとラベルの高さ）
+    let mut flat_up = vec![0f64; rank_count];
+    for (ei, e) in input_edges.iter().enumerate() {
+        if let (Route::Flat { adjacent, .. }, Some((_, lh))) = (&routes[ei], e.label)
+            && e.tail != e.head
+        {
+            let r = nodes[e.tail].rank;
+            let room = if *adjacent {
+                (lh + 2.0 - rank_h[r] / 2.0).max(0.0)
+            } else {
+                lh + 20.0
+            };
+            flat_up[r] = flat_up[r].max(room);
+        }
+    }
     // 題が横（LR・RL の絵の上下）のクラスタは、題の長さ（配置の縦）より箱が短ければ、両端のランクの外に場所を
     // 足して箱を伸ばす（中のクラスタから。伸ばすとランクの間が開くので、収まるまで数回やり直す）
     let mut stretch = vec![0f64; k];
@@ -1233,6 +1249,7 @@ pub fn layout(
             close_room[hi] = close_room[hi].max(room_close);
         }
         let mut y = open_room.first().copied().unwrap_or(0.0)
+            + flat_up.first().copied().unwrap_or(0.0)
             + rank_h.first().copied().unwrap_or(0.0) / 2.0;
         for r in 0..rank_count {
             if r > 0 {
@@ -1240,6 +1257,7 @@ pub fn layout(
                     + base_gap
                     + close_room[r - 1]
                     + open_room[r]
+                    + flat_up[r]
                     + rank_h[r] / 2.0;
             }
             rank_y[r] = y;
