@@ -7,6 +7,13 @@ becomes the GitHub Release notes.
 
 ## App and engine
 
+### Unreleased
+
+#### Added
+
+- History's All Files draws Android VectorDrawables (`.xml` with a `<vector>` or `<animated-vector>` root) as pictures,
+  resolving `@color/…` from the commit's `res` folder and noting what's drawn in gray (macOS, GTK4).
+
 ### [0.2.14] - 2026-11-24
 
 On macOS, Show Only Commit Details can be undone again, with a button at the top right of the commit details.
