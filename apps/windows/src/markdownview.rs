@@ -5,7 +5,7 @@
 use std::cell::Cell;
 use std::sync::{Arc, OnceLock};
 
-use amonhen_core::diagram::{Scheme, ThemeColors};
+use amonhen_core::diagram::{IMPORTED_PREFIX, MermaidConfig, Scheme, ThemeColors};
 use amonhen_core::markdown::{Align, Block, Run};
 use amonhen_model::tr;
 use resvg::{tiny_skia, usvg};
@@ -26,9 +26,75 @@ pub struct DiagramPicture {
     height: f64,
 }
 
-/// 図に当てる色の元（今のテーマの構文の色と、本文の文字と地の色）。図を絵にする前に UI のスレッドで取る
-/// （GTK4 版の `diagram_palette`）。図の中で指定した Mermaid のテーマが先。
-pub fn diagram_theme() -> (ThemeColors, bool) {
+/// 図の配色の設定（Settings > Appearance の Mermaid の「配色」。鍵は `Scheme::key`、読み込んだテーマは
+/// `mermaid-import:名前`）と、読み込んだ Mermaid のテーマ（名前 → 中身）。鍵は GTK4 版と同じ。
+pub const DIAGRAM_COLORS: &str = "diagramColors";
+pub const IMPORTED_MERMAID_THEMES: &str = "importedMermaidThemes";
+
+/// 読み込んだ Mermaid のテーマ（名前の順）。
+pub fn imported_mermaid() -> Vec<(String, MermaidConfig)> {
+    let mut all: Vec<(String, MermaidConfig)> = crate::prefs::string(IMPORTED_MERMAID_THEMES)
+        .and_then(|s| {
+            serde_json::from_str::<std::collections::HashMap<String, MermaidConfig>>(&s).ok()
+        })
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
+    all.sort_by(|a, b| a.0.cmp(&b.0));
+    all
+}
+
+pub fn set_imported_mermaid(themes: &[(String, MermaidConfig)]) {
+    let map: std::collections::HashMap<&str, &MermaidConfig> =
+        themes.iter().map(|(k, v)| (k.as_str(), v)).collect();
+    if let Err(e) = crate::prefs::set_string(
+        IMPORTED_MERMAID_THEMES,
+        &serde_json::to_string(&map).unwrap_or_default(),
+    ) {
+        eprintln!("読み込んだ Mermaid のテーマを覚えられない: {e}");
+    }
+}
+
+/// 「配色」に並べるもの（設定の鍵と、出す名前。GTK4 版の `diagram_scheme_label`）。読み込んだテーマは名前で。
+pub fn diagram_schemes() -> Vec<(String, String)> {
+    let mut entries: Vec<(String, String)> = Scheme::all()
+        .into_iter()
+        .map(|scheme| {
+            let label = match scheme {
+                Scheme::Syntax => tr!("Syntax colors"),
+                Scheme::Pele => "pele".into(),
+                Scheme::Mermaid(None) => tr!("Mermaid (follows the appearance)"),
+                Scheme::Mermaid(Some(theme)) => format!("Mermaid {}", theme.name()),
+                Scheme::Imported => "Mermaid".into(),
+            };
+            (scheme.key(), label)
+        })
+        .collect();
+    entries.extend(
+        imported_mermaid()
+            .into_iter()
+            .map(|(name, _)| (format!("{IMPORTED_PREFIX}{name}"), name)),
+    );
+    entries
+}
+
+/// 図に当てる色の元: 今のテーマの構文の色と、本文の文字と地の色、外観、「配色」（読み込んだテーマならその中身）。
+/// 図を絵にする前に UI のスレッドで取る（GTK4 版の `diagram_palette`）。図の中で指定した Mermaid のテーマが先。
+pub struct DiagramColors {
+    theme: ThemeColors,
+    dark: bool,
+    scheme: Scheme,
+    imported: Option<MermaidConfig>,
+}
+
+pub fn diagram_theme() -> DiagramColors {
+    let key = crate::prefs::string(DIAGRAM_COLORS).unwrap_or_default();
+    let imported = key.strip_prefix(IMPORTED_PREFIX).and_then(|name| {
+        imported_mermaid()
+            .into_iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, c)| c)
+    });
     let dark = crate::palette::dark();
     let hex = |(r, g, b): (f32, f32, f32)| {
         format!(
@@ -49,14 +115,72 @@ pub fn diagram_theme() -> (ThemeColors, bool) {
             Some(((*name).to_owned(), hex(crate::render::syntax_rgb(*kind)?)))
         })
         .collect();
-    (
-        ThemeColors {
+    DiagramColors {
+        theme: ThemeColors {
             text: text.to_owned(),
             background: background.to_owned(),
             kinds,
         },
         dark,
-    )
+        scheme: Scheme::from_key(&key),
+        imported,
+    }
+}
+
+impl DiagramColors {
+    /// 図の SVG に色を当てる（図の中で指定したテーマ `own` が先）。
+    fn colorize(&self, svg: &str, own: Option<&MermaidConfig>) -> Option<String> {
+        let (vars, backdrop) = amonhen_core::diagram::colors_for(
+            own,
+            self.scheme,
+            self.imported.as_ref(),
+            self.dark,
+            &self.theme,
+        );
+        amonhen_core::diagram::colorize(svg, &vars, backdrop)
+    }
+}
+
+/// 見本を描いたときの配色・外観・テーマの世代と、その絵。
+type Sample = ((String, bool, u32), Option<Arc<DiagramPicture>>);
+
+thread_local! {
+    /// Settings の図の見本（配色・外観・テーマが同じなら描き直さない）。
+    static SAMPLE: std::cell::RefCell<Option<Sample>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Settings の図の見本（「配色」と今の外観・テーマで色を当てる。GTK4 版の `diagram_sample`）。UI のスレッドで。
+pub fn diagram_sample() -> View {
+    let colors = diagram_theme();
+    let key = (
+        crate::prefs::string(DIAGRAM_COLORS).unwrap_or_default(),
+        colors.dark,
+        crate::theme::generation(),
+    );
+    let picture = SAMPLE.with(|cell| {
+        let mut cell = cell.borrow_mut();
+        if let Some((k, p)) = cell.as_ref()
+            && *k == key
+        {
+            return p.clone();
+        }
+        let picture = amonhen_core::diagram::sample()
+            .and_then(|svg| colors.colorize(&svg, None))
+            .and_then(|svg| render_diagram(&svg))
+            .map(Arc::new);
+        *cell = Some((key, picture.clone()));
+        picture
+    });
+    match picture {
+        Some(picture) => Image::new()
+            .source_data(picture.png.clone())
+            .stretch(Stretch::Uniform)
+            .width(picture.width)
+            .height(picture.height)
+            .horizontal_alignment(HorizontalAlignment::Left)
+            .into(),
+        None => View::empty(),
+    }
 }
 
 /// Windows の字体（最初に図を描くときに 1 度だけ読む。千近い字体で 0.2 秒ほど）。
@@ -101,35 +225,26 @@ fn render_diagram(svg: &str) -> Option<DiagramPicture> {
 }
 
 /// 文書の図を、出てくる順に絵にする（`blocks` と同じたどり方。描けない図は None）。裏のスレッドで呼ぶ。
-pub fn render_diagrams(
-    list: &[Block],
-    theme: &ThemeColors,
-    dark: bool,
-) -> Vec<Option<DiagramPicture>> {
+pub fn render_diagrams(list: &[Block], colors: &DiagramColors) -> Vec<Option<DiagramPicture>> {
     let mut out = Vec::new();
-    collect(list, theme, dark, &mut out);
+    collect(list, colors, &mut out);
     out
 }
 
-fn collect(list: &[Block], theme: &ThemeColors, dark: bool, out: &mut Vec<Option<DiagramPicture>>) {
+fn collect(list: &[Block], colors: &DiagramColors, out: &mut Vec<Option<DiagramPicture>>) {
     for b in list {
         match b {
-            Block::Diagram { svg, config, .. } => out.push(svg.as_ref().and_then(|svg| {
-                let (vars, backdrop) = amonhen_core::diagram::colors_for(
-                    config.as_ref(),
-                    Scheme::default(),
-                    None,
-                    dark,
-                    theme,
-                );
-                render_diagram(&amonhen_core::diagram::colorize(svg, &vars, backdrop)?)
-            })),
+            Block::Diagram { svg, config, .. } => out.push(
+                svg.as_ref()
+                    .and_then(|svg| colors.colorize(svg, config.as_ref()))
+                    .and_then(|svg| render_diagram(&svg)),
+            ),
             Block::Quote { blocks: inner, .. }
             | Block::Footnote { blocks: inner, .. }
-            | Block::Details { blocks: inner, .. } => collect(inner, theme, dark, out),
+            | Block::Details { blocks: inner, .. } => collect(inner, colors, out),
             Block::List { items, .. } => {
                 for item in items {
-                    collect(&item.blocks, theme, dark, out);
+                    collect(&item.blocks, colors, out);
                 }
             }
             _ => {}

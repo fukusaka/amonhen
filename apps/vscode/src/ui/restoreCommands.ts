@@ -12,6 +12,8 @@ import { showError } from './stageCommands.ts';
 interface CommitFileContext {
   oid?: string;
   path?: string;
+  /** このコミットで名前を変えたファイルの、前の名前 */
+  origPath?: string;
 }
 
 export function registerRestoreCommands(manager: RepositoryManager): vscode.Disposable {
@@ -20,6 +22,8 @@ export function registerRestoreCommands(manager: RepositoryManager): vscode.Disp
       const repo = manager.current;
       if (!repo || !ctx?.oid || !ctx.path) return;
       const rev = before ? `${ctx.oid}^` : ctx.oid;
+      // 名前を変えたファイルを前の版に戻すと、新しい名前のファイルは消え、元の名前のファイルが戻る（macOS 版と同じ）
+      const paths = before && ctx.origPath && ctx.origPath !== ctx.path ? [ctx.origPath, ctx.path] : [ctx.path];
       const which = before ? `the version before ${ctx.oid.slice(0, 8)}` : `its version in ${ctx.oid.slice(0, 8)}`;
       const answer = await vscode.window.showWarningMessage(
         `Restore ${ctx.path} to ${which}?`,
@@ -33,7 +37,7 @@ export function registerRestoreCommands(manager: RepositoryManager): vscode.Disp
       );
       if (answer !== 'Restore' && answer !== 'Restore and Stage') return;
       try {
-        await runEngine(repo, { op: 'restoreFiles', rev, paths: [ctx.path], staged: answer === 'Restore and Stage' }, `Restore ${ctx.path}`);
+        await runEngine(repo, { op: 'restoreFiles', rev, paths, staged: answer === 'Restore and Stage' }, `Restore ${ctx.path}`);
         vscode.window.setStatusBarMessage(`$(history) Restored ${ctx.path}`, 5000);
       } catch (err) {
         showError(err);
