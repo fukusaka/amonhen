@@ -761,6 +761,12 @@ pub struct App {
     edit_mode: Option<crate::editmode::EditMode>,
     /// 印をつけたコミット（新しい順）を、編集モードで 1 つにまとめる（`E`。行が届いたら決める）。
     combining: Vec<String>,
+    /// History でドラッグしているコミット（ID と件名）。
+    commit_drag: Option<(String, String, u32)>,
+    /// ドラッグして落とした: 動かすコミット、落とした先、まとめるか（編集モードの行が届いたら当てる）。
+    drag_plan: Option<(String, String, bool)>,
+    /// 落とした後に、動かすかまとめるかを聞いている間（動かすコミットと落とした先）。
+    drop_asked: Option<(String, String, bool)>,
     /// 端末のクリップボードに入れる文字（OSC 52。描くループが書く）。
     copy: Option<String>,
     /// 編集モードで、変更があるのに Esc を 1 度押した（もう 1 度で捨てる）。
@@ -911,6 +917,9 @@ impl App {
             octopus_last: None,
             edit_mode: None,
             combining: Vec::new(),
+            commit_drag: None,
+            drag_plan: None,
+            drop_asked: None,
             copy: None,
             edit_discard: false,
             plan_message: None,
@@ -1959,6 +1968,20 @@ impl App {
             self.naming = Naming::PatchVersion;
             self.typing_branch = Some((String::new(), String::new(), "2".to_owned()));
             self.dirty = true;
+            return;
+        }
+        // コミットを落とした後: `m` 動かす、`s` まとめる。編集モードの行を、古い方から読む。
+        if self.choices.is_some()
+            && let Some((dragged, target, dragged_older)) = self.drop_asked.take()
+        {
+            self.choices = None;
+            self.dirty = true;
+            if let KeyCode::Char(ch @ ('m' | 's')) = key.code {
+                // 古い方（History で下の行）から HEAD まで。
+                let from = if dragged_older { &dragged } else { &target }.clone();
+                self.drag_plan = Some((dragged, target, ch == 's'));
+                self.send(Request::EditRows { from });
+            }
             return;
         }
         // octopus merge を確かめている間の `l`: コンフリクトしそうなものを最後に回して見直す（アプリの Put Last）。
@@ -4976,6 +4999,13 @@ impl App {
                     })
                     .collect();
                 let mut mode = crate::editmode::EditMode::new(rows);
+                if let Some((dragged, target, squash)) = self.drag_plan.take()
+                    && let Err(error) = mode.drop_onto(&dragged, &target, squash)
+                {
+                    self.error = Some(error);
+                    self.dirty = true;
+                    return;
+                }
                 let combining = std::mem::take(&mut self.combining);
                 if !combining.is_empty() && !mode.combine_last(&combining) {
                     self.error = Some(tr!(
@@ -8646,6 +8676,80 @@ impl App {
             MouseEventKind::Up(MouseButton::Left) if self.dragging.take().is_some() => return,
             _ => {}
         }
+        // History のコミットをドラッグして別のコミットに落とす: 動かすかまとめるかを聞いて、編集モードを始める
+        // （アプリの History のドラッグ。端末では行の上と行の間を分けにくいので、落とした後に聞く）。
+        let in_main = layout.main.filter(|a| {
+            a.x <= mouse.column
+                && mouse.column < a.right()
+                && a.y <= mouse.row
+                && mouse.row < a.bottom()
+        });
+        match mouse.kind {
+            MouseEventKind::Drag(MouseButton::Left)
+                if self.view == View::History && self.commit_drag.is_none() =>
+            {
+                if let Some((id, merge, subject)) = self.history.selected_commit()
+                    && in_main.is_some()
+                    && !merge
+                {
+                    self.commit_drag =
+                        Some((id.to_string(), subject.to_owned(), self.history.selected()));
+                    self.notice = Some(tr!(
+                        "Drop it onto another commit to move it there or combine it with that one"
+                    ));
+                    self.dirty = true;
+                }
+                return;
+            }
+            MouseEventKind::Drag(MouseButton::Left) if self.commit_drag.is_some() => {
+                // 落とす先を選んで見せる。
+                if let Some(area) = in_main
+                    && self.history.click(mouse.row - area.y)
+                {
+                    self.damage |= Damage::MAIN;
+                }
+                return;
+            }
+            MouseEventKind::Up(MouseButton::Left) if self.commit_drag.is_some() => {
+                let (dragged, subject, from_row) = self.commit_drag.take().unwrap();
+                self.notice = None;
+                self.dirty = true;
+                let Some(area) = in_main else {
+                    return;
+                };
+                self.history.click(mouse.row - area.y);
+                let Some((target, merge, target_subject)) = self.history.selected_commit() else {
+                    return;
+                };
+                let target = target.to_string();
+                if target == dragged {
+                    return;
+                }
+                if merge {
+                    self.error = Some(tr!("A merge is recreated as it is"));
+                    return;
+                }
+                let (short, target_short) = (dragged[..8].to_owned(), target[..8].to_owned());
+                self.choices = Some((
+                    tr!(
+                        "{commit} “{subject}” onto {target} “{target_subject}”:",
+                        commit = short,
+                        subject = subject,
+                        target = target_short,
+                        target_subject = target_subject
+                    ),
+                    vec![
+                        ('m', tr!("move it above"), Request::Status),
+                        ('s', tr!("combine it with that one"), Request::Status),
+                    ],
+                ));
+                // History で下の行ほど古い。
+                let dragged_older = from_row > self.history.selected();
+                self.drop_asked = Some((dragged, target, dragged_older));
+                return;
+            }
+            _ => {}
+        }
         let inside = |area: Option<Rect>| {
             area.filter(|a| {
                 a.x <= mouse.column
@@ -10626,6 +10730,69 @@ mod tests {
     }
 
     /// settings.json の `tui.mouse` が false なら、マウスを取り込まずに始める。読めなければ取り込んだまま理由を出す。
+    /// History でコミットをドラッグして別のコミットに落とすと、動かすかまとめるかを聞き、その変更を入れた
+    /// 編集モードを開く（アプリの History のドラッグ）
+    #[test]
+    fn a_commit_is_dragged_onto_another() {
+        let drop = |key: char| {
+            let (_dir, mut app, rx) = app_with_history();
+            let main = app.layout().main.unwrap();
+            let at = |row: u16, kind: MouseEventKind| {
+                Event::Input(Input::Mouse(MouseEvent {
+                    kind,
+                    column: main.x + 10,
+                    row: main.y + row,
+                    modifiers: KeyModifiers::NONE,
+                }))
+            };
+            // Commit 1（上から 5 行目）を Commit 3（3 行目）へ。
+            app.handle(at(4, MouseEventKind::Down(MouseButton::Left)));
+            app.handle(at(3, MouseEventKind::Drag(MouseButton::Left)));
+            app.handle(at(2, MouseEventKind::Drag(MouseButton::Left)));
+            app.handle(at(2, MouseEventKind::Up(MouseButton::Left)));
+            assert!(
+                bottom_line(&mut app).contains("move it above"),
+                "{}",
+                bottom_line(&mut app)
+            );
+            app.handle(Event::Input(Input::Key(KeyEvent::new(
+                KeyCode::Char(key),
+                KeyModifiers::NONE,
+            ))));
+            crate::settle(&mut app, &rx).unwrap();
+            let mode = app.edit_mode.as_ref().expect("the edit mode opens");
+            mode.rows
+                .iter()
+                .map(|r| {
+                    let subject = r.message.lines().next().unwrap_or("").to_owned();
+                    format!("{} {subject}", r.action.name())
+                })
+                .collect::<Vec<_>>()
+        };
+        // 動かす: Commit 1 が Commit 3 のすぐ上に（範囲は古い方の Commit 1 から HEAD まで）。
+        assert_eq!(
+            drop('m'),
+            [
+                "pick Commit 5",
+                "pick Commit 4",
+                "pick Commit 1",
+                "pick Commit 3",
+                "pick Commit 2"
+            ]
+        );
+        // まとめる: 同じ所で、Commit 3 とまとめる行に。
+        assert_eq!(
+            drop('s'),
+            [
+                "pick Commit 5",
+                "pick Commit 4",
+                "squash Commit 1",
+                "pick Commit 3",
+                "pick Commit 2"
+            ]
+        );
+    }
+
     /// ペインの区切りをドラッグすると、サイドバーとメインの画面の幅が変わる（アプリのドラッグできる区切り）
     #[test]
     fn dividers_are_dragged() {
