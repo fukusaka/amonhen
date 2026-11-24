@@ -419,6 +419,16 @@ public struct VectorDrawablePicture: Sendable {
     public let notes: [String]
 }
 
+/// 透けた絵の下の市松模様の既定（コアの `checker::Tone`）。`pixels` は `height` 行 × `stride` バイトの、不透明度を
+/// 掛けた RGBA の画素（比べる 2 枚は並べて 1 つに）。暗くするのが既定か（`dark`）と、透けた画素があったか。
+public func checkerTone(pixels: UnsafePointer<UInt8>?, width: Int, height: Int, stride: Int)
+    -> (dark: Bool, transparent: Bool)
+{
+    var transparent = false
+    let dark = amonhen_checker_dark(pixels, UInt(width), UInt(height), UInt(stride), false, &transparent)
+    return (dark, transparent)
+}
+
 extension Repository {
     /// `path` の中身 `data` が、絵にする Android の VectorDrawable か（`.xml` で、根が `<vector>` か
     /// `<animated-vector>`。頭だけを見る）。
@@ -427,15 +437,17 @@ extension Repository {
     }
 
     /// コミット `commit`（20 バイト）の `path` の VectorDrawable（中身 `data`）を絵にする。色の参照は同じコミットの
-    /// リソースから引く。裏のスレッドで呼ぶ。
-    public func vectorDrawable(commit: Data, path: String, data: Data) throws -> VectorDrawablePicture {
+    /// リソースから引き、引けない色は `fallback`（画面の文字の色の `#rrggbb`。nil なら灰色）で描く。裏のスレッドで呼ぶ。
+    public func vectorDrawable(commit: Data, path: String, data: Data, fallback: String? = nil) throws
+        -> VectorDrawablePicture
+    {
         var length: UInt = 0
         var notes: UnsafeMutablePointer<CChar>?
         let raw = commit.withUnsafeBytes { id in
             data.withUnsafeBytes { bytes in
                 amonhen_vector_drawable(
                     self.raw, id.baseAddress!.assumingMemoryBound(to: UInt8.self), path,
-                    bytes.bindMemory(to: UInt8.self).baseAddress, UInt(bytes.count), &length, &notes)
+                    bytes.bindMemory(to: UInt8.self).baseAddress, UInt(bytes.count), fallback, &length, &notes)
             }
         }
         guard let raw else { throw AmonhenError.last() }

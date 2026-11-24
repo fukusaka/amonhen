@@ -2,7 +2,7 @@
 //!
 //! 絵は `svgandroid` で SVG に戻して描く。色の参照（`@color/x`）は、同じコミットの、drawable のいちばん近い `res`
 //! フォルダの `values*/` の `<color>`（と `color/x.xml` の色の一覧）から引く。テーマの属性（`?attr/x`）と、
-//! 見つからない参照は引けないので灰色で描き、そのことを説明に足す。`<animated-vector>` は、動かす前の絵（中に
+//! 見つからない参照は引けないので、FE が渡す画面の文字の色（なければ灰色）で描き、そのことを説明に足す。`<animated-vector>` は、動かす前の絵（中に
 //! 書いた `<vector>` か、同じ `res` の `@drawable/x`）を描く。読むのはコミットの中のものだけで、量に上限がある。
 
 use std::cell::{OnceCell, RefCell};
@@ -25,7 +25,7 @@ pub const MAX_RESOURCE_FILES: usize = 64;
 pub const MAX_RESOURCE_BYTES: usize = 8 << 20;
 /// 色の参照をたどる深さの上限（`@color/a` → `@color/b` → …）。
 pub const MAX_REFERENCE_DEPTH: usize = 8;
-/// 引けない色の代わりに描く色（明るい背景でも暗い背景でも見える灰色）。
+/// 引けない色の代わりに描く色の既定（FE が文字の色を渡さないとき。明るい地でも暗い地でも見える灰色）。
 pub const FALLBACK_COLOR: &str = "#FF808080";
 
 /// コミットの中のファイルを読むもの（テストでは手で作る）。パスは根からの相対で、`/` で区切る。
@@ -93,8 +93,14 @@ pub fn is_vector_drawable(path: &str, data: &[u8]) -> bool {
 }
 
 /// コミットの `path` の VectorDrawable（中身 `xml`）を絵にする。色の参照・`<animated-vector>` の参照は `files`
-/// から引く。
-pub fn picture(path: &str, xml: &[u8], files: &dyn Files) -> Result<Picture> {
+/// から引く。引けない色は `fallback`（画面の文字の色の `#rrggbb`。テーマの属性はたいてい文字・アイコンの色）、
+/// なければ `FALLBACK_COLOR` で描く。
+pub fn picture(
+    path: &str,
+    xml: &[u8],
+    files: &dyn Files,
+    fallback: Option<&str>,
+) -> Result<Picture> {
     if xml.len() > MAX_DRAWABLE_BYTES {
         return Err(tr!("The VectorDrawable is too large to draw").into());
     }
@@ -109,6 +115,9 @@ pub fn picture(path: &str, xml: &[u8], files: &dyn Files) -> Result<Picture> {
         table: OnceCell::new(),
         themed: RefCell::new(Vec::new()),
         missing: RefCell::new(Vec::new()),
+        fallback: fallback
+            .filter(|c| svgandroid::is_color(c))
+            .unwrap_or(FALLBACK_COLOR),
     };
     let resolve = |value: &str| colors.resolve(value);
     let (svg, converter_notes) = svgandroid::convert(&text, Some(&resolve))?;
@@ -116,14 +125,14 @@ pub fn picture(path: &str, xml: &[u8], files: &dyn Files) -> Result<Picture> {
     let themed = colors.themed.into_inner();
     if !themed.is_empty() {
         notes.push(tr!(
-            "Android theme attributes can’t be resolved here, so they’re drawn in gray: {refs}",
+            "Android theme attributes can’t be resolved here, so they’re drawn in the text color: {refs}",
             refs = themed.join(", ")
         ));
     }
     let missing = colors.missing.into_inner();
     if !missing.is_empty() {
         notes.push(tr!(
-            "Colors not found in this commit’s resources are drawn in gray: {refs}",
+            "Colors not found in this commit’s resources are drawn in the text color: {refs}",
             refs = missing.join(", ")
         ));
     }
@@ -261,6 +270,8 @@ struct Colors<'a> {
     table: OnceCell<HashMap<String, String>>,
     themed: RefCell<Vec<String>>,
     missing: RefCell<Vec<String>>,
+    /// 引けない色の代わりに描く色。
+    fallback: &'a str,
 }
 
 impl Colors<'_> {
@@ -290,7 +301,7 @@ impl Colors<'_> {
         if !list.iter().any(|v| v == value) {
             list.push(value.to_owned());
         }
-        FALLBACK_COLOR.into()
+        self.fallback.into()
     }
 
     fn lookup(&self, r: &Reference) -> Option<String> {
@@ -530,7 +541,7 @@ mod tests {
             ]
             .concat(),
         );
-        let p = picture("app/res/drawable/ic.xml", xml.as_bytes(), &tree).unwrap();
+        let p = picture("app/res/drawable/ic.xml", xml.as_bytes(), &tree, None).unwrap();
         // values が values-night より先
         assert!(p.svg.contains(r##"fill="#ff0000""##), "{}", p.svg);
         assert!(p.svg.contains(r##"fill="#ffffff""##), "{}", p.svg);
@@ -538,21 +549,21 @@ mod tests {
         assert!(p.svg.contains(r##"fill="#000000""##), "{}", p.svg);
         assert!(p.notes.is_empty(), "{:?}", p.notes);
 
-        // 終わらない参照は深さで止め、灰色で描く
+        // 終わらない参照は深さで止め、代わりの色で描く
         let xml = vector(&path("@color/loop"));
-        let p = picture("app/res/drawable/ic.xml", xml.as_bytes(), &tree).unwrap();
+        let p = picture("app/res/drawable/ic.xml", xml.as_bytes(), &tree, None).unwrap();
         assert!(p.svg.contains(r##"fill="#808080""##), "{}", p.svg);
         assert_eq!(
             p.notes,
             vec![tr!(
-                "Colors not found in this commit’s resources are drawn in gray: {refs}",
+                "Colors not found in this commit’s resources are drawn in the text color: {refs}",
                 refs = "@color/loop"
             )]
         );
     }
 
     #[test]
-    fn draws_what_cant_be_resolved_in_gray_with_a_note() {
+    fn draws_what_cant_be_resolved_in_the_text_color_with_a_note() {
         let tree = Tree::with(&[]);
         let xml = vector(
             &[
@@ -564,17 +575,28 @@ mod tests {
             ]
             .concat(),
         );
-        let p = picture("res/drawable/ic.xml", xml.as_bytes(), &tree).unwrap();
-        assert_eq!(p.svg.matches(r##"fill="#808080""##).count(), 5, "{}", p.svg);
+        let p = picture(
+            "res/drawable/ic.xml",
+            xml.as_bytes(),
+            &tree,
+            Some("#e5e5e5"),
+        )
+        .unwrap();
+        assert_eq!(p.svg.matches(r##"fill="#e5e5e5""##).count(), 5, "{}", p.svg);
+        // 文字の色がない（読めない）ときは灰色
+        for fallback in [None, Some("white")] {
+            let gray = picture("res/drawable/ic.xml", xml.as_bytes(), &tree, fallback).unwrap();
+            assert_eq!(gray.svg.matches(r##"fill="#808080""##).count(), 5);
+        }
         assert_eq!(
             p.notes,
             vec![
                 tr!(
-                    "Android theme attributes can’t be resolved here, so they’re drawn in gray: {refs}",
+                    "Android theme attributes can’t be resolved here, so they’re drawn in the text color: {refs}",
                     refs = "?attr/colorControlNormal, ?android:attr/textColorPrimary"
                 ),
                 tr!(
-                    "Colors not found in this commit’s resources are drawn in gray: {refs}",
+                    "Colors not found in this commit’s resources are drawn in the text color: {refs}",
                     refs = "@color/nowhere, @android:color/holo_blue_light"
                 ),
             ]
@@ -595,7 +617,7 @@ mod tests {
         ]);
         let xml =
             vector(&path("#000")).replace("<vector ", r#"<vector android:tint="@color/tint" "#);
-        let p = picture("res/drawable/ic.xml", xml.as_bytes(), &tree).unwrap();
+        let p = picture("res/drawable/ic.xml", xml.as_bytes(), &tree, None).unwrap();
         assert!(p.svg.contains(r##"fill="#00ff00""##), "{}", p.svg);
         assert!(p.notes.is_empty(), "{:?}", p.notes);
     }
@@ -607,17 +629,17 @@ mod tests {
             vector(&path("#f00"))
         );
         let tree = Tree::with(&[("res/drawable-v24/ic_base.xml", &vector(&path("#00f")))]);
-        let p = picture("res/drawable/anim.xml", inline.as_bytes(), &tree).unwrap();
+        let p = picture("res/drawable/anim.xml", inline.as_bytes(), &tree, None).unwrap();
         assert!(p.svg.contains(r##"fill="#ff0000""##), "{}", p.svg);
 
         let by_ref = format!(
             r#"<animated-vector {NS} android:drawable="@drawable/ic_base"></animated-vector>"#
         );
-        let p = picture("res/drawable/anim.xml", by_ref.as_bytes(), &tree).unwrap();
+        let p = picture("res/drawable/anim.xml", by_ref.as_bytes(), &tree, None).unwrap();
         assert!(p.svg.contains(r##"fill="#0000ff""##), "{}", p.svg);
 
         let missing = by_ref.replace("ic_base", "ic_gone");
-        let error = picture("res/drawable/anim.xml", missing.as_bytes(), &tree).unwrap_err();
+        let error = picture("res/drawable/anim.xml", missing.as_bytes(), &tree, None).unwrap_err();
         assert_eq!(
             error.to_string(),
             tr!(
@@ -626,7 +648,7 @@ mod tests {
             )
         );
         let tree = Tree::with(&[("res/drawable/ic_base.xml", "<selector/>")]);
-        assert!(picture("res/drawable/anim.xml", by_ref.as_bytes(), &tree).is_err());
+        assert!(picture("res/drawable/anim.xml", by_ref.as_bytes(), &tree, None).is_err());
     }
 
     #[test]
@@ -635,7 +657,8 @@ mod tests {
             picture(
                 "res/drawable/ic.xml",
                 &vec![b' '; MAX_DRAWABLE_BYTES + 1],
-                &Tree::default()
+                &Tree::default(),
+                None
             )
             .is_err()
         );
@@ -665,12 +688,12 @@ mod tests {
             ]
             .concat(),
         );
-        let p = picture("res/drawable/ic.xml", xml.as_bytes(), &tree).unwrap();
+        let p = picture("res/drawable/ic.xml", xml.as_bytes(), &tree, None).unwrap();
         assert!(p.svg.contains(r##"fill="#00ff00""##), "{}", p.svg);
         assert_eq!(
             p.notes,
             vec![tr!(
-                "Colors not found in this commit’s resources are drawn in gray: {refs}",
+                "Colors not found in this commit’s resources are drawn in the text color: {refs}",
                 refs = format!("@color/big, @color/c{last}")
             )]
         );
@@ -681,7 +704,7 @@ mod tests {
     fn reads_no_resources_without_references() {
         let tree = Tree::with(&[("res/values/colors.xml", "<resources/>")]);
         let xml = vector(&path("#fff"));
-        picture("res/drawable/ic.xml", xml.as_bytes(), &tree).unwrap();
+        picture("res/drawable/ic.xml", xml.as_bytes(), &tree, None).unwrap();
         assert!(tree.reads.borrow().is_empty());
     }
 }
