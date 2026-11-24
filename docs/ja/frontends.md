@@ -417,7 +417,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 共有の daemon を通す | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `-C daemon:<path>`。<br>TUI: `amonhen tui daemon:<path>`。 |
 | 合うものがなければホストにエンジンを送る | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: 拡張が動くホストで、同梱したエンジンを使う。<br>Windows: 他のアプリと同じく、先に聞く。 |
 | Windows の SSH 先 | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |
-| パスワード・パスフレーズを尋ねる askpass のダイアログ | ✓ | ✓ | ✓ | ✓ | n/a | △ | VSCode: VSCode の入力欄。拡張が git・ssh・共有の daemon に渡すスクリプトから尋ねる。<br>CLI: ダイアログはアプリのもの。<br>TUI: 一番下の行で。Unix だけ。 |
+| パスワード・パスフレーズを尋ねる askpass のダイアログ | ✓ | ✓ | ✓ | ✓ | n/a | △ | VSCode: VSCode の入力欄。拡張が git・ssh・共有の daemon に渡すスクリプトから尋ねる。<br>CLI: ダイアログはアプリのもの。<br>TUI: 一番下の行で。Unix だけ。Windows では git の credential helper・ssh-agent・pinentry に任せ、止まったらそう言う。 |
 | 署名の確かめ（この機械か、ホストの鍵） | ✓ | ✓ | ✓ | n/a | △ | ✓ | VSCode: 拡張は `ssh://` のリポジトリを開かない。Remote-SSH では拡張がホストで動くので、開くほかのリポジトリと同じく、git がホストの鍵で確かめる。<br>CLI: `show`・`refs --verify` で確かめ、選択はない。<br>TUI: 詳細の `S` で、リポジトリごとに（`amonhen/tui.json` に覚える）。署名の行に、どこで確かめたかを添える。 |
 
 ## 端末の FE（TUI）

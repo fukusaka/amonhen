@@ -5281,6 +5281,12 @@ impl App {
                 if name == "editRows" {
                     self.combining.clear();
                 }
+                // Windows では資格情報を尋ねない（git の credential helper・ssh-agent・pinentry に任せる）。尋ねられずに
+                // 止まったら、そう添える。
+                let error = match credential_hint(&error) {
+                    Some(hint) => format!("{hint}\n{error}"),
+                    None => error,
+                };
                 // 長い出力は、最初の行だけ。2 行以上なら、全部を `!` で出せる（アプリの Details）。
                 let line = error.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
                 let lines = error.lines().filter(|l| !l.trim().is_empty()).count();
@@ -11479,6 +11485,26 @@ fn reveal(path: &str) -> std::io::Result<()> {
         .map(|_| ())
 }
 
+/// Windows で、git や ssh がパスワード・パスフレーズを尋ねられずに止まったときに添える文（TUI は Windows では
+/// 尋ねない。ほかの OS は一番下の行で尋ねる）。当たらなければ None。
+fn credential_hint(error: &str) -> Option<String> {
+    if !cfg!(windows) {
+        return None;
+    }
+    let asked = [
+        "terminal prompts disabled",
+        "could not read Username",
+        "could not read Password",
+        "Permission denied (publickey",
+        "read_passphrase",
+    ];
+    asked.iter().any(|a| error.contains(a)).then(|| {
+        tr!(
+            "The TUI doesn’t ask for passwords on Windows: use a credential helper, ssh-agent or pinentry"
+        )
+    })
+}
+
 /// 打った場所: この機械のパスは、~ を広げて絶対パスに（アプリと同じく、リンクは解かない）。`ssh://`・`daemon:`
 /// はそのまま。
 fn local_location(location: &str) -> String {
@@ -12234,6 +12260,15 @@ mod tests {
             Some("abc123")
         );
         assert_eq!(app.host_options("ssh://you@dev/src").send_engine, None);
+    }
+
+    /// Windows では資格情報を尋ねないので、git・ssh が尋ねられずに止まったら、そう添える（ほかの OS は添えない）
+    #[test]
+    fn a_credential_failure_says_why_on_windows() {
+        let error =
+            "fatal: could not read Username for 'https://example.com': terminal prompts disabled";
+        assert_eq!(credential_hint(error).is_some(), cfg!(windows));
+        assert_eq!(credential_hint("fatal: not a git repository"), None);
     }
 
     #[test]

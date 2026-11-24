@@ -417,7 +417,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Through the shared daemon | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `-C daemon:<path>`.<br>TUI: `amonhen tui daemon:<path>`. |
 | Engine sent to a host when none fits | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: The bundled engine is used on the host the extension runs on.<br>Windows: Asks first, as in the other apps. |
 | Windows SSH hosts | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |
-| askpass dialog for passwords and passphrases | ✓ | ✓ | ✓ | ✓ | n/a | △ | VSCode: VSCode's input box, through a script the extension passes to git, ssh and the shared daemon.<br>CLI: The dialog belongs to the apps.<br>TUI: On the bottom line, on Unix only. |
+| askpass dialog for passwords and passphrases | ✓ | ✓ | ✓ | ✓ | n/a | △ | VSCode: VSCode's input box, through a script the extension passes to git, ssh and the shared daemon.<br>CLI: The dialog belongs to the apps.<br>TUI: On the bottom line, on Unix only; on Windows it's left to git's credential helpers, ssh-agent and pinentry, and a failure says so. |
 | Signature verification (this machine's keys or the host's) | ✓ | ✓ | ✓ | n/a | △ | ✓ | VSCode: The extension opens no `ssh://` repositories; under Remote-SSH it runs on the host, so git verifies there with the host's keys, as for any repository the extension opens.<br>CLI: Checked in `show` and `refs --verify`; no choice.<br>TUI: `S` in the details, per repository (kept in `amonhen/tui.json`); the signature line says where it was checked. |
 
 ## Terminal front end (TUI)
