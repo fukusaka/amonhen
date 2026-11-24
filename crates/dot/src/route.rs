@@ -304,6 +304,55 @@ impl Obstacles {
     }
 }
 
+/// dot 以外の配置の直角の道: 横・縦・横か縦・横・縦の Z、または L の形のうち、ほかのノードと題の箱に当たる数の
+/// いちばん少ないもの（同じなら Z を先に、長いほうの向きから出る）。両端の箱が縦か横に重なれば、その重なりの
+/// 中ほどを通る 1 本の直線（端はノードの中から始まり、外形で切られる）。`ha`・`hb` は両端の箱の大きさの半分。
+pub fn ortho_free(a: P, b: P, ha: P, hb: P, obstacles: &mut Obstacles, skip: &[usize]) -> Vec<P> {
+    let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+    let (mx, my) = ((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0);
+    let (lo_x, hi_x) = ((a.0 - ha.0).max(b.0 - hb.0), (a.0 + ha.0).min(b.0 + hb.0));
+    let (lo_y, hi_y) = ((a.1 - ha.1).max(b.1 - hb.1), (a.1 + ha.1).min(b.1 + hb.1));
+    if dx.abs() < 0.5 || dy.abs() < 0.5 {
+        return vec![a, b];
+    }
+    if dy.abs() >= dx.abs() && hi_x - lo_x > 2.0 {
+        let x = (lo_x + hi_x) / 2.0;
+        return vec![(x, a.1), (x, b.1)];
+    }
+    if hi_y - lo_y > 2.0 {
+        let y = (lo_y + hi_y) / 2.0;
+        return vec![(a.0, y), (b.0, y)];
+    }
+    let hvh = vec![a, (mx, a.1), (mx, b.1), b];
+    let vhv = vec![a, (a.0, my), (b.0, my), b];
+    let l1 = vec![a, (b.0, a.1), b];
+    let l2 = vec![a, (a.0, b.1), b];
+    let candidates = if dx.abs() >= dy.abs() {
+        [hvh, vhv, l1, l2]
+    } else {
+        [vhv, hvh, l2, l1]
+    };
+    let mut best: Option<(usize, Vec<P>)> = None;
+    for c in candidates {
+        let hits: usize = c
+            .windows(2)
+            .map(|w| {
+                let r = [
+                    w[0].0.min(w[1].0),
+                    w[0].1.min(w[1].1),
+                    w[0].0.max(w[1].0),
+                    w[0].1.max(w[1].1),
+                ];
+                obstacles.overlapping(r, skip).len()
+            })
+            .sum();
+        if best.as_ref().is_none_or(|(h, _)| hits < *h) {
+            best = Some((hits, c));
+        }
+    }
+    best.map(|(_, c)| c).unwrap_or_else(|| vec![a, b])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

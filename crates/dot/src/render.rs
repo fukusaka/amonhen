@@ -986,7 +986,24 @@ pub fn render(
         route::Obstacles::new(rects)
     };
     // splines=ortho の道筋（配置の座標）
-    let ortho_paths: Vec<Option<Vec<P>>> = if ortho {
+    let ortho_paths: Vec<Option<Vec<P>>> = if ortho && free {
+        model
+            .edges
+            .iter()
+            .enumerate()
+            .map(|(ei, e)| match &lay.routes[ei] {
+                Route::Path { points, .. } if points.len() >= 2 => Some(route::ortho_free(
+                    points[0],
+                    points[points.len() - 1],
+                    (lnodes[e.tail].w / 2.0, lnodes[e.tail].h / 2.0),
+                    (lnodes[e.head].w / 2.0, lnodes[e.head].h / 2.0),
+                    &mut obstacles,
+                    &[e.tail, e.head],
+                )),
+                _ => None,
+            })
+            .collect()
+    } else if ortho {
         let input: Vec<route::OrthoEdge> = model
             .edges
             .iter()
