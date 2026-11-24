@@ -7,7 +7,12 @@ becomes the GitHub Release notes.
 
 ## App and engine
 
-### Unreleased
+### [0.2.13] - 2026-11-24
+
+`amonhen tui` brings Amon Hen to the terminal, and History's right column is rebuilt: the changed files are the diff's
+own headers, with wider context, whole files, image comparison, ignored whitespace, wrapped lines and All Files with
+previews of images, SVGs and Markdown. History's edit mode works on History itself, where dragging a commit squashes or
+drops it, and merges fold on their own.
 
 #### Added
 
