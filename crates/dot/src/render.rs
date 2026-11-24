@@ -1478,7 +1478,20 @@ pub fn render(
             let extra = line_attrs(&st, pen);
             let known: Vec<(Option<Color>, Option<f64>)> =
                 colors.iter().filter(|c| c.0.is_some()).cloned().collect();
-            if !path.is_empty() {
+            if !path.is_empty() && has(&st, "tapered") {
+                // 太さ penwidth から細く: dir の forward は頭へ、back は尾へ、both は両端へ、none は同じ太さ
+                let taper = |s: f64| match dir_attr.as_str() {
+                    "back" => pen * s,
+                    "both" => pen * (1.0 - (2.0 * s - 1.0).abs()),
+                    "none" => pen,
+                    _ => pen * (1.0 - s),
+                };
+                edges_out.push_str(&format!(
+                    "<path d=\"{}\"{} stroke=\"none\"/>",
+                    curve::tapered(&path, taper),
+                    main_attr("fill")
+                ));
+            } else if !path.is_empty() {
                 if known.len() > 1 && known.iter().any(|c| c.1.is_some()) {
                     // 割合つき: 線に沿った区切り
                     let total = curve::total_length(&path);

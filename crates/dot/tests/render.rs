@@ -160,6 +160,21 @@ fn decorates_edge_labels() {
 }
 
 #[test]
+fn tapers_edges() {
+    let svg = render("digraph { a -> b [style=tapered, penwidth=7, color=blue]; c -> d [style=tapered, dir=none] }")
+        .unwrap()
+        .svg;
+    let edge = svg.split("data-id=\"a-&gt;b\"").nth(1).unwrap();
+    // 線ではなく塗った外形
+    assert!(edge.starts_with("><path d=\"M"), "{svg}");
+    assert!(
+        edge.contains("Z\" fill=\"#0000ff\" stroke=\"none\""),
+        "{svg}"
+    );
+    assert!(!svg.contains("fill=\"none\" stroke=\"#0000ff\""), "{svg}");
+}
+
+#[test]
 fn stripes_clusters() {
     let svg = render(
         "digraph { subgraph cluster_a { style=striped; fillcolor=\"red;0.5:green:blue\"; a; b } }",
