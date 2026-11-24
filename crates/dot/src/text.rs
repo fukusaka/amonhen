@@ -628,16 +628,13 @@ pub fn color_attr(name: &str, c: &Color) -> String {
 }
 
 /// 空白を SVG で縮めてしまう文字（両端の空白・続く空白）か。そうなら `xml:space="preserve"` を付ける。span の
-/// 並ぶ行（`single` でない）は span の両端の空白を描かずに間の送りにするので、続く空白だけを見る。
+/// 並ぶ行はいつも付ける（librsvg は `<tspan>` の両端の空白を、間の空白でも縮めてしまう）。
 fn needs_preserve(line: &Line, single: bool) -> bool {
-    line.spans.iter().any(|s| {
-        let t = if single {
-            s.text.as_str()
-        } else {
-            s.text.trim_matches(' ')
-        };
-        t.contains("  ") || t.starts_with(' ') || t.ends_with(' ')
-    })
+    !single
+        || line.spans.iter().any(|s| {
+            let t = s.text.as_str();
+            t.contains("  ") || t.starts_with(' ') || t.ends_with(' ')
+        })
 }
 
 fn span_attrs(font: &Font, root: &Font, out: &mut String) {
@@ -663,10 +660,22 @@ fn span_attrs(font: &Font, root: &Font, out: &mut String) {
     {
         out.push_str(&color_attr("fill", c));
     }
+    let lines: Vec<&str> = [
+        (font.underline, "underline"),
+        (font.overline, "overline"),
+        (font.strike, "line-through"),
+    ]
+    .iter()
+    .filter(|(on, _)| *on)
+    .map(|(_, name)| *name)
+    .collect();
+    if !lines.is_empty() {
+        out.push_str(&format!(" text-decoration=\"{}\"", lines.join(" ")));
+    }
 }
 
-/// 下線・上線・打ち消し線を、文字（左 `left`・幅 `w`・基線 `base`）に添える線で描く（CoreSVG は
-/// `text-decoration` を読まない）。色は文字と同じ。
+/// 下線・上線・打ち消し線を、文字（左 `left`・幅 `w`・基線 `base`）に添える線で描く。色は文字と同じ。CoreSVG は
+/// `text-decoration` を読まないので、その代わり（`data-coresvg-only` の組に入れ、librsvg には渡さない）。
 fn decorations(
     out: &mut String,
     left: f64,
@@ -713,6 +722,12 @@ fn decorations(
 /// 文字を (cx, cy) を中心に書く。`box_w` は寄せの幅（ラベルより広い枠の中で左・右に寄せる）。`root` はまわりの
 /// `<text>` の書体（色・大きさ）。`ink` は文が色を決めていないときの文字の色（下の塗りで読めるように。表の
 /// `bgcolor` があれば表の中ではそちらが勝つ）。
+///
+/// 飾りの違う span が並ぶ行は、1 つの `<text>` に流れる `<tspan>`（x なし）で書き、飾りの線は `text-decoration`
+/// にする。描き手の書体が測りより広くても、span の間の空白はつぶれない（librsvg）。CoreSVG は `<tspan>` の飾りも
+/// `text-decoration` も読まないので、アプリは span ごとの `<text>` に分けて描く（core の `svgcss`）。そのために
+/// 各 `<tspan>` に測った左端（両端の空白を除いた文字の左）を `data-x` で添え、飾りの線を `data-coresvg-only` の
+/// `<g>` に入れて添える。
 pub fn text_svg(
     text: &Text,
     cx: f64,
@@ -741,6 +756,8 @@ pub fn text_svg(
     };
     let mut top = cy - text.height / 2.0;
     let half = box_w.max(text.width) / 2.0;
+    // CoreSVG だけが描く飾りの線
+    let mut lines = String::new();
     for line in &text.lines {
         let base = top + line.height / 2.0 + line.size * 0.35;
         top += line.height;
@@ -748,15 +765,16 @@ pub fn text_svg(
             continue;
         }
         let single = line.spans.len() == 1 && !line.spans[0].font.sub && !line.spans[0].font.sup;
-        // 飾りの違う span が並ぶ行は、span ごとに左の x を書く（CoreSVG は `<tspan>` の飾りを読まないので、
-        // アプリは span ごとの `<text>` に分ける。分けるには x が要る）
-        let (x, anchor) = match (line.just, single) {
-            (Just::Center, true) => (cx, "middle"),
-            (Just::Left, true) => (cx - half, "start"),
-            (Just::Right, true) => (cx + half, "end"),
-            (Just::Center, false) => (cx - line.width / 2.0, "start"),
-            (Just::Left, false) => (cx - half, "start"),
-            (Just::Right, false) => (cx + half - line.width, "start"),
+        let (x, anchor) = match line.just {
+            Just::Center => (cx, "middle"),
+            Just::Left => (cx - half, "start"),
+            Just::Right => (cx + half, "end"),
+        };
+        // 測った行の左端
+        let mut at = match line.just {
+            Just::Center => cx - line.width / 2.0,
+            Just::Left => cx - half,
+            Just::Right => cx + half - line.width,
         };
         // 1 つの span の行は span の色を `<text>` に書くので、そのときは塗りの上の色を書かない
         let own_color = single && line.spans[0].font.color.is_some();
@@ -777,16 +795,11 @@ pub fn text_svg(
             out.push('>');
             out.push_str(&esc(&span.text));
             out.push_str("</text>");
-            let start = match anchor {
-                "middle" => x - span.width / 2.0,
-                "end" => x - span.width,
-                _ => x,
-            };
             let lead = span.text.len() - span.text.trim_start_matches(' ').len();
             let drawn = span.text.trim_matches(' ');
             decorations(
-                &mut out,
-                start + measure(&" ".repeat(lead), &span.font),
+                &mut lines,
+                at + measure(&" ".repeat(lead), &span.font),
                 measure(drawn, &span.font),
                 base,
                 &span.font,
@@ -796,25 +809,14 @@ pub fn text_svg(
             continue;
         }
         out.push('>');
-        let mut lines = String::new();
         let mut shifted = 0.0f64;
-        let mut at = x;
         for span in &line.spans {
-            // span の両端の空白は描かずに送りだけにする（分けた `<text>` の両端の空白は、描き手によって
-            // 縮めたり残したりするので、位置と描く文字がずれる）
+            // span の文はそのまま（空白も）流す。`data-x` は両端の空白を除いた文字の左
             let drawn = span.text.trim_matches(' ');
             let lead = span.text.len() - span.text.trim_start_matches(' ').len();
-            let left = at;
+            let left = at + measure(&" ".repeat(lead), &span.font);
             at += span.width;
-            if drawn.is_empty() {
-                continue;
-            }
-            let left = if lead > 0 {
-                left + measure(&" ".repeat(lead), &span.font)
-            } else {
-                left
-            };
-            out.push_str(&format!("<tspan x=\"{}\"", num(left)));
+            out.push_str(&format!("<tspan data-x=\"{}\"", num(left)));
             span_attrs(&span.font, root, &mut out);
             let want = if span.font.sub {
                 span.font.size * 0.3
@@ -828,7 +830,7 @@ pub fn text_svg(
                 shifted = want;
             }
             out.push('>');
-            out.push_str(&esc(drawn));
+            out.push_str(&esc(&span.text));
             out.push_str("</tspan>");
             decorations(
                 &mut lines,
@@ -841,7 +843,11 @@ pub fn text_svg(
             );
         }
         out.push_str("</text>");
+    }
+    if !lines.is_empty() {
+        out.push_str("<g data-coresvg-only=\"1\">");
         out.push_str(&lines);
+        out.push_str("</g>");
     }
     out
 }
@@ -940,7 +946,8 @@ mod tests {
 
     #[test]
     fn draws_decorations_as_lines() {
-        // CoreSVG は text-decoration を読まないので、線を添える（色は文字の色）
+        // 文字には text-decoration を書き、CoreSVG（読まない）のための線を `data-coresvg-only` の組に添える
+        // （色は文字の色）
         let font = Font::new(14.0);
         let t = html_label(
             "plain <u>under</u> <font color=\"red\"><s>gone</s></font>",
@@ -948,8 +955,17 @@ mod tests {
             None,
         );
         let svg = text_svg(&t, 0.0, 0.0, 0.0, &font, "", Some("#1f1f1f"));
-        assert!(!svg.contains("text-decoration"), "{svg}");
-        let paths: Vec<&str> = svg.split("<path").skip(1).collect();
+        assert!(
+            svg.contains("text-decoration=\"underline\">under</tspan>"),
+            "{svg}"
+        );
+        assert!(
+            svg.contains("text-decoration=\"line-through\">gone</tspan>"),
+            "{svg}"
+        );
+        let (text, group) = svg.split_once("<g data-coresvg-only=\"1\">").unwrap();
+        assert!(!text.contains("<path"), "{svg}");
+        let paths: Vec<&str> = group.split("<path").skip(1).collect();
         assert_eq!(paths.len(), 2, "{svg}");
         assert!(paths[0].contains("stroke=\"#1f1f1f\""), "{svg}");
         assert!(paths[1].contains("stroke=\"#ff0000\""), "{svg}");
@@ -958,9 +974,37 @@ mod tests {
         assert!(paths[0].contains(&format!("h{}", num(w))), "{svg}");
         let t = html_label("<o>top</o>", &font, None);
         let svg = text_svg(&t, 10.0, 0.0, 0.0, &font, "", None);
+        assert!(
+            svg.contains("text-decoration=\"overline\">top</text>"),
+            "{svg}"
+        );
         assert!(svg.contains("stroke=\"var(--_fg)\""), "{svg}");
         let w = measure("top", &font);
         assert!(svg.contains(&format!("M{},", num(10.0 - w / 2.0))), "{svg}");
+    }
+
+    #[test]
+    fn mixed_lines_flow_with_hints() {
+        // span の並ぶ行は 1 つの `<text>` に流れる `<tspan>`（x なし、空白も文の中）で書き、左端を `data-x` で添える
+        let font = Font::new(14.0);
+        let t = html_label("<b>bold</b> and <i>italic</i>", &font, None);
+        let svg = text_svg(&t, 0.0, 0.0, 0.0, &font, "", None);
+        assert_eq!(svg.matches("<text").count(), 1, "{svg}");
+        assert!(svg.contains("text-anchor=\"middle\""), "{svg}");
+        assert!(!svg.contains("<tspan x="), "{svg}");
+        assert!(svg.contains(">bold</tspan><tspan data-x="), "{svg}");
+        assert!(svg.contains("> and </tspan>"), "{svg}");
+        let left = -t.lines[0].width / 2.0;
+        assert!(
+            svg.contains(&format!("<tspan data-x=\"{}\"", num(left))),
+            "{svg}"
+        );
+        let and = left + measure("bold", &t.lines[0].spans[0].font) + measure(" ", &font);
+        assert!(
+            svg.contains(&format!("<tspan data-x=\"{}\">", num(and))),
+            "{svg}"
+        );
+        assert!(svg.contains("xml:space=\"preserve\""), "{svg}");
     }
 
     #[test]

@@ -714,73 +714,118 @@ mod tests {
         assert!(light.contains(">Start</text>"));
     }
 
+    /// 太字・斜体と、下線・色の混ざる DOT のラベル（どちらも 1 行）。
+    #[cfg(feature = "diagrams")]
+    const MIXED_DOT: [&str; 2] = [
+        "digraph { a [label=<<b>bold</b> and <i>italic</i>>] }",
+        "digraph { a [label=<plain <u>under</u> <font color=\"red\">red</font>>] }",
+    ];
+
     #[cfg(feature = "diagrams")]
     #[test]
-    fn dot_labels_keep_mixed_styles_in_one_line() {
-        // CoreSVG は `<tspan>` の飾りを読まないので、太字・斜体の span は別々の `<text>` に分ける
-        let src = "digraph { a [label=<<b>bold</b> and <i>italic</i>>] }";
-        let Some(Drawn::Svg(svg, None)) = draw("dot", src) else {
-            panic!("not drawn");
+    fn dot_labels_flow_for_librsvg() {
+        // librsvg は `<tspan>` の飾りも text-decoration も読むので、span の並ぶ行は 1 つの `<text>` に流す（書体が
+        // 測りより広くても、span の間の空白はつぶれない）。CoreSVG だけの線と手がかりは渡さない
+        for (src, words) in MIXED_DOT.into_iter().zip([
+            &["bold", " and ", "italic"][..],
+            &["plain ", "under", " ", "red"],
+        ]) {
+            let Some(Drawn::Svg(svg, None)) = draw("dot", src) else {
+                panic!("not drawn");
+            };
+            let flat = colorize(&svg, &palette(Scheme::Pele, false, &theme()), false).unwrap();
+            assert!(
+                !flat.contains("data-coresvg-only") && !flat.contains("data-x"),
+                "{flat}"
+            );
+            assert!(!flat.contains("skewX"), "{flat}");
+            let labels: Vec<&str> = flat
+                .split("<text")
+                .skip(1)
+                .filter(|t| t.contains("<tspan"))
+                .collect();
+            assert_eq!(labels.len(), 1, "{flat}");
+            let label = labels[0].split("</text>").next().unwrap();
+            // librsvg は `<tspan>` の両端の空白を縮めるので、空白を残させる
+            assert!(label.contains("text-anchor=\"middle\""), "{flat}");
+            assert!(label.contains("xml:space=\"preserve\""), "{flat}");
+            assert!(!label.contains("<tspan x="), "{flat}");
+            let spans: Vec<&str> = label
+                .split("<tspan")
+                .skip(1)
+                .map(|t| t.split('>').nth(1).unwrap().split('<').next().unwrap())
+                .collect();
+            assert_eq!(spans, words, "{flat}");
+        }
+        let flat = |src: &str| {
+            let Some(Drawn::Svg(svg, None)) = draw("dot", src) else {
+                panic!("not drawn");
+            };
+            colorize(&svg, &palette(Scheme::Pele, false, &theme()), false).unwrap()
         };
-        let flat = colorize(&svg, &palette(Scheme::Pele, false, &theme()), false).unwrap();
-        assert!(!flat.contains("<tspan"), "{flat}");
-        let texts: Vec<&str> = flat.split("<text").skip(1).collect();
-        let with = |word: &str| {
-            texts
-                .iter()
-                .find(|t| t.contains(&format!(">{word}</text>")))
-                .unwrap_or_else(|| panic!("{word}: {flat}"))
-        };
-        assert!(with("bold").contains("font-weight=\"700\""));
-        assert!(with("italic").contains("font-style=\"italic\""));
-        assert!(!with("italic").contains("font-weight"));
-        assert!(!with("and").contains("font-weight") && !with("and").contains("font-style"));
+        let a = flat(MIXED_DOT[0]);
+        assert!(a.contains("font-weight=\"700\">bold</tspan>"), "{a}");
+        assert!(a.contains("font-style=\"italic\">italic</tspan>"), "{a}");
+        let b = flat(MIXED_DOT[1]);
+        assert!(
+            b.contains("text-decoration=\"underline\">under</tspan>"),
+            "{b}"
+        );
+        assert!(b.contains("fill=\"#ff0000\">red</tspan>"), "{b}");
     }
 
     #[cfg(feature = "diagrams")]
     #[test]
-    fn dot_span_boundaries_keep_one_space() {
-        // 分けた `<text>` の両端の空白は描き手によって縮んだり残ったりするので、空白は描かずに位置の間に置く。
-        // どの `<text>` も空白で始まり・終わらず、間はちょうど空白 1 つ分
+    fn dot_labels_split_for_coresvg() {
+        // CoreSVG は `<tspan>` の飾りも text-decoration も読まないので、span ごとの `<text>` に分け（左端は
+        // `data-x`）、下線は線で描く。分けた `<text>` の両端の空白は描き手によって縮んだり残ったりするので、空白は
+        // 描かずに位置の間に置く: どの `<text>` も空白で始まり・終わらず、間はちょうど空白 1 つ分
         use amonhen_pele::text::measurer::{default_measurer, style};
         let measure = |t: &str, st: u32| default_measurer().width(t, 14.0, st);
-        for (src, words) in [
-            (
-                "digraph { a [label=<<b>bold</b> and <i>italic</i>>] }",
-                [("bold", style::BOLD), ("and", 0), ("italic", 0)],
-            ),
-            (
-                "digraph { a [label=<plain <u>under</u> <font color=\"red\">red</font>>] }",
-                [("plain", 0), ("under", 0), ("red", 0)],
-            ),
-        ] {
+        for (src, words) in MIXED_DOT.into_iter().zip([
+            [("bold", style::BOLD), ("and", 0), ("italic", 0)],
+            [("plain", 0), ("under", 0), ("red", 0)],
+        ]) {
             let Some(Drawn::Svg(svg, None)) = draw("dot", src) else {
                 panic!("not drawn");
             };
-            for flat in [
-                colorize(&svg, &palette(Scheme::Pele, false, &theme()), false).unwrap(),
-                colorize_for_coresvg(&svg, &palette(Scheme::Pele, false, &theme()), false).unwrap(),
-            ] {
-                assert!(!flat.contains("<tspan"), "{flat}");
-                let texts: Vec<(f64, &str)> = flat
-                    .split("<text")
-                    .skip(1)
-                    .map(|t| {
-                        let x = t.split("x=\"").nth(1).unwrap().split('"').next().unwrap();
-                        let body = t.split('>').nth(1).unwrap().split('<').next().unwrap();
-                        (x.parse().unwrap(), body)
-                    })
-                    .collect();
+            let flat =
+                colorize_for_coresvg(&svg, &palette(Scheme::Pele, false, &theme()), false).unwrap();
+            assert!(!flat.contains("<tspan"), "{flat}");
+            assert!(
+                !flat.contains("text-decoration") && !flat.contains("data-x"),
+                "{flat}"
+            );
+            let texts: Vec<(&str, f64, &str)> = flat
+                .split("<text")
+                .skip(1)
+                .map(|t| {
+                    let x = t.split("x=\"").nth(1).unwrap().split('"').next().unwrap();
+                    let body = t.split('>').nth(1).unwrap().split('<').next().unwrap();
+                    (t.split('>').next().unwrap(), x.parse().unwrap(), body)
+                })
+                .collect();
+            assert_eq!(
+                texts.iter().map(|t| t.2).collect::<Vec<_>>(),
+                words.iter().map(|w| w.0).collect::<Vec<_>>(),
+                "{flat}"
+            );
+            for k in 1..texts.len() {
+                let (word, st) = words[k - 1];
+                let gap = texts[k].1 - texts[k - 1].1 - measure(word, st);
+                assert!((gap - measure(" ", 0)).abs() < 0.05, "{gap} {flat}");
+            }
+            for (open, x, word) in &texts {
+                assert!(open.contains("text-anchor=\"start\""), "{flat}");
                 assert_eq!(
-                    texts.iter().map(|t| t.1).collect::<Vec<_>>(),
-                    words.iter().map(|w| w.0).collect::<Vec<_>>(),
+                    open.contains("font-weight=\"700\""),
+                    *word == "bold",
                     "{flat}"
                 );
-                for k in 1..texts.len() {
-                    let (word, st) = words[k - 1];
-                    let gap = texts[k].0 - texts[k - 1].0 - measure(word, st);
-                    assert!((gap - measure(" ", 0)).abs() < 0.05, "{gap} {flat}");
-                }
+                assert_eq!(open.contains("skewX"), *word == "italic", "{flat}");
+                // 下線は文字の左端から文字の幅だけ
+                let line = format!("<path d=\"M{x},");
+                assert_eq!(flat.contains(&line), *word == "under", "{flat}");
             }
         }
     }
