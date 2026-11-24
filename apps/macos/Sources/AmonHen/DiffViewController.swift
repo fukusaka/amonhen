@@ -2022,6 +2022,16 @@ final class CommitDetailViewController: NSSplitViewController, NSTextViewDelegat
 
     required init?(coder: NSCoder) { fatalError() }
 
+    private var restoredExpand = false
+
+    override func viewWillAppear() {
+        super.viewWillAppear()
+        // 境目の位置と一緒に、差分を畳んだ（コミット情報だけを表示した）ことも覚えてしまうので、開くときは戻す。
+        guard !restoredExpand else { return }
+        restoredExpand = true
+        if isExpanded { toggleExpanded() }
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
         // 上に詳細（メッセージとメタ情報）、下に差分。境目の位置は覚えておく。変更ファイルの一覧は差分の
@@ -2059,6 +2069,14 @@ final class CommitDetailViewController: NSSplitViewController, NSTextViewDelegat
             self?.onSearch?("author:\"\(name.replacingOccurrences(of: "\"", with: ""))\"")
         }
         headerContainer.addSubview(peopleStrip)
+        // 右上（縦のスクロールバーの左）にいつも置き、欄の大きさが変わっても右上に保つ。
+        updateExpandButton()
+        expandButton.sizeToFit()
+        expandButton.frame.origin = NSPoint(
+            x: headerContainer.bounds.width - expandButton.frame.width - 18,
+            y: headerContainer.bounds.height - expandButton.frame.height - 6)
+        expandButton.autoresizingMask = [.minXMargin, .minYMargin]
+        headerContainer.addSubview(expandButton)
         styleControl.selectedSegment = isPreview ? CommitHeaderStyle.standard.rawValue : CommitHeaderStyle.saved.rawValue
         if CommitHeaderStyle.saved == .compact, !isPreview {
             // 簡潔で始めるなら、最初から低くしておく。
@@ -2699,10 +2717,13 @@ final class CommitDetailViewController: NSSplitViewController, NSTextViewDelegat
 
     override func splitViewDidResizeSubviews(_ notification: Notification) {
         super.splitViewDidResizeSubviews(notification)
+        // 仕切りを下まで引いて差分を畳んだときも、ボタンを「戻す」にする。
+        updateExpandButton()
         // 仕切りをドラッグしたときだけ、通知に仕切りの番号が入る。
         guard !settingHeaderHeight, !isExpanded, rewordEditor == nil,
               (notification.userInfo?["NSSplitViewDividerIndex"] as? Int) == 0,
-              NSApp.currentEvent?.type == .leftMouseDragged || NSApp.currentEvent?.type == .leftMouseUp
+              // 引いている間だけ（ボタン・メニューで差分を畳んだときの、マウスを離した時点の高さは覚えない）。
+              NSApp.currentEvent?.type == .leftMouseDragged
         else { return }
         keptHeaderHeight = splitViewItems[0].viewController.view.frame.height
     }
@@ -2829,6 +2850,30 @@ final class CommitDetailViewController: NSSplitViewController, NSTextViewDelegat
         guard splitViewItems.count > 1 else { return }
         let expand = !isExpanded
         for item in splitViewItems.dropFirst() { item.isCollapsed = expand }
+        updateExpandButton()
+        // 戻したら、高さを前のとおりに（合わせるか、仕切りを動かした位置）。
+        if !expand { scheduleHeaderFit() }
+    }
+
+    /// コミット情報の右上に置く、コミット情報だけを表示する・戻すボタン（表示の設定の「コミット情報だけを表示」と
+    /// 同じ）。表示の設定は畳んだ差分の側の帯にあり、広げている間はそこから戻せないので、いつもここに置く。
+    private lazy var expandButton: NSButton = {
+        let button = NSButton(image: NSImage(), target: self, action: #selector(toggleExpanded))
+        button.bezelStyle = .accessoryBarAction
+        button.controlSize = .small
+        button.isBordered = false
+        button.imagePosition = .imageOnly
+        return button
+    }()
+
+    /// 広げているかでアイコンとツールチップを替える。
+    private func updateExpandButton() {
+        let expanded = isExpanded
+        let title = expanded ? L("Restore Commit Details") : L("Show Only Commit Details")
+        expandButton.image = NSImage(
+            systemSymbolName: expanded ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
+            accessibilityDescription: title)
+        expandButton.toolTip = title
     }
 
     @objc private func styleChanged() {
@@ -2843,7 +2888,11 @@ final class CommitDetailViewController: NSSplitViewController, NSTextViewDelegat
     /// スクロールするか、⤢ で広げる）。コミットを選ぶたび・見せ方を変えるたびに合わせる。
     private func fitHeaderToContent() {
         // 仕切りを手で動かしたら、その位置を保つ（表示の設定の「詳細をメッセージに合わせる」で戻す）。
-        if let kept = keptHeaderHeight {
+        if var kept = keptHeaderHeight {
+            // 差分の欄の最小の高さは残す（前の版が差分を畳んだときの高さを覚えていても、戻したらまた畳まない）。
+            if splitViewItems.count > 1, splitView.bounds.height > 0 {
+                kept = min(kept, splitView.bounds.height - splitViewItems[1].minimumThickness - splitView.dividerThickness)
+            }
             if !isExpanded, rewordEditor == nil, abs(splitViewItems[0].viewController.view.frame.height - kept) > 1 {
                 setHeaderHeight(kept)
             }

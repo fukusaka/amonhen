@@ -7,6 +7,13 @@ becomes the GitHub Release notes.
 
 ## App and engine
 
+### Unreleased
+
+#### Fixed
+
+- macOS: Show Only Commit Details can be undone again: a button at the top right of the commit details switches it, since
+  the View Options menu is hidden with the diff. It's no longer kept across launches or taken as a dragged height.
+
 ### [0.2.13] - 2026-11-24
 
 `amonhen tui` brings Amon Hen to the terminal, and History's right column is rebuilt: the changed files are the diff's
