@@ -109,7 +109,7 @@ impl Git {
         cmd.env("GIT_OPTIONAL_LOCKS", "0");
         let repo = self.workdir.to_string_lossy().into_owned();
         let name = format!("git {}", args.join(" "));
-        let out = amonhen_model::activity::track("git", &repo, name, || cmd.output())?;
+        let out = amonhen_model::activity::track("git", &repo, name, || crate::output(&mut cmd))?;
         // 終了コードは、きれいにマージできれば 0、コンフリクトすれば 1。1 は名前が読めないときにも返るので、
         // 先頭の木の ID で見分ける。出力は 木の ID、コンフリクトするファイル（-z で NUL 区切り）。
         let mut fields = out.stdout.split(|&b| b == 0);
@@ -1207,7 +1207,7 @@ impl Operations for Git {
         // 消す前に何を消すかを見せるので、git clean 自身に聞く（-X の決め方をまねない）。文は英語で読む。
         let mut cmd = self.command(&["-c", "core.quotePath=false", "clean", "-n", "-d", "-X"]);
         cmd.env("LC_ALL", "C").env("GIT_OPTIONAL_LOCKS", "0");
-        let out = cmd.output()?;
+        let out = crate::output(&mut cmd)?;
         if !out.status.success() {
             return Err(String::from_utf8_lossy(&out.stderr)
                 .trim()

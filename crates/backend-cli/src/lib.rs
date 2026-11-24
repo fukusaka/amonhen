@@ -489,6 +489,40 @@ fn index_locked(message: &str) -> bool {
     message.contains("index.lock") && message.contains("File exists")
 }
 
+/// 設定のファイルが読めずに止まった git をやり直すまでの待ち。Windows の git は `.git/config` を `config.lock` で
+/// 置き換えるので、ほかの git が書き換えているその一瞬に読みにいった git は、開けずに何もしないまま止まる。
+const UNREADABLE_CONFIG_WAITS: [Duration; 3] = [
+    Duration::from_millis(50),
+    Duration::from_millis(150),
+    Duration::from_millis(400),
+];
+
+/// 設定のファイルが読めずに git が止まったら、少し待ってやり直す（3 回まで）。そのときの git はまだ何もしていない
+/// ので、やり直してよい。ほかの失敗はやり直さない。
+fn retry_on_unreadable_config(
+    mut once: impl FnMut() -> std::io::Result<std::process::Output>,
+) -> std::io::Result<std::process::Output> {
+    for wait in UNREADABLE_CONFIG_WAITS {
+        let out = once()?;
+        if out.status.success() || !config_unreadable(&out.stderr) {
+            return Ok(out);
+        }
+        std::thread::sleep(wait);
+    }
+    once()
+}
+
+/// `cmd.output()` で、設定のファイルが読めずに止まったらやり直す。
+pub(crate) fn output(cmd: &mut Command) -> std::io::Result<std::process::Output> {
+    retry_on_unreadable_config(|| cmd.output())
+}
+
+/// ほかの git が書き換えている最中で、設定のファイルが読めなかった。
+fn config_unreadable(stderr: &[u8]) -> bool {
+    String::from_utf8_lossy(stderr)
+        .contains("unknown error occurred while reading the configuration files")
+}
+
 /// git を実行し、Activity に記録する（どのリポジトリで、何を、どれだけかかったか）。
 /// 作業ツリーごとの、書き込みの鍵。git の書き込みは共有で取り（同時に動いてよい）、status の結果を index に
 /// 書き残すのは独り占めできたときだけにする（書き残すときは index の鍵を取るので、同じエンジンの書き込みと重なると、
@@ -598,7 +632,7 @@ fn run_lenient(mut cmd: Command) -> Result<(bool, Vec<u8>, Vec<u8>)> {
     }
     amonhen_model::activity::track_with("git", &repo, label, |seq| {
         cmd.stdin(Stdio::null());
-        let out = cmd.output()?;
+        let out = output(&mut cmd)?;
         let err = String::from_utf8_lossy(&out.stderr);
         if !err.trim().is_empty() {
             amonhen_model::activity::set_output(seq, err.trim());
@@ -884,14 +918,16 @@ fn spawn_with_stderr(mut cmd: Command, input: Option<&[u8]>) -> Result<(Vec<u8>,
     } else {
         Stdio::null()
     });
-    let mut child = cmd.spawn()?;
-    if let Some(input) = input {
-        // 大きな入力で詰まらないよう、書き込みは別のスレッドで行う。
-        let mut stdin = child.stdin.take().unwrap();
-        let input = input.to_vec();
-        std::thread::spawn(move || stdin.write_all(&input));
-    }
-    let out = child.wait_with_output()?;
+    let out = retry_on_unreadable_config(|| {
+        let mut child = cmd.spawn()?;
+        if let Some(input) = input {
+            // 大きな入力で詰まらないよう、書き込みは別のスレッドで行う。
+            let mut stdin = child.stdin.take().unwrap();
+            let input = input.to_vec();
+            std::thread::spawn(move || stdin.write_all(&input));
+        }
+        child.wait_with_output()
+    })?;
     if !out.status.success() {
         let mut message = String::from_utf8_lossy(&out.stderr).trim().to_owned();
         // commit と merge は、失敗のわけ（何も stage していない、など）を標準出力の最後に書く。
@@ -1141,6 +1177,59 @@ mod tests {
             git.write(args).unwrap();
         }
         (tmp, git)
+    }
+
+    /// `stderr` を書いて `code` で終わる命令の、終わった結果。
+    fn finished(code: i32, stderr: &str) -> std::process::Output {
+        #[cfg(unix)]
+        let mut cmd = amonhen_model::process::command("sh");
+        #[cfg(unix)]
+        cmd.args([
+            "-c",
+            &format!("printf '%s' \"$0\" >&2; exit {code}"),
+            stderr,
+        ]);
+        #[cfg(windows)]
+        let mut cmd = amonhen_model::process::command("cmd");
+        #[cfg(windows)]
+        cmd.args(["/C", &format!("(echo {stderr})>&2 & exit {code}")]);
+        cmd.output().unwrap()
+    }
+
+    #[test]
+    fn retries_only_when_the_config_could_not_be_read() {
+        let unreadable = "warning: unable to access '.git/config': Permission denied / fatal: unknown error occurred while reading the configuration files";
+        // 2 回読めずに止まり、3 回目に通る。
+        let mut runs = 0;
+        let out = retry_on_unreadable_config(|| {
+            runs += 1;
+            Ok(if runs < 3 {
+                finished(128, unreadable)
+            } else {
+                finished(0, "")
+            })
+        })
+        .unwrap();
+        assert!(out.status.success());
+        assert_eq!(runs, 3);
+        // 読めないままなら、3 回やり直してから失敗を返す。
+        let mut runs = 0;
+        let out = retry_on_unreadable_config(|| {
+            runs += 1;
+            Ok(finished(128, unreadable))
+        })
+        .unwrap();
+        assert!(!out.status.success());
+        assert_eq!(runs, 1 + UNREADABLE_CONFIG_WAITS.len());
+        // ほかの失敗はやり直さない。
+        let mut runs = 0;
+        let out = retry_on_unreadable_config(|| {
+            runs += 1;
+            Ok(finished(128, "fatal: not a git repository"))
+        })
+        .unwrap();
+        assert!(!out.status.success());
+        assert_eq!(runs, 1);
     }
 
     #[test]
