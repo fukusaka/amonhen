@@ -275,6 +275,19 @@ struct RootInput {
 }
 
 /// 前のタブの History で `f` を呼ぶ（窓の入力の処理から。入力を受けるのは前のタブだけ）。
+/// メッセージの中のコミット ID のリンク（`APP_LINK_PREFIX` の `rev:`）を押したら、前に出ている窓の History で
+/// そのコミットへ（macOS 版の `amonhen-rev:`）。窓はどれも同じ UI のスレッドなので、タブを作るたびに付け直してよい。
+fn install_app_links() {
+    windows_reactor::set_app_link_handler(|target| {
+        if let Some(rev) = target.strip_prefix("rev:") {
+            let rev = rev.to_owned();
+            with_history(|h| {
+                h.sender.send(Message::GoToRev(rev));
+            });
+        }
+    });
+}
+
 fn with_history(f: impl FnOnce(&mut HistoryView)) {
     if let Some(view) = HISTORY.with(|h| h.borrow().clone()) {
         f(&mut view.borrow_mut());
@@ -1200,6 +1213,8 @@ enum Message {
     MergePick(String),
     /// マージエディタの Base の欄を出すか。
     MergeBase(bool),
+    /// メッセージの中のコミット ID のリンク: 引けたら History でそのコミットを選ぶ（引けなければ鳴らす）。
+    GoToRev(String),
     MergeResult(String),
     /// マージエディタの Accept などの書き換えを戻す（true ならやり直す）。
     MergeUndo(bool),
@@ -1574,6 +1589,7 @@ impl Component for Root {
     type Message = Message;
 
     fn create(input: &RootInput, _context: &ComponentContext<Self>) -> Self {
+        install_app_links();
         if let Ok(path) = std::path::absolute(&input.tab.location)
             && path.join(".git").exists()
         {
@@ -6730,6 +6746,26 @@ impl Root {
             Message::MergeBase(on) => {
                 if let Some(state) = self.merge.as_mut() {
                     state.show_base = on;
+                }
+            }
+            Message::GoToRev(rev) => {
+                let command = json!({ "op": "resolveCommit", "rev": rev });
+                let reply: Value = self
+                    .repo
+                    .as_ref()
+                    .and_then(|repo| {
+                        serde_json::from_str(&repo.run_json(&command.to_string())).ok()
+                    })
+                    .unwrap_or_default();
+                match reply["text"]
+                    .as_str()
+                    .and_then(amonhen_model::Oid::from_hex)
+                {
+                    Some(id) => {
+                        self.show_page(Page::History);
+                        self.with_history(|h| h.select_commit(&id));
+                    }
+                    None => beep(),
                 }
             }
             Message::ActivityTab(Some(tab)) => {
@@ -18916,11 +18952,20 @@ fn match_count(text: &str, query: &str) -> usize {
     n
 }
 
-/// コミットのメッセージの件名と本文（詳細に出す形）。
-fn message_parts(info: &Value) -> (&str, &str) {
+/// コミットのメッセージの件名・本文・トレーラー（詳細に出す形）。トレーラー（`Signed-off-by:` など、コアが
+/// 最後の段落から読んだもの）があれば、本文からその段落を除いて別に返す（macOS 版の `bodyWithoutTrailers`）。
+fn message_parts(info: &Value) -> (&str, &str, &str) {
     let message = info["message"].as_str().unwrap_or_default().trim_end();
     let (subject, body) = message.split_once('\n').unwrap_or((message, ""));
-    (subject, body.trim())
+    let body = body.trim();
+    if info["trailers"].as_array().is_none_or(|t| t.is_empty()) {
+        return (subject, body, "");
+    }
+    match body.rsplit_once("\n\n") {
+        Some((body, trailers)) => (subject, body.trim_end(), trailers.trim()),
+        // 本文がトレーラーだけ。
+        None => (subject, "", body),
+    }
 }
 
 /// 詳細のメッセージの中の `query` の一致の数（件名と本文）。
@@ -18928,8 +18973,8 @@ fn message_match_count(info: Option<&Value>, query: &str) -> usize {
     let Some(info) = info.filter(|i| i["selection"].is_null()) else {
         return 0;
     };
-    let (subject, body) = message_parts(info);
-    match_count(subject, query) + match_count(body, query)
+    let (subject, body, trailers) = message_parts(info);
+    match_count(subject, query) + match_count(body, query) + match_count(trailers, query)
 }
 
 thread_local! {
@@ -18992,66 +19037,172 @@ thread_local! {
     static ISSUE_BASE: RefCell<Option<String>> = const { RefCell::new(None) };
 }
 
-/// メッセージの中の `#123` を、`base`（GitHub のリポジトリの URL）の Issue へのリンクにする（GTK4 版の `linked`
-/// の Issue の番号の分）。単語の途中・`&#` の後ろ・数字でないものはリンクにしない。リンクがなければ None。
-fn issue_links(text: &str, base: &str, bold: bool) -> Option<RichText> {
+/// メッセージの中のリンク（GTK4 版の `linked`、macOS 版の `linkReferences`）: `http://`・`https://` の URL は
+/// ブラウザで、7〜40 桁の 16 進（前後が英数字でないもの）はコミット ID とみなして History でそのコミットへ、
+/// `#123` は `base`（GitHub のリポジトリの URL。なければリンクにしない）の Issue へ。単語の途中・`&#` の後ろ・
+/// 数字でないものは Issue にしない。リンクの外の字は `plain` で作る。リンクがなければ None。
+fn message_links(
+    text: &str,
+    base: Option<&str>,
+    plain: &dyn Fn(&str) -> RichTextInline,
+) -> Option<Vec<RichTextInline>> {
     let bytes = text.as_bytes();
     let mut inlines = Vec::new();
     let mut at = 0;
     let mut i = 0;
-    let run = |text: &str| {
-        RichTextInline::Run(RichTextRun {
-            text: text.to_owned(),
-            is_bold: bold,
-            ..RichTextRun::default()
-        })
-    };
+    let mut linked = false;
+    let word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
     while i < bytes.len() {
-        let before_ok = i == 0 || {
-            let b = bytes[i - 1];
-            !(b.is_ascii_alphanumeric() || b == b'&' || b == b'_')
-        };
-        if bytes[i] == b'#' && before_ok {
+        let prev = (i > 0).then(|| bytes[i - 1]);
+        // (リンクの終わり, 先)
+        let found: Option<(usize, String)> = if (bytes[i..].starts_with(b"https://")
+            || bytes[i..].starts_with(b"http://"))
+            && !prev.is_some_and(word)
+        {
+            let mut end = i + bytes[i..]
+                .iter()
+                .take_while(|b| !b.is_ascii_whitespace() && **b != b'<' && **b != b'>')
+                .count();
+            // 文の終わりの句読点と閉じ括弧は URL に入れない。
+            while end > i && b".,;:!?)]}'\"".contains(&bytes[end - 1]) {
+                end -= 1;
+            }
+            Some((end, text[i..end].to_owned()))
+        } else if bytes[i] == b'#' && !prev.is_some_and(|b| word(b) || b == b'&') {
             let digits = bytes[i + 1..]
                 .iter()
                 .take_while(|b| b.is_ascii_digit())
                 .count();
             let end = i + 1 + digits;
-            let after_ok =
-                end == bytes.len() || !(bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_');
-            if digits > 0 && after_ok {
+            match base {
+                Some(base) if digits > 0 && !bytes.get(end).is_some_and(|b| word(*b)) => {
+                    Some((end, format!("{base}/issues/{}", &text[i + 1..end])))
+                }
+                _ => None,
+            }
+        } else if bytes[i].is_ascii_hexdigit()
+            && !prev.is_some_and(|b| b.is_ascii_alphanumeric() || b == b'/')
+        {
+            let run = bytes[i..]
+                .iter()
+                .take_while(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(*b))
+                .count();
+            let end = i + run;
+            ((7..=40).contains(&run) && !bytes.get(end).is_some_and(u8::is_ascii_alphanumeric))
+                .then(|| {
+                    (
+                        end,
+                        format!("{}rev:{}", windows_reactor::APP_LINK_PREFIX, &text[i..end]),
+                    )
+                })
+        } else {
+            None
+        };
+        match found {
+            Some((end, uri)) if end > i => {
                 if at < i {
-                    inlines.push(run(&text[at..i]));
+                    inlines.push(plain(&text[at..i]));
                 }
                 inlines.push(RichTextInline::Hyperlink(RichTextHyperlink {
                     text: text[i..end].to_owned(),
-                    uri: format!("{base}/issues/{}", &text[i + 1..end]),
+                    uri,
                 }));
+                linked = true;
                 at = end;
                 i = end;
-                continue;
             }
+            _ => i += text[i..].chars().next().map_or(1, char::len_utf8),
         }
-        i += 1;
     }
-    if at == 0 {
+    if !linked {
         return None;
     }
     if at < text.len() {
-        inlines.push(run(&text[at..]));
+        inlines.push(plain(&text[at..]));
     }
-    Some(RichText::single_paragraph(inlines))
+    Some(inlines)
+}
+
+/// トレーラーの欄（`Key: 値` を 1 行ずつ。`query` の一致があれば、`text`（元の段落）に色を付けて出す）。
+fn trailers_text(info: &Value, text: &str, query: &str, current: Option<usize>) -> View {
+    if let Some(runs) = highlighted_at(text, query, false, current) {
+        let key = match current {
+            Some(c) => format!("found-{c}"),
+            None => "found".to_owned(),
+        };
+        return View::keyed_fragment([(
+            key,
+            View::from(
+                RichTextBlock::new()
+                    .paragraphs(runs)
+                    .font_size(12.0)
+                    .text_wrapping(TextWrapping::Wrap)
+                    .margin(Thickness::new(0.0, 6.0, 0.0, 0.0)),
+            ),
+        )]);
+    }
+    let dim = Color::rgb(0x80, 0x80, 0x80);
+    let plain = |text: &str| {
+        RichTextInline::Run(RichTextRun {
+            text: text.to_owned(),
+            foreground: Some(dim),
+            ..RichTextRun::default()
+        })
+    };
+    let base = ISSUE_BASE.with(|b| b.borrow().clone());
+    let mut inlines = Vec::new();
+    for (i, trailer) in info["trailers"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .enumerate()
+    {
+        if i > 0 {
+            inlines.push(RichTextInline::LineBreak);
+        }
+        inlines.push(RichTextInline::Run(RichTextRun {
+            text: format!("{}: ", trailer["key"].as_str().unwrap_or_default()),
+            is_bold: true,
+            foreground: Some(dim),
+            ..RichTextRun::default()
+        }));
+        let value = trailer["value"].as_str().unwrap_or_default();
+        match message_links(value, base.as_deref(), &plain) {
+            Some(linked) => inlines.extend(linked),
+            None => inlines.push(plain(value)),
+        }
+    }
+    View::keyed_fragment([(
+        "linked".to_owned(),
+        View::from(
+            RichTextBlock::new()
+                .paragraphs(RichText::single_paragraph(inlines))
+                .font_size(12.0)
+                .text_wrapping(TextWrapping::Wrap)
+                .margin(Thickness::new(0.0, 6.0, 0.0, 0.0)),
+        ),
+    )])
 }
 
 /// メッセージの 1 つの欄（`query` の一致があれば色を付ける。なければ `#123` を Issue へのリンクに）。
 fn message_text(text: &str, query: &str, size: f64, bold: bool, current: Option<usize>) -> View {
     // 色を付けるときと付けないときで部品が違うので、鍵を分けて作り直させる（今の一致が動いたときも）。
     let runs = highlighted_at(text, query, bold, current);
+    let plain = |text: &str| {
+        RichTextInline::Run(RichTextRun {
+            text: text.to_owned(),
+            is_bold: bold,
+            ..RichTextRun::default()
+        })
+    };
     let linked = runs
         .is_none()
-        .then(|| ISSUE_BASE.with(|b| b.borrow().clone()))
+        .then(|| {
+            let base = ISSUE_BASE.with(|b| b.borrow().clone());
+            message_links(text, base.as_deref(), &plain)
+        })
         .flatten()
-        .and_then(|base| issue_links(text, &base, bold));
+        .map(RichText::single_paragraph);
     if let Some(linked) = linked {
         return View::keyed_fragment([(
             "linked".to_owned(),
@@ -19275,13 +19426,15 @@ fn details(
             rows.push(line("Pushed", text).into());
         }
     }
-    let (subject, body) = message_parts(info);
-    // 今の一致が件名の中か本文の中か。
+    let (subject, body, trailer_text) = message_parts(info);
+    // 今の一致が件名・本文・トレーラーのどれの中か。
     let in_subject = match_count(subject, query);
-    let (subject_current, body_current) = match current {
-        Some(c) if c < in_subject => (Some(c), None),
-        Some(c) => (None, Some(c - in_subject)),
-        None => (None, None),
+    let in_body = match_count(body, query);
+    let (subject_current, body_current, trailer_current) = match current {
+        Some(c) if c < in_subject => (Some(c), None, None),
+        Some(c) if c < in_subject + in_body => (None, Some(c - in_subject), None),
+        Some(c) => (None, None, Some(c - in_subject - in_body)),
+        None => (None, None, None),
     };
     rows.push(
         Border::new()
@@ -19290,6 +19443,10 @@ fn details(
     );
     if !body.is_empty() {
         rows.push(message_text(body, query, 13.0, false, body_current));
+    }
+    // トレーラーは本文の後に、薄く並べる（キーは少し太く。値の中の ID・`#123` はリンク。macOS 版と同じ）。
+    if !trailer_text.is_empty() {
+        rows.push(trailers_text(info, trailer_text, query, trailer_current));
     }
     // merge のコミットでは、下の変更が最初の親との差分だと書き添える（macOS 版・GTK4 版と同じ）。
     if merge_note && parents.len() > 1 {
@@ -19347,7 +19504,7 @@ fn brief_details(
         };
         meta.push(format!("{label} {}", short.join(", ")));
     }
-    let (subject, _) = message_parts(info);
+    let (subject, _, _) = message_parts(info);
     let panel = StackPanel::new()
         .spacing(4.0)
         .margin(Thickness::new(14.0, 10.0, 14.0, 10.0))
@@ -22700,15 +22857,47 @@ mod tests {
     }
 
     #[test]
-    fn issue_numbers_become_links() {
-        let base = "https://github.com/a/b";
-        let text = |rich: Option<RichText>| rich.map(|r| format!("{r:?}"));
-        assert!(
-            text(super::issue_links("Fixes #12, see", base, false))
-                .is_some_and(|t| t.contains("https://github.com/a/b/issues/12"))
+    fn messages_link_issues_commit_ids_and_urls() {
+        let base = Some("https://github.com/a/b");
+        let plain = |t: &str| RichTextInline::Run(RichTextRun::plain(t));
+        let links = |text: &str, base: Option<&str>| -> Vec<(String, String)> {
+            super::message_links(text, base, &plain)
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|i| match i {
+                    RichTextInline::Hyperlink(h) => Some((h.text, h.uri)),
+                    _ => None,
+                })
+                .collect()
+        };
+        assert_eq!(
+            links("Fixes #12, see", base),
+            [(
+                "#12".to_owned(),
+                "https://github.com/a/b/issues/12".to_owned()
+            )]
         );
-        // 単語の途中・`&#` の後ろ・数字でないものはリンクにしない。
-        assert!(super::issue_links("a#1 &#38; #x", base, false).is_none());
+        // GitHub でなければ Issue にしない。
+        assert!(links("Fixes #12", None).is_empty());
+        // 単語の途中・`&#` の後ろ・数字でないものは Issue にしない。
+        assert!(links("a#1 &#38; #x", base).is_empty());
+        // 7〜40 桁の 16 進はコミット ID（短いもの・単語の途中・パスの中・大文字は除く）。
+        let rev = format!("{}rev:", windows_reactor::APP_LINK_PREFIX);
+        assert_eq!(
+            links(
+                "Reverts 1a2b3c4d (see abc123, x1a2b3c4d, a/1a2b3c4d, 1A2B3C4D).",
+                None
+            ),
+            [("1a2b3c4d".to_owned(), format!("{rev}1a2b3c4d"))]
+        );
+        // URL は文の終わりの句読点を含めない。中の 16 進はコミット ID にしない。
+        assert_eq!(
+            links("See https://example.com/c/1a2b3c4d5e. Done", None),
+            [(
+                "https://example.com/c/1a2b3c4d5e".to_owned(),
+                "https://example.com/c/1a2b3c4d5e".to_owned()
+            )]
+        );
     }
 
     use super::*;
@@ -22723,6 +22912,19 @@ mod tests {
         assert_eq!(match_count("Fix", ""), 0);
         let info = serde_json::json!({ "message": "Fix bug\n\nThe bug and another bug\n" });
         assert_eq!(message_match_count(Some(&info), "bug"), 3);
-        assert_eq!(message_parts(&info), ("Fix bug", "The bug and another bug"));
+        assert_eq!(
+            message_parts(&info),
+            ("Fix bug", "The bug and another bug", "")
+        );
+        // トレーラーは本文から分ける（検索の数には入る）。
+        let info = serde_json::json!({
+            "message": "Fix bug\n\nThe bug.\n\nReported-by: bug finder\n",
+            "trailers": [{ "key": "Reported-by", "value": "bug finder" }],
+        });
+        assert_eq!(
+            message_parts(&info),
+            ("Fix bug", "The bug.", "Reported-by: bug finder")
+        );
+        assert_eq!(message_match_count(Some(&info), "bug"), 3);
     }
 }
