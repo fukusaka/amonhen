@@ -2071,6 +2071,8 @@
 "Zoom Out" = "縮小";
 "Zoom In" = "拡大";
 "Zoom to Fit" = "合わせる";
+"Darken the Checkerboard" = "市松模様を暗く";
+"Lighten the Checkerboard" = "市松模様を明るく";
 "Actual Size (100%) or Zoom to Fit" = "実際の大きさ（100%）と合わせるを切り替える";
 "Fit" = "合わせる";
 "Picture" = "絵";

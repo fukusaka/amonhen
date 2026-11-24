@@ -1099,6 +1099,21 @@ uint8_t *amonhen_svg_preview(const uint8_t *data,
                              char **info);
 
 /**
+ * 透けた絵の下の市松模様を暗くするのが既定か（コアの `checker::Tone`）。`pixels` は `height` 行 × `stride` バイトの、
+ * 不透明度を掛けた RGBA（`bgra` なら BGRA）の画素。比べる 2 枚は 1 つの画素の並びに並べて渡す。`transparent` に
+ * 透けた画素があったか（なければ市松模様は見えない）を書く。
+ *
+ * # Safety
+ * `pixels` は `height * stride` バイト読めること（NULL なら何も数えない）。`transparent` は書けること（NULL でもよい）。
+ */
+bool amonhen_checker_dark(const uint8_t *pixels,
+                          uintptr_t width,
+                          uintptr_t height,
+                          uintptr_t stride,
+                          bool bgra,
+                          bool *transparent);
+
+/**
  * `path`（NUL で終わる UTF-8）の中身（`data` の `len` バイト）が、History の「すべてのファイル」で絵にする Android の
  * VectorDrawable か（`.xml` で、根が `<vector>` か `<animated-vector>`。頭だけを見る）。
  *
@@ -1113,17 +1128,19 @@ bool amonhen_is_vector_drawable(const char *path,
  * コミット `commit`（20 バイト）の `path` の Android の VectorDrawable（中身 `data` の `len` バイト）を、描ける SVG
  * にする（コアの `Repository::vector_drawable`。色の参照は同じコミットのリソースから引く）。SVG を返し、長さを
  * `out_len` に書く（`amonhen_blob_free` で解放する）。描けなければ NULL で、理由は `amonhen_last_error`。`notes` に
- * 絵の下に添える説明の JSON の配列（文字列）を書く（`amonhen_string_free` で解放する）。裏のスレッドで呼ぶ。
+ * 絵の下に添える説明の JSON の配列（文字列）を書く（`amonhen_string_free` で解放する）。引けない色は `fallback`
+ * （画面の文字の色の `#rrggbb`。NULL なら灰色）で描く。裏のスレッドで呼ぶ。
  *
  * # Safety
  * `repo` は有効、`commit` は 20 バイトを読める領域、`path` は NUL で終わる UTF-8、`data` は `len` バイト読めること。
- * `out_len` と `notes` は書けること（NULL でもよい）。
+ * `fallback` は NULL か NUL で終わる UTF-8。`out_len` と `notes` は書けること（NULL でもよい）。
  */
 uint8_t *amonhen_vector_drawable(const AmonhenRepo *repo_ptr,
                                  const uint8_t *commit,
                                  const char *path,
                                  const uint8_t *data,
                                  uintptr_t len,
+                                 const char *fallback,
                                  uintptr_t *out_len,
                                  char **notes);
 

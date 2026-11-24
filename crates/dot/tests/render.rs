@@ -279,11 +279,11 @@ fn measured(text: &str) -> f64 {
     .width
 }
 
-/// アプリの書体が測り（Arial）より 1 割広くても、クラスタの題・枠のあるノードの文字は線に触れない。
+/// アプリの書体が測り（Arial）より 15% 広くても、クラスタの題・枠のあるノードの文字は線に触れない。
 #[test]
 fn leaves_room_for_wider_app_fonts() {
     let title = "A rather long cluster title that is wider than its nodes";
-    let need = measured(title) * 1.1 + 16.0;
+    let need = measured(title) * 1.15 + 16.0;
     for (dir, layout) in [
         ("TB", "dot"),
         ("LR", "dot"),
@@ -309,7 +309,7 @@ fn leaves_room_for_wider_app_fonts() {
     ))
     .unwrap()
     .svg;
-    let w = measured(long) * 1.1;
+    let w = measured(long) * 1.15;
     let b = svg.split("data-id=\"b\"").nth(1).unwrap();
     let bw = attr_num(b, "width");
     assert!(bw >= w + 2.0 * 7.9, "box {bw} < {w}");
