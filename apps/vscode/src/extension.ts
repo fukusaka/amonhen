@@ -22,6 +22,7 @@ import { registerFormCommands } from './ui/formCommands.ts';
 import { registerHistoryCommands } from './ui/historyCommands.ts';
 import { MainPanel } from './ui/mainPanel.ts';
 import { registerMergeBranchesCommand } from './ui/mergeBranches.ts';
+import { registerMenuCommands } from './ui/menuCommands.ts';
 import { registerNavCommands } from './ui/navCommands.ts';
 import { registerBundleArchiveCommands } from './ui/bundleArchiveCommands.ts';
 import { registerPatchCommands } from './ui/patchCommands.ts';
@@ -156,6 +157,7 @@ export async function activate(
     registerBundleArchiveCommands(manager),
     registerNavCommands(manager, (repo, name) => sidebar.branchFacts.pullRequestOf(repo, name)),
     registerMergeBranchesCommand(manager),
+    registerMenuCommands(manager, (view) => show(view)),
     registerBranchCommands(manager),
     registerStashCommands(manager),
     registerIgnoredCommands(manager),

@@ -1292,6 +1292,8 @@ First release.
 
 - The Working Copy diff can ignore whitespace (at line ends, changes in amount or all), with the engine. Lines and
   hunks aren't staged or discarded meanwhile.
+- The app menus' Commit, Commit and Push, Stage All, Set Upstream…, Rebase…, Go to HEAD and Find in History… are
+  commands, so they can be bound to keys; Merge Branches… and Rebase… also offer the commit selected in History.
 - Markdown in All Files draws the HTML GitHub renders, with the engine: `<details>`, tables spanning cells, `align`,
   image sizes, `<picture>` by theme, `<kbd>`, `<sub>` and `<sup>`.
 

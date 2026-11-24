@@ -45,6 +45,8 @@ export class MainPanel implements vscode.Disposable {
   private readonly disposables: vscode.Disposable[] = [];
   private repo: Repository | undefined;
   private ready = false;
+  /** 準備ができたら行うこと（開いたばかりのときのコマンド） */
+  private readonly whenReadyQueue: (() => void)[] = [];
   /** 準備ができる前に求められた画面 */
   private pendingView: ViewName | undefined;
   /** 答えを待っている確認のシート */
@@ -134,6 +136,12 @@ export class MainPanel implements vscode.Disposable {
     void this.panel.webview.postMessage(message);
   }
 
+  /** Webview の準備ができてから fn を行う（できていればすぐ） */
+  whenReady(fn: () => void): void {
+    if (this.ready) fn();
+    else this.whenReadyQueue.push(fn);
+  }
+
   showView(view: ViewName): void {
     if (this.ready) {
       this.post({ type: 'show', view });
@@ -193,6 +201,7 @@ export class MainPanel implements vscode.Disposable {
         this.fileHistory.setRepository(this.repo);
         this.blame.setRepository(this.repo);
         this.settings.setRepository(this.repo);
+        for (const fn of this.whenReadyQueue.splice(0)) fn();
         break;
       case 'toggleWrapLines':
         await toggleWrapLongLines();
@@ -223,6 +232,7 @@ export class MainPanel implements vscode.Disposable {
       case 'wcDiscardLines':
       case 'wcCommit':
       case 'wcOpenFile':
+      case 'wcCommitRefused':
       case 'wcWhitespace':
       case 'wcResolve':
         await this.workingCopy.handle(message);

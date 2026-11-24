@@ -165,6 +165,8 @@ export interface SearchState {
 }
 
 export type HistoryHostMessage =
+  /** コマンド（Find in History…）から、検索の欄にフォーカスを移す */
+  | { type: 'focusSearch' }
   /** `select` があれば、新しい History のその行を選ぶ（一致だけの History との切り替え） */
   | { type: 'reset'; title: string; scope: Scope; select?: number }
   /** `total` があれば daemon の History で、行は `range` で頼んだところだけ届く（`done` は常に true） */
