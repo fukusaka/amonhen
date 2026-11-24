@@ -150,6 +150,17 @@ const LABEL_HEIGHT: f32 = 17.0;
 /// 差分の行の高さ（DIP）と、行番号の列の幅。
 pub const DIFF_ROW_HEIGHT: f32 = 18.0;
 const DIFF_NUMBER_WIDTH: f32 = 44.0;
+/// 差分の行の文字の左端（含める印の列・行番号の列の右。その時点のファイルなら行番号は 1 列）。
+pub fn text_left(marks: bool, file_mode: bool) -> f32 {
+    let left = if marks { DIFF_MARK_WIDTH } else { 0.0 };
+    let numbers = if file_mode {
+        DIFF_NUMBER_WIDTH
+    } else {
+        DIFF_NUMBER_WIDTH * 2.0
+    };
+    left + numbers + DIFF_TEXT_INSET
+}
+
 /// History の差分の行番号の欄の幅（hunk の見出しのここを押すと、前後の行を広げる）。
 pub const DIFF_GUTTER_WIDTH: f32 = DIFF_NUMBER_WIDTH * 2.0;
 const DIFF_TEXT_INSET: f32 = 10.0;
@@ -1149,8 +1160,19 @@ impl Renderer {
         let mut drawn_panel = None;
         for n in first..last {
             let top = n as f32 * DIFF_ROW_HEIGHT - scroll_y;
+            // 折り返した行は、その行の文字の範囲（続きの行なら Some）。最初の表示の行は、最初の範囲の終わりまで。
+            let mut segment: Option<(u32, u32)> = None;
             let i = match commit.line(n as usize) {
-                Some(crate::data::DiffLine::Row(i)) => i,
+                Some(crate::data::DiffLine::Row(i)) => {
+                    if let Some(&end) = commit.tree.and_then(|t| t.first_end.get(&i)) {
+                        segment = Some((0, end));
+                    }
+                    i
+                }
+                Some(crate::data::DiffLine::Cont(i, start, end)) => {
+                    segment = Some((start, end));
+                    i
+                }
                 Some(crate::data::DiffLine::Deleted(d)) => {
                     let count = commit
                         .tree
@@ -1214,11 +1236,25 @@ impl Renderer {
                     .count()
                     .saturating_sub(t.encode_utf16().count()) as u32
             });
+            // 折り返した行: その範囲の左端だけ左へずらして描き、範囲の外は切る。
+            let continued = segment.is_some_and(|(start, _)| start > 0);
+            let (x0, x1) = match segment {
+                Some((start, end)) => (x_of(layout, start)?, x_of(layout, end)?),
+                None => (0.0, f32::MAX),
+            };
             let base = if file {
                 HEADER_PATH_X + self.header_indent(&commit, i)
             } else {
-                text_x
+                text_x - x0
             };
+            if segment.is_some() {
+                unsafe {
+                    self.d2d.PushAxisAlignedClip(
+                        &rect(text_x, (text_x + x1 - x0 + 1.0).min(width)),
+                        D2D1_ANTIALIAS_MODE_ALIASED,
+                    );
+                }
+            }
             // 差分の中の検索の一致（黄色、今の一致は橙。GTK4 版の差分の検索の帯）。
             let from = self.diff_find.partition_point(|m| m.0 < i);
             for (k, &(_, start, end)) in self.diff_find[from..]
@@ -1255,7 +1291,7 @@ impl Renderer {
                     unsafe {
                         self.brush.SetColor(&fill);
                         self.d2d.FillRectangle(
-                            &rect(text_x + left, text_x + right.max(left + 2.0)),
+                            &rect(base + left, base + right.max(left + 2.0)),
                             &self.brush,
                         );
                     }
@@ -1267,12 +1303,19 @@ impl Renderer {
                 unsafe {
                     self.brush.SetColor(&foreground());
                     self.d2d.DrawTextLayout(
-                        point(text_x, top + 1.0),
+                        point(base, top + 1.0),
                         layout,
                         &self.brush,
                         D2D1_DRAW_TEXT_OPTIONS_CLIP,
                     );
                 }
+            }
+            if segment.is_some() {
+                unsafe { self.d2d.PopAxisAlignedClip() };
+            }
+            // 続きの行には、行番号・印を出さない（最初の表示の行だけ。macOS 版・GTK4 版と同じ）。
+            if continued {
+                continue;
             }
             if commit.file_mode {
                 let line = if row.new_no == 0 {
