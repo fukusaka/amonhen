@@ -1291,6 +1291,8 @@ First release.
   hunks aren't staged or discarded meanwhile.
 - The app menus' Commit, Commit and Push, Stage All, Set Upstream…, Rebase…, Go to HEAD and Find in History… are
   commands, so they can be bound to keys; Merge Branches… and Rebase… also offer the commit selected in History.
+- The Working Copy selects several files (⌘- or Ctrl-click, Shift-click, Shift+↑↓); Space, ⌫, the row buttons and
+  Stash… act on all of them.
 
 #### Fixed
 

@@ -175,7 +175,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | いくつもを 1 つにマージ（順番・コンフリクトの見込み） | ✓ | ✓ | ✓ | ✓ | △ | △ | CLI: `merge-check` で確かめ、マージは `amonhen run` から。<br>Windows: History の選択から。順（ドラッグ）、ぶつかる見込みと最後に回す、取り込み方、1 つずつ、メッセージ、前と後の絵、git が断ったら 1 つずつ Merge。<br>TUI: サイドバーの `v` で印をつけた ref で `m`。印をつけた順に、それぞれが持ち込むコミットの数とコンフリクトの見込みを添える。`l` でコンフリクトしそうな最初のものを最後に回す。ほかの並べ替えはない。 |
 | 前と後を描く Rebase のシート | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: メインビューが開いていれば絵の付いたシート。なければダイアログに、今と rebase の後のコミットを文で並べる。<br>CLI: `rewrite-preview` が出し、rebase は `amonhen run` から。<br>TUI: サイドバーで `r`。絵は画面に重ねる。 |
 | Stash（メッセージ・未追跡を含める） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: `amonhen run` から。<br>TUI: `s`。 |
-| Stash: stage した変更だけ・index を残す・選んだファイルだけ | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: エンジンがあるとき、Stash の一覧に前の 2 つ、Working Copy のファイルの右クリックにそのファイルの Stash…。<br>CLI: `amonhen run`（`stashPush` の `staged`・`keepIndex`・`paths`）から。<br>TUI: `s` で `k` index を残す、`s` stage したものだけ、Working Copy では `f` 選んでいるファイルだけ。 |
+| Stash: stage した変更だけ・index を残す・選んだファイルだけ | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: エンジンがあるとき、Stash の一覧に前の 2 つ、Working Copy のファイルの右クリックに、そのファイルか選んだファイルの Stash…。<br>CLI: `amonhen run`（`stashPush` の `staged`・`keepIndex`・`paths`）から。<br>TUI: `s` で `k` index を残す、`s` stage したものだけ、Working Copy では `f` 選んでいるファイルだけ。 |
 | ignore されたファイルを消す（先に一覧） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: コマンドパレットと Working Copy の右クリックから。一覧は選ぶもので、はじめはすべて選んである。<br>CLI: `amonhen run`（`ignoredFiles`・`deleteIgnored`）から。<br>TUI: 命令の一覧から。 |
 | 最新の stash を Pop（先に尋ねる） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: Stashes の見出しとコマンドパレットの Pop Latest Stash…。行の Pop も尋ねる。<br>CLI: `amonhen run` から。<br>TUI: `S`。stash の名前とメッセージを出して尋ねる。サイドバーの stash の `a`・`o` も同じ。 |
 | Activity のくるくると数 | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: VSCode の進み具合の知らせ。<br>TUI: 一番上の行に動いている操作の名前。 |
@@ -224,7 +224,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | List / Tree / File Name | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: 一覧の `v` で順に切り替える。フォルダの行で中をまとめて stage し、Enter で畳む。 |
 | パスで絞り込む | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: 一覧の `/`。 |
 | 行ごとの +/− の数と、ホバーで Discard | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: 行数はエンジンがあるときだけ。<br>CLI: `diff --stat`。<br>Windows: ↶ はマウスを最後に載せた行に残る。<br>TUI: 数は各行の右の端に。ホバーの ↶ か `d` で捨てる。 |
-| Space で切り替え、⌫ で捨てる | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: Space と `d`。 |
+| Space で切り替え、⌫ で捨てる | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: 選んだファイルすべてに効く（⌘・Ctrl クリック、Shift クリック、Shift+↑↓ でいくつも選べ、行のボタンと Stash… も選んだものに効く）。<br>TUI: Space と `d`。 |
 | 上のコミットの欄、50/72 の数と本文の目安の線 | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: 列が 72 文字より狭いので、目安の線の代わりに、72 を超える本文の行の長さを出す。<br>TUI: 見出しに件名の行の文字数（50 を超えると黄色）。件名の 50 文字・本文の行の 72 文字を超えた分は黄色。 |
 | リポジトリごとの下書き、テンプレートから始める | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: `commit.template` だけで、共有のテンプレートは使わない。<br>TUI: 下書きは `<git dir>/amonhen/commit-draft` に置く。テンプレートは `commit.template`（リポジトリ専用のものは SSH 先でも）で、共有のテンプレートは使わない。 |
 | 最近のメッセージ（⌥↑ / ⌥↓・一覧） | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: メッセージの欄の Alt-↑ / Alt-↓。一覧は Working Copy の `R`。 |

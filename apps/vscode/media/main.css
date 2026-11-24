@@ -2968,3 +2968,13 @@ body.wrap-lines .line .code {
   background: var(--vscode-badge-background, rgba(128, 128, 128, 0.25));
   background: color-mix(in srgb, var(--vscode-descriptionForeground) 18%, transparent);
 }
+
+/* Working Copy でいくつも選んだファイル（差分を出しているものは .selected） */
+.wc-file.marked {
+  background: var(--vscode-list-inactiveSelectionBackground);
+}
+
+.wc-files:focus .wc-file.marked {
+  background: var(--vscode-list-activeSelectionBackground);
+  color: var(--vscode-list-activeSelectionForeground);
+}
