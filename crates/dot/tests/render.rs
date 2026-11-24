@@ -57,6 +57,65 @@ fn uses_theme_variables_and_given_colors() {
     assert!(svg.contains(">a</text>") && svg.contains(">b</text>"));
 }
 
+/// `>word<` を中に持つ `<text …>` の開きの札。
+fn text_tag<'a>(svg: &'a str, word: &str) -> &'a str {
+    let end = svg
+        .find(&format!(">{word}<"))
+        .unwrap_or_else(|| panic!("no {word}: {svg}"));
+    let start = svg[..end].rfind("<text").expect("a text element");
+    &svg[start..end]
+}
+
+#[test]
+fn text_on_explicit_fills_stays_readable() {
+    // 表・升の bgcolor の上は、いちばん内側の塗りで読める色に（文の色があれば文の色）
+    let svg = render(
+        "digraph { node [shape=plain]; o [label=<<TABLE BGCOLOR=\"lightyellow\"><TR><TD>user_id</TD><TD BGCOLOR=\"navy\">dark</TD><TD><FONT COLOR=\"red\">own</FONT></TD></TR></TABLE>>]; p [label=<<TABLE><TR><TD>bare</TD></TR></TABLE>>]; q [shape=box, style=filled, fillcolor=navy, label=<<TABLE BORDER=\"0\"><TR><TD>inside</TD></TR></TABLE>>]; r [shape=box, style=filled, fillcolor=navy, fontcolor=yellow, label=<<TABLE BGCOLOR=\"white\"><TR><TD>given</TD></TR></TABLE>>] }",
+    )
+    .unwrap()
+    .svg;
+    assert!(
+        text_tag(&svg, "user_id").contains("fill=\"#1f1f1f\""),
+        "{svg}"
+    );
+    assert!(text_tag(&svg, "dark").contains("fill=\"#ffffff\""), "{svg}");
+    let own = text_tag(&svg, "own");
+    assert!(
+        own.contains("fill=\"#ff0000\"") && own.matches("fill=").count() == 1,
+        "{svg}"
+    );
+    assert!(!text_tag(&svg, "bare").contains("fill="), "{svg}");
+    assert!(
+        text_tag(&svg, "inside").contains("fill=\"#ffffff\""),
+        "{svg}"
+    );
+    let given = text_tag(&svg, "given");
+    assert!(
+        given.contains("fill=\"#ffff00\"") && given.matches("fill=").count() == 1,
+        "{svg}"
+    );
+    // クラスタの題: 塗りか bgcolor の上なら読める色、なければ控えめな色
+    let svg = render(
+        "digraph { subgraph cluster_a { label=\"Filled\"; style=filled; fillcolor=\"#202060\"; a } subgraph cluster_b { label=\"Back\"; bgcolor=\"#ffeecc\"; b } subgraph cluster_c { label=\"Plain\"; c } subgraph cluster_d { label=\"Own\"; bgcolor=black; fontcolor=red; d } }",
+    )
+    .unwrap()
+    .svg;
+    assert!(
+        text_tag(&svg, "Filled").contains("fill=\"#ffffff\""),
+        "{svg}"
+    );
+    assert!(text_tag(&svg, "Back").contains("fill=\"#1f1f1f\""), "{svg}");
+    assert!(
+        text_tag(&svg, "Plain").contains("fill=\"var(--_m)\""),
+        "{svg}"
+    );
+    let own = text_tag(&svg, "Own");
+    assert!(
+        own.contains("fill=\"#ff0000\"") && own.matches("fill=").count() == 1,
+        "{svg}"
+    );
+}
+
 #[test]
 fn notes_approximations() {
     let notes = |src: &str| render(src).unwrap().notes;

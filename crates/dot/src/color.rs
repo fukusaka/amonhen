@@ -54,6 +54,17 @@ pub enum Color {
     None,
 }
 
+impl Color {
+    /// この色の塗りの上で読める既定の文字の色（濃い塗りなら白、明るければ黒に近い色）。
+    pub fn ink(self) -> Option<&'static str> {
+        match self {
+            Color::Rgba(rgba) if rgba.luminance() < 0.45 => Some("#ffffff"),
+            Color::Rgba(_) => Some("#1f1f1f"),
+            Color::None => None,
+        }
+    }
+}
+
 /// 名前の色の配色。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Scheme {

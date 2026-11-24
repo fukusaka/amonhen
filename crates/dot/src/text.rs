@@ -646,8 +646,17 @@ fn span_attrs(font: &Font, root: &Font, out: &mut String) {
 }
 
 /// 文字を (cx, cy) を中心に書く。`box_w` は寄せの幅（ラベルより広い枠の中で左・右に寄せる）。`root` はまわりの
-/// `<text>` の書体（色・大きさ）。
-pub fn text_svg(text: &Text, cx: f64, cy: f64, box_w: f64, root: &Font, attrs: &str) -> String {
+/// `<text>` の書体（色・大きさ）。`ink` は文が色を決めていないときの文字の色（下の塗りで読めるように。表の
+/// `bgcolor` があれば表の中ではそちらが勝つ）。
+pub fn text_svg(
+    text: &Text,
+    cx: f64,
+    cy: f64,
+    box_w: f64,
+    root: &Font,
+    attrs: &str,
+    ink: Option<&str>,
+) -> String {
     let mut out = String::new();
     if let Some(table) = &text.html {
         crate::html::draw(
@@ -656,10 +665,15 @@ pub fn text_svg(text: &Text, cx: f64, cy: f64, box_w: f64, root: &Font, attrs: &
             cy - table.h / 2.0,
             root,
             attrs,
+            ink,
             &mut out,
         );
         return out;
     }
+    let ink_attr = match ink {
+        Some(c) if root.color.is_none() => format!(" fill=\"{c}\""),
+        _ => String::new(),
+    };
     let mut top = cy - text.height / 2.0;
     let half = box_w.max(text.width) / 2.0;
     for line in &text.lines {
@@ -679,8 +693,11 @@ pub fn text_svg(text: &Text, cx: f64, cy: f64, box_w: f64, root: &Font, attrs: &
             (Just::Left, false) => (cx - half, "start"),
             (Just::Right, false) => (cx + half - line.width, "start"),
         };
+        // 1 つの span の行は span の色を `<text>` に書くので、そのときは塗りの上の色を書かない
+        let own_color = single && line.spans[0].font.color.is_some();
         out.push_str(&format!(
-            "<text{attrs}{} x=\"{}\" y=\"{}\" text-anchor=\"{anchor}\"",
+            "<text{attrs}{}{} x=\"{}\" y=\"{}\" text-anchor=\"{anchor}\"",
+            if own_color { "" } else { ink_attr.as_str() },
             if needs_preserve(line) {
                 " xml:space=\"preserve\""
             } else {
@@ -780,7 +797,7 @@ mod tests {
         assert!(matches!(big.font.color, Some(Color::Rgba(c)) if c.hex() == "#ff0000"));
         assert!(t.lines[1].spans[2].font.sub);
         assert!(!t.table);
-        let svg = text_svg(&t, 0.0, 0.0, 0.0, &font, "");
+        let svg = text_svg(&t, 0.0, 0.0, 0.0, &font, "", None);
         assert!(svg.contains("font-weight=\"bold\"") && svg.contains("fill=\"#ff0000\""));
         assert!(svg.contains("dy="), "{svg}");
     }
@@ -819,8 +836,8 @@ mod tests {
     fn keeps_runs_of_spaces() {
         let font = Font::new(14.0);
         let t = plain_label("a  b", &Names::default(), &font);
-        assert!(text_svg(&t, 0.0, 0.0, 0.0, &font, "").contains("xml:space=\"preserve\""));
+        assert!(text_svg(&t, 0.0, 0.0, 0.0, &font, "", None).contains("xml:space=\"preserve\""));
         let t = plain_label("a b", &Names::default(), &font);
-        assert!(!text_svg(&t, 0.0, 0.0, 0.0, &font, "").contains("xml:space"));
+        assert!(!text_svg(&t, 0.0, 0.0, 0.0, &font, "", None).contains("xml:space"));
     }
 }

@@ -530,11 +530,7 @@ pub fn render(model: &Model, budget: Budget, notes: &mut BTreeSet<Note>) -> Stri
                         .into_iter()
                         .find_map(|s| s.color)
                 })
-                .and_then(|c| match c {
-                    Color::Rgba(rgba) if rgba.luminance() < 0.45 => Some("#ffffff"),
-                    Color::Rgba(_) => Some("#1f1f1f"),
-                    Color::None => None,
-                })
+                .and_then(Color::ink)
         } else {
             None
         };
@@ -834,6 +830,17 @@ pub fn render(model: &Model, budget: Budget, notes: &mut BTreeSet<Note>) -> Stri
             .or(color.as_deref())
             .or(a.get("bgcolor"))
             .map(str::to_owned);
+        // 題の下の塗り（題の文字の色を決める。グラデーションは最初の色）
+        let ground = if filled {
+            fill_text.as_deref()
+        } else {
+            a.get("bgcolor")
+        }
+        .and_then(|t| {
+            color::parse_list(t, scheme.as_deref().or(ctx.scheme.as_deref()))
+                .into_iter()
+                .find_map(|s| s.color)
+        });
         let fill = if filled {
             match fill_text.as_deref() {
                 Some(t) if t.contains(':') => gradient(
@@ -889,22 +896,14 @@ pub fn render(model: &Model, budget: Budget, notes: &mut BTreeSet<Note>) -> Stri
                 cx + t.width / 2.0 + 4.0,
                 cy + t.height / 2.0 + 1.0,
             ]);
-            let fill = if cv.font.color.is_some() {
-                String::new()
-            } else {
-                format!(" fill=\"{MUTED}\"")
-            };
             clusters_out.push_str(&text_svg(
                 t,
                 cx,
                 cy,
                 0.0,
                 &cv.font,
-                &format!(
-                    " class=\"dot-cluster-label\"{}{}",
-                    font_attrs(&cv.font),
-                    fill
-                ),
+                &format!(" class=\"dot-cluster-label\"{}", font_attrs(&cv.font)),
+                Some(ground.and_then(Color::ink).unwrap_or(MUTED)),
             ));
         }
         clusters_out.push_str("</g>");
@@ -1417,6 +1416,7 @@ pub fn render(model: &Model, budget: Budget, notes: &mut BTreeSet<Note>) -> Stri
                     0.0,
                     &ev.font,
                     &label_attrs(&ev.font),
+                    None,
                 ));
             }
             bbox.add_rect(
@@ -1436,6 +1436,7 @@ pub fn render(model: &Model, budget: Budget, notes: &mut BTreeSet<Note>) -> Stri
                     0.0,
                     &ev.font,
                     &label_attrs(&ev.font),
+                    None,
                 ));
             }
             bbox.add_rect(
@@ -1474,6 +1475,7 @@ pub fn render(model: &Model, budget: Budget, notes: &mut BTreeSet<Note>) -> Stri
                             .and_then(|l| l.spans.first())
                             .map_or(ev.font.clone(), |s| s.font.clone()),
                     ),
+                    None,
                 ));
             }
             bbox.add_rect(
@@ -1500,6 +1502,7 @@ pub fn render(model: &Model, budget: Budget, notes: &mut BTreeSet<Note>) -> Stri
                     0.0,
                     &v.font,
                     &format!(" class=\"dot-xlabel\"{}", font_attrs(&v.font)),
+                    None,
                 ));
             }
             bbox.add_rect(
@@ -1559,7 +1562,8 @@ pub fn render(model: &Model, budget: Budget, notes: &mut BTreeSet<Note>) -> Stri
                         y + f.y + f.h / 2.0,
                         f.w - 16.0,
                         &v.font,
-                        &format!(" class=\"dot-label\"{}{}", font_attrs(&v.font), ink_attr(v)),
+                        &format!(" class=\"dot-label\"{}", font_attrs(&v.font)),
+                        v.ink,
                     ));
                 }
             }
@@ -1571,7 +1575,8 @@ pub fn render(model: &Model, budget: Budget, notes: &mut BTreeSet<Note>) -> Stri
                 y,
                 v.inner_w,
                 &v.font,
-                &format!(" class=\"dot-label\"{}{}", font_attrs(&v.font), ink_attr(v)),
+                &format!(" class=\"dot-label\"{}", font_attrs(&v.font)),
+                v.ink,
             ));
         }
         nodes_out.push_str(&format!(
@@ -1619,6 +1624,7 @@ pub fn render(model: &Model, budget: Budget, notes: &mut BTreeSet<Note>) -> Stri
             0.0,
             &graph_font,
             &format!(" class=\"dot-title\"{}", font_attrs(&graph_font)),
+            None,
         );
         bbox.add_rect(
             cx - t.width / 2.0,
@@ -1762,13 +1768,6 @@ fn detour(path: &mut Vec<Cubic>, view: &NodeView, d: P, reach: f64) {
     );
     path[0] = second;
     path.insert(0, first_leg);
-}
-
-fn ink_attr(v: &NodeView) -> String {
-    match v.ink {
-        Some(c) => format!(" fill=\"{c}\""),
-        None => String::new(),
-    }
 }
 
 /// `<text>` の書体の属性（大きさ・太さ・色）。

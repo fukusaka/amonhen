@@ -777,12 +777,23 @@ fn frame(
     }
 }
 
-/// 表を (left, top) から描く。`root`・`attrs` は文字の `<text>` の書体と属性。
-pub fn draw(t: &Table, left: f64, top: f64, root: &Font, attrs: &str, out: &mut String) {
+/// 表を (left, top) から描く。`root`・`attrs` は文字の `<text>` の書体と属性、`ink` は表の外の塗りの上の文字の
+/// 色。表・升の `bgcolor` の上では、いちばん内側の塗りで読める色にする（文が色を決めていれば文の色）。
+pub fn draw(
+    t: &Table,
+    left: f64,
+    top: f64,
+    root: &Font,
+    attrs: &str,
+    ink: Option<&str>,
+    out: &mut String,
+) {
     frame(
         out, left, top, t.w, t.h, t.border, t.sides, t.color, t.bg, t.rounded,
     );
+    let ink = t.bg.and_then(Color::ink).or(ink);
     for c in &t.cells {
+        let ink = c.bg.and_then(Color::ink).or(ink);
         let (x, y) = (left + c.x, top + c.y);
         frame(out, x, y, c.w, c.h, c.border, c.sides, c.color, c.bg, false);
         let inset = c.border + c.padding;
@@ -802,11 +813,11 @@ pub fn draw(t: &Table, left: f64, top: f64, root: &Font, attrs: &str, out: &mut 
             Content::Empty => {}
             Content::Text(text) => {
                 let box_w = if c.align == Align::Text { iw } else { 0.0 };
-                out.push_str(&text::text_svg(text, cx, cy, box_w, root, attrs));
+                out.push_str(&text::text_svg(text, cx, cy, box_w, root, attrs, ink));
             }
             Content::Table(inner) => {
                 let (ox, oy) = c.inner_origin(inner);
-                draw(inner, left + ox, top + oy, root, attrs, out);
+                draw(inner, left + ox, top + oy, root, attrs, ink, out);
             }
             Content::Image => {
                 out.push_str(&format!(
@@ -893,7 +904,7 @@ mod tests {
         .unwrap();
         assert!(lbl.image && !lbl.table);
         let mut out = String::new();
-        draw(&t, 0.0, 0.0, &Font::new(14.0), "", &mut out);
+        draw(&t, 0.0, 0.0, &Font::new(14.0), "", None, &mut out);
         assert!(
             out.contains("font-weight=\"bold\"") || out.contains(">x</text>"),
             "{out}"
