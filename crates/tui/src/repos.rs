@@ -22,8 +22,27 @@ pub struct Entry {
     pub name: String,
     pub favorite: bool,
     pub group: Option<String>,
+    /// 探すフォルダの下で見つけたもの（登録も、開いた記録もない）。
+    pub scanned: bool,
+    /// 色ラベル（`amonhen_model::bookmarks::COLORS` の名前）。
+    pub color: Option<String>,
     /// 最後に開いた日時（UNIX 時間の秒）。
     pub opened: Option<i64>,
+}
+
+/// 一番下の行で聞いていること（打っている語）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Prompt {
+    /// 表示名（空なら場所の最後の部分に戻す）。
+    Name(String),
+    /// グループ（空ならグループから外す）。
+    Group(String),
+    /// 足すリポジトリの場所（この機械のパスか `ssh://host/path`）。
+    Add(String),
+    /// 色ラベル（`1`〜`7`、`0` で外す）。
+    Color,
+    /// 一覧から外すか（`y`）。
+    Remove,
 }
 
 impl Entry {
@@ -88,6 +107,8 @@ pub struct Repos {
     /// 名前と場所で絞る語（`/`）。
     pub filter: String,
     pub typing_filter: bool,
+    /// 一番下の行で聞いていること。
+    pub prompt: Option<Prompt>,
 }
 
 impl Repos {
@@ -103,9 +124,28 @@ impl Repos {
             focus_categories: false,
             filter: String::new(),
             typing_filter: false,
+            prompt: None,
         };
         repos.add(entries);
         repos
+    }
+
+    /// ファイルから読み直した一覧に替える（行の状態・分類・選んでいる行はそのまま。探して見つけたものは残す）。
+    pub fn replace(&mut self, entries: Vec<Entry>) {
+        let scanned: Vec<Entry> = (self.entries.iter())
+            .filter(|e| e.scanned && !entries.iter().any(|n| n.path == e.path))
+            .cloned()
+            .collect();
+        self.entries.clear();
+        self.add(entries);
+        self.add(scanned);
+        let last = self.rows().len().saturating_sub(1);
+        self.selected = self.selected.min(last);
+    }
+
+    /// 選んでいる行。
+    pub fn selected_entry(&self) -> Option<Entry> {
+        self.rows().get(self.selected).map(|e| (*e).clone())
     }
 
     /// リポジトリを足す（もうある場所は足さない。`daemon:` の付いた同じ場所も）。
@@ -392,14 +432,15 @@ impl Repos {
             let peek = self.peeks.get(&entry.path).cloned().flatten();
             let star = if entry.favorite { "★ " } else { "" };
             let name = format!("{star}{}", entry.name);
+            // 色ラベルは、名前の前に色の点。
+            let mut x = list.x + 1;
+            if let Some(color) = entry.color.as_deref().and_then(label_color) {
+                buf.set_string(x, y, "●", Style::new().fg(color));
+                x += 2;
+            }
+            let room = usize::from((list.x + 1 + name_w).saturating_sub(x));
             let end = buf
-                .set_stringn(
-                    list.x + 1,
-                    y,
-                    fit(&name, usize::from(name_w)),
-                    usize::from(name_w),
-                    Style::new(),
-                )
+                .set_stringn(x, y, fit(&name, room), room, Style::new())
                 .0;
             // 名前の後ろに、薄く場所。
             if end + 2 < list.x + 1 + name_w {
@@ -446,9 +487,25 @@ impl Repos {
                 buf.set_style(Rect::new(list.x, y, list.width, 1), Style::new().bg(bg));
             }
         }
-        let hints = match self.typing_filter {
-            true => format!("/{}", self.filter),
-            false => tr!("j/k move   Tab categories   Enter open   / filter   s sort   Esc close"),
+        let hints = match (&self.prompt, self.typing_filter) {
+            (Some(Prompt::Name(text)), _) => {
+                tr!("Display name (empty for the folder’s): {text}", text = text)
+            }
+            (Some(Prompt::Group(text)), _) => tr!("Group (empty for none): {text}", text = text),
+            (Some(Prompt::Add(text)), _) => tr!(
+                "Add a repository (a path on this machine or ssh://host/path): {text}",
+                text = text
+            ),
+            (Some(Prompt::Color), _) => tr!(
+                "Color label: 1 red  2 orange  3 yellow  4 green  5 blue  6 purple  7 gray  0 none"
+            ),
+            (Some(Prompt::Remove), _) => {
+                tr!("Remove it from the list? The repository itself stays.   y remove   n cancel")
+            }
+            (None, true) => format!("/{}", self.filter),
+            (None, false) => tr!(
+                "j/k move   Enter open   * favorite   n name   c color   g group   a add   x remove   / filter   s sort   Esc close"
+            ),
         };
         buf.set_stringn(
             area.x + 1,
@@ -458,4 +515,18 @@ impl Repos {
             Style::new().fg(DIM),
         );
     }
+}
+
+/// 色ラベルの端末の色。
+fn label_color(name: &str) -> Option<Color> {
+    Some(match name {
+        "red" => Color::Red,
+        "orange" => Color::Indexed(208),
+        "yellow" => Color::Yellow,
+        "green" => Color::Green,
+        "blue" => Color::Blue,
+        "purple" => Color::Magenta,
+        "gray" => Color::Indexed(244),
+        _ => return None,
+    })
 }

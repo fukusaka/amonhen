@@ -1,7 +1,7 @@
 //! ブックマーク（`bookmarks.json`）: 個別に登録したリポジトリ（表示名・グループ・お気に入り）と、リポジトリを探す
 //! フォルダ。アプリ・GTK4 のアプリ・TUI が同じものを使う。置き場所は設定と同じフォルダ（[`crate::settings::dir`]、
-//! `~/.config/amonhen/bookmarks.json`）。形は macOS 版の `BookmarkData`（`items`・`groups`・`scanRoots`）。書くのは
-//! アプリ（鍵 `bookmarks.lock` を取って書く）で、ここは読むだけ。知らないキーは読み飛ばす。探すフォルダの中の
+//! `~/.config/amonhen/bookmarks.json`）。形は macOS 版の `BookmarkData`（`items`・`groups`・`scanRoots`）。書くときは
+//! アプリと同じく隣の `bookmarks.lock` を取ってから読み直し（[`edit`]）、知らないキーは残す。探すフォルダの中の
 //! リポジトリは [`crate::scan::find_repositories`] で探す（結果は保存しない）。
 
 use std::path::PathBuf;
@@ -15,7 +15,12 @@ pub struct Bookmark {
     pub name: Option<String>,
     pub group: Option<String>,
     pub favorite: bool,
+    /// 色ラベル（[`COLORS`] の名前）。
+    pub color: Option<String>,
 }
+
+/// 色ラベルの名前（並びは macOS 版と同じ。Finder のタグ）。
+pub const COLORS: [&str; 7] = ["red", "orange", "yellow", "green", "blue", "purple", "gray"];
 
 impl Bookmark {
     /// 一覧に出す名前（上書きがなければ、場所の最後の部分）。
@@ -96,6 +101,7 @@ pub fn read() -> Result<Vec<Bookmark>, String> {
                 name: text(item, "name"),
                 group: text(item, "group"),
                 favorite: item.get("favorite").and_then(serde_json::Value::as_bool) == Some(true),
+                color: text(item, "color"),
             })
         })
         .collect())
@@ -137,6 +143,112 @@ pub fn scan_roots() -> Result<Vec<ScanRoot>, String> {
             })
         })
         .collect())
+}
+
+/// `bookmarks.lock` を取ってから読み直し、中身（JSON のオブジェクト。なければ空）に `change` を当てて書く（アプリと
+/// 同じ鍵。ほかのプロセスの変更を手元の古い内容で消さない）。変わらなければ書かない。
+pub fn edit(
+    change: impl FnOnce(&mut serde_json::Map<String, serde_json::Value>),
+) -> crate::Result<()> {
+    let path = path()
+        .ok_or_else(|| crate::tr!("Can’t tell where Amon Hen’s settings go (HOME isn’t set)"))?;
+    let dir = path.parent().expect("bookmarks.json is in a folder");
+    std::fs::create_dir_all(dir)?;
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(dir.join("bookmarks.lock"))?;
+    // 閉じれば外れる。
+    lock.lock()?;
+    let mut object = match path.exists() {
+        true => crate::settings::read(&path).map_err(|e| -> crate::Error { e.into() })?,
+        false => serde_json::Map::new(),
+    };
+    let before = object.clone();
+    change(&mut object);
+    if object == before {
+        return Ok(());
+    }
+    let mut text = serde_json::to_string_pretty(&object)?;
+    text.push('\n');
+    // 途中で読まれても半端な中身を見せないよう、隣に書いてから置き換える。
+    let temp = dir.join(format!("bookmarks.json.tmp.{}", std::process::id()));
+    std::fs::write(&temp, text)?;
+    std::fs::rename(&temp, &path)?;
+    Ok(())
+}
+
+/// `location` の項目を変える（なければ足してから。アプリと同じく、お気に入りなどにしたリポジトリは登録される）。
+pub fn edit_item(
+    location: &str,
+    change: impl FnOnce(&mut serde_json::Map<String, serde_json::Value>),
+) -> crate::Result<()> {
+    edit(|object| {
+        let items = object
+            .entry("items")
+            .or_insert_with(|| serde_json::Value::Array(Vec::new()));
+        if !items.is_array() {
+            *items = serde_json::Value::Array(Vec::new());
+        }
+        let list = items.as_array_mut().expect("an array");
+        let at = match list
+            .iter()
+            .position(|i| i.get("path").and_then(|p| p.as_str()) == Some(location))
+        {
+            Some(at) => at,
+            None => {
+                list.push(serde_json::json!({"path": location, "favorite": false}));
+                list.len() - 1
+            }
+        };
+        if let Some(item) = list[at].as_object_mut() {
+            change(item);
+        }
+        // グループは、使っているものを `groups` にも（アプリの並びに足す）。
+        let used: Vec<String> = (list.iter())
+            .filter_map(|i| i.get("group").and_then(|g| g.as_str()).map(str::to_owned))
+            .collect();
+        let groups = object
+            .entry("groups")
+            .or_insert_with(|| serde_json::Value::Array(Vec::new()));
+        if let Some(groups) = groups.as_array_mut() {
+            for group in used {
+                if !groups.iter().any(|g| g.as_str() == Some(group.as_str())) {
+                    groups.push(group.into());
+                }
+            }
+        }
+    })
+}
+
+/// 値を入れる（None なら鍵ごと外す）。
+pub fn set(
+    item: &mut serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    value: Option<serde_json::Value>,
+) {
+    match value {
+        Some(value) => {
+            item.insert(key.to_owned(), value);
+        }
+        None => {
+            item.remove(key);
+        }
+    }
+}
+
+/// 登録を外す（Repositories の「一覧から外す」。最近開いたものからも外すのは呼ぶ側）。
+pub fn remove(locations: &[&str]) -> crate::Result<()> {
+    edit(|object| {
+        if let Some(list) = object.get_mut("items").and_then(|i| i.as_array_mut()) {
+            list.retain(|i| {
+                i.get("path")
+                    .and_then(|p| p.as_str())
+                    .is_none_or(|p| !locations.contains(&p))
+            });
+        }
+    })
 }
 
 #[cfg(test)]
@@ -221,6 +333,43 @@ mod tests {
         );
     }
 
+    /// 項目を変える: なければ足し、グループは `groups` にも。知らないキーは残す。外す。
+    #[test]
+    fn edits_items_and_keeps_unknown_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        let vars = crate::settings::config_vars(dir.path().to_str().unwrap());
+        let env = crate::process::ClientEnv::from_vars(vars);
+        crate::process::with_client_env(&env, || {
+            let file = path().unwrap();
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(
+                &file,
+                r#"{"items": [{"path": "/w/a", "autoFetch": 5}], "scanRoots": [], "extra": 1}"#,
+            )
+            .unwrap();
+            edit_item("/w/a", |item| set(item, "favorite", Some(true.into()))).unwrap();
+            edit_item("/w/b", |item| {
+                set(item, "group", Some("Work".into()));
+                set(item, "color", Some("blue".into()));
+            })
+            .unwrap();
+            let items = read().unwrap();
+            assert_eq!(items.len(), 2);
+            assert!(items[0].favorite);
+            assert_eq!(items[1].group.as_deref(), Some("Work"));
+            assert_eq!(items[1].color.as_deref(), Some("blue"));
+            let json: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+            assert_eq!(json["items"][0]["autoFetch"], 5, "unknown keys stay");
+            assert_eq!(json["extra"], 1);
+            assert_eq!(json["groups"], serde_json::json!(["Work"]));
+            edit_item("/w/b", |item| set(item, "color", None)).unwrap();
+            assert_eq!(read().unwrap()[1].color, None);
+            remove(&["/w/a"]).unwrap();
+            assert_eq!(read().unwrap().len(), 1);
+        });
+    }
+
     #[test]
     fn display_names_come_from_the_last_part() {
         let bookmark = |path: &str| Bookmark {
@@ -228,6 +377,7 @@ mod tests {
             name: None,
             group: None,
             favorite: false,
+            color: None,
         };
         assert_eq!(bookmark("ssh://host/src/tool/").display_name(), "tool");
         assert_eq!(bookmark("daemon:/w/repo").display_name(), "repo");

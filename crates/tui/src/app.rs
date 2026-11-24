@@ -241,6 +241,7 @@ impl Candidate {
             name: None,
             group: None,
             favorite: false,
+            color: None,
         };
         Self {
             name: bookmark.display_name(),
@@ -1903,7 +1904,12 @@ impl App {
             }
             Event::Scanned(paths) => {
                 if let Some(repos) = &mut self.repos {
-                    repos.add(paths.iter().map(|p| repo_entry(p, None, None)).collect());
+                    repos.add(
+                        paths
+                            .iter()
+                            .map(|p| repo_entry(p, true, None, None))
+                            .collect(),
+                    );
                     self.peek_repositories(paths.clone());
                     self.dirty = true;
                 }
@@ -2049,6 +2055,11 @@ impl App {
             return;
         }
         // リポジトリのページ: 左の分類と右の一覧。Enter で開き、Esc で閉じる。
+        if self.repos.as_ref().is_some_and(|r| r.prompt.is_some()) {
+            self.repos_prompt_key(key.code, control);
+            self.dirty = true;
+            return;
+        }
         if let Some(repos) = &mut self.repos {
             self.dirty = true;
             if repos.typing_filter {
@@ -2079,6 +2090,41 @@ impl App {
                 KeyCode::PageDown => repos.move_selection(10),
                 KeyCode::PageUp => repos.move_selection(-10),
                 KeyCode::Char('s') => repos.next_sort(),
+                // 登録の編集（アプリの行の右クリックと同じもの）。
+                KeyCode::Char('*') if !repos.focus_categories => {
+                    if let Some(entry) = repos.selected_entry() {
+                        let result = amonhen_model::bookmarks::edit_item(&entry.path, |item| {
+                            amonhen_model::bookmarks::set(
+                                item,
+                                "favorite",
+                                Some((!entry.favorite).into()),
+                            )
+                        });
+                        self.edit_bookmark(result);
+                    }
+                }
+                KeyCode::Char('n') if !repos.focus_categories => {
+                    if let Some(entry) = repos.selected_entry() {
+                        repos.prompt = Some(crate::repos::Prompt::Name(entry.name));
+                    }
+                }
+                KeyCode::Char('g') if !repos.focus_categories => {
+                    if let Some(entry) = repos.selected_entry() {
+                        repos.prompt =
+                            Some(crate::repos::Prompt::Group(entry.group.unwrap_or_default()));
+                    }
+                }
+                KeyCode::Char('c')
+                    if !repos.focus_categories && repos.selected_entry().is_some() =>
+                {
+                    repos.prompt = Some(crate::repos::Prompt::Color)
+                }
+                KeyCode::Char('x')
+                    if !repos.focus_categories && repos.selected_entry().is_some() =>
+                {
+                    repos.prompt = Some(crate::repos::Prompt::Remove)
+                }
+                KeyCode::Char('a') => repos.prompt = Some(crate::repos::Prompt::Add(String::new())),
                 KeyCode::Char('/') => repos.typing_filter = true,
                 KeyCode::Enter if repos.focus_categories => repos.focus_categories = false,
                 // TUI を閉じて、選んだリポジトリで開き直す（アプリのタブがそのリポジトリになるのと同じ）。
@@ -3382,34 +3428,13 @@ impl App {
     /// リポジトリのページを開く: ブックマーク・最近開いたもの・探すフォルダの下で見つけたもの（裏で探す）。手元の
     /// リポジトリの状態は裏で 4 つずつ読む（アプリと同じ）。
     fn open_repositories(&mut self) {
-        let (bookmarks, recents, roots) = match (
-            amonhen_model::bookmarks::read(),
-            amonhen_model::recent::read(),
-            amonhen_model::bookmarks::scan_roots(),
-        ) {
-            (Ok(b), Ok(r), Ok(s)) => (b, r, s),
-            (Err(reason), _, _) | (_, Err(reason), _) | (_, _, Err(reason)) => {
+        let (entries, roots) = match repository_entries() {
+            Ok(read) => read,
+            Err(reason) => {
                 self.error = Some(reason);
                 return;
             }
         };
-        let opened: std::collections::HashMap<String, i64> = (recents.iter())
-            .filter_map(|r| Some((r.path.clone(), r.opened_at? as i64)))
-            .collect();
-        let mut entries: Vec<crate::repos::Entry> = (bookmarks.iter())
-            .map(|b| crate::repos::Entry {
-                path: b.path.clone(),
-                name: b.display_name(),
-                favorite: b.favorite,
-                group: b.group.clone(),
-                opened: opened.get(&b.path).copied(),
-            })
-            .collect();
-        entries.extend(
-            recents
-                .iter()
-                .map(|r| repo_entry(&r.path, None, r.opened_at.map(|t| t as i64))),
-        );
         let repos = crate::repos::Repos::new(entries);
         let local = repos.local_paths();
         self.repos = Some(repos);
@@ -3427,6 +3452,131 @@ impl App {
             });
         }
         self.dirty = true;
+    }
+
+    /// リポジトリのページで聞いていることへの答え（打つ語、`y`、色の数字）。
+    fn repos_prompt_key(&mut self, code: KeyCode, control: bool) {
+        use crate::repos::Prompt;
+        let Some(repos) = &mut self.repos else {
+            return;
+        };
+        let Some(prompt) = repos.prompt.take() else {
+            return;
+        };
+        let path = repos.selected_entry().map(|e| e.path);
+        let set = amonhen_model::bookmarks::set;
+        // 打っている語: 書き換えて、聞き続ける。Enter で決め、Esc でやめる。
+        let typing = |text: &mut String| match code {
+            KeyCode::Backspace => {
+                text.pop();
+                true
+            }
+            KeyCode::Char('u') if control => {
+                text.clear();
+                true
+            }
+            KeyCode::Char(ch) if !control => {
+                text.push(ch);
+                true
+            }
+            _ => false,
+        };
+        match (prompt, code) {
+            (Prompt::Color, KeyCode::Char(ch @ '0'..='7')) => {
+                let Some(path) = path else { return };
+                let color = (ch != '0')
+                    .then(|| amonhen_model::bookmarks::COLORS[usize::from(ch as u8 - b'1')]);
+                let result = amonhen_model::bookmarks::edit_item(&path, |item| {
+                    set(item, "color", color.map(Into::into))
+                });
+                self.edit_bookmark(result);
+            }
+            (Prompt::Remove, KeyCode::Char('y')) => {
+                let Some(path) = path else { return };
+                let result = amonhen_model::bookmarks::remove(&[path.as_str()])
+                    .and_then(|()| amonhen_model::recent::forget(&[path.as_str()]));
+                self.edit_bookmark(result);
+            }
+            (Prompt::Name(text), KeyCode::Enter) => {
+                let Some(path) = path else { return };
+                let name = text.trim().to_owned();
+                let result = amonhen_model::bookmarks::edit_item(&path, |item| {
+                    set(item, "name", (!name.is_empty()).then(|| name.into()))
+                });
+                self.edit_bookmark(result);
+            }
+            (Prompt::Group(text), KeyCode::Enter) => {
+                let Some(path) = path else { return };
+                let group = text.trim().to_owned();
+                let result = amonhen_model::bookmarks::edit_item(&path, |item| {
+                    set(item, "group", (!group.is_empty()).then(|| group.into()))
+                });
+                self.edit_bookmark(result);
+            }
+            (Prompt::Add(text), KeyCode::Enter) => {
+                let location = text.trim();
+                if location.is_empty() {
+                    return;
+                }
+                // この機械のパスは、~ を広げて絶対パスに（アプリと同じく、リンクは解かない）。
+                let location =
+                    match location.starts_with("ssh://") || location.starts_with("daemon:") {
+                        true => location.to_owned(),
+                        false => {
+                            let path = amonhen_backend_cli::expand_home(location);
+                            std::path::absolute(&path)
+                                .unwrap_or(path)
+                                .to_string_lossy()
+                                .into_owned()
+                        }
+                    };
+                let result = amonhen_model::bookmarks::edit_item(&location, |_| {});
+                self.edit_bookmark(result);
+            }
+            // Esc（とほかのキー）でやめる。打った語なら、書き換えて聞き続ける。
+            (Prompt::Name(mut text), _) => {
+                if typing(&mut text) {
+                    repos.prompt = Some(Prompt::Name(text));
+                }
+            }
+            (Prompt::Group(mut text), _) => {
+                if typing(&mut text) {
+                    repos.prompt = Some(Prompt::Group(text));
+                }
+            }
+            (Prompt::Add(mut text), _) => {
+                if typing(&mut text) {
+                    repos.prompt = Some(Prompt::Add(text));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// 一覧をファイルから読み直す（編集した後）。読めなければ理由を出す。
+    fn reload_repositories(&mut self) {
+        match repository_entries() {
+            Ok((entries, _)) => {
+                if let Some(repos) = &mut self.repos {
+                    let known = repos.local_paths();
+                    repos.replace(entries);
+                    let new: Vec<String> = (repos.local_paths().into_iter())
+                        .filter(|p| !known.contains(p))
+                        .collect();
+                    self.peek_repositories(new);
+                }
+            }
+            Err(reason) => self.error = Some(reason),
+        }
+        self.dirty = true;
+    }
+
+    /// リポジトリのページの編集（お気に入り・表示名・色・グループ・追加・外す）を当てて、読み直す。
+    fn edit_bookmark(&mut self, result: crate::Result<()>) {
+        if let Err(error) = result {
+            self.error = Some(error.to_string());
+        }
+        self.reload_repositories();
     }
 
     /// 手元のリポジトリ `paths` の状態を裏で読む（4 つずつ。アプリの peekQueue と同じ）。
@@ -10751,19 +10901,60 @@ struct ClonePlan {
     branch: Option<String>,
 }
 
+/// リポジトリのページの行（ブックマーク、最近開いたもの）と、探すフォルダ。
+fn repository_entries() -> std::result::Result<
+    (
+        Vec<crate::repos::Entry>,
+        Vec<amonhen_model::bookmarks::ScanRoot>,
+    ),
+    String,
+> {
+    let bookmarks = amonhen_model::bookmarks::read()?;
+    let recents = amonhen_model::recent::read()?;
+    let roots = amonhen_model::bookmarks::scan_roots()?;
+    let opened: std::collections::HashMap<String, i64> = (recents.iter())
+        .filter_map(|r| Some((r.path.clone(), r.opened_at? as i64)))
+        .collect();
+    let mut entries: Vec<crate::repos::Entry> = (bookmarks.iter())
+        .map(|b| crate::repos::Entry {
+            path: b.path.clone(),
+            name: b.display_name(),
+            favorite: b.favorite,
+            group: b.group.clone(),
+            color: b.color.clone(),
+            scanned: false,
+            opened: opened.get(&b.path).copied(),
+        })
+        .collect();
+    entries.extend(
+        recents
+            .iter()
+            .map(|r| repo_entry(&r.path, false, None, r.opened_at.map(|t| t as i64))),
+    );
+    Ok((entries, roots))
+}
+
 /// ブックマークでないリポジトリの行（名前は場所の最後の部分）。
-fn repo_entry(path: &str, group: Option<String>, opened: Option<i64>) -> crate::repos::Entry {
+fn repo_entry(
+    path: &str,
+    scanned: bool,
+    group: Option<String>,
+    opened: Option<i64>,
+) -> crate::repos::Entry {
     let bookmark = amonhen_model::bookmarks::Bookmark {
         path: path.to_owned(),
         name: None,
         group: None,
         favorite: false,
+        color: None,
     };
     crate::repos::Entry {
         name: bookmark.display_name(),
         path: path.to_owned(),
         favorite: false,
         group,
+        color: None,
+        scanned,
         opened,
     }
 }
@@ -11135,6 +11326,96 @@ mod tests {
         key(&mut app, KeyCode::Enter);
         assert!(app.quit);
         assert_eq!(app.take_next(), Some(crate::Next::Location(local)));
+    }
+
+    /// リポジトリのページの編集: `*` お気に入り、`n` 表示名、`c` 色、`g` グループ、`a` 追加、`x` 外す。アプリと同じ
+    /// `bookmarks.json` に、鍵を取って書く
+    #[test]
+    fn the_repository_page_edits_the_bookmarks() {
+        let (_dir, mut app, _rx) = app_with_history();
+        let config = tempfile::tempdir().unwrap();
+        let vars = amonhen_model::settings::config_vars(config.path().to_str().unwrap());
+        let env = amonhen_model::process::ClientEnv::from_vars(vars);
+        amonhen_model::process::with_client_env(&env, || {
+            let folder = config.path().join("amonhen");
+            std::fs::create_dir_all(&folder).unwrap();
+            let bookmarks =
+                serde_json::json!({"items": [{"path": "ssh://host/src/tool", "autoFetch": 5}]});
+            std::fs::write(folder.join("bookmarks.json"), bookmarks.to_string()).unwrap();
+            amonhen_model::recent::touch("ssh://host/src/beta").unwrap();
+            let keys = |app: &mut App, text: &str| {
+                for ch in text.chars() {
+                    let code = match ch {
+                        '\n' => KeyCode::Enter,
+                        '\x15' => {
+                            app.handle(Event::Input(Input::Key(KeyEvent::new(
+                                KeyCode::Char('u'),
+                                KeyModifiers::CONTROL,
+                            ))));
+                            continue;
+                        }
+                        ch => KeyCode::Char(ch),
+                    };
+                    app.handle(Event::Input(Input::Key(KeyEvent::new(
+                        code,
+                        KeyModifiers::NONE,
+                    ))));
+                }
+            };
+            app.handle(Event::Input(Input::Key(KeyEvent::new(
+                KeyCode::Char('o'),
+                KeyModifiers::CONTROL,
+            ))));
+            // 名前の順: beta、tool。tool をお気に入り・表示名・色・グループに。
+            keys(&mut app, "sj*n\x15Tool\nc5g\x15Team\n");
+            let items = amonhen_model::bookmarks::read().unwrap();
+            let tool = items
+                .iter()
+                .find(|b| b.path == "ssh://host/src/tool")
+                .unwrap();
+            assert!(tool.favorite);
+            assert_eq!(tool.name.as_deref(), Some("Tool"));
+            assert_eq!(tool.color.as_deref(), Some("blue"));
+            assert_eq!(tool.group.as_deref(), Some("Team"));
+            let text = std::fs::read_to_string(folder.join("bookmarks.json")).unwrap();
+            assert!(text.contains("autoFetch"), "unknown keys stay: {text}");
+            // 足す。
+            keys(&mut app, "assh://host/src/new\n");
+            assert!(
+                amonhen_model::bookmarks::read()
+                    .unwrap()
+                    .iter()
+                    .any(|b| b.path == "ssh://host/src/new")
+            );
+            // beta（最近開いたもの）を外す: 一覧から消える。
+            keys(&mut app, "s");
+            let repos = app.repos.as_ref().unwrap();
+            assert!(repos.selected_path().is_some());
+        });
+        // 外すのは、選んでいる行を確かめてから。
+        let before = app.repos.as_ref().unwrap().selected_path().unwrap();
+        amonhen_model::process::with_client_env(&env, || {
+            app.handle(Event::Input(Input::Key(KeyEvent::new(
+                KeyCode::Char('x'),
+                KeyModifiers::NONE,
+            ))));
+            app.handle(Event::Input(Input::Key(KeyEvent::new(
+                KeyCode::Char('y'),
+                KeyModifiers::NONE,
+            ))));
+            assert!(
+                !amonhen_model::bookmarks::read()
+                    .unwrap()
+                    .iter()
+                    .any(|b| b.path == before)
+            );
+            assert!(
+                !amonhen_model::recent::read()
+                    .unwrap()
+                    .iter()
+                    .any(|r| r.path == before)
+            );
+        });
     }
 
     #[test]
