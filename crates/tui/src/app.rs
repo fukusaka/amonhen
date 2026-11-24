@@ -5265,8 +5265,63 @@ impl App {
                 });
                 self.dirty = true;
             }
+            (_, None) if self.branch.is_some() => self.ask_pull_upstream(),
             _ => self.run("pull", tr!("Pulling…"), json!({"op": "pull"})),
         }
+    }
+
+    /// 上流のないブランチの pull: 取り込むリモートのブランチを選ばせ、それを上流にしてから pull する（アプリの
+    /// Pull のシートと同じ）。同じ名前のものを先に、9 つまで。
+    fn ask_pull_upstream(&mut self) {
+        let branch = self.branch.clone().unwrap_or_default();
+        let mut candidates: Vec<String> = (self.sidebar.branches().into_iter())
+            .filter(|(name, remote)| *remote && !name.ends_with("/HEAD"))
+            .map(|(name, _)| name)
+            .collect();
+        candidates.sort_by_key(|name| !name.ends_with(&format!("/{branch}")));
+        candidates.truncate(9);
+        if candidates.is_empty() {
+            self.error = Some(tr!(
+                "{branch} has no upstream, and there is no remote branch to pull from",
+                branch = branch
+            ));
+            self.dirty = true;
+            return;
+        }
+        let set =
+            |key: String, value: String| json!({"op": "configSet", "key": key, "value": value});
+        let choices = (candidates.iter().enumerate())
+            .filter_map(|(i, name)| {
+                // リモートの名前（スラッシュを含むこともある）と、その下のブランチ。
+                let remote = (self.remotes.iter())
+                    .filter(|r| name.starts_with(&format!("{r}/")))
+                    .max_by_key(|r| r.len())?;
+                let remote_branch = &name[remote.len() + 1..];
+                Some((
+                    char::from(b'1' + i as u8),
+                    name.clone(),
+                    Request::Run {
+                        name: "pull",
+                        command: json!([
+                            set(format!("branch.{branch}.remote"), remote.clone()),
+                            set(
+                                format!("branch.{branch}.merge"),
+                                format!("refs/heads/{remote_branch}")
+                            ),
+                            {"op": "pull"},
+                        ]),
+                    },
+                ))
+            })
+            .collect();
+        self.choices = Some((
+            tr!(
+                "{branch} has no upstream: pull from which branch? It becomes the upstream.",
+                branch = branch
+            ),
+            choices,
+        ));
+        self.dirty = true;
     }
 
     /// 分かれているときの pull の選択。`conflicts` は上流を merge したときにコンフリクトしそうなファイル（分から

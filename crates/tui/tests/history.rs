@@ -3365,6 +3365,43 @@ fn clone_a_bundle_without_head_asks_the_branch() {
     assert_eq!(git_out(&dest, &["branch", "--show-current"]), "topic\n");
 }
 
+/// 上流のないブランチで `p`: 取り込むリモートのブランチを選ぶと、それを上流にして pull する（アプリの Pull）
+#[test]
+fn pull_without_upstream_asks_the_branch() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("source");
+    std::fs::create_dir(&source).unwrap();
+    merged(&source);
+    let work = dir.path().join("work");
+    git(
+        dir.path(),
+        BASE,
+        &[
+            "clone",
+            "-q",
+            source.to_str().unwrap(),
+            work.to_str().unwrap(),
+        ],
+    );
+    git(&work, BASE, &["switch", "-q", "-c", "side", "HEAD~1"]);
+    let asked = amonhen_tui::snapshot(open(&work), 200, 12, clock(), "p").unwrap();
+    println!("{asked}");
+    assert!(
+        asked.contains("side has no upstream: pull from which branch?"),
+        "{asked}"
+    );
+    assert!(asked.contains("1 origin/main"), "{asked}");
+    amonhen_tui::snapshot(open(&work), 200, 12, clock(), "p1").unwrap();
+    assert_eq!(
+        git_out(&work, &["config", "branch.side.merge"]),
+        "refs/heads/main\n"
+    );
+    assert_eq!(
+        git_out(&work, &["rev-parse", "HEAD"]),
+        git_out(&work, &["rev-parse", "origin/main"])
+    );
+}
+
 /// コマンドの一覧の Delete Ignored Files: 数と名前を出して確かめ、ignore されたものを消す
 #[test]
 fn delete_ignored_files_from_the_command_list() {
