@@ -2081,6 +2081,27 @@ async function workingWhitespaceFlow(): Promise<void> {
   }
 }
 
+/** git notes は詳細の残り（commitExtras）で届く（エンジン） */
+async function notesFlow(): Promise<void> {
+  const start = git('rev-parse', 'HEAD').trim();
+  // 詳細の残りは覚えておくので、まだ出していない新しいコミットで
+  git('commit', '-q', '--allow-empty', '-m', 'notes e2e');
+  const oid = git('rev-parse', 'HEAD').trim();
+  git('notes', 'add', '-f', '-m', 'A note for e2e', oid);
+  await api.manager.current!.refresh();
+  try {
+    const panel = await showView('amonhen.showHistory');
+    const mark = posted.length;
+    await panel.history.handle({ type: 'select', oid });
+    const extras = (await waitPosted('detailsExtras', mark, (m) => m.extras.oid === oid)).extras;
+    assert.equal(extras.notes?.trim(), 'A note for e2e');
+  } finally {
+    git('notes', 'remove', '--ignore-missing', oid);
+    git('reset', '-q', '--hard', start);
+    await api.manager.current!.refresh();
+  }
+}
+
 /**
  * アプリのメニューにあってボタンの中にしかなかった操作のコマンド: Stage All、Set Upstream…（QuickPick で選ぶ）、
  * Find in History…（検索の欄へ）
@@ -3455,6 +3476,16 @@ async function editFlow(label: string): Promise<void> {
       await until('move', () => subjects(3).join() === [name('c'), name('b'), name('d')].join());
       await undo('move');
 
+      if (label === 'daemon') {
+        // Webview で d を b に重ねて落とす: d を b の上へ動かして squash にした編集モードが開く（Apply まで何も変わらない）
+        const rows = await openedEditMode(() => panel.history.handle({ type: 'squashOnto', oid: d, onto: b }));
+        assert.deepEqual(
+          rows.map((r) => `${r.oid}:${r.action}`),
+          [`${c}:pick`, `${d}:squash`, `${b}:pick`],
+        );
+        assert.equal(rev(work), top);
+      }
+
       // Edit: b で止まり、変えて amend されるように stage してから Continue
       answer = 'Edit';
       if (label === 'daemon') {
@@ -3845,10 +3876,13 @@ suite('Amon Hen in VSCode', () => {
       await merge('mm-topic', 'squash');
       await until('Squash の途中', async () => (await repo.backend.sequenceInProgress()) === 'squash', undefined, lastErrors);
       await repo.refresh();
-      assert.ok(
-        api.sidebar.getChildren().some((n) => n.kind === 'sequence' && api.sidebar.getTreeItem(n).label === 'Squash in progress'),
-        'サイドバーの Squash の行',
+      // エンジンがあれば、アプリの帯と同じく何をどこへしている途中かと、なぜ止まったか（コンフリクト）を言う
+      const row = await until('サイドバーの Squash の行', () =>
+        api.sidebar.getChildren().map((n) => (n.kind === 'sequence' ? api.sidebar.getTreeItem(n) : undefined)).find((i) => /^Squash/.test(String(i?.label))),
       );
+      if (process.env.AMONHEN_E2E_ENGINE && /^Squashing /.test(String(row.label))) {
+        assert.match(String(row.description), /conflicts/, String(row.description));
+      }
       writeFileSync(join(root, 'mm.txt'), 'both\n');
       git('add', 'mm.txt');
       await withWindow({ showInformationMessage: async () => undefined }, async () => vscode.commands.executeCommand('amonhen.continueSequence'));
@@ -4536,6 +4570,10 @@ suite('Amon Hen in VSCode', () => {
 
   test('ignores whitespace in the Working Copy diff through the daemon', async () => {
     await workingWhitespaceFlow();
+  });
+
+  test('shows git notes in the details through the daemon', async () => {
+    await notesFlow();
   });
 
   test('runs the app menu’s commands from the Command Palette', async () => {

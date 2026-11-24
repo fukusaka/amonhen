@@ -236,6 +236,8 @@ export interface DetailsExtras {
   signature?: SignatureView;
   /** そのコミットを親に持つコミット */
   children: string[];
+  /** git notes（refs/notes/commits）。なければ undefined */
+  notes?: string;
 }
 
 export type HistoryWebviewMessage =
@@ -281,6 +283,8 @@ export type HistoryWebviewMessage =
   | { type: 'saveMessage'; oid: string; last?: string; kind: MessageEdit; message: string }
   /** 編集できる範囲の中で、新しい順の to 番目に動かす */
   | { type: 'move'; oid: string; to: number }
+  /** History で行に重ねて落とした: oid を onto にまとめる（編集モードを、その変更を入れて開く） */
+  | { type: 'squashOnto'; oid: string; onto: string }
   /** HEAD・親・子のコミットに移る（`oid` は今選んでいるコミット） */
   | { type: 'goTo'; to: 'head' | 'parent' | 'child'; oid?: string }
   /** shallow clone の履歴を取り足す・すべて取る、partial clone の中身をすべて取る（帯と札のボタン） */
