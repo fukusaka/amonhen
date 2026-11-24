@@ -5998,7 +5998,9 @@ impl App {
             // 並び順が替わった: History を読み直す（ref と状態も、ほかの操作と同じく下で読み直す）。
             "historyOrder" => {
                 self.topo_order = reply["order"] == "topo";
+                // 覚えていた並び順に戻した: 知らせも書き直しもせず、その順で History を読み直す。
                 if std::mem::take(&mut self.restoring_order) {
+                    self.open();
                     return;
                 }
                 self.save_tui_state();
