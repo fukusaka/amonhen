@@ -2021,6 +2021,49 @@ async function syntaxFlow(): Promise<void> {
   }
 }
 
+/**
+ * Working Copy の差分で空白を無視する（エンジン）: 空白だけの変更は差分に出ず、その間は行を stage しない。戻すと出る
+ */
+async function workingWhitespaceFlow(): Promise<void> {
+  const start = git('rev-parse', 'HEAD').trim();
+  const file = join(root, 'ws.txt');
+  const wc = (await showView('amonhen.showWorkingCopy')).workingCopy;
+  const choose = async (whitespace: 'exact' | 'all') => {
+    const at = posted.length;
+    await wc.handle({ type: 'wcWhitespace', whitespace });
+    return (await waitPosted('wcDiff', at, (m) => m.diff?.path === 'ws.txt' && m.whitespace === whitespace)).diff!;
+  };
+  const removed = (diff: { hunks: { lines: { kind: string }[] }[] }) => diff.hunks.some((h) => h.lines.some((l) => l.kind === '-'));
+  try {
+    writeFileSync(file, 'a b\nc\n');
+    git('add', 'ws.txt');
+    git('commit', '-q', '-m', 'add ws.txt');
+    writeFileSync(file, 'a  b\nc\nd\n');
+    let mark = posted.length;
+    await vscode.commands.executeCommand('amonhen.refresh');
+    await waitPosted('wcFiles', mark, (m) => m.files.some((f) => f.path === 'ws.txt'));
+    mark = posted.length;
+    await wc.handle({ type: 'wcSelect', group: 'unstaged', path: 'ws.txt' });
+    const first = await waitPosted('wcDiff', mark, (m) => m.diff?.path === 'ws.txt');
+    assert.equal(first.whitespace, 'exact');
+    assert.ok(removed(first.diff!), JSON.stringify(first.diff));
+
+    const ignored = await choose('all');
+    assert.ok(!removed(ignored), JSON.stringify(ignored));
+    assert.ok(ignored.hunks.some((h) => h.lines.some((l) => l.kind === '+' && l.text === 'd')), JSON.stringify(ignored));
+    // 無視している間は、行の stage を断る（index は変わらない）
+    await wc.handle({ type: 'wcStageLines', group: 'unstaged', path: 'ws.txt', version: ignored.version, lines: [{ kind: '+', new: 3 }] });
+    assert.equal(git('diff', '--cached', '--name-only').trim(), '');
+
+    assert.ok(removed(await choose('exact')));
+  } finally {
+    await wc.handle({ type: 'wcWhitespace', whitespace: 'exact' });
+    git('reset', '-q', '--hard', start);
+    rmSync(file, { force: true });
+    await vscode.commands.executeCommand('amonhen.refresh');
+  }
+}
+
 async function orphanFlow(): Promise<void> {
   const repo = api.manager.current!;
   const branch = git('symbolic-ref', '--short', 'HEAD').trim();
@@ -4405,6 +4448,10 @@ suite('Amon Hen in VSCode', () => {
 
   test('colors diffs and Blame with the engine’s syntax highlighting', async () => {
     await syntaxFlow();
+  });
+
+  test('ignores whitespace in the Working Copy diff through the daemon', async () => {
+    await workingWhitespaceFlow();
   });
 
   test('creates an orphan branch, empty or keeping the files, through the daemon', async () => {

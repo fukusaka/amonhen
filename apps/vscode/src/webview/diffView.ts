@@ -1,5 +1,6 @@
 /** 差分の描画。Working Copy と History で共通に使う */
 import type { DiffHunk, DiffLine, FileDiff } from '../diff/fileDiff.ts';
+import type { DiffWhitespace } from '../history/protocol.ts';
 import { el, post } from './api.ts';
 
 /** これより多い行は描かない（重くなるので） */
@@ -228,6 +229,29 @@ function updateWrapButton(button: HTMLElement): void {
 }
 
 /** 差分の帯の ↩︎（長い行の折り返しを切り替える。設定はすべての差分で 1 つ） */
+const WHITESPACE: { value: DiffWhitespace; label: string; tip: string }[] = [
+  { value: 'exact', label: 'Compare Whitespace', tip: 'Lines that differ only in whitespace are changes' },
+  { value: 'at-eol', label: 'Ignore Whitespace at Line Ends', tip: 'Ignore whitespace at the end of lines (git diff --ignore-space-at-eol)' },
+  { value: 'change', label: 'Ignore Changes in Whitespace', tip: 'Ignore changes in the amount of whitespace (git diff -b)' },
+  { value: 'all', label: 'Ignore All Whitespace', tip: 'Ignore all whitespace when comparing lines (git diff -w)' },
+];
+
+/** 行を比べるときに無視する空白を選ぶ欄（History の詳細と Working Copy の差分の帯。無視している間は枠を強調） */
+export function whitespaceSelect(current: DiffWhitespace, onChange: (whitespace: DiffWhitespace) => void): HTMLSelectElement {
+  const select = el('select', 'whitespace');
+  select.classList.toggle('on', current !== 'exact');
+  for (const w of WHITESPACE) {
+    const option = el('option', '', w.label);
+    option.value = w.value;
+    option.title = w.tip;
+    option.selected = w.value === current;
+    select.append(option);
+  }
+  select.title = 'Whitespace to ignore when comparing lines (as git diff does)';
+  select.addEventListener('change', () => onChange(select.value as DiffWhitespace));
+  return select;
+}
+
 export function wrapButton(): HTMLElement {
   const button = el('button', 'bar-button wrap-button', '↩︎');
   button.addEventListener('click', () => post({ type: 'toggleWrapLines' }));

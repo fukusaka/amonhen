@@ -9,7 +9,6 @@ import type {
   DetailsExtras,
   DetailsLayout,
   DiffChoices,
-  DiffWhitespace,
   FileView,
   ImageBlob,
   PairMode,
@@ -20,7 +19,7 @@ import type {
 import { el, formatDate, getState, post, updateState } from './api.ts';
 import { type FileDir, makeFileTree } from '../workingCopy/fileList.ts';
 import { COLLAPSE_ABOVE, isGenerated, type LineCounts, lineCounts, renamedPath } from '../history/stackedFiles.ts';
-import { renderDiffBody, wrapButton } from './diffView.ts';
+import { renderDiffBody, whitespaceSelect, wrapButton } from './diffView.ts';
 import { isImagePath, renderImageDiff } from './imageDiff.ts';
 import { type AllFiles, createAllFiles } from './allFiles.ts';
 import { signatureMark } from './signature.ts';
@@ -103,12 +102,6 @@ export function showWholeFile(oid: string, path: string): void {
   for (const show of wholeFiles) show(oid, path);
 }
 
-const WHITESPACE: { value: DiffWhitespace; label: string; tip: string }[] = [
-  { value: 'exact', label: 'Compare Whitespace', tip: 'Lines that differ only in whitespace are changes' },
-  { value: 'at-eol', label: 'Ignore Whitespace at Line Ends', tip: 'Ignore whitespace at the end of lines (git diff --ignore-space-at-eol)' },
-  { value: 'change', label: 'Ignore Changes in Whitespace', tip: 'Ignore changes in the amount of whitespace (git diff -b)' },
-  { value: 'all', label: 'Ignore All Whitespace', tip: 'Ignore all whitespace when comparing lines (git diff -w)' },
-];
 
 /** 詳細に並べた 1 ファイル（差分の見出しが、変わったファイルの一覧を兼ねる） */
 interface FileSection {
@@ -316,18 +309,7 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
     );
     const items: Node[] = canAll ? [pages, total, spacer, switcher] : [total, spacer, switcher];
     if (choices) {
-      const current = choices.whitespace;
-      const select = el('select');
-      select.classList.toggle('on', current !== 'exact');
-      for (const w of WHITESPACE) {
-        const option = el('option', '', w.label);
-        option.value = w.value;
-        option.title = w.tip;
-        option.selected = w.value === current;
-        select.append(option);
-      }
-      select.title = 'Whitespace to ignore when comparing lines (as git diff does)';
-      select.addEventListener('change', () => post({ type: 'whitespace', whitespace: select.value as DiffWhitespace }));
+      const select = whitespaceSelect(choices.whitespace, (whitespace) => post({ type: 'whitespace', whitespace }));
       items.push(select);
     }
     items.push(wrapButton());

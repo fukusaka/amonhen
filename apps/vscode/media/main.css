@@ -1381,14 +1381,16 @@ button.sheet-list-item:hover {
   flex: 1;
 }
 
-.files-bar select {
+.files-bar select,
+.diff-head select.whitespace {
   padding: 1px 4px;
   color: var(--vscode-dropdown-foreground);
   background: var(--vscode-dropdown-background);
   border: 1px solid var(--vscode-dropdown-border, transparent);
 }
 
-.files-bar select.on {
+.files-bar select.on,
+.diff-head select.whitespace.on {
   border-color: var(--vscode-focusBorder);
 }
 

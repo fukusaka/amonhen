@@ -10,7 +10,8 @@ import type { Eol, LineEndings } from '../git/eol.ts';
 import { addTrailer, commitDisabledReason, lengthLevel, longestLine, messageLength, splitMessage, withType } from '../workingCopy/commitMessage.ts';
 import { filesUnder, filterByPath, makeFileTree, type FileDir, type FileLayout } from '../workingCopy/fileList.ts';
 import { el, post, type View } from './api.ts';
-import { lineKey, renderDiffBody, wrapButton } from './diffView.ts';
+import { lineKey, renderDiffBody, whitespaceSelect, wrapButton } from './diffView.ts';
+import type { DiffWhitespace } from '../history/protocol.ts';
 
 const GROUPS: { group: ChangeGroup; title: string }[] = [
   { group: 'conflicts', title: 'Conflicts' },
@@ -100,6 +101,8 @@ export function createWorkingCopyView(): View {
   let diff: FileDiff | undefined;
   /** diff のファイルが今あるグループ */
   let diffGroup: ChangeGroup | undefined;
+  /** 差分で無視している空白（エンジンで読んだときだけ。なければ選ぶ欄を出さない） */
+  let whitespace: DiffWhitespace | undefined;
   /** 選んでいる行。キーは `old:12` / `new:7` */
   let picked = new Set<string>();
   let anchor: string | undefined;
@@ -343,9 +346,12 @@ export function createWorkingCopyView(): View {
     if (d.lineEndings?.notable) {
       head.append(lineEndingsBadge(d.lineEndings));
     }
+    const group = diffGroup!;
+    if (whitespace && group !== 'conflicts') {
+      head.append(whitespaceSelect(whitespace, (w) => post({ type: 'wcWhitespace', whitespace: w })));
+    }
     head.append(wrapButton());
     const actions = el('span', 'actions');
-    const group = diffGroup!;
     if (group === 'conflicts') {
       diffPane.replaceChildren(head, renderConflict(d));
       return;
@@ -355,6 +361,8 @@ export function createWorkingCopyView(): View {
       return;
     }
     const staged = group === 'staged';
+    // 空白を無視した差分の行は中身をそのまま表していないので、行・hunk ごとには stage・破棄しない（macOS 版と同じ）
+    const exact = (whitespace ?? 'exact') === 'exact';
     if (picked.size > 0) {
       const lines = el(
         'button',
@@ -367,6 +375,12 @@ export function createWorkingCopyView(): View {
         const discardLines = el('button', 'secondary', `Discard ${picked.size} Line${picked.size > 1 ? 's' : ''}`);
         discardLines.addEventListener('click', () => discard([...picked]));
         actions.append(discardLines);
+      }
+      if (!exact) {
+        for (const button of actions.querySelectorAll('button')) {
+          button.disabled = true;
+          button.title = 'Can’t stage or discard lines while whitespace is ignored';
+        }
       }
     }
     const file = el('button', 'secondary', staged ? 'Unstage File' : 'Stage File');
@@ -389,7 +403,7 @@ export function createWorkingCopyView(): View {
     content.push(
       ...renderDiffBody(d, {
         picked,
-        hunkActions: [
+        hunkActions: !exact ? [] : [
           {
             label: staged ? 'Unstage Hunk' : 'Stage Hunk',
             run: (hunk) => stageLines(hunk.lines.filter((l) => l.kind !== ' ').map(lineKey)),
@@ -530,14 +544,14 @@ export function createWorkingCopyView(): View {
   }
 
   function stageLines(keys: string[]): void {
-    if (!diff || keys.length === 0) return;
+    if (!diff || keys.length === 0 || (whitespace ?? 'exact') !== 'exact') return;
     post({ type: 'wcStageLines', group: diffGroup!, path: diff.path, version: diff.version, lines: toLines(keys) });
     picked = new Set();
   }
 
   /** 選んだ行を破棄する。確認は拡張ホストで行う */
   function discard(keys: string[]): void {
-    if (!diff || keys.length === 0) return;
+    if (!diff || keys.length === 0 || (whitespace ?? 'exact') !== 'exact') return;
     post({ type: 'wcDiscardLines', path: diff.path, version: diff.version, lines: toLines(keys) });
   }
 
@@ -720,6 +734,7 @@ export function createWorkingCopyView(): View {
         }
         diff = m.diff;
         diffGroup = m.group;
+        whitespace = m.diff ? m.whitespace : whitespace;
         selected = m.diff ? { group: m.group!, path: m.diff.path } : undefined;
         renderFiles();
         renderDiff();

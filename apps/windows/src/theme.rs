@@ -60,7 +60,7 @@ pub struct SyntaxTheme {
 }
 
 /// 種類の名前と `SyntaxSpan` の定数（GTK4 版の `KINDS` と同じ並び）。
-const KINDS: [(&str, u8); 14] = [
+pub const KINDS: [(&str, u8); 14] = [
     ("keyword", SyntaxSpan::KEYWORD),
     ("string", SyntaxSpan::STRING),
     ("comment", SyntaxSpan::COMMENT),

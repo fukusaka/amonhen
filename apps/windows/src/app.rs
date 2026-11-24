@@ -17555,17 +17555,16 @@ impl Root {
                 return View::empty();
             }
             let mut parsed = None;
+            let mut diagrams = std::sync::Arc::default();
             self.with_history(|h| {
-                parsed = h
-                    .session
-                    .data
-                    .file_view
-                    .as_ref()
-                    .map(|f| f.markdown.clone().unwrap_or_default());
+                if let Some(f) = h.session.data.file_view.as_ref() {
+                    parsed = Some(f.markdown.clone().unwrap_or_default());
+                    diagrams = f.diagrams.clone();
+                }
             });
             return Border::new()
                 .background(Brush::Solid(crate::palette::background()))
-                .content(crate::markdownview::view(parsed.as_deref()));
+                .content(crate::markdownview::view(parsed.as_deref(), &diagrams));
         }
         let flat = !crate::prefs::bool(crate::prefs::HISTORY_FILE_TREE);
         Border::new()

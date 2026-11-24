@@ -223,6 +223,7 @@ export class MainPanel implements vscode.Disposable {
       case 'wcDiscardLines':
       case 'wcCommit':
       case 'wcOpenFile':
+      case 'wcWhitespace':
       case 'wcResolve':
         await this.workingCopy.handle(message);
         break;
