@@ -89,13 +89,13 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | All・Favorites・Places・グループのあるリポジトリのページ | ✓ | ✓ | ✓ | n/a | n/a | ✓ | TUI: Ctrl-o かコマンドの一覧の Repositories で、画面に重ねる。Quick Open にも並ぶ。 |
 | 手元・SSH のリポジトリを足す | ✓ | ✓ | ✓ | n/a | n/a | ✓ | TUI: リポジトリのページの `a`。この機械のパスか `ssh://host/path` を打つ。 |
 | この機械の探すフォルダー（深さ・見張り） | △ | △ | △ | n/a | n/a | △ | macOS: 除くものは決まった一覧。<br>GTK4: 除くものは決まった一覧。<br>Windows: 除外は決まったもの。フォルダは Repositories を出している間だけ見張る。<br>TUI: 除外は決まった並び。リポジトリのページの `a` で足し、🔍 の上で `d` 深さ、`r` 探し直し、`x` やめる。ページを開いている間は見張る。 |
-| SSH 先の探すフォルダー | ✓ | ✓ | ✓ | n/a | △ | △ | CLI: `find-repositories` がアプリのために探す。<br>TUI: 並べ、足せるが、探さない（エンジンにまだ探させない）。 |
+| SSH 先の探すフォルダー | ✓ | ✓ | ✓ | n/a | △ | ✓ | CLI: `find-repositories` がアプリのために探す。<br>TUI: SSH 先のエンジンが探す（要れば、送ってよいか聞いてから）。 |
 | 場所の下のリポジトリのフォルダーの木 | ✓ | ✓ | ✓ | n/a | n/a | ✓ | TUI: リポジトリのページの、場所ごとの下。 |
 | 手で作るグループ・行を Favorites やグループへドラッグ | △ | △ | ✓ | n/a | n/a | △ | macOS: グループそのものはドラッグで並べ替えられない。<br>GTK4: グループそのものはドラッグで並べ替えられない。<br>TUI: `g` でグループを打つ。ドラッグはない。 |
 | 状態の列（ブランチ・変更・ahead/behind・最後のコミット・開いた時）、並べ替え、列の順の入れ替え | ✓ | ✓ | ✓ | n/a | n/a | △ | TUI: `s` で並べる列を替える。列は並べ替えられない。 |
 | お気に入り・表示名・色のラベル | ✓ | ✓ | ✓ | n/a | n/a | ✓ | TUI: リポジトリのページの `*`・`n`・`c`。 |
 | タブ・窓で開く、Finder（ファイル）・Terminal・エディタ | ✓ | ✓ | ✓ | n/a | n/a | ✓ | GTK4: 知っているコードエディタと「その他…」で選んだプログラム以外は、inode/directory を宣言しているアプリだけがフォルダを開く。<br>Windows: エクスプローラー・Windows Terminal（なければ cmd）・Settings で選んだエディタ。<br>TUI: Enter でそこで開き直す。`t` でそのフォルダのシェル（端末を渡す）、`e` で git のエディタ、`o` でファイルの窓。 |
-| 選んだリポジトリを Fetch | ✓ | ✓ | ✓ | n/a | n/a | △ | Windows: Ctrl・Shift で行を選び、選んだ行のメニューの Fetch で、選んだものすべてを fetch する。<br>TUI: `v` で行に印をつけ、`f` で裏で Fetch。SSH 先のリポジトリはページからは Fetch しない。 |
+| 選んだリポジトリを Fetch | ✓ | ✓ | ✓ | n/a | n/a | ✓ | Windows: Ctrl・Shift で行を選び、選んだ行のメニューの Fetch で、選んだものすべてを fetch する。<br>TUI: `v` で行に印をつけ、`f` で裏で Fetch。SSH 先のリポジトリは共有の daemon 越しに（要れば、エンジンを送ってよいか聞いてから）。 |
 | Quick Open（あいまい検索） | ✓ | ✓ | ✓ | n/a | n/a | ✓ | TUI: 命令の一覧の Quick Open が、アプリと同じものを並べる: 共有のブックマーク（`bookmarks.json`。お気に入りを先に）、最近開いたもの（`recent.json`）、手元の探すフォルダの下で見つけたもの（裏で探す。SSH 先のフォルダは探さない）。Enter で TUI をそこで開き直す。 |
 | ツールバーのリポジトリ名で切り替える | ✓ | ✓ | ✓ | ✓ | n/a | n/a | VSCode: Select Repository でワークスペースのリポジトリから選ぶ。<br>TUI: Quick Open が代わり。 |
 | Clone（自分の GitHub のリポジトリから選ぶ） | ✓ | ✓ | ✓ | n/a | △ | △ | VSCode: VSCode 自身の Git: Clone。<br>CLI: `clone <url>` だけ。<br>Windows: clone したものは新しいタブで開く。<br>TUI: Quick Open に URL を打つ。GitHub はない。 |
@@ -280,7 +280,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | 空白を無視する（行末・量の違い・すべて） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: エンジンがあれば。<br>CLI: `show -w`・`-b`・`--ignore-space-at-eol`。<br>TUI: 詳細の `w` で順に替える。 |
 | 画像を比べる（並べる・スワイプ・オニオンスキン・違うピクセル） | ✓ | ✓ | ✓ | ✓ | n/a | — | VSCode: 20 MB を超える画像は比べない。 |
 | すべてのファイル: その時点の木と、コミットの行に印を付けたファイルの中身 | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: エンジンがあれば。<br>TUI: History の `a`。画面に重ねる。プレビューはない（中身は文字で出す）。 |
-| すべてのファイルのプレビュー: 拡大縮小できる画像・SVG の絵とモバイル向けの確認・整形した Markdown・バイナリの Quick Look | ✓ | ✓ | △ | ✓ | n/a | — | VSCode: そのほかのバイナリは Quick Look の代わりに VSCode のエディタで開く。<br>GTK4: Quick Look の代わりに GNOME のプレビュー（か既定のアプリ）。SVG の絵は librsvg で描く。<br>Windows: 拡大縮小できる画像・SVG の絵・整形した Markdown。SVG のモバイル向けの確認とバイナリのプレビューはまだない。 |
+| すべてのファイルのプレビュー: 拡大縮小できる画像・SVG の絵とモバイル向けの確認・整形した Markdown・バイナリの Quick Look | ✓ | ✓ | △ | ✓ | n/a | — | VSCode: そのほかのバイナリは Quick Look の代わりに VSCode のエディタで開く。<br>GTK4: Quick Look の代わりに GNOME のプレビュー（か既定のアプリ）。SVG の絵は librsvg で描く。<br>Windows: 拡大縮小できる画像・SVG の絵とモバイル向けの確認・整形した Markdown。部品の切り替えはパスの帯にあり、バイナリのプレビューはまだない。 |
 | すべてのファイル: Android の VectorDrawable の絵（色はコミットの `res` から、animated-vector は動く前の絵） | ✓ | ✓ | — | — | n/a | — | Windows・VSCode: VectorDrawable の XML はテキストで出す。 |
 | ファイルの見出しのメニュー（Blame・File History・パスのコピー・開く） | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: 右クリックの Blame・File History・Copy Path と、VSCode の差分のエディターで開く。<br>TUI: 見ているファイルの `B`・`L`・`Y`（パスのコピー）・`e`（git のエディタで開く）。 |
 | 選んだものの差分（範囲をまとめる・A..B / A...B・飛び飛び） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: エンジンがあるとき。<br>CLI: `diff <rev> <rev>`。<br>TUI: `m` と Shift-↑↓（か Ctrl・Alt を押しながらクリック）で選ぶ。`x` で向きを入れ替え、`.` で merge-base から。 |

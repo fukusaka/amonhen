@@ -115,6 +115,24 @@ pub struct DiffContent<'a> {
     pub file_mode: bool,
     /// すべてのファイルで開いた画像（差分の代わりに 1 枚の絵）と、その見せ方。
     pub picture: Option<(&'a [u8], crate::imagediff::View)>,
+    /// SVG をモバイルで見るとき、その部品での見え方（元の絵と並べる）。
+    pub mobile: Option<&'a MobileCheck>,
+}
+
+/// SVG の見せ方（macOS 版の `SVGView`、GTK4 版の `SvgView`）: 絵・モバイル（絵と、モバイル向けの描画部品で
+/// 崩れる機能の一覧）・テキスト。開いている間は覚える（覚え直さない）。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SvgView {
+    #[default]
+    Picture,
+    Mobile,
+    Text,
+}
+
+/// SVG のモバイル向けの確認: 崩れる機能（`svglint`）と、見ている部品での見え方（`svgmobile`）。
+pub struct MobileCheck {
+    pub issues: Vec<amonhen_core::svglint::Issue>,
+    pub preview: amonhen_core::svgmobile::Preview,
 }
 
 impl DiffContent<'_> {
@@ -409,6 +427,7 @@ impl WorkingShown {
             key: 0,
             file_mode: false,
             picture: None,
+            mobile: None,
         }
     }
 }
@@ -430,6 +449,8 @@ pub struct FileShown {
     key: u64,
     /// Markdown なら、整形して見せるブロック。
     pub markdown: Option<Vec<amonhen_core::markdown::Block>>,
+    /// SVG をモバイルで見ているなら、その確認。
+    pub mobile: Option<Arc<MobileCheck>>,
 }
 
 impl FileShown {
@@ -452,6 +473,7 @@ impl FileShown {
                 .picture
                 .as_deref()
                 .map(|p| (p.as_slice(), self.picture_view)),
+            mobile: self.mobile.as_deref(),
         }
     }
 }
@@ -650,6 +672,7 @@ impl CommitShown {
             key: self.id,
             file_mode: false,
             picture: None,
+            mobile: None,
         }
     }
 
@@ -1101,6 +1124,9 @@ pub struct Data {
     working_entry: Option<(amonhen_model::StatusEntry, bool)>,
     /// 行を比べるときに無視する空白（差分の帯で選ぶ。覚えない。macOS 版・GTK4 版と同じ）。
     pub whitespace: Whitespace,
+    /// すべてのファイルで開いた SVG の見せ方と、モバイルで見る部品（パスの帯で選ぶ。覚えない）。
+    pub svg_view: SvgView,
+    pub mobile_renderer: amonhen_core::svglint::Target,
     /// 空白の扱いを変えて読み直すとき、届いた差分に戻す開き方。
     restore: Option<Restore>,
     /// 空白の扱いを変えて読み直した差分が届いた（同じ行でも出し直す。見たら `false` に戻す）。
@@ -1454,6 +1480,8 @@ impl Data {
             last_want: None,
             working_entry: None,
             whitespace: Whitespace::Exact,
+            svg_view: SvgView::Picture,
+            mobile_renderer: amonhen_core::svglint::Target::Android,
             restore: None,
             commit_reloaded: false,
             syntax_changed: false,
@@ -2098,11 +2126,26 @@ impl Data {
             return;
         };
         let (tx, wake) = (self.tx.clone(), self.wake.clone());
+        let (svg_view, renderer) = (self.svg_view, self.mobile_renderer);
         std::thread::spawn(move || {
-            // 画像は、その時点の中身を絵で見せる（読めなければ、ほかのファイルと同じく）。
-            let picture = crate::imagediff::is_picture(&path)
+            // 画像は、その時点の中身を絵で見せる（読めなければ、ほかのファイルと同じく）。SVG はテキストでも
+            // 見られる。
+            let svg = crate::imagediff::is_svg(&path);
+            let picture = (crate::imagediff::is_picture(&path)
+                && !(svg && svg_view == SvgView::Text))
                 .then(|| blob_at(&repo, &commit, change.as_ref(), &path))
                 .flatten();
+            // モバイルで見る SVG は、崩れる機能と、その部品での見え方も（Android と flutter_svg は本物の取り込みを
+            // 移したもの、ほかは近似。GTK4 版と同じ）。
+            let mobile = picture
+                .as_deref()
+                .filter(|_| svg && svg_view == SvgView::Mobile)
+                .map(|data| {
+                    Arc::new(MobileCheck {
+                        issues: amonhen_core::svglint::lint(data),
+                        preview: amonhen_core::svgmobile::preview(data, renderer),
+                    })
+                });
             // Markdown は、整形して見せるブロックも読む（macOS 版の `MarkdownView`）。
             let markdown = amonhen_core::markdown::is_markdown(&path)
                 .then(|| blob_at(&repo, &commit, change.as_ref(), &path))
@@ -2136,6 +2179,7 @@ impl Data {
                 picture_view: crate::imagediff::View::default(),
                 key: NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
                 markdown,
+                mobile,
             })));
             wake();
         });

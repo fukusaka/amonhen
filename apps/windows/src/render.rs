@@ -1699,15 +1699,78 @@ impl Renderer {
             );
         };
         let size = entry.after.as_ref().map_or((0.0, 0.0), |p| p.size());
-        let caption = entry.caption.clone();
+        let mut caption = entry.caption.clone();
         let layout = image::single_layout(width, height);
-        let rect = image::fit(size, layout.canvas, &view);
         unsafe {
             self.d2d
                 .PushAxisAlignedClip(&d2d_rect(layout.canvas), D2D1_ANTIALIAS_MODE_ALIASED);
         }
-        self.checker(rect);
-        self.draw_bitmap(&bitmap, rect, 1.0);
+        match content.mobile {
+            // モバイルで見る SVG: 元の絵と、その部品での絵を並べる（GTK4 版の `imagediff::compare`）。
+            Some(mobile) => {
+                let mobile_key = (content.key, usize::MAX - 1);
+                if !self.images.contains_key(&mobile_key) {
+                    let pixels = mobile
+                        .preview
+                        .svg
+                        .as_deref()
+                        .and_then(|svg| self.rasterize_svg(svg).ok());
+                    let bitmap = pixels.as_ref().and_then(|p| self.bitmap(p).ok());
+                    self.images.insert(
+                        mobile_key,
+                        ImageEntry {
+                            before: None,
+                            after: pixels,
+                            before_bitmap: None,
+                            after_bitmap: bitmap,
+                            caption: String::new(),
+                            difference: None,
+                        },
+                    );
+                }
+                let rendered = &self.images[&mobile_key];
+                let (rendered_bitmap, rendered_size) = (
+                    rendered.after_bitmap.clone(),
+                    rendered.after.as_ref().map_or((0.0, 0.0), |p| p.size()),
+                );
+                caption = format!("{caption}    {}", mobile.preview.caption);
+                let titles = [amonhen_model::tr!("Original"), mobile.preview.title.clone()];
+                for (side, (bitmap, size)) in [
+                    (Some(bitmap.clone()), size),
+                    (rendered_bitmap, rendered_size),
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    let area = image::two_up_area(layout.canvas, side);
+                    self.draw_small(
+                        &titles[side],
+                        &format,
+                        area.x,
+                        area.y - 20.0,
+                        area.w,
+                        &secondary(),
+                        false,
+                    )?;
+                    // その部品が読めない SVG は空けておく（理由は下の一覧の上に）。
+                    if let Some(bitmap) = bitmap {
+                        unsafe {
+                            self.d2d
+                                .PushAxisAlignedClip(&d2d_rect(area), D2D1_ANTIALIAS_MODE_ALIASED);
+                        }
+                        let rect = image::fit(size, area, &view);
+                        self.checker(rect);
+                        self.draw_bitmap(&bitmap, rect, 1.0);
+                        unsafe { self.d2d.PopAxisAlignedClip() };
+                    }
+                }
+            }
+            None => {
+                let rect = image::fit(size, layout.canvas, &view);
+                self.checker(rect);
+                self.draw_bitmap(&bitmap, rect, 1.0);
+            }
+        }
         unsafe { self.d2d.PopAxisAlignedClip() };
         self.draw_centered(
             &image::zoom_text(&view),
