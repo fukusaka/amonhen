@@ -11,7 +11,8 @@ becomes the GitHub Release notes.
 
 #### Added
 
-- Markdown previews draw Graphviz DOT diagrams (` ```dot `, ` ```graphviz `, ` ```gv `) with the app's own layout,
+- Markdown previews draw Graphviz DOT diagrams (` ```dot `, ` ```graphviz `, ` ```gv `) with the app's own layouts
+  (dot, neato, fdp, sfdp, twopi, circo, osage and patchwork, chosen by `layout` or a fence such as ` ```neato `),
   including HTML-like tables, `splines=ortho` and ColorBrewer colors, noting under the picture what is drawn
   approximately.
 - `amonhen tui` is a front end in the terminal: History with commit details and diffs, the Working Copy with staging
