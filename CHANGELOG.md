@@ -1297,6 +1297,8 @@ First release.
   hunks aren't staged or discarded meanwhile.
 - The app menus' Commit, Commit and Push, Stage All, Set Upstream…, Rebase…, Go to HEAD and Find in History… are
   commands, so they can be bound to keys; Merge Branches… and Rebase… also offer the commit selected in History.
+- The commit details' right-click copies the ID, the short ID, the subject, the message or a git show command, and
+  has Edit Message… for an editable commit. The author's and committer's names search History for that person.
 
 #### Fixed
 
