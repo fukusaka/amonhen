@@ -148,6 +148,18 @@ fn places_node_labels_by_labelloc() {
 }
 
 #[test]
+fn decorates_edge_labels() {
+    let svg = render(
+        "digraph { a -> b [label=\"dec\", decorate=true, color=red]; c -> d [label=\"plain\"] }",
+    )
+    .unwrap()
+    .svg;
+    let labels = svg.split("class=\"dot-labels\"").nth(1).unwrap();
+    assert_eq!(labels.matches("<path ").count(), 1, "{svg}");
+    assert!(labels.contains("fill=\"none\" stroke=\"#ff0000\""), "{svg}");
+}
+
+#[test]
 fn stripes_clusters() {
     let svg = render(
         "digraph { subgraph cluster_a { style=striped; fillcolor=\"red;0.5:green:blue\"; a; b } }",

@@ -1568,6 +1568,28 @@ pub fn render(
                     &label_attrs(&ev.font),
                     None,
                 ));
+                // decorate: ラベルに下線を引き、近い端から線の中ほどへつなぐ
+                if a.flag("decorate").unwrap_or(false)
+                    && let Some(m) = curve::midpoint(&path)
+                {
+                    let y = at.1 + t.height / 2.0;
+                    let (l, r) = (at.0 - t.width / 2.0, at.0 + t.width / 2.0);
+                    let (far, near) = if (m.0 - l).abs() <= (m.0 - r).abs() {
+                        (r, l)
+                    } else {
+                        (l, r)
+                    };
+                    labels_out.push_str(&format!(
+                        "<path d=\"M{},{}L{},{}L{},{}\" fill=\"none\"{}/>",
+                        num(far),
+                        num(y),
+                        num(near),
+                        num(y),
+                        num(m.0),
+                        num(m.1),
+                        main_attr("stroke")
+                    ));
+                }
             }
             bbox.add_rect(
                 at.0 - t.width / 2.0,
