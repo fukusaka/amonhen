@@ -7,6 +7,14 @@ becomes the GitHub Release notes.
 
 ## App and engine
 
+### Unreleased
+
+#### Changed
+
+- DOT diagrams: `splines=ortho` edges leave from their ports' sides, spread across each side of a node and keep shared
+  runs apart; sfdp keeps small cycles open, fdp reads `pos`/`pin` inside clusters, self-loops go on their port's side
+  and same-rank edge labels get room.
+
 ### [0.2.14] - 2026-11-24
 
 On macOS, Show Only Commit Details can be undone again, with a button at the top right of the commit details.
