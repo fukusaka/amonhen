@@ -37,7 +37,7 @@ export interface RowData {
   canSquash: boolean;
   /** 畳んだ merge が隠している、取り込んだコミットの数 */
   hidden?: number;
-  /** 畳む設定で、開いている merge */
+  /** 開いている merge（畳める） */
   expanded?: boolean;
 }
 
@@ -242,6 +242,8 @@ export interface DetailsExtras {
 
 export type HistoryWebviewMessage =
   | { type: 'more' }
+  /** merge を 1 つ開く・畳む（← →。右クリックの Show・Fold Merged Commits と同じ） */
+  | { type: 'toggleFold'; oid: string }
   /** daemon の History の、start から count 行 */
   | { type: 'range'; start: number; count: number }
   /** 探す（空なら検索をやめる）。`selected` は今選んでいる行（一致だけの History との切り替えで選んだままにする） */

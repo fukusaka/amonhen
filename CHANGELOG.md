@@ -1315,6 +1315,11 @@ First release.
   (the commit, conflicts, a failed exec, a stop to edit), as the app's band does (with the engine); a revert has no
   Skip.
 
+#### Changed
+
+- History folds or shows any merge on its own (its context menu, ←/→), and the display menu has Fold All and Show
+  All Merged Commits; the folds are kept per repository and shared with the apps and the TUI.
+
 #### Fixed
 
 - Restoring the version before a commit that renamed a file brings back the old name instead of only deleting the new
