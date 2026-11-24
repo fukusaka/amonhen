@@ -33,6 +33,16 @@ pub const WHEEL_ROWS: i64 = 3;
 
 const AUTHOR_WIDTH: u16 = 16;
 const DATE_WIDTH: u16 = 4;
+const ID_WIDTH: u16 = 8;
+
+/// 行に出す項目のビット（アプリの History の Items と同じ値。件名はいつも出す）。
+pub const ITEM_REFS: u8 = 1;
+pub const ITEM_AUTHOR: u8 = 2;
+pub const ITEM_DATE: u8 = 4;
+pub const ITEM_ID: u8 = 8;
+pub const ITEM_SIGNATURE: u8 = 16;
+/// TUI の初め（コミット ID は出さない。幅が足りないことが多い）。
+pub const ITEMS_DEFAULT: u8 = ITEM_REFS | ITEM_AUTHOR | ITEM_DATE | ITEM_SIGNATURE;
 /// これより狭ければ、作者と日付を出さない。
 const NARROW: u16 = 60;
 
@@ -115,6 +125,8 @@ pub struct History {
     /// HEAD のコミットの行。
     head_row: Option<u32>,
     labels: HashMap<Oid, Vec<Label>>,
+    /// 行に出す項目（`ITEM_*` のビット。0 なら初めの `ITEMS_DEFAULT`）。
+    items: Option<u8>,
     /// refs の worktree の一覧と、それぞれの変更の数（札に出す）。
     worktrees: Value,
     worktree_counts: HashMap<String, u64>,
@@ -332,6 +344,17 @@ impl History {
     }
 
     /// 前のフレームで組み立てた行を捨てる。
+    /// 行に出す項目（`ITEM_*` のビット）。
+    pub fn items(&self) -> u8 {
+        self.items.unwrap_or(ITEMS_DEFAULT)
+    }
+
+    /// 行に出す項目を変える（すべての行を描き直す）。
+    pub fn set_items(&mut self, items: u8) {
+        self.items = Some(items);
+        self.generation += 1;
+    }
+
     pub fn forget_drawn(&mut self) {
         self.generation += 1;
     }
@@ -799,16 +822,34 @@ impl History {
         now: i64,
     ) {
         let y = at.y;
-        // 右端から: 日付、作者。
-        let date_x = at.right().saturating_sub(DATE_WIDTH);
-        let author_x = date_x.saturating_sub(AUTHOR_WIDTH + 1);
-        let text_end = if wide {
-            author_x.saturating_sub(1)
-        } else {
-            at.right()
-        };
+        let items = self.items();
+        let shows = |item: u8| items & item != 0;
+        // 右端から: 日付、作者、コミット ID（出すものだけ）。
+        let mut right = at.right();
+        let date_x = (wide && shows(ITEM_DATE)).then(|| {
+            right = right.saturating_sub(DATE_WIDTH);
+            let x = right;
+            right = right.saturating_sub(1);
+            x
+        });
+        let author_x = (wide && shows(ITEM_AUTHOR)).then(|| {
+            right = right.saturating_sub(AUTHOR_WIDTH);
+            let x = right;
+            right = right.saturating_sub(1);
+            x
+        });
+        let id_x = (wide && shows(ITEM_ID)).then(|| {
+            right = right.saturating_sub(ID_WIDTH);
+            let x = right;
+            right = right.saturating_sub(1);
+            x
+        });
+        let text_end = right.max(at.x);
         let mut x = at.x;
-        for label in self.labels.get(&window.ids[i]).into_iter().flatten() {
+        let labels = shows(ITEM_REFS)
+            .then(|| self.labels.get(&window.ids[i]))
+            .flatten();
+        for label in labels.into_iter().flatten() {
             if x + 2 >= text_end {
                 break;
             }
@@ -834,6 +875,7 @@ impl History {
         }
         // 署名の印（検証した結果。アプリの行の印と同じ）。
         if let Some(&(mark, color)) = self.signatures.get(&window.ids[i])
+            && shows(ITEM_SIGNATURE)
             && x + 2 < text_end
         {
             buf.set_stringn(
@@ -869,13 +911,19 @@ impl History {
             };
             buf.set_string(x, y, subject, style);
         }
-        if wide && author_x >= at.x {
-            let dim = Style::new().fg(DIM);
+        let dim = Style::new().fg(DIM);
+        if let Some(author_x) = author_x.filter(|&x| x >= at.x) {
             let author = fit(window.string(i, 1), usize::from(AUTHOR_WIDTH));
             buf.set_string(author_x, y, author, dim);
+        }
+        if let Some(date_x) = date_x.filter(|&x| x >= at.x) {
             let date = ago(now, window.times[i]);
             let pad = DATE_WIDTH.saturating_sub(date.width() as u16);
             buf.set_string(date_x + pad, y, date, dim);
+        }
+        if let Some(id_x) = id_x.filter(|&x| x >= at.x) {
+            let id = window.ids[i].to_string();
+            buf.set_string(id_x, y, &id[..id.len().min(usize::from(ID_WIDTH))], dim);
         }
     }
 }

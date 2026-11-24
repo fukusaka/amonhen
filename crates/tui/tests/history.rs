@@ -889,6 +889,31 @@ fn ampersand_shows_only_matching_commits() {
     assert!(first.contains("Search with / first"), "{first}");
 }
 
+/// History の `I`: 行に出す項目（ブランチとタグ・作者・日付・コミット ID・署名）を出す・隠す（アプリの Items）
+#[test]
+fn history_row_items_are_chosen() {
+    let dir = tempfile::tempdir().unwrap();
+    merged(dir.path());
+    let asked = amonhen_tui::snapshot(open(dir.path()), 200, 9, clock(), "I").unwrap();
+    println!("{asked}");
+    assert!(
+        asked.contains(
+            "r ✓ branches and tags   a ✓ author   d ✓ date   i commit ID   s ✓ signature"
+        ),
+        "{asked}"
+    );
+    let head = git_out(dir.path(), &["rev-parse", "--short=8", "HEAD"]);
+    // コミット ID を出す。
+    let with_id = amonhen_tui::snapshot(open(dir.path()), 200, 9, clock(), "Ii").unwrap();
+    assert!(with_id.contains(head.trim()), "{with_id}");
+    // 作者を隠す、ブランチとタグを隠す。
+    let plain = amonhen_tui::snapshot(open(dir.path()), 200, 9, clock(), "IaIr").unwrap();
+    println!("{plain}");
+    let history: Vec<String> = plain.lines().skip(1).filter_map(|l| column(l, 1)).collect();
+    assert!(!history.iter().any(|l| l.contains("Ann")), "{history:?}");
+    assert!(!history.iter().any(|l| l.contains("[main]")), "{history:?}");
+}
+
 /// `/` で History を検索し、合った行を選ぶ。`n` `N` で次と前、Esc でやめる
 #[test]
 fn slash_searches_history() {
