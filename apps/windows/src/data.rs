@@ -449,10 +449,12 @@ pub struct FileShown {
     pub picture: Option<Arc<Vec<u8>>>,
     pub picture_view: crate::imagediff::View,
     /// 絵を読んだものを取っておく鍵（開くたびに新しい）。
-    key: u64,
+    pub key: u64,
     /// Markdown なら、整形して見せるブロックと、その中の図を絵にしたもの（出てくる順）。
     pub markdown: Option<Vec<amonhen_core::markdown::Block>>,
     pub diagrams: Arc<Vec<Option<crate::markdownview::DiagramPicture>>>,
+    /// Markdown の中の、このコミットから読めた画像。
+    pub images: Arc<crate::markdownview::MdImages>,
     /// SVG をモバイルで見ているなら、その確認。
     pub mobile: Option<Arc<MobileCheck>>,
     /// Android の VectorDrawable なら、絵の下の説明と添え書き（テキストで見ていても、切り替えを出すために持つ）。
@@ -2210,8 +2212,29 @@ impl Data {
                 .then(|| blob_at(&repo, &commit, change.as_ref(), &path))
                 .flatten()
                 .map(|bytes| {
-                    amonhen_core::markdown::parse(&String::from_utf8_lossy(bytes.as_slice()))
+                    // 図（DOT）の中の画像も、同じコミットから読む（GTK4 版と同じ）。
+                    let images = amonhen_core::diagram::ImageSource {
+                        from: path.clone(),
+                        read: {
+                            let repo = repo.clone();
+                            Arc::new(move |p: &str| {
+                                blob_at(&repo, &commit, None, p).map(|b| b.to_vec())
+                            })
+                        },
+                    };
+                    amonhen_core::markdown::parse_with_images(
+                        &String::from_utf8_lossy(bytes.as_slice()),
+                        None,
+                        None,
+                        Some(images),
+                    )
                 });
+            // Markdown の中の画像は、このコミットの中のものだけを読んでおく（外へは読みに行かない）。
+            let images = markdown.as_deref().map_or_else(Default::default, |blocks| {
+                crate::markdownview::load_images(blocks, &path, &|p| {
+                    blob_at(&repo, &commit, None, p)
+                })
+            });
             // 図は、ここ（裏）で色を当てて絵にしておく（大きな図は数十 ms かかる）。
             let diagrams = match (&markdown, &diagram_theme) {
                 (Some(blocks), Some(colors)) => {
@@ -2246,6 +2269,7 @@ impl Data {
                 key: NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
                 markdown,
                 diagrams: Arc::new(diagrams),
+                images: Arc::new(images),
                 mobile,
                 drawable,
             })));
