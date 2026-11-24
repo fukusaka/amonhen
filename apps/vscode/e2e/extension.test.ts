@@ -64,9 +64,22 @@ let sheetAnswer: Answerer = pressDefault;
 const errors: string[] = [];
 let api: Api;
 
+/**
+ * テストの git。Windows では、拡張やエンジンの git が `.git/config` を書き換える瞬間に読むと「Permission denied」で
+ * 何もしないまま止まる（拡張の `GitExecutor.exec`・エンジンと同じく、少し待ってやり直す）
+ */
 function git(...args: string[]): string {
   const start = Date.now();
   try {
+    for (const wait of [50, 150, 400]) {
+      try {
+        return childProcess.execFileSync('git', args, { cwd: root, encoding: 'utf8' });
+      } catch (e) {
+        const text = `${(e as Error).message} ${String((e as { stderr?: unknown }).stderr ?? '')}`;
+        if (!text.includes('unknown error occurred while reading the configuration files')) throw e;
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, wait);
+      }
+    }
     return childProcess.execFileSync('git', args, { cwd: root, encoding: 'utf8' });
   } finally {
     // 同期で待つ間は拡張ホストが止まる。遅かったものを残す（CI の Windows で遅れる件の手がかり）
