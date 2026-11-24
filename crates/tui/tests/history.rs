@@ -3502,9 +3502,13 @@ fn export_archive_of_the_selected_commit() {
 fn save_the_repository_as_a_bundle() {
     let dir = tempfile::tempdir().unwrap();
     merged(dir.path());
-    let asked = amonhen_tui::snapshot(open(dir.path()), 200, 8, clock(), ":bundle\n").unwrap();
-    assert!(asked.contains("Save the repository as a bundle at: "));
-    assert!(asked.contains(".bundle"));
+    // 初めの場所は TUI を始めたフォルダの下なので、作業ツリーのパスが長くても切れない幅で見る。
+    let asked = amonhen_tui::snapshot(open(dir.path()), 1000, 8, clock(), ":bundle\n").unwrap();
+    assert!(
+        asked.contains("Save the repository as a bundle at: "),
+        "{asked}"
+    );
+    assert!(asked.contains(".bundle"), "{asked}");
     let out = tempfile::tempdir().unwrap();
     let file = out.path().join("all.bundle");
     let keys = format!(":bundle\n\x15{}\n", file.display());
