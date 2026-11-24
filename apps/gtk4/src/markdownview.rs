@@ -165,8 +165,9 @@ pub fn diagram_picture(
     Some(picture)
 }
 
-/// 数式の絵（macOS 版の `FormulaPicture`）。コアが描いた SVG（色は `--math-fg` の変数のまま）に今の外観の文字の
-/// 色を当て、裏のスレッドで画像にする。外観が変わったら色だけを当て直す（大きさは変わらない）。文中に埋め込める
+/// 数式の絵（macOS 版の `FormulaPicture`）。コアが描いた SVG（色は `--math-fg` の変数のまま）に、Markdown の
+/// 本文と同じ文字の色（TextView のスタイルの色。ユーザーの GTK のテーマ・明るい暗い・ハイコントラストに従う）を
+/// 当て、裏のスレッドで画像にする。テーマが変わったら色だけを当て直す（大きさは変わらない）。文中に埋め込める
 /// よう `gdk::Paintable` にする（`TextBuffer::insert_paintable`）。
 mod formula {
     use std::cell::{Cell, RefCell};
@@ -178,9 +179,15 @@ mod formula {
 
     use super::DIAGRAMS_PENDING;
 
-    /// 本文の文字の色（libadwaita の view の文字の色。明るい外観は地の白に 80% の黒を重ねたもの）。
-    fn foreground(dark: bool) -> &'static str {
-        if dark { "#ffffff" } else { "#333338" }
+    /// 文字の色の CSS の値（不透明なら `#rrggbb`、ほかは `rgba()`。librsvg はどちらも読む）。
+    fn css(color: &gdk::RGBA) -> String {
+        let c = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+        let (r, g, b) = (c(color.red()), c(color.green()), c(color.blue()));
+        if color.alpha() >= 1.0 {
+            format!("#{r:02x}{g:02x}{b:02x}")
+        } else {
+            format!("rgba({r},{g},{b},{:.3})", color.alpha().clamp(0.0, 1.0))
+        }
     }
 
     mod imp {
@@ -191,8 +198,8 @@ mod formula {
             /// 論理の大きさ（画素）。
             pub size: Cell<(i32, i32)>,
             pub texture: RefCell<Option<gdk::Texture>>,
-            /// 外観の変わり目の知らせ（捨てるときに外す）。
-            pub dark_handler: RefCell<Option<glib::SignalHandlerId>>,
+            /// テーマの変わり目の知らせ（知らせる側と、捨てるときに外す番号）。
+            pub watches: RefCell<Vec<(glib::WeakRef<glib::Object>, glib::SignalHandlerId)>>,
         }
 
         #[glib::object_subclass]
@@ -204,8 +211,10 @@ mod formula {
 
         impl ObjectImpl for Formula {
             fn dispose(&self) {
-                if let Some(id) = self.dark_handler.take() {
-                    adw::StyleManager::default().disconnect(id);
+                for (source, id) in self.watches.take() {
+                    if let Some(source) = source.upgrade() {
+                        source.disconnect(id);
+                    }
                 }
             }
         }
@@ -236,19 +245,35 @@ mod formula {
     }
 
     impl Formula {
-        /// `svg` を論理の大きさ `width`×`height`（画素）で描く絵。画像は `scale` 倍の画素で作る（高い解像度の画面で
-        /// ぼやけないように）。
-        pub fn new(svg: &str, width: i32, height: i32, scale: i32) -> Formula {
+        /// `svg` を論理の大きさ `width`×`height`（画素）で、`view`（Markdown の TextView）の文字の色で描く絵。
+        /// 画像は `scale` 倍の画素で作る（高い解像度の画面でぼやけないように）。
+        pub fn new(
+            svg: &str,
+            width: i32,
+            height: i32,
+            scale: i32,
+            view: &gtk::TextView,
+        ) -> Formula {
             let obj: Formula = glib::Object::new();
             let (width, height) = (width.max(1), height.max(1));
             obj.imp().size.set((width, height));
             let svg: Rc<str> = Rc::from(svg);
             let generation = Rc::new(Cell::new(0u32));
-            let weak = obj.downgrade();
-            let render = Rc::new(move |dark: bool| {
-                let Some(colored) = amonhen_core::math::colorize(&svg, foreground(dark)) else {
+            let last = Rc::new(RefCell::new(String::new()));
+            let (weak, view_weak) = (obj.downgrade(), view.downgrade());
+            let render = Rc::new(move || {
+                let Some(view) = view_weak.upgrade() else {
                     return;
                 };
+                // 同じ色なら描き直さない
+                let fg = css(&view.color());
+                if *last.borrow() == fg {
+                    return;
+                }
+                let Some(colored) = amonhen_core::math::colorize(&svg, &fg) else {
+                    return;
+                };
+                last.replace(fg);
                 // 続けて頼まれたら、最後のものだけを見せる。
                 let mine = generation.get().wrapping_add(1);
                 generation.set(mine);
@@ -275,10 +300,33 @@ mod formula {
                     }
                 });
             });
+            render();
+            // テーマが変わったら、スタイルが決め直された後（次のひま）で色を読み直す。部品が画面に出たとき
+            // （スタイルが決まったとき）にも読み直す。
+            let later = {
+                let render = render.clone();
+                move || {
+                    let render = render.clone();
+                    glib::idle_add_local_once(move || render());
+                }
+            };
+            let mut watches: Vec<(glib::WeakRef<glib::Object>, glib::SignalHandlerId)> = Vec::new();
             let style = adw::StyleManager::default();
-            render(style.is_dark());
-            let id = style.connect_dark_notify(move |style| render(style.is_dark()));
-            obj.imp().dark_handler.replace(Some(id));
+            for property in ["dark", "high-contrast"] {
+                let later = later.clone();
+                let id = style.connect_notify_local(Some(property), move |_, _| later());
+                watches.push((style.upcast_ref::<glib::Object>().downgrade(), id));
+            }
+            if let Some(settings) = gtk::Settings::default() {
+                for property in ["gtk-theme-name", "gtk-application-prefer-dark-theme"] {
+                    let later = later.clone();
+                    let id = settings.connect_notify_local(Some(property), move |_, _| later());
+                    watches.push((settings.upcast_ref::<glib::Object>().downgrade(), id));
+                }
+            }
+            let id = view.connect_map(move |_| later());
+            watches.push((view.upcast_ref::<glib::Object>().downgrade(), id));
+            obj.imp().watches.replace(watches);
             obj
         }
     }
@@ -987,7 +1035,7 @@ impl<'a> Builder<'a> {
     fn inline_formula(&self, math: &amonhen_core::math::MathPicture, size: f64, run: &Run) {
         let (w, h, depth) = formula_size(math, size);
         let scale = self.view.scale_factor().max(2);
-        let paintable = formula::Formula::new(&math.svg, w, h, scale);
+        let paintable = formula::Formula::new(&math.svg, w, h, scale, &self.view);
         let rise = -(depth * pango::SCALE as f64).round() as i32;
         let lower = self.tag(&format!("rise{rise}"), |t| t.set_rise(rise));
         let start = self.offset();
@@ -1184,8 +1232,9 @@ impl<'a> Builder<'a> {
                     (w, h)
                 };
                 let scale = self.view.scale_factor().max(2);
-                let picture =
-                    gtk::Picture::for_paintable(&formula::Formula::new(&math.svg, w, h, scale));
+                let picture = gtk::Picture::for_paintable(&formula::Formula::new(
+                    &math.svg, w, h, scale, &self.view,
+                ));
                 picture.set_can_shrink(true);
                 picture.set_content_fit(gtk::ContentFit::Contain);
                 picture.set_size_request(shown_w, shown_h);
@@ -1474,8 +1523,9 @@ impl<'a> Builder<'a> {
                     }
                     let (w, h, _) = formula_size(math, BODY - 1.0);
                     let scale = self.view.scale_factor().max(2);
-                    let picture =
-                        gtk::Picture::for_paintable(&formula::Formula::new(&math.svg, w, h, scale));
+                    let picture = gtk::Picture::for_paintable(&formula::Formula::new(
+                        &math.svg, w, h, scale, &self.view,
+                    ));
                     picture.set_size_request(w, h);
                     picture.set_valign(gtk::Align::Center);
                     picture.set_tooltip_text(Some(&run.text));
