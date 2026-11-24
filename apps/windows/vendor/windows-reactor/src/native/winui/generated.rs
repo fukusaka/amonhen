@@ -2925,8 +2925,20 @@ pub fn set_property(
                         crate::RichTextInline::Run(value) => append_run(&inlines, value)?,
                         crate::RichTextInline::Hyperlink(value) => {
                             let hyperlink = Hyperlink::new().map_err(native_error)?;
-                            let uri = Uri::CreateUri(&value.uri).map_err(native_error)?;
-                            hyperlink.SetNavigateUri(&uri).map_err(native_error)?;
+                            match value.uri.strip_prefix(crate::APP_LINK_PREFIX) {
+                                // Handled in the app: keep the handler for as long as the link lives.
+                                Some(target) => {
+                                    let target = target.to_owned();
+                                    hyperlink
+                                        .Click(move |_, _| crate::element::open_app_link(&target))
+                                        .map_err(native_error)?
+                                        .into_token();
+                                }
+                                None => {
+                                    let uri = Uri::CreateUri(&value.uri).map_err(native_error)?;
+                                    hyperlink.SetNavigateUri(&uri).map_err(native_error)?;
+                                }
+                            }
                             let hyperlink_inlines: windows_collections::IVector<Inline> = hyperlink
                                 .cast::<ISpan>()
                                 .and_then(|hyperlink| hyperlink.Inlines())

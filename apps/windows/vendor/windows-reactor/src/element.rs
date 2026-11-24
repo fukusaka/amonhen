@@ -1007,6 +1007,28 @@ pub struct RichTextHyperlink {
     pub uri: String,
 }
 
+/// A hyperlink whose `uri` starts with this is handled in the app instead of being opened in the
+/// browser: clicking it passes the rest of the `uri` to the handler set with
+/// [`set_app_link_handler`].
+pub const APP_LINK_PREFIX: &str = "app-link:";
+
+thread_local! {
+    static APP_LINK_HANDLER: std::cell::RefCell<Option<Rc<dyn Fn(&str)>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Sets the handler for clicked hyperlinks whose `uri` starts with [`APP_LINK_PREFIX`] (on the
+/// UI thread).
+pub fn set_app_link_handler(handler: impl Fn(&str) + 'static) {
+    APP_LINK_HANDLER.with(|h| *h.borrow_mut() = Some(Rc::new(handler)));
+}
+
+pub(crate) fn open_app_link(target: &str) {
+    if let Some(handler) = APP_LINK_HANDLER.with(|h| h.borrow().clone()) {
+        handler(target);
+    }
+}
+
 /// A keyed node in a tree view.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TreeNode {
