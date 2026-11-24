@@ -355,3 +355,294 @@ mod tests {
         assert!(segment_hits((5.0, 5.0), (5.0, 6.0), &r));
     }
 }
+
+// ---- splines=ortho ----
+
+/// 直角の道筋の入力の 1 本（配置の座標、尾から頭への点）。
+pub struct OrthoEdge {
+    pub points: Vec<P>,
+    pub tail: usize,
+    pub head: usize,
+    /// 端の点を広げてよいか（ポート・samehead などがなければ）。
+    pub spread_tail: bool,
+    pub spread_head: bool,
+}
+
+/// 直角の道筋（`splines=ortho`）。点の列はランクを 1 つずつ下る（上る）ので、ランクの間の空き（ノードのない帯）
+/// で横に動き、ランクの行は仮のノードの位置（ノードのない列）を縦に通る。同じ空きで横の線が重なるときは高さを
+/// 分け、クラスタの題を避ける高さを選ぶ。同じノードの同じ側に出入りする線は、ノードの幅の中で端の点を散らす。
+/// `nodes` はノードの中心と幅・高さ、`titles` は題の箱。2 つ以上のランクを一度にまたぐ線（仮のノードの上限を
+/// 超えたもの）は直角にしない（None）。
+pub fn ortho(edges: &[OrthoEdge], nodes: &[(P, f64, f64)], titles: &[Rect]) -> Vec<Option<Vec<P>>> {
+    use std::collections::HashMap;
+    let key = |y: f64| (y * 64.0).round() as i64;
+    // ランクの行の上下（ノードのある行）
+    let mut rows: HashMap<i64, (f64, f64)> = HashMap::new();
+    for &((_, y), _, h) in nodes {
+        let e = rows.entry(key(y)).or_insert((y, y));
+        e.0 = e.0.min(y - h / 2.0);
+        e.1 = e.1.max(y + h / 2.0);
+    }
+    let row = |y: f64| rows.get(&key(y)).copied().unwrap_or((y, y));
+    // ランクの行の y（ノードの中心）を順に。間に別の行があれば一度にまたぐ線
+    let mut centers: Vec<f64> = nodes.iter().map(|n| n.0.1).collect();
+    centers.sort_by(f64::total_cmp);
+    centers.dedup_by(|a, b| (*a - *b).abs() < 1e-6);
+    let skips_rank = |a: f64, b: f64| {
+        let (lo, hi) = (a.min(b), a.max(b));
+        let i = centers.partition_point(|&c| c <= lo + 1e-6);
+        centers.get(i).is_some_and(|&c| c < hi - 1e-6)
+    };
+
+    let mut pts: Vec<Vec<P>> = edges.iter().map(|e| e.points.clone()).collect();
+    // 端の点を散らす: (ノード, 下へ出るか) ごとに、向こうの x の順に
+    // (ノード, 下側か) → (向こうの x, 辺, 尾か)
+    type Ends = Vec<(f64, usize, bool)>;
+    let mut groups: HashMap<(usize, bool), Ends> = HashMap::new();
+    for (i, e) in edges.iter().enumerate() {
+        let p = &pts[i];
+        if p.len() < 2 || e.tail == e.head {
+            continue;
+        }
+        if e.spread_tail {
+            groups
+                .entry((e.tail, p[1].1 > p[0].1))
+                .or_default()
+                .push((p[1].0, i, true));
+        }
+        let n = p.len();
+        if e.spread_head {
+            groups
+                .entry((e.head, p[n - 2].1 > p[n - 1].1))
+                .or_default()
+                .push((p[n - 2].0, i, false));
+        }
+    }
+    for ((node, _), mut list) in groups {
+        if list.len() < 2 {
+            continue;
+        }
+        list.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+        let w = nodes.get(node).map_or(0.0, |n| n.1);
+        let k = list.len();
+        let spread = (w * 0.6).min(10.0 * (k - 1) as f64);
+        for (j, (_, i, tail)) in list.into_iter().enumerate() {
+            let off = -spread / 2.0 + spread * j as f64 / (k - 1) as f64;
+            let p = &mut pts[i];
+            let at = if tail { 0 } else { p.len() - 1 };
+            p[at].0 += off;
+        }
+    }
+
+    // 横の線（空きの上の行の y、x の範囲、辺、点の番号）
+    struct Run {
+        gap: i64,
+        x0: f64,
+        x1: f64,
+        edge: usize,
+        at: usize,
+    }
+    let mut runs: Vec<Run> = Vec::new();
+    let mut usable = vec![true; edges.len()];
+    for (i, p) in pts.iter().enumerate() {
+        for (k, w) in p.windows(2).enumerate() {
+            let (a, b) = (w[0], w[1]);
+            if (a.1 - b.1).abs() < 1e-6 || skips_rank(a.1, b.1) {
+                usable[i] = false;
+                break;
+            }
+            if (a.0 - b.0).abs() > 0.5 {
+                runs.push(Run {
+                    gap: key(a.1.min(b.1)),
+                    x0: a.0.min(b.0),
+                    x1: a.0.max(b.0),
+                    edge: i,
+                    at: k,
+                });
+            }
+        }
+    }
+    runs.retain(|r| usable[r.edge]);
+    // 空きごとに、重なる横の線を別の高さ（段）に
+    runs.sort_by(|a, b| a.gap.cmp(&b.gap).then(a.x0.total_cmp(&b.x0)));
+    let mut track = vec![0usize; runs.len()];
+    let mut tracks_in: HashMap<i64, usize> = HashMap::new();
+    {
+        let mut start = 0;
+        while start < runs.len() {
+            let gap = runs[start].gap;
+            let mut end = start;
+            while end < runs.len() && runs[end].gap == gap {
+                end += 1;
+            }
+            let mut ends: Vec<f64> = Vec::new();
+            for r in start..end {
+                let t = match ends.iter().position(|&e| e < runs[r].x0 - 2.0) {
+                    Some(t) => t,
+                    None => {
+                        ends.push(f64::MIN);
+                        ends.len() - 1
+                    }
+                };
+                ends[t] = runs[r].x1;
+                track[r] = t;
+            }
+            tracks_in.insert(gap, ends.len());
+            start = end;
+        }
+    }
+    let mut level: HashMap<(usize, usize), f64> = HashMap::new();
+    for (r, run) in runs.iter().enumerate() {
+        let p = &pts[run.edge];
+        let (a, b) = (p[run.at], p[run.at + 1]);
+        let (upper, lower) = if a.1 < b.1 { (a, b) } else { (b, a) };
+        let g0 = row(upper.1).1;
+        let g1 = row(lower.1).0;
+        // 端の縦の線に矢じりの分（12）を残す
+        let (g0, g1) = if g1 - g0 < 4.0 {
+            let m = (upper.1 + lower.1) / 2.0;
+            (m - 2.0, m + 2.0)
+        } else if g1 - g0 > 30.0 {
+            (g0 + 12.0, g1 - 12.0)
+        } else {
+            let m = (g0 + g1) / 2.0;
+            (m - 3.0, m + 3.0)
+        };
+        let count = tracks_in.get(&run.gap).copied().unwrap_or(1);
+        let want = g0 + (g1 - g0) * (track[r] + 1) as f64 / (count + 1) as f64;
+        // 題を避ける高さ（望む高さから近い順に）。調べるのはこの線の範囲に重なる題だけ
+        let (lo, hi) = (a.0.min(b.0), a.0.max(b.0));
+        let (top, bottom) = (upper.1, lower.1);
+        let near: Vec<&Rect> = titles
+            .iter()
+            .filter(|r| r[0] <= hi && r[2] >= lo && r[1] <= bottom && r[3] >= top)
+            .collect();
+        let hits_title = |p: P, q: P| near.iter().any(|r| segment_hits(p, q, r));
+        let clear = |y: f64| {
+            !hits_title(a, (a.0, y)) && !hits_title((a.0, y), (b.0, y)) && !hits_title((b.0, y), b)
+        };
+        let mut y = want;
+        if !clear(want) {
+            let steps = ((g1 - g0) / 2.0).ceil().clamp(1.0, 400.0) as usize;
+            let mut found = None;
+            for s in 1..=steps {
+                for sign in [-1.0, 1.0] {
+                    let c = want + sign * 2.0 * s as f64;
+                    if c > g0 && c < g1 && clear(c) {
+                        found = Some(c);
+                        break;
+                    }
+                }
+                if found.is_some() {
+                    break;
+                }
+            }
+            y = found.unwrap_or(want);
+        }
+        level.insert((run.edge, run.at), y);
+    }
+    pts.iter()
+        .enumerate()
+        .map(|(i, p)| {
+            if !usable[i] || p.len() < 2 {
+                return None;
+            }
+            let mut out = vec![p[0]];
+            for (k, w) in p.windows(2).enumerate() {
+                let (a, b) = (w[0], w[1]);
+                if let Some(&y) = level.get(&(i, k)) {
+                    out.push((a.0, y));
+                    out.push((b.0, y));
+                }
+                out.push(b);
+            }
+            // 一直線に並ぶ中の点を除く
+            let mut clean: Vec<P> = Vec::with_capacity(out.len());
+            for q in out {
+                if clean
+                    .last()
+                    .is_some_and(|l: &P| (l.0 - q.0).abs() < 1e-6 && (l.1 - q.1).abs() < 1e-6)
+                {
+                    continue;
+                }
+                if clean.len() >= 2 {
+                    let (s, t) = (clean[clean.len() - 2], clean[clean.len() - 1]);
+                    let vertical = (s.0 - t.0).abs() < 1e-6 && (t.0 - q.0).abs() < 1e-6;
+                    let horizontal = (s.1 - t.1).abs() < 1e-6 && (t.1 - q.1).abs() < 1e-6;
+                    if vertical || horizontal {
+                        clean.pop();
+                    }
+                }
+                clean.push(q);
+            }
+            Some(clean)
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod ortho_tests {
+    use super::*;
+
+    fn axis_aligned(p: &[P]) -> bool {
+        p.windows(2)
+            .all(|w| (w[0].0 - w[1].0).abs() < 1e-6 || (w[0].1 - w[1].1).abs() < 1e-6)
+    }
+
+    #[test]
+    fn routes_with_right_angles_and_separate_tracks() {
+        // 0 が上、1・2 が下。0→1、0→2、それに 3→2（3 は上の行の右）
+        let nodes = vec![
+            ((0.0, 0.0), 54.0, 36.0),
+            ((-60.0, 100.0), 54.0, 36.0),
+            ((60.0, 100.0), 54.0, 36.0),
+            ((120.0, 0.0), 54.0, 36.0),
+        ];
+        let e = |t: usize, h: usize| OrthoEdge {
+            points: vec![nodes[t].0, nodes[h].0],
+            tail: t,
+            head: h,
+            spread_tail: true,
+            spread_head: true,
+        };
+        let edges = vec![e(0, 1), e(0, 2), e(3, 2)];
+        let out = ortho(&edges, &nodes, &[]);
+        let mut levels = Vec::new();
+        for p in &out {
+            let p = p.as_ref().unwrap();
+            assert!(axis_aligned(p), "{p:?}");
+            // 横の線は行の間の空き（18..82）
+            for w in p.windows(2) {
+                if (w[0].1 - w[1].1).abs() < 1e-6 {
+                    assert!(w[0].1 > 18.0 && w[0].1 < 82.0);
+                    levels.push((w[0].1, w[0].0.min(w[1].0), w[0].0.max(w[1].0)));
+                }
+            }
+        }
+        // 重なる横の線は高さが違う
+        for (i, a) in levels.iter().enumerate() {
+            for b in &levels[i + 1..] {
+                if a.1 < b.2 && b.1 < a.2 {
+                    assert!((a.0 - b.0).abs() > 1.0, "{levels:?}");
+                }
+            }
+        }
+        // 同じノードから出る 2 本は出る点が違う
+        let (a, b) = (out[0].as_ref().unwrap()[0], out[1].as_ref().unwrap()[0]);
+        assert!(a.0 < b.0);
+        // 題を避ける
+        let title = [[-100.0, 40.0, -30.0, 60.0]];
+        let one = vec![OrthoEdge {
+            points: vec![(0.0, 0.0), (-60.0, 100.0)],
+            tail: 0,
+            head: 1,
+            spread_tail: false,
+            spread_head: false,
+        }];
+        let p = ortho(&one, &nodes, &title)[0].clone().unwrap();
+        assert!(
+            !p.windows(2).any(|w| segment_hits(w[0], w[1], &title[0])),
+            "{p:?}"
+        );
+    }
+}

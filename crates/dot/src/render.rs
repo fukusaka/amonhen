@@ -342,9 +342,7 @@ pub fn render(model: &Model, budget: Budget, notes: &mut BTreeSet<Note>) -> Stri
         .get("splines")
         .map(|s| s.trim().to_ascii_lowercase())
         .unwrap_or_default();
-    if splines == "ortho" {
-        ctx.notes.insert(Note::Ortho);
-    }
+    let ortho = splines == "ortho";
     let draw_edges =
         !matches!(splines.as_str(), "none" | "\"\"") && !(g.get("splines") == Some(""));
     let straight = matches!(splines.as_str(), "line" | "false" | "no");
@@ -921,6 +919,13 @@ pub fn render(model: &Model, budget: Budget, notes: &mut BTreeSet<Note>) -> Stri
             Dir::RL => (f.1, lh - f.0),
         }
     };
+    let titles: Vec<route::Rect> = title_rects
+        .iter()
+        .map(|r| {
+            let (p, q) = (from_final((r[0], r[1])), from_final((r[2], r[3])));
+            [p.0.min(q.0), p.1.min(q.1), p.0.max(q.0), p.1.max(q.1)]
+        })
+        .collect();
     let mut obstacles = {
         const NODE_PAD: f64 = 4.0;
         let mut rects: Vec<(route::Rect, Option<usize>)> = Vec::new();
@@ -932,14 +937,48 @@ pub fn render(model: &Model, budget: Budget, notes: &mut BTreeSet<Note>) -> Stri
             let (w, h) = (lnodes[i].w / 2.0 + NODE_PAD, lnodes[i].h / 2.0 + NODE_PAD);
             rects.push(([x - w, y - h, x + w, y + h], Some(i)));
         }
-        for r in &title_rects {
-            let (p, q) = (from_final((r[0], r[1])), from_final((r[2], r[3])));
-            rects.push((
-                [p.0.min(q.0), p.1.min(q.1), p.0.max(q.0), p.1.max(q.1)],
-                None,
-            ));
+        for r in &titles {
+            rects.push((*r, None));
         }
         route::Obstacles::new(rects)
+    };
+    // splines=ortho の道筋（配置の座標）
+    let ortho_paths: Vec<Option<Vec<P>>> = if ortho {
+        let input: Vec<route::OrthoEdge> = model
+            .edges
+            .iter()
+            .enumerate()
+            .map(|(ei, e)| {
+                let a = &e.attrs;
+                let free = |port: Option<&str>, view: &NodeView, same: &str| {
+                    port_of(view, port).is_none() && a.get(same).is_none_or(|v| v.is_empty())
+                };
+                route::OrthoEdge {
+                    points: match &lay.routes[ei] {
+                        Route::Path { points, .. } => points.clone(),
+                        _ => vec![],
+                    },
+                    tail: e.tail,
+                    head: e.head,
+                    spread_tail: free(
+                        a.get("tailport").or(e.tail_port.as_deref()),
+                        &views[e.tail],
+                        "sametail",
+                    ),
+                    spread_head: free(
+                        a.get("headport").or(e.head_port.as_deref()),
+                        &views[e.head],
+                        "samehead",
+                    ),
+                }
+            })
+            .collect();
+        let boxes: Vec<(P, f64, f64)> = (0..views.len())
+            .map(|i| (lay.nodes[i], lnodes[i].w, lnodes[i].h))
+            .collect();
+        route::ortho(&input, &boxes, &titles)
+    } else {
+        vec![]
     };
 
     // 辺
@@ -984,10 +1023,15 @@ pub fn render(model: &Model, budget: Budget, notes: &mut BTreeSet<Note>) -> Stri
         match &lay.routes[ei] {
             Route::Path { points, label } => {
                 let mut pts: Vec<P> = points.clone();
-                if !(straight || curved) {
+                let right_angles = ortho_paths.get(ei).cloned().flatten();
+                if ortho && right_angles.is_none() {
+                    // 直角にできなかった線（仮のノードの上限を超えた長い線）
+                    ctx.notes.insert(Note::Ortho);
+                }
+                if !(straight || curved || right_angles.is_some()) {
                     obstacles.avoid(&mut pts, &[e.tail, e.head], !polyline);
                 }
-                let mut lp: Vec<P> = pts.clone();
+                let mut lp: Vec<P> = right_angles.unwrap_or_else(|| pts.clone());
                 if straight || curved {
                     lp = vec![pts[0], pts[pts.len() - 1]];
                 }
@@ -1038,7 +1082,16 @@ pub fn render(model: &Model, budget: Budget, notes: &mut BTreeSet<Note>) -> Stri
                     let lift = (h_a + 14.0 + (pb.0 - pa.0).abs().min(400.0) * 0.05).max(clear)
                         + 12.0 * *lane as f64;
                     let top = pa.1.min(pb.1) - lift;
-                    path = vec![Cubic(pa, (pa.0, top), (pb.0, top), pb)];
+                    path = if ortho {
+                        let top = pa.1.min(pb.1) - lift * 0.75;
+                        vec![
+                            Cubic::line(pa, (pa.0, top)),
+                            Cubic::line((pa.0, top), (pb.0, top)),
+                            Cubic::line((pb.0, top), pb),
+                        ]
+                    } else {
+                        vec![Cubic(pa, (pa.0, top), (pb.0, top), pb)]
+                    };
                     label_at = ev.label.as_ref().map(|t| {
                         let lh = if dir.sideways() { t.width } else { t.height };
                         ((pa.0 + pb.0) / 2.0, top + lift * 0.25 - lh / 2.0 - 2.0)
@@ -1056,12 +1109,25 @@ pub fn render(model: &Model, budget: Budget, notes: &mut BTreeSet<Note>) -> Stri
                 let start = (c.0 + half_w * 0.6, c.1 - half_h * 0.6);
                 let end = (c.0 + half_w * 0.6, c.1 + half_h * 0.6);
                 let reach = c.0 + half_w + size;
-                path = vec![Cubic(
-                    start,
-                    (reach, c.1 - half_h - size * 0.4),
-                    (reach, c.1 + half_h + size * 0.4),
-                    end,
-                )];
+                path = if ortho {
+                    let (s, t) = (
+                        (c.0 + half_w, c.1 - half_h * 0.6),
+                        (c.0 + half_w, c.1 + half_h * 0.6),
+                    );
+                    let r = c.0 + half_w + size;
+                    vec![
+                        Cubic::line(s, (r, s.1)),
+                        Cubic::line((r, s.1), (r, t.1)),
+                        Cubic::line((r, t.1), t),
+                    ]
+                } else {
+                    vec![Cubic(
+                        start,
+                        (reach, c.1 - half_h - size * 0.4),
+                        (reach, c.1 + half_h + size * 0.4),
+                        end,
+                    )]
+                };
                 label_at = ev.label.as_ref().map(|t| {
                     let lw = if dir.sideways() { t.height } else { t.width };
                     (reach + lw / 2.0 + 2.0, c.1)
@@ -1082,7 +1148,7 @@ pub fn render(model: &Model, budget: Budget, notes: &mut BTreeSet<Note>) -> Stri
         if let Some(p) = &tail_port {
             let at = (tv.pos.0 + p.at.0, tv.pos.1 + p.at.1);
             path[0].0 = at;
-            if let Some(d) = p.dir {
+            if let Some(d) = p.dir.filter(|_| !ortho) {
                 path[0].1 = (at.0 + d.0 * reach, at.1 + d.1 * reach);
                 detour(&mut path, tv, d, reach);
             }
@@ -1091,7 +1157,7 @@ pub fn render(model: &Model, budget: Budget, notes: &mut BTreeSet<Note>) -> Stri
             let last = path.len() - 1;
             let at = (hv.pos.0 + p.at.0, hv.pos.1 + p.at.1);
             path[last].3 = at;
-            if let Some(d) = p.dir {
+            if let Some(d) = p.dir.filter(|_| !ortho) {
                 path[last].2 = (at.0 + d.0 * reach, at.1 + d.1 * reach);
                 let mut rev = curve::reverse(&path);
                 detour(&mut rev, hv, d, reach);

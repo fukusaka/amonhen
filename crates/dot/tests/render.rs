@@ -73,7 +73,7 @@ fn notes_approximations() {
     );
     assert_eq!(notes("digraph { a [image=\"x.png\"] }"), [Note::Images]);
     assert_eq!(notes("digraph { a [shape=blob] }"), [Note::UnknownShapes]);
-    assert_eq!(notes("digraph { splines=ortho; a -> b }"), [Note::Ortho]);
+    assert!(notes("digraph { splines=ortho; a -> b -> c; a -> c; b -> b }").is_empty());
     assert_eq!(
         notes("digraph { a [color=nocolor] }"),
         [Note::UnknownColors]

@@ -53,7 +53,7 @@ pub enum Note {
     Images,
     /// 知らない形は箱にした。
     UnknownShapes,
-    /// `splines=ortho` は折れ線にした。
+    /// `splines=ortho` の線のうち、直角にできなかったもの（仮のノードの上限を超えた長い線）は折れ線にした。
     Ortho,
     /// 読めない色は既定の色にした。
     UnknownColors,
