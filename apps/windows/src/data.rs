@@ -268,11 +268,14 @@ pub fn wrapped(view: &DiffView, base: Option<DiffTree>, cols: usize) -> Option<D
             continue;
         }
         let bytes = view.strings.bytes(r.text);
-        // 桁の数を超えないほど短い行は見るまでもない。
+        // 桁の数を超えないほど短い行は見るまでもない（どの字もバイトの数より多くの桁は取らない）。
         if bytes.len() <= cols {
             continue;
         }
-        let parts = wrap_breaks(&String::from_utf8_lossy(bytes), cols);
+        // ASCII 以外の行は、コアが UTF-16 で持っている（`push_utf16`）。
+        let mut units = Vec::with_capacity(bytes.len());
+        push_utf16(bytes, r.text.is_ascii(), &mut units);
+        let parts = wrap_breaks(&String::from_utf16_lossy(&units), cols);
         if parts.len() > 1 {
             breaks.insert(i as u32, parts);
         }
