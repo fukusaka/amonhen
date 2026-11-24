@@ -14,7 +14,7 @@ export const ACTION_TITLES: Record<EditAction, string> = {
   reword: 'Edit Message',
   squash: 'Combine with Older',
   fixup: 'Combine with Older, Keep Its Message',
-  drop: 'Drop',
+  drop: 'Remove',
   edit: 'Stop to Change Files',
 };
 

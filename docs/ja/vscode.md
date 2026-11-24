@@ -297,3 +297,7 @@ macOS アプリに追いつく（1 つの機能を 1 つの pull request で、�
 - [x] 83. 見分けられる失敗を分かる言葉で知らせ、アプリと同じ次の一手（Pull…・Open Working Copy・Set Upstream…・Open Worktree・Open in Terminal・Try Again）と、Details に助言を
 - [x] 84. 詳細の帯の表示の設定: 表示項目（簡潔・標準・詳細）、高さを自動で決める、コミット情報だけを表示、長い行を折り返す（アプリと同じ）
 - [x] 85. 編集モードで p・r・s・f・d・e で行のすることを決め、行の下の線を引いて古いコミットを取り込む・手を付けていない古いものを外す
+- [x] 86. History をアプリと同じに: 最初はすべてのブランチ、ブランチの History は上流も、「N branches」、検索の ▾、「3 / 10」の件数、祖先を最初から目立たせる、中身を取りすぎる検索から Fetching and Folders へ
+- [x] 87. History のメニューをアプリと同じに: Copy Branch or Tag Name…・Copy Short IDs、Squash into Previous… と Interactive Rebase from Here…、どのコミットにも Cherry-pick、Split と複数選択の Merge・Save Patches は使えるときだけ、Go to Parent / Child のキー、編集モードの「drop — Remove」、パッチの形とカバーレターの組み合わせ、Reflog の worktree
+- [x] 88. History の札をアプリと同じに（3 つまで・+N・真ん中を切る・押すと名前の一覧）、一覧の横のコミットの頻度とブランチの動きの帯
+- [x] 89. 画像の比べ方をアプリと同じに: 2-Up、拡大縮小（−・倍率・+・合わせる・⌘ スクロール）、違うピクセルの割合、SVG は絵で出して Show as Text

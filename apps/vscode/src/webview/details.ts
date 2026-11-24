@@ -148,6 +148,9 @@ interface FileSection {
   heavy: boolean;
   /** 画像の比べる欄（求めたら置く） */
   image?: HTMLElement;
+  /** SVG を文字の差分で見ている（Show as Text）。読んだ差分（絵と文字を行き来するため） */
+  svgText?: boolean;
+  diff?: FileDiff;
   counts?: LineCounts;
 }
 
@@ -816,14 +819,24 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
     }
     const all = contexts.get(path) === 'all';
     const body = renderDiffBody(diff, choices && !all ? { widen: () => widen(file) } : {});
-    // 画像は前と後を比べる（1 つのコミットだけ。SVG は文字の差分も下に出す）。画像は別に求める
-    if (imagesFor && isImagePath(path)) {
+    // 画像は前と後を比べる（1 つのコミットだけ）。画像は別に求める。SVG は絵を出し、「Show as Text」で文字の差分に
+    // 替える（アプリと同じ）
+    if (imagesFor && isImagePath(path) && !file.svgText) {
       const slot = file.image ?? el('div', 'empty', 'Loading the image…');
       if (!file.image) {
         file.image = slot;
         post({ type: 'commitImage', oid, path });
       }
-      file.section.replaceChildren(file.head, slot, ...(diff.binary ? [] : body));
+      file.diff = diff;
+      file.section.replaceChildren(file.head, slot);
+    } else if (file.svgText) {
+      const back = el('button', 'bar-button svg-picture', 'Show as Picture');
+      back.title = 'Show the SVG as a picture again';
+      back.addEventListener('click', () => {
+        file.svgText = false;
+        showDiff(oid, path, diff);
+      });
+      file.section.replaceChildren(file.head, back, ...body);
     } else {
       file.section.replaceChildren(file.head, ...body);
     }
@@ -849,7 +862,19 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
   function showImage(oid: string, path: string, before?: ImageBlob, after?: ImageBlob, error?: string): void {
     const file = sections.get(path);
     if (oid !== shownOid || !file?.image) return;
-    const panel = error ? el('div', 'empty', error) : renderImageDiff(before, after);
+    const svg = /\.svg$/i.test(path);
+    const panel = error
+      ? el('div', 'empty', error)
+      : renderImageDiff(before, after, {
+          ...(svg
+            ? {
+                onShowText: () => {
+                  file.svgText = true;
+                  if (file.diff) showDiff(oid, path, file.diff);
+                },
+              }
+            : {}),
+        });
     file.image.replaceWith(panel);
     file.image = panel;
   }

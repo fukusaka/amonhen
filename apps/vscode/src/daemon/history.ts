@@ -137,6 +137,7 @@ export function toRowData(
     const position = chain.get(r.oid);
     return {
       oid: r.oid,
+      ...(r.parentOids.length > 1 ? { merge: true } : {}),
       subject: r.subject,
       author: r.author,
       date: r.date,

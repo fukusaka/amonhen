@@ -59,7 +59,7 @@ export async function setHistoryOneLine(oneLine: boolean): Promise<void> {
 
 /** History で、選んだコミットの祖先だけをはっきり出すか */
 export function historyHighlight(): boolean {
-  return store?.get<boolean>('history.highlight') ?? false;
+  return store?.get<boolean>('history.highlight') ?? true;
 }
 
 export async function setHistoryHighlight(highlight: boolean): Promise<void> {
@@ -83,6 +83,16 @@ export function detailsStyle(): DetailsStyle {
 
 export async function setDetailsStyle(style: DetailsStyle): Promise<void> {
   await store?.update('history.detailsStyle', style);
+}
+
+/** 前に選んだパッチの形（1 つの mbox か）と送り状 */
+export function patchFormat(): { single: boolean; cover: boolean } {
+  const v = store?.get<{ single?: boolean; cover?: boolean }>('patches.format');
+  return { single: v?.single === true, cover: v?.cover === true };
+}
+
+export async function setPatchFormat(format: { single: boolean; cover: boolean }): Promise<void> {
+  await store?.update('patches.format', format);
 }
 
 /** 前に選んだアーカイブの形 */

@@ -307,3 +307,7 @@ left out for now: VSCode has its own extensions and settings for them.
 - [x] 83. Known failures said in plain words with the app's next steps (Pull…, Open Working Copy, Set Upstream…, Open Worktree, Open in Terminal, Try Again) and advice in Details
 - [x] 84. The details bar's View Options: Details Shown (Brief, Standard, Full), Fit Height Automatically, Show Only Commit Details and Wrap Long Lines, as in the app
 - [x] 85. In the edit mode, p, r, s, f, d and e choose a row's action, and the line under the rows is dragged to take in older commits or leave out the unchanged oldest ones
+- [x] 86. History as the app's: All Branches first, a branch's History with its upstream, "N branches", the search ▾, "3 / 10" counts, ancestors highlighted at first, and Open Fetching and Folders from a too-large contents search
+- [x] 87. History's menus as the app's: Copy Branch or Tag Name…, Copy Short IDs, Squash into Previous… and Interactive Rebase from Here…, Cherry-pick on every commit, Split and the selection's Merge and Save Patches only where they work, Go to Parent / Child keys, the edit mode's "drop — Remove", patch form and cover letter combined, and the Reflog's worktree
+- [x] 88. History's labels as the app's (three, +N, middle-cut names, the names on a click) and the commit frequency and branch activity strip beside the list
+- [x] 89. Image comparison as the app's: 2-Up, zoom (−, %, +, Fit, ⌘-scroll), the differing pixels' share, and an SVG as a picture with Show as Text

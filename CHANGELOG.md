@@ -1322,6 +1322,9 @@ First release.
 - The details bar's ⚙︎ View Options shows the commit details Brief, Standard or Full (Full adds the children, the
   branches and tags that contain the commit, whether it's pushed, and the merged and related commits), fits their
   height, shows only them, and wraps long lines, as in the app.
+- History shows at most three labels on a row, with the rest as +N and long names cut in the middle (click either for
+  every name), and a strip beside the list shows commit frequency and branch activity and jumps there when clicked,
+  as in the app (with the engine).
 - In the edit mode, p, r, s, f, d and e choose the selected row's action, and dragging the line under the rows takes in
   older commits or leaves out the oldest unchanged ones, as in the app.
 - Markdown math (` ```math `, `$$…$$`, `$…$`) shows as its TeX code, with the engine.
@@ -1331,6 +1334,14 @@ First release.
 - The sidebar's in-progress row says what is being done where and the step, and why it stopped with what to do next
   (the commit, conflicts, a failed exec, a stop to edit), as the app's band does (with the engine); a revert has no
   Skip.
+- Comparing images follows the app: 2-Up, zoom (−, %, +, Fit, ⌘-scroll), the differing pixels counted against the
+  whole with their share, and an SVG shown as a picture that Show as Text turns into its diff.
+- History's menus follow the app: Copy Branch or Tag Name… and Copy Short IDs, Squash into Previous… and
+  Interactive Rebase from Here…, Cherry-pick on every commit, Split, Merge and Save Patches only where they work, and
+  Go to Parent / Child on ⌘⌥↓ / ⌘⌥↑. Save as Patch combines an mbox with a cover letter and remembers the choice, the
+  edit mode reads "drop — Remove", and the Reflog names its worktree when there are several.
+- History starts on All Branches, a branch chosen in the sidebar shows its upstream too, the search field has the
+  app's ▾ of ways to search, the counts read "3 / 10", and ancestors are highlighted from the start, as in the app.
 
 #### Changed
 
