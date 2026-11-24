@@ -133,7 +133,9 @@ impl AllFiles {
             false => Ok(Diff::new(&r, false)),
         });
         self.shown = Some((path, diff));
+        let wrap = self.scroll.wrap;
         self.scroll = Scroll::default();
+        self.scroll.wrap = wrap;
     }
 
     /// 右の中身を動かす。
@@ -145,6 +147,11 @@ impl AllFiles {
 
     pub fn pan(&mut self, delta: i32) {
         self.scroll.pan(delta);
+    }
+
+    /// 長い行を折り返す（アプリの Wrap Long Lines）。
+    pub fn set_wrap(&mut self, wrap: bool) {
+        self.scroll.wrap = wrap;
     }
 
     pub fn page(&self) -> i64 {
@@ -264,15 +271,25 @@ impl AllFiles {
                 );
                 self.scroll.height = rows.height;
                 self.scroll.clamp(diff.len());
-                for (y, row) in (rows.y..rows.bottom()).zip(self.scroll.top..diff.len()) {
-                    draw_row(
-                        Rect::new(rows.x, y, rows.width, 1),
-                        buf,
-                        diff,
-                        row as usize,
-                        self.scroll.left,
-                        theme,
-                    );
+                let mut y = rows.y;
+                let mut row = self.scroll.top;
+                while y < rows.bottom() && row < diff.len() {
+                    let at = Rect::new(rows.x, y, rows.width, 1);
+                    y += match self.scroll.wrap {
+                        true => crate::diff::draw_row_wrapped(
+                            at,
+                            rows.bottom() - y,
+                            buf,
+                            diff,
+                            row as usize,
+                            theme,
+                        ),
+                        false => {
+                            draw_row(at, buf, diff, row as usize, self.scroll.left, theme);
+                            1
+                        }
+                    };
+                    row += 1;
                 }
             }
         }

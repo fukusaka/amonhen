@@ -4088,6 +4088,25 @@ fn all_files_of_a_commit() {
     assert!(!closed.contains("All Files of"), "{closed}");
 }
 
+/// コマンドの一覧の Wrap Long Lines（Alt-z）: 差分の長い行を折り返す。続きの行は行番号の欄を空ける
+#[test]
+fn long_lines_wrap() {
+    let dir = tempfile::tempdir().unwrap();
+    let dir = dir.path();
+    git(dir, BASE, &["init", "-q", "-b", "main"]);
+    let long: String = (0..30).map(|n| format!("word{n} ")).collect();
+    std::fs::write(dir.join("a.txt"), format!("{}END\n", long)).unwrap();
+    git(dir, BASE, &["add", "."]);
+    git(dir, BASE, &["commit", "-q", "-m", "Start"]);
+    let plain = amonhen_tui::snapshot(open(dir), 200, 20, clock(), "").unwrap();
+    println!("{plain}");
+    assert!(!plain.contains("END"), "{plain}");
+    let wrapped = amonhen_tui::snapshot(open(dir), 200, 20, clock(), ":wrap long\n").unwrap();
+    println!("{wrapped}");
+    assert!(wrapped.contains("Long lines wrap"), "{wrapped}");
+    assert!(wrapped.contains("END"), "{wrapped}");
+}
+
 /// 詳細の `t`: 変わったファイルを木で出す（フォルダの下に名前だけ）。`z` でフォルダをたたみ、もう一度で開く
 #[test]
 fn changed_files_as_a_tree() {
