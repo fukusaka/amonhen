@@ -366,6 +366,11 @@ pub struct Browser {
     markdown_switch: gtk::Box,
     markdown_buttons: [gtk::ToggleButton; 2],
     markdown_text: Cell<bool>,
+    /// Android の VectorDrawable の見せ方の切り替え（絵・テキスト。VectorDrawable を開いたときだけ出す）と、
+    /// テキストで見るか。
+    drawable_switch: gtk::Box,
+    drawable_buttons: [gtk::ToggleButton; 2],
+    drawable_text: Cell<bool>,
     /// Markdown の整形表示を置く所。
     markdown_holder: gtk::Box,
     /// Markdown の #123・@user・コミットの ID をリンクにする先（`https://github.com/owner/repo`。GitHub の
@@ -540,8 +545,23 @@ impl Browser {
             button
         });
         markdown_buttons[1].set_group(Some(&markdown_buttons[0]));
+        let drawable_switch = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        drawable_switch.add_css_class("linked");
+        drawable_switch.set_visible(false);
+        let drawable_buttons = [
+            (tr!("Picture"), tr!("Draw the VectorDrawable")),
+            (tr!("Text"), tr!("Show the XML source")),
+        ]
+        .map(|(title, tip)| {
+            let button = gtk::ToggleButton::with_label(&title);
+            button.set_tooltip_text(Some(&tip));
+            drawable_switch.append(&button);
+            button
+        });
+        drawable_buttons[1].set_group(Some(&drawable_buttons[0]));
         path_bar.append(&markdown_switch);
         path_bar.append(&svg_switch);
+        path_bar.append(&drawable_switch);
         path_bar.append(&preview_button);
         path_bar.append(&change_button);
         path_bar.set_visible(false);
@@ -602,6 +622,10 @@ impl Browser {
             // 確かめる用（`--snapshot`）に `AMH_MARKDOWN_VIEW=text` でテキストから（macOS 版の `AMHMarkdownView`）。
             markdown_text: Cell::new(std::env::var("AMH_MARKDOWN_VIEW").is_ok_and(|v| v == "text")),
             markdown_holder,
+            drawable_switch,
+            drawable_buttons,
+            // 確かめる用（`--snapshot`）に `AMH_DRAWABLE_VIEW=text` でテキストから（macOS 版の `AMHDrawableView`）。
+            drawable_text: Cell::new(std::env::var("AMH_DRAWABLE_VIEW").is_ok_and(|v| v == "text")),
             github: RefCell::default(),
             svg_view: Cell::new(SvgView::initial()),
             syncing: Cell::new(false),
@@ -671,6 +695,21 @@ impl Browser {
                     return;
                 }
                 this.markdown_text.set(text);
+                let path = this.open_path.borrow().clone();
+                if let Some(path) = path {
+                    this.open(&path, None);
+                }
+            });
+        }
+        for (i, button) in this.drawable_buttons.iter().enumerate() {
+            let weak = Rc::downgrade(&this);
+            button.connect_toggled(move |b| {
+                let Some(this) = weak.upgrade() else { return };
+                let text = i == 1;
+                if !b.is_active() || this.syncing.get() || this.drawable_text.get() == text {
+                    return;
+                }
+                this.drawable_text.set(text);
                 let path = this.open_path.borrow().clone();
                 if let Some(path) = path {
                     this.open(&path, None);
@@ -1022,7 +1061,6 @@ impl Browser {
         let request = self.request.get() + 1;
         self.request.set(request);
         let repo = self.tree.repo.clone();
-        let commit = self.tree.commit;
         self.pending.set(self.pending.get() + 1);
         let weak = Rc::downgrade(self);
         // SVG は、見せ方の切り替えを出す（絵・モバイルなら絵、テキストなら中身）。
@@ -1037,9 +1075,16 @@ impl Browser {
         let markdown = amonhen_core::markdown::is_markdown(path);
         self.markdown_switch.set_visible(markdown);
         self.markdown_buttons[usize::from(self.markdown_text.get())].set_active(true);
+        self.drawable_switch.set_visible(false);
+        self.drawable_buttons[usize::from(self.drawable_text.get())].set_active(true);
         self.syncing.set(false);
         if markdown && !self.markdown_text.get() {
             self.show_markdown(path, request);
+            return;
+        }
+        // .xml は中身の頭を見て、Android の VectorDrawable なら絵にする（ほかの XML はテキスト）。
+        if amonhen_core::vectordrawable::is_xml(path) {
+            self.show_drawable(path, line, change, request);
             return;
         }
         let picture = if svg {
@@ -1099,9 +1144,87 @@ impl Browser {
             });
             return;
         }
+        self.show_text(path, line, change, request);
+    }
+
+    /// Android の VectorDrawable かを中身の頭で見て、そうなら絵（テキストで見るならテキスト）で、違えばテキストで
+    /// 出す。描けないもの（参照した drawable がないなど）もテキストで出す。
+    fn show_drawable(
+        self: &Rc<Self>,
+        path: &str,
+        line: Option<u32>,
+        change: Option<FileChange>,
+        request: u64,
+    ) {
+        self.contents.set_visible_child_name("image");
+        let oid = self.blob_id(path);
+        let (repo, commit, p) = (self.tree.repo.clone(), self.tree.commit, path.to_owned());
+        let text = self.drawable_text.get();
+        let weak = Rc::downgrade(self);
+        let path = path.to_owned();
+        glib::spawn_future_local(async move {
+            let result = gio::spawn_blocking(move || {
+                let data = oid.and_then(|oid| repo.blob(&oid).ok())?;
+                if !amonhen_core::vectordrawable::is_vector_drawable(&p, &data) {
+                    return None;
+                }
+                let picture = (!text).then(|| repo.vector_drawable(&commit, &p, &data));
+                Some((data.len(), picture))
+            })
+            .await
+            .ok()
+            .flatten();
+            let Some(this) = weak.upgrade() else { return };
+            if this.request.get() != request {
+                this.pending.set(this.pending.get() - 1);
+                return;
+            }
+            let Some((len, picture)) = result else {
+                return this.show_text(&path, line, change, request);
+            };
+            this.drawable_switch.set_visible(true);
+            let picture = match picture {
+                Some(Ok(picture)) => picture,
+                Some(Err(e)) => {
+                    eprintln!("VectorDrawable を描けない: {e}");
+                    this.drawable_switch.set_visible(false);
+                    return this.show_text(&path, line, change, request);
+                }
+                None => return this.show_text(&path, line, change, request),
+            };
+            let size = crate::imagediff::svg_size(&picture.svg);
+            let bytes = glib::format_size(len as u64).to_string();
+            let caption = match size {
+                Some((w, h)) => format!("{w} × {h} dp · {bytes}"),
+                None => bytes,
+            };
+            match crate::imagediff::drawable(picture.svg.as_bytes(), caption, &picture.notes) {
+                Some(panel) => {
+                    this.pending.set(this.pending.get() - 1);
+                    this.image_holder.append(&panel);
+                }
+                None => {
+                    this.drawable_switch.set_visible(false);
+                    this.show_text(&path, line, change, request);
+                }
+            }
+        });
+    }
+
+    /// `path` の中身をテキストで出す（変えたファイルは前後をファイル全体にした差分、変えていないファイルはその時点
+    /// の中身。`line` があればその行へ）。
+    fn show_text(
+        self: &Rc<Self>,
+        path: &str,
+        line: Option<u32>,
+        change: Option<FileChange>,
+        request: u64,
+    ) {
         self.contents.set_visible_child_name("text");
         self.content.show_message(&tr!("Loading the diff…"));
         let path = path.to_owned();
+        let (repo, commit) = (self.tree.repo.clone(), self.tree.commit);
+        let weak = Rc::downgrade(self);
         glib::spawn_future_local(async move {
             let view = gio::spawn_blocking(move || {
                 let view = match &change {

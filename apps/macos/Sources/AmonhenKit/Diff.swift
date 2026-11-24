@@ -411,6 +411,44 @@ extension Repository {
     }
 }
 
+/// Android の VectorDrawable を絵にしたもの（History の「すべてのファイル」）。
+public struct VectorDrawablePicture: Sendable {
+    /// 描ける SVG（大きさは dp）。
+    public let svg: Data
+    /// 絵の下に添える説明（引けなかった色・SVG では同じに描けないもの）。
+    public let notes: [String]
+}
+
+extension Repository {
+    /// `path` の中身 `data` が、絵にする Android の VectorDrawable か（`.xml` で、根が `<vector>` か
+    /// `<animated-vector>`。頭だけを見る）。
+    public static func isVectorDrawable(path: String, data: Data) -> Bool {
+        data.withUnsafeBytes { amonhen_is_vector_drawable(path, $0.bindMemory(to: UInt8.self).baseAddress, UInt($0.count)) }
+    }
+
+    /// コミット `commit`（20 バイト）の `path` の VectorDrawable（中身 `data`）を絵にする。色の参照は同じコミットの
+    /// リソースから引く。裏のスレッドで呼ぶ。
+    public func vectorDrawable(commit: Data, path: String, data: Data) throws -> VectorDrawablePicture {
+        var length: UInt = 0
+        var notes: UnsafeMutablePointer<CChar>?
+        let raw = commit.withUnsafeBytes { id in
+            data.withUnsafeBytes { bytes in
+                amonhen_vector_drawable(
+                    self.raw, id.baseAddress!.assumingMemoryBound(to: UInt8.self), path,
+                    bytes.bindMemory(to: UInt8.self).baseAddress, UInt(bytes.count), &length, &notes)
+            }
+        }
+        guard let raw else { throw AmonhenError.last() }
+        defer { amonhen_blob_free(raw, length) }
+        var list: [String] = []
+        if let notes {
+            list = (try? JSONDecoder().decode([String].self, from: Data(String(cString: notes).utf8))) ?? []
+            amonhen_string_free(notes)
+        }
+        return VectorDrawablePicture(svg: Data(bytes: raw, count: Int(length)), notes: list)
+    }
+}
+
 /// SVG の、モバイル向けの描画部品で崩れる機能 1 つ。
 public struct SVGIssue: Sendable, Decodable {
     /// 崩れる部品（`android`・`ios`・`flutter`・`reactNative`）。

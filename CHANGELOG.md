@@ -11,6 +11,8 @@ becomes the GitHub Release notes.
 
 #### Added
 
+- History's All Files draws Android VectorDrawables (`.xml` with a `<vector>` or `<animated-vector>` root) as pictures,
+  resolving `@color/…` from the commit's `res` folder and noting what's drawn in gray (macOS, GTK4).
 - Markdown previews draw the HTML GitHub renders: `align` for centered logos and badge rows, sized and linked images,
   `<details>` that open and close, `<picture>` by appearance, tables spanning cells, `<kbd>`, `<sub>` and `<sup>`.
   Comments, styles, scripts and forms are left out, as on GitHub.
