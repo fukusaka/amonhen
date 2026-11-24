@@ -565,6 +565,113 @@ pub unsafe extern "C" fn amonhen_markdown_parse_in_zone(
     .map_or(std::ptr::null_mut(), CString::into_raw)
 }
 
+/// 画像の読み手が中身を渡す先（`amonhen_markdown_parse_with_images` の `read` が、読めたときだけ呼ぶ）。
+/// `sink_context` は `read` に渡されたもの、`data` は `len` バイト（呼んでいる間だけ読めればよい）。
+pub type AmonhenImageSink = extern "C" fn(sink_context: *mut c_void, data: *const u8, len: usize);
+
+/// FE が渡す画像の読み手。`path` はリポジトリの根からのパス（NUL 終わりの UTF-8）。
+struct ForeignImages {
+    context: usize,
+    read: extern "C" fn(
+        context: *const c_void,
+        path: *const c_char,
+        sink: AmonhenImageSink,
+        sink_context: *mut c_void,
+    ),
+}
+
+extern "C" fn image_sink(sink_context: *mut c_void, data: *const u8, len: usize) {
+    if sink_context.is_null() || (data.is_null() && len > 0) {
+        return;
+    }
+    // 大きすぎるものは写さない（図が描かない大きさ）
+    if len > amonhen_core::diagram::MAX_IMAGE_BYTES {
+        return;
+    }
+    let out = unsafe { &mut *(sink_context as *mut Option<Vec<u8>>) };
+    let bytes = if len == 0 {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(data, len) }
+    };
+    *out = Some(bytes.to_vec());
+}
+
+impl ForeignImages {
+    fn read(&self, path: &str) -> Option<Vec<u8>> {
+        let path = CString::new(path).ok()?;
+        let mut out: Option<Vec<u8>> = None;
+        (self.read)(
+            self.context as *const c_void,
+            path.as_ptr(),
+            image_sink,
+            &mut out as *mut Option<Vec<u8>> as *mut c_void,
+        );
+        out
+    }
+}
+
+/// `amonhen_markdown_parse_in_zone` と同じで、DOT の図の画像（ノードの `image`・表の `<IMG>`）を FE から読む。
+/// `path` は Markdown のファイルのパス（リポジトリの根から、NUL 終わり）。図の中の画像は、そのファイルのフォルダ
+/// からの相対パスだけを読む（URL・絶対パス・根より上は読まない）。`read` は、リポジトリの根からのパスの中身を、
+/// そのファイルと同じコミットから読み、読めれば `sink(sink_context, data, len)` を 1 回呼ぶ（読めなければ呼ばずに
+/// 戻る）。`read` は図を描くスレッド（メインではない）から、この関数から戻るまでに呼ばれる。`path` か `read` が
+/// NULL なら画像は読まない。
+///
+/// # Safety
+/// `amonhen_markdown_parse_in_zone` と同じ。`path` は NULL か NUL 終わりの文字列、`read` は `image_context` を
+/// 渡してどのスレッドから呼んでもよいこと。
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn amonhen_markdown_parse_with_images(
+    text: *const u8,
+    len: usize,
+    github: *const c_char,
+    context: *const c_void,
+    offset: Option<extern "C" fn(context: *const c_void, utc_ms: f64) -> f64>,
+    path: *const c_char,
+    image_context: *const c_void,
+    read: Option<
+        extern "C" fn(
+            context: *const c_void,
+            path: *const c_char,
+            sink: AmonhenImageSink,
+            sink_context: *mut c_void,
+        ),
+    >,
+) -> *mut c_char {
+    let bytes = if len == 0 || text.is_null() {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(text, len) }
+    };
+    let text = String::from_utf8_lossy(bytes);
+    let github = str_arg(github).ok().filter(|g| !g.is_empty());
+    let zone = offset.map(|offset| {
+        std::sync::Arc::new(ForeignZone {
+            context: context as usize,
+            offset,
+        }) as std::sync::Arc<dyn amonhen_core::diagram::TimeZone>
+    });
+    let images = match (str_arg(path).ok(), read) {
+        (Some(from), Some(read)) if !from.is_empty() => {
+            let foreign = ForeignImages {
+                context: image_context as usize,
+                read,
+            };
+            Some(amonhen_core::diagram::ImageSource {
+                from: from.to_owned(),
+                read: std::sync::Arc::new(move |p: &str| foreign.read(p)),
+            })
+        }
+        _ => None,
+    };
+    CString::new(amonhen_core::markdown::parse_json_with_images(
+        &text, github, zone, images,
+    ))
+    .map_or(std::ptr::null_mut(), CString::into_raw)
+}
+
 /// この機械の git の版（`2.39.5`）。読めなければ NULL。`amonhen_string_free` で解放する。git を起動する
 /// ことがあるので（初めの 1 回だけ）、裏のスレッドで呼ぶ。
 #[unsafe(no_mangle)]
