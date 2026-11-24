@@ -204,6 +204,8 @@ export class HistoryController implements vscode.Disposable {
   private readonly extras = new Map<string, DetailsExtras>();
   /** 詳細を読んだコミットの署名の種類（`gpg`・`ssh`・`x509`。署名がなければ null） */
   private readonly signedKinds = new Map<string, string | null>();
+  /** daemon の ref が古いかもしれない（ref・HEAD が動いた。詳細の残りを読む前に読み直させる） */
+  private daemonRefsStale = true;
   /** コミットが merge したタグ（コアの `commitInfo` の mergedTags。署名の結果は `commitExtras` から） */
   private readonly mergedTagInfo = new Map<string, { name: string; tagger?: string; taggerEmail?: string; subject?: string; signed?: string | null }[]>();
   /** 共有の daemon で History を読むとき（設定 `amonhen.daemon.path`）、出している History */
@@ -315,6 +317,12 @@ export class HistoryController implements vscode.Disposable {
    */
   private onRepositoryChange(changed: ReadonlySet<Section>): void {
     const headOid = this.repo?.current.status?.branch.oid;
+    // ref が動いた: 詳細の残り（タグ・含むブランチ）は覚え直し、daemon にも ref を読み直させる（daemon は頼まれるまで
+    // ref を読み直さないので、端末で作ったタグを知らない）
+    if (changed.has('branches') || changed.has('remotes') || changed.has('tags') || (headOid !== undefined && headOid !== this.headOid)) {
+      this.daemonRefsStale = true;
+      this.extras.clear();
+    }
     const refsChanged =
       this.readingRefs === 0 && (changed.has('branches') || changed.has('remotes') || changed.has('tags'));
     if (changed.has('mailmap')) {
@@ -630,6 +638,10 @@ export class HistoryController implements vscode.Disposable {
     if (cached) return cached;
     const client = await this.engine();
     if (!client) return undefined;
+    if (this.daemonRefsStale) {
+      this.daemonRefsStale = false;
+      await client.call({ op: 'refs' }).catch(() => undefined);
+    }
     const reply = (await client.call({ op: 'run', command: { op: 'commitExtras', oid } })).json;
     if (reply['ok'] !== true) return undefined;
     const info = reply['info'] as
