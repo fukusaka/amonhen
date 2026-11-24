@@ -809,6 +809,15 @@ pub struct App {
     repo_watch: Option<amonhen_watch::DirsWatch>,
     /// 端末を渡して、このフォルダでシェルを開く（リポジトリのページの `t`）。
     open_shell: Option<String>,
+    /// daemon 越しのリポジトリ（SSH 先）の署名を、この機械の鍵で確かめるか（アプリの既定と同じく、初めはする）。
+    /// TUI はリポジトリの `amonhen/tui.json` に覚える。
+    signatures_here: bool,
+    /// daemon 越しのリポジトリか（署名を確かめる所を選べる）。
+    remote_repository: bool,
+    /// リポジトリの `amonhen/tui.json` を読んだ（読む前に書いて、覚えていたものを消さない）。
+    tui_state_read: bool,
+    /// 覚えていた並び順に戻している（知らせを出さない）。
+    restoring_order: bool,
     /// SSH 先（`user@host:port`）ごとに、送ってよいと答えたエンジン（この TUI の間だけ。CLI と同じく覚えない）。
     engine_consents: std::collections::HashMap<String, String>,
     /// エンジンを送ってよいか聞いている間（聞いていることと、やり直すこと）。
@@ -974,6 +983,10 @@ impl App {
             repos: None,
             repo_watch: None,
             open_shell: None,
+            signatures_here: true,
+            remote_repository: false,
+            tui_state_read: false,
+            restoring_order: false,
             engine_consents: Default::default(),
             engine_asked: None,
             rescan_queued: false,
@@ -1033,6 +1046,11 @@ impl App {
 
     /// リポジトリを読み始める。
     pub fn start(&mut self) {
+        // TUI がリポジトリに覚えているもの（History の並び順・行の項目・ペインの幅・署名を確かめる所）。
+        self.send(Request::Run {
+            name: "tuiState",
+            command: json!({"op": "tuiState"}),
+        });
         // 覚えている History の折りたたみ（アプリと共有）。違えば、届いたときに読み直す。
         self.send(Request::Run {
             name: "foldState",
@@ -2375,6 +2393,7 @@ impl App {
             };
             let items = self.history.items() ^ item;
             self.history.set_items(items);
+            self.save_tui_state();
             self.damage |= Damage::MAIN;
             return;
         }
@@ -4130,6 +4149,76 @@ impl App {
     }
 
     /// History の並び順を、日付順とトポロジー順で替える（この TUI の間だけ）。
+    /// TUI がリポジトリに覚えていたものを当てる（読めなければ初めのまま）。
+    fn apply_tui_state(&mut self, state: &Value) {
+        if let Some(items) = state["historyItems"].as_u64() {
+            self.history.set_items(items as u8);
+        }
+        if let Some(width) = state["sidebarWidth"].as_u64() {
+            self.sidebar_width = width as u16;
+        }
+        if let Some(width) = state["mainWidth"].as_u64() {
+            self.main_width = Some(width as u16);
+        }
+        let (cols, rows) = self.size;
+        if cols > 0 {
+            self.resize(cols, rows);
+        }
+        if state["historyOrder"] == "topo" && !self.topo_order {
+            self.restoring_order = true;
+            self.send(Request::Call {
+                name: "historyOrder",
+                request: json!({"op": "historyOrder", "order": "topo"}),
+            });
+        }
+        self.signatures_here = state["signaturesHere"] != false;
+        self.send(Request::Call {
+            name: "signatureCheck",
+            request: json!({"op": "setSignatureCheck", "local": self.signatures_here}),
+        });
+        self.damage = Damage::ALL;
+        self.dirty = true;
+    }
+
+    /// TUI が覚えるものを、リポジトリの `amonhen/tui.json` に書く（読む前は書かない）。
+    fn save_tui_state(&mut self) {
+        if !self.tui_state_read {
+            return;
+        }
+        let mut state = json!({
+            "historyOrder": if self.topo_order { "topo" } else { "date" },
+            "historyItems": self.history.items(),
+            "signaturesHere": self.signatures_here,
+        });
+        if self.sidebar_width != sidebar::WIDTH {
+            state["sidebarWidth"] = json!(self.sidebar_width);
+        }
+        if let Some(width) = self.main_width {
+            state["mainWidth"] = json!(width);
+        }
+        self.send(Request::Run {
+            name: "saveTuiState",
+            command: json!({"op": "setTuiState", "state": state}),
+        });
+    }
+
+    /// daemon 越しのリポジトリの署名を、この機械の鍵とSSH 先の鍵のどちらで確かめるかを替えて、覚える。
+    fn toggle_signature_place(&mut self) -> bool {
+        if !self.remote_repository {
+            self.notice = Some(tr!(
+                "Signatures here are checked on this machine; the choice is for repositories on SSH hosts"
+            ));
+            return true;
+        }
+        self.signatures_here = !self.signatures_here;
+        self.send(Request::Call {
+            name: "signatureCheck",
+            request: json!({"op": "setSignatureCheck", "local": self.signatures_here}),
+        });
+        self.save_tui_state();
+        true
+    }
+
     fn toggle_history_order(&mut self) {
         self.dirty = true;
         if self.running.is_some() {
@@ -4931,6 +5020,35 @@ impl App {
         }
         // 折りたたみを覚えた・読んだ（裏で）。読めたら、そのとおりに History を読み直す。
         if name == "saveFold" {
+            return;
+        }
+        if name == "tuiState" {
+            self.tui_state_read = true;
+            let state = result.map(|r| r["info"].clone()).unwrap_or_default();
+            self.apply_tui_state(&state);
+            return;
+        }
+        if name == "saveTuiState" {
+            if let Err(error) = result {
+                self.error = Some(error);
+            }
+            return;
+        }
+        if name == "signatureCheck" {
+            let remote = result.is_ok_and(|r| r["remote"] == true);
+            self.remote_repository = remote;
+            self.details
+                .set_signature_place(remote.then(|| match self.signatures_here {
+                    true => tr!("checked on this machine (S: on the host)"),
+                    false => tr!("checked on the host (S: on this machine)"),
+                }));
+            // 確かめる所を変えたので、見えている署名を確かめ直す（コアは覚えていた結果を捨てた）。
+            if remote {
+                self.history.set_signatures(None);
+                self.verify_signatures();
+                self.details.reload();
+            }
+            self.dirty = true;
             return;
         }
         if name == "foldState" {
@@ -5874,6 +5992,10 @@ impl App {
             // 並び順が替わった: History を読み直す（ref と状態も、ほかの操作と同じく下で読み直す）。
             "historyOrder" => {
                 self.topo_order = reply["order"] == "topo";
+                if std::mem::take(&mut self.restoring_order) {
+                    return;
+                }
+                self.save_tui_state();
                 self.notice = Some(match self.topo_order {
                     true => tr!(
                         "History in topological order: a branch's commits stay together under its merge"
@@ -9514,6 +9636,10 @@ impl App {
         if code == KeyCode::Char('+') {
             return self.details.widen();
         }
+        // SSH 先のリポジトリの署名を、この機械の鍵と SSH 先の鍵のどちらで確かめるか（アプリの SSH Hosts の選択）。
+        if code == KeyCode::Char('S') {
+            return self.toggle_signature_place();
+        }
         if code == KeyCode::Char('F') {
             return match self.details.toggle_whole_file() {
                 Some(whole) => {
@@ -9637,7 +9763,10 @@ impl App {
                 self.damage = Damage::ALL;
                 return;
             }
-            MouseEventKind::Up(MouseButton::Left) if self.dragging.take().is_some() => return,
+            MouseEventKind::Up(MouseButton::Left) if self.dragging.take().is_some() => {
+                self.save_tui_state();
+                return;
+            }
             _ => {}
         }
         // History のコミットをドラッグして別のコミットに落とす: 動かすかまとめるかを聞いて、編集モードを始める
