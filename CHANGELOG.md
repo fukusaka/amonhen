@@ -7,6 +7,14 @@ becomes the GitHub Release notes.
 
 ## App and engine
 
+### Unreleased
+
+#### Added
+
+- Markdown previews draw the HTML GitHub renders: `align` for centered logos and badge rows, sized and linked images,
+  `<details>` that open and close, `<picture>` by appearance, tables spanning cells, `<kbd>`, `<sub>` and `<sup>`.
+  Comments, styles, scripts and forms are left out, as on GitHub.
+
 ### [0.2.14] - 2026-11-24
 
 On macOS, Show Only Commit Details can be undone again, with a button at the top right of the commit details.
@@ -1274,6 +1282,8 @@ First release.
 
 - The Working Copy diff can ignore whitespace (at line ends, changes in amount or all), with the engine. Lines and
   hunks aren't staged or discarded meanwhile.
+- Markdown in All Files draws the HTML GitHub renders, with the engine: `<details>`, tables spanning cells, `align`,
+  image sizes, `<picture>` by theme, `<kbd>`, `<sub>` and `<sup>`.
 
 ### [0.2.9] - 2026-11-24
 
