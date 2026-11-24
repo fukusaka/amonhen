@@ -1049,6 +1049,8 @@ pub struct RefLabel {
 pub type Labels = HashMap<u32, Vec<RefLabel>>;
 
 enum Event {
+    /// 開いている Markdown の図を、色を当て直して描いたもの（開いたファイルの鍵と、図の絵）。
+    Diagrams(u64, Vec<Option<crate::markdownview::DiagramPicture>>),
     History(Arc<Repository>, Arc<HistorySnapshot>),
     Refs(u64, Arc<RefsSnapshot>, Labels),
     Commit(u64, Box<CommitShown>),
@@ -2007,6 +2009,13 @@ impl Data {
                         changed = true;
                     }
                 }
+                Event::Diagrams(key, diagrams) => {
+                    if let Some(file) = self.file_view.as_mut().filter(|f| f.key == key) {
+                        file.diagrams = Arc::new(diagrams);
+                        self.file_view_changed = true;
+                        changed = true;
+                    }
+                }
                 Event::File(shown) => {
                     if self.file_wanted.as_deref() == Some(shown.path.as_str()) {
                         self.file_view = Some(shown);
@@ -2159,8 +2168,8 @@ impl Data {
                 });
             // 図は、ここ（裏）で色を当てて絵にしておく（大きな図は数十 ms かかる）。
             let diagrams = match (&markdown, &diagram_theme) {
-                (Some(blocks), Some((theme, dark))) => {
-                    crate::markdownview::render_diagrams(blocks, theme, *dark)
+                (Some(blocks), Some(colors)) => {
+                    crate::markdownview::render_diagrams(blocks, colors)
                 }
                 _ => Vec::new(),
             };
@@ -2193,6 +2202,24 @@ impl Data {
                 diagrams: Arc::new(diagrams),
                 mobile,
             })));
+            wake();
+        });
+    }
+
+    /// 開いている Markdown の図に、今の配色・外観・テーマで色を当て直す（裏で描き、届くまでは前の絵のまま。
+    /// macOS 版・GTK4 版と同じく、図だけを描き直す）。
+    pub fn recolor_diagrams(&mut self) {
+        let Some(file) = self.file_view.as_ref() else {
+            return;
+        };
+        let Some(blocks) = file.markdown.clone().filter(|_| !file.diagrams.is_empty()) else {
+            return;
+        };
+        let (key, colors) = (file.key, crate::markdownview::diagram_theme());
+        let (tx, wake) = (self.tx.clone(), self.wake.clone());
+        std::thread::spawn(move || {
+            let diagrams = crate::markdownview::render_diagrams(&blocks, &colors);
+            let _ = tx.send(Event::Diagrams(key, diagrams));
             wake();
         });
     }
