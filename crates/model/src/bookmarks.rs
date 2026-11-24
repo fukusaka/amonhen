@@ -251,6 +251,56 @@ pub fn remove(locations: &[&str]) -> crate::Result<()> {
     })
 }
 
+/// 探すフォルダを足す（もうあれば何もしない。深さと除外の名前はアプリの既定）。
+pub fn add_scan_root(location: &str) -> crate::Result<()> {
+    edit(|object| {
+        let roots = scan_roots_mut(object);
+        if roots
+            .iter()
+            .any(|r| r.get("path").and_then(|p| p.as_str()) == Some(location))
+        {
+            return;
+        }
+        roots.push(serde_json::json!({
+            "path": location,
+            "depth": 3,
+            "excludes": crate::scan::DEFAULT_EXCLUDES,
+        }));
+    })
+}
+
+/// 探すフォルダの深さを変える。
+pub fn set_scan_depth(location: &str, depth: u32) -> crate::Result<()> {
+    edit(|object| {
+        for root in scan_roots_mut(object) {
+            if root.get("path").and_then(|p| p.as_str()) == Some(location)
+                && let Some(root) = root.as_object_mut()
+            {
+                root.insert("depth".into(), depth.into());
+            }
+        }
+    })
+}
+
+/// 探すのをやめる。
+pub fn remove_scan_root(location: &str) -> crate::Result<()> {
+    edit(|object| {
+        scan_roots_mut(object).retain(|r| r.get("path").and_then(|p| p.as_str()) != Some(location));
+    })
+}
+
+fn scan_roots_mut(
+    object: &mut serde_json::Map<String, serde_json::Value>,
+) -> &mut Vec<serde_json::Value> {
+    let roots = object
+        .entry("scanRoots")
+        .or_insert_with(|| serde_json::Value::Array(Vec::new()));
+    if !roots.is_array() {
+        *roots = serde_json::Value::Array(Vec::new());
+    }
+    roots.as_array_mut().expect("an array")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -367,6 +417,26 @@ mod tests {
             assert_eq!(read().unwrap()[1].color, None);
             remove(&["/w/a"]).unwrap();
             assert_eq!(read().unwrap().len(), 1);
+        });
+    }
+
+    /// 探すフォルダを足す（既定の深さ・除外）、深さを変える、やめる。
+    #[test]
+    fn edits_scan_roots() {
+        let dir = tempfile::tempdir().unwrap();
+        let vars = crate::settings::config_vars(dir.path().to_str().unwrap());
+        let env = crate::process::ClientEnv::from_vars(vars);
+        crate::process::with_client_env(&env, || {
+            add_scan_root("/w/prj").unwrap();
+            add_scan_root("/w/prj").unwrap();
+            let roots = scan_roots().unwrap();
+            assert_eq!(roots.len(), 1);
+            assert_eq!(roots[0].depth, 3);
+            assert!(roots[0].excludes.iter().any(|e| e == "target"));
+            set_scan_depth("/w/prj", 5).unwrap();
+            assert_eq!(scan_roots().unwrap()[0].depth, 5);
+            remove_scan_root("/w/prj").unwrap();
+            assert!(scan_roots().unwrap().is_empty());
         });
     }
 

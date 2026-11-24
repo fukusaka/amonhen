@@ -51,6 +51,14 @@ pub enum Event {
     CountWorktrees,
     /// リポジトリのページの行の状態（読めなければ None）。
     Peeked(String, Option<amonhen_backend_cli::Peek>),
+    /// 探すフォルダの中で、フォルダが増えた・消えた（少し待ってから探し直す）。
+    RepositoryFoldersChanged,
+    /// 探すフォルダを探し直す頃。
+    RescanRepositories,
+    /// 探したフォルダの見張り（裏で作る）。
+    WatchingRepositories(amonhen_watch::DirsWatch),
+    /// リポジトリのページの Fetch が終わった（だめなら理由）。
+    Fetched(String, Option<String>),
 }
 
 /// 描き直す所。一番上と一番下の行は、どれかを描き直すたびに描き直す。
@@ -784,6 +792,12 @@ pub struct App {
     all_files: Option<crate::allfiles::AllFiles>,
     /// リポジトリのページ（アプリの Repositories。Ctrl-o）。画面に重ねる。
     repos: Option<crate::repos::Repos>,
+    /// リポジトリのページを開いている間、手元の探すフォルダを見張る（アプリと同じく、増えたリポジトリを足す）。
+    repo_watch: Option<amonhen_watch::DirsWatch>,
+    /// 端末を渡して、このフォルダでシェルを開く（リポジトリのページの `t`）。
+    open_shell: Option<String>,
+    /// 探し直しを待っている（見張りの知らせをまとめる）。
+    rescan_queued: bool,
     /// 端末のクリップボードに入れる文字（OSC 52。描くループが書く）。
     copy: Option<String>,
     /// 編集モードで、変更があるのに Esc を 1 度押した（もう 1 度で捨てる）。
@@ -941,6 +955,9 @@ impl App {
             wrap: false,
             all_files: None,
             repos: None,
+            repo_watch: None,
+            open_shell: None,
+            rescan_queued: false,
             copy: None,
             edit_discard: false,
             plan_message: None,
@@ -1896,6 +1913,41 @@ impl App {
                 }
                 self.dirty = true;
             }
+            Event::RepositoryFoldersChanged => {
+                if self.repos.is_some() && !self.rescan_queued {
+                    self.rescan_queued = true;
+                    let events = self.events.clone();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_secs(1));
+                        let _ = events.send(Event::RescanRepositories);
+                    });
+                }
+            }
+            Event::Fetched(path, error) => {
+                if let Some(repos) = &mut self.repos {
+                    repos.fetched(&path, error.clone());
+                    self.dirty = true;
+                }
+                if let Some(error) = error {
+                    self.error = Some(tr!(
+                        "Couldn’t fetch {path}: {error}",
+                        path = path,
+                        error = error
+                    ));
+                }
+                self.peek_repositories(vec![path]);
+            }
+            Event::WatchingRepositories(watch) => {
+                if self.repos.is_some() {
+                    self.repo_watch = Some(watch);
+                }
+            }
+            Event::RescanRepositories => {
+                self.rescan_queued = false;
+                if self.repos.is_some() {
+                    self.scan_repositories();
+                }
+            }
             Event::Peeked(path, peek) => {
                 if let Some(repos) = &mut self.repos {
                     repos.set_peek(path, peek);
@@ -2080,7 +2132,10 @@ impl App {
             }
             match key.code {
                 KeyCode::Esc if !repos.filter.is_empty() => repos.set_filter(String::new()),
-                KeyCode::Esc | KeyCode::Char('q') => self.repos = None,
+                KeyCode::Esc | KeyCode::Char('q') => {
+                    self.repos = None;
+                    self.repo_watch = None;
+                }
                 KeyCode::Char('o') if control => self.repos = None,
                 KeyCode::Tab | KeyCode::BackTab => repos.focus_categories = !repos.focus_categories,
                 KeyCode::Char('h') | KeyCode::Left => repos.focus_categories = true,
@@ -2090,6 +2145,63 @@ impl App {
                 KeyCode::PageDown => repos.move_selection(10),
                 KeyCode::PageUp => repos.move_selection(-10),
                 KeyCode::Char('s') => repos.next_sort(),
+                // 左の分類で: 探すフォルダを足す、🔍 の深さ・探し直し・やめる（アプリの Places の右クリック）。
+                KeyCode::Char('a') if repos.focus_categories => {
+                    repos.prompt = Some(crate::repos::Prompt::AddRoot(repos.selected_place()));
+                }
+                KeyCode::Char('d') if repos.focus_categories => {
+                    if let Some(root) = repos.selected_root() {
+                        let depth = repos.root_depth(&root).unwrap_or(3);
+                        repos.prompt = Some(crate::repos::Prompt::Depth(depth.to_string()));
+                    }
+                }
+                KeyCode::Char('x') if repos.focus_categories && repos.selected_root().is_some() => {
+                    repos.prompt = Some(crate::repos::Prompt::RemoveRoot);
+                }
+                KeyCode::Char('r') if repos.focus_categories => {
+                    self.scan_repositories();
+                    self.notice = Some(tr!("Scanning the folders again"));
+                }
+                // 選んだリポジトリで: 印をつける、Fetch（印をつけたものすべて）、シェル・エディタ・ファイルの窓で開く
+                // （アプリの行のメニューの Fetch・Open in Terminal・Open in Editor・Show in Finder）。
+                KeyCode::Char('v') if !repos.focus_categories => {
+                    repos.toggle_mark();
+                    repos.move_selection(1);
+                }
+                KeyCode::Char('f') if !repos.focus_categories => {
+                    let paths: Vec<String> = repos
+                        .to_fetch()
+                        .into_iter()
+                        .filter(|p| !p.starts_with("ssh://") && !p.starts_with("daemon:"))
+                        .collect();
+                    if paths.is_empty() {
+                        self.error = Some(tr!(
+                            "Repositories on SSH hosts are fetched when they are open"
+                        ));
+                    } else {
+                        repos.fetch_started(&paths);
+                        self.fetch_repositories(paths);
+                    }
+                }
+                KeyCode::Char('t' | 'e' | 'o') if !repos.focus_categories => {
+                    match repos.selected_entry() {
+                        Some(entry) if entry.is_local() => match key.code {
+                            KeyCode::Char('t') => self.open_shell = Some(entry.path),
+                            KeyCode::Char('e') => self.open_file = Some(entry.path),
+                            _ => {
+                                if let Err(error) = reveal(&entry.path) {
+                                    self.error = Some(error.to_string());
+                                }
+                            }
+                        },
+                        Some(_) => {
+                            self.error = Some(tr!(
+                                "The files are on another machine; open them in a terminal there"
+                            ))
+                        }
+                        None => {}
+                    }
+                }
                 // 登録の編集（アプリの行の右クリックと同じもの）。
                 KeyCode::Char('*') if !repos.focus_categories => {
                     if let Some(entry) = repos.selected_entry() {
@@ -3435,23 +3547,47 @@ impl App {
                 return;
             }
         };
-        let repos = crate::repos::Repos::new(entries);
+        let mut repos = crate::repos::Repos::new(entries);
+        repos.set_roots(roots);
         let local = repos.local_paths();
         self.repos = Some(repos);
         self.peek_repositories(local);
-        let roots: Vec<_> = roots.into_iter().filter(|r| r.is_local()).collect();
-        if !roots.is_empty() {
-            let events = self.events.clone();
-            std::thread::spawn(move || {
-                for root in roots {
-                    let found = root.find_local();
-                    if !found.is_empty() && events.send(Event::Scanned(found)).is_err() {
-                        return;
-                    }
-                }
-            });
-        }
+        self.scan_repositories();
         self.dirty = true;
+    }
+
+    /// 手元の探すフォルダを裏で探し（見つかったら `Event::Scanned`）、そのフォルダを見張る。SSH 先のフォルダは
+    /// 探さない（並べるだけ）。
+    fn scan_repositories(&mut self) {
+        let roots: Vec<_> = match amonhen_model::bookmarks::scan_roots() {
+            Ok(roots) => roots.into_iter().filter(|r| r.is_local()).collect(),
+            Err(reason) => {
+                self.error = Some(reason);
+                return;
+            }
+        };
+        if roots.is_empty() {
+            self.repo_watch = None;
+            return;
+        }
+        let events = self.events.clone();
+        std::thread::spawn(move || {
+            // 探したフォルダ（その中でリポジトリが増えたら見つかるところ）を見張る（アプリと同じ）。
+            let dirs: Vec<std::path::PathBuf> = roots.iter().flat_map(scanned_dirs).collect();
+            let notify = events.clone();
+            if let Ok(watch) = amonhen_watch::DirsWatch::new(&dirs, move |_| {
+                let _ = notify.send(Event::RepositoryFoldersChanged);
+            }) && events.send(Event::WatchingRepositories(watch)).is_err()
+            {
+                return;
+            }
+            for root in roots {
+                let found = root.find_local();
+                if !found.is_empty() && events.send(Event::Scanned(found)).is_err() {
+                    return;
+                }
+            }
+        });
     }
 
     /// リポジトリのページで聞いていることへの答え（打つ語、`y`、色の数字）。
@@ -3464,6 +3600,7 @@ impl App {
             return;
         };
         let path = repos.selected_entry().map(|e| e.path);
+        let root = repos.selected_root();
         let set = amonhen_model::bookmarks::set;
         // 打っている語: 書き換えて、聞き続ける。Enter で決め、Esc でやめる。
         let typing = |text: &mut String| match code {
@@ -3497,6 +3634,33 @@ impl App {
                     .and_then(|()| amonhen_model::recent::forget(&[path.as_str()]));
                 self.edit_bookmark(result);
             }
+            (Prompt::RemoveRoot, KeyCode::Char('y')) => {
+                let Some(root) = root else { return };
+                let result = amonhen_model::bookmarks::remove_scan_root(&root);
+                self.edit_bookmark(result);
+                self.scan_repositories();
+            }
+            (Prompt::Depth(text), KeyCode::Enter) => {
+                let Some(root) = root else { return };
+                match text.trim().parse::<u32>() {
+                    Ok(depth) if (1..=10).contains(&depth) => {
+                        let result = amonhen_model::bookmarks::set_scan_depth(&root, depth);
+                        self.edit_bookmark(result);
+                        self.scan_repositories();
+                    }
+                    _ => self.error = Some(tr!("The depth is a number from 1 to 10")),
+                }
+            }
+            (Prompt::AddRoot(text), KeyCode::Enter) => {
+                let location = text.trim();
+                if location.is_empty() || location.ends_with("://") {
+                    return;
+                }
+                let location = local_location(location);
+                let result = amonhen_model::bookmarks::add_scan_root(&location);
+                self.edit_bookmark(result);
+                self.scan_repositories();
+            }
             (Prompt::Name(text), KeyCode::Enter) => {
                 let Some(path) = path else { return };
                 let name = text.trim().to_owned();
@@ -3518,18 +3682,7 @@ impl App {
                 if location.is_empty() {
                     return;
                 }
-                // この機械のパスは、~ を広げて絶対パスに（アプリと同じく、リンクは解かない）。
-                let location =
-                    match location.starts_with("ssh://") || location.starts_with("daemon:") {
-                        true => location.to_owned(),
-                        false => {
-                            let path = amonhen_backend_cli::expand_home(location);
-                            std::path::absolute(&path)
-                                .unwrap_or(path)
-                                .to_string_lossy()
-                                .into_owned()
-                        }
-                    };
+                let location = local_location(location);
                 let result = amonhen_model::bookmarks::edit_item(&location, |_| {});
                 self.edit_bookmark(result);
             }
@@ -3549,6 +3702,16 @@ impl App {
                     repos.prompt = Some(Prompt::Add(text));
                 }
             }
+            (Prompt::AddRoot(mut text), _) => {
+                if typing(&mut text) {
+                    repos.prompt = Some(Prompt::AddRoot(text));
+                }
+            }
+            (Prompt::Depth(mut text), _) => {
+                if typing(&mut text) {
+                    repos.prompt = Some(Prompt::Depth(text));
+                }
+            }
             _ => {}
         }
     }
@@ -3556,10 +3719,11 @@ impl App {
     /// 一覧をファイルから読み直す（編集した後）。読めなければ理由を出す。
     fn reload_repositories(&mut self) {
         match repository_entries() {
-            Ok((entries, _)) => {
+            Ok((entries, roots)) => {
                 if let Some(repos) = &mut self.repos {
                     let known = repos.local_paths();
                     repos.replace(entries);
+                    repos.set_roots(roots);
                     let new: Vec<String> = (repos.local_paths().into_iter())
                         .filter(|p| !known.contains(p))
                         .collect();
@@ -3577,6 +3741,46 @@ impl App {
             self.error = Some(error.to_string());
         }
         self.reload_repositories();
+    }
+
+    /// 手元のリポジトリ `paths` を裏で Fetch する（4 つずつ。終わるごとに `Event::Fetched`）。
+    fn fetch_repositories(&mut self, paths: Vec<String>) {
+        let queue = Arc::new(std::sync::Mutex::new(std::collections::VecDeque::from(
+            paths,
+        )));
+        for _ in 0..4 {
+            let (queue, events) = (queue.clone(), self.events.clone());
+            std::thread::spawn(move || {
+                loop {
+                    let Some(path) = queue.lock().unwrap().pop_front() else {
+                        return;
+                    };
+                    // その場で開いて fetch するだけ（アプリと同じ。History のキャッシュは持たない）。
+                    let error =
+                        match amonhen_front::InProcess::open(std::path::Path::new(&path), None) {
+                            Ok(front) => {
+                                let request = json!({"op": "run", "command": {"op": "fetch"}});
+                                match front.call(request) {
+                                    Ok(reply) if reply.json["ok"] == true => None,
+                                    Ok(reply) => {
+                                        Some(reply.json["error"].as_str().unwrap_or("").to_owned())
+                                    }
+                                    Err(e) => Some(e.to_string()),
+                                }
+                            }
+                            Err(e) => Some(e.to_string()),
+                        };
+                    if events.send(Event::Fetched(path, error)).is_err() {
+                        return;
+                    }
+                }
+            });
+        }
+    }
+
+    /// 端末を渡してシェルを開くフォルダ（聞いたら、なかったことにする）。
+    pub fn take_open_shell(&mut self) -> Option<String> {
+        self.open_shell.take()
     }
 
     /// 手元のリポジトリ `paths` の状態を裏で読む（4 つずつ。アプリの peekQueue と同じ）。
@@ -10934,6 +11138,64 @@ fn repository_entries() -> std::result::Result<
     Ok((entries, roots))
 }
 
+/// 探すフォルダ `root` で中を読むフォルダ（リポジトリと、隠しフォルダ・除外の名前のフォルダには入らない）。
+fn scanned_dirs(root: &amonhen_model::bookmarks::ScanRoot) -> Vec<std::path::PathBuf> {
+    let mut dirs = Vec::new();
+    let mut next = vec![(std::path::PathBuf::from(&root.path), 0u32)];
+    while let Some((dir, depth)) = next.pop() {
+        if dir.join(".git").exists() {
+            continue;
+        }
+        dirs.push(dir.clone());
+        if depth >= root.depth {
+            continue;
+        }
+        for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') || root.excludes.contains(&name) {
+                continue;
+            }
+            if entry.file_type().is_ok_and(|t| t.is_dir()) {
+                next.push((entry.path(), depth + 1));
+            }
+        }
+    }
+    dirs
+}
+
+/// フォルダを、この機械のファイルの窓で開く（Finder・Files・Explorer）。待たない。
+fn reveal(path: &str) -> std::io::Result<()> {
+    let program = if cfg!(target_os = "macos") {
+        "open"
+    } else if cfg!(windows) {
+        "explorer"
+    } else {
+        "xdg-open"
+    };
+    amonhen_model::process::command(program)
+        .arg(path)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map(|_| ())
+}
+
+/// 打った場所: この機械のパスは、~ を広げて絶対パスに（アプリと同じく、リンクは解かない）。`ssh://`・`daemon:`
+/// はそのまま。
+fn local_location(location: &str) -> String {
+    match location.starts_with("ssh://") || location.starts_with("daemon:") {
+        true => location.to_owned(),
+        false => {
+            let path = amonhen_backend_cli::expand_home(location);
+            std::path::absolute(&path)
+                .unwrap_or(path)
+                .to_string_lossy()
+                .into_owned()
+        }
+    }
+}
+
 /// ブックマークでないリポジトリの行（名前は場所の最後の部分）。
 fn repo_entry(
     path: &str,
@@ -11416,6 +11678,212 @@ mod tests {
                     .any(|r| r.path == before)
             );
         });
+    }
+
+    /// リポジトリのページの左: 探すフォルダ（🔍。深さ・やめる・足す）と、ほかのリポジトリのフォルダの木（子が 1 つの
+    /// フォルダはまとめる）。探すフォルダは見張り、増えたリポジトリを足す
+    #[test]
+    fn the_repository_page_scans_folders_and_shows_a_folder_tree() {
+        let (_dir, mut app, rx) = app_with_history();
+        let config = tempfile::tempdir().unwrap();
+        let vars = amonhen_model::settings::config_vars(config.path().to_str().unwrap());
+        let env = amonhen_model::process::ClientEnv::from_vars(vars);
+        let work = tempfile::tempdir().unwrap();
+        let root = work.path().join("prj");
+        std::fs::create_dir_all(root.join("a/.git")).unwrap();
+        let other = work.path().join("deep/one/two");
+        std::fs::create_dir_all(other.join("repo/.git")).unwrap();
+        let root_path = root.to_string_lossy().into_owned();
+        let key = |app: &mut App, ch: char| {
+            let code = match ch {
+                '\n' => KeyCode::Enter,
+                '\t' => KeyCode::Tab,
+                ch => KeyCode::Char(ch),
+            };
+            app.handle(Event::Input(Input::Key(KeyEvent::new(
+                code,
+                KeyModifiers::NONE,
+            ))));
+        };
+        let wait_for = |app: &mut App, want: &str| loop {
+            match rx.recv_timeout(std::time::Duration::from_secs(30)) {
+                Ok(Event::Scanned(paths)) => {
+                    let found = paths.iter().any(|p| p.ends_with(want));
+                    app.handle(Event::Scanned(paths));
+                    if found {
+                        break;
+                    }
+                }
+                Ok(other) => app.handle(other),
+                Err(e) => panic!("{want} not found: {e}"),
+            }
+        };
+        amonhen_model::process::with_client_env(&env, || {
+            let folder = config.path().join("amonhen");
+            std::fs::create_dir_all(&folder).unwrap();
+            let bookmarks = serde_json::json!({
+                "items": [{"path": other.join("repo").to_str().unwrap()}],
+                "scanRoots": [{"path": root_path}, {"path": "ssh://host/src"}],
+            });
+            std::fs::write(folder.join("bookmarks.json"), bookmarks.to_string()).unwrap();
+            app.handle(Event::Input(Input::Key(KeyEvent::new(
+                KeyCode::Char('o'),
+                KeyModifiers::CONTROL,
+            ))));
+        });
+        amonhen_model::process::with_client_env(&env, || wait_for(&mut app, "a"));
+        let categories = |app: &App| -> Vec<String> {
+            let repos = app.repos.as_ref().unwrap();
+            (0..repos.category_count())
+                .map(|i| repos.category_label(i))
+                .collect()
+        };
+        let names = categories(&app);
+        assert!(
+            names
+                .iter()
+                .any(|n| n.starts_with("🔍 ") && n.ends_with("prj")),
+            "{names:?}"
+        );
+        // 子が 1 つのフォルダはまとめる（…/deep/one/two が 1 つ）。
+        assert!(
+            names.iter().any(|n| n.ends_with("deep/one/two")),
+            "{names:?}"
+        );
+        assert!(
+            names.iter().any(|n| n == "🔍 /src"),
+            "an SSH folder is listed: {names:?}"
+        );
+        // 見張っている: 増えたリポジトリが届く（見張りが動き出すまで、少し待つ）。
+        assert!(app.repo_watch.is_some());
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        std::fs::create_dir_all(root.join("b/.git")).unwrap();
+        amonhen_model::process::with_client_env(&env, || wait_for(&mut app, "b"));
+        // 🔍 を選んで、深さを変え、やめる。
+        let at = names
+            .iter()
+            .position(|n| n.starts_with("🔍 ") && n.ends_with("prj"))
+            .unwrap();
+        amonhen_model::process::with_client_env(&env, || {
+            key(&mut app, '\t');
+            for _ in 0..at {
+                key(&mut app, 'j');
+            }
+            for ch in "d\x15".chars() {
+                if ch == '\x15' {
+                    app.handle(Event::Input(Input::Key(KeyEvent::new(
+                        KeyCode::Char('u'),
+                        KeyModifiers::CONTROL,
+                    ))));
+                } else {
+                    key(&mut app, ch);
+                }
+            }
+            for ch in "5\n".chars() {
+                key(&mut app, ch);
+            }
+            assert_eq!(amonhen_model::bookmarks::scan_roots().unwrap()[0].depth, 5);
+            for ch in "xy".chars() {
+                key(&mut app, ch);
+            }
+            let roots = amonhen_model::bookmarks::scan_roots().unwrap();
+            assert!(!roots.iter().any(|r| r.path == root_path), "{roots:?}");
+            // 足す。
+            key(&mut app, 'a');
+            for ch in root_path.chars() {
+                key(&mut app, ch);
+            }
+            key(&mut app, '\n');
+            let roots = amonhen_model::bookmarks::scan_roots().unwrap();
+            assert!(
+                roots.iter().any(|r| r.path == root_path && r.depth == 3),
+                "{roots:?}"
+            );
+        });
+    }
+
+    /// リポジトリのページの `v` 印・`f` Fetch（印をつけたものすべて、裏で）・`t` シェル・`e` エディタ
+    #[test]
+    fn the_repository_page_fetches_and_opens_repositories() {
+        let (dir, mut app, rx) = app_with_history();
+        let git = |cwd: &std::path::Path, args: &[&str]| {
+            let out = amonhen_model::process::command("git")
+                .args(["-c", "user.name=Ann", "-c", "user.email=ann@example.com"])
+                .args(["-c", "commit.gpgsign=false"])
+                .args(args)
+                .current_dir(cwd)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "git {args:?}");
+        };
+        let work = tempfile::tempdir().unwrap();
+        let clone = work.path().join("clone");
+        git(
+            work.path(),
+            &[
+                "clone",
+                "-q",
+                dir.path().to_str().unwrap(),
+                clone.to_str().unwrap(),
+            ],
+        );
+        // 元のリポジトリが進む: Fetch すれば ↓1。
+        git(
+            dir.path(),
+            &["commit", "-q", "--allow-empty", "-m", "Later"],
+        );
+        let config = tempfile::tempdir().unwrap();
+        let vars = amonhen_model::settings::config_vars(config.path().to_str().unwrap());
+        let env = amonhen_model::process::ClientEnv::from_vars(vars);
+        let clone_path = clone.to_string_lossy().into_owned();
+        let key = |app: &mut App, ch: char| {
+            app.handle(Event::Input(Input::Key(KeyEvent::new(
+                KeyCode::Char(ch),
+                KeyModifiers::NONE,
+            ))));
+        };
+        amonhen_model::process::with_client_env(&env, || {
+            let folder = config.path().join("amonhen");
+            std::fs::create_dir_all(&folder).unwrap();
+            let bookmarks = serde_json::json!({"items": [{"path": clone_path}]});
+            std::fs::write(folder.join("bookmarks.json"), bookmarks.to_string()).unwrap();
+            app.handle(Event::Input(Input::Key(KeyEvent::new(
+                KeyCode::Char('o'),
+                KeyModifiers::CONTROL,
+            ))));
+        });
+        key(&mut app, 'v');
+        assert_eq!(
+            app.repos.as_ref().unwrap().to_fetch(),
+            std::slice::from_ref(&clone_path)
+        );
+        key(&mut app, 'f');
+        loop {
+            match rx.recv_timeout(std::time::Duration::from_secs(30)) {
+                Ok(Event::Fetched(path, error)) => {
+                    assert_eq!(error, None);
+                    app.handle(Event::Fetched(path, None));
+                    break;
+                }
+                Ok(other) => app.handle(other),
+                Err(e) => panic!("not fetched: {e}"),
+            }
+        }
+        // 読み直した状態で、上流より 1 つ遅れている。
+        loop {
+            match rx.recv_timeout(std::time::Duration::from_secs(30)) {
+                Ok(Event::Peeked(path, peek)) if path == clone_path => {
+                    assert_eq!(peek.as_ref().map(|p| p.behind), Some(1), "{peek:?}");
+                    break;
+                }
+                Ok(other) => app.handle(other),
+                Err(e) => panic!("no status: {e}"),
+            }
+        }
+        key(&mut app, 't');
+        assert_eq!(app.take_open_shell(), Some(clone_path.clone()));
+        key(&mut app, 'e');
+        assert_eq!(app.take_open_file().map(|f| f.0), Some(clone_path));
     }
 
     #[test]

@@ -33,6 +33,12 @@ pub struct Entry {
 /// 一番下の行で聞いていること（打っている語）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Prompt {
+    /// 足す探すフォルダ（この機械のパスか `ssh://host/path`）。
+    AddRoot(String),
+    /// 探すフォルダの深さ。
+    Depth(String),
+    /// 探すのをやめるか（`y`）。
+    RemoveRoot,
     /// 表示名（空なら場所の最後の部分に戻す）。
     Name(String),
     /// グループ（空ならグループから外す）。
@@ -68,6 +74,14 @@ enum Category {
     ThisMachine,
     Host(String),
     Group(String),
+    /// 場所（この機械なら None、SSH 先ならそのホスト）の下のフォルダ。`scan` は探すフォルダ（🔍）。
+    Folder {
+        host: Option<String>,
+        path: String,
+        label: String,
+        depth: u16,
+        scan: bool,
+    },
 }
 
 /// 並べる列（`s` で順に替える）。
@@ -109,6 +123,15 @@ pub struct Repos {
     pub typing_filter: bool,
     /// 一番下の行で聞いていること。
     pub prompt: Option<Prompt>,
+    /// 探すフォルダ（この機械のものと SSH 先のもの）。
+    roots: Vec<amonhen_model::bookmarks::ScanRoot>,
+    /// 左の分類の一番上に見えているもの。
+    category_top: usize,
+    /// 印をつけた行（`v`。Fetch をまとめてする）。
+    marked: std::collections::HashSet<String>,
+    /// Fetch している行と、失敗した行の理由。
+    fetching: std::collections::HashSet<String>,
+    fetch_errors: HashMap<String, String>,
 }
 
 impl Repos {
@@ -125,6 +148,11 @@ impl Repos {
             filter: String::new(),
             typing_filter: false,
             prompt: None,
+            roots: Vec::new(),
+            category_top: 0,
+            marked: Default::default(),
+            fetching: Default::default(),
+            fetch_errors: HashMap::new(),
         };
         repos.add(entries);
         repos
@@ -141,6 +169,45 @@ impl Repos {
         self.add(scanned);
         let last = self.rows().len().saturating_sub(1);
         self.selected = self.selected.min(last);
+    }
+
+    /// 選んでいる行に印をつける・外す（`v`）。
+    pub fn toggle_mark(&mut self) {
+        if let Some(path) = self.selected_path()
+            && !self.marked.remove(&path)
+        {
+            self.marked.insert(path);
+        }
+    }
+
+    /// Fetch するもの: 印をつけた行（なければ選んでいる行）。
+    pub fn to_fetch(&self) -> Vec<String> {
+        match self.marked.is_empty() {
+            true => self.selected_path().into_iter().collect(),
+            false => {
+                let mut paths: Vec<String> = self.marked.iter().cloned().collect();
+                paths.sort();
+                paths
+            }
+        }
+    }
+
+    /// Fetch を始めた（印は外す）。
+    pub fn fetch_started(&mut self, paths: &[String]) {
+        for path in paths {
+            self.fetching.insert(path.clone());
+            self.fetch_errors.remove(path);
+        }
+        self.marked.clear();
+    }
+
+    /// Fetch が終わった。行の状態は読み直す（呼ぶ側）。
+    pub fn fetched(&mut self, path: &str, error: Option<String>) {
+        self.fetching.remove(path);
+        self.peeks.remove(path);
+        if let Some(error) = error {
+            self.fetch_errors.insert(path.to_owned(), error);
+        }
     }
 
     /// 選んでいる行。
@@ -164,15 +231,66 @@ impl Repos {
         self.rebuild_categories();
     }
 
+    /// 探すフォルダを替える（分類を作り直す）。
+    pub fn set_roots(&mut self, roots: Vec<amonhen_model::bookmarks::ScanRoot>) {
+        self.roots = roots;
+        self.rebuild_categories();
+    }
+
+    /// 場所（None はこの機械）の下の分類: 探すフォルダ（🔍）と、ほかのリポジトリのあるフォルダの木（アプリと
+    /// 同じ。子が 1 つだけでリポジトリのないフォルダは 1 つにまとめる）。
+    fn folders(&self, host: Option<&str>) -> Vec<Category> {
+        let mut out = Vec::new();
+        let roots: Vec<String> = (self.roots.iter())
+            .filter(|r| place_of(&r.path).0.as_deref() == host)
+            .map(|r| place_of(&r.path).1)
+            .collect();
+        for root in &roots {
+            out.push(Category::Folder {
+                host: host.map(str::to_owned),
+                path: root.clone(),
+                label: format!("🔍 {}", short_home(root)),
+                depth: 0,
+                scan: true,
+            });
+        }
+        // 探すフォルダの下にないリポジトリの、親のフォルダの木。
+        let dirs: Vec<String> = (self.entries.iter())
+            .filter(|e| e.host() == host)
+            .map(|e| place_of(&e.path).1)
+            .filter(|p| !roots.iter().any(|r| under(p, r)))
+            .filter_map(|p| parent(&p))
+            .collect();
+        for (path, label, depth) in folder_tree(&dirs) {
+            out.push(Category::Folder {
+                host: host.map(str::to_owned),
+                label: match depth {
+                    0 => short_home(&label),
+                    _ => label,
+                },
+                path,
+                depth,
+                scan: false,
+            });
+        }
+        out
+    }
+
     fn rebuild_categories(&mut self) {
         let current = self.categories.get(self.category).cloned();
         let mut categories = vec![Category::All, Category::Favorites, Category::ThisMachine];
+        categories.extend(self.folders(None));
         let mut hosts: Vec<String> = (self.entries.iter())
             .filter_map(|e| e.host().map(str::to_owned))
+            .chain(self.roots.iter().filter_map(|r| place_of(&r.path).0))
             .collect();
         hosts.sort();
         hosts.dedup();
-        categories.extend(hosts.into_iter().map(Category::Host));
+        for host in hosts {
+            let folders = self.folders(Some(&host));
+            categories.push(Category::Host(host));
+            categories.extend(folders);
+        }
         let mut groups: Vec<String> = (self.entries.iter())
             .filter_map(|e| e.group.clone())
             .collect();
@@ -183,6 +301,17 @@ impl Repos {
         self.category = current
             .and_then(|c| self.categories.iter().position(|x| *x == c))
             .unwrap_or(0);
+    }
+
+    /// 左の分類の数と、`index` 番目の名前（テストで並びを見る）。
+    #[cfg(test)]
+    pub fn category_count(&self) -> usize {
+        self.categories.len()
+    }
+
+    #[cfg(test)]
+    pub fn category_label(&self, index: usize) -> String {
+        self.category_name(&self.categories[index])
     }
 
     /// 状態を手元で読むリポジトリの場所。
@@ -205,7 +334,49 @@ impl Repos {
             Category::ThisMachine => entry.host().is_none(),
             Category::Host(host) => entry.host() == Some(host.as_str()),
             Category::Group(group) => entry.group.as_deref() == Some(group.as_str()),
+            Category::Folder { host, path, .. } => {
+                entry.host() == host.as_deref() && under(&place_of(&entry.path).1, path)
+            }
         }
+    }
+
+    /// 選んでいる分類が探すフォルダなら、その場所（`ssh://` を付けた形）。
+    pub fn selected_root(&self) -> Option<String> {
+        match self.categories.get(self.category)? {
+            Category::Folder {
+                host,
+                path,
+                scan: true,
+                ..
+            } => Some(match host {
+                Some(host) => self
+                    .roots
+                    .iter()
+                    .find(|r| place_of(&r.path) == (Some(host.clone()), path.clone()))
+                    .map_or_else(|| format!("ssh://{host}{path}"), |r| r.path.clone()),
+                None => path.clone(),
+            }),
+            _ => None,
+        }
+    }
+
+    /// 選んでいる分類の場所（探すフォルダを足すとき、初めに入れる）。
+    pub fn selected_place(&self) -> String {
+        match self.categories.get(self.category) {
+            Some(Category::Host(host)) => format!("ssh://{host}/"),
+            Some(Category::Folder {
+                host: Some(host), ..
+            }) => format!("ssh://{host}/"),
+            _ => String::new(),
+        }
+    }
+
+    /// 探すフォルダ `location` の深さ。
+    pub fn root_depth(&self, location: &str) -> Option<u32> {
+        self.roots
+            .iter()
+            .find(|r| r.path == location)
+            .map(|r| r.depth)
     }
 
     /// 今の分類と絞り込みの行（並べた順）。
@@ -276,6 +447,12 @@ impl Repos {
 
     /// 状態の列の文字（アプリと同じ: 変更の数、上流との差、何もなければ ✓。SSH 先は SSH）。
     fn status(&self, entry: &Entry) -> (String, Style) {
+        if self.fetching.contains(&entry.path) {
+            return (tr!("fetching…"), Style::new().fg(Color::Cyan));
+        }
+        if self.fetch_errors.contains_key(&entry.path) {
+            return (tr!("fetch failed"), Style::new().fg(Color::Red));
+        }
         if !entry.is_local() {
             return ("SSH".to_owned(), Style::new().fg(DIM));
         }
@@ -308,6 +485,7 @@ impl Repos {
             Category::ThisMachine => tr!("This Machine"),
             Category::Host(host) => host.clone(),
             Category::Group(group) => group.clone(),
+            Category::Folder { label, .. } => label.clone(),
         }
     }
 
@@ -343,14 +521,27 @@ impl Repos {
                     .count()
             })
             .collect();
+        // 分類が多ければ、選んでいるものが見えるよう動かす。
+        let rows = usize::from(body.height.max(1));
+        if self.category < self.category_top {
+            self.category_top = self.category;
+        } else if self.category >= self.category_top + rows {
+            self.category_top = self.category + 1 - rows;
+        }
         for (i, (category, y)) in self
             .categories
             .iter()
-            .zip(body.y..body.bottom())
             .enumerate()
+            .skip(self.category_top)
+            .map(|(i, c)| (c, i))
+            .zip(body.y..body.bottom())
+            .map(|((c, i), y)| (i, (c, y)))
         {
             let indent = match category {
                 Category::Host(_) => 2,
+                Category::Folder { host, depth, .. } => {
+                    2 + u16::from(host.is_some()) * 2 + depth * 2
+                }
                 _ => 0,
             };
             let name = match category {
@@ -479,10 +670,18 @@ impl Repos {
             let opened = entry.opened.map_or("—".to_owned(), |t| ago(now, t));
             let pad = 4u16.saturating_sub(opened.width() as u16);
             put(x_opened + pad, opened_w, &opened, Style::new().fg(DIM));
+            // 印をつけた行（History の印と同じ色）。
+            if self.marked.contains(&entry.path) {
+                buf.set_style(
+                    Rect::new(list.x, y, list.width, 1),
+                    Style::new().bg(Color::Indexed(24)),
+                );
+            }
             if i == self.selected {
-                let bg = match self.focus_categories {
-                    true => Color::Indexed(236),
-                    false => Color::Indexed(238),
+                let bg = match (self.focus_categories, self.marked.contains(&entry.path)) {
+                    (_, true) => Color::Indexed(31),
+                    (true, false) => Color::Indexed(236),
+                    (false, false) => Color::Indexed(238),
                 };
                 buf.set_style(Rect::new(list.x, y, list.width, 1), Style::new().bg(bg));
             }
@@ -502,9 +701,22 @@ impl Repos {
             (Some(Prompt::Remove), _) => {
                 tr!("Remove it from the list? The repository itself stays.   y remove   n cancel")
             }
+            (Some(Prompt::AddRoot(text)), _) => tr!(
+                "Add a folder to scan (a path on this machine or ssh://host/path): {text}",
+                text = text
+            ),
+            (Some(Prompt::Depth(text)), _) => {
+                tr!("How many levels down to look: {text}", text = text)
+            }
+            (Some(Prompt::RemoveRoot), _) => tr!(
+                "Stop scanning this folder? Its repositories leave the list unless added.   y stop   n cancel"
+            ),
             (None, true) => format!("/{}", self.filter),
+            (None, false) if self.focus_categories => tr!(
+                "j/k move   Enter list   a add a folder to scan   on 🔍: d depth  r rescan  x stop   Esc close"
+            ),
             (None, false) => tr!(
-                "j/k move   Enter open   * favorite   n name   c color   g group   a add   x remove   / filter   s sort   Esc close"
+                "j/k move   Enter open   v mark   f fetch   t shell   e editor   o files   * favorite   n name   c color   g group   a add   x remove   / filter   s sort   Esc close"
             ),
         };
         buf.set_stringn(
@@ -529,4 +741,99 @@ fn label_color(name: &str) -> Option<Color> {
         "gray" => Color::Indexed(244),
         _ => return None,
     })
+}
+
+/// 場所を、ホスト（この機械なら None）とその上のパスに分ける。
+fn place_of(location: &str) -> (Option<String>, String) {
+    let plain = location.strip_prefix("daemon:").unwrap_or(location);
+    match plain.strip_prefix("ssh://") {
+        Some(rest) => {
+            let (host, path) = rest.split_at(rest.find('/').unwrap_or(rest.len()));
+            let host = host.rsplit('@').next().unwrap_or(host);
+            (Some(host.to_owned()), path.to_owned())
+        }
+        None => (None, plain.to_owned()),
+    }
+}
+
+/// `path` が `folder` か、その下か。
+fn under(path: &str, folder: &str) -> bool {
+    let folder = folder.trim_end_matches(['/', '\\']);
+    path == folder || (path.starts_with(folder) && path[folder.len()..].starts_with(['/', '\\']))
+}
+
+/// 親のフォルダ。
+fn parent(path: &str) -> Option<String> {
+    let trimmed = path.trim_end_matches(['/', '\\']);
+    let at = trimmed.rfind(['/', '\\'])?;
+    Some(match at {
+        0 => trimmed[..1].to_owned(),
+        _ => trimmed[..at].to_owned(),
+    })
+}
+
+/// 家のフォルダを `~` に。
+fn short_home(path: &str) -> String {
+    match std::env::var("HOME").ok().filter(|h| !h.is_empty()) {
+        Some(home) if under(path, &home) => {
+            format!("~{}", &path[home.trim_end_matches('/').len()..])
+        }
+        _ => path.to_owned(),
+    }
+}
+
+/// リポジトリのあるフォルダ `dirs` の木（パス、出す名前、深さ）。子が 1 つだけで、それ自体はリポジトリのある
+/// フォルダでないものは、子と 1 つにまとめる（`~/prj/oss` のように）。
+fn folder_tree(dirs: &[String]) -> Vec<(String, String, u16)> {
+    #[derive(Default)]
+    struct Node {
+        children: std::collections::BTreeMap<String, Node>,
+        holds: bool,
+    }
+    let mut root = Node::default();
+    let separator = if dirs.iter().any(|d| d.contains('\\') && !d.contains('/')) {
+        '\\'
+    } else {
+        '/'
+    };
+    for dir in dirs {
+        let mut node = &mut root;
+        for part in dir.split(['/', '\\']) {
+            node = node.children.entry(part.to_owned()).or_default();
+        }
+        node.holds = true;
+    }
+    fn emit(
+        node: &Node,
+        prefix: &str,
+        depth: u16,
+        sep: char,
+        out: &mut Vec<(String, String, u16)>,
+    ) {
+        for (name, child) in &node.children {
+            let mut path = match prefix.is_empty() && name.is_empty() {
+                true => sep.to_string(),
+                false => match prefix.is_empty() {
+                    true => name.clone(),
+                    false => format!("{}{sep}{name}", prefix.trim_end_matches(sep)),
+                },
+            };
+            let mut label = path.clone();
+            if depth > 0 {
+                label = name.clone();
+            }
+            let mut child = child;
+            while !child.holds && child.children.len() == 1 {
+                let (next, grand) = child.children.iter().next().expect("one child");
+                path = format!("{}{sep}{next}", path.trim_end_matches(sep));
+                label = format!("{}{sep}{next}", label.trim_end_matches(sep));
+                child = grand;
+            }
+            out.push((path.clone(), label, depth));
+            emit(child, &path, depth + 1, sep, out);
+        }
+    }
+    let mut out = Vec::new();
+    emit(&root, "", 0, separator, &mut out);
+    out
 }
