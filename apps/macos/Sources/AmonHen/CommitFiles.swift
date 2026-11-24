@@ -60,6 +60,10 @@ final class ImageDiffPanel: NSView {
         return control
     }()
     private let zoomLabel = NSButton(title: "", target: nil, action: nil)
+    /// 市松模様の明暗の切り替え（透けた画素があるときだけ出す）。
+    private let checkerButton = NSButton(
+        image: NSImage(systemSymbolName: "checkerboard.rectangle", accessibilityDescription: L("Darken the Checkerboard"))!,
+        target: nil, action: nil)
     private let caption = NSTextField(labelWithString: "")
     private var baseCaption = ""
     /// SVG のとき「テキストで見る」を押した。
@@ -79,11 +83,10 @@ final class ImageDiffPanel: NSView {
     init(
         before old: NSImage?, after new: NSImage?, titles: (String, String), caption text: String, svg: Bool, mode: Mode,
         position: CGFloat, single: Bool, notes: NSAttributedString? = nil, accessory: NSView? = nil,
-        footnote: [String] = [], themedChecker: Bool = false
+        footnote: [String] = []
     ) {
         canvas = ImageCompareCanvas(before: old, after: new)
         canvas.single = single
-        canvas.themedChecker = themedChecker
         canvas.titles = titles
         super.init(frame: NSRect(x: 0, y: 0, width: 600, height: 300))
         wantsLayer = true
@@ -125,7 +128,21 @@ final class ImageDiffPanel: NSView {
         }
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        let bar = NSStackView(views: top + [spacer, slider, zoomLabel, zoomControl])
+        // 市松模様の明暗: 既定は絵の色から（確かめる用に `-AMHCheckerboard dark|light`）。開いている間はボタンが勝つ
+        let tone = canvas.checkerDefault()
+        switch UserDefaults.standard.string(forKey: "AMHCheckerboard") {
+        case "dark": canvas.darkChecker = true
+        case "light": canvas.darkChecker = false
+        default: canvas.darkChecker = tone.dark
+        }
+        checkerButton.setButtonType(.pushOnPushOff)
+        checkerButton.bezelStyle = .accessoryBarAction
+        checkerButton.controlSize = .small
+        checkerButton.target = self
+        checkerButton.action = #selector(checkerChanged)
+        checkerButton.isHidden = !tone.transparent
+        updateCheckerButton()
+        let bar = NSStackView(views: top + [spacer, slider, checkerButton, zoomLabel, zoomControl])
         bar.spacing = 10
         slider.widthAnchor.constraint(equalToConstant: 160).isActive = true
         let line = NSBox()
@@ -202,6 +219,18 @@ final class ImageDiffPanel: NSView {
     }
     @objc private func showText() { onShowText?() }
 
+    @objc private func checkerChanged() {
+        canvas.darkChecker = checkerButton.state == .on
+        updateCheckerButton()
+    }
+
+    private func updateCheckerButton() {
+        checkerButton.state = canvas.darkChecker ? .on : .off
+        let title = canvas.darkChecker ? L("Lighten the Checkerboard") : L("Darken the Checkerboard")
+        checkerButton.toolTip = title
+        checkerButton.setAccessibilityLabel(title)
+    }
+
     @objc private func zoomChanged() {
         switch zoomControl.selectedSegment {
         case 0: canvas.zoom(by: 1 / 1.5)
@@ -244,8 +273,8 @@ final class ImageCompareCanvas: NSView {
     var onPosition: ((CGFloat) -> Void)?
     /// 1 枚だけ見せる（比べない）。
     var single = false
-    /// 市松模様を外観に合わせる（暗い外観では暗く）。絵が画面の文字の色を使うとき（VectorDrawable）。
-    var themedChecker = false
+    /// 市松模様を暗くする（既定は絵の色から。`checkerDefault`）。
+    var darkChecker = false { didSet { needsDisplay = true } }
     /// 前と後の見出し（SVG をブラウザと iOS で比べるときは、その名前）。
     var titles = (L("Before"), L("After"))
     /// 倍率（画像の 1 ピクセルを何ポイントで描くか）。nil なら枠に合わせる。
@@ -265,6 +294,26 @@ final class ImageCompareCanvas: NSView {
 
     required init?(coder: NSCoder) { fatalError() }
     override var isFlipped: Bool { true }
+
+    /// 市松模様の既定（絵の色から。比べるときは両方を合わせて 1 つ）と、透けた画素があるか。2 枚の絵をそれぞれ
+    /// 256 × 256 に伸ばして並べた画素で数える。
+    func checkerDefault() -> (dark: Bool, transparent: Bool) {
+        let images = [before, after].compactMap { $0 }
+        guard !images.isEmpty else { return (false, false) }
+        let cell = 256
+        guard let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: cell * images.count, pixelsHigh: cell, bitsPerSample: 8,
+            samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0,
+            bitsPerPixel: 0)
+        else { return (false, false) }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        for (i, image) in images.enumerated() {
+            image.draw(in: NSRect(x: i * cell, y: 0, width: cell, height: cell))
+        }
+        NSGraphicsContext.restoreGraphicsState()
+        return checkerTone(pixels: rep.bitmapData, width: rep.pixelsWide, height: rep.pixelsHigh, stride: rep.bytesPerRow)
+    }
 
     var sizeSummary: String {
         func size(_ image: NSImage?) -> String {
@@ -342,7 +391,7 @@ final class ImageCompareCanvas: NSView {
     }
 
     private func checker(_ rect: NSRect) {
-        let dark = themedChecker && effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        let dark = darkChecker
         NSColor(white: dark ? 0.16 : 1, alpha: 1).setFill()
         rect.fill()
         NSColor(white: dark ? 0.24 : 0.86, alpha: 1).setFill()
@@ -1098,7 +1147,7 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
                 let size = "\(Int(image.size.width)) × \(Int(image.size.height)) dp · \(bytes)"
                 let panel = ImageDiffPanel(
                     before: nil, after: image, titles: ("", ""), caption: size, svg: false, mode: .twoUp,
-                    position: 0.5, single: true, footnote: picture.notes, themedChecker: true)
+                    position: 0.5, single: true, footnote: picture.notes)
                 imagePanel = panel
                 addSubview(panel, positioned: .below, relativeTo: pathBar)
                 needsLayout = true

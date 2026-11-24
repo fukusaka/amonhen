@@ -419,6 +419,16 @@ public struct VectorDrawablePicture: Sendable {
     public let notes: [String]
 }
 
+/// 透けた絵の下の市松模様の既定（コアの `checker::Tone`）。`pixels` は `height` 行 × `stride` バイトの、不透明度を
+/// 掛けた RGBA の画素（比べる 2 枚は並べて 1 つに）。暗くするのが既定か（`dark`）と、透けた画素があったか。
+public func checkerTone(pixels: UnsafePointer<UInt8>?, width: Int, height: Int, stride: Int)
+    -> (dark: Bool, transparent: Bool)
+{
+    var transparent = false
+    let dark = amonhen_checker_dark(pixels, UInt(width), UInt(height), UInt(stride), false, &transparent)
+    return (dark, transparent)
+}
+
 extension Repository {
     /// `path` の中身 `data` が、絵にする Android の VectorDrawable か（`.xml` で、根が `<vector>` か
     /// `<animated-vector>`。頭だけを見る）。
