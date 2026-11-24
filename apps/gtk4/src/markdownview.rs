@@ -389,6 +389,8 @@ struct Doc {
     links: RefCell<Vec<(i32, i32, String)>>,
     /// 組み立てたときの外観（暗いか）。
     dark: Cell<bool>,
+    /// 表と、その段落の左の下げ（欄の幅が変わったら広げ直す）。
+    tables: RefCell<Vec<(glib::WeakRef<gtk::Grid>, i32)>>,
     /// Markdown のファイル。
     from: String,
     on_open: OnOpenPath,
@@ -416,6 +418,7 @@ pub fn view(
         open: RefCell::new(initially_open(blocks)),
         links: RefCell::default(),
         dark: Cell::new(false),
+        tables: RefCell::default(),
         from: path.to_owned(),
         on_open,
     });
@@ -465,12 +468,25 @@ pub fn view(
             }
         });
     }
-    gtk::ScrolledWindow::builder()
+    let scrolled = gtk::ScrolledWindow::builder()
         .child(&text)
         .hscrollbar_policy(gtk::PolicyType::Never)
         .vexpand(true)
-        .build()
-        .upcast()
+        .build();
+    // 欄の幅が変わったら、表を広げ直す（横の adjustment の page-size は欄の幅）。
+    {
+        let (weak, doc) = (text.downgrade(), doc.clone());
+        scrolled.hadjustment().connect_page_size_notify(move |_| {
+            // 割り当ての最中に大きさを決め直さないよう、後で。
+            let (weak, doc) = (weak.clone(), doc.clone());
+            glib::idle_add_local_once(move || {
+                if let Some(text) = weak.upgrade() {
+                    fit_tables(&doc, &text);
+                }
+            });
+        });
+    }
+    scrolled.upcast()
 }
 
 /// 文字を組み立てる（前のものは消す）。
@@ -489,6 +505,13 @@ fn build(doc: &Rc<Doc>, text: &gtk::TextView) {
         buffer.delete(&mut before, &mut end);
     }
     *doc.links.borrow_mut() = builder.links.take();
+    *doc.tables.borrow_mut() = builder
+        .tables
+        .take()
+        .into_iter()
+        .map(|(grid, margin)| (grid.downgrade(), margin))
+        .collect();
+    fit_tables(doc, text);
     // 表のマスの中のリンク（ラベルの <a>）。
     for label in builder.labels.take() {
         let (weak, doc) = (text.downgrade(), doc.clone());
@@ -511,6 +534,24 @@ fn build(doc: &Rc<Doc>, text: &gtk::TextView) {
             }
         });
         widget.add_controller(click);
+    }
+}
+
+/// 表を欄の幅に広げる（macOS 版の幅 100% の表と同じ。列は収まれば 1 行で、収まらないときだけ折り返す）。
+/// 文字の間に埋め込んだ部品は最小の大きさで置かれ、折り返すラベルは 1 語の幅まで縮むので、幅を決めておく。
+fn fit_tables(doc: &Doc, text: &gtk::TextView) {
+    let width = text.width();
+    if width <= 0 {
+        return;
+    }
+    for (grid, margin) in doc.tables.borrow().iter() {
+        if let Some(grid) = grid.upgrade() {
+            // 左右の余白（24 と 24）と段落の下げを除く。
+            let available = (width - 48 - margin - 2).max(0);
+            if grid.width_request() != available {
+                grid.set_size_request(available, -1);
+            }
+        }
     }
 }
 
@@ -595,6 +636,8 @@ struct Builder<'a> {
     labels: RefCell<Vec<gtk::Label>>,
     /// リンクの中の絵・キーの札（押せるように）と、その先。
     linked: RefCell<Vec<(gtk::Widget, String)>>,
+    /// 表（欄の幅に広げる）と、その段落の左の下げ。
+    tables: RefCell<Vec<(gtk::Grid, i32)>>,
     /// 暗い外観か（`<picture>` の画像を選ぶ）。
     dark: bool,
     /// 開いている `<details>` の番号と、次の `<details>` の番号（閉じたものの中のものも数える）。
@@ -616,6 +659,7 @@ impl<'a> Builder<'a> {
             links: RefCell::default(),
             labels: RefCell::default(),
             linked: RefCell::default(),
+            tables: RefCell::default(),
             dark,
             open,
             details: Cell::new(0),
@@ -1143,6 +1187,7 @@ impl<'a> Builder<'a> {
             }
         }
         let start = self.offset();
+        self.tables.borrow_mut().push((grid.clone(), ctx.margin));
         self.embed(&grid);
         self.insert("\n", &[]);
         self.paragraph(start, ctx, false, 10);
@@ -1170,6 +1215,7 @@ impl<'a> Builder<'a> {
             );
         }
         let start = self.offset();
+        self.tables.borrow_mut().push((grid.clone(), ctx.margin));
         self.embed(&grid);
         self.insert("\n", &[]);
         self.paragraph(start, ctx, false, 10);
