@@ -407,9 +407,14 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
         barButton('All Files', 'All files at this commit, with the changes marked', page === 'all', () => setPage('all')),
       );
     }
+    const switcher = el('span', 'segmented');
+    switcher.append(
+      barButton('List', 'Show the files as a list of paths', !layout.tree, () => post({ type: 'detailsLayout', layout: { tree: false } })),
+      barButton('Tree', 'Show the files in their folders', layout.tree, () => post({ type: 'detailsLayout', layout: { tree: true } })),
+    );
     if (canAll && page === 'all') {
       const spacer = el('span', 'spacer');
-      bar.replaceChildren(pages, spacer, wrapButton());
+      bar.replaceChildren(pages, spacer, switcher, wrapButton());
       return;
     }
     const total = el('span', 'files-total', `${files.length} file${files.length === 1 ? '' : 's'}`);
@@ -417,11 +422,6 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
       total.append(' ', countsLabel(files.reduce((sum, f) => ({ added: sum.added + f.counts!.added, removed: sum.removed + f.counts!.removed }), { added: 0, removed: 0 })));
     }
     const spacer = el('span', 'spacer');
-    const switcher = el('span', 'segmented');
-    switcher.append(
-      barButton('List', 'Show the changed files as a list of paths', !layout.tree, () => post({ type: 'detailsLayout', layout: { tree: false } })),
-      barButton('Tree', 'Show the changed files in their folders', layout.tree, () => post({ type: 'detailsLayout', layout: { tree: true } })),
-    );
     const items: Node[] = canAll ? [pages, total, spacer, switcher] : [total, spacer, switcher];
     if (choices) {
       const select = whitespaceSelect(choices.whitespace, (whitespace) => post({ type: 'whitespace', whitespace }));
@@ -545,6 +545,8 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
     renderBar();
   }
   panes.add(applyLayout);
+  // すべてのファイルもリストと木を切り替える（アプリと同じ）
+  panes.add((next) => allFiles?.setTree(next.tree));
 
   /**
    * 差分を並べる。差分は画面に入ったものから順に求める（畳んだものは開くまで求めない）。`single` は 1 つのコミット
@@ -633,7 +635,19 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
   function showPage(): void {
     const canAll = imagesFor && choices !== undefined && shownOid !== undefined;
     if (page === 'all' && canAll) {
-      allFiles ??= createAllFiles(shownOid!, changedFiles);
+      allFiles ??= createAllFiles(shownOid!, changedFiles, {
+        tree: layout.tree,
+        // Show This Change: 変更に戻り、そのファイルの差分を開いて見せる（アプリと同じ）
+        onShowChange: (path) => {
+          setPage('changes');
+          const file = sections.get(path);
+          if (!file) return;
+          file.chosen = true;
+          setCollapsed(file, false);
+          request(file);
+          file.section.scrollIntoView({ block: 'start' });
+        },
+      });
       scroller.replaceChildren(allFiles.root);
       root.classList.add('all-files-page');
     } else {

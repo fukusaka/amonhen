@@ -139,6 +139,9 @@ export type FileView =
   | { kind: 'binary'; bytes: number }
   | { kind: 'error'; message: string };
 
+/** 中身に添えること（このコミットで消したファイルは、前の版を出す） */
+export type FileViewNote = { deleted?: boolean };
+
 /** いくつも選んだコミットの見せ方（`commitDiff` の `history`・`rows`）。差分はファイルごとに求める */
 export interface SelectionView {
   /** 差分を求めるときの `oid` の代わり */
@@ -206,7 +209,7 @@ export type HistoryHostMessage =
   /** コミットの木のフォルダ `path` の中身（「すべてのファイル」） */
   | { type: 'treeEntries'; oid: string; path: string; entries: TreeEntry[]; error?: string }
   /** コミットのファイル `path` の中身（「すべてのファイル」） */
-  | { type: 'treeFile'; oid: string; path: string; view: FileView }
+  | { type: 'treeFile'; oid: string; path: string; view: FileView & FileViewNote }
   /** ファイルの右クリックの Show Whole File（その詳細を出している欄が、ファイル全体を頼む） */
   | { type: 'wholeFile'; oid: string; path: string }
   /** コミットの中の 1 ファイルの差分（最初の親との差分） */
