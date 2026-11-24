@@ -3309,6 +3309,37 @@ fn clone_from_quick_open() {
     );
 }
 
+/// HEAD のない bundle のファイルを Quick Open で clone: 取り方は聞かず、取り出すブランチを選ぶ
+#[test]
+fn clone_a_bundle_without_head_asks_the_branch() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("source");
+    std::fs::create_dir(&source).unwrap();
+    merged(&source);
+    let bundle = dir.path().join("two.bundle");
+    git(
+        &source,
+        BASE,
+        &[
+            "bundle",
+            "create",
+            "-q",
+            bundle.to_str().unwrap(),
+            "main",
+            "topic",
+        ],
+    );
+    let place = tempfile::tempdir().unwrap();
+    let dest = place.path().join("copy");
+    let keys = format!(":quick\n{}\n\x15{}\n", bundle.display(), dest.display());
+    let asked = amonhen_tui::snapshot(open(&source), 300, 14, clock(), &keys).unwrap();
+    println!("{asked}");
+    assert!(asked.contains("check out which branch?"), "{asked}");
+    assert!(asked.contains("1 main   2 topic"), "{asked}");
+    amonhen_tui::snapshot(open(&source), 300, 14, clock(), &format!("{keys}2y")).unwrap();
+    assert_eq!(git_out(&dest, &["branch", "--show-current"]), "topic\n");
+}
+
 /// コマンドの一覧の Delete Ignored Files: 数と名前を出して確かめ、ignore されたものを消す
 #[test]
 fn delete_ignored_files_from_the_command_list() {
