@@ -297,3 +297,4 @@ left out for now: VSCode has its own extensions and settings for them.
 - [x] 73. Wrap long lines (`amonhen.wrapLongLines`, Alt+Z, the ↩︎ above the diff), keep the dragged height of the commit details, and GitHub's image-only emoji as dim chips in Markdown
 - [x] 74. Ignore whitespace in the Working Copy diff (with the engine; lines and hunks aren't staged or discarded meanwhile)
 - [x] 75. The app menus' Commit, Commit and Push, Stage All, Set Upstream…, Rebase…, Go to HEAD and Find in History… as commands; Merge Branches… and Rebase… offer the commit selected in History
+- [x] 76. The commit details' right-click (copy the ID, short ID, subject, message or git show command; Edit Message…) and names that search History by that person
