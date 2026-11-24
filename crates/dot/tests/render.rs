@@ -379,6 +379,10 @@ fn survives_random_sources() {
         "Mrecord",
         "point",
         "samehead",
+        "tailport",
+        "headport",
+        "se",
+        "w",
         "sametail",
         "newrank",
         "labelloc",
@@ -473,4 +477,49 @@ fn samehead_edges_meet_at_one_point() {
         3,
         "{arrows:?}"
     );
+}
+
+/// `splines=ortho` の線はどの配置でも縦か横の線だけ（ポート・samehead・ラベル・クラスタ・向き入り）。
+#[test]
+fn ortho_edges_are_axis_aligned() {
+    let body = "node [shape=record]; a [label=\"<p> x|<q> y|{z|<r> w}\"]; b; c [shape=ellipse]; \
+        d [shape=box]; subgraph cluster_k { label=K; e; f } \
+        a:p -> b:n; a:r:s -> c; a -> d [samehead=h]; b -> d [samehead=h]; c:ne -> e:w; \
+        d:se -> f; b -> f [label=l]; e -> a:q; f -> a; c -> c; {rank=same; b -> c [label=m]}";
+    for engine in ["dot", "neato", "fdp", "sfdp", "twopi", "circo", "osage"] {
+        for rankdir in ["TB", "LR", "BT", "RL"] {
+            let src =
+                format!("digraph {{ layout={engine}; rankdir={rankdir}; splines=ortho; {body} }}");
+            let svg = render(&src).unwrap().svg;
+            let edges = svg
+                .split("class=\"dot-edge\"")
+                .skip(1)
+                .map(|g| g.split("</g>").next().unwrap());
+            let paths = edges.flat_map(|g| {
+                g.split("<path d=\"")
+                    .skip(1)
+                    .map(|s| s.split('"').next().unwrap())
+            });
+            let mut seen = 0;
+            for d in paths {
+                seen += 1;
+                let nums: Vec<f64> = d
+                    .split(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-'))
+                    .filter(|t| !t.is_empty())
+                    .filter_map(|t| t.parse().ok())
+                    .collect();
+                // M x y、それから C の 6 つ組（終わりの点は最後の 2 つ）
+                let mut prev = (nums[0], nums[1]);
+                for c in nums[2..].as_chunks::<6>().0 {
+                    let next = (c[4], c[5]);
+                    assert!(
+                        (prev.0 - next.0).abs() < 0.02 || (prev.1 - next.1).abs() < 0.02,
+                        "{engine} {rankdir}: {d}"
+                    );
+                    prev = next;
+                }
+            }
+            assert!(seen >= 8, "{engine} {rankdir}: {seen}");
+        }
+    }
 }

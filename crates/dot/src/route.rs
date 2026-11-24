@@ -353,8 +353,12 @@ pub fn ortho_free(a: P, b: P, ha: P, hb: P, obstacles: &mut Obstacles, skip: &[u
     let (mx, my) = ((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0);
     let (lo_x, hi_x) = ((a.0 - ha.0).max(b.0 - hb.0), (a.0 + ha.0).min(b.0 + hb.0));
     let (lo_y, hi_y) = ((a.1 - ha.1).max(b.1 - hb.1), (a.1 + ha.1).min(b.1 + hb.1));
-    if dx.abs() < 0.5 || dy.abs() < 0.5 {
-        return vec![a, b];
+    // ほぼ縦・横の線は、ずれの真ん中にそろえる（斜めの線を残さない）
+    if dx.abs() < 0.5 {
+        return vec![(mx, a.1), (mx, b.1)];
+    }
+    if dy.abs() < 0.5 {
+        return vec![(a.0, my), (b.0, my)];
     }
     if dy.abs() >= dx.abs() && hi_x - lo_x > 2.0 {
         let x = (lo_x + hi_x) / 2.0;
@@ -479,7 +483,8 @@ const NUDGE_WORK: usize = 2_000_000;
 /// Wybrow・Marriott・Stuckey（2009）の手順にならう（線どうしの順は簡単な決まりで、最適化はしない）。
 pub fn ortho_free_all(edges: &[FreeEdge], obstacles: &mut Obstacles) -> Vec<Vec<P>> {
     use std::collections::HashMap;
-    // 4 点（端、曲がり 2 つ、端）にそろえる。直線は真ん中に長さ 0 の線、L は曲がりを 2 つ重ねる
+    // 直線は 4 点（端、真ん中に長さ 0 の線、端）にする（両端を別々に散らすと真ん中が段になる）。L は 3 点の
+    // まま（曲がりの x と y を両端が 1 つずつ決める）
     let mut routes: Vec<Vec<P>> = edges
         .iter()
         .map(|e| {
@@ -489,7 +494,6 @@ pub fn ortho_free_all(edges: &[FreeEdge], obstacles: &mut Obstacles) -> Vec<Vec<
                     let m = ((p[0].0 + p[1].0) / 2.0, (p[0].1 + p[1].1) / 2.0);
                     vec![p[0], m, m, p[1]]
                 }
-                3 => vec![p[0], p[1], p[1], p[2]],
                 _ => p,
             }
         })
@@ -500,14 +504,15 @@ pub fn ortho_free_all(edges: &[FreeEdge], obstacles: &mut Obstacles) -> Vec<Vec<
     type Ends = Vec<(f64, usize, bool)>;
     let mut groups: HashMap<(usize, Side), Ends> = HashMap::new();
     for (i, (e, p)) in edges.iter().zip(&routes).enumerate() {
-        if p.len() != 4 || e.tail == e.head {
+        let n = p.len();
+        if n < 3 || e.tail == e.head {
             continue;
         }
         for (tail, v, c, near, far) in [
             (true, e.tail, e.a, p[1], e.b),
-            (false, e.head, e.b, p[2], e.a),
+            (false, e.head, e.b, p[n - 2], e.a),
         ] {
-            let end = if tail { p[0] } else { p[3] };
+            let end = if tail { p[0] } else { p[n - 1] };
             let side = if horizontal(end, near) {
                 if near.0 > c.0 { Side::E } else { Side::W }
             } else if (end.0 - near.0).abs() < 1e-9 && (end.1 - near.1).abs() > 1e-9 {
@@ -541,7 +546,8 @@ pub fn ortho_free_all(edges: &[FreeEdge], obstacles: &mut Obstacles) -> Vec<Vec<
         for (j, (_, i, tail)) in list.into_iter().enumerate() {
             let at = c_along(c, vertical_side) - avail / 2.0 + avail * (j as f64 + 0.5) / k;
             let p = &mut routes[i];
-            let (x, y) = if tail { (0, 1) } else { (3, 2) };
+            let n = p.len();
+            let (x, y) = if tail { (0, 1) } else { (n - 1, n - 2) };
             if vertical_side {
                 p[x].0 = at;
                 p[y].0 = at;
@@ -1190,7 +1196,7 @@ pub fn ortho(
                 usable[i] = false;
                 break;
             }
-            if (a.0 - b.0).abs() > 0.5 {
+            if (a.0 - b.0).abs() > 1e-6 {
                 runs.push(Run {
                     gap: key(a.1.min(b.1)),
                     x0: a.0.min(b.0),
