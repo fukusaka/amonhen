@@ -31,6 +31,7 @@ import type {
   SearchState,
   SelectionView,
   SignatureView,
+  TagView,
   HistoryItem,
   HistoryOrder,
 } from '../history/protocol.ts';
@@ -203,6 +204,10 @@ export class HistoryController implements vscode.Disposable {
   private readonly extras = new Map<string, DetailsExtras>();
   /** 詳細を読んだコミットの署名の種類（`gpg`・`ssh`・`x509`。署名がなければ null） */
   private readonly signedKinds = new Map<string, string | null>();
+  /** daemon の ref が古いかもしれない（ref・HEAD が動いた。詳細の残りを読む前に読み直させる） */
+  private daemonRefsStale = true;
+  /** コミットが merge したタグ（コアの `commitInfo` の mergedTags。署名の結果は `commitExtras` から） */
+  private readonly mergedTagInfo = new Map<string, { name: string; tagger?: string; taggerEmail?: string; subject?: string; signed?: string | null }[]>();
   /** 共有の daemon で History を読むとき（設定 `amonhen.daemon.path`）、出している History */
   private daemon: DaemonHistory | undefined;
   /** 一致だけの History を出しているとき、もとの History */
@@ -312,6 +317,12 @@ export class HistoryController implements vscode.Disposable {
    */
   private onRepositoryChange(changed: ReadonlySet<Section>): void {
     const headOid = this.repo?.current.status?.branch.oid;
+    // ref が動いた: 詳細の残り（タグ・含むブランチ）は覚え直し、daemon にも ref を読み直させる（daemon は頼まれるまで
+    // ref を読み直さないので、端末で作ったタグを知らない）
+    if (changed.has('branches') || changed.has('remotes') || changed.has('tags') || (headOid !== undefined && headOid !== this.headOid)) {
+      this.daemonRefsStale = true;
+      this.extras.clear();
+    }
     const refsChanged =
       this.readingRefs === 0 && (changed.has('branches') || changed.has('remotes') || changed.has('tags'));
     if (changed.has('mailmap')) {
@@ -628,19 +639,50 @@ export class HistoryController implements vscode.Disposable {
     if (cached) return cached;
     const client = await this.engine();
     if (!client) return undefined;
+    if (this.daemonRefsStale) {
+      this.daemonRefsStale = false;
+      await client.call({ op: 'refs' }).catch(() => undefined);
+    }
     const reply = (await client.call({ op: 'run', command: { op: 'commitExtras', oid } })).json;
     if (reply['ok'] !== true) return undefined;
-    const info = reply['info'] as { signature?: SignatureCheck | null; children?: string[]; notes?: string } | undefined;
+    const info = reply['info'] as
+      | {
+          signature?: SignatureCheck | null;
+          children?: string[];
+          notes?: string;
+          tagObjects?: { name: string; id: string | null; tagger?: string; taggerEmail?: string; time?: number; subject?: string; signed?: string | null; signature?: SignatureCheck | null }[];
+          mergedTagSignatures?: (SignatureCheck | null)[];
+          mergedCount?: number;
+        }
+      | undefined;
     const committer = this.details.get(oid)?.committer.email ?? '';
     // 署名があるのに確かめられなければ（N か結果なし）No key（アプリと同じ）
     const signed = this.signedKinds.get(oid);
     const check = info?.signature && info.signature.status !== 'N' ? info.signature : signed ? { status: 'N' } : undefined;
-    const signature = check ? signatureView(check, committer) : undefined;
+    const signature = check ? signatureView(check, committer, signed) : undefined;
+    // タグの署名は、タガーのメールと比べる。署名のないタグには付けない
+    const tagSignature = (s: SignatureCheck | null | undefined, email: string | undefined, kind: string | null | undefined) =>
+      kind ? signatureView(s && s.status !== 'N' ? s : { status: 'N' }, email ?? '', kind) : undefined;
+    const tags: TagView[] = (info?.tagObjects ?? []).map((t) => {
+      const view = tagSignature(t.signature, t.taggerEmail, t.signed);
+      return {
+        name: t.name.replace(/^refs\/tags\//, ''),
+        ...(t.id ? { tagger: t.tagger, time: t.time, subject: t.subject } : {}),
+        ...(view ? { signature: view } : {}),
+      };
+    });
+    const mergedTags: TagView[] = (this.mergedTagInfo.get(oid) ?? []).map((t, n) => {
+      const view = tagSignature(info?.mergedTagSignatures?.[n], t.taggerEmail, t.signed);
+      return { name: t.name, ...(t.tagger ? { tagger: t.tagger } : {}), ...(t.subject ? { subject: t.subject } : {}), ...(view ? { signature: view } : {}) };
+    });
     const extras: DetailsExtras = {
       oid,
       ...(signature ? { signature } : {}),
       children: info?.children ?? [],
       ...(info?.notes?.trim() ? { notes: info.notes } : {}),
+      ...(tags.length > 0 ? { tags } : {}),
+      ...(mergedTags.length > 0 ? { mergedTags } : {}),
+      ...(info?.mergedCount ? { mergedCount: info.mergedCount } : {}),
     };
     this.extras.set(oid, extras);
     if (this.extras.size > DETAILS_CACHE) this.extras.delete(this.extras.keys().next().value!);
@@ -701,6 +743,10 @@ export class HistoryController implements vscode.Disposable {
     }
     this.signedKinds.set(oid, typeof i['signed'] === 'string' ? i['signed'] : null);
     if (this.signedKinds.size > DETAILS_CACHE) this.signedKinds.delete(this.signedKinds.keys().next().value!);
+    if (Array.isArray(i['mergedTags']) && i['mergedTags'].length > 0) {
+      this.mergedTagInfo.set(oid, i['mergedTags'] as never);
+      if (this.mergedTagInfo.size > DETAILS_CACHE) this.mergedTagInfo.delete(this.mergedTagInfo.keys().next().value!);
+    }
     const index = new Map<number, DiffLine>();
     const split = splitCommitDiff(diff, index);
     this.rememberOrder(oid, diff.json['files']);
@@ -1573,8 +1619,10 @@ export class HistoryController implements vscode.Disposable {
 }
 
 /** 検証の結果を、行と詳細に出す形に。SSH の鍵は指紋が SHA256: で始まる（allowed signers に載っていれば信用している） */
-function signatureView(check: SignatureCheck, committerEmail: string): SignatureView {
-  const kind = check.fingerprint?.startsWith('SHA256:') ? 'ssh' : undefined;
+function signatureView(check: SignatureCheck, committerEmail: string, signed?: string | null): SignatureView {
+  // 形式はコミット・タグの署名の頭で分かる（なければ指紋の形から SSH を推す）
+  const kind = signed ?? (check.fingerprint?.startsWith('SHA256:') ? 'ssh' : undefined);
+  const format = kind === 'ssh' ? 'SSH' : kind === 'x509' ? 'X.509' : kind === 'gpg' ? 'GPG' : undefined;
   const status = signatureStatus(check, committerEmail, kind);
   return {
     kind: status.kind,
@@ -1583,5 +1631,7 @@ function signatureView(check: SignatureCheck, committerEmail: string): Signature
     explanation: signatureExplanation(status),
     ...(check.signer ? { signer: check.signer } : {}),
     ...(check.key ? { key: check.key } : {}),
+    ...(format ? { format } : {}),
+    ...(check.fingerprint ? { fingerprint: check.fingerprint } : {}),
   };
 }

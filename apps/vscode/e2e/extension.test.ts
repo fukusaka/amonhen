@@ -1079,7 +1079,10 @@ async function historySignatureFlow(): Promise<void> {
     await panel.history.handle({ type: 'select', oid: signed });
     const extras = (await waitPosted('detailsExtras', mark, (m) => m.extras.oid === signed)).extras;
     assert.deepEqual(extras.children, [after]);
-    if (ssh) assert.equal(extras.signature?.label, 'Verified');
+    if (ssh) {
+      assert.equal(extras.signature?.label, 'Verified');
+      assert.equal(extras.signature?.format, 'SSH');
+    }
 
     // 子・親・HEAD へ移る
     for (const [to, oid] of [
@@ -2169,6 +2172,32 @@ async function detailsCopyFlow(): Promise<void> {
   assert.equal(await copied('amonhen.details.copyMessage'), git('log', '-1', '--format=%B', oid).trim());
   assert.equal(await copied('amonhen.details.copyShortId'), oid.slice(0, 7));
   assert.equal(await copied('amonhen.details.copyShowCommand'), `git show ${oid}`);
+}
+
+/** コミットを指す注釈付きのタグは、詳細の残りに Tag の行（タガーと件名）として届く（エンジン） */
+async function tagRowsFlow(): Promise<void> {
+  const start = git('rev-parse', 'HEAD').trim();
+  // 詳細の残りは覚えておくので、まだ出していない新しいコミットで
+  git('commit', '-q', '--allow-empty', '-m', 'tag rows e2e');
+  const oid = git('rev-parse', 'HEAD').trim();
+  git('tag', '-a', 'tag-rows-e2e', '-m', 'Release for e2e', oid);
+  git('tag', 'tag-rows-light-e2e', oid);
+  await api.manager.current!.refresh();
+  try {
+    const panel = await showView('amonhen.showHistory');
+    const mark = posted.length;
+    await panel.history.handle({ type: 'select', oid });
+    const extras = (await waitPosted('detailsExtras', mark, (m) => m.extras.oid === oid)).extras;
+    const byName = (n: string) => extras.tags?.find((t) => t.name === n);
+    assert.equal(byName('tag-rows-e2e')?.subject, 'Release for e2e', JSON.stringify(extras.tags));
+    assert.ok(byName('tag-rows-e2e')?.tagger);
+    assert.ok(byName('tag-rows-light-e2e'), '軽量のタグも並ぶ');
+    assert.equal(byName('tag-rows-light-e2e')?.subject, undefined);
+  } finally {
+    git('tag', '-d', 'tag-rows-e2e', 'tag-rows-light-e2e');
+    git('reset', '-q', '--hard', start);
+    await api.manager.current!.refresh();
+  }
 }
 
 async function orphanFlow(): Promise<void> {
@@ -4602,6 +4631,10 @@ suite('Amon Hen in VSCode', () => {
 
   test('copies from the commit details’ right-click', async () => {
     await detailsCopyFlow();
+  });
+
+  test('shows the tags on a commit in the details through the daemon', async () => {
+    await tagRowsFlow();
   });
 
   test('creates an orphan branch, empty or keeping the files, through the daemon', async () => {

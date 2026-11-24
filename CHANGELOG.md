@@ -1305,6 +1305,8 @@ First release.
 
 - The Working Copy diff can ignore whitespace (at line ends, changes in amount or all), with the engine. Lines and
   hunks aren't staged or discarded meanwhile.
+- The commit details show the tags on the commit and the tags a merge took in, with their tagger, subject and
+  signature, the number of commits a merge took in, and the signature's format and fingerprint (with the engine).
 - In the commit details, URLs and commit IDs in the message are links, the trailers are listed apart from the body,
   git notes follow the message (with the engine), and History's search terms are marked.
 - The app menus' Commit, Commit and Push, Stage All, Set Upstream…, Rebase…, Go to HEAD and Find in History… are
