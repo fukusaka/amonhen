@@ -10,7 +10,7 @@
 
 use std::sync::Arc;
 
-use crate::color::{Color, parse as parse_color};
+use crate::color::{Color, Fill, parse as parse_color};
 use crate::image::{self, Picture, Scale};
 use crate::text::{self, Font, Just, Piece, Text, attr, color_attr, inline_label, styled};
 use amonhen_pele::svg::builder::num;
@@ -89,8 +89,9 @@ pub struct Cell {
     border: f64,
     padding: f64,
     color: Option<Color>,
-    bg: Option<Color>,
+    bg: Option<Fill>,
     sides: Sides,
+    rounded: bool,
     align: Align,
     valign: VAlign,
     pub port: Option<String>,
@@ -111,7 +112,7 @@ pub struct Table {
     pub h: f64,
     border: f64,
     color: Option<Color>,
-    bg: Option<Color>,
+    bg: Option<Fill>,
     sides: Sides,
     rounded: bool,
     pub port: Option<String>,
@@ -160,10 +161,28 @@ fn flag(attrs: &[(String, String)], key: &str) -> bool {
 }
 
 fn color(attrs: &[(String, String)], key: &str, scheme: Option<&str>) -> Option<Color> {
-    // 色の並び（グラデーション）は最初の色
+    // 線の色の並びは最初の色
     let v = attr(attrs, key)?;
     let first = v.split(':').next().unwrap_or("");
     parse_color(first.split(';').next().unwrap_or(""), scheme)
+}
+
+/// `style` の項目（`rounded`・`radial` など、小文字）。
+fn style_has(attrs: &[(String, String)], name: &str) -> bool {
+    attr(attrs, "style").is_some_and(|s| {
+        s.split(|c: char| c == ',' || c.is_whitespace())
+            .any(|p| p.trim().eq_ignore_ascii_case(name))
+    })
+}
+
+/// `bgcolor` の塗り（色の並びはグラデーション。`style="radial"`・`gradientangle`）。
+fn fill(attrs: &[(String, String)], scheme: Option<&str>) -> Option<Fill> {
+    Fill::parse(
+        attr(attrs, "bgcolor")?,
+        scheme,
+        style_has(attrs, "radial"),
+        number(attrs, "gradientangle").unwrap_or(0.0),
+    )
 }
 
 struct Parser<'a> {
@@ -357,8 +376,9 @@ impl Parser<'_> {
                                         .unwrap_or(padding)
                                         .clamp(0.0, 255.0),
                                     color: color(&a, "color", self.scheme).or(tcolor),
-                                    bg: color(&a, "bgcolor", self.scheme),
+                                    bg: fill(&a, self.scheme),
                                     sides: Sides::parse(attr(&a, "sides")),
+                                    rounded: style_has(&a, "rounded"),
                                     align: align_of(&a),
                                     valign: valign_of(&a),
                                     port: attr(&a, "port").map(str::to_owned),
@@ -386,10 +406,9 @@ impl Parser<'_> {
             h: 0.0,
             border,
             color: tcolor,
-            bg: color(&attrs, "bgcolor", self.scheme),
+            bg: fill(&attrs, self.scheme),
             sides: Sides::parse(attr(&attrs, "sides")),
-            rounded: attr(&attrs, "style")
-                .is_some_and(|s| s.to_ascii_lowercase().contains("rounded")),
+            rounded: style_has(&attrs, "rounded"),
             port: attr(&attrs, "port").map(str::to_owned),
             cells,
             rules: vec![],
@@ -755,18 +774,30 @@ fn frame(
     b: f64,
     sides: Sides,
     stroke: Option<Color>,
-    fill: Option<Color>,
+    fill: Option<&Fill>,
     rounded: bool,
 ) {
     if let Some(f) = fill {
+        let paint = match f {
+            Fill::Solid(c) => color_attr("fill", c),
+            Fill::Gradient(g) => {
+                // id は中身と位置から（同じ表を描き直しても同じ、ほかの塗りとは重ならない）
+                let element = g.element("");
+                let id = format!(
+                    "dot-h{:016x}",
+                    fnv(&format!("{element}{x:.3},{y:.3},{w:.3},{h:.3}"))
+                );
+                out.push_str(&format!("<defs>{}</defs>", g.element(&id)));
+                format!(" fill=\"url(#{id})\"")
+            }
+        };
         out.push_str(&format!(
-            "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\"{}{} stroke=\"none\"/>",
+            "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\"{}{paint} stroke=\"none\"/>",
             num(x),
             num(y),
             num(w.max(0.0)),
             num(h.max(0.0)),
             if rounded { " rx=\"6\"" } else { "" },
-            color_attr("fill", &f)
         ));
     }
     if b <= 0.0 || w <= 0.0 || h <= 0.0 {
@@ -813,6 +844,13 @@ fn frame(
     }
 }
 
+/// FNV-1a（塗りの id）。
+fn fnv(s: &str) -> u64 {
+    s.bytes().fold(0xcbf2_9ce4_8422_2325, |h, b| {
+        (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
+    })
+}
+
 /// 表を (left, top) から描く。`root`・`attrs` は文字の `<text>` の書体と属性、`ink` は表の外の塗りの上の文字の
 /// 色。表・升の `bgcolor` の上では、いちばん内側の塗りで読める色にする（文が色を決めていれば文の色）。
 pub fn draw(
@@ -825,13 +863,41 @@ pub fn draw(
     out: &mut String,
 ) {
     frame(
-        out, left, top, t.w, t.h, t.border, t.sides, t.color, t.bg, t.rounded,
+        out,
+        left,
+        top,
+        t.w,
+        t.h,
+        t.border,
+        t.sides,
+        t.color,
+        t.bg.as_ref(),
+        t.rounded,
     );
-    let ink = t.bg.and_then(Color::ink).or(ink);
+    let ink =
+        t.bg.as_ref()
+            .and_then(Fill::first)
+            .and_then(Color::ink)
+            .or(ink);
     for c in &t.cells {
-        let ink = c.bg.and_then(Color::ink).or(ink);
+        let ink =
+            c.bg.as_ref()
+                .and_then(Fill::first)
+                .and_then(Color::ink)
+                .or(ink);
         let (x, y) = (left + c.x, top + c.y);
-        frame(out, x, y, c.w, c.h, c.border, c.sides, c.color, c.bg, false);
+        frame(
+            out,
+            x,
+            y,
+            c.w,
+            c.h,
+            c.border,
+            c.sides,
+            c.color,
+            c.bg.as_ref(),
+            c.rounded,
+        );
         let inset = c.border + c.padding;
         let (iw, ih) = ((c.w - 2.0 * inset).max(0.0), (c.h - 2.0 * inset).max(0.0));
         let (cw, ch) = c.content_size();
@@ -1008,6 +1074,28 @@ mod tests {
         assert!(out.contains("width=\"144\" height=\"36\""), "{out}");
         // 読めない画像は点線の枠
         assert!(out.contains("stroke-dasharray=\"3,2\""), "{out}");
+    }
+
+    #[test]
+    fn fills_tables_and_cells_with_gradients() {
+        let t = table(
+            "<table bgcolor=\"yellow:blue\" gradientangle=\"90\"><tr><td bgcolor=\"red:white\" style=\"radial, rounded\">a</td><td bgcolor=\"navy\">b</td></tr></table>",
+        );
+        let mut out = String::new();
+        draw(&t, 0.0, 0.0, &Font::new(14.0), "", None, &mut out);
+        assert_eq!(out.matches("<defs>").count(), 2, "{out}");
+        assert!(
+            out.contains("<linearGradient id=\"dot-h") && out.contains("y1=\"1\""),
+            "{out}"
+        );
+        assert!(out.contains("<radialGradient id=\"dot-h"), "{out}");
+        assert!(out.contains("fill=\"url(#dot-h"), "{out}");
+        // 升の角も丸く、1 色の塗りはそのまま、紺の上の文字は白
+        assert!(out.matches("rx=\"6\"").count() >= 1, "{out}");
+        assert!(out.contains("fill=\"#000080\""), "{out}");
+        let mut again = String::new();
+        draw(&t, 0.0, 0.0, &Font::new(14.0), "", None, &mut again);
+        assert_eq!(out, again);
     }
 
     #[test]

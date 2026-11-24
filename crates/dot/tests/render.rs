@@ -51,6 +51,10 @@ const SAMPLES: &[(&str, &str)] = &[
         "graph { layout=patchwork; subgraph cluster_a { a1 [area=4]; a2 [area=2]; subgraph cluster_c { c1; c2 } } b1 [area=3]; b2 }",
     ),
     (
+        "gradients",
+        "digraph { bgcolor=\"white:lightgrey\"; gradientangle=90; node [shape=plain]; t [label=<<table bgcolor=\"yellow:blue\" gradientangle=\"90\" style=\"rounded\"><tr><td bgcolor=\"red:white\" style=\"radial\">radial</td><td bgcolor=\"green;0.3:white\">fraction</td></tr></table>>]; subgraph cluster_a { label=A; bgcolor=\"pink:white\"; style=radial; a } t -> a }",
+    ),
+    (
         "ortho_free",
         "graph { layout=neato; splines=ortho; a -- b -- c -- a; c -- d }",
     ),

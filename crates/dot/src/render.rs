@@ -9,7 +9,7 @@ use amonhen_pele::svg::root::{Accessible, svg_document};
 
 use crate::Note;
 use crate::arrows;
-use crate::color::{self, Color, Rgba};
+use crate::color::{self, Color};
 use crate::curve::{self, Cubic, P};
 use crate::engines::{self, Engine};
 use crate::graph::{Attrs, Model};
@@ -934,7 +934,13 @@ pub fn render(
                 None => format!(" fill=\"{SURFACE_ALT}\""),
             }
         } else if let Some(bg) = a.get("bgcolor").map(str::to_owned) {
-            paint("fill", ctx.first_color(&bg, scheme.as_deref()), SURFACE_ALT)
+            gradient(
+                &mut ctx,
+                &bg,
+                scheme.as_deref(),
+                has(&st, "radial"),
+                a.num("gradientangle").unwrap_or(0.0),
+            )
         } else {
             format!(" fill=\"{SURFACE_ALT}\" fill-opacity=\"0.5\"")
         };
@@ -1748,17 +1754,24 @@ pub fn render(
     let width = (bbox.x1 - bbox.x0 + 2.0 * PAD).ceil().max(1.0);
     let height = (bbox.y1 - bbox.y0 + 2.0 * PAD).ceil().max(1.0);
     let mut content = String::new();
+    // グラフの地（色の並びはグラデーション）
+    let ground = g
+        .get("bgcolor")
+        .map(str::to_owned)
+        .filter(|bg| ctx.first_color(bg, None).is_some())
+        .map(|bg| {
+            let radial = has(&styles(g.get("style")), "radial");
+            let angle = g.num("gradientangle").unwrap_or(0.0);
+            gradient(&mut ctx, &bg, None, radial, angle)
+        });
     if !ctx.defs.is_empty() {
         content.push_str(&format!("<defs>{}</defs>", ctx.defs));
     }
-    if let Some(bg) = g.get("bgcolor").map(str::to_owned)
-        && let Some(c) = ctx.first_color(&bg, None)
-    {
+    if let Some(fill) = ground {
         content.push_str(&format!(
-            "<rect x=\"0\" y=\"0\" width=\"{}\" height=\"{}\"{}/>",
+            "<rect x=\"0\" y=\"0\" width=\"{}\" height=\"{}\"{fill}/>",
             num(width),
             num(height),
-            color_attr("fill", &c)
         ));
     }
     content.push_str(&format!(
@@ -2071,65 +2084,15 @@ fn gradient(ctx: &mut Ctx, text: &str, scheme: Option<&str>, radial: bool, angle
     if stops.iter().any(|s| s.color.is_none()) {
         let _ = ctx.first_color(text, scheme);
     }
-    let known: Vec<(Rgba, Option<f64>)> = stops
-        .iter()
-        .filter_map(|s| match s.color {
-            Some(Color::Rgba(c)) => Some((c, s.fraction)),
-            Some(Color::None) => Some((
-                Rgba {
-                    r: 255,
-                    g: 255,
-                    b: 255,
-                    a: 0,
-                },
-                s.fraction,
-            )),
-            None => None,
-        })
-        .collect();
-    if known.is_empty() {
-        return format!(" fill=\"{SURFACE_ALT}\"");
+    match color::Fill::parse(text, scheme.or(ctx.scheme.as_deref()), radial, angle) {
+        None => format!(" fill=\"{SURFACE_ALT}\""),
+        Some(color::Fill::Solid(c)) => color_attr("fill", &c),
+        Some(color::Fill::Gradient(g)) => {
+            let id = ctx.id();
+            ctx.defs.push_str(&g.element(&id));
+            format!(" fill=\"url(#{id})\"")
+        }
     }
-    if known.len() == 1 {
-        return color_attr("fill", &Color::Rgba(known[0].0));
-    }
-    let id = ctx.id();
-    let mut body = String::new();
-    let n = known.len();
-    let mut at = 0.0;
-    for (i, (c, f)) in known.iter().enumerate() {
-        let offset = match f {
-            Some(f) => {
-                let o = at + f;
-                at = o;
-                (o - f).clamp(0.0, 1.0)
-            }
-            None => i as f64 / (n - 1) as f64,
-        };
-        body.push_str(&format!(
-            "<stop offset=\"{}\" stop-color=\"{}\"{}/>",
-            num(offset),
-            c.hex(),
-            c.opacity()
-                .map_or(String::new(), |o| format!(" stop-opacity=\"{o}\""))
-        ));
-    }
-    if radial {
-        ctx.defs.push_str(&format!(
-            "<radialGradient id=\"{id}\">{body}</radialGradient>"
-        ));
-    } else {
-        let r = angle.to_radians();
-        let (dx, dy) = (r.cos() / 2.0, -r.sin() / 2.0);
-        ctx.defs.push_str(&format!(
-            "<linearGradient id=\"{id}\" x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\">{body}</linearGradient>",
-            num(0.5 - dx),
-            num(0.5 - dy),
-            num(0.5 + dx),
-            num(0.5 + dy)
-        ));
-    }
-    format!(" fill=\"url(#{id})\"")
 }
 
 /// striped（箱の縦の帯）・wedged（楕円の扇）。
