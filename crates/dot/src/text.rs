@@ -99,7 +99,7 @@ pub struct Text {
     pub height: f64,
     /// HTML の表を文字だけにした。
     pub table: bool,
-    /// HTML の画像（`<img>`）を省いた。
+    /// HTML の画像（`<img>`）を描けなかった（枠にした・省いた）。
     pub image: bool,
     /// HTML の表（あれば行の代わりにこれを描く。大きさは `width`・`height`）。
     pub html: Option<Box<crate::html::Table>>,
@@ -113,6 +113,16 @@ fn measure(text: &str, font: &Font) -> f64 {
 }
 
 impl Text {
+    /// 枠の中に収めるときの幅: 文字の行は、アプリの書体が測り（Arial）より広くてもはみ出さないよう
+    /// `TEXT_SLACK` 倍にする（表は升の中で見込んであるのでそのまま）。
+    pub fn fit_width(&self) -> f64 {
+        if self.html.is_some() {
+            self.width
+        } else {
+            self.width * crate::html::TEXT_SLACK
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.html.is_none()
             && self
@@ -411,7 +421,18 @@ fn just_of(attrs: &[(String, String)]) -> Option<Just> {
 /// HTML のラベルを読む。`base` はノードの書体、`scheme` は色の配色。表は中の文字を、行（`<tr>`）ごとに区切りを
 /// 入れて並べる。
 pub fn html_label(src: &str, base: &Font, scheme: Option<&str>) -> Text {
-    if let Some(t) = crate::html::label(src, base, scheme) {
+    html_label_with_images(src, base, scheme, &mut |_| None)
+}
+
+/// `html_label` の、表の `<IMG>` を `images`（`SRC` の値から画像）で読むもの。読めない画像は枠にして
+/// `Text::image` を立てる。
+pub fn html_label_with_images(
+    src: &str,
+    base: &Font,
+    scheme: Option<&str>,
+    images: &mut dyn FnMut(&str) -> Option<std::sync::Arc<crate::image::Picture>>,
+) -> Text {
+    if let Some(t) = crate::html::label_with_images(src, base, scheme, images) {
         return t;
     }
     inline_label(src, base, scheme)

@@ -58,7 +58,8 @@ export function registerBranchCommands(manager: RepositoryManager): vscode.Dispo
       const to = await askName(repo, `Rename ${from}`, 'heads', from);
       if (!to || to === from) return;
       try {
-        await repo.backend.renameBranch(from, to);
+        // Undo で元の名前に戻せるように記録する（エンジンを通すときはコアが記録する）
+        await repo.undo.recordRename(from, to, () => repo.backend.renameBranch(from, to));
       } finally {
         await repo.refresh();
       }
