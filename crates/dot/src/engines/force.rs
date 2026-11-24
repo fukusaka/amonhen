@@ -514,19 +514,18 @@ impl Fdp<'_> {
             adj[a].push((b, 1.0));
             adj[b].push((a, 1.0));
         }
-        // 位置の決まったノード（根の段だけ）
+        // 位置の決まったノード。クラスタの中では、同じクラスタに直に入るノードどうしの位置の差を保つ（クラスタは
+        // 1 つの単位として外の配置で動く。Graphviz の fdp と同じ）
         let mut fixed = vec![false; m];
         let mut pos: Vec<P> = vec![(0.0, 0.0); m];
         let mut placed = vec![false; m];
-        if level.is_none() {
-            for (k, u) in units.iter().enumerate() {
-                if let Unit::Node(v) = *u
-                    && let Some(p) = self.items[v].pos
-                {
-                    pos[k] = p;
-                    placed[k] = true;
-                    fixed[k] = self.items[v].pinned;
-                }
+        for (k, u) in units.iter().enumerate() {
+            if let Unit::Node(v) = *u
+                && let Some(p) = self.items[v].pos
+            {
+                pos[k] = p;
+                placed[k] = true;
+                fixed[k] = self.items[v].pinned;
             }
         }
         let comps = common::components(&adj);
@@ -640,6 +639,15 @@ impl Fdp<'_> {
         order.sort_by_key(|&c| common::depth(self.groups, c));
         for c in order {
             let Some(b) = self.boxes[c] else { continue };
+            // 動かさないノードの入るクラスタは裏返さない（決めた位置の並びが鏡になる）
+            if self
+                .items
+                .iter()
+                .enumerate()
+                .any(|(v, it)| it.pinned && it.pos.is_some() && self.chains[v].contains(&c))
+            {
+                continue;
+            }
             let lh = self.groups[c].label.1;
             let center = ((b[0] + b[2]) / 2.0, (b[1] + lh + b[3]) / 2.0);
             // 直の単位とその中心
@@ -1137,6 +1145,39 @@ mod tests {
             assert!(p[i].0 > c[0] && p[i].0 < c[2] && p[i].1 > c[1] && p[i].1 < c[3]);
         }
         assert!(!overlaps(&p, 54.0, 36.0));
+    }
+
+    #[test]
+    fn fdp_pins_nodes_inside_clusters() {
+        let groups = vec![Group {
+            parent: None,
+            margin: 8.0,
+            label: (20.0, 18.0),
+            sortv: None,
+        }];
+        let mut items = vec![item(Some(0)), item(Some(0)), item(Some(0)), item(None)];
+        items[0].pos = Some((0.0, 0.0));
+        items[0].pinned = true;
+        items[1].pos = Some((144.0, -72.0));
+        items[1].pinned = true;
+        let links = vec![link(0, 1), link(1, 2), link(2, 3), link(3, 0)];
+        let (p, boxes) = fdp(
+            &items,
+            &links,
+            &groups,
+            &Attrs::default(),
+            &mut BTreeSet::new(),
+        );
+        // 2 つの動かさないノードの位置の差はそのまま、どちらもクラスタの箱の中
+        let d = (p[1].0 - p[0].0, p[1].1 - p[0].1);
+        assert!(
+            (d.0 - 144.0).abs() < 1e-6 && (d.1 + 72.0).abs() < 1e-6,
+            "{d:?}"
+        );
+        let b = boxes[0].unwrap();
+        for q in &p[..3] {
+            assert!(q.0 > b[0] && q.0 < b[2] && q.1 > b[1] && q.1 < b[3]);
+        }
     }
 
     #[test]

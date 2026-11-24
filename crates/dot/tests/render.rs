@@ -31,6 +31,10 @@ const SAMPLES: &[(&str, &str)] = &[
         "graph { layout=fdp; subgraph cluster_a { label=A; a1 -- a2 -- a3 } subgraph cluster_b { label=B; b1 -- b2 } a1 -- b1; c -- a3; c -- b2; c -- d }",
     ),
     (
+        "fdp_pin",
+        "graph { layout=fdp; subgraph cluster_a { label=A; a1 [pos=\"0,0!\"]; a2 [pos=\"2,-1!\"]; a1 -- a2 -- a3 } b -- a3; b -- c; c -- a1 }",
+    ),
+    (
         "sfdp",
         "graph { layout=sfdp; overlap=false; a -- {b c d e}; b -- {f g}; c -- {h i}; d -- j; e -- {k l m}; m -- a }",
     ),
