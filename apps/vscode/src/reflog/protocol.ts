@@ -18,7 +18,8 @@ export interface ReflogEntry {
 
 export type ReflogHostMessage =
   /** 読み直した reflog。`error` は読めなかったわけ */
-  | { type: 'reflog'; entries: ReflogEntry[]; error?: string };
+  /** worktree があれば、どの worktree の HEAD か（2 つ以上あるときだけ。アプリの「HEAD of ✎ 名前」） */
+  | { type: 'reflog'; entries: ReflogEntry[]; error?: string; worktree?: string };
 
 export type ReflogWebviewMessage =
   /** Reflog を出した（読み直してもらう） */

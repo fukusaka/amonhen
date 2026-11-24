@@ -148,7 +148,7 @@
       },
       {
         "command": "amonhen.history.editFrom",
-        "title": "Edit Commits from Here…",
+        "title": "Interactive Rebase from Here…",
         "category": "Amon Hen"
       },
       {
@@ -158,7 +158,7 @@
       },
       {
         "command": "amonhen.history.squash",
-        "title": "Combine with Older Commit…",
+        "title": "Squash into Previous…",
         "category": "Amon Hen"
       },
       {
@@ -562,6 +562,16 @@
         "category": "Amon Hen"
       },
       {
+        "command": "amonhen.history.copyRefName",
+        "title": "Copy Branch or Tag Name…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.history.selection.copyShortIds",
+        "title": "Copy Short IDs",
+        "category": "Amon Hen"
+      },
+      {
         "command": "amonhen.mergeBranches",
         "title": "Merge Branches…",
         "category": "Amon Hen",
@@ -796,6 +806,11 @@
         "title": "Copy Commit IDs",
         "category": "Amon Hen"
       },
+        {
+          "command": "amonhen.history.selection.copyShortIds",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commits'",
+          "group": "9_copy@2"
+        },
       {
         "command": "amonhen.history.cherryPick",
         "title": "Cherry-pick…",
@@ -931,6 +946,18 @@
         "command": "amonhen.toggleWrapLongLines",
         "key": "alt+z",
         "when": "activeWebviewPanelId == 'amonhen.main'"
+      },
+      {
+        "command": "amonhen.history.goToParent",
+        "key": "ctrl+alt+down",
+        "mac": "cmd+alt+down",
+        "when": "activeWebviewPanelId == 'amonhen.main' && amonhen.engine"
+      },
+      {
+        "command": "amonhen.history.goToChild",
+        "key": "ctrl+alt+up",
+        "mac": "cmd+alt+up",
+        "when": "activeWebviewPanelId == 'amonhen.main' && amonhen.engine"
       }
     ],
     "menus": {
@@ -1522,12 +1549,20 @@
           "when": "false"
         },
         {
-          "command": "amonhen.history.goToParent",
+          "command": "amonhen.history.copyRefName",
           "when": "false"
         },
         {
-          "command": "amonhen.history.goToChild",
+          "command": "amonhen.history.selection.copyShortIds",
           "when": "false"
+        },
+        {
+          "command": "amonhen.history.goToParent",
+          "when": "amonhen.hasRepository && amonhen.engine"
+        },
+        {
+          "command": "amonhen.history.goToChild",
+          "when": "amonhen.hasRepository && amonhen.engine"
         },
         {
           "command": "amonhen.skipSequence",
@@ -2026,7 +2061,7 @@
         },
         {
           "command": "amonhen.history.split",
-          "when": "webviewId == 'amonhen.main' && webviewSection == 'commit' && commitEditable",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commit' && commitCanSquash",
           "group": "2_rewrite@2"
         },
         {
@@ -2048,6 +2083,11 @@
           "command": "amonhen.history.copyId",
           "when": "webviewId == 'amonhen.main' && (webviewSection == 'commit' || webviewSection == 'reflog' || webviewSection == 'fileHistory' || webviewSection == 'blame' || webviewSection == 'commitDetails')",
           "group": "9_copy@1"
+        },
+        {
+          "command": "amonhen.history.copyRefName",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commit' && commitHasRefs",
+          "group": "9_copy@2"
         },
         {
           "command": "amonhen.details.copyShortId",
@@ -2096,7 +2136,7 @@
         },
         {
           "command": "amonhen.history.selection.savePatches",
-          "when": "webviewId == 'amonhen.main' && webviewSection == 'commits'",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commits' && !commitsHaveMerge",
           "group": "6_patch@1"
         },
         {
@@ -2106,7 +2146,7 @@
         },
         {
           "command": "amonhen.history.selection.merge",
-          "when": "webviewId == 'amonhen.main' && webviewSection == 'commits'",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commits' && commitsCanMerge",
           "group": "7_merge@1"
         },
         {
@@ -2121,7 +2161,7 @@
         },
         {
           "command": "amonhen.history.cherryPick",
-          "when": "webviewId == 'amonhen.main' && webviewSection == 'commit' && !commitEditable",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commit'",
           "group": "5_apply@1"
         },
         {

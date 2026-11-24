@@ -23,6 +23,8 @@ export interface RefLabel {
 
 export interface RowData {
   oid: string;
+  /** merge（親が 2 つ以上） */
+  merge?: boolean;
   subject: string;
   author: string;
   /** unix 秒 */
