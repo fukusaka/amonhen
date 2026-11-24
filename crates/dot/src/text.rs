@@ -1,6 +1,6 @@
 //! ラベルの文字: 行（`\n`・`\l`・`\r` の寄せ）と飾りの span、幅の見積もり、SVG の `<text>`。ふつうのラベルの
 //! エスケープ（`\N`・`\G`・`\E`・`\T`・`\H`・`\L`）と、HTML のラベル（`<b>`・`<i>`・`<u>`・`<s>`・`<o>`・`<sub>`・
-//! `<sup>`・`<br/>`・`<font>`）を読む。HTML の表（`<table>`）は今は中の文字だけを行にする（呼ぶ側が注記する）。
+//! `<sup>`・`<br/>`・`<font>`）を読む。HTML の表（`<table>`）は `html` で組んで描く。
 
 use amonhen_pele::svg::builder::{esc, num};
 use amonhen_pele::text::entities::decode_entities;
@@ -101,6 +101,8 @@ pub struct Text {
     pub table: bool,
     /// HTML の画像（`<img>`）を省いた。
     pub image: bool,
+    /// HTML の表（あれば行の代わりにこれを描く。大きさは `width`・`height`）。
+    pub html: Option<Box<crate::html::Table>>,
 }
 
 /// 行の高さ（文字の大きさの倍）。
@@ -112,9 +114,11 @@ fn measure(text: &str, font: &Font) -> f64 {
 
 impl Text {
     pub fn is_empty(&self) -> bool {
-        self.lines
-            .iter()
-            .all(|l| l.spans.iter().all(|s| s.text.is_empty()))
+        self.html.is_none()
+            && self
+                .lines
+                .iter()
+                .all(|l| l.spans.iter().all(|s| s.text.is_empty()))
     }
 
     fn finish(mut self, base: f64) -> Self {
@@ -236,7 +240,7 @@ struct Html<'a> {
 }
 
 #[derive(Debug)]
-enum Piece {
+pub(crate) enum Piece {
     Text(String),
     Open(String, Vec<(String, String)>),
     Close(String),
@@ -336,7 +340,59 @@ fn html_attrs(s: &str) -> Vec<(String, String)> {
     out
 }
 
-fn attr<'a>(attrs: &'a [(String, String)], key: &str) -> Option<&'a str> {
+/// HTML を切れ端に分ける（切れ端とその文の中の始め・終わり）。
+pub(crate) fn pieces(src: &str, limit: usize) -> Vec<(Piece, usize, usize)> {
+    let mut p = Html { s: src, i: 0 };
+    let mut out = Vec::new();
+    loop {
+        let start = p.i;
+        let Some(piece) = p.next() else { break };
+        // 注釈を飛ばした分は始めに含めない
+        let end = p.i;
+        out.push((piece, start, end));
+        if out.len() >= limit {
+            break;
+        }
+    }
+    out
+}
+
+/// 飾りの要素（`<b>`・`<font>` など）なら、その中の書体。
+pub(crate) fn styled(
+    font: &Font,
+    name: &str,
+    attrs: &[(String, String)],
+    scheme: Option<&str>,
+) -> Option<Font> {
+    let mut font = font.clone();
+    match name {
+        "b" => font.bold = true,
+        "i" => font.italic = true,
+        "u" => font.underline = true,
+        "s" => font.strike = true,
+        "o" => font.overline = true,
+        "sub" => font.sub = true,
+        "sup" => font.sup = true,
+        "font" => {
+            if let Some(c) = attr(attrs, "color").and_then(|c| parse_color(c, scheme)) {
+                font.color = Some(c);
+            }
+            if let Some(sz) = attr(attrs, "point-size")
+                .and_then(|v| v.trim().parse::<f64>().ok())
+                .filter(|v| v.is_finite() && *v > 0.0)
+            {
+                font.size = sz.min(400.0);
+            }
+            if let Some(face) = attr(attrs, "face") {
+                font = font.with_name(face);
+            }
+        }
+        _ => return None,
+    }
+    Some(font)
+}
+
+pub(crate) fn attr<'a>(attrs: &'a [(String, String)], key: &str) -> Option<&'a str> {
     attrs
         .iter()
         .find(|(k, _)| k == key)
@@ -355,6 +411,14 @@ fn just_of(attrs: &[(String, String)]) -> Option<Just> {
 /// HTML のラベルを読む。`base` はノードの書体、`scheme` は色の配色。表は中の文字を、行（`<tr>`）ごとに区切りを
 /// 入れて並べる。
 pub fn html_label(src: &str, base: &Font, scheme: Option<&str>) -> Text {
+    if let Some(t) = crate::html::label(src, base, scheme) {
+        return t;
+    }
+    inline_label(src, base, scheme)
+}
+
+/// 表を含まない HTML のラベル（表があれば中の文字だけを並べる）。
+pub(crate) fn inline_label(src: &str, base: &Font, scheme: Option<&str>) -> Text {
     let mut p = Html { s: src, i: 0 };
     let mut fonts: Vec<Font> = vec![base.clone()];
     // 開いた要素の名前（閉じで飾りを戻すため。飾りを変えない要素は None）
@@ -429,58 +493,41 @@ pub fn html_label(src: &str, base: &Font, scheme: Option<&str>) -> Text {
                 _ => {}
             },
             Piece::Open(name, attrs) => {
-                let mut font = fonts.last().cloned().unwrap_or_else(|| base.clone());
+                let current = fonts.last().cloned().unwrap_or_else(|| base.clone());
+                let mut font = current.clone();
                 let mut styled = true;
-                match name.as_str() {
-                    "b" => font.bold = true,
-                    "i" => font.italic = true,
-                    "u" => font.underline = true,
-                    "s" => font.strike = true,
-                    "o" => font.overline = true,
-                    "sub" => font.sub = true,
-                    "sup" => font.sup = true,
-                    "font" => {
-                        if let Some(c) = attr(&attrs, "color").and_then(|c| parse_color(c, scheme))
-                        {
-                            font.color = Some(c);
+                if let Some(f) = self::styled(&current, &name, &attrs, scheme) {
+                    font = f;
+                } else {
+                    match name.as_str() {
+                        "table" => {
+                            text.table = true;
+                            if table == 0 && !line.spans.is_empty() {
+                                push_line(&mut text, &mut line, Just::Center);
+                            }
+                            table += 1;
+                            styled = false;
                         }
-                        if let Some(sz) = attr(&attrs, "point-size")
-                            .and_then(|v| v.trim().parse::<f64>().ok())
-                            .filter(|v| v.is_finite() && *v > 0.0)
-                        {
-                            font.size = sz.min(400.0);
+                        "tr" => {
+                            cells_in_row = 0;
+                            styled = false;
                         }
-                        if let Some(face) = attr(&attrs, "face") {
-                            font = font.with_name(face);
+                        "td" => {
+                            cells_in_row += 1;
+                            if cells_in_row > 1 && !line.spans.is_empty() {
+                                let font = fonts.last().cloned().unwrap_or_else(|| base.clone());
+                                let width = measure("  ", &font);
+                                line.spans.push(Span {
+                                    text: "  ".into(),
+                                    font,
+                                    width,
+                                });
+                            }
+                            table_just.push(just_of(&attrs).unwrap_or(Just::Center));
+                            styled = false;
                         }
+                        _ => styled = false,
                     }
-                    "table" => {
-                        text.table = true;
-                        if table == 0 && !line.spans.is_empty() {
-                            push_line(&mut text, &mut line, Just::Center);
-                        }
-                        table += 1;
-                        styled = false;
-                    }
-                    "tr" => {
-                        cells_in_row = 0;
-                        styled = false;
-                    }
-                    "td" => {
-                        cells_in_row += 1;
-                        if cells_in_row > 1 && !line.spans.is_empty() {
-                            let font = fonts.last().cloned().unwrap_or_else(|| base.clone());
-                            let width = measure("  ", &font);
-                            line.spans.push(Span {
-                                text: "  ".into(),
-                                font,
-                                width,
-                            });
-                        }
-                        table_just.push(just_of(&attrs).unwrap_or(Just::Center));
-                        styled = false;
-                    }
-                    _ => styled = false,
                 }
                 if styled {
                     fonts.push(font);
@@ -602,6 +649,17 @@ fn span_attrs(font: &Font, root: &Font, out: &mut String) {
 /// `<text>` の書体（色・大きさ）。
 pub fn text_svg(text: &Text, cx: f64, cy: f64, box_w: f64, root: &Font, attrs: &str) -> String {
     let mut out = String::new();
+    if let Some(table) = &text.html {
+        crate::html::draw(
+            table,
+            cx - table.w / 2.0,
+            cy - table.h / 2.0,
+            root,
+            attrs,
+            &mut out,
+        );
+        return out;
+    }
     let mut top = cy - text.height / 2.0;
     let half = box_w.max(text.width) / 2.0;
     for line in &text.lines {
@@ -728,9 +786,10 @@ mod tests {
     }
 
     #[test]
-    fn flattens_html_tables() {
+    fn flattens_html_tables_inline() {
+        // 表の中の文字だけを並べる（表を組めないときの道）
         let font = Font::new(14.0);
-        let t = html_label(
+        let t = inline_label(
             "<TABLE BORDER=\"0\"><TR><TD>a</TD><TD>b</TD></TR><TR><TD ALIGN=\"LEFT\">c &amp; d</TD></TR></TABLE>",
             &font,
             None,

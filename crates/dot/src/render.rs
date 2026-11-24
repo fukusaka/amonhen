@@ -203,9 +203,6 @@ fn label_text(
 ) -> Text {
     if raw.html {
         let t = text::html_label(&raw.text, font, scheme.or(ctx.scheme.as_deref()));
-        if t.table {
-            ctx.notes.insert(Note::HtmlTables);
-        }
         if t.image {
             ctx.notes.insert(Note::Images);
         }
@@ -281,8 +278,18 @@ fn port_of(view: &NodeView, port: Option<&str>) -> Option<Port> {
             cy + d.1 * (b[3] - b[1]) / 2.0,
         )
     };
-    if let Some(field) = view.record.as_ref().and_then(|r| record::port(r, name)) {
-        let b = [field.x, field.y, field.x + field.w, field.y + field.h];
+    let html_port = view.label.as_ref().and_then(|t| {
+        let table = t.html.as_ref()?;
+        let b = table.port(name)?;
+        let (ox, oy) = (-table.w / 2.0, -table.h / 2.0);
+        Some([b[0] + ox, b[1] + oy, b[2] + ox, b[3] + oy])
+    });
+    let record_port = view
+        .record
+        .as_ref()
+        .and_then(|r| record::port(r, name))
+        .map(|f| [f.x, f.y, f.x + f.w, f.y + f.h]);
+    if let Some(b) = record_port.or(html_port) {
         return Some(match dir.and_then(compass) {
             Some(d) if d != (0.0, 0.0) => Port {
                 at: on_box(b, d),
@@ -412,11 +419,6 @@ pub fn render(model: &Model, budget: Budget, notes: &mut BTreeSet<Note>) -> Stri
             }
             _ if point => {}
             _ => label = Some(label_text(raw, &names, &font, &mut ctx, scheme.as_deref())),
-        }
-        // HTML の表は枠で囲む
-        if label.as_ref().is_some_and(|t| t.table) && spec.kind == Kind::Plain {
-            spec.kind = shapes::spec("box", None, 0.0, 0.0, 0.0, false).kind;
-            spec.peripheries = 1;
         }
         let (mx, my) = if spec.no_margin {
             (0.0, 0.0)

@@ -61,9 +61,15 @@ fn uses_theme_variables_and_given_colors() {
 fn notes_approximations() {
     let notes = |src: &str| render(src).unwrap().notes;
     assert!(notes("digraph { a -> b }").is_empty());
+    assert!(
+        notes("digraph { a [shape=plaintext, label=<<table><tr><td>x</td></tr></table>>] }")
+            .is_empty()
+    );
     assert_eq!(
-        notes("digraph { a [shape=plaintext, label=<<table><tr><td>x</td></tr></table>>] }"),
-        [Note::HtmlTables]
+        notes(
+            "digraph { a [shape=plain, label=<<table><tr><td><img src=\"x.png\"/></td></tr></table>>] }"
+        ),
+        [Note::Images]
     );
     assert_eq!(notes("digraph { a [image=\"x.png\"] }"), [Note::Images]);
     assert_eq!(notes("digraph { a [shape=blob] }"), [Note::UnknownShapes]);

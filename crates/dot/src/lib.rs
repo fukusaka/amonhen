@@ -3,14 +3,15 @@
 //! 並びは中央値と入れ替え、横の位置は補助グラフのネットワーク単体法）。
 //!
 //! 色は pele の図と同じく CSS の変数（`var(--_l)` など）で書く。文が決めない色（既定の線・文字・ノードの枠・地）は
-//! テーマに従い（core の `diagram::colorize`）、文が決めた色はそのまま使う。描けないもの（画像・HTML の表・ortho の
-//! 線など）は近いもので描き、`Drawing::notes` に理由を残す。
+//! テーマに従い（core の `diagram::colorize`）、文が決めた色はそのまま使う。描けないもの（画像・知らない形・知らない
+//! 色など）は近いもので描き、`Drawing::notes` に理由を残す。
 
 pub mod arrows;
 mod brewer;
 pub mod color;
 pub mod curve;
 pub mod graph;
+pub mod html;
 pub mod layout;
 pub mod parse;
 pub mod record;
@@ -48,8 +49,6 @@ use std::collections::BTreeSet;
 /// 近いもので描いたものの理由（図の下に添える）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Note {
-    /// HTML の表は中の文字だけを描いた。
-    HtmlTables,
     /// 画像は空の枠にした。
     Images,
     /// 知らない形は箱にした。
@@ -68,7 +67,6 @@ impl Note {
     /// 英語の理由（FE は翻訳して見せる）。
     pub fn reason(self) -> &'static str {
         match self {
-            Note::HtmlTables => "HTML tables are drawn as plain text",
             Note::Images => "images are drawn as empty frames",
             Note::UnknownShapes => "unknown shapes are drawn as boxes",
             Note::Ortho => "orthogonal edges are drawn as polylines",

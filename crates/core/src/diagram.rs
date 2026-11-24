@@ -84,7 +84,6 @@ fn approximation_note(notes: &[amonhen_dot::Note]) -> String {
     let reasons: Vec<String> = notes
         .iter()
         .map(|n| match n {
-            Note::HtmlTables => amonhen_model::tr!("HTML tables are drawn as plain text"),
             Note::Images => amonhen_model::tr!("images are drawn as empty frames"),
             Note::UnknownShapes => amonhen_model::tr!("unknown shapes are drawn as boxes"),
             Note::Ortho => amonhen_model::tr!("orthogonal edges are drawn as polylines"),
@@ -821,7 +820,7 @@ mod tests {
     #[cfg(feature = "diagrams")]
     #[test]
     fn dot_approximations_carry_a_note() {
-        let md = "```dot\ndigraph { a [shape=none, label=<<table><tr><td>x</td></tr></table>>, color=nosuch] }\n```\n";
+        let md = "```dot\ndigraph { a [shape=none, label=<<table><tr><td><img src=\"x.png\"/></td></tr></table>>, color=nosuch] }\n```\n";
         let blocks = crate::markdown::parse_in_zone(md, None, None);
         let crate::markdown::Block::Diagram {
             svg: Some(_),
@@ -832,7 +831,7 @@ mod tests {
             panic!("{blocks:?}");
         };
         assert!(
-            note.contains("HTML tables") && note.contains("unknown colors"),
+            note.contains("images") && note.contains("unknown colors"),
             "{note}"
         );
         let json = serde_json::to_string(&blocks[0]).unwrap();
