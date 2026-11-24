@@ -5362,7 +5362,12 @@ impl App {
         // （fetch して、新しく来たものを取り込む）。
         match (self.behind, self.upstream.clone()) {
             (1.., Some(upstream)) => {
-                self.confirm = Some((
+                // アプリのシートと同じく、取り込み方も選べる（上流が進んでいるだけなら、どれも fast-forward）。
+                let pull = |mode: &str| Request::Run {
+                    name: "pull",
+                    command: json!({"op": "pull", "mode": mode}),
+                };
+                self.choices = Some((
                     match self.behind {
                         1 => tr!("Pull 1 commit from {upstream}?", upstream = upstream),
                         n => tr!(
@@ -5371,11 +5376,10 @@ impl App {
                             upstream = upstream
                         ),
                     },
-                    tr!("pull"),
-                    Request::Run {
-                        name: "pull",
-                        command: json!({"op": "pull"}),
-                    },
+                    vec![
+                        ('y', tr!("pull as git is set"), pull("git")),
+                        ('f', tr!("fast-forward only"), pull("fastForwardOnly")),
+                    ],
                 ));
                 self.send(Request::Run {
                     name: "syncCommits",
@@ -5450,9 +5454,14 @@ impl App {
             name: "pull",
             command: json!({"op": "pull", "mode": mode}),
         };
+        // 手元だけのコミットと、上流から来るコミットの数（アプリのシートの両方の一覧の代わり。件名は後から足す）。
+        let upstream = self.upstream.clone().unwrap_or_default();
         self.choices = Some((
             tr!(
-                "Pull: the branch and its upstream have diverged.{risk} How?",
+                "Pull from {upstream} into a branch that has diverged ({behind} new, {ahead} only here)?{risk}",
+                upstream = upstream,
+                behind = self.behind,
+                ahead = self.ahead,
                 risk = risk_text(conflicts)
             ),
             vec![
@@ -5461,6 +5470,13 @@ impl App {
                 ('r', tr!("rebase"), pull("rebase")),
             ],
         ));
+        // 上流から来るコミットの件名（3 つまで）を、聞いている文に足す。
+        if !upstream.is_empty() {
+            self.send(Request::Run {
+                name: "syncCommits",
+                command: json!({"op": "between", "base": "HEAD", "tip": upstream, "limit": 3}),
+            });
+        }
         self.dirty = true;
     }
 
