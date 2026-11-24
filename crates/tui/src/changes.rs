@@ -487,8 +487,20 @@ impl Changes {
     }
 
     /// 一覧の高さ（メッセージの欄を除く）。
-    pub fn list_height(&self) -> u16 {
-        self.height
+    /// 一覧の上にある行の数（メッセージの欄と、sparse checkout の知らせ）。
+    fn above_list(&self) -> u16 {
+        message_height(self.total_height) + u16::from(self.sparse_note.is_some())
+    }
+
+    /// メインの画面の `line` 行目（上から）が、メッセージの欄か。
+    pub fn in_message(&self, line: u16) -> bool {
+        line < message_height(self.total_height)
+    }
+
+    /// メインの画面の `line` 行目（上から）が、一覧の行か。
+    pub fn in_list(&self, line: u16) -> bool {
+        let top = self.above_list();
+        line >= top && line < top + self.height
     }
 
     /// メッセージの欄が出ている。
@@ -572,7 +584,7 @@ impl Changes {
     /// ポインタを一覧の `line` 行目（見えている中で。None は一覧の外）に重ねた。変わったら true。
     pub fn hover(&mut self, line: Option<u16>) -> bool {
         let index = line
-            .and_then(|l| l.checked_sub(u16::from(self.sparse_note.is_some())))
+            .and_then(|l| l.checked_sub(self.above_list()))
             .map(|l| self.top + usize::from(l))
             .filter(|&i| matches!(self.rows.get(i), Some(Row::File { .. })));
         let changed = index != self.hovered;
@@ -586,7 +598,7 @@ impl Changes {
             return false;
         }
         let Some(index) = line
-            .checked_sub(u16::from(self.sparse_note.is_some()))
+            .checked_sub(self.above_list())
             .map(|l| self.top + usize::from(l))
         else {
             return false;
@@ -600,7 +612,7 @@ impl Changes {
 
     /// 一覧の `line` 行目（見えている中で）を選ぶ。
     pub fn click(&mut self, line: u16) -> bool {
-        let Some(line) = line.checked_sub(u16::from(self.sparse_note.is_some())) else {
+        let Some(line) = line.checked_sub(self.above_list()) else {
             return false;
         };
         let index = self.top + usize::from(line);
@@ -621,8 +633,9 @@ impl Changes {
         focused: bool,
         typing: bool,
     ) -> Option<(u16, u16)> {
+        // メッセージの欄を上に、一覧をその下に（アプリの Working Copy と同じ）。
         let field = message_height(area.height);
-        let mut list = Rect::new(area.x, area.y, area.width, area.height - field);
+        let mut list = Rect::new(area.x, area.y + field, area.width, area.height - field);
         // sparse checkout なら、一覧の上に知らせ（アプリと同じ）。
         if let Some(note) = &self.sparse_note
             && list.height > 1
@@ -641,7 +654,7 @@ impl Changes {
             return None;
         }
         // 見出し: 「── Message ───── 23 ─」（右は件名の文字数）。
-        let y = list.bottom();
+        let y = area.y;
         let line = Style::new().fg(if typing { Color::Cyan } else { DIM });
         for x in area.x..area.right() {
             buf[(x, y)].set_char('─').set_style(line);
@@ -669,7 +682,12 @@ impl Changes {
             };
             buf.set_string(count_x, y, count, style);
         }
-        let body = Rect::new(area.x + 1, y + 1, area.width - 1, field - 1);
+        // 欄の下の区切り（一覧との間）。
+        let body = Rect::new(area.x + 1, y + 1, area.width - 1, field - 2);
+        let rule = y + field - 1;
+        for x in area.x..area.right() {
+            buf[(x, rule)].set_char('─').set_style(Style::new().fg(DIM));
+        }
         if self.message.is_empty() && !typing {
             buf.set_stringn(
                 body.x,

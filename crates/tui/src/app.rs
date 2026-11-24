@@ -9063,7 +9063,7 @@ impl App {
                 a.x <= mouse.column
                     && mouse.column < a.right()
                     && a.y <= mouse.row
-                    && mouse.row < a.y + self.changes.list_height()
+                    && self.changes.in_list(mouse.row - a.y)
             });
             match mouse.kind {
                 MouseEventKind::Moved => {
@@ -9145,8 +9145,8 @@ impl App {
                         View::History => self.history.click(line),
                         View::Reflog => self.reflog.click(line),
                         View::File => self.file.click(line),
-                        // 一覧の下は、メッセージの欄。
-                        View::Changes if line >= self.changes.list_height() => {
+                        // 一覧の上は、メッセージの欄。
+                        View::Changes if self.changes.in_message(line) => {
                             self.focus = Focus::Message;
                             false
                         }
@@ -11311,7 +11311,10 @@ mod tests {
             KeyModifiers::NONE,
         ))));
         crate::settle(&mut app, &rx).unwrap();
-        let list = app.layout().main.unwrap();
+        let main = app.layout().main.unwrap();
+        // 一覧の最初の行（メッセージの欄の下）。
+        let first = (0..main.height).find(|&l| app.changes.in_list(l)).unwrap();
+        let list = Rect::new(main.x, main.y + first, main.width, 1);
         let at = |column: u16, kind: MouseEventKind| {
             Event::Input(Input::Mouse(MouseEvent {
                 kind,

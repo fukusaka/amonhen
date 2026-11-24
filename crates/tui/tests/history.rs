@@ -321,7 +321,8 @@ fn working_copy_lists_files_beside_the_diff() {
     // サイドバーの Changes の行に、変わったファイルの数。
     assert!(column(lines[2], 0).unwrap().starts_with("  Changes"));
     assert!(column(lines[2], 0).unwrap().ends_with(" 3"));
-    let list: Vec<String> = lines[1..8].iter().filter_map(|l| column(l, 1)).collect();
+    // 一覧はメッセージの欄（上）の下から。
+    let list: Vec<String> = after_message(lines[1..].iter().filter_map(|l| column(l, 1)));
     let diff: Vec<String> = lines[1..8].iter().filter_map(|l| column(l, 2)).collect();
     // stage の印（まだ・済み）、状態の 1 文字、パス。
     // 右の端に、HEAD からの行数（アプリの行の +/−。untracked にはない）。
@@ -552,7 +553,7 @@ fn commit_from_the_message_field() {
     assert_eq!(git_out(dir.path(), &["rev-list", "--count", "HEAD"]), "1\n");
     // 書いている途中の画面: 欄の見出しに件名の文字数。
     let typing =
-        amonhen_tui::snapshot(front(), 100, 14, clock(), "1 cUse capitals\n\nBody").unwrap();
+        amonhen_tui::snapshot(front(), 100, 20, clock(), "1 cUse capitals\n\nBody").unwrap();
     println!("{typing}");
     assert!(typing.contains("─ Message ─"));
     assert!(typing.contains(" 12 ─"));
@@ -729,8 +730,9 @@ fn the_working_copy_lists_a_tree_or_names_and_filters() {
     let list = |keys: &str| -> Vec<String> {
         let text = amonhen_tui::snapshot(front(), 100, 16, clock(), keys).unwrap();
         println!("{text}");
-        (text.lines().skip(1).take(7))
-            .filter_map(|l| column(l, 1))
+        after_message(text.lines().skip(1).filter_map(|l| column(l, 1)))
+            .into_iter()
+            .take(7)
             .map(|l| l.trim_end().to_owned())
             .collect()
     };
@@ -1380,6 +1382,16 @@ fn git_at_least(major: u32, minor: u32) -> bool {
         .split('.')
         .map(|p| p.parse::<u32>().unwrap_or(0));
     (parts.next().unwrap_or(0), parts.next().unwrap_or(0)) >= (major, minor)
+}
+
+/// Working Copy の列の行のうち、上のメッセージの欄（見出しから下の区切りまで）より下のもの。
+fn after_message(lines: impl Iterator<Item = String>) -> Vec<String> {
+    let lines: Vec<String> = lines.collect();
+    let rule = lines
+        .iter()
+        .position(|l| l.starts_with('─') && !l.contains("Message"))
+        .map_or(0, |i| i + 1);
+    lines[rule..].to_vec()
 }
 
 fn predicts_conflicts(dir: &Path) -> bool {
