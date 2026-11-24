@@ -826,6 +826,93 @@ fn coarsen(l: &Level) -> Option<Level> {
     })
 }
 
+/// 近くの stress で整えるときの、1 つのノードが見る相手の数の上限・繰り返しの数・手間の上限（対の更新の数）。
+const LOCAL_PEERS: usize = 32;
+const LOCAL_ITERS: usize = 30;
+const LOCAL_WORK: usize = 3_000_000;
+
+/// 力の配置の仕上げ: 2 歩までの近くの対だけで stress（Gansner・Koren・North の stress majorization、重み d⁻²）を
+/// 下げる。望む長さは歩数 × 今の辺の長さの中央値なので、全体の大きさと形は変えずに、近くの形（三角などの小さな
+/// 輪）を整える。1 つのノードが見る相手は `LOCAL_PEERS` まで、対の更新は図ぜんぶで `LOCAL_WORK` まで。
+fn local_stress(x: &mut [P], edges: &[(usize, usize, f64)]) {
+    let n = x.len();
+    if n < 3 || edges.is_empty() {
+        return;
+    }
+    let mut adj: Vec<Vec<usize>> = vec![Vec::new(); n];
+    let mut lens: Vec<f64> = Vec::with_capacity(edges.len());
+    for &(a, b, _) in edges {
+        if a == b || a >= n || b >= n {
+            continue;
+        }
+        adj[a].push(b);
+        adj[b].push(a);
+        lens.push((x[a].0 - x[b].0).hypot(x[a].1 - x[b].1));
+    }
+    if lens.is_empty() {
+        return;
+    }
+    lens.sort_by(f64::total_cmp);
+    let unit = lens[lens.len() / 2];
+    if !(unit.is_finite() && unit > 1e-6) {
+        return;
+    }
+    // 相手: 隣（1 歩）と、隣の隣（2 歩）
+    let mut seen = vec![usize::MAX; n];
+    let peers: Vec<Vec<(usize, f64)>> = (0..n)
+        .map(|v| {
+            seen[v] = v;
+            let mut out: Vec<(usize, f64)> = Vec::new();
+            for &u in &adj[v] {
+                if out.len() >= LOCAL_PEERS {
+                    break;
+                }
+                if seen[u] != v {
+                    seen[u] = v;
+                    out.push((u, unit));
+                }
+            }
+            let first = out.len();
+            for k in 0..first {
+                let u = out[k].0;
+                for &w in &adj[u] {
+                    if out.len() >= LOCAL_PEERS {
+                        break;
+                    }
+                    if seen[w] != v {
+                        seen[w] = v;
+                        out.push((w, 2.0 * unit));
+                    }
+                }
+            }
+            out
+        })
+        .collect();
+    let pairs: usize = peers.iter().map(Vec::len).sum::<usize>().max(1);
+    let iters = LOCAL_ITERS.min(LOCAL_WORK / pairs);
+    for _ in 0..iters {
+        for v in 0..n {
+            let (mut sx, mut sy, mut sw) = (0.0, 0.0, 0.0);
+            for &(u, d) in &peers[v] {
+                let w = 1.0 / (d * d);
+                let (dx, dy) = (x[v].0 - x[u].0, x[v].1 - x[u].1);
+                let l = dx.hypot(dy);
+                let (ox, oy) = if l > 1e-9 {
+                    (d * dx / l, d * dy / l)
+                } else {
+                    (0.0, 0.0)
+                };
+                sx += w * (x[u].0 + ox);
+                sy += w * (x[u].1 + oy);
+                sw += w;
+            }
+            if sw > 0.0 {
+                x[v] = (sx / sw, sy / sw);
+            }
+        }
+    }
+}
+
 pub fn sfdp(items: &[Item], links: &[Link], g: &Attrs, notes: &mut BTreeSet<Note>) -> Vec<P> {
     let n = items.len();
     if n == 0 {
@@ -945,6 +1032,8 @@ pub fn sfdp(items: &[Item], links: &[Link], g: &Attrs, notes: &mut BTreeSet<Note
             sys.run(kk, iters, t0, repulsion_for(lv.n, true), &mut budget);
             x = sys.pos;
         }
+        // いちばん細かい段の形を、近くの stress で整える（小さな輪が平たく畳まれたままにならないように）
+        local_stress(&mut x, &levels[0].edges);
         for (i, &v) in comp.iter().enumerate() {
             pos[v] = x[i];
         }
@@ -1048,6 +1137,37 @@ mod tests {
             assert!(p[i].0 > c[0] && p[i].0 < c[2] && p[i].1 > c[1] && p[i].1 < c[3]);
         }
         assert!(!overlaps(&p, 54.0, 36.0));
+    }
+
+    #[test]
+    fn sfdp_keeps_small_cycles_open() {
+        // a -- {b c d e}; b -- {f g}; c -- {h i}; d -- j; e -- {k l m}; m -- a（a・e・m の三角）
+        let items = vec![item(None); 13];
+        let pairs = [
+            (0, 1),
+            (0, 2),
+            (0, 3),
+            (0, 4),
+            (1, 5),
+            (1, 6),
+            (2, 7),
+            (2, 8),
+            (3, 9),
+            (4, 10),
+            (4, 11),
+            (4, 12),
+            (12, 0),
+        ];
+        let links: Vec<Link> = pairs.iter().map(|&(a, b)| link(a, b)).collect();
+        let p = sfdp(&items, &links, &Attrs::default(), &mut BTreeSet::new());
+        let (a, e, m) = (p[0], p[4], p[12]);
+        let area = ((e.0 - a.0) * (m.1 - a.1) - (m.0 - a.0) * (e.1 - a.1)).abs() / 2.0;
+        let side = [(a, e), (e, m), (m, a)]
+            .iter()
+            .map(|(x, y)| (x.0 - y.0).hypot(x.1 - y.1))
+            .fold(0.0, f64::max);
+        // 正三角形は 0.43。平たいと 0 に近い
+        assert!(area > 0.2 * side * side, "{area} {side}");
     }
 
     #[test]
