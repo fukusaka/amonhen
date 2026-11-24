@@ -12,6 +12,7 @@ import { shortName } from '../state/operations.ts';
 import type { Repository } from '../state/repository.ts';
 import { MainPanel } from './mainPanel.ts';
 import { showError } from './stageCommands.ts';
+import { patchFormat, setPatchFormat } from './preferences.ts';
 
 /** Webview の右クリックメニューから渡される情報（data-vscode-context） */
 interface CommitContext {
@@ -74,15 +75,18 @@ export function registerPatchCommands(manager: RepositoryManager): vscode.Dispos
 
 /** oids（古い順）をパッチにする。形（1 コミット 1 ファイルか 1 つの mbox か）と送り状を選んでもらう */
 async function savePatches(repo: Repository, oids: string[]): Promise<void> {
-  const choice = await vscode.window.showQuickPick(
-    [
-      { label: 'One File per Commit', description: '0001-….patch (git format-patch’s default)', single: false, cover: false },
-      { label: 'One File per Commit, with a Cover Letter', description: 'Also writes 0000-cover-letter.patch', single: false, cover: true },
-      { label: 'One mbox File', description: 'git format-patch --stdout', single: true, cover: false },
-    ],
-    { title: oids.length === 1 ? 'Save as Patch' : `Save ${oids.length} Commits as Patches` },
-  );
+  // 形（1 コミット 1 ファイルか 1 つの mbox か）と送り状は別々に選べ、前に選んだものを先頭にする（アプリと同じく覚える）
+  const choices = [
+    { label: 'One File per Commit', description: '0001-….patch (git format-patch’s default)', single: false, cover: false },
+    { label: 'One File per Commit, with a Cover Letter', description: 'Also writes 0000-cover-letter.patch', single: false, cover: true },
+    { label: 'One mbox File', description: 'git format-patch --stdout', single: true, cover: false },
+    { label: 'One mbox File, with a Cover Letter', description: 'The cover letter first in the mbox', single: true, cover: true },
+  ];
+  const last = patchFormat();
+  const ordered = [...choices].sort((a, b) => Number(b.single === last.single && b.cover === last.cover) - Number(a.single === last.single && a.cover === last.cover));
+  const choice = await vscode.window.showQuickPick(ordered, { title: oids.length === 1 ? 'Save as Patch' : `Save ${oids.length} Commits as Patches` });
   if (!choice) return;
+  await setPatchFormat({ single: choice.single, cover: choice.cover });
   // 版（-v）。空か 1 なら付けない。2 からは v2-0001-….patch のように名前と件名に入る
   const version = await vscode.window.showInputBox({
     title: 'Version (-v)',

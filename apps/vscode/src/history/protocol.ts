@@ -23,6 +23,8 @@ export interface RefLabel {
 
 export interface RowData {
   oid: string;
+  /** merge（親が 2 つ以上） */
+  merge?: boolean;
   subject: string;
   author: string;
   /** unix 秒 */
@@ -165,6 +167,8 @@ export interface SearchState {
 }
 
 export type HistoryHostMessage =
+  /** 密度の帯: 区間ごとの頻度と動き（0〜1）を交互に並べた f32 の base64 */
+  | { type: 'density'; values: string }
   /** コマンド（Find in History…）から、検索の欄にフォーカスを移す */
   | { type: 'focusSearch' }
   /** `select` があれば、新しい History のその行を選ぶ（一致だけの History との切り替え） */
@@ -184,6 +188,8 @@ export type HistoryHostMessage =
    * すぐメッセージの編集欄を開く
    */
   | { type: 'editMode'; rows: EditRow[]; original: string[]; editMessageAt?: number }
+  /** 編集モードの範囲を広げた: いちばん古い行より古いコミット（新しい順） */
+  | { type: 'editMore'; rows: EditRow[] }
   /** 編集モードの見通し（`key` は頼んだときのもの）。`conflicts` はコンフリクトしそうなコミット */
   | { type: 'editPreview'; key: number; lines: string[]; conflicts: string[]; stacked?: EditStacked }
   /** Apply を終えた。`ok` なら編集モードを閉じ、そうでなければ開いたまま（もう一度押せる） */
@@ -227,6 +233,19 @@ export interface SignatureView {
   /** 署名した人・鍵（分かれば） */
   signer?: string;
   key?: string;
+  /** 署名の形式（GPG・SSH・X.509）と鍵の指紋（分かれば。アプリの署名の吹き出しと同じ） */
+  format?: string;
+  fingerprint?: string;
+}
+
+/** コミットを指すタグ・merge したタグ（注釈付きならタガー・日時・件名と署名） */
+export interface TagView {
+  name: string;
+  tagger?: string;
+  /** UNIX 時刻（秒） */
+  time?: number;
+  subject?: string;
+  signature?: SignatureView;
 }
 
 /** コミットの詳細のうち時間のかかる分（コアの `commitExtras`）。署名と子のコミット */
@@ -236,12 +255,20 @@ export interface DetailsExtras {
   signature?: SignatureView;
   /** そのコミットを親に持つコミット */
   children: string[];
+  /** このコミットを指すタグ（エンジンの `tagObjects`） */
+  tags?: TagView[];
+  /** この merge が取り込んだタグ（コミットの mergetag） */
+  mergedTags?: TagView[];
+  /** merge で取り込んだコミットの数（merge でなければ 0） */
+  mergedCount?: number;
   /** git notes（refs/notes/commits）。なければ undefined */
   notes?: string;
 }
 
 export type HistoryWebviewMessage =
   | { type: 'more' }
+  /** 密度の帯（コミットの頻度とブランチの動き）を buckets 区間で頼む（daemon の History だけ） */
+  | { type: 'density'; buckets: number }
   /** merge を 1 つ開く・畳む（← →。右クリックの Show・Fold Merged Commits と同じ） */
   | { type: 'toggleFold'; oid: string }
   /** daemon の History の、start から count 行 */
@@ -273,6 +300,8 @@ export type HistoryWebviewMessage =
   | { type: 'detailsLayout'; layout: DetailsLayout }
   /** 編集モードの見通しを求める。`updateRefs` は、積み重ねたブランチを今回だけどうするか（触っていなければなし） */
   | { type: 'editPreview'; key: number; steps: PlanStep[]; updateRefs?: boolean }
+  /** 編集モードの範囲の境目を下へ引いた: oldest より古い count 個のコミットを取り込む */
+  | { type: 'editExtend'; oldest: string; count: number }
   /** 編集モードの変更を当てる */
   | { type: 'editApply'; steps: PlanStep[]; updateRefs?: boolean }
   | { type: 'scope'; scope: Scope }

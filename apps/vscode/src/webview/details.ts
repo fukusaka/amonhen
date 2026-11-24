@@ -14,6 +14,7 @@ import type {
   PairMode,
   Person,
   SelectionView,
+  TagView,
   TreeEntry,
 } from '../history/protocol.ts';
 import { el, formatDate, getState, post, updateState } from './api.ts';
@@ -821,10 +822,30 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
       // アプリの署名の吹き出しの中身（言葉・説明・署名した人と鍵）
       const value = el('span', 'signature');
       value.append(signatureMark(s), ` ${s.label}`);
-      const note = el('span', 'recorded', [s.explanation, s.signer && `Signed by ${s.signer}`, s.key && `Key ${s.key}`].filter(Boolean).join(' · '));
+      const note = el('span', 'recorded', [s.explanation, s.signer && `Signed by ${s.signer}`, s.format, s.key && `Key ${s.key}`].filter(Boolean).join(' · '));
+      if (s.fingerprint) note.title = `Fingerprint ${s.fingerprint}`;
       value.append(note);
       add('Signature', value);
     }
+    // このコミットを指すタグと、この merge が取り込んだタグ（注釈付きならタガー・日時・件名と署名。アプリと同じ）
+    const tagLine = (t: TagView): Node => {
+      const span = el('span', 'tag-line');
+      span.append(el('span', 'ref tag', t.name));
+      const about = [t.tagger, t.time ? formatDate(t.time) : undefined].filter(Boolean).join(', ');
+      if (about || t.subject) span.append(el('span', 'recorded', [about, t.subject].filter(Boolean).join(' — ')));
+      if (t.signature) {
+        const sig = el('span', 'signature');
+        sig.append(signatureMark(t.signature), ` ${t.signature.label}`);
+        sig.title = [t.signature.explanation, t.signature.signer && `Signed by ${t.signature.signer}`, t.signature.format, t.signature.key && `Key ${t.signature.key}`]
+          .filter(Boolean)
+          .join('\n');
+        span.append(' ', sig);
+      }
+      return span;
+    };
+    for (const t of extras.tags ?? []) add('Tag', tagLine(t));
+    for (const t of extras.mergedTags ?? []) add('Merged Tag', tagLine(t));
+    if (extras.mergedCount) add('Merged', document.createTextNode(`${extras.mergedCount} commit${extras.mergedCount === 1 ? '' : 's'}`));
     if (extras.children.length > 0) add(extras.children.length > 1 ? 'Children' : 'Child', commitLinks(extras.children));
     // git notes（refs/notes/commits）は、メッセージの後に
     if (extras.notes) {

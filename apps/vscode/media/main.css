@@ -3054,3 +3054,116 @@ body.wrap-lines .line .code {
 .svg-picture {
   margin: 4px 8px;
 }
+
+/* History の密度の帯（左半分がコミットの頻度、右半分がブランチの動き。押すとそこへ） */
+.density-box {
+  position: relative;
+  flex: 0 0 8px;
+  width: 8px;
+  cursor: pointer;
+  border-left: 1px solid var(--vscode-panel-border, transparent);
+}
+
+.density-box[hidden],
+.history.editing .density-box {
+  display: none;
+}
+
+.density-box .density {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.density-box .density-viewport {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border: 1px solid var(--vscode-foreground);
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+/* 行の札の「+N」と、切った札（押すと名前の一覧） */
+.row .ref.more {
+  border: none;
+  cursor: pointer;
+  font: inherit;
+}
+
+.row .ref.cut {
+  cursor: pointer;
+}
+
+.ref-names {
+  position: fixed;
+  z-index: 30;
+  max-width: 420px;
+  max-height: 300px;
+  overflow: auto;
+  padding: 4px 8px;
+  background: var(--vscode-editorHoverWidget-background, var(--vscode-editorWidget-background));
+  color: var(--vscode-editorHoverWidget-foreground, var(--vscode-foreground));
+  border: 1px solid var(--vscode-editorHoverWidget-border, var(--vscode-widget-border, transparent));
+  box-shadow: 0 2px 8px var(--vscode-widget-shadow);
+}
+
+.ref-names .ref-name {
+  padding: 1px 0;
+  white-space: nowrap;
+}
+
+/* History の検索欄の ▾（探す書き方を入れる） */
+.search {
+  position: relative;
+}
+
+.search-prefix-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  min-width: 220px;
+  padding: 4px 0;
+  background: var(--vscode-menu-background, var(--vscode-editorWidget-background));
+  color: var(--vscode-menu-foreground, var(--vscode-foreground));
+  border: 1px solid var(--vscode-menu-border, var(--vscode-widget-border, transparent));
+  box-shadow: 0 2px 8px var(--vscode-widget-shadow);
+}
+
+.search-prefix-menu[hidden] {
+  display: none;
+}
+
+.search-prefix-menu .menu-item {
+  padding: 3px 12px;
+  text-align: left;
+  color: inherit;
+  background: transparent;
+  border: none;
+}
+
+.search-prefix-menu .menu-item:hover {
+  background: var(--vscode-menu-selectionBackground, var(--vscode-list-hoverBackground));
+  color: var(--vscode-menu-selectionForeground, inherit);
+}
+
+/* 編集モードの範囲の境目（下へ引くと古いコミットを取り込み、上へ引くと外す） */
+.edit-boundary {
+  height: 6px;
+  margin: 0 8px;
+  border-bottom: 2px solid var(--vscode-focusBorder);
+  cursor: ns-resize;
+  position: relative;
+}
+
+.edit-boundary[data-steps]:not([data-steps=''])::after {
+  content: attr(data-steps);
+  position: absolute;
+  right: 0;
+  top: -14px;
+  font-size: 0.85em;
+  color: var(--vscode-descriptionForeground);
+}

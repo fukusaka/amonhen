@@ -16,5 +16,7 @@ export function scopeRefs(scope: Scope): string[] | undefined {
 /** 範囲の選択肢に出す名前 */
 export function scopeTitle(scope: Scope): string {
   const short = (name: string) => name.replace(/^refs\/(heads|remotes|tags)\//, '');
-  return (scopeRefs(scope) ?? []).map(short).join(', ');
+  const refs = scopeRefs(scope) ?? [];
+  // いくつも選んだら数だけ（アプリと同じ）
+  return refs.length > 1 ? `${refs.length} branches` : refs.map(short).join(', ');
 }

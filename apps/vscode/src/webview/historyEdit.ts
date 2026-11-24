@@ -30,6 +30,8 @@ export interface EditMode {
   preview(key: number, lines: string[], conflicts: string[], stacked?: EditStacked): void;
   /** Apply を終えた（ok なら閉じる） */
   applied(ok: boolean): void;
+  /** 範囲を広げて読んだ、いちばん古い行より古いコミット（新しい順） */
+  more(rows: EditRow[]): void;
   readonly isOpen: boolean;
 }
 
@@ -56,7 +58,10 @@ export function createEditMode(onClose: () => void, onSelect: (oid: string) => v
   const buttons = el('div', 'edit-buttons');
   buttons.append(stackedLabel, cancel, apply);
   bar.append(texts, buttons);
-  root.append(heading, hint, list, bar);
+  // 範囲の境目: 下へ引くと古いコミットを取り込み、上へ引くと何もしていない古い行から外す（アプリと同じ）
+  const boundary = el('div', 'edit-boundary');
+  boundary.title = 'Drag down to take in older commits, or up to leave out the oldest ones you haven’t changed';
+  root.append(heading, hint, list, boundary, bar);
 
   let rows: EditRow[] = [];
   let original: string[] = [];
@@ -114,7 +119,8 @@ export function createEditMode(onClose: () => void, onSelect: (oid: string) => v
         const select = el('select');
         select.disabled = row.merge === true || applying;
         for (const action of choices(rows, i)) {
-          const option = el('option', '', ACTION_TITLES[action]);
+          // アプリと同じく git の語に説明を添える（pick — Keep など）
+        const option = el('option', '', `${action} — ${ACTION_TITLES[action]}`);
           option.value = action;
           option.title = ACTION_TOOLTIPS[action];
           select.append(option);
@@ -247,6 +253,13 @@ export function createEditMode(onClose: () => void, onSelect: (oid: string) => v
     } else if (e.key === 'Enter') {
       e.preventDefault();
       editMessage(selected);
+    } else if (!e.metaKey && !e.ctrlKey && !e.altKey && e.key.length === 1 && 'prsfde'.includes(e.key.toLowerCase())) {
+      // p・r・s・f・d・e で、選んだ行ですることを決める（git の rebase の todo と同じ頭文字。アプリと同じ）
+      const action = ({ p: 'pick', r: 'reword', s: 'squash', f: 'fixup', d: 'drop', e: 'edit' } as const)[e.key.toLowerCase() as 'p'];
+      if (rows[selected] && !rows[selected]!.merge && choices(rows, selected).includes(action) && !applying) {
+        e.preventDefault();
+        setAction(selected, action);
+      }
     } else if (e.key === 'Escape') {
       e.preventDefault();
       if (!applying) close();
@@ -307,8 +320,63 @@ export function createEditMode(onClose: () => void, onSelect: (oid: string) => v
     clearDrop();
   });
 
+  // 範囲の境目を引く。行の高さで数える
+  boundary.addEventListener('mousedown', (e) => {
+    if (applying || rows.length === 0) return;
+    e.preventDefault();
+    const start = e.clientY;
+    const height = list.querySelector<HTMLElement>('.edit-row')?.offsetHeight || 24;
+    const steps = (m: MouseEvent) => Math.round((m.clientY - start) / height);
+    const onMove = (m: MouseEvent) => {
+      const n = steps(m);
+      boundary.dataset.steps = n === 0 ? '' : n > 0 ? `+${n}` : String(n);
+    };
+    const onUp = (m: MouseEvent) => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      boundary.dataset.steps = '';
+      resize(steps(m));
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  });
+
+  /** 範囲を n 行広げる（拡張ホストに読ませる）か、-n 行狭める（何もしていない、元の場所のままの古い行だけ） */
+  function resize(n: number): void {
+    if (n > 0) {
+      post({ type: 'editExtend', oldest: original[original.length - 1] ?? rows[rows.length - 1]!.oid, count: n });
+      return;
+    }
+    let drop = 0;
+    while (drop < -n && rows.length - drop > 1) {
+      const i = rows.length - 1 - drop;
+      const row = rows[i]!;
+      const above = rows[i - 1];
+      // 外せるのは、何もしていない（pick）、元の場所のままで、すぐ上の行がまとめ先にしていない行だけ
+      const untouched = row.action === 'pick' && original[original.length - 1 - drop] === row.oid;
+      const target = above?.action === 'squash' || above?.action === 'fixup';
+      if (!untouched || target) break;
+      drop++;
+    }
+    if (drop === 0) return;
+    rows = rows.slice(0, rows.length - drop);
+    original = original.slice(0, original.length - drop);
+    selected = Math.min(selected, rows.length - 1);
+    update();
+  }
+
+  function more(older: EditRow[]): void {
+    if (root.hidden || older.length === 0) return;
+    const known = new Set(rows.map((r) => r.oid));
+    const added = older.filter((r) => !known.has(r.oid));
+    rows = [...rows, ...added];
+    original = [...original, ...added.map((r) => r.oid)];
+    update();
+  }
+
   return {
     root,
+    more,
     open,
     preview,
     applied,

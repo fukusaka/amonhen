@@ -87,8 +87,14 @@ export function registerHistoryCommands(): vscode.Disposable {
     command('amonhen.history.cherryPick', (panel, repo, oid) => applyCommit(panel, repo, oid, 'cherry-pick')),
     command('amonhen.history.revert', (panel, repo, oid) => applyCommit(panel, repo, oid, 'revert')),
     // 親（最初の親）・子のコミットへ（子がいくつもあれば選ぶ）。エンジンだけ
-    command('amonhen.history.goToParent', (panel, _repo, oid) => panel.goTo('parent', oid)),
-    command('amonhen.history.goToChild', (panel, _repo, oid) => panel.goTo('child', oid)),
+    // コマンドパレットやキーからは、選んでいるコミットの親・子へ（アプリの ⌘⌥↓・⌘⌥↑）
+    ...(['parent', 'child'] as const).map((to) =>
+      vscode.commands.registerCommand(`amonhen.history.goTo${to === 'parent' ? 'Parent' : 'Child'}`, async (ctx?: CommitContext) => {
+        const panel = MainPanel.active?.history;
+        const oid = ctx?.oid ?? panel?.selectedCommit;
+        if (panel && oid) await panel.goTo(to, oid).catch(showError);
+      }),
+    ),
     // いくつも選んだコミットをまとめて（エンジンだけ）
     selected('amonhen.history.selection.cherryPick', (_panel, repo, commits) => pickSelected(repo, commits, 'cherry-pick')),
     selected('amonhen.history.selection.revert', (_panel, repo, commits) => pickSelected(repo, commits, 'revert')),
@@ -105,6 +111,26 @@ export function registerHistoryCommands(): vscode.Disposable {
     selected('amonhen.history.selection.copyIds', async (_panel, _repo, commits) => {
       await vscode.env.clipboard.writeText(commits.map((c) => c.oid).join('\n'));
       vscode.window.setStatusBarMessage(`$(copy) ${commits.length} commit IDs`, 3000);
+    }),
+    selected('amonhen.history.selection.copyShortIds', async (_panel, _repo, commits) => {
+      await vscode.env.clipboard.writeText(commits.map((c) => c.oid.slice(0, 7)).join('\n'));
+      vscode.window.setStatusBarMessage(`$(copy) ${commits.length} short IDs`, 3000);
+    }),
+    // このコミットを指すブランチ・タグの名前（1 つならそのまま、いくつもなら選ぶ。リモートブランチは origin/ を付けたまま）
+    command('amonhen.history.copyRefName', async (_panel, repo, oid) => {
+      // 読んである ref から（History の行の札と同じもの。リモートブランチは origin/ を付けたまま）
+      const short = (name: string) => name.replace(/^refs\/(heads|remotes|tags)\//, '');
+      const points = (r: { oid: string; peeled?: string }) => r.oid === oid || r.peeled === oid;
+      const names = [
+        ...(repo.current.branches ?? []).filter(points).map((r) => ({ label: short(r.name), description: 'branch' })),
+        ...(repo.current.remoteBranches ?? []).filter((r) => points(r) && !r.symref).map((r) => ({ label: short(r.name), description: 'remote branch' })),
+        ...(repo.current.tags ?? []).filter(points).map((r) => ({ label: short(r.name), description: 'tag' })),
+      ];
+      if (names.length === 0) return;
+      const picked = names.length === 1 ? names[0] : await vscode.window.showQuickPick(names, { placeHolder: 'Copy which name?' });
+      if (!picked) return;
+      await vscode.env.clipboard.writeText(picked.label);
+      vscode.window.setStatusBarMessage(`$(copy) ${picked.label}`, 3000);
     }),
     command('amonhen.history.copyId', async (_panel, _repo, oid) => {
       await vscode.env.clipboard.writeText(oid);
@@ -132,6 +158,20 @@ export function registerHistoryCommands(): vscode.Disposable {
       if (!panel || !repo) return;
       if (message.type === 'editPreview') {
         await sendEditPreview(panel, repo, message.key, message.steps, message.updateRefs);
+        return;
+      }
+      if (message.type === 'editExtend') {
+        // 範囲の境目を下へ引いた: いちばん古い行より古いものを、並びの続きから（merge の向こうも、エンジンが辿れるところまで）
+        try {
+          // 並びの終わり（最初のコミット・辿れない merge）を越えるなら、届くところまで
+          let rows: Awaited<ReturnType<typeof panel.editRows>>;
+          for (let n = message.count; n > 0 && !rows; n--) rows = await panel.editRows(message.oldest, n);
+          const at = rows?.findIndex((r) => r.oid === message.oldest) ?? -1;
+          if (rows && at >= 0) panel.post({ type: 'editMore', rows: rows.slice(at + 1) });
+          else vscode.window.setStatusBarMessage('There are no older commits to take in here.', 4000);
+        } catch (err) {
+          showError(err);
+        }
         return;
       }
       if (message.type === 'editApply') {

@@ -1079,7 +1079,10 @@ async function historySignatureFlow(): Promise<void> {
     await panel.history.handle({ type: 'select', oid: signed });
     const extras = (await waitPosted('detailsExtras', mark, (m) => m.extras.oid === signed)).extras;
     assert.deepEqual(extras.children, [after]);
-    if (ssh) assert.equal(extras.signature?.label, 'Verified');
+    if (ssh) {
+      assert.equal(extras.signature?.label, 'Verified');
+      assert.equal(extras.signature?.format, 'SSH');
+    }
 
     // 子・親・HEAD へ移る
     for (const [to, oid] of [
@@ -2169,6 +2172,39 @@ async function detailsCopyFlow(): Promise<void> {
   assert.equal(await copied('amonhen.details.copyMessage'), git('log', '-1', '--format=%B', oid).trim());
   assert.equal(await copied('amonhen.details.copyShortId'), oid.slice(0, 7));
   assert.equal(await copied('amonhen.details.copyShowCommand'), `git show ${oid}`);
+  // History の行の右クリック: このコミットを指すブランチの名前（HEAD のブランチ 1 つなら選ばずにそのまま）
+  const branch = git('symbolic-ref', '--short', 'HEAD').trim();
+  const names = git('for-each-ref', '--points-at', oid, '--format=%(refname:short)', 'refs/heads', 'refs/remotes', 'refs/tags').trim().split('\n');
+  if (names.length === 1) {
+    await vscode.commands.executeCommand('amonhen.history.copyRefName', { webviewSection: 'commit', oid });
+    assert.equal(await vscode.env.clipboard.readText(), branch);
+  }
+}
+
+/** コミットを指す注釈付きのタグは、詳細の残りに Tag の行（タガーと件名）として届く（エンジン） */
+async function tagRowsFlow(): Promise<void> {
+  const start = git('rev-parse', 'HEAD').trim();
+  // 詳細の残りは覚えておくので、まだ出していない新しいコミットで
+  git('commit', '-q', '--allow-empty', '-m', 'tag rows e2e');
+  const oid = git('rev-parse', 'HEAD').trim();
+  git('tag', '-a', 'tag-rows-e2e', '-m', 'Release for e2e', oid);
+  git('tag', 'tag-rows-light-e2e', oid);
+  await api.manager.current!.refresh();
+  try {
+    const panel = await showView('amonhen.showHistory');
+    const mark = posted.length;
+    await panel.history.handle({ type: 'select', oid });
+    const extras = (await waitPosted('detailsExtras', mark, (m) => m.extras.oid === oid)).extras;
+    const byName = (n: string) => extras.tags?.find((t) => t.name === n);
+    assert.equal(byName('tag-rows-e2e')?.subject, 'Release for e2e', JSON.stringify(extras.tags));
+    assert.ok(byName('tag-rows-e2e')?.tagger);
+    assert.ok(byName('tag-rows-light-e2e'), '軽量のタグも並ぶ');
+    assert.equal(byName('tag-rows-light-e2e')?.subject, undefined);
+  } finally {
+    git('tag', '-d', 'tag-rows-e2e', 'tag-rows-light-e2e');
+    git('reset', '-q', '--hard', start);
+    await api.manager.current!.refresh();
+  }
 }
 
 async function orphanFlow(): Promise<void> {
@@ -3486,6 +3522,17 @@ async function editFlow(label: string): Promise<void> {
       await undo('move');
 
       if (label === 'daemon') {
+        // 編集モードの範囲の境目を下へ引く: いちばん古い行より古いコミットが届く
+        const opened = await openedEditMode(() => vscode.commands.executeCommand('amonhen.history.edit', { oid: c }));
+        const oldest = opened.at(-1)!.oid;
+        const at = posted.length;
+        await panel.history.handle({ type: 'editExtend', oldest, count: 1 });
+        const more = await waitPosted('editMore', at);
+        assert.equal(more.rows.length, 1, JSON.stringify(more.rows.map((r) => r.oid)));
+        assert.equal(more.rows[0]!.oid, rev(`${oldest}~1`));
+      }
+
+      if (label === 'daemon') {
         // Webview で d を b に重ねて落とす: d を b の上へ動かして squash にした編集モードが開く（Apply まで何も変わらない）
         const rows = await openedEditMode(() => panel.history.handle({ type: 'squashOnto', oid: d, onto: b }));
         assert.deepEqual(
@@ -4383,9 +4430,12 @@ suite('Amon Hen in VSCode', () => {
     const start = git('rev-parse', 'HEAD').trim();
     const branch = git('symbolic-ref', '--short', 'HEAD').trim();
     const quickPick = vscode.window.showQuickPick;
-    const toggle = async () => {
-      (vscode.window as { showQuickPick: unknown }).showQuickPick = async (items: vscode.QuickPickItem[]) =>
-        items.find((i) => i.label.endsWith('Highlight Ancestors'));
+    // 祖先を目立たせるを on か off にする（今の印を見て、違うときだけ押す。最初はアプリと同じく on）
+    const highlight = async (on: boolean) => {
+      (vscode.window as { showQuickPick: unknown }).showQuickPick = async (items: vscode.QuickPickItem[]) => {
+        const item = items.find((i) => i.label.endsWith('Highlight Ancestors'));
+        return item && item.label.startsWith('$(check)') !== on ? item : undefined;
+      };
       await panel.history.handle({ type: 'displayMenu' });
     };
     // 2 つのコミットの時刻を 1 秒ずらす。同じ秒だと、日付順の History で同じ時刻のものの並びが読み方（キャッシュ
@@ -4419,8 +4469,10 @@ suite('Amon Hen in VSCode', () => {
       const rows = shown.at(-1)?.rows ?? (await waitPosted('rows', at, (m) => m.total !== undefined)).rows;
       assert.ok(rows.some((r) => r.oid === tip) && rows.some((r) => r.oid === side), 'tip と side が History にある');
       const rowOf = (oid: string) => rows.findIndex((r) => r.oid === oid);
+      // 一度切ってから入れる（入れたときに祖先を送る）
+      await highlight(false);
       at = posted.length;
-      await toggle();
+      await highlight(true);
       await panel.history.handle({ type: 'select', oid: tip });
       // Webview が最初の行を選んだ分が先に届くことがあるので、tip を選んだ答えを待つ
       const isAncestor = (bits: string, oid: string) => {
@@ -4435,8 +4487,9 @@ suite('Amon Hen in VSCode', () => {
       assert.ok(!isAncestor(bits!, side));
       // 切る前に頼んだ分の答えが後から届くことがある。切った答え（null）を待つ
       at = posted.length;
-      await toggle();
+      await highlight(false);
       await waitPosted('lineage', at, (m) => m.rows === null);
+      await highlight(true);
     } finally {
       (vscode.window as { showQuickPick: unknown }).showQuickPick = quickPick;
       await panel.history.handle({ type: 'scope', scope: 'head' });
@@ -4444,6 +4497,20 @@ suite('Amon Hen in VSCode', () => {
       git('branch', '-q', '-D', 'lineage-side');
       await vscode.commands.executeCommand('amonhen.refresh');
     }
+  });
+
+  test('sends the density strip of History through the daemon', async () => {
+    const panel = await showView('amonhen.showHistory');
+    const at = posted.length;
+    await panel.history.reset();
+    await waitPosted('rows', at, (m) => m.total !== undefined);
+    const asked = posted.length;
+    await panel.history.handle({ type: 'density', buckets: 4 });
+    const { values } = await waitPosted('density', asked);
+    const bytes = Buffer.from(values, 'base64');
+    const density = new Float32Array(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+    assert.ok(density.length > 0 && density.length % 2 === 0, String(density.length));
+    assert.ok([...density].every((v) => v >= 0 && v <= 1), String([...density]));
   });
 
   test('shows names from the mailmap through the daemon and reloads them when it changes', async () => {
@@ -4591,6 +4658,10 @@ suite('Amon Hen in VSCode', () => {
 
   test('copies from the commit details’ right-click', async () => {
     await detailsCopyFlow();
+  });
+
+  test('shows the tags on a commit in the details through the daemon', async () => {
+    await tagRowsFlow();
   });
 
   test('creates an orphan branch, empty or keeping the files, through the daemon', async () => {

@@ -148,6 +148,7 @@ export function createReflogView(): View {
   function onMessage(message: HostMessage): void {
     switch (message.type) {
       case 'reflog':
+        title.textContent = message.worktree ? `HEAD of ✎ ${message.worktree}` : 'HEAD';
         onReflog(message.entries, message.error);
         break;
       case 'details':

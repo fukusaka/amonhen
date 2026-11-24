@@ -1,0 +1,62 @@
+x^2 + y^2 = z^2
+e^{i\pi} + 1 = 0
+\frac{a}{b} + \frac{1}{2}
+\frac{\partial f}{\partial x}
+\dfrac{1}{1+\frac{1}{x}}
+\tfrac{1}{2}
+\sum_{i=1}^{n} i = \frac{n(n+1)}{2}
+\int_0^\infty e^{-x^2}\,dx = \frac{\sqrt{\pi}}{2}
+\oint_C \mathbf{F}\cdot d\mathbf{r}
+\prod_{k=1}^{\infty} \left(1 - \frac{1}{p_k^s}\right)^{-1}
+\lim_{x \to 0} \frac{\sin x}{x} = 1
+\iint_D f(x,y)\,dA
+\begin{matrix} a & b \\ c & d \end{matrix}
+\begin{pmatrix} 1 & 0 \\ 0 & 1 \end{pmatrix}
+\begin{bmatrix} a_{11} & a_{12} & \cdots \\ a_{21} & a_{22} & \cdots \\ \vdots & \vdots & \ddots \end{bmatrix}
+\begin{vmatrix} a & b \\ c & d \end{vmatrix} = ad - bc
+\begin{Bmatrix} x \\ y \end{Bmatrix}
+f(x) = \begin{cases} x^2 & \text{if } x \ge 0 \\ -x & \text{otherwise} \end{cases}
+\begin{aligned} a &= b + c \\ &= d \end{aligned}
+\begin{align} f(x) &= (x+1)^2 \\ &= x^2 + 2x + 1 \end{align}
+\begin{align*} x &= 1 & y &= 2 \end{align*}
+\begin{gather} a = b \\ c = d \end{gather}
+\begin{array}{c|c} 1 & 2 \\ \hline 3 & 4 \end{array}
+\alpha \beta \gamma \delta \epsilon \varepsilon \zeta \eta \theta \vartheta \lambda \mu \pi \sigma \phi \varphi \omega
+\Gamma \Delta \Theta \Lambda \Xi \Pi \Sigma \Phi \Psi \Omega
+\hat{x} \bar{y} \tilde{z} \vec{v} \dot{a} \ddot{b} \acute{c} \breve{d} \check{e}
+\widehat{abc} \widetilde{xyz} \overline{AB} \underline{cd}
+\text{velocity } v = \frac{d}{t}
+\mathbb{R}^n \mathbb{N} \mathbb{Z} \mathbb{Q} \mathbb{C}
+\mathcal{L} \mathcal{O}(n \log n)
+\mathrm{d}x \mathrm{e}^{x}
+\mathbf{x} \boldsymbol{\alpha} \mathit{abc} \mathsf{T} \mathtt{code} \mathfrak{g}
+\left( \frac{a}{b} \right) \left[ x \right] \left\{ y \right\} \left| z \right| \left\langle u \right\rangle
+\left. \frac{df}{dx} \right|_{x=0}
+\bigl( \Bigl( \biggl( \Biggl(
+x_i^2 \quad x_{i,j}^{(k)} \quad {}^{14}_{6}C
+a^{b^{c^{d}}}
+\sqrt{2} \sqrt[3]{x} \sqrt[n]{1+x^2}
+\overbrace{a+b+c}^{\text{sum}}
+\underbrace{x_1 + \cdots + x_n}_{n\text{ terms}}
+\binom{n}{k} = \frac{n!}{k!(n-k)!}
+\dbinom{n}{2} \tbinom{a}{b}
+\operatorname{argmax}_{x} f(x) \operatorname{Tr}(A)
+\sin \cos \tan \log \ln \exp \det \max \min \sup \inf
+{\color{red} x} + \color{blue} y
+\textcolor{green}{a+b}
+\colorbox{yellow}{boxed}
+\boxed{E = mc^2}
+\mathbb{E}[X] = \sum_x x\,P(X=x)
+\nabla \cdot \mathbf{E} = \frac{\rho}{\varepsilon_0}
+\forall x \in A,\ \exists y \notin B : x \subseteq y
+a \le b \ge c \ne d \approx e \equiv f \sim g \propto h
+\to \rightarrow \Rightarrow \leftrightarrow \Leftrightarrow \mapsto \implies \iff
+\infty \partial \hbar \ell \aleph_0 \emptyset
+\cdots \ldots \vdots \ddots
+P(A \mid B) = \frac{P(B \mid A) P(A)}{P(B)}
+\| x \|_2 = \sqrt{\sum_i x_i^2}
+x \pmod{n} \quad a \equiv b \pmod m
+\stackrel{\text{def}}{=} \overset{?}{=} \underset{x}{\arg\min}
+\xrightarrow{f} \xleftarrow[g]{h}
+\mathrm{softmax}(z)_i = \frac{e^{z_i}}{\sum_j e^{z_j}}
+\begin{pmatrix} \cos\theta & -\sin\theta \\ \sin\theta & \cos\theta \end{pmatrix}
