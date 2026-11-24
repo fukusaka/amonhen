@@ -9,6 +9,11 @@ becomes the GitHub Release notes.
 
 ### Unreleased
 
+#### Added
+
+- History's All Files draws Android VectorDrawables (`.xml` with a `<vector>` or `<animated-vector>` root) as pictures,
+  resolving `@color/…` from the commit's `res` folder and noting what's drawn in gray (macOS, GTK4).
+
 #### Changed
 
 - DOT diagrams: `splines=ortho` edges leave from their ports' sides, spread across each side of a node and keep shared
@@ -1282,6 +1287,11 @@ First release.
 
 - The Working Copy diff can ignore whitespace (at line ends, changes in amount or all), with the engine. Lines and
   hunks aren't staged or discarded meanwhile.
+
+#### Fixed
+
+- Restoring the version before a commit that renamed a file brings back the old name instead of only deleting the new
+  one, and Restore This Version isn't offered for a file the commit deleted.
 
 ### [0.2.9] - 2026-11-24
 

@@ -38,10 +38,19 @@ function withRecorded(text: string, recorded: Person | undefined): Node | string
 
 /**
  * ファイルの差分の見出しの右クリックメニュー（package.json の webview/context）に渡す情報。`wide` なら Show Whole
- * File も出す
+ * File も出す。このコミットで消したファイルには「この版に戻す」を出さない（この版にはない）。名前を変えたファイルは、
+ * 前の版に戻すと元の名前に戻す（origPath）
  */
-function fileContext(oid: string, path: string, wide: boolean): string {
-  return JSON.stringify({ webviewSection: 'commitFile', oid, path, commitFileWide: wide, preventDefaultContextMenuItems: true });
+function fileContext(oid: string, path: string, wide: boolean, status?: string, origPath?: string): string {
+  return JSON.stringify({
+    webviewSection: 'commitFile',
+    oid,
+    path,
+    ...(origPath ? { origPath } : {}),
+    commitFileWide: wide,
+    commitFileDeleted: status === 'D',
+    preventDefaultContextMenuItems: true,
+  });
 }
 
 export interface DetailsPane {
@@ -467,7 +476,7 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
       if (f.status) head.append(el('span', `status s-${f.status}`, f.status));
       head.append(el('span', 'path'));
       if (single) {
-        head.dataset.vscodeContext = fileContext(oid, f.path, choices !== undefined);
+        head.dataset.vscodeContext = fileContext(oid, f.path, choices !== undefined, f.status, f.origPath);
         const open = el('button', 'head-button', 'Open');
         open.title = 'Open the diff in the editor';
         open.addEventListener('click', () => post({ type: 'openFile', oid, path: f.path }));

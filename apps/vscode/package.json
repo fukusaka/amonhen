@@ -2095,7 +2095,7 @@
         },
         {
           "command": "amonhen.restoreFile.thisVersion",
-          "when": "webviewId == 'amonhen.main' && webviewSection == 'commitFile' && amonhen.engine",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commitFile' && !commitFileDeleted && amonhen.engine",
           "group": "2_restore@1"
         },
         {
