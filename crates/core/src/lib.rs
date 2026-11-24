@@ -17,6 +17,7 @@ pub mod graph;
 pub mod lanes;
 pub mod lineage;
 pub mod markdown;
+pub mod math;
 pub mod mermaidtheme;
 pub mod patch;
 pub mod query;

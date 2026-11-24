@@ -90,6 +90,7 @@ dependencies = [
  "amonhen-backend-gix",
  "amonhen-dot",
  "amonhen-layout",
+ "amonhen-math",
  "amonhen-model",
  "amonhen-pele",
  "amonhen-projection",

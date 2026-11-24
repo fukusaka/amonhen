@@ -2498,6 +2498,10 @@
 "What {name} reports" = "{name} の報告";
 "This diagram couldn’t be drawn" = "この図は描けませんでした";
 "This picture is an approximation: {reasons}." = "この絵は近いもので描いています（{reasons}）。";
+"This file has too many formulas to draw them all" = "このファイルは数式が多すぎて、すべては描けません";
+"This formula couldn’t be drawn" = "この数式は描けませんでした";
+"This formula is too long to draw ({limit} bytes at most)" = "この数式は長すぎて描けません（{limit} バイトまで）";
+"This formula is too large to draw" = "この数式は大きすぎて描けません";
 "images that can’t be read are drawn as empty frames" = "読めない画像は空の枠";
 "unknown shapes are drawn as boxes" = "知らない形は箱";
 "orthogonal edges are drawn as polylines" = "直角の線（ortho）は折れ線";
