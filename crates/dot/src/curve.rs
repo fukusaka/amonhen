@@ -269,6 +269,53 @@ pub fn offset(path: &[Cubic], d: f64) -> Vec<Cubic> {
 }
 
 /// SVG の `d`。
+/// 太さの変わる線（`style=tapered`）の外形の SVG のパス。`width(s)` は線に沿った割合 s（0〜1）での太さ。
+pub fn tapered(path: &[Cubic], width: impl Fn(f64) -> f64) -> String {
+    use amonhen_pele::svg::builder::num;
+    // 線に沿って点を取る（1 本の曲線に 24 点）
+    let mut pts: Vec<P> = Vec::new();
+    for c in path {
+        for k in 0..=24 {
+            if k == 0 && !pts.is_empty() {
+                continue;
+            }
+            pts.push(c.at(k as f64 / 24.0));
+        }
+    }
+    pts.dedup_by(|a, b| (a.0 - b.0).hypot(a.1 - b.1) < 1e-9);
+    if pts.len() < 2 {
+        return String::new();
+    }
+    let mut along = vec![0.0];
+    for w in pts.windows(2) {
+        let l = along[along.len() - 1] + (w[1].0 - w[0].0).hypot(w[1].1 - w[0].1);
+        along.push(l);
+    }
+    let total = along[along.len() - 1].max(1e-9);
+    let mut left = Vec::with_capacity(pts.len());
+    let mut right = Vec::with_capacity(pts.len());
+    for (i, p) in pts.iter().enumerate() {
+        let (a, b) = (pts[i.saturating_sub(1)], pts[(i + 1).min(pts.len() - 1)]);
+        let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+        let l = dx.hypot(dy).max(1e-9);
+        let half = width(along[i] / total).max(0.0) / 2.0;
+        let n = (-dy / l * half, dx / l * half);
+        left.push((p.0 + n.0, p.1 + n.1));
+        right.push((p.0 - n.0, p.1 - n.1));
+    }
+    let mut d = String::new();
+    for (i, q) in left.iter().chain(right.iter().rev()).enumerate() {
+        d.push_str(&format!(
+            "{}{},{}",
+            if i == 0 { "M" } else { "L" },
+            num(q.0),
+            num(q.1)
+        ));
+    }
+    d.push('Z');
+    d
+}
+
 pub fn svg_d(path: &[Cubic]) -> String {
     use amonhen_pele::svg::builder::num;
     let mut d = String::new();

@@ -751,6 +751,10 @@ export function createHistoryView(): View {
         render();
         break;
       }
+      case 'focusSearch':
+        searchInput.focus();
+        searchInput.select();
+        break;
       case 'reset':
         lineage = null;
         lineageEdges = null;

@@ -428,6 +428,9 @@ export class WorkingCopyController implements vscode.Disposable {
       case 'wcCommitMenu':
         await this.commitMenu(repo, message.canCommit, message.message, message.amend);
         break;
+      case 'wcCommitRefused':
+        void vscode.window.showWarningMessage(`Can’t commit: ${message.reason}`);
+        break;
       case 'wcWhitespace':
         if (message.whitespace !== this.whitespace) {
           this.whitespace = message.whitespace;

@@ -13,6 +13,14 @@ becomes the GitHub Release notes.
 
 - History's All Files draws Android VectorDrawables (`.xml` with a `<vector>` or `<animated-vector>` root) as pictures,
   resolving `@color/…` from the commit's `res` folder and noting what's drawn in gray (macOS, GTK4).
+- DOT diagrams in Markdown previews draw images (a node's `image`, a table's `<IMG>`) from the same commit, by a path
+  relative to the Markdown file's folder.
+- DOT diagrams draw gradient fills in HTML-like tables, cells and cluster and graph backgrounds, striped clusters,
+  tapered edges, `decorate`, node `labelloc`, and dashed or dotted table borders.
+
+#### Fixed
+
+- DOT diagrams: in `rankdir=LR`/`RL`, a cluster is widened to fit a title longer than its box.
 
 ### [0.2.14] - 2026-11-24
 
@@ -1283,6 +1291,8 @@ First release.
   hunks aren't staged or discarded meanwhile.
 - In the commit details, URLs and commit IDs in the message are links, the trailers are listed apart from the body,
   git notes follow the message (with the engine), and History's search terms are marked.
+- The app menus' Commit, Commit and Push, Stage All, Set Upstream…, Rebase…, Go to HEAD and Find in History… are
+  commands, so they can be bound to keys; Merge Branches… and Rebase… also offer the commit selected in History.
 
 #### Fixed
 

@@ -235,6 +235,11 @@ export class HistoryController implements vscode.Disposable {
   }
   /** 選んでいるコミット（祖先を目立たせるため） */
   private selectedOid: string | undefined;
+
+  /** History で 1 つだけ選んでいるコミット（いくつも選んでいれば undefined。Merge…・Rebase… で選べる） */
+  get selectedCommit(): string | undefined {
+    return this.selection ? undefined : this.selectedOid;
+  }
   private lineageRequest = 0;
   /** 探している途中の検索の文（History を読み直したら、終わっていなくても探し直す） */
   private searching: string | undefined;

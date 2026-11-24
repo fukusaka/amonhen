@@ -2102,6 +2102,52 @@ async function notesFlow(): Promise<void> {
   }
 }
 
+/**
+ * アプリのメニューにあってボタンの中にしかなかった操作のコマンド: Stage All、Set Upstream…（QuickPick で選ぶ）、
+ * Find in History…（検索の欄へ）
+ */
+async function menuCommandsFlow(): Promise<void> {
+  const repo = api.manager.current!;
+  const branch = git('symbolic-ref', '--short', 'HEAD').trim();
+  const upstream = (() => {
+    try {
+      return git('rev-parse', '--abbrev-ref', `${branch}@{u}`).trim();
+    } catch {
+      return '';
+    }
+  })();
+  const file = join(root, 'stage-all-e2e.txt');
+  try {
+    writeFileSync(file, 'new\n');
+    await repo.refresh();
+    await vscode.commands.executeCommand('amonhen.stageAll');
+    assert.ok(git('diff', '--cached', '--name-only').split('\n').includes('stage-all-e2e.txt'), lastErrors());
+
+    git('update-ref', 'refs/remotes/origin/menu-up-e2e', 'HEAD');
+    await repo.refresh();
+    await withWindow(
+      { showQuickPick: async (items: readonly vscode.QuickPickItem[]) => items.find((i) => i.label.endsWith('origin/menu-up-e2e')) },
+      async () => vscode.commands.executeCommand('amonhen.setUpstream'),
+    );
+    assert.equal(git('rev-parse', '--abbrev-ref', `${branch}@{u}`).trim(), 'origin/menu-up-e2e', lastErrors());
+
+    const at = posted.length;
+    await vscode.commands.executeCommand('amonhen.history.find');
+    await waitPosted('focusSearch', at);
+  } finally {
+    git('reset', '-q');
+    rmSync(file, { force: true });
+    try {
+      if (upstream) git('branch', `--set-upstream-to=${upstream}`, branch);
+      else git('branch', '--unset-upstream', branch);
+    } catch {
+      // 上流を変える前に落ちた
+    }
+    git('update-ref', '-d', 'refs/remotes/origin/menu-up-e2e');
+    await repo.refresh();
+  }
+}
+
 async function orphanFlow(): Promise<void> {
   const repo = api.manager.current!;
   const branch = git('symbolic-ref', '--short', 'HEAD').trim();
@@ -4494,6 +4540,10 @@ suite('Amon Hen in VSCode', () => {
 
   test('shows git notes in the details through the daemon', async () => {
     await notesFlow();
+  });
+
+  test('runs the app menu’s commands from the Command Palette', async () => {
+    await menuCommandsFlow();
   });
 
   test('creates an orphan branch, empty or keeping the files, through the daemon', async () => {

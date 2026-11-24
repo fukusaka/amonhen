@@ -10,6 +10,7 @@ import type { Repository } from '../state/repository.ts';
 import type { MergeMode } from '../git/backend.ts';
 import { runAction } from './dragDrop.ts';
 import { pickMergeMode } from './mergeMode.ts';
+import { MainPanel } from './mainPanel.ts';
 
 interface RefItem extends vscode.QuickPickItem {
   ref: string;
@@ -45,7 +46,12 @@ export async function mergeBranches(repo: Repository, chosen?: readonly string[]
   ];
   const icon = (ref: string) =>
     ref.startsWith('refs/tags/') ? '$(tag)' : ref.startsWith('refs/remotes/') ? '$(cloud)' : '$(git-branch)';
-  const items: RefItem[] = refs.map((r) => ({ label: `${icon(r.name)} ${shortName(r.name)}`, detail: r.subject, ref: r.name }));
+  // History で 1 つだけ選んでいるコミットも選べる（アプリの Merge… と同じ）
+  const selected = MainPanel.active?.history.selectedCommit;
+  const items: RefItem[] = [
+    ...(selected ? [{ label: `$(git-commit) ${selected.slice(0, 8)}`, description: 'selected in History', ref: selected }] : []),
+    ...refs.map((r) => ({ label: `${icon(r.name)} ${shortName(r.name)}`, detail: r.subject, ref: r.name })),
+  ];
   const picked = await vscode.window.showQuickPick(items, {
     canPickMany: true,
     matchOnDetail: true,

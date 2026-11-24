@@ -793,6 +793,11 @@ export function createWorkingCopyView(): View {
         committing = m.committing;
         updateCommitButton();
         break;
+      case 'wcCommitNow':
+        // 押せないときは、ボタンのツールチップと同じわけを返す（拡張が知らせる）
+        if (commitButton.disabled) post({ type: 'wcCommitRefused', reason: commitButton.title });
+        else commit(m.push);
+        break;
       case 'wcCommitted':
         clearTimeout(draftTimer);
         subject.value = '';
