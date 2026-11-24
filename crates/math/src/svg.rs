@@ -174,6 +174,44 @@ fn paint(out: &mut String, attr: &str, color: &Color) {
     }
 }
 
+/// 濃い地の上の既定の文字の色と、明るい地の上の色（DOT の図と同じ決まり）。
+const INK_ON_DARK: Color = Color::rgb(1.0, 1.0, 1.0);
+const INK_ON_LIGHT: Color = Color::rgb(31.0 / 255.0, 31.0 / 255.0, 31.0 / 255.0);
+
+/// 地の色 `back` の上で読める文字の色（明るさが 0.45 より暗ければ白、ほかは #1f1f1f。DOT の `Color::ink` と同じ）。
+fn ink(back: &Color) -> Color {
+    let luminance =
+        0.299 * f64::from(back.r) + 0.587 * f64::from(back.g) + 0.114 * f64::from(back.b);
+    if luminance < 0.45 {
+        INK_ON_DARK
+    } else {
+        INK_ON_LIGHT
+    }
+}
+
+/// 色を決めて塗った地（`\colorbox`・`\fcolorbox` など）。範囲は SVG の単位、`at` は並びの中の位置。
+struct Backdrop {
+    at: usize,
+    x0: f64,
+    y0: f64,
+    x1: f64,
+    y1: f64,
+    ink: Color,
+}
+
+/// 並びの `i` 番目の物（点 `(x, y)` を含む）の色。既定の色の物が塗った地の上にあれば、テーマの文字の色ではなく
+/// その地の上で読める色にする（暗い外観の白い文字が黄色の地で読めなくならないように）。`\color` の色はそのまま。
+fn on_backdrop(backdrops: &[Backdrop], i: usize, (x, y): (f64, f64), color: &Color) -> Color {
+    if *color != DEFAULT_MARK {
+        return *color;
+    }
+    backdrops
+        .iter()
+        .rev()
+        .find(|b| b.at < i && (b.x0..=b.x1).contains(&x) && (b.y0..=b.y1).contains(&y))
+        .map_or(*color, |b| b.ink)
+}
+
 fn escape(out: &mut String, ch: char) {
     match ch {
         '&' => out.push_str("&amp;"),
@@ -198,7 +236,29 @@ pub(crate) fn write(list: &DisplayList) -> Written {
     let mut body = String::with_capacity(list.items.len() * 80);
     let mut defs = String::new();
     let mut ids: HashMap<(FontId, u16), usize> = HashMap::new();
-    for item in &list.items {
+    let backdrops: Vec<Backdrop> = list
+        .items
+        .iter()
+        .enumerate()
+        .filter_map(|(at, item)| match item {
+            DisplayItem::Rect {
+                x,
+                y,
+                width,
+                height,
+                color,
+            } if *color != DEFAULT_MARK && color.a >= 0.5 => Some(Backdrop {
+                at,
+                x0: x * UNIT,
+                y0: y * UNIT,
+                x1: (x + width) * UNIT,
+                y1: (y + height) * UNIT,
+                ink: ink(color),
+            }),
+            _ => None,
+        })
+        .collect();
+    for (i, item) in list.items.iter().enumerate() {
         match item {
             DisplayItem::GlyphPath {
                 x,
@@ -209,6 +269,7 @@ pub(crate) fn write(list: &DisplayList) -> Written {
                 color,
             } => {
                 let (gx, gy) = (x * UNIT, y * UNIT);
+                let color = &on_backdrop(&backdrops, i, (gx + s * 250.0, gy - s * 250.0), color);
                 let font_id = FontId::parse(font).unwrap_or(FontId::MainRegular);
                 let found = fonts.get(&font_id).and_then(Option::as_ref).and_then(|f| {
                     let ch = ratex_font::katex_ttf_glyph_char(font_id, *char_code);
@@ -275,6 +336,7 @@ pub(crate) fn write(list: &DisplayList) -> Written {
             } => {
                 let (lx, ly, w) = (x * UNIT, y * UNIT, width * UNIT);
                 let t = (thickness * UNIT).max(0.5);
+                let color = &on_backdrop(&backdrops, i, (lx + w / 2.0, ly), color);
                 bounds.add(lx, ly - t / 2.0, lx + w, ly + t / 2.0);
                 if *dashed {
                     body.push_str("<line x1=\"");
@@ -304,6 +366,7 @@ pub(crate) fn write(list: &DisplayList) -> Written {
                 color,
             } => {
                 let (rx, ry, w, h) = (x * UNIT, y * UNIT, width * UNIT, height * UNIT);
+                let color = &on_backdrop(&backdrops, i, (rx + w / 2.0, ry + h / 2.0), color);
                 bounds.add(rx, ry, rx + w, ry + h);
                 rect(&mut body, rx, ry, w, h, color);
             }
@@ -315,6 +378,11 @@ pub(crate) fn write(list: &DisplayList) -> Written {
                 color,
             } => {
                 let (ox, oy) = (x * UNIT, y * UNIT);
+                let start = commands.iter().find_map(|c| match *c {
+                    PathCommand::MoveTo { x, y } => Some((ox + x * UNIT, oy + y * UNIT)),
+                    _ => None,
+                });
+                let color = &on_backdrop(&backdrops, i, start.unwrap_or((ox, oy)), color);
                 if *fill {
                     // 輪郭ごとに別の <path> に（重なる輪郭で穴が開かないよう。ratex-svg と同じ）
                     let mut start = 0;

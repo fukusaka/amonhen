@@ -201,6 +201,24 @@ mod tests {
     }
 
     #[test]
+    fn content_on_a_colored_box_gets_a_readable_color() {
+        // 明るい地の上は #1f1f1f、濃い地の上は白（テーマの文字の色の変数は使わない）
+        let f = render(r"\colorbox{yellow}{boxed}", false).unwrap();
+        assert!(f.svg.contains("fill=\"#ffff00\""), "{}", f.svg);
+        assert_eq!(f.svg.matches("fill=\"#1f1f1f\"").count(), 5, "{}", f.svg);
+        let f = render(r"\colorbox{navy}{x} + y", false).unwrap();
+        assert_eq!(f.svg.matches("fill=\"#ffffff\"").count(), 1, "{}", f.svg);
+        // 地の外の y は既定の色のまま（fill を書かない <use> がある）
+        assert!(f.svg.contains("\"/><use"), "{}", f.svg);
+        let f = render(r"\fcolorbox{red}{black}{ab}", false).unwrap();
+        assert_eq!(f.svg.matches("fill=\"#ffffff\"").count(), 2, "{}", f.svg);
+        // \color で決めた色はそのまま
+        let f = render(r"\colorbox{yellow}{\color{blue} z}", false).unwrap();
+        assert!(f.svg.contains("fill=\"#0000ff\""), "{}", f.svg);
+        assert!(!f.svg.contains("#1f1f1f"), "{}", f.svg);
+    }
+
+    #[test]
     fn missing_glyphs_become_text() {
         let f = render(r"\text{日本語} = x", true).unwrap();
         assert!(f.svg.contains(">日</text>"), "{}", f.svg);
