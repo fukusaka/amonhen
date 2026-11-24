@@ -1316,6 +1316,8 @@ First release.
 - The sidebar's in-progress row says what is being done where and the step, and why it stopped with what to do next
   (the commit, conflicts, a failed exec, a stop to edit), as the app's band does (with the engine); a revert has no
   Skip.
+- Comparing images follows the app: 2-Up, zoom (−, %, +, Fit, ⌘-scroll), the differing pixels counted against the
+  whole with their share, and an SVG shown as a picture that Show as Text turns into its diff.
 
 #### Changed
 

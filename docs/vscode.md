@@ -304,3 +304,4 @@ left out for now: VSCode has its own extensions and settings for them.
 - [x] 81. Select several files in the Working Copy (⌘- or Ctrl-click, Shift-click, Shift+↑↓); Space, ⌫, the row buttons and Stash… act on all of them
 - [x] 82. The in-progress row says what is being done where and the step, and why it stopped with what to do next (with the engine), as the app's band; no Skip for a revert
 - [x] 83. Known failures said in plain words with the app's next steps (Pull…, Open Working Copy, Set Upstream…, Open Worktree, Open in Terminal, Try Again) and advice in Details
+- [x] 89. Image comparison as the app's: 2-Up, zoom (−, %, +, Fit, ⌘-scroll), the differing pixels' share, and an SVG as a picture with Show as Text

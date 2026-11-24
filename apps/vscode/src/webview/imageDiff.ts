@@ -8,7 +8,7 @@ import { el } from './api.ts';
 export type ImageMode = 'side' | 'swipe' | 'onion' | 'difference';
 
 const MODES: { mode: ImageMode; label: string; tip: string }[] = [
-  { mode: 'side', label: 'Side by Side', tip: 'Show the two versions side by side' },
+  { mode: 'side', label: '2-Up', tip: 'Show the two versions side by side' },
   { mode: 'swipe', label: 'Swipe', tip: 'Drag to uncover the new version over the old one' },
   { mode: 'onion', label: 'Onion Skin', tip: 'Fade the new version over the old one' },
   { mode: 'difference', label: 'Difference', tip: 'Mark the pixels that differ' },
@@ -38,8 +38,15 @@ function load(url: string): Promise<HTMLImageElement> {
   });
 }
 
-/** 画像の差分の欄 */
-export function renderImageDiff(before: ImageBlob | undefined, after: ImageBlob | undefined): HTMLElement {
+/** 拡大縮小の倍率（0 は欄に合わせる）。欄をまたいで同じにする（開いている間だけ） */
+let lastZoom = 0;
+
+/** 画像の差分の欄。onShowText があれば（SVG）、帯に「文字で見る」を置く */
+export function renderImageDiff(
+  before: ImageBlob | undefined,
+  after: ImageBlob | undefined,
+  options: { onShowText?: () => void } = {},
+): HTMLElement {
   const box = el('div', 'image-diff');
   if (!before && !after) {
     box.append(el('div', 'empty', 'Can’t read the image'));
@@ -47,9 +54,68 @@ export function renderImageDiff(before: ImageBlob | undefined, after: ImageBlob 
   }
   const both = before !== undefined && after !== undefined;
   const bar = el('div', 'image-modes');
+  const modes = el('span', 'segmented');
   const stage = el('div', 'image-stage');
-  if (both) box.append(bar);
-  box.append(stage);
+  // 帯: 比べ方（2 枚あるとき）・文字で見る（SVG）・拡大縮小（アプリと同じ）
+  bar.append(modes);
+  if (options.onShowText) {
+    const text = el('button', 'bar-button', 'Show as Text');
+    text.title = 'Show the SVG’s text and its diff';
+    text.addEventListener('click', () => options.onShowText?.());
+    bar.append(text);
+  }
+  const zoomLabel = el('button', 'bar-button zoom-label');
+  zoomLabel.title = 'Actual Size (100%) or Zoom to Fit';
+  const zoomButton = (text: string, tip: string, run: () => void) => {
+    const b = el('button', 'bar-button', text);
+    b.title = tip;
+    b.addEventListener('click', run);
+    return b;
+  };
+  const spacer = el('span', 'spacer');
+  bar.append(
+    spacer,
+    zoomButton('−', 'Zoom Out', () => setZoom(currentZoom() / 1.25)),
+    zoomLabel,
+    zoomButton('+', 'Zoom In', () => setZoom(currentZoom() * 1.25)),
+    zoomButton('Fit', 'Zoom to Fit', () => setZoom(0)),
+  );
+  zoomLabel.addEventListener('click', () => setZoom(lastZoom === 1 ? 0 : 1));
+  box.append(bar, stage);
+  /** 今の倍率（合わせているときは、いちばん大きい画像の見えている倍率） */
+  const currentZoom = () => {
+    if (lastZoom > 0) return lastZoom;
+    const img = stage.querySelector<HTMLImageElement | HTMLCanvasElement>('img, canvas');
+    const natural = img instanceof HTMLImageElement ? img.naturalWidth : (img?.width ?? 0);
+    return img && natural ? img.clientWidth / natural : 1;
+  };
+  const setZoom = (zoom: number) => {
+    lastZoom = zoom === 0 ? 0 : Math.min(32, Math.max(0.05, zoom));
+    applyZoom();
+  };
+  /** 画像と重ねた枠の幅を倍率に合わせる（合わせるなら欄の幅まで） */
+  const applyZoom = () => {
+    zoomLabel.textContent = lastZoom === 0 ? 'Fit' : `${Math.round(lastZoom * 100)}%`;
+    for (const img of stage.querySelectorAll<HTMLImageElement>('.image-side img')) {
+      img.style.maxWidth = lastZoom === 0 ? '100%' : 'none';
+      img.style.width = lastZoom === 0 ? '' : `${Math.round(img.naturalWidth * lastZoom)}px`;
+    }
+    const overlay = stage.querySelector<HTMLElement>('.image-overlay');
+    if (overlay) {
+      const width = Number(overlay.dataset.width ?? 0);
+      overlay.style.maxWidth = lastZoom === 0 ? `${width}px` : 'none';
+      overlay.style.width = lastZoom === 0 ? '' : `${Math.round(width * lastZoom)}px`;
+    }
+  };
+  stage.addEventListener(
+    'wheel',
+    (e) => {
+      if (!e.metaKey && !e.ctrlKey) return;
+      e.preventDefault();
+      setZoom(currentZoom() * (e.deltaY < 0 ? 1.1 : 1 / 1.1));
+    },
+    { passive: false },
+  );
 
   const caption = (label: string, blob: ImageBlob, img: HTMLImageElement) =>
     el('div', 'image-caption', `${label} · ${img.naturalWidth} × ${img.naturalHeight} · ${sizeText(blob.bytes)}`);
@@ -57,8 +123,9 @@ export function renderImageDiff(before: ImageBlob | undefined, after: ImageBlob 
   void Promise.all([before ? load(before.url) : undefined, after ? load(after.url) : undefined]).then(([old, now]) => {
     const show = (mode: ImageMode) => {
       lastMode = mode;
-      for (const b of bar.querySelectorAll<HTMLElement>('button')) b.classList.toggle('on', b.dataset.mode === mode);
+      for (const b of modes.querySelectorAll<HTMLElement>('button')) b.classList.toggle('on', b.dataset.mode === mode);
       stage.replaceChildren(...render(mode));
+      applyZoom();
     };
     const render = (mode: ImageMode): Node[] => {
       if (!both || mode === 'side') {
@@ -79,6 +146,7 @@ export function renderImageDiff(before: ImageBlob | undefined, after: ImageBlob 
       const width = Math.max(old!.naturalWidth, now!.naturalWidth);
       const height = Math.max(old!.naturalHeight, now!.naturalHeight);
       const frame = el('div', 'checker image-overlay');
+      frame.dataset.width = String(width);
       frame.style.aspectRatio = `${width} / ${height || 1}`;
       frame.style.maxWidth = `${width}px`;
       const under = old!.cloneNode() as HTMLImageElement;
@@ -121,7 +189,7 @@ export function renderImageDiff(before: ImageBlob | undefined, after: ImageBlob 
       button.dataset.mode = m.mode;
       button.title = m.tip;
       button.addEventListener('click', () => show(m.mode));
-      bar.append(button);
+      if (both) modes.append(button);
     }
     show(both ? lastMode : 'side');
   });
@@ -166,5 +234,8 @@ function paintDifference(canvas: HTMLCanvasElement, old: HTMLImageElement, now: 
     }
   }
   g.putImageData(out, 0, 0);
-  count.textContent = differ === 0 ? 'No pixels differ' : `${differ.toLocaleString()} pixel${differ === 1 ? '' : 's'} differ`;
+  const total = width * height;
+  // アプリと同じく、全体のうちの数と割合
+  count.textContent =
+    differ === 0 ? 'No pixels differ' : `${differ.toLocaleString()} of ${total.toLocaleString()} pixels differ (${((differ * 100) / total).toFixed(1)}%)`;
 }
