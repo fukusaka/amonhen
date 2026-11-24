@@ -6,7 +6,7 @@ test('one ref stays a ref scope, several keep every name', () => {
   assert.equal(refsScope(['refs/heads/a']), 'ref:refs/heads/a');
   const two = refsScope(['refs/heads/a', 'refs/remotes/origin/b']);
   assert.deepEqual(scopeRefs(two), ['refs/heads/a', 'refs/remotes/origin/b']);
-  assert.equal(scopeTitle(two), 'a, origin/b');
+  assert.equal(scopeTitle(two), '2 branches');
 });
 
 test('the current branch and all branches have no refs', () => {

@@ -12,14 +12,19 @@ becomes the GitHub Release notes.
 #### Added
 
 - History's All Files draws Android VectorDrawables (`.xml` with a `<vector>` or `<animated-vector>` root) as pictures,
-  resolving `@color/…` from the commit's `res` folder and noting what's drawn in gray (macOS, GTK4).
+  resolving `@color/…` from the commit's `res` folder; what can't be resolved is drawn in the text color, with a note
+  (macOS, GTK4).
 - DOT diagrams in Markdown previews draw images (a node's `image`, a table's `<IMG>`) from the same commit, by a path
-  relative to the Markdown file's folder.
+  relative to the Markdown file's folder; images over 1 MiB or larger than 4K (3840 × 2160 pixels) are drawn as empty frames.
 - DOT diagrams draw gradient fills in HTML-like tables, cells and cluster and graph backgrounds, striped clusters,
   tapered edges, `decorate`, node `labelloc`, and dashed or dotted table borders.
 - Markdown previews draw the HTML GitHub renders: `align` for centered logos and badge rows, sized and linked images,
   `<details>` that open and close, `<picture>` by appearance, tables spanning cells, `<kbd>`, `<sub>` and `<sup>`.
   Comments, styles, scripts and forms are left out, as on GitHub.
+- A button beside the zoom buttons switches the checkerboard behind transparent pictures between light and dark;
+  light pictures such as white icons get the dark one by default (macOS, GTK4).
+- Markdown previews draw math as on GitHub (` ```math `, `$$…$$`, `$…$` and `` $`…`$ ``) with RaTeX and the KaTeX
+  fonts, in the text color (macOS, GTK4); prices such as `$5 and $6` stay text.
 
 #### Fixed
 
@@ -30,6 +35,8 @@ becomes the GitHub Release notes.
 - DOT diagrams: `splines=ortho` edges leave from their ports' sides, spread across each side of a node and keep shared
   runs apart; sfdp keeps small cycles open, fdp reads `pos`/`pin` inside clusters, self-loops go on their port's side
   and same-rank edge labels get room.
+- DOT diagrams: table and cell borders without a `color` are drawn in a color readable on the fill under them, like
+  the text.
 
 ### [0.2.14] - 2026-11-24
 
@@ -1298,6 +1305,8 @@ First release.
 
 - The Working Copy diff can ignore whitespace (at line ends, changes in amount or all), with the engine. Lines and
   hunks aren't staged or discarded meanwhile.
+- The commit details show the tags on the commit and the tags a merge took in, with their tagger, subject and
+  signature, the number of commits a merge took in, and the signature's format and fingerprint (with the engine).
 - In the commit details, URLs and commit IDs in the message are links, the trailers are listed apart from the body,
   git notes follow the message (with the engine), and History's search terms are marked.
 - The app menus' Commit, Commit and Push, Stage All, Set Upstream…, Rebase…, Go to HEAD and Find in History… are
@@ -1310,6 +1319,9 @@ First release.
   has Edit Message… for an editable commit. The author's and committer's names search History for that person.
 - Markdown in All Files draws the HTML GitHub renders, with the engine: `<details>`, tables spanning cells, `align`,
   image sizes, `<picture>` by theme, `<kbd>`, `<sub>` and `<sup>`.
+- In the edit mode, p, r, s, f, d and e choose the selected row's action, and dragging the line under the rows takes in
+  older commits or leaves out the oldest unchanged ones, as in the app.
+- Markdown math (` ```math `, `$$…$$`, `$…$`) shows as its TeX code, with the engine.
 
 #### Changed
 
@@ -1320,6 +1332,8 @@ First release.
   Interactive Rebase from Here…, Cherry-pick on every commit, Split, Merge and Save Patches only where they work, and
   Go to Parent / Child on ⌘⌥↓ / ⌘⌥↑. Save as Patch combines an mbox with a cover letter and remembers the choice, the
   edit mode reads "drop — Remove", and the Reflog names its worktree when there are several.
+- History starts on All Branches, a branch chosen in the sidebar shows its upstream too, the search field has the
+  app's ▾ of ways to search, the counts read "3 / 10", and ancestors are highlighted from the start, as in the app.
 
 #### Changed
 

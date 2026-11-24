@@ -59,7 +59,7 @@ export async function setHistoryOneLine(oneLine: boolean): Promise<void> {
 
 /** History で、選んだコミットの祖先だけをはっきり出すか */
 export function historyHighlight(): boolean {
-  return store?.get<boolean>('history.highlight') ?? false;
+  return store?.get<boolean>('history.highlight') ?? true;
 }
 
 export async function setHistoryHighlight(highlight: boolean): Promise<void> {

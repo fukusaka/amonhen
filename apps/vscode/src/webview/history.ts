@@ -66,8 +66,8 @@ export function createHistoryView(): View {
   const scopeSelect = el('select');
   scopeSelect.setAttribute('aria-label', 'Scope');
   for (const [value, label] of [
-    ['head', 'Current Branch'],
     ['all', 'All Branches'],
+    ['head', 'Current Branch'],
   ] as const) {
     const option = el('option', undefined, label);
     option.value = value;
@@ -110,7 +110,41 @@ export function createHistoryView(): View {
   matchingOnly.type = 'checkbox';
   matchingOnlyLabel.append(matchingOnly, 'Matching Only');
   matchingOnlyLabel.title = 'Show only the matching commits';
-  search.append(searchInput, searchCount, previousMatch, nextMatch, matchingOnlyLabel);
+  // ▾: 作者・コミッター・ID・件名・メッセージ・パス・中身・日時で探す書き方を入れる（アプリの検索欄の ▾ と同じ 9 項目）
+  const prefixButton = el('button', 'icon-button search-prefixes', '▾');
+  prefixButton.title = 'Search by…';
+  const prefixMenu = el('div', 'search-prefix-menu');
+  prefixMenu.hidden = true;
+  for (const [title, prefix] of [
+    ['Search by Author (author:)', 'author:'],
+    ['Search by Committer (committer:)', 'committer:'],
+    ['Search by Commit ID (commit:)', 'commit:'],
+    ['Search by Subject (subject:)', 'subject:'],
+    ['Search by Message (message:)', 'message:'],
+    ['Search by Path (path:)', 'path:'],
+    ['Search by Contents (contents:)', 'contents:'],
+    ['Committed After (after:)', 'after:'],
+    ['Committed Before (before:)', 'before:'],
+  ] as const) {
+    const item = el('button', 'menu-item', title);
+    item.addEventListener('click', () => {
+      prefixMenu.hidden = true;
+      // 書きかけの語の後ろに、空白で区切って足す
+      const value = searchInput.value;
+      searchInput.value = value && !/\s$/.test(value) ? `${value} ${prefix}` : `${value}${prefix}`;
+      searchInput.focus();
+      searchInput.setSelectionRange(searchInput.value.length, searchInput.value.length);
+    });
+    prefixMenu.append(item);
+  }
+  prefixButton.addEventListener('click', (e) => {
+    e.stopPropagation();
+    prefixMenu.hidden = !prefixMenu.hidden;
+  });
+  document.addEventListener('click', (e) => {
+    if (!prefixMenu.hidden && !prefixMenu.contains(e.target as Node)) prefixMenu.hidden = true;
+  });
+  search.append(prefixButton, prefixMenu, searchInput, searchCount, previousMatch, nextMatch, matchingOnlyLabel);
   const status = el('span', 'status');
   // 今の HEAD のコミットへ（アプリの Go to HEAD）
   const goHead = el('button', 'secondary', 'HEAD');
@@ -547,15 +581,15 @@ export function createHistoryView(): View {
       searchCount.title = s.error;
     } else if (s.searching) {
       const found = s.rows.length > 0 ? `${s.rows.length.toLocaleString()} found` : 'Searching…';
-      searchCount.textContent = s.done > 0 ? `${found} (${Math.floor(s.done * 100)}%)` : found;
+      searchCount.textContent = s.done > 0 ? `${found} · ${Math.floor(s.done * 100)}%` : found;
     } else {
       const total = s.matchingOnly ? rows.length : s.rows.length;
       if (total === 0) {
-        searchCount.textContent = 'No matches';
+        searchCount.textContent = 'No Matches';
       } else {
         const index = s.matchingOnly ? selected : s.rows.indexOf(selected);
         searchCount.textContent =
-          index >= 0 ? `${(index + 1).toLocaleString()} of ${total.toLocaleString()}` : `${total.toLocaleString()} found`;
+          index >= 0 ? `${(index + 1).toLocaleString()} / ${total.toLocaleString()}` : `${total.toLocaleString()} found`;
       }
     }
     const navigable = !!s && !s.error && !s.searching && (s.matchingOnly ? rows.length > 0 : s.rows.length > 0);
@@ -898,6 +932,9 @@ export function createHistoryView(): View {
       case 'editMode':
         root.classList.add('editing');
         editMode.open(message.rows, message.original, message.editMessageAt);
+        break;
+      case 'editMore':
+        editMode.more(message.rows);
         break;
       case 'editPreview':
         editMode.preview(message.key, message.lines, message.conflicts, message.stacked);

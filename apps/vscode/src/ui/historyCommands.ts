@@ -160,6 +160,20 @@ export function registerHistoryCommands(): vscode.Disposable {
         await sendEditPreview(panel, repo, message.key, message.steps, message.updateRefs);
         return;
       }
+      if (message.type === 'editExtend') {
+        // 範囲の境目を下へ引いた: いちばん古い行より古いものを、並びの続きから（merge の向こうも、エンジンが辿れるところまで）
+        try {
+          // 並びの終わり（最初のコミット・辿れない merge）を越えるなら、届くところまで
+          let rows: Awaited<ReturnType<typeof panel.editRows>>;
+          for (let n = message.count; n > 0 && !rows; n--) rows = await panel.editRows(message.oldest, n);
+          const at = rows?.findIndex((r) => r.oid === message.oldest) ?? -1;
+          if (rows && at >= 0) panel.post({ type: 'editMore', rows: rows.slice(at + 1) });
+          else vscode.window.setStatusBarMessage('There are no older commits to take in here.', 4000);
+        } catch (err) {
+          showError(err);
+        }
+        return;
+      }
       if (message.type === 'editApply') {
         if (!(await confirmEdit(repo, message.steps, message.updateRefs))) {
           panel.post({ type: 'editApplied', ok: false });

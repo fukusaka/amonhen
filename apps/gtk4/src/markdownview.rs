@@ -5,7 +5,8 @@
 //!
 //! GtkTextView にない枠は、段落の背景で代える: 引用・囲みは左を下げて薄い背景、コードは背景、横線は細い背景の行。
 //! 表は GtkGrid を、`<kbd>` は枠付きのラベルを文字の間に埋め込む。HTML の `<details>` は見出しを押すと開く・閉じる
-//! （組み直す）。`<picture>` は外観に合う画像を出し、外観が変わったら組み直す。
+//! （組み直す）。`<picture>` は外観に合う画像を出し、外観が変わったら組み直す。数式はコアが描いた SVG に文字の色を
+//! 当てて絵にし（`formula`）、文中の式は文字として埋め込んで基線にそろえる（`rise`）。
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
@@ -30,6 +31,8 @@ const DIM: gdk::RGBA = gdk::RGBA::new(0.5, 0.5, 0.5, 1.0);
 const SHADE: gdk::RGBA = gdk::RGBA::new(0.5, 0.5, 0.5, 0.12);
 /// `<details>` の見出しのリンク（後ろに番号）。
 const DETAILS_LINK: &str = "amonhen-details:";
+/// 1 pt の画素（Pango の既定の 96 dpi）。数式の大きさを、文字の大きさ（pt）から画素にする。
+const PX_PER_PT: f64 = 96.0 / 72.0;
 
 /// リンクを押したとき（リポジトリの中のファイルのパス）。
 pub type OnOpenPath = Rc<dyn Fn(String)>;
@@ -162,6 +165,183 @@ pub fn diagram_picture(
     Some(picture)
 }
 
+/// 数式の絵（macOS 版の `FormulaPicture`）。コアが描いた SVG（色は `--math-fg` の変数のまま）に、Markdown の
+/// 本文と同じ文字の色（TextView のスタイルの色。ユーザーの GTK のテーマ・明るい暗い・ハイコントラストに従う）を
+/// 当て、裏のスレッドで画像にする。テーマが変わったら色だけを当て直す（大きさは変わらない）。文中に埋め込める
+/// よう `gdk::Paintable` にする（`TextBuffer::insert_paintable`）。
+mod formula {
+    use std::cell::{Cell, RefCell};
+    use std::rc::Rc;
+
+    use gtk::prelude::*;
+    use gtk::subclass::prelude::*;
+    use gtk::{gdk, gio, glib};
+
+    use super::DIAGRAMS_PENDING;
+
+    /// 文字の色の CSS の値（不透明なら `#rrggbb`、ほかは `rgba()`。librsvg はどちらも読む）。
+    fn css(color: &gdk::RGBA) -> String {
+        let c = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+        let (r, g, b) = (c(color.red()), c(color.green()), c(color.blue()));
+        if color.alpha() >= 1.0 {
+            format!("#{r:02x}{g:02x}{b:02x}")
+        } else {
+            format!("rgba({r},{g},{b},{:.3})", color.alpha().clamp(0.0, 1.0))
+        }
+    }
+
+    mod imp {
+        use super::*;
+
+        #[derive(Default)]
+        pub struct Formula {
+            /// 論理の大きさ（画素）。
+            pub size: Cell<(i32, i32)>,
+            pub texture: RefCell<Option<gdk::Texture>>,
+            /// テーマの変わり目の知らせ（知らせる側と、捨てるときに外す番号）。
+            pub watches: RefCell<Vec<(glib::WeakRef<glib::Object>, glib::SignalHandlerId)>>,
+        }
+
+        #[glib::object_subclass]
+        impl ObjectSubclass for Formula {
+            const NAME: &'static str = "AmonhenFormula";
+            type Type = super::Formula;
+            type Interfaces = (gdk::Paintable,);
+        }
+
+        impl ObjectImpl for Formula {
+            fn dispose(&self) {
+                for (source, id) in self.watches.take() {
+                    if let Some(source) = source.upgrade() {
+                        source.disconnect(id);
+                    }
+                }
+            }
+        }
+
+        impl PaintableImpl for Formula {
+            fn flags(&self) -> gdk::PaintableFlags {
+                gdk::PaintableFlags::STATIC_SIZE
+            }
+
+            fn intrinsic_width(&self) -> i32 {
+                self.size.get().0
+            }
+
+            fn intrinsic_height(&self) -> i32 {
+                self.size.get().1
+            }
+
+            fn snapshot(&self, snapshot: &gdk::Snapshot, width: f64, height: f64) {
+                if let Some(texture) = self.texture.borrow().as_ref() {
+                    texture.snapshot(snapshot, width, height);
+                }
+            }
+        }
+    }
+
+    glib::wrapper! {
+        pub struct Formula(ObjectSubclass<imp::Formula>) @implements gdk::Paintable;
+    }
+
+    impl Formula {
+        /// `svg` を論理の大きさ `width`×`height`（画素）で、`view`（Markdown の TextView）の文字の色で描く絵。
+        /// 画像は `scale` 倍の画素で作る（高い解像度の画面でぼやけないように）。
+        pub fn new(
+            svg: &str,
+            width: i32,
+            height: i32,
+            scale: i32,
+            view: &gtk::TextView,
+        ) -> Formula {
+            let obj: Formula = glib::Object::new();
+            let (width, height) = (width.max(1), height.max(1));
+            obj.imp().size.set((width, height));
+            let svg: Rc<str> = Rc::from(svg);
+            let generation = Rc::new(Cell::new(0u32));
+            let last = Rc::new(RefCell::new(String::new()));
+            let (weak, view_weak) = (obj.downgrade(), view.downgrade());
+            let render = Rc::new(move || {
+                let Some(view) = view_weak.upgrade() else {
+                    return;
+                };
+                // 同じ色なら描き直さない
+                let fg = css(&view.color());
+                if *last.borrow() == fg {
+                    return;
+                }
+                let Some(colored) = amonhen_core::math::colorize(&svg, &fg) else {
+                    return;
+                };
+                last.replace(fg);
+                // 続けて頼まれたら、最後のものだけを見せる。
+                let mine = generation.get().wrapping_add(1);
+                generation.set(mine);
+                let (weak, generation) = (weak.clone(), generation.clone());
+                DIAGRAMS_PENDING.with(|p| p.set(p.get() + 1));
+                glib::spawn_future_local(async move {
+                    let pixels = gio::spawn_blocking(move || {
+                        crate::imagediff::svg_pixels(
+                            colored.as_bytes(),
+                            width * scale,
+                            height * scale,
+                        )
+                    })
+                    .await
+                    .ok()
+                    .flatten();
+                    DIAGRAMS_PENDING.with(|p| p.set(p.get() - 1));
+                    if generation.get() != mine {
+                        return;
+                    }
+                    if let (Some(obj), Some(pixels)) = (weak.upgrade(), pixels) {
+                        obj.imp().texture.replace(Some(pixels.texture()));
+                        obj.invalidate_contents();
+                    }
+                });
+            });
+            render();
+            // テーマが変わったら、スタイルが決め直された後（次のひま）で色を読み直す。部品が画面に出たとき
+            // （スタイルが決まったとき）にも読み直す。
+            let later = {
+                let render = render.clone();
+                move || {
+                    let render = render.clone();
+                    glib::idle_add_local_once(move || render());
+                }
+            };
+            let mut watches: Vec<(glib::WeakRef<glib::Object>, glib::SignalHandlerId)> = Vec::new();
+            let style = adw::StyleManager::default();
+            for property in ["dark", "high-contrast"] {
+                let later = later.clone();
+                let id = style.connect_notify_local(Some(property), move |_, _| later());
+                watches.push((style.upcast_ref::<glib::Object>().downgrade(), id));
+            }
+            if let Some(settings) = gtk::Settings::default() {
+                for property in ["gtk-theme-name", "gtk-application-prefer-dark-theme"] {
+                    let later = later.clone();
+                    let id = settings.connect_notify_local(Some(property), move |_, _| later());
+                    watches.push((settings.upcast_ref::<glib::Object>().downgrade(), id));
+                }
+            }
+            let id = view.connect_map(move |_| later());
+            watches.push((view.upcast_ref::<glib::Object>().downgrade(), id));
+            obj.imp().watches.replace(watches);
+            obj
+        }
+    }
+}
+
+/// 字の大きさ `size`（pt）で描く数式の大きさ（画素）と、基線から下の深さ（画素）。
+fn formula_size(math: &amonhen_core::math::MathPicture, size: f64) -> (i32, i32, f64) {
+    let em = size * PX_PER_PT * amonhen_core::math::FONT_SCALE;
+    (
+        (math.width * em).ceil() as i32,
+        ((math.height + math.depth) * em).ceil() as i32,
+        math.depth * em,
+    )
+}
+
 /// `blocks` の中の画像の場所（重ならずに、出てくる順）。
 pub fn image_sources(blocks: &[Block]) -> Vec<String> {
     fn runs(runs: &[Run], out: &mut Vec<String>) {
@@ -202,7 +382,7 @@ pub fn image_sources(blocks: &[Block]) -> Vec<String> {
                         runs(cell, out);
                     }
                 }
-                Block::Code { .. } | Block::Diagram { .. } | Block::Rule => {}
+                Block::Code { .. } | Block::Diagram { .. } | Block::Math { .. } | Block::Rule => {}
             }
         }
     }
@@ -760,6 +940,10 @@ impl<'a> Builder<'a> {
                 self.image(src, run);
                 continue;
             }
+            if let Some(math) = &run.math {
+                self.inline_formula(math, size, run);
+                continue;
+            }
             if run.kbd {
                 // キーは枠付きの札（macOS 版と同じ）。
                 install_css();
@@ -809,6 +993,12 @@ impl<'a> Builder<'a> {
             if run.code {
                 tags.push(self.tag("code", |t| t.set_background_rgba(Some(&SHADE))));
             }
+            if run.math_error.is_some() {
+                // 描けなかった文中の数式は、原文をコードとして赤く
+                tags.push(self.tag("math-error", |t| {
+                    t.set_foreground_rgba(Some(&gdk::RGBA::new(0.85, 0.2, 0.2, 1.0)));
+                }));
+            }
             if run.custom_emoji.is_some() {
                 // GitHub 独自の絵文字は画像を持たないので、名前を薄い札で見せる。
                 tags.push(self.tag("custom-emoji", |t| {
@@ -838,6 +1028,24 @@ impl<'a> Builder<'a> {
             } else {
                 self.insert(&text, &tags);
             }
+        }
+    }
+
+    /// 文中の数式: 文字として埋め込み、深さの分だけ基線より下げる（`rise`）。
+    fn inline_formula(&self, math: &amonhen_core::math::MathPicture, size: f64, run: &Run) {
+        let (w, h, depth) = formula_size(math, size);
+        let scale = self.view.scale_factor().max(2);
+        let paintable = formula::Formula::new(&math.svg, w, h, scale, &self.view);
+        let rise = -(depth * pango::SCALE as f64).round() as i32;
+        let lower = self.tag(&format!("rise{rise}"), |t| t.set_rise(rise));
+        let start = self.offset();
+        let mut end = self.buffer.end_iter();
+        self.buffer.insert_paintable(&mut end, &paintable);
+        self.apply(start, &[lower]);
+        if let Some(link) = &run.link {
+            self.links
+                .borrow_mut()
+                .push((start, self.offset(), link.clone()));
         }
     }
 
@@ -991,6 +1199,52 @@ impl<'a> Builder<'a> {
                     self.insert("\n", &[]);
                     self.paragraph(start, ctx, false, 10);
                 }
+            }
+            Block::Math { text, math, error } => {
+                let Some(math) = math else {
+                    // 描けない数式（数式を描かない作りも）は TeX をコードとして見せ、理由を添える
+                    self.block(
+                        &Block::Code {
+                            language: "math".into(),
+                            text: text.clone(),
+                        },
+                        ctx,
+                    );
+                    if let Some(error) = error {
+                        let start = self.offset();
+                        let red = self.tag("diagram-error", |t| {
+                            t.set_foreground_rgba(Some(&gdk::RGBA::new(0.85, 0.2, 0.2, 1.0)));
+                            t.set_family(Some("monospace"));
+                            t.set_scale(0.9);
+                        });
+                        self.insert(&error.replace('\n', "\u{2028}"), &[red]);
+                        self.insert("\n", &[]);
+                        self.paragraph(start, ctx, false, 10);
+                    }
+                    return;
+                };
+                // 数式のブロックは中央に（幅は 640 px まで、比を保って縮める）
+                self.lone_marker(ctx);
+                let (w, h, _) = formula_size(math, BODY);
+                let (shown_w, shown_h) = if w > MAX_IMAGE_WIDTH {
+                    (MAX_IMAGE_WIDTH, h * MAX_IMAGE_WIDTH / w.max(1))
+                } else {
+                    (w, h)
+                };
+                let scale = self.view.scale_factor().max(2);
+                let picture = gtk::Picture::for_paintable(&formula::Formula::new(
+                    &math.svg, w, h, scale, &self.view,
+                ));
+                picture.set_can_shrink(true);
+                picture.set_content_fit(gtk::ContentFit::Contain);
+                picture.set_size_request(shown_w, shown_h);
+                picture.set_alternative_text(Some(text));
+                picture.set_tooltip_text(Some(text));
+                let start = self.offset();
+                self.embed(&picture);
+                self.insert("\n", &[]);
+                self.paragraph(start, ctx, false, 12);
+                self.justify(start, Align::Center);
             }
             Block::Quote {
                 alert: kind,
@@ -1240,9 +1494,10 @@ impl<'a> Builder<'a> {
             self.labels.borrow_mut().push(label.clone());
             label
         };
-        let has_image = runs
-            .iter()
-            .any(|r| image_for(r, self.dark).is_some_and(|src| self.images.contains_key(src)));
+        let has_image = runs.iter().any(|r| {
+            r.math.is_some()
+                || image_for(r, self.dark).is_some_and(|src| self.images.contains_key(src))
+        });
         let outer = gtk::Box::new(gtk::Orientation::Vertical, 2);
         outer.add_css_class("md-cell");
         if head {
@@ -1261,6 +1516,22 @@ impl<'a> Builder<'a> {
             row.set_halign(halign);
             let mut text: Vec<Run> = Vec::new();
             for run in line {
+                if let Some(math) = &run.math {
+                    // マスの中の数式は、文字のかたまりの間に絵として並べる
+                    if !text.is_empty() {
+                        row.append(&label(&std::mem::take(&mut text)));
+                    }
+                    let (w, h, _) = formula_size(math, BODY - 1.0);
+                    let scale = self.view.scale_factor().max(2);
+                    let picture = gtk::Picture::for_paintable(&formula::Formula::new(
+                        &math.svg, w, h, scale, &self.view,
+                    ));
+                    picture.set_size_request(w, h);
+                    picture.set_valign(gtk::Align::Center);
+                    picture.set_tooltip_text(Some(&run.text));
+                    row.append(&picture);
+                    continue;
+                }
                 let texture = image_for(run, self.dark).and_then(|src| self.images.get(src));
                 match texture {
                     Some(texture) => {

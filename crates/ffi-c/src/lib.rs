@@ -488,6 +488,25 @@ pub unsafe extern "C" fn amonhen_diagram_colorize(
         .map_or(std::ptr::null_mut(), CString::into_raw)
 }
 
+/// Markdown の数式の SVG（`MarkdownBlock` の `math` の `svg`、文中の式の `math` の `svg`）に文字の色 `fg`
+/// （`#rrggbb`）を当て、CoreSVG で描ける SVG にする。`\color` で決めた色はそのまま。読めなければ NULL。
+/// `amonhen_string_free` で解放する。
+///
+/// # Safety
+/// `svg`・`fg` は NUL 終わりの文字列であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_math_colorize(
+    svg: *const c_char,
+    fg: *const c_char,
+) -> *mut c_char {
+    let (Ok(svg), Ok(fg)) = (str_arg(svg), str_arg(fg)) else {
+        return std::ptr::null_mut();
+    };
+    amonhen_core::math::colorize_for_coresvg(svg, fg)
+        .and_then(|out| CString::new(out).ok())
+        .map_or(std::ptr::null_mut(), CString::into_raw)
+}
+
 /// 設定の見本の図の SVG（色は `amonhen_diagram_colorize` で当てる）。描けなければ NULL。`amonhen_string_free` で
 /// 解放する。
 #[unsafe(no_mangle)]
@@ -1881,6 +1900,37 @@ fn svg_target(n: u8) -> amonhen_core::svglint::Target {
     }
 }
 
+/// 透けた絵の下の市松模様を暗くするのが既定か（コアの `checker::Tone`）。`pixels` は `height` 行 × `stride` バイトの、
+/// 不透明度を掛けた RGBA（`bgra` なら BGRA）の画素。比べる 2 枚は 1 つの画素の並びに並べて渡す。`transparent` に
+/// 透けた画素があったか（なければ市松模様は見えない）を書く。
+///
+/// # Safety
+/// `pixels` は `height * stride` バイト読めること（NULL なら何も数えない）。`transparent` は書けること（NULL でもよい）。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_checker_dark(
+    pixels: *const u8,
+    width: usize,
+    height: usize,
+    stride: usize,
+    bgra: bool,
+    transparent: *mut bool,
+) -> bool {
+    let mut tone = amonhen_core::checker::Tone::default();
+    if !pixels.is_null() && height > 0 {
+        let bytes = unsafe { std::slice::from_raw_parts(pixels, height * stride) };
+        let order = if bgra {
+            amonhen_core::checker::Order::Bgra
+        } else {
+            amonhen_core::checker::Order::Rgba
+        };
+        tone.add(bytes, width, height, stride, order);
+    }
+    if let Some(transparent) = unsafe { transparent.as_mut() } {
+        *transparent = tone.transparent();
+    }
+    tone.dark()
+}
+
 /// `path`（NUL で終わる UTF-8）の中身（`data` の `len` バイト）が、History の「すべてのファイル」で絵にする Android の
 /// VectorDrawable か（`.xml` で、根が `<vector>` か `<animated-vector>`。頭だけを見る）。
 ///
@@ -1906,11 +1956,12 @@ pub unsafe extern "C" fn amonhen_is_vector_drawable(
 /// コミット `commit`（20 バイト）の `path` の Android の VectorDrawable（中身 `data` の `len` バイト）を、描ける SVG
 /// にする（コアの `Repository::vector_drawable`。色の参照は同じコミットのリソースから引く）。SVG を返し、長さを
 /// `out_len` に書く（`amonhen_blob_free` で解放する）。描けなければ NULL で、理由は `amonhen_last_error`。`notes` に
-/// 絵の下に添える説明の JSON の配列（文字列）を書く（`amonhen_string_free` で解放する）。裏のスレッドで呼ぶ。
+/// 絵の下に添える説明の JSON の配列（文字列）を書く（`amonhen_string_free` で解放する）。引けない色は `fallback`
+/// （画面の文字の色の `#rrggbb`。NULL なら灰色）で描く。裏のスレッドで呼ぶ。
 ///
 /// # Safety
 /// `repo` は有効、`commit` は 20 バイトを読める領域、`path` は NUL で終わる UTF-8、`data` は `len` バイト読めること。
-/// `out_len` と `notes` は書けること（NULL でもよい）。
+/// `fallback` は NULL か NUL で終わる UTF-8。`out_len` と `notes` は書けること（NULL でもよい）。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn amonhen_vector_drawable(
     repo_ptr: *const AmonhenRepo,
@@ -1918,6 +1969,7 @@ pub unsafe extern "C" fn amonhen_vector_drawable(
     path: *const c_char,
     data: *const u8,
     len: usize,
+    fallback: *const c_char,
     out_len: *mut usize,
     notes: *mut *mut c_char,
 ) -> *mut u8 {
@@ -1940,7 +1992,8 @@ pub unsafe extern "C" fn amonhen_vector_drawable(
     } else {
         unsafe { std::slice::from_raw_parts(data, len) }
     };
-    match repo!(repo_ptr).vector_drawable(&commit, path, bytes) {
+    let fallback = str_arg(fallback).ok();
+    match repo!(repo_ptr).vector_drawable(&commit, path, bytes, fallback) {
         Ok(picture) => {
             if let Some(notes) = unsafe { notes.as_mut() } {
                 let json = serde_json::to_string(&picture.notes).unwrap_or_default();
