@@ -1,13 +1,17 @@
 //! HTML のラベルの表（`<TABLE>`・`<TR>`・`<TD>`）: 読んで、升目に組み、SVG に描く。
 //!
 //! 属性は Graphviz の説明のとおり: 表の `border`（既定 1）・`cellborder`（既定は `border`）・`cellspacing`
-//! （既定 2）・`cellpadding`（既定 2）・`bgcolor`・`color`・`width`・`height`・`fixedsize`・`sides`・`style`
-//! （rounded）・`columns`・`rows`（`*` で間の線）・`port`・`align`・`valign`。升の `colspan`・`rowspan`・`border`・
-//! `cellpadding`・`bgcolor`・`color`・`align`（`text` も）・`valign`・`balign`・`width`・`height`・`fixedsize`・
-//! `sides`・`port`。`<HR/>`・`<VR/>` は行・升の間の線。中の文字は `text` の HTML（`<font>`・`<b>`・`<br/>` など）、
-//! 升の中の表は入れ子にする。`<IMG>` は枠だけ（呼ぶ側が注記する）。
+//! （既定 2）・`cellpadding`（既定 2）・`bgcolor`（色の並びはグラデーション）・`gradientangle`・`color`・`width`・
+//! `height`・`fixedsize`・`sides`・`style`（rounded・radial・dashed・dotted）・`columns`・`rows`（`*` で間の線）・
+//! `port`・`align`・`valign`。升の `colspan`・`rowspan`・`border`・`cellpadding`・`bgcolor`・`gradientangle`・
+//! `style`・`color`・`align`（`text` も）・`valign`・`balign`・`width`・`height`・`fixedsize`・`sides`・`port`。`<HR/>`・`<VR/>` は行・升の間の線。中の文字は `text` の HTML（`<font>`・`<b>`・`<br/>` など）、
+//! 升の中の表は入れ子にする。`<IMG>` は `SRC` を呼ぶ側の読み手で読み、`SCALE` で升に合わせて描く（読めなければ
+//! 枠だけ。呼ぶ側が注記する）。
 
-use crate::color::{Color, parse as parse_color};
+use std::sync::Arc;
+
+use crate::color::{Color, Fill, parse as parse_color};
+use crate::image::{self, Picture, Scale};
 use crate::text::{self, Font, Just, Piece, Text, attr, color_attr, inline_label, styled};
 use amonhen_pele::svg::builder::num;
 
@@ -20,12 +24,14 @@ const MAX_CELLS: usize = 20_000;
 const MAX_SPAN: usize = 200;
 /// 大きさの上限（点）。
 const MAX_SIZE: f64 = 20_000.0;
-/// 画像の代わりの枠の大きさ。
+/// 読めない画像の代わりの枠の大きさ。
 const IMAGE: (f64, f64) = (36.0, 24.0);
+/// 表の画像の 1 画素の大きさ（点。Graphviz の表の画像は 96 dpi で数える）。
+const IMAGE_PX: f64 = 0.75;
 /// 升の文字の幅のゆとり。幅は Arial の送りで見積もるが、アプリの書体（macOS の sans-serif、Linux の DejaVu Sans・
 /// Noto Sans など）は 1 割ほど広いことがあり、升の余白（`cellpadding`）が小さいと枠からはみ出る。ノードの
 /// ラベルは周りの余白が吸うが、升は詰まっているので見積もりを広げておく。
-const TEXT_SLACK: f64 = 1.1;
+pub(crate) const TEXT_SLACK: f64 = 1.1;
 /// 既定の線の色（ノードの枠と同じ）。
 const BORDER: &str = "var(--_b)";
 
@@ -69,7 +75,8 @@ pub enum Content {
     Empty,
     Text(Text),
     Table(Box<Table>),
-    Image,
+    /// 画像（読めなければ None で、枠を描く）と `SCALE`。
+    Image(Option<Arc<Picture>>, Scale),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -82,8 +89,10 @@ pub struct Cell {
     border: f64,
     padding: f64,
     color: Option<Color>,
-    bg: Option<Color>,
+    bg: Option<Fill>,
     sides: Sides,
+    rounded: bool,
+    dash: Dash,
     align: Align,
     valign: VAlign,
     pub port: Option<String>,
@@ -104,9 +113,10 @@ pub struct Table {
     pub h: f64,
     border: f64,
     color: Option<Color>,
-    bg: Option<Color>,
+    bg: Option<Fill>,
     sides: Sides,
     rounded: bool,
+    dash: Dash,
     pub port: Option<String>,
     pub cells: Vec<Cell>,
     /// 間の線（表の左上から、両端）。
@@ -153,10 +163,56 @@ fn flag(attrs: &[(String, String)], key: &str) -> bool {
 }
 
 fn color(attrs: &[(String, String)], key: &str, scheme: Option<&str>) -> Option<Color> {
-    // 色の並び（グラデーション）は最初の色
+    // 線の色の並びは最初の色
     let v = attr(attrs, key)?;
     let first = v.split(':').next().unwrap_or("");
     parse_color(first.split(';').next().unwrap_or(""), scheme)
+}
+
+/// `style` の項目（`rounded`・`radial` など、小文字）。
+fn style_has(attrs: &[(String, String)], name: &str) -> bool {
+    attr(attrs, "style").is_some_and(|s| {
+        s.split(|c: char| c == ',' || c.is_whitespace())
+            .any(|p| p.trim().eq_ignore_ascii_case(name))
+    })
+}
+
+/// 枠の線の種類（`style` の `dashed`・`dotted`）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Dash {
+    Solid,
+    Dashed,
+    Dotted,
+}
+
+impl Dash {
+    fn of(attrs: &[(String, String)]) -> Dash {
+        if style_has(attrs, "dashed") {
+            Dash::Dashed
+        } else if style_has(attrs, "dotted") {
+            Dash::Dotted
+        } else {
+            Dash::Solid
+        }
+    }
+
+    fn attr(self) -> &'static str {
+        match self {
+            Dash::Solid => "",
+            Dash::Dashed => " stroke-dasharray=\"5,2\"",
+            Dash::Dotted => " stroke-dasharray=\"1,5\"",
+        }
+    }
+}
+
+/// `bgcolor` の塗り（色の並びはグラデーション。`style="radial"`・`gradientangle`）。
+fn fill(attrs: &[(String, String)], scheme: Option<&str>) -> Option<Fill> {
+    Fill::parse(
+        attr(attrs, "bgcolor")?,
+        scheme,
+        style_has(attrs, "radial"),
+        number(attrs, "gradientangle").unwrap_or(0.0),
+    )
 }
 
 struct Parser<'a> {
@@ -166,10 +222,21 @@ struct Parser<'a> {
     scheme: Option<&'a str>,
     found: Found,
     cells: usize,
+    images: &'a mut dyn FnMut(&str) -> Option<Arc<Picture>>,
 }
 
-/// HTML のラベルに表があれば、組んだ表のラベル。なければ None。
+/// HTML のラベルに表があれば、組んだ表のラベル。なければ None。画像は読まない（枠にする）。
 pub fn label(src: &str, base: &Font, scheme: Option<&str>) -> Option<Text> {
+    label_with_images(src, base, scheme, &mut |_| None)
+}
+
+/// `label` の、`<IMG>` を `images`（`SRC` の値から画像）で読むもの。
+pub fn label_with_images(
+    src: &str,
+    base: &Font,
+    scheme: Option<&str>,
+    images: &mut dyn FnMut(&str) -> Option<Arc<Picture>>,
+) -> Option<Text> {
     let pieces = text::pieces(src, MAX_PIECES);
     let at = pieces
         .iter()
@@ -203,6 +270,7 @@ pub fn label(src: &str, base: &Font, scheme: Option<&str>) -> Option<Text> {
         scheme,
         found: Found::default(),
         cells: 0,
+        images,
     };
     let mut table = p.table(&font, 0);
     table.place();
@@ -338,8 +406,10 @@ impl Parser<'_> {
                                         .unwrap_or(padding)
                                         .clamp(0.0, 255.0),
                                     color: color(&a, "color", self.scheme).or(tcolor),
-                                    bg: color(&a, "bgcolor", self.scheme),
+                                    bg: fill(&a, self.scheme),
                                     sides: Sides::parse(attr(&a, "sides")),
+                                    rounded: style_has(&a, "rounded"),
+                                    dash: Dash::of(&a),
                                     align: align_of(&a),
                                     valign: valign_of(&a),
                                     port: attr(&a, "port").map(str::to_owned),
@@ -367,10 +437,10 @@ impl Parser<'_> {
             h: 0.0,
             border,
             color: tcolor,
-            bg: color(&attrs, "bgcolor", self.scheme),
+            bg: fill(&attrs, self.scheme),
             sides: Sides::parse(attr(&attrs, "sides")),
-            rounded: attr(&attrs, "style")
-                .is_some_and(|s| s.to_ascii_lowercase().contains("rounded")),
+            rounded: style_has(&attrs, "rounded"),
+            dash: Dash::of(&attrs),
             port: attr(&attrs, "port").map(str::to_owned),
             cells,
             rules: vec![],
@@ -421,7 +491,7 @@ impl Parser<'_> {
         let mut fonts = vec![font.clone()];
         let mut open: Vec<bool> = Vec::new();
         let mut nested = None;
-        let mut image = false;
+        let mut image = None;
         for k in inner.clone() {
             match &self.pieces[k].0 {
                 Piece::Open(n, _) if n == "table" => {
@@ -443,7 +513,12 @@ impl Parser<'_> {
                         fonts.pop();
                     }
                 }
-                Piece::Empty(n, _) if n == "img" => image = true,
+                Piece::Empty(n, a) if n == "img" && image.is_none() => {
+                    image = Some((
+                        attr(a, "src").unwrap_or("").to_owned(),
+                        Scale::parse(attr(a, "scale")),
+                    ));
+                }
                 _ => {}
             }
         }
@@ -456,9 +531,16 @@ impl Parser<'_> {
                 let t = self.table(&f, depth + 1);
                 Content::Table(Box::new(t))
             }
-        } else if image {
-            self.found.image = true;
-            Content::Image
+        } else if let Some((src, scale)) = image {
+            let picture = if src.trim().is_empty() {
+                None
+            } else {
+                (self.images)(&src)
+            };
+            if picture.is_none() {
+                self.found.image = true;
+            }
+            Content::Image(picture, scale)
         } else {
             let t = inline_label(&self.src[start..stop.max(start)], font, self.scheme);
             if t.is_empty() {
@@ -479,7 +561,8 @@ impl Cell {
             Content::Empty => (0.0, 0.0),
             Content::Text(t) => (t.width * TEXT_SLACK, t.height),
             Content::Table(t) => (t.w, t.h),
-            Content::Image => IMAGE,
+            Content::Image(Some(p), _) => p.size(IMAGE_PX),
+            Content::Image(None, _) => IMAGE,
         }
     }
 
@@ -723,18 +806,31 @@ fn frame(
     b: f64,
     sides: Sides,
     stroke: Option<Color>,
-    fill: Option<Color>,
+    fill: Option<&Fill>,
     rounded: bool,
+    dash: Dash,
 ) {
     if let Some(f) = fill {
+        let paint = match f {
+            Fill::Solid(c) => color_attr("fill", c),
+            Fill::Gradient(g) => {
+                // id は中身と位置から（同じ表を描き直しても同じ、ほかの塗りとは重ならない）
+                let element = g.element("");
+                let id = format!(
+                    "dot-h{:016x}",
+                    fnv(&format!("{element}{x:.3},{y:.3},{w:.3},{h:.3}"))
+                );
+                out.push_str(&format!("<defs>{}</defs>", g.element(&id)));
+                format!(" fill=\"url(#{id})\"")
+            }
+        };
         out.push_str(&format!(
-            "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\"{}{} stroke=\"none\"/>",
+            "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\"{}{paint} stroke=\"none\"/>",
             num(x),
             num(y),
             num(w.max(0.0)),
             num(h.max(0.0)),
             if rounded { " rx=\"6\"" } else { "" },
-            color_attr("fill", &f)
         ));
     }
     if b <= 0.0 || w <= 0.0 || h <= 0.0 {
@@ -742,9 +838,9 @@ fn frame(
     }
     let stroke = paint("stroke", stroke, BORDER);
     let width = if (b - 1.0).abs() > 1e-9 {
-        format!(" stroke-width=\"{}\"", num(b))
+        format!(" stroke-width=\"{}\"{}", num(b), dash.attr())
     } else {
-        String::new()
+        dash.attr().to_owned()
     };
     let (x0, y0, x1, y1) = (x + b / 2.0, y + b / 2.0, x + w - b / 2.0, y + h - b / 2.0);
     if sides == Sides::ALL {
@@ -781,6 +877,13 @@ fn frame(
     }
 }
 
+/// FNV-1a（塗りの id）。
+fn fnv(s: &str) -> u64 {
+    s.bytes().fold(0xcbf2_9ce4_8422_2325, |h, b| {
+        (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
+    })
+}
+
 /// 表を (left, top) から描く。`root`・`attrs` は文字の `<text>` の書体と属性、`ink` は表の外の塗りの上の文字の
 /// 色。表・升の `bgcolor` の上では、いちばん内側の塗りで読める色にする（文が色を決めていれば文の色）。
 pub fn draw(
@@ -793,13 +896,43 @@ pub fn draw(
     out: &mut String,
 ) {
     frame(
-        out, left, top, t.w, t.h, t.border, t.sides, t.color, t.bg, t.rounded,
+        out,
+        left,
+        top,
+        t.w,
+        t.h,
+        t.border,
+        t.sides,
+        t.color,
+        t.bg.as_ref(),
+        t.rounded,
+        t.dash,
     );
-    let ink = t.bg.and_then(Color::ink).or(ink);
+    let ink =
+        t.bg.as_ref()
+            .and_then(Fill::first)
+            .and_then(Color::ink)
+            .or(ink);
     for c in &t.cells {
-        let ink = c.bg.and_then(Color::ink).or(ink);
+        let ink =
+            c.bg.as_ref()
+                .and_then(Fill::first)
+                .and_then(Color::ink)
+                .or(ink);
         let (x, y) = (left + c.x, top + c.y);
-        frame(out, x, y, c.w, c.h, c.border, c.sides, c.color, c.bg, false);
+        frame(
+            out,
+            x,
+            y,
+            c.w,
+            c.h,
+            c.border,
+            c.sides,
+            c.color,
+            c.bg.as_ref(),
+            c.rounded,
+            c.dash,
+        );
         let inset = c.border + c.padding;
         let (iw, ih) = ((c.w - 2.0 * inset).max(0.0), (c.h - 2.0 * inset).max(0.0));
         let (cw, ch) = c.content_size();
@@ -823,7 +956,21 @@ pub fn draw(
                 let (ox, oy) = c.inner_origin(inner);
                 draw(inner, left + ox, top + oy, root, attrs, ink, out);
             }
-            Content::Image => {
+            Content::Image(Some(p), scale) => {
+                let (w, h) = image::fit(p.size(IMAGE_PX), (iw, ih), *scale);
+                let ix = match c.align {
+                    Align::Left => x + inset,
+                    Align::Right => x + inset + iw - w,
+                    Align::Center | Align::Text => x + inset + (iw - w) / 2.0,
+                };
+                let iy = match c.valign {
+                    VAlign::Top => y + inset,
+                    VAlign::Bottom => y + inset + ih - h,
+                    VAlign::Middle => y + inset + (ih - h) / 2.0,
+                };
+                out.push_str(&image::element(p, ix, iy, w, h));
+            }
+            Content::Image(None, _) => {
                 out.push_str(&format!(
                     "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"none\" stroke=\"{BORDER}\" stroke-dasharray=\"3,2\"/>",
                     num(cx - IMAGE.0 / 2.0),
@@ -908,7 +1055,7 @@ mod tests {
             panic!("no text");
         };
         assert!(x.lines[0].spans[0].font.bold && x.lines[0].spans[0].font.size == 20.0);
-        assert_eq!(t.cells[1].content, Content::Image);
+        assert_eq!(t.cells[1].content, Content::Image(None, Scale::Natural));
         assert_eq!(t.rules.len(), 2);
         assert!(t.port("in").is_some());
         let lbl = label(
@@ -924,6 +1071,76 @@ mod tests {
             out.contains("font-weight=\"bold\"") || out.contains(">x</text>"),
             "{out}"
         );
+    }
+
+    #[test]
+    fn draws_images_in_cells() {
+        // 96×48 画素の PNG の頭
+        let mut png = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR".to_vec();
+        png.extend_from_slice(&96u32.to_be_bytes());
+        png.extend_from_slice(&48u32.to_be_bytes());
+        let picture = Arc::new(image::read(&png).unwrap());
+        let mut asked = Vec::new();
+        let mut images = |src: &str| {
+            asked.push(src.to_owned());
+            (src == "a.png").then(|| picture.clone())
+        };
+        let t = label_with_images(
+            "<table><tr><td><img src=\"a.png\"/></td><td width=\"150\" height=\"30\"><IMG SRC=\"a.png\" SCALE=\"BOTH\"/></td><td><img src=\"gone.png\"/></td></tr></table>",
+            &Font::new(14.0),
+            None,
+            &mut images,
+        )
+        .unwrap();
+        assert_eq!(asked, ["a.png", "a.png", "gone.png"]);
+        // 読めない画像があれば注記
+        assert!(t.image);
+        let table = t.html.unwrap();
+        // 表の画像は 96 dpi: 72×36 点と、枠 1・余白 2
+        let c = &table.cells[0];
+        assert_eq!((c.w, c.h), (78.0, 42.0));
+        let mut out = String::new();
+        draw(&table, 0.0, 0.0, &Font::new(14.0), "", None, &mut out);
+        assert!(
+            out.contains("<image x=\"6\" y=\"6\" width=\"72\" height=\"36\" preserveAspectRatio=\"none\" href=\"data:image/png;base64,"),
+            "{out}"
+        );
+        // SCALE=BOTH は升の中いっぱい（150 − 2 × 3）
+        assert!(out.contains("width=\"144\" height=\"36\""), "{out}");
+        // 読めない画像は点線の枠
+        assert!(out.contains("stroke-dasharray=\"3,2\""), "{out}");
+    }
+
+    #[test]
+    fn fills_tables_and_cells_with_gradients() {
+        let t = table(
+            "<table bgcolor=\"yellow:blue\" gradientangle=\"90\"><tr><td bgcolor=\"red:white\" style=\"radial, rounded\">a</td><td bgcolor=\"navy\">b</td></tr></table>",
+        );
+        let mut out = String::new();
+        draw(&t, 0.0, 0.0, &Font::new(14.0), "", None, &mut out);
+        assert_eq!(out.matches("<defs>").count(), 2, "{out}");
+        assert!(
+            out.contains("<linearGradient id=\"dot-h") && out.contains("y1=\"1\""),
+            "{out}"
+        );
+        assert!(out.contains("<radialGradient id=\"dot-h"), "{out}");
+        assert!(out.contains("fill=\"url(#dot-h"), "{out}");
+        // 升の角も丸く、1 色の塗りはそのまま、紺の上の文字は白
+        assert!(out.matches("rx=\"6\"").count() >= 1, "{out}");
+        assert!(out.contains("fill=\"#000080\""), "{out}");
+        let mut again = String::new();
+        draw(&t, 0.0, 0.0, &Font::new(14.0), "", None, &mut again);
+        assert_eq!(out, again);
+    }
+
+    #[test]
+    fn draws_dashed_and_dotted_borders() {
+        let t =
+            table("<table style=\"dashed\"><tr><td style=\"dotted\">a</td><td>b</td></tr></table>");
+        let mut out = String::new();
+        draw(&t, 0.0, 0.0, &Font::new(14.0), "", None, &mut out);
+        assert_eq!(out.matches("stroke-dasharray=\"5,2\"").count(), 1, "{out}");
+        assert_eq!(out.matches("stroke-dasharray=\"1,5\"").count(), 1, "{out}");
     }
 
     #[test]

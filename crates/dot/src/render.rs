@@ -2,6 +2,7 @@
 //! グラフの題と地。色は文が決めたものを使い、決めないものはテーマの変数（`var(--_l)` など）にする。
 
 use std::collections::{BTreeSet, HashMap};
+use std::sync::Arc;
 
 use amonhen_pele::svg::builder::{esc, num};
 use amonhen_pele::svg::root::{Accessible, svg_document};
@@ -12,6 +13,7 @@ use crate::color::{self, Color, Rgba};
 use crate::curve::{self, Cubic, P};
 use crate::engines::{self, Engine};
 use crate::graph::{Attrs, Model};
+use crate::image::{self, Images, Picture, Scale};
 use crate::layout::{self, LabelSide, Route};
 use crate::record::{self, Field};
 use crate::route;
@@ -24,6 +26,8 @@ const PATCH: f64 = 40.0;
 const INCH: f64 = 72.0;
 const PAD: f64 = 8.0;
 const FONT_SIZE: f64 = 14.0;
+/// クラスタの題の左右の余白（アプリの書体のゆとりとは別に）。
+const TITLE_PAD: f64 = 8.0;
 /// クラスタの中の余白。
 const CLUSTER_MARGIN: f64 = 8.0;
 
@@ -61,6 +65,7 @@ struct Ctx<'a> {
     scheme: Option<String>,
     defs: String,
     next_id: usize,
+    images: Images<'a>,
 }
 
 impl Ctx<'_> {
@@ -205,7 +210,13 @@ fn label_text(
     scheme: Option<&str>,
 ) -> Text {
     if raw.html {
-        let t = text::html_label(&raw.text, font, scheme.or(ctx.scheme.as_deref()));
+        let images = &mut ctx.images;
+        let t = text::html_label_with_images(
+            &raw.text,
+            font,
+            scheme.or(ctx.scheme.as_deref()),
+            &mut |src| images.get(src),
+        );
         if t.image {
             ctx.notes.insert(Note::Images);
         }
@@ -232,6 +243,12 @@ struct NodeView {
     ink: Option<&'static str>,
     /// ラベルを寄せる幅。
     inner_w: f64,
+    /// `image` の画像と、合わせ方・置き場所（`imagepos` の縦と横: -1・0・1）。
+    image: Option<(Arc<Picture>, Scale, (i8, i8))>,
+    /// ラベルの縦のずれ（`labelloc` の t・b。ノードがラベルより高いとき）。
+    label_dy: f64,
+    /// ノードの外の地（文が決めたクラスタの塗り・グラフの bgcolor）の上で読める文字の色。
+    ground_ink: Option<&'static str>,
     pos: P,
 }
 
@@ -325,6 +342,7 @@ pub fn render(
     budget: Budget,
     default_engine: Engine,
     notes: &mut BTreeSet<Note>,
+    images: Option<&image::Loader>,
 ) -> String {
     let g = &model.attrs;
     let mut ctx = Ctx {
@@ -333,6 +351,7 @@ pub fn render(
         scheme: g.get("colorscheme").map(str::to_owned),
         defs: String::new(),
         next_id: 0,
+        images: Images::new(images),
     };
     // 配置: `layout` が決め、なければフェンスの言葉の既定。知らない名前は dot で描いて注記
     let engine = match g.get("layout").map(str::trim).filter(|l| !l.is_empty()) {
@@ -379,6 +398,8 @@ pub fn render(
         .map_or(0.5 * INCH, |v| v.max(0.02) * INCH)
         .min(20.0 * INCH);
     let graph_font = font_of(g, "", &mut ctx, None);
+    // 文が決めた地（クラスタの塗り・グラフの bgcolor）。その上の既定の色の文字・線は読める色にする
+    let grounds = Grounds::new(model, ctx.scheme.as_deref());
 
     // ---- ノード ----
     let mut views: Vec<NodeView> = Vec::with_capacity(model.nodes.len());
@@ -399,8 +420,18 @@ pub fn render(
         if spec.unknown {
             ctx.notes.insert(Note::UnknownShapes);
         }
-        if a.get("image").is_some_and(|s| !s.is_empty()) || shape_name.eq_ignore_ascii_case("epsf")
-        {
+        // 画像（読めなければ注記して描かない）
+        let picture = match a.get("image").filter(|s| !s.trim().is_empty()) {
+            Some(src) => {
+                let p = ctx.images.get(src);
+                if p.is_none() {
+                    ctx.notes.insert(Note::Images);
+                }
+                p
+            }
+            None => None,
+        };
+        if shape_name.eq_ignore_ascii_case("epsf") {
             ctx.notes.insert(Note::Images);
         }
         if let Some(p) = a.num("peripheries") {
@@ -447,11 +478,25 @@ pub fn render(
                 None => (0.11 * INCH, 0.055 * INCH),
             }
         };
-        let (lw, lh) = match (&label, &rec) {
-            (Some(t), _) if !t.is_empty() => (t.width + 2.0 * mx, t.height + 2.0 * my),
+        let (mut lw, mut lh) = match (&label, &rec) {
+            // 枠のある形は、アプリの書体が広くても文字が線に触れないように
+            (Some(t), _) if !t.is_empty() => {
+                let tw = if matches!(spec.kind, Kind::Plain) {
+                    t.width
+                } else {
+                    t.fit_width()
+                };
+                (tw + 2.0 * mx, t.height + 2.0 * my)
+            }
             (_, Some(f)) => (f.w, f.h),
             _ => (0.0, 0.0),
         };
+        // 画像の入る大きさ（1 画素を 1 点。ラベルは画像の上に重ねる）
+        if let Some(p) = &picture {
+            let (iw, ih) = p.size(1.0);
+            lw = lw.max(iw);
+            lh = lh.max(ih);
+        }
         let min_w = a
             .num("width")
             .map_or(0.75 * INCH, |v| v.clamp(0.0, 100.0) * INCH);
@@ -532,13 +577,26 @@ pub fn render(
         if invis {
             fill = " fill=\"none\"".to_owned();
         }
+        // 自分の塗りのないノード（plaintext・plain・none）は、外の地の上で読める色で描く
+        let ground_ink = grounds.at(node.cluster).1.and_then(Color::ink);
+        let bare = !filled && !point && matches!(spec.kind, Kind::Plain);
         let stroke = format!(
             "{}{}",
-            paint("stroke", line_color, if point { LINE } else { BORDER }),
+            paint(
+                "stroke",
+                line_color,
+                match ground_ink {
+                    Some(c) if bare => c,
+                    _ if point => LINE,
+                    _ => BORDER,
+                }
+            ),
             line_attrs(&st, pen)
         );
         // 濃い塗りの上の既定の文字は白に
-        let ink = if font.color.is_none() && filled {
+        let ink = if font.color.is_none() && bare {
+            ground_ink
+        } else if font.color.is_none() && filled {
             fill_text
                 .as_deref()
                 .and_then(|t| {
@@ -555,6 +613,19 @@ pub fn render(
             _ => None,
         };
         let inner_w = (w - 2.0 * mx).max(0.0);
+        // labelloc: 形の中のラベルの入る高さの上・下に寄せる
+        let label_dy = match a
+            .get("labelloc")
+            .and_then(|s| s.trim().chars().next())
+            .map(|c| c.to_ascii_lowercase())
+        {
+            Some(side @ ('t' | 'b')) if rec.is_none() && !point => {
+                let (_, ky) = shapes::fit(&spec.kind, 1.0, 1.0);
+                let room = (h / ky.max(1e-9) - lh).max(0.0) / 2.0;
+                if side == 't' { -room } else { room }
+            }
+            _ => 0.0,
+        };
         views.push(NodeView {
             geom: Geom {
                 kind: spec.kind.clone(),
@@ -575,6 +646,15 @@ pub fn render(
             special,
             ink,
             inner_w,
+            image: picture.map(|p| {
+                (
+                    p,
+                    Scale::parse(a.get("imagescale")),
+                    image_pos(a.get("imagepos")),
+                )
+            }),
+            label_dy,
+            ground_ink,
             pos: (0.0, 0.0),
         });
     }
@@ -627,7 +707,8 @@ pub fn render(
         let tail_label = mk("taillabel", &end_font, &mut ctx);
         let xlabel = mk("xlabel", &font, &mut ctx);
         let size = label.as_ref().map(|t| {
-            let (w, h) = (t.width + 4.0, t.height + 2.0);
+            // 線の脇に置くので、アプリの書体が広くても線に重ならないように
+            let (w, h) = (t.fit_width() + 4.0, t.height + 2.0);
             if dir.sideways() { (h, w) } else { (w, h) }
         });
         let off = |node: usize, port: Option<&str>| -> f64 {
@@ -696,9 +777,9 @@ pub fn render(
             .value("label")
             .filter(|v| !v.text.is_empty())
             .map(|v| label_text(v, &names, &font, &mut ctx, scheme.as_deref()));
-        let (lw, lh) = label
-            .as_ref()
-            .map_or((0.0, 0.0), |t| (t.width + 8.0, t.height + 4.0));
+        let (lw, lh) = label.as_ref().map_or((0.0, 0.0), |t| {
+            (t.fit_width() + 2.0 * TITLE_PAD, t.height + 4.0)
+        });
         let margin = a
             .num("margin")
             .map_or(CLUSTER_MARGIN, |m| m.clamp(0.0, 200.0));
@@ -874,20 +955,11 @@ pub fn render(
             .or(color.as_deref())
             .or(a.get("bgcolor"))
             .map(str::to_owned);
-        // 題の下の塗り（題の文字の色を決める。グラデーションは最初の色）
-        let ground = if filled {
-            fill_text.as_deref()
-        } else {
-            a.get("bgcolor")
-        }
-        .and_then(|t| {
-            color::parse_list(t, scheme.as_deref().or(ctx.scheme.as_deref()))
-                .into_iter()
-                .find_map(|s| s.color)
-        });
+        // 題の下の地（題の文字の色を決める。グラデーションは色の平均、なければ外の地）
+        let ground = grounds.at(Some(ci)).1;
         let fill = if filled {
             match fill_text.as_deref() {
-                Some(t) if t.contains(':') => gradient(
+                Some(t) if t.contains(':') && !has(&st, "striped") => gradient(
                     &mut ctx,
                     t,
                     scheme.as_deref(),
@@ -898,7 +970,13 @@ pub fn render(
                 None => format!(" fill=\"{SURFACE_ALT}\""),
             }
         } else if let Some(bg) = a.get("bgcolor").map(str::to_owned) {
-            paint("fill", ctx.first_color(&bg, scheme.as_deref()), SURFACE_ALT)
+            gradient(
+                &mut ctx,
+                &bg,
+                scheme.as_deref(),
+                has(&st, "radial"),
+                a.num("gradientangle").unwrap_or(0.0),
+            )
         } else {
             format!(" fill=\"{SURFACE_ALT}\" fill-opacity=\"0.5\"")
         };
@@ -913,20 +991,46 @@ pub fn render(
             )
         };
         let r = if has(&st, "rounded") { " rx=\"8\"" } else { "" };
+        // striped: 色の並びの縦の帯（枠の線は帯の上に描き直す）
+        let bands = if has(&st, "striped") {
+            let text = fill_text.clone().unwrap_or_default();
+            bands(
+                &mut ctx,
+                &text,
+                scheme.as_deref(),
+                b[0],
+                b[1],
+                b[2] - b[0],
+                b[3] - b[1],
+            )
+        } else {
+            String::new()
+        };
+        let rect = |fill: &str, stroke: &str| {
+            format!(
+                "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\"{r}{fill}{stroke}/>",
+                num(b[0]),
+                num(b[1]),
+                num(b[2] - b[0]),
+                num(b[3] - b[1])
+            )
+        };
         clusters_out.push_str(&format!(
-            "<g class=\"dot-cluster\" data-id=\"{}\"><rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\"{r}{fill}{stroke}/>",
-            esc(&c.name),
-            num(b[0]),
-            num(b[1]),
-            num(b[2] - b[0]),
-            num(b[3] - b[1])
+            "<g class=\"dot-cluster\" data-id=\"{}\">",
+            esc(&c.name)
         ));
+        if bands.is_empty() {
+            clusters_out.push_str(&rect(&fill, &stroke));
+        } else {
+            clusters_out.push_str(&bands);
+            clusters_out.push_str(&rect(" fill=\"none\"", &stroke));
+        }
         let cv = &cviews[ci];
         if let Some(t) = &cv.label {
             let margin = lclusters[ci].margin;
             let cx = match cv.just {
-                'l' => b[0] + margin + t.width / 2.0,
-                'r' => b[2] - margin - t.width / 2.0,
+                'l' => b[0] + margin + t.fit_width() / 2.0,
+                'r' => b[2] - margin - t.fit_width() / 2.0,
                 _ => (b[0] + b[2]) / 2.0,
             };
             let cy = if cv.loc_bottom {
@@ -935,9 +1039,9 @@ pub fn render(
                 b[1] + margin / 2.0 + 2.0 + t.height / 2.0
             };
             title_rects.push([
-                cx - t.width / 2.0 - 4.0,
+                cx - t.fit_width() / 2.0 - 4.0,
                 cy - t.height / 2.0 - 1.0,
-                cx + t.width / 2.0 + 4.0,
+                cx + t.fit_width() / 2.0 + 4.0,
                 cy + t.height / 2.0 + 1.0,
             ]);
             clusters_out.push_str(&text_svg(
@@ -1382,7 +1486,18 @@ pub fn render(
         let colors: Vec<(Option<Color>, Option<f64>)> =
             stops.iter().map(|s| (s.color, s.fraction)).collect();
         let main = colors.iter().find_map(|c| c.0);
-        let main_attr = |name: &str| paint(name, main, LINE);
+        // 両端が同じ地（文が決めたクラスタの塗り・グラフの bgcolor）の中なら、既定の色はその上で読める色
+        let edge_ink = {
+            let (ka, ca) = grounds.at(model.nodes[e.tail].cluster);
+            let (kb, _) = grounds.at(model.nodes[e.head].cluster);
+            if ka == kb {
+                ca.and_then(Color::ink)
+            } else {
+                None
+            }
+        };
+        let line_default = edge_ink.unwrap_or(LINE);
+        let main_attr = |name: &str| paint(name, main, line_default);
         if !invis {
             edges_out.push_str(&format!(
                 "<g class=\"dot-edge\" data-id=\"{}\">",
@@ -1394,7 +1509,20 @@ pub fn render(
             let extra = line_attrs(&st, pen);
             let known: Vec<(Option<Color>, Option<f64>)> =
                 colors.iter().filter(|c| c.0.is_some()).cloned().collect();
-            if !path.is_empty() {
+            if !path.is_empty() && has(&st, "tapered") {
+                // 太さ penwidth から細く: dir の forward は頭へ、back は尾へ、both は両端へ、none は同じ太さ
+                let taper = |s: f64| match dir_attr.as_str() {
+                    "back" => pen * s,
+                    "both" => pen * (1.0 - (2.0 * s - 1.0).abs()),
+                    "none" => pen,
+                    _ => pen * (1.0 - s),
+                };
+                edges_out.push_str(&format!(
+                    "<path d=\"{}\"{} stroke=\"none\"/>",
+                    curve::tapered(&path, taper),
+                    main_attr("fill")
+                ));
+            } else if !path.is_empty() {
                 if known.len() > 1 && known.iter().any(|c| c.1.is_some()) {
                     // 割合つき: 線に沿った区切り
                     let total = curve::total_length(&path);
@@ -1441,7 +1569,7 @@ pub fn render(
             let arrow_color = match main {
                 Some(Color::Rgba(c)) => c.hex(),
                 Some(Color::None) => "none".into(),
-                None => LINE.into(),
+                None => line_default.into(),
             };
             if let Some((tip, dir)) = head_tip {
                 edges_out.push_str(&arrows::draw(
@@ -1482,8 +1610,30 @@ pub fn render(
                     0.0,
                     &ev.font,
                     &label_attrs(&ev.font),
-                    None,
+                    edge_ink,
                 ));
+                // decorate: ラベルに下線を引き、近い端から線の中ほどへつなぐ
+                if a.flag("decorate").unwrap_or(false)
+                    && let Some(m) = curve::midpoint(&path)
+                {
+                    let y = at.1 + t.height / 2.0;
+                    let (l, r) = (at.0 - t.width / 2.0, at.0 + t.width / 2.0);
+                    let (far, near) = if (m.0 - l).abs() <= (m.0 - r).abs() {
+                        (r, l)
+                    } else {
+                        (l, r)
+                    };
+                    labels_out.push_str(&format!(
+                        "<path d=\"M{},{}L{},{}L{},{}\" fill=\"none\"{}/>",
+                        num(far),
+                        num(y),
+                        num(near),
+                        num(y),
+                        num(m.0),
+                        num(m.1),
+                        main_attr("stroke")
+                    ));
+                }
             }
             bbox.add_rect(
                 at.0 - t.width / 2.0,
@@ -1502,7 +1652,7 @@ pub fn render(
                     0.0,
                     &ev.font,
                     &label_attrs(&ev.font),
-                    None,
+                    edge_ink,
                 ));
             }
             bbox.add_rect(
@@ -1541,7 +1691,7 @@ pub fn render(
                             .and_then(|l| l.spans.first())
                             .map_or(ev.font.clone(), |s| s.font.clone()),
                     ),
-                    None,
+                    edge_ink,
                 ));
             }
             bbox.add_rect(
@@ -1568,7 +1718,7 @@ pub fn render(
                     0.0,
                     &v.font,
                     &format!(" class=\"dot-xlabel\"{}", font_attrs(&v.font)),
-                    None,
+                    v.ground_ink,
                 ));
             }
             bbox.add_rect(
@@ -1601,6 +1751,14 @@ pub fn render(
         }
         if striped || wedged {
             body.push_str(&stripes(&mut ctx, &node.attrs, v, striped));
+        }
+        if let Some((p, scale, (px, py))) = &v.image {
+            // 置き場所はノードの外接の箱の中
+            let (aw, ah) = (v.geom.w, v.geom.h);
+            let (w, h) = image::fit(p.size(1.0), (aw, ah), *scale);
+            let ix = x - w / 2.0 + f64::from(*px) * (aw - w) / 2.0;
+            let iy = y - h / 2.0 + f64::from(*py) * (ah - h) / 2.0;
+            body.push_str(&image::element(p, ix, iy, w, h));
         }
         if let Some(rec) = &v.record {
             let mut seps = Vec::new();
@@ -1638,7 +1796,7 @@ pub fn render(
             body.push_str(&text_svg(
                 t,
                 x,
-                y,
+                y + v.label_dy,
                 v.inner_w,
                 &v.font,
                 &format!(" class=\"dot-label\"{}", font_attrs(&v.font)),
@@ -1690,7 +1848,7 @@ pub fn render(
             0.0,
             &graph_font,
             &format!(" class=\"dot-title\"{}", font_attrs(&graph_font)),
-            None,
+            grounds.graph.and_then(Color::ink),
         );
         bbox.add_rect(
             cx - t.width / 2.0,
@@ -1704,17 +1862,24 @@ pub fn render(
     let width = (bbox.x1 - bbox.x0 + 2.0 * PAD).ceil().max(1.0);
     let height = (bbox.y1 - bbox.y0 + 2.0 * PAD).ceil().max(1.0);
     let mut content = String::new();
+    // グラフの地（色の並びはグラデーション）
+    let ground = g
+        .get("bgcolor")
+        .map(str::to_owned)
+        .filter(|bg| ctx.first_color(bg, None).is_some())
+        .map(|bg| {
+            let radial = has(&styles(g.get("style")), "radial");
+            let angle = g.num("gradientangle").unwrap_or(0.0);
+            gradient(&mut ctx, &bg, None, radial, angle)
+        });
     if !ctx.defs.is_empty() {
         content.push_str(&format!("<defs>{}</defs>", ctx.defs));
     }
-    if let Some(bg) = g.get("bgcolor").map(str::to_owned)
-        && let Some(c) = ctx.first_color(&bg, None)
-    {
+    if let Some(fill) = ground {
         content.push_str(&format!(
-            "<rect x=\"0\" y=\"0\" width=\"{}\" height=\"{}\"{}/>",
+            "<rect x=\"0\" y=\"0\" width=\"{}\" height=\"{}\"{fill}/>",
             num(width),
             num(height),
-            color_attr("fill", &c)
         ));
     }
     content.push_str(&format!(
@@ -1740,6 +1905,27 @@ pub fn render(
     let acc = Accessible::default();
     let _ = ctx.model;
     svg_document("dot", width, height, FONT_SIZE, &options, &acc, &content)
+}
+
+/// `imagepos` の置き場所（横と縦: -1 は左・上、0 は中、1 は右・下）。既定は中央。
+fn image_pos(s: Option<&str>) -> (i8, i8) {
+    let s = s.map(|s| s.trim().to_ascii_lowercase()).unwrap_or_default();
+    let mut c = s.chars();
+    let (v, h) = (c.next(), c.next());
+    if s.len() != 2 {
+        return (0, 0);
+    }
+    let y = match v {
+        Some('t') => -1,
+        Some('b') => 1,
+        _ => 0,
+    };
+    let x = match h {
+        Some('l') => -1,
+        Some('r') => 1,
+        _ => 0,
+    };
+    (x, y)
 }
 
 /// `pos` の値（`x,y` と、動かさない印の `!`）。
@@ -2000,71 +2186,150 @@ fn font_attrs(f: &Font) -> String {
     s
 }
 
+/// 色の並びの地の色（グラデーションは読める色の平均。透明・読めない色は除く）。
+fn ground_color(text: &str, scheme: Option<&str>) -> Option<Color> {
+    let list: Vec<Rgba> = color::parse_list(text, scheme)
+        .into_iter()
+        .filter_map(|s| match s.color {
+            Some(Color::Rgba(c)) => Some(c),
+            _ => None,
+        })
+        .collect();
+    if list.is_empty() {
+        return None;
+    }
+    let n = list.len() as u32;
+    let avg = |f: fn(&Rgba) -> u8| (list.iter().map(|c| u32::from(f(c))).sum::<u32>() / n) as u8;
+    Some(Color::Rgba(Rgba {
+        r: avg(|c| c.r),
+        g: avg(|c| c.g),
+        b: avg(|c| c.b),
+        a: 255,
+    }))
+}
+
+/// 文が決めた地（クラスタの塗り・グラフの bgcolor）。`clusters[c]` はそのクラスタの中の地（自分になければ
+/// 外のクラスタ、なければグラフの地）と、その地を決めたもの（クラスタの番号、グラフは None）。
+struct Grounds {
+    graph: Option<Color>,
+    clusters: Vec<(Option<usize>, Option<Color>)>,
+}
+
+impl Grounds {
+    fn new(model: &Model, scheme: Option<&str>) -> Grounds {
+        let g = &model.attrs;
+        let graph = g.get("bgcolor").and_then(|t| ground_color(t, scheme));
+        let own: Vec<Option<Color>> = model
+            .clusters
+            .iter()
+            .map(|c| {
+                let a = &c.attrs;
+                let sc = a.get("colorscheme").or(scheme);
+                let st = styles(a.get("style"));
+                if has(&st, "invis") {
+                    return None;
+                }
+                let filled = has(&st, "filled") || has(&st, "radial") || has(&st, "striped");
+                let text = if filled {
+                    a.get("fillcolor").or(a.get("color")).or(a.get("bgcolor"))
+                } else {
+                    a.get("bgcolor")
+                };
+                text.and_then(|t| ground_color(t, sc))
+            })
+            .collect();
+        let clusters = (0..model.clusters.len())
+            .map(|c| {
+                let mut at = Some(c);
+                let mut steps = 0;
+                while let Some(ci) = at {
+                    if let Some(col) = own[ci] {
+                        return (Some(ci), Some(col));
+                    }
+                    at = model.clusters[ci].parent;
+                    steps += 1;
+                    if steps > 10_000 {
+                        break;
+                    }
+                }
+                (None, graph)
+            })
+            .collect();
+        Grounds { graph, clusters }
+    }
+
+    /// クラスタ `c`（None は根）の中の地。
+    fn at(&self, c: Option<usize>) -> (Option<usize>, Option<Color>) {
+        match c {
+            Some(c) => self.clusters.get(c).copied().unwrap_or((None, self.graph)),
+            None => (None, self.graph),
+        }
+    }
+}
+
 /// 色の並びのグラデーション（`defs` に足し、塗りの属性を返す）。
 fn gradient(ctx: &mut Ctx, text: &str, scheme: Option<&str>, radial: bool, angle: f64) -> String {
     let stops = color::parse_list(text, scheme.or(ctx.scheme.as_deref()));
     if stops.iter().any(|s| s.color.is_none()) {
         let _ = ctx.first_color(text, scheme);
     }
-    let known: Vec<(Rgba, Option<f64>)> = stops
+    match color::Fill::parse(text, scheme.or(ctx.scheme.as_deref()), radial, angle) {
+        None => format!(" fill=\"{SURFACE_ALT}\""),
+        Some(color::Fill::Solid(c)) => color_attr("fill", &c),
+        Some(color::Fill::Gradient(g)) => {
+            let id = ctx.id();
+            ctx.defs.push_str(&g.element(&id));
+            format!(" fill=\"url(#{id})\"")
+        }
+    }
+}
+
+/// 箱 (x, y, w, h) を色の並び `text` の縦の帯で塗る（クラスタの striped）。読める色が 2 つ未満なら空。
+#[allow(clippy::too_many_arguments)]
+fn bands(
+    ctx: &mut Ctx,
+    text: &str,
+    scheme: Option<&str>,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+) -> String {
+    let stops = color::parse_list(text, scheme.or(ctx.scheme.as_deref()));
+    if stops.iter().any(|s| s.color.is_none()) {
+        let _ = ctx.first_color(text, scheme);
+    }
+    let known: Vec<(Color, Option<f64>)> = stops
         .iter()
-        .filter_map(|s| match s.color {
-            Some(Color::Rgba(c)) => Some((c, s.fraction)),
-            Some(Color::None) => Some((
-                Rgba {
-                    r: 255,
-                    g: 255,
-                    b: 255,
-                    a: 0,
-                },
-                s.fraction,
-            )),
-            None => None,
-        })
+        .filter_map(|s| s.color.map(|c| (c, s.fraction)))
         .collect();
-    if known.is_empty() {
-        return format!(" fill=\"{SURFACE_ALT}\"");
+    if known.len() < 2 {
+        return String::new();
     }
-    if known.len() == 1 {
-        return color_attr("fill", &Color::Rgba(known[0].0));
-    }
-    let id = ctx.id();
-    let mut body = String::new();
-    let n = known.len();
+    let given: f64 = known.iter().filter_map(|k| k.1).sum();
+    let unspecified = known.iter().filter(|k| k.1.is_none()).count();
+    let rest = (1.0 - given).max(0.0) / unspecified.max(1) as f64;
+    let mut out = String::new();
     let mut at = 0.0;
-    for (i, (c, f)) in known.iter().enumerate() {
-        let offset = match f {
-            Some(f) => {
-                let o = at + f;
-                at = o;
-                (o - f).clamp(0.0, 1.0)
-            }
-            None => i as f64 / (n - 1) as f64,
-        };
-        body.push_str(&format!(
-            "<stop offset=\"{}\" stop-color=\"{}\"{}/>",
-            num(offset),
-            c.hex(),
-            c.opacity()
-                .map_or(String::new(), |o| format!(" stop-opacity=\"{o}\""))
+    for (c, f) in known {
+        let frac = f.unwrap_or(rest);
+        if frac <= 0.0 {
+            continue;
+        }
+        out.push_str(&format!(
+            "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\"{} stroke=\"none\"/>",
+            num(x + at * w),
+            num(y),
+            num(frac.min(1.0 - at).max(0.0) * w),
+            num(h),
+            color_attr("fill", &c)
         ));
+        at += frac;
+        if at >= 1.0 {
+            break;
+        }
     }
-    if radial {
-        ctx.defs.push_str(&format!(
-            "<radialGradient id=\"{id}\">{body}</radialGradient>"
-        ));
-    } else {
-        let r = angle.to_radians();
-        let (dx, dy) = (r.cos() / 2.0, -r.sin() / 2.0);
-        ctx.defs.push_str(&format!(
-            "<linearGradient id=\"{id}\" x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\">{body}</linearGradient>",
-            num(0.5 - dx),
-            num(0.5 - dy),
-            num(0.5 + dx),
-            num(0.5 + dy)
-        ));
-    }
-    format!(" fill=\"url(#{id})\"")
+    out
 }
 
 /// striped（箱の縦の帯）・wedged（楕円の扇）。
