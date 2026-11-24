@@ -2136,6 +2136,20 @@ async function menuCommandsFlow(): Promise<void> {
   }
 }
 
+/** 詳細の見出しの右クリックのコピー（件名・メッセージ・短い ID・git show） */
+async function detailsCopyFlow(): Promise<void> {
+  await showView('amonhen.showHistory');
+  const oid = git('rev-parse', 'HEAD').trim();
+  const copied = async (id: string) => {
+    await vscode.commands.executeCommand(id, { webviewSection: 'commitDetails', oid });
+    return vscode.env.clipboard.readText();
+  };
+  assert.equal(await copied('amonhen.details.copySubject'), git('log', '-1', '--format=%s', oid).trim());
+  assert.equal(await copied('amonhen.details.copyMessage'), git('log', '-1', '--format=%B', oid).trim());
+  assert.equal(await copied('amonhen.details.copyShortId'), oid.slice(0, 7));
+  assert.equal(await copied('amonhen.details.copyShowCommand'), `git show ${oid}`);
+}
+
 async function orphanFlow(): Promise<void> {
   const repo = api.manager.current!;
   const branch = git('symbolic-ref', '--short', 'HEAD').trim();
@@ -4528,6 +4542,10 @@ suite('Amon Hen in VSCode', () => {
 
   test('runs the app menu’s commands from the Command Palette', async () => {
     await menuCommandsFlow();
+  });
+
+  test('copies from the commit details’ right-click', async () => {
+    await detailsCopyFlow();
   });
 
   test('creates an orphan branch, empty or keeping the files, through the daemon', async () => {

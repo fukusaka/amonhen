@@ -298,3 +298,4 @@ left out for now: VSCode has its own extensions and settings for them.
 - [x] 74. Ignore whitespace in the Working Copy diff (with the engine; lines and hunks aren't staged or discarded meanwhile)
 - [x] 81. Select several files in the Working Copy (⌘- or Ctrl-click, Shift-click, Shift+↑↓); Space, ⌫, the row buttons and Stash… act on all of them
 - [x] 75. The app menus' Commit, Commit and Push, Stage All, Set Upstream…, Rebase…, Go to HEAD and Find in History… as commands; Merge Branches… and Rebase… offer the commit selected in History
+- [x] 76. The commit details' right-click (copy the ID, short ID, subject, message or git show command; Edit Message…) and names that search History by that person
