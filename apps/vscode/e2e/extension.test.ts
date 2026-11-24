@@ -1396,6 +1396,15 @@ async function stashOptionsFlow(): Promise<void> {
     await withWindow({ showInputBox: inputs('only b') }, async () => vscode.commands.executeCommand('amonhen.stash.files', { path: 'so-b.txt' }));
     assert.equal(git('diff', '--name-only').trim(), 'so-a.txt', lastErrors());
     assert.equal(git('stash', 'show', '--name-only').trim(), 'so-b.txt');
+
+    // いくつも選んで: 選んだファイルすべてを 1 つの stash に
+    writeFileSync(b, 'b5\n');
+    await repo.refresh();
+    await withWindow({ showInputBox: inputs('both') }, async () =>
+      vscode.commands.executeCommand('amonhen.stash.files', { path: 'so-a.txt', paths: ['so-a.txt', 'so-b.txt'] }),
+    );
+    assert.equal(git('diff', '--name-only').trim(), '', lastErrors());
+    assert.deepEqual(git('stash', 'show', '--name-only').trim().split('\n').sort(), ['so-a.txt', 'so-b.txt']);
   } finally {
     git('reset', '-q', '--hard', start);
     while (git('stash', 'list').trim()) git('stash', 'drop', '-q');
