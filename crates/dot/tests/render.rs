@@ -19,6 +19,10 @@ const SAMPLES: &[(&str, &str)] = &[
         "digraph { rankdir=LR; a -> b [label=\"x\"]; b -> b [label=\"loop\"]; b -> c [dir=both, arrowtail=odiamond, arrowhead=crow]; {rank=same; c; d} c -> d }",
     ),
     (
+        "flat_labels",
+        "digraph { a -> {b c d}; {rank=same; b -> d [label=\"skips c\"]; b -> c [label=\"next\\nto\"]} }",
+    ),
+    (
         "loops",
         "digraph { x -> a; a -> a [tailport=n, headport=n, label=n]; a:w -> a:w; a -> a [tailport=s]; a -> a; a -> b; b -> b }",
     ),
