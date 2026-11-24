@@ -55,7 +55,9 @@ export type EditPreset =
   | { kind: 'drop'; oid: string }
   | { kind: 'edit'; oid: string }
   /** `oid` を、新しい順の並びで `to` 番目へ */
-  | { kind: 'move'; oid: string; to: number };
+  | { kind: 'move'; oid: string; to: number }
+  /** `oid` を `onto` のすぐ上（新しい側）へ動かして、`onto` にまとめる（History で行に重ねて落とした） */
+  | { kind: 'squashOnto'; oid: string; onto: string };
 
 export function subjectOf(row: EditRow): string {
   return (row.newMessage ?? row.message).split('\n', 1)[0] ?? '';
@@ -172,6 +174,15 @@ export function applyPreset(rows: readonly EditRow[], preset: EditPreset): { row
       if (from < 0 || preset.to < 0 || preset.to >= rows.length) return { rows: [...rows] };
       // 落とす位置で数えると、下へ動かすときは抜けた分だけ先になる
       return { rows: moveRow(rows, from, preset.to > from ? preset.to + 1 : preset.to) };
+    }
+    case 'squashOnto': {
+      // アプリと同じ: 重ねた相手のすぐ上へ動かし、squash にする（merge の行・同じ行には何もしない）
+      const from = at(preset.oid);
+      const to = at(preset.onto);
+      if (from < 0 || to < 0 || from === to || rows[from]!.merge || rows[to]!.merge) return { rows: [...rows] };
+      const moved = moveRow(rows, from, to);
+      const i = moved.findIndex((r) => r.oid === preset.oid);
+      return { rows: choices(moved, i).includes('squash') ? withAction(moved, i, 'squash') : moved };
     }
   }
 }

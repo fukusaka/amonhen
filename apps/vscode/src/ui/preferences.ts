@@ -48,15 +48,6 @@ export async function setHistoryHidden(hidden: readonly HistoryItem[]): Promise<
   await store?.update('history.hidden', hidden);
 }
 
-/** History で、merge が取り込んだコミットを畳むか */
-export function historyFold(): boolean {
-  return store?.get<boolean>('history.fold') ?? false;
-}
-
-export async function setHistoryFold(fold: boolean): Promise<void> {
-  await store?.update('history.fold', fold);
-}
-
 /** History の行を 1 行にするか（既定は、アプリと同じく件名と作者・日時の 2 行） */
 export function historyOneLine(): boolean {
   return store?.get<boolean>('history.oneLine') ?? false;

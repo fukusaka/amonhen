@@ -117,6 +117,8 @@ pub struct DiffContent<'a> {
     pub picture: Option<(&'a [u8], crate::imagediff::View)>,
     /// SVG をモバイルで見るとき、その部品での見え方（元の絵と並べる）。
     pub mobile: Option<&'a MobileCheck>,
+    /// 絵の下の説明を替えるもの（Android の VectorDrawable の「24 × 24 dp · 1 kB」）。
+    pub picture_caption: Option<&'a str>,
 }
 
 /// SVG の見せ方（macOS 版の `SVGView`、GTK4 版の `SvgView`）: 絵・モバイル（絵と、モバイル向けの描画部品で
@@ -428,6 +430,7 @@ impl WorkingShown {
             file_mode: false,
             picture: None,
             mobile: None,
+            picture_caption: None,
         }
     }
 }
@@ -452,6 +455,16 @@ pub struct FileShown {
     pub diagrams: Arc<Vec<Option<crate::markdownview::DiagramPicture>>>,
     /// SVG をモバイルで見ているなら、その確認。
     pub mobile: Option<Arc<MobileCheck>>,
+    /// Android の VectorDrawable なら、絵の下の説明と添え書き（テキストで見ていても、切り替えを出すために持つ）。
+    pub drawable: Option<Drawable>,
+}
+
+/// すべてのファイルで開いた Android の VectorDrawable（macOS 版・GTK4 版と同じく、SVG にして絵で見せる）。
+pub struct Drawable {
+    /// 「24 × 24 dp · 1 kB」。
+    pub caption: String,
+    /// 引けなかった色・SVG では同じに描けないもの（訳した文）。
+    pub notes: Vec<String>,
 }
 
 impl FileShown {
@@ -475,6 +488,7 @@ impl FileShown {
                 .as_deref()
                 .map(|p| (p.as_slice(), self.picture_view)),
             mobile: self.mobile.as_deref(),
+            picture_caption: self.drawable.as_ref().map(|d| d.caption.as_str()),
         }
     }
 }
@@ -674,6 +688,7 @@ impl CommitShown {
             file_mode: false,
             picture: None,
             mobile: None,
+            picture_caption: None,
         }
     }
 
@@ -2148,6 +2163,37 @@ impl Data {
                 && !(svg && svg_view == SvgView::Text))
                 .then(|| blob_at(&repo, &commit, change.as_ref(), &path))
                 .flatten();
+            // .xml は中身の頭を見て、Android の VectorDrawable なら SVG にして絵で見せる（色の参照は同じコミットの
+            // res から引く。テキストで見るなら絵にしない。描けなければテキスト。GTK4 版の `show_drawable`）。
+            let mut drawable = None;
+            let mut picture = picture;
+            if amonhen_core::vectordrawable::is_xml(&path)
+                && let Some(data) = blob_at(&repo, &commit, change.as_ref(), &path)
+                && amonhen_core::vectordrawable::is_vector_drawable(&path, &data)
+            {
+                let drawn = (svg_view != SvgView::Text)
+                    .then(|| repo.vector_drawable(&commit, &path, &data));
+                match drawn {
+                    Some(Ok(drawn)) => {
+                        let (w, h) = crate::imagediff::svg_size(drawn.svg.as_bytes());
+                        drawable = Some(Drawable {
+                            caption: format!(
+                                "{w} × {h} dp · {}",
+                                crate::imagediff::format_size(data.len())
+                            ),
+                            notes: drawn.notes,
+                        });
+                        picture = Some(Arc::new(drawn.svg.into_bytes()));
+                    }
+                    Some(Err(e)) => eprintln!("VectorDrawable を描けない（{path}）: {e}"),
+                    None => {
+                        drawable = Some(Drawable {
+                            caption: String::new(),
+                            notes: Vec::new(),
+                        })
+                    }
+                }
+            }
             // モバイルで見る SVG は、崩れる機能と、その部品での見え方も（Android と flutter_svg は本物の取り込みを
             // 移したもの、ほかは近似。GTK4 版と同じ）。
             let mobile = picture
@@ -2201,6 +2247,7 @@ impl Data {
                 markdown,
                 diagrams: Arc::new(diagrams),
                 mobile,
+                drawable,
             })));
             wake();
         });

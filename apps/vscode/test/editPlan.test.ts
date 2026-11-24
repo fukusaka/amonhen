@@ -84,4 +84,9 @@ test('presets start the mode with the shortcut’s change', () => {
   assert.deepEqual(applyPreset(r, { kind: 'combine', oids: ['b'] }).rows.map((x) => x.action), ['pick', 'squash', 'pick']);
   assert.deepEqual(applyPreset(r, { kind: 'move', oid: 'c', to: 2 }).rows.map((x) => x.oid), ['b', 'a', 'c']);
   assert.deepEqual(applyPreset(r, { kind: 'move', oid: 'a', to: 0 }).rows.map((x) => x.oid), ['a', 'c', 'b']);
+  // 行に重ねて落とすと、その上へ動かしてまとめる（新しい方を古い方へ、古い方を新しい方へ）
+  const onto = (oid: string, target: string) => applyPreset(r, { kind: 'squashOnto', oid, onto: target }).rows.map((x) => `${x.oid}:${x.action}`);
+  assert.deepEqual(onto('c', 'a'), ['b:pick', 'c:squash', 'a:pick']);
+  assert.deepEqual(onto('a', 'c'), ['a:squash', 'c:pick', 'b:pick']);
+  assert.deepEqual(onto('b', 'a'), ['c:pick', 'b:squash', 'a:pick']);
 });

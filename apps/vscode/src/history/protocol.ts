@@ -37,7 +37,7 @@ export interface RowData {
   canSquash: boolean;
   /** 畳んだ merge が隠している、取り込んだコミットの数 */
   hidden?: number;
-  /** 畳む設定で、開いている merge */
+  /** 開いている merge（畳める） */
   expanded?: boolean;
 }
 
@@ -236,10 +236,14 @@ export interface DetailsExtras {
   signature?: SignatureView;
   /** そのコミットを親に持つコミット */
   children: string[];
+  /** git notes（refs/notes/commits）。なければ undefined */
+  notes?: string;
 }
 
 export type HistoryWebviewMessage =
   | { type: 'more' }
+  /** merge を 1 つ開く・畳む（← →。右クリックの Show・Fold Merged Commits と同じ） */
+  | { type: 'toggleFold'; oid: string }
   /** daemon の History の、start から count 行 */
   | { type: 'range'; start: number; count: number }
   /** 探す（空なら検索をやめる）。`selected` は今選んでいる行（一致だけの History との切り替えで選んだままにする） */
@@ -279,6 +283,8 @@ export type HistoryWebviewMessage =
   | { type: 'saveMessage'; oid: string; last?: string; kind: MessageEdit; message: string }
   /** 編集できる範囲の中で、新しい順の to 番目に動かす */
   | { type: 'move'; oid: string; to: number }
+  /** History で行に重ねて落とした: oid を onto にまとめる（編集モードを、その変更を入れて開く） */
+  | { type: 'squashOnto'; oid: string; onto: string }
   /** HEAD・親・子のコミットに移る（`oid` は今選んでいるコミット） */
   | { type: 'goTo'; to: 'head' | 'parent' | 'child'; oid?: string }
   /** shallow clone の履歴を取り足す・すべて取る、partial clone の中身をすべて取る（帯と札のボタン） */

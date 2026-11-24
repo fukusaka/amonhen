@@ -36,13 +36,11 @@ import type {
 } from '../history/protocol.ts';
 import { samePath, type Worktree } from '../git/worktrees.ts';
 import {
-  historyFold,
   historyHidden,
   historyHighlight,
   historyOneLine,
   historyOrder,
   setDetailsLayout,
-  setHistoryFold,
   detailsLayout,
   setHistoryHidden,
   setHistoryHighlight,
@@ -162,7 +160,7 @@ function imageType(path: string): string {
 
 export class HistoryController implements vscode.Disposable {
   private static readonly edits = new vscode.EventEmitter<
-    Extract<HistoryWebviewMessage, { type: 'saveMessage' | 'move' | 'editPreview' | 'editApply' }>
+    Extract<HistoryWebviewMessage, { type: 'saveMessage' | 'move' | 'squashOnto' | 'editPreview' | 'editApply' }>
   >();
   /** Webview でメッセージの編集や並べ替えが行われた。処理は historyCommands が受け持つ */
   static readonly onDidReceiveEdit = HistoryController.edits.event;
@@ -219,17 +217,19 @@ export class HistoryController implements vscode.Disposable {
   private readonly fileOrder = new Map<string, string[]>();
   private selectionRequest = 0;
   private searchAbort: AbortController | undefined;
-  /** 畳む設定で、開いている merge */
-  private readonly expandedMerges = new Set<string>();
+  /**
+   * merge の畳み方（コアの `foldState`。リポジトリごとに `<git dir>/amonhen/fold.json` に覚え、アプリ・TUI と同じ）。
+   * foldDefault なら merge を畳み、foldExcept はそれと逆にした merge
+   */
+  private foldDefault = false;
+  private readonly foldExcept = new Set<string>();
+  /** 畳み方を読んだリポジトリ（開き直したら読み直す） */
+  private foldLoadedFor: string | undefined;
   /**
    * 畳むか・祖先を目立たせるか。選んだらすぐこの値で読み直し、覚えるのは裏で（覚え終わるのを待つと、その間に始まった
    * 読み直しが前の値で読む）。まだ選んでいなければ、覚えている値
    */
-  private foldChoice: boolean | undefined;
   private highlightChoice: boolean | undefined;
-  private get folding(): boolean {
-    return this.foldChoice ?? historyFold();
-  }
   private get highlighting(): boolean {
     return this.highlightChoice ?? historyHighlight();
   }
@@ -418,12 +418,16 @@ export class HistoryController implements vscode.Disposable {
       }
       case 'saveMessage':
       case 'move':
+      case 'squashOnto':
       case 'editPreview':
       case 'editApply':
         HistoryController.edits.fire(message);
         break;
       case 'goTo':
         await this.goTo(message.to, message.oid).catch(showError);
+        break;
+      case 'toggleFold':
+        await this.toggleFold(message.oid).catch(showError);
         break;
       case 'fetchForm': {
         const command = { more: 'amonhen.fetchMoreHistory', all: 'amonhen.fetchAllHistory', contents: 'amonhen.fetchAllContents' };
@@ -625,7 +629,7 @@ export class HistoryController implements vscode.Disposable {
     if (!client) return undefined;
     const reply = (await client.call({ op: 'run', command: { op: 'commitExtras', oid } })).json;
     if (reply['ok'] !== true) return undefined;
-    const info = reply['info'] as { signature?: SignatureCheck | null; children?: string[] } | undefined;
+    const info = reply['info'] as { signature?: SignatureCheck | null; children?: string[]; notes?: string } | undefined;
     const committer = this.details.get(oid)?.committer.email ?? '';
     // 署名があるのに確かめられなければ（N か結果なし）No key（アプリと同じ）
     const signed = this.signedKinds.get(oid);
@@ -635,6 +639,7 @@ export class HistoryController implements vscode.Disposable {
       oid,
       ...(signature ? { signature } : {}),
       children: info?.children ?? [],
+      ...(info?.notes?.trim() ? { notes: info.notes } : {}),
     };
     this.extras.set(oid, extras);
     if (this.extras.size > DETAILS_CACHE) this.extras.delete(this.extras.keys().next().value!);
@@ -847,13 +852,15 @@ export class HistoryController implements vscode.Disposable {
       }
       if (!value || typeof value !== 'object') return;
       const run = value as Record<string, unknown>;
-      const image = run['image'];
-      if (typeof image === 'string' && !/^[a-z][a-z0-9+.-]*:|^\/\//i.test(image)) {
+      // `<picture>` の暗い外観・明るい外観の画像も
+      for (const key of ['image', 'image_dark', 'image_light']) {
+        const image = run[key];
+        if (typeof image !== 'string' || /^[a-z][a-z0-9+.-]*:|^\/\//i.test(image)) continue;
         const target = normalizePath(image.startsWith('/') ? image.slice(1) : `${dir}${image}`.split(/[?#]/)[0]!);
         const data = target ? (await repo.backend.object(`${oid}:${target}`).catch(() => undefined))?.data : undefined;
         if (data && data.length <= budget && /\.(png|jpe?g|gif|webp|bmp|ico|avif|svg)$/i.test(target!)) {
           budget -= data.length;
-          run['image'] = `data:${imageType(target!)};base64,${data.toString('base64')}`;
+          run[key] = `data:${imageType(target!)};base64,${data.toString('base64')}`;
         }
       }
       for (const v of Object.values(run)) if (typeof v === 'object') await visit(v);
@@ -1295,9 +1302,36 @@ export class HistoryController implements vscode.Disposable {
     }
   }
 
-  /** 畳んだ merge を開く・畳む。読み直しても同じコミットを選んだままにする */
+  /** リポジトリの畳み方を読む（開き直したリポジトリなら。読めなければ何も畳まない） */
+  private async loadFold(client: DaemonClient): Promise<void> {
+    const root = this.repo?.root;
+    if (!root || this.foldLoadedFor === root) return;
+    this.foldLoadedFor = root;
+    this.foldDefault = false;
+    this.foldExcept.clear();
+    try {
+      const reply = (await client.call({ op: 'run', command: { op: 'foldState' } })).json;
+      const info = reply['info'] as { folded?: boolean; except?: string[] } | undefined;
+      this.foldDefault = info?.folded === true;
+      for (const id of info?.except ?? []) this.foldExcept.add(id);
+    } catch {
+      // 古いエンジン。畳まない
+    }
+  }
+
+  /** 畳み方を覚える（アプリ・TUI と同じファイル）。覚えられなくても、この窓では効く */
+  private async saveFold(): Promise<void> {
+    const client = await this.engine();
+    if (!client) return;
+    await client
+      .call({ op: 'run', command: { op: 'setFoldState', folded: this.foldDefault, except: [...this.foldExcept] } })
+      .catch(() => undefined);
+  }
+
+  /** merge を 1 つ開く・畳む。覚えて、読み直しても同じコミットを選んだままにする */
   async toggleFold(oid: string): Promise<void> {
-    if (!this.expandedMerges.delete(oid)) this.expandedMerges.add(oid);
+    if (!this.foldExcept.delete(oid)) this.foldExcept.add(oid);
+    await this.saveFold();
     await this.reset();
     // 読み直しの途中で次の読み直しが始まっていれば、それも待ってから選ぶ
     await this.settled();
@@ -1331,7 +1365,9 @@ export class HistoryController implements vscode.Disposable {
       label: `${mark(this.highlighting)}Highlight Ancestors`,
       description: 'Full color only for the selected commit’s ancestors',
     };
-    const fold: Item = { label: `${mark(this.folding)}Fold Merged Branches`, description: 'Hide the commits a merge brought in' };
+    // merge の畳み方は、すべて畳む・すべて開く（1 つずつは右クリックか ← →。アプリと同じ）
+    const foldAll: Item = { label: 'Fold All Merged Commits', description: 'Hide the commits each merge brought in' };
+    const showAll: Item = { label: 'Show All Merged Commits' };
     const oneLine: Item = { label: `${mark(historyOneLine())}One Line per Commit` };
     const picked = await vscode.window.showQuickPick<Item>(
       [
@@ -1350,7 +1386,7 @@ export class HistoryController implements vscode.Disposable {
         ...items.map(([value, label]): Item => ({ label: `${mark(!hidden.includes(value))}${label}`, item: value })),
         separator('View'),
         oneLine,
-        ...(engine ? [fold, highlight] : []),
+        ...(engine ? [separator('Merged Commits'), foldAll, showAll, separator('Ancestors'), highlight] : []),
       ],
       { placeHolder: 'History Display' },
     );
@@ -1361,10 +1397,11 @@ export class HistoryController implements vscode.Disposable {
       this.highlightChoice = !this.highlighting;
       void setHistoryHighlight(this.highlightChoice);
       await this.sendLineage();
-    } else if (picked === fold) {
-      this.foldChoice = !this.folding;
-      void setHistoryFold(this.foldChoice);
-      this.expandedMerges.clear();
+    } else if (picked === foldAll || picked === showAll) {
+      // すべて畳む・すべて開く（1 つずつ開いた・畳んだものも忘れる。アプリと同じ）
+      this.foldDefault = picked === foldAll;
+      this.foldExcept.clear();
+      await this.saveFold();
       await this.reset();
     } else if (picked?.order && picked.order !== order) {
       await setHistoryOrder(picked.order);
@@ -1418,11 +1455,12 @@ export class HistoryController implements vscode.Disposable {
       }
     }
     await client.call({ op: 'historyOrder', order: historyOrder() });
-    const fold = this.folding;
+    await this.loadFold(client);
+    const except = [...this.foldExcept];
     const history = await client.call({
       op: 'history',
       ...(tips ? { tips } : {}),
-      ...(fold ? { fold, expanded: [...this.expandedMerges] } : {}),
+      ...(this.foldDefault ? { fold: true, expanded: except } : except.length > 0 ? { collapsed: except } : {}),
     });
     // 畳んだ数は History ごとに持つ（古い読み直しが新しい History の分を書き換えないように）
     const folded =
@@ -1463,7 +1501,8 @@ export class HistoryController implements vscode.Disposable {
       rows.forEach((row, i) => {
         const hidden = daemon.folded?.[start + i];
         if (hidden) row.hidden = hidden;
-        if (this.expandedMerges.has(row.oid)) row.expanded = true;
+        // 開いている merge は畳める（畳んで隠すものがあるかは、畳んでみるまで分からない）
+        else if ((page[i]?.parentOids.length ?? 0) > 1) row.expanded = true;
       });
     } catch (err) {
       if (daemon !== this.daemon || generation !== this.generation) {
