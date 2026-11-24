@@ -16633,6 +16633,7 @@ impl Root {
                 }),
                 result: context.callback(Message::MergeResult),
                 base: context.callback(Message::MergeBase),
+                option: context.callback(Message::Command),
             },
         );
         Border::new()
