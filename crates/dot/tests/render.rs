@@ -19,6 +19,10 @@ const SAMPLES: &[(&str, &str)] = &[
         "digraph { rankdir=LR; a -> b [label=\"x\"]; b -> b [label=\"loop\"]; b -> c [dir=both, arrowtail=odiamond, arrowhead=crow]; {rank=same; c; d} c -> d }",
     ),
     (
+        "loops",
+        "digraph { x -> a; a -> a [tailport=n, headport=n, label=n]; a:w -> a:w; a -> a [tailport=s]; a -> a; a -> b; b -> b }",
+    ),
+    (
         "styles",
         "graph { node [style=filled, fillcolor=\"#ffcc00\"]; a -- b [color=\"red:blue\", penwidth=2]; b [shape=box, style=\"rounded,dashed,filled\", fillcolor=\"red:yellow\"]; c [label=<<b>bold</b> <i>it</i>>]; b -- c [style=dotted, label=\"e\"] }",
     ),

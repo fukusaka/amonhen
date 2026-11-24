@@ -1238,34 +1238,55 @@ pub fn render(
             Route::Loop { index } => {
                 let c = lay.nodes[e.tail];
                 let ln = &lnodes[e.tail];
-                let half_w = ln.w / 2.0;
-                let half_h = ln.h / 2.0;
                 let size = 18.0 + 8.0 * *index as f64;
-                let start = (c.0 + half_w * 0.6, c.1 - half_h * 0.6);
-                let end = (c.0 + half_w * 0.6, c.1 + half_h * 0.6);
-                let reach = c.0 + half_w + size;
+                // 輪の側: 向きのあるポートがあればその側（尾が先）、なければ配置の右（Graphviz と同じ）
+                let port_side = [
+                    a.get("tailport").or(e.tail_port.as_deref()),
+                    a.get("headport").or(e.head_port.as_deref()),
+                ]
+                .into_iter()
+                .find_map(|p| match ortho_port(tv, p, dir) {
+                    route::OrthoPort::Point { dir: d, .. } => {
+                        Some(if d.0.abs() > d.1.abs() + 1e-6 {
+                            (d.0.signum(), 0.0)
+                        } else {
+                            (0.0, d.1.signum())
+                        })
+                    }
+                    _ => None,
+                });
+                let u = port_side.unwrap_or((1.0, 0.0));
+                let v = (-u.1, u.0);
+                // 外へ（u）の半分の大きさと、脇へ（v）の半分の大きさ
+                let ext = (u.0 * ln.w).abs().max((u.1 * ln.h).abs()) / 2.0;
+                let mut span = (v.0 * ln.w).abs().max((v.1 * ln.h).abs()) / 2.0;
+                if port_side.is_some() {
+                    span = span.min(ext * 1.5);
+                }
+                let at = |p: f64, q: f64| (c.0 + u.0 * p + v.0 * q, c.1 + u.1 * p + v.1 * q);
                 path = if ortho {
-                    let (s, t) = (
-                        (c.0 + half_w, c.1 - half_h * 0.6),
-                        (c.0 + half_w, c.1 + half_h * 0.6),
-                    );
-                    let r = c.0 + half_w + size;
+                    let r = ext + size;
                     vec![
-                        Cubic::line(s, (r, s.1)),
-                        Cubic::line((r, s.1), (r, t.1)),
-                        Cubic::line((r, t.1), t),
+                        Cubic::line(at(ext, -span * 0.6), at(r, -span * 0.6)),
+                        Cubic::line(at(r, -span * 0.6), at(r, span * 0.6)),
+                        Cubic::line(at(r, span * 0.6), at(ext, span * 0.6)),
                     ]
                 } else {
                     vec![Cubic(
-                        start,
-                        (reach, c.1 - half_h - size * 0.4),
-                        (reach, c.1 + half_h + size * 0.4),
-                        end,
+                        at(ext * 0.6, -span * 0.6),
+                        at(ext + size, -span - size * 0.4),
+                        at(ext + size, span + size * 0.4),
+                        at(ext * 0.6, span * 0.6),
                     )]
                 };
                 label_at = ev.label.as_ref().map(|t| {
-                    let lw = if dir.sideways() { t.height } else { t.width };
-                    (reach + lw / 2.0 + 2.0, c.1)
+                    let (lw, lh) = if dir.sideways() {
+                        (t.height, t.width)
+                    } else {
+                        (t.width, t.height)
+                    };
+                    let l = (u.0 * lw).abs().max((u.1 * lh).abs());
+                    at(ext + size + l / 2.0 + 2.0, 0.0)
                 });
                 path = path.iter().map(|c| c.map(to_final)).collect();
                 label_at = label_at.map(to_final);
@@ -1287,8 +1308,8 @@ pub fn render(
             let (a0, b0) = (path[0].0, path[path.len() - 1].3);
             ((b0.0 - a0.0).hypot(b0.1 - a0.1) / 3.0).clamp(20.0, 60.0)
         };
-        // 直角の道は端の側と位置を道筋で決めた（ノードの中から始まり、外形で切る）
-        if ortho {
+        // 直角の道と自分への輪は、端の側と位置を道筋で決めた（ノードの中から始まり、外形で切る）
+        if ortho || e.tail == e.head {
             tail_port = None;
             head_port = None;
         }
