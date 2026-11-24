@@ -730,7 +730,7 @@ mod tests {
                 .find(|t| t.contains(&format!(">{word}</text>")))
                 .unwrap_or_else(|| panic!("{word}: {flat}"))
         };
-        assert!(with("bold").contains("font-weight=\"bold\""));
+        assert!(with("bold").contains("font-weight=\"700\""));
         assert!(with("italic").contains("font-style=\"italic\""));
         assert!(!with("italic").contains("font-weight"));
         assert!(!with(" and ").contains("font-weight") && !with(" and ").contains("font-style"));
