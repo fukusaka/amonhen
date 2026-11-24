@@ -288,3 +288,4 @@ macOS アプリに追いつく（1 つの機能を 1 つの pull request で、�
 - [x] 74. Working Copy の差分で空白を無視する（エンジンがあれば。その間は行・hunk を stage・破棄しない）
 - [x] 80. History と編集モードで、コミットを別のコミットに重ねて落とすとそれにまとめる（その上へ動かして squash にした編集モードを開く）
 - [x] 75. アプリのメニューの Commit・Commit and Push・Stage All・Set Upstream…・Rebase…・Go to HEAD・Find in History… をコマンドに。Merge Branches… と Rebase… で History で選んでいるコミットも選べる
+- [x] 76. コミット情報の右クリック（ID・短い ID・件名・メッセージ・git show のコピー、Edit Message…）と、名前を押してその人で History を探す

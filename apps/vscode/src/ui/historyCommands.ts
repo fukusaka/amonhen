@@ -110,6 +110,22 @@ export function registerHistoryCommands(): vscode.Disposable {
       await vscode.env.clipboard.writeText(oid);
       vscode.window.setStatusBarMessage(`$(copy) ${oid.slice(0, 8)}`, 3000);
     }),
+    // 詳細の見出しの右クリック（History・Reflog・File History・Range Diff の詳細）
+    ...(
+      [
+        ['amonhen.details.copyShortId', async (oid: string) => oid.slice(0, 7)],
+        ['amonhen.details.copySubject', async (oid: string, repo: Repository) => (await fullMessage(repo, oid)).split('\n')[0] ?? ''],
+        ['amonhen.details.copyMessage', async (oid: string, repo: Repository) => (await fullMessage(repo, oid)).trim()],
+        ['amonhen.details.copyShowCommand', async (oid: string) => `git show ${oid}`],
+      ] as const
+    ).map(([id, text]) =>
+      vscode.commands.registerCommand(id, async (ctx?: CommitContext) => {
+        const repo = MainPanel.active?.repository;
+        if (!repo || !ctx?.oid) return;
+        await vscode.env.clipboard.writeText(await text(ctx.oid, repo));
+        vscode.window.setStatusBarMessage(`$(copy) Copied`, 3000);
+      }),
+    ),
     HistoryController.onDidReceiveEdit(async (message) => {
       const panel = MainPanel.active?.history;
       const repo = panel?.repository;
