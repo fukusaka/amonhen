@@ -7,7 +7,7 @@ import type { HostMessage, ViewName } from '../view/protocol.ts';
 import { el, getState, post, updateState, type View } from './api.ts';
 import { createBlameView } from './blame.ts';
 import { createDaemonView } from './daemon.ts';
-import { setDetailsLayout, showWholeFile } from './details.ts';
+import { setDetailsLayout, showWholeFile, fileAction } from './details.ts';
 import { setWrapLines } from './diffView.ts';
 import { createFileHistoryView } from './fileHistory.ts';
 import { createHistoryView } from './history.ts';
@@ -67,8 +67,16 @@ window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
     setWrapLines(message.wrap);
     return;
   }
+  if (message.type === 'messageFont') {
+    document.body.classList.toggle('monospace-message', message.monospace);
+    return;
+  }
   if (message.type === 'wholeFile') {
     showWholeFile(message.oid, message.path);
+    return;
+  }
+  if (message.type === 'fileAction') {
+    fileAction(message.oid, message.path, message.action);
     return;
   }
   for (const v of Object.values(views)) {

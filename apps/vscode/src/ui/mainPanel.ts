@@ -8,7 +8,7 @@ import { BlameController } from './blameController.ts';
 import { DaemonController } from './daemonController.ts';
 import { FileHistoryController } from './fileHistoryController.ts';
 import { HistoryController } from './historyController.ts';
-import { detailsLayout } from './preferences.ts';
+import { detailsLayout, monospacedMessage } from './preferences.ts';
 import { RangeDiffController } from './rangeDiffController.ts';
 import { ReflogController } from './reflogController.ts';
 import { SettingsController } from './settingsController.ts';
@@ -191,6 +191,7 @@ export class MainPanel implements vscode.Disposable {
         this.ready = true;
         this.post({ type: 'detailsLayout', layout: detailsLayout() });
         this.post({ type: 'wrapLines', wrap: wrapLongLines() });
+        this.post({ type: 'messageFont', monospace: monospacedMessage() });
         if (this.pendingView) {
           this.post({ type: 'show', view: this.pendingView });
           this.pendingView = undefined;

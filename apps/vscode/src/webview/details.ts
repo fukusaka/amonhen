@@ -44,13 +44,16 @@ function withRecorded(text: Node | string, recorded: Person | undefined): Node |
  * File も出す。このコミットで消したファイルには「この版に戻す」を出さない（この版にはない）。名前を変えたファイルは、
  * 前の版に戻すと元の名前に戻す（origPath）
  */
-function fileContext(oid: string, path: string, wide: boolean, status?: string, origPath?: string): string {
+function fileContext(oid: string, path: string, wide: boolean, status?: string, origPath?: string, state: { collapsed?: boolean; whole?: boolean } = {}): string {
   return JSON.stringify({
     webviewSection: 'commitFile',
     oid,
     path,
     ...(origPath ? { origPath } : {}),
     commitFileWide: wide,
+    // 開く・畳む（アプリの ⋯ の最初の項目）と、ファイル全体を出しているか（Show Whole File を戻す）
+    commitFileCollapsed: state.collapsed === true,
+    commitFileWhole: state.whole === true,
     commitFileDeleted: status === 'D',
     preventDefaultContextMenuItems: true,
   });
@@ -112,6 +115,13 @@ const wholeFiles = new Set<(oid: string, path: string) => void>();
 
 export function showWholeFile(oid: string, path: string): void {
   for (const show of wholeFiles) show(oid, path);
+}
+
+/** 見出しのメニューの Expand・Collapse と Show Changes Only */
+const fileActions = new Set<(oid: string, path: string, action: 'toggle' | 'changesOnly') => void>();
+
+export function fileAction(oid: string, path: string, action: 'toggle' | 'changesOnly'): void {
+  for (const act of fileActions) act(oid, path, action);
 }
 
 
@@ -194,6 +204,21 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
     if (oid !== shownOid || !file || !choices) return;
     widen(file, 'all');
   });
+  fileActions.add((oid, path, action) => {
+    const file = sections.get(path);
+    if (oid !== shownOid || !file) return;
+    if (action === 'toggle') {
+      file.chosen = true;
+      setCollapsed(file, !file.section.classList.contains('collapsed'));
+      request(file);
+      renderBar();
+    } else if (contexts.get(path) === 'all') {
+      // ファイル全体をやめて、変えたところ（前後 3 行）に戻す
+      contexts.delete(path);
+      file.requested = true;
+      post({ type: 'fileContext', oid, path, context: 3 });
+    }
+  });
 
   /**
    * メッセージの文: URL とコミット ID をリンクにし（ID は onParent があれば押すとその行に移る）、検索の語を強調する
@@ -243,10 +268,16 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
     });
   }
 
-  /** コミットの ID の並び（onParent があれば押すとその行に移る） */
-  function commitLinks(oids: readonly string[]): HTMLElement {
+  /** コミットの ID の並び（onParent があれば押すとその行に移る）。取っていないもの（missing）は薄く「(not fetched)」 */
+  function commitLinks(oids: readonly string[], missing: readonly string[] = []): HTMLElement {
     const span = el('span');
     for (const p of oids) {
+      if (missing.includes(p)) {
+        const code = el('code', 'parent missing', p.slice(0, 8));
+        code.title = `${p} isn’t fetched (shallow clone)`;
+        span.append(code, el('span', 'recorded', ' (not fetched) '));
+        continue;
+      }
       if (onParent) {
         const link = el('a', 'parent', p.slice(0, 8));
         link.href = '#';
@@ -313,7 +344,7 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
     }
     add('Commit', el('code', '', d.oid));
     if (d.parents.length > 0) {
-      add(d.parents.length > 1 ? 'Parents' : 'Parent', commitLinks(d.parents));
+      add(d.parents.length > 1 ? 'Parents' : 'Parent', commitLinks(d.parents, d.missingParents));
     }
 
     const parts: Node[] = [expandButton(), title, list];
@@ -431,7 +462,7 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
     if (layout.tree && diffs?.querySelector('.dir-head')) {
       const anyFolded = foldedDirs.size > 0;
       items.push(
-        barButton(anyFolded ? 'Expand Folders' : 'Collapse Folders', anyFolded ? 'Expand all folders' : 'Collapse all folders', false, () => {
+        barButton(anyFolded ? 'Expand All Folders' : 'Collapse All Folders', anyFolded ? 'Expand all folders' : 'Collapse all folders', false, () => {
           if (anyFolded) foldedDirs.clear();
           else for (const d of diffs?.querySelectorAll<HTMLElement>('.dir-head') ?? []) foldedDirs.add(d.dataset.dir!);
           applyFolds();
@@ -443,7 +474,7 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
     const expand = closed.length > 0;
     items.push(
       barButton(
-        expand ? 'Expand All' : 'Collapse All',
+        expand ? 'Expand All Diffs' : 'Collapse All Diffs',
         expand ? 'Expand every diff (generated files and very large changes stay folded)' : 'Collapse every diff',
         false,
         () => {
@@ -583,6 +614,17 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
       head.append(el('span', 'path'));
       if (single) {
         head.dataset.vscodeContext = fileContext(oid, f.path, choices !== undefined, f.status, f.origPath);
+        // 右クリックの直前に、今の様子（畳んでいるか・ファイル全体か）を入れ直す
+        head.addEventListener(
+          'contextmenu',
+          () => {
+            head.dataset.vscodeContext = fileContext(oid, f.path, choices !== undefined, f.status, f.origPath, {
+              collapsed: section.classList.contains('collapsed'),
+              whole: contexts.get(f.path) === 'all',
+            });
+          },
+          true,
+        );
         const open = el('button', 'head-button', 'Open');
         open.title = 'Open the diff in the editor';
         open.addEventListener('click', () => post({ type: 'openFile', oid, path: f.path }));
@@ -595,6 +637,17 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
           head.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: r.left, clientY: r.bottom, button: 2 }));
         });
         head.append(open, more);
+      } else {
+        // いくつも選んだときの見出しにも、パスで使える項目（File History・Copy Path。アプリと同じ）
+        head.dataset.vscodeContext = JSON.stringify({ webviewSection: 'selectionFile', path: f.path, preventDefaultContextMenuItems: true });
+        const more = el('button', 'head-button more', '⋯');
+        more.title = 'More actions for this file';
+        more.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const r = more.getBoundingClientRect();
+          head.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: r.left, clientY: r.bottom, button: 2 }));
+        });
+        head.append(more);
       }
       section.append(head, el('div', 'empty', 'Loading…'));
 
@@ -863,7 +916,7 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
     meta = undefined;
     place([]);
     fileSections('', [], false);
-    scroller.replaceChildren(el('div', 'empty', 'Select a commit to see its details here'));
+    scroller.replaceChildren(el('div', 'empty', 'Select a commit to see its changes.'));
   }
 
   clear();

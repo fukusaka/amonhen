@@ -1339,6 +1339,10 @@ First release.
   edit mode reads "drop — Remove", and the Reflog names its worktree when there are several.
 - History starts on All Branches, a branch chosen in the sidebar shows its upstream too, the search field has the
   app's ▾ of ways to search, the counts read "3 / 10", and ancestors are highlighted from the start, as in the app.
+- History's details follow the app in the small things: a file header's menu has Expand / Collapse, Open File at
+  This Commit and Show Changes Only, selected commits' headers have File History and Copy Path, parents not fetched are
+  marked, the bar reads Expand All Folders / Diffs, and the display menu has Monospaced Commit Message (off at first,
+  as in the app) and Changed Files as Tree.
 
 #### Changed
 

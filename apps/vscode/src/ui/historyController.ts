@@ -43,6 +43,8 @@ import {
   historyOrder,
   setDetailsLayout,
   detailsLayout,
+  monospacedMessage,
+  setMonospacedMessage,
   setHistoryHidden,
   setHistoryHighlight,
   setHistoryOneLine,
@@ -744,7 +746,18 @@ export class HistoryController implements vscode.Disposable {
         this.details.delete(this.details.keys().next().value!);
       }
     }
-    this.post({ type: 'details', details: { ...details, refs: this.labels.get(oid) ?? [] }, ...(this.daemon ? { choices: this.choices() } : {}) });
+    // shallow clone なら、取っていない親を確かめる（詳細に「(not fetched)」と出す。アプリと同じ）
+    const missingParents =
+      this.daemon?.boundary !== undefined && this.repo
+        ? (await Promise.all(details.parents.map(async (p) => ((await this.repo!.backend.object(p).catch(() => undefined)) ? undefined : p)))).filter(
+            (p): p is string => p !== undefined,
+          )
+        : [];
+    this.post({
+      type: 'details',
+      details: { ...details, refs: this.labels.get(oid) ?? [], ...(missingParents.length > 0 ? { missingParents } : {}) },
+      ...(this.daemon ? { choices: this.choices() } : {}),
+    });
     // 署名の検証と子のコミットは時間がかかるので、後から送る（エンジンだけ）
     void this.readExtras(oid)
       .then((extras) => extras && this.post({ type: 'detailsExtras', extras }))
@@ -1435,6 +1448,8 @@ export class HistoryController implements vscode.Disposable {
     // merge の畳み方は、すべて畳む・すべて開く（1 つずつは右クリックか ← →。アプリと同じ）
     const foldAll: Item = { label: 'Fold All Merged Commits', description: 'Hide the commits each merge brought in' };
     const showAll: Item = { label: 'Show All Merged Commits' };
+    const monospace: Item = { label: `${mark(monospacedMessage())}Monospaced Commit Message` };
+    const tree: Item = { label: `${mark(detailsLayout().tree)}Changed Files as Tree` };
     const oneLine: Item = { label: `${mark(historyOneLine())}One Line per Commit` };
     const picked = await vscode.window.showQuickPick<Item>(
       [
@@ -1454,10 +1469,21 @@ export class HistoryController implements vscode.Disposable {
         separator('View'),
         oneLine,
         ...(engine ? [separator('Merged Commits'), foldAll, showAll, separator('Ancestors'), highlight] : []),
+        // コミット情報（右の列）に効くもの（アプリの表示のメニューの Commit Details）
+        separator('Commit Details'),
+        monospace,
+        tree,
       ],
       { placeHolder: 'History Display' },
     );
-    if (picked === oneLine) {
+    if (picked === monospace) {
+      await setMonospacedMessage(!monospacedMessage());
+      this.post({ type: 'messageFont', monospace: monospacedMessage() });
+    } else if (picked === tree) {
+      const layout = { tree: !detailsLayout().tree };
+      await setDetailsLayout(layout);
+      this.post({ type: 'detailsLayout', layout });
+    } else if (picked === oneLine) {
       await setHistoryOneLine(!historyOneLine());
       this.post({ type: 'historyDisplay', hidden, oneLine: historyOneLine() });
     } else if (picked === highlight) {

@@ -85,6 +85,15 @@ export async function setPatchFormat(format: { single: boolean; cover: boolean }
   await store?.update('patches.format', format);
 }
 
+/** コミットのメッセージを等幅で出すか（既定はアプリと同じく出さない） */
+export function monospacedMessage(): boolean {
+  return store?.get<boolean>('details.monospace') ?? false;
+}
+
+export async function setMonospacedMessage(on: boolean): Promise<void> {
+  await store?.update('details.monospace', on);
+}
+
 /** 前に選んだアーカイブの形 */
 export function archiveFormat(): ArchiveFormat | undefined {
   return store?.get<ArchiveFormat>('archive.format');

@@ -3167,3 +3167,17 @@ body.wrap-lines .line .code {
   font-size: 0.85em;
   color: var(--vscode-descriptionForeground);
 }
+
+/* コミットのメッセージは、既定ではふつうの字（アプリと同じ）。表示のメニューの Monospaced Commit Message で等幅に */
+.details-head pre.body {
+  font-family: var(--vscode-font-family);
+  white-space: pre-wrap;
+}
+
+body.monospace-message .details-head pre.body {
+  font-family: var(--vscode-editor-font-family);
+}
+
+.details-head .parent.missing {
+  opacity: 0.6;
+}

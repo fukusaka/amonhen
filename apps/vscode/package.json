@@ -572,6 +572,26 @@
         "category": "Amon Hen"
       },
       {
+        "command": "amonhen.commitFile.expand",
+        "title": "Expand",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.commitFile.collapse",
+        "title": "Collapse",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.commitFile.changesOnly",
+        "title": "Show Changes Only",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.commitFile.openAtCommit",
+        "title": "Open File at This Commit",
+        "category": "Amon Hen"
+      },
+      {
         "command": "amonhen.mergeBranches",
         "title": "Merge Branches…",
         "category": "Amon Hen",
@@ -1861,6 +1881,22 @@
           "when": "false"
         },
         {
+          "command": "amonhen.commitFile.expand",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.commitFile.collapse",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.commitFile.changesOnly",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.commitFile.openAtCommit",
+          "when": "false"
+        },
+        {
           "command": "amonhen.commitFile.showWholeFile",
           "when": "false"
         },
@@ -2205,8 +2241,28 @@
           "group": "1_show@1"
         },
         {
+          "command": "amonhen.commitFile.expand",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commitFile' && commitFileCollapsed",
+          "group": "0_view@0"
+        },
+        {
+          "command": "amonhen.commitFile.collapse",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commitFile' && !commitFileCollapsed",
+          "group": "0_view@0"
+        },
+        {
+          "command": "amonhen.commitFile.changesOnly",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commitFile' && commitFileWhole",
+          "group": "0_view@1"
+        },
+        {
+          "command": "amonhen.commitFile.openAtCommit",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commitFile' && !commitFileDeleted",
+          "group": "1_file@0"
+        },
+        {
           "command": "amonhen.commitFile.showWholeFile",
-          "when": "webviewId == 'amonhen.main' && webviewSection == 'commitFile' && commitFileWide",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commitFile' && commitFileWide && !commitFileWhole",
           "group": "0_view@1"
         },
         {
@@ -2216,12 +2272,12 @@
         },
         {
           "command": "amonhen.fileHistory.copyPath",
-          "when": "webviewId == 'amonhen.main' && (webviewSection == 'fileHistory' || webviewSection == 'commitFile' || (webviewSection == 'wcFile' && !wcMulti))",
+          "when": "webviewId == 'amonhen.main' && (webviewSection == 'fileHistory' || webviewSection == 'commitFile' || webviewSection == 'selectionFile' || (webviewSection == 'wcFile' && !wcMulti))",
           "group": "9_copy@2"
         },
         {
           "command": "amonhen.fileHistory",
-          "when": "webviewId == 'amonhen.main' && (webviewSection == 'commitFile' || (webviewSection == 'wcFile' && !wcMulti) || webviewSection == 'blame') && amonhen.engine",
+          "when": "webviewId == 'amonhen.main' && (webviewSection == 'commitFile' || webviewSection == 'selectionFile' || (webviewSection == 'wcFile' && !wcMulti) || webviewSection == 'blame') && amonhen.engine",
           "group": "1_file@1"
         },
         {
