@@ -261,3 +261,24 @@ fn survives_random_sources() {
         }
     }
 }
+
+#[test]
+fn samehead_edges_meet_at_one_point() {
+    let svg =
+        render("digraph { a -> d [samehead=h]; b -> d [samehead=h]; c -> d [samehead=h]; x -> d }")
+            .unwrap()
+            .svg;
+    let arrows: Vec<&str> = svg
+        .split("<polygon points=\"")
+        .skip(1)
+        .map(|s| s.split(' ').next().unwrap())
+        .collect();
+    assert_eq!(arrows.len(), 4);
+    // 同じ値の 3 本の矢じりの先は同じ点、ほかの 1 本は別
+    let first = arrows[0];
+    assert_eq!(
+        arrows.iter().filter(|a| **a == first).count(),
+        3,
+        "{arrows:?}"
+    );
+}

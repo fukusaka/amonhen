@@ -981,6 +981,54 @@ pub fn render(model: &Model, budget: Budget, notes: &mut BTreeSet<Note>) -> Stri
         vec![]
     };
 
+    // samehead・sametail: 同じ値の辺がノードの外形の 1 点で会う（向こうの点の平均の向き）
+    // 会う点と外向きの向き（矢じりの向きをそろえる）
+    let mut meet: Vec<[Option<(P, P)>; 2]> = vec![[None, None]; model.edges.len()];
+    if !ortho {
+        let mut groups: HashMap<(usize, bool, &str), Vec<usize>> = HashMap::new();
+        for (ei, e) in model.edges.iter().enumerate() {
+            if e.tail == e.head {
+                continue;
+            }
+            for (head, key) in [(true, "samehead"), (false, "sametail")] {
+                if let Some(v) = e.attrs.get(key).filter(|v| !v.is_empty()) {
+                    let node = if head { e.head } else { e.tail };
+                    groups.entry((node, head, v)).or_default().push(ei);
+                }
+            }
+        }
+        for ((node, head, _), list) in groups {
+            if list.len() < 2 {
+                continue;
+            }
+            let c = views[node].pos;
+            let (mut sx, mut sy) = (0.0, 0.0);
+            for &ei in &list {
+                let e = &model.edges[ei];
+                let other = if head { e.tail } else { e.head };
+                let toward = match &lay.routes[ei] {
+                    Route::Path { points, .. } if points.len() >= 2 => {
+                        let k = if head { points.len() - 2 } else { 1 };
+                        to_final(points[k])
+                    }
+                    _ => views[other].pos,
+                };
+                let (dx, dy) = (toward.0 - c.0, toward.1 - c.1);
+                let l = dx.hypot(dy).max(1e-9);
+                sx += dx / l;
+                sy += dy / l;
+            }
+            if sx.hypot(sy) < 1e-6 {
+                continue;
+            }
+            let b = views[node].geom.boundary(sx, sy);
+            let l = sx.hypot(sy);
+            for ei in list {
+                meet[ei][usize::from(!head)] = Some(((c.0 + b.0, c.1 + b.1), (sx / l, sy / l)));
+            }
+        }
+    }
+
     // 辺
     let compound = g.flag("compound").unwrap_or(false);
     let vertical_flow = !dir.sideways();
@@ -1173,11 +1221,31 @@ pub fn render(model: &Model, budget: Budget, notes: &mut BTreeSet<Note>) -> Stri
             let ci = *cluster_index.get(name)?;
             cluster_boxes[ci]
         };
+        let [meet_head, meet_tail] = meet[ei];
+        if let Some((m, u)) = meet_tail
+            && tail_port.is_none()
+        {
+            path[0].0 = m;
+            path[0].1 = (m.0 + u.0 * reach, m.1 + u.1 * reach);
+        }
+        if let Some((m, u)) = meet_head
+            && head_port.is_none()
+        {
+            let last = path.len() - 1;
+            path[last].3 = m;
+            path[last].2 = (m.0 + u.0 * reach, m.1 + u.1 * reach);
+        }
         if e.tail != e.head {
-            if tail_clip && let Some(f) = clip_fn(tv, &tail_port) {
+            if tail_clip
+                && (meet_tail.is_none() || tail_port.is_some())
+                && let Some(f) = clip_fn(tv, &tail_port)
+            {
                 curve::clip_start(&mut path, &*f);
             }
-            if head_clip && let Some(f) = clip_fn(hv, &head_port) {
+            if head_clip
+                && (meet_head.is_none() || head_port.is_some())
+                && let Some(f) = clip_fn(hv, &head_port)
+            {
                 curve::clip_end(&mut path, &*f);
             }
             if let Some(b) = cluster_clip("ltail") {
