@@ -1292,6 +1292,12 @@ First release.
 - The app menus' Commit, Commit and Push, Stage All, Set Upstream…, Rebase…, Go to HEAD and Find in History… are
   commands, so they can be bound to keys; Merge Branches… and Rebase… also offer the commit selected in History.
 
+#### Changed
+
+- The sidebar's in-progress row says what is being done where and the step, and why it stopped with what to do next
+  (the commit, conflicts, a failed exec, a stop to edit), as the app's band does (with the engine); a revert has no
+  Skip.
+
 #### Fixed
 
 - Restoring the version before a commit that renamed a file brings back the old name instead of only deleting the new

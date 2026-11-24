@@ -2,6 +2,8 @@
  * サイドバーのナビ。Working Copy・History・Reflog の入口、途中で止まっている merge / rebase、
  * ブランチ・リモート・タグ・stash・サブモジュールを出す。中身はメインビューに出す。
  */
+import { daemonFor } from '../daemon/connection.ts';
+import { sequenceDetail, sequenceTitle, type SequenceInfo } from '../state/sequenceText.ts';
 import * as vscode from 'vscode';
 import type { Sequence } from '../git/backend.ts';
 import type { Ref, Remote, Stash } from '../git/refs.ts';
@@ -102,6 +104,8 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
   readonly onDidChangeFilter = this._onDidChangeFilter.event;
   /** 開いている遅延セクション */
   private readonly expanded = new Set<LazySection>();
+  /** 途中の merge・rebase などの中身（コアの `sequence`。エンジンだけ）。行の題と説明をアプリの帯と同じにする */
+  private sequence: { root: string; info: SequenceInfo } | undefined;
   /** sparse checkout のリポジトリ（Working Copy の行に印を付ける） */
   private readonly sparse = new Set<string>();
   /** 更新通知で同じノードを指せるよう、セクションのノードは使い回す */
@@ -138,6 +142,31 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
     return this.manager.current;
   }
 
+  /** 途中の操作の中身を読む（エンジンがあって、何かの途中のときだけ）。変われば描き直す */
+  private async loadSequence(repository: Repository): Promise<void> {
+    const kind = repository.current.sequence;
+    if (!this.engine || !kind) {
+      if (this.sequence) {
+        this.sequence = undefined;
+        this._onDidChangeTreeData.fire(undefined);
+      }
+      return;
+    }
+    try {
+      const client = await daemonFor(repository.root);
+      if (!client) return;
+      const reply = (await client.call({ op: 'run', command: { op: 'sequence' } })).json;
+      const info = reply['info'] as SequenceInfo | undefined;
+      if (repository !== this.repo) return;
+      const next = info ? { root: repository.root, info } : undefined;
+      if (JSON.stringify(next) === JSON.stringify(this.sequence)) return;
+      this.sequence = next;
+      this._onDidChangeTreeData.fire(undefined);
+    } catch {
+      // 古いエンジン。これまでの言い方のまま
+    }
+  }
+
   private watch(repository: Repository | undefined): void {
     this.repoListener?.dispose();
     // 開いたままの遅延セクションは、切り替えた先のリポジトリでも読む（開き直すまで空のままにしない）
@@ -150,7 +179,9 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
     this.submoduleFacts.setRepository(this.engine ? repository : undefined);
     this.subtreeFacts.setRepository(this.engine ? repository : undefined);
     if (repository) void this.checkSparse(repository);
+    if (repository) void this.loadSequence(repository);
     this.repoListener = repository?.onDidChange((changed) => {
+      if (changed.has('workingCopy')) void this.loadSequence(repository);
       if (changed.has('branches')) this.updateContext(repository);
       // sparse checkout にしたかは設定（core.sparseCheckout。worktree の config.worktree のこともある）に出る
       if (changed.has('config') || changed.has('workingCopy')) void this.checkSparse(repository);
@@ -431,13 +462,18 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
       case 'sequence': {
         const step = node.progress ? ` (${node.progress.current}/${node.progress.total})` : '';
         const am = node.sequence === 'am' ? state?.am : undefined;
-        const item = new vscode.TreeItem(`${sequenceRowName(node.sequence)}${step}`);
+        const conflicts = (state?.status?.entries ?? []).filter((e) => e.kind === 'unmerged').length;
+        // エンジンがあれば、アプリの帯と同じ: 何をどこへしている途中か（何手目か）と、どこで・なぜ止まり、次に何をするか
+        const info = this.sequence && this.sequence.root === this.repo?.root && this.sequence.info.kind === node.sequence ? this.sequence.info : undefined;
+        const item = new vscode.TreeItem(info ? sequenceTitle(info) : `${sequenceRowName(node.sequence)}${step}`);
         item.id = 'sequence';
-        item.description = 'Resolve and commit, then Continue';
+        item.description = info ? sequenceDetail(info, conflicts) : 'Resolve and commit, then Continue';
+        if (info) item.tooltip = `${sequenceTitle(info)}\n${sequenceDetail(info, conflicts)}`;
         item.iconPath = new vscode.ThemeIcon('debug-pause', new vscode.ThemeColor('notificationsWarningIcon.foreground'));
         item.contextValue = `sequence.${node.sequence}`;
         if (am) {
-          // 止まったパッチと、なぜ止まったか（当たらない・空・コンフリクト）
+          // 止まったパッチと、なぜ止まったか（当たらない・空・コンフリクト）。エンジンの中身があれば、その言い方を残す
+          const shown = { description: item.description, tooltip: item.tooltip };
           const conflicts = state?.status?.entries.some((e) => e.kind === 'unmerged') ?? false;
           const subject = am.subject ? `“${am.subject}”` : 'The patch';
           item.tooltip = am.subject;
@@ -451,6 +487,7 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
             item.description = `${subject} doesn’t apply. Retry with a 3-way merge, apply it by hand and Continue, or Skip`;
             item.contextValue = 'sequence.am.retry';
           }
+          if (info) Object.assign(item, shown);
         }
         item.command = { command: 'amonhen.showWorkingCopy', title: 'Show Working Copy' };
         return item;
