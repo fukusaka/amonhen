@@ -2,7 +2,7 @@
 //! `data:` の URI で埋める。形式は PNG・JPEG・GIF・WebP・SVG（中身はほどかず、大きさだけを読む）。
 //!
 //! 読み手がない・読めない・大きすぎる・上限を超えたものは描かない（呼ぶ側が枠と注記にする）。上限は 1 枚の
-//! バイト数・図ぜんぶで埋めるバイト数（同じ画像を何度使っても、そのたびに数える）・読む画像の数。
+//! バイト数と画素数・図ぜんぶで埋めるバイト数と画素数（同じ画像を何度使っても、そのたびに数える）・読む画像の数。
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -17,6 +17,12 @@ pub const MAX_BYTES: usize = 1024 * 1024;
 pub const MAX_TOTAL: usize = 2 * 1024 * 1024;
 /// 読む画像（違う `src`）の数の上限。
 pub const MAX_COUNT: usize = 32;
+/// 1 枚の画素数の上限（PNG・JPEG・GIF・WebP。描き手は画像をほどいてから縮めるので、バイト数が小さくても画素が
+/// 多いと重い。一色の 8192 × 8192 の PNG は 228 KB だが、CoreSVG で 1.1 秒・3.8 GB、librsvg で 2 秒・1 GB
+/// かかった。2048 × 2048 は CoreSVG で 0.09 秒・0.26 GB、librsvg で 0.14 秒・0.08 GB）。
+pub const MAX_PIXELS: f64 = 2048.0 * 2048.0;
+/// 図ぜんぶで描く画素数の上限（同じ画像も使うたびに数える）。
+pub const MAX_TOTAL_PIXELS: f64 = 2.0 * MAX_PIXELS;
 /// 大きさの上限（点）。
 const MAX_SIDE: f64 = 20_000.0;
 
@@ -28,6 +34,8 @@ pub struct Picture {
     /// `data:` の URI。
     pub uri: Arc<str>,
     bytes: usize,
+    /// ほどいたときの画素数（SVG は 0）。
+    pixels: f64,
 }
 
 impl Picture {
@@ -42,6 +50,7 @@ pub struct Images<'a> {
     loader: Option<&'a Loader>,
     cache: HashMap<String, Option<Arc<Picture>>>,
     total: usize,
+    pixels: f64,
 }
 
 impl<'a> Images<'a> {
@@ -50,6 +59,7 @@ impl<'a> Images<'a> {
             loader,
             cache: HashMap::new(),
             total: 0,
+            pixels: 0.0,
         }
     }
 
@@ -71,18 +81,24 @@ impl<'a> Images<'a> {
             self.cache.insert(src.to_owned(), picture);
         }
         let picture = self.cache.get(src)?.clone()?;
-        if self.total + picture.bytes > MAX_TOTAL {
+        if self.total + picture.bytes > MAX_TOTAL || self.pixels + picture.pixels > MAX_TOTAL_PIXELS
+        {
             return None;
         }
         self.total += picture.bytes;
+        self.pixels += picture.pixels;
         Some(picture)
     }
 }
 
-/// バイトから画像にする（大きさの読めない・知らない形式は None）。
+/// バイトから画像にする（大きさの読めない・知らない形式・画素の多すぎるものは None）。
 pub fn read(bytes: &[u8]) -> Option<Picture> {
     let (mime, w, h) = probe(bytes)?;
     if !(w.is_finite() && h.is_finite() && w > 0.0 && h > 0.0) {
+        return None;
+    }
+    let pixels = if mime == "image/svg+xml" { 0.0 } else { w * h };
+    if pixels > MAX_PIXELS {
         return None;
     }
     let mut uri = String::with_capacity(bytes.len() * 4 / 3 + 40);
@@ -94,6 +110,7 @@ pub fn read(bytes: &[u8]) -> Option<Picture> {
         px: (w.min(MAX_SIDE), h.min(MAX_SIDE)),
         uri: uri.into(),
         bytes: bytes.len(),
+        pixels,
     })
 }
 
@@ -530,6 +547,24 @@ mod tests {
         }
         assert!(many.get("a.png").is_none());
         assert!(Images::new(None).get("a.png").is_none());
+    }
+
+    #[test]
+    fn counts_pixels() {
+        // 画素の多すぎる 1 枚（ヘッダだけでも大きさで決まる）
+        assert!(read(&png_bytes(2049, 2048)).is_none());
+        let full = png_bytes(2048, 2048);
+        assert!(read(&full).is_some());
+        // 図ぜんぶでは 2 枚分まで（同じ画像も使うたびに数える）
+        let loader = move |_: &str| Some(full.clone());
+        let loader: &Loader = &loader;
+        let mut images = Images::new(Some(loader));
+        assert!(images.get("a.png").is_some());
+        assert!(images.get("a.png").is_some());
+        assert!(images.get("a.png").is_none());
+        // SVG は画素で数えない
+        let svg = b"<svg width=\"20000\" height=\"20000\"/>".to_vec();
+        assert!(read(&svg).is_some());
     }
 
     #[test]
