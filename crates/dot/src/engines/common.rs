@@ -109,6 +109,25 @@ pub fn shortest(adj: &[Vec<(usize, f64)>], src: usize, out: &mut [f64]) {
     }
 }
 
+/// 幅優先の段の数（届かなければ usize::MAX）。
+pub fn hops(adj: &[Vec<(usize, f64)>], src: usize) -> Vec<usize> {
+    let mut d = vec![usize::MAX; adj.len()];
+    d[src] = 0;
+    let mut queue = vec![src];
+    let mut k = 0;
+    while k < queue.len() {
+        let v = queue[k];
+        k += 1;
+        for &(w, _) in &adj[v] {
+            if d[w] == usize::MAX {
+                d[w] = d[v] + 1;
+                queue.push(w);
+            }
+        }
+    }
+    d
+}
+
 /// 半分の大きさ。
 pub fn halves(items: &[Item]) -> Vec<P> {
     items

@@ -14,6 +14,7 @@
 
 mod common;
 mod force;
+mod radial;
 mod stress;
 
 use std::collections::BTreeSet;
@@ -32,6 +33,7 @@ pub enum Engine {
     Nop,
     Fdp,
     Sfdp,
+    Twopi,
 }
 
 impl Engine {
@@ -43,13 +45,14 @@ impl Engine {
             "nop" | "nop1" | "nop2" => Engine::Nop,
             "fdp" => Engine::Fdp,
             "sfdp" => Engine::Sfdp,
+            "twopi" => Engine::Twopi,
             _ => return None,
         })
     }
 
-    /// クラスタの箱を描くか（sfdp は Graphviz でも描かない）。
+    /// クラスタの箱を描くか（twopi・sfdp は Graphviz でも描かない）。
     pub fn draws_clusters(self) -> bool {
-        !matches!(self, Engine::Sfdp)
+        !matches!(self, Engine::Twopi | Engine::Sfdp)
     }
 }
 
@@ -121,6 +124,7 @@ pub fn place(
             let (nodes, boxes) = force::fdp(items, links, groups, g, notes);
             (nodes, Some(boxes))
         }
+        Engine::Twopi => (radial::layout(items, links, g), None),
     };
     if !engine.draws_clusters() {
         clusters = Some(vec![None; groups.len()]);
