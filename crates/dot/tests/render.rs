@@ -225,6 +225,15 @@ fn survives_random_sources() {
         "distortion",
         "Mrecord",
         "point",
+        "samehead",
+        "sametail",
+        "newrank",
+        "labelloc",
+        "b",
+        "<<table border=\"3\" cellspacing=\"-9\"><tr><td rowspan=\"9\" port=\"p\">a</td><td colspan=\"0\"><table><tr><td><img/></td></tr></table></td></tr><hr/><tr><td>",
+        "\"</td><vr/><td fixedsize=\\\"true\\\" width=\\\"-1\\\">\"",
+        "\"a:p\"",
+        "\"/set312/12\"",
     ];
     let mut seed: u64 = 1;
     let mut next = |n: usize| {
