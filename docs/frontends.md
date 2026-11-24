@@ -272,7 +272,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 
 | Feature | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
-| Full message, draggable panes, ⤢ to expand | ✓ | ✓ | ✓ | ✓ | n/a | △ | TUI: The dividers can't be dragged; on a narrow terminal the details open in place of History. |
+| Full message, draggable panes, ⤢ to expand | ✓ | ✓ | ✓ | ✓ | n/a | △ | TUI: The dividers are dragged with the mouse, for this run only; no ⤢, and on a narrow terminal the details open in place of History. |
 | Find inside the details | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: ⌘F searches the whole main view; diffs not loaded yet aren't searched.<br>TUI: `/` in the details, `n` `N` for the next and previous. |
 | Changed files as the diff's own file headers (folded at first, sticky, one bar of controls) | ✓ | ✓ | ✓ | ✓ | ✓ | △ | CLI: `show`.<br>VSCode: The header's ⋯ opens its right-click menu; Open opens VSCode's diff editor.<br>TUI: The header of the file in view sticks at the top, and `o` or a click on a header folds the file; `[` `]` move between files. The changed files are a list above the diff, not folded headers at first. |
 | Changed files as a list or a tree whose folders fold | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | TUI: Above the diff; `t` switches to the tree, a click folds a folder (`z` all) or goes to a file's diff. |

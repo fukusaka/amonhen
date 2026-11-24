@@ -716,6 +716,11 @@ pub struct App {
     failure_details: Option<String>,
     /// `!` の枠に出しているのが、失敗の全部か（でなければ hooks の出力）。
     showing_failure: bool,
+    /// ペインの区切りをドラッグして決めた幅（この TUI を動かしている間だけ）: サイドバーと、並べたときのメインの画面。
+    sidebar_width: u16,
+    main_width: Option<u16>,
+    /// ドラッグしている区切り（true はサイドバーの右、false はメインの画面の右）。
+    dragging: Option<bool>,
     /// 最後の失敗の全文（git のコマンドを探す間）。見つかったら、詳細の先頭に `$ git …` を足す。
     failure_seen: Option<String>,
     /// `failure_details` は失敗ではなく、命令の出力（Run in Each Submodule）。
@@ -878,6 +883,9 @@ impl App {
             hook_output: None,
             failure_details: None,
             showing_failure: false,
+            sidebar_width: sidebar::WIDTH,
+            main_width: None,
+            dragging: None,
             failure_seen: None,
             details_are_output: false,
             showing_hooks: None,
@@ -1150,15 +1158,20 @@ impl App {
         }
         let (sidebar, x) = match cols >= SIDEBAR_FROM {
             // サイドバーの右に、区切りの 1 列。
-            true => (
-                Some(Rect::new(0, 1, sidebar::WIDTH, height)),
-                sidebar::WIDTH + 1,
-            ),
+            true => {
+                // ドラッグした幅は、メインの画面に 40 列を残す所まで。
+                let width = self.sidebar_width.clamp(12, cols - 41);
+                (Some(Rect::new(0, 1, width, height)), width + 1)
+            }
             false => (None, 0),
         };
         let rest = cols - x;
         if rest >= SIDE_BY_SIDE {
-            let left = (rest / 5 * 2).max(HISTORY_MIN);
+            let left = match self.main_width {
+                // ドラッグした幅は、両側に 30 列を残す所まで。
+                Some(width) => width.clamp(30, rest - 31),
+                None => (rest / 5 * 2).max(HISTORY_MIN),
+            };
             // 間に区切りの 1 列。
             return Layout {
                 sidebar,
@@ -8476,6 +8489,40 @@ impl App {
             return;
         }
         let layout = self.layout();
+        // ペインの区切り（サイドバーの右の列、並べたときのメインの画面の右の列）をドラッグして、幅を変える
+        // （アプリの、ドラッグできる区切り）。
+        let divider = |area: Option<Rect>| {
+            area.is_some_and(|a| {
+                mouse.column == a.right() && a.y <= mouse.row && mouse.row < a.bottom()
+            })
+        };
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) if divider(layout.sidebar) => {
+                self.dragging = Some(true);
+                return;
+            }
+            MouseEventKind::Down(MouseButton::Left)
+                if layout.side.is_some() && divider(layout.main) =>
+            {
+                self.dragging = Some(false);
+                return;
+            }
+            MouseEventKind::Drag(MouseButton::Left) if self.dragging.is_some() => {
+                match self.dragging {
+                    Some(true) => self.sidebar_width = mouse.column.max(1),
+                    _ => {
+                        let start = layout.main.map_or(0, |m| m.x);
+                        self.main_width = Some(mouse.column.saturating_sub(start).max(1));
+                    }
+                }
+                let (cols, rows) = self.size;
+                self.resize(cols, rows);
+                self.damage = Damage::ALL;
+                return;
+            }
+            MouseEventKind::Up(MouseButton::Left) if self.dragging.take().is_some() => return,
+            _ => {}
+        }
         let inside = |area: Option<Rect>| {
             area.filter(|a| {
                 a.x <= mouse.column
@@ -10450,6 +10497,42 @@ mod tests {
     }
 
     /// settings.json の `tui.mouse` が false なら、マウスを取り込まずに始める。読めなければ取り込んだまま理由を出す。
+    /// ペインの区切りをドラッグすると、サイドバーとメインの画面の幅が変わる（アプリのドラッグできる区切り）
+    #[test]
+    fn dividers_are_dragged() {
+        let (_dir, mut app, _rx) = app_with_history();
+        app.resize(160, 12);
+        let at = |column: u16, kind: MouseEventKind| {
+            Event::Input(Input::Mouse(MouseEvent {
+                kind,
+                column,
+                row: 3,
+                modifiers: KeyModifiers::NONE,
+            }))
+        };
+        let layout = app.layout();
+        let sidebar = layout.sidebar.unwrap();
+        assert_eq!(sidebar.width, sidebar::WIDTH);
+        // サイドバーの右の区切りを 10 列右へ。
+        app.handle(at(sidebar.right(), MouseEventKind::Down(MouseButton::Left)));
+        app.handle(at(sidebar.right() + 10, MouseEventKind::Drag(MouseButton::Left)));
+        app.handle(at(sidebar.right() + 10, MouseEventKind::Up(MouseButton::Left)));
+        let layout = app.layout();
+        assert_eq!(layout.sidebar.unwrap().width, sidebar::WIDTH + 10);
+        // メインの画面の右の区切り（並べているとき）を左へ。サイドの画面が広がる。
+        let main = layout.main.unwrap();
+        let side = layout.side.unwrap().width;
+        app.handle(at(main.right(), MouseEventKind::Down(MouseButton::Left)));
+        app.handle(at(main.right() - 5, MouseEventKind::Drag(MouseButton::Left)));
+        app.handle(at(main.right() - 5, MouseEventKind::Up(MouseButton::Left)));
+        let layout = app.layout();
+        assert_eq!(layout.main.unwrap().width, main.width - 5);
+        assert_eq!(layout.side.unwrap().width, side + 5);
+        // 区切りでない所のドラッグでは変わらない。
+        app.handle(at(5, MouseEventKind::Drag(MouseButton::Left)));
+        assert_eq!(app.layout().sidebar.unwrap().width, sidebar::WIDTH + 10);
+    }
+
     #[test]
     fn the_mouse_setting_applies_at_start() {
         let (_dir, mut app, _rx) = app_with_history();
