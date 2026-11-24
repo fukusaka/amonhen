@@ -11,6 +11,8 @@ becomes the GitHub Release notes.
 
 #### Added
 
+- History's All Files draws Android VectorDrawables (`.xml` with a `<vector>` or `<animated-vector>` root) as pictures,
+  resolving `@color/…` from the commit's `res` folder and noting what's drawn in gray (macOS, GTK4).
 - DOT diagrams in Markdown previews draw images (a node's `image`, a table's `<IMG>`) from the same commit, by a path
   relative to the Markdown file's folder.
 - DOT diagrams draw gradient fills in HTML-like tables, cells and cluster and graph backgrounds, striped clusters,
@@ -1287,6 +1289,11 @@ First release.
 
 - The Working Copy diff can ignore whitespace (at line ends, changes in amount or all), with the engine. Lines and
   hunks aren't staged or discarded meanwhile.
+
+#### Fixed
+
+- Restoring the version before a commit that renamed a file brings back the old name instead of only deleting the new
+  one, and Restore This Version isn't offered for a file the commit deleted.
 
 ### [0.2.9] - 2026-11-24
 

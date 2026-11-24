@@ -1881,6 +1881,80 @@ fn svg_target(n: u8) -> amonhen_core::svglint::Target {
     }
 }
 
+/// `path`（NUL で終わる UTF-8）の中身（`data` の `len` バイト）が、History の「すべてのファイル」で絵にする Android の
+/// VectorDrawable か（`.xml` で、根が `<vector>` か `<animated-vector>`。頭だけを見る）。
+///
+/// # Safety
+/// `path` は NUL で終わる文字列、`data` は `len` バイト読めること（`len` が 0 なら NULL でもよい）。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_is_vector_drawable(
+    path: *const c_char,
+    data: *const u8,
+    len: usize,
+) -> bool {
+    let Ok(path) = str_arg(path) else {
+        return false;
+    };
+    let bytes = if len == 0 || data.is_null() {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(data, len) }
+    };
+    amonhen_core::vectordrawable::is_vector_drawable(path, bytes)
+}
+
+/// コミット `commit`（20 バイト）の `path` の Android の VectorDrawable（中身 `data` の `len` バイト）を、描ける SVG
+/// にする（コアの `Repository::vector_drawable`。色の参照は同じコミットのリソースから引く）。SVG を返し、長さを
+/// `out_len` に書く（`amonhen_blob_free` で解放する）。描けなければ NULL で、理由は `amonhen_last_error`。`notes` に
+/// 絵の下に添える説明の JSON の配列（文字列）を書く（`amonhen_string_free` で解放する）。裏のスレッドで呼ぶ。
+///
+/// # Safety
+/// `repo` は有効、`commit` は 20 バイトを読める領域、`path` は NUL で終わる UTF-8、`data` は `len` バイト読めること。
+/// `out_len` と `notes` は書けること（NULL でもよい）。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_vector_drawable(
+    repo_ptr: *const AmonhenRepo,
+    commit: *const u8,
+    path: *const c_char,
+    data: *const u8,
+    len: usize,
+    out_len: *mut usize,
+    notes: *mut *mut c_char,
+) -> *mut u8 {
+    if let Some(out_len) = unsafe { out_len.as_mut() } {
+        *out_len = 0;
+    }
+    if let Some(notes) = unsafe { notes.as_mut() } {
+        *notes = std::ptr::null_mut();
+    }
+    let commit = oid!(commit);
+    let path = match str_arg(path) {
+        Ok(path) => path,
+        Err(e) => {
+            set_error(e);
+            return std::ptr::null_mut();
+        }
+    };
+    let bytes = if len == 0 || data.is_null() {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(data, len) }
+    };
+    match repo!(repo_ptr).vector_drawable(&commit, path, bytes) {
+        Ok(picture) => {
+            if let Some(notes) = unsafe { notes.as_mut() } {
+                let json = serde_json::to_string(&picture.notes).unwrap_or_default();
+                *notes = CString::new(json).map_or(std::ptr::null_mut(), CString::into_raw);
+            }
+            blob_out(picture.svg.as_bytes(), out_len)
+        }
+        Err(e) => {
+            set_error(e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
 /// `amonhen_blob_read`・`amonhen_change_blob` が返したものを解放する。
 ///
 /// # Safety

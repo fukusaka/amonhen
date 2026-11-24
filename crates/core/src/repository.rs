@@ -1080,6 +1080,64 @@ impl Repository {
         self.backend.blob(&entry.oid)
     }
 
+    /// コミット `commit` の `path` の Android の VectorDrawable（中身 `xml`）を絵にする（History の「すべての
+    /// ファイル」）。色の参照などは同じコミットの資源から引く（`vectordrawable::picture`）。裏のスレッドで呼ぶ。
+    pub fn vector_drawable(
+        &self,
+        commit: &Oid,
+        path: &str,
+        xml: &[u8],
+    ) -> Result<crate::vectordrawable::Picture> {
+        /// コミットの木（読んだフォルダは覚える）。
+        struct Tree<'a> {
+            backend: &'a dyn GitBackend,
+            commit: &'a Oid,
+            folders: std::cell::RefCell<
+                std::collections::HashMap<String, Vec<amonhen_model::TreeEntry>>,
+            >,
+        }
+        impl Tree<'_> {
+            fn entries(&self, folder: &str) -> Vec<amonhen_model::TreeEntry> {
+                let mut folders = self.folders.borrow_mut();
+                folders
+                    .entry(folder.to_owned())
+                    .or_insert_with(|| {
+                        self.backend
+                            .tree_entries(self.commit, folder)
+                            .unwrap_or_default()
+                    })
+                    .clone()
+            }
+        }
+        impl crate::vectordrawable::Files for Tree<'_> {
+            fn list(&self, folder: &str) -> Vec<(String, bool)> {
+                self.entries(folder)
+                    .into_iter()
+                    .map(|e| (e.name, e.kind == amonhen_model::TreeEntryKind::Folder))
+                    .collect()
+            }
+
+            fn read(&self, path: &str) -> Option<Arc<Vec<u8>>> {
+                let (folder, name) = path.rsplit_once('/').unwrap_or(("", path));
+                let entry = self.entries(folder).into_iter().find(|e| {
+                    e.name == name
+                        && matches!(
+                            e.kind,
+                            amonhen_model::TreeEntryKind::File
+                                | amonhen_model::TreeEntryKind::Executable
+                        )
+                })?;
+                self.backend.blob(&entry.oid).ok()
+            }
+        }
+        let tree = Tree {
+            backend: self.backend.as_ref(),
+            commit,
+            folders: Default::default(),
+        };
+        crate::vectordrawable::picture(path.trim_matches('/'), xml, &tree)
+    }
+
     /// `changes` のすべてのファイルの差分（History で全ファイルを縦に並べて見せる）。ファイルの数だけ blob を読んで
     /// 差分を取るので、裏のスレッドで呼ぶ。
     pub fn stacked_diff(&self, changes: &[FileChange]) -> Result<diff::StackedDiff> {

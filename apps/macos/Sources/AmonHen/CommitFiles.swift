@@ -78,7 +78,8 @@ final class ImageDiffPanel: NSView {
     /// 描いた画像で作る（`titles` は前と後の見出し）。
     init(
         before old: NSImage?, after new: NSImage?, titles: (String, String), caption text: String, svg: Bool, mode: Mode,
-        position: CGFloat, single: Bool, notes: NSAttributedString? = nil, accessory: NSView? = nil
+        position: CGFloat, single: Bool, notes: NSAttributedString? = nil, accessory: NSView? = nil,
+        footnote: [String] = []
     ) {
         canvas = ImageCompareCanvas(before: old, after: new)
         canvas.single = single
@@ -142,11 +143,26 @@ final class ImageDiffPanel: NSView {
             notesView.hasVerticalScroller = true
             notesView.drawsBackground = false
         }
-        for v in [bar, canvas, caption, line] + (notes == nil ? [] : [notesView]) as [NSView] {
+        // 絵の下に添える短い説明（VectorDrawable の引けなかった色など。Markdown の図の注記と同じ見た目）。
+        let footnoteLabel = NSTextField(wrappingLabelWithString: footnote.joined(separator: "\n"))
+        footnoteLabel.font = .systemFont(ofSize: 11.5)
+        footnoteLabel.textColor = .secondaryLabelColor
+        footnoteLabel.isSelectable = true
+        let extra: [NSView] = (notes == nil ? [] : [notesView]) + (footnote.isEmpty ? [] : [footnoteLabel])
+        for v in [bar, canvas, caption, line] + extra as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             addSubview(v)
         }
         let below: NSView = notes == nil ? line : notesView
+        // 説明があれば、見出し（大きさ）の下に置く。
+        let last: NSView = footnote.isEmpty ? caption : footnoteLabel
+        if !footnote.isEmpty {
+            NSLayoutConstraint.activate([
+                footnoteLabel.topAnchor.constraint(equalTo: caption.bottomAnchor, constant: 4),
+                footnoteLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+                footnoteLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -12),
+            ])
+        }
         if notes != nil {
             NSLayoutConstraint.activate([
                 notesView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
@@ -164,7 +180,7 @@ final class ImageDiffPanel: NSView {
             canvas.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             caption.topAnchor.constraint(equalTo: canvas.bottomAnchor, constant: 6),
             caption.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            caption.bottomAnchor.constraint(equalTo: below.topAnchor, constant: -6),
+            last.bottomAnchor.constraint(equalTo: below.topAnchor, constant: -6),
             line.leadingAnchor.constraint(equalTo: leadingAnchor),
             line.trailingAnchor.constraint(equalTo: trailingAnchor),
             line.bottomAnchor.constraint(equalTo: bottomAnchor),
@@ -567,6 +583,10 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
     private let markdownSwitch = NSSegmentedControl(
         labels: [L("Preview"), L("Text")], trackingMode: .selectOne, target: nil, action: nil)
     private var markdownView: MarkdownView?
+    /// Android の VectorDrawable の見せ方（絵・テキスト）。確かめる用に `-AMHDrawableView text`。
+    private var drawableText = UserDefaults.standard.string(forKey: "AMHDrawableView") == "text"
+    private let drawableSwitch = NSSegmentedControl(
+        labels: [L("Picture"), L("Text")], trackingMode: .selectOne, target: nil, action: nil)
     /// Markdown の #123・@user・コミットの ID をリンクにする先（`https://github.com/owner/repo`）。
     var gitHub: String?
     private let rendererSwitch = NSSegmentedControl(
@@ -686,7 +706,13 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         markdownSwitch.target = self
         markdownSwitch.action = #selector(markdownViewChanged)
         markdownSwitch.isHidden = true
-        for v in [back, pathLabel, spacer, svgSwitch, markdownSwitch, quickLookButton, changeButton] {
+        drawableSwitch.controlSize = .small
+        drawableSwitch.setToolTip(L("Draw the VectorDrawable"), forSegment: 0)
+        drawableSwitch.setToolTip(L("Show the XML source"), forSegment: 1)
+        drawableSwitch.target = self
+        drawableSwitch.action = #selector(drawableViewChanged)
+        drawableSwitch.isHidden = true
+        for v in [back, pathLabel, spacer, svgSwitch, markdownSwitch, drawableSwitch, quickLookButton, changeButton] {
             pathBar.addArrangedSubview(v)
         }
         pathBar.edgeInsets = NSEdgeInsets(top: 0, left: 6, bottom: 0, right: 10)
@@ -886,6 +912,11 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         if let openPath { open(path: openPath, line: nil) }
     }
 
+    @objc private func drawableViewChanged() {
+        drawableText = drawableSwitch.selectedSegment == 1
+        if let openPath { open(path: openPath, line: nil) }
+    }
+
     @objc private func svgViewChanged() {
         svgView = SVGView(rawValue: svgSwitch.selectedSegment) ?? .picture
         if let openPath { open(path: openPath, line: nil) }
@@ -966,6 +997,7 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
         removeImage()
         let svg = ImageDiffPanel.isSVG(path)
         let markdown = MarkdownBlock.isMarkdown(path)
+        drawableSwitch.isHidden = true
         markdownSwitch.isHidden = !markdown
         markdownSwitch.selectedSegment = markdownText ? 1 : 0
         if markdown, !markdownText {
@@ -1027,6 +1059,39 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
             }
             return
         }
+        // .xml は中身の頭を見て、Android の VectorDrawable なら絵にする（ほかの XML はテキスト）。
+        if (path as NSString).pathExtension.lowercased() == "xml" {
+            content.view.isHidden = true
+            let store = repository, commitID = self.commitID
+            Task {
+                let data = await contents(of: path)
+                guard request == self.request else { return }
+                guard let data, Repository.isVectorDrawable(path: path, data: data) else {
+                    return showFile(path: path, index: index, line: line, request: request)
+                }
+                drawableSwitch.isHidden = false
+                drawableSwitch.selectedSegment = drawableText ? 1 : 0
+                if drawableText { return showFile(path: path, index: index, line: line, request: request) }
+                let picture = await Task.detached(priority: .userInitiated) {
+                    try? store.vectorDrawable(commit: commitID, path: path, data: data)
+                }.value
+                guard request == self.request else { return }
+                // 描けないもの（参照した drawable がないなど）はテキストで見せる。
+                guard let picture, let image = NSImage(data: picture.svg) else {
+                    drawableSwitch.isHidden = true
+                    return showFile(path: path, index: index, line: line, request: request)
+                }
+                let bytes = ByteCountFormatter.string(fromByteCount: Int64(data.count), countStyle: .file)
+                let size = "\(Int(image.size.width)) × \(Int(image.size.height)) dp · \(bytes)"
+                let panel = ImageDiffPanel(
+                    before: nil, after: image, titles: ("", ""), caption: size, svg: false, mode: .twoUp,
+                    position: 0.5, single: true, footnote: picture.notes)
+                imagePanel = panel
+                addSubview(panel, positioned: .below, relativeTo: pathBar)
+                needsLayout = true
+            }
+            return
+        }
         if ImageDiffPanel.isImage(path), !svg {
             content.view.isHidden = true
             Task {
@@ -1045,6 +1110,12 @@ final class CommitFilesBrowser: NSView, NSOutlineViewDataSource, NSOutlineViewDe
             }
             return
         }
+        showFile(path: path, index: index, line: line, request: request)
+    }
+
+    /// `path` の中身をテキストで出す（変えたファイルは前後をファイル全体にした差分、変えていないファイルはその時点の
+    /// 中身。`line` があればその行へ）。
+    private func showFile(path: String, index: Int?, line: Int?, request: Int) {
         content.view.isHidden = false
         content.show(nil, message: L("Loading the diff…"))
         let changes = self.changes, repository = self.repository, commitID = self.commitID
