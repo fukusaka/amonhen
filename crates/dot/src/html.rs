@@ -28,10 +28,11 @@ const MAX_SIZE: f64 = 20_000.0;
 const IMAGE: (f64, f64) = (36.0, 24.0);
 /// 表の画像の 1 画素の大きさ（点。Graphviz の表の画像は 96 dpi で数える）。
 const IMAGE_PX: f64 = 0.75;
-/// 升の文字の幅のゆとり。幅は Arial の送りで見積もるが、アプリの書体（macOS の sans-serif、Linux の DejaVu Sans・
-/// Noto Sans など）は 1 割ほど広いことがあり、升の余白（`cellpadding`）が小さいと枠からはみ出る。ノードの
-/// ラベルは周りの余白が吸うが、升は詰まっているので見積もりを広げておく。
-pub(crate) const TEXT_SLACK: f64 = 1.1;
+/// 文字の幅のゆとり（升の文字と、枠の中のラベル）。幅は Arial の送りで見積もる。描き手の sans-serif の、Arial の
+/// 見積もりに対する幅（ふつうのラベル・数・かな漢字で測った）は、macOS の CoreSVG（Helvetica）と Windows の resvg
+/// （Arial）で 1.00、Linux の librsvg の Noto Sans（Noto Sans CJK）で中央 1.03・最大 1.10（i・l の多い語は 1.17）。
+/// その最大に少し足した。DejaVu Sans（中央 1.13、太字の数は 1.34 まで）は、広いものが枠の余白にかかる。
+pub(crate) const TEXT_SLACK: f64 = 1.15;
 /// 既定の線の色（ノードの枠と同じ）。
 const BORDER: &str = "var(--_b)";
 
@@ -1036,7 +1037,7 @@ mod tests {
         let t = table("<table width=\"200\"><tr><td>a</td><td>b</td></tr></table>");
         assert_eq!(t.w, 200.0);
         assert!((t.cells[0].w - t.cells[1].w).abs() < 1e-6);
-        // 升は文字の見積もりより 1 割広く（アプリの書体が Arial より広くても余白の内に収まる）
+        // 升は文字の見積もりより TEXT_SLACK 倍広く（アプリの書体が Arial より広くても余白の内に収まる）
         let t = table("<table cellpadding=\"2\"><tr><td>user_id</td></tr></table>");
         let Content::Text(text) = &t.cells[0].content else {
             panic!("no text");
