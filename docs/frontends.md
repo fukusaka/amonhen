@@ -248,7 +248,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 
 | Feature | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
-| Graph with branch and tag labels | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `log`.<br>TUI: One line per commit. |
+| Graph with branch and tag labels | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: Up to three labels with the rest as +N and long names cut in the middle, which list every name when clicked; the commit frequency and branch activity strip beside the list (with the engine), as in the app.<br>CLI: `log`.<br>TUI: One line per commit. |
 | Huge histories in chunks with the persistent cache | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |
 | Search with match count, next / previous, matching only | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: With the engine.<br>CLI: `log <query>` lists the matches.<br>TUI: `/`, `n` `N`, `&` for matching only. |
 | Display: order, one line, row items, fold merged, highlight ancestors | ✓ | ✓ | ✓ | △ | △ | △ | macOS, GTK4: Any merge folds on its own (a +N badge, its context menu, ←/→), kept per repository.<br>VSCode: Order, folding and highlighting with the engine. Any merge folds on its own (its context menu, ←/→), kept per repository and shared with the apps; Highlight Ancestors is off at first (on in the apps).<br>CLI: `--topo-order`, `--fold`.<br>Windows: In View.<br>TUI: `o` order, for the run only; `z` folds every merge and `Z` one, kept per repository and shared with the apps; `I` the row items, for the run only; always one line. |

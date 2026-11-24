@@ -3030,3 +3030,61 @@ body.wrap-lines .line .code {
   color: var(--vscode-textLink-foreground);
   text-decoration: underline;
 }
+
+/* History の密度の帯（左半分がコミットの頻度、右半分がブランチの動き。押すとそこへ） */
+.density-box {
+  position: relative;
+  flex: 0 0 8px;
+  width: 8px;
+  cursor: pointer;
+  border-left: 1px solid var(--vscode-panel-border, transparent);
+}
+
+.density-box[hidden],
+.history.editing .density-box {
+  display: none;
+}
+
+.density-box .density {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.density-box .density-viewport {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border: 1px solid var(--vscode-foreground);
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+/* 行の札の「+N」と、切った札（押すと名前の一覧） */
+.row .ref.more {
+  border: none;
+  cursor: pointer;
+  font: inherit;
+}
+
+.row .ref.cut {
+  cursor: pointer;
+}
+
+.ref-names {
+  position: fixed;
+  z-index: 30;
+  max-width: 420px;
+  max-height: 300px;
+  overflow: auto;
+  padding: 4px 8px;
+  background: var(--vscode-editorHoverWidget-background, var(--vscode-editorWidget-background));
+  color: var(--vscode-editorHoverWidget-foreground, var(--vscode-foreground));
+  border: 1px solid var(--vscode-editorHoverWidget-border, var(--vscode-widget-border, transparent));
+  box-shadow: 0 2px 8px var(--vscode-widget-shadow);
+}
+
+.ref-names .ref-name {
+  padding: 1px 0;
+  white-space: nowrap;
+}
