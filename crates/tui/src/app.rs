@@ -775,6 +775,8 @@ pub struct App {
     drop_asked: Option<(String, String, bool)>,
     /// History の行に出す項目を選んでいる間（`I`）。
     items_asked: bool,
+    /// 差分の長い行を折り返す（アプリの Wrap Long Lines。Alt-z。この TUI を動かしている間だけ）。
+    wrap: bool,
     /// History の All Files（`a`）。画面に重ねる。
     all_files: Option<crate::allfiles::AllFiles>,
     /// 端末のクリップボードに入れる文字（OSC 52。描くループが書く）。
@@ -931,6 +933,7 @@ impl App {
             drag_plan: None,
             drop_asked: None,
             items_asked: false,
+            wrap: false,
             all_files: None,
             copy: None,
             edit_discard: false,
@@ -1963,6 +1966,11 @@ impl App {
             return;
         }
         let control = key.modifiers.contains(KeyModifiers::CONTROL);
+        // 差分の長い行を折り返す・やめる（どこからでも。メッセージを書いている間も）。
+        if key.modifiers.contains(KeyModifiers::ALT) && key.code == KeyCode::Char('z') {
+            self.toggle_wrap();
+            return;
+        }
         // つながりが切れていれば、`R` で同じ場所を開き直し、`q` で終える。ほかの操作はできない。
         if self.lost.is_some() {
             match key.code {
@@ -3308,6 +3316,10 @@ impl App {
     fn run_keyless(&mut self, id: &str) {
         if id == "quick-open" {
             self.open_quick();
+            return;
+        }
+        if id == "wrap-long-lines" {
+            self.toggle_wrap();
             return;
         }
         if id == "rebuild-history" {
@@ -6227,6 +6239,21 @@ impl App {
 
     /// 印をつけたコミット（first-parent の並びで続いたもの）を、編集モードで 1 つにまとめる（アプリの Combine）。
     /// 一番古いものから HEAD までを開き、新しい方をひとつ古いものとまとめる行にしておく。当てるのは編集モードで。
+    /// 差分の長い行を折り返す・やめる（詳細・Working Copy の差分・All Files の中身）。
+    fn toggle_wrap(&mut self) {
+        self.wrap = !self.wrap;
+        self.details.set_wrap(self.wrap);
+        self.changes.set_wrap(self.wrap);
+        if let Some(files) = &mut self.all_files {
+            files.set_wrap(self.wrap);
+        }
+        self.notice = Some(match self.wrap {
+            true => tr!("Long lines wrap"),
+            false => tr!("Long lines don’t wrap"),
+        });
+        self.dirty = true;
+    }
+
     /// 選んでいるコミットの All Files を開く（根のフォルダを読む）。
     fn open_all_files(&mut self) {
         let Some((id, _, subject)) = self.history.selected_commit() else {
@@ -6235,7 +6262,9 @@ impl App {
         let (id, subject) = (id.to_string(), subject.to_owned());
         let changed = self.details.changed_paths(&id).unwrap_or_default();
         let title = format!("{} “{subject}”", &id[..8]);
-        self.all_files = Some(crate::allfiles::AllFiles::new(id.clone(), title, changed));
+        let mut files = crate::allfiles::AllFiles::new(id.clone(), title, changed);
+        files.set_wrap(self.wrap);
+        self.all_files = Some(files);
         // 変わったファイル（詳細を読んでいなくても印をつける）。
         self.send(Request::Run {
             name: "allFilesChanged",

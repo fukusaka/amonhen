@@ -840,6 +840,12 @@ impl Details {
         self.scroll.scrolled()
     }
 
+    /// 長い行を折り返す（アプリの Wrap Long Lines）。
+    pub fn set_wrap(&mut self, wrap: bool) {
+        self.scroll.wrap = wrap;
+        self.kept.forget();
+    }
+
     /// 前のフレームで組み立てた行を捨てる。
     pub fn forget_drawn(&mut self) {
         self.kept.forget();
@@ -1083,12 +1089,17 @@ impl Details {
             .map(|f| f.1.as_str());
         let head = commit.head.len() as u32;
         let before = commit.before_diff();
-        for y in 0..area.height {
-            let line = self.scroll.top + u32::from(y);
-            if line >= commit.lines() {
-                break;
+        let wrap = self.scroll.wrap;
+        // 折り返すと、1 つの行が何行も使う（その行の画面での位置を覚えて、探した行を目立たせる）。
+        let mut found_y: Option<u16> = None;
+        let mut y = 0u16;
+        let mut line = self.scroll.top;
+        while y < area.height && line < commit.lines() {
+            if self.found.as_ref().is_some_and(|f| f.1 == line) {
+                found_y = Some(y);
             }
             let at = Rect::new(area.x, area.y + y, area.width, 1);
+            let mut used = 1;
             if line < head {
                 let (text, style) = &commit.head[line as usize];
                 buf.set_stringn(at.x, at.y, text, usize::from(at.width), *style);
@@ -1105,6 +1116,21 @@ impl Details {
                         files,
                     }) => draw_folder(at, buf, path, *depth, *folded, *files),
                     None => {}
+                }
+            } else if wrap {
+                let index = (line - before) as usize;
+                used = crate::diff::draw_row_wrapped(
+                    at,
+                    area.height - y,
+                    buf,
+                    &commit.diff,
+                    commit.shown[index] as usize,
+                    theme,
+                );
+                if let Some(file) = commit.starts.iter().position(|&s| s as usize == index)
+                    && commit.folded[file]
+                {
+                    buf[(at.x, at.y)].set_char('▸');
                 }
             } else {
                 let index = (line - before) as usize;
@@ -1125,6 +1151,8 @@ impl Details {
                     buf[(at.x, at.y)].set_char('▸');
                 }
             }
+            y += used;
+            line += 1;
         }
         // 差分の中ほどにいれば、そのファイルの見出しを一番上に貼り付ける（アプリと同じ）。
         let top = self.scroll.top.checked_sub(before);
@@ -1147,16 +1175,8 @@ impl Details {
             );
         }
         // 探して合った行を目立たせる。
-        if let Some((_, line)) = &self.found
-            && *line >= self.scroll.top
-            && *line < self.scroll.top + u32::from(area.height)
-        {
-            let at = Rect::new(
-                area.x,
-                area.y + (line - self.scroll.top) as u16,
-                area.width,
-                1,
-            );
+        if let Some(y) = found_y {
+            let at = Rect::new(area.x, area.y + y, area.width, 1);
             buf.set_style(at, Style::new().bg(Color::Indexed(58)));
         }
         if let Some(error) = failed {

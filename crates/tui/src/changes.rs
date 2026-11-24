@@ -1137,15 +1137,23 @@ impl Changes {
         self.scroll.drawn();
         // 左の 1 列は、選んでいる行の印。
         let body = Rect::new(area.x + 1, area.y, area.width - 1, area.height);
-        for y in 0..area.height {
-            let line = self.scroll.top + u32::from(y);
-            if line > shown.diff.len() {
-                break;
-            }
+        let mut y = 0u16;
+        let mut line = self.scroll.top;
+        while y < area.height && line <= shown.diff.len() {
             let at = Rect::new(body.x, body.y + y, body.width, 1);
+            let mut used = 1;
             if at.width > 0 {
                 if line == 0 {
                     draw_title(at, buf, shown);
+                } else if self.scroll.wrap {
+                    used = crate::diff::draw_row_wrapped(
+                        at,
+                        area.height - y,
+                        buf,
+                        &shown.diff,
+                        (line - 1) as usize,
+                        theme,
+                    );
                 } else {
                     draw_row_kept(
                         &mut self.kept,
@@ -1163,9 +1171,21 @@ impl Changes {
                 .range()
                 .is_some_and(|(first, last)| first <= line && line <= last);
             if (line == self.cursor || in_range) && focused {
-                buf[(area.x, area.y + y)].set_char('▌').set_fg(Color::Cyan);
+                for k in 0..used {
+                    buf[(area.x, area.y + y + k)]
+                        .set_char('▌')
+                        .set_fg(Color::Cyan);
+                }
             }
+            y += used;
+            line += 1;
         }
+    }
+
+    /// 長い行を折り返す（アプリの Wrap Long Lines）。
+    pub fn set_wrap(&mut self, wrap: bool) {
+        self.scroll.wrap = wrap;
+        self.kept.forget();
     }
 }
 

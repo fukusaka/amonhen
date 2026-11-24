@@ -196,11 +196,16 @@ pub struct Scroll {
     pub height: u16,
     /// 最後に描いたときの `top`。
     drawn_top: u32,
+    /// 長い行を折り返している（行が画面より多くの行を使うので、最後の行まで一番上に動かせる）。
+    pub wrap: bool,
 }
 
 impl Scroll {
     fn last_top(&self, lines: u32) -> u32 {
-        lines.saturating_sub(u32::from(self.height))
+        match self.wrap {
+            true => lines.saturating_sub(1),
+            false => lines.saturating_sub(u32::from(self.height)),
+        }
     }
 
     pub fn clamp(&mut self, lines: u32) {
@@ -214,6 +219,10 @@ impl Scroll {
 
     /// 最後に描いてから、縦に何行ずれたか（正なら、中身が上へ）。
     pub fn scrolled(&self) -> i32 {
+        // 折り返していると、1 行が何行も使うので、ずれた行数は分からない。
+        if self.wrap {
+            return 0;
+        }
         (i64::from(self.top) - i64::from(self.drawn_top)) as i32
     }
 
@@ -321,6 +330,57 @@ pub fn draw_row_kept(
         draw_row(at, buf, diff, row, left, theme);
         kept.store(row as u32, &buf.content[start..start + width]);
     }
+}
+
+/// 差分の行 `row` を折り返して描く（アプリの Wrap Long Lines）: 幅に収まらない分を次の行へ。続きの行は行番号と
+/// 印の欄を空ける。`at` は 1 行目、`max` は使える行数。描いた行数を返す。
+pub fn draw_row_wrapped(
+    at: Rect,
+    max: u16,
+    buf: &mut Buffer,
+    diff: &Diff,
+    row: usize,
+    theme: &Theme,
+) -> u16 {
+    let kind = (diff.rows[row * 4] & 0xff) as u8;
+    draw_row(at, buf, diff, row, 0, theme);
+    if matches!(kind, DiffRow::FILE | DiffRow::HUNK) || max <= 1 {
+        return 1;
+    }
+    let gutter = gutter_width(diff, at.width);
+    let room = usize::from(at.width.saturating_sub(gutter));
+    if room == 0 {
+        return 1;
+    }
+    let mut width = 0usize;
+    for ch in diff.row_text(row).chars() {
+        width += match ch {
+            '\t' => TAB - width % TAB,
+            _ => ch.width().unwrap_or(0),
+        };
+    }
+    let lines = width.div_ceil(room).clamp(1, usize::from(max)) as u16;
+    for k in 1..lines {
+        let line = Rect::new(at.x, at.y + k, at.width, 1);
+        draw_row(line, buf, diff, row, k * room as u16, theme);
+        // 続きの行は、行番号・印・符号の欄を空ける（地の色はそのまま）。
+        for x in line.x..(line.x + gutter).min(line.right()) {
+            buf[(x, line.y)].set_symbol(" ");
+        }
+    }
+    lines
+}
+
+/// 行番号・stage の印・符号の欄の幅（`draw_row` と同じ）。
+fn gutter_width(diff: &Diff, width: u16) -> u16 {
+    let mut gutter = 0;
+    if width >= NARROW {
+        gutter += 2 * (diff.digits + 1);
+    }
+    if diff.marks {
+        gutter += 2;
+    }
+    gutter + 1
 }
 
 /// 差分の 1 行。
