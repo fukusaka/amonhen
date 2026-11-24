@@ -1251,18 +1251,32 @@ pub fn ortho(
         let (upper, lower) = if a.1 < b.1 { (a, b) } else { (b, a) };
         let g0 = row(upper.1).1;
         let g1 = row(lower.1).0;
-        // 端の縦の線に矢じりの分（12）を残す
-        let (g0, g1) = if g1 - g0 < 4.0 {
-            let m = (upper.1 + lower.1) / 2.0;
-            (m - 2.0, m + 2.0)
-        } else if g1 - g0 > 30.0 {
-            (g0 + 12.0, g1 - 12.0)
+        // 段は空きの真ん中を中心に、TRACK 以上（12 まで）の間で並べる。端の縦の線に矢じりの分（12）を残せる
+        // ならそうし、残せなければ空きの縁から 4 まで使う
+        let gap = g1 - g0;
+        let mid = if gap < 4.0 {
+            (upper.1 + lower.1) / 2.0
         } else {
-            let m = (g0 + g1) / 2.0;
-            (m - 3.0, m + 3.0)
+            (g0 + g1) / 2.0
+        };
+        let (g0, g1) = if gap < 4.0 {
+            (mid - 2.0, mid + 2.0)
+        } else {
+            (g0 + 2.0, g1 - 2.0)
         };
         let count = tracks_in.get(&run.gap).copied().unwrap_or(1);
-        let want = g0 + (g1 - g0) * (track[r] + 1) as f64 / (count + 1) as f64;
+        let step = if count < 2 {
+            0.0
+        } else {
+            let n = (count - 1) as f64;
+            let roomy = ((gap - 24.0).max(0.0) / n).min(12.0);
+            if roomy >= TRACK {
+                roomy
+            } else {
+                ((gap - 8.0).max(0.0) / n).min(TRACK)
+            }
+        };
+        let want = mid + (track[r] as f64 - (count - 1) as f64 / 2.0) * step;
         // 題を避ける高さ（望む高さから近い順に）。調べるのはこの線の範囲に重なる題だけ
         let (lo, hi) = (a.0.min(b.0), a.0.max(b.0));
         let (top, bottom) = (upper.1, lower.1);
@@ -1294,7 +1308,8 @@ pub fn ortho(
         }
         level.insert((run.edge, run.at), y);
     }
-    pts.iter()
+    let mut paths: Vec<Option<Vec<P>>> = pts
+        .iter()
         .enumerate()
         .map(|(i, p)| {
             if !usable[i] || p.len() < 2 {
@@ -1320,7 +1335,183 @@ pub fn ortho(
             }
             Some(tidy(out))
         })
-        .collect()
+        .collect();
+    separate(&mut paths, edges, obstacles);
+    paths
+}
+
+/// 違う辺の、同じ向きで TRACK より近く並んで重なる線を離す（溝を分ける）。動かすのは両隣が直角の中ほどの線
+/// だけで、両隣の線を伸び縮みさせて TRACK ずつずらし、ほかの線とも TRACK 以上離れ、ノード・題・ラベルの箱に
+/// 当たらない位置を選ぶ。samehead・sametail の組（同じ点で会う線）は離さない。比べる組の数は NUDGE_WORK まで。
+fn separate(paths: &mut [Option<Vec<P>>], edges: &[OrthoEdge], obstacles: &mut Obstacles) {
+    #[derive(Clone, Copy)]
+    struct Seg {
+        edge: usize,
+        at: usize,
+        vertical: bool,
+        pos: f64,
+        lo: f64,
+        hi: f64,
+    }
+    let joined = |a: usize, b: usize| {
+        let (ea, eb) = (&edges[a], &edges[b]);
+        let same = |x: &Option<String>, y: &Option<String>| {
+            x.as_deref()
+                .is_some_and(|x| !x.is_empty() && Some(x) == y.as_deref())
+        };
+        (ea.head == eb.head && same(&ea.head_end.same, &eb.head_end.same))
+            || (ea.tail == eb.tail && same(&ea.tail_end.same, &eb.tail_end.same))
+    };
+    let mut work = NUDGE_WORK;
+    for _ in 0..3 {
+        let mut segs: Vec<Seg> = Vec::new();
+        for (i, p) in paths.iter().enumerate() {
+            let Some(p) = p else { continue };
+            for (k, w) in p.windows(2).enumerate() {
+                let (a, b) = (w[0], w[1]);
+                if (a.0 - b.0).abs() < 1e-6 && (a.1 - b.1).abs() > 1e-6 {
+                    segs.push(Seg {
+                        edge: i,
+                        at: k,
+                        vertical: true,
+                        pos: a.0,
+                        lo: a.1.min(b.1),
+                        hi: a.1.max(b.1),
+                    });
+                } else if (a.1 - b.1).abs() < 1e-6 && (a.0 - b.0).abs() > 1e-6 {
+                    segs.push(Seg {
+                        edge: i,
+                        at: k,
+                        vertical: false,
+                        pos: a.1,
+                        lo: a.0.min(b.0),
+                        hi: a.0.max(b.0),
+                    });
+                }
+            }
+        }
+        segs.sort_by(|a, b| {
+            a.vertical
+                .cmp(&b.vertical)
+                .then(a.pos.total_cmp(&b.pos))
+                .then(a.edge.cmp(&b.edge))
+                .then(a.at.cmp(&b.at))
+        });
+        let near = |a: &Seg, b: &Seg| {
+            a.edge != b.edge
+                && a.vertical == b.vertical
+                && (a.pos - b.pos).abs() < TRACK - 0.01
+                && a.hi.min(b.hi) - a.lo.max(b.lo) > 2.0
+                && !joined(a.edge, b.edge)
+        };
+        // 並びの時の位置（動かしたものは `shifted` で別に見る）
+        let keys: Vec<(bool, f64)> = segs.iter().map(|s| (s.vertical, s.pos)).collect();
+        let mut shifted: Vec<usize> = Vec::new();
+        let mut moved = false;
+        let mut i = 0;
+        while i < segs.len() && work > 0 {
+            let mut j = i + 1;
+            while j < segs.len() && segs[j].vertical == segs[i].vertical && work > 0 {
+                if segs[j].pos - segs[i].pos >= TRACK - 0.01 {
+                    break;
+                }
+                work -= 1;
+                if near(&segs[i], &segs[j]) {
+                    // 動かせるほう（後の辺を先に）
+                    let movable = |s: &Seg, paths: &[Option<Vec<P>>]| {
+                        let n = paths[s.edge].as_ref().map_or(0, Vec::len);
+                        s.at > 0 && s.at + 2 < n
+                    };
+                    let (m, other) = if movable(&segs[j], paths) {
+                        (j, i)
+                    } else if movable(&segs[i], paths) {
+                        (i, j)
+                    } else {
+                        j += 1;
+                        continue;
+                    };
+                    let seg = segs[m];
+                    let base = segs[other].pos;
+                    let away = if seg.pos >= base { 1.0 } else { -1.0 };
+                    let mut tries: Vec<f64> = (1..=3)
+                        .flat_map(|k| [away * k as f64, -away * k as f64])
+                        .map(|k| base + k * TRACK)
+                        .collect();
+                    tries.sort_by(|a, b| (a - seg.pos).abs().total_cmp(&(b - seg.pos).abs()));
+                    let p = paths[seg.edge].clone().unwrap_or_default();
+                    let e = &edges[seg.edge];
+                    let skip = [e.tail, e.head];
+                    let mut done = false;
+                    for to in tries {
+                        let probe = Seg { pos: to, ..seg };
+                        // 近くの線だけ（並びの時の位置で二分探索）と、動かした線
+                        let from =
+                            keys.partition_point(|k| (k.0, k.1) < (seg.vertical, to - TRACK));
+                        let mut window = 0;
+                        let mut crowded = false;
+                        for (k, s) in keys[from..].iter().zip(&segs[from..]) {
+                            if k.0 != seg.vertical || k.1 > to + TRACK {
+                                break;
+                            }
+                            window += 1;
+                            if near(&probe, s) {
+                                crowded = true;
+                                break;
+                            }
+                        }
+                        work = work.saturating_sub(window + shifted.len() + 1);
+                        if crowded || shifted.iter().any(|&x| near(&probe, &segs[x])) {
+                            continue;
+                        }
+                        let mut q = p.clone();
+                        for idx in [seg.at, seg.at + 1] {
+                            if seg.vertical {
+                                q[idx].0 = to;
+                            } else {
+                                q[idx].1 = to;
+                            }
+                        }
+                        // 端の線（ノードに出入りする線）は短くしない（ノードの外の分が矢じりより短くなる）
+                        let len = |p: &[P], k: usize| {
+                            (p[k].0 - p[k + 1].0).abs() + (p[k].1 - p[k + 1].1).abs()
+                        };
+                        let last = q.len() - 2;
+                        let ends_ok = [seg.at - 1, seg.at + 1]
+                            .into_iter()
+                            .filter(|&k| k == 0 || k == last)
+                            .all(|k| len(&q, k) >= len(&p, k) - 1e-6);
+                        if !ends_ok {
+                            continue;
+                        }
+                        let clear = (seg.at - 1..=seg.at + 1).all(|k| {
+                            let (a, b) = (q[k], q[k + 1]);
+                            let r = [
+                                a.0.min(b.0) - 0.5,
+                                a.1.min(b.1) - 0.5,
+                                a.0.max(b.0) + 0.5,
+                                a.1.max(b.1) + 0.5,
+                            ];
+                            !obstacles.blocked(r, &skip)
+                        });
+                        if clear {
+                            paths[seg.edge] = Some(q);
+                            segs[m].pos = to;
+                            shifted.push(m);
+                            moved = true;
+                            done = true;
+                            break;
+                        }
+                    }
+                    let _ = done;
+                }
+                j += 1;
+            }
+            i += 1;
+        }
+        if !moved {
+            break;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1375,7 +1566,7 @@ mod ortho_tests {
         for (i, a) in levels.iter().enumerate() {
             for b in &levels[i + 1..] {
                 if a.1 < b.2 && b.1 < a.2 {
-                    assert!((a.0 - b.0).abs() > 1.0, "{levels:?}");
+                    assert!((a.0 - b.0).abs() >= TRACK - 0.01, "{levels:?}");
                 }
             }
         }
