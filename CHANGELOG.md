@@ -1279,6 +1279,7 @@ First release.
 
 - Restoring the version before a commit that renamed a file brings back the old name instead of only deleting the new
   one, and Restore This Version isn't offered for a file the commit deleted.
+- Renaming a branch without the engine can be undone, as it already could with the engine.
 
 ### [0.2.9] - 2026-11-24
 
