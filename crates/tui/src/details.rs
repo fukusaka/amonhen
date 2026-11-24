@@ -24,7 +24,12 @@ struct File {
     added: u64,
     removed: u64,
     binary: bool,
+    /// 生成物（lock ファイルなど）。最初は畳む。
+    generated: bool,
 }
+
+/// 1 ファイルの変更がこの行数を超えたら、最初は畳む（アプリと同じ）。
+const COLLAPSE_ABOVE: u64 = 1000;
 
 /// 差分で無視する空白（アプリの Ignore Whitespace。`commitDiff` の whitespace）。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -210,6 +215,7 @@ impl Commit {
                 added: f["added"].as_u64().unwrap_or(0),
                 removed: f["removed"].as_u64().unwrap_or(0),
                 binary: f["binary"] == true,
+                generated: f["generated"] == true,
             })
             .collect();
         Self {
@@ -230,7 +236,14 @@ impl Commit {
     }
 
     fn unfolded(mut self) -> Self {
-        self.folded = vec![false; self.diff.file_rows.len()];
+        // 生成物と、変更が 1000 行を超えるファイルは、最初は畳む（アプリと同じ）。
+        self.folded = (0..self.diff.file_rows.len())
+            .map(|i| {
+                self.files
+                    .get(i)
+                    .is_some_and(|f| f.generated || f.added + f.removed > COLLAPSE_ABOVE)
+            })
+            .collect();
         self.refold();
         self
     }
