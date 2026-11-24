@@ -45,6 +45,8 @@ pub enum Event {
     Failed(String),
     /// Quick Open を開いたときに探し始めた、手元の探すフォルダの下のリポジトリ（フォルダごとに届く）。
     Scanned(Vec<String>),
+    /// clone が終わった（clone した場所か、失敗の理由）。
+    Cloned(std::result::Result<String, String>),
 }
 
 /// 描き直す所。一番上と一番下の行は、どれかを描き直すたびに描き直す。
@@ -175,6 +177,8 @@ enum Naming {
     DeepenSince,
     /// sparse checkout で取り出すフォルダ（空白で区切る。空ならすべて取り出す）。
     SparseFolders,
+    /// clone する場所（この機械の。始まりは URL）。
+    CloneDest,
     /// Activity の記録を書き出すファイル（この機械の）。
     ActivityExport,
     /// Range Diff の範囲（git range-diff と同じ: `A...B`、`A..B C..D`、`base A B`）。
@@ -710,6 +714,8 @@ pub struct App {
     operation_log: Option<OperationLog>,
     /// Activity の Operations（`Tab` で操作ログと切り替える）。
     operations: Option<Operations>,
+    /// clone の途中で聞いていること（URL、場所、取り方）。選ぶ前に横取りして、次を聞く。
+    clone_plan: Option<ClonePlan>,
     /// Export JSON で書き出す Operations の記録（場所を打っている間）。
     export_records: Option<Value>,
     /// Activity の History Cache（`historyCache` の info。キャッシュがなければ null）。
@@ -863,6 +869,7 @@ impl App {
             perf: Vec::new(),
             showing_performance: false,
             export_records: None,
+            clone_plan: None,
             edit_mode: None,
             combining: Vec::new(),
             copy: None,
@@ -1765,6 +1772,19 @@ impl App {
                     self.dirty = true;
                 }
             }
+            // clone できたら、そのリポジトリを開く（Quick Open で選んだときと同じ）。
+            Event::Cloned(result) => {
+                self.pending = self.pending.saturating_sub(1);
+                self.running = None;
+                match result {
+                    Ok(dest) => {
+                        self.open_location = Some(dest);
+                        self.quit = true;
+                    }
+                    Err(error) => self.error = Some(error),
+                }
+                self.dirty = true;
+            }
             Event::Scanned(paths) => {
                 if let Some(quick) = &mut self.quick_open {
                     quick.add(paths);
@@ -1879,6 +1899,26 @@ impl App {
             self.patch_version = Some(pending);
             self.naming = Naming::PatchVersion;
             self.typing_branch = Some((String::new(), String::new(), "2".to_owned()));
+            self.dirty = true;
+            return;
+        }
+        // clone の取り方・一緒にすることを選んでいる間（`ask_clone_download` と `ask_clone_extras`）。
+        if self.choices.is_some()
+            && let Some(mut plan) = self.clone_plan.take()
+        {
+            match (plan.stage, key.code) {
+                (0, KeyCode::Char(ch @ ('y' | 'c' | 'r'))) => {
+                    plan.download = ch;
+                    plan.stage = 1;
+                    self.choices = None;
+                    self.ask_clone_extras(plan);
+                }
+                (1, KeyCode::Char(ch @ ('y' | 's' | 'f' | 'a'))) => {
+                    self.choices = None;
+                    self.start_clone(plan, ch);
+                }
+                _ => self.choices = None,
+            }
             self.dirty = true;
             return;
         }
@@ -2267,6 +2307,11 @@ impl App {
             match key.code {
                 KeyCode::Esc => return,
                 KeyCode::Enter => {
+                    // URL（か bundle のファイル）を打っていれば、それを clone する（アプリの Clone…）。
+                    if clonable(quick.query.trim()) {
+                        self.ask_clone_destination(quick.query.trim());
+                        return;
+                    }
                     if let Some(candidate) = quick.shown().get(quick.selected) {
                         self.open_location = Some(candidate.path.clone());
                         self.quit = true;
@@ -2388,6 +2433,10 @@ impl App {
                         let name = name.trim();
                         let (op, label, command) = match self.naming {
                             Naming::Stash | Naming::SparseFolders | Naming::SubmoduleBranch => {
+                                return;
+                            }
+                            Naming::CloneDest => {
+                                self.ask_clone_download(&start, &local_path(name));
                                 return;
                             }
                             // アプリと同じ項目だけを、読みやすい JSON で。
@@ -3002,13 +3051,8 @@ impl App {
                 return;
             }
         };
+        // 何もなくても開く（URL を打てば clone できる）。
         let roots: Vec<_> = roots.into_iter().filter(|r| r.is_local()).collect();
-        if bookmarks.is_empty() && recents.is_empty() && roots.is_empty() {
-            self.notice = Some(tr!(
-                "No repositories yet: open one, or add bookmarks on the apps' Repositories page"
-            ));
-            return;
-        }
         let mut quick = QuickOpen {
             query: String::new(),
             selected: 0,
@@ -3450,6 +3494,91 @@ impl App {
         if values.len() > 200 {
             values.pop_front();
         }
+    }
+
+    /// clone する場所を聞く（今のフォルダの、URL の最後の名前）。
+    fn ask_clone_destination(&mut self, url: &str) {
+        self.quick_open = None;
+        let name = url
+            .trim_end_matches('/')
+            .rsplit(['/', '\\', ':'])
+            .next()
+            .unwrap_or("repo");
+        let name = name.strip_suffix(".git").unwrap_or(name);
+        let name = name.strip_suffix(".bundle").unwrap_or(name);
+        self.naming = Naming::CloneDest;
+        self.typing_branch = Some((url.to_owned(), url.to_owned(), local_path(name)));
+        self.dirty = true;
+    }
+
+    /// 何を取ってくるか（アプリの Clone のシートと同じ: すべて、中身は必要なときに、最近の履歴だけ）。
+    fn ask_clone_download(&mut self, url: &str, dest: &str) {
+        self.clone_plan = Some(ClonePlan {
+            url: url.to_owned(),
+            dest: dest.to_owned(),
+            stage: 0,
+            download: 'y',
+        });
+        self.choices = Some((
+            tr!(
+                "Clone {url} into {dest}: download what?",
+                url = url,
+                dest = dest
+            ),
+            vec![
+                ('y', tr!("everything"), Request::Status),
+                (
+                    'c',
+                    tr!("contents when needed (partial clone)"),
+                    Request::Status,
+                ),
+                (
+                    'r',
+                    tr!("recent history only (shallow clone)"),
+                    Request::Status,
+                ),
+            ],
+        ));
+    }
+
+    /// 一緒にすること: submodule も取り出す、一番上のファイルだけを取り出す（sparse checkout で始める）。
+    fn ask_clone_extras(&mut self, plan: ClonePlan) {
+        self.clone_plan = Some(plan);
+        self.choices = Some((
+            tr!("Clone it now?"),
+            vec![
+                ('y', tr!("clone"), Request::Status),
+                ('s', tr!("with its submodules"), Request::Status),
+                (
+                    'f',
+                    tr!("only the files at the top (pick folders later)"),
+                    Request::Status,
+                ),
+                ('a', tr!("both"), Request::Status),
+            ],
+        ));
+    }
+
+    /// clone を裏で動かす（終わったら `Event::Cloned`）。git を動かすのはこの機械。
+    fn start_clone(&mut self, plan: ClonePlan, extras: char) {
+        let options = amonhen_backend_cli::CloneOptions {
+            filter: (plan.download == 'c').then(|| "blob:none".to_owned()),
+            depth: (plan.download == 'r').then_some(1),
+            sparse: matches!(extras, 'f' | 'a'),
+            branch: None,
+            recurse_submodules: matches!(extras, 's' | 'a'),
+        };
+        self.running = Some(tr!("Cloning {url}…", url = plan.url));
+        self.pending += 1;
+        let events = self.events.clone();
+        std::thread::spawn(move || {
+            let result =
+                amonhen_backend_cli::clone(&plan.url, std::path::Path::new(&plan.dest), &options)
+                    .map(|()| plan.dest.clone())
+                    .map_err(|e| e.to_string());
+            let _ = events.send(Event::Cloned(result));
+        });
+        self.dirty = true;
     }
 
     /// Activity の Events に 1 つ記録する（500 まで）。
@@ -8513,6 +8642,11 @@ impl App {
                         "Write the operations as JSON to (on this machine): {name}",
                         name = name
                     ),
+                    Naming::CloneDest => tr!(
+                        "Clone {at} into (on this machine): {name}",
+                        at = at,
+                        name = name
+                    ),
                     Naming::SparseFolders => {
                         let text = tr!(
                             "Check out only the folders (spaces between, Tab completes, empty for all): {name}",
@@ -8930,6 +9064,11 @@ impl App {
                     (mark, c.name.as_str(), c.path.as_str())
                 })
                 .collect();
+            let none = match (clonable(quick.query.trim()), quick.items.is_empty()) {
+                (true, _) => tr!("Enter clones it"),
+                (false, true) => tr!("No repositories yet: type a URL to clone one"),
+                (false, false) => tr!("No repository matches"),
+            };
             cursor = choice_list(
                 buf,
                 area,
@@ -8937,7 +9076,7 @@ impl App {
                 &quick.query,
                 &rows,
                 quick.selected,
-                &tr!("No repository matches"),
+                &none,
             );
         }
         if let Some(pick) = &self.fixup_pick {
@@ -9484,6 +9623,29 @@ impl App {
     }
 }
 
+/// clone の途中で聞いていること。
+struct ClonePlan {
+    url: String,
+    dest: String,
+    /// 0: 取り方を聞いている、1: 一緒にすることを聞いている。
+    stage: u8,
+    /// 取り方（`y` すべて、`c` 中身は必要なときに、`r` 最近の履歴だけ）。
+    download: char,
+}
+
+/// Quick Open に打ったものが clone できる場所か（URL、`user@host:path`、`.git`・`.bundle` で終わるもの）。
+fn clonable(text: &str) -> bool {
+    if text.is_empty() || text.contains(char::is_whitespace) {
+        return false;
+    }
+    text.contains("://")
+        || text.ends_with(".git")
+        || text.ends_with(".bundle")
+        || text
+            .split_once(':')
+            .is_some_and(|(host, _)| host.contains('@') && !host.contains('/'))
+}
+
 fn frame_box(buf: &mut Buffer, area: Rect, at: Rect, title: &str) {
     for y in at.y..at.bottom() {
         // 枠の左端が全角の文字の後ろ半分に重なるなら、その文字を消す。
@@ -9776,11 +9938,11 @@ mod tests {
         std::fs::create_dir_all(work.join("found/.git")).unwrap();
         let found = work.join("found").to_string_lossy().into_owned();
         amonhen_model::process::with_client_env(&env, || {
-            // 何もなければ、そう言う。
+            // 何もなくても開く（URL を打てば clone できる）。
             typed(&mut app, ":quick");
             key(&mut app, KeyCode::Enter);
-            assert!(app.quick_open.is_none());
-            assert!(bottom_line(&mut app).contains("No repositories yet"));
+            assert!(app.quick_open.as_ref().is_some_and(|q| q.items.is_empty()));
+            key(&mut app, KeyCode::Esc);
             let dir = config.path().join("amonhen");
             std::fs::create_dir_all(&dir).unwrap();
             let bookmarks = serde_json::json!({

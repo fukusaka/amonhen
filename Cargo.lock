@@ -251,6 +251,7 @@ dependencies = [
 name = "amonhen-tui"
 version = "0.2.12"
 dependencies = [
+ "amonhen-backend-cli",
  "amonhen-commands",
  "amonhen-front",
  "amonhen-layout",
