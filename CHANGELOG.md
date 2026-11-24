@@ -30,6 +30,8 @@ becomes the GitHub Release notes.
 
 - DOT diagrams: in `rankdir=LR`/`RL`, a cluster is widened to fit a title longer than its box.
 - DOT diagrams: clusters joined by edges both ways sit side by side instead of being stacked, as in Graphviz.
+- DOT diagrams: `splines=ortho` in the dot layout widens the space between ranks (up to `ranksep`) when many edges
+  run across it, so they no longer merge into one line.
 
 #### Changed
 

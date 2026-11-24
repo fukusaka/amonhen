@@ -478,7 +478,7 @@ pub struct FreeEdge {
 /// 同じ溝（同じ向きで、この距離より近い平行な線）とみなす間。
 const CHANNEL: f64 = 4.0;
 /// 溝の中で分けた線の間。
-const TRACK: f64 = 6.0;
+pub const TRACK: f64 = 6.0;
 /// 溝を分けるときに比べる組の数の上限（図ぜんぶ）。
 const NUDGE_WORK: usize = 2_000_000;
 
