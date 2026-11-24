@@ -726,6 +726,14 @@ impl<'a, 'input> Writer<'a, 'input> {
             set(&mut attrs, "overflow", "visible");
         }
         attrs.retain(|(n, _)| self.kept(n));
+        if self.coresvg
+            && tag == "image"
+            && !attrs.iter().any(|(n, _)| n == "xlink:href")
+            && let Some(href) = attrs.iter_mut().find(|(n, _)| n == "href")
+        {
+            // CoreSVG は SVG 2 の `href` を読まないことがあるので、古い `xlink:href` にする
+            href.0 = "xlink:href".into();
+        }
         let mut markers = Vec::new();
         attrs.retain(|(n, v)| {
             let kind = match n.as_str() {
@@ -1486,6 +1494,24 @@ mod tests {
             out.contains(r##"<rect fill="#f3f3f3" stroke=""/>"##),
             "{out}"
         );
+    }
+
+    #[test]
+    fn images_use_xlink_href_for_coresvg() {
+        let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><image width="4" height="4" href="data:image/png;base64,AA=="/></svg>"#;
+        let plain = inline(svg).unwrap();
+        assert!(
+            plain.contains(r#" href="data:image/png;base64,AA==""#),
+            "{plain}"
+        );
+        let core = inline_slanted(svg, &[]).unwrap();
+        assert!(
+            core.contains(
+                r#"<image width="4" height="4" xlink:href="data:image/png;base64,AA=="/>"#
+            ),
+            "{core}"
+        );
+        assert!(!core.contains(" href="), "{core}");
     }
 
     #[test]
