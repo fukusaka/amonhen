@@ -15,7 +15,7 @@ becomes the GitHub Release notes.
   resolving `@color/…` from the commit's `res` folder; what can't be resolved is drawn in the text color, with a note
   (macOS, GTK4).
 - DOT diagrams in Markdown previews draw images (a node's `image`, a table's `<IMG>`) from the same commit, by a path
-  relative to the Markdown file's folder; images over 1 MiB or 2048 × 2048 pixels are drawn as empty frames.
+  relative to the Markdown file's folder; images over 1 MiB or larger than 4K (3840 × 2160 pixels) are drawn as empty frames.
 - DOT diagrams draw gradient fills in HTML-like tables, cells and cluster and graph backgrounds, striped clusters,
   tapered edges, `decorate`, node `labelloc`, and dashed or dotted table borders.
 - Markdown previews draw the HTML GitHub renders: `align` for centered logos and badge rows, sized and linked images,

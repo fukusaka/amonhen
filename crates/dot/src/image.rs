@@ -17,12 +17,14 @@ pub const MAX_BYTES: usize = 1024 * 1024;
 pub const MAX_TOTAL: usize = 2 * 1024 * 1024;
 /// 読む画像（違う `src`）の数の上限。
 pub const MAX_COUNT: usize = 32;
-/// 1 枚の画素数の上限（PNG・JPEG・GIF・WebP。描き手は画像をほどいてから縮めるので、バイト数が小さくても画素が
-/// 多いと重い。一色の 8192 × 8192 の PNG は 228 KB だが、CoreSVG で 1.1 秒・3.8 GB、librsvg で 2 秒・1 GB
-/// かかった。2048 × 2048 は CoreSVG で 0.09 秒・0.26 GB、librsvg で 0.14 秒・0.08 GB）。
-pub const MAX_PIXELS: f64 = 2048.0 * 2048.0;
-/// 図ぜんぶで描く画素数の上限（同じ画像も使うたびに数える）。
-pub const MAX_TOTAL_PIXELS: f64 = 2.0 * MAX_PIXELS;
+/// 1 枚の画素数の上限（PNG・JPEG・GIF・WebP）。4K（3840 × 2160、縦長も）が収まる面積。描き手は画像をほどいて
+/// から縮めるので、バイト数が小さくても画素が多いと重い（一色の PNG を 200 点の枠に描いて測った: 4096 × 4096 は
+/// CoreSVG で 95 ms・91 MB、librsvg で 0.10 秒・200 MB。16384 × 16384 は 852 KB だが、1.1 秒・1.1 GB と 1 秒・3 GB）。
+/// 辺の長さは縛らない（面積がほどく量を決める）。
+pub const MAX_PIXELS: f64 = 3840.0 * 2160.0;
+/// 図ぜんぶで描く画素数の上限（同じ画像も使うたびに数える）。4096 × 4096 と同じ面積で、4K の 1 枚と、ほかの
+/// 小さな画像（4K 近くならもう 1 枚）が入る。
+pub const MAX_TOTAL_PIXELS: f64 = 4096.0 * 4096.0;
 /// 大きさの上限（点）。
 const MAX_SIDE: f64 = 20_000.0;
 
@@ -551,16 +553,30 @@ mod tests {
 
     #[test]
     fn counts_pixels() {
-        // 画素の多すぎる 1 枚（ヘッダだけでも大きさで決まる）
-        assert!(read(&png_bytes(2049, 2048)).is_none());
-        let full = png_bytes(2048, 2048);
-        assert!(read(&full).is_some());
-        // 図ぜんぶでは 2 枚分まで（同じ画像も使うたびに数える）
-        let loader = move |_: &str| Some(full.clone());
+        // 4K は横でも縦でも入る。面積が超えるものは入らない（ヘッダだけでも大きさで決まる）
+        assert!(read(&png_bytes(3840, 2160)).is_some());
+        assert!(read(&png_bytes(2160, 3840)).is_some());
+        assert!(read(&png_bytes(3841, 2160)).is_none());
+        assert!(read(&png_bytes(1, 8_294_401)).is_none());
+        // 図ぜんぶでは 4K の 2 枚まで（同じ画像も使うたびに数える）。4K の 1 枚と小さな画像は入る
+        let (k4, icon) = (png_bytes(3840, 2160), png_bytes(512, 512));
+        let loader = move |src: &str| {
+            Some(if src == "icon.png" {
+                icon.clone()
+            } else {
+                k4.clone()
+            })
+        };
         let loader: &Loader = &loader;
         let mut images = Images::new(Some(loader));
         assert!(images.get("a.png").is_some());
+        assert!(images.get("icon.png").is_some());
+        assert!(images.get("icon.png").is_some());
+        let mut images = Images::new(Some(loader));
         assert!(images.get("a.png").is_some());
+        assert!(images.get("a.png").is_some());
+        // 4K の 2 枚の後は、512 × 512 も入らない
+        assert!(images.get("icon.png").is_none());
         assert!(images.get("a.png").is_none());
         // SVG は画素で数えない
         let svg = b"<svg width=\"20000\" height=\"20000\"/>".to_vec();
