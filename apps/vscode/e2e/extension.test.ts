@@ -1079,6 +1079,8 @@ async function historySignatureFlow(): Promise<void> {
     await panel.history.handle({ type: 'select', oid: signed });
     const extras = (await waitPosted('detailsExtras', mark, (m) => m.extras.oid === signed)).extras;
     assert.deepEqual(extras.children, [after]);
+    // 詳細（Full）の項目: 含むブランチ（今のブランチ）と HEAD からの道
+    assert.ok(extras.full && extras.full.branches.length > 0, JSON.stringify(extras.full));
     if (ssh) assert.equal(extras.signature?.label, 'Verified');
 
     // 子・親・HEAD へ移る
