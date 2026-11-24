@@ -68,7 +68,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Submodules group (Update, Open in New Window) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `submodule`, `submodule update`.<br>TUI: A Submodules section in the sidebar, where Enter reopens the TUI in the submodule; Update Submodules in the command list. |
 | Submodule marks (not checked out, another commit, changes inside, conflict) and menus: Update… (recursive, remote), Edit URL, Branch to Follow, Remove (optionally .git/modules), Add, Sync URLs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: Remove asks with two buttons: keep `.git/modules` or delete it too.<br>CLI: `submodule` (`add`, `remove`, `set-url`, `set-branch`, `sync`).<br>TUI: Marks at the end of the row; Update Submodules and Add Submodule in the command list, and on a submodule's row `e` URL, `B` branch to follow, `x` remove (`d` deletes .git/modules too), `y` sync URLs. |
 | Submodules: move repository data into .git/modules, run a command in each | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: Run in Each Submodule…'s output goes to an Output channel (the app's Activity).<br>CLI: `submodule absorb`, `submodule foreach`.<br>TUI: `a` and `F` on a submodule's row; `!` shows the command's output. |
-| Worktrees under Working Copy with change counts (✎ ⌂ ⑂) | ✓ | ✓ | ✓ | ✓ | △ | △ | VSCode: The marks are the rows' icons; a branch another worktree has checked out gets ⌂ or ⑂.<br>CLI: `worktree list --changes`.<br>TUI: In the sidebar (folder and branch) when there are two or more; no change counts. |
+| Worktrees under Working Copy with change counts (✎ ⌂ ⑂) | ✓ | ✓ | ✓ | ✓ | △ | △ | VSCode: The marks are the rows' icons; a branch another worktree has checked out gets ⌂ or ⑂.<br>CLI: `worktree list --changes`.<br>TUI: In the sidebar (folder, branch and change count) when there are two or more, not under Working Copy. |
 | Marks for a shallow or partial clone (History) and a sparse checkout (Working Copy) | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: Shallow and Partial above History (Partial fetches all contents when clicked); " · some folders" on the Working Copy row for a sparse checkout.<br>TUI: [shallow] and [partial] on the top line after the branch; a sparse checkout's note above the Working Copy list. |
 
 ## 1. Tabs and windows
@@ -255,7 +255,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | Avatars | ✓ | ✓ | ✓ | — | n/a | — |  |
 | Signature marks on commits | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: With the engine.<br>CLI: In `show`.<br>TUI: The mark before the subject; no popover. |
 | CI status per commit with a checks popover | ✓ | ✓ | ✓ | — | — | — |  |
-| Worktree HEAD labels (✎ ⌂ ⑂, change counts) | ✓ | ✓ | ✓ | ✓ | — | △ | TUI: The labels, when there are two or more worktrees; no change counts. |
+| Worktree HEAD labels (✎ ⌂ ⑂, change counts) | ✓ | ✓ | ✓ | ✓ | — | ✓ | TUI: When there are two or more worktrees. |
 | Go to HEAD, Parent, Child | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: The HEAD button above History, Go to Parent and Go to Child on a commit's menu, and parent and child links in the details (with the engine).<br>TUI: `@`, `]` and `[`. |
 | Go to Ref | — | — | — | — | n/a | — |  |
 | Several commits selected (range, two, scattered) | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: With the engine.<br>CLI: `diff <rev> <rev>` for two.<br>TUI: `m`, Shift-↑↓, or Ctrl- or Alt-click. |
@@ -400,7 +400,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 
 | Feature | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
-| Worktrees with change counts | ✓ | ✓ | ✓ | ✓ | ✓ | △ | CLI: `worktree list --changes`.<br>TUI: In the sidebar when there are two or more; no change counts. |
+| Worktrees with change counts | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `worktree list --changes`.<br>TUI: In the sidebar when there are two or more. |
 | The edited worktree (✎) and switching it | ✓ | ✓ | △ | ✓ | n/a | ✓ | VSCode: Switches the repository the extension works on; one outside the workspace isn't added to the Source Control view.<br>CLI: Works on the worktree it runs in.<br>Windows: Choosing a worktree (or Edit This Worktree) reopens the window on it at the same place and page, since only the front tab's repository is open.<br>TUI: Enter on another worktree reopens the TUI there. |
 | New Worktree… (from a branch or commit) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | TUI: `w` on a local branch, or in History with a new branch at the selected commit. |
 | Remove Worktree (asks, `--force` with changes) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | TUI: `x` after asking, naming the changes it removes with `--force`. |

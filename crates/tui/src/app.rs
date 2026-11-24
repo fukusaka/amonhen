@@ -47,6 +47,8 @@ pub enum Event {
     Scanned(Vec<String>),
     /// clone が終わった（clone した場所か、失敗の理由）。
     Cloned(std::result::Result<String, String>),
+    /// ほかの worktree の変更の数を読み直す頃（worktree が 2 つ以上あるとき、10 秒ごと。アプリと同じ）。
+    CountWorktrees,
 }
 
 /// 描き直す所。一番上と一番下の行は、どれかを描き直すたびに描き直す。
@@ -636,6 +638,13 @@ pub struct App {
     tag_remote: Option<(String, bool)>,
     /// 消す worktree（変更の数を読んでいる間）。
     removing_worktree: Option<String>,
+    /// worktree ごとの変更のあるファイルの数（パスごと。開いているものは Working Copy の数）。
+    worktree_counts: std::collections::HashMap<String, u64>,
+    /// 開いている worktree のパスと、ほかの読める worktree のパス（2 つ以上あるときだけ）。
+    worktree_paths: Option<(String, Vec<String>)>,
+    /// 変更の数をすべて数え直した時刻（5 分ごとに `fresh` で読む）と、数えるのを頼む時計を動かしたか。
+    counts_fresh_at: Option<std::time::Instant>,
+    counts_clock: bool,
     /// History のコミットから作る worktree の、新しいブランチの名前（場所を聞いている間）。
     worktree_branch: Option<String>,
     /// パッチの版の番号を聞いている間の、コミット（空白区切り）と書く場所。
@@ -819,6 +828,10 @@ impl App {
             editing_remote: None,
             tag_remote: None,
             removing_worktree: None,
+            worktree_counts: Default::default(),
+            worktree_paths: None,
+            counts_fresh_at: None,
+            counts_clock: false,
             worktree_branch: None,
             patch_version: None,
             archive_folder: None,
@@ -1512,6 +1525,7 @@ impl App {
                         let selected = self.history.selected_id();
                         self.history.opened(&refs, &history);
                         self.sidebar.set_refs(&refs);
+                        self.worktrees_opened(&refs);
                         // タグの署名の印（アプリのタグの行の印）。タグが変わったときだけ読む（検証の結果はコアが覚える）。
                         // ブランチの分け方（お気に入り・積んだもの・Inactive・Archived）。
                         self.send(Request::Run {
@@ -1664,6 +1678,7 @@ impl App {
                             && sequence["empty"] != true
                             && sequence["retried"] != true;
                         self.changes.status(&status);
+                        self.count_open_worktree();
                         self.sidebar.set_conflicts(self.changes.conflicts());
                         // Commit and Push: コミットの後の状態（上流より進んだ数）が届いたら、push を確かめる。
                         if !self.committing && std::mem::take(&mut self.push_after_commit) {
@@ -1773,6 +1788,7 @@ impl App {
                 }
             }
             // clone できたら、そのリポジトリを開く（Quick Open で選んだときと同じ）。
+            Event::CountWorktrees => self.read_worktree_counts(),
             Event::Cloned(result) => {
                 self.pending = self.pending.saturating_sub(1);
                 self.running = None;
@@ -3829,6 +3845,84 @@ impl App {
         }
     }
 
+    /// refs を読んだら、worktree の一覧を覚えて、ほかの worktree の変更の数を読む（2 つ以上あるとき）。
+    fn worktrees_opened(&mut self, refs: &Value) {
+        let worktrees: Vec<&Value> = refs["worktrees"].as_array().into_iter().flatten().collect();
+        let open = worktrees
+            .iter()
+            .find(|w| w["current"] == true)
+            .and_then(|w| w["path"].as_str());
+        self.worktree_paths = match open {
+            Some(open) if worktrees.len() > 1 => Some((
+                open.to_owned(),
+                (worktrees.iter())
+                    .filter(|w| {
+                        w["current"] != true && w["prunable"].is_null() && w["bare"] != true
+                    })
+                    .filter_map(|w| w["path"].as_str().map(str::to_owned))
+                    .collect(),
+            )),
+            _ => None,
+        };
+        self.count_open_worktree();
+        self.read_worktree_counts();
+        // ほかの worktree の変化は知らされないので、10 秒ごとに読み直す（アプリと同じ）。
+        if self.worktree_paths.is_some() && !self.counts_clock {
+            self.counts_clock = true;
+            let events = self.events.clone();
+            std::thread::spawn(move || {
+                loop {
+                    std::thread::sleep(std::time::Duration::from_secs(10));
+                    if events.send(Event::CountWorktrees).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+    }
+
+    /// 開いている worktree の変更の数は、Working Copy の数。
+    fn count_open_worktree(&mut self) {
+        if let Some((open, _)) = &self.worktree_paths {
+            self.worktree_counts
+                .insert(open.clone(), self.changes.count() as u64);
+            self.show_worktree_counts();
+        }
+    }
+
+    /// ほかの worktree の変更の数を裏で読む（5 分ごとに、指紋が同じでも数え直す）。
+    fn read_worktree_counts(&mut self) {
+        let Some((_, others)) = &self.worktree_paths else {
+            return;
+        };
+        if others.is_empty() {
+            return;
+        }
+        let fresh = self
+            .counts_fresh_at
+            .is_none_or(|at| at.elapsed() > std::time::Duration::from_secs(300));
+        if fresh {
+            self.counts_fresh_at = Some(std::time::Instant::now());
+        }
+        let paths = others.clone();
+        self.send(Request::Background {
+            name: "worktreeCounts",
+            command: json!({"op": "worktreeChanges", "paths": paths, "fresh": fresh}),
+        });
+    }
+
+    fn show_worktree_counts(&mut self) {
+        let counts = if self.worktree_paths.is_some() {
+            self.worktree_counts.clone()
+        } else {
+            Default::default()
+        };
+        self.sidebar.set_worktree_counts(&counts);
+        self.history.set_worktree_counts(&counts);
+        self.damage |= Damage::SIDEBAR | Damage::MAIN;
+        self.dirty = true;
+    }
+
     fn ran(&mut self, name: &'static str, result: std::result::Result<Value, String>) {
         // タグのリモートでの様子（裏で読む）。印: 同じ名前の別のタグがあるリモートがあれば ⚠、読んだリモートの
         // どれにもなければ ∅（アプリの印）。
@@ -3934,6 +4028,20 @@ impl App {
                 Err(error) => self.error = Some(error),
             }
             self.read_operations();
+            return;
+        }
+        // ほかの worktree の変更の数（裏で読む。読めなければ前の数のまま）。
+        if name == "worktreeCounts" {
+            for w in (result.ok().as_ref())
+                .and_then(|r| r["info"]["worktrees"].as_array().cloned())
+                .unwrap_or_default()
+            {
+                if let Some(path) = w["path"].as_str() {
+                    self.worktree_counts
+                        .insert(path.to_owned(), w["count"].as_u64().unwrap_or(0));
+                }
+            }
+            self.show_worktree_counts();
             return;
         }
         // subtree の一覧（裏で読む）。

@@ -68,7 +68,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | Submodules のグループ（Update・新しい窓で開く） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `submodule`・`submodule update`。<br>TUI: サイドバーの Submodules の節。Enter でその submodule で TUI を開き直す。命令の一覧に Update Submodules。 |
 | submodule の印（取り出していない・違うコミット・中の変更・コンフリクト）とメニュー: Update…（中の submodule も・追うブランチの最新）・URL の編集・追うブランチ・外す（.git/modules も消せる）・追加・Sync URLs | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: Remove は 2 つのボタンで、.git/modules を残すか一緒に消すかを聞く。<br>CLI: `submodule`（`add`・`remove`・`set-url`・`set-branch`・`sync`）。<br>TUI: 行の右端に印。コマンドの一覧に Update Submodules・Add Submodule、submodule の行で `e` URL、`B` 追うブランチ、`x` 外す（`d` で .git/modules も消す）、`y` Sync URLs。 |
 | submodule: リポジトリのデータを .git/modules に移す・それぞれで命令を動かす | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | VSCode: Run in Each Submodule… の出力は出力パネルに出る（アプリの Activity にあたる）。<br>CLI: `submodule absorb`・`submodule foreach`。<br>TUI: submodule の行で `a`・`F`。命令の出力は `!` で出す。 |
-| Working Copy の下の worktree と変更の数（✎ ⌂ ⑂） | ✓ | ✓ | ✓ | ✓ | △ | △ | VSCode: 印は行のアイコン。ほかの worktree が checkout しているブランチには ⌂ か ⑂ が付く。<br>CLI: `worktree list --changes`。<br>TUI: 2 つ以上あればサイドバーに（フォルダとブランチ）。変更の数はない。 |
+| Working Copy の下の worktree と変更の数（✎ ⌂ ⑂） | ✓ | ✓ | ✓ | ✓ | △ | △ | VSCode: 印は行のアイコン。ほかの worktree が checkout しているブランチには ⌂ か ⑂ が付く。<br>CLI: `worktree list --changes`。<br>TUI: 2 つ以上あればサイドバーに（フォルダ・ブランチ・変更の数）。Working Copy の下ではない。 |
 | shallow clone・partial clone（History）と sparse checkout（Working Copy）の印 | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: History の上の Shallow・Partial（Partial は押すと中身をすべて取る）。sparse checkout なら Working Copy の行に「· some folders」。<br>TUI: 一番上の行のブランチの後ろに [shallow]・[partial]。sparse checkout は Working Copy の一覧の上に知らせ。 |
 
 ## 1. タブと窓
@@ -255,7 +255,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | アバター | ✓ | ✓ | ✓ | — | n/a | — |  |
 | コミットの署名の印 | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: エンジンがあるとき。<br>CLI: `show` に出る。<br>TUI: 件名の前の印。吹き出しはない。 |
 | コミットごとの CI の状態とポップオーバー | ✓ | ✓ | ✓ | — | — | — |  |
-| worktree の HEAD のラベル（✎ ⌂ ⑂・変更の数） | ✓ | ✓ | ✓ | ✓ | — | △ | TUI: worktree が 2 つ以上あるときのラベル。変更の数はない。 |
+| worktree の HEAD のラベル（✎ ⌂ ⑂・変更の数） | ✓ | ✓ | ✓ | ✓ | — | ✓ | TUI: worktree が 2 つ以上あるとき。 |
 | Go to HEAD・Parent・Child | ✓ | ✓ | ✓ | ✓ | n/a | ✓ | VSCode: History の上の HEAD のボタン、コミットのメニューの Go to Parent・Go to Child、詳細の親と子へのリンク（エンジンがあるとき）。<br>TUI: `@`・`]`・`[`。 |
 | Go to Ref | — | — | — | — | n/a | — |  |
 | いくつものコミットを選ぶ（範囲・2 つ・飛び飛び） | ✓ | ✓ | ✓ | ✓ | △ | ✓ | VSCode: エンジンがあるとき。<br>CLI: 2 つは `diff <rev> <rev>`。<br>TUI: `m`・Shift-↑↓・Ctrl か Alt のクリック。 |
@@ -400,7 +400,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 
 | 機能 | macOS | GTK4 | Windows | VSCode | CLI | TUI | Notes |
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
-| worktree と変更の数 | ✓ | ✓ | ✓ | ✓ | ✓ | △ | CLI: `worktree list --changes`。<br>TUI: 2 つ以上あればサイドバーに。変更の数はない。 |
+| worktree と変更の数 | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | CLI: `worktree list --changes`。<br>TUI: 2 つ以上あればサイドバーに。 |
 | 書き込む先の worktree（✎）と切り替え | ✓ | ✓ | △ | ✓ | n/a | ✓ | VSCode: 拡張が働くリポジトリを切り替える。ワークスペースの外のものはソース管理のビューには足さない。<br>CLI: 動かした worktree で働く。<br>Windows: worktree を選ぶ（か Edit This Worktree）と、同じ位置・同じ画面の窓でその worktree を開き直す（開いているのは前のタブのリポジトリだけのため）。<br>TUI: ほかの worktree で Enter を押すと、TUI をそこで開き直す。 |
 | New Worktree…（ブランチ・コミットから） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | TUI: 手元のブランチで `w`。History の `w` で、選んでいるコミットに新しいブランチを作って。 |
 | Remove Worktree（尋ね、変更があれば `--force`） | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | TUI: `x` で尋ねてから消す。変更があればその数を書き、`--force` で消す。 |

@@ -115,6 +115,9 @@ pub struct History {
     /// HEAD のコミットの行。
     head_row: Option<u32>,
     labels: HashMap<Oid, Vec<Label>>,
+    /// refs の worktree の一覧と、それぞれの変更の数（札に出す）。
+    worktrees: Value,
+    worktree_counts: HashMap<String, u64>,
     /// shallow clone の History（最後の行の下に、取り足す帯を出す）。
     shallow: bool,
     /// shallow clone の境界のコミット（親を取っていない）の行。
@@ -154,6 +157,56 @@ pub struct History {
 }
 
 impl History {
+    /// worktree ごとの変更のあるファイルの数（パスごと）。札の名前の後ろに「· 数」を出す（アプリと同じ）。
+    pub fn set_worktree_counts(&mut self, counts: &HashMap<String, u64>) {
+        if &self.worktree_counts != counts {
+            self.worktree_counts = counts.clone();
+            self.worktree_labels();
+        }
+    }
+
+    /// worktree が 2 つ以上あれば、それぞれの HEAD に札（アプリと同じ印。開いているものを先に。変更があれば数も）。
+    fn worktree_labels(&mut self) {
+        for labels in self.labels.values_mut() {
+            labels.retain(|l| !matches!(l.kind, LabelKind::Worktree));
+        }
+        let worktrees: Vec<Value> = self.worktrees.as_array().cloned().unwrap_or_default();
+        if worktrees.len() > 1 {
+            let mut ordered = worktrees;
+            ordered.sort_by_key(|w| (w["current"] != true, w["main"] != true));
+            for w in ordered {
+                let (Some(path), Some(head)) = (w["path"].as_str(), w["head"].as_str()) else {
+                    continue;
+                };
+                let Some(oid) = Oid::from_hex(head) else {
+                    continue;
+                };
+                let folder = path.rsplit(['/', '\\']).next().unwrap_or(path);
+                let mark = match (w["current"] == true, w["main"] == true) {
+                    (true, _) => '✎',
+                    (false, true) => '⌂',
+                    (false, false) => '⑂',
+                };
+                let name = match self.worktree_counts.get(path) {
+                    Some(&count) if count > 0 => format!("{mark} {folder} · {count}"),
+                    _ => format!("{mark} {folder}"),
+                };
+                self.labels.entry(oid).or_default().push(Label {
+                    name,
+                    kind: LabelKind::Worktree,
+                });
+            }
+        }
+        // worktree の札、今のブランチの順に先頭へ。
+        for labels in self.labels.values_mut() {
+            labels.sort_by_key(|l| match l.kind {
+                LabelKind::Worktree => 0,
+                LabelKind::Head => 1,
+                _ => 2,
+            });
+        }
+    }
+
     /// 開いた（か、読み直した）History と ref。
     pub fn opened(&mut self, refs: &Value, history: &Value) {
         self.id = history["history"].clone();
@@ -188,38 +241,8 @@ impl History {
                 });
             }
         }
-        // worktree が 2 つ以上あれば、それぞれの HEAD に札（アプリと同じ印。開いているものを先に）。
-        let worktrees: Vec<&Value> = refs["worktrees"].as_array().into_iter().flatten().collect();
-        if worktrees.len() > 1 {
-            let mut ordered = worktrees.clone();
-            ordered.sort_by_key(|w| (w["current"] != true, w["main"] != true));
-            for w in ordered {
-                let (Some(path), Some(head)) = (w["path"].as_str(), w["head"].as_str()) else {
-                    continue;
-                };
-                let Some(oid) = Oid::from_hex(head) else {
-                    continue;
-                };
-                let folder = path.rsplit(['/', '\\']).next().unwrap_or(path);
-                let mark = match (w["current"] == true, w["main"] == true) {
-                    (true, _) => '✎',
-                    (false, true) => '⌂',
-                    (false, false) => '⑂',
-                };
-                self.labels.entry(oid).or_default().push(Label {
-                    name: format!("{mark} {folder}"),
-                    kind: LabelKind::Worktree,
-                });
-            }
-        }
-        // worktree の札、今のブランチの順に先頭へ。
-        for labels in self.labels.values_mut() {
-            labels.sort_by_key(|l| match l.kind {
-                LabelKind::Worktree => 0,
-                LabelKind::Head => 1,
-                _ => 2,
-            });
-        }
+        self.worktrees = refs["worktrees"].clone();
+        self.worktree_labels();
         self.selected = self.selected.min(self.last());
         self.clamp_top();
         // 印は行の番号が変わるので、新しい History での行を聞いてから戻す（`remapped`）。

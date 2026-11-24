@@ -2834,6 +2834,31 @@ fn worktrees_are_listed_in_the_sidebar() {
     assert!(from_other.contains("[✎ other]"), "{from_other}");
 }
 
+/// worktree の行と札に、変更のあるファイルの数（開いているものは Working Copy の数、ほかは裏で数える）
+#[test]
+fn worktrees_show_their_change_counts() {
+    let dir = tempfile::tempdir().unwrap();
+    let main = dir.path().join("main");
+    std::fs::create_dir(&main).unwrap();
+    merged(&main);
+    let other = dir.path().join("other");
+    git(
+        &main,
+        BASE,
+        &["worktree", "add", "-q", other.to_str().unwrap(), "topic"],
+    );
+    std::fs::write(other.join("new-a.txt"), "a\n").unwrap();
+    std::fs::write(other.join("new-b.txt"), "b\n").unwrap();
+    std::fs::write(main.join("new.txt"), "c\n").unwrap();
+    let text = amonhen_tui::snapshot(open(&main), 160, 16, clock(), "").unwrap();
+    let side: Vec<String> = text.lines().skip(1).filter_map(|l| column(l, 0)).collect();
+    let at = side.iter().position(|l| l == "Worktrees").unwrap();
+    assert_eq!(side[at + 1], "● main (main) · 1", "{text}");
+    assert_eq!(side[at + 2], "  other (topic) · 2", "{text}");
+    assert!(text.contains("[✎ main · 1]"), "{text}");
+    assert!(text.contains("[⑂ other · 2]"), "{text}");
+}
+
 /// コマンドの一覧の New Orphan Branch: 名前を聞き、空からか、今のファイルを stage したままかを選ぶ
 #[test]
 fn new_orphan_branch_from_the_command_list() {
