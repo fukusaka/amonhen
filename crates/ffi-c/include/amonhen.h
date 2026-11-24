@@ -107,6 +107,12 @@ typedef struct AmonhenWatch AmonhenWatch;
 typedef struct AmonhenWorkingDiff AmonhenWorkingDiff;
 
 /**
+ * 画像の読み手が中身を渡す先（`amonhen_markdown_parse_with_images` の `read` が、読めたときだけ呼ぶ）。
+ * `sink_context` は `read` に渡されたもの、`data` は `len` バイト（呼んでいる間だけ読めればよい）。
+ */
+typedef void (*AmonhenImageSink)(void *sink_context, const uint8_t *data, uintptr_t len);
+
+/**
  * グラフの点（コミット 1 つ）。
  */
 typedef struct {
@@ -596,6 +602,30 @@ char *amonhen_markdown_parse_in_zone(const uint8_t *text,
                                      const char *github,
                                      const void *context,
                                      double (*offset)(const void *context, double utc_ms));
+
+/**
+ * `amonhen_markdown_parse_in_zone` と同じで、DOT の図の画像（ノードの `image`・表の `<IMG>`）を FE から読む。
+ * `path` は Markdown のファイルのパス（リポジトリの根から、NUL 終わり）。図の中の画像は、そのファイルのフォルダ
+ * からの相対パスだけを読む（URL・絶対パス・根より上は読まない）。`read` は、リポジトリの根からのパスの中身を、
+ * そのファイルと同じコミットから読み、読めれば `sink(sink_context, data, len)` を 1 回呼ぶ（読めなければ呼ばずに
+ * 戻る）。`read` は図を描くスレッド（メインではない）から、この関数から戻るまでに呼ばれる。`path` か `read` が
+ * NULL なら画像は読まない。
+ *
+ * # Safety
+ * `amonhen_markdown_parse_in_zone` と同じ。`path` は NULL か NUL 終わりの文字列、`read` は `image_context` を
+ * 渡してどのスレッドから呼んでもよいこと。
+ */
+char *amonhen_markdown_parse_with_images(const uint8_t *text,
+                                         uintptr_t len,
+                                         const char *github,
+                                         const void *context,
+                                         double (*offset)(const void *context, double utc_ms),
+                                         const char *path,
+                                         const void *image_context,
+                                         void (*read)(const void *context,
+                                                      const char *path,
+                                                      AmonhenImageSink sink,
+                                                      void *sink_context));
 
 /**
  * この機械の git の版（`2.39.5`）。読めなければ NULL。`amonhen_string_free` で解放する。git を起動する
