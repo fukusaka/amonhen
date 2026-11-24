@@ -767,6 +767,8 @@ pub struct App {
     drag_plan: Option<(String, String, bool)>,
     /// 落とした後に、動かすかまとめるかを聞いている間（動かすコミットと落とした先）。
     drop_asked: Option<(String, String, bool)>,
+    /// History の行に出す項目を選んでいる間（`I`）。
+    items_asked: bool,
     /// 端末のクリップボードに入れる文字（OSC 52。描くループが書く）。
     copy: Option<String>,
     /// 編集モードで、変更があるのに Esc を 1 度押した（もう 1 度で捨てる）。
@@ -920,6 +922,7 @@ impl App {
             commit_drag: None,
             drag_plan: None,
             drop_asked: None,
+            items_asked: false,
             copy: None,
             edit_discard: false,
             plan_message: None,
@@ -1968,6 +1971,23 @@ impl App {
             self.naming = Naming::PatchVersion;
             self.typing_branch = Some((String::new(), String::new(), "2".to_owned()));
             self.dirty = true;
+            return;
+        }
+        // History の行に出す項目: 押したものを出す・隠す。
+        if self.choices.is_some() && std::mem::take(&mut self.items_asked) {
+            self.choices = None;
+            self.dirty = true;
+            let item = match key.code {
+                KeyCode::Char('r') => crate::history::ITEM_REFS,
+                KeyCode::Char('a') => crate::history::ITEM_AUTHOR,
+                KeyCode::Char('d') => crate::history::ITEM_DATE,
+                KeyCode::Char('i') => crate::history::ITEM_ID,
+                KeyCode::Char('s') => crate::history::ITEM_SIGNATURE,
+                _ => return,
+            };
+            let items = self.history.items() ^ item;
+            self.history.set_items(items);
+            self.damage |= Damage::MAIN;
             return;
         }
         // コミットを落とした後: `m` 動かす、`s` まとめる。編集モードの行を、古い方から読む。
@@ -6017,6 +6037,32 @@ impl App {
 
     /// 印をつけたコミット（first-parent の並びで続いたもの）を、編集モードで 1 つにまとめる（アプリの Combine）。
     /// 一番古いものから HEAD までを開き、新しい方をひとつ古いものとまとめる行にしておく。当てるのは編集モードで。
+    /// History の行に出す項目を聞く（出しているものに ✓）。
+    fn ask_history_items(&mut self) {
+        let items = self.history.items();
+        let mark = |item: u8, name: String| match items & item != 0 {
+            true => format!("✓ {name}"),
+            false => name,
+        };
+        use crate::history::{ITEM_AUTHOR, ITEM_DATE, ITEM_ID, ITEM_REFS, ITEM_SIGNATURE};
+        self.choices = Some((
+            tr!("Show or hide in History’s rows:"),
+            vec![
+                (
+                    'r',
+                    mark(ITEM_REFS, tr!("branches and tags")),
+                    Request::Status,
+                ),
+                ('a', mark(ITEM_AUTHOR, tr!("author")), Request::Status),
+                ('d', mark(ITEM_DATE, tr!("date")), Request::Status),
+                ('i', mark(ITEM_ID, tr!("commit ID")), Request::Status),
+                ('s', mark(ITEM_SIGNATURE, tr!("signature")), Request::Status),
+            ],
+        ));
+        self.items_asked = true;
+        self.dirty = true;
+    }
+
     fn combine_marked(&mut self) -> bool {
         let marks: Vec<&Marked> = self.history.marks().map(|(_, m)| m).collect();
         if marks.iter().any(|m| m.merge) {
@@ -8447,6 +8493,11 @@ impl App {
             KeyCode::Char('@') => Some(self.history.go_to_head()),
             KeyCode::Char('o') => {
                 self.toggle_history_order();
+                None
+            }
+            // 行に出す項目を選ぶ（アプリの History の Items。この TUI を動かしている間だけ）。
+            KeyCode::Char('I') => {
+                self.ask_history_items();
                 None
             }
             // マージ済みのブランチを折りたたむ・戻す。
