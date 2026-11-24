@@ -620,7 +620,7 @@ export class HistoryController implements vscode.Disposable {
     if (!client) return undefined;
     const reply = (await client.call({ op: 'run', command: { op: 'commitExtras', oid } })).json;
     if (reply['ok'] !== true) return undefined;
-    const info = reply['info'] as { signature?: SignatureCheck | null; children?: string[] } | undefined;
+    const info = reply['info'] as { signature?: SignatureCheck | null; children?: string[]; notes?: string } | undefined;
     const committer = this.details.get(oid)?.committer.email ?? '';
     // 署名があるのに確かめられなければ（N か結果なし）No key（アプリと同じ）
     const signed = this.signedKinds.get(oid);
@@ -630,6 +630,7 @@ export class HistoryController implements vscode.Disposable {
       oid,
       ...(signature ? { signature } : {}),
       children: info?.children ?? [],
+      ...(info?.notes?.trim() ? { notes: info.notes } : {}),
     };
     this.extras.set(oid, extras);
     if (this.extras.size > DETAILS_CACHE) this.extras.delete(this.extras.keys().next().value!);

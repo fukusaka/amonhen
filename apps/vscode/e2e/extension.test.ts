@@ -2081,6 +2081,27 @@ async function workingWhitespaceFlow(): Promise<void> {
   }
 }
 
+/** git notes は詳細の残り（commitExtras）で届く（エンジン） */
+async function notesFlow(): Promise<void> {
+  const start = git('rev-parse', 'HEAD').trim();
+  // 詳細の残りは覚えておくので、まだ出していない新しいコミットで
+  git('commit', '-q', '--allow-empty', '-m', 'notes e2e');
+  const oid = git('rev-parse', 'HEAD').trim();
+  git('notes', 'add', '-f', '-m', 'A note for e2e', oid);
+  await api.manager.current!.refresh();
+  try {
+    const panel = await showView('amonhen.showHistory');
+    const mark = posted.length;
+    await panel.history.handle({ type: 'select', oid });
+    const extras = (await waitPosted('detailsExtras', mark, (m) => m.extras.oid === oid)).extras;
+    assert.equal(extras.notes?.trim(), 'A note for e2e');
+  } finally {
+    git('notes', 'remove', '--ignore-missing', oid);
+    git('reset', '-q', '--hard', start);
+    await api.manager.current!.refresh();
+  }
+}
+
 async function orphanFlow(): Promise<void> {
   const repo = api.manager.current!;
   const branch = git('symbolic-ref', '--short', 'HEAD').trim();
@@ -4469,6 +4490,10 @@ suite('Amon Hen in VSCode', () => {
 
   test('ignores whitespace in the Working Copy diff through the daemon', async () => {
     await workingWhitespaceFlow();
+  });
+
+  test('shows git notes in the details through the daemon', async () => {
+    await notesFlow();
   });
 
   test('creates an orphan branch, empty or keeping the files, through the daemon', async () => {

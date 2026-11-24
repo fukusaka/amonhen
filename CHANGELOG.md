@@ -1281,6 +1281,8 @@ First release.
 
 - The Working Copy diff can ignore whitespace (at line ends, changes in amount or all), with the engine. Lines and
   hunks aren't staged or discarded meanwhile.
+- In the commit details, URLs and commit IDs in the message are links, the trailers are listed apart from the body,
+  git notes follow the message (with the engine), and History's search terms are marked.
 
 #### Fixed
 
