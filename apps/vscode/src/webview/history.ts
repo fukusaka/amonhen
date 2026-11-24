@@ -11,6 +11,7 @@ import type { HostMessage } from '../view/protocol.ts';
 import { scopeRefs, scopeTitle } from '../history/scope.ts';
 import { el, formatDate, post, type View } from './api.ts';
 import { attachSplitter, createDetailsPane } from './details.ts';
+import { highlightTerms } from '../history/messageParts.ts';
 import { createEditMode } from './historyEdit.ts';
 import { openMessageEditor } from './messageEditor.ts';
 import { signatureMark } from './signature.ts';
@@ -150,11 +151,14 @@ export function createHistoryView(): View {
   splitter.setAttribute('role', 'separator');
   const details = createDetailsPane(
     (oid) => {
-      const index = rows.findIndex((r) => r?.oid === oid);
+      // 本文の短い ID も（読んである行のうち、その ID で始まるもの）
+      const index = rows.findIndex((r) => r?.oid.startsWith(oid));
       if (index >= 0) select(index, true);
     },
     true,
     {
+      // 検索の語を件名・本文で強調する（アプリと同じ）
+      highlight: () => (submitted ? highlightTerms(submitted) : []),
       // 見出しの右クリックの Edit Message… は、行と同じく編集できるコミットだけ
       context: (oid) => ({ commitEditable: rows.find((r) => r?.oid === oid)?.editable === true }),
       // 名前を押すと、その人のコミットを探す（アプリと同じ author: の検索）

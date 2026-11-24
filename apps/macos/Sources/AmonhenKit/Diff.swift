@@ -553,18 +553,48 @@ public indirect enum MarkdownBlock: Decodable, Sendable {
         public let italic: Bool?
         public let strike: Bool?
         public let code: Bool?
-        public let html: Bool?
+        /// キー（HTML の `<kbd>`）。小さなキーの札で見せる。
+        public let kbd: Bool?
+        /// 下付き・上付き（`<sub>`・`<sup>`）。
+        public let sub: Bool?
+        public let sup: Bool?
+        /// 下線（`<ins>`）。
+        public let underline: Bool?
         public let link: String?
         public let image: String?
+        /// `<picture>` の、暗い外観・明るい外観で見せる画像（合うものがなければ `image`）。
+        public let imageDark: String?
+        public let imageLight: String?
+        /// 画像の幅・高さ（HTML の `width`・`height`、pt）。片方だけなら、もう片方は比を保つ。
+        public let width: Int?
+        public let height: Int?
         public let footnote: String?
         public let lineBreak: Bool?
         /// GitHub 独自の絵文字（画像だけのもの）の名前。`text`（`:octocat:`）を札で見せる。
         public let customEmoji: String?
         enum CodingKeys: String, CodingKey {
-            case text, bold, italic, strike, code, html, link, image, footnote
+            case text, bold, italic, strike, code, kbd, sub, sup, underline, link, image, width, height, footnote
+            case imageDark = "image_dark"
+            case imageLight = "image_light"
             case lineBreak = "line_break"
             case customEmoji = "custom_emoji"
         }
+
+        /// 外観 `dark` で見せる画像。
+        public func image(dark: Bool) -> String? {
+            (dark ? imageDark : imageLight) ?? image
+        }
+    }
+
+    /// HTML の表のマス 1 つ（`colspan`・`rowspan` を解いた後の位置）。
+    public struct TableCell: Decodable, Sendable {
+        public let row: Int
+        public let column: Int
+        public let rowspan: Int
+        public let colspan: Int
+        public let header: Bool?
+        public let align: String?
+        public let runs: [Run]
     }
 
     public struct Item: Decodable, Sendable {
@@ -572,8 +602,9 @@ public indirect enum MarkdownBlock: Decodable, Sendable {
         public let blocks: [MarkdownBlock]
     }
 
-    case heading(level: Int, runs: [Run])
-    case paragraph(runs: [Run])
+    /// 見出し・段落。`align` は HTML の `align`（left・center・right。なければ nil）。
+    case heading(level: Int, runs: [Run], align: String?)
+    case paragraph(runs: [Run], align: String?)
     case code(language: String, text: String)
     /// 図（` ```mermaid ` など）。`svg` は色を CSS の変数のままにした絵（描くときに `colorizeDiagram` で配色を当てる）。
     /// 近いもので描いた図（DOT の HTML の表など）なら `note` にそのことを伝える一文。描けなければ `error` に理由。
@@ -582,18 +613,26 @@ public indirect enum MarkdownBlock: Decodable, Sendable {
     case list(start: Int?, items: [Item])
     case table(aligns: [String], head: [[Run]], rows: [[[Run]]])
     case rule
-    case html(text: String)
     case footnote(label: String, blocks: [MarkdownBlock])
+    /// HTML の `<details>`。`summary` が空なら「Details」、`open` は最初から開いているか。
+    case details(summary: [Run], open: Bool, blocks: [MarkdownBlock])
+    /// HTML の表。マスは行・列の順で、隙間は空のマスで埋めてある。
+    case htmlTable(columns: Int, rows: Int, cells: [TableCell])
 
     enum Key: String, CodingKey {
         case kind, level, runs, language, text, alert, blocks, start, items, aligns, head, rows, label, svg, config, note, error
+        case align, summary, open, columns, cells
     }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: Key.self)
         switch try c.decode(String.self, forKey: .kind) {
-        case "heading": self = .heading(level: try c.decode(Int.self, forKey: .level), runs: try c.decode([Run].self, forKey: .runs))
-        case "paragraph": self = .paragraph(runs: try c.decode([Run].self, forKey: .runs))
+        case "heading":
+            self = .heading(
+                level: try c.decode(Int.self, forKey: .level), runs: try c.decode([Run].self, forKey: .runs),
+                align: try c.decodeIfPresent(String.self, forKey: .align))
+        case "paragraph":
+            self = .paragraph(runs: try c.decode([Run].self, forKey: .runs), align: try c.decodeIfPresent(String.self, forKey: .align))
         case "code": self = .code(language: try c.decode(String.self, forKey: .language), text: try c.decode(String.self, forKey: .text))
         case "diagram":
             self = .diagram(
@@ -609,7 +648,14 @@ public indirect enum MarkdownBlock: Decodable, Sendable {
             self = .table(
                 aligns: try c.decode([String].self, forKey: .aligns), head: try c.decode([[Run]].self, forKey: .head),
                 rows: try c.decode([[[Run]]].self, forKey: .rows))
-        case "html": self = .html(text: try c.decode(String.self, forKey: .text))
+        case "details":
+            self = .details(
+                summary: try c.decode([Run].self, forKey: .summary), open: try c.decodeIfPresent(Bool.self, forKey: .open) ?? false,
+                blocks: try c.decode([MarkdownBlock].self, forKey: .blocks))
+        case "htmlTable":
+            self = .htmlTable(
+                columns: try c.decode(Int.self, forKey: .columns), rows: try c.decode(Int.self, forKey: .rows),
+                cells: try c.decode([TableCell].self, forKey: .cells))
         case "footnote": self = .footnote(label: try c.decode(String.self, forKey: .label), blocks: try c.decode([MarkdownBlock].self, forKey: .blocks))
         default: self = .rule
         }

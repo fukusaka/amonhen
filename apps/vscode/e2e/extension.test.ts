@@ -2081,6 +2081,27 @@ async function workingWhitespaceFlow(): Promise<void> {
   }
 }
 
+/** git notes は詳細の残り（commitExtras）で届く（エンジン） */
+async function notesFlow(): Promise<void> {
+  const start = git('rev-parse', 'HEAD').trim();
+  // 詳細の残りは覚えておくので、まだ出していない新しいコミットで
+  git('commit', '-q', '--allow-empty', '-m', 'notes e2e');
+  const oid = git('rev-parse', 'HEAD').trim();
+  git('notes', 'add', '-f', '-m', 'A note for e2e', oid);
+  await api.manager.current!.refresh();
+  try {
+    const panel = await showView('amonhen.showHistory');
+    const mark = posted.length;
+    await panel.history.handle({ type: 'select', oid });
+    const extras = (await waitPosted('detailsExtras', mark, (m) => m.extras.oid === oid)).extras;
+    assert.equal(extras.notes?.trim(), 'A note for e2e');
+  } finally {
+    git('notes', 'remove', '--ignore-missing', oid);
+    git('reset', '-q', '--hard', start);
+    await api.manager.current!.refresh();
+  }
+}
+
 /**
  * アプリのメニューにあってボタンの中にしかなかった操作のコマンド: Stage All、Set Upstream…（QuickPick で選ぶ）、
  * Find in History…（検索の欄へ）
@@ -4539,6 +4560,10 @@ suite('Amon Hen in VSCode', () => {
 
   test('ignores whitespace in the Working Copy diff through the daemon', async () => {
     await workingWhitespaceFlow();
+  });
+
+  test('shows git notes in the details through the daemon', async () => {
+    await notesFlow();
   });
 
   test('runs the app menu’s commands from the Command Palette', async () => {
