@@ -13,10 +13,23 @@ pub fn vector_drawable_to_svg(xml: &str) -> Result<String> {
 
 /// `vector_drawable_to_svg` と、SVG では同じに描けずに近づけた・捨てたことの説明（訳した文）。
 pub fn vector_drawable_to_svg_with_notes(xml: &str) -> Result<(String, Vec<String>)> {
+    convert(xml, None)
+}
+
+/// 色の参照（`@color/x`・`?attr/x` など）を色（`#AARRGGBB` など）に引くもの。引けなければ代わりの色を返す。
+pub(crate) type Resolve<'a> = &'a dyn Fn(&str) -> String;
+
+/// `vector_drawable_to_svg_with_notes` の、色の参照を `resolve` で引くもの（なければ参照のある塗りは描かず、そのことを
+/// 説明に足す）。根が `<animated-vector>` なら、中に書いた `<vector>`（`aapt:attr` の `android:drawable`）を描く。
+pub(crate) fn convert(xml: &str, resolve: Option<Resolve>) -> Result<(String, Vec<String>)> {
     let nodes = parse_xml(xml);
     let root = nodes
         .iter()
-        .find(|n| n.local() == "vector")
+        .find_map(|n| match n.local() {
+            "vector" => Some(n),
+            "animated-vector" => inline_drawable(n),
+            _ => None,
+        })
         .ok_or_else(|| tr!("Not a VectorDrawable: the root isn’t <vector>"))?;
     let num = |key: &str| root.attr(key).and_then(|v| parse_dimension(&v));
     let (Some(width), Some(height), Some(vw), Some(vh)) = (
@@ -36,18 +49,18 @@ pub fn vector_drawable_to_svg_with_notes(xml: &str) -> Result<(String, Vec<Strin
         )
         .into());
     }
-    let mut w = Writer::default();
-    if let Some(tint) = root.attr("tint") {
-        match parse_color(&tint) {
-            Some(color) => {
-                let mode = root.attr("tintMode").unwrap_or_else(|| "src_in".into());
-                if mode == "src_in" {
-                    w.tint = Some(color);
-                } else {
-                    w.note(tr!("Only tintMode src_in is applied"));
-                }
-            }
-            None => w.unresolved(&tint),
+    let mut w = Writer {
+        resolve,
+        ..Writer::default()
+    };
+    if let Some(tint) = root.attr("tint")
+        && let Some(color) = w.color(&tint)
+    {
+        let mode = root.attr("tintMode").unwrap_or_else(|| "src_in".into());
+        if mode == "src_in" {
+            w.tint = Some(color);
+        } else {
+            w.note(tr!("Only tintMode src_in is applied"));
         }
     }
     let alpha = root
@@ -80,6 +93,19 @@ pub fn vector_drawable_to_svg_with_notes(xml: &str) -> Result<(String, Vec<Strin
     Ok((svg, w.notes))
 }
 
+/// `<animated-vector>` の中に書いた `<vector>`（`<aapt:attr name="android:drawable">` の子）。
+pub(crate) fn inline_drawable(animated: &XmlNode) -> Option<&XmlNode> {
+    animated
+        .children
+        .iter()
+        .filter(|c| c.local() == "attr")
+        .filter(|c| {
+            c.attr_exact("name")
+                .is_some_and(|n| n.rsplit(':').next() == Some("drawable"))
+        })
+        .find_map(|c| c.children.iter().find(|v| v.local() == "vector"))
+}
+
 /// `24dp`・`24px`・`24` の数。
 fn parse_dimension(value: &str) -> Option<f64> {
     let v = value.trim();
@@ -92,6 +118,11 @@ fn parse_dimension(value: &str) -> Option<f64> {
         number = &number[..number.len() - 1];
     }
     number.parse().ok()
+}
+
+/// `value` が色そのもの（参照でない）か。
+pub(crate) fn is_color(value: &str) -> bool {
+    parse_color(value).is_some()
 }
 
 /// Android の色（`#RGB`・`#ARGB`・`#RRGGBB`・`#AARRGGBB`、アルファが先）。
@@ -193,15 +224,30 @@ enum Paint {
 }
 
 #[derive(Default)]
-struct Writer {
+struct Writer<'a> {
     defs: String,
     body: String,
     notes: Vec<String>,
     next_id: usize,
     tint: Option<Color>,
+    resolve: Option<Resolve<'a>>,
 }
 
-impl Writer {
+impl Writer<'_> {
+    /// 色の値。参照は `resolve` で引く（なければ説明に足して None）。
+    fn color(&mut self, value: &str) -> Option<Color> {
+        if let Some(color) = parse_color(value) {
+            return Some(color);
+        }
+        match self.resolve {
+            Some(resolve) => parse_color(&resolve(value.trim())),
+            None => {
+                self.unresolved(value);
+                None
+            }
+        }
+    }
+
     fn note(&mut self, note: String) {
         if !self.notes.contains(&note) {
             self.notes.push(note);
@@ -298,12 +344,9 @@ impl Writer {
         }
         match node.attr(key) {
             None => Paint::None,
-            Some(value) => match parse_color(&value) {
+            Some(value) => match self.color(&value) {
                 Some(color) => Paint::Color(color),
-                None => {
-                    self.unresolved(&value);
-                    Paint::None
-                }
+                None => Paint::None,
             },
         }
     }
@@ -335,11 +378,10 @@ impl Writer {
         let items: Vec<&XmlNode> = g.children.iter().filter(|c| c.local() == "item").collect();
         if items.is_empty() {
             for (key, offset) in [("startColor", 0.0), ("centerColor", 0.5), ("endColor", 1.0)] {
-                if let Some(value) = g.attr(key) {
-                    match parse_color(&value) {
-                        Some(color) => stops.push((offset, color)),
-                        None => self.unresolved(&value),
-                    }
+                if let Some(value) = g.attr(key)
+                    && let Some(color) = self.color(&value)
+                {
+                    stops.push((offset, color));
                 }
             }
         } else {
@@ -349,11 +391,10 @@ impl Writer {
                     .and_then(|v| v.trim().parse::<f64>().ok())
                     .unwrap_or(0.0)
                     .clamp(0.0, 1.0);
-                if let Some(value) = item.attr("color") {
-                    match parse_color(&value) {
-                        Some(color) => stops.push((offset, color)),
-                        None => self.unresolved(&value),
-                    }
+                if let Some(value) = item.attr("color")
+                    && let Some(color) = self.color(&value)
+                {
+                    stops.push((offset, color));
                 }
             }
         }
@@ -606,23 +647,32 @@ fn escape(s: &str) -> String {
 // ---- 小さな XML の読み手 ----
 
 #[derive(Debug, Default)]
-struct XmlNode {
-    name: String,
+pub(crate) struct XmlNode {
+    pub(crate) name: String,
     attrs: Vec<(String, String)>,
-    children: Vec<XmlNode>,
+    pub(crate) children: Vec<XmlNode>,
+    /// 子の要素の間の文字（前後の空白を除いてつないだもの。`<color>` の値など）。
+    pub(crate) text: String,
 }
 
 impl XmlNode {
-    fn local(&self) -> &str {
+    pub(crate) fn local(&self) -> &str {
         self.name.rsplit(':').next().unwrap_or(&self.name)
     }
 
     /// `android:key`（接頭辞は問わない）か、接頭辞のない `key`。
-    fn attr(&self, key: &str) -> Option<String> {
+    pub(crate) fn attr(&self, key: &str) -> Option<String> {
         self.attrs
             .iter()
             .find(|(k, _)| k.rsplit(':').next() == Some(key))
             .map(|(_, v)| v.clone())
+    }
+
+    /// 名前（接頭辞を除く）が `prefix` で始まる属性があるか（`state_` など）。
+    pub(crate) fn has_attr_prefix(&self, prefix: &str) -> bool {
+        self.attrs
+            .iter()
+            .any(|(k, _)| k.rsplit(':').next().is_some_and(|l| l.starts_with(prefix)))
     }
 
     fn attr_exact(&self, key: &str) -> Option<&str> {
@@ -634,7 +684,7 @@ impl XmlNode {
 }
 
 /// いちばん上の要素の並び（ふつうは 1 つ）。
-fn parse_xml(text: &str) -> Vec<XmlNode> {
+pub(crate) fn parse_xml(text: &str) -> Vec<XmlNode> {
     let bytes = text.as_bytes();
     // stack[0] は仮の親
     let mut stack: Vec<XmlNode> = vec![XmlNode::default()];
@@ -653,6 +703,12 @@ fn parse_xml(text: &str) -> Vec<XmlNode> {
         }
     };
     while let Some(p) = text[i..].find('<') {
+        let between = text[i..i + p].trim();
+        if !between.is_empty()
+            && let Some(node) = stack.last_mut()
+        {
+            node.text.push_str(&unescape(between));
+        }
         i += p;
         let rest = &text[i..];
         if rest.starts_with("<!--") {
@@ -735,7 +791,7 @@ fn parse_xml(text: &str) -> Vec<XmlNode> {
             stack.push(XmlNode {
                 name,
                 attrs,
-                children: Vec::new(),
+                ..XmlNode::default()
             });
             if closed {
                 close(&mut stack);
