@@ -317,7 +317,7 @@ GTK4 のアプリは macOS のアプリと同じふるまいをめざす。わ�
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
 | 帯でつないだ 3 つの列（Current / Result / Incoming） | ✓ | ✓ | ✓ | n/a | n/a | n/a | VSCode: VSCode 自身の 3-way のマージエディター。<br>Windows: 3 つの列。左右の欄はコンフリクトごとに色を付け（Current は青、Incoming は緑、Base は灰色、選んでいるものは濃く、解いたものは薄く）、≫・≪ でその側を取る。選んだコンフリクトへ 3 つの列ともスクロールする。<br>TUI: マーカーつきのファイルの差分で、`o` `t` `b` `a` でコンフリクトごとに解く。 |
 | Show Base | ✓ | ✓ | ✓ | n/a | n/a | n/a | TUI: `merge.conflictStyle` が `diff3` か `zdiff3` なら、マーカーの中に共通の祖先が出る。 |
-| Magic Merge（ファイルを開いたときの確かな規則も） | ✓ | ✓ | ✓ | n/a | ✓ | △ | VSCode: コンフリクトは VSCode 標準の 3-way マージエディターで開く。<br>CLI: `merge-file`（git の mergetool にも）。<br>TUI: コンフリクトのファイルで `m`。開いたときには当てない。 |
+| Magic Merge（ファイルを開いたときの確かな規則も） | ✓ | ✓ | ✓ | n/a | ✓ | △ | VSCode: コンフリクトは VSCode 標準の 3-way マージエディターで開く。<br>CLI: `merge-file`（git の mergetool にも）。<br>TUI: コンフリクトのファイルで `m`。開いたときには当てない（決めたこと: TUI には後で保存するマージエディタがなく、開いただけでファイルを書き換えることになるため）。 |
 | 直せる Result とコンフリクトごとの Undo | ✓ | ✓ | ✓ | n/a | n/a | n/a | TUI: `e` でファイルを git のエディタで開く。 |
 | ファイルを Current / Incoming で解く | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: `amonhen run` から。<br>TUI: 一覧で `o` `t`。 |
 | 外のマージツールで開く | — | — | — | n/a | n/a | — |  |

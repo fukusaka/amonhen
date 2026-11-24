@@ -317,7 +317,7 @@ The GTK4 app aims to behave like the macOS app. These are the only intended diff
 | --- | :-: | :-: | :-: | :-: | :-: | :-: | --- |
 | Three columns with bands (Current / Result / Incoming) | ✓ | ✓ | ✓ | n/a | n/a | n/a | VSCode: VSCode's own 3-way merge editor.<br>Windows: Three columns; the side columns color each conflict (Current blue, Incoming green, Base gray, the selected one darker, resolved ones dimmed) with ≫ / ≪ to take that side, and all three scroll to the selected conflict.<br>TUI: The conflicted file's diff with its markers, resolved per conflict with `o` `t` `b` `a`. |
 | Show Base | ✓ | ✓ | ✓ | n/a | n/a | n/a | TUI: The base shows within the markers with `merge.conflictStyle` `diff3` or `zdiff3`. |
-| Magic Merge (and the safe rules when a file opens) | ✓ | ✓ | ✓ | n/a | ✓ | △ | VSCode: Conflicts open VSCode's standard 3-way merge editor.<br>CLI: `merge-file` (also as git's mergetool).<br>TUI: `m` on a conflicted file; not run when a file opens. |
+| Magic Merge (and the safe rules when a file opens) | ✓ | ✓ | ✓ | n/a | ✓ | △ | VSCode: Conflicts open VSCode's standard 3-way merge editor.<br>CLI: `merge-file` (also as git's mergetool).<br>TUI: `m` on a conflicted file; not run when a file opens, by decision: the TUI has no merge editor whose result is saved later, so it would rewrite the file just by opening it. |
 | Editable Result with undo per conflict | ✓ | ✓ | ✓ | n/a | n/a | n/a | TUI: `e` opens the file in git's editor. |
 | Resolve a file with Current / Incoming | ✓ | ✓ | ✓ | ✓ | △ | ✓ | CLI: Via `amonhen run`.<br>TUI: `o` `t` in the list. |
 | Open in an external merge tool | — | — | — | n/a | n/a | — |  |
