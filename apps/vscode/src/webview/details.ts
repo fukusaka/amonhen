@@ -23,6 +23,7 @@ import { renderDiffBody, whitespaceSelect, wrapButton } from './diffView.ts';
 import { isImagePath, renderImageDiff } from './imageDiff.ts';
 import { type AllFiles, createAllFiles } from './allFiles.ts';
 import { signatureMark } from './signature.ts';
+import { linkPieces, splitTrailers } from '../history/messageParts.ts';
 
 /** mailmap で置き換えた人。記録と違えば、記録されたものを下に小さく添える */
 function withRecorded(text: Node | string, recorded: Person | undefined): Node | string {
@@ -141,6 +142,8 @@ function countsLabel(counts: LineCounts): HTMLElement {
 /** `images` なら、画像の前と後を拡張ホストに求めて比べる（History だけ） */
 /** 詳細の欄を持つ画面ごとの違い */
 export interface DetailsOptions {
+  /** 件名・本文・トレーラー・notes で強調する語（History の検索） */
+  highlight?: () => readonly string[];
   /** 右クリックのメニュー（package.json の webview/context）に足す情報（History なら編集できるか） */
   context?: (oid: string) => Record<string, unknown>;
   /** 作者・コミッターの名前を押したとき（History はその人で絞り込む） */
@@ -187,6 +190,54 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
     if (oid !== shownOid || !file || !choices) return;
     widen(file, 'all');
   });
+
+  /**
+   * メッセージの文: URL とコミット ID をリンクにし（ID は onParent があれば押すとその行に移る）、検索の語を強調する
+   * （アプリと同じ）
+   */
+  function richText(text: string): Node[] {
+    const terms = (options.highlight?.() ?? []).filter(Boolean).map((t) => t.toLowerCase());
+    const marked = (s: string): Node[] => {
+      if (terms.length === 0) return [document.createTextNode(s)];
+      const out: Node[] = [];
+      const lower = s.toLowerCase();
+      let at = 0;
+      while (at < s.length) {
+        let next = -1;
+        let len = 0;
+        for (const t of terms) {
+          const i = lower.indexOf(t, at);
+          if (i >= 0 && (next < 0 || i < next)) [next, len] = [i, t.length];
+        }
+        if (next < 0) break;
+        if (next > at) out.push(document.createTextNode(s.slice(at, next)));
+        out.push(el('mark', 'match', s.slice(next, next + len)));
+        at = next + len;
+      }
+      if (at < s.length) out.push(document.createTextNode(s.slice(at)));
+      return out;
+    };
+    return linkPieces(text).flatMap((p): Node[] => {
+      if ('url' in p) {
+        const a = el('a', 'url', p.url);
+        a.href = p.url;
+        a.title = p.url;
+        return [a];
+      }
+      if ('commit' in p) {
+        if (!onParent) return marked(p.commit);
+        const a = el('a', 'parent', p.commit);
+        a.href = '#';
+        a.title = `Go to ${p.commit}`;
+        a.addEventListener('click', (e) => {
+          e.preventDefault();
+          onParent(p.commit);
+        });
+        return [a];
+      }
+      return marked(p.text);
+    });
+  }
 
   /** コミットの ID の並び（onParent があれば押すとその行に移る） */
   function commitLinks(oids: readonly string[]): HTMLElement {
@@ -240,7 +291,9 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
     for (const ref of d.refs) {
       title.append(el('span', `ref ${ref.kind}${ref.current ? ' current' : ''}`, ref.name));
     }
-    title.append(el('span', '', subject));
+    const subjectText = el('span');
+    subjectText.append(...richText(subject));
+    title.append(subjectText);
 
     const list = el('dl', 'meta');
     meta = list;
@@ -260,8 +313,25 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
     }
 
     const parts: Node[] = [expandButton(), title, list];
-    if (body) parts.push(el('pre', 'body', body));
-    if (d.parents.length > 1) parts.push(el('div', 'selection-note', 'The changes are shown against the first parent.'));
+    // 本文（トレーラーは最後の段落から分けて、名前と値に並べる。アプリと同じ）
+    const { body: text, trailers } = splitTrailers(body);
+    if (text) {
+      const pre = el('pre', 'body');
+      pre.append(...richText(text));
+      parts.push(pre);
+    }
+    if (trailers.length > 0) {
+      const list = el('div', 'trailers');
+      for (const t of trailers) {
+        const line = el('div', 'trailer');
+        line.append(el('span', 'trailer-key', `${t.key}:`), ' ', ...richText(t.value));
+        list.append(line);
+      }
+      parts.push(list);
+    }
+    if (d.parents.length > 1) {
+      parts.push(el('div', 'selection-note', `This is a merge: the changes below are against its first parent (${d.parents[0]!.slice(0, 7)}).`));
+    }
     place(parts);
     // 見出しの右クリック: ID・件名・メッセージ・git show のコピー、編集できるコミットなら Edit Message…（アプリと同じ）。
     // 選んだ文字のコピーも残す（既定の項目を消さない）
@@ -731,6 +801,15 @@ export function createDetailsPane(onParent?: (oid: string) => void, images = fal
       add('Signature', value);
     }
     if (extras.children.length > 0) add(extras.children.length > 1 ? 'Children' : 'Child', commitLinks(extras.children));
+    // git notes（refs/notes/commits）は、メッセージの後に
+    if (extras.notes) {
+      const notes = el('div', 'notes extras');
+      const pre = el('pre', 'body');
+      pre.append(...richText(extras.notes.replace(/\s+$/, '')));
+      notes.append(el('div', 'notes-head', 'Notes'), pre);
+      const after = head.querySelector('.selection-note') ?? head.querySelector('.trailers') ?? head.querySelector('pre.body') ?? meta;
+      after.after(notes);
+    }
   }
 
   function clear(): void {
