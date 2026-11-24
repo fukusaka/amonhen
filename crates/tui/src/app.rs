@@ -59,6 +59,19 @@ pub enum Event {
     WatchingRepositories(amonhen_watch::DirsWatch),
     /// リポジトリのページの Fetch が終わった（だめなら理由）。
     Fetched(String, Option<String>),
+    /// SSH 先にエンジンを送る必要がある（送ってよいか聞いて、やり直す）。
+    NeedsEngine(amonhen_remote::ssh::EngineConsent, EngineRetry),
+    /// SSH 先のフォルダを探せなかった（フォルダと理由）。
+    ScanFailed(String, String),
+}
+
+/// エンジンを送ってよいと答えたら、やり直すこと。
+#[derive(Clone, Debug)]
+pub enum EngineRetry {
+    /// 探すフォルダを探す。
+    Scan,
+    /// このリポジトリを Fetch する。
+    Fetch(String),
 }
 
 /// 描き直す所。一番上と一番下の行は、どれかを描き直すたびに描き直す。
@@ -796,6 +809,10 @@ pub struct App {
     repo_watch: Option<amonhen_watch::DirsWatch>,
     /// 端末を渡して、このフォルダでシェルを開く（リポジトリのページの `t`）。
     open_shell: Option<String>,
+    /// SSH 先（`user@host:port`）ごとに、送ってよいと答えたエンジン（この TUI の間だけ。CLI と同じく覚えない）。
+    engine_consents: std::collections::HashMap<String, String>,
+    /// エンジンを送ってよいか聞いている間（聞いていることと、やり直すこと）。
+    engine_asked: Option<(amonhen_remote::ssh::EngineConsent, Vec<EngineRetry>)>,
     /// 探し直しを待っている（見張りの知らせをまとめる）。
     rescan_queued: bool,
     /// 端末のクリップボードに入れる文字（OSC 52。描くループが書く）。
@@ -957,6 +974,8 @@ impl App {
             repos: None,
             repo_watch: None,
             open_shell: None,
+            engine_consents: Default::default(),
+            engine_asked: None,
             rescan_queued: false,
             copy: None,
             edit_discard: false,
@@ -1937,6 +1956,22 @@ impl App {
                 }
                 self.peek_repositories(vec![path]);
             }
+            Event::NeedsEngine(consent, retry) => {
+                // 同じ SSH 先を続けて聞かない（聞いている間に届いたものは、答えの後でまとめてやり直す）。
+                match &mut self.engine_asked {
+                    Some((asked, retries)) if asked.host == consent.host => retries.push(retry),
+                    Some(_) => {}
+                    None => self.ask_send_engine(consent, retry),
+                }
+            }
+            Event::ScanFailed(folder, error) => {
+                self.error = Some(tr!(
+                    "Couldn’t search {folder}: {error}",
+                    folder = folder,
+                    error = error
+                ));
+                self.dirty = true;
+            }
             Event::WatchingRepositories(watch) => {
                 if self.repos.is_some() {
                     self.repo_watch = Some(watch);
@@ -2106,6 +2141,35 @@ impl App {
             self.dirty = true;
             return;
         }
+        // SSH 先にエンジンを送ってよいか: `y` なら、その答えを添えてやり直す。
+        if self.choices.is_some()
+            && let Some((consent, retries)) = self.engine_asked.take()
+        {
+            self.choices = None;
+            self.dirty = true;
+            if key.code == KeyCode::Char('y') {
+                self.engine_consents
+                    .insert(consent.host.clone(), consent.hash.clone());
+                for retry in retries {
+                    match retry {
+                        EngineRetry::Scan => self.scan_repositories(),
+                        EngineRetry::Fetch(path) => {
+                            if let Some(repos) = &mut self.repos {
+                                repos.fetch_started(std::slice::from_ref(&path));
+                            }
+                            self.fetch_repositories(vec![path]);
+                        }
+                    }
+                }
+            } else {
+                for retry in retries {
+                    if let (EngineRetry::Fetch(path), Some(repos)) = (retry, &mut self.repos) {
+                        repos.fetched(&path, Some(tr!("The engine wasn’t sent")));
+                    }
+                }
+            }
+            return;
+        }
         // リポジトリのページ: 左の分類と右の一覧。Enter で開き、Esc で閉じる。
         if self.repos.as_ref().is_some_and(|r| r.prompt.is_some()) {
             self.repos_prompt_key(key.code, control);
@@ -2169,16 +2233,8 @@ impl App {
                     repos.move_selection(1);
                 }
                 KeyCode::Char('f') if !repos.focus_categories => {
-                    let paths: Vec<String> = repos
-                        .to_fetch()
-                        .into_iter()
-                        .filter(|p| !p.starts_with("ssh://") && !p.starts_with("daemon:"))
-                        .collect();
-                    if paths.is_empty() {
-                        self.error = Some(tr!(
-                            "Repositories on SSH hosts are fetched when they are open"
-                        ));
-                    } else {
+                    let paths = repos.to_fetch();
+                    if !paths.is_empty() {
                         repos.fetch_started(&paths);
                         self.fetch_repositories(paths);
                     }
@@ -3559,13 +3615,28 @@ impl App {
     /// 手元の探すフォルダを裏で探し（見つかったら `Event::Scanned`）、そのフォルダを見張る。SSH 先のフォルダは
     /// 探さない（並べるだけ）。
     fn scan_repositories(&mut self) {
-        let roots: Vec<_> = match amonhen_model::bookmarks::scan_roots() {
-            Ok(roots) => roots.into_iter().filter(|r| r.is_local()).collect(),
+        let (roots, remote): (Vec<_>, Vec<_>) = match amonhen_model::bookmarks::scan_roots() {
+            Ok(roots) => roots.into_iter().partition(|r| r.is_local()),
             Err(reason) => {
                 self.error = Some(reason);
                 return;
             }
         };
+        // SSH 先のフォルダは、SSH 先のエンジンが探す（アプリと同じ。フォルダごとに並べて）。
+        for root in remote {
+            let events = self.events.clone();
+            let options = self.host_options(&root.path);
+            std::thread::spawn(move || {
+                let event = match scan_remote(&root, &options) {
+                    Ok(found) => Event::Scanned(found),
+                    Err(error) => match amonhen_remote::ssh::EngineConsent::find(&error) {
+                        Some(consent) => Event::NeedsEngine(consent, EngineRetry::Scan),
+                        None => Event::ScanFailed(root.path.clone(), error),
+                    },
+                };
+                let _ = events.send(event);
+            });
+        }
         if roots.is_empty() {
             self.repo_watch = None;
             return;
@@ -3745,6 +3816,13 @@ impl App {
 
     /// 手元のリポジトリ `paths` を裏で Fetch する（4 つずつ。終わるごとに `Event::Fetched`）。
     fn fetch_repositories(&mut self, paths: Vec<String>) {
+        // SSH 先のものは、共有の daemon 越しに開く（送ってよいと答えたエンジンを添えて）。
+        let paths: Vec<(String, amonhen_remote::ssh::HostOptions)> = (paths.into_iter())
+            .map(|p| {
+                let options = self.host_options(&p);
+                (p, options)
+            })
+            .collect();
         let queue = Arc::new(std::sync::Mutex::new(std::collections::VecDeque::from(
             paths,
         )));
@@ -3752,30 +3830,61 @@ impl App {
             let (queue, events) = (queue.clone(), self.events.clone());
             std::thread::spawn(move || {
                 loop {
-                    let Some(path) = queue.lock().unwrap().pop_front() else {
+                    let Some((path, options)) = queue.lock().unwrap().pop_front() else {
                         return;
                     };
-                    // その場で開いて fetch するだけ（アプリと同じ。History のキャッシュは持たない）。
-                    let error =
-                        match amonhen_front::InProcess::open(std::path::Path::new(&path), None) {
-                            Ok(front) => {
-                                let request = json!({"op": "run", "command": {"op": "fetch"}});
-                                match front.call(request) {
-                                    Ok(reply) if reply.json["ok"] == true => None,
-                                    Ok(reply) => {
-                                        Some(reply.json["error"].as_str().unwrap_or("").to_owned())
-                                    }
-                                    Err(e) => Some(e.to_string()),
-                                }
-                            }
-                            Err(e) => Some(e.to_string()),
-                        };
-                    if events.send(Event::Fetched(path, error)).is_err() {
+                    let event = match fetch_one(&path, &options) {
+                        Err(error) => match amonhen_remote::ssh::EngineConsent::find(&error) {
+                            Some(consent) => Event::NeedsEngine(consent, EngineRetry::Fetch(path)),
+                            None => Event::Fetched(path, Some(error)),
+                        },
+                        Ok(()) => Event::Fetched(path, None),
+                    };
+                    if events.send(event).is_err() {
                         return;
                     }
                 }
             });
         }
+    }
+
+    /// SSH 先の場所を開くときの選択（送ってよいと答えたエンジンがあれば添える）。
+    fn host_options(&self, location: &str) -> amonhen_remote::ssh::HostOptions {
+        let plain = location.strip_prefix("daemon:").unwrap_or(location);
+        let send_engine = amonhen_remote::ssh::Target::parse(plain)
+            .ok()
+            .and_then(|t| self.engine_consents.get(&t.authority()).cloned());
+        amonhen_remote::ssh::HostOptions {
+            send_engine,
+            ..Default::default()
+        }
+    }
+
+    /// SSH 先にエンジンを送ってよいか聞く（CLI と同じ文）。
+    fn ask_send_engine(&mut self, consent: amonhen_remote::ssh::EngineConsent, retry: EngineRetry) {
+        let question = match consent.update {
+            true => tr!(
+                "Send a new version of the Amon Hen engine ({size} MB, {platform}) to {host}?",
+                size = consent.megabytes(),
+                platform = consent.platform,
+                host = consent.host
+            ),
+            false => tr!(
+                "Send the Amon Hen engine ({size} MB, {platform}) to {host}?",
+                size = consent.megabytes(),
+                platform = consent.platform,
+                host = consent.host
+            ),
+        };
+        self.choices = Some((
+            question,
+            vec![
+                ('y', tr!("send"), Request::Status),
+                ('n', tr!("don’t send"), Request::Status),
+            ],
+        ));
+        self.engine_asked = Some((consent, vec![retry]));
+        self.dirty = true;
     }
 
     /// 端末を渡してシェルを開くフォルダ（聞いたら、なかったことにする）。
@@ -10178,6 +10287,8 @@ impl App {
             }
             (None, None) => {
                 let hints = match (self.view, self.focus) {
+                    // リポジトリのページは、キーの説明を自分の一番下に出す。
+                    _ if self.repos.is_some() => String::new(),
                     (View::History, Focus::Main) => match &self.search {
                         // 検索している間は、語と、合った行のうち何番目か。
                         Some((query, running)) => {
@@ -10410,11 +10521,12 @@ impl App {
             files.draw(at, buf, &self.theme);
         }
         if let Some(repos) = &mut self.repos {
+            // 一番下の行（知らせ・エラー・問い）は残す。
             let at = Rect::new(
                 area.x,
                 area.y + 1,
                 area.width,
-                area.height.saturating_sub(1),
+                area.height.saturating_sub(2),
             );
             let now = self.clock.now;
             repos.draw(at, buf, now);
@@ -11138,6 +11250,63 @@ fn repository_entries() -> std::result::Result<
     Ok((entries, roots))
 }
 
+/// SSH 先の探すフォルダ `root` の下のリポジトリ（SSH 先のエンジンの `find-repositories`。場所の形で）。だめなら
+/// 理由（エンジンを送る必要があれば、その印を含む）。
+fn scan_remote(
+    root: &amonhen_model::bookmarks::ScanRoot,
+    options: &amonhen_remote::ssh::HostOptions,
+) -> std::result::Result<Vec<String>, String> {
+    use amonhen_remote::ssh;
+    let plain = root.path.strip_prefix("daemon:").unwrap_or(&root.path);
+    let target = ssh::Target::parse(plain).map_err(|e| e.to_string())?;
+    let program = std::env::var("AMONHEN_SSH").unwrap_or_else(|_| "ssh".into());
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let daemons = ssh::Daemons::new(
+        amonhen_remote::engines::bundled_dir(&exe),
+        Some((ssh::local_platform(), exe)),
+    );
+    let found = ssh::find_repositories(
+        &program,
+        &target,
+        &daemons,
+        options,
+        root.depth,
+        &root.excludes,
+    )
+    .map_err(|e| e.to_string())?;
+    // 場所の形に戻す（`ssh://` と接続先はそのまま、パスだけ見つけたものに）。
+    let prefix = &root.path[..root.path.len() - target.path.len()];
+    Ok(found.iter().map(|p| format!("{prefix}{p}")).collect())
+}
+
+/// リポジトリ `location` を開いて Fetch する（手元は同じプロセス、SSH 先は共有の daemon 越し）。History の
+/// キャッシュは持たない（アプリと同じ）。
+fn fetch_one(
+    location: &str,
+    options: &amonhen_remote::ssh::HostOptions,
+) -> std::result::Result<(), String> {
+    let front: Box<dyn Front> = match location.starts_with("ssh://")
+        || location.starts_with("daemon:")
+    {
+        true => {
+            let daemon = crate::daemon_program()
+                .ok_or_else(|| tr!("The shared daemon can’t be started from here"))?;
+            amonhen_front::open_with(location, daemon, None, options).map_err(|e| e.to_string())?
+        }
+        false => Box::new(
+            amonhen_front::InProcess::open(std::path::Path::new(location), None)
+                .map_err(|e| e.to_string())?,
+        ),
+    };
+    let reply = front
+        .call(json!({"op": "run", "command": {"op": "fetch"}}))
+        .map_err(|e| e.to_string())?;
+    match reply.json["ok"] == true {
+        true => Ok(()),
+        false => Err(reply.json["error"].as_str().unwrap_or("").to_owned()),
+    }
+}
+
 /// 探すフォルダ `root` で中を読むフォルダ（リポジトリと、隠しフォルダ・除外の名前のフォルダには入らない）。
 fn scanned_dirs(root: &amonhen_model::bookmarks::ScanRoot) -> Vec<std::path::PathBuf> {
     let mut dirs = Vec::new();
@@ -11545,11 +11714,11 @@ mod tests {
                 Err(e) => panic!("no status: {e}"),
             }
         }
-        app.resize(160, 12);
+        app.resize(160, 16);
         let screen = |app: &mut App| -> String {
-            let mut buf = Buffer::empty(Rect::new(0, 0, 160, 12));
+            let mut buf = Buffer::empty(Rect::new(0, 0, 160, 16));
             app.draw(&mut buf, Damage::ALL);
-            (0..12)
+            (0..16)
                 .map(|y| (0..160).map(|x| buf[(x, y)].symbol()).collect::<String>())
                 .collect::<Vec<_>>()
                 .join("\n")
@@ -11884,6 +12053,58 @@ mod tests {
         assert_eq!(app.take_open_shell(), Some(clone_path.clone()));
         key(&mut app, 'e');
         assert_eq!(app.take_open_file().map(|f| f.0), Some(clone_path));
+    }
+
+    /// SSH 先にエンジンを送る必要があれば、一番下の行で聞く。`y` なら答えを覚えて、その SSH 先を開くときに添えて
+    /// やり直す。`n` ならやめる
+    #[test]
+    fn the_engine_is_sent_to_an_ssh_host_after_asking() {
+        let (_dir, mut app, _rx) = app_with_history();
+        let consent = amonhen_remote::ssh::EngineConsent {
+            host: "me@dev".into(),
+            platform: "Linux x86_64".into(),
+            size: 12_300_000,
+            hash: "abc123".into(),
+            update: false,
+        };
+        let key = |app: &mut App, ch: char| {
+            app.handle(Event::Input(Input::Key(KeyEvent::new(
+                KeyCode::Char(ch),
+                KeyModifiers::NONE,
+            ))));
+        };
+        let location = "ssh://me@dev/src/tool".to_owned();
+        app.handle(Event::NeedsEngine(
+            consent.clone(),
+            EngineRetry::Fetch(location.clone()),
+        ));
+        let line = bottom_line(&mut app);
+        assert!(
+            line.contains("Send the Amon Hen engine (12.3 MB, Linux x86_64) to me@dev?"),
+            "{line}"
+        );
+        // 聞いている間に届いた同じ SSH 先のものは、答えの後でまとめてやり直す。
+        app.handle(Event::NeedsEngine(consent.clone(), EngineRetry::Scan));
+        assert_eq!(app.engine_asked.as_ref().map(|a| a.1.len()), Some(2));
+        key(&mut app, 'n');
+        assert!(app.engine_consents.is_empty());
+        assert_eq!(app.host_options(&location).send_engine, None);
+        app.handle(Event::NeedsEngine(
+            consent,
+            EngineRetry::Fetch(location.clone()),
+        ));
+        key(&mut app, 'y');
+        assert_eq!(
+            app.host_options(&location).send_engine.as_deref(),
+            Some("abc123")
+        );
+        assert_eq!(
+            app.host_options("daemon:ssh://me@dev/other")
+                .send_engine
+                .as_deref(),
+            Some("abc123")
+        );
+        assert_eq!(app.host_options("ssh://you@dev/src").send_engine, None);
     }
 
     #[test]

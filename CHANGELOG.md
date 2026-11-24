@@ -1281,6 +1281,13 @@ First release.
 
 ## VSCode extension
 
+### Unreleased
+
+#### Added
+
+- The Working Copy diff can ignore whitespace (at line ends, changes in amount or all), with the engine. Lines and
+  hunks aren't staged or discarded meanwhile.
+
 ### [0.2.9] - 2026-11-24
 
 History's details work like the app's: the file headers are the changed files, and with the engine they widen a
