@@ -113,6 +113,25 @@ fn matches_the_image_sample() {
     assert!(!plain.svg.contains("<image "));
 }
 
+#[test]
+fn stripes_clusters() {
+    let svg = render(
+        "digraph { subgraph cluster_a { style=striped; fillcolor=\"red;0.5:green:blue\"; a; b } }",
+    )
+    .unwrap()
+    .svg;
+    let cluster = svg.split("class=\"dot-cluster\"").nth(1).unwrap();
+    for color in ["#ff0000", "#00ff00", "#0000ff"] {
+        assert!(
+            cluster.contains(&format!("fill=\"{color}\" stroke=\"none\"")),
+            "{svg}"
+        );
+    }
+    // 帯の上に枠。グラデーションは作らない
+    assert!(cluster.contains("fill=\"none\" stroke="), "{svg}");
+    assert!(!svg.contains("Gradient"), "{svg}");
+}
+
 /// LR・RL のクラスタの箱は題より広い（題が箱からはみ出さない）。
 #[test]
 fn sideways_clusters_fit_their_titles() {

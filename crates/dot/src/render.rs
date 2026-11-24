@@ -923,7 +923,7 @@ pub fn render(
         });
         let fill = if filled {
             match fill_text.as_deref() {
-                Some(t) if t.contains(':') => gradient(
+                Some(t) if t.contains(':') && !has(&st, "striped") => gradient(
                     &mut ctx,
                     t,
                     scheme.as_deref(),
@@ -955,14 +955,40 @@ pub fn render(
             )
         };
         let r = if has(&st, "rounded") { " rx=\"8\"" } else { "" };
+        // striped: 色の並びの縦の帯（枠の線は帯の上に描き直す）
+        let bands = if has(&st, "striped") {
+            let text = fill_text.clone().unwrap_or_default();
+            bands(
+                &mut ctx,
+                &text,
+                scheme.as_deref(),
+                b[0],
+                b[1],
+                b[2] - b[0],
+                b[3] - b[1],
+            )
+        } else {
+            String::new()
+        };
+        let rect = |fill: &str, stroke: &str| {
+            format!(
+                "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\"{r}{fill}{stroke}/>",
+                num(b[0]),
+                num(b[1]),
+                num(b[2] - b[0]),
+                num(b[3] - b[1])
+            )
+        };
         clusters_out.push_str(&format!(
-            "<g class=\"dot-cluster\" data-id=\"{}\"><rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\"{r}{fill}{stroke}/>",
-            esc(&c.name),
-            num(b[0]),
-            num(b[1]),
-            num(b[2] - b[0]),
-            num(b[3] - b[1])
+            "<g class=\"dot-cluster\" data-id=\"{}\">",
+            esc(&c.name)
         ));
+        if bands.is_empty() {
+            clusters_out.push_str(&rect(&fill, &stroke));
+        } else {
+            clusters_out.push_str(&bands);
+            clusters_out.push_str(&rect(" fill=\"none\"", &stroke));
+        }
         let cv = &cviews[ci];
         if let Some(t) = &cv.label {
             let margin = lclusters[ci].margin;
@@ -2093,6 +2119,54 @@ fn gradient(ctx: &mut Ctx, text: &str, scheme: Option<&str>, radial: bool, angle
             format!(" fill=\"url(#{id})\"")
         }
     }
+}
+
+/// 箱 (x, y, w, h) を色の並び `text` の縦の帯で塗る（クラスタの striped）。読める色が 2 つ未満なら空。
+#[allow(clippy::too_many_arguments)]
+fn bands(
+    ctx: &mut Ctx,
+    text: &str,
+    scheme: Option<&str>,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+) -> String {
+    let stops = color::parse_list(text, scheme.or(ctx.scheme.as_deref()));
+    if stops.iter().any(|s| s.color.is_none()) {
+        let _ = ctx.first_color(text, scheme);
+    }
+    let known: Vec<(Color, Option<f64>)> = stops
+        .iter()
+        .filter_map(|s| s.color.map(|c| (c, s.fraction)))
+        .collect();
+    if known.len() < 2 {
+        return String::new();
+    }
+    let given: f64 = known.iter().filter_map(|k| k.1).sum();
+    let unspecified = known.iter().filter(|k| k.1.is_none()).count();
+    let rest = (1.0 - given).max(0.0) / unspecified.max(1) as f64;
+    let mut out = String::new();
+    let mut at = 0.0;
+    for (c, f) in known {
+        let frac = f.unwrap_or(rest);
+        if frac <= 0.0 {
+            continue;
+        }
+        out.push_str(&format!(
+            "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\"{} stroke=\"none\"/>",
+            num(x + at * w),
+            num(y),
+            num(frac.min(1.0 - at).max(0.0) * w),
+            num(h),
+            color_attr("fill", &c)
+        ));
+        at += frac;
+        if at >= 1.0 {
+            break;
+        }
+    }
+    out
 }
 
 /// striped（箱の縦の帯）・wedged（楕円の扇）。
