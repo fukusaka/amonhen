@@ -23,7 +23,7 @@ pub struct Obstacles {
     stamp: u32,
     /// 残りの手間（線分と箱の判定の数）。尽きたらもう避けない。
     work: usize,
-    /// 直角の道で脇を回る形を試す残りの手間（格子の目の数）。
+    /// 直角の道で脇を回る形を試す残りの手間（格子の目と箱の数）。
     around: usize,
 }
 
@@ -35,8 +35,8 @@ const MAX_SCAN: usize = 4096;
 const MAX_DETOURS: usize = 12;
 /// 図ぜんぶで、線分と箱を比べる回数の上限（込んだ大きなグラフの時間を抑える）。
 const WORK: usize = 4_000_000;
-/// 図ぜんぶで、直角の道の脇を回る形を試すときに引く格子の目の数の上限。
-const AROUND_WORK: usize = 50_000;
+/// 図ぜんぶで、直角の道の脇を回る形を試すときの手間（引く格子の目と、目に入る箱の数）の上限。
+const AROUND_WORK: usize = 150_000;
 
 fn contains(r: &Rect, p: P) -> bool {
     p.0 > r[0] && p.0 < r[2] && p.1 > r[1] && p.1 < r[3]
@@ -176,7 +176,7 @@ impl Obstacles {
         }
     }
 
-    /// 箱 `b` が覆う格子の目の数。
+    /// 箱 `b` を引く手間（覆う格子の目と、目に入る箱の数）。
     fn cells(&self, b: Rect) -> usize {
         if self.rects.is_empty() {
             return 0;
@@ -186,8 +186,16 @@ impl Obstacles {
                 .floor()
                 .clamp(0.0, (count - 1) as f64)) as usize
         };
-        (at(b[2], self.x0, self.cols) - at(b[0], self.x0, self.cols) + 1)
-            * (at(b[3], self.y0, self.rows) - at(b[1], self.y0, self.rows) + 1)
+        let (gx0, gx1) = (at(b[0], self.x0, self.cols), at(b[2], self.x0, self.cols));
+        let (gy0, gy1) = (at(b[1], self.y0, self.rows), at(b[3], self.y0, self.rows));
+        let count = (gx1 - gx0 + 1) * (gy1 - gy0 + 1);
+        if count > MAX_SCAN {
+            return count;
+        }
+        (gy0..=gy1)
+            .flat_map(|gy| (gx0..=gx1).map(move |gx| gy * self.cols + gx))
+            .map(|i| 1 + self.grid[i].len())
+            .sum()
     }
 
     pub fn is_empty(&self) -> bool {
