@@ -3320,10 +3320,10 @@ fn clone_a_bundle_without_head_asks_the_branch() {
     git(
         &source,
         BASE,
+        // `-q` は git 2.23 にない。
         &[
             "bundle",
             "create",
-            "-q",
             bundle.to_str().unwrap(),
             "main",
             "topic",
