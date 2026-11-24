@@ -842,13 +842,15 @@ export class HistoryController implements vscode.Disposable {
       }
       if (!value || typeof value !== 'object') return;
       const run = value as Record<string, unknown>;
-      const image = run['image'];
-      if (typeof image === 'string' && !/^[a-z][a-z0-9+.-]*:|^\/\//i.test(image)) {
+      // `<picture>` の暗い外観・明るい外観の画像も
+      for (const key of ['image', 'image_dark', 'image_light']) {
+        const image = run[key];
+        if (typeof image !== 'string' || /^[a-z][a-z0-9+.-]*:|^\/\//i.test(image)) continue;
         const target = normalizePath(image.startsWith('/') ? image.slice(1) : `${dir}${image}`.split(/[?#]/)[0]!);
         const data = target ? (await repo.backend.object(`${oid}:${target}`).catch(() => undefined))?.data : undefined;
         if (data && data.length <= budget && /\.(png|jpe?g|gif|webp|bmp|ico|avif|svg)$/i.test(target!)) {
           budget -= data.length;
-          run['image'] = `data:${imageType(target!)};base64,${data.toString('base64')}`;
+          run[key] = `data:${imageType(target!)};base64,${data.toString('base64')}`;
         }
       }
       for (const v of Object.values(run)) if (typeof v === 'object') await visit(v);

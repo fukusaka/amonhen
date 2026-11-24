@@ -2905,8 +2905,16 @@ aside.details.all-files-page .details-body {
   border: 1px solid var(--vscode-panel-border);
 }
 
-.markdown .md-html {
-  color: var(--vscode-descriptionForeground);
+.markdown kbd {
+  font-family: var(--vscode-editor-font-family);
+  font-size: 0.85em;
+  padding: 0 4px;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 4px;
+}
+
+.markdown .md-details > summary {
+  cursor: pointer;
 }
 
 .markdown .md-img {
