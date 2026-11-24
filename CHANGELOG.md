@@ -21,6 +21,8 @@ becomes the GitHub Release notes.
 - Markdown previews draw the HTML GitHub renders: `align` for centered logos and badge rows, sized and linked images,
   `<details>` that open and close, `<picture>` by appearance, tables spanning cells, `<kbd>`, `<sub>` and `<sup>`.
   Comments, styles, scripts and forms are left out, as on GitHub.
+- A button beside the zoom buttons switches the checkerboard behind transparent pictures between light and dark;
+  light pictures such as white icons get the dark one by default (macOS, GTK4).
 
 #### Fixed
 
