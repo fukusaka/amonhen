@@ -987,22 +987,32 @@ pub fn render(
     };
     // splines=ortho の道筋（配置の座標）
     let ortho_paths: Vec<Option<Vec<P>>> = if ortho && free {
-        model
-            .edges
-            .iter()
-            .enumerate()
-            .map(|(ei, e)| match &lay.routes[ei] {
-                Route::Path { points, .. } if points.len() >= 2 => Some(route::ortho_free(
-                    points[0],
-                    points[points.len() - 1],
-                    (lnodes[e.tail].w / 2.0, lnodes[e.tail].h / 2.0),
-                    (lnodes[e.head].w / 2.0, lnodes[e.head].h / 2.0),
-                    &mut obstacles,
-                    &[e.tail, e.head],
-                )),
-                _ => None,
-            })
-            .collect()
+        // 引ける辺だけまとめて引き、辺の番号に戻す
+        let mut which: Vec<usize> = Vec::new();
+        let mut input: Vec<route::FreeEdge> = Vec::new();
+        for (ei, e) in model.edges.iter().enumerate() {
+            if let Route::Path { points, .. } = &lay.routes[ei]
+                && points.len() >= 2
+            {
+                which.push(ei);
+                input.push(route::FreeEdge {
+                    a: points[0],
+                    b: points[points.len() - 1],
+                    ha: (lnodes[e.tail].w / 2.0, lnodes[e.tail].h / 2.0),
+                    hb: (lnodes[e.head].w / 2.0, lnodes[e.head].h / 2.0),
+                    tail: e.tail,
+                    head: e.head,
+                });
+            }
+        }
+        let mut out: Vec<Option<Vec<P>>> = vec![None; model.edges.len()];
+        for (ei, p) in which
+            .into_iter()
+            .zip(route::ortho_free_all(&input, &mut obstacles))
+        {
+            out[ei] = Some(p);
+        }
+        out
     } else if ortho {
         let input: Vec<route::OrthoEdge> = model
             .edges

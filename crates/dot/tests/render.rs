@@ -58,6 +58,10 @@ const SAMPLES: &[(&str, &str)] = &[
         "ortho_free",
         "graph { layout=neato; splines=ortho; a -- b -- c -- a; c -- d }",
     ),
+    (
+        "ortho_neato",
+        "graph { layout=neato; overlap=false; splines=ortho; node [shape=box]; c -- {a b d e f g}; a -- b; d -- e; f -- g; a -- g; c -- d }",
+    ),
 ];
 
 fn data(name: &str) -> std::path::PathBuf {

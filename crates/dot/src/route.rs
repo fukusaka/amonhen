@@ -370,6 +370,267 @@ pub fn ortho_free(a: P, b: P, ha: P, hb: P, obstacles: &mut Obstacles, skip: &[u
     best.map(|(_, c)| c).unwrap_or_else(|| vec![a, b])
 }
 
+/// dot 以外の配置の直角の道の 1 本（両端のノードの中心と大きさの半分、ノードの番号）。
+pub struct FreeEdge {
+    pub a: P,
+    pub b: P,
+    pub ha: P,
+    pub hb: P,
+    pub tail: usize,
+    pub head: usize,
+}
+
+/// 同じ溝（同じ向きで、この距離より近い平行な線）とみなす間。
+const CHANNEL: f64 = 4.0;
+/// 溝の中で分けた線の間。
+const TRACK: f64 = 6.0;
+/// 溝を分けるときに比べる組の数の上限（図ぜんぶ）。
+const NUDGE_WORK: usize = 2_000_000;
+
+/// dot 以外の配置の直角の道をまとめて引く。1 本ずつの形は `ortho_free` で選び、それから
+///
+/// - 端を散らす: 同じノードの同じ側から出入りする端を、その側の長さの 7 割に等しい間で並べる（向こうの順）。
+/// - 溝を分ける: 中ほどの線（Z の真ん中）が別の辺の中ほどの線と同じ溝で重なれば、並べて間を空ける。
+///
+/// 端を散らしてから溝を分ける考えは、直角のコネクタの道を引いてから「nudging」で平行な線を離す
+/// Wybrow・Marriott・Stuckey（2009）の手順にならう（線どうしの順は簡単な決まりで、最適化はしない）。
+pub fn ortho_free_all(edges: &[FreeEdge], obstacles: &mut Obstacles) -> Vec<Vec<P>> {
+    use std::collections::HashMap;
+    // 4 点（端、曲がり 2 つ、端）にそろえる。直線は真ん中に長さ 0 の線、L は曲がりを 2 つ重ねる
+    let mut routes: Vec<Vec<P>> = edges
+        .iter()
+        .map(|e| {
+            let p = ortho_free(e.a, e.b, e.ha, e.hb, obstacles, &[e.tail, e.head]);
+            match p.len() {
+                2 => {
+                    let m = ((p[0].0 + p[1].0) / 2.0, (p[0].1 + p[1].1) / 2.0);
+                    vec![p[0], m, m, p[1]]
+                }
+                3 => vec![p[0], p[1], p[1], p[2]],
+                _ => p,
+            }
+        })
+        .collect();
+    let horizontal = |a: P, b: P| (a.1 - b.1).abs() < 1e-9 && (a.0 - b.0).abs() > 1e-9;
+    // 端の側: 最初（最後）の線の向きと、ノードの中心から見た向き
+    // (ノード, 側) → (並べる値, 辺, 尾か)
+    type Ends = Vec<(f64, usize, bool)>;
+    let mut groups: HashMap<(usize, Side), Ends> = HashMap::new();
+    for (i, (e, p)) in edges.iter().zip(&routes).enumerate() {
+        if p.len() != 4 || e.tail == e.head {
+            continue;
+        }
+        for (tail, v, c, near, far) in [
+            (true, e.tail, e.a, p[1], e.b),
+            (false, e.head, e.b, p[2], e.a),
+        ] {
+            let end = if tail { p[0] } else { p[3] };
+            let side = if horizontal(end, near) {
+                if near.0 > c.0 { Side::E } else { Side::W }
+            } else if (end.0 - near.0).abs() < 1e-9 && (end.1 - near.1).abs() > 1e-9 {
+                if near.1 > c.1 { Side::S } else { Side::N }
+            } else {
+                continue;
+            };
+            // E・W の側は向こうの y の順、N・S の側は x の順
+            let key = if matches!(side, Side::E | Side::W) {
+                far.1
+            } else {
+                far.0
+            };
+            groups.entry((v, side)).or_default().push((key, i, tail));
+        }
+    }
+    for ((v, side), mut list) in groups {
+        if list.len() < 2 {
+            continue;
+        }
+        list.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
+        let e0 = &edges[list[0].1];
+        let (c, half) = if e0.tail == v && list[0].2 {
+            (e0.a, e0.ha)
+        } else {
+            (e0.b, e0.hb)
+        };
+        let vertical_side = matches!(side, Side::N | Side::S);
+        let avail = if vertical_side { half.0 } else { half.1 } * 2.0 * 0.7;
+        let k = list.len() as f64;
+        for (j, (_, i, tail)) in list.into_iter().enumerate() {
+            let at = c_along(c, vertical_side) - avail / 2.0 + avail * (j as f64 + 0.5) / k;
+            let p = &mut routes[i];
+            let (x, y) = if tail { (0, 1) } else { (3, 2) };
+            if vertical_side {
+                p[x].0 = at;
+                p[y].0 = at;
+            } else {
+                p[x].1 = at;
+                p[y].1 = at;
+            }
+        }
+    }
+    // 中ほどの線（p[1]→p[2]）を溝ごとに分ける
+    struct Mid {
+        vertical: bool,
+        at: f64,
+        lo: f64,
+        hi: f64,
+        edge: usize,
+    }
+    let mut mids: Vec<Mid> = routes
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| p.len() == 4)
+        .filter_map(|(i, p)| {
+            let (a, b) = (p[1], p[2]);
+            if (a.0 - b.0).abs() < 1e-9 && (a.1 - b.1).abs() > 1e-9 {
+                Some(Mid {
+                    vertical: true,
+                    at: a.0,
+                    lo: a.1.min(b.1),
+                    hi: a.1.max(b.1),
+                    edge: i,
+                })
+            } else if horizontal(a, b) {
+                Some(Mid {
+                    vertical: false,
+                    at: a.1,
+                    lo: a.0.min(b.0),
+                    hi: a.0.max(b.0),
+                    edge: i,
+                })
+            } else {
+                None
+            }
+        })
+        .collect();
+    mids.sort_by(|a, b| {
+        a.vertical
+            .cmp(&b.vertical)
+            .then(a.at.total_cmp(&b.at))
+            .then(a.edge.cmp(&b.edge))
+    });
+    // 近くて重なる線を 1 つの溝に（union-find）
+    let mut parent: Vec<usize> = (0..mids.len()).collect();
+    fn find(parent: &mut [usize], mut x: usize) -> usize {
+        while parent[x] != x {
+            parent[x] = parent[parent[x]];
+            x = parent[x];
+        }
+        x
+    }
+    let mut work = NUDGE_WORK;
+    for i in 0..mids.len() {
+        for j in i + 1..mids.len() {
+            if mids[j].vertical != mids[i].vertical
+                || mids[j].at - mids[i].at >= CHANNEL
+                || work == 0
+            {
+                break;
+            }
+            work -= 1;
+            if mids[j].lo < mids[i].hi && mids[i].lo < mids[j].hi {
+                let (a, b) = (find(&mut parent, i), find(&mut parent, j));
+                parent[a.max(b)] = a.min(b);
+            }
+        }
+    }
+    let mut channels: HashMap<usize, Vec<usize>> = HashMap::new();
+    for i in 0..mids.len() {
+        let r = find(&mut parent, i);
+        channels.entry(r).or_default().push(i);
+    }
+    for (_, list) in channels {
+        if list.len() < 2 {
+            continue;
+        }
+        let mean = list.iter().map(|&i| mids[i].at).sum::<f64>() / list.len() as f64;
+        // 線の順: 並びの始め（lo）の順。始めが同じなら辺の順
+        let mut order = list;
+        order.sort_by(|&a, &b| {
+            mids[a]
+                .lo
+                .total_cmp(&mids[b].lo)
+                .then(mids[a].edge.cmp(&mids[b].edge))
+        });
+        let k = order.len() as f64;
+        for (j, i) in order.into_iter().enumerate() {
+            let at = mean + (j as f64 - (k - 1.0) / 2.0) * TRACK;
+            let m = &mids[i];
+            let p = &mut routes[m.edge];
+            if m.vertical {
+                p[1].0 = at;
+                p[2].0 = at;
+            } else {
+                p[1].1 = at;
+                p[2].1 = at;
+            }
+        }
+    }
+    routes.into_iter().map(tidy).collect()
+}
+
+/// 中心の、側に沿った座標（N・S の側なら x、E・W なら y）。
+fn c_along(c: P, vertical_side: bool) -> f64 {
+    if vertical_side { c.0 } else { c.1 }
+}
+
+#[cfg(test)]
+mod free_tests {
+    use super::*;
+
+    fn axis_aligned(p: &[P]) -> bool {
+        p.windows(2)
+            .all(|w| (w[0].0 - w[1].0).abs() < 1e-6 || (w[0].1 - w[1].1).abs() < 1e-6)
+    }
+
+    #[test]
+    fn spreads_ends_and_separates_channels() {
+        // 中心の 0 から右上・右・右下の 1・2・3 へ、それに 0 から 2 へもう 1 本
+        let half = (27.0, 18.0);
+        let c = (0.0, 0.0);
+        let others = [(200.0, -150.0), (200.0, 0.0), (200.0, 150.0), (200.0, 0.0)];
+        let edges: Vec<FreeEdge> = others
+            .iter()
+            .enumerate()
+            .map(|(i, &b)| FreeEdge {
+                a: c,
+                b,
+                ha: half,
+                hb: half,
+                tail: 0,
+                head: [1, 2, 3, 2][i],
+            })
+            .collect();
+        let out = ortho_free_all(&edges, &mut Obstacles::new(vec![]));
+        for p in &out {
+            assert!(axis_aligned(p), "{p:?}");
+        }
+        // 0 から出る端はすべて違う点
+        let starts: Vec<P> = out.iter().map(|p| p[0]).collect();
+        for (i, a) in starts.iter().enumerate() {
+            for b in &starts[i + 1..] {
+                assert!((a.0 - b.0).abs() + (a.1 - b.1).abs() > 1.0, "{starts:?}");
+            }
+        }
+        // 縦の中ほどの線は、重なれば間が空く
+        let mut verticals: Vec<(f64, f64, f64)> = Vec::new();
+        for p in &out {
+            for w in p.windows(2) {
+                if (w[0].0 - w[1].0).abs() < 1e-6 && (w[0].1 - w[1].1).abs() > 1e-6 {
+                    verticals.push((w[0].0, w[0].1.min(w[1].1), w[0].1.max(w[1].1)));
+                }
+            }
+        }
+        for (i, a) in verticals.iter().enumerate() {
+            for b in &verticals[i + 1..] {
+                if a.1 < b.2 && b.1 < a.2 {
+                    assert!((a.0 - b.0).abs() > 1.0, "{verticals:?}");
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
